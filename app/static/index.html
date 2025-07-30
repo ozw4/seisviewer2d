@@ -51,6 +51,8 @@
     let currentFileId = '';
     let currentKey1Byte = 189;
     let currentKey2Byte = 193;
+    let savedXRange = null;
+    let savedYRange = null;
 
     function updateKey1Display() {
       const slider = document.getElementById('key1_idx_slider');
@@ -142,14 +144,29 @@
         traces.push({ type: 'scatter', mode: 'lines', x: shiftedFullX, y: time, line: { color: 'black', width: 0.5 }, showlegend: false });
       }
 
-      Plotly.newPlot('plot', traces, {
+      const layout = {
         yaxis: { autorange: 'reversed', title: 'Time (s)', showgrid: false, tickfont: { color: '#000' }, titlefont: { color: '#000' } },
         xaxis: { visible: false, range: [-1, nTraces + 1] },
         paper_bgcolor: '#fff',
         plot_bgcolor: '#fff',
         margin: { t: 10, r: 10, l: 60, b: 40 },
         dragmode: false
-      }, { responsive: true });
+      };
+      if (savedXRange) layout.xaxis.range = savedXRange;
+      if (savedYRange) layout.yaxis.range = savedYRange;
+
+      const plotDiv = document.getElementById('plot');
+      Plotly.newPlot(plotDiv, traces, layout, { responsive: true }).then(() => {
+        plotDiv.removeAllListeners('plotly_relayout');
+        plotDiv.on('plotly_relayout', ev => {
+          if (ev['xaxis.range[0]'] !== undefined && ev['xaxis.range[1]'] !== undefined) {
+            savedXRange = [ev['xaxis.range[0]'], ev['xaxis.range[1]']];
+          }
+          if (ev['yaxis.range[0]'] !== undefined && ev['yaxis.range[1]'] !== undefined) {
+            savedYRange = [ev['yaxis.range[0]'], ev['yaxis.range[1]']];
+          }
+        });
+      });
     }
 
     window.addEventListener('DOMContentLoaded', loadSettings);
