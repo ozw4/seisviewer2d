@@ -42,6 +42,14 @@
     <label for="key1_idx_slider">key1 index:</label>
     <input type="range" id="key1_idx_slider" min="0" max="10000" value="0" step="1" oninput="updateKey1Display()" />
     <input type="number" id="key1_idx_display" value="0" min="0" max="10000" step="1" style="width: 60px;" onchange="syncSliderWithInput()" />
+    <label>
+      start sample:
+      <input type="number" id="sample_start" value="0" min="0" step="1" style="width: 80px;" />
+    </label>
+    <label>
+      end sample:
+      <input type="number" id="sample_end" value="0" min="0" step="1" style="width: 80px;" />
+    </label>
     <button onclick="fetchAndPlot()">Plot</button>
   </div>
   <div id="plot" style="width: 100vw; height: calc(100vh - 100px);"></div>
@@ -110,8 +118,17 @@
     async function fetchAndPlot() {
       const index = parseInt(document.getElementById('key1_idx_slider').value);
       const key1Val = key1Values[index];
-      const url = `/get_section?file_id=${currentFileId}&key1_idx=${key1Val}&key1_byte=${currentKey1Byte}&key2_byte=${currentKey2Byte}`;
-      const res = await fetch(url);
+      const start = document.getElementById('sample_start').value;
+      const end = document.getElementById('sample_end').value;
+      const params = new URLSearchParams({
+        file_id: currentFileId,
+        key1_idx: key1Val,
+        key1_byte: currentKey1Byte,
+        key2_byte: currentKey2Byte,
+      });
+      if (start) params.append('sample_start', start);
+      if (end) params.append('sample_end', end);
+      const res = await fetch(`/get_section?${params.toString()}`);
       if (!res.ok) {
         alert('Failed to load section');
         return;
@@ -123,7 +140,15 @@
     function plotSeismicData(seismic, dt) {
       const nTraces = seismic.length;
       const nSamples = seismic[0].length;
-      const time = Array.from({ length: nSamples }, (_, i) => i * dt);
+      const startInput = document.getElementById('sample_start');
+      const endInput = document.getElementById('sample_end');
+      startInput.max = nSamples - 1;
+      endInput.max = nSamples - 1;
+      if (!endInput.value || parseInt(endInput.value) >= nSamples) {
+        endInput.value = nSamples - 1;
+      }
+      const offset = parseInt(startInput.value) || 0;
+      const time = Array.from({ length: nSamples }, (_, i) => (i + offset) * dt);
       const traces = [];
       const gain = 1.0;
 

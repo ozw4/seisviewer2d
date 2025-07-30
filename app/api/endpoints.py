@@ -49,10 +49,12 @@ async def upload_segy(file: UploadFile = File(...)):
 
 @router.get('/get_section')
 def get_section(
-	file_id: str = Query(...),
-	key1_byte: int = Query(189),  # デフォルト設定
-	key2_byte: int = Query(193),
-	key1_idx: int = Query(...),
+        file_id: str = Query(...),
+        key1_byte: int = Query(189),  # デフォルト設定
+        key2_byte: int = Query(193),
+        key1_idx: int = Query(...),
+        sample_start: int | None = Query(None),
+        sample_end: int | None = Query(None),
 ):
 	try:
 		# 複合キーを作る（file_id, key1_byte, key2_byte）
@@ -66,7 +68,7 @@ def get_section(
 			cached_readers[cache_key] = SegySectionReader(path, key1_byte, key2_byte)
 
 		reader = cached_readers[cache_key]
-		section = reader.get_section(key1_idx)
+		section = reader.get_section(key1_idx, sample_start, sample_end)
 		return JSONResponse(content={'section': section})
 
 	except Exception as e:
