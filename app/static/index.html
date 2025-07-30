@@ -147,7 +147,7 @@
       const plotDiv = document.getElementById('plot');
       Plotly.newPlot(plotDiv, traces, {
         yaxis: { autorange: 'reversed', title: 'Time (s)', showgrid: false, tickfont: { color: '#000' }, titlefont: { color: '#000' } },
-        xaxis: { visible: false, range: [-1, nTraces + 1] },
+        xaxis: { autorange: true, title: 'Trace', showgrid: false, tickfont: { color: '#000' }, titlefont: { color: '#000' } },
         paper_bgcolor: '#fff',
         plot_bgcolor: '#fff',
         margin: { t: 10, r: 10, l: 60, b: 40 },
