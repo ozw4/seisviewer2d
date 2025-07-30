@@ -40,8 +40,8 @@
   <input type="hidden" id="file_id" />
   <div id="controls" style="padding: 1em; background: #f8f8f8; display: flex; gap: 1em; align-items: center;">
     <label for="key1_idx_slider">key1 index:</label>
-    <input type="range" id="key1_idx_slider" min="0" max="10000" value="0" step="1" oninput="updateKey1Display()" />
-    <input type="number" id="key1_idx_display" value="0" min="0" max="10000" step="1" style="width: 60px;" onchange="syncSliderWithInput()" />
+    <input type="range" id="key1_idx_slider" min="0" max="10000" value="0" step="1" oninput="updateKey1Display(); fetchAndPlot()" />
+    <input type="number" id="key1_idx_display" value="0" min="0" max="10000" step="1" style="width: 60px;" onchange="syncSliderWithInput(); fetchAndPlot()" />
     <button onclick="fetchAndPlot()">Plot</button>
   </div>
   <div id="plot" style="width: 100vw; height: calc(100vh - 100px);"></div>
@@ -93,7 +93,7 @@
       }
     }
 
-    function loadSettings() {
+    async function loadSettings() {
       const params = new URLSearchParams(window.location.search);
       currentFileId = params.get('file_id') || localStorage.getItem('file_id') || '';
       currentKey1Byte = parseInt(params.get('key1_byte') || localStorage.getItem('key1_byte') || '189');
@@ -103,7 +103,8 @@
         localStorage.setItem('file_id', currentFileId);
         localStorage.setItem('key1_byte', currentKey1Byte);
         localStorage.setItem('key2_byte', currentKey2Byte);
-        fetchKey1Values();
+        await fetchKey1Values();
+        await fetchAndPlot();
       }
     }
 
