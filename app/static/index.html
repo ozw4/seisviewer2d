@@ -1,0 +1,219 @@
+<!DOCTYPE html>
+<html lang="en">
+<meta charset="utf-8">
+
+<head>
+  <title>Seismic Wiggle Viewer</title>
+  <style>
+    body {
+      margin: 0;
+      font-family: sans-serif;
+      background-color: #fff;
+      color: #000;
+    }
+
+    header {
+      background: #f0f0f0;
+      padding: 0.8em 1.2em;
+      font-size: 1.2em;
+      border-bottom: 1px solid #ccc;
+    }
+
+
+    #controls {
+      padding: 0.5em 1em;
+      background: #fafafa;
+      border-bottom: 1px solid #ccc;
+    }
+
+    input,
+    button {
+      font-size: 1em;
+      padding: 0.2em 0.4em;
+      margin-right: 0.5em;
+    }
+  </style>
+</head>
+
+<body>
+  <header>Seismic Wiggle Viewer </header>
+  <input type="hidden" id="file_id" />
+  <div id="controls" style="padding: 1em; background: #f8f8f8; display: flex; gap: 1em; align-items: center;">
+  <label>
+    Upload SEG-Y file:
+    <input type="file" id="upload_segy" accept=".sgy,.segy" />
+  </label>
+  <progress id="upload_progress" value="0" max="100" style="width: 300px;"></progress>
+  <span id="progress_text">0%</span>
+
+
+
+    <label>
+      key1_byte:
+      <select id="key1_byte">
+        <option value="189">CDP (byte 189)</option>
+        <option value="189">CDP (byte 189)</option>
+        <option value="73">INLINE_3D (byte 73)</option>
+        <option value="77">CROSSLINE_3D (byte 77)</option>
+        <option value="21">FieldRecord (byte 21)</option>
+        <!-- 必要ならさらに追加 -->
+      </select>
+    </label>
+
+    <label>
+      key2_byte:
+      <select id="key2_byte">
+        <option value="193">Offset (byte 193)</option>
+        <option value="77">CROSSLINE_3D (byte 77)</option>
+        <option value="17">TraceSequenceLine (byte 17)</option>
+        <!-- 必要ならさらに追加 -->
+      </select>
+    </label>
+
+  <div style="display: flex; align-items: center; gap: 0.5em;">
+    <label for="key1_idx_slider">key1 index:</label>
+
+    <!-- スライダー -->
+    <input type="range" id="key1_idx_slider" min="0" max="100" value="0" step="1" oninput="updateKey1Display()" />
+
+    <!-- 現在の値を表示 -->
+    <input type="number" id="key1_idx_display" value="0" min="0" max="100" step="1" style="width: 60px;"
+      onchange="syncSliderWithInput()" />
+
+  </div>
+
+    <button onclick="fetchAndPlot()">Plot</button>
+  </div>
+
+  <div id="plot" style="width: 100vw; height: calc(100vh - 100px);"></div>
+
+  <script src="https://cdn.plot.ly/plotly-2.29.1.min.js"></script>
+<script>
+    function updateKey1Display() {
+      const slider = document.getElementById('key1_idx_slider');
+      const display = document.getElementById('key1_idx_display');
+      display.value = slider.value;
+    }
+
+    function syncSliderWithInput() {
+      const slider = document.getElementById('key1_idx_slider');
+      const display = document.getElementById('key1_idx_display');
+      let value = parseInt(display.value);
+      value = Math.max(slider.min, Math.min(slider.max, value));
+      slider.value = value;
+      display.value = value;
+    }
+
+    function stepKey1(delta) {
+      const slider = document.getElementById('key1_idx_slider');
+      const display = document.getElementById('key1_idx_display');
+      let value = parseInt(slider.value) + delta;
+      value = Math.max(slider.min, Math.min(slider.max, value));
+      slider.value = value;
+      display.value = value;
+    }
+
+    // 必要に応じて max を動的に設定（例: 取得した key1 値の長さ - 1）
+    function setKey1SliderMax(max) {
+      document.getElementById('key1_idx_slider').max = max;
+      document.getElementById('key1_idx_display').max = max;
+    }
+
+    // 呼び出し例: setKey1SliderMax(58);
+
+  document.getElementById('upload_segy').addEventListener('change', function (event) {
+    const file = event.target.files[0];
+    if (!file) return;
+
+    const formData = new FormData();
+    formData.append('file', file);
+
+    const xhr = new XMLHttpRequest();
+    xhr.open('POST', '/upload_segy', true);
+
+    // アップロード進捗
+    xhr.upload.onprogress = function (e) {
+      if (e.lengthComputable) {
+        const percent = (e.loaded / e.total) * 100;
+        document.getElementById('upload_progress').value = percent;
+        document.getElementById('progress_text').innerText = `${percent.toFixed(1)}%`;
+      }
+    };
+
+    xhr.onload = function () {
+      if (xhr.status === 200) {
+        const result = JSON.parse(xhr.responseText);
+        document.getElementById('file_id').value = result.file_id;
+        alert(`Upload successful. File ID: ${result.file_id}`);
+      } else {
+        alert('Upload failed');
+      }
+    };
+
+    xhr.onerror = function () {
+      alert('Upload error occurred');
+    };
+
+    xhr.send(formData);
+  });
+
+  async function fetchAndPlot() {
+    const file_id = document.getElementById('file_id').value;
+    const key1_idx = document.getElementById('key1_idx').value;
+    const key1_byte = document.getElementById('key1_byte').value;
+    const key2_byte = document.getElementById('key2_byte').value;
+
+    const url = `/get_section?file_id=${file_id}&key1_idx=${key1_idx}&key1_byte=${key1_byte}&key2_byte=${key2_byte}`;
+    const res = await fetch(url);
+    if (!res.ok) {
+      alert("Failed to load section");
+      return;
+    }
+    const json = await res.json();
+    plotSeismicData(json.section, 0.004);
+  }
+    function plotSeismicData(seismic, dt) {
+      const nTraces = seismic.length;
+      const nSamples = seismic[0].length;
+      const gain = 1.0;
+      const time = Array.from({ length: nSamples }, (_, i) => i * dt);
+      const traces = [];
+
+      for (let i = 0; i < nTraces; i++) {
+        const traceData = seismic[i].map(v => v * gain);
+        const positiveOnly = traceData.map(val => Math.max(0, val));
+        const shiftedFullX = traceData.map(x => x + i);
+        const shiftedPosX = positiveOnly.map(x => x + i);
+        const baseX = Array(nSamples).fill(i);
+
+        traces.push({
+          type: 'scatter', mode: 'lines', x: baseX, y: time,
+          line: { width: 0 }, hoverinfo: 'skip', showlegend: false
+        });
+        traces.push({
+          type: 'scatter', mode: 'lines', x: shiftedPosX, y: time,
+          fill: 'tonextx', fillcolor: 'black', line: { width: 0 },
+          opacity: 0.6, hoverinfo: 'skip', showlegend: false
+        });
+        traces.push({
+          type: 'scatter', mode: 'lines', x: shiftedFullX, y: time,
+          line: { color: 'black', width: 0.5 }, showlegend: false
+        });
+      }
+
+      Plotly.newPlot('plot', traces, {
+        yaxis: {
+          autorange: 'reversed', title: 'Time (s)', showgrid: false,
+          tickfont: { color: '#000' }, titlefont: { color: '#000' }
+        },
+        xaxis: {
+          visible: false, range: [-1, nTraces + 1]
+        },
+        paper_bgcolor: '#fff', plot_bgcolor: '#fff',
+        margin: { t: 10, r: 10, l: 60, b: 40 }, dragmode: false
+      }, { responsive: true });
+    }
+  </script>
+</body>
+
+</html>
