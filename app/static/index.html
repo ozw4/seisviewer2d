@@ -132,8 +132,7 @@
 
       for (let i = 0; i < nTraces; i++) {
         const raw = seismic[i];
-        const maxAbs = Math.max(...raw.map(v => Math.abs(v))) || 1.0;
-        const traceData = raw.map(v => (v / maxAbs) * gain);
+        const traceData = raw.map(v => v * gain);
         const positiveOnly = traceData.map(val => Math.max(0, val));
         const shiftedFullX = traceData.map(x => x + i);
         const shiftedPosX = positiveOnly.map(x => x + i);
