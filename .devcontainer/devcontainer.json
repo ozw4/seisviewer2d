@@ -5,6 +5,7 @@
     "workspaceFolder": "/workspace",
     "remoteUser": "dcuser",
     "updateRemoteUserUID": false,
+    "forwardPorts": [8000],
     "customizations": {
         "vscode": {
             "settings": {
