@@ -118,34 +118,34 @@
 
   <script src="https://cdn.plot.ly/plotly-2.29.1.min.js"></script>
 <script>
+    let key1Values = [];
     function updateKey1Display() {
       const slider = document.getElementById('key1_idx_slider');
       const display = document.getElementById('key1_idx_display');
-      display.value = slider.value;
+      const idx = parseInt(slider.value);
+      display.value = key1Values[idx] ?? '';
     }
 
     function syncSliderWithInput() {
       const slider = document.getElementById('key1_idx_slider');
       const display = document.getElementById('key1_idx_display');
-      let value = parseInt(display.value);
-      value = Math.max(slider.min, Math.min(slider.max, value));
-      slider.value = value;
-      display.value = value;
+      const val = parseInt(display.value);
+      const idx = key1Values.indexOf(val);
+      slider.value = idx >= 0 ? idx : 0;
+      display.value = key1Values[slider.value] ?? '';
     }
 
     function stepKey1(delta) {
       const slider = document.getElementById('key1_idx_slider');
-      const display = document.getElementById('key1_idx_display');
       let value = parseInt(slider.value) + delta;
       value = Math.max(slider.min, Math.min(slider.max, value));
       slider.value = value;
-      display.value = value;
+      updateKey1Display();
     }
 
     // 必要に応じて max を動的に設定（例: 取得した key1 値の長さ - 1）
     function setKey1SliderMax(max) {
       document.getElementById('key1_idx_slider').max = max;
-      document.getElementById('key1_idx_display').max = max;
     }
 
     // 呼び出し例: setKey1SliderMax(58);
@@ -169,11 +169,24 @@
       }
     };
 
-    xhr.onload = function () {
+    xhr.onload = async function () {
       if (xhr.status === 200) {
         const result = JSON.parse(xhr.responseText);
         document.getElementById('file_id').value = result.file_id;
         alert(`Upload successful. File ID: ${result.file_id}`);
+
+        const key1Byte = document.getElementById('key1_byte').value;
+        const key2Byte = document.getElementById('key2_byte').value;
+        const res = await fetch(`/get_key1_values?file_id=${result.file_id}&key1_byte=${key1Byte}&key2_byte=${key2Byte}`);
+        if (res.ok) {
+          const data = await res.json();
+          key1Values = data.values;
+          setKey1SliderMax(key1Values.length - 1);
+          document.getElementById('key1_idx_display').min = key1Values[0];
+          document.getElementById('key1_idx_display').max = key1Values[key1Values.length - 1];
+          document.getElementById('key1_idx_slider').value = 0;
+          updateKey1Display();
+        }
       } else {
         alert('Upload failed');
       }
@@ -188,11 +201,12 @@
 
   async function fetchAndPlot() {
     const file_id = document.getElementById('file_id').value;
-    const key1_idx = document.getElementById('key1_idx_display').value;
+    const index = parseInt(document.getElementById('key1_idx_slider').value);
     const key1_byte = document.getElementById('key1_byte').value;
     const key2_byte = document.getElementById('key2_byte').value;
+    const key1_val = key1Values[index];
 
-    const url = `/get_section?file_id=${file_id}&key1_idx=${key1_idx}&key1_byte=${key1_byte}&key2_byte=${key2_byte}`;
+    const url = `/get_section?file_id=${file_id}&key1_idx=${key1_val}&key1_byte=${key1_byte}&key2_byte=${key2_byte}`;
     const res = await fetch(url);
     if (!res.ok) {
       alert("Failed to load section");
