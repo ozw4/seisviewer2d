@@ -14,6 +14,21 @@ UPLOAD_DIR.mkdir(exist_ok=True)
 cached_readers: dict[str, SegySectionReader] = {}
 SEGYS: dict[str, str] = {}
 
+@router.get('/get_key1_values')
+def get_key1_values(
+	file_id: str = Query(...),
+	key1_byte: int = Query(189),
+	key2_byte: int = Query(193),
+):
+	cache_key = f'{file_id}_{key1_byte}_{key2_byte}'
+	if cache_key not in cached_readers:
+		if file_id not in SEGYS:
+			raise HTTPException(status_code=404, detail='File ID not found')
+		path = SEGYS[file_id]
+		cached_readers[cache_key] = SegySectionReader(path, key1_byte, key2_byte)
+	reader = cached_readers[cache_key]
+	return JSONResponse(content={'values': reader.get_key1_values().tolist()})
+
 
 @router.post('/upload_segy')
 async def upload_segy(file: UploadFile = File(...)):
