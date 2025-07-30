@@ -16,6 +16,8 @@ class SegySectionReader:
 			self.key1s = f.attributes(self.key1_byte)[:]
 			self.key2s = f.attributes(self.key2_byte)[:]
 		self.unique_key1 = np.unique(self.key1s)
+	def get_key1_values(self):
+		return self.unique_key1
 
 	def get_section(self, key1_val):
 		# キャッシュにあれば返す
