@@ -36,9 +36,10 @@ class SegySectionReader:
 
 		with segyio.open(self.path, 'r', ignore_geometry=True) as f:
 			f.mmap()
-			section = [
-				f.trace[i].tolist() for i in sorted_indices
-			]  # list of lists に変換
+			traces = np.array([f.trace[i] for i in sorted_indices], dtype='float32')
+			max_abs = np.max(np.abs(traces), axis=1, keepdims=True)
+			max_abs[max_abs == 0] = 1.0
+			section = (traces / max_abs).tolist()
 
 		# キャッシュに保存
 		self.section_cache[key1_val] = section
