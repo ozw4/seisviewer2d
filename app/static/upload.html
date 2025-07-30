@@ -1,0 +1,134 @@
+<!DOCTYPE html>
+<html lang="en">
+<meta charset="utf-8" />
+<head>
+  <title>Upload SEG-Y</title>
+  <style>
+    body {
+      margin: 0;
+      font-family: sans-serif;
+      background-color: #fff;
+      color: #000;
+    }
+    header {
+      background: #f0f0f0;
+      padding: 0.8em 1.2em;
+      font-size: 1.2em;
+      border-bottom: 1px solid #ccc;
+    }
+    #controls {
+      padding: 1em;
+      display: flex;
+      gap: 1em;
+      align-items: center;
+    }
+    input,
+    button,
+    select {
+      font-size: 1em;
+      padding: 0.2em 0.4em;
+    }
+  </style>
+</head>
+<body>
+  <header>Upload SEG-Y</header>
+  <div id="controls">
+    <label>
+      SEG-Y file:
+      <input type="file" id="upload_segy" accept=".sgy,.segy" />
+    </label>
+    <label>
+      key1_byte:
+      <select id="key1_byte">
+        <option value="1">TRACE_SEQUENCE_LINE (byte 1)</option>
+        <option value="5">TRACE_SEQUENCE_FILE (byte 5)</option>
+        <option value="9">FIELD_RECORD (byte 9)</option>
+        <option value="13">TRACE_NUMBER (byte 13)</option>
+        <option value="21">CDP (byte 21)</option>
+        <option value="25">CDP_TRACE (byte 25)</option>
+        <option value="29">TRACE_IDENTIFICATION_CODE (byte 29)</option>
+        <option value="37">OFFSET (byte 37)</option>
+        <option value="71">SCALAR_TO_APPLY_COORDINATES (byte 71)</option>
+        <option value="73">X (byte 73)</option>
+        <option value="77">Y (byte 77)</option>
+        <option value="81">REC_X (byte 81)</option>
+        <option value="85">REC_Y (byte 85)</option>
+        <option value="89">SRC_X (byte 89)</option>
+        <option value="93">SRC_Y (byte 93)</option>
+        <option value="115">NS (byte 115)</option>
+        <option value="117">DT (byte 117)</option>
+        <option value="189">INLINE_3D (byte 189)</option>
+        <option value="193">CROSSLINE_3D (byte 193)</option>
+        <option value="197">SHOT_POINT (byte 197)</option>
+      </select>
+    </label>
+    <label>
+      key2_byte:
+      <select id="key2_byte">
+        <option value="1">TRACE_SEQUENCE_LINE (byte 1)</option>
+        <option value="5">TRACE_SEQUENCE_FILE (byte 5)</option>
+        <option value="9">FIELD_RECORD (byte 9)</option>
+        <option value="13">TRACE_NUMBER (byte 13)</option>
+        <option value="21">CDP (byte 21)</option>
+        <option value="25">CDP_TRACE (byte 25)</option>
+        <option value="29">TRACE_IDENTIFICATION_CODE (byte 29)</option>
+        <option value="37">OFFSET (byte 37)</option>
+        <option value="71">SCALAR_TO_APPLY_COORDINATES (byte 71)</option>
+        <option value="73">X (byte 73)</option>
+        <option value="77">Y (byte 77)</option>
+        <option value="81">REC_X (byte 81)</option>
+        <option value="85">REC_Y (byte 85)</option>
+        <option value="89">SRC_X (byte 89)</option>
+        <option value="93">SRC_Y (byte 93)</option>
+        <option value="115">NS (byte 115)</option>
+        <option value="117">DT (byte 117)</option>
+        <option value="189">INLINE_3D (byte 189)</option>
+        <option value="193">CROSSLINE_3D (byte 193)</option>
+        <option value="197">SHOT_POINT (byte 197)</option>
+      </select>
+    </label>
+    <button id="upload_btn">Upload</button>
+    <progress id="upload_progress" value="0" max="100" style="width: 200px;"></progress>
+    <span id="progress_text">0%</span>
+  </div>
+  <script>
+    document.getElementById('upload_btn').addEventListener('click', () => {
+      const fileInput = document.getElementById('upload_segy');
+      const file = fileInput.files[0];
+      if (!file) {
+        alert('Please select a file');
+        return;
+      }
+      const key1Byte = document.getElementById('key1_byte').value;
+      const key2Byte = document.getElementById('key2_byte').value;
+      const formData = new FormData();
+      formData.append('file', file);
+      const xhr = new XMLHttpRequest();
+      xhr.open('POST', '/upload_segy', true);
+      xhr.upload.onprogress = function (e) {
+        if (e.lengthComputable) {
+          const percent = (e.loaded / e.total) * 100;
+          document.getElementById('upload_progress').value = percent;
+          document.getElementById('progress_text').innerText = `${percent.toFixed(1)}%`;
+        }
+      };
+      xhr.onload = function () {
+        if (xhr.status === 200) {
+          const result = JSON.parse(xhr.responseText);
+          localStorage.setItem('file_id', result.file_id);
+          localStorage.setItem('key1_byte', key1Byte);
+          localStorage.setItem('key2_byte', key2Byte);
+          const params = new URLSearchParams({ file_id: result.file_id, key1_byte: key1Byte, key2_byte: key2Byte });
+          window.location.href = `/?${params.toString()}`;
+        } else {
+          alert('Upload failed');
+        }
+      };
+      xhr.onerror = function () {
+        alert('Upload error occurred');
+      };
+      xhr.send(formData);
+    });
+  </script>
+</body>
+</html>
