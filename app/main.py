@@ -1,3 +1,5 @@
+"""FastAPI application entrypoint."""
+
 from pathlib import Path
 
 from api import endpoints
@@ -7,18 +9,16 @@ from fastapi.staticfiles import StaticFiles
 
 app = FastAPI()
 
-# 静的ファイル（HTML, JS）
-app.mount(
-	'/workspace/app/static',
-	StaticFiles(directory='/workspace/app/static'),
-	name='static',
-)
+STATIC_DIR = Path(__file__).parent / 'static'
+
+app.mount('/workspace/app/static', StaticFiles(directory=STATIC_DIR), name='static')
 
 # エンドポイント登録
 app.include_router(endpoints.router)
 
 
 @app.get('/', response_class=HTMLResponse)
-async def index():
-	index_path = Path('/workspace/app/static/index.html')
+async def index() -> str:
+	"""Serve the main HTML page."""
+	index_path = STATIC_DIR / 'index.html'
 	return index_path.read_text(encoding='utf-8')
