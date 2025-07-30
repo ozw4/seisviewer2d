@@ -20,5 +20,11 @@ app.include_router(endpoints.router)
 
 @app.get('/', response_class=HTMLResponse)
 async def index():
-	index_path = Path('/workspace/app/static/index.html')
-	return index_path.read_text(encoding='utf-8')
+        index_path = Path('/workspace/app/static/index.html')
+        return index_path.read_text(encoding='utf-8')
+
+
+@app.get('/upload', response_class=HTMLResponse)
+async def upload():
+        upload_path = Path('/workspace/app/static/upload.html')
+        return upload_path.read_text(encoding='utf-8')
