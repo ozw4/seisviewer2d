@@ -147,7 +147,11 @@
       const plotDiv = document.getElementById('plot');
       Plotly.newPlot(plotDiv, traces, {
         yaxis: { autorange: 'reversed', title: 'Time (s)', showgrid: false, tickfont: { color: '#000' }, titlefont: { color: '#000' } },
+<<<<<<< HEAD
         xaxis: {  },
+=======
+        xaxis: { autorange: true, title: 'Trace', showgrid: false, tickfont: { color: '#000' }, titlefont: { color: '#000' } },
+>>>>>>> codex/update-plotseismicdata-function-details
         paper_bgcolor: '#fff',
         plot_bgcolor: '#fff',
         margin: { t: 10, r: 10, l: 60, b: 40 },
