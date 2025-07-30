@@ -46,16 +46,29 @@
   <progress id="upload_progress" value="0" max="100" style="width: 300px;"></progress>
   <span id="progress_text">0%</span>
 
-
-
     <label>
       key1_byte:
       <select id="key1_byte">
-        <option value="189">CDP (byte 189)</option>
-        <option value="189">CDP (byte 189)</option>
-        <option value="73">INLINE_3D (byte 73)</option>
-        <option value="77">CROSSLINE_3D (byte 77)</option>
-        <option value="21">FieldRecord (byte 21)</option>
+        <option value="1">TRACE_SEQUENCE_LINE (byte 1)</option>
+        <option value="5">TRACE_SEQUENCE_FILE (byte 5)</option>
+        <option value="9">FIELD_RECORD (byte 9)</option>
+        <option value="13">TRACE_NUMBER (byte 13)</option>
+        <option value="21">CDP (byte 21)</option>
+        <option value="25">CDP_TRACE (byte 25)</option>
+        <option value="29">TRACE_IDENTIFICATION_CODE (byte 29)</option>
+        <option value="37">OFFSET (byte 37)</option>
+        <option value="71">SCALAR_TO_APPLY_COORDINATES (byte 71)</option>
+        <option value="73">X (byte 73)</option>
+        <option value="77">Y (byte 77)</option>
+        <option value="81">REC_X (byte 81)</option>
+        <option value="85">REC_Y (byte 85)</option>
+        <option value="89">SRC_X (byte 89)</option>
+        <option value="93">SRC_Y (byte 93)</option>
+        <option value="115">NS (byte 115)</option>
+        <option value="117">DT (byte 117)</option>
+        <option value="189">INLINE_3D (byte 189)</option>
+        <option value="193">CROSSLINE_3D (byte 193)</option>
+        <option value="197">SHOT_POINT (byte 197)</option>
         <!-- 必要ならさらに追加 -->
       </select>
     </label>
@@ -63,9 +76,26 @@
     <label>
       key2_byte:
       <select id="key2_byte">
-        <option value="193">Offset (byte 193)</option>
-        <option value="77">CROSSLINE_3D (byte 77)</option>
-        <option value="17">TraceSequenceLine (byte 17)</option>
+        <option value="1">TRACE_SEQUENCE_LINE (byte 1)</option>
+        <option value="5">TRACE_SEQUENCE_FILE (byte 5)</option>
+        <option value="9">FIELD_RECORD (byte 9)</option>
+        <option value="13">TRACE_NUMBER (byte 13)</option>
+        <option value="21">CDP (byte 21)</option>
+        <option value="25">CDP_TRACE (byte 25)</option>
+        <option value="29">TRACE_IDENTIFICATION_CODE (byte 29)</option>
+        <option value="37">OFFSET (byte 37)</option>
+        <option value="71">SCALAR_TO_APPLY_COORDINATES (byte 71)</option>
+        <option value="73">X (byte 73)</option>
+        <option value="77">Y (byte 77)</option>
+        <option value="81">REC_X (byte 81)</option>
+        <option value="85">REC_Y (byte 85)</option>
+        <option value="89">SRC_X (byte 89)</option>
+        <option value="93">SRC_Y (byte 93)</option>
+        <option value="115">NS (byte 115)</option>
+        <option value="117">DT (byte 117)</option>
+        <option value="189">INLINE_3D (byte 189)</option>
+        <option value="193">CROSSLINE_3D (byte 193)</option>
+        <option value="197">SHOT_POINT (byte 197)</option>
         <!-- 必要ならさらに追加 -->
       </select>
     </label>
@@ -74,14 +104,13 @@
     <label for="key1_idx_slider">key1 index:</label>
 
     <!-- スライダー -->
-    <input type="range" id="key1_idx_slider" min="0" max="100" value="0" step="1" oninput="updateKey1Display()" />
+    <input type="range" id="key1_idx_slider" min="0" max="10000" value="0" step="1" oninput="updateKey1Display()" />
 
     <!-- 現在の値を表示 -->
-    <input type="number" id="key1_idx_display" value="0" min="0" max="100" step="1" style="width: 60px;"
+    <input type="number" id="key1_idx_display" value="0" min="0" max="10000" step="1" style="width: 60px;"
       onchange="syncSliderWithInput()" />
 
   </div>
-
     <button onclick="fetchAndPlot()">Plot</button>
   </div>
 
@@ -159,7 +188,7 @@
 
   async function fetchAndPlot() {
     const file_id = document.getElementById('file_id').value;
-    const key1_idx = document.getElementById('key1_idx').value;
+    const key1_idx = document.getElementById('key1_idx_display').value;
     const key1_byte = document.getElementById('key1_byte').value;
     const key2_byte = document.getElementById('key2_byte').value;
 
@@ -172,34 +201,38 @@
     const json = await res.json();
     plotSeismicData(json.section, 0.004);
   }
-    function plotSeismicData(seismic, dt) {
-      const nTraces = seismic.length;
-      const nSamples = seismic[0].length;
-      const gain = 1.0;
-      const time = Array.from({ length: nSamples }, (_, i) => i * dt);
-      const traces = [];
+  function plotSeismicData(seismic, dt) {
+    const nTraces = seismic.length;
+    const nSamples = seismic[0].length;
+    const time = Array.from({ length: nSamples }, (_, i) => i * dt);
+    const traces = [];
+    const gain = 1.0;
 
-      for (let i = 0; i < nTraces; i++) {
-        const traceData = seismic[i].map(v => v * gain);
-        const positiveOnly = traceData.map(val => Math.max(0, val));
-        const shiftedFullX = traceData.map(x => x + i);
-        const shiftedPosX = positiveOnly.map(x => x + i);
-        const baseX = Array(nSamples).fill(i);
+    for (let i = 0; i < nTraces; i++) {
+      const raw = seismic[i];
+      const maxAbs = Math.max(...raw.map(v => Math.abs(v))) || 1.0;  // avoid division by 0
+      const traceData = raw.map(v => (v / maxAbs) * gain);
 
-        traces.push({
-          type: 'scatter', mode: 'lines', x: baseX, y: time,
-          line: { width: 0 }, hoverinfo: 'skip', showlegend: false
-        });
-        traces.push({
-          type: 'scatter', mode: 'lines', x: shiftedPosX, y: time,
-          fill: 'tonextx', fillcolor: 'black', line: { width: 0 },
-          opacity: 0.6, hoverinfo: 'skip', showlegend: false
-        });
-        traces.push({
-          type: 'scatter', mode: 'lines', x: shiftedFullX, y: time,
-          line: { color: 'black', width: 0.5 }, showlegend: false
-        });
-      }
+      const positiveOnly = traceData.map(val => Math.max(0, val));
+      const shiftedFullX = traceData.map(x => x + i);
+      const shiftedPosX = positiveOnly.map(x => x + i);
+      const baseX = Array(nSamples).fill(i);
+
+      traces.push({
+        type: 'scatter', mode: 'lines', x: baseX, y: time,
+        line: { width: 0 }, hoverinfo: 'skip', showlegend: false
+      });
+      traces.push({
+        type: 'scatter', mode: 'lines', x: shiftedPosX, y: time,
+        fill: 'tonextx', fillcolor: 'black', line: { width: 0 },
+        opacity: 0.6, hoverinfo: 'skip', showlegend: false
+      });
+      traces.push({
+        type: 'scatter', mode: 'lines', x: shiftedFullX, y: time,
+        line: { color: 'black', width: 0.5 }, showlegend: false
+      });
+    }
+
 
       Plotly.newPlot('plot', traces, {
         yaxis: {
