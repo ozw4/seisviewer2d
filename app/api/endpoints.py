@@ -64,6 +64,8 @@ def get_section(
 	"""Return a seismic section as JSON."""
 	try:
 		reader = _get_reader(file_id, key1_byte, key2_byte)
+		if key1_idx not in reader.unique_key1:
+			raise HTTPException(status_code=400, detail='Invalid key1_idx')  # noqa: TRY301
 		section = reader.get_section(key1_idx)
 		return JSONResponse(content={'section': section})
 	except Exception as e:  # pragma: no cover - generic error response
