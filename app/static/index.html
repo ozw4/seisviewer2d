@@ -137,7 +137,7 @@
       let traces = [];
       const gain = 1.0;
 
-      if (density < 1) {
+      if (density < 0.1) {
         for (let i = 0; i < nTraces; i++) {
           const raw = seismic[i];
           const traceData = raw.map(v => v * gain);
@@ -146,9 +146,9 @@
           const shiftedPosX = positiveOnly.map(x => x + i);
           const baseX = Array(nSamples).fill(i);
 
-          traces.push({ type: 'scattergl', mode: 'lines', x: baseX, y: time, line: { width: 0 }, hoverinfo: 'skip', showlegend: false });
-          traces.push({ type: 'scattergl', mode: 'lines', x: shiftedPosX, y: time, fill: 'tonextx', fillcolor: 'black', line: { width: 0 }, opacity: 0.6, hoverinfo: 'skip', showlegend: false });
-          traces.push({ type: 'scattergl', mode: 'lines', x: shiftedFullX, y: time, line: { color: 'black', width: 0.5 }, showlegend: false });
+          traces.push({ type: 'scatter', mode: 'lines', x: baseX, y: time, line: { width: 0 }, hoverinfo: 'skip', showlegend: false });
+          traces.push({ type: 'scatter', mode: 'lines', x: shiftedPosX, y: time, fill: 'tonextx', fillcolor: 'black', line: { width: 0 }, opacity: 0.6, hoverinfo: 'skip', showlegend: false });
+          traces.push({ type: 'scatter', mode: 'lines', x: shiftedFullX, y: time, line: { color: 'black', width: 0.5 }, showlegend: false });
         }
       } else {
         const zData = [];
@@ -165,7 +165,7 @@
           zData.push(row);
         }
         traces = [{
-          type: 'heatmapgl',
+          type: 'heatmap',
           x: Array.from({ length: nTraces }, (_, i) => i),
           y: time,
           z: zData,
