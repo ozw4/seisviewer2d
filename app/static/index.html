@@ -53,6 +53,8 @@
     let currentKey2Byte = 193;
     let savedXRange = null;
     let savedYRange = null;
+    let latestSeismicData = null;
+    const defaultDt = 0.004;
 
     function updateKey1Display() {
       const slider = document.getElementById('key1_idx_slider');
@@ -120,7 +122,8 @@
         return;
       }
       const json = await res.json();
-      plotSeismicData(json.section, 0.004);
+      latestSeismicData = json.section;
+      plotSeismicData(latestSeismicData, defaultDt);
     }
 
     function plotSeismicData(seismic, dt) {
@@ -212,15 +215,23 @@
 
 
       plotDiv.on('plotly_relayout', ev => {
+              let xChanged = false;
               if ('xaxis.range[0]' in ev && 'xaxis.range[1]' in ev) {
-                savedXRange = [ev['xaxis.range[0]'], ev['xaxis.range[1]']];
+                const newRange = [ev['xaxis.range[0]'], ev['xaxis.range[1]']];
+                xChanged = !savedXRange || savedXRange[0] !== newRange[0] || savedXRange[1] !== newRange[1];
+                savedXRange = newRange;
               } else if ('xaxis.autorange' in ev && ev['xaxis.autorange'] === true) {
+                xChanged = savedXRange !== null;
                 savedXRange = null;
                 savedYRange = null;
               }
 
               if ('yaxis.range[0]' in ev && 'yaxis.range[1]' in ev) {
                 savedYRange = [ev['yaxis.range[0]'], ev['yaxis.range[1]']];
+              }
+
+              if (xChanged && latestSeismicData) {
+                plotSeismicData(latestSeismicData, defaultDt);
               }
 
             });
