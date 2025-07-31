@@ -133,20 +133,15 @@
       for (let i = 0; i < nTraces; i++) {
         const raw = seismic[i];
         const traceData = raw.map(v => v * gain);
+        const positiveOnly = traceData.map(val => Math.max(0, val));
         const shiftedFullX = traceData.map(x => x + i);
-        const time = Array.from({ length: nSamples }, (_, j) => j * dt);
+        const shiftedPosX = positiveOnly.map(x => x + i);
+        const baseX = Array(nSamples).fill(i);
 
-        traces.push({
-          type: 'scattergl',  // ← WebGL版
-          mode: 'lines',
-          x: shiftedFullX,
-          y: time,
-          line: { color: 'black', width: 0.5 },
-          showlegend: false,
-          hoverinfo: 'skip'
-        });
+        traces.push({ type: 'scatter', mode: 'lines', x: baseX, y: time, line: { width: 0 }, hoverinfo: 'skip', showlegend: false });
+        traces.push({ type: 'scatter', mode: 'lines', x: shiftedPosX, y: time, fill: 'tonextx', fillcolor: 'black', line: { width: 0 }, opacity: 0.6, hoverinfo: 'skip', showlegend: false });
+        traces.push({ type: 'scatter', mode: 'lines', x: shiftedFullX, y: time, line: { color: 'black', width: 0.5 }, showlegend: false });
       }
-
       const plotDiv = document.getElementById('plot');
       const layout = {
         xaxis: {
