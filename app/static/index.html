@@ -53,6 +53,8 @@
     let currentKey2Byte = 193;
     let savedXRange = null;
     let savedYRange = null;
+    let latestSeismicData = null;
+    const defaultDt = 0.004;
 
     function updateKey1Display() {
       const slider = document.getElementById('key1_idx_slider');
@@ -120,7 +122,8 @@
         return;
       }
       const json = await res.json();
-      plotSeismicData(json.section, 0.004);
+      latestSeismicData = json.section;
+      plotSeismicData(latestSeismicData, defaultDt);
     }
 
     function plotSeismicData(seismic, dt) {
@@ -212,18 +215,38 @@
 
 
       plotDiv.on('plotly_relayout', ev => {
-              if ('xaxis.range[0]' in ev && 'xaxis.range[1]' in ev) {
-                savedXRange = [ev['xaxis.range[0]'], ev['xaxis.range[1]']];
-              } else if ('xaxis.autorange' in ev && ev['xaxis.autorange'] === true) {
-                savedXRange = null;
-                savedYRange = null;
-              }
+        let shouldRedraw = false;
 
-              if ('yaxis.range[0]' in ev && 'yaxis.range[1]' in ev) {
-                savedYRange = [ev['yaxis.range[0]'], ev['yaxis.range[1]']];
-              }
+        if ('xaxis.range[0]' in ev && 'xaxis.range[1]' in ev) {
+          const newRange = [ev['xaxis.range[0]'], ev['xaxis.range[1]']];
 
-            });
+          // 旧範囲と比較してズームかどうかを判断（パンなら再描画不要）
+          const prevWidth = savedXRange ? Math.abs(savedXRange[1] - savedXRange[0]) : null;
+          const newWidth = Math.abs(newRange[1] - newRange[0]);
+
+          // ズームインまたはズームアウト
+          if (prevWidth === null || Math.abs(newWidth - prevWidth) > 2) {
+            savedXRange = newRange;
+            shouldRedraw = true;
+          } else {
+            savedXRange = newRange;  // パンだが範囲更新のみ
+          }
+        }
+
+        if ('xaxis.autorange' in ev && ev['xaxis.autorange'] === true) {
+          savedXRange = null;
+          savedYRange = null;
+          shouldRedraw = true;
+        }
+
+        if ('yaxis.range[0]' in ev && 'yaxis.range[1]' in ev) {
+          savedYRange = [ev['yaxis.range[0]'], ev['yaxis.range[1]']];
+        }
+
+        if (shouldRedraw && latestSeismicData) {
+          plotSeismicData(latestSeismicData, 0.004);
+        }
+      });
     }
 
 
