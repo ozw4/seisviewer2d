@@ -127,22 +127,56 @@
       const nTraces = seismic.length;
       const nSamples = seismic[0].length;
       const time = Array.from({ length: nSamples }, (_, i) => i * dt);
-      const traces = [];
+      const plotDiv = document.getElementById('plot');
+
+      const widthPx = plotDiv.clientWidth || 1;
+      const xRange = savedXRange ?? [0, nTraces - 1];
+      const visibleTraces = Math.abs(xRange[1] - xRange[0]) + 1;
+      const density = visibleTraces / widthPx;
+
+      let traces = [];
       const gain = 1.0;
 
-      for (let i = 0; i < nTraces; i++) {
-        const raw = seismic[i];
-        const traceData = raw.map(v => v * gain);
-        const positiveOnly = traceData.map(val => Math.max(0, val));
-        const shiftedFullX = traceData.map(x => x + i);
-        const shiftedPosX = positiveOnly.map(x => x + i);
-        const baseX = Array(nSamples).fill(i);
+      if (density < 0.1) {
+        for (let i = 0; i < nTraces; i++) {
+          const raw = seismic[i];
+          const traceData = raw.map(v => v * gain);
+          const positiveOnly = traceData.map(val => Math.max(0, val));
+          const shiftedFullX = traceData.map(x => x + i);
+          const shiftedPosX = positiveOnly.map(x => x + i);
+          const baseX = Array(nSamples).fill(i);
 
-        traces.push({ type: 'scatter', mode: 'lines', x: baseX, y: time, line: { width: 0 }, hoverinfo: 'skip', showlegend: false });
-        traces.push({ type: 'scatter', mode: 'lines', x: shiftedPosX, y: time, fill: 'tonextx', fillcolor: 'black', line: { width: 0 }, opacity: 0.6, hoverinfo: 'skip', showlegend: false });
-        traces.push({ type: 'scatter', mode: 'lines', x: shiftedFullX, y: time, line: { color: 'black', width: 0.5 }, showlegend: false });
+          traces.push({ type: 'scatter', mode: 'lines', x: baseX, y: time, line: { width: 0 }, hoverinfo: 'skip', showlegend: false });
+          traces.push({ type: 'scatter', mode: 'lines', x: shiftedPosX, y: time, fill: 'tonextx', fillcolor: 'black', line: { width: 0 }, opacity: 0.6, hoverinfo: 'skip', showlegend: false });
+          traces.push({ type: 'scatter', mode: 'lines', x: shiftedFullX, y: time, line: { color: 'black', width: 0.5 }, showlegend: false });
+        }
+      } else {
+        const zData = [];
+        let zMin = Infinity;
+        let zMax = -Infinity;
+        for (let j = 0; j < nSamples; j++) {
+          const row = [];
+          for (let i = 0; i < nTraces; i++) {
+            const val = seismic[i][j];
+            row.push(val);
+            if (val < zMin) zMin = val;
+            if (val > zMax) zMax = val;
+          }
+          zData.push(row);
+        }
+        traces = [{
+          type: 'heatmap',
+          x: Array.from({ length: nTraces }, (_, i) => i),
+          y: time,
+          z: zData,
+          colorscale: 'Gray',
+          zmin: zMin,
+          zmax: zMax,
+          showscale: false,
+          hoverinfo: 'skip'
+        }];
       }
-      const plotDiv = document.getElementById('plot');
+
       const layout = {
         xaxis: {
           title: 'Trace',
