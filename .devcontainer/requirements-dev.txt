@@ -14,7 +14,6 @@ ipywidgets
 jupyter_rfb
 h5py
 xgboost
-plotly
 pillow
 umap-learn
 opencv-python-headless==4.5.5.64

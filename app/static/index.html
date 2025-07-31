@@ -45,14 +45,16 @@
     <button onclick="fetchAndPlot()">Plot</button>
   </div>
   <div id="plot" style="width: 100vw; height: calc(100vh - 100px);"></div>
-  <script src="https://cdn.plot.ly/plotly-2.29.1.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/pixi.js/7.2.4/pixi.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/pixi-viewport/4.37.0/viewport.min.js"></script>
   <script>
     let key1Values = [];
     let currentFileId = '';
     let currentKey1Byte = 189;
     let currentKey2Byte = 193;
-    let savedXRange = null;
-    let savedYRange = null;
+    let appPixi = null;
+    let viewport = null;
+    let savedTransform = null;
 
     function updateKey1Display() {
       const slider = document.getElementById('key1_idx_slider');
@@ -82,6 +84,23 @@
       document.getElementById('key1_idx_slider').max = max;
     }
 
+    function initPixi() {
+      const plotDiv = document.getElementById('plot');
+      appPixi = new PIXI.Application({
+        resizeTo: plotDiv,
+        backgroundColor: 0xffffff,
+        antialias: true
+      });
+      plotDiv.appendChild(appPixi.view);
+      viewport = new PIXI.Viewport({
+        interaction: appPixi.renderer.plugins.interaction,
+        screenWidth: plotDiv.clientWidth,
+        screenHeight: plotDiv.clientHeight
+      });
+      viewport.drag().pinch().wheel().decelerate();
+      appPixi.stage.addChild(viewport);
+    }
+
     async function fetchKey1Values() {
       const res = await fetch(`/get_key1_values?file_id=${currentFileId}&key1_byte=${currentKey1Byte}&key2_byte=${currentKey2Byte}`);
       if (res.ok) {
@@ -96,6 +115,9 @@
     }
 
     async function loadSettings() {
+      if (!appPixi) {
+        initPixi();
+      }
       const params = new URLSearchParams(window.location.search);
       currentFileId = params.get('file_id') || localStorage.getItem('file_id') || '';
       currentKey1Byte = parseInt(params.get('key1_byte') || localStorage.getItem('key1_byte') || '189');
@@ -123,66 +145,56 @@
       plotSeismicData(json.section, 0.004);
     }
 
+    function storeTransform() {
+      savedTransform = {
+        x: viewport.x,
+        y: viewport.y,
+        scaleX: viewport.scale.x,
+        scaleY: viewport.scale.y
+      };
+    }
+
     function plotSeismicData(seismic, dt) {
+      viewport.removeChildren();
       const nTraces = seismic.length;
       const nSamples = seismic[0].length;
-      const time = Array.from({ length: nSamples }, (_, i) => i * dt);
-      const traces = [];
-      const gain = 1.0;
+
+      viewport.worldWidth = nTraces + 1;
+      viewport.worldHeight = nSamples * dt;
 
       for (let i = 0; i < nTraces; i++) {
         const raw = seismic[i];
-        const traceData = raw.map(v => v * gain);
-        const positiveOnly = traceData.map(val => Math.max(0, val));
-        const shiftedFullX = traceData.map(x => x + i);
-        const shiftedPosX = positiveOnly.map(x => x + i);
-        const baseX = Array(nSamples).fill(i);
+        const line = new PIXI.Graphics();
+        const fill = new PIXI.Graphics();
 
-        traces.push({ type: 'scatter', mode: 'lines', x: baseX, y: time, line: { width: 0 }, hoverinfo: 'skip', showlegend: false });
-        traces.push({ type: 'scatter', mode: 'lines', x: shiftedPosX, y: time, fill: 'tonextx', fillcolor: 'black', line: { width: 0 }, opacity: 0.6, hoverinfo: 'skip', showlegend: false });
-        traces.push({ type: 'scatter', mode: 'lines', x: shiftedFullX, y: time, line: { color: 'black', width: 0.5 }, showlegend: false });
+        line.lineStyle(1, 0x000000, 1);
+        line.moveTo(i, 0);
+        fill.beginFill(0x000000, 0.6);
+        fill.moveTo(i, 0);
+
+        for (let j = 0; j < nSamples; j++) {
+          const val = raw[j];
+          const y = j * dt;
+          line.lineTo(i + val, y);
+          fill.lineTo(i + Math.max(0, val), y);
+        }
+        fill.lineTo(i, (nSamples - 1) * dt);
+        fill.endFill();
+
+        viewport.addChild(fill);
+        viewport.addChild(line);
       }
 
-      const plotDiv = document.getElementById('plot');
-      const layout = {
-        xaxis: {
-          title: 'Trace',
-          showgrid: false,
-          tickfont: { color: '#000' },
-          titlefont: { color: '#000' },
-          autorange: !savedXRange,
-          ...(savedXRange ? { range: savedXRange } : {})
-        },
-        yaxis: {
-          title: 'Time (s)',
-          showgrid: false,
-          tickfont: { color: '#000' },
-          titlefont: { color: '#000' },
-          autorange: false,
-          range: savedYRange ?? [nSamples * dt, 0]  // reversed を手動設定
-        },
-        paper_bgcolor: '#fff',
-        plot_bgcolor: '#fff',
-        margin: { t: 10, r: 10, l: 60, b: 40 },
-        dragmode: false
-      };
+      if (savedTransform) {
+        viewport.position.set(savedTransform.x, savedTransform.y);
+        viewport.scale.set(savedTransform.scaleX, savedTransform.scaleY);
+      } else {
+        viewport.fit();
+        viewport.moveCorner(0, 0);
+      }
 
-      Plotly.react(plotDiv, traces, layout, { responsive: true });
-
-
-      plotDiv.on('plotly_relayout', ev => {
-              if ('xaxis.range[0]' in ev && 'xaxis.range[1]' in ev) {
-                savedXRange = [ev['xaxis.range[0]'], ev['xaxis.range[1]']];
-              } else if ('xaxis.autorange' in ev && ev['xaxis.autorange'] === true) {
-                savedXRange = null;
-                savedYRange = null;
-              }
-
-              if ('yaxis.range[0]' in ev && 'yaxis.range[1]' in ev) {
-                savedYRange = [ev['yaxis.range[0]'], ev['yaxis.range[1]']];
-              }
-
-            });
+      viewport.off('moved', storeTransform);
+      viewport.on('moved', storeTransform);
     }
 
 
