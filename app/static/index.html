@@ -126,7 +126,10 @@
     function plotSeismicData(seismic, dt) {
       const nTraces = seismic.length;
       const nSamples = seismic[0].length;
-      const time = Array.from({ length: nSamples }, (_, i) => i * dt);
+      const time = new Float32Array(nSamples);
+      for (let t = 0; t < nSamples; t++) {
+        time[t] = t * dt;
+      }
       const plotDiv = document.getElementById('plot');
 
       const widthPx = plotDiv.clientWidth || 1;
@@ -140,33 +143,38 @@
       if (density < 0.1) {
         for (let i = 0; i < nTraces; i++) {
           const raw = seismic[i];
-          const traceData = raw.map(v => v * gain);
-          const positiveOnly = traceData.map(val => Math.max(0, val));
-          const shiftedFullX = traceData.map(x => x + i);
-          const shiftedPosX = positiveOnly.map(x => x + i);
-          const baseX = Array(nSamples).fill(i);
+          const baseX = new Float32Array(nSamples);
+          const shiftedFullX = new Float32Array(nSamples);
+          const shiftedPosX = new Float32Array(nSamples);
+          for (let j = 0; j < nSamples; j++) {
+            const val = raw[j] * gain;
+            baseX[j] = i;
+            shiftedFullX[j] = val + i;
+            shiftedPosX[j] = (val < 0 ? 0 : val) + i;
+          }
 
           traces.push({ type: 'scatter', mode: 'lines', x: baseX, y: time, line: { width: 0 }, hoverinfo: 'skip', showlegend: false });
           traces.push({ type: 'scatter', mode: 'lines', x: shiftedPosX, y: time, fill: 'tonextx', fillcolor: 'black', line: { width: 0 }, opacity: 0.6, hoverinfo: 'skip', showlegend: false });
           traces.push({ type: 'scatter', mode: 'lines', x: shiftedFullX, y: time, line: { color: 'black', width: 0.5 }, showlegend: false });
         }
       } else {
-        const zData = [];
+        const zData = Array.from({ length: nSamples }, () => new Float32Array(nTraces));
         let zMin = Infinity;
         let zMax = -Infinity;
-        for (let j = 0; j < nSamples; j++) {
-          const row = [];
-          for (let i = 0; i < nTraces; i++) {
-            const val = seismic[i][j];
-            row.push(val);
+        for (let i = 0; i < nTraces; i++) {
+          const trace = seismic[i];
+          for (let j = 0; j < nSamples; j++) {
+            const val = trace[j];
+            zData[j][i] = val;
             if (val < zMin) zMin = val;
             if (val > zMax) zMax = val;
           }
-          zData.push(row);
         }
+        const xVals = new Float32Array(nTraces);
+        for (let i = 0; i < nTraces; i++) xVals[i] = i;
         traces = [{
           type: 'heatmap',
-          x: Array.from({ length: nTraces }, (_, i) => i),
+          x: xVals,
           y: time,
           z: zData,
           colorscale: 'Gray',
