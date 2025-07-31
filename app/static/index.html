@@ -215,26 +215,38 @@
 
 
       plotDiv.on('plotly_relayout', ev => {
-              let xChanged = false;
-              if ('xaxis.range[0]' in ev && 'xaxis.range[1]' in ev) {
-                const newRange = [ev['xaxis.range[0]'], ev['xaxis.range[1]']];
-                xChanged = !savedXRange || savedXRange[0] !== newRange[0] || savedXRange[1] !== newRange[1];
-                savedXRange = newRange;
-              } else if ('xaxis.autorange' in ev && ev['xaxis.autorange'] === true) {
-                xChanged = savedXRange !== null;
-                savedXRange = null;
-                savedYRange = null;
-              }
+        let shouldRedraw = false;
 
-              if ('yaxis.range[0]' in ev && 'yaxis.range[1]' in ev) {
-                savedYRange = [ev['yaxis.range[0]'], ev['yaxis.range[1]']];
-              }
+        if ('xaxis.range[0]' in ev && 'xaxis.range[1]' in ev) {
+          const newRange = [ev['xaxis.range[0]'], ev['xaxis.range[1]']];
 
-              if (xChanged && latestSeismicData) {
-                plotSeismicData(latestSeismicData, defaultDt);
-              }
+          // 旧範囲と比較してズームかどうかを判断（パンなら再描画不要）
+          const prevWidth = savedXRange ? Math.abs(savedXRange[1] - savedXRange[0]) : null;
+          const newWidth = Math.abs(newRange[1] - newRange[0]);
 
-            });
+          // ズームインまたはズームアウト
+          if (prevWidth === null || Math.abs(newWidth - prevWidth) > 2) {
+            savedXRange = newRange;
+            shouldRedraw = true;
+          } else {
+            savedXRange = newRange;  // パンだが範囲更新のみ
+          }
+        }
+
+        if ('xaxis.autorange' in ev && ev['xaxis.autorange'] === true) {
+          savedXRange = null;
+          savedYRange = null;
+          shouldRedraw = true;
+        }
+
+        if ('yaxis.range[0]' in ev && 'yaxis.range[1]' in ev) {
+          savedYRange = [ev['yaxis.range[0]'], ev['yaxis.range[1]']];
+        }
+
+        if (shouldRedraw && latestSeismicData) {
+          plotSeismicData(latestSeismicData, 0.004);
+        }
+      });
     }
 
 
