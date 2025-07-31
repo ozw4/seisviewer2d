@@ -126,21 +126,34 @@
     function plotSeismicData(seismic, dt) {
       const nTraces = seismic.length;
       const nSamples = seismic[0].length;
-      const time = Array.from({ length: nSamples }, (_, i) => i * dt);
+
+      const time = new Float32Array(nSamples);
+      for (let j = 0; j < nSamples; j++) {
+        time[j] = j * dt;
+      }
+
       const traces = [];
       const gain = 1.0;
 
+      const traceData = new Float32Array(nSamples);
+      const positiveOnly = new Float32Array(nSamples);
+      const shiftedFullX = new Float32Array(nSamples);
+      const shiftedPosX = new Float32Array(nSamples);
+
       for (let i = 0; i < nTraces; i++) {
         const raw = seismic[i];
-        const traceData = raw.map(v => v * gain);
-        const positiveOnly = traceData.map(val => Math.max(0, val));
-        const shiftedFullX = traceData.map(x => x + i);
-        const shiftedPosX = positiveOnly.map(x => x + i);
-        const baseX = Array(nSamples).fill(i);
+        for (let j = 0; j < nSamples; j++) {
+          const scaled = raw[j] * gain;
+          traceData[j] = scaled;
+          const pos = scaled > 0 ? scaled : 0;
+          positiveOnly[j] = pos;
+          shiftedFullX[j] = scaled + i;
+          shiftedPosX[j] = pos + i;
+        }
 
-        traces.push({ type: 'scatter', mode: 'lines', x: baseX, y: time, line: { width: 0 }, hoverinfo: 'skip', showlegend: false });
-        traces.push({ type: 'scatter', mode: 'lines', x: shiftedPosX, y: time, fill: 'tonextx', fillcolor: 'black', line: { width: 0 }, opacity: 0.6, hoverinfo: 'skip', showlegend: false });
-        traces.push({ type: 'scatter', mode: 'lines', x: shiftedFullX, y: time, line: { color: 'black', width: 0.5 }, showlegend: false });
+        traces.push({ type: 'scatter', mode: 'lines', x0: i, dx: 0, y: time, line: { width: 0 }, hoverinfo: 'skip', showlegend: false });
+        traces.push({ type: 'scatter', mode: 'lines', x: shiftedPosX.slice(), y: time, fill: 'tonextx', fillcolor: 'black', line: { width: 0 }, opacity: 0.6, hoverinfo: 'skip', showlegend: false });
+        traces.push({ type: 'scatter', mode: 'lines', x: shiftedFullX.slice(), y: time, line: { color: 'black', width: 0.5 }, showlegend: false });
       }
       const plotDiv = document.getElementById('plot');
       const layout = {
