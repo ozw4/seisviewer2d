@@ -53,7 +53,6 @@
     let currentKey2Byte = 193;
     let savedXRange = null;
     let savedYRange = null;
-    let latestSeismicData = null;
     const defaultDt = 0.004;
     let renderedStart = null;
     let renderedEnd = null;
@@ -117,57 +116,53 @@
     async function fetchAndPlot() {
       const index = parseInt(document.getElementById('key1_idx_slider').value);
       const key1Val = key1Values[index];
-      const url = `/get_section?file_id=${currentFileId}&key1_idx=${key1Val}&key1_byte=${currentKey1Byte}&key2_byte=${currentKey2Byte}`;
+      const [s, e] = visibleTraceIndices(savedXRange);
+      const width = document.getElementById('plot').clientWidth || 1;
+      const url = `/get_section?file_id=${currentFileId}&key1_idx=${key1Val}&key1_byte=${currentKey1Byte}&key2_byte=${currentKey2Byte}&start_trace=${s}&end_trace=${e}&target_px=${width}`;
       const res = await fetch(url);
       if (!res.ok) {
         alert('Failed to load section');
         return;
       }
       const json = await res.json();
-      latestSeismicData = json.section;
-      const [s, e] = savedXRange ? visibleTraceIndices(savedXRange, latestSeismicData.length) : [0, latestSeismicData.length - 1];
-      plotSeismicData(latestSeismicData, defaultDt, s, e);
+      plotSeismicData(json.section, defaultDt * json.factor, s, json.factor);
     }
 
-    function visibleTraceIndices(range, total) {
+    function visibleTraceIndices(range) {
+      if (!range) return [0, Number.MAX_SAFE_INTEGER];
       let start = Math.floor(range[0]);
       let end = Math.ceil(range[1]);
-      start = Math.max(0, start);
-      end = Math.min(total - 1, end);
       return [start, end];
     }
 
-    function plotSeismicData(seismic, dt, startTrace = 0, endTrace = seismic.length - 1) {
-      const totalTraces = seismic.length;
-      startTrace = Math.max(0, startTrace);
-      endTrace = Math.min(totalTraces - 1, endTrace);
-      const nTraces = endTrace - startTrace + 1;
+    function plotSeismicData(seismic, dt, startTrace = 0, traceStep = 1) {
+      const nTraces = seismic.length;
       const nSamples = seismic[0].length;
       const plotDiv = document.getElementById('plot');
 
       const widthPx = plotDiv.clientWidth || 1;
-      const xRange = savedXRange ?? [0, totalTraces - 1];
-      const visibleTraces = endTrace - startTrace + 1;
+      const visibleTraces = nTraces * traceStep;
       const density = visibleTraces / widthPx;
 
       let traces = [];
       const gain = 1.0;
+      const time = new Float32Array(nSamples);
+      for (let t = 0; t < nSamples; t++) {
+        time[t] = t * dt;
+      }
 
       if (density < 0.1) {
-        const time = new Float32Array(nSamples);
-        for (let t = 0; t < nSamples; t++) {
-          time[t] = t * dt;
-        }
-        for (let i = startTrace; i <= endTrace; i++) {
+        for (let i = 0; i < nTraces; i++) {
           const raw = seismic[i];
+          const traceNo = startTrace + i * traceStep;
           const baseX = new Float32Array(nSamples);
           const shiftedFullX = new Float32Array(nSamples);
           const shiftedPosX = new Float32Array(nSamples);
           for (let j = 0; j < nSamples; j++) {
             const val = raw[j] * gain;
-            baseX[j] = i;
-            shiftedFullX[j] = val + i;
-            shiftedPosX[j] = (val < 0 ? 0 : val) + i;
+            baseX[j] = traceNo;
+            shiftedFullX[j] = val + traceNo;
+            shiftedPosX[j] = (val < 0 ? 0 : val) + traceNo;
           }
 
           traces.push({ type: 'scatter', mode: 'lines', x: baseX, y: time, line: { width: 0 }, hoverinfo: 'skip', showlegend: false });
@@ -175,41 +170,23 @@
           traces.push({ type: 'scatter', mode: 'lines', x: shiftedFullX, y: time, line: { color: 'black', width: 0.5 }, showlegend: false });
         }
       } else {
-        const MAX_POINTS = 3_000_000;
-        let factor = 1;
-        while (Math.floor(nTraces / factor) * Math.floor(nSamples / factor) > MAX_POINTS) {
-          factor++;
-        }
-
-        const nTracesDS = Math.floor(nTraces / factor);
-        const nSamplesDS = Math.floor(nSamples / factor);
-        console.log('Downsampling factor:', factor);
-        console.log('Final dimensions:', nTracesDS, 'x', nSamplesDS);
-
-        const time = new Float32Array(nSamplesDS);
-        for (let t = 0; t < nSamplesDS; t++) {
-          time[t] = t * dt * factor;
-        }
-
-        const zData = Array.from({ length: nSamplesDS }, () => new Float32Array(nTracesDS));
         let zMin = Infinity;
         let zMax = -Infinity;
-        for (let i = startTrace, col = 0; col < nTracesDS; i += factor, col++) {
+        const xVals = new Float32Array(nTraces);
+        for (let i = 0; i < nTraces; i++) {
+          xVals[i] = startTrace + i * traceStep;
           const trace = seismic[i];
-          for (let j = 0, row = 0; row < nSamplesDS; j += factor, row++) {
+          for (let j = 0; j < nSamples; j++) {
             const val = trace[j];
-            zData[row][col] = val;
             if (val < zMin) zMin = val;
             if (val > zMax) zMax = val;
           }
         }
-        const xVals = new Float32Array(nTracesDS);
-        for (let i = 0; i < nTracesDS; i++) xVals[i] = startTrace + i * factor;
         traces = [{
           type: 'heatmap',
           x: xVals,
           y: time,
-          z: zData,
+          z: seismic,
           colorscale: 'Gray',
           zmin: zMin,
           zmax: zMax,
@@ -233,7 +210,7 @@
           tickfont: { color: '#000' },
           titlefont: { color: '#000' },
           autorange: false,
-          range: savedYRange ?? [nSamples * dt, 0]  // reversed を手動設定
+          range: savedYRange ?? [nSamples * dt, 0]
         },
         paper_bgcolor: '#fff',
         plot_bgcolor: '#fff',
@@ -244,8 +221,8 @@
       Plotly.react(plotDiv, traces, layout, { responsive: true });
       setTimeout(() => Plotly.Plots.resize(plotDiv), 50);
       renderedStart = startTrace;
-      renderedEnd = endTrace;
-      console.log(`Rendered traces ${startTrace}-${endTrace}`);
+      renderedEnd = startTrace + (nTraces - 1) * traceStep;
+      console.log(`Rendered traces ${renderedStart}-${renderedEnd}`);
 
       plotDiv.removeAllListeners('plotly_relayout');
       plotDiv.on('plotly_relayout', ev => {
@@ -259,14 +236,12 @@
         if ('yaxis.range[0]' in ev && 'yaxis.range[1]' in ev) {
           const y0 = ev['yaxis.range[0]'];
           const y1 = ev['yaxis.range[1]'];
-          savedYRange = y0 > y1 ? [y0, y1] : [y1, y0]; // 大きい方を上に（逆順）
+          savedYRange = y0 > y1 ? [y0, y1] : [y1, y0];
         }
 
-        if (latestSeismicData) {
-          const [s, e] = savedXRange ? visibleTraceIndices(savedXRange, latestSeismicData.length) : [0, latestSeismicData.length - 1];
-          if (s !== renderedStart || e !== renderedEnd) {
-            plotSeismicData(latestSeismicData, defaultDt, s, e);
-          }
+        const [s, e] = visibleTraceIndices(savedXRange);
+        if (s !== renderedStart || e !== renderedEnd) {
+          fetchAndPlot();
         }
       });
     }
