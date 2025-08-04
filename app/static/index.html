@@ -55,6 +55,9 @@
     let savedYRange = null;
     let latestSeismicData = null;
     const defaultDt = 0.004;
+    const sectionCache = {};
+    let renderedStart = null;
+    let renderedEnd = null;
 
     function updateKey1Display() {
       const slider = document.getElementById('key1_idx_slider');
@@ -115,19 +118,36 @@
     async function fetchAndPlot() {
       const index = parseInt(document.getElementById('key1_idx_slider').value);
       const key1Val = key1Values[index];
-      const url = `/get_section?file_id=${currentFileId}&key1_idx=${key1Val}&key1_byte=${currentKey1Byte}&key2_byte=${currentKey2Byte}`;
-      const res = await fetch(url);
-      if (!res.ok) {
-        alert('Failed to load section');
-        return;
+      if (sectionCache[key1Val]) {
+        latestSeismicData = sectionCache[key1Val];
+      } else {
+        const url = `/get_section?file_id=${currentFileId}&key1_idx=${key1Val}&key1_byte=${currentKey1Byte}&key2_byte=${currentKey2Byte}`;
+        const res = await fetch(url);
+        if (!res.ok) {
+          alert('Failed to load section');
+          return;
+        }
+        const json = await res.json();
+        latestSeismicData = json.section;
+        sectionCache[key1Val] = latestSeismicData;
       }
-      const json = await res.json();
-      latestSeismicData = json.section;
-      plotSeismicData(latestSeismicData, defaultDt);
+      const [s, e] = savedXRange ? visibleTraceIndices(savedXRange, latestSeismicData.length) : [0, latestSeismicData.length - 1];
+      plotSeismicData(latestSeismicData, defaultDt, s, e);
     }
 
-    function plotSeismicData(seismic, dt) {
-      const nTraces = seismic.length;
+    function visibleTraceIndices(range, total) {
+      let start = Math.floor(range[0]);
+      let end = Math.ceil(range[1]);
+      start = Math.max(0, start);
+      end = Math.min(total - 1, end);
+      return [start, end];
+    }
+
+    function plotSeismicData(seismic, dt, startTrace = 0, endTrace = seismic.length - 1) {
+      const totalTraces = seismic.length;
+      startTrace = Math.max(0, startTrace);
+      endTrace = Math.min(totalTraces - 1, endTrace);
+      const nTraces = endTrace - startTrace + 1;
       const nSamples = seismic[0].length;
       const time = new Float32Array(nSamples);
       for (let t = 0; t < nSamples; t++) {
@@ -136,15 +156,15 @@
       const plotDiv = document.getElementById('plot');
 
       const widthPx = plotDiv.clientWidth || 1;
-      const xRange = savedXRange ?? [0, nTraces - 1];
-      const visibleTraces = Math.abs(xRange[1] - xRange[0]) + 1;
+      const xRange = savedXRange ?? [0, totalTraces - 1];
+      const visibleTraces = endTrace - startTrace + 1;
       const density = visibleTraces / widthPx;
 
       let traces = [];
       const gain = 1.0;
 
       if (density < 0.1) {
-        for (let i = 0; i < nTraces; i++) {
+        for (let i = startTrace; i <= endTrace; i++) {
           const raw = seismic[i];
           const baseX = new Float32Array(nSamples);
           const shiftedFullX = new Float32Array(nSamples);
@@ -164,17 +184,18 @@
         const zData = Array.from({ length: nSamples }, () => new Float32Array(nTraces));
         let zMin = Infinity;
         let zMax = -Infinity;
-        for (let i = 0; i < nTraces; i++) {
+        let col = 0;
+        for (let i = startTrace; i <= endTrace; i++, col++) {
           const trace = seismic[i];
           for (let j = 0; j < nSamples; j++) {
             const val = trace[j];
-            zData[j][i] = val;
+            zData[j][col] = val;
             if (val < zMin) zMin = val;
             if (val > zMax) zMax = val;
           }
         }
         const xVals = new Float32Array(nTraces);
-        for (let i = 0; i < nTraces; i++) xVals[i] = i;
+        for (let i = 0; i < nTraces; i++) xVals[i] = startTrace + i;
         traces = [{
           type: 'heatmap',
           x: xVals,
@@ -212,39 +233,28 @@
       };
 
       Plotly.react(plotDiv, traces, layout, { responsive: true });
+      renderedStart = startTrace;
+      renderedEnd = endTrace;
+      console.log(`Rendered traces ${startTrace}-${endTrace}`);
 
 
       plotDiv.on('plotly_relayout', ev => {
-        let shouldRedraw = false;
-
         if ('xaxis.range[0]' in ev && 'xaxis.range[1]' in ev) {
-          const newRange = [ev['xaxis.range[0]'], ev['xaxis.range[1]']];
-
-          // 旧範囲と比較してズームかどうかを判断（パンなら再描画不要）
-          const prevWidth = savedXRange ? Math.abs(savedXRange[1] - savedXRange[0]) : null;
-          const newWidth = Math.abs(newRange[1] - newRange[0]);
-
-          // ズームインまたはズームアウト
-          if (prevWidth === null || Math.abs(newWidth - prevWidth) > 2) {
-            savedXRange = newRange;
-            shouldRedraw = true;
-          } else {
-            savedXRange = newRange;  // パンだが範囲更新のみ
-          }
-        }
-
-        if ('xaxis.autorange' in ev && ev['xaxis.autorange'] === true) {
+          savedXRange = [ev['xaxis.range[0]'], ev['xaxis.range[1]']];
+        } else if ('xaxis.autorange' in ev && ev['xaxis.autorange'] === true) {
           savedXRange = null;
           savedYRange = null;
-          shouldRedraw = true;
         }
 
         if ('yaxis.range[0]' in ev && 'yaxis.range[1]' in ev) {
           savedYRange = [ev['yaxis.range[0]'], ev['yaxis.range[1]']];
         }
 
-        if (shouldRedraw && latestSeismicData) {
-          plotSeismicData(latestSeismicData, 0.004);
+        if (latestSeismicData) {
+          const [s, e] = savedXRange ? visibleTraceIndices(savedXRange, latestSeismicData.length) : [0, latestSeismicData.length - 1];
+          if (s !== renderedStart || e !== renderedEnd) {
+            plotSeismicData(latestSeismicData, defaultDt, s, e);
+          }
         }
       });
     }
