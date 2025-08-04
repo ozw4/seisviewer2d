@@ -32,4 +32,5 @@ pyproj
 fastapi
 uvicorn[standard]
 python-multipart
+redis
 plotly
