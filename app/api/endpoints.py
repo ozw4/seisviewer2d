@@ -1,8 +1,16 @@
 # endpoint.py
 import pathlib
+import threading
 from uuid import uuid4
 
-from fastapi import APIRouter, File, HTTPException, Query, UploadFile
+from fastapi import (
+	APIRouter,
+	File,
+	Form,  # 忘れずにインポート
+	HTTPException,
+	Query,
+	UploadFile,
+)
 from fastapi.responses import JSONResponse
 from utils.utils import SegySectionReader
 
@@ -13,6 +21,7 @@ UPLOAD_DIR.mkdir(exist_ok=True)
 
 cached_readers: dict[str, SegySectionReader] = {}
 SEGYS: dict[str, str] = {}
+
 
 @router.get('/get_key1_values')
 def get_key1_values(
@@ -31,7 +40,11 @@ def get_key1_values(
 
 
 @router.post('/upload_segy')
-async def upload_segy(file: UploadFile = File(...)):
+async def upload_segy(
+	file: UploadFile = File(...),
+	key1_byte: int = Form(189),
+	key2_byte: int = Form(193),
+):
 	if not file.filename:
 		raise HTTPException(
 			status_code=400, detail='Uploaded file must have a filename'
@@ -44,6 +57,15 @@ async def upload_segy(file: UploadFile = File(...)):
 		f.write(await file.read())
 
 	SEGYS[file_id] = str(dest_path)
+
+	cache_key = f'{file_id}_{key1_byte}_{key2_byte}'
+	print(f'Creating cache key: {cache_key}')
+
+	reader = SegySectionReader(str(dest_path), key1_byte, key2_byte)
+	cache_key = f'{file_id}_{key1_byte}_{key2_byte}'
+	cached_readers[cache_key] = reader
+
+	threading.Thread(target=reader.preload_all_sections, daemon=True).start()
 	return {'file_id': file_id}
 
 
