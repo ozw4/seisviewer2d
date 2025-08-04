@@ -103,6 +103,8 @@
       const key2Byte = document.getElementById('key2_byte').value;
       const formData = new FormData();
       formData.append('file', file);
+      formData.append('key1_byte', key1Byte);  // ✅ 追加
+      formData.append('key2_byte', key2Byte);  // ✅ 追加
       const xhr = new XMLHttpRequest();
       xhr.open('POST', '/upload_segy', true);
       xhr.upload.onprogress = function (e) {
