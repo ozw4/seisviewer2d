@@ -47,6 +47,8 @@
   </div>
   <div id="plot" style="width: 100vw; height: calc(100vh - 100px);"></div>
   <script src="/static/plotly-2.29.1.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/pako@2.1.0/dist/pako.min.js"></script>
+  <script type="module" src="https://cdn.skypack.dev/msgpack-lite"></script>
   <script>
     let key1Values = [];
     let currentFileId = '';
@@ -56,9 +58,25 @@
     let savedYRange = null;
     let latestSeismicData = null;
     const defaultDt = 0.004;
-    const sectionCache = {};
+    const MAX_CACHE = 10;
+    const cache = new Map(); // key -> {scale, buf:Int8Array}
+    let sectionShape = null;
     let renderedStart = null;
     let renderedEnd = null;
+
+    function putCache(key, scale, buf){
+      if (cache.size >= MAX_CACHE) cache.delete(cache.keys().next().value);
+      cache.set(key, {scale, buf});
+    }
+    function getCacheF32(key){
+      if(!cache.has(key)) return null;
+      const {scale, buf} = cache.get(key);
+      cache.delete(key); cache.set(key,{scale,buf});   // refresh LRU
+      return toFloat32(buf, scale);
+    }
+    function toFloat32(buf, scale){
+      return Float32Array.from(buf, v => v/scale);
+    }
 
     function updateKey1Display() {
       const slider = document.getElementById('key1_idx_slider');
@@ -106,18 +124,21 @@
       progress.max = key1Values.length;
       let loaded = 0;
       for (const key1Val of key1Values) {
-        if (sectionCache[key1Val]) {
+        if (cache.has(key1Val)) {
           loaded++;
           progress.value = loaded;
           console.log(`Preloaded ${loaded}/${key1Values.length}`);
           continue;
         }
         try {
-          const url = `/get_section?file_id=${currentFileId}&key1_idx=${key1Val}&key1_byte=${currentKey1Byte}&key2_byte=${currentKey2Byte}`;
+          const url = `/get_section_bin?file_id=${currentFileId}&key1_idx=${key1Val}&key1_byte=${currentKey1Byte}&key2_byte=${currentKey2Byte}`;
           const res = await fetch(url);
           if (res.ok) {
-            const json = await res.json();
-            sectionCache[key1Val] = json.section;
+            const bin = new Uint8Array(await res.arrayBuffer());
+            const obj = msgpack.decode(pako.ungzip(bin));
+            const int8 = new Int8Array(obj.data.buffer);
+            putCache(key1Val, obj.scale, int8);
+            if (!sectionShape) sectionShape = obj.shape;
           } else {
             console.warn(`Failed to preload section for key1 ${key1Val}`);
           }
@@ -150,18 +171,33 @@
     async function fetchAndPlot() {
       const index = parseInt(document.getElementById('key1_idx_slider').value);
       const key1Val = key1Values[index];
-      if (sectionCache[key1Val]) {
-        latestSeismicData = sectionCache[key1Val];
+      let f32 = getCacheF32(key1Val);
+      if (f32) {
+        const [nTraces, nSamples] = sectionShape;
+        const traces = new Array(nTraces);
+        for (let i = 0; i < nTraces; i++) {
+          traces[i] = f32.subarray(i * nSamples, (i + 1) * nSamples);
+        }
+        latestSeismicData = traces;
       } else {
-        const url = `/get_section?file_id=${currentFileId}&key1_idx=${key1Val}&key1_byte=${currentKey1Byte}&key2_byte=${currentKey2Byte}`;
-        const res = await fetch(url);
+        const urlBin = `/get_section_bin?file_id=${currentFileId}&key1_idx=${key1Val}&key1_byte=${currentKey1Byte}&key2_byte=${currentKey2Byte}`;
+        const res = await fetch(urlBin);
         if (!res.ok) {
           alert('Failed to load section');
           return;
         }
-        const json = await res.json();
-        latestSeismicData = json.section;
-        sectionCache[key1Val] = latestSeismicData;
+        const bin = new Uint8Array(await res.arrayBuffer());
+        const obj = msgpack.decode(pako.ungzip(bin));
+        const int8 = new Int8Array(obj.data.buffer);
+        putCache(key1Val, obj.scale, int8);
+        sectionShape = obj.shape;
+        const tmp = toFloat32(int8, obj.scale);
+        const [nTraces, nSamples] = sectionShape;
+        const traces = new Array(nTraces);
+        for (let i = 0; i < nTraces; i++) {
+          traces[i] = tmp.subarray(i * nSamples, (i + 1) * nSamples);
+        }
+        latestSeismicData = traces;
       }
       const [s, e] = savedXRange ? visibleTraceIndices(savedXRange, latestSeismicData.length) : [0, latestSeismicData.length - 1];
       plotSeismicData(latestSeismicData, defaultDt, s, e);
