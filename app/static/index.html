@@ -181,7 +181,7 @@
           traces.push({ type: 'scatter', mode: 'lines', x: shiftedFullX, y: time, line: { color: 'black', width: 0.5 }, showlegend: false });
         }
       } else {
-        const MAX_POINTS = 30_000_000;
+        const MAX_POINTS = 3_000_000;
         let factor = 1;
         while (Math.floor(nTraces / factor) * Math.floor(nSamples / factor) > MAX_POINTS) {
           factor++;
@@ -248,11 +248,12 @@
       };
 
       Plotly.react(plotDiv, traces, layout, { responsive: true });
+      setTimeout(() => Plotly.Plots.resize(plotDiv), 50);
       renderedStart = startTrace;
       renderedEnd = endTrace;
       console.log(`Rendered traces ${startTrace}-${endTrace}`);
 
-
+      plotDiv.removeAllListeners('plotly_relayout');
       plotDiv.on('plotly_relayout', ev => {
         if ('xaxis.range[0]' in ev && 'xaxis.range[1]' in ev) {
           savedXRange = [ev['xaxis.range[0]'], ev['xaxis.range[1]']];
@@ -262,7 +263,9 @@
         }
 
         if ('yaxis.range[0]' in ev && 'yaxis.range[1]' in ev) {
-          savedYRange = [ev['yaxis.range[0]'], ev['yaxis.range[1]']];
+          const y0 = ev['yaxis.range[0]'];
+          const y1 = ev['yaxis.range[1]'];
+          savedYRange = y0 > y1 ? [y0, y1] : [y1, y0]; // 大きい方を上に（逆順）
         }
 
         if (latestSeismicData) {
