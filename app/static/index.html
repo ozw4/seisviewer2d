@@ -43,7 +43,6 @@
     <input type="range" id="key1_idx_slider" min="0" max="10000" value="0" step="1" oninput="updateKey1Display(); fetchAndPlot()" />
     <input type="number" id="key1_idx_display" value="0" min="0" max="10000" step="1" style="width: 60px;" onchange="syncSliderWithInput(); fetchAndPlot()" />
     <button onclick="fetchAndPlot()">Plot</button>
-    <progress id="preload_progress" value="0" max="0" style="width: 150px;"></progress>
   </div>
   <div id="plot" style="width: 100vw; height: calc(100vh - 100px);"></div>
   <script src="/static/plotly-2.29.1.min.js"></script>
@@ -56,7 +55,6 @@
     let savedYRange = null;
     let latestSeismicData = null;
     const defaultDt = 0.004;
-    const sectionCache = {};
     let renderedStart = null;
     let renderedEnd = null;
 
@@ -101,36 +99,6 @@
       }
     }
 
-    async function preloadSections() {
-      const progress = document.getElementById('preload_progress');
-      progress.max = key1Values.length;
-      let loaded = 0;
-      for (const key1Val of key1Values) {
-        if (sectionCache[key1Val]) {
-          loaded++;
-          progress.value = loaded;
-          console.log(`Preloaded ${loaded}/${key1Values.length}`);
-          continue;
-        }
-        try {
-          const url = `/get_section?file_id=${currentFileId}&key1_idx=${key1Val}&key1_byte=${currentKey1Byte}&key2_byte=${currentKey2Byte}`;
-          const res = await fetch(url);
-          if (res.ok) {
-            const json = await res.json();
-            sectionCache[key1Val] = json.section;
-          } else {
-            console.warn(`Failed to preload section for key1 ${key1Val}`);
-          }
-        } catch (err) {
-          console.warn(`Error preloading section for key1 ${key1Val}`, err);
-        }
-        loaded++;
-        progress.value = loaded;
-        console.log(`Preloaded ${loaded}/${key1Values.length}`);
-      }
-      console.log('Finished preloading sections');
-    }
-
     async function loadSettings() {
       const params = new URLSearchParams(window.location.search);
       currentFileId = params.get('file_id') || localStorage.getItem('file_id') || '';
@@ -143,16 +111,12 @@
         localStorage.setItem('key2_byte', currentKey2Byte);
         await fetchKey1Values();
         await fetchAndPlot();
-        preloadSections();
       }
     }
 
-    async function fetchAndPlot() {
-      const index = parseInt(document.getElementById('key1_idx_slider').value);
-      const key1Val = key1Values[index];
-      if (sectionCache[key1Val]) {
-        latestSeismicData = sectionCache[key1Val];
-      } else {
+      async function fetchAndPlot() {
+        const index = parseInt(document.getElementById('key1_idx_slider').value);
+        const key1Val = key1Values[index];
         const url = `/get_section?file_id=${currentFileId}&key1_idx=${key1Val}&key1_byte=${currentKey1Byte}&key2_byte=${currentKey2Byte}`;
         const res = await fetch(url);
         if (!res.ok) {
@@ -161,11 +125,9 @@
         }
         const json = await res.json();
         latestSeismicData = json.section;
-        sectionCache[key1Val] = latestSeismicData;
+        const [s, e] = savedXRange ? visibleTraceIndices(savedXRange, latestSeismicData.length) : [0, latestSeismicData.length - 1];
+        plotSeismicData(latestSeismicData, defaultDt, s, e);
       }
-      const [s, e] = savedXRange ? visibleTraceIndices(savedXRange, latestSeismicData.length) : [0, latestSeismicData.length - 1];
-      plotSeismicData(latestSeismicData, defaultDt, s, e);
-    }
 
     function visibleTraceIndices(range, total) {
       let start = Math.floor(range[0]);
