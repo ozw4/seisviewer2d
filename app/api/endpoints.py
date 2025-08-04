@@ -21,6 +21,7 @@ UPLOAD_DIR.mkdir(exist_ok=True)
 
 cached_readers: dict[str, SegySectionReader] = {}
 SEGYS: dict[str, str] = {}
+cached_sections: dict[str, dict[int, list[list[float]]]] = {}
 
 
 @router.get('/get_key1_values')
@@ -71,25 +72,49 @@ async def upload_segy(
 
 @router.get('/get_section')
 def get_section(
-	file_id: str = Query(...),
-	key1_byte: int = Query(189),  # デフォルト設定
-	key2_byte: int = Query(193),
-	key1_idx: int = Query(...),
+        file_id: str = Query(...),
+        key1_byte: int = Query(189),  # デフォルト設定
+        key2_byte: int = Query(193),
+        key1_idx: int = Query(...),
 ):
-	try:
-		# 複合キーを作る（file_id, key1_byte, key2_byte）
-		cache_key = f'{file_id}_{key1_byte}_{key2_byte}'
+        try:
+                # 複合キーを作る（file_id, key1_byte, key2_byte）
+                cache_key = f"{file_id}_{key1_byte}_{key2_byte}"
 
-		# キャッシュにreaderがなければ初期化
-		if cache_key not in cached_readers:
-			if file_id not in SEGYS:
-				raise HTTPException(status_code=404, detail='File ID not found')
-			path = SEGYS[file_id]
-			cached_readers[cache_key] = SegySectionReader(path, key1_byte, key2_byte)
+                section_cache = cached_sections.setdefault(cache_key, {})
+                if key1_idx in section_cache:
+                        return JSONResponse(content={'section': section_cache[key1_idx]})
 
-		reader = cached_readers[cache_key]
-		section = reader.get_section(key1_idx)
-		return JSONResponse(content={'section': section})
+                # キャッシュにreaderがなければ初期化
+                if cache_key not in cached_readers:
+                        if file_id not in SEGYS:
+                                raise HTTPException(status_code=404, detail='File ID not found')
+                        path = SEGYS[file_id]
+                        cached_readers[cache_key] = SegySectionReader(path, key1_byte, key2_byte)
 
-	except Exception as e:
-		raise HTTPException(status_code=500, detail=str(e))
+                reader = cached_readers[cache_key]
+                section = reader.get_section(key1_idx)
+                section_cache[key1_idx] = section
+                return JSONResponse(content={'section': section})
+
+        except Exception as e:
+                raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post('/preload_sections')
+def preload_sections(
+        file_id: str = Query(...),
+        key1_byte: int = Query(189),
+        key2_byte: int = Query(193),
+):
+        cache_key = f"{file_id}_{key1_byte}_{key2_byte}"
+        if cache_key not in cached_readers:
+                if file_id not in SEGYS:
+                        raise HTTPException(status_code=404, detail='File ID not found')
+                path = SEGYS[file_id]
+                cached_readers[cache_key] = SegySectionReader(path, key1_byte, key2_byte)
+
+        reader = cached_readers[cache_key]
+        reader.preload_all_sections()
+        cached_sections[cache_key] = dict(reader.section_cache)
+        return {'status': 'preloaded'}
