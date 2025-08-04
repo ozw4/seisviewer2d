@@ -149,10 +149,6 @@
       endTrace = Math.min(totalTraces - 1, endTrace);
       const nTraces = endTrace - startTrace + 1;
       const nSamples = seismic[0].length;
-      const time = new Float32Array(nSamples);
-      for (let t = 0; t < nSamples; t++) {
-        time[t] = t * dt;
-      }
       const plotDiv = document.getElementById('plot');
 
       const widthPx = plotDiv.clientWidth || 1;
@@ -164,6 +160,10 @@
       const gain = 1.0;
 
       if (density < 0.1) {
+        const time = new Float32Array(nSamples);
+        for (let t = 0; t < nSamples; t++) {
+          time[t] = t * dt;
+        }
         for (let i = startTrace; i <= endTrace; i++) {
           const raw = seismic[i];
           const baseX = new Float32Array(nSamples);
@@ -181,21 +181,36 @@
           traces.push({ type: 'scatter', mode: 'lines', x: shiftedFullX, y: time, line: { color: 'black', width: 0.5 }, showlegend: false });
         }
       } else {
-        const zData = Array.from({ length: nSamples }, () => new Float32Array(nTraces));
+        const MAX_POINTS = 3_000_000;
+        let factor = 1;
+        while (Math.floor(nTraces / factor) * Math.floor(nSamples / factor) > MAX_POINTS) {
+          factor++;
+        }
+
+        const nTracesDS = Math.floor(nTraces / factor);
+        const nSamplesDS = Math.floor(nSamples / factor);
+        console.log('Downsampling factor:', factor);
+        console.log('Final dimensions:', nTracesDS, 'x', nSamplesDS);
+
+        const time = new Float32Array(nSamplesDS);
+        for (let t = 0; t < nSamplesDS; t++) {
+          time[t] = t * dt * factor;
+        }
+
+        const zData = Array.from({ length: nSamplesDS }, () => new Float32Array(nTracesDS));
         let zMin = Infinity;
         let zMax = -Infinity;
-        let col = 0;
-        for (let i = startTrace; i <= endTrace; i++, col++) {
+        for (let i = startTrace, col = 0; col < nTracesDS; i += factor, col++) {
           const trace = seismic[i];
-          for (let j = 0; j < nSamples; j++) {
+          for (let j = 0, row = 0; row < nSamplesDS; j += factor, row++) {
             const val = trace[j];
-            zData[j][col] = val;
+            zData[row][col] = val;
             if (val < zMin) zMin = val;
             if (val > zMax) zMax = val;
           }
         }
-        const xVals = new Float32Array(nTraces);
-        for (let i = 0; i < nTraces; i++) xVals[i] = startTrace + i;
+        const xVals = new Float32Array(nTracesDS);
+        for (let i = 0; i < nTracesDS; i++) xVals[i] = startTrace + i * factor;
         traces = [{
           type: 'heatmap',
           x: xVals,
@@ -233,11 +248,12 @@
       };
 
       Plotly.react(plotDiv, traces, layout, { responsive: true });
+      setTimeout(() => Plotly.Plots.resize(plotDiv), 50);
       renderedStart = startTrace;
       renderedEnd = endTrace;
       console.log(`Rendered traces ${startTrace}-${endTrace}`);
 
-
+      plotDiv.removeAllListeners('plotly_relayout');
       plotDiv.on('plotly_relayout', ev => {
         if ('xaxis.range[0]' in ev && 'xaxis.range[1]' in ev) {
           savedXRange = [ev['xaxis.range[0]'], ev['xaxis.range[1]']];
@@ -247,7 +263,9 @@
         }
 
         if ('yaxis.range[0]' in ev && 'yaxis.range[1]' in ev) {
-          savedYRange = [ev['yaxis.range[0]'], ev['yaxis.range[1]']];
+          const y0 = ev['yaxis.range[0]'];
+          const y1 = ev['yaxis.range[1]'];
+          savedYRange = y0 > y1 ? [y0, y1] : [y1, y0]; // 大きい方を上に（逆順）
         }
 
         if (latestSeismicData) {
