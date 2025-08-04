@@ -44,3 +44,7 @@ class SegySectionReader:
 		# キャッシュに保存
 		self.section_cache[key1_val] = section
 		return section
+
+	def preload_all_sections(self):
+		for key1_val in self.unique_key1:
+			self.get_section(key1_val)

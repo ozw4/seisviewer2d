@@ -1,5 +1,6 @@
 # endpoint.py
 import pathlib
+import threading
 from uuid import uuid4
 
 from fastapi import APIRouter, File, HTTPException, Query, UploadFile
@@ -44,6 +45,13 @@ async def upload_segy(file: UploadFile = File(...)):
 		f.write(await file.read())
 
 	SEGYS[file_id] = str(dest_path)
+	key1_byte = 189
+	key2_byte = 193
+	reader = SegySectionReader(str(dest_path), key1_byte, key2_byte)
+	cache_key = f"{file_id}_{key1_byte}_{key2_byte}"
+	cached_readers[cache_key] = reader
+
+	threading.Thread(target=reader.preload_all_sections, daemon=True).start()
 	return {'file_id': file_id}
 
 
