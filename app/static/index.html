@@ -43,7 +43,6 @@
     <input type="range" id="key1_idx_slider" min="0" max="10000" value="0" step="1" oninput="updateKey1Display(); fetchAndPlot()" />
     <input type="number" id="key1_idx_display" value="0" min="0" max="10000" step="1" style="width: 60px;" onchange="syncSliderWithInput(); fetchAndPlot()" />
     <button onclick="fetchAndPlot()">Plot</button>
-    <progress id="preload_progress" value="0" max="0" style="width: 150px;"></progress>
   </div>
   <div id="plot" style="width: 100vw; height: calc(100vh - 100px);"></div>
   <script src="/static/plotly-2.29.1.min.js"></script>
@@ -58,15 +57,26 @@
     let savedYRange = null;
     let latestSeismicData = null;
     const defaultDt = 0.004;
-    const MAX_CACHE = 10;
+    const PREFETCH_WIDTH = 10;   // ±10
+    const FALLBACK_MAX = 12;  // API 無い場合
+    const MEM_LIMIT = 0.8; // 80 %
     const cache = new Map(); // key -> {scale, buf:Int8Array}
+    const inflight = new Map();
     let sectionShape = null;
     let renderedStart = null;
     let renderedEnd = null;
 
     function putCache(key, scale, buf){
-      if (cache.size >= MAX_CACHE) cache.delete(cache.keys().next().value);
       cache.set(key, {scale, buf});
+      if (performance && performance.memory) {
+        while (performance.memory.usedJSHeapSize / performance.memory.totalJSHeapSize > MEM_LIMIT && cache.size > 1) {
+          cache.delete(cache.keys().next().value);
+        }
+      } else {
+        while (cache.size > FALLBACK_MAX) {
+          cache.delete(cache.keys().next().value);
+        }
+      }
     }
     function getCacheF32(key){
       if(!cache.has(key)) return null;
@@ -106,51 +116,58 @@
       document.getElementById('key1_idx_slider').max = max;
     }
 
-    async function fetchKey1Values() {
-      const res = await fetch(`/get_key1_values?file_id=${currentFileId}&key1_byte=${currentKey1Byte}&key2_byte=${currentKey2Byte}`);
-      if (res.ok) {
-        const data = await res.json();
-        key1Values = data.values;
-        setKey1SliderMax(key1Values.length - 1);
-        document.getElementById('key1_idx_display').min = key1Values[0];
-        document.getElementById('key1_idx_display').max = key1Values[key1Values.length - 1];
-        document.getElementById('key1_idx_slider').value = 0;
-        updateKey1Display();
+      async function fetchKey1Values() {
+        const res = await fetch(`/get_key1_values?file_id=${currentFileId}&key1_byte=${currentKey1Byte}&key2_byte=${currentKey2Byte}`);
+        if (res.ok) {
+          const data = await res.json();
+          key1Values = data.values;
+          setKey1SliderMax(key1Values.length - 1);
+          document.getElementById('key1_idx_display').min = key1Values[0];
+          document.getElementById('key1_idx_display').max = key1Values[key1Values.length - 1];
+          document.getElementById('key1_idx_slider').value = 0;
+          updateKey1Display();
+        }
       }
-    }
 
-    async function preloadSections() {
-      const progress = document.getElementById('preload_progress');
-      progress.max = key1Values.length;
-      let loaded = 0;
-      for (const key1Val of key1Values) {
-        if (cache.has(key1Val)) {
-          loaded++;
-          progress.value = loaded;
-          console.log(`Preloaded ${loaded}/${key1Values.length}`);
-          continue;
-        }
-        try {
-          const url = `/get_section_bin?file_id=${currentFileId}&key1_idx=${key1Val}&key1_byte=${currentKey1Byte}&key2_byte=${currentKey2Byte}`;
-          const res = await fetch(url);
-          if (res.ok) {
-            const bin = new Uint8Array(await res.arrayBuffer());
-            const obj = msgpack.decode(pako.ungzip(bin));
-            const int8 = new Int8Array(obj.data.buffer);
-            putCache(key1Val, obj.scale, int8);
-            if (!sectionShape) sectionShape = obj.shape;
+      function prefetchAround(centerIdx) {
+        for (const ctrl of inflight.values()) ctrl.abort();
+        inflight.clear();
+        const start = Math.max(0, centerIdx - PREFETCH_WIDTH);
+        const end = Math.min(key1Values.length - 1, centerIdx + PREFETCH_WIDTH);
+        const scheduler = cb => {
+          if ('requestIdleCallback' in window) {
+            requestIdleCallback(cb);
           } else {
-            console.warn(`Failed to preload section for key1 ${key1Val}`);
+            setTimeout(cb, 0);
           }
-        } catch (err) {
-          console.warn(`Error preloading section for key1 ${key1Val}`, err);
+        };
+        for (let i = start; i <= end; i++) {
+          if (i === centerIdx) continue;
+          const key = key1Values[i];
+          if (cache.has(key) || inflight.has(key)) continue;
+          const controller = new AbortController();
+          inflight.set(key, controller);
+          scheduler(async () => {
+            try {
+              const url = `/get_section_bin?file_id=${currentFileId}&key1_idx=${key}&key1_byte=${currentKey1Byte}&key2_byte=${currentKey2Byte}`;
+              const res = await fetch(url, { signal: controller.signal });
+              if (res.ok) {
+                const bin = new Uint8Array(await res.arrayBuffer());
+                const obj = msgpack.decode(pako.ungzip(bin));
+                const int8 = new Int8Array(obj.data.buffer);
+                putCache(key, obj.scale, int8);
+                if (!sectionShape) sectionShape = obj.shape;
+              }
+            } catch (err) {
+              if (err.name !== 'AbortError') {
+                console.warn('Prefetch failed', key, err);
+              }
+            } finally {
+              inflight.delete(key);
+            }
+          });
         }
-        loaded++;
-        progress.value = loaded;
-        console.log(`Preloaded ${loaded}/${key1Values.length}`);
       }
-      console.log('Finished preloading sections');
-    }
 
     async function loadSettings() {
       const params = new URLSearchParams(window.location.search);
@@ -164,7 +181,6 @@
         localStorage.setItem('key2_byte', currentKey2Byte);
         await fetchKey1Values();
         await fetchAndPlot();
-        preloadSections();
       }
     }
 
@@ -179,29 +195,30 @@
           traces[i] = f32.subarray(i * nSamples, (i + 1) * nSamples);
         }
         latestSeismicData = traces;
-      } else {
-        const urlBin = `/get_section_bin?file_id=${currentFileId}&key1_idx=${key1Val}&key1_byte=${currentKey1Byte}&key2_byte=${currentKey2Byte}`;
-        const res = await fetch(urlBin);
-        if (!res.ok) {
-          alert('Failed to load section');
-          return;
+        } else {
+          const urlBin = `/get_section_bin?file_id=${currentFileId}&key1_idx=${key1Val}&key1_byte=${currentKey1Byte}&key2_byte=${currentKey2Byte}`;
+          const res = await fetch(urlBin);
+          if (!res.ok) {
+            alert('Failed to load section');
+            return;
+          }
+          const bin = new Uint8Array(await res.arrayBuffer());
+          const obj = msgpack.decode(pako.ungzip(bin));
+          const int8 = new Int8Array(obj.data.buffer);
+          putCache(key1Val, obj.scale, int8);
+          sectionShape = obj.shape;
+          const tmp = toFloat32(int8, obj.scale);
+          const [nTraces, nSamples] = sectionShape;
+          const traces = new Array(nTraces);
+          for (let i = 0; i < nTraces; i++) {
+            traces[i] = tmp.subarray(i * nSamples, (i + 1) * nSamples);
+          }
+          latestSeismicData = traces;
         }
-        const bin = new Uint8Array(await res.arrayBuffer());
-        const obj = msgpack.decode(pako.ungzip(bin));
-        const int8 = new Int8Array(obj.data.buffer);
-        putCache(key1Val, obj.scale, int8);
-        sectionShape = obj.shape;
-        const tmp = toFloat32(int8, obj.scale);
-        const [nTraces, nSamples] = sectionShape;
-        const traces = new Array(nTraces);
-        for (let i = 0; i < nTraces; i++) {
-          traces[i] = tmp.subarray(i * nSamples, (i + 1) * nSamples);
-        }
-        latestSeismicData = traces;
+        const [s, e] = savedXRange ? visibleTraceIndices(savedXRange, latestSeismicData.length) : [0, latestSeismicData.length - 1];
+        plotSeismicData(latestSeismicData, defaultDt, s, e);
+        prefetchAround(index);
       }
-      const [s, e] = savedXRange ? visibleTraceIndices(savedXRange, latestSeismicData.length) : [0, latestSeismicData.length - 1];
-      plotSeismicData(latestSeismicData, defaultDt, s, e);
-    }
 
     function visibleTraceIndices(range, total) {
       let start = Math.floor(range[0]);
