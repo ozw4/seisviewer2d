@@ -2,6 +2,15 @@ import numpy as np
 import segyio
 
 
+def quantize_float32(arr: np.ndarray, bits: int = 8):
+        max_abs = np.max(np.abs(arr))
+        if max_abs == 0:
+                max_abs = 1.0
+        scale = (1 << (bits - 1)) - 1
+        q = np.clip(np.round(arr / max_abs * scale), -scale, scale).astype(np.int8)
+        return scale, q
+
+
 class SegySectionReader:
 	def __init__(self, path, key1_byte=189, key2_byte=193):
 		self.path = path
