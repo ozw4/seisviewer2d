@@ -1,53 +1,27 @@
 # seisviewer2d
 
-このリポジトリは 2D 地震データを表示するシンプルな Web アプリケーションです。ここでは主要なコードファイルの役割を説明します。
+`seisviewer2d` is a small FastAPI application for exploring 2D seismic data stored in SEG-Y files. It ships with a minimal HTML/JavaScript frontend that lets you upload a file and view sections interactively with Plotly.
 
-## ディレクトリ構成
+## Project Layout
 
 ```
-seisviewer2d/
-├── app/
-│   ├── api/
-│   │   └── endpoints.py
-│   ├── utils/
-│   │   └── utils.py
-│   ├── static/
-│   │   ├── index.html
-│   │   ├── upload.html
-│   │   └── api.js
-│   └── main.py
-├── Dockerfile
-└── ruff.toml
+app/
+  api/endpoints.py   # API routes for uploads and section retrieval
+  utils/utils.py     # SEG-Y reading helpers
+  static/            # Frontend assets (HTML/JS)
+  main.py            # FastAPI application
+Dockerfile           # Dev container configuration
+ruff.toml            # Ruff linter settings
 ```
 
-## ファイル説明
+## API Overview
+- `POST /upload_segy`: upload a SEG-Y file and begin background loading.
+- `GET /get_key1_values`: list available values for the first key.
+- `GET /get_section` and `GET /get_section_bin`: fetch normalized traces for a given `key1` index (JSON or binary).
 
-### `app/main.py`
-FastAPI アプリケーションのエントリーポイントです。静的ファイル(`static` ディレクトリ)を公開し、`api/endpoints.py` で定義されたエンドポイントを登録しています。
+## Development
+1. Install dependencies (FastAPI, Uvicorn, NumPy, segyio, msgpack, etc.).
+2. Launch the server: `uvicorn app.main:app --reload`.
+3. Open `http://localhost:8000/upload` to select a file and key bytes. After uploading, you are redirected to the viewer page.
 
-### `app/api/endpoints.py`
-SEG-Y ファイルをアップロードしたり、指定されたキーでセクションを取得する API エンドポイントを提供します。アップロードされたファイルは `uploads` ディレクトリに保存され、`SegySectionReader` を用いてトレースを読み込みます。
-
-### `app/utils/utils.py`
-`SegySectionReader` クラスを定義します。SEG-Y ファイルからキーごとのトレースセクションを読み込む処理をカプセル化し、結果をキャッシュします。各トレースは最大振幅で正規化された値を返します。
-
-### `app/static/index.html`
-アップロード済みのデータを表示するフロントエンドです。Plotly を用いて地震波形をプロットします。
-
-### `app/static/upload.html`
-SEG‑Y ファイルをアップロードし、`key1_byte` と `key2_byte` を指定するための画面です。アップロード後は `index.html` にリダイレクトされます。
-
-### `app/static/api.js`
-シンプルなサンプルコードとして `fetchAndPlot` 関数を定義しています。API からデータを取得してプロットするための例です。
-
-### `Dockerfile`
-開発用コンテナを構築するための設定が記述されています。必要な依存ライブラリのインストールやユーザー設定を行います。
-
-### `ruff.toml`
-コード整形・静的解析ツール Ruff の設定ファイルです。スタイルのルールや使用する Python バージョンなどを指定しています。
-
-## 使い方
-1. 依存ライブラリをインストール後、`uvicorn app.main:app --reload` を実行するとローカルサーバーが起動します。
-2. ブラウザで `http://localhost:8000/upload` にアクセスし、SEG-Y ファイルとキーを指定してアップロードします。
-3. アップロードが完了するとトップページへリダイレクトされ、指定したキーで波形を閲覧できます。
-
+This project is intended as a starting point for building interactive seismic viewers.
