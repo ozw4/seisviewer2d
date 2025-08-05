@@ -47,8 +47,8 @@
   </div>
   <div id="plot" style="width: 100vw; height: calc(100vh - 100px);"></div>
   <script src="/static/plotly-2.29.1.min.js"></script>
-  <script src="https://cdn.jsdelivr.net/npm/pako@2.1.0/dist/pako.min.js"></script>
-  <script type="module" src="https://cdn.skypack.dev/msgpack-lite"></script>
+  <script src="/static/pako.min.js"></script>
+  <script src="/static/msgpack.min.js"></script>
   <script>
     let key1Values = [];
     let currentFileId = '';
@@ -58,7 +58,7 @@
     let savedYRange = null;
     let latestSeismicData = null;
     const defaultDt = 0.004;
-    const MAX_CACHE = 10;
+    const MAX_CACHE = 50;
     const cache = new Map(); // key -> {scale, buf:Int8Array}
     let sectionShape = null;
     let renderedStart = null;
@@ -135,7 +135,7 @@
           const res = await fetch(url);
           if (res.ok) {
             const bin = new Uint8Array(await res.arrayBuffer());
-            const obj = msgpack.decode(pako.ungzip(bin));
+            const obj = msgpack.decode(bin);
             const int8 = new Int8Array(obj.data.buffer);
             putCache(key1Val, obj.scale, int8);
             if (!sectionShape) sectionShape = obj.shape;
@@ -168,40 +168,72 @@
       }
     }
 
-    async function fetchAndPlot() {
-      const index = parseInt(document.getElementById('key1_idx_slider').value);
-      const key1Val = key1Values[index];
-      let f32 = getCacheF32(key1Val);
-      if (f32) {
-        const [nTraces, nSamples] = sectionShape;
-        const traces = new Array(nTraces);
-        for (let i = 0; i < nTraces; i++) {
-          traces[i] = f32.subarray(i * nSamples, (i + 1) * nSamples);
-        }
-        latestSeismicData = traces;
-      } else {
-        const urlBin = `/get_section_bin?file_id=${currentFileId}&key1_idx=${key1Val}&key1_byte=${currentKey1Byte}&key2_byte=${currentKey2Byte}`;
-        const res = await fetch(urlBin);
-        if (!res.ok) {
-          alert('Failed to load section');
-          return;
-        }
-        const bin = new Uint8Array(await res.arrayBuffer());
-        const obj = msgpack.decode(pako.ungzip(bin));
-        const int8 = new Int8Array(obj.data.buffer);
-        putCache(key1Val, obj.scale, int8);
-        sectionShape = obj.shape;
-        const tmp = toFloat32(int8, obj.scale);
-        const [nTraces, nSamples] = sectionShape;
-        const traces = new Array(nTraces);
-        for (let i = 0; i < nTraces; i++) {
-          traces[i] = tmp.subarray(i * nSamples, (i + 1) * nSamples);
-        }
-        latestSeismicData = traces;
-      }
-      const [s, e] = savedXRange ? visibleTraceIndices(savedXRange, latestSeismicData.length) : [0, latestSeismicData.length - 1];
-      plotSeismicData(latestSeismicData, defaultDt, s, e);
+  async function fetchAndPlot() {
+    const t0_all = performance.now();               // ★ 全体計測開始
+
+    /*─────────────────── 取得する key1 決定 ───────────────────*/
+    const index = +document.getElementById('key1_idx_slider').value;
+    const key1Val = key1Values[index];
+
+    let t_net = 0, t_decode = 0, t_f32 = 0, t_plot = 0;   // メトリクス初期化
+    let f32;
+
+    /*──────────── LRU キャッシュ (Int8) ヒットチェック ───────────*/
+    f32 = getCacheF32(key1Val);
+    if (!f32) {
+      /*────────── ネットワーク取得 ──────────*/
+      const urlBin = `/get_section_bin?file_id=${currentFileId}` +
+        `&key1_idx=${key1Val}&key1_byte=${currentKey1Byte}` +
+        `&key2_byte=${currentKey2Byte}`;
+
+      const t0_net = performance.now();
+      const res = await fetch(urlBin);
+      const bin = new Uint8Array(await res.arrayBuffer());
+      t_net = performance.now() - t0_net;                  // ★ ネット転送
+
+      /*────────── msgpack デコード ──────────*/
+      const t0_dec = performance.now();
+      const obj = msgpack.decode(bin);
+      const int8 = new Int8Array(obj.data.buffer);
+      t_decode = performance.now() - t0_dec;           // ★ デコード
+
+      /*────────── LRU に Int8 を保存 ──────────*/
+      putCache(key1Val, obj.scale, int8);
+      sectionShape = obj.shape;            // たとえ null でも上書き
+
+      /*────────── Int8 → Float32 変換 ────────*/
+      const t0_f32 = performance.now();
+      f32 = toFloat32(int8, obj.scale);
+      t_f32 = performance.now() - t0_f32;           // ★ 変換
     }
+
+    /*───────── Float32Array を 2 次元トレース配列へ ─────────*/
+    const [nTraces, nSamples] = sectionShape;
+    const traces = new Array(nTraces);
+    for (let i = 0; i < nTraces; i++) {
+      traces[i] = f32.subarray(i * nSamples, (i + 1) * nSamples);
+    }
+    latestSeismicData = traces;
+
+    /*───────── 既存ロジックで描画 ─────────*/
+    const [s, e] = savedXRange
+      ? visibleTraceIndices(savedXRange, latestSeismicData.length)
+      : [0, latestSeismicData.length - 1];
+
+    const t0_plot = performance.now();
+    plotSeismicData(latestSeismicData, defaultDt, s, e);
+    t_plot = performance.now() - t0_plot;                   // ★ 描画
+
+    /*───────── メトリクスをまとめて表示 ─────────*/
+    console.table([{
+      key1: key1Val,
+      net_ms: t_net.toFixed(1),
+      decode_ms: t_decode.toFixed(1),
+      f32_ms: t_f32.toFixed(1),
+      plot_ms: t_plot.toFixed(1),
+      total_ms: (performance.now() - t0_all).toFixed(1)
+    }]);
+  }
 
     function visibleTraceIndices(range, total) {
       let start = Math.floor(range[0]);
