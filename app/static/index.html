@@ -43,11 +43,12 @@
     <input type="range" id="key1_idx_slider" min="0" max="10000" value="0" step="1" oninput="updateKey1Display(); fetchAndPlot()" />
     <input type="number" id="key1_idx_display" value="0" min="0" max="10000" step="1" style="width: 60px;" onchange="syncSliderWithInput(); fetchAndPlot()" />
     <button onclick="fetchAndPlot()">Plot</button>
+    <button onclick="showCacheKeys()">Show Cache Keys</button>
   </div>
   <div id="plot" style="width: 100vw; height: calc(100vh - 100px);"></div>
   <script src="/static/plotly-2.29.1.min.js"></script>
-  <script src="https://cdn.jsdelivr.net/npm/pako@2.1.0/dist/pako.min.js"></script>
-  <script type="module" src="https://cdn.skypack.dev/msgpack-lite"></script>
+  <script src="/static/pako.min.js"></script>
+  <script src="/static/msgpack.min.js"></script>
   <script>
     let key1Values = [];
     let currentFileId = '';
@@ -57,35 +58,74 @@
     let savedYRange = null;
     let latestSeismicData = null;
     const defaultDt = 0.004;
-    const PREFETCH_WIDTH = 10;   // ±10
-    const FALLBACK_MAX = 12;  // API 無い場合
-    const MEM_LIMIT = 0.8; // 80 %
+    const PREFETCH_WIDTH = 3;   // ±10
+    const FALLBACK_MAX = 8;  // API 無い場合
+    const HARD_LIMIT_BYTES = 1000 * 1024 * 1024; // 800MB
+
     const cache = new Map(); // key -> {scale, buf:Int8Array}
     const inflight = new Map();
     let sectionShape = null;
     let renderedStart = null;
     let renderedEnd = null;
 
-    function putCache(key, scale, buf){
-      cache.set(key, {scale, buf});
-      if (performance && performance.memory) {
-        while (performance.memory.usedJSHeapSize / performance.memory.totalJSHeapSize > MEM_LIMIT && cache.size > 1) {
-          cache.delete(cache.keys().next().value);
-        }
-      } else {
-        while (cache.size > FALLBACK_MAX) {
-          cache.delete(cache.keys().next().value);
-        }
+    function showCacheKeys() {
+        const currentKeys = Array.from(cache.keys());
+        console.log('Cache keys:', currentKeys);
       }
+
+  function toFloat32(buf, scale) {
+    return Float32Array.from(buf, v => v / scale);
+  }
+  function putCache(key, scale, buf) {
+    const f32 = Float32Array.from(buf, v => v / scale);
+    cache.set(key, { scale, buf, f32 });
+    //cache.set(key, { scale, buf });
+
+    const canCheckMemory =
+      performance.memory &&
+      performance.memory.usedJSHeapSize > 0;
+
+    const used = canCheckMemory ? performance.memory.usedJSHeapSize : 0;
+
+    console.log('--- putCache called ---');
+    console.log('Added key:', cache.keys());
+    console.log('Cache size:', cache.size);
+    if (canCheckMemory) {
+      const total = performance.memory.totalJSHeapSize;
+      const ratio = used / total;
+      console.log(`used: ${(used / 1024 / 1024).toFixed(2)} MB`);
+
+    } else {
+      console.log(`used: ${(used / 1024 / 1024).toFixed(2)} MB (fallback, no total)`);
     }
-    function getCacheF32(key){
-      if(!cache.has(key)) return null;
-      const {scale, buf} = cache.get(key);
-      cache.delete(key); cache.set(key,{scale,buf});   // refresh LRU
-      return toFloat32(buf, scale);
+
+    if (used > HARD_LIMIT_BYTES) {
+      console.warn(`⚠ Memory limit exceeded! (${(used / 1024 / 1024).toFixed(1)} MB > 800 MB)`);
+      let removed = 0;
+      while (cache.size > 1) {
+        const removedKey = cache.keys().next().value;
+        const entry = cache.get(removedKey);
+
+        // 🔽 メモリ解放を促すために参照を切る
+        if (entry) {
+          entry.f32 = null;
+          entry.buf = null;
+        }
+
+        cache.delete(removedKey);
+        removed++;
+      }
+      console.warn(`Evicted ${removed} items due to hard heap limit.`);
+      console.log('Remaining keys:', Array.from(cache.keys()));
     }
-    function toFloat32(buf, scale){
-      return Float32Array.from(buf, v => v/scale);
+
+    console.log('------------------------');
+  }
+    function getCacheF32(key) {
+      if (!cache.has(key)) return null;
+      const entry = cache.get(key);
+      cache.delete(key); cache.set(key, entry); // refresh LRU
+      return entry.f32;
     }
 
     function updateKey1Display() {
@@ -153,7 +193,7 @@
               const res = await fetch(url, { signal: controller.signal });
               if (res.ok) {
                 const bin = new Uint8Array(await res.arrayBuffer());
-                const obj = msgpack.decode(pako.ungzip(bin));
+                const obj = msgpack.decode(bin);
                 const int8 = new Int8Array(obj.data.buffer);
                 putCache(key, obj.scale, int8);
                 if (!sectionShape) sectionShape = obj.shape;
@@ -184,41 +224,66 @@
       }
     }
 
-    async function fetchAndPlot() {
-      const index = parseInt(document.getElementById('key1_idx_slider').value);
-      const key1Val = key1Values[index];
-      let f32 = getCacheF32(key1Val);
-      if (f32) {
-        const [nTraces, nSamples] = sectionShape;
-        const traces = new Array(nTraces);
-        for (let i = 0; i < nTraces; i++) {
-          traces[i] = f32.subarray(i * nSamples, (i + 1) * nSamples);
-        }
-        latestSeismicData = traces;
-        } else {
-          const urlBin = `/get_section_bin?file_id=${currentFileId}&key1_idx=${key1Val}&key1_byte=${currentKey1Byte}&key2_byte=${currentKey2Byte}`;
-          const res = await fetch(urlBin);
-          if (!res.ok) {
-            alert('Failed to load section');
-            return;
-          }
-          const bin = new Uint8Array(await res.arrayBuffer());
-          const obj = msgpack.decode(pako.ungzip(bin));
-          const int8 = new Int8Array(obj.data.buffer);
-          putCache(key1Val, obj.scale, int8);
-          sectionShape = obj.shape;
-          const tmp = toFloat32(int8, obj.scale);
-          const [nTraces, nSamples] = sectionShape;
-          const traces = new Array(nTraces);
-          for (let i = 0; i < nTraces; i++) {
-            traces[i] = tmp.subarray(i * nSamples, (i + 1) * nSamples);
-          }
-          latestSeismicData = traces;
-        }
-        const [s, e] = savedXRange ? visibleTraceIndices(savedXRange, latestSeismicData.length) : [0, latestSeismicData.length - 1];
-        plotSeismicData(latestSeismicData, defaultDt, s, e);
-        prefetchAround(index);
+  async function fetchAndPlot() {
+    console.log('--- fetchAndPlot start ---');
+    console.time('Total fetchAndPlot');
+
+    const index = parseInt(document.getElementById('key1_idx_slider').value);
+    const key1Val = key1Values[index];
+
+    console.time('Cache lookup');
+    let f32 = getCacheF32(key1Val);
+    console.timeEnd('Cache lookup');
+
+    let traces;
+
+    if (f32) {
+      console.time('Decode from cache');
+      const [nTraces, nSamples] = sectionShape;
+      traces = new Array(nTraces);
+      for (let i = 0; i < nTraces; i++) {
+        traces[i] = f32.subarray(i * nSamples, (i + 1) * nSamples);
       }
+      console.timeEnd('Decode from cache');
+      latestSeismicData = traces;
+    } else {
+      console.time('Fetch binary');
+      const urlBin = `/get_section_bin?file_id=${currentFileId}&key1_idx=${key1Val}&key1_byte=${currentKey1Byte}&key2_byte=${currentKey2Byte}`;
+      const res = await fetch(urlBin);
+      if (!res.ok) {
+        alert('Failed to load section');
+        return;
+      }
+      const bin = new Uint8Array(await res.arrayBuffer());
+      console.timeEnd('Fetch binary');
+
+      console.time('Decode & cache');
+      const obj = msgpack.decode(bin);
+      const int8 = new Int8Array(obj.data.buffer);
+      putCache(key1Val, obj.scale, int8);
+      sectionShape = obj.shape;
+      const tmp = toFloat32(int8, obj.scale);
+      const [nTraces, nSamples] = sectionShape;
+      traces = new Array(nTraces);
+      for (let i = 0; i < nTraces; i++) {
+        traces[i] = tmp.subarray(i * nSamples, (i + 1) * nSamples);
+      }
+      console.timeEnd('Decode & cache');
+      latestSeismicData = traces;
+    }
+
+    console.time('Plotting');
+    const [s, e] = savedXRange ? visibleTraceIndices(savedXRange, latestSeismicData.length) : [0, latestSeismicData.length - 1];
+    plotSeismicData(latestSeismicData, defaultDt, s, e);
+    console.timeEnd('Plotting');
+
+    console.time('Prefetch');
+    prefetchAround(index);
+    console.timeEnd('Prefetch');
+
+    console.timeEnd('Total fetchAndPlot');
+    console.log('--- fetchAndPlot end ---');
+  }
 
     function visibleTraceIndices(range, total) {
       let start = Math.floor(range[0]);
