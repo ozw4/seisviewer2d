@@ -535,38 +535,61 @@
       console.log('Snapped trace:', trace);
       console.log('Snapped time:', time);
       console.groupEnd();
-      if (!linePickStart) {
-        const existing = pickNear(trace, time);
-        if (existing >= 0) {
-          selectedPickIndex = existing;
-          document.getElementById('deletePickBtn').disabled = false;
-          return;
-        }
-        linePickStart = { trace, time };
-        selectedPickIndex = null;
-        document.getElementById('deletePickBtn').disabled = true;
+
+      // -------- 既存ピック近傍を優先的に選択 --------
+      const existing = pickNear(trace, time);
+      if (existing >= 0) {
+        linePickStart = null;
+        selectedPickIndex = existing;
+        document.getElementById('deletePickBtn').disabled = false;
         return;
       }
 
-      const { trace: x0, time: y0 } = linePickStart;
-      linePickStart = null;
-      const x1 = trace;
-      const y1 = time;
-      const xStart = Math.round(Math.min(x0, x1));
-      const xEnd = Math.round(Math.max(x0, x1));
-      const slope = x1 === x0 ? 0 : (y1 - y0) / (x1 - x0);
-      const promises = [];
-      for (let x = xStart; x <= xEnd; x++) {
-        const y = x1 === x0 ? y1 : y0 + slope * (x - x0);
-        const snapped = Math.round(y / dt) * dt;
-        const idx = pickOnTrace(x);
-        if (idx >= 0) {
-          promises.push(deletePick(x));
-          picks.splice(idx, 1);
+      // -------- Shift+クリックでラインピック --------
+      if (ev.event.shiftKey) {
+        if (!linePickStart) {
+          linePickStart = { trace, time };
+          selectedPickIndex = null;
+          document.getElementById('deletePickBtn').disabled = true;
+          return;
         }
-        picks.push({ trace: x, time: snapped });
-        promises.push(postPick(x, snapped));
+
+        const { trace: x0, time: y0 } = linePickStart;
+        linePickStart = null;
+        const x1 = trace;
+        const y1 = time;
+        const xStart = Math.round(Math.min(x0, x1));
+        const xEnd = Math.round(Math.max(x0, x1));
+        const slope = x1 === x0 ? 0 : (y1 - y0) / (x1 - x0);
+        const promises = [];
+        for (let x = xStart; x <= xEnd; x++) {
+          const y = x1 === x0 ? y1 : y0 + slope * (x - x0);
+          const snapped = Math.round(y / dt) * dt;
+          const idx = pickOnTrace(x);
+          if (idx >= 0) {
+            promises.push(deletePick(x));
+            picks.splice(idx, 1);
+          }
+          picks.push({ trace: x, time: snapped });
+          promises.push(postPick(x, snapped));
+        }
+        await Promise.all(promises);
+        selectedPickIndex = null;
+        document.getElementById('deletePickBtn').disabled = true;
+        plotSeismicData(latestSeismicData, defaultDt, renderedStart, renderedEnd);
+        return;
       }
+
+      // -------- 通常クリックで単一ピック --------
+      linePickStart = null;
+      const idx = pickOnTrace(trace);
+      const promises = [];
+      if (idx >= 0) {
+        promises.push(deletePick(trace));
+        picks.splice(idx, 1);
+      }
+      picks.push({ trace, time });
+      promises.push(postPick(trace, time));
       await Promise.all(promises);
       selectedPickIndex = null;
       document.getElementById('deletePickBtn').disabled = true;
