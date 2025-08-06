@@ -49,7 +49,6 @@
     <button onclick="fetchAndPlot()">Plot</button>
     <button onclick="showCacheKeys()">Show Cache Keys</button>
     <button id="pickModeBtn" onclick="togglePickMode()">Pick Mode: OFF</button>
-    <button id="deletePickBtn" onclick="deleteSelectedPick()" disabled>Delete Pick</button>
   </div>
   <div id="plot" style="width: 100vw; height: calc(100vh - 100px);"></div>
   <script src="/static/plotly-2.29.1.min.js"></script>
@@ -75,9 +74,9 @@
     let renderedEnd = null;
     let picks = [];
     let downsampleFactor = 1;
-    let selectedPickIndex = null;
     let isPickMode = false;
     let linePickStart = null;
+    let deleteRangeStart = null;
 
     function showCacheKeys() {
         const currentKeys = Array.from(cache.keys());
@@ -90,8 +89,7 @@
       btn.textContent = isPickMode ? 'Pick Mode: ON' : 'Pick Mode: OFF';
       btn.classList.toggle('active', isPickMode);
       linePickStart = null;
-      selectedPickIndex = null;
-      document.getElementById('deletePickBtn').disabled = true;
+      deleteRangeStart = null;
       if (latestSeismicData) {
         plotSeismicData(latestSeismicData, defaultDt, renderedStart, renderedEnd);
       }
@@ -465,14 +463,14 @@
         margin: { t: 10, r: 10, l: 60, b: 40 },
         dragmode: isPickMode ? false : 'zoom'
       };
-      layout.shapes = picks.map((p, i) => ({
-        type: 'line',
-        x0: p.trace - 0.4,
-        x1: p.trace + 0.4,
-        y0: p.time,
-        y1: p.time,
-        line: { color: i === selectedPickIndex ? 'blue' : 'red', width: 2 }
-      }));
+        layout.shapes = picks.map(p => ({
+          type: 'line',
+          x0: p.trace - 0.4,
+          x1: p.trace + 0.4,
+          y0: p.time,
+          y1: p.time,
+          line: { color: 'red', width: 2 }
+        }));
 
       Plotly.react(plotDiv, traces, layout, {
         responsive: true,
@@ -493,15 +491,9 @@
       }
     }
 
-    function pickNear(trace, time) {
-      return picks.findIndex(
-        p => Math.abs(p.trace - trace) < 0.5 && Math.abs(p.time - time) < defaultDt * downsampleFactor * 2
-      );
-    }
-
-    function pickOnTrace(trace) {
-      return picks.findIndex(p => Math.round(p.trace) === trace);
-    }
+      function pickOnTrace(trace) {
+        return picks.findIndex(p => Math.round(p.trace) === trace);
+      }
 
     async function handlePlotClick(ev) {
       if (!isPickMode) return;
@@ -536,65 +528,72 @@
       console.log('Snapped time:', time);
       console.groupEnd();
 
-      // -------- 既存ピック近傍を優先的に選択 --------
-      const existing = pickNear(trace, time);
-      if (existing >= 0) {
-        linePickStart = null;
-        selectedPickIndex = existing;
-        document.getElementById('deletePickBtn').disabled = false;
-        return;
-      }
-
-      // -------- Shift+クリックでラインピック --------
-      if (ev.event.shiftKey) {
-        if (!linePickStart) {
-          linePickStart = { trace, time };
-          selectedPickIndex = null;
-          document.getElementById('deletePickBtn').disabled = true;
+        // -------- Ctrl+クリックで範囲削除 --------
+        if (ev.event.ctrlKey) {
+          if (deleteRangeStart === null) {
+            deleteRangeStart = trace;
+            linePickStart = null;
+            return;
+          }
+          const x0 = deleteRangeStart;
+          deleteRangeStart = null;
+          const x1 = trace;
+          const start = Math.min(x0, x1);
+          const end = Math.max(x0, x1);
+          const toDelete = picks.filter(p => Math.round(p.trace) >= start && Math.round(p.trace) <= end);
+          const promises = toDelete.map(p => deletePick(Math.round(p.trace)));
+          picks = picks.filter(p => Math.round(p.trace) < start || Math.round(p.trace) > end);
+          await Promise.all(promises);
+          plotSeismicData(latestSeismicData, defaultDt, renderedStart, renderedEnd);
           return;
         }
 
-        const { trace: x0, time: y0 } = linePickStart;
-        linePickStart = null;
-        const x1 = trace;
-        const y1 = time;
-        const xStart = Math.round(Math.min(x0, x1));
-        const xEnd = Math.round(Math.max(x0, x1));
-        const slope = x1 === x0 ? 0 : (y1 - y0) / (x1 - x0);
-        const promises = [];
-        for (let x = xStart; x <= xEnd; x++) {
-          const y = x1 === x0 ? y1 : y0 + slope * (x - x0);
-          const snapped = Math.round(y / dt) * dt;
-          const idx = pickOnTrace(x);
-          if (idx >= 0) {
-            promises.push(deletePick(x));
-            picks.splice(idx, 1);
+        // -------- Shift+クリックでラインピック --------
+        if (ev.event.shiftKey) {
+          if (!linePickStart) {
+            linePickStart = { trace, time };
+            deleteRangeStart = null;
+            return;
           }
-          picks.push({ trace: x, time: snapped });
-          promises.push(postPick(x, snapped));
-        }
-        await Promise.all(promises);
-        selectedPickIndex = null;
-        document.getElementById('deletePickBtn').disabled = true;
-        plotSeismicData(latestSeismicData, defaultDt, renderedStart, renderedEnd);
-        return;
-      }
 
-      // -------- 通常クリックで単一ピック --------
-      linePickStart = null;
-      const idx = pickOnTrace(trace);
-      const promises = [];
-      if (idx >= 0) {
-        promises.push(deletePick(trace));
-        picks.splice(idx, 1);
+          const { trace: x0, time: y0 } = linePickStart;
+          linePickStart = null;
+          const x1 = trace;
+          const y1 = time;
+          const xStart = Math.round(Math.min(x0, x1));
+          const xEnd = Math.round(Math.max(x0, x1));
+          const slope = x1 === x0 ? 0 : (y1 - y0) / (x1 - x0);
+          const promises = [];
+          for (let x = xStart; x <= xEnd; x++) {
+            const y = x1 === x0 ? y1 : y0 + slope * (x - x0);
+            const snapped = Math.round(y / dt) * dt;
+            const idx = pickOnTrace(x);
+            if (idx >= 0) {
+              promises.push(deletePick(x));
+              picks.splice(idx, 1);
+            }
+            picks.push({ trace: x, time: snapped });
+            promises.push(postPick(x, snapped));
+          }
+          await Promise.all(promises);
+          plotSeismicData(latestSeismicData, defaultDt, renderedStart, renderedEnd);
+          return;
+        }
+
+        // -------- 通常クリックで単一ピック --------
+        linePickStart = null;
+        deleteRangeStart = null;
+        const idx = pickOnTrace(trace);
+        const promises = [];
+        if (idx >= 0) {
+          promises.push(deletePick(trace));
+          picks.splice(idx, 1);
+        }
+        picks.push({ trace, time });
+        promises.push(postPick(trace, time));
+        await Promise.all(promises);
+        plotSeismicData(latestSeismicData, defaultDt, renderedStart, renderedEnd);
       }
-      picks.push({ trace, time });
-      promises.push(postPick(trace, time));
-      await Promise.all(promises);
-      selectedPickIndex = null;
-      document.getElementById('deletePickBtn').disabled = true;
-      plotSeismicData(latestSeismicData, defaultDt, renderedStart, renderedEnd);
-    }
 
     async function handleRelayout(ev) {
       const plotDiv = document.getElementById('plot');
@@ -630,19 +629,7 @@
           }
         }
         picks = newPicks;
-        selectedPickIndex = null;
-        document.getElementById('deletePickBtn').disabled = true;
       }
-    }
-
-    async function deleteSelectedPick() {
-      if (selectedPickIndex === null) return;
-      const trace = Math.round(picks[selectedPickIndex].trace);
-      await deletePick(trace);
-      picks.splice(selectedPickIndex, 1);
-      selectedPickIndex = null;
-      document.getElementById('deletePickBtn').disabled = true;
-      plotSeismicData(latestSeismicData, defaultDt, renderedStart, renderedEnd);
     }
 
     window.addEventListener('DOMContentLoaded', loadSettings);
