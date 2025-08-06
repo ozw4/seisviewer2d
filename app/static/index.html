@@ -58,7 +58,7 @@
     let savedXRange = null;
     let savedYRange = null;
     let latestSeismicData = null;
-    const defaultDt = 0.004;
+    const defaultDt = 0.002;
     const PREFETCH_WIDTH = 3;   // ±10
     const FALLBACK_MAX = 8;  // API 無い場合
     const HARD_LIMIT_BYTES = 1000 * 1024 * 1024; // 800MB
@@ -365,9 +365,9 @@
             shiftedPosX[j] = (val < 0 ? 0 : val) + i;
           }
 
-          traces.push({ type: 'scatter', mode: 'lines', x: baseX, y: time, line: { width: 0 }, hoverinfo: 'skip', showlegend: false });
+          traces.push({ type: 'scatter', mode: 'lines', x: baseX, y: time, line: { width: 0 }, hoverinfo: 'x+y', showlegend: false });
           traces.push({ type: 'scatter', mode: 'lines', x: shiftedPosX, y: time, fill: 'tonextx', fillcolor: 'black', line: { width: 0 }, opacity: 0.6, hoverinfo: 'skip', showlegend: false });
-          traces.push({ type: 'scatter', mode: 'lines', x: shiftedFullX, y: time, line: { color: 'black', width: 0.5 }, showlegend: false });
+          traces.push({ type: 'scatter', mode: 'lines', x: shiftedFullX, y: time, line: { color: 'black', width: 0.5 }, hoverinfo: 'skip',showlegend: false });
         }
       } else {
         const MAX_POINTS = 3_000_000;
@@ -410,7 +410,8 @@
           zmin: zMin,
           zmax: zMax,
           showscale: false,
-          hoverinfo: 'skip'
+          hoverinfo: 'x+y',
+          hovertemplate: '',
         }];
       }
 
@@ -468,19 +469,38 @@
     }
 
     async function handlePlotClick(ev) {
-      if (!ev.points.length) return;
-      const point = ev.points[0];
-      let trace = Math.round(point.x);
-      let time = point.y;
-      if (downsampleFactor > 1) {
-        const dt = defaultDt * downsampleFactor;
-        const idx = point.y / dt;
-        const lower = Math.floor(idx);
-        const frac = idx - lower;
-        const lowerTime = lower * dt;
-        const upperTime = (lower + 1) * dt;
-        time = lowerTime + (upperTime - lowerTime) * frac;
+      console.log('🔥 plotly_click fired', ev);
+      const plotDiv = document.getElementById('plot');
+      if (!plotDiv || !ev.event || !ev.event.clientX) {
+        console.warn('⚠️ plotDiv or event data not available.');
+        return;
       }
+
+      const dt = defaultDt * downsampleFactor;
+
+      // -------- クリック位置を取得し、軸座標に変換 --------
+      const rect = plotDiv.getBoundingClientRect();
+      const xpx = ev.event.clientX - rect.left;
+      const ypx = ev.event.clientY - rect.top;
+
+      const xData = plotDiv._fullLayout.xaxis.p2d(xpx);
+      const yData = plotDiv._fullLayout.yaxis.p2d(ypx);
+
+      // -------- trace / time を整数グリッドにスナップ --------
+      const trace = Math.round(ev.points[0].x);
+      const time = Math.round(ev.points[0].y / dt) * dt;
+
+      // -------- ログ --------
+      console.group('🖱 Actual Click Data');
+      console.log('clientX / Y:', ev.event.clientX, ev.event.clientY);
+      console.log('pixel offset:', xpx, ypx);
+      console.log('xData (trace):', xData);
+      console.log('yData (time):', yData);
+      console.log('Snapped trace:', trace);
+      console.log('Snapped time:', time);
+      console.groupEnd();
+
+      // 既存ピックとの近接確認
       const existing = pickNear(trace, time);
       if (existing >= 0) {
         selectedPickIndex = existing;
@@ -491,6 +511,7 @@
         picks.push({ trace, time });
         await postPick(trace, time);
       }
+
       plotSeismicData(latestSeismicData, defaultDt, renderedStart, renderedEnd);
     }
 
