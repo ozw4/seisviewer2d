@@ -231,11 +231,13 @@
 
   async function fetchPicks() {
     if (!currentFileId) return;
+    const idx = parseInt(document.getElementById('key1_idx_slider').value);
+    const key1Val = key1Values[idx];
     try {
-      const res = await fetch(`/picks?file_id=${currentFileId}`);
+      const res = await fetch(`/picks?file_id=${currentFileId}&key1_idx=${key1Val}&key1_byte=${currentKey1Byte}`);
       if (res.ok) {
         const data = await res.json();
-        picks = data.picks || [];
+        picks = (data.picks || []).map(p => ({ trace: p.trace, time: p.time }));
       }
     } catch (e) {
       console.error('Failed to fetch picks', e);
@@ -243,11 +245,13 @@
   }
 
   async function postPick(trace, time) {
+    const idx = parseInt(document.getElementById('key1_idx_slider').value);
+    const key1Val = key1Values[idx];
     try {
       await fetch('/picks', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ file_id: currentFileId, trace, time })
+        body: JSON.stringify({ file_id: currentFileId, trace, time, key1_idx: key1Val, key1_byte: currentKey1Byte })
       });
     } catch (e) {
       console.error('Failed to post pick', e);
@@ -255,8 +259,10 @@
   }
 
   async function deletePick(trace) {
+    const idx = parseInt(document.getElementById('key1_idx_slider').value);
+    const key1Val = key1Values[idx];
     try {
-      await fetch(`/picks?file_id=${currentFileId}&trace=${trace}`, { method: 'DELETE' });
+      await fetch(`/picks?file_id=${currentFileId}&trace=${trace}&key1_idx=${key1Val}&key1_byte=${currentKey1Byte}`, { method: 'DELETE' });
     } catch (e) {
       console.error('Failed to delete pick', e);
     }
@@ -268,6 +274,8 @@
 
     const index = parseInt(document.getElementById('key1_idx_slider').value);
     const key1Val = key1Values[index];
+
+    await fetchPicks();
 
     console.time('Cache lookup');
     let f32 = getCacheF32(key1Val);
