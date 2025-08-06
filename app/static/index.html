@@ -477,6 +477,10 @@
       );
     }
 
+    function pickOnTrace(trace) {
+      return picks.findIndex(p => Math.round(p.trace) === trace);
+    }
+
     async function handlePlotClick(ev) {
       console.log('🔥 plotly_click fired', ev);
       const plotDiv = document.getElementById('plot');
@@ -515,6 +519,11 @@
         selectedPickIndex = existing;
         document.getElementById('deletePickBtn').disabled = false;
       } else {
+        const traceIdx = pickOnTrace(trace);
+        if (traceIdx >= 0) {
+          await deletePick(trace);
+          picks.splice(traceIdx, 1);
+        }
         selectedPickIndex = null;
         document.getElementById('deletePickBtn').disabled = true;
         picks.push({ trace, time });
