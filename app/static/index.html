@@ -47,7 +47,6 @@
     <input type="range" id="key1_idx_slider" min="0" max="10000" value="0" step="1" oninput="updateKey1Display(); fetchAndPlot()" />
     <input type="number" id="key1_idx_display" value="0" min="0" max="10000" step="1" style="width: 60px;" onchange="syncSliderWithInput(); fetchAndPlot()" />
     <button onclick="fetchAndPlot()">Plot</button>
-    <button onclick="showCacheKeys()">Show Cache Keys</button>
     <button id="pickModeBtn" onclick="togglePickMode()">Pick Mode: OFF</button>
   </div>
   <div id="plot" style="width: 100vw; height: calc(100vh - 100px);"></div>
@@ -77,11 +76,6 @@
     let isPickMode = false;
     let linePickStart = null;
     let deleteRangeStart = null;
-
-    function showCacheKeys() {
-        const currentKeys = Array.from(cache.keys());
-        console.log('Cache keys:', currentKeys);
-      }
 
     function togglePickMode() {
       isPickMode = !isPickMode;
