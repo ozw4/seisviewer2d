@@ -1,4 +1,5 @@
 # endpoint.py
+import asyncio
 import gzip
 import pathlib
 import threading
@@ -8,6 +9,7 @@ import msgpack
 import numpy as np
 from fastapi import (
         APIRouter,
+        Body,
         File,
         Form,  # 忘れずにインポート
         HTTPException,
@@ -15,6 +17,7 @@ from fastapi import (
         UploadFile,
 )
 from fastapi.responses import JSONResponse, Response
+from utils.picks import PickStore
 from utils.utils import SegySectionReader, quantize_float32
 
 router = APIRouter()
@@ -24,6 +27,7 @@ UPLOAD_DIR.mkdir(exist_ok=True)
 
 cached_readers: dict[str, SegySectionReader] = {}
 SEGYS: dict[str, str] = {}
+pick_store = PickStore()
 
 
 @router.get('/get_key1_values')
@@ -127,3 +131,27 @@ def get_section_bin(
         )
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post('/picks')
+async def add_picks(
+        file_id: str = Query(...),
+        picks: dict[int, float] = Body(...),
+):
+        updated = await asyncio.to_thread(pick_store.add_or_update, file_id, picks)
+        return {'file_id': file_id, 'picks': updated}
+
+
+@router.get('/picks')
+async def get_picks(file_id: str = Query(...)):
+        picks = await asyncio.to_thread(pick_store.get, file_id)
+        return {'file_id': file_id, 'picks': picks}
+
+
+@router.delete('/picks')
+async def delete_picks(
+        file_id: str = Query(...),
+        trace_idx: int | None = Query(None),
+):
+        await asyncio.to_thread(pick_store.delete, file_id, trace_idx)
+        return {'status': 'ok'}
