@@ -457,7 +457,8 @@
       Plotly.react(plotDiv, traces, layout, {
         responsive: true,
         editable: true,
-        modeBarButtonsToAdd: ['eraseshape']
+        modeBarButtonsToAdd: ['eraseshape'],
+        edits: { shapePosition: false }
       });
       setTimeout(() => Plotly.Plots.resize(plotDiv), 50);
       renderedStart = startTrace;
@@ -547,15 +548,7 @@
         }
       }
 
-      const shapeKey = Object.keys(ev).find(k => k.startsWith('shapes['));
-      if (shapeKey) {
-        const idx = parseInt(shapeKey.match(/shapes\[(\d+)\]/)[1], 10);
-        const shape = plotDiv.layout.shapes[idx];
-        const trace = (shape.x0 + shape.x1) / 2;
-        const time = (shape.y0 + shape.y1) / 2;
-        picks[idx] = { trace, time };
-        await postPick(Math.round(trace), time);
-      } else if (Array.isArray(ev.shapes)) {
+      if (Array.isArray(ev.shapes)) {
         const newPicks = ev.shapes.map(s => ({ trace: (s.x0 + s.x1) / 2, time: (s.y0 + s.y1) / 2 }));
         const oldTraces = new Set(picks.map(p => Math.round(p.trace)));
         const newTraces = new Set(newPicks.map(p => Math.round(p.trace)));
