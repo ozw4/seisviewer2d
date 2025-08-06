@@ -1,4 +1,5 @@
 # endpoint.py
+import asyncio
 import gzip
 import pathlib
 import threading
@@ -15,6 +16,8 @@ from fastapi import (
         UploadFile,
 )
 from fastapi.responses import JSONResponse, Response
+from pydantic import BaseModel
+from utils.picks import add_pick, delete_pick, list_picks, store
 from utils.utils import SegySectionReader, quantize_float32
 
 router = APIRouter()
@@ -24,6 +27,12 @@ UPLOAD_DIR.mkdir(exist_ok=True)
 
 cached_readers: dict[str, SegySectionReader] = {}
 SEGYS: dict[str, str] = {}
+
+
+class Pick(BaseModel):
+        file_id: str
+        trace: int
+        time: float
 
 
 @router.get('/get_key1_values')
@@ -127,3 +136,25 @@ def get_section_bin(
         )
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post('/picks')
+async def post_pick(pick: Pick) -> dict[str, str]:
+        add_pick(pick.file_id, pick.trace, pick.time)
+        await asyncio.to_thread(store.save)
+        return {'status': 'ok'}
+
+
+@router.get('/picks')
+async def get_pick(file_id: str = Query(...)) -> dict[str, list[dict[str, int | float]]]:
+        return {'picks': list_picks(file_id)}
+
+
+@router.delete('/picks')
+async def delete_pick_route(
+        file_id: str = Query(...),
+        trace: int | None = Query(None),
+) -> dict[str, str]:
+        delete_pick(file_id, trace)
+        await asyncio.to_thread(store.save)
+        return {'status': 'ok'}
