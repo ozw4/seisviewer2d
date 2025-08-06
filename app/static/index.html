@@ -30,6 +30,10 @@
       padding: 0.2em 0.4em;
       margin-right: 0.5em;
     }
+    #pickModeBtn.active {
+      background: #007bff;
+      color: #fff;
+    }
   </style>
 </head>
 <body>
@@ -44,6 +48,7 @@
     <input type="number" id="key1_idx_display" value="0" min="0" max="10000" step="1" style="width: 60px;" onchange="syncSliderWithInput(); fetchAndPlot()" />
     <button onclick="fetchAndPlot()">Plot</button>
     <button onclick="showCacheKeys()">Show Cache Keys</button>
+    <button id="pickModeBtn" onclick="togglePickMode()">Pick Mode: OFF</button>
     <button id="deletePickBtn" onclick="deleteSelectedPick()" disabled>Delete Pick</button>
   </div>
   <div id="plot" style="width: 100vw; height: calc(100vh - 100px);"></div>
@@ -71,11 +76,23 @@
     let picks = [];
     let downsampleFactor = 1;
     let selectedPickIndex = null;
+    let isPickMode = false;
 
     function showCacheKeys() {
         const currentKeys = Array.from(cache.keys());
         console.log('Cache keys:', currentKeys);
       }
+
+    function togglePickMode() {
+      isPickMode = !isPickMode;
+      const btn = document.getElementById('pickModeBtn');
+      btn.textContent = isPickMode ? 'Pick Mode: ON' : 'Pick Mode: OFF';
+      btn.classList.toggle('active', isPickMode);
+      document.getElementById('deletePickBtn').disabled = !isPickMode || selectedPickIndex === null;
+      if (latestSeismicData) {
+        plotSeismicData(latestSeismicData, defaultDt, renderedStart, renderedEnd);
+      }
+    }
 
   function toFloat32(buf, scale) {
     return Float32Array.from(buf, v => v / scale);
@@ -443,7 +460,7 @@
         paper_bgcolor: '#fff',
         plot_bgcolor: '#fff',
         margin: { t: 10, r: 10, l: 60, b: 40 },
-        dragmode: false
+        dragmode: isPickMode ? false : 'zoom'
       };
       layout.shapes = picks.map((p, i) => ({
         type: 'line',
@@ -468,7 +485,9 @@
       plotDiv.removeAllListeners('plotly_relayout');
       plotDiv.removeAllListeners('plotly_click');
       plotDiv.on('plotly_relayout', handleRelayout);
-      plotDiv.on('plotly_click', handlePlotClick);
+      if (isPickMode) {
+        plotDiv.on('plotly_click', handlePlotClick);
+      }
     }
 
     function pickNear(trace, time) {
@@ -482,6 +501,7 @@
     }
 
     async function handlePlotClick(ev) {
+      if (!isPickMode) return;
       console.log('🔥 plotly_click fired', ev);
       const plotDiv = document.getElementById('plot');
       if (!plotDiv || !ev.event || !ev.event.clientX) {
