@@ -15,6 +15,8 @@ from fastapi import (
         UploadFile,
 )
 from fastapi.responses import JSONResponse, Response
+from pydantic import BaseModel
+from utils.picking import pick_first_arrival
 from utils.utils import SegySectionReader, quantize_float32
 
 router = APIRouter()
@@ -24,6 +26,53 @@ UPLOAD_DIR.mkdir(exist_ok=True)
 
 cached_readers: dict[str, SegySectionReader] = {}
 SEGYS: dict[str, str] = {}
+PICK_STORE: dict[str, dict[int, dict[int, int | None]]] = {}
+
+class AutoPickParams(BaseModel):
+	"""Parameters for automatic picking."""
+
+	file_id: str
+	key1_idx: int
+	trace_idx: int | None = None
+	win_sta: int = 20
+	win_lta: int = 100
+	threshold: float = 3.0
+	key1_byte: int = 189
+	key2_byte: int = 193
+
+def _store_pick(file_id: str, key1_idx: int, trace_idx: int, pick: int | None) -> None:
+	PICK_STORE.setdefault(file_id, {}).setdefault(key1_idx, {})[trace_idx] = pick
+
+def _auto_pick_task(params: AutoPickParams) -> None:
+	cache_key = f'{params.file_id}_{params.key1_byte}_{params.key2_byte}'
+	if cache_key not in cached_readers:
+		if params.file_id not in SEGYS:
+			return
+		path = SEGYS[params.file_id]
+		cached_readers[cache_key] = SegySectionReader(
+		path, params.key1_byte, params.key2_byte
+	)
+	reader = cached_readers[cache_key]
+	section = reader.get_section(params.key1_idx)
+	if params.trace_idx is not None:
+		traces = [(params.trace_idx, section[params.trace_idx])]
+	else:
+		traces = list(enumerate(section))
+	for idx, tr in traces:
+		pick = pick_first_arrival(
+				np.array(tr, dtype=np.float32),
+				params.win_sta,
+				params.win_lta,
+				params.threshold,
+			)
+		_store_pick(params.file_id, params.key1_idx, idx, pick)
+
+@router.post('/auto_pick')
+def auto_pick(params: AutoPickParams) -> dict[str, str]:
+	"""Trigger automatic picking in background."""
+	threading.Thread(target=_auto_pick_task, args=(params,), daemon=True).start()
+	return {'status': 'started'}
+
 
 
 @router.get('/get_key1_values')
