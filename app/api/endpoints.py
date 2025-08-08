@@ -29,6 +29,16 @@ cached_readers: dict[str, SegySectionReader] = {}
 SEGYS: dict[str, str] = {}
 
 
+def get_reader(file_id: str, key1_byte: int, key2_byte: int) -> SegySectionReader:
+        cache_key = f'{file_id}_{key1_byte}_{key2_byte}'
+        if cache_key not in cached_readers:
+                if file_id not in SEGYS:
+                        raise HTTPException(status_code=404, detail='File ID not found')
+                path = SEGYS[file_id]
+                cached_readers[cache_key] = SegySectionReader(path, key1_byte, key2_byte)
+        return cached_readers[cache_key]
+
+
 class Pick(BaseModel):
         file_id: str
         trace: int
@@ -39,18 +49,12 @@ class Pick(BaseModel):
 
 @router.get('/get_key1_values')
 def get_key1_values(
-	file_id: str = Query(...),
-	key1_byte: int = Query(189),
-	key2_byte: int = Query(193),
+        file_id: str = Query(...),
+        key1_byte: int = Query(189),
+        key2_byte: int = Query(193),
 ):
-	cache_key = f'{file_id}_{key1_byte}_{key2_byte}'
-	if cache_key not in cached_readers:
-		if file_id not in SEGYS:
-			raise HTTPException(status_code=404, detail='File ID not found')
-		path = SEGYS[file_id]
-		cached_readers[cache_key] = SegySectionReader(path, key1_byte, key2_byte)
-	reader = cached_readers[cache_key]
-	return JSONResponse(content={'values': reader.get_key1_values().tolist()})
+        reader = get_reader(file_id, key1_byte, key2_byte)
+        return JSONResponse(content={'values': reader.get_key1_values().tolist()})
 
 
 @router.post('/upload_segy')
@@ -85,28 +89,18 @@ async def upload_segy(
 
 @router.get('/get_section')
 def get_section(
-	file_id: str = Query(...),
-	key1_byte: int = Query(189),  # デフォルト設定
-	key2_byte: int = Query(193),
-	key1_idx: int = Query(...),
+        file_id: str = Query(...),
+        key1_byte: int = Query(189),  # デフォルト設定
+        key2_byte: int = Query(193),
+        key1_idx: int = Query(...),
 ):
-	try:
-		# 複合キーを作る（file_id, key1_byte, key2_byte）
-		cache_key = f'{file_id}_{key1_byte}_{key2_byte}'
+        try:
+                reader = get_reader(file_id, key1_byte, key2_byte)
+                section = reader.get_section(key1_idx)
+                return JSONResponse(content={'section': section})
 
-		# キャッシュにreaderがなければ初期化
-		if cache_key not in cached_readers:
-			if file_id not in SEGYS:
-				raise HTTPException(status_code=404, detail='File ID not found')
-			path = SEGYS[file_id]
-			cached_readers[cache_key] = SegySectionReader(path, key1_byte, key2_byte)
-
-		reader = cached_readers[cache_key]
-		section = reader.get_section(key1_idx)
-		return JSONResponse(content={'section': section})
-
-	except Exception as e:
-		raise HTTPException(status_code=500, detail=str(e))
+        except Exception as e:
+                raise HTTPException(status_code=500, detail=str(e))
 
 
 @router.get('/get_section_bin')
@@ -117,13 +111,7 @@ def get_section_bin(
     key2_byte: int = Query(193),
 ):
     try:
-        cache_key = f'{file_id}_{key1_byte}_{key2_byte}'
-        if cache_key not in cached_readers:
-            if file_id not in SEGYS:
-                raise HTTPException(status_code=404, detail='File ID not found')
-            path = SEGYS[file_id]
-            cached_readers[cache_key] = SegySectionReader(path, key1_byte, key2_byte)
-        reader = cached_readers[cache_key]
+        reader = get_reader(file_id, key1_byte, key2_byte)
         section = np.array(reader.get_section(key1_idx), dtype=np.float32)
         scale, q = quantize_float32(section)
         payload = msgpack.packb({
