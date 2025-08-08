@@ -551,7 +551,7 @@
           }
 
           const { trace: x0, time: y0 } = linePickStart;
-          linePickStart = null;
+          linePickStart =  { trace, time };
           const x1 = trace;
           const y1 = time;
           const xStart = Math.round(Math.min(x0, x1));
@@ -627,6 +627,11 @@
     }
 
     window.addEventListener('DOMContentLoaded', loadSettings);
+    window.addEventListener('keyup', (e) => {
+        if (e.key === 'Shift') {
+          linePickStart = null;
+        }
+      });
   </script>
 </body>
 </html>
