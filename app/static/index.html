@@ -34,6 +34,17 @@
       background: #007bff;
       color: #fff;
     }
+    .denoiseParam {
+      display: none;
+    }
+    #denoiseSettingsDialog {
+      padding: 1em;
+      border: 1px solid #888;
+    }
+    #denoiseSettingsDialog form label {
+      display: block;
+      margin: 0.5em 0;
+    }
   </style>
 </head>
 <body>
@@ -59,11 +70,12 @@
       <option value="common_shot">共通ショット</option>
       <option value="common_receiver">共通レシーバー</option>
     </select>
-    <label>mask_ratio:<input type="number" id="mask_ratio" value="0.5" step="0.1" min="0" max="1" style="width:70px;"></label>
-    <label>noise_std:<input type="number" id="noise_std" value="1" step="0.1" style="width:70px;"></label>
-    <label>chunk_h:<input type="number" id="chunk_h" value="128" step="1" style="width:70px;"></label>
-    <label>overlap:<input type="number" id="overlap" value="32" step="1" style="width:70px;"></label>
-    <select id="mask_noise_mode">
+    <button id="openDenoiseDlgBtn" onclick="openDenoiseSettings()">ノイズ抑制パラメータ設定</button>
+    <label class="denoiseParam">mask_ratio:<input type="number" id="mask_ratio" value="0.5" step="0.1" min="0" max="1" style="width:70px;"></label>
+    <label class="denoiseParam">noise_std:<input type="number" id="noise_std" value="1" step="0.1" style="width:70px;"></label>
+    <label class="denoiseParam">chunk_h:<input type="number" id="chunk_h" value="128" step="1" style="width:70px;"></label>
+    <label class="denoiseParam">overlap:<input type="number" id="overlap" value="32" step="1" style="width:70px;"></label>
+    <select id="mask_noise_mode" class="denoiseParam">
       <option value="replace" selected>replace</option>
       <option value="add">add</option>
     </select>
@@ -72,6 +84,24 @@
     <span id="denoiseProgressText"></span>
   </div>
   <div id="plot" style="width: 100vw; height: calc(100vh - 100px);"></div>
+  <dialog id="denoiseSettingsDialog">
+    <form method="dialog">
+      <label>mask_ratio:<input type="number" id="dlg_mask_ratio" required step="0.1" min="0" max="1"></label>
+      <label>noise_std:<input type="number" id="dlg_noise_std" required step="0.1"></label>
+      <label>chunk_h:<input type="number" id="dlg_chunk_h" required step="1"></label>
+      <label>overlap:<input type="number" id="dlg_overlap" required step="1"></label>
+      <label>mask_noise_mode:
+        <select id="dlg_mask_noise_mode" required>
+          <option value="replace">replace</option>
+          <option value="add">add</option>
+        </select>
+      </label>
+      <div style="margin-top:1em;text-align:right;">
+        <button type="button" onclick="saveDenoiseSettings()">保存</button>
+        <button type="button" onclick="closeDenoiseSettings()">キャンセル</button>
+      </div>
+    </form>
+  </dialog>
   <script src="/static/plotly-2.29.1.min.js"></script>
   <script src="/static/pako.min.js"></script>
   <script src="/static/msgpack.min.js"></script>
@@ -101,6 +131,20 @@
     let linePickStart = null;
     let deleteRangeStart = null;
 
+    (function() {
+      const saved = localStorage.getItem('denoise_params');
+      if (saved) {
+        try {
+          const p = JSON.parse(saved);
+          if (p.mask_ratio !== undefined) document.getElementById('mask_ratio').value = p.mask_ratio;
+          if (p.noise_std !== undefined) document.getElementById('noise_std').value = p.noise_std;
+          if (p.chunk_h !== undefined) document.getElementById('chunk_h').value = p.chunk_h;
+          if (p.overlap !== undefined) document.getElementById('overlap').value = p.overlap;
+          if (p.mask_noise_mode !== undefined) document.getElementById('mask_noise_mode').value = p.mask_noise_mode;
+        } catch(e){}
+      }
+    })();
+
     function getDenoiseParams() {
       return {
         mask_ratio: parseFloat(document.getElementById('mask_ratio').value),
@@ -109,6 +153,34 @@
         overlap: parseInt(document.getElementById('overlap').value),
         mask_noise_mode: document.getElementById('mask_noise_mode').value,
       };
+    }
+
+    function openDenoiseSettings() {
+      document.getElementById('dlg_mask_ratio').value = document.getElementById('mask_ratio').value;
+      document.getElementById('dlg_noise_std').value = document.getElementById('noise_std').value;
+      document.getElementById('dlg_chunk_h').value = document.getElementById('chunk_h').value;
+      document.getElementById('dlg_overlap').value = document.getElementById('overlap').value;
+      document.getElementById('dlg_mask_noise_mode').value = document.getElementById('mask_noise_mode').value;
+      const dlg = document.getElementById('denoiseSettingsDialog');
+      if (dlg.showModal) dlg.showModal(); else dlg.style.display = 'block';
+    }
+
+    function closeDenoiseSettings() {
+      const dlg = document.getElementById('denoiseSettingsDialog');
+      if (dlg.close) dlg.close(); else dlg.style.display = 'none';
+    }
+
+    function saveDenoiseSettings() {
+      document.getElementById('mask_ratio').value = document.getElementById('dlg_mask_ratio').value;
+      document.getElementById('noise_std').value = document.getElementById('dlg_noise_std').value;
+      document.getElementById('chunk_h').value = document.getElementById('dlg_chunk_h').value;
+      document.getElementById('overlap').value = document.getElementById('dlg_overlap').value;
+      document.getElementById('mask_noise_mode').value = document.getElementById('dlg_mask_noise_mode').value;
+      localStorage.setItem('denoise_params', JSON.stringify(getDenoiseParams()));
+      closeDenoiseSettings();
+      if (typeof fetchAndPlot === 'function') {
+        try { fetchAndPlot(); } catch (e) {}
+      }
     }
 
     async function pollDenoiseJob(jobId) {
