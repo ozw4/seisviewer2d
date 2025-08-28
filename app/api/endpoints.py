@@ -21,6 +21,7 @@ from fastapi import (
 )
 from fastapi.responses import JSONResponse, Response
 from pydantic import BaseModel
+from utils.bandpass import bandpass_np
 from utils.denoise import denoise_tensor
 from utils.picks import add_pick, delete_pick, list_picks, store
 from utils.utils import SegySectionReader, quantize_float32
@@ -54,6 +55,17 @@ class Pick(BaseModel):
 	time: float
 	key1_idx: int
 	key1_byte: int
+
+
+class BandpassRequest(BaseModel):
+	file_id: str
+	key1_idx: int
+	key1_byte: int = 189
+	key2_byte: int = 193
+	low_hz: float
+	high_hz: float
+	dt: float = 0.002
+	taper: float = 0.0
 
 
 class DenoiseRequest(BaseModel):
@@ -225,6 +237,36 @@ def get_section_bin(
 	except Exception as e:
 		raise HTTPException(status_code=500, detail=str(e))
 
+
+@router.post('/bandpass_section_bin')
+def bandpass_section_bin(req: BandpassRequest):
+	try:
+		reader = get_reader(req.file_id, req.key1_byte, req.key2_byte)
+		section = np.array(reader.get_section(req.key1_idx), dtype=np.float32)
+		filtered = bandpass_np(
+			section,
+			low_hz=req.low_hz,
+			high_hz=req.high_hz,
+			dt=req.dt,
+			taper=req.taper,
+		)
+		scale, q = quantize_float32(filtered)
+		payload = msgpack.packb(
+			{
+				'scale': scale,
+				'shape': q.shape,
+				'data': q.tobytes(),
+			}
+		)
+		return Response(
+			gzip.compress(payload),
+			media_type='application/octet-stream',
+			headers={'Content-Encoding': 'gzip'},
+		)
+	except ValueError as e:
+		raise HTTPException(status_code=400, detail=str(e))
+	except Exception as e:
+		raise HTTPException(status_code=500, detail=str(e))
 
 @router.post('/denoise_section_bin')
 def denoise_section_bin(req: DenoiseRequest):
