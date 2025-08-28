@@ -25,10 +25,11 @@ Thumbs.db
 *.tdms
 *.sgy
 *.segy
+*.pth
 
 data/
 output/
-
+model/
 # compiled コード
 *.so
 *.o
