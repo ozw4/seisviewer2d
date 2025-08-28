@@ -48,6 +48,11 @@
     <input type="number" id="key1_idx_display" value="0" min="0" max="10000" step="1" style="width: 60px;" onchange="syncSliderWithInput(); fetchAndPlot()" />
     <button onclick="fetchAndPlot()">Plot</button>
     <button id="pickModeBtn" onclick="togglePickMode()">Pick Mode: OFF</button>
+    <select id="displayMode" onchange="fetchAndPlot()">
+      <option value="auto" selected>auto</option>
+      <option value="raw">raw</option>
+      <option value="denoised">denoised</option>
+    </select>
     <select id="denoiseScope">
       <option value="display">表示セクション</option>
       <option value="all_key1">データ全体</option>
@@ -85,6 +90,8 @@
 
     const cache = new Map(); // key -> {scale, buf:Int8Array}
     const inflight = new Map();
+    const CACHE_LIMIT = 32;
+    function cacheKey(val, mode) { return `${val}|${mode}`; }
     let sectionShape = null;
     let renderedStart = null;
     let renderedEnd = null;
@@ -156,7 +163,7 @@
         const bin = new Uint8Array(await res.arrayBuffer());
         const obj = msgpack.decode(bin);
         const int8 = new Int8Array(obj.data.buffer);
-        putCache(key1Val, obj.scale, int8);
+        putCache(cacheKey(key1Val, 'den'), obj.scale, int8);
         sectionShape = obj.shape;
         await fetchAndPlot();
       } else {
@@ -202,6 +209,12 @@
     return Float32Array.from(buf, v => v / scale);
   }
   function putCache(key, scale, buf) {
+    if (cache.size >= CACHE_LIMIT) {
+      const oldestKey = cache.keys().next().value;
+      const old = cache.get(oldestKey);
+      if (old) { old.f32 = null; old.buf = null; }
+      cache.delete(oldestKey);
+    }
     const f32 = Float32Array.from(buf, v => v / scale);
     cache.set(key, { scale, buf, f32 });
     //cache.set(key, { scale, buf });
@@ -294,7 +307,7 @@
         }
       }
 
-      function prefetchAround(centerIdx) {
+      function prefetchAround(centerIdx, mode) {
         for (const ctrl of inflight.values()) ctrl.abort();
         inflight.clear();
         const start = Math.max(0, centerIdx - PREFETCH_WIDTH);
@@ -308,27 +321,47 @@
         };
         for (let i = start; i <= end; i++) {
           if (i === centerIdx) continue;
-          const key = key1Values[i];
-          if (cache.has(key) || inflight.has(key)) continue;
+          const key1Val = key1Values[i];
+          if (mode === 'auto') {
+            if (cache.has(cacheKey(key1Val, 'den')) || cache.has(cacheKey(key1Val, 'raw')) ||
+                inflight.has(cacheKey(key1Val, 'den')) || inflight.has(cacheKey(key1Val, 'raw'))) continue;
+          } else {
+            const ck = cacheKey(key1Val, mode === 'denoised' ? 'den' : 'raw');
+            if (cache.has(ck) || inflight.has(ck)) continue;
+          }
           const controller = new AbortController();
-          inflight.set(key, controller);
+          const inflightKey = mode === 'raw' ? cacheKey(key1Val, 'raw') : cacheKey(key1Val, 'den');
+          inflight.set(inflightKey, controller);
           scheduler(async () => {
             try {
-              const url = `/get_section_bin?file_id=${currentFileId}&key1_idx=${key}&key1_byte=${currentKey1Byte}&key2_byte=${currentKey2Byte}`;
-              const res = await fetch(url, { signal: controller.signal });
-              if (res.ok) {
-                const bin = new Uint8Array(await res.arrayBuffer());
-                const obj = msgpack.decode(bin);
-                const int8 = new Int8Array(obj.data.buffer);
-                putCache(key, obj.scale, int8);
-                if (!sectionShape) sectionShape = obj.shape;
+              const denoiseParams = getDenoiseParams();
+              const urlDen = `/get_denoised_section_bin?file_id=${currentFileId}&key1_idx=${key1Val}&chunk_h=${denoiseParams.chunk_h}&overlap=${denoiseParams.overlap}&mask_ratio=${denoiseParams.mask_ratio}&noise_std=${denoiseParams.noise_std}&mask_noise_mode=${denoiseParams.mask_noise_mode}`;
+              const urlRaw = `/get_section_bin?file_id=${currentFileId}&key1_idx=${key1Val}&key1_byte=${currentKey1Byte}&key2_byte=${currentKey2Byte}`;
+              let res;
+              let fetchedMode = 'raw';
+              if (mode === 'raw') {
+                res = await fetch(urlRaw, { signal: controller.signal });
+                if (!res.ok) return;
+              } else {
+                res = await fetch(urlDen, { signal: controller.signal });
+                if (res.ok) {
+                  fetchedMode = 'den';
+                } else {
+                  res = await fetch(urlRaw, { signal: controller.signal });
+                  if (!res.ok) return;
+                }
               }
+              const bin = new Uint8Array(await res.arrayBuffer());
+              const obj = msgpack.decode(bin);
+              const int8 = new Int8Array(obj.data.buffer);
+              putCache(cacheKey(key1Val, fetchedMode), obj.scale, int8);
+              if (!sectionShape) sectionShape = obj.shape;
             } catch (err) {
               if (err.name !== 'AbortError') {
-                console.warn('Prefetch failed', key, err);
+                console.warn('Prefetch failed', key1Val, err);
               }
             } finally {
-              inflight.delete(key);
+              inflight.delete(inflightKey);
             }
           });
         }
@@ -393,13 +426,21 @@
     console.log('--- fetchAndPlot start ---');
     console.time('Total fetchAndPlot');
 
+    const mode = document.getElementById('displayMode').value;
     const index = parseInt(document.getElementById('key1_idx_slider').value);
     const key1Val = key1Values[index];
 
     await fetchPicks();
 
     console.time('Cache lookup');
-    let f32 = getCacheF32(key1Val);
+    let f32 = null;
+    if (mode === 'raw') {
+      f32 = getCacheF32(cacheKey(key1Val, 'raw'));
+    } else if (mode === 'denoised') {
+      f32 = getCacheF32(cacheKey(key1Val, 'den'));
+    } else {
+      f32 = getCacheF32(cacheKey(key1Val, 'den')) || getCacheF32(cacheKey(key1Val, 'raw'));
+    }
     console.timeEnd('Cache lookup');
 
     let traces;
@@ -416,15 +457,31 @@
     } else {
       console.time('Fetch binary');
       const denoiseParams = getDenoiseParams();
-      const urlDenoised = `/get_denoised_section_bin?file_id=${currentFileId}&key1_idx=${key1Val}&chunk_h=${denoiseParams.chunk_h}&overlap=${denoiseParams.overlap}&mask_ratio=${denoiseParams.mask_ratio}&noise_std=${denoiseParams.noise_std}&mask_noise_mode=${denoiseParams.mask_noise_mode}`;
-      const urlBin = `/get_section_bin?file_id=${currentFileId}&key1_idx=${key1Val}&key1_byte=${currentKey1Byte}&key2_byte=${currentKey2Byte}`;
-      let res = await fetch(urlDenoised);
-      if (!res.ok) {
-        res = await fetch(urlBin);
+      const urlDen = `/get_denoised_section_bin?file_id=${currentFileId}&key1_idx=${key1Val}&chunk_h=${denoiseParams.chunk_h}&overlap=${denoiseParams.overlap}&mask_ratio=${denoiseParams.mask_ratio}&noise_std=${denoiseParams.noise_std}&mask_noise_mode=${denoiseParams.mask_noise_mode}`;
+      const urlRaw = `/get_section_bin?file_id=${currentFileId}&key1_idx=${key1Val}&key1_byte=${currentKey1Byte}&key2_byte=${currentKey2Byte}`;
+      let res;
+      let fetchedMode = 'raw';
+      if (mode === 'raw') {
+        res = await fetch(urlRaw);
         if (!res.ok) {
           console.timeEnd('Fetch binary');
           alert('Failed to load section');
           return;
+        }
+      } else {
+        res = await fetch(urlDen);
+        if (res.ok) {
+          fetchedMode = 'den';
+        } else {
+          if (mode === 'denoised') {
+            alert('denoised section not available, showing raw');
+          }
+          res = await fetch(urlRaw);
+          if (!res.ok) {
+            console.timeEnd('Fetch binary');
+            alert('Failed to load section');
+            return;
+          }
         }
       }
       const bin = new Uint8Array(await res.arrayBuffer());
@@ -433,7 +490,7 @@
       console.time('Decode & cache');
       const obj = msgpack.decode(bin);
       const int8 = new Int8Array(obj.data.buffer);
-      putCache(key1Val, obj.scale, int8);
+      putCache(cacheKey(key1Val, fetchedMode), obj.scale, int8);
       sectionShape = obj.shape;
       const tmp = toFloat32(int8, obj.scale);
       const [nTraces, nSamples] = sectionShape;
@@ -451,7 +508,7 @@
     console.timeEnd('Plotting');
 
     console.time('Prefetch');
-    prefetchAround(index);
+    prefetchAround(index, mode);
     console.timeEnd('Prefetch');
 
     console.timeEnd('Total fetchAndPlot');
