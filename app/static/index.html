@@ -48,6 +48,23 @@
     <input type="number" id="key1_idx_display" value="0" min="0" max="10000" step="1" style="width: 60px;" onchange="syncSliderWithInput(); fetchAndPlot()" />
     <button onclick="fetchAndPlot()">Plot</button>
     <button id="pickModeBtn" onclick="togglePickMode()">Pick Mode: OFF</button>
+    <select id="denoiseScope">
+      <option value="display">表示セクション</option>
+      <option value="all_key1">データ全体</option>
+      <option value="common_shot">共通ショット</option>
+      <option value="common_receiver">共通レシーバー</option>
+    </select>
+    <label>mask_ratio:<input type="number" id="mask_ratio" value="0.5" step="0.1" min="0" max="1" style="width:70px;"></label>
+    <label>noise_std:<input type="number" id="noise_std" value="1" step="0.1" style="width:70px;"></label>
+    <label>chunk_h:<input type="number" id="chunk_h" value="128" step="1" style="width:70px;"></label>
+    <label>overlap:<input type="number" id="overlap" value="32" step="1" style="width:70px;"></label>
+    <select id="mask_noise_mode">
+      <option value="replace" selected>replace</option>
+      <option value="add">add</option>
+    </select>
+    <button id="denoiseBtn" onclick="handleDenoise()">ノイズ抑制</button>
+    <progress id="denoiseProgress" value="0" max="1" style="display:none; width:150px;"></progress>
+    <span id="denoiseProgressText"></span>
   </div>
   <div id="plot" style="width: 100vw; height: calc(100vh - 100px);"></div>
   <script src="/static/plotly-2.29.1.min.js"></script>
@@ -76,6 +93,98 @@
     let isPickMode = false;
     let linePickStart = null;
     let deleteRangeStart = null;
+
+    function getDenoiseParams() {
+      return {
+        mask_ratio: parseFloat(document.getElementById('mask_ratio').value),
+        noise_std: parseFloat(document.getElementById('noise_std').value),
+        chunk_h: parseInt(document.getElementById('chunk_h').value),
+        overlap: parseInt(document.getElementById('overlap').value),
+        mask_noise_mode: document.getElementById('mask_noise_mode').value,
+      };
+    }
+
+    async function pollDenoiseJob(jobId) {
+      const bar = document.getElementById('denoiseProgress');
+      const txt = document.getElementById('denoiseProgressText');
+      bar.style.display = 'inline-block';
+      bar.value = 0;
+      txt.textContent = '0%';
+      const timer = setInterval(async () => {
+        const res = await fetch(`/denoise_job_status?job_id=${jobId}`);
+        if (!res.ok) return;
+        const data = await res.json();
+        bar.value = data.progress;
+        txt.textContent = `${Math.round(data.progress * 100)}%`;
+        if (data.status === 'done') {
+          clearInterval(timer);
+          cache.clear();
+          await fetchAndPlot();
+          setTimeout(() => {
+            bar.style.display = 'none';
+            txt.textContent = '';
+          }, 1000);
+        } else if (data.status === 'error') {
+          clearInterval(timer);
+          txt.textContent = `error`;
+        }
+      }, 1000);
+    }
+
+    async function handleDenoise() {
+      const scope = document.getElementById('denoiseScope').value;
+      const params = getDenoiseParams();
+      const index = parseInt(document.getElementById('key1_idx_slider').value);
+      const key1Val = key1Values[index];
+      if (scope === 'display') {
+        const body = {
+          file_id: currentFileId,
+          key1_idx: key1Val,
+          key1_byte: currentKey1Byte,
+          key2_byte: currentKey2Byte,
+          ...params,
+        };
+        const res = await fetch('/denoise_section_bin', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(body),
+        });
+        if (!res.ok) {
+          alert('denoise failed');
+          return;
+        }
+        const bin = new Uint8Array(await res.arrayBuffer());
+        const obj = msgpack.decode(bin);
+        const int8 = new Int8Array(obj.data.buffer);
+        putCache(key1Val, obj.scale, int8);
+        sectionShape = obj.shape;
+        await fetchAndPlot();
+      } else {
+        const body = {
+          file_id: currentFileId,
+          scope: scope === 'all_key1' ? 'all_key1' : 'by_header',
+          key1_byte: currentKey1Byte,
+          key2_byte: currentKey2Byte,
+          ...params,
+        };
+        if (scope !== 'all_key1') {
+          body.key1_idx = key1Val;
+          body.group_header_byte =
+            scope === 'common_shot' ? currentKey1Byte : currentKey2Byte;
+        }
+        const res = await fetch('/denoise_apply', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(body),
+        });
+        if (!res.ok) {
+          alert('denoise apply failed');
+          return;
+        }
+        const data = await res.json();
+        pollDenoiseJob(data.job_id);
+      }
+    }
 
     function togglePickMode() {
       isPickMode = !isPickMode;
@@ -306,11 +415,17 @@
       latestSeismicData = traces;
     } else {
       console.time('Fetch binary');
+      const denoiseParams = getDenoiseParams();
+      const urlDenoised = `/get_denoised_section_bin?file_id=${currentFileId}&key1_idx=${key1Val}&chunk_h=${denoiseParams.chunk_h}&overlap=${denoiseParams.overlap}&mask_ratio=${denoiseParams.mask_ratio}&noise_std=${denoiseParams.noise_std}&mask_noise_mode=${denoiseParams.mask_noise_mode}`;
       const urlBin = `/get_section_bin?file_id=${currentFileId}&key1_idx=${key1Val}&key1_byte=${currentKey1Byte}&key2_byte=${currentKey2Byte}`;
-      const res = await fetch(urlBin);
+      let res = await fetch(urlDenoised);
       if (!res.ok) {
-        alert('Failed to load section');
-        return;
+        res = await fetch(urlBin);
+        if (!res.ok) {
+          console.timeEnd('Fetch binary');
+          alert('Failed to load section');
+          return;
+        }
       }
       const bin = new Uint8Array(await res.arrayBuffer());
       console.timeEnd('Fetch binary');
