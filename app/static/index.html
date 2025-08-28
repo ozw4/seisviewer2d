@@ -68,6 +68,9 @@
       <option value="denoised">denoised</option>
       <option value="filtered">表示: フィルタ</option>
     </select>
+    <label for="gain">Gain:</label>
+    <input type="range" id="gain" min="0.1" max="5" step="0.1" value="1" oninput="onGainChange()" />
+    <span id="gain_display">1×</span>
     <select id="denoiseScope">
       <option value="display">表示セクション</option>
       <option value="all_key1">データ全体</option>
@@ -181,6 +184,17 @@
       }
     })();
 
+    (function() {
+      const saved = localStorage.getItem('gain');
+      const el = document.getElementById('gain');
+      const disp = document.getElementById('gain_display');
+      if (el && disp) {
+        const val = saved !== null ? parseFloat(saved) : parseFloat(el.value);
+        el.value = val;
+        disp.textContent = `${val}×`;
+      }
+    })();
+
     function getDenoiseParams() {
       return {
         mask_ratio: parseFloat(document.getElementById('mask_ratio').value),
@@ -198,6 +212,15 @@
         dt: parseFloat(document.getElementById('dt').value),
         taper: parseFloat(document.getElementById('taper').value),
       };
+    }
+
+    function onGainChange() {
+      const val = document.getElementById('gain').value;
+      document.getElementById('gain_display').textContent = `${parseFloat(val)}×`;
+      localStorage.setItem('gain', val);
+      if (latestSeismicData) {
+        plotSeismicData(latestSeismicData, defaultDt, renderedStart, renderedEnd);
+      }
     }
 
     function openDenoiseSettings() {
@@ -828,7 +851,7 @@
       const density = visibleTraces / widthPx;
 
       let traces = [];
-      const gain = 1.0;
+      const gain = parseFloat(document.getElementById('gain').value) || 1.0;
 
       if (density < 0.1) {
         downsampleFactor = 1;
@@ -870,15 +893,17 @@
         }
 
         const zData = Array.from({ length: nSamplesDS }, () => new Float32Array(nTracesDS));
-        let zMin = Infinity;
-        let zMax = -Infinity;
+        // カラースケールはゲイン前の値で固定する（自己正規化を避ける）
+        let baseMin = Infinity;
+        let baseMax = -Infinity;
         for (let i = startTrace, col = 0; col < nTracesDS; i += factor, col++) {
           const trace = seismic[i];
           for (let j = 0, row = 0; row < nSamplesDS; j += factor, row++) {
-            const val = trace[j];
+            const raw = trace[j];
+            const val = raw * gain;
             zData[row][col] = val;
-            if (val < zMin) zMin = val;
-            if (val > zMax) zMax = val;
+            if (raw < baseMin) baseMin = raw;
+            if (raw > baseMax) baseMax = raw;
           }
         }
         const xVals = new Float32Array(nTracesDS);
@@ -890,8 +915,9 @@
           y: time,
           z: zData,
           colorscale: 'Greys',
-          zmin: zMin,
-          zmax: zMax,
+          // ゲイン前のベース範囲を使うことで、ゲイン変更が可視的なコントラスト変化になる
+          zmin: baseMin,
+          zmax: baseMax,
           showscale: false,
           hoverinfo: 'x+y',
           hovertemplate: '',
