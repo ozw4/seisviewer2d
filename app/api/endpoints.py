@@ -3,10 +3,12 @@ import asyncio
 import gzip
 import pathlib
 import threading
+from typing import Literal
 from uuid import uuid4
 
 import msgpack
 import numpy as np
+import torch
 from fastapi import (
         APIRouter,
         File,
@@ -17,6 +19,7 @@ from fastapi import (
 )
 from fastapi.responses import JSONResponse, Response
 from pydantic import BaseModel
+from utils.denoise import denoise_tensor
 from utils.picks import add_pick, delete_pick, list_picks, store
 from utils.utils import SegySectionReader, quantize_float32
 
@@ -45,6 +48,19 @@ class Pick(BaseModel):
         time: float
         key1_idx: int
         key1_byte: int
+
+
+class DenoiseRequest(BaseModel):
+        file_id: str
+        key1_idx: int
+        key1_byte: int = 189
+        key2_byte: int = 193
+        chunk_h: int = 128
+        overlap: int = 32
+        mask_ratio: float = 0.5
+        noise_std: float = 1.0
+        mask_noise_mode: Literal['replace', 'add'] = 'replace'
+        passes_batch: int = 4
 
 
 @router.get('/get_key1_values')
@@ -119,6 +135,39 @@ def get_section_bin(
             'shape': q.shape,
             'data': q.tobytes(),
         })
+        return Response(
+            gzip.compress(payload),
+            media_type='application/octet-stream',
+            headers={'Content-Encoding': 'gzip'},
+        )
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post('/denoise_section_bin')
+def denoise_section_bin(req: DenoiseRequest):
+    try:
+        reader = get_reader(req.file_id, req.key1_byte, req.key2_byte)
+        section = np.array(reader.get_section(req.key1_idx), dtype=np.float32)
+        xt = torch.from_numpy(section).unsqueeze(0).unsqueeze(0)
+        yt = denoise_tensor(
+            xt,
+            chunk_h=req.chunk_h,
+            overlap=req.overlap,
+            mask_ratio=req.mask_ratio,
+            noise_std=req.noise_std,
+            mask_noise_mode=req.mask_noise_mode,
+            passes_batch=req.passes_batch,
+        )
+        denoised = yt.squeeze(0).squeeze(0).numpy()
+        scale, q = quantize_float32(denoised)
+        payload = msgpack.packb(
+            {
+                'scale': scale,
+                'shape': q.shape,
+                'data': q.tobytes(),
+            }
+        )
         return Response(
             gzip.compress(payload),
             media_type='application/octet-stream',
