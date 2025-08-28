@@ -33,3 +33,4 @@ fastapi
 uvicorn[standard]
 python-multipart
 plotly
+monai
