@@ -96,6 +96,15 @@
     <label class="bpfParam">taper:<input type="number" id="taper" value="0.1" step="0.1" style="width:70px;"></label>
     <button id="bpfBtn" onclick="handleBandpass()">BPF（表示セクション）</button>
     <button id="bpfApplyBtn" onclick="applyBandpassBatch()">BPF（全体/共通）</button>
+    <label for="colormap">Colormap:</label>
+    <select id="colormap" onchange="onColormapChange()">
+      <option value="Greys">Greys</option>
+      <option value="RdBu">RdBu</option>
+      <option value="BWR">BWR</option>
+      <option value="Cividis">Cividis</option>
+      <option value="Viridis">Viridis</option>
+    </select>
+    <label><input type="checkbox" id="cmReverse" onchange="onColormapChange()">reverse</label>
   </div>
   <div id="plot" style="width: 100vw; height: calc(100vh - 100px);"></div>
   <dialog id="denoiseSettingsDialog">
@@ -156,6 +165,13 @@
     let isPickMode = false;
     let linePickStart = null;
     let deleteRangeStart = null;
+    const COLORMAPS = {
+      Greys: 'Greys',
+      RdBu: 'RdBu',
+      BWR: [[0, 'blue'], [0.5, 'white'], [1, 'red']],
+      Cividis: 'Cividis',
+      Viridis: 'Viridis',
+    };
 
     (function() {
       const saved = localStorage.getItem('denoise_params');
@@ -195,6 +211,19 @@
       }
     })();
 
+    (function() {
+      const sel = document.getElementById('colormap');
+      const chk = document.getElementById('cmReverse');
+      if (sel) {
+        const saved = localStorage.getItem('colormap');
+        if (saved) sel.value = saved;
+      }
+      if (chk) {
+        const savedRev = localStorage.getItem('cmReverse');
+        if (savedRev !== null) chk.checked = savedRev === 'true';
+      }
+    })();
+
     function getDenoiseParams() {
       return {
         mask_ratio: parseFloat(document.getElementById('mask_ratio').value),
@@ -218,6 +247,16 @@
       const val = document.getElementById('gain').value;
       document.getElementById('gain_display').textContent = `${parseFloat(val)}×`;
       localStorage.setItem('gain', val);
+      if (latestSeismicData) {
+        plotSeismicData(latestSeismicData, defaultDt, renderedStart, renderedEnd);
+      }
+    }
+
+    function onColormapChange() {
+      const sel = document.getElementById('colormap');
+      const chk = document.getElementById('cmReverse');
+      if (sel) localStorage.setItem('colormap', sel.value);
+      if (chk) localStorage.setItem('cmReverse', chk.checked);
       if (latestSeismicData) {
         plotSeismicData(latestSeismicData, defaultDt, renderedStart, renderedEnd);
       }
@@ -909,15 +948,21 @@
         const xVals = new Float32Array(nTracesDS);
         for (let i = 0; i < nTracesDS; i++) xVals[i] = startTrace + i * factor;
         downsampleFactor = factor;
+        const cmName = document.getElementById('colormap')?.value || 'Greys';
+        const reverse = document.getElementById('cmReverse')?.checked || false;
+        const cm = COLORMAPS[cmName] || 'Greys';
+        const isDiv = cmName === 'RdBu' || cmName === 'BWR';
         traces = [{
           type: 'heatmap',
           x: xVals,
           y: time,
           z: zData,
-          colorscale: 'Greys',
+          colorscale: cm,
+          reversescale: reverse,
           // ゲイン前のベース範囲を使うことで、ゲイン変更が可視的なコントラスト変化になる
           zmin: baseMin,
           zmax: baseMax,
+          ...(isDiv ? { zmid: 0 } : {}),
           showscale: false,
           hoverinfo: 'x+y',
           hovertemplate: '',
