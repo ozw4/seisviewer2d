@@ -1,14 +1,16 @@
+import os
+
 import numpy as np
 import segyio
 
 
-def quantize_float32(arr: np.ndarray, bits: int = 8):
-        max_abs = np.max(np.abs(arr))
-        if max_abs == 0:
-                max_abs = 1.0
-        scale = (1 << (bits - 1)) - 1
-        q = np.clip(np.round(arr / max_abs * scale), -scale, scale).astype(np.int8)
-        return scale, q
+def quantize_float32(arr: np.ndarray, bits: int = 8, fixed_scale: float | None = None):
+	qmax = (1 << (bits - 1)) - 1  # 127
+	# 環境変数で既定値を上書き可能。例: FIXED_INT8_SCALE=42.333
+	default = float(os.getenv('FIXED_INT8_SCALE', '42.333333'))
+	scale = float(fixed_scale) if fixed_scale is not None else default
+	q = np.clip(np.round(arr * scale), -qmax, qmax).astype(np.int8)
+	return scale, q
 
 
 class SegySectionReader:
@@ -47,9 +49,11 @@ class SegySectionReader:
 		with segyio.open(self.path, 'r', ignore_geometry=True) as f:
 			f.mmap()
 			traces = np.array([f.trace[i] for i in sorted_indices], dtype='float32')
-			max_abs = np.max(np.abs(traces), axis=1, keepdims=True)
-			max_abs[max_abs == 0] = 1.0
-			section = (traces / max_abs).tolist()
+			# --- z-score 正規化（トレース毎）: 平均0・標準偏差1 ---
+			mean = traces.mean(axis=1, keepdims=True)
+			std = traces.std(axis=1, keepdims=True)
+			std[std == 0] = 1.0  # 定常/ゼロトレース対策
+			section = ((traces - mean) / std).tolist()
 
 		# キャッシュに保存
 		self.section_cache[key1_val] = section
