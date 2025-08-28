@@ -1,6 +1,8 @@
 # endpoint.py
 import asyncio
 import gzip
+import hashlib
+import json
 import pathlib
 import threading
 from typing import Literal
@@ -30,6 +32,10 @@ UPLOAD_DIR.mkdir(exist_ok=True)
 
 cached_readers: dict[str, SegySectionReader] = {}
 SEGYS: dict[str, str] = {}
+
+# Private caches for denoised sections and asynchronous jobs
+denoise_cache: dict[tuple[str, int, str], bytes] = {}
+jobs: dict[str, dict[str, float | str]] = {}
 
 
 def get_reader(file_id: str, key1_byte: int, key2_byte: int) -> SegySectionReader:
@@ -61,6 +67,82 @@ class DenoiseRequest(BaseModel):
         noise_std: float = 1.0
         mask_noise_mode: Literal['replace', 'add'] = 'replace'
         passes_batch: int = 4
+
+
+class DenoiseApplyRequest(BaseModel):
+        file_id: str
+        scope: Literal['display', 'all_key1', 'by_header']
+        key1_idx: int | None = None
+        group_header_byte: int | None = None
+        key1_byte: int = 189
+        key2_byte: int = 193
+        chunk_h: int = 128
+        overlap: int = 32
+        mask_ratio: float = 0.5
+        noise_std: float = 1.0
+        mask_noise_mode: Literal['replace', 'add'] = 'replace'
+        passes_batch: int = 4
+
+
+def _run_denoise_job(job_id: str, req: DenoiseApplyRequest) -> None:
+        job = jobs[job_id]
+        try:
+                reader = get_reader(req.file_id, req.key1_byte, req.key2_byte)
+                if req.scope == 'display':
+                        if req.key1_idx is None:
+                                msg = 'key1_idx is required for display scope'
+                                raise ValueError(msg)
+                        key1_vals = [req.key1_idx]
+                elif req.scope == 'all_key1':
+                        key1_vals = reader.get_key1_values().tolist()
+                else:
+                        msg = 'by_header scope not implemented'
+                        raise ValueError(msg)
+                total = len(key1_vals) or 1
+                params = {
+                        'chunk_h': req.chunk_h,
+                        'overlap': req.overlap,
+                        'mask_ratio': req.mask_ratio,
+                        'noise_std': req.noise_std,
+                        'mask_noise_mode': req.mask_noise_mode,
+                        'passes_batch': req.passes_batch,
+                }
+                param_hash = hashlib.sha256(
+                        json.dumps(params, sort_keys=True).encode('utf-8')
+                ).hexdigest()
+                for idx, key1_val in enumerate(key1_vals):
+                        cache_key = (req.file_id, int(key1_val), param_hash)
+                        if cache_key in denoise_cache:
+                                job['progress'] = (idx + 1) / total
+                                continue
+                        section = np.array(
+                                reader.get_section(int(key1_val)), dtype=np.float32
+                        )
+                        xt = torch.from_numpy(section).unsqueeze(0).unsqueeze(0)
+                        yt = denoise_tensor(
+                                xt,
+                                chunk_h=req.chunk_h,
+                                overlap=req.overlap,
+                                mask_ratio=req.mask_ratio,
+                                noise_std=req.noise_std,
+                                mask_noise_mode=req.mask_noise_mode,
+                                passes_batch=req.passes_batch,
+                        )
+                        denoised = yt.squeeze(0).squeeze(0).numpy()
+                        scale, q = quantize_float32(denoised)
+                        payload = msgpack.packb(
+                                {
+                                        'scale': scale,
+                                        'shape': q.shape,
+                                        'data': q.tobytes(),
+                                }
+                        )
+                        denoise_cache[cache_key] = gzip.compress(payload)
+                        job['progress'] = (idx + 1) / total
+                job['status'] = 'done'
+        except Exception as e:
+                job['status'] = 'error'
+                job['message'] = str(e)
 
 
 @router.get('/get_key1_values')
@@ -175,6 +257,61 @@ def denoise_section_bin(req: DenoiseRequest):
         )
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post('/denoise_apply')
+def denoise_apply(req: DenoiseApplyRequest):
+    if req.scope == 'by_header':
+        raise HTTPException(status_code=400, detail='by_header scope not implemented')
+    job_id = str(uuid4())
+    jobs[job_id] = {'status': 'running', 'progress': 0.0, 'message': ''}
+    threading.Thread(target=_run_denoise_job, args=(job_id, req), daemon=True).start()
+    return {'job_id': job_id}
+
+
+@router.get('/denoise_job_status')
+def denoise_job_status(job_id: str = Query(...)):
+    job = jobs.get(job_id)
+    if job is None:
+        raise HTTPException(status_code=404, detail='Job ID not found')
+    return {
+        'status': job.get('status', 'unknown'),
+        'progress': job.get('progress', 0.0),
+        'message': job.get('message', ''),
+    }
+
+
+@router.get('/get_denoised_section_bin')
+def get_denoised_section_bin(
+    file_id: str = Query(...),
+    key1_idx: int = Query(...),
+    chunk_h: int = Query(128),
+    overlap: int = Query(32),
+    mask_ratio: float = Query(0.5),
+    noise_std: float = Query(1.0),
+    mask_noise_mode: Literal['replace', 'add'] = Query('replace'),
+    passes_batch: int = Query(4),
+):
+    params = {
+        'chunk_h': chunk_h,
+        'overlap': overlap,
+        'mask_ratio': mask_ratio,
+        'noise_std': noise_std,
+        'mask_noise_mode': mask_noise_mode,
+        'passes_batch': passes_batch,
+    }
+    param_hash = hashlib.sha256(
+        json.dumps(params, sort_keys=True).encode('utf-8')
+    ).hexdigest()
+    cache_key = (file_id, key1_idx, param_hash)
+    payload = denoise_cache.get(cache_key)
+    if payload is None:
+        raise HTTPException(status_code=404, detail='Section not processed')
+    return Response(
+        payload,
+        media_type='application/octet-stream',
+        headers={'Content-Encoding': 'gzip'},
+    )
 
 
 @router.post('/picks')
