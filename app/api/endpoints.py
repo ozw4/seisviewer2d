@@ -34,8 +34,9 @@ UPLOAD_DIR.mkdir(exist_ok=True)
 cached_readers: dict[str, SegySectionReader] = {}
 SEGYS: dict[str, str] = {}
 
-# Private caches for denoised sections and asynchronous jobs
+# Private caches for denoised sections, band-passed sections and asynchronous jobs
 denoise_cache: dict[tuple[str, int, str], bytes] = {}
+bandpass_cache: dict[tuple[str, int, str], bytes] = {}
 jobs: dict[str, dict[str, float | str]] = {}
 
 
@@ -60,6 +61,19 @@ class Pick(BaseModel):
 class BandpassRequest(BaseModel):
 	file_id: str
 	key1_idx: int
+	key1_byte: int = 189
+	key2_byte: int = 193
+	low_hz: float
+	high_hz: float
+	dt: float = 0.002
+	taper: float = 0.0
+
+
+class BandpassApplyRequest(BaseModel):
+	file_id: str
+	scope: Literal['display', 'all_key1', 'by_header']
+	key1_idx: int | None = None
+	group_header_byte: int | None = None
 	key1_byte: int = 189
 	key2_byte: int = 193
 	low_hz: float
@@ -148,6 +162,59 @@ def _run_denoise_job(job_id: str, req: DenoiseApplyRequest) -> None:
 				}
 			)
 			denoise_cache[cache_key] = gzip.compress(payload)
+			job['progress'] = (idx + 1) / total
+		job['status'] = 'done'
+	except Exception as e:
+		job['status'] = 'error'
+		job['message'] = str(e)
+
+
+def _run_bandpass_job(job_id: str, req: BandpassApplyRequest) -> None:
+	job = jobs[job_id]
+	try:
+		reader = get_reader(req.file_id, req.key1_byte, req.key2_byte)
+		if req.scope == 'display':
+			if req.key1_idx is None:
+				msg = 'key1_idx is required for display scope'
+				raise ValueError(msg)
+			key1_vals = [req.key1_idx]
+		elif req.scope == 'all_key1':
+			key1_vals = reader.get_key1_values().tolist()
+		else:
+			msg = 'by_header scope not implemented'
+			raise ValueError(msg)
+		total = len(key1_vals) or 1
+		params = {
+			'low_hz': req.low_hz,
+			'high_hz': req.high_hz,
+			'dt': req.dt,
+			'taper': req.taper,
+		}
+		param_hash = hashlib.sha256(
+			json.dumps(params, sort_keys=True).encode('utf-8')
+		).hexdigest()
+		for idx, key1_val in enumerate(key1_vals):
+			cache_key = (req.file_id, int(key1_val), param_hash)
+			if cache_key in bandpass_cache:
+				job['progress'] = (idx + 1) / total
+				continue
+			section = np.array(reader.get_section(int(key1_val)), dtype=np.float32)
+			filtered = bandpass_np(
+				section,
+				low_hz=req.low_hz,
+				high_hz=req.high_hz,
+				dt=req.dt,
+				taper=req.taper,
+			)
+			scale, q = quantize_float32(filtered)
+			payload = msgpack.packb(
+				{
+					'scale': scale,
+					'shape': q.shape,
+					'data': q.tobytes(),
+				}
+			)
+			bandpass_cache[cache_key] = gzip.compress(payload)
 			job['progress'] = (idx + 1) / total
 		job['status'] = 'done'
 	except Exception as e:
@@ -267,6 +334,52 @@ def bandpass_section_bin(req: BandpassRequest):
 		raise HTTPException(status_code=400, detail=str(e))
 	except Exception as e:
 		raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post('/bandpass_apply')
+def bandpass_apply(req: BandpassApplyRequest):
+	if req.scope == 'by_header':
+		raise HTTPException(status_code=400, detail='by_header scope not implemented')
+	job_id = str(uuid4())
+	jobs[job_id] = {'status': 'running', 'progress': 0.0, 'message': ''}
+	threading.Thread(target=_run_bandpass_job, args=(job_id, req), daemon=True).start()
+	return {'job_id': job_id}
+
+
+@router.get('/bandpass_job_status')
+def bandpass_job_status(job_id: str = Query(...)):
+	job = jobs.get(job_id)
+	if job is None:
+		raise HTTPException(status_code=404, detail='Job ID not found')
+	return {
+		'status': job.get('status', 'unknown'),
+		'progress': job.get('progress', 0.0),
+		'message': job.get('message', ''),
+	}
+
+
+@router.get('/get_bandpassed_section_bin')
+def get_bandpassed_section_bin(
+	file_id: str = Query(...),
+	key1_idx: int = Query(...),
+	low_hz: float = Query(...),
+	high_hz: float = Query(...),
+	dt: float = Query(0.002),
+	taper: float = Query(0.0),
+):
+	params = {'low_hz': low_hz, 'high_hz': high_hz, 'dt': dt, 'taper': taper}
+	param_hash = hashlib.sha256(
+		json.dumps(params, sort_keys=True).encode('utf-8')
+	).hexdigest()
+	cache_key = (file_id, key1_idx, param_hash)
+	payload = bandpass_cache.get(cache_key)
+	if payload is None:
+		raise HTTPException(status_code=404, detail='Section not processed')
+	return Response(
+		payload,
+		media_type='application/octet-stream',
+		headers={'Content-Encoding': 'gzip'},
+	)
 
 @router.post('/denoise_section_bin')
 def denoise_section_bin(req: DenoiseRequest):
