@@ -5,6 +5,7 @@ import hashlib
 import json
 import pathlib
 import threading
+from pathlib import Path
 from typing import Literal
 from uuid import uuid4
 
@@ -30,6 +31,16 @@ router = APIRouter()
 
 UPLOAD_DIR = pathlib.Path(__file__).parent / 'uploads'
 UPLOAD_DIR.mkdir(exist_ok=True)
+
+PROCESSED_DIR = UPLOAD_DIR / 'processed'
+DENOISE_DIR = PROCESSED_DIR / 'denoise'
+DENOISE_DIR.mkdir(parents=True, exist_ok=True)
+
+
+def _denoise_path(file_id: str, key1_idx: int, param_hash: str) -> Path:
+	safe_id = str(file_id).replace('/', '_')
+	return DENOISE_DIR / safe_id / param_hash / f'{key1_idx}.bin.gz'
+
 
 cached_readers: dict[str, SegySectionReader] = {}
 SEGYS: dict[str, str] = {}
@@ -161,7 +172,11 @@ def _run_denoise_job(job_id: str, req: DenoiseApplyRequest) -> None:
 					'data': q.tobytes(),
 				}
 			)
-			denoise_cache[cache_key] = gzip.compress(payload)
+			gz = gzip.compress(payload)
+			p = _denoise_path(req.file_id, int(key1_val), param_hash)
+			p.parent.mkdir(parents=True, exist_ok=True)
+			p.write_bytes(gz)
+			denoise_cache[cache_key] = gz
 			job['progress'] = (idx + 1) / total
 		job['status'] = 'done'
 	except Exception as e:
@@ -405,8 +420,25 @@ def denoise_section_bin(req: DenoiseRequest):
 				'data': q.tobytes(),
 			}
 		)
+		params = {
+			'chunk_h': req.chunk_h,
+			'overlap': req.overlap,
+			'mask_ratio': req.mask_ratio,
+			'noise_std': req.noise_std,
+			'mask_noise_mode': req.mask_noise_mode,
+			'passes_batch': req.passes_batch,
+		}
+		param_hash = hashlib.sha256(
+			json.dumps(params, sort_keys=True).encode('utf-8')
+		).hexdigest()
+		cache_key = (req.file_id, req.key1_idx, param_hash)
+		gz = gzip.compress(payload)
+		p = _denoise_path(req.file_id, req.key1_idx, param_hash)
+		p.parent.mkdir(parents=True, exist_ok=True)
+		p.write_bytes(gz)
+		denoise_cache[cache_key] = gz
 		return Response(
-			gzip.compress(payload),
+			gz,
 			media_type='application/octet-stream',
 			headers={'Content-Encoding': 'gzip'},
 		)
@@ -465,7 +497,12 @@ def get_denoised_section_bin(
 	cache_key = (file_id, key1_idx, param_hash)
 	payload = denoise_cache.get(cache_key)
 	if payload is None:
-		raise HTTPException(status_code=404, detail='Section not processed')
+		p = _denoise_path(file_id, key1_idx, param_hash)
+		if p.exists():
+			payload = p.read_bytes()
+			denoise_cache[(file_id, key1_idx, param_hash)] = payload
+		else:
+			raise HTTPException(status_code=404, detail='Section not processed')
 	return Response(
 		payload,
 		media_type='application/octet-stream',
