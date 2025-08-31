@@ -77,6 +77,14 @@
       <option value="common_shot">共通ショット</option>
       <option value="common_receiver">共通レシーバー</option>
     </select>
+    <label>適用ドメイン:
+      <select id="applyDomain">
+        <option value="current" selected>current</option>
+        <option value="other">other</option>
+      </select>
+    </label>
+    <label>other key1_byte:<input type="number" id="other_key1_byte" value="189" style="width:80px"></label>
+    <label>other key2_byte:<input type="number" id="other_key2_byte" value="193" style="width:80px"></label>
     <button id="openDenoiseDlgBtn" onclick="openDenoiseSettings()">ノイズ抑制パラメータ設定</button>
     <label class="denoiseParam">mask_ratio:<input type="number" id="mask_ratio" value="0.5" step="0.1" min="0" max="1" style="width:70px;"></label>
     <label class="denoiseParam">noise_std:<input type="number" id="noise_std" value="1" step="0.1" style="width:70px;"></label>
@@ -407,6 +415,13 @@
           key2_byte: currentKey2Byte,
           ...params,
         };
+        // domain selection for denoise batch
+        const applyDomain = document.getElementById('applyDomain')?.value || 'current';
+        body.apply_domain = applyDomain;
+        if (applyDomain === 'other') {
+          body.other_key1_byte = parseInt(document.getElementById('other_key1_byte').value);
+          body.other_key2_byte = parseInt(document.getElementById('other_key2_byte').value);
+        }
         if (scope !== 'all_key1') {
           body.key1_idx = key1Val;
           body.group_header_byte =

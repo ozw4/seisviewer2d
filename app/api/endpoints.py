@@ -70,6 +70,24 @@ def get_reader(file_id: str, key1_byte: int, key2_byte: int) -> SegySectionReade
 	return cached_readers[cache_key]
 
 
+def _enumerate_indices_sorted(reader: SegySectionReader) -> list[int]:
+	"""Return key1 indices (values) sorted by (key1, key2) when key2 is available,
+	otherwise in the original order.
+	"""
+	key1_vals = reader.get_key1_values().tolist()
+	get_k2 = getattr(reader, 'get_key2_values', None)
+	if callable(get_k2):
+		try:
+			k2 = get_k2().tolist()
+			pairs = list(enumerate(zip(key1_vals, k2)))  # Python <3.10 compatible
+			pairs.sort(key=lambda kv: (kv[1][0], kv[1][1]))
+			# We store denoise results by "key1 value" already, so return values:
+			return [key1_vals[i] for i, _ in pairs]
+		except Exception:
+			pass
+	return key1_vals
+
+
 class Pick(BaseModel):
 	file_id: str
 	trace: int
@@ -128,19 +146,27 @@ class DenoiseApplyRequest(BaseModel):
 	noise_std: float = 1.0
 	mask_noise_mode: Literal['replace', 'add'] = 'replace'
 	passes_batch: int = 4
+	apply_domain: Literal['current', 'other'] = 'current'
+	other_key1_byte: int | None = None
+	other_key2_byte: int | None = None
 
 
 def _run_denoise_job(job_id: str, req: DenoiseApplyRequest) -> None:
 	job = jobs[job_id]
 	try:
-		reader = get_reader(req.file_id, req.key1_byte, req.key2_byte)
+		if getattr(req, 'apply_domain', 'current') == 'other':
+			if req.other_key1_byte is None or req.other_key2_byte is None:
+				raise ValueError('other domain requires other_key1_byte and other_key2_byte')
+			reader = get_reader(req.file_id, req.other_key1_byte, req.other_key2_byte)
+		else:
+			reader = get_reader(req.file_id, req.key1_byte, req.key2_byte)
 		if req.scope == 'display':
 			if req.key1_idx is None:
 				msg = 'key1_idx is required for display scope'
 				raise ValueError(msg)
 			key1_vals = [req.key1_idx]
 		elif req.scope == 'all_key1':
-			key1_vals = reader.get_key1_values().tolist()
+			key1_vals = _enumerate_indices_sorted(reader)
 		else:
 			msg = 'by_header scope not implemented'
 			raise ValueError(msg)
