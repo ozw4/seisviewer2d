@@ -4,6 +4,7 @@ import gzip
 import hashlib
 import json
 import pathlib
+import shutil
 import threading
 from pathlib import Path
 from typing import Literal
@@ -36,17 +37,25 @@ PROCESSED_DIR = UPLOAD_DIR / 'processed'
 DENOISE_DIR = PROCESSED_DIR / 'denoise'
 DENOISE_DIR.mkdir(parents=True, exist_ok=True)
 
+LATEST_DIR = DENOISE_DIR / 'latest'
+LATEST_DIR.mkdir(parents=True, exist_ok=True)
+
 
 def _denoise_path(file_id: str, key1_idx: int, param_hash: str) -> Path:
 	safe_id = str(file_id).replace('/', '_')
 	return DENOISE_DIR / safe_id / param_hash / f'{key1_idx}.bin.gz'
 
 
+def _denoise_latest_path(file_id: str, key1_idx: int) -> Path:
+	safe_id = str(file_id).replace('/', '_')
+	return LATEST_DIR / safe_id / f'{key1_idx}.bin.gz'
+
+
 cached_readers: dict[str, SegySectionReader] = {}
 SEGYS: dict[str, str] = {}
 
 # Private caches for denoised sections, band-passed sections and asynchronous jobs
-denoise_cache: dict[tuple[str, int, str], bytes] = {}
+denoise_cache: dict[tuple, bytes] = {}
 bandpass_cache: dict[tuple[str, int, str], bytes] = {}
 jobs: dict[str, dict[str, float | str]] = {}
 
@@ -176,7 +185,20 @@ def _run_denoise_job(job_id: str, req: DenoiseApplyRequest) -> None:
 			p = _denoise_path(req.file_id, int(key1_val), param_hash)
 			p.parent.mkdir(parents=True, exist_ok=True)
 			p.write_bytes(gz)
+			p_latest = _denoise_latest_path(req.file_id, int(key1_val))
+			p_latest.parent.mkdir(parents=True, exist_ok=True)
+			tmp = p_latest.with_suffix('.tmp')
+			tmp.write_bytes(gz)
+			tmp.replace(p_latest)
 			denoise_cache[cache_key] = gz
+			denoise_cache[(req.file_id, int(key1_val))] = gz
+			try:
+				base = DENOISE_DIR / str(req.file_id).replace('/', '_')
+				for child in base.iterdir():
+					if child.is_dir() and child.name not in {param_hash, 'latest'}:
+						shutil.rmtree(child, ignore_errors=True)
+			except Exception:
+				pass
 			job['progress'] = (idx + 1) / total
 		job['status'] = 'done'
 	except Exception as e:
@@ -436,7 +458,20 @@ def denoise_section_bin(req: DenoiseRequest):
 		p = _denoise_path(req.file_id, req.key1_idx, param_hash)
 		p.parent.mkdir(parents=True, exist_ok=True)
 		p.write_bytes(gz)
+		p_latest = _denoise_latest_path(req.file_id, req.key1_idx)
+		p_latest.parent.mkdir(parents=True, exist_ok=True)
+		tmp = p_latest.with_suffix('.tmp')
+		tmp.write_bytes(gz)
+		tmp.replace(p_latest)
 		denoise_cache[cache_key] = gz
+		denoise_cache[(req.file_id, req.key1_idx)] = gz
+		try:
+			base = DENOISE_DIR / str(req.file_id).replace('/', '_')
+			for child in base.iterdir():
+				if child.is_dir() and child.name not in {param_hash, 'latest'}:
+					shutil.rmtree(child, ignore_errors=True)
+		except Exception:
+			pass
 		return Response(
 			gz,
 			media_type='application/octet-stream',
@@ -483,25 +518,33 @@ def get_denoised_section_bin(
 	mask_noise_mode: Literal['replace', 'add'] = Query('replace'),
 	passes_batch: int = Query(4),
 ):
-	params = {
-		'chunk_h': chunk_h,
-		'overlap': overlap,
-		'mask_ratio': mask_ratio,
-		'noise_std': noise_std,
-		'mask_noise_mode': mask_noise_mode,
-		'passes_batch': passes_batch,
-	}
-	param_hash = hashlib.sha256(
-		json.dumps(params, sort_keys=True).encode('utf-8')
-	).hexdigest()
-	cache_key = (file_id, key1_idx, param_hash)
-	payload = denoise_cache.get(cache_key)
+	cache_key_latest = (file_id, key1_idx)
+	payload = denoise_cache.get(cache_key_latest)
 	if payload is None:
-		p = _denoise_path(file_id, key1_idx, param_hash)
-		if p.exists():
-			payload = p.read_bytes()
-			denoise_cache[(file_id, key1_idx, param_hash)] = payload
-		else:
+		p_latest = _denoise_latest_path(file_id, key1_idx)
+		if p_latest.exists():
+			payload = p_latest.read_bytes()
+			denoise_cache[cache_key_latest] = payload
+	if payload is None:
+		params = {
+			'chunk_h': chunk_h,
+			'overlap': overlap,
+			'mask_ratio': mask_ratio,
+			'noise_std': noise_std,
+			'mask_noise_mode': mask_noise_mode,
+			'passes_batch': passes_batch,
+		}
+		param_hash = hashlib.sha256(
+			json.dumps(params, sort_keys=True).encode('utf-8')
+		).hexdigest()
+		cache_key = (file_id, key1_idx, param_hash)
+		payload = denoise_cache.get(cache_key)
+		if payload is None:
+			p = _denoise_path(file_id, key1_idx, param_hash)
+			if p.exists():
+				payload = p.read_bytes()
+				denoise_cache[(file_id, key1_idx, param_hash)] = payload
+		if payload is None:
 			raise HTTPException(status_code=404, detail='Section not processed')
 	return Response(
 		payload,
