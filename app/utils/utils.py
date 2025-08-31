@@ -1,4 +1,6 @@
+import json
 import os
+from pathlib import Path
 
 import numpy as np
 import segyio
@@ -14,51 +16,85 @@ def quantize_float32(arr: np.ndarray, bits: int = 8, fixed_scale: float | None =
 
 
 class SegySectionReader:
-	def __init__(self, path, key1_byte=189, key2_byte=193):
-		self.path = path
-		self.key1_byte = key1_byte
-		self.key2_byte = key2_byte
-		self.section_cache = {}  # ← sectionごとのキャッシュ
-		self._initialize_metadata()
+        def __init__(self, path, key1_byte=189, key2_byte=193):
+                self.path = Path(path)
+                self.key1_byte = key1_byte
+                self.key2_byte = key2_byte
+                self.section_cache: dict[int, list] = {}
+                self._load_or_build_cache()
 
-	def _initialize_metadata(self):
-		with segyio.open(self.path, 'r', ignore_geometry=True) as f:
-			f.mmap()
-			self.key1s = f.attributes(self.key1_byte)[:]
-			self.key2s = f.attributes(self.key2_byte)[:]
-		self.unique_key1 = np.unique(self.key1s)
+        def _load_or_build_cache(self) -> None:
+                cache_dir = self.path.parent
+                traces_path = cache_dir / 'traces.npy'
+                keys_path = cache_dir / 'keys.npz'
+                index_path = cache_dir / 'indexmap.json'
 
-	def get_key1_values(self):
-		return self.unique_key1
+                if traces_path.exists() and keys_path.exists() and index_path.exists():
+                        self.traces_mm = np.load(traces_path, mmap_mode='r')
+                        with np.load(keys_path) as npz:
+                                self.key1s = npz['key1s']
+                                self.key2s = npz['key2s']
+                                self.unique_key1 = npz['unique_key1']
+                                self.unique_key2 = npz['unique_key2']
+                        with open(index_path, encoding='utf-8') as f:
+                                self.indexmap = json.load(f)
+                        return
 
-	def get_section(self, key1_val):
-		# キャッシュにあれば返す
-		if key1_val in self.section_cache:
-			return self.section_cache[key1_val]
+                with segyio.open(self.path, 'r', ignore_geometry=True) as f:
+                        f.mmap()
+                        n_traces = len(f.trace)
+                        n_samples = f.trace[0].size
+                        arr = np.empty((n_traces, n_samples), dtype=np.float32)
+                        for i in range(n_traces):
+                                arr[i] = np.asarray(f.trace[i], dtype=np.float32)
+                        np.save(traces_path, arr)
+                        del arr
+                        key1s = f.attributes(self.key1_byte)[:]
+                        key2s = f.attributes(self.key2_byte)[:]
 
-		# なければSEGYから読み込む
-		indices = np.where(self.key1s == key1_val)[0]
-		print(len(indices), 'indices found for key1_val:', key1_val)
-		if len(indices) == 0:
-			raise ValueError(f'Key1 value {key1_val} not found')
+                unique_key1 = np.unique(key1s)
+                unique_key2 = np.unique(key2s)
+                by_key1 = {
+                        str(int(v)): np.where(key1s == v)[0].tolist() for v in unique_key1
+                }
+                with open(index_path, 'w', encoding='utf-8') as fw:
+                        json.dump({'by_key1': by_key1}, fw)
+                np.savez_compressed(
+                        keys_path,
+                        key1s=key1s,
+                        key2s=key2s,
+                        unique_key1=unique_key1,
+                        unique_key2=unique_key2,
+                )
 
-		# key2でソート
-		key2_vals = self.key2s[indices]
-		sorted_indices = indices[np.argsort(key2_vals)]
+                self.traces_mm = np.load(traces_path, mmap_mode='r')
+                self.key1s = key1s
+                self.key2s = key2s
+                self.unique_key1 = unique_key1
+                self.unique_key2 = unique_key2
+                self.indexmap = {'by_key1': by_key1}
 
-		with segyio.open(self.path, 'r', ignore_geometry=True) as f:
-			f.mmap()
-			traces = np.array([f.trace[i] for i in sorted_indices], dtype='float32')
-			# --- z-score 正規化（トレース毎）: 平均0・標準偏差1 ---
-			mean = traces.mean(axis=1, keepdims=True)
-			std = traces.std(axis=1, keepdims=True)
-			std[std == 0] = 1.0  # 定常/ゼロトレース対策
-			section = ((traces - mean) / std).tolist()
+        def get_key1_values(self):
+                return self.unique_key1
 
-		# キャッシュに保存
-		self.section_cache[key1_val] = section
-		return section
+        def get_section(self, key1_val):
+                if key1_val in self.section_cache:
+                        return self.section_cache[key1_val]
 
-	def preload_all_sections(self):
-		for key1_val in self.unique_key1:
-			self.get_section(key1_val)
+                idxs = self.indexmap['by_key1'].get(str(int(key1_val)))
+                if not idxs:
+                        raise ValueError(f'Key1 value {key1_val} not found')
+                traces = np.take(self.traces_mm, idxs, axis=0)
+                k2vals = np.take(self.key2s, idxs)
+                order = np.argsort(k2vals)
+                traces = traces[order]
+                mean = traces.mean(axis=1, keepdims=True)
+                std = traces.std(axis=1, keepdims=True)
+                std[std == 0] = 1.0
+                section = ((traces - mean) / std).tolist()
+                self.section_cache[key1_val] = section
+                return section
+
+        def preload_all_sections(self):
+                for key1_val in self.unique_key1:
+                        self.get_section(int(key1_val))

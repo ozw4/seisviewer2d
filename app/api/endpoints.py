@@ -30,8 +30,9 @@ from utils.utils import SegySectionReader, quantize_float32
 
 router = APIRouter()
 
-UPLOAD_DIR = pathlib.Path(__file__).parent / 'uploads'
-UPLOAD_DIR.mkdir(exist_ok=True)
+# Root directory for uploaded SEG-Y files and their caches
+UPLOAD_DIR = pathlib.Path('/workspace/app/upload')
+UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
 
 PROCESSED_DIR = UPLOAD_DIR / 'processed'
 DENOISE_DIR = PROCESSED_DIR / 'denoise'
@@ -271,32 +272,31 @@ def get_key1_values(
 
 @router.post('/upload_segy')
 async def upload_segy(
-	file: UploadFile = File(...),
-	key1_byte: int = Form(189),
-	key2_byte: int = Form(193),
+        file: UploadFile = File(...),
+        key1_byte: int = Form(189),
+        key2_byte: int = Form(193),
 ):
-	if not file.filename:
-		raise HTTPException(
-			status_code=400, detail='Uploaded file must have a filename'
-		)
-	print(f'Uploading file: {file.filename}')
-	ext = pathlib.Path(file.filename).suffix.lower()
-	file_id = str(uuid4())
-	dest_path = UPLOAD_DIR / f'{file_id}{ext}'
-	with open(dest_path, 'wb') as f:
-		f.write(await file.read())
+        if not file.filename:
+                raise HTTPException(
+                        status_code=400, detail='Uploaded file must have a filename'
+                )
+        print(f'Uploading file: {file.filename}')
+        name = Path(file.filename).name
+        stem = Path(file.filename).stem
+        dst_dir = UPLOAD_DIR / name
+        dst_dir.mkdir(parents=True, exist_ok=True)
+        dst_path = dst_dir / name
+        with open(dst_path, 'wb') as w:
+                shutil.copyfileobj(file.file, w)
 
-	SEGYS[file_id] = str(dest_path)
+        SEGYS[stem] = str(dst_path)
 
-	cache_key = f'{file_id}_{key1_byte}_{key2_byte}'
-	print(f'Creating cache key: {cache_key}')
+        cache_key = f'{stem}_{key1_byte}_{key2_byte}'
+        reader = SegySectionReader(str(dst_path), key1_byte, key2_byte)
+        cached_readers[cache_key] = reader
 
-	reader = SegySectionReader(str(dest_path), key1_byte, key2_byte)
-	cache_key = f'{file_id}_{key1_byte}_{key2_byte}'
-	cached_readers[cache_key] = reader
-
-	threading.Thread(target=reader.preload_all_sections, daemon=True).start()
-	return {'file_id': file_id}
+        threading.Thread(target=reader.preload_all_sections, daemon=True).start()
+        return {'file_id': stem}
 
 
 @router.get('/get_section')
