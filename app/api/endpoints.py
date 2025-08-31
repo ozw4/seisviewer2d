@@ -3,6 +3,7 @@ import asyncio
 import gzip
 import hashlib
 import json
+import os
 import pathlib
 import shutil
 import threading
@@ -31,7 +32,7 @@ from utils.utils import SegySectionReader, quantize_float32
 router = APIRouter()
 
 # Root directory for uploaded SEG-Y files and their caches
-UPLOAD_DIR = pathlib.Path('/workspace/app/upload')
+UPLOAD_DIR = pathlib.Path(os.getenv('UPLOAD_ROOT', '/workspace/app/upload'))
 UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
 
 PROCESSED_DIR = UPLOAD_DIR / 'processed'
@@ -281,12 +282,12 @@ async def upload_segy(
                         status_code=400, detail='Uploaded file must have a filename'
                 )
         print(f'Uploading file: {file.filename}')
-        name = Path(file.filename).name
-        stem = Path(file.filename).stem
-        dst_dir = UPLOAD_DIR / name
+        raw_name = Path(file.filename).name
+        stem = Path(raw_name).stem.lower()
+        dst_dir = UPLOAD_DIR / stem
         dst_dir.mkdir(parents=True, exist_ok=True)
-        dst_path = dst_dir / name
-        with open(dst_path, 'wb') as w:
+        dst_path = dst_dir / raw_name
+        with dst_path.open('wb') as w:
                 shutil.copyfileobj(file.file, w)
 
         SEGYS[stem] = str(dst_path)
@@ -295,7 +296,15 @@ async def upload_segy(
         reader = SegySectionReader(str(dst_path), key1_byte, key2_byte)
         cached_readers[cache_key] = reader
 
-        threading.Thread(target=reader.preload_all_sections, daemon=True).start()
+        base = Path(str(dst_path)).parent
+        traces = base / 'traces.npy'
+        keys = base / f'keys_k1_{key1_byte}_k2_{key2_byte}.npz'
+        index = base / f'indexmap_k1_{key1_byte}_k2_{key2_byte}.json'
+        if not (traces.exists() and keys.exists() and index.exists()):
+                threading.Thread(
+                        target=reader.preload_all_sections, daemon=True
+                ).start()
+
         return {'file_id': stem}
 
 

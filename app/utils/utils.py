@@ -26,8 +26,12 @@ class SegySectionReader:
         def _load_or_build_cache(self) -> None:
                 cache_dir = self.path.parent
                 traces_path = cache_dir / 'traces.npy'
-                keys_path = cache_dir / 'keys.npz'
-                index_path = cache_dir / 'indexmap.json'
+                keys_path = cache_dir / (
+			f'keys_k1_{self.key1_byte}_k2_{self.key2_byte}.npz'
+		)
+                index_path = cache_dir / (
+			f'indexmap_k1_{self.key1_byte}_k2_{self.key2_byte}.json'
+		)
 
                 if traces_path.exists() and keys_path.exists() and index_path.exists():
                         self.traces_mm = np.load(traces_path, mmap_mode='r')
