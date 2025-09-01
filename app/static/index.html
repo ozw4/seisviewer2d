@@ -151,11 +151,11 @@
     const defaultDt = 0.002;
     const PREFETCH_WIDTH = 3;   // ±10
     const FALLBACK_MAX = 8;  // API 無い場合
-    const HARD_LIMIT_BYTES = 1000 * 1024 * 1024; // 800MB
+    const HARD_LIMIT_BYTES = 512 * 1024 * 1024; // 512MB
 
-    const cache = new Map(); // key -> {scale, buf:Int8Array}
+    const cache = new Map(); // key -> { f32: Float32Array }
     const inflight = new Map();
-    const CACHE_LIMIT = 32;
+    const CACHE_LIMIT = 12;
     function cacheKey(val, mode) { return `${val}|${mode}`; }
     let sectionShape = null;
     let renderedStart = null;
@@ -395,7 +395,8 @@
         const bin = new Uint8Array(await res.arrayBuffer());
         const obj = msgpack.decode(bin);
         const int8 = new Int8Array(obj.data.buffer);
-        putCache(cacheKey(key1Val, 'den'), obj.scale, int8);
+        const f32  = Float32Array.from(int8, v => v / obj.scale);
+        putCacheF32(cacheKey(key1Val, 'den'), f32);
         sectionShape = obj.shape;
         await fetchAndPlot();
       } else {
@@ -448,7 +449,8 @@
       const bin = new Uint8Array(await res.arrayBuffer());
       const obj = msgpack.decode(bin);
       const int8 = new Int8Array(obj.data.buffer);
-      putCache(cacheKey(key1Val, 'filt'), obj.scale, int8);
+      const f32  = Float32Array.from(int8, v => v / obj.scale);
+      putCacheF32(cacheKey(key1Val, 'filt'), f32);
       sectionShape = obj.shape;
       await fetchAndPlot();
     }
@@ -499,19 +501,14 @@
       }
     }
 
-  function toFloat32(buf, scale) {
-    return Float32Array.from(buf, v => v / scale);
-  }
-  function putCache(key, scale, buf) {
+  function putCacheF32(key, f32) {
     if (cache.size >= CACHE_LIMIT) {
       const oldestKey = cache.keys().next().value;
       const old = cache.get(oldestKey);
-      if (old) { old.f32 = null; old.buf = null; }
+      if (old) old.f32 = null;
       cache.delete(oldestKey);
     }
-    const f32 = Float32Array.from(buf, v => v / scale);
-    cache.set(key, { scale, buf, f32 });
-    //cache.set(key, { scale, buf });
+    cache.set(key, { f32 });
 
     const canCheckMemory =
       performance.memory &&
@@ -532,7 +529,7 @@
     }
 
     if (used > HARD_LIMIT_BYTES) {
-      console.warn(`⚠ Memory limit exceeded! (${(used / 1024 / 1024).toFixed(1)} MB > 800 MB)`);
+      console.warn(`⚠ Memory limit exceeded! (${(used / 1024 / 1024).toFixed(1)} MB > 512 MB)`);
       let removed = 0;
       while (cache.size > 1) {
         const removedKey = cache.keys().next().value;
@@ -541,7 +538,6 @@
         // 🔽 メモリ解放を促すために参照を切る
         if (entry) {
           entry.f32 = null;
-          entry.buf = null;
         }
 
         cache.delete(removedKey);
@@ -557,7 +553,7 @@
       if (!cache.has(key)) return null;
       const entry = cache.get(key);
       cache.delete(key); cache.set(key, entry); // refresh LRU
-      return entry.f32;
+      return entry;
     }
 
     function updateKey1Display() {
@@ -602,6 +598,7 @@
       }
 
       function prefetchAround(centerIdx, mode) {
+        if (mode === 'denoised') return;
         for (const ctrl of inflight.values()) ctrl.abort();
         inflight.clear();
         const start = Math.max(0, centerIdx - PREFETCH_WIDTH);
@@ -674,7 +671,8 @@
               const bin = new Uint8Array(await res.arrayBuffer());
               const obj = msgpack.decode(bin);
               const int8 = new Int8Array(obj.data.buffer);
-              putCache(cacheKey(key1Val, fetchedMode), obj.scale, int8);
+              const f32  = Float32Array.from(int8, v => v / obj.scale);
+              putCacheF32(cacheKey(key1Val, fetchedMode), f32);
               if (!sectionShape) sectionShape = obj.shape;
             } catch (err) {
               if (err.name !== 'AbortError') {
@@ -753,21 +751,22 @@
     await fetchPicks();
 
     console.time('Cache lookup');
-    let f32 = null;
+    let hit = null;
     if (mode === 'raw') {
-      f32 = getCacheF32(cacheKey(key1Val, 'raw'));
+      hit = getCacheF32(cacheKey(key1Val, 'raw'));
     } else if (mode === 'denoised') {
-      f32 = getCacheF32(cacheKey(key1Val, 'den'));
+      hit = getCacheF32(cacheKey(key1Val, 'den'));
     } else if (mode === 'filtered') {
-      f32 = getCacheF32(cacheKey(key1Val, 'filt'));
+      hit = getCacheF32(cacheKey(key1Val, 'filt'));
     } else {
-      f32 = getCacheF32(cacheKey(key1Val, 'den')) ||
+      hit = getCacheF32(cacheKey(key1Val, 'den')) ||
             getCacheF32(cacheKey(key1Val, 'filt')) ||
             getCacheF32(cacheKey(key1Val, 'raw'));
     }
     console.timeEnd('Cache lookup');
 
     let traces;
+    let f32 = hit ? hit.f32 : null;
 
     if (f32) {
       console.time('Decode from cache');
@@ -843,13 +842,13 @@
       console.time('Decode & cache');
       const obj = msgpack.decode(bin);
       const int8 = new Int8Array(obj.data.buffer);
-      putCache(cacheKey(key1Val, fetchedMode), obj.scale, int8);
+      f32 = Float32Array.from(int8, v => v / obj.scale);
+      putCacheF32(cacheKey(key1Val, fetchedMode), f32);
       sectionShape = obj.shape;
-      const tmp = toFloat32(int8, obj.scale);
       const [nTraces, nSamples] = sectionShape;
       traces = new Array(nTraces);
       for (let i = 0; i < nTraces; i++) {
-        traces[i] = tmp.subarray(i * nSamples, (i + 1) * nSamples);
+        traces[i] = f32.subarray(i * nSamples, (i + 1) * nSamples);
       }
       console.timeEnd('Decode & cache');
       latestSeismicData = traces;

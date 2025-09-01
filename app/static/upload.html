@@ -92,7 +92,73 @@
     <span id="progress_text">0%</span>
   </div>
   <script>
-    document.getElementById('upload_btn').addEventListener('click', () => {
+    const progressBar = document.getElementById('upload_progress');
+    const progressText = document.getElementById('progress_text');
+
+    function handleSuccess(fileId, key1Byte, key2Byte) {
+      localStorage.setItem('file_id', fileId);
+      localStorage.setItem('key1_byte', key1Byte);
+      localStorage.setItem('key2_byte', key2Byte);
+      const params = new URLSearchParams({ file_id: fileId, key1_byte: key1Byte, key2_byte: key2Byte });
+      window.location.href = `/?${params.toString()}`;
+    }
+
+    async function openAfterConflict(originalName, key1Byte, key2Byte) {
+      const fd = new FormData();
+      fd.append('original_name', originalName);
+      fd.append('key1_byte', key1Byte);
+      fd.append('key2_byte', key2Byte);
+      try {
+        const res = await fetch('/open_segy', { method: 'POST', body: fd });
+        if (res.ok) {
+          const result = await res.json();
+          handleSuccess(result.file_id, key1Byte, key2Byte);
+        } else {
+          const text = await res.text().catch(() => '');
+          alert(text || 'Open failed');
+        }
+      } catch (err) {
+        alert('Open error occurred');
+      }
+    }
+
+    async function doUpload(file, key1Byte, key2Byte) {
+      return new Promise((resolve) => {
+        const formData = new FormData();
+        formData.append('file', file);
+        formData.append('key1_byte', key1Byte);
+        formData.append('key2_byte', key2Byte);
+        const xhr = new XMLHttpRequest();
+        xhr.open('POST', '/upload_segy', true);
+        xhr.upload.onprogress = function (e) {
+          if (e.lengthComputable) {
+            const percent = (e.loaded / e.total) * 100;
+            progressBar.value = percent;
+            progressText.innerText = `${percent.toFixed(1)}%`;
+          }
+        };
+        xhr.onload = async function () {
+          if (xhr.status === 200) {
+            const result = JSON.parse(xhr.responseText);
+            handleSuccess(result.file_id, key1Byte, key2Byte);
+            resolve();
+          } else if (xhr.status === 409) {
+            await openAfterConflict(file.name, key1Byte, key2Byte);
+            resolve();
+          } else {
+            alert('Upload failed');
+            resolve();
+          }
+        };
+        xhr.onerror = function () {
+          alert('Upload error occurred');
+          resolve();
+        };
+        xhr.send(formData);
+      });
+    }
+
+    document.getElementById('upload_btn').addEventListener('click', async () => {
       const fileInput = document.getElementById('upload_segy');
       const file = fileInput.files[0];
       if (!file) {
@@ -101,35 +167,26 @@
       }
       const key1Byte = document.getElementById('key1_byte').value;
       const key2Byte = document.getElementById('key2_byte').value;
-      const formData = new FormData();
-      formData.append('file', file);
-      formData.append('key1_byte', key1Byte);  // ✅ 追加
-      formData.append('key2_byte', key2Byte);  // ✅ 追加
-      const xhr = new XMLHttpRequest();
-      xhr.open('POST', '/upload_segy', true);
-      xhr.upload.onprogress = function (e) {
-        if (e.lengthComputable) {
-          const percent = (e.loaded / e.total) * 100;
-          document.getElementById('upload_progress').value = percent;
-          document.getElementById('progress_text').innerText = `${percent.toFixed(1)}%`;
-        }
-      };
-      xhr.onload = function () {
-        if (xhr.status === 200) {
-          const result = JSON.parse(xhr.responseText);
-          localStorage.setItem('file_id', result.file_id);
-          localStorage.setItem('key1_byte', key1Byte);
-          localStorage.setItem('key2_byte', key2Byte);
-          const params = new URLSearchParams({ file_id: result.file_id, key1_byte: key1Byte, key2_byte: key2Byte });
-          window.location.href = `/?${params.toString()}`;
+      progressBar.value = 0;
+      progressText.innerText = '0%';
+      const fdOpen = new FormData();
+      fdOpen.append('original_name', file.name);
+      fdOpen.append('key1_byte', key1Byte);
+      fdOpen.append('key2_byte', key2Byte);
+      try {
+        const res = await fetch('/open_segy', { method: 'POST', body: fdOpen });
+        if (res.ok) {
+          const result = await res.json();
+          handleSuccess(result.file_id, key1Byte, key2Byte);
+        } else if (res.status === 404) {
+          await doUpload(file, key1Byte, key2Byte);
         } else {
-          alert('Upload failed');
+          const text = await res.text().catch(() => '');
+          alert(text || 'Open failed');
         }
-      };
-      xhr.onerror = function () {
-        alert('Upload error occurred');
-      };
-      xhr.send(formData);
+      } catch (err) {
+        alert('Open error occurred');
+      }
     });
   </script>
 </body>
