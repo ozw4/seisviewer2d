@@ -67,56 +67,56 @@ class SegySectionReader:
 
 
 class TraceStoreSectionReader:
-        def __init__(
-                self, store_dir: str | Path, key1_byte: int = 189, key2_byte: int = 193
-        ):
-                self.store_dir = Path(store_dir)
-                self.key1_byte = key1_byte
-                self.key2_byte = key2_byte
-                meta_path = self.store_dir / 'meta.json'
-                self.meta = json.loads(meta_path.read_text())
-                self.traces = np.load(self.store_dir / 'traces.npy', mmap_mode='r')
-                self.section_cache: dict[int, list[list[float]]] = {}
+	def __init__(
+		self, store_dir: str | Path, key1_byte: int = 189, key2_byte: int = 193
+	):
+		self.store_dir = Path(store_dir)
+		self.key1_byte = key1_byte
+		self.key2_byte = key2_byte
+		meta_path = self.store_dir / 'meta.json'
+		self.meta = json.loads(meta_path.read_text())
+		self.traces = np.load(self.store_dir / 'traces.npy', mmap_mode='r')
+		self.section_cache: dict[int, list[list[float]]] = {}
 
-        def _header_path(self, byte: int) -> Path:
-                return self.store_dir / f'headers_byte_{byte}.npy'
+	def _header_path(self, byte: int) -> Path:
+		return self.store_dir / f'headers_byte_{byte}.npy'
 
-        def ensure_header(self, byte: int) -> np.ndarray:
-                p = self._header_path(byte)
-                if p.exists():
-                        return np.load(p, mmap_mode='r')
-                print(f'Extracting header byte {byte} for {self.store_dir}')
-                with segyio.open(
-                        self.meta['original_segy_path'], 'r', ignore_geometry=True
-                ) as f:
-                        f.mmap()
-                        vals = f.attributes(byte)[:].astype(np.int32)
-                tmp = p.with_suffix('.tmp')
-                np.save(tmp, vals)
-                os.replace(tmp, p)
-                return np.load(p, mmap_mode='r')
+	def ensure_header(self, byte: int) -> np.ndarray:
+		p = self._header_path(byte)
+		if p.exists():
+			return np.load(p, mmap_mode='r')
+		print(f'Extracting header byte {byte} for {self.store_dir}')
+		with segyio.open(
+			self.meta['original_segy_path'], 'r', ignore_geometry=True
+		) as f:
+			f.mmap()
+			vals = f.attributes(byte)[:].astype(np.int32)
+		tmp = p.with_name(p.stem + '_tmp.npy')
+		np.save(tmp, vals)
+		os.replace(tmp, p)
+		return np.load(p, mmap_mode='r')
 
-        def _get_header(self, byte: int) -> np.ndarray:
-                return self.ensure_header(byte)
+	def _get_header(self, byte: int) -> np.ndarray:
+		return self.ensure_header(byte)
 
-        def get_key1_values(self):
-                key1s = self._get_header(self.key1_byte)
-                return np.unique(key1s)
+	def get_key1_values(self):
+		key1s = self._get_header(self.key1_byte)
+		return np.unique(key1s)
 
-        def get_section(self, key1_val: int):
-                if key1_val in self.section_cache:
-                        return self.section_cache[key1_val]
-                key1s = self._get_header(self.key1_byte)
-                indices = np.where(key1s == key1_val)[0]
-                print(len(indices), 'indices found for key1_val:', key1_val)
-                if len(indices) == 0:
-                        raise ValueError(f'Key1 value {key1_val} not found')
-                key2s = self._get_header(self.key2_byte)[indices]
-                sorted_indices = indices[np.argsort(key2s, kind='stable')]
-                section = self.traces[sorted_indices].tolist()
-                self.section_cache[key1_val] = section
-                return section
+	def get_section(self, key1_val: int):
+		if key1_val in self.section_cache:
+			return self.section_cache[key1_val]
+		key1s = self._get_header(self.key1_byte)
+		indices = np.where(key1s == key1_val)[0]
+		print(len(indices), 'indices found for key1_val:', key1_val)
+		if len(indices) == 0:
+			raise ValueError(f'Key1 value {key1_val} not found')
+		key2s = self._get_header(self.key2_byte)[indices]
+		sorted_indices = indices[np.argsort(key2s, kind='stable')]
+		section = self.traces[sorted_indices].tolist()
+		self.section_cache[key1_val] = section
+		return section
 
-        def preload_all_sections(self):
-                self._get_header(self.key1_byte)
-                self._get_header(self.key2_byte)
+	def preload_all_sections(self):
+		self._get_header(self.key1_byte)
+		self._get_header(self.key2_byte)
