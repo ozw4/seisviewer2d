@@ -26,6 +26,7 @@ Thumbs.db
 *.sgy
 *.segy
 *.pth
+*.gz
 
 data/
 output/

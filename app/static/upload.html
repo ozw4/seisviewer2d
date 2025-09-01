@@ -2,7 +2,7 @@
 <html lang="en">
 <meta charset="utf-8" />
 <head>
-  <title>Upload SEG-Y</title>
+  <title>Open SEG-Y</title>
   <style>
     body {
       margin: 0;
@@ -31,7 +31,7 @@
   </style>
 </head>
 <body>
-  <header>Upload SEG-Y</header>
+  <header>Open SEG-Y</header>
   <div id="controls">
     <label>
       SEG-Y file:
@@ -87,42 +87,49 @@
         <option value="197">SHOT_POINT (byte 197)</option>
       </select>
     </label>
-    <button id="upload_btn">Upload</button>
+    <button id="upload_btn">Open</button>
     <progress id="upload_progress" value="0" max="100" style="width: 200px;"></progress>
     <span id="progress_text">0%</span>
   </div>
   <script>
     const progressBar = document.getElementById('upload_progress');
     const progressText = document.getElementById('progress_text');
+    const uploadBtn = document.getElementById('upload_btn');
+    const key1Select = document.getElementById('key1_byte');
+    const key2Select = document.getElementById('key2_byte');
 
-    function handleSuccess(fileId, key1Byte, key2Byte) {
+    const savedKey1 = localStorage.getItem('last_key1_byte');
+    if (savedKey1) key1Select.value = savedKey1;
+    const savedKey2 = localStorage.getItem('last_key2_byte');
+    if (savedKey2) key2Select.value = savedKey2;
+
+    const lastName = localStorage.getItem('last_original_name');
+    if (lastName) {
+      progressText.innerText = `前回のデータ: ${lastName}`;
+    } else {
+      progressText.innerText = '前回のデータ: ありません';
+    }
+
+    function handleSuccess(fileId, originalName, key1Byte, key2Byte) {
       localStorage.setItem('file_id', fileId);
       localStorage.setItem('key1_byte', key1Byte);
       localStorage.setItem('key2_byte', key2Byte);
+      localStorage.setItem('last_original_name', originalName);
+      localStorage.setItem('last_key1_byte', key1Byte);
+      localStorage.setItem('last_key2_byte', key2Byte);
       const params = new URLSearchParams({ file_id: fileId, key1_byte: key1Byte, key2_byte: key2Byte });
       window.location.href = `/?${params.toString()}`;
     }
 
-    async function openAfterConflict(originalName, key1Byte, key2Byte) {
+    async function openSegy(originalName, key1Byte, key2Byte) {
       const fd = new FormData();
       fd.append('original_name', originalName);
       fd.append('key1_byte', key1Byte);
       fd.append('key2_byte', key2Byte);
-      try {
-        const res = await fetch('/open_segy', { method: 'POST', body: fd });
-        if (res.ok) {
-          const result = await res.json();
-          handleSuccess(result.file_id, key1Byte, key2Byte);
-        } else {
-          const text = await res.text().catch(() => '');
-          alert(text || 'Open failed');
-        }
-      } catch (err) {
-        alert('Open error occurred');
-      }
+      return fetch('/open_segy', { method: 'POST', body: fd });
     }
 
-    async function doUpload(file, key1Byte, key2Byte) {
+    async function uploadSegy(file, key1Byte, key2Byte) {
       return new Promise((resolve) => {
         const formData = new FormData();
         formData.append('file', file);
@@ -140,15 +147,24 @@
         xhr.onload = async function () {
           if (xhr.status === 200) {
             const result = JSON.parse(xhr.responseText);
-            handleSuccess(result.file_id, key1Byte, key2Byte);
-            resolve();
+            handleSuccess(result.file_id, file.name, key1Byte, key2Byte);
           } else if (xhr.status === 409) {
-            await openAfterConflict(file.name, key1Byte, key2Byte);
-            resolve();
+            try {
+              const res = await openSegy(file.name, key1Byte, key2Byte);
+              if (res.ok) {
+                const result = await res.json();
+                handleSuccess(result.file_id, file.name, key1Byte, key2Byte);
+              } else {
+                const text = await res.text().catch(() => '');
+                alert(text || 'Open failed');
+              }
+            } catch (err) {
+              alert('Open error occurred');
+            }
           } else {
             alert('Upload failed');
-            resolve();
           }
+          resolve();
         };
         xhr.onerror = function () {
           alert('Upload error occurred');
@@ -158,34 +174,46 @@
       });
     }
 
-    document.getElementById('upload_btn').addEventListener('click', async () => {
-      const fileInput = document.getElementById('upload_segy');
-      const file = fileInput.files[0];
-      if (!file) {
-        alert('Please select a file');
-        return;
-      }
-      const key1Byte = document.getElementById('key1_byte').value;
-      const key2Byte = document.getElementById('key2_byte').value;
+    uploadBtn.addEventListener('click', async () => {
+      uploadBtn.disabled = true;
+      const file = document.getElementById('upload_segy').files[0];
+      const key1Byte = key1Select.value;
+      const key2Byte = key2Select.value;
       progressBar.value = 0;
       progressText.innerText = '0%';
-      const fdOpen = new FormData();
-      fdOpen.append('original_name', file.name);
-      fdOpen.append('key1_byte', key1Byte);
-      fdOpen.append('key2_byte', key2Byte);
       try {
-        const res = await fetch('/open_segy', { method: 'POST', body: fdOpen });
-        if (res.ok) {
-          const result = await res.json();
-          handleSuccess(result.file_id, key1Byte, key2Byte);
-        } else if (res.status === 404) {
-          await doUpload(file, key1Byte, key2Byte);
+        if (file) {
+          const res = await openSegy(file.name, key1Byte, key2Byte);
+          if (res.ok) {
+            const result = await res.json();
+            handleSuccess(result.file_id, file.name, key1Byte, key2Byte);
+          } else if (res.status === 404) {
+            await uploadSegy(file, key1Byte, key2Byte);
+          } else {
+            const text = await res.text().catch(() => '');
+            alert(text || 'Open failed');
+          }
         } else {
-          const text = await res.text().catch(() => '');
-          alert(text || 'Open failed');
+          const lastName = localStorage.getItem('last_original_name');
+          if (!lastName) {
+            alert('存在しません。ファイルを選んでアップロードしてください.');
+          } else {
+            const res = await openSegy(lastName, key1Byte, key2Byte);
+            if (res.ok) {
+              const result = await res.json();
+              handleSuccess(result.file_id, lastName, key1Byte, key2Byte);
+            } else if (res.status === 404) {
+              alert('存在しません。ファイルを選んでアップロードしてください.');
+            } else {
+              const text = await res.text().catch(() => '');
+              alert(text || 'Open failed');
+            }
+          }
         }
       } catch (err) {
         alert('Open error occurred');
+      } finally {
+        uploadBtn.disabled = false;
       }
     });
   </script>
