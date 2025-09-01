@@ -19,6 +19,10 @@ ruff.toml            # Ruff linter settings
 - `GET /get_key1_values`: list available values for the first key.
 - `GET /get_section` and `GET /get_section_bin`: fetch normalized traces for a given `key1` index (JSON or binary).
 
+## Keyboard Shortcuts
+
+- `N`: Toggle between raw and denoised display modes.
+
 ## Development
 1. Install dependencies (FastAPI, Uvicorn, NumPy, segyio, msgpack, etc.).
 2. Launch the server: `uvicorn app.main:app --reload`.

@@ -1160,6 +1160,22 @@
     }
 
     window.addEventListener('DOMContentLoaded', loadSettings);
+
+    // Toggle between raw and denoised displays with the "n" key
+    window.addEventListener('keydown', (e) => {
+        if (
+          e.key.toLowerCase() === 'n' &&
+          !e.ctrlKey &&
+          !e.altKey &&
+          !e.metaKey &&
+          !['INPUT', 'SELECT', 'TEXTAREA'].includes(document.activeElement.tagName)
+        ) {
+          const sel = document.getElementById('displayMode');
+          sel.value = sel.value === 'denoised' ? 'raw' : 'denoised';
+          fetchAndPlot();
+        }
+      });
+
     window.addEventListener('keyup', (e) => {
         if (e.key === 'Shift') {
           linePickStart = null;
