@@ -278,12 +278,38 @@ def _run_bandpass_job(job_id: str, req: BandpassApplyRequest) -> None:
 
 @router.get('/get_key1_values')
 def get_key1_values(
-	file_id: str = Query(...),
-	key1_byte: int = Query(189),
-	key2_byte: int = Query(193),
+        file_id: str = Query(...),
+        key1_byte: int = Query(189),
+        key2_byte: int = Query(193),
 ):
-	reader = get_reader(file_id, key1_byte, key2_byte)
-	return JSONResponse(content={'values': reader.get_key1_values().tolist()})
+        reader = get_reader(file_id, key1_byte, key2_byte)
+        return JSONResponse(content={'values': reader.get_key1_values().tolist()})
+
+
+@router.post('/open_segy')
+async def open_segy(
+        original_name: str = Form(...),
+        key1_byte: int = Form(189),
+        key2_byte: int = Form(193),
+):
+        safe_name = re.sub(r'[^A-Za-z0-9_.-]', '_', original_name)
+        store_dir = TRACE_DIR / safe_name
+        meta_path = store_dir / 'meta.json'
+        if not meta_path.exists():
+                raise HTTPException(
+                        status_code=404,
+                        detail=f'Trace store not found for {original_name}',
+                )
+        print(f'Opening existing trace store for {original_name}')
+        file_id = str(uuid4())
+        reader = TraceStoreSectionReader(store_dir, key1_byte, key2_byte)
+        SEGYS[file_id] = str(store_dir)
+        cache_key = f'{file_id}_{key1_byte}_{key2_byte}'
+        cached_readers[cache_key] = reader
+        threading.Thread(target=reader.preload_all_sections, daemon=True).start()
+        for b in {key1_byte, key2_byte}:
+                threading.Thread(target=reader.ensure_header, args=(b,), daemon=True).start()
+        return {'file_id': file_id, 'reused_trace_store': True}
 
 
 @router.post('/upload_segy')
