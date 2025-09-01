@@ -3,13 +3,18 @@ import asyncio
 import gzip
 import hashlib
 import json
+import os
 import pathlib
+import re
+import shutil
 import threading
+from pathlib import Path
 from typing import Literal
 from uuid import uuid4
 
 import msgpack
 import numpy as np
+import segyio
 import torch
 from fastapi import (
 	APIRouter,
@@ -24,30 +29,62 @@ from pydantic import BaseModel
 from utils.bandpass import bandpass_np
 from utils.denoise import denoise_tensor
 from utils.picks import add_pick, delete_pick, list_picks, store
-from utils.utils import SegySectionReader, quantize_float32
+from utils.utils import (
+        SegySectionReader,
+        TraceStoreSectionReader,
+        quantize_float32,
+)
 
 router = APIRouter()
 
 UPLOAD_DIR = pathlib.Path(__file__).parent / 'uploads'
 UPLOAD_DIR.mkdir(exist_ok=True)
 
-cached_readers: dict[str, SegySectionReader] = {}
+PROCESSED_DIR = UPLOAD_DIR / 'processed'
+DENOISE_DIR = PROCESSED_DIR / 'denoise'
+DENOISE_DIR.mkdir(parents=True, exist_ok=True)
+
+TRACE_DIR = PROCESSED_DIR / 'traces'
+TRACE_DIR.mkdir(parents=True, exist_ok=True)
+
+LATEST_DIR = DENOISE_DIR / 'latest'
+LATEST_DIR.mkdir(parents=True, exist_ok=True)
+
+
+def _denoise_path(file_id: str, key1_idx: int, param_hash: str) -> Path:
+	safe_id = str(file_id).replace('/', '_')
+	return DENOISE_DIR / safe_id / param_hash / f'{key1_idx}.bin.gz'
+
+
+def _denoise_latest_path(file_id: str, key1_idx: int) -> Path:
+	safe_id = str(file_id).replace('/', '_')
+	return LATEST_DIR / safe_id / f'{key1_idx}.bin.gz'
+
+
+cached_readers: dict[str, SegySectionReader | TraceStoreSectionReader] = {}
 SEGYS: dict[str, str] = {}
 
 # Private caches for denoised sections, band-passed sections and asynchronous jobs
-denoise_cache: dict[tuple[str, int, str], bytes] = {}
+denoise_cache: dict[tuple, bytes] = {}
 bandpass_cache: dict[tuple[str, int, str], bytes] = {}
 jobs: dict[str, dict[str, float | str]] = {}
 
 
-def get_reader(file_id: str, key1_byte: int, key2_byte: int) -> SegySectionReader:
-	cache_key = f'{file_id}_{key1_byte}_{key2_byte}'
-	if cache_key not in cached_readers:
-		if file_id not in SEGYS:
-			raise HTTPException(status_code=404, detail='File ID not found')
-		path = SEGYS[file_id]
-		cached_readers[cache_key] = SegySectionReader(path, key1_byte, key2_byte)
-	return cached_readers[cache_key]
+def get_reader(
+        file_id: str, key1_byte: int, key2_byte: int
+) -> SegySectionReader | TraceStoreSectionReader:
+        cache_key = f'{file_id}_{key1_byte}_{key2_byte}'
+        if cache_key not in cached_readers:
+                if file_id not in SEGYS:
+                        raise HTTPException(status_code=404, detail='File ID not found')
+                path = SEGYS[file_id]
+                p = Path(path)
+                if p.is_dir():
+                        reader = TraceStoreSectionReader(p, key1_byte, key2_byte)
+                else:
+                        reader = SegySectionReader(path, key1_byte, key2_byte)
+                cached_readers[cache_key] = reader
+        return cached_readers[cache_key]
 
 
 class Pick(BaseModel):
@@ -161,7 +198,24 @@ def _run_denoise_job(job_id: str, req: DenoiseApplyRequest) -> None:
 					'data': q.tobytes(),
 				}
 			)
-			denoise_cache[cache_key] = gzip.compress(payload)
+			gz = gzip.compress(payload)
+			p = _denoise_path(req.file_id, int(key1_val), param_hash)
+			p.parent.mkdir(parents=True, exist_ok=True)
+			p.write_bytes(gz)
+			p_latest = _denoise_latest_path(req.file_id, int(key1_val))
+			p_latest.parent.mkdir(parents=True, exist_ok=True)
+			tmp = p_latest.with_suffix('.tmp')
+			tmp.write_bytes(gz)
+			tmp.replace(p_latest)
+			denoise_cache[cache_key] = gz
+			denoise_cache[(req.file_id, int(key1_val))] = gz
+			try:
+				base = DENOISE_DIR / str(req.file_id).replace('/', '_')
+				for child in base.iterdir():
+					if child.is_dir() and child.name not in {param_hash, 'latest'}:
+						shutil.rmtree(child, ignore_errors=True)
+			except Exception:
+				pass
 			job['progress'] = (idx + 1) / total
 		job['status'] = 'done'
 	except Exception as e:
@@ -224,42 +278,112 @@ def _run_bandpass_job(job_id: str, req: BandpassApplyRequest) -> None:
 
 @router.get('/get_key1_values')
 def get_key1_values(
-	file_id: str = Query(...),
-	key1_byte: int = Query(189),
-	key2_byte: int = Query(193),
+        file_id: str = Query(...),
+        key1_byte: int = Query(189),
+        key2_byte: int = Query(193),
 ):
-	reader = get_reader(file_id, key1_byte, key2_byte)
-	return JSONResponse(content={'values': reader.get_key1_values().tolist()})
+        reader = get_reader(file_id, key1_byte, key2_byte)
+        return JSONResponse(content={'values': reader.get_key1_values().tolist()})
+
+
+@router.post('/open_segy')
+async def open_segy(
+        original_name: str = Form(...),
+        key1_byte: int = Form(189),
+        key2_byte: int = Form(193),
+):
+        safe_name = re.sub(r'[^A-Za-z0-9_.-]', '_', original_name)
+        store_dir = TRACE_DIR / safe_name
+        meta_path = store_dir / 'meta.json'
+        if not meta_path.exists():
+                raise HTTPException(
+                        status_code=404,
+                        detail=f'Trace store not found for {original_name}',
+                )
+        print(f'Opening existing trace store for {original_name}')
+        file_id = str(uuid4())
+        reader = TraceStoreSectionReader(store_dir, key1_byte, key2_byte)
+        SEGYS[file_id] = str(store_dir)
+        cache_key = f'{file_id}_{key1_byte}_{key2_byte}'
+        cached_readers[cache_key] = reader
+        threading.Thread(target=reader.preload_all_sections, daemon=True).start()
+        for b in {key1_byte, key2_byte}:
+                threading.Thread(target=reader.ensure_header, args=(b,), daemon=True).start()
+        return {'file_id': file_id, 'reused_trace_store': True}
 
 
 @router.post('/upload_segy')
 async def upload_segy(
-	file: UploadFile = File(...),
-	key1_byte: int = Form(189),
-	key2_byte: int = Form(193),
+        file: UploadFile = File(...),
+        key1_byte: int = Form(189),
+        key2_byte: int = Form(193),
 ):
-	if not file.filename:
-		raise HTTPException(
-			status_code=400, detail='Uploaded file must have a filename'
-		)
-	print(f'Uploading file: {file.filename}')
-	ext = pathlib.Path(file.filename).suffix.lower()
-	file_id = str(uuid4())
-	dest_path = UPLOAD_DIR / f'{file_id}{ext}'
-	with open(dest_path, 'wb') as f:
-		f.write(await file.read())
+        if not file.filename:
+                raise HTTPException(
+                        status_code=400, detail='Uploaded file must have a filename'
+                )
+        print(f'Uploading file: {file.filename}')
+        safe_name = re.sub(r'[^A-Za-z0-9_.-]', '_', file.filename)
+        store_dir = TRACE_DIR / safe_name
+        meta_path = store_dir / 'meta.json'
+        file_id = str(uuid4())
 
-	SEGYS[file_id] = str(dest_path)
+        if meta_path.exists():
+                print(f'Reusing trace store for {file.filename}')
+                reader = TraceStoreSectionReader(store_dir, key1_byte, key2_byte)
+                SEGYS[file_id] = str(store_dir)
+                cache_key = f'{file_id}_{key1_byte}_{key2_byte}'
+                cached_readers[cache_key] = reader
+                threading.Thread(target=reader.preload_all_sections, daemon=True).start()
+                for b in {key1_byte, key2_byte}:
+                        threading.Thread(
+                                target=reader.ensure_header, args=(b,), daemon=True
+                        ).start()
+                return {'file_id': file_id, 'reused_trace_store': True}
 
-	cache_key = f'{file_id}_{key1_byte}_{key2_byte}'
-	print(f'Creating cache key: {cache_key}')
+        raw_path = UPLOAD_DIR / safe_name
+        with open(raw_path, 'wb') as f:
+                f.write(await file.read())
+        store_dir.mkdir(parents=True, exist_ok=True)
+        traces_tmp = store_dir / 'traces.npy.tmp'
+        with segyio.open(raw_path, 'r', ignore_geometry=True) as segy:
+                segy.mmap()
+                n_traces = segy.tracecount
+                n_samples = len(segy.trace[0])
+                mm = np.lib.format.open_memmap(
+                        traces_tmp,
+                        mode='w+',
+                        dtype=np.float32,
+                        shape=(n_traces, n_samples),
+                )
+                for i in range(n_traces):
+                        tr = segy.trace[i].astype(np.float32)
+                        mean = tr.mean()
+                        std = tr.std()
+                        if std == 0:
+                                std = 1.0
+                        mm[i] = (tr - mean) / std
+                del mm
+        os.replace(traces_tmp, store_dir / 'traces.npy')
+        meta = {
+                'n_traces': int(n_traces),
+                'n_samples': int(n_samples),
+                'original_segy_path': str(raw_path),
+                'version': 1,
+                'normalized': True,
+        }
+        tmp_meta = store_dir / 'meta.json.tmp'
+        tmp_meta.write_text(json.dumps(meta))
+        os.replace(tmp_meta, meta_path)
 
-	reader = SegySectionReader(str(dest_path), key1_byte, key2_byte)
-	cache_key = f'{file_id}_{key1_byte}_{key2_byte}'
-	cached_readers[cache_key] = reader
-
-	threading.Thread(target=reader.preload_all_sections, daemon=True).start()
-	return {'file_id': file_id}
+        reader = TraceStoreSectionReader(store_dir, key1_byte, key2_byte)
+        SEGYS[file_id] = str(store_dir)
+        cache_key = f'{file_id}_{key1_byte}_{key2_byte}'
+        cached_readers[cache_key] = reader
+        threading.Thread(target=reader.preload_all_sections, daemon=True).start()
+        for b in {key1_byte, key2_byte}:
+                threading.Thread(target=reader.ensure_header, args=(b,), daemon=True).start()
+        return {'file_id': file_id, 'reused_trace_store': False}
 
 
 @router.get('/get_section')
@@ -405,8 +529,38 @@ def denoise_section_bin(req: DenoiseRequest):
 				'data': q.tobytes(),
 			}
 		)
+		params = {
+			'chunk_h': req.chunk_h,
+			'overlap': req.overlap,
+			'mask_ratio': req.mask_ratio,
+			'noise_std': req.noise_std,
+			'mask_noise_mode': req.mask_noise_mode,
+			'passes_batch': req.passes_batch,
+		}
+		param_hash = hashlib.sha256(
+			json.dumps(params, sort_keys=True).encode('utf-8')
+		).hexdigest()
+		cache_key = (req.file_id, req.key1_idx, param_hash)
+		gz = gzip.compress(payload)
+		p = _denoise_path(req.file_id, req.key1_idx, param_hash)
+		p.parent.mkdir(parents=True, exist_ok=True)
+		p.write_bytes(gz)
+		p_latest = _denoise_latest_path(req.file_id, req.key1_idx)
+		p_latest.parent.mkdir(parents=True, exist_ok=True)
+		tmp = p_latest.with_suffix('.tmp')
+		tmp.write_bytes(gz)
+		tmp.replace(p_latest)
+		denoise_cache[cache_key] = gz
+		denoise_cache[(req.file_id, req.key1_idx)] = gz
+		try:
+			base = DENOISE_DIR / str(req.file_id).replace('/', '_')
+			for child in base.iterdir():
+				if child.is_dir() and child.name not in {param_hash, 'latest'}:
+					shutil.rmtree(child, ignore_errors=True)
+		except Exception:
+			pass
 		return Response(
-			gzip.compress(payload),
+			gz,
 			media_type='application/octet-stream',
 			headers={'Content-Encoding': 'gzip'},
 		)
@@ -451,21 +605,34 @@ def get_denoised_section_bin(
 	mask_noise_mode: Literal['replace', 'add'] = Query('replace'),
 	passes_batch: int = Query(4),
 ):
-	params = {
-		'chunk_h': chunk_h,
-		'overlap': overlap,
-		'mask_ratio': mask_ratio,
-		'noise_std': noise_std,
-		'mask_noise_mode': mask_noise_mode,
-		'passes_batch': passes_batch,
-	}
-	param_hash = hashlib.sha256(
-		json.dumps(params, sort_keys=True).encode('utf-8')
-	).hexdigest()
-	cache_key = (file_id, key1_idx, param_hash)
-	payload = denoise_cache.get(cache_key)
+	cache_key_latest = (file_id, key1_idx)
+	payload = denoise_cache.get(cache_key_latest)
 	if payload is None:
-		raise HTTPException(status_code=404, detail='Section not processed')
+		p_latest = _denoise_latest_path(file_id, key1_idx)
+		if p_latest.exists():
+			payload = p_latest.read_bytes()
+			denoise_cache[cache_key_latest] = payload
+	if payload is None:
+		params = {
+			'chunk_h': chunk_h,
+			'overlap': overlap,
+			'mask_ratio': mask_ratio,
+			'noise_std': noise_std,
+			'mask_noise_mode': mask_noise_mode,
+			'passes_batch': passes_batch,
+		}
+		param_hash = hashlib.sha256(
+			json.dumps(params, sort_keys=True).encode('utf-8')
+		).hexdigest()
+		cache_key = (file_id, key1_idx, param_hash)
+		payload = denoise_cache.get(cache_key)
+		if payload is None:
+			p = _denoise_path(file_id, key1_idx, param_hash)
+			if p.exists():
+				payload = p.read_bytes()
+				denoise_cache[(file_id, key1_idx, param_hash)] = payload
+		if payload is None:
+			raise HTTPException(status_code=404, detail='Section not processed')
 	return Response(
 		payload,
 		media_type='application/octet-stream',
