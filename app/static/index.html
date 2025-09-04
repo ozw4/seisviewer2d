@@ -717,7 +717,12 @@
       const res = await fetch(`/picks?file_id=${currentFileId}&key1_idx=${key1Val}&key1_byte=${currentKey1Byte}`);
       if (res.ok) {
         const data = await res.json();
-        picks = (data.picks || []).map(p => ({ trace: p.trace, time: p.time }));
+        {
+         const arr = (data.picks || []).map(p => ({ trace: p.trace, time: p.time }));
+        picks.length = 0;
+        picks.push(...arr);
+        }
+
       }
     } catch (e) {
       console.error('Failed to fetch picks', e);
@@ -1077,7 +1082,9 @@
           const end = Math.max(x0, x1);
           const toDelete = picks.filter(p => Math.round(p.trace) >= start && Math.round(p.trace) <= end);
           const promises = toDelete.map(p => deletePick(Math.round(p.trace)));
-          picks = picks.filter(p => Math.round(p.trace) < start || Math.round(p.trace) > end);
+          const remain = picks.filter(p => Math.round(p.trace) < start || Math.round(p.trace) > end);
+          picks.length = 0;
+          picks.push(...remain);
           await Promise.all(promises);
           plotSeismicData(latestSeismicData, defaultDt, renderedStart, renderedEnd);
           return;
@@ -1163,7 +1170,8 @@
             await deletePick(t);
           }
         }
-        picks = newPicks;
+        picks.length = 0;
+        picks.push(...newPicks);
       }
     }
 
@@ -1191,8 +1199,8 @@
       });
   </script>
   <script type="module">
-    import { fbInfer, fbPicks } from './api.js';
-
+    import { fbInfer, fbPicks } from '/static/api.js?v=1';
+    console.log('[fb] module loaded');
     let fbCacheId = null;
     let fbMeta = null;
 
@@ -1234,7 +1242,6 @@
       if (!isNaN(mj) && mj > 0) params.max_jump = mj;
       try {
         const { picks: newPicks } = await fbPicks(params);
-        window.picks = newPicks.map(p => ({ trace: p.trace, time: p.t_us / 1e6 }));
         const next = newPicks.map(p => ({ trace: p.trace, time: p.t_us / 1e6 }));
         if (Array.isArray(window.picks)) {
           window.picks.length = 0;       // in-place update
@@ -1272,20 +1279,33 @@
     });
 
     document.getElementById('btn-fb-infer')?.addEventListener('click', async () => {
-      try {
-        const { cache_id, meta } = await fbInfer({
-          path: window.currentSegyPath,
-          axis: window.currentAxis,
-          index: window.currentIndex,
-          dt_us: window.currentDtUs,
-        });
-        fbCacheId = cache_id;
-        fbMeta = meta;
-        await runAndDraw();
-      } catch (err) {
-        console.error('fbInfer failed', err);
-      }
-    });
+        console.log({ path: window.currentSegyPath, axis: window.currentAxis, index: window.currentIndex, dt_us: window.currentDtUs });
+        // --- 追加: 足りてないグローバルを補完 ---
+        window.currentAxis ??= 'iline'; // 仮に inline とする
+        const idx = parseInt(document.getElementById('key1_idx_slider').value);
+        window.currentIndex = idx;
+        const dt = parseFloat(document.getElementById('dt').value);
+        window.currentDtUs = Math.round((Number.isFinite(dt) ? dt : 0.002) * 1e6);
+
+        // ⚠ ここは本来 "path" が必要。今のバックエンドが file_id 非対応なら失敗する。
+        // 一時的に file_id を突っ込んでもサーバ側が受け取れない可能性が高い。
+        window.currentSegyPath ??= currentFileId;
+
+        try {
+          const { cache_id, meta } = await fbInfer({
+            path: window.currentSegyPath,
+            axis: window.currentAxis,
+            index: window.currentIndex,
+            dt_us: window.currentDtUs,
+          });
+          fbCacheId = cache_id;
+          fbMeta = meta;
+          await runAndDraw();
+        } catch (err) {
+          console.error('fbInfer failed', err);
+          alert('fbInfer failed: ' + (err?.message || err));
+        }
+      });
   </script>
 </body>
 </html>
