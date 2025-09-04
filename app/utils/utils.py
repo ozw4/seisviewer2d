@@ -1,7 +1,9 @@
+import gzip
 import json
 import os
 from pathlib import Path
 
+import msgpack
 import numpy as np
 import segyio
 
@@ -15,12 +17,28 @@ def quantize_float32(arr: np.ndarray, bits: int = 8, fixed_scale: float | None =
 	return scale, q
 
 
+def pack_array_u8(prob_f32: np.ndarray, meta: dict) -> bytes:
+	"""Pack probability array ``prob_f32`` into msgpack+gzip bytes."""
+	if prob_f32.min() < 0 or prob_f32.max() > 1:
+		raise ValueError('prob_f32 must be in [0,1]')
+	h, w = prob_f32.shape
+	q = np.clip(np.round(prob_f32 * 255.0), 0, 255).astype(np.uint8)
+	payload = {
+		'dtype': 'u8',
+		'h': int(h),
+		'w': int(w),
+		'data': q.tobytes(),
+		'meta': meta,
+	}
+	return gzip.compress(msgpack.packb(payload))
+
+
 class SegySectionReader:
 	def __init__(self, path, key1_byte=189, key2_byte=193):
 		self.path = path
 		self.key1_byte = key1_byte
 		self.key2_byte = key2_byte
-		self.section_cache = {}  # ← sectionごとのキャッシュ
+		self.section_cache = {}	 # ← sectionごとのキャッシュ
 		self._initialize_metadata()
 
 	def _initialize_metadata(self):

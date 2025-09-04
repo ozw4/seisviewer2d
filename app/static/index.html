@@ -105,6 +105,8 @@
       <option value="Viridis">Viridis</option>
     </select>
     <label><input type="checkbox" id="cmReverse" onchange="onColormapChange()">reverse</label>
+    <label><input type="checkbox" id="fbpickToggle" onchange="onFbpickToggle()">FBPICK prob (P)</label>
+    <label>Prob opacity:<input type="range" id="fbpickOpacity" min="0" max="1" step="0.05" value="0.45" oninput="onFbpickOpacity()" /></label>
   </div>
   <div id="plot" style="width: 100vw; height: calc(100vh - 100px);"></div>
   <dialog id="denoiseSettingsDialog">
@@ -140,6 +142,7 @@
   <script src="/static/plotly-2.29.1.min.js"></script>
   <script src="/static/pako.min.js"></script>
   <script src="/static/msgpack.min.js"></script>
+  <script src="/static/api.js"></script>
   <script>
     let key1Values = [];
     let currentFileId = '';
@@ -165,6 +168,10 @@
     let isPickMode = false;
     let linePickStart = null;
     let deleteRangeStart = null;
+    let fbpickEnabled = false;
+    let fbpickOpacity = 0.45;
+    const fbpickCache = new Map();
+    let currentFbpick = null;
     const COLORMAPS = {
       Greys: 'Greys',
       RdBu: 'RdBu',
@@ -258,6 +265,48 @@
       if (sel) localStorage.setItem('colormap', sel.value);
       if (chk) localStorage.setItem('cmReverse', chk.checked);
       if (latestSeismicData) {
+        plotSeismicData(latestSeismicData, defaultDt, renderedStart, renderedEnd);
+      }
+    }
+
+    async function fetchFbpickCurrent() {
+      const idx = parseInt(document.getElementById('key1_idx_slider').value);
+      const key1Val = key1Values[idx];
+      let data = fbpickCache.get(key1Val);
+      if (!data) {
+        data = await fetchFbpickSectionBin({
+          file_id: currentFileId,
+          key1_idx: key1Val,
+          key1_byte: currentKey1Byte,
+          key2_byte: currentKey2Byte,
+          params: { chunk_h: 2048, overlap: 256, smooth_window: 0 },
+        });
+        fbpickCache.set(key1Val, data);
+      }
+      currentFbpick = data;
+    }
+
+    async function onFbpickToggle() {
+      fbpickEnabled = document.getElementById('fbpickToggle').checked;
+      if (fbpickEnabled) {
+        try {
+          await fetchFbpickCurrent();
+        } catch (e) {
+          console.error('fbpick fetch failed', e);
+          fbpickEnabled = false;
+          document.getElementById('fbpickToggle').checked = false;
+        }
+      } else {
+        currentFbpick = null;
+      }
+      if (latestSeismicData) {
+        plotSeismicData(latestSeismicData, defaultDt, renderedStart, renderedEnd);
+      }
+    }
+
+    function onFbpickOpacity() {
+      fbpickOpacity = parseFloat(document.getElementById('fbpickOpacity').value);
+      if (fbpickEnabled && latestSeismicData) {
         plotSeismicData(latestSeismicData, defaultDt, renderedStart, renderedEnd);
       }
     }
@@ -854,6 +903,16 @@
       latestSeismicData = traces;
     }
 
+    if (fbpickEnabled) {
+      try {
+        await fetchFbpickCurrent();
+      } catch (e) {
+        console.error('fbpick fetch failed', e);
+      }
+    } else {
+      currentFbpick = null;
+    }
+
     console.time('Plotting');
     const [s, e] = savedXRange ? visibleTraceIndices(savedXRange, latestSeismicData.length) : [0, latestSeismicData.length - 1];
     plotSeismicData(latestSeismicData, defaultDt, s, e);
@@ -890,10 +949,15 @@
 
       let traces = [];
       const gain = parseFloat(document.getElementById('gain').value) || 1.0;
+      let factor = 1;
+      let nSamplesDS = nSamples;
+      let nTracesDS = nTraces;
+      let time;
+      let xVals;
 
       if (density < 0.1) {
         downsampleFactor = 1;
-        const time = new Float32Array(nSamples);
+        time = new Float32Array(nSamples);
         for (let t = 0; t < nSamples; t++) {
           time[t] = t * dt;
         }
@@ -908,30 +972,26 @@
             shiftedFullX[j] = val + i;
             shiftedPosX[j] = (val < 0 ? 0 : val) + i;
           }
-
           traces.push({ type: 'scatter', mode: 'lines', x: baseX, y: time, line: { width: 0 }, hoverinfo: 'x+y', showlegend: false });
           traces.push({ type: 'scatter', mode: 'lines', x: shiftedPosX, y: time, fill: 'tonextx', fillcolor: 'black', line: { width: 0 }, opacity: 0.6, hoverinfo: 'skip', showlegend: false });
           traces.push({ type: 'scatter', mode: 'lines', x: shiftedFullX, y: time, line: { color: 'black', width: 0.5 }, hoverinfo: 'skip',showlegend: false });
         }
+        xVals = new Float32Array(nTraces);
+        for (let i = 0; i < nTraces; i++) xVals[i] = startTrace + i;
       } else {
         const MAX_POINTS = 3_000_000;
-        let factor = 1;
         while (Math.floor(nTraces / factor) * Math.floor(nSamples / factor) > MAX_POINTS) {
           factor++;
         }
-
-        const nTracesDS = Math.floor(nTraces / factor);
-        const nSamplesDS = Math.floor(nSamples / factor);
+        nTracesDS = Math.floor(nTraces / factor);
+        nSamplesDS = Math.floor(nSamples / factor);
         console.log('Downsampling factor:', factor);
         console.log('Final dimensions:', nTracesDS, 'x', nSamplesDS);
-
-        const time = new Float32Array(nSamplesDS);
+        time = new Float32Array(nSamplesDS);
         for (let t = 0; t < nSamplesDS; t++) {
           time[t] = t * dt * factor;
         }
-
         const zData = Array.from({ length: nSamplesDS }, () => new Float32Array(nTracesDS));
-        // カラースケールはゲイン前の値で固定する（自己正規化を避ける）
         let baseMin = Infinity;
         let baseMax = -Infinity;
         for (let i = startTrace, col = 0; col < nTracesDS; i += factor, col++) {
@@ -944,7 +1004,7 @@
             if (raw > baseMax) baseMax = raw;
           }
         }
-        const xVals = new Float32Array(nTracesDS);
+        xVals = new Float32Array(nTracesDS);
         for (let i = 0; i < nTracesDS; i++) xVals[i] = startTrace + i * factor;
         downsampleFactor = factor;
         const cmName = document.getElementById('colormap')?.value || 'Greys';
@@ -958,7 +1018,6 @@
           z: zData,
           colorscale: cm,
           reversescale: reverse,
-          // ゲイン前のベース範囲を使うことで、ゲイン変更が可視的なコントラスト変化になる
           zmin: baseMin,
           zmax: baseMax,
           ...(isDiv ? { zmid: 0 } : {}),
@@ -966,6 +1025,31 @@
           hoverinfo: 'x+y',
           hovertemplate: '',
         }];
+      }
+
+      if (fbpickEnabled && currentFbpick) {
+        const probs = currentFbpick.probs;
+        const h = currentFbpick.h;
+        const w = currentFbpick.w;
+        const zProb = Array.from({ length: nSamplesDS }, () => new Float32Array(nTracesDS));
+        for (let c = 0, ci = startTrace; c < nTracesDS; c++, ci += factor) {
+          for (let r = 0, ri = 0; r < nSamplesDS; r++, ri += factor) {
+            zProb[r][c] = probs[ri * w + ci];
+          }
+        }
+        traces.push({
+          type: 'heatmap',
+          x: xVals,
+          y: time,
+          z: zProb,
+          zmin: 0,
+          zmax: 1,
+          colorscale: 'Hot',
+          opacity: fbpickOpacity,
+          showscale: true,
+          colorbar: { title: 'FBPICK prob' },
+          hoverinfo: 'skip',
+        });
       }
 
       const layout = {
@@ -1173,6 +1257,14 @@
           const sel = document.getElementById('displayMode');
           sel.value = sel.value === 'denoised' ? 'raw' : 'denoised';
           fetchAndPlot();
+        } else if (
+          e.key.toLowerCase() === 'p' &&
+          !e.ctrlKey && !e.altKey && !e.metaKey &&
+          !['INPUT', 'SELECT', 'TEXTAREA'].includes(document.activeElement.tagName)
+        ) {
+          const chk = document.getElementById('fbpickToggle');
+          chk.checked = !chk.checked;
+          onFbpickToggle();
         }
       });
 

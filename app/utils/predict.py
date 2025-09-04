@@ -1,10 +1,15 @@
 import math
 from typing import Literal
 
+import numpy as np
 import torch
 from torch.amp.autocast_mode import autocast
 
-__all__ = ['cover_all_traces_predict', 'cover_all_traces_predict_chunked']
+__all__ = [
+	'cover_all_traces_predict',
+	'cover_all_traces_predict_chunked',
+	'predict_section_fbpick',
+]
 
 
 @torch.no_grad()
@@ -135,3 +140,65 @@ def cover_all_traces_predict_chunked(
 		s += step
 	y_full = y_acc / (w_acc + 1e-8)
 	return y_full
+
+
+@torch.no_grad()
+def predict_section_fbpick(
+	section_f32: np.ndarray,
+	model: torch.nn.Module,
+	device: torch.device,
+	chunk_h: int,
+	overlap: int,
+	*,
+	amp: bool = True,
+	smooth_window: int = 0,
+) -> np.ndarray:
+	"""Predict first-arrival probabilities for a section.
+
+	The section is tiled along the time axis (H) with overlapping windows
+	and blended using linear ramps, mirroring the denoise pipeline.
+	"""
+	if overlap >= chunk_h:
+		msg = 'overlap must be smaller than chunk_h'
+		raise ValueError(msg)
+
+	xt = torch.from_numpy(section_f32).unsqueeze(0).unsqueeze(0).to(device)
+	B, _, H, W = xt.shape
+	y_acc = torch.zeros((B, 1, H, W), device=device, dtype=torch.float32)
+	w_acc = torch.zeros((B, 1, H, 1), device=device, dtype=torch.float32)
+	step = chunk_h - overlap
+	s = 0
+	while s < H:
+		e = min(s + chunk_h, H)
+		xt_chunk = xt[:, :, s:e, :]
+		dev_type = 'cuda' if device.type == 'cuda' else 'cpu'
+		with autocast(device_type=dev_type, enabled=amp):
+			logits = model(xt_chunk)
+			probs = torch.sigmoid(logits)
+		h_t = e - s
+		w = torch.ones((1, 1, h_t, 1), device=device, dtype=torch.float32)
+		left_ov = min(overlap, s)
+		right_ov = min(overlap, H - e)
+		if left_ov > 0:
+			ramp = torch.linspace(
+				0, 1, steps=left_ov, device=device, dtype=torch.float32
+			).view(1, 1, -1, 1)
+			w[:, :, :left_ov, :] = ramp
+		if right_ov > 0:
+			ramp = torch.linspace(
+				1, 0, steps=right_ov, device=device, dtype=torch.float32
+			).view(1, 1, -1, 1)
+			w[:, :, -right_ov:, :] = ramp
+		y_acc[:, :, s:e, :] += probs * w
+		w_acc[:, :, s:e, :] += w
+		if e == H:
+			break
+		s += step
+	y_full = y_acc / (w_acc + 1e-8)
+	prob = y_full.squeeze(0).squeeze(0).cpu().numpy().astype(np.float32)
+	if smooth_window > 1:
+		kernel = np.ones(smooth_window, dtype=np.float32) / smooth_window
+		prob = np.apply_along_axis(
+			lambda m: np.convolve(m, kernel, mode='same'), 0, prob
+		)
+	return np.clip(prob, 1e-4, 1.0 - 1e-4)
