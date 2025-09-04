@@ -31,7 +31,7 @@ _CACHE_DIR = Path('.cache/fbpick')
 
 
 def build_fb_model(
-	weights_path: Path = Path('./model/fbpick_edgenext_small.pth'),
+	weights_path: Path = Path('/mworkspace/model/fbpick_edgenext_small.pth'),
 	device: torch.device | None = None,
 ) -> nn.Module:
 	"""Construct the EdgeNeXt-based first-break model.
@@ -40,6 +40,7 @@ def build_fb_model(
 	produces a probability map of the same shape after a sigmoid
 	activation.
 	"""
+	print(f'Loading first-break model from {weights_path}')
 	device = device or torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 	core = NetAE(
 		backbone='edgenext_small.usi_in1k',
@@ -56,6 +57,7 @@ def build_fb_model(
 	model = nn.Sequential(core, nn.Sigmoid())
 	model.to(device)
 	model.eval()
+	print('First-break model ready')
 	return model
 
 
@@ -90,6 +92,7 @@ def infer_prob_map(
 		original sizes.
 
 	"""
+	print('Running first-break picking inference')
 	nt, ns = section.shape
 	x = np.asarray(section, dtype=np.float32, order='C')
 	mean = x.mean(axis=1, keepdims=True)
@@ -130,6 +133,7 @@ def picks_from_prob(  # noqa: PLR0913, PLR0912, C901
 	smoothing operations act across traces (axis 0) before picking the
 	argmax along the sample axis (axis 1).
 	"""
+	print('Extracting picks from probability map')
 	p = np.asarray(probs, dtype=np.float32)
 	if median_kernel > 1 and median_filter is not None:
 		p = median_filter(p, size=(median_kernel, 1))

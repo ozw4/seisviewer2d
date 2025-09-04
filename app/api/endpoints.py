@@ -17,12 +17,12 @@ import numpy as np
 import segyio
 import torch
 from fastapi import (
-        APIRouter,
-        File,
-        Form,  # 忘れずにインポート
-        HTTPException,
-        Query,
-        UploadFile,
+	APIRouter,
+	File,
+	Form,  # 忘れずにインポート
+	HTTPException,
+	Query,
+	UploadFile,
 )
 from fastapi.responses import JSONResponse, Response
 from pydantic import BaseModel
@@ -32,15 +32,15 @@ from utils.denoise import denoise_tensor
 from utils.picks import add_pick, delete_pick, list_picks, store
 from utils.picks import store as picks_store
 from utils.utils import (
-        SegySectionReader,
-        TraceStoreSectionReader,
-        quantize_float32,
+	SegySectionReader,
+	TraceStoreSectionReader,
+	quantize_float32,
 )
 
 try:
-        from utils.utils import get_section as get_section_float
+	from utils.utils import get_section as get_section_float
 except Exception:
-        get_section_float = None  # type: ignore
+	get_section_float = None  # type: ignore
 
 router = APIRouter()
 
@@ -512,6 +512,7 @@ def get_bandpassed_section_bin(
 		headers={'Content-Encoding': 'gzip'},
 	)
 
+
 @router.post('/denoise_section_bin')
 def denoise_section_bin(req: DenoiseRequest):
 	try:
@@ -677,68 +678,71 @@ async def delete_pick_route(
 
 @router.post('/fbpick/infer')
 async def fbpick_infer(
-        path: str = Form(...),
-        axis: str = Form('iline'),
-        index: int = Form(...),
-        dt_us: int | None = Form(None),
+	path: str = Form(...),
+	axis: str = Form('iline'),
+	index: int = Form(...),
+	dt_us: int | None = Form(None),
 ) -> dict[str, Any]:
-        if get_section_float is None:
-                raise HTTPException(status_code=500, detail="get_section(...) helper is unavailable")
-        section, meta = get_section_float(path, axis, index, as_float=True)
-        probs, prob_meta = fbpick.infer_prob_map(section)
-        weights = Path('./model/fbpick_edgenext_small.pth')
-        cache_id = fbpick._cache_key(path, axis, index, weights, probs.shape)
-        fbpick.save_cached_prob(cache_id, probs)
-        t0_us = int(meta.get('t0_us', 0))
-        dt_us_val = int(dt_us if dt_us is not None else meta.get('dt_us', 1000))
-        return {
-                'cache_id': cache_id,
-                'meta': {
-                        'ns': prob_meta['ns'],
-                        'nt': prob_meta['nt'],
-                        'dt_us': dt_us_val,
-                        't0_us': t0_us,
-                },
-        }
+	if get_section_float is None:
+		raise HTTPException(
+			status_code=500, detail='get_section(...) helper is unavailable'
+		)
+	print(f'FBpick inference for {path} {axis} {index}')
+	section, meta = get_section_float(path, axis, index, as_float=True)
+	probs, prob_meta = fbpick.infer_prob_map(section)
+	weights = Path('./model/fbpick_edgenext_small.pth')
+	cache_id = fbpick._cache_key(path, axis, index, weights, probs.shape)
+	fbpick.save_cached_prob(cache_id, probs)
+	t0_us = int(meta.get('t0_us', 0))
+	dt_us_val = int(dt_us if dt_us is not None else meta.get('dt_us', 1000))
+	return {
+		'cache_id': cache_id,
+		'meta': {
+			'ns': prob_meta['ns'],
+			'nt': prob_meta['nt'],
+			'dt_us': dt_us_val,
+			't0_us': t0_us,
+		},
+	}
 
 
 @router.post('/fbpick/picks')
 async def fbpick_picks(
-        cache_id: str = Form(...),
-        dt_us: int = Form(...),
-        t0_us: int = Form(...),
-        save: bool = Form(True),
-        layer: str = Form('fb_auto'),
-        method: str = Form('argmax'),
-        median_kernel: int = Form(5),
-        gaussian_sigma: float | None = Form(None),
-        sg_window: int | None = Form(None),
-        sg_poly: int = Form(2),
-        conf_threshold: float | None = Form(None),
-        max_jump: int | None = Form(None),
-        path: str = Form(...),
-        axis: str = Form('iline'),
-        index: int = Form(...),
+	cache_id: str = Form(...),
+	dt_us: int = Form(...),
+	t0_us: int = Form(...),
+	save: bool = Form(True),
+	layer: str = Form('fb_auto'),
+	method: str = Form('argmax'),
+	median_kernel: int = Form(5),
+	gaussian_sigma: float | None = Form(None),
+	sg_window: int | None = Form(None),
+	sg_poly: int = Form(2),
+	conf_threshold: float | None = Form(None),
+	max_jump: int | None = Form(None),
+	path: str = Form(...),
+	axis: str = Form('iline'),
+	index: int = Form(...),
 ) -> dict[str, Any]:
-        probs = fbpick.load_cached_prob(cache_id)
-        if probs is None:
-                raise HTTPException(status_code=404, detail='Probability map not found')
-        picks, aux = fbpick.picks_from_prob(
-                probs,
-                dt_us=dt_us,
-                t0_us=t0_us,
-                method=method,
-                median_kernel=median_kernel,
-                gaussian_sigma=gaussian_sigma,
-                sg_window=sg_window,
-                sg_poly=sg_poly,
-                conf_threshold=conf_threshold,
-                max_jump=max_jump,
-        )
-        if save:
-                if hasattr(picks_store, "save"):
-                        picks_store.save(path, axis, index, layer, picks)
-                else:
-                        # No batch-save API available; skip persisting here.
-                        pass
-        return {'picks': picks, 'aux': aux}
+	probs = fbpick.load_cached_prob(cache_id)
+	if probs is None:
+		raise HTTPException(status_code=404, detail='Probability map not found')
+	picks, aux = fbpick.picks_from_prob(
+		probs,
+		dt_us=dt_us,
+		t0_us=t0_us,
+		method=method,
+		median_kernel=median_kernel,
+		gaussian_sigma=gaussian_sigma,
+		sg_window=sg_window,
+		sg_poly=sg_poly,
+		conf_threshold=conf_threshold,
+		max_jump=max_jump,
+	)
+	if save:
+		if hasattr(picks_store, 'save'):
+			picks_store.save(path, axis, index, layer, picks)
+		else:
+			# No batch-save API available; skip persisting here.
+			pass
+	return {'picks': picks, 'aux': aux}

@@ -168,6 +168,7 @@
     let renderedStart = null;
     let renderedEnd = null;
     let picks = [];
+    window.picks = picks;
     let downsampleFactor = 1;
     let isPickMode = false;
     let linePickStart = null;
@@ -1234,6 +1235,15 @@
       try {
         const { picks: newPicks } = await fbPicks(params);
         window.picks = newPicks.map(p => ({ trace: p.trace, time: p.t_us / 1e6 }));
+        const next = newPicks.map(p => ({ trace: p.trace, time: p.t_us / 1e6 }));
+        if (Array.isArray(window.picks)) {
+          window.picks.length = 0;       // in-place update
+          window.picks.push(...next);
+        } else {
+        // Fallback in case the bridge wasn't set for some reason
+          window.picks = next;
+        }
+
         if (typeof window.plotSeismicData === 'function' && window.latestSeismicData) {
           window.plotSeismicData(window.latestSeismicData, window.defaultDt, window.renderedStart, window.renderedEnd);
         } else {
