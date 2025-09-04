@@ -28,11 +28,13 @@ from fastapi.responses import JSONResponse, Response
 from pydantic import BaseModel
 from utils.bandpass import bandpass_np
 from utils.denoise import denoise_tensor
+from utils.fbpick import _MODEL_PATH as FBPICK_MODEL_PATH
+from utils.fbpick import infer_prob_map
 from utils.picks import add_pick, delete_pick, list_picks, store
 from utils.utils import (
-        SegySectionReader,
-        TraceStoreSectionReader,
-        quantize_float32,
+	SegySectionReader,
+	TraceStoreSectionReader,
+	quantize_float32,
 )
 
 router = APIRouter()
@@ -67,6 +69,7 @@ SEGYS: dict[str, str] = {}
 # Private caches for denoised sections, band-passed sections and asynchronous jobs
 denoise_cache: dict[tuple, bytes] = {}
 bandpass_cache: dict[tuple[str, int, str], bytes] = {}
+fbpick_cache: dict[tuple, bytes] = {}
 jobs: dict[str, dict[str, float | str]] = {}
 
 
@@ -145,6 +148,16 @@ class DenoiseApplyRequest(BaseModel):
 	noise_std: float = 1.0
 	mask_noise_mode: Literal['replace', 'add'] = 'replace'
 	passes_batch: int = 4
+
+class FbpickRequest(BaseModel):
+	file_id: str
+	key1_idx: int
+	key1_byte: int = 189
+	key2_byte: int = 193
+	tile_h: int = 256
+	tile_w: int = 256
+	overlap: int = 32
+	amp: bool = True
 
 
 def _run_denoise_job(job_id: str, req: DenoiseApplyRequest) -> None:
@@ -270,6 +283,32 @@ def _run_bandpass_job(job_id: str, req: BandpassApplyRequest) -> None:
 			)
 			bandpass_cache[cache_key] = gzip.compress(payload)
 			job['progress'] = (idx + 1) / total
+		job['status'] = 'done'
+	except Exception as e:
+		job['status'] = 'error'
+		job['message'] = str(e)
+
+
+def _run_fbpick_job(job_id: str, req: FbpickRequest) -> None:
+	job = jobs[job_id]
+	job['status'] = 'running'
+	try:
+		cache_key = job['cache_key']
+		reader = get_reader(req.file_id, req.key1_byte, req.key2_byte)
+		section = np.array(reader.get_section(req.key1_idx), dtype=np.float32)
+		prob = infer_prob_map(
+			section,
+			amp=req.amp,
+			tile=(req.tile_h, req.tile_w),
+			overlap=req.overlap,
+		)
+		scale, q = quantize_float32(prob, fixed_scale=127.0)
+		payload = msgpack.packb({
+			'scale': scale,
+			'shape': q.shape,
+			'data': q.tobytes(),
+		})
+		fbpick_cache[cache_key] = gzip.compress(payload)
 		job['status'] = 'done'
 	except Exception as e:
 		job['status'] = 'error'
@@ -638,6 +677,49 @@ def get_denoised_section_bin(
 		media_type='application/octet-stream',
 		headers={'Content-Encoding': 'gzip'},
 	)
+
+
+@router.post('/fbpick_section_bin')
+def fbpick_section_bin(req: FbpickRequest):
+	if not FBPICK_MODEL_PATH.exists():
+		raise HTTPException(status_code=409, detail='FB pick model weights not found')
+	cache_key = (
+		req.file_id,
+		req.key1_idx,
+		req.key1_byte,
+		req.tile_h,
+		req.tile_w,
+		req.overlap,
+		bool(req.amp),
+		'fbpick',
+	)
+	job_id = str(uuid4())
+	jobs[job_id] = {'status': 'queued', "cache_key": cache_key}
+	if cache_key in fbpick_cache:
+		jobs[job_id]['status'] = 'done'
+	else:
+		threading.Thread(target=_run_fbpick_job, args=(job_id, req), daemon=True).start()
+	return {'job_id': job_id, "status": jobs[job_id]['status']}
+
+
+@router.get('/fbpick_job_status')
+def fbpick_job_status(job_id: str = Query(...)):
+	job = jobs.get(job_id)
+	if job is None:
+		raise HTTPException(status_code=404, detail='Job ID not found')
+	return {'status': job.get('status', 'unknown'), "message": job.get('message', "")}
+
+
+@router.get('/get_fbpick_section_bin')
+def get_fbpick_section_bin(job_id: str = Query(...)):
+	job = jobs.get(job_id)
+	if job is None or job.get('status') != 'done':
+		raise HTTPException(status_code=404, detail='Result not ready')
+	cache_key = job.get('cache_key')
+	payload = fbpick_cache.get(cache_key)
+	if payload is None:
+		raise HTTPException(status_code=404, detail='Result missing')
+	return Response(payload, media_type='application/octet-stream', headers={'Content-Encoding': "gzip"})
 
 
 @router.post('/picks')
