@@ -1199,7 +1199,7 @@
       });
   </script>
   <script type="module">
-    import { fbInfer, fbPicks } from '/static/api.js?v=1';
+    import { fbInferByFileId, fbPicksByFileId } from './api.js';
     console.log('[fb] module loaded');
     let fbCacheId = null;
     let fbMeta = null;
@@ -1277,24 +1277,76 @@
     });
 
     document.getElementById('btn-fb-infer')?.addEventListener('click', async () => {
-        const idx = parseInt(document.getElementById('key1_idx_slider').value);
-        const key1Val = window.key1Values[idx];
-        const dt = parseFloat(document.getElementById('dt').value);
-        try {
-          const { cache_id, meta } = await fbInfer({
-            file_id: window.currentFileId,
-            key1_idx: key1Val,
-            key1_byte: window.currentKey1Byte || 189,
-            key2_byte: window.currentKey2Byte || 193,
-            dt_us: Number.isFinite(dt) ? Math.round(dt * 1e6) : undefined,
-          });
-          fbCacheId = cache_id;
-          fbMeta = meta;
-          await runAndDraw();
-        } catch (err) {
-          console.error('fbInfer failed', err);
-        }
+      const file_id = currentFileId;
+      const sliderIdx = parseInt(document.getElementById('key1_idx_slider').value);
+      const key1_idx = key1Values?.[sliderIdx];
+      const key1_byte = currentKey1Byte;
+      const key2_byte = currentKey2Byte;
+
+      const dtInput = parseFloat(document.getElementById('dt').value);
+      const dt_us = Math.round((Number.isFinite(dtInput) ? dtInput : 0.002) * 1e6);
+
+      console.log('[fbInfer click]', {
+        file_id, sliderIdx, key1_idx, key1_byte, key2_byte, dt_us,
+        haveLatest: !!latestSeismicData, haveShape: !!sectionShape
       });
+
+      if (!file_id) return alert('file_id is missing. Open a file first.');
+      if (!Number.isFinite(sliderIdx) || key1_idx == null) return alert('key1_idx is missing. Move the slider.');
+
+      try {
+        // 1) run model
+        const { cache_id, meta } = await fbInferByFileId({ file_id, key1_idx, key1_byte, key2_byte, dt_us });
+
+        // 2) convert probability → picks
+        const gs = parseFloat(document.getElementById('gaussS').value);
+        const swRaw = parseInt(document.getElementById('sgWin').value);
+        const sg_window = Number.isFinite(swRaw) && swRaw > 1 ? (swRaw % 2 ? swRaw : swRaw + 1) : null;
+        const confTh = parseFloat(document.getElementById('confTh').value);
+        const maxJump = parseInt(document.getElementById('maxJump').value);
+        const medianK = (() => { const k = parseInt(document.getElementById('medianK').value) || 5; return k % 2 ? k : k + 1; })();
+
+        const { picks: newPicks } = await fbPicksByFileId({
+          cache_id,
+          file_id,
+          key1_idx,
+          key1_byte,
+          key2_byte,
+          dt_us: meta?.dt_us ?? dt_us,
+          t0_us: meta?.t0_us ?? 0,
+          median_kernel: medianK,
+          gaussian_sigma: (!isNaN(gs) && gs > 0) ? gs : null,
+          sg_window,
+          sg_poly: parseInt(document.getElementById('sgPoly').value) || 2,
+          conf_threshold: !isNaN(confTh) ? confTh : null,
+          max_jump: (!isNaN(maxJump) && maxJump > 0) ? maxJump : null,
+          save: false,
+        });
+
+        // 3) in-place update of the shared picks array
+        const next = newPicks.map(p => ({ trace: p.trace, time: p.t_us / 1e6 }));
+        picks.length = 0;
+        picks.push(...next);
+
+        // 4) redraw
+        if (latestSeismicData) {
+          plotSeismicData(latestSeismicData, defaultDt, renderedStart, renderedEnd);
+        } else {
+          const plotDiv = document.getElementById('plot');
+          (window.Plotly || Plotly).relayout(plotDiv, {
+            shapes: picks.map(p => ({
+              type: 'line',
+              x0: p.trace - 0.4, x1: p.trace + 0.4,
+              y0: p.time, y1: p.time,
+              line: { width: 2, color: 'red' }
+            }))
+          });
+        }
+      } catch (err) {
+        console.error('fbInfer failed', err);
+        alert('fbInfer failed: ' + (err?.message || err));
+      }
+    });
   </script>
 </body>
 </html>
