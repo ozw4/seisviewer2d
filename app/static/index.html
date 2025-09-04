@@ -105,6 +105,13 @@
       <option value="Viridis">Viridis</option>
     </select>
     <label><input type="checkbox" id="cmReverse" onchange="onColormapChange()">reverse</label>
+    <label>medianK:<input type="number" id="medianK" value="5" step="2" min="1" style="width:70px;"></label>
+    <label>gaussS:<input type="number" id="gaussS" value="0" step="0.5" min="0" style="width:70px;"></label>
+    <label>sgWin:<input type="number" id="sgWin" value="0" step="2" min="0" style="width:70px;"></label>
+    <label>sgPoly:<input type="number" id="sgPoly" value="2" step="1" min="1" style="width:70px;"></label>
+    <label>confTh:<input type="number" id="confTh" placeholder="e.g. 0.3" style="width:70px;"></label>
+    <label>maxJump:<input type="number" id="maxJump" value="0" min="0" style="width:70px;"></label>
+    <button id="btn-fb-infer">FB Inference</button>
   </div>
   <div id="plot" style="width: 100vw; height: calc(100vh - 100px);"></div>
   <dialog id="denoiseSettingsDialog">
@@ -1181,6 +1188,94 @@
           linePickStart = null;
         }
       });
+  </script>
+  <script type="module">
+    import { fbInfer, fbPicks } from './api.js';
+
+    let fbCacheId = null;
+    let fbMeta = null;
+
+    function debounce(fn, ms) {
+      let t;
+      return (...args) => {
+        clearTimeout(t);
+        t = setTimeout(() => fn(...args), ms);
+      };
+    }
+
+    async function runAndDraw() {
+      if (!fbCacheId || !fbMeta) return;
+      const path = window.currentSegyPath;
+      const axis = window.currentAxis;
+      const index = window.currentIndex;
+      const dt_us = window.currentDtUs ?? fbMeta.dt_us;
+      const params = {
+        cache_id: fbCacheId,
+        path,
+        axis,
+        index,
+        dt_us,
+        t0_us: fbMeta.t0_us,
+        median_kernel: (() => {
+          const k = parseInt(document.getElementById('medianK').value) || 5;
+          return k % 2 ? k : k + 1;
+        })(),
+        sg_poly: parseInt(document.getElementById('sgPoly').value) || 2,
+      };
+      const gs = parseFloat(document.getElementById('gaussS').value);
+      const swRaw = parseInt(document.getElementById('sgWin').value);
+      const sw = Number.isFinite(swRaw) && swRaw > 1 ? (swRaw % 2 ? swRaw : swRaw + 1) : 0;
+      const ct = parseFloat(document.getElementById('confTh').value);
+      const mj = parseInt(document.getElementById('maxJump').value);
+      if (!isNaN(gs) && gs > 0) params.gaussian_sigma = gs;
+      if (!isNaN(sw) && sw > 0) params.sg_window = sw;
+      if (!isNaN(ct)) params.conf_threshold = ct;
+      if (!isNaN(mj) && mj > 0) params.max_jump = mj;
+      try {
+        const { picks: newPicks } = await fbPicks(params);
+        window.picks = newPicks.map(p => ({ trace: p.trace, time: p.t_us / 1e6 }));
+        if (typeof window.plotSeismicData === 'function' && window.latestSeismicData) {
+          window.plotSeismicData(window.latestSeismicData, window.defaultDt, window.renderedStart, window.renderedEnd);
+        } else {
+          const plotDiv = document.getElementById('plot');
+          if (plotDiv) {
+            const shapes = (window.picks || []).map(p => ({
+              type: 'line',
+              x0: p.trace - 0.4,
+              x1: p.trace + 0.4,
+              y0: p.time,
+              y1: p.time,
+              line: { width: 2, color: 'red' },
+            }));
+            (window.Plotly || Plotly).relayout(plotDiv, { shapes });
+          }
+        }
+      } catch (err) {
+        console.error('fbPicks failed', err);
+      }
+    }
+
+    const debouncedRun = debounce(runAndDraw, 150);
+    ['medianK','gaussS','sgWin','sgPoly','confTh','maxJump'].forEach((id) => {
+      const el = document.getElementById(id);
+      if (el) el.addEventListener('input', debouncedRun);
+    });
+
+    document.getElementById('btn-fb-infer')?.addEventListener('click', async () => {
+      try {
+        const { cache_id, meta } = await fbInfer({
+          path: window.currentSegyPath,
+          axis: window.currentAxis,
+          index: window.currentIndex,
+          dt_us: window.currentDtUs,
+        });
+        fbCacheId = cache_id;
+        fbMeta = meta;
+        await runAndDraw();
+      } catch (err) {
+        console.error('fbInfer failed', err);
+      }
+    });
   </script>
 </body>
 </html>
