@@ -1,3 +1,14 @@
+function makeZRowMajor(float1d, h, w) {
+  const z = new Array(h);
+  for (let i = 0; i < h; i++) {
+    const base = i * w;
+    const row = new Array(w);
+    for (let j = 0; j < w; j++) row[j] = float1d[base + j];
+    z[i] = row;
+  }
+  return z;
+}
+
 async function fetchFbpickSectionBin(args) {
   const res = await fetch('/fbpick_section_bin', {
     method: 'POST',
@@ -13,8 +24,10 @@ async function fetchFbpickSectionBin(args) {
   const obj = msgpack.decode(ungz);
   if (obj.dtype === 'u8') {
     const arr = new Uint8Array(obj.data);
-    const probs = Float32Array.from(arr, (v) => v / 255);
-    return { h: obj.h, w: obj.w, probs, meta: obj.meta || {} };
+    const probs = new Float32Array(arr.length);
+    for (let i = 0; i < arr.length; i++) probs[i] = arr[i] / 255;
+    const z = makeZRowMajor(probs, obj.h, obj.w);
+    return { h: obj.h, w: obj.w, probs, z, meta: obj.meta || {} };
   }
   throw new Error('Unsupported dtype');
 }

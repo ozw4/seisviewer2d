@@ -1028,13 +1028,13 @@
       }
 
       if (fbpickEnabled && currentFbpick) {
-        const probs = currentFbpick.probs;
-        const h = currentFbpick.h;
-        const w = currentFbpick.w;
+        const zFull = currentFbpick.z;
         const zProb = Array.from({ length: nSamplesDS }, () => new Float32Array(nTracesDS));
-        for (let c = 0, ci = startTrace; c < nTracesDS; c++, ci += factor) {
-          for (let r = 0, ri = 0; r < nSamplesDS; r++, ri += factor) {
-            zProb[r][c] = probs[ri * w + ci];
+        for (let r = 0, ri = 0; r < nSamplesDS; r++, ri += factor) {
+          const srcRow = zFull[ri];
+          const dstRow = zProb[r];
+          for (let c = 0, ci = startTrace; c < nTracesDS; c++, ci += factor) {
+            dstRow[c] = srcRow[ci];
           }
         }
         traces.push({
@@ -1066,8 +1066,8 @@
           showgrid: false,
           tickfont: { color: '#000' },
           titlefont: { color: '#000' },
-          autorange: false,
-          range: savedYRange ?? [nSamples * dt, 0]  // reversed を手動設定
+          autorange: savedYRange ? false : 'reversed',
+          ...(savedYRange ? { range: savedYRange } : {})
         },
         paper_bgcolor: '#fff',
         plot_bgcolor: '#fff',

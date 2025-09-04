@@ -201,4 +201,9 @@ def predict_section_fbpick(
 		prob = np.apply_along_axis(
 			lambda m: np.convolve(m, kernel, mode='same'), 0, prob
 		)
-	return np.clip(prob, 1e-4, 1.0 - 1e-4)
+	prob = np.clip(prob, 1e-4, 1.0 - 1e-4)
+	H_expected, W_expected = section_f32.shape
+	if prob.shape == (W_expected, H_expected):
+		prob = prob.T
+	assert prob.shape == (H_expected, W_expected)
+	return prob
