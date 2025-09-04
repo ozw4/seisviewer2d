@@ -9,7 +9,7 @@ import re
 import shutil
 import threading
 from pathlib import Path
-from typing import Literal
+from typing import Any, Literal
 from uuid import uuid4
 
 import msgpack
@@ -17,23 +17,30 @@ import numpy as np
 import segyio
 import torch
 from fastapi import (
-	APIRouter,
-	File,
-	Form,  # 忘れずにインポート
-	HTTPException,
-	Query,
-	UploadFile,
+        APIRouter,
+        File,
+        Form,  # 忘れずにインポート
+        HTTPException,
+        Query,
+        UploadFile,
 )
 from fastapi.responses import JSONResponse, Response
 from pydantic import BaseModel
+from utils import fbpick
 from utils.bandpass import bandpass_np
 from utils.denoise import denoise_tensor
 from utils.picks import add_pick, delete_pick, list_picks, store
+from utils.picks import store as picks_store
 from utils.utils import (
         SegySectionReader,
         TraceStoreSectionReader,
         quantize_float32,
 )
+
+try:
+        from utils.utils import get_section as get_section_float
+except Exception:
+        get_section_float = None  # type: ignore
 
 router = APIRouter()
 
@@ -71,20 +78,20 @@ jobs: dict[str, dict[str, float | str]] = {}
 
 
 def get_reader(
-        file_id: str, key1_byte: int, key2_byte: int
+	file_id: str, key1_byte: int, key2_byte: int
 ) -> SegySectionReader | TraceStoreSectionReader:
-        cache_key = f'{file_id}_{key1_byte}_{key2_byte}'
-        if cache_key not in cached_readers:
-                if file_id not in SEGYS:
-                        raise HTTPException(status_code=404, detail='File ID not found')
-                path = SEGYS[file_id]
-                p = Path(path)
-                if p.is_dir():
-                        reader = TraceStoreSectionReader(p, key1_byte, key2_byte)
-                else:
-                        reader = SegySectionReader(path, key1_byte, key2_byte)
-                cached_readers[cache_key] = reader
-        return cached_readers[cache_key]
+	cache_key = f'{file_id}_{key1_byte}_{key2_byte}'
+	if cache_key not in cached_readers:
+		if file_id not in SEGYS:
+			raise HTTPException(status_code=404, detail='File ID not found')
+		path = SEGYS[file_id]
+		p = Path(path)
+		if p.is_dir():
+			reader = TraceStoreSectionReader(p, key1_byte, key2_byte)
+		else:
+			reader = SegySectionReader(path, key1_byte, key2_byte)
+		cached_readers[cache_key] = reader
+	return cached_readers[cache_key]
 
 
 class Pick(BaseModel):
@@ -278,112 +285,112 @@ def _run_bandpass_job(job_id: str, req: BandpassApplyRequest) -> None:
 
 @router.get('/get_key1_values')
 def get_key1_values(
-        file_id: str = Query(...),
-        key1_byte: int = Query(189),
-        key2_byte: int = Query(193),
+	file_id: str = Query(...),
+	key1_byte: int = Query(189),
+	key2_byte: int = Query(193),
 ):
-        reader = get_reader(file_id, key1_byte, key2_byte)
-        return JSONResponse(content={'values': reader.get_key1_values().tolist()})
+	reader = get_reader(file_id, key1_byte, key2_byte)
+	return JSONResponse(content={'values': reader.get_key1_values().tolist()})
 
 
 @router.post('/open_segy')
 async def open_segy(
-        original_name: str = Form(...),
-        key1_byte: int = Form(189),
-        key2_byte: int = Form(193),
+	original_name: str = Form(...),
+	key1_byte: int = Form(189),
+	key2_byte: int = Form(193),
 ):
-        safe_name = re.sub(r'[^A-Za-z0-9_.-]', '_', original_name)
-        store_dir = TRACE_DIR / safe_name
-        meta_path = store_dir / 'meta.json'
-        if not meta_path.exists():
-                raise HTTPException(
-                        status_code=404,
-                        detail=f'Trace store not found for {original_name}',
-                )
-        print(f'Opening existing trace store for {original_name}')
-        file_id = str(uuid4())
-        reader = TraceStoreSectionReader(store_dir, key1_byte, key2_byte)
-        SEGYS[file_id] = str(store_dir)
-        cache_key = f'{file_id}_{key1_byte}_{key2_byte}'
-        cached_readers[cache_key] = reader
-        threading.Thread(target=reader.preload_all_sections, daemon=True).start()
-        for b in {key1_byte, key2_byte}:
-                threading.Thread(target=reader.ensure_header, args=(b,), daemon=True).start()
-        return {'file_id': file_id, 'reused_trace_store': True}
+	safe_name = re.sub(r'[^A-Za-z0-9_.-]', '_', original_name)
+	store_dir = TRACE_DIR / safe_name
+	meta_path = store_dir / 'meta.json'
+	if not meta_path.exists():
+		raise HTTPException(
+			status_code=404,
+			detail=f'Trace store not found for {original_name}',
+		)
+	print(f'Opening existing trace store for {original_name}')
+	file_id = str(uuid4())
+	reader = TraceStoreSectionReader(store_dir, key1_byte, key2_byte)
+	SEGYS[file_id] = str(store_dir)
+	cache_key = f'{file_id}_{key1_byte}_{key2_byte}'
+	cached_readers[cache_key] = reader
+	threading.Thread(target=reader.preload_all_sections, daemon=True).start()
+	for b in {key1_byte, key2_byte}:
+		threading.Thread(target=reader.ensure_header, args=(b,), daemon=True).start()
+	return {'file_id': file_id, 'reused_trace_store': True}
 
 
 @router.post('/upload_segy')
 async def upload_segy(
-        file: UploadFile = File(...),
-        key1_byte: int = Form(189),
-        key2_byte: int = Form(193),
+	file: UploadFile = File(...),
+	key1_byte: int = Form(189),
+	key2_byte: int = Form(193),
 ):
-        if not file.filename:
-                raise HTTPException(
-                        status_code=400, detail='Uploaded file must have a filename'
-                )
-        print(f'Uploading file: {file.filename}')
-        safe_name = re.sub(r'[^A-Za-z0-9_.-]', '_', file.filename)
-        store_dir = TRACE_DIR / safe_name
-        meta_path = store_dir / 'meta.json'
-        file_id = str(uuid4())
+	if not file.filename:
+		raise HTTPException(
+			status_code=400, detail='Uploaded file must have a filename'
+		)
+	print(f'Uploading file: {file.filename}')
+	safe_name = re.sub(r'[^A-Za-z0-9_.-]', '_', file.filename)
+	store_dir = TRACE_DIR / safe_name
+	meta_path = store_dir / 'meta.json'
+	file_id = str(uuid4())
 
-        if meta_path.exists():
-                print(f'Reusing trace store for {file.filename}')
-                reader = TraceStoreSectionReader(store_dir, key1_byte, key2_byte)
-                SEGYS[file_id] = str(store_dir)
-                cache_key = f'{file_id}_{key1_byte}_{key2_byte}'
-                cached_readers[cache_key] = reader
-                threading.Thread(target=reader.preload_all_sections, daemon=True).start()
-                for b in {key1_byte, key2_byte}:
-                        threading.Thread(
-                                target=reader.ensure_header, args=(b,), daemon=True
-                        ).start()
-                return {'file_id': file_id, 'reused_trace_store': True}
+	if meta_path.exists():
+		print(f'Reusing trace store for {file.filename}')
+		reader = TraceStoreSectionReader(store_dir, key1_byte, key2_byte)
+		SEGYS[file_id] = str(store_dir)
+		cache_key = f'{file_id}_{key1_byte}_{key2_byte}'
+		cached_readers[cache_key] = reader
+		threading.Thread(target=reader.preload_all_sections, daemon=True).start()
+		for b in {key1_byte, key2_byte}:
+			threading.Thread(
+				target=reader.ensure_header, args=(b,), daemon=True
+			).start()
+		return {'file_id': file_id, 'reused_trace_store': True}
 
-        raw_path = UPLOAD_DIR / safe_name
-        with open(raw_path, 'wb') as f:
-                f.write(await file.read())
-        store_dir.mkdir(parents=True, exist_ok=True)
-        traces_tmp = store_dir / 'traces.npy.tmp'
-        with segyio.open(raw_path, 'r', ignore_geometry=True) as segy:
-                segy.mmap()
-                n_traces = segy.tracecount
-                n_samples = len(segy.trace[0])
-                mm = np.lib.format.open_memmap(
-                        traces_tmp,
-                        mode='w+',
-                        dtype=np.float32,
-                        shape=(n_traces, n_samples),
-                )
-                for i in range(n_traces):
-                        tr = segy.trace[i].astype(np.float32)
-                        mean = tr.mean()
-                        std = tr.std()
-                        if std == 0:
-                                std = 1.0
-                        mm[i] = (tr - mean) / std
-                del mm
-        os.replace(traces_tmp, store_dir / 'traces.npy')
-        meta = {
-                'n_traces': int(n_traces),
-                'n_samples': int(n_samples),
-                'original_segy_path': str(raw_path),
-                'version': 1,
-                'normalized': True,
-        }
-        tmp_meta = store_dir / 'meta.json.tmp'
-        tmp_meta.write_text(json.dumps(meta))
-        os.replace(tmp_meta, meta_path)
+	raw_path = UPLOAD_DIR / safe_name
+	with open(raw_path, 'wb') as f:
+		f.write(await file.read())
+	store_dir.mkdir(parents=True, exist_ok=True)
+	traces_tmp = store_dir / 'traces.npy.tmp'
+	with segyio.open(raw_path, 'r', ignore_geometry=True) as segy:
+		segy.mmap()
+		n_traces = segy.tracecount
+		n_samples = len(segy.trace[0])
+		mm = np.lib.format.open_memmap(
+			traces_tmp,
+			mode='w+',
+			dtype=np.float32,
+			shape=(n_traces, n_samples),
+		)
+		for i in range(n_traces):
+			tr = segy.trace[i].astype(np.float32)
+			mean = tr.mean()
+			std = tr.std()
+			if std == 0:
+				std = 1.0
+			mm[i] = (tr - mean) / std
+		del mm
+	os.replace(traces_tmp, store_dir / 'traces.npy')
+	meta = {
+		'n_traces': int(n_traces),
+		'n_samples': int(n_samples),
+		'original_segy_path': str(raw_path),
+		'version': 1,
+		'normalized': True,
+	}
+	tmp_meta = store_dir / 'meta.json.tmp'
+	tmp_meta.write_text(json.dumps(meta))
+	os.replace(tmp_meta, meta_path)
 
-        reader = TraceStoreSectionReader(store_dir, key1_byte, key2_byte)
-        SEGYS[file_id] = str(store_dir)
-        cache_key = f'{file_id}_{key1_byte}_{key2_byte}'
-        cached_readers[cache_key] = reader
-        threading.Thread(target=reader.preload_all_sections, daemon=True).start()
-        for b in {key1_byte, key2_byte}:
-                threading.Thread(target=reader.ensure_header, args=(b,), daemon=True).start()
-        return {'file_id': file_id, 'reused_trace_store': False}
+	reader = TraceStoreSectionReader(store_dir, key1_byte, key2_byte)
+	SEGYS[file_id] = str(store_dir)
+	cache_key = f'{file_id}_{key1_byte}_{key2_byte}'
+	cached_readers[cache_key] = reader
+	threading.Thread(target=reader.preload_all_sections, daemon=True).start()
+	for b in {key1_byte, key2_byte}:
+		threading.Thread(target=reader.ensure_header, args=(b,), daemon=True).start()
+	return {'file_id': file_id, 'reused_trace_store': False}
 
 
 @router.get('/get_section')
@@ -666,3 +673,72 @@ async def delete_pick_route(
 	delete_pick(file_id, trace, key1_idx, key1_byte)
 	await asyncio.to_thread(store.save)
 	return {'status': 'ok'}
+
+
+@router.post('/fbpick/infer')
+async def fbpick_infer(
+        path: str = Form(...),
+        axis: str = Form('iline'),
+        index: int = Form(...),
+        dt_us: int | None = Form(None),
+) -> dict[str, Any]:
+        if get_section_float is None:
+                raise HTTPException(status_code=500, detail="get_section(...) helper is unavailable")
+        section, meta = get_section_float(path, axis, index, as_float=True)
+        probs, prob_meta = fbpick.infer_prob_map(section)
+        weights = Path('./model/fbpick_edgenext_small.pth')
+        cache_id = fbpick._cache_key(path, axis, index, weights, probs.shape)
+        fbpick.save_cached_prob(cache_id, probs)
+        t0_us = int(meta.get('t0_us', 0))
+        dt_us_val = int(dt_us if dt_us is not None else meta.get('dt_us', 1000))
+        return {
+                'cache_id': cache_id,
+                'meta': {
+                        'ns': prob_meta['ns'],
+                        'nt': prob_meta['nt'],
+                        'dt_us': dt_us_val,
+                        't0_us': t0_us,
+                },
+        }
+
+
+@router.post('/fbpick/picks')
+async def fbpick_picks(
+        cache_id: str = Form(...),
+        dt_us: int = Form(...),
+        t0_us: int = Form(...),
+        save: bool = Form(True),
+        layer: str = Form('fb_auto'),
+        method: str = Form('argmax'),
+        median_kernel: int = Form(5),
+        gaussian_sigma: float | None = Form(None),
+        sg_window: int | None = Form(None),
+        sg_poly: int = Form(2),
+        conf_threshold: float | None = Form(None),
+        max_jump: int | None = Form(None),
+        path: str = Form(...),
+        axis: str = Form('iline'),
+        index: int = Form(...),
+) -> dict[str, Any]:
+        probs = fbpick.load_cached_prob(cache_id)
+        if probs is None:
+                raise HTTPException(status_code=404, detail='Probability map not found')
+        picks, aux = fbpick.picks_from_prob(
+                probs,
+                dt_us=dt_us,
+                t0_us=t0_us,
+                method=method,
+                median_kernel=median_kernel,
+                gaussian_sigma=gaussian_sigma,
+                sg_window=sg_window,
+                sg_poly=sg_poly,
+                conf_threshold=conf_threshold,
+                max_jump=max_jump,
+        )
+        if save:
+                if hasattr(picks_store, "save"):
+                        picks_store.save(path, axis, index, layer, picks)
+                else:
+                        # No batch-save API available; skip persisting here.
+                        pass
+        return {'picks': picks, 'aux': aux}
