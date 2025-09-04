@@ -30,17 +30,13 @@ from utils import fbpick
 from utils.bandpass import bandpass_np
 from utils.denoise import denoise_tensor
 from utils.picks import add_pick, delete_pick, list_picks, store
-from utils.picks import store as picks_store
+# from utils.picks import store as picks_store   # optional batch store (may not exist)
 from utils.utils import (
-	SegySectionReader,
-	TraceStoreSectionReader,
-	quantize_float32,
+        SegySectionReader,
+        TraceStoreSectionReader,
+        quantize_float32,
 )
-
-try:
-	from utils.utils import get_section as get_section_float
-except Exception:
-	get_section_float = None  # type: ignore
+# no get_section_float import; use internal get_reader instead
 
 router = APIRouter()
 
@@ -678,51 +674,64 @@ async def delete_pick_route(
 
 @router.post('/fbpick/infer')
 async def fbpick_infer(
-	path: str = Form(...),
-	axis: str = Form('iline'),
-	index: int = Form(...),
-	dt_us: int | None = Form(None),
+        file_id: str = Form(...),
+        key1_idx: int = Form(...),
+        key1_byte: int = Form(189),
+        key2_byte: int = Form(193),
+        dt_us: int | None = Form(None),
 ) -> dict[str, Any]:
-	if get_section_float is None:
-		raise HTTPException(
-			status_code=500, detail='get_section(...) helper is unavailable'
-		)
-	print(f'FBpick inference for {path} {axis} {index}')
-	section, meta = get_section_float(path, axis, index, as_float=True)
-	probs, prob_meta = fbpick.infer_prob_map(section)
-	weights = Path('./model/fbpick_edgenext_small.pth')
-	cache_id = fbpick._cache_key(path, axis, index, weights, probs.shape)
-	fbpick.save_cached_prob(cache_id, probs)
-	t0_us = int(meta.get('t0_us', 0))
-	dt_us_val = int(dt_us if dt_us is not None else meta.get('dt_us', 1000))
-	return {
-		'cache_id': cache_id,
-		'meta': {
-			'ns': prob_meta['ns'],
-			'nt': prob_meta['nt'],
-			'dt_us': dt_us_val,
-			't0_us': t0_us,
-		},
-	}
+        """
+        Run first-break inference for the given section specified by (file_id, key1_idx).
+        Uses the same reader pipeline as other endpoints, so no utils.get_section helper needed.
+        """
+        # read section as float32 [Trace, Sample]
+        reader = get_reader(file_id, key1_byte, key2_byte)
+        try:
+                section = np.asarray(reader.get_section(key1_idx), dtype=np.float32)
+        except Exception as e:
+                raise HTTPException(status_code=500, detail=f'failed to read section: {e}')
+
+        # run model
+        probs, prob_meta = fbpick.infer_prob_map(section)
+
+        # persist prob map to cache (cache key is stable on file/line/weights/shape)
+        weights = Path('./model/fbpick_edgenext_small.pth')
+        cache_id = fbpick._cache_key(file_id, 'key1', key1_idx, weights, probs.shape)
+        fbpick.save_cached_prob(cache_id, probs)
+
+        # basic timing meta (fallback dt_us=2000 if not provided)
+        t0_us = 0
+        dt_us_val = int(dt_us if dt_us is not None else 2000)
+        return {
+                'cache_id': cache_id,
+                'meta': {
+                        'ns': prob_meta['ns'],
+                        'nt': prob_meta['nt'],
+                        'dt_us': dt_us_val,
+                        't0_us': t0_us,
+                },
+        }
 
 
 @router.post('/fbpick/picks')
 async def fbpick_picks(
-	cache_id: str = Form(...),
-	dt_us: int = Form(...),
-	t0_us: int = Form(...),
-	save: bool = Form(True),
-	layer: str = Form('fb_auto'),
-	method: str = Form('argmax'),
-	median_kernel: int = Form(5),
-	gaussian_sigma: float | None = Form(None),
-	sg_window: int | None = Form(None),
-	sg_poly: int = Form(2),
-	conf_threshold: float | None = Form(None),
-	max_jump: int | None = Form(None),
-	path: str = Form(...),
-	axis: str = Form('iline'),
-	index: int = Form(...),
+        cache_id: str = Form(...),
+        dt_us: int = Form(...),
+        t0_us: int = Form(...),
+        save: bool = Form(True),
+        layer: str = Form('fb_auto'),
+        method: str = Form('argmax'),
+        median_kernel: int = Form(5),
+        gaussian_sigma: float | None = Form(None),
+        sg_window: int | None = Form(None),
+        sg_poly: int = Form(2),
+        conf_threshold: float | None = Form(None),
+        max_jump: int | None = Form(None),
+        # for persistence with our existing picks store
+        file_id: str = Form(...),
+        key1_idx: int = Form(...),
+        key1_byte: int = Form(189),
+        key2_byte: int = Form(193),
 ) -> dict[str, Any]:
 	probs = fbpick.load_cached_prob(cache_id)
 	if probs is None:
@@ -739,10 +748,15 @@ async def fbpick_picks(
 		conf_threshold=conf_threshold,
 		max_jump=max_jump,
 	)
-	if save:
-		if hasattr(picks_store, 'save'):
-			picks_store.save(path, axis, index, layer, picks)
-		else:
-			# No batch-save API available; skip persisting here.
-			pass
-	return {'picks': picks, 'aux': aux}
+        if save:
+                # Persist via existing single-pick API for compatibility
+                try:
+                        for p in picks:
+                                if p['t_us'] >= 0:
+                                        # convert microseconds -> seconds
+                                        add_pick(file_id, int(p['trace']), p['t_us'] / 1e6, key1_idx, key1_byte)
+                        await asyncio.to_thread(store.save)
+                except Exception:
+                        # best-effort; keep response even if persistence fails
+                        pass
+        return {'picks': picks, 'aux': aux}

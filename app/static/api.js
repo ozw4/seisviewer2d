@@ -1,8 +1,9 @@
-export async function fbInfer({ path, axis, index, dt_us = null }) {
+export async function fbInfer({ file_id, key1_idx, key1_byte = 189, key2_byte = 193, dt_us = null }) {
     const form = new FormData();
-    form.append('path', path);
-    form.append('axis', axis);
-    form.append('index', index);
+    form.append('file_id', file_id);
+    form.append('key1_idx', key1_idx);
+    form.append('key1_byte', key1_byte);
+    form.append('key2_byte', key2_byte);
     if (dt_us !== null && dt_us !== undefined) {
         form.append('dt_us', dt_us);
     }
@@ -16,9 +17,10 @@ export async function fbInfer({ path, axis, index, dt_us = null }) {
 
 export async function fbPicks({
     cache_id,
-    path,
-    axis,
-    index,
+    file_id,
+    key1_idx,
+    key1_byte = 189,
+    key2_byte = 193,
     dt_us,
     t0_us,
     method = 'argmax',
@@ -33,9 +35,10 @@ export async function fbPicks({
 }) {
     const form = new FormData();
     form.append('cache_id', cache_id);
-    form.append('path', path);
-    form.append('axis', axis);
-    form.append('index', index);
+    form.append('file_id', file_id);
+    form.append('key1_idx', key1_idx);
+    form.append('key1_byte', key1_byte);
+    form.append('key2_byte', key2_byte);
     form.append('dt_us', dt_us);
     form.append('t0_us', t0_us);
     form.append('method', method);

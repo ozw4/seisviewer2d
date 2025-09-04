@@ -1214,15 +1214,13 @@
 
     async function runAndDraw() {
       if (!fbCacheId || !fbMeta) return;
-      const path = window.currentSegyPath;
-      const axis = window.currentAxis;
-      const index = window.currentIndex;
       const dt_us = window.currentDtUs ?? fbMeta.dt_us;
       const params = {
         cache_id: fbCacheId,
-        path,
-        axis,
-        index,
+        file_id: window.currentFileId,
+        key1_idx: window.key1Values[parseInt(document.getElementById('key1_idx_slider').value)],
+        key1_byte: window.currentKey1Byte || 189,
+        key2_byte: window.currentKey2Byte || 193,
         dt_us,
         t0_us: fbMeta.t0_us,
         median_kernel: (() => {
@@ -1279,31 +1277,22 @@
     });
 
     document.getElementById('btn-fb-infer')?.addEventListener('click', async () => {
-        console.log({ path: window.currentSegyPath, axis: window.currentAxis, index: window.currentIndex, dt_us: window.currentDtUs });
-        // --- 追加: 足りてないグローバルを補完 ---
-        window.currentAxis ??= 'iline'; // 仮に inline とする
         const idx = parseInt(document.getElementById('key1_idx_slider').value);
-        window.currentIndex = idx;
+        const key1Val = window.key1Values[idx];
         const dt = parseFloat(document.getElementById('dt').value);
-        window.currentDtUs = Math.round((Number.isFinite(dt) ? dt : 0.002) * 1e6);
-
-        // ⚠ ここは本来 "path" が必要。今のバックエンドが file_id 非対応なら失敗する。
-        // 一時的に file_id を突っ込んでもサーバ側が受け取れない可能性が高い。
-        window.currentSegyPath ??= currentFileId;
-
         try {
           const { cache_id, meta } = await fbInfer({
-            path: window.currentSegyPath,
-            axis: window.currentAxis,
-            index: window.currentIndex,
-            dt_us: window.currentDtUs,
+            file_id: window.currentFileId,
+            key1_idx: key1Val,
+            key1_byte: window.currentKey1Byte || 189,
+            key2_byte: window.currentKey2Byte || 193,
+            dt_us: Number.isFinite(dt) ? Math.round(dt * 1e6) : undefined,
           });
           fbCacheId = cache_id;
           fbMeta = meta;
           await runAndDraw();
         } catch (err) {
           console.error('fbInfer failed', err);
-          alert('fbInfer failed: ' + (err?.message || err));
         }
       });
   </script>
