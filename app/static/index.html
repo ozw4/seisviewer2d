@@ -69,6 +69,13 @@
       <option value="filtered">表示: フィルタ</option>
       <option value="fbprob">FB Prob</option>
     </select>
+    <label>FB thresh:
+      <input type="range" id="fbThresh" min="0" max="1" step="0.01" value="0.50"
+             oninput="document.getElementById('fbThreshDisp').textContent=(+this.value).toFixed(2); localStorage.setItem('fbThresh', this.value)">
+    </label>
+    <span id="fbThreshDisp">0.50</span>
+    <label><input type="checkbox" id="showFbPred" onchange="localStorage.setItem('showFbPred', this.checked); fetchAndPlot()">Show FB predicted</label>
+    <button id="predictFbBtn" onclick="predictFromFb()">Predict from FB</button>
     <label for="gain">Gain:</label>
     <input type="range" id="gain" min="0.1" max="5" step="0.1" value="1" oninput="onGainChange()" />
     <span id="gain_display">1×</span>
@@ -162,6 +169,11 @@
     let renderedStart = null;
     let renderedEnd = null;
     let picks = [];
+    let predictedPicks = [];               // [{ trace, time, prob }]
+    const fbPredCache = new Map();         // key1Val -> predictedPicks
+    let latestFbProbTraces = null;         // Array<Float32Array> of 0..1 probs for current section
+    let currentFbKey = null;               // which key1Val latestFbProbTraces belongs to
+    let fbPredReqId = 0;                  // generation counter for FB predictions
     let downsampleFactor = 1;
     let isPickMode = false;
     let linePickStart = null;
@@ -225,6 +237,21 @@
       }
     })();
 
+    (function restoreFbUi() {
+      const thr = localStorage.getItem('fbThresh');
+      if (thr !== null) {
+        const s = document.getElementById('fbThresh');
+        const d = document.getElementById('fbThreshDisp');
+        if (s) s.value = parseFloat(thr);
+        if (d) d.textContent = (+thr).toFixed(2);
+      }
+      const sh = localStorage.getItem('showFbPred');
+      if (sh !== null) {
+        const c = document.getElementById('showFbPred');
+        if (c) c.checked = (sh === 'true');
+      }
+    })();
+
     function getDenoiseParams() {
       return {
         mask_ratio: parseFloat(document.getElementById('mask_ratio').value),
@@ -282,6 +309,71 @@
       const int8 = new Int8Array(obj.data.buffer);
       const f32 = Float32Array.from(int8, v => v / obj.scale);
       return { f32, shape: obj.shape };
+    }
+
+    function computePredictedPicksFromProb(traces, dt, thr) {
+      // traces: Array<Float32Array> each in [0,1]
+      const out = [];
+      for (let x = 0; x < traces.length; x++) {
+        const col = traces[x];
+        let maxVal = -1, maxIdx = -1;
+        for (let t = 0; t < col.length; t++) {
+          const v = col[t];
+          if (v > maxVal) { maxVal = v; maxIdx = t; }
+        }
+        if (maxIdx >= 0 && maxVal >= thr) {
+          out.push({ trace: x, time: maxIdx * dt, prob: maxVal });
+        }
+      }
+      return out;
+    }
+    async function predictFromFb() {
+      // Snapshot the section at start
+      const idx0 = parseInt(document.getElementById('key1_idx_slider').value);
+      const keyAtStart = key1Values[idx0];
+
+      // Issue a new request token for this invocation
+      const reqToken = ++fbPredReqId;
+
+      const btn = document.getElementById('predictFbBtn');
+      if (btn) btn.disabled = true;
+
+      // Ensure we have FB probabilities for this section
+      let tracesLocal = latestFbProbTraces;
+      if (!tracesLocal || currentFbKey !== keyAtStart) {
+        const { f32, shape } = await fetchFbProb(keyAtStart);
+        const [nTraces, nSamples] = shape;
+        const traces = new Array(nTraces);
+        for (let i = 0; i < nTraces; i++) {
+          traces[i] = f32.subarray(i * nSamples, (i + 1) * nSamples); // 0..1
+        }
+        tracesLocal = traces;
+      }
+
+      // Compute picks locally
+      const thr = parseFloat(document.getElementById('fbThresh')?.value) || 0.5;
+      const picks = computePredictedPicksFromProb(tracesLocal, defaultDt, thr);
+
+      // Always cache by the key that triggered this run
+      fbPredCache.set(keyAtStart, picks);
+
+      // ===== Guard against stale results =====
+      // If a newer request started or the user moved to a different section, abort UI updates.
+      const idxNow = parseInt(document.getElementById('key1_idx_slider').value);
+      const keyNow = key1Values[idxNow];
+      if (reqToken !== fbPredReqId || keyNow !== keyAtStart) {
+        if (btn) btn.disabled = false;
+        return; // stale result -> do not touch predictedPicks or replot
+      }
+
+      // Still on the same section AND this is the latest request -> commit to UI state
+      predictedPicks = picks;
+      latestFbProbTraces = tracesLocal;
+      currentFbKey = keyAtStart;
+
+      if (btn) btn.disabled = false;
+      // Replot overlays
+      plotSeismicData(latestSeismicData, defaultDt, renderedStart, renderedEnd);
     }
 
     function onGainChange() {
@@ -789,6 +881,9 @@
     const index = parseInt(document.getElementById('key1_idx_slider').value);
     const key1Val = key1Values[index];
 
+    // Load predicted picks for this section if available
+    predictedPicks = fbPredCache.get(key1Val) || [];
+
     await fetchPicks();
 
     console.time('Cache lookup');
@@ -1060,14 +1155,24 @@
         dragmode: isPickMode ? false : 'zoom',
         ...(fbMode ? { title: 'First-break Probability' } : {}),
       };
-        layout.shapes = picks.map(p => ({
+        const manualShapes = picks.map(p => ({
           type: 'line',
-          x0: p.trace - 0.4,
-          x1: p.trace + 0.4,
-          y0: p.time,
-          y1: p.time,
+          x0: p.trace - 0.4, x1: p.trace + 0.4,
+          y0: p.time, y1: p.time,
           line: { color: 'red', width: 2 }
         }));
+
+        const showPred = document.getElementById('showFbPred')?.checked;
+        const predShapes = (showPred ? predictedPicks : [])
+          .filter(p => p.trace >= startTrace && p.trace <= endTrace)
+          .map(p => ({
+            type: 'line',
+            x0: p.trace - 0.4, x1: p.trace + 0.4,
+            y0: p.time, y1: p.time,
+            line: { color: '#1f77b4', width: 2, dash: 'dot' }  // predicted = blue dotted
+          }));
+
+        layout.shapes = [...manualShapes, ...predShapes];
 
       Plotly.react(plotDiv, traces, layout, {
         responsive: true,
@@ -1217,7 +1322,13 @@
       }
 
       if (Array.isArray(ev.shapes)) {
-        const newPicks = ev.shapes.map(s => ({ trace: (s.x0 + s.x1) / 2, time: (s.y0 + s.y1) / 2 }));
+        // Only persist MANUAL (red) picks; ignore predicted (blue dotted)
+        const onlyManual = ev.shapes.filter(s => s.line && s.line.color === 'red');
+        const newPicks = onlyManual.map(s => ({
+          trace: (s.x0 + s.x1) / 2,
+          time:  (s.y0 + s.y1) / 2
+        }));
+
         const oldTraces = new Set(picks.map(p => Math.round(p.trace)));
         const newTraces = new Set(newPicks.map(p => Math.round(p.trace)));
         for (const t of oldTraces) {
