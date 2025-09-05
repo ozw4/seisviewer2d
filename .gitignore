@@ -27,6 +27,7 @@ Thumbs.db
 *.segy
 *.pth
 *.gz
+*.json
 
 data/
 output/
