@@ -338,42 +338,44 @@
       const btn = document.getElementById('predictFbBtn');
       if (btn) btn.disabled = true;
 
-      // Ensure we have FB probabilities for this section
-      let tracesLocal = latestFbProbTraces;
-      if (!tracesLocal || currentFbKey !== keyAtStart) {
-        const { f32, shape } = await fetchFbProb(keyAtStart);
-        const [nTraces, nSamples] = shape;
-        const traces = new Array(nTraces);
-        for (let i = 0; i < nTraces; i++) {
-          traces[i] = f32.subarray(i * nSamples, (i + 1) * nSamples); // 0..1
+      try {
+        // Ensure we have FB probabilities for this section
+        let tracesLocal = latestFbProbTraces;
+        if (!tracesLocal || currentFbKey !== keyAtStart) {
+          const { f32, shape } = await fetchFbProb(keyAtStart);
+          const [nTraces, nSamples] = shape;
+          const traces = new Array(nTraces);
+          for (let i = 0; i < nTraces; i++) {
+            traces[i] = f32.subarray(i * nSamples, (i + 1) * nSamples); // 0..1
+          }
+          tracesLocal = traces;
         }
-        tracesLocal = traces;
-      }
 
-      // Compute picks locally
-      const thr = parseFloat(document.getElementById('fbThresh')?.value) || 0.5;
-      const picks = computePredictedPicksFromProb(tracesLocal, defaultDt, thr);
+        // Compute picks locally
+        const thr = parseFloat(document.getElementById('fbThresh')?.value) || 0.5;
+        const picks = computePredictedPicksFromProb(tracesLocal, defaultDt, thr);
 
-      // Always cache by the key that triggered this run
-      fbPredCache.set(keyAtStart, picks);
+        // Always cache by the key that triggered this run
+        fbPredCache.set(keyAtStart, picks);
 
-      // ===== Guard against stale results =====
-      // If a newer request started or the user moved to a different section, abort UI updates.
-      const idxNow = parseInt(document.getElementById('key1_idx_slider').value);
-      const keyNow = key1Values[idxNow];
-      if (reqToken !== fbPredReqId || keyNow !== keyAtStart) {
+        // ===== Guard against stale results =====
+        // If a newer request started or the user moved to a different section, abort UI updates.
+        const idxNow = parseInt(document.getElementById('key1_idx_slider').value);
+        const keyNow = key1Values[idxNow];
+        if (reqToken !== fbPredReqId || keyNow !== keyAtStart) {
+          return; // stale result -> do not touch predictedPicks or replot
+        }
+
+        // Still on the same section AND this is the latest request -> commit to UI state
+        predictedPicks = picks;
+        latestFbProbTraces = tracesLocal;
+        currentFbKey = keyAtStart;
+
+        // Replot overlays
+        plotSeismicData(latestSeismicData, defaultDt, renderedStart, renderedEnd);
+      } finally {
         if (btn) btn.disabled = false;
-        return; // stale result -> do not touch predictedPicks or replot
       }
-
-      // Still on the same section AND this is the latest request -> commit to UI state
-      predictedPicks = picks;
-      latestFbProbTraces = tracesLocal;
-      currentFbKey = keyAtStart;
-
-      if (btn) btn.disabled = false;
-      // Replot overlays
-      plotSeismicData(latestSeismicData, defaultDt, renderedStart, renderedEnd);
     }
 
     function onGainChange() {
