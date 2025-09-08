@@ -7,7 +7,7 @@ from pathlib import Path
 
 import numpy as np
 import torch
-import torch.nn.functional as F
+from torch.nn import functional as F
 
 from .model import NetAE
 
@@ -62,12 +62,14 @@ def _run_tiled(
 			right = min(left + tile_w, w)
 			h0 = max(0, bottom - tile_h)
 			w0 = max(0, right - tile_w)
-			patch = x[:, :, h0:bottom, w0:right]  # (B,C,ph,pw)
+			patch = x[:, :, h0:bottom, w0:right]
 			ph, pw = patch.shape[-2], patch.shape[-1]
 			pad_h = max(0, tile_h - ph)
 			pad_w = max(0, tile_w - pw)
+
 			if pad_h or pad_w:
 				patch = F.pad(patch, (0, pad_w, 0, pad_h), mode='constant', value=0.0)
+			print(patch.shape, pad_h, pad_w)
 			with torch.cuda.amp.autocast(enabled=amp and torch.cuda.is_available()):
 				yp = model(patch)  # (B,1,tile_h,tile_w) expected
 			yp = yp[..., :ph, :pw]
@@ -84,10 +86,13 @@ def infer_prob_map(
 	amp: bool = True,
 	tile: tuple[int, int] = (128, 6016),
 	overlap: int = 32,
+	tau: float = 1.0,
 ) -> np.ndarray:
 	"""Infer first-break probability for ``section``."""
 	model, device = _load_model()
 	x = torch.from_numpy(section).float().unsqueeze(0).unsqueeze(0).to(device)
-	y = _run_tiled(model, x, tile=tile, overlap=overlap, amp=amp)
-	y = torch.sigmoid(y)
-	return y.squeeze(0).squeeze(0).clamp_(0, 1).cpu().numpy().astype(np.float32)
+	logits = _run_tiled(model, x, tile=tile, overlap=overlap, amp=amp)  # (1,1,H,W)
+
+	# 学習と同じ：時間軸に沿ってsoftmax
+	prob = torch.softmax(logits.squeeze(1) / tau, dim=-1)  # (1,H,W)
+	return prob.squeeze(0).detach().cpu().numpy().astype(np.float32)
