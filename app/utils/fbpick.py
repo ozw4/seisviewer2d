@@ -7,6 +7,7 @@ from pathlib import Path
 
 import numpy as np
 import torch
+import torch.nn.functional as F
 
 from .model import NetAE
 
@@ -44,7 +45,7 @@ def _run_tiled(
     model: torch.nn.Module,
     x: torch.Tensor,
     *,
-    tile: tuple[int, int] = (256, 256),
+    tile: tuple[int, int] = (128, 6000),
     overlap: int = 32,
     amp: bool = True,
 ) -> torch.Tensor:
@@ -61,9 +62,15 @@ def _run_tiled(
             right = min(left + tile_w, w)
             h0 = max(0, bottom - tile_h)
             w0 = max(0, right - tile_w)
-            patch = x[:, :, h0:bottom, w0:right]
+            patch = x[:, :, h0:bottom, w0:right]  # (B,C,ph,pw)
+            ph, pw = patch.shape[-2], patch.shape[-1]
+            pad_h = max(0, tile_h - ph)
+            pad_w = max(0, tile_w - pw)
+            if pad_h or pad_w:
+                patch = F.pad(patch, (0, pad_w, 0, pad_h), mode="constant", value=0.0)
             with torch.cuda.amp.autocast(enabled=amp and torch.cuda.is_available()):
-                yp = model(patch)
+                yp = model(patch)  # (B,1,tile_h,tile_w) expected
+            yp = yp[..., :ph, :pw]
             out[:, :, h0:bottom, w0:right] += yp
             weight[:, :, h0:bottom, w0:right] += 1
     out /= weight.clamp_min(1.0)
@@ -75,7 +82,7 @@ def infer_prob_map(
     section: np.ndarray,
     *,
     amp: bool = True,
-    tile: tuple[int, int] = (256, 256),
+    tile: tuple[int, int] = (128, 6000),
     overlap: int = 32,
 ) -> np.ndarray:
     """Infer first-break probability for ``section``."""

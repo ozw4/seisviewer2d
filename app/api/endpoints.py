@@ -150,14 +150,14 @@ class DenoiseApplyRequest(BaseModel):
 	passes_batch: int = 4
 
 class FbpickRequest(BaseModel):
-	file_id: str
-	key1_idx: int
-	key1_byte: int = 189
-	key2_byte: int = 193
-	tile_h: int = 256
-	tile_w: int = 256
-	overlap: int = 32
-	amp: bool = True
+        file_id: str
+        key1_idx: int
+        key1_byte: int = 189
+        key2_byte: int = 193
+        tile_h: int = 128
+        tile_w: int = 6000
+        overlap: int = 32
+        amp: bool = True
 
 
 def _run_denoise_job(job_id: str, req: DenoiseApplyRequest) -> None:
