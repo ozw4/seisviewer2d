@@ -74,20 +74,20 @@ jobs: dict[str, dict[str, float | str]] = {}
 
 
 def get_reader(
-        file_id: str, key1_byte: int, key2_byte: int
+	file_id: str, key1_byte: int, key2_byte: int
 ) -> SegySectionReader | TraceStoreSectionReader:
-        cache_key = f'{file_id}_{key1_byte}_{key2_byte}'
-        if cache_key not in cached_readers:
-                if file_id not in SEGYS:
-                        raise HTTPException(status_code=404, detail='File ID not found')
-                path = SEGYS[file_id]
-                p = Path(path)
-                if p.is_dir():
-                        reader = TraceStoreSectionReader(p, key1_byte, key2_byte)
-                else:
-                        reader = SegySectionReader(path, key1_byte, key2_byte)
-                cached_readers[cache_key] = reader
-        return cached_readers[cache_key]
+	cache_key = f'{file_id}_{key1_byte}_{key2_byte}'
+	if cache_key not in cached_readers:
+		if file_id not in SEGYS:
+			raise HTTPException(status_code=404, detail='File ID not found')
+		path = SEGYS[file_id]
+		p = Path(path)
+		if p.is_dir():
+			reader = TraceStoreSectionReader(p, key1_byte, key2_byte)
+		else:
+			reader = SegySectionReader(path, key1_byte, key2_byte)
+		cached_readers[cache_key] = reader
+	return cached_readers[cache_key]
 
 
 class Pick(BaseModel):
@@ -149,15 +149,16 @@ class DenoiseApplyRequest(BaseModel):
 	mask_noise_mode: Literal['replace', 'add'] = 'replace'
 	passes_batch: int = 4
 
+
 class FbpickRequest(BaseModel):
-        file_id: str
-        key1_idx: int
-        key1_byte: int = 189
-        key2_byte: int = 193
-        tile_h: int = 128
-        tile_w: int = 6000
-        overlap: int = 32
-        amp: bool = True
+	file_id: str
+	key1_idx: int
+	key1_byte: int = 189
+	key2_byte: int = 193
+	tile_h: int = 128
+	tile_w: int = 6016
+	overlap: int = 32
+	amp: bool = True
 
 
 def _run_denoise_job(job_id: str, req: DenoiseApplyRequest) -> None:
@@ -303,11 +304,13 @@ def _run_fbpick_job(job_id: str, req: FbpickRequest) -> None:
 			overlap=req.overlap,
 		)
 		scale, q = quantize_float32(prob, fixed_scale=127.0)
-		payload = msgpack.packb({
-			'scale': scale,
-			'shape': q.shape,
-			'data': q.tobytes(),
-		})
+		payload = msgpack.packb(
+			{
+				'scale': scale,
+				'shape': q.shape,
+				'data': q.tobytes(),
+			}
+		)
 		fbpick_cache[cache_key] = gzip.compress(payload)
 		job['status'] = 'done'
 	except Exception as e:
@@ -317,112 +320,112 @@ def _run_fbpick_job(job_id: str, req: FbpickRequest) -> None:
 
 @router.get('/get_key1_values')
 def get_key1_values(
-        file_id: str = Query(...),
-        key1_byte: int = Query(189),
-        key2_byte: int = Query(193),
+	file_id: str = Query(...),
+	key1_byte: int = Query(189),
+	key2_byte: int = Query(193),
 ):
-        reader = get_reader(file_id, key1_byte, key2_byte)
-        return JSONResponse(content={'values': reader.get_key1_values().tolist()})
+	reader = get_reader(file_id, key1_byte, key2_byte)
+	return JSONResponse(content={'values': reader.get_key1_values().tolist()})
 
 
 @router.post('/open_segy')
 async def open_segy(
-        original_name: str = Form(...),
-        key1_byte: int = Form(189),
-        key2_byte: int = Form(193),
+	original_name: str = Form(...),
+	key1_byte: int = Form(189),
+	key2_byte: int = Form(193),
 ):
-        safe_name = re.sub(r'[^A-Za-z0-9_.-]', '_', original_name)
-        store_dir = TRACE_DIR / safe_name
-        meta_path = store_dir / 'meta.json'
-        if not meta_path.exists():
-                raise HTTPException(
-                        status_code=404,
-                        detail=f'Trace store not found for {original_name}',
-                )
-        print(f'Opening existing trace store for {original_name}')
-        file_id = str(uuid4())
-        reader = TraceStoreSectionReader(store_dir, key1_byte, key2_byte)
-        SEGYS[file_id] = str(store_dir)
-        cache_key = f'{file_id}_{key1_byte}_{key2_byte}'
-        cached_readers[cache_key] = reader
-        threading.Thread(target=reader.preload_all_sections, daemon=True).start()
-        for b in {key1_byte, key2_byte}:
-                threading.Thread(target=reader.ensure_header, args=(b,), daemon=True).start()
-        return {'file_id': file_id, 'reused_trace_store': True}
+	safe_name = re.sub(r'[^A-Za-z0-9_.-]', '_', original_name)
+	store_dir = TRACE_DIR / safe_name
+	meta_path = store_dir / 'meta.json'
+	if not meta_path.exists():
+		raise HTTPException(
+			status_code=404,
+			detail=f'Trace store not found for {original_name}',
+		)
+	print(f'Opening existing trace store for {original_name}')
+	file_id = str(uuid4())
+	reader = TraceStoreSectionReader(store_dir, key1_byte, key2_byte)
+	SEGYS[file_id] = str(store_dir)
+	cache_key = f'{file_id}_{key1_byte}_{key2_byte}'
+	cached_readers[cache_key] = reader
+	threading.Thread(target=reader.preload_all_sections, daemon=True).start()
+	for b in {key1_byte, key2_byte}:
+		threading.Thread(target=reader.ensure_header, args=(b,), daemon=True).start()
+	return {'file_id': file_id, 'reused_trace_store': True}
 
 
 @router.post('/upload_segy')
 async def upload_segy(
-        file: UploadFile = File(...),
-        key1_byte: int = Form(189),
-        key2_byte: int = Form(193),
+	file: UploadFile = File(...),
+	key1_byte: int = Form(189),
+	key2_byte: int = Form(193),
 ):
-        if not file.filename:
-                raise HTTPException(
-                        status_code=400, detail='Uploaded file must have a filename'
-                )
-        print(f'Uploading file: {file.filename}')
-        safe_name = re.sub(r'[^A-Za-z0-9_.-]', '_', file.filename)
-        store_dir = TRACE_DIR / safe_name
-        meta_path = store_dir / 'meta.json'
-        file_id = str(uuid4())
+	if not file.filename:
+		raise HTTPException(
+			status_code=400, detail='Uploaded file must have a filename'
+		)
+	print(f'Uploading file: {file.filename}')
+	safe_name = re.sub(r'[^A-Za-z0-9_.-]', '_', file.filename)
+	store_dir = TRACE_DIR / safe_name
+	meta_path = store_dir / 'meta.json'
+	file_id = str(uuid4())
 
-        if meta_path.exists():
-                print(f'Reusing trace store for {file.filename}')
-                reader = TraceStoreSectionReader(store_dir, key1_byte, key2_byte)
-                SEGYS[file_id] = str(store_dir)
-                cache_key = f'{file_id}_{key1_byte}_{key2_byte}'
-                cached_readers[cache_key] = reader
-                threading.Thread(target=reader.preload_all_sections, daemon=True).start()
-                for b in {key1_byte, key2_byte}:
-                        threading.Thread(
-                                target=reader.ensure_header, args=(b,), daemon=True
-                        ).start()
-                return {'file_id': file_id, 'reused_trace_store': True}
+	if meta_path.exists():
+		print(f'Reusing trace store for {file.filename}')
+		reader = TraceStoreSectionReader(store_dir, key1_byte, key2_byte)
+		SEGYS[file_id] = str(store_dir)
+		cache_key = f'{file_id}_{key1_byte}_{key2_byte}'
+		cached_readers[cache_key] = reader
+		threading.Thread(target=reader.preload_all_sections, daemon=True).start()
+		for b in {key1_byte, key2_byte}:
+			threading.Thread(
+				target=reader.ensure_header, args=(b,), daemon=True
+			).start()
+		return {'file_id': file_id, 'reused_trace_store': True}
 
-        raw_path = UPLOAD_DIR / safe_name
-        with open(raw_path, 'wb') as f:
-                f.write(await file.read())
-        store_dir.mkdir(parents=True, exist_ok=True)
-        traces_tmp = store_dir / 'traces.npy.tmp'
-        with segyio.open(raw_path, 'r', ignore_geometry=True) as segy:
-                segy.mmap()
-                n_traces = segy.tracecount
-                n_samples = len(segy.trace[0])
-                mm = np.lib.format.open_memmap(
-                        traces_tmp,
-                        mode='w+',
-                        dtype=np.float32,
-                        shape=(n_traces, n_samples),
-                )
-                for i in range(n_traces):
-                        tr = segy.trace[i].astype(np.float32)
-                        mean = tr.mean()
-                        std = tr.std()
-                        if std == 0:
-                                std = 1.0
-                        mm[i] = (tr - mean) / std
-                del mm
-        os.replace(traces_tmp, store_dir / 'traces.npy')
-        meta = {
-                'n_traces': int(n_traces),
-                'n_samples': int(n_samples),
-                'original_segy_path': str(raw_path),
-                'version': 1,
-                'normalized': True,
-        }
-        tmp_meta = store_dir / 'meta.json.tmp'
-        tmp_meta.write_text(json.dumps(meta))
-        os.replace(tmp_meta, meta_path)
+	raw_path = UPLOAD_DIR / safe_name
+	with open(raw_path, 'wb') as f:
+		f.write(await file.read())
+	store_dir.mkdir(parents=True, exist_ok=True)
+	traces_tmp = store_dir / 'traces.npy.tmp'
+	with segyio.open(raw_path, 'r', ignore_geometry=True) as segy:
+		segy.mmap()
+		n_traces = segy.tracecount
+		n_samples = len(segy.trace[0])
+		mm = np.lib.format.open_memmap(
+			traces_tmp,
+			mode='w+',
+			dtype=np.float32,
+			shape=(n_traces, n_samples),
+		)
+		for i in range(n_traces):
+			tr = segy.trace[i].astype(np.float32)
+			mean = tr.mean()
+			std = tr.std()
+			if std == 0:
+				std = 1.0
+			mm[i] = (tr - mean) / std
+		del mm
+	os.replace(traces_tmp, store_dir / 'traces.npy')
+	meta = {
+		'n_traces': int(n_traces),
+		'n_samples': int(n_samples),
+		'original_segy_path': str(raw_path),
+		'version': 1,
+		'normalized': True,
+	}
+	tmp_meta = store_dir / 'meta.json.tmp'
+	tmp_meta.write_text(json.dumps(meta))
+	os.replace(tmp_meta, meta_path)
 
-        reader = TraceStoreSectionReader(store_dir, key1_byte, key2_byte)
-        SEGYS[file_id] = str(store_dir)
-        cache_key = f'{file_id}_{key1_byte}_{key2_byte}'
-        cached_readers[cache_key] = reader
-        threading.Thread(target=reader.preload_all_sections, daemon=True).start()
-        for b in {key1_byte, key2_byte}:
-                threading.Thread(target=reader.ensure_header, args=(b,), daemon=True).start()
-        return {'file_id': file_id, 'reused_trace_store': False}
+	reader = TraceStoreSectionReader(store_dir, key1_byte, key2_byte)
+	SEGYS[file_id] = str(store_dir)
+	cache_key = f'{file_id}_{key1_byte}_{key2_byte}'
+	cached_readers[cache_key] = reader
+	threading.Thread(target=reader.preload_all_sections, daemon=True).start()
+	for b in {key1_byte, key2_byte}:
+		threading.Thread(target=reader.ensure_header, args=(b,), daemon=True).start()
+	return {'file_id': file_id, 'reused_trace_store': False}
 
 
 @router.get('/get_section')
@@ -543,6 +546,7 @@ def get_bandpassed_section_bin(
 		media_type='application/octet-stream',
 		headers={'Content-Encoding': 'gzip'},
 	)
+
 
 @router.post('/denoise_section_bin')
 def denoise_section_bin(req: DenoiseRequest):
@@ -694,12 +698,14 @@ def fbpick_section_bin(req: FbpickRequest):
 		'fbpick',
 	)
 	job_id = str(uuid4())
-	jobs[job_id] = {'status': 'queued', "cache_key": cache_key}
+	jobs[job_id] = {'status': 'queued', 'cache_key': cache_key}
 	if cache_key in fbpick_cache:
 		jobs[job_id]['status'] = 'done'
 	else:
-		threading.Thread(target=_run_fbpick_job, args=(job_id, req), daemon=True).start()
-	return {'job_id': job_id, "status": jobs[job_id]['status']}
+		threading.Thread(
+			target=_run_fbpick_job, args=(job_id, req), daemon=True
+		).start()
+	return {'job_id': job_id, 'status': jobs[job_id]['status']}
 
 
 @router.get('/fbpick_job_status')
@@ -707,7 +713,7 @@ def fbpick_job_status(job_id: str = Query(...)):
 	job = jobs.get(job_id)
 	if job is None:
 		raise HTTPException(status_code=404, detail='Job ID not found')
-	return {'status': job.get('status', 'unknown'), "message": job.get('message', "")}
+	return {'status': job.get('status', 'unknown'), 'message': job.get('message', '')}
 
 
 @router.get('/get_fbpick_section_bin')
@@ -719,7 +725,11 @@ def get_fbpick_section_bin(job_id: str = Query(...)):
 	payload = fbpick_cache.get(cache_key)
 	if payload is None:
 		raise HTTPException(status_code=404, detail='Result missing')
-	return Response(payload, media_type='application/octet-stream', headers={'Content-Encoding': "gzip"})
+	return Response(
+		payload,
+		media_type='application/octet-stream',
+		headers={'Content-Encoding': 'gzip'},
+	)
 
 
 @router.post('/picks')
