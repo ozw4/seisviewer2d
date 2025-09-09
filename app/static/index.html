@@ -69,11 +69,15 @@
       <option value="filtered">表示: フィルタ</option>
       <option value="fbprob">FB Prob</option>
     </select>
-    <label>FB thresh:
-      <input type="range" id="fbThresh" min="0" max="1" step="0.01" value="0.50"
-             oninput="document.getElementById('fbThreshDisp').textContent=(+this.value).toFixed(2); localStorage.setItem('fbThresh', this.value)">
+    <label style="margin-left:8px">σmax (ms):
+      <input id="sigma_ms_max" type="number" value="20" step="1" min="1" style="width:5em" oninput="onSigmaChange()">
     </label>
-    <span id="fbThreshDisp">0.50</span>
+    <label style="margin-left:8px">Pick:
+      <select id="pick_method" onchange="onPickMethodChange()">
+        <option value="argmax" selected>argmax</option>
+        <option value="expectation">expectation</option>
+      </select>
+    </label>
     <label><input type="checkbox" id="showFbPred" onchange="localStorage.setItem('showFbPred', this.checked); fetchAndPlot()">Show FB predicted</label>
     <button id="predictFbBtn" onclick="predictFromFb()">Predict from FB</button>
     <label for="gain">Gain:</label>
@@ -238,12 +242,15 @@
     })();
 
     (function restoreFbUi() {
-      const thr = localStorage.getItem('fbThresh');
-      if (thr !== null) {
-        const s = document.getElementById('fbThresh');
-        const d = document.getElementById('fbThreshDisp');
-        if (s) s.value = parseFloat(thr);
-        if (d) d.textContent = (+thr).toFixed(2);
+      const sig = localStorage.getItem('sigma_ms_max');
+      if (sig !== null) {
+        const s = document.getElementById('sigma_ms_max');
+        if (s) s.value = parseFloat(sig);
+      }
+      const pm = localStorage.getItem('pick_method');
+      if (pm) {
+        const sel = document.getElementById('pick_method');
+        if (sel) sel.value = pm;
       }
       const sh = localStorage.getItem('showFbPred');
       if (sh !== null) {
@@ -311,21 +318,79 @@
       return { f32, shape: obj.shape };
     }
 
-    function computePredictedPicksFromProb(traces, dt, thr) {
-      // traces: Array<Float32Array> each in [0,1]
-      const out = [];
-      for (let x = 0; x < traces.length; x++) {
-        const col = traces[x];
-        let maxVal = -1, maxIdx = -1;
-        for (let t = 0; t < col.length; t++) {
-          const v = col[t];
-          if (v > maxVal) { maxVal = v; maxIdx = t; }
+    // prob2d: Array(H) of Float32Array(W); each row sums to ~1
+    function picksFromProb(prob2d, dt, sigmaMaxMs = 20, method = 'argmax') {
+      const H = prob2d.length;
+      const W = prob2d[0].length;
+      const picks = new Array(H).fill(-1);
+      const dt_ms = dt * 1000;
+      const eps = 1e-12;
+
+      const t = new Float32Array(W);
+      for (let i = 0; i < W; i++) t[i] = i;
+
+      for (let h = 0; h < H; h++) {
+        const p = prob2d[h];
+        let s = 0.0;
+        for (let i = 0; i < W; i++) s += p[i];
+        if (!(s > eps) || !isFinite(s)) continue;
+        const invs = 1.0 / s;
+        let mu = 0.0;
+        for (let i = 0; i < W; i++) mu += p[i] * t[i];
+        mu *= invs;
+        let v = 0.0;
+        for (let i = 0; i < W; i++) {
+          const d = t[i] - mu;
+          v += p[i] * d * d;
         }
-        if (maxIdx >= 0 && maxVal >= thr) {
-          out.push({ trace: x, time: maxIdx * dt, prob: maxVal });
+        v *= invs;
+        const sigma_ms = Math.sqrt(Math.max(v, 0)) * dt_ms;
+        if (sigma_ms > sigmaMaxMs) continue;
+        if (method === 'expectation') {
+          picks[h] = Math.round(mu);
+        } else {
+          let imax = 0, vmax = -Infinity;
+          for (let i = 0; i < W; i++) if (p[i] > vmax) { vmax = p[i]; imax = i; }
+          picks[h] = imax;
         }
       }
+      return picks;
+    }
+
+    function computePicks(prob2d) {
+      const sigmaMax = Number(document.getElementById('sigma_ms_max').value) || 20;
+      const method = document.getElementById('pick_method').value;
+      const dt = (window.defaultDt ?? defaultDt);
+      const idxs = picksFromProb(prob2d, dt, sigmaMax, method);
+      const out = [];
+      for (let h = 0; h < idxs.length; h++) {
+        const idx = idxs[h];
+        if (idx >= 0) out.push({ trace: h, time: idx * dt });
+      }
       return out;
+    }
+
+    function recomputeFbPicks() {
+      if (!latestFbProbTraces) return;
+      const idx0 = parseInt(document.getElementById('key1_idx_slider').value);
+      const keyAtStart = key1Values[idx0];
+      if (currentFbKey !== keyAtStart) return;
+      const picks = computePicks(latestFbProbTraces);
+      predictedPicks = picks;
+      fbPredCache.set(currentFbKey, picks);
+      if (latestSeismicData) {
+        plotSeismicData(latestSeismicData, defaultDt, renderedStart, renderedEnd);
+      }
+    }
+
+    function onSigmaChange() {
+      localStorage.setItem('sigma_ms_max', document.getElementById('sigma_ms_max').value);
+      recomputeFbPicks();
+    }
+
+    function onPickMethodChange() {
+      localStorage.setItem('pick_method', document.getElementById('pick_method').value);
+      recomputeFbPicks();
     }
     async function predictFromFb() {
       // Snapshot the section at start
@@ -352,11 +417,7 @@
         }
 
         // Compute picks locally
-        const thr = parseFloat(document.getElementById('fbThresh')?.value) || 0.5;
-        const picks = computePredictedPicksFromProb(tracesLocal, defaultDt, thr);
-
-        // Always cache by the key that triggered this run
-        fbPredCache.set(keyAtStart, picks);
+        const picks = computePicks(tracesLocal);
 
         // ===== Guard against stale results =====
         // If a newer request started or the user moved to a different section, abort UI updates.
@@ -370,6 +431,7 @@
         predictedPicks = picks;
         latestFbProbTraces = tracesLocal;
         currentFbKey = keyAtStart;
+        fbPredCache.set(keyAtStart, picks);
 
         // Replot overlays
         plotSeismicData(latestSeismicData, defaultDt, renderedStart, renderedEnd);
