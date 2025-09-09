@@ -67,7 +67,15 @@
       <option value="raw">raw</option>
       <option value="denoised">denoised</option>
       <option value="filtered">表示: フィルタ</option>
+      <option value="fbprob">FB Prob</option>
     </select>
+    <label>FB thresh:
+      <input type="range" id="fbThresh" min="0" max="1" step="0.01" value="0.50"
+             oninput="document.getElementById('fbThreshDisp').textContent=(+this.value).toFixed(2); localStorage.setItem('fbThresh', this.value)">
+    </label>
+    <span id="fbThreshDisp">0.50</span>
+    <label><input type="checkbox" id="showFbPred" onchange="localStorage.setItem('showFbPred', this.checked); fetchAndPlot()">Show FB predicted</label>
+    <button id="predictFbBtn" onclick="predictFromFb()">Predict from FB</button>
     <label for="gain">Gain:</label>
     <input type="range" id="gain" min="0.1" max="5" step="0.1" value="1" oninput="onGainChange()" />
     <span id="gain_display">1×</span>
@@ -102,7 +110,7 @@
       <option value="RdBu">RdBu</option>
       <option value="BWR">BWR</option>
       <option value="Cividis">Cividis</option>
-      <option value="Viridis">Viridis</option>
+      <option value="Jet">Jet</option>
     </select>
     <label><input type="checkbox" id="cmReverse" onchange="onColormapChange()">reverse</label>
   </div>
@@ -161,6 +169,11 @@
     let renderedStart = null;
     let renderedEnd = null;
     let picks = [];
+    let predictedPicks = [];               // [{ trace, time, prob }]
+    const fbPredCache = new Map();         // key1Val -> predictedPicks
+    let latestFbProbTraces = null;         // Array<Float32Array> of 0..1 probs for current section
+    let currentFbKey = null;               // which key1Val latestFbProbTraces belongs to
+    let fbPredReqId = 0;                  // generation counter for FB predictions
     let downsampleFactor = 1;
     let isPickMode = false;
     let linePickStart = null;
@@ -170,7 +183,7 @@
       RdBu: 'RdBu',
       BWR: [[0, 'blue'], [0.5, 'white'], [1, 'red']],
       Cividis: 'Cividis',
-      Viridis: 'Viridis',
+      Jet: 'Jet',
     };
 
     (function() {
@@ -224,6 +237,21 @@
       }
     })();
 
+    (function restoreFbUi() {
+      const thr = localStorage.getItem('fbThresh');
+      if (thr !== null) {
+        const s = document.getElementById('fbThresh');
+        const d = document.getElementById('fbThreshDisp');
+        if (s) s.value = parseFloat(thr);
+        if (d) d.textContent = (+thr).toFixed(2);
+      }
+      const sh = localStorage.getItem('showFbPred');
+      if (sh !== null) {
+        const c = document.getElementById('showFbPred');
+        if (c) c.checked = (sh === 'true');
+      }
+    })();
+
     function getDenoiseParams() {
       return {
         mask_ratio: parseFloat(document.getElementById('mask_ratio').value),
@@ -241,6 +269,113 @@
         dt: parseFloat(document.getElementById('dt').value),
         taper: parseFloat(document.getElementById('taper').value),
       };
+    }
+
+    async function fetchFbProb(key1Val) {
+      const body = {
+        file_id: currentFileId,
+        key1_idx: key1Val,
+        key1_byte: currentKey1Byte,
+        key2_byte: currentKey2Byte,
+        tile_h: 128,
+        tile_w:6016,
+        overlap: 32,
+        amp: true,
+      };
+      const res = await fetch('/fbpick_section_bin', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      });
+      if (!res.ok) {
+        throw new Error('fbpick job failed');
+      }
+      const { job_id } = await res.json();
+      while (true) {
+        const st = await fetch(`/fbpick_job_status?job_id=${job_id}`);
+        const js = await st.json();
+        if (js.status === 'done') break;
+        if (js.status === 'error') {
+          throw new Error(js.message || 'fbpick failed');
+        }
+        await new Promise(r => setTimeout(r, 1000));
+      }
+      const binRes = await fetch(`/get_fbpick_section_bin?job_id=${job_id}`);
+      if (!binRes.ok) {
+        throw new Error('fbpick result fetch failed');
+      }
+      const bin = new Uint8Array(await binRes.arrayBuffer());
+      const obj = msgpack.decode(bin);
+      const int8 = new Int8Array(obj.data.buffer);
+      const f32 = Float32Array.from(int8, v => v / obj.scale);
+      return { f32, shape: obj.shape };
+    }
+
+    function computePredictedPicksFromProb(traces, dt, thr) {
+      // traces: Array<Float32Array> each in [0,1]
+      const out = [];
+      for (let x = 0; x < traces.length; x++) {
+        const col = traces[x];
+        let maxVal = -1, maxIdx = -1;
+        for (let t = 0; t < col.length; t++) {
+          const v = col[t];
+          if (v > maxVal) { maxVal = v; maxIdx = t; }
+        }
+        if (maxIdx >= 0 && maxVal >= thr) {
+          out.push({ trace: x, time: maxIdx * dt, prob: maxVal });
+        }
+      }
+      return out;
+    }
+    async function predictFromFb() {
+      // Snapshot the section at start
+      const idx0 = parseInt(document.getElementById('key1_idx_slider').value);
+      const keyAtStart = key1Values[idx0];
+
+      // Issue a new request token for this invocation
+      const reqToken = ++fbPredReqId;
+
+      const btn = document.getElementById('predictFbBtn');
+      if (btn) btn.disabled = true;
+
+      try {
+        // Ensure we have FB probabilities for this section
+        let tracesLocal = latestFbProbTraces;
+        if (!tracesLocal || currentFbKey !== keyAtStart) {
+          const { f32, shape } = await fetchFbProb(keyAtStart);
+          const [nTraces, nSamples] = shape;
+          const traces = new Array(nTraces);
+          for (let i = 0; i < nTraces; i++) {
+            traces[i] = f32.subarray(i * nSamples, (i + 1) * nSamples); // 0..1
+          }
+          tracesLocal = traces;
+        }
+
+        // Compute picks locally
+        const thr = parseFloat(document.getElementById('fbThresh')?.value) || 0.5;
+        const picks = computePredictedPicksFromProb(tracesLocal, defaultDt, thr);
+
+        // Always cache by the key that triggered this run
+        fbPredCache.set(keyAtStart, picks);
+
+        // ===== Guard against stale results =====
+        // If a newer request started or the user moved to a different section, abort UI updates.
+        const idxNow = parseInt(document.getElementById('key1_idx_slider').value);
+        const keyNow = key1Values[idxNow];
+        if (reqToken !== fbPredReqId || keyNow !== keyAtStart) {
+          return; // stale result -> do not touch predictedPicks or replot
+        }
+
+        // Still on the same section AND this is the latest request -> commit to UI state
+        predictedPicks = picks;
+        latestFbProbTraces = tracesLocal;
+        currentFbKey = keyAtStart;
+
+        // Replot overlays
+        plotSeismicData(latestSeismicData, defaultDt, renderedStart, renderedEnd);
+      } finally {
+        if (btn) btn.disabled = false;
+      }
     }
 
     function onGainChange() {
@@ -598,7 +733,7 @@
       }
 
       function prefetchAround(centerIdx, mode) {
-        if (mode === 'denoised') return;
+        if (mode === 'denoised' || mode === 'fbprob') return;
         for (const ctrl of inflight.values()) ctrl.abort();
         inflight.clear();
         const start = Math.max(0, centerIdx - PREFETCH_WIDTH);
@@ -748,6 +883,9 @@
     const index = parseInt(document.getElementById('key1_idx_slider').value);
     const key1Val = key1Values[index];
 
+    // Load predicted picks for this section if available
+    predictedPicks = fbPredCache.get(key1Val) || [];
+
     await fetchPicks();
 
     console.time('Cache lookup');
@@ -758,6 +896,8 @@
       hit = getCacheF32(cacheKey(key1Val, 'den'));
     } else if (mode === 'filtered') {
       hit = getCacheF32(cacheKey(key1Val, 'filt'));
+    } else if (mode === 'fbprob') {
+      hit = getCacheF32(cacheKey(key1Val, 'fbp'));
     } else {
       hit = getCacheF32(cacheKey(key1Val, 'den')) ||
             getCacheF32(cacheKey(key1Val, 'filt')) ||
@@ -779,50 +919,53 @@
       latestSeismicData = traces;
     } else {
       console.time('Fetch binary');
-      const denoiseParams = getDenoiseParams();
-      const bpfParams = getBpfParams();
-      const urlDen = `/get_denoised_section_bin?file_id=${currentFileId}&key1_idx=${key1Val}&chunk_h=${denoiseParams.chunk_h}&overlap=${denoiseParams.overlap}&mask_ratio=${denoiseParams.mask_ratio}&noise_std=${denoiseParams.noise_std}&mask_noise_mode=${denoiseParams.mask_noise_mode}`;
-      const urlFilt = `/get_bandpassed_section_bin?file_id=${currentFileId}&key1_idx=${key1Val}&low_hz=${bpfParams.low_hz}&high_hz=${bpfParams.high_hz}&dt=${bpfParams.dt}&taper=${bpfParams.taper}`;
-      const urlRaw = `/get_section_bin?file_id=${currentFileId}&key1_idx=${key1Val}&key1_byte=${currentKey1Byte}&key2_byte=${currentKey2Byte}`;
-      let res;
-      let fetchedMode = 'raw';
-      if (mode === 'raw') {
-        res = await fetch(urlRaw);
-        if (!res.ok) {
+      if (mode === 'fbprob') {
+        try {
+          const { f32: f32fb, shape } = await fetchFbProb(key1Val);
           console.timeEnd('Fetch binary');
-          alert('Failed to load section');
+          f32 = f32fb;
+          putCacheF32(cacheKey(key1Val, 'fbp'), f32);
+          sectionShape = shape;
+          const [nTraces, nSamples] = sectionShape;
+          traces = new Array(nTraces);
+          for (let i = 0; i < nTraces; i++) {
+            traces[i] = f32.subarray(i * nSamples, (i + 1) * nSamples);
+          }
+          latestSeismicData = traces;
+        } catch (e) {
+          console.timeEnd('Fetch binary');
+          alert('Failed to load FB Prob');
           return;
         }
-      } else if (mode === 'denoised') {
-        res = await fetch(urlDen);
-        if (res.ok) {
-          fetchedMode = 'den';
-        } else {
-          alert('denoised section not available, showing raw');
-          res = await fetch(urlRaw);
-          if (!res.ok) {
-            console.timeEnd('Fetch binary');
-            alert('Failed to load section');
-            return;
-          }
-        }
-      } else if (mode === 'filtered') {
-        res = await fetch(urlFilt);
-        if (res.ok) {
-          fetchedMode = 'filt';
-        } else {
-          res = await fetch(urlRaw);
-          if (!res.ok) {
-            console.timeEnd('Fetch binary');
-            alert('Failed to load section');
-            return;
-          }
-        }
       } else {
-        res = await fetch(urlDen);
-        if (res.ok) {
-          fetchedMode = 'den';
-        } else {
+        const denoiseParams = getDenoiseParams();
+        const bpfParams = getBpfParams();
+        const urlDen = `/get_denoised_section_bin?file_id=${currentFileId}&key1_idx=${key1Val}&chunk_h=${denoiseParams.chunk_h}&overlap=${denoiseParams.overlap}&mask_ratio=${denoiseParams.mask_ratio}&noise_std=${denoiseParams.noise_std}&mask_noise_mode=${denoiseParams.mask_noise_mode}`;
+        const urlFilt = `/get_bandpassed_section_bin?file_id=${currentFileId}&key1_idx=${key1Val}&low_hz=${bpfParams.low_hz}&high_hz=${bpfParams.high_hz}&dt=${bpfParams.dt}&taper=${bpfParams.taper}`;
+        const urlRaw = `/get_section_bin?file_id=${currentFileId}&key1_idx=${key1Val}&key1_byte=${currentKey1Byte}&key2_byte=${currentKey2Byte}`;
+        let res;
+        let fetchedMode = 'raw';
+        if (mode === 'raw') {
+          res = await fetch(urlRaw);
+          if (!res.ok) {
+            console.timeEnd('Fetch binary');
+            alert('Failed to load section');
+            return;
+          }
+        } else if (mode === 'denoised') {
+          res = await fetch(urlDen);
+          if (res.ok) {
+            fetchedMode = 'den';
+          } else {
+            alert('denoised section not available, showing raw');
+            res = await fetch(urlRaw);
+            if (!res.ok) {
+              console.timeEnd('Fetch binary');
+              alert('Failed to load section');
+              return;
+            }
+          }
+        } else if (mode === 'filtered') {
           res = await fetch(urlFilt);
           if (res.ok) {
             fetchedMode = 'filt';
@@ -834,24 +977,41 @@
               return;
             }
           }
+        } else {
+          res = await fetch(urlDen);
+          if (res.ok) {
+            fetchedMode = 'den';
+          } else {
+            res = await fetch(urlFilt);
+            if (res.ok) {
+              fetchedMode = 'filt';
+            } else {
+              res = await fetch(urlRaw);
+              if (!res.ok) {
+                console.timeEnd('Fetch binary');
+                alert('Failed to load section');
+                return;
+              }
+            }
+          }
         }
-      }
-      const bin = new Uint8Array(await res.arrayBuffer());
-      console.timeEnd('Fetch binary');
+        const bin = new Uint8Array(await res.arrayBuffer());
+        console.timeEnd('Fetch binary');
 
-      console.time('Decode & cache');
-      const obj = msgpack.decode(bin);
-      const int8 = new Int8Array(obj.data.buffer);
-      f32 = Float32Array.from(int8, v => v / obj.scale);
-      putCacheF32(cacheKey(key1Val, fetchedMode), f32);
-      sectionShape = obj.shape;
-      const [nTraces, nSamples] = sectionShape;
-      traces = new Array(nTraces);
-      for (let i = 0; i < nTraces; i++) {
-        traces[i] = f32.subarray(i * nSamples, (i + 1) * nSamples);
+        console.time('Decode & cache');
+        const obj = msgpack.decode(bin);
+        const int8 = new Int8Array(obj.data.buffer);
+        f32 = Float32Array.from(int8, v => v / obj.scale);
+        putCacheF32(cacheKey(key1Val, fetchedMode), f32);
+        sectionShape = obj.shape;
+        const [nTraces, nSamples] = sectionShape;
+        traces = new Array(nTraces);
+        for (let i = 0; i < nTraces; i++) {
+          traces[i] = f32.subarray(i * nSamples, (i + 1) * nSamples);
+        }
+        console.timeEnd('Decode & cache');
+        latestSeismicData = traces;
       }
-      console.timeEnd('Decode & cache');
-      latestSeismicData = traces;
     }
 
     console.time('Plotting');
@@ -887,11 +1047,13 @@
       const xRange = savedXRange ?? [0, totalTraces - 1];
       const visibleTraces = endTrace - startTrace + 1;
       const density = visibleTraces / widthPx;
+      const mode = document.getElementById('displayMode').value;
+      const fbMode = mode === 'fbprob';
 
       let traces = [];
       const gain = parseFloat(document.getElementById('gain').value) || 1.0;
 
-      if (density < 0.1) {
+      if (!fbMode && density < 0.1) {
         downsampleFactor = 1;
         const time = new Float32Array(nSamples);
         for (let t = 0; t < nSamples; t++) {
@@ -931,17 +1093,21 @@
         }
 
         const zData = Array.from({ length: nSamplesDS }, () => new Float32Array(nTracesDS));
-        // カラースケールはゲイン前の値で固定する（自己正規化を避ける）
-        let baseMin = Infinity;
-        let baseMax = -Infinity;
+        let baseMin = fbMode ? 0 : Infinity;
+        let baseMax = fbMode ? 255 : -Infinity;
         for (let i = startTrace, col = 0; col < nTracesDS; i += factor, col++) {
           const trace = seismic[i];
           for (let j = 0, row = 0; row < nSamplesDS; j += factor, row++) {
-            const raw = trace[j];
-            const val = raw * gain;
-            zData[row][col] = val;
-            if (raw < baseMin) baseMin = raw;
-            if (raw > baseMax) baseMax = raw;
+            if (fbMode) {
+              const val = trace[j] * 255;
+              zData[row][col] = val;
+            } else {
+              const raw = trace[j];
+              const val = raw * gain;
+              zData[row][col] = val;
+              if (raw < baseMin) baseMin = raw;
+              if (raw > baseMax) baseMax = raw;
+            }
           }
         }
         const xVals = new Float32Array(nTracesDS);
@@ -959,9 +1125,9 @@
           colorscale: cm,
           reversescale: reverse,
           // ゲイン前のベース範囲を使うことで、ゲイン変更が可視的なコントラスト変化になる
-          zmin: baseMin,
-          zmax: baseMax,
-          ...(isDiv ? { zmid: 0 } : {}),
+          zmin: fbMode ? 0 : baseMin,
+          zmax: fbMode ? 255 : baseMax,
+          ...(fbMode ? {} : (isDiv ? { zmid: 0 } : {})),
           showscale: false,
           hoverinfo: 'x+y',
           hovertemplate: '',
@@ -988,16 +1154,27 @@
         paper_bgcolor: '#fff',
         plot_bgcolor: '#fff',
         margin: { t: 10, r: 10, l: 60, b: 40 },
-        dragmode: isPickMode ? false : 'zoom'
+        dragmode: isPickMode ? false : 'zoom',
+        ...(fbMode ? { title: 'First-break Probability' } : {}),
       };
-        layout.shapes = picks.map(p => ({
+        const manualShapes = picks.map(p => ({
           type: 'line',
-          x0: p.trace - 0.4,
-          x1: p.trace + 0.4,
-          y0: p.time,
-          y1: p.time,
+          x0: p.trace - 0.4, x1: p.trace + 0.4,
+          y0: p.time, y1: p.time,
           line: { color: 'red', width: 2 }
         }));
+
+        const showPred = document.getElementById('showFbPred')?.checked;
+        const predShapes = (showPred ? predictedPicks : [])
+          .filter(p => p.trace >= startTrace && p.trace <= endTrace)
+          .map(p => ({
+            type: 'line',
+            x0: p.trace - 0.4, x1: p.trace + 0.4,
+            y0: p.time, y1: p.time,
+            line: { color: '#1f77b4', width: 5, dash: 'dot' }  // predicted = blue dotted
+          }));
+
+        layout.shapes = [...manualShapes, ...predShapes];
 
       Plotly.react(plotDiv, traces, layout, {
         responsive: true,
@@ -1147,7 +1324,13 @@
       }
 
       if (Array.isArray(ev.shapes)) {
-        const newPicks = ev.shapes.map(s => ({ trace: (s.x0 + s.x1) / 2, time: (s.y0 + s.y1) / 2 }));
+        // Only persist MANUAL (red) picks; ignore predicted (blue dotted)
+        const onlyManual = ev.shapes.filter(s => s.line && s.line.color === 'red');
+        const newPicks = onlyManual.map(s => ({
+          trace: (s.x0 + s.x1) / 2,
+          time:  (s.y0 + s.y1) / 2
+        }));
+
         const oldTraces = new Set(picks.map(p => Math.round(p.trace)));
         const newTraces = new Set(newPicks.map(p => Math.round(p.trace)));
         for (const t of oldTraces) {
