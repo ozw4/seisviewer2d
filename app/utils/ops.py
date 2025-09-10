@@ -4,6 +4,11 @@ from collections.abc import Callable  # noqa: F401
 from typing import Any, Protocol
 
 import numpy as np
+import torch
+
+from .bandpass import bandpass_np
+from .denoise import denoise_tensor
+from .fbpick import infer_prob_map
 
 
 class Transform(Protocol):
@@ -39,10 +44,10 @@ def op_bandpass(
     *,
     params: dict[str, Any],
     meta: dict[str, Any],
-
 ) -> np.ndarray:
     """Apply bandpass transform."""
-    raise NotImplementedError
+    _ = meta
+    return bandpass_np(x, **params)
 
 
 def op_denoise(
@@ -50,10 +55,12 @@ def op_denoise(
     *,
     params: dict[str, Any],
     meta: dict[str, Any],
-
 ) -> np.ndarray:
     """Apply denoise transform."""
-    raise NotImplementedError
+    _ = meta
+    x_t = torch.from_numpy(x.astype(np.float32)).unsqueeze(0).unsqueeze(0)
+    y_t = denoise_tensor(x_t, **params)
+    return y_t.squeeze(0).squeeze(0).numpy()
 
 
 def op_fbpick(
@@ -61,11 +68,13 @@ def op_fbpick(
     *,
     params: dict[str, Any],
     meta: dict[str, Any],
-
 ) -> dict[str, Any]:
     """Run fbpick analyzer."""
-    raise NotImplementedError
+    _ = meta
+    prob = infer_prob_map(x, **params)
+    return {'prob': prob}
 
 
-TRANSFORMS: dict[str, Transform] = {"bandpass": op_bandpass, "denoise": op_denoise}
-ANALYZERS: dict[str, Analyzer] = {"fbpick": op_fbpick}
+TRANSFORMS: dict[str, Transform] = {'bandpass': op_bandpass, 'denoise': op_denoise}
+ANALYZERS: dict[str, Analyzer] = {'fbpick': op_fbpick}
+
