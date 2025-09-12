@@ -8,6 +8,7 @@ import pathlib
 import re
 import shutil
 import threading
+from collections import OrderedDict
 from pathlib import Path
 from typing import Literal
 from uuid import uuid4
@@ -75,6 +76,28 @@ denoise_cache: dict[tuple, bytes] = {}
 bandpass_cache: dict[tuple[str, int, str], bytes] = {}
 fbpick_cache: dict[tuple, bytes] = {}
 jobs: dict[str, dict[str, float | str]] = {}
+
+
+class LRUCache(OrderedDict):
+        def __init__(self, capacity: int = 16):
+                super().__init__()
+                self.capacity = capacity
+
+        def get(self, key):
+                if key in self:
+                        self.move_to_end(key)
+                        return super().__getitem__(key)
+                return None
+
+        def set(self, key, value):
+                if key in self:
+                        self.move_to_end(key)
+                super().__setitem__(key, value)
+                if len(self) > self.capacity:
+                        self.popitem(last=False)
+
+
+pipeline_tap_cache = LRUCache(16)
 
 
 def get_reader(
@@ -748,21 +771,50 @@ def pipeline_section(
 ):
         reader = get_reader(file_id, key1_byte, key2_byte)
         section = np.array(reader.get_section(key1_idx), dtype=np.float32)
+        window_hash = None
         if window:
                 tr_min = int(window.get('tr_min', 0))
                 tr_max = int(window.get('tr_max', section.shape[0]))
                 t_min = int(window.get('t_min', 0))
                 t_max = int(window.get('t_max', section.shape[1]))
                 section = section[tr_min:tr_max, t_min:t_max]
+                clean_window = {
+                        'tr_min': tr_min,
+                        'tr_max': tr_max,
+                        't_min': t_min,
+                        't_max': t_max,
+                }
+                window_hash = hashlib.sha256(
+                        json.dumps(clean_window, sort_keys=True).encode()
+                ).hexdigest()[:8]
         dt = 0.002
         if hasattr(reader, 'meta'):
                 dt = getattr(reader, 'meta', {}).get('dt', dt)
         meta = {'dt': dt}
-        out = apply_pipeline(section, spec=spec, meta=meta, taps=taps)
+        pipe_key = pipeline_key(spec)
+        tap_names = taps or []
+        if tap_names:
+                base_key = (file_id, key1_idx, key1_byte, pipe_key, window_hash)
+                taps_out: dict[str, object] = {}
+                misses: list[str] = []
+                for tap in tap_names:
+                        payload = pipeline_tap_cache.get((*base_key, tap))
+                        if payload is not None:
+                                taps_out[tap] = payload
+                        else:
+                                misses.append(tap)
+                if misses:
+                        out = apply_pipeline(section, spec=spec, meta=meta, taps=misses)
+                        for k, v in out.items():
+                                val = v.tolist() if isinstance(v, np.ndarray) else v
+                                taps_out[k] = val
+                                pipeline_tap_cache.set((*base_key, k), val)
+                return {'taps': taps_out, 'pipeline_key': pipe_key}
+        out = apply_pipeline(section, spec=spec, meta=meta, taps=None)
         taps_out = {
                 k: v.tolist() if isinstance(v, np.ndarray) else v for k, v in out.items()
         }
-        return {'taps': taps_out, 'pipeline_key': pipeline_key(spec)}
+        return {'taps': taps_out, 'pipeline_key': pipe_key}
 
 
 @router.post('/picks')
