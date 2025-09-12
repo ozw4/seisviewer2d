@@ -32,6 +32,7 @@ Thumbs.db
 data/
 output/
 model/
+test/
 # compiled コード
 *.so
 *.o
