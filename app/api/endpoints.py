@@ -17,6 +17,7 @@ import msgpack
 import numpy as np
 import segyio
 import torch
+from api.schemas import PipelineSpec
 from fastapi import (
 	APIRouter,
 	Body,
@@ -33,14 +34,13 @@ from utils.denoise import denoise_tensor
 from utils.fbpick import _MODEL_PATH as FBPICK_MODEL_PATH
 from utils.fbpick import infer_prob_map
 from utils.picks import add_pick, delete_pick, list_picks, store
+from utils.pipeline import apply_pipeline, pipeline_key
 from utils.utils import (
 	SegySectionReader,
 	TraceStoreSectionReader,
 	quantize_float32,
+	to_builtin,
 )
-
-from ..api.schemas import PipelineSpec
-from ..utils.pipeline import apply_pipeline, pipeline_key
 
 router = APIRouter()
 
@@ -745,30 +745,31 @@ def fbpick_job_status(job_id: str = Query(...)):
 
 @router.get('/get_fbpick_section_bin')
 def get_fbpick_section_bin(job_id: str = Query(...)):
-        job = jobs.get(job_id)
-        if job is None or job.get('status') != 'done':
-                raise HTTPException(status_code=404, detail='Result not ready')
-        cache_key = job.get('cache_key')
-        payload = fbpick_cache.get(cache_key)
-        if payload is None:
-                raise HTTPException(status_code=404, detail='Result missing')
-        return Response(
-                payload,
-                media_type='application/octet-stream',
-                headers={'Content-Encoding': 'gzip'},
-        )
+	job = jobs.get(job_id)
+	if job is None or job.get('status') != 'done':
+		raise HTTPException(status_code=404, detail='Result not ready')
+	cache_key = job.get('cache_key')
+	payload = fbpick_cache.get(cache_key)
+	if payload is None:
+		raise HTTPException(status_code=404, detail='Result missing')
+	return Response(
+		payload,
+		media_type='application/octet-stream',
+		headers={'Content-Encoding': 'gzip'},
+	)
 
 
 @router.post('/pipeline/section')
 def pipeline_section(
-        file_id: str = Query(...),
-        key1_idx: int = Query(...),
-        key1_byte: int = Query(189),
-        key2_byte: int = Query(193),
-        spec: PipelineSpec = Body(...),
-        taps: list[str] | None = Body(default=None),
-        window: dict[str, int | float] | None = Body(default=None),
+	file_id: str = Query(...),
+	key1_idx: int = Query(...),
+	key1_byte: int = Query(189),
+	key2_byte: int = Query(193),
+	spec: PipelineSpec = Body(...),
+	taps: list[str] | None = Body(default=None),
+	window: dict[str, int | float] | None = Body(default=None),
 ):
+
         reader = get_reader(file_id, key1_byte, key2_byte)
         section = np.array(reader.get_section(key1_idx), dtype=np.float32)
         window_hash = None
@@ -815,6 +816,7 @@ def pipeline_section(
                 k: v.tolist() if isinstance(v, np.ndarray) else v for k, v in out.items()
         }
         return {'taps': taps_out, 'pipeline_key': pipe_key}
+
 
 
 @router.post('/picks')
