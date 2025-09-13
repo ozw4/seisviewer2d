@@ -12,13 +12,19 @@ import threading
 import traceback
 from collections import OrderedDict
 from pathlib import Path
-from typing import Literal
+from typing import Any, Literal
 from uuid import uuid4
 
 import msgpack
 import numpy as np
 import segyio
-from api.schemas import PipelineSpec
+from api.schemas import (
+        BandpassParams,
+        PipelineAllResponse,
+        PipelineJobStatusResponse,
+        PipelineSectionResponse,
+        PipelineSpec,
+)
 from fastapi import (
 	APIRouter,
 	Body,
@@ -123,28 +129,20 @@ class Pick(BaseModel):
 	key1_byte: int
 
 
-class BandpassRequest(BaseModel):
-	file_id: str
-	key1_idx: int
-	key1_byte: int = 189
-	key2_byte: int = 193
-	low_hz: float
-	high_hz: float
-	dt: float = 0.002
-	taper: float = 0.0
+class BandpassRequest(BandpassParams):
+        file_id: str
+        key1_idx: int
+        key1_byte: int = 189
+        key2_byte: int = 193
 
 
-class BandpassApplyRequest(BaseModel):
-	file_id: str
-	scope: Literal['display', 'all_key1', 'by_header']
-	key1_idx: int | None = None
-	group_header_byte: int | None = None
-	key1_byte: int = 189
-	key2_byte: int = 193
-	low_hz: float
-	high_hz: float
-	dt: float = 0.002
-	taper: float = 0.0
+class BandpassApplyRequest(BandpassParams):
+        file_id: str
+        scope: Literal['display', 'all_key1', 'by_header']
+        key1_idx: int | None = None
+        group_header_byte: int | None = None
+        key1_byte: int = 189
+        key2_byte: int = 193
 
 
 class DenoiseRequest(BaseModel):
@@ -838,7 +836,7 @@ def get_fbpick_section_bin(job_id: str = Query(...)):
 	)
 
 
-@router.post('/pipeline/section')
+@router.post('/pipeline/section', response_model=PipelineSectionResponse)
 def pipeline_section(
 	file_id: str = Query(...),
 	key1_idx: int = Query(...),
@@ -893,7 +891,7 @@ def pipeline_section(
 	return {'taps': to_builtin(out), 'pipeline_key': pipe_key}
 
 
-@router.post('/pipeline/all')
+@router.post('/pipeline/all', response_model=PipelineAllResponse)
 def pipeline_all(
 	file_id: str = Query(...),
 	key1_byte: int = Query(189),
@@ -927,8 +925,8 @@ def pipeline_all(
 	return {'job_id': job_id, 'state': jobs[job_id]['status']}
 
 
-@router.get('/pipeline/job/{job_id}/status')
-def pipeline_job_status(job_id: str) -> dict[str, object]:
+@router.get('/pipeline/job/{job_id}/status', response_model=PipelineJobStatusResponse)
+def pipeline_job_status(job_id: str) -> PipelineJobStatusResponse:
 	job = jobs.get(job_id)
 	if job is None:
 		raise HTTPException(status_code=404, detail='Job ID not found')
@@ -939,7 +937,7 @@ def pipeline_job_status(job_id: str) -> dict[str, object]:
 	}
 
 
-@router.get('/pipeline/job/{job_id}/artifact')
+@router.get('/pipeline/job/{job_id}/artifact', response_model=Any)
 def pipeline_job_artifact(
 	job_id: str,
 	key1_idx: int = Query(...),
@@ -958,7 +956,7 @@ def pipeline_job_artifact(
 	payload = pipeline_tap_cache.get((*base_key, tap))
 	if payload is None:
 		raise HTTPException(status_code=404, detail='Artifact not ready')
-	return JSONResponse(content=payload)
+	return payload
 
 
 @router.post('/picks')
