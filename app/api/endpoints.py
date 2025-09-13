@@ -16,7 +16,6 @@ from uuid import uuid4
 import msgpack
 import numpy as np
 import segyio
-import torch
 from api.schemas import PipelineSpec
 from fastapi import (
 	APIRouter,
@@ -29,10 +28,7 @@ from fastapi import (
 )
 from fastapi.responses import JSONResponse, Response
 from pydantic import BaseModel, Field
-from utils.bandpass import bandpass_np
-from utils.denoise import denoise_tensor
 from utils.fbpick import _MODEL_PATH as FBPICK_MODEL_PATH
-from utils.fbpick import infer_prob_map
 from utils.picks import add_pick, delete_pick, list_picks, store
 from utils.pipeline import apply_pipeline, pipeline_key
 from utils.utils import (
@@ -197,160 +193,185 @@ class PipelineAllRequest(BaseModel):
 
 
 def _run_denoise_job(job_id: str, req: DenoiseApplyRequest) -> None:
-	job = jobs[job_id]
-	try:
-		reader = get_reader(req.file_id, req.key1_byte, req.key2_byte)
-		if req.scope == 'display':
-			if req.key1_idx is None:
-				msg = 'key1_idx is required for display scope'
-				raise ValueError(msg)
-			key1_vals = [req.key1_idx]
-		elif req.scope == 'all_key1':
-			key1_vals = reader.get_key1_values().tolist()
-		else:
-			msg = 'by_header scope not implemented'
-			raise ValueError(msg)
-		total = len(key1_vals) or 1
-		params = {
-			'chunk_h': req.chunk_h,
-			'overlap': req.overlap,
-			'mask_ratio': req.mask_ratio,
-			'noise_std': req.noise_std,
-			'mask_noise_mode': req.mask_noise_mode,
-			'passes_batch': req.passes_batch,
-		}
-		param_hash = hashlib.sha256(
-			json.dumps(params, sort_keys=True).encode('utf-8')
-		).hexdigest()
-		for idx, key1_val in enumerate(key1_vals):
-			cache_key = (req.file_id, int(key1_val), param_hash)
-			if cache_key in denoise_cache:
-				job['progress'] = (idx + 1) / total
-				continue
-			section = np.array(reader.get_section(int(key1_val)), dtype=np.float32)
-			xt = torch.from_numpy(section).unsqueeze(0).unsqueeze(0)
-			yt = denoise_tensor(
-				xt,
-				chunk_h=req.chunk_h,
-				overlap=req.overlap,
-				mask_ratio=req.mask_ratio,
-				noise_std=req.noise_std,
-				mask_noise_mode=req.mask_noise_mode,
-				passes_batch=req.passes_batch,
-			)
-			denoised = yt.squeeze(0).squeeze(0).numpy()
-			scale, q = quantize_float32(denoised)
-			payload = msgpack.packb(
-				{
-					'scale': scale,
-					'shape': q.shape,
-					'data': q.tobytes(),
-				}
-			)
-			gz = gzip.compress(payload)
-			p = _denoise_path(req.file_id, int(key1_val), param_hash)
-			p.parent.mkdir(parents=True, exist_ok=True)
-			p.write_bytes(gz)
-			p_latest = _denoise_latest_path(req.file_id, int(key1_val))
-			p_latest.parent.mkdir(parents=True, exist_ok=True)
-			tmp = p_latest.with_suffix('.tmp')
-			tmp.write_bytes(gz)
-			tmp.replace(p_latest)
-			denoise_cache[cache_key] = gz
-			denoise_cache[(req.file_id, int(key1_val))] = gz
-			try:
-				base = DENOISE_DIR / str(req.file_id).replace('/', '_')
-				for child in base.iterdir():
-					if child.is_dir() and child.name not in {param_hash, 'latest'}:
-						shutil.rmtree(child, ignore_errors=True)
-			except Exception:
-				pass
-			job['progress'] = (idx + 1) / total
-		job['status'] = 'done'
-	except Exception as e:
-		job['status'] = 'error'
-		job['message'] = str(e)
+        job = jobs[job_id]
+        try:
+                reader = get_reader(req.file_id, req.key1_byte, req.key2_byte)
+                if req.scope == 'display':
+                        if req.key1_idx is None:
+                                msg = 'key1_idx is required for display scope'
+                                raise ValueError(msg)
+                        key1_vals = [req.key1_idx]
+                elif req.scope == 'all_key1':
+                        key1_vals = reader.get_key1_values().tolist()
+                else:
+                        msg = 'by_header scope not implemented'
+                        raise ValueError(msg)
+                total = len(key1_vals) or 1
+                params = {
+                        'chunk_h': req.chunk_h,
+                        'overlap': req.overlap,
+                        'mask_ratio': req.mask_ratio,
+                        'noise_std': req.noise_std,
+                        'mask_noise_mode': req.mask_noise_mode,
+                        'passes_batch': req.passes_batch,
+                }
+                param_hash = hashlib.sha256(
+                        json.dumps(params, sort_keys=True).encode('utf-8')
+                ).hexdigest()
+                spec = PipelineSpec(
+                        steps=[
+                                {
+                                        'kind': 'transform',
+                                        'name': 'denoise',
+                                        'params': {
+                                                'chunk_h': req.chunk_h,
+                                                'overlap': req.overlap,
+                                                'mask_ratio': req.mask_ratio,
+                                                'noise_std': req.noise_std,
+                                                'mask_noise_mode': req.mask_noise_mode,
+                                                'passes_batch': req.passes_batch,
+                                        },
+                                }
+                        ]
+                )
+                for idx, key1_val in enumerate(key1_vals):
+                        cache_key = (req.file_id, int(key1_val), param_hash)
+                        if cache_key in denoise_cache:
+                                job['progress'] = (idx + 1) / total
+                                continue
+                        section = np.array(reader.get_section(int(key1_val)), dtype=np.float32)
+                        out = apply_pipeline(section, spec=spec, meta={}, taps=['denoise'])
+                        denoised = out['denoise']['data']
+                        scale, q = quantize_float32(denoised)
+                        payload = msgpack.packb(
+                                {
+                                        'scale': scale,
+                                        'shape': q.shape,
+                                        'data': q.tobytes(),
+                                }
+                        )
+                        gz = gzip.compress(payload)
+                        p = _denoise_path(req.file_id, int(key1_val), param_hash)
+                        p.parent.mkdir(parents=True, exist_ok=True)
+                        p.write_bytes(gz)
+                        p_latest = _denoise_latest_path(req.file_id, int(key1_val))
+                        p_latest.parent.mkdir(parents=True, exist_ok=True)
+                        tmp = p_latest.with_suffix('.tmp')
+                        tmp.write_bytes(gz)
+                        tmp.replace(p_latest)
+                        denoise_cache[cache_key] = gz
+                        denoise_cache[(req.file_id, int(key1_val))] = gz
+                        try:
+                                base = DENOISE_DIR / str(req.file_id).replace('/', '_')
+                                for child in base.iterdir():
+                                        if child.is_dir() and child.name not in {param_hash, 'latest'}:
+                                                shutil.rmtree(child, ignore_errors=True)
+                        except Exception:
+                                pass
+                        job['progress'] = (idx + 1) / total
+                job['status'] = 'done'
+        except Exception as e:
+                job['status'] = 'error'
+                job['message'] = str(e)
 
 
 def _run_bandpass_job(job_id: str, req: BandpassApplyRequest) -> None:
-	job = jobs[job_id]
-	try:
-		reader = get_reader(req.file_id, req.key1_byte, req.key2_byte)
-		if req.scope == 'display':
-			if req.key1_idx is None:
-				msg = 'key1_idx is required for display scope'
-				raise ValueError(msg)
-			key1_vals = [req.key1_idx]
-		elif req.scope == 'all_key1':
-			key1_vals = reader.get_key1_values().tolist()
-		else:
-			msg = 'by_header scope not implemented'
-			raise ValueError(msg)
-		total = len(key1_vals) or 1
-		params = {
-			'low_hz': req.low_hz,
-			'high_hz': req.high_hz,
-			'dt': req.dt,
-			'taper': req.taper,
-		}
-		param_hash = hashlib.sha256(
-			json.dumps(params, sort_keys=True).encode('utf-8')
-		).hexdigest()
-		for idx, key1_val in enumerate(key1_vals):
-			cache_key = (req.file_id, int(key1_val), param_hash)
-			if cache_key in bandpass_cache:
-				job['progress'] = (idx + 1) / total
-				continue
-			section = np.array(reader.get_section(int(key1_val)), dtype=np.float32)
-			filtered = bandpass_np(
-				section,
-				low_hz=req.low_hz,
-				high_hz=req.high_hz,
-				dt=req.dt,
-				taper=req.taper,
-			)
-			scale, q = quantize_float32(filtered)
-			payload = msgpack.packb(
-				{
-					'scale': scale,
-					'shape': q.shape,
-					'data': q.tobytes(),
-				}
-			)
-			bandpass_cache[cache_key] = gzip.compress(payload)
-			job['progress'] = (idx + 1) / total
-		job['status'] = 'done'
-	except Exception as e:
-		job['status'] = 'error'
-		job['message'] = str(e)
+        job = jobs[job_id]
+        try:
+                reader = get_reader(req.file_id, req.key1_byte, req.key2_byte)
+                if req.scope == 'display':
+                        if req.key1_idx is None:
+                                msg = 'key1_idx is required for display scope'
+                                raise ValueError(msg)
+                        key1_vals = [req.key1_idx]
+                elif req.scope == 'all_key1':
+                        key1_vals = reader.get_key1_values().tolist()
+                else:
+                        msg = 'by_header scope not implemented'
+                        raise ValueError(msg)
+                total = len(key1_vals) or 1
+                params = {
+                        'low_hz': req.low_hz,
+                        'high_hz': req.high_hz,
+                        'dt': req.dt,
+                        'taper': req.taper,
+                }
+                param_hash = hashlib.sha256(
+                        json.dumps(params, sort_keys=True).encode('utf-8')
+                ).hexdigest()
+                spec = PipelineSpec(
+                        steps=[
+                                {
+                                        'kind': 'transform',
+                                        'name': 'bandpass',
+                                        'params': {
+                                                'low_hz': req.low_hz,
+                                                'high_hz': req.high_hz,
+                                                'dt': req.dt,
+                                                'taper': req.taper,
+                                        },
+                                }
+                        ]
+                )
+                for idx, key1_val in enumerate(key1_vals):
+                        cache_key = (req.file_id, int(key1_val), param_hash)
+                        if cache_key in bandpass_cache:
+                                job['progress'] = (idx + 1) / total
+                                continue
+                        section = np.array(reader.get_section(int(key1_val)), dtype=np.float32)
+                        out = apply_pipeline(section, spec=spec, meta={}, taps=['bandpass'])
+                        filtered = out['bandpass']['data']
+                        scale, q = quantize_float32(filtered)
+                        payload = msgpack.packb(
+                                {
+                                        'scale': scale,
+                                        'shape': q.shape,
+                                        'data': q.tobytes(),
+                                }
+                        )
+                        bandpass_cache[cache_key] = gzip.compress(payload)
+                        job['progress'] = (idx + 1) / total
+                job['status'] = 'done'
+        except Exception as e:
+                job['status'] = 'error'
+                job['message'] = str(e)
 
 
 def _run_fbpick_job(job_id: str, req: FbpickRequest) -> None:
-	job = jobs[job_id]
-	job['status'] = 'running'
-	try:
-		cache_key = job['cache_key']
-		reader = get_reader(req.file_id, req.key1_byte, req.key2_byte)
-		section = np.array(reader.get_section(req.key1_idx), dtype=np.float32)
-		prob = infer_prob_map(
-			section,
-			amp=req.amp,
-			tile=(req.tile_h, req.tile_w),
-			overlap=req.overlap,
-		)
-		scale, q = quantize_float32(prob, fixed_scale=127.0)
-		payload = msgpack.packb(
-			{
-				'scale': scale,
-				'shape': q.shape,
-				'data': q.tobytes(),
-			}
-		)
-		fbpick_cache[cache_key] = gzip.compress(payload)
-		job['status'] = 'done'
-	except Exception as e:
-		job['status'] = 'error'
-		job['message'] = str(e)
+        job = jobs[job_id]
+        job['status'] = 'running'
+        try:
+                cache_key = job['cache_key']
+                reader = get_reader(req.file_id, req.key1_byte, req.key2_byte)
+                section = np.array(reader.get_section(req.key1_idx), dtype=np.float32)
+                spec = PipelineSpec(
+                        steps=[
+                                {
+                                        'kind': 'analyzer',
+                                        'name': 'fbpick',
+                                        'params': {
+                                                'tile': (req.tile_h, req.tile_w),
+                                                'overlap': req.overlap,
+                                                'amp': req.amp,
+                                        },
+                                }
+                        ]
+                )
+                out = apply_pipeline(section, spec=spec, meta={}, taps=None)
+                prob = out['fbpick']['prob']
+                scale, q = quantize_float32(prob, fixed_scale=127.0)
+                payload = msgpack.packb(
+                        {
+                                'scale': scale,
+                                'shape': q.shape,
+                                'data': q.tobytes(),
+                        }
+                )
+                fbpick_cache[cache_key] = gzip.compress(payload)
+                job['status'] = 'done'
+        except Exception as e:
+                job['status'] = 'error'
+                job['message'] = str(e)
 
 
 
@@ -551,33 +572,42 @@ def get_section_bin(
 
 @router.post('/bandpass_section_bin')
 def bandpass_section_bin(req: BandpassRequest):
-	try:
-		reader = get_reader(req.file_id, req.key1_byte, req.key2_byte)
-		section = np.array(reader.get_section(req.key1_idx), dtype=np.float32)
-		filtered = bandpass_np(
-			section,
-			low_hz=req.low_hz,
-			high_hz=req.high_hz,
-			dt=req.dt,
-			taper=req.taper,
-		)
-		scale, q = quantize_float32(filtered)
-		payload = msgpack.packb(
-			{
-				'scale': scale,
-				'shape': q.shape,
-				'data': q.tobytes(),
-			}
-		)
-		return Response(
-			gzip.compress(payload),
-			media_type='application/octet-stream',
-			headers={'Content-Encoding': 'gzip'},
-		)
-	except ValueError as e:
-		raise HTTPException(status_code=400, detail=str(e))
-	except Exception as e:
-		raise HTTPException(status_code=500, detail=str(e))
+        try:
+                reader = get_reader(req.file_id, req.key1_byte, req.key2_byte)
+                section = np.array(reader.get_section(req.key1_idx), dtype=np.float32)
+                spec = PipelineSpec(
+                        steps=[
+                                {
+                                        'kind': 'transform',
+                                        'name': 'bandpass',
+                                        'params': {
+                                                'low_hz': req.low_hz,
+                                                'high_hz': req.high_hz,
+                                                'dt': req.dt,
+                                                'taper': req.taper,
+                                        },
+                                }
+                        ]
+                )
+                out = apply_pipeline(section, spec=spec, meta={}, taps=['bandpass'])
+                filtered = out['bandpass']['data']
+                scale, q = quantize_float32(filtered)
+                payload = msgpack.packb(
+                        {
+                                'scale': scale,
+                                'shape': q.shape,
+                                'data': q.tobytes(),
+                        }
+                )
+                return Response(
+                        gzip.compress(payload),
+                        media_type='application/octet-stream',
+                        headers={'Content-Encoding': 'gzip'},
+                )
+        except ValueError as e:
+                raise HTTPException(status_code=400, detail=str(e))
+        except Exception as e:
+                raise HTTPException(status_code=500, detail=str(e))
 
 
 @router.post('/bandpass_apply')
@@ -628,69 +658,76 @@ def get_bandpassed_section_bin(
 
 @router.post('/denoise_section_bin')
 def denoise_section_bin(req: DenoiseRequest):
-	try:
-		reader = get_reader(req.file_id, req.key1_byte, req.key2_byte)
-		section = np.array(reader.get_section(req.key1_idx), dtype=np.float32)
-		xt = torch.from_numpy(section).unsqueeze(0).unsqueeze(0)
-		yt = denoise_tensor(
-			xt,
-			chunk_h=req.chunk_h,
-			overlap=req.overlap,
-			mask_ratio=req.mask_ratio,
-			noise_std=req.noise_std,
-			mask_noise_mode=req.mask_noise_mode,
-			passes_batch=req.passes_batch,
-		)
-		denoised = yt.squeeze(0).squeeze(0).numpy()
-		scale, q = quantize_float32(denoised)
-		payload = msgpack.packb(
-			{
-				'scale': scale,
-				'shape': q.shape,
-				'data': q.tobytes(),
-			}
-		)
-		params = {
-			'chunk_h': req.chunk_h,
-			'overlap': req.overlap,
-			'mask_ratio': req.mask_ratio,
-			'noise_std': req.noise_std,
-			'mask_noise_mode': req.mask_noise_mode,
-			'passes_batch': req.passes_batch,
-		}
-		param_hash = hashlib.sha256(
-			json.dumps(params, sort_keys=True).encode('utf-8')
-		).hexdigest()
-		cache_key = (req.file_id, req.key1_idx, param_hash)
-		gz = gzip.compress(payload)
-		p = _denoise_path(req.file_id, req.key1_idx, param_hash)
-		p.parent.mkdir(parents=True, exist_ok=True)
-		p.write_bytes(gz)
-		p_latest = _denoise_latest_path(req.file_id, req.key1_idx)
-		p_latest.parent.mkdir(parents=True, exist_ok=True)
-		tmp = p_latest.with_suffix('.tmp')
-		tmp.write_bytes(gz)
-		tmp.replace(p_latest)
-		denoise_cache[cache_key] = gz
-		denoise_cache[(req.file_id, req.key1_idx)] = gz
-		try:
-			base = DENOISE_DIR / str(req.file_id).replace('/', '_')
-			for child in base.iterdir():
-				if child.is_dir() and child.name not in {param_hash, 'latest'}:
-					shutil.rmtree(child, ignore_errors=True)
-		except Exception:
-			pass
-		return Response(
-			gz,
-			media_type='application/octet-stream',
-			headers={'Content-Encoding': 'gzip'},
-		)
-	except Exception as e:
-		import sys
-		import traceback
+        try:
+                reader = get_reader(req.file_id, req.key1_byte, req.key2_byte)
+                section = np.array(reader.get_section(req.key1_idx), dtype=np.float32)
+                spec = PipelineSpec(
+                        steps=[
+                                {
+                                        'kind': 'transform',
+                                        'name': 'denoise',
+                                        'params': {
+                                                'chunk_h': req.chunk_h,
+                                                'overlap': req.overlap,
+                                                'mask_ratio': req.mask_ratio,
+                                                'noise_std': req.noise_std,
+                                                'mask_noise_mode': req.mask_noise_mode,
+                                                'passes_batch': req.passes_batch,
+                                        },
+                                }
+                        ]
+                )
+                out = apply_pipeline(section, spec=spec, meta={}, taps=['denoise'])
+                denoised = out['denoise']['data']
+                scale, q = quantize_float32(denoised)
+                payload = msgpack.packb(
+                        {
+                                'scale': scale,
+                                'shape': q.shape,
+                                'data': q.tobytes(),
+                        }
+                )
+                params = {
+                        'chunk_h': req.chunk_h,
+                        'overlap': req.overlap,
+                        'mask_ratio': req.mask_ratio,
+                        'noise_std': req.noise_std,
+                        'mask_noise_mode': req.mask_noise_mode,
+                        'passes_batch': req.passes_batch,
+                }
+                param_hash = hashlib.sha256(
+                        json.dumps(params, sort_keys=True).encode('utf-8')
+                ).hexdigest()
+                cache_key = (req.file_id, req.key1_idx, param_hash)
+                gz = gzip.compress(payload)
+                p = _denoise_path(req.file_id, req.key1_idx, param_hash)
+                p.parent.mkdir(parents=True, exist_ok=True)
+                p.write_bytes(gz)
+                p_latest = _denoise_latest_path(req.file_id, req.key1_idx)
+                p_latest.parent.mkdir(parents=True, exist_ok=True)
+                tmp = p_latest.with_suffix('.tmp')
+                tmp.write_bytes(gz)
+                tmp.replace(p_latest)
+                denoise_cache[cache_key] = gz
+                denoise_cache[(req.file_id, req.key1_idx)] = gz
+                try:
+                        base = DENOISE_DIR / str(req.file_id).replace('/', '_')
+                        for child in base.iterdir():
+                                if child.is_dir() and child.name not in {param_hash, 'latest'}:
+                                        shutil.rmtree(child, ignore_errors=True)
+                except Exception:
+                        pass
+                return Response(
+                        gz,
+                        media_type='application/octet-stream',
+                        headers={'Content-Encoding': 'gzip'},
+                )
+        except Exception:
+                import sys
+                import traceback
 
-		traceback.print_exc(file=sys.stderr)
-		raise HTTPException(status_code=500, detail=str(e))
+        traceback.print_exc(file=sys.stderr)
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 @router.post('/denoise_apply')
