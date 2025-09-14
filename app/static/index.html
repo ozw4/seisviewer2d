@@ -62,12 +62,8 @@
     <input type="number" id="key1_idx_display" value="0" min="0" max="10000" step="1" style="width: 60px;" onchange="syncSliderWithInput(); fetchAndPlot()" />
     <button onclick="fetchAndPlot()">Plot</button>
     <button id="pickModeBtn" onclick="togglePickMode()">Pick Mode: OFF</button>
-    <select id="displayMode" onchange="fetchAndPlot()">
-      <option value="auto" selected>auto</option>
-      <option value="raw">raw</option>
-      <option value="denoised">denoised</option>
-      <option value="filtered">表示: フィルタ</option>
-      <option value="fbprob">FB Prob</option>
+    <select id="layerSelect" onchange="drawSelectedLayer()">
+      <option value="raw" selected>raw</option>
     </select>
     <label style="margin-left:8px">σmax (ms):
       <input id="sigma_ms_max" type="number" value="20" step="1" min="1" style="width:5em" oninput="onSigmaChange()">
@@ -152,6 +148,7 @@
   <script src="/static/plotly-2.29.1.min.js"></script>
   <script src="/static/pako.min.js"></script>
   <script src="/static/msgpack.min.js"></script>
+  <script src="/static/api.js"></script>
   <script>
     let key1Values = [];
     let currentFileId = '';
@@ -160,6 +157,9 @@
     let savedXRange = null;
     let savedYRange = null;
     let latestSeismicData = null;
+    let rawSeismicData = null;
+    let latestTapData = {};
+    let latestPipelineKey = null;
     const defaultDt = 0.002;
     const PREFETCH_WIDTH = 3;   // ±10
     const FALLBACK_MAX = 8;  // API 無い場合
@@ -941,30 +941,15 @@
     console.log('--- fetchAndPlot start ---');
     console.time('Total fetchAndPlot');
 
-    const mode = document.getElementById('displayMode').value;
     const index = parseInt(document.getElementById('key1_idx_slider').value);
     const key1Val = key1Values[index];
 
-    // Load predicted picks for this section if available
     predictedPicks = fbPredCache.get(key1Val) || [];
 
     await fetchPicks();
 
     console.time('Cache lookup');
-    let hit = null;
-    if (mode === 'raw') {
-      hit = getCacheF32(cacheKey(key1Val, 'raw'));
-    } else if (mode === 'denoised') {
-      hit = getCacheF32(cacheKey(key1Val, 'den'));
-    } else if (mode === 'filtered') {
-      hit = getCacheF32(cacheKey(key1Val, 'filt'));
-    } else if (mode === 'fbprob') {
-      hit = getCacheF32(cacheKey(key1Val, 'fbp'));
-    } else {
-      hit = getCacheF32(cacheKey(key1Val, 'den')) ||
-            getCacheF32(cacheKey(key1Val, 'filt')) ||
-            getCacheF32(cacheKey(key1Val, 'raw'));
-    }
+    const hit = getCacheF32(cacheKey(key1Val, 'raw'));
     console.timeEnd('Cache lookup');
 
     let traces;
@@ -978,115 +963,84 @@
         traces[i] = f32.subarray(i * nSamples, (i + 1) * nSamples);
       }
       console.timeEnd('Decode from cache');
-      latestSeismicData = traces;
+      rawSeismicData = traces;
     } else {
       console.time('Fetch binary');
-      if (mode === 'fbprob') {
-        try {
-          const { f32: f32fb, shape } = await fetchFbProb(key1Val);
-          console.timeEnd('Fetch binary');
-          f32 = f32fb;
-          putCacheF32(cacheKey(key1Val, 'fbp'), f32);
-          sectionShape = shape;
-          const [nTraces, nSamples] = sectionShape;
-          traces = new Array(nTraces);
-          for (let i = 0; i < nTraces; i++) {
-            traces[i] = f32.subarray(i * nSamples, (i + 1) * nSamples);
-          }
-          latestSeismicData = traces;
-        } catch (e) {
-          console.timeEnd('Fetch binary');
-          alert('Failed to load FB Prob');
-          return;
-        }
-      } else {
-        const denoiseParams = getDenoiseParams();
-        const bpfParams = getBpfParams();
-        const urlDen = `/get_denoised_section_bin?file_id=${currentFileId}&key1_idx=${key1Val}&chunk_h=${denoiseParams.chunk_h}&overlap=${denoiseParams.overlap}&mask_ratio=${denoiseParams.mask_ratio}&noise_std=${denoiseParams.noise_std}&mask_noise_mode=${denoiseParams.mask_noise_mode}`;
-        const urlFilt = `/get_bandpassed_section_bin?file_id=${currentFileId}&key1_idx=${key1Val}&low_hz=${bpfParams.low_hz}&high_hz=${bpfParams.high_hz}&dt=${bpfParams.dt}&taper=${bpfParams.taper}`;
-        const urlRaw = `/get_section_bin?file_id=${currentFileId}&key1_idx=${key1Val}&key1_byte=${currentKey1Byte}&key2_byte=${currentKey2Byte}`;
-        let res;
-        let fetchedMode = 'raw';
-        if (mode === 'raw') {
-          res = await fetch(urlRaw);
-          if (!res.ok) {
-            console.timeEnd('Fetch binary');
-            alert('Failed to load section');
-            return;
-          }
-        } else if (mode === 'denoised') {
-          res = await fetch(urlDen);
-          if (res.ok) {
-            fetchedMode = 'den';
-          } else {
-            alert('denoised section not available, showing raw');
-            res = await fetch(urlRaw);
-            if (!res.ok) {
-              console.timeEnd('Fetch binary');
-              alert('Failed to load section');
-              return;
-            }
-          }
-        } else if (mode === 'filtered') {
-          res = await fetch(urlFilt);
-          if (res.ok) {
-            fetchedMode = 'filt';
-          } else {
-            res = await fetch(urlRaw);
-            if (!res.ok) {
-              console.timeEnd('Fetch binary');
-              alert('Failed to load section');
-              return;
-            }
-          }
-        } else {
-          res = await fetch(urlDen);
-          if (res.ok) {
-            fetchedMode = 'den';
-          } else {
-            res = await fetch(urlFilt);
-            if (res.ok) {
-              fetchedMode = 'filt';
-            } else {
-              res = await fetch(urlRaw);
-              if (!res.ok) {
-                console.timeEnd('Fetch binary');
-                alert('Failed to load section');
-                return;
-              }
-            }
-          }
-        }
-        const bin = new Uint8Array(await res.arrayBuffer());
+      const urlRaw = `/get_section_bin?file_id=${currentFileId}&key1_idx=${key1Val}&key1_byte=${currentKey1Byte}&key2_byte=${currentKey2Byte}`;
+      const res = await fetch(urlRaw);
+      if (!res.ok) {
         console.timeEnd('Fetch binary');
-
-        console.time('Decode & cache');
-        const obj = msgpack.decode(bin);
-        const int8 = new Int8Array(obj.data.buffer);
-        f32 = Float32Array.from(int8, v => v / obj.scale);
-        putCacheF32(cacheKey(key1Val, fetchedMode), f32);
-        sectionShape = obj.shape;
-        const [nTraces, nSamples] = sectionShape;
-        traces = new Array(nTraces);
-        for (let i = 0; i < nTraces; i++) {
-          traces[i] = f32.subarray(i * nSamples, (i + 1) * nSamples);
-        }
-        console.timeEnd('Decode & cache');
-        latestSeismicData = traces;
+        alert('Failed to load section');
+        return;
       }
+      const bin = new Uint8Array(await res.arrayBuffer());
+      console.timeEnd('Fetch binary');
+
+      console.time('Decode & cache');
+      const obj = msgpack.decode(bin);
+      const int8 = new Int8Array(obj.data.buffer);
+      f32 = Float32Array.from(int8, (v) => v / obj.scale);
+      putCacheF32(cacheKey(key1Val, 'raw'), f32);
+      sectionShape = obj.shape;
+      const [nTraces, nSamples] = sectionShape;
+      traces = new Array(nTraces);
+      for (let i = 0; i < nTraces; i++) {
+        traces[i] = f32.subarray(i * nSamples, (i + 1) * nSamples);
+      }
+      console.timeEnd('Decode & cache');
+      rawSeismicData = traces;
     }
 
-    console.time('Plotting');
-    const [s, e] = savedXRange ? visibleTraceIndices(savedXRange, latestSeismicData.length) : [0, latestSeismicData.length - 1];
-    plotSeismicData(latestSeismicData, defaultDt, s, e);
-    console.timeEnd('Plotting');
+    try {
+      const spec = { steps: [{ kind: 'transform', name: 'bandpass', params: { low_hz: 5, high_hz: 45, dt: 0.002 } }] };
+      const taps = ['bandpass', 'final'];
+      const { taps: tapMap, pipelineKey } = await fetchSectionWithPipeline(
+        currentFileId,
+        key1Val,
+        spec,
+        taps,
+        { key1Byte: currentKey1Byte, key2Byte: currentKey2Byte },
+      );
+      latestTapData = tapMap;
+      latestPipelineKey = pipelineKey;
+      const sel = document.getElementById('layerSelect');
+      const current = sel.value;
+      sel.innerHTML = '';
+      sel.appendChild(new Option('raw', 'raw'));
+      Object.keys(tapMap)
+        .sort()
+        .forEach((name) => sel.appendChild(new Option(name, name)));
+      sel.value = tapMap[current] ? current : 'raw';
+    } catch (e) {
+      console.warn('pipeline/section failed', e);
+      latestTapData = {};
+      latestPipelineKey = null;
+      const sel = document.getElementById('layerSelect');
+      sel.innerHTML = '';
+      sel.appendChild(new Option('raw', 'raw'));
+      sel.value = 'raw';
+    }
+
+    const [s, e] = savedXRange ? visibleTraceIndices(savedXRange, rawSeismicData.length) : [0, rawSeismicData.length - 1];
+    drawSelectedLayer(s, e);
 
     console.time('Prefetch');
-    prefetchAround(index, mode);
+    prefetchAround(index, 'raw');
     console.timeEnd('Prefetch');
 
     console.timeEnd('Total fetchAndPlot');
     console.log('--- fetchAndPlot end ---');
+  }
+
+  function drawSelectedLayer(start = 0, end = rawSeismicData ? rawSeismicData.length - 1 : 0) {
+    const sel = document.getElementById('layerSelect');
+    const layer = sel ? sel.value : 'raw';
+    if (layer === 'raw' || !latestTapData[layer]) {
+      latestSeismicData = rawSeismicData;
+    } else {
+      latestSeismicData = latestTapData[layer];
+    }
+    plotSeismicData(latestSeismicData, defaultDt, start, end);
   }
 
     function visibleTraceIndices(range, total) {
@@ -1109,7 +1063,7 @@
       const xRange = savedXRange ?? [0, totalTraces - 1];
       const visibleTraces = endTrace - startTrace + 1;
       const density = visibleTraces / widthPx;
-      const mode = document.getElementById('displayMode').value;
+      const mode = document.getElementById('layerSelect').value;
       const fbMode = mode === 'fbprob';
 
       let traces = [];
@@ -1406,7 +1360,7 @@
 
     window.addEventListener('DOMContentLoaded', loadSettings);
 
-    // Toggle between raw and denoised displays with the "n" key
+    // Toggle between raw and first tap with the "n" key
     window.addEventListener('keydown', (e) => {
         if (
           e.key.toLowerCase() === 'n' &&
@@ -1415,9 +1369,12 @@
           !e.metaKey &&
           !['INPUT', 'SELECT', 'TEXTAREA'].includes(document.activeElement.tagName)
         ) {
-          const sel = document.getElementById('displayMode');
-          sel.value = sel.value === 'denoised' ? 'raw' : 'denoised';
-          fetchAndPlot();
+          const sel = document.getElementById('layerSelect');
+          if (!sel) return;
+          if (sel.options.length > 1) {
+            sel.value = sel.value === 'raw' ? sel.options[1].value : 'raw';
+            drawSelectedLayer();
+          }
         }
       });
 
