@@ -69,7 +69,6 @@ def _run_tiled(
 
 			if pad_h or pad_w:
 				patch = F.pad(patch, (0, pad_w, 0, pad_h), mode='constant', value=0.0)
-			print(patch.shape, pad_h, pad_w)
 			with torch.cuda.amp.autocast(enabled=amp and torch.cuda.is_available()):
 				yp = model(patch)  # (B,1,tile_h,tile_w) expected
 			yp = yp[..., :ph, :pw]
