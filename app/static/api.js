@@ -33,3 +33,54 @@ async function fetchFbpickSectionBin(body) {
 
   return { h, w, probs, meta };
 }
+
+const _pipelineSectionCache = new Map();
+
+function cacheSet(key, value) {
+  _pipelineSectionCache.set(key, value);
+}
+
+function cacheGet(key) {
+  return _pipelineSectionCache.get(key);
+}
+
+function normalizeTapValue(value) {
+  let mat = value;
+  if (value && typeof value === 'object') {
+    if (value.data) {
+      mat = value.data;
+    } else if (value.prob) {
+      mat = value.prob;
+    }
+  }
+  return Array.isArray(mat)
+    ? mat.map((row) => Float32Array.from(row))
+    : mat;
+}
+
+async function fetchSectionWithPipeline(
+  fileId,
+  key1Idx,
+  spec,
+  taps,
+  { key1Byte = 189, key2Byte = 193 } = {}
+) {
+  const url = `/pipeline/section?file_id=${encodeURIComponent(fileId)}&key1_idx=${key1Idx}&key1_byte=${key1Byte}&key2_byte=${key2Byte}`;
+  const r = await fetch(url, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ spec, taps }),
+  });
+  if (!r.ok) throw new Error(`pipeline/section ${r.status}`);
+  const json = await r.json();
+  const out = {};
+  for (const [name, val] of Object.entries(json.taps || {})) {
+    try {
+      out[name] = normalizeTapValue(val);
+    } catch (e) {
+      console.warn('normalizeTapValue failed', name, e);
+    }
+  }
+  cacheSet(`${fileId}:${key1Idx}:${json.pipeline_key}`, out);
+  return { taps: out, pipelineKey: json.pipeline_key };
+}
