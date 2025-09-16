@@ -6,6 +6,20 @@ import numpy as np
 import segyio
 
 
+def to_builtin(o):
+	import numpy as np
+
+	if isinstance(o, np.ndarray):
+		return o.tolist()
+	if isinstance(o, (np.floating, np.integer)):
+		return o.item()
+	if isinstance(o, dict):
+		return {k: to_builtin(v) for k, v in o.items()}
+	if isinstance(o, (list, tuple)):
+		return [to_builtin(v) for v in o]
+	return o
+
+
 def quantize_float32(arr: np.ndarray, bits: int = 8, fixed_scale: float | None = None):
 	qmax = (1 << (bits - 1)) - 1  # 127
 	# 環境変数で既定値を上書き可能。例: FIXED_INT8_SCALE=42.333
