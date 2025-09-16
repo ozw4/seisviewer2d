@@ -264,6 +264,17 @@
       editBtn.textContent = 'Edit';
       editBtn.addEventListener('click', () => openInspector(step.id));
       header.appendChild(editBtn);
+      // Delete button
+        const delBtn = document.createElement('button');
+      delBtn.type = 'button';
+      delBtn.textContent = 'Delete';
+      delBtn.addEventListener('click', (e) => {
+          e.stopPropagation();
+          if (window.confirm('Delete this step?')) {
+              deleteStep(step.id);
+            }
+        });
+      header.appendChild(delBtn);
       card.appendChild(header);
 
       const controls = document.createElement('div');
@@ -370,6 +381,26 @@
     notifyGraphChanged();
   }
 
+  function deleteStep(stepId) {
+      const idx = pipelineState.graph.findIndex((s) => s.id === stepId);
+      if (idx === -1) return;
+      const removed = pipelineState.graph[idx];
+      const removedLabel = (removed.label && removed.label.trim()) || removed.name;
+      // If currently viewing this tap, fall back to raw
+        if (pipelineState.desiredLayer === removedLabel) {
+            pipelineState.desiredLayer = 'raw';
+            const sel = document.getElementById('layerSelect');
+            if (sel) sel.value = 'raw';
+          }
+      // Remove and close inspector if needed
+        pipelineState.graph.splice(idx, 1);
+      if (pipelineState.inspectorStepId === stepId) {
+          pipelineState.inspectorStepId = null;
+          if (pipelineState.inspectorEl) pipelineState.inspectorEl.classList.add('hidden');
+          if (pipelineState.inspectorFieldsEl) pipelineState.inspectorFieldsEl.innerHTML = '';
+        }
+      notifyGraphChanged();
+  }
   function getDragAfterElement(container, y) {
     const cards = Array.from(container.querySelectorAll('.pipeline-card:not(.is-dragging)'));
     let closest = { offset: Number.NEGATIVE_INFINITY, element: null };

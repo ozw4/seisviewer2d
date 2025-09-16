@@ -1,12 +1,14 @@
 <!DOCTYPE html>
 <html lang="en">
 <meta charset="utf-8" />
+
 <head>
   <title>Seismic Wiggle Viewer</title>
   <style>
     :root {
       color-scheme: light;
     }
+
     body {
       margin: 0;
       font-family: sans-serif;
@@ -16,6 +18,7 @@
       display: flex;
       flex-direction: column;
     }
+
     header {
       background: #f0f0f0;
       padding: 0.8em 1.2em;
@@ -25,18 +28,21 @@
       justify-content: space-between;
       align-items: center;
     }
+
     #mainContent {
       flex: 1;
       display: flex;
       min-height: 0;
       background: #fff;
     }
+
     #viewerColumn {
       flex: 1;
       display: flex;
       flex-direction: column;
       min-width: 0;
     }
+
     #controls {
       padding: 0.5em 1em;
       background: #fafafa;
@@ -47,35 +53,43 @@
       flex-wrap: wrap;
       overflow-y: auto;
     }
+
     input,
     button {
       font-size: 1em;
       padding: 0.2em 0.4em;
       margin-right: 0.5em;
     }
+
     #plot {
       flex: 1;
       width: 100%;
       min-height: 0;
     }
+
     #pickModeBtn.active {
       background: #007bff;
       color: #fff;
     }
+
     .denoiseParam {
       display: none;
     }
+
     .bpfParam {
       display: none;
     }
+
     #denoiseSettingsDialog {
       padding: 1em;
       border: 1px solid #888;
     }
+
     #denoiseSettingsDialog form label {
       display: block;
       margin: 0.5em 0;
     }
+
     #pipelinePanel {
       width: 320px;
       max-width: 100%;
@@ -85,6 +99,7 @@
       flex-direction: column;
       min-height: 0;
     }
+
     .pipeline-header {
       display: flex;
       justify-content: space-between;
@@ -94,20 +109,24 @@
       background: #f7f7f7;
       font-weight: 600;
     }
+
     .pipeline-header .pipeline-actions {
       display: inline-flex;
       gap: 0.5em;
       align-items: center;
     }
+
     .pipeline-add {
       position: relative;
       display: inline-flex;
       flex-direction: column;
       align-items: flex-end;
     }
+
     .pipeline-add button {
       margin-right: 0;
     }
+
     .pipeline-add-menu {
       position: absolute;
       top: 100%;
@@ -115,72 +134,84 @@
       background: #fff;
       border: 1px solid #ccc;
       border-radius: 4px;
-      box-shadow: 0 4px 10px rgba(0, 0, 0, 0.08);
-      padding: 0.25em 0;
-      margin-top: 0.3em;
+      box-shadow: 0 4px 10px rgba(0, 0, 0, .08);
+      padding: .25em 0;
+      margin-top: .3em;
       display: none;
       min-width: 160px;
       z-index: 20;
     }
+
     .pipeline-add-menu.open {
       display: block;
     }
+
     .pipeline-add-menu button {
       display: block;
       width: 100%;
       background: transparent;
       border: 0;
       text-align: left;
-      padding: 0.45em 1em;
-      font-size: 0.95em;
+      padding: .45em 1em;
+      font-size: .95em;
       cursor: pointer;
     }
+
     .pipeline-add-menu button:hover,
     .pipeline-add-menu button:focus {
       background: #eef3ff;
     }
+
     #pipelineCards {
       flex: 1;
       overflow-y: auto;
       padding: 1em;
       background: #fafafa;
     }
+
     .pipeline-card {
       border: 1px solid #d2d2d2;
       border-radius: 8px;
-      padding: 0.75em;
+      padding: .75em;
       background: #fff;
       display: flex;
       flex-direction: column;
-      gap: 0.5em;
-      box-shadow: 0 1px 2px rgba(0, 0, 0, 0.04);
+      gap: .5em;
+      box-shadow: 0 1px 2px rgba(0, 0, 0, .04);
     }
-    .pipeline-card + .pipeline-card {
-      margin-top: 0.75em;
+
+    .pipeline-card+.pipeline-card {
+      margin-top: .75em;
     }
+
     .pipeline-card.disabled {
-      opacity: 0.6;
+      opacity: .6;
     }
+
     .pipeline-card.inspecting {
       border-color: #4c8bf5;
-      box-shadow: 0 0 0 1px rgba(76, 139, 245, 0.25);
+      box-shadow: 0 0 0 1px rgba(76, 139, 245, .25);
     }
+
     .pipeline-card.is-dragging {
-      opacity: 0.6;
+      opacity: .6;
     }
+
     .pipeline-card-header {
       display: flex;
       justify-content: space-between;
       align-items: center;
-      gap: 0.5em;
+      gap: .5em;
     }
+
     .pipeline-card-title {
       display: inline-flex;
       align-items: center;
-      gap: 0.4em;
+      gap: .4em;
       font-weight: 600;
-      font-size: 0.95em;
+      font-size: .95em;
     }
+
     .drag-handle {
       cursor: grab;
       color: #666;
@@ -188,82 +219,97 @@
       line-height: 1;
       user-select: none;
     }
+
     .pipeline-card-controls {
       display: flex;
       flex-wrap: wrap;
-      gap: 0.75em;
-      font-size: 0.85em;
+      gap: .75em;
+      font-size: .85em;
     }
+
     .pipeline-card-controls label {
       display: inline-flex;
       align-items: center;
-      gap: 0.35em;
+      gap: .35em;
       cursor: pointer;
     }
+
     .pipeline-label {
       display: flex;
       flex-direction: column;
-      gap: 0.3em;
-      font-size: 0.85em;
+      gap: .3em;
+      font-size: .85em;
     }
+
     .pipeline-label-input {
-      font-size: 0.95em;
-      padding: 0.35em 0.45em;
+      font-size: .95em;
+      padding: .35em .45em;
       border: 1px solid #ccc;
       border-radius: 4px;
     }
+
     .pipeline-card button {
-      font-size: 0.85em;
-      padding: 0.35em 0.6em;
+      font-size: .85em;
+      padding: .35em .6em;
       margin-right: 0;
     }
+
     .pipeline-empty {
       color: #666;
-      font-size: 0.9em;
-      padding: 0.5em 0.25em;
+      font-size: .9em;
+      padding: .5em .25em;
       text-align: center;
     }
+
     .pipeline-inspector {
       border-top: 1px solid #ddd;
-      padding: 0.9em 1em;
+      padding: .9em 1em;
       background: #fff;
     }
+
     .pipeline-inspector.hidden {
       display: none;
     }
+
     .pipeline-inspector h3 {
-      margin: 0 0 0.6em 0;
+      margin: 0 0 .6em 0;
       font-size: 1em;
     }
+
     .pipeline-inspector form {
       display: flex;
       flex-direction: column;
-      gap: 0.6em;
+      gap: .6em;
     }
+
     .pipeline-inspector label {
       display: flex;
       flex-direction: column;
-      gap: 0.3em;
-      font-size: 0.85em;
+      gap: .3em;
+      font-size: .85em;
     }
+
     .pipeline-inspector input,
     .pipeline-inspector select {
-      font-size: 0.95em;
-      padding: 0.35em 0.45em;
+      font-size: .95em;
+      padding: .35em .45em;
       border: 1px solid #ccc;
       border-radius: 4px;
     }
+
     .pipeline-inspector-actions {
       display: flex;
       justify-content: flex-end;
-      gap: 0.5em;
-      margin-top: 0.4em;
+      gap: .5em;
+      margin-top: .4em;
     }
+
     .hidden {
       display: none !important;
     }
   </style>
 </head>
+
 <body>
   <header>
     <span>Seismic Wiggle Viewer</span>
@@ -273,62 +319,75 @@
   <div id="mainContent">
     <div id="viewerColumn">
       <div id="controls">
-    <label for="key1_idx_slider">key1 index:</label>
-    <input type="range" id="key1_idx_slider" min="0" max="10000" value="0" step="1" oninput="updateKey1Display(); fetchAndPlot()" />
-    <input type="number" id="key1_idx_display" value="0" min="0" max="10000" step="1" style="width: 60px;" onchange="syncSliderWithInput(); fetchAndPlot()" />
-    <button onclick="fetchAndPlot()">Plot</button>
-    <button id="pickModeBtn" onclick="togglePickMode()">Pick Mode: OFF</button>
-    <select id="layerSelect" onchange="drawSelectedLayer()">
-      <option value="raw" selected>raw</option>
-    </select>
-    <label style="margin-left:8px">σmax (ms):
-      <input id="sigma_ms_max" type="number" value="20" step="1" min="1" style="width:5em" oninput="onSigmaChange()">
-    </label>
-    <label style="margin-left:8px">Pick:
-      <select id="pick_method" onchange="onPickMethodChange()">
-        <option value="argmax" selected>argmax</option>
-        <option value="expectation">expectation</option>
-      </select>
-    </label>
-    <label><input type="checkbox" id="showFbPred" onchange="localStorage.setItem('showFbPred', this.checked); fetchAndPlot()">Show FB predicted</label>
-    <button id="predictFbBtn" onclick="predictFromFb()">Predict from FB</button>
-    <label for="gain">Gain:</label>
-    <input type="range" id="gain" min="0.1" max="5" step="0.1" value="1" oninput="onGainChange()" />
-    <span id="gain_display">1×</span>
-    <select id="denoiseScope">
-      <option value="display">表示セクション</option>
-      <option value="all_key1">データ全体</option>
-      <option value="common_shot">共通ショット</option>
-      <option value="common_receiver">共通レシーバー</option>
-    </select>
-    <button id="openDenoiseDlgBtn" onclick="openDenoiseSettings()">ノイズ抑制パラメータ設定</button>
-    <label class="denoiseParam">mask_ratio:<input type="number" id="mask_ratio" value="0.5" step="0.1" min="0" max="1" style="width:70px;"></label>
-    <label class="denoiseParam">noise_std:<input type="number" id="noise_std" value="1" step="0.1" style="width:70px;"></label>
-    <label class="denoiseParam">chunk_h:<input type="number" id="chunk_h" value="128" step="1" style="width:70px;"></label>
-    <label class="denoiseParam">overlap:<input type="number" id="overlap" value="32" step="1" style="width:70px;"></label>
-    <select id="mask_noise_mode" class="denoiseParam">
-      <option value="replace" selected>replace</option>
-      <option value="add">add</option>
-    </select>
-    <button id="denoiseBtn" onclick="handleDenoise()">ノイズ抑制</button>
-    <progress id="denoiseProgress" value="0" max="1" style="display:none; width:150px;"></progress>
-    <span id="denoiseProgressText"></span>
-    <button id="openBpfDlgBtn" onclick="openBpfSettings()">BPFパラメータ設定</button>
-    <label class="bpfParam">low_hz:<input type="number" id="low_hz" value="5" step="0.1" style="width:70px;"></label>
-    <label class="bpfParam">high_hz:<input type="number" id="high_hz" value="60" step="0.1" style="width:70px;"></label>
-    <label class="bpfParam">dt:<input type="number" id="dt" value="0.002" step="0.0001" style="width:70px;"></label>
-    <label class="bpfParam">taper:<input type="number" id="taper" value="0.1" step="0.1" style="width:70px;"></label>
-    <button id="bpfBtn" onclick="handleBandpass()">BPF（表示セクション）</button>
-    <button id="bpfApplyBtn" onclick="applyBandpassBatch()">BPF（全体/共通）</button>
-    <label for="colormap">Colormap:</label>
-    <select id="colormap" onchange="onColormapChange()">
-      <option value="Greys">Greys</option>
-      <option value="RdBu">RdBu</option>
-      <option value="BWR">BWR</option>
-      <option value="Cividis">Cividis</option>
-      <option value="Jet">Jet</option>
-    </select>
-    <label><input type="checkbox" id="cmReverse" onchange="onColormapChange()">reverse</label>
+        <label for="key1_idx_slider">key1 index:</label>
+        <input type="range" id="key1_idx_slider" min="0" max="10000" value="0" step="1"
+          oninput="updateKey1Display(); fetchAndPlot()" />
+        <input type="number" id="key1_idx_display" value="0" min="0" max="10000" step="1" style="width: 60px;"
+          onchange="syncSliderWithInput(); fetchAndPlot()" />
+        <button onclick="fetchAndPlot()">Plot</button>
+        <button id="pickModeBtn" onclick="togglePickMode()">Pick Mode: OFF</button>
+        <select id="layerSelect" onchange="drawSelectedLayer()">
+          <option value="raw" selected>raw</option>
+        </select>
+        <label style="margin-left:8px">σmax (ms):
+          <input id="sigma_ms_max" type="number" value="20" step="1" min="1" style="width:5em"
+            oninput="onSigmaChange()">
+        </label>
+        <label style="margin-left:8px">Pick:
+          <select id="pick_method" onchange="onPickMethodChange()">
+            <option value="argmax" selected>argmax</option>
+            <option value="expectation">expectation</option>
+          </select>
+        </label>
+        <label><input type="checkbox" id="showFbPred"
+            onchange="localStorage.setItem('showFbPred', this.checked); drawSelectedLayer(renderedStart, renderedEnd)">Show FB
+          predicted</label>
+
+        <button id="predictFbBtn" onclick="predictFromFb()">Predict from FB</button>
+        <label for="gain">Gain:</label>
+        <input type="range" id="gain" min="0.1" max="5" step="0.1" value="1" oninput="onGainChange()" />
+        <span id="gain_display">1×</span>
+        <select id="denoiseScope">
+          <option value="display">表示セクション</option>
+          <option value="all_key1">データ全体</option>
+          <option value="common_shot">共通ショット</option>
+          <option value="common_receiver">共通レシーバー</option>
+        </select>
+        <button id="openDenoiseDlgBtn" onclick="openDenoiseSettings()">ノイズ抑制パラメータ設定</button>
+        <label class="denoiseParam">mask_ratio:<input type="number" id="mask_ratio" value="0.5" step="0.1" min="0"
+            max="1" style="width:70px;"></label>
+        <label class="denoiseParam">noise_std:<input type="number" id="noise_std" value="1" step="0.1"
+            style="width:70px;"></label>
+        <label class="denoiseParam">chunk_h:<input type="number" id="chunk_h" value="128" step="1"
+            style="width:70px;"></label>
+        <label class="denoiseParam">overlap:<input type="number" id="overlap" value="32" step="1"
+            style="width:70px;"></label>
+        <select id="mask_noise_mode" class="denoiseParam">
+          <option value="replace" selected>replace</option>
+          <option value="add">add</option>
+        </select>
+        <button id="denoiseBtn" onclick="handleDenoise()">ノイズ抑制</button>
+        <progress id="denoiseProgress" value="0" max="1" style="display:none; width:150px;"></progress>
+        <span id="denoiseProgressText"></span>
+        <button id="openBpfDlgBtn" onclick="openBpfSettings()">BPFパラメータ設定</button>
+        <label class="bpfParam">low_hz:<input type="number" id="low_hz" value="5" step="0.1"
+            style="width:70px;"></label>
+        <label class="bpfParam">high_hz:<input type="number" id="high_hz" value="60" step="0.1"
+            style="width:70px;"></label>
+        <label class="bpfParam">dt:<input type="number" id="dt" value="0.002" step="0.0001" style="width:70px;"></label>
+        <label class="bpfParam">taper:<input type="number" id="taper" value="0.1" step="0.1"
+            style="width:70px;"></label>
+        <button id="bpfBtn" onclick="handleBandpass()">BPF（表示セクション）</button>
+        <button id="bpfApplyBtn" onclick="applyBandpassBatch()">BPF（全体/共通）</button>
+        <label for="colormap">Colormap:</label>
+        <select id="colormap" onchange="onColormapChange()">
+          <option value="Greys">Greys</option>
+          <option value="RdBu">RdBu</option>
+          <option value="BWR">BWR</option>
+          <option value="Cividis">Cividis</option>
+          <option value="Jet">Jet</option>
+        </select>
+        <label><input type="checkbox" id="cmReverse" onchange="onColormapChange()">reverse</label>
       </div>
       <div id="plot"></div>
     </div>
@@ -406,9 +465,9 @@
     var latestTapData = {};
     var latestPipelineKey = null;
     const defaultDt = 0.002;
-    const PREFETCH_WIDTH = 3;   // ±10
-    const FALLBACK_MAX = 8;  // API 無い場合
-    const HARD_LIMIT_BYTES = 512 * 1024 * 1024; // 512MB
+    const PREFETCH_WIDTH = 3;
+    const FALLBACK_MAX = 8;
+    const HARD_LIMIT_BYTES = 512 * 1024 * 1024;
 
     const cache = new Map(); // key -> { f32: Float32Array }
     const inflight = new Map();
@@ -418,15 +477,25 @@
     var renderedStart = null;
     var renderedEnd = null;
     var picks = [];
-    var predictedPicks = [];               // [{ trace, time, prob }]
-    const fbPredCache = new Map();         // key1Val -> predictedPicks
-    var latestFbProbTraces = null;         // Array<Float32Array> of 0..1 probs for current section
-    var currentFbKey = null;               // which key1Val latestFbProbTraces belongs to
-    var fbPredReqId = 0;                  // generation counter for FB predictions
+    var predictedPicks = [];
+    const fbPredCache = new Map(); // key: "key1|layer|pipelineKey"
+    var latestFbProbTraces = null;
+    var currentFbKey = null;
+    var fbPredReqId = 0;
     var downsampleFactor = 1;
     var isPickMode = false;
     var linePickStart = null;
     var deleteRangeStart = null;
+
+    // 追加：現在のFB計算に紐づくレイヤ/パイプラインキー
+    let currentFbLayer = 'raw';
+    let currentFbPipelineKey = null;
+
+    // 統一キー関数（FB予測キャッシュ用）
+    function fbCacheKey(k1, layer, pKey) {
+      return `${k1}|${layer}|${pKey ?? 'raw'}`;
+    }
+
     const COLORMAPS = {
       Greys: 'Greys',
       RdBu: 'RdBu',
@@ -435,7 +504,7 @@
       Jet: 'Jet',
     };
 
-    (function() {
+    (function () {
       const saved = localStorage.getItem('denoise_params');
       if (saved) {
         try {
@@ -445,11 +514,11 @@
           if (p.chunk_h !== undefined) document.getElementById('chunk_h').value = p.chunk_h;
           if (p.overlap !== undefined) document.getElementById('overlap').value = p.overlap;
           if (p.mask_noise_mode !== undefined) document.getElementById('mask_noise_mode').value = p.mask_noise_mode;
-        } catch(e){}
+        } catch (e) { }
       }
     })();
 
-    (function() {
+    (function () {
       const saved = localStorage.getItem('bpf_params');
       if (saved) {
         try {
@@ -458,22 +527,21 @@
           if (p.high_hz !== undefined) document.getElementById('high_hz').value = p.high_hz;
           if (p.dt !== undefined) document.getElementById('dt').value = p.dt;
           if (p.taper !== undefined) document.getElementById('taper').value = p.taper;
-        } catch(e){}
+        } catch (e) { }
       }
     })();
 
-    (function() {
+    (function () {
       const saved = localStorage.getItem('gain');
       const el = document.getElementById('gain');
       const disp = document.getElementById('gain_display');
       if (el && disp) {
         const val = saved !== null ? parseFloat(saved) : parseFloat(el.value);
-        el.value = val;
-        disp.textContent = `${val}×`;
+        el.value = val; disp.textContent = `${val}×`;
       }
     })();
 
-    (function() {
+    (function () {
       const sel = document.getElementById('colormap');
       const chk = document.getElementById('cmReverse');
       if (sel) {
@@ -523,39 +591,63 @@
       };
     }
 
-    async function fetchFbProb(key1Val) {
+    // ★★★ FB確率取得：レイヤ/パイプライン対応（既存のジョブAPIを使用）
+    async function fetchFbProb(key1Val, { layer = 'raw', pipelineKey = null } = {}) {
       const body = {
         file_id: currentFileId,
         key1_idx: key1Val,
         key1_byte: currentKey1Byte,
         key2_byte: currentKey2Byte,
         tile_h: 128,
-        tile_w:6016,
+        tile_w: 6016,
         overlap: 32,
         amp: true,
       };
+      // パイプラインの特定レイヤで推論したい場合
+      if (layer && layer !== 'raw' && pipelineKey) {
+        body.pipeline_key = pipelineKey;
+        body.tap_label = layer;
+      }
       const res = await fetch('/fbpick_section_bin', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(body),
       });
       if (!res.ok) {
-        throw new Error('fbpick job failed');
+        let message = `fbpick job failed (${res.status})`;
+        try {
+          const text = await res.text();
+          if (text) {
+            try {
+              const parsed = JSON.parse(text);
+              if (parsed && typeof parsed.detail === 'string') {
+                message = parsed.detail;
+              } else {
+                message = text;
+              }
+            } catch (parseErr) {
+              message = text;
+            }
+          }
+        } catch (readErr) {
+          // ignore body read errors
+        }
+        throw new Error(message);
       }
       const { job_id } = await res.json();
+
+      // ポーリング
       while (true) {
         const st = await fetch(`/fbpick_job_status?job_id=${job_id}`);
         const js = await st.json();
         if (js.status === 'done') break;
-        if (js.status === 'error') {
-          throw new Error(js.message || 'fbpick failed');
-        }
+        if (js.status === 'error') throw new Error(js.message || 'fbpick failed');
         await new Promise(r => setTimeout(r, 1000));
       }
+
+      // 取得 & 復号
       const binRes = await fetch(`/get_fbpick_section_bin?job_id=${job_id}`);
-      if (!binRes.ok) {
-        throw new Error('fbpick result fetch failed');
-      }
+      if (!binRes.ok) throw new Error('fbpick result fetch failed');
       const bin = new Uint8Array(await binRes.arrayBuffer());
       const obj = msgpack.decode(bin);
       const int8 = new Int8Array(obj.data.buffer);
@@ -617,12 +709,23 @@
 
     function recomputeFbPicks() {
       if (!latestFbProbTraces) return;
-      const idx0 = parseInt(document.getElementById('key1_idx_slider').value);
-      const keyAtStart = key1Values[idx0];
-      if (currentFbKey !== keyAtStart) return;
-      const picks = computePicks(latestFbProbTraces);
-      predictedPicks = picks;
-      fbPredCache.set(currentFbKey, picks);
+
+      const idx0 = parseInt(document.getElementById('key1_idx_slider').value, 10);
+      const keyAtNow = key1Values[idx0];
+      const layerNow = (document.getElementById('layerSelect')?.value) || 'raw';
+      const pKeyNow = window.latestPipelineKey || null;
+
+      // 現在のセクション＆レイヤ＆パイプラインキーに紐づく確率以外は再計算しない
+      if (currentFbKey !== keyAtNow ||
+        currentFbLayer !== layerNow ||
+        currentFbPipelineKey !== pKeyNow) {
+        return;
+      }
+
+      const picksNow = computePicks(latestFbProbTraces);
+      predictedPicks = picksNow;
+      fbPredCache.set(fbCacheKey(currentFbKey, currentFbLayer, currentFbPipelineKey), picksNow);
+
       if (latestSeismicData) {
         plotSeismicData(latestSeismicData, defaultDt, renderedStart, renderedEnd);
       }
@@ -632,31 +735,37 @@
       localStorage.setItem('sigma_ms_max', document.getElementById('sigma_ms_max').value);
       recomputeFbPicks();
     }
-
     function onPickMethodChange() {
       localStorage.setItem('pick_method', document.getElementById('pick_method').value);
       recomputeFbPicks();
     }
-    async function predictFromFb() {
-      // Snapshot the section at start
-      const idx0 = parseInt(document.getElementById('key1_idx_slider').value);
-      const keyAtStart = key1Values[idx0];
 
-      // Issue a new request token for this invocation
+    async function predictFromFb() {
+      // Snapshot
+      const idx0 = parseInt(document.getElementById('key1_idx_slider').value, 10);
+      const keyAtStart = key1Values[idx0];
+      const layerAtStart = (document.getElementById('layerSelect')?.value) || 'raw';
+      const pipelineKeyAtStart = window.latestPipelineKey || null;
+
+      // Request token
       const reqToken = ++fbPredReqId;
 
       const btn = document.getElementById('predictFbBtn');
       if (btn) btn.disabled = true;
 
       try {
-        // Ensure we have FB probabilities for this section
+        // Ensure probs
         let tracesLocal = latestFbProbTraces;
-        if (!tracesLocal || currentFbKey !== keyAtStart) {
-          const { f32, shape } = await fetchFbProb(keyAtStart);
+        if (!tracesLocal ||
+          currentFbKey !== keyAtStart ||
+          currentFbLayer !== layerAtStart ||
+          currentFbPipelineKey !== pipelineKeyAtStart) {
+
+          const { f32, shape } = await fetchFbProb(keyAtStart, { layer: layerAtStart, pipelineKey: pipelineKeyAtStart });
           const [nTraces, nSamples] = shape;
           const traces = new Array(nTraces);
           for (let i = 0; i < nTraces; i++) {
-            traces[i] = f32.subarray(i * nSamples, (i + 1) * nSamples); // 0..1
+            traces[i] = f32.subarray(i * nSamples, (i + 1) * nSamples);
           }
           tracesLocal = traces;
         }
@@ -664,21 +773,27 @@
         // Compute picks locally
         const picks = computePicks(tracesLocal);
 
-        // ===== Guard against stale results =====
-        // If a newer request started or the user moved to a different section, abort UI updates.
-        const idxNow = parseInt(document.getElementById('key1_idx_slider').value);
+        // Guard against stale
+        const idxNow = parseInt(document.getElementById('key1_idx_slider').value, 10);
         const keyNow = key1Values[idxNow];
-        if (reqToken !== fbPredReqId || keyNow !== keyAtStart) {
-          return; // stale result -> do not touch predictedPicks or replot
+        const layerNow = (document.getElementById('layerSelect')?.value) || 'raw';
+        const pipelineKeyNow = window.latestPipelineKey || null;
+        if (reqToken !== fbPredReqId ||
+          keyNow !== keyAtStart ||
+          layerNow !== layerAtStart ||
+          pipelineKeyNow !== pipelineKeyAtStart) {
+          return;
         }
 
-        // Still on the same section AND this is the latest request -> commit to UI state
+        // Commit
         predictedPicks = picks;
         latestFbProbTraces = tracesLocal;
         currentFbKey = keyAtStart;
-        fbPredCache.set(keyAtStart, picks);
+        currentFbLayer = layerAtStart;
+        currentFbPipelineKey = pipelineKeyAtStart;
+        fbPredCache.set(fbCacheKey(keyAtStart, layerAtStart, pipelineKeyAtStart), picks);
 
-        // Replot overlays
+        // Replot
         plotSeismicData(latestSeismicData, defaultDt, renderedStart, renderedEnd);
       } finally {
         if (btn) btn.disabled = false;
@@ -713,12 +828,10 @@
       const dlg = document.getElementById('denoiseSettingsDialog');
       if (dlg.showModal) dlg.showModal(); else dlg.style.display = 'block';
     }
-
     function closeDenoiseSettings() {
       const dlg = document.getElementById('denoiseSettingsDialog');
       if (dlg.close) dlg.close(); else dlg.style.display = 'none';
     }
-
     function saveDenoiseSettings() {
       document.getElementById('mask_ratio').value = document.getElementById('dlg_mask_ratio').value;
       document.getElementById('noise_std').value = document.getElementById('dlg_noise_std').value;
@@ -727,9 +840,7 @@
       document.getElementById('mask_noise_mode').value = document.getElementById('dlg_mask_noise_mode').value;
       localStorage.setItem('denoise_params', JSON.stringify(getDenoiseParams()));
       closeDenoiseSettings();
-      if (typeof fetchAndPlot === 'function') {
-        try { fetchAndPlot(); } catch (e) {}
-      }
+      if (typeof fetchAndPlot === 'function') { try { fetchAndPlot(); } catch (e) { } }
     }
 
     function openBpfSettings() {
@@ -740,12 +851,10 @@
       const dlg = document.getElementById('bpfSettingsDialog');
       if (dlg.showModal) dlg.showModal(); else dlg.style.display = 'block';
     }
-
     function closeBpfSettings() {
       const dlg = document.getElementById('bpfSettingsDialog');
       if (dlg.close) dlg.close(); else dlg.style.display = 'none';
     }
-
     function saveBpfSettings() {
       document.getElementById('low_hz').value = document.getElementById('dlg_low_hz').value;
       document.getElementById('high_hz').value = document.getElementById('dlg_high_hz').value;
@@ -753,9 +862,7 @@
       document.getElementById('taper').value = document.getElementById('dlg_taper').value;
       localStorage.setItem('bpf_params', JSON.stringify(getBpfParams()));
       closeBpfSettings();
-      if (typeof fetchAndPlot === 'function') {
-        try { fetchAndPlot(); } catch (e) {}
-      }
+      if (typeof fetchAndPlot === 'function') { try { fetchAndPlot(); } catch (e) { } }
     }
 
     async function pollDenoiseJob(jobId) {
@@ -774,10 +881,7 @@
           clearInterval(timer);
           cache.clear();
           await fetchAndPlot();
-          setTimeout(() => {
-            bar.style.display = 'none';
-            txt.textContent = '';
-          }, 1000);
+          setTimeout(() => { bar.style.display = 'none'; txt.textContent = ''; }, 1000);
         } else if (data.status === 'error') {
           clearInterval(timer);
           txt.textContent = `error`;
@@ -801,10 +905,7 @@
           clearInterval(timer);
           cache.clear();
           await fetchAndPlot();
-          setTimeout(() => {
-            bar.style.display = 'none';
-            txt.textContent = '';
-          }, 1000);
+          setTimeout(() => { bar.style.display = 'none'; txt.textContent = ''; }, 1000);
         } else if (data.status === 'error') {
           clearInterval(timer);
           txt.textContent = 'BPF error';
@@ -819,25 +920,17 @@
       const key1Val = key1Values[index];
       if (scope === 'display') {
         const body = {
-          file_id: currentFileId,
-          key1_idx: key1Val,
-          key1_byte: currentKey1Byte,
-          key2_byte: currentKey2Byte,
-          ...params,
+          file_id: currentFileId, key1_idx: key1Val,
+          key1_byte: currentKey1Byte, key2_byte: currentKey2Byte, ...params,
         };
         const res = await fetch('/denoise_section_bin', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(body),
+          method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
         });
-        if (!res.ok) {
-          alert('denoise failed');
-          return;
-        }
+        if (!res.ok) { alert('denoise failed'); return; }
         const bin = new Uint8Array(await res.arrayBuffer());
         const obj = msgpack.decode(bin);
         const int8 = new Int8Array(obj.data.buffer);
-        const f32  = Float32Array.from(int8, v => v / obj.scale);
+        const f32 = Float32Array.from(int8, v => v / obj.scale);
         putCacheF32(cacheKey(key1Val, 'den'), f32);
         sectionShape = obj.shape;
         await fetchAndPlot();
@@ -845,24 +938,16 @@
         const body = {
           file_id: currentFileId,
           scope: scope === 'all_key1' ? 'all_key1' : 'by_header',
-          key1_byte: currentKey1Byte,
-          key2_byte: currentKey2Byte,
-          ...params,
+          key1_byte: currentKey1Byte, key2_byte: currentKey2Byte, ...params,
         };
         if (scope !== 'all_key1') {
           body.key1_idx = key1Val;
-          body.group_header_byte =
-            scope === 'common_shot' ? currentKey1Byte : currentKey2Byte;
+          body.group_header_byte = scope === 'common_shot' ? currentKey1Byte : currentKey2Byte;
         }
         const res = await fetch('/denoise_apply', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(body),
+          method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
         });
-        if (!res.ok) {
-          alert('denoise apply failed');
-          return;
-        }
+        if (!res.ok) { alert('denoise apply failed'); return; }
         const data = await res.json();
         pollDenoiseJob(data.job_id);
       }
@@ -873,25 +958,17 @@
       const index = parseInt(document.getElementById('key1_idx_slider').value);
       const key1Val = key1Values[index];
       const body = {
-        file_id: currentFileId,
-        key1_idx: key1Val,
-        key1_byte: currentKey1Byte,
-        key2_byte: currentKey2Byte,
-        ...params,
+        file_id: currentFileId, key1_idx: key1Val,
+        key1_byte: currentKey1Byte, key2_byte: currentKey2Byte, ...params,
       };
       const res = await fetch('/bandpass_section_bin', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(body),
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
       });
-      if (!res.ok) {
-        alert('bandpass failed');
-        return;
-      }
+      if (!res.ok) { alert('bandpass failed'); return; }
       const bin = new Uint8Array(await res.arrayBuffer());
       const obj = msgpack.decode(bin);
       const int8 = new Int8Array(obj.data.buffer);
-      const f32  = Float32Array.from(int8, v => v / obj.scale);
+      const f32 = Float32Array.from(int8, v => v / obj.scale);
       putCacheF32(cacheKey(key1Val, 'filt'), f32);
       sectionShape = obj.shape;
       await fetchAndPlot();
@@ -908,24 +985,16 @@
         const body = {
           file_id: currentFileId,
           scope: scope === 'all_key1' ? 'all_key1' : 'by_header',
-          key1_byte: currentKey1Byte,
-          key2_byte: currentKey2Byte,
-          ...params,
+          key1_byte: currentKey1Byte, key2_byte: currentKey2Byte, ...params,
         };
         if (scope !== 'all_key1') {
           body.key1_idx = key1Val;
-          body.group_header_byte =
-            scope === 'common_shot' ? currentKey1Byte : currentKey2Byte;
+          body.group_header_byte = scope === 'common_shot' ? currentKey1Byte : currentKey2Byte;
         }
         const res = await fetch('/bandpass_apply', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(body),
+          method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
         });
-        if (!res.ok) {
-          alert('bandpass apply failed');
-          return;
-        }
+        if (!res.ok) { alert('bandpass apply failed'); return; }
         const data = await res.json();
         pollBpfJob(data.job_id);
       }
@@ -943,54 +1012,50 @@
       }
     }
 
-  function putCacheF32(key, f32) {
-    if (cache.size >= CACHE_LIMIT) {
-      const oldestKey = cache.keys().next().value;
-      const old = cache.get(oldestKey);
-      if (old) old.f32 = null;
-      cache.delete(oldestKey);
-    }
-    cache.set(key, { f32 });
-
-    const canCheckMemory =
-      performance.memory &&
-      performance.memory.usedJSHeapSize > 0;
-
-    const used = canCheckMemory ? performance.memory.usedJSHeapSize : 0;
-
-    console.log('--- putCache called ---');
-    console.log('Added key:', cache.keys());
-    console.log('Cache size:', cache.size);
-    if (canCheckMemory) {
-      const total = performance.memory.totalJSHeapSize;
-      const ratio = used / total;
-      console.log(`used: ${(used / 1024 / 1024).toFixed(2)} MB`);
-
-    } else {
-      console.log(`used: ${(used / 1024 / 1024).toFixed(2)} MB (fallback, no total)`);
+    function getSeismicForProcessing() {
+      const sel = document.getElementById('layerSelect');
+      const layer = sel?.value || 'raw';
+      return layer === 'raw' ? rawSeismicData : (latestTapData[layer] || rawSeismicData);
     }
 
-    if (used > HARD_LIMIT_BYTES) {
-      console.warn(`⚠ Memory limit exceeded! (${(used / 1024 / 1024).toFixed(1)} MB > 512 MB)`);
-      let removed = 0;
-      while (cache.size > 1) {
-        const removedKey = cache.keys().next().value;
-        const entry = cache.get(removedKey);
-
-        // 🔽 メモリ解放を促すために参照を切る
-        if (entry) {
-          entry.f32 = null;
-        }
-
-        cache.delete(removedKey);
-        removed++;
+    function putCacheF32(key, f32) {
+      if (cache.size >= CACHE_LIMIT) {
+        const oldestKey = cache.keys().next().value;
+        const old = cache.get(oldestKey);
+        if (old) old.f32 = null;
+        cache.delete(oldestKey);
       }
-      console.warn(`Evicted ${removed} items due to hard heap limit.`);
-      console.log('Remaining keys:', Array.from(cache.keys()));
+      cache.set(key, { f32 });
+
+      const canCheckMemory = performance.memory && performance.memory.usedJSHeapSize > 0;
+      const used = canCheckMemory ? performance.memory.usedJSHeapSize : 0;
+
+      console.log('--- putCache called ---');
+      console.log('Added key:', cache.keys());
+      console.log('Cache size:', cache.size);
+      if (canCheckMemory) {
+        const total = performance.memory.totalJSHeapSize;
+        console.log(`used: ${(used / 1024 / 1024).toFixed(2)} MB`);
+      } else {
+        console.log(`used: ${(used / 1024 / 1024).toFixed(2)} MB (fallback, no total)`);
+      }
+
+      if (used > HARD_LIMIT_BYTES) {
+        console.warn(`⚠ Memory limit exceeded! (${(used / 1024 / 1024).toFixed(1)} MB > 512 MB)`);
+        let removed = 0;
+        while (cache.size > 1) {
+          const removedKey = cache.keys().next().value;
+          const entry = cache.get(removedKey);
+          if (entry) entry.f32 = null;
+          cache.delete(removedKey);
+          removed++;
+        }
+        console.warn(`Evicted ${removed} items due to hard heap limit.`);
+        console.log('Remaining keys:', Array.from(cache.keys()));
+      }
+      console.log('------------------------');
     }
 
-    console.log('------------------------');
-  }
     function getCacheF32(key) {
       if (!cache.has(key)) return null;
       const entry = cache.get(key);
@@ -1026,106 +1091,85 @@
       document.getElementById('key1_idx_slider').max = max;
     }
 
-      async function fetchKey1Values() {
-        const res = await fetch(`/get_key1_values?file_id=${currentFileId}&key1_byte=${currentKey1Byte}&key2_byte=${currentKey2Byte}`);
-        if (res.ok) {
-          const data = await res.json();
-          key1Values = data.values;
-          setKey1SliderMax(key1Values.length - 1);
-          document.getElementById('key1_idx_display').min = key1Values[0];
-          document.getElementById('key1_idx_display').max = key1Values[key1Values.length - 1];
-          document.getElementById('key1_idx_slider').value = 0;
-          updateKey1Display();
-        }
+    async function fetchKey1Values() {
+      const res = await fetch(`/get_key1_values?file_id=${currentFileId}&key1_byte=${currentKey1Byte}&key2_byte=${currentKey2Byte}`);
+      if (res.ok) {
+        const data = await res.json();
+        key1Values = data.values;
+        setKey1SliderMax(key1Values.length - 1);
+        document.getElementById('key1_idx_display').min = key1Values[0];
+        document.getElementById('key1_idx_display').max = key1Values[key1Values.length - 1];
+        document.getElementById('key1_idx_slider').value = 0;
+        updateKey1Display();
       }
+    }
 
-      function prefetchAround(centerIdx, mode) {
-        if (mode === 'denoised' || mode === 'fbprob') return;
-        for (const ctrl of inflight.values()) ctrl.abort();
-        inflight.clear();
-        const start = Math.max(0, centerIdx - PREFETCH_WIDTH);
-        const end = Math.min(key1Values.length - 1, centerIdx + PREFETCH_WIDTH);
-        const scheduler = cb => {
-          if ('requestIdleCallback' in window) {
-            requestIdleCallback(cb);
-          } else {
-            setTimeout(cb, 0);
-          }
-        };
-        for (let i = start; i <= end; i++) {
-          if (i === centerIdx) continue;
-          const key1Val = key1Values[i];
-          if (mode === 'auto') {
-            if (cache.has(cacheKey(key1Val, 'den')) || cache.has(cacheKey(key1Val, 'filt')) || cache.has(cacheKey(key1Val, 'raw')) ||
-                inflight.has(cacheKey(key1Val, 'den')) || inflight.has(cacheKey(key1Val, 'filt')) || inflight.has(cacheKey(key1Val, 'raw'))) continue;
-          } else {
-            const ck = cacheKey(key1Val, mode === 'denoised' ? 'den' : mode === 'filtered' ? 'filt' : 'raw');
-            if (cache.has(ck) || inflight.has(ck)) continue;
-          }
-          const controller = new AbortController();
-          const inflightKey = mode === 'raw' ? cacheKey(key1Val, 'raw') :
-                              mode === 'denoised' ? cacheKey(key1Val, 'den') :
-                              mode === 'filtered' ? cacheKey(key1Val, 'filt') :
-                              cacheKey(key1Val, 'den');
-          inflight.set(inflightKey, controller);
-          scheduler(async () => {
-            try {
-              const denoiseParams = getDenoiseParams();
-              const bpfParams = getBpfParams();
-              const urlDen = `/get_denoised_section_bin?file_id=${currentFileId}&key1_idx=${key1Val}&chunk_h=${denoiseParams.chunk_h}&overlap=${denoiseParams.overlap}&mask_ratio=${denoiseParams.mask_ratio}&noise_std=${denoiseParams.noise_std}&mask_noise_mode=${denoiseParams.mask_noise_mode}`;
-              const urlFilt = `/get_bandpassed_section_bin?file_id=${currentFileId}&key1_idx=${key1Val}&low_hz=${bpfParams.low_hz}&high_hz=${bpfParams.high_hz}&dt=${bpfParams.dt}&taper=${bpfParams.taper}`;
-              const urlRaw = `/get_section_bin?file_id=${currentFileId}&key1_idx=${key1Val}&key1_byte=${currentKey1Byte}&key2_byte=${currentKey2Byte}`;
-              let res;
-              let fetchedMode = 'raw';
-              if (mode === 'raw') {
-                res = await fetch(urlRaw, { signal: controller.signal });
-                if (!res.ok) return;
-              } else if (mode === 'denoised') {
-                res = await fetch(urlDen, { signal: controller.signal });
-                if (res.ok) {
-                  fetchedMode = 'den';
-                } else {
-                  res = await fetch(urlRaw, { signal: controller.signal });
-                  if (!res.ok) return;
-                }
-              } else if (mode === 'filtered') {
-                res = await fetch(urlFilt, { signal: controller.signal });
-                if (res.ok) {
-                  fetchedMode = 'filt';
-                } else {
-                  res = await fetch(urlRaw, { signal: controller.signal });
-                  if (!res.ok) return;
-                }
-              } else {
-                res = await fetch(urlDen, { signal: controller.signal });
-                if (res.ok) {
-                  fetchedMode = 'den';
-                } else {
-                  res = await fetch(urlFilt, { signal: controller.signal });
-                  if (res.ok) {
-                    fetchedMode = 'filt';
-                  } else {
-                    res = await fetch(urlRaw, { signal: controller.signal });
-                    if (!res.ok) return;
-                  }
-                }
-              }
-              const bin = new Uint8Array(await res.arrayBuffer());
-              const obj = msgpack.decode(bin);
-              const int8 = new Int8Array(obj.data.buffer);
-              const f32  = Float32Array.from(int8, v => v / obj.scale);
-              putCacheF32(cacheKey(key1Val, fetchedMode), f32);
-              if (!sectionShape) sectionShape = obj.shape;
-            } catch (err) {
-              if (err.name !== 'AbortError') {
-                console.warn('Prefetch failed', key1Val, err);
-              }
-            } finally {
-              inflight.delete(inflightKey);
-            }
-          });
+    function prefetchAround(centerIdx, mode) {
+      if (mode === 'denoised' || mode === 'fbprob') return;
+      for (const ctrl of inflight.values()) ctrl.abort();
+      inflight.clear();
+      const start = Math.max(0, centerIdx - PREFETCH_WIDTH);
+      const end = Math.min(key1Values.length - 1, centerIdx + PREFETCH_WIDTH);
+      const scheduler = cb => { ('requestIdleCallback' in window) ? requestIdleCallback(cb) : setTimeout(cb, 0); };
+      for (let i = start; i <= end; i++) {
+        if (i === centerIdx) continue;
+        const key1Val = key1Values[i];
+        if (mode === 'auto') {
+          if (cache.has(cacheKey(key1Val, 'den')) || cache.has(cacheKey(key1Val, 'filt')) || cache.has(cacheKey(key1Val, 'raw')) ||
+            inflight.has(cacheKey(key1Val, 'den')) || inflight.has(cacheKey(key1Val, 'filt')) || inflight.has(cacheKey(key1Val, 'raw'))) continue;
+        } else {
+          const ck = cacheKey(key1Val, mode === 'denoised' ? 'den' : mode === 'filtered' ? 'filt' : 'raw');
+          if (cache.has(ck) || inflight.has(ck)) continue;
         }
+        const controller = new AbortController();
+        const inflightKey = mode === 'raw' ? cacheKey(key1Val, 'raw') :
+          mode === 'denoised' ? cacheKey(key1Val, 'den') :
+            mode === 'filtered' ? cacheKey(key1Val, 'filt') :
+              cacheKey(key1Val, 'den');
+        inflight.set(inflightKey, controller);
+        scheduler(async () => {
+          try {
+            const denoiseParams = getDenoiseParams();
+            const bpfParams = getBpfParams();
+            const urlDen = `/get_denoised_section_bin?file_id=${currentFileId}&key1_idx=${key1Val}&chunk_h=${denoiseParams.chunk_h}&overlap=${denoiseParams.overlap}&mask_ratio=${denoiseParams.mask_ratio}&noise_std=${denoiseParams.noise_std}&mask_noise_mode=${denoiseParams.mask_noise_mode}`;
+            const urlFilt = `/get_bandpassed_section_bin?file_id=${currentFileId}&key1_idx=${key1Val}&low_hz=${bpfParams.low_hz}&high_hz=${bpfParams.high_hz}&dt=${bpfParams.dt}&taper=${bpfParams.taper}`;
+            const urlRaw = `/get_section_bin?file_id=${currentFileId}&key1_idx=${key1Val}&key1_byte=${currentKey1Byte}&key2_byte=${currentKey2Byte}`;
+            let res;
+            let fetchedMode = 'raw';
+            if (mode === 'raw') {
+              res = await fetch(urlRaw, { signal: controller.signal });
+              if (!res.ok) return;
+            } else if (mode === 'denoised') {
+              res = await fetch(urlDen, { signal: controller.signal });
+              if (res.ok) fetchedMode = 'den';
+              else { res = await fetch(urlRaw, { signal: controller.signal }); if (!res.ok) return; }
+            } else if (mode === 'filtered') {
+              res = await fetch(urlFilt, { signal: controller.signal });
+              if (res.ok) fetchedMode = 'filt';
+              else { res = await fetch(urlRaw, { signal: controller.signal }); if (!res.ok) return; }
+            } else {
+              res = await fetch(urlDen, { signal: controller.signal });
+              if (res.ok) fetchedMode = 'den';
+              else {
+                res = await fetch(urlFilt, { signal: controller.signal });
+                if (res.ok) fetchedMode = 'filt';
+                else { res = await fetch(urlRaw, { signal: controller.signal }); if (!res.ok) return; }
+              }
+            }
+            const bin = new Uint8Array(await res.arrayBuffer());
+            const obj = msgpack.decode(bin);
+            const int8 = new Int8Array(obj.data.buffer);
+            const f32 = Float32Array.from(int8, v => v / obj.scale);
+            putCacheF32(cacheKey(key1Val, fetchedMode), f32);
+            if (!sectionShape) sectionShape = obj.shape;
+          } catch (err) {
+            if (err.name !== 'AbortError') console.warn('Prefetch failed', key1Val, err);
+          } finally {
+            inflight.delete(inflightKey);
+          }
+        });
       }
+    }
 
     async function loadSettings() {
       const params = new URLSearchParams(window.location.search);
@@ -1143,488 +1187,458 @@
       }
     }
 
-  async function fetchPicks() {
-    if (!currentFileId) return;
-    const idx = parseInt(document.getElementById('key1_idx_slider').value);
-    const key1Val = key1Values[idx];
-    try {
-      const res = await fetch(`/picks?file_id=${currentFileId}&key1_idx=${key1Val}&key1_byte=${currentKey1Byte}`);
-      if (res.ok) {
-        const data = await res.json();
-        picks = (data.picks || []).map(p => ({ trace: p.trace, time: p.time }));
-      }
-    } catch (e) {
-      console.error('Failed to fetch picks', e);
-    }
-  }
-
-  async function postPick(trace, time) {
-    const idx = parseInt(document.getElementById('key1_idx_slider').value);
-    const key1Val = key1Values[idx];
-    try {
-      await fetch('/picks', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ file_id: currentFileId, trace, time, key1_idx: key1Val, key1_byte: currentKey1Byte })
-      });
-    } catch (e) {
-      console.error('Failed to post pick', e);
-    }
-  }
-
-  async function deletePick(trace) {
-    const idx = parseInt(document.getElementById('key1_idx_slider').value);
-    const key1Val = key1Values[idx];
-    try {
-      await fetch(`/picks?file_id=${currentFileId}&trace=${trace}&key1_idx=${key1Val}&key1_byte=${currentKey1Byte}`, { method: 'DELETE' });
-    } catch (e) {
-      console.error('Failed to delete pick', e);
-    }
-  }
-
-  async function fetchAndPlot() {
-    console.log('--- fetchAndPlot start ---');
-    console.time('Total fetchAndPlot');
-
-    const index = parseInt(document.getElementById('key1_idx_slider').value);
-    const key1Val = key1Values[index];
-
-    predictedPicks = fbPredCache.get(key1Val) || [];
-
-    await fetchPicks();
-
-    console.time('Cache lookup');
-    const hit = getCacheF32(cacheKey(key1Val, 'raw'));
-    console.timeEnd('Cache lookup');
-
-    let traces;
-    let f32 = hit ? hit.f32 : null;
-
-    if (f32) {
-      console.time('Decode from cache');
-      const [nTraces, nSamples] = sectionShape;
-      traces = new Array(nTraces);
-      for (let i = 0; i < nTraces; i++) {
-        traces[i] = f32.subarray(i * nSamples, (i + 1) * nSamples);
-      }
-      console.timeEnd('Decode from cache');
-      rawSeismicData = traces;
-    } else {
-      console.time('Fetch binary');
-      const urlRaw = `/get_section_bin?file_id=${currentFileId}&key1_idx=${key1Val}&key1_byte=${currentKey1Byte}&key2_byte=${currentKey2Byte}`;
-      const res = await fetch(urlRaw);
-      if (!res.ok) {
-        console.timeEnd('Fetch binary');
-        alert('Failed to load section');
-        return;
-      }
-      const bin = new Uint8Array(await res.arrayBuffer());
-      console.timeEnd('Fetch binary');
-
-      console.time('Decode & cache');
-      const obj = msgpack.decode(bin);
-      const int8 = new Int8Array(obj.data.buffer);
-      f32 = Float32Array.from(int8, (v) => v / obj.scale);
-      putCacheF32(cacheKey(key1Val, 'raw'), f32);
-      sectionShape = obj.shape;
-      const [nTraces, nSamples] = sectionShape;
-      traces = new Array(nTraces);
-      for (let i = 0; i < nTraces; i++) {
-        traces[i] = f32.subarray(i * nSamples, (i + 1) * nSamples);
-      }
-      console.timeEnd('Decode & cache');
-      rawSeismicData = traces;
-    }
-
-    if (window.pipelineUI && typeof window.pipelineUI.prepareForNewSection === 'function') {
-      window.pipelineUI.prepareForNewSection();
-    } else {
-      latestTapData = {};
-      latestPipelineKey = null;
-      const sel = document.getElementById('layerSelect');
-      if (sel) {
-        sel.innerHTML = '';
-        sel.appendChild(new Option('raw', 'raw'));
-        sel.value = 'raw';
-      }
-    }
-
-    const [s, e] = savedXRange ? visibleTraceIndices(savedXRange, rawSeismicData.length) : [0, rawSeismicData.length - 1];
-    drawSelectedLayer(s, e);
-
-    // Pipeline execution is now manual via the ▶ Run button.
-
-    console.time('Prefetch');
-    prefetchAround(index, 'raw');
-    console.timeEnd('Prefetch');
-
-    console.timeEnd('Total fetchAndPlot');
-    console.log('--- fetchAndPlot end ---');
-  }
-
-  function drawSelectedLayer(start = 0, end = rawSeismicData ? rawSeismicData.length - 1 : 0) {
-    const sel = document.getElementById('layerSelect');
-    const layer = sel ? sel.value : 'raw';
-    if (layer === 'raw' || !latestTapData[layer]) {
-      latestSeismicData = rawSeismicData;
-    } else {
-      latestSeismicData = latestTapData[layer];
-    }
-    plotSeismicData(latestSeismicData, defaultDt, start, end);
-  }
-
-  function visibleTraceIndices(range, total) {
-    let start = Math.floor(range[0]);
-    let end = Math.ceil(range[1]);
-    start = Math.max(0, start);
-    end = Math.min(total - 1, end);
-    return [start, end];
-  }
-
-  function plotSeismicData(seismic, dt, startTrace = 0, endTrace = seismic.length - 1) {
-    const totalTraces = seismic.length;
-    startTrace = Math.max(0, startTrace);
-    endTrace = Math.min(totalTraces - 1, endTrace);
-    const nTraces = endTrace - startTrace + 1;
-    const nSamples = seismic[0].length;
-    const plotDiv = document.getElementById('plot');
-
-    const widthPx = plotDiv.clientWidth || 1;
-    const xRange = savedXRange ?? [0, totalTraces - 1];
-    const visibleTraces = endTrace - startTrace + 1;
-    const density = visibleTraces / widthPx;
-    const mode = document.getElementById('layerSelect').value;
-    const fbMode = mode === 'fbprob';
-
-    let traces = [];
-    const gain = parseFloat(document.getElementById('gain').value) || 1.0;
-    // σ≈1 を前提とした固定基準（±3）。データだけ gain 倍、表示軸は固定。
-    const AMP_LIMIT = 3.0;
-
-    if (!fbMode && density < 0.1) {
-      // 低密度（ワイヤーフレーム）
-      downsampleFactor = 1;
-      const time = new Float32Array(nSamples);
-      for (let t = 0; t < nSamples; t++) {
-        time[t] = t * dt;
-      }
-      for (let i = startTrace; i <= endTrace; i++) {
-        const raw = seismic[i];
-        const baseX = new Float32Array(nSamples);
-        const shiftedFullX = new Float32Array(nSamples);
-        const shiftedPosX = new Float32Array(nSamples);
-        for (let j = 0; j < nSamples; j++) {
-          let val = raw[j] * gain;
-          if (val > AMP_LIMIT) val = AMP_LIMIT;
-          if (val < -AMP_LIMIT) val = -AMP_LIMIT;
-          baseX[j] = i;
-          shiftedFullX[j] = val + i;
-          shiftedPosX[j] = (val < 0 ? 0 : val) + i;
+    async function fetchPicks() {
+      if (!currentFileId) return;
+      const idx = parseInt(document.getElementById('key1_idx_slider').value);
+      const key1Val = key1Values[idx];
+      try {
+        const res = await fetch(`/picks?file_id=${currentFileId}&key1_idx=${key1Val}&key1_byte=${currentKey1Byte}`);
+        if (res.ok) {
+          const data = await res.json();
+          picks = (data.picks || []).map(p => ({ trace: p.trace, time: p.time }));
         }
+      } catch (e) { console.error('Failed to fetch picks', e); }
+    }
 
-        traces.push({ type: 'scatter', mode: 'lines', x: baseX, y: time, line: { width: 0 }, hoverinfo: 'x+y', showlegend: false });
-        traces.push({ type: 'scatter', mode: 'lines', x: shiftedPosX, y: time, fill: 'tonextx', fillcolor: 'black', line: { width: 0 }, opacity: 0.6, hoverinfo: 'skip', showlegend: false });
-        traces.push({ type: 'scatter', mode: 'lines', x: shiftedFullX, y: time, line: { color: 'black', width: 0.5 }, hoverinfo: 'skip', showlegend: false });
+    async function postPick(trace, time) {
+      const idx = parseInt(document.getElementById('key1_idx_slider').value);
+      const key1Val = key1Values[idx];
+      try {
+        await fetch('/picks', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ file_id: currentFileId, trace, time, key1_idx: key1Val, key1_byte: currentKey1Byte })
+        });
+      } catch (e) { console.error('Failed to post pick', e); }
+    }
+
+    async function deletePick(trace) {
+      const idx = parseInt(document.getElementById('key1_idx_slider').value);
+      const key1Val = key1Values[idx];
+      try {
+        await fetch(`/picks?file_id=${currentFileId}&trace=${trace}&key1_idx=${key1Val}&key1_byte=${currentKey1Byte}`, { method: 'DELETE' });
+      } catch (e) { console.error('Failed to delete pick', e); }
+    }
+
+    async function fetchAndPlot() {
+      console.log('--- fetchAndPlot start ---');
+      console.time('Total fetchAndPlot');
+
+      const index = parseInt(document.getElementById('key1_idx_slider').value);
+      const key1Val = key1Values[index];
+
+      // ★ FB予測キャッシュ取得：レイヤ＆パイプラインキーでキー統一
+      const layerCur = (document.getElementById('layerSelect')?.value) || 'raw';
+      const pKeyCur = window.latestPipelineKey || null;
+      predictedPicks = fbPredCache.get(fbCacheKey(key1Val, layerCur, pKeyCur)) || [];
+
+      await fetchPicks();
+
+      console.time('Cache lookup');
+      const hit = getCacheF32(cacheKey(key1Val, 'raw'));
+      console.timeEnd('Cache lookup');
+
+      let traces;
+      let f32 = hit ? hit.f32 : null;
+
+      if (f32) {
+        console.time('Decode from cache');
+        const [nTraces, nSamples] = sectionShape;
+        traces = new Array(nTraces);
+        for (let i = 0; i < nTraces; i++) {
+          traces[i] = f32.subarray(i * nSamples, (i + 1) * nSamples);
+        }
+        console.timeEnd('Decode from cache');
+        rawSeismicData = traces;
+      } else {
+        console.time('Fetch binary');
+        const urlRaw = `/get_section_bin?file_id=${currentFileId}&key1_idx=${key1Val}&key1_byte=${currentKey1Byte}&key2_byte=${currentKey2Byte}`;
+        const res = await fetch(urlRaw);
+        if (!res.ok) {
+          console.timeEnd('Fetch binary');
+          alert('Failed to load section');
+          return;
+        }
+        const bin = new Uint8Array(await res.arrayBuffer());
+        console.timeEnd('Fetch binary');
+
+        console.time('Decode & cache');
+        const obj = msgpack.decode(bin);
+        const int8 = new Int8Array(obj.data.buffer);
+        f32 = Float32Array.from(int8, (v) => v / obj.scale);
+        putCacheF32(cacheKey(key1Val, 'raw'), f32);
+        sectionShape = obj.shape;
+        const [nTraces, nSamples] = sectionShape;
+        traces = new Array(nTraces);
+        for (let i = 0; i < nTraces; i++) {
+          traces[i] = f32.subarray(i * nSamples, (i + 1) * nSamples);
+        }
+        console.timeEnd('Decode & cache');
+        rawSeismicData = traces;
       }
-    } else {
-      // 高密度（ヒートマップ）
-      const MAX_POINTS = 3_000_000;
-      let factor = 1;
-      while (Math.floor(nTraces / factor) * Math.floor(nSamples / factor) > MAX_POINTS) {
-        factor++;
+
+      if (window.pipelineUI && typeof window.pipelineUI.prepareForNewSection === 'function') {
+        window.pipelineUI.prepareForNewSection();
+      } else {
+        latestTapData = {};
+        latestPipelineKey = null;
+        const sel = document.getElementById('layerSelect');
+        if (sel) {
+          sel.innerHTML = '';
+          sel.appendChild(new Option('raw', 'raw'));
+          sel.value = 'raw';
+        }
       }
 
-      const nTracesDS = Math.floor(nTraces / factor);
-      const nSamplesDS = Math.floor(nSamples / factor);
-      console.log('Downsampling factor:', factor);
-      console.log('Final dimensions:', nTracesDS, 'x', nSamplesDS);
+      const [s, e] = savedXRange ? visibleTraceIndices(savedXRange, rawSeismicData.length) : [0, rawSeismicData.length - 1];
+      drawSelectedLayer(s, e);
 
-      const time = new Float32Array(nSamplesDS);
-      for (let t = 0; t < nSamplesDS; t++) {
-        time[t] = t * dt * factor;
+      // Pipeline execution: manual via ▶ Run button
+
+      console.time('Prefetch');
+      prefetchAround(index, 'raw');
+      console.timeEnd('Prefetch');
+
+      console.timeEnd('Total fetchAndPlot');
+      console.log('--- fetchAndPlot end ---');
+    }
+
+    function drawSelectedLayer(start = 0, end = rawSeismicData ? rawSeismicData.length - 1 : 0) {
+      const sel = document.getElementById('layerSelect');
+      const layer = sel ? sel.value : 'raw';
+      if (layer === 'raw' || !latestTapData[layer]) {
+        latestSeismicData = rawSeismicData;
+      } else {
+        latestSeismicData = latestTapData[layer];
       }
+      plotSeismicData(latestSeismicData, defaultDt, start, end);
+    }
 
-      const zData = Array.from({ length: nSamplesDS }, () => new Float32Array(nTracesDS));
+    function visibleTraceIndices(range, total) {
+      let start = Math.floor(range[0]);
+      let end = Math.ceil(range[1]);
+      start = Math.max(0, start);
+      end = Math.min(total - 1, end);
+      return [start, end];
+    }
 
-      for (let i = startTrace, col = 0; col < nTracesDS; i += factor, col++) {
-        const trace = seismic[i];
-        for (let j = 0, row = 0; row < nSamplesDS; j += factor, row++) {
-          if (fbMode) {
-            const val = trace[j] * 255;
-            zData[row][col] = val;
-          } else {
-            let val = trace[j] * gain;
+    function plotSeismicData(seismic, dt, startTrace = 0, endTrace = seismic.length - 1) {
+      const totalTraces = seismic.length;
+      startTrace = Math.max(0, startTrace);
+      endTrace = Math.min(totalTraces - 1, endTrace);
+      const nTraces = endTrace - startTrace + 1;
+      const nSamples = seismic[0].length;
+      const plotDiv = document.getElementById('plot');
+
+      const widthPx = plotDiv.clientWidth || 1;
+      const xRange = savedXRange ?? [0, totalTraces - 1];
+      const visibleTraces = endTrace - startTrace + 1;
+      const density = visibleTraces / widthPx;
+      const mode = document.getElementById('layerSelect').value;
+      const fbMode = mode === 'fbprob'; // 使っていないが残置可
+
+      let traces = [];
+      const gain = parseFloat(document.getElementById('gain').value) || 1.0;
+      const AMP_LIMIT = 3.0;
+
+      if (!fbMode && density < 0.1) {
+        downsampleFactor = 1;
+        const time = new Float32Array(nSamples);
+        for (let t = 0; t < nSamples; t++) time[t] = t * dt;
+        for (let i = startTrace; i <= endTrace; i++) {
+          const raw = seismic[i];
+          const baseX = new Float32Array(nSamples);
+          const shiftedFullX = new Float32Array(nSamples);
+          const shiftedPosX = new Float32Array(nSamples);
+          for (let j = 0; j < nSamples; j++) {
+            let val = raw[j] * gain;
             if (val > AMP_LIMIT) val = AMP_LIMIT;
             if (val < -AMP_LIMIT) val = -AMP_LIMIT;
-            zData[row][col] = val;
+            baseX[j] = i;
+            shiftedFullX[j] = val + i;
+            shiftedPosX[j] = (val < 0 ? 0 : val) + i;
+          }
+
+          traces.push({ type: 'scatter', mode: 'lines', x: baseX, y: time, line: { width: 0 }, hoverinfo: 'x+y', showlegend: false });
+          traces.push({ type: 'scatter', mode: 'lines', x: shiftedPosX, y: time, fill: 'tonextx', fillcolor: 'black', line: { width: 0 }, opacity: 0.6, hoverinfo: 'skip', showlegend: false });
+          traces.push({ type: 'scatter', mode: 'lines', x: shiftedFullX, y: time, line: { color: 'black', width: 0.5 }, hoverinfo: 'skip', showlegend: false });
+        }
+      } else {
+        const MAX_POINTS = 3_000_000;
+        let factor = 1;
+        while (Math.floor(nTraces / factor) * Math.floor(nSamples / factor) > MAX_POINTS) factor++;
+        const nTracesDS = Math.floor(nTraces / factor);
+        const nSamplesDS = Math.floor(nSamples / factor);
+        console.log('Downsampling factor:', factor);
+        console.log('Final dimensions:', nTracesDS, 'x', nSamplesDS);
+
+        const time = new Float32Array(nSamplesDS);
+        for (let t = 0; t < nSamplesDS; t++) time[t] = t * dt * factor;
+
+        const zData = Array.from({ length: nSamplesDS }, () => new Float32Array(nTracesDS));
+
+        for (let i = startTrace, col = 0; col < nTracesDS; i += factor, col++) {
+          const trace = seismic[i];
+          for (let j = 0, row = 0; row < nSamplesDS; j += factor, row++) {
+            if (fbMode) {
+              const val = trace[j] * 255;
+              zData[row][col] = val;
+            } else {
+              let val = trace[j] * gain;
+              if (val > AMP_LIMIT) val = AMP_LIMIT;
+              if (val < -AMP_LIMIT) val = -AMP_LIMIT;
+              zData[row][col] = val;
+            }
           }
         }
+
+        const zMin = fbMode ? 0 : -AMP_LIMIT;
+        const zMax = fbMode ? 255 : AMP_LIMIT;
+
+        const xVals = new Float32Array(nTracesDS);
+        for (let i = 0; i < nTracesDS; i++) xVals[i] = startTrace + i * factor;
+        downsampleFactor = factor;
+
+        const cmName = document.getElementById('colormap')?.value || 'Greys';
+        const reverse = document.getElementById('cmReverse')?.checked || false;
+        const cm = COLORMAPS[cmName] || 'Greys';
+        const isDiv = cmName === 'RdBu' || cmName === 'BWR';
+
+        traces = [{
+          type: 'heatmap',
+          x: xVals,
+          y: time,
+          z: zData,
+          colorscale: cm,
+          reversescale: reverse,
+          zmin: zMin,
+          zmax: zMax,
+          ...(fbMode ? {} : (isDiv ? { zmid: 0 } : {})),
+          showscale: false,
+          hoverinfo: 'x+y',
+          hovertemplate: '',
+        }];
       }
 
-      // ヒートマップの z 範囲は常に固定（RAW / pipeline で同一軸）
-      const zMin = fbMode ? 0 : -AMP_LIMIT;
-      const zMax = fbMode ? 255 :  AMP_LIMIT;
+      const layout = {
+        xaxis: {
+          title: 'Trace', showgrid: false, tickfont: { color: '#000' }, titlefont: { color: '#000' },
+          autorange: !savedXRange, ...(savedXRange ? { range: savedXRange } : {})
+        },
+        yaxis: {
+          title: 'Time (s)', showgrid: false, tickfont: { color: '#000' }, titlefont: { color: '#000' },
+          autorange: false, range: savedYRange ?? [nSamples * dt, 0]
+        },
+        paper_bgcolor: '#fff', plot_bgcolor: '#fff',
+        margin: { t: 10, r: 10, l: 60, b: 40 },
+        dragmode: isPickMode ? false : 'zoom',
+        ...(fbMode ? { title: 'First-break Probability' } : {}),
+      };
 
-      const xVals = new Float32Array(nTracesDS);
-      for (let i = 0; i < nTracesDS; i++) xVals[i] = startTrace + i * factor;
-      downsampleFactor = factor;
-
-      const cmName = document.getElementById('colormap')?.value || 'Greys';
-      const reverse = document.getElementById('cmReverse')?.checked || false;
-      const cm = COLORMAPS[cmName] || 'Greys';
-      const isDiv = cmName === 'RdBu' || cmName === 'BWR';
-
-      traces = [{
-        type: 'heatmap',
-        x: xVals,
-        y: time,
-        z: zData,
-        colorscale: cm,
-        reversescale: reverse,
-        zmin: zMin,
-        zmax: zMax,
-        ...(fbMode ? {} : (isDiv ? { zmid: 0 } : {})),
-        showscale: false,
-        hoverinfo: 'x+y',
-        hovertemplate: '',
-      }];
-    }
-
-    const layout = {
-      xaxis: {
-        title: 'Trace',
-        showgrid: false,
-        tickfont: { color: '#000' },
-        titlefont: { color: '#000' },
-        autorange: !savedXRange,
-        ...(savedXRange ? { range: savedXRange } : {})
-      },
-      yaxis: {
-        title: 'Time (s)',
-        showgrid: false,
-        tickfont: { color: '#000' },
-        titlefont: { color: '#000' },
-        autorange: false,
-        range: savedYRange ?? [nSamples * dt, 0]  // reversed を手動設定
-      },
-      paper_bgcolor: '#fff',
-      plot_bgcolor: '#fff',
-      margin: { t: 10, r: 10, l: 60, b: 40 },
-      dragmode: isPickMode ? false : 'zoom',
-      ...(fbMode ? { title: 'First-break Probability' } : {}),
-    };
-
-    const manualShapes = picks.map(p => ({
-      type: 'line',
-      x0: p.trace - 0.4, x1: p.trace + 0.4,
-      y0: p.time, y1: p.time,
-      line: { color: 'red', width: 2 }
-    }));
-
-    const showPred = document.getElementById('showFbPred')?.checked;
-    const predShapes = (showPred ? predictedPicks : [])
-      .filter(p => p.trace >= startTrace && p.trace <= endTrace)
-      .map(p => ({
+      const manualShapes = picks.map(p => ({
         type: 'line',
         x0: p.trace - 0.4, x1: p.trace + 0.4,
         y0: p.time, y1: p.time,
-        line: { color: '#1f77b4', width: 5, dash: 'dot' }  // predicted = blue dotted
+        line: { color: 'red', width: 2 }
       }));
 
-    layout.shapes = [...manualShapes, ...predShapes];
+      const showPred = document.getElementById('showFbPred')?.checked;
+      const predShapes = (showPred ? predictedPicks : [])
+        .filter(p => p.trace >= startTrace && p.trace <= endTrace)
+        .map(p => ({
+          type: 'line',
+          x0: p.trace - 0.4, x1: p.trace + 0.4,
+          y0: p.time, y1: p.time,
+          line: { color: '#1f77b4', width: 5, dash: 'dot' }
+        }));
 
-    Plotly.react(plotDiv, traces, layout, {
-      responsive: true,
-      editable: true,
-      modeBarButtonsToAdd: ['eraseshape'],
-      edits: { shapePosition: false }
-    });
-    setTimeout(() => Plotly.Plots.resize(plotDiv), 50);
-    renderedStart = startTrace;
-    renderedEnd = endTrace;
-    console.log(`Rendered traces ${startTrace}-${endTrace}`);
+      layout.shapes = [...manualShapes, ...predShapes];
 
-    plotDiv.removeAllListeners('plotly_relayout');
-    plotDiv.removeAllListeners('plotly_click');
-    plotDiv.on('plotly_relayout', handleRelayout);
-    if (isPickMode) {
-      plotDiv.on('plotly_click', handlePlotClick);
-    }
-  }
+      Plotly.react(plotDiv, traces, layout, {
+        responsive: true,
+        editable: true,
+        modeBarButtonsToAdd: ['eraseshape'],
+        edits: { shapePosition: false }
+      });
+      setTimeout(() => Plotly.Plots.resize(plotDiv), 50);
+      renderedStart = startTrace;
+      renderedEnd = endTrace;
+      console.log(`Rendered traces ${startTrace}-${endTrace}`);
 
-  function pickOnTrace(trace) {
-    return picks.findIndex(p => Math.round(p.trace) === trace);
-  }
-
-  async function handlePlotClick(ev) {
-    if (!isPickMode) return;
-    console.log('🔥 plotly_click fired', ev);
-    const plotDiv = document.getElementById('plot');
-    if (!plotDiv || !ev.event || !ev.event.clientX) {
-      console.warn('⚠️ plotDiv or event data not available.');
-      return;
+      plotDiv.removeAllListeners('plotly_relayout');
+      plotDiv.removeAllListeners('plotly_click');
+      plotDiv.on('plotly_relayout', handleRelayout);
+      if (isPickMode) {
+        plotDiv.on('plotly_click', handlePlotClick);
+      }
     }
 
-    const dt = defaultDt * downsampleFactor;
+    function pickOnTrace(trace) {
+      return picks.findIndex(p => Math.round(p.trace) === trace);
+    }
 
-    // -------- クリック位置を取得し、軸座標に変換 --------
-    const rect = plotDiv.getBoundingClientRect();
-    const xpx = ev.event.clientX - rect.left;
-    const ypx = ev.event.clientY - rect.top;
-
-    const xData = plotDiv._fullLayout.xaxis.p2d(xpx);
-    const yData = plotDiv._fullLayout.yaxis.p2d(ypx);
-
-    // -------- trace / time を整数グリッドにスナップ --------
-    const trace = Math.round(ev.points[0].x);
-    const time = Math.round(ev.points[0].y / dt) * dt;
-
-    // -------- ログ --------
-    console.group('🖱 Actual Click Data');
-    console.log('clientX / Y:', ev.event.clientX, ev.event.clientY);
-    console.log('pixel offset:', xpx, ypx);
-    console.log('xData (trace):', xData);
-    console.log('yData (time):', yData);
-    console.log('Snapped trace:', trace);
-    console.log('Snapped time:', time);
-    console.groupEnd();
-
-    // -------- Ctrl+クリックで範囲削除 --------
-    if (ev.event.ctrlKey) {
-      if (deleteRangeStart === null) {
-        deleteRangeStart = trace;
-        linePickStart = null;
+    async function handlePlotClick(ev) {
+      if (!isPickMode) return;
+      console.log('🔥 plotly_click fired', ev);
+      const plotDiv = document.getElementById('plot');
+      if (!plotDiv || !ev.event || !ev.event.clientX) {
+        console.warn('⚠️ plotDiv or event data not available.');
         return;
       }
-      const x0 = deleteRangeStart;
-      deleteRangeStart = null;
-      const x1 = trace;
-      const start = Math.min(x0, x1);
-      const end = Math.max(x0, x1);
-      const toDelete = picks.filter(p => Math.round(p.trace) >= start && Math.round(p.trace) <= end);
-      const promises = toDelete.map(p => deletePick(Math.round(p.trace)));
-      picks = picks.filter(p => Math.round(p.trace) < start || Math.round(p.trace) > end);
-      await Promise.all(promises);
-      plotSeismicData(latestSeismicData, defaultDt, renderedStart, renderedEnd);
-      return;
-    }
 
-    // -------- Shift+クリックでラインピック --------
-    if (ev.event.shiftKey) {
-      if (!linePickStart) {
-        linePickStart = { trace, time };
+      const dt = defaultDt * downsampleFactor;
+
+      // クリック位置を軸座標に変換（ログ用途）
+      const rect = plotDiv.getBoundingClientRect();
+      const xpx = ev.event.clientX - rect.left;
+      const ypx = ev.event.clientY - rect.top;
+      const xData = plotDiv._fullLayout.xaxis.p2d(xpx);
+      const yData = plotDiv._fullLayout.yaxis.p2d(ypx);
+
+      const trace = Math.round(ev.points[0].x);
+      const time = Math.round(ev.points[0].y / dt) * dt;
+
+      console.group('🖱 Actual Click Data');
+      console.log('clientX / Y:', ev.event.clientX, ev.event.clientY);
+      console.log('pixel offset:', xpx, ypx);
+      console.log('xData (trace):', xData);
+      console.log('yData (time):', yData);
+      console.log('Snapped trace:', trace);
+      console.log('Snapped time:', time);
+      console.groupEnd();
+
+      // Ctrl+クリック: 範囲削除
+      if (ev.event.ctrlKey) {
+        if (deleteRangeStart === null) {
+          deleteRangeStart = trace;
+          linePickStart = null;
+          return;
+        }
+        const x0 = deleteRangeStart;
         deleteRangeStart = null;
+        const x1 = trace;
+        const start = Math.min(x0, x1);
+        const end = Math.max(x0, x1);
+        const toDelete = picks.filter(p => Math.round(p.trace) >= start && Math.round(p.trace) <= end);
+        const promises = toDelete.map(p => deletePick(Math.round(p.trace)));
+        picks = picks.filter(p => Math.round(p.trace) < start || Math.round(p.trace) > end);
+        await Promise.all(promises);
+        plotSeismicData(latestSeismicData, defaultDt, renderedStart, renderedEnd);
         return;
       }
 
-      const { trace: x0, time: y0 } = linePickStart;
-      linePickStart = { trace, time };
-      const x1 = trace;
-      const y1 = time;
-      const xStart = Math.round(Math.min(x0, x1));
-      const xEnd = Math.round(Math.max(x0, x1));
-      const slope = x1 === x0 ? 0 : (y1 - y0) / (x1 - x0);
-      const promises = [];
-      for (let x = xStart; x <= xEnd; x++) {
-        const y = x1 === x0 ? y1 : y0 + slope * (x - x0);
-        const snapped = Math.round(y / dt) * dt;
-        const idx = pickOnTrace(x);
-        if (idx >= 0) {
-          promises.push(deletePick(x));
-          picks.splice(idx, 1);
+      // Shift+クリック: ラインピック
+      if (ev.event.shiftKey) {
+        if (!linePickStart) {
+          linePickStart = { trace, time };
+          deleteRangeStart = null;
+          return;
         }
-        picks.push({ trace: x, time: snapped });
-        promises.push(postPick(x, snapped));
+
+        const { trace: x0, time: y0 } = linePickStart;
+        linePickStart = { trace, time };
+        const x1 = trace;
+        const y1 = time;
+        const xStart = Math.round(Math.min(x0, x1));
+        const xEnd = Math.round(Math.max(x0, x1));
+        const slope = x1 === x0 ? 0 : (y1 - y0) / (x1 - x0);
+        const promises = [];
+        for (let x = xStart; x <= xEnd; x++) {
+          const y = x1 === x0 ? y1 : y0 + slope * (x - x0);
+          const snapped = Math.round(y / dt) * dt;
+          const idx = pickOnTrace(x);
+          if (idx >= 0) {
+            promises.push(deletePick(x));
+            picks.splice(idx, 1);
+          }
+          picks.push({ trace: x, time: snapped });
+          promises.push(postPick(x, snapped));
+        }
+        await Promise.all(promises);
+        plotSeismicData(latestSeismicData, defaultDt, renderedStart, renderedEnd);
+        return;
       }
+
+      // 通常クリック: 単一ピック
+      linePickStart = null;
+      deleteRangeStart = null;
+      const idx = pickOnTrace(trace);
+      const promises = [];
+      if (idx >= 0) {
+        promises.push(deletePick(trace));
+        picks.splice(idx, 1);
+      }
+      picks.push({ trace, time });
+      promises.push(postPick(trace, time));
       await Promise.all(promises);
       plotSeismicData(latestSeismicData, defaultDt, renderedStart, renderedEnd);
-      return;
     }
 
-    // -------- 通常クリックで単一ピック --------
-    linePickStart = null;
-    deleteRangeStart = null;
-    const idx = pickOnTrace(trace);
-    const promises = [];
-    if (idx >= 0) {
-      promises.push(deletePick(trace));
-      picks.splice(idx, 1);
-    }
-    picks.push({ trace, time });
-    promises.push(postPick(trace, time));
-    await Promise.all(promises);
-    plotSeismicData(latestSeismicData, defaultDt, renderedStart, renderedEnd);
-  }
-
-  async function handleRelayout(ev) {
-    const plotDiv = document.getElementById('plot');
-    if ('xaxis.range[0]' in ev && 'xaxis.range[1]' in ev) {
-      savedXRange = [ev['xaxis.range[0]'], ev['xaxis.range[1]']];
-    } else if ('xaxis.autorange' in ev && ev['xaxis.autorange'] === true) {
-      savedXRange = null;
-      savedYRange = null;
-    }
-
-    if ('yaxis.range[0]' in ev && 'yaxis.range[1]' in ev) {
-      const y0 = ev['yaxis.range[0]'];
-      const y1 = ev['yaxis.range[1]'];
-      savedYRange = y0 > y1 ? [y0, y1] : [y1, y0];
-    }
-
-    if (latestSeismicData) {
-      const [s, e] = savedXRange
-        ? visibleTraceIndices(savedXRange, latestSeismicData.length)
-        : [0, latestSeismicData.length - 1];
-      if (s !== renderedStart || e !== renderedEnd) {
-        plotSeismicData(latestSeismicData, defaultDt, s, e);
+    async function handleRelayout(ev) {
+      const plotDiv = document.getElementById('plot');
+      if ('xaxis.range[0]' in ev && 'xaxis.range[1]' in ev) {
+        savedXRange = [ev['xaxis.range[0]'], ev['xaxis.range[1]']];
+      } else if ('xaxis.autorange' in ev && ev['xaxis.autorange'] === true) {
+        savedXRange = null;
+        savedYRange = null;
       }
-    }
 
-    if (Array.isArray(ev.shapes)) {
-      // Only persist MANUAL (red) picks; ignore predicted (blue dotted)
-      const onlyManual = ev.shapes.filter(s => s.line && s.line.color === 'red');
-      const newPicks = onlyManual.map(s => ({
-        trace: (s.x0 + s.x1) / 2,
-        time: (s.y0 + s.y1) / 2
-      }));
+      if ('yaxis.range[0]' in ev && 'yaxis.range[1]' in ev) {
+        const y0 = ev['yaxis.range[0]'];
+        const y1 = ev['yaxis.range[1]'];
+        savedYRange = y0 > y1 ? [y0, y1] : [y1, y0];
+      }
 
-      const oldTraces = new Set(picks.map(p => Math.round(p.trace)));
-      const newTraces = new Set(newPicks.map(p => Math.round(p.trace)));
-      for (const t of oldTraces) {
-        if (!newTraces.has(t)) {
-          await deletePick(t);
+      if (latestSeismicData) {
+        const [s, e] = savedXRange ? visibleTraceIndices(savedXRange, latestSeismicData.length)
+          : [0, latestSeismicData.length - 1];
+        if (s !== renderedStart || e !== renderedEnd) {
+          plotSeismicData(latestSeismicData, defaultDt, s, e);
         }
       }
-      picks = newPicks;
-    }
-  }
 
-  window.addEventListener('DOMContentLoaded', loadSettings);
+      if (Array.isArray(ev.shapes)) {
+        // 予測(青点線)は保存しない。赤のみ保存。
+        const onlyManual = ev.shapes.filter(s => s.line && s.line.color === 'red');
+        const newPicks = onlyManual.map(s => ({
+          trace: (s.x0 + s.x1) / 2,
+          time: (s.y0 + s.y1) / 2
+        }));
 
-  // Toggle between raw and first tap with the "n" key
-  window.addEventListener('keydown', (e) => {
-    if (
-      e.key.toLowerCase() === 'n' &&
-      !e.ctrlKey &&
-      !e.altKey &&
-      !e.metaKey &&
-      !['INPUT', 'SELECT', 'TEXTAREA'].includes(document.activeElement.tagName)
-    ) {
-      const sel = document.getElementById('layerSelect');
-      if (!sel) return;
-      if (sel.options.length > 1) {
-        sel.value = sel.value === 'raw' ? sel.options[1].value : 'raw';
-        drawSelectedLayer();
+        const oldTraces = new Set(picks.map(p => Math.round(p.trace)));
+        const newTraces = new Set(newPicks.map(p => Math.round(p.trace)));
+        for (const t of oldTraces) {
+          if (!newTraces.has(t)) {
+            await deletePick(t);
+          }
+        }
+        picks = newPicks;
       }
     }
-  });
 
-  window.addEventListener('keyup', (e) => {
-    if (e.key === 'Shift') {
-      linePickStart = null;
-    }
-  });
+    window.addEventListener('DOMContentLoaded', loadSettings);
 
+    // Toggle between raw and first tap with the "n" key
+    window.addEventListener('keydown', (e) => {
+      if (
+        e.key.toLowerCase() === 'n' &&
+        !e.ctrlKey && !e.altKey && !e.metaKey &&
+        !['INPUT', 'SELECT', 'TEXTAREA'].includes(document.activeElement.tagName)
+      ) {
+        const sel = document.getElementById('layerSelect');
+        if (!sel) return;
+        if (sel.options.length > 1) {
+          sel.value = sel.value === 'raw' ? sel.options[1].value : 'raw';
+          drawSelectedLayer();
+        }
+      }
+    });
+
+    window.addEventListener('keyup', (e) => {
+      if (e.key === 'Shift') {
+        linePickStart = null;
+      }
+    });
   </script>
 </body>
+
 </html>
