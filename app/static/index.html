@@ -94,6 +94,11 @@
       background: #f7f7f7;
       font-weight: 600;
     }
+    .pipeline-header .pipeline-actions {
+      display: inline-flex;
+      gap: 0.5em;
+      align-items: center;
+    }
     .pipeline-add {
       position: relative;
       display: inline-flex;
@@ -330,11 +335,14 @@
     <aside id="pipelinePanel">
       <div class="pipeline-header">
         <span>Pipeline</span>
-        <div class="pipeline-add">
-          <button type="button" id="pipelineAddButton">+ Add Step ▾</button>
-          <div class="pipeline-add-menu" id="pipelineAddMenu">
-            <button type="button" data-step="bandpass">Bandpass</button>
-            <button type="button" data-step="denoise">Denoise</button>
+        <div class="pipeline-actions">
+          <button type="button" id="pipelineRunButton">▶ Run</button>
+          <div class="pipeline-add">
+            <button type="button" id="pipelineAddButton">+ Add Step ▾</button>
+            <div class="pipeline-add-menu" id="pipelineAddMenu">
+              <button type="button" data-step="bandpass">Bandpass</button>
+              <button type="button" data-step="denoise">Denoise</button>
+            </div>
           </div>
         </div>
       </div>
@@ -1244,13 +1252,7 @@
     const [s, e] = savedXRange ? visibleTraceIndices(savedXRange, rawSeismicData.length) : [0, rawSeismicData.length - 1];
     drawSelectedLayer(s, e);
 
-    // ---- ここで必ず runPipeline を呼ぶ（ログ付き）----
-    if (window.pipelineUI?.runPipeline) {
-        console.info('[pipeline] fetchAndPlot → runPipeline()');
-        window.pipelineUI.runPipeline();
-      } else {
-      console.warn('[pipeline] runPipeline NOT available', window.pipelineUI);
-    }
+    // Pipeline execution is now manual via the ▶ Run button.
 
     console.time('Prefetch');
     prefetchAround(index, 'raw');

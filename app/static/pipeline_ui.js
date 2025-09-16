@@ -628,7 +628,6 @@
   function notifyGraphChanged(options = {}) {
     savePipelineToLocalStorage(pipelineState.graph);
     renderPipelineCards(pipelineState.graph);
-    if (options.schedule !== false) schedulePipelineRun();
   }
 
   function initPipelineUI() {
@@ -646,6 +645,11 @@
 
     renderPipelineCards(pipelineState.graph);
     savePipelineToLocalStorage(pipelineState.graph);
+
+    const runButton = document.getElementById('pipelineRunButton');
+    if (runButton) {
+      runButton.addEventListener('click', () => runPipeline());
+    }
 
     if (pipelineState.cardsContainer) {
       pipelineState.cardsContainer.addEventListener('dragover', handleDragOver);
@@ -687,8 +691,6 @@
       });
     }
 
-    // 初期表示でも 1 回は走らせる（fetchAndPlot 側で呼ばれなくても安全）
-    try { schedulePipelineRun(); } catch (_) { }
   }
 
   const schedulePipelineRun = debounce(() => runPipeline(), 300);
