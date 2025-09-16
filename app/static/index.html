@@ -4,11 +4,17 @@
 <head>
   <title>Seismic Wiggle Viewer</title>
   <style>
+    :root {
+      color-scheme: light;
+    }
     body {
       margin: 0;
       font-family: sans-serif;
       background-color: #fff;
       color: #000;
+      height: 100vh;
+      display: flex;
+      flex-direction: column;
     }
     header {
       background: #f0f0f0;
@@ -19,16 +25,38 @@
       justify-content: space-between;
       align-items: center;
     }
+    #mainContent {
+      flex: 1;
+      display: flex;
+      min-height: 0;
+      background: #fff;
+    }
+    #viewerColumn {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      min-width: 0;
+    }
     #controls {
       padding: 0.5em 1em;
       background: #fafafa;
       border-bottom: 1px solid #ccc;
+      display: flex;
+      gap: 1em;
+      align-items: center;
+      flex-wrap: wrap;
+      overflow-y: auto;
     }
     input,
     button {
       font-size: 1em;
       padding: 0.2em 0.4em;
       margin-right: 0.5em;
+    }
+    #plot {
+      flex: 1;
+      width: 100%;
+      min-height: 0;
     }
     #pickModeBtn.active {
       background: #007bff;
@@ -48,6 +76,187 @@
       display: block;
       margin: 0.5em 0;
     }
+    #pipelinePanel {
+      width: 320px;
+      max-width: 100%;
+      border-left: 1px solid #ddd;
+      background: #fdfdfd;
+      display: flex;
+      flex-direction: column;
+      min-height: 0;
+    }
+    .pipeline-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 0.75em 1em;
+      border-bottom: 1px solid #ddd;
+      background: #f7f7f7;
+      font-weight: 600;
+    }
+    .pipeline-add {
+      position: relative;
+      display: inline-flex;
+      flex-direction: column;
+      align-items: flex-end;
+    }
+    .pipeline-add button {
+      margin-right: 0;
+    }
+    .pipeline-add-menu {
+      position: absolute;
+      top: 100%;
+      right: 0;
+      background: #fff;
+      border: 1px solid #ccc;
+      border-radius: 4px;
+      box-shadow: 0 4px 10px rgba(0, 0, 0, 0.08);
+      padding: 0.25em 0;
+      margin-top: 0.3em;
+      display: none;
+      min-width: 160px;
+      z-index: 20;
+    }
+    .pipeline-add-menu.open {
+      display: block;
+    }
+    .pipeline-add-menu button {
+      display: block;
+      width: 100%;
+      background: transparent;
+      border: 0;
+      text-align: left;
+      padding: 0.45em 1em;
+      font-size: 0.95em;
+      cursor: pointer;
+    }
+    .pipeline-add-menu button:hover,
+    .pipeline-add-menu button:focus {
+      background: #eef3ff;
+    }
+    #pipelineCards {
+      flex: 1;
+      overflow-y: auto;
+      padding: 1em;
+      background: #fafafa;
+    }
+    .pipeline-card {
+      border: 1px solid #d2d2d2;
+      border-radius: 8px;
+      padding: 0.75em;
+      background: #fff;
+      display: flex;
+      flex-direction: column;
+      gap: 0.5em;
+      box-shadow: 0 1px 2px rgba(0, 0, 0, 0.04);
+    }
+    .pipeline-card + .pipeline-card {
+      margin-top: 0.75em;
+    }
+    .pipeline-card.disabled {
+      opacity: 0.6;
+    }
+    .pipeline-card.inspecting {
+      border-color: #4c8bf5;
+      box-shadow: 0 0 0 1px rgba(76, 139, 245, 0.25);
+    }
+    .pipeline-card.is-dragging {
+      opacity: 0.6;
+    }
+    .pipeline-card-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 0.5em;
+    }
+    .pipeline-card-title {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.4em;
+      font-weight: 600;
+      font-size: 0.95em;
+    }
+    .drag-handle {
+      cursor: grab;
+      color: #666;
+      font-size: 1.1em;
+      line-height: 1;
+      user-select: none;
+    }
+    .pipeline-card-controls {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.75em;
+      font-size: 0.85em;
+    }
+    .pipeline-card-controls label {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.35em;
+      cursor: pointer;
+    }
+    .pipeline-label {
+      display: flex;
+      flex-direction: column;
+      gap: 0.3em;
+      font-size: 0.85em;
+    }
+    .pipeline-label-input {
+      font-size: 0.95em;
+      padding: 0.35em 0.45em;
+      border: 1px solid #ccc;
+      border-radius: 4px;
+    }
+    .pipeline-card button {
+      font-size: 0.85em;
+      padding: 0.35em 0.6em;
+      margin-right: 0;
+    }
+    .pipeline-empty {
+      color: #666;
+      font-size: 0.9em;
+      padding: 0.5em 0.25em;
+      text-align: center;
+    }
+    .pipeline-inspector {
+      border-top: 1px solid #ddd;
+      padding: 0.9em 1em;
+      background: #fff;
+    }
+    .pipeline-inspector.hidden {
+      display: none;
+    }
+    .pipeline-inspector h3 {
+      margin: 0 0 0.6em 0;
+      font-size: 1em;
+    }
+    .pipeline-inspector form {
+      display: flex;
+      flex-direction: column;
+      gap: 0.6em;
+    }
+    .pipeline-inspector label {
+      display: flex;
+      flex-direction: column;
+      gap: 0.3em;
+      font-size: 0.85em;
+    }
+    .pipeline-inspector input,
+    .pipeline-inspector select {
+      font-size: 0.95em;
+      padding: 0.35em 0.45em;
+      border: 1px solid #ccc;
+      border-radius: 4px;
+    }
+    .pipeline-inspector-actions {
+      display: flex;
+      justify-content: flex-end;
+      gap: 0.5em;
+      margin-top: 0.4em;
+    }
+    .hidden {
+      display: none !important;
+    }
   </style>
 </head>
 <body>
@@ -56,7 +265,9 @@
     <a href="/upload">Open SEG-Y</a>
   </header>
   <input type="hidden" id="file_id" />
-  <div id="controls" style="padding: 1em; background: #f8f8f8; display: flex; gap: 1em; align-items: center;">
+  <div id="mainContent">
+    <div id="viewerColumn">
+      <div id="controls">
     <label for="key1_idx_slider">key1 index:</label>
     <input type="range" id="key1_idx_slider" min="0" max="10000" value="0" step="1" oninput="updateKey1Display(); fetchAndPlot()" />
     <input type="number" id="key1_idx_display" value="0" min="0" max="10000" step="1" style="width: 60px;" onchange="syncSliderWithInput(); fetchAndPlot()" />
@@ -113,8 +324,33 @@
       <option value="Jet">Jet</option>
     </select>
     <label><input type="checkbox" id="cmReverse" onchange="onColormapChange()">reverse</label>
+      </div>
+      <div id="plot"></div>
+    </div>
+    <aside id="pipelinePanel">
+      <div class="pipeline-header">
+        <span>Pipeline</span>
+        <div class="pipeline-add">
+          <button type="button" id="pipelineAddButton">+ Add Step ▾</button>
+          <div class="pipeline-add-menu" id="pipelineAddMenu">
+            <button type="button" data-step="bandpass">Bandpass</button>
+            <button type="button" data-step="denoise">Denoise</button>
+          </div>
+        </div>
+      </div>
+      <div id="pipelineCards"></div>
+      <div id="pipelineInspector" class="pipeline-inspector hidden">
+        <h3 id="pipelineInspectorTitle">Inspector</h3>
+        <form id="pipelineInspectorForm">
+          <div id="pipelineInspectorFields"></div>
+          <div class="pipeline-inspector-actions">
+            <button type="button" id="pipelineInspectorClose">Close</button>
+            <button type="submit" id="pipelineInspectorSave">Save</button>
+          </div>
+        </form>
+      </div>
+    </aside>
   </div>
-  <div id="plot" style="width: 100vw; height: calc(100vh - 100px);"></div>
   <dialog id="denoiseSettingsDialog">
     <form method="dialog">
       <label>mask_ratio:<input type="number" id="dlg_mask_ratio" required step="0.1" min="0" max="1"></label>
@@ -149,6 +385,7 @@
   <script src="/static/pako.min.js"></script>
   <script src="/static/msgpack.min.js"></script>
   <script src="/static/api.js"></script>
+  <script src="/static/pipeline_ui.js"></script>
   <script>
     let key1Values = [];
     let currentFileId = '';
@@ -991,39 +1228,25 @@
       rawSeismicData = traces;
     }
 
-    try {
-      // NOTE: pipeline spec は UI と接続していない暫定値です（必要なら getBpfParams() に置換）
-      const spec = { steps: [{ kind: 'transform', name: 'bandpass', params: { low_hz: 0, high_hz: 100, dt: 0.002 } }] };
-      const taps = ['bandpass', 'final'];
-      const { taps: tapMap, pipelineKey } = await fetchSectionWithPipeline(
-        currentFileId,
-        key1Val,
-        spec,
-        taps,
-        { key1Byte: currentKey1Byte, key2Byte: currentKey2Byte },
-      );
-      latestTapData = tapMap;
-      latestPipelineKey = pipelineKey;
-      const sel = document.getElementById('layerSelect');
-      const current = sel.value;
-      sel.innerHTML = '';
-      sel.appendChild(new Option('raw', 'raw'));
-      Object.keys(tapMap)
-        .sort()
-        .forEach((name) => sel.appendChild(new Option(name, name)));
-      sel.value = tapMap[current] ? current : 'raw';
-    } catch (e) {
-      console.warn('pipeline/section failed', e);
+    if (window.pipelineUI && typeof window.pipelineUI.prepareForNewSection === 'function') {
+      window.pipelineUI.prepareForNewSection();
+    } else {
       latestTapData = {};
       latestPipelineKey = null;
       const sel = document.getElementById('layerSelect');
-      sel.innerHTML = '';
-      sel.appendChild(new Option('raw', 'raw'));
-      sel.value = 'raw';
+      if (sel) {
+        sel.innerHTML = '';
+        sel.appendChild(new Option('raw', 'raw'));
+        sel.value = 'raw';
+      }
     }
 
     const [s, e] = savedXRange ? visibleTraceIndices(savedXRange, rawSeismicData.length) : [0, rawSeismicData.length - 1];
     drawSelectedLayer(s, e);
+
+    if (window.pipelineUI && typeof window.pipelineUI.runPipeline === 'function') {
+      window.pipelineUI.runPipeline();
+    }
 
     console.time('Prefetch');
     prefetchAround(index, 'raw');
