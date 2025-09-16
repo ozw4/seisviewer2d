@@ -387,16 +387,16 @@
   <script src="/static/api.js"></script>
   <script src="/static/pipeline_ui.js"></script>
   <script>
-    let key1Values = [];
-    let currentFileId = '';
-    let currentKey1Byte = 189;
-    let currentKey2Byte = 193;
-    let savedXRange = null;
-    let savedYRange = null;
-    let latestSeismicData = null;
-    let rawSeismicData = null;
-    let latestTapData = {};
-    let latestPipelineKey = null;
+    var key1Values = [];
+    var currentFileId = '';
+    var currentKey1Byte = 189;
+    var currentKey2Byte = 193;
+    var savedXRange = null;
+    var savedYRange = null;
+    var latestSeismicData = null;
+    var rawSeismicData = null;
+    var latestTapData = {};
+    var latestPipelineKey = null;
     const defaultDt = 0.002;
     const PREFETCH_WIDTH = 3;   // ±10
     const FALLBACK_MAX = 8;  // API 無い場合
@@ -406,19 +406,19 @@
     const inflight = new Map();
     const CACHE_LIMIT = 12;
     function cacheKey(val, mode) { return `${val}|${mode}`; }
-    let sectionShape = null;
-    let renderedStart = null;
-    let renderedEnd = null;
-    let picks = [];
-    let predictedPicks = [];               // [{ trace, time, prob }]
+    var sectionShape = null;
+    var renderedStart = null;
+    var renderedEnd = null;
+    var picks = [];
+    var predictedPicks = [];               // [{ trace, time, prob }]
     const fbPredCache = new Map();         // key1Val -> predictedPicks
-    let latestFbProbTraces = null;         // Array<Float32Array> of 0..1 probs for current section
-    let currentFbKey = null;               // which key1Val latestFbProbTraces belongs to
-    let fbPredReqId = 0;                  // generation counter for FB predictions
-    let downsampleFactor = 1;
-    let isPickMode = false;
-    let linePickStart = null;
-    let deleteRangeStart = null;
+    var latestFbProbTraces = null;         // Array<Float32Array> of 0..1 probs for current section
+    var currentFbKey = null;               // which key1Val latestFbProbTraces belongs to
+    var fbPredReqId = 0;                  // generation counter for FB predictions
+    var downsampleFactor = 1;
+    var isPickMode = false;
+    var linePickStart = null;
+    var deleteRangeStart = null;
     const COLORMAPS = {
       Greys: 'Greys',
       RdBu: 'RdBu',
@@ -1244,8 +1244,12 @@
     const [s, e] = savedXRange ? visibleTraceIndices(savedXRange, rawSeismicData.length) : [0, rawSeismicData.length - 1];
     drawSelectedLayer(s, e);
 
-    if (window.pipelineUI && typeof window.pipelineUI.runPipeline === 'function') {
-      window.pipelineUI.runPipeline();
+    // ---- ここで必ず runPipeline を呼ぶ（ログ付き）----
+    if (window.pipelineUI?.runPipeline) {
+        console.info('[pipeline] fetchAndPlot → runPipeline()');
+        window.pipelineUI.runPipeline();
+      } else {
+      console.warn('[pipeline] runPipeline NOT available', window.pipelineUI);
     }
 
     console.time('Prefetch');

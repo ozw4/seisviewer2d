@@ -1,4 +1,8 @@
 (function () {
+  // === smoke log ===
+  console.info('[pipeline] pipeline_ui.js loaded');
+
+  const DEBUG_PIPELINE = true;
   const VALID_STEP_NAMES = new Set(['bandpass', 'denoise']);
 
   const pipelineState = {
@@ -44,9 +48,7 @@
   function debounce(fn, delay) {
     let timer = null;
     return function debounced(...args) {
-      if (timer) {
-        clearTimeout(timer);
-      }
+      if (timer) clearTimeout(timer);
       timer = setTimeout(() => {
         timer = null;
         fn.apply(this, args);
@@ -62,12 +64,8 @@
   function getDtFromUI() {
     const input = document.getElementById('dt');
     const candidate = input ? parseFloat(input.value) : NaN;
-    if (!Number.isNaN(candidate) && isFinite(candidate) && candidate > 0) {
-      return candidate;
-    }
-    if (typeof window.defaultDt === 'number' && isFinite(window.defaultDt)) {
-      return window.defaultDt;
-    }
+    if (!Number.isNaN(candidate) && isFinite(candidate) && candidate > 0) return candidate;
+    if (typeof window.defaultDt === 'number' && isFinite(window.defaultDt)) return window.defaultDt;
     return 0.002;
   }
 
@@ -92,6 +90,10 @@
     const base = defaultParamsFor(name);
     const incoming = params && typeof params === 'object' ? params : {};
     return { ...base, ...incoming };
+  }
+
+  function labelOf(step) {
+    return (step.label && step.label.trim()) || step.name;
   }
 
   function generateId() {
@@ -125,34 +127,30 @@
       params: defaultParamsFor(normalized),
     };
   }
+
+  // taps は「ラベルの累積」＋ 'final' を返す
   function graphToSpec(graph) {
-      const steps = [];
-      const enabled = graph.filter((s) => s && s.enabled);
+    const steps = [];
+    const enabled = graph.filter((s) => s && s.enabled);
 
-        // spec.steps はそのまま（label は表示用に活かす）
-        for (const step of enabled) {
-            steps.push({
- kind: step.kind || 'transform',
-                name: step.name,
-                params: { ...(step.params || {}) },
-                label: (step.label && step.label.trim()) || step.name,
-              });
-      }
+    for (const step of enabled) {
+      steps.push({
+        kind: step.kind || 'transform',
+        name: step.name,
+        params: { ...(step.params || {}) },
+        label: labelOf(step),
+      });
+    }
 
-      // taps は「処理名の累積」＋「final」
-      // 例: [bandpass(tap), denoise(tap)] -> ["bandpass", "bandpass+denoise", "final"]
-      const taps = [];
-    if (steps.length > 0) {
-        const path = [];
-        for (const step of enabled) {
-            path.push(step.name);
-            if (step.tap) {
-              taps.push(path.join('+'));
-              }
-          }
-        // 最後は必ず final を要求
-          taps.push('final');
+    const taps = [];
+    if (enabled.length > 0) {
+      const path = [];
+      for (const step of enabled) {
+        path.push(labelOf(step));
+        if (step.tap) taps.push(path.join('+')); // 例: "bandpass+denoise"
       }
+      taps.push('final');
+    }
     return { spec: { steps }, taps };
   }
 
@@ -167,9 +165,7 @@
         tap: tapSet.has(step.label || step.name),
         label: step.label || step.name,
       });
-      if (normalized) {
-        out.push(normalized);
-      }
+      if (normalized) out.push(normalized);
     }
     return out;
   }
@@ -238,9 +234,7 @@
       card.dataset.id = step.id;
       card.draggable = true;
       if (!step.enabled) card.classList.add('disabled');
-      if (pipelineState.inspectorStepId === step.id) {
-        card.classList.add('inspecting');
-      }
+      if (pipelineState.inspectorStepId === step.id) card.classList.add('inspecting');
 
       card.addEventListener('dragstart', (event) => {
         pipelineState.draggedId = step.id;
@@ -281,13 +275,11 @@
       enableInput.checked = step.enabled;
       enableInput.addEventListener('change', () => {
         step.enabled = enableInput.checked;
-        const labelValue = (step.label && step.label.trim()) || step.name;
+        const labelValue = labelOf(step);
         if (!step.enabled && pipelineState.desiredLayer === labelValue) {
           pipelineState.desiredLayer = 'raw';
           const sel = document.getElementById('layerSelect');
-          if (sel) {
-            sel.value = 'raw';
-          }
+          if (sel) sel.value = 'raw';
           if (typeof drawSelectedLayer === 'function') {
             const start = typeof renderedStart === 'number' ? renderedStart : 0;
             const end = typeof renderedEnd === 'number'
@@ -308,20 +300,30 @@
       tapInput.checked = step.tap;
       tapInput.addEventListener('change', () => {
         step.tap = tapInput.checked;
-        const labelValue = (step.label && step.label.trim()) || step.name;
-        if (!step.tap && pipelineState.desiredLayer === labelValue) {
-          pipelineState.desiredLayer = 'raw';
+
+        // この step までの累積キーを作る
+        const enabled = pipelineState.graph.filter((s) => s && s.enabled);
+        const idx = enabled.findIndex((s) => s.id === step.id);
+        const pathKey = enabled.slice(0, idx + 1).map(labelOf).join('+'); // ex) "bandpass+denoise"
+
+        if (tapInput.checked) {
+          pipelineState.desiredLayer = pathKey;
           const sel = document.getElementById('layerSelect');
-          if (sel) {
-            sel.value = 'raw';
+          if (sel) sel.value = pathKey;
+        } else {
+          if (pipelineState.desiredLayer === pathKey) {
+            pipelineState.desiredLayer = 'raw';
+            const sel = document.getElementById('layerSelect');
+            if (sel) sel.value = 'raw';
           }
-          if (typeof drawSelectedLayer === 'function') {
-            const start = typeof renderedStart === 'number' ? renderedStart : 0;
-            const end = typeof renderedEnd === 'number'
-              ? renderedEnd
-              : (Array.isArray(rawSeismicData) ? rawSeismicData.length - 1 : 0);
-            drawSelectedLayer(start, end);
-          }
+        }
+
+        if (typeof drawSelectedLayer === 'function') {
+          const start = typeof renderedStart === 'number' ? renderedStart : 0;
+          const end = typeof renderedEnd === 'number'
+            ? renderedEnd
+            : (Array.isArray(rawSeismicData) ? rawSeismicData.length - 1 : 0);
+          drawSelectedLayer(start, end);
         }
         notifyGraphChanged();
       });
@@ -342,7 +344,7 @@
       labelInput.value = step.label || '';
       labelInput.placeholder = step.name;
       labelInput.addEventListener('change', () => {
-        const previous = (step.label && step.label.trim()) || step.name;
+        const previous = labelOf(step);
         const nextLabel = labelInput.value.trim();
         step.label = nextLabel;
         if (pipelineState.desiredLayer === previous) {
@@ -460,12 +462,8 @@
 
   function closeInspector() {
     pipelineState.inspectorStepId = null;
-    if (pipelineState.inspectorEl) {
-      pipelineState.inspectorEl.classList.add('hidden');
-    }
-    if (pipelineState.inspectorFieldsEl) {
-      pipelineState.inspectorFieldsEl.innerHTML = '';
-    }
+    if (pipelineState.inspectorEl) pipelineState.inspectorEl.classList.add('hidden');
+    if (pipelineState.inspectorFieldsEl) pipelineState.inspectorFieldsEl.innerHTML = '';
     renderPipelineCards(pipelineState.graph);
   }
 
@@ -499,8 +497,9 @@
   }
 
   function prepareForNewSection() {
-    latestTapData = {};
-    latestPipelineKey = null;
+    // グローバルをクリア（index.html側で定義）
+    window.latestTapData = {};
+    window.latestPipelineKey = null;
     const sel = document.getElementById('layerSelect');
     if (sel) {
       const current = sel.value;
@@ -520,31 +519,41 @@
     const desired = pipelineState.desiredLayer;
     sel.innerHTML = '';
     sel.appendChild(new Option('raw', 'raw'));
-    for (const name of names) {
-      sel.appendChild(new Option(name, name));
-    }
+    for (const name of names) sel.appendChild(new Option(name, name));
     let target = 'raw';
-    if (names.includes(desired)) {
+    if (desired && desired !== 'raw' && names.includes(desired)) {
       target = desired;
-    } else {
-      const currentValue = sel.value;
-      if (names.includes(currentValue) && currentValue !== 'raw') {
-        target = currentValue;
-      }
+    } else if (names.length > 0) {
+      target = names[0];
     }
     sel.value = target;
     pipelineState.desiredLayer = target;
+    if (DEBUG_PIPELINE) {
+      console.debug('[pipeline] updateLayerSelect: names=', names, 'selected=', target);
+    }
   }
 
   async function runPipeline() {
+    console.info('[pipeline] runPipeline() ENTER');
+    console.info(
+      '[pipeline] precheck: fileId=%o, key1Values.len=%o, slider? %o',
+      window.currentFileId,
+      Array.isArray(window.key1Values) ? window.key1Values.length : '(none)',
+      !!document.getElementById('key1_idx_slider')
+    );
     savePipelineToLocalStorage(pipelineState.graph);
 
     if (!window.currentFileId) {
+      console.info('[pipeline] abort: no currentFileId');
       updateLayerSelect({});
       return;
     }
     const slider = document.getElementById('key1_idx_slider');
     if (!slider || !Array.isArray(window.key1Values) || !window.key1Values.length) {
+      console.info('[pipeline] abort: slider/key1Values not ready', {
+        sliderFound: !!slider,
+        len: Array.isArray(window.key1Values) ? window.key1Values.length : null,
+      });
       updateLayerSelect({});
       return;
     }
@@ -556,16 +565,24 @@
     }
     const { spec, taps } = graphToSpec(pipelineState.graph);
 
-    if (!spec.steps.length || !taps.length) {
-      latestTapData = {};
-      latestPipelineKey = null;
+    // 常に final を含めておく
+    const tapsUnique = Array.from(new Set([...(taps || []), 'final']));
+    console.info('[pipeline] runPipeline spec=%o taps=%o', spec, tapsUnique);
+    if (DEBUG_PIPELINE) {
+      console.debug('[pipeline] runPipeline spec=', spec, 'taps=', tapsUnique);
+    }
+
+    if (!spec.steps.length || !tapsUnique.length) {
+      console.info('[pipeline] noop: no steps or taps');
+      window.latestTapData = {};
+      window.latestPipelineKey = null;
       updateLayerSelect({});
-      if (typeof drawSelectedLayer === 'function') {
-        const start = typeof renderedStart === 'number' ? renderedStart : 0;
-        const end = typeof renderedEnd === 'number'
-          ? renderedEnd
-          : (Array.isArray(rawSeismicData) ? rawSeismicData.length - 1 : 0);
-        drawSelectedLayer(start, end);
+      if (typeof window.drawSelectedLayer === 'function') {
+        const start = typeof window.renderedStart === 'number' ? window.renderedStart : 0;
+        const end = typeof window.renderedEnd === 'number'
+          ? window.renderedEnd
+          : (Array.isArray(window.rawSeismicData) ? window.rawSeismicData.length - 1 : 0);
+        window.drawSelectedLayer(start, end);
       }
       return;
     }
@@ -576,36 +593,42 @@
         window.currentFileId,
         key1Val,
         spec,
-        taps,
+        tapsUnique,
         { key1Byte: window.currentKey1Byte, key2Byte: window.currentKey2Byte },
       );
+      if (DEBUG_PIPELINE) {
+        console.debug(
+          '[pipeline] /pipeline/section OK pipelineKey=',
+          pipelineKey,
+          'tap keys=',
+          Object.keys(tapMap || {})
+        );
+      }
       if (runId !== pipelineState.runToken) return;
-      latestTapData = tapMap || {};
-      latestPipelineKey = pipelineKey || null;
+      window.latestTapData = tapMap || {};
+      window.latestPipelineKey = pipelineKey || null;
       updateLayerSelect(tapMap || {});
     } catch (error) {
       if (runId !== pipelineState.runToken) return;
       console.warn('pipeline/section failed', error);
-      latestTapData = {};
-      latestPipelineKey = null;
+      window.latestTapData = {};
+      window.latestPipelineKey = null;
       updateLayerSelect({});
     }
 
-    if (typeof drawSelectedLayer === 'function') {
-      const start = typeof renderedStart === 'number' ? renderedStart : 0;
-      const end = typeof renderedEnd === 'number'
-        ? renderedEnd
-        : (Array.isArray(rawSeismicData) ? rawSeismicData.length - 1 : 0);
-      drawSelectedLayer(start, end);
+    if (typeof window.drawSelectedLayer === 'function') {
+      const start = typeof window.renderedStart === 'number' ? window.renderedStart : 0;
+      const end = typeof window.renderedEnd === 'number'
+        ? window.renderedEnd
+        : (Array.isArray(window.rawSeismicData) ? window.rawSeismicData.length - 1 : 0);
+      window.drawSelectedLayer(start, end);
     }
   }
 
   function notifyGraphChanged(options = {}) {
     savePipelineToLocalStorage(pipelineState.graph);
     renderPipelineCards(pipelineState.graph);
-    if (options.schedule !== false) {
-      schedulePipelineRun();
-    }
+    if (options.schedule !== false) schedulePipelineRun();
   }
 
   function initPipelineUI() {
@@ -618,9 +641,8 @@
     pipelineState.addButtonEl = document.getElementById('pipelineAddButton');
 
     pipelineState.graph = loadPipelineFromLocalStorage();
-    if (!Array.isArray(pipelineState.graph)) {
-      pipelineState.graph = [];
-    }
+    if (DEBUG_PIPELINE) console.info('[pipeline] initPipelineUI(): graph=', pipelineState.graph);
+    if (!Array.isArray(pipelineState.graph)) pipelineState.graph = [];
 
     renderPipelineCards(pipelineState.graph);
     savePipelineToLocalStorage(pipelineState.graph);
@@ -664,6 +686,9 @@
         pipelineState.desiredLayer = layerSelect.value || 'raw';
       });
     }
+
+    // 初期表示でも 1 回は走らせる（fetchAndPlot 側で呼ばれなくても安全）
+    try { schedulePipelineRun(); } catch (_) { }
   }
 
   const schedulePipelineRun = debounce(() => runPipeline(), 300);
@@ -685,6 +710,8 @@
   window.pipelineUI = pipelineUI;
 
   window.addEventListener('DOMContentLoaded', () => {
+    console.info('[pipeline] DOMContentLoaded -> initPipelineUI()');
     initPipelineUI();
   });
 })();
+
