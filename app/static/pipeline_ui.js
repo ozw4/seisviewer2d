@@ -125,23 +125,34 @@
       params: defaultParamsFor(normalized),
     };
   }
-
   function graphToSpec(graph) {
-    const steps = [];
-    for (const step of graph) {
-      if (!step || !step.enabled) continue;
-      const specStep = {
-        kind: step.kind || 'transform',
-        name: step.name,
-        params: { ...(step.params || {}) },
-      };
-      const lbl = (step.label || '').trim() || step.name;
-      specStep.label = lbl;
-      steps.push(specStep);
-    }
-    const taps = graph
-      .filter((step) => step && step.enabled && step.tap)
-      .map((step) => (step.label && step.label.trim() ? step.label.trim() : step.name));
+      const steps = [];
+      const enabled = graph.filter((s) => s && s.enabled);
+
+        // spec.steps はそのまま（label は表示用に活かす）
+        for (const step of enabled) {
+            steps.push({
+ kind: step.kind || 'transform',
+                name: step.name,
+                params: { ...(step.params || {}) },
+                label: (step.label && step.label.trim()) || step.name,
+              });
+      }
+
+      // taps は「処理名の累積」＋「final」
+      // 例: [bandpass(tap), denoise(tap)] -> ["bandpass", "bandpass+denoise", "final"]
+      const taps = [];
+    if (steps.length > 0) {
+        const path = [];
+        for (const step of enabled) {
+            path.push(step.name);
+            if (step.tap) {
+              taps.push(path.join('+'));
+              }
+          }
+        // 最後は必ず final を要求
+          taps.push('final');
+      }
     return { spec: { steps }, taps };
   }
 
