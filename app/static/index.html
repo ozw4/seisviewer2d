@@ -613,7 +613,27 @@
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(body),
       });
-      if (!res.ok) throw new Error('fbpick job failed');
+      if (!res.ok) {
+        let message = `fbpick job failed (${res.status})`;
+        try {
+          const text = await res.text();
+          if (text) {
+            try {
+              const parsed = JSON.parse(text);
+              if (parsed && typeof parsed.detail === 'string') {
+                message = parsed.detail;
+              } else {
+                message = text;
+              }
+            } catch (parseErr) {
+              message = text;
+            }
+          }
+        } catch (readErr) {
+          // ignore body read errors
+        }
+        throw new Error(message);
+      }
       const { job_id } = await res.json();
 
       // ポーリング
