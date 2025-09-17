@@ -304,6 +304,12 @@
       margin-top: .4em;
     }
 
+    /* While in pick mode, shapes should not eat clicks */
+    .pick-mode .shapelayer path,
+    .pick-mode .shapelayer line {
+      pointer-events: none;
+    }
+
     .hidden {
       display: none !important;
     }
@@ -494,6 +500,12 @@
     var linePickStart = null;
     var deleteRangeStart = null;
 
+    // Short suppression window for post-pick re-fetches
+    let suppressUntil = 0;
+    function suppressWindowFetch(ms = 150) {
+      suppressUntil = performance.now() + ms;
+    }
+
     let suppressRelayout = false;       // ignore relayouts we cause internally
     let forceFullExtentOnce = false;    // next window calc uses full extent with no padding
 
@@ -504,6 +516,95 @@
     // 統一キー関数（FB予測キャッシュ用）
     function fbCacheKey(k1, layer, pKey) {
       return `${k1}|${layer}|${pKey ?? 'raw'}`;
+    }
+
+    let lastPlotlyClickAt = 0;
+
+    // Commit a pick at axis coords (x: trace index space, y: time in seconds)
+    async function commitPickAt(axisX, axisY, mods = {}) {
+      if (!isPickMode) return;
+
+      const dt = defaultDt * downsampleFactor;
+      const trace = Math.round(axisX);
+      const time = Math.round(axisY / dt) * dt;
+      const shift = !!mods.shift;
+      const ctrl = !!mods.ctrl;
+      const alt = !!mods.alt;
+      void alt; // reserved for future use
+
+      if (ctrl) {
+        if (deleteRangeStart === null) {
+          deleteRangeStart = trace;
+          linePickStart = null;
+          return;
+        }
+        const x0 = deleteRangeStart;
+        deleteRangeStart = null;
+        linePickStart = null;
+        const x1 = trace;
+        const start = Math.min(x0, x1);
+        const end = Math.max(x0, x1);
+        const toDelete = picks.filter((p) => {
+          const t = Math.round(p.trace);
+          return t >= start && t <= end;
+        });
+        const promises = toDelete.map((p) => deletePick(Math.round(p.trace)));
+        picks = picks.filter((p) => {
+          const t = Math.round(p.trace);
+          return t < start || t > end;
+        });
+        await Promise.all(promises);
+        suppressWindowFetch();
+        renderLatestView();
+        return;
+      }
+
+      if (shift) {
+        if (!linePickStart) {
+          linePickStart = { trace, time };
+          deleteRangeStart = null;
+          return;
+        }
+
+        const { trace: x0, time: y0 } = linePickStart;
+        linePickStart = { trace, time };
+        deleteRangeStart = null;
+        const x1 = trace;
+        const y1 = time;
+        const xStart = Math.round(Math.min(x0, x1));
+        const xEnd = Math.round(Math.max(x0, x1));
+        const slope = x1 === x0 ? 0 : (y1 - y0) / (x1 - x0);
+        const promises = [];
+        for (let x = xStart; x <= xEnd; x++) {
+          const y = x1 === x0 ? y1 : y0 + slope * (x - x0);
+          const snapped = Math.round(y / dt) * dt;
+          const idx = pickOnTrace(x);
+          if (idx >= 0) {
+            promises.push(deletePick(x));
+            picks.splice(idx, 1);
+          }
+          picks.push({ trace: x, time: snapped });
+          promises.push(postPick(x, snapped));
+        }
+        await Promise.all(promises);
+        suppressWindowFetch();
+        renderLatestView();
+        return;
+      }
+
+      linePickStart = null;
+      deleteRangeStart = null;
+      const idx = pickOnTrace(trace);
+      const promises = [];
+      if (idx >= 0) {
+        promises.push(deletePick(trace));
+        picks.splice(idx, 1);
+      }
+      picks.push({ trace, time });
+      promises.push(postPick(trace, time));
+      await Promise.all(promises);
+      suppressWindowFetch();
+      renderLatestView();
     }
 
     const COLORMAPS = {
@@ -517,19 +618,80 @@
     // Click handler that is always attached; pick mode gating is done here
     function onPlotlyClick(ev) {
       if (!isPickMode) return;
-      return handlePlotClick(ev);
+      lastPlotlyClickAt = performance.now();
+      if (!ev?.points?.length) return;
+      const p = ev.points[0];
+      commitPickAt(p.x, p.y, {
+        shift: !!ev.event?.shiftKey,
+        ctrl: !!ev.event?.ctrlKey,
+        alt: !!ev.event?.altKey,
+      }).catch((err) => console.warn('Pick commit failed', err));
     }
 
     // Central place to (re)bind plot handlers
     function bindPlotHandlers(plotDiv) {
       if (!plotDiv || typeof plotDiv.removeAllListeners !== 'function') return;
 
-      // Remove then re-attach to prevent accumulation / duplicates
       plotDiv.removeAllListeners('plotly_click');
       plotDiv.removeAllListeners('plotly_relayout');
 
       plotDiv.on('plotly_click', onPlotlyClick);
       plotDiv.on('plotly_relayout', handleRelayout);
+    }
+
+    function bindNativePickFallback(plotDiv) {
+      if (!plotDiv) return;
+
+      if (plotDiv.__nativePickDown) {
+        plotDiv.removeEventListener('pointerdown', plotDiv.__nativePickDown, true);
+      }
+      if (plotDiv.__nativePickUp) {
+        plotDiv.removeEventListener('pointerup', plotDiv.__nativePickUp, true);
+      }
+
+      let downInfo = null;
+
+      function onDown(e) {
+        if (!isPickMode || (e.button ?? 0) !== 0) return;
+        downInfo = { x: e.clientX, y: e.clientY, t: performance.now() };
+      }
+
+      function onUp(e) {
+        if (!isPickMode || (e.button ?? 0) !== 0) return;
+        const d = downInfo;
+        downInfo = null;
+        if (!d) return;
+
+        if (performance.now() - lastPlotlyClickAt < 60) return;
+
+        if (Math.abs(e.clientX - d.x) > 6 || Math.abs(e.clientY - d.y) > 6) return;
+
+        const plotDivLocal = plotDiv;
+        if (!plotDivLocal || !plotDivLocal._fullLayout) return;
+
+        const rect = plotDivLocal.getBoundingClientRect();
+        const xpx = e.clientX - rect.left;
+        const ypx = e.clientY - rect.top;
+        const xa = plotDivLocal._fullLayout?.xaxis;
+        const ya = plotDivLocal._fullLayout?.yaxis;
+        if (!xa?.p2d || !ya?.p2d) return;
+
+        const axisX = xa.p2d(xpx);
+        const axisY = ya.p2d(ypx);
+        if (!Number.isFinite(axisX) || !Number.isFinite(axisY)) return;
+
+        commitPickAt(axisX, axisY, {
+          shift: !!e.shiftKey,
+          ctrl: !!e.ctrlKey,
+          alt: !!e.altKey,
+        }).catch((err) => console.warn('Fallback pick failed', err));
+      }
+
+      plotDiv.__nativePickDown = onDown;
+      plotDiv.__nativePickUp = onUp;
+
+      plotDiv.addEventListener('pointerdown', onDown, true);
+      plotDiv.addEventListener('pointerup', onUp, true);
     }
 
     (function () {
@@ -1027,6 +1189,8 @@
       const btn = document.getElementById('pickModeBtn');
       btn.textContent = isPickMode ? 'Pick Mode: ON' : 'Pick Mode: OFF';
       btn.classList.toggle('active', isPickMode);
+      // Toggle CSS class so shapes ignore clicks while picking
+      document.body.classList.toggle('pick-mode', isPickMode);
       linePickStart = null;
       deleteRangeStart = null;
       renderLatestView();
@@ -1616,19 +1780,21 @@
         }));
 
       layout.shapes = [...manualShapes, ...predShapes];
+      layout.dragmode = isPickMode ? false : 'zoom';
 
       Plotly.react(plotDiv, traces, layout, {
         responsive: true,
-        editable: true,
+        editable: !isPickMode,
         modeBarButtonsToAdd: ['eraseshape'],
         edits: { shapePosition: false },
       });
       if (typeof plotDiv.on === 'function') {
         plotDiv.removeAllListeners && plotDiv.removeAllListeners('plotly_afterplot');
-        plotDiv.on('plotly_afterplot', () => bindPlotHandlers(plotDiv));
-        }
-
-
+        plotDiv.on('plotly_afterplot', () => {
+          bindPlotHandlers(plotDiv);
+          bindNativePickFallback(plotDiv);
+        });
+      }
 
       setTimeout(() => {
         suppressRelayout = true;
@@ -1638,6 +1804,7 @@
 
       // Always (re)attach handlers in one place
       bindPlotHandlers(plotDiv);
+      bindNativePickFallback(plotDiv);
     }
 
     function renderWindowHeatmap(windowData) {
@@ -1766,18 +1933,22 @@
         }));
 
       layout.shapes = [...manualShapes, ...predShapes];
+      layout.dragmode = isPickMode ? false : 'zoom';
 
       Plotly.react(plotDiv, traces, layout, {
         responsive: true,
-        editable: true,
+        editable: !isPickMode,
         modeBarButtonsToAdd: ['eraseshape'],
         edits: { shapePosition: false },
       });
 
       if (typeof plotDiv.on === 'function') {
-          plotDiv.removeAllListeners && plotDiv.removeAllListeners('plotly_afterplot');
-          plotDiv.on('plotly_afterplot', () => bindPlotHandlers(plotDiv));
-        }
+        plotDiv.removeAllListeners && plotDiv.removeAllListeners('plotly_afterplot');
+        plotDiv.on('plotly_afterplot', () => {
+          bindPlotHandlers(plotDiv);
+          bindNativePickFallback(plotDiv);
+        });
+      }
       setTimeout(() => {
         suppressRelayout = true;
         Plotly.Plots.resize(plotDiv);
@@ -1786,6 +1957,7 @@
 
       // Always (re)attach handlers in one place
       bindPlotHandlers(plotDiv);
+      bindNativePickFallback(plotDiv);
     }
 
     function renderLatestView(startOverride = null, endOverride = null) {
@@ -1828,6 +2000,7 @@
     }
 
     async function fetchWindowAndPlot() {
+      if (performance.now() < suppressUntil) return;
       if (!currentFileId || !sectionShape) return;
       const slider = document.getElementById('key1_idx_slider');
       if (!slider) return;
@@ -2106,17 +2279,21 @@
         }));
 
       layout.shapes = [...manualShapes, ...predShapes];
+      layout.dragmode = isPickMode ? false : 'zoom';
 
       Plotly.react(plotDiv, traces, layout, {
         responsive: true,
-        editable: true,
+        editable: !isPickMode,
         modeBarButtonsToAdd: ['eraseshape'],
         edits: { shapePosition: false }
       });
       if (typeof plotDiv.on === 'function') {
-          plotDiv.removeAllListeners && plotDiv.removeAllListeners('plotly_afterplot');
-          plotDiv.on('plotly_afterplot', () => bindPlotHandlers(plotDiv));
-        }
+        plotDiv.removeAllListeners && plotDiv.removeAllListeners('plotly_afterplot');
+        plotDiv.on('plotly_afterplot', () => {
+          bindPlotHandlers(plotDiv);
+          bindNativePickFallback(plotDiv);
+        });
+      }
 
       setTimeout(() => {
         suppressRelayout = true;
@@ -2129,107 +2306,11 @@
 
       // Always (re)attach handlers in one place
       bindPlotHandlers(plotDiv);
+      bindNativePickFallback(plotDiv);
     }
 
     function pickOnTrace(trace) {
       return picks.findIndex(p => Math.round(p.trace) === trace);
-    }
-
-    async function handlePlotClick(ev) {
-      if (!isPickMode) return;
-      console.log('🔥 plotly_click fired', ev);
-      const plotDiv = document.getElementById('plot');
-      if (!plotDiv || !ev.event || !ev.event.clientX) {
-        console.warn('⚠️ plotDiv or event data not available.');
-        return;
-      }
-
-      const dt = defaultDt * downsampleFactor;
-
-      // クリック位置を軸座標に変換（ログ用途）
-      const rect = plotDiv.getBoundingClientRect();
-      const xpx = ev.event.clientX - rect.left;
-      const ypx = ev.event.clientY - rect.top;
-      const xData = plotDiv._fullLayout.xaxis.p2d(xpx);
-      const yData = plotDiv._fullLayout.yaxis.p2d(ypx);
-
-      const trace = Math.round(ev.points[0].x);
-      const time = Math.round(ev.points[0].y / dt) * dt;
-
-      console.group('🖱 Actual Click Data');
-      console.log('clientX / Y:', ev.event.clientX, ev.event.clientY);
-      console.log('pixel offset:', xpx, ypx);
-      console.log('xData (trace):', xData);
-      console.log('yData (time):', yData);
-      console.log('Snapped trace:', trace);
-      console.log('Snapped time:', time);
-      console.groupEnd();
-
-      // Ctrl+クリック: 範囲削除
-      if (ev.event.ctrlKey) {
-        if (deleteRangeStart === null) {
-          deleteRangeStart = trace;
-          linePickStart = null;
-          return;
-        }
-        const x0 = deleteRangeStart;
-        deleteRangeStart = null;
-        const x1 = trace;
-        const start = Math.min(x0, x1);
-        const end = Math.max(x0, x1);
-        const toDelete = picks.filter(p => Math.round(p.trace) >= start && Math.round(p.trace) <= end);
-        const promises = toDelete.map(p => deletePick(Math.round(p.trace)));
-        picks = picks.filter(p => Math.round(p.trace) < start || Math.round(p.trace) > end);
-        await Promise.all(promises);
-        renderLatestView();
-        return;
-      }
-
-      // Shift+クリック: ラインピック
-      if (ev.event.shiftKey) {
-        if (!linePickStart) {
-          linePickStart = { trace, time };
-          deleteRangeStart = null;
-          return;
-        }
-
-        const { trace: x0, time: y0 } = linePickStart;
-        linePickStart = { trace, time };
-        const x1 = trace;
-        const y1 = time;
-        const xStart = Math.round(Math.min(x0, x1));
-        const xEnd = Math.round(Math.max(x0, x1));
-        const slope = x1 === x0 ? 0 : (y1 - y0) / (x1 - x0);
-        const promises = [];
-        for (let x = xStart; x <= xEnd; x++) {
-          const y = x1 === x0 ? y1 : y0 + slope * (x - x0);
-          const snapped = Math.round(y / dt) * dt;
-          const idx = pickOnTrace(x);
-          if (idx >= 0) {
-            promises.push(deletePick(x));
-            picks.splice(idx, 1);
-          }
-          picks.push({ trace: x, time: snapped });
-          promises.push(postPick(x, snapped));
-        }
-        await Promise.all(promises);
-        renderLatestView();
-        return;
-      }
-
-      // 通常クリック: 単一ピック
-      linePickStart = null;
-      deleteRangeStart = null;
-      const idx = pickOnTrace(trace);
-      const promises = [];
-      if (idx >= 0) {
-        promises.push(deletePick(trace));
-        picks.splice(idx, 1);
-      }
-      picks.push({ trace, time });
-      promises.push(postPick(trace, time));
-      await Promise.all(promises);
-      renderLatestView();
     }
 
     async function handleRelayout(ev) {
@@ -2292,6 +2373,7 @@
         // Re-bind after every Plotly internal “afterplot” (e.g., react/resize/layout changes)
         plotDiv.on('plotly_afterplot', () => {
           bindPlotHandlers(plotDiv);
+          bindNativePickFallback(plotDiv);
         });
       }
     });
