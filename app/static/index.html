@@ -513,6 +513,24 @@
       Jet: 'Jet',
     };
 
+    // Click handler that is always attached; pick mode gating is done here
+    function onPlotlyClick(ev) {
+      if (!isPickMode) return;
+      return handlePlotClick(ev);
+    }
+
+    // Central place to (re)bind plot handlers
+    function bindPlotHandlers(plotDiv) {
+      if (!plotDiv || typeof plotDiv.removeAllListeners !== 'function') return;
+
+      // Remove then re-attach to prevent accumulation / duplicates
+      plotDiv.removeAllListeners('plotly_click');
+      plotDiv.removeAllListeners('plotly_relayout');
+
+      plotDiv.on('plotly_click', onPlotlyClick);
+      plotDiv.on('plotly_relayout', handleRelayout);
+    }
+
     (function () {
       const saved = localStorage.getItem('denoise_params');
       if (saved) {
@@ -1608,12 +1626,8 @@
         suppressRelayout = false;
       }, 50);
 
-      plotDiv.removeAllListeners('plotly_relayout');
-      plotDiv.removeAllListeners('plotly_click');
-      plotDiv.on('plotly_relayout', handleRelayout);
-      if (isPickMode) {
-        plotDiv.on('plotly_click', handlePlotClick);
-      }
+      // Always (re)attach handlers in one place
+      bindPlotHandlers(plotDiv);
     }
 
     function renderWindowHeatmap(windowData) {
@@ -1755,12 +1769,8 @@
         suppressRelayout = false;
       }, 50);
 
-      plotDiv.removeAllListeners('plotly_relayout');
-      plotDiv.removeAllListeners('plotly_click');
-      plotDiv.on('plotly_relayout', handleRelayout);
-      if (isPickMode) {
-        plotDiv.on('plotly_click', handlePlotClick);
-      }
+      // Always (re)attach handlers in one place
+      bindPlotHandlers(plotDiv);
     }
 
     function renderLatestView(startOverride = null, endOverride = null) {
@@ -2087,12 +2097,8 @@
       renderedEnd = endTrace;
       console.log(`Rendered traces ${startTrace}-${endTrace}`);
 
-      plotDiv.removeAllListeners('plotly_relayout');
-      plotDiv.removeAllListeners('plotly_click');
-      plotDiv.on('plotly_relayout', handleRelayout);
-      if (isPickMode) {
-        plotDiv.on('plotly_click', handlePlotClick);
-      }
+      // Always (re)attach handlers in one place
+      bindPlotHandlers(plotDiv);
     }
 
     function pickOnTrace(trace) {
@@ -2197,7 +2203,7 @@
     }
 
     async function handleRelayout(ev) {
-      if (suppressRelayout) return;
+      if (typeof suppressRelayout !== 'undefined' && suppressRelayout) return;
       const plotDiv = document.getElementById('plot');
       if ('xaxis.range[0]' in ev && 'xaxis.range[1]' in ev) {
         savedXRange = [ev['xaxis.range[0]'], ev['xaxis.range[1]']];
@@ -2249,7 +2255,16 @@
       scheduleWindowFetch();
     }
 
-    window.addEventListener('DOMContentLoaded', loadSettings);
+    window.addEventListener('DOMContentLoaded', () => {
+      loadSettings();
+      const plotDiv = document.getElementById('plot');
+      if (plotDiv && typeof plotDiv.on === 'function') {
+        // Re-bind after every Plotly internal “afterplot” (e.g., react/resize/layout changes)
+        plotDiv.on('plotly_afterplot', () => {
+          bindPlotHandlers(plotDiv);
+        });
+      }
+    });
 
     // Toggle between raw and first tap with the "n" key
     window.addEventListener('keydown', (e) => {
