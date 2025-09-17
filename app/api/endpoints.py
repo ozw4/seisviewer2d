@@ -19,11 +19,11 @@ import msgpack
 import numpy as np
 import segyio
 from api.schemas import (
-        BandpassParams,
-        PipelineAllResponse,
-        PipelineJobStatusResponse,
-        PipelineSectionResponse,
-        PipelineSpec,
+	BandpassParams,
+	PipelineAllResponse,
+	PipelineJobStatusResponse,
+	PipelineSectionResponse,
+	PipelineSpec,
 )
 from fastapi import (
 	APIRouter,
@@ -105,64 +105,64 @@ pipeline_tap_cache = LRUCache(16)
 
 
 class PipelineTapNotFoundError(LookupError):
-        """Raised when a requested pipeline tap output is unavailable."""
+	"""Raised when a requested pipeline tap output is unavailable."""
 
 
 def _pipeline_payload_to_array(payload: object, *, tap_label: str) -> np.ndarray:
-        """Convert a cached pipeline payload into a 2D ``float32`` array."""
-        data_obj = payload
-        if isinstance(payload, dict):
-                for key in ('data', 'prob', 'values'):
-                        if key in payload:
-                                data_obj = payload[key]
-                                break
-                else:
-                        msg = f'Pipeline tap {tap_label!r} payload missing data field'
-                        raise ValueError(msg)
+	"""Convert a cached pipeline payload into a 2D ``float32`` array."""
+	data_obj = payload
+	if isinstance(payload, dict):
+		for key in ('data', 'prob', 'values'):
+			if key in payload:
+				data_obj = payload[key]
+				break
+		else:
+			msg = f'Pipeline tap {tap_label!r} payload missing data field'
+			raise ValueError(msg)
 
-        arr = np.asarray(data_obj, dtype=np.float32)
-        if arr.ndim != 2:
-                msg = f'Pipeline tap {tap_label!r} expected 2D data, got {arr.ndim}D'
-                raise ValueError(msg)
-        return np.ascontiguousarray(arr)
+	arr = np.asarray(data_obj, dtype=np.float32)
+	if arr.ndim != 2:
+		msg = f'Pipeline tap {tap_label!r} expected 2D data, got {arr.ndim}D'
+		raise ValueError(msg)
+	return np.ascontiguousarray(arr)
 
 
 def get_raw_section(
-        *, file_id: str, key1_idx: int, key1_byte: int, key2_byte: int
+	*, file_id: str, key1_idx: int, key1_byte: int, key2_byte: int
 ) -> np.ndarray:
-        """Load the RAW seismic section as ``float32``."""
-        reader = get_reader(file_id, key1_byte, key2_byte)
-        section = reader.get_section(key1_idx)
-        arr = np.asarray(section, dtype=np.float32)
-        if arr.ndim != 2:
-                msg = f'Raw section expected 2D data, got {arr.ndim}D'
-                raise ValueError(msg)
-        return np.ascontiguousarray(arr)
+	"""Load the RAW seismic section as ``float32``."""
+	reader = get_reader(file_id, key1_byte, key2_byte)
+	section = reader.get_section(key1_idx)
+	arr = np.asarray(section, dtype=np.float32)
+	if arr.ndim != 2:
+		msg = f'Raw section expected 2D data, got {arr.ndim}D'
+		raise ValueError(msg)
+	return np.ascontiguousarray(arr)
 
 
 def get_section_from_pipeline_tap(
-        *,
-        file_id: str,
-        key1_idx: int,
-        key1_byte: int,
-        pipeline_key: str,
-        tap_label: str,
+	*,
+	file_id: str,
+	key1_idx: int,
+	key1_byte: int,
+	pipeline_key: str,
+	tap_label: str,
 ) -> np.ndarray:
-        """Return the cached pipeline tap output as a ``float32`` array."""
-        base_key = (file_id, key1_idx, key1_byte, pipeline_key, None)
-        payload = pipeline_tap_cache.get((*base_key, tap_label))
-        if payload is None:
-                msg = (
-                        f'Pipeline tap {tap_label!r} for pipeline {pipeline_key!r} '
-                        f'and key1={key1_idx} is not available. '
-                        'Please re-run the pipeline.'
-                )
-                raise PipelineTapNotFoundError(msg)
-        return _pipeline_payload_to_array(payload, tap_label=tap_label)
+	"""Return the cached pipeline tap output as a ``float32`` array."""
+	base_key = (file_id, key1_idx, key1_byte, pipeline_key, None)
+	payload = pipeline_tap_cache.get((*base_key, tap_label))
+	if payload is None:
+		msg = (
+			f'Pipeline tap {tap_label!r} for pipeline {pipeline_key!r} '
+			f'and key1={key1_idx} is not available. '
+			'Please re-run the pipeline.'
+		)
+		raise PipelineTapNotFoundError(msg)
+	return _pipeline_payload_to_array(payload, tap_label=tap_label)
 
 
 def get_reader(
-        file_id: str, key1_byte: int, key2_byte: int
+	file_id: str, key1_byte: int, key2_byte: int
 ) -> SegySectionReader | TraceStoreSectionReader:
 	cache_key = f'{file_id}_{key1_byte}_{key2_byte}'
 	if cache_key not in cached_readers:
@@ -187,19 +187,19 @@ class Pick(BaseModel):
 
 
 class BandpassRequest(BandpassParams):
-        file_id: str
-        key1_idx: int
-        key1_byte: int = 189
-        key2_byte: int = 193
+	file_id: str
+	key1_idx: int
+	key1_byte: int = 189
+	key2_byte: int = 193
 
 
 class BandpassApplyRequest(BandpassParams):
-        file_id: str
-        scope: Literal['display', 'all_key1', 'by_header']
-        key1_idx: int | None = None
-        group_header_byte: int | None = None
-        key1_byte: int = 189
-        key2_byte: int = 193
+	file_id: str
+	scope: Literal['display', 'all_key1', 'by_header']
+	key1_idx: int | None = None
+	group_header_byte: int | None = None
+	key1_byte: int = 189
+	key2_byte: int = 193
 
 
 class DenoiseRequest(BaseModel):
@@ -231,16 +231,16 @@ class DenoiseApplyRequest(BaseModel):
 
 
 class FbpickRequest(BaseModel):
-        file_id: str
-        key1_idx: int
-        key1_byte: int = 189
-        key2_byte: int = 193
-        tile_h: int = 128
-        tile_w: int = 6016
-        overlap: int = 32
-        amp: bool = True
-        pipeline_key: Optional[str] = None
-        tap_label: Optional[str] = None
+	file_id: str
+	key1_idx: int
+	key1_byte: int = 189
+	key2_byte: int = 193
+	tile_h: int = 128
+	tile_w: int = 6016
+	overlap: int = 32
+	amp: bool = True
+	pipeline_key: str | None = None
+	tap_label: str | None = None
 
 
 class PipelineAllRequest(BaseModel):
@@ -449,6 +449,7 @@ def _run_fbpick_job(job_id: str, req: FbpickRequest) -> None:
 	except Exception as e:
 		job['status'] = 'error'
 		job['message'] = str(e)
+
 
 def _run_pipeline_all_job(job_id: str, req: PipelineAllRequest, pipe_key: str) -> None:
 	job = jobs[job_id]
@@ -864,54 +865,52 @@ def get_denoised_section_bin(
 
 @router.post('/fbpick_section_bin')
 def fbpick_section_bin(req: FbpickRequest):
-        if not FBPICK_MODEL_PATH.exists():
-                raise HTTPException(
-                        status_code=409, detail='FB pick model weights not found'
-                )
-        pipeline_key = req.pipeline_key
-        tap_label = req.tap_label
-        cache_key = (
-                req.file_id,
-                req.key1_idx,
-                req.key1_byte,
-                req.key2_byte,
-                req.tile_h,
-                req.tile_w,
-                req.overlap,
-                bool(req.amp),
-                pipeline_key,
-                tap_label,
-                'fbpick',
-        )
-        section_override: Optional[np.ndarray] = None
-        wants_pipeline = bool(pipeline_key and tap_label)
-        if cache_key not in fbpick_cache and wants_pipeline:
-                assert pipeline_key is not None
-                assert tap_label is not None
-                try:
-                        section_override = get_section_from_pipeline_tap(
-                                file_id=req.file_id,
-                                key1_idx=req.key1_idx,
-                                key1_byte=req.key1_byte,
-                                pipeline_key=pipeline_key,
-                                tap_label=tap_label,
-                        )
-                except PipelineTapNotFoundError as exc:
-                        raise HTTPException(status_code=409, detail=str(exc)) from exc
-                except (TypeError, ValueError) as exc:
-                        raise HTTPException(status_code=409, detail=str(exc)) from exc
-        job_id = str(uuid4())
-        job_state: dict[str, object] = {'status': 'queued', 'cache_key': cache_key}
-        if section_override is not None:
-                job_state['section_override'] = section_override
-        jobs[job_id] = job_state
-        if cache_key in fbpick_cache:
-                jobs[job_id]['status'] = 'done'
-        else:
-                threading.Thread(
-                        target=_run_fbpick_job, args=(job_id, req), daemon=True
-                ).start()
-        return {'job_id': job_id, 'status': jobs[job_id]['status']}
+	if not FBPICK_MODEL_PATH.exists():
+		raise HTTPException(status_code=409, detail='FB pick model weights not found')
+	pipeline_key = req.pipeline_key
+	tap_label = req.tap_label
+	cache_key = (
+		req.file_id,
+		req.key1_idx,
+		req.key1_byte,
+		req.key2_byte,
+		req.tile_h,
+		req.tile_w,
+		req.overlap,
+		bool(req.amp),
+		pipeline_key,
+		tap_label,
+		'fbpick',
+	)
+	section_override: np.ndarray | None = None
+	wants_pipeline = bool(pipeline_key and tap_label)
+	if cache_key not in fbpick_cache and wants_pipeline:
+		assert pipeline_key is not None
+		assert tap_label is not None
+		try:
+			section_override = get_section_from_pipeline_tap(
+				file_id=req.file_id,
+				key1_idx=req.key1_idx,
+				key1_byte=req.key1_byte,
+				pipeline_key=pipeline_key,
+				tap_label=tap_label,
+			)
+		except PipelineTapNotFoundError as exc:
+			raise HTTPException(status_code=409, detail=str(exc)) from exc
+		except (TypeError, ValueError) as exc:
+			raise HTTPException(status_code=409, detail=str(exc)) from exc
+	job_id = str(uuid4())
+	job_state: dict[str, object] = {'status': 'queued', 'cache_key': cache_key}
+	if section_override is not None:
+		job_state['section_override'] = section_override
+	jobs[job_id] = job_state
+	if cache_key in fbpick_cache:
+		jobs[job_id]['status'] = 'done'
+	else:
+		threading.Thread(
+			target=_run_fbpick_job, args=(job_id, req), daemon=True
+		).start()
+	return {'job_id': job_id, 'status': jobs[job_id]['status']}
 
 
 @router.get('/fbpick_job_status')
