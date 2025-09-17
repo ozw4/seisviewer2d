@@ -493,6 +493,9 @@
     var linePickStart = null;
     var deleteRangeStart = null;
 
+    let suppressRelayout = false;       // ignore relayouts we cause internally
+    let forceFullExtentOnce = false;    // next window calc uses full extent with no padding
+
     // 追加：現在のFB計算に紐づくレイヤ/パイプラインキー
     let currentFbLayer = 'raw';
     let currentFbPipelineKey = null;
@@ -1138,9 +1141,11 @@
       if (!sectionShape) return null;
       const [totalTraces, totalSamples] = sectionShape;
 
-      let x0;
-      let x1;
-      if (savedXRange && savedXRange.length === 2) {
+      // X range
+      let x0, x1;
+      if (forceFullExtentOnce) {
+        x0 = 0; x1 = totalTraces - 1;
+      } else if (savedXRange && savedXRange.length === 2) {
         const minX = Math.min(savedXRange[0], savedXRange[1]);
         const maxX = Math.max(savedXRange[0], savedXRange[1]);
         x0 = Math.floor(minX);
@@ -1158,14 +1163,16 @@
       if (x1 < x0) [x0, x1] = [x1, x0];
 
       const spanX = Math.max(1, x1 - x0 + 1);
-      const padX = Math.max(1, Math.floor(spanX * 0.1));
+      const padX = (!forceFullExtentOnce && !!savedXRange)
+        ? Math.max(1, Math.floor(spanX * 0.1))
+        : 0;
       x0 = Math.max(0, x0 - padX);
       x1 = Math.min(totalTraces - 1, x1 + padX);
 
+      // Y range
       const dtBase = window.defaultDt ?? defaultDt;
-      let yMinSec;
-      let yMaxSec;
-      if (savedYRange && savedYRange.length === 2) {
+      let yMinSec, yMaxSec;
+      if (!forceFullExtentOnce && savedYRange && savedYRange.length === 2) {
         yMinSec = Math.min(savedYRange[0], savedYRange[1]);
         yMaxSec = Math.max(savedYRange[0], savedYRange[1]);
       } else {
@@ -1180,15 +1187,17 @@
       if (y1 < y0) [y0, y1] = [y1, y0];
 
       const spanY = Math.max(1, y1 - y0 + 1);
-      const padY = Math.max(1, Math.floor(spanY * 0.1));
+      const padY = (!forceFullExtentOnce && !!savedYRange)
+        ? Math.max(1, Math.floor(spanY * 0.1))
+        : 0;
       y0 = Math.max(0, y0 - padY);
       y1 = Math.min(totalSamples - 1, y1 + padY);
 
+      // one-shot full-extent is consumed here
+      if (forceFullExtentOnce) forceFullExtentOnce = false;
+
       return {
-        x0,
-        x1,
-        y0,
-        y1,
+        x0, x1, y0, y1,
         nTraces: x1 - x0 + 1,
         nSamples: y1 - y0 + 1,
       };
@@ -1593,7 +1602,11 @@
         modeBarButtonsToAdd: ['eraseshape'],
         edits: { shapePosition: false },
       });
-      setTimeout(() => Plotly.Plots.resize(plotDiv), 50);
+      setTimeout(() => {
+        suppressRelayout = true;
+        Plotly.Plots.resize(plotDiv);
+        suppressRelayout = false;
+      }, 50);
 
       plotDiv.removeAllListeners('plotly_relayout');
       plotDiv.removeAllListeners('plotly_click');
@@ -1736,7 +1749,11 @@
         modeBarButtonsToAdd: ['eraseshape'],
         edits: { shapePosition: false },
       });
-      setTimeout(() => Plotly.Plots.resize(plotDiv), 50);
+      setTimeout(() => {
+        suppressRelayout = true;
+        Plotly.Plots.resize(plotDiv);
+        suppressRelayout = false;
+      }, 50);
 
       plotDiv.removeAllListeners('plotly_relayout');
       plotDiv.removeAllListeners('plotly_click');
@@ -2061,7 +2078,11 @@
         modeBarButtonsToAdd: ['eraseshape'],
         edits: { shapePosition: false }
       });
-      setTimeout(() => Plotly.Plots.resize(plotDiv), 50);
+      setTimeout(() => {
+        suppressRelayout = true;
+        Plotly.Plots.resize(plotDiv);
+        suppressRelayout = false;
+      }, 50);
       renderedStart = startTrace;
       renderedEnd = endTrace;
       console.log(`Rendered traces ${startTrace}-${endTrace}`);
@@ -2176,12 +2197,18 @@
     }
 
     async function handleRelayout(ev) {
+      if (suppressRelayout) return;
       const plotDiv = document.getElementById('plot');
       if ('xaxis.range[0]' in ev && 'xaxis.range[1]' in ev) {
         savedXRange = [ev['xaxis.range[0]'], ev['xaxis.range[1]']];
       } else if ('xaxis.autorange' in ev && ev['xaxis.autorange'] === true) {
         savedXRange = null;
         savedYRange = null;
+        // also drop any “previous window” fallback so we don’t creep out again
+        renderedStart = null;
+        renderedEnd = null;
+        // next currentVisibleWindow() call must use full extent, no padding
+        forceFullExtentOnce = true;
       }
 
       if ('yaxis.range[0]' in ev && 'yaxis.range[1]' in ev) {
