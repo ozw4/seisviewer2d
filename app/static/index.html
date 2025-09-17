@@ -493,6 +493,21 @@
     var linePickStart = null;
     var deleteRangeStart = null;
 
+    // Pointer fallback state
+    let nativePickState = { downX: 0, downY: 0, t: 0, active: false, id: null, handled: false };
+    let lastPlotlyClickTime = 0;
+
+    // Plot area hit-test independent from target class
+    function isInsidePlotArea(plotDiv, clientX, clientY) {
+      const layer =
+        plotDiv.querySelector('.cartesianlayer') ||
+        plotDiv.querySelector('.main-svg') ||
+        plotDiv;
+      const bb = layer.getBoundingClientRect();
+      return clientX >= bb.left && clientX <= bb.right &&
+        clientY >= bb.top && clientY <= bb.bottom;
+    }
+
     let suppressRelayout = false;       // ignore relayouts we cause internally
     let forceFullExtentOnce = false;    // next window calc uses full extent with no padding
 
@@ -866,6 +881,112 @@
       localStorage.setItem('bpf_params', JSON.stringify(getBpfParams()));
       closeBpfSettings();
       if (typeof fetchAndPlot === 'function') { try { fetchAndPlot(); } catch (e) { } }
+    }
+
+    // Click handler that always exists; gate by isPickMode
+    function onPlotlyClick(ev) {
+      if (!isPickMode) return;
+      nativePickState.handled = true;
+      lastPlotlyClickTime = performance.now();
+      return handlePlotClick(ev);
+    }
+
+    // Central place to (re)bind plot handlers
+    function bindPlotHandlers(plotDiv) {
+      if (!plotDiv || typeof plotDiv.removeAllListeners !== 'function') return;
+      plotDiv.removeAllListeners('plotly_click');
+      plotDiv.removeAllListeners('plotly_relayout');
+      plotDiv.on('plotly_click', onPlotlyClick);
+      plotDiv.on('plotly_relayout', handleRelayout);
+    }
+
+    function attachNativePickFallback(plotDiv) {
+      if (!plotDiv) return;
+      plotDiv.removeEventListener('pointerdown', _onPointerDown, true);
+      plotDiv.removeEventListener('pointerup', _onPointerUp, true);
+      plotDiv.removeEventListener('pointercancel', _onPointerCancel, true);
+      plotDiv.addEventListener('pointerdown', _onPointerDown, true);
+      plotDiv.addEventListener('pointerup', _onPointerUp, true);
+      plotDiv.addEventListener('pointercancel', _onPointerCancel, true);
+    }
+
+    function _onPointerDown(e) {
+      if (!isPickMode) return;
+      if ((e.button ?? 0) !== 0) return; // left only
+      const plotDiv = document.getElementById('plot');
+      if (!plotDiv) return;
+      if (!isInsidePlotArea(plotDiv, e.clientX, e.clientY)) return;
+
+      nativePickState = {
+        downX: e.clientX, downY: e.clientY,
+        t: performance.now(), active: true, id: e.pointerId, handled: false
+      };
+      try { plotDiv.setPointerCapture && plotDiv.setPointerCapture(e.pointerId); } catch (_) { }
+    }
+
+    function _onPointerUp(e) {
+      if (!isPickMode || !nativePickState.active) return;
+      const wasHandled = nativePickState.handled;
+      const downX = nativePickState.downX;
+      const downY = nativePickState.downY;
+      const downT = nativePickState.t;
+      const pointerId = nativePickState.id ?? e.pointerId;
+      nativePickState.active = false;
+      nativePickState.handled = false;
+      nativePickState.id = null;
+      if ((e.button ?? 0) !== 0) return;
+      const plotDiv = document.getElementById('plot');
+      if (!plotDiv) return;
+      const upClientX = e.clientX;
+      const upClientY = e.clientY;
+      const shiftKey = !!e.shiftKey;
+      const ctrlKey = !!e.ctrlKey;
+      const altKey = !!e.altKey;
+      const button = e.button ?? 0;
+      try { plotDiv.releasePointerCapture && plotDiv.releasePointerCapture(pointerId); } catch (_) { }
+      if (!isInsidePlotArea(plotDiv, upClientX, upClientY)) return;
+      if (wasHandled) return;
+
+      setTimeout(() => {
+        const now = performance.now();
+        if (lastPlotlyClickTime >= downT && now - lastPlotlyClickTime < 80) return;
+        if (!isInsidePlotArea(plotDiv, upClientX, upClientY)) return;
+
+        const dx = Math.abs(upClientX - downX);
+        const dy = Math.abs(upClientY - downY);
+        const dtMs = now - downT;
+
+        // Click (not drag) threshold: slightly relaxed
+        if (dx < 8 && dy < 8 && dtMs < 600) {
+          dispatchPickFromPixel(plotDiv, upClientX, upClientY, {
+            shift: shiftKey, ctrl: ctrlKey, alt: altKey, button
+          });
+        }
+      }, 0);
+    }
+    function _onPointerCancel() { nativePickState.active = false; nativePickState.id = null; nativePickState.handled = false; }
+
+    function dispatchPickFromPixel(plotDiv, clientX, clientY, mods) {
+      try {
+        if (!plotDiv || !plotDiv._fullLayout) return;
+        if (!isInsidePlotArea(plotDiv, clientX, clientY)) return; // final guard
+        const rect = plotDiv.getBoundingClientRect();
+        const xpx = clientX - rect.left;
+        const ypx = clientY - rect.top;
+        const xAxis = plotDiv._fullLayout.xaxis;
+        const yAxis = plotDiv._fullLayout.yaxis;
+        if (!xAxis || !yAxis || typeof xAxis.p2d !== 'function' || typeof yAxis.p2d !== 'function') return;
+
+        const xData = xAxis.p2d(xpx);
+        const yData = yAxis.p2d(ypx);
+        if (!isFinite(xData) || !isFinite(yData)) return;
+
+        const ev = {
+          event: { clientX, clientY, shiftKey: mods.shift, ctrlKey: mods.ctrl, altKey: mods.alt, button: mods.button },
+          points: [{ x: xData, y: yData }],
+        };
+        handlePlotClick(ev);
+      } catch (_) { }
     }
 
     async function pollDenoiseJob(jobId) {
@@ -1602,18 +1723,13 @@
         modeBarButtonsToAdd: ['eraseshape'],
         edits: { shapePosition: false },
       });
+      bindPlotHandlers(plotDiv);
+      attachNativePickFallback(plotDiv);
       setTimeout(() => {
         suppressRelayout = true;
         Plotly.Plots.resize(plotDiv);
         suppressRelayout = false;
       }, 50);
-
-      plotDiv.removeAllListeners('plotly_relayout');
-      plotDiv.removeAllListeners('plotly_click');
-      plotDiv.on('plotly_relayout', handleRelayout);
-      if (isPickMode) {
-        plotDiv.on('plotly_click', handlePlotClick);
-      }
     }
 
     function renderWindowHeatmap(windowData) {
@@ -1749,18 +1865,15 @@
         modeBarButtonsToAdd: ['eraseshape'],
         edits: { shapePosition: false },
       });
+      bindPlotHandlers(plotDiv);
+      attachNativePickFallback(plotDiv);
       setTimeout(() => {
         suppressRelayout = true;
         Plotly.Plots.resize(plotDiv);
         suppressRelayout = false;
       }, 50);
 
-      plotDiv.removeAllListeners('plotly_relayout');
-      plotDiv.removeAllListeners('plotly_click');
-      plotDiv.on('plotly_relayout', handleRelayout);
-      if (isPickMode) {
-        plotDiv.on('plotly_click', handlePlotClick);
-      }
+      
     }
 
     function renderLatestView(startOverride = null, endOverride = null) {
@@ -2078,6 +2191,8 @@
         modeBarButtonsToAdd: ['eraseshape'],
         edits: { shapePosition: false }
       });
+      bindPlotHandlers(plotDiv);
+      attachNativePickFallback(plotDiv);
       setTimeout(() => {
         suppressRelayout = true;
         Plotly.Plots.resize(plotDiv);
@@ -2087,12 +2202,6 @@
       renderedEnd = endTrace;
       console.log(`Rendered traces ${startTrace}-${endTrace}`);
 
-      plotDiv.removeAllListeners('plotly_relayout');
-      plotDiv.removeAllListeners('plotly_click');
-      plotDiv.on('plotly_relayout', handleRelayout);
-      if (isPickMode) {
-        plotDiv.on('plotly_click', handlePlotClick);
-      }
     }
 
     function pickOnTrace(trace) {
@@ -2249,7 +2358,16 @@
       scheduleWindowFetch();
     }
 
-    window.addEventListener('DOMContentLoaded', loadSettings);
+    window.addEventListener('DOMContentLoaded', () => {
+      loadSettings();
+      const plotDiv = document.getElementById('plot');
+      if (plotDiv && typeof plotDiv.on === 'function') {
+        plotDiv.on('plotly_afterplot', () => {
+          bindPlotHandlers(plotDiv);
+          attachNativePickFallback(plotDiv);
+        });
+      }
+    });
 
     // Toggle between raw and first tap with the "n" key
     window.addEventListener('keydown', (e) => {
