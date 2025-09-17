@@ -614,123 +614,124 @@ def get_section(
 
 @router.get('/get_section_bin')
 def get_section_bin(
-        file_id: str = Query(...),
-        key1_idx: int = Query(...),
-        key1_byte: int = Query(189),
-        key2_byte: int = Query(193),
+	file_id: str = Query(...),
+	key1_idx: int = Query(...),
+	key1_byte: int = Query(189),
+	key2_byte: int = Query(193),
 ):
-        try:
-                reader = get_reader(file_id, key1_byte, key2_byte)
-                section = np.array(reader.get_section(key1_idx), dtype=np.float32)
-                scale, q = quantize_float32(section)
-                payload = msgpack.packb(
-                        {
-                                'scale': scale,
-                                'shape': q.shape,
-                                'data': q.tobytes(),
-                        }
-                )
-                return Response(
-                        gzip.compress(payload),
-                        media_type='application/octet-stream',
-                        headers={'Content-Encoding': 'gzip'},
-                )
-        except Exception as e:
-                raise HTTPException(status_code=500, detail=str(e))
+	try:
+		reader = get_reader(file_id, key1_byte, key2_byte)
+		section = np.array(reader.get_section(key1_idx), dtype=np.float32)
+		scale, q = quantize_float32(section)
+		payload = msgpack.packb(
+			{
+				'scale': scale,
+				'shape': q.shape,
+				'data': q.tobytes(),
+			}
+		)
+		return Response(
+			gzip.compress(payload),
+			media_type='application/octet-stream',
+			headers={'Content-Encoding': 'gzip'},
+		)
+	except Exception as e:
+		raise HTTPException(status_code=500, detail=str(e))
 
 
 @router.get('/get_section_window_bin')
 def get_section_window_bin(
-        file_id: str = Query(...),
-        key1_idx: int = Query(...),
-        key1_byte: int = Query(189),
-        key2_byte: int = Query(193),
-        x0: int = Query(...),
-        x1: int = Query(...),
-        y0: int = Query(...),
-        y1: int = Query(...),
-        step_x: int = Query(1, ge=1),
-        step_y: int = Query(1, ge=1),
-        pipeline_key: str | None = Query(None),
-        tap_label: str | None = Query(None),
+	file_id: str = Query(...),
+	key1_idx: int = Query(...),
+	key1_byte: int = Query(189),
+	key2_byte: int = Query(193),
+	x0: int = Query(...),
+	x1: int = Query(...),
+	y0: int = Query(...),
+	y1: int = Query(...),
+	step_x: int = Query(1, ge=1),
+	step_y: int = Query(1, ge=1),
+	pipeline_key: str | None = Query(None),
+	tap_label: str | None = Query(None),
 ):
-        cache_key = (
-                file_id,
-                key1_idx,
-                key1_byte,
-                key2_byte,
-                x0,
-                x1,
-                y0,
-                y1,
-                step_x,
-                step_y,
-                pipeline_key,
-                tap_label,
-        )
+	cache_key = (
+		file_id,
+		key1_idx,
+		key1_byte,
+		key2_byte,
+		x0,
+		x1,
+		y0,
+		y1,
+		step_x,
+		step_y,
+		pipeline_key,
+		tap_label,
+	)
 
-        cached_payload = window_section_cache.get(cache_key)
-        if cached_payload is not None:
-                return Response(
-                        cached_payload,
-                        media_type='application/octet-stream',
-                        headers={'Content-Encoding': 'gzip'},
-                )
+	cached_payload = window_section_cache.get(cache_key)
+	if cached_payload is not None:
+		return Response(
+			cached_payload,
+			media_type='application/octet-stream',
+			headers={'Content-Encoding': 'gzip'},
+		)
 
-        try:
-                if pipeline_key and tap_label:
-                        section = get_section_from_pipeline_tap(
-                                file_id=file_id,
-                                key1_idx=key1_idx,
-                                key1_byte=key1_byte,
-                                pipeline_key=pipeline_key,
-                                tap_label=tap_label,
-                        )
-                else:
-                        reader = get_reader(file_id, key1_byte, key2_byte)
-                        section = np.array(reader.get_section(key1_idx), dtype=np.float32)
-        except PipelineTapNotFoundError as exc:
-                raise HTTPException(status_code=409, detail=str(exc)) from exc
+	try:
+		if pipeline_key and tap_label:
+			section = get_section_from_pipeline_tap(
+				file_id=file_id,
+				key1_idx=key1_idx,
+				key1_byte=key1_byte,
+				pipeline_key=pipeline_key,
+				tap_label=tap_label,
+			)
+		else:
+			reader = get_reader(file_id, key1_byte, key2_byte)
+			section = np.array(reader.get_section(key1_idx), dtype=np.float32)
+	except PipelineTapNotFoundError as exc:
+		raise HTTPException(status_code=409, detail=str(exc)) from exc
 
-        section = np.ascontiguousarray(section, dtype=np.float32)
-        if section.ndim != 2:
-                raise HTTPException(status_code=500, detail='Section data must be 2D')
+	section = np.ascontiguousarray(section, dtype=np.float32)
+	if section.ndim != 2:
+		raise HTTPException(status_code=500, detail='Section data must be 2D')
 
-        n_traces, n_samples = section.shape
-        if not (0 <= x0 <= x1 < n_traces):
-                raise HTTPException(status_code=400, detail='Trace range out of bounds')
-        if not (0 <= y0 <= y1 < n_samples):
-                raise HTTPException(status_code=400, detail='Sample range out of bounds')
-        if step_x < 1 or step_y < 1:
-                raise HTTPException(status_code=400, detail='Steps must be >= 1')
+	n_traces, n_samples = section.shape
+	if not (0 <= x0 <= x1 < n_traces):
+		raise HTTPException(status_code=400, detail='Trace range out of bounds')
+	if not (0 <= y0 <= y1 < n_samples):
+		raise HTTPException(status_code=400, detail='Sample range out of bounds')
+	if step_x < 1 or step_y < 1:
+		raise HTTPException(status_code=400, detail='Steps must be >= 1')
 
-        sub = section[x0 : x1 + 1 : step_x, y0 : y1 + 1 : step_y]
-        if sub.size == 0:
-                raise HTTPException(status_code=400, detail='Requested window is empty')
+	sub = section[x0 : x1 + 1 : step_x, y0 : y1 + 1 : step_y]
+	if sub.size == 0:
+		raise HTTPException(status_code=400, detail='Requested window is empty')
 
-        window_view = np.ascontiguousarray(sub.T, dtype=np.float32)
-        scale, q = quantize_float32(window_view)
-        payload = msgpack.packb(
-                {
-                        'scale': scale,
-                        'shape': window_view.shape,
-                        'data': q.tobytes(),
-                }
-        )
-        compressed = gzip.compress(payload)
-        window_section_cache.set(cache_key, compressed)
-        return Response(
-                compressed,
-                media_type='application/octet-stream',
-                headers={'Content-Encoding': 'gzip'},
-        )
+	window_view = np.ascontiguousarray(sub.T, dtype=np.float32)
+	scale, q = quantize_float32(window_view)
+	payload = msgpack.packb(
+		{
+			'scale': scale,
+			'shape': window_view.shape,
+			'data': q.tobytes(),
+		}
+	)
+	compressed = gzip.compress(payload)
+	window_section_cache.set(cache_key, compressed)
+	return Response(
+		compressed,
+		media_type='application/octet-stream',
+		headers={'Content-Encoding': 'gzip'},
+	)
 
 
 @router.post('/bandpass_section_bin')
 def bandpass_section_bin(req: BandpassRequest):
-        try:
-                reader = get_reader(req.file_id, req.key1_byte, req.key2_byte)
-                section = np.array(reader.get_section(req.key1_idx), dtype=np.float32)
+	try:
+		reader = get_reader(req.file_id, req.key1_byte, req.key2_byte)
+		section = np.asarray(reader.get_section(req.key1_idx), dtype=np.float32)
+
 		spec = PipelineSpec(
 			steps=[
 				{
@@ -745,8 +746,11 @@ def bandpass_section_bin(req: BandpassRequest):
 				}
 			]
 		)
+
 		out = apply_pipeline(section, spec=spec, meta={}, taps=['bandpass'])
-		filtered = out['bandpass']['data']
+		band = out['bandpass']
+		filtered = band['data'] if isinstance(band, dict) else band
+
 		scale, q = quantize_float32(filtered)
 		payload = msgpack.packb(
 			{
@@ -755,15 +759,17 @@ def bandpass_section_bin(req: BandpassRequest):
 				'data': q.tobytes(),
 			}
 		)
+
 		return Response(
 			gzip.compress(payload),
 			media_type='application/octet-stream',
 			headers={'Content-Encoding': 'gzip'},
 		)
+
 	except ValueError as e:
-		raise HTTPException(status_code=400, detail=str(e))
+		raise HTTPException(status_code=400, detail=str(e)) from e
 	except Exception as e:
-		raise HTTPException(status_code=500, detail=str(e))
+		raise HTTPException(status_code=500, detail=str(e)) from e
 
 
 @router.post('/bandpass_apply')

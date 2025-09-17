@@ -1430,23 +1430,38 @@
       console.log('--- fetchAndPlot end ---');
     }
 
+    function shouldPreferWindowFirst() {
+      const win = currentVisibleWindow();
+      const plotDiv = document.getElementById('plot');
+      if (!win || !plotDiv) return false;
+      const { step_x, step_y } = computeStepsForWindow({
+        tracesVisible: win.nTraces,
+        samplesVisible: win.nSamples,
+        widthPx: plotDiv.clientWidth || 1,
+        heightPx: plotDiv.clientHeight || 1,
+      });
+      return (step_x > 1 || step_y > 1);
+    }
+
     function drawSelectedLayer(start = null, end = null) {
       const sel = document.getElementById('layerSelect');
       const layer = sel ? sel.value : 'raw';
-      if (layer === 'raw') {
-        latestSeismicData = rawSeismicData;
-      } else if (latestTapData[layer]) {
-        latestSeismicData = latestTapData[layer];
-      } else {
+      latestSeismicData = (layer === 'raw') ? rawSeismicData : (latestTapData[layer] || null);
+
+      if (shouldPreferWindowFirst()) {
+        // 最初からウィンドウ版に任せる（フル描画をスキップ）
         latestSeismicData = null;
+        renderLatestView();      // 既存：必要なら状態維持（スピナー等を出すならここ）
+        fetchWindowAndPlot();    // 即時フェッチ
+        return;
       }
 
-      const totalTraces = latestSeismicData ? latestSeismicData.length : (sectionShape ? sectionShape[0] : 0);
-      const startTrace = typeof start === 'number' ? start : 0;
-      const endTrace = typeof end === 'number' ? end : (totalTraces ? totalTraces - 1 : 0);
-
+      // 低負荷なら従来どおりフル描画
+      const total = latestSeismicData ? latestSeismicData.length : (sectionShape ? sectionShape[0] : 0);
+      const s = (typeof start === 'number') ? start : 0;
+      const e = (typeof end === 'number') ? end : Math.max(0, total - 1);
       if (latestSeismicData) {
-        plotSeismicData(latestSeismicData, defaultDt, startTrace, endTrace);
+        plotSeismicData(latestSeismicData, defaultDt, s, e);
       } else {
         renderLatestView();
       }
