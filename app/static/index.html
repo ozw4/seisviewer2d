@@ -464,10 +464,14 @@
     var rawSeismicData = null;
     var latestTapData = {};
     var latestPipelineKey = null;
+    var latestWindowRender = null;
+    var windowFetchToken = 0;
     const defaultDt = 0.002;
     const PREFETCH_WIDTH = 3;
     const FALLBACK_MAX = 8;
     const HARD_LIMIT_BYTES = 512 * 1024 * 1024;
+    const WINDOW_FETCH_DEBOUNCE_MS = 120;
+    const WINDOW_MAX_POINTS = 1_200_000;
 
     const cache = new Map(); // key -> { f32: Float32Array }
     const inflight = new Map();
@@ -726,9 +730,7 @@
       predictedPicks = picksNow;
       fbPredCache.set(fbCacheKey(currentFbKey, currentFbLayer, currentFbPipelineKey), picksNow);
 
-      if (latestSeismicData) {
-        plotSeismicData(latestSeismicData, defaultDt, renderedStart, renderedEnd);
-      }
+      renderLatestView();
     }
 
     function onSigmaChange() {
@@ -794,7 +796,7 @@
         fbPredCache.set(fbCacheKey(keyAtStart, layerAtStart, pipelineKeyAtStart), picks);
 
         // Replot
-        plotSeismicData(latestSeismicData, defaultDt, renderedStart, renderedEnd);
+        renderLatestView();
       } finally {
         if (btn) btn.disabled = false;
       }
@@ -804,9 +806,7 @@
       const val = document.getElementById('gain').value;
       document.getElementById('gain_display').textContent = `${parseFloat(val)}×`;
       localStorage.setItem('gain', val);
-      if (latestSeismicData) {
-        plotSeismicData(latestSeismicData, defaultDt, renderedStart, renderedEnd);
-      }
+      renderLatestView();
     }
 
     function onColormapChange() {
@@ -814,9 +814,7 @@
       const chk = document.getElementById('cmReverse');
       if (sel) localStorage.setItem('colormap', sel.value);
       if (chk) localStorage.setItem('cmReverse', chk.checked);
-      if (latestSeismicData) {
-        plotSeismicData(latestSeismicData, defaultDt, renderedStart, renderedEnd);
-      }
+      renderLatestView();
     }
 
     function openDenoiseSettings() {
@@ -1007,9 +1005,7 @@
       btn.classList.toggle('active', isPickMode);
       linePickStart = null;
       deleteRangeStart = null;
-      if (latestSeismicData) {
-        plotSeismicData(latestSeismicData, defaultDt, renderedStart, renderedEnd);
-      }
+      renderLatestView();
     }
 
     function getSeismicForProcessing() {
@@ -1061,6 +1057,132 @@
       const entry = cache.get(key);
       cache.delete(key); cache.set(key, entry); // refresh LRU
       return entry;
+    }
+
+    function debounce(fn, delay) {
+      let timer = null;
+      return function debounced(...args) {
+        if (timer) clearTimeout(timer);
+        timer = setTimeout(() => {
+          timer = null;
+          fn.apply(this, args);
+        }, delay);
+      };
+    }
+
+    function roundUpPowerOfTwo(value) {
+      let v = Math.max(1, Math.floor(value));
+      v -= 1;
+      v |= v >> 1;
+      v |= v >> 2;
+      v |= v >> 4;
+      v |= v >> 8;
+      v |= v >> 16;
+      return v + 1;
+    }
+
+    function computeStepsForWindow({
+      tracesVisible,
+      samplesVisible,
+      widthPx,
+      heightPx,
+      oversampleX = 1.2,
+      oversampleY = 1.2,
+      maxPoints = WINDOW_MAX_POINTS,
+    }) {
+      const ratio = window.devicePixelRatio || 1;
+      const effW = Math.max(1, Math.round(widthPx * ratio));
+      const effH = Math.max(1, Math.round(heightPx * ratio));
+      let stepX = Math.max(1, Math.ceil(tracesVisible / (effW * oversampleX)));
+      let stepY = Math.max(1, Math.ceil(samplesVisible / (effH * oversampleY)));
+
+      const tracesOut = () => Math.ceil(tracesVisible / stepX);
+      const samplesOut = () => Math.ceil(samplesVisible / stepY);
+
+      let guard = 0;
+      while (tracesOut() * samplesOut() > maxPoints && guard < 512) {
+        if (tracesOut() / effW > samplesOut() / effH) {
+          stepX += 1;
+        } else {
+          stepY += 1;
+        }
+        guard += 1;
+      }
+
+      stepX = roundUpPowerOfTwo(stepX);
+      stepY = roundUpPowerOfTwo(stepY);
+
+      guard = 0;
+      while (Math.ceil(tracesVisible / stepX) * Math.ceil(samplesVisible / stepY) > maxPoints && guard < 512) {
+        if (tracesVisible / stepX > samplesVisible / stepY) {
+          stepX = roundUpPowerOfTwo(stepX + 1);
+        } else {
+          stepY = roundUpPowerOfTwo(stepY + 1);
+        }
+        guard += 1;
+      }
+
+      return { step_x: stepX, step_y: stepY };
+    }
+
+    function currentVisibleWindow() {
+      if (!sectionShape) return null;
+      const [totalTraces, totalSamples] = sectionShape;
+
+      let x0;
+      let x1;
+      if (savedXRange && savedXRange.length === 2) {
+        const minX = Math.min(savedXRange[0], savedXRange[1]);
+        const maxX = Math.max(savedXRange[0], savedXRange[1]);
+        x0 = Math.floor(minX);
+        x1 = Math.ceil(maxX);
+      } else if (typeof renderedStart === 'number' && typeof renderedEnd === 'number') {
+        x0 = renderedStart;
+        x1 = renderedEnd;
+      } else {
+        x0 = 0;
+        x1 = totalTraces - 1;
+      }
+
+      x0 = Math.max(0, Math.floor(x0));
+      x1 = Math.min(totalTraces - 1, Math.ceil(x1));
+      if (x1 < x0) [x0, x1] = [x1, x0];
+
+      const spanX = Math.max(1, x1 - x0 + 1);
+      const padX = Math.max(1, Math.floor(spanX * 0.1));
+      x0 = Math.max(0, x0 - padX);
+      x1 = Math.min(totalTraces - 1, x1 + padX);
+
+      const dtBase = window.defaultDt ?? defaultDt;
+      let yMinSec;
+      let yMaxSec;
+      if (savedYRange && savedYRange.length === 2) {
+        yMinSec = Math.min(savedYRange[0], savedYRange[1]);
+        yMaxSec = Math.max(savedYRange[0], savedYRange[1]);
+      } else {
+        yMinSec = 0;
+        yMaxSec = (totalSamples - 1) * dtBase;
+      }
+
+      let y0 = Math.floor(yMinSec / dtBase);
+      let y1 = Math.ceil(yMaxSec / dtBase);
+      y0 = Math.max(0, y0);
+      y1 = Math.min(totalSamples - 1, y1);
+      if (y1 < y0) [y0, y1] = [y1, y0];
+
+      const spanY = Math.max(1, y1 - y0 + 1);
+      const padY = Math.max(1, Math.floor(spanY * 0.1));
+      y0 = Math.max(0, y0 - padY);
+      y1 = Math.min(totalSamples - 1, y1 + padY);
+
+      return {
+        x0,
+        x1,
+        y0,
+        y1,
+        nTraces: x1 - x0 + 1,
+        nSamples: y1 - y0 + 1,
+      };
     }
 
     function updateKey1Display() {
@@ -1276,6 +1398,9 @@
         rawSeismicData = traces;
       }
 
+      latestWindowRender = null;
+      windowFetchToken += 1;
+
       if (window.pipelineUI && typeof window.pipelineUI.prepareForNewSection === 'function') {
         window.pipelineUI.prepareForNewSection();
       } else {
@@ -1289,7 +1414,10 @@
         }
       }
 
-      const [s, e] = savedXRange ? visibleTraceIndices(savedXRange, rawSeismicData.length) : [0, rawSeismicData.length - 1];
+      const totalTraces = rawSeismicData ? rawSeismicData.length : (sectionShape ? sectionShape[0] : 0);
+      const [s, e] = totalTraces > 0
+        ? (savedXRange ? visibleTraceIndices(savedXRange, totalTraces) : [0, totalTraces - 1])
+        : [0, 0];
       drawSelectedLayer(s, e);
 
       // Pipeline execution: manual via ▶ Run button
@@ -1302,16 +1430,315 @@
       console.log('--- fetchAndPlot end ---');
     }
 
-    function drawSelectedLayer(start = 0, end = rawSeismicData ? rawSeismicData.length - 1 : 0) {
+    function drawSelectedLayer(start = null, end = null) {
       const sel = document.getElementById('layerSelect');
       const layer = sel ? sel.value : 'raw';
-      if (layer === 'raw' || !latestTapData[layer]) {
+      if (layer === 'raw') {
         latestSeismicData = rawSeismicData;
-      } else {
+      } else if (latestTapData[layer]) {
         latestSeismicData = latestTapData[layer];
+      } else {
+        latestSeismicData = null;
       }
-      plotSeismicData(latestSeismicData, defaultDt, start, end);
+
+      const totalTraces = latestSeismicData ? latestSeismicData.length : (sectionShape ? sectionShape[0] : 0);
+      const startTrace = typeof start === 'number' ? start : 0;
+      const endTrace = typeof end === 'number' ? end : (totalTraces ? totalTraces - 1 : 0);
+
+      if (latestSeismicData) {
+        plotSeismicData(latestSeismicData, defaultDt, startTrace, endTrace);
+      } else {
+        renderLatestView();
+      }
+      scheduleWindowFetch();
     }
+
+    function renderWindowHeatmap(windowData) {
+      if (!windowData) return;
+      const sel = document.getElementById('layerSelect');
+      const currentLayer = sel ? sel.value : 'raw';
+      if (windowData.requestedLayer !== currentLayer) return;
+
+      const slider = document.getElementById('key1_idx_slider');
+      const idx = slider ? parseInt(slider.value, 10) : 0;
+      const key1Val = key1Values[idx];
+      if (windowData.key1 !== key1Val) return;
+
+      if (windowData.pipelineKey && (window.latestPipelineKey || null) !== (windowData.pipelineKey || null)) {
+        return;
+      }
+
+      const plotDiv = document.getElementById('plot');
+      if (!plotDiv) return;
+
+      const { values, shape, x0, x1, y0, y1, stepX, stepY, effectiveLayer } = windowData;
+      const rows = Number(shape?.[0] ?? 0);
+      const cols = Number(shape?.[1] ?? 0);
+      if (!rows || !cols) return;
+      if (values.length !== rows * cols) return;
+
+      const gain = parseFloat(document.getElementById('gain').value) || 1.0;
+      const AMP_LIMIT = 3.0;
+      const fbMode = effectiveLayer === 'fbprob';
+      const zData = new Array(rows);
+      for (let r = 0; r < rows; r++) {
+        const row = new Float32Array(cols);
+        const offset = r * cols;
+        for (let c = 0; c < cols; c++) {
+          let val = values[offset + c];
+          if (fbMode) {
+            row[c] = val * 255;
+          } else {
+            val *= gain;
+            if (val > AMP_LIMIT) val = AMP_LIMIT;
+            else if (val < -AMP_LIMIT) val = -AMP_LIMIT;
+            row[c] = val;
+          }
+        }
+        zData[r] = row;
+      }
+
+      const xVals = new Float32Array(cols);
+      for (let c = 0; c < cols; c++) xVals[c] = x0 + c * stepX;
+
+      const baseDt = window.defaultDt ?? defaultDt;
+      const yVals = new Float32Array(rows);
+      for (let r = 0; r < rows; r++) yVals[r] = (y0 + r * stepY) * baseDt;
+
+      downsampleFactor = stepY || 1;
+      renderedStart = x0;
+      renderedEnd = x1;
+
+      const cmName = document.getElementById('colormap')?.value || 'Greys';
+      const reverse = document.getElementById('cmReverse')?.checked || false;
+      const cm = COLORMAPS[cmName] || 'Greys';
+      const isDiv = cmName === 'RdBu' || cmName === 'BWR';
+      const zMin = fbMode ? 0 : -AMP_LIMIT;
+      const zMax = fbMode ? 255 : AMP_LIMIT;
+
+      const traces = [{
+        type: 'heatmap',
+        x: xVals,
+        y: yVals,
+        z: zData,
+        colorscale: cm,
+        reversescale: reverse,
+        zmin: zMin,
+        zmax: zMax,
+        ...(fbMode ? {} : (isDiv ? { zmid: 0 } : {})),
+        showscale: false,
+        hoverinfo: 'x+y',
+        hovertemplate: '',
+      }];
+
+      const totalTraces = sectionShape ? sectionShape[0] : x1 - x0 + 1;
+      const totalSamples = sectionShape ? sectionShape[1] : y1 - y0 + 1;
+      const layout = {
+        xaxis: {
+          title: 'Trace',
+          showgrid: false,
+          tickfont: { color: '#000' },
+          titlefont: { color: '#000' },
+          autorange: !savedXRange,
+          range: savedXRange ?? [x0, x1],
+        },
+        yaxis: {
+          title: 'Time (s)',
+          showgrid: false,
+          tickfont: { color: '#000' },
+          titlefont: { color: '#000' },
+          autorange: false,
+          range: savedYRange ?? [totalSamples * baseDt, 0],
+        },
+        paper_bgcolor: '#fff',
+        plot_bgcolor: '#fff',
+        margin: { t: 10, r: 10, l: 60, b: 40 },
+        dragmode: isPickMode ? false : 'zoom',
+        ...(fbMode ? { title: 'First-break Probability' } : {}),
+      };
+
+      const manualShapes = picks.map((p) => ({
+        type: 'line',
+        x0: p.trace - 0.4,
+        x1: p.trace + 0.4,
+        y0: p.time,
+        y1: p.time,
+        line: { color: 'red', width: 2 },
+      }));
+
+      const showPred = document.getElementById('showFbPred')?.checked;
+      const predShapes = (showPred ? predictedPicks : [])
+        .filter((p) => p.trace >= x0 && p.trace <= x1)
+        .map((p) => ({
+          type: 'line',
+          x0: p.trace - 0.4,
+          x1: p.trace + 0.4,
+          y0: p.time,
+          y1: p.time,
+          line: { color: '#1f77b4', width: 5, dash: 'dot' },
+        }));
+
+      layout.shapes = [...manualShapes, ...predShapes];
+
+      Plotly.react(plotDiv, traces, layout, {
+        responsive: true,
+        editable: true,
+        modeBarButtonsToAdd: ['eraseshape'],
+        edits: { shapePosition: false },
+      });
+      setTimeout(() => Plotly.Plots.resize(plotDiv), 50);
+
+      plotDiv.removeAllListeners('plotly_relayout');
+      plotDiv.removeAllListeners('plotly_click');
+      plotDiv.on('plotly_relayout', handleRelayout);
+      if (isPickMode) {
+        plotDiv.on('plotly_click', handlePlotClick);
+      }
+    }
+
+    function renderLatestView(startOverride = null, endOverride = null) {
+      const sel = document.getElementById('layerSelect');
+      const layer = sel ? sel.value : 'raw';
+      const slider = document.getElementById('key1_idx_slider');
+      const idx = slider ? parseInt(slider.value, 10) : 0;
+      const key1Val = key1Values[idx];
+
+      if (latestSeismicData) {
+        const startTrace = typeof startOverride === 'number'
+          ? startOverride
+          : (typeof renderedStart === 'number' ? renderedStart : 0);
+        const endTrace = typeof endOverride === 'number'
+          ? endOverride
+          : (typeof renderedEnd === 'number'
+            ? renderedEnd
+            : latestSeismicData.length - 1);
+        plotSeismicData(latestSeismicData, defaultDt, startTrace, endTrace);
+        return;
+      }
+
+      if (
+        latestWindowRender &&
+        latestWindowRender.requestedLayer === layer &&
+        latestWindowRender.key1 === key1Val
+      ) {
+        if (layer !== 'raw') {
+          const pipelineKeyNow = window.latestPipelineKey || null;
+          if ((latestWindowRender.pipelineKey || null) !== (pipelineKeyNow || null)) {
+            return;
+          }
+        }
+        renderWindowHeatmap(latestWindowRender);
+      }
+    }
+
+    async function fetchWindowAndPlot() {
+      if (!currentFileId || !sectionShape) return;
+      const slider = document.getElementById('key1_idx_slider');
+      if (!slider) return;
+      const idx = parseInt(slider.value, 10);
+      const key1Val = key1Values[idx];
+      if (key1Val === undefined) return;
+
+      const windowInfo = currentVisibleWindow();
+      if (!windowInfo) return;
+
+      const plotDiv = document.getElementById('plot');
+      if (!plotDiv) return;
+
+      const widthPx = plotDiv.clientWidth || plotDiv.offsetWidth || 1;
+      const heightPx = plotDiv.clientHeight || plotDiv.offsetHeight || 1;
+      const { step_x, step_y } = computeStepsForWindow({
+        tracesVisible: windowInfo.nTraces,
+        samplesVisible: windowInfo.nSamples,
+        widthPx,
+        heightPx,
+      });
+
+      const sel = document.getElementById('layerSelect');
+      const requestedLayer = sel ? sel.value : 'raw';
+      const pipelineKeyNow = window.latestPipelineKey || null;
+
+      let effectiveLayer = requestedLayer;
+      let tapLabel = null;
+      if (requestedLayer !== 'raw') {
+        if (pipelineKeyNow) {
+          tapLabel = requestedLayer;
+        } else {
+          effectiveLayer = 'raw';
+        }
+      } else {
+        effectiveLayer = 'raw';
+      }
+
+      if (effectiveLayer === 'raw' && latestSeismicData && step_x === 1 && step_y === 1) {
+        return;
+      }
+      if (tapLabel && latestTapData[requestedLayer] && step_x === 1 && step_y === 1) {
+        latestSeismicData = latestTapData[requestedLayer];
+        renderLatestView(windowInfo.x0, windowInfo.x1);
+        return;
+      }
+
+      const params = new URLSearchParams({
+        file_id: currentFileId,
+        key1_idx: String(key1Val),
+        key1_byte: String(currentKey1Byte),
+        key2_byte: String(currentKey2Byte),
+        x0: String(windowInfo.x0),
+        x1: String(windowInfo.x1),
+        y0: String(windowInfo.y0),
+        y1: String(windowInfo.y1),
+        step_x: String(step_x),
+        step_y: String(step_y),
+      });
+      if (tapLabel && pipelineKeyNow) {
+        params.set('pipeline_key', pipelineKeyNow);
+        params.set('tap_label', tapLabel);
+      }
+
+      const requestId = ++windowFetchToken;
+      try {
+        const res = await fetch(`/get_section_window_bin?${params.toString()}`);
+        if (!res.ok) {
+          console.warn('Window fetch failed', res.status);
+          return;
+        }
+        const bin = new Uint8Array(await res.arrayBuffer());
+        if (requestId !== windowFetchToken) return;
+        const obj = msgpack.decode(bin);
+        const int8 = new Int8Array(obj.data.buffer);
+        const values = Float32Array.from(int8, (v) => v / obj.scale);
+        const shapeRaw = Array.isArray(obj.shape) ? obj.shape : Array.from(obj.shape ?? []);
+        if (shapeRaw.length !== 2) {
+          console.warn('Unexpected window shape', obj.shape);
+          return;
+        }
+        const rows = Number(shapeRaw[0]);
+        const cols = Number(shapeRaw[1]);
+        latestWindowRender = {
+          key1: key1Val,
+          requestedLayer,
+          effectiveLayer,
+          pipelineKey: tapLabel ? pipelineKeyNow : null,
+          x0: windowInfo.x0,
+          x1: windowInfo.x1,
+          y0: windowInfo.y0,
+          y1: windowInfo.y1,
+          stepX: step_x,
+          stepY: step_y,
+          shape: [rows, cols],
+          values,
+        };
+        latestSeismicData = null;
+        renderWindowHeatmap(latestWindowRender);
+      } catch (err) {
+        if (requestId === windowFetchToken) console.warn('Window fetch error', err);
+      }
+    }
+
+    const scheduleWindowFetch = debounce(() => {
+      fetchWindowAndPlot().catch((err) => console.warn('Window fetch failed', err));
+    }, WINDOW_FETCH_DEBOUNCE_MS);
 
     function visibleTraceIndices(range, total) {
       let start = Math.floor(range[0]);
@@ -1522,7 +1949,7 @@
         const promises = toDelete.map(p => deletePick(Math.round(p.trace)));
         picks = picks.filter(p => Math.round(p.trace) < start || Math.round(p.trace) > end);
         await Promise.all(promises);
-        plotSeismicData(latestSeismicData, defaultDt, renderedStart, renderedEnd);
+        renderLatestView();
         return;
       }
 
@@ -1554,7 +1981,7 @@
           promises.push(postPick(x, snapped));
         }
         await Promise.all(promises);
-        plotSeismicData(latestSeismicData, defaultDt, renderedStart, renderedEnd);
+        renderLatestView();
         return;
       }
 
@@ -1570,7 +1997,7 @@
       picks.push({ trace, time });
       promises.push(postPick(trace, time));
       await Promise.all(promises);
-      plotSeismicData(latestSeismicData, defaultDt, renderedStart, renderedEnd);
+      renderLatestView();
     }
 
     async function handleRelayout(ev) {
@@ -1592,8 +2019,12 @@
         const [s, e] = savedXRange ? visibleTraceIndices(savedXRange, latestSeismicData.length)
           : [0, latestSeismicData.length - 1];
         if (s !== renderedStart || e !== renderedEnd) {
-          plotSeismicData(latestSeismicData, defaultDt, s, e);
+          renderLatestView(s, e);
+        } else {
+          renderLatestView();
         }
+      } else if (latestWindowRender) {
+        renderLatestView();
       }
 
       if (Array.isArray(ev.shapes)) {
@@ -1613,6 +2044,7 @@
         }
         picks = newPicks;
       }
+      scheduleWindowFetch();
     }
 
     window.addEventListener('DOMContentLoaded', loadSettings);
