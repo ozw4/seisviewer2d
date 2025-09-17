@@ -466,6 +466,7 @@
     var latestPipelineKey = null;
     var latestWindowRender = null;
     var windowFetchToken = 0;
+    var windowFetchAbort = null;
     const defaultDt = 0.002;
     const PREFETCH_WIDTH = 3;
     const FALLBACK_MAX = 8;
@@ -1892,15 +1893,21 @@
         params.set('tap_label', tapLabel);
       }
 
+      if (windowFetchAbort) {
+        try { windowFetchAbort.abort(); } catch (_) {}
+      }
+      const ac = new AbortController();
+      windowFetchAbort = ac;
       const requestId = ++windowFetchToken;
       try {
-        const res = await fetch(`/get_section_window_bin?${params.toString()}`);
+        const res = await fetch(`/get_section_window_bin?${params.toString()}`, { signal: ac.signal });
         if (!res.ok) {
           console.warn('Window fetch failed', res.status);
           return;
         }
         const bin = new Uint8Array(await res.arrayBuffer());
         if (requestId !== windowFetchToken) return;
+        if (windowFetchAbort !== ac) return;
         const obj = msgpack.decode(bin);
         const int8 = new Int8Array(obj.data.buffer);
         const values = Float32Array.from(int8, (v) => v / obj.scale);
@@ -1934,7 +1941,11 @@
           renderWindowHeatmap(windowPayload);
         }
       } catch (err) {
-        if (requestId === windowFetchToken) console.warn('Window fetch error', err);
+        if (!(err && err.name === 'AbortError')) {
+          if (requestId === windowFetchToken) console.warn('Window fetch error', err);
+        }
+      } finally {
+        if (windowFetchAbort === ac) windowFetchAbort = null;
       }
     }
 
