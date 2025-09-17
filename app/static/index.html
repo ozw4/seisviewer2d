@@ -1599,6 +1599,7 @@
         y0: p.time,
         y1: p.time,
         line: { color: 'red', width: 2 },
+        layer: 'below',
       }));
 
       const showPred = document.getElementById('showFbPred')?.checked;
@@ -1611,6 +1612,7 @@
           y0: p.time,
           y1: p.time,
           line: { color: '#1f77b4', width: 5, dash: 'dot' },
+          layer: 'below',
         }));
 
       layout.shapes = [...manualShapes, ...predShapes];
@@ -1621,6 +1623,13 @@
         modeBarButtonsToAdd: ['eraseshape'],
         edits: { shapePosition: false },
       });
+      if (typeof plotDiv.on === 'function') {
+        plotDiv.removeAllListeners && plotDiv.removeAllListeners('plotly_afterplot');
+        plotDiv.on('plotly_afterplot', () => bindPlotHandlers(plotDiv));
+        }
+
+
+
       setTimeout(() => {
         suppressRelayout = true;
         Plotly.Plots.resize(plotDiv);
@@ -1764,6 +1773,11 @@
         modeBarButtonsToAdd: ['eraseshape'],
         edits: { shapePosition: false },
       });
+
+      if (typeof plotDiv.on === 'function') {
+          plotDiv.removeAllListeners && plotDiv.removeAllListeners('plotly_afterplot');
+          plotDiv.on('plotly_afterplot', () => bindPlotHandlers(plotDiv));
+        }
       setTimeout(() => {
         suppressRelayout = true;
         Plotly.Plots.resize(plotDiv);
@@ -2078,7 +2092,7 @@
         type: 'line',
         x0: p.trace - 0.4, x1: p.trace + 0.4,
         y0: p.time, y1: p.time,
-        line: { color: 'red', width: 2 }
+        line: { color: 'red', width: 2 },
       }));
 
       const showPred = document.getElementById('showFbPred')?.checked;
@@ -2088,7 +2102,7 @@
           type: 'line',
           x0: p.trace - 0.4, x1: p.trace + 0.4,
           y0: p.time, y1: p.time,
-          line: { color: '#1f77b4', width: 5, dash: 'dot' }
+          line: { color: '#1f77b4', width: 5, dash: 'dot' },
         }));
 
       layout.shapes = [...manualShapes, ...predShapes];
@@ -2099,6 +2113,11 @@
         modeBarButtonsToAdd: ['eraseshape'],
         edits: { shapePosition: false }
       });
+      if (typeof plotDiv.on === 'function') {
+          plotDiv.removeAllListeners && plotDiv.removeAllListeners('plotly_afterplot');
+          plotDiv.on('plotly_afterplot', () => bindPlotHandlers(plotDiv));
+        }
+
       setTimeout(() => {
         suppressRelayout = true;
         Plotly.Plots.resize(plotDiv);
