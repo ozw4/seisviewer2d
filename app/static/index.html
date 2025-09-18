@@ -307,6 +307,13 @@
     .hidden {
       display: none !important;
     }
+
+    /* ① pick mode 中は Plotly の shapelayer がクリックを横取りしないようにする */
+    /* heatmap 上でのピック用。wiggle でも副作用はありません。 */
+    .pick-mode .shapelayer path,
+    .pick-mode .shapelayer line {
+      pointer-events: none;
+    }
   </style>
 </head>
 
@@ -466,6 +473,7 @@
     var latestPipelineKey = null;
     var latestWindowRender = null;
     var windowFetchToken = 0;
+    var windowFetchAbort = null;
     const defaultDt = 0.002;
     const PREFETCH_WIDTH = 3;
     const FALLBACK_MAX = 8;
@@ -512,6 +520,24 @@
       Cividis: 'Cividis',
       Jet: 'Jet',
     };
+
+    // Click handler that is always attached; pick mode gating is done here
+    function onPlotlyClick(ev) {
+      if (!isPickMode) return;
+      return handlePlotClick(ev);
+    }
+
+    // Central place to (re)bind plot handlers
+    function bindPlotHandlers(plotDiv) {
+      if (!plotDiv || typeof plotDiv.removeAllListeners !== 'function') return;
+
+      // Remove then re-attach to prevent accumulation / duplicates
+      plotDiv.removeAllListeners('plotly_click');
+      plotDiv.removeAllListeners('plotly_relayout');
+
+      plotDiv.on('plotly_click', onPlotlyClick);
+      plotDiv.on('plotly_relayout', handleRelayout);
+    }
 
     (function () {
       const saved = localStorage.getItem('denoise_params');
@@ -1010,6 +1036,7 @@
       btn.classList.toggle('active', isPickMode);
       linePickStart = null;
       deleteRangeStart = null;
+      document.body.classList.toggle('pick-mode', isPickMode);
       renderLatestView();
     }
 
@@ -1580,6 +1607,7 @@
         y0: p.time,
         y1: p.time,
         line: { color: 'red', width: 2 },
+        layer: 'below',
       }));
 
       const showPred = document.getElementById('showFbPred')?.checked;
@@ -1592,6 +1620,7 @@
           y0: p.time,
           y1: p.time,
           line: { color: '#1f77b4', width: 5, dash: 'dot' },
+          layer: 'below',
         }));
 
       layout.shapes = [...manualShapes, ...predShapes];
@@ -1602,18 +1631,21 @@
         modeBarButtonsToAdd: ['eraseshape'],
         edits: { shapePosition: false },
       });
+      if (typeof plotDiv.on === 'function') {
+        plotDiv.removeAllListeners && plotDiv.removeAllListeners('plotly_afterplot');
+        plotDiv.on('plotly_afterplot', () => bindPlotHandlers(plotDiv));
+        }
+
+
+
       setTimeout(() => {
         suppressRelayout = true;
         Plotly.Plots.resize(plotDiv);
         suppressRelayout = false;
       }, 50);
 
-      plotDiv.removeAllListeners('plotly_relayout');
-      plotDiv.removeAllListeners('plotly_click');
-      plotDiv.on('plotly_relayout', handleRelayout);
-      if (isPickMode) {
-        plotDiv.on('plotly_click', handlePlotClick);
-      }
+      // Always (re)attach handlers in one place
+      bindPlotHandlers(plotDiv);
     }
 
     function renderWindowHeatmap(windowData) {
@@ -1749,18 +1781,19 @@
         modeBarButtonsToAdd: ['eraseshape'],
         edits: { shapePosition: false },
       });
+
+      if (typeof plotDiv.on === 'function') {
+          plotDiv.removeAllListeners && plotDiv.removeAllListeners('plotly_afterplot');
+          plotDiv.on('plotly_afterplot', () => bindPlotHandlers(plotDiv));
+        }
       setTimeout(() => {
         suppressRelayout = true;
         Plotly.Plots.resize(plotDiv);
         suppressRelayout = false;
       }, 50);
 
-      plotDiv.removeAllListeners('plotly_relayout');
-      plotDiv.removeAllListeners('plotly_click');
-      plotDiv.on('plotly_relayout', handleRelayout);
-      if (isPickMode) {
-        plotDiv.on('plotly_click', handlePlotClick);
-      }
+      // Always (re)attach handlers in one place
+      bindPlotHandlers(plotDiv);
     }
 
     function renderLatestView(startOverride = null, endOverride = null) {
@@ -1882,15 +1915,21 @@
         params.set('tap_label', tapLabel);
       }
 
+      if (windowFetchAbort) {
+        try { windowFetchAbort.abort(); } catch (_) {}
+      }
+      const ac = new AbortController();
+      windowFetchAbort = ac;
       const requestId = ++windowFetchToken;
       try {
-        const res = await fetch(`/get_section_window_bin?${params.toString()}`);
+        const res = await fetch(`/get_section_window_bin?${params.toString()}`, { signal: ac.signal });
         if (!res.ok) {
           console.warn('Window fetch failed', res.status);
           return;
         }
         const bin = new Uint8Array(await res.arrayBuffer());
         if (requestId !== windowFetchToken) return;
+        if (windowFetchAbort !== ac) return;
         const obj = msgpack.decode(bin);
         const int8 = new Int8Array(obj.data.buffer);
         const values = Float32Array.from(int8, (v) => v / obj.scale);
@@ -1924,7 +1963,11 @@
           renderWindowHeatmap(windowPayload);
         }
       } catch (err) {
-        if (requestId === windowFetchToken) console.warn('Window fetch error', err);
+        if (!(err && err.name === 'AbortError')) {
+          if (requestId === windowFetchToken) console.warn('Window fetch error', err);
+        }
+      } finally {
+        if (windowFetchAbort === ac) windowFetchAbort = null;
       }
     }
 
@@ -2057,7 +2100,7 @@
         type: 'line',
         x0: p.trace - 0.4, x1: p.trace + 0.4,
         y0: p.time, y1: p.time,
-        line: { color: 'red', width: 2 }
+        line: { color: 'red', width: 2 },
       }));
 
       const showPred = document.getElementById('showFbPred')?.checked;
@@ -2067,7 +2110,7 @@
           type: 'line',
           x0: p.trace - 0.4, x1: p.trace + 0.4,
           y0: p.time, y1: p.time,
-          line: { color: '#1f77b4', width: 5, dash: 'dot' }
+          line: { color: '#1f77b4', width: 5, dash: 'dot' },
         }));
 
       layout.shapes = [...manualShapes, ...predShapes];
@@ -2078,6 +2121,11 @@
         modeBarButtonsToAdd: ['eraseshape'],
         edits: { shapePosition: false }
       });
+      if (typeof plotDiv.on === 'function') {
+          plotDiv.removeAllListeners && plotDiv.removeAllListeners('plotly_afterplot');
+          plotDiv.on('plotly_afterplot', () => bindPlotHandlers(plotDiv));
+        }
+
       setTimeout(() => {
         suppressRelayout = true;
         Plotly.Plots.resize(plotDiv);
@@ -2087,12 +2135,8 @@
       renderedEnd = endTrace;
       console.log(`Rendered traces ${startTrace}-${endTrace}`);
 
-      plotDiv.removeAllListeners('plotly_relayout');
-      plotDiv.removeAllListeners('plotly_click');
-      plotDiv.on('plotly_relayout', handleRelayout);
-      if (isPickMode) {
-        plotDiv.on('plotly_click', handlePlotClick);
-      }
+      // Always (re)attach handlers in one place
+      bindPlotHandlers(plotDiv);
     }
 
     function pickOnTrace(trace) {
@@ -2197,7 +2241,7 @@
     }
 
     async function handleRelayout(ev) {
-      if (suppressRelayout) return;
+      if (typeof suppressRelayout !== 'undefined' && suppressRelayout) return;
       const plotDiv = document.getElementById('plot');
       if ('xaxis.range[0]' in ev && 'xaxis.range[1]' in ev) {
         savedXRange = [ev['xaxis.range[0]'], ev['xaxis.range[1]']];
@@ -2249,7 +2293,16 @@
       scheduleWindowFetch();
     }
 
-    window.addEventListener('DOMContentLoaded', loadSettings);
+    window.addEventListener('DOMContentLoaded', () => {
+      loadSettings();
+      const plotDiv = document.getElementById('plot');
+      if (plotDiv && typeof plotDiv.on === 'function') {
+        // Re-bind after every Plotly internal “afterplot” (e.g., react/resize/layout changes)
+        plotDiv.on('plotly_afterplot', () => {
+          bindPlotHandlers(plotDiv);
+        });
+      }
+    });
 
     // Toggle between raw and first tap with the "n" key
     window.addEventListener('keydown', (e) => {
