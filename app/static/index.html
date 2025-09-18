@@ -307,6 +307,13 @@
     .hidden {
       display: none !important;
     }
+
+    /* ① pick mode 中は Plotly の shapelayer がクリックを横取りしないようにする */
+    /* heatmap 上でのピック用。wiggle でも副作用はありません。 */
+    .pick-mode .shapelayer path,
+    .pick-mode .shapelayer line {
+      pointer-events: none;
+    }
   </style>
 </head>
 
@@ -1029,6 +1036,7 @@
       btn.classList.toggle('active', isPickMode);
       linePickStart = null;
       deleteRangeStart = null;
+      document.body.classList.toggle('pick-mode', isPickMode);
       renderLatestView();
     }
 
