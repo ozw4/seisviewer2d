@@ -1,3 +1,7 @@
+"""Utility helpers for working with SEG-Y sections and cached traces."""
+
+from __future__ import annotations
+
 import json
 import os
 from pathlib import Path
@@ -6,131 +10,188 @@ import numpy as np
 import segyio
 
 
-def to_builtin(o):
-	import numpy as np
+def to_builtin(obj: object) -> object:
+    """Recursively convert numpy containers to built-in Python types."""
+    if isinstance(obj, np.ndarray):
+        return obj.tolist()
+    if isinstance(obj, (np.floating, np.integer)):
+        return obj.item()
+    if isinstance(obj, dict):
+        return {key: to_builtin(val) for key, val in obj.items()}
+    if isinstance(obj, (list, tuple)):
+        return [to_builtin(val) for val in obj]
+    return obj
 
-	if isinstance(o, np.ndarray):
-		return o.tolist()
-	if isinstance(o, (np.floating, np.integer)):
-		return o.item()
-	if isinstance(o, dict):
-		return {k: to_builtin(v) for k, v in o.items()}
-	if isinstance(o, (list, tuple)):
-		return [to_builtin(v) for v in o]
-	return o
 
-
-def quantize_float32(arr: np.ndarray, bits: int = 8, fixed_scale: float | None = None):
-	qmax = (1 << (bits - 1)) - 1  # 127
-	# 環境変数で既定値を上書き可能。例: FIXED_INT8_SCALE=42.333
-	default = float(os.getenv('FIXED_INT8_SCALE', '42.333333'))
-	scale = float(fixed_scale) if fixed_scale is not None else default
-	q = np.clip(np.round(arr * scale), -qmax, qmax).astype(np.int8)
-	return scale, q
+def quantize_float32(
+    arr: np.ndarray, *, bits: int = 8, fixed_scale: float | None = None
+) -> tuple[float, np.ndarray]:
+    """Quantize ``arr`` into int8 with an optional externally provided scale."""
+    qmax = (1 << (bits - 1)) - 1
+    default_scale = float(os.getenv("FIXED_INT8_SCALE", "42.333333"))
+    scale = float(fixed_scale) if fixed_scale is not None else default_scale
+    q = np.clip(np.round(arr * scale), -qmax, qmax).astype(np.int8)
+    return scale, q
 
 
 class SegySectionReader:
-	def __init__(self, path, key1_byte=189, key2_byte=193):
-		self.path = path
-		self.key1_byte = key1_byte
-		self.key2_byte = key2_byte
-		self.section_cache = {}  # ← sectionごとのキャッシュ
-		self._initialize_metadata()
+    """Read SEG-Y sections and associated trace headers."""
 
-	def _initialize_metadata(self):
-		with segyio.open(self.path, 'r', ignore_geometry=True) as f:
-			f.mmap()
-			self.key1s = f.attributes(self.key1_byte)[:]
-			self.key2s = f.attributes(self.key2_byte)[:]
-		self.unique_key1 = np.unique(self.key1s)
+    def __init__(
+        self,
+        path: str | os.PathLike[str],
+        key1_byte: int = 189,
+        key2_byte: int = 193,
+    ) -> None:
+        """Initialize the SEG-Y reader with header byte settings."""
+        self.path = Path(path)
+        self.key1_byte = key1_byte
+        self.key2_byte = key2_byte
+        self.section_cache: dict[int, list[list[float]]] = {}
+        self._initialize_metadata()
 
-	def get_key1_values(self):
-		return self.unique_key1
+    def _initialize_metadata(self) -> None:
+        with segyio.open(self.path, "r", ignore_geometry=True) as f:
+            f.mmap()
+            self.key1s = f.attributes(self.key1_byte)[:]
+            self.key2s = f.attributes(self.key2_byte)[:]
+        self.unique_key1 = np.unique(self.key1s)
 
-	def get_section(self, key1_val):
-		# キャッシュにあれば返す
-		if key1_val in self.section_cache:
-			return self.section_cache[key1_val]
+    def get_key1_values(self) -> np.ndarray:
+        """Return the available values for header ``key1``."""
+        return self.unique_key1
 
-		# なければSEGYから読み込む
-		indices = np.where(self.key1s == key1_val)[0]
-		print(len(indices), 'indices found for key1_val:', key1_val)
-		if len(indices) == 0:
-			raise ValueError(f'Key1 value {key1_val} not found')
+    def get_section(self, key1_val: int) -> list[list[float]]:
+        """Return the z-scored section for ``key1_val``."""
+        if key1_val in self.section_cache:
+            return self.section_cache[key1_val]
 
-		# key2でソート
-		key2_vals = self.key2s[indices]
-		sorted_indices = indices[np.argsort(key2_vals)]
+        indices = np.where(self.key1s == key1_val)[0]
+        print(len(indices), "indices found for key1_val:", key1_val)
+        if len(indices) == 0:
+            msg = f"Key1 value {key1_val} not found"
+            raise ValueError(msg)
 
-		with segyio.open(self.path, 'r', ignore_geometry=True) as f:
-			f.mmap()
-			traces = np.array([f.trace[i] for i in sorted_indices], dtype='float32')
-			# --- z-score 正規化（トレース毎）: 平均0・標準偏差1 ---
-			mean = traces.mean(axis=1, keepdims=True)
-			std = traces.std(axis=1, keepdims=True)
-			std[std == 0] = 1.0  # 定常/ゼロトレース対策
-			section = ((traces - mean) / std).tolist()
+        key2_vals = self.key2s[indices]
+        sorted_indices = indices[np.argsort(key2_vals, kind="stable")]
 
-		# キャッシュに保存
-		self.section_cache[key1_val] = section
-		return section
+        with segyio.open(self.path, "r", ignore_geometry=True) as f:
+            f.mmap()
+            traces = np.array([f.trace[idx] for idx in sorted_indices], dtype="float32")
+            mean = traces.mean(axis=1, keepdims=True)
+            std = traces.std(axis=1, keepdims=True)
+            std[std == 0] = 1.0
+            section = ((traces - mean) / std).tolist()
 
-	def preload_all_sections(self):
-		for key1_val in self.unique_key1:
-			self.get_section(key1_val)
+        self.section_cache[key1_val] = section
+        return section
+
+    def get_offsets_for_section(self, key1_val: int, offset_byte: int) -> np.ndarray:
+        """Return ``(W,)`` float32 offsets aligned with :meth:`get_section`."""
+        indices = np.where(self.key1s == key1_val)[0]
+        print(len(indices), "indices found for key1_val:", key1_val)
+        if len(indices) == 0:
+            msg = f"Key1 value {key1_val} not found"
+            raise ValueError(msg)
+
+        key2_vals = self.key2s[indices]
+        sorted_indices = indices[np.argsort(key2_vals, kind="stable")]
+
+        with segyio.open(self.path, "r", ignore_geometry=True) as f:
+            f.mmap()
+            attr = f.attributes(offset_byte)
+            offsets = np.asarray(attr[sorted_indices], dtype=np.float32)
+        return np.ascontiguousarray(offsets)
+
+    def preload_all_sections(self) -> None:
+        """Populate the section cache for every ``key1`` value."""
+        for key1_val in self.unique_key1:
+            self.get_section(int(key1_val))
 
 
 class TraceStoreSectionReader:
-	def __init__(
-		self, store_dir: str | Path, key1_byte: int = 189, key2_byte: int = 193
-	):
-		self.store_dir = Path(store_dir)
-		self.key1_byte = key1_byte
-		self.key2_byte = key2_byte
-		meta_path = self.store_dir / 'meta.json'
-		self.meta = json.loads(meta_path.read_text())
-		self.traces = np.load(self.store_dir / 'traces.npy', mmap_mode='r')
-		self.section_cache: dict[int, list[list[float]]] = {}
+    """Read cached traces and headers generated from SEG-Y files."""
 
-	def _header_path(self, byte: int) -> Path:
-		return self.store_dir / f'headers_byte_{byte}.npy'
+    def __init__(
+        self,
+        store_dir: str | Path,
+        key1_byte: int = 189,
+        key2_byte: int = 193,
+    ) -> None:
+        """Initialize the trace-store reader for cached sections."""
+        self.store_dir = Path(store_dir)
+        self.key1_byte = key1_byte
+        self.key2_byte = key2_byte
+        meta_path = self.store_dir / "meta.json"
+        self.meta = json.loads(meta_path.read_text())
+        self.traces = np.load(self.store_dir / "traces.npy", mmap_mode="r")
+        self.section_cache: dict[int, list[list[float]]] = {}
 
-	def ensure_header(self, byte: int) -> np.ndarray:
-		p = self._header_path(byte)
-		if p.exists():
-			return np.load(p, mmap_mode='r')
-		print(f'Extracting header byte {byte} for {self.store_dir}')
-		with segyio.open(
-			self.meta['original_segy_path'], 'r', ignore_geometry=True
-		) as f:
-			f.mmap()
-			vals = f.attributes(byte)[:].astype(np.int32)
-		tmp = p.with_name(p.stem + '_tmp.npy')
-		np.save(tmp, vals)
-		os.replace(tmp, p)
-		return np.load(p, mmap_mode='r')
+    def _header_path(self, byte: int) -> Path:
+        return self.store_dir / f"headers_byte_{byte}.npy"
 
-	def _get_header(self, byte: int) -> np.ndarray:
-		return self.ensure_header(byte)
+    def ensure_header(self, byte: int) -> np.ndarray:
+        """Ensure the header array for ``byte`` exists on disk and return it."""
+        path = self._header_path(byte)
+        if path.exists():
+            return np.load(path, mmap_mode="r")
 
-	def get_key1_values(self):
-		key1s = self._get_header(self.key1_byte)
-		return np.unique(key1s)
+        print(f"Extracting header byte {byte} for {self.store_dir}")
+        with segyio.open(
+            self.meta["original_segy_path"],
+            "r",
+            ignore_geometry=True,
+        ) as f:
+            f.mmap()
+            values = f.attributes(byte)[:].astype(np.int32)
 
-	def get_section(self, key1_val: int):
-		if key1_val in self.section_cache:
-			return self.section_cache[key1_val]
-		key1s = self._get_header(self.key1_byte)
-		indices = np.where(key1s == key1_val)[0]
-		print(len(indices), 'indices found for key1_val:', key1_val)
-		if len(indices) == 0:
-			raise ValueError(f'Key1 value {key1_val} not found')
-		key2s = self._get_header(self.key2_byte)[indices]
-		sorted_indices = indices[np.argsort(key2s, kind='stable')]
-		section = self.traces[sorted_indices].tolist()
-		self.section_cache[key1_val] = section
-		return section
+        tmp_path = path.with_name(path.stem + "_tmp.npy")
+        np.save(tmp_path, values)
+        tmp_path.replace(path)
+        return np.load(path, mmap_mode="r")
 
-	def preload_all_sections(self):
-		self._get_header(self.key1_byte)
-		self._get_header(self.key2_byte)
+    def _get_header(self, byte: int) -> np.ndarray:
+        return self.ensure_header(byte)
+
+    def get_key1_values(self) -> np.ndarray:
+        """Return the available ``key1`` header values."""
+        key1s = self._get_header(self.key1_byte)
+        return np.unique(key1s)
+
+    def get_section(self, key1_val: int) -> list[list[float]]:
+        """Return the cached section for ``key1_val``."""
+        if key1_val in self.section_cache:
+            return self.section_cache[key1_val]
+
+        key1s = self._get_header(self.key1_byte)
+        indices = np.where(key1s == key1_val)[0]
+        print(len(indices), "indices found for key1_val:", key1_val)
+        if len(indices) == 0:
+            msg = f"Key1 value {key1_val} not found"
+            raise ValueError(msg)
+
+        key2s = self._get_header(self.key2_byte)[indices]
+        sorted_indices = indices[np.argsort(key2s, kind="stable")]
+        section = self.traces[sorted_indices].tolist()
+        self.section_cache[key1_val] = section
+        return section
+
+    def get_offsets_for_section(self, key1_val: int, offset_byte: int) -> np.ndarray:
+        """Return ``(W,)`` float32 offsets aligned with :meth:`get_section`."""
+        key1s = self._get_header(self.key1_byte)
+        indices = np.where(key1s == key1_val)[0]
+        print(len(indices), "indices found for key1_val:", key1_val)
+        if len(indices) == 0:
+            msg = f"Key1 value {key1_val} not found"
+            raise ValueError(msg)
+
+        key2s = self._get_header(self.key2_byte)[indices]
+        sorted_indices = indices[np.argsort(key2s, kind="stable")]
+        header = self.ensure_header(offset_byte)
+        offsets = np.asarray(header[sorted_indices], dtype=np.float32)
+        return np.ascontiguousarray(offsets)
+
+    def preload_all_sections(self) -> None:
+        """Warm caches for the frequently accessed headers."""
+        self._get_header(self.key1_byte)
+        self._get_header(self.key2_byte)

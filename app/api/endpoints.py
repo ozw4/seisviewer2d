@@ -1,9 +1,9 @@
+# ruff: noqa: ANN001, ANN201, ANN204, D100, D101, D102, D103, FAST002, PLR0913,B008
 # endpoint.py
 import asyncio
 import gzip
 import hashlib
 import json
-import os
 import pathlib
 import re
 import shutil
@@ -12,7 +12,7 @@ import threading
 import traceback
 from collections import OrderedDict
 from pathlib import Path
-from typing import Any, Literal
+from typing import Annotated, Any, Literal
 from uuid import uuid4
 
 import msgpack
@@ -45,6 +45,8 @@ from utils.utils import (
 	quantize_float32,
 	to_builtin,
 )
+
+USE_FBPICK_OFFSET = 'offset' in FBPICK_MODEL_PATH.name.lower()
 
 router = APIRouter()
 
@@ -84,6 +86,7 @@ jobs: dict[str, dict[str, object]] = {}
 
 class LRUCache(OrderedDict):
 	def __init__(self, capacity: int = 16):
+		"""Initialize the cache with a maximum size."""
 		super().__init__()
 		self.capacity = capacity
 
@@ -104,6 +107,44 @@ class LRUCache(OrderedDict):
 pipeline_tap_cache = LRUCache(16)
 window_section_cache = LRUCache(32)
 
+EXPECTED_SECTION_NDIM = 2
+
+
+def _spec_uses_fbpick(spec: PipelineSpec) -> bool:
+        """Return True when ``spec`` contains an fbpick analyzer step."""
+        return any(
+                step.kind == 'analyzer' and step.name == 'fbpick'
+                for step in spec.steps
+        )
+
+
+def _maybe_attach_fbpick_offsets(
+        meta: dict[str, Any],
+        *,
+        spec: PipelineSpec,
+        reader: SegySectionReader | TraceStoreSectionReader,
+        key1_idx: int,
+        offset_byte: int | None,
+        trace_slice: slice | None = None,
+) -> dict[str, Any]:
+        """Add offset metadata when the fbpick model expects it."""
+        if not USE_FBPICK_OFFSET or offset_byte is None:
+                return meta
+        if not _spec_uses_fbpick(spec):
+                return meta
+        get_offsets = getattr(reader, 'get_offsets_for_section', None)
+        if get_offsets is None:
+                return meta
+        offsets = get_offsets(key1_idx, offset_byte)
+        if trace_slice is not None:
+                offsets = offsets[trace_slice]
+        offsets = np.ascontiguousarray(offsets, dtype=np.float32)
+        if not meta:
+                return {'offsets': offsets}
+        meta_with_offsets = dict(meta)
+        meta_with_offsets['offsets'] = offsets
+        return meta_with_offsets
+
 
 class PipelineTapNotFoundError(LookupError):
 	"""Raised when a requested pipeline tap output is unavailable."""
@@ -122,7 +163,7 @@ def _pipeline_payload_to_array(payload: object, *, tap_label: str) -> np.ndarray
 			raise ValueError(msg)
 
 	arr = np.asarray(data_obj, dtype=np.float32)
-	if arr.ndim != 2:
+	if arr.ndim != EXPECTED_SECTION_NDIM:
 		msg = f'Pipeline tap {tap_label!r} expected 2D data, got {arr.ndim}D'
 		raise ValueError(msg)
 	return np.ascontiguousarray(arr)
@@ -135,7 +176,7 @@ def get_raw_section(
 	reader = get_reader(file_id, key1_byte, key2_byte)
 	section = reader.get_section(key1_idx)
 	arr = np.asarray(section, dtype=np.float32)
-	if arr.ndim != 2:
+	if arr.ndim != EXPECTED_SECTION_NDIM:
 		msg = f'Raw section expected 2D data, got {arr.ndim}D'
 		raise ValueError(msg)
 	return np.ascontiguousarray(arr)
@@ -148,9 +189,10 @@ def get_section_from_pipeline_tap(
 	key1_byte: int,
 	pipeline_key: str,
 	tap_label: str,
+	offset_byte: int | None = None,
 ) -> np.ndarray:
 	"""Return the cached pipeline tap output as a ``float32`` array."""
-	base_key = (file_id, key1_idx, key1_byte, pipeline_key, None)
+	base_key = (file_id, key1_idx, key1_byte, pipeline_key, None, offset_byte)
 	payload = pipeline_tap_cache.get((*base_key, tap_label))
 	if payload is None:
 		msg = (
@@ -236,6 +278,7 @@ class FbpickRequest(BaseModel):
 	key1_idx: int
 	key1_byte: int = 189
 	key2_byte: int = 193
+	offset_byte: int | None = None
 	tile_h: int = 128
 	tile_w: int = 6016
 	overlap: int = 32
@@ -248,6 +291,7 @@ class PipelineAllRequest(BaseModel):
 	file_id: str
 	key1_byte: int = 189
 	key2_byte: int = 193
+	offset_byte: int | None = None
 	spec: PipelineSpec
 	taps: list[str] = Field(default_factory=list)
 	downsample_quicklook: bool = True
@@ -260,13 +304,13 @@ def _run_denoise_job(job_id: str, req: DenoiseApplyRequest) -> None:
 		if req.scope == 'display':
 			if req.key1_idx is None:
 				msg = 'key1_idx is required for display scope'
-				raise ValueError(msg)
+				raise ValueError(msg)  # noqa: TRY301
 			key1_vals = [req.key1_idx]
 		elif req.scope == 'all_key1':
 			key1_vals = reader.get_key1_values().tolist()
 		else:
 			msg = 'by_header scope not implemented'
-			raise ValueError(msg)
+			raise ValueError(msg)  # noqa: TRY301
 		total = len(key1_vals) or 1
 		params = {
 			'chunk_h': req.chunk_h,
@@ -322,16 +366,18 @@ def _run_denoise_job(job_id: str, req: DenoiseApplyRequest) -> None:
 			tmp.replace(p_latest)
 			denoise_cache[cache_key] = gz
 			denoise_cache[(req.file_id, int(key1_val))] = gz
+			base = DENOISE_DIR / str(req.file_id).replace('/', '_')
 			try:
-				base = DENOISE_DIR / str(req.file_id).replace('/', '_')
 				for child in base.iterdir():
 					if child.is_dir() and child.name not in {param_hash, 'latest'}:
 						shutil.rmtree(child, ignore_errors=True)
-			except Exception:
-				pass
+			except OSError as exc:
+				print(f"Cleanup failed for {base}: {exc}", file=sys.stderr)
+				traceback.print_exc(file=sys.stderr)
+				# Continue even if cleanup fails.
 			job['progress'] = (idx + 1) / total
 		job['status'] = 'done'
-	except Exception as e:
+	except Exception as e:  # noqa: BLE001
 		job['status'] = 'error'
 		job['message'] = str(e)
 
@@ -343,13 +389,13 @@ def _run_bandpass_job(job_id: str, req: BandpassApplyRequest) -> None:
 		if req.scope == 'display':
 			if req.key1_idx is None:
 				msg = 'key1_idx is required for display scope'
-				raise ValueError(msg)
+				raise ValueError(msg)  # noqa: TRY301
 			key1_vals = [req.key1_idx]
 		elif req.scope == 'all_key1':
 			key1_vals = reader.get_key1_values().tolist()
 		else:
 			msg = 'by_header scope not implemented'
-			raise ValueError(msg)
+			raise ValueError(msg)  # noqa: TRY301
 		total = len(key1_vals) or 1
 		params = {
 			'low_hz': req.low_hz,
@@ -393,7 +439,7 @@ def _run_bandpass_job(job_id: str, req: BandpassApplyRequest) -> None:
 			bandpass_cache[cache_key] = gzip.compress(payload)
 			job['progress'] = (idx + 1) / total
 		job['status'] = 'done'
-	except Exception as e:
+	except Exception as e:  # noqa: BLE001
 		job['status'] = 'error'
 		job['message'] = str(e)
 
@@ -404,6 +450,9 @@ def _run_fbpick_job(job_id: str, req: FbpickRequest) -> None:
 	try:
 		cache_key = job['cache_key']
 		section_override = job.pop('section_override', None)
+		reader: SegySectionReader | TraceStoreSectionReader | None = None
+		if USE_FBPICK_OFFSET and req.offset_byte is not None:
+			reader = get_reader(req.file_id, req.key1_byte, req.key2_byte)
 		if section_override is not None:
 			section = np.asarray(section_override, dtype=np.float32)
 		elif req.pipeline_key and req.tap_label:
@@ -413,14 +462,13 @@ def _run_fbpick_job(job_id: str, req: FbpickRequest) -> None:
 				key1_byte=req.key1_byte,
 				pipeline_key=req.pipeline_key,
 				tap_label=req.tap_label,
+				offset_byte=req.offset_byte,
 			)
+			section = np.asarray(section, dtype=np.float32)
 		else:
-			section = get_raw_section(
-				file_id=req.file_id,
-				key1_idx=req.key1_idx,
-				key1_byte=req.key1_byte,
-				key2_byte=req.key2_byte,
-			)
+			if reader is None:
+				reader = get_reader(req.file_id, req.key1_byte, req.key2_byte)
+			section = np.asarray(reader.get_section(req.key1_idx), dtype=np.float32)
 		section = np.ascontiguousarray(section, dtype=np.float32)
 		spec = PipelineSpec(
 			steps=[
@@ -435,7 +483,16 @@ def _run_fbpick_job(job_id: str, req: FbpickRequest) -> None:
 				}
 			]
 		)
-		out = apply_pipeline(section, spec=spec, meta={}, taps=None)
+		meta: dict[str, Any] = {}
+		if reader is not None:
+			meta = _maybe_attach_fbpick_offsets(
+				meta,
+				spec=spec,
+				reader=reader,
+				key1_idx=req.key1_idx,
+				offset_byte=req.offset_byte,
+			)
+		out = apply_pipeline(section, spec=spec, meta=meta, taps=None)
 		prob = out['fbpick']['prob']
 		scale, q = quantize_float32(prob, fixed_scale=127.0)
 		payload = msgpack.packb(
@@ -447,7 +504,7 @@ def _run_fbpick_job(job_id: str, req: FbpickRequest) -> None:
 		)
 		fbpick_cache[cache_key] = gzip.compress(payload)
 		job['status'] = 'done'
-	except Exception as e:
+	except Exception as e:  # noqa: BLE001
 		job['status'] = 'error'
 		job['message'] = str(e)
 
@@ -466,6 +523,13 @@ def _run_pipeline_all_job(job_id: str, req: PipelineAllRequest, pipe_key: str) -
 			if hasattr(reader, 'meta'):
 				dt = getattr(reader, 'meta', {}).get('dt', dt)
 			meta = {'dt': dt}
+			meta = _maybe_attach_fbpick_offsets(
+				meta,
+				spec=req.spec,
+				reader=reader,
+				key1_idx=int(key1_val),
+				offset_byte=req.offset_byte,
+			)
 			out = apply_pipeline(section, spec=req.spec, meta=meta, taps=taps)
 			base_key = (
 				req.file_id,
@@ -473,6 +537,7 @@ def _run_pipeline_all_job(job_id: str, req: PipelineAllRequest, pipe_key: str) -
 				req.key1_byte,
 				pipe_key,
 				None,
+				req.offset_byte,
 			)
 			for k, v in out.items():
 				val = v
@@ -481,7 +546,7 @@ def _run_pipeline_all_job(job_id: str, req: PipelineAllRequest, pipe_key: str) -
 				pipeline_tap_cache.set((*base_key, k), to_builtin(val))
 			job['progress'] = (idx + 1) / total
 		job['status'] = 'done'
-	except Exception as e:
+	except Exception as e:  # noqa: BLE001
 		job['status'] = 'error'
 		job['message'] = str(e)
 
@@ -552,8 +617,8 @@ async def upload_segy(
 		return {'file_id': file_id, 'reused_trace_store': True}
 
 	raw_path = UPLOAD_DIR / safe_name
-	with open(raw_path, 'wb') as f:
-		f.write(await file.read())
+	data = await file.read()
+	await asyncio.to_thread(raw_path.write_bytes, data)
 	store_dir.mkdir(parents=True, exist_ok=True)
 	traces_tmp = store_dir / 'traces.npy.tmp'
 	with segyio.open(raw_path, 'r', ignore_geometry=True) as segy:
@@ -574,7 +639,7 @@ async def upload_segy(
 				std = 1.0
 			mm[i] = (tr - mean) / std
 		del mm
-	os.replace(traces_tmp, store_dir / 'traces.npy')
+	traces_tmp.replace(store_dir / 'traces.npy')
 	meta = {
 		'n_traces': int(n_traces),
 		'n_samples': int(n_samples),
@@ -584,7 +649,7 @@ async def upload_segy(
 	}
 	tmp_meta = store_dir / 'meta.json.tmp'
 	tmp_meta.write_text(json.dumps(meta))
-	os.replace(tmp_meta, meta_path)
+	tmp_meta.replace(meta_path)
 
 	reader = TraceStoreSectionReader(store_dir, key1_byte, key2_byte)
 	SEGYS[file_id] = str(store_dir)
@@ -609,7 +674,7 @@ def get_section(
 		return JSONResponse(content={'section': section})
 
 	except Exception as e:
-		raise HTTPException(status_code=500, detail=str(e))
+		raise HTTPException(status_code=500, detail=str(e)) from e
 
 
 @router.get('/get_section_bin')
@@ -636,7 +701,7 @@ def get_section_bin(
 			headers={'Content-Encoding': 'gzip'},
 		)
 	except Exception as e:
-		raise HTTPException(status_code=500, detail=str(e))
+		raise HTTPException(status_code=500, detail=str(e)) from e
 
 
 @router.get('/get_section_window_bin')
@@ -645,6 +710,7 @@ def get_section_window_bin(
 	key1_idx: int = Query(...),
 	key1_byte: int = Query(189),
 	key2_byte: int = Query(193),
+	offset_byte: int | None = Query(None),
 	x0: int = Query(...),
 	x1: int = Query(...),
 	y0: int = Query(...),
@@ -659,6 +725,7 @@ def get_section_window_bin(
 		key1_idx,
 		key1_byte,
 		key2_byte,
+		offset_byte,
 		x0,
 		x1,
 		y0,
@@ -685,6 +752,7 @@ def get_section_window_bin(
 				key1_byte=key1_byte,
 				pipeline_key=pipeline_key,
 				tap_label=tap_label,
+				offset_byte=offset_byte,
 			)
 		else:
 			reader = get_reader(file_id, key1_byte, key2_byte)
@@ -693,7 +761,7 @@ def get_section_window_bin(
 		raise HTTPException(status_code=409, detail=str(exc)) from exc
 
 	section = np.ascontiguousarray(section, dtype=np.float32)
-	if section.ndim != 2:
+	if section.ndim != EXPECTED_SECTION_NDIM:
 		raise HTTPException(status_code=500, detail='Section data must be 2D')
 
 	n_traces, n_samples = section.shape
@@ -872,21 +940,23 @@ def denoise_section_bin(req: DenoiseRequest):
 		tmp.replace(p_latest)
 		denoise_cache[cache_key] = gz
 		denoise_cache[(req.file_id, req.key1_idx)] = gz
+		base = DENOISE_DIR / str(req.file_id).replace('/', '_')
 		try:
-			base = DENOISE_DIR / str(req.file_id).replace('/', '_')
 			for child in base.iterdir():
 				if child.is_dir() and child.name not in {param_hash, 'latest'}:
 					shutil.rmtree(child, ignore_errors=True)
-		except Exception:
-			pass
+		except OSError as exc:
+			print(f"Cleanup failed for {base}: {exc}", file=sys.stderr)
+			traceback.print_exc(file=sys.stderr)
+			# Continue even if cleanup fails.
 		return Response(
 			gz,
 			media_type='application/octet-stream',
 			headers={'Content-Encoding': 'gzip'},
 		)
-	except Exception as e:
+	except Exception as exc:
 		traceback.print_exc(file=sys.stderr)
-		raise HTTPException(status_code=500, detail=str(e))
+		raise HTTPException(status_code=500, detail=str(exc)) from exc
 
 
 @router.post('/denoise_apply')
@@ -968,6 +1038,7 @@ def fbpick_section_bin(req: FbpickRequest):
 		req.key1_idx,
 		req.key1_byte,
 		req.key2_byte,
+		req.offset_byte,
 		req.tile_h,
 		req.tile_w,
 		req.overlap,
@@ -979,8 +1050,6 @@ def fbpick_section_bin(req: FbpickRequest):
 	section_override: np.ndarray | None = None
 	wants_pipeline = bool(pipeline_key and tap_label)
 	if cache_key not in fbpick_cache and wants_pipeline:
-		assert pipeline_key is not None
-		assert tap_label is not None
 		try:
 			section_override = get_section_from_pipeline_tap(
 				file_id=req.file_id,
@@ -988,6 +1057,7 @@ def fbpick_section_bin(req: FbpickRequest):
 				key1_byte=req.key1_byte,
 				pipeline_key=pipeline_key,
 				tap_label=tap_label,
+				offset_byte=req.offset_byte,
 			)
 		except PipelineTapNotFoundError as exc:
 			raise HTTPException(status_code=409, detail=str(exc)) from exc
@@ -1037,12 +1107,14 @@ def pipeline_section(
 	key1_idx: int = Query(...),
 	key1_byte: int = Query(189),
 	key2_byte: int = Query(193),
+	offset_byte: int | None = Query(None),
 	spec: PipelineSpec = Body(...),
 	taps: list[str] | None = Body(default=None),
 	window: dict[str, int | float] | None = Body(default=None),
 ):
 	reader = get_reader(file_id, key1_byte, key2_byte)
 	section = np.array(reader.get_section(key1_idx), dtype=np.float32)
+	trace_slice: slice | None = None
 	window_hash = None
 	if window:
 		tr_min = int(window.get('tr_min', 0))
@@ -1050,6 +1122,7 @@ def pipeline_section(
 		t_min = int(window.get('t_min', 0))
 		t_max = int(window.get('t_max', section.shape[1]))
 		section = section[tr_min:tr_max, t_min:t_max]
+		trace_slice = slice(tr_min, tr_max)
 		clean_window = {
 			'tr_min': tr_min,
 			'tr_max': tr_max,
@@ -1063,10 +1136,18 @@ def pipeline_section(
 	if hasattr(reader, 'meta'):
 		dt = getattr(reader, 'meta', {}).get('dt', dt)
 	meta = {'dt': dt}
+	meta = _maybe_attach_fbpick_offsets(
+		meta,
+		spec=spec,
+		reader=reader,
+		key1_idx=key1_idx,
+		offset_byte=offset_byte,
+		trace_slice=trace_slice,
+	)
 	pipe_key = pipeline_key(spec)
 	tap_names = taps or []
 	if tap_names:
-		base_key = (file_id, key1_idx, key1_byte, pipe_key, window_hash)
+		base_key = (file_id, key1_idx, key1_byte, pipe_key, window_hash, offset_byte)
 		taps_out: dict[str, object] = {}
 		misses: list[str] = []
 		for tap in tap_names:
@@ -1091,15 +1172,17 @@ def pipeline_all(
 	file_id: str = Query(...),
 	key1_byte: int = Query(189),
 	key2_byte: int = Query(193),
+	downsample_quicklook: Annotated[bool, Query(True)] = True,  # noqa: FBT002,FBT003
+	offset_byte: int | None = Query(None),
 	spec: PipelineSpec = Body(...),
 	taps: list[str] | None = Body(default=None),
-	downsample_quicklook: bool = Query(True),
 ):
 	tap_names = taps or []
 	req = PipelineAllRequest(
 		file_id=file_id,
 		key1_byte=key1_byte,
 		key2_byte=key2_byte,
+		offset_byte=offset_byte,
 		spec=spec,
 		taps=tap_names,
 		downsample_quicklook=downsample_quicklook,
@@ -1113,6 +1196,7 @@ def pipeline_all(
 		'file_id': file_id,
 		'key1_byte': key1_byte,
 		'pipeline_key': pipe_key,
+		'offset_byte': offset_byte,
 	}
 	threading.Thread(
 		target=_run_pipeline_all_job, args=(job_id, req, pipe_key), daemon=True
@@ -1120,7 +1204,7 @@ def pipeline_all(
 	return {'job_id': job_id, 'state': jobs[job_id]['status']}
 
 
-@router.get('/pipeline/job/{job_id}/status', response_model=PipelineJobStatusResponse)
+@router.get('/pipeline/job/{job_id}/status', response_model=PipelineJobStatusResponse)  # noqa: FAST001
 def pipeline_job_status(job_id: str) -> PipelineJobStatusResponse:
 	job = jobs.get(job_id)
 	if job is None:
@@ -1147,6 +1231,7 @@ def pipeline_job_artifact(
 		job.get('key1_byte'),
 		job.get('pipeline_key'),
 		None,
+		job.get('offset_byte'),
 	)
 	payload = pipeline_tap_cache.get((*base_key, tap))
 	if payload is None:

@@ -1,24 +1,28 @@
-from __future__ import annotations
-
 """First-break probability model wrapper."""
+
+from __future__ import annotations
 
 from functools import lru_cache
 from pathlib import Path
 
 import numpy as np
 import torch
-from torch.nn import functional as F
+import torch.nn.functional as torch_nn_func
 
 from .model import NetAE
 from .model_utils import inflate_input_convs_to_2ch
 
-__all__ = ['_MODEL_PATH', 'infer_prob_map']
+__all__ = ['_MODEL_PATH', 'infer_prob_map', 'make_offset_channel']
 
 _MODEL_PATH = (
-	Path(__file__).resolve().parents[2]
-	/ 'model'
-	/ 'fbpick_edgenext_small_useoffset.pth'
+        Path(__file__).resolve().parents[2]
+        / 'model'
+        / 'fbpick_edgenext_small_useoffset.pth'
 )
+
+
+_OFFSET_VECTOR_NDIM = 1
+_OFFSET_IMAGE_NDIM = 2
 
 
 def _device() -> torch.device:
@@ -49,57 +53,129 @@ def _load_model() -> tuple[torch.nn.Module, torch.device]:
 
 
 @torch.no_grad()
-def _run_tiled(
-	model: torch.nn.Module,
-	x: torch.Tensor,
-	*,
-	tile: tuple[int, int] = (128, 6016),
-	overlap: int = 32,
-	amp: bool = True,
+def _run_tiled(  # noqa: PLR0913
+        model: torch.nn.Module,
+        x: torch.Tensor,
+        *,
+        tile: tuple[int, int] = (128, 6016),
+        overlap: int = 32,
+        amp: bool = True,
+        offset_channel: int | None = None,
 ) -> torch.Tensor:
-	"""Run ``model`` on ``x`` using sliding-window tiling."""
-	b, c, h, w = x.shape
-	tile_h, tile_w = tile
-	stride_h = tile_h - overlap
-	stride_w = tile_w - overlap
-	out = torch.zeros((b, 1, h, w), device=x.device, dtype=torch.float32)
-	weight = torch.zeros_like(out)
-	for top in range(0, h, stride_h):
-		for left in range(0, w, stride_w):
-			bottom = min(top + tile_h, h)
-			right = min(left + tile_w, w)
-			h0 = max(0, bottom - tile_h)
-			w0 = max(0, right - tile_w)
-			patch = x[:, :, h0:bottom, w0:right]
-			ph, pw = patch.shape[-2], patch.shape[-1]
-			pad_h = max(0, tile_h - ph)
-			pad_w = max(0, tile_w - pw)
+        """Run ``model`` on ``x`` using sliding-window tiling."""
+        b, c, h, w = x.shape
+        tile_h, tile_w = tile
+        stride_h = tile_h - overlap
+        stride_w = tile_w - overlap
+        out = torch.zeros((b, 1, h, w), device=x.device, dtype=torch.float32)
+        weight = torch.zeros_like(out)
+        autocast_available = torch.cuda.is_available()
+        for top in range(0, h, stride_h):
+            for left in range(0, w, stride_w):
+                bottom = min(top + tile_h, h)
+                right = min(left + tile_w, w)
+                h0 = max(0, bottom - tile_h)
+                w0 = max(0, right - tile_w)
+                patch = x[:, :, h0:bottom, w0:right]
+                if offset_channel is not None:
+                    patch = patch.clone()
+                    off = patch[:, offset_channel : offset_channel + 1, :, :]
+                    mean = off.mean(dim=(2, 3), keepdim=True)
+                    var = off.var(dim=(2, 3), keepdim=True, unbiased=False)
+                    std = torch.sqrt(var).clamp_min(1e-6)
+                    patch[:, offset_channel : offset_channel + 1, :, :] = (
+                        (off - mean) / std
+                    )
+                ph, pw = patch.shape[-2], patch.shape[-1]
+                pad_h = max(0, tile_h - ph)
+                pad_w = max(0, tile_w - pw)
 
-			if pad_h or pad_w:
-				patch = F.pad(patch, (0, pad_w, 0, pad_h), mode='constant', value=0.0)
-			with torch.cuda.amp.autocast(enabled=amp and torch.cuda.is_available()):
-				yp = model(patch)  # (B,1,tile_h,tile_w) expected
-			yp = yp[..., :ph, :pw]
-			out[:, :, h0:bottom, w0:right] += yp
-			weight[:, :, h0:bottom, w0:right] += 1
-	out /= weight.clamp_min(1.0)
-	return out
+                if pad_h or pad_w:
+                    patch = torch_nn_func.pad(
+                        patch,
+                        (0, pad_w, 0, pad_h),
+                        mode='constant',
+                        value=0.0,
+                    )
+                autocast_enabled = amp and autocast_available
+                with torch.cuda.amp.autocast(enabled=autocast_enabled):
+                    yp = model(patch)  # (B,1,tile_h,tile_w) expected
+                yp = yp[..., :ph, :pw]
+                out[:, :, h0:bottom, w0:right] += yp
+                weight[:, :, h0:bottom, w0:right] += 1
+        out /= weight.clamp_min(1.0)
+        return out
+
+
+def make_offset_channel(offsets: np.ndarray, h: int, w: int) -> np.ndarray:
+        """Return a ``(h, w)`` float32 offset channel from ``offsets``."""
+        arr = np.asarray(offsets, dtype=np.float32)
+        if arr.ndim == _OFFSET_VECTOR_NDIM:
+                if arr.shape[0] != w:
+                        msg = (
+                                'Offset vector length '
+                                f'{arr.shape[0]} does not match width {w}'
+                        )
+                        raise ValueError(msg)
+                arr = np.broadcast_to(arr.reshape(1, w), (h, w)).copy()
+        elif arr.ndim == _OFFSET_IMAGE_NDIM:
+                if arr.shape != (h, w):
+                        msg = (
+                                f'Offset array shape {arr.shape} '
+                                f'does not match {(h, w)}'
+                        )
+                        raise ValueError(msg)
+                if arr.dtype != np.float32:
+                        arr = arr.astype(np.float32, copy=False)
+        else:
+                msg = (
+                        'Offsets must be a 1D vector of width W or '
+                        '2D array of shape (H, W)'
+                )
+                raise ValueError(msg)
+        return np.ascontiguousarray(arr, dtype=np.float32)
 
 
 @torch.no_grad()
-def infer_prob_map(
-	section: np.ndarray,
-	*,
-	amp: bool = True,
-	tile: tuple[int, int] = (128, 6016),
-	overlap: int = 32,
-	tau: float = 1.0,
+def infer_prob_map(  # noqa: PLR0913
+        section: np.ndarray,
+        *,
+        amp: bool = True,
+        tile: tuple[int, int] = (128, 6016),
+        overlap: int = 32,
+        tau: float = 1.0,
+        offsets: np.ndarray | None = None,
 ) -> np.ndarray:
-	"""Infer first-break probability for ``section``."""
-	model, device = _load_model()
-	x = torch.from_numpy(section).float().unsqueeze(0).unsqueeze(0).to(device)
-	logits = _run_tiled(model, x, tile=tile, overlap=overlap, amp=amp)  # (1,1,H,W)
+        """Infer first-break probability for ``section``.
 
-	# 学習と同じ：時間軸に沿ってsoftmax
-	prob = torch.softmax(logits.squeeze(1) / tau, dim=-1)  # (1,H,W)
-	return prob.squeeze(0).detach().cpu().numpy().astype(np.float32)
+        When ``offsets`` are provided, they are used as a second channel that is
+        z-scored per inference tile before being passed to the network.
+        """
+        arr = np.ascontiguousarray(section, dtype=np.float32)
+        h, w = arr.shape
+        model, device = _load_model()
+        if offsets is None:
+                x = torch.from_numpy(arr).unsqueeze(0).unsqueeze(0).to(device)
+                logits = _run_tiled(
+                        model,
+                        x,
+                        tile=tile,
+                        overlap=overlap,
+                        amp=amp,
+                )  # (1,1,H,W)
+        else:
+                offset_ch = make_offset_channel(offsets, h, w)
+                stacked = np.stack((arr, offset_ch), axis=0)
+                x = torch.from_numpy(stacked).unsqueeze(0).to(device)
+                logits = _run_tiled(
+                        model,
+                        x,
+                        tile=tile,
+                        overlap=overlap,
+                        amp=amp,
+                        offset_channel=1,
+                )
+
+        # 学習と同じ: 時間軸に沿ってsoftmax
+        prob = torch.softmax(logits.squeeze(1) / tau, dim=-1)  # (1,H,W)
+        return prob.squeeze(0).detach().cpu().numpy().astype(np.float32)
