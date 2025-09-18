@@ -10,11 +10,14 @@ import torch
 from torch.nn import functional as F
 
 from .model import NetAE
+from .model_utils import inflate_input_convs_to_2ch
 
 __all__ = ['_MODEL_PATH', 'infer_prob_map']
 
 _MODEL_PATH = (
-	Path(__file__).resolve().parents[2] / 'model' / 'fbpick_edgenext_small.pth'
+	Path(__file__).resolve().parents[2]
+	/ 'model'
+	/ 'fbpick_edgenext_small_useoffset.pth'
 )
 
 
@@ -25,6 +28,8 @@ def _device() -> torch.device:
 @lru_cache(maxsize=1)
 def _load_model() -> tuple[torch.nn.Module, torch.device]:
 	device = _device()
+
+	use_offset = 'offset' in _MODEL_PATH.name
 	model = NetAE(
 		backbone='edgenext_small.usi_in1k',
 		pretrained=False,
@@ -32,6 +37,9 @@ def _load_model() -> tuple[torch.nn.Module, torch.device]:
 		pre_stages=2,
 		pre_stage_strides=((1, 1), (1, 2)),
 	)
+	if use_offset:
+		inflate_input_convs_to_2ch(model, verbose=True, init_mode='zero')
+
 	state = torch.load(_MODEL_PATH, map_location='cpu', weights_only=False)
 	if isinstance(state, dict) and 'model_ema' in state:
 		state = state['model_ema']
