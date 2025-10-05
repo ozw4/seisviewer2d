@@ -97,6 +97,9 @@ def _run_tiled(  # noqa: PLR0913
 				)
 			autocast_enabled = amp and autocast_available
 			with torch.cuda.amp.autocast(enabled=autocast_enabled):
+				print(model)
+				print(patch.shape)
+				model.print_shapes = True
 				yp = model(patch)  # (B,1,tile_h,tile_w) expected
 			yp = yp[..., :ph, :pw]
 			out[:, :, h0:bottom, w0:right] += yp
@@ -106,22 +109,44 @@ def _run_tiled(  # noqa: PLR0913
 
 
 def make_offset_channel(offsets: np.ndarray, h: int, w: int) -> np.ndarray:
-	"""Return a ``(h, w)`` float32 offset channel from ``offsets``."""
+	"""Return a (h, w) float32 offset channel from ``offsets``.
+
+	Accepts:
+		- 1D vector of length **W** (per-trace along width)  -> broadcast to (H, W)
+		- 1D vector of length **H** (per-trace along height) -> broadcast to (H, W)
+		- 2D array of shape (H, W)                           -> used as-is
+		(and also tolerates (W, H) by transposing)
+	"""
 	arr = np.asarray(offsets, dtype=np.float32)
+
 	if arr.ndim == _OFFSET_VECTOR_NDIM:
-		if arr.shape[0] != w:
-			msg = f'Offset vector length {arr.shape[0]} does not match width {w}'
-			raise ValueError(msg)
-		arr = np.broadcast_to(arr.reshape(1, w), (h, w)).copy()
+		n = arr.shape[0]
+		if n == w:
+			# vector aligned to width (samples)
+			arr = np.broadcast_to(arr.reshape(1, w), (h, w)).copy()
+		elif n == h:
+			# vector aligned to height (traces)
+			arr = np.broadcast_to(arr.reshape(h, 1), (h, w)).copy()
+		else:
+			raise ValueError(
+				f'Offset vector length {n} does not match either height {h} or width {w}'
+			)
 	elif arr.ndim == _OFFSET_IMAGE_NDIM:
-		if arr.shape != (h, w):
-			msg = f'Offset array shape {arr.shape} does not match {(h, w)}'
-			raise ValueError(msg)
+		if arr.shape == (h, w):
+			pass
+		elif arr.shape == (w, h):
+			arr = arr.T
+		else:
+			raise ValueError(
+				f'Offset array shape {arr.shape} does not match (H,W)=({h},{w}) nor (W,H)=({w},{h})'
+			)
 		if arr.dtype != np.float32:
 			arr = arr.astype(np.float32, copy=False)
 	else:
-		msg = 'Offsets must be a 1D vector of width W or 2D array of shape (H, W)'
-		raise ValueError(msg)
+		raise ValueError(
+			'Offsets must be a 1D vector of length H or W, or a 2D array of shape (H,W)/(W,H)'
+		)
+
 	return np.ascontiguousarray(arr, dtype=np.float32)
 
 
@@ -143,6 +168,7 @@ def infer_prob_map(  # noqa: PLR0913
 	arr = np.ascontiguousarray(section, dtype=np.float32)
 	h, w = arr.shape
 	model, device = _load_model()
+
 	if offsets is None:
 		x = torch.from_numpy(arr).unsqueeze(0).unsqueeze(0).to(device)
 		logits = _run_tiled(
@@ -164,7 +190,8 @@ def infer_prob_map(  # noqa: PLR0913
 			amp=amp,
 			offset_channel=1,
 		)
-
+		print(logits)
 	# 学習と同じ: 時間軸に沿ってsoftmax
 	prob = torch.softmax(logits.squeeze(1) / tau, dim=-1)  # (1,H,W)
+
 	return prob.squeeze(0).detach().cpu().numpy().astype(np.float32)

@@ -13,7 +13,9 @@ __all__ = ['denoise_tensor', 'get_model']
 
 _DEVICE = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 _MODEL_PATH = (
-	Path(__file__).resolve().parents[2] / 'model' / 'recon_replace_edgenext_small.pth'
+	Path(__file__).resolve().parents[2]
+	/ 'model'
+	/ 'recon_replace_eq_edgenext_small.pth'
 )
 print(f'Loading model from {_MODEL_PATH}, device: {_DEVICE}')
 

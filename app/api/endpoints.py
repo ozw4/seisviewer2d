@@ -46,7 +46,10 @@ from utils.utils import (
 	to_builtin,
 )
 
+# Offset-enabled model detection from filename (e.g., "*offset*.pth")
 USE_FBPICK_OFFSET = 'offset' in FBPICK_MODEL_PATH.name.lower()
+# Always use this SEG-Y trace header byte as "offset" when offset-enabled model is active
+OFFSET_BYTE_FIXED: int = 37
 
 router = APIRouter()
 
@@ -111,39 +114,36 @@ EXPECTED_SECTION_NDIM = 2
 
 
 def _spec_uses_fbpick(spec: PipelineSpec) -> bool:
-        """Return True when ``spec`` contains an fbpick analyzer step."""
-        return any(
-                step.kind == 'analyzer' and step.name == 'fbpick'
-                for step in spec.steps
-        )
+	"""Return True when ``spec`` contains an fbpick analyzer step."""
+	return any(step.kind == 'analyzer' and step.name == 'fbpick' for step in spec.steps)
 
 
 def _maybe_attach_fbpick_offsets(
-        meta: dict[str, Any],
-        *,
-        spec: PipelineSpec,
-        reader: SegySectionReader | TraceStoreSectionReader,
-        key1_idx: int,
-        offset_byte: int | None,
-        trace_slice: slice | None = None,
+	meta: dict[str, Any],
+	*,
+	spec: PipelineSpec,
+	reader: SegySectionReader | TraceStoreSectionReader,
+	key1_idx: int,
+	offset_byte: int | None,
+	trace_slice: slice | None = None,
 ) -> dict[str, Any]:
-        """Add offset metadata when the fbpick model expects it."""
-        if not USE_FBPICK_OFFSET or offset_byte is None:
-                return meta
-        if not _spec_uses_fbpick(spec):
-                return meta
-        get_offsets = getattr(reader, 'get_offsets_for_section', None)
-        if get_offsets is None:
-                return meta
-        offsets = get_offsets(key1_idx, offset_byte)
-        if trace_slice is not None:
-                offsets = offsets[trace_slice]
-        offsets = np.ascontiguousarray(offsets, dtype=np.float32)
-        if not meta:
-                return {'offsets': offsets}
-        meta_with_offsets = dict(meta)
-        meta_with_offsets['offsets'] = offsets
-        return meta_with_offsets
+	"""Add offset metadata when the fbpick model expects it."""
+	if not USE_FBPICK_OFFSET or offset_byte is None:
+		return meta
+	if not _spec_uses_fbpick(spec):
+		return meta
+	get_offsets = getattr(reader, 'get_offsets_for_section', None)
+	if get_offsets is None:
+		return meta
+	offsets = get_offsets(key1_idx, offset_byte)
+	if trace_slice is not None:
+		offsets = offsets[trace_slice]
+	offsets = np.ascontiguousarray(offsets, dtype=np.float32)
+	if not meta:
+		return {'offsets': offsets}
+	meta_with_offsets = dict(meta)
+	meta_with_offsets['offsets'] = offsets
+	return meta_with_offsets
 
 
 class PipelineTapNotFoundError(LookupError):
@@ -372,7 +372,7 @@ def _run_denoise_job(job_id: str, req: DenoiseApplyRequest) -> None:
 					if child.is_dir() and child.name not in {param_hash, 'latest'}:
 						shutil.rmtree(child, ignore_errors=True)
 			except OSError as exc:
-				print(f"Cleanup failed for {base}: {exc}", file=sys.stderr)
+				print(f'Cleanup failed for {base}: {exc}', file=sys.stderr)
 				traceback.print_exc(file=sys.stderr)
 				# Continue even if cleanup fails.
 			job['progress'] = (idx + 1) / total
@@ -448,10 +448,13 @@ def _run_fbpick_job(job_id: str, req: FbpickRequest) -> None:
 	job = jobs[job_id]
 	job['status'] = 'running'
 	try:
+		# Force offset_byte if offset-enabled model is active
+		forced_offset_byte = OFFSET_BYTE_FIXED if USE_FBPICK_OFFSET else None
+
 		cache_key = job['cache_key']
 		section_override = job.pop('section_override', None)
 		reader: SegySectionReader | TraceStoreSectionReader | None = None
-		if USE_FBPICK_OFFSET and req.offset_byte is not None:
+		if USE_FBPICK_OFFSET and forced_offset_byte is not None:
 			reader = get_reader(req.file_id, req.key1_byte, req.key2_byte)
 		if section_override is not None:
 			section = np.asarray(section_override, dtype=np.float32)
@@ -462,7 +465,7 @@ def _run_fbpick_job(job_id: str, req: FbpickRequest) -> None:
 				key1_byte=req.key1_byte,
 				pipeline_key=req.pipeline_key,
 				tap_label=req.tap_label,
-				offset_byte=req.offset_byte,
+				offset_byte=forced_offset_byte,
 			)
 			section = np.asarray(section, dtype=np.float32)
 		else:
@@ -490,7 +493,7 @@ def _run_fbpick_job(job_id: str, req: FbpickRequest) -> None:
 				spec=spec,
 				reader=reader,
 				key1_idx=req.key1_idx,
-				offset_byte=req.offset_byte,
+				offset_byte=forced_offset_byte,
 			)
 		out = apply_pipeline(section, spec=spec, meta=meta, taps=None)
 		prob = out['fbpick']['prob']
@@ -528,7 +531,7 @@ def _run_pipeline_all_job(job_id: str, req: PipelineAllRequest, pipe_key: str) -
 				spec=req.spec,
 				reader=reader,
 				key1_idx=int(key1_val),
-				offset_byte=req.offset_byte,
+				offset_byte=req.offset_byte,  # already forced by caller
 			)
 			out = apply_pipeline(section, spec=req.spec, meta=meta, taps=taps)
 			base_key = (
@@ -537,7 +540,7 @@ def _run_pipeline_all_job(job_id: str, req: PipelineAllRequest, pipe_key: str) -
 				req.key1_byte,
 				pipe_key,
 				None,
-				req.offset_byte,
+				req.offset_byte,  # forced
 			)
 			for k, v in out.items():
 				val = v
@@ -720,12 +723,15 @@ def get_section_window_bin(
 	pipeline_key: str | None = Query(None),
 	tap_label: str | None = Query(None),
 ):
+	# Force offset_byte for pipeline tap cache alignment when offset-enabled
+	forced_offset_byte = OFFSET_BYTE_FIXED if USE_FBPICK_OFFSET else offset_byte
+
 	cache_key = (
 		file_id,
 		key1_idx,
 		key1_byte,
 		key2_byte,
-		offset_byte,
+		forced_offset_byte,
 		x0,
 		x1,
 		y0,
@@ -752,7 +758,7 @@ def get_section_window_bin(
 				key1_byte=key1_byte,
 				pipeline_key=pipeline_key,
 				tap_label=tap_label,
-				offset_byte=offset_byte,
+				offset_byte=forced_offset_byte,
 			)
 		else:
 			reader = get_reader(file_id, key1_byte, key2_byte)
@@ -946,7 +952,7 @@ def denoise_section_bin(req: DenoiseRequest):
 				if child.is_dir() and child.name not in {param_hash, 'latest'}:
 					shutil.rmtree(child, ignore_errors=True)
 		except OSError as exc:
-			print(f"Cleanup failed for {base}: {exc}", file=sys.stderr)
+			print(f'Cleanup failed for {base}: {exc}', file=sys.stderr)
 			traceback.print_exc(file=sys.stderr)
 			# Continue even if cleanup fails.
 		return Response(
@@ -1031,6 +1037,10 @@ def get_denoised_section_bin(
 def fbpick_section_bin(req: FbpickRequest):
 	if not FBPICK_MODEL_PATH.exists():
 		raise HTTPException(status_code=409, detail='FB pick model weights not found')
+
+	# Force offset_byte if offset-enabled model is active
+	forced_offset_byte = OFFSET_BYTE_FIXED if USE_FBPICK_OFFSET else None
+
 	pipeline_key = req.pipeline_key
 	tap_label = req.tap_label
 	cache_key = (
@@ -1038,7 +1048,7 @@ def fbpick_section_bin(req: FbpickRequest):
 		req.key1_idx,
 		req.key1_byte,
 		req.key2_byte,
-		req.offset_byte,
+		forced_offset_byte,
 		req.tile_h,
 		req.tile_w,
 		req.overlap,
@@ -1057,7 +1067,7 @@ def fbpick_section_bin(req: FbpickRequest):
 				key1_byte=req.key1_byte,
 				pipeline_key=pipeline_key,
 				tap_label=tap_label,
-				offset_byte=req.offset_byte,
+				offset_byte=forced_offset_byte,
 			)
 		except PipelineTapNotFoundError as exc:
 			raise HTTPException(status_code=409, detail=str(exc)) from exc
@@ -1068,11 +1078,15 @@ def fbpick_section_bin(req: FbpickRequest):
 	if section_override is not None:
 		job_state['section_override'] = section_override
 	jobs[job_id] = job_state
+
+	# Ensure the worker sees the forced value
+	req2 = req.copy(update={'offset_byte': forced_offset_byte})
+
 	if cache_key in fbpick_cache:
 		jobs[job_id]['status'] = 'done'
 	else:
 		threading.Thread(
-			target=_run_fbpick_job, args=(job_id, req), daemon=True
+			target=_run_fbpick_job, args=(job_id, req2), daemon=True
 		).start()
 	return {'job_id': job_id, 'status': jobs[job_id]['status']}
 
@@ -1136,18 +1150,29 @@ def pipeline_section(
 	if hasattr(reader, 'meta'):
 		dt = getattr(reader, 'meta', {}).get('dt', dt)
 	meta = {'dt': dt}
+
+	# Force offset_byte for fbpick use
+	forced_offset_byte = OFFSET_BYTE_FIXED if USE_FBPICK_OFFSET else None
+
 	meta = _maybe_attach_fbpick_offsets(
 		meta,
 		spec=spec,
 		reader=reader,
 		key1_idx=key1_idx,
-		offset_byte=offset_byte,
+		offset_byte=forced_offset_byte,
 		trace_slice=trace_slice,
 	)
 	pipe_key = pipeline_key(spec)
 	tap_names = taps or []
 	if tap_names:
-		base_key = (file_id, key1_idx, key1_byte, pipe_key, window_hash, offset_byte)
+		base_key = (
+			file_id,
+			key1_idx,
+			key1_byte,
+			pipe_key,
+			window_hash,
+			forced_offset_byte,
+		)
 		taps_out: dict[str, object] = {}
 		misses: list[str] = []
 		for tap in tap_names:
@@ -1172,17 +1197,21 @@ def pipeline_all(
 	file_id: str = Query(...),
 	key1_byte: int = Query(189),
 	key2_byte: int = Query(193),
-	downsample_quicklook: Annotated[bool, Query(True)] = True,  # noqa: FBT002,FBT003
+	downsample_quicklook: Annotated[bool, Query()] = True,
 	offset_byte: int | None = Query(None),
 	spec: PipelineSpec = Body(...),
 	taps: list[str] | None = Body(default=None),
 ):
 	tap_names = taps or []
+
+	# Force offset_byte for the entire pipeline if applicable
+	forced_offset_byte = OFFSET_BYTE_FIXED if USE_FBPICK_OFFSET else None
+
 	req = PipelineAllRequest(
 		file_id=file_id,
 		key1_byte=key1_byte,
 		key2_byte=key2_byte,
-		offset_byte=offset_byte,
+		offset_byte=forced_offset_byte,
 		spec=spec,
 		taps=tap_names,
 		downsample_quicklook=downsample_quicklook,
@@ -1196,7 +1225,7 @@ def pipeline_all(
 		'file_id': file_id,
 		'key1_byte': key1_byte,
 		'pipeline_key': pipe_key,
-		'offset_byte': offset_byte,
+		'offset_byte': forced_offset_byte,
 	}
 	threading.Thread(
 		target=_run_pipeline_all_job, args=(job_id, req, pipe_key), daemon=True
