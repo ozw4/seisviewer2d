@@ -20,11 +20,17 @@
     runToken: 0,
   };
 
+  function emitPipelineEvent(eventName, payload) {
+    const ui = window.pipelineUI;
+    if (ui && typeof ui._emit === 'function') {
+      ui._emit(eventName, payload);
+    }
+  }
+
   const PARAM_DEFS = {
     bandpass: [
       { key: 'low_hz', label: 'low_hz', type: 'number', step: '0.1' },
       { key: 'high_hz', label: 'high_hz', type: 'number', step: '0.1' },
-      { key: 'dt', label: 'dt', type: 'number', step: '0.0001' },
       { key: 'taper', label: 'taper', type: 'number', step: '0.05' },
     ],
     denoise: [
@@ -61,17 +67,9 @@
     return name.charAt(0).toUpperCase() + name.slice(1);
   }
 
-  function getDtFromUI() {
-    const input = document.getElementById('dt');
-    const candidate = input ? parseFloat(input.value) : NaN;
-    if (!Number.isNaN(candidate) && isFinite(candidate) && candidate > 0) return candidate;
-    if (typeof window.defaultDt === 'number' && isFinite(window.defaultDt)) return window.defaultDt;
-    return 0.002;
-  }
-
   function defaultParamsFor(name) {
     if (name === 'bandpass') {
-      return { low_hz: 5, high_hz: 60, dt: getDtFromUI(), taper: 0.1 };
+      return { low_hz: 5, high_hz: 60, taper: 0.1 };
     }
     if (name === 'denoise') {
       return {
@@ -88,7 +86,10 @@
 
   function applyDefaultParams(name, params) {
     const base = defaultParamsFor(name);
-    const incoming = params && typeof params === 'object' ? params : {};
+    const incoming = params && typeof params === 'object' ? { ...params } : {};
+    if (name === 'bandpass') {
+      delete incoming.dt;
+    }
     return { ...base, ...incoming };
   }
 
@@ -618,7 +619,10 @@
       return;
     }
 
+    const steps = Array.isArray(spec.steps) ? spec.steps : [];
+    const totalSteps = Math.max(steps.length, 1);
     const runId = ++pipelineState.runToken;
+    emitPipelineEvent('run:start', { totalSteps });
     try {
       const { taps: tapMap, pipelineKey } = await fetchSectionWithPipeline(
         window.currentFileId,
@@ -639,12 +643,18 @@
       window.latestTapData = tapMap || {};
       window.latestPipelineKey = pipelineKey || null;
       updateLayerSelect(tapMap || {});
+      const finalName = steps.length
+        ? steps[steps.length - 1].label || steps[steps.length - 1].name || `Step ${steps.length}`
+        : 'Complete';
+      emitPipelineEvent('run:step', { index: totalSteps, name: finalName });
+      emitPipelineEvent('run:finish', { totalSteps });
     } catch (error) {
       if (runId !== pipelineState.runToken) return;
       console.warn('pipeline/section failed', error);
       window.latestTapData = {};
       window.latestPipelineKey = null;
       updateLayerSelect({});
+      emitPipelineEvent('run:error', { message: (error && error.message) || String(error) });
     }
 
     if (typeof window.drawSelectedLayer === 'function') {
@@ -739,6 +749,41 @@
     loadPipelineFromLocalStorage,
     prepareForNewSection,
   };
+
+  const _listeners = {};
+  function _on(eventName, handler) {
+    if (typeof handler !== 'function') return;
+    (_listeners[eventName] ||= new Set()).add(handler);
+  }
+
+  function _off(eventName, handler) {
+    const bucket = _listeners[eventName];
+    if (!bucket) return;
+    if (!handler) {
+      bucket.clear();
+      return;
+    }
+    bucket.delete(handler);
+  }
+
+  function _emit(eventName, payload) {
+    const bucket = _listeners[eventName];
+    if (!bucket) return;
+    for (const handler of bucket) {
+      try {
+        handler(payload);
+      } catch (err) {
+        console.warn('[pipeline] listener for', eventName, 'threw', err);
+      }
+    }
+  }
+
+  pipelineUI.on = pipelineUI.on || _on;
+  pipelineUI.off = pipelineUI.off || _off;
+  pipelineUI._emit = pipelineUI._emit || _emit;
+  if (typeof pipelineUI.cancel !== 'function') {
+    pipelineUI.cancel = function noopCancel() {};
+  }
 
   window.pipelineUI = pipelineUI;
 
