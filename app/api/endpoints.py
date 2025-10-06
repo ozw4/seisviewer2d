@@ -15,7 +15,6 @@ from uuid import uuid4
 import msgpack
 import numpy as np
 import segyio
-from app.main import FILE_REGISTRY, get_dt_for_file, read_segy_dt_seconds
 from api.schemas import (
         PipelineAllResponse,
         PipelineJobStatusResponse,
@@ -36,6 +35,7 @@ from pydantic import BaseModel, Field
 from utils.fbpick import _MODEL_PATH as FBPICK_MODEL_PATH
 from utils.picks import add_pick, delete_pick, list_picks, store
 from utils.pipeline import apply_pipeline, pipeline_key
+from utils.segy_meta import FILE_REGISTRY, get_dt_for_file, read_segy_dt_seconds
 from utils.utils import (
 	SegySectionReader,
 	TraceStoreSectionReader,
