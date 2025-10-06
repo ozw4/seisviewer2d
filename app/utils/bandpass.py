@@ -12,7 +12,7 @@ def bandpass_np(  # noqa: D417
 	*,
 	low_hz: float,
 	high_hz: float,
-	dt: float,
+	dt: float = 0.002,
 	taper: float = 0.0,
 ) -> np.ndarray:
 	"""Apply a zero-phase rectangular band-pass filter to ``section``.
