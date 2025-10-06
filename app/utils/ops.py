@@ -47,24 +47,8 @@ def op_bandpass(
     meta: dict[str, Any],
 ) -> np.ndarray:
     """Apply bandpass transform."""
-    dt = None
-    if isinstance(meta, dict):
-        dt = meta.get("dt")
-    if not isinstance(dt, (int, float)) or dt <= 0:
-        msg = "Bandpass transform requires a positive dt value in metadata"
-        raise ValueError(msg)
-
-    kwargs = dict(params or {})
-    kwargs.pop("dt", None)
-
-    high_hz = kwargs.get("high_hz")
-    if isinstance(high_hz, (int, float)):
-        nyquist = 0.5 / float(dt)
-        if high_hz > nyquist:
-            msg = f"high_hz must be <= Nyquist (0.5/dt={nyquist:g})"
-            raise ValueError(msg)
-
-    return bandpass_np(x, dt=float(dt), **kwargs)
+    _ = meta
+    return bandpass_np(x, **params)
 
 
 def op_denoise(

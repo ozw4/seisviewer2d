@@ -16,10 +16,10 @@ import msgpack
 import numpy as np
 import segyio
 from api.schemas import (
-	PipelineAllResponse,
-	PipelineJobStatusResponse,
-	PipelineSectionResponse,
-	PipelineSpec,
+        PipelineAllResponse,
+        PipelineJobStatusResponse,
+        PipelineSectionResponse,
+        PipelineSpec,
 )
 from fastapi import (
 	APIRouter,
@@ -35,7 +35,6 @@ from pydantic import BaseModel, Field
 from utils.fbpick import _MODEL_PATH as FBPICK_MODEL_PATH
 from utils.picks import add_pick, delete_pick, list_picks, store
 from utils.pipeline import apply_pipeline, pipeline_key
-from utils.segy_meta import FILE_REGISTRY, get_dt_for_file, read_segy_dt_seconds
 from utils.utils import (
 	SegySectionReader,
 	TraceStoreSectionReader,
@@ -61,24 +60,6 @@ TRACE_DIR.mkdir(parents=True, exist_ok=True)
 
 cached_readers: dict[str, SegySectionReader | TraceStoreSectionReader] = {}
 SEGYS: dict[str, str] = {}
-
-
-def _update_file_registry(
-	file_id: str,
-	*,
-	path: str | None = None,
-	store_path: str | None = None,
-	dt: float | None = None,
-) -> None:
-	rec = FILE_REGISTRY.get(file_id) or {}
-	if path:
-		rec['path'] = path
-	if store_path:
-		rec['store_path'] = store_path
-	if isinstance(dt, (int, float)) and dt > 0:
-		rec['dt'] = float(dt)
-	FILE_REGISTRY[file_id] = rec
-
 
 # Private caches for FB pick sections and asynchronous jobs
 fbpick_cache: dict[tuple, bytes] = {}
@@ -216,18 +197,7 @@ def get_reader(
 		else:
 			reader = SegySectionReader(path, key1_byte, key2_byte)
 		cached_readers[cache_key] = reader
-	reader = cached_readers[cache_key]
-	dt_val = get_dt_for_file(file_id)
-	meta_attr = getattr(reader, 'meta', None)
-	if isinstance(meta_attr, dict):
-		if not isinstance(meta_attr.get('dt'), (int, float)) or meta_attr['dt'] <= 0:
-			meta_attr['dt'] = dt_val
-	else:
-		try:
-			reader.meta = {'dt': dt_val}
-		except Exception:  # noqa: BLE001
-			pass
-	return reader
+	return cached_readers[cache_key]
 
 
 class Pick(BaseModel):
@@ -405,22 +375,6 @@ async def open_segy(
 	threading.Thread(target=reader.preload_all_sections, daemon=True).start()
 	for b in {key1_byte, key2_byte}:
 		threading.Thread(target=reader.ensure_header, args=(b,), daemon=True).start()
-	segy_path = (
-		reader.meta.get('original_segy_path') if isinstance(reader.meta, dict) else None
-	)
-	dt_meta = None
-	if isinstance(reader.meta, dict):
-		dt_meta = reader.meta.get('dt')
-	if (
-		dt_meta is None or not isinstance(dt_meta, (int, float)) or dt_meta <= 0
-	) and isinstance(segy_path, str):
-		dt_meta = read_segy_dt_seconds(segy_path)
-	_update_file_registry(
-		file_id,
-		path=segy_path if isinstance(segy_path, str) else None,
-		store_path=str(store_dir),
-		dt=dt_meta,
-	)
 	return {'file_id': file_id, 'reused_trace_store': True}
 
 
@@ -451,24 +405,6 @@ async def upload_segy(
 			threading.Thread(
 				target=reader.ensure_header, args=(b,), daemon=True
 			).start()
-		segy_path = (
-			reader.meta.get('original_segy_path')
-			if isinstance(reader.meta, dict)
-			else None
-		)
-		dt_meta = None
-		if isinstance(reader.meta, dict):
-			dt_meta = reader.meta.get('dt')
-		if (
-			dt_meta is None or not isinstance(dt_meta, (int, float)) or dt_meta <= 0
-		) and isinstance(segy_path, str):
-			dt_meta = read_segy_dt_seconds(segy_path)
-		_update_file_registry(
-			file_id,
-			path=segy_path if isinstance(segy_path, str) else None,
-			store_path=str(store_dir),
-			dt=dt_meta,
-		)
 		return {'file_id': file_id, 'reused_trace_store': True}
 
 	raw_path = UPLOAD_DIR / safe_name
@@ -476,26 +412,24 @@ async def upload_segy(
 	await asyncio.to_thread(raw_path.write_bytes, data)
 	store_dir.mkdir(parents=True, exist_ok=True)
 	traces_tmp = store_dir / 'traces.npy.tmp'
-	dt_seconds = read_segy_dt_seconds(str(raw_path)) or 0.002
-
 	with segyio.open(raw_path, 'r', ignore_geometry=True) as segy:
 		segy.mmap()
 		n_traces = segy.tracecount
 		n_samples = len(segy.trace[0])
-	mm = np.lib.format.open_memmap(
-		traces_tmp,
-		mode='w+',
-		dtype=np.float32,
-		shape=(n_traces, n_samples),
-	)
-	for i in range(n_traces):
-		tr = segy.trace[i].astype(np.float32)
-		mean = tr.mean()
-		std = tr.std()
-		if std == 0:
-			std = 1.0
-		mm[i] = (tr - mean) / std
-	del mm
+		mm = np.lib.format.open_memmap(
+			traces_tmp,
+			mode='w+',
+			dtype=np.float32,
+			shape=(n_traces, n_samples),
+		)
+		for i in range(n_traces):
+			tr = segy.trace[i].astype(np.float32)
+			mean = tr.mean()
+			std = tr.std()
+			if std == 0:
+				std = 1.0
+			mm[i] = (tr - mean) / std
+		del mm
 	traces_tmp.replace(store_dir / 'traces.npy')
 	meta = {
 		'n_traces': int(n_traces),
@@ -503,7 +437,6 @@ async def upload_segy(
 		'original_segy_path': str(raw_path),
 		'version': 1,
 		'normalized': True,
-		'dt': dt_seconds,
 	}
 	tmp_meta = store_dir / 'meta.json.tmp'
 	tmp_meta.write_text(json.dumps(meta))
@@ -516,12 +449,6 @@ async def upload_segy(
 	threading.Thread(target=reader.preload_all_sections, daemon=True).start()
 	for b in {key1_byte, key2_byte}:
 		threading.Thread(target=reader.ensure_header, args=(b,), daemon=True).start()
-	_update_file_registry(
-		file_id,
-		path=str(raw_path),
-		store_path=str(store_dir),
-		dt=dt_seconds,
-	)
 	return {'file_id': file_id, 'reused_trace_store': False}
 
 
@@ -552,13 +479,13 @@ def get_section_bin(
 		reader = get_reader(file_id, key1_byte, key2_byte)
 		section = np.array(reader.get_section(key1_idx), dtype=np.float32)
 		scale, q = quantize_float32(section)
-		obj = {
-			'scale': scale,
-			'shape': q.shape,
-			'data': q.tobytes(),
-			'dt': get_dt_for_file(file_id),
-		}
-		payload = msgpack.packb(obj)
+		payload = msgpack.packb(
+			{
+				'scale': scale,
+				'shape': q.shape,
+				'data': q.tobytes(),
+			}
+		)
 		return Response(
 			gzip.compress(payload),
 			media_type='application/octet-stream',
@@ -645,13 +572,13 @@ def get_section_window_bin(
 
 	window_view = np.ascontiguousarray(sub.T, dtype=np.float32)
 	scale, q = quantize_float32(window_view)
-	obj = {
-		'scale': scale,
-		'shape': window_view.shape,
-		'data': q.tobytes(),
-		'dt': get_dt_for_file(file_id),
-	}
-	payload = msgpack.packb(obj)
+	payload = msgpack.packb(
+		{
+			'scale': scale,
+			'shape': window_view.shape,
+			'data': q.tobytes(),
+		}
+	)
 	compressed = gzip.compress(payload)
 	window_section_cache.set(cache_key, compressed)
 	return Response(

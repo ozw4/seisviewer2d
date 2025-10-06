@@ -288,64 +288,6 @@
       margin-top: .4em;
     }
 
-    /* Pipeline progress overlay */
-    #ppOverlay {
-      position: fixed;
-      inset: 0;
-      background: rgba(0, 0, 0, .25);
-      display: none;
-      align-items: center;
-      justify-content: center;
-      z-index: 9999;
-    }
-
-    #ppOverlay.show {
-      display: flex;
-    }
-
-    .ppCard {
-      min-width: 320px;
-      max-width: 90vw;
-      background: #fff;
-      border: 1px solid #e3e3e3;
-      border-radius: 10px;
-      box-shadow: 0 10px 30px rgba(0, 0, 0, .15);
-      padding: 16px 18px;
-      color: #222;
-    }
-
-    .ppTitle {
-      font-weight: 700;
-      margin-bottom: 8px;
-    }
-
-    .ppStatus {
-      font-size: .95em;
-      color: #444;
-      margin: 8px 0 12px;
-    }
-
-    .ppBar {
-      height: 8px;
-      background: #eee;
-      border-radius: 9999px;
-      overflow: hidden;
-    }
-
-    .ppBarInner {
-      height: 100%;
-      width: 0%;
-      background: #4c8bf5;
-      transition: width .2s ease;
-    }
-
-    .ppActions {
-      display: flex;
-      justify-content: flex-end;
-      gap: .5em;
-      margin-top: 10px;
-    }
-
     .hidden {
       display: none !important;
     }
@@ -446,17 +388,7 @@
     var latestPipelineKey = null;
     var latestWindowRender = null;
     var windowFetchToken = 0;
-    let defaultDt = 0.002;
-    try {
-      const storedDt = localStorage.getItem('segy.dt');
-      if (storedDt !== null) {
-        const parsed = parseFloat(storedDt);
-        if (!Number.isNaN(parsed) && Number.isFinite(parsed) && parsed > 0) {
-          defaultDt = parsed;
-        }
-      }
-    } catch (_) {}
-    window.defaultDt = defaultDt;
+    const defaultDt = 0.002;
     const PREFETCH_WIDTH = 3;
     const FALLBACK_MAX = 8;
     const HARD_LIMIT_BYTES = 512 * 1024 * 1024;
@@ -493,28 +425,6 @@
     // 統一キー関数（FB予測キャッシュ用）
     function fbCacheKey(k1, layer, pKey) {
       return `${k1}|${layer}|${pKey ?? 'raw'}`;
-    }
-
-    function applyServerDt(obj) {
-      const dtSec =
-        obj && typeof obj.dt === 'number' && isFinite(obj.dt) && obj.dt > 0
-          ? obj.dt
-          : null;
-
-      if (dtSec === null) return;
-
-      const prev =
-        typeof window.defaultDt === 'number' && isFinite(window.defaultDt)
-          ? window.defaultDt
-          : defaultDt;
-
-      // dt が実際に変わった時だけ更新＆Yレンジ初期化
-      if (!Number.isFinite(prev) || Math.abs(prev - dtSec) > 1e-12) {
-        defaultDt = dtSec;
-        window.defaultDt = dtSec;
-        try { localStorage.setItem('segy.dt', String(dtSec)); } catch (_) { }
-        savedYRange = null;
-      }
     }
 
     const COLORMAPS = {
@@ -1052,7 +962,6 @@
             if (!res.ok) return;
             const bin = new Uint8Array(await res.arrayBuffer());
             const obj = msgpack.decode(bin);
-            applyServerDt(obj);
             const int8 = new Int8Array(obj.data.buffer);
             const f32 = Float32Array.from(int8, v => v / obj.scale);
             putCacheF32(rawKey, f32);
@@ -1158,7 +1067,6 @@
 
         console.time('Decode & cache');
         const obj = msgpack.decode(bin);
-        applyServerDt(obj);
         const int8 = new Int8Array(obj.data.buffer);
         f32 = Float32Array.from(int8, (v) => v / obj.scale);
         putCacheF32(cacheKey(key1Val, 'raw'), f32);
@@ -1648,7 +1556,6 @@
         const bin = new Uint8Array(await res.arrayBuffer());
         if (requestId !== windowFetchToken) return;
         const obj = msgpack.decode(bin);
-        applyServerDt(obj);
         const int8 = new Int8Array(obj.data.buffer);
         const values = Float32Array.from(int8, (v) => v / obj.scale);
         const shapeRaw = Array.isArray(obj.shape) ? obj.shape : Array.from(obj.shape ?? []);
@@ -2006,121 +1913,6 @@
       scheduleWindowFetch();
     }
 
-    window.addEventListener('DOMContentLoaded', () => {
-      const overlay = document.getElementById('ppOverlay');
-      const statusEl = document.getElementById('ppStatus');
-      const barInner = document.getElementById('ppBarInner');
-      const cancelBtn = document.getElementById('ppCancelBtn');
-
-      if (!overlay || !statusEl || !barInner || !cancelBtn) {
-        return;
-      }
-
-      let totalStepsCount = 1;
-
-      function setText(msg) {
-        statusEl.textContent = msg || '';
-      }
-
-      function setProgress(pct) {
-        const clamped = Math.max(0, Math.min(100, Math.round(pct)));
-        barInner.style.width = `${clamped}%`;
-      }
-
-      function openOverlay(totalSteps = 1, initialText = 'Preparing…') {
-        totalStepsCount = Math.max(1, Number(totalSteps) || 1);
-        overlay.classList.add('show');
-        setText(initialText);
-        setProgress(0);
-      }
-
-      function stepOverlay(index, name) {
-        const idx = Math.max(0, Number(index) || 0);
-        const pct = Math.round((idx / totalStepsCount) * 100);
-        const label = name ? `(${idx}/${totalStepsCount}) ${name}` : `Step ${idx}/${totalStepsCount}`;
-        setText(label);
-        setProgress(pct);
-      }
-
-      function closeOverlay() {
-        overlay.classList.remove('show');
-      }
-
-      function errorOverlay(message) {
-        setText(`Error: ${message}`);
-        setProgress(100);
-        setTimeout(() => closeOverlay(), 1200);
-      }
-
-      const progressApi = {
-        open: openOverlay,
-        progress: setProgress,
-        step: stepOverlay,
-        text: setText,
-        close: closeOverlay,
-        error: errorOverlay,
-      };
-
-      window.pipelineProgress = progressApi;
-
-      cancelBtn.addEventListener('click', () => {
-        try {
-          if (window.pipelineUI && typeof window.pipelineUI.cancel === 'function') {
-            window.pipelineUI.cancel();
-          }
-        } catch (err) {
-          console.warn('pipeline cancel threw', err);
-        }
-        closeOverlay();
-      });
-
-      function attachPipelineHandlers() {
-        const ui = window.pipelineUI;
-        if (!ui) return;
-
-        if (typeof ui.on === 'function') {
-          ui.on('run:start', (event) => {
-            const total = event && typeof event.totalSteps === 'number' ? event.totalSteps : 1;
-            openOverlay(total, 'Submitting…');
-          });
-          ui.on('run:step', (event) => {
-            const idx = event && typeof event.index === 'number' ? event.index : 0;
-            const name = event && typeof event.name === 'string' ? event.name : 'Processing…';
-            stepOverlay(idx, name);
-          });
-          ui.on('run:finish', (event) => {
-            const total = event && typeof event.totalSteps === 'number' ? event.totalSteps : totalStepsCount;
-            stepOverlay(total, 'Done');
-            setTimeout(() => closeOverlay(), 400);
-          });
-          ui.on('run:error', (event) => {
-            const message = event && typeof event.message === 'string' ? event.message : 'failed';
-            errorOverlay(message);
-          });
-          return;
-        }
-
-        if (typeof ui.run === 'function' && !ui.__progressWrapped) {
-          const originalRun = ui.run.bind(ui);
-          ui.__progressWrapped = true;
-          ui.run = async function progressWrappedRun(...args) {
-            openOverlay(1, 'Running pipeline…');
-            try {
-              const result = await originalRun(...args);
-              setProgress(100);
-              setTimeout(() => closeOverlay(), 400);
-              return result;
-            } catch (err) {
-              errorOverlay((err && err.message) || 'failed');
-              throw err;
-            }
-          };
-        }
-      }
-
-      attachPipelineHandlers();
-    });
-
     window.addEventListener('DOMContentLoaded', loadSettings);
 
     // Toggle between raw and first tap with the "n" key
@@ -2145,16 +1937,6 @@
       }
     });
   </script>
-  <div id="ppOverlay">
-    <div class="ppCard">
-      <div class="ppTitle">Pipeline running…</div>
-      <div id="ppStatus" class="ppStatus">Preparing…</div>
-      <div class="ppBar"><div id="ppBarInner" class="ppBarInner"></div></div>
-      <div class="ppActions">
-        <button id="ppCancelBtn" type="button">Cancel</button>
-      </div>
-    </div>
-  </div>
 </body>
 
 </html>
