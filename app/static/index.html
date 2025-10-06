@@ -496,20 +496,14 @@
     }
 
     function applyServerDt(obj) {
-      try {
-        let dtSec = null;
-        if (obj && typeof obj.dt === 'number' && isFinite(obj.dt) && obj.dt > 0) dtSec = obj.dt;
-        else if (obj && typeof obj.dt_ms === 'number' && isFinite(obj.dt_ms) && obj.dt_ms > 0) dtSec = obj.dt_ms / 1000;
-        else if (obj && typeof obj.dt_us === 'number' && isFinite(obj.dt_us) && obj.dt_us > 0) dtSec = obj.dt_us / 1e6;
-
-        if (dtSec && isFinite(dtSec) && dtSec > 0) {
-          defaultDt = dtSec;
-          window.defaultDt = dtSec;
-          try { localStorage.setItem('segy.dt', String(dtSec)); } catch (_) {}
-          savedYRange = null;
-        }
-      } catch (_) {}
-    }
+      const dt = obj?.dt;
+      if (typeof dt === 'number' && isFinite(dt) && dt > 0) {
+            defaultDt = dt;
+            window.defaultDt = dt;
+            try { localStorage.setItem('segy.dt', String(dt)); } catch (_) { }
+            savedYRange = null; // y軸スケールをdtに合わせてリセット
+          }
+      }
 
     const COLORMAPS = {
       Greys: 'Greys',
