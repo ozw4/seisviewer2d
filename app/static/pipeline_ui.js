@@ -31,7 +31,6 @@
     bandpass: [
       { key: 'low_hz', label: 'low_hz', type: 'number', step: '0.1' },
       { key: 'high_hz', label: 'high_hz', type: 'number', step: '0.1' },
-      { key: 'dt', label: 'dt', type: 'number', step: '0.0001' },
       { key: 'taper', label: 'taper', type: 'number', step: '0.05' },
     ],
     denoise: [
@@ -68,17 +67,9 @@
     return name.charAt(0).toUpperCase() + name.slice(1);
   }
 
-  function getDtFromUI() {
-    const input = document.getElementById('dt');
-    const candidate = input ? parseFloat(input.value) : NaN;
-    if (!Number.isNaN(candidate) && isFinite(candidate) && candidate > 0) return candidate;
-    if (typeof window.defaultDt === 'number' && isFinite(window.defaultDt)) return window.defaultDt;
-    return 0.002;
-  }
-
   function defaultParamsFor(name) {
     if (name === 'bandpass') {
-      return { low_hz: 5, high_hz: 60, dt: getDtFromUI(), taper: 0.1 };
+      return { low_hz: 5, high_hz: 60, taper: 0.1 };
     }
     if (name === 'denoise') {
       return {
@@ -95,7 +86,10 @@
 
   function applyDefaultParams(name, params) {
     const base = defaultParamsFor(name);
-    const incoming = params && typeof params === 'object' ? params : {};
+    const incoming = params && typeof params === 'object' ? { ...params } : {};
+    if (name === 'bandpass') {
+      delete incoming.dt;
+    }
     return { ...base, ...incoming };
   }
 
