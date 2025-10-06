@@ -446,7 +446,17 @@
     var latestPipelineKey = null;
     var latestWindowRender = null;
     var windowFetchToken = 0;
-    const defaultDt = 0.002;
+    let defaultDt = 0.002;
+    try {
+      const storedDt = localStorage.getItem('segy.dt');
+      if (storedDt !== null) {
+        const parsed = parseFloat(storedDt);
+        if (!Number.isNaN(parsed) && Number.isFinite(parsed) && parsed > 0) {
+          defaultDt = parsed;
+        }
+      }
+    } catch (_) {}
+    window.defaultDt = defaultDt;
     const PREFETCH_WIDTH = 3;
     const FALLBACK_MAX = 8;
     const HARD_LIMIT_BYTES = 512 * 1024 * 1024;
@@ -483,6 +493,28 @@
     // 統一キー関数（FB予測キャッシュ用）
     function fbCacheKey(k1, layer, pKey) {
       return `${k1}|${layer}|${pKey ?? 'raw'}`;
+    }
+
+    function applyServerDt(obj) {
+      const dtSec =
+        obj && typeof obj.dt === 'number' && isFinite(obj.dt) && obj.dt > 0
+          ? obj.dt
+          : null;
+
+      if (dtSec === null) return;
+
+      const prev =
+        typeof window.defaultDt === 'number' && isFinite(window.defaultDt)
+          ? window.defaultDt
+          : defaultDt;
+
+      // dt が実際に変わった時だけ更新＆Yレンジ初期化
+      if (!Number.isFinite(prev) || Math.abs(prev - dtSec) > 1e-12) {
+        defaultDt = dtSec;
+        window.defaultDt = dtSec;
+        try { localStorage.setItem('segy.dt', String(dtSec)); } catch (_) { }
+        savedYRange = null;
+      }
     }
 
     const COLORMAPS = {
@@ -1020,6 +1052,7 @@
             if (!res.ok) return;
             const bin = new Uint8Array(await res.arrayBuffer());
             const obj = msgpack.decode(bin);
+            applyServerDt(obj);
             const int8 = new Int8Array(obj.data.buffer);
             const f32 = Float32Array.from(int8, v => v / obj.scale);
             putCacheF32(rawKey, f32);
@@ -1125,6 +1158,7 @@
 
         console.time('Decode & cache');
         const obj = msgpack.decode(bin);
+        applyServerDt(obj);
         const int8 = new Int8Array(obj.data.buffer);
         f32 = Float32Array.from(int8, (v) => v / obj.scale);
         putCacheF32(cacheKey(key1Val, 'raw'), f32);
@@ -1614,6 +1648,7 @@
         const bin = new Uint8Array(await res.arrayBuffer());
         if (requestId !== windowFetchToken) return;
         const obj = msgpack.decode(bin);
+        applyServerDt(obj);
         const int8 = new Int8Array(obj.data.buffer);
         const values = Float32Array.from(int8, (v) => v / obj.scale);
         const shapeRaw = Array.isArray(obj.shape) ? obj.shape : Array.from(obj.shape ?? []);
