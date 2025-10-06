@@ -72,23 +72,7 @@
       color: #fff;
     }
 
-    .denoiseParam {
-      display: none;
-    }
 
-    .bpfParam {
-      display: none;
-    }
-
-    #denoiseSettingsDialog {
-      padding: 1em;
-      border: 1px solid #888;
-    }
-
-    #denoiseSettingsDialog form label {
-      display: block;
-      margin: 0.5em 0;
-    }
 
     #pipelinePanel {
       width: 320px;
@@ -347,38 +331,6 @@
         <label for="gain">Gain:</label>
         <input type="range" id="gain" min="0.1" max="5" step="0.1" value="1" oninput="onGainChange()" />
         <span id="gain_display">1×</span>
-        <select id="denoiseScope">
-          <option value="display">表示セクション</option>
-          <option value="all_key1">データ全体</option>
-          <option value="common_shot">共通ショット</option>
-          <option value="common_receiver">共通レシーバー</option>
-        </select>
-        <button id="openDenoiseDlgBtn" onclick="openDenoiseSettings()">ノイズ抑制パラメータ設定</button>
-        <label class="denoiseParam">mask_ratio:<input type="number" id="mask_ratio" value="0.5" step="0.1" min="0"
-            max="1" style="width:70px;"></label>
-        <label class="denoiseParam">noise_std:<input type="number" id="noise_std" value="1" step="0.1"
-            style="width:70px;"></label>
-        <label class="denoiseParam">chunk_h:<input type="number" id="chunk_h" value="128" step="1"
-            style="width:70px;"></label>
-        <label class="denoiseParam">overlap:<input type="number" id="overlap" value="32" step="1"
-            style="width:70px;"></label>
-        <select id="mask_noise_mode" class="denoiseParam">
-          <option value="replace" selected>replace</option>
-          <option value="add">add</option>
-        </select>
-        <button id="denoiseBtn" onclick="handleDenoise()">ノイズ抑制</button>
-        <progress id="denoiseProgress" value="0" max="1" style="display:none; width:150px;"></progress>
-        <span id="denoiseProgressText"></span>
-        <button id="openBpfDlgBtn" onclick="openBpfSettings()">BPFパラメータ設定</button>
-        <label class="bpfParam">low_hz:<input type="number" id="low_hz" value="5" step="0.1"
-            style="width:70px;"></label>
-        <label class="bpfParam">high_hz:<input type="number" id="high_hz" value="60" step="0.1"
-            style="width:70px;"></label>
-        <label class="bpfParam">dt:<input type="number" id="dt" value="0.002" step="0.0001" style="width:70px;"></label>
-        <label class="bpfParam">taper:<input type="number" id="taper" value="0.1" step="0.1"
-            style="width:70px;"></label>
-        <button id="bpfBtn" onclick="handleBandpass()">BPF（表示セクション）</button>
-        <button id="bpfApplyBtn" onclick="applyBandpassBatch()">BPF（全体/共通）</button>
         <label for="colormap">Colormap:</label>
         <select id="colormap" onchange="onColormapChange()">
           <option value="Greys">Greys</option>
@@ -418,36 +370,6 @@
       </div>
     </aside>
   </div>
-  <dialog id="denoiseSettingsDialog">
-    <form method="dialog">
-      <label>mask_ratio:<input type="number" id="dlg_mask_ratio" required step="0.1" min="0" max="1"></label>
-      <label>noise_std:<input type="number" id="dlg_noise_std" required step="0.1"></label>
-      <label>chunk_h:<input type="number" id="dlg_chunk_h" required step="1"></label>
-      <label>overlap:<input type="number" id="dlg_overlap" required step="1"></label>
-      <label>mask_noise_mode:
-        <select id="dlg_mask_noise_mode" required>
-          <option value="replace">replace</option>
-          <option value="add">add</option>
-        </select>
-      </label>
-      <div style="margin-top:1em;text-align:right;">
-        <button type="button" onclick="saveDenoiseSettings()">保存</button>
-        <button type="button" onclick="closeDenoiseSettings()">キャンセル</button>
-      </div>
-    </form>
-  </dialog>
-  <dialog id="bpfSettingsDialog">
-    <form method="dialog">
-      <label>low_hz:<input type="number" id="dlg_low_hz" required step="0.1"></label>
-      <label>high_hz:<input type="number" id="dlg_high_hz" required step="0.1"></label>
-      <label>dt:<input type="number" id="dlg_dt" required step="0.0001"></label>
-      <label>taper:<input type="number" id="dlg_taper" required step="0.1"></label>
-      <div style="margin-top:1em;text-align:right;">
-        <button type="button" onclick="saveBpfSettings()">保存</button>
-        <button type="button" onclick="closeBpfSettings()">キャンセル</button>
-      </div>
-    </form>
-  </dialog>
   <script src="/static/plotly-2.29.1.min.js"></script>
   <script src="/static/pako.min.js"></script>
   <script src="/static/msgpack.min.js"></script>
@@ -514,33 +436,6 @@
     };
 
     (function () {
-      const saved = localStorage.getItem('denoise_params');
-      if (saved) {
-        try {
-          const p = JSON.parse(saved);
-          if (p.mask_ratio !== undefined) document.getElementById('mask_ratio').value = p.mask_ratio;
-          if (p.noise_std !== undefined) document.getElementById('noise_std').value = p.noise_std;
-          if (p.chunk_h !== undefined) document.getElementById('chunk_h').value = p.chunk_h;
-          if (p.overlap !== undefined) document.getElementById('overlap').value = p.overlap;
-          if (p.mask_noise_mode !== undefined) document.getElementById('mask_noise_mode').value = p.mask_noise_mode;
-        } catch (e) { }
-      }
-    })();
-
-    (function () {
-      const saved = localStorage.getItem('bpf_params');
-      if (saved) {
-        try {
-          const p = JSON.parse(saved);
-          if (p.low_hz !== undefined) document.getElementById('low_hz').value = p.low_hz;
-          if (p.high_hz !== undefined) document.getElementById('high_hz').value = p.high_hz;
-          if (p.dt !== undefined) document.getElementById('dt').value = p.dt;
-          if (p.taper !== undefined) document.getElementById('taper').value = p.taper;
-        } catch (e) { }
-      }
-    })();
-
-    (function () {
       const saved = localStorage.getItem('gain');
       const el = document.getElementById('gain');
       const disp = document.getElementById('gain_display');
@@ -580,25 +475,6 @@
         if (c) c.checked = (sh === 'true');
       }
     })();
-
-    function getDenoiseParams() {
-      return {
-        mask_ratio: parseFloat(document.getElementById('mask_ratio').value),
-        noise_std: parseFloat(document.getElementById('noise_std').value),
-        chunk_h: parseInt(document.getElementById('chunk_h').value),
-        overlap: parseInt(document.getElementById('overlap').value),
-        mask_noise_mode: document.getElementById('mask_noise_mode').value,
-      };
-    }
-
-    function getBpfParams() {
-      return {
-        low_hz: parseFloat(document.getElementById('low_hz').value),
-        high_hz: parseFloat(document.getElementById('high_hz').value),
-        dt: parseFloat(document.getElementById('dt').value),
-        taper: parseFloat(document.getElementById('taper').value),
-      };
-    }
 
     // ★★★ FB確率取得：レイヤ/パイプライン対応（既存のジョブAPIを使用）
     async function fetchFbProb(key1Val, { layer = 'raw', pipelineKey = null } = {}) {
@@ -820,187 +696,6 @@
       if (sel) localStorage.setItem('colormap', sel.value);
       if (chk) localStorage.setItem('cmReverse', chk.checked);
       renderLatestView();
-    }
-
-    function openDenoiseSettings() {
-      document.getElementById('dlg_mask_ratio').value = document.getElementById('mask_ratio').value;
-      document.getElementById('dlg_noise_std').value = document.getElementById('noise_std').value;
-      document.getElementById('dlg_chunk_h').value = document.getElementById('chunk_h').value;
-      document.getElementById('dlg_overlap').value = document.getElementById('overlap').value;
-      document.getElementById('dlg_mask_noise_mode').value = document.getElementById('mask_noise_mode').value;
-      const dlg = document.getElementById('denoiseSettingsDialog');
-      if (dlg.showModal) dlg.showModal(); else dlg.style.display = 'block';
-    }
-    function closeDenoiseSettings() {
-      const dlg = document.getElementById('denoiseSettingsDialog');
-      if (dlg.close) dlg.close(); else dlg.style.display = 'none';
-    }
-    function saveDenoiseSettings() {
-      document.getElementById('mask_ratio').value = document.getElementById('dlg_mask_ratio').value;
-      document.getElementById('noise_std').value = document.getElementById('dlg_noise_std').value;
-      document.getElementById('chunk_h').value = document.getElementById('dlg_chunk_h').value;
-      document.getElementById('overlap').value = document.getElementById('dlg_overlap').value;
-      document.getElementById('mask_noise_mode').value = document.getElementById('dlg_mask_noise_mode').value;
-      localStorage.setItem('denoise_params', JSON.stringify(getDenoiseParams()));
-      closeDenoiseSettings();
-      if (typeof fetchAndPlot === 'function') { try { fetchAndPlot(); } catch (e) { } }
-    }
-
-    function openBpfSettings() {
-      document.getElementById('dlg_low_hz').value = document.getElementById('low_hz').value;
-      document.getElementById('dlg_high_hz').value = document.getElementById('high_hz').value;
-      document.getElementById('dlg_dt').value = document.getElementById('dt').value;
-      document.getElementById('dlg_taper').value = document.getElementById('taper').value;
-      const dlg = document.getElementById('bpfSettingsDialog');
-      if (dlg.showModal) dlg.showModal(); else dlg.style.display = 'block';
-    }
-    function closeBpfSettings() {
-      const dlg = document.getElementById('bpfSettingsDialog');
-      if (dlg.close) dlg.close(); else dlg.style.display = 'none';
-    }
-    function saveBpfSettings() {
-      document.getElementById('low_hz').value = document.getElementById('dlg_low_hz').value;
-      document.getElementById('high_hz').value = document.getElementById('dlg_high_hz').value;
-      document.getElementById('dt').value = document.getElementById('dlg_dt').value;
-      document.getElementById('taper').value = document.getElementById('dlg_taper').value;
-      localStorage.setItem('bpf_params', JSON.stringify(getBpfParams()));
-      closeBpfSettings();
-      if (typeof fetchAndPlot === 'function') { try { fetchAndPlot(); } catch (e) { } }
-    }
-
-    async function pollDenoiseJob(jobId) {
-      const bar = document.getElementById('denoiseProgress');
-      const txt = document.getElementById('denoiseProgressText');
-      bar.style.display = 'inline-block';
-      bar.value = 0;
-      txt.textContent = '0%';
-      const timer = setInterval(async () => {
-        const res = await fetch(`/denoise_job_status?job_id=${jobId}`);
-        if (!res.ok) return;
-        const data = await res.json();
-        bar.value = data.progress;
-        txt.textContent = `${Math.round(data.progress * 100)}%`;
-        if (data.status === 'done') {
-          clearInterval(timer);
-          cache.clear();
-          await fetchAndPlot();
-          setTimeout(() => { bar.style.display = 'none'; txt.textContent = ''; }, 1000);
-        } else if (data.status === 'error') {
-          clearInterval(timer);
-          txt.textContent = `error`;
-        }
-      }, 1000);
-    }
-
-    async function pollBpfJob(jobId) {
-      const bar = document.getElementById('denoiseProgress');
-      const txt = document.getElementById('denoiseProgressText');
-      bar.style.display = 'inline-block';
-      bar.value = 0;
-      txt.textContent = 'BPF 0%';
-      const timer = setInterval(async () => {
-        const res = await fetch(`/bandpass_job_status?job_id=${jobId}`);
-        if (!res.ok) return;
-        const data = await res.json();
-        bar.value = data.progress;
-        txt.textContent = `BPF ${Math.round(data.progress * 100)}%`;
-        if (data.status === 'done') {
-          clearInterval(timer);
-          cache.clear();
-          await fetchAndPlot();
-          setTimeout(() => { bar.style.display = 'none'; txt.textContent = ''; }, 1000);
-        } else if (data.status === 'error') {
-          clearInterval(timer);
-          txt.textContent = 'BPF error';
-        }
-      }, 1000);
-    }
-
-    async function handleDenoise() {
-      const scope = document.getElementById('denoiseScope').value;
-      const params = getDenoiseParams();
-      const index = parseInt(document.getElementById('key1_idx_slider').value);
-      const key1Val = key1Values[index];
-      if (scope === 'display') {
-        const body = {
-          file_id: currentFileId, key1_idx: key1Val,
-          key1_byte: currentKey1Byte, key2_byte: currentKey2Byte, ...params,
-        };
-        const res = await fetch('/denoise_section_bin', {
-          method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
-        });
-        if (!res.ok) { alert('denoise failed'); return; }
-        const bin = new Uint8Array(await res.arrayBuffer());
-        const obj = msgpack.decode(bin);
-        const int8 = new Int8Array(obj.data.buffer);
-        const f32 = Float32Array.from(int8, v => v / obj.scale);
-        putCacheF32(cacheKey(key1Val, 'den'), f32);
-        sectionShape = obj.shape;
-        await fetchAndPlot();
-      } else {
-        const body = {
-          file_id: currentFileId,
-          scope: scope === 'all_key1' ? 'all_key1' : 'by_header',
-          key1_byte: currentKey1Byte, key2_byte: currentKey2Byte, ...params,
-        };
-        if (scope !== 'all_key1') {
-          body.key1_idx = key1Val;
-          body.group_header_byte = scope === 'common_shot' ? currentKey1Byte : currentKey2Byte;
-        }
-        const res = await fetch('/denoise_apply', {
-          method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
-        });
-        if (!res.ok) { alert('denoise apply failed'); return; }
-        const data = await res.json();
-        pollDenoiseJob(data.job_id);
-      }
-    }
-
-    async function handleBandpass() {
-      const params = getBpfParams();
-      const index = parseInt(document.getElementById('key1_idx_slider').value);
-      const key1Val = key1Values[index];
-      const body = {
-        file_id: currentFileId, key1_idx: key1Val,
-        key1_byte: currentKey1Byte, key2_byte: currentKey2Byte, ...params,
-      };
-      const res = await fetch('/bandpass_section_bin', {
-        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
-      });
-      if (!res.ok) { alert('bandpass failed'); return; }
-      const bin = new Uint8Array(await res.arrayBuffer());
-      const obj = msgpack.decode(bin);
-      const int8 = new Int8Array(obj.data.buffer);
-      const f32 = Float32Array.from(int8, v => v / obj.scale);
-      putCacheF32(cacheKey(key1Val, 'filt'), f32);
-      sectionShape = obj.shape;
-      await fetchAndPlot();
-    }
-
-    async function applyBandpassBatch() {
-      const scope = document.getElementById('denoiseScope').value;
-      const params = getBpfParams();
-      const index = parseInt(document.getElementById('key1_idx_slider').value);
-      const key1Val = key1Values[index];
-      if (scope === 'display') {
-        await handleBandpass();
-      } else {
-        const body = {
-          file_id: currentFileId,
-          scope: scope === 'all_key1' ? 'all_key1' : 'by_header',
-          key1_byte: currentKey1Byte, key2_byte: currentKey2Byte, ...params,
-        };
-        if (scope !== 'all_key1') {
-          body.key1_idx = key1Val;
-          body.group_header_byte = scope === 'common_shot' ? currentKey1Byte : currentKey2Byte;
-        }
-        const res = await fetch('/bandpass_apply', {
-          method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
-        });
-        if (!res.ok) { alert('bandpass apply failed'); return; }
-        const data = await res.json();
-        pollBpfJob(data.job_id);
-      }
     }
 
     function togglePickMode() {
@@ -1245,7 +940,9 @@
     }
 
     function prefetchAround(centerIdx, mode) {
-      if (mode === 'denoised' || mode === 'fbprob') return;
+      if (mode === 'fbprob') return;
+      const effectiveMode = mode === 'auto' ? 'raw' : mode;
+      if (effectiveMode !== 'raw') return;
       for (const ctrl of inflight.values()) ctrl.abort();
       inflight.clear();
       const start = Math.max(0, centerIdx - PREFETCH_WIDTH);
@@ -1254,58 +951,25 @@
       for (let i = start; i <= end; i++) {
         if (i === centerIdx) continue;
         const key1Val = key1Values[i];
-        if (mode === 'auto') {
-          if (cache.has(cacheKey(key1Val, 'den')) || cache.has(cacheKey(key1Val, 'filt')) || cache.has(cacheKey(key1Val, 'raw')) ||
-            inflight.has(cacheKey(key1Val, 'den')) || inflight.has(cacheKey(key1Val, 'filt')) || inflight.has(cacheKey(key1Val, 'raw'))) continue;
-        } else {
-          const ck = cacheKey(key1Val, mode === 'denoised' ? 'den' : mode === 'filtered' ? 'filt' : 'raw');
-          if (cache.has(ck) || inflight.has(ck)) continue;
-        }
+        const rawKey = cacheKey(key1Val, 'raw');
+        if (cache.has(rawKey) || inflight.has(rawKey)) continue;
         const controller = new AbortController();
-        const inflightKey = mode === 'raw' ? cacheKey(key1Val, 'raw') :
-          mode === 'denoised' ? cacheKey(key1Val, 'den') :
-            mode === 'filtered' ? cacheKey(key1Val, 'filt') :
-              cacheKey(key1Val, 'den');
-        inflight.set(inflightKey, controller);
+        inflight.set(rawKey, controller);
         scheduler(async () => {
           try {
-            const denoiseParams = getDenoiseParams();
-            const bpfParams = getBpfParams();
-            const urlDen = `/get_denoised_section_bin?file_id=${currentFileId}&key1_idx=${key1Val}&chunk_h=${denoiseParams.chunk_h}&overlap=${denoiseParams.overlap}&mask_ratio=${denoiseParams.mask_ratio}&noise_std=${denoiseParams.noise_std}&mask_noise_mode=${denoiseParams.mask_noise_mode}`;
-            const urlFilt = `/get_bandpassed_section_bin?file_id=${currentFileId}&key1_idx=${key1Val}&low_hz=${bpfParams.low_hz}&high_hz=${bpfParams.high_hz}&dt=${bpfParams.dt}&taper=${bpfParams.taper}`;
             const urlRaw = `/get_section_bin?file_id=${currentFileId}&key1_idx=${key1Val}&key1_byte=${currentKey1Byte}&key2_byte=${currentKey2Byte}`;
-            let res;
-            let fetchedMode = 'raw';
-            if (mode === 'raw') {
-              res = await fetch(urlRaw, { signal: controller.signal });
-              if (!res.ok) return;
-            } else if (mode === 'denoised') {
-              res = await fetch(urlDen, { signal: controller.signal });
-              if (res.ok) fetchedMode = 'den';
-              else { res = await fetch(urlRaw, { signal: controller.signal }); if (!res.ok) return; }
-            } else if (mode === 'filtered') {
-              res = await fetch(urlFilt, { signal: controller.signal });
-              if (res.ok) fetchedMode = 'filt';
-              else { res = await fetch(urlRaw, { signal: controller.signal }); if (!res.ok) return; }
-            } else {
-              res = await fetch(urlDen, { signal: controller.signal });
-              if (res.ok) fetchedMode = 'den';
-              else {
-                res = await fetch(urlFilt, { signal: controller.signal });
-                if (res.ok) fetchedMode = 'filt';
-                else { res = await fetch(urlRaw, { signal: controller.signal }); if (!res.ok) return; }
-              }
-            }
+            const res = await fetch(urlRaw, { signal: controller.signal });
+            if (!res.ok) return;
             const bin = new Uint8Array(await res.arrayBuffer());
             const obj = msgpack.decode(bin);
             const int8 = new Int8Array(obj.data.buffer);
             const f32 = Float32Array.from(int8, v => v / obj.scale);
-            putCacheF32(cacheKey(key1Val, fetchedMode), f32);
+            putCacheF32(rawKey, f32);
             if (!sectionShape) sectionShape = obj.shape;
           } catch (err) {
             if (err.name !== 'AbortError') console.warn('Prefetch failed', key1Val, err);
           } finally {
-            inflight.delete(inflightKey);
+            inflight.delete(rawKey);
           }
         });
       }

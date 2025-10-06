@@ -6,24 +6,20 @@ import hashlib
 import json
 import pathlib
 import re
-import shutil
-import sys
 import threading
-import traceback
 from collections import OrderedDict
 from pathlib import Path
-from typing import Annotated, Any, Literal
+from typing import Annotated, Any
 from uuid import uuid4
 
 import msgpack
 import numpy as np
 import segyio
 from api.schemas import (
-	BandpassParams,
-	PipelineAllResponse,
-	PipelineJobStatusResponse,
-	PipelineSectionResponse,
-	PipelineSpec,
+        PipelineAllResponse,
+        PipelineJobStatusResponse,
+        PipelineSectionResponse,
+        PipelineSpec,
 )
 from fastapi import (
 	APIRouter,
@@ -57,32 +53,15 @@ UPLOAD_DIR = pathlib.Path(__file__).parent / 'uploads'
 UPLOAD_DIR.mkdir(exist_ok=True)
 
 PROCESSED_DIR = UPLOAD_DIR / 'processed'
-DENOISE_DIR = PROCESSED_DIR / 'denoise'
-DENOISE_DIR.mkdir(parents=True, exist_ok=True)
 
 TRACE_DIR = PROCESSED_DIR / 'traces'
 TRACE_DIR.mkdir(parents=True, exist_ok=True)
-
-LATEST_DIR = DENOISE_DIR / 'latest'
-LATEST_DIR.mkdir(parents=True, exist_ok=True)
-
-
-def _denoise_path(file_id: str, key1_idx: int, param_hash: str) -> Path:
-	safe_id = str(file_id).replace('/', '_')
-	return DENOISE_DIR / safe_id / param_hash / f'{key1_idx}.bin.gz'
-
-
-def _denoise_latest_path(file_id: str, key1_idx: int) -> Path:
-	safe_id = str(file_id).replace('/', '_')
-	return LATEST_DIR / safe_id / f'{key1_idx}.bin.gz'
 
 
 cached_readers: dict[str, SegySectionReader | TraceStoreSectionReader] = {}
 SEGYS: dict[str, str] = {}
 
-# Private caches for denoised sections, band-passed sections and asynchronous jobs
-denoise_cache: dict[tuple, bytes] = {}
-bandpass_cache: dict[tuple[str, int, str], bytes] = {}
+# Private caches for FB pick sections and asynchronous jobs
 fbpick_cache: dict[tuple, bytes] = {}
 jobs: dict[str, dict[str, object]] = {}
 
@@ -229,50 +208,6 @@ class Pick(BaseModel):
 	key1_byte: int
 
 
-class BandpassRequest(BandpassParams):
-	file_id: str
-	key1_idx: int
-	key1_byte: int = 189
-	key2_byte: int = 193
-
-
-class BandpassApplyRequest(BandpassParams):
-	file_id: str
-	scope: Literal['display', 'all_key1', 'by_header']
-	key1_idx: int | None = None
-	group_header_byte: int | None = None
-	key1_byte: int = 189
-	key2_byte: int = 193
-
-
-class DenoiseRequest(BaseModel):
-	file_id: str
-	key1_idx: int
-	key1_byte: int = 189
-	key2_byte: int = 193
-	chunk_h: int = 128
-	overlap: int = 32
-	mask_ratio: float = 0.5
-	noise_std: float = 1.0
-	mask_noise_mode: Literal['replace', 'add'] = 'replace'
-	passes_batch: int = 4
-
-
-class DenoiseApplyRequest(BaseModel):
-	file_id: str
-	scope: Literal['display', 'all_key1', 'by_header']
-	key1_idx: int | None = None
-	group_header_byte: int | None = None
-	key1_byte: int = 189
-	key2_byte: int = 193
-	chunk_h: int = 128
-	overlap: int = 32
-	mask_ratio: float = 0.5
-	noise_std: float = 1.0
-	mask_noise_mode: Literal['replace', 'add'] = 'replace'
-	passes_batch: int = 4
-
-
 class FbpickRequest(BaseModel):
 	file_id: str
 	key1_idx: int
@@ -295,153 +230,6 @@ class PipelineAllRequest(BaseModel):
 	spec: PipelineSpec
 	taps: list[str] = Field(default_factory=list)
 	downsample_quicklook: bool = True
-
-
-def _run_denoise_job(job_id: str, req: DenoiseApplyRequest) -> None:
-	job = jobs[job_id]
-	try:
-		reader = get_reader(req.file_id, req.key1_byte, req.key2_byte)
-		if req.scope == 'display':
-			if req.key1_idx is None:
-				msg = 'key1_idx is required for display scope'
-				raise ValueError(msg)  # noqa: TRY301
-			key1_vals = [req.key1_idx]
-		elif req.scope == 'all_key1':
-			key1_vals = reader.get_key1_values().tolist()
-		else:
-			msg = 'by_header scope not implemented'
-			raise ValueError(msg)  # noqa: TRY301
-		total = len(key1_vals) or 1
-		params = {
-			'chunk_h': req.chunk_h,
-			'overlap': req.overlap,
-			'mask_ratio': req.mask_ratio,
-			'noise_std': req.noise_std,
-			'mask_noise_mode': req.mask_noise_mode,
-			'passes_batch': req.passes_batch,
-		}
-		param_hash = hashlib.sha256(
-			json.dumps(params, sort_keys=True).encode('utf-8')
-		).hexdigest()
-		spec = PipelineSpec(
-			steps=[
-				{
-					'kind': 'transform',
-					'name': 'denoise',
-					'params': {
-						'chunk_h': req.chunk_h,
-						'overlap': req.overlap,
-						'mask_ratio': req.mask_ratio,
-						'noise_std': req.noise_std,
-						'mask_noise_mode': req.mask_noise_mode,
-						'passes_batch': req.passes_batch,
-					},
-				}
-			]
-		)
-		for idx, key1_val in enumerate(key1_vals):
-			cache_key = (req.file_id, int(key1_val), param_hash)
-			if cache_key in denoise_cache:
-				job['progress'] = (idx + 1) / total
-				continue
-			section = np.array(reader.get_section(int(key1_val)), dtype=np.float32)
-			out = apply_pipeline(section, spec=spec, meta={}, taps=['denoise'])
-			denoised = out['denoise']['data']
-			scale, q = quantize_float32(denoised)
-			payload = msgpack.packb(
-				{
-					'scale': scale,
-					'shape': q.shape,
-					'data': q.tobytes(),
-				}
-			)
-			gz = gzip.compress(payload)
-			p = _denoise_path(req.file_id, int(key1_val), param_hash)
-			p.parent.mkdir(parents=True, exist_ok=True)
-			p.write_bytes(gz)
-			p_latest = _denoise_latest_path(req.file_id, int(key1_val))
-			p_latest.parent.mkdir(parents=True, exist_ok=True)
-			tmp = p_latest.with_suffix('.tmp')
-			tmp.write_bytes(gz)
-			tmp.replace(p_latest)
-			denoise_cache[cache_key] = gz
-			denoise_cache[(req.file_id, int(key1_val))] = gz
-			base = DENOISE_DIR / str(req.file_id).replace('/', '_')
-			try:
-				for child in base.iterdir():
-					if child.is_dir() and child.name not in {param_hash, 'latest'}:
-						shutil.rmtree(child, ignore_errors=True)
-			except OSError as exc:
-				print(f'Cleanup failed for {base}: {exc}', file=sys.stderr)
-				traceback.print_exc(file=sys.stderr)
-				# Continue even if cleanup fails.
-			job['progress'] = (idx + 1) / total
-		job['status'] = 'done'
-	except Exception as e:  # noqa: BLE001
-		job['status'] = 'error'
-		job['message'] = str(e)
-
-
-def _run_bandpass_job(job_id: str, req: BandpassApplyRequest) -> None:
-	job = jobs[job_id]
-	try:
-		reader = get_reader(req.file_id, req.key1_byte, req.key2_byte)
-		if req.scope == 'display':
-			if req.key1_idx is None:
-				msg = 'key1_idx is required for display scope'
-				raise ValueError(msg)  # noqa: TRY301
-			key1_vals = [req.key1_idx]
-		elif req.scope == 'all_key1':
-			key1_vals = reader.get_key1_values().tolist()
-		else:
-			msg = 'by_header scope not implemented'
-			raise ValueError(msg)  # noqa: TRY301
-		total = len(key1_vals) or 1
-		params = {
-			'low_hz': req.low_hz,
-			'high_hz': req.high_hz,
-			'dt': req.dt,
-			'taper': req.taper,
-		}
-		param_hash = hashlib.sha256(
-			json.dumps(params, sort_keys=True).encode('utf-8')
-		).hexdigest()
-		spec = PipelineSpec(
-			steps=[
-				{
-					'kind': 'transform',
-					'name': 'bandpass',
-					'params': {
-						'low_hz': req.low_hz,
-						'high_hz': req.high_hz,
-						'dt': req.dt,
-						'taper': req.taper,
-					},
-				}
-			]
-		)
-		for idx, key1_val in enumerate(key1_vals):
-			cache_key = (req.file_id, int(key1_val), param_hash)
-			if cache_key in bandpass_cache:
-				job['progress'] = (idx + 1) / total
-				continue
-			section = np.array(reader.get_section(int(key1_val)), dtype=np.float32)
-			out = apply_pipeline(section, spec=spec, meta={}, taps=['bandpass'])
-			filtered = out['bandpass']['data']
-			scale, q = quantize_float32(filtered)
-			payload = msgpack.packb(
-				{
-					'scale': scale,
-					'shape': q.shape,
-					'data': q.tobytes(),
-				}
-			)
-			bandpass_cache[cache_key] = gzip.compress(payload)
-			job['progress'] = (idx + 1) / total
-		job['status'] = 'done'
-	except Exception as e:  # noqa: BLE001
-		job['status'] = 'error'
-		job['message'] = str(e)
 
 
 def _run_fbpick_job(job_id: str, req: FbpickRequest) -> None:
@@ -795,239 +583,6 @@ def get_section_window_bin(
 	window_section_cache.set(cache_key, compressed)
 	return Response(
 		compressed,
-		media_type='application/octet-stream',
-		headers={'Content-Encoding': 'gzip'},
-	)
-
-
-@router.post('/bandpass_section_bin')
-def bandpass_section_bin(req: BandpassRequest):
-	try:
-		reader = get_reader(req.file_id, req.key1_byte, req.key2_byte)
-		section = np.asarray(reader.get_section(req.key1_idx), dtype=np.float32)
-
-		spec = PipelineSpec(
-			steps=[
-				{
-					'kind': 'transform',
-					'name': 'bandpass',
-					'params': {
-						'low_hz': req.low_hz,
-						'high_hz': req.high_hz,
-						'dt': req.dt,
-						'taper': req.taper,
-					},
-				}
-			]
-		)
-
-		out = apply_pipeline(section, spec=spec, meta={}, taps=['bandpass'])
-		band = out['bandpass']
-		filtered = band['data'] if isinstance(band, dict) else band
-
-		scale, q = quantize_float32(filtered)
-		payload = msgpack.packb(
-			{
-				'scale': scale,
-				'shape': q.shape,
-				'data': q.tobytes(),
-			}
-		)
-
-		return Response(
-			gzip.compress(payload),
-			media_type='application/octet-stream',
-			headers={'Content-Encoding': 'gzip'},
-		)
-
-	except ValueError as e:
-		raise HTTPException(status_code=400, detail=str(e)) from e
-	except Exception as e:
-		raise HTTPException(status_code=500, detail=str(e)) from e
-
-
-@router.post('/bandpass_apply')
-def bandpass_apply(req: BandpassApplyRequest):
-	if req.scope == 'by_header':
-		raise HTTPException(status_code=400, detail='by_header scope not implemented')
-	job_id = str(uuid4())
-	jobs[job_id] = {'status': 'running', 'progress': 0.0, 'message': ''}
-	threading.Thread(target=_run_bandpass_job, args=(job_id, req), daemon=True).start()
-	return {'job_id': job_id}
-
-
-@router.get('/bandpass_job_status')
-def bandpass_job_status(job_id: str = Query(...)):
-	job = jobs.get(job_id)
-	if job is None:
-		raise HTTPException(status_code=404, detail='Job ID not found')
-	return {
-		'status': job.get('status', 'unknown'),
-		'progress': job.get('progress', 0.0),
-		'message': job.get('message', ''),
-	}
-
-
-@router.get('/get_bandpassed_section_bin')
-def get_bandpassed_section_bin(
-	file_id: str = Query(...),
-	key1_idx: int = Query(...),
-	low_hz: float = Query(...),
-	high_hz: float = Query(...),
-	dt: float = Query(0.002),
-	taper: float = Query(0.0),
-):
-	params = {'low_hz': low_hz, 'high_hz': high_hz, 'dt': dt, 'taper': taper}
-	param_hash = hashlib.sha256(
-		json.dumps(params, sort_keys=True).encode('utf-8')
-	).hexdigest()
-	cache_key = (file_id, key1_idx, param_hash)
-	payload = bandpass_cache.get(cache_key)
-	if payload is None:
-		raise HTTPException(status_code=404, detail='Section not processed')
-	return Response(
-		payload,
-		media_type='application/octet-stream',
-		headers={'Content-Encoding': 'gzip'},
-	)
-
-
-@router.post('/denoise_section_bin')
-def denoise_section_bin(req: DenoiseRequest):
-	try:
-		reader = get_reader(req.file_id, req.key1_byte, req.key2_byte)
-		section = np.array(reader.get_section(req.key1_idx), dtype=np.float32)
-		spec = PipelineSpec(
-			steps=[
-				{
-					'kind': 'transform',
-					'name': 'denoise',
-					'params': {
-						'chunk_h': req.chunk_h,
-						'overlap': req.overlap,
-						'mask_ratio': req.mask_ratio,
-						'noise_std': req.noise_std,
-						'mask_noise_mode': req.mask_noise_mode,
-						'passes_batch': req.passes_batch,
-					},
-				}
-			]
-		)
-		out = apply_pipeline(section, spec=spec, meta={}, taps=['denoise'])
-		denoised = out['denoise']['data']
-		scale, q = quantize_float32(denoised)
-		payload = msgpack.packb(
-			{
-				'scale': scale,
-				'shape': q.shape,
-				'data': q.tobytes(),
-			}
-		)
-		params = {
-			'chunk_h': req.chunk_h,
-			'overlap': req.overlap,
-			'mask_ratio': req.mask_ratio,
-			'noise_std': req.noise_std,
-			'mask_noise_mode': req.mask_noise_mode,
-			'passes_batch': req.passes_batch,
-		}
-		param_hash = hashlib.sha256(
-			json.dumps(params, sort_keys=True).encode('utf-8')
-		).hexdigest()
-		cache_key = (req.file_id, req.key1_idx, param_hash)
-		gz = gzip.compress(payload)
-		p = _denoise_path(req.file_id, req.key1_idx, param_hash)
-		p.parent.mkdir(parents=True, exist_ok=True)
-		p.write_bytes(gz)
-		p_latest = _denoise_latest_path(req.file_id, req.key1_idx)
-		p_latest.parent.mkdir(parents=True, exist_ok=True)
-		tmp = p_latest.with_suffix('.tmp')
-		tmp.write_bytes(gz)
-		tmp.replace(p_latest)
-		denoise_cache[cache_key] = gz
-		denoise_cache[(req.file_id, req.key1_idx)] = gz
-		base = DENOISE_DIR / str(req.file_id).replace('/', '_')
-		try:
-			for child in base.iterdir():
-				if child.is_dir() and child.name not in {param_hash, 'latest'}:
-					shutil.rmtree(child, ignore_errors=True)
-		except OSError as exc:
-			print(f'Cleanup failed for {base}: {exc}', file=sys.stderr)
-			traceback.print_exc(file=sys.stderr)
-			# Continue even if cleanup fails.
-		return Response(
-			gz,
-			media_type='application/octet-stream',
-			headers={'Content-Encoding': 'gzip'},
-		)
-	except Exception as exc:
-		traceback.print_exc(file=sys.stderr)
-		raise HTTPException(status_code=500, detail=str(exc)) from exc
-
-
-@router.post('/denoise_apply')
-def denoise_apply(req: DenoiseApplyRequest):
-	if req.scope == 'by_header':
-		raise HTTPException(status_code=400, detail='by_header scope not implemented')
-	job_id = str(uuid4())
-	jobs[job_id] = {'status': 'running', 'progress': 0.0, 'message': ''}
-	threading.Thread(target=_run_denoise_job, args=(job_id, req), daemon=True).start()
-	return {'job_id': job_id}
-
-
-@router.get('/denoise_job_status')
-def denoise_job_status(job_id: str = Query(...)):
-	job = jobs.get(job_id)
-	if job is None:
-		raise HTTPException(status_code=404, detail='Job ID not found')
-	return {
-		'status': job.get('status', 'unknown'),
-		'progress': job.get('progress', 0.0),
-		'message': job.get('message', ''),
-	}
-
-
-@router.get('/get_denoised_section_bin')
-def get_denoised_section_bin(
-	file_id: str = Query(...),
-	key1_idx: int = Query(...),
-	chunk_h: int = Query(128),
-	overlap: int = Query(32),
-	mask_ratio: float = Query(0.5),
-	noise_std: float = Query(1.0),
-	mask_noise_mode: Literal['replace', 'add'] = Query('replace'),
-	passes_batch: int = Query(4),
-):
-	cache_key_latest = (file_id, key1_idx)
-	payload = denoise_cache.get(cache_key_latest)
-	if payload is None:
-		p_latest = _denoise_latest_path(file_id, key1_idx)
-		if p_latest.exists():
-			payload = p_latest.read_bytes()
-			denoise_cache[cache_key_latest] = payload
-	if payload is None:
-		params = {
-			'chunk_h': chunk_h,
-			'overlap': overlap,
-			'mask_ratio': mask_ratio,
-			'noise_std': noise_std,
-			'mask_noise_mode': mask_noise_mode,
-			'passes_batch': passes_batch,
-		}
-		param_hash = hashlib.sha256(
-			json.dumps(params, sort_keys=True).encode('utf-8')
-		).hexdigest()
-		cache_key = (file_id, key1_idx, param_hash)
-		payload = denoise_cache.get(cache_key)
-		if payload is None:
-			p = _denoise_path(file_id, key1_idx, param_hash)
-			if p.exists():
-				payload = p.read_bytes()
-				denoise_cache[(file_id, key1_idx, param_hash)] = payload
-		if payload is None:
-			raise HTTPException(status_code=404, detail='Section not processed')
-	return Response(
-		payload,
 		media_type='application/octet-stream',
 		headers={'Content-Encoding': 'gzip'},
 	)
