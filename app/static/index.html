@@ -496,14 +496,26 @@
     }
 
     function applyServerDt(obj) {
-      const dt = obj?.dt;
-      if (typeof dt === 'number' && isFinite(dt) && dt > 0) {
-            defaultDt = dt;
-            window.defaultDt = dt;
-            try { localStorage.setItem('segy.dt', String(dt)); } catch (_) { }
-            savedYRange = null; // y軸スケールをdtに合わせてリセット
-          }
+      const dtSec =
+        obj && typeof obj.dt === 'number' && isFinite(obj.dt) && obj.dt > 0
+          ? obj.dt
+          : null;
+
+      if (dtSec === null) return;
+
+      const prev =
+        typeof window.defaultDt === 'number' && isFinite(window.defaultDt)
+          ? window.defaultDt
+          : defaultDt;
+
+      // dt が実際に変わった時だけ更新＆Yレンジ初期化
+      if (!Number.isFinite(prev) || Math.abs(prev - dtSec) > 1e-12) {
+        defaultDt = dtSec;
+        window.defaultDt = dtSec;
+        try { localStorage.setItem('segy.dt', String(dtSec)); } catch (_) { }
+        savedYRange = null;
       }
+    }
 
     const COLORMAPS = {
       Greys: 'Greys',
