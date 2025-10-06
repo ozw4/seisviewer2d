@@ -16,10 +16,10 @@ import msgpack
 import numpy as np
 import segyio
 from api.schemas import (
-        PipelineAllResponse,
-        PipelineJobStatusResponse,
-        PipelineSectionResponse,
-        PipelineSpec,
+	PipelineAllResponse,
+	PipelineJobStatusResponse,
+	PipelineSectionResponse,
+	PipelineSpec,
 )
 from fastapi import (
 	APIRouter,
@@ -64,20 +64,21 @@ SEGYS: dict[str, str] = {}
 
 
 def _update_file_registry(
-        file_id: str,
-        *,
-        path: str | None = None,
-        store_path: str | None = None,
-        dt: float | None = None,
+	file_id: str,
+	*,
+	path: str | None = None,
+	store_path: str | None = None,
+	dt: float | None = None,
 ) -> None:
-        rec = FILE_REGISTRY.get(file_id) or {}
-        if path:
-                rec["path"] = path
-        if store_path:
-                rec["store_path"] = store_path
-        if isinstance(dt, (int, float)) and dt > 0:
-                rec["dt"] = float(dt)
-        FILE_REGISTRY[file_id] = rec
+	rec = FILE_REGISTRY.get(file_id) or {}
+	if path:
+		rec['path'] = path
+	if store_path:
+		rec['store_path'] = store_path
+	if isinstance(dt, (int, float)) and dt > 0:
+		rec['dt'] = float(dt)
+	FILE_REGISTRY[file_id] = rec
+
 
 # Private caches for FB pick sections and asynchronous jobs
 fbpick_cache: dict[tuple, bytes] = {}
@@ -205,28 +206,28 @@ def get_reader(
 	file_id: str, key1_byte: int, key2_byte: int
 ) -> SegySectionReader | TraceStoreSectionReader:
 	cache_key = f'{file_id}_{key1_byte}_{key2_byte}'
-        if cache_key not in cached_readers:
-                if file_id not in SEGYS:
-                        raise HTTPException(status_code=404, detail='File ID not found')
-                path = SEGYS[file_id]
-                p = Path(path)
-                if p.is_dir():
-                        reader = TraceStoreSectionReader(p, key1_byte, key2_byte)
-                else:
-                        reader = SegySectionReader(path, key1_byte, key2_byte)
-                cached_readers[cache_key] = reader
-        reader = cached_readers[cache_key]
-        dt_val = get_dt_for_file(file_id)
-        meta_attr = getattr(reader, 'meta', None)
-        if isinstance(meta_attr, dict):
-                if not isinstance(meta_attr.get('dt'), (int, float)) or meta_attr['dt'] <= 0:
-                        meta_attr['dt'] = dt_val
-        else:
-                try:
-                        setattr(reader, 'meta', {'dt': dt_val})
-                except Exception:  # noqa: BLE001
-                        pass
-        return reader
+	if cache_key not in cached_readers:
+		if file_id not in SEGYS:
+			raise HTTPException(status_code=404, detail='File ID not found')
+		path = SEGYS[file_id]
+		p = Path(path)
+		if p.is_dir():
+			reader = TraceStoreSectionReader(p, key1_byte, key2_byte)
+		else:
+			reader = SegySectionReader(path, key1_byte, key2_byte)
+		cached_readers[cache_key] = reader
+	reader = cached_readers[cache_key]
+	dt_val = get_dt_for_file(file_id)
+	meta_attr = getattr(reader, 'meta', None)
+	if isinstance(meta_attr, dict):
+		if not isinstance(meta_attr.get('dt'), (int, float)) or meta_attr['dt'] <= 0:
+			meta_attr['dt'] = dt_val
+	else:
+		try:
+			reader.meta = {'dt': dt_val}
+		except Exception:  # noqa: BLE001
+			pass
+	return reader
 
 
 class Pick(BaseModel):
@@ -383,9 +384,9 @@ def get_key1_values(
 
 @router.post('/open_segy')
 async def open_segy(
-        original_name: str = Form(...),
-        key1_byte: int = Form(189),
-        key2_byte: int = Form(193),
+	original_name: str = Form(...),
+	key1_byte: int = Form(189),
+	key2_byte: int = Form(193),
 ):
 	safe_name = re.sub(r'[^A-Za-z0-9_.-]', '_', original_name)
 	store_dir = TRACE_DIR / safe_name
@@ -397,28 +398,30 @@ async def open_segy(
 		)
 	print(f'Opening existing trace store for {original_name}')
 	file_id = str(uuid4())
-        reader = TraceStoreSectionReader(store_dir, key1_byte, key2_byte)
-        SEGYS[file_id] = str(store_dir)
-        cache_key = f'{file_id}_{key1_byte}_{key2_byte}'
-        cached_readers[cache_key] = reader
-        threading.Thread(target=reader.preload_all_sections, daemon=True).start()
-        for b in {key1_byte, key2_byte}:
-                threading.Thread(target=reader.ensure_header, args=(b,), daemon=True).start()
-        segy_path = reader.meta.get('original_segy_path') if isinstance(reader.meta, dict) else None
-        dt_meta = None
-        if isinstance(reader.meta, dict):
-                dt_meta = reader.meta.get('dt')
-        if (dt_meta is None or not isinstance(dt_meta, (int, float)) or dt_meta <= 0) and isinstance(
-                segy_path, str
-        ):
-                dt_meta = read_segy_dt_seconds(segy_path)
-        _update_file_registry(
-                file_id,
-                path=segy_path if isinstance(segy_path, str) else None,
-                store_path=str(store_dir),
-                dt=dt_meta,
-        )
-        return {'file_id': file_id, 'reused_trace_store': True}
+	reader = TraceStoreSectionReader(store_dir, key1_byte, key2_byte)
+	SEGYS[file_id] = str(store_dir)
+	cache_key = f'{file_id}_{key1_byte}_{key2_byte}'
+	cached_readers[cache_key] = reader
+	threading.Thread(target=reader.preload_all_sections, daemon=True).start()
+	for b in {key1_byte, key2_byte}:
+		threading.Thread(target=reader.ensure_header, args=(b,), daemon=True).start()
+	segy_path = (
+		reader.meta.get('original_segy_path') if isinstance(reader.meta, dict) else None
+	)
+	dt_meta = None
+	if isinstance(reader.meta, dict):
+		dt_meta = reader.meta.get('dt')
+	if (
+		dt_meta is None or not isinstance(dt_meta, (int, float)) or dt_meta <= 0
+	) and isinstance(segy_path, str):
+		dt_meta = read_segy_dt_seconds(segy_path)
+	_update_file_registry(
+		file_id,
+		path=segy_path if isinstance(segy_path, str) else None,
+		store_path=str(store_dir),
+		dt=dt_meta,
+	)
+	return {'file_id': file_id, 'reused_trace_store': True}
 
 
 @router.post('/upload_segy')
@@ -437,85 +440,89 @@ async def upload_segy(
 	meta_path = store_dir / 'meta.json'
 	file_id = str(uuid4())
 
-        if meta_path.exists():
-                print(f'Reusing trace store for {file.filename}')
-                reader = TraceStoreSectionReader(store_dir, key1_byte, key2_byte)
-                SEGYS[file_id] = str(store_dir)
-                cache_key = f'{file_id}_{key1_byte}_{key2_byte}'
-                cached_readers[cache_key] = reader
-                threading.Thread(target=reader.preload_all_sections, daemon=True).start()
-                for b in {key1_byte, key2_byte}:
-                        threading.Thread(
-                                target=reader.ensure_header, args=(b,), daemon=True
-                        ).start()
-                segy_path = reader.meta.get('original_segy_path') if isinstance(reader.meta, dict) else None
-                dt_meta = None
-                if isinstance(reader.meta, dict):
-                        dt_meta = reader.meta.get('dt')
-                if (dt_meta is None or not isinstance(dt_meta, (int, float)) or dt_meta <= 0) and isinstance(
-                        segy_path, str
-                ):
-                        dt_meta = read_segy_dt_seconds(segy_path)
-                _update_file_registry(
-                        file_id,
-                        path=segy_path if isinstance(segy_path, str) else None,
-                        store_path=str(store_dir),
-                        dt=dt_meta,
-                )
-                return {'file_id': file_id, 'reused_trace_store': True}
-
-        raw_path = UPLOAD_DIR / safe_name
-        data = await file.read()
-        await asyncio.to_thread(raw_path.write_bytes, data)
-        store_dir.mkdir(parents=True, exist_ok=True)
-        traces_tmp = store_dir / 'traces.npy.tmp'
-        dt_seconds = read_segy_dt_seconds(str(raw_path)) or 0.002
-
-        with segyio.open(raw_path, 'r', ignore_geometry=True) as segy:
-                segy.mmap()
-                n_traces = segy.tracecount
-                n_samples = len(segy.trace[0])
-		mm = np.lib.format.open_memmap(
-			traces_tmp,
-			mode='w+',
-			dtype=np.float32,
-			shape=(n_traces, n_samples),
+	if meta_path.exists():
+		print(f'Reusing trace store for {file.filename}')
+		reader = TraceStoreSectionReader(store_dir, key1_byte, key2_byte)
+		SEGYS[file_id] = str(store_dir)
+		cache_key = f'{file_id}_{key1_byte}_{key2_byte}'
+		cached_readers[cache_key] = reader
+		threading.Thread(target=reader.preload_all_sections, daemon=True).start()
+		for b in {key1_byte, key2_byte}:
+			threading.Thread(
+				target=reader.ensure_header, args=(b,), daemon=True
+			).start()
+		segy_path = (
+			reader.meta.get('original_segy_path')
+			if isinstance(reader.meta, dict)
+			else None
 		)
-		for i in range(n_traces):
-			tr = segy.trace[i].astype(np.float32)
-			mean = tr.mean()
-			std = tr.std()
-			if std == 0:
-				std = 1.0
-			mm[i] = (tr - mean) / std
-		del mm
+		dt_meta = None
+		if isinstance(reader.meta, dict):
+			dt_meta = reader.meta.get('dt')
+		if (
+			dt_meta is None or not isinstance(dt_meta, (int, float)) or dt_meta <= 0
+		) and isinstance(segy_path, str):
+			dt_meta = read_segy_dt_seconds(segy_path)
+		_update_file_registry(
+			file_id,
+			path=segy_path if isinstance(segy_path, str) else None,
+			store_path=str(store_dir),
+			dt=dt_meta,
+		)
+		return {'file_id': file_id, 'reused_trace_store': True}
+
+	raw_path = UPLOAD_DIR / safe_name
+	data = await file.read()
+	await asyncio.to_thread(raw_path.write_bytes, data)
+	store_dir.mkdir(parents=True, exist_ok=True)
+	traces_tmp = store_dir / 'traces.npy.tmp'
+	dt_seconds = read_segy_dt_seconds(str(raw_path)) or 0.002
+
+	with segyio.open(raw_path, 'r', ignore_geometry=True) as segy:
+		segy.mmap()
+		n_traces = segy.tracecount
+		n_samples = len(segy.trace[0])
+	mm = np.lib.format.open_memmap(
+		traces_tmp,
+		mode='w+',
+		dtype=np.float32,
+		shape=(n_traces, n_samples),
+	)
+	for i in range(n_traces):
+		tr = segy.trace[i].astype(np.float32)
+		mean = tr.mean()
+		std = tr.std()
+		if std == 0:
+			std = 1.0
+		mm[i] = (tr - mean) / std
+	del mm
 	traces_tmp.replace(store_dir / 'traces.npy')
-        meta = {
-                'n_traces': int(n_traces),
-                'n_samples': int(n_samples),
-                'original_segy_path': str(raw_path),
-                'version': 1,
-                'normalized': True,
-                'dt': dt_seconds,
-        }
+	meta = {
+		'n_traces': int(n_traces),
+		'n_samples': int(n_samples),
+		'original_segy_path': str(raw_path),
+		'version': 1,
+		'normalized': True,
+		'dt': dt_seconds,
+	}
 	tmp_meta = store_dir / 'meta.json.tmp'
 	tmp_meta.write_text(json.dumps(meta))
 	tmp_meta.replace(meta_path)
 
-        reader = TraceStoreSectionReader(store_dir, key1_byte, key2_byte)
-        SEGYS[file_id] = str(store_dir)
-        cache_key = f'{file_id}_{key1_byte}_{key2_byte}'
-        cached_readers[cache_key] = reader
-        threading.Thread(target=reader.preload_all_sections, daemon=True).start()
-        for b in {key1_byte, key2_byte}:
-                threading.Thread(target=reader.ensure_header, args=(b,), daemon=True).start()
-        _update_file_registry(
-                file_id,
-                path=str(raw_path),
-                store_path=str(store_dir),
-                dt=dt_seconds,
-        )
-        return {'file_id': file_id, 'reused_trace_store': False}
+	reader = TraceStoreSectionReader(store_dir, key1_byte, key2_byte)
+	SEGYS[file_id] = str(store_dir)
+	cache_key = f'{file_id}_{key1_byte}_{key2_byte}'
+	cached_readers[cache_key] = reader
+	threading.Thread(target=reader.preload_all_sections, daemon=True).start()
+	for b in {key1_byte, key2_byte}:
+		threading.Thread(target=reader.ensure_header, args=(b,), daemon=True).start()
+	_update_file_registry(
+		file_id,
+		path=str(raw_path),
+		store_path=str(store_dir),
+		dt=dt_seconds,
+	)
+	return {'file_id': file_id, 'reused_trace_store': False}
 
 
 @router.get('/get_section')
@@ -541,22 +548,22 @@ def get_section_bin(
 	key1_byte: int = Query(189),
 	key2_byte: int = Query(193),
 ):
-        try:
-                reader = get_reader(file_id, key1_byte, key2_byte)
-                section = np.array(reader.get_section(key1_idx), dtype=np.float32)
-                scale, q = quantize_float32(section)
-                obj = {
-                        'scale': scale,
-                        'shape': q.shape,
-                        'data': q.tobytes(),
-                        'dt': get_dt_for_file(file_id),
-                }
-                payload = msgpack.packb(obj)
-                return Response(
-                        gzip.compress(payload),
-                        media_type='application/octet-stream',
-                        headers={'Content-Encoding': 'gzip'},
-                )
+	try:
+		reader = get_reader(file_id, key1_byte, key2_byte)
+		section = np.array(reader.get_section(key1_idx), dtype=np.float32)
+		scale, q = quantize_float32(section)
+		obj = {
+			'scale': scale,
+			'shape': q.shape,
+			'data': q.tobytes(),
+			'dt': get_dt_for_file(file_id),
+		}
+		payload = msgpack.packb(obj)
+		return Response(
+			gzip.compress(payload),
+			media_type='application/octet-stream',
+			headers={'Content-Encoding': 'gzip'},
+		)
 	except Exception as e:
 		raise HTTPException(status_code=500, detail=str(e)) from e
 
@@ -632,24 +639,24 @@ def get_section_window_bin(
 	if step_x < 1 or step_y < 1:
 		raise HTTPException(status_code=400, detail='Steps must be >= 1')
 
-        sub = section[x0 : x1 + 1 : step_x, y0 : y1 + 1 : step_y]
-        if sub.size == 0:
-                raise HTTPException(status_code=400, detail='Requested window is empty')
+	sub = section[x0 : x1 + 1 : step_x, y0 : y1 + 1 : step_y]
+	if sub.size == 0:
+		raise HTTPException(status_code=400, detail='Requested window is empty')
 
-        window_view = np.ascontiguousarray(sub.T, dtype=np.float32)
-        scale, q = quantize_float32(window_view)
-        obj = {
-                'scale': scale,
-                'shape': window_view.shape,
-                'data': q.tobytes(),
-                'dt': get_dt_for_file(file_id),
-        }
-        payload = msgpack.packb(obj)
-        compressed = gzip.compress(payload)
-        window_section_cache.set(cache_key, compressed)
-        return Response(
-                compressed,
-                media_type='application/octet-stream',
+	window_view = np.ascontiguousarray(sub.T, dtype=np.float32)
+	scale, q = quantize_float32(window_view)
+	obj = {
+		'scale': scale,
+		'shape': window_view.shape,
+		'data': q.tobytes(),
+		'dt': get_dt_for_file(file_id),
+	}
+	payload = msgpack.packb(obj)
+	compressed = gzip.compress(payload)
+	window_section_cache.set(cache_key, compressed)
+	return Response(
+		compressed,
+		media_type='application/octet-stream',
 		headers={'Content-Encoding': 'gzip'},
 	)
 
