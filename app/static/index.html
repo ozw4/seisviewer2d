@@ -72,13 +72,7 @@
       color: #fff;
     }
 
-    .denoiseParam {
-      display: none;
-    }
 
-    .bpfParam {
-      display: none;
-    }
 
     #pipelinePanel {
       width: 320px;
@@ -337,26 +331,6 @@
         <label for="gain">Gain:</label>
         <input type="range" id="gain" min="0.1" max="5" step="0.1" value="1" oninput="onGainChange()" />
         <span id="gain_display">1×</span>
-        <label class="denoiseParam">mask_ratio:<input type="number" id="mask_ratio" value="0.5" step="0.1" min="0"
-            max="1" style="width:70px;"></label>
-        <label class="denoiseParam">noise_std:<input type="number" id="noise_std" value="1" step="0.1"
-            style="width:70px;"></label>
-        <label class="denoiseParam">chunk_h:<input type="number" id="chunk_h" value="128" step="1"
-            style="width:70px;"></label>
-        <label class="denoiseParam">overlap:<input type="number" id="overlap" value="32" step="1"
-            style="width:70px;"></label>
-        <select id="mask_noise_mode" class="denoiseParam">
-          <option value="replace" selected>replace</option>
-          <option value="add">add</option>
-        </select>
-        <button id="openBpfDlgBtn" onclick="openBpfSettings()">BPFパラメータ設定</button>
-        <label class="bpfParam">low_hz:<input type="number" id="low_hz" value="5" step="0.1"
-            style="width:70px;"></label>
-        <label class="bpfParam">high_hz:<input type="number" id="high_hz" value="60" step="0.1"
-            style="width:70px;"></label>
-        <label class="bpfParam">dt:<input type="number" id="dt" value="0.002" step="0.0001" style="width:70px;"></label>
-        <label class="bpfParam">taper:<input type="number" id="taper" value="0.1" step="0.1"
-            style="width:70px;"></label>
         <label for="colormap">Colormap:</label>
         <select id="colormap" onchange="onColormapChange()">
           <option value="Greys">Greys</option>
@@ -396,18 +370,6 @@
       </div>
     </aside>
   </div>
-  <dialog id="bpfSettingsDialog">
-    <form method="dialog">
-      <label>low_hz:<input type="number" id="dlg_low_hz" required step="0.1"></label>
-      <label>high_hz:<input type="number" id="dlg_high_hz" required step="0.1"></label>
-      <label>dt:<input type="number" id="dlg_dt" required step="0.0001"></label>
-      <label>taper:<input type="number" id="dlg_taper" required step="0.1"></label>
-      <div style="margin-top:1em;text-align:right;">
-        <button type="button" onclick="saveBpfSettings()">保存</button>
-        <button type="button" onclick="closeBpfSettings()">キャンセル</button>
-      </div>
-    </form>
-  </dialog>
   <script src="/static/plotly-2.29.1.min.js"></script>
   <script src="/static/pako.min.js"></script>
   <script src="/static/msgpack.min.js"></script>
@@ -474,33 +436,6 @@
     };
 
     (function () {
-      const saved = localStorage.getItem('denoise_params');
-      if (saved) {
-        try {
-          const p = JSON.parse(saved);
-          if (p.mask_ratio !== undefined) document.getElementById('mask_ratio').value = p.mask_ratio;
-          if (p.noise_std !== undefined) document.getElementById('noise_std').value = p.noise_std;
-          if (p.chunk_h !== undefined) document.getElementById('chunk_h').value = p.chunk_h;
-          if (p.overlap !== undefined) document.getElementById('overlap').value = p.overlap;
-          if (p.mask_noise_mode !== undefined) document.getElementById('mask_noise_mode').value = p.mask_noise_mode;
-        } catch (e) { }
-      }
-    })();
-
-    (function () {
-      const saved = localStorage.getItem('bpf_params');
-      if (saved) {
-        try {
-          const p = JSON.parse(saved);
-          if (p.low_hz !== undefined) document.getElementById('low_hz').value = p.low_hz;
-          if (p.high_hz !== undefined) document.getElementById('high_hz').value = p.high_hz;
-          if (p.dt !== undefined) document.getElementById('dt').value = p.dt;
-          if (p.taper !== undefined) document.getElementById('taper').value = p.taper;
-        } catch (e) { }
-      }
-    })();
-
-    (function () {
       const saved = localStorage.getItem('gain');
       const el = document.getElementById('gain');
       const disp = document.getElementById('gain_display');
@@ -540,37 +475,6 @@
         if (c) c.checked = (sh === 'true');
       }
     })();
-
-    function getDenoiseParams() {
-      return {
-        mask_ratio: parseFloat(document.getElementById('mask_ratio').value),
-        noise_std: parseFloat(document.getElementById('noise_std').value),
-        chunk_h: parseInt(document.getElementById('chunk_h').value),
-        overlap: parseInt(document.getElementById('overlap').value),
-        mask_noise_mode: document.getElementById('mask_noise_mode').value,
-      };
-    }
-
-    (function () {
-      const persist = () => {
-        try {
-          localStorage.setItem('denoise_params', JSON.stringify(getDenoiseParams()));
-        } catch (e) { }
-      };
-      ['mask_ratio', 'noise_std', 'chunk_h', 'overlap', 'mask_noise_mode'].forEach((id) => {
-        const el = document.getElementById(id);
-        if (el) el.addEventListener('change', persist);
-      });
-    })();
-
-    function getBpfParams() {
-      return {
-        low_hz: parseFloat(document.getElementById('low_hz').value),
-        high_hz: parseFloat(document.getElementById('high_hz').value),
-        dt: parseFloat(document.getElementById('dt').value),
-        taper: parseFloat(document.getElementById('taper').value),
-      };
-    }
 
     // ★★★ FB確率取得：レイヤ/パイプライン対応（既存のジョブAPIを使用）
     async function fetchFbProb(key1Val, { layer = 'raw', pipelineKey = null } = {}) {
@@ -792,28 +696,6 @@
       if (sel) localStorage.setItem('colormap', sel.value);
       if (chk) localStorage.setItem('cmReverse', chk.checked);
       renderLatestView();
-    }
-
-    function openBpfSettings() {
-      document.getElementById('dlg_low_hz').value = document.getElementById('low_hz').value;
-      document.getElementById('dlg_high_hz').value = document.getElementById('high_hz').value;
-      document.getElementById('dlg_dt').value = document.getElementById('dt').value;
-      document.getElementById('dlg_taper').value = document.getElementById('taper').value;
-      const dlg = document.getElementById('bpfSettingsDialog');
-      if (dlg.showModal) dlg.showModal(); else dlg.style.display = 'block';
-    }
-    function closeBpfSettings() {
-      const dlg = document.getElementById('bpfSettingsDialog');
-      if (dlg.close) dlg.close(); else dlg.style.display = 'none';
-    }
-    function saveBpfSettings() {
-      document.getElementById('low_hz').value = document.getElementById('dlg_low_hz').value;
-      document.getElementById('high_hz').value = document.getElementById('dlg_high_hz').value;
-      document.getElementById('dt').value = document.getElementById('dlg_dt').value;
-      document.getElementById('taper').value = document.getElementById('dlg_taper').value;
-      localStorage.setItem('bpf_params', JSON.stringify(getBpfParams()));
-      closeBpfSettings();
-      if (typeof fetchAndPlot === 'function') { try { fetchAndPlot(); } catch (e) { } }
     }
 
     function togglePickMode() {
