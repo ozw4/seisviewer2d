@@ -669,6 +669,50 @@
       return picks;
     }
 
+    function attachPickListeners(plotDiv) {
+      // 常に relayout は付け直す
+      plotDiv.removeAllListeners('plotly_relayout');
+      plotDiv.on('plotly_relayout', handleRelayout);
+
+      // 既存の pick 用ハンドラをいったん外す
+      plotDiv.removeAllListeners('plotly_click');
+      if (plotDiv._genericClickHandler) {
+        plotDiv.removeEventListener('click', plotDiv._genericClickHandler);
+        plotDiv._genericClickHandler = null;
+      }
+
+      if (!isPickMode) return; // ピックモード時だけ
+
+      // まずは通常の plotly_click（データ上クリック時）
+      plotDiv.on('plotly_click', (ev) => {
+        handlePlotClick._firedRecently = true; // 後続の素 click を抑止
+        try { handlePlotClick(ev); } finally {
+          // 次の macrotask でフラグ解除（同一クリックでは再実行されない）
+          setTimeout(() => { handlePlotClick._firedRecently = false; }, 0);
+        }
+      });
+
+      // データ外クリックのフォールバック（任意位置→軸座標へ変換）
+      const fallback = (e) => {
+        if (handlePlotClick._firedRecently) return; // 直前に plotly_click が来ていれば無視
+        const rect = plotDiv.getBoundingClientRect();
+        const xpx = e.clientX - rect.left;
+        const ypx = e.clientY - rect.top;
+        const xa = plotDiv._fullLayout?.xaxis;
+        const ya = plotDiv._fullLayout?.yaxis;
+        if (!xa || !ya) return;
+
+        const xData = xa.p2d(xpx);
+        const yData = ya.p2d(ypx);
+        if (!isFinite(xData) || !isFinite(yData)) return;
+
+        // Plotly のイベント風オブジェクトを合成して既存のロジックを再利用
+        handlePlotClick({ event: e, points: [{ x: xData, y: yData }] });
+      };
+      plotDiv._genericClickHandler = fallback;
+      plotDiv.addEventListener('click', fallback);
+    }
+
     function computePicks(prob2d) {
       const sigmaMax = Number(document.getElementById('sigma_ms_max').value) || 20;
       const method = document.getElementById('pick_method').value;
@@ -1293,9 +1337,9 @@
           shiftedPosX[r] = traceIndex + (val < 0 ? 0 : val);
         }
 
-        traces.push({ type: 'scatter', mode: 'lines', x: baseX, y: time, line: { width: 0 }, hoverinfo: 'x+y', showlegend: false });
+        traces.push({ type: 'scatter', mode: 'lines', x: baseX, y: time, line: { width: 0 }, hoverinfo: 'skip', showlegend: false });
         traces.push({ type: 'scatter', mode: 'lines', x: shiftedPosX, y: time, fill: 'tonextx', fillcolor: 'black', line: { width: 0 }, opacity: 0.6, hoverinfo: 'skip', showlegend: false });
-        traces.push({ type: 'scatter', mode: 'lines', x: shiftedFullX, y: time, line: { color: 'black', width: 0.5 }, hoverinfo: 'skip', showlegend: false });
+        traces.push({ type: 'scatter', mode: 'lines', x: shiftedFullX, y: time, line: { color: 'black', width: 0.5 }, hoverinfo: 'x+y', showlegend: false });
       }
 
       downsampleFactor = 1;
@@ -1323,6 +1367,7 @@
           autorange: false,
           range: savedYRange ?? [totalSamples * baseDt, 0],
         },
+        clickmode: 'event+select',
         paper_bgcolor: '#fff',
         plot_bgcolor: '#fff',
         margin: { t: 10, r: 10, l: 60, b: 40 },
@@ -1364,12 +1409,7 @@
         suppressRelayout = false;
       }, 50);
 
-      plotDiv.removeAllListeners('plotly_relayout');
-      plotDiv.removeAllListeners('plotly_click');
-      plotDiv.on('plotly_relayout', handleRelayout);
-      if (isPickMode) {
-        plotDiv.on('plotly_click', handlePlotClick);
-      }
+      attachPickListeners(plotDiv);
     }
 
     function renderWindowHeatmap(windowData) {
@@ -1469,6 +1509,7 @@
           autorange: false,
           range: savedYRange ?? [totalSamples * baseDt, 0],
         },
+        clickmode: 'event+select',
         paper_bgcolor: '#fff',
         plot_bgcolor: '#fff',
         margin: { t: 10, r: 10, l: 60, b: 40 },
@@ -1804,6 +1845,7 @@
           title: 'Time (s)', showgrid: false, tickfont: { color: '#000' }, titlefont: { color: '#000' },
           autorange: false, range: savedYRange ?? [nSamples * dt, 0]
         },
+        clickmode: 'event+select',
         paper_bgcolor: '#fff', plot_bgcolor: '#fff',
         margin: { t: 10, r: 10, l: 60, b: 40 },
         dragmode: isPickMode ? false : 'zoom',
