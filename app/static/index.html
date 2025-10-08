@@ -381,6 +381,18 @@
             <option value="expectation">expectation</option>
           </select>
         </label>
+        <label style="margin-left:8px">Snap:
+          <select id="snap_mode" onchange="localStorage.setItem('snap_mode', this.value)">
+            <option value="none" selected>none</option>
+            <option value="peak">peak ↑</option>
+            <option value="trough">trough ↓</option>
+            <option value="rise">rise ⇑</option>
+          </select>
+        </label>
+        <label>±ms:
+          <input id="snap_ms" type="number" value="4" step="0.5" style="width:4.2em"
+            oninput="localStorage.setItem('snap_ms', this.value)">
+        </label>
         <label><input type="checkbox" id="showFbPred"
             onchange="localStorage.setItem('showFbPred', this.checked); drawSelectedLayer(renderedStart, renderedEnd)">Show
           FB
@@ -565,6 +577,19 @@
       if (sh !== null) {
         const c = document.getElementById('showFbPred');
         if (c) c.checked = (sh === 'true');
+      }
+    })();
+
+    (function restoreSnapUi() {
+      const m = localStorage.getItem('snap_mode');
+      if (m) {
+        const el = document.getElementById('snap_mode');
+        if (el) el.value = m;
+      }
+      const w = localStorage.getItem('snap_ms');
+      if (w) {
+        const el = document.getElementById('snap_ms');
+        if (el) el.value = w;
       }
     })();
 
@@ -901,6 +926,57 @@
       const sel = document.getElementById('layerSelect');
       const layer = sel?.value || 'raw';
       return layer === 'raw' ? rawSeismicData : (latestTapData[layer] || rawSeismicData);
+    }
+
+    // Adjust a pick's time (seconds) on a given trace to the nearest feature in ±window.
+    // Uses the *original* data of the currently selected layer (raw or pipeline layer).
+    function adjustPickToFeature(trace, timeSec) {
+      const mode = (document.getElementById('snap_mode')?.value) || 'none';
+      if (mode === 'none') return timeSec;
+
+      const seismic = getSeismicForProcessing(); // raw or current TAP layer
+      if (!seismic || !seismic[trace]) return timeSec;
+
+      const dt = (window.defaultDt ?? defaultDt);
+      const arr = seismic[trace]; // Float32Array (one trace)
+      if (!arr || !arr.length) return timeSec;
+
+      const i0 = Math.round(timeSec / dt);
+
+      // ±window in samples
+      const ms = parseFloat(document.getElementById('snap_ms')?.value) || 4;
+      const rad = Math.max(1, Math.round((ms / 1000) / dt));
+
+      // keep one-sample margin for central differences
+      const lo = Math.max(1, i0 - rad);
+      const hi = Math.min(arr.length - 2, i0 + rad);
+
+      let idx = i0;
+
+      if (mode === 'peak') {
+        let vmax = -Infinity;
+        for (let i = lo; i <= hi; i++) {
+          const v = arr[i];
+          if (v > vmax) { vmax = v; idx = i; }
+        }
+      } else if (mode === 'trough') {
+        let vmin = Infinity;
+        for (let i = lo; i <= hi; i++) {
+          const v = arr[i];
+          if (v < vmin) { vmin = v; idx = i; }
+        }
+      } else if (mode === 'rise') {
+        // Pick the steepest *positive* slope using a simple central difference.
+        let smax = -Infinity;
+        let found = false;
+        for (let i = lo; i <= hi; i++) {
+          const s = arr[i + 1] - arr[i - 1]; // proportional to derivative
+          if (s > 0 && s > smax) { smax = s; idx = i; found = true; }
+        }
+        if (!found) idx = i0; // fallback if no positive slope region in window
+      }
+
+      return idx * dt;
     }
 
     function putCacheF32(key, f32) {
@@ -2022,13 +2098,14 @@
         for (let x = xStart; x <= xEnd; x++) {
           const y = x1 === x0 ? y1 : y0 + slope * (x - x0);
           const snapped = Math.round(y / dt) * dt;
+          const tAdj = adjustPickToFeature(x, snapped);
           const idx = pickOnTrace(x);
           if (idx >= 0) {
             promises.push(deletePick(x));
             picks.splice(idx, 1);
           }
-          picks.push({ trace: x, time: snapped });
-          promises.push(postPick(x, snapped));
+          picks.push({ trace: x, time: tAdj });
+          promises.push(postPick(x, tAdj));
         }
         await Promise.all(promises);
         renderLatestView();
@@ -2044,8 +2121,9 @@
         promises.push(deletePick(trace));
         picks.splice(idx, 1);
       }
-      picks.push({ trace, time });
-      promises.push(postPick(trace, time));
+      const tAdj = adjustPickToFeature(trace, time);
+      picks.push({ trace, time: tAdj });
+      promises.push(postPick(trace, tAdj));
       await Promise.all(promises);
       renderLatestView();
     }
