@@ -382,7 +382,8 @@
           </select>
         </label>
         <label><input type="checkbox" id="showFbPred"
-            onchange="localStorage.setItem('showFbPred', this.checked); drawSelectedLayer(renderedStart, renderedEnd)">Show FB
+            onchange="localStorage.setItem('showFbPred', this.checked); drawSelectedLayer(renderedStart, renderedEnd)">Show
+          FB
           predicted</label>
 
         <button id="predictFbBtn" onclick="predictFromFb()">Predict from FB</button>
@@ -447,6 +448,7 @@
     var latestWindowRender = null;
     var windowFetchToken = 0;
     let defaultDt = 0.002;
+    let lastHover = null;
     try {
       const storedDt = localStorage.getItem('segy.dt');
       if (storedDt !== null) {
@@ -455,7 +457,7 @@
           defaultDt = parsed;
         }
       }
-    } catch (_) {}
+    } catch (_) { }
     window.defaultDt = defaultDt;
     const PREFETCH_WIDTH = 3;
     const FALLBACK_MAX = 8;
@@ -670,48 +672,101 @@
     }
 
     function attachPickListeners(plotDiv) {
-      // 常に relayout は付け直す
-      plotDiv.removeAllListeners('plotly_relayout');
-      plotDiv.on('plotly_relayout', handleRelayout);
+        // 常に relayout は付け直す
+        plotDiv.removeAllListeners('plotly_relayout');
+        plotDiv.on('plotly_relayout', handleRelayout);
 
-      // 既存の pick 用ハンドラをいったん外す
-      plotDiv.removeAllListeners('plotly_click');
-      if (plotDiv._genericClickHandler) {
-        plotDiv.removeEventListener('click', plotDiv._genericClickHandler);
-        plotDiv._genericClickHandler = null;
-      }
+        // 既存の pick 用ハンドラをいったん外す
+        plotDiv.removeAllListeners('plotly_click');
+        plotDiv.removeAllListeners('plotly_hover');
+        plotDiv.removeAllListeners('plotly_unhover');
 
-      if (!isPickMode) return; // ピックモード時だけ
-
-      // まずは通常の plotly_click（データ上クリック時）
-      plotDiv.on('plotly_click', (ev) => {
-        handlePlotClick._firedRecently = true; // 後続の素 click を抑止
-        try { handlePlotClick(ev); } finally {
-          // 次の macrotask でフラグ解除（同一クリックでは再実行されない）
-          setTimeout(() => { handlePlotClick._firedRecently = false; }, 0);
+        if (plotDiv._genericClickHandler) {
+          plotDiv.removeEventListener('click', plotDiv._genericClickHandler);
+          plotDiv._genericClickHandler = null;
         }
-      });
 
-      // データ外クリックのフォールバック（任意位置→軸座標へ変換）
-      const fallback = (e) => {
-        if (handlePlotClick._firedRecently) return; // 直前に plotly_click が来ていれば無視
-        const rect = plotDiv.getBoundingClientRect();
-        const xpx = e.clientX - rect.left;
-        const ypx = e.clientY - rect.top;
-        const xa = plotDiv._fullLayout?.xaxis;
-        const ya = plotDiv._fullLayout?.yaxis;
-        if (!xa || !ya) return;
+        // 直近のホバー値を保持（黒いBoxと同じ値）
+        plotDiv.on('plotly_hover', (e) => {
+          const p = e?.points?.[0];
+          if (!p) return;
+          lastHover = {
+            x: p.x,
+            y: p.y,
+            meta: Number.isFinite(p.data?.meta) ? p.data.meta : null, // wiggleの元トレース番号
+            t: performance.now(),
+          };
+        });
+        plotDiv.on('plotly_unhover', () => { lastHover = null; });
 
-        const xData = xa.p2d(xpx);
-        const yData = ya.p2d(ypx);
-        if (!isFinite(xData) || !isFinite(yData)) return;
+        if (!isPickMode) return; // ピックモード時だけ
 
-        // Plotly のイベント風オブジェクトを合成して既存のロジックを再利用
-        handlePlotClick({ event: e, points: [{ x: xData, y: yData }] });
-      };
-      plotDiv._genericClickHandler = fallback;
-      plotDiv.addEventListener('click', fallback);
-    }
+        // 便利関数：クリック位置を軸座標へ（余白補正込み）
+        const pxToData = (evt) => {
+          const rect = plotDiv.getBoundingClientRect();
+          const xpx = evt.clientX - rect.left;
+          const ypx = evt.clientY - rect.top;
+          const xa = plotDiv._fullLayout?.xaxis;
+          const ya = plotDiv._fullLayout?.yaxis;
+          const m = plotDiv._fullLayout?._size; // {l,t,w,h}
+          if (!xa || !ya || !m) return null;
+          const xData = xa.p2d(xpx - m.l);
+          const yData = ya.p2d(ypx - m.t);
+          if (!Number.isFinite(xData) || !Number.isFinite(yData)) return null;
+          return { xData, yData };
+        };
+
+        // 通常の plotly_click（データ上クリック時）
+        plotDiv.on('plotly_click', (ev) => {
+          handlePlotClick._firedRecently = true; // 後続の素 click を抑止
+          try {
+            const now = performance.now();
+            // 1) 直近ホバーがあればそれを優先（黒いBoxの数値と一致）
+            let xData, yData, meta = null;
+            if (lastHover && (now - lastHover.t) < 300) {
+              xData = lastHover.x;
+              yData = lastHover.y;
+              meta = lastHover.meta ?? ev?.points?.[0]?.data?.meta ?? null;
+            } else {
+              // 2) なければ p2d（余白補正込み）
+              const conv = pxToData(ev.event);
+              if (!conv) return;
+              xData = conv.xData;
+              yData = conv.yData;
+              meta = ev?.points?.[0]?.data?.meta ?? null;
+            }
+
+            // Plotly風イベントに整形して既存ロジックへ
+            handlePlotClick({
+              event: ev.event,
+              points: [{ x: xData, y: yData, data: { meta } }],
+            });
+          } finally {
+            // 同一クリックでは再実行されないように
+            setTimeout(() => { handlePlotClick._firedRecently = false; }, 0);
+          }
+        });
+
+        // データ外クリックのフォールバック（任意位置→軸座標へ）
+        const fallback = (e) => {
+          if (handlePlotClick._firedRecently) return; // 直前に plotly_click が来ていれば無視
+          const now = performance.now();
+          let xData, yData;
+          if (lastHover && (now - lastHover.t) < 300) {
+            // 黒いBoxの値をそのまま使う
+            xData = lastHover.x;
+            yData = lastHover.y;
+          } else {
+            const conv = pxToData(e);
+            if (!conv) return;
+            xData = conv.xData;
+            yData = conv.yData;
+          }
+          handlePlotClick({ event: e, points: [{ x: xData, y: yData }] });
+        };
+        plotDiv._genericClickHandler = fallback;
+        plotDiv.addEventListener('click', fallback);
+      }
 
     function computePicks(prob2d) {
       const sigmaMax = Number(document.getElementById('sigma_ms_max').value) || 20;
@@ -2191,7 +2246,9 @@
     <div class="ppCard">
       <div class="ppTitle">Pipeline running…</div>
       <div id="ppStatus" class="ppStatus">Preparing…</div>
-      <div class="ppBar"><div id="ppBarInner" class="ppBarInner"></div></div>
+      <div class="ppBar">
+        <div id="ppBarInner" class="ppBarInner"></div>
+      </div>
       <div class="ppActions">
         <button id="ppCancelBtn" type="button">Cancel</button>
       </div>
