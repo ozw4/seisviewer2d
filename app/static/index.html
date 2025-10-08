@@ -954,30 +954,54 @@
       let idx = i0;
 
       if (mode === 'peak') {
-        let vmax = -Infinity;
+        // 近傍の「局所最大」(arr[i-1] <= arr[i] >= arr[i+1]) のうち i0 に最も近い点
+        let best = null, bestDist = Infinity;
         for (let i = lo; i <= hi; i++) {
-          const v = arr[i];
-          if (v > vmax) { vmax = v; idx = i; }
+          if (arr[i] >= arr[i - 1] && arr[i] >= arr[i + 1]) {
+            const d = Math.abs(i - i0);
+            if (d < bestDist) { bestDist = d; best = i; }
+          }
+        }
+        if (best != null) idx = best;
+        else {
+          // 局所最大がない時のフォールバック：従来どおり最大値へ
+          let vmax = -Infinity;
+          for (let i = lo; i <= hi; i++) { const v = arr[i]; if (v > vmax) { vmax = v; idx = i; } }
         }
       } else if (mode === 'trough') {
-        let vmin = Infinity;
+        // 近傍の「局所最小」(arr[i-1] >= arr[i] <= arr[i+1]) のうち最も近い点
+        let best = null, bestDist = Infinity;
         for (let i = lo; i <= hi; i++) {
-          const v = arr[i];
-          if (v < vmin) { vmin = v; idx = i; }
+          if (arr[i] <= arr[i - 1] && arr[i] <= arr[i + 1]) {
+            const d = Math.abs(i - i0);
+            if (d < bestDist) { bestDist = d; best = i; }
+          }
+        }
+        if (best != null) idx = best;
+        else {
+          // フォールバック：従来どおり最小値へ
+          let vmin = Infinity;
+          for (let i = lo; i <= hi; i++) { const v = arr[i]; if (v < vmin) { vmin = v; idx = i; } }
         }
       } else if (mode === 'rise') {
-        // Pick the steepest *positive* slope using a simple central difference.
-        let smax = -Infinity;
-        let found = false;
-        for (let i = lo; i <= hi; i++) {
-          const s = arr[i + 1] - arr[i - 1]; // proportional to derivative
-          if (s > 0 && s > smax) { smax = s; idx = i; found = true; }
+        // 「最も近い上りエッジ」を優先：ゼロクロス↑があれば最優先、なければ最大正勾配
+        let best = null, bestDist = Infinity;
+        for (let i = lo; i < hi; i++) {
+          if (arr[i] <= 0 && arr[i + 1] > 0) {
+            const cand = (Math.abs(arr[i]) < Math.abs(arr[i + 1])) ? i : i + 1;
+            const d = Math.abs(cand - i0);
+            if (d < bestDist) { bestDist = d; best = cand; }
+          }
         }
-        if (!found) idx = i0; // fallback if no positive slope region in window
+        if (best != null) idx = best;
+        else {
+          let smax = -Infinity;
+          for (let i = lo; i <= hi; i++) {
+            const s = arr[i + 1] - arr[i - 1];
+            if (s > 0 && s > smax) { smax = s; idx = i; }
+          }
+        }
       }
-
-      return idx * dt;
-    }
 
     function putCacheF32(key, f32) {
       if (cache.size >= CACHE_LIMIT) {
