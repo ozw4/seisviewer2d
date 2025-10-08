@@ -709,101 +709,126 @@
     }
 
     function attachPickListeners(plotDiv) {
-        // 常に relayout は付け直す
-        plotDiv.removeAllListeners('plotly_relayout');
-        plotDiv.on('plotly_relayout', handleRelayout);
+      // 常に relayout は付け直す
+      plotDiv.removeAllListeners('plotly_relayout');
+      plotDiv.on('plotly_relayout', handleRelayout);
 
-        // 既存の pick 用ハンドラをいったん外す
-        plotDiv.removeAllListeners('plotly_click');
-        plotDiv.removeAllListeners('plotly_hover');
-        plotDiv.removeAllListeners('plotly_unhover');
+      // 既存の pick/hover ハンドラを外す
+      plotDiv.removeAllListeners('plotly_click');
+      plotDiv.removeAllListeners('plotly_hover');
+      plotDiv.removeAllListeners('plotly_unhover');
 
-        if (plotDiv._genericClickHandler) {
-          plotDiv.removeEventListener('click', plotDiv._genericClickHandler);
-          plotDiv._genericClickHandler = null;
+      if (plotDiv._genericClickHandler) {
+        plotDiv.removeEventListener('click', plotDiv._genericClickHandler);
+        plotDiv._genericClickHandler = null;
+      }
+      if (plotDiv._captureShiftHandler) {
+        plotDiv.removeEventListener('click', plotDiv._captureShiftHandler, true);
+        plotDiv._captureShiftHandler = null;
+      }
+
+      // 直近のホバー値を保持（黒いBoxと同じ値）
+      plotDiv.on('plotly_hover', (e) => {
+        const p = e?.points?.[0];
+        if (!p) return;
+        lastHover = {
+          x: p.x,
+          y: p.y,
+          meta: Number.isFinite(p.data?.meta) ? p.data.meta : null,
+          t: performance.now(),
+        };
+      });
+      plotDiv.on('plotly_unhover', () => { lastHover = null; });
+
+      // ピックモードじゃなければここまで
+      if (!isPickMode) return;
+
+      // 便利関数：クリック位置を軸座標へ（余白補正込み）
+      const pxToData = (evt) => {
+        const rect = plotDiv.getBoundingClientRect();
+        const xpx = evt.clientX - rect.left;
+        const ypx = evt.clientY - rect.top;
+        const xa = plotDiv._fullLayout?.xaxis;
+        const ya = plotDiv._fullLayout?.yaxis;
+        const m = plotDiv._fullLayout?._size; // {l,t,w,h}
+        if (!xa || !ya || !m) return null;
+        const xData = xa.p2d(xpx - m.l);
+        const yData = ya.p2d(ypx - m.t);
+        if (!Number.isFinite(xData) || !Number.isFinite(yData)) return null;
+        return { xData, yData };
+      };
+
+      // ★ 重要：Shift クリックを“キャプチャ段階”で奪って Plotly 本体に届かないようにする（初回ヒートマップのcdエラー回避）
+      const captureShift = (e) => {
+        if (!isPickMode || !e.shiftKey) return;
+        // Plotly の内部 click ハンドラに届かないよう完全に止める
+        e.stopImmediatePropagation();
+        e.stopPropagation();
+        e.preventDefault();
+
+        const now = performance.now();
+        let xData, yData, meta = null;
+        if (lastHover && (now - lastHover.t) < 300) {
+          xData = lastHover.x; yData = lastHover.y; meta = lastHover.meta;
+        } else {
+          const conv = pxToData(e);
+          if (!conv) return;
+          xData = conv.xData; yData = conv.yData;
         }
 
-        // 直近のホバー値を保持（黒いBoxと同じ値）
-        plotDiv.on('plotly_hover', (e) => {
-          const p = e?.points?.[0];
-          if (!p) return;
-          lastHover = {
-            x: p.x,
-            y: p.y,
-            meta: Number.isFinite(p.data?.meta) ? p.data.meta : null, // wiggleの元トレース番号
-            t: performance.now(),
-          };
-        });
-        plotDiv.on('plotly_unhover', () => { lastHover = null; });
+        // Plotly 内部が処理を終えた次tickで自前処理
+        setTimeout(() => {
+          handlePlotClick({ event: e, points: [{ x: xData, y: yData, data: { meta } }] });
+        }, 0);
+      };
+      plotDiv._captureShiftHandler = captureShift;
+      plotDiv.addEventListener('click', captureShift, true); // ← capture=true がミソ
 
-        if (!isPickMode) return; // ピックモード時だけ
+      // 通常の plotly_click（Shift以外）→ 次tickで処理
+      plotDiv.on('plotly_click', (ev) => {
+        handlePlotClick._firedRecently = true;
+        setTimeout(() => {
+          const now = performance.now();
+          let xData, yData, meta = null;
 
-        // 便利関数：クリック位置を軸座標へ（余白補正込み）
-        const pxToData = (evt) => {
-          const rect = plotDiv.getBoundingClientRect();
-          const xpx = evt.clientX - rect.left;
-          const ypx = evt.clientY - rect.top;
-          const xa = plotDiv._fullLayout?.xaxis;
-          const ya = plotDiv._fullLayout?.yaxis;
-          const m = plotDiv._fullLayout?._size; // {l,t,w,h}
-          if (!xa || !ya || !m) return null;
-          const xData = xa.p2d(xpx - m.l);
-          const yData = ya.p2d(ypx - m.t);
-          if (!Number.isFinite(xData) || !Number.isFinite(yData)) return null;
-          return { xData, yData };
-        };
-
-        // 通常の plotly_click（データ上クリック時）
-        plotDiv.on('plotly_click', (ev) => {
-          handlePlotClick._firedRecently = true; // 後続の素 click を抑止
-          try {
-            const now = performance.now();
-            // 1) 直近ホバーがあればそれを優先（黒いBoxの数値と一致）
-            let xData, yData, meta = null;
-            if (lastHover && (now - lastHover.t) < 300) {
-              xData = lastHover.x;
-              yData = lastHover.y;
-              meta = lastHover.meta ?? ev?.points?.[0]?.data?.meta ?? null;
-            } else {
-              // 2) なければ p2d（余白補正込み）
-              const conv = pxToData(ev.event);
-              if (!conv) return;
-              xData = conv.xData;
-              yData = conv.yData;
-              meta = ev?.points?.[0]?.data?.meta ?? null;
-            }
-
-            // Plotly風イベントに整形して既存ロジックへ
-            handlePlotClick({
-              event: ev.event,
-              points: [{ x: xData, y: yData, data: { meta } }],
-            });
-          } finally {
-            // 同一クリックでは再実行されないように
-            setTimeout(() => { handlePlotClick._firedRecently = false; }, 0);
+          if (lastHover && (now - lastHover.t) < 300) {
+            xData = lastHover.x; yData = lastHover.y; meta = lastHover.meta ?? ev?.points?.[0]?.data?.meta ?? null;
+          } else {
+            const conv = pxToData(ev.event);
+            if (!conv) { handlePlotClick._firedRecently = false; return; }
+            xData = conv.xData; yData = conv.yData; meta = ev?.points?.[0]?.data?.meta ?? null;
           }
-        });
 
-        // データ外クリックのフォールバック（任意位置→軸座標へ）
-        const fallback = (e) => {
-          if (handlePlotClick._firedRecently) return; // 直前に plotly_click が来ていれば無視
+          setTimeout(() => {
+            handlePlotClick({ event: ev.event, points: [{ x: xData, y: yData, data: { meta } }] });
+            handlePlotClick._firedRecently = false;
+          }, 0);
+        }, 0);
+      });
+
+      // データ外クリックのフォールバック（Shift以外のみ）
+      const fallback = (e) => {
+        // Shift は captureShift で処理済み
+        if (e.shiftKey) return;
+        setTimeout(() => {
+          if (handlePlotClick._firedRecently) return;
           const now = performance.now();
           let xData, yData;
           if (lastHover && (now - lastHover.t) < 300) {
-            // 黒いBoxの値をそのまま使う
-            xData = lastHover.x;
-            yData = lastHover.y;
+            xData = lastHover.x; yData = lastHover.y;
           } else {
             const conv = pxToData(e);
             if (!conv) return;
-            xData = conv.xData;
-            yData = conv.yData;
+            xData = conv.xData; yData = conv.yData;
           }
-          handlePlotClick({ event: e, points: [{ x: xData, y: yData }] });
-        };
-        plotDiv._genericClickHandler = fallback;
-        plotDiv.addEventListener('click', fallback);
-      }
+          setTimeout(() => {
+            handlePlotClick({ event: e, points: [{ x: xData, y: yData }] });
+          }, 0);
+        }, 0);
+      };
+      plotDiv._genericClickHandler = fallback;
+      plotDiv.addEventListener('click', fallback);
+    }
 
     function computePicks(prob2d) {
       const sigmaMax = Number(document.getElementById('sigma_ms_max').value) || 20;
@@ -946,8 +971,9 @@
       const ii = Math.max(1, Math.min(n - 2, i | 0));
       const y1 = arr[ii - 1], y2 = arr[ii], y3 = arr[ii + 1];
       const denom = (y1 - 2 * y2 + y3);
-      if (!Number.isFinite(denom) || denom === 0) return ii;
+      if (!Number.isFinite(denom) || Math.abs(denom) < 1e-12) return ii; // near-flat → skip
       const delta = 0.5 * (y1 - y3) / denom;          // typically within ~[-0.5, 0.5]
+      if (!Number.isFinite(delta) || Math.abs(delta) > 0.6) return ii;   // outlier move → skip
       const xhat = ii + delta;
       if (!Number.isFinite(xhat)) return ii;
       return Math.max(0, Math.min(n - 1, xhat));
@@ -967,7 +993,7 @@
       }
 
       const dy = (arr[i1] - arr[i0]);
-      if (!Number.isFinite(dy) || dy === 0) return i;
+      if (!Number.isFinite(dy) || Math.abs(dy) < 1e-12) return i; // near-flat → skip
       const frac = (0 - arr[i0]) / dy;                // ∈ [0, 1]
       const xhat = i0 + frac;
       if (!Number.isFinite(xhat)) return i;
@@ -1580,7 +1606,8 @@
           autorange: false,
           range: savedYRange ?? [totalSamples * baseDt, 0],
         },
-        clickmode: 'event+select',
+        clickmode: clickModeForCurrentState(),
+
         paper_bgcolor: '#fff',
         plot_bgcolor: '#fff',
         margin: { t: 10, r: 10, l: 60, b: 40 },
@@ -1722,7 +1749,8 @@
           autorange: false,
           range: savedYRange ?? [totalSamples * baseDt, 0],
         },
-        clickmode: 'event+select',
+        clickmode: clickModeForCurrentState(),
+
         paper_bgcolor: '#fff',
         plot_bgcolor: '#fff',
         margin: { t: 10, r: 10, l: 60, b: 40 },
@@ -1951,6 +1979,10 @@
       return [start, end];
     }
 
+    function clickModeForCurrentState() {
+        return isPickMode ? 'event' : 'event+select';
+      }
+
     function plotSeismicData(seismic, dt, startTrace = 0, endTrace = seismic.length - 1) {
       const totalTraces = seismic.length;
       startTrace = Math.max(0, startTrace);
@@ -2058,7 +2090,8 @@
           title: 'Time (s)', showgrid: false, tickfont: { color: '#000' }, titlefont: { color: '#000' },
           autorange: false, range: savedYRange ?? [nSamples * dt, 0]
         },
-        clickmode: 'event+select',
+        clickmode: clickModeForCurrentState(),
+
         paper_bgcolor: '#fff', plot_bgcolor: '#fff',
         margin: { t: 10, r: 10, l: 60, b: 40 },
         dragmode: isPickMode ? false : 'zoom',
