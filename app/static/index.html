@@ -72,8 +72,6 @@
       color: #fff;
     }
 
-
-
     #pipelinePanel {
       width: 320px;
       max-width: 100%;
@@ -483,7 +481,7 @@
     const HARD_LIMIT_BYTES = 512 * 1024 * 1024;
     const WINDOW_FETCH_DEBOUNCE_MS = 120;
     const WINDOW_MAX_POINTS = 1_200_000;
-    const WIGGLE_DENSITY_THRESHOLD = 0.10;
+    const WIGGLE_DENSITY_THRESHOLD = 0.30;
     const WIGGLE_MAX_POINTS = 2_500_000;
 
     const cache = new Map(); // key -> { f32: Float32Array }
@@ -511,10 +509,59 @@
     let currentFbLayer = 'raw';
     let currentFbPipelineKey = null;
 
+    let dragBase = localStorage.getItem('drag_base') || 'zoom'; // 'zoom' or 'pan'
+    let dragOverride = null; // 一時上書き（'pan' を入れる）
+
+    function effectiveDragMode() {
+      if (isPickMode) {
+        // ピック中でも Alt 押してる間だけ pan を許可
+        return (dragOverride === 'pan') ? 'pan' : false;
+      }
+      return dragOverride || dragBase; // 通常時はベース or 一時上書き
+    }
+    function applyDragMode() {
+      const plotDiv = document.getElementById('plot');
+      if (!plotDiv) return;
+      const dm = effectiveDragMode();
+      if (applyDragMode._last === dm) return; // 余計な relayout 防止
+      applyDragMode._last = dm;
+      Plotly.relayout(plotDiv, { dragmode: dm });
+    }
+
     // 統一キー関数（FB予測キャッシュ用）
     function fbCacheKey(k1, layer, pKey) {
       return `${k1}|${layer}|${pKey ?? 'raw'}`;
     }
+
+    // 一時上書きの適用
+    function setAltPan(on) {
+      const next = on ? 'pan' : null;
+      if (dragOverride !== next) {
+        dragOverride = next;
+        applyDragMode();
+      }
+    }
+
+    // 入力系にフォーカスがある時は無効
+    function canUseGlobalHotkey() {
+      const el = document.activeElement;
+      const tag = el?.tagName;
+      return !(tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || el?.isContentEditable);
+    }
+
+    // Alt 押してる間だけ pan
+    window.addEventListener('keydown', (e) => {
+      if (!canUseGlobalHotkey()) return;
+      if (e.key === 'Alt' || e.altKey) setAltPan(true);
+    });
+    window.addEventListener('keyup', (e) => {
+      if (e.key === 'Alt' || !e.altKey) setAltPan(false);
+    });
+
+    // 取りこぼし対策
+    window.addEventListener('blur', () => setAltPan(false));
+    document.addEventListener('visibilitychange', () => { if (document.hidden) setAltPan(false); });
+    window.addEventListener('pointerup', () => setAltPan(false));
 
     function applyServerDt(obj) {
       const dtSec =
@@ -709,7 +756,7 @@
     }
 
     function attachPickListeners(plotDiv) {
-      // 常に relayout は付け直す
+      // relayout は常に付け直す
       plotDiv.removeAllListeners('plotly_relayout');
       plotDiv.on('plotly_relayout', handleRelayout);
 
@@ -727,7 +774,7 @@
         plotDiv._captureShiftHandler = null;
       }
 
-      // 直近のホバー値を保持（黒いBoxと同じ値）
+      // 黒いホバーボックスと同じ値を保持
       plotDiv.on('plotly_hover', (e) => {
         const p = e?.points?.[0];
         if (!p) return;
@@ -740,10 +787,9 @@
       });
       plotDiv.on('plotly_unhover', () => { lastHover = null; });
 
-      // ピックモードじゃなければここまで
-      if (!isPickMode) return;
+      if (!isPickMode) return; // ピックモードでないなら終了
 
-      // 便利関数：クリック位置を軸座標へ（余白補正込み）
+      // クリック位置を軸座標へ（余白補正込み）
       const pxToData = (evt) => {
         const rect = plotDiv.getBoundingClientRect();
         const xpx = evt.clientX - rect.left;
@@ -758,10 +804,9 @@
         return { xData, yData };
       };
 
-      // ★ 重要：Shift クリックを“キャプチャ段階”で奪って Plotly 本体に届かないようにする（初回ヒートマップのcdエラー回避）
+      // ★ Shiftクリックはキャプチャ段階で奪って Plotly 本体に渡さない（初回Heatmapのcdエラー回避）
       const captureShift = (e) => {
         if (!isPickMode || !e.shiftKey) return;
-        // Plotly の内部 click ハンドラに届かないよう完全に止める
         e.stopImmediatePropagation();
         e.stopPropagation();
         e.preventDefault();
@@ -775,14 +820,12 @@
           if (!conv) return;
           xData = conv.xData; yData = conv.yData;
         }
-
-        // Plotly 内部が処理を終えた次tickで自前処理
         setTimeout(() => {
           handlePlotClick({ event: e, points: [{ x: xData, y: yData, data: { meta } }] });
         }, 0);
       };
       plotDiv._captureShiftHandler = captureShift;
-      plotDiv.addEventListener('click', captureShift, true); // ← capture=true がミソ
+      plotDiv.addEventListener('click', captureShift, true); // capture=true が肝
 
       // 通常の plotly_click（Shift以外）→ 次tickで処理
       plotDiv.on('plotly_click', (ev) => {
@@ -792,11 +835,13 @@
           let xData, yData, meta = null;
 
           if (lastHover && (now - lastHover.t) < 300) {
-            xData = lastHover.x; yData = lastHover.y; meta = lastHover.meta ?? ev?.points?.[0]?.data?.meta ?? null;
+            xData = lastHover.x; yData = lastHover.y;
+            meta = lastHover.meta ?? ev?.points?.[0]?.data?.meta ?? null;
           } else {
             const conv = pxToData(ev.event);
             if (!conv) { handlePlotClick._firedRecently = false; return; }
-            xData = conv.xData; yData = conv.yData; meta = ev?.points?.[0]?.data?.meta ?? null;
+            xData = conv.xData; yData = conv.yData;
+            meta = ev?.points?.[0]?.data?.meta ?? null;
           }
 
           setTimeout(() => {
@@ -806,9 +851,8 @@
         }, 0);
       });
 
-      // データ外クリックのフォールバック（Shift以外のみ）
+      // データ外クリックのフォールバック（Shiftは captureShift で処理済み）
       const fallback = (e) => {
-        // Shift は captureShift で処理済み
         if (e.shiftKey) return;
         setTimeout(() => {
           if (handlePlotClick._firedRecently) return;
@@ -957,6 +1001,7 @@
       linePickStart = null;
       deleteRangeStart = null;
       renderLatestView();
+      applyDragMode();
     }
 
     function getSeismicForProcessing() {
@@ -1232,7 +1277,7 @@
 
       const spanX = Math.max(1, x1 - x0 + 1);
       const padX = (!forceFullExtentOnce && !!savedXRange)
-        ? Math.max(1, Math.floor(spanX * 0.1))
+        ? Math.max(1, Math.floor(spanX * 1))
         : 0;
       x0 = Math.max(0, x0 - padX);
       x1 = Math.min(totalTraces - 1, x1 + padX);
@@ -1611,7 +1656,7 @@
         paper_bgcolor: '#fff',
         plot_bgcolor: '#fff',
         margin: { t: 10, r: 10, l: 60, b: 40 },
-        dragmode: isPickMode ? false : 'zoom',
+        dragmode: effectiveDragMode(),
       };
 
       const manualShapes = picks.map((p) => ({
@@ -1754,7 +1799,7 @@
         paper_bgcolor: '#fff',
         plot_bgcolor: '#fff',
         margin: { t: 10, r: 10, l: 60, b: 40 },
-        dragmode: isPickMode ? false : 'zoom',
+        dragmode: effectiveDragMode(),
         ...(fbMode ? { title: 'First-break Probability' } : {}),
       };
 
@@ -1794,13 +1839,9 @@
       }, 50);
 
       plotDiv.removeAllListeners('plotly_relayout');
-      plotDiv.removeAllListeners('plotly_click');
       plotDiv.on('plotly_relayout', handleRelayout);
-      if (isPickMode) {
-        plotDiv.on('plotly_click', handlePlotClick);
-      }
+      attachPickListeners(plotDiv);
     }
-
     function renderLatestView(startOverride = null, endOverride = null) {
       const sel = document.getElementById('layerSelect');
       const layer = sel ? sel.value : 'raw';
@@ -2094,7 +2135,7 @@
 
         paper_bgcolor: '#fff', plot_bgcolor: '#fff',
         margin: { t: 10, r: 10, l: 60, b: 40 },
-        dragmode: isPickMode ? false : 'zoom',
+        dragmode: effectiveDragMode(),
         ...(fbMode ? { title: 'First-break Probability' } : {}),
       };
 
@@ -2145,103 +2186,132 @@
     }
 
     async function handlePlotClick(ev) {
-      if (!isPickMode) return;
-      console.log('🔥 plotly_click fired', ev);
-      const plotDiv = document.getElementById('plot');
-      if (!plotDiv || !ev.event || !ev.event.clientX) {
-        console.warn('⚠️ plotDiv or event data not available.');
+      if (isPickMode && dragOverride === 'pan') return;
+      // 再入抑止：処理中は最後の1件だけキュー
+      if (handlePlotClick._busy) {
+        handlePlotClick._queued = ev;
         return;
       }
+      handlePlotClick._busy = true;
 
-      const dt = defaultDt * downsampleFactor;
+      try {
+        if (!isPickMode) return;
 
-      // クリック位置を軸座標に変換（ログ用途）
-      const rect = plotDiv.getBoundingClientRect();
-      const xpx = ev.event.clientX - rect.left;
-      const ypx = ev.event.clientY - rect.top;
-      const xData = plotDiv._fullLayout.xaxis.p2d(xpx);
-      const yData = plotDiv._fullLayout.yaxis.p2d(ypx);
-
-      const trace = Math.round(ev.points[0].x);
-      const time = Math.round(ev.points[0].y / dt) * dt;
-
-      console.group('🖱 Actual Click Data');
-      console.log('clientX / Y:', ev.event.clientX, ev.event.clientY);
-      console.log('pixel offset:', xpx, ypx);
-      console.log('xData (trace):', xData);
-      console.log('yData (time):', yData);
-      console.log('Snapped trace:', trace);
-      console.log('Snapped time:', time);
-      console.groupEnd();
-
-      // Ctrl+クリック: 範囲削除
-      if (ev.event.ctrlKey) {
-        if (deleteRangeStart === null) {
-          deleteRangeStart = trace;
-          linePickStart = null;
+        console.log('🔥 plotly_click fired', ev);
+        const plotDiv = document.getElementById('plot');
+        if (!plotDiv || !ev?.event || !ev.event.clientX) {
+          console.warn('⚠️ plotDiv or event data not available.');
           return;
         }
-        const x0 = deleteRangeStart;
-        deleteRangeStart = null;
-        const x1 = trace;
-        const start = Math.min(x0, x1);
-        const end = Math.max(x0, x1);
-        const toDelete = picks.filter(p => Math.round(p.trace) >= start && Math.round(p.trace) <= end);
-        const promises = toDelete.map(p => deletePick(Math.round(p.trace)));
-        picks = picks.filter(p => Math.round(p.trace) < start || Math.round(p.trace) > end);
-        await Promise.all(promises);
-        renderLatestView();
-        return;
-      }
 
-      // Shift+クリック: ラインピック
-      if (ev.event.shiftKey) {
-        if (!linePickStart) {
-          linePickStart = { trace, time };
+        const dt = (window.defaultDt ?? defaultDt) * (window.downsampleFactor ?? downsampleFactor);
+
+        // ログ用：実際の座標変換
+        const rect = plotDiv.getBoundingClientRect();
+        const xpx = ev.event.clientX - rect.left;
+        const ypx = ev.event.clientY - rect.top;
+        const xData = plotDiv._fullLayout.xaxis.p2d(xpx);
+        const yData = plotDiv._fullLayout.yaxis.p2d(ypx);
+
+        const p0 = ev.points && ev.points[0];
+        if (!p0) return;
+
+        const trace = Math.round(p0.x);
+        const time = Math.round(p0.y / dt) * dt;
+
+        console.group('🖱 Actual Click Data');
+        console.log('clientX / Y:', ev.event.clientX, ev.event.clientY);
+        console.log('pixel offset:', xpx, ypx);
+        console.log('xData (trace):', xData);
+        console.log('yData (time):', yData);
+        console.log('Snapped trace:', trace);
+        console.log('Snapped time:', time);
+        console.groupEnd();
+
+        // Ctrl+クリック: 範囲削除
+        if (ev.event.ctrlKey) {
+          if (deleteRangeStart === null) {
+            deleteRangeStart = trace;
+            linePickStart = null;
+            return;
+          }
+          const x0 = deleteRangeStart;
           deleteRangeStart = null;
+          const x1 = trace;
+          const start = Math.min(x0, x1);
+          const end = Math.max(x0, x1);
+          const toDelete = picks.filter(p => Math.round(p.trace) >= start && Math.round(p.trace) <= end);
+          const promises = toDelete.map(p => deletePick(Math.round(p.trace)));
+          picks = picks.filter(p => Math.round(p.trace) < start || Math.round(p.trace) > end);
+          await Promise.all(promises);
+          // レンダ直後のレースを避けるため次tick
+          setTimeout(() => {
+            try { renderLatestView(); } catch (e) { console.warn('renderLatestView failed', e); }
+          }, 0);
           return;
         }
 
-        const { trace: x0, time: y0 } = linePickStart;
-        linePickStart = { trace, time };
-        const x1 = trace;
-        const y1 = time;
-        const xStart = Math.round(Math.min(x0, x1));
-        const xEnd = Math.round(Math.max(x0, x1));
-        const slope = x1 === x0 ? 0 : (y1 - y0) / (x1 - x0);
-        const promises = [];
-        for (let x = xStart; x <= xEnd; x++) {
-          const y = x1 === x0 ? y1 : y0 + slope * (x - x0);
-          const snapped = Math.round(y / dt) * dt;
-          const tAdj = adjustPickToFeature(x, snapped);
-          const idx = pickOnTrace(x);
+        // Shift+クリック: ラインピック
+        if (ev.event.shiftKey) {
+          if (!linePickStart) {
+            linePickStart = { trace, time };
+            deleteRangeStart = null;
+            return;
+          }
+
+          const { trace: x0, time: y0 } = linePickStart;
+          linePickStart = { trace, time };
+          const x1 = trace;
+          const y1 = time;
+          const xStart = Math.round(Math.min(x0, x1));
+          const xEnd = Math.round(Math.max(x0, x1));
+          const slope = x1 === x0 ? 0 : (y1 - y0) / (x1 - x0);
+
+          const promises = [];
+          for (let x = xStart; x <= xEnd; x++) {
+            const y = x1 === x0 ? y1 : y0 + slope * (x - x0);
+            const snapped = Math.round(y / dt) * dt;
+            const tAdj = adjustPickToFeature(x, snapped);
+
+            const idx = pickOnTrace(x);
+            if (idx >= 0) {
+              promises.push(deletePick(x));
+              picks.splice(idx, 1);
+            }
+            picks.push({ trace: x, time: tAdj });
+            promises.push(postPick(x, tAdj));
+          }
+          await Promise.all(promises);
+          renderLatestView();
+          return;
+        }
+
+        // 通常クリック: 単一ピック
+        linePickStart = null;
+        deleteRangeStart = null;
+
+        {
+          const idx = pickOnTrace(trace);
+          const promises = [];
           if (idx >= 0) {
-            promises.push(deletePick(x));
+            promises.push(deletePick(trace));
             picks.splice(idx, 1);
           }
-          picks.push({ trace: x, time: tAdj });
-          promises.push(postPick(x, tAdj));
+          const tAdj = adjustPickToFeature(trace, time);
+          picks.push({ trace, time: tAdj });
+          promises.push(postPick(trace, tAdj));
+          await Promise.all(promises);
+          renderLatestView();
         }
-        await Promise.all(promises);
-        renderLatestView();
-        return;
+      } finally {
+        handlePlotClick._busy = false;
+        // キューがあれば消化（最新一件のみ）
+        const next = handlePlotClick._queued;
+        handlePlotClick._queued = null;
+        if (next) setTimeout(() => handlePlotClick(next), 0);
       }
-
-      // 通常クリック: 単一ピック
-      linePickStart = null;
-      deleteRangeStart = null;
-      const idx = pickOnTrace(trace);
-      const promises = [];
-      if (idx >= 0) {
-        promises.push(deletePick(trace));
-        picks.splice(idx, 1);
-      }
-      const tAdj = adjustPickToFeature(trace, time);
-      picks.push({ trace, time: tAdj });
-      promises.push(postPick(trace, tAdj));
-      await Promise.all(promises);
-      renderLatestView();
     }
+
 
     async function handleRelayout(ev) {
       if (suppressRelayout) return;
@@ -2295,6 +2365,28 @@
       }
       scheduleWindowFetch();
     }
+
+    window.addEventListener('keydown', (e) => {
+        if (isPickMode) return;
+        const el = document.activeElement;
+        const tag = el?.tagName;
+        if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || el?.isContentEditable) return;
+        if (e.key === 'Alt' && dragOverride !== 'pan') {
+            dragOverride = 'pan';
+            applyDragMode();
+          }
+      });
+    window.addEventListener('keyup', (e) => {
+        if (e.key === 'Alt' && dragOverride) {
+            dragOverride = null;
+            applyDragMode();
+          }
+      });
+    // 念のため：フォーカス喪失やタブ切替で keyup が飛ばない時の解除
+      window.addEventListener('blur', () => { if (dragOverride) { dragOverride = null; applyDragMode(); } });
+    document.addEventListener('visibilitychange', () => {
+        if (document.hidden && dragOverride) { dragOverride = null; applyDragMode(); }
+      });
 
     window.addEventListener('DOMContentLoaded', () => {
       const overlay = document.getElementById('ppOverlay');
