@@ -487,7 +487,21 @@
     const WINDOW_FETCH_DEBOUNCE_MS = 120;
     const WINDOW_MAX_POINTS = 1_200_000;
     // UI-adjustable threshold for Wiggle/Heatmap decision (persisted)
-    let WIGGLE_DENSITY_THRESHOLD = parseFloat(localStorage.getItem('wiggle_density') || '0.10');
+    let WIGGLE_DENSITY_THRESHOLD = parseFloat(localStorage.getItem('wiggle_density') || '0.20');
+
+    (function syncWiggleInit() {
+        const el = document.getElementById('wiggle_density');
+        if (!el) return;
+        const saved = localStorage.getItem('wiggle_density');
+        const min = parseFloat(el.min) || 0.02;
+        const max = parseFloat(el.max) || 0.30;
+        let v = saved != null ? parseFloat(saved) : parseFloat(el.value) || 0.20;
+        if (!Number.isFinite(v)) v = 0.20;
+        v = Math.min(max, Math.max(min, v));
+        el.value = v.toFixed(2);
+        WIGGLE_DENSITY_THRESHOLD = v;
+      })();
+
     if (!Number.isFinite(WIGGLE_DENSITY_THRESHOLD)) {
       WIGGLE_DENSITY_THRESHOLD = 0.10;
     }
@@ -589,22 +603,44 @@
       // Encode as .npy (<i4, shape (N,))
       const npy = npyEncode1d(vec, '<i4');
 
+      function safeName(s) { return String(s).replace(/[^-_.a-zA-Z0-9]/g, '_'); }
+
       // File name
       const slider = document.getElementById('key1_idx_slider');
       const idx = parseInt(slider?.value ?? '0', 10);
       const key1Val = key1Values?.[idx] ?? 'cur';
-      const fileId = (document.getElementById('file_id')?.value) || 'file';
+      const fileId = safeName((document.getElementById('file_id')?.value) || 'file');
       const fname = `pvec_idx_${fileId}_${key1Val}.npy`;
 
-      // Download
-      const blob = new Blob([npy], { type: 'application/octet-stream' });
-      const a = document.createElement('a');
-      a.href = URL.createObjectURL(blob);
-      a.download = fname;
-      document.body.appendChild(a);
-      a.click();
-      a.remove();
-      setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+      // Save (prefer File System Access API on secure contexts)
+        try {
+            if (window.isSecureContext && 'showSaveFilePicker' in window) {
+                const handle = await window.showSaveFilePicker({
+                suggestedName: fname,
+                    types: [{ description: 'NumPy array', accept: { 'application/octet-stream': ['.npy'] } }],
+                  });
+              const writable = await handle.createWritable();
+              await writable.write(npy);
+              await writable.close();
+            } else {
+            // Fallback: anchor download (may show HTTP warning on non-HTTPS)
+              const blob = new Blob([npy], { type: 'application/octet-stream' });
+            const href = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = href;
+            a.download = fname;
+            document.body.appendChild(a);
+            a.click();
+            a.remove();
+            setTimeout(() => URL.revokeObjectURL(href), 1000);
+            if (!window.isSecureContext) {
+                console.warn('Downloading over an insecure context (HTTP). Consider HTTPS/localhost to silence warnings.');
+              }
+          }
+      } catch (err) {
+          console.error('Save failed:', err);
+          alert('Save failed: ' + (err && err.message ? err.message : err));
+        }
     }
 
     let suppressRelayout = false;       // ignore relayouts we cause internally
@@ -716,7 +752,7 @@
     // 取りこぼし対策
     window.addEventListener('blur', () => setAltPan(false));
     document.addEventListener('visibilitychange', () => { if (document.hidden) setAltPan(false); });
-    window.addEventListener('pointerup', () => setAltPan(false));
+    window.addEventListener('pointerup', (e) => { if (!e.altKey) setAltPan(false); });
 
     function applyServerDt(obj) {
       const dtSec =
@@ -1880,7 +1916,7 @@
         Plotly.Plots.resize(plotDiv);
         suppressRelayout = false;
       }, 50);
-
+      requestAnimationFrame(applyDragMode);
       attachPickListeners(plotDiv);
     }
 
@@ -2024,7 +2060,7 @@
         Plotly.Plots.resize(plotDiv);
         suppressRelayout = false;
       }, 50);
-
+      requestAnimationFrame(applyDragMode);
       plotDiv.removeAllListeners('plotly_relayout');
       plotDiv.on('plotly_relayout', handleRelayout);
       attachPickListeners(plotDiv);
@@ -2356,6 +2392,7 @@
         Plotly.Plots.resize(plotDiv);
         suppressRelayout = false;
       }, 50);
+      requestAnimationFrame(applyDragMode);
       renderedStart = startTrace;
       renderedEnd = endTrace;
       console.log(`Rendered traces ${startTrace}-${endTrace}`);
@@ -2560,28 +2597,6 @@
       checkModeFlipAndRefetch();
       maybeFetchIfOutOfWindow();
     }
-
-    window.addEventListener('keydown', (e) => {
-        if (isPickMode) return;
-        const el = document.activeElement;
-        const tag = el?.tagName;
-        if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || el?.isContentEditable) return;
-        if (e.key === 'Alt' && dragOverride !== 'pan') {
-            dragOverride = 'pan';
-            applyDragMode();
-          }
-      });
-    window.addEventListener('keyup', (e) => {
-        if (e.key === 'Alt' && dragOverride) {
-            dragOverride = null;
-            applyDragMode();
-          }
-      });
-    // 念のため：フォーカス喪失やタブ切替で keyup が飛ばない時の解除
-      window.addEventListener('blur', () => { if (dragOverride) { dragOverride = null; applyDragMode(); } });
-    document.addEventListener('visibilitychange', () => {
-        if (document.hidden && dragOverride) { dragOverride = null; applyDragMode(); }
-      });
 
     window.addEventListener('DOMContentLoaded', () => {
       const overlay = document.getElementById('ppOverlay');
