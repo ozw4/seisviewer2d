@@ -1,8 +1,8 @@
 <!DOCTYPE html>
 <html lang="en">
-<meta charset="utf-8" />
 
 <head>
+  <meta charset="utf-8" />
   <title>Seismic Wiggle Viewer</title>
   <style>
     :root {
@@ -540,7 +540,7 @@
         const halfX = (stepX || 1) * 0.5;
         const halfYSec = (stepY || 1) * effectiveDt * 0.5;
         const defaultXRange = [x0 - halfX, x1 + halfX];
-        const defaultYRange = [ (y1 * effectiveDt) + halfYSec, (y0 * effectiveDt) - halfYSec ];
+        const defaultYRange = [(y1 * effectiveDt) + halfYSec, (y0 * effectiveDt) + halfYSec];
         xaxis.autorange = !savedXRange;
         xaxis.range = savedXRange ?? defaultXRange;
         yaxis.autorange = false;
@@ -2508,7 +2508,7 @@
       let defaultXRange;
       let defaultYRange;
 
-      if (!fbMode && density < 0.1) {
+      if (!fbMode && density < WIGGLE_DENSITY_THRESHOLD) {
         downsampleFactor = 1;
         setGrid({ x0: startTrace, stepX: 1, y0: 0, stepY: 1 });
         const time = new Float32Array(nSamples);
