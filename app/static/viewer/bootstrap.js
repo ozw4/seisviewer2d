@@ -1,5 +1,7 @@
 // /viewer/bootstrap.js
 import { createStore } from './store.js';
+import * as GridCore from './core/grid.js';
+import { buildLayout, buildPickShapes } from './core/layout.js';
 import { initPrefs, getPref } from './settings/prefs.js';
 
 // Read initial values from existing DOM / globals
@@ -24,6 +26,22 @@ const store = createStore(initial);
 
 // Expose for debugging
 window.store = store;
+
+// ---- Expose core modules to existing global code (override safely) ----
+// Grid & coordinate helpers
+window.Grid = GridCore.Grid;
+window.setGrid = GridCore.setGrid;
+window.getPlotEnv = GridCore.getPlotEnv;
+window.dataXYFromClient = GridCore.dataXYFromClient;
+window.snapTraceFromDataX = GridCore.snapTraceFromDataX;
+window.snapTimeFromDataY = GridCore.snapTimeFromDataY;
+window.traceAtPixel = GridCore.traceAtPixel;
+window.pixelForTrace = GridCore.pixelForTrace;
+window.timeAtPixel = GridCore.timeAtPixel;
+
+// Layout helpers
+window.buildLayout = buildLayout;
+window.buildPickShapes = buildPickShapes;
 
 // Initialize preferences (applies to DOM & sets listeners)
 initPrefs({
