@@ -408,8 +408,8 @@
         <input type="range" id="gain" min="0.1" max="5" step="0.1" value="1" oninput="onGainChange()" />
         <span id="gain_display">1×</span>
         <label style="margin-left:8px">Wiggle threshold:
-          <input id="wiggle_density" type="number" min="0.02" max="0.50" step="0.01" value="0.10"
-            oninput="onWiggleDensityChange()">
+        <input id="wiggle_density" type="number" min="0.02" max="0.30" step="0.01" value="0.20"
+          oninput="onWiggleDensityChange()">
         </label>
         <label for="colormap">Colormap:</label>
         <select id="colormap" onchange="onColormapChange()">
@@ -548,6 +548,56 @@
         dragOverride = next;
         applyDragMode();
       }
+    }
+
+    function currentDesiredMode() {
+      const win = currentVisibleWindow();
+      const plotDiv = document.getElementById('plot');
+      if (!win || !plotDiv) return null;
+      const wantWig = wantWiggleForWindow({
+        tracesVisible: win.nTraces,
+        samplesVisible: win.nSamples,
+        widthPx: plotDiv.clientWidth || 1,
+      });
+      return wantWig ? 'wiggle' : 'heatmap';
+    }
+
+    function checkModeFlipAndRefetch() {
+      const desired = currentDesiredMode();
+      if (!desired) return;
+
+      const cur = (latestWindowRender && latestWindowRender.mode) || null;
+
+      if (desired === 'wiggle') {
+        // wiggleは step_x=1/step_y=1 が前提。heatmapの粗サンプルを流用しない
+        const needFresh =
+          !latestWindowRender ||
+          cur !== 'wiggle' ||
+          latestWindowRender.stepX !== 1 ||
+          latestWindowRender.stepY !== 1;
+
+        if (needFresh) scheduleWindowFetch();
+      } else {
+        // heatmapへ切替も今のwindowがwiggleだったら取り直す（負荷を抑えるため）
+        const needFresh = !latestWindowRender || cur !== 'heatmap';
+        if (needFresh) scheduleWindowFetch();
+      }
+    }
+
+    // （任意：すでに入れているならそのままでOK）
+    function maybeFetchIfOutOfWindow() {
+      if (!latestWindowRender || !sectionShape) {
+        scheduleWindowFetch();
+        return;
+      }
+      const { x0, x1, y0, y1 } = latestWindowRender;
+      const win = currentVisibleWindow();
+      if (!win) return;
+      const guardX = Math.max(1, Math.floor((x1 - x0 + 1) * 0.05));
+      const guardY = Math.max(1, Math.floor((y1 - y0 + 1) * 0.05));
+      const insideX = win.x0 >= x0 + guardX && win.x1 <= x1 - guardX;
+      const insideY = win.y0 >= y0 + guardY && win.y1 <= y1 - guardY;
+      if (!(insideX && insideY)) scheduleWindowFetch();
     }
 
     // 入力系にフォーカスがある時は無効
@@ -1001,10 +1051,21 @@
     // Restore UI on load
     (function restoreWiggleUi() {
       const saved = localStorage.getItem('wiggle_density');
-      if (saved) {
-        const el = document.getElementById('wiggle_density');
-        if (el) el.value = saved;
-      }
+      const el = document.getElementById('wiggle_density');
+      if (!el) return;
+      if (saved != null) {
+          let v = parseFloat(saved);
+          if (!Number.isFinite(v)) v = 0.10;
+          const min = parseFloat(el.min) || 0.02;
+          const max = parseFloat(el.max) || 0.30;
+          v = Math.min(max, Math.max(min, v));
+          el.value = v.toFixed(2);
+          WIGGLE_DENSITY_THRESHOLD = v;
+        } else {
+          // localStorage未設定時はinputの既定値を信頼
+            let v = parseFloat(el.value) || 0.10;
+          WIGGLE_DENSITY_THRESHOLD = v;
+        }
     })();
 
     function onGainChange() {
@@ -1306,7 +1367,7 @@
 
       const spanX = Math.max(1, x1 - x0 + 1);
       const padX = (!forceFullExtentOnce && !!savedXRange)
-        ? Math.max(1, Math.floor(spanX * 1))
+        ? Math.max(1, Math.floor(spanX * 0.5))
         : 0;
       x0 = Math.max(0, x0 - padX);
       x1 = Math.min(totalTraces - 1, x1 + padX);
@@ -2341,7 +2402,26 @@
       }
     }
 
+  function maybeFetchIfOutOfWindow() {
+    if (!latestWindowRender || !sectionShape) {
+      scheduleWindowFetch();
+      return;
+    }
+    const { x0, x1, y0, y1 } = latestWindowRender;
+    // 画面の“可視”レンジ（savedX/YRange）を取得
+    const win = currentVisibleWindow(); // 既存関数でOK
+    if (!win) return;
 
+    // フチに触れたら少し余裕（5%）を見て取得
+    const guardX = Math.max(1, Math.floor((x1 - x0 + 1) * 0.05));
+    const guardY = Math.max(1, Math.floor((y1 - y0 + 1) * 0.05));
+    const insideX = (win.x0 >= x0 + guardX) && (win.x1 <= x1 - guardX);
+    const insideY = (win.y0 >= y0 + guardY) && (win.y1 <= y1 - guardY);
+
+    if (!(insideX && insideY)) {
+      scheduleWindowFetch();
+    }
+  }
     async function handleRelayout(ev) {
       if (suppressRelayout) return;
       const plotDiv = document.getElementById('plot');
@@ -2363,18 +2443,6 @@
         savedYRange = y0 > y1 ? [y0, y1] : [y1, y0];
       }
 
-      if (latestSeismicData) {
-        const [s, e] = savedXRange ? visibleTraceIndices(savedXRange, latestSeismicData.length)
-          : [0, latestSeismicData.length - 1];
-        if (s !== renderedStart || e !== renderedEnd) {
-          renderLatestView(s, e);
-        } else {
-          renderLatestView();
-        }
-      } else if (latestWindowRender) {
-        renderLatestView();
-      }
-
       if (Array.isArray(ev.shapes)) {
         // 予測(青点線)は保存しない。赤のみ保存。
         const onlyManual = ev.shapes.filter(s => s.line && s.line.color === 'red');
@@ -2392,7 +2460,8 @@
         }
         picks = newPicks;
       }
-      scheduleWindowFetch();
+      checkModeFlipAndRefetch();
+      maybeFetchIfOutOfWindow();
     }
 
     window.addEventListener('keydown', (e) => {
