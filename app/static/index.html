@@ -508,15 +508,20 @@
     }
     // clientX/Y -> data X/Y using Plotly p2d
     function dataXYFromClient(clientX, clientY) {
-      const env = getPlotEnv(); if (!env) return null;
-      const { rect, m, xa, ya } = env;
-      const innerX = clientX - rect.left - m.l;
-      const innerY = clientY - rect.top  - m.t;
-      const x = xa.p2d(innerX);
-      const y = ya.p2d(innerY);
-      if (!Number.isFinite(x) || !Number.isFinite(y)) return null;
-      return { x, y };
-    }
+        const env = getPlotEnv(); if (!env) return null;
+        const { rect, m, xa, ya } = env;
+        let x = Number.NaN, y = Number.NaN;
+        if (Number.isFinite(clientX)) {
+            const innerX = clientX - rect.left - m.l;
+            x = xa.p2d(innerX);
+          }
+        if (Number.isFinite(clientY)) {
+            const innerY = clientY - rect.top - m.t;
+            y = ya.p2d(innerY);
+          }
+        return { x, y };
+      }
+
     // Shared snap: snap to the center of the current cell/trace line
     function snapTraceFromDataX(x) {
       const k = Math.round((x - Grid.x0) / Grid.stepX);
@@ -530,12 +535,13 @@
     }
     // Public helpers
     function traceAtPixel(clientX) {
-      const env = getPlotEnv(); if (!env) return null;
-      const { rect } = env;
-      const xy = dataXYFromClient(clientX, rect.top); // y is irrelevant here
-      if (!xy) return null;
-      return snapTraceFromDataX(xy.x);
-    }
+        const env = getPlotEnv(); if (!env) return NaN;
+        const { rect, m, xa } = env;
+        const innerX = clientX - rect.left - m.l;
+        const x = xa.p2d(innerX);
+        if (!Number.isFinite(x)) return NaN;
+        return snapTraceFromDataX(x);
+      }
     function pixelForTrace(trace) {
       const env = getPlotEnv(); if (!env) return null;
       const { rect, m, xa } = env;
@@ -544,12 +550,13 @@
       return rect.left + m.l + inner; // clientX
     }
     function timeAtPixel(clientY) {
-      const env = getPlotEnv(); if (!env) return null;
-      const { rect } = env;
-      const xy = dataXYFromClient(rect.left, clientY); // x is irrelevant here
-      if (!xy) return null;
-      return snapTimeFromDataY(xy.y);
-    }
+        const env = getPlotEnv(); if (!env) return NaN;
+        const { rect, m, ya } = env;
+        const innerY = clientY - rect.top - m.t;
+        const y = ya.p2d(innerY);
+        if (!Number.isFinite(y)) return NaN;
+        return snapTimeFromDataY(y);
+      }
     const PREFETCH_WIDTH = 3;
     const FALLBACK_MAX = 8;
     const HARD_LIMIT_BYTES = 512 * 1024 * 1024;
