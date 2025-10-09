@@ -1,24 +1,17 @@
 // /viewer/bootstrap.js
 import { createStore } from './store.js';
+import { initPrefs, getPref } from './settings/prefs.js';
 
 // Read initial values from existing DOM / globals
-const gainEl   = document.getElementById('gain');
-const cmSel    = document.getElementById('colormap');
-const cmRevEl  = document.getElementById('cmReverse');
 const slider   = document.getElementById('key1_idx_slider');
-
-function num(v, def) {
-  const x = parseFloat(v);
-  return Number.isFinite(x) ? x : def;
-}
 
 const initial = {
   fileId: document.getElementById('file_id')?.value || (window.currentFileId || ''),
   pickMode: !!window.isPickMode,
-  wiggleDensity: num(localStorage.getItem('wiggle_density'), 0.20),
-  gain: num(localStorage.getItem('gain') ?? (gainEl?.value ?? 1), 1),
-  colormap: localStorage.getItem('colormap') || (cmSel?.value || 'Greys'),
-  cmReverse: (localStorage.getItem('cmReverse') ?? (cmRevEl?.checked ? 'true' : 'false')) === 'true',
+  wiggleDensity: Number(getPref('wiggle_density')),
+  gain: Number(getPref('gain')),
+  colormap: String(getPref('colormap')),
+  cmReverse: !!getPref('cmReverse'),
   savedXRange: window.savedXRange || null,
   savedYRange: window.savedYRange || null,
   key1Index: Number.parseInt(slider?.value || '0', 10) || 0,
@@ -32,6 +25,18 @@ const store = createStore(initial);
 // Expose for debugging
 window.store = store;
 
+// Initialize preferences (applies to DOM & sets listeners)
+initPrefs({
+  onChange(key, value) {
+    // Patch only the fields we mirror in store (render will be triggered below)
+    if (key === 'gain')             store.patch({ gain: Number(value) || 1 });
+    if (key === 'colormap')         store.patch({ colormap: String(value) });
+    if (key === 'cmReverse')        store.patch({ cmReverse: !!value });
+    if (key === 'wiggle_density')   store.patch({ wiggleDensity: Number(value) });
+    if (typeof window.renderLatestView === 'function') window.renderLatestView();
+  }
+});
+
 /* ---- Wrap or listen to existing handlers to keep store in sync ---- */
 
 // Pick mode toggle
@@ -40,34 +45,6 @@ if (typeof window.togglePickMode === 'function') {
   window.togglePickMode = function () {
     _orig();
     store.patch({ pickMode: !!window.isPickMode });
-  };
-}
-
-// Wiggle/heatmap density threshold
-const wiggleInput = document.getElementById('wiggle_density');
-if (wiggleInput) {
-  wiggleInput.addEventListener('input', () => {
-    const v = parseFloat(wiggleInput.value);
-    if (Number.isFinite(v)) store.patch({ wiggleDensity: v });
-  });
-}
-
-// Gain
-if (gainEl && typeof window.onGainChange === 'function') {
-  const _gain = window.onGainChange;
-  window.onGainChange = function () {
-    _gain();
-    store.patch({ gain: num(gainEl.value, 1) });
-  };
-}
-
-// Colormap + reverse
-if (cmSel && typeof window.onColormapChange === 'function') {
-  const _cm = window.onColormapChange;
-  window.onColormapChange = function () {
-    _cm();
-    const rev = !!document.getElementById('cmReverse')?.checked;
-    store.patch({ colormap: cmSel.value || 'Greys', cmReverse: rev });
   };
 }
 
