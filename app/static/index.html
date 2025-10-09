@@ -407,6 +407,10 @@
         <label for="gain">Gain:</label>
         <input type="range" id="gain" min="0.1" max="5" step="0.1" value="1" oninput="onGainChange()" />
         <span id="gain_display">1×</span>
+        <label style="margin-left:8px">Wiggle threshold:
+          <input id="wiggle_density" type="number" min="0.02" max="0.50" step="0.01" value="0.10"
+            oninput="onWiggleDensityChange()">
+        </label>
         <label for="colormap">Colormap:</label>
         <select id="colormap" onchange="onColormapChange()">
           <option value="Greys">Greys</option>
@@ -481,7 +485,11 @@
     const HARD_LIMIT_BYTES = 512 * 1024 * 1024;
     const WINDOW_FETCH_DEBOUNCE_MS = 120;
     const WINDOW_MAX_POINTS = 1_200_000;
-    const WIGGLE_DENSITY_THRESHOLD = 0.30;
+    // UI-adjustable threshold for Wiggle/Heatmap decision (persisted)
+    let WIGGLE_DENSITY_THRESHOLD = parseFloat(localStorage.getItem('wiggle_density') || '0.10');
+    if (!Number.isFinite(WIGGLE_DENSITY_THRESHOLD)) {
+      WIGGLE_DENSITY_THRESHOLD = 0.10;
+    }
     const WIGGLE_MAX_POINTS = 2_500_000;
 
     const cache = new Map(); // key -> { f32: Float32Array }
@@ -977,6 +985,27 @@
         if (btn) btn.disabled = false;
       }
     }
+
+    function onWiggleDensityChange() {
+      const el = document.getElementById('wiggle_density');
+      const v = parseFloat(el?.value);
+      if (Number.isFinite(v) && v > 0) {
+        WIGGLE_DENSITY_THRESHOLD = v;
+        try { localStorage.setItem('wiggle_density', String(v)); } catch (_) { }
+        // Apply now: re-evaluate window mode and redraw
+        renderLatestView();
+        scheduleWindowFetch();
+      }
+    }
+
+    // Restore UI on load
+    (function restoreWiggleUi() {
+      const saved = localStorage.getItem('wiggle_density');
+      if (saved) {
+        const el = document.getElementById('wiggle_density');
+        if (el) el.value = saved;
+      }
+    })();
 
     function onGainChange() {
       const val = document.getElementById('gain').value;
