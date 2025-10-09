@@ -404,9 +404,14 @@
           predicted</label>
 
         <button id="predictFbBtn" onclick="predictFromFb()">Predict from FB</button>
+        <button type="button" onclick="exportPickIndexVectorNpy()">Export pick index vector (.npy)</button>
         <label for="gain">Gain:</label>
         <input type="range" id="gain" min="0.1" max="5" step="0.1" value="1" oninput="onGainChange()" />
         <span id="gain_display">1×</span>
+        <label style="margin-left:8px">Wiggle threshold:
+        <input id="wiggle_density" type="number" min="0.02" max="0.30" step="0.01" value="0.20"
+          oninput="onWiggleDensityChange()">
+        </label>
         <label for="colormap">Colormap:</label>
         <select id="colormap" onchange="onColormapChange()">
           <option value="Greys">Greys</option>
@@ -481,7 +486,25 @@
     const HARD_LIMIT_BYTES = 512 * 1024 * 1024;
     const WINDOW_FETCH_DEBOUNCE_MS = 120;
     const WINDOW_MAX_POINTS = 1_200_000;
-    const WIGGLE_DENSITY_THRESHOLD = 0.30;
+    // UI-adjustable threshold for Wiggle/Heatmap decision (persisted)
+    let WIGGLE_DENSITY_THRESHOLD = parseFloat(localStorage.getItem('wiggle_density') || '0.20');
+
+    (function syncWiggleInit() {
+        const el = document.getElementById('wiggle_density');
+        if (!el) return;
+        const saved = localStorage.getItem('wiggle_density');
+        const min = parseFloat(el.min) || 0.02;
+        const max = parseFloat(el.max) || 0.30;
+        let v = saved != null ? parseFloat(saved) : parseFloat(el.value) || 0.20;
+        if (!Number.isFinite(v)) v = 0.20;
+        v = Math.min(max, Math.max(min, v));
+        el.value = v.toFixed(2);
+        WIGGLE_DENSITY_THRESHOLD = v;
+      })();
+
+    if (!Number.isFinite(WIGGLE_DENSITY_THRESHOLD)) {
+      WIGGLE_DENSITY_THRESHOLD = 0.10;
+    }
     const WIGGLE_MAX_POINTS = 2_500_000;
 
     const cache = new Map(); // key -> { f32: Float32Array }
@@ -501,6 +524,123 @@
     var isPickMode = false;
     var linePickStart = null;
     var deleteRangeStart = null;
+
+    // ---- Minimal NPY v1.0 encoder for 1-D TypedArray ----
+    // dtype must be '<i4' here (little-endian int32). Shape is (N,)
+    function npyEncode1d(typedArray, dtype /* '<i4' */) {
+      const N = typedArray.length;
+      const magicBytes = new Uint8Array([0x93, 0x4e, 0x55, 0x4d, 0x50, 0x59]);
+      const ver = new Uint8Array([1, 0]);
+
+      // Python-style header string
+      const shapeStr = `(${N},)`;
+      let headerStr = `{'descr': '${dtype}', 'fortran_order': False, 'shape': ${shapeStr}, }`;
+      headerStr += '\n';
+
+      const enc = new TextEncoder();
+      let headerBytes = enc.encode(headerStr);
+
+      // Pad so that (10 + headerLen) % 16 === 0 ; 10 = len(magic)+len(ver)+len(hlen)
+      const preambleLen = 10;
+      const mod = (preambleLen + headerBytes.length) % 16;
+      if (mod !== 0) {
+        const pad = 16 - mod;
+        const padded = new Uint8Array(headerBytes.length + pad);
+        padded.set(headerBytes, 0);
+        // fill with spaces; ensure last char is '\n'
+        padded.fill(' '.charCodeAt(0), headerBytes.length);
+        padded[padded.length - 1] = '\n'.charCodeAt(0);
+        headerBytes = padded;
+      }
+
+      const hlenLE = new Uint8Array(2);
+      new DataView(hlenLE.buffer).setUint16(0, headerBytes.length, true);
+
+      const totalLen = magicBytes.length + ver.length + hlenLE.length + headerBytes.length + typedArray.byteLength;
+      const out = new Uint8Array(totalLen);
+      let o = 0;
+      out.set(magicBytes, o); o += magicBytes.length;
+      out.set(ver, o);        o += ver.length;
+      out.set(hlenLE, o);     o += hlenLE.length;
+      out.set(headerBytes, o); o += headerBytes.length;
+      out.set(new Uint8Array(typedArray.buffer, typedArray.byteOffset, typedArray.byteLength), o);
+      return out;
+    }
+
+    // ---- Export current section's manual picks as int32 index vector (.npy) ----
+    async function exportPickIndexVectorNpy() {
+      if (!sectionShape || !Array.isArray(sectionShape) || sectionShape.length < 2) {
+        alert('Section shape is unknown yet.');
+        return;
+      }
+      const nTraces = sectionShape[0];
+      const nSamples = sectionShape[1];
+      const dt = (window.defaultDt ?? defaultDt);
+
+      // Build trace -> time_sec map using ONLY manual picks (red).
+      // If multiple picks on same trace, take the latest occurrence.
+      const traceToTime = new Map();
+      for (const p of (picks || [])) {
+        const tr = Math.round(p.trace);
+        if (tr >= 0 && tr < nTraces && Number.isFinite(p.time)) {
+          traceToTime.set(tr, p.time);
+        }
+      }
+
+      // Create int32 vector (length = nTraces), default -1 for "no pick"
+      const vec = new Int32Array(nTraces);
+      vec.fill(-1);
+
+      for (const [tr, t] of traceToTime.entries()) {
+        let idx = Math.round(t / dt);
+        if (!Number.isFinite(idx) || idx < 0 || idx >= nSamples) {
+          idx = -1;
+        }
+        vec[tr] = idx;
+      }
+
+      // Encode as .npy (<i4, shape (N,))
+      const npy = npyEncode1d(vec, '<i4');
+
+      function safeName(s) { return String(s).replace(/[^-_.a-zA-Z0-9]/g, '_'); }
+
+      // File name
+      const slider = document.getElementById('key1_idx_slider');
+      const idx = parseInt(slider?.value ?? '0', 10);
+      const key1Val = key1Values?.[idx] ?? 'cur';
+      const fileId = safeName((document.getElementById('file_id')?.value) || 'file');
+      const fname = `pvec_idx_${fileId}_${key1Val}.npy`;
+
+      // Save (prefer File System Access API on secure contexts)
+        try {
+            if (window.isSecureContext && 'showSaveFilePicker' in window) {
+                const handle = await window.showSaveFilePicker({
+                suggestedName: fname,
+                    types: [{ description: 'NumPy array', accept: { 'application/octet-stream': ['.npy'] } }],
+                  });
+              const writable = await handle.createWritable();
+              await writable.write(npy);
+              await writable.close();
+            } else {
+            // Fallback: anchor download (may show HTTP warning on non-HTTPS)
+              const blob = new Blob([npy], { type: 'application/octet-stream' });
+            const href = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = href;
+            a.download = fname;
+            document.body.appendChild(a);
+            a.click();
+            a.remove();
+            setTimeout(() => URL.revokeObjectURL(href), 1000);
+            if (!window.isSecureContext) {
+                console.warn('Downloading over an insecure context (HTTP). Consider HTTPS/localhost to silence warnings.');
+              }
+          }
+      } catch (err) {
+          console.error('Save failed:', err);
+          alert('Save failed: ' + (err && err.message ? err.message : err));
+        }
+    }
 
     let suppressRelayout = false;       // ignore relayouts we cause internally
     let forceFullExtentOnce = false;    // next window calc uses full extent with no padding
@@ -542,6 +682,56 @@
       }
     }
 
+    function currentDesiredMode() {
+      const win = currentVisibleWindow();
+      const plotDiv = document.getElementById('plot');
+      if (!win || !plotDiv) return null;
+      const wantWig = wantWiggleForWindow({
+        tracesVisible: win.nTraces,
+        samplesVisible: win.nSamples,
+        widthPx: plotDiv.clientWidth || 1,
+      });
+      return wantWig ? 'wiggle' : 'heatmap';
+    }
+
+    function checkModeFlipAndRefetch() {
+      const desired = currentDesiredMode();
+      if (!desired) return;
+
+      const cur = (latestWindowRender && latestWindowRender.mode) || null;
+
+      if (desired === 'wiggle') {
+        // wiggleは step_x=1/step_y=1 が前提。heatmapの粗サンプルを流用しない
+        const needFresh =
+          !latestWindowRender ||
+          cur !== 'wiggle' ||
+          latestWindowRender.stepX !== 1 ||
+          latestWindowRender.stepY !== 1;
+
+        if (needFresh) scheduleWindowFetch();
+      } else {
+        // heatmapへ切替も今のwindowがwiggleだったら取り直す（負荷を抑えるため）
+        const needFresh = !latestWindowRender || cur !== 'heatmap';
+        if (needFresh) scheduleWindowFetch();
+      }
+    }
+
+    // （任意：すでに入れているならそのままでOK）
+    function maybeFetchIfOutOfWindow() {
+      if (!latestWindowRender || !sectionShape) {
+        scheduleWindowFetch();
+        return;
+      }
+      const { x0, x1, y0, y1 } = latestWindowRender;
+      const win = currentVisibleWindow();
+      if (!win) return;
+      const guardX = Math.max(1, Math.floor((x1 - x0 + 1) * 0.05));
+      const guardY = Math.max(1, Math.floor((y1 - y0 + 1) * 0.05));
+      const insideX = win.x0 >= x0 + guardX && win.x1 <= x1 - guardX;
+      const insideY = win.y0 >= y0 + guardY && win.y1 <= y1 - guardY;
+      if (!(insideX && insideY)) scheduleWindowFetch();
+    }
+
     // 入力系にフォーカスがある時は無効
     function canUseGlobalHotkey() {
       const el = document.activeElement;
@@ -561,7 +751,7 @@
     // 取りこぼし対策
     window.addEventListener('blur', () => setAltPan(false));
     document.addEventListener('visibilitychange', () => { if (document.hidden) setAltPan(false); });
-    window.addEventListener('pointerup', () => setAltPan(false));
+    window.addEventListener('pointerup', (e) => { if (!e.altKey) setAltPan(false); });
 
     function applyServerDt(obj) {
       const dtSec =
@@ -978,6 +1168,38 @@
       }
     }
 
+    function onWiggleDensityChange() {
+      const el = document.getElementById('wiggle_density');
+      const v = parseFloat(el?.value);
+      if (Number.isFinite(v) && v > 0) {
+        WIGGLE_DENSITY_THRESHOLD = v;
+        try { localStorage.setItem('wiggle_density', String(v)); } catch (_) { }
+        // Apply now: re-evaluate window mode and redraw
+        renderLatestView();
+        scheduleWindowFetch();
+      }
+    }
+
+    // Restore UI on load
+    (function restoreWiggleUi() {
+      const saved = localStorage.getItem('wiggle_density');
+      const el = document.getElementById('wiggle_density');
+      if (!el) return;
+      if (saved != null) {
+          let v = parseFloat(saved);
+          if (!Number.isFinite(v)) v = 0.10;
+          const min = parseFloat(el.min) || 0.02;
+          const max = parseFloat(el.max) || 0.30;
+          v = Math.min(max, Math.max(min, v));
+          el.value = v.toFixed(2);
+          WIGGLE_DENSITY_THRESHOLD = v;
+        } else {
+          // localStorage未設定時はinputの既定値を信頼
+            let v = parseFloat(el.value) || 0.10;
+          WIGGLE_DENSITY_THRESHOLD = v;
+        }
+    })();
+
     function onGainChange() {
       const val = document.getElementById('gain').value;
       document.getElementById('gain_display').textContent = `${parseFloat(val)}×`;
@@ -1277,7 +1499,7 @@
 
       const spanX = Math.max(1, x1 - x0 + 1);
       const padX = (!forceFullExtentOnce && !!savedXRange)
-        ? Math.max(1, Math.floor(spanX * 1))
+        ? Math.max(1, Math.floor(spanX * 0.5))
         : 0;
       x0 = Math.max(0, x0 - padX);
       x1 = Math.min(totalTraces - 1, x1 + padX);
@@ -1693,7 +1915,7 @@
         Plotly.Plots.resize(plotDiv);
         suppressRelayout = false;
       }, 50);
-
+      requestAnimationFrame(applyDragMode);
       attachPickListeners(plotDiv);
     }
 
@@ -1837,7 +2059,7 @@
         Plotly.Plots.resize(plotDiv);
         suppressRelayout = false;
       }, 50);
-
+      requestAnimationFrame(applyDragMode);
       plotDiv.removeAllListeners('plotly_relayout');
       plotDiv.on('plotly_relayout', handleRelayout);
       attachPickListeners(plotDiv);
@@ -2169,6 +2391,7 @@
         Plotly.Plots.resize(plotDiv);
         suppressRelayout = false;
       }, 50);
+      requestAnimationFrame(applyDragMode);
       renderedStart = startTrace;
       renderedEnd = endTrace;
       console.log(`Rendered traces ${startTrace}-${endTrace}`);
@@ -2312,7 +2535,26 @@
       }
     }
 
+  function maybeFetchIfOutOfWindow() {
+    if (!latestWindowRender || !sectionShape) {
+      scheduleWindowFetch();
+      return;
+    }
+    const { x0, x1, y0, y1 } = latestWindowRender;
+    // 画面の“可視”レンジ（savedX/YRange）を取得
+    const win = currentVisibleWindow(); // 既存関数でOK
+    if (!win) return;
 
+    // フチに触れたら少し余裕（5%）を見て取得
+    const guardX = Math.max(1, Math.floor((x1 - x0 + 1) * 0.05));
+    const guardY = Math.max(1, Math.floor((y1 - y0 + 1) * 0.05));
+    const insideX = (win.x0 >= x0 + guardX) && (win.x1 <= x1 - guardX);
+    const insideY = (win.y0 >= y0 + guardY) && (win.y1 <= y1 - guardY);
+
+    if (!(insideX && insideY)) {
+      scheduleWindowFetch();
+    }
+  }
     async function handleRelayout(ev) {
       if (suppressRelayout) return;
       const plotDiv = document.getElementById('plot');
@@ -2334,18 +2576,6 @@
         savedYRange = y0 > y1 ? [y0, y1] : [y1, y0];
       }
 
-      if (latestSeismicData) {
-        const [s, e] = savedXRange ? visibleTraceIndices(savedXRange, latestSeismicData.length)
-          : [0, latestSeismicData.length - 1];
-        if (s !== renderedStart || e !== renderedEnd) {
-          renderLatestView(s, e);
-        } else {
-          renderLatestView();
-        }
-      } else if (latestWindowRender) {
-        renderLatestView();
-      }
-
       if (Array.isArray(ev.shapes)) {
         // 予測(青点線)は保存しない。赤のみ保存。
         const onlyManual = ev.shapes.filter(s => s.line && s.line.color === 'red');
@@ -2363,30 +2593,9 @@
         }
         picks = newPicks;
       }
-      scheduleWindowFetch();
+      checkModeFlipAndRefetch();
+      maybeFetchIfOutOfWindow();
     }
-
-    window.addEventListener('keydown', (e) => {
-        if (isPickMode) return;
-        const el = document.activeElement;
-        const tag = el?.tagName;
-        if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || el?.isContentEditable) return;
-        if (e.key === 'Alt' && dragOverride !== 'pan') {
-            dragOverride = 'pan';
-            applyDragMode();
-          }
-      });
-    window.addEventListener('keyup', (e) => {
-        if (e.key === 'Alt' && dragOverride) {
-            dragOverride = null;
-            applyDragMode();
-          }
-      });
-    // 念のため：フォーカス喪失やタブ切替で keyup が飛ばない時の解除
-      window.addEventListener('blur', () => { if (dragOverride) { dragOverride = null; applyDragMode(); } });
-    document.addEventListener('visibilitychange', () => {
-        if (document.hidden && dragOverride) { dragOverride = null; applyDragMode(); }
-      });
 
     window.addEventListener('DOMContentLoaded', () => {
       const overlay = document.getElementById('ppOverlay');
