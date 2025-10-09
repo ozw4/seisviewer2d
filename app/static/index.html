@@ -1,8 +1,8 @@
 <!DOCTYPE html>
 <html lang="en">
-<meta charset="utf-8" />
 
 <head>
+  <meta charset="utf-8" />
   <title>Seismic Wiggle Viewer</title>
   <style>
     :root {
@@ -540,7 +540,7 @@
         const halfX = (stepX || 1) * 0.5;
         const halfYSec = (stepY || 1) * effectiveDt * 0.5;
         const defaultXRange = [x0 - halfX, x1 + halfX];
-        const defaultYRange = [ (y1 * effectiveDt) + halfYSec, (y0 * effectiveDt) - halfYSec ];
+        const defaultYRange = [(y1 * effectiveDt) + halfYSec, (y0 * effectiveDt) + halfYSec];
         xaxis.autorange = !savedXRange;
         xaxis.range = savedXRange ?? defaultXRange;
         yaxis.autorange = false;
@@ -1246,6 +1246,63 @@
       return picks;
     }
 
+    function installUnifiedClickRouter(plotDiv) {
+      if (!plotDiv || plotDiv.__unifiedClickRouter) return;
+
+      const onClick = (e) => {
+        if (e.detail > 1) return; // keep Plotly double-click reset
+        if (e.button !== 0) return;
+        if (!isPickMode) return;
+        if (dragOverride === 'pan' || e.altKey) return;
+        if (isRelayouting) return;
+
+        const activeEl = document.activeElement;
+        if (activeEl && activeEl !== document.body) {
+          const tag = activeEl.tagName;
+          if (tag === 'INPUT' || tag === 'SELECT' || tag === 'TEXTAREA' || activeEl.isContentEditable) {
+            return;
+          }
+        }
+
+        const env = getPlotEnv();
+        if (!env) return;
+        const { rect, m } = env;
+        const innerX = e.clientX - rect.left;
+        const innerY = e.clientY - rect.top;
+        if (innerX < m.l || innerX > m.l + m.w || innerY < m.t || innerY > m.t + m.h) {
+          return;
+        }
+
+        const tr = traceAtPixel(e.clientX);
+        const tSec = timeAtPixel(e.clientY);
+        if (!Number.isFinite(tr) || !Number.isFinite(tSec)) return;
+
+        e.stopImmediatePropagation();
+        e.stopPropagation();
+        e.preventDefault();
+
+        const maybePromise = handlePickNormalized({
+          trace: snapTraceFromDataX(tr),
+          time: snapTimeFromDataY(tSec),
+          shiftKey: !!e.shiftKey,
+          ctrlKey: !!e.ctrlKey,
+          altKey: !!e.altKey,
+        });
+        if (maybePromise && typeof maybePromise.catch === 'function') {
+          maybePromise.catch(err => console.warn('handlePickNormalized failed', err));
+        }
+      };
+
+      const remover = () => {
+        plotDiv.removeEventListener('click', onClick, true);
+        if (plotDiv.__unifiedClickRouter === remover) {
+          plotDiv.__unifiedClickRouter = null;
+        }
+      };
+      plotDiv.addEventListener('click', onClick, { capture: true });
+      plotDiv.__unifiedClickRouter = remover;
+    }
+
     function attachPickListeners(plotDiv) {
       // relayout ハンドラは一度だけインストール
       installPlotlyViewportHandlersOnce();
@@ -1277,72 +1334,7 @@
       });
       plotDiv.on('plotly_unhover', () => { lastHover = null; });
 
-      if (!isPickMode) return; // ピックモードでないなら終了
-
-      // ★ Shiftクリックはキャプチャ段階で奪って Plotly 本体に渡さない（初回Heatmapのcdエラー回避）
-      const captureShift = (e) => {
-        if (!isPickMode || !e.shiftKey) return;
-        e.stopImmediatePropagation();
-        e.stopPropagation();
-        e.preventDefault();
-
-        const now = performance.now();
-        let meta = null;
-        if (lastHover && (now - lastHover.t) < 300) {
-          meta = lastHover.meta;
-        }
-        const tr = traceAtPixel(e.clientX);
-        const tSec = timeAtPixel(e.clientY);
-        if (!Number.isFinite(tr) || !Number.isFinite(tSec)) return;
-        setTimeout(() => {
-          handlePlotClick({ event: e, points: [{ x: tr, y: tSec, data: { meta } }] });
-        }, 0);
-      };
-      plotDiv._captureShiftHandler = captureShift;
-      plotDiv.addEventListener('click', captureShift, true); // capture=true が肝
-
-      // 通常の plotly_click（Shift以外）→ 次tickで処理
-      plotDiv.on('plotly_click', (ev) => {
-        handlePlotClick._firedRecently = true;
-        setTimeout(() => {
-          const clientX = ev?.event?.clientX;
-          const clientY = ev?.event?.clientY;
-          const tr = traceAtPixel(clientX);
-          const tSec = timeAtPixel(clientY);
-          if (!Number.isFinite(tr) || !Number.isFinite(tSec)) { handlePlotClick._firedRecently = false; return; }
-          const now = performance.now();
-          let meta = ev?.points?.[0]?.data?.meta ?? null;
-          if (lastHover && (now - lastHover.t) < 300) {
-            meta = lastHover.meta ?? meta;
-          }
-
-          setTimeout(() => {
-            handlePlotClick({ event: ev.event, points: [{ x: tr, y: tSec, data: { meta } }] });
-            handlePlotClick._firedRecently = false;
-          }, 0);
-        }, 0);
-      });
-
-      // データ外クリックのフォールバック（Shiftは captureShift で処理済み）
-      const fallback = (e) => {
-        if (e.shiftKey) return;
-        setTimeout(() => {
-          if (handlePlotClick._firedRecently) return;
-          const tr = traceAtPixel(e.clientX);
-          const tSec = timeAtPixel(e.clientY);
-          if (!Number.isFinite(tr) || !Number.isFinite(tSec)) return;
-          const now = performance.now();
-          let meta = null;
-          if (lastHover && (now - lastHover.t) < 300) {
-            meta = lastHover.meta ?? null;
-          }
-          setTimeout(() => {
-            handlePlotClick({ event: e, points: [{ x: tr, y: tSec, data: { meta } }] });
-          }, 0);
-        }, 0);
-      };
-      plotDiv._genericClickHandler = fallback;
-      plotDiv.addEventListener('click', fallback);
+      installUnifiedClickRouter(plotDiv);
     }
 
     function computePicks(prob2d) {
@@ -2516,7 +2508,7 @@
       let defaultXRange;
       let defaultYRange;
 
-      if (!fbMode && density < 0.1) {
+      if (!fbMode && density < WIGGLE_DENSITY_THRESHOLD) {
         downsampleFactor = 1;
         setGrid({ x0: startTrace, stepX: 1, y0: 0, stepY: 1 });
         const time = new Float32Array(nSamples);
@@ -2660,49 +2652,22 @@
       return picks.findIndex(p => Math.round(p.trace) === trace);
     }
 
-    async function handlePlotClick(ev) {
+    async function handlePickNormalized({ trace, time, shiftKey, ctrlKey, altKey }) {
       if (isPickMode && dragOverride === 'pan') return;
-      // 再入抑止：処理中は最後の1件だけキュー
-      if (handlePlotClick._busy) {
-        handlePlotClick._queued = ev;
+      if (!Number.isFinite(trace) || !Number.isFinite(time)) return;
+
+      if (handlePickNormalized._busy) {
+        handlePickNormalized._queued = { trace, time, shiftKey, ctrlKey, altKey };
         return;
       }
-      handlePlotClick._busy = true;
+      handlePickNormalized._busy = true;
 
       try {
         if (!isPickMode) return;
 
-        console.log('🔥 plotly_click fired', ev);
-        const plotDiv = document.getElementById('plot');
-        if (!plotDiv || !ev?.event || !ev.event.clientX) {
-          console.warn('⚠️ plotDiv or event data not available.');
-          return;
-        }
+        console.log('🔥 pick request', { trace, time, shiftKey, ctrlKey, altKey });
 
-        // ログ用：実際の座標変換
-        const rect = plotDiv.getBoundingClientRect();
-        const xpx = ev.event.clientX - rect.left;
-        const ypx = ev.event.clientY - rect.top;
-        const xData = plotDiv._fullLayout.xaxis.p2d(xpx);
-        const yData = plotDiv._fullLayout.yaxis.p2d(ypx);
-
-        const p0 = ev.points && ev.points[0];
-        if (!p0) return;
-
-        const trace = snapTraceFromDataX(p0.x);
-        const time = snapTimeFromDataY(p0.y);
-
-        console.group('🖱 Actual Click Data');
-        console.log('clientX / Y:', ev.event.clientX, ev.event.clientY);
-        console.log('pixel offset:', xpx, ypx);
-        console.log('xData (trace):', xData);
-        console.log('yData (time):', yData);
-        console.log('Snapped trace:', trace);
-        console.log('Snapped time:', time);
-        console.groupEnd();
-
-        // Ctrl+クリック: 範囲削除
-        if (ev.event.ctrlKey) {
+        if (ctrlKey) {
           if (deleteRangeStart === null) {
             deleteRangeStart = trace;
             linePickStart = null;
@@ -2717,15 +2682,13 @@
           const promises = toDelete.map(p => deletePick(Math.round(p.trace)));
           picks = picks.filter(p => Math.round(p.trace) < start || Math.round(p.trace) > end);
           await Promise.all(promises);
-          // レンダ直後のレースを避けるため次tick
           setTimeout(() => {
             try { renderLatestView(); } catch (e) { console.warn('renderLatestView failed', e); }
           }, 0);
           return;
         }
 
-        // Shift+クリック: ラインピック
-        if (ev.event.shiftKey) {
+        if (shiftKey) {
           if (!linePickStart) {
             linePickStart = { trace, time };
             deleteRangeStart = null;
@@ -2759,30 +2722,47 @@
           return;
         }
 
-        // 通常クリック: 単一ピック
         linePickStart = null;
         deleteRangeStart = null;
 
-        {
-          const idx = pickOnTrace(trace);
-          const promises = [];
-          if (idx >= 0) {
-            promises.push(deletePick(trace));
-            picks.splice(idx, 1);
-          }
-          const tAdj = adjustPickToFeature(trace, time);
-          picks.push({ trace, time: tAdj });
-          promises.push(postPick(trace, tAdj));
-          await Promise.all(promises);
-          renderLatestView();
+        const idx = pickOnTrace(trace);
+        const promises = [];
+        if (idx >= 0) {
+          promises.push(deletePick(trace));
+          picks.splice(idx, 1);
         }
+        const tAdj = adjustPickToFeature(trace, time);
+        picks.push({ trace, time: tAdj });
+        promises.push(postPick(trace, tAdj));
+        await Promise.all(promises);
+        renderLatestView();
       } finally {
-        handlePlotClick._busy = false;
-        // キューがあれば消化（最新一件のみ）
-        const next = handlePlotClick._queued;
-        handlePlotClick._queued = null;
-        if (next) setTimeout(() => handlePlotClick(next), 0);
+        handlePickNormalized._busy = false;
+        const next = handlePickNormalized._queued;
+        handlePickNormalized._queued = null;
+        if (next) setTimeout(() => handlePickNormalized(next), 0);
       }
+    }
+
+    async function handlePlotClick(ev) {
+      const p0 = ev?.points?.[0];
+      const raw = ev?.event;
+      if (!p0 || !raw) {
+        console.warn('⚠️ plotly_click payload missing point/event');
+        return;
+      }
+
+      const trace = snapTraceFromDataX(p0.x);
+      const time = snapTimeFromDataY(p0.y);
+      if (!Number.isFinite(trace) || !Number.isFinite(time)) return;
+
+      await handlePickNormalized({
+        trace,
+        time,
+        shiftKey: !!raw.shiftKey,
+        ctrlKey: !!raw.ctrlKey,
+        altKey: !!raw.altKey,
+      });
     }
 
     async function handleRelayout(ev) {
