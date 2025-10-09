@@ -469,8 +469,10 @@
     var latestPipelineKey = null;
     var latestWindowRender = null;
     var windowFetchToken = 0;
+    let windowFetchCtrl = null; // active window-fetch controller (if any)
     let defaultDt = 0.002;
     let lastHover = null;
+    let redrawPending = false;
     try {
       const storedDt = localStorage.getItem('segy.dt');
       if (storedDt !== null) {
@@ -487,6 +489,7 @@
     const WINDOW_FETCH_DEBOUNCE_MS = 120;
     const FETCH_DEBOUNCE_MS = 200;
     const WINDOW_MAX_POINTS = 1_200_000;
+    const LS = { DRAG_BASE: 'drag_base' };
     // UI-adjustable threshold for Wiggle/Heatmap decision (persisted)
     let WIGGLE_DENSITY_THRESHOLD = parseFloat(localStorage.getItem('wiggle_density') || '0.20');
 
@@ -525,6 +528,40 @@
     var isPickMode = false;
     var linePickStart = null;
     var deleteRangeStart = null;
+
+    let uiResetNonce = 0;
+    function currentUiRevision() {
+      const sel = document.getElementById('layerSelect');
+      const layer = sel ? sel.value : 'raw';
+      const slider = document.getElementById('key1_idx_slider');
+      const idx = slider ? parseInt(slider.value, 10) : 0;
+      const key1Val = key1Values[idx];
+      const pKey = window.latestPipelineKey || '';
+      return `rev:${currentFileId}|${key1Val}|${layer}|${pKey}|${uiResetNonce}`;
+    }
+
+  function withSuppressedRelayout(promiseLike) {
+      suppressRelayout = true;
+      if (promiseLike && typeof promiseLike.finally === 'function') {
+          return promiseLike.finally(() => { suppressRelayout = false; });
+        }
+      suppressRelayout = false;
+      return promiseLike;
+    }
+
+    function snapshotAxesRangesFromDOM() {
+      const gd = document.getElementById('plot');
+      const xa = gd?._fullLayout?.xaxis;
+      const ya = gd?._fullLayout?.yaxis;
+      if (xa && Array.isArray(xa.range) && xa.range.length === 2) {
+        savedXRange = [xa.range[0], xa.range[1]];
+      }
+      if (ya && Array.isArray(ya.range) && ya.range.length === 2) {
+        const y0 = ya.range[0], y1 = ya.range[1];
+        // 上下逆レンジでも扱えるように max/min 順で保存
+        savedYRange = y0 > y1 ? [y0, y1] : [y1, y0];
+      }
+    }
 
     // ---- Minimal NPY v1.0 encoder for 1-D TypedArray ----
     // dtype must be '<i4' here (little-endian int32). Shape is (N,)
@@ -651,15 +688,32 @@
     let currentFbLayer = 'raw';
     let currentFbPipelineKey = null;
 
-    let dragBase = localStorage.getItem('drag_base') || 'zoom'; // 'zoom' or 'pan'
+    let dragBase = localStorage.getItem(LS.DRAG_BASE) || 'zoom'; // 'zoom' or 'pan'
     let dragOverride = null; // 一時上書き（'pan' を入れる）
 
-    function effectiveDragMode() {
-      if (isPickMode) {
-        // ピック中でも Alt 押してる間だけ pan を許可
-        return (dragOverride === 'pan') ? 'pan' : false;
+    function getBaseDragMode() {
+      return (dragBase === 'pan') ? 'pan' : 'zoom';
+    }
+
+    function setBaseDragMode(mode) {
+      const next = (mode === 'pan') ? 'pan' : 'zoom';
+      if (dragBase !== next) {
+        dragBase = next;
+        try { localStorage.setItem(LS.DRAG_BASE, next); } catch (_) { }
+        applyDragMode();
       }
-      return dragOverride || dragBase; // 通常時はベース or 一時上書き
+    }
+
+    function getOverrideDragMode() {
+      if (dragOverride) return dragOverride;
+      if (isPickMode) return false;
+      return null;
+    }
+
+    function effectiveDragMode() {
+      const over = getOverrideDragMode();
+      if (over !== null && over !== undefined) return over;
+      return getBaseDragMode();
     }
     function applyDragMode() {
       const plotDiv = document.getElementById('plot');
@@ -782,12 +836,22 @@
         if (result && typeof result.catch === 'function') {
           result.catch((err) => console.warn('handleRelayout failed', err));
         }
+        if (redrawPending) {
+            redrawPending = false;
+            try { renderLatestView(); } catch (e) { console.warn('deferred render failed', e); }
+          }
         onViewportSettled();
       });
 
       plotDiv.on('plotly_doubleclick', () => {
         if (suppressRelayout) return;
         isRelayouting = false;
+        savedXRange = null;
+        savedYRange = null;
+        renderedStart = null;
+        renderedEnd = null;
+        forceFullExtentOnce = true;
+        uiResetNonce++;
         onViewportSettled();
       });
     }
@@ -1458,17 +1522,6 @@
       return entry;
     }
 
-    function debounce(fn, delay) {
-      let timer = null;
-      return function debounced(...args) {
-        if (timer) clearTimeout(timer);
-        timer = setTimeout(() => {
-          timer = null;
-          fn.apply(this, args);
-        }, delay);
-      };
-    }
-
     function roundUpPowerOfTwo(value) {
       let v = Math.max(1, Math.floor(value));
       v -= 1;
@@ -1783,7 +1836,7 @@
 
       latestWindowRender = null;
       windowFetchToken += 1;
-
+      uiResetNonce++;
       if (window.pipelineUI && typeof window.pipelineUI.prepareForNewSection === 'function') {
         window.pipelineUI.prepareForNewSection();
       } else {
@@ -1852,6 +1905,12 @@
     }
 
     function renderWindowWiggle(windowData) {
+      if (isRelayouting) {           // ユーザーがドラッグ中
+          latestWindowRender = windowData; // 最新結果だけ覚えて
+          redrawPending = true;            // 終了後に再描画
+          return;
+        }
+      snapshotAxesRangesFromDOM();
       if (!windowData || (windowData.mode && windowData.mode !== 'wiggle')) return;
 
       const sel = document.getElementById('layerSelect');
@@ -1921,7 +1980,7 @@
           showgrid: false,
           tickfont: { color: '#000' },
           titlefont: { color: '#000' },
-          autorange: !savedXRange,
+          autorange: false,
           range: savedXRange ?? [x0, endTrace],
         },
         yaxis: {
@@ -1933,7 +1992,7 @@
           range: savedYRange ?? [totalSamples * baseDt, 0],
         },
         clickmode: clickModeForCurrentState(),
-
+        uirevision: currentUiRevision(),
         paper_bgcolor: '#fff',
         plot_bgcolor: '#fff',
         margin: { t: 10, r: 10, l: 60, b: 40 },
@@ -1941,6 +2000,7 @@
       };
 
       const manualShapes = picks.map((p) => ({
+        xref: 'x', yref: 'y',
         type: 'line',
         x0: p.trace - 0.4,
         x1: p.trace + 0.4,
@@ -1963,23 +2023,27 @@
 
       layout.shapes = [...manualShapes, ...predShapes];
 
-      Plotly.react(plotDiv, traces, layout, {
+      withSuppressedRelayout(Plotly.react(plotDiv, traces, layout, {
         responsive: true,
         editable: true,
         modeBarButtonsToAdd: ['eraseshape'],
         edits: { shapePosition: false },
-      });
+      }));
       setTimeout(() => {
-        suppressRelayout = true;
-        Plotly.Plots.resize(plotDiv);
-        suppressRelayout = false;
-      }, 50);
+          withSuppressedRelayout(Plotly.Plots.resize(plotDiv));
+        }, 50);
       requestAnimationFrame(applyDragMode);
       installPlotlyViewportHandlersOnce();
       attachPickListeners(plotDiv);
     }
 
     function renderWindowHeatmap(windowData) {
+      if (isRelayouting) {           // ユーザーがドラッグ中
+          latestWindowRender = windowData; // 最新結果だけ覚えて
+          redrawPending = true;            // 終了後に再描画
+          return;
+        }
+      snapshotAxesRangesFromDOM();
       if (!windowData || (windowData.mode && windowData.mode !== 'heatmap')) return;
       const sel = document.getElementById('layerSelect');
       const currentLayer = sel ? sel.value : 'raw';
@@ -2077,7 +2141,7 @@
           range: savedYRange ?? [totalSamples * baseDt, 0],
         },
         clickmode: clickModeForCurrentState(),
-
+        uirevision: currentUiRevision(),
         paper_bgcolor: '#fff',
         plot_bgcolor: '#fff',
         margin: { t: 10, r: 10, l: 60, b: 40 },
@@ -2086,6 +2150,7 @@
       };
 
       const manualShapes = picks.map((p) => ({
+        xref: 'x', yref: 'y',
         type: 'line',
         x0: p.trace - 0.4,
         x1: p.trace + 0.4,
@@ -2108,17 +2173,15 @@
 
       layout.shapes = [...manualShapes, ...predShapes];
 
-      Plotly.react(plotDiv, traces, layout, {
+      withSuppressedRelayout(Plotly.react(plotDiv, traces, layout, {
         responsive: true,
         editable: true,
         modeBarButtonsToAdd: ['eraseshape'],
         edits: { shapePosition: false },
-      });
+      }));
       setTimeout(() => {
-        suppressRelayout = true;
-        Plotly.Plots.resize(plotDiv);
-        suppressRelayout = false;
-      }, 50);
+          withSuppressedRelayout(Plotly.Plots.resize(plotDiv));
+        }, 50);
       requestAnimationFrame(applyDragMode);
       installPlotlyViewportHandlersOnce();
       attachPickListeners(plotDiv);
@@ -2187,11 +2250,9 @@
         widthPx,
       });
 
-      let step_x;
-      let step_y;
+      let step_x, step_y;
       if (wantWiggle) {
-        step_x = 1;
-        step_y = 1;
+        step_x = 1; step_y = 1;
       } else {
         ({ step_x, step_y } = computeStepsForWindow({
           tracesVisible: windowInfo.nTraces,
@@ -2243,14 +2304,22 @@
       }
 
       const requestId = ++windowFetchToken;
+
+      // ---- Abort older in-flight window fetch, then create a new controller
+      if (windowFetchCtrl) {
+        try { windowFetchCtrl.abort(); } catch (_) { }
+      }
+      const ctrl = new AbortController();
+      windowFetchCtrl = ctrl;
+
       try {
-        const res = await fetch(`/get_section_window_bin?${params.toString()}`);
+        const res = await fetch(`/get_section_window_bin?${params.toString()}`, { signal: ctrl.signal });
         if (!res.ok) {
           console.warn('Window fetch failed', res.status);
           return;
         }
         const bin = new Uint8Array(await res.arrayBuffer());
-        if (requestId !== windowFetchToken) return;
+        if (requestId !== windowFetchToken) return; // stale
         const obj = msgpack.decode(bin);
         applyServerDt(obj);
         const int8 = new Int8Array(obj.data.buffer);
@@ -2279,13 +2348,20 @@
         };
         latestSeismicData = null;
         latestWindowRender = windowPayload;
-        if (mode === 'wiggle') {
-          renderWindowWiggle(windowPayload);
-        } else {
-          renderWindowHeatmap(windowPayload);
-        }
+        if (isRelayouting) {      // ドラッグ中なら描画は保留
+            redrawPending = true;
+            return;
+          }
+        if (mode === 'wiggle') renderWindowWiggle(windowPayload);
+        else renderWindowHeatmap(windowPayload);
       } catch (err) {
+        if (err && err.name === 'AbortError') {
+          // canceled on purpose; ignore
+          return;
+        }
         if (requestId === windowFetchToken) console.warn('Window fetch error', err);
+      } finally {
+        if (windowFetchCtrl === ctrl) windowFetchCtrl = null;
       }
     }
 
@@ -2306,6 +2382,7 @@
       }
 
     function plotSeismicData(seismic, dt, startTrace = 0, endTrace = seismic.length - 1) {
+      snapshotAxesRangesFromDOM();
       const totalTraces = seismic.length;
       startTrace = Math.max(0, startTrace);
       endTrace = Math.min(totalTraces - 1, endTrace);
@@ -2406,14 +2483,14 @@
       const layout = {
         xaxis: {
           title: 'Trace', showgrid: false, tickfont: { color: '#000' }, titlefont: { color: '#000' },
-          autorange: !savedXRange, ...(savedXRange ? { range: savedXRange } : {})
+          autorange: false, range: savedXRange ?? [startTrace, endTrace]
         },
         yaxis: {
           title: 'Time (s)', showgrid: false, tickfont: { color: '#000' }, titlefont: { color: '#000' },
           autorange: false, range: savedYRange ?? [nSamples * dt, 0]
         },
         clickmode: clickModeForCurrentState(),
-
+        uirevision: currentUiRevision(),
         paper_bgcolor: '#fff', plot_bgcolor: '#fff',
         margin: { t: 10, r: 10, l: 60, b: 40 },
         dragmode: effectiveDragMode(),
@@ -2439,26 +2516,21 @@
 
       layout.shapes = [...manualShapes, ...predShapes];
 
-      Plotly.react(plotDiv, traces, layout, {
+      withSuppressedRelayout(Plotly.react(plotDiv, traces, layout, {
         responsive: true,
         editable: true,
         modeBarButtonsToAdd: ['eraseshape'],
         edits: { shapePosition: false }
-      });
+      }));
       setTimeout(() => {
-        suppressRelayout = true;
-        Plotly.Plots.resize(plotDiv);
-        suppressRelayout = false;
-      }, 50);
+          withSuppressedRelayout(Plotly.Plots.resize(plotDiv));
+        }, 50);
       requestAnimationFrame(applyDragMode);
       renderedStart = startTrace;
       renderedEnd = endTrace;
       console.log(`Rendered traces ${startTrace}-${endTrace}`);
       installPlotlyViewportHandlersOnce();
-      plotDiv.removeAllListeners('plotly_click');
-      if (isPickMode) {
-        plotDiv.on('plotly_click', handlePlotClick);
-      }
+      attachPickListeners(plotDiv);
     }
 
     function pickOnTrace(trace) {
@@ -2592,39 +2664,11 @@
       }
     }
 
-  function maybeFetchIfOutOfWindow() {
-    if (!latestWindowRender || !sectionShape) {
-      scheduleWindowFetch();
-      return;
-    }
-    const { x0, x1, y0, y1 } = latestWindowRender;
-    // 画面の“可視”レンジ（savedX/YRange）を取得
-    const win = currentVisibleWindow(); // 既存関数でOK
-    if (!win) return;
-
-    // フチに触れたら少し余裕（5%）を見て取得
-    const guardX = Math.max(1, Math.floor((x1 - x0 + 1) * 0.05));
-    const guardY = Math.max(1, Math.floor((y1 - y0 + 1) * 0.05));
-    const insideX = (win.x0 >= x0 + guardX) && (win.x1 <= x1 - guardX);
-    const insideY = (win.y0 >= y0 + guardY) && (win.y1 <= y1 - guardY);
-
-    if (!(insideX && insideY)) {
-      scheduleWindowFetch();
-    }
-  }
     async function handleRelayout(ev) {
       if (suppressRelayout) return;
       const plotDiv = document.getElementById('plot');
       if ('xaxis.range[0]' in ev && 'xaxis.range[1]' in ev) {
         savedXRange = [ev['xaxis.range[0]'], ev['xaxis.range[1]']];
-      } else if ('xaxis.autorange' in ev && ev['xaxis.autorange'] === true) {
-        savedXRange = null;
-        savedYRange = null;
-        // also drop any “previous window” fallback so we don’t creep out again
-        renderedStart = null;
-        renderedEnd = null;
-        // next currentVisibleWindow() call must use full extent, no padding
-        forceFullExtentOnce = true;
       }
 
       if ('yaxis.range[0]' in ev && 'yaxis.range[1]' in ev) {
