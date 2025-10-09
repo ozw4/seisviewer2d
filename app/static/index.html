@@ -487,6 +487,7 @@
     const WINDOW_FETCH_DEBOUNCE_MS = 120;
     const FETCH_DEBOUNCE_MS = 200;
     const WINDOW_MAX_POINTS = 1_200_000;
+    const LS = { DRAG_BASE: 'drag_base' };
     // UI-adjustable threshold for Wiggle/Heatmap decision (persisted)
     let WIGGLE_DENSITY_THRESHOLD = parseFloat(localStorage.getItem('wiggle_density') || '0.20');
 
@@ -651,15 +652,32 @@
     let currentFbLayer = 'raw';
     let currentFbPipelineKey = null;
 
-    let dragBase = localStorage.getItem('drag_base') || 'zoom'; // 'zoom' or 'pan'
+    let dragBase = localStorage.getItem(LS.DRAG_BASE) || 'zoom'; // 'zoom' or 'pan'
     let dragOverride = null; // 一時上書き（'pan' を入れる）
 
-    function effectiveDragMode() {
-      if (isPickMode) {
-        // ピック中でも Alt 押してる間だけ pan を許可
-        return (dragOverride === 'pan') ? 'pan' : false;
+    function getBaseDragMode() {
+      return (dragBase === 'pan') ? 'pan' : 'zoom';
+    }
+
+    function setBaseDragMode(mode) {
+      const next = (mode === 'pan') ? 'pan' : 'zoom';
+      if (dragBase !== next) {
+        dragBase = next;
+        try { localStorage.setItem(LS.DRAG_BASE, next); } catch (_) { }
+        applyDragMode();
       }
-      return dragOverride || dragBase; // 通常時はベース or 一時上書き
+    }
+
+    function getOverrideDragMode() {
+      if (dragOverride) return dragOverride;
+      if (isPickMode) return false;
+      return null;
+    }
+
+    function effectiveDragMode() {
+      const over = getOverrideDragMode();
+      if (over !== null && over !== undefined) return over;
+      return getBaseDragMode();
     }
     function applyDragMode() {
       const plotDiv = document.getElementById('plot');
