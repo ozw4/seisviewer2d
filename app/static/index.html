@@ -651,13 +651,15 @@
 
     let dragBase = localStorage.getItem('drag_base') || 'zoom'; // 'zoom' or 'pan'
     let dragOverride = null; // 一時上書き（'pan' を入れる）
+    let isZHeld = false;
 
     function effectiveDragMode() {
-      if (isPickMode) {
-        // ピック中でも Alt 押してる間だけ pan を許可
-        return (dragOverride === 'pan') ? 'pan' : false;
+      if (!isPickMode) {
+        return dragOverride || dragBase; // 通常時はベース or 一時上書き
       }
-      return dragOverride || dragBase; // 通常時はベース or 一時上書き
+      if (isZHeld) return 'zoom';
+      if (dragOverride === 'pan') return 'pan';
+      return false;
     }
     function applyDragMode() {
       const plotDiv = document.getElementById('plot');
@@ -666,6 +668,10 @@
       if (applyDragMode._last === dm) return; // 余計な relayout 防止
       applyDragMode._last = dm;
       Plotly.relayout(plotDiv, { dragmode: dm });
+    }
+
+    function refreshDragMode() {
+      applyDragMode();
     }
 
     // 統一キー関数（FB予測キャッシュ用）
@@ -732,6 +738,42 @@
       if (!(insideX && insideY)) scheduleWindowFetch();
     }
 
+    function isTypingTarget(el) {
+      return el && (
+        el.tagName === 'INPUT' ||
+        el.tagName === 'TEXTAREA' ||
+        el.isContentEditable
+      );
+    }
+
+    function ensureKeyHandlersOnce() {
+      if (window.__zZoomHotkeyInstalled) return;
+      window.__zZoomHotkeyInstalled = true;
+
+      window.addEventListener('keydown', (e) => {
+        if (e.repeat) return;
+        if (isTypingTarget(e.target)) return;
+        if (e.key === 'z' || e.key === 'Z') {
+          if (!isZHeld) {
+            isZHeld = true;
+            refreshDragMode();
+          }
+        }
+      }, { capture: true });
+
+      window.addEventListener('keyup', (e) => {
+        if (isTypingTarget(e.target)) return;
+        if (e.key === 'z' || e.key === 'Z') {
+          if (isZHeld) {
+            isZHeld = false;
+            refreshDragMode();
+          }
+        }
+      }, { capture: true });
+    }
+
+    ensureKeyHandlersOnce();
+
     // 入力系にフォーカスがある時は無効
     function canUseGlobalHotkey() {
       const el = document.activeElement;
@@ -749,7 +791,13 @@
     });
 
     // 取りこぼし対策
-    window.addEventListener('blur', () => setAltPan(false));
+    window.addEventListener('blur', () => {
+      setAltPan(false);
+      if (isZHeld) {
+        isZHeld = false;
+        refreshDragMode();
+      }
+    });
     document.addEventListener('visibilitychange', () => { if (document.hidden) setAltPan(false); });
     window.addEventListener('pointerup', (e) => { if (!e.altKey) setAltPan(false); });
 
