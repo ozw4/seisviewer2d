@@ -485,6 +485,7 @@
     const FALLBACK_MAX = 8;
     const HARD_LIMIT_BYTES = 512 * 1024 * 1024;
     const WINDOW_FETCH_DEBOUNCE_MS = 120;
+    const FETCH_DEBOUNCE_MS = 200;
     const WINDOW_MAX_POINTS = 1_200_000;
     // UI-adjustable threshold for Wiggle/Heatmap decision (persisted)
     let WIGGLE_DENSITY_THRESHOLD = parseFloat(localStorage.getItem('wiggle_density') || '0.20');
@@ -643,6 +644,7 @@
     }
 
     let suppressRelayout = false;       // ignore relayouts we cause internally
+    let isRelayouting = false;          // true while user is actively adjusting viewport
     let forceFullExtentOnce = false;    // next window calc uses full extent with no padding
 
     // 追加：現在のFB計算に紐づくレイヤ/パイプラインキー
@@ -665,7 +667,24 @@
       const dm = effectiveDragMode();
       if (applyDragMode._last === dm) return; // 余計な relayout 防止
       applyDragMode._last = dm;
-      Plotly.relayout(plotDiv, { dragmode: dm });
+      safeRelayout(plotDiv, { dragmode: dm });
+    }
+
+    function safeRelayout(gd, props) {
+      suppressRelayout = true;
+      try {
+        const result = Plotly.relayout(gd, props);
+        if (result && typeof result.finally === 'function') {
+          return result.finally(() => {
+            suppressRelayout = false;
+          });
+        }
+        suppressRelayout = false;
+        return result;
+      } catch (err) {
+        suppressRelayout = false;
+        throw err;
+      }
     }
 
     // 統一キー関数（FB予測キャッシュ用）
@@ -730,6 +749,39 @@
       const insideX = win.x0 >= x0 + guardX && win.x1 <= x1 - guardX;
       const insideY = win.y0 >= y0 + guardY && win.y1 <= y1 - guardY;
       if (!(insideX && insideY)) scheduleWindowFetch();
+    }
+
+    const onViewportSettled = debounce(() => {
+      if (suppressRelayout || isRelayouting) return;
+      checkModeFlipAndRefetch();
+      maybeFetchIfOutOfWindow();
+    }, FETCH_DEBOUNCE_MS);
+
+    function installPlotlyViewportHandlersOnce() {
+      const plotDiv = document.getElementById('plot');
+      if (!plotDiv || plotDiv.__viewportHandlersInstalled) return;
+      plotDiv.__viewportHandlersInstalled = true;
+
+      plotDiv.on('plotly_relayouting', () => {
+        if (suppressRelayout) return;
+        isRelayouting = true;
+      });
+
+      plotDiv.on('plotly_relayout', (ev) => {
+        if (suppressRelayout) return;
+        isRelayouting = false;
+        const result = handleRelayout(ev);
+        if (result && typeof result.catch === 'function') {
+          result.catch((err) => console.warn('handleRelayout failed', err));
+        }
+        onViewportSettled();
+      });
+
+      plotDiv.on('plotly_doubleclick', () => {
+        if (suppressRelayout) return;
+        isRelayouting = false;
+        onViewportSettled();
+      });
     }
 
     // 入力系にフォーカスがある時は無効
@@ -946,9 +998,8 @@
     }
 
     function attachPickListeners(plotDiv) {
-      // relayout は常に付け直す
-      plotDiv.removeAllListeners('plotly_relayout');
-      plotDiv.on('plotly_relayout', handleRelayout);
+      // relayout ハンドラは一度だけインストール
+      installPlotlyViewportHandlersOnce();
 
       // 既存の pick/hover ハンドラを外す
       plotDiv.removeAllListeners('plotly_click');
@@ -1916,6 +1967,7 @@
         suppressRelayout = false;
       }, 50);
       requestAnimationFrame(applyDragMode);
+      installPlotlyViewportHandlersOnce();
       attachPickListeners(plotDiv);
     }
 
@@ -2060,8 +2112,7 @@
         suppressRelayout = false;
       }, 50);
       requestAnimationFrame(applyDragMode);
-      plotDiv.removeAllListeners('plotly_relayout');
-      plotDiv.on('plotly_relayout', handleRelayout);
+      installPlotlyViewportHandlersOnce();
       attachPickListeners(plotDiv);
     }
     function renderLatestView(startOverride = null, endOverride = null) {
@@ -2395,10 +2446,8 @@
       renderedStart = startTrace;
       renderedEnd = endTrace;
       console.log(`Rendered traces ${startTrace}-${endTrace}`);
-
-      plotDiv.removeAllListeners('plotly_relayout');
+      installPlotlyViewportHandlersOnce();
       plotDiv.removeAllListeners('plotly_click');
-      plotDiv.on('plotly_relayout', handleRelayout);
       if (isPickMode) {
         plotDiv.on('plotly_click', handlePlotClick);
       }
@@ -2593,8 +2642,6 @@
         }
         picks = newPicks;
       }
-      checkModeFlipAndRefetch();
-      maybeFetchIfOutOfWindow();
     }
 
     window.addEventListener('DOMContentLoaded', () => {
