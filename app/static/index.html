@@ -588,6 +588,8 @@
       const predictedShapes = (predicted || [])
         .filter((p) => p && typeof p.trace === 'number' && p.trace >= xMin && p.trace <= xMax)
         .map((p) => ({
+          xref: 'x',
+          yref: 'y',
           type: 'line',
           x0: p.trace - 0.4,
           x1: p.trace + 0.4,
