@@ -1476,17 +1476,6 @@
       return entry;
     }
 
-    function debounce(fn, delay) {
-      let timer = null;
-      return function debounced(...args) {
-        if (timer) clearTimeout(timer);
-        timer = setTimeout(() => {
-          timer = null;
-          fn.apply(this, args);
-        }, delay);
-      };
-    }
-
     function roundUpPowerOfTwo(value) {
       let v = Math.max(1, Math.floor(value));
       v -= 1;
@@ -2473,10 +2462,7 @@
       renderedEnd = endTrace;
       console.log(`Rendered traces ${startTrace}-${endTrace}`);
       installPlotlyViewportHandlersOnce();
-      plotDiv.removeAllListeners('plotly_click');
-      if (isPickMode) {
-        plotDiv.on('plotly_click', handlePlotClick);
-      }
+      attachPickListeners(plotDiv);
     }
 
     function pickOnTrace(trace) {
