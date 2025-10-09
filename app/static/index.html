@@ -483,6 +483,183 @@
       }
     } catch (_) { }
     window.defaultDt = defaultDt;
+    // === A-7: Coordinate utilities (single source of truth) ===
+    const Grid = {
+      x0: 0,      // leftmost trace center
+      stepX: 1,   // trace stride used for current render (1 for wiggle, stepX/factor for heatmap)
+      y0: 0,      // top sample index center
+      stepY: 1,   // sample stride used for current render (1 or stepY/factor)
+      get dt() { return (window.defaultDt ?? defaultDt) || 0.002; }
+    };
+    function setGrid({ x0, stepX, y0, stepY }) {
+      Grid.x0 = Number.isFinite(x0) ? x0 : 0;
+      Grid.stepX = Number.isFinite(stepX) ? stepX : 1;
+      Grid.y0 = Number.isFinite(y0) ? y0 : 0;
+      Grid.stepY = Number.isFinite(stepY) ? stepY : 1;
+    }
+
+    function buildLayout({
+      mode,
+      x0,
+      x1,
+      y0,
+      y1,
+      stepX = 1,
+      stepY = 1,
+      totalSamples,
+      dt,
+      savedXRange,
+      savedYRange,
+      clickmode,
+      dragmode,
+      uirevision,
+      fbTitle = null,
+    }) {
+      const effectiveDt = typeof dt === 'number' ? dt : 0;
+      const xaxis = {
+        title: 'Trace',
+        showgrid: false,
+        tickfont: { color: '#000' },
+        titlefont: { color: '#000' },
+      };
+      const yaxis = {
+        title: 'Time (s)',
+        showgrid: false,
+        tickfont: { color: '#000' },
+        titlefont: { color: '#000' },
+      };
+
+      if (mode === 'wiggle') {
+        const defaultXRange = [x0, x1];
+        const defaultYRange = [totalSamples * effectiveDt, 0];
+        xaxis.autorange = false;
+        xaxis.range = savedXRange ?? defaultXRange;
+        yaxis.autorange = false;
+        yaxis.range = savedYRange ?? defaultYRange;
+      } else if (mode === 'heatmap') {
+        const halfX = (stepX || 1) * 0.5;
+        const halfYSec = (stepY || 1) * effectiveDt * 0.5;
+        const defaultXRange = [x0 - halfX, x1 + halfX];
+        const defaultYRange = [ (y1 * effectiveDt) + halfYSec, (y0 * effectiveDt) - halfYSec ];
+        xaxis.autorange = !savedXRange;
+        xaxis.range = savedXRange ?? defaultXRange;
+        yaxis.autorange = false;
+        yaxis.range = savedYRange ?? defaultYRange;
+      }
+
+      const layout = {
+        xaxis,
+        yaxis,
+        clickmode,
+        dragmode,
+        uirevision,
+        paper_bgcolor: '#fff',
+        plot_bgcolor: '#fff',
+        margin: { t: 10, r: 10, l: 60, b: 40 },
+      };
+
+      if (fbTitle !== null) {
+        layout.title = fbTitle;
+      }
+
+      return layout;
+    }
+
+    function buildPickShapes({
+      manualPicks,
+      predicted,
+      xMin,
+      xMax,
+      showPredicted,
+    }) {
+      const manualShapes = (manualPicks || [])
+        .filter((p) => p && typeof p.trace === 'number' && p.trace >= xMin && p.trace <= xMax)
+        .map((p) => ({
+          xref: 'x',
+          yref: 'y',
+          type: 'line',
+          x0: p.trace - 0.4,
+          x1: p.trace + 0.4,
+          y0: p.time,
+          y1: p.time,
+          line: { color: 'red', width: 2 },
+        }));
+
+      const predictedShapes = (predicted || [])
+        .filter((p) => p && typeof p.trace === 'number' && p.trace >= xMin && p.trace <= xMax)
+        .map((p) => ({
+          xref: 'x',
+          yref: 'y',
+          type: 'line',
+          x0: p.trace - 0.4,
+          x1: p.trace + 0.4,
+          y0: p.time,
+          y1: p.time,
+          line: { color: '#1f77b4', width: 5, dash: 'dot' },
+        }));
+
+      return [...manualShapes, ...(showPredicted ? predictedShapes : [])];
+    }
+    function getPlotEnv() {
+      const gd = document.getElementById('plot');
+      const rect = gd?.getBoundingClientRect();
+      const m = gd?._fullLayout?._size;   // {l,t,w,h}
+      const xa = gd?._fullLayout?.xaxis;
+      const ya = gd?._fullLayout?.yaxis;
+      if (!gd || !rect || !m || !xa || !ya) return null;
+      return { gd, rect, m, xa, ya };
+    }
+    // clientX/Y -> data X/Y using Plotly p2d
+    function dataXYFromClient(clientX, clientY) {
+        const env = getPlotEnv(); if (!env) return null;
+        const { rect, m, xa, ya } = env;
+        let x = Number.NaN, y = Number.NaN;
+        if (Number.isFinite(clientX)) {
+            const innerX = clientX - rect.left - m.l;
+            x = xa.p2d(innerX);
+          }
+        if (Number.isFinite(clientY)) {
+            const innerY = clientY - rect.top - m.t;
+            y = ya.p2d(innerY);
+          }
+        return { x, y };
+      }
+
+    // Shared snap: snap to the center of the current cell/trace line
+    function snapTraceFromDataX(x) {
+      const k = Math.round((x - Grid.x0) / Grid.stepX);
+      return Grid.x0 + k * Grid.stepX;
+    }
+    function snapTimeFromDataY(y) {
+      const idx = y / Grid.dt;
+      const k = Math.round((idx - Grid.y0) / Grid.stepY);
+      const snappedIdx = Grid.y0 + k * Grid.stepY;
+      return snappedIdx * Grid.dt;
+    }
+    // Public helpers
+    function traceAtPixel(clientX) {
+        const env = getPlotEnv(); if (!env) return NaN;
+        const { rect, m, xa } = env;
+        const innerX = clientX - rect.left - m.l;
+        const x = xa.p2d(innerX);
+        if (!Number.isFinite(x)) return NaN;
+        return snapTraceFromDataX(x);
+      }
+    function pixelForTrace(trace) {
+      const env = getPlotEnv(); if (!env) return null;
+      const { rect, m, xa } = env;
+      const snapped = snapTraceFromDataX(trace);
+      const inner = xa.d2p(snapped);
+      return rect.left + m.l + inner; // clientX
+    }
+    function timeAtPixel(clientY) {
+        const env = getPlotEnv(); if (!env) return NaN;
+        const { rect, m, ya } = env;
+        const innerY = clientY - rect.top - m.t;
+        const y = ya.p2d(innerY);
+        if (!Number.isFinite(y)) return NaN;
+        return snapTimeFromDataY(y);
+      }
     const PREFETCH_WIDTH = 3;
     const FALLBACK_MAX = 8;
     const HARD_LIMIT_BYTES = 512 * 1024 * 1024;
@@ -1102,21 +1279,6 @@
 
       if (!isPickMode) return; // ピックモードでないなら終了
 
-      // クリック位置を軸座標へ（余白補正込み）
-      const pxToData = (evt) => {
-        const rect = plotDiv.getBoundingClientRect();
-        const xpx = evt.clientX - rect.left;
-        const ypx = evt.clientY - rect.top;
-        const xa = plotDiv._fullLayout?.xaxis;
-        const ya = plotDiv._fullLayout?.yaxis;
-        const m = plotDiv._fullLayout?._size; // {l,t,w,h}
-        if (!xa || !ya || !m) return null;
-        const xData = xa.p2d(xpx - m.l);
-        const yData = ya.p2d(ypx - m.t);
-        if (!Number.isFinite(xData) || !Number.isFinite(yData)) return null;
-        return { xData, yData };
-      };
-
       // ★ Shiftクリックはキャプチャ段階で奪って Plotly 本体に渡さない（初回Heatmapのcdエラー回避）
       const captureShift = (e) => {
         if (!isPickMode || !e.shiftKey) return;
@@ -1125,16 +1287,15 @@
         e.preventDefault();
 
         const now = performance.now();
-        let xData, yData, meta = null;
+        let meta = null;
         if (lastHover && (now - lastHover.t) < 300) {
-          xData = lastHover.x; yData = lastHover.y; meta = lastHover.meta;
-        } else {
-          const conv = pxToData(e);
-          if (!conv) return;
-          xData = conv.xData; yData = conv.yData;
+          meta = lastHover.meta;
         }
+        const tr = traceAtPixel(e.clientX);
+        const tSec = timeAtPixel(e.clientY);
+        if (!Number.isFinite(tr) || !Number.isFinite(tSec)) return;
         setTimeout(() => {
-          handlePlotClick({ event: e, points: [{ x: xData, y: yData, data: { meta } }] });
+          handlePlotClick({ event: e, points: [{ x: tr, y: tSec, data: { meta } }] });
         }, 0);
       };
       plotDiv._captureShiftHandler = captureShift;
@@ -1144,21 +1305,19 @@
       plotDiv.on('plotly_click', (ev) => {
         handlePlotClick._firedRecently = true;
         setTimeout(() => {
+          const clientX = ev?.event?.clientX;
+          const clientY = ev?.event?.clientY;
+          const tr = traceAtPixel(clientX);
+          const tSec = timeAtPixel(clientY);
+          if (!Number.isFinite(tr) || !Number.isFinite(tSec)) { handlePlotClick._firedRecently = false; return; }
           const now = performance.now();
-          let xData, yData, meta = null;
-
+          let meta = ev?.points?.[0]?.data?.meta ?? null;
           if (lastHover && (now - lastHover.t) < 300) {
-            xData = lastHover.x; yData = lastHover.y;
-            meta = lastHover.meta ?? ev?.points?.[0]?.data?.meta ?? null;
-          } else {
-            const conv = pxToData(ev.event);
-            if (!conv) { handlePlotClick._firedRecently = false; return; }
-            xData = conv.xData; yData = conv.yData;
-            meta = ev?.points?.[0]?.data?.meta ?? null;
+            meta = lastHover.meta ?? meta;
           }
 
           setTimeout(() => {
-            handlePlotClick({ event: ev.event, points: [{ x: xData, y: yData, data: { meta } }] });
+            handlePlotClick({ event: ev.event, points: [{ x: tr, y: tSec, data: { meta } }] });
             handlePlotClick._firedRecently = false;
           }, 0);
         }, 0);
@@ -1169,17 +1328,16 @@
         if (e.shiftKey) return;
         setTimeout(() => {
           if (handlePlotClick._firedRecently) return;
+          const tr = traceAtPixel(e.clientX);
+          const tSec = timeAtPixel(e.clientY);
+          if (!Number.isFinite(tr) || !Number.isFinite(tSec)) return;
           const now = performance.now();
-          let xData, yData;
+          let meta = null;
           if (lastHover && (now - lastHover.t) < 300) {
-            xData = lastHover.x; yData = lastHover.y;
-          } else {
-            const conv = pxToData(e);
-            if (!conv) return;
-            xData = conv.xData; yData = conv.yData;
+            meta = lastHover.meta ?? null;
           }
           setTimeout(() => {
-            handlePlotClick({ event: e, points: [{ x: xData, y: yData }] });
+            handlePlotClick({ event: e, points: [{ x: tr, y: tSec, data: { meta } }] });
           }, 0);
         }, 0);
       };
@@ -1937,6 +2095,7 @@
       if (!rows || !cols) return;
       if (values.length !== rows * cols) return;
 
+      setGrid({ x0, stepX: 1, y0, stepY: 1 });
       const dt = window.defaultDt ?? defaultDt;
       const time = new Float32Array(rows);
       for (let r = 0; r < rows; r++) time[r] = (y0 + r * stepY) * dt;
@@ -1973,55 +2132,32 @@
 
       const totalTraces = sectionShape ? sectionShape[0] : endTrace - x0 + 1;
       const totalSamples = sectionShape ? sectionShape[1] : (typeof y1 === 'number' ? y1 - y0 + 1 : rows);
-      const baseDt = dt;
-      const layout = {
-        xaxis: {
-          title: 'Trace',
-          showgrid: false,
-          tickfont: { color: '#000' },
-          titlefont: { color: '#000' },
-          autorange: false,
-          range: savedXRange ?? [x0, endTrace],
-        },
-        yaxis: {
-          title: 'Time (s)',
-          showgrid: false,
-          tickfont: { color: '#000' },
-          titlefont: { color: '#000' },
-          autorange: false,
-          range: savedYRange ?? [totalSamples * baseDt, 0],
-        },
+      const layout = buildLayout({
+        mode: 'wiggle',
+        x0,
+        x1: endTrace,
+        y0,
+        y1,
+        stepX: 1,
+        stepY: 1,
+        totalSamples,
+        dt,
+        savedXRange,
+        savedYRange,
         clickmode: clickModeForCurrentState(),
-        uirevision: currentUiRevision(),
-        paper_bgcolor: '#fff',
-        plot_bgcolor: '#fff',
-        margin: { t: 10, r: 10, l: 60, b: 40 },
         dragmode: effectiveDragMode(),
-      };
+        uirevision: currentUiRevision(),
+        fbTitle: null,
+      });
 
-      const manualShapes = picks.map((p) => ({
-        xref: 'x', yref: 'y',
-        type: 'line',
-        x0: p.trace - 0.4,
-        x1: p.trace + 0.4,
-        y0: p.time,
-        y1: p.time,
-        line: { color: 'red', width: 2 },
-      }));
-
-      const showPred = document.getElementById('showFbPred')?.checked;
-      const predShapes = (showPred ? predictedPicks : [])
-        .filter((p) => p.trace >= x0 && p.trace <= endTrace)
-        .map((p) => ({
-          type: 'line',
-          x0: p.trace - 0.4,
-          x1: p.trace + 0.4,
-          y0: p.time,
-          y1: p.time,
-          line: { color: '#1f77b4', width: 5, dash: 'dot' },
-        }));
-
-      layout.shapes = [...manualShapes, ...predShapes];
+      const showPred = !!document.getElementById('showFbPred')?.checked;
+      layout.shapes = buildPickShapes({
+        manualPicks: picks,
+        predicted: showPred ? predictedPicks : [],
+        xMin: x0,
+        xMax: endTrace,
+        showPredicted: showPred,
+      });
 
       withSuppressedRelayout(Plotly.react(plotDiv, traces, layout, {
         responsive: true,
@@ -2067,6 +2203,7 @@
       if (!rows || !cols) return;
       if (values.length !== rows * cols) return;
 
+      setGrid({ x0, stepX, y0, stepY });
       const gain = parseFloat(document.getElementById('gain').value) || 1.0;
       const AMP_LIMIT = 3.0;
       const fbMode = effectiveLayer === 'fbprob';
@@ -2121,57 +2258,33 @@
         hovertemplate: '',
       }];
 
-      const totalTraces = sectionShape ? sectionShape[0] : x1 - x0 + 1;
-      const totalSamples = sectionShape ? sectionShape[1] : y1 - y0 + 1;
-      const layout = {
-        xaxis: {
-          title: 'Trace',
-          showgrid: false,
-          tickfont: { color: '#000' },
-          titlefont: { color: '#000' },
-          autorange: !savedXRange,
-          range: savedXRange ?? [x0, x1],
-        },
-        yaxis: {
-          title: 'Time (s)',
-          showgrid: false,
-          tickfont: { color: '#000' },
-          titlefont: { color: '#000' },
-          autorange: false,
-          range: savedYRange ?? [totalSamples * baseDt, 0],
-        },
+      const dt = window.defaultDt ?? defaultDt;
+      const layout = buildLayout({
+        mode: 'heatmap',
+        x0,
+        x1,
+        y0,
+        y1,
+        stepX,
+        stepY,
+        totalSamples: sectionShape ? sectionShape[1] : (y1 - y0 + 1),
+        dt,
+        savedXRange,
+        savedYRange,
         clickmode: clickModeForCurrentState(),
-        uirevision: currentUiRevision(),
-        paper_bgcolor: '#fff',
-        plot_bgcolor: '#fff',
-        margin: { t: 10, r: 10, l: 60, b: 40 },
         dragmode: effectiveDragMode(),
-        ...(fbMode ? { title: 'First-break Probability' } : {}),
-      };
+        uirevision: currentUiRevision(),
+        fbTitle: fbMode ? 'First-break Probability' : null,
+      });
 
-      const manualShapes = picks.map((p) => ({
-        xref: 'x', yref: 'y',
-        type: 'line',
-        x0: p.trace - 0.4,
-        x1: p.trace + 0.4,
-        y0: p.time,
-        y1: p.time,
-        line: { color: 'red', width: 2 },
-      }));
-
-      const showPred = document.getElementById('showFbPred')?.checked;
-      const predShapes = (showPred ? predictedPicks : [])
-        .filter((p) => p.trace >= x0 && p.trace <= x1)
-        .map((p) => ({
-          type: 'line',
-          x0: p.trace - 0.4,
-          x1: p.trace + 0.4,
-          y0: p.time,
-          y1: p.time,
-          line: { color: '#1f77b4', width: 5, dash: 'dot' },
-        }));
-
-      layout.shapes = [...manualShapes, ...predShapes];
+      const showPred = !!document.getElementById('showFbPred')?.checked;
+      layout.shapes = buildPickShapes({
+        manualPicks: picks,
+        predicted: showPred ? predictedPicks : [],
+        xMin: x0,
+        xMax: x1,
+        showPredicted: showPred,
+      });
 
       withSuppressedRelayout(Plotly.react(plotDiv, traces, layout, {
         responsive: true,
@@ -2400,9 +2513,12 @@
       let traces = [];
       const gain = parseFloat(document.getElementById('gain').value) || 1.0;
       const AMP_LIMIT = 3.0;
+      let defaultXRange;
+      let defaultYRange;
 
       if (!fbMode && density < 0.1) {
         downsampleFactor = 1;
+        setGrid({ x0: startTrace, stepX: 1, y0: 0, stepY: 1 });
         const time = new Float32Array(nSamples);
         for (let t = 0; t < nSamples; t++) time[t] = t * dt;
         for (let i = startTrace; i <= endTrace; i++) {
@@ -2423,6 +2539,8 @@
           traces.push({ type: 'scatter', mode: 'lines', x: shiftedPosX, y: time, fill: 'tonextx', fillcolor: 'black', line: { width: 0 }, opacity: 0.6, hoverinfo: 'skip', showlegend: false });
           traces.push({ type: 'scatter', mode: 'lines', x: shiftedFullX, y: time, line: { color: 'black', width: 0.5 }, hoverinfo: 'skip', showlegend: false });
         }
+        defaultXRange = [startTrace, endTrace];
+        defaultYRange = [nSamples * dt, 0];
       } else {
         const MAX_POINTS = 3_000_000;
         let factor = 1;
@@ -2432,6 +2550,7 @@
         console.log('Downsampling factor:', factor);
         console.log('Final dimensions:', nTracesDS, 'x', nSamplesDS);
 
+        setGrid({ x0: startTrace, stepX: factor, y0: 0, stepY: factor });
         const time = new Float32Array(nSamplesDS);
         for (let t = 0; t < nSamplesDS; t++) time[t] = t * dt * factor;
 
@@ -2478,16 +2597,20 @@
           hoverinfo: 'x+y',
           hovertemplate: '',
         }];
+        const halfX = factor * 0.5;
+        const halfY = dt * factor * 0.5;
+        defaultXRange = [startTrace - halfX, (startTrace + (nTracesDS - 1) * factor) + halfX];
+        defaultYRange = [ (nSamplesDS * dt * factor) - halfY, 0 - halfY ];
       }
 
       const layout = {
         xaxis: {
           title: 'Trace', showgrid: false, tickfont: { color: '#000' }, titlefont: { color: '#000' },
-          autorange: false, range: savedXRange ?? [startTrace, endTrace]
+          autorange: false, range: savedXRange ?? defaultXRange
         },
         yaxis: {
           title: 'Time (s)', showgrid: false, tickfont: { color: '#000' }, titlefont: { color: '#000' },
-          autorange: false, range: savedYRange ?? [nSamples * dt, 0]
+          autorange: false, range: savedYRange ?? defaultYRange
         },
         clickmode: clickModeForCurrentState(),
         uirevision: currentUiRevision(),
@@ -2556,8 +2679,6 @@
           return;
         }
 
-        const dt = (window.defaultDt ?? defaultDt) * (window.downsampleFactor ?? downsampleFactor);
-
         // ログ用：実際の座標変換
         const rect = plotDiv.getBoundingClientRect();
         const xpx = ev.event.clientX - rect.left;
@@ -2568,8 +2689,8 @@
         const p0 = ev.points && ev.points[0];
         if (!p0) return;
 
-        const trace = Math.round(p0.x);
-        const time = Math.round(p0.y / dt) * dt;
+        const trace = snapTraceFromDataX(p0.x);
+        const time = snapTimeFromDataY(p0.y);
 
         console.group('🖱 Actual Click Data');
         console.log('clientX / Y:', ev.event.clientX, ev.event.clientY);
@@ -2622,7 +2743,7 @@
           const promises = [];
           for (let x = xStart; x <= xEnd; x++) {
             const y = x1 === x0 ? y1 : y0 + slope * (x - x0);
-            const snapped = Math.round(y / dt) * dt;
+            const snapped = snapTimeFromDataY(y);
             const tAdj = adjustPickToFeature(x, snapped);
 
             const idx = pickOnTrace(x);
