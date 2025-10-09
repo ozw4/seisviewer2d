@@ -529,7 +529,7 @@
     // dtype must be '<i4' here (little-endian int32). Shape is (N,)
     function npyEncode1d(typedArray, dtype /* '<i4' */) {
       const N = typedArray.length;
-      const magic = '\x93NUMPY';
+      const magicBytes = new Uint8Array([0x93, 0x4e, 0x55, 0x4d, 0x50, 0x59]);
       const ver = new Uint8Array([1, 0]);
 
       // Python-style header string
@@ -538,7 +538,6 @@
       headerStr += '\n';
 
       const enc = new TextEncoder();
-      const magicBytes = enc.encode(magic);
       let headerBytes = enc.encode(headerStr);
 
       // Pad so that (10 + headerLen) % 16 === 0 ; 10 = len(magic)+len(ver)+len(hlen)
