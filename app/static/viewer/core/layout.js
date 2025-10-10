@@ -43,7 +43,7 @@ export function buildLayout({
     const halfX = (stepX || 1) * 0.5;
     const halfYSec = (stepY || 1) * effectiveDt * 0.5;
     const defaultXRange = [x0 - halfX, x1 + halfX];
-    const defaultYRange = [(y1 * effectiveDt) + halfYSec, (y0 * effectiveDt) - halfYSec];
+    const defaultYRange = [(y1 * effectiveDt) + halfYSec, (y0 * effectiveDt) + halfYSec];
     xaxis.autorange = !savedXRange;
     xaxis.range = savedXRange ?? defaultXRange;
     yaxis.autorange = false;
