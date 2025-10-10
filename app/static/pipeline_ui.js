@@ -1,26 +1,39 @@
+
+function whenViewerBootstrapReady(cb) {
+  if (typeof cb !== 'function') return;
+  if (window.cfg && window.debounce) {
+    cb();
+    return;
+  }
+  (window.__viewerBootstrapQueue ||= []).push(cb);
+}
+
+window.whenViewerBootstrapReady = window.whenViewerBootstrapReady || whenViewerBootstrapReady;
+
 (function () {
-  // === smoke log ===
-  console.info('[pipeline] pipeline_ui.js loaded');
+  whenViewerBootstrapReady(() => {
+    // === smoke log ===
+    console.info('[pipeline] pipeline_ui.js loaded');
 
-  const DEBUG_PIPELINE = true;
-  const VALID_STEP_NAMES = new Set(['bandpass', 'denoise']);
+    const DEBUG_PIPELINE = true;
+    const VALID_STEP_NAMES = new Set(['bandpass', 'denoise']);
 
-  const pipelineState = {
-    graph: [],
-    desiredLayer: 'raw',
-    inspectorStepId: null,
-    cardsContainer: null,
-    inspectorEl: null,
-    inspectorForm: null,
-    inspectorFieldsEl: null,
-    inspectorTitleEl: null,
-    addMenuEl: null,
-    addButtonEl: null,
-    draggedId: null,
-    runToken: 0,
-  };
+    const pipelineState = {
+      graph: [],
+      desiredLayer: 'raw',
+      inspectorStepId: null,
+      cardsContainer: null,
+      inspectorEl: null,
+      inspectorForm: null,
+      inspectorFieldsEl: null,
+      inspectorTitleEl: null,
+      addMenuEl: null,
+      addButtonEl: null,
+      draggedId: null,
+      runToken: 0,
+    };
 
-  const debounce = window.debounce;
+    const debounce = window.debounce;
 
   function emitPipelineEvent(eventName, payload) {
     const ui = window.pipelineUI;
@@ -725,21 +738,21 @@
 
   }
 
-  const schedulePipelineRun = debounce(() => runPipeline(), 300);
+    const schedulePipelineRun = debounce(() => runPipeline(), 300);
 
-  const pipelineUI = {
-    initPipelineUI,
-    renderPipelineCards,
-    openInspector,
-    closeInspector,
-    graphToSpec,
-    specToGraph,
-    schedulePipelineRun,
-    runPipeline,
-    savePipelineToLocalStorage,
-    loadPipelineFromLocalStorage,
-    prepareForNewSection,
-  };
+    const pipelineUI = {
+      initPipelineUI,
+      renderPipelineCards,
+      openInspector,
+      closeInspector,
+      graphToSpec,
+      specToGraph,
+      schedulePipelineRun,
+      runPipeline,
+      savePipelineToLocalStorage,
+      loadPipelineFromLocalStorage,
+      prepareForNewSection,
+    };
 
   const _listeners = {};
   function _on(eventName, handler) {
@@ -769,18 +782,25 @@
     }
   }
 
-  pipelineUI.on = pipelineUI.on || _on;
-  pipelineUI.off = pipelineUI.off || _off;
-  pipelineUI._emit = pipelineUI._emit || _emit;
-  if (typeof pipelineUI.cancel !== 'function') {
-    pipelineUI.cancel = function noopCancel() {};
-  }
+    pipelineUI.on = pipelineUI.on || _on;
+    pipelineUI.off = pipelineUI.off || _off;
+    pipelineUI._emit = pipelineUI._emit || _emit;
+    if (typeof pipelineUI.cancel !== 'function') {
+      pipelineUI.cancel = function noopCancel() {};
+    }
 
-  window.pipelineUI = pipelineUI;
+    window.pipelineUI = pipelineUI;
 
-  window.addEventListener('DOMContentLoaded', () => {
-    console.info('[pipeline] DOMContentLoaded -> initPipelineUI()');
-    initPipelineUI();
+    function startPipelineUI() {
+      console.info('[pipeline] DOMContentLoaded -> initPipelineUI()');
+      initPipelineUI();
+    }
+
+    if (document.readyState === 'loading') {
+      window.addEventListener('DOMContentLoaded', startPipelineUI, { once: true });
+    } else {
+      startPipelineUI();
+    }
   });
 })();
 
