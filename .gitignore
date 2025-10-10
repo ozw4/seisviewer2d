@@ -37,3 +37,6 @@ test/
 *.so
 *.o
 *.a
+
+node_modules/
+picks.json
