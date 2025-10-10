@@ -7,3 +7,6 @@ numba
 fastapi
 uvicorn[standard]
 python-multipart
+omegaconf==2.3.0
+pytest>=8
+pytest-playwright>=0.5

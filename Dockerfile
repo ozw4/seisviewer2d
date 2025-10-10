@@ -35,6 +35,7 @@ RUN --mount=type=cache,target=/root/.cache/pip,sharing=locked \
     --mount=type=bind,source=.devcontainer/requirements-dev.txt,target=requirements-dev.txt \
     python -m pip install -r requirements-dev.txt
 
+RUN python -m playwright install --with-deps chromium
 RUN addgroup --gid $GID $USERNAME && \
     adduser --disabled-password --gecos "" --shell "/sbin/nologin" --uid $UID --gid $GID $USERNAME
 
