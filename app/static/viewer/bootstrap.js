@@ -2,6 +2,18 @@
 import { createStore } from './store.js';
 import * as GridCore from './core/grid.js';
 import { buildLayout, buildPickShapes } from './core/layout.js';
+import {
+  renderWindowWiggle,
+  renderWindowHeatmap,
+  renderLatestView,
+} from './core/render.js';
+import {
+  computeStepsForWindow,
+  wantWiggleForWindow,
+  currentVisibleWindow,
+  fetchWindowAndPlot,
+  scheduleWindowFetch,
+} from './core/window_fetch.js';
 import { initPrefs, getPref } from './settings/prefs.js';
 
 // ---- helpers
@@ -53,6 +65,30 @@ window.timeAtPixel = GridCore.timeAtPixel;
 // Layout helpers
 window.buildLayout = buildLayout;
 window.buildPickShapes = buildPickShapes;
+
+const renderExports = {
+  renderWindowWiggle,
+  renderWindowHeatmap,
+  renderLatestView,
+};
+window.__viewerRender = renderExports;
+window.renderWindowWiggle = renderWindowWiggle;
+window.renderWindowHeatmap = renderWindowHeatmap;
+window.renderLatestView = renderLatestView;
+
+const windowExports = {
+  computeStepsForWindow,
+  wantWiggleForWindow,
+  currentVisibleWindow,
+  fetchWindowAndPlot,
+  scheduleWindowFetch,
+};
+window.__viewerWindow = windowExports;
+window.computeStepsForWindow = computeStepsForWindow;
+window.wantWiggleForWindow = wantWiggleForWindow;
+window.currentVisibleWindow = currentVisibleWindow;
+window.fetchWindowAndPlot = fetchWindowAndPlot;
+window.scheduleWindowFetch = scheduleWindowFetch;
 
 // Initialize preferences (applies to DOM & sets listeners)
 initPrefs({
@@ -130,4 +166,8 @@ if (typeof window.loadSettings === 'function') {
     // dt が変わる可能性があるので、閾値更新は不要だが、必要ならここで再フェッチ可能
   };
 }
-store.subscribe(() => { });
+store.subscribe(() => {
+  if (!window.isRelayouting && typeof window.renderLatestView === 'function') {
+    window.renderLatestView();
+  }
+});
