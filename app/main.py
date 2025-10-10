@@ -13,13 +13,13 @@ from utils.picks import store
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-        # --- startup ---
-        store.load()
-        picks_by_name.load()
-        yield
-        # --- shutdown ---
-        store.save()
-        picks_by_name.save()
+	# --- startup ---
+	store.load()
+	picks_by_name.load()
+	yield
+	# --- shutdown ---
+	store.save()
+	picks_by_name.save()
 
 
 app = FastAPI(lifespan=lifespan)

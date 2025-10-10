@@ -39,4 +39,3 @@ test/
 *.a
 
 node_modules/
-picks.json
