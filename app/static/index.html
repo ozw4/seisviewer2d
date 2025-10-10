@@ -477,6 +477,9 @@
     let cfg;
     let debounce;
     let defaultDt = 0;
+    var onViewportSettled = function () { };
+    var scheduleWindowFetch = function () { };
+    var dragBase = 'zoom'; // will be overridden from localStorage in initViewerGlobals
     let lastHover = null;
     let redrawPending = false;
     // === A-7: Coordinate utilities (provided by /static/viewer/core via bootstrap) ===
@@ -714,7 +717,7 @@
     let currentFbLayer = 'raw';
     let currentFbPipelineKey = null;
 
-    let dragBase = 'zoom'; // 'zoom' or 'pan'
+    dragBase = dragBase;
     let dragOverride = null; // 一時上書き（'pan' を入れる）
 
     function getBaseDragMode() {
@@ -830,8 +833,6 @@
       const insideY = win.y0 >= y0 + guardY && win.y1 <= y1 - guardY;
       if (!(insideX && insideY)) scheduleWindowFetch();
     }
-
-    let onViewportSettled = () => {};
 
     function installPlotlyViewportHandlersOnce() {
       const plotDiv = document.getElementById('plot');
@@ -1292,16 +1293,22 @@
 
     // Restore UI on load
     (function restoreWiggleUi() {
-      const el = document.getElementById('wiggle_density');
-      if (!el) return;
-      const min = parseFloat(el.min) || 0.02;
-      const max = parseFloat(el.max) || 0.30;
-      let v = cfg.getWiggleDensity();
-      if (!Number.isFinite(v)) v = parseFloat(el.value) || 0.10;
-      v = Math.min(max, Math.max(min, v));
-      el.value = v.toFixed(2);
-      WIGGLE_DENSITY_THRESHOLD = v;
-    })();
+        const el = document.getElementById('wiggle_density');
+        if (!el) return;
+        const min = parseFloat(el.min) || 0.02;
+        const max = parseFloat(el.max) || 0.30;
+        let v;
+        if (window.cfg && typeof window.cfg.getWiggleDensity === 'function') {
+            v = window.cfg.getWiggleDensity();
+          } else {
+            const saved = localStorage.getItem('wiggle_density');
+            const p = parseFloat(saved);
+            v = Number.isFinite(p) ? p : (parseFloat(el.value) || 0.10);
+          }
+        v = Math.min(max, Math.max(min, v));
+        el.value = v.toFixed(2);
+        WIGGLE_DENSITY_THRESHOLD = v;
+      })();
 
     function onGainChange() {
       const val = document.getElementById('gain').value;
@@ -2299,8 +2306,6 @@
         if (windowFetchCtrl === ctrl) windowFetchCtrl = null;
       }
     }
-
-    let scheduleWindowFetch = () => {};
 
     function visibleTraceIndices(range, total) {
       let start = Math.floor(range[0]);

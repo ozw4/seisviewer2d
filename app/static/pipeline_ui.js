@@ -1,19 +1,27 @@
 
-function whenViewerBootstrapReady(cb) {
-  if (typeof cb !== 'function') return;
-  if (window.cfg && window.debounce) {
-    cb();
-    return;
-  }
-  (window.__viewerBootstrapQueue ||= []).push(cb);
-}
-
-window.whenViewerBootstrapReady = window.whenViewerBootstrapReady || whenViewerBootstrapReady;
-
 (function () {
-  whenViewerBootstrapReady(() => {
-    // === smoke log ===
-    console.info('[pipeline] pipeline_ui.js loaded');
+  // IIFEローカルに保持（グローバルと衝突させない）
+  var cfg;
+  var debounce;
+
+    // queue方式のreadyヘルパ（window側に無ければ登録）
+  function ensureReady(cb) {
+    if (typeof cb !== 'function') return;
+    if (window.cfg && window.debounce) { cb(); return; }
+      (window.__viewerBootstrapQueue ||= []).push(cb);
+    }
+    if (typeof window.whenViewerBootstrapReady !== 'function') {
+        window.whenViewerBootstrapReady = ensureReady;
+      }
+
+    window.whenViewerBootstrapReady(() => {
+        console.info('[pipeline] pipeline_ui.js LOADED');
+        cfg = window.cfg;
+        debounce = window.debounce;
+
+    // ← ここで outer へ代入（ファイル全域から見える）
+    cfg = window.cfg;
+    debounce = window.debounce;
 
     const DEBUG_PIPELINE = true;
     const VALID_STEP_NAMES = new Set(['bandpass', 'denoise']);
@@ -33,7 +41,6 @@ window.whenViewerBootstrapReady = window.whenViewerBootstrapReady || whenViewerB
       runToken: 0,
     };
 
-    const debounce = window.debounce;
 
   function emitPipelineEvent(eventName, payload) {
     const ui = window.pipelineUI;
