@@ -35,12 +35,16 @@ def load() -> None:
 
 
 def save() -> None:
-        """Persist picks to disk."""
+        """Persist picks to disk atomically."""
         STORE_PATH.parent.mkdir(parents=True, exist_ok=True)
-        STORE_PATH.write_text(
-                json.dumps(_store, ensure_ascii=False, indent=2),
-                encoding='utf-8',
-        )
+        tmp = STORE_PATH.with_suffix(STORE_PATH.suffix  ".tmp")  # e.g. picks_by_name.json.tmp
+        data = json.dumps(_store, ensure_ascii=False, indent=2)
+        with open(tmp, "w", encoding="utf-8") as f:
+                f.write(data)
+                f.flush()
+                import os
+                os.fsync(f.fileno())  # ensure bytes hit disk before swap
+        tmp.replace(STORE_PATH)  # atomic on same filesystem
 
 
 def _ensure_entry(file_name: str | None) -> tuple[str, dict[str, Any]] | None:

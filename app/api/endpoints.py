@@ -918,8 +918,8 @@ async def post_pick(pick: Pick) -> dict[str, str]:
 				pick.key1_byte,
 			)
 			await asyncio.to_thread(picks_by_name.save)
-		except Exception:  # noqa: BLE001
-			pass
+		except Exception as e:  # noqa: BLE001
+			print(f'[picks mirror] filename save failed: {e!s}')
 	return {'status': 'ok'}
 
 
@@ -955,6 +955,6 @@ async def delete_pick_route(
 		try:
 			picks_by_name.delete_pick(fname, trace, key1_idx, key1_byte)
 			await asyncio.to_thread(picks_by_name.save)
-		except Exception:  # noqa: BLE001
-			pass
+		except Exception as e:  # noqa: BLE001
+			print(f'[picks mirror] filename save failed: {e!s}')
 	return {'status': 'ok'}
