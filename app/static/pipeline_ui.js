@@ -19,9 +19,6 @@
         cfg = window.cfg;
         debounce = window.debounce;
 
-    // ← ここで outer へ代入（ファイル全域から見える）
-    cfg = window.cfg;
-    debounce = window.debounce;
 
     const DEBUG_PIPELINE = true;
     const VALID_STEP_NAMES = new Set(['bandpass', 'denoise']);
