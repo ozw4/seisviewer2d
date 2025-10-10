@@ -3,6 +3,8 @@ import { createStore } from './store.js';
 import * as GridCore from './core/grid.js';
 import { buildLayout, buildPickShapes } from './core/layout.js';
 import { initPrefs, getPref } from './settings/prefs.js';
+import { cfg } from './core/config.js';
+import { debounce, throttle, rafDebounce } from './core/utils/timing.js';
 
 // ---- helpers
 const toNum = (v, d) => {
@@ -11,6 +13,40 @@ const toNum = (v, d) => {
 };
 const toStr = (v, d) => (v == null ? d : String(v));
 const toBool = (v) => (typeof v === 'string' ? v === 'true' : !!v);
+
+// Make available to non-module scripts
+window.cfg = cfg;
+window.debounce = debounce;
+window.throttle = throttle;
+window.rafDebounce = rafDebounce;
+
+const readyQueue = window.__viewerBootstrapQueue;
+window.viewerBootstrapReady = Promise.resolve();
+if (Array.isArray(readyQueue)) {
+  window.__viewerBootstrapQueue = null;
+  for (const fn of readyQueue) {
+    try {
+      if (typeof fn === 'function') fn();
+    } catch (err) {
+      console.error('[viewer] bootstrap callback failed', err);
+    }
+  }
+}
+if (typeof window.whenViewerBootstrapReady === 'function') {
+  window.whenViewerBootstrapReady = function whenViewerBootstrapReady(cb) {
+    if (typeof cb !== 'function') return;
+    try {
+      cb();
+    } catch (err) {
+      console.error('[viewer] bootstrap callback failed', err);
+    }
+  };
+}
+
+if (!(typeof window.defaultDt === 'number' && Number.isFinite(window.defaultDt) && window.defaultDt > 0)) {
+  const v = cfg.getDefaultDt();
+  window.defaultDt = v;
+}
 
 // Read initial values from existing DOM / globals
 const slider = document.getElementById('key1_idx_slider');
