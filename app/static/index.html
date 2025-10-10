@@ -474,37 +474,23 @@
     var latestWindowRender = null;
     var windowFetchToken = 0;
     let windowFetchCtrl = null; // active window-fetch controller (if any)
-    let defaultDt = 0.002;
+    const cfg = window.cfg;
+    const debounce = window.debounce;
+    let defaultDt = cfg.getDefaultDt();
     let lastHover = null;
     let redrawPending = false;
-    try {
-      const storedDt = localStorage.getItem('segy.dt');
-      if (storedDt !== null) {
-        const parsed = parseFloat(storedDt);
-        if (!Number.isNaN(parsed) && Number.isFinite(parsed) && parsed > 0) {
-          defaultDt = parsed;
-        }
-      }
-    } catch (_) { }
     window.defaultDt = defaultDt;
     // === A-7: Coordinate utilities (provided by /static/viewer/core via bootstrap) ===
-    const PREFETCH_WIDTH = 3;
-    const FALLBACK_MAX = 8;
-    const HARD_LIMIT_BYTES = 512 * 1024 * 1024;
-    const WINDOW_FETCH_DEBOUNCE_MS = 120;
-    const FETCH_DEBOUNCE_MS = 200;
-    const WINDOW_MAX_POINTS = 1_200_000;
-    const LS = { DRAG_BASE: 'drag_base' };
     // UI-adjustable threshold for Wiggle/Heatmap decision (persisted)
-    let WIGGLE_DENSITY_THRESHOLD = parseFloat(localStorage.getItem('wiggle_density') || '0.20');
+    let WIGGLE_DENSITY_THRESHOLD = cfg.getWiggleDensity();
 
     (function syncWiggleInit() {
         const el = document.getElementById('wiggle_density');
         if (!el) return;
-        const saved = localStorage.getItem('wiggle_density');
+        const saved = cfg.getWiggleDensity();
         const min = parseFloat(el.min) || 0.02;
         const max = parseFloat(el.max) || 0.30;
-        let v = saved != null ? parseFloat(saved) : parseFloat(el.value) || 0.20;
+        let v = Number.isFinite(saved) ? saved : parseFloat(el.value) || 0.20;
         if (!Number.isFinite(v)) v = 0.20;
         v = Math.min(max, Math.max(min, v));
         el.value = v.toFixed(2);
@@ -693,7 +679,7 @@
     let currentFbLayer = 'raw';
     let currentFbPipelineKey = null;
 
-    let dragBase = localStorage.getItem(LS.DRAG_BASE) || 'zoom'; // 'zoom' or 'pan'
+    let dragBase = localStorage.getItem(cfg.LS_KEYS.DRAG_BASE) || 'zoom'; // 'zoom' or 'pan'
     let dragOverride = null; // 一時上書き（'pan' を入れる）
 
     function getBaseDragMode() {
@@ -704,7 +690,7 @@
       const next = (mode === 'pan') ? 'pan' : 'zoom';
       if (dragBase !== next) {
         dragBase = next;
-        try { localStorage.setItem(LS.DRAG_BASE, next); } catch (_) { }
+        try { localStorage.setItem(cfg.LS_KEYS.DRAG_BASE, next); } catch (_) { }
         applyDragMode();
       }
     }
@@ -728,14 +714,6 @@
       applyDragMode._last = dm;
       safeRelayout(plotDiv, { dragmode: dm });
     }
-
-    function debounce(fn, wait) {
-        let t = null;
-        return function (...args) {
-          if (t) clearTimeout(t);
-          t = setTimeout(() => { t = null; fn.apply(this, args); }, wait);
-        };
-      }
 
     function safeRelayout(gd, props) {
       suppressRelayout = true;
@@ -822,7 +800,7 @@
       if (suppressRelayout || isRelayouting) return;
       checkModeFlipAndRefetch();
       maybeFetchIfOutOfWindow();
-    }, FETCH_DEBOUNCE_MS);
+    }, cfg.FETCH_DEBOUNCE_MS);
 
     function installPlotlyViewportHandlersOnce() {
       const plotDiv = document.getElementById('plot');
@@ -899,7 +877,7 @@
       if (!Number.isFinite(prev) || Math.abs(prev - dtSec) > 1e-12) {
         defaultDt = dtSec;
         window.defaultDt = dtSec;
-        try { localStorage.setItem('segy.dt', String(dtSec)); } catch (_) { }
+        cfg.setDefaultDt(dtSec);
         savedYRange = null;
       }
     }
@@ -1272,33 +1250,26 @@
     function onWiggleDensityChange() {
       const el = document.getElementById('wiggle_density');
       const v = parseFloat(el?.value);
-      if (Number.isFinite(v) && v > 0) {
-        WIGGLE_DENSITY_THRESHOLD = v;
-        try { localStorage.setItem('wiggle_density', String(v)); } catch (_) { }
-        // Apply now: re-evaluate window mode and redraw
-        renderLatestView();
-        scheduleWindowFetch();
-      }
+      if (!Number.isFinite(v) || v <= 0) return;
+      const stored = cfg.setWiggleDensity(v);
+      if (el) el.value = stored.toFixed(2);
+      WIGGLE_DENSITY_THRESHOLD = stored;
+      // Apply now: re-evaluate window mode and redraw
+      renderLatestView();
+      scheduleWindowFetch();
     }
 
     // Restore UI on load
     (function restoreWiggleUi() {
-      const saved = localStorage.getItem('wiggle_density');
       const el = document.getElementById('wiggle_density');
       if (!el) return;
-      if (saved != null) {
-          let v = parseFloat(saved);
-          if (!Number.isFinite(v)) v = 0.10;
-          const min = parseFloat(el.min) || 0.02;
-          const max = parseFloat(el.max) || 0.30;
-          v = Math.min(max, Math.max(min, v));
-          el.value = v.toFixed(2);
-          WIGGLE_DENSITY_THRESHOLD = v;
-        } else {
-          // localStorage未設定時はinputの既定値を信頼
-            let v = parseFloat(el.value) || 0.10;
-          WIGGLE_DENSITY_THRESHOLD = v;
-        }
+      const min = parseFloat(el.min) || 0.02;
+      const max = parseFloat(el.max) || 0.30;
+      let v = cfg.getWiggleDensity();
+      if (!Number.isFinite(v)) v = parseFloat(el.value) || 0.10;
+      v = Math.min(max, Math.max(min, v));
+      el.value = v.toFixed(2);
+      WIGGLE_DENSITY_THRESHOLD = v;
     })();
 
     function onGainChange() {
@@ -1477,7 +1448,7 @@
         console.log(`used: ${(used / 1024 / 1024).toFixed(2)} MB (fallback, no total)`);
       }
 
-      if (used > HARD_LIMIT_BYTES) {
+      if (used > cfg.HARD_LIMIT_BYTES) {
         console.warn(`⚠ Memory limit exceeded! (${(used / 1024 / 1024).toFixed(1)} MB > 512 MB)`);
         let removed = 0;
         while (cache.size > 1) {
@@ -1518,7 +1489,7 @@
       heightPx,
       oversampleX = 1.2,
       oversampleY = 1.2,
-      maxPoints = WINDOW_MAX_POINTS,
+      maxPoints = cfg.WINDOW_MAX_POINTS,
     }) {
       const ratio = window.devicePixelRatio || 1;
       const effW = Math.max(1, Math.round(widthPx * ratio));
@@ -1675,8 +1646,8 @@
       if (effectiveMode !== 'raw') return;
       for (const ctrl of inflight.values()) ctrl.abort();
       inflight.clear();
-      const start = Math.max(0, centerIdx - PREFETCH_WIDTH);
-      const end = Math.min(key1Values.length - 1, centerIdx + PREFETCH_WIDTH);
+      const start = Math.max(0, centerIdx - cfg.PREFETCH_WIDTH);
+      const end = Math.min(key1Values.length - 1, centerIdx + cfg.PREFETCH_WIDTH);
       const scheduler = cb => { ('requestIdleCallback' in window) ? requestIdleCallback(cb) : setTimeout(cb, 0); };
       for (let i = start; i <= end; i++) {
         if (i === centerIdx) continue;
@@ -2300,7 +2271,7 @@
 
     const scheduleWindowFetch = debounce(() => {
       fetchWindowAndPlot().catch((err) => console.warn('Window fetch failed', err));
-    }, WINDOW_FETCH_DEBOUNCE_MS);
+    }, cfg.WINDOW_FETCH_DEBOUNCE_MS);
 
     function visibleTraceIndices(range, total) {
       let start = Math.floor(range[0]);

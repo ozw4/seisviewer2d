@@ -20,6 +20,8 @@
     runToken: 0,
   };
 
+  const debounce = window.debounce;
+
   function emitPipelineEvent(eventName, payload) {
     const ui = window.pipelineUI;
     if (ui && typeof ui._emit === 'function') {
@@ -50,17 +52,6 @@
       { key: 'passes_batch', label: 'passes_batch', type: 'number', step: '1', min: 1, parser: (v) => parseInt(v, 10) },
     ],
   };
-
-  function debounce(fn, delay) {
-    let timer = null;
-    return function debounced(...args) {
-      if (timer) clearTimeout(timer);
-      timer = setTimeout(() => {
-        timer = null;
-        fn.apply(this, args);
-      }, delay);
-    };
-  }
 
   function formatStepName(name) {
     if (!name) return '';
