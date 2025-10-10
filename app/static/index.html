@@ -463,6 +463,7 @@
         snapTraceFromDataX, snapTimeFromDataY, buildLayout, buildPickShapes;
     var key1Values = [];
     var currentFileId = '';
+    var currentFileName = ''; // NEW: basename (e.g., LineA.sgy)
     var currentKey1Byte = 189;
     var currentKey2Byte = 193;
     var savedXRange = null;
@@ -1720,17 +1721,24 @@
       currentKey1Byte = parseInt(params.get('key1_byte') || localStorage.getItem('key1_byte') || '189');
       currentKey2Byte = parseInt(params.get('key2_byte') || localStorage.getItem('key2_byte') || '193');
       document.getElementById('file_id').value = currentFileId;
-      if (currentFileId) {
-        localStorage.setItem('file_id', currentFileId);
-        localStorage.setItem('key1_byte', currentKey1Byte);
-        localStorage.setItem('key2_byte', currentKey2Byte);
-        await fetchKey1Values();
-        await fetchPicks();
-        await fetchAndPlot();
+      if (!currentFileId) {
+        currentFileName = '';
+        return;
       }
+      localStorage.setItem('file_id', currentFileId);
+      localStorage.setItem('key1_byte', currentKey1Byte);
+      localStorage.setItem('key2_byte', currentKey2Byte);
+      await fetchCurrentFileName();
+      await fetchKey1Values();
+      await fetchPicks();
+      await fetchAndPlot();
     }
 
     async function fetchPicks() {
+      if (currentFileName) {
+        await reloadPicksForCurrentSection();
+        return;
+      }
       if (!currentFileId) return;
       const idx = parseInt(document.getElementById('key1_idx_slider').value);
       const key1Val = key1Values[idx];
@@ -1760,6 +1768,44 @@
       try {
         await fetch(`/picks?file_id=${currentFileId}&trace=${trace}&key1_idx=${key1Val}&key1_byte=${currentKey1Byte}`, { method: 'DELETE' });
       } catch (e) { console.error('Failed to delete pick', e); }
+    }
+
+    // --- filename & picks loader (by filename) ---
+    async function fetchCurrentFileName() {
+      if (!currentFileId) {
+        currentFileName = '';
+        return;
+      }
+      try {
+        const r = await fetch(`/file_info?file_id=${encodeURIComponent(currentFileId)}`);
+        if (!r.ok) {
+          currentFileName = '';
+          return;
+        }
+        const j = await r.json();
+        currentFileName = j.file_name || '';
+      } catch (e) {
+        currentFileName = '';
+        console.warn('file_info failed', e);
+      }
+    }
+
+    async function reloadPicksForCurrentSection() {
+      if (!currentFileName) return;
+      const slider = document.getElementById('key1_idx_slider');
+      const key1Idx = slider ? parseInt(slider.value, 10) || 0 : 0;
+      const url = `/picks/by-filename?file_name=${encodeURIComponent(currentFileName)}&key1_idx=${key1Idx}&key1_byte=${currentKey1Byte}`;
+      try {
+        const r = await fetch(url);
+        if (!r.ok) return;
+        const j = await r.json();
+        picks = (j.picks || []).map(p => ({ trace: (p.trace | 0), time: +p.time }));
+        if (typeof renderLatestView === 'function') {
+          try { renderLatestView(); } catch (e) { console.warn('render after picks failed', e); }
+        }
+      } catch (e) {
+        console.warn('reload picks failed', e);
+      }
     }
 
     async function fetchAndPlot() {
@@ -2744,7 +2790,42 @@
       attachPipelineHandlers();
     });
 
-    window.addEventListener('DOMContentLoaded', loadSettings);
+    window.addEventListener('DOMContentLoaded', () => {
+      console.info('[viewer] DOMContentLoaded hook');
+      const fileIdEl = document.getElementById('file_id');
+      const slider = document.getElementById('key1_idx_slider');
+
+      const boot = async () => {
+        if (fileIdEl && fileIdEl.value && !currentFileId) {
+          currentFileId = fileIdEl.value;
+        }
+        if (!currentFileId) {
+          currentFileName = '';
+          return;
+        }
+        if (!currentFileName) {
+          await fetchCurrentFileName();
+        }
+        await reloadPicksForCurrentSection();
+      };
+
+      loadSettings().catch((err) => console.warn('loadSettings failed', err)).finally(() => {
+        boot().catch((err) => console.warn('initial picks load failed', err));
+      });
+
+      if (fileIdEl) {
+        fileIdEl.addEventListener('change', async () => {
+          currentFileId = fileIdEl.value || '';
+          await fetchCurrentFileName();
+          await reloadPicksForCurrentSection();
+        });
+      }
+      if (slider) {
+        slider.addEventListener('change', () => {
+          reloadPicksForCurrentSection().catch((err) => console.warn('slider picks reload failed', err));
+        });
+      }
+    });
 
     // Toggle between raw and first tap with the "n" key
     window.addEventListener('keydown', (e) => {
