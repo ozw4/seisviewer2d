@@ -474,38 +474,73 @@
     var latestWindowRender = null;
     var windowFetchToken = 0;
     let windowFetchCtrl = null; // active window-fetch controller (if any)
-    const cfg = window.cfg;
-    const debounce = window.debounce;
-    let defaultDt = cfg.getDefaultDt();
+    let cfg;
+    let debounce;
+    let defaultDt = 0;
     let lastHover = null;
     let redrawPending = false;
-    window.defaultDt = defaultDt;
     // === A-7: Coordinate utilities (provided by /static/viewer/core via bootstrap) ===
     // UI-adjustable threshold for Wiggle/Heatmap decision (persisted)
-    let WIGGLE_DENSITY_THRESHOLD = cfg.getWiggleDensity();
-
-    (function syncWiggleInit() {
-        const el = document.getElementById('wiggle_density');
-        if (!el) return;
-        const saved = cfg.getWiggleDensity();
-        const min = parseFloat(el.min) || 0.02;
-        const max = parseFloat(el.max) || 0.30;
-        let v = Number.isFinite(saved) ? saved : parseFloat(el.value) || 0.20;
-        if (!Number.isFinite(v)) v = 0.20;
-        v = Math.min(max, Math.max(min, v));
-        el.value = v.toFixed(2);
-        WIGGLE_DENSITY_THRESHOLD = v;
-      })();
-
-    if (!Number.isFinite(WIGGLE_DENSITY_THRESHOLD)) {
-      WIGGLE_DENSITY_THRESHOLD = 0.10;
-    }
+    let WIGGLE_DENSITY_THRESHOLD = 0.10;
     const WIGGLE_MAX_POINTS = 2_500_000;
 
     const cache = new Map(); // key -> { f32: Float32Array }
     const inflight = new Map();
     const CACHE_LIMIT = 12;
     function cacheKey(val, mode) { return `${val}|${mode}`; }
+    function syncWiggleInit() {
+      const el = document.getElementById('wiggle_density');
+      if (!el) return;
+      const saved = cfg.getWiggleDensity();
+      const min = parseFloat(el.min) || 0.02;
+      const max = parseFloat(el.max) || 0.30;
+      let v = Number.isFinite(saved) ? saved : parseFloat(el.value) || 0.20;
+      if (!Number.isFinite(v)) v = 0.20;
+      v = Math.min(max, Math.max(min, v));
+      el.value = v.toFixed(2);
+      WIGGLE_DENSITY_THRESHOLD = v;
+    }
+    function initViewerGlobals() {
+      cfg = window.cfg;
+      debounce = window.debounce;
+      if (!cfg || !debounce) {
+        console.warn('viewer bootstrap globals not ready yet');
+        return;
+      }
+      defaultDt = cfg.getDefaultDt();
+      window.defaultDt = defaultDt;
+      WIGGLE_DENSITY_THRESHOLD = cfg.getWiggleDensity();
+      syncWiggleInit();
+      if (!Number.isFinite(WIGGLE_DENSITY_THRESHOLD)) {
+        WIGGLE_DENSITY_THRESHOLD = 0.10;
+      }
+      try {
+        const storedDrag = localStorage.getItem(cfg.LS_KEYS.DRAG_BASE);
+        dragBase = storedDrag === 'pan' ? 'pan' : 'zoom';
+      } catch (_) {
+        dragBase = 'zoom';
+      }
+      onViewportSettled = debounce(() => {
+        if (suppressRelayout || isRelayouting) return;
+        checkModeFlipAndRefetch();
+        maybeFetchIfOutOfWindow();
+      }, cfg.FETCH_DEBOUNCE_MS);
+      scheduleWindowFetch = debounce(() => {
+        fetchWindowAndPlot().catch((err) => console.warn('Window fetch failed', err));
+      }, cfg.WINDOW_FETCH_DEBOUNCE_MS);
+    }
+
+    if (typeof window.whenViewerBootstrapReady !== 'function') {
+      window.whenViewerBootstrapReady = function whenViewerBootstrapReady(cb) {
+        if (typeof cb !== 'function') return;
+        if (window.cfg && window.debounce) {
+          cb();
+          return;
+        }
+        (window.__viewerBootstrapQueue ||= []).push(cb);
+      };
+    }
+    window.whenViewerBootstrapReady(initViewerGlobals);
     var sectionShape = null;
     var renderedStart = null;
     var renderedEnd = null;
@@ -679,7 +714,7 @@
     let currentFbLayer = 'raw';
     let currentFbPipelineKey = null;
 
-    let dragBase = localStorage.getItem(cfg.LS_KEYS.DRAG_BASE) || 'zoom'; // 'zoom' or 'pan'
+    let dragBase = 'zoom'; // 'zoom' or 'pan'
     let dragOverride = null; // 一時上書き（'pan' を入れる）
 
     function getBaseDragMode() {
@@ -796,11 +831,7 @@
       if (!(insideX && insideY)) scheduleWindowFetch();
     }
 
-    const onViewportSettled = debounce(() => {
-      if (suppressRelayout || isRelayouting) return;
-      checkModeFlipAndRefetch();
-      maybeFetchIfOutOfWindow();
-    }, cfg.FETCH_DEBOUNCE_MS);
+    let onViewportSettled = () => {};
 
     function installPlotlyViewportHandlersOnce() {
       const plotDiv = document.getElementById('plot');
@@ -2269,9 +2300,7 @@
       }
     }
 
-    const scheduleWindowFetch = debounce(() => {
-      fetchWindowAndPlot().catch((err) => console.warn('Window fetch failed', err));
-    }, cfg.WINDOW_FETCH_DEBOUNCE_MS);
+    let scheduleWindowFetch = () => {};
 
     function visibleTraceIndices(range, total) {
       let start = Math.floor(range[0]);

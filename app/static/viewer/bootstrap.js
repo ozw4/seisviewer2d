@@ -20,6 +20,29 @@ window.debounce = debounce;
 window.throttle = throttle;
 window.rafDebounce = rafDebounce;
 
+const readyQueue = window.__viewerBootstrapQueue;
+window.viewerBootstrapReady = Promise.resolve();
+if (Array.isArray(readyQueue)) {
+  window.__viewerBootstrapQueue = null;
+  for (const fn of readyQueue) {
+    try {
+      if (typeof fn === 'function') fn();
+    } catch (err) {
+      console.error('[viewer] bootstrap callback failed', err);
+    }
+  }
+}
+if (typeof window.whenViewerBootstrapReady === 'function') {
+  window.whenViewerBootstrapReady = function whenViewerBootstrapReady(cb) {
+    if (typeof cb !== 'function') return;
+    try {
+      cb();
+    } catch (err) {
+      console.error('[viewer] bootstrap callback failed', err);
+    }
+  };
+}
+
 if (!(typeof window.defaultDt === 'number' && Number.isFinite(window.defaultDt) && window.defaultDt > 0)) {
   const v = cfg.getDefaultDt();
   window.defaultDt = v;
