@@ -470,9 +470,19 @@
     var latestWindowRender = null;
     var windowFetchToken = 0;
     let windowFetchCtrl = null; // active window-fetch controller (if any)
+    Object.defineProperty(window, 'windowFetchCtrl', {
+      configurable: true,
+      get() { return windowFetchCtrl; },
+      set(value) { windowFetchCtrl = value; },
+    });
     let defaultDt = 0.002;
     let lastHover = null;
     let redrawPending = false;
+    Object.defineProperty(window, 'redrawPending', {
+      configurable: true,
+      get() { return redrawPending; },
+      set(value) { redrawPending = !!value; },
+    });
     try {
       const storedDt = localStorage.getItem('segy.dt');
       if (storedDt !== null) {
@@ -707,6 +717,11 @@
     var deleteRangeStart = null;
 
     let uiResetNonce = 0;
+    Object.defineProperty(window, 'uiResetNonce', {
+      configurable: true,
+      get() { return uiResetNonce; },
+      set(value) { uiResetNonce = Number(value) || 0; },
+    });
     function currentUiRevision() {
       const sel = document.getElementById('layerSelect');
       const layer = sel ? sel.value : 'raw';
@@ -858,8 +873,23 @@
     }
 
     let suppressRelayout = false;       // ignore relayouts we cause internally
+    Object.defineProperty(window, 'suppressRelayout', {
+      configurable: true,
+      get() { return suppressRelayout; },
+      set(value) { suppressRelayout = !!value; },
+    });
     let isRelayouting = false;          // true while user is actively adjusting viewport
+    Object.defineProperty(window, 'isRelayouting', {
+      configurable: true,
+      get() { return isRelayouting; },
+      set(value) { isRelayouting = !!value; },
+    });
     let forceFullExtentOnce = false;    // next window calc uses full extent with no padding
+    Object.defineProperty(window, 'forceFullExtentOnce', {
+      configurable: true,
+      get() { return forceFullExtentOnce; },
+      set(value) { forceFullExtentOnce = !!value; },
+    });
 
     // 追加：現在のFB計算に紐づくレイヤ/パイプラインキー
     let currentFbLayer = 'raw';
@@ -1083,6 +1113,7 @@
       Cividis: 'Cividis',
       Jet: 'Jet',
     };
+    window.COLORMAPS = COLORMAPS;
 
     (function () {
       const saved = localStorage.getItem('gain');
@@ -1692,6 +1723,17 @@
       oversampleY = 1.2,
       maxPoints = WINDOW_MAX_POINTS,
     }) {
+      if (window.__viewerWindow?.computeStepsForWindow) {
+        return window.__viewerWindow.computeStepsForWindow({
+          tracesVisible,
+          samplesVisible,
+          widthPx,
+          heightPx,
+          oversampleX,
+          oversampleY,
+          maxPoints,
+        });
+      }
       const ratio = window.devicePixelRatio || 1;
       const effW = Math.max(1, Math.round(widthPx * ratio));
       const effH = Math.max(1, Math.round(heightPx * ratio));
@@ -1728,6 +1770,9 @@
     }
 
     function wantWiggleForWindow({ tracesVisible, samplesVisible, widthPx }) {
+      if (window.__viewerWindow?.wantWiggleForWindow) {
+        return window.__viewerWindow.wantWiggleForWindow({ tracesVisible, samplesVisible, widthPx });
+      }
       const density = tracesVisible / Math.max(1, widthPx);
       if (density >= WIGGLE_DENSITY_THRESHOLD) return false;
       if ((tracesVisible * samplesVisible) > WIGGLE_MAX_POINTS) return false;
@@ -1735,6 +1780,9 @@
     }
 
     function currentVisibleWindow() {
+      if (window.__viewerWindow?.currentVisibleWindow) {
+        return window.__viewerWindow.currentVisibleWindow();
+      }
       if (!sectionShape) return null;
       const [totalTraces, totalSamples] = sectionShape;
 
@@ -2037,8 +2085,8 @@
       if (shouldPreferWindowFirst()) {
         // 最初からウィンドウ版に任せる（フル描画をスキップ）
         latestSeismicData = null;
-        renderLatestView();      // 既存：必要なら状態維持（スピナー等を出すならここ）
-        fetchWindowAndPlot();    // 即時フェッチ
+        window.renderLatestView();      // 既存：必要なら状態維持（スピナー等を出すならここ）
+        window.fetchWindowAndPlot();    // 即時フェッチ
         return;
       }
 
@@ -2047,14 +2095,17 @@
       const s = (typeof start === 'number') ? start : 0;
       const e = (typeof end === 'number') ? end : Math.max(0, total - 1);
       if (latestSeismicData) {
-        plotSeismicData(latestSeismicData, defaultDt, s, e);
+        window.renderLatestView(s, e);
       } else {
-        renderLatestView();
+        window.renderLatestView();
       }
-      scheduleWindowFetch();
+      window.scheduleWindowFetch();
     }
 
     function renderWindowWiggle(windowData) {
+      if (window.__viewerRender?.renderWindowWiggle) {
+        return window.__viewerRender.renderWindowWiggle(windowData);
+      }
       if (isRelayouting) {           // ユーザーがドラッグ中
           latestWindowRender = windowData; // 最新結果だけ覚えて
           redrawPending = true;            // 終了後に再描画
@@ -2166,6 +2217,9 @@
     }
 
     function renderWindowHeatmap(windowData) {
+      if (window.__viewerRender?.renderWindowHeatmap) {
+        return window.__viewerRender.renderWindowHeatmap(windowData);
+      }
       if (isRelayouting) {           // ユーザーがドラッグ中
           latestWindowRender = windowData; // 最新結果だけ覚えて
           redrawPending = true;            // 終了後に再描画
@@ -2292,6 +2346,9 @@
       attachPickListeners(plotDiv);
     }
     function renderLatestView(startOverride = null, endOverride = null) {
+      if (window.__viewerRender?.renderLatestView) {
+        return window.__viewerRender.renderLatestView(startOverride, endOverride);
+      }
       const sel = document.getElementById('layerSelect');
       const layer = sel ? sel.value : 'raw';
       const slider = document.getElementById('key1_idx_slider');
@@ -2331,6 +2388,9 @@
     }
 
     async function fetchWindowAndPlot() {
+      if (window.__viewerWindow?.fetchWindowAndPlot) {
+        return window.__viewerWindow.fetchWindowAndPlot();
+      }
       if (!currentFileId || !sectionShape) return;
       const slider = document.getElementById('key1_idx_slider');
       if (!slider) return;
@@ -2471,6 +2531,10 @@
     }
 
     const scheduleWindowFetch = debounce(() => {
+      if (window.__viewerWindow?.scheduleWindowFetch) {
+        window.__viewerWindow.scheduleWindowFetch();
+        return;
+      }
       fetchWindowAndPlot().catch((err) => console.warn('Window fetch failed', err));
     }, WINDOW_FETCH_DEBOUNCE_MS);
 
