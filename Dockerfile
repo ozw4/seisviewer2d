@@ -36,6 +36,8 @@ RUN --mount=type=cache,target=/root/.cache/pip,sharing=locked \
     python -m pip install -r requirements-dev.txt
 
 RUN python -m playwright install --with-deps chromium
+RUN curl -fsSL https://deb.nodesource.com/setup_20.x | bash - \
+ && apt-get install -y nodejs
 RUN addgroup --gid $GID $USERNAME && \
     adduser --disabled-password --gecos "" --shell "/sbin/nologin" --uid $UID --gid $GID $USERNAME
 
