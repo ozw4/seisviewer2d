@@ -1,17 +1,27 @@
 // /viewer/bootstrap.js
 import { createStore } from './store.js';
+import * as GridCore from './core/grid.js';
+import { buildLayout, buildPickShapes } from './core/layout.js';
 import { initPrefs, getPref } from './settings/prefs.js';
 
+// ---- helpers
+const toNum = (v, d) => {
+  const x = Number(v);
+  return Number.isFinite(x) ? x : d;
+};
+const toStr = (v, d) => (v == null ? d : String(v));
+const toBool = (v) => (typeof v === 'string' ? v === 'true' : !!v);
+
 // Read initial values from existing DOM / globals
-const slider   = document.getElementById('key1_idx_slider');
+const slider = document.getElementById('key1_idx_slider');
 
 const initial = {
   fileId: document.getElementById('file_id')?.value || (window.currentFileId || ''),
   pickMode: !!window.isPickMode,
-  wiggleDensity: Number(getPref('wiggle_density')),
-  gain: Number(getPref('gain')),
-  colormap: String(getPref('colormap')),
-  cmReverse: !!getPref('cmReverse'),
+  wiggleDensity: toNum(getPref('wiggle_density'), 0.20),
+  gain: toNum(getPref('gain'), toNum(document.getElementById('gain')?.value, 1)),
+  colormap: toStr(getPref('colormap'), document.getElementById('colormap')?.value || 'Greys'),
+  cmReverse: toBool(getPref('cmReverse')),
   savedXRange: window.savedXRange || null,
   savedYRange: window.savedYRange || null,
   key1Index: Number.parseInt(slider?.value || '0', 10) || 0,
@@ -25,15 +35,50 @@ const store = createStore(initial);
 // Expose for debugging
 window.store = store;
 
+// ---- Sync global wiggle-threshold at boot (wantWiggleForWindow uses this)
+window.WIGGLE_DENSITY_THRESHOLD = store.get().wiggleDensity;
+
+// ---- Expose core modules to existing global code (override safely)
+// Grid & coordinate helpers
+window.Grid = GridCore.Grid;
+window.setGrid = GridCore.setGrid;
+window.getPlotEnv = GridCore.getPlotEnv;
+window.dataXYFromClient = GridCore.dataXYFromClient;
+window.snapTraceFromDataX = GridCore.snapTraceFromDataX;
+window.snapTimeFromDataY = GridCore.snapTimeFromDataY;
+window.traceAtPixel = GridCore.traceAtPixel;
+window.pixelForTrace = GridCore.pixelForTrace;
+window.timeAtPixel = GridCore.timeAtPixel;
+
+// Layout helpers
+window.buildLayout = buildLayout;
+window.buildPickShapes = buildPickShapes;
+
 // Initialize preferences (applies to DOM & sets listeners)
 initPrefs({
   onChange(key, value) {
-    // Patch only the fields we mirror in store (render will be triggered below)
-    if (key === 'gain')             store.patch({ gain: Number(value) || 1 });
-    if (key === 'colormap')         store.patch({ colormap: String(value) });
-    if (key === 'cmReverse')        store.patch({ cmReverse: !!value });
-    if (key === 'wiggle_density')   store.patch({ wiggleDensity: Number(value) });
-    if (typeof window.renderLatestView === 'function') window.renderLatestView();
+    // patch store (描画は必要時のみ行う)
+    if (key === 'gain') store.patch({ gain: toNum(value, 1) });
+    if (key === 'colormap') store.patch({ colormap: toStr(value, 'Greys') });
+    if (key === 'cmReverse') store.patch({ cmReverse: toBool(value) });
+
+    if (key === 'wiggle_density') {
+      const v = toNum(value, 0.20);
+      store.patch({ wiggleDensity: v });
+      // モード判定はこのグローバルを見るので同期が必須
+      window.WIGGLE_DENSITY_THRESHOLD = v;
+      if (typeof window.scheduleWindowFetch === 'function') {
+        window.scheduleWindowFetch();
+      }
+      return; // 閾値変更では即時再描画しない（fetchに任せる）
+    }
+
+    // それ以外（gain/colormap等）は pan/zoom 中でなければ軽量再描画
+    if (!window.isRelayouting && !window.suppressRelayout) {
+      if (typeof window.renderLatestView === 'function') {
+        window.renderLatestView();
+      }
+    }
   }
 });
 
@@ -71,9 +116,18 @@ if (typeof window.handleRelayout === 'function') {
   };
 }
 
-// Whenever store changes, ask existing renderer to refresh (cheap & safe)
-store.subscribe(() => {
-  if (typeof window.renderLatestView === 'function') {
-    window.renderLatestView();
-  }
-});
+// loadSettings 後に store を実データで追従（fileId/key1Values 等）
+if (typeof window.loadSettings === 'function') {
+  const _load = window.loadSettings;
+  window.loadSettings = async function () {
+    await _load();
+    window.store.patch({
+      fileId: document.getElementById('file_id')?.value || (window.currentFileId || ''),
+      key1Values: Array.isArray(window.key1Values) ? window.key1Values : [],
+      sectionShape: window.sectionShape || null,
+      pipelineKey: window.latestPipelineKey || null,
+    });
+    // dt が変わる可能性があるので、閾値更新は不要だが、必要ならここで再フェッチ可能
+  };
+}
+store.subscribe(() => { });
