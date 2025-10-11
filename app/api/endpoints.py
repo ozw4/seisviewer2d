@@ -923,11 +923,21 @@ async def post_pick(pick: Pick) -> dict[str, str]:
 	return {'status': 'ok'}
 
 
+@router.get('/file_info')
+async def file_info(file_id: str = Query(...)) -> dict[str, str]:
+        """Return basename for a given ``file_id``."""
+        rec = FILE_REGISTRY.get(file_id) or {}
+        path = rec.get('path') or rec.get('store_path')
+        if not path:
+                raise HTTPException(status_code=404, detail='Unknown file_id')
+        return {'file_name': Path(path).name}
+
+
 @router.get('/picks')
 async def get_pick(
-	file_id: str = Query(...),
-	key1_idx: int = Query(...),
-	key1_byte: int = Query(...),
+        file_id: str = Query(...),
+        key1_idx: int = Query(...),
+        key1_byte: int = Query(...),
 ) -> dict[str, list[dict[str, int | float]]]:
 	return {'picks': list_picks(file_id, key1_idx, key1_byte)}
 
