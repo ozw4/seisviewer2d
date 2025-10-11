@@ -7,6 +7,7 @@ from api import endpoints
 from fastapi import FastAPI
 from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
+from utils import picks_by_name
 from utils.picks import store
 
 
@@ -14,9 +15,11 @@ from utils.picks import store
 async def lifespan(app: FastAPI):
 	# --- startup ---
 	store.load()
+	picks_by_name.load()
 	yield
 	# --- shutdown ---
 	store.save()
+	picks_by_name.save()
 
 
 app = FastAPI(lifespan=lifespan)

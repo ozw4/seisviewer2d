@@ -32,6 +32,7 @@ from fastapi import (
 )
 from fastapi.responses import JSONResponse, Response
 from pydantic import BaseModel, Field
+from utils import picks_by_name
 from utils.fbpick import _MODEL_PATH as FBPICK_MODEL_PATH
 from utils.picks import add_pick, delete_pick, list_picks, store
 from utils.pipeline import apply_pipeline, pipeline_key
@@ -83,6 +84,12 @@ def _update_file_registry(
 # Private caches for FB pick sections and asynchronous jobs
 fbpick_cache: dict[tuple, bytes] = {}
 jobs: dict[str, dict[str, object]] = {}
+
+
+def _filename_for_file_id(file_id: str) -> str | None:
+	rec = FILE_REGISTRY.get(file_id) or {}
+	path = rec.get('path') or rec.get('store_path')
+	return Path(path).name if path else None
 
 
 class LRUCache(OrderedDict):
@@ -900,16 +907,48 @@ def pipeline_job_artifact(
 async def post_pick(pick: Pick) -> dict[str, str]:
 	add_pick(pick.file_id, pick.trace, pick.time, pick.key1_idx, pick.key1_byte)
 	await asyncio.to_thread(store.save)
+	fname = _filename_for_file_id(pick.file_id)
+	if fname:
+		try:
+			picks_by_name.add_pick(
+				fname,
+				pick.trace,
+				pick.time,
+				pick.key1_idx,
+				pick.key1_byte,
+			)
+			await asyncio.to_thread(picks_by_name.save)
+		except Exception as e:  # noqa: BLE001
+			print(f'[picks mirror] filename save failed: {e!s}')
 	return {'status': 'ok'}
+
+
+@router.get('/file_info')
+async def file_info(file_id: str = Query(...)) -> dict[str, str]:
+        """Return basename for a given ``file_id``."""
+        rec = FILE_REGISTRY.get(file_id) or {}
+        path = rec.get('path') or rec.get('store_path')
+        if not path:
+                raise HTTPException(status_code=404, detail='Unknown file_id')
+        return {'file_name': Path(path).name}
 
 
 @router.get('/picks')
 async def get_pick(
-	file_id: str = Query(...),
+        file_id: str = Query(...),
+        key1_idx: int = Query(...),
+        key1_byte: int = Query(...),
+) -> dict[str, list[dict[str, int | float]]]:
+	return {'picks': list_picks(file_id, key1_idx, key1_byte)}
+
+
+@router.get('/picks/by-filename')
+async def get_picks_by_filename(
+	file_name: str = Query(...),
 	key1_idx: int = Query(...),
 	key1_byte: int = Query(...),
 ) -> dict[str, list[dict[str, int | float]]]:
-	return {'picks': list_picks(file_id, key1_idx, key1_byte)}
+	return {'picks': picks_by_name.list_picks(file_name, key1_idx, key1_byte)}
 
 
 @router.delete('/picks')
@@ -921,4 +960,11 @@ async def delete_pick_route(
 ) -> dict[str, str]:
 	delete_pick(file_id, trace, key1_idx, key1_byte)
 	await asyncio.to_thread(store.save)
+	fname = _filename_for_file_id(file_id)
+	if fname:
+		try:
+			picks_by_name.delete_pick(fname, trace, key1_idx, key1_byte)
+			await asyncio.to_thread(picks_by_name.save)
+		except Exception as e:  # noqa: BLE001
+			print(f'[picks mirror] filename save failed: {e!s}')
 	return {'status': 'ok'}
