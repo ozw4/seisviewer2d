@@ -4,8 +4,10 @@ import asyncio
 import gzip
 import hashlib
 import json
+import os
 import pathlib
 import re
+import tempfile
 import threading
 from collections import OrderedDict
 from pathlib import Path
@@ -30,8 +32,9 @@ from fastapi import (
 	Query,
 	UploadFile,
 )
-from fastapi.responses import JSONResponse, Response
+from fastapi.responses import FileResponse, JSONResponse, Response
 from pydantic import BaseModel, Field
+from starlette.background import BackgroundTask
 from utils import picks_by_name
 from utils.fbpick import _MODEL_PATH as FBPICK_MODEL_PATH
 from utils.picks import add_pick, delete_pick, list_picks, store
@@ -944,17 +947,119 @@ async def get_pick(
 
 @router.get('/picks/by-filename')
 async def get_picks_by_filename(
-	file_name: str = Query(...),
-	key1_idx: int = Query(...),
-	key1_byte: int = Query(...),
+        file_name: str = Query(...),
+        key1_idx: int = Query(...),
+        key1_byte: int = Query(...),
 ) -> dict[str, list[dict[str, int | float]]]:
-	return {'picks': picks_by_name.list_picks(file_name, key1_idx, key1_byte)}
+        return {'picks': picks_by_name.list_picks(file_name, key1_idx, key1_byte)}
+
+
+@router.get('/export_manual_picks_all_npy')
+async def export_manual_picks_all_npy(
+        file_id: str = Query(...),
+        key1_byte: int = Query(189),
+        key2_byte: int = Query(193),
+) -> FileResponse:
+        reader = get_reader(file_id, key1_byte, key2_byte)
+        key1_values = reader.get_key1_values()
+        if key1_values is None or len(key1_values) == 0:
+                raise HTTPException(status_code=409, detail='No key1 values found for file')
+
+        try:
+                key1_list = [int(v) for v in np.asarray(key1_values).ravel()]
+        except Exception:  # noqa: BLE001
+                key1_list = [int(v) for v in key1_values]
+
+        file_name = _filename_for_file_id(file_id)
+        if not file_name:
+                raise HTTPException(status_code=404, detail='Filename not found for file_id')
+
+        key1_header: np.ndarray | None
+        if isinstance(reader, SegySectionReader):
+                key1_header = np.asarray(reader.key1s)
+        elif isinstance(reader, TraceStoreSectionReader):
+                key1_header = np.asarray(reader._get_header(reader.key1_byte))
+        else:
+                key1_header = None
+
+        if key1_header is None:
+                raise HTTPException(status_code=500, detail='Unable to determine trace counts for file')
+
+        counts = [int(np.count_nonzero(key1_header == val)) for val in key1_list]
+        width = max(counts, default=0)
+        if width <= 0:
+                raise HTTPException(status_code=409, detail='No traces found for provided key1 values')
+
+        mat = np.full((len(key1_list), width), -1, dtype=np.int32)
+
+        dt = get_dt_for_file(file_id)
+        if not isinstance(dt, (int, float)) or dt <= 0:
+                raise HTTPException(status_code=409, detail='Invalid or missing sample interval (dt) for file')
+        dt = float(dt)
+
+        n_samples: int | None = None
+        if isinstance(reader, TraceStoreSectionReader):
+                traces = getattr(reader, 'traces', None)
+                if isinstance(traces, np.ndarray) and traces.ndim >= 2:
+                        n_samples = int(traces.shape[-1])
+
+        for i, _key1_val in enumerate(key1_list):
+                row_picks = picks_by_name.list_picks(file_name, key1_idx=i, key1_byte=key1_byte)
+                if not row_picks:
+                        continue
+
+                latest_by_trace: dict[int, float] = {}
+                for pick in row_picks:
+                        trace_val = pick.get('trace') if isinstance(pick, dict) else None
+                        time_val = pick.get('time') if isinstance(pick, dict) else None
+                        try:
+                                trace_idx = int(trace_val)
+                                time_sec = float(time_val)
+                        except (TypeError, ValueError):
+                                continue
+                        if not np.isfinite(time_sec):
+                                continue
+                        latest_by_trace[trace_idx] = time_sec
+
+                row_width = counts[i] if i < len(counts) else width
+                if row_width <= 0 or not latest_by_trace:
+                        continue
+
+                for trace_idx, time_sec in latest_by_trace.items():
+                        idx = int(round(time_sec / dt))
+                        if n_samples is not None and n_samples > 0:
+                                idx = max(0, min(idx, n_samples - 1))
+                        if idx < 0:
+                                continue
+                        if trace_idx < 0 or trace_idx >= width or trace_idx >= row_width:
+                                continue
+                        mat[i, trace_idx] = idx
+
+        tmp = tempfile.NamedTemporaryFile(delete=False, suffix='.npy')
+        try:
+                np.save(tmp, mat)
+                tmp.flush()
+                os.fsync(tmp.fileno())
+        finally:
+                tmp_path = Path(tmp.name)
+                tmp.close()
+
+        safe_base = re.sub(r'[^-_.a-zA-Z0-9]', '_', Path(file_name).stem) or 'file'
+        download_name = f'pvec_idx_all_{safe_base}.npy'
+
+        background = BackgroundTask(lambda path=tmp_path: path.unlink(missing_ok=True))
+        return FileResponse(
+                tmp_path,
+                media_type='application/octet-stream',
+                filename=download_name,
+                background=background,
+        )
 
 
 @router.delete('/picks')
 async def delete_pick_route(
-	file_id: str = Query(...),
-	trace: int | None = Query(None),
+        file_id: str = Query(...),
+        trace: int | None = Query(None),
 	key1_idx: int = Query(...),
 	key1_byte: int = Query(...),
 ) -> dict[str, str]:

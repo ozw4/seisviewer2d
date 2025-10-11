@@ -405,6 +405,7 @@
 
         <button id="predictFbBtn" onclick="predictFromFb()">Predict from FB</button>
         <button type="button" onclick="exportPickIndexVectorNpy()">Export pick index vector (.npy)</button>
+        <button type="button" id="export-npy-all-key1" onclick="exportManualPicksAllKey1Npy()">Export manual picks (ALL key1) (.npy)</button>
         <label for="gain">Gain:</label>
         <input type="range" id="gain" min="0.1" max="5" step="0.1" value="1" oninput="onGainChange()" />
         <span id="gain_display">1×</span>
@@ -635,6 +636,21 @@
       return out;
     }
 
+    function filenameFromContentDisposition(disposition) {
+      if (!disposition) return null;
+      const utfMatch = /filename\*=UTF-8''([^;\n]+)/i.exec(disposition);
+      if (utfMatch && utfMatch[1]) {
+        try {
+          return decodeURIComponent(utfMatch[1]);
+        } catch (err) {
+          console.warn('Failed to decode UTF-8 filename from Content-Disposition:', err);
+          return utfMatch[1];
+        }
+      }
+      const match = /filename="?([^";]+)"?/i.exec(disposition);
+      return match && match[1] ? match[1] : null;
+    }
+
     // ---- Export current section's manual picks as int32 index vector (.npy) ----
     async function exportPickIndexVectorNpy() {
       if (!sectionShape || !Array.isArray(sectionShape) || sectionShape.length < 2) {
@@ -707,7 +723,67 @@
       } catch (err) {
           console.error('Save failed:', err);
           alert('Save failed: ' + (err && err.message ? err.message : err));
+      }
+    }
+
+    async function exportManualPicksAllKey1Npy() {
+      if (!currentFileId) {
+        alert('No file selected.');
+        return;
+      }
+
+      const params = new URLSearchParams({
+        file_id: currentFileId,
+        key1_byte: String(currentKey1Byte ?? 189),
+        key2_byte: String(currentKey2Byte ?? 193),
+      });
+
+      try {
+        const res = await fetch(`/export_manual_picks_all_npy?${params.toString()}`);
+        if (!res.ok) {
+          const text = await res.text();
+          let detail = text;
+          try {
+            const data = JSON.parse(text);
+            if (data && data.detail) detail = data.detail;
+          } catch (_) {
+            // plain text response
+          }
+          throw new Error(detail || `Request failed (${res.status})`);
         }
+
+        const blob = await res.blob();
+        const bytes = new Uint8Array(await blob.arrayBuffer());
+        const disposition = res.headers.get('Content-Disposition');
+        const filename = filenameFromContentDisposition(disposition) || 'pvec_idx_all.npy';
+
+        if (window.isSecureContext && 'showSaveFilePicker' in window) {
+          const handle = await window.showSaveFilePicker({
+            suggestedName: filename,
+            types: [{ description: 'NumPy array', accept: { 'application/octet-stream': ['.npy'] } }],
+          });
+          const writable = await handle.createWritable();
+          await writable.write(bytes);
+          await writable.close();
+        } else {
+          const downloadBlob = new Blob([bytes], { type: 'application/octet-stream' });
+          const href = URL.createObjectURL(downloadBlob);
+          const a = document.createElement('a');
+          a.href = href;
+          a.download = filename;
+          document.body.appendChild(a);
+          a.click();
+          a.remove();
+          setTimeout(() => URL.revokeObjectURL(href), 1000);
+          if (!window.isSecureContext) {
+            console.warn('Downloading over an insecure context (HTTP). Consider HTTPS/localhost to silence warnings.');
+          }
+        }
+      } catch (err) {
+        console.error('Export failed:', err);
+        const message = err && err.message ? err.message : String(err);
+        alert('Export failed: ' + message);
+      }
     }
 
     let suppressRelayout = false;       // ignore relayouts we cause internally
