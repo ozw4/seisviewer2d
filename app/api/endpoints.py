@@ -1003,8 +1003,12 @@ async def export_manual_picks_all_npy(
                 if isinstance(traces, np.ndarray) and traces.ndim >= 2:
                         n_samples = int(traces.shape[-1])
 
-        for i, _key1_val in enumerate(key1_list):
-                row_picks = picks_by_name.list_picks(file_name, key1_idx=i, key1_byte=key1_byte)
+        for i, key1_val in enumerate(key1_list):
+                row_picks = picks_by_name.list_picks(
+                        file_name,
+                        key1_idx=key1_val,
+                        key1_byte=key1_byte,
+                )
                 if not row_picks:
                         continue
 
