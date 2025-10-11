@@ -1793,8 +1793,9 @@
     async function reloadPicksForCurrentSection() {
       if (!currentFileName) return;
       const slider = document.getElementById('key1_idx_slider');
-      const key1Idx = slider ? parseInt(slider.value, 10) || 0 : 0;
-      const url = `/picks/by-filename?file_name=${encodeURIComponent(currentFileName)}&key1_idx=${key1Idx}&key1_byte=${currentKey1Byte}`;
+      const idx = slider ? (parseInt(slider.value, 10) || 0) : 0;
+      const key1Val = key1Values[idx];            // ★ ここが大事
+      const url = `/picks/by-filename?file_name=${encodeURIComponent(currentFileName)}&key1_idx=${key1Val}&key1_byte=${currentKey1Byte}`;
       try {
         const r = await fetch(url);
         if (!r.ok) return;
