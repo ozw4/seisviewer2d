@@ -6,6 +6,49 @@ import { initPrefs, getPref } from './settings/prefs.js';
 import { cfg } from './core/config.js';
 import { debounce, throttle, rafDebounce } from './core/utils/timing.js';
 
+// ------------------------------------------------------------
+  // Mode decider with geometry-stability lock
+  // ------------------------------------------------------------
+  (function attachModeDecider() {
+      // 「直前の幾何」と「直前のモード」を保持
+        let lastGeom = null;   // { traces: number, samples: number }
+      let lastMode = null;   // 'wiggle' | 'heatmap'
+
+        // 既存のしきい値（ローカル保存や設定から）
+        const getThreshold = () =>
+            (typeof window.WIGGLE_DENSITY_THRESHOLD === 'number'
+                ? window.WIGGLE_DENSITY_THRESHOLD
+              : (typeof window.cfg?.getWiggleDensity === 'function'
+                    ? window.cfg.getWiggleDensity()
+                  : 0.20));
+
+        // 既存の「ポイント上限」
+        const getMaxPoints = () =>
+            (window.cfg?.limits?.WINDOW_MAX_POINTS ?? window.cfg?.WINDOW_MAX_POINTS ?? 1_200_000);
+
+        // 公開API：必要なら他所からも呼べるように
+        window.decidePlotMode = function decidePlotMode({ traces, samples }) {
+            const geom = { traces: Math.max(0, traces | 0), samples: Math.max(0, samples | 0) };
+            const stable = lastGeom
+                && lastGeom.traces === geom.traces
+                && lastGeom.samples === geom.samples;
+            if (stable && lastMode) return lastMode;              // ← 幾何不変ならモード維持
+
+              // 幾何が変わったときだけ密度で再判定（元々の規約に合わせる）
+              const density = geom.traces * geom.samples;
+            const wantWiggle = density <= getThreshold() * getMaxPoints();
+            const next = wantWiggle ? 'wiggle' : 'heatmap';
+            lastGeom = geom;
+            lastMode = next;
+            return next;
+          };
+
+        // 明示的にリセットしたい場合用（ズーム/リセットなど）
+        window.resetPlotModeDecision = function () {
+            lastGeom = null; lastMode = null;
+          };
+    })();
+
 // ---- helpers
 const toNum = (v, d) => {
   const x = Number(v);
@@ -71,9 +114,27 @@ const store = createStore(initial);
 // Expose for debugging
 window.store = store;
 
-// ---- Sync global wiggle-threshold at boot (wantWiggleForWindow uses this)
-window.WIGGLE_DENSITY_THRESHOLD = store.get().wiggleDensity;
+// ---- Sync global wiggle-threshold at boot
+  window.WIGGLE_DENSITY_THRESHOLD = store.get().wiggleDensity;
 
+  // ---- Wrap drawSelectedLayer to pass geometry into decidePlotMode
+  // 既存の drawSelectedLayer がグローバルにある前提。なければ後段の render 呼び出し側で同様に包む。
+  if (typeof window.drawSelectedLayer === 'function') {
+      const _origDraw = window.drawSelectedLayer;
+      window.drawSelectedLayer = function (start, end) {
+          try {
+              const traces = Math.max(0, (Number(end) - Number(start)  1) | 0);
+              const samples =
+                  Array.isArray(window.sectionShape) && window.sectionShape.length >= 2
+                      ? Number(window.sectionShape[1]) | 0
+                      : 0;
+              const mode = window.decidePlotMode({ traces, samples });
+              // どこで mode を参照するかは実装次第だが、広く使えるように保持しておく
+                window.currentPlotMode = mode;
+            } catch (_) { /* keep original path even if geometry not available */ }
+          return _origDraw.apply(this, arguments);
+        };
+    }
 // ---- Expose core modules to existing global code (override safely)
 // Grid & coordinate helpers
 window.Grid = GridCore.Grid;

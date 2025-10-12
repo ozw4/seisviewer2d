@@ -3,13 +3,8 @@ import io
 import numpy as np
 from fastapi.testclient import TestClient
 
+from app.api.routers import picks as ep
 from app.main import app
-
-try:
-	# app.main は `from api import endpoints` を使用するため、こちらを優先
-	import api.endpoints as ep
-except Exception:
-	import app.api.endpoints as ep  # フォールバック（環境差異対策）
 
 
 def test_export_all_key1_basic(monkeypatch):
