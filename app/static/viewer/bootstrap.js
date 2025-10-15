@@ -123,7 +123,7 @@ window.store = store;
       const _origDraw = window.drawSelectedLayer;
       window.drawSelectedLayer = function (start, end) {
           try {
-              const traces = Math.max(0, (Number(end) - Number(start)  1) | 0);
+              const traces = Math.max(0, Number(end) - Number(start));
               const samples =
                   Array.isArray(window.sectionShape) && window.sectionShape.length >= 2
                       ? Number(window.sectionShape[1]) | 0

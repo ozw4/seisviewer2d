@@ -404,8 +404,7 @@
           predicted</label>
 
         <button id="predictFbBtn" onclick="predictFromFb()">Predict from FB</button>
-        <button type="button" onclick="exportPickIndexVectorNpy()">Export pick index vector (.npy)</button>
-        <button type="button" id="export-npy-all-key1" onclick="exportManualPicksAllKey1Npy()">Export manual picks (ALL key1) (.npy)</button>
+        <button type="button" id="export-npy-all-key1" onclick="exportAllPickIndexMatrixNpy()">Export manual picks (.npy)</button>
         <label for="gain">Gain:</label>
         <input type="range" id="gain" min="0.1" max="5" step="0.1" value="1" oninput="onGainChange()" />
         <span id="gain_display">1×</span>
@@ -571,14 +570,14 @@
       return `rev:${currentFileId}|${key1Val}|${layer}|${pKey}|${uiResetNonce}`;
     }
 
-  function withSuppressedRelayout(promiseLike) {
-      suppressRelayout = true;
-      if (promiseLike && typeof promiseLike.finally === 'function') {
-          return promiseLike.finally(() => { suppressRelayout = false; });
-        }
-      suppressRelayout = false;
-      return promiseLike;
-    }
+    function withSuppressedRelayout(promiseLike) {
+        suppressRelayout = true;
+        if (promiseLike && typeof promiseLike.finally === 'function') {
+            return promiseLike.finally(() => { suppressRelayout = false; });
+          }
+        suppressRelayout = false;
+        return promiseLike;
+      }
 
     function snapshotAxesRangesFromDOM() {
       const gd = document.getElementById('plot');
@@ -592,48 +591,6 @@
         // 上下逆レンジでも扱えるように max/min 順で保存
         savedYRange = y0 > y1 ? [y0, y1] : [y1, y0];
       }
-    }
-
-    // ---- Minimal NPY v1.0 encoder for 1-D TypedArray ----
-    // dtype must be '<i4' here (little-endian int32). Shape is (N,)
-    function npyEncode1d(typedArray, dtype /* '<i4' */) {
-      const N = typedArray.length;
-      const magicBytes = new Uint8Array([0x93, 0x4e, 0x55, 0x4d, 0x50, 0x59]);
-      const ver = new Uint8Array([1, 0]);
-
-      // Python-style header string
-      const shapeStr = `(${N},)`;
-      let headerStr = `{'descr': '${dtype}', 'fortran_order': False, 'shape': ${shapeStr}, }`;
-      headerStr += '\n';
-
-      const enc = new TextEncoder();
-      let headerBytes = enc.encode(headerStr);
-
-      // Pad so that (10 + headerLen) % 16 === 0 ; 10 = len(magic)+len(ver)+len(hlen)
-      const preambleLen = 10;
-      const mod = (preambleLen + headerBytes.length) % 16;
-      if (mod !== 0) {
-        const pad = 16 - mod;
-        const padded = new Uint8Array(headerBytes.length + pad);
-        padded.set(headerBytes, 0);
-        // fill with spaces; ensure last char is '\n'
-        padded.fill(' '.charCodeAt(0), headerBytes.length);
-        padded[padded.length - 1] = '\n'.charCodeAt(0);
-        headerBytes = padded;
-      }
-
-      const hlenLE = new Uint8Array(2);
-      new DataView(hlenLE.buffer).setUint16(0, headerBytes.length, true);
-
-      const totalLen = magicBytes.length + ver.length + hlenLE.length + headerBytes.length + typedArray.byteLength;
-      const out = new Uint8Array(totalLen);
-      let o = 0;
-      out.set(magicBytes, o); o += magicBytes.length;
-      out.set(ver, o);        o += ver.length;
-      out.set(hlenLE, o);     o += hlenLE.length;
-      out.set(headerBytes, o); o += headerBytes.length;
-      out.set(new Uint8Array(typedArray.buffer, typedArray.byteOffset, typedArray.byteLength), o);
-      return out;
     }
 
     function filenameFromContentDisposition(disposition) {
@@ -651,139 +608,94 @@
       return match && match[1] ? match[1] : null;
     }
 
-    // ---- Export current section's manual picks as int32 index vector (.npy) ----
-    async function exportPickIndexVectorNpy() {
-      if (!sectionShape || !Array.isArray(sectionShape) || sectionShape.length < 2) {
+    // 手動ピック -> インデックスベクトル（-1は欠損）
+    function buildPickIndexVector(picksArr, nTraces, nSamples, dt) {
+      const last = new Map();
+      for (const p of (picksArr || [])) {
+        const tr = Math.round(p.trace);
+        if (tr >= 0 && tr < nTraces && Number.isFinite(p.time)) last.set(tr, p.time);
+      }
+      const vec = new Int32Array(nTraces);
+      vec.fill(-1);
+      for (const [tr, t] of last) {
+        let idx = Math.round(t / dt);
+        if (!Number.isFinite(idx) || idx < 0 || idx >= nSamples) idx = -1;
+        vec[tr] = idx;
+      }
+      return vec;
+    }
+
+    function saveBlob(uint8OrBlob, filename) {
+        const blob = (uint8OrBlob instanceof Blob)
+          ? uint8OrBlob
+          : new Blob([uint8OrBlob], { type: 'application/octet-stream' });
+
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = filename || 'download.bin';
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+        setTimeout(() => URL.revokeObjectURL(url), 1000);
+      }
+
+    // .npy エンコーダ（1D/2D両対応）
+    function npyEncode(data, shape, descr = '<i4') {
+      const magic = new Uint8Array([0x93, 0x4E, 0x55, 0x4D, 0x50, 0x59]);
+      const ver = new Uint8Array([0x01, 0x00]); // v1.0
+      const shapeTxt = `(${shape.join(', ')}${shape.length === 1 ? ',' : ''})`;
+      let header = `{'descr': '${descr}', 'fortran_order': False, 'shape': ${shapeTxt}, }`;
+      const fixed = magic.length + ver.length + 2;
+      const pad = (16 - ((fixed + header.length) % 16)) % 16;
+      header += ' '.repeat(pad);
+      const hbytes = new TextEncoder().encode(header);
+      const hlenLE = new Uint8Array(2);
+      new DataView(hlenLE.buffer).setUint16(0, hbytes.length, true);
+
+      const out = new Uint8Array(magic.length + ver.length + 2 + hbytes.length + data.byteLength);
+      let o = 0;
+      out.set(magic, o); o += magic.length;
+      out.set(ver, o); o += ver.length;
+      out.set(hlenLE, o); o += 2;
+      out.set(hbytes, o); o += hbytes.length;
+      out.set(new Uint8Array(data.buffer, data.byteOffset, data.byteLength), o);
+      return out;
+    }
+
+    // ★唯一のエクスポータ：全 key1 を [K, Ntr] 行列で書き出し
+    async function exportAllPickIndexMatrixNpy() {
+      if (!sectionShape || sectionShape.length < 2) {
         alert('Section shape is unknown yet.');
         return;
       }
-      const nTraces = sectionShape[0];
-      const nSamples = sectionShape[1];
-      const dt = (window.defaultDt ?? defaultDt);
-
-      // Build trace -> time_sec map using ONLY manual picks (red).
-      // If multiple picks on same trace, take the latest occurrence.
-      const traceToTime = new Map();
-      for (const p of (picks || [])) {
-        const tr = Math.round(p.trace);
-        if (tr >= 0 && tr < nTraces && Number.isFinite(p.time)) {
-          traceToTime.set(tr, p.time);
-        }
-      }
-
-      // Create int32 vector (length = nTraces), default -1 for "no pick"
-      const vec = new Int32Array(nTraces);
-      vec.fill(-1);
-
-      for (const [tr, t] of traceToTime.entries()) {
-        let idx = Math.round(t / dt);
-        if (!Number.isFinite(idx) || idx < 0 || idx >= nSamples) {
-          idx = -1;
-        }
-        vec[tr] = idx;
-      }
-
-      // Encode as .npy (<i4, shape (N,))
-      const npy = npyEncode1d(vec, '<i4');
-
-      function safeName(s) { return String(s).replace(/[^-_.a-zA-Z0-9]/g, '_'); }
-
-      // File name
-      const slider = document.getElementById('key1_idx_slider');
-      const idx = parseInt(slider?.value ?? '0', 10);
-      const key1Val = key1Values?.[idx] ?? 'cur';
-      const fileId = safeName((document.getElementById('file_id')?.value) || 'file');
-      const fname = `pvec_idx_${fileId}_${key1Val}.npy`;
-
-      // Save (prefer File System Access API on secure contexts)
-        try {
-            if (window.isSecureContext && 'showSaveFilePicker' in window) {
-                const handle = await window.showSaveFilePicker({
-                suggestedName: fname,
-                    types: [{ description: 'NumPy array', accept: { 'application/octet-stream': ['.npy'] } }],
-                  });
-              const writable = await handle.createWritable();
-              await writable.write(npy);
-              await writable.close();
-            } else {
-            // Fallback: anchor download (may show HTTP warning on non-HTTPS)
-              const blob = new Blob([npy], { type: 'application/octet-stream' });
-            const href = URL.createObjectURL(blob);
-            const a = document.createElement('a');
-            a.href = href;
-            a.download = fname;
-            document.body.appendChild(a);
-            a.click();
-            a.remove();
-            setTimeout(() => URL.revokeObjectURL(href), 1000);
-            if (!window.isSecureContext) {
-                console.warn('Downloading over an insecure context (HTTP). Consider HTTPS/localhost to silence warnings.');
-              }
-          }
-      } catch (err) {
-          console.error('Save failed:', err);
-          alert('Save failed: ' + (err && err.message ? err.message : err));
-      }
-    }
-
-    async function exportManualPicksAllKey1Npy() {
-      if (!currentFileId) {
-        alert('No file selected.');
+      if (!Array.isArray(key1Values) || key1Values.length === 0) {
+        alert('key1 values not loaded.');
         return;
       }
 
-      const params = new URLSearchParams({
-        file_id: currentFileId,
-        key1_byte: String(currentKey1Byte ?? 189),
-        key2_byte: String(currentKey2Byte ?? 193),
-      });
+      const nTraces = sectionShape[0];
+      const nSamples = sectionShape[1];
+      const dt = (window.defaultDt ?? defaultDt);
+      const K = key1Values.length;
 
-      try {
-        const res = await fetch(`/export_manual_picks_all_npy?${params.toString()}`);
-        if (!res.ok) {
-          const text = await res.text();
-          let detail = text;
-          try {
-            const data = JSON.parse(text);
-            if (data && data.detail) detail = data.detail;
-          } catch (_) {
-            // plain text response
-          }
-          throw new Error(detail || `Request failed (${res.status})`);
-        }
+      const buf = new Int32Array(K * nTraces);
+      buf.fill(-1);
 
-        const blob = await res.blob();
-        const bytes = new Uint8Array(await blob.arrayBuffer());
-        const disposition = res.headers.get('Content-Disposition');
-        const filename = filenameFromContentDisposition(disposition) || 'pvec_idx_all.npy';
-
-        if (window.isSecureContext && 'showSaveFilePicker' in window) {
-          const handle = await window.showSaveFilePicker({
-            suggestedName: filename,
-            types: [{ description: 'NumPy array', accept: { 'application/octet-stream': ['.npy'] } }],
-          });
-          const writable = await handle.createWritable();
-          await writable.write(bytes);
-          await writable.close();
-        } else {
-          const downloadBlob = new Blob([bytes], { type: 'application/octet-stream' });
-          const href = URL.createObjectURL(downloadBlob);
-          const a = document.createElement('a');
-          a.href = href;
-          a.download = filename;
-          document.body.appendChild(a);
-          a.click();
-          a.remove();
-          setTimeout(() => URL.revokeObjectURL(href), 1000);
-          if (!window.isSecureContext) {
-            console.warn('Downloading over an insecure context (HTTP). Consider HTTPS/localhost to silence warnings.');
-          }
-        }
-      } catch (err) {
-        console.error('Export failed:', err);
-        const message = err && err.message ? err.message : String(err);
-        alert('Export failed: ' + message);
+      for (let i = 0; i < K; i++) {
+        const key1Val = key1Values[i];
+        const url = `/picks/by-filename?file_name=${encodeURIComponent(currentFileName)}&key1_idx=${key1Val}&key1_byte=${currentKey1Byte}`;
+        const r = await fetch(url);
+        if (!r.ok) continue;
+        const j = await r.json();
+        const arr = (j.picks || []).map(p => ({ trace: (p.trace | 0), time: +p.time }));
+        const vec = buildPickIndexVector(arr, nTraces, nSamples, dt);
+        buf.set(vec, i * nTraces);
       }
+
+      const npy = npyEncode(buf, [K, nTraces], '<i4');
+      const base = currentFileName || currentFileId || 'picks';
+      saveBlob(npy, `manual_picks_idx_ALL_${base}.npy`);
     }
 
     let suppressRelayout = false;       // ignore relayouts we cause internally
@@ -1867,22 +1779,48 @@
       }
     }
 
-    async function reloadPicksForCurrentSection() {
-      if (!currentFileName) return;
-      const slider = document.getElementById('key1_idx_slider');
-      const idx = slider ? (parseInt(slider.value, 10) || 0) : 0;
-      const key1Val = key1Values[idx];            // ★ ここが大事
+    async function reloadPicksForCurrentSection(key1IdxOrVal) {
+      if (!currentFileName) return [];
+
+      // key1 を決定（indexでもvalueでもOK。未指定ならスライダから）
+      let key1Val;
+      if (typeof key1IdxOrVal === 'number') {
+        if (
+          Array.isArray(key1Values) &&
+          Number.isInteger(key1IdxOrVal) &&
+          key1IdxOrVal >= 0 &&
+          key1IdxOrVal < key1Values.length
+        ) {
+          // index 指定
+          key1Val = key1Values[key1IdxOrVal];
+        } else {
+          // value 直接指定
+          key1Val = key1IdxOrVal;
+        }
+      } else {
+        const slider = document.getElementById('key1_idx_slider');
+        const idx = slider ? (parseInt(slider.value, 10) || 0) : 0;
+        key1Val = Array.isArray(key1Values) ? key1Values[idx] : idx;
+      }
+
       const url = `/picks/by-filename?file_name=${encodeURIComponent(currentFileName)}&key1_idx=${key1Val}&key1_byte=${currentKey1Byte}`;
       try {
         const r = await fetch(url);
-        if (!r.ok) return;
+        if (!r.ok) return [];
         const j = await r.json();
-        picks = (j.picks || []).map(p => ({ trace: (p.trace | 0), time: +p.time }));
-        if (typeof renderLatestView === 'function') {
-          try { renderLatestView(); } catch (e) { console.warn('render after picks failed', e); }
+        const arr = (j.picks || []).map(p => ({ trace: (p.trace | 0), time: +p.time }));
+
+        // 引数なし＝現在セクションの更新として扱う
+        if (key1IdxOrVal == null) {
+          picks = arr;
+          if (typeof renderLatestView === 'function') {
+            try { renderLatestView(); } catch (e) { console.warn('render after picks failed', e); }
+          }
         }
+        return arr;
       } catch (e) {
         console.warn('reload picks failed', e);
+        return [];
       }
     }
 
