@@ -1954,10 +1954,10 @@
 
     function renderWindowWiggle(windowData) {
       if (isRelayouting) {           // ユーザーがドラッグ中
-          latestWindowRender = windowData; // 最新結果だけ覚えて
-          redrawPending = true;            // 終了後に再描画
-          return;
-        }
+        latestWindowRender = windowData; // 最新結果だけ覚えて
+        redrawPending = true;            // 終了後に再描画
+        return;
+      }
       snapshotAxesRangesFromDOM();
       if (!windowData || (windowData.mode && windowData.mode !== 'wiggle')) return;
 
@@ -1979,21 +1979,31 @@
       const plotDiv = document.getElementById('plot');
       if (!plotDiv) return;
 
-      const { values, shape, x0, x1, y0, y1, stepX = 1, stepY = 1 } = windowData;
+      const { shape, x0, x1, y0, y1 } = windowData;
       const rows = Number(shape?.[0] ?? 0);
       const cols = Number(shape?.[1] ?? 0);
       if (!rows || !cols) return;
-      if (values.length !== rows * cols) return;
+
+      const useI8 = windowData.valuesI8 instanceof Int8Array;
+      const useF32 = !useI8 && windowData.values && windowData.values.length != null;
+      if (!useI8 && !useF32) return;
+
+      const N = rows * cols;
+      if (useI8 && windowData.valuesI8.length < N) return;
+      if (useF32 && windowData.values.length < N) return;
+
+      const scale = Number(windowData.scale) || 1;
 
       setGrid({ x0, stepX: 1, y0, stepY: 1 });
       const dt = window.defaultDt ?? defaultDt;
       const time = new Float32Array(rows);
-      for (let r = 0; r < rows; r++) time[r] = (y0 + r * stepY) * dt;
+      for (let r = 0; r < rows; r++) time[r] = (y0 + r * (windowData.stepY || 1)) * dt;
 
       const traces = [];
       const gain = parseFloat(document.getElementById('gain').value) || 1.0;
       const AMP_LIMIT = 3.0;
 
+      const stepX = windowData.stepX || 1;
       for (let c = 0; c < cols; c++) {
         const baseX = new Float32Array(rows);
         const shiftedFullX = new Float32Array(rows);
@@ -2001,7 +2011,8 @@
         const traceIndex = x0 + c * stepX;
         for (let r = 0; r < rows; r++) {
           const idxVal = r * cols + c;
-          let val = values[idxVal] * gain;
+          let val = (useI8 ? (windowData.valuesI8[idxVal] / scale)
+            : windowData.values[idxVal]) * gain;
           if (val > AMP_LIMIT) val = AMP_LIMIT;
           if (val < -AMP_LIMIT) val = -AMP_LIMIT;
 
@@ -2020,7 +2031,6 @@
       renderedStart = x0;
       renderedEnd = endTrace;
 
-      const totalTraces = sectionShape ? sectionShape[0] : endTrace - x0 + 1;
       const totalSamples = sectionShape ? sectionShape[1] : (typeof y1 === 'number' ? y1 - y0 + 1 : rows);
       const layout = buildLayout({
         mode: 'wiggle',
@@ -2055,9 +2065,7 @@
         modeBarButtonsToAdd: ['eraseshape'],
         edits: { shapePosition: false },
       }));
-      setTimeout(() => {
-          withSuppressedRelayout(Plotly.Plots.resize(plotDiv));
-        }, 50);
+      setTimeout(() => { withSuppressedRelayout(Plotly.Plots.resize(plotDiv)); }, 50);
       requestAnimationFrame(applyDragMode);
       installPlotlyViewportHandlersOnce();
       attachPickListeners(plotDiv);
@@ -2065,12 +2073,13 @@
 
     function renderWindowHeatmap(windowData) {
       if (isRelayouting) {           // ユーザーがドラッグ中
-          latestWindowRender = windowData; // 最新結果だけ覚えて
-          redrawPending = true;            // 終了後に再描画
-          return;
-        }
+        latestWindowRender = windowData; // 最新結果だけ覚えて
+        redrawPending = true;            // 終了後に再描画
+        return;
+      }
       snapshotAxesRangesFromDOM();
       if (!windowData || (windowData.mode && windowData.mode !== 'heatmap')) return;
+
       const sel = document.getElementById('layerSelect');
       const currentLayer = sel ? sel.value : 'raw';
       if (windowData.requestedLayer !== currentLayer) return;
@@ -2087,29 +2096,43 @@
       const plotDiv = document.getElementById('plot');
       if (!plotDiv) return;
 
-      const { values, shape, x0, x1, y0, y1, stepX, stepY, effectiveLayer } = windowData;
+      const { shape, x0, x1, y0, y1, effectiveLayer } = windowData;
+      let { stepX, stepY } = windowData;
       const rows = Number(shape?.[0] ?? 0);
       const cols = Number(shape?.[1] ?? 0);
       if (!rows || !cols) return;
-      if (values.length !== rows * cols) return;
+
+      const useI8 = windowData.valuesI8 instanceof Int8Array;
+      const useF32 = !useI8 && windowData.values && windowData.values.length != null;
+      if (!useI8 && !useF32) {
+        console.warn('renderWindowHeatmap: missing values');
+        return;
+      }
+      const N = rows * cols;
+      if (useI8 && windowData.valuesI8.length < N) return;
+      if (useF32 && windowData.values.length < N) return;
+
+      const scale = Number(windowData.scale) || 1;
 
       setGrid({ x0, stepX, y0, stepY });
       const gain = parseFloat(document.getElementById('gain').value) || 1.0;
       const AMP_LIMIT = 3.0;
       const fbMode = effectiveLayer === 'fbprob';
+
       const zData = new Array(rows);
       for (let r = 0; r < rows; r++) {
         const row = new Float32Array(cols);
         const offset = r * cols;
         for (let c = 0; c < cols; c++) {
-          let val = values[offset + c];
+          let v = useI8 ? (windowData.valuesI8[offset + c] / scale)
+            : windowData.values[offset + c];
           if (fbMode) {
-            row[c] = val * 255;
+            row[c] = v * 255;
           } else {
-            val *= gain;
-            if (val > AMP_LIMIT) val = AMP_LIMIT;
-            else if (val < -AMP_LIMIT) val = -AMP_LIMIT;
-            row[c] = val;
+            v *= gain;
+            if (v > AMP_LIMIT) v = AMP_LIMIT;
+            else if (v < -AMP_LIMIT) v = -AMP_LIMIT;
+            row[c] = v;
           }
         }
         zData[r] = row;
@@ -2182,13 +2205,12 @@
         modeBarButtonsToAdd: ['eraseshape'],
         edits: { shapePosition: false },
       }));
-      setTimeout(() => {
-          withSuppressedRelayout(Plotly.Plots.resize(plotDiv));
-        }, 50);
+      setTimeout(() => { withSuppressedRelayout(Plotly.Plots.resize(plotDiv)); }, 50);
       requestAnimationFrame(applyDragMode);
       installPlotlyViewportHandlersOnce();
       attachPickListeners(plotDiv);
     }
+
     function renderLatestView(startOverride = null, endOverride = null) {
       const sel = document.getElementById('layerSelect');
       const layer = sel ? sel.value : 'raw';
@@ -2323,10 +2345,12 @@
         }
         const bin = new Uint8Array(await res.arrayBuffer());
         if (requestId !== windowFetchToken) return; // stale
+
         const obj = msgpack.decode(bin);
         applyServerDt(obj);
-        const int8 = new Int8Array(obj.data.buffer);
-        const values = Float32Array.from(int8, (v) => v / obj.scale);
+
+        // Int8 のまま保持（Float32生成しない）
+        const valuesI8 = new Int8Array(obj.data.buffer);
         const shapeRaw = Array.isArray(obj.shape) ? obj.shape : Array.from(obj.shape ?? []);
         if (shapeRaw.length !== 2) {
           console.warn('Unexpected window shape', obj.shape);
@@ -2334,6 +2358,7 @@
         }
         const rows = Number(shapeRaw[0]);
         const cols = Number(shapeRaw[1]);
+
         const windowPayload = {
           key1: key1Val,
           requestedLayer,
@@ -2346,21 +2371,23 @@
           stepX: step_x,
           stepY: step_y,
           shape: [rows, cols],
-          values,
+          valuesI8,          // Int8保持
+          scale: obj.scale,  // 後段で /scale
           mode,
         };
+
         latestSeismicData = null;
         latestWindowRender = windowPayload;
         if (isRelayouting) {      // ドラッグ中なら描画は保留
-            redrawPending = true;
-            return;
-          }
+          redrawPending = true;
+          return;
+        }
         if (mode === 'wiggle') renderWindowWiggle(windowPayload);
         else renderWindowHeatmap(windowPayload);
+
       } catch (err) {
         if (err && err.name === 'AbortError') {
-          // canceled on purpose; ignore
-          return;
+          return; // canceled on purpose
         }
         if (requestId === windowFetchToken) console.warn('Window fetch error', err);
       } finally {
@@ -2377,8 +2404,9 @@
     }
 
     function clickModeForCurrentState() {
-        return isPickMode ? 'event' : 'event+select';
-      }
+      return isPickMode ? 'event' : 'event+select';
+    }
+
 
     function plotSeismicData(seismic, dt, startTrace = 0, endTrace = seismic.length - 1) {
       snapshotAxesRangesFromDOM();
