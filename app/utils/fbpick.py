@@ -17,7 +17,7 @@ __all__ = ['_MODEL_PATH', 'infer_prob_map', 'make_offset_channel']
 _MODEL_PATH = (
 	Path(__file__).resolve().parents[2]
 	/ 'model'
-	/ 'fbpick_edgenext_small_useoffset.pth'
+	/ 'fbpick_edgenext_small_mobara_tr1.pth'
 )
 
 
