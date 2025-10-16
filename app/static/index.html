@@ -1471,18 +1471,19 @@
       const canCheckMemory = performance.memory && performance.memory.usedJSHeapSize > 0;
       const used = canCheckMemory ? performance.memory.usedJSHeapSize : 0;
 
+      const hardLimit = (typeof cfg === 'object' && Number.isFinite(cfg.HARD_LIMIT_BYTES))
+        ? cfg.HARD_LIMIT_BYTES
+        : 512 * 1024 * 1024;
+
       console.log('--- putCache called ---');
-      console.log('Added key:', cache.keys());
+      console.log('Keys:', Array.from(cache.keys()));
       console.log('Cache size:', cache.size);
       if (canCheckMemory) {
-        const total = performance.memory.totalJSHeapSize;
-        console.log(`used: ${(used / 1024 / 1024).toFixed(2)} MB`);
-      } else {
-        console.log(`used: ${(used / 1024 / 1024).toFixed(2)} MB (fallback, no total)`);
+        console.log(`used: ${(used / 1024 / 1024).toFixed(1)} MB / ${(hardLimit / 1024 / 1024).toFixed(0)} MB`);
       }
 
-      if (used > cfg.HARD_LIMIT_BYTES) {
-        console.warn(`⚠ Memory limit exceeded! (${(used / 1024 / 1024).toFixed(1)} MB > 512 MB)`);
+      if (canCheckMemory && used > hardLimit) {
+        console.warn(`⚠ Memory limit exceeded! (${(used / 1024 / 1024).toFixed(1)} MB > ${(hardLimit / 1024 / 1024).toFixed(0)} MB)`);
         let removed = 0;
         while (cache.size > 1) {
           const removedKey = cache.keys().next().value;
@@ -1545,12 +1546,6 @@
         if (tracesOut() / effW > samplesOut() / effH) stepX += 1; else stepY += 1;
         guard += 1;
       }
-
-      const roundUpPowerOfTwo = (v) => {
-        let x = Math.max(1, Math.floor(v)) - 1;
-        x |= x >> 1; x |= x >> 2; x |= x >> 4; x |= x >> 8; x |= x >> 16;
-        return x + 1;
-      };
 
       stepX = roundUpPowerOfTwo(stepX);
       stepY = roundUpPowerOfTwo(stepY);
