@@ -491,6 +491,46 @@
     const cache = new Map(); // key -> { f32: Float32Array }
     const inflight = new Map();
     const CACHE_LIMIT = 12;
+
+    let __dbg = { enabled: true };
+    function D(tag, obj) {
+      if (!__dbg.enabled) return;
+      try {
+        console.debug(`🧭 ${tag}`, JSON.parse(JSON.stringify(obj)));
+      } catch {
+        console.debug(`🧭 ${tag}`, obj);
+      }
+    }
+    function samplePicks(arr, k = 6) {
+      return (arr || []).slice(0, k).map(p => ({ tr: Math.round(p.trace), t: +p.time }));
+    }
+    // 現在の可視Xレンジ（整数トレース）と viewer 状態サマリ
+    function visibleXRng() {
+      const gd = document.getElementById('plot');
+      const xr = gd?._fullLayout?.xaxis?.range || savedXRange || [renderedStart ?? 0, renderedEnd ?? 0];
+      const x0 = Math.floor(Math.min(xr[0], xr[1]));
+      const x1 = Math.ceil(Math.max(xr[0], xr[1]));
+      return [x0, x1];
+    }
+    function viewerState(tag = 'STATE') {
+      const [x0, x1] = visibleXRng();
+      const mode = latestWindowRender?.mode || (latestSeismicData ? 'full' : 'none');
+      const st = {
+        key1: key1Values?.[parseInt(document.getElementById('key1_idx_slider')?.value || '0', 10)],
+        layer: document.getElementById('layerSelect')?.value,
+        mode, stepX: latestWindowRender?.stepX, stepY: latestWindowRender?.stepY,
+        x0, x1, renderedStart, renderedEnd, savedXRange, picksCount: picks?.length || 0
+      };
+      D(tag, st);
+      return st;
+    }
+    // ローカル→サーバ疑い時に呼べる即席ダンプ
+    window.debugDump = () => ({
+      viewer: viewerState('DUMP'),
+      picks: samplePicks(picks, 20),
+      predicted: samplePicks(predictedPicks, 10)
+  });
+
     function cacheKey(val, mode) { return `${val}|${mode}`; }
     function syncWiggleInit() {
       const el = document.getElementById('wiggle_density');
@@ -1388,6 +1428,31 @@
         WIGGLE_DENSITY_THRESHOLD = v;
       })();
 
+    (function hookFetchOnce() {
+        if (window.__fetchHooked) return;
+        window.__fetchHooked = true;
+        const orig = window.fetch;
+        window.fetch = async function (...args) {
+          const url = String(args?.[0] || '');
+          const method = (args?.[1]?.method || 'GET').toUpperCase();
+          const t0 = performance.now();
+          try {
+            const res = await orig.apply(this, args);
+            if (/\/picks(\?|$)/.test(url)) {
+              console.debug(`📡 FETCH ${method} ${url} → ${res.status} (${(performance.now() - t0).toFixed(0)}ms)`);
+              console.trace('  ↳ stack @picks'); // 重要：誰が呼んだか
+            } else if (/get_section_window_bin|get_section_bin/.test(url)) {
+              console.debug(`📡 FETCH ${method} ${url} → ${res.status} (${(performance.now() - t0).toFixed(0)}ms)`);
+            }
+            return res;
+          } catch (e) {
+            console.debug(`📡 FETCH ${method} ${url} ✖`, e);
+            throw e;
+          }
+        };
+      })();
+
+
     function onGainChange() {
       const val = document.getElementById('gain').value;
       document.getElementById('gain_display').textContent = `${parseFloat(val)}×`;
@@ -1827,6 +1892,10 @@
           const data = await res.json();
           picks = (data.picks || []).map(p => ({ trace: p.trace, time: p.time }));
         }
+        const [x0, x1] = visibleXRng();
+        D('PICKS@fetchPicks', { count: picks.length, vis: [x0, x1],
+          visCount: picks.filter(p => Math.round(p.trace) >= x0 && Math.round(p.trace) <= x1).length,
+          sample: samplePicks(picks) });
       } catch (e) { console.error('Failed to fetch picks', e); }
     }
 
@@ -1839,6 +1908,7 @@
           body: JSON.stringify({ file_id: currentFileId, trace, time, key1_idx: key1Val, key1_byte: currentKey1Byte })
         });
       } catch (e) { console.error('Failed to post pick', e); }
+      D('PICKS@post', { trace, time });
     }
 
     async function deletePick(trace) {
@@ -1847,6 +1917,7 @@
       try {
         await fetch(`/picks?file_id=${currentFileId}&trace=${trace}&key1_idx=${key1Val}&key1_byte=${currentKey1Byte}`, { method: 'DELETE' });
       } catch (e) { console.error('Failed to delete pick', e); }
+      D('PICKS@delete', { trace });
     }
 
     // --- filename & picks loader (by filename) ---
@@ -1906,6 +1977,10 @@
           if (typeof renderLatestView === 'function') {
             try { renderLatestView(); } catch (e) { console.warn('render after picks failed', e); }
           }
+          const [x0, x1] = visibleXRng();
+          D('PICKS@reload', { count: picks.length, vis: [x0, x1],
+            visCount: picks.filter(p => Math.round(p.trace) >= x0 && Math.round(p.trace) <= x1).length,
+            sample: samplePicks(picks) });
         }
         return arr;
       } catch (e) {
@@ -2019,6 +2094,7 @@
     }
 
     function drawSelectedLayer(start = null, end = null) {
+      D('DRAW@selectLayer', { layer: document.getElementById('layerSelect')?.value, start, end });
       const sel = document.getElementById('layerSelect');
       const layer = sel ? sel.value : 'raw';
       latestSeismicData = (layer === 'raw') ? rawSeismicData : (latestTapData[layer] || null);
@@ -2044,6 +2120,9 @@
     }
 
     function renderWindowWiggle(windowData) {
+      D('RENDER@wiggle', { key1: windowData.key1, x: [windowData.x0, windowData.x1],
+        y: [windowData.y0, windowData.y1], step: [windowData.stepX, windowData.stepY],
+        picksTotal: picks.length });
       if (isRelayouting) {           // ユーザーがドラッグ中
         latestWindowRender = windowData; // 最新結果だけ覚えて
         redrawPending = true;            // 終了後に再描画
@@ -2115,6 +2194,12 @@
         traces.push({ type: 'scatter', mode: 'lines', x: baseX, y: time, line: { width: 0 }, hoverinfo: 'skip', showlegend: false });
         traces.push({ type: 'scatter', mode: 'lines', x: shiftedPosX, y: time, fill: 'tonextx', fillcolor: 'black', line: { width: 0 }, opacity: 0.6, hoverinfo: 'skip', showlegend: false });
         traces.push({ type: 'scatter', mode: 'lines', x: shiftedFullX, y: time, line: { color: 'black', width: 0.5 }, hoverinfo: 'x+y', showlegend: false });
+
+        const [x0v, x1v] = visibleXRng();
+        D('RENDER@wiggle:shapes', {
+          manualInWin: picks.filter(p => p.trace >= windowData.x0 && p.trace <= windowData.x1).length,
+          vis: [x0v, x1v],
+        });
       }
 
       downsampleFactor = 1;
@@ -2163,6 +2248,9 @@
     }
 
     function renderWindowHeatmap(windowData) {
+      D('RENDER@heatmap', { key1: windowData.key1, x: [windowData.x0, windowData.x1],
+        y: [windowData.y0, windowData.y1], step: [windowData.stepX, windowData.stepY],
+        picksTotal: picks.length });
       if (isRelayouting) {           // ユーザーがドラッグ中
         latestWindowRender = windowData; // 最新結果だけ覚えて
         redrawPending = true;            // 終了後に再描画
@@ -2300,6 +2388,11 @@
       requestAnimationFrame(applyDragMode);
       installPlotlyViewportHandlersOnce();
       attachPickListeners(plotDiv);
+      const [x0v, x1v] = visibleXRng();
+       D('RENDER@wiggle:shapes', {
+        manualInWin: picks.filter(p => p.trace >= windowData.x0 && p.trace <= windowData.x1).length,
+        vis: [x0v, x1v],
+       });
     }
 
     function renderLatestView(startOverride = null, endOverride = null) {
@@ -2342,6 +2435,7 @@
     }
 
     async function fetchWindowAndPlot() {
+      D('WINDOW@req', { key1: key1Values?.[parseInt(document.getElementById('key1_idx_slider')?.value || '0', 10)] });
       if (!currentFileId || !sectionShape) return;
       const slider = document.getElementById('key1_idx_slider');
       if (!slider) return;
@@ -2380,7 +2474,7 @@
 
       const pipelineKeyNow = window.latestPipelineKey || null;
       const mode = wantWiggle ? 'wiggle' : 'heatmap';
-
+       D('WINDOW@calc', { mode, step_x, step_y, x0: windowInfo.x0, x1: windowInfo.x1, y0: windowInfo.y0, y1: windowInfo.y1 });
       let effectiveLayer = requestedLayer;
       let tapLabel = null;
       if (requestedLayer !== 'raw') {
@@ -2473,6 +2567,7 @@
           redrawPending = true;
           return;
         }
+        D('WINDOW@recv', { mode, shape: windowPayload.shape, stepX: windowPayload.stepX, stepY: windowPayload.stepY });
         if (mode === 'wiggle') renderWindowWiggle(windowPayload);
         else renderWindowHeatmap(windowPayload);
 
@@ -2701,6 +2796,7 @@
           const promises = toDelete.map(p => deletePick(Math.round(p.trace)));
           picks = picks.filter(p => Math.round(p.trace) < start || Math.round(p.trace) > end);
           await Promise.all(promises);
+          D('PICKS@handlePickNormalized:line', { range: [start, end], count: picks.length });
           setTimeout(() => {
             try { renderLatestView(); } catch (e) { console.warn('renderLatestView failed', e); }
           }, 0);
@@ -2737,6 +2833,7 @@
             promises.push(postPick(x, tAdj));
           }
           await Promise.all(promises);
+          D('PICKS@handlePickNormalized:line', { range: [xStart, xEnd], count: picks.length });
           renderLatestView();
           return;
         }
@@ -2754,6 +2851,7 @@
         picks.push({ trace: trInt, time: tAdj });
         promises.push(postPick(trInt, tAdj));
         await Promise.all(promises);
+        D('PICKS@handlePickNormalized:single', { add: { trace: trInt, time: tAdj }, count: picks.length });
         renderLatestView();
       } finally {
         handlePickNormalized._busy = false;
@@ -2765,8 +2863,12 @@
 
     async function handleRelayout(ev) {
       if (suppressRelayout) return;
+
+      D('RELAYOUT@begin', { keys: Object.keys(ev), isRelayouting, pickMode: isPickMode });
+
       const gd = document.getElementById('plot');
 
+      // range 更新
       if ('xaxis.range[0]' in ev && 'xaxis.range[1]' in ev) {
         savedXRange = [ev['xaxis.range[0]'], ev['xaxis.range[1]']];
       }
@@ -2776,39 +2878,95 @@
         savedYRange = y0 > y1 ? [y0, y1] : [y1, y0];
       }
 
-      // autorange トグル時は DOM からレンジ再読込
+      // autorange のときはレンジ再取得して終了（shape同期はしない）
       if ('xaxis.autorange' in ev || 'yaxis.autorange' in ev) {
         await new Promise(r => requestAnimationFrame(r));
         snapshotAxesRangesFromDOM();
         checkModeFlipAndRefetch();
+        return;
       }
 
-      // 形状編集: ev が "shapes[...].x0" などのキーを含む場合にも対応
-      const hasShapePathUpdate = Object.keys(ev).some(k => k.startsWith('shapes['));
-      const gotShapesArray = Array.isArray(ev.shapes);
-      if (gotShapesArray || hasShapePathUpdate) {
-        await new Promise(r => requestAnimationFrame(r)); // Plotly が layout 反映後
+      // ★ 本当に shape のプロパティが変わったときだけ同期（eraseshape 等の全置換は無視）
+      const shapePropKeys = Object.keys(ev).filter(k => /^shapes\[\d+\]\.(x0|x1|y0|y1|line\.color|line\.width|visible)$/.test(k));
+      if (shapePropKeys.length === 0 || !isPickMode) {
+        D('RELAYOUT@skip(no-shape-prop or not pickMode)', viewerState());
+        return;
+      }
 
-        const fullShapes =
-          (gd && gd._fullLayout && Array.isArray(gd._fullLayout.shapes))
-            ? gd._fullLayout.shapes
-            : (Array.isArray(ev.shapes) ? ev.shapes : []);
+      // Plotly が layout 反映完了するのを待つ
+      await new Promise(r => requestAnimationFrame(r));
 
-        // 予測(青)は保存しない。赤のみ保存。
-        const onlyManual = fullShapes.filter(s => s?.line?.color === 'red');
-        const newPicks = onlyManual.map(s => ({
-          trace: (Number(s.x0) + Number(s.x1)) / 2,
-          time: (Number(s.y0) + Number(s.y1)) / 2,
-        }));
+      const fullShapes =
+        (gd && gd._fullLayout && Array.isArray(gd._fullLayout.shapes))
+          ? gd._fullLayout.shapes
+          : [];
 
-        const oldTraces = new Set(picks.map(p => Math.round(p.trace)));
-        const newTraces = new Set(newPicks.map(p => Math.round(p.trace)));
-        for (const t of oldTraces) {
-          if (!newTraces.has(t)) await deletePick(t);
+      // 可視Xレンジ
+      const xa = gd?._fullLayout?.xaxis;
+      const xr = (xa && Array.isArray(xa.range)) ? xa.range : [renderedStart ?? 0, renderedEnd ?? 0];
+      const xVis0 = Math.floor(Math.min(xr[0], xr[1]));
+      const xVis1 = Math.ceil(Math.max(xr[0], xr[1]));
+      const inView = (t) => t >= xVis0 && t <= xVis1;
+
+      // shapes → newMap（赤のみ・可視範囲のみ）
+      const newMap = new Map();
+      for (const s of fullShapes) {
+        if (!s || !s.line || s.line.color !== 'red') continue;
+        const tr = Math.round(((+s.x0) + (+s.x1)) / 2);
+        if (!inView(tr)) continue;
+        const time = ((+s.y0) + (+s.y1)) / 2;
+        newMap.set(tr, { trace: tr, time });
+      }
+
+      // 旧ローカル → oldMap（可視範囲のみ）
+      const oldMap = new Map();
+      for (const p of (picks || [])) {
+        const tr = Math.round(p.trace);
+        if (!inView(tr)) continue;
+        oldMap.set(tr, { trace: tr, time: +p.time });
+      }
+
+      // 差分計算
+      const del = [];
+      const add = [];
+      const upd = [];
+
+      for (const [tr, op] of oldMap) {
+        if (!newMap.has(tr)) {
+          del.push(tr);
+        } else {
+          const np = newMap.get(tr);
+          if (Math.abs(np.time - op.time) > 1e-9) upd.push(np);
         }
-        picks = newPicks;
       }
+      for (const [tr, np] of newMap) {
+        if (!oldMap.has(tr)) add.push(np);
+      }
+
+      // サーバ反映（可視範囲の差分のみ）
+      await Promise.all([
+        ...del.map(t => deletePick(t)),
+        ...add.map(p => postPick(p.trace, p.time)),
+        ...upd.map(p => postPick(p.trace, p.time)),
+      ]);
+
+      // ローカル更新：不可視はそのまま、可視は差分適用
+      const kept = (picks || []).filter(p => {
+        const tr = Math.round(p.trace);
+        return tr < xVis0 || tr > xVis1 || !del.includes(tr);
+      });
+      const mergedMap = new Map(kept.map(p => [Math.round(p.trace), { trace: Math.round(p.trace), time: +p.time }]));
+      for (const p of add) mergedMap.set(p.trace, p);
+      for (const p of upd) mergedMap.set(p.trace, p);
+      picks = Array.from(mergedMap.values()).sort((a, b) => a.trace - b.trace);
+
+      D('RELAYOUT@sync', {
+        shapePropKeys, vis: [xVis0, xVis1],
+        del, add: add.map(p => p.trace), upd: upd.map(p => p.trace),
+        count: picks.length, sample: samplePicks(picks)
+      });
     }
+
 
     window.addEventListener('DOMContentLoaded', () => {
       const overlay = document.getElementById('ppOverlay');
