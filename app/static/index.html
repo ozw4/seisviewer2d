@@ -777,10 +777,32 @@
     function applyDragMode() {
       const plotDiv = document.getElementById('plot');
       if (!plotDiv) return;
+
+      // 既存関数：'zoom' or 'pan' を返す（ピック中は false を返していた）
       const dm = effectiveDragMode();
-      if (applyDragMode._last === dm) return; // 余計な relayout 防止
+
+      //  - ピック中（dm===false）のときは dragmode は 'zoom' のままにして
+      //    x/y の fixedrange を true にしてドラッグ無効化
+      //  - Alt パンや通常時は fixedrange を false に戻す
+      if (dm === false) {
+        // ピック中（ドラッグ禁止）
+        safeRelayout(plotDiv, {
+          dragmode: 'zoom',                  // 値は何でもOKだが合法値を入れておく
+          'xaxis.fixedrange': true,
+          'yaxis.fixedrange': true,
+        });
+        applyDragMode._last = 'pick-locked';
+        return;
+      }
+
+      // 通常 or Alt パン（ドラッグ可能）
+      if (applyDragMode._last === dm) return; // 余計な relayout を避ける
       applyDragMode._last = dm;
-      safeRelayout(plotDiv, { dragmode: dm });
+      safeRelayout(plotDiv, {
+        dragmode: dm,                        // 'zoom' or 'pan'
+        'xaxis.fixedrange': false,
+        'yaxis.fixedrange': false,
+      });
     }
 
     function safeRelayout(gd, props) {
