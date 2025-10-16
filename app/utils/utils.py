@@ -176,12 +176,13 @@ class TraceStoreSectionReader:
         tmp_path.replace(path)
         return np.load(path, mmap_mode="r")
 
-    def _get_header(self, byte: int) -> np.ndarray:
+    def get_header(self, byte: int) -> np.ndarray:
+        """Return the header array for ``byte``."""
         return self.ensure_header(byte)
 
     def get_key1_values(self) -> np.ndarray:
         """Return the available ``key1`` header values."""
-        key1s = self._get_header(self.key1_byte)
+        key1s = self.get_header(self.key1_byte)
         return np.unique(key1s)
 
     def get_section(self, key1_val: int) -> list[list[float]]:
@@ -189,14 +190,14 @@ class TraceStoreSectionReader:
         if key1_val in self.section_cache:
             return self.section_cache[key1_val]
 
-        key1s = self._get_header(self.key1_byte)
+        key1s = self.get_header(self.key1_byte)
         indices = np.where(key1s == key1_val)[0]
         print(len(indices), "indices found for key1_val:", key1_val)
         if len(indices) == 0:
             msg = f"Key1 value {key1_val} not found"
             raise ValueError(msg)
 
-        key2s = self._get_header(self.key2_byte)[indices]
+        key2s = self.get_header(self.key2_byte)[indices]
         sorted_indices = indices[np.argsort(key2s, kind="stable")]
         section = self.traces[sorted_indices].tolist()
         self.section_cache[key1_val] = section
@@ -204,14 +205,14 @@ class TraceStoreSectionReader:
 
     def get_offsets_for_section(self, key1_val: int, offset_byte: int) -> np.ndarray:
         """Return ``(W,)`` float32 offsets aligned with :meth:`get_section`."""
-        key1s = self._get_header(self.key1_byte)
+        key1s = self.get_header(self.key1_byte)
         indices = np.where(key1s == key1_val)[0]
         print(len(indices), "indices found for key1_val:", key1_val)
         if len(indices) == 0:
             msg = f"Key1 value {key1_val} not found"
             raise ValueError(msg)
 
-        key2s = self._get_header(self.key2_byte)[indices]
+        key2s = self.get_header(self.key2_byte)[indices]
         sorted_indices = indices[np.argsort(key2s, kind="stable")]
         header = self.ensure_header(offset_byte)
         offsets = np.asarray(header[sorted_indices], dtype=np.float32)
@@ -219,5 +220,5 @@ class TraceStoreSectionReader:
 
     def preload_all_sections(self) -> None:
         """Warm caches for the frequently accessed headers."""
-        self._get_header(self.key1_byte)
-        self._get_header(self.key2_byte)
+        self.get_header(self.key1_byte)
+        self.get_header(self.key2_byte)

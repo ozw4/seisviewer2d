@@ -93,7 +93,7 @@ async def export_manual_picks_all_npy(
         if isinstance(reader, SegySectionReader):
                 key1_header = np.asarray(reader.key1s)
         elif isinstance(reader, TraceStoreSectionReader):
-                key1_header = np.asarray(reader._get_header(reader.key1_byte))
+                key1_header = np.asarray(reader.get_header(reader.key1_byte))
         else:
                 key1_header = None
 
