@@ -847,17 +847,11 @@
       });
 
       plotDiv.on('plotly_doubleclick', () => {
-        if (suppressRelayout) return;
-        isRelayouting = false;
-        savedXRange = null;
-        savedYRange = null;
-        renderedStart = null;
-        renderedEnd = null;
-        forceFullExtentOnce = true;
-        uiResetNonce++;
-        onViewportSettled();
-        return false;
-      });
+          if (suppressRelayout) return;
+          // デフォルトのダブルクリック挙動（reset/autorange/ズーム等）に任せる
+            // → 実際のレンジは plotly_relayout で autorange を検出して保存する
+            isRelayouting = false;
+        });
     }
 
     // 入力系にフォーカスがある時は無効
@@ -1825,6 +1819,7 @@
     }
 
     async function fetchAndPlot() {
+      snapshotAxesRangesFromDOM();
       console.log('--- fetchAndPlot start ---');
       console.time('Total fetchAndPlot');
 
@@ -2699,6 +2694,12 @@
         const y1 = ev['yaxis.range[1]'];
         savedYRange = y0 > y1 ? [y0, y1] : [y1, y0];
       }
+
+      if ('xaxis.autorange' in ev || 'yaxis.autorange' in ev) {
+          await new Promise(r => requestAnimationFrame(r));
+          snapshotAxesRangesFromDOM();
+          checkModeFlipAndRefetch();
+        }
 
       if (Array.isArray(ev.shapes)) {
         // 予測(青点線)は保存しない。赤のみ保存。
