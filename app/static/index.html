@@ -495,6 +495,100 @@
     const __pickOps = new Map();
     let flushPickOpsDebounced = null;
 
+    function installCustomDoubleClick(plotDiv) {
+      if (!plotDiv || plotDiv.__customDbl) return;
+
+      const onDbl = (e) => {
+        // 既定の Plotly ダブルクリックは無効化しているので、ここで挙動を全部やる
+        e.preventDefault();
+        e.stopPropagation();
+
+        // Shift+ダブルクリック → フル範囲へ
+        if (e.shiftKey) {
+          if (!sectionShape) return;
+          const totalTraces = sectionShape[0] | 0;
+          const totalSamples = sectionShape[1] | 0;
+          const dt = window.defaultDt ?? defaultDt;
+          savedXRange = [0, Math.max(0, totalTraces - 1)];
+          savedYRange = [Math.max(0, (totalSamples - 1) * dt), 0]; // Yは上向きに大きい→降順で保存
+          withSuppressedRelayout(Plotly.relayout(plotDiv, {
+            'xaxis.autorange': false,
+            'yaxis.autorange': false,
+            'xaxis.range': savedXRange,
+            'yaxis.range': savedYRange,
+          }));
+          checkModeFlipAndRefetch();
+          return;
+        }
+
+        // 通常ダブルクリック → カーソル中心で 1/2ズーム（範囲2倍）
+        const gd = plotDiv;
+        const xa = gd?._fullLayout?.xaxis;
+        const ya = gd?._fullLayout?.yaxis;
+        if (!xa || !ya) return;
+
+        // 現在のレンジ（Plotlyはyが上→下で降順のことが多いのでmin/max整える）
+        const xr = Array.isArray(xa.range) ? xa.range.slice() : [renderedStart ?? 0, renderedEnd ?? 0];
+        let xMin = Math.min(xr[0], xr[1]);
+        let xMax = Math.max(xr[0], xr[1]);
+
+        const yr = Array.isArray(ya.range) ? ya.range.slice() : [0, (sectionShape?.[1] ?? 1) * (window.defaultDt ?? defaultDt)];
+        let yMin = Math.min(yr[0], yr[1]);
+        let yMax = Math.max(yr[0], yr[1]);
+
+        const totalTraces = sectionShape?.[0] ?? (latestSeismicData?.length ?? 0);
+        const totalSamples = sectionShape?.[1] ?? (latestSeismicData?.[0]?.length ?? 0);
+        if (!totalTraces || !totalSamples) return;
+        const dt = window.defaultDt ?? defaultDt;
+        const yAbsMin = 0;
+        const yAbsMax = (totalSamples - 1) * dt;
+
+        // 画面座標→データ座標
+        const cx = Number.isFinite(traceAtPixel?.(e.clientX)) ? traceAtPixel(e.clientX) : (xMin + xMax) / 2;
+        const cy = Number.isFinite(timeAtPixel?.(e.clientY)) ? timeAtPixel(e.clientY) : (yMin + yMax) / 2;
+
+        // いまの幅/高さを2倍に
+        const spanX = (xMax - xMin) * 2;
+        const spanY = (yMax - yMin) * 2;
+
+        // 新しい範囲（中心はカーソル）
+        let nx0 = cx - spanX / 2;
+        let nx1 = cx + spanX / 2;
+
+        let ny0 = cy - spanY / 2;
+        let ny1 = cy + spanY / 2;
+
+        // 枠内に収める（はみ出した分は反対側に寄せて可能な限り中心を保つ）
+        if (nx0 < 0) { nx1 += -nx0; nx0 = 0; }
+        if (nx1 > totalTraces - 1) { const d = nx1 - (totalTraces - 1); nx0 -= d; nx1 = totalTraces - 1; }
+        nx0 = Math.max(0, Math.floor(nx0));
+        nx1 = Math.min(totalTraces - 1, Math.ceil(nx1));
+
+        if (ny0 < yAbsMin) { ny1 += (yAbsMin - ny0); ny0 = yAbsMin; }
+        if (ny1 > yAbsMax) { const d = ny1 - yAbsMax; ny0 -= d; ny1 = yAbsMax; }
+        ny0 = Math.max(yAbsMin, ny0);
+        ny1 = Math.min(yAbsMax, ny1);
+
+        // 保存（Yは降順で保存している実装に合わせる）
+        savedXRange = [nx0, nx1];
+        savedYRange = [ny1, ny0];
+
+        withSuppressedRelayout(Plotly.relayout(plotDiv, {
+          'xaxis.autorange': false,
+          'yaxis.autorange': false,
+          'xaxis.range': savedXRange,
+          'yaxis.range': savedYRange,
+        }));
+
+        // 表示密度の閾値を超えた/下回ったら自動モード切替も走らせる
+        checkModeFlipAndRefetch();
+      };
+
+      plotDiv.addEventListener('dblclick', onDbl, { capture: true });
+      plotDiv.__customDbl = onDbl;
+    }
+
+
     function ensureFlushPickOpsDebounced() {
       if (!flushPickOpsDebounced) {
         const debFn = (typeof debounce === 'function') ? debounce : makeDebounced;
@@ -574,14 +668,35 @@
     }
 
     let __dbg = { enabled: true };
+    // 連続重複を抑制したいタグ（必要なら増やせる）
+      const DEDUP_TAGS = new Set(['RENDER@wiggle:shapes']);
+    const __lastLogKeyByTag = new Map();
+    function __stableStringify(v) {
+        if (v && typeof v === 'object') {
+            if (Array.isArray(v)) return `[${v.map(__stableStringify).join(',')}]`;
+            const keys = Object.keys(v).sort();
+            return `{${keys.map(k => JSON.stringify(k) + ':' + __stableStringify(v[k])).join(',')}}`;
+          }
+        return JSON.stringify(v);
+      }
     function D(tag, obj) {
       if (!__dbg.enabled) return;
+      // 直前と同じ内容ならスキップ（指定タグのみ）
+        if (DEDUP_TAGS.has(tag)) {
+            let key;
+            try { key = __stableStringify(obj); } catch { key = null; }
+            const last = __lastLogKeyByTag.get(tag);
+            if (last === key) return;
+            __lastLogKeyByTag.set(tag, key);
+          }
       try {
-        console.debug(`🧭 ${tag}`, JSON.parse(JSON.stringify(obj)));
-      } catch {
-        console.debug(`🧭 ${tag}`, obj);
-      }
+          console.debug(`🧭 ${tag}`, JSON.parse(JSON.stringify(obj)));
+        } catch {
+            console.debug(`🧭 ${tag}`, obj);
+          }
     }
+
+
     function samplePicks(arr, k = 6) {
       return (arr || []).slice(0, k).map(p => ({ tr: Math.round(p.trace), t: +p.time }));
     }
@@ -1073,12 +1188,6 @@
         onViewportSettled();
       });
 
-      plotDiv.on('plotly_doubleclick', () => {
-          if (suppressRelayout) return;
-          // デフォルトのダブルクリック挙動（reset/autorange/ズーム等）に任せる
-            // → 実際のレンジは plotly_relayout で autorange を検出して保存する
-            isRelayouting = false;
-        });
     }
 
     // 入力系にフォーカスがある時は無効
@@ -2302,11 +2411,14 @@
         editable: true,
         modeBarButtonsToAdd: ['eraseshape'],
         edits: { shapePosition: false },
+        doubleClick: false,
+        doubleClickDelay: 300,
       }));
       setTimeout(() => { withSuppressedRelayout(Plotly.Plots.resize(plotDiv)); }, 50);
       requestAnimationFrame(applyDragMode);
       installPlotlyViewportHandlersOnce();
       attachPickListeners(plotDiv);
+      installCustomDoubleClick(plotDiv);
     }
 
     function renderWindowHeatmap(windowData) {
@@ -2445,11 +2557,14 @@
         editable: true,
         modeBarButtonsToAdd: ['eraseshape'],
         edits: { shapePosition: false },
+        doubleClick: false,
+        doubleClickDelay: 300,
       }));
       setTimeout(() => { withSuppressedRelayout(Plotly.Plots.resize(plotDiv)); }, 50);
       requestAnimationFrame(applyDragMode);
       installPlotlyViewportHandlersOnce();
       attachPickListeners(plotDiv);
+      installCustomDoubleClick(plotDiv);
       const [x0v, x1v] = visibleXRng();
        D('RENDER@wiggle:shapes', {
         manualInWin: picks.filter(p => p.trace >= windowData.x0 && p.trace <= windowData.x1).length,
@@ -2550,6 +2665,7 @@
       }
 
       if (!wantWiggle && effectiveLayer === 'raw' && latestSeismicData && step_x === 1 && step_y === 1) {
+        renderLatestView(windowInfo.x0, windowInfo.x1);
         return;
       }
       if (!wantWiggle && tapLabel && latestTapData[requestedLayer] && step_x === 1 && step_y === 1) {
@@ -2805,7 +2921,9 @@
         responsive: true,
         editable: true,
         modeBarButtonsToAdd: ['eraseshape'],
-        edits: { shapePosition: false }
+        edits: { shapePosition: false },
+        doubleClick: false,
+        doubleClickDelay: 300
       }));
       setTimeout(() => {
           withSuppressedRelayout(Plotly.Plots.resize(plotDiv));
@@ -2816,6 +2934,7 @@
       console.log(`Rendered traces ${startTrace}-${endTrace}`);
       installPlotlyViewportHandlersOnce();
       attachPickListeners(plotDiv);
+      installCustomDoubleClick(plotDiv);
     }
 
     function pickOnTrace(trace) {
