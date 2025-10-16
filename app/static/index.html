@@ -787,6 +787,11 @@
         return;
       }
 
+      if (!currentFileId) {
+        alert('file_id not loaded.');
+        return;
+      }
+
       const nTraces = sectionShape[0];
       const nSamples = sectionShape[1];
       const dt = (window.defaultDt ?? defaultDt);
@@ -796,8 +801,7 @@
       buf.fill(-1);
 
       for (let i = 0; i < K; i++) {
-        const key1Val = key1Values[i];
-        const url = `/picks/by-filename?file_name=${encodeURIComponent(currentFileName)}&key1_idx=${key1Val}&key1_byte=${currentKey1Byte}`;
+        const url = `/picks?file_id=${encodeURIComponent(currentFileId)}&key1_idx=${i}&key1_byte=${currentKey1Byte}`;
         const r = await fetch(url);
         if (!r.ok) continue;
         const j = await r.json();
@@ -1885,9 +1889,8 @@
       }
       if (!currentFileId) return;
       const idx = parseInt(document.getElementById('key1_idx_slider').value);
-      const key1Val = key1Values[idx];
       try {
-        const res = await fetch(`/picks?file_id=${currentFileId}&key1_idx=${key1Val}&key1_byte=${currentKey1Byte}`);
+        const res = await fetch(`/picks?file_id=${currentFileId}&key1_idx=${idx}&key1_byte=${currentKey1Byte}`);
         if (res.ok) {
           const data = await res.json();
           picks = (data.picks || []).map(p => ({ trace: p.trace, time: p.time }));
@@ -1901,11 +1904,10 @@
 
     async function postPick(trace, time) {
       const idx = parseInt(document.getElementById('key1_idx_slider').value);
-      const key1Val = key1Values[idx];
       try {
         await fetch('/picks', {
           method: 'POST', headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ file_id: currentFileId, trace, time, key1_idx: key1Val, key1_byte: currentKey1Byte })
+          body: JSON.stringify({ file_id: currentFileId, trace, time, key1_idx: idx, key1_byte: currentKey1Byte })
         });
       } catch (e) { console.error('Failed to post pick', e); }
       D('PICKS@post', { trace, time });
@@ -1913,9 +1915,8 @@
 
     async function deletePick(trace) {
       const idx = parseInt(document.getElementById('key1_idx_slider').value);
-      const key1Val = key1Values[idx];
       try {
-        await fetch(`/picks?file_id=${currentFileId}&trace=${trace}&key1_idx=${key1Val}&key1_byte=${currentKey1Byte}`, { method: 'DELETE' });
+        await fetch(`/picks?file_id=${currentFileId}&trace=${trace}&key1_idx=${idx}&key1_byte=${currentKey1Byte}`, { method: 'DELETE' });
       } catch (e) { console.error('Failed to delete pick', e); }
       D('PICKS@delete', { trace });
     }
@@ -1941,30 +1942,31 @@
     }
 
     async function reloadPicksForCurrentSection(key1IdxOrVal) {
-      if (!currentFileName) return [];
+      if (!currentFileId) return [];
 
-      // key1 を決定（indexでもvalueでもOK。未指定ならスライダから）
-      let key1Val;
+      // key1 index を決定（index か value を受け付ける）
+      let key1Idx = null;
       if (typeof key1IdxOrVal === 'number') {
         if (
-          Array.isArray(key1Values) &&
           Number.isInteger(key1IdxOrVal) &&
           key1IdxOrVal >= 0 &&
-          key1IdxOrVal < key1Values.length
+          key1IdxOrVal < (key1Values?.length ?? 0)
         ) {
-          // index 指定
-          key1Val = key1Values[key1IdxOrVal];
-        } else {
-          // value 直接指定
-          key1Val = key1IdxOrVal;
+          key1Idx = key1IdxOrVal;
+        } else if (Array.isArray(key1Values)) {
+          const found = key1Values.indexOf(key1IdxOrVal);
+          if (found >= 0) key1Idx = found;
         }
-      } else {
-        const slider = document.getElementById('key1_idx_slider');
-        const idx = slider ? (parseInt(slider.value, 10) || 0) : 0;
-        key1Val = Array.isArray(key1Values) ? key1Values[idx] : idx;
       }
+      if (!Number.isInteger(key1Idx)) {
+        const slider = document.getElementById('key1_idx_slider');
+        key1Idx = slider ? (parseInt(slider.value, 10) || 0) : 0;
+      }
+      if (key1Idx < 0) key1Idx = 0;
+      const maxIdx = (key1Values?.length ?? 1) - 1;
+      if (key1Idx > maxIdx && maxIdx >= 0) key1Idx = maxIdx;
 
-      const url = `/picks/by-filename?file_name=${encodeURIComponent(currentFileName)}&key1_idx=${key1Val}&key1_byte=${currentKey1Byte}`;
+      const url = `/picks?file_id=${encodeURIComponent(currentFileId)}&key1_idx=${key1Idx}&key1_byte=${currentKey1Byte}`;
       try {
         const r = await fetch(url);
         if (!r.ok) return [];
