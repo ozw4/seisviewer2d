@@ -634,7 +634,7 @@
     try {
       const { taps: tapMap, pipelineKey } = await fetchSectionWithPipeline(
         window.currentFileId,
-        key1Val,
+        idx,
         spec,
         tapsUnique,
         { key1Byte: window.currentKey1Byte, key2Byte: window.currentKey2Byte },

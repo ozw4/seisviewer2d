@@ -1301,10 +1301,14 @@
     })();
 
     // ★★★ FB確率取得：レイヤ/パイプライン対応（既存のジョブAPIを使用）
-    async function fetchFbProb(key1Val, { layer = 'raw', pipelineKey = null } = {}) {
+    async function fetchFbProb(key1Idx, { layer = 'raw', pipelineKey = null } = {}) {
+      const key1Val = key1Values?.[key1Idx];
+      if (key1Val === undefined) {
+        throw new Error(`key1 index ${key1Idx} is out of range`);
+      }
       const body = {
         file_id: currentFileId,
-        key1_idx: key1Val,
+        key1_idx: key1Idx,
         key1_byte: currentKey1Byte,
         key2_byte: currentKey2Byte,
         tile_h: 128,
@@ -1559,7 +1563,7 @@
           currentFbLayer !== layerAtStart ||
           currentFbPipelineKey !== pipelineKeyAtStart) {
 
-          const { f32, shape } = await fetchFbProb(keyAtStart, { layer: layerAtStart, pipelineKey: pipelineKeyAtStart });
+          const { f32, shape } = await fetchFbProb(idx0, { layer: layerAtStart, pipelineKey: pipelineKeyAtStart });
           const [nTraces, nSamples] = shape;
           const traces = new Array(nTraces);
           for (let i = 0; i < nTraces; i++) {
@@ -2042,7 +2046,7 @@
         inflight.set(rawKey, controller);
         scheduler(async () => {
           try {
-            const urlRaw = `/get_section_bin?file_id=${currentFileId}&key1_idx=${key1Val}&key1_byte=${currentKey1Byte}&key2_byte=${currentKey2Byte}`;
+            const urlRaw = `/get_section_bin?file_id=${currentFileId}&key1_idx=${i}&key1_byte=${currentKey1Byte}&key2_byte=${currentKey2Byte}`;
             const res = await fetch(urlRaw, { signal: controller.signal });
             if (!res.ok) return;
             const bin = new Uint8Array(await res.arrayBuffer());
@@ -2193,7 +2197,7 @@
         rawSeismicData = traces;
       } else {
         console.time('Fetch binary');
-        const urlRaw = `/get_section_bin?file_id=${currentFileId}&key1_idx=${key1Val}&key1_byte=${currentKey1Byte}&key2_byte=${currentKey2Byte}`;
+        const urlRaw = `/get_section_bin?file_id=${currentFileId}&key1_idx=${index}&key1_byte=${currentKey1Byte}&key2_byte=${currentKey2Byte}`;
         const res = await fetch(urlRaw);
         if (!res.ok) {
           console.timeEnd('Fetch binary');
@@ -2696,7 +2700,7 @@
 
       const params = new URLSearchParams({
         file_id: currentFileId,
-        key1_idx: String(key1Val),
+        key1_idx: String(idx),
         key1_byte: String(currentKey1Byte),
         key2_byte: String(currentKey2Byte),
         x0: String(windowInfo.x0),
