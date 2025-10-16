@@ -609,6 +609,37 @@
         return promiseLike;
       }
 
+    function logCurrentPicks(opts = {}) {
+      const { includePredicted = false, onlyVisible = false } = opts;
+
+      const dt = (window.defaultDt ?? defaultDt);
+      const k1Idx = parseInt(document.getElementById('key1_idx_slider').value, 10) | 0;
+      const key1Val = key1Values?.[k1Idx];
+      const layer = document.getElementById('layerSelect')?.value || 'raw';
+
+      const start = (typeof renderedStart === 'number') ? renderedStart : 0;
+      const end = (typeof renderedEnd === 'number') ? renderedEnd : (sectionShape ? sectionShape[0] - 1 : 0);
+
+      const src = includePredicted ? [...picks, ...predictedPicks] : picks;
+
+      const rows = src
+        .filter(p => Number.isFinite(p.trace) && Number.isFinite(p.time))
+        .map(p => ({
+          trace: Math.round(p.trace),
+          time_s: +p.time,
+          sample_idx: Math.round(p.time / dt),
+        }))
+        .filter(r => !onlyVisible || (r.trace >= start && r.trace <= end))
+        .sort((a, b) => a.trace - b.trace);
+
+      console.log(`[Picks] key1=${key1Val} layer=${layer} count=${rows.length} visibleOnly=${!!onlyVisible}`);
+      console.table(rows);
+      return rows; // 必要なら呼び出し元で使えるように返す
+    }
+
+    // グローバルから呼べるように
+    window.logCurrentPicks = logCurrentPicks;
+
     function snapshotAxesRangesFromDOM() {
       const gd = document.getElementById('plot');
       const xa = gd?._fullLayout?.xaxis;
@@ -1779,7 +1810,6 @@
       localStorage.setItem('key2_byte', currentKey2Byte);
       await fetchCurrentFileName();
       await fetchKey1Values();
-      await fetchPicks();
       await fetchAndPlot();
     }
 
@@ -2635,12 +2665,18 @@
       return picks.findIndex(p => Math.round(p.trace) === trace);
     }
 
+    function toTraceInt(t) {
+      // マイナス防止も兼ねる。必要なら上限クリップもここで。
+      return Math.max(0, Math.round(t));
+    }
+
     async function handlePickNormalized({ trace, time, shiftKey, ctrlKey, altKey }) {
       if (isPickMode && dragOverride === 'pan') return;
       if (!Number.isFinite(trace) || !Number.isFinite(time)) return;
+      const trInt = toTraceInt(trace);
 
       if (handlePickNormalized._busy) {
-        handlePickNormalized._queued = { trace, time, shiftKey, ctrlKey, altKey };
+        handlePickNormalized._queued = { trace: trInt, time, shiftKey, ctrlKey, altKey };
         return;
       }
       handlePickNormalized._busy = true;
@@ -2652,13 +2688,13 @@
 
         if (ctrlKey) {
           if (deleteRangeStart === null) {
-            deleteRangeStart = trace;
+            deleteRangeStart = trInt;
             linePickStart = null;
             return;
           }
           const x0 = deleteRangeStart;
           deleteRangeStart = null;
-          const x1 = trace;
+          const x1 = trInt;
           const start = Math.min(x0, x1);
           const end = Math.max(x0, x1);
           const toDelete = picks.filter(p => Math.round(p.trace) >= start && Math.round(p.trace) <= end);
@@ -2673,14 +2709,14 @@
 
         if (shiftKey) {
           if (!linePickStart) {
-            linePickStart = { trace, time };
+            linePickStart = { trace: trInt, time };
             deleteRangeStart = null;
             return;
           }
 
           const { trace: x0, time: y0 } = linePickStart;
-          linePickStart = { trace, time };
-          const x1 = trace;
+          linePickStart = { trace: trInt, time };
+          const x1 = trInt;
           const y1 = time;
           const xStart = Math.round(Math.min(x0, x1));
           const xEnd = Math.round(Math.max(x0, x1));
@@ -2708,15 +2744,15 @@
         linePickStart = null;
         deleteRangeStart = null;
 
-        const idx = pickOnTrace(trace);
+        const idx = pickOnTrace(trInt);
         const promises = [];
         if (idx >= 0) {
-          promises.push(deletePick(trace));
+          promises.push(deletePick(trInt));
           picks.splice(idx, 1);
         }
-        const tAdj = adjustPickToFeature(trace, time);
-        picks.push({ trace, time: tAdj });
-        promises.push(postPick(trace, tAdj));
+        const tAdj = adjustPickToFeature(trInt, time);
+        picks.push({ trace: trInt, time: tAdj });
+        promises.push(postPick(trInt, tAdj));
         await Promise.all(promises);
         renderLatestView();
       } finally {
@@ -2905,7 +2941,6 @@
         if (!currentFileName) {
           await fetchCurrentFileName();
         }
-        await reloadPicksForCurrentSection();
       };
 
       loadSettings().catch((err) => console.warn('loadSettings failed', err)).finally(() => {
@@ -2916,12 +2951,18 @@
         fileIdEl.addEventListener('change', async () => {
           currentFileId = fileIdEl.value || '';
           await fetchCurrentFileName();
-          await reloadPicksForCurrentSection();
+          await fetchKey1Values();
+          (typeof fetchAndPlotDebounced?.flush === 'function')
+            ? fetchAndPlotDebounced.flush()
+            : fetchAndPlot();
         });
       }
       if (slider) {
         slider.addEventListener('change', () => {
-          reloadPicksForCurrentSection().catch((err) => console.warn('slider picks reload failed', err));
+          // ピック読込は fetchAndPlot() 内に集約
+          (typeof fetchAndPlotDebounced?.flush === 'function')
+            ? fetchAndPlotDebounced.flush()
+            : fetchAndPlot();
         });
       }
     });
