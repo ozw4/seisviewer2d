@@ -18,6 +18,7 @@ from app.api._helpers import (
         _maybe_attach_fbpick_offsets,
         get_reader,
         jobs,
+        key1_value_for_index,
         pipeline_tap_cache,
 )
 from app.api.schemas import (
@@ -60,7 +61,7 @@ def _run_pipeline_all_job(job_id: str, req: PipelineAllRequest, pipe_key: str) -
                                 meta,
                                 spec=req.spec,
                                 reader=reader,
-                                key1_idx=int(key1_val),
+                                key1_value=int(key1_val),
                                 offset_byte=req.offset_byte,  # already forced by caller
                         )
                         out = apply_pipeline(section, spec=req.spec, meta=meta, taps=taps)
@@ -96,7 +97,12 @@ def pipeline_section(
         window: dict[str, int | float] | None = Body(default=None),
 ):
         reader = get_reader(file_id, key1_byte, key2_byte)
-        section = np.array(reader.get_section(key1_idx), dtype=np.float32)
+        try:
+                key1_val = key1_value_for_index(reader, key1_idx)
+        except IndexError as exc:
+                raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+        section = np.array(reader.get_section(key1_val), dtype=np.float32)
         trace_slice: slice | None = None
         window_hash = None
         if window:
@@ -126,7 +132,7 @@ def pipeline_section(
                 meta,
                 spec=spec,
                 reader=reader,
-                key1_idx=key1_idx,
+                key1_value=key1_val,
                 offset_byte=forced_offset_byte,
                 trace_slice=trace_slice,
         )
@@ -135,7 +141,7 @@ def pipeline_section(
         if tap_names:
                 base_key = (
                         file_id,
-                        key1_idx,
+                        key1_val,
                         key1_byte,
                         pipe_key,
                         window_hash,

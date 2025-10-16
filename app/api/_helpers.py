@@ -53,6 +53,36 @@ class PipelineTapNotFoundError(LookupError):
         """Raised when a requested pipeline tap output is unavailable."""
 
 
+def _key1_values_array(
+        reader: SegySectionReader | TraceStoreSectionReader,
+) -> np.ndarray:
+        """Return the available key1 values for ``reader`` as ``int64``."""
+
+        vals = getattr(reader, 'unique_key1', None)
+        if vals is not None:
+                return np.asarray(vals, dtype=np.int64)
+
+        get_key1_values = getattr(reader, 'get_key1_values', None)
+        if callable(get_key1_values):
+                vals = get_key1_values()
+                return np.asarray(vals, dtype=np.int64)
+
+        msg = 'Reader does not expose key1 values'
+        raise AttributeError(msg)
+
+
+def key1_value_for_index(
+        reader: SegySectionReader | TraceStoreSectionReader, key1_idx: int
+) -> int:
+        """Convert ``key1_idx`` to its corresponding header value."""
+
+        vals = _key1_values_array(reader)
+        if key1_idx < 0 or key1_idx >= vals.size:
+                msg = 'key1_idx out of range'
+                raise IndexError(msg)
+        return int(vals[key1_idx])
+
+
 def _spec_uses_fbpick(spec: PipelineSpec) -> bool:
         """Return ``True`` when ``spec`` contains an fbpick analyzer step."""
         return any(step.kind == 'analyzer' and step.name == 'fbpick' for step in spec.steps)
@@ -63,7 +93,7 @@ def _maybe_attach_fbpick_offsets(
         *,
         spec: PipelineSpec,
         reader: SegySectionReader | TraceStoreSectionReader,
-        key1_idx: int,
+        key1_value: int,
         offset_byte: int | None,
         trace_slice: slice | None = None,
 ) -> dict[str, Any]:
@@ -75,7 +105,7 @@ def _maybe_attach_fbpick_offsets(
         get_offsets = getattr(reader, 'get_offsets_for_section', None)
         if get_offsets is None:
                 return meta
-        offsets = get_offsets(key1_idx, offset_byte)
+        offsets = get_offsets(key1_value, offset_byte)
         if trace_slice is not None:
                 offsets = offsets[trace_slice]
         offsets = np.ascontiguousarray(offsets, dtype=np.float32)
@@ -131,19 +161,19 @@ def _pipeline_payload_to_array(payload: object, *, tap_label: str) -> np.ndarray
 def get_section_from_pipeline_tap(
         *,
         file_id: str,
-        key1_idx: int,
+        key1_value: int,
         key1_byte: int,
         pipeline_key: str,
         tap_label: str,
         offset_byte: int | None = None,
 ) -> np.ndarray:
         """Return the cached pipeline tap output as a ``float32`` array."""
-        base_key = (file_id, key1_idx, key1_byte, pipeline_key, None, offset_byte)
+        base_key = (file_id, key1_value, key1_byte, pipeline_key, None, offset_byte)
         payload = pipeline_tap_cache.get((*base_key, tap_label))
         if payload is None:
                 msg = (
                         f'Pipeline tap {tap_label!r} for pipeline {pipeline_key!r} '
-                        f'and key1={key1_idx} is not available. '
+                        f'and key1={key1_value} is not available. '
                         'Please re-run the pipeline.'
                 )
                 raise PipelineTapNotFoundError(msg)
@@ -183,7 +213,8 @@ def get_raw_section(
 ) -> np.ndarray:
         """Load the RAW seismic section as ``float32``."""
         reader = get_reader(file_id, key1_byte, key2_byte)
-        section = reader.get_section(key1_idx)
+        key1_value = key1_value_for_index(reader, key1_idx)
+        section = reader.get_section(key1_value)
         arr = np.asarray(section, dtype=np.float32)
         if arr.ndim != EXPECTED_SECTION_NDIM:
                 msg = f'Raw section expected 2D data, got {arr.ndim}D'
@@ -203,6 +234,7 @@ __all__ = [
         '_pipeline_payload_to_array',
         '_spec_uses_fbpick',
         '_update_file_registry',
+        'key1_value_for_index',
         'cached_readers',
         'fbpick_cache',
         'get_raw_section',

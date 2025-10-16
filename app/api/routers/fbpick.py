@@ -22,15 +22,12 @@ from app.api._helpers import (
         get_reader,
         get_section_from_pipeline_tap,
         jobs,
+        key1_value_for_index,
 )
 from app.api.schemas import PipelineSpec
 from app.utils.fbpick import _MODEL_PATH as FBPICK_MODEL_PATH
 from app.utils.pipeline import apply_pipeline
-from app.utils.utils import (
-        SegySectionReader,
-        TraceStoreSectionReader,
-        quantize_float32,
-)
+from app.utils.utils import quantize_float32
 
 router = APIRouter()
 
@@ -55,17 +52,22 @@ def _run_fbpick_job(job_id: str, req: FbpickRequest) -> None:
         try:
                 forced_offset_byte = OFFSET_BYTE_FIXED if USE_FBPICK_OFFSET else None
 
+                reader = get_reader(req.file_id, req.key1_byte, req.key2_byte)
+                try:
+                        key1_value = key1_value_for_index(reader, req.key1_idx)
+                except IndexError as exc:
+                        job['status'] = 'error'
+                        job['message'] = str(exc)
+                        return
+
                 cache_key = job['cache_key']
                 section_override = job.pop('section_override', None)
-                reader: SegySectionReader | TraceStoreSectionReader | None = None
-                if USE_FBPICK_OFFSET and forced_offset_byte is not None:
-                        reader = get_reader(req.file_id, req.key1_byte, req.key2_byte)
                 if section_override is not None:
                         section = np.asarray(section_override, dtype=np.float32)
                 elif req.pipeline_key and req.tap_label:
                         section = get_section_from_pipeline_tap(
                                 file_id=req.file_id,
-                                key1_idx=req.key1_idx,
+                                key1_value=key1_value,
                                 key1_byte=req.key1_byte,
                                 pipeline_key=req.pipeline_key,
                                 tap_label=req.tap_label,
@@ -73,9 +75,7 @@ def _run_fbpick_job(job_id: str, req: FbpickRequest) -> None:
                         )
                         section = np.asarray(section, dtype=np.float32)
                 else:
-                        if reader is None:
-                                reader = get_reader(req.file_id, req.key1_byte, req.key2_byte)
-                        section = np.asarray(reader.get_section(req.key1_idx), dtype=np.float32)
+                        section = np.asarray(reader.get_section(key1_value), dtype=np.float32)
                 section = np.ascontiguousarray(section, dtype=np.float32)
                 spec = PipelineSpec(
                         steps=[
@@ -96,7 +96,7 @@ def _run_fbpick_job(job_id: str, req: FbpickRequest) -> None:
                                 meta,
                                 spec=spec,
                                 reader=reader,
-                                key1_idx=req.key1_idx,
+                                key1_value=key1_value,
                                 offset_byte=forced_offset_byte,
                         )
                 out = apply_pipeline(section, spec=spec, meta=meta, taps=None)
@@ -123,11 +123,17 @@ def fbpick_section_bin(req: FbpickRequest):
 
         forced_offset_byte = OFFSET_BYTE_FIXED if USE_FBPICK_OFFSET else None
 
+        reader = get_reader(req.file_id, req.key1_byte, req.key2_byte)
+        try:
+                key1_value = key1_value_for_index(reader, req.key1_idx)
+        except IndexError as exc:
+                raise HTTPException(status_code=400, detail=str(exc)) from exc
+
         pipeline_key = req.pipeline_key
         tap_label = req.tap_label
         cache_key = (
                 req.file_id,
-                req.key1_idx,
+                key1_value,
                 req.key1_byte,
                 req.key2_byte,
                 forced_offset_byte,
@@ -145,7 +151,7 @@ def fbpick_section_bin(req: FbpickRequest):
                 try:
                         section_override = get_section_from_pipeline_tap(
                                 file_id=req.file_id,
-                                key1_idx=req.key1_idx,
+                                key1_value=key1_value,
                                 key1_byte=req.key1_byte,
                                 pipeline_key=pipeline_key,
                                 tap_label=tap_label,
