@@ -492,6 +492,87 @@
     const inflight = new Map();
     const CACHE_LIMIT = 12;
 
+    const __pickOps = new Map();
+    let flushPickOpsDebounced = null;
+
+    function ensureFlushPickOpsDebounced() {
+      if (!flushPickOpsDebounced) {
+        const debFn = (typeof debounce === 'function') ? debounce : makeDebounced;
+        flushPickOpsDebounced = debFn(flushPickOps, 120);
+      }
+      return flushPickOpsDebounced;
+    }
+
+    function _sliderKey1Idx() {
+        const el = document.getElementById('key1_idx_slider');
+        const v = Number.parseInt(el?.value ?? '0', 10);
+        return Number.isFinite(v) ? v : 0;
+      }
+        function _opKey(fileId, key1Idx, key1Byte, trace) {
+          return `${fileId}|${key1Idx}|${key1Byte}|${trace | 0}`;
+        }
+
+    function queueUpsert(trace, time) {
+      const tr = (trace | 0);
+      const fileId = currentFileId;
+      const key1Idx = _sliderKey1Idx();
+      const key1Byte = currentKey1Byte;
+      const k = _opKey(fileId, key1Idx, key1Byte, tr);
+      __pickOps.set(k, { op: 'upsert', fileId, key1Idx, key1Byte, trace: tr, time: +time });
+      const debounced = ensureFlushPickOpsDebounced();
+      debounced();
+    }
+
+    function queueDelete(trace) {
+      const tr = (trace | 0);
+      const fileId = currentFileId;
+      const key1Idx = _sliderKey1Idx();
+      const key1Byte = currentKey1Byte;
+      const k = _opKey(fileId, key1Idx, key1Byte, tr);
+      __pickOps.set(k, { op: 'delete', fileId, key1Idx, key1Byte, trace: tr });
+      const debounced = ensureFlushPickOpsDebounced();
+      debounced();
+    }
+
+    async function flushPickOps() {
+      if (__pickOps.size === 0) return;
+
+      const ops = Array.from(__pickOps.values());
+      __pickOps.clear();
+
+      if (ops.every(op => !op.fileId)) return;
+      const limit = Math.min(4, ops.length);
+      let i = 0;
+
+      async function worker() {
+        while (i < ops.length) {
+          const op = ops[i++];
+          if (!op?.fileId) continue;
+          const fileId = op.fileId;
+          const idx = op.key1Idx | 0;
+          const key1Byte = op.key1Byte | 0;
+          if (op.op === 'upsert') {
+            await fetch('/picks', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                file_id: fileId,
+                trace: op.trace,
+                time: op.time,
+                key1_idx: idx,
+                key1_byte: key1Byte
+              }),
+            });
+          } else {
+            const url = `/picks?file_id=${encodeURIComponent(fileId)}&trace=${op.trace}&key1_idx=${idx}&key1_byte=${key1Byte}`;
+            await fetch(url, { method: 'DELETE' });
+          }
+        }
+      }
+
+      await Promise.all(Array.from({ length: limit }, () => worker()));
+    }
+
     let __dbg = { enabled: true };
     function D(tag, obj) {
       if (!__dbg.enabled) return;
@@ -551,6 +632,7 @@
         console.warn('viewer bootstrap globals not ready yet');
         return;
       }
+      flushPickOpsDebounced = debounce(flushPickOps, 120);
       defaultDt = cfg.getDefaultDt();
       window.defaultDt = defaultDt;
       WIGGLE_DENSITY_THRESHOLD = cfg.getWiggleDensity();
@@ -635,8 +717,14 @@
       fetchAndPlotDebounced();        // 入力が止まってから実行
     }
 
-    function onKey1Change() {
+    async function onKey1Change() {
       updateKey1Display();
+      const debounced = ensureFlushPickOpsDebounced();
+      if (typeof debounced?.flush === 'function') {
+        await debounced.flush();
+      } else {
+        await flushPickOps();
+      }
       fetchAndPlotDebounced.flush();
     }
 
@@ -1902,23 +1990,14 @@
       } catch (e) { console.error('Failed to fetch picks', e); }
     }
 
-    async function postPick(trace, time) {
-      const idx = parseInt(document.getElementById('key1_idx_slider').value);
-      try {
-        await fetch('/picks', {
-          method: 'POST', headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ file_id: currentFileId, trace, time, key1_idx: idx, key1_byte: currentKey1Byte })
-        });
-      } catch (e) { console.error('Failed to post pick', e); }
-      D('PICKS@post', { trace, time });
+    function postPick(trace, time) {
+      queueUpsert(trace, time);
+      D('PICKS@queuePost', { trace: (trace | 0), time: +time });
     }
 
-    async function deletePick(trace) {
-      const idx = parseInt(document.getElementById('key1_idx_slider').value);
-      try {
-        await fetch(`/picks?file_id=${currentFileId}&trace=${trace}&key1_idx=${idx}&key1_byte=${currentKey1Byte}`, { method: 'DELETE' });
-      } catch (e) { console.error('Failed to delete pick', e); }
-      D('PICKS@delete', { trace });
+    function deletePick(trace) {
+      queueDelete(trace);
+      D('PICKS@queueDelete', { trace: (trace | 0) });
     }
 
     // --- filename & picks loader (by filename) ---
@@ -1944,46 +2023,27 @@
     async function reloadPicksForCurrentSection(key1IdxOrVal) {
       if (!currentFileId) return [];
 
-      // key1 index を決定（index か value を受け付ける）
-      let key1Idx = null;
-      if (typeof key1IdxOrVal === 'number') {
-        if (
-          Number.isInteger(key1IdxOrVal) &&
-          key1IdxOrVal >= 0 &&
-          key1IdxOrVal < (key1Values?.length ?? 0)
-        ) {
-          key1Idx = key1IdxOrVal;
-        } else if (Array.isArray(key1Values)) {
-          const found = key1Values.indexOf(key1IdxOrVal);
-          if (found >= 0) key1Idx = found;
-        }
-      }
-      if (!Number.isInteger(key1Idx)) {
-        const slider = document.getElementById('key1_idx_slider');
-        key1Idx = slider ? (parseInt(slider.value, 10) || 0) : 0;
-      }
-      if (key1Idx < 0) key1Idx = 0;
-      const maxIdx = (key1Values?.length ?? 1) - 1;
-      if (key1Idx > maxIdx && maxIdx >= 0) key1Idx = maxIdx;
-
-      const url = `/picks?file_id=${encodeURIComponent(currentFileId)}&key1_idx=${key1Idx}&key1_byte=${currentKey1Byte}`;
+      const fileId = currentFileId;
+      const idxRaw = Number.isInteger(key1IdxOrVal)
+        ? key1IdxOrVal
+        : parseInt(document.getElementById('key1_idx_slider').value, 10);
+      const idx = Number.isFinite(idxRaw) ? idxRaw : 0;
       try {
-        const r = await fetch(url);
+        const r = await fetch(`/picks?file_id=${encodeURIComponent(fileId)}&key1_idx=${idx}&key1_byte=${currentKey1Byte}`);
         if (!r.ok) return [];
         const j = await r.json();
         const arr = (j.picks || []).map(p => ({ trace: (p.trace | 0), time: +p.time }));
-
-        // 引数なし＝現在セクションの更新として扱う
-        if (key1IdxOrVal == null) {
-          picks = arr;
-          if (typeof renderLatestView === 'function') {
-            try { renderLatestView(); } catch (e) { console.warn('render after picks failed', e); }
-          }
-          const [x0, x1] = visibleXRng();
-          D('PICKS@reload', { count: picks.length, vis: [x0, x1],
-            visCount: picks.filter(p => Math.round(p.trace) >= x0 && Math.round(p.trace) <= x1).length,
-            sample: samplePicks(picks) });
+        picks = arr;
+        if (typeof renderLatestView === 'function') {
+          try { renderLatestView(); } catch (e) { console.warn('render after picks failed', e); }
         }
+        const [x0, x1] = visibleXRng();
+        D('PICKS@reload', {
+          count: picks.length,
+          vis: [x0, x1],
+          visCount: picks.filter(p => Math.round(p.trace) >= x0 && Math.round(p.trace) <= x1).length,
+          sample: samplePicks(picks)
+        });
         return arr;
       } catch (e) {
         console.warn('reload picks failed', e);
