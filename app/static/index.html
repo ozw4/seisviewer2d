@@ -360,8 +360,8 @@
     <div id="viewerColumn">
       <div id="controls">
         <label for="key1_idx_slider">key1 index:</label>
-        <input type="range" id="key1_idx_slider" min="0" max="10000" value="0" step="1"
-          oninput="updateKey1Display(); fetchAndPlot()" />
+        <input type="range" id="key1_idx_slider" min="0" max="10000" value="0" step="1" oninput="onKey1Input()"
+          onchange="onKey1Change()" />
         <input type="number" id="key1_idx_display" value="0" min="0" max="10000" step="1" style="width: 60px;"
           onchange="syncSliderWithInput(); fetchAndPlot()" />
         <button onclick="fetchAndPlot()">Plot</button>
@@ -568,6 +568,36 @@
       const key1Val = key1Values[idx];
       const pKey = window.latestPipelineKey || '';
       return `rev:${currentFileId}|${key1Val}|${layer}|${pKey}|${uiResetNonce}`;
+    }
+
+    function makeDebounced(fn, waitMs) {
+      let timer = null;
+      function debounced(...args) {
+        if (timer) clearTimeout(timer);
+        timer = setTimeout(() => { timer = null; fn(...args); }, waitMs);
+      }
+      debounced.flush = (...args) => {
+        if (timer) { clearTimeout(timer); timer = null; }
+        fn(...args);
+      };
+      debounced.cancel = () => { if (timer) { clearTimeout(timer); timer = null; } };
+      return debounced;
+    }
+
+    // スライダ用：入力中は遅延、確定時は即時
+    let fetchAndPlotDebounced = makeDebounced(() => {
+      try { fetchAndPlot(); } catch (e) { console.warn(e); }
+    }, 120); // 100〜200msくらいが体感◎
+
+    // --- 追加：ハンドラ ---
+    function onKey1Input() {
+      updateKey1Display();
+      fetchAndPlotDebounced();        // 入力が止まってから実行
+    }
+
+    function onKey1Change() {
+      updateKey1Display();
+      fetchAndPlotDebounced.flush();
     }
 
     function withSuppressedRelayout(promiseLike) {
