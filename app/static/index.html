@@ -642,13 +642,24 @@
 
     // .npy エンコーダ（1D/2D両対応）
     function npyEncode(data, shape, descr = '<i4') {
-      const magic = new Uint8Array([0x93, 0x4E, 0x55, 0x4D, 0x50, 0x59]);
+      const magic = new Uint8Array([0x93, 0x4E, 0x55, 0x4D, 0x50, 0x59]); // \x93NUMPY
       const ver = new Uint8Array([0x01, 0x00]); // v1.0
       const shapeTxt = `(${shape.join(', ')}${shape.length === 1 ? ',' : ''})`;
-      let header = `{'descr': '${descr}', 'fortran_order': False, 'shape': ${shapeTxt}, }`;
+
+      // v1.0 ヘッダは Python 辞書表現・末尾カンマなし・改行で終端
+      let headerDict =
+        "{'descr': '" + descr + "', 'fortran_order': False, 'shape': " + shapeTxt + ", }";
+      // ↑ 末尾カンマを削る
+      headerDict = headerDict.replace(/,\s*}$/, ' }');
+
+      // 最後に改行を必ず入れる
+      let header = headerDict + '\n';
+
+      // 16B アライン（magic+ver+hlen(2B)+header の合計が16の倍数になるようパディング）
       const fixed = magic.length + ver.length + 2;
       const pad = (16 - ((fixed + header.length) % 16)) % 16;
       header += ' '.repeat(pad);
+
       const hbytes = new TextEncoder().encode(header);
       const hlenLE = new Uint8Array(2);
       new DataView(hlenLE.buffer).setUint16(0, hbytes.length, true);
@@ -662,6 +673,7 @@
       out.set(new Uint8Array(data.buffer, data.byteOffset, data.byteLength), o);
       return out;
     }
+
 
     // ★唯一のエクスポータ：全 key1 を [K, Ntr] 行列で書き出し
     async function exportAllPickIndexMatrixNpy() {
