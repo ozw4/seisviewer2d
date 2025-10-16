@@ -1522,11 +1522,18 @@
       heightPx,
       oversampleX = 1.2,
       oversampleY = 1.2,
-      maxPoints = cfg.WINDOW_MAX_POINTS,
+      maxPoints, // ここは未指定OK
     }) {
       const ratio = window.devicePixelRatio || 1;
       const effW = Math.max(1, Math.round(widthPx * ratio));
       const effH = Math.max(1, Math.round(heightPx * ratio));
+      // cfg 未初期化でも安全な閾値
+      const MAX = Number.isFinite(maxPoints)
+        ? Math.max(1, Math.floor(maxPoints))
+        : ((typeof cfg === 'object' && Number.isFinite(cfg.WINDOW_MAX_POINTS))
+          ? cfg.WINDOW_MAX_POINTS
+          : 2_000_000);
+
       let stepX = Math.max(1, Math.ceil(tracesVisible / (effW * oversampleX)));
       let stepY = Math.max(1, Math.ceil(samplesVisible / (effH * oversampleY)));
 
@@ -1534,30 +1541,30 @@
       const samplesOut = () => Math.ceil(samplesVisible / stepY);
 
       let guard = 0;
-      while (tracesOut() * samplesOut() > maxPoints && guard < 512) {
-        if (tracesOut() / effW > samplesOut() / effH) {
-          stepX += 1;
-        } else {
-          stepY += 1;
-        }
+      while (tracesOut() * samplesOut() > MAX && guard < 512) {
+        if (tracesOut() / effW > samplesOut() / effH) stepX += 1; else stepY += 1;
         guard += 1;
       }
+
+      const roundUpPowerOfTwo = (v) => {
+        let x = Math.max(1, Math.floor(v)) - 1;
+        x |= x >> 1; x |= x >> 2; x |= x >> 4; x |= x >> 8; x |= x >> 16;
+        return x + 1;
+      };
 
       stepX = roundUpPowerOfTwo(stepX);
       stepY = roundUpPowerOfTwo(stepY);
 
       guard = 0;
-      while (Math.ceil(tracesVisible / stepX) * Math.ceil(samplesVisible / stepY) > maxPoints && guard < 512) {
-        if (tracesVisible / stepX > samplesVisible / stepY) {
-          stepX = roundUpPowerOfTwo(stepX + 1);
-        } else {
-          stepY = roundUpPowerOfTwo(stepY + 1);
-        }
+      while (Math.ceil(tracesVisible / stepX) * Math.ceil(samplesVisible / stepY) > MAX && guard < 512) {
+        if (tracesVisible / stepX > samplesVisible / stepY) stepX = roundUpPowerOfTwo(stepX + 1);
+        else stepY = roundUpPowerOfTwo(stepY + 1);
         guard += 1;
       }
 
       return { step_x: stepX, step_y: stepY };
     }
+
 
     function wantWiggleForWindow({ tracesVisible, samplesVisible, widthPx }) {
       const density = tracesVisible / Math.max(1, widthPx);
