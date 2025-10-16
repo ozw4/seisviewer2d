@@ -153,12 +153,6 @@ ROUTES: list[dict[str, object]] = [
         },
         {
                 'method': 'GET',
-                'path': '/picks/by-filename',
-                'params': {'file_name': 'missing', 'key1_idx': 0, 'key1_byte': 189},
-                'expected': {200},
-        },
-        {
-                'method': 'GET',
                 'path': '/export_manual_picks_all_npy',
                 'params': {'file_id': 'missing', 'key1_byte': 189, 'key2_byte': 193},
                 'expected': {404},
