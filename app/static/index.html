@@ -2680,60 +2680,48 @@
       }
     }
 
-    async function handlePlotClick(ev) {
-      const p0 = ev?.points?.[0];
-      const raw = ev?.event;
-      if (!p0 || !raw) {
-        console.warn('⚠️ plotly_click payload missing point/event');
-        return;
-      }
-
-      const trace = snapTraceFromDataX(p0.x);
-      const time = snapTimeFromDataY(p0.y);
-      if (!Number.isFinite(trace) || !Number.isFinite(time)) return;
-
-      await handlePickNormalized({
-        trace,
-        time,
-        shiftKey: !!raw.shiftKey,
-        ctrlKey: !!raw.ctrlKey,
-        altKey: !!raw.altKey,
-      });
-    }
-
     async function handleRelayout(ev) {
       if (suppressRelayout) return;
-      const plotDiv = document.getElementById('plot');
+      const gd = document.getElementById('plot');
+
       if ('xaxis.range[0]' in ev && 'xaxis.range[1]' in ev) {
         savedXRange = [ev['xaxis.range[0]'], ev['xaxis.range[1]']];
       }
-
       if ('yaxis.range[0]' in ev && 'yaxis.range[1]' in ev) {
         const y0 = ev['yaxis.range[0]'];
         const y1 = ev['yaxis.range[1]'];
         savedYRange = y0 > y1 ? [y0, y1] : [y1, y0];
       }
 
+      // autorange トグル時は DOM からレンジ再読込
       if ('xaxis.autorange' in ev || 'yaxis.autorange' in ev) {
-          await new Promise(r => requestAnimationFrame(r));
-          snapshotAxesRangesFromDOM();
-          checkModeFlipAndRefetch();
-        }
+        await new Promise(r => requestAnimationFrame(r));
+        snapshotAxesRangesFromDOM();
+        checkModeFlipAndRefetch();
+      }
 
-      if (Array.isArray(ev.shapes)) {
-        // 予測(青点線)は保存しない。赤のみ保存。
-        const onlyManual = ev.shapes.filter(s => s.line && s.line.color === 'red');
+      // 形状編集: ev が "shapes[...].x0" などのキーを含む場合にも対応
+      const hasShapePathUpdate = Object.keys(ev).some(k => k.startsWith('shapes['));
+      const gotShapesArray = Array.isArray(ev.shapes);
+      if (gotShapesArray || hasShapePathUpdate) {
+        await new Promise(r => requestAnimationFrame(r)); // Plotly が layout 反映後
+
+        const fullShapes =
+          (gd && gd._fullLayout && Array.isArray(gd._fullLayout.shapes))
+            ? gd._fullLayout.shapes
+            : (Array.isArray(ev.shapes) ? ev.shapes : []);
+
+        // 予測(青)は保存しない。赤のみ保存。
+        const onlyManual = fullShapes.filter(s => s?.line?.color === 'red');
         const newPicks = onlyManual.map(s => ({
-          trace: (s.x0 + s.x1) / 2,
-          time: (s.y0 + s.y1) / 2
+          trace: (Number(s.x0) + Number(s.x1)) / 2,
+          time: (Number(s.y0) + Number(s.y1)) / 2,
         }));
 
         const oldTraces = new Set(picks.map(p => Math.round(p.trace)));
         const newTraces = new Set(newPicks.map(p => Math.round(p.trace)));
         for (const t of oldTraces) {
-          if (!newTraces.has(t)) {
-            await deletePick(t);
-          }
+          if (!newTraces.has(t)) await deletePick(t);
         }
         picks = newPicks;
       }
