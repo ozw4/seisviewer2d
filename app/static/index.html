@@ -2362,9 +2362,29 @@
           shiftedPosX[r] = traceIndex + (val < 0 ? 0 : val);
         }
 
-        traces.push({ type: 'scatter', mode: 'lines', x: baseX, y: time, line: { width: 0 }, hoverinfo: 'skip', showlegend: false });
-        traces.push({ type: 'scatter', mode: 'lines', x: shiftedPosX, y: time, fill: 'tonextx', fillcolor: 'black', line: { width: 0 }, opacity: 0.6, hoverinfo: 'skip', showlegend: false });
-        traces.push({ type: 'scatter', mode: 'lines', x: shiftedFullX, y: time, line: { color: 'black', width: 0.5 }, hoverinfo: 'x+y', showlegend: false });
+        traces.push({
+          type: 'scatter',
+          mode: 'lines',
+          x: baseX,
+          y: time,
+          line: { width: 0 },
+          hoverinfo: 'skip',
+          showlegend: false
+        });
+
+        // 「塗り＋輪郭」をまとめる（←ここを変更）
+        traces.push({
+          type: 'scatter',
+          mode: 'lines',
+          x: shiftedPosX,           // 正側だけずらす
+          y: time,
+          fill: 'tonextx',
+          fillcolor: 'black',
+          line: { color: 'black', width: 0.5 },  // ★ ここで輪郭も描画
+          opacity: 0.6,
+          hoverinfo: 'x+y',         // ★ ホバーはこのトレースで出す
+          showlegend: false
+        });
 
         const [x0v, x1v] = visibleXRng();
         D('RENDER@wiggle:shapes', {
@@ -2813,9 +2833,29 @@
             shiftedPosX[j] = (val < 0 ? 0 : val) + i;
           }
 
-          traces.push({ type: 'scatter', mode: 'lines', x: baseX, y: time, line: { width: 0 }, hoverinfo: 'x+y', showlegend: false });
-          traces.push({ type: 'scatter', mode: 'lines', x: shiftedPosX, y: time, fill: 'tonextx', fillcolor: 'black', line: { width: 0 }, opacity: 0.6, hoverinfo: 'skip', showlegend: false });
-          traces.push({ type: 'scatter', mode: 'lines', x: shiftedFullX, y: time, line: { color: 'black', width: 0.5 }, hoverinfo: 'skip', showlegend: false });
+          traces.push({
+            type: 'scatter',
+            mode: 'lines',
+            x: baseX,
+            y: time,
+            line: { width: 0 },
+            hoverinfo: 'skip',        // ここは skip にしてノイズ減らす
+            showlegend: false
+          });
+
+          // 「塗り＋輪郭」をまとめる
+          traces.push({
+            type: 'scatter',
+            mode: 'lines',
+            x: shiftedPosX,
+            y: time,
+            fill: 'tonextx',
+            fillcolor: 'black',
+            line: { color: 'black', width: 0.5 },  // ★ 細線をここに
+            opacity: 0.6,
+            hoverinfo: 'x+y',         // ★ ホバーはここで
+            showlegend: false
+          });
         }
         defaultXRange = [startTrace, endTrace];
         defaultYRange = [nSamples * dt, 0];
