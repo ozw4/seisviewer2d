@@ -11,7 +11,6 @@ import msgpack
 import numpy as np
 from fastapi import APIRouter, HTTPException, Query
 from fastapi.responses import Response
-from pydantic import BaseModel
 
 from app.api._helpers import (
         OFFSET_BYTE_FIXED,
@@ -23,7 +22,7 @@ from app.api._helpers import (
         get_section_from_pipeline_tap,
         jobs,
 )
-from app.api.schemas import PipelineSpec
+from app.api.schemas import FbpickRequest, PipelineSpec
 from app.utils.fbpick import _MODEL_PATH as FBPICK_MODEL_PATH
 from app.utils.pipeline import apply_pipeline
 from app.utils.utils import (
@@ -33,20 +32,6 @@ from app.utils.utils import (
 )
 
 router = APIRouter()
-
-
-class FbpickRequest(BaseModel):
-        file_id: str
-        key1_idx: int
-        key1_byte: int = 189
-        key2_byte: int = 193
-        offset_byte: int | None = None
-        tile_h: int = 128
-        tile_w: int = 6016
-        overlap: int = 32
-        amp: bool = True
-        pipeline_key: str | None = None
-        tap_label: str | None = None
 
 
 def _run_fbpick_job(job_id: str, req: FbpickRequest) -> None:

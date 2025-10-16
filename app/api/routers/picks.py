@@ -11,11 +11,11 @@ from pathlib import Path
 import numpy as np
 from fastapi import APIRouter, HTTPException, Query
 from fastapi.responses import FileResponse
-from pydantic import BaseModel
 from starlette.background import BackgroundTask
 
 from app.api._helpers import _filename_for_file_id, get_reader
 from app.api.routers.section import get_ntraces_for, get_trace_seq_for
+from app.api.schemas import PickPostModel
 from app.utils.pick_cache_file1d_mem import (
     clear_by_traceseq,
     clear_section,
@@ -26,14 +26,6 @@ from app.utils.segy_meta import get_dt_for_file
 from app.utils.utils import TraceStoreSectionReader
 
 router = APIRouter()
-
-
-class PickPostModel(BaseModel):
-    file_id: str
-    trace: int
-    time: float
-    key1_idx: int
-    key1_byte: int
 
 
 @router.get("/picks")
