@@ -130,35 +130,61 @@ def test__key1_values_array_handles_listlike(monkeypatch):
 	assert np.array_equal(out, np.array([1, 2, 3], dtype=np.int64))
 
 
-def test_get_ntraces_for_prefers_reader_attr_and_fallbacks(monkeypatch):
-	# prefers reader.ntraces
+def test_get_ntraces_for_prefers_get_reader_and_fallbacks(monkeypatch):
+	import numpy as np
+
+	from app.api.routers import section as sec
+
+	# Always mutate the same dict object; don't rebind FILE_REGISTRY.
+	assert isinstance(sec.FILE_REGISTRY, dict)
+
+	# 1) get_reader が返す reader を優先
+	sec.FILE_REGISTRY.clear()
+	sec.FILE_REGISTRY.update({'f1': {}})
+
 	r = _make_segy_reader(
 		key1s=np.array([1, 1, 2, 3, 3], dtype=np.int32),
 		key2s=np.array([5, 2, 9, 1, 1], dtype=np.int32),
 	)
-	sec.FILE_REGISTRY['f1'] = {'reader': r}
+	monkeypatch.setattr(sec, 'get_reader', lambda file_id, kb1, kb2: r)
 	assert sec.get_ntraces_for('f1') == 5
 
-	# meta['n_traces'] fallback (TraceStore)
+	# 2) get_reader が失敗した場合は registry.meta にフォールバック
+	sec.FILE_REGISTRY.clear()
+	sec.FILE_REGISTRY.update({'f2': {'meta': {'n_traces': 8}}})
+
+	def boom(*a, **k):
+		raise RuntimeError('no reader')
+
+	monkeypatch.setattr(sec, 'get_reader', boom)
+	assert 'f2' in sec.FILE_REGISTRY
+	assert sec.get_ntraces_for('f2') == 8
+
+	# 3) reader.meta['n_traces'] / TraceStore 風のフォールバック
+	#    （get_reader は TraceStore ライクな reader を返す想定）
 	t = _make_tracestore_reader(
 		key1s=np.array([10, 10, 20, 20, 30], dtype=np.int32),
 		key2s=np.array([1, 2, 3, 4, 5], dtype=np.int32),
 	)
-	sec.FILE_REGISTRY['f2'] = {'reader': t}
+	sec.FILE_REGISTRY.clear()
+	sec.FILE_REGISTRY.update({'f2': {}})
+	monkeypatch.setattr(sec, 'get_reader', lambda file_id, kb1, kb2: t)
 	assert sec.get_ntraces_for('f2') == 5
 
-	# traces.shape[0] fallback
+	# 4) traces.shape[0] フォールバック
 	r2 = _make_segy_reader(
 		key1s=np.array([7, 8, 9], dtype=np.int32),
 		key2s=np.array([0, 0, 0], dtype=np.int32),
 	)
-	r2.ntraces = None  # type: ignore[assignment]
+	r2.ntraces = None  # type: ignore[attr-defined]
 
 	class _Traces:
 		shape = (3, 100)
 
 	r2.traces = _Traces()  # type: ignore[attr-defined]
-	sec.FILE_REGISTRY['f3'] = {'reader': r2}
+	sec.FILE_REGISTRY.clear()
+	sec.FILE_REGISTRY.update({'f3': {}})
+	monkeypatch.setattr(sec, 'get_reader', lambda file_id, kb1, kb2: r2)
 	assert sec.get_ntraces_for('f3') == 3
 
 
