@@ -190,3 +190,70 @@ class FbpickRequest(_Key1GatherRequest):
         amp: bool = True
         pipeline_key: str | None = None
         tap_label: str | None = None
+        start: int = Field(0, ge=0)
+        length: int | None = None
+
+
+class SectionQuery(_Key1GatherRequest):
+        """Query parameters for section retrieval endpoints."""
+
+        key1_byte: int = 189
+        key2_byte: int = 193
+        start: int = Field(0, ge=0)
+        length: int | None = None
+
+        @model_validator(mode='after')
+        def _validate_length(self) -> 'SectionQuery':
+                if self.length is not None and self.length < 1:
+                        raise ValueError('length must be >= 1')
+                return self
+
+
+class SectionBinQuery(SectionQuery):
+        """Binary section retrieval query."""
+
+
+class SectionWindowBinQuery(SectionQuery):
+        """Query parameters for ``get_section_window_bin``."""
+
+        offset_byte: int | None = None
+        y0: int = Field(0, ge=0)
+        y1: int | None = None
+        step_x: int = Field(1, ge=1)
+        step_y: int = Field(1, ge=1)
+        pipeline_key: str | None = None
+        tap_label: str | None = None
+
+        @model_validator(mode='before')
+        @classmethod
+        def _migrate_trace_window(cls, data: Any) -> Any:
+                if not isinstance(data, dict):
+                        return data
+                if 'length' not in data:
+                        x0 = data.get('x0')
+                        x1 = data.get('x1')
+                        if x0 is not None and x1 is not None:
+                                start = int(x0)
+                                end = int(x1)
+                                data = dict(data)
+                                data['start'] = start
+                                data['length'] = max(1, end - start + 1)
+                return data
+
+        @model_validator(mode='after')
+        def _validate_ranges(self) -> 'SectionWindowBinQuery':
+                if self.length is not None and self.length < 1:
+                        raise ValueError('length must be >= 1')
+                if self.y1 is not None and self.y1 < self.y0:
+                        raise ValueError('y1 must be >= y0')
+                return self
+
+
+class PipelineSectionQuery(_Key1GatherRequest):
+        """Query parameters for ``/pipeline/section``."""
+
+        key1_byte: int = 189
+        key2_byte: int = 193
+        offset_byte: int | None = None
+        start: int = Field(0, ge=0)
+        length: int | None = None

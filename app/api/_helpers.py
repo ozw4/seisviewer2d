@@ -7,10 +7,16 @@ from pathlib import Path
 from typing import Any
 
 import numpy as np
+import hashlib
+import json
+from typing import Any
+
+import numpy as np
 from fastapi import HTTPException
 
 from app.api.schemas import PipelineSpec
 from app.utils.fbpick import _MODEL_PATH as FBPICK_MODEL_PATH
+from app.utils.key_resolver import indices_to_runs
 from app.utils.segy_meta import FILE_REGISTRY, get_dt_for_file
 from app.utils.utils import SegySectionReader, TraceStoreSectionReader
 
@@ -58,26 +64,82 @@ def _spec_uses_fbpick(spec: PipelineSpec) -> bool:
         return any(step.kind == 'analyzer' and step.name == 'fbpick' for step in spec.steps)
 
 
+def make_cache_key(
+        file_id: str,
+        key1_value: object,
+        start: int,
+        length: int | None,
+        spec: dict[str, object],
+) -> str:
+        """Return a stable cache key for gather artifacts."""
+        payload = {
+                'f': file_id,
+                'k1': str(key1_value),
+                's': int(start),
+                'n': None if length is None else int(length),
+                'spec': spec,
+        }
+        blob = json.dumps(payload, sort_keys=True, default=str).encode('utf-8')
+        return hashlib.sha1(blob).hexdigest()
+
+
+def load_section_by_indices(
+        reader: SegySectionReader | TraceStoreSectionReader, idx: np.ndarray
+) -> np.ndarray:
+        """Return a ``float32`` section for the provided absolute trace indices."""
+        if idx.size == 0:
+                return np.empty((0, 0), dtype=np.float32)
+
+        get_by_indices = getattr(reader, 'get_section_by_indices', None)
+        if callable(get_by_indices):
+                arr = np.asarray(get_by_indices(idx), dtype=np.float32)
+                return np.ascontiguousarray(arr)
+
+        runs = indices_to_runs(idx)
+        parts: list[np.ndarray] = []
+        for start, end in runs:
+                chunk = np.asarray(reader.get_section_by_absolute(start, end), dtype=np.float32)
+                parts.append(np.ascontiguousarray(chunk))
+        if not parts:
+                return np.empty((0, 0), dtype=np.float32)
+        if len(parts) == 1:
+                return parts[0]
+        stacked = np.vstack(parts)
+        return stacked.astype(np.float32, copy=False)
+
+
 def _maybe_attach_fbpick_offsets(
         meta: dict[str, Any],
         *,
         spec: PipelineSpec,
         reader: SegySectionReader | TraceStoreSectionReader,
-        key1_idx: int,
+        key1_idx: int | None,
         offset_byte: int | None,
         trace_slice: slice | None = None,
+        indices: np.ndarray | None = None,
 ) -> dict[str, Any]:
         """Add offset metadata when the fbpick model expects it."""
         if not USE_FBPICK_OFFSET or offset_byte is None:
                 return meta
         if not _spec_uses_fbpick(spec):
                 return meta
-        get_offsets = getattr(reader, 'get_offsets_for_section', None)
-        if get_offsets is None:
+
+        offsets: np.ndarray | None = None
+        if indices is not None:
+                header = np.asarray(reader.get_header(offset_byte))
+                offsets = header[indices]
+                if trace_slice is not None:
+                        offsets = offsets[trace_slice]
+        elif key1_idx is not None:
+                get_offsets = getattr(reader, 'get_offsets_for_section', None)
+                if get_offsets is None:
+                        return meta
+                offsets = get_offsets(key1_idx, offset_byte)
+                if trace_slice is not None:
+                        offsets = offsets[trace_slice]
+        else:
                 return meta
-        offsets = get_offsets(key1_idx, offset_byte)
-        if trace_slice is not None:
-                offsets = offsets[trace_slice]
+
         offsets = np.ascontiguousarray(offsets, dtype=np.float32)
         if not meta:
                 return {'offsets': offsets}
@@ -136,15 +198,31 @@ def get_section_from_pipeline_tap(
         pipeline_key: str,
         tap_label: str,
         offset_byte: int | None = None,
+        key1_value: object | None = None,
+        start: int = 0,
+        length: int | None = None,
 ) -> np.ndarray:
         """Return the cached pipeline tap output as a ``float32`` array."""
-        base_key = (file_id, key1_idx, key1_byte, pipeline_key, None, offset_byte)
-        payload = pipeline_tap_cache.get((*base_key, tap_label))
+        cache_spec = {
+                'kb1': key1_byte,
+                'pipe': pipeline_key,
+                'offset': offset_byte,
+                'tap': tap_label,
+                'window': None,
+        }
+        cache_key = make_cache_key(
+                file_id,
+                key1_value if key1_value is not None else key1_idx,
+                start,
+                length,
+                cache_spec,
+        )
+        payload = pipeline_tap_cache.get(cache_key)
         if payload is None:
                 msg = (
                         f'Pipeline tap {tap_label!r} for pipeline {pipeline_key!r} '
-                        f'and key1={key1_idx} is not available. '
-                        'Please re-run the pipeline.'
+                        f'and key1={key1_value if key1_value is not None else key1_idx} '
+                        'is not available. Please re-run the pipeline.'
                 )
                 raise PipelineTapNotFoundError(msg)
         return _pipeline_payload_to_array(payload, tap_label=tap_label)
@@ -198,6 +276,8 @@ __all__ = [
         'USE_FBPICK_OFFSET',
         'LRUCache',
         'PipelineTapNotFoundError',
+        'load_section_by_indices',
+        'make_cache_key',
         '_filename_for_file_id',
         '_maybe_attach_fbpick_offsets',
         '_pipeline_payload_to_array',

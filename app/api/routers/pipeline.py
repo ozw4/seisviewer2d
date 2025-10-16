@@ -9,7 +9,7 @@ from typing import Annotated, Any
 from uuid import uuid4
 
 import numpy as np
-from fastapi import APIRouter, Body, HTTPException, Query
+from fastapi import APIRouter, Body, Depends, HTTPException, Query, Response
 from pydantic import BaseModel, Field
 
 from app.api._helpers import (
@@ -18,9 +18,12 @@ from app.api._helpers import (
         _maybe_attach_fbpick_offsets,
         get_reader,
         jobs,
+        load_section_by_indices,
+        make_cache_key,
         pipeline_tap_cache,
 )
 from app.api.schemas import (
+        PipelineSectionQuery,
         PipelineAllResponse,
         PipelineJobStatusResponse,
         PipelineSectionResponse,
@@ -28,8 +31,11 @@ from app.api.schemas import (
 )
 from app.utils.pipeline import apply_pipeline, pipeline_key
 from app.utils.utils import to_builtin
+from app.utils.key_resolver import resolve_indices_slice_on_demand
 
 router = APIRouter()
+
+WARNING_DEPRECATED_IDX = '299 - key1_idx is deprecated; use key1_value'
 
 
 class PipelineAllRequest(BaseModel):
@@ -46,38 +52,47 @@ def _run_pipeline_all_job(job_id: str, req: PipelineAllRequest, pipe_key: str) -
         job = jobs[job_id]
         job['status'] = 'running'
         try:
-                reader = get_reader(req.file_id, req.key1_byte, req.key2_byte)
-                key1_vals = reader.get_key1_values().tolist()
-                total = len(key1_vals) or 1
-                taps = req.taps
-                for idx, key1_val in enumerate(key1_vals):
-                        section = np.array(reader.get_section(int(key1_val)), dtype=np.float32)
-                        dt = 0.002
-                        if hasattr(reader, 'meta'):
-                                dt = getattr(reader, 'meta', {}).get('dt', dt)
-                        meta = {'dt': dt}
-                        meta = _maybe_attach_fbpick_offsets(
-                                meta,
-                                spec=req.spec,
-                                reader=reader,
-                                key1_idx=int(key1_val),
-                                offset_byte=req.offset_byte,  # already forced by caller
-                        )
-                        out = apply_pipeline(section, spec=req.spec, meta=meta, taps=taps)
-                        base_key = (
+        reader = get_reader(req.file_id, req.key1_byte, req.key2_byte)
+        key1_vals = reader.get_key1_values().tolist()
+        total = len(key1_vals) or 1
+        taps = req.taps
+        for idx, key1_val in enumerate(key1_vals):
+                gather_idx = resolve_indices_slice_on_demand(reader, key1_val, 0, 1_000_000_000)
+                section = load_section_by_indices(reader, gather_idx)
+                section = np.ascontiguousarray(section, dtype=np.float32)
+                dt = 0.002
+                if hasattr(reader, 'meta'):
+                        dt = getattr(reader, 'meta', {}).get('dt', dt)
+                meta = {'dt': dt}
+                meta = _maybe_attach_fbpick_offsets(
+                        meta,
+                        spec=req.spec,
+                        reader=reader,
+                        key1_idx=None,
+                        offset_byte=req.offset_byte,  # already forced by caller
+                        indices=gather_idx,
+                )
+                out = apply_pipeline(section, spec=req.spec, meta=meta, taps=taps)
+                for k, v in out.items():
+                        val = v
+                        if req.downsample_quicklook and isinstance(v, np.ndarray):
+                                val = v[::4, ::4]
+                        cache_spec = {
+                                'kb1': req.key1_byte,
+                                'pipe': pipe_key,
+                                'offset': req.offset_byte,
+                                'tap': k,
+                                'window': None,
+                        }
+                        cache_key = make_cache_key(
                                 req.file_id,
-                                int(key1_val),
-                                req.key1_byte,
-                                pipe_key,
-                                None,
-                                req.offset_byte,  # forced
+                                key1_val,
+                                0,
+                                int(gather_idx.size),
+                                cache_spec,
                         )
-                        for k, v in out.items():
-                                val = v
-                                if req.downsample_quicklook and isinstance(v, np.ndarray):
-                                        val = v[::4, ::4]
-                                pipeline_tap_cache.set((*base_key, k), to_builtin(val))
-                        job['progress'] = (idx + 1) / total
+                        pipeline_tap_cache.set(cache_key, to_builtin(val))
+                job['progress'] = (idx + 1) / total
                 job['status'] = 'done'
         except Exception as e:  # noqa: BLE001
                 job['status'] = 'error'
@@ -86,17 +101,23 @@ def _run_pipeline_all_job(job_id: str, req: PipelineAllRequest, pipe_key: str) -
 
 @router.post('/pipeline/section', response_model=PipelineSectionResponse)
 def pipeline_section(
-        file_id: str = Query(...),
-        key1_idx: int = Query(...),
-        key1_byte: int = Query(189),
-        key2_byte: int = Query(193),
-        offset_byte: int | None = Query(None),
+        q: PipelineSectionQuery = Depends(),
+        response: Response,
         spec: PipelineSpec = Body(...),
         taps: list[str] | None = Body(default=None),
         window: dict[str, int | float] | None = Body(default=None),
 ):
-        reader = get_reader(file_id, key1_byte, key2_byte)
-        section = np.array(reader.get_section(key1_idx), dtype=np.float32)
+        reader = get_reader(q.file_id, q.key1_byte, q.key2_byte)
+        effective_length = q.length if q.length is not None else 1_000_000_000
+        try:
+                idx = resolve_indices_slice_on_demand(
+                        reader, q.key1_value, q.start, effective_length
+                )
+        except (KeyError, ValueError) as exc:
+                raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+        section = load_section_by_indices(reader, idx)
+        section = np.ascontiguousarray(section, dtype=np.float32)
         trace_slice: slice | None = None
         window_hash = None
         if window:
@@ -126,37 +147,50 @@ def pipeline_section(
                 meta,
                 spec=spec,
                 reader=reader,
-                key1_idx=key1_idx,
+                key1_idx=None,
                 offset_byte=forced_offset_byte,
                 trace_slice=trace_slice,
+                indices=idx,
         )
         pipe_key = pipeline_key(spec)
         tap_names = taps or []
+        section_len = int(section.shape[0])
+        base_spec = {
+                'kb1': q.key1_byte,
+                'pipe': pipe_key,
+                'offset': forced_offset_byte,
+                'window': window_hash,
+        }
         if tap_names:
-                base_key = (
-                        file_id,
-                        key1_idx,
-                        key1_byte,
-                        pipe_key,
-                        window_hash,
-                        forced_offset_byte,
-                )
                 taps_out: dict[str, Any] = {}
-                misses: list[str] = []
+                misses: list[tuple[str, dict[str, object], str]] = []
                 for tap in tap_names:
-                        payload = pipeline_tap_cache.get((*base_key, tap))
+                        cache_spec = dict(base_spec, tap=tap)
+                        cache_key = make_cache_key(
+                                q.file_id,
+                                q.key1_value,
+                                q.start,
+                                section_len,
+                                cache_spec,
+                        )
+                        payload = pipeline_tap_cache.get(cache_key)
                         if payload is not None:
                                 taps_out[tap] = payload
                         else:
-                                misses.append(tap)
+                                misses.append((tap, cache_spec, cache_key))
                 if misses:
-                        out = apply_pipeline(section, spec=spec, meta=meta, taps=misses)
-                        for k, v in out.items():
-                                val = to_builtin(v)
-                                taps_out[k] = val
-                                pipeline_tap_cache.set((*base_key, k), val)
+                        missing_labels = [tap for tap, _, _ in misses]
+                        out = apply_pipeline(section, spec=spec, meta=meta, taps=missing_labels)
+                        for tap, cache_spec, cache_key in misses:
+                                val = to_builtin(out[tap])
+                                taps_out[tap] = val
+                                pipeline_tap_cache.set(cache_key, val)
+                if q.used_deprecated_idx:
+                        response.headers['Warning'] = WARNING_DEPRECATED_IDX
                 return {'taps': taps_out, 'pipeline_key': pipe_key}
         out = apply_pipeline(section, spec=spec, meta=meta, taps=None)
+        if q.used_deprecated_idx:
+                response.headers['Warning'] = WARNING_DEPRECATED_IDX
         return {'taps': to_builtin(out), 'pipeline_key': pipe_key}
 
 
@@ -221,15 +255,35 @@ def pipeline_job_artifact(
         job = jobs.get(job_id)
         if job is None:
                 raise HTTPException(status_code=404, detail='Job ID not found')
-        base_key = (
-                job.get('file_id'),
-                key1_idx,
-                job.get('key1_byte'),
-                job.get('pipeline_key'),
-                None,
-                job.get('offset_byte'),
+        file_id = job.get('file_id')
+        if not isinstance(file_id, str):
+                raise HTTPException(status_code=404, detail='Job metadata incomplete')
+        key1_byte = int(job.get('key1_byte', 189))
+        pipe_key = job.get('pipeline_key')
+        offset_byte = job.get('offset_byte')
+
+        query = PipelineSectionQuery(
+                file_id=file_id,
+                key1_byte=key1_byte,
+                key1_idx=key1_idx,
         )
-        payload = pipeline_tap_cache.get((*base_key, tap))
+        reader = get_reader(file_id, query.key1_byte, query.key2_byte)
+        gather_idx = resolve_indices_slice_on_demand(reader, query.key1_value, query.start, 1_000_000_000)
+        cache_spec = {
+                'kb1': query.key1_byte,
+                'pipe': pipe_key,
+                'offset': offset_byte,
+                'tap': tap,
+                'window': None,
+        }
+        cache_key = make_cache_key(
+                file_id,
+                query.key1_value,
+                query.start,
+                int(gather_idx.size),
+                cache_spec,
+        )
+        payload = pipeline_tap_cache.get(cache_key)
         if payload is None:
                 raise HTTPException(status_code=404, detail='Artifact not ready')
         return payload

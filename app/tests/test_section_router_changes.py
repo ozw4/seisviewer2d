@@ -2,11 +2,13 @@
 import gzip
 import json
 
-import msgpack
-import numpy as np
 import pytest
 
+np = pytest.importorskip('numpy')
+msgpack = pytest.importorskip('msgpack')
+
 from app.api.routers import section as sec
+from app.api.schemas import SectionBinQuery, SectionQuery, SectionWindowBinQuery
 from app.utils.utils import SegySectionReader, TraceStoreSectionReader
 
 
@@ -226,107 +228,104 @@ def test_get_trace_seq_for_with_tracestore_uses_public_get_header(monkeypatch):
 
 
 def test_get_section_converts_index_to_value_and_returns_json(monkeypatch):
-	# Reader returns specific values and captures the key1_val it received.
-	received = {'val': None}
+        # Reader is irrelevant because we stub load/resolve helpers below.
+        monkeypatch.setattr(sec, 'get_reader', lambda fid, kb1, kb2: object(), raising=True)
 
-	class _StubReader:
-		key1_byte = 189
-		key2_byte = 193
+        calls: dict[str, object] = {}
 
-		def get_key1_values(self):
-			return np.array([10, 20, 30], dtype=np.int32)
+        def _fake_resolve(reader, key1_value, start, length):
+                calls['value'] = key1_value
+                calls['start'] = start
+                return np.array([0, 1], dtype=np.int64)
 
-		def get_section(self, key1_val: int):
-			received['val'] = key1_val
-			return [[1.0, 2.0], [3.0, 4.0]]
+        def _fake_load(reader, idx):
+                calls['idx'] = idx
+                return np.array([[1.0, 2.0], [3.0, 4.0]], dtype=np.float32)
 
-	monkeypatch.setattr(
-		sec, 'get_reader', lambda fid, kb1, kb2: _StubReader(), raising=True
-	)
-	resp = sec.get_section(file_id='f', key1_byte=189, key2_byte=193, key1_idx=1)
-	data = json.loads(resp.body)
-	assert data['section'] == [[1.0, 2.0], [3.0, 4.0]]
-	assert received['val'] == 20  # idx→val conversion happened
+        monkeypatch.setattr(sec, 'resolve_indices_slice_on_demand', _fake_resolve, raising=True)
+        monkeypatch.setattr(sec, 'load_section_by_indices', _fake_load, raising=True)
 
-	# out-of-range index → HTTPException(400)
-	with pytest.raises(Exception) as ei:
-		sec.get_section(file_id='f', key1_byte=189, key2_byte=193, key1_idx=99)
-	# (FastAPI HTTPException) don't overfit type; message check is enough
-	assert 'key1_idx out of range' in str(ei.value)
+        sec.FILE_REGISTRY['f'] = {'key1_values': [10, 20, 30]}
+
+        q = SectionQuery(file_id='f', key1_byte=189, key2_byte=193, key1_idx=1)
+        resp = sec.get_section(q=q)
+        data = json.loads(resp.body)
+        assert data['section'] == [[1.0, 2.0], [3.0, 4.0]]
+        assert calls['value'] == 20
+        np.testing.assert_array_equal(calls['idx'], np.array([0, 1]))
+
+        with pytest.raises(ValueError) as ei:
+                SectionQuery(file_id='f', key1_idx=99)
+        assert 'key1_idx out of range' in str(ei.value)
 
 
 def test_get_section_bin_happy_path(monkeypatch):
-	class _StubReader:
-		key1_byte = 189
-		key2_byte = 193
+        monkeypatch.setattr(sec, 'get_reader', lambda fid, kb1, kb2: object(), raising=True)
+        monkeypatch.setattr(
+                sec,
+                'resolve_indices_slice_on_demand',
+                lambda reader, key1_value, start, length: np.array([0, 1], dtype=np.int64),
+                raising=True,
+        )
+        monkeypatch.setattr(
+                sec,
+                'load_section_by_indices',
+                lambda reader, idx: np.array(
+                        [[0.1, 0.2, 0.3, 0.4], [0.5, 0.6, 0.7, 0.8]], dtype=np.float32
+                ),
+                raising=True,
+        )
+        q = SectionBinQuery(file_id='f', key1_value=111, start=0, length=2)
+        res = sec.get_section_bin(q=q)
+        assert res.headers.get('Content-Encoding') == 'gzip'
 
-		def get_key1_values(self):
-			return np.array([111], dtype=np.int32)
-
-		def get_section(self, key1_val: int):
-			# 2 traces x 4 samples
-			assert key1_val == 111
-			return np.array(
-				[[0.1, 0.2, 0.3, 0.4], [0.5, 0.6, 0.7, 0.8]], dtype=np.float32
-			)
-
-	monkeypatch.setattr(
-		sec, 'get_reader', lambda fid, kb1, kb2: _StubReader(), raising=True
-	)
-	res = sec.get_section_bin(file_id='f', key1_idx=0, key1_byte=189, key2_byte=193)
-	assert res.headers.get('Content-Encoding') == 'gzip'
-
-	payload = msgpack.unpackb(gzip.decompress(res.body))
-	assert (
-		'scale' in payload
-		and 'shape' in payload
-		and 'data' in payload
-		and 'dt' in payload
-	)
-	# data length equals product of shape (int8 bytes)
-	h, w = payload['shape']
-	assert len(payload['data']) == (h * w)
+        payload = msgpack.unpackb(gzip.decompress(res.body))
+        assert (
+                'scale' in payload
+                and 'shape' in payload
+                and 'data' in payload
+                and 'dt' in payload
+        )
+        # data length equals product of shape (int8 bytes)
+        h, w = payload['shape']
+        assert len(payload['data']) == (h * w)
 
 
 def test_get_section_window_bin_happy_path(monkeypatch):
-	class _StubReader:
-		key1_byte = 189
-		key2_byte = 193
+        monkeypatch.setattr(sec, 'get_reader', lambda fid, kb1, kb2: object(), raising=True)
+        monkeypatch.setattr(
+                sec,
+                'resolve_indices_slice_on_demand',
+                lambda reader, key1_value, start, length: np.array([0, 1, 2], dtype=np.int64),
+                raising=True,
+        )
+        monkeypatch.setattr(
+                sec,
+                'load_section_by_indices',
+                lambda reader, idx: np.array(
+                        [[0, 1, 2, 3, 4], [5, 6, 7, 8, 9], [1, 2, 3, 4, 5]], dtype=np.float32
+                ),
+                raising=True,
+        )
 
-		def get_key1_values(self):
-			return np.array([7], dtype=np.int32)
-
-		def get_section(self, key1_val: int):
-			# 3 traces x 5 samples
-			return np.array(
-				[[0, 1, 2, 3, 4], [5, 6, 7, 8, 9], [1, 2, 3, 4, 5]], dtype=np.float32
-			)
-
-	monkeypatch.setattr(
-		sec, 'get_reader', lambda fid, kb1, kb2: _StubReader(), raising=True
-	)
-	res = sec.get_section_window_bin(
-		file_id='f',
-		key1_idx=0,
-		key1_byte=189,
-		key2_byte=193,
-		offset_byte=None,
-		x0=0,
-		x1=2,
-		y0=1,
-		y1=3,
-		step_x=1,
-		step_y=1,
-		pipeline_key=None,
-		tap_label=None,
-	)
-	assert res.headers.get('Content-Encoding') == 'gzip'
-	payload = msgpack.unpackb(gzip.decompress(res.body))
-	assert (
-		'scale' in payload
-		and 'shape' in payload
-		and 'data' in payload
-		and 'dt' in payload
-	)
-	h, w = payload['shape']
-	assert len(payload['data']) == (h * w)
+        q = SectionWindowBinQuery(
+                file_id='f',
+                key1_value=7,
+                start=0,
+                length=3,
+                y0=1,
+                y1=3,
+                step_x=1,
+                step_y=1,
+        )
+        res = sec.get_section_window_bin(q=q)
+        assert res.headers.get('Content-Encoding') == 'gzip'
+        payload = msgpack.unpackb(gzip.decompress(res.body))
+        assert (
+                'scale' in payload
+                and 'shape' in payload
+                and 'data' in payload
+                and 'dt' in payload
+        )
+        h, w = payload['shape']
+        assert len(payload['data']) == (h * w)

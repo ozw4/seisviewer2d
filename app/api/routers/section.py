@@ -8,8 +8,8 @@ from typing import TYPE_CHECKING, Any
 
 import msgpack
 import numpy as np
-from fastapi import APIRouter, HTTPException, Query
-from fastapi.responses import JSONResponse, Response
+from fastapi import APIRouter, Depends, HTTPException, Query, Response
+from fastapi.responses import JSONResponse
 
 if TYPE_CHECKING:
 	from numpy.typing import NDArray
@@ -17,18 +17,38 @@ else:  # pragma: no cover - runtime alias for type checkers
 	NDArray = np.ndarray
 
 from app.api._helpers import (
-	EXPECTED_SECTION_NDIM,
-	OFFSET_BYTE_FIXED,
-	USE_FBPICK_OFFSET,
-	PipelineTapNotFoundError,
-	get_reader,
-	get_section_from_pipeline_tap,
-	window_section_cache,
+        EXPECTED_SECTION_NDIM,
+        OFFSET_BYTE_FIXED,
+        USE_FBPICK_OFFSET,
+        PipelineTapNotFoundError,
+        get_reader,
+        get_section_from_pipeline_tap,
+        load_section_by_indices,
+        make_cache_key,
+        window_section_cache,
 )
+from app.api.schemas import SectionBinQuery, SectionQuery, SectionWindowBinQuery
+from app.utils.key_resolver import resolve_indices_slice_on_demand
 from app.utils.segy_meta import FILE_REGISTRY, get_dt_for_file
 from app.utils.utils import SegySectionReader, TraceStoreSectionReader, quantize_float32
 
 router = APIRouter()
+
+
+WARNING_DEPRECATED_IDX = '299 - key1_idx is deprecated; use key1_value'
+
+
+def _resolve_indices_for_request(
+        reader: SegySectionReader | TraceStoreSectionReader,
+        key1_value: object,
+        start: int,
+        length: int | None,
+) -> np.ndarray:
+        effective_length = length if length is not None else 1_000_000_000
+        try:
+                return resolve_indices_slice_on_demand(reader, key1_value, start, effective_length)
+        except (KeyError, ValueError) as exc:
+                raise HTTPException(status_code=422, detail=str(exc)) from exc
 
 
 def _resolve_reader(entry: object) -> SegySectionReader | TraceStoreSectionReader:
@@ -161,146 +181,152 @@ def get_key1_values(
 
 @router.get('/get_section')
 def get_section(
-	file_id: str = Query(...),
-	key1_byte: int = Query(189),
-	key2_byte: int = Query(193),
-	key1_idx: int = Query(...),
+        q: SectionQuery = Depends(),
 ) -> JSONResponse:
-	"""Return the section for the ``key1_idx`` trace grouping."""
-	try:
-		reader = get_reader(file_id, key1_byte, key2_byte)
-		key1_val = _key1_value_for_index(reader, key1_idx)
-		section = reader.get_section(key1_val)
-		payload = section.tolist() if isinstance(section, np.ndarray) else section
-		return JSONResponse(content={'section': payload})
-	except IndexError as exc:
-		raise HTTPException(status_code=400, detail=str(exc)) from exc
-	except Exception as exc:
-		raise HTTPException(status_code=500, detail=str(exc)) from exc
+        """Return the section for the requested key1 gather."""
+        reader = get_reader(q.file_id, q.key1_byte, q.key2_byte)
+        idx = _resolve_indices_for_request(reader, q.key1_value, q.start, q.length)
+        section = load_section_by_indices(reader, idx)
+        if section.ndim != EXPECTED_SECTION_NDIM:
+                raise HTTPException(status_code=500, detail='Section data must be 2D')
+        payload = section.tolist()
+        resp = JSONResponse(content={'section': payload})
+        if q.used_deprecated_idx:
+                resp.headers['Warning'] = WARNING_DEPRECATED_IDX
+        return resp
 
 
 @router.get('/get_section_bin')
 def get_section_bin(
-	file_id: str = Query(...),
-	key1_idx: int = Query(...),
-	key1_byte: int = Query(189),
-	key2_byte: int = Query(193),
+        q: SectionBinQuery = Depends(),
 ) -> Response:
-	"""Return a quantized, binary section payload."""
-	try:
-		reader = get_reader(file_id, key1_byte, key2_byte)
-		key1_val = _key1_value_for_index(reader, key1_idx)
-		section = np.array(reader.get_section(key1_val), dtype=np.float32)
-		scale, q = quantize_float32(section)
-		obj = {
-			'scale': scale,
-			'shape': q.shape,
-			'data': q.tobytes(),
-			'dt': get_dt_for_file(file_id),
-		}
-		payload = msgpack.packb(obj)
-		return Response(
-			gzip.compress(payload),
-			media_type='application/octet-stream',
-			headers={'Content-Encoding': 'gzip'},
-		)
-	except IndexError as exc:
-		raise HTTPException(status_code=400, detail=str(exc)) from exc
-	except Exception as exc:
-		raise HTTPException(status_code=500, detail=str(exc)) from exc
+        """Return a quantized, binary section payload."""
+        reader = get_reader(q.file_id, q.key1_byte, q.key2_byte)
+        idx = _resolve_indices_for_request(reader, q.key1_value, q.start, q.length)
+        section = load_section_by_indices(reader, idx)
+        if section.ndim != EXPECTED_SECTION_NDIM:
+                raise HTTPException(status_code=500, detail='Section data must be 2D')
+        section = np.ascontiguousarray(section, dtype=np.float32)
+        scale, q_arr = quantize_float32(section)
+        obj = {
+                'scale': scale,
+                'shape': q_arr.shape,
+                'data': q_arr.tobytes(),
+                'dt': get_dt_for_file(q.file_id),
+        }
+        payload = msgpack.packb(obj)
+        resp = Response(
+                gzip.compress(payload),
+                media_type='application/octet-stream',
+                headers={'Content-Encoding': 'gzip'},
+        )
+        if q.used_deprecated_idx:
+                resp.headers['Warning'] = WARNING_DEPRECATED_IDX
+        return resp
 
 
 @router.get('/get_section_window_bin')
 def get_section_window_bin(
-	file_id: str = Query(...),
-	key1_idx: int = Query(...),
-	key1_byte: int = Query(189),
-	key2_byte: int = Query(193),
-	offset_byte: int | None = Query(None),
-	x0: int = Query(...),
-	x1: int = Query(...),
-	y0: int = Query(...),
-	y1: int = Query(...),
-	step_x: int = Query(1, ge=1),
-	step_y: int = Query(1, ge=1),
-	pipeline_key: str | None = Query(None),
-	tap_label: str | None = Query(None),
+        q: SectionWindowBinQuery = Depends(),
 ) -> Response:
-	"""Return a quantized window of a section, optionally via a pipeline tap."""
-	forced_offset_byte = OFFSET_BYTE_FIXED if USE_FBPICK_OFFSET else offset_byte
+        """Return a quantized window of a section, optionally via a pipeline tap."""
+        forced_offset_byte = OFFSET_BYTE_FIXED if USE_FBPICK_OFFSET else q.offset_byte
 
-	cache_key = (
-		file_id,
-		key1_idx,
-		key1_byte,
-		key2_byte,
-		forced_offset_byte,
-		x0,
-		x1,
-		y0,
-		y1,
-		step_x,
-		step_y,
-		pipeline_key,
-		tap_label,
-	)
+        reader = get_reader(q.file_id, q.key1_byte, q.key2_byte)
+        idx = _resolve_indices_for_request(reader, q.key1_value, q.start, q.length)
+        trace_count = int(idx.size)
 
-	cached_payload = window_section_cache.get(cache_key)
-	if cached_payload is not None:
-		return Response(
-			cached_payload,
-			media_type='application/octet-stream',
-			headers={'Content-Encoding': 'gzip'},
-		)
+        cache_spec = {
+                'kb1': q.key1_byte,
+                'k2b': q.key2_byte,
+                'offset': forced_offset_byte,
+                'y0': q.y0,
+                'y1': q.y1,
+                'sx': q.step_x,
+                'sy': q.step_y,
+                'pipe': q.pipeline_key,
+                'tap': q.tap_label,
+        }
+        cache_key = make_cache_key(q.file_id, q.key1_value, q.start, trace_count, cache_spec)
 
-	try:
-		if pipeline_key and tap_label:
-			section = get_section_from_pipeline_tap(
-				file_id=file_id,
-				key1_idx=key1_idx,
-				key1_byte=key1_byte,
-				pipeline_key=pipeline_key,
-				tap_label=tap_label,
-				offset_byte=forced_offset_byte,
-			)
-		else:
-			reader = get_reader(file_id, key1_byte, key2_byte)
-			key1_val = _key1_value_for_index(reader, key1_idx)
-			section = np.array(reader.get_section(key1_val), dtype=np.float32)
-	except IndexError as exc:
-		raise HTTPException(status_code=400, detail=str(exc)) from exc
-	except PipelineTapNotFoundError as exc:
-		raise HTTPException(status_code=409, detail=str(exc)) from exc
+        cached_payload = window_section_cache.get(cache_key)
+        if cached_payload is not None:
+                resp = Response(
+                        cached_payload,
+                        media_type='application/octet-stream',
+                        headers={'Content-Encoding': 'gzip'},
+                )
+                if q.used_deprecated_idx:
+                        resp.headers['Warning'] = WARNING_DEPRECATED_IDX
+                return resp
 
-	section = np.ascontiguousarray(section, dtype=np.float32)
-	if section.ndim != EXPECTED_SECTION_NDIM:
-		raise HTTPException(status_code=500, detail='Section data must be 2D')
+        try:
+                if q.pipeline_key and q.tap_label:
+                        section = get_section_from_pipeline_tap(
+                                file_id=q.file_id,
+                                key1_idx=q.key1_idx,
+                                key1_byte=q.key1_byte,
+                                pipeline_key=q.pipeline_key,
+                                tap_label=q.tap_label,
+                                offset_byte=forced_offset_byte,
+                                key1_value=q.key1_value,
+                                start=q.start,
+                                length=trace_count if trace_count else None,
+                        )
+                        section = np.asarray(section, dtype=np.float32)
+                        if section.ndim != EXPECTED_SECTION_NDIM:
+                                raise HTTPException(status_code=500, detail='Section data must be 2D')
+                        available = section.shape[0]
+                        window_end = q.start + trace_count
+                        if available == trace_count:
+                                pass
+                        elif available >= window_end:
+                                section = section[q.start:window_end]
+                        else:
+                                raise HTTPException(
+                                        status_code=422,
+                                        detail='Pipeline tap output shorter than requested window',
+                                )
+                else:
+                        section = load_section_by_indices(reader, idx)
+        except PipelineTapNotFoundError as exc:
+                raise HTTPException(status_code=409, detail=str(exc)) from exc
 
-	n_traces, n_samples = section.shape
-	if not (0 <= x0 <= x1 < n_traces):
-		raise HTTPException(status_code=400, detail='Trace range out of bounds')
-	if not (0 <= y0 <= y1 < n_samples):
-		raise HTTPException(status_code=400, detail='Sample range out of bounds')
-	if step_x < 1 or step_y < 1:
-		raise HTTPException(status_code=400, detail='Steps must be >= 1')
+        section = np.ascontiguousarray(section, dtype=np.float32)
+        if section.ndim != EXPECTED_SECTION_NDIM:
+                raise HTTPException(status_code=500, detail='Section data must be 2D')
 
-	sub = section[x0 : x1 + 1 : step_x, y0 : y1 + 1 : step_y]
-	if sub.size == 0:
-		raise HTTPException(status_code=400, detail='Requested window is empty')
+        n_traces, n_samples = section.shape
+        if n_traces == 0:
+                raise HTTPException(status_code=422, detail='Requested window is empty')
 
-	window_view = np.ascontiguousarray(sub.T, dtype=np.float32)
-	scale, q = quantize_float32(window_view)
-	obj: dict[str, Any] = {
-		'scale': scale,
-		'shape': window_view.shape,
-		'data': q.tobytes(),
-		'dt': get_dt_for_file(file_id),
-	}
-	payload = msgpack.packb(obj)
-	compressed = gzip.compress(payload)
-	window_section_cache.set(cache_key, compressed)
-	return Response(
-		compressed,
-		media_type='application/octet-stream',
-		headers={'Content-Encoding': 'gzip'},
-	)
+        y0 = q.y0
+        y1 = (n_samples - 1) if q.y1 is None else q.y1
+        if not (0 <= y0 <= y1 < n_samples):
+                raise HTTPException(status_code=400, detail='Sample range out of bounds')
+
+        traces = section[:: q.step_x]
+        window = traces[:, y0 : y1 + 1 : q.step_y]
+        if window.size == 0:
+                raise HTTPException(status_code=400, detail='Requested window is empty')
+
+        window_view = np.ascontiguousarray(window.T, dtype=np.float32)
+        scale, q_arr = quantize_float32(window_view)
+        obj: dict[str, Any] = {
+                'scale': scale,
+                'shape': window_view.shape,
+                'data': q_arr.tobytes(),
+                'dt': get_dt_for_file(q.file_id),
+        }
+        payload = msgpack.packb(obj)
+        compressed = gzip.compress(payload)
+        window_section_cache.set(cache_key, compressed)
+
+        resp = Response(
+                compressed,
+                media_type='application/octet-stream',
+                headers={'Content-Encoding': 'gzip'},
+        )
+        if q.used_deprecated_idx:
+                resp.headers['Warning'] = WARNING_DEPRECATED_IDX
+        return resp

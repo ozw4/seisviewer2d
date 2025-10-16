@@ -9,7 +9,7 @@ from uuid import uuid4
 
 import msgpack
 import numpy as np
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, HTTPException, Query, Response as FastAPIResponse
 from fastapi.responses import Response
 
 from app.api._helpers import (
@@ -21,6 +21,8 @@ from app.api._helpers import (
         get_reader,
         get_section_from_pipeline_tap,
         jobs,
+        load_section_by_indices,
+        make_cache_key,
 )
 from app.api.schemas import FbpickRequest, PipelineSpec
 from app.utils.fbpick import _MODEL_PATH as FBPICK_MODEL_PATH
@@ -30,8 +32,11 @@ from app.utils.utils import (
         TraceStoreSectionReader,
         quantize_float32,
 )
+from app.utils.key_resolver import resolve_indices_slice_on_demand
 
 router = APIRouter()
+
+WARNING_DEPRECATED_IDX = '299 - key1_idx is deprecated; use key1_value'
 
 
 def _run_fbpick_job(job_id: str, req: FbpickRequest) -> None:
@@ -42,9 +47,15 @@ def _run_fbpick_job(job_id: str, req: FbpickRequest) -> None:
 
                 cache_key = job['cache_key']
                 section_override = job.pop('section_override', None)
-                reader: SegySectionReader | TraceStoreSectionReader | None = None
-                if USE_FBPICK_OFFSET and forced_offset_byte is not None:
-                        reader = get_reader(req.file_id, req.key1_byte, req.key2_byte)
+                reader: SegySectionReader | TraceStoreSectionReader | None = get_reader(
+                        req.file_id, req.key1_byte, req.key2_byte
+                )
+                effective_length = req.length if req.length is not None else 1_000_000_000
+                gather_idx = resolve_indices_slice_on_demand(
+                        reader, req.key1_value, req.start, effective_length
+                )
+                if gather_idx.size == 0:
+                        raise ValueError('Requested gather has no traces')
                 if section_override is not None:
                         section = np.asarray(section_override, dtype=np.float32)
                 elif req.pipeline_key and req.tap_label:
@@ -55,12 +66,21 @@ def _run_fbpick_job(job_id: str, req: FbpickRequest) -> None:
                                 pipeline_key=req.pipeline_key,
                                 tap_label=req.tap_label,
                                 offset_byte=forced_offset_byte,
+                                key1_value=req.key1_value,
+                                start=req.start,
+                                length=int(gather_idx.size),
                         )
                         section = np.asarray(section, dtype=np.float32)
+                        available = section.shape[0]
+                        window_end = req.start + int(gather_idx.size)
+                        if available == int(gather_idx.size):
+                                pass
+                        elif available >= window_end:
+                                section = section[req.start:window_end]
+                        else:
+                                raise ValueError('Pipeline tap shorter than requested gather window')
                 else:
-                        if reader is None:
-                                reader = get_reader(req.file_id, req.key1_byte, req.key2_byte)
-                        section = np.asarray(reader.get_section(req.key1_idx), dtype=np.float32)
+                        section = load_section_by_indices(reader, gather_idx)
                 section = np.ascontiguousarray(section, dtype=np.float32)
                 spec = PipelineSpec(
                         steps=[
@@ -81,8 +101,9 @@ def _run_fbpick_job(job_id: str, req: FbpickRequest) -> None:
                                 meta,
                                 spec=spec,
                                 reader=reader,
-                                key1_idx=req.key1_idx,
+                                key1_idx=None,
                                 offset_byte=forced_offset_byte,
+                                indices=gather_idx,
                         )
                 out = apply_pipeline(section, spec=spec, meta=meta, taps=None)
                 prob = out['fbpick']['prob']
@@ -102,7 +123,7 @@ def _run_fbpick_job(job_id: str, req: FbpickRequest) -> None:
 
 
 @router.post('/fbpick_section_bin')
-def fbpick_section_bin(req: FbpickRequest):
+def fbpick_section_bin(req: FbpickRequest, response: FastAPIResponse):
         if not FBPICK_MODEL_PATH.exists():
                 raise HTTPException(status_code=409, detail='FB pick model weights not found')
 
@@ -110,19 +131,34 @@ def fbpick_section_bin(req: FbpickRequest):
 
         pipeline_key = req.pipeline_key
         tap_label = req.tap_label
-        cache_key = (
+        reader = get_reader(req.file_id, req.key1_byte, req.key2_byte)
+        effective_length = req.length if req.length is not None else 1_000_000_000
+        try:
+                gather_idx = resolve_indices_slice_on_demand(
+                        reader, req.key1_value, req.start, effective_length
+                )
+        except (KeyError, ValueError) as exc:
+                raise HTTPException(status_code=422, detail=str(exc)) from exc
+        if gather_idx.size == 0:
+                raise HTTPException(status_code=422, detail='Requested gather has no traces')
+
+        cache_spec = {
+                'kb1': req.key1_byte,
+                'k2b': req.key2_byte,
+                'offset': forced_offset_byte,
+                'tile': (req.tile_h, req.tile_w),
+                'overlap': req.overlap,
+                'amp': bool(req.amp),
+                'pipe': pipeline_key,
+                'tap': tap_label,
+                'kind': 'fbpick',
+        }
+        cache_key = make_cache_key(
                 req.file_id,
-                req.key1_idx,
-                req.key1_byte,
-                req.key2_byte,
-                forced_offset_byte,
-                req.tile_h,
-                req.tile_w,
-                req.overlap,
-                bool(req.amp),
-                pipeline_key,
-                tap_label,
-                'fbpick',
+                req.key1_value,
+                req.start,
+                int(gather_idx.size),
+                cache_spec,
         )
         section_override: np.ndarray | None = None
         wants_pipeline = bool(pipeline_key and tap_label)
@@ -135,7 +171,18 @@ def fbpick_section_bin(req: FbpickRequest):
                                 pipeline_key=pipeline_key,
                                 tap_label=tap_label,
                                 offset_byte=forced_offset_byte,
+                                key1_value=req.key1_value,
+                                start=req.start,
+                                length=int(gather_idx.size),
                         )
+                        available = section_override.shape[0]
+                        window_end = req.start + int(gather_idx.size)
+                        if available == int(gather_idx.size):
+                                pass
+                        elif available >= window_end:
+                                section_override = section_override[req.start:window_end]
+                        else:
+                                raise ValueError('Pipeline tap shorter than requested gather window')
                 except PipelineTapNotFoundError as exc:
                         raise HTTPException(status_code=409, detail=str(exc)) from exc
                 except (TypeError, ValueError) as exc:
@@ -154,6 +201,8 @@ def fbpick_section_bin(req: FbpickRequest):
                 threading.Thread(
                         target=_run_fbpick_job, args=(job_id, req2), daemon=True
                 ).start()
+        if req.used_deprecated_idx:
+                response.headers['Warning'] = WARNING_DEPRECATED_IDX
         return {'job_id': job_id, 'status': jobs[job_id]['status']}
 
 

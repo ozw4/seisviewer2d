@@ -51,6 +51,7 @@ class SegySectionReader:
         self._trace_seq_cache: dict[int, np.ndarray] = {}
         self._trace_seq_disp_cache: dict[int, np.ndarray] = {}
         self.ntraces: int = 0
+        self._nsamples: int = 0
         self._initialize_metadata()
 
     def _initialize_metadata(self) -> None:
@@ -58,6 +59,8 @@ class SegySectionReader:
             f.mmap()
             self.key1s = f.attributes(self.key1_byte)[:]
             self.key2s = f.attributes(self.key2_byte)[:]
+            first_trace = f.trace[0]
+            self._nsamples = int(first_trace.size)
         self.unique_key1 = np.unique(self.key1s)
         self.ntraces = int(len(self.key1s))
 
@@ -118,6 +121,20 @@ class SegySectionReader:
         self.section_cache[key1_val] = section
         return section
 
+    def get_section_by_absolute(self, start: int, end: int) -> np.ndarray:
+        """Return traces ``[start:end)`` as a ``float32`` array."""
+        if start < 0 or end < start:
+            raise ValueError("Invalid absolute trace range")
+        if end > self.ntraces:
+            raise ValueError("Absolute trace range exceeds available traces")
+        if start == end:
+            return np.empty((0, self._nsamples), dtype=np.float32)
+
+        with segyio.open(self.path, "r", ignore_geometry=True) as f:
+            f.mmap()
+            traces = np.array([f.trace[idx] for idx in range(start, end)], dtype=np.float32)
+        return np.ascontiguousarray(traces)
+
     def get_offsets_for_section(self, key1_val: int, offset_byte: int) -> np.ndarray:
         """Return ``(W,)`` float32 offsets aligned with :meth:`get_section`."""
         sorted_indices = self.get_trace_seq_for_section(key1_val, align_to="display")
@@ -152,6 +169,8 @@ class TraceStoreSectionReader:
         self.meta = json.loads(meta_path.read_text())
         self.traces = np.load(self.store_dir / "traces.npy", mmap_mode="r")
         self.section_cache: dict[int, list[list[float]]] = {}
+        self._ntraces = int(self.traces.shape[0])
+        self._nsamples = int(self.traces.shape[1]) if self.traces.ndim >= 2 else 0
 
     def _header_path(self, byte: int) -> Path:
         return self.store_dir / f"headers_byte_{byte}.npy"
@@ -222,3 +241,14 @@ class TraceStoreSectionReader:
         """Warm caches for the frequently accessed headers."""
         self.get_header(self.key1_byte)
         self.get_header(self.key2_byte)
+
+    def get_section_by_absolute(self, start: int, end: int) -> np.ndarray:
+        """Return traces ``[start:end)`` from the cached trace store."""
+        if start < 0 or end < start:
+            raise ValueError("Invalid absolute trace range")
+        if end > self._ntraces:
+            raise ValueError("Absolute trace range exceeds available traces")
+        if start == end:
+            return np.empty((0, self._nsamples), dtype=np.float32)
+        window = self.traces[start:end]
+        return np.asarray(window, dtype=np.float32)
