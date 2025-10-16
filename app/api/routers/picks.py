@@ -32,21 +32,23 @@ class PickPostModel(BaseModel):
     file_id: str
     trace: int
     time: float
-    key1_idx: int
+    # The actual key1 header value specifying the section.
+    key1: int
     key1_byte: int
 
 
 @router.get("/picks")
 async def get_picks(
     file_id: str = Query(...),
-    key1_idx: int = Query(...),
+    key1: int = Query(...),
     key1_byte: int = Query(...),
 ) -> dict[str, list[dict[str, int | float]]]:
     fname = _filename_for_file_id(file_id)
     if not fname:
         raise HTTPException(404, "file_id not found")
     ntr = get_ntraces_for(file_id)
-    sec_map = get_trace_seq_for(file_id, key1_idx, key1_byte)
+    # Use the header value directly when computing the trace sequence
+    sec_map = get_trace_seq_for(file_id, key1, key1_byte)
     picks = await asyncio.to_thread(to_pairs_for_section, fname, ntr, sec_map)
     return {"picks": picks}
 
@@ -57,7 +59,8 @@ async def post_pick(m: PickPostModel) -> dict[str, str]:
     if not fname:
         raise HTTPException(404, "file_id not found")
     ntr = get_ntraces_for(m.file_id)
-    sec_map = get_trace_seq_for(m.file_id, m.key1_idx, m.key1_byte)
+    # Use the header value directly
+    sec_map = get_trace_seq_for(m.file_id, m.key1, m.key1_byte)
     if not (0 <= m.trace < sec_map.size):
         raise HTTPException(400, "trace out of range for section")
     trace_seq = int(sec_map[m.trace])
@@ -88,8 +91,9 @@ async def export_manual_picks_all_npy(
     ntraces = get_ntraces_for(file_id)
     sec_maps: list[np.ndarray] = []
     counts: list[int] = []
-    for idx in range(len(key1_list)):
-        sec_map = get_trace_seq_for(file_id, idx, key1_byte)
+    # Compute trace sequence arrays for each key1 header value.
+    for key1_val in key1_list:
+        sec_map = get_trace_seq_for(file_id, key1_val, key1_byte)
         sec_maps.append(sec_map)
         counts.append(int(sec_map.size))
 
@@ -169,14 +173,15 @@ async def export_manual_picks_all_npy(
 async def delete_pick(
     file_id: str = Query(...),
     trace: int | None = Query(None),
-    key1_idx: int = Query(...),
+    key1: int = Query(...),
     key1_byte: int = Query(...),
 ) -> dict[str, str]:
     fname = _filename_for_file_id(file_id)
     if not fname:
         raise HTTPException(404, "file_id not found")
     ntr = get_ntraces_for(file_id)
-    sec_map = get_trace_seq_for(file_id, key1_idx, key1_byte)
+    # Use the header value directly
+    sec_map = get_trace_seq_for(file_id, key1, key1_byte)
 
     if trace is None:
         await asyncio.to_thread(clear_section, fname, ntr, sec_map)

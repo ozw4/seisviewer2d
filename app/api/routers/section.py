@@ -61,13 +61,20 @@ def _key1_values_array(
 
 
 def _key1_value_for_index(
-	reader: SegySectionReader | TraceStoreSectionReader, key1_idx: int
+        reader: SegySectionReader | TraceStoreSectionReader, key1_idx: int
 ) -> int:
-	vals = _key1_values_array(reader)
-	if key1_idx < 0 or key1_idx >= vals.size:
-		msg = 'key1_idx out of range'
-		raise IndexError(msg)
-	return int(vals[key1_idx])
+        """Backward-compatible helper to return the key1 header value for an index.
+
+        This function remains for internal use by the UI slider which still
+        operates on indices.  It converts an index into the corresponding
+        header value by looking up the array returned from ``get_key1_values``.
+        If ``key1_idx`` is out of range an ``IndexError`` is raised.
+        """
+        vals = _key1_values_array(reader)
+        if key1_idx < 0 or key1_idx >= vals.size:
+                msg = 'key1_idx out of range'
+                raise IndexError(msg)
+        return int(vals[key1_idx])
 
 
 def get_ntraces_for(
@@ -108,42 +115,47 @@ def get_ntraces_for(
 	raise AttributeError('Unable to determine number of traces for file')
 
 
-def get_trace_seq_for(file_id: str, key1_idx: int, key1_byte: int) -> NDArray[np.int64]:
-	"""Return display-aligned trace ordering for ``key1_idx`` of ``file_id``.
-	Avoids touching FILE_REGISTRY.reader directly; always goes through get_reader (lazy-safe).
-	"""
-	# Try to pick a sensible key2_byte: use configured one if available, else default 193.
-	key2_byte = 193
-	ent = FILE_REGISTRY.get(file_id)
-	if ent is None:
-		raise KeyError(f'file_id not found: {file_id}')
-	maybe_reader = getattr(ent, 'reader', None)
-	if maybe_reader is None and isinstance(ent, dict):
-		maybe_reader = ent.get('reader')
-	if maybe_reader is not None:
-		key2_byte = int(getattr(maybe_reader, 'key2_byte', 193))
+def get_trace_seq_for(file_id: str, key1: int, key1_byte: int) -> NDArray[np.int64]:
+        """Return display-aligned trace ordering for the given ``key1`` value of ``file_id``.
 
-	reader = get_reader(file_id, int(key1_byte), key2_byte)
+        This helper accepts the actual key1 header value rather than an index into
+        the available values.  It still goes through :func:`get_reader` to ensure lazy
+        loading.  When the underlying reader provides a ``get_trace_seq_for_section``
+        method, it is used directly; otherwise the trace indices are computed by
+        matching header values and sorting by key2.
+        """
+        # Try to pick a sensible key2_byte: use configured one if available, else default 193.
+        key2_byte = 193
+        ent = FILE_REGISTRY.get(file_id)
+        if ent is None:
+                raise KeyError(f'file_id not found: {file_id}')
+        maybe_reader = getattr(ent, 'reader', None)
+        if maybe_reader is None and isinstance(ent, dict):
+                maybe_reader = ent.get('reader')
+        if maybe_reader is not None:
+                key2_byte = int(getattr(maybe_reader, 'key2_byte', 193))
 
-	key1_val = _key1_value_for_index(reader, key1_idx)
+        reader = get_reader(file_id, int(key1_byte), key2_byte)
 
-	get_trace_seq = getattr(reader, 'get_trace_seq_for_section', None)
-	if callable(get_trace_seq):
-		seq = get_trace_seq(key1_val, align_to='display')
-		return np.asarray(seq, dtype=np.int64)
+        key1_val = int(key1)
 
-	if isinstance(reader, TraceStoreSectionReader):
-		key1s = np.asarray(reader.get_header(reader.key1_byte), dtype=np.int64)
-		indices = np.flatnonzero(key1s == key1_val)
-		if indices.size == 0:
-			msg = f'Key1 value {key1_val} not found'
-			raise ValueError(msg)
-		key2s = np.asarray(reader.get_header(reader.key2_byte)[indices])
-		order = np.argsort(key2s, kind='stable')
-		return np.asarray(indices[order], dtype=np.int64)
+        get_trace_seq = getattr(reader, 'get_trace_seq_for_section', None)
+        if callable(get_trace_seq):
+                seq = get_trace_seq(key1_val, align_to='display')
+                return np.asarray(seq, dtype=np.int64)
 
-	msg = 'Reader cannot provide trace sequence information'
-	raise AttributeError(msg)
+        if isinstance(reader, TraceStoreSectionReader):
+                key1s = np.asarray(reader.get_header(reader.key1_byte), dtype=np.int64)
+                indices = np.flatnonzero(key1s == key1_val)
+                if indices.size == 0:
+                        msg = f'Key1 value {key1_val} not found'
+                        raise ValueError(msg)
+                key2s = np.asarray(reader.get_header(reader.key2_byte)[indices])
+                order = np.argsort(key2s, kind='stable')
+                return np.asarray(indices[order], dtype=np.int64)
+
+        msg = 'Reader cannot provide trace sequence information'
+        raise AttributeError(msg)
 
 
 @router.get('/get_key1_values')
@@ -161,146 +173,147 @@ def get_key1_values(
 
 @router.get('/get_section')
 def get_section(
-	file_id: str = Query(...),
-	key1_byte: int = Query(189),
-	key2_byte: int = Query(193),
-	key1_idx: int = Query(...),
+        file_id: str = Query(...),
+        key1_byte: int = Query(189),
+        key2_byte: int = Query(193),
+        key1: int = Query(...),
 ) -> JSONResponse:
-	"""Return the section for the ``key1_idx`` trace grouping."""
-	try:
-		reader = get_reader(file_id, key1_byte, key2_byte)
-		key1_val = _key1_value_for_index(reader, key1_idx)
-		section = reader.get_section(key1_val)
-		payload = section.tolist() if isinstance(section, np.ndarray) else section
-		return JSONResponse(content={'section': payload})
-	except IndexError as exc:
-		raise HTTPException(status_code=400, detail=str(exc)) from exc
-	except Exception as exc:
-		raise HTTPException(status_code=500, detail=str(exc)) from exc
+        """Return the section for the provided ``key1`` value."""
+        try:
+                reader = get_reader(file_id, key1_byte, key2_byte)
+                section = reader.get_section(int(key1))
+                payload = section.tolist() if isinstance(section, np.ndarray) else section
+                return JSONResponse(content={'section': payload})
+        except (IndexError, ValueError) as exc:
+                # Return a 400 when the requested key1 value does not exist or is out of range
+                raise HTTPException(status_code=400, detail=str(exc)) from exc
+        except Exception as exc:
+                # Unexpected errors propagate as 500
+                raise HTTPException(status_code=500, detail=str(exc)) from exc
 
 
 @router.get('/get_section_bin')
 def get_section_bin(
-	file_id: str = Query(...),
-	key1_idx: int = Query(...),
-	key1_byte: int = Query(189),
-	key2_byte: int = Query(193),
+        file_id: str = Query(...),
+        key1: int = Query(...),
+        key1_byte: int = Query(189),
+        key2_byte: int = Query(193),
 ) -> Response:
-	"""Return a quantized, binary section payload."""
-	try:
-		reader = get_reader(file_id, key1_byte, key2_byte)
-		key1_val = _key1_value_for_index(reader, key1_idx)
-		section = np.array(reader.get_section(key1_val), dtype=np.float32)
-		scale, q = quantize_float32(section)
-		obj = {
-			'scale': scale,
-			'shape': q.shape,
-			'data': q.tobytes(),
-			'dt': get_dt_for_file(file_id),
-		}
-		payload = msgpack.packb(obj)
-		return Response(
-			gzip.compress(payload),
-			media_type='application/octet-stream',
-			headers={'Content-Encoding': 'gzip'},
-		)
-	except IndexError as exc:
-		raise HTTPException(status_code=400, detail=str(exc)) from exc
-	except Exception as exc:
-		raise HTTPException(status_code=500, detail=str(exc)) from exc
+        """Return a quantized, binary section payload."""
+        try:
+                reader = get_reader(file_id, key1_byte, key2_byte)
+                section = np.array(reader.get_section(int(key1)), dtype=np.float32)
+                scale, q = quantize_float32(section)
+                obj = {
+                        'scale': scale,
+                        'shape': q.shape,
+                        'data': q.tobytes(),
+                        'dt': get_dt_for_file(file_id),
+                }
+                payload = msgpack.packb(obj)
+                return Response(
+                        gzip.compress(payload),
+                        media_type='application/octet-stream',
+                        headers={'Content-Encoding': 'gzip'},
+                )
+        except (IndexError, ValueError) as exc:
+                raise HTTPException(status_code=400, detail=str(exc)) from exc
+        except Exception as exc:
+                raise HTTPException(status_code=500, detail=str(exc)) from exc
 
 
 @router.get('/get_section_window_bin')
 def get_section_window_bin(
-	file_id: str = Query(...),
-	key1_idx: int = Query(...),
-	key1_byte: int = Query(189),
-	key2_byte: int = Query(193),
-	offset_byte: int | None = Query(None),
-	x0: int = Query(...),
-	x1: int = Query(...),
-	y0: int = Query(...),
-	y1: int = Query(...),
-	step_x: int = Query(1, ge=1),
-	step_y: int = Query(1, ge=1),
-	pipeline_key: str | None = Query(None),
-	tap_label: str | None = Query(None),
+        file_id: str = Query(...),
+        key1: int = Query(...),
+        key1_byte: int = Query(189),
+        key2_byte: int = Query(193),
+        offset_byte: int | None = Query(None),
+        x0: int = Query(...),
+        x1: int = Query(...),
+        y0: int = Query(...),
+        y1: int = Query(...),
+        step_x: int = Query(1, ge=1),
+        step_y: int = Query(1, ge=1),
+        pipeline_key: str | None = Query(None),
+        tap_label: str | None = Query(None),
 ) -> Response:
-	"""Return a quantized window of a section, optionally via a pipeline tap."""
-	forced_offset_byte = OFFSET_BYTE_FIXED if USE_FBPICK_OFFSET else offset_byte
+        """Return a quantized window of a section, optionally via a pipeline tap."""
+        forced_offset_byte = OFFSET_BYTE_FIXED if USE_FBPICK_OFFSET else offset_byte
 
-	cache_key = (
-		file_id,
-		key1_idx,
-		key1_byte,
-		key2_byte,
-		forced_offset_byte,
-		x0,
-		x1,
-		y0,
-		y1,
-		step_x,
-		step_y,
-		pipeline_key,
-		tap_label,
-	)
+        cache_key = (
+                file_id,
+                key1,
+                key1_byte,
+                key2_byte,
+                forced_offset_byte,
+                x0,
+                x1,
+                y0,
+                y1,
+                step_x,
+                step_y,
+                pipeline_key,
+                tap_label,
+        )
 
-	cached_payload = window_section_cache.get(cache_key)
-	if cached_payload is not None:
-		return Response(
-			cached_payload,
-			media_type='application/octet-stream',
-			headers={'Content-Encoding': 'gzip'},
-		)
+        cached_payload = window_section_cache.get(cache_key)
+        if cached_payload is not None:
+                return Response(
+                        cached_payload,
+                        media_type='application/octet-stream',
+                        headers={'Content-Encoding': 'gzip'},
+                )
 
-	try:
-		if pipeline_key and tap_label:
-			section = get_section_from_pipeline_tap(
-				file_id=file_id,
-				key1_idx=key1_idx,
-				key1_byte=key1_byte,
-				pipeline_key=pipeline_key,
-				tap_label=tap_label,
-				offset_byte=forced_offset_byte,
-			)
-		else:
-			reader = get_reader(file_id, key1_byte, key2_byte)
-			key1_val = _key1_value_for_index(reader, key1_idx)
-			section = np.array(reader.get_section(key1_val), dtype=np.float32)
-	except IndexError as exc:
-		raise HTTPException(status_code=400, detail=str(exc)) from exc
-	except PipelineTapNotFoundError as exc:
-		raise HTTPException(status_code=409, detail=str(exc)) from exc
+        try:
+                if pipeline_key and tap_label:
+                        # When a pipeline key and tap label are provided, fetch from the pipeline
+                        section = get_section_from_pipeline_tap(
+                                file_id=file_id,
+                                key1=int(key1),
+                                key1_byte=key1_byte,
+                                pipeline_key=pipeline_key,
+                                tap_label=tap_label,
+                                offset_byte=forced_offset_byte,
+                        )
+                        section = np.asarray(section, dtype=np.float32)
+                else:
+                        reader = get_reader(file_id, key1_byte, key2_byte)
+                        section = np.array(reader.get_section(int(key1)), dtype=np.float32)
+        except (IndexError, ValueError) as exc:
+                raise HTTPException(status_code=400, detail=str(exc)) from exc
+        except PipelineTapNotFoundError as exc:
+                raise HTTPException(status_code=409, detail=str(exc)) from exc
 
-	section = np.ascontiguousarray(section, dtype=np.float32)
-	if section.ndim != EXPECTED_SECTION_NDIM:
-		raise HTTPException(status_code=500, detail='Section data must be 2D')
+        section = np.ascontiguousarray(section, dtype=np.float32)
+        if section.ndim != EXPECTED_SECTION_NDIM:
+                raise HTTPException(status_code=500, detail='Section data must be 2D')
 
-	n_traces, n_samples = section.shape
-	if not (0 <= x0 <= x1 < n_traces):
-		raise HTTPException(status_code=400, detail='Trace range out of bounds')
-	if not (0 <= y0 <= y1 < n_samples):
-		raise HTTPException(status_code=400, detail='Sample range out of bounds')
-	if step_x < 1 or step_y < 1:
-		raise HTTPException(status_code=400, detail='Steps must be >= 1')
+        n_traces, n_samples = section.shape
+        if not (0 <= x0 <= x1 < n_traces):
+                raise HTTPException(status_code=400, detail='Trace range out of bounds')
+        if not (0 <= y0 <= y1 < n_samples):
+                raise HTTPException(status_code=400, detail='Sample range out of bounds')
+        if step_x < 1 or step_y < 1:
+                raise HTTPException(status_code=400, detail='Steps must be >= 1')
 
-	sub = section[x0 : x1 + 1 : step_x, y0 : y1 + 1 : step_y]
-	if sub.size == 0:
-		raise HTTPException(status_code=400, detail='Requested window is empty')
+        sub = section[x0 : x1 + 1 : step_x, y0 : y1 + 1 : step_y]
+        if sub.size == 0:
+                raise HTTPException(status_code=400, detail='Requested window is empty')
 
-	window_view = np.ascontiguousarray(sub.T, dtype=np.float32)
-	scale, q = quantize_float32(window_view)
-	obj: dict[str, Any] = {
-		'scale': scale,
-		'shape': window_view.shape,
-		'data': q.tobytes(),
-		'dt': get_dt_for_file(file_id),
-	}
-	payload = msgpack.packb(obj)
-	compressed = gzip.compress(payload)
-	window_section_cache.set(cache_key, compressed)
-	return Response(
-		compressed,
-		media_type='application/octet-stream',
-		headers={'Content-Encoding': 'gzip'},
-	)
+        window_view = np.ascontiguousarray(sub.T, dtype=np.float32)
+        scale, q = quantize_float32(window_view)
+        obj: dict[str, Any] = {
+                'scale': scale,
+                'shape': window_view.shape,
+                'data': q.tobytes(),
+                'dt': get_dt_for_file(file_id),
+        }
+        payload = msgpack.packb(obj)
+        compressed = gzip.compress(payload)
+        window_section_cache.set(cache_key, compressed)
+        return Response(
+                compressed,
+                media_type='application/octet-stream',
+                headers={'Content-Encoding': 'gzip'},
+        )

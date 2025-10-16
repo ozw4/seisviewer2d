@@ -645,6 +645,11 @@
           const fileId = op.fileId;
           const idx = op.key1Idx | 0;
           const key1Byte = op.key1Byte | 0;
+          // Look up the actual header value for this index.  key1Values is a global
+          // array populated from the server.  If undefined, fall back to the index.
+          const key1Val = (Array.isArray(key1Values) && key1Values[idx] !== undefined)
+            ? key1Values[idx]
+            : idx;
           if (op.op === 'upsert') {
             await fetch('/picks', {
               method: 'POST',
@@ -653,12 +658,13 @@
                 file_id: fileId,
                 trace: op.trace,
                 time: op.time,
-                key1_idx: idx,
+                // Send the header value instead of the index
+                key1: key1Val,
                 key1_byte: key1Byte
               }),
             });
           } else {
-            const url = `/picks?file_id=${encodeURIComponent(fileId)}&trace=${op.trace}&key1_idx=${idx}&key1_byte=${key1Byte}`;
+            const url = `/picks?file_id=${encodeURIComponent(fileId)}&trace=${op.trace}&key1=${key1Val}&key1_byte=${key1Byte}`;
             await fetch(url, { method: 'DELETE' });
           }
         }
@@ -1004,7 +1010,11 @@
       buf.fill(-1);
 
       for (let i = 0; i < K; i++) {
-        const url = `/picks?file_id=${encodeURIComponent(currentFileId)}&key1_idx=${i}&key1_byte=${currentKey1Byte}`;
+        // Convert index to header value for export
+        const key1Val = (Array.isArray(key1Values) && key1Values[i] !== undefined)
+          ? key1Values[i]
+          : i;
+        const url = `/picks?file_id=${encodeURIComponent(currentFileId)}&key1=${key1Val}&key1_byte=${currentKey1Byte}`;
         const r = await fetch(url);
         if (!r.ok) continue;
         const j = await r.json();
@@ -1304,7 +1314,8 @@
     async function fetchFbProb(key1Val, { layer = 'raw', pipelineKey = null } = {}) {
       const body = {
         file_id: currentFileId,
-        key1_idx: key1Val,
+        // Send the header value (key1) to the fbpick API
+        key1: key1Val,
         key1_byte: currentKey1Byte,
         key2_byte: currentKey2Byte,
         tile_h: 128,
@@ -2035,14 +2046,16 @@
       const scheduler = cb => { ('requestIdleCallback' in window) ? requestIdleCallback(cb) : setTimeout(cb, 0); };
       for (let i = start; i <= end; i++) {
         if (i === centerIdx) continue;
-        const key1Val = key1Values[i];
+        const key1Val = (Array.isArray(key1Values) && key1Values[i] !== undefined)
+          ? key1Values[i]
+          : i;
         const rawKey = cacheKey(key1Val, 'raw');
         if (cache.has(rawKey) || inflight.has(rawKey)) continue;
         const controller = new AbortController();
         inflight.set(rawKey, controller);
         scheduler(async () => {
           try {
-            const urlRaw = `/get_section_bin?file_id=${currentFileId}&key1_idx=${key1Val}&key1_byte=${currentKey1Byte}&key2_byte=${currentKey2Byte}`;
+            const urlRaw = `/get_section_bin?file_id=${currentFileId}&key1=${key1Val}&key1_byte=${currentKey1Byte}&key2_byte=${currentKey2Byte}`;
             const res = await fetch(urlRaw, { signal: controller.signal });
             if (!res.ok) return;
             const bin = new Uint8Array(await res.arrayBuffer());
@@ -2086,8 +2099,12 @@
       }
       if (!currentFileId) return;
       const idx = parseInt(document.getElementById('key1_idx_slider').value);
+      // Convert index to the actual header value for pick retrieval
+      const key1Val = (Array.isArray(key1Values) && key1Values[idx] !== undefined)
+        ? key1Values[idx]
+        : idx;
       try {
-        const res = await fetch(`/picks?file_id=${currentFileId}&key1_idx=${idx}&key1_byte=${currentKey1Byte}`);
+        const res = await fetch(`/picks?file_id=${currentFileId}&key1=${key1Val}&key1_byte=${currentKey1Byte}`);
         if (res.ok) {
           const data = await res.json();
           picks = (data.picks || []).map(p => ({ trace: p.trace, time: p.time }));
@@ -2137,8 +2154,12 @@
         ? key1IdxOrVal
         : parseInt(document.getElementById('key1_idx_slider').value, 10);
       const idx = Number.isFinite(idxRaw) ? idxRaw : 0;
+      // Convert to actual header value
+      const key1Val = (Array.isArray(key1Values) && key1Values[idx] !== undefined)
+        ? key1Values[idx]
+        : idx;
       try {
-        const r = await fetch(`/picks?file_id=${encodeURIComponent(fileId)}&key1_idx=${idx}&key1_byte=${currentKey1Byte}`);
+        const r = await fetch(`/picks?file_id=${encodeURIComponent(fileId)}&key1=${key1Val}&key1_byte=${currentKey1Byte}`);
         if (!r.ok) return [];
         const j = await r.json();
         const arr = (j.picks || []).map(p => ({ trace: (p.trace | 0), time: +p.time }));
@@ -2166,7 +2187,9 @@
       console.time('Total fetchAndPlot');
 
       const index = parseInt(document.getElementById('key1_idx_slider').value);
-      const key1Val = key1Values[index];
+      const key1Val = (Array.isArray(key1Values) && key1Values[index] !== undefined)
+        ? key1Values[index]
+        : index;
 
       // ★ FB予測キャッシュ取得：レイヤ＆パイプラインキーでキー統一
       const layerCur = (document.getElementById('layerSelect')?.value) || 'raw';
@@ -2193,7 +2216,7 @@
         rawSeismicData = traces;
       } else {
         console.time('Fetch binary');
-        const urlRaw = `/get_section_bin?file_id=${currentFileId}&key1_idx=${key1Val}&key1_byte=${currentKey1Byte}&key2_byte=${currentKey2Byte}`;
+        const urlRaw = `/get_section_bin?file_id=${currentFileId}&key1=${key1Val}&key1_byte=${currentKey1Byte}&key2_byte=${currentKey2Byte}`;
         const res = await fetch(urlRaw);
         if (!res.ok) {
           console.timeEnd('Fetch binary');
@@ -2696,7 +2719,8 @@
 
       const params = new URLSearchParams({
         file_id: currentFileId,
-        key1_idx: String(key1Val),
+        // Use the header value for the section
+        key1: String(key1Val),
         key1_byte: String(currentKey1Byte),
         key2_byte: String(currentKey2Byte),
         x0: String(windowInfo.x0),

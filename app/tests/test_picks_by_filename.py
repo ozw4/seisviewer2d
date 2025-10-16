@@ -13,7 +13,7 @@ def test_picks_memmap_roundtrip(monkeypatch):
     monkeypatch.setattr(
         picks,
         "get_trace_seq_for",
-        lambda fid, key1_idx, key1_byte: np.arange(0, 12, dtype=np.int64),
+        lambda fid, key1, key1_byte: np.arange(0, 12, dtype=np.int64),
     )
 
     store: dict[int, float] = {}
@@ -51,7 +51,7 @@ def test_picks_memmap_roundtrip(monkeypatch):
                 "file_id": file_id,
                 "trace": 10,
                 "time": 0.12,
-                "key1_idx": 0,
+                "key1": 0,
                 "key1_byte": 189,
             },
         )
@@ -59,7 +59,7 @@ def test_picks_memmap_roundtrip(monkeypatch):
 
         response = client.get(
             "/picks",
-            params={"file_id": file_id, "key1_idx": 0, "key1_byte": 189},
+            params={"file_id": file_id, "key1": 0, "key1_byte": 189},
         )
         assert response.status_code == 200
         assert response.json() == {
@@ -76,7 +76,7 @@ def test_picks_memmap_roundtrip(monkeypatch):
             params={
                 "file_id": file_id,
                 "trace": 10,
-                "key1_idx": 0,
+                "key1": 0,
                 "key1_byte": 189,
             },
         )
@@ -84,7 +84,7 @@ def test_picks_memmap_roundtrip(monkeypatch):
 
         response = client.get(
             "/picks",
-            params={"file_id": file_id, "key1_idx": 0, "key1_byte": 189},
+            params={"file_id": file_id, "key1": 0, "key1_byte": 189},
         )
         assert response.status_code == 200
         assert response.json() == {"picks": []}

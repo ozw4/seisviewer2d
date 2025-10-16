@@ -63,19 +63,50 @@ def _maybe_attach_fbpick_offsets(
         *,
         spec: PipelineSpec,
         reader: SegySectionReader | TraceStoreSectionReader,
-        key1_idx: int,
+        key1: int,
         offset_byte: int | None,
         trace_slice: slice | None = None,
 ) -> dict[str, Any]:
-        """Add offset metadata when the fbpick model expects it."""
+        """Add offset metadata when the fbpick model expects it.
+
+        This helper inspects the pipeline specification and, when the fbpick
+        analyzer is present and an offset byte is provided, attaches a vector
+        of offset values to the metadata.  The ``key1`` argument is the actual
+        header value identifying the section; it is not an index into the key1
+        values array.  Offsets are aligned to the display ordering of the
+        section and optionally sliced when a window is applied.
+
+        Parameters
+        ----------
+        meta:
+                Existing metadata to augment.
+        spec:
+                Pipeline specification describing the operations to be applied.
+        reader:
+                The reader instance used to access SEG-Y or trace-store data.
+        key1:
+                The actual ``key1`` header value identifying the section.  A
+                value-based API avoids the former index-based confusion by always
+                using the header value directly.
+        offset_byte:
+                The byte offset in the header that contains offset values, or
+                ``None``.
+        trace_slice:
+                Optional slice selecting a subset of traces from the section (used
+                when windowing into a larger section).
+        """
+        # Only attach offsets when the fbpick model requires them and an offset byte
+        # was provided by the caller.
         if not USE_FBPICK_OFFSET or offset_byte is None:
                 return meta
+        # Do nothing when the pipeline spec does not include an fbpick analyzer step.
         if not _spec_uses_fbpick(spec):
                 return meta
         get_offsets = getattr(reader, 'get_offsets_for_section', None)
         if get_offsets is None:
                 return meta
-        offsets = get_offsets(key1_idx, offset_byte)
+        # Fetch offsets for the given key1 header value.
+        offsets = get_offsets(key1, offset_byte)
         if trace_slice is not None:
                 offsets = offsets[trace_slice]
         offsets = np.ascontiguousarray(offsets, dtype=np.float32)
@@ -131,19 +162,36 @@ def _pipeline_payload_to_array(payload: object, *, tap_label: str) -> np.ndarray
 def get_section_from_pipeline_tap(
         *,
         file_id: str,
-        key1_idx: int,
+        key1: int,
         key1_byte: int,
         pipeline_key: str,
         tap_label: str,
         offset_byte: int | None = None,
 ) -> np.ndarray:
-        """Return the cached pipeline tap output as a ``float32`` array."""
-        base_key = (file_id, key1_idx, key1_byte, pipeline_key, None, offset_byte)
+        """Return the cached pipeline tap output as a ``float32`` array.
+
+        Parameters
+        ----------
+        file_id:
+                Identifier of the SEG-Y or trace-store file.
+        key1:
+                The actual ``key1`` header value identifying the section whose
+                pipeline tap output is requested.
+        key1_byte:
+                Byte offset of the ``key1`` header in the SEG-Y file.
+        pipeline_key:
+                Cache key identifying the pipeline specification.
+        tap_label:
+                Label of the tap output to return.
+        offset_byte:
+                Header byte containing offsets used by fbpick (if any).
+        """
+        base_key = (file_id, key1, key1_byte, pipeline_key, None, offset_byte)
         payload = pipeline_tap_cache.get((*base_key, tap_label))
         if payload is None:
                 msg = (
                         f'Pipeline tap {tap_label!r} for pipeline {pipeline_key!r} '
-                        f'and key1={key1_idx} is not available. '
+                        f'and key1={key1} is not available. '
                         'Please re-run the pipeline.'
                 )
                 raise PipelineTapNotFoundError(msg)
@@ -179,11 +227,23 @@ def get_reader(
 
 
 def get_raw_section(
-        *, file_id: str, key1_idx: int, key1_byte: int, key2_byte: int
+        *, file_id: str, key1: int, key1_byte: int, key2_byte: int
 ) -> np.ndarray:
-        """Load the RAW seismic section as ``float32``."""
+        """Load the RAW seismic section as ``float32``.
+
+        Parameters
+        ----------
+        file_id:
+                Identifier of the SEG-Y or trace-store file.
+        key1:
+                The actual ``key1`` header value specifying which section to load.
+        key1_byte:
+                Byte offset of the ``key1`` header in the SEG-Y file.
+        key2_byte:
+                Byte offset of the ``key2`` header in the SEG-Y file.
+        """
         reader = get_reader(file_id, key1_byte, key2_byte)
-        section = reader.get_section(key1_idx)
+        section = reader.get_section(key1)
         arr = np.asarray(section, dtype=np.float32)
         if arr.ndim != EXPECTED_SECTION_NDIM:
                 msg = f'Raw section expected 2D data, got {arr.ndim}D'
