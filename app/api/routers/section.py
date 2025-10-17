@@ -10,6 +10,7 @@ import msgpack
 import numpy as np
 from fastapi import APIRouter, HTTPException, Query
 from fastapi.responses import JSONResponse, Response
+from pydantic import BaseModel
 
 if TYPE_CHECKING:
 	from numpy.typing import NDArray
@@ -29,6 +30,13 @@ from app.utils.segy_meta import FILE_REGISTRY, get_dt_for_file
 from app.utils.utils import SegySectionReader, TraceStoreSectionReader, quantize_float32
 
 router = APIRouter()
+
+
+class SectionMeta(BaseModel):
+	shape: list[int]
+	dt: float
+	dtype: str | None = None
+	scale: float | None = None
 
 
 def _resolve_reader(entry: object) -> SegySectionReader | TraceStoreSectionReader:
@@ -171,6 +179,73 @@ def get_section(
 		raise HTTPException(status_code=400, detail=str(exc)) from exc
 	except Exception as exc:
 		raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+
+@router.get('/get_section_meta', response_model=SectionMeta)
+def get_section_meta(
+	file_id: str = Query(...),
+	key1_byte: int = Query(189),
+	key2_byte: int = Query(193),
+) -> SectionMeta:
+	reader = get_reader(file_id, key1_byte, key2_byte)
+	n_traces = get_ntraces_for(file_id, key1_byte, key2_byte)
+
+	meta_attr = getattr(reader, 'meta', None)
+	n_samples = None
+	dtype_obj = getattr(reader, 'dtype', None)
+	dtype = str(dtype_obj) if dtype_obj is not None else None
+	scale = getattr(reader, 'scale', None)
+
+	if isinstance(meta_attr, dict):
+		if n_traces is None:
+			n_traces = meta_attr.get('n_traces')
+		shape_meta = meta_attr.get('shape')
+		if isinstance(shape_meta, (list, tuple)) and len(shape_meta) == 2:
+			n_samples = shape_meta[1]
+			if n_traces is None:
+				n_traces = shape_meta[0]
+		if n_samples is None and 'n_samples' in meta_attr:
+			n_samples = meta_attr['n_samples']
+		if dtype is None and 'dtype' in meta_attr:
+			dtype = str(meta_attr['dtype'])
+
+	traces_obj = getattr(reader, 'traces', None)
+	traces_shape = getattr(traces_obj, 'shape', None)
+	if n_samples is None and isinstance(traces_shape, tuple) and len(traces_shape) >= 2:
+		n_samples = traces_shape[1]
+		if n_traces is None:
+			n_traces = traces_shape[0]
+
+	if n_samples is None:
+		get_section = getattr(reader, 'get_section', None)
+		get_key1_values = getattr(reader, 'get_key1_values', None)
+		if callable(get_section) and callable(get_key1_values):
+			try:
+				values = get_key1_values()
+				if isinstance(values, np.ndarray):
+					values = values.tolist()
+				elif not isinstance(values, list):
+					values = list(values)
+				first_val = values[0] if values else None
+				if first_val is not None:
+					section = np.asarray(get_section(int(first_val)), dtype=np.float32)
+					if section.ndim == EXPECTED_SECTION_NDIM:
+						n_samples = int(section.shape[1])
+						if n_traces is None:
+							n_traces = int(section.shape[0])
+			except Exception:  # noqa: BLE001
+				n_samples = None
+
+	if n_traces is None or n_samples is None:
+		raise HTTPException(status_code=500, detail='Unable to determine section shape')
+
+	dt_val = float(get_dt_for_file(file_id))
+	return SectionMeta(
+		shape=[int(n_traces), int(n_samples)],
+		dt=dt_val,
+		dtype=dtype,
+		scale=float(scale) if isinstance(scale, (int, float)) else None,
+	)
 
 
 @router.get('/get_section_bin')
