@@ -36,14 +36,14 @@ def test_export_all_key1_basic(monkeypatch):
     monkeypatch.setattr(ep, "get_dt_for_file", lambda file_id: 0.004)  # 4 ms
     monkeypatch.setattr(ep, "get_ntraces_for", lambda file_id: 5)
 
-    def fake_get_trace_seq(file_id, key1_idx, key1_byte):
-        if key1_idx == 0:
+    def fake_get_trace_seq(file_id, key1_val, key1_byte):
+        if key1_val == 100:
             return np.array([0, 1, 2], dtype=np.int64)
-        if key1_idx == 1:
+        if key1_val == 200:
             return np.array([3, 4], dtype=np.int64)
-        raise AssertionError(f"unexpected key1_idx {key1_idx}")
+        raise AssertionError(f"unexpected key1_val {key1_val}")
 
-    monkeypatch.setattr(ep, "get_trace_seq_for", fake_get_trace_seq)
+    monkeypatch.setattr(ep, "get_trace_seq_for_value", fake_get_trace_seq)
 
     calls = []
 
@@ -113,8 +113,8 @@ def test_export_all_key1_empty_is_all_minus1(monkeypatch):
     monkeypatch.setattr(ep, "get_ntraces_for", lambda file_id: 2)
     monkeypatch.setattr(
         ep,
-        "get_trace_seq_for",
-        lambda file_id, key1_idx, key1_byte: np.array([0, 1], dtype=np.int64),
+        "get_trace_seq_for_value",
+        lambda file_id, key1_val, key1_byte: np.array([0, 1], dtype=np.int64),
     )
     monkeypatch.setattr(ep, "to_pairs_for_section", lambda *args, **kwargs: [])
 

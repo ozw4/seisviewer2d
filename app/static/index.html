@@ -359,10 +359,10 @@
   <div id="mainContent">
     <div id="viewerColumn">
       <div id="controls">
-        <label for="key1_idx_slider">key1 index:</label>
+        <label for="key1_idx_slider">key1 value:</label>
         <input type="range" id="key1_idx_slider" min="0" max="10000" value="0" step="1" oninput="onKey1Input()"
           onchange="onKey1Change()" />
-        <input type="number" id="key1_idx_display" value="0" min="0" max="10000" step="1" style="width: 60px;"
+        <input type="number" id="key1_val_display" value="0" min="0" max="10000" step="1" style="width: 60px;"
           onchange="syncSliderWithInput(); fetchAndPlot()" />
         <button onclick="fetchAndPlot()">Plot</button>
         <button id="pickModeBtn" onclick="togglePickMode()">Pick Mode: OFF</button>
@@ -1317,7 +1317,7 @@
     async function fetchFbProb(key1Val, { layer = 'raw', pipelineKey = null } = {}) {
       const body = {
         file_id: currentFileId,
-        key1_idx: key1Val,
+        key1_val: key1Val,
         key1_byte: currentKey1Byte,
         key2_byte: currentKey2Byte,
         tile_h: 128,
@@ -1998,14 +1998,14 @@
 
     function updateKey1Display() {
       const slider = document.getElementById('key1_idx_slider');
-      const display = document.getElementById('key1_idx_display');
+      const display = document.getElementById('key1_val_display');
       const idx = parseInt(slider.value);
       display.value = key1Values[idx] ?? '';
     }
 
     function syncSliderWithInput() {
       const slider = document.getElementById('key1_idx_slider');
-      const display = document.getElementById('key1_idx_display');
+      const display = document.getElementById('key1_val_display');
       const val = parseInt(display.value);
       const idx = key1Values.indexOf(val);
       slider.value = idx >= 0 ? idx : 0;
@@ -2030,8 +2030,8 @@
         const data = await res.json();
         key1Values = data.values;
         setKey1SliderMax(key1Values.length - 1);
-        document.getElementById('key1_idx_display').min = key1Values[0];
-        document.getElementById('key1_idx_display').max = key1Values[key1Values.length - 1];
+        document.getElementById('key1_val_display').min = key1Values[0];
+        document.getElementById('key1_val_display').max = key1Values[key1Values.length - 1];
         document.getElementById('key1_idx_slider').value = 0;
         updateKey1Display();
       }
@@ -2055,7 +2055,7 @@
         inflight.set(rawKey, controller);
         scheduler(async () => {
           try {
-            const urlRaw = `/get_section_bin?file_id=${currentFileId}&key1_idx=${key1Val}&key1_byte=${currentKey1Byte}&key2_byte=${currentKey2Byte}`;
+            const urlRaw = `/get_section_bin?file_id=${currentFileId}&key1_val=${key1Val}&key1_byte=${currentKey1Byte}&key2_byte=${currentKey2Byte}`;
             const res = await fetch(urlRaw, { signal: controller.signal });
             if (!res.ok) return;
             const bin = new Uint8Array(await res.arrayBuffer());
@@ -2210,7 +2210,7 @@
         rawSeismicData = traces;
       } else {
         console.time('Fetch binary');
-        const urlRaw = `/get_section_bin?file_id=${currentFileId}&key1_idx=${key1Val}&key1_byte=${currentKey1Byte}&key2_byte=${currentKey2Byte}`;
+        const urlRaw = `/get_section_bin?file_id=${currentFileId}&key1_val=${key1Val}&key1_byte=${currentKey1Byte}&key2_byte=${currentKey2Byte}`;
         const res = await fetch(urlRaw);
         if (!res.ok) {
           console.timeEnd('Fetch binary');
@@ -2693,7 +2693,7 @@
 
       const params = new URLSearchParams({
         file_id: currentFileId,
-        key1_idx: String(key1Val),
+        key1_val: String(key1Val),
         key1_byte: String(currentKey1Byte),
         key2_byte: String(currentKey2Byte),
         x0: String(windowInfo.x0),

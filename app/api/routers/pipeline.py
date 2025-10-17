@@ -87,7 +87,7 @@ def _run_pipeline_all_job(job_id: str, req: PipelineAllRequest, pipe_key: str) -
 @router.post('/pipeline/section', response_model=PipelineSectionResponse)
 def pipeline_section(
         file_id: str = Query(...),
-        key1_idx: int = Query(...),
+        key1_val: int = Query(...),
         key1_byte: int = Query(189),
         key2_byte: int = Query(193),
         offset_byte: int | None = Query(None),
@@ -96,7 +96,6 @@ def pipeline_section(
         window: dict[str, int | float] | None = Body(default=None),
 ):
         reader = get_reader(file_id, key1_byte, key2_byte)
-        key1_val = key1_idx
         section = np.array(reader.get_section(key1_val), dtype=np.float32)
         trace_slice: slice | None = None
         window_hash = None
@@ -216,13 +215,12 @@ def pipeline_job_status(job_id: str) -> PipelineJobStatusResponse:
 @router.get('/pipeline/job/{job_id}/artifact', response_model=Any)
 def pipeline_job_artifact(
         job_id: str,
-        key1_idx: int = Query(...),
+        key1_val: int = Query(...),
         tap: str = Query(...),
 ):
         job = jobs.get(job_id)
         if job is None:
                 raise HTTPException(status_code=404, detail='Job ID not found')
-        key1_val = key1_idx
         base_key = (
                 job.get('file_id'),
                 key1_val,
