@@ -359,10 +359,10 @@
   <div id="mainContent">
     <div id="viewerColumn">
       <div id="controls">
-        <label for="key1_idx_slider">key1 index:</label>
+        <label for="key1_idx_slider">key1 value:</label>
         <input type="range" id="key1_idx_slider" min="0" max="10000" value="0" step="1" oninput="onKey1Input()"
           onchange="onKey1Change()" />
-        <input type="number" id="key1_idx_display" value="0" min="0" max="10000" step="1" style="width: 60px;"
+        <input type="number" id="key1_val_display" value="0" min="0" max="10000" step="1" style="width: 60px;"
           onchange="syncSliderWithInput(); fetchAndPlot()" />
         <button onclick="fetchAndPlot()">Plot</button>
         <button id="pickModeBtn" onclick="togglePickMode()">Pick Mode: OFF</button>
@@ -602,8 +602,8 @@
         const v = Number.parseInt(el?.value ?? '0', 10);
         return Number.isFinite(v) ? v : 0;
       }
-        function _opKey(fileId, key1Idx, key1Byte, trace) {
-          return `${fileId}|${key1Idx}|${key1Byte}|${trace | 0}`;
+        function _opKey(fileId, key1Val, key1Byte, trace) {
+          return `${fileId}|${key1Val}|${key1Byte}|${trace | 0}`;
         }
 
     function queueUpsert(trace, time) {
@@ -611,8 +611,13 @@
       const fileId = currentFileId;
       const key1Idx = _sliderKey1Idx();
       const key1Byte = currentKey1Byte;
-      const k = _opKey(fileId, key1Idx, key1Byte, tr);
-      __pickOps.set(k, { op: 'upsert', fileId, key1Idx, key1Byte, trace: tr, time: +time });
+      const key1Val = key1Values?.[key1Idx];
+      if (key1Val === undefined) {
+        console.warn('queueUpsert skipped: key1 value unavailable', { key1Idx });
+        return;
+      }
+      const k = _opKey(fileId, key1Val, key1Byte, tr);
+      __pickOps.set(k, { op: 'upsert', fileId, key1Val, key1Byte, trace: tr, time: +time });
       const debounced = ensureFlushPickOpsDebounced();
       debounced();
     }
@@ -622,8 +627,13 @@
       const fileId = currentFileId;
       const key1Idx = _sliderKey1Idx();
       const key1Byte = currentKey1Byte;
-      const k = _opKey(fileId, key1Idx, key1Byte, tr);
-      __pickOps.set(k, { op: 'delete', fileId, key1Idx, key1Byte, trace: tr });
+      const key1Val = key1Values?.[key1Idx];
+      if (key1Val === undefined) {
+        console.warn('queueDelete skipped: key1 value unavailable', { key1Idx });
+        return;
+      }
+      const k = _opKey(fileId, key1Val, key1Byte, tr);
+      __pickOps.set(k, { op: 'delete', fileId, key1Val, key1Byte, trace: tr });
       const debounced = ensureFlushPickOpsDebounced();
       debounced();
     }
@@ -643,8 +653,9 @@
           const op = ops[i++];
           if (!op?.fileId) continue;
           const fileId = op.fileId;
-          const idx = op.key1Idx | 0;
+          const key1Val = op.key1Val;
           const key1Byte = op.key1Byte | 0;
+          if (key1Val === undefined) continue;
           if (op.op === 'upsert') {
             await fetch('/picks', {
               method: 'POST',
@@ -653,12 +664,12 @@
                 file_id: fileId,
                 trace: op.trace,
                 time: op.time,
-                key1_idx: idx,
+                key1_val: key1Val,
                 key1_byte: key1Byte
               }),
             });
           } else {
-            const url = `/picks?file_id=${encodeURIComponent(fileId)}&trace=${op.trace}&key1_idx=${idx}&key1_byte=${key1Byte}`;
+            const url = `/picks?file_id=${encodeURIComponent(fileId)}&trace=${op.trace}&key1_val=${encodeURIComponent(key1Val)}&key1_byte=${key1Byte}`;
             await fetch(url, { method: 'DELETE' });
           }
         }
@@ -1004,7 +1015,9 @@
       buf.fill(-1);
 
       for (let i = 0; i < K; i++) {
-        const url = `/picks?file_id=${encodeURIComponent(currentFileId)}&key1_idx=${i}&key1_byte=${currentKey1Byte}`;
+        const key1Val = key1Values[i];
+        if (key1Val === undefined) continue;
+        const url = `/picks?file_id=${encodeURIComponent(currentFileId)}&key1_val=${encodeURIComponent(key1Val)}&key1_byte=${currentKey1Byte}`;
         const r = await fetch(url);
         if (!r.ok) continue;
         const j = await r.json();
@@ -1304,7 +1317,7 @@
     async function fetchFbProb(key1Val, { layer = 'raw', pipelineKey = null } = {}) {
       const body = {
         file_id: currentFileId,
-        key1_idx: key1Val,
+        key1_val: key1Val,
         key1_byte: currentKey1Byte,
         key2_byte: currentKey2Byte,
         tile_h: 128,
@@ -1985,14 +1998,14 @@
 
     function updateKey1Display() {
       const slider = document.getElementById('key1_idx_slider');
-      const display = document.getElementById('key1_idx_display');
+      const display = document.getElementById('key1_val_display');
       const idx = parseInt(slider.value);
       display.value = key1Values[idx] ?? '';
     }
 
     function syncSliderWithInput() {
       const slider = document.getElementById('key1_idx_slider');
-      const display = document.getElementById('key1_idx_display');
+      const display = document.getElementById('key1_val_display');
       const val = parseInt(display.value);
       const idx = key1Values.indexOf(val);
       slider.value = idx >= 0 ? idx : 0;
@@ -2017,8 +2030,8 @@
         const data = await res.json();
         key1Values = data.values;
         setKey1SliderMax(key1Values.length - 1);
-        document.getElementById('key1_idx_display').min = key1Values[0];
-        document.getElementById('key1_idx_display').max = key1Values[key1Values.length - 1];
+        document.getElementById('key1_val_display').min = key1Values[0];
+        document.getElementById('key1_val_display').max = key1Values[key1Values.length - 1];
         document.getElementById('key1_idx_slider').value = 0;
         updateKey1Display();
       }
@@ -2042,7 +2055,7 @@
         inflight.set(rawKey, controller);
         scheduler(async () => {
           try {
-            const urlRaw = `/get_section_bin?file_id=${currentFileId}&key1_idx=${key1Val}&key1_byte=${currentKey1Byte}&key2_byte=${currentKey2Byte}`;
+            const urlRaw = `/get_section_bin?file_id=${currentFileId}&key1_val=${key1Val}&key1_byte=${currentKey1Byte}&key2_byte=${currentKey2Byte}`;
             const res = await fetch(urlRaw, { signal: controller.signal });
             if (!res.ok) return;
             const bin = new Uint8Array(await res.arrayBuffer());
@@ -2086,8 +2099,10 @@
       }
       if (!currentFileId) return;
       const idx = parseInt(document.getElementById('key1_idx_slider').value);
+      const key1Val = key1Values?.[idx];
+      if (key1Val === undefined) return;
       try {
-        const res = await fetch(`/picks?file_id=${currentFileId}&key1_idx=${idx}&key1_byte=${currentKey1Byte}`);
+        const res = await fetch(`/picks?file_id=${currentFileId}&key1_val=${encodeURIComponent(key1Val)}&key1_byte=${currentKey1Byte}`);
         if (res.ok) {
           const data = await res.json();
           picks = (data.picks || []).map(p => ({ trace: p.trace, time: p.time }));
@@ -2137,8 +2152,10 @@
         ? key1IdxOrVal
         : parseInt(document.getElementById('key1_idx_slider').value, 10);
       const idx = Number.isFinite(idxRaw) ? idxRaw : 0;
+      const key1Val = key1Values?.[idx];
+      if (key1Val === undefined) return [];
       try {
-        const r = await fetch(`/picks?file_id=${encodeURIComponent(fileId)}&key1_idx=${idx}&key1_byte=${currentKey1Byte}`);
+        const r = await fetch(`/picks?file_id=${encodeURIComponent(fileId)}&key1_val=${encodeURIComponent(key1Val)}&key1_byte=${currentKey1Byte}`);
         if (!r.ok) return [];
         const j = await r.json();
         const arr = (j.picks || []).map(p => ({ trace: (p.trace | 0), time: +p.time }));
@@ -2193,7 +2210,7 @@
         rawSeismicData = traces;
       } else {
         console.time('Fetch binary');
-        const urlRaw = `/get_section_bin?file_id=${currentFileId}&key1_idx=${key1Val}&key1_byte=${currentKey1Byte}&key2_byte=${currentKey2Byte}`;
+        const urlRaw = `/get_section_bin?file_id=${currentFileId}&key1_val=${key1Val}&key1_byte=${currentKey1Byte}&key2_byte=${currentKey2Byte}`;
         const res = await fetch(urlRaw);
         if (!res.ok) {
           console.timeEnd('Fetch binary');
@@ -2676,7 +2693,7 @@
 
       const params = new URLSearchParams({
         file_id: currentFileId,
-        key1_idx: String(key1Val),
+        key1_val: String(key1Val),
         key1_byte: String(currentKey1Byte),
         key2_byte: String(currentKey2Byte),
         x0: String(windowInfo.x0),
