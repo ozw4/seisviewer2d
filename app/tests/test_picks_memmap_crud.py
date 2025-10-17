@@ -117,7 +117,9 @@ def test_post_trace_out_of_range_returns_400(tmp_path, monkeypatch):
 	monkeypatch.setattr(ep, '_filename_for_file_id', lambda fid: 'LineZ.sgy')
 	monkeypatch.setattr(ep, 'get_ntraces_for', lambda fid: 5)
 	monkeypatch.setattr(
-		ep, 'get_trace_seq_for_value', lambda fid, val, b: np.array([10, 11], dtype=np.int64)
+		ep,
+		'get_trace_seq_for_value',
+		lambda fid, val, b: np.array([10, 11], dtype=np.int64),
 	)  # セクション幅2
 
 	client = TestClient(app, raise_server_exceptions=False)
