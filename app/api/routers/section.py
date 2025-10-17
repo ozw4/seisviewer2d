@@ -169,7 +169,7 @@ def get_section(
 	"""Return the section for the ``key1_idx`` trace grouping."""
 	try:
 		reader = get_reader(file_id, key1_byte, key2_byte)
-		key1_val = _key1_value_for_index(reader, key1_idx)
+		# key1_val = _key1_value_for_index(reader, key1_idx)
 		section = reader.get_section(key1_val)
 		payload = section.tolist() if isinstance(section, np.ndarray) else section
 		return JSONResponse(content={'section': payload})
@@ -189,8 +189,8 @@ def get_section_bin(
 	"""Return a quantized, binary section payload."""
 	try:
 		reader = get_reader(file_id, key1_byte, key2_byte)
-		key1_val = _key1_value_for_index(reader, key1_idx)
-		section = np.array(reader.get_section(key1_val), dtype=np.float32)
+		# key1_val = _key1_value_for_index(reader, key1_idx)
+		section = np.array(reader.get_section(key1_idx), dtype=np.float32)
 		scale, q = quantize_float32(section)
 		obj = {
 			'scale': scale,
@@ -265,8 +265,8 @@ def get_section_window_bin(
 			)
 		else:
 			reader = get_reader(file_id, key1_byte, key2_byte)
-			key1_val = _key1_value_for_index(reader, key1_idx)
-			section = np.array(reader.get_section(key1_val), dtype=np.float32)
+			# key1_val = _key1_value_for_index(reader, key1_idx)
+			section = np.array(reader.get_section(key1_idx), dtype=np.float32)
 	except IndexError as exc:
 		raise HTTPException(status_code=400, detail=str(exc)) from exc
 	except PipelineTapNotFoundError as exc:
