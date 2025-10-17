@@ -59,7 +59,7 @@ class SegySectionReader:
             self.key1s = f.attributes(self.key1_byte)[:]
             self.key2s = f.attributes(self.key2_byte)[:]
         self.unique_key1 = np.unique(self.key1s)
-        self.ntraces = int(len(self.key1s))
+        self.ntraces = len(self.key1s)
 
     def _indices_for_key1(self, key1_val: int) -> np.ndarray:
         if key1_val in self._trace_seq_cache:
@@ -87,7 +87,6 @@ class SegySectionReader:
         self, key1_val: int, align_to: str = "display"
     ) -> np.ndarray:
         """Return TraceSeq indices for ``key1_val`` aligned to the requested order."""
-
         if align_to == "display":
             return self._sorted_indices_for_key1(key1_val)
         if align_to == "original":

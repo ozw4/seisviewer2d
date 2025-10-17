@@ -8,6 +8,7 @@ import pathlib
 import re
 import threading
 from pathlib import Path
+from typing import Annotated
 from uuid import uuid4
 
 import numpy as np
@@ -32,9 +33,9 @@ TRACE_DIR.mkdir(parents=True, exist_ok=True)
 
 @router.post('/open_segy')
 async def open_segy(
-	original_name: str = Form(...),
-	key1_byte: int = Form(189),
-	key2_byte: int = Form(193),
+	original_name: Annotated[str, Form(...)],
+	key1_byte: Annotated[int, Form()] = 189,
+	key2_byte: Annotated[int, Form()] = 193,
 ):
 	safe_name = re.sub(r'[^A-Za-z0-9_.-]', '_', original_name)
 	store_dir = TRACE_DIR / safe_name
@@ -74,9 +75,9 @@ async def open_segy(
 
 @router.post('/upload_segy')
 async def upload_segy(
-	file: UploadFile = File(...),
-	key1_byte: int = Form(189),
-	key2_byte: int = Form(193),
+	file: Annotated[UploadFile, File(...)],
+	key1_byte: Annotated[int, Form()] = 189,
+	key2_byte: Annotated[int, Form()] = 193,
 ):
 	if not file.filename:
 		raise HTTPException(
@@ -174,7 +175,7 @@ async def upload_segy(
 
 
 @router.get('/file_info')
-async def file_info(file_id: str = Query(...)) -> dict[str, str]:
+async def file_info(file_id: Annotated[str, Query()]) -> dict[str, str]:
 	"""Return basename for a given ``file_id``."""
 	rec = FILE_REGISTRY.get(file_id) or {}
 	path = rec.get('path') or rec.get('store_path')

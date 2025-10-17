@@ -152,12 +152,12 @@ def inflate_input_convs_to_2ch(
 	fix_backbone: bool = True,
 ) -> None:
 	"""Make the *raw-input path* truly 2ch end-to-end:
-	  - pre_down[0] and pre_down[1] convs → (in=2, out=2) ＋ 対応BNを2ch化
-	  - backbone first conv (stem_0 or patch_embed.proj) の in を 1→2 にinflate
+		- pre_down[0] and pre_down[1] convs → (in=2, out=2) ＋ 対応BNを2ch化
+		- backbone first conv (stem_0 or patch_embed.proj) の in を 1→2 にinflate
 
 	Tips:
-	  - 既存 1ch 重みを複製して2chへ展開（init_mode='duplicate' 推奨）
-	  - 2ch skip を使わない場合でも、backbone が 2ch を受け取れるようにしておく
+		- 既存 1ch 重みを複製して2chへ展開(init_mode='duplicate' 推奨)
+		- 2ch skip を使わない場合でも、backbone が 2ch を受け取れるようにしておく
 	"""
 	# (A) pre_down の 2段を 2→2 に強制
 	if fix_predown and hasattr(model, 'pre_down') and len(model.pre_down) > 0:

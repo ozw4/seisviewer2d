@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import contextlib
 import gzip
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Annotated, Any
 
 import msgpack
 import numpy as np
@@ -151,9 +151,9 @@ def get_trace_seq_for_value(
 
 @router.get('/get_key1_values')
 def get_key1_values(
-	file_id: str = Query(...),
-	key1_byte: int = Query(189),
-	key2_byte: int = Query(193),
+	file_id: Annotated[str, Query(...)],
+	key1_byte: Annotated[int, Query()] = 189,
+	key2_byte: Annotated[int, Query()] = 193,
 ) -> JSONResponse:
 	"""Return the available key1 header values for ``file_id``."""
 	reader = get_reader(file_id, key1_byte, key2_byte)
@@ -164,10 +164,10 @@ def get_key1_values(
 
 @router.get('/get_section')
 def get_section(
-	file_id: str = Query(...),
-	key1_byte: int = Query(189),
-	key2_byte: int = Query(193),
-	key1_val: int = Query(...),
+	file_id: Annotated[str, Query(...)],
+	key1_val: Annotated[int, Query(...)],
+	key1_byte: Annotated[int, Query()] = 189,
+	key2_byte: Annotated[int, Query()] = 193,
 ) -> JSONResponse:
 	"""Return the section for the ``key1_val`` trace grouping."""
 	try:
@@ -183,9 +183,9 @@ def get_section(
 
 @router.get('/get_section_meta', response_model=SectionMeta)
 def get_section_meta(
-	file_id: str = Query(...),
-	key1_byte: int = Query(189),
-	key2_byte: int = Query(193),
+	file_id: Annotated[str, Query(...)],
+	key1_byte: Annotated[int, Query()] = 189,
+	key2_byte: Annotated[int, Query()] = 193,
 ) -> SectionMeta:
 	reader = get_reader(file_id, key1_byte, key2_byte)
 	n_traces = get_ntraces_for(file_id, key1_byte, key2_byte)
@@ -250,10 +250,10 @@ def get_section_meta(
 
 @router.get('/get_section_bin')
 def get_section_bin(
-	file_id: str = Query(...),
-	key1_val: int = Query(...),
-	key1_byte: int = Query(189),
-	key2_byte: int = Query(193),
+	file_id: Annotated[str, Query(...)],
+	key1_val: Annotated[int, Query(...)],
+	key1_byte: Annotated[int, Query()] = 189,
+	key2_byte: Annotated[int, Query()] = 193,
 ) -> Response:
 	"""Return a quantized, binary section payload."""
 	try:
@@ -280,19 +280,19 @@ def get_section_bin(
 
 @router.get('/get_section_window_bin')
 def get_section_window_bin(
-	file_id: str = Query(...),
-	key1_val: int = Query(...),
-	key1_byte: int = Query(189),
-	key2_byte: int = Query(193),
-	offset_byte: int | None = Query(None),
-	x0: int = Query(...),
-	x1: int = Query(...),
-	y0: int = Query(...),
-	y1: int = Query(...),
-	step_x: int = Query(1, ge=1),
-	step_y: int = Query(1, ge=1),
-	pipeline_key: str | None = Query(None),
-	tap_label: str | None = Query(None),
+	file_id: Annotated[str, Query(...)],
+	key1_val: Annotated[int, Query(...)],
+	x0: Annotated[int, Query(...)],
+	x1: Annotated[int, Query(...)],
+	y0: Annotated[int, Query(...)],
+	y1: Annotated[int, Query(...)],
+	key1_byte: Annotated[int, Query()] = 189,
+	key2_byte: Annotated[int, Query()] = 193,
+	offset_byte: Annotated[int | None, Query()] = None,
+	step_x: Annotated[int, Query(ge=1)] = 1,
+	step_y: Annotated[int, Query(ge=1)] = 1,
+	pipeline_key: Annotated[str | None, Query()] = None,
+	tap_label: Annotated[str | None, Query()] = None,
 ) -> Response:
 	"""Return a quantized window of a section, optionally via a pipeline tap."""
 	forced_offset_byte = OFFSET_BYTE_FIXED if USE_FBPICK_OFFSET else offset_byte

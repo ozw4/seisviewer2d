@@ -37,7 +37,7 @@ def _resize_file(p: Path, n_new: int) -> None:
 	new.flush()
 	del old
 	del new
-	os.replace(tmp, p)
+	tmp.replace(p)
 
 
 def _ensure_shape(p: Path, ntraces: int) -> None:
@@ -51,7 +51,7 @@ def _ensure_shape(p: Path, ntraces: int) -> None:
 		_resize_file(p, ntraces)
 
 
-def _open(file_name: str, ntraces: int, mode: str = 'r+'):
+def _open(file_name: str, ntraces: int, mode: str = 'r+') -> np.memmap:
 	p = _p(file_name)
 	_ensure_shape(p, ntraces)
 	return open_memmap(p, mode=mode, dtype=DTYPE)

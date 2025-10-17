@@ -1,41 +1,29 @@
+# Python version target
 target-version = "py310"
-fix = true
+
+# Ruff は "check only"。Black が唯一のフォーマッタ
+fix = false
+respect-gitignore = true
+
+[pylint]
+# 参照用（PLR系は選択していないので実際のチェックには影響しません）
+max-statements = 80
 
 [lint]
-select = ["ALL"]
-ignore = [
-    "COM812",
-    "COM819",
-    "D206",
-    "D300",
-    "E111",
-    "E114",
-    "E117",
-    "E741",
-    "E742",
-    "E743",
-    "ERA001",
-    "G004",
-    "ISC001",
-    "ISC002",
-    "Q000",
-    "Q001",
-    "Q002",
-    "Q003",
-    "T20",
-    "W191",
-]
-# COM812, COM819, D206, D300, E111, E114, E117,
-# ISC001, ISC002, Q000, Q001, Q002, Q003, W191: conflict formatter
-# #ANN: annotations
-# #D: pydocstyle
-# E741, E742, E743: Ambiguous name
-# ERA001: commented-out-code
-# #EXE: executable
-# G004: logging-f-string
-# T20: print, p-print
+# Agents.md の方針に合わせて E と F のみ
+select = ["E", "F"]
 
-[format]
-docstring-code-format = true
-indent-style = "tab"
-quote-style = "single"
+# Black と衝突するものは必ず無視
+ignore = [
+  "E203", # slice の前の空白（Blackと流儀が違う）
+  "E501", # 行長（行折りはBlackに任せる）
+]
+
+# テストは現実的に緩める
+[per-file-ignores]
+"app/tests/**" = [
+  "INP001", # __init__.py 不要
+  "S101", "SLF001",
+  "ARG001", "ARG002", "ARG005",
+  "PLR2004", "PT011", "PT018",
+]

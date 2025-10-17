@@ -9,7 +9,6 @@ from app.main import app
 
 def test_export_all_key1_basic(monkeypatch):
     """Ensure export uses memmap-backed picks for each section."""
-
     assert any(
         getattr(r, "path", "") == "/export_manual_picks_all_npy"
         for r in app.router.routes
@@ -86,7 +85,6 @@ def test_export_all_key1_basic(monkeypatch):
 
 def test_export_all_key1_empty_is_all_minus1(monkeypatch):
     """Empty memmap rows stay -1 with computed section widths."""
-
     assert any(
         getattr(r, "path", "") == "/export_manual_picks_all_npy"
         for r in app.router.routes
