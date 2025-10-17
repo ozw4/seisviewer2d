@@ -63,7 +63,7 @@ def _maybe_attach_fbpick_offsets(
         *,
         spec: PipelineSpec,
         reader: SegySectionReader | TraceStoreSectionReader,
-        key1_idx: int,
+        key1_val: int,
         offset_byte: int | None,
         trace_slice: slice | None = None,
 ) -> dict[str, Any]:
@@ -75,7 +75,7 @@ def _maybe_attach_fbpick_offsets(
         get_offsets = getattr(reader, 'get_offsets_for_section', None)
         if get_offsets is None:
                 return meta
-        offsets = get_offsets(key1_idx, offset_byte)
+        offsets = get_offsets(key1_val, offset_byte)
         if trace_slice is not None:
                 offsets = offsets[trace_slice]
         offsets = np.ascontiguousarray(offsets, dtype=np.float32)
@@ -131,19 +131,19 @@ def _pipeline_payload_to_array(payload: object, *, tap_label: str) -> np.ndarray
 def get_section_from_pipeline_tap(
         *,
         file_id: str,
-        key1_idx: int,
+        key1_val: int,
         key1_byte: int,
         pipeline_key: str,
         tap_label: str,
         offset_byte: int | None = None,
 ) -> np.ndarray:
         """Return the cached pipeline tap output as a ``float32`` array."""
-        base_key = (file_id, key1_idx, key1_byte, pipeline_key, None, offset_byte)
+        base_key = (file_id, key1_val, key1_byte, pipeline_key, None, offset_byte)
         payload = pipeline_tap_cache.get((*base_key, tap_label))
         if payload is None:
                 msg = (
                         f'Pipeline tap {tap_label!r} for pipeline {pipeline_key!r} '
-                        f'and key1={key1_idx} is not available. '
+                        f'and key1={key1_val} is not available. '
                         'Please re-run the pipeline.'
                 )
                 raise PipelineTapNotFoundError(msg)
@@ -179,11 +179,11 @@ def get_reader(
 
 
 def get_raw_section(
-        *, file_id: str, key1_idx: int, key1_byte: int, key2_byte: int
+        *, file_id: str, key1_val: int, key1_byte: int, key2_byte: int
 ) -> np.ndarray:
         """Load the RAW seismic section as ``float32``."""
         reader = get_reader(file_id, key1_byte, key2_byte)
-        section = reader.get_section(key1_idx)
+        section = reader.get_section(key1_val)
         arr = np.asarray(section, dtype=np.float32)
         if arr.ndim != EXPECTED_SECTION_NDIM:
                 msg = f'Raw section expected 2D data, got {arr.ndim}D'

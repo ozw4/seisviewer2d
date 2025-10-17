@@ -227,8 +227,9 @@ def get_section_bin(
 	"""Return a quantized, binary section payload."""
 	try:
 		reader = get_reader(file_id, key1_byte, key2_byte)
+		key1_val = key1_idx
 		# key1_val = _key1_value_for_index(reader, key1_idx)
-		section = np.array(reader.get_section(key1_idx), dtype=np.float32)
+		section = np.array(reader.get_section(key1_val), dtype=np.float32)
 		scale, q = quantize_float32(section)
 		obj = {
 			'scale': scale,
@@ -266,10 +267,11 @@ def get_section_window_bin(
 ) -> Response:
 	"""Return a quantized window of a section, optionally via a pipeline tap."""
 	forced_offset_byte = OFFSET_BYTE_FIXED if USE_FBPICK_OFFSET else offset_byte
+	key1_val = key1_idx
 
 	cache_key = (
 		file_id,
-		key1_idx,
+		key1_val,
 		key1_byte,
 		key2_byte,
 		forced_offset_byte,
@@ -295,7 +297,7 @@ def get_section_window_bin(
 		if pipeline_key and tap_label:
 			section = get_section_from_pipeline_tap(
 				file_id=file_id,
-				key1_idx=key1_idx,
+				key1_val=key1_val,
 				key1_byte=key1_byte,
 				pipeline_key=pipeline_key,
 				tap_label=tap_label,
@@ -304,7 +306,7 @@ def get_section_window_bin(
 		else:
 			reader = get_reader(file_id, key1_byte, key2_byte)
 			# key1_val = _key1_value_for_index(reader, key1_idx)
-			section = np.array(reader.get_section(key1_idx), dtype=np.float32)
+			section = np.array(reader.get_section(key1_val), dtype=np.float32)
 	except IndexError as exc:
 		raise HTTPException(status_code=400, detail=str(exc)) from exc
 	except PipelineTapNotFoundError as exc:

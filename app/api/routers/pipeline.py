@@ -60,7 +60,7 @@ def _run_pipeline_all_job(job_id: str, req: PipelineAllRequest, pipe_key: str) -
                                 meta,
                                 spec=req.spec,
                                 reader=reader,
-                                key1_idx=int(key1_val),
+                                key1_val=int(key1_val),
                                 offset_byte=req.offset_byte,  # already forced by caller
                         )
                         out = apply_pipeline(section, spec=req.spec, meta=meta, taps=taps)
@@ -96,7 +96,8 @@ def pipeline_section(
         window: dict[str, int | float] | None = Body(default=None),
 ):
         reader = get_reader(file_id, key1_byte, key2_byte)
-        section = np.array(reader.get_section(key1_idx), dtype=np.float32)
+        key1_val = key1_idx
+        section = np.array(reader.get_section(key1_val), dtype=np.float32)
         trace_slice: slice | None = None
         window_hash = None
         if window:
@@ -126,7 +127,7 @@ def pipeline_section(
                 meta,
                 spec=spec,
                 reader=reader,
-                key1_idx=key1_idx,
+                key1_val=key1_val,
                 offset_byte=forced_offset_byte,
                 trace_slice=trace_slice,
         )
@@ -135,7 +136,7 @@ def pipeline_section(
         if tap_names:
                 base_key = (
                         file_id,
-                        key1_idx,
+                        key1_val,
                         key1_byte,
                         pipe_key,
                         window_hash,
@@ -221,9 +222,10 @@ def pipeline_job_artifact(
         job = jobs.get(job_id)
         if job is None:
                 raise HTTPException(status_code=404, detail='Job ID not found')
+        key1_val = key1_idx
         base_key = (
                 job.get('file_id'),
-                key1_idx,
+                key1_val,
                 job.get('key1_byte'),
                 job.get('pipeline_key'),
                 None,
