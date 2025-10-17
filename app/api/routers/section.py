@@ -125,18 +125,16 @@ def get_trace_seq_for(file_id: str, key1_idx: int, key1_byte: int) -> NDArray[np
 
 	reader = get_reader(file_id, int(key1_byte), key2_byte)
 
-	key1_val = _key1_value_for_index(reader, key1_idx)
-
 	get_trace_seq = getattr(reader, 'get_trace_seq_for_section', None)
 	if callable(get_trace_seq):
-		seq = get_trace_seq(key1_val, align_to='display')
+		seq = get_trace_seq(key1_idx, align_to='display')
 		return np.asarray(seq, dtype=np.int64)
 
 	if isinstance(reader, TraceStoreSectionReader):
 		key1s = np.asarray(reader.get_header(reader.key1_byte), dtype=np.int64)
-		indices = np.flatnonzero(key1s == key1_val)
+		indices = np.flatnonzero(key1s == key1_idx)
 		if indices.size == 0:
-			msg = f'Key1 value {key1_val} not found'
+			msg = f'Key1 value {key1_idx} not found'
 			raise ValueError(msg)
 		key2s = np.asarray(reader.get_header(reader.key2_byte)[indices])
 		order = np.argsort(key2s, kind='stable')
