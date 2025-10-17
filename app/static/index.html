@@ -1,8 +1,8 @@
 <!DOCTYPE html>
 <html lang="en">
-<meta charset="utf-8" />
 
 <head>
+  <meta charset="utf-8" />
   <title>Seismic Wiggle Viewer</title>
   <style>
     :root {
@@ -360,8 +360,8 @@
     <div id="viewerColumn">
       <div id="controls">
         <label for="key1_idx_slider">key1 index:</label>
-        <input type="range" id="key1_idx_slider" min="0" max="10000" value="0" step="1"
-          oninput="updateKey1Display(); fetchAndPlot()" />
+        <input type="range" id="key1_idx_slider" min="0" max="10000" value="0" step="1" oninput="onKey1Input()"
+          onchange="onKey1Change()" />
         <input type="number" id="key1_idx_display" value="0" min="0" max="10000" step="1" style="width: 60px;"
           onchange="syncSliderWithInput(); fetchAndPlot()" />
         <button onclick="fetchAndPlot()">Plot</button>
@@ -404,7 +404,7 @@
           predicted</label>
 
         <button id="predictFbBtn" onclick="predictFromFb()">Predict from FB</button>
-        <button type="button" onclick="exportPickIndexVectorNpy()">Export pick index vector (.npy)</button>
+        <button type="button" id="export-npy-all-key1" onclick="exportAllPickIndexMatrixNpy()">Export manual picks (.npy)</button>
         <label for="gain">Gain:</label>
         <input type="range" id="gain" min="0.1" max="5" step="0.1" value="1" oninput="onGainChange()" />
         <span id="gain_display">1×</span>
@@ -456,9 +456,14 @@
   <script src="/static/msgpack.min.js"></script>
   <script src="/static/api.js"></script>
   <script src="/static/pipeline_ui.js"></script>
+  <script type="module" src="/static/viewer/bootstrap.js"></script>
   <script>
+    /* Adopt globals provided by /static/viewer/bootstrap.js */
+    var setGrid, getPlotEnv, dataXYFromClient, traceAtPixel, timeAtPixel, pixelForTrace,
+        snapTraceFromDataX, snapTimeFromDataY, buildLayout, buildPickShapes;
     var key1Values = [];
     var currentFileId = '';
+    var currentFileName = ''; // NEW: basename (e.g., LineA.sgy)
     var currentKey1Byte = 189;
     var currentKey2Byte = 193;
     var savedXRange = null;
@@ -470,228 +475,313 @@
     var latestWindowRender = null;
     var windowFetchToken = 0;
     let windowFetchCtrl = null; // active window-fetch controller (if any)
-    let defaultDt = 0.002;
+    let cfg;
+    let debounce;
+    let defaultDt = 0;
+    var onViewportSettled = function () { };
+    var scheduleWindowFetch = function () { };
+    var dragBase = 'zoom'; // will be overridden from localStorage in initViewerGlobals
     let lastHover = null;
     let redrawPending = false;
-    try {
-      const storedDt = localStorage.getItem('segy.dt');
-      if (storedDt !== null) {
-        const parsed = parseFloat(storedDt);
-        if (!Number.isNaN(parsed) && Number.isFinite(parsed) && parsed > 0) {
-          defaultDt = parsed;
-        }
-      }
-    } catch (_) { }
-    window.defaultDt = defaultDt;
-    // === A-7: Coordinate utilities (single source of truth) ===
-    const Grid = {
-      x0: 0,      // leftmost trace center
-      stepX: 1,   // trace stride used for current render (1 for wiggle, stepX/factor for heatmap)
-      y0: 0,      // top sample index center
-      stepY: 1,   // sample stride used for current render (1 or stepY/factor)
-      get dt() { return (window.defaultDt ?? defaultDt) || 0.002; }
-    };
-    function setGrid({ x0, stepX, y0, stepY }) {
-      Grid.x0 = Number.isFinite(x0) ? x0 : 0;
-      Grid.stepX = Number.isFinite(stepX) ? stepX : 1;
-      Grid.y0 = Number.isFinite(y0) ? y0 : 0;
-      Grid.stepY = Number.isFinite(stepY) ? stepY : 1;
-    }
-
-    function buildLayout({
-      mode,
-      x0,
-      x1,
-      y0,
-      y1,
-      stepX = 1,
-      stepY = 1,
-      totalSamples,
-      dt,
-      savedXRange,
-      savedYRange,
-      clickmode,
-      dragmode,
-      uirevision,
-      fbTitle = null,
-    }) {
-      const effectiveDt = typeof dt === 'number' ? dt : 0;
-      const xaxis = {
-        title: 'Trace',
-        showgrid: false,
-        tickfont: { color: '#000' },
-        titlefont: { color: '#000' },
-      };
-      const yaxis = {
-        title: 'Time (s)',
-        showgrid: false,
-        tickfont: { color: '#000' },
-        titlefont: { color: '#000' },
-      };
-
-      if (mode === 'wiggle') {
-        const defaultXRange = [x0, x1];
-        const defaultYRange = [totalSamples * effectiveDt, 0];
-        xaxis.autorange = false;
-        xaxis.range = savedXRange ?? defaultXRange;
-        yaxis.autorange = false;
-        yaxis.range = savedYRange ?? defaultYRange;
-      } else if (mode === 'heatmap') {
-        const halfX = (stepX || 1) * 0.5;
-        const halfYSec = (stepY || 1) * effectiveDt * 0.5;
-        const defaultXRange = [x0 - halfX, x1 + halfX];
-        const defaultYRange = [ (y1 * effectiveDt) + halfYSec, (y0 * effectiveDt) - halfYSec ];
-        xaxis.autorange = !savedXRange;
-        xaxis.range = savedXRange ?? defaultXRange;
-        yaxis.autorange = false;
-        yaxis.range = savedYRange ?? defaultYRange;
-      }
-
-      const layout = {
-        xaxis,
-        yaxis,
-        clickmode,
-        dragmode,
-        uirevision,
-        paper_bgcolor: '#fff',
-        plot_bgcolor: '#fff',
-        margin: { t: 10, r: 10, l: 60, b: 40 },
-      };
-
-      if (fbTitle !== null) {
-        layout.title = fbTitle;
-      }
-
-      return layout;
-    }
-
-    function buildPickShapes({
-      manualPicks,
-      predicted,
-      xMin,
-      xMax,
-      showPredicted,
-    }) {
-      const manualShapes = (manualPicks || [])
-        .filter((p) => p && typeof p.trace === 'number' && p.trace >= xMin && p.trace <= xMax)
-        .map((p) => ({
-          xref: 'x',
-          yref: 'y',
-          type: 'line',
-          x0: p.trace - 0.4,
-          x1: p.trace + 0.4,
-          y0: p.time,
-          y1: p.time,
-          line: { color: 'red', width: 2 },
-        }));
-
-      const predictedShapes = (predicted || [])
-        .filter((p) => p && typeof p.trace === 'number' && p.trace >= xMin && p.trace <= xMax)
-        .map((p) => ({
-          xref: 'x',
-          yref: 'y',
-          type: 'line',
-          x0: p.trace - 0.4,
-          x1: p.trace + 0.4,
-          y0: p.time,
-          y1: p.time,
-          line: { color: '#1f77b4', width: 5, dash: 'dot' },
-        }));
-
-      return [...manualShapes, ...(showPredicted ? predictedShapes : [])];
-    }
-    function getPlotEnv() {
-      const gd = document.getElementById('plot');
-      const rect = gd?.getBoundingClientRect();
-      const m = gd?._fullLayout?._size;   // {l,t,w,h}
-      const xa = gd?._fullLayout?.xaxis;
-      const ya = gd?._fullLayout?.yaxis;
-      if (!gd || !rect || !m || !xa || !ya) return null;
-      return { gd, rect, m, xa, ya };
-    }
-    // clientX/Y -> data X/Y using Plotly p2d
-    function dataXYFromClient(clientX, clientY) {
-        const env = getPlotEnv(); if (!env) return null;
-        const { rect, m, xa, ya } = env;
-        let x = Number.NaN, y = Number.NaN;
-        if (Number.isFinite(clientX)) {
-            const innerX = clientX - rect.left - m.l;
-            x = xa.p2d(innerX);
-          }
-        if (Number.isFinite(clientY)) {
-            const innerY = clientY - rect.top - m.t;
-            y = ya.p2d(innerY);
-          }
-        return { x, y };
-      }
-
-    // Shared snap: snap to the center of the current cell/trace line
-    function snapTraceFromDataX(x) {
-      const k = Math.round((x - Grid.x0) / Grid.stepX);
-      return Grid.x0 + k * Grid.stepX;
-    }
-    function snapTimeFromDataY(y) {
-      const idx = y / Grid.dt;
-      const k = Math.round((idx - Grid.y0) / Grid.stepY);
-      const snappedIdx = Grid.y0 + k * Grid.stepY;
-      return snappedIdx * Grid.dt;
-    }
-    // Public helpers
-    function traceAtPixel(clientX) {
-        const env = getPlotEnv(); if (!env) return NaN;
-        const { rect, m, xa } = env;
-        const innerX = clientX - rect.left - m.l;
-        const x = xa.p2d(innerX);
-        if (!Number.isFinite(x)) return NaN;
-        return snapTraceFromDataX(x);
-      }
-    function pixelForTrace(trace) {
-      const env = getPlotEnv(); if (!env) return null;
-      const { rect, m, xa } = env;
-      const snapped = snapTraceFromDataX(trace);
-      const inner = xa.d2p(snapped);
-      return rect.left + m.l + inner; // clientX
-    }
-    function timeAtPixel(clientY) {
-        const env = getPlotEnv(); if (!env) return NaN;
-        const { rect, m, ya } = env;
-        const innerY = clientY - rect.top - m.t;
-        const y = ya.p2d(innerY);
-        if (!Number.isFinite(y)) return NaN;
-        return snapTimeFromDataY(y);
-      }
-    const PREFETCH_WIDTH = 3;
-    const FALLBACK_MAX = 8;
-    const HARD_LIMIT_BYTES = 512 * 1024 * 1024;
-    const WINDOW_FETCH_DEBOUNCE_MS = 120;
-    const FETCH_DEBOUNCE_MS = 200;
-    const WINDOW_MAX_POINTS = 1_200_000;
-    const LS = { DRAG_BASE: 'drag_base' };
+    // === A-7: Coordinate utilities (provided by /static/viewer/core via bootstrap) ===
     // UI-adjustable threshold for Wiggle/Heatmap decision (persisted)
-    let WIGGLE_DENSITY_THRESHOLD = parseFloat(localStorage.getItem('wiggle_density') || '0.20');
-
-    (function syncWiggleInit() {
-        const el = document.getElementById('wiggle_density');
-        if (!el) return;
-        const saved = localStorage.getItem('wiggle_density');
-        const min = parseFloat(el.min) || 0.02;
-        const max = parseFloat(el.max) || 0.30;
-        let v = saved != null ? parseFloat(saved) : parseFloat(el.value) || 0.20;
-        if (!Number.isFinite(v)) v = 0.20;
-        v = Math.min(max, Math.max(min, v));
-        el.value = v.toFixed(2);
-        WIGGLE_DENSITY_THRESHOLD = v;
-      })();
-
-    if (!Number.isFinite(WIGGLE_DENSITY_THRESHOLD)) {
-      WIGGLE_DENSITY_THRESHOLD = 0.10;
-    }
-    const WIGGLE_MAX_POINTS = 2_500_000;
+    let WIGGLE_DENSITY_THRESHOLD = 0.10;
+    const WIGGLE_MAX_POINTS = 1_000_000;
 
     const cache = new Map(); // key -> { f32: Float32Array }
     const inflight = new Map();
     const CACHE_LIMIT = 12;
+
+    const __pickOps = new Map();
+    let flushPickOpsDebounced = null;
+
+    function installCustomDoubleClick(plotDiv) {
+      if (!plotDiv || plotDiv.__customDbl) return;
+
+      const onDbl = (e) => {
+        // 既定の Plotly ダブルクリックは無効化しているので、ここで挙動を全部やる
+        e.preventDefault();
+        e.stopPropagation();
+
+        // Shift+ダブルクリック → フル範囲へ
+        if (e.shiftKey) {
+          if (!sectionShape) return;
+          const totalTraces = sectionShape[0] | 0;
+          const totalSamples = sectionShape[1] | 0;
+          const dt = window.defaultDt ?? defaultDt;
+          savedXRange = [0, Math.max(0, totalTraces - 1)];
+          savedYRange = [Math.max(0, (totalSamples - 1) * dt), 0]; // Yは上向きに大きい→降順で保存
+          withSuppressedRelayout(Plotly.relayout(plotDiv, {
+            'xaxis.autorange': false,
+            'yaxis.autorange': false,
+            'xaxis.range': savedXRange,
+            'yaxis.range': savedYRange,
+          }));
+          checkModeFlipAndRefetch();
+          return;
+        }
+
+        // 通常ダブルクリック → カーソル中心で 1/2ズーム（範囲2倍）
+        const gd = plotDiv;
+        const xa = gd?._fullLayout?.xaxis;
+        const ya = gd?._fullLayout?.yaxis;
+        if (!xa || !ya) return;
+
+        // 現在のレンジ（Plotlyはyが上→下で降順のことが多いのでmin/max整える）
+        const xr = Array.isArray(xa.range) ? xa.range.slice() : [renderedStart ?? 0, renderedEnd ?? 0];
+        let xMin = Math.min(xr[0], xr[1]);
+        let xMax = Math.max(xr[0], xr[1]);
+
+        const yr = Array.isArray(ya.range) ? ya.range.slice() : [0, (sectionShape?.[1] ?? 1) * (window.defaultDt ?? defaultDt)];
+        let yMin = Math.min(yr[0], yr[1]);
+        let yMax = Math.max(yr[0], yr[1]);
+
+        const totalTraces = sectionShape?.[0] ?? (latestSeismicData?.length ?? 0);
+        const totalSamples = sectionShape?.[1] ?? (latestSeismicData?.[0]?.length ?? 0);
+        if (!totalTraces || !totalSamples) return;
+        const dt = window.defaultDt ?? defaultDt;
+        const yAbsMin = 0;
+        const yAbsMax = (totalSamples - 1) * dt;
+
+        // 画面座標→データ座標
+        const cx = Number.isFinite(traceAtPixel?.(e.clientX)) ? traceAtPixel(e.clientX) : (xMin + xMax) / 2;
+        const cy = Number.isFinite(timeAtPixel?.(e.clientY)) ? timeAtPixel(e.clientY) : (yMin + yMax) / 2;
+
+        // いまの幅/高さを2倍に
+        const spanX = (xMax - xMin) * 2;
+        const spanY = (yMax - yMin) * 2;
+
+        // 新しい範囲（中心はカーソル）
+        let nx0 = cx - spanX / 2;
+        let nx1 = cx + spanX / 2;
+
+        let ny0 = cy - spanY / 2;
+        let ny1 = cy + spanY / 2;
+
+        // 枠内に収める（はみ出した分は反対側に寄せて可能な限り中心を保つ）
+        if (nx0 < 0) { nx1 += -nx0; nx0 = 0; }
+        if (nx1 > totalTraces - 1) { const d = nx1 - (totalTraces - 1); nx0 -= d; nx1 = totalTraces - 1; }
+        nx0 = Math.max(0, Math.floor(nx0));
+        nx1 = Math.min(totalTraces - 1, Math.ceil(nx1));
+
+        if (ny0 < yAbsMin) { ny1 += (yAbsMin - ny0); ny0 = yAbsMin; }
+        if (ny1 > yAbsMax) { const d = ny1 - yAbsMax; ny0 -= d; ny1 = yAbsMax; }
+        ny0 = Math.max(yAbsMin, ny0);
+        ny1 = Math.min(yAbsMax, ny1);
+
+        // 保存（Yは降順で保存している実装に合わせる）
+        savedXRange = [nx0, nx1];
+        savedYRange = [ny1, ny0];
+
+        withSuppressedRelayout(Plotly.relayout(plotDiv, {
+          'xaxis.autorange': false,
+          'yaxis.autorange': false,
+          'xaxis.range': savedXRange,
+          'yaxis.range': savedYRange,
+        }));
+
+        // 表示密度の閾値を超えた/下回ったら自動モード切替も走らせる
+        checkModeFlipAndRefetch();
+      };
+
+      plotDiv.addEventListener('dblclick', onDbl, { capture: true });
+      plotDiv.__customDbl = onDbl;
+    }
+
+
+    function ensureFlushPickOpsDebounced() {
+      if (!flushPickOpsDebounced) {
+        const debFn = (typeof debounce === 'function') ? debounce : makeDebounced;
+        flushPickOpsDebounced = debFn(flushPickOps, 120);
+      }
+      return flushPickOpsDebounced;
+    }
+
+    function _sliderKey1Idx() {
+        const el = document.getElementById('key1_idx_slider');
+        const v = Number.parseInt(el?.value ?? '0', 10);
+        return Number.isFinite(v) ? v : 0;
+      }
+        function _opKey(fileId, key1Idx, key1Byte, trace) {
+          return `${fileId}|${key1Idx}|${key1Byte}|${trace | 0}`;
+        }
+
+    function queueUpsert(trace, time) {
+      const tr = (trace | 0);
+      const fileId = currentFileId;
+      const key1Idx = _sliderKey1Idx();
+      const key1Byte = currentKey1Byte;
+      const k = _opKey(fileId, key1Idx, key1Byte, tr);
+      __pickOps.set(k, { op: 'upsert', fileId, key1Idx, key1Byte, trace: tr, time: +time });
+      const debounced = ensureFlushPickOpsDebounced();
+      debounced();
+    }
+
+    function queueDelete(trace) {
+      const tr = (trace | 0);
+      const fileId = currentFileId;
+      const key1Idx = _sliderKey1Idx();
+      const key1Byte = currentKey1Byte;
+      const k = _opKey(fileId, key1Idx, key1Byte, tr);
+      __pickOps.set(k, { op: 'delete', fileId, key1Idx, key1Byte, trace: tr });
+      const debounced = ensureFlushPickOpsDebounced();
+      debounced();
+    }
+
+    async function flushPickOps() {
+      if (__pickOps.size === 0) return;
+
+      const ops = Array.from(__pickOps.values());
+      __pickOps.clear();
+
+      if (ops.every(op => !op.fileId)) return;
+      const limit = Math.min(4, ops.length);
+      let i = 0;
+
+      async function worker() {
+        while (i < ops.length) {
+          const op = ops[i++];
+          if (!op?.fileId) continue;
+          const fileId = op.fileId;
+          const idx = op.key1Idx | 0;
+          const key1Byte = op.key1Byte | 0;
+          if (op.op === 'upsert') {
+            await fetch('/picks', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                file_id: fileId,
+                trace: op.trace,
+                time: op.time,
+                key1_idx: idx,
+                key1_byte: key1Byte
+              }),
+            });
+          } else {
+            const url = `/picks?file_id=${encodeURIComponent(fileId)}&trace=${op.trace}&key1_idx=${idx}&key1_byte=${key1Byte}`;
+            await fetch(url, { method: 'DELETE' });
+          }
+        }
+      }
+
+      await Promise.all(Array.from({ length: limit }, () => worker()));
+    }
+
+    let __dbg = { enabled: true };
+    // 連続重複を抑制したいタグ（必要なら増やせる）
+      const DEDUP_TAGS = new Set(['RENDER@wiggle:shapes']);
+    const __lastLogKeyByTag = new Map();
+    function __stableStringify(v) {
+        if (v && typeof v === 'object') {
+            if (Array.isArray(v)) return `[${v.map(__stableStringify).join(',')}]`;
+            const keys = Object.keys(v).sort();
+            return `{${keys.map(k => JSON.stringify(k) + ':' + __stableStringify(v[k])).join(',')}}`;
+          }
+        return JSON.stringify(v);
+      }
+    function D(tag, obj) {
+      if (!__dbg.enabled) return;
+      // 直前と同じ内容ならスキップ（指定タグのみ）
+        if (DEDUP_TAGS.has(tag)) {
+            let key;
+            try { key = __stableStringify(obj); } catch { key = null; }
+            const last = __lastLogKeyByTag.get(tag);
+            if (last === key) return;
+            __lastLogKeyByTag.set(tag, key);
+          }
+      try {
+          console.debug(`🧭 ${tag}`, JSON.parse(JSON.stringify(obj)));
+        } catch {
+            console.debug(`🧭 ${tag}`, obj);
+          }
+    }
+
+
+    function samplePicks(arr, k = 6) {
+      return (arr || []).slice(0, k).map(p => ({ tr: Math.round(p.trace), t: +p.time }));
+    }
+    // 現在の可視Xレンジ（整数トレース）と viewer 状態サマリ
+    function visibleXRng() {
+      const gd = document.getElementById('plot');
+      const xr = gd?._fullLayout?.xaxis?.range || savedXRange || [renderedStart ?? 0, renderedEnd ?? 0];
+      const x0 = Math.floor(Math.min(xr[0], xr[1]));
+      const x1 = Math.ceil(Math.max(xr[0], xr[1]));
+      return [x0, x1];
+    }
+    function viewerState(tag = 'STATE') {
+      const [x0, x1] = visibleXRng();
+      const mode = latestWindowRender?.mode || (latestSeismicData ? 'full' : 'none');
+      const st = {
+        key1: key1Values?.[parseInt(document.getElementById('key1_idx_slider')?.value || '0', 10)],
+        layer: document.getElementById('layerSelect')?.value,
+        mode, stepX: latestWindowRender?.stepX, stepY: latestWindowRender?.stepY,
+        x0, x1, renderedStart, renderedEnd, savedXRange, picksCount: picks?.length || 0
+      };
+      D(tag, st);
+      return st;
+    }
+    // ローカル→サーバ疑い時に呼べる即席ダンプ
+    window.debugDump = () => ({
+      viewer: viewerState('DUMP'),
+      picks: samplePicks(picks, 20),
+      predicted: samplePicks(predictedPicks, 10)
+  });
+
     function cacheKey(val, mode) { return `${val}|${mode}`; }
+    function syncWiggleInit() {
+      const el = document.getElementById('wiggle_density');
+      if (!el) return;
+      const saved = cfg.getWiggleDensity();
+      const min = parseFloat(el.min) || 0.02;
+      const max = parseFloat(el.max) || 0.30;
+      let v = Number.isFinite(saved) ? saved : parseFloat(el.value) || 0.20;
+      if (!Number.isFinite(v)) v = 0.20;
+      v = Math.min(max, Math.max(min, v));
+      el.value = v.toFixed(2);
+      WIGGLE_DENSITY_THRESHOLD = v;
+    }
+    function initViewerGlobals() {
+      cfg = window.cfg;
+      debounce = window.debounce;
+      if (!cfg || !debounce) {
+        console.warn('viewer bootstrap globals not ready yet');
+        return;
+      }
+      flushPickOpsDebounced = debounce(flushPickOps, 120);
+      defaultDt = cfg.getDefaultDt();
+      window.defaultDt = defaultDt;
+      WIGGLE_DENSITY_THRESHOLD = cfg.getWiggleDensity();
+      syncWiggleInit();
+      if (!Number.isFinite(WIGGLE_DENSITY_THRESHOLD)) {
+        WIGGLE_DENSITY_THRESHOLD = 0.10;
+      }
+      try {
+        const storedDrag = localStorage.getItem(cfg.LS_KEYS.DRAG_BASE);
+        dragBase = storedDrag === 'pan' ? 'pan' : 'zoom';
+      } catch (_) {
+        dragBase = 'zoom';
+      }
+      onViewportSettled = debounce(() => {
+        if (suppressRelayout || isRelayouting) return;
+        checkModeFlipAndRefetch();
+        maybeFetchIfOutOfWindow();
+      }, cfg.FETCH_DEBOUNCE_MS);
+      scheduleWindowFetch = debounce(() => {
+        fetchWindowAndPlot().catch((err) => console.warn('Window fetch failed', err));
+      }, cfg.WINDOW_FETCH_DEBOUNCE_MS);
+    }
+
+    if (typeof window.whenViewerBootstrapReady !== 'function') {
+      window.whenViewerBootstrapReady = function whenViewerBootstrapReady(cb) {
+        if (typeof cb !== 'function') return;
+        if (window.cfg && window.debounce) {
+          cb();
+          return;
+        }
+        (window.__viewerBootstrapQueue ||= []).push(cb);
+      };
+    }
+    window.whenViewerBootstrapReady(initViewerGlobals);
     var sectionShape = null;
     var renderedStart = null;
     var renderedEnd = null;
@@ -717,14 +807,81 @@
       return `rev:${currentFileId}|${key1Val}|${layer}|${pKey}|${uiResetNonce}`;
     }
 
-  function withSuppressedRelayout(promiseLike) {
-      suppressRelayout = true;
-      if (promiseLike && typeof promiseLike.finally === 'function') {
-          return promiseLike.finally(() => { suppressRelayout = false; });
-        }
-      suppressRelayout = false;
-      return promiseLike;
+    function makeDebounced(fn, waitMs) {
+      let timer = null;
+      function debounced(...args) {
+        if (timer) clearTimeout(timer);
+        timer = setTimeout(() => { timer = null; fn(...args); }, waitMs);
+      }
+      debounced.flush = (...args) => {
+        if (timer) { clearTimeout(timer); timer = null; }
+        fn(...args);
+      };
+      debounced.cancel = () => { if (timer) { clearTimeout(timer); timer = null; } };
+      return debounced;
     }
+
+    // スライダ用：入力中は遅延、確定時は即時
+    let fetchAndPlotDebounced = makeDebounced(() => {
+      try { fetchAndPlot(); } catch (e) { console.warn(e); }
+    }, 120); // 100〜200msくらいが体感◎
+
+    // --- 追加：ハンドラ ---
+    function onKey1Input() {
+      updateKey1Display();
+      fetchAndPlotDebounced();        // 入力が止まってから実行
+    }
+
+    async function onKey1Change() {
+      updateKey1Display();
+      const debounced = ensureFlushPickOpsDebounced();
+      if (typeof debounced?.flush === 'function') {
+        await debounced.flush();
+      } else {
+        await flushPickOps();
+      }
+      fetchAndPlotDebounced.flush();
+    }
+
+    function withSuppressedRelayout(promiseLike) {
+        suppressRelayout = true;
+        if (promiseLike && typeof promiseLike.finally === 'function') {
+            return promiseLike.finally(() => { suppressRelayout = false; });
+          }
+        suppressRelayout = false;
+        return promiseLike;
+      }
+
+    function logCurrentPicks(opts = {}) {
+      const { includePredicted = false, onlyVisible = false } = opts;
+
+      const dt = (window.defaultDt ?? defaultDt);
+      const k1Idx = parseInt(document.getElementById('key1_idx_slider').value, 10) | 0;
+      const key1Val = key1Values?.[k1Idx];
+      const layer = document.getElementById('layerSelect')?.value || 'raw';
+
+      const start = (typeof renderedStart === 'number') ? renderedStart : 0;
+      const end = (typeof renderedEnd === 'number') ? renderedEnd : (sectionShape ? sectionShape[0] - 1 : 0);
+
+      const src = includePredicted ? [...picks, ...predictedPicks] : picks;
+
+      const rows = src
+        .filter(p => Number.isFinite(p.trace) && Number.isFinite(p.time))
+        .map(p => ({
+          trace: Math.round(p.trace),
+          time_s: +p.time,
+          sample_idx: Math.round(p.time / dt),
+        }))
+        .filter(r => !onlyVisible || (r.trace >= start && r.trace <= end))
+        .sort((a, b) => a.trace - b.trace);
+
+      console.log(`[Picks] key1=${key1Val} layer=${layer} count=${rows.length} visibleOnly=${!!onlyVisible}`);
+      console.table(rows);
+      return rows; // 必要なら呼び出し元で使えるように返す
+    }
+
+    // グローバルから呼べるように
+    window.logCurrentPicks = logCurrentPicks;
 
     function snapshotAxesRangesFromDOM() {
       const gd = document.getElementById('plot');
@@ -740,121 +897,125 @@
       }
     }
 
-    // ---- Minimal NPY v1.0 encoder for 1-D TypedArray ----
-    // dtype must be '<i4' here (little-endian int32). Shape is (N,)
-    function npyEncode1d(typedArray, dtype /* '<i4' */) {
-      const N = typedArray.length;
-      const magicBytes = new Uint8Array([0x93, 0x4e, 0x55, 0x4d, 0x50, 0x59]);
-      const ver = new Uint8Array([1, 0]);
+    function filenameFromContentDisposition(disposition) {
+      if (!disposition) return null;
+      const utfMatch = /filename\*=UTF-8''([^;\n]+)/i.exec(disposition);
+      if (utfMatch && utfMatch[1]) {
+        try {
+          return decodeURIComponent(utfMatch[1]);
+        } catch (err) {
+          console.warn('Failed to decode UTF-8 filename from Content-Disposition:', err);
+          return utfMatch[1];
+        }
+      }
+      const match = /filename="?([^";]+)"?/i.exec(disposition);
+      return match && match[1] ? match[1] : null;
+    }
 
-      // Python-style header string
-      const shapeStr = `(${N},)`;
-      let headerStr = `{'descr': '${dtype}', 'fortran_order': False, 'shape': ${shapeStr}, }`;
-      headerStr += '\n';
+    // 手動ピック -> インデックスベクトル（-1は欠損）
+    function buildPickIndexVector(picksArr, nTraces, nSamples, dt) {
+      const last = new Map();
+      for (const p of (picksArr || [])) {
+        const tr = Math.round(p.trace);
+        if (tr >= 0 && tr < nTraces && Number.isFinite(p.time)) last.set(tr, p.time);
+      }
+      const vec = new Int32Array(nTraces);
+      vec.fill(-1);
+      for (const [tr, t] of last) {
+        let idx = Math.round(t / dt);
+        if (!Number.isFinite(idx) || idx < 0 || idx >= nSamples) idx = -1;
+        vec[tr] = idx;
+      }
+      return vec;
+    }
 
-      const enc = new TextEncoder();
-      let headerBytes = enc.encode(headerStr);
+    function saveBlob(uint8OrBlob, filename) {
+        const blob = (uint8OrBlob instanceof Blob)
+          ? uint8OrBlob
+          : new Blob([uint8OrBlob], { type: 'application/octet-stream' });
 
-      // Pad so that (10 + headerLen) % 16 === 0 ; 10 = len(magic)+len(ver)+len(hlen)
-      const preambleLen = 10;
-      const mod = (preambleLen + headerBytes.length) % 16;
-      if (mod !== 0) {
-        const pad = 16 - mod;
-        const padded = new Uint8Array(headerBytes.length + pad);
-        padded.set(headerBytes, 0);
-        // fill with spaces; ensure last char is '\n'
-        padded.fill(' '.charCodeAt(0), headerBytes.length);
-        padded[padded.length - 1] = '\n'.charCodeAt(0);
-        headerBytes = padded;
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = filename || 'download.bin';
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+        setTimeout(() => URL.revokeObjectURL(url), 1000);
       }
 
-      const hlenLE = new Uint8Array(2);
-      new DataView(hlenLE.buffer).setUint16(0, headerBytes.length, true);
+    // .npy エンコーダ（1D/2D両対応）
+    function npyEncode(data, shape, descr = '<i4') {
+      const magic = new Uint8Array([0x93, 0x4E, 0x55, 0x4D, 0x50, 0x59]); // \x93NUMPY
+      const ver = new Uint8Array([0x01, 0x00]); // v1.0
+      const shapeTxt = `(${shape.join(', ')}${shape.length === 1 ? ',' : ''})`;
 
-      const totalLen = magicBytes.length + ver.length + hlenLE.length + headerBytes.length + typedArray.byteLength;
-      const out = new Uint8Array(totalLen);
+      // v1.0 ヘッダは Python 辞書表現・末尾カンマなし・改行で終端
+      let headerDict =
+        "{'descr': '" + descr + "', 'fortran_order': False, 'shape': " + shapeTxt + ", }";
+      // ↑ 末尾カンマを削る
+      headerDict = headerDict.replace(/,\s*}$/, ' }');
+
+      // 最後に改行を必ず入れる
+      let header = headerDict + '\n';
+
+      // 16B アライン（magic+ver+hlen(2B)+header の合計が16の倍数になるようパディング）
+      const fixed = magic.length + ver.length + 2;
+      const pad = (16 - ((fixed + header.length) % 16)) % 16;
+      header += ' '.repeat(pad);
+
+      const hbytes = new TextEncoder().encode(header);
+      const hlenLE = new Uint8Array(2);
+      new DataView(hlenLE.buffer).setUint16(0, hbytes.length, true);
+
+      const out = new Uint8Array(magic.length + ver.length + 2 + hbytes.length + data.byteLength);
       let o = 0;
-      out.set(magicBytes, o); o += magicBytes.length;
-      out.set(ver, o);        o += ver.length;
-      out.set(hlenLE, o);     o += hlenLE.length;
-      out.set(headerBytes, o); o += headerBytes.length;
-      out.set(new Uint8Array(typedArray.buffer, typedArray.byteOffset, typedArray.byteLength), o);
+      out.set(magic, o); o += magic.length;
+      out.set(ver, o); o += ver.length;
+      out.set(hlenLE, o); o += 2;
+      out.set(hbytes, o); o += hbytes.length;
+      out.set(new Uint8Array(data.buffer, data.byteOffset, data.byteLength), o);
       return out;
     }
 
-    // ---- Export current section's manual picks as int32 index vector (.npy) ----
-    async function exportPickIndexVectorNpy() {
-      if (!sectionShape || !Array.isArray(sectionShape) || sectionShape.length < 2) {
+
+    // ★唯一のエクスポータ：全 key1 を [K, Ntr] 行列で書き出し
+    async function exportAllPickIndexMatrixNpy() {
+      if (!sectionShape || sectionShape.length < 2) {
         alert('Section shape is unknown yet.');
         return;
       }
+      if (!Array.isArray(key1Values) || key1Values.length === 0) {
+        alert('key1 values not loaded.');
+        return;
+      }
+
+      if (!currentFileId) {
+        alert('file_id not loaded.');
+        return;
+      }
+
       const nTraces = sectionShape[0];
       const nSamples = sectionShape[1];
       const dt = (window.defaultDt ?? defaultDt);
+      const K = key1Values.length;
 
-      // Build trace -> time_sec map using ONLY manual picks (red).
-      // If multiple picks on same trace, take the latest occurrence.
-      const traceToTime = new Map();
-      for (const p of (picks || [])) {
-        const tr = Math.round(p.trace);
-        if (tr >= 0 && tr < nTraces && Number.isFinite(p.time)) {
-          traceToTime.set(tr, p.time);
-        }
+      const buf = new Int32Array(K * nTraces);
+      buf.fill(-1);
+
+      for (let i = 0; i < K; i++) {
+        const url = `/picks?file_id=${encodeURIComponent(currentFileId)}&key1_idx=${i}&key1_byte=${currentKey1Byte}`;
+        const r = await fetch(url);
+        if (!r.ok) continue;
+        const j = await r.json();
+        const arr = (j.picks || []).map(p => ({ trace: (p.trace | 0), time: +p.time }));
+        const vec = buildPickIndexVector(arr, nTraces, nSamples, dt);
+        buf.set(vec, i * nTraces);
       }
 
-      // Create int32 vector (length = nTraces), default -1 for "no pick"
-      const vec = new Int32Array(nTraces);
-      vec.fill(-1);
-
-      for (const [tr, t] of traceToTime.entries()) {
-        let idx = Math.round(t / dt);
-        if (!Number.isFinite(idx) || idx < 0 || idx >= nSamples) {
-          idx = -1;
-        }
-        vec[tr] = idx;
-      }
-
-      // Encode as .npy (<i4, shape (N,))
-      const npy = npyEncode1d(vec, '<i4');
-
-      function safeName(s) { return String(s).replace(/[^-_.a-zA-Z0-9]/g, '_'); }
-
-      // File name
-      const slider = document.getElementById('key1_idx_slider');
-      const idx = parseInt(slider?.value ?? '0', 10);
-      const key1Val = key1Values?.[idx] ?? 'cur';
-      const fileId = safeName((document.getElementById('file_id')?.value) || 'file');
-      const fname = `pvec_idx_${fileId}_${key1Val}.npy`;
-
-      // Save (prefer File System Access API on secure contexts)
-        try {
-            if (window.isSecureContext && 'showSaveFilePicker' in window) {
-                const handle = await window.showSaveFilePicker({
-                suggestedName: fname,
-                    types: [{ description: 'NumPy array', accept: { 'application/octet-stream': ['.npy'] } }],
-                  });
-              const writable = await handle.createWritable();
-              await writable.write(npy);
-              await writable.close();
-            } else {
-            // Fallback: anchor download (may show HTTP warning on non-HTTPS)
-              const blob = new Blob([npy], { type: 'application/octet-stream' });
-            const href = URL.createObjectURL(blob);
-            const a = document.createElement('a');
-            a.href = href;
-            a.download = fname;
-            document.body.appendChild(a);
-            a.click();
-            a.remove();
-            setTimeout(() => URL.revokeObjectURL(href), 1000);
-            if (!window.isSecureContext) {
-                console.warn('Downloading over an insecure context (HTTP). Consider HTTPS/localhost to silence warnings.');
-              }
-          }
-      } catch (err) {
-          console.error('Save failed:', err);
-          alert('Save failed: ' + (err && err.message ? err.message : err));
-        }
+      const npy = npyEncode(buf, [K, nTraces], '<i4');
+      const base = currentFileName || currentFileId || 'picks';
+      saveBlob(npy, `manual_picks_idx_ALL_${base}.npy`);
     }
 
     let suppressRelayout = false;       // ignore relayouts we cause internally
@@ -865,7 +1026,6 @@
     let currentFbLayer = 'raw';
     let currentFbPipelineKey = null;
 
-    let dragBase = localStorage.getItem(LS.DRAG_BASE) || 'zoom'; // 'zoom' or 'pan'
     let dragOverride = null; // 一時上書き（'pan' を入れる）
 
     function getBaseDragMode() {
@@ -876,7 +1036,7 @@
       const next = (mode === 'pan') ? 'pan' : 'zoom';
       if (dragBase !== next) {
         dragBase = next;
-        try { localStorage.setItem(LS.DRAG_BASE, next); } catch (_) { }
+        try { localStorage.setItem(cfg.LS_KEYS.DRAG_BASE, next); } catch (_) { }
         applyDragMode();
       }
     }
@@ -895,19 +1055,33 @@
     function applyDragMode() {
       const plotDiv = document.getElementById('plot');
       if (!plotDiv) return;
-      const dm = effectiveDragMode();
-      if (applyDragMode._last === dm) return; // 余計な relayout 防止
-      applyDragMode._last = dm;
-      safeRelayout(plotDiv, { dragmode: dm });
-    }
 
-    function debounce(fn, wait) {
-        let t = null;
-        return function (...args) {
-          if (t) clearTimeout(t);
-          t = setTimeout(() => { t = null; fn.apply(this, args); }, wait);
-        };
+      // 既存関数：'zoom' or 'pan' を返す（ピック中は false を返していた）
+      const dm = effectiveDragMode();
+
+      //  - ピック中（dm===false）のときは dragmode は 'zoom' のままにして
+      //    x/y の fixedrange を true にしてドラッグ無効化
+      //  - Alt パンや通常時は fixedrange を false に戻す
+      if (dm === false) {
+        // ピック中（ドラッグ禁止）
+        safeRelayout(plotDiv, {
+          dragmode: 'zoom',                  // 値は何でもOKだが合法値を入れておく
+          'xaxis.fixedrange': true,
+          'yaxis.fixedrange': true,
+        });
+        applyDragMode._last = 'pick-locked';
+        return;
       }
+
+      // 通常 or Alt パン（ドラッグ可能）
+      if (applyDragMode._last === dm) return; // 余計な relayout を避ける
+      applyDragMode._last = dm;
+      safeRelayout(plotDiv, {
+        dragmode: dm,                        // 'zoom' or 'pan'
+        'xaxis.fixedrange': false,
+        'yaxis.fixedrange': false,
+      });
+    }
 
     function safeRelayout(gd, props) {
       suppressRelayout = true;
@@ -990,12 +1164,6 @@
       if (!(insideX && insideY)) scheduleWindowFetch();
     }
 
-    const onViewportSettled = debounce(() => {
-      if (suppressRelayout || isRelayouting) return;
-      checkModeFlipAndRefetch();
-      maybeFetchIfOutOfWindow();
-    }, FETCH_DEBOUNCE_MS);
-
     function installPlotlyViewportHandlersOnce() {
       const plotDiv = document.getElementById('plot');
       if (!plotDiv || plotDiv.__viewportHandlersInstalled) return;
@@ -1020,17 +1188,6 @@
         onViewportSettled();
       });
 
-      plotDiv.on('plotly_doubleclick', () => {
-        if (suppressRelayout) return;
-        isRelayouting = false;
-        savedXRange = null;
-        savedYRange = null;
-        renderedStart = null;
-        renderedEnd = null;
-        forceFullExtentOnce = true;
-        uiResetNonce++;
-        onViewportSettled();
-      });
     }
 
     // 入力系にフォーカスがある時は無効
@@ -1071,7 +1228,7 @@
       if (!Number.isFinite(prev) || Math.abs(prev - dtSec) > 1e-12) {
         defaultDt = dtSec;
         window.defaultDt = dtSec;
-        try { localStorage.setItem('segy.dt', String(dtSec)); } catch (_) { }
+        cfg.setDefaultDt(dtSec);
         savedYRange = null;
       }
     }
@@ -1246,6 +1403,63 @@
       return picks;
     }
 
+    function installUnifiedClickRouter(plotDiv) {
+      if (!plotDiv || plotDiv.__unifiedClickRouter) return;
+
+      const onClick = (e) => {
+        if (e.detail > 1) return; // keep Plotly double-click reset
+        if (e.button !== 0) return;
+        if (!isPickMode) return;
+        if (dragOverride === 'pan' || e.altKey) return;
+        if (isRelayouting) return;
+
+        const activeEl = document.activeElement;
+        if (activeEl && activeEl !== document.body) {
+          const tag = activeEl.tagName;
+          if (tag === 'INPUT' || tag === 'SELECT' || tag === 'TEXTAREA' || activeEl.isContentEditable) {
+            return;
+          }
+        }
+
+        const env = getPlotEnv();
+        if (!env) return;
+        const { rect, m } = env;
+        const innerX = e.clientX - rect.left;
+        const innerY = e.clientY - rect.top;
+        if (innerX < m.l || innerX > m.l + m.w || innerY < m.t || innerY > m.t + m.h) {
+          return;
+        }
+
+        const tr = traceAtPixel(e.clientX);
+        const tSec = timeAtPixel(e.clientY);
+        if (!Number.isFinite(tr) || !Number.isFinite(tSec)) return;
+
+        e.stopImmediatePropagation();
+        e.stopPropagation();
+        e.preventDefault();
+
+        const maybePromise = handlePickNormalized({
+          trace: snapTraceFromDataX(tr),
+          time: snapTimeFromDataY(tSec),
+          shiftKey: !!e.shiftKey,
+          ctrlKey: !!e.ctrlKey,
+          altKey: !!e.altKey,
+        });
+        if (maybePromise && typeof maybePromise.catch === 'function') {
+          maybePromise.catch(err => console.warn('handlePickNormalized failed', err));
+        }
+      };
+
+      const remover = () => {
+        plotDiv.removeEventListener('click', onClick, true);
+        if (plotDiv.__unifiedClickRouter === remover) {
+          plotDiv.__unifiedClickRouter = null;
+        }
+      };
+      plotDiv.addEventListener('click', onClick, { capture: true });
+      plotDiv.__unifiedClickRouter = remover;
+    }
+
     function attachPickListeners(plotDiv) {
       // relayout ハンドラは一度だけインストール
       installPlotlyViewportHandlersOnce();
@@ -1277,72 +1491,7 @@
       });
       plotDiv.on('plotly_unhover', () => { lastHover = null; });
 
-      if (!isPickMode) return; // ピックモードでないなら終了
-
-      // ★ Shiftクリックはキャプチャ段階で奪って Plotly 本体に渡さない（初回Heatmapのcdエラー回避）
-      const captureShift = (e) => {
-        if (!isPickMode || !e.shiftKey) return;
-        e.stopImmediatePropagation();
-        e.stopPropagation();
-        e.preventDefault();
-
-        const now = performance.now();
-        let meta = null;
-        if (lastHover && (now - lastHover.t) < 300) {
-          meta = lastHover.meta;
-        }
-        const tr = traceAtPixel(e.clientX);
-        const tSec = timeAtPixel(e.clientY);
-        if (!Number.isFinite(tr) || !Number.isFinite(tSec)) return;
-        setTimeout(() => {
-          handlePlotClick({ event: e, points: [{ x: tr, y: tSec, data: { meta } }] });
-        }, 0);
-      };
-      plotDiv._captureShiftHandler = captureShift;
-      plotDiv.addEventListener('click', captureShift, true); // capture=true が肝
-
-      // 通常の plotly_click（Shift以外）→ 次tickで処理
-      plotDiv.on('plotly_click', (ev) => {
-        handlePlotClick._firedRecently = true;
-        setTimeout(() => {
-          const clientX = ev?.event?.clientX;
-          const clientY = ev?.event?.clientY;
-          const tr = traceAtPixel(clientX);
-          const tSec = timeAtPixel(clientY);
-          if (!Number.isFinite(tr) || !Number.isFinite(tSec)) { handlePlotClick._firedRecently = false; return; }
-          const now = performance.now();
-          let meta = ev?.points?.[0]?.data?.meta ?? null;
-          if (lastHover && (now - lastHover.t) < 300) {
-            meta = lastHover.meta ?? meta;
-          }
-
-          setTimeout(() => {
-            handlePlotClick({ event: ev.event, points: [{ x: tr, y: tSec, data: { meta } }] });
-            handlePlotClick._firedRecently = false;
-          }, 0);
-        }, 0);
-      });
-
-      // データ外クリックのフォールバック（Shiftは captureShift で処理済み）
-      const fallback = (e) => {
-        if (e.shiftKey) return;
-        setTimeout(() => {
-          if (handlePlotClick._firedRecently) return;
-          const tr = traceAtPixel(e.clientX);
-          const tSec = timeAtPixel(e.clientY);
-          if (!Number.isFinite(tr) || !Number.isFinite(tSec)) return;
-          const now = performance.now();
-          let meta = null;
-          if (lastHover && (now - lastHover.t) < 300) {
-            meta = lastHover.meta ?? null;
-          }
-          setTimeout(() => {
-            handlePlotClick({ event: e, points: [{ x: tr, y: tSec, data: { meta } }] });
-          }, 0);
-        }, 0);
-      };
-      plotDiv._genericClickHandler = fallback;
-      plotDiv.addEventListener('click', fallback);
+      installUnifiedClickRouter(plotDiv);
     }
 
     function computePicks(prob2d) {
@@ -1452,34 +1601,58 @@
     function onWiggleDensityChange() {
       const el = document.getElementById('wiggle_density');
       const v = parseFloat(el?.value);
-      if (Number.isFinite(v) && v > 0) {
-        WIGGLE_DENSITY_THRESHOLD = v;
-        try { localStorage.setItem('wiggle_density', String(v)); } catch (_) { }
-        // Apply now: re-evaluate window mode and redraw
-        renderLatestView();
-        scheduleWindowFetch();
-      }
+      if (!Number.isFinite(v) || v <= 0) return;
+      const stored = cfg.setWiggleDensity(v);
+      if (el) el.value = stored.toFixed(2);
+      WIGGLE_DENSITY_THRESHOLD = stored;
+      // Apply now: re-evaluate window mode and redraw
+      renderLatestView();
+      scheduleWindowFetch();
     }
 
     // Restore UI on load
     (function restoreWiggleUi() {
-      const saved = localStorage.getItem('wiggle_density');
-      const el = document.getElementById('wiggle_density');
-      if (!el) return;
-      if (saved != null) {
-          let v = parseFloat(saved);
-          if (!Number.isFinite(v)) v = 0.10;
-          const min = parseFloat(el.min) || 0.02;
-          const max = parseFloat(el.max) || 0.30;
-          v = Math.min(max, Math.max(min, v));
-          el.value = v.toFixed(2);
-          WIGGLE_DENSITY_THRESHOLD = v;
-        } else {
-          // localStorage未設定時はinputの既定値を信頼
-            let v = parseFloat(el.value) || 0.10;
-          WIGGLE_DENSITY_THRESHOLD = v;
-        }
-    })();
+        const el = document.getElementById('wiggle_density');
+        if (!el) return;
+        const min = parseFloat(el.min) || 0.02;
+        const max = parseFloat(el.max) || 0.30;
+        let v;
+        if (window.cfg && typeof window.cfg.getWiggleDensity === 'function') {
+            v = window.cfg.getWiggleDensity();
+          } else {
+            const saved = localStorage.getItem('wiggle_density');
+            const p = parseFloat(saved);
+            v = Number.isFinite(p) ? p : (parseFloat(el.value) || 0.10);
+          }
+        v = Math.min(max, Math.max(min, v));
+        el.value = v.toFixed(2);
+        WIGGLE_DENSITY_THRESHOLD = v;
+      })();
+
+    (function hookFetchOnce() {
+        if (window.__fetchHooked) return;
+        window.__fetchHooked = true;
+        const orig = window.fetch;
+        window.fetch = async function (...args) {
+          const url = String(args?.[0] || '');
+          const method = (args?.[1]?.method || 'GET').toUpperCase();
+          const t0 = performance.now();
+          try {
+            const res = await orig.apply(this, args);
+            if (/\/picks(\?|$)/.test(url)) {
+              console.debug(`📡 FETCH ${method} ${url} → ${res.status} (${(performance.now() - t0).toFixed(0)}ms)`);
+              console.trace('  ↳ stack @picks'); // 重要：誰が呼んだか
+            } else if (/get_section_window_bin|get_section_bin/.test(url)) {
+              console.debug(`📡 FETCH ${method} ${url} → ${res.status} (${(performance.now() - t0).toFixed(0)}ms)`);
+            }
+            return res;
+          } catch (e) {
+            console.debug(`📡 FETCH ${method} ${url} ✖`, e);
+            throw e;
+          }
+        };
+      })();
+
 
     function onGainChange() {
       const val = document.getElementById('gain').value;
@@ -1647,18 +1820,19 @@
       const canCheckMemory = performance.memory && performance.memory.usedJSHeapSize > 0;
       const used = canCheckMemory ? performance.memory.usedJSHeapSize : 0;
 
+      const hardLimit = (typeof cfg === 'object' && Number.isFinite(cfg.HARD_LIMIT_BYTES))
+        ? cfg.HARD_LIMIT_BYTES
+        : 512 * 1024 * 1024;
+
       console.log('--- putCache called ---');
-      console.log('Added key:', cache.keys());
+      console.log('Keys:', Array.from(cache.keys()));
       console.log('Cache size:', cache.size);
       if (canCheckMemory) {
-        const total = performance.memory.totalJSHeapSize;
-        console.log(`used: ${(used / 1024 / 1024).toFixed(2)} MB`);
-      } else {
-        console.log(`used: ${(used / 1024 / 1024).toFixed(2)} MB (fallback, no total)`);
+        console.log(`used: ${(used / 1024 / 1024).toFixed(1)} MB / ${(hardLimit / 1024 / 1024).toFixed(0)} MB`);
       }
 
-      if (used > HARD_LIMIT_BYTES) {
-        console.warn(`⚠ Memory limit exceeded! (${(used / 1024 / 1024).toFixed(1)} MB > 512 MB)`);
+      if (canCheckMemory && used > hardLimit) {
+        console.warn(`⚠ Memory limit exceeded! (${(used / 1024 / 1024).toFixed(1)} MB > ${(hardLimit / 1024 / 1024).toFixed(0)} MB)`);
         let removed = 0;
         while (cache.size > 1) {
           const removedKey = cache.keys().next().value;
@@ -1698,11 +1872,18 @@
       heightPx,
       oversampleX = 1.2,
       oversampleY = 1.2,
-      maxPoints = WINDOW_MAX_POINTS,
+      maxPoints, // ここは未指定OK
     }) {
       const ratio = window.devicePixelRatio || 1;
       const effW = Math.max(1, Math.round(widthPx * ratio));
       const effH = Math.max(1, Math.round(heightPx * ratio));
+      // cfg 未初期化でも安全な閾値
+      const MAX = Number.isFinite(maxPoints)
+        ? Math.max(1, Math.floor(maxPoints))
+        : ((typeof cfg === 'object' && Number.isFinite(cfg.WINDOW_MAX_POINTS))
+          ? cfg.WINDOW_MAX_POINTS
+          : 2_000_000);
+
       let stepX = Math.max(1, Math.ceil(tracesVisible / (effW * oversampleX)));
       let stepY = Math.max(1, Math.ceil(samplesVisible / (effH * oversampleY)));
 
@@ -1710,12 +1891,8 @@
       const samplesOut = () => Math.ceil(samplesVisible / stepY);
 
       let guard = 0;
-      while (tracesOut() * samplesOut() > maxPoints && guard < 512) {
-        if (tracesOut() / effW > samplesOut() / effH) {
-          stepX += 1;
-        } else {
-          stepY += 1;
-        }
+      while (tracesOut() * samplesOut() > MAX && guard < 512) {
+        if (tracesOut() / effW > samplesOut() / effH) stepX += 1; else stepY += 1;
         guard += 1;
       }
 
@@ -1723,17 +1900,15 @@
       stepY = roundUpPowerOfTwo(stepY);
 
       guard = 0;
-      while (Math.ceil(tracesVisible / stepX) * Math.ceil(samplesVisible / stepY) > maxPoints && guard < 512) {
-        if (tracesVisible / stepX > samplesVisible / stepY) {
-          stepX = roundUpPowerOfTwo(stepX + 1);
-        } else {
-          stepY = roundUpPowerOfTwo(stepY + 1);
-        }
+      while (Math.ceil(tracesVisible / stepX) * Math.ceil(samplesVisible / stepY) > MAX && guard < 512) {
+        if (tracesVisible / stepX > samplesVisible / stepY) stepX = roundUpPowerOfTwo(stepX + 1);
+        else stepY = roundUpPowerOfTwo(stepY + 1);
         guard += 1;
       }
 
       return { step_x: stepX, step_y: stepY };
     }
+
 
     function wantWiggleForWindow({ tracesVisible, samplesVisible, widthPx }) {
       const density = tracesVisible / Math.max(1, widthPx);
@@ -1855,8 +2030,8 @@
       if (effectiveMode !== 'raw') return;
       for (const ctrl of inflight.values()) ctrl.abort();
       inflight.clear();
-      const start = Math.max(0, centerIdx - PREFETCH_WIDTH);
-      const end = Math.min(key1Values.length - 1, centerIdx + PREFETCH_WIDTH);
+      const start = Math.max(0, centerIdx - cfg.PREFETCH_WIDTH);
+      const end = Math.min(key1Values.length - 1, centerIdx + cfg.PREFETCH_WIDTH);
       const scheduler = cb => { ('requestIdleCallback' in window) ? requestIdleCallback(cb) : setTimeout(cb, 0); };
       for (let i = start; i <= end; i++) {
         if (i === centerIdx) continue;
@@ -1892,49 +2067,101 @@
       currentKey1Byte = parseInt(params.get('key1_byte') || localStorage.getItem('key1_byte') || '189');
       currentKey2Byte = parseInt(params.get('key2_byte') || localStorage.getItem('key2_byte') || '193');
       document.getElementById('file_id').value = currentFileId;
-      if (currentFileId) {
-        localStorage.setItem('file_id', currentFileId);
-        localStorage.setItem('key1_byte', currentKey1Byte);
-        localStorage.setItem('key2_byte', currentKey2Byte);
-        await fetchKey1Values();
-        await fetchPicks();
-        await fetchAndPlot();
+      if (!currentFileId) {
+        currentFileName = '';
+        return;
       }
+      localStorage.setItem('file_id', currentFileId);
+      localStorage.setItem('key1_byte', currentKey1Byte);
+      localStorage.setItem('key2_byte', currentKey2Byte);
+      await fetchCurrentFileName();
+      await fetchKey1Values();
+      await fetchAndPlot();
     }
 
     async function fetchPicks() {
+      if (currentFileName) {
+        await reloadPicksForCurrentSection();
+        return;
+      }
       if (!currentFileId) return;
       const idx = parseInt(document.getElementById('key1_idx_slider').value);
-      const key1Val = key1Values[idx];
       try {
-        const res = await fetch(`/picks?file_id=${currentFileId}&key1_idx=${key1Val}&key1_byte=${currentKey1Byte}`);
+        const res = await fetch(`/picks?file_id=${currentFileId}&key1_idx=${idx}&key1_byte=${currentKey1Byte}`);
         if (res.ok) {
           const data = await res.json();
           picks = (data.picks || []).map(p => ({ trace: p.trace, time: p.time }));
         }
+        const [x0, x1] = visibleXRng();
+        D('PICKS@fetchPicks', { count: picks.length, vis: [x0, x1],
+          visCount: picks.filter(p => Math.round(p.trace) >= x0 && Math.round(p.trace) <= x1).length,
+          sample: samplePicks(picks) });
       } catch (e) { console.error('Failed to fetch picks', e); }
     }
 
-    async function postPick(trace, time) {
-      const idx = parseInt(document.getElementById('key1_idx_slider').value);
-      const key1Val = key1Values[idx];
-      try {
-        await fetch('/picks', {
-          method: 'POST', headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ file_id: currentFileId, trace, time, key1_idx: key1Val, key1_byte: currentKey1Byte })
-        });
-      } catch (e) { console.error('Failed to post pick', e); }
+    function postPick(trace, time) {
+      queueUpsert(trace, time);
+      D('PICKS@queuePost', { trace: (trace | 0), time: +time });
     }
 
-    async function deletePick(trace) {
-      const idx = parseInt(document.getElementById('key1_idx_slider').value);
-      const key1Val = key1Values[idx];
+    function deletePick(trace) {
+      queueDelete(trace);
+      D('PICKS@queueDelete', { trace: (trace | 0) });
+    }
+
+    // --- filename & picks loader (by filename) ---
+    async function fetchCurrentFileName() {
+      if (!currentFileId) {
+        currentFileName = '';
+        return;
+      }
       try {
-        await fetch(`/picks?file_id=${currentFileId}&trace=${trace}&key1_idx=${key1Val}&key1_byte=${currentKey1Byte}`, { method: 'DELETE' });
-      } catch (e) { console.error('Failed to delete pick', e); }
+        const r = await fetch(`/file_info?file_id=${encodeURIComponent(currentFileId)}`);
+        if (!r.ok) {
+          currentFileName = '';
+          return;
+        }
+        const j = await r.json();
+        currentFileName = j.file_name || '';
+      } catch (e) {
+        currentFileName = '';
+        console.warn('file_info failed', e);
+      }
+    }
+
+    async function reloadPicksForCurrentSection(key1IdxOrVal) {
+      if (!currentFileId) return [];
+
+      const fileId = currentFileId;
+      const idxRaw = Number.isInteger(key1IdxOrVal)
+        ? key1IdxOrVal
+        : parseInt(document.getElementById('key1_idx_slider').value, 10);
+      const idx = Number.isFinite(idxRaw) ? idxRaw : 0;
+      try {
+        const r = await fetch(`/picks?file_id=${encodeURIComponent(fileId)}&key1_idx=${idx}&key1_byte=${currentKey1Byte}`);
+        if (!r.ok) return [];
+        const j = await r.json();
+        const arr = (j.picks || []).map(p => ({ trace: (p.trace | 0), time: +p.time }));
+        picks = arr;
+        if (typeof renderLatestView === 'function') {
+          try { renderLatestView(); } catch (e) { console.warn('render after picks failed', e); }
+        }
+        const [x0, x1] = visibleXRng();
+        D('PICKS@reload', {
+          count: picks.length,
+          vis: [x0, x1],
+          visCount: picks.filter(p => Math.round(p.trace) >= x0 && Math.round(p.trace) <= x1).length,
+          sample: samplePicks(picks)
+        });
+        return arr;
+      } catch (e) {
+        console.warn('reload picks failed', e);
+        return [];
+      }
     }
 
     async function fetchAndPlot() {
+      snapshotAxesRangesFromDOM();
       console.log('--- fetchAndPlot start ---');
       console.time('Total fetchAndPlot');
 
@@ -2038,6 +2265,7 @@
     }
 
     function drawSelectedLayer(start = null, end = null) {
+      D('DRAW@selectLayer', { layer: document.getElementById('layerSelect')?.value, start, end });
       const sel = document.getElementById('layerSelect');
       const layer = sel ? sel.value : 'raw';
       latestSeismicData = (layer === 'raw') ? rawSeismicData : (latestTapData[layer] || null);
@@ -2063,11 +2291,14 @@
     }
 
     function renderWindowWiggle(windowData) {
+      D('RENDER@wiggle', { key1: windowData.key1, x: [windowData.x0, windowData.x1],
+        y: [windowData.y0, windowData.y1], step: [windowData.stepX, windowData.stepY],
+        picksTotal: picks.length });
       if (isRelayouting) {           // ユーザーがドラッグ中
-          latestWindowRender = windowData; // 最新結果だけ覚えて
-          redrawPending = true;            // 終了後に再描画
-          return;
-        }
+        latestWindowRender = windowData; // 最新結果だけ覚えて
+        redrawPending = true;            // 終了後に再描画
+        return;
+      }
       snapshotAxesRangesFromDOM();
       if (!windowData || (windowData.mode && windowData.mode !== 'wiggle')) return;
 
@@ -2089,21 +2320,31 @@
       const plotDiv = document.getElementById('plot');
       if (!plotDiv) return;
 
-      const { values, shape, x0, x1, y0, y1, stepX = 1, stepY = 1 } = windowData;
+      const { shape, x0, x1, y0, y1 } = windowData;
       const rows = Number(shape?.[0] ?? 0);
       const cols = Number(shape?.[1] ?? 0);
       if (!rows || !cols) return;
-      if (values.length !== rows * cols) return;
+
+      const useI8 = windowData.valuesI8 instanceof Int8Array;
+      const useF32 = !useI8 && windowData.values && windowData.values.length != null;
+      if (!useI8 && !useF32) return;
+
+      const N = rows * cols;
+      if (useI8 && windowData.valuesI8.length < N) return;
+      if (useF32 && windowData.values.length < N) return;
+
+      const scale = Number(windowData.scale) || 1;
 
       setGrid({ x0, stepX: 1, y0, stepY: 1 });
       const dt = window.defaultDt ?? defaultDt;
       const time = new Float32Array(rows);
-      for (let r = 0; r < rows; r++) time[r] = (y0 + r * stepY) * dt;
+      for (let r = 0; r < rows; r++) time[r] = (y0 + r * (windowData.stepY || 1)) * dt;
 
       const traces = [];
       const gain = parseFloat(document.getElementById('gain').value) || 1.0;
       const AMP_LIMIT = 3.0;
 
+      const stepX = windowData.stepX || 1;
       for (let c = 0; c < cols; c++) {
         const baseX = new Float32Array(rows);
         const shiftedFullX = new Float32Array(rows);
@@ -2111,7 +2352,8 @@
         const traceIndex = x0 + c * stepX;
         for (let r = 0; r < rows; r++) {
           const idxVal = r * cols + c;
-          let val = values[idxVal] * gain;
+          let val = (useI8 ? (windowData.valuesI8[idxVal] / scale)
+            : windowData.values[idxVal]) * gain;
           if (val > AMP_LIMIT) val = AMP_LIMIT;
           if (val < -AMP_LIMIT) val = -AMP_LIMIT;
 
@@ -2123,6 +2365,12 @@
         traces.push({ type: 'scatter', mode: 'lines', x: baseX, y: time, line: { width: 0 }, hoverinfo: 'skip', showlegend: false });
         traces.push({ type: 'scatter', mode: 'lines', x: shiftedPosX, y: time, fill: 'tonextx', fillcolor: 'black', line: { width: 0 }, opacity: 0.6, hoverinfo: 'skip', showlegend: false });
         traces.push({ type: 'scatter', mode: 'lines', x: shiftedFullX, y: time, line: { color: 'black', width: 0.5 }, hoverinfo: 'x+y', showlegend: false });
+
+        const [x0v, x1v] = visibleXRng();
+        D('RENDER@wiggle:shapes', {
+          manualInWin: picks.filter(p => p.trace >= windowData.x0 && p.trace <= windowData.x1).length,
+          vis: [x0v, x1v],
+        });
       }
 
       downsampleFactor = 1;
@@ -2130,7 +2378,6 @@
       renderedStart = x0;
       renderedEnd = endTrace;
 
-      const totalTraces = sectionShape ? sectionShape[0] : endTrace - x0 + 1;
       const totalSamples = sectionShape ? sectionShape[1] : (typeof y1 === 'number' ? y1 - y0 + 1 : rows);
       const layout = buildLayout({
         mode: 'wiggle',
@@ -2164,23 +2411,28 @@
         editable: true,
         modeBarButtonsToAdd: ['eraseshape'],
         edits: { shapePosition: false },
+        doubleClick: false,
+        doubleClickDelay: 300,
       }));
-      setTimeout(() => {
-          withSuppressedRelayout(Plotly.Plots.resize(plotDiv));
-        }, 50);
+      setTimeout(() => { withSuppressedRelayout(Plotly.Plots.resize(plotDiv)); }, 50);
       requestAnimationFrame(applyDragMode);
       installPlotlyViewportHandlersOnce();
       attachPickListeners(plotDiv);
+      installCustomDoubleClick(plotDiv);
     }
 
     function renderWindowHeatmap(windowData) {
+      D('RENDER@heatmap', { key1: windowData.key1, x: [windowData.x0, windowData.x1],
+        y: [windowData.y0, windowData.y1], step: [windowData.stepX, windowData.stepY],
+        picksTotal: picks.length });
       if (isRelayouting) {           // ユーザーがドラッグ中
-          latestWindowRender = windowData; // 最新結果だけ覚えて
-          redrawPending = true;            // 終了後に再描画
-          return;
-        }
+        latestWindowRender = windowData; // 最新結果だけ覚えて
+        redrawPending = true;            // 終了後に再描画
+        return;
+      }
       snapshotAxesRangesFromDOM();
       if (!windowData || (windowData.mode && windowData.mode !== 'heatmap')) return;
+
       const sel = document.getElementById('layerSelect');
       const currentLayer = sel ? sel.value : 'raw';
       if (windowData.requestedLayer !== currentLayer) return;
@@ -2197,29 +2449,43 @@
       const plotDiv = document.getElementById('plot');
       if (!plotDiv) return;
 
-      const { values, shape, x0, x1, y0, y1, stepX, stepY, effectiveLayer } = windowData;
+      const { shape, x0, x1, y0, y1, effectiveLayer } = windowData;
+      let { stepX, stepY } = windowData;
       const rows = Number(shape?.[0] ?? 0);
       const cols = Number(shape?.[1] ?? 0);
       if (!rows || !cols) return;
-      if (values.length !== rows * cols) return;
+
+      const useI8 = windowData.valuesI8 instanceof Int8Array;
+      const useF32 = !useI8 && windowData.values && windowData.values.length != null;
+      if (!useI8 && !useF32) {
+        console.warn('renderWindowHeatmap: missing values');
+        return;
+      }
+      const N = rows * cols;
+      if (useI8 && windowData.valuesI8.length < N) return;
+      if (useF32 && windowData.values.length < N) return;
+
+      const scale = Number(windowData.scale) || 1;
 
       setGrid({ x0, stepX, y0, stepY });
       const gain = parseFloat(document.getElementById('gain').value) || 1.0;
       const AMP_LIMIT = 3.0;
       const fbMode = effectiveLayer === 'fbprob';
+
       const zData = new Array(rows);
       for (let r = 0; r < rows; r++) {
         const row = new Float32Array(cols);
         const offset = r * cols;
         for (let c = 0; c < cols; c++) {
-          let val = values[offset + c];
+          let v = useI8 ? (windowData.valuesI8[offset + c] / scale)
+            : windowData.values[offset + c];
           if (fbMode) {
-            row[c] = val * 255;
+            row[c] = v * 255;
           } else {
-            val *= gain;
-            if (val > AMP_LIMIT) val = AMP_LIMIT;
-            else if (val < -AMP_LIMIT) val = -AMP_LIMIT;
-            row[c] = val;
+            v *= gain;
+            if (v > AMP_LIMIT) v = AMP_LIMIT;
+            else if (v < -AMP_LIMIT) v = -AMP_LIMIT;
+            row[c] = v;
           }
         }
         zData[r] = row;
@@ -2291,14 +2557,21 @@
         editable: true,
         modeBarButtonsToAdd: ['eraseshape'],
         edits: { shapePosition: false },
+        doubleClick: false,
+        doubleClickDelay: 300,
       }));
-      setTimeout(() => {
-          withSuppressedRelayout(Plotly.Plots.resize(plotDiv));
-        }, 50);
+      setTimeout(() => { withSuppressedRelayout(Plotly.Plots.resize(plotDiv)); }, 50);
       requestAnimationFrame(applyDragMode);
       installPlotlyViewportHandlersOnce();
       attachPickListeners(plotDiv);
+      installCustomDoubleClick(plotDiv);
+      const [x0v, x1v] = visibleXRng();
+       D('RENDER@wiggle:shapes', {
+        manualInWin: picks.filter(p => p.trace >= windowData.x0 && p.trace <= windowData.x1).length,
+        vis: [x0v, x1v],
+       });
     }
+
     function renderLatestView(startOverride = null, endOverride = null) {
       const sel = document.getElementById('layerSelect');
       const layer = sel ? sel.value : 'raw';
@@ -2339,6 +2612,7 @@
     }
 
     async function fetchWindowAndPlot() {
+      D('WINDOW@req', { key1: key1Values?.[parseInt(document.getElementById('key1_idx_slider')?.value || '0', 10)] });
       if (!currentFileId || !sectionShape) return;
       const slider = document.getElementById('key1_idx_slider');
       if (!slider) return;
@@ -2377,7 +2651,7 @@
 
       const pipelineKeyNow = window.latestPipelineKey || null;
       const mode = wantWiggle ? 'wiggle' : 'heatmap';
-
+       D('WINDOW@calc', { mode, step_x, step_y, x0: windowInfo.x0, x1: windowInfo.x1, y0: windowInfo.y0, y1: windowInfo.y1 });
       let effectiveLayer = requestedLayer;
       let tapLabel = null;
       if (requestedLayer !== 'raw') {
@@ -2391,6 +2665,7 @@
       }
 
       if (!wantWiggle && effectiveLayer === 'raw' && latestSeismicData && step_x === 1 && step_y === 1) {
+        renderLatestView(windowInfo.x0, windowInfo.x1);
         return;
       }
       if (!wantWiggle && tapLabel && latestTapData[requestedLayer] && step_x === 1 && step_y === 1) {
@@ -2433,10 +2708,12 @@
         }
         const bin = new Uint8Array(await res.arrayBuffer());
         if (requestId !== windowFetchToken) return; // stale
+
         const obj = msgpack.decode(bin);
         applyServerDt(obj);
-        const int8 = new Int8Array(obj.data.buffer);
-        const values = Float32Array.from(int8, (v) => v / obj.scale);
+
+        // Int8 のまま保持（Float32生成しない）
+        const valuesI8 = new Int8Array(obj.data.buffer);
         const shapeRaw = Array.isArray(obj.shape) ? obj.shape : Array.from(obj.shape ?? []);
         if (shapeRaw.length !== 2) {
           console.warn('Unexpected window shape', obj.shape);
@@ -2444,6 +2721,7 @@
         }
         const rows = Number(shapeRaw[0]);
         const cols = Number(shapeRaw[1]);
+
         const windowPayload = {
           key1: key1Val,
           requestedLayer,
@@ -2456,31 +2734,30 @@
           stepX: step_x,
           stepY: step_y,
           shape: [rows, cols],
-          values,
+          valuesI8,          // Int8保持
+          scale: obj.scale,  // 後段で /scale
           mode,
         };
+
         latestSeismicData = null;
         latestWindowRender = windowPayload;
         if (isRelayouting) {      // ドラッグ中なら描画は保留
-            redrawPending = true;
-            return;
-          }
+          redrawPending = true;
+          return;
+        }
+        D('WINDOW@recv', { mode, shape: windowPayload.shape, stepX: windowPayload.stepX, stepY: windowPayload.stepY });
         if (mode === 'wiggle') renderWindowWiggle(windowPayload);
         else renderWindowHeatmap(windowPayload);
+
       } catch (err) {
         if (err && err.name === 'AbortError') {
-          // canceled on purpose; ignore
-          return;
+          return; // canceled on purpose
         }
         if (requestId === windowFetchToken) console.warn('Window fetch error', err);
       } finally {
         if (windowFetchCtrl === ctrl) windowFetchCtrl = null;
       }
     }
-
-    const scheduleWindowFetch = debounce(() => {
-      fetchWindowAndPlot().catch((err) => console.warn('Window fetch failed', err));
-    }, WINDOW_FETCH_DEBOUNCE_MS);
 
     function visibleTraceIndices(range, total) {
       let start = Math.floor(range[0]);
@@ -2491,8 +2768,9 @@
     }
 
     function clickModeForCurrentState() {
-        return isPickMode ? 'event' : 'event+select';
-      }
+      return isPickMode ? 'event' : 'event+select';
+    }
+
 
     function plotSeismicData(seismic, dt, startTrace = 0, endTrace = seismic.length - 1) {
       snapshotAxesRangesFromDOM();
@@ -2516,7 +2794,7 @@
       let defaultXRange;
       let defaultYRange;
 
-      if (!fbMode && density < 0.1) {
+      if (!fbMode && density < WIGGLE_DENSITY_THRESHOLD) {
         downsampleFactor = 1;
         setGrid({ x0: startTrace, stepX: 1, y0: 0, stepY: 1 });
         const time = new Float32Array(nSamples);
@@ -2643,7 +2921,9 @@
         responsive: true,
         editable: true,
         modeBarButtonsToAdd: ['eraseshape'],
-        edits: { shapePosition: false }
+        edits: { shapePosition: false },
+        doubleClick: false,
+        doubleClickDelay: 300
       }));
       setTimeout(() => {
           withSuppressedRelayout(Plotly.Plots.resize(plotDiv));
@@ -2654,87 +2934,66 @@
       console.log(`Rendered traces ${startTrace}-${endTrace}`);
       installPlotlyViewportHandlersOnce();
       attachPickListeners(plotDiv);
+      installCustomDoubleClick(plotDiv);
     }
 
     function pickOnTrace(trace) {
       return picks.findIndex(p => Math.round(p.trace) === trace);
     }
 
-    async function handlePlotClick(ev) {
+    function toTraceInt(t) {
+      // マイナス防止も兼ねる。必要なら上限クリップもここで。
+      return Math.max(0, Math.round(t));
+    }
+
+    async function handlePickNormalized({ trace, time, shiftKey, ctrlKey, altKey }) {
       if (isPickMode && dragOverride === 'pan') return;
-      // 再入抑止：処理中は最後の1件だけキュー
-      if (handlePlotClick._busy) {
-        handlePlotClick._queued = ev;
+      if (!Number.isFinite(trace) || !Number.isFinite(time)) return;
+      const trInt = toTraceInt(trace);
+
+      if (handlePickNormalized._busy) {
+        handlePickNormalized._queued = { trace: trInt, time, shiftKey, ctrlKey, altKey };
         return;
       }
-      handlePlotClick._busy = true;
+      handlePickNormalized._busy = true;
 
       try {
         if (!isPickMode) return;
 
-        console.log('🔥 plotly_click fired', ev);
-        const plotDiv = document.getElementById('plot');
-        if (!plotDiv || !ev?.event || !ev.event.clientX) {
-          console.warn('⚠️ plotDiv or event data not available.');
-          return;
-        }
+        console.log('🔥 pick request', { trace, time, shiftKey, ctrlKey, altKey });
 
-        // ログ用：実際の座標変換
-        const rect = plotDiv.getBoundingClientRect();
-        const xpx = ev.event.clientX - rect.left;
-        const ypx = ev.event.clientY - rect.top;
-        const xData = plotDiv._fullLayout.xaxis.p2d(xpx);
-        const yData = plotDiv._fullLayout.yaxis.p2d(ypx);
-
-        const p0 = ev.points && ev.points[0];
-        if (!p0) return;
-
-        const trace = snapTraceFromDataX(p0.x);
-        const time = snapTimeFromDataY(p0.y);
-
-        console.group('🖱 Actual Click Data');
-        console.log('clientX / Y:', ev.event.clientX, ev.event.clientY);
-        console.log('pixel offset:', xpx, ypx);
-        console.log('xData (trace):', xData);
-        console.log('yData (time):', yData);
-        console.log('Snapped trace:', trace);
-        console.log('Snapped time:', time);
-        console.groupEnd();
-
-        // Ctrl+クリック: 範囲削除
-        if (ev.event.ctrlKey) {
+        if (ctrlKey) {
           if (deleteRangeStart === null) {
-            deleteRangeStart = trace;
+            deleteRangeStart = trInt;
             linePickStart = null;
             return;
           }
           const x0 = deleteRangeStart;
           deleteRangeStart = null;
-          const x1 = trace;
+          const x1 = trInt;
           const start = Math.min(x0, x1);
           const end = Math.max(x0, x1);
           const toDelete = picks.filter(p => Math.round(p.trace) >= start && Math.round(p.trace) <= end);
           const promises = toDelete.map(p => deletePick(Math.round(p.trace)));
           picks = picks.filter(p => Math.round(p.trace) < start || Math.round(p.trace) > end);
           await Promise.all(promises);
-          // レンダ直後のレースを避けるため次tick
+          D('PICKS@handlePickNormalized:line', { range: [start, end], count: picks.length });
           setTimeout(() => {
             try { renderLatestView(); } catch (e) { console.warn('renderLatestView failed', e); }
           }, 0);
           return;
         }
 
-        // Shift+クリック: ラインピック
-        if (ev.event.shiftKey) {
+        if (shiftKey) {
           if (!linePickStart) {
-            linePickStart = { trace, time };
+            linePickStart = { trace: trInt, time };
             deleteRangeStart = null;
             return;
           }
 
           const { trace: x0, time: y0 } = linePickStart;
-          linePickStart = { trace, time };
-          const x1 = trace;
+          linePickStart = { trace: trInt, time };
+          const x1 = trInt;
           const y1 = time;
           const xStart = Math.round(Math.min(x0, x1));
           const xEnd = Math.round(Math.max(x0, x1));
@@ -2755,67 +3014,140 @@
             promises.push(postPick(x, tAdj));
           }
           await Promise.all(promises);
+          D('PICKS@handlePickNormalized:line', { range: [xStart, xEnd], count: picks.length });
           renderLatestView();
           return;
         }
 
-        // 通常クリック: 単一ピック
         linePickStart = null;
         deleteRangeStart = null;
 
-        {
-          const idx = pickOnTrace(trace);
-          const promises = [];
-          if (idx >= 0) {
-            promises.push(deletePick(trace));
-            picks.splice(idx, 1);
-          }
-          const tAdj = adjustPickToFeature(trace, time);
-          picks.push({ trace, time: tAdj });
-          promises.push(postPick(trace, tAdj));
-          await Promise.all(promises);
-          renderLatestView();
+        const idx = pickOnTrace(trInt);
+        const promises = [];
+        if (idx >= 0) {
+          promises.push(deletePick(trInt));
+          picks.splice(idx, 1);
         }
+        const tAdj = adjustPickToFeature(trInt, time);
+        picks.push({ trace: trInt, time: tAdj });
+        promises.push(postPick(trInt, tAdj));
+        await Promise.all(promises);
+        D('PICKS@handlePickNormalized:single', { add: { trace: trInt, time: tAdj }, count: picks.length });
+        renderLatestView();
       } finally {
-        handlePlotClick._busy = false;
-        // キューがあれば消化（最新一件のみ）
-        const next = handlePlotClick._queued;
-        handlePlotClick._queued = null;
-        if (next) setTimeout(() => handlePlotClick(next), 0);
+        handlePickNormalized._busy = false;
+        const next = handlePickNormalized._queued;
+        handlePickNormalized._queued = null;
+        if (next) setTimeout(() => handlePickNormalized(next), 0);
       }
     }
 
     async function handleRelayout(ev) {
       if (suppressRelayout) return;
-      const plotDiv = document.getElementById('plot');
+
+      D('RELAYOUT@begin', { keys: Object.keys(ev), isRelayouting, pickMode: isPickMode });
+
+      const gd = document.getElementById('plot');
+
+      // range 更新
       if ('xaxis.range[0]' in ev && 'xaxis.range[1]' in ev) {
         savedXRange = [ev['xaxis.range[0]'], ev['xaxis.range[1]']];
       }
-
       if ('yaxis.range[0]' in ev && 'yaxis.range[1]' in ev) {
         const y0 = ev['yaxis.range[0]'];
         const y1 = ev['yaxis.range[1]'];
         savedYRange = y0 > y1 ? [y0, y1] : [y1, y0];
       }
 
-      if (Array.isArray(ev.shapes)) {
-        // 予測(青点線)は保存しない。赤のみ保存。
-        const onlyManual = ev.shapes.filter(s => s.line && s.line.color === 'red');
-        const newPicks = onlyManual.map(s => ({
-          trace: (s.x0 + s.x1) / 2,
-          time: (s.y0 + s.y1) / 2
-        }));
-
-        const oldTraces = new Set(picks.map(p => Math.round(p.trace)));
-        const newTraces = new Set(newPicks.map(p => Math.round(p.trace)));
-        for (const t of oldTraces) {
-          if (!newTraces.has(t)) {
-            await deletePick(t);
-          }
-        }
-        picks = newPicks;
+      // autorange のときはレンジ再取得して終了（shape同期はしない）
+      if ('xaxis.autorange' in ev || 'yaxis.autorange' in ev) {
+        await new Promise(r => requestAnimationFrame(r));
+        snapshotAxesRangesFromDOM();
+        checkModeFlipAndRefetch();
+        return;
       }
+
+      // ★ 本当に shape のプロパティが変わったときだけ同期（eraseshape 等の全置換は無視）
+      const shapePropKeys = Object.keys(ev).filter(k => /^shapes\[\d+\]\.(x0|x1|y0|y1|line\.color|line\.width|visible)$/.test(k));
+      if (shapePropKeys.length === 0 || !isPickMode) {
+        D('RELAYOUT@skip(no-shape-prop or not pickMode)', viewerState());
+        return;
+      }
+
+      // Plotly が layout 反映完了するのを待つ
+      await new Promise(r => requestAnimationFrame(r));
+
+      const fullShapes =
+        (gd && gd._fullLayout && Array.isArray(gd._fullLayout.shapes))
+          ? gd._fullLayout.shapes
+          : [];
+
+      // 可視Xレンジ
+      const xa = gd?._fullLayout?.xaxis;
+      const xr = (xa && Array.isArray(xa.range)) ? xa.range : [renderedStart ?? 0, renderedEnd ?? 0];
+      const xVis0 = Math.floor(Math.min(xr[0], xr[1]));
+      const xVis1 = Math.ceil(Math.max(xr[0], xr[1]));
+      const inView = (t) => t >= xVis0 && t <= xVis1;
+
+      // shapes → newMap（赤のみ・可視範囲のみ）
+      const newMap = new Map();
+      for (const s of fullShapes) {
+        if (!s || !s.line || s.line.color !== 'red') continue;
+        const tr = Math.round(((+s.x0) + (+s.x1)) / 2);
+        if (!inView(tr)) continue;
+        const time = ((+s.y0) + (+s.y1)) / 2;
+        newMap.set(tr, { trace: tr, time });
+      }
+
+      // 旧ローカル → oldMap（可視範囲のみ）
+      const oldMap = new Map();
+      for (const p of (picks || [])) {
+        const tr = Math.round(p.trace);
+        if (!inView(tr)) continue;
+        oldMap.set(tr, { trace: tr, time: +p.time });
+      }
+
+      // 差分計算
+      const del = [];
+      const add = [];
+      const upd = [];
+
+      for (const [tr, op] of oldMap) {
+        if (!newMap.has(tr)) {
+          del.push(tr);
+        } else {
+          const np = newMap.get(tr);
+          if (Math.abs(np.time - op.time) > 1e-9) upd.push(np);
+        }
+      }
+      for (const [tr, np] of newMap) {
+        if (!oldMap.has(tr)) add.push(np);
+      }
+
+      // サーバ反映（可視範囲の差分のみ）
+      await Promise.all([
+        ...del.map(t => deletePick(t)),
+        ...add.map(p => postPick(p.trace, p.time)),
+        ...upd.map(p => postPick(p.trace, p.time)),
+      ]);
+
+      // ローカル更新：不可視はそのまま、可視は差分適用
+      const kept = (picks || []).filter(p => {
+        const tr = Math.round(p.trace);
+        return tr < xVis0 || tr > xVis1 || !del.includes(tr);
+      });
+      const mergedMap = new Map(kept.map(p => [Math.round(p.trace), { trace: Math.round(p.trace), time: +p.time }]));
+      for (const p of add) mergedMap.set(p.trace, p);
+      for (const p of upd) mergedMap.set(p.trace, p);
+      picks = Array.from(mergedMap.values()).sort((a, b) => a.trace - b.trace);
+
+      D('RELAYOUT@sync', {
+        shapePropKeys, vis: [xVis0, xVis1],
+        del, add: add.map(p => p.trace), upd: upd.map(p => p.trace),
+        count: picks.length, sample: samplePicks(picks)
+      });
     }
+
 
     window.addEventListener('DOMContentLoaded', () => {
       const overlay = document.getElementById('ppOverlay');
@@ -2932,7 +3264,47 @@
       attachPipelineHandlers();
     });
 
-    window.addEventListener('DOMContentLoaded', loadSettings);
+    window.addEventListener('DOMContentLoaded', () => {
+      console.info('[viewer] DOMContentLoaded hook');
+      const fileIdEl = document.getElementById('file_id');
+      const slider = document.getElementById('key1_idx_slider');
+
+      const boot = async () => {
+        if (fileIdEl && fileIdEl.value && !currentFileId) {
+          currentFileId = fileIdEl.value;
+        }
+        if (!currentFileId) {
+          currentFileName = '';
+          return;
+        }
+        if (!currentFileName) {
+          await fetchCurrentFileName();
+        }
+      };
+
+      loadSettings().catch((err) => console.warn('loadSettings failed', err)).finally(() => {
+        boot().catch((err) => console.warn('initial picks load failed', err));
+      });
+
+      if (fileIdEl) {
+        fileIdEl.addEventListener('change', async () => {
+          currentFileId = fileIdEl.value || '';
+          await fetchCurrentFileName();
+          await fetchKey1Values();
+          (typeof fetchAndPlotDebounced?.flush === 'function')
+            ? fetchAndPlotDebounced.flush()
+            : fetchAndPlot();
+        });
+      }
+      if (slider) {
+        slider.addEventListener('change', () => {
+          // ピック読込は fetchAndPlot() 内に集約
+          (typeof fetchAndPlotDebounced?.flush === 'function')
+            ? fetchAndPlotDebounced.flush()
+            : fetchAndPlot();
+        });
+      }
+    });
 
     // Toggle between raw and first tap with the "n" key
     window.addEventListener('keydown', (e) => {

@@ -33,7 +33,10 @@ data/
 output/
 model/
 test/
+/workspace/app_data/
 # compiled コード
 *.so
 *.o
 *.a
+
+node_modules/

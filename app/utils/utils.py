@@ -48,6 +48,9 @@ class SegySectionReader:
         self.key1_byte = key1_byte
         self.key2_byte = key2_byte
         self.section_cache: dict[int, list[list[float]]] = {}
+        self._trace_seq_cache: dict[int, np.ndarray] = {}
+        self._trace_seq_disp_cache: dict[int, np.ndarray] = {}
+        self.ntraces: int = 0
         self._initialize_metadata()
 
     def _initialize_metadata(self) -> None:
@@ -56,6 +59,41 @@ class SegySectionReader:
             self.key1s = f.attributes(self.key1_byte)[:]
             self.key2s = f.attributes(self.key2_byte)[:]
         self.unique_key1 = np.unique(self.key1s)
+        self.ntraces = int(len(self.key1s))
+
+    def _indices_for_key1(self, key1_val: int) -> np.ndarray:
+        if key1_val in self._trace_seq_cache:
+            return self._trace_seq_cache[key1_val]
+
+        idx = np.flatnonzero(self.key1s == key1_val).astype(np.int64)
+        if idx.size == 0:
+            msg = f"Key1 value {key1_val} not found"
+            raise ValueError(msg)
+
+        self._trace_seq_cache[key1_val] = idx
+        return idx
+
+    def _sorted_indices_for_key1(self, key1_val: int) -> np.ndarray:
+        if key1_val in self._trace_seq_disp_cache:
+            return self._trace_seq_disp_cache[key1_val]
+
+        idx = self._indices_for_key1(key1_val)
+        order = np.argsort(self.key2s[idx], kind="stable")
+        sorted_idx = idx[order]
+        self._trace_seq_disp_cache[key1_val] = sorted_idx
+        return sorted_idx
+
+    def get_trace_seq_for_section(
+        self, key1_val: int, align_to: str = "display"
+    ) -> np.ndarray:
+        """Return TraceSeq indices for ``key1_val`` aligned to the requested order."""
+
+        if align_to == "display":
+            return self._sorted_indices_for_key1(key1_val)
+        if align_to == "original":
+            return self._indices_for_key1(key1_val)
+        msg = "align_to must be 'display' or 'original'"
+        raise ValueError(msg)
 
     def get_key1_values(self) -> np.ndarray:
         """Return the available values for header ``key1``."""
@@ -66,14 +104,8 @@ class SegySectionReader:
         if key1_val in self.section_cache:
             return self.section_cache[key1_val]
 
-        indices = np.where(self.key1s == key1_val)[0]
-        print(len(indices), "indices found for key1_val:", key1_val)
-        if len(indices) == 0:
-            msg = f"Key1 value {key1_val} not found"
-            raise ValueError(msg)
-
-        key2_vals = self.key2s[indices]
-        sorted_indices = indices[np.argsort(key2_vals, kind="stable")]
+        sorted_indices = self.get_trace_seq_for_section(key1_val, align_to="display")
+        print(len(sorted_indices), "indices found for key1_val:", key1_val)
 
         with segyio.open(self.path, "r", ignore_geometry=True) as f:
             f.mmap()
@@ -88,14 +120,8 @@ class SegySectionReader:
 
     def get_offsets_for_section(self, key1_val: int, offset_byte: int) -> np.ndarray:
         """Return ``(W,)`` float32 offsets aligned with :meth:`get_section`."""
-        indices = np.where(self.key1s == key1_val)[0]
-        print(len(indices), "indices found for key1_val:", key1_val)
-        if len(indices) == 0:
-            msg = f"Key1 value {key1_val} not found"
-            raise ValueError(msg)
-
-        key2_vals = self.key2s[indices]
-        sorted_indices = indices[np.argsort(key2_vals, kind="stable")]
+        sorted_indices = self.get_trace_seq_for_section(key1_val, align_to="display")
+        print(len(sorted_indices), "indices found for key1_val:", key1_val)
 
         with segyio.open(self.path, "r", ignore_geometry=True) as f:
             f.mmap()
@@ -150,12 +176,13 @@ class TraceStoreSectionReader:
         tmp_path.replace(path)
         return np.load(path, mmap_mode="r")
 
-    def _get_header(self, byte: int) -> np.ndarray:
+    def get_header(self, byte: int) -> np.ndarray:
+        """Return the header array for ``byte``."""
         return self.ensure_header(byte)
 
     def get_key1_values(self) -> np.ndarray:
         """Return the available ``key1`` header values."""
-        key1s = self._get_header(self.key1_byte)
+        key1s = self.get_header(self.key1_byte)
         return np.unique(key1s)
 
     def get_section(self, key1_val: int) -> list[list[float]]:
@@ -163,14 +190,14 @@ class TraceStoreSectionReader:
         if key1_val in self.section_cache:
             return self.section_cache[key1_val]
 
-        key1s = self._get_header(self.key1_byte)
+        key1s = self.get_header(self.key1_byte)
         indices = np.where(key1s == key1_val)[0]
         print(len(indices), "indices found for key1_val:", key1_val)
         if len(indices) == 0:
             msg = f"Key1 value {key1_val} not found"
             raise ValueError(msg)
 
-        key2s = self._get_header(self.key2_byte)[indices]
+        key2s = self.get_header(self.key2_byte)[indices]
         sorted_indices = indices[np.argsort(key2s, kind="stable")]
         section = self.traces[sorted_indices].tolist()
         self.section_cache[key1_val] = section
@@ -178,14 +205,14 @@ class TraceStoreSectionReader:
 
     def get_offsets_for_section(self, key1_val: int, offset_byte: int) -> np.ndarray:
         """Return ``(W,)`` float32 offsets aligned with :meth:`get_section`."""
-        key1s = self._get_header(self.key1_byte)
+        key1s = self.get_header(self.key1_byte)
         indices = np.where(key1s == key1_val)[0]
         print(len(indices), "indices found for key1_val:", key1_val)
         if len(indices) == 0:
             msg = f"Key1 value {key1_val} not found"
             raise ValueError(msg)
 
-        key2s = self._get_header(self.key2_byte)[indices]
+        key2s = self.get_header(self.key2_byte)[indices]
         sorted_indices = indices[np.argsort(key2s, kind="stable")]
         header = self.ensure_header(offset_byte)
         offsets = np.asarray(header[sorted_indices], dtype=np.float32)
@@ -193,5 +220,5 @@ class TraceStoreSectionReader:
 
     def preload_all_sections(self) -> None:
         """Warm caches for the frequently accessed headers."""
-        self._get_header(self.key1_byte)
-        self._get_header(self.key2_byte)
+        self.get_header(self.key1_byte)
+        self.get_header(self.key2_byte)

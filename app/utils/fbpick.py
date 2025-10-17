@@ -17,7 +17,7 @@ __all__ = ['_MODEL_PATH', 'infer_prob_map', 'make_offset_channel']
 _MODEL_PATH = (
 	Path(__file__).resolve().parents[2]
 	/ 'model'
-	/ 'fbpick_edgenext_small_useoffset.pth'
+	/ 'fbpick_edgenext_small_mobara_tr1.pth'
 )
 
 
@@ -97,9 +97,7 @@ def _run_tiled(  # noqa: PLR0913
 				)
 			autocast_enabled = amp and autocast_available
 			with torch.cuda.amp.autocast(enabled=autocast_enabled):
-				print(model)
-				print(patch.shape)
-				model.print_shapes = True
+				model.print_shapes = False
 				yp = model(patch)  # (B,1,tile_h,tile_w) expected
 			yp = yp[..., :ph, :pw]
 			out[:, :, h0:bottom, w0:right] += yp
@@ -190,7 +188,6 @@ def infer_prob_map(  # noqa: PLR0913
 			amp=amp,
 			offset_channel=1,
 		)
-		print(logits)
 	# 学習と同じ: 時間軸に沿ってsoftmax
 	prob = torch.softmax(logits.squeeze(1) / tau, dim=-1)  # (1,H,W)
 

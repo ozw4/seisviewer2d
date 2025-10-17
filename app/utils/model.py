@@ -465,9 +465,8 @@ if __name__ == '__main__':
 		),
 	)
 	# adjust_first_conv_padding(model.backbone, padding=(3, 3))
-	model.print_shapes = True
+	model.print_shapes = False
 	model.eval()
 
 	with torch.no_grad():
 		output = model(dummy_input)
-		print('Output shape:', output.shape)
