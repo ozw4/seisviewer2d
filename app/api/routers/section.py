@@ -129,7 +129,7 @@ def get_trace_seq_for(file_id: str, key1_idx: int, key1_byte: int) -> NDArray[np
 
 	get_trace_seq = getattr(reader, 'get_trace_seq_for_section', None)
 	if callable(get_trace_seq):
-		seq = get_trace_seq(key1_idx, align_to='display')
+		seq = get_trace_seq(key1_val, align_to='display')
 		return np.asarray(seq, dtype=np.int64)
 
 	if isinstance(reader, TraceStoreSectionReader):
@@ -140,6 +140,44 @@ def get_trace_seq_for(file_id: str, key1_idx: int, key1_byte: int) -> NDArray[np
 			raise ValueError(msg)
 		key2s = np.asarray(reader.get_header(reader.key2_byte)[indices])
 		order = np.argsort(key2s, kind='stable')
+		return np.asarray(indices[order], dtype=np.int64)
+
+	msg = 'Reader cannot provide trace sequence information'
+	raise AttributeError(msg)
+
+
+def get_trace_seq_for_value(
+        file_id: str, key1_val: int, key1_byte: int
+) -> NDArray[np.int64]:
+	"""Return display-aligned trace ordering for ``key1_val`` of ``file_id``."""
+	key2_byte = 193
+	ent = FILE_REGISTRY.get(file_id)
+	if ent is None:
+		raise KeyError(f'file_id not found: {file_id}')
+	maybe_reader = getattr(ent, 'reader', None)
+	if maybe_reader is None and isinstance(ent, dict):
+		maybe_reader = ent.get('reader')
+	if maybe_reader is not None:
+		key2_byte = int(getattr(maybe_reader, 'key2_byte', 193))
+
+	reader = get_reader(file_id, int(key1_byte), key2_byte)
+	target_val = int(key1_val)
+
+	get_trace_seq = getattr(reader, 'get_trace_seq_for_section', None)
+	if callable(get_trace_seq):
+		seq = get_trace_seq(target_val, align_to='display')
+		return np.asarray(seq, dtype=np.int64)
+
+	get_header = getattr(reader, 'get_header', None)
+	if callable(get_header):
+		key1_headers = np.asarray(get_header(int(key1_byte)), dtype=np.int64)
+		indices = np.flatnonzero(key1_headers == target_val)
+		if indices.size == 0:
+			msg = f'Key1 value {target_val} not found'
+			raise ValueError(msg)
+		key2_src = int(getattr(reader, 'key2_byte', key2_byte))
+		key2_headers = np.asarray(get_header(key2_src), dtype=np.int64)
+		order = np.argsort(key2_headers[indices], kind='stable')
 		return np.asarray(indices[order], dtype=np.int64)
 
 	msg = 'Reader cannot provide trace sequence information'
@@ -169,7 +207,7 @@ def get_section(
 	"""Return the section for the ``key1_idx`` trace grouping."""
 	try:
 		reader = get_reader(file_id, key1_byte, key2_byte)
-		# key1_val = _key1_value_for_index(reader, key1_idx)
+		key1_val = _key1_value_for_index(reader, key1_idx)
 		section = reader.get_section(key1_val)
 		payload = section.tolist() if isinstance(section, np.ndarray) else section
 		return JSONResponse(content={'section': payload})

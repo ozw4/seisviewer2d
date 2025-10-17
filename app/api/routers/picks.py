@@ -15,7 +15,7 @@ from pydantic import BaseModel
 from starlette.background import BackgroundTask
 
 from app.api._helpers import _filename_for_file_id, get_reader
-from app.api.routers.section import get_ntraces_for, get_trace_seq_for
+from app.api.routers.section import get_ntraces_for, get_trace_seq_for_value
 from app.utils.pick_cache_file1d_mem import (
     clear_by_traceseq,
     clear_section,
@@ -32,21 +32,21 @@ class PickPostModel(BaseModel):
     file_id: str
     trace: int
     time: float
-    key1_idx: int
+    key1_val: int
     key1_byte: int
 
 
 @router.get("/picks")
 async def get_picks(
     file_id: str = Query(...),
-    key1_idx: int = Query(...),
+    key1_val: int = Query(...),
     key1_byte: int = Query(...),
 ) -> dict[str, list[dict[str, int | float]]]:
     fname = _filename_for_file_id(file_id)
     if not fname:
         raise HTTPException(404, "file_id not found")
     ntr = get_ntraces_for(file_id)
-    sec_map = get_trace_seq_for(file_id, key1_idx, key1_byte)
+    sec_map = get_trace_seq_for_value(file_id, key1_val, key1_byte)
     picks = await asyncio.to_thread(to_pairs_for_section, fname, ntr, sec_map)
     return {"picks": picks}
 
@@ -57,7 +57,7 @@ async def post_pick(m: PickPostModel) -> dict[str, str]:
     if not fname:
         raise HTTPException(404, "file_id not found")
     ntr = get_ntraces_for(m.file_id)
-    sec_map = get_trace_seq_for(m.file_id, m.key1_idx, m.key1_byte)
+    sec_map = get_trace_seq_for_value(m.file_id, m.key1_val, m.key1_byte)
     if not (0 <= m.trace < sec_map.size):
         raise HTTPException(400, "trace out of range for section")
     trace_seq = int(sec_map[m.trace])
@@ -88,8 +88,8 @@ async def export_manual_picks_all_npy(
     ntraces = get_ntraces_for(file_id)
     sec_maps: list[np.ndarray] = []
     counts: list[int] = []
-    for idx in range(len(key1_list)):
-        sec_map = get_trace_seq_for(file_id, idx, key1_byte)
+    for key1_val in key1_list:
+        sec_map = get_trace_seq_for_value(file_id, key1_val, key1_byte)
         sec_maps.append(sec_map)
         counts.append(int(sec_map.size))
 
@@ -169,14 +169,14 @@ async def export_manual_picks_all_npy(
 async def delete_pick(
     file_id: str = Query(...),
     trace: int | None = Query(None),
-    key1_idx: int = Query(...),
+    key1_val: int = Query(...),
     key1_byte: int = Query(...),
 ) -> dict[str, str]:
     fname = _filename_for_file_id(file_id)
     if not fname:
         raise HTTPException(404, "file_id not found")
     ntr = get_ntraces_for(file_id)
-    sec_map = get_trace_seq_for(file_id, key1_idx, key1_byte)
+    sec_map = get_trace_seq_for_value(file_id, key1_val, key1_byte)
 
     if trace is None:
         await asyncio.to_thread(clear_section, fname, ntr, sec_map)
