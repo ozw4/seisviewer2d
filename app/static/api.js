@@ -60,12 +60,12 @@ function normalizeTapValue(value) {
 
 async function fetchSectionWithPipeline(
   fileId,
-  key1Idx,
+  key1Val,
   spec,
   taps,
   { key1Byte = 189, key2Byte = 193 } = {}
 ) {
-  const url = `/pipeline/section?file_id=${encodeURIComponent(fileId)}&key1_idx=${key1Idx}&key1_byte=${key1Byte}&key2_byte=${key2Byte}`;
+  const url = `/pipeline/section?file_id=${encodeURIComponent(fileId)}&key1_val=${key1Val}&key1_byte=${key1Byte}&key2_byte=${key2Byte}`;
   const r = await fetch(url, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -81,6 +81,6 @@ async function fetchSectionWithPipeline(
       console.warn('normalizeTapValue failed', name, e);
     }
   }
-  cacheSet(`${fileId}:${key1Idx}:${json.pipeline_key}`, out);
+  cacheSet(`${fileId}:${key1Val}:${json.pipeline_key}`, out);
   return { taps: out, pipelineKey: json.pipeline_key };
 }

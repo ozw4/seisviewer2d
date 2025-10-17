@@ -198,8 +198,8 @@ def test_get_trace_seq_for_with_segy_reader_matches_legacy(monkeypatch):
 	monkeypatch.setattr(sec, 'get_reader', lambda fid, kb1, kb2: r, raising=True)
 
 	vals = r.get_key1_values()
-	for key1_idx, v in enumerate(vals):
-		seq = sec.get_trace_seq_for('lineA', key1_idx=key1_idx, key1_byte=189)
+	for v in vals:
+		seq = sec.get_trace_seq_for('lineA', key1_val=int(v), key1_byte=189)
 		indices = np.where(r.key1s == v)[0]
 		expected = indices[np.argsort(r.key2s[indices], kind='stable')]
 		assert np.array_equal(seq, expected)
@@ -214,18 +214,18 @@ def test_get_trace_seq_for_with_tracestore_uses_public_get_header(monkeypatch):
 	# ensure per-request reader is used
 	monkeypatch.setattr(sec, 'get_reader', lambda fid, kb1, kb2: t, raising=True)
 
-	# unique_key1 = [7,8,9] → idx=2 => val=9
-	seq = sec.get_trace_seq_for('lineB', key1_idx=2, key1_byte=189)
+	# unique_key1 = [7,8,9] → value=9
+	seq = sec.get_trace_seq_for('lineB', key1_val=9, key1_byte=189)
 	idx = np.where(key1s == 9)[0]
 	expected = idx[np.argsort(key2s[idx], kind='stable')]
 	assert np.array_equal(seq, expected)
 
-	# also verify out-of-range idx raises IndexError
-	with pytest.raises(IndexError):
-		sec.get_trace_seq_for('lineB', key1_idx=99, key1_byte=189)
+	# also verify missing value raises ValueError
+	with pytest.raises(ValueError):
+		sec.get_trace_seq_for('lineB', key1_val=999, key1_byte=189)
 
 
-def test_get_section_converts_index_to_value_and_returns_json(monkeypatch):
+def test_get_section_returns_json_for_value(monkeypatch):
 	# Reader returns specific values and captures the key1_val it received.
 	received = {'val': None}
 
@@ -243,16 +243,26 @@ def test_get_section_converts_index_to_value_and_returns_json(monkeypatch):
 	monkeypatch.setattr(
 		sec, 'get_reader', lambda fid, kb1, kb2: _StubReader(), raising=True
 	)
-	resp = sec.get_section(file_id='f', key1_byte=189, key2_byte=193, key1_idx=1)
+	resp = sec.get_section(file_id='f', key1_byte=189, key2_byte=193, key1_val=20)
 	data = json.loads(resp.body)
 	assert data['section'] == [[1.0, 2.0], [3.0, 4.0]]
-	assert received['val'] == 20  # idx→val conversion happened
+	assert received['val'] == 20
 
-	# out-of-range index → HTTPException(400)
+	# missing value → HTTPException(400)
+	class _StubReader2:
+		key1_byte = 189
+		key2_byte = 193
+
+		def get_section(self, key1_val: int):
+			raise ValueError(f'key1 {key1_val} not found')
+
+	monkeypatch.setattr(
+		sec, 'get_reader', lambda fid, kb1, kb2: _StubReader2(), raising=True
+	)
 	with pytest.raises(Exception) as ei:
-		sec.get_section(file_id='f', key1_byte=189, key2_byte=193, key1_idx=99)
+		sec.get_section(file_id='f', key1_byte=189, key2_byte=193, key1_val=99)
 	# (FastAPI HTTPException) don't overfit type; message check is enough
-	assert 'key1_idx out of range' in str(ei.value)
+	assert 'key1 99 not found' in str(ei.value)
 
 
 def test_get_section_bin_happy_path(monkeypatch):
@@ -273,7 +283,7 @@ def test_get_section_bin_happy_path(monkeypatch):
 	monkeypatch.setattr(
 		sec, 'get_reader', lambda fid, kb1, kb2: _StubReader(), raising=True
 	)
-	res = sec.get_section_bin(file_id='f', key1_idx=0, key1_byte=189, key2_byte=193)
+	res = sec.get_section_bin(file_id='f', key1_val=111, key1_byte=189, key2_byte=193)
 	assert res.headers.get('Content-Encoding') == 'gzip'
 
 	payload = msgpack.unpackb(gzip.decompress(res.body))
@@ -307,7 +317,7 @@ def test_get_section_window_bin_happy_path(monkeypatch):
 	)
 	res = sec.get_section_window_bin(
 		file_id='f',
-		key1_idx=0,
+		key1_val=7,
 		key1_byte=189,
 		key2_byte=193,
 		offset_byte=None,

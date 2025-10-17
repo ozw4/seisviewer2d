@@ -37,7 +37,7 @@ router = APIRouter()
 
 class FbpickRequest(BaseModel):
         file_id: str
-        key1_idx: int
+        key1_val: int
         key1_byte: int = 189
         key2_byte: int = 193
         offset_byte: int | None = None
@@ -54,7 +54,7 @@ def _run_fbpick_job(job_id: str, req: FbpickRequest) -> None:
         job['status'] = 'running'
         try:
                 forced_offset_byte = OFFSET_BYTE_FIXED if USE_FBPICK_OFFSET else None
-                key1_val = req.key1_idx
+                key1_val = req.key1_val
 
                 cache_key = job['cache_key']
                 section_override = job.pop('section_override', None)
@@ -126,7 +126,7 @@ def fbpick_section_bin(req: FbpickRequest):
 
         pipeline_key = req.pipeline_key
         tap_label = req.tap_label
-        key1_val = req.key1_idx
+        key1_val = req.key1_val
         cache_key = (
                 req.file_id,
                 key1_val,
