@@ -37,7 +37,7 @@ router = APIRouter()
 
 class FbpickRequest(BaseModel):
         file_id: str
-        key1_idx: int
+        key1_val: int
         key1_byte: int = 189
         key2_byte: int = 193
         offset_byte: int | None = None
@@ -54,6 +54,7 @@ def _run_fbpick_job(job_id: str, req: FbpickRequest) -> None:
         job['status'] = 'running'
         try:
                 forced_offset_byte = OFFSET_BYTE_FIXED if USE_FBPICK_OFFSET else None
+                key1_val = req.key1_val
 
                 cache_key = job['cache_key']
                 section_override = job.pop('section_override', None)
@@ -65,7 +66,7 @@ def _run_fbpick_job(job_id: str, req: FbpickRequest) -> None:
                 elif req.pipeline_key and req.tap_label:
                         section = get_section_from_pipeline_tap(
                                 file_id=req.file_id,
-                                key1_idx=req.key1_idx,
+                                key1_val=key1_val,
                                 key1_byte=req.key1_byte,
                                 pipeline_key=req.pipeline_key,
                                 tap_label=req.tap_label,
@@ -75,7 +76,7 @@ def _run_fbpick_job(job_id: str, req: FbpickRequest) -> None:
                 else:
                         if reader is None:
                                 reader = get_reader(req.file_id, req.key1_byte, req.key2_byte)
-                        section = np.asarray(reader.get_section(req.key1_idx), dtype=np.float32)
+                        section = np.asarray(reader.get_section(key1_val), dtype=np.float32)
                 section = np.ascontiguousarray(section, dtype=np.float32)
                 spec = PipelineSpec(
                         steps=[
@@ -96,7 +97,7 @@ def _run_fbpick_job(job_id: str, req: FbpickRequest) -> None:
                                 meta,
                                 spec=spec,
                                 reader=reader,
-                                key1_idx=req.key1_idx,
+                                key1_val=key1_val,
                                 offset_byte=forced_offset_byte,
                         )
                 out = apply_pipeline(section, spec=spec, meta=meta, taps=None)
@@ -125,9 +126,10 @@ def fbpick_section_bin(req: FbpickRequest):
 
         pipeline_key = req.pipeline_key
         tap_label = req.tap_label
+        key1_val = req.key1_val
         cache_key = (
                 req.file_id,
-                req.key1_idx,
+                key1_val,
                 req.key1_byte,
                 req.key2_byte,
                 forced_offset_byte,
@@ -145,7 +147,7 @@ def fbpick_section_bin(req: FbpickRequest):
                 try:
                         section_override = get_section_from_pipeline_tap(
                                 file_id=req.file_id,
-                                key1_idx=req.key1_idx,
+                                key1_val=key1_val,
                                 key1_byte=req.key1_byte,
                                 pipeline_key=pipeline_key,
                                 tap_label=tap_label,

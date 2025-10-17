@@ -42,7 +42,7 @@ ROUTES: list[dict[str, object]] = [
                 'path': '/get_section',
                 'params': {
                         'file_id': 'missing',
-                        'key1_idx': 0,
+                        'key1_val': 0,
                         'key1_byte': 189,
                         'key2_byte': 193,
                 },
@@ -53,7 +53,7 @@ ROUTES: list[dict[str, object]] = [
                 'path': '/get_section_bin',
                 'params': {
                         'file_id': 'missing',
-                        'key1_idx': 0,
+                        'key1_val': 0,
                         'key1_byte': 189,
                         'key2_byte': 193,
                 },
@@ -64,7 +64,7 @@ ROUTES: list[dict[str, object]] = [
                 'path': '/get_section_window_bin',
                 'params': {
                         'file_id': 'missing',
-                        'key1_idx': 0,
+                        'key1_val': 0,
                         'key1_byte': 189,
                         'key2_byte': 193,
                         'x0': 0,
@@ -81,7 +81,7 @@ ROUTES: list[dict[str, object]] = [
                 'path': '/fbpick_section_bin',
                 'json': {
                         'file_id': 'missing',
-                        'key1_idx': 0,
+                        'key1_val': 0,
                         'key1_byte': 189,
                         'key2_byte': 193,
                         'tile_h': 128,
@@ -108,7 +108,7 @@ ROUTES: list[dict[str, object]] = [
                 'path': '/pipeline/section',
                 'params': {
                         'file_id': 'missing',
-                        'key1_idx': 0,
+                        'key1_val': 0,
                         'key1_byte': 189,
                         'key2_byte': 193,
                 },
@@ -130,7 +130,7 @@ ROUTES: list[dict[str, object]] = [
         {
                 'method': 'GET',
                 'path': '/pipeline/job/missing/artifact',
-                'params': {'key1_idx': 0, 'tap': 'fbpick'},
+                'params': {'key1_val': 0, 'tap': 'fbpick'},
                 'expected': {404},
         },
         {
@@ -140,7 +140,7 @@ ROUTES: list[dict[str, object]] = [
                         'file_id': 'missing',
                         'trace': 0,
                         'time': 0.0,
-                        'key1_idx': 0,
+                        'key1_val': 0,
                         'key1_byte': 189,
                 },
                 'expected': {200},
@@ -148,7 +148,7 @@ ROUTES: list[dict[str, object]] = [
         {
                 'method': 'GET',
                 'path': '/picks',
-                'params': {'file_id': 'missing', 'key1_idx': 0, 'key1_byte': 189},
+                'params': {'file_id': 'missing', 'key1_val': 0, 'key1_byte': 189},
                 'expected': {200},
         },
         {
@@ -163,7 +163,7 @@ ROUTES: list[dict[str, object]] = [
                 'params': {
                         'file_id': 'missing',
                         'trace': 0,
-                        'key1_idx': 0,
+                        'key1_val': 0,
                         'key1_byte': 189,
                 },
                 'expected': {200},

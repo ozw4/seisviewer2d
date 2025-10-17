@@ -60,16 +60,6 @@ def _key1_values_array(
 	return np.asarray(vals, dtype=np.int64)
 
 
-def _key1_value_for_index(
-	reader: SegySectionReader | TraceStoreSectionReader, key1_idx: int
-) -> int:
-	vals = _key1_values_array(reader)
-	if key1_idx < 0 or key1_idx >= vals.size:
-		msg = 'key1_idx out of range'
-		raise IndexError(msg)
-	return int(vals[key1_idx])
-
-
 def get_ntraces_for(
 	file_id: str, key1_byte: int | None = None, key2_byte: int | None = None
 ) -> int:
@@ -108,46 +98,13 @@ def get_ntraces_for(
 	raise AttributeError('Unable to determine number of traces for file')
 
 
-def get_trace_seq_for(file_id: str, key1_idx: int, key1_byte: int) -> NDArray[np.int64]:
-	"""Return display-aligned trace ordering for ``key1_idx`` of ``file_id``.
-	Avoids touching FILE_REGISTRY.reader directly; always goes through get_reader (lazy-safe).
-	"""
-	# Try to pick a sensible key2_byte: use configured one if available, else default 193.
-	key2_byte = 193
-	ent = FILE_REGISTRY.get(file_id)
-	if ent is None:
-		raise KeyError(f'file_id not found: {file_id}')
-	maybe_reader = getattr(ent, 'reader', None)
-	if maybe_reader is None and isinstance(ent, dict):
-		maybe_reader = ent.get('reader')
-	if maybe_reader is not None:
-		key2_byte = int(getattr(maybe_reader, 'key2_byte', 193))
-
-	reader = get_reader(file_id, int(key1_byte), key2_byte)
-
-	key1_val = _key1_value_for_index(reader, key1_idx)
-
-	get_trace_seq = getattr(reader, 'get_trace_seq_for_section', None)
-	if callable(get_trace_seq):
-		seq = get_trace_seq(key1_val, align_to='display')
-		return np.asarray(seq, dtype=np.int64)
-
-	if isinstance(reader, TraceStoreSectionReader):
-		key1s = np.asarray(reader.get_header(reader.key1_byte), dtype=np.int64)
-		indices = np.flatnonzero(key1s == key1_val)
-		if indices.size == 0:
-			msg = f'Key1 value {key1_val} not found'
-			raise ValueError(msg)
-		key2s = np.asarray(reader.get_header(reader.key2_byte)[indices])
-		order = np.argsort(key2s, kind='stable')
-		return np.asarray(indices[order], dtype=np.int64)
-
-	msg = 'Reader cannot provide trace sequence information'
-	raise AttributeError(msg)
+def get_trace_seq_for(file_id: str, key1_val: int, key1_byte: int) -> NDArray[np.int64]:
+	"""Return display-aligned trace ordering for ``key1_val`` of ``file_id``."""
+	return get_trace_seq_for_value(file_id, key1_val, key1_byte)
 
 
 def get_trace_seq_for_value(
-        file_id: str, key1_val: int, key1_byte: int
+	file_id: str, key1_val: int, key1_byte: int
 ) -> NDArray[np.int64]:
 	"""Return display-aligned trace ordering for ``key1_val`` of ``file_id``."""
 	key2_byte = 193
@@ -202,16 +159,15 @@ def get_section(
 	file_id: str = Query(...),
 	key1_byte: int = Query(189),
 	key2_byte: int = Query(193),
-	key1_idx: int = Query(...),
+	key1_val: int = Query(...),
 ) -> JSONResponse:
-	"""Return the section for the ``key1_idx`` trace grouping."""
+	"""Return the section for the ``key1_val`` trace grouping."""
 	try:
 		reader = get_reader(file_id, key1_byte, key2_byte)
-		key1_val = _key1_value_for_index(reader, key1_idx)
 		section = reader.get_section(key1_val)
 		payload = section.tolist() if isinstance(section, np.ndarray) else section
 		return JSONResponse(content={'section': payload})
-	except IndexError as exc:
+	except ValueError as exc:
 		raise HTTPException(status_code=400, detail=str(exc)) from exc
 	except Exception as exc:
 		raise HTTPException(status_code=500, detail=str(exc)) from exc
@@ -220,15 +176,14 @@ def get_section(
 @router.get('/get_section_bin')
 def get_section_bin(
 	file_id: str = Query(...),
-	key1_idx: int = Query(...),
+	key1_val: int = Query(...),
 	key1_byte: int = Query(189),
 	key2_byte: int = Query(193),
 ) -> Response:
 	"""Return a quantized, binary section payload."""
 	try:
 		reader = get_reader(file_id, key1_byte, key2_byte)
-		# key1_val = _key1_value_for_index(reader, key1_idx)
-		section = np.array(reader.get_section(key1_idx), dtype=np.float32)
+		section = np.array(reader.get_section(key1_val), dtype=np.float32)
 		scale, q = quantize_float32(section)
 		obj = {
 			'scale': scale,
@@ -242,7 +197,7 @@ def get_section_bin(
 			media_type='application/octet-stream',
 			headers={'Content-Encoding': 'gzip'},
 		)
-	except IndexError as exc:
+	except ValueError as exc:
 		raise HTTPException(status_code=400, detail=str(exc)) from exc
 	except Exception as exc:
 		raise HTTPException(status_code=500, detail=str(exc)) from exc
@@ -251,7 +206,7 @@ def get_section_bin(
 @router.get('/get_section_window_bin')
 def get_section_window_bin(
 	file_id: str = Query(...),
-	key1_idx: int = Query(...),
+	key1_val: int = Query(...),
 	key1_byte: int = Query(189),
 	key2_byte: int = Query(193),
 	offset_byte: int | None = Query(None),
@@ -266,10 +221,9 @@ def get_section_window_bin(
 ) -> Response:
 	"""Return a quantized window of a section, optionally via a pipeline tap."""
 	forced_offset_byte = OFFSET_BYTE_FIXED if USE_FBPICK_OFFSET else offset_byte
-
 	cache_key = (
 		file_id,
-		key1_idx,
+		key1_val,
 		key1_byte,
 		key2_byte,
 		forced_offset_byte,
@@ -295,7 +249,7 @@ def get_section_window_bin(
 		if pipeline_key and tap_label:
 			section = get_section_from_pipeline_tap(
 				file_id=file_id,
-				key1_idx=key1_idx,
+				key1_val=key1_val,
 				key1_byte=key1_byte,
 				pipeline_key=pipeline_key,
 				tap_label=tap_label,
@@ -303,12 +257,11 @@ def get_section_window_bin(
 			)
 		else:
 			reader = get_reader(file_id, key1_byte, key2_byte)
-			# key1_val = _key1_value_for_index(reader, key1_idx)
-			section = np.array(reader.get_section(key1_idx), dtype=np.float32)
-	except IndexError as exc:
-		raise HTTPException(status_code=400, detail=str(exc)) from exc
+			section = np.array(reader.get_section(key1_val), dtype=np.float32)
 	except PipelineTapNotFoundError as exc:
 		raise HTTPException(status_code=409, detail=str(exc)) from exc
+	except ValueError as exc:
+		raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 	section = np.ascontiguousarray(section, dtype=np.float32)
 	if section.ndim != EXPECTED_SECTION_NDIM:
