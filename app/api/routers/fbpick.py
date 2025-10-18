@@ -102,12 +102,14 @@ def _run_fbpick_job(job_id: str, req: FbpickRequest) -> None:
 			)
 		out = apply_pipeline(section, spec=spec, meta=meta, taps=None)
 		prob = out['fbpick']['prob']
-		scale, q = quantize_float32(prob, fixed_scale=127.0)
+		scale, offset, q = quantize_float32(prob, fixed_scale=127.0)
 		payload = msgpack.packb(
 			{
 				'scale': scale,
+				'offset': offset,
 				'shape': q.shape,
 				'data': q.tobytes(),
+				'dtype': 'int8',
 			}
 		)
 		fbpick_cache[cache_key] = gzip.compress(payload)

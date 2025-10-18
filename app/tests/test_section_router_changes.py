@@ -288,6 +288,8 @@ def test_get_section_bin_happy_path(monkeypatch):
 		and 'shape' in payload
 		and 'data' in payload
 		and 'dt' in payload
+		and 'offset' in payload
+		and payload.get('dtype') == 'int8'
 	)
 	# data length equals product of shape (int8 bytes)
 	h, w = payload['shape']
@@ -333,6 +335,8 @@ def test_get_section_window_bin_happy_path(monkeypatch):
 		and 'shape' in payload
 		and 'data' in payload
 		and 'dt' in payload
+		and 'offset' in payload
+		and payload.get('dtype') == 'int8'
 	)
 	h, w = payload['shape']
 	assert len(payload['data']) == (h * w)
