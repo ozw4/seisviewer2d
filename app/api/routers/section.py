@@ -18,13 +18,13 @@ else:  # pragma: no cover - runtime alias for type checkers
 	NDArray = np.ndarray
 
 from app.api._helpers import (
-	EXPECTED_SECTION_NDIM,
-	OFFSET_BYTE_FIXED,
-	USE_FBPICK_OFFSET,
-	PipelineTapNotFoundError,
-	get_reader,
-	get_section_from_pipeline_tap,
-	window_section_cache,
+        EXPECTED_SECTION_NDIM,
+        OFFSET_BYTE_FIXED,
+        USE_FBPICK_OFFSET,
+        PipelineTapNotFoundError,
+        get_reader,
+        get_section_from_pipeline_tap,
+        window_section_cache,
 )
 from app.utils.segy_meta import FILE_REGISTRY, get_dt_for_file
 from app.utils.utils import SegySectionReader, TraceStoreSectionReader, quantize_float32
@@ -53,7 +53,7 @@ def _resolve_reader(entry: object) -> SegySectionReader | TraceStoreSectionReade
 
 
 def _key1_values_array(
-	reader: SegySectionReader | TraceStoreSectionReader,
+        reader: SegySectionReader | TraceStoreSectionReader,
 ) -> NDArray[np.int64]:
 	vals: Any = getattr(reader, 'unique_key1', None)
 	if vals is not None:
@@ -66,6 +66,13 @@ def _key1_values_array(
 		msg = 'Reader does not expose key1 values'
 		raise AttributeError(msg)
 	return np.asarray(vals, dtype=np.int64)
+
+
+def _to_int_or_none(value: Any) -> int | None:
+        try:
+                return int(value)
+        except (TypeError, ValueError):
+                return None
 
 
 def get_ntraces_for(
@@ -201,14 +208,17 @@ def get_section_meta(
 
 	if isinstance(meta_attr, dict):
 		if n_traces is None and 'n_traces' in meta_attr:
-			n_traces = int(meta_attr['n_traces'])
+			n_traces = _to_int_or_none(meta_attr['n_traces'])
 		shape_meta = meta_attr.get('shape')
 		if isinstance(shape_meta, (list, tuple)) and len(shape_meta) >= 2:
-			n_samples = int(shape_meta[1])
-			if n_traces is None:
-				n_traces = int(shape_meta[0])
+			n_samples_candidate = _to_int_or_none(shape_meta[1])
+			if n_samples is None and n_samples_candidate is not None:
+				n_samples = n_samples_candidate
+			n_traces_candidate = _to_int_or_none(shape_meta[0])
+			if n_traces is None and n_traces_candidate is not None:
+				n_traces = n_traces_candidate
 		if n_samples is None and 'n_samples' in meta_attr:
-			n_samples = int(meta_attr['n_samples'])
+			n_samples = _to_int_or_none(meta_attr['n_samples'])
 		if dtype is None and 'dtype' in meta_attr:
 			dtype = str(meta_attr['dtype'])
 		if scale is None and 'scale' in meta_attr:
