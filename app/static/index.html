@@ -798,7 +798,7 @@
     var renderedEnd = null;
     var picks = [];
     var predictedPicks = [];
-    const fbPredCache = new Map(); // key: "key1|layer|pipelineKey"
+    const fbPredCache = new Map(); // key: "file|key1|layer|pipelineKey"
     var latestFbProbTraces = null;
     var currentFbKey = null;
     var fbPredReqId = 0;
@@ -2044,6 +2044,7 @@
     }
 
     function prefetchAround(centerIdx, mode) {
+      if (shouldPreferWindowFirst()) return;
       if (mode === 'fbprob') return;
       const effectiveMode = mode === 'auto' ? 'raw' : mode;
       if (effectiveMode !== 'raw') return;
@@ -2146,11 +2147,20 @@
           return null;
         }
         const meta = await res.json();
-        if (Array.isArray(meta.shape) && meta.shape.length === 2) {
-          sectionShape = [Number(meta.shape[0]), Number(meta.shape[1])];
+        console.log('section meta', meta);
+        if (meta && typeof meta === 'object' && 'dt' in meta) {
           applyServerDt(meta);
-          console.info('[META] sectionShape=', sectionShape, 'dt=', meta.dt);
-          return sectionShape;
+        }
+        if (Array.isArray(meta.shape) && meta.shape.length === 2) {
+          const traces = Number(meta.shape[0]);
+          const samples = Number(meta.shape[1]);
+          if (Number.isFinite(traces) && Number.isFinite(samples)) {
+            sectionShape = [Math.max(0, Math.floor(traces)), Math.max(0, Math.floor(samples))];
+            console.info('[META] sectionShape=', sectionShape, 'dt=', meta.dt);
+            return sectionShape;
+          }
+          console.warn('get_section_meta returned non-finite shape', meta.shape);
+          sectionShape = null;
         }
       } catch (e) {
         console.warn('get_section_meta error', e);
@@ -2218,7 +2228,6 @@
       const index = parseInt(document.getElementById('key1_idx_slider').value);
       const key1Val = key1Values[index];
 
-      // ★ FB予測キャッシュ取得：レイヤ＆パイプラインキーでキー統一
       const layerCur = (document.getElementById('layerSelect')?.value) || 'raw';
       const pKeyCur = window.latestPipelineKey || null;
       predictedPicks = fbPredCache.get(
@@ -2226,6 +2235,41 @@
       ) || [];
 
       await fetchPicks();
+
+      const preferWindow = shouldPreferWindowFirst();
+
+      latestWindowRender = null;
+      windowFetchToken += 1;
+      uiResetNonce++;
+      if (window.pipelineUI && typeof window.pipelineUI.prepareForNewSection === 'function') {
+        window.pipelineUI.prepareForNewSection();
+      } else {
+        latestTapData = {};
+        latestPipelineKey = null;
+        const sel = document.getElementById('layerSelect');
+        if (sel) {
+          sel.innerHTML = '';
+          sel.appendChild(new Option('raw', 'raw'));
+          sel.value = 'raw';
+        }
+      }
+      rawSeismicData = null;
+      latestSeismicData = null;
+
+      if (preferWindow) {
+        if (!sectionShape) {
+          await fetchSectionMeta();
+          if (!sectionShape) {
+            console.timeEnd('Total fetchAndPlot');
+            console.log('--- fetchAndPlot end ---');
+            return;
+          }
+        }
+        await fetchWindowAndPlot();
+        console.timeEnd('Total fetchAndPlot');
+        console.log('--- fetchAndPlot end ---');
+        return;
+      }
 
       console.time('Cache lookup');
       const hit = getCacheF32(cacheKey(key1Val, 'raw'));
@@ -2271,29 +2315,11 @@
         rawSeismicData = traces;
       }
 
-      latestWindowRender = null;
-      windowFetchToken += 1;
-      uiResetNonce++;
-      if (window.pipelineUI && typeof window.pipelineUI.prepareForNewSection === 'function') {
-        window.pipelineUI.prepareForNewSection();
-      } else {
-        latestTapData = {};
-        latestPipelineKey = null;
-        const sel = document.getElementById('layerSelect');
-        if (sel) {
-          sel.innerHTML = '';
-          sel.appendChild(new Option('raw', 'raw'));
-          sel.value = 'raw';
-        }
-      }
-
       const totalTraces = rawSeismicData ? rawSeismicData.length : (sectionShape ? sectionShape[0] : 0);
       const [s, e] = totalTraces > 0
         ? (savedXRange ? visibleTraceIndices(savedXRange, totalTraces) : [0, totalTraces - 1])
         : [0, 0];
       drawSelectedLayer(s, e);
-
-      // Pipeline execution: manual via ▶ Run button
 
       console.time('Prefetch');
       prefetchAround(index, 'raw');
@@ -2756,7 +2782,10 @@
       const ctrl = new AbortController();
       windowFetchCtrl = ctrl;
 
+      let windowFetchTimerStarted = false;
       try {
+        console.time('Window fetch');
+        windowFetchTimerStarted = true;
         const res = await fetch(`/get_section_window_bin?${params.toString()}`, { signal: ctrl.signal });
         if (!res.ok) {
           console.warn('Window fetch failed', res.status);
@@ -2811,6 +2840,9 @@
         }
         if (requestId === windowFetchToken) console.warn('Window fetch error', err);
       } finally {
+        if (windowFetchTimerStarted) {
+          try { console.timeEnd('Window fetch'); } catch (_) { }
+        }
         if (windowFetchCtrl === ctrl) windowFetchCtrl = null;
       }
     }
