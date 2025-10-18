@@ -408,6 +408,7 @@
         <label for="gain">Gain:</label>
         <input type="range" id="gain" min="0.1" max="5" step="0.1" value="1" oninput="onGainChange()" />
         <span id="gain_display">1×</span>
+        <label style="margin-left:8px"><input type="checkbox" id="highResToggle" onchange="onHighResToggle()">High-res floats</label>
         <label style="margin-left:8px">Wiggle threshold:
         <input id="wiggle_density" type="number" min="0.02" max="0.30" step="0.01" value="0.20"
           oninput="onWiggleDensityChange()">
@@ -487,6 +488,8 @@
     // UI-adjustable threshold for Wiggle/Heatmap decision (persisted)
     let WIGGLE_DENSITY_THRESHOLD = 0.10;
     const WIGGLE_MAX_POINTS = 1_000_000;
+
+    let useHighResMode = false;
 
     const cache = new Map(); // key -> { f32: Float32Array }
     const inflight = new Map();
@@ -1373,7 +1376,7 @@
       const bin = new Uint8Array(await binRes.arrayBuffer());
       const obj = msgpack.decode(bin);
       const int8 = new Int8Array(obj.data.buffer);
-      const f32 = Float32Array.from(int8, v => v / obj.scale);
+      const f32 = Float32Array.from(int8, v => (v * obj.scale) + (obj.offset ?? 0));
       return { f32, shape: obj.shape };
     }
 
@@ -1661,7 +1664,7 @@
             if (/\/picks(\?|$)/.test(url)) {
               console.debug(`📡 FETCH ${method} ${url} → ${res.status} (${(performance.now() - t0).toFixed(0)}ms)`);
               console.trace('  ↳ stack @picks'); // 重要：誰が呼んだか
-            } else if (/get_section_window_bin|get_section_bin/.test(url)) {
+            } else if (/get_section_window_bin|get_section_(?:bin|int8)/.test(url)) {
               console.debug(`📡 FETCH ${method} ${url} → ${res.status} (${(performance.now() - t0).toFixed(0)}ms)`);
             }
             return res;
@@ -1678,6 +1681,31 @@
       document.getElementById('gain_display').textContent = `${parseFloat(val)}×`;
       localStorage.setItem('gain', val);
       renderLatestView();
+    }
+
+    function onHighResToggle() {
+      const el = document.getElementById('highResToggle');
+      const enabled = !!(el && el.checked);
+      useHighResMode = enabled;
+      localStorage.setItem('high_res_mode', enabled ? '1' : '0');
+      for (const ctrl of inflight.values()) {
+        try { ctrl.abort(); } catch (_) { }
+      }
+      inflight.clear();
+      if (windowFetchCtrl) {
+        try { windowFetchCtrl.abort(); } catch (_) { }
+        windowFetchCtrl = null;
+      }
+      cache.clear();
+      latestSeismicData = null;
+      rawSeismicData = null;
+      sectionShape = null;
+      latestWindowRender = null;
+      if (typeof fetchAndPlotDebounced?.flush === 'function') {
+        fetchAndPlotDebounced.flush();
+      } else {
+        fetchAndPlot();
+      }
     }
 
     function onColormapChange() {
@@ -2044,6 +2072,7 @@
     }
 
     function prefetchAround(centerIdx, mode) {
+      if (useHighResMode) return;
       if (mode === 'fbprob') return;
       const effectiveMode = mode === 'auto' ? 'raw' : mode;
       if (effectiveMode !== 'raw') return;
@@ -2061,14 +2090,14 @@
         inflight.set(rawKey, controller);
         scheduler(async () => {
           try {
-            const urlRaw = `/get_section_bin?file_id=${currentFileId}&key1_val=${key1Val}&key1_byte=${currentKey1Byte}&key2_byte=${currentKey2Byte}`;
+            const urlRaw = `/get_section_int8?file_id=${currentFileId}&key1_val=${key1Val}&key1_byte=${currentKey1Byte}&key2_byte=${currentKey2Byte}`;
             const res = await fetch(urlRaw, { signal: controller.signal });
             if (!res.ok) return;
             const bin = new Uint8Array(await res.arrayBuffer());
             const obj = msgpack.decode(bin);
             applyServerDt(obj);
             const int8 = new Int8Array(obj.data.buffer);
-            const f32 = Float32Array.from(int8, v => v / obj.scale);
+            const f32 = Float32Array.from(int8, v => (v * obj.scale) + (obj.offset ?? 0));
             putCacheF32(rawKey, f32);
             if (!sectionShape) sectionShape = obj.shape;
           } catch (err) {
@@ -2086,6 +2115,10 @@
       currentKey1Byte = parseInt(params.get('key1_byte') || localStorage.getItem('key1_byte') || '189');
       currentKey2Byte = parseInt(params.get('key2_byte') || localStorage.getItem('key2_byte') || '193');
       document.getElementById('file_id').value = currentFileId;
+      const hiToggle = document.getElementById('highResToggle');
+      const storedHi = localStorage.getItem('high_res_mode') === '1';
+      useHighResMode = storedHi;
+      if (hiToggle) hiToggle.checked = storedHi;
       if (!currentFileId) {
         currentFileName = '';
         return;
@@ -2227,8 +2260,10 @@
 
       await fetchPicks();
 
+
       console.time('Cache lookup');
-      const hit = getCacheF32(cacheKey(key1Val, 'raw'));
+      const cacheMode = useHighResMode ? 'raw-hi' : 'raw';
+      const hit = getCacheF32(cacheKey(key1Val, cacheMode));
       console.timeEnd('Cache lookup');
 
       let traces;
@@ -2243,9 +2278,41 @@
         }
         console.timeEnd('Decode from cache');
         rawSeismicData = traces;
+      } else if (useHighResMode) {
+        console.time('Fetch JSON');
+        const urlRaw = `/get_section?file_id=${currentFileId}&key1_val=${key1Val}&key1_byte=${currentKey1Byte}&key2_byte=${currentKey2Byte}`;
+        const res = await fetch(urlRaw);
+        if (!res.ok) {
+          console.timeEnd('Fetch JSON');
+          alert('Failed to load section');
+          return;
+        }
+        const obj = await res.json();
+        console.timeEnd('Fetch JSON');
+
+        console.time('Decode & cache');
+        applyServerDt(obj);
+        const section = Array.isArray(obj.section) ? obj.section : [];
+        const nTraces = section.length;
+        const nSamples = nTraces ? (Array.isArray(section[0]) ? section[0].length : 0) : 0;
+        f32 = new Float32Array(nTraces * (nSamples || 0));
+        for (let i = 0; i < nTraces; i++) {
+          const trace = Array.isArray(section[i]) ? section[i] : [];
+          for (let j = 0; j < nSamples; j++) {
+            f32[i * nSamples + j] = Number(trace[j] ?? 0);
+          }
+        }
+        sectionShape = [nTraces, nSamples];
+        putCacheF32(cacheKey(key1Val, cacheMode), f32);
+        traces = new Array(nTraces);
+        for (let i = 0; i < nTraces; i++) {
+          traces[i] = f32.subarray(i * nSamples, (i + 1) * nSamples);
+        }
+        console.timeEnd('Decode & cache');
+        rawSeismicData = traces;
       } else {
         console.time('Fetch binary');
-        const urlRaw = `/get_section_bin?file_id=${currentFileId}&key1_val=${key1Val}&key1_byte=${currentKey1Byte}&key2_byte=${currentKey2Byte}`;
+        const urlRaw = `/get_section_int8?file_id=${currentFileId}&key1_val=${key1Val}&key1_byte=${currentKey1Byte}&key2_byte=${currentKey2Byte}`;
         const res = await fetch(urlRaw);
         if (!res.ok) {
           console.timeEnd('Fetch binary');
@@ -2259,8 +2326,8 @@
         const obj = msgpack.decode(bin);
         applyServerDt(obj);
         const int8 = new Int8Array(obj.data.buffer);
-        f32 = Float32Array.from(int8, (v) => v / obj.scale);
-        putCacheF32(cacheKey(key1Val, 'raw'), f32);
+        f32 = Float32Array.from(int8, (v) => (v * obj.scale) + (obj.offset ?? 0));
+        putCacheF32(cacheKey(key1Val, cacheMode), f32);
         sectionShape = obj.shape;
         const [nTraces, nSamples] = sectionShape;
         traces = new Array(nTraces);
@@ -2270,6 +2337,9 @@
         console.timeEnd('Decode & cache');
         rawSeismicData = traces;
       }
+
+      latestWindowRender = null;
+latestWindowRender = null;
 
       latestWindowRender = null;
       windowFetchToken += 1;
@@ -2385,7 +2455,8 @@
       if (useI8 && windowData.valuesI8.length < N) return;
       if (useF32 && windowData.values.length < N) return;
 
-      const scale = Number(windowData.scale) || 1;
+      const scale = Number.isFinite(Number(windowData.scale)) ? Number(windowData.scale) : 1;
+      const offsetVal = Number.isFinite(Number(windowData.offset)) ? Number(windowData.offset) : 0;
 
       setGrid({ x0, stepX: 1, y0, stepY: 1 });
       const dt = window.defaultDt ?? defaultDt;
@@ -2404,8 +2475,8 @@
         const traceIndex = x0 + c * stepX;
         for (let r = 0; r < rows; r++) {
           const idxVal = r * cols + c;
-          let val = (useI8 ? (windowData.valuesI8[idxVal] / scale)
-            : windowData.values[idxVal]) * gain;
+          let val = useI8 ? ((windowData.valuesI8[idxVal] * scale) + offsetVal) : windowData.values[idxVal];
+          val *= gain;
           if (val > AMP_LIMIT) val = AMP_LIMIT;
           if (val < -AMP_LIMIT) val = -AMP_LIMIT;
 
@@ -2517,7 +2588,8 @@
       if (useI8 && windowData.valuesI8.length < N) return;
       if (useF32 && windowData.values.length < N) return;
 
-      const scale = Number(windowData.scale) || 1;
+      const scale = Number.isFinite(Number(windowData.scale)) ? Number(windowData.scale) : 1;
+      const offsetVal = Number.isFinite(Number(windowData.offset)) ? Number(windowData.offset) : 0;
 
       setGrid({ x0, stepX, y0, stepY });
       const gain = parseFloat(document.getElementById('gain').value) || 1.0;
@@ -2527,10 +2599,10 @@
       const zData = new Array(rows);
       for (let r = 0; r < rows; r++) {
         const row = new Float32Array(cols);
-        const offset = r * cols;
+        const idxBase = r * cols;
         for (let c = 0; c < cols; c++) {
-          let v = useI8 ? (windowData.valuesI8[offset + c] / scale)
-            : windowData.values[offset + c];
+          let v = useI8 ? ((windowData.valuesI8[idxBase + c] * scale) + offsetVal)
+            : windowData.values[idxBase + c];
           if (fbMode) {
             row[c] = v * 255;
           } else {
@@ -2791,7 +2863,8 @@
           stepY: step_y,
           shape: [rows, cols],
           valuesI8,          // Int8保持
-          scale: obj.scale,  // 後段で /scale
+          scale: obj.scale,
+          offset: obj.offset ?? 0,
           mode,
         };
 

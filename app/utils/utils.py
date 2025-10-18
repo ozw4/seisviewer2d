@@ -24,14 +24,42 @@ def to_builtin(obj: object) -> object:
 
 
 def quantize_float32(
-	arr: np.ndarray, *, bits: int = 8, fixed_scale: float | None = None
-) -> tuple[float, np.ndarray]:
-	"""Quantize ``arr`` into int8 with an optional externally provided scale."""
+	arr: np.ndarray,
+	*,
+	bits: int = 8,
+	fixed_scale: float | None = None,
+) -> tuple[float, float, np.ndarray]:
+	"""Quantize ``arr`` into ``int8`` alongside scale and offset metadata."""
+	data = np.asarray(arr, dtype=np.float32)
+	if data.size == 0:
+		raise ValueError('quantize_float32 requires a non-empty array')
+	qmin = -(1 << (bits - 1))
 	qmax = (1 << (bits - 1)) - 1
-	default_scale = float(os.getenv("FIXED_INT8_SCALE", "42.333333"))
-	scale = float(fixed_scale) if fixed_scale is not None else default_scale
-	q = np.clip(np.round(arr * scale), -qmax, qmax).astype(np.int8)
-	return scale, q
+	if fixed_scale is not None:
+		inv = float(fixed_scale)
+		if not np.isfinite(inv) or inv <= 0:
+			raise ValueError('fixed_scale must be a positive finite value')
+		scale = 1.0 / inv
+		offset = 0.0
+		q = np.clip(np.round(data * inv), qmin, qmax).astype(np.int8)
+		return scale, offset, q
+	finite_vals = data[np.isfinite(data)]
+	if finite_vals.size == 0:
+		raise ValueError('array must contain at least one finite value')
+	min_val = float(np.min(finite_vals))
+	max_val = float(np.max(finite_vals))
+	if max_val == min_val:
+		scale = 1.0
+		offset = min_val
+		q = np.zeros_like(data, dtype=np.int8)
+		return scale, offset, q
+	scale = (max_val - min_val) / float(qmax - qmin)
+	if not np.isfinite(scale) or scale == 0.0:
+		scale = 1.0
+	offset = min_val - qmin * scale
+	q = np.round((data - min_val) / scale + qmin)
+	q = np.clip(q, qmin, qmax).astype(np.int8)
+	return scale, float(offset), q
 
 
 class SegySectionReader:
@@ -48,6 +76,8 @@ class SegySectionReader:
 		self.key1_byte = key1_byte
 		self.key2_byte = key2_byte
 		self.section_cache: dict[int, list[list[float]]] = {}
+		self._section_array_cache: dict[int, np.ndarray] = {}
+		self._section_quant_cache: dict[int, tuple[np.ndarray, float, float]] = {}
 		self._trace_seq_cache: dict[int, np.ndarray] = {}
 		self._trace_seq_disp_cache: dict[int, np.ndarray] = {}
 		self.ntraces: int = 0
@@ -83,6 +113,25 @@ class SegySectionReader:
 		self._trace_seq_disp_cache[key1_val] = sorted_idx
 		return sorted_idx
 
+	def _section_array_for_key1(self, key1_val: int) -> np.ndarray:
+		if key1_val in self._section_array_cache:
+			return self._section_array_cache[key1_val]
+
+		sorted_indices = self.get_trace_seq_for_section(key1_val, align_to="display")
+		print(len(sorted_indices), 'indices found for key1_val:', key1_val)
+
+		with segyio.open(self.path, "r", ignore_geometry=True) as f:
+			f.mmap()
+			traces = np.array([f.trace[idx] for idx in sorted_indices], dtype='float32')
+			mean = traces.mean(axis=1, keepdims=True)
+			std = traces.std(axis=1, keepdims=True)
+			std[std == 0] = 1.0
+			section = (traces - mean) / std
+
+		section = np.ascontiguousarray(section, dtype=np.float32)
+		self._section_array_cache[key1_val] = section
+		return section
+
 	def get_trace_seq_for_section(
 		self, key1_val: int, align_to: str = "display"
 	) -> np.ndarray:
@@ -103,19 +152,22 @@ class SegySectionReader:
 		if key1_val in self.section_cache:
 			return self.section_cache[key1_val]
 
-		sorted_indices = self.get_trace_seq_for_section(key1_val, align_to="display")
-		print(len(sorted_indices), "indices found for key1_val:", key1_val)
-
-		with segyio.open(self.path, "r", ignore_geometry=True) as f:
-			f.mmap()
-			traces = np.array([f.trace[idx] for idx in sorted_indices], dtype="float32")
-			mean = traces.mean(axis=1, keepdims=True)
-			std = traces.std(axis=1, keepdims=True)
-			std[std == 0] = 1.0
-			section = ((traces - mean) / std).tolist()
-
+		section_arr = self._section_array_for_key1(key1_val)
+		section = section_arr.tolist()
 		self.section_cache[key1_val] = section
 		return section
+
+	def get_section_quantized(self, key1_val: int) -> tuple[np.ndarray, float, float]:
+		"""Return an ``int8`` quantized section for ``key1_val``."""
+		if key1_val in self._section_quant_cache:
+			return self._section_quant_cache[key1_val]
+
+		section_arr = self._section_array_for_key1(key1_val)
+		scale, offset, q = quantize_float32(section_arr)
+		q = np.ascontiguousarray(q, dtype=np.int8)
+		info = (q, scale, offset)
+		self._section_quant_cache[key1_val] = info
+		return info
 
 	def get_offsets_for_section(self, key1_val: int, offset_byte: int) -> np.ndarray:
 		"""Return ``(W,)`` float32 offsets aligned with :meth:`get_section`."""
@@ -151,6 +203,8 @@ class TraceStoreSectionReader:
 		self.meta = json.loads(meta_path.read_text())
 		self.traces = np.load(self.store_dir / "traces.npy", mmap_mode="r")
 		self.section_cache: dict[int, list[list[float]]] = {}
+		self._section_array_cache: dict[int, np.ndarray] = {}
+		self._section_quant_cache: dict[int, tuple[np.ndarray, float, float]] = {}
 
 	def _header_path(self, byte: int) -> Path:
 		return self.store_dir / f"headers_byte_{byte}.npy"
@@ -184,23 +238,45 @@ class TraceStoreSectionReader:
 		key1s = self.get_header(self.key1_byte)
 		return np.unique(key1s)
 
-	def get_section(self, key1_val: int) -> list[list[float]]:
-		"""Return the cached section for ``key1_val``."""
-		if key1_val in self.section_cache:
-			return self.section_cache[key1_val]
+	def _section_array_for_key1(self, key1_val: int) -> np.ndarray:
+		if key1_val in self._section_array_cache:
+			return self._section_array_cache[key1_val]
 
 		key1s = self.get_header(self.key1_byte)
 		indices = np.where(key1s == key1_val)[0]
-		print(len(indices), "indices found for key1_val:", key1_val)
+		print(len(indices), 'indices found for key1_val:', key1_val)
 		if len(indices) == 0:
 			msg = f"Key1 value {key1_val} not found"
 			raise ValueError(msg)
 
 		key2s = self.get_header(self.key2_byte)[indices]
-		sorted_indices = indices[np.argsort(key2s, kind="stable")]
-		section = self.traces[sorted_indices].tolist()
+		sorted_indices = indices[np.argsort(key2s, kind='stable')]
+		section = np.asarray(self.traces[sorted_indices], dtype=np.float32)
+		section = np.ascontiguousarray(section, dtype=np.float32)
+		self._section_array_cache[key1_val] = section
+		return section
+
+	def get_section(self, key1_val: int) -> list[list[float]]:
+		"""Return the cached section for ``key1_val``."""
+		if key1_val in self.section_cache:
+			return self.section_cache[key1_val]
+
+		section_arr = self._section_array_for_key1(key1_val)
+		section = section_arr.tolist()
 		self.section_cache[key1_val] = section
 		return section
+
+	def get_section_quantized(self, key1_val: int) -> tuple[np.ndarray, float, float]:
+		"""Return an ``int8`` quantized section for ``key1_val``."""
+		if key1_val in self._section_quant_cache:
+			return self._section_quant_cache[key1_val]
+
+		section_arr = self._section_array_for_key1(key1_val)
+		scale, offset, q = quantize_float32(section_arr)
+		q = np.ascontiguousarray(q, dtype=np.int8)
+		info = (q, scale, offset)
+		self._section_quant_cache[key1_val] = info
+		return info
 
 	def get_offsets_for_section(self, key1_val: int, offset_byte: int) -> np.ndarray:
 		"""Return ``(W,)`` float32 offsets aligned with :meth:`get_section`."""
