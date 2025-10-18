@@ -7,7 +7,7 @@ import numpy as np
 __all__ = ['bandpass_np']
 
 
-def bandpass_np(  # noqa: D417
+def bandpass_np(
 	section: np.ndarray,
 	*,
 	low_hz: float,

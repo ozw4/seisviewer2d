@@ -45,7 +45,7 @@ def get_model() -> torch.nn.Module:
 
 
 @torch.no_grad()
-def denoise_tensor(  # noqa: PLR0913
+def denoise_tensor(
 	x: torch.Tensor,
 	*,
 	chunk_h: int = 128,

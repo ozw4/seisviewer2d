@@ -1,41 +1,30 @@
+# Python target
 target-version = "py310"
-fix = true
+respect-gitignore = true
+
+# Ruff will not auto-apply code fixes by default (formatは別サブコマンド)
+fix = false
 
 [lint]
-select = ["ALL"]
-ignore = [
-    "COM812",
-    "COM819",
-    "D206",
-    "D300",
-    "E111",
-    "E114",
-    "E117",
-    "E741",
-    "E742",
-    "E743",
-    "ERA001",
-    "G004",
-    "ISC001",
-    "ISC002",
-    "Q000",
-    "Q001",
-    "Q002",
-    "Q003",
-    "T20",
-    "W191",
+# 安定運用：まずは E/F のみ
+select = ["E", "F"]
+
+# 行長やスライス空白はフォーマッタと衝突しやすいので無視
+ignore = ["E203", "E501"]
+
+# テストを現実的に緩める
+[lint.per-file-ignores]
+"app/tests/**" = [
+    "INP001",
+    "S101", "SLF001",
+    "ARG001", "ARG002", "ARG005",
+    "PLR2004", "PT011", "PT018",
 ]
-# COM812, COM819, D206, D300, E111, E114, E117,
-# ISC001, ISC002, Q000, Q001, Q002, Q003, W191: conflict formatter
-# #ANN: annotations
-# #D: pydocstyle
-# E741, E742, E743: Ambiguous name
-# ERA001: commented-out-code
-# #EXE: executable
-# G004: logging-f-string
-# T20: print, p-print
 
 [format]
-docstring-code-format = true
+# ★ Python はタブインデント運用
 indent-style = "tab"
-quote-style = "single"
+# 既存のクォートを尊重（差分最小）
+quote-style = "preserve"
+# Docstring 内コードはまず触らない（差分最小）
+docstring-code-format = false

@@ -217,13 +217,13 @@ class UnetDecoder2d(nn.Module):
 
 		# skip_channels 安全化
 		if skip_channels is None:
-			skip_channels = list(encoder_channels[1:]) + [0]
+			skip_channels = [*list(encoder_channels[1:]), 0]
 		if len(skip_channels) < len(decoder_channels):
 			skip_channels += [0] * (len(decoder_channels) - len(skip_channels))
 		else:
 			skip_channels = skip_channels[: len(decoder_channels)]
 
-		in_channels = [encoder_channels[0]] + list(decoder_channels[:-1])
+		in_channels = [encoder_channels[0], *list(decoder_channels[:-1])]
 
 		self.blocks = nn.ModuleList(
 			[
@@ -264,7 +264,7 @@ class SegmentationHead2d(nn.Module):
 
 
 #################
-# Net（汎用 Stem & MAE向け出力）
+# Net　(汎用 Stem & MAE向け出力)
 #################
 
 
@@ -401,7 +401,7 @@ class NetAE(nn.Module):
 		top = feats[0]
 		for b in self.extra_down:
 			top = b(top)
-			feats = [top] + feats
+			feats = [top, *feats]
 
 		# ★pre_down 出力を浅い側（末尾）に積む
 		feats = feats + pre_feats

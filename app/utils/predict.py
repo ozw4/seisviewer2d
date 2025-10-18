@@ -29,7 +29,7 @@ def cover_all_traces_predict(
 	assert x.dim() == 4 and x.size(1) == 1, 'x must be (B,1,H,W)'
 	device = device or x.device
 	B, _, H, W = x.shape
-	m = max(1, min(int(round(mask_ratio * H)), H - 1))
+	m = max(1, min(round(mask_ratio * H), H - 1))
 	K = math.ceil(H / m)
 	y_full = torch.empty_like(x)
 	for b in range(B):
@@ -95,7 +95,7 @@ def cover_all_traces_predict_chunked(
 	"""
 	assert overlap < chunk_h, 'overlap は chunk_h より小さくしてください'
 	device = device or x.device
-	B, _, H, W = x.shape
+	B, _, H, _ = x.shape
 	y_acc = torch.zeros_like(x)
 	w_acc = torch.zeros((B, 1, H, 1), dtype=x.dtype, device=device)
 	step = chunk_h - overlap

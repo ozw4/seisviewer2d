@@ -131,10 +131,6 @@ def test__key1_values_array_handles_listlike(monkeypatch):
 
 
 def test_get_ntraces_for_prefers_get_reader_and_fallbacks(monkeypatch):
-	import numpy as np
-
-	from app.api.routers import section as sec
-
 	# Always mutate the same dict object; don't rebind FILE_REGISTRY.
 	assert isinstance(sec.FILE_REGISTRY, dict)
 

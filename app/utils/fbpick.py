@@ -53,7 +53,7 @@ def _load_model() -> tuple[torch.nn.Module, torch.device]:
 
 
 @torch.no_grad()
-def _run_tiled(  # noqa: PLR0913
+def _run_tiled(
 	model: torch.nn.Module,
 	x: torch.Tensor,
 	*,
@@ -63,7 +63,7 @@ def _run_tiled(  # noqa: PLR0913
 	offset_channel: int | None = None,
 ) -> torch.Tensor:
 	"""Run ``model`` on ``x`` using sliding-window tiling."""
-	b, c, h, w = x.shape
+	b, _, h, w = x.shape
 	tile_h, tile_w = tile
 	stride_h = tile_h - overlap
 	stride_w = tile_w - overlap
@@ -149,7 +149,7 @@ def make_offset_channel(offsets: np.ndarray, h: int, w: int) -> np.ndarray:
 
 
 @torch.no_grad()
-def infer_prob_map(  # noqa: PLR0913
+def infer_prob_map(
 	section: np.ndarray,
 	*,
 	amp: bool = True,

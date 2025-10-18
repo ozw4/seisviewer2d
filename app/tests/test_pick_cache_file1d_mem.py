@@ -4,13 +4,14 @@ import importlib
 import numpy as np
 import pytest
 
+import app.utils.pick_cache_file1d_mem as mod
+
 
 @pytest.fixture
 def cache(tmp_path, monkeypatch):
 	# 書き込み先を一時ディレクトリへ
 	monkeypatch.setenv('PICKS_NPY_DIR', str(tmp_path))
 	# 環境変数を反映させるため再読込
-	import app.utils.pick_cache_file1d_mem as mod
 
 	importlib.reload(mod)
 	return mod

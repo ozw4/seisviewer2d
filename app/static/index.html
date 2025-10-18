@@ -1114,8 +1114,8 @@
     }
 
     // 統一キー関数（FB予測キャッシュ用）
-    function fbCacheKey(k1, layer, pKey) {
-      return `${k1}|${layer}|${pKey ?? 'raw'}`;
+    function fbCacheKey(fileId, k1, layer, pKey) {
+      return `${fileId}|${k1}|${layer}|${pKey ?? 'raw'}`;
     }
 
     // 一時上書きの適用
@@ -1537,7 +1537,10 @@
 
       const picksNow = computePicks(latestFbProbTraces);
       predictedPicks = picksNow;
-      fbPredCache.set(fbCacheKey(currentFbKey, currentFbLayer, currentFbPipelineKey), picksNow);
+      fbPredCache.set(
+        fbCacheKey(currentFileId, currentFbKey, currentFbLayer, currentFbPipelineKey),
+        picksNow,
+      );
 
       renderLatestView();
     }
@@ -1602,7 +1605,10 @@
         currentFbKey = keyAtStart;
         currentFbLayer = layerAtStart;
         currentFbPipelineKey = pipelineKeyAtStart;
-        fbPredCache.set(fbCacheKey(keyAtStart, layerAtStart, pipelineKeyAtStart), picks);
+        fbPredCache.set(
+          fbCacheKey(currentFileId, keyAtStart, layerAtStart, pipelineKeyAtStart),
+          picks,
+        );
 
         // Replot
         renderLatestView();
@@ -2089,6 +2095,7 @@
       localStorage.setItem('key2_byte', currentKey2Byte);
       await fetchCurrentFileName();
       await fetchKey1Values();
+      await fetchSectionMeta();
       await fetchAndPlot();
     }
 
@@ -2125,6 +2132,32 @@
     }
 
     // --- filename & picks loader (by filename) ---
+    async function fetchSectionMeta() {
+      if (!currentFileId) return null;
+      try {
+        const q = new URLSearchParams({
+          file_id: currentFileId,
+          key1_byte: String(currentKey1Byte),
+          key2_byte: String(currentKey2Byte),
+        });
+        const res = await fetch(`/get_section_meta?${q.toString()}`);
+        if (!res.ok) {
+          console.warn('get_section_meta failed', res.status);
+          return null;
+        }
+        const meta = await res.json();
+        if (Array.isArray(meta.shape) && meta.shape.length === 2) {
+          sectionShape = [Number(meta.shape[0]), Number(meta.shape[1])];
+          applyServerDt(meta);
+          console.info('[META] sectionShape=', sectionShape, 'dt=', meta.dt);
+          return sectionShape;
+        }
+      } catch (e) {
+        console.warn('get_section_meta error', e);
+      }
+      return null;
+    }
+
     async function fetchCurrentFileName() {
       if (!currentFileId) {
         currentFileName = '';
@@ -2188,7 +2221,9 @@
       // ★ FB予測キャッシュ取得：レイヤ＆パイプラインキーでキー統一
       const layerCur = (document.getElementById('layerSelect')?.value) || 'raw';
       const pKeyCur = window.latestPipelineKey || null;
-      predictedPicks = fbPredCache.get(fbCacheKey(key1Val, layerCur, pKeyCur)) || [];
+      predictedPicks = fbPredCache.get(
+        fbCacheKey(currentFileId, key1Val, layerCur, pKeyCur),
+      ) || [];
 
       await fetchPicks();
 
@@ -2630,7 +2665,11 @@
 
     async function fetchWindowAndPlot() {
       D('WINDOW@req', { key1: key1Values?.[parseInt(document.getElementById('key1_idx_slider')?.value || '0', 10)] });
-      if (!currentFileId || !sectionShape) return;
+      if (!currentFileId) return;
+      if (!sectionShape) {
+        await fetchSectionMeta();
+        if (!sectionShape) return;
+      }
       const slider = document.getElementById('key1_idx_slider');
       if (!slider) return;
       const idx = parseInt(slider.value, 10);
@@ -3306,8 +3345,40 @@
       if (fileIdEl) {
         fileIdEl.addEventListener('change', async () => {
           currentFileId = fileIdEl.value || '';
+          key1Values = [];
+          sectionShape = null;
+          savedXRange = null;
+          savedYRange = null;
+          renderedStart = null;
+          renderedEnd = null;
+          latestWindowRender = null;
+          windowFetchToken += 1;
+          rawSeismicData = null;
+          latestSeismicData = null;
+          latestTapData = {};
+          latestFbProbTraces = null;
+          fbPredReqId += 1;
+          
+          picks = [];
+          predictedPicks = [];
+          currentFbKey = null;
+          currentFbLayer = 'raw';
+          currentFbPipelineKey = null;
+          fbPredCache.clear();
+          latestPipelineKey = null;
+          window.latestPipelineKey = null;
+          if (windowFetchCtrl) {
+            try { windowFetchCtrl.abort(); } catch (_) { }
+            windowFetchCtrl = null;
+          }
+
+          cache.clear();
+          for (const ctrl of inflight.values()) ctrl.abort();
+          inflight.clear();
+
           await fetchCurrentFileName();
           await fetchKey1Values();
+          await fetchSectionMeta();
           (typeof fetchAndPlotDebounced?.flush === 'function')
             ? fetchAndPlotDebounced.flush()
             : fetchAndPlot();
