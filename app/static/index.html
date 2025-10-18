@@ -457,6 +457,10 @@
   <script src="/static/api.js"></script>
   <script src="/static/pipeline_ui.js"></script>
   <script type="module" src="/static/viewer/bootstrap.js"></script>
+  <script type="module">
+    import { toPlotlyHeatmapZ, getQuantLUT, getHeatmapPoolStats } from './js/renderHeatmap.js';
+    window.SeisHeatmap = { toPlotlyHeatmapZ, getQuantLUT, getHeatmapPoolStats };
+  </script>
   <script>
     /* Adopt globals provided by /static/viewer/bootstrap.js */
     var setGrid, getPlotEnv, dataXYFromClient, traceAtPixel, timeAtPixel, pixelForTrace,
@@ -483,6 +487,20 @@
     var dragBase = 'zoom'; // will be overridden from localStorage in initViewerGlobals
     let lastHover = null;
     let redrawPending = false;
+    let USE_HEATMAP_POOLING = true;
+    {
+      const params = new URLSearchParams(window.location.search);
+      const poolParam = params.get('heatmap_pool');
+      if (poolParam != null) {
+        const norm = poolParam.trim().toLowerCase();
+        if (norm === '0' || norm === 'false' || norm === 'off') {
+          USE_HEATMAP_POOLING = false;
+        }
+        if (norm === '1' || norm === 'true' || norm === 'on') {
+          USE_HEATMAP_POOLING = true;
+        }
+      }
+    }
     // === A-7: Coordinate utilities (provided by /static/viewer/core via bootstrap) ===
     // UI-adjustable threshold for Wiggle/Heatmap decision (persisted)
     let WIGGLE_DENSITY_THRESHOLD = 0.10;
@@ -2517,30 +2535,83 @@
       if (useI8 && windowData.valuesI8.length < N) return;
       if (useF32 && windowData.values.length < N) return;
 
-      const scale = Number(windowData.scale) || 1;
-
       setGrid({ x0, stepX, y0, stepY });
       const gain = parseFloat(document.getElementById('gain').value) || 1.0;
       const AMP_LIMIT = 3.0;
       const fbMode = effectiveLayer === 'fbprob';
+      const quantMeta = windowData.quant || (
+        (windowData.lo !== undefined && windowData.hi !== undefined)
+          ? { mode: windowData.method || 'linear', lo: windowData.lo, hi: windowData.hi, mu: windowData.mu ?? 255 }
+          : (windowData.scale != null ? { scale: windowData.scale } : null)
+      );
+      const fallbackScale = Number(windowData.scale) || 1;
 
-      const zData = new Array(rows);
-      for (let r = 0; r < rows; r++) {
-        const row = new Float32Array(cols);
-        const offset = r * cols;
-        for (let c = 0; c < cols; c++) {
-          let v = useI8 ? (windowData.valuesI8[offset + c] / scale)
-            : windowData.values[offset + c];
-          if (fbMode) {
-            row[c] = v * 255;
-          } else {
-            v *= gain;
+      let zData;
+      const poolingCandidate = (
+        USE_HEATMAP_POOLING &&
+        useI8 &&
+        window.SeisHeatmap &&
+        typeof window.SeisHeatmap.toPlotlyHeatmapZ === 'function'
+      );
+      if (poolingCandidate) {
+        zData = window.SeisHeatmap.toPlotlyHeatmapZ({
+          i8: windowData.valuesI8,
+          rows,
+          cols,
+          quant: quantMeta,
+        });
+        const backing = zData.backing;
+        const total = rows * cols;
+        if (fbMode) {
+          for (let p = 0; p < total; p++) backing[p] = backing[p] * 255;
+        } else {
+          for (let p = 0; p < total; p++) {
+            let v = backing[p] * gain;
             if (v > AMP_LIMIT) v = AMP_LIMIT;
             else if (v < -AMP_LIMIT) v = -AMP_LIMIT;
-            row[c] = v;
+            backing[p] = v;
           }
         }
-        zData[r] = row;
+      } else {
+        const zRows = new Array(rows);
+        const hasLut = !!(quantMeta && 'lo' in quantMeta && 'hi' in quantMeta);
+        const lut = hasLut && window.SeisHeatmap && typeof window.SeisHeatmap.getQuantLUT === 'function'
+          ? window.SeisHeatmap.getQuantLUT(quantMeta)
+          : null;
+        let invScale = 1 / (fallbackScale || 1);
+        if (quantMeta && 'scale' in (quantMeta || {})) {
+          const scaleVal = Number(quantMeta.scale);
+          if (Number.isFinite(scaleVal) && scaleVal !== 0) {
+            invScale = 1 / scaleVal;
+          }
+        }
+        const srcF32 = useF32 ? windowData.values : null;
+        for (let r = 0; r < rows; r++) {
+          const row = new Float32Array(cols);
+          const offset = r * cols;
+          for (let c = 0; c < cols; c++) {
+            let rawValue;
+            if (useI8) {
+              const q = windowData.valuesI8[offset + c];
+              if (lut) rawValue = lut[(q + 128) & 0xff];
+              else rawValue = q * invScale;
+            } else if (srcF32) {
+              rawValue = srcF32[offset + c];
+            } else {
+              rawValue = 0;
+            }
+            if (fbMode) {
+              row[c] = rawValue * 255;
+            } else {
+              let v = rawValue * gain;
+              if (v > AMP_LIMIT) v = AMP_LIMIT;
+              else if (v < -AMP_LIMIT) v = -AMP_LIMIT;
+              row[c] = v;
+            }
+          }
+          zRows[r] = row;
+        }
+        zData = zRows;
       }
 
       const xVals = new Float32Array(cols);
@@ -2778,6 +2849,12 @@
         const rows = Number(shapeRaw[0]);
         const cols = Number(shapeRaw[1]);
 
+        const quantMeta = obj.quant || (
+          (obj.lo !== undefined && obj.hi !== undefined)
+            ? { mode: obj.method || 'linear', lo: obj.lo, hi: obj.hi, mu: obj.mu ?? 255 }
+            : (obj.scale != null ? { scale: obj.scale } : null)
+        );
+
         const windowPayload = {
           key1: key1Val,
           requestedLayer,
@@ -2792,6 +2869,7 @@
           shape: [rows, cols],
           valuesI8,          // Int8保持
           scale: obj.scale,  // 後段で /scale
+          quant: quantMeta,
           mode,
         };
 
