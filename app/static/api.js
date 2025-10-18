@@ -23,13 +23,16 @@ async function fetchFbpickSectionBin(body) {
   // ここまでで u8 は msgpack の生バイト
   const payload = msgpack.decode(u8);
 
-  if (payload.dtype !== 'u8') {
-    throw new Error(`Unexpected dtype: ${payload.dtype}`);
+  const { h, w, data, meta, scale, offset = 0, dtype } = payload;
+  if (dtype && dtype !== 'int8') {
+    throw new Error(`Unexpected dtype: ${dtype}`);
   }
-  const { h, w, data, meta } = payload;
-  const bytes = new Uint8Array(data);
+  const bytes = new Int8Array(data);
   const probs = new Float32Array(h * w);
-  for (let i = 0; i < bytes.length; i++) probs[i] = bytes[i] / 255.0;
+  const scaleNum = Number(scale);
+  const scaleVal = Number.isFinite(scaleNum) && scaleNum !== 0 ? scaleNum : (1 / 127);
+  const offsetVal = Number.isFinite(Number(offset)) ? Number(offset) : 0;
+  for (let i = 0; i < bytes.length; i++) probs[i] = bytes[i] * scaleVal + offsetVal;
 
   return { h, w, probs, meta };
 }

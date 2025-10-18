@@ -39,6 +39,38 @@ class SectionMeta(BaseModel):
 	scale: float | None = None
 
 
+def _quantized_section(
+	reader: SegySectionReader | TraceStoreSectionReader,
+	key1_val: int,
+) -> tuple[np.ndarray, float, float]:
+	get_quantized = getattr(reader, 'get_section_quantized', None)
+	if callable(get_quantized):
+		q_data, scale, offset = get_quantized(key1_val)
+	else:
+		section = np.asarray(reader.get_section(key1_val), dtype=np.float32)
+		scale, offset, q_data = quantize_float32(section)
+	q_arr = np.ascontiguousarray(q_data, dtype=np.int8)
+	return q_arr, float(scale), float(offset)
+
+
+def _encode_quantized_payload(
+	q: np.ndarray,
+	scale: float,
+	offset: float,
+	dt: float,
+) -> bytes:
+	obj = {
+		'scale': float(scale),
+		'offset': float(offset),
+		'shape': [int(dim) for dim in q.shape],
+		'data': q.tobytes(),
+		'dtype': 'int8',
+		'dt': float(dt),
+	}
+	payload = msgpack.packb(obj)
+	return gzip.compress(payload)
+
+
 def _resolve_reader(entry: object) -> SegySectionReader | TraceStoreSectionReader:
 	reader = getattr(entry, 'reader', None)
 	if reader is None and isinstance(entry, dict):
@@ -248,6 +280,33 @@ def get_section_meta(
 	)
 
 
+@router.get('/get_section_int8')
+def get_section_int8(
+	file_id: Annotated[str, Query(...)],
+	key1_val: Annotated[int, Query(...)],
+	key1_byte: Annotated[int, Query()] = 189,
+	key2_byte: Annotated[int, Query()] = 193,
+) -> Response:
+	"""Return a quantized ``int8`` section payload."""
+	try:
+		reader = get_reader(file_id, key1_byte, key2_byte)
+		q, scale, offset = _quantized_section(reader, int(key1_val))
+	except ValueError as exc:
+		raise HTTPException(status_code=400, detail=str(exc)) from exc
+	except Exception as exc:
+		raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+	if q.ndim != EXPECTED_SECTION_NDIM:
+		raise HTTPException(status_code=500, detail='Section data must be 2D')
+
+	payload = _encode_quantized_payload(q, scale, offset, get_dt_for_file(file_id))
+	return Response(
+		payload,
+		media_type='application/octet-stream',
+		headers={'Content-Encoding': 'gzip'},
+	)
+
+
 @router.get('/get_section_bin')
 def get_section_bin(
 	file_id: Annotated[str, Query(...)],
@@ -255,27 +314,13 @@ def get_section_bin(
 	key1_byte: Annotated[int, Query()] = 189,
 	key2_byte: Annotated[int, Query()] = 193,
 ) -> Response:
-	"""Return a quantized, binary section payload."""
-	try:
-		reader = get_reader(file_id, key1_byte, key2_byte)
-		section = np.array(reader.get_section(key1_val), dtype=np.float32)
-		scale, q = quantize_float32(section)
-		obj = {
-			'scale': scale,
-			'shape': q.shape,
-			'data': q.tobytes(),
-			'dt': get_dt_for_file(file_id),
-		}
-		payload = msgpack.packb(obj)
-		return Response(
-			gzip.compress(payload),
-			media_type='application/octet-stream',
-			headers={'Content-Encoding': 'gzip'},
-		)
-	except ValueError as exc:
-		raise HTTPException(status_code=400, detail=str(exc)) from exc
-	except Exception as exc:
-		raise HTTPException(status_code=500, detail=str(exc)) from exc
+	"""Return a quantized, binary section payload (legacy alias)."""
+	return get_section_int8(
+		file_id=file_id,
+		key1_val=key1_val,
+		key1_byte=key1_byte,
+		key2_byte=key2_byte,
+	)
 
 
 @router.get('/get_section_window_bin')
@@ -320,6 +365,11 @@ def get_section_window_bin(
 			headers={'Content-Encoding': 'gzip'},
 		)
 
+	section: np.ndarray | None = None
+	quant_section: np.ndarray | None = None
+	scale_full: float | None = None
+	offset_full: float | None = None
+
 	try:
 		if pipeline_key and tap_label:
 			section = get_section_from_pipeline_tap(
@@ -330,19 +380,28 @@ def get_section_window_bin(
 				tap_label=tap_label,
 				offset_byte=forced_offset_byte,
 			)
+			section = np.ascontiguousarray(section, dtype=np.float32)
 		else:
 			reader = get_reader(file_id, key1_byte, key2_byte)
-			section = np.array(reader.get_section(key1_val), dtype=np.float32)
+			quant_section, scale_full, offset_full = _quantized_section(
+				reader, int(key1_val)
+			)
 	except PipelineTapNotFoundError as exc:
 		raise HTTPException(status_code=409, detail=str(exc)) from exc
 	except ValueError as exc:
 		raise HTTPException(status_code=400, detail=str(exc)) from exc
 
-	section = np.ascontiguousarray(section, dtype=np.float32)
-	if section.ndim != EXPECTED_SECTION_NDIM:
-		raise HTTPException(status_code=500, detail='Section data must be 2D')
+	if section is not None:
+		if section.ndim != EXPECTED_SECTION_NDIM:
+			raise HTTPException(status_code=500, detail='Section data must be 2D')
+		n_traces, n_samples = section.shape
+	elif quant_section is not None:
+		if quant_section.ndim != EXPECTED_SECTION_NDIM:
+			raise HTTPException(status_code=500, detail='Section data must be 2D')
+		n_traces, n_samples = quant_section.shape
+	else:
+		raise HTTPException(status_code=500, detail='Section data unavailable')
 
-	n_traces, n_samples = section.shape
 	if not (0 <= x0 <= x1 < n_traces):
 		raise HTTPException(status_code=400, detail='Trace range out of bounds')
 	if not (0 <= y0 <= y1 < n_samples):
@@ -350,23 +409,27 @@ def get_section_window_bin(
 	if step_x < 1 or step_y < 1:
 		raise HTTPException(status_code=400, detail='Steps must be >= 1')
 
-	sub = section[x0 : x1 + 1 : step_x, y0 : y1 + 1 : step_y]
-	if sub.size == 0:
-		raise HTTPException(status_code=400, detail='Requested window is empty')
+	if section is not None:
+		sub = section[x0 : x1 + 1 : step_x, y0 : y1 + 1 : step_y]
+		if sub.size == 0:
+			raise HTTPException(status_code=400, detail='Requested window is empty')
+		window_matrix = np.ascontiguousarray(sub.T, dtype=np.float32)
+		scale, offset, q_window = quantize_float32(window_matrix)
+		quant_window = np.ascontiguousarray(q_window, dtype=np.int8)
+	else:
+		sub_q = quant_section[x0 : x1 + 1 : step_x, y0 : y1 + 1 : step_y]
+		if sub_q.size == 0:
+			raise HTTPException(status_code=400, detail='Requested window is empty')
+		quant_window = np.ascontiguousarray(sub_q.T, dtype=np.int8)
+		scale = float(scale_full) if scale_full is not None else 1.0
+		offset = float(offset_full) if offset_full is not None else 0.0
 
-	window_view = np.ascontiguousarray(sub.T, dtype=np.float32)
-	scale, q = quantize_float32(window_view)
-	obj: dict[str, Any] = {
-		'scale': scale,
-		'shape': window_view.shape,
-		'data': q.tobytes(),
-		'dt': get_dt_for_file(file_id),
-	}
-	payload = msgpack.packb(obj)
-	compressed = gzip.compress(payload)
-	window_section_cache.set(cache_key, compressed)
+	payload = _encode_quantized_payload(
+		quant_window, scale, offset, get_dt_for_file(file_id)
+	)
+	window_section_cache.set(cache_key, payload)
 	return Response(
-		compressed,
+		payload,
 		media_type='application/octet-stream',
 		headers={'Content-Encoding': 'gzip'},
 	)
