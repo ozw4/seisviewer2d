@@ -13,6 +13,8 @@ from fastapi import APIRouter, Body, HTTPException, Query
 from pydantic import BaseModel, Field
 
 from app.api._helpers import (
+	OFFSET_BYTE_FIXED,
+	USE_FBPICK_OFFSET,
 	_maybe_attach_fbpick_offsets,
 	get_reader,
 	jobs,
@@ -50,10 +52,13 @@ def _run_pipeline_all_job(job_id: str, req: PipelineAllRequest, pipe_key: str) -
 		taps = req.taps
 		for idx, key1_val in enumerate(key1_vals):
 			section = np.array(reader.get_section(int(key1_val)), dtype=np.float32)
+
 			dt = 0.002
 			if hasattr(reader, 'meta'):
 				dt = getattr(reader, 'meta', {}).get('dt', dt)
 			meta = {'dt': dt}
+
+			# offsetをreqからそのまま適用（pass-through）
 			meta = _maybe_attach_fbpick_offsets(
 				meta,
 				spec=req.spec,
@@ -61,21 +66,27 @@ def _run_pipeline_all_job(job_id: str, req: PipelineAllRequest, pipe_key: str) -
 				key1_val=int(key1_val),
 				offset_byte=req.offset_byte,  # already forced by caller
 			)
+
 			out = apply_pipeline(section, spec=req.spec, meta=meta, taps=taps)
+
 			base_key = (
 				req.file_id,
 				int(key1_val),
 				req.key1_byte,
 				pipe_key,
-				None,
-				req.offset_byte,  # forced
+				None,  # window_hash (all-jobは常にNone)
+				req.offset_byte,  # pass-through (forced by caller)
 			)
+
 			for k, v in out.items():
 				val = v
 				if req.downsample_quicklook and isinstance(v, np.ndarray):
 					val = v[::4, ::4]
+				print('PIPELINE_CACHE_SET all', (*base_key, k))
 				pipeline_tap_cache.set((*base_key, k), to_builtin(val))
+
 			job['progress'] = (idx + 1) / total
+
 		job['status'] = 'done'
 	except Exception as e:  # noqa: BLE001
 		job['status'] = 'error'
@@ -89,12 +100,13 @@ def pipeline_section(
 	spec: Annotated[PipelineSpec, Body(...)],
 	key1_byte: Annotated[int, Query()] = 189,
 	key2_byte: Annotated[int, Query()] = 193,
-	offset_byte: Annotated[int | None, Query()] = 37,
+	offset_byte: Annotated[int | None, Query()] = None,  # pass-throughで受ける
 	taps: Annotated[list[str] | None, Body()] = None,
 	window: Annotated[dict[str, int | float] | None, Body()] = None,
 ):
 	reader = get_reader(file_id, key1_byte, key2_byte)
 	section = np.array(reader.get_section(key1_val), dtype=np.float32)
+
 	trace_slice: slice | None = None
 	window_hash = None
 	if window:
@@ -113,20 +125,31 @@ def pipeline_section(
 		window_hash = hashlib.sha256(
 			json.dumps(clean_window, sort_keys=True).encode()
 		).hexdigest()[:8]
+
 	dt = 0.002
 	if hasattr(reader, 'meta'):
 		dt = getattr(reader, 'meta', {}).get('dt', dt)
 	meta = {'dt': dt}
+
+	# pass-through + 同期フォールバック
+	# None で来ていて、かつ FBPICK モードなら固定オフセットに揃える
+	forced_offset_byte = (
+		OFFSET_BYTE_FIXED
+		if (USE_FBPICK_OFFSET and offset_byte is None)
+		else offset_byte
+	)
 
 	meta = _maybe_attach_fbpick_offsets(
 		meta,
 		spec=spec,
 		reader=reader,
 		key1_val=key1_val,
-		offset_byte=offset_byte,
+		offset_byte=forced_offset_byte,
 		trace_slice=trace_slice,
 	)
+
 	pipe_key = pipeline_key(spec)
+
 	tap_names = taps or []
 	if tap_names:
 		base_key = (
@@ -134,24 +157,30 @@ def pipeline_section(
 			key1_val,
 			key1_byte,
 			pipe_key,
-			window_hash,
-			offset_byte,
+			window_hash,  # sectionはwindow付きならこれが入る
+			forced_offset_byte,  # pass-through or fallback
 		)
+
 		taps_out: dict[str, Any] = {}
 		misses: list[str] = []
+
 		for tap in tap_names:
+			print('PIPELINE_CACHE_GET pipelinesection', (*base_key, tap))
 			payload = pipeline_tap_cache.get((*base_key, tap))
 			if payload is not None:
 				taps_out[tap] = payload
 			else:
 				misses.append(tap)
+
 		if misses:
 			out = apply_pipeline(section, spec=spec, meta=meta, taps=misses)
 			for k, v in out.items():
 				val = to_builtin(v)
 				taps_out[k] = val
 				pipeline_tap_cache.set((*base_key, k), val)
+
 		return {'taps': taps_out, 'pipeline_key': pipe_key}
+
 	out = apply_pipeline(section, spec=spec, meta=meta, taps=None)
 	return {'taps': to_builtin(out), 'pipeline_key': pipe_key}
 
@@ -163,22 +192,31 @@ def pipeline_all(
 	key1_byte: Annotated[int, Query()] = 189,
 	key2_byte: Annotated[int, Query()] = 193,
 	downsample_quicklook: Annotated[bool, Query()] = True,
-	offset_byte: Annotated[int | None, Query()] = 37,
+	offset_byte: Annotated[int | None, Query()] = None,  # pass-throughで受ける
 	taps: Annotated[list[str] | None, Body()] = None,
 ):
 	tap_names = taps or []
+
+	# pass-through + 同期フォールバック（sectionと同一ロジック）
+	forced_offset_byte = (
+		OFFSET_BYTE_FIXED
+		if (USE_FBPICK_OFFSET and offset_byte is None)
+		else offset_byte
+	)
 
 	req = PipelineAllRequest(
 		file_id=file_id,
 		key1_byte=key1_byte,
 		key2_byte=key2_byte,
-		offset_byte=offset_byte,
+		offset_byte=forced_offset_byte,  # ここで確定させて渡す
 		spec=spec,
 		taps=tap_names,
 		downsample_quicklook=downsample_quicklook,
 	)
+
 	job_id = str(uuid4())
 	pipe_key = pipeline_key(spec)
+
 	jobs[job_id] = {
 		'status': 'queued',
 		'progress': 0.0,
@@ -186,11 +224,13 @@ def pipeline_all(
 		'file_id': file_id,
 		'key1_byte': key1_byte,
 		'pipeline_key': pipe_key,
-		'offset_byte': offset_byte,
+		'offset_byte': forced_offset_byte,  # artifact側も同じ値で参照
 	}
+
 	threading.Thread(
 		target=_run_pipeline_all_job, args=(job_id, req, pipe_key), daemon=True
 	).start()
+
 	return {'job_id': job_id, 'state': jobs[job_id]['status']}
 
 
@@ -215,14 +255,18 @@ def pipeline_job_artifact(
 	job = jobs.get(job_id)
 	if job is None:
 		raise HTTPException(status_code=404, detail='Job ID not found')
+
 	base_key = (
 		job.get('file_id'),
 		key1_val,
 		job.get('key1_byte'),
 		job.get('pipeline_key'),
-		None,
+		None,  # window_hash は常に None
 		job.get('offset_byte'),
 	)
+
+	print('PIPELINE_CACHE_GET artifact', (*base_key, tap))
+
 	payload = pipeline_tap_cache.get((*base_key, tap))
 	if payload is None:
 		raise HTTPException(status_code=404, detail='Artifact not ready')
