@@ -2275,14 +2275,33 @@
       windowFetchToken += 1;
       uiResetNonce++;
       if (window.pipelineUI && typeof window.pipelineUI.prepareForNewSection === 'function') {
-        window.pipelineUI.prepareForNewSection();
+        window.pipelineUI.prepareForNewSection({ key1Val });
       } else {
-        latestTapData = {};
-        latestPipelineKey = null;
+        const store = window.__pipelineKeyByKey1;
+        const keyStr = (key1Val === null || key1Val === undefined) ? null : String(key1Val);
+        let taps = {};
+        let pipelineKey = null;
+        if (store instanceof Map && keyStr != null) {
+          pipelineKey = store.get(keyStr) || null;
+          if (pipelineKey && typeof window.getCachedPipelineTaps === 'function') {
+            try {
+              const cached = window.getCachedPipelineTaps(currentFileId, key1Val, pipelineKey);
+              if (cached && typeof cached === 'object') {
+                taps = cached;
+              }
+            } catch (err) {
+              console.warn('restore cached taps (fallback) failed', err);
+            }
+          }
+        }
+        latestTapData = taps || {};
+        latestPipelineKey = pipelineKey || null;
         const sel = document.getElementById('layerSelect');
         if (sel) {
+          const names = Object.keys(latestTapData || {}).sort((a, b) => a.localeCompare(b));
           sel.innerHTML = '';
           sel.appendChild(new Option('raw', 'raw'));
+          for (const name of names) sel.appendChild(new Option(name, name));
           sel.value = 'raw';
         }
       }

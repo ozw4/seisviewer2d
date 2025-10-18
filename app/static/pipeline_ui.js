@@ -39,6 +39,38 @@
     };
 
 
+  function ensurePipelineKeyStore() {
+    if (!(window.__pipelineKeyByKey1 instanceof Map)) {
+      window.__pipelineKeyByKey1 = new Map();
+    }
+    return window.__pipelineKeyByKey1;
+  }
+
+  function key1ToStoreKey(key1Val) {
+    if (key1Val === null || key1Val === undefined) return null;
+    return String(key1Val);
+  }
+
+  function rememberPipelineKey(key1Val, pipelineKey) {
+    const store = ensurePipelineKeyStore();
+    const storeKey = key1ToStoreKey(key1Val);
+    if (storeKey == null) return;
+    if (pipelineKey) {
+      store.set(storeKey, pipelineKey);
+    } else {
+      store.delete(storeKey);
+    }
+  }
+
+  function lookupPipelineKey(key1Val) {
+    const store = window.__pipelineKeyByKey1;
+    if (!(store instanceof Map)) return null;
+    const storeKey = key1ToStoreKey(key1Val);
+    if (storeKey == null) return null;
+    return store.get(storeKey) || null;
+  }
+
+
   function emitPipelineEvent(eventName, payload) {
     const ui = window.pipelineUI;
     if (ui && typeof ui._emit === 'function') {
@@ -536,20 +568,38 @@
     closeInspector();
   }
 
-  function prepareForNewSection() {
-    // グローバルをクリア（index.html側で定義）
-    window.latestTapData = {};
-    window.latestPipelineKey = null;
-    const sel = document.getElementById('layerSelect');
-    if (sel) {
-      const current = sel.value;
-      if (current && current !== 'raw') {
-        pipelineState.desiredLayer = current;
-      }
-      sel.innerHTML = '';
-      sel.appendChild(new Option('raw', 'raw'));
-      sel.value = 'raw';
+  function prepareForNewSection(options = {}) {
+    let key1Val = null;
+    if (options && typeof options === 'object') {
+      if ('key1Val' in options) key1Val = options.key1Val;
+    } else if (options !== undefined) {
+      key1Val = options;
     }
+
+    if (key1Val === null || key1Val === undefined) {
+      const slider = document.getElementById('key1_idx_slider');
+      const idx = slider ? parseInt(slider.value, 10) : NaN;
+      if (!Number.isNaN(idx) && Array.isArray(window.key1Values)) {
+        key1Val = window.key1Values[idx];
+      }
+    }
+
+    let tapData = {};
+    const pipelineKey = lookupPipelineKey(key1Val);
+    if (pipelineKey && typeof window.getCachedPipelineTaps === 'function' && window.currentFileId) {
+      try {
+        const cached = window.getCachedPipelineTaps(window.currentFileId, key1Val, pipelineKey);
+        if (cached && typeof cached === 'object') {
+          tapData = cached;
+        }
+      } catch (err) {
+        console.warn('[pipeline] failed to restore cached taps', err);
+      }
+    }
+
+    window.latestTapData = tapData;
+    window.latestPipelineKey = pipelineKey || null;
+    updateLayerSelect(tapData || {});
   }
 
   function updateLayerSelect(tapMap) {
@@ -615,6 +665,7 @@
     if (!spec.steps.length || !tapsUnique.length) {
       console.info('[pipeline] noop: no steps or taps');
       window.latestTapData = {};
+      rememberPipelineKey(key1Val, null);
       window.latestPipelineKey = null;
       updateLayerSelect({});
       if (typeof window.drawSelectedLayer === 'function') {
@@ -649,6 +700,7 @@
       }
       if (runId !== pipelineState.runToken) return;
       window.latestTapData = tapMap || {};
+      rememberPipelineKey(key1Val, pipelineKey || null);
       window.latestPipelineKey = pipelineKey || null;
       updateLayerSelect(tapMap || {});
       const finalName = steps.length
@@ -660,6 +712,7 @@
       if (runId !== pipelineState.runToken) return;
       console.warn('pipeline/section failed', error);
       window.latestTapData = {};
+      rememberPipelineKey(key1Val, null);
       window.latestPipelineKey = null;
       updateLayerSelect({});
       emitPipelineEvent('run:error', { message: (error && error.message) || String(error) });
@@ -756,6 +809,8 @@
       savePipelineToLocalStorage,
       loadPipelineFromLocalStorage,
       prepareForNewSection,
+      getPipelineKeyForKey1: lookupPipelineKey,
+      setPipelineKeyForKey1: rememberPipelineKey,
     };
 
   const _listeners = {};

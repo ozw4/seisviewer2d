@@ -84,3 +84,18 @@ async function fetchSectionWithPipeline(
   cacheSet(`${fileId}:${key1Val}:${json.pipeline_key}`, out);
   return { taps: out, pipelineKey: json.pipeline_key };
 }
+
+function getCachedPipelineTaps(fileId, key1Val, pipelineKey) {
+  if (!fileId || pipelineKey == null) return null;
+  const cached = cacheGet(`${fileId}:${key1Val}:${pipelineKey}`);
+  if (!cached) return null;
+  const out = {};
+  for (const [name, val] of Object.entries(cached)) {
+    try {
+      out[name] = normalizeTapValue(val);
+    } catch (e) {
+      console.warn('normalizeTapValue (cached) failed', name, e);
+    }
+  }
+  return out;
+}
