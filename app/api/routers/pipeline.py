@@ -51,7 +51,18 @@ def _run_pipeline_all_job(job_id: str, req: PipelineAllRequest, pipe_key: str) -
 		total = len(key1_vals) or 1
 		taps = req.taps
 		for idx, key1_val in enumerate(key1_vals):
-			section = np.array(reader.get_section(int(key1_val)), dtype=np.float32)
+			view = reader.get_section(int(key1_val))
+			section = (
+				view.arr.astype(np.float32, copy=False)
+				if view.arr.dtype != np.float32
+				else view.arr
+			)
+			if view.scale is not None:
+				if not section.flags.writeable:
+					section = section.copy()
+				section = section.astype(np.float32, copy=False)
+				section *= float(view.scale)
+			section = np.ascontiguousarray(section, dtype=np.float32)
 
 			dt = 0.002
 			if hasattr(reader, 'meta'):
@@ -105,7 +116,18 @@ def pipeline_section(
 	window: Annotated[dict[str, int | float] | None, Body()] = None,
 ):
 	reader = get_reader(file_id, key1_byte, key2_byte)
-	section = np.array(reader.get_section(key1_val), dtype=np.float32)
+	view = reader.get_section(key1_val)
+	section = (
+		view.arr.astype(np.float32, copy=False)
+		if view.arr.dtype != np.float32
+		else view.arr
+	)
+	if view.scale is not None:
+		if not section.flags.writeable:
+			section = section.copy()
+		section = section.astype(np.float32, copy=False)
+		section *= float(view.scale)
+	section = np.ascontiguousarray(section, dtype=np.float32)
 
 	trace_slice: slice | None = None
 	window_hash = None

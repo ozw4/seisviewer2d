@@ -27,7 +27,12 @@ from app.api._helpers import (
 	window_section_cache,
 )
 from app.utils.segy_meta import FILE_REGISTRY, get_dt_for_file
-from app.utils.utils import SegySectionReader, TraceStoreSectionReader, quantize_float32
+from app.utils.utils import (
+	SectionView,
+	SegySectionReader,
+	TraceStoreSectionReader,
+	quantize_float32,
+)
 
 router = APIRouter()
 
@@ -66,6 +71,18 @@ def _key1_values_array(
 		msg = 'Reader does not expose key1 values'
 		raise AttributeError(msg)
 	return np.asarray(vals, dtype=np.int64)
+
+
+def _ensure_float32(sub: np.ndarray, *, scale: float | None) -> np.ndarray:
+	"""Return ``sub`` as float32, applying ``scale`` when provided."""
+	arr = sub.astype(np.float32, copy=False) if sub.dtype != np.float32 else sub
+	if scale is not None:
+		if arr.dtype != np.float32:
+			arr = arr.astype(np.float32, copy=False)
+		if not arr.flags.writeable:
+			arr = arr.copy()
+		arr *= float(scale)
+	return arr
 
 
 def get_ntraces_for(
@@ -172,8 +189,8 @@ def get_section(
 	"""Return the section for the ``key1_val`` trace grouping."""
 	try:
 		reader = get_reader(file_id, key1_byte, key2_byte)
-		section = reader.get_section(key1_val)
-		payload = section.tolist() if isinstance(section, np.ndarray) else section
+		view = reader.get_section(key1_val)
+		payload = view.arr.tolist()
 		return JSONResponse(content={'section': payload})
 	except ValueError as exc:
 		raise HTTPException(status_code=400, detail=str(exc)) from exc
@@ -228,11 +245,16 @@ def get_section_meta(
 					values = list(values)
 				first_val = values[0] if values else None
 				if first_val is not None:
-					section = np.asarray(get_section(int(first_val)), dtype=np.float32)
-					if section.ndim == EXPECTED_SECTION_NDIM:
-						n_samples = int(section.shape[1])
+					view = get_section(int(first_val))
+					arr = np.asarray(view.arr)
+					if arr.ndim == EXPECTED_SECTION_NDIM:
+						n_samples = int(arr.shape[1])
 						if n_traces is None:
-							n_traces = int(section.shape[0])
+							n_traces = int(arr.shape[0])
+					if dtype is None:
+						dtype = str(view.dtype)
+					if scale is None and view.scale is not None:
+						scale = float(view.scale)
 			except Exception:  # noqa: BLE001
 				n_samples = None
 
@@ -258,10 +280,15 @@ def get_section_bin(
 	"""Return a quantized, binary section payload."""
 	try:
 		reader = get_reader(file_id, key1_byte, key2_byte)
-		section = np.array(reader.get_section(key1_val), dtype=np.float32)
-		scale, q = quantize_float32(section)
+		view = reader.get_section(key1_val)
+		base = view.arr
+		if base.ndim != EXPECTED_SECTION_NDIM:
+			raise HTTPException(status_code=500, detail='Section data must be 2D')
+		prepared = _ensure_float32(base, scale=view.scale)
+		window_view = np.ascontiguousarray(prepared.T, dtype=np.float32)
+		scale_val, q = quantize_float32(window_view)
 		obj = {
-			'scale': scale,
+			'scale': scale_val,
 			'shape': q.shape,
 			'data': q.tobytes(),
 			'dt': get_dt_for_file(file_id),
@@ -322,7 +349,7 @@ def get_section_window_bin(
 
 	try:
 		if pipeline_key and tap_label:
-			section = get_section_from_pipeline_tap(
+			section_arr = get_section_from_pipeline_tap(
 				file_id=file_id,
 				key1_val=key1_val,
 				key1_byte=key1_byte,
@@ -330,19 +357,22 @@ def get_section_window_bin(
 				tap_label=tap_label,
 				offset_byte=forced_offset_byte,
 			)
+			section_view = SectionView(
+				arr=section_arr, dtype=section_arr.dtype, scale=None
+			)
 		else:
 			reader = get_reader(file_id, key1_byte, key2_byte)
-			section = np.array(reader.get_section(key1_val), dtype=np.float32)
+			section_view = reader.get_section(key1_val)
 	except PipelineTapNotFoundError as exc:
 		raise HTTPException(status_code=409, detail=str(exc)) from exc
 	except ValueError as exc:
 		raise HTTPException(status_code=400, detail=str(exc)) from exc
 
-	section = np.ascontiguousarray(section, dtype=np.float32)
-	if section.ndim != EXPECTED_SECTION_NDIM:
+	base = section_view.arr
+	if base.ndim != EXPECTED_SECTION_NDIM:
 		raise HTTPException(status_code=500, detail='Section data must be 2D')
 
-	n_traces, n_samples = section.shape
+	n_traces, n_samples = base.shape
 	if not (0 <= x0 <= x1 < n_traces):
 		raise HTTPException(status_code=400, detail='Trace range out of bounds')
 	if not (0 <= y0 <= y1 < n_samples):
@@ -350,14 +380,15 @@ def get_section_window_bin(
 	if step_x < 1 or step_y < 1:
 		raise HTTPException(status_code=400, detail='Steps must be >= 1')
 
-	sub = section[x0 : x1 + 1 : step_x, y0 : y1 + 1 : step_y]
+	sub = base[x0 : x1 + 1 : step_x, y0 : y1 + 1 : step_y]
 	if sub.size == 0:
 		raise HTTPException(status_code=400, detail='Requested window is empty')
 
-	window_view = np.ascontiguousarray(sub.T, dtype=np.float32)
-	scale, q = quantize_float32(window_view)
+	prepared = _ensure_float32(sub, scale=section_view.scale)
+	window_view = np.ascontiguousarray(prepared.T, dtype=np.float32)
+	scale_val, q = quantize_float32(window_view)
 	obj: dict[str, Any] = {
-		'scale': scale,
+		'scale': scale_val,
 		'shape': window_view.shape,
 		'data': q.tobytes(),
 		'dt': get_dt_for_file(file_id),
