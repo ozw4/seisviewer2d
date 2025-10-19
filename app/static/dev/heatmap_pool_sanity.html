@@ -1,0 +1,47 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Heatmap Pool Sanity</title>
+<div style="display:flex;gap:12px;align-items:center">
+    <button id="same">Render same size (no growth expected)</button>
+    <button id="bigger">Render bigger (one-time growth)</button>
+    <span id="stats"></span>
+</div>
+<div id="plot" style="width: 900px; height: 500px;"></div>
+
+<script src="../plotly-2.29.1.min.js"></script>
+<script type="module">
+  import { toPlotlyHeatmapZ, getHeatmapPoolStats } from '../js/renderHeatmap.js';
+
+  const plotDiv = document.getElementById('plot');
+  let rows = 300, cols = 600;
+
+  function makeI8(r, c) {
+    const a = new Int8Array(r * c);
+    for (let i = 0; i < a.length; i++) a[i] = ((i * 17) & 0xff) - 128;
+    return a;
+  }
+
+  async function render(r, c) {
+    const i8 = makeI8(r, c);
+    const quant = { mode: 'linear', lo: -1.0, hi: 1.0 };
+    const z = toPlotlyHeatmapZ({ i8, rows: r, cols: c, quant });
+
+    const x = new Float32Array(c);
+    const y = new Float32Array(r);
+    for (let i = 0; i < c; i++) x[i] = i;
+    for (let i = 0; i < r; i++) y[i] = i;
+
+    const trace = { type: 'heatmap', x, y, z, colorscale: 'Greys', showscale: false };
+    const layout = { margin: {l:30,r:10,t:10,b:30}, uirevision:'keep' };
+    await Plotly.react(plotDiv, [trace], layout, {staticPlot:true});
+
+    const st = getHeatmapPoolStats();
+    document.getElementById('stats').textContent =
+      `cap=${st.cap} elems, grows=${st.grows}, z.length=${z.length}`;
+  }
+
+  document.getElementById('same').onclick = () => render(rows, cols);
+  document.getElementById('bigger').onclick = () => { rows+=50; cols+=50; render(rows, cols); };
+
+  render(rows, cols);
+</script>
