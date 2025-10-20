@@ -4,11 +4,15 @@ from __future__ import annotations
 
 import json
 import os
+import re
+import warnings
 from pathlib import Path
 from typing import NamedTuple
 
 import numpy as np
 import segyio
+
+from app.utils.ingest import SegyIngestor
 
 
 class SectionView(NamedTuple):
@@ -44,7 +48,7 @@ def quantize_float32(
 
 
 class SegySectionReader:
-	"""Read SEG-Y sections and associated trace headers."""
+	"""Deprecated wrapper delegating to :class:`TraceStoreSectionReader`."""
 
 	def __init__(
 		self,
@@ -52,125 +56,114 @@ class SegySectionReader:
 		key1_byte: int = 189,
 		key2_byte: int = 193,
 	) -> None:
-		"""Initialize the SEG-Y reader with header byte settings."""
+		"""Build or reuse a TraceStore for the provided SEG-Y file."""
 		self.path = Path(path)
 		self.key1_byte = key1_byte
 		self.key2_byte = key2_byte
+		warnings.warn(
+			'SegySectionReader is deprecated; use TraceStoreSectionReader instead.',
+			DeprecationWarning,
+			stacklevel=2,
+		)
 		self.section_cache: dict[int, SectionView] = {}
 		self._trace_seq_cache: dict[int, np.ndarray] = {}
 		self._trace_seq_disp_cache: dict[int, np.ndarray] = {}
-		self.ntraces: int = 0
-		self.dtype: np.dtype | None = None
-		self.scale: float | None = None
-		self._initialize_metadata()
+		self._store_dir = self._compute_store_dir()
+		self._delegate = self._initialize_delegate()
+		self.section_cache = self._delegate.section_cache
+		self.traces = getattr(self._delegate, 'traces', None)
+		self.dtype = getattr(self._delegate, 'dtype', None)
+		self.scale = getattr(self._delegate, 'scale', None)
+		self.meta = getattr(self._delegate, 'meta', None)
 
-	def _initialize_metadata(self) -> None:
-		with segyio.open(self.path, 'r', ignore_geometry=True) as f:
-			f.mmap()
-			self.key1s = f.attributes(self.key1_byte)[:]  # type: ignore[assignment]
-			self.key2s = f.attributes(self.key2_byte)[:]  # type: ignore[assignment]
-			try:
-				sample = np.asarray(f.trace[0])
-			except Exception:  # noqa: BLE001
-				sample = None
-			if sample is not None:
-				self.dtype = np.dtype(sample.dtype)
-				n_samples = int(sample.shape[0])
-				self.meta = {
-					'n_samples': n_samples,
-					'n_traces': len(self.key1s),
-					'dtype': self.dtype,
-				}
-		self.unique_key1 = np.unique(self.key1s)
-		self.ntraces = len(self.key1s)
-		if self.dtype is None:
-			self.dtype = np.dtype('float32')
-			self.meta = {
-				'n_traces': int(self.ntraces),
-				'dtype': self.dtype,
-			}
+	def _compute_store_dir(self) -> Path:
+		safe_name = re.sub(r'[^A-Za-z0-9_.-]', '_', self.path.name)
+		return self.path.parent / f'{safe_name}.trace_store'
 
-	def _indices_for_key1(self, key1_val: int) -> np.ndarray:
-		if key1_val in self._trace_seq_cache:
-			return self._trace_seq_cache[key1_val]
+	def _trace_store_complete(self) -> bool:
+		required = [
+			self._store_dir / 'traces.npy',
+			self._store_dir / 'index.npz',
+			self._store_dir / 'meta.json',
+			self._store_dir / f'headers_byte_{self.key1_byte}.npy',
+			self._store_dir / f'headers_byte_{self.key2_byte}.npy',
+		]
+		if not all(path.exists() for path in required):
+			return False
+		try:
+			meta = json.loads((self._store_dir / 'meta.json').read_text())
+		except Exception:  # noqa: BLE001
+			return False
+		key_meta = meta.get('key_bytes') if isinstance(meta, dict) else None
+		if isinstance(key_meta, dict):
+			key1_meta = int(key_meta.get('key1', self.key1_byte))
+			key2_meta = int(key_meta.get('key2', self.key2_byte))
+			if key1_meta != self.key1_byte or key2_meta != self.key2_byte:
+				return False
+		return True
 
-		idx = np.flatnonzero(self.key1s == key1_val).astype(np.int64)
-		if idx.size == 0:
+	def _initialize_delegate(self) -> TraceStoreSectionReader:
+		if not self._trace_store_complete():
+			SegyIngestor.from_segy(
+				self.path,
+				self._store_dir,
+				key1_byte=self.key1_byte,
+				key2_byte=self.key2_byte,
+			)
+		return TraceStoreSectionReader(self._store_dir, self.key1_byte, self.key2_byte)
+
+	def _compute_indices(self, key1_val: int) -> tuple[np.ndarray, np.ndarray]:
+		original = self._trace_seq_cache.get(key1_val)
+		display = self._trace_seq_disp_cache.get(key1_val)
+		if original is not None and display is not None:
+			return original, display
+
+		key1_header = np.asarray(
+			self._delegate.get_header(self.key1_byte),
+			dtype=np.int64,
+		)
+		indices = np.flatnonzero(key1_header == key1_val).astype(np.int64)
+		if indices.size == 0:
 			msg = f'Key1 value {key1_val} not found'
 			raise ValueError(msg)
+		self._trace_seq_cache[key1_val] = indices
 
-		self._trace_seq_cache[key1_val] = idx
-		return idx
-
-	def _sorted_indices_for_key1(self, key1_val: int) -> np.ndarray:
-		if key1_val in self._trace_seq_disp_cache:
-			return self._trace_seq_disp_cache[key1_val]
-
-		idx = self._indices_for_key1(key1_val)
-		order = np.argsort(self.key2s[idx], kind='stable')
-		sorted_idx = idx[order]
-		self._trace_seq_disp_cache[key1_val] = sorted_idx
-		return sorted_idx
+		key2_header = np.asarray(
+			self._delegate.get_header(self.key2_byte)[indices],
+			dtype=np.int64,
+		)
+		order = np.argsort(key2_header, kind='stable')
+		display_indices = indices[order]
+		self._trace_seq_disp_cache[key1_val] = display_indices
+		return indices, display_indices
 
 	def get_trace_seq_for_section(
 		self, key1_val: int, align_to: str = 'display'
 	) -> np.ndarray:
 		"""Return TraceSeq indices for ``key1_val`` aligned to the requested order."""
+		original, display = self._compute_indices(key1_val)
 		if align_to == 'display':
-			return self._sorted_indices_for_key1(key1_val)
+			return display
 		if align_to == 'original':
-			return self._indices_for_key1(key1_val)
+			return original
 		msg = "align_to must be 'display' or 'original'"
 		raise ValueError(msg)
 
 	def get_key1_values(self) -> np.ndarray:
 		"""Return the available values for header ``key1``."""
-		return self.unique_key1
-
-	def _load_section_array(self, sorted_indices: np.ndarray) -> np.ndarray:
-		if sorted_indices.size == 0:
-			return np.empty((0, 0), dtype=self.dtype)
-
-		with segyio.open(self.path, 'r', ignore_geometry=True) as f:
-			f.mmap()
-			trace_len = int(np.asarray(f.trace[int(sorted_indices[0])]).shape[0])
-			out = np.empty((sorted_indices.size, trace_len), dtype=self.dtype)
-			for out_row, idx in enumerate(sorted_indices):
-				out[out_row] = np.asarray(f.trace[int(idx)], dtype=self.dtype)
-		return out
+		return self._delegate.get_key1_values()
 
 	def get_section(self, key1_val: int) -> SectionView:
-		"""Return the section for ``key1_val`` preserving on-disk dtype."""
-		cached = self.section_cache.get(key1_val)
-		if cached is not None:
-			return cached
-
-		sorted_indices = self.get_trace_seq_for_section(key1_val, align_to='display')
-		print(len(sorted_indices), 'indices found for key1_val:', key1_val)
-		if sorted_indices.size == 0:
-			msg = f'Key1 value {key1_val} not found'
-			raise ValueError(msg)
-
-		arr = self._load_section_array(sorted_indices)
-		view = SectionView(arr=arr, dtype=arr.dtype, scale=None)
-		self.section_cache[key1_val] = view
-		return view
+		"""Return the cached section for ``key1_val``."""
+		return self._delegate.get_section(key1_val)
 
 	def get_offsets_for_section(self, key1_val: int, offset_byte: int) -> np.ndarray:
 		"""Return ``(W,)`` float32 offsets aligned with :meth:`get_section`."""
-		sorted_indices = self.get_trace_seq_for_section(key1_val, align_to='display')
-		print(len(sorted_indices), 'indices found for key1_val:', key1_val)
-
-		with segyio.open(self.path, 'r', ignore_geometry=True) as f:
-			f.mmap()
-			attr = f.attributes(offset_byte)
-			offsets = np.asarray(attr[sorted_indices], dtype=np.float32)
-		return np.ascontiguousarray(offsets)
+		return self._delegate.get_offsets_for_section(key1_val, offset_byte)
 
 	def preload_all_sections(self) -> None:
-		"""Populate the section cache for every ``key1`` value."""
-		for key1_val in self.unique_key1:
-			self.get_section(int(key1_val))
+		"""Warm caches using the delegate TraceStore reader."""
+		self._delegate.preload_all_sections()
 
 
 class TraceStoreSectionReader:

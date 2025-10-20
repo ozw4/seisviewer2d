@@ -11,12 +11,11 @@ from pathlib import Path
 from typing import Annotated
 from uuid import uuid4
 
-import numpy as np
-import segyio
 from fastapi import APIRouter, File, Form, HTTPException, Query, UploadFile
 
-from app.api._helpers import SEGYS, _update_file_registry, cached_readers
-from app.utils.segy_meta import FILE_REGISTRY, read_segy_dt_seconds
+from app.api._helpers import SEGYS, cached_readers
+from app.utils.ingest import SegyIngestor
+from app.utils.segy_meta import FILE_REGISTRY
 from app.utils.utils import TraceStoreSectionReader
 
 router = APIRouter()
@@ -29,6 +28,30 @@ PROCESSED_DIR = UPLOAD_DIR / 'processed'
 
 TRACE_DIR = PROCESSED_DIR / 'traces'
 TRACE_DIR.mkdir(parents=True, exist_ok=True)
+
+
+def _trace_store_complete(store_dir: Path, key1_byte: int, key2_byte: int) -> bool:
+	required = [
+		store_dir / 'traces.npy',
+		store_dir / 'index.npz',
+		store_dir / 'meta.json',
+		store_dir / f'headers_byte_{key1_byte}.npy',
+		store_dir / f'headers_byte_{key2_byte}.npy',
+	]
+	return all(path.exists() for path in required)
+
+
+def _register_trace_store(
+	file_id: str, store_dir: Path, key1_byte: int, key2_byte: int
+) -> TraceStoreSectionReader:
+	reader = TraceStoreSectionReader(store_dir, key1_byte, key2_byte)
+	SEGYS[file_id] = str(store_dir)
+	cache_key = f'{file_id}_{key1_byte}_{key2_byte}'
+	cached_readers[cache_key] = reader
+	threading.Thread(target=reader.preload_all_sections, daemon=True).start()
+	for b in {key1_byte, key2_byte}:
+		threading.Thread(target=reader.ensure_header, args=(b,), daemon=True).start()
+	return reader
 
 
 @router.post('/open_segy')
@@ -47,30 +70,31 @@ async def open_segy(
 		)
 	print(f'Opening existing trace store for {original_name}')
 	file_id = str(uuid4())
-	reader = TraceStoreSectionReader(store_dir, key1_byte, key2_byte)
-	SEGYS[file_id] = str(store_dir)
-	cache_key = f'{file_id}_{key1_byte}_{key2_byte}'
-	cached_readers[cache_key] = reader
-	threading.Thread(target=reader.preload_all_sections, daemon=True).start()
-	for b in {key1_byte, key2_byte}:
-		threading.Thread(target=reader.ensure_header, args=(b,), daemon=True).start()
-	segy_path = (
-		reader.meta.get('original_segy_path') if isinstance(reader.meta, dict) else None
-	)
-	dt_meta = None
-	if isinstance(reader.meta, dict):
-		dt_meta = reader.meta.get('dt')
-	if (
-		dt_meta is None or not isinstance(dt_meta, (int, float)) or dt_meta <= 0
-	) and isinstance(segy_path, str):
-		dt_meta = read_segy_dt_seconds(segy_path)
-	_update_file_registry(
-		file_id,
-		path=segy_path if isinstance(segy_path, str) else None,
-		store_path=str(store_dir),
-		dt=dt_meta,
-	)
-	return {'file_id': file_id, 'reused_trace_store': True}
+	reused = _trace_store_complete(store_dir, key1_byte, key2_byte)
+	if reused:
+		meta = json.loads(meta_path.read_text())
+	else:
+		meta = json.loads(meta_path.read_text())
+		segy_path = meta.get('original_segy_path') if isinstance(meta, dict) else None
+		if not isinstance(segy_path, str):
+			raise HTTPException(
+				status_code=500,
+				detail='Trace store incomplete and SEG-Y path unavailable',
+			)
+		meta = await asyncio.to_thread(
+			SegyIngestor.from_segy,
+			segy_path,
+			store_dir,
+			key1_byte,
+			key2_byte,
+		)
+	_register_trace_store(file_id, store_dir, key1_byte, key2_byte)
+	if isinstance(meta, dict):
+		FILE_REGISTRY[file_id] = {
+			'store_path': str(store_dir),
+			'dt': meta.get('dt'),
+		}
+	return {'file_id': file_id, 'reused_trace_store': reused}
 
 
 @router.post('/upload_segy')
@@ -89,88 +113,34 @@ async def upload_segy(
 	meta_path = store_dir / 'meta.json'
 	file_id = str(uuid4())
 
-	if meta_path.exists():
+	if meta_path.exists() and _trace_store_complete(store_dir, key1_byte, key2_byte):
 		print(f'Reusing trace store for {file.filename}')
-		reader = TraceStoreSectionReader(store_dir, key1_byte, key2_byte)
-		SEGYS[file_id] = str(store_dir)
-		cache_key = f'{file_id}_{key1_byte}_{key2_byte}'
-		cached_readers[cache_key] = reader
-		threading.Thread(target=reader.preload_all_sections, daemon=True).start()
-		for b in {key1_byte, key2_byte}:
-			threading.Thread(
-				target=reader.ensure_header, args=(b,), daemon=True
-			).start()
-		segy_path = (
-			reader.meta.get('original_segy_path')
-			if isinstance(reader.meta, dict)
-			else None
-		)
-		dt_meta = None
-		if isinstance(reader.meta, dict):
-			dt_meta = reader.meta.get('dt')
-		if (
-			dt_meta is None or not isinstance(dt_meta, (int, float)) or dt_meta <= 0
-		) and isinstance(segy_path, str):
-			dt_meta = read_segy_dt_seconds(segy_path)
-		_update_file_registry(
-			file_id,
-			path=segy_path if isinstance(segy_path, str) else None,
-			store_path=str(store_dir),
-			dt=dt_meta,
-		)
+		reader = _register_trace_store(file_id, store_dir, key1_byte, key2_byte)
+		meta = reader.meta if isinstance(reader.meta, dict) else {}
+		if isinstance(meta, dict):
+			FILE_REGISTRY[file_id] = {
+				'store_path': str(store_dir),
+				'dt': meta.get('dt'),
+			}
 		return {'file_id': file_id, 'reused_trace_store': True}
 
 	raw_path = UPLOAD_DIR / safe_name
 	data = await file.read()
 	await asyncio.to_thread(raw_path.write_bytes, data)
 	store_dir.mkdir(parents=True, exist_ok=True)
-	traces_tmp = store_dir / 'traces.npy.tmp'
-	dt_seconds = read_segy_dt_seconds(str(raw_path)) or 0.002
-
-	with segyio.open(raw_path, 'r', ignore_geometry=True) as segy:
-		segy.mmap()
-		n_traces = segy.tracecount
-		n_samples = len(segy.trace[0])
-		mm = np.lib.format.open_memmap(
-			traces_tmp,
-			mode='w+',
-			dtype=np.float32,
-			shape=(n_traces, n_samples),
-		)
-		for i in range(n_traces):
-			tr = segy.trace[i].astype(np.float32)
-			mean = tr.mean()
-			std = tr.std()
-			if std == 0:
-				std = 1.0
-			mm[i] = (tr - mean) / std
-		del mm
-	traces_tmp.replace(store_dir / 'traces.npy')
-	meta = {
-		'n_traces': int(n_traces),
-		'n_samples': int(n_samples),
-		'original_segy_path': str(raw_path),
-		'version': 1,
-		'normalized': True,
-		'dt': dt_seconds,
-	}
-	tmp_meta = store_dir / 'meta.json.tmp'
-	tmp_meta.write_text(json.dumps(meta))
-	tmp_meta.replace(meta_path)
-
-	reader = TraceStoreSectionReader(store_dir, key1_byte, key2_byte)
-	SEGYS[file_id] = str(store_dir)
-	cache_key = f'{file_id}_{key1_byte}_{key2_byte}'
-	cached_readers[cache_key] = reader
-	threading.Thread(target=reader.preload_all_sections, daemon=True).start()
-	for b in {key1_byte, key2_byte}:
-		threading.Thread(target=reader.ensure_header, args=(b,), daemon=True).start()
-	_update_file_registry(
-		file_id,
-		path=str(raw_path),
-		store_path=str(store_dir),
-		dt=dt_seconds,
+	meta = await asyncio.to_thread(
+		SegyIngestor.from_segy,
+		str(raw_path),
+		store_dir,
+		key1_byte,
+		key2_byte,
 	)
+	reader = _register_trace_store(file_id, store_dir, key1_byte, key2_byte)
+	if isinstance(meta, dict):
+		FILE_REGISTRY[file_id] = {
+			'store_path': str(store_dir),
+			'dt': meta.get('dt'),
+		}
 	return {'file_id': file_id, 'reused_trace_store': False}
 
 
