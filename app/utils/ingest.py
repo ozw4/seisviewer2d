@@ -14,17 +14,18 @@ import segyio
 class SegyIngestor:
 	"""Build TraceStore artifacts from a raw SEG-Y file."""
 
-	@classmethod
+	@staticmethod
 	def from_segy(
-		cls,
 		path: str | Path,
 		store_dir: str | Path,
-		key1_byte: int = 189,
-		key2_byte: int = 193,
-		dtype: str = 'float32',
+		key1_byte=189,
+		key2_byte=193,
+		dtype='float32',
 		quantize: bool = False,
 		scale: float | None = None,
-	) -> dict[str, Any]:
+		*,
+		source_sha256: str | None = None,
+	) -> dict:
 		"""Ingest ``path`` into ``store_dir`` and return the generated metadata."""
 		segy_path = Path(path)
 		if not segy_path.is_file():
@@ -188,6 +189,7 @@ class SegyIngestor:
 				'original_segy_path': str(segy_path),
 				'original_mtime': stat.st_mtime,
 				'original_size': stat.st_size,
+				'source_sha256': (str(source_sha256) if source_sha256 else None),
 			}
 			if quantize:
 				meta['scale'] = scale_val
