@@ -116,20 +116,6 @@ def _make_tracestore_reader(
 # -------------------------
 
 
-def test__key1_values_array_handles_listlike(monkeypatch):
-	# reader that exposes list-like values (not ndarray)
-	r = _make_segy_reader(
-		key1s=np.array([3, 1, 1, 2, 3], dtype=np.int32),
-		key2s=np.array([0, 0, 1, 0, 2], dtype=np.int32),
-	)
-	# overwrite to return a Python list to verify np.asarray is applied
-	r.get_key1_values = lambda: [1, 2, 3]  # type: ignore[attr-defined]
-	out = sec._key1_values_array(r)
-	assert isinstance(out, np.ndarray)
-	assert out.dtype == np.int64
-	assert np.array_equal(out, np.array([1, 2, 3], dtype=np.int64))
-
-
 def test_get_ntraces_for_prefers_get_reader_and_fallbacks(monkeypatch):
 	# Always mutate the same dict object; don't rebind FILE_REGISTRY.
 	assert isinstance(sec.FILE_REGISTRY, dict)

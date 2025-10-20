@@ -29,8 +29,6 @@ from app.api._helpers import (
 from app.utils.segy_meta import FILE_REGISTRY, get_dt_for_file
 from app.utils.utils import (
 	SectionView,
-	SegySectionReader,
-	TraceStoreSectionReader,
 	quantize_float32,
 )
 
@@ -42,35 +40,6 @@ class SectionMeta(BaseModel):
 	dt: float
 	dtype: str | None = None
 	scale: float | None = None
-
-
-def _resolve_reader(entry: object) -> SegySectionReader | TraceStoreSectionReader:
-	reader = getattr(entry, 'reader', None)
-	if reader is None and isinstance(entry, dict):
-		reader = entry.get('reader')
-	if reader is None:
-		msg = 'FILE_REGISTRY entry is missing a reader instance'
-		raise KeyError(msg)
-	if not isinstance(reader, (SegySectionReader, TraceStoreSectionReader)):
-		msg = 'FILE_REGISTRY reader is of an unexpected type'
-		raise TypeError(msg)
-	return reader
-
-
-def _key1_values_array(
-	reader: SegySectionReader | TraceStoreSectionReader,
-) -> NDArray[np.int64]:
-	vals: Any = getattr(reader, 'unique_key1', None)
-	if vals is not None:
-		vals = np.asarray(vals)
-	else:
-		get_key1_values = getattr(reader, 'get_key1_values', None)
-		if callable(get_key1_values):
-			vals = np.asarray(get_key1_values())
-	if vals is None:
-		msg = 'Reader does not expose key1 values'
-		raise AttributeError(msg)
-	return np.asarray(vals, dtype=np.int64)
 
 
 def _ensure_float32(sub: np.ndarray, *, scale: float | None) -> np.ndarray:
