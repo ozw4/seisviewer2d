@@ -32,16 +32,28 @@ TRACE_DIR.mkdir(parents=True, exist_ok=True)
 
 
 def _trace_store_complete(store_dir: Path, key1_byte: int, key2_byte: int) -> bool:
+	"""Return True only when a trace store exists AND its metadata indicates
+	it was built for the requested key bytes. Header files are not part of
+	the completion predicate (they are generated on demand).
+	"""
 	if not store_dir.is_dir():
 		return False
-	required = [
-		store_dir / 'traces.npy',
-		store_dir / 'index.npz',
-		store_dir / 'meta.json',
-		store_dir / f'headers_byte_{key1_byte}.npy',
-		store_dir / f'headers_byte_{key2_byte}.npy',
-	]
-	return all(path.exists() for path in required)
+	meta_path = store_dir / 'meta.json'
+	if not (
+		(store_dir / 'traces.npy').exists()
+		and (store_dir / 'index.npz').exists()
+		and meta_path.exists()
+	):
+		return False
+	meta = _load_trace_store_meta(meta_path)
+	if not isinstance(meta, dict):
+		return False
+	kb = meta.get('key_bytes')
+	return (
+		isinstance(kb, dict)
+		and kb.get('key1') == key1_byte
+		and kb.get('key2') == key2_byte
+	)
 
 
 def _load_trace_store_meta(meta_path: Path) -> dict | None:
@@ -87,7 +99,7 @@ def _trace_store_matches_source(
 def _archive_trace_store(store_dir: Path) -> None:
 	if not store_dir.exists():
 		return
-	archive_dir = store_dir.parent / f"{store_dir.name}.old-{uuid4().hex}"
+	archive_dir = store_dir.parent / f'{store_dir.name}.old-{uuid4().hex}'
 	store_dir.rename(archive_dir)
 
 
