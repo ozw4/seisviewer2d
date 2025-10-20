@@ -458,7 +458,7 @@
   <script src="/static/pipeline_ui.js"></script>
   <script type="module" src="/static/viewer/bootstrap.js"></script>
   <script type="module">
-    import { toPlotlyHeatmapZ, getQuantLUT, getHeatmapPoolStats } from './js/renderHeatmap.js';
+    import { toPlotlyHeatmapZ, getQuantLUT, getHeatmapPoolStats } from '/static/js/renderHeatmap.js';
     window.SeisHeatmap = { toPlotlyHeatmapZ, getQuantLUT, getHeatmapPoolStats };
   </script>
   <script>
@@ -3436,7 +3436,7 @@
           latestTapData = {};
           latestFbProbTraces = null;
           fbPredReqId += 1;
-          
+
           picks = [];
           predictedPicks = [];
           currentFbKey = null;

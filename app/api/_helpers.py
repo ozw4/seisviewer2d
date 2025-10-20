@@ -184,12 +184,18 @@ def get_raw_section(
 ) -> np.ndarray:
 	"""Load the RAW seismic section as ``float32``."""
 	reader = get_reader(file_id, key1_byte, key2_byte)
-	section = reader.get_section(key1_val)
-	arr = np.asarray(section, dtype=np.float32)
+	view = reader.get_section(key1_val)
+	base = view.arr
+	arr = base.astype(np.float32, copy=False) if base.dtype != np.float32 else base
+	if view.scale is not None:
+		if not arr.flags.writeable:
+			arr = arr.copy()
+		arr = arr.astype(np.float32, copy=False)
+		arr *= float(view.scale)
 	if arr.ndim != EXPECTED_SECTION_NDIM:
 		msg = f'Raw section expected 2D data, got {arr.ndim}D'
 		raise ValueError(msg)
-	return np.ascontiguousarray(arr)
+	return np.ascontiguousarray(arr, dtype=np.float32)
 
 
 __all__ = [
