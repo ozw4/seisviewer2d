@@ -9,6 +9,8 @@ import numpy as np
 import torch
 import torch.nn.functional as torch_nn_func
 
+from app.utils.signal_utils import zscore_per_trace_np
+
 from .model import NetAE
 from .model_utils import inflate_input_convs_to_2ch
 
@@ -160,10 +162,10 @@ def infer_prob_map(
 ) -> np.ndarray:
 	"""Infer first-break probability for ``section``.
 
-	When ``offsets`` are provided, they are used as a second channel that is
-	z-scored per inference tile before being passed to the network.
+	When ``offsets`` are provided, they are used as a second channel
 	"""
 	arr = np.ascontiguousarray(section, dtype=np.float32)
+	arr = zscore_per_trace_np(arr, axis=1, eps=1e-6)
 	h, w = arr.shape
 	model, device = _load_model()
 
