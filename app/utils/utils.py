@@ -4,11 +4,14 @@ from __future__ import annotations
 
 import json
 import os
+import warnings
 from pathlib import Path
 from typing import NamedTuple
 
 import numpy as np
 import segyio
+
+from app.utils.ingest import SegyIngestor
 
 
 class SectionView(NamedTuple):
@@ -44,7 +47,7 @@ def quantize_float32(
 
 
 class SegySectionReader:
-	"""Read SEG-Y sections and associated trace headers."""
+	"""Compatibility wrapper that ingests SEG-Y data into TraceStore."""
 
 	def __init__(
 		self,
@@ -52,45 +55,62 @@ class SegySectionReader:
 		key1_byte: int = 189,
 		key2_byte: int = 193,
 	) -> None:
-		"""Initialize the SEG-Y reader with header byte settings."""
 		self.path = Path(path)
-		self.key1_byte = key1_byte
-		self.key2_byte = key2_byte
+		self.key1_byte = int(key1_byte)
+		self.key2_byte = int(key2_byte)
 		self.section_cache: dict[int, SectionView] = {}
 		self._trace_seq_cache: dict[int, np.ndarray] = {}
 		self._trace_seq_disp_cache: dict[int, np.ndarray] = {}
-		self.ntraces: int = 0
-		self.dtype: np.dtype | None = None
-		self.scale: float | None = None
-		self._initialize_metadata()
-
-	def _initialize_metadata(self) -> None:
-		with segyio.open(self.path, 'r', ignore_geometry=True) as f:
-			f.mmap()
-			self.key1s = f.attributes(self.key1_byte)[:]  # type: ignore[assignment]
-			self.key2s = f.attributes(self.key2_byte)[:]  # type: ignore[assignment]
-			try:
-				sample = np.asarray(f.trace[0])
-			except Exception:  # noqa: BLE001
-				sample = None
-			if sample is not None:
-				self.dtype = np.dtype(sample.dtype)
-				n_samples = int(sample.shape[0])
-				self.meta = {
-					'n_samples': n_samples,
-					'n_traces': int(len(self.key1s)),
-					'dtype': self.dtype,
-				}
+		self._delegate: TraceStoreSectionReader | None = None
+		warnings.warn(
+			'`SegySectionReader` is deprecated. Please ingest the SEG-Y file '
+			'into a TraceStore before reading.',
+			DeprecationWarning,
+			stacklevel=2,
+		)
+		store_dir = self._default_store_dir()
+		if not self._is_store_complete(store_dir, self.key1_byte, self.key2_byte):
+			SegyIngestor.from_segy(
+				self.path,
+				store_dir,
+				self.key1_byte,
+				self.key2_byte,
+			)
+		self.store_dir = store_dir
+		self._delegate = TraceStoreSectionReader(store_dir, self.key1_byte, self.key2_byte)
+		self.meta = getattr(self._delegate, 'meta', {})
+		self.traces = self._delegate.traces
+		self.section_cache = self._delegate.section_cache
+		self.dtype = self._delegate.dtype
+		self.scale = self._delegate.scale
+		self._hydrate_headers_from_delegate()
 		self.unique_key1 = np.unique(self.key1s)
-		self.ntraces = len(self.key1s)
-		if self.dtype is None:
-			self.dtype = np.dtype('float32')
-			self.meta = {
-				'n_traces': int(self.ntraces),
-				'dtype': self.dtype,
-			}
+		self.ntraces = int(self.key1s.shape[0])
+
+	def _default_store_dir(self) -> Path:
+		return self.path.with_name(f"{self.path.stem}_trace_store")
+
+	@staticmethod
+	def _is_store_complete(store_dir: Path, key1_byte: int, key2_byte: int) -> bool:
+		required = [
+			store_dir / 'traces.npy',
+			store_dir / 'meta.json',
+			store_dir / 'index.npz',
+			store_dir / f'headers_byte_{key1_byte}.npy',
+			store_dir / f'headers_byte_{key2_byte}.npy',
+		]
+		return all(path.exists() for path in required)
+
+	def _hydrate_headers_from_delegate(self) -> None:
+		delegate = self._delegate
+		if delegate is None:
+			return
+		self.key1s = np.asarray(delegate.get_header(self.key1_byte), dtype=np.int32)
+		self.key2s = np.asarray(delegate.get_header(self.key2_byte), dtype=np.int32)
 
 	def _indices_for_key1(self, key1_val: int) -> np.ndarray:
+		if self._delegate is not None:
+			self._hydrate_headers_from_delegate()
 		if key1_val in self._trace_seq_cache:
 			return self._trace_seq_cache[key1_val]
 
@@ -103,6 +123,8 @@ class SegySectionReader:
 		return idx
 
 	def _sorted_indices_for_key1(self, key1_val: int) -> np.ndarray:
+		if self._delegate is not None:
+			self._hydrate_headers_from_delegate()
 		if key1_val in self._trace_seq_disp_cache:
 			return self._trace_seq_disp_cache[key1_val]
 
@@ -112,10 +134,7 @@ class SegySectionReader:
 		self._trace_seq_disp_cache[key1_val] = sorted_idx
 		return sorted_idx
 
-	def get_trace_seq_for_section(
-		self, key1_val: int, align_to: str = 'display'
-	) -> np.ndarray:
-		"""Return TraceSeq indices for ``key1_val`` aligned to the requested order."""
+	def get_trace_seq_for_section(self, key1_val: int, align_to: str = 'display') -> np.ndarray:
 		if align_to == 'display':
 			return self._sorted_indices_for_key1(key1_val)
 		if align_to == 'original':
@@ -124,7 +143,8 @@ class SegySectionReader:
 		raise ValueError(msg)
 
 	def get_key1_values(self) -> np.ndarray:
-		"""Return the available values for header ``key1``."""
+		if self._delegate is not None:
+			return self._delegate.get_key1_values()
 		return self.unique_key1
 
 	def _load_section_array(self, sorted_indices: np.ndarray) -> np.ndarray:
@@ -140,7 +160,9 @@ class SegySectionReader:
 		return out
 
 	def get_section(self, key1_val: int) -> SectionView:
-		"""Return the section for ``key1_val`` preserving on-disk dtype."""
+		if self._delegate is not None:
+			return self._delegate.get_section(key1_val)
+
 		cached = self.section_cache.get(key1_val)
 		if cached is not None:
 			return cached
@@ -157,7 +179,9 @@ class SegySectionReader:
 		return view
 
 	def get_offsets_for_section(self, key1_val: int, offset_byte: int) -> np.ndarray:
-		"""Return ``(W,)`` float32 offsets aligned with :meth:`get_section`."""
+		if self._delegate is not None:
+			return self._delegate.get_offsets_for_section(key1_val, offset_byte)
+
 		sorted_indices = self.get_trace_seq_for_section(key1_val, align_to='display')
 		print(len(sorted_indices), 'indices found for key1_val:', key1_val)
 
@@ -168,11 +192,11 @@ class SegySectionReader:
 		return np.ascontiguousarray(offsets)
 
 	def preload_all_sections(self) -> None:
-		"""Populate the section cache for every ``key1`` value."""
+		if self._delegate is not None:
+			self._delegate.preload_all_sections()
+			return
 		for key1_val in self.unique_key1:
 			self.get_section(int(key1_val))
-
-
 class TraceStoreSectionReader:
 	"""Read cached traces and headers generated from SEG-Y files."""
 
