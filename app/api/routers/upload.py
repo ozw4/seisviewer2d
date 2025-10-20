@@ -3,11 +3,11 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import pathlib
 import re
 import threading
-from math import isclose
 from pathlib import Path
 from typing import Annotated
 from uuid import uuid4
@@ -70,7 +70,9 @@ def _trace_store_matches_source(
 	store_dir: Path,
 	key1_byte: int,
 	key2_byte: int,
-	source_stat,
+	*,
+	source_sha256: str | None = None,
+	source_size: int | None = None,
 ) -> dict | None:
 	if not _trace_store_complete(store_dir, key1_byte, key2_byte):
 		return None
@@ -83,15 +85,16 @@ def _trace_store_matches_source(
 		return None
 	if key_bytes.get('key1') != key1_byte or key_bytes.get('key2') != key2_byte:
 		return None
-	original_size = meta.get('original_size')
-	original_mtime = meta.get('original_mtime')
-	if not isinstance(original_size, int):
-		return None
-	if not isinstance(original_mtime, (int, float)):
-		return None
-	if original_size != source_stat.st_size:
-		return None
-	if not isclose(float(original_mtime), float(source_stat.st_mtime), abs_tol=1e-3):
+	# --- Prefer exact identity via content hash when available ---
+	meta_hash = meta.get('source_sha256')
+	if isinstance(source_sha256, str) and isinstance(meta_hash, str):
+		return meta if meta_hash == source_sha256 else None
+
+	# --- Fallback: size match only (for legacy stores without hash) ---
+	if isinstance(source_size, int):
+		original_size = meta.get('original_size')
+		if isinstance(original_size, int) and original_size == source_size:
+			return meta
 		return None
 	return meta
 
@@ -174,6 +177,7 @@ async def upload_segy(
 	file_id = str(uuid4())
 	raw_path = UPLOAD_DIR / safe_name
 	data = await file.read()
+	source_sha256 = hashlib.sha256(data).hexdigest()
 	await asyncio.to_thread(raw_path.write_bytes, data)
 	try:
 		source_stat = raw_path.stat()
@@ -183,7 +187,13 @@ async def upload_segy(
 	meta: dict | None = None
 	reused = False
 	if store_dir.exists():
-		meta = _trace_store_matches_source(store_dir, key1_byte, key2_byte, source_stat)
+		meta = _trace_store_matches_source(
+			store_dir,
+			key1_byte,
+			key2_byte,
+			source_sha256=source_sha256,
+			source_size=source_stat.st_size,
+		)
 		if meta is not None:
 			reused = True
 		else:
@@ -209,6 +219,7 @@ async def upload_segy(
 		store_dir,
 		key1_byte,
 		key2_byte,
+		source_sha256=source_sha256,
 	)
 	_register_trace_store(file_id, store_dir, key1_byte, key2_byte)
 	if isinstance(meta, dict):
