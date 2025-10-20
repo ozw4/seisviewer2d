@@ -18,13 +18,14 @@ else:  # pragma: no cover - runtime alias for type checkers
 	NDArray = np.ndarray
 
 from app.api._helpers import (
-	EXPECTED_SECTION_NDIM,
-	OFFSET_BYTE_FIXED,
-	USE_FBPICK_OFFSET,
-	PipelineTapNotFoundError,
-	get_reader,
-	get_section_from_pipeline_tap,
-	window_section_cache,
+        EXPECTED_SECTION_NDIM,
+        OFFSET_BYTE_FIXED,
+        USE_FBPICK_OFFSET,
+        PipelineTapNotFoundError,
+        coerce_section_f32,
+        get_reader,
+        get_section_from_pipeline_tap,
+        window_section_cache,
 )
 from app.utils.segy_meta import FILE_REGISTRY, get_dt_for_file
 from app.utils.utils import (
@@ -40,20 +41,6 @@ class SectionMeta(BaseModel):
 	dt: float
 	dtype: str | None = None
 	scale: float | None = None
-
-
-def _ensure_float32(sub: np.ndarray, *, scale: float | None) -> np.ndarray:
-	"""Return ``sub`` as float32, applying ``scale`` when provided."""
-	arr = sub.astype(np.float32, copy=False) if sub.dtype != np.float32 else sub
-	if scale is not None:
-		if arr.dtype != np.float32:
-			arr = arr.astype(np.float32, copy=False)
-		if not arr.flags.writeable:
-			arr = arr.copy()
-		arr *= float(scale)
-	return arr
-
-
 def get_ntraces_for(
 	file_id: str, key1_byte: int | None = None, key2_byte: int | None = None
 ) -> int:
@@ -248,7 +235,7 @@ def get_section_bin(
 		base = view.arr
 		if base.ndim != EXPECTED_SECTION_NDIM:
 			raise HTTPException(status_code=500, detail='Section data must be 2D')
-		prepared = _ensure_float32(base, scale=view.scale)
+                prepared = coerce_section_f32(base, view.scale)
 		scale_val, q = quantize_float32(prepared)
 		obj = {
 			'scale': scale_val,
@@ -347,7 +334,7 @@ def get_section_window_bin(
 	if sub.size == 0:
 		raise HTTPException(status_code=400, detail='Requested window is empty')
 
-	prepared = _ensure_float32(sub, scale=section_view.scale)
+        prepared = coerce_section_f32(sub, section_view.scale)
 	window_view = np.ascontiguousarray(prepared.T, dtype=np.float32)
 	scale_val, q = quantize_float32(window_view)
 	obj: dict[str, Any] = {

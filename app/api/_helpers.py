@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 import numpy as np
+from numpy.typing import NDArray
 from fastapi import HTTPException
 
 from app.utils.fbpick import _MODEL_PATH as FBPICK_MODEL_PATH
@@ -21,6 +22,20 @@ USE_FBPICK_OFFSET = 'offset' in FBPICK_MODEL_PATH.name.lower()
 OFFSET_BYTE_FIXED: int = 37
 
 EXPECTED_SECTION_NDIM = 2
+
+
+def coerce_section_f32(arr: NDArray, scale: float | None) -> NDArray[np.float32]:
+	"""Return ``arr`` as a C-contiguous ``float32`` array, applying ``scale``."""
+	out = arr if arr.dtype == np.float32 else arr.astype(np.float32, copy=False)
+	if scale is not None:
+		if not out.flags.writeable:
+			out = out.copy()
+		if out.dtype != np.float32:
+			out = out.astype(np.float32, copy=False)
+		out *= float(scale)
+	if not out.flags['C_CONTIGUOUS'] or out.dtype != np.float32:
+		out = np.ascontiguousarray(out, dtype=np.float32)
+	return out
 
 
 class LRUCache(OrderedDict):
