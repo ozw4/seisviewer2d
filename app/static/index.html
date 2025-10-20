@@ -1679,7 +1679,7 @@
             if (/\/picks(\?|$)/.test(url)) {
               console.debug(`📡 FETCH ${method} ${url} → ${res.status} (${(performance.now() - t0).toFixed(0)}ms)`);
               console.trace('  ↳ stack @picks'); // 重要：誰が呼んだか
-            } else if (/get_section_window_bin|get_section_bin/.test(url)) {
+            } else if (/get_section_window_bin/.test(url)) {
               console.debug(`📡 FETCH ${method} ${url} → ${res.status} (${(performance.now() - t0).toFixed(0)}ms)`);
             }
             return res;
@@ -2062,6 +2062,9 @@
     }
 
     function prefetchAround(centerIdx, mode) {
+      // Unified to window API: disable full-res neighbor prefetch entirely
+      inflight.clear();
+      return;
       if (mode === 'fbprob') return;
       const effectiveMode = mode === 'auto' ? 'raw' : mode;
       if (effectiveMode !== 'raw') return;
@@ -2075,25 +2078,10 @@
         const key1Val = key1Values[i];
         const rawKey = cacheKey(key1Val, 'raw');
         if (cache.has(rawKey) || inflight.has(rawKey)) continue;
-        const controller = new AbortController();
-        inflight.set(rawKey, controller);
         scheduler(async () => {
-          try {
-            const urlRaw = `/get_section_bin?file_id=${currentFileId}&key1_val=${key1Val}&key1_byte=${currentKey1Byte}&key2_byte=${currentKey2Byte}`;
-            const res = await fetch(urlRaw, { signal: controller.signal });
-            if (!res.ok) return;
-            const bin = new Uint8Array(await res.arrayBuffer());
-            const obj = msgpack.decode(bin);
-            applyServerDt(obj);
-            const int8 = new Int8Array(obj.data.buffer);
-            const f32 = Float32Array.from(int8, v => v / obj.scale);
-            putCacheF32(rawKey, f32);
-            if (!sectionShape) sectionShape = obj.shape;
-          } catch (err) {
-            if (err.name !== 'AbortError') console.warn('Prefetch failed', key1Val, err);
-          } finally {
-            inflight.delete(rawKey);
-          }
+          // Disable full-resolution prefetch entirely (unified to window API)
+          inflight.delete(rawKey);
+          return;
         });
       }
     }
@@ -2262,31 +2250,10 @@
         console.timeEnd('Decode from cache');
         rawSeismicData = traces;
       } else {
-        console.time('Fetch binary');
-        const urlRaw = `/get_section_bin?file_id=${currentFileId}&key1_val=${key1Val}&key1_byte=${currentKey1Byte}&key2_byte=${currentKey2Byte}`;
-        const res = await fetch(urlRaw);
-        if (!res.ok) {
-          console.timeEnd('Fetch binary');
-          alert('Failed to load section');
-          return;
-        }
-        const bin = new Uint8Array(await res.arrayBuffer());
-        console.timeEnd('Fetch binary');
-
-        console.time('Decode & cache');
-        const obj = msgpack.decode(bin);
-        applyServerDt(obj);
-        const int8 = new Int8Array(obj.data.buffer);
-        f32 = Float32Array.from(int8, (v) => v / obj.scale);
-        putCacheF32(cacheKey(key1Val, 'raw'), f32);
-        sectionShape = obj.shape;
-        const [nTraces, nSamples] = sectionShape;
-        traces = new Array(nTraces);
-        for (let i = 0; i < nTraces; i++) {
-          traces[i] = f32.subarray(i * nSamples, (i + 1) * nSamples);
-        }
-        console.timeEnd('Decode & cache');
-        rawSeismicData = traces;
+        // Unified to window path: do not fetch full-resolution section
+        latestSeismicData = null;
+        fetchWindowAndPlot(); // rely on window pipeline for both overview and zoomed views
+        return;
       }
 
       latestWindowRender = null;
@@ -2840,7 +2807,8 @@
         applyServerDt(obj);
 
         // Int8 のまま保持（Float32生成しない）
-        const valuesI8 = new Int8Array(obj.data.buffer);
+        const { buffer, byteOffset, byteLength } = obj.data;
+        const valuesI8 = new Int8Array(buffer, byteOffset, byteLength);
         const shapeRaw = Array.isArray(obj.shape) ? obj.shape : Array.from(obj.shape ?? []);
         if (shapeRaw.length !== 2) {
           console.warn('Unexpected window shape', obj.shape);
