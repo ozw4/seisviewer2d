@@ -285,11 +285,10 @@ def get_section_bin(
 		if base.ndim != EXPECTED_SECTION_NDIM:
 			raise HTTPException(status_code=500, detail='Section data must be 2D')
 		prepared = _ensure_float32(base, scale=view.scale)
-		window_view = np.ascontiguousarray(prepared.T, dtype=np.float32)
-		scale_val, q = quantize_float32(window_view)
+		scale_val, q = quantize_float32(prepared)
 		obj = {
 			'scale': scale_val,
-			'shape': q.shape,
+			'shape': prepared.shape,
 			'data': q.tobytes(),
 			'dt': get_dt_for_file(file_id),
 		}
