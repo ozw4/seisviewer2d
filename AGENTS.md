@@ -48,3 +48,6 @@ JS/TS: prettier==3.x (**tabWidth=2, useTabs=false**), eslint
 - Only touch files in the current diff.
 - Never change indent width or tab/space policy (Python: **tabs**).
 - If formatting changes a file, explain why in the commit body.
+- Default to “fail fast” on errors—especially
+- Allow fallbacks only via an explicit flag (e.g., allow_fallback=False by default; set to True only when intentionally permitted).
+- Always emit loud logs or warnings; silent behavior is forbidden. Ensure these warnings are detectable by CI (e.g., fail the build or surface a gate when [FALLBACK] appears).
