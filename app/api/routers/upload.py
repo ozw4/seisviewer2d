@@ -7,6 +7,7 @@ import json
 import pathlib
 import re
 import threading
+from math import isclose
 from pathlib import Path
 from typing import Annotated
 from uuid import uuid4
@@ -31,6 +32,8 @@ TRACE_DIR.mkdir(parents=True, exist_ok=True)
 
 
 def _trace_store_complete(store_dir: Path, key1_byte: int, key2_byte: int) -> bool:
+	if not store_dir.is_dir():
+		return False
 	required = [
 		store_dir / 'traces.npy',
 		store_dir / 'index.npz',
@@ -39,6 +42,53 @@ def _trace_store_complete(store_dir: Path, key1_byte: int, key2_byte: int) -> bo
 		store_dir / f'headers_byte_{key2_byte}.npy',
 	]
 	return all(path.exists() for path in required)
+
+
+def _load_trace_store_meta(meta_path: Path) -> dict | None:
+	try:
+		meta = json.loads(meta_path.read_text())
+	except (OSError, json.JSONDecodeError):
+		return None
+	if not isinstance(meta, dict):
+		return None
+	return meta
+
+
+def _trace_store_matches_source(
+	store_dir: Path,
+	key1_byte: int,
+	key2_byte: int,
+	source_stat,
+) -> dict | None:
+	if not _trace_store_complete(store_dir, key1_byte, key2_byte):
+		return None
+	meta_path = store_dir / 'meta.json'
+	meta = _load_trace_store_meta(meta_path)
+	if meta is None:
+		return None
+	key_bytes = meta.get('key_bytes')
+	if not isinstance(key_bytes, dict):
+		return None
+	if key_bytes.get('key1') != key1_byte or key_bytes.get('key2') != key2_byte:
+		return None
+	original_size = meta.get('original_size')
+	original_mtime = meta.get('original_mtime')
+	if not isinstance(original_size, int):
+		return None
+	if not isinstance(original_mtime, (int, float)):
+		return None
+	if original_size != source_stat.st_size:
+		return None
+	if not isclose(float(original_mtime), float(source_stat.st_mtime), abs_tol=1e-3):
+		return None
+	return meta
+
+
+def _archive_trace_store(store_dir: Path) -> None:
+	if not store_dir.exists():
+		return
+	archive_dir = store_dir.parent / f"{store_dir.name}.old-{uuid4().hex}"
+	store_dir.rename(archive_dir)
 
 
 def _register_trace_store(
@@ -109,23 +159,39 @@ async def upload_segy(
 	print(f'Uploading file: {file.filename}')
 	safe_name = re.sub(r'[^A-Za-z0-9_.-]', '_', file.filename)
 	store_dir = TRACE_DIR / safe_name
-	meta_path = store_dir / 'meta.json'
 	file_id = str(uuid4())
-
-	if meta_path.exists() and _trace_store_complete(store_dir, key1_byte, key2_byte):
-		print(f'Reusing trace store for {file.filename}')
-		reader = _register_trace_store(file_id, store_dir, key1_byte, key2_byte)
-		meta = reader.meta if isinstance(reader.meta, dict) else {}
-		if isinstance(meta, dict):
-			FILE_REGISTRY[file_id] = {
-				'store_path': str(store_dir),
-				'dt': meta.get('dt'),
-			}
-		return {'file_id': file_id, 'reused_trace_store': True}
-
 	raw_path = UPLOAD_DIR / safe_name
 	data = await file.read()
 	await asyncio.to_thread(raw_path.write_bytes, data)
+	try:
+		source_stat = raw_path.stat()
+	except OSError as exc:
+		raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+	meta: dict | None = None
+	reused = False
+	if store_dir.exists():
+		meta = _trace_store_matches_source(
+			store_dir, key1_byte, key2_byte, source_stat
+		)
+		if meta is not None:
+			reused = True
+		else:
+			try:
+				_archive_trace_store(store_dir)
+			except OSError as exc:
+				msg = f'Unable to archive existing trace store: {exc}'
+				raise HTTPException(status_code=409, detail=msg) from exc
+
+	if reused and meta is not None:
+		print(f'Reusing trace store for {file.filename}')
+		_register_trace_store(file_id, store_dir, key1_byte, key2_byte)
+		FILE_REGISTRY[file_id] = {
+			'store_path': str(store_dir),
+			'dt': meta.get('dt'),
+		}
+		return {'file_id': file_id, 'reused_trace_store': True}
+
 	store_dir.mkdir(parents=True, exist_ok=True)
 	meta = await asyncio.to_thread(
 		SegyIngestor.from_segy,
@@ -134,12 +200,14 @@ async def upload_segy(
 		key1_byte,
 		key2_byte,
 	)
-	reader = _register_trace_store(file_id, store_dir, key1_byte, key2_byte)
+	_register_trace_store(file_id, store_dir, key1_byte, key2_byte)
 	if isinstance(meta, dict):
 		FILE_REGISTRY[file_id] = {
 			'store_path': str(store_dir),
 			'dt': meta.get('dt'),
 		}
+	else:
+		FILE_REGISTRY[file_id] = {'store_path': str(store_dir)}
 	return {'file_id': file_id, 'reused_trace_store': False}
 
 
