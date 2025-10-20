@@ -13,7 +13,7 @@ from uuid import uuid4
 
 from fastapi import APIRouter, File, Form, HTTPException, Query, UploadFile
 
-from app.api._helpers import SEGYS, cached_readers
+from app.api._helpers import cached_readers
 from app.utils.ingest import SegyIngestor
 from app.utils.segy_meta import FILE_REGISTRY
 from app.utils.utils import TraceStoreSectionReader
@@ -45,7 +45,6 @@ def _register_trace_store(
 	file_id: str, store_dir: Path, key1_byte: int, key2_byte: int
 ) -> TraceStoreSectionReader:
 	reader = TraceStoreSectionReader(store_dir, key1_byte, key2_byte)
-	SEGYS[file_id] = str(store_dir)
 	cache_key = f'{file_id}_{key1_byte}_{key2_byte}'
 	cached_readers[cache_key] = reader
 	threading.Thread(target=reader.preload_all_sections, daemon=True).start()

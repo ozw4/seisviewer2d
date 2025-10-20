@@ -45,7 +45,6 @@ class LRUCache(OrderedDict):
 
 
 cached_readers: dict[str, TraceStoreSectionReader] = {}
-SEGYS: dict[str, str] = {}
 fbpick_cache: dict[tuple, bytes] = {}
 jobs: dict[str, dict[str, object]] = {}
 pipeline_tap_cache = LRUCache(16)
@@ -153,9 +152,7 @@ def get_section_from_pipeline_tap(
 	return _pipeline_payload_to_array(payload, tap_label=tap_label)
 
 
-def get_reader(
-	file_id: str, key1_byte: int, key2_byte: int
-) -> TraceStoreSectionReader:
+def get_reader(file_id: str, key1_byte: int, key2_byte: int) -> TraceStoreSectionReader:
 	cache_key = f'{file_id}_{key1_byte}_{key2_byte}'
 	reader = cached_readers.get(cache_key)
 	if reader is None:
@@ -203,7 +200,6 @@ def get_raw_section(
 __all__ = [
 	'EXPECTED_SECTION_NDIM',
 	'OFFSET_BYTE_FIXED',
-	'SEGYS',
 	'USE_FBPICK_OFFSET',
 	'LRUCache',
 	'PipelineTapNotFoundError',

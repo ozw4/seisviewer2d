@@ -11,7 +11,6 @@ from fastapi import APIRouter
 from app.api._helpers import (
 	EXPECTED_SECTION_NDIM,
 	OFFSET_BYTE_FIXED,
-	SEGYS,
 	USE_FBPICK_OFFSET,
 	PipelineTapNotFoundError,
 	_filename_for_file_id,
@@ -57,7 +56,6 @@ router.include_router(picks_router)
 __all__ = [
 	'EXPECTED_SECTION_NDIM',
 	'OFFSET_BYTE_FIXED',
-	'SEGYS',
 	'USE_FBPICK_OFFSET',
 	'PipelineTapNotFoundError',
 	'_filename_for_file_id',
