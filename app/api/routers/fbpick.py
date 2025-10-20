@@ -26,11 +26,7 @@ from app.api._helpers import (
 from app.api.schemas import PipelineSpec
 from app.utils.fbpick import _MODEL_PATH as FBPICK_MODEL_PATH
 from app.utils.pipeline import apply_pipeline
-from app.utils.utils import (
-	SegySectionReader,
-	TraceStoreSectionReader,
-	quantize_float32,
-)
+from app.utils.utils import quantize_float32
 
 router = APIRouter()
 
@@ -58,7 +54,7 @@ def _run_fbpick_job(job_id: str, req: FbpickRequest) -> None:
 
 		cache_key = job['cache_key']
 		section_override = job.pop('section_override', None)
-		reader: SegySectionReader | TraceStoreSectionReader | None = None
+		reader: object | None = None
 		if USE_FBPICK_OFFSET and forced_offset_byte is not None:
 			reader = get_reader(req.file_id, req.key1_byte, req.key2_byte)
 		if section_override is not None:
