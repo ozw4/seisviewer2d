@@ -2,30 +2,9 @@
 ## Goal
 Maintain the FastAPI-based viewer that visualizes 2D seismic data from SEG-Y files via a simple web frontend.
 
-## What to Read vs. Skip
-### Must Read (highest priority)
-Entry point: app/main.py (app wiring, static routes).
-API aggregation & routers:
-app/api/endpoints.py
-app/api/routers/{upload.py, section.py, pipeline.py, fbpick.py, picks.py}
-app/api/schemas.py, app/api/_helpers.py
-Domain & processing (app/utils/):
-Core pipeline & ops: pipeline.py, ops.py
-First-break & metadata: fbpick.py, segy_meta.py
-Models & utilities: model.py, model_utils.py, utils.py, pick_cache_file1d_mem.py
-Signal transforms: bandpass.py, denoise.py, predict.py
-Frontend glue (API↔UI): app/static/pipeline_ui.js, app/static/api.js, plus index.html and upload.html.
-Top-level docs & run: README.md, Dockerfile.
-
-### Nice to Read (as needed)
-UI core/layout state: app/static/viewer/**
-Dev environment helpers: .devcontainer/**
-
-
 ### Skip (do not load bodies into context)
 Test source bodies: app/tests/** → Use execution logs, coverage, and test names only. Exception: golden/property/E2E tests — extract high-level expectations only.
 Large/minified vendor assets: app/static/plotly-*.min.js, app/static/msgpack*.min.js, app/static/pako*.min.js.
-Generated artifacts, large binaries, images, node_modules/ (if added later).
 
 ## Formatting Policy (Do NOT change indent width)
 Python: **ruff (formatter) with tabs**; ruff >= 0.6.9
