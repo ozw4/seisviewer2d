@@ -171,9 +171,7 @@ async def upload_segy(
 	meta: dict | None = None
 	reused = False
 	if store_dir.exists():
-		meta = _trace_store_matches_source(
-			store_dir, key1_byte, key2_byte, source_stat
-		)
+		meta = _trace_store_matches_source(store_dir, key1_byte, key2_byte, source_stat)
 		if meta is not None:
 			reused = True
 		else:
