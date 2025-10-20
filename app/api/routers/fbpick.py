@@ -14,14 +14,15 @@ from fastapi.responses import Response
 from pydantic import BaseModel
 
 from app.api._helpers import (
-	OFFSET_BYTE_FIXED,
-	USE_FBPICK_OFFSET,
-	PipelineTapNotFoundError,
-	_maybe_attach_fbpick_offsets,
-	fbpick_cache,
-	get_reader,
-	get_section_from_pipeline_tap,
-	jobs,
+        OFFSET_BYTE_FIXED,
+        USE_FBPICK_OFFSET,
+        PipelineTapNotFoundError,
+        _maybe_attach_fbpick_offsets,
+        coerce_section_f32,
+        fbpick_cache,
+        get_reader,
+        get_section_from_pipeline_tap,
+        jobs,
 )
 from app.api.schemas import PipelineSpec
 from app.utils.fbpick import _MODEL_PATH as FBPICK_MODEL_PATH
@@ -57,33 +58,25 @@ def _run_fbpick_job(job_id: str, req: FbpickRequest) -> None:
 		reader: object | None = None
 		if USE_FBPICK_OFFSET and forced_offset_byte is not None:
 			reader = get_reader(req.file_id, req.key1_byte, req.key2_byte)
-		if section_override is not None:
-			section = np.asarray(section_override, dtype=np.float32)
-		elif req.pipeline_key and req.tap_label:
-			section = get_section_from_pipeline_tap(
-				file_id=req.file_id,
+                if section_override is not None:
+                        section = coerce_section_f32(
+                                np.asarray(section_override), None
+                        )
+                elif req.pipeline_key and req.tap_label:
+                        section = get_section_from_pipeline_tap(
+                                file_id=req.file_id,
 				key1_val=key1_val,
 				key1_byte=req.key1_byte,
 				pipeline_key=req.pipeline_key,
 				tap_label=req.tap_label,
 				offset_byte=forced_offset_byte,
 			)
-			section = np.asarray(section, dtype=np.float32)
-		else:
-			if reader is None:
-				reader = get_reader(req.file_id, req.key1_byte, req.key2_byte)
-			view = reader.get_section(key1_val)
-			section = (
-				view.arr.astype(np.float32, copy=False)
-				if view.arr.dtype != np.float32
-				else view.arr
-			)
-			if view.scale is not None:
-				if not section.flags.writeable:
-					section = section.copy()
-				section = section.astype(np.float32, copy=False)
-				section *= float(view.scale)
-		section = np.ascontiguousarray(section, dtype=np.float32)
+                        section = coerce_section_f32(np.asarray(section), None)
+                else:
+                        if reader is None:
+                                reader = get_reader(req.file_id, req.key1_byte, req.key2_byte)
+                        view = reader.get_section(key1_val)
+                        section = coerce_section_f32(view.arr, view.scale)
 		spec = PipelineSpec(
 			steps=[
 				{
