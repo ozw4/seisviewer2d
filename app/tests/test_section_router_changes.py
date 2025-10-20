@@ -7,7 +7,7 @@ import numpy as np
 import pytest
 
 from app.api.routers import section as sec
-from app.utils.utils import SegySectionReader, TraceStoreSectionReader
+from app.utils.utils import SectionView, SegySectionReader, TraceStoreSectionReader
 
 
 @pytest.fixture(autouse=True)
@@ -234,7 +234,8 @@ def test_get_section_returns_json_for_value(monkeypatch):
 
 		def get_section(self, key1_val: int):
 			received['val'] = key1_val
-			return [[1.0, 2.0], [3.0, 4.0]]
+			arr = np.array([[1.0, 2.0], [3.0, 4.0]], dtype=np.float32)
+			return SectionView(arr=arr, dtype=arr.dtype, scale=None)
 
 	monkeypatch.setattr(
 		sec, 'get_reader', lambda fid, kb1, kb2: _StubReader(), raising=True
@@ -272,9 +273,10 @@ def test_get_section_bin_happy_path(monkeypatch):
 		def get_section(self, key1_val: int):
 			# 2 traces x 4 samples
 			assert key1_val == 111
-			return np.array(
+			arr = np.array(
 				[[0.1, 0.2, 0.3, 0.4], [0.5, 0.6, 0.7, 0.8]], dtype=np.float32
 			)
+			return SectionView(arr=arr, dtype=arr.dtype, scale=None)
 
 	monkeypatch.setattr(
 		sec, 'get_reader', lambda fid, kb1, kb2: _StubReader(), raising=True
@@ -304,9 +306,10 @@ def test_get_section_window_bin_happy_path(monkeypatch):
 
 		def get_section(self, key1_val: int):
 			# 3 traces x 5 samples
-			return np.array(
+			arr = np.array(
 				[[0, 1, 2, 3, 4], [5, 6, 7, 8, 9], [1, 2, 3, 4, 5]], dtype=np.float32
 			)
+			return SectionView(arr=arr, dtype=arr.dtype, scale=None)
 
 	monkeypatch.setattr(
 		sec, 'get_reader', lambda fid, kb1, kb2: _StubReader(), raising=True
