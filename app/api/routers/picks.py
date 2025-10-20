@@ -24,7 +24,6 @@ from app.utils.pick_cache_file1d_mem import (
 	to_pairs_for_section,
 )
 from app.utils.segy_meta import get_dt_for_file
-from app.utils.utils import TraceStoreSectionReader
 
 router = APIRouter()
 
@@ -110,10 +109,10 @@ async def export_manual_picks_all_npy(
 	dt = float(dt)
 
 	n_samples: int | None = None
-	if isinstance(reader, TraceStoreSectionReader):
-		traces = getattr(reader, 'traces', None)
-		if isinstance(traces, np.ndarray) and traces.ndim >= 2:
-			n_samples = int(traces.shape[-1])
+	try:
+		n_samples = int(reader.get_n_samples())
+	except Exception:  # noqa: BLE001
+		n_samples = None
 
 	for i, sec_map in enumerate(sec_maps):
 		row_picks = await asyncio.to_thread(
