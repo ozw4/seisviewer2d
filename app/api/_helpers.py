@@ -12,7 +12,7 @@ from fastapi import HTTPException
 
 from app.utils.fbpick import _MODEL_PATH as FBPICK_MODEL_PATH
 from app.utils.segy_meta import FILE_REGISTRY, get_dt_for_file
-from app.utils.utils import SegySectionReader, TraceStoreSectionReader
+from app.utils.utils import TraceStoreSectionReader
 
 if TYPE_CHECKING:
 	from app.api.schemas import PipelineSpec
@@ -44,8 +44,7 @@ class LRUCache(OrderedDict):
 			self.popitem(last=False)
 
 
-cached_readers: dict[str, SegySectionReader | TraceStoreSectionReader] = {}
-SEGYS: dict[str, str] = {}
+cached_readers: dict[str, TraceStoreSectionReader] = {}
 fbpick_cache: dict[tuple, bytes] = {}
 jobs: dict[str, dict[str, object]] = {}
 pipeline_tap_cache = LRUCache(16)
@@ -65,7 +64,7 @@ def _maybe_attach_fbpick_offsets(
 	meta: dict[str, Any],
 	*,
 	spec: PipelineSpec,
-	reader: SegySectionReader | TraceStoreSectionReader,
+	reader: TraceStoreSectionReader,
 	key1_val: int,
 	offset_byte: int | None,
 	trace_slice: slice | None = None,
@@ -153,21 +152,21 @@ def get_section_from_pipeline_tap(
 	return _pipeline_payload_to_array(payload, tap_label=tap_label)
 
 
-def get_reader(
-	file_id: str, key1_byte: int, key2_byte: int
-) -> SegySectionReader | TraceStoreSectionReader:
+def get_reader(file_id: str, key1_byte: int, key2_byte: int) -> TraceStoreSectionReader:
 	cache_key = f'{file_id}_{key1_byte}_{key2_byte}'
-	if cache_key not in cached_readers:
-		if file_id not in SEGYS:
+	reader = cached_readers.get(cache_key)
+	if reader is None:
+		rec = FILE_REGISTRY.get(file_id)
+		if rec is None:
 			raise HTTPException(status_code=404, detail='File ID not found')
-		path = SEGYS[file_id]
-		p = Path(path)
-		if p.is_dir():
-			reader = TraceStoreSectionReader(p, key1_byte, key2_byte)
-		else:
-			reader = SegySectionReader(path, key1_byte, key2_byte)
+		store_path = rec.get('store_path') if isinstance(rec, dict) else None
+		if not isinstance(store_path, str):
+			raise HTTPException(status_code=409, detail='trace store not built')
+		p = Path(store_path)
+		if not p.is_dir():
+			raise HTTPException(status_code=409, detail='trace store not built')
+		reader = TraceStoreSectionReader(p, key1_byte, key2_byte)
 		cached_readers[cache_key] = reader
-	reader = cached_readers[cache_key]
 	dt_val = get_dt_for_file(file_id)
 	meta_attr = getattr(reader, 'meta', None)
 	if isinstance(meta_attr, dict):
@@ -201,7 +200,6 @@ def get_raw_section(
 __all__ = [
 	'EXPECTED_SECTION_NDIM',
 	'OFFSET_BYTE_FIXED',
-	'SEGYS',
 	'USE_FBPICK_OFFSET',
 	'LRUCache',
 	'PipelineTapNotFoundError',
