@@ -5,6 +5,7 @@ tqdm
 segyio
 numba
 fastapi
+httpx
 uvicorn[standard]
 python-multipart
 omegaconf==2.3.0
