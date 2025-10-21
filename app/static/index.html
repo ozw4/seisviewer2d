@@ -818,7 +818,6 @@
     var picks = [];
     var predictedPicks = [];
     const fbPredCache = new Map(); // key: "key1|layer|pipelineKey"
-    var latestFbProbTraces = null;
     var currentFbKey = null;
     var fbPredReqId = 0;
     var downsampleFactor = 1;
@@ -1333,106 +1332,12 @@
     })();
 
     // ★★★ FB確率取得：レイヤ/パイプライン対応（既存のジョブAPIを使用）
-    async function fetchFbProb(key1Val, { layer = 'raw', pipelineKey = null } = {}) {
-      const body = {
-        file_id: currentFileId,
-        key1_val: key1Val,
-        key1_byte: currentKey1Byte,
-        key2_byte: currentKey2Byte,
-        tile_h: 128,
-        tile_w: 6016,
-        overlap: 32,
-        amp: true,
-      };
-      // パイプラインの特定レイヤで推論したい場合
-      if (layer && layer !== 'raw' && pipelineKey) {
-        body.pipeline_key = pipelineKey;
-        body.tap_label = layer;
-      }
-      const res = await fetch('/fbpick_section_bin', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(body),
-      });
-      if (!res.ok) {
-        let message = `fbpick job failed (${res.status})`;
-        try {
-          const text = await res.text();
-          if (text) {
-            try {
-              const parsed = JSON.parse(text);
-              if (parsed && typeof parsed.detail === 'string') {
-                message = parsed.detail;
-              } else {
-                message = text;
-              }
-            } catch (parseErr) {
-              message = text;
-            }
-          }
-        } catch (readErr) {
-          // ignore body read errors
-        }
-        throw new Error(message);
-      }
-      const { job_id } = await res.json();
-
-      // ポーリング
-      while (true) {
-        const st = await fetch(`/fbpick_job_status?job_id=${job_id}`);
-        const js = await st.json();
-        if (js.status === 'done') break;
-        if (js.status === 'error') throw new Error(js.message || 'fbpick failed');
-        await new Promise(r => setTimeout(r, 1000));
-      }
-
-      // 取得 & 復号
-      const binRes = await fetch(`/get_fbpick_section_bin?job_id=${job_id}`);
-      if (!binRes.ok) throw new Error('fbpick result fetch failed');
-      const bin = new Uint8Array(await binRes.arrayBuffer());
-      const obj = msgpack.decode(bin);
-      const int8 = new Int8Array(obj.data.buffer);
-      const f32 = Float32Array.from(int8, v => v / obj.scale);
-      return { f32, shape: obj.shape };
-    }
-
-    // prob2d: Array(H) of Float32Array(W); each row sums to ~1
-    function picksFromProb(prob2d, dt, sigmaMaxMs = 20, method = 'argmax') {
-      const H = prob2d.length;
-      const W = prob2d[0].length;
-      const picks = new Array(H).fill(-1);
-      const dt_ms = dt * 1000;
-      const eps = 1e-12;
-
-      const t = new Float32Array(W);
-      for (let i = 0; i < W; i++) t[i] = i;
-
-      for (let h = 0; h < H; h++) {
-        const p = prob2d[h];
-        let s = 0.0;
-        for (let i = 0; i < W; i++) s += p[i];
-        if (!(s > eps) || !isFinite(s)) continue;
-        const invs = 1.0 / s;
-        let mu = 0.0;
-        for (let i = 0; i < W; i++) mu += p[i] * t[i];
-        mu *= invs;
-        let v = 0.0;
-        for (let i = 0; i < W; i++) {
-          const d = t[i] - mu;
-          v += p[i] * d * d;
-        }
-        v *= invs;
-        const sigma_ms = Math.sqrt(Math.max(v, 0)) * dt_ms;
-        if (sigma_ms > sigmaMaxMs) continue;
-        if (method === 'expectation') {
-          picks[h] = Math.round(mu);
-        } else {
-          let imax = 0, vmax = -Infinity;
-          for (let i = 0; i < W; i++) if (p[i] > vmax) { vmax = p[i]; imax = i; }
-          picks[h] = imax;
-        }
-      }
-      return picks;
+    function getCachedFbEntry(cacheKey, method, sigmaMsMax) {
+      const entry = fbPredCache.get(cacheKey);
+      if (!entry) return null;
+      if (entry.method !== method) return null;
+      if (Math.abs(entry.sigma_ms_max - sigmaMsMax) > 1e-9) return null;
+      return entry;
     }
 
     function installUnifiedClickRouter(plotDiv) {
@@ -1526,42 +1431,26 @@
       installUnifiedClickRouter(plotDiv);
     }
 
-    function computePicks(prob2d) {
-      const sigmaMax = Number(document.getElementById('sigma_ms_max').value) || 20;
-      const method = document.getElementById('pick_method').value;
-      const dt = (window.defaultDt ?? defaultDt);
-      const idxs = picksFromProb(prob2d, dt, sigmaMax, method);
-      const out = [];
-      for (let h = 0; h < idxs.length; h++) {
-        const idx = idxs[h];
-        if (idx >= 0) out.push({ trace: h, time: idx * dt });
-      }
-      return out;
-    }
-
     function recomputeFbPicks() {
-      if (!latestFbProbTraces) return;
-
-      const idx0 = parseInt(document.getElementById('key1_idx_slider').value, 10);
+      const slider = document.getElementById('key1_idx_slider');
+      if (!slider) return;
+      const idx0 = parseInt(slider.value, 10);
       const keyAtNow = key1Values[idx0];
       const layerNow = (document.getElementById('layerSelect')?.value) || 'raw';
       const pKeyNow = window.latestPipelineKey || null;
-
-      // 現在のセクション＆レイヤ＆パイプラインキーに紐づく確率以外は再計算しない
-      if (currentFbKey !== keyAtNow ||
-        currentFbLayer !== layerNow ||
-        currentFbPipelineKey !== pKeyNow) {
+      const method = document.getElementById('pick_method').value;
+      const sigma = Number(document.getElementById('sigma_ms_max').value) || 20;
+      const cacheKeyStr = fbCacheKey(currentFileId, keyAtNow, layerNow, pKeyNow);
+      const cached = getCachedFbEntry(cacheKeyStr, method, sigma);
+      if (cached) {
+        predictedPicks = (cached.picks || []).slice();
+        currentFbKey = keyAtNow;
+        currentFbLayer = layerNow;
+        currentFbPipelineKey = pKeyNow;
+        renderLatestView();
         return;
       }
-
-      const picksNow = computePicks(latestFbProbTraces);
-      predictedPicks = picksNow;
-      fbPredCache.set(
-        fbCacheKey(currentFileId, currentFbKey, currentFbLayer, currentFbPipelineKey),
-        picksNow,
-      );
-
-      renderLatestView();
+      predictFromFb();
     }
 
     function onSigmaChange() {
@@ -1574,39 +1463,74 @@
     }
 
     async function predictFromFb() {
-      // Snapshot
       const idx0 = parseInt(document.getElementById('key1_idx_slider').value, 10);
       const keyAtStart = key1Values[idx0];
       const layerAtStart = (document.getElementById('layerSelect')?.value) || 'raw';
       const pipelineKeyAtStart = window.latestPipelineKey || null;
+      const method = document.getElementById('pick_method').value;
+      const sigmaMax = Number(document.getElementById('sigma_ms_max').value) || 20;
+      const cacheKeyStr = fbCacheKey(currentFileId, keyAtStart, layerAtStart, pipelineKeyAtStart);
 
-      // Request token
+      const cached = getCachedFbEntry(cacheKeyStr, method, sigmaMax);
       const reqToken = ++fbPredReqId;
-
       const btn = document.getElementById('predictFbBtn');
       if (btn) btn.disabled = true;
 
       try {
-        // Ensure probs
-        let tracesLocal = latestFbProbTraces;
-        if (!tracesLocal ||
-          currentFbKey !== keyAtStart ||
-          currentFbLayer !== layerAtStart ||
-          currentFbPipelineKey !== pipelineKeyAtStart) {
-
-          const { f32, shape } = await fetchFbProb(keyAtStart, { layer: layerAtStart, pipelineKey: pipelineKeyAtStart });
-          const [nTraces, nSamples] = shape;
-          const traces = new Array(nTraces);
-          for (let i = 0; i < nTraces; i++) {
-            traces[i] = f32.subarray(i * nSamples, (i + 1) * nSamples);
-          }
-          tracesLocal = traces;
+        if (cached) {
+          predictedPicks = (cached.picks || []).slice();
+          currentFbKey = keyAtStart;
+          currentFbLayer = layerAtStart;
+          currentFbPipelineKey = pipelineKeyAtStart;
+          renderLatestView();
+          return;
         }
 
-        // Compute picks locally
-        const picks = computePicks(tracesLocal);
+        const body = {
+          file_id: currentFileId,
+          key1_val: keyAtStart,
+          key1_byte: currentKey1Byte,
+          key2_byte: currentKey2Byte,
+          method,
+          sigma_ms_max: sigmaMax,
+        };
+        if (layerAtStart && layerAtStart !== 'raw' && pipelineKeyAtStart) {
+          body.pipeline_key = pipelineKeyAtStart;
+          body.tap_label = layerAtStart;
+        }
 
-        // Guard against stale
+        const res = await fetch('/fbpick_predict', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(body),
+        });
+        if (!res.ok) {
+          let message = `fbpick_predict failed (${res.status})`;
+          try {
+            const text = await res.text();
+            if (text) {
+              try {
+                const parsed = JSON.parse(text);
+                if (parsed && typeof parsed.detail === 'string') {
+                  message = parsed.detail;
+                } else {
+                  message = text;
+                }
+              } catch (parseErr) {
+                message = text;
+              }
+            }
+          } catch (readErr) {
+            // ignore body read errors
+          }
+          throw new Error(message);
+        }
+
+        const data = await res.json();
+        const picks = Array.isArray(data?.picks)
+          ? data.picks.map(p => ({ trace: p.trace, time: p.time }))
+          : [];
+
         const idxNow = parseInt(document.getElementById('key1_idx_slider').value, 10);
         const keyNow = key1Values[idxNow];
         const layerNow = (document.getElementById('layerSelect')?.value) || 'raw';
@@ -1618,18 +1542,16 @@
           return;
         }
 
-        // Commit
-        predictedPicks = picks;
-        latestFbProbTraces = tracesLocal;
+        predictedPicks = picks.slice();
         currentFbKey = keyAtStart;
         currentFbLayer = layerAtStart;
         currentFbPipelineKey = pipelineKeyAtStart;
-        fbPredCache.set(
-          fbCacheKey(currentFileId, keyAtStart, layerAtStart, pipelineKeyAtStart),
-          picks,
-        );
+        fbPredCache.set(cacheKeyStr, {
+          picks: picks.slice(),
+          method,
+          sigma_ms_max: sigmaMax,
+        });
 
-        // Replot
         renderLatestView();
       } finally {
         if (btn) btn.disabled = false;
@@ -1721,7 +1643,8 @@
     function getSeismicForProcessing() {
       const sel = document.getElementById('layerSelect');
       const layer = sel?.value || 'raw';
-      return layer === 'raw' ? rawSeismicData : (latestTapData[layer] || rawSeismicData);
+      // ★ 加工レイヤは window API 経由のみ。配列は raw のみ保持。
+      return (layer === 'raw' && Array.isArray(rawSeismicData)) ? rawSeismicData : rawSeismicData;
     }
 
     // 3-point parabolic interpolation around index i (for peak/trough). Returns a float index.
@@ -2261,9 +2184,14 @@
       // ★ FB予測キャッシュ取得：レイヤ＆パイプラインキーでキー統一
       const layerCur = (document.getElementById('layerSelect')?.value) || 'raw';
       const pKeyCur = window.latestPipelineKey || null;
-      predictedPicks = fbPredCache.get(
+      const methodCur = document.getElementById('pick_method').value;
+      const sigmaCur = Number(document.getElementById('sigma_ms_max').value) || 20;
+      const cachedEntry = getCachedFbEntry(
         fbCacheKey(currentFileId, key1Val, layerCur, pKeyCur),
-      ) || [];
+        methodCur,
+        sigmaCur,
+      );
+      predictedPicks = cachedEntry && cachedEntry.picks ? cachedEntry.picks.slice() : [];
 
       await fetchPicks();
 
@@ -2409,7 +2337,8 @@
       D('DRAW@selectLayer', { layer: document.getElementById('layerSelect')?.value, start, end });
       const sel = document.getElementById('layerSelect');
       const layer = sel ? sel.value : 'raw';
-      latestSeismicData = (layer === 'raw') ? rawSeismicData : (latestTapData[layer] || null);
+      // ★ 加工レイヤのフル配列は保持しない（window API に任せる）
+      latestSeismicData = (layer === 'raw') ? rawSeismicData : null;
 
       if (shouldPreferWindowFirst()) {
         // 最初からウィンドウ版に任せる（フル描画をスキップ）
@@ -2862,6 +2791,7 @@
         effectiveLayer = 'raw';
       }
 
+      // ★ 加工後配列は保持しないため、上記ショートカットは全て削除
       const params = new URLSearchParams({
         file_id: currentFileId,
         key1_val: String(key1Val),
@@ -3496,7 +3426,6 @@
           rawSeismicData = null;
           latestSeismicData = null;
           latestTapData = {};
-          latestFbProbTraces = null;
           fbPredReqId += 1;
 
           picks = [];

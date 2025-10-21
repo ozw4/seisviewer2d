@@ -5,7 +5,7 @@ from __future__ import annotations
 from collections import OrderedDict
 from contextlib import suppress
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Tuple
 
 import numpy as np
 from numpy.typing import NDArray
@@ -154,6 +154,27 @@ def get_section_from_pipeline_tap(
 	offset_byte: int | None = None,
 ) -> np.ndarray:
 	"""Return the cached pipeline tap output as a ``float32`` array."""
+	arr, _ = get_section_and_meta_from_pipeline_tap(
+		file_id=file_id,
+		key1_val=key1_val,
+		key1_byte=key1_byte,
+		pipeline_key=pipeline_key,
+		tap_label=tap_label,
+		offset_byte=offset_byte,
+	)
+	return arr
+
+
+def get_section_and_meta_from_pipeline_tap(
+	*,
+	file_id: str,
+	key1_val: int,
+	key1_byte: int,
+	pipeline_key: str,
+	tap_label: str,
+	offset_byte: int | None = None,
+) -> Tuple[np.ndarray, dict[str, Any] | None]:
+	"""Return tap payload as ``float32`` along with optional metadata."""
 	base_key = (file_id, key1_val, key1_byte, pipeline_key, None, offset_byte)
 	payload = pipeline_tap_cache.get((*base_key, tap_label))
 	if payload is None:
@@ -163,7 +184,13 @@ def get_section_from_pipeline_tap(
 			'Please re-run the pipeline.'
 		)
 		raise PipelineTapNotFoundError(msg)
-	return _pipeline_payload_to_array(payload, tap_label=tap_label)
+	arr = _pipeline_payload_to_array(payload, tap_label=tap_label)
+	meta = None
+	if isinstance(payload, dict):
+		meta_obj = payload.get('meta')
+		if isinstance(meta_obj, dict):
+			meta = meta_obj
+	return arr, meta
 
 
 def get_reader(file_id: str, key1_byte: int, key2_byte: int) -> TraceStoreSectionReader:
@@ -216,6 +243,7 @@ __all__ = [
 	'_filename_for_file_id',
 	'_maybe_attach_fbpick_offsets',
 	'_pipeline_payload_to_array',
+	'get_section_and_meta_from_pipeline_tap',
 	'_spec_uses_fbpick',
 	'_update_file_registry',
 	'cached_readers',
