@@ -2269,13 +2269,28 @@
 
       // 🪄 Window-first ならフルraw構築をスキップして即ウィンドウ描画へ
       if (shouldPreferWindowFirst()) {
-        latestSeismicData = null;
-        renderLatestView();
-        fetchWindowAndPlot();
-        console.timeEnd('Total fetchAndPlot');
-        console.log('--- fetchAndPlot end ---');
-        return;
-      }
+          latestWindowRender = null;
+          windowFetchToken += 1;
+          uiResetNonce++;
+          if (window.pipelineUI && typeof window.pipelineUI.prepareForNewSection === 'function') {
+              window.pipelineUI.prepareForNewSection();
+            } else {
+              latestTapData = { };
+              latestPipelineKey = null;
+              const sel = document.getElementById('layerSelect');
+              if (sel) {
+                  sel.innerHTML = '';
+                  sel.appendChild(new Option('raw', 'raw'));
+                  sel.value = 'raw';
+                }
+            }
+          latestSeismicData = null;
+          renderLatestView();
+          fetchWindowAndPlot();
+          console.timeEnd('Total fetchAndPlot');
+          console.log('--- fetchAndPlot end ---');
+          return;
+        }
 
       console.time('Cache lookup');
       const hit = getCacheF32(cacheKey(key1Val, 'raw'));
@@ -2845,16 +2860,6 @@
         }
       } else {
         effectiveLayer = 'raw';
-      }
-
-      if (!wantWiggle && effectiveLayer === 'raw' && latestSeismicData && step_x === 1 && step_y === 1) {
-        renderLatestView(windowInfo.x0, windowInfo.x1);
-        return;
-      }
-      if (!wantWiggle && tapLabel && latestTapData[requestedLayer] && step_x === 1 && step_y === 1) {
-        latestSeismicData = latestTapData[requestedLayer];
-        renderLatestView(windowInfo.x0, windowInfo.x1);
-        return;
       }
 
       const params = new URLSearchParams({

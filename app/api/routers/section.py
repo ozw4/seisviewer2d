@@ -18,11 +18,11 @@ else:  # pragma: no cover - runtime alias for type checkers
 	NDArray = np.ndarray
 
 from app.api._helpers import (
-	coerce_section_f32,
 	EXPECTED_SECTION_NDIM,
 	OFFSET_BYTE_FIXED,
 	USE_FBPICK_OFFSET,
 	PipelineTapNotFoundError,
+	coerce_section_f32,
 	get_reader,
 	get_section_from_pipeline_tap,
 	window_section_cache,
@@ -158,68 +158,22 @@ def get_section_meta(
 	key2_byte: Annotated[int, Query()] = 193,
 ) -> SectionMeta:
 	reader = get_reader(file_id, key1_byte, key2_byte)
-	n_traces = get_ntraces_for(file_id, key1_byte, key2_byte)
 
-	meta_attr = getattr(reader, 'meta', None)
-	n_samples = None
-	dtype_obj = getattr(reader, 'dtype', None)
-	dtype = str(dtype_obj) if dtype_obj is not None else None
-	scale = getattr(reader, 'scale', None)
+	# セクション形状を実データから最短経路で確定
+	values = reader.get_key1_values()
+	first_val = int(values[0])
+	n_traces = int(reader.get_trace_seq_for_value(first_val, align_to='display').size)
+	n_samples = int(reader.get_n_samples())
 
-	if isinstance(meta_attr, dict):
-		if n_traces is None:
-			n_traces = meta_attr.get('n_traces')
-		shape_meta = meta_attr.get('shape')
-		if isinstance(shape_meta, (list, tuple)) and len(shape_meta) == 2:
-			n_samples = shape_meta[1]
-			if n_traces is None:
-				n_traces = shape_meta[0]
-		if n_samples is None and 'n_samples' in meta_attr:
-			n_samples = meta_attr['n_samples']
-		if dtype is None and 'dtype' in meta_attr:
-			dtype = str(meta_attr['dtype'])
-
-	traces_obj = getattr(reader, 'traces', None)
-	traces_shape = getattr(traces_obj, 'shape', None)
-	if n_samples is None and isinstance(traces_shape, tuple) and len(traces_shape) >= 2:
-		n_samples = traces_shape[1]
-		if n_traces is None:
-			n_traces = traces_shape[0]
-
-	if n_samples is None:
-		get_section = getattr(reader, 'get_section', None)
-		get_key1_values = getattr(reader, 'get_key1_values', None)
-		if callable(get_section) and callable(get_key1_values):
-			try:
-				values = get_key1_values()
-				if isinstance(values, np.ndarray):
-					values = values.tolist()
-				elif not isinstance(values, list):
-					values = list(values)
-				first_val = values[0] if values else None
-				if first_val is not None:
-					view = get_section(int(first_val))
-					arr = np.asarray(view.arr)
-					if arr.ndim == EXPECTED_SECTION_NDIM:
-						n_samples = int(arr.shape[1])
-						if n_traces is None:
-							n_traces = int(arr.shape[0])
-					if dtype is None:
-						dtype = str(view.dtype)
-					if scale is None and view.scale is not None:
-						scale = float(view.scale)
-			except Exception:  # noqa: BLE001
-				n_samples = None
-
-	if n_traces is None or n_samples is None:
-		raise HTTPException(status_code=500, detail='Unable to determine section shape')
-
+	dtype = str(reader.dtype) if reader.dtype is not None else None
+	scale = float(reader.scale) if isinstance(reader.scale, (int, float)) else None
 	dt_val = float(get_dt_for_file(file_id))
+
 	return SectionMeta(
-		shape=[int(n_traces), int(n_samples)],
+		shape=[n_traces, n_samples],  # セクション内 [traces, samples]
 		dt=dt_val,
 		dtype=dtype,
-		scale=float(scale) if isinstance(scale, (int, float)) else None,
+		scale=scale,
 	)
 
 
