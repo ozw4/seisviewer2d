@@ -14,6 +14,7 @@ from fastapi.responses import Response
 from pydantic import BaseModel
 
 from app.api._helpers import (
+	coerce_section_f32,
 	OFFSET_BYTE_FIXED,
 	USE_FBPICK_OFFSET,
 	PipelineTapNotFoundError,
@@ -73,16 +74,7 @@ def _run_fbpick_job(job_id: str, req: FbpickRequest) -> None:
 			if reader is None:
 				reader = get_reader(req.file_id, req.key1_byte, req.key2_byte)
 			view = reader.get_section(key1_val)
-			section = (
-				view.arr.astype(np.float32, copy=False)
-				if view.arr.dtype != np.float32
-				else view.arr
-			)
-			if view.scale is not None:
-				if not section.flags.writeable:
-					section = section.copy()
-				section = section.astype(np.float32, copy=False)
-				section *= float(view.scale)
+			section = coerce_section_f32(view.arr, view.scale)
 		section = np.ascontiguousarray(section, dtype=np.float32)
 		spec = PipelineSpec(
 			steps=[

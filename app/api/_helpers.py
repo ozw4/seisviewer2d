@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 import numpy as np
+from numpy.typing import NDArray
 from fastapi import HTTPException
 
 from app.utils.fbpick import _MODEL_PATH as FBPICK_MODEL_PATH
@@ -21,6 +22,19 @@ USE_FBPICK_OFFSET = 'offset' in FBPICK_MODEL_PATH.name.lower()
 OFFSET_BYTE_FIXED: int = 37
 
 EXPECTED_SECTION_NDIM = 2
+
+
+def coerce_section_f32(arr: NDArray, scale: float | None) -> NDArray[np.float32]:
+	out = arr if arr.dtype == np.float32 else arr.astype(np.float32, copy=False)
+	if scale is not None:
+		if not out.flags.writeable:
+			out = out.copy()
+		if out.dtype != np.float32:
+			out = out.astype(np.float32, copy=False)
+		out *= float(scale)
+	if not out.flags['C_CONTIGUOUS'] or out.dtype != np.float32:
+		out = np.ascontiguousarray(out, dtype=np.float32)
+	return out
 
 
 class LRUCache(OrderedDict):
@@ -185,19 +199,15 @@ def get_raw_section(
 	reader = get_reader(file_id, key1_byte, key2_byte)
 	view = reader.get_section(key1_val)
 	base = view.arr
-	arr = base.astype(np.float32, copy=False) if base.dtype != np.float32 else base
-	if view.scale is not None:
-		if not arr.flags.writeable:
-			arr = arr.copy()
-		arr = arr.astype(np.float32, copy=False)
-		arr *= float(view.scale)
+	arr = coerce_section_f32(base, view.scale)
 	if arr.ndim != EXPECTED_SECTION_NDIM:
 		msg = f'Raw section expected 2D data, got {arr.ndim}D'
 		raise ValueError(msg)
-	return np.ascontiguousarray(arr, dtype=np.float32)
+	return arr
 
 
 __all__ = [
+	'coerce_section_f32',
 	'EXPECTED_SECTION_NDIM',
 	'OFFSET_BYTE_FIXED',
 	'USE_FBPICK_OFFSET',

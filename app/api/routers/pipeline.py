@@ -13,6 +13,7 @@ from fastapi import APIRouter, Body, HTTPException, Query
 from pydantic import BaseModel, Field
 
 from app.api._helpers import (
+	coerce_section_f32,
 	OFFSET_BYTE_FIXED,
 	USE_FBPICK_OFFSET,
 	_maybe_attach_fbpick_offsets,
@@ -52,17 +53,7 @@ def _run_pipeline_all_job(job_id: str, req: PipelineAllRequest, pipe_key: str) -
 		taps = req.taps
 		for idx, key1_val in enumerate(key1_vals):
 			view = reader.get_section(int(key1_val))
-			section = (
-				view.arr.astype(np.float32, copy=False)
-				if view.arr.dtype != np.float32
-				else view.arr
-			)
-			if view.scale is not None:
-				if not section.flags.writeable:
-					section = section.copy()
-				section = section.astype(np.float32, copy=False)
-				section *= float(view.scale)
-			section = np.ascontiguousarray(section, dtype=np.float32)
+			section = coerce_section_f32(view.arr, view.scale)
 
 			dt = 0.002
 			if hasattr(reader, 'meta'):
@@ -117,17 +108,7 @@ def pipeline_section(
 ):
 	reader = get_reader(file_id, key1_byte, key2_byte)
 	view = reader.get_section(key1_val)
-	section = (
-		view.arr.astype(np.float32, copy=False)
-		if view.arr.dtype != np.float32
-		else view.arr
-	)
-	if view.scale is not None:
-		if not section.flags.writeable:
-			section = section.copy()
-		section = section.astype(np.float32, copy=False)
-		section *= float(view.scale)
-	section = np.ascontiguousarray(section, dtype=np.float32)
+	section = coerce_section_f32(view.arr, view.scale)
 
 	trace_slice: slice | None = None
 	window_hash = None
