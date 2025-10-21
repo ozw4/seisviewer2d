@@ -105,6 +105,7 @@ def pipeline_section(
 	offset_byte: Annotated[int | None, Query()] = None,  # pass-throughで受ける
 	taps: Annotated[list[str] | None, Body()] = None,
 	window: Annotated[dict[str, int | float] | None, Body()] = None,
+	list_only: Annotated[bool, Query()] = False,
 ):
 	reader = get_reader(file_id, key1_byte, key2_byte)
 	view = reader.get_section(key1_val)
@@ -154,6 +155,10 @@ def pipeline_section(
 	pipe_key = pipeline_key(spec)
 
 	tap_names = taps or []
+	if list_only:
+		labels = tap_names if tap_names else ['final']
+		return {'taps': {name: True for name in labels}, 'pipeline_key': pipe_key}
+
 	if tap_names:
 		base_key = (
 			file_id,

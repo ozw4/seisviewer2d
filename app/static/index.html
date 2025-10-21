@@ -1721,7 +1721,8 @@
     function getSeismicForProcessing() {
       const sel = document.getElementById('layerSelect');
       const layer = sel?.value || 'raw';
-      return layer === 'raw' ? rawSeismicData : (latestTapData[layer] || rawSeismicData);
+      // ★ 加工レイヤは window API 経由のみ。配列は raw のみ保持。
+      return (layer === 'raw' && Array.isArray(rawSeismicData)) ? rawSeismicData : rawSeismicData;
     }
 
     // 3-point parabolic interpolation around index i (for peak/trough). Returns a float index.
@@ -2409,7 +2410,8 @@
       D('DRAW@selectLayer', { layer: document.getElementById('layerSelect')?.value, start, end });
       const sel = document.getElementById('layerSelect');
       const layer = sel ? sel.value : 'raw';
-      latestSeismicData = (layer === 'raw') ? rawSeismicData : (latestTapData[layer] || null);
+      // ★ 加工レイヤのフル配列は保持しない（window API に任せる）
+      latestSeismicData = (layer === 'raw') ? rawSeismicData : null;
 
       if (shouldPreferWindowFirst()) {
         // 最初からウィンドウ版に任せる（フル描画をスキップ）
@@ -2862,6 +2864,7 @@
         effectiveLayer = 'raw';
       }
 
+      // ★ 加工後配列は保持しないため、上記ショートカットは全て削除
       const params = new URLSearchParams({
         file_id: currentFileId,
         key1_val: String(key1Val),
