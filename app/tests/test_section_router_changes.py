@@ -193,7 +193,7 @@ def test_get_trace_seq_for_with_stub_reader_matches_legacy(monkeypatch):
 
 	vals = r.get_key1_values()
 	for v in vals:
-		seq = sec.get_trace_seq_for('lineA', key1_val=int(v), key1_byte=189)
+		seq = sec.get_trace_seq_for_value('lineA', key1_val=int(v), key1_byte=189)
 		indices = np.where(r.key1s == v)[0]
 		expected = indices[np.argsort(r.key2s[indices], kind='stable')]
 		assert np.array_equal(seq, expected)
@@ -209,14 +209,14 @@ def test_get_trace_seq_for_with_tracestore_uses_public_get_header(monkeypatch):
 	monkeypatch.setattr(sec, 'get_reader', lambda fid, kb1, kb2: t, raising=True)
 
 	# unique_key1 = [7,8,9] → value=9
-	seq = sec.get_trace_seq_for('lineB', key1_val=9, key1_byte=189)
+	seq = sec.get_trace_seq_for_value('lineB', key1_val=9, key1_byte=189)
 	idx = np.where(key1s == 9)[0]
 	expected = idx[np.argsort(key2s[idx], kind='stable')]
 	assert np.array_equal(seq, expected)
 
 	# also verify missing value raises ValueError
 	with pytest.raises(ValueError):
-		sec.get_trace_seq_for('lineB', key1_val=999, key1_byte=189)
+		sec.get_trace_seq_for_value('lineB', key1_val=999, key1_byte=189)
 
 
 def test_get_section_returns_json_for_value(monkeypatch):

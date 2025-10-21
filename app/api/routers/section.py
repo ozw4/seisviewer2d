@@ -92,11 +92,6 @@ def get_ntraces_for(
 	raise AttributeError('Unable to determine number of traces for file')
 
 
-def get_trace_seq_for(file_id: str, key1_val: int, key1_byte: int) -> NDArray[np.int64]:
-	"""Return display-aligned trace ordering for ``key1_val`` of ``file_id``."""
-	return get_trace_seq_for_value(file_id, key1_val, key1_byte)
-
-
 def get_trace_seq_for_value(
 	file_id: str, key1_val: int, key1_byte: int
 ) -> NDArray[np.int64]:
