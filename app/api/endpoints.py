@@ -28,6 +28,7 @@ from app.api._helpers import (
 	window_section_cache,
 )
 from app.api.routers import (
+	fbpick_predict_router,
 	fbpick_router,
 	picks_router,
 	pipeline_router,
@@ -50,6 +51,7 @@ router = APIRouter()
 router.include_router(upload_router)
 router.include_router(section_router)
 router.include_router(fbpick_router)
+router.include_router(fbpick_predict_router)
 router.include_router(pipeline_router)
 router.include_router(picks_router)
 
@@ -65,6 +67,7 @@ __all__ = [
 	'_update_file_registry',
 	'cached_readers',
 	'fbpick_cache',
+	'fbpick_predict_router',
 	'get_raw_section',
 	'get_reader',
 	'get_section_from_pipeline_tap',

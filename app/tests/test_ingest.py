@@ -123,7 +123,7 @@ def test_ingest_builds_artifacts_float32(tmp_path: Path, monkeypatch):
 	segy_path.write_bytes(b'stub')
 
 	store_dir = tmp_path / 'store'
-	meta = SegyIngestor.from_segy(
+	SegyIngestor.from_segy(
 		path=segy_path,
 		store_dir=store_dir,
 		key1_byte=189,
@@ -209,7 +209,7 @@ def test_ingest_quantize_int8_with_auto_scale(tmp_path: Path, monkeypatch):
 	segy_path.write_bytes(b'stub')
 
 	store_dir = tmp_path / 'store_q'
-	meta = SegyIngestor.from_segy(
+	SegyIngestor.from_segy(
 		path=segy_path,
 		store_dir=store_dir,
 		key1_byte=189,

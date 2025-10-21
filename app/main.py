@@ -7,6 +7,7 @@ from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
 
 from app.api.routers import (
+	fbpick_predict_router,
 	fbpick_router,
 	picks_router,
 	pipeline_router,
@@ -30,6 +31,7 @@ app.mount(
 app.include_router(upload_router)
 app.include_router(section_router)
 app.include_router(fbpick_router)
+app.include_router(fbpick_predict_router)
 app.include_router(pipeline_router)
 app.include_router(picks_router)
 
