@@ -459,6 +459,53 @@
     import { toPlotlyHeatmapZ, getQuantLUT, getHeatmapPoolStats } from '/static/js/renderHeatmap.js';
     window.SeisHeatmap = { toPlotlyHeatmapZ, getQuantLUT, getHeatmapPoolStats };
   </script>
+  <script>
+    (function enableRestyleOnly() {
+      let raf = 0;
+      function heatmapTraceIndex(plotDiv) {
+        const data = plotDiv && Array.isArray(plotDiv.data) ? plotDiv.data : null;
+        if (!data) throw new Error('plot data not available');
+        for (let i = 0; i < data.length; i++) {
+          const tr = data[i];
+          if (tr && tr.type === 'heatmap') return i;
+        }
+        throw new Error('Heatmap trace not found');
+      }
+      window.heatmapTraceIndex = heatmapTraceIndex;
+
+      window.restyleColorAndGain = function () {
+        const plotDiv = document.getElementById('plot');
+        if (!plotDiv) throw new Error('plot div not found');
+        const idx = heatmapTraceIndex(plotDiv);
+
+        const gainEl = document.getElementById('gain');
+        const gain = parseFloat(gainEl && gainEl.value) || 1.0;
+        const cmSelect = document.getElementById('colormap');
+        const cmName = (cmSelect && cmSelect.value) || 'Greys';
+        const reverse = !!(document.getElementById('cmReverse') && document.getElementById('cmReverse').checked);
+
+        const AMP_LIMIT = 3.0;
+        const zmin = -AMP_LIMIT * gain;
+        const zmax = AMP_LIMIT * gain;
+        const cm = (window.COLORMAPS && window.COLORMAPS[cmName]) || 'Greys';
+
+        Plotly.restyle(plotDiv, {
+          colorscale: [cm],
+          reversescale: [reverse],
+          zmin: [zmin],
+          zmax: [zmax],
+        }, [idx]);
+      };
+
+      window.scheduleRestyle = function () {
+        if (raf) cancelAnimationFrame(raf);
+        raf = requestAnimationFrame(function () {
+          raf = 0;
+          window.restyleColorAndGain();
+        });
+      };
+    })();
+  </script>
 
   <script>
     /* Adopt globals provided by /static/viewer/bootstrap.js */
@@ -1615,10 +1662,11 @@
 
 
     function onGainChange() {
-      const val = document.getElementById('gain').value;
+      const el = document.getElementById('gain');
+      const val = el ? el.value : '1';
       document.getElementById('gain_display').textContent = `${parseFloat(val)}×`;
       localStorage.setItem('gain', val);
-      renderLatestView();
+      scheduleRestyle();
     }
 
     function onColormapChange() {
@@ -1626,7 +1674,7 @@
       const chk = document.getElementById('cmReverse');
       if (sel) localStorage.setItem('colormap', sel.value);
       if (chk) localStorage.setItem('cmReverse', chk.checked);
-      renderLatestView();
+      scheduleRestyle();
     }
 
     function togglePickMode() {
