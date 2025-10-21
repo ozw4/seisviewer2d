@@ -27,7 +27,9 @@ Thumbs.db
 *.segy
 *.pth
 *.gz
-*.json
+picks.json
+picks_by_name.json
+package-lock.json
 
 data/
 output/
