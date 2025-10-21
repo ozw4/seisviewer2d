@@ -504,6 +504,8 @@
     // UI-adjustable threshold for Wiggle/Heatmap decision (persisted)
     let WIGGLE_DENSITY_THRESHOLD = 0.10;
     const WIGGLE_MAX_POINTS = 1_000_000;
+    // Always prefer window API on first load (skip full raw drawing path)
+    const ALWAYS_WINDOW_FIRST = true;
 
     const cache = new Map(); // key -> { f32: Float32Array }
     const inflight = new Map();
@@ -2061,6 +2063,8 @@
     }
 
     function prefetchAround(centerIdx, mode) {
+      // Window-first mode: do not prefetch full-raw sections
+      return;
       if (mode === 'fbprob') return;
       const effectiveMode = mode === 'auto' ? 'raw' : mode;
       if (effectiveMode !== 'raw') return;
@@ -2078,8 +2082,20 @@
         inflight.set(rawKey, controller);
         scheduler(async () => {
           try {
-            const urlRaw = `/get_section_bin?file_id=${currentFileId}&key1_val=${key1Val}&key1_byte=${currentKey1Byte}&key2_byte=${currentKey2Byte}`;
-            const res = await fetch(urlRaw, { signal: controller.signal });
+            const meta = sectionShape || await fetchSectionMeta();
+            if (!meta) { console.warn('prefetch: missing sectionShape'); return; }
+            const [nTraces, nSamples] = meta;
+            const q = new URLSearchParams({
+              file_id: currentFileId,
+              key1_val: String(key1Val),
+              key1_byte: String(currentKey1Byte),
+              key2_byte: String(currentKey2Byte),
+              x0: '0', x1: String(nTraces - 1),
+              y0: '0', y1: String(nSamples - 1),
+              step_x: '1', step_y: '1',
+              transpose: '0',
+            });
+            const res = await fetch(`/get_section_window_bin?${q.toString()}`, { signal: controller.signal });
             if (!res.ok) return;
             const bin = new Uint8Array(await res.arrayBuffer());
             const obj = msgpack.decode(bin);
@@ -2087,7 +2103,14 @@
             const int8 = new Int8Array(obj.data.buffer);
             const f32 = Float32Array.from(int8, v => v / obj.scale);
             putCacheF32(rawKey, f32);
-            if (!sectionShape) sectionShape = obj.shape;
+            // Keep sectionShape from /get_section_meta only. Sanity-check payload shape if needed:
+            if (Array.isArray(sectionShape) && Array.isArray(obj.shape)) {
+              const [mt, ms] = sectionShape;
+              const [pt0, pt1] = obj.shape;
+              if ((pt0 * pt1) !== (mt * ms)) {
+                console.warn('shape mismatch vs meta', { meta: sectionShape, payload: obj.shape });
+              }
+            }
           } catch (err) {
             if (err.name !== 'AbortError') console.warn('Prefetch failed', key1Val, err);
           } finally {
@@ -2244,6 +2267,16 @@
 
       await fetchPicks();
 
+      // 🪄 Window-first ならフルraw構築をスキップして即ウィンドウ描画へ
+      if (shouldPreferWindowFirst()) {
+        latestSeismicData = null;
+        renderLatestView();
+        fetchWindowAndPlot();
+        console.timeEnd('Total fetchAndPlot');
+        console.log('--- fetchAndPlot end ---');
+        return;
+      }
+
       console.time('Cache lookup');
       const hit = getCacheF32(cacheKey(key1Val, 'raw'));
       console.timeEnd('Cache lookup');
@@ -2262,8 +2295,24 @@
         rawSeismicData = traces;
       } else {
         console.time('Fetch binary');
-        const urlRaw = `/get_section_bin?file_id=${currentFileId}&key1_val=${key1Val}&key1_byte=${currentKey1Byte}&key2_byte=${currentKey2Byte}`;
-        const res = await fetch(urlRaw);
+        const meta = sectionShape || await fetchSectionMeta();
+        if (!meta) {
+          console.timeEnd('Fetch binary');
+          alert('Failed to load section meta');
+          return;
+        }
+        const [nTracesMeta, nSamplesMeta] = meta;
+        const qFull = new URLSearchParams({
+          file_id: currentFileId,
+          key1_val: String(key1Val),
+          key1_byte: String(currentKey1Byte),
+          key2_byte: String(currentKey2Byte),
+          x0: '0', x1: String(nTracesMeta - 1),
+          y0: '0', y1: String(nSamplesMeta - 1),
+          step_x: '1', step_y: '1',
+          transpose: '0',
+        });
+        const res = await fetch(`/get_section_window_bin?${qFull.toString()}`);
         if (!res.ok) {
           console.timeEnd('Fetch binary');
           alert('Failed to load section');
@@ -2278,8 +2327,15 @@
         const int8 = new Int8Array(obj.data.buffer);
         f32 = Float32Array.from(int8, (v) => v / obj.scale);
         putCacheF32(cacheKey(key1Val, 'raw'), f32);
-        sectionShape = obj.shape;
-        const [nTraces, nSamples] = sectionShape;
+        // Keep sectionShape from /get_section_meta only. Sanity-check payload shape if needed:
+        if (Array.isArray(sectionShape) && Array.isArray(obj.shape)) {
+          const [mt, ms] = sectionShape;
+          const [pt0, pt1] = obj.shape;
+          if ((pt0 * pt1) !== (mt * ms)) {
+            console.warn('shape mismatch vs meta', { meta: sectionShape, payload: obj.shape });
+          }
+        }
+        const [nTraces, nSamples] = meta;
         traces = new Array(nTraces);
         for (let i = 0; i < nTraces; i++) {
           traces[i] = f32.subarray(i * nSamples, (i + 1) * nSamples);
@@ -2321,6 +2377,7 @@
     }
 
     function shouldPreferWindowFirst() {
+      if (ALWAYS_WINDOW_FIRST) return true;
       const win = currentVisibleWindow();
       const plotDiv = document.getElementById('plot');
       if (!win || !plotDiv) return false;
@@ -2816,6 +2873,7 @@
         params.set('pipeline_key', pipelineKeyNow);
         params.set('tap_label', tapLabel);
       }
+      params.set('transpose', '1');
 
       const requestId = ++windowFetchToken;
 

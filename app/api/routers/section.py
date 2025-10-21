@@ -270,6 +270,7 @@ def get_section_window_bin(
 	offset_byte: Annotated[int | None, Query()] = None,
 	step_x: Annotated[int, Query(ge=1)] = 1,
 	step_y: Annotated[int, Query(ge=1)] = 1,
+	transpose: Annotated[bool, Query()] = True,
 	pipeline_key: Annotated[str | None, Query()] = None,
 	tap_label: Annotated[str | None, Query()] = None,
 ) -> Response:
@@ -287,6 +288,7 @@ def get_section_window_bin(
 		y1,
 		step_x,
 		step_y,
+		transpose,
 		pipeline_key,
 		tap_label,
 	)
@@ -337,7 +339,8 @@ def get_section_window_bin(
 		raise HTTPException(status_code=400, detail='Requested window is empty')
 
 	prepared = coerce_section_f32(sub, section_view.scale)
-	window_view = np.ascontiguousarray(prepared.T, dtype=np.float32)
+	view = prepared.T if transpose else prepared
+	window_view = np.ascontiguousarray(view, dtype=np.float32)
 	scale_val, q = quantize_float32(window_view)
 	obj: dict[str, Any] = {
 		'scale': scale_val,
