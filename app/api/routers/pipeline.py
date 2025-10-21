@@ -13,10 +13,10 @@ from fastapi import APIRouter, Body, HTTPException, Query
 from pydantic import BaseModel, Field
 
 from app.api._helpers import (
-	coerce_section_f32,
 	OFFSET_BYTE_FIXED,
 	USE_FBPICK_OFFSET,
 	_maybe_attach_fbpick_offsets,
+	coerce_section_f32,
 	get_reader,
 	jobs,
 	pipeline_tap_cache,
@@ -156,8 +156,34 @@ def pipeline_section(
 
 	tap_names = taps or []
 	if list_only:
+		# ★ list_only でもサーバ側で計算して cache に置く（返すのはラベルだけ）
 		labels = tap_names if tap_names else ['final']
-		return {'taps': {name: True for name in labels}, 'pipeline_key': pipe_key}
+
+		# フルセクション基準で保存（window 指定が無ければ window_hash は None）
+		base_key = (
+			file_id,
+			key1_val,
+			key1_byte,
+			pipe_key,
+			None,  # window_hash（フル配列）
+			forced_offset_byte,  # pass-through/fallback 済み
+		)
+
+		# 既存 cache を確認し、無いものだけ計算
+		misses: list[str] = []
+		for label in labels:
+			payload = pipeline_tap_cache.get((*base_key, label))
+			if payload is None:
+				misses.append(label)
+
+		if misses:
+			out = apply_pipeline(section, spec=spec, meta=meta, taps=misses)
+			for k, v in out.items():
+				val = to_builtin(v)
+				pipeline_tap_cache.set((*base_key, k), val)
+
+		# レスポンスは軽量（ラベル存在のみ）
+		return {'taps': dict.fromkeys(labels, True), 'pipeline_key': pipe_key}
 
 	if tap_names:
 		base_key = (
