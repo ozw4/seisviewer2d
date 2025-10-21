@@ -40,3 +40,13 @@ test/
 *.a
 
 node_modules/
+web/dist/
+static/assets/
+
+# Vite build artifacts
+app/static/assets/
+
+# legacy vendored libs (now bundled via Vite)
+app/static/plotly-*.min.js
+app/static/pako*.min.js
+app/static/msgpack*.min.js
