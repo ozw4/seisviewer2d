@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import contextlib
 import gzip
+import logging
 from typing import TYPE_CHECKING, Annotated, Any
 
 import msgpack
@@ -27,6 +28,7 @@ from app.api._helpers import (
 	get_section_from_pipeline_tap,
 	window_section_cache,
 )
+from app.utils.raw_stats import ensure_raw_baseline
 from app.utils.segy_meta import FILE_REGISTRY, get_dt_for_file
 from app.utils.utils import (
 	SectionView,
@@ -34,6 +36,9 @@ from app.utils.utils import (
 )
 
 router = APIRouter()
+logger = logging.getLogger(__name__)
+
+RAW_BASELINE_DDOF = 0
 
 
 class SectionMeta(BaseModel):
@@ -209,6 +214,65 @@ def get_section_bin(
 		raise HTTPException(status_code=400, detail=str(exc)) from exc
 	except Exception as exc:
 		raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+
+@router.get('/section/stats')
+def get_section_stats(
+	file_id: Annotated[str, Query(...)],
+	key1_val: Annotated[int, Query(...)],
+	baseline: Annotated[str, Query()] = 'raw',
+	key1_byte: Annotated[int, Query()] = 189,
+	key2_byte: Annotated[int, Query()] = 193,
+) -> JSONResponse:
+	"""Return baseline statistics for visualization."""
+
+	baseline_norm = baseline.lower()
+	if baseline_norm != 'raw':
+		msg = "Only baseline='raw' is supported"
+		raise HTTPException(status_code=400, detail=msg)
+
+	try:
+		reader = get_reader(file_id, key1_byte, key2_byte)
+	except HTTPException:
+		raise
+	except Exception as exc:  # noqa: BLE001
+		raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+	try:
+		view = reader.get_section(key1_val)
+	except ValueError as exc:
+		raise HTTPException(status_code=400, detail=str(exc)) from exc
+	except Exception as exc:  # noqa: BLE001
+		raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+	arr = coerce_section_f32(view.arr, view.scale)
+	if arr.ndim != EXPECTED_SECTION_NDIM:
+		msg = f'Section data must be 2D, got {arr.ndim}D'
+		raise HTTPException(status_code=500, detail=msg)
+
+	dt_val = float(get_dt_for_file(file_id))
+	dtype_base = (
+		str(view.dtype) if isinstance(view.dtype, np.dtype) else str(view.dtype)
+	)
+
+	stats = ensure_raw_baseline(
+		reader=reader,
+		key1_val=int(key1_val),
+		section=arr,
+		dtype_base=dtype_base,
+		dt=dt_val,
+		ddof=RAW_BASELINE_DDOF,
+	)
+
+	logger.info(
+		'section.stats stage=%s key1=%s ddof=%s source=%s',
+		stats.stage,
+		key1_val,
+		stats.ddof,
+		stats.source_sha256,
+	)
+
+	return JSONResponse(content=stats.to_payload())
 
 
 @router.get('/get_section_window_bin')
