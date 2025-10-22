@@ -241,40 +241,6 @@ def get_section_meta(
 	)
 
 
-@router.get('/get_section_bin')
-def get_section_bin(
-	file_id: Annotated[str, Query(...)],
-	key1_val: Annotated[int, Query(...)],
-	key1_byte: Annotated[int, Query()] = 189,
-	key2_byte: Annotated[int, Query()] = 193,
-) -> Response:
-	"""Return a quantized, binary section payload."""
-	try:
-		reader = get_reader(file_id, key1_byte, key2_byte)
-		view = reader.get_section(key1_val)
-		base = view.arr
-		if base.ndim != EXPECTED_SECTION_NDIM:
-			raise HTTPException(status_code=500, detail='Section data must be 2D')
-		prepared = coerce_section_f32(base, view.scale)
-		scale_val, q = quantize_float32(prepared)
-		obj = {
-			'scale': scale_val,
-			'shape': prepared.shape,
-			'data': q.tobytes(),
-			'dt': get_dt_for_file(file_id),
-		}
-		payload = msgpack.packb(obj)
-		return Response(
-			gzip.compress(payload),
-			media_type='application/octet-stream',
-			headers={'Content-Encoding': 'gzip'},
-		)
-	except ValueError as exc:
-		raise HTTPException(status_code=400, detail=str(exc)) from exc
-	except Exception as exc:
-		raise HTTPException(status_code=500, detail=str(exc)) from exc
-
-
 @router.get('/get_section_window_bin')
 def get_section_window_bin(
 	file_id: Annotated[str, Query(...)],
