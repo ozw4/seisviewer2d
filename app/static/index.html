@@ -459,6 +459,56 @@
     import { toPlotlyHeatmapZ, getQuantLUT, getHeatmapPoolStats } from '/static/js/renderHeatmap.js';
     window.SeisHeatmap = { toPlotlyHeatmapZ, getQuantLUT, getHeatmapPoolStats };
   </script>
+  <script>
+    (function enableRestyleOnly() {
+      let raf = 0;
+      function heatmapTraceIndex(plotDiv) {
+        const data = plotDiv && Array.isArray(plotDiv.data) ? plotDiv.data : null;
+        if (!data) return -1;
+        for (let i = 0; i < data.length; i++) {
+          const tr = data[i];
+          if (tr && tr.type === 'heatmap') return i;
+        }
+        return -1;
+      }
+      window.heatmapTraceIndex = heatmapTraceIndex;
+
+      window.restyleColorAndGain = function () {
+        const plotDiv = document.getElementById('plot');
+        if (!plotDiv) throw new Error('plot div not found');
+        const idx = heatmapTraceIndex(plotDiv);
+        if (idx < 0) {
+            // ウィグルのみ: 幾何にgainを掛け直すため再描画へ
+              renderLatestView();
+            return;
+          }
+        const gainEl = document.getElementById('gain');
+        const gain = parseFloat(gainEl && gainEl.value) || 1.0;
+        const cmSelect = document.getElementById('colormap');
+        const cmName = (cmSelect && cmSelect.value) || 'Greys';
+        const reverse = !!(document.getElementById('cmReverse') && document.getElementById('cmReverse').checked);
+
+        const AMP_LIMIT = 3.0;
+        const fbMode = !!(window.latestWindowRender && window.latestWindowRender.effectiveLayer === 'fbprob');
+        const g = Math.max(gain, 1e-9);
+        const zmin = fbMode ? 0 : -AMP_LIMIT / g;
+        const zmax = fbMode ? 255 : AMP_LIMIT / g;
+        const cm = (window.COLORMAPS && window.COLORMAPS[cmName]) || 'Greys';
+        const isDiv = !fbMode && (cmName === 'RdBu' || cmName === 'BWR');
+        const props = { colorscale: [cm], reversescale: [reverse], zmin: [zmin], zmax: [zmax] };
+        if (isDiv) props.zmid = [0];   // 発散CMは中央0を維持
+        Plotly.restyle(plotDiv, props, [idx]);
+      };
+
+      window.scheduleRestyle = function () {
+        if (raf) cancelAnimationFrame(raf);
+        raf = requestAnimationFrame(function () {
+          raf = 0;
+          window.restyleColorAndGain();
+        });
+      };
+    })();
+  </script>
 
   <script>
     /* Adopt globals provided by /static/viewer/bootstrap.js */
@@ -1271,6 +1321,7 @@
       Cividis: 'Cividis',
       Jet: 'Jet',
     };
+    window.COLORMAPS = COLORMAPS;
 
     (function () {
       const saved = localStorage.getItem('gain');
@@ -1615,10 +1666,11 @@
 
 
     function onGainChange() {
-      const val = document.getElementById('gain').value;
+      const el = document.getElementById('gain');
+      const val = el ? el.value : '1';
       document.getElementById('gain_display').textContent = `${parseFloat(val)}×`;
       localStorage.setItem('gain', val);
-      renderLatestView();
+      scheduleRestyle();
     }
 
     function onColormapChange() {
@@ -1626,7 +1678,7 @@
       const chk = document.getElementById('cmReverse');
       if (sel) localStorage.setItem('colormap', sel.value);
       if (chk) localStorage.setItem('cmReverse', chk.checked);
-      renderLatestView();
+      scheduleRestyle();
     }
 
     function togglePickMode() {
@@ -1644,7 +1696,7 @@
       const sel = document.getElementById('layerSelect');
       const layer = sel?.value || 'raw';
       // ★ 加工レイヤは window API 経由のみ。配列は raw のみ保持。
-      return (layer === 'raw' && Array.isArray(rawSeismicData)) ? rawSeismicData : rawSeismicData;
+      return (layer === 'raw' && Array.isArray(rawSeismicData)) ? rawSeismicData : null;
     }
 
     // 3-point parabolic interpolation around index i (for peak/trough). Returns a float index.
@@ -2563,16 +2615,11 @@
         const backing = zData.backing;
         const total = rows * cols;
         if (fbMode) {
-          for (let p = 0; p < total; p++) backing[p] = backing[p] * 255;
-        } else {
-          for (let p = 0; p < total; p++) {
-            let v = backing[p] * gain;
-            if (v > AMP_LIMIT) v = AMP_LIMIT;
-            else if (v < -AMP_LIMIT) v = -AMP_LIMIT;
-            backing[p] = v;
+            for (let p = 0; p < total; p++) backing[p] = backing[p] * 255;
+          } else {
           }
-        }
-      } else {
+      }
+      else {
         const zRows = new Array(rows);
         const hasLut = !!(quantMeta && 'lo' in quantMeta && 'hi' in quantMeta);
         const lut = hasLut && window.SeisHeatmap && typeof window.SeisHeatmap.getQuantLUT === 'function'
@@ -2603,10 +2650,7 @@
             if (fbMode) {
               row[c] = rawValue * 255;
             } else {
-              let v = rawValue * gain;
-              if (v > AMP_LIMIT) v = AMP_LIMIT;
-              else if (v < -AMP_LIMIT) v = -AMP_LIMIT;
-              row[c] = v;
+              row[c] = rawValue
             }
           }
           zRows[r] = row;
@@ -2629,9 +2673,9 @@
       const reverse = document.getElementById('cmReverse')?.checked || false;
       const cm = COLORMAPS[cmName] || 'Greys';
       const isDiv = cmName === 'RdBu' || cmName === 'BWR';
-      const zMin = fbMode ? 0 : -AMP_LIMIT;
-      const zMax = fbMode ? 255 : AMP_LIMIT;
-
+      const g = Math.max(gain, 1e-9);
+      const zMin = fbMode ? 0 : -AMP_LIMIT / g;
+      const zMax = fbMode ? 255 : AMP_LIMIT / g;
       const traces = [{
         type: 'heatmap',
         x: xVals,
@@ -2931,7 +2975,7 @@
           const shiftedFullX = new Float32Array(nSamples);
           const shiftedPosX = new Float32Array(nSamples);
           for (let j = 0; j < nSamples; j++) {
-            let val = raw[j] * gain;
+            let val = raw[j] * gain ;
             if (val > AMP_LIMIT) val = AMP_LIMIT;
             if (val < -AMP_LIMIT) val = -AMP_LIMIT;
             baseX[j] = i;
@@ -2967,16 +3011,14 @@
               const val = trace[j] * 255;
               zData[row][col] = val;
             } else {
-              let val = trace[j] * gain;
-              if (val > AMP_LIMIT) val = AMP_LIMIT;
-              if (val < -AMP_LIMIT) val = -AMP_LIMIT;
-              zData[row][col] = val;
+              zData[row][col] = trace[j];
             }
           }
         }
 
-        const zMin = fbMode ? 0 : -AMP_LIMIT;
-        const zMax = fbMode ? 255 : AMP_LIMIT;
+        const g = Math.max(gain, 1e-9);
+        const zMin = fbMode ? 0 : -AMP_LIMIT / g;
+        const zMax = fbMode ? 255 : AMP_LIMIT / g;
 
         const xVals = new Float32Array(nTracesDS);
         for (let i = 0; i < nTracesDS; i++) xVals[i] = startTrace + i * factor;
