@@ -89,3 +89,37 @@ async function fetchSectionWithPipeline(
   cacheSet(`${fileId}:${key1Val}:${json.pipeline_key}`, out);
   return { taps: out, pipelineKey: json.pipeline_key };
 }
+
+async function fetchRawBaselineStats({
+  fileId,
+  key1Val,
+  key1Byte = 189,
+  key2Byte = 193,
+} = {}) {
+  const url = new URL('/section/stats', location.origin);
+  url.searchParams.set('file_id', fileId);
+  url.searchParams.set('key1_val', String(key1Val));
+  url.searchParams.set('baseline', 'raw');
+  url.searchParams.set('key1_byte', String(key1Byte));
+  url.searchParams.set('key2_byte', String(key2Byte));
+
+  const resp = await fetch(url.toString());
+  if (!resp.ok) {
+    const text = await resp.text().catch(() => '');
+    throw new Error(`section/stats ${resp.status} ${resp.statusText} — ${text}`);
+  }
+
+  const json = await resp.json();
+  const stats = { ...json };
+  stats.mu_traces = Float32Array.from(json.mu_traces ?? []);
+  stats.sigma_traces = Float32Array.from(json.sigma_traces ?? []);
+  const maskArray = Array.isArray(json.zero_var_mask)
+    ? json.zero_var_mask
+    : [];
+  stats.zero_var_mask = Uint8Array.from(maskArray, (v) => (v ? 1 : 0));
+  stats.mu_section = Number(json.mu_section ?? 0);
+  stats.sigma_section = Number(json.sigma_section ?? 1);
+  return stats;
+}
+
+window.fetchRawBaselineStats = fetchRawBaselineStats;

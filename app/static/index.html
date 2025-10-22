@@ -405,6 +405,12 @@
 
         <button id="predictFbBtn" onclick="predictFromFb()">Predict from FB</button>
         <button type="button" id="export-npy-all-key1" onclick="exportAllPickIndexMatrixNpy()">Export manual picks (.npy)</button>
+        <label style="margin-left:8px">Normalize:
+          <select id="vizNormalize" onchange="onNormalizeModeChange()">
+            <option value="amax" selected>AMAX (section)</option>
+            <option value="tracewise">Tracewise</option>
+          </select>
+        </label>
         <label for="gain">Gain:</label>
         <input type="range" id="gain" min="0.1" max="5" step="0.1" value="1" oninput="onGainChange()" />
         <span id="gain_display">1×</span>
@@ -523,6 +529,11 @@
     var savedYRange = null;
     var latestSeismicData = null;
     var rawSeismicData = null;
+    var rawSeismicDataRaw = null;
+    var rawBaselineStats = null;
+    var rawBaselineCache = new Map();
+    var normalizationMode = 'amax';
+    var normalizationCaches = { key: null, amax: null, tracewise: null };
     var latestTapData = {};
     var latestPipelineKey = null;
     var latestWindowRender = null;
@@ -1696,7 +1707,7 @@
       const sel = document.getElementById('layerSelect');
       const layer = sel?.value || 'raw';
       // ★ 加工レイヤは window API 経由のみ。配列は raw のみ保持。
-      return (layer === 'raw' && Array.isArray(rawSeismicData)) ? rawSeismicData : null;
+      return (layer === 'raw' && Array.isArray(rawSeismicDataRaw)) ? rawSeismicDataRaw : null;
     }
 
     // 3-point parabolic interpolation around index i (for peak/trough). Returns a float index.
@@ -2225,6 +2236,118 @@
       }
     }
 
+    function normalizationDatasetKey(fileId, key1Val, stats) {
+      const sha = stats && typeof stats.source_sha256 === 'string'
+        ? stats.source_sha256
+        : 'none';
+      return `${fileId}:${key1Val}:${sha}`;
+    }
+
+    function resetNormalizationCaches(datasetKey) {
+      if (normalizationCaches.key !== datasetKey) {
+        normalizationCaches.key = datasetKey;
+        normalizationCaches.amax = null;
+        normalizationCaches.tracewise = null;
+      }
+    }
+
+    function buildNormalizedTraces(mode, stats) {
+      if (!Array.isArray(rawSeismicDataRaw) || !rawSeismicDataRaw.length) return null;
+      if (!stats) return { traces: rawSeismicDataRaw, backing: null };
+      const nTraces = rawSeismicDataRaw.length;
+      const nSamples = rawSeismicDataRaw[0]?.length ?? 0;
+      if (!nSamples) return null;
+      const backing = new Float32Array(nTraces * nSamples);
+      const traces = new Array(nTraces);
+      const useTracewise = mode === 'tracewise'
+        && stats.mu_traces instanceof Float32Array
+        && stats.sigma_traces instanceof Float32Array
+        && stats.mu_traces.length >= nTraces;
+      const sectionMu = Number(stats.mu_section ?? 0);
+      const sectionSigma = Number(stats.sigma_section ?? 1) || 1;
+
+      for (let tr = 0; tr < nTraces; tr++) {
+        const dst = backing.subarray(tr * nSamples, (tr + 1) * nSamples);
+        const src = rawSeismicDataRaw[tr];
+        const mean = useTracewise ? stats.mu_traces[tr] ?? sectionMu : sectionMu;
+        const sigma = useTracewise ? (stats.sigma_traces[tr] || 1) : sectionSigma;
+        const safeSigma = (sigma && Number.isFinite(sigma)) ? sigma : 1;
+        for (let s = 0; s < nSamples; s++) {
+          dst[s] = (src[s] - mean) / safeSigma;
+        }
+        traces[tr] = dst;
+      }
+      return { traces, backing };
+    }
+
+    async function ensureRawBaselineStatsFor(fileId, key1Val) {
+      if (!fileId || key1Val == null) return null;
+      const cacheKey = `${fileId}:${key1Val}`;
+      if (rawBaselineCache.has(cacheKey)) {
+        return rawBaselineCache.get(cacheKey);
+      }
+      if (typeof fetchRawBaselineStats !== 'function') {
+        console.warn('fetchRawBaselineStats API is unavailable');
+        return null;
+      }
+      const stats = await fetchRawBaselineStats({
+        fileId,
+        key1Val,
+        key1Byte: currentKey1Byte,
+        key2Byte: currentKey2Byte,
+      });
+      rawBaselineCache.set(cacheKey, stats);
+      return stats;
+    }
+
+    function applyVisualizationNormalizationFor(key1Val) {
+      if (!Array.isArray(rawSeismicDataRaw)) {
+        rawSeismicData = null;
+        return;
+      }
+      if (!rawBaselineStats) {
+        rawSeismicData = rawSeismicDataRaw;
+        return;
+      }
+      const datasetKey = normalizationDatasetKey(currentFileId, key1Val, rawBaselineStats);
+      resetNormalizationCaches(datasetKey);
+      const mode = normalizationMode === 'tracewise' ? 'tracewise' : 'amax';
+      let cacheEntry = normalizationCaches[mode];
+      if (!cacheEntry) {
+        cacheEntry = buildNormalizedTraces(mode, rawBaselineStats);
+        normalizationCaches[mode] = cacheEntry;
+      }
+      rawSeismicData = cacheEntry && cacheEntry.traces ? cacheEntry.traces : rawSeismicDataRaw;
+    }
+
+    function getTraceNormalizationParams(traceIndex) {
+      if (!rawBaselineStats) return null;
+      if (normalizationMode === 'tracewise'
+        && rawBaselineStats.mu_traces instanceof Float32Array
+        && rawBaselineStats.sigma_traces instanceof Float32Array
+        && traceIndex >= 0
+        && traceIndex < rawBaselineStats.mu_traces.length) {
+        const mu = rawBaselineStats.mu_traces[traceIndex];
+        const sigma = rawBaselineStats.sigma_traces[traceIndex] || 1;
+        return { mu, sigma: sigma || 1 };
+      }
+      return {
+        mu: Number(rawBaselineStats.mu_section ?? 0),
+        sigma: Number(rawBaselineStats.sigma_section ?? 1) || 1,
+      };
+    }
+
+    function onNormalizeModeChange() {
+      const sel = document.getElementById('vizNormalize');
+      const next = sel ? sel.value : 'amax';
+      normalizationMode = next === 'tracewise' ? 'tracewise' : 'amax';
+      const slider = document.getElementById('key1_idx_slider');
+      const idx = slider ? parseInt(slider.value || '0', 10) : 0;
+      const key1Val = key1Values?.[idx];
+      applyVisualizationNormalizationFor(key1Val);
+      drawSelectedLayer(renderedStart, renderedEnd);
+    }
+
     async function fetchAndPlot() {
       snapshotAxesRangesFromDOM();
       console.log('--- fetchAndPlot start ---');
@@ -2247,6 +2370,13 @@
 
       await fetchPicks();
 
+      try {
+        rawBaselineStats = await ensureRawBaselineStatsFor(currentFileId, key1Val);
+      } catch (err) {
+        console.warn('Failed to load baseline stats', err);
+        rawBaselineStats = null;
+      }
+
       // 🪄 Window-first ならフルraw構築をスキップして即ウィンドウ描画へ
       if (shouldPreferWindowFirst()) {
           latestWindowRender = null;
@@ -2264,6 +2394,8 @@
                   sel.value = 'raw';
                 }
             }
+          rawSeismicDataRaw = null;
+          rawSeismicData = null;
           latestSeismicData = null;
           renderLatestView();
           fetchWindowAndPlot();
@@ -2287,7 +2419,8 @@
           traces[i] = f32.subarray(i * nSamples, (i + 1) * nSamples);
         }
         console.timeEnd('Decode from cache');
-        rawSeismicData = traces;
+        rawSeismicDataRaw = traces;
+        applyVisualizationNormalizationFor(key1Val);
       } else {
         console.time('Fetch binary');
         const meta = sectionShape || await fetchSectionMeta();
@@ -2336,7 +2469,8 @@
           traces[i] = f32.subarray(i * nSamples, (i + 1) * nSamples);
         }
         console.timeEnd('Decode & cache');
-        rawSeismicData = traces;
+        rawSeismicDataRaw = traces;
+        applyVisualizationNormalizationFor(key1Val);
       }
 
       latestWindowRender = null;
@@ -2472,10 +2606,16 @@
         const shiftedFullX = new Float32Array(rows);
         const shiftedPosX = new Float32Array(rows);
         const traceIndex = x0 + c * stepX;
+        const normParams = getTraceNormalizationParams(traceIndex);
+        const mean = normParams ? normParams.mu : 0;
+        const sigma = normParams ? normParams.sigma : 1;
         for (let r = 0; r < rows; r++) {
           const idxVal = r * cols + c;
-          let val = (useI8 ? (windowData.valuesI8[idxVal] / scale)
-            : windowData.values[idxVal]) * gain;
+          const rawVal = useI8
+            ? (windowData.valuesI8[idxVal] / scale)
+            : windowData.values[idxVal];
+          const normVal = normParams ? ((rawVal - mean) / (sigma || 1)) : rawVal;
+          let val = normVal * gain;
           if (val > AMP_LIMIT) val = AMP_LIMIT;
           if (val < -AMP_LIMIT) val = -AMP_LIMIT;
 
@@ -2573,6 +2713,8 @@
 
       const { shape, x0, x1, y0, y1, effectiveLayer } = windowData;
       let { stepX, stepY } = windowData;
+      stepX = stepX || 1;
+      stepY = stepY || 1;
       const rows = Number(shape?.[0] ?? 0);
       const cols = Number(shape?.[1] ?? 0);
       if (!rows || !cols) return;
@@ -2597,6 +2739,9 @@
           : (windowData.scale != null ? { scale: windowData.scale } : null)
       );
       const fallbackScale = Number(windowData.scale) || 1;
+      const normCache = (!fbMode && rawBaselineStats)
+        ? Array.from({ length: cols }, (_, c) => getTraceNormalizationParams(x0 + c * stepX))
+        : null;
 
       let zData;
       const poolingCandidate = (
@@ -2616,7 +2761,16 @@
         const total = rows * cols;
         if (fbMode) {
             for (let p = 0; p < total; p++) backing[p] = backing[p] * 255;
-          } else {
+          } else if (normCache) {
+            for (let c = 0; c < cols; c++) {
+              const params = normCache[c];
+              const mean = params ? params.mu : 0;
+              const sigma = params ? params.sigma || 1 : 1;
+              for (let r = 0; r < rows; r++) {
+                const idx = r * cols + c;
+                backing[idx] = (backing[idx] - mean) / (sigma || 1);
+              }
+            }
           }
       }
       else {
@@ -2637,6 +2791,7 @@
           const row = new Float32Array(cols);
           const offset = r * cols;
           for (let c = 0; c < cols; c++) {
+            const params = normCache ? normCache[c] : null;
             let rawValue;
             if (useI8) {
               const q = windowData.valuesI8[offset + c];
@@ -2650,7 +2805,13 @@
             if (fbMode) {
               row[c] = rawValue * 255;
             } else {
-              row[c] = rawValue
+              if (params) {
+                const mean = params.mu;
+                const sigma = params.sigma || 1;
+                row[c] = (rawValue - mean) / (sigma || 1);
+              } else {
+                row[c] = rawValue;
+              }
             }
           }
           zRows[r] = row;
@@ -2790,6 +2951,12 @@
       const idx = parseInt(slider.value, 10);
       const key1Val = key1Values[idx];
       if (key1Val === undefined) return;
+
+      try {
+        rawBaselineStats = await ensureRawBaselineStatsFor(currentFileId, key1Val);
+      } catch (err) {
+        console.warn('Baseline stats fetch failed for window', err);
+      }
 
       const windowInfo = currentVisibleWindow();
       if (!windowInfo) return;
@@ -3466,6 +3633,11 @@
           latestWindowRender = null;
           windowFetchToken += 1;
           rawSeismicData = null;
+          rawSeismicDataRaw = null;
+          rawBaselineStats = null;
+          normalizationCaches.key = null;
+          normalizationCaches.amax = null;
+          normalizationCaches.tracewise = null;
           latestSeismicData = null;
           latestTapData = {};
           fbPredReqId += 1;
