@@ -17,6 +17,11 @@ if TYPE_CHECKING:
 else:  # pragma: no cover - runtime alias for type checkers
 	NDArray = np.ndarray
 
+from app.api.baselines import (
+	BASELINE_STAGE_RAW,
+	BaselineComputationError,
+	get_or_create_raw_baseline,
+)
 from app.api._helpers import (
 	EXPECTED_SECTION_NDIM,
 	OFFSET_BYTE_FIXED,
@@ -149,6 +154,57 @@ def get_section(
 		raise HTTPException(status_code=400, detail=str(exc)) from exc
 	except Exception as exc:
 		raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+
+@router.get('/section/stats')
+def get_section_stats(
+	file_id: Annotated[str, Query(...)],
+	baseline: Annotated[str, Query(...)],
+	key1_idx: Annotated[int | None, Query()] = None,
+	key1_byte: Annotated[int, Query()] = 189,
+	key2_byte: Annotated[int, Query()] = 193,
+	step_x: Annotated[int | None, Query()] = None,
+	step_y: Annotated[int | None, Query()] = None,
+) -> JSONResponse:
+	baseline_value = baseline.lower().strip()
+	if baseline_value != BASELINE_STAGE_RAW:
+		raise HTTPException(status_code=400, detail='Only baseline=raw is supported')
+	for name, value in (('step_x', step_x), ('step_y', step_y)):
+		if value is not None and int(value) != 1:
+			raise HTTPException(
+				status_code=400,
+				detail=f'{name} must equal 1 for raw baseline',
+			)
+	try:
+		payload = get_or_create_raw_baseline(
+			file_id=file_id,
+			key1_byte=int(key1_byte),
+			key2_byte=int(key2_byte),
+		)
+	except BaselineComputationError as exc:
+		raise HTTPException(status_code=500, detail=str(exc)) from exc
+	response_payload = dict(payload)
+	if key1_idx is not None:
+		key1_val = int(key1_idx)
+		key1_values = response_payload.get('key1_values') or []
+		try:
+			pos = key1_values.index(key1_val)
+		except ValueError as exc:
+			raise HTTPException(
+				status_code=404,
+				detail=f'key1_idx {key1_val} not found in baseline',
+			) from exc
+		trace_map = response_payload.get('trace_index_map') or {}
+		trace_range = trace_map.get(str(key1_val))
+		if trace_range is None:
+			trace_range = trace_map.get(str(int(key1_val)))
+		response_payload['selected_key1'] = {
+			'key1_value': key1_val,
+			'mu_section': response_payload['mu_section_by_key1'][pos],
+			'sigma_section': response_payload['sigma_section_by_key1'][pos],
+			'trace_range': trace_range,
+		}
+	return JSONResponse(content=response_payload)
 
 
 @router.get('/get_section_meta', response_model=SectionMeta)
