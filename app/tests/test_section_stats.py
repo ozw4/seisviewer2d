@@ -116,6 +116,27 @@ def test_baseline_recompute_on_key1_byte_change(sample_store):
 	assert second['computed_at'] != first['computed_at']
 
 
+def test_baseline_partition_matches_requested_key1(sample_store):
+	file_id, store = sample_store
+	# Override the cached headers for byte 200 with a different grouping than the store default.
+	new_headers = np.array([5, 15, 15], dtype=np.int32)
+	with open(store / 'headers_byte_200.npy', 'wb') as fh:
+		np.save(fh, new_headers)
+	cached_readers.clear()
+	baseline = get_or_create_raw_baseline(file_id=file_id, key1_byte=200, key2_byte=193)
+	assert baseline['key1_values'] == [5, 15]
+	assert baseline['trace_index_map'] == {'5': [0, 1], '15': [1, 3]}
+	mu_sections = baseline['mu_section_by_key1']
+	sigma_sections = baseline['sigma_section_by_key1']
+	assert mu_sections == pytest.approx([2.0, 1.0 / 3.0])
+	assert sigma_sections == pytest.approx(
+		[
+			float(np.sqrt(2.0 / 3.0)),
+			float(np.sqrt(8.0 / 9.0)),
+		]
+	)
+
+
 def test_section_stats_endpoint(sample_store):
 	file_id, _ = sample_store
 	client = TestClient(app)

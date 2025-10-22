@@ -85,6 +85,43 @@ def _load_trace_store_artifacts(file_id: str) -> _TraceStoreArtifacts:
 	)
 
 
+def _resolve_key1_partition(
+	*,
+	artifacts: _TraceStoreArtifacts,
+	reader: Any,
+	traces: np.ndarray,
+	key1_byte: int,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+	meta_key1 = None
+	meta = artifacts.meta
+	if isinstance(meta, dict):
+		key_bytes = meta.get('key_bytes')
+		if isinstance(key_bytes, dict):
+			meta_key1 = key_bytes.get('key1')
+	if meta_key1 is not None and int(meta_key1) == int(key1_byte):
+		return artifacts.key1_values, artifacts.key1_offsets, artifacts.key1_counts
+	get_header = getattr(reader, 'get_header', None)
+	if not callable(get_header):
+		raise BaselineComputationError(
+			'TraceStore reader cannot provide headers for requested key1 byte'
+		)
+	header = np.asarray(get_header(int(key1_byte)), dtype=np.int64)
+	if header.ndim != 1:
+		raise BaselineComputationError('TraceStore header array must be 1D')
+	if header.shape[0] != traces.shape[0]:
+		raise BaselineComputationError(
+			'TraceStore header array does not match trace count'
+		)
+	key1_values, key1_offsets, key1_counts = np.unique(
+		header, return_index=True, return_counts=True
+	)
+	order = np.argsort(key1_offsets, kind='stable')
+	key1_values = np.ascontiguousarray(key1_values[order], dtype=np.int64)
+	key1_offsets = np.ascontiguousarray(key1_offsets[order], dtype=np.int64)
+	key1_counts = np.ascontiguousarray(key1_counts[order], dtype=np.int64)
+	return key1_values, key1_offsets, key1_counts
+
+
 def _baseline_path(store_path: Path) -> Path:
 	return store_path / BASELINE_FILENAME_RAW
 
@@ -216,6 +253,9 @@ def _prepare_payload(
 	artifacts: _TraceStoreArtifacts,
 	key1_byte: int,
 	key2_byte: int,
+	key1_values: np.ndarray,
+	key1_offsets: np.ndarray,
+	key1_counts: np.ndarray,
 	mu_traces: np.ndarray,
 	sigma_traces: np.ndarray,
 	zero_mask: np.ndarray,
@@ -231,15 +271,13 @@ def _prepare_payload(
 		'method': 'mean_std',
 		'dtype_base': str(meta.get('dtype', '')),
 		'dt': dt_val,
-		'key1_values': artifacts.key1_values.astype(np.int64).tolist(),
+		'key1_values': key1_values.astype(np.int64).tolist(),
 		'mu_section_by_key1': mu_sections.astype(np.float32, copy=False).tolist(),
 		'sigma_section_by_key1': sigma_sections.astype(np.float32, copy=False).tolist(),
 		'mu_traces': mu_traces.astype(np.float32, copy=False).tolist(),
 		'sigma_traces': sigma_traces.astype(np.float32, copy=False).tolist(),
 		'zero_var_mask': zero_mask.astype(bool, copy=False).tolist(),
-		'trace_index_map': _trace_index_map(
-			artifacts.key1_values, artifacts.key1_offsets, artifacts.key1_counts
-		),
+		'trace_index_map': _trace_index_map(key1_values, key1_offsets, key1_counts),
 		'source_sha256': source_sha,
 		'computed_at': datetime.now(timezone.utc).isoformat(),
 		'key1_byte': int(key1_byte),
@@ -267,11 +305,17 @@ def _compute_baseline(
 		raise BaselineComputationError('TraceStore reader did not expose traces array')
 	if traces.ndim != 2:
 		raise BaselineComputationError('Trace array must be 2D')
-	_ensure_nonempty_counts(artifacts.key1_counts)
-	_ensure_trace_alignment(artifacts.key1_counts, int(traces.shape[0]))
+	key1_values, key1_offsets, key1_counts = _resolve_key1_partition(
+		artifacts=artifacts,
+		reader=reader,
+		traces=traces,
+		key1_byte=key1_byte,
+	)
+	_ensure_nonempty_counts(key1_counts)
+	_ensure_trace_alignment(key1_counts, int(traces.shape[0]))
 	mu_traces, sigma_traces, zero_mask = _compute_trace_stats(traces)
 	mu_sections, sigma_sections = _compute_section_stats(
-		traces=traces, key1_counts=artifacts.key1_counts
+		traces=traces, key1_counts=key1_counts
 	)
 	if not np.all(np.isfinite(mu_traces)):
 		raise BaselineComputationError('Per-trace mean produced non-finite values')
@@ -286,6 +330,9 @@ def _compute_baseline(
 		artifacts=artifacts,
 		key1_byte=key1_byte,
 		key2_byte=key2_byte,
+		key1_values=key1_values,
+		key1_offsets=key1_offsets,
+		key1_counts=key1_counts,
 		mu_traces=mu_traces,
 		sigma_traces=sigma_traces,
 		zero_mask=zero_mask,
