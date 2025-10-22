@@ -27,6 +27,11 @@ from app.api._helpers import (
 	get_section_from_pipeline_tap,
 	window_section_cache,
 )
+from app.api.baselines import (
+	BASELINE_STAGE_RAW,
+	BaselineComputationError,
+	get_or_create_raw_baseline,
+)
 from app.utils.segy_meta import FILE_REGISTRY, get_dt_for_file
 from app.utils.utils import (
 	SectionView,
@@ -151,6 +156,62 @@ def get_section(
 		raise HTTPException(status_code=500, detail=str(exc)) from exc
 
 
+@router.get('/section/stats')
+def get_section_stats(
+	file_id: Annotated[str, Query(...)],
+	baseline: Annotated[str, Query(...)],
+	key1_idx: Annotated[int | None, Query()] = None,
+	key1_byte: Annotated[int, Query()] = 189,
+	key2_byte: Annotated[int, Query()] = 193,
+	step_x: Annotated[int | None, Query()] = None,
+	step_y: Annotated[int | None, Query()] = None,
+) -> JSONResponse:
+	baseline_value = baseline.lower().strip()
+	if baseline_value != BASELINE_STAGE_RAW:
+		raise HTTPException(status_code=400, detail='Only baseline=raw is supported')
+	for name, value in (('step_x', step_x), ('step_y', step_y)):
+		if value is not None and int(value) != 1:
+			raise HTTPException(
+				status_code=400,
+				detail=f'{name} must equal 1 for raw baseline',
+			)
+	try:
+		payload = get_or_create_raw_baseline(
+			file_id=file_id,
+			key1_byte=int(key1_byte),
+			key2_byte=int(key2_byte),
+		)
+	except BaselineComputationError as exc:
+		raise HTTPException(status_code=500, detail=str(exc)) from exc
+	response_payload = dict(payload)
+	if key1_idx is not None:
+		key1_val = int(key1_idx)
+		key1_values = response_payload.get('key1_values') or []
+		try:
+			pos = key1_values.index(key1_val)
+		except ValueError as exc:
+			raise HTTPException(
+				status_code=404,
+				detail=f'key1_idx {key1_val} not found in baseline',
+			) from exc
+		trace_spans_map = response_payload.get('trace_spans_by_key1') or {}
+		trace_spans = trace_spans_map.get(str(key1_val))
+		if trace_spans is None:
+			trace_spans = trace_spans_map.get(str(int(key1_val)))
+		if trace_spans is None:
+			trace_spans = []
+		selected = {
+			'key1_value': key1_val,
+			'mu_section': response_payload['mu_section_by_key1'][pos],
+			'sigma_section': response_payload['sigma_section_by_key1'][pos],
+			'trace_spans': trace_spans,
+		}
+		if len(trace_spans) == 1:
+			selected['trace_range'] = trace_spans[0]
+		response_payload['selected_key1'] = selected
+	return JSONResponse(content=response_payload)
+
+
 @router.get('/get_section_meta', response_model=SectionMeta)
 def get_section_meta(
 	file_id: Annotated[str, Query(...)],
@@ -168,6 +229,9 @@ def get_section_meta(
 	dtype = str(reader.dtype) if reader.dtype is not None else None
 	scale = float(reader.scale) if isinstance(reader.scale, (int, float)) else None
 	dt_val = float(get_dt_for_file(file_id))
+	_ = get_or_create_raw_baseline(
+		file_id=file_id, key1_byte=key1_byte, key2_byte=key2_byte
+	)
 
 	return SectionMeta(
 		shape=[n_traces, n_samples],  # セクション内 [traces, samples]
