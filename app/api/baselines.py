@@ -7,7 +7,7 @@ import os
 import time
 from contextlib import contextmanager, suppress
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -241,7 +241,7 @@ def _prepare_payload(
 			artifacts.key1_values, artifacts.key1_offsets, artifacts.key1_counts
 		),
 		'source_sha256': source_sha,
-		'computed_at': datetime.now(UTC).isoformat(),
+		'computed_at': datetime.now(timezone.utc).isoformat(),
 		'key1_byte': int(key1_byte),
 		'key2_byte': int(key2_byte),
 	}
@@ -319,7 +319,7 @@ def get_or_create_raw_baseline(
 			return baseline
 		raise BaselineComputationError('Baseline computation is already in progress')
 	try:
-		cache_key = f"{file_id}_{int(key1_byte)}_{int(key2_byte)}"
+		cache_key = f'{file_id}_{int(key1_byte)}_{int(key2_byte)}'
 		cached_readers.pop(cache_key, None)
 		payload = _compute_baseline(
 			file_id=file_id,
@@ -334,7 +334,7 @@ def get_or_create_raw_baseline(
 
 
 __all__ = [
-	'BaselineComputationError',
 	'BASELINE_STAGE_RAW',
+	'BaselineComputationError',
 	'get_or_create_raw_baseline',
 ]

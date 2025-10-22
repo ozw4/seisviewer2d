@@ -17,11 +17,6 @@ if TYPE_CHECKING:
 else:  # pragma: no cover - runtime alias for type checkers
 	NDArray = np.ndarray
 
-from app.api.baselines import (
-	BASELINE_STAGE_RAW,
-	BaselineComputationError,
-	get_or_create_raw_baseline,
-)
 from app.api._helpers import (
 	EXPECTED_SECTION_NDIM,
 	OFFSET_BYTE_FIXED,
@@ -31,6 +26,11 @@ from app.api._helpers import (
 	get_reader,
 	get_section_from_pipeline_tap,
 	window_section_cache,
+)
+from app.api.baselines import (
+	BASELINE_STAGE_RAW,
+	BaselineComputationError,
+	get_or_create_raw_baseline,
 )
 from app.utils.segy_meta import FILE_REGISTRY, get_dt_for_file
 from app.utils.utils import (
@@ -224,6 +224,9 @@ def get_section_meta(
 	dtype = str(reader.dtype) if reader.dtype is not None else None
 	scale = float(reader.scale) if isinstance(reader.scale, (int, float)) else None
 	dt_val = float(get_dt_for_file(file_id))
+	_ = get_or_create_raw_baseline(
+		file_id=file_id, key1_byte=key1_byte, key2_byte=key2_byte
+	)
 
 	return SectionMeta(
 		shape=[n_traces, n_samples],  # セクション内 [traces, samples]
