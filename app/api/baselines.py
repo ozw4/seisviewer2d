@@ -103,14 +103,9 @@ def _resolve_key1_groups(
 		raise BaselineComputationError(
 			'TraceStore header array does not match trace count'
 		)
-	key1_values, inverse, first_indices = np.unique(
-		header, return_inverse=True, return_index=True
-	)
-	order = np.argsort(first_indices, kind='stable')
-	reindex = np.empty_like(order)
-	reindex[order] = np.arange(order.size, dtype=reindex.dtype)
-	key1_values = np.ascontiguousarray(key1_values[order], dtype=np.int64)
-	inverse = np.ascontiguousarray(reindex[inverse], dtype=np.int64)
+	key1_values, inverse = np.unique(header, return_inverse=True)
+	key1_values = np.ascontiguousarray(key1_values, dtype=np.int64)
+	inverse = inverse.astype(np.int64, copy=False)
 	return key1_values, inverse
 
 
