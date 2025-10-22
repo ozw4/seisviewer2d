@@ -194,16 +194,21 @@ def get_section_stats(
 				status_code=404,
 				detail=f'key1_idx {key1_val} not found in baseline',
 			) from exc
-		trace_map = response_payload.get('trace_index_map') or {}
-		trace_range = trace_map.get(str(key1_val))
-		if trace_range is None:
-			trace_range = trace_map.get(str(int(key1_val)))
-		response_payload['selected_key1'] = {
+		trace_spans_map = response_payload.get('trace_spans_by_key1') or {}
+		trace_spans = trace_spans_map.get(str(key1_val))
+		if trace_spans is None:
+			trace_spans = trace_spans_map.get(str(int(key1_val)))
+		if trace_spans is None:
+			trace_spans = []
+		selected = {
 			'key1_value': key1_val,
 			'mu_section': response_payload['mu_section_by_key1'][pos],
 			'sigma_section': response_payload['sigma_section_by_key1'][pos],
-			'trace_range': trace_range,
+			'trace_spans': trace_spans,
 		}
+		if len(trace_spans) == 1:
+			selected['trace_range'] = trace_spans[0]
+		response_payload['selected_key1'] = selected
 	return JSONResponse(content=response_payload)
 
 

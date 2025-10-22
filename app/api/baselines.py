@@ -85,21 +85,12 @@ def _load_trace_store_artifacts(file_id: str) -> _TraceStoreArtifacts:
 	)
 
 
-def _resolve_key1_partition(
+def _resolve_key1_groups(
 	*,
-	artifacts: _TraceStoreArtifacts,
 	reader: Any,
 	traces: np.ndarray,
 	key1_byte: int,
-) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
-	meta_key1 = None
-	meta = artifacts.meta
-	if isinstance(meta, dict):
-		key_bytes = meta.get('key_bytes')
-		if isinstance(key_bytes, dict):
-			meta_key1 = key_bytes.get('key1')
-	if meta_key1 is not None and int(meta_key1) == int(key1_byte):
-		return artifacts.key1_values, artifacts.key1_offsets, artifacts.key1_counts
+) -> tuple[np.ndarray, np.ndarray]:
 	get_header = getattr(reader, 'get_header', None)
 	if not callable(get_header):
 		raise BaselineComputationError(
@@ -112,14 +103,35 @@ def _resolve_key1_partition(
 		raise BaselineComputationError(
 			'TraceStore header array does not match trace count'
 		)
-	key1_values, key1_offsets, key1_counts = np.unique(
-		header, return_index=True, return_counts=True
+	key1_values, inverse, first_indices = np.unique(
+		header, return_inverse=True, return_index=True
 	)
-	order = np.argsort(key1_offsets, kind='stable')
+	order = np.argsort(first_indices, kind='stable')
+	reindex = np.empty_like(order)
+	reindex[order] = np.arange(order.size, dtype=reindex.dtype)
 	key1_values = np.ascontiguousarray(key1_values[order], dtype=np.int64)
-	key1_offsets = np.ascontiguousarray(key1_offsets[order], dtype=np.int64)
-	key1_counts = np.ascontiguousarray(key1_counts[order], dtype=np.int64)
-	return key1_values, key1_offsets, key1_counts
+	inverse = np.ascontiguousarray(reindex[inverse], dtype=np.int64)
+	return key1_values, inverse
+
+
+def _spans_from_inverse(
+	inverse: np.ndarray, n_groups: int
+) -> dict[str, list[list[int]]]:
+	if inverse.ndim != 1:
+		raise BaselineComputationError('inverse must be 1D')
+	N = int(inverse.shape[0])
+	if N == 0:
+		return {}
+	spans: list[list[list[int]]] = [[] for _ in range(int(n_groups))]
+	start = 0
+	curr = int(inverse[0])
+	for i in range(1, N + 1):
+		if i == N or int(inverse[i]) != curr:
+			spans[curr].append([start, i])
+			if i < N:
+				start = i
+				curr = int(inverse[i])
+	return {str(group): spans[group] for group in range(int(n_groups))}
 
 
 def _baseline_path(store_path: Path) -> Path:
@@ -188,45 +200,25 @@ def _release_lock(store_path: Path) -> None:
 		lock_path.unlink()
 
 
-def _ensure_nonempty_counts(key1_counts: np.ndarray) -> None:
-	if np.any(key1_counts <= 0):
-		raise BaselineComputationError('TraceStore contains empty key1 sections')
-
-
-def _ensure_trace_alignment(key1_counts: np.ndarray, n_traces: int) -> None:
-	if int(np.sum(key1_counts, dtype=np.int64)) != n_traces:
-		raise BaselineComputationError('TraceStore index does not match trace array')
-
-
-def _trace_index_map(
-	key1_values: np.ndarray, key1_offsets: np.ndarray, key1_counts: np.ndarray
-) -> dict[str, list[int]]:
-	mapping: dict[str, list[int]] = {}
-	for value, offset, count in zip(
-		key1_values, key1_offsets, key1_counts, strict=True
-	):
-		start = int(offset)
-		stop = start + int(count)
-		mapping[str(int(value))] = [start, stop]
-	return mapping
-
-
 def _compute_section_stats(
 	*,
 	traces: np.ndarray,
-	key1_counts: np.ndarray,
+	inverse: np.ndarray,
+	n_groups: int,
 ) -> tuple[np.ndarray, np.ndarray]:
+	if traces.ndim != 2:
+		raise BaselineComputationError('Trace array must be 2D')
+	if inverse.ndim != 1:
+		raise BaselineComputationError('inverse must be 1D')
+	if int(traces.shape[0]) != int(inverse.shape[0]):
+		raise BaselineComputationError('inverse length does not match trace count')
 	trace_sum = traces.sum(axis=1, dtype=np.float64)
 	trace_sumsq = np.einsum('ij,ij->i', traces, traces, dtype=np.float64)
-	group_ids = np.repeat(
-		np.arange(key1_counts.size, dtype=np.int64), key1_counts.astype(np.int64)
-	)
-	group_sum = np.bincount(group_ids, weights=trace_sum, minlength=key1_counts.size)
-	group_sumsq = np.bincount(
-		group_ids, weights=trace_sumsq, minlength=key1_counts.size
-	)
-	n_samples = traces.shape[1]
-	total_samples = key1_counts.astype(np.float64) * float(n_samples)
+	group_sum = np.bincount(inverse, weights=trace_sum, minlength=int(n_groups))
+	group_sumsq = np.bincount(inverse, weights=trace_sumsq, minlength=int(n_groups))
+	n_samples = float(traces.shape[1])
+	trace_counts = np.bincount(inverse, minlength=int(n_groups)).astype(np.float64)
+	total_samples = trace_counts * n_samples
 	mean = group_sum / total_samples
 	mean_sq = group_sumsq / total_samples
 	var = np.maximum(mean_sq - np.square(mean), 0.0)
@@ -254,8 +246,7 @@ def _prepare_payload(
 	key1_byte: int,
 	key2_byte: int,
 	key1_values: np.ndarray,
-	key1_offsets: np.ndarray,
-	key1_counts: np.ndarray,
+	trace_spans_by_key1: dict[str, list[list[int]]],
 	mu_traces: np.ndarray,
 	sigma_traces: np.ndarray,
 	zero_mask: np.ndarray,
@@ -277,7 +268,8 @@ def _prepare_payload(
 		'mu_traces': mu_traces.astype(np.float32, copy=False).tolist(),
 		'sigma_traces': sigma_traces.astype(np.float32, copy=False).tolist(),
 		'zero_var_mask': zero_mask.astype(bool, copy=False).tolist(),
-		'trace_index_map': _trace_index_map(key1_values, key1_offsets, key1_counts),
+		# No backward compat: replace single-span trace_index_map with multi-span layout.
+		'trace_spans_by_key1': trace_spans_by_key1,
 		'source_sha256': source_sha,
 		'computed_at': datetime.now(timezone.utc).isoformat(),
 		'key1_byte': int(key1_byte),
@@ -305,17 +297,19 @@ def _compute_baseline(
 		raise BaselineComputationError('TraceStore reader did not expose traces array')
 	if traces.ndim != 2:
 		raise BaselineComputationError('Trace array must be 2D')
-	key1_values, key1_offsets, key1_counts = _resolve_key1_partition(
-		artifacts=artifacts,
+	key1_values, inverse = _resolve_key1_groups(
 		reader=reader,
 		traces=traces,
 		key1_byte=key1_byte,
 	)
-	_ensure_nonempty_counts(key1_counts)
-	_ensure_trace_alignment(key1_counts, int(traces.shape[0]))
+	n_groups = int(key1_values.size)
+	if n_groups == 0:
+		raise BaselineComputationError('TraceStore returned no key1 groups')
 	mu_traces, sigma_traces, zero_mask = _compute_trace_stats(traces)
 	mu_sections, sigma_sections = _compute_section_stats(
-		traces=traces, key1_counts=key1_counts
+		traces=traces,
+		inverse=inverse,
+		n_groups=n_groups,
 	)
 	if not np.all(np.isfinite(mu_traces)):
 		raise BaselineComputationError('Per-trace mean produced non-finite values')
@@ -325,14 +319,14 @@ def _compute_baseline(
 		raise BaselineComputationError('Section mean produced non-finite values')
 	if not np.all(np.isfinite(sigma_sections)):
 		raise BaselineComputationError('Section sigma produced non-finite values')
+	trace_spans_by_key1 = _spans_from_inverse(inverse, n_groups)
 	return _prepare_payload(
 		file_id=file_id,
 		artifacts=artifacts,
 		key1_byte=key1_byte,
 		key2_byte=key2_byte,
 		key1_values=key1_values,
-		key1_offsets=key1_offsets,
-		key1_counts=key1_counts,
+		trace_spans_by_key1=trace_spans_by_key1,
 		mu_traces=mu_traces,
 		sigma_traces=sigma_traces,
 		zero_mask=zero_mask,

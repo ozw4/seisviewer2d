@@ -69,7 +69,7 @@ def test_get_or_create_raw_baseline(sample_store):
 	assert baseline['method'] == 'mean_std'
 	assert baseline['source_sha256'] == 'sha1'
 	assert baseline['key1_values'] == [10, 20]
-	assert baseline['trace_index_map'] == {'10': [0, 2], '20': [2, 3]}
+	assert baseline['trace_spans_by_key1'] == {'10': [[0, 2]], '20': [[2, 3]]}
 	mu_traces = baseline['mu_traces']
 	sigma_traces = baseline['sigma_traces']
 	zero_mask = baseline['zero_var_mask']
@@ -125,7 +125,7 @@ def test_baseline_partition_matches_requested_key1(sample_store):
 	cached_readers.clear()
 	baseline = get_or_create_raw_baseline(file_id=file_id, key1_byte=200, key2_byte=193)
 	assert baseline['key1_values'] == [5, 15]
-	assert baseline['trace_index_map'] == {'5': [0, 1], '15': [1, 3]}
+	assert baseline['trace_spans_by_key1'] == {'5': [[0, 1]], '15': [[1, 3]]}
 	mu_sections = baseline['mu_section_by_key1']
 	sigma_sections = baseline['sigma_section_by_key1']
 	assert mu_sections == pytest.approx([2.0, 1.0 / 3.0])
@@ -149,6 +149,7 @@ def test_section_stats_endpoint(sample_store):
 	assert payload['key1_values'] == [10, 20]
 	selected = payload['selected_key1']
 	assert selected['key1_value'] == 20
+	assert selected['trace_spans'] == [[2, 3]]
 	assert selected['trace_range'] == [2, 3]
 	assert selected['mu_section'] == pytest.approx(-1.0 / 3.0)
 	assert selected['sigma_section'] == pytest.approx(float(np.sqrt(8.0 / 9.0)))
