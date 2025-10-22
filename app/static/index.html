@@ -379,6 +379,12 @@
             <option value="expectation">expectation</option>
           </select>
         </label>
+        <label style="margin-left:8px">Scale:
+          <select id="scale_mode" onchange="Scale_onModeChange()">
+            <option value="section">AMAX (section)</option>
+            <option value="trace">Tracewise</option>
+          </select>
+        </label>
         <label style="margin-left:8px">Snap:
           <select id="snap_mode" onchange="localStorage.setItem('snap_mode', this.value)">
             <option value="none" selected>none</option>
@@ -2474,8 +2480,9 @@
         const traceIndex = x0 + c * stepX;
         for (let r = 0; r < rows; r++) {
           const idxVal = r * cols + c;
-          let val = (useI8 ? (windowData.valuesI8[idxVal] / scale)
-            : windowData.values[idxVal]) * gain;
+          const raw = useI8 ? (windowData.valuesI8[idxVal] / scale) : windowData.values[idxVal];
+          const trIdxInSection = traceIndex;
+          let val = Scale_value(raw, trIdxInSection) * gain;
           if (val > AMP_LIMIT) val = AMP_LIMIT;
           if (val < -AMP_LIMIT) val = -AMP_LIMIT;
 
@@ -2615,11 +2622,11 @@
         const backing = zData.backing;
         const total = rows * cols;
         if (fbMode) {
-            for (let p = 0; p < total; p++) backing[p] = backing[p] * 255;
-          } else {
-          }
-      }
-      else {
+          for (let p = 0; p < total; p++) backing[p] = backing[p] * 255;
+        } else {
+          Scale_applyToZ(zData, x0, stepX);
+        }
+      } else {
         const zRows = new Array(rows);
         const hasLut = !!(quantMeta && 'lo' in quantMeta && 'hi' in quantMeta);
         const lut = hasLut && window.SeisHeatmap && typeof window.SeisHeatmap.getQuantLUT === 'function'
@@ -2650,7 +2657,9 @@
             if (fbMode) {
               row[c] = rawValue * 255;
             } else {
-              row[c] = rawValue
+              const trIdxInSection = (x0 | 0) + c * ((stepX | 0) || 1);
+              const scaled = Scale_value(rawValue, trIdxInSection);
+              row[c] = scaled;
             }
           }
           zRows[r] = row;
@@ -2975,7 +2984,8 @@
           const shiftedFullX = new Float32Array(nSamples);
           const shiftedPosX = new Float32Array(nSamples);
           for (let j = 0; j < nSamples; j++) {
-            let val = raw[j] * gain ;
+            const trIdxInSection = i;
+            let val = Scale_value(raw[j], trIdxInSection) * gain;
             if (val > AMP_LIMIT) val = AMP_LIMIT;
             if (val < -AMP_LIMIT) val = -AMP_LIMIT;
             baseX[j] = i;
@@ -3014,6 +3024,10 @@
               zData[row][col] = trace[j];
             }
           }
+        }
+
+        if (!fbMode) {
+          Scale_applyToZ(zData, startTrace, factor);
         }
 
         const g = Math.max(gain, 1e-9);
@@ -3539,6 +3553,28 @@
       </div>
     </div>
   </div>
+  <script src="/static/viewer/scaling.js"></script>
+  <script>
+    (function initScaleMode() {
+      var el = document.getElementById('scale_mode');
+      if (!el) return;
+      var saved = localStorage.getItem('scale_mode');
+      if (saved !== 'section' && saved !== 'trace') {
+        saved = 'section';
+        localStorage.setItem('scale_mode', 'section');
+      }
+      el.value = saved;
+    })();
+
+    (function wrapFetchAndPlot() {
+      if (typeof window.fetchAndPlot !== 'function') return;
+      var orig = window.fetchAndPlot;
+      window.fetchAndPlot = async function () {
+        await Scale_fetchBaselineForCurrentSection();
+        return orig.apply(this, arguments);
+      };
+    })();
+  </script>
 </body>
 
 </html>
