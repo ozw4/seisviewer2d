@@ -17,7 +17,7 @@ ruff.toml            # Ruff linter settings
 ## API Overview
 - `POST /upload_segy`: upload a SEG-Y file and begin background loading.
 - `GET /get_key1_values`: list available values for the first key.
-- `GET /get_section` and `GET /get_section_bin`: fetch normalized traces for a given `key1` index (JSON or binary).
+- `GET /get_section` and `GET /get_section_window_bin`: fetch normalized traces for a given `key1` index (JSON or binary).
 
 ## Keyboard Shortcuts
 

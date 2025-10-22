@@ -260,40 +260,6 @@ def test_get_section_returns_json_for_value(monkeypatch):
 	assert 'key1 99 not found' in str(ei.value)
 
 
-def test_get_section_bin_happy_path(monkeypatch):
-	class _StubReader:
-		key1_byte = 189
-		key2_byte = 193
-
-		def get_key1_values(self):
-			return np.array([111], dtype=np.int32)
-
-		def get_section(self, key1_val: int):
-			# 2 traces x 4 samples
-			assert key1_val == 111
-			arr = np.array(
-				[[0.1, 0.2, 0.3, 0.4], [0.5, 0.6, 0.7, 0.8]], dtype=np.float32
-			)
-			return SectionView(arr=arr, dtype=arr.dtype, scale=None)
-
-	monkeypatch.setattr(
-		sec, 'get_reader', lambda fid, kb1, kb2: _StubReader(), raising=True
-	)
-	res = sec.get_section_bin(file_id='f', key1_val=111, key1_byte=189, key2_byte=193)
-	assert res.headers.get('Content-Encoding') == 'gzip'
-
-	payload = msgpack.unpackb(gzip.decompress(res.body))
-	assert (
-		'scale' in payload
-		and 'shape' in payload
-		and 'data' in payload
-		and 'dt' in payload
-	)
-	# data length equals product of shape (int8 bytes)
-	h, w = payload['shape']
-	assert len(payload['data']) == (h * w)
-
-
 def test_get_section_window_bin_happy_path(monkeypatch):
 	class _StubReader:
 		key1_byte = 189

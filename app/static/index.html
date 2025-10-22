@@ -1653,7 +1653,7 @@
             if (/\/picks(\?|$)/.test(url)) {
               console.debug(`📡 FETCH ${method} ${url} → ${res.status} (${(performance.now() - t0).toFixed(0)}ms)`);
               console.trace('  ↳ stack @picks'); // 重要：誰が呼んだか
-            } else if (/get_section_window_bin|get_section_bin/.test(url)) {
+            } else if (/get_section_window_bin/.test(url)) {
               console.debug(`📡 FETCH ${method} ${url} → ${res.status} (${(performance.now() - t0).toFixed(0)}ms)`);
             }
             return res;
