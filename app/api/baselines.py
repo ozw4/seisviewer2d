@@ -115,10 +115,16 @@ def _resolve_key1_groups(
 
 
 def _spans_from_inverse(
-	inverse: np.ndarray, n_groups: int
+	key1_values: np.ndarray,
+	inverse: np.ndarray,
+	n_groups: int,
 ) -> dict[str, list[list[int]]]:
 	if inverse.ndim != 1:
 		raise BaselineComputationError('inverse must be 1D')
+	if key1_values.ndim != 1:
+		raise BaselineComputationError('key1_values must be 1D')
+	if int(key1_values.size) != int(n_groups):
+		raise BaselineComputationError('key1_values size does not match n_groups')
 	N = int(inverse.shape[0])
 	if N == 0:
 		return {}
@@ -131,7 +137,9 @@ def _spans_from_inverse(
 			if i < N:
 				start = i
 				curr = int(inverse[i])
-	return {str(group): spans[group] for group in range(int(n_groups))}
+	return {
+		str(int(key1_values[group])): spans[group] for group in range(int(n_groups))
+	}
 
 
 def _baseline_path(store_path: Path) -> Path:
@@ -319,7 +327,7 @@ def _compute_baseline(
 		raise BaselineComputationError('Section mean produced non-finite values')
 	if not np.all(np.isfinite(sigma_sections)):
 		raise BaselineComputationError('Section sigma produced non-finite values')
-	trace_spans_by_key1 = _spans_from_inverse(inverse, n_groups)
+	trace_spans_by_key1 = _spans_from_inverse(key1_values, inverse, n_groups)
 	return _prepare_payload(
 		file_id=file_id,
 		artifacts=artifacts,
