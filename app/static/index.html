@@ -369,6 +369,12 @@
         <select id="layerSelect" onchange="drawSelectedLayer()">
           <option value="raw" selected>raw</option>
         </select>
+        <label style="margin-left:8px">Normalization:
+          <select id="scalingMode" onchange="onScalingChange()">
+            <option value="amax" selected>AMAX</option>
+            <option value="tracewise">Tracewise</option>
+          </select>
+        </label>
         <label style="margin-left:8px">σmax (ms):
           <input id="sigma_ms_max" type="number" value="20" step="1" min="1" style="width:5em"
             oninput="onSigmaChange()">
@@ -807,7 +813,12 @@
       predicted: samplePicks(predictedPicks, 10)
   });
 
-    function cacheKey(val, mode) { return `${val}|${mode}`; }
+    var currentScaling = 'amax';
+
+    function cacheKey(val, mode) {
+      const scaleKey = mode === 'raw' ? currentScaling : mode;
+      return `${val}|${mode}|${scaleKey}`;
+    }
     function syncWiggleInit() {
       const el = document.getElementById('wiggle_density');
       if (!el) return;
@@ -1609,6 +1620,19 @@
       }
     }
 
+    function onScalingChange() {
+      const sel = document.getElementById('scalingMode');
+      const rawValue = (sel && typeof sel.value === 'string') ? sel.value.toLowerCase() : 'amax';
+      currentScaling = rawValue === 'tracewise' ? 'tracewise' : 'amax';
+      if (sel) sel.value = currentScaling;
+      try { localStorage.setItem('scaling_mode', currentScaling); } catch (_) {}
+      if (windowFetchCtrl) {
+        try { windowFetchCtrl.abort(); } catch (_) {}
+        windowFetchCtrl = null;
+      }
+      scheduleWindowFetch();
+    }
+
     function onWiggleDensityChange() {
       const el = document.getElementById('wiggle_density');
       const v = parseFloat(el?.value);
@@ -2070,6 +2094,7 @@
               step_x: '1', step_y: '1',
               transpose: '0',
             });
+            q.set('scaling', currentScaling);
             const res = await fetch(`/get_section_window_bin?${q.toString()}`, { signal: controller.signal });
             if (!res.ok) return;
             const bin = new Uint8Array(await res.arrayBuffer());
@@ -2100,6 +2125,11 @@
       currentFileId = params.get('file_id') || localStorage.getItem('file_id') || '';
       currentKey1Byte = parseInt(params.get('key1_byte') || localStorage.getItem('key1_byte') || '189');
       currentKey2Byte = parseInt(params.get('key2_byte') || localStorage.getItem('key2_byte') || '193');
+      const scalingParam = (params.get('scaling') || localStorage.getItem('scaling_mode') || 'amax').toLowerCase();
+      currentScaling = scalingParam === 'tracewise' ? 'tracewise' : 'amax';
+      try { localStorage.setItem('scaling_mode', currentScaling); } catch (_) {}
+      const scalingSel = document.getElementById('scalingMode');
+      if (scalingSel) scalingSel.value = currentScaling;
       document.getElementById('file_id').value = currentFileId;
       if (!currentFileId) {
         currentFileName = '';
@@ -2307,6 +2337,7 @@
           step_x: '1', step_y: '1',
           transpose: '0',
         });
+        qFull.set('scaling', currentScaling);
         const res = await fetch(`/get_section_window_bin?${qFull.toString()}`);
         if (!res.ok) {
           console.timeEnd('Fetch binary');
@@ -2853,6 +2884,7 @@
         params.set('tap_label', tapLabel);
       }
       params.set('transpose', '1');
+      params.set('scaling', currentScaling);
 
       const requestId = ++windowFetchToken;
 

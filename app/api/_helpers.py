@@ -7,12 +7,15 @@ from contextlib import suppress
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Tuple
 
+import logging
+import os
+
 import numpy as np
 from numpy.typing import NDArray
 from fastapi import HTTPException
 
 from app.utils.fbpick import _MODEL_PATH as FBPICK_MODEL_PATH
-from app.utils.segy_meta import FILE_REGISTRY, get_dt_for_file
+from app.utils.segy_meta import FILE_REGISTRY, get_dt_for_file, load_baseline
 from app.utils.utils import TraceStoreSectionReader
 
 if TYPE_CHECKING:
@@ -22,6 +25,12 @@ USE_FBPICK_OFFSET = 'offset' in FBPICK_MODEL_PATH.name.lower()
 OFFSET_BYTE_FIXED: int = 37
 
 EXPECTED_SECTION_NDIM = 2
+
+logger = logging.getLogger(__name__)
+
+NORM_EPS = np.float32(float(os.getenv('NORM_EPS', '1e-6')))
+
+_TRACE_STATS_CACHE: dict[tuple[str, int, int], tuple[np.ndarray, np.ndarray, int]] = {}
 
 
 def coerce_section_f32(arr: NDArray, scale: float | None) -> NDArray[np.float32]:
@@ -35,6 +44,113 @@ def coerce_section_f32(arr: NDArray, scale: float | None) -> NDArray[np.float32]
 	if not out.flags['C_CONTIGUOUS'] or out.dtype != np.float32:
 		out = np.ascontiguousarray(out, dtype=np.float32)
 	return out
+
+
+def apply_scaling_from_baseline(
+	arr: NDArray[np.float32],
+	scaling: str | None,
+	file_id: str,
+	key1_val: int,
+	store_dir: str | Path,
+) -> NDArray[np.float32]:
+	"""Normalize ``arr`` in-place using baseline statistics."""
+	mode = 'amax' if scaling is None else str(scaling)
+	mode = mode.lower()
+	if mode not in {'amax', 'tracewise'}:
+		raise HTTPException(status_code=400, detail='Unsupported scaling mode')
+	if not np.all(np.isfinite(arr)):
+		raise HTTPException(
+			status_code=422, detail='Section contains non-finite values'
+		)
+	try:
+		baseline = load_baseline(store_dir)
+	except FileNotFoundError as exc:
+		raise HTTPException(
+			status_code=500, detail='Baseline statistics not found'
+		) from exc
+	except ValueError as exc:
+		raise HTTPException(status_code=422, detail=str(exc)) from exc
+	except Exception as exc:
+		raise HTTPException(
+			status_code=500, detail='Failed to load baseline statistics'
+		) from exc
+	key1_int = int(key1_val)
+	index = baseline['key1_index'].get(key1_int)
+	if index is None:
+		raise HTTPException(
+			status_code=422, detail='Baseline statistics missing for key1 value'
+		)
+	if mode == 'amax':
+		mean = baseline['section_mean'][index]
+		inv_std = baseline['section_inv_std'][index]
+		if not (np.isfinite(mean) and np.isfinite(inv_std)):
+			raise HTTPException(
+				status_code=422, detail='Baseline statistics contain non-finite values'
+			)
+		arr -= mean
+		arr *= inv_std
+		if bool(baseline['section_clamp_mask'][index]):
+			logger.info(
+				'Section std clamped to eps for file_id=%s key1=%s', file_id, key1_int
+			)
+		return arr
+	spans = baseline['trace_spans'].get(key1_int)
+	if spans is None:
+		raise HTTPException(
+			status_code=422, detail='Baseline trace spans missing for key1 value'
+		)
+	n_traces = int(arr.shape[0])
+	total = 0
+	for start, end in spans:
+		total += int(end) - int(start)
+	if total != n_traces:
+		raise HTTPException(
+			status_code=422, detail='Trace span length mismatch for baseline'
+		)
+	store_key = baseline['store_key']
+	cache_key = (store_key, key1_int, n_traces)
+	cached = _TRACE_STATS_CACHE.get(cache_key)
+	if cached is None:
+		mean_vec = np.empty(n_traces, dtype=np.float32)
+		inv_vec = np.empty(n_traces, dtype=np.float32)
+		clamp_count = 0
+		offset = 0
+		trace_mean = baseline['trace_mean']
+		trace_inv = baseline['trace_inv_std']
+		trace_clamp_mask = baseline['trace_clamp_mask']
+		for start, end in spans:
+			start_i = int(start)
+			end_i = int(end)
+			if end_i <= start_i:
+				continue
+			length = end_i - start_i
+			mean_vec[offset : offset + length] = trace_mean[start_i:end_i]
+			inv_vec[offset : offset + length] = trace_inv[start_i:end_i]
+			if trace_clamp_mask.size:
+				clamp_count += int(np.count_nonzero(trace_clamp_mask[start_i:end_i]))
+			offset += length
+		if offset != n_traces:
+			raise HTTPException(
+				status_code=422, detail='Trace span length mismatch for baseline'
+			)
+		_TRACE_STATS_CACHE[cache_key] = (mean_vec, inv_vec, clamp_count)
+		if clamp_count:
+			logger.info(
+				'Trace std clamped to eps for %d entries (file_id=%s key1=%s)',
+				clamp_count,
+				file_id,
+				key1_int,
+			)
+		cached = _TRACE_STATS_CACHE[cache_key]
+	mean_vec, inv_vec, _ = cached
+	if not np.all(np.isfinite(mean_vec)) or not np.all(np.isfinite(inv_vec)):
+		raise HTTPException(
+			status_code=422,
+			detail='Baseline trace statistics contain non-finite values',
+		)
+	arr -= mean_vec[:, None]
+	arr *= inv_vec[:, None]
+	return arr
 
 
 class LRUCache(OrderedDict):
