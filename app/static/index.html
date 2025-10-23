@@ -564,7 +564,6 @@
     const ALWAYS_WINDOW_FIRST = true;
 
     const cache = new Map(); // key -> { f32: Float32Array }
-    const inflight = new Map();
     const CACHE_LIMIT = 12;
 
     const __pickOps = new Map();
@@ -1219,25 +1218,43 @@
     }
 
     function checkModeFlipAndRefetch() {
-      const desired = currentDesiredMode();
-      if (!desired) return;
+        const desired = currentDesiredMode();
+        if (!desired) return;
+          const cur = (latestWindowRender && latestWindowRender.mode) || null;
+        const plotDiv = document.getElementById('plot');
+        const win = currentVisibleWindow();
+        if (!plotDiv || !win) return;
 
-      const cur = (latestWindowRender && latestWindowRender.mode) || null;
+          if (desired === 'wiggle') {
+              // wiggle は step=1 前提。モード不一致 or step不一致 or ウィンドウ外なら再フェッチ
+                const needFresh =
+                    !latestWindowRender ||
+                    cur !== 'wiggle' ||
+                    latestWindowRender.stepX !== 1 ||
+                    latestWindowRender.stepY !== 1 ||
+                    latestWindowRender.x0 > win.x0 || latestWindowRender.x1 < win.x1 ||
+                    latestWindowRender.y0 > win.y0 || latestWindowRender.y1 < win.y1;
+              if (needFresh) scheduleWindowFetch();
+              return;
+            }
 
-      if (desired === 'wiggle') {
-        // wiggleは step_x=1/step_y=1 が前提。heatmapの粗サンプルを流用しない
+          // heatmap の場合：現在の可視窓と描画サイズから必要 step を再計算して比較
+          const { step_x, step_y } = computeStepsForWindow({
+  tracesVisible: win.nTraces,
+              samplesVisible: win.nSamples,
+              widthPx: plotDiv.clientWidth || 1,
+              heightPx: plotDiv.clientHeight || 1,
+            });
+
         const needFresh =
-          !latestWindowRender ||
-          cur !== 'wiggle' ||
-          latestWindowRender.stepX !== 1 ||
-          latestWindowRender.stepY !== 1;
+            !latestWindowRender ||
+            cur !== 'heatmap' ||
+            latestWindowRender.stepX !== step_x ||
+            latestWindowRender.stepY !== step_y ||
+            latestWindowRender.x0 > win.x0 || latestWindowRender.x1 < win.x1 ||
+            latestWindowRender.y0 > win.y0 || latestWindowRender.y1 < win.y1;
 
         if (needFresh) scheduleWindowFetch();
-      } else {
-        // heatmapへ切替も今のwindowがwiggleだったら取り直す（負荷を抑えるため）
-        const needFresh = !latestWindowRender || cur !== 'heatmap';
-        if (needFresh) scheduleWindowFetch();
-      }
     }
 
     // （任意：すでに入れているならそのままでOK）
@@ -2061,65 +2078,6 @@
       }
     }
 
-    function prefetchAround(centerIdx, mode) {
-      // Window-first mode: do not prefetch full-raw sections
-      return;
-      if (mode === 'fbprob') return;
-      const effectiveMode = mode === 'auto' ? 'raw' : mode;
-      if (effectiveMode !== 'raw') return;
-      for (const ctrl of inflight.values()) ctrl.abort();
-      inflight.clear();
-      const start = Math.max(0, centerIdx - cfg.PREFETCH_WIDTH);
-      const end = Math.min(key1Values.length - 1, centerIdx + cfg.PREFETCH_WIDTH);
-      const scheduler = cb => { ('requestIdleCallback' in window) ? requestIdleCallback(cb) : setTimeout(cb, 0); };
-      for (let i = start; i <= end; i++) {
-        if (i === centerIdx) continue;
-        const key1Val = key1Values[i];
-        const rawKey = cacheKey(key1Val, 'raw');
-        if (cache.has(rawKey) || inflight.has(rawKey)) continue;
-        const controller = new AbortController();
-        inflight.set(rawKey, controller);
-        scheduler(async () => {
-          try {
-            const meta = sectionShape || await fetchSectionMeta();
-            if (!meta) { console.warn('prefetch: missing sectionShape'); return; }
-            const [nTraces, nSamples] = meta;
-            const q = new URLSearchParams({
-              file_id: currentFileId,
-              key1_val: String(key1Val),
-              key1_byte: String(currentKey1Byte),
-              key2_byte: String(currentKey2Byte),
-              x0: '0', x1: String(nTraces - 1),
-              y0: '0', y1: String(nSamples - 1),
-              step_x: '1', step_y: '1',
-              transpose: '0',
-            });
-            q.set('scaling', currentScaling);
-            const res = await fetch(`/get_section_window_bin?${q.toString()}`, { signal: controller.signal });
-            if (!res.ok) return;
-            const bin = new Uint8Array(await res.arrayBuffer());
-            const obj = msgpack.decode(bin);
-            applyServerDt(obj);
-            const int8 = new Int8Array(obj.data.buffer);
-            const f32 = Float32Array.from(int8, v => v / obj.scale);
-            putCacheF32(rawKey, f32);
-            // Keep sectionShape from /get_section_meta only. Sanity-check payload shape if needed:
-            if (Array.isArray(sectionShape) && Array.isArray(obj.shape)) {
-              const [mt, ms] = sectionShape;
-              const [pt0, pt1] = obj.shape;
-              if ((pt0 * pt1) !== (mt * ms)) {
-                console.warn('shape mismatch vs meta', { meta: sectionShape, payload: obj.shape });
-              }
-            }
-          } catch (err) {
-            if (err.name !== 'AbortError') console.warn('Prefetch failed', key1Val, err);
-          } finally {
-            inflight.delete(rawKey);
-          }
-        });
-      }
-    }
-
     async function loadSettings() {
       const params = new URLSearchParams(window.location.search);
       currentFileId = params.get('file_id') || localStorage.getItem('file_id') || '';
@@ -2391,12 +2349,6 @@
         ? (savedXRange ? visibleTraceIndices(savedXRange, totalTraces) : [0, totalTraces - 1])
         : [0, 0];
       drawSelectedLayer(s, e);
-
-      // Pipeline execution: manual via ▶ Run button
-
-      console.time('Prefetch');
-      prefetchAround(index, 'raw');
-      console.timeEnd('Prefetch');
 
       console.timeEnd('Total fetchAndPlot');
       console.log('--- fetchAndPlot end ---');
@@ -3516,8 +3468,7 @@
           }
 
           cache.clear();
-          for (const ctrl of inflight.values()) ctrl.abort();
-          inflight.clear();
+
 
           await fetchCurrentFileName();
           await fetchKey1Values();
