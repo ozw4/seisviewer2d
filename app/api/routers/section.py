@@ -4,7 +4,8 @@ from __future__ import annotations
 
 import contextlib
 import gzip
-from typing import TYPE_CHECKING, Annotated, Any
+from pathlib import Path
+from typing import TYPE_CHECKING, Annotated, Any, Literal
 
 import msgpack
 import numpy as np
@@ -22,6 +23,7 @@ from app.api._helpers import (
 	OFFSET_BYTE_FIXED,
 	USE_FBPICK_OFFSET,
 	PipelineTapNotFoundError,
+	apply_scaling_from_baseline,
 	coerce_section_f32,
 	get_reader,
 	get_section_from_pipeline_tap,
@@ -257,8 +259,15 @@ def get_section_window_bin(
 	transpose: Annotated[bool, Query()] = True,
 	pipeline_key: Annotated[str | None, Query()] = None,
 	tap_label: Annotated[str | None, Query()] = None,
+	scaling: Annotated[
+		Literal['amax', 'tracewise'] | None, Query(description='Normalization mode')
+	] = None,
 ) -> Response:
 	"""Return a quantized window of a section, optionally via a pipeline tap."""
+	mode = 'amax' if scaling is None else scaling
+	mode = mode.lower()
+	if mode not in {'amax', 'tracewise'}:
+		raise HTTPException(status_code=400, detail='Unsupported scaling mode')
 	forced_offset_byte = OFFSET_BYTE_FIXED if USE_FBPICK_OFFSET else offset_byte
 	cache_key = (
 		file_id,
@@ -275,6 +284,7 @@ def get_section_window_bin(
 		transpose,
 		pipeline_key,
 		tap_label,
+		mode,
 	)
 
 	cached_payload = window_section_cache.get(cache_key)
@@ -285,6 +295,7 @@ def get_section_window_bin(
 			headers={'Content-Encoding': 'gzip'},
 		)
 
+	reader = None
 	try:
 		if pipeline_key and tap_label:
 			section_arr = get_section_from_pipeline_tap(
@@ -323,6 +334,32 @@ def get_section_window_bin(
 		raise HTTPException(status_code=400, detail='Requested window is empty')
 
 	prepared = coerce_section_f32(sub, section_view.scale)
+	registry_entry = FILE_REGISTRY.get(file_id)
+	store_dir: str | None = None
+	if isinstance(registry_entry, dict):
+		maybe_store = registry_entry.get('store_path')
+		if isinstance(maybe_store, str):
+			store_dir = maybe_store
+	else:
+		maybe_store = getattr(registry_entry, 'store_path', None)
+		if isinstance(maybe_store, (str, Path)):
+			store_dir = str(maybe_store)
+	if store_dir is None and reader is not None:
+		maybe_store = getattr(reader, 'store_dir', None)
+		if isinstance(maybe_store, (str, Path)):
+			store_dir = str(maybe_store)
+	if store_dir is None:
+		raise HTTPException(status_code=500, detail='Trace store path unavailable')
+	prepared = apply_scaling_from_baseline(
+		prepared,
+		mode,
+		file_id,
+		key1_val,
+		store_dir,
+		x0=x0,
+		x1=x1,
+		step_x=step_x,
+	)
 	view = prepared.T if transpose else prepared
 	window_view = np.ascontiguousarray(view, dtype=np.float32)
 	scale_val, q = quantize_float32(window_view)

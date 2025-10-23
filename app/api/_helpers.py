@@ -2,17 +2,19 @@
 
 from __future__ import annotations
 
+import logging
+import os
 from collections import OrderedDict
 from contextlib import suppress
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Tuple
+from typing import TYPE_CHECKING, Any
 
 import numpy as np
-from numpy.typing import NDArray
 from fastapi import HTTPException
+from numpy.typing import NDArray
 
 from app.utils.fbpick import _MODEL_PATH as FBPICK_MODEL_PATH
-from app.utils.segy_meta import FILE_REGISTRY, get_dt_for_file
+from app.utils.segy_meta import FILE_REGISTRY, get_dt_for_file, load_baseline
 from app.utils.utils import TraceStoreSectionReader
 
 if TYPE_CHECKING:
@@ -22,6 +24,12 @@ USE_FBPICK_OFFSET = 'offset' in FBPICK_MODEL_PATH.name.lower()
 OFFSET_BYTE_FIXED: int = 37
 
 EXPECTED_SECTION_NDIM = 2
+
+logger = logging.getLogger(__name__)
+
+NORM_EPS = np.float32(float(os.getenv('NORM_EPS', '1e-6')))
+
+_TRACE_STATS_CACHE: dict[tuple[str, int, int], tuple[np.ndarray, np.ndarray, int]] = {}
 
 
 def coerce_section_f32(arr: NDArray, scale: float | None) -> NDArray[np.float32]:
@@ -35,6 +43,104 @@ def coerce_section_f32(arr: NDArray, scale: float | None) -> NDArray[np.float32]
 	if not out.flags['C_CONTIGUOUS'] or out.dtype != np.float32:
 		out = np.ascontiguousarray(out, dtype=np.float32)
 	return out
+
+
+def apply_scaling_from_baseline(
+	arr: NDArray[np.float32],
+	scaling: str | None,
+	file_id: str,
+	key1_val: int,
+	store_dir: str | Path,
+	*,
+	x0: int,
+	x1: int,
+	step_x: int,
+) -> NDArray[np.float32]:
+	"""Normalize ``arr`` in-place using baseline statistics."""
+	mode = 'amax' if scaling is None else str(scaling)
+	mode = mode.lower()
+	if mode not in {'amax', 'tracewise'}:
+		raise HTTPException(status_code=400, detail='Unsupported scaling mode')
+	if not np.all(np.isfinite(arr)):
+		raise HTTPException(
+			status_code=422, detail='Section contains non-finite values'
+		)
+	try:
+		baseline = load_baseline(store_dir)
+	except FileNotFoundError as exc:
+		raise HTTPException(
+			status_code=500, detail='Baseline statistics not found'
+		) from exc
+	except ValueError as exc:
+		raise HTTPException(status_code=422, detail=str(exc)) from exc
+	except Exception as exc:
+		raise HTTPException(
+			status_code=500, detail='Failed to load baseline statistics'
+		) from exc
+	key1_int = int(key1_val)
+	index = baseline['key1_index'].get(key1_int)
+	if index is None:
+		raise HTTPException(
+			status_code=422, detail='Baseline statistics missing for key1 value'
+		)
+	if mode == 'amax':
+		mean = baseline['section_mean'][index]
+		inv_std = baseline['section_inv_std'][index]
+		if not (np.isfinite(mean) and np.isfinite(inv_std)):
+			raise HTTPException(
+				status_code=422, detail='Baseline statistics contain non-finite values'
+			)
+		arr -= mean
+		arr *= inv_std
+		if bool(baseline['section_clamp_mask'][index]):
+			logger.info(
+				'Section std clamped to eps for file_id=%s key1=%s', file_id, key1_int
+			)
+		return arr
+	spans = baseline['trace_spans'].get(key1_int)
+	if spans is None:
+		raise HTTPException(
+			status_code=422, detail='Baseline trace spans missing for key1 value'
+		)
+	store_key = baseline['store_key']
+	idx_full_key = (store_key, key1_int, 'idx_full')
+	idx_full = _TRACE_STATS_CACHE.get(idx_full_key)
+	if idx_full is None:
+		idx_full = np.concatenate(
+			[np.arange(int(s), int(e), dtype=np.int64) for (s, e) in spans]
+		)
+		_TRACE_STATS_CACHE[idx_full_key] = (idx_full, None, 0)  # slot reuse
+	else:
+		idx_full = idx_full[0]  # unpack tuple
+
+	# Window/stride selection within the section
+	n_traces = int(arr.shape[0])
+	if x0 < 0 or x1 < x0 or step_x < 1:
+		raise HTTPException(status_code=400, detail='Invalid window parameters')
+	sel = np.arange(0, idx_full.shape[0], dtype=np.int64)[x0 : x1 + 1 : step_x]
+	if sel.shape[0] != n_traces:
+		raise HTTPException(status_code=422, detail='Trace count mismatch for window')
+	sel_global = idx_full[sel]
+
+	# Gather per-trace stats for the selected window (cache by x0,x1,step_x)
+	trace_key = (store_key, key1_int, x0, x1, step_x)
+	cached = _TRACE_STATS_CACHE.get(trace_key)
+	if cached is None:
+		trace_mean = baseline['trace_mean']
+		trace_inv = baseline['trace_inv_std']
+		mean_vec = trace_mean[sel_global].astype(np.float32, copy=False)
+		inv_vec = trace_inv[sel_global].astype(np.float32, copy=False)
+		_TRACE_STATS_CACHE[trace_key] = (mean_vec, inv_vec, 0)
+		cached = _TRACE_STATS_CACHE[trace_key]
+	mean_vec, inv_vec, _ = cached
+	if not np.all(np.isfinite(mean_vec)) or not np.all(np.isfinite(inv_vec)):
+		raise HTTPException(
+			status_code=422,
+			detail='Baseline trace statistics contain non-finite values',
+		)
+	arr -= mean_vec[:, None]
+	arr *= inv_vec[:, None]
+	return arr
 
 
 class LRUCache(OrderedDict):
@@ -173,7 +279,7 @@ def get_section_and_meta_from_pipeline_tap(
 	pipeline_key: str,
 	tap_label: str,
 	offset_byte: int | None = None,
-) -> Tuple[np.ndarray, dict[str, Any] | None]:
+) -> tuple[np.ndarray, dict[str, Any] | None]:
 	"""Return tap payload as ``float32`` along with optional metadata."""
 	base_key = (file_id, key1_val, key1_byte, pipeline_key, None, offset_byte)
 	payload = pipeline_tap_cache.get((*base_key, tap_label))
@@ -234,7 +340,6 @@ def get_raw_section(
 
 
 __all__ = [
-	'coerce_section_f32',
 	'EXPECTED_SECTION_NDIM',
 	'OFFSET_BYTE_FIXED',
 	'USE_FBPICK_OFFSET',
@@ -243,13 +348,14 @@ __all__ = [
 	'_filename_for_file_id',
 	'_maybe_attach_fbpick_offsets',
 	'_pipeline_payload_to_array',
-	'get_section_and_meta_from_pipeline_tap',
 	'_spec_uses_fbpick',
 	'_update_file_registry',
 	'cached_readers',
+	'coerce_section_f32',
 	'fbpick_cache',
 	'get_raw_section',
 	'get_reader',
+	'get_section_and_meta_from_pipeline_tap',
 	'get_section_from_pipeline_tap',
 	'jobs',
 	'pipeline_tap_cache',
