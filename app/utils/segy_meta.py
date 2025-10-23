@@ -122,7 +122,8 @@ def load_baseline(store_dir: str | Path) -> dict[str, Any]:
 		)
 	safe_sigma_section = sigma_section.copy()
 	np.maximum(safe_sigma_section, NORM_EPS, out=safe_sigma_section)
-	inv_sigma_section = np.reciprocal(safe_sigma_section, dtype=np.float32)
+	inv_sigma_section = np.empty_like(safe_sigma_section, dtype=np.float32)
+	np.reciprocal(safe_sigma_section, out=inv_sigma_section)
 	mu_traces = np.ascontiguousarray(
 		np.asarray(payload.get('mu_traces'), dtype=np.float32)
 	)
@@ -144,7 +145,8 @@ def load_baseline(store_dir: str | Path) -> dict[str, Any]:
 		)
 	safe_sigma_traces = sigma_traces.copy()
 	np.maximum(safe_sigma_traces, NORM_EPS, out=safe_sigma_traces)
-	inv_sigma_traces = np.reciprocal(safe_sigma_traces, dtype=np.float32)
+	inv_sigma_traces = np.empty_like(safe_sigma_traces, dtype=np.float32)
+	np.reciprocal(safe_sigma_traces, out=inv_sigma_traces)
 	raw_spans = payload.get('trace_spans_by_key1') or {}
 	trace_spans: dict[int, list[tuple[int, int]]] = {}
 	for key_str, ranges in raw_spans.items():

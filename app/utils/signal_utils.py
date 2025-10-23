@@ -1,5 +1,9 @@
+import os
+
 import numpy as np
 import torch
+
+_NORM_EPS = float(os.getenv('NORM_EPS', '1e-6'))
 
 
 def zscore_per_trace_np(
@@ -21,28 +25,58 @@ def zscore_per_trace_np(
 
 
 def zscore_per_trace_tensor_b1hw(
-	x: torch.Tensor, eps: float = 1e-6, inplace: bool = False
-) -> torch.Tensor:
-	"""Z-score normalize per trace for x shaped (B, 1, H, W),
-	where H = #traces, W = #samples per trace.
-	Normalization is done along dim=-1 (W) for each (B, 1, H) slice.
-
-	Args:
-		x: Tensor of shape (B, 1, H, W). Prefer float32.
-		eps: Small floor for std to avoid division by zero.
-		inplace: If True, modify x in-place (may conflict with autograd).
-
-	Returns:
-		Tensor of same shape, z-scored per trace.
-
+	x: torch.Tensor,
+	*,
+	inplace: bool = False,
+	eps: float | None = None,
+) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
 	"""
-	if x.dtype != torch.float32:
-		x = x.to(torch.float32)  # keep it simple & stable
+	Per-trace z-score along W (samples) for input x of shape (B,1,H,W).
+	- H: number of traces
+	- W: number of samples per trace
+	Returns:
+	  xn:      normalized tensor, shape (B,1,H,W)
+	  mean:    per-trace mean,   shape (B,1,H,1)
+	  inv_std: per-trace 1/std,  shape (B,1,H,1)
+	"""
+	if x.ndim != 4 or x.size(1) != 1:
+		raise ValueError('expected x shape (B,1,H,W)')
 
-	mean = x.mean(dim=-1, keepdim=True)
-	std = x.std(dim=-1, keepdim=True, unbiased=False).clamp_min(eps)
+	eps_val = float(_NORM_EPS if eps is None else eps)
+	device, dtype = x.device, x.dtype
 
-	if inplace:
-		x.sub_(mean).div_(std)
-		return x
-	return (x - mean) / std
+	# 統計は W 次元（dim=3）で計算（各トレースごと）
+	# mean:(B,1,H,1), std:(B,1,H,1)
+	mean = x.mean(dim=3, keepdim=True)
+	# var = E[(x-mean)^2]（不偏なし）→ sqrt
+	std = (x - mean).pow(2).mean(dim=3, keepdim=True)
+	std.sqrt_()  # in-place sqrt
+	std.clamp_min_(eps_val)  # 0 除算回避（ε 導入）
+
+	inv_std = std.reciprocal()  # 逆数を前計算（以後は乗算のみ）
+
+	# 正規化（in-place / 非 in-place 選択）
+	xn = x if inplace else x.clone()
+	xn.add_(-mean).mul_(inv_std)
+	return xn, mean, inv_std
+
+
+@torch.no_grad()
+def denorm_per_trace_tensor_b1hw(
+	y: torch.Tensor,
+	mean: torch.Tensor,
+	inv_std: torch.Tensor,
+	*,
+	inplace: bool = False,
+) -> torch.Tensor:
+	"""
+	Inverse of per-trace z-score: y*std + mean, where std = 1/inv_std.
+	All tensors are (B,1,H,*) with mean/inv_std shaped (B,1,H,1).
+	"""
+	if y.ndim != 4 or mean.ndim != 4 or inv_std.ndim != 4:
+		raise ValueError('expected (B,1,H,*) tensors for y, mean, inv_std')
+
+	std = inv_std.reciprocal()
+	out = y if inplace else y.clone()
+	out.mul_(std).add_(mean)
+	return out
