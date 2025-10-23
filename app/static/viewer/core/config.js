@@ -4,7 +4,7 @@ export const cfg = {
   HARD_LIMIT_BYTES: 512 * 1024 * 1024,
   WINDOW_FETCH_DEBOUNCE_MS: 120,
   FETCH_DEBOUNCE_MS: 200,
-  WINDOW_MAX_POINTS: 1_200_000,
+  WINDOW_MAX_POINTS: 5_000_000,
   LS_KEYS: { DT: 'segy.dt', WIGGLE_DENSITY: 'wiggle_density', DRAG_BASE: 'drag_base' },
 
   getDefaultDt() {
