@@ -8,7 +8,7 @@ import torch
 
 from .model import NetAE
 from .predict import cover_all_traces_predict_chunked
-from .signal_utils import zscore_per_trace_tensor_b1hw
+from .signal_utils import denorm_per_trace_tensor_b1hw, zscore_per_trace_tensor_b1hw
 
 __all__ = ['denoise_tensor', 'get_model']
 
@@ -63,9 +63,9 @@ def denoise_tensor(
 	if x.dim() != expected_dim or x.size(1) != 1:
 		msg = 'x must be (B,1,H,W)'
 		raise ValueError(msg)
-	x = zscore_per_trace_tensor_b1hw(x, inplace=False)
+	xn, mean, inv_std = zscore_per_trace_tensor_b1hw(x, eps=1e-6)
 	model = get_model()
-	xt = x.to(_DEVICE)
+	xt = xn.to(_DEVICE)
 	yt = cover_all_traces_predict_chunked(
 		model,
 		xt,
@@ -79,4 +79,7 @@ def denoise_tensor(
 		seed=seed,
 		passes_batch=passes_batch,
 	)
-	return yt.cpu()
+	y_restored = denorm_per_trace_tensor_b1hw(
+		yt, mean=mean.to(yt.device), inv_std=inv_std.to(yt.device)
+	)
+	return y_restored.cpu()
