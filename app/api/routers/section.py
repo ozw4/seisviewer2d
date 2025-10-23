@@ -356,6 +356,9 @@ def get_section_window_bin(
 		file_id,
 		key1_val,
 		store_dir,
+		x0=x0,
+		x1=x1,
+		step_x=step_x,
 	)
 	view = prepared.T if transpose else prepared
 	window_view = np.ascontiguousarray(view, dtype=np.float32)

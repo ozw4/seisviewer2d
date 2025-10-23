@@ -2,17 +2,16 @@
 
 from __future__ import annotations
 
+import logging
+import os
 from collections import OrderedDict
 from contextlib import suppress
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Tuple
-
-import logging
-import os
+from typing import TYPE_CHECKING, Any
 
 import numpy as np
-from numpy.typing import NDArray
 from fastapi import HTTPException
+from numpy.typing import NDArray
 
 from app.utils.fbpick import _MODEL_PATH as FBPICK_MODEL_PATH
 from app.utils.segy_meta import FILE_REGISTRY, get_dt_for_file, load_baseline
@@ -52,6 +51,10 @@ def apply_scaling_from_baseline(
 	file_id: str,
 	key1_val: int,
 	store_dir: str | Path,
+	*,
+	x0: int,
+	x1: int,
+	step_x: int,
 ) -> NDArray[np.float32]:
 	"""Normalize ``arr`` in-place using baseline statistics."""
 	mode = 'amax' if scaling is None else str(scaling)
@@ -99,49 +102,36 @@ def apply_scaling_from_baseline(
 		raise HTTPException(
 			status_code=422, detail='Baseline trace spans missing for key1 value'
 		)
-	n_traces = int(arr.shape[0])
-	total = 0
-	for start, end in spans:
-		total += int(end) - int(start)
-	if total != n_traces:
-		raise HTTPException(
-			status_code=422, detail='Trace span length mismatch for baseline'
-		)
 	store_key = baseline['store_key']
-	cache_key = (store_key, key1_int, n_traces)
-	cached = _TRACE_STATS_CACHE.get(cache_key)
+	idx_full_key = (store_key, key1_int, 'idx_full')
+	idx_full = _TRACE_STATS_CACHE.get(idx_full_key)
+	if idx_full is None:
+		idx_full = np.concatenate(
+			[np.arange(int(s), int(e), dtype=np.int64) for (s, e) in spans]
+		)
+		_TRACE_STATS_CACHE[idx_full_key] = (idx_full, None, 0)  # slot reuse
+	else:
+		idx_full = idx_full[0]  # unpack tuple
+
+	# Window/stride selection within the section
+	n_traces = int(arr.shape[0])
+	if x0 < 0 or x1 < x0 or step_x < 1:
+		raise HTTPException(status_code=400, detail='Invalid window parameters')
+	sel = np.arange(0, idx_full.shape[0], dtype=np.int64)[x0 : x1 + 1 : step_x]
+	if sel.shape[0] != n_traces:
+		raise HTTPException(status_code=422, detail='Trace count mismatch for window')
+	sel_global = idx_full[sel]
+
+	# Gather per-trace stats for the selected window (cache by x0,x1,step_x)
+	trace_key = (store_key, key1_int, x0, x1, step_x)
+	cached = _TRACE_STATS_CACHE.get(trace_key)
 	if cached is None:
-		mean_vec = np.empty(n_traces, dtype=np.float32)
-		inv_vec = np.empty(n_traces, dtype=np.float32)
-		clamp_count = 0
-		offset = 0
 		trace_mean = baseline['trace_mean']
 		trace_inv = baseline['trace_inv_std']
-		trace_clamp_mask = baseline['trace_clamp_mask']
-		for start, end in spans:
-			start_i = int(start)
-			end_i = int(end)
-			if end_i <= start_i:
-				continue
-			length = end_i - start_i
-			mean_vec[offset : offset + length] = trace_mean[start_i:end_i]
-			inv_vec[offset : offset + length] = trace_inv[start_i:end_i]
-			if trace_clamp_mask.size:
-				clamp_count += int(np.count_nonzero(trace_clamp_mask[start_i:end_i]))
-			offset += length
-		if offset != n_traces:
-			raise HTTPException(
-				status_code=422, detail='Trace span length mismatch for baseline'
-			)
-		_TRACE_STATS_CACHE[cache_key] = (mean_vec, inv_vec, clamp_count)
-		if clamp_count:
-			logger.info(
-				'Trace std clamped to eps for %d entries (file_id=%s key1=%s)',
-				clamp_count,
-				file_id,
-				key1_int,
-			)
-		cached = _TRACE_STATS_CACHE[cache_key]
+		mean_vec = trace_mean[sel_global].astype(np.float32, copy=False)
+		inv_vec = trace_inv[sel_global].astype(np.float32, copy=False)
+		_TRACE_STATS_CACHE[trace_key] = (mean_vec, inv_vec, 0)
+		cached = _TRACE_STATS_CACHE[trace_key]
 	mean_vec, inv_vec, _ = cached
 	if not np.all(np.isfinite(mean_vec)) or not np.all(np.isfinite(inv_vec)):
 		raise HTTPException(
@@ -289,7 +279,7 @@ def get_section_and_meta_from_pipeline_tap(
 	pipeline_key: str,
 	tap_label: str,
 	offset_byte: int | None = None,
-) -> Tuple[np.ndarray, dict[str, Any] | None]:
+) -> tuple[np.ndarray, dict[str, Any] | None]:
 	"""Return tap payload as ``float32`` along with optional metadata."""
 	base_key = (file_id, key1_val, key1_byte, pipeline_key, None, offset_byte)
 	payload = pipeline_tap_cache.get((*base_key, tap_label))
@@ -350,7 +340,6 @@ def get_raw_section(
 
 
 __all__ = [
-	'coerce_section_f32',
 	'EXPECTED_SECTION_NDIM',
 	'OFFSET_BYTE_FIXED',
 	'USE_FBPICK_OFFSET',
@@ -359,13 +348,14 @@ __all__ = [
 	'_filename_for_file_id',
 	'_maybe_attach_fbpick_offsets',
 	'_pipeline_payload_to_array',
-	'get_section_and_meta_from_pipeline_tap',
 	'_spec_uses_fbpick',
 	'_update_file_registry',
 	'cached_readers',
+	'coerce_section_f32',
 	'fbpick_cache',
 	'get_raw_section',
 	'get_reader',
+	'get_section_and_meta_from_pipeline_tap',
 	'get_section_from_pipeline_tap',
 	'jobs',
 	'pipeline_tap_cache',
