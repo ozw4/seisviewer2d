@@ -1240,7 +1240,7 @@
 
           // heatmap の場合：現在の可視窓と描画サイズから必要 step を再計算して比較
           const { step_x, step_y } = computeStepsForWindow({
-  tracesVisible: win.nTraces,
+              tracesVisible: win.nTraces,
               samplesVisible: win.nSamples,
               widthPx: plotDiv.clientWidth || 1,
               heightPx: plotDiv.clientHeight || 1,
