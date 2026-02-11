@@ -17,9 +17,7 @@ from .model_utils import inflate_input_convs_to_2ch
 __all__ = ['_MODEL_PATH', 'infer_prob_map', 'make_offset_channel']
 
 _MODEL_PATH = (
-	Path(__file__).resolve().parents[2]
-	/ 'model'
-	/ 'fbpick_edgenext_small_mobara_tr1.pth'
+	Path(__file__).resolve().parents[2] / 'model' / 'fbpick_edgenext_small.pth'
 )
 
 
