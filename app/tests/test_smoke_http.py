@@ -51,12 +51,8 @@ def test_router_modules_present_and_no_leftovers():
 		'app.api.routers.section',
 		'app.api.routers.pipeline',
 		'app.api.routers.fbpick',
+		'app.api.routers.fbpick_predict',
 		'app.api.routers.picks',
 	}
 	missing = expected - mods
 	assert not missing, f'Missing router modules: {missing}'
-
-	leftovers = [r for r in routes if r.endpoint.__module__ == 'app.api.endpoints']
-	assert not leftovers, (
-		f'Leftover routes in app.api.endpoints: {[r.path for r in leftovers]}'
-	)

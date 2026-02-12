@@ -191,8 +191,8 @@ Endpoints:
 app/
   main.py                 # FastAPI app + static mounting
   api/
-    endpoints.py          # legacy aggregator for routers
     routers/              # upload/section/pipeline/picks/fbpick
+    _helpers.py           # shared state/cache helpers (to be refactored)
     baselines.py          # raw baseline stats used for scaling
     schemas.py            # pydantic models for requests/responses
   static/                 # HTML/JS viewer served at / and /upload
