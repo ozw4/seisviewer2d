@@ -1,10 +1,9 @@
-import os
 from pathlib import Path
 
 import numpy as np
 from numpy.lib.format import open_memmap
 
-DEFAULT_PICKS_NPY_DIR = '/workspace/app_data/picks_npy'
+from app.core.paths import get_picks_npy_dir
 
 DTYPE = np.float32
 NAN = np.float32(np.nan)
@@ -15,7 +14,7 @@ def _safe(name: str) -> str:
 
 
 def get_root_dir() -> Path:
-	return Path(os.getenv('PICKS_NPY_DIR', DEFAULT_PICKS_NPY_DIR))
+	return get_picks_npy_dir()
 
 
 def ensure_root_dir() -> Path:

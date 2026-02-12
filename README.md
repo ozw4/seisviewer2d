@@ -175,8 +175,20 @@ For “picks from probability” (server-side):
 
 Manual picks are stored in a memmapped `.npy` file per dataset.
 
-- Default storage: `PICKS_NPY_DIR=/workspace/app_data/picks_npy`
-- Override by setting the `PICKS_NPY_DIR` environment variable.
+- `PICKS_NPY_DIR` (highest priority): direct override for memmap files.
+- Default when unset: `<app_data_dir>/picks_npy`
+
+Pipeline job artifacts are persisted on disk.
+
+- `PIPELINE_JOBS_DIR` (highest priority): direct override for pipeline artifacts.
+- Default when unset: `<app_data_dir>/pipeline_jobs`
+
+`<app_data_dir>` is resolved in this order:
+
+- `SV_APP_DATA_DIR`
+- `RUNNER_TEMP/seisviewer2d_app_data` (CI-friendly default)
+- `XDG_CACHE_HOME/seisviewer2d`
+- `~/.cache/seisviewer2d`
 
 Endpoints:
 

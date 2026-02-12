@@ -13,27 +13,19 @@ from typing import Any
 
 import msgpack
 
+from app.core.paths import get_pipeline_jobs_dir
+
 _SAFE_LABEL_RE = re.compile(r'[^A-Za-z0-9._-]+')
 logger = logging.getLogger(__name__)
 
-_DEFAULT_PIPELINE_JOBS_DIR = (
-	Path(__file__).resolve().parent.parent
-	/ 'api'
-	/ 'uploads'
-	/ 'processed'
-	/ 'pipeline_jobs'
-)
 _DEFAULT_TTL_HOURS = 48
 _DEFAULT_CLEANUP_INTERVAL_SEC = 600
 _last_cleanup_ts = 0.0
 
 
 def get_pipeline_jobs_base_dir() -> Path:
-	"""Return the base directory for persisted pipeline job artifacts."""
-	override = os.getenv('PIPELINE_JOBS_DIR')
-	if override:
-		return Path(override).expanduser()
-	return _DEFAULT_PIPELINE_JOBS_DIR
+	"""Compatibility wrapper for the pipeline artifacts base directory."""
+	return get_pipeline_jobs_dir()
 
 
 def get_job_dir(job_id: str) -> Path:
