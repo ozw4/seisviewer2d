@@ -21,7 +21,7 @@ def _set_prob(monkeypatch, prob, dt=0.004, source='raw'):
 		prob=np.asarray(prob, dtype=np.float32), dt=dt, source=source
 	)
 
-	def _fake_loader(_req):
+	def _fake_loader(_req, *, state=None):
 		return payload
 
 	monkeypatch.setattr(fbpick_predict_mod, '_load_probability_map', _fake_loader)

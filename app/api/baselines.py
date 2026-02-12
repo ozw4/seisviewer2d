@@ -9,12 +9,16 @@ from contextlib import contextmanager, suppress
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import numpy as np
 
-from app.api._helpers import cached_readers, get_reader
+from app.api._helpers import get_reader, get_state
+from app.core.state import AppState
 from app.utils.segy_meta import FILE_REGISTRY, get_dt_for_file
+
+if TYPE_CHECKING:
+	from fastapi import FastAPI
 
 BASELINE_STAGE_RAW = 'raw'
 BASELINE_FILENAME_RAW = 'baseline_raw.json'
@@ -293,8 +297,9 @@ def _compute_baseline(
 	artifacts: _TraceStoreArtifacts,
 	key1_byte: int,
 	key2_byte: int,
+	state: AppState,
 ) -> dict[str, Any]:
-	reader = get_reader(file_id, key1_byte, key2_byte)
+	reader = get_reader(file_id, key1_byte, key2_byte, state=state)
 	traces = getattr(reader, 'traces', None)
 	if not isinstance(traces, np.ndarray):
 		raise BaselineComputationError('TraceStore reader did not expose traces array')
@@ -339,9 +344,14 @@ def _compute_baseline(
 
 
 def get_or_create_raw_baseline(
-	*, file_id: str, key1_byte: int, key2_byte: int
+	*,
+	file_id: str,
+	key1_byte: int,
+	key2_byte: int,
+	app: FastAPI,
 ) -> dict[str, Any]:
 	"""Return the cached raw baseline for ``file_id`` computing it if required."""
+	state = get_state(app)
 	artifacts = _load_trace_store_artifacts(file_id)
 	meta = artifacts.meta
 	expected_sha = meta.get('source_sha256')
@@ -364,12 +374,13 @@ def get_or_create_raw_baseline(
 		raise BaselineComputationError('Baseline computation is already in progress')
 	try:
 		cache_key = f'{file_id}_{int(key1_byte)}_{int(key2_byte)}'
-		cached_readers.pop(cache_key, None)
+		state.cached_readers.pop(cache_key, None)
 		payload = _compute_baseline(
 			file_id=file_id,
 			artifacts=artifacts,
 			key1_byte=key1_byte,
 			key2_byte=key2_byte,
+			state=state,
 		)
 		_write_baseline(artifacts.store_path, payload)
 		return payload

@@ -7,7 +7,7 @@ pytest.importorskip('httpx')
 from fastapi.testclient import TestClient
 
 from app.api.baselines import BASELINE_FILENAME_RAW, get_or_create_raw_baseline
-from app.api._helpers import cached_readers
+from app.api._helpers import get_state
 from app.main import app
 from app.utils.segy_meta import FILE_REGISTRY
 
@@ -48,9 +48,9 @@ def sample_store(tmp_path):
 	(store / 'meta.json').write_text(json.dumps(meta), encoding='utf-8')
 	file_id = 'file_test'
 	FILE_REGISTRY[file_id] = {'store_path': str(store), 'dt': 0.004}
-	cached_readers.clear()
+	get_state(app).cached_readers.clear()
 	yield file_id, store
-	cached_readers.clear()
+	get_state(app).cached_readers.clear()
 	FILE_REGISTRY.pop(file_id, None)
 	baseline_path = store / BASELINE_FILENAME_RAW
 	if baseline_path.exists():
@@ -63,6 +63,7 @@ def test_get_or_create_raw_baseline(sample_store):
 		file_id=file_id,
 		key1_byte=189,
 		key2_byte=193,
+		app=app,
 	)
 	assert baseline['stage'] == 'raw'
 	assert baseline['ddof'] == 0
@@ -97,21 +98,29 @@ def test_get_or_create_raw_baseline(sample_store):
 
 def test_baseline_recompute_on_source_change(sample_store):
 	file_id, store = sample_store
-	first = get_or_create_raw_baseline(file_id=file_id, key1_byte=189, key2_byte=193)
+	first = get_or_create_raw_baseline(
+		file_id=file_id, key1_byte=189, key2_byte=193, app=app
+	)
 	meta_path = store / 'meta.json'
 	meta = json.loads(meta_path.read_text(encoding='utf-8'))
 	meta['source_sha256'] = 'sha2'
 	meta_path.write_text(json.dumps(meta), encoding='utf-8')
-	cached_readers.clear()
-	second = get_or_create_raw_baseline(file_id=file_id, key1_byte=189, key2_byte=193)
+	get_state(app).cached_readers.clear()
+	second = get_or_create_raw_baseline(
+		file_id=file_id, key1_byte=189, key2_byte=193, app=app
+	)
 	assert second['source_sha256'] == 'sha2'
 	assert second['computed_at'] != first['computed_at']
 
 
 def test_baseline_recompute_on_key1_byte_change(sample_store):
 	file_id, _ = sample_store
-	first = get_or_create_raw_baseline(file_id=file_id, key1_byte=189, key2_byte=193)
-	second = get_or_create_raw_baseline(file_id=file_id, key1_byte=200, key2_byte=193)
+	first = get_or_create_raw_baseline(
+		file_id=file_id, key1_byte=189, key2_byte=193, app=app
+	)
+	second = get_or_create_raw_baseline(
+		file_id=file_id, key1_byte=200, key2_byte=193, app=app
+	)
 	assert second['key1_byte'] == 200
 	assert second['computed_at'] != first['computed_at']
 
@@ -122,8 +131,10 @@ def test_baseline_partition_matches_requested_key1(sample_store):
 	new_headers = np.array([5, 15, 15], dtype=np.int32)
 	with open(store / 'headers_byte_200.npy', 'wb') as fh:
 		np.save(fh, new_headers)
-	cached_readers.clear()
-	baseline = get_or_create_raw_baseline(file_id=file_id, key1_byte=200, key2_byte=193)
+	get_state(app).cached_readers.clear()
+	baseline = get_or_create_raw_baseline(
+		file_id=file_id, key1_byte=200, key2_byte=193, app=app
+	)
 	assert baseline['key1_values'] == [5, 15]
 	assert baseline['trace_spans_by_key1'] == {'5': [[0, 1]], '15': [[1, 3]]}
 	mu_sections = baseline['mu_section_by_key1']

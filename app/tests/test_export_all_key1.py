@@ -32,13 +32,13 @@ def test_export_all_key1_basic(monkeypatch):
 
 	# ルータが必ず get_reader(...) を呼ぶため、先にパッチ
 	monkeypatch.setattr(
-		ep, 'get_reader', lambda file_id, key1_byte, key2_byte: FakeReader()
+		ep, 'get_reader', lambda file_id, key1_byte, key2_byte, state=None: FakeReader()
 	)
 	monkeypatch.setattr(ep, '_filename_for_file_id', lambda file_id: 'lineA.sgy')
 	monkeypatch.setattr(ep, 'get_dt_for_file', lambda file_id: 0.004)  # 4 ms
-	monkeypatch.setattr(ep, 'get_ntraces_for', lambda file_id: 5)
+	monkeypatch.setattr(ep, 'get_ntraces_for', lambda file_id, state=None: 5)
 
-	def fake_get_trace_seq(file_id, key1_val, key1_byte):
+	def fake_get_trace_seq(file_id, key1_val, key1_byte, state=None):
 		if key1_val == 100:
 			return np.array([0, 1, 2], dtype=np.int64)
 		if key1_val == 200:
@@ -107,15 +107,15 @@ def test_export_all_key1_empty_is_all_minus1(monkeypatch):
 
 	# ---- monkeypatch を全部先に当てる ----
 	monkeypatch.setattr(
-		ep, 'get_reader', lambda file_id, key1_byte, key2_byte: FakeReader()
+		ep, 'get_reader', lambda file_id, key1_byte, key2_byte, state=None: FakeReader()
 	)
 	monkeypatch.setattr(ep, '_filename_for_file_id', lambda file_id: 'lineB.sgy')
 	monkeypatch.setattr(ep, 'get_dt_for_file', lambda file_id: 0.002)
-	monkeypatch.setattr(ep, 'get_ntraces_for', lambda file_id: 2)
+	monkeypatch.setattr(ep, 'get_ntraces_for', lambda file_id, state=None: 2)
 	monkeypatch.setattr(
 		ep,
 		'get_trace_seq_for_value',
-		lambda file_id, key1_val, key1_byte: np.array([0, 1], dtype=np.int64),
+		lambda file_id, key1_val, key1_byte, state=None: np.array([0, 1], dtype=np.int64),
 	)
 	monkeypatch.setattr(ep, 'to_pairs_for_section', lambda *args, **kwargs: [])
 

@@ -16,18 +16,20 @@ from app.api.routers import (
 	section_router,
 	upload_router,
 )
-from app.core.state import DEFAULT_STATE
+from app.core.state import AppState, create_app_state
 
 STATIC_DIR = (Path(__file__).parent / 'static').resolve()
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
-	app.state.sv = DEFAULT_STATE
+	if not isinstance(getattr(app.state, 'sv', None), AppState):
+		app.state.sv = create_app_state()
 	yield
 
 
 app = FastAPI(lifespan=lifespan)
+app.state.sv = create_app_state()
 
 # 静的ファイル (HTML, JS)
 app.mount(

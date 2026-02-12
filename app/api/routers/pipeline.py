@@ -9,7 +9,7 @@ from typing import Annotated, Any
 from uuid import uuid4
 
 import numpy as np
-from fastapi import APIRouter, Body, HTTPException, Query
+from fastapi import APIRouter, Body, HTTPException, Query, Request
 from pydantic import BaseModel, Field
 
 from app.api._helpers import (
@@ -18,8 +18,7 @@ from app.api._helpers import (
 	_maybe_attach_fbpick_offsets,
 	coerce_section_f32,
 	get_reader,
-	jobs,
-	pipeline_tap_cache,
+	get_state,
 )
 from app.api.schemas import (
 	PipelineAllResponse,
@@ -33,6 +32,7 @@ from app.services.pipeline_artifacts import (
 	read_artifact,
 	write_artifact,
 )
+from app.core.state import AppState
 from app.utils.pipeline import apply_pipeline, pipeline_key
 from app.utils.utils import to_builtin
 
@@ -49,11 +49,13 @@ class PipelineAllRequest(BaseModel):
 	downsample_quicklook: bool = True
 
 
-def _run_pipeline_all_job(job_id: str, req: PipelineAllRequest, pipe_key: str) -> None:
-	job = jobs[job_id]
+def _run_pipeline_all_job(
+	job_id: str, req: PipelineAllRequest, pipe_key: str, state: AppState
+) -> None:
+	job = state.jobs[job_id]
 	job['status'] = 'running'
 	try:
-		reader = get_reader(req.file_id, req.key1_byte, req.key2_byte)
+		reader = get_reader(req.file_id, req.key1_byte, req.key2_byte, state=state)
 		key1_vals = reader.get_key1_values().tolist()
 		total = len(key1_vals) or 1
 		taps = req.taps
@@ -92,7 +94,7 @@ def _run_pipeline_all_job(job_id: str, req: PipelineAllRequest, pipe_key: str) -
 					val = v[::4, ::4]
 				payload_obj = to_builtin(val)
 				print('PIPELINE_CACHE_SET all', (*base_key, k))
-				pipeline_tap_cache.set((*base_key, k), payload_obj)
+				state.pipeline_tap_cache.set((*base_key, k), payload_obj)
 				write_artifact(
 					job_id=job_id,
 					key1_val=int(key1_val),
@@ -110,6 +112,7 @@ def _run_pipeline_all_job(job_id: str, req: PipelineAllRequest, pipe_key: str) -
 
 @router.post('/pipeline/section', response_model=PipelineSectionResponse)
 def pipeline_section(
+	request: Request,
 	file_id: Annotated[str, Query(...)],
 	key1_val: Annotated[int, Query(...)],
 	spec: Annotated[PipelineSpec, Body(...)],
@@ -120,7 +123,8 @@ def pipeline_section(
 	window: Annotated[dict[str, int | float] | None, Body()] = None,
 	list_only: Annotated[bool, Query()] = False,
 ):
-	reader = get_reader(file_id, key1_byte, key2_byte)
+	state = get_state(request.app)
+	reader = get_reader(file_id, key1_byte, key2_byte, state=state)
 	view = reader.get_section(key1_val)
 	section = coerce_section_f32(view.arr, view.scale)
 
@@ -185,7 +189,7 @@ def pipeline_section(
 		# 既存 cache を確認し、無いものだけ計算
 		misses: list[str] = []
 		for label in labels:
-			payload = pipeline_tap_cache.get((*base_key, label))
+			payload = state.pipeline_tap_cache.get((*base_key, label))
 			if payload is None:
 				misses.append(label)
 
@@ -193,7 +197,7 @@ def pipeline_section(
 			out = apply_pipeline(section, spec=spec, meta=meta, taps=misses)
 			for k, v in out.items():
 				val = to_builtin(v)
-				pipeline_tap_cache.set((*base_key, k), val)
+				state.pipeline_tap_cache.set((*base_key, k), val)
 
 		# レスポンスは軽量（ラベル存在のみ）
 		return {'taps': dict.fromkeys(labels, True), 'pipeline_key': pipe_key}
@@ -213,7 +217,7 @@ def pipeline_section(
 
 		for tap in tap_names:
 			print('PIPELINE_CACHE_GET pipelinesection', (*base_key, tap))
-			payload = pipeline_tap_cache.get((*base_key, tap))
+			payload = state.pipeline_tap_cache.get((*base_key, tap))
 			if payload is not None:
 				taps_out[tap] = payload
 			else:
@@ -224,7 +228,7 @@ def pipeline_section(
 			for k, v in out.items():
 				val = to_builtin(v)
 				taps_out[k] = val
-				pipeline_tap_cache.set((*base_key, k), val)
+				state.pipeline_tap_cache.set((*base_key, k), val)
 
 		return {'taps': taps_out, 'pipeline_key': pipe_key}
 
@@ -234,6 +238,7 @@ def pipeline_section(
 
 @router.post('/pipeline/all', response_model=PipelineAllResponse)
 def pipeline_all(
+	request: Request,
 	file_id: Annotated[str, Query(...)],
 	spec: Annotated[PipelineSpec, Body(...)],
 	key1_byte: Annotated[int, Query()] = 189,
@@ -242,6 +247,7 @@ def pipeline_all(
 	offset_byte: Annotated[int | None, Query()] = None,  # pass-throughで受ける
 	taps: Annotated[list[str] | None, Body()] = None,
 ):
+	state = get_state(request.app)
 	maybe_cleanup_expired_jobs()
 
 	tap_names = taps or []
@@ -266,7 +272,7 @@ def pipeline_all(
 	job_id = str(uuid4())
 	pipe_key = pipeline_key(spec)
 
-	jobs[job_id] = {
+	state.jobs[job_id] = {
 		'status': 'queued',
 		'progress': 0.0,
 		'message': '',
@@ -278,15 +284,16 @@ def pipeline_all(
 	}
 
 	threading.Thread(
-		target=_run_pipeline_all_job, args=(job_id, req, pipe_key), daemon=True
+		target=_run_pipeline_all_job, args=(job_id, req, pipe_key, state), daemon=True
 	).start()
 
-	return {'job_id': job_id, 'state': jobs[job_id]['status']}
+	return {'job_id': job_id, 'state': state.jobs[job_id]['status']}
 
 
 @router.get('/pipeline/job/{job_id}/status', response_model=PipelineJobStatusResponse)
-def pipeline_job_status(job_id: str) -> PipelineJobStatusResponse:
-	job = jobs.get(job_id)
+def pipeline_job_status(request: Request, job_id: str) -> PipelineJobStatusResponse:
+	state = get_state(request.app)
+	job = state.jobs.get(job_id)
 	if job is None:
 		raise HTTPException(status_code=404, detail='Job ID not found')
 	return {
@@ -298,11 +305,13 @@ def pipeline_job_status(job_id: str) -> PipelineJobStatusResponse:
 
 @router.get('/pipeline/job/{job_id}/artifact', response_model=Any)
 def pipeline_job_artifact(
+	request: Request,
 	job_id: str,
 	key1_val: Annotated[int, Query(...)],
 	tap: Annotated[str, Query(...)],
 ):
-	job = jobs.get(job_id)
+	state = get_state(request.app)
+	job = state.jobs.get(job_id)
 	if job is None:
 		raise HTTPException(status_code=404, detail='Job ID not found')
 
@@ -324,7 +333,7 @@ def pipeline_job_artifact(
 	# Migration compatibility: fall back to in-memory LRU when disk artifact is absent.
 	print('PIPELINE_CACHE_GET artifact', (*base_key, tap))
 
-	payload = pipeline_tap_cache.get((*base_key, tap))
+	payload = state.pipeline_tap_cache.get((*base_key, tap))
 	if payload is None:
 		raise HTTPException(status_code=404, detail='Artifact not ready')
 	return payload

@@ -6,7 +6,7 @@ import contextlib
 from typing import TYPE_CHECKING, Annotated, Literal
 
 import numpy as np
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, HTTPException, Query, Request
 from fastapi.responses import JSONResponse, Response
 from pydantic import BaseModel
 
@@ -20,14 +20,15 @@ from app.api._helpers import (
 	USE_FBPICK_OFFSET,
 	PipelineTapNotFoundError,
 	get_reader,
+	get_state,
 	get_section_from_pipeline_tap,
-	window_section_cache,
 )
 from app.api.baselines import (
 	BASELINE_STAGE_RAW,
 	BaselineComputationError,
 	get_or_create_raw_baseline,
 )
+from app.core.state import AppState
 from app.services.section_service import (
 	SectionServiceInternalError,
 	build_section_window_payload,
@@ -45,7 +46,11 @@ class SectionMeta(BaseModel):
 
 
 def get_ntraces_for(
-	file_id: str, key1_byte: int | None = None, key2_byte: int | None = None
+	file_id: str,
+	key1_byte: int | None = None,
+	key2_byte: int | None = None,
+	*,
+	state: AppState,
 ) -> int:
 	"""Return total number of traces for ``file_id``.
 	Always uses ``get_reader`` (lazy-safe). Falls back to registry meta if needed.
@@ -59,7 +64,7 @@ def get_ntraces_for(
 
 	# Prefer an actual reader (lazy open). If it fails, try registry meta.
 	with contextlib.suppress(Exception):
-		reader = get_reader(file_id, kb1, kb2)
+		reader = get_reader(file_id, kb1, kb2, state=state)
 		ntraces = getattr(reader, 'ntraces', None)
 		if ntraces is None:
 			meta = getattr(reader, 'meta', None)
@@ -83,7 +88,11 @@ def get_ntraces_for(
 
 
 def get_trace_seq_for_value(
-	file_id: str, key1_val: int, key1_byte: int
+	file_id: str,
+	key1_val: int,
+	key1_byte: int,
+	*,
+	state: AppState,
 ) -> NDArray[np.int64]:
 	"""Return display-aligned trace ordering for ``key1_val`` of ``file_id``."""
 	key2_byte = 193
@@ -96,7 +105,7 @@ def get_trace_seq_for_value(
 	if maybe_reader is not None:
 		key2_byte = int(getattr(maybe_reader, 'key2_byte', 193))
 
-	reader = get_reader(file_id, int(key1_byte), key2_byte)
+	reader = get_reader(file_id, int(key1_byte), key2_byte, state=state)
 	target_val = int(key1_val)
 
 	get_trace_seq = getattr(reader, 'get_trace_seq_for_section', None)
@@ -122,12 +131,14 @@ def get_trace_seq_for_value(
 
 @router.get('/get_key1_values')
 def get_key1_values(
+	request: Request,
 	file_id: Annotated[str, Query(...)],
 	key1_byte: Annotated[int, Query()] = 189,
 	key2_byte: Annotated[int, Query()] = 193,
 ) -> JSONResponse:
 	"""Return the available key1 header values for ``file_id``."""
-	reader = get_reader(file_id, key1_byte, key2_byte)
+	state = get_state(request.app)
+	reader = get_reader(file_id, key1_byte, key2_byte, state=state)
 	values = reader.get_key1_values()
 	payload = values.tolist() if isinstance(values, np.ndarray) else list(values)
 	return JSONResponse(content={'values': payload})
@@ -135,6 +146,7 @@ def get_key1_values(
 
 @router.get('/get_section')
 def get_section(
+	request: Request,
 	file_id: Annotated[str, Query(...)],
 	key1_val: Annotated[int, Query(...)],
 	key1_byte: Annotated[int, Query()] = 189,
@@ -142,7 +154,8 @@ def get_section(
 ) -> JSONResponse:
 	"""Return the section for the ``key1_val`` trace grouping."""
 	try:
-		reader = get_reader(file_id, key1_byte, key2_byte)
+		state = get_state(request.app)
+		reader = get_reader(file_id, key1_byte, key2_byte, state=state)
 		view = reader.get_section(key1_val)
 		payload = view.arr.tolist()
 		return JSONResponse(content={'section': payload})
@@ -154,6 +167,7 @@ def get_section(
 
 @router.get('/section/stats')
 def get_section_stats(
+	request: Request,
 	file_id: Annotated[str, Query(...)],
 	baseline: Annotated[str, Query(...)],
 	key1_idx: Annotated[int | None, Query()] = None,
@@ -176,6 +190,7 @@ def get_section_stats(
 			file_id=file_id,
 			key1_byte=int(key1_byte),
 			key2_byte=int(key2_byte),
+			app=request.app,
 		)
 	except BaselineComputationError as exc:
 		raise HTTPException(status_code=500, detail=str(exc)) from exc
@@ -210,11 +225,13 @@ def get_section_stats(
 
 @router.get('/get_section_meta', response_model=SectionMeta)
 def get_section_meta(
+	request: Request,
 	file_id: Annotated[str, Query(...)],
 	key1_byte: Annotated[int, Query()] = 189,
 	key2_byte: Annotated[int, Query()] = 193,
 ) -> SectionMeta:
-	reader = get_reader(file_id, key1_byte, key2_byte)
+	state = get_state(request.app)
+	reader = get_reader(file_id, key1_byte, key2_byte, state=state)
 
 	# セクション形状を実データから最短経路で確定
 	values = reader.get_key1_values()
@@ -226,7 +243,10 @@ def get_section_meta(
 	scale = float(reader.scale) if isinstance(reader.scale, (int, float)) else None
 	dt_val = float(get_dt_for_file(file_id))
 	_ = get_or_create_raw_baseline(
-		file_id=file_id, key1_byte=key1_byte, key2_byte=key2_byte
+		file_id=file_id,
+		key1_byte=key1_byte,
+		key2_byte=key2_byte,
+		app=request.app,
 	)
 
 	return SectionMeta(
@@ -239,6 +259,7 @@ def get_section_meta(
 
 @router.get('/get_section_window_bin')
 def get_section_window_bin(
+	request: Request,
 	file_id: Annotated[str, Query(...)],
 	key1_val: Annotated[int, Query(...)],
 	x0: Annotated[int, Query(...)],
@@ -258,6 +279,7 @@ def get_section_window_bin(
 	] = None,
 ) -> Response:
 	"""Return a quantized window of a section, optionally via a pipeline tap."""
+	state = get_state(request.app)
 	mode = 'amax' if scaling is None else scaling
 	mode = mode.lower()
 	if mode not in {'amax', 'tracewise'}:
@@ -281,7 +303,7 @@ def get_section_window_bin(
 		mode,
 	)
 
-	cached_payload = window_section_cache.get(cache_key)
+	cached_payload = state.window_section_cache.get(cache_key)
 	if cached_payload is not None:
 		return Response(
 			cached_payload,
@@ -306,8 +328,11 @@ def get_section_window_bin(
 			pipeline_key=pipeline_key,
 			tap_label=tap_label,
 			scaling_mode=mode,
-			reader_getter=get_reader,
-			pipeline_section_getter=get_section_from_pipeline_tap,
+			trace_stats_cache=state.trace_stats_cache,
+			reader_getter=lambda fid, kb1, kb2: get_reader(fid, kb1, kb2, state=state),
+			pipeline_section_getter=lambda **kwargs: get_section_from_pipeline_tap(
+				**kwargs, state=state
+			),
 			dt_resolver=get_dt_for_file,
 		)
 	except SectionServiceInternalError as exc:
@@ -320,7 +345,7 @@ def get_section_window_bin(
 	except ValueError as exc:
 		raise HTTPException(status_code=400, detail=str(exc)) from exc
 
-	window_section_cache.set(cache_key, compressed)
+	state.window_section_cache.set(cache_key, compressed)
 	return Response(
 		compressed,
 		media_type='application/octet-stream',

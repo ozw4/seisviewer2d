@@ -1,12 +1,14 @@
 # app/tests/test_section_router_changes.py
 import gzip
 import json
+from types import SimpleNamespace
 
 import msgpack
 import numpy as np
 import pytest
 
 from app.api.routers import section as sec
+from app.main import app
 from app.utils.utils import SectionView
 
 
@@ -141,8 +143,8 @@ def test_get_ntraces_for_prefers_get_reader_and_fallbacks(monkeypatch):
 		key1s=np.array([1, 1, 2, 3, 3], dtype=np.int32),
 		key2s=np.array([5, 2, 9, 1, 1], dtype=np.int32),
 	)
-	monkeypatch.setattr(sec, 'get_reader', lambda file_id, kb1, kb2: r)
-	assert sec.get_ntraces_for('f1') == 5
+	monkeypatch.setattr(sec, 'get_reader', lambda file_id, kb1, kb2, state=None: r)
+	assert sec.get_ntraces_for('f1', state=sec.get_state(app)) == 5
 
 	# 2) get_reader が失敗した場合は registry.meta にフォールバック
 	sec.FILE_REGISTRY.clear()
@@ -153,7 +155,7 @@ def test_get_ntraces_for_prefers_get_reader_and_fallbacks(monkeypatch):
 
 	monkeypatch.setattr(sec, 'get_reader', boom)
 	assert 'f2' in sec.FILE_REGISTRY
-	assert sec.get_ntraces_for('f2') == 8
+	assert sec.get_ntraces_for('f2', state=sec.get_state(app)) == 8
 
 	# 3) reader.meta['n_traces'] / TraceStore 風のフォールバック
 	t = _make_tracestore_like_reader(
@@ -162,8 +164,8 @@ def test_get_ntraces_for_prefers_get_reader_and_fallbacks(monkeypatch):
 	)
 	sec.FILE_REGISTRY.clear()
 	sec.FILE_REGISTRY.update({'f2': {}})
-	monkeypatch.setattr(sec, 'get_reader', lambda file_id, kb1, kb2: t)
-	assert sec.get_ntraces_for('f2') == 5
+	monkeypatch.setattr(sec, 'get_reader', lambda file_id, kb1, kb2, state=None: t)
+	assert sec.get_ntraces_for('f2', state=sec.get_state(app)) == 5
 
 	# 4) traces.shape[0] フォールバック
 	r2 = _make_stub_reader(
@@ -178,8 +180,8 @@ def test_get_ntraces_for_prefers_get_reader_and_fallbacks(monkeypatch):
 	r2.traces = _Traces()  # type: ignore[attr-defined]
 	sec.FILE_REGISTRY.clear()
 	sec.FILE_REGISTRY.update({'f3': {}})
-	monkeypatch.setattr(sec, 'get_reader', lambda file_id, kb1, kb2: r2)
-	assert sec.get_ntraces_for('f3') == 3
+	monkeypatch.setattr(sec, 'get_reader', lambda file_id, kb1, kb2, state=None: r2)
+	assert sec.get_ntraces_for('f3', state=sec.get_state(app)) == 3
 
 
 def test_get_trace_seq_for_with_stub_reader_matches_legacy(monkeypatch):
@@ -189,11 +191,18 @@ def test_get_trace_seq_for_with_stub_reader_matches_legacy(monkeypatch):
 	sec.FILE_REGISTRY['lineA'] = {'reader': r}
 
 	# ensure per-request reader is used
-	monkeypatch.setattr(sec, 'get_reader', lambda fid, kb1, kb2: r, raising=True)
+	monkeypatch.setattr(
+		sec, 'get_reader', lambda fid, kb1, kb2, state=None: r, raising=True
+	)
 
 	vals = r.get_key1_values()
 	for v in vals:
-		seq = sec.get_trace_seq_for_value('lineA', key1_val=int(v), key1_byte=189)
+		seq = sec.get_trace_seq_for_value(
+			'lineA',
+			key1_val=int(v),
+			key1_byte=189,
+			state=sec.get_state(app),
+		)
 		indices = np.where(r.key1s == v)[0]
 		expected = indices[np.argsort(r.key2s[indices], kind='stable')]
 		assert np.array_equal(seq, expected)
@@ -206,17 +215,29 @@ def test_get_trace_seq_for_with_tracestore_uses_public_get_header(monkeypatch):
 	sec.FILE_REGISTRY['lineB'] = {'reader': t}
 
 	# ensure per-request reader is used
-	monkeypatch.setattr(sec, 'get_reader', lambda fid, kb1, kb2: t, raising=True)
+	monkeypatch.setattr(
+		sec, 'get_reader', lambda fid, kb1, kb2, state=None: t, raising=True
+	)
 
 	# unique_key1 = [7,8,9] → value=9
-	seq = sec.get_trace_seq_for_value('lineB', key1_val=9, key1_byte=189)
+	seq = sec.get_trace_seq_for_value(
+		'lineB',
+		key1_val=9,
+		key1_byte=189,
+		state=sec.get_state(app),
+	)
 	idx = np.where(key1s == 9)[0]
 	expected = idx[np.argsort(key2s[idx], kind='stable')]
 	assert np.array_equal(seq, expected)
 
 	# also verify missing value raises ValueError
 	with pytest.raises(ValueError):
-		sec.get_trace_seq_for_value('lineB', key1_val=999, key1_byte=189)
+		sec.get_trace_seq_for_value(
+			'lineB',
+			key1_val=999,
+			key1_byte=189,
+			state=sec.get_state(app),
+		)
 
 
 def test_get_section_returns_json_for_value(monkeypatch):
@@ -236,9 +257,18 @@ def test_get_section_returns_json_for_value(monkeypatch):
 			return SectionView(arr=arr, dtype=arr.dtype, scale=None)
 
 	monkeypatch.setattr(
-		sec, 'get_reader', lambda fid, kb1, kb2: _StubReader(), raising=True
+		sec,
+		'get_reader',
+		lambda fid, kb1, kb2, state=None: _StubReader(),
+		raising=True,
 	)
-	resp = sec.get_section(file_id='f', key1_byte=189, key2_byte=193, key1_val=20)
+	resp = sec.get_section(
+		file_id='f',
+		key1_byte=189,
+		key2_byte=193,
+		key1_val=20,
+		request=SimpleNamespace(app=app),
+	)
 	data = json.loads(resp.body)
 	assert data['section'] == [[1.0, 2.0], [3.0, 4.0]]
 	assert received['val'] == 20
@@ -252,10 +282,19 @@ def test_get_section_returns_json_for_value(monkeypatch):
 			raise ValueError(f'key1 {key1_val} not found')
 
 	monkeypatch.setattr(
-		sec, 'get_reader', lambda fid, kb1, kb2: _StubReader2(), raising=True
+		sec,
+		'get_reader',
+		lambda fid, kb1, kb2, state=None: _StubReader2(),
+		raising=True,
 	)
 	with pytest.raises(Exception) as ei:
-		sec.get_section(file_id='f', key1_byte=189, key2_byte=193, key1_val=99)
+		sec.get_section(
+			file_id='f',
+			key1_byte=189,
+			key2_byte=193,
+			key1_val=99,
+			request=SimpleNamespace(app=app),
+		)
 	# (FastAPI HTTPException) don't overfit type; message check is enough
 	assert 'key1 99 not found' in str(ei.value)
 
@@ -276,7 +315,10 @@ def test_get_section_window_bin_happy_path(monkeypatch, tmp_path):
 			return SectionView(arr=arr, dtype=arr.dtype, scale=None)
 
 	monkeypatch.setattr(
-		sec, 'get_reader', lambda fid, kb1, kb2: _StubReader(), raising=True
+		sec,
+		'get_reader',
+		lambda fid, kb1, kb2, state=None: _StubReader(),
+		raising=True,
 	)
 
 	# TraceStore の場所と baseline を用意（apply_scaling_from_baseline が参照）
@@ -304,6 +346,7 @@ def test_get_section_window_bin_happy_path(monkeypatch, tmp_path):
 		step_y=1,
 		pipeline_key=None,
 		tap_label=None,
+		request=SimpleNamespace(app=app),
 	)
 	assert res.headers.get('Content-Encoding') == 'gzip'
 	payload = msgpack.unpackb(gzip.decompress(res.body))

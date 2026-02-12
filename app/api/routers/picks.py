@@ -10,12 +10,12 @@ from pathlib import Path
 from typing import Annotated
 
 import numpy as np
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, HTTPException, Query, Request
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
 from starlette.background import BackgroundTask
 
-from app.api._helpers import _filename_for_file_id, get_reader
+from app.api._helpers import _filename_for_file_id, get_reader, get_state
 from app.api.routers.section import get_ntraces_for, get_trace_seq_for_value
 from app.utils.pick_cache_file1d_mem import (
 	clear_by_traceseq,
@@ -38,26 +38,29 @@ class PickPostModel(BaseModel):
 
 @router.get('/picks')
 async def get_picks(
+	request: Request,
 	file_id: Annotated[str, Query(...)],
 	key1_val: Annotated[int, Query(...)],
 	key1_byte: Annotated[int, Query(...)],
 ) -> dict[str, list[dict[str, int | float]]]:
+	state = get_state(request.app)
 	fname = _filename_for_file_id(file_id)
 	if not fname:
 		raise HTTPException(404, 'file_id not found')
-	ntr = get_ntraces_for(file_id)
-	sec_map = get_trace_seq_for_value(file_id, key1_val, key1_byte)
+	ntr = get_ntraces_for(file_id, state=state)
+	sec_map = get_trace_seq_for_value(file_id, key1_val, key1_byte, state=state)
 	picks = await asyncio.to_thread(to_pairs_for_section, fname, ntr, sec_map)
 	return {'picks': picks}
 
 
 @router.post('/picks')
-async def post_pick(m: PickPostModel) -> dict[str, str]:
+async def post_pick(m: PickPostModel, request: Request) -> dict[str, str]:
+	state = get_state(request.app)
 	fname = _filename_for_file_id(m.file_id)
 	if not fname:
 		raise HTTPException(404, 'file_id not found')
-	ntr = get_ntraces_for(m.file_id)
-	sec_map = get_trace_seq_for_value(m.file_id, m.key1_val, m.key1_byte)
+	ntr = get_ntraces_for(m.file_id, state=state)
+	sec_map = get_trace_seq_for_value(m.file_id, m.key1_val, m.key1_byte, state=state)
 	if not (0 <= m.trace < sec_map.size):
 		raise HTTPException(400, 'trace out of range for section')
 	trace_seq = int(sec_map[m.trace])
@@ -67,11 +70,13 @@ async def post_pick(m: PickPostModel) -> dict[str, str]:
 
 @router.get('/export_manual_picks_all_npy')
 async def export_manual_picks_all_npy(
+	request: Request,
 	file_id: Annotated[str, Query(...)],
 	key1_byte: Annotated[int, Query()] = 189,
 	key2_byte: Annotated[int, Query()] = 193,
 ) -> FileResponse:
-	reader = get_reader(file_id, key1_byte, key2_byte)
+	state = get_state(request.app)
+	reader = get_reader(file_id, key1_byte, key2_byte, state=state)
 	key1_values = reader.get_key1_values()
 	if key1_values is None or len(key1_values) == 0:
 		raise HTTPException(status_code=409, detail='No key1 values found for file')
@@ -85,11 +90,11 @@ async def export_manual_picks_all_npy(
 	if not file_name:
 		raise HTTPException(status_code=404, detail='Filename not found for file_id')
 
-	ntraces = get_ntraces_for(file_id)
+	ntraces = get_ntraces_for(file_id, state=state)
 	sec_maps: list[np.ndarray] = []
 	counts: list[int] = []
 	for key1_val in key1_list:
-		sec_map = get_trace_seq_for_value(file_id, key1_val, key1_byte)
+		sec_map = get_trace_seq_for_value(file_id, key1_val, key1_byte, state=state)
 		sec_maps.append(sec_map)
 		counts.append(int(sec_map.size))
 
@@ -169,16 +174,18 @@ async def export_manual_picks_all_npy(
 
 @router.delete('/picks')
 async def delete_pick(
+	request: Request,
 	file_id: Annotated[str, Query(...)],
 	key1_val: Annotated[int, Query(...)],
 	key1_byte: Annotated[int, Query(...)],
 	trace: Annotated[int | None, Query()] = None,
 ) -> dict[str, str]:
+	state = get_state(request.app)
 	fname = _filename_for_file_id(file_id)
 	if not fname:
 		raise HTTPException(404, 'file_id not found')
-	ntr = get_ntraces_for(file_id)
-	sec_map = get_trace_seq_for_value(file_id, key1_val, key1_byte)
+	ntr = get_ntraces_for(file_id, state=state)
+	sec_map = get_trace_seq_for_value(file_id, key1_val, key1_byte, state=state)
 
 	if trace is None:
 		await asyncio.to_thread(clear_section, fname, ntr, sec_map)

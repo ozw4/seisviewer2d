@@ -12,7 +12,7 @@ import numpy as np
 from fastapi import HTTPException
 from numpy.typing import NDArray
 
-from app.core.state import DEFAULT_STATE, AppState, LRUCache
+from app.core.state import AppState, LRUCache
 from app.utils.fbpick import _MODEL_PATH as FBPICK_MODEL_PATH
 from app.utils.segy_meta import FILE_REGISTRY, get_dt_for_file, load_baseline
 from app.utils.utils import TraceStoreSectionReader
@@ -31,11 +31,11 @@ logger = logging.getLogger(__name__)
 
 NORM_EPS = np.float32(float(os.getenv('NORM_EPS', '1e-6')))
 
-_TRACE_STATS_CACHE = DEFAULT_STATE.trace_stats_cache
-
 
 def coerce_section_f32(arr: NDArray, scale: float | None) -> NDArray[np.float32]:
 	out = arr if arr.dtype == np.float32 else arr.astype(np.float32, copy=False)
+	if not out.flags.writeable:
+		out = out.copy()
 	if scale is not None:
 		if not out.flags.writeable:
 			out = out.copy()
@@ -54,6 +54,7 @@ def apply_scaling_from_baseline(
 	key1_val: int,
 	store_dir: str | Path,
 	*,
+	trace_stats_cache: dict[tuple[Any, ...], tuple[np.ndarray, np.ndarray | None, int]],
 	x0: int,
 	x1: int,
 	step_x: int,
@@ -106,14 +107,14 @@ def apply_scaling_from_baseline(
 		)
 	store_key = baseline['store_key']
 	idx_full_key = (store_key, key1_int, 'idx_full')
-	idx_full = _TRACE_STATS_CACHE.get(idx_full_key)
-	if idx_full is None:
+	idx_full_payload = trace_stats_cache.get(idx_full_key)
+	if idx_full_payload is None:
 		idx_full = np.concatenate(
 			[np.arange(int(s), int(e), dtype=np.int64) for (s, e) in spans]
 		)
-		_TRACE_STATS_CACHE[idx_full_key] = (idx_full, None, 0)  # slot reuse
+		trace_stats_cache[idx_full_key] = (idx_full, None, 0)  # slot reuse
 	else:
-		idx_full = idx_full[0]  # unpack tuple
+		idx_full = idx_full_payload[0]  # unpack tuple
 
 	# Window/stride selection within the section
 	n_traces = int(arr.shape[0])
@@ -126,15 +127,20 @@ def apply_scaling_from_baseline(
 
 	# Gather per-trace stats for the selected window (cache by x0,x1,step_x)
 	trace_key = (store_key, key1_int, x0, x1, step_x)
-	cached = _TRACE_STATS_CACHE.get(trace_key)
+	cached = trace_stats_cache.get(trace_key)
 	if cached is None:
 		trace_mean = baseline['trace_mean']
 		trace_inv = baseline['trace_inv_std']
 		mean_vec = trace_mean[sel_global].astype(np.float32, copy=False)
 		inv_vec = trace_inv[sel_global].astype(np.float32, copy=False)
-		_TRACE_STATS_CACHE[trace_key] = (mean_vec, inv_vec, 0)
-		cached = _TRACE_STATS_CACHE[trace_key]
+		trace_stats_cache[trace_key] = (mean_vec, inv_vec, 0)
+		cached = trace_stats_cache[trace_key]
 	mean_vec, inv_vec, _ = cached
+	if inv_vec is None:
+		raise HTTPException(
+			status_code=500,
+			detail='Trace statistics cache entry is invalid',
+		)
 	if not np.all(np.isfinite(mean_vec)) or not np.all(np.isfinite(inv_vec)):
 		raise HTTPException(
 			status_code=422,
@@ -145,21 +151,24 @@ def apply_scaling_from_baseline(
 	return arr
 
 
-def get_state(app: FastAPI | None = None) -> AppState:
-	"""Return app-scoped state when available, else module default state."""
-	if app is None:
-		return DEFAULT_STATE
+def get_state(app: FastAPI) -> AppState:
+	"""Return app-scoped state from ``app.state.sv``."""
 	sv = getattr(getattr(app, 'state', None), 'sv', None)
 	if isinstance(sv, AppState):
 		return sv
-	return DEFAULT_STATE
+	msg = 'Application state is not initialized (app.state.sv)'
+	logger.error(msg)
+	raise RuntimeError(msg)
 
 
-cached_readers = DEFAULT_STATE.cached_readers
-fbpick_cache = DEFAULT_STATE.fbpick_cache
-jobs = DEFAULT_STATE.jobs
-pipeline_tap_cache = DEFAULT_STATE.pipeline_tap_cache
-window_section_cache = DEFAULT_STATE.window_section_cache
+def _resolve_state(
+	*, app: FastAPI | None = None, state: AppState | None = None
+) -> AppState:
+	if state is not None:
+		return state
+	if app is None:
+		raise RuntimeError('Either app or state must be provided')
+	return get_state(app)
 
 
 class PipelineTapNotFoundError(LookupError):
@@ -249,6 +258,8 @@ def get_section_from_pipeline_tap(
 	pipeline_key: str,
 	tap_label: str,
 	offset_byte: int | None = None,
+	app: FastAPI | None = None,
+	state: AppState | None = None,
 ) -> np.ndarray:
 	"""Return the cached pipeline tap output as a ``float32`` array."""
 	arr, _ = get_section_and_meta_from_pipeline_tap(
@@ -258,6 +269,8 @@ def get_section_from_pipeline_tap(
 		pipeline_key=pipeline_key,
 		tap_label=tap_label,
 		offset_byte=offset_byte,
+		app=app,
+		state=state,
 	)
 	return arr
 
@@ -270,10 +283,13 @@ def get_section_and_meta_from_pipeline_tap(
 	pipeline_key: str,
 	tap_label: str,
 	offset_byte: int | None = None,
+	app: FastAPI | None = None,
+	state: AppState | None = None,
 ) -> tuple[np.ndarray, dict[str, Any] | None]:
 	"""Return tap payload as ``float32`` along with optional metadata."""
+	sv = _resolve_state(app=app, state=state)
 	base_key = (file_id, key1_val, key1_byte, pipeline_key, None, offset_byte)
-	payload = pipeline_tap_cache.get((*base_key, tap_label))
+	payload = sv.pipeline_tap_cache.get((*base_key, tap_label))
 	if payload is None:
 		msg = (
 			f'Pipeline tap {tap_label!r} for pipeline {pipeline_key!r} '
@@ -290,9 +306,17 @@ def get_section_and_meta_from_pipeline_tap(
 	return arr, meta
 
 
-def get_reader(file_id: str, key1_byte: int, key2_byte: int) -> TraceStoreSectionReader:
+def get_reader(
+	file_id: str,
+	key1_byte: int,
+	key2_byte: int,
+	*,
+	app: FastAPI | None = None,
+	state: AppState | None = None,
+) -> TraceStoreSectionReader:
+	sv = _resolve_state(app=app, state=state)
 	cache_key = f'{file_id}_{key1_byte}_{key2_byte}'
-	reader = cached_readers.get(cache_key)
+	reader = sv.cached_readers.get(cache_key)
 	if reader is None:
 		rec = FILE_REGISTRY.get(file_id)
 		if rec is None:
@@ -304,7 +328,7 @@ def get_reader(file_id: str, key1_byte: int, key2_byte: int) -> TraceStoreSectio
 		if not p.is_dir():
 			raise HTTPException(status_code=409, detail='trace store not built')
 		reader = TraceStoreSectionReader(p, key1_byte, key2_byte)
-		cached_readers[cache_key] = reader
+		sv.cached_readers[cache_key] = reader
 	dt_val = get_dt_for_file(file_id)
 	meta_attr = getattr(reader, 'meta', None)
 	if isinstance(meta_attr, dict):
@@ -317,10 +341,16 @@ def get_reader(file_id: str, key1_byte: int, key2_byte: int) -> TraceStoreSectio
 
 
 def get_raw_section(
-	*, file_id: str, key1_val: int, key1_byte: int, key2_byte: int
+	*,
+	file_id: str,
+	key1_val: int,
+	key1_byte: int,
+	key2_byte: int,
+	app: FastAPI | None = None,
+	state: AppState | None = None,
 ) -> np.ndarray:
 	"""Load the RAW seismic section as ``float32``."""
-	reader = get_reader(file_id, key1_byte, key2_byte)
+	reader = get_reader(file_id, key1_byte, key2_byte, app=app, state=state)
 	view = reader.get_section(key1_val)
 	base = view.arr
 	arr = coerce_section_f32(base, view.scale)
@@ -332,7 +362,6 @@ def get_raw_section(
 
 __all__ = [
 	'AppState',
-	'DEFAULT_STATE',
 	'EXPECTED_SECTION_NDIM',
 	'OFFSET_BYTE_FIXED',
 	'USE_FBPICK_OFFSET',
@@ -343,15 +372,10 @@ __all__ = [
 	'_pipeline_payload_to_array',
 	'_spec_uses_fbpick',
 	'_update_file_registry',
-	'cached_readers',
 	'coerce_section_f32',
-	'fbpick_cache',
 	'get_state',
 	'get_raw_section',
 	'get_reader',
 	'get_section_and_meta_from_pipeline_tap',
 	'get_section_from_pipeline_tap',
-	'jobs',
-	'pipeline_tap_cache',
-	'window_section_cache',
 ]

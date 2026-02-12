@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Callable, Literal
+from typing import Any, Callable, Literal
 
 import numpy as np
 
@@ -11,8 +11,6 @@ from app.api._helpers import (
 	EXPECTED_SECTION_NDIM,
 	apply_scaling_from_baseline,
 	coerce_section_f32,
-	get_reader,
-	get_section_from_pipeline_tap,
 )
 from app.api.binary_codec import pack_quantized_array_gzip
 from app.utils.segy_meta import FILE_REGISTRY, get_dt_for_file
@@ -52,9 +50,7 @@ def _load_section_view(
 	return reader.get_section(key1_val), reader
 
 
-def _resolve_store_dir(
-	*, file_id: str, reader: TraceStoreSectionReader | None
-) -> str:
+def _resolve_store_dir(*, file_id: str, reader: TraceStoreSectionReader | None) -> str:
 	registry_entry = FILE_REGISTRY.get(file_id)
 	store_dir: str | None = None
 	if isinstance(registry_entry, dict):
@@ -91,8 +87,9 @@ def build_section_window_payload(
 	pipeline_key: str | None,
 	tap_label: str | None,
 	scaling_mode: Literal['amax', 'tracewise'],
-	reader_getter: Callable[[str, int, int], TraceStoreSectionReader] = get_reader,
-	pipeline_section_getter: Callable[..., np.ndarray] = get_section_from_pipeline_tap,
+	trace_stats_cache: dict[tuple[Any, ...], tuple[np.ndarray, np.ndarray | None, int]],
+	reader_getter: Callable[[str, int, int], TraceStoreSectionReader],
+	pipeline_section_getter: Callable[..., np.ndarray],
 	dt_resolver: Callable[[str], float] = get_dt_for_file,
 ) -> bytes:
 	"""Build the compressed binary payload for a section window."""
@@ -135,6 +132,7 @@ def build_section_window_payload(
 		file_id=file_id,
 		key1_val=key1_val,
 		store_dir=store_dir,
+		trace_stats_cache=trace_stats_cache,
 		x0=x0,
 		x1=x1,
 		step_x=step_x,

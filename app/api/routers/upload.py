@@ -12,9 +12,10 @@ from pathlib import Path
 from typing import Annotated
 from uuid import uuid4
 
-from fastapi import APIRouter, File, Form, HTTPException, Query, UploadFile
+from fastapi import APIRouter, File, Form, HTTPException, Query, Request, UploadFile
 
-from app.api._helpers import cached_readers
+from app.api._helpers import get_state
+from app.core.state import AppState
 from app.utils.ingest import SegyIngestor
 from app.utils.segy_meta import FILE_REGISTRY
 from app.utils.utils import TraceStoreSectionReader
@@ -107,11 +108,16 @@ def _archive_trace_store(store_dir: Path) -> None:
 
 
 def _register_trace_store(
-	file_id: str, store_dir: Path, key1_byte: int, key2_byte: int
+	file_id: str,
+	store_dir: Path,
+	key1_byte: int,
+	key2_byte: int,
+	*,
+	state: AppState,
 ) -> TraceStoreSectionReader:
 	reader = TraceStoreSectionReader(store_dir, key1_byte, key2_byte)
 	cache_key = f'{file_id}_{key1_byte}_{key2_byte}'
-	cached_readers[cache_key] = reader
+	state.cached_readers[cache_key] = reader
 	threading.Thread(target=reader.preload_all_sections, daemon=True).start()
 	for b in {key1_byte, key2_byte}:
 		threading.Thread(target=reader.ensure_header, args=(b,), daemon=True).start()
@@ -120,10 +126,12 @@ def _register_trace_store(
 
 @router.post('/open_segy')
 async def open_segy(
+	request: Request,
 	original_name: Annotated[str, Form(...)],
 	key1_byte: Annotated[int, Form()] = 189,
 	key2_byte: Annotated[int, Form()] = 193,
 ):
+	state = get_state(request.app)
 	safe_name = re.sub(r'[^A-Za-z0-9_.-]', '_', original_name)
 	store_dir = TRACE_DIR / safe_name
 	meta_path = store_dir / 'meta.json'
@@ -152,7 +160,7 @@ async def open_segy(
 			key1_byte,
 			key2_byte,
 		)
-	_register_trace_store(file_id, store_dir, key1_byte, key2_byte)
+	_register_trace_store(file_id, store_dir, key1_byte, key2_byte, state=state)
 	if isinstance(meta, dict):
 		FILE_REGISTRY[file_id] = {
 			'store_path': str(store_dir),
@@ -163,10 +171,12 @@ async def open_segy(
 
 @router.post('/upload_segy')
 async def upload_segy(
+	request: Request,
 	file: Annotated[UploadFile, File(...)],
 	key1_byte: Annotated[int, Form()] = 189,
 	key2_byte: Annotated[int, Form()] = 193,
 ):
+	state = get_state(request.app)
 	if not file.filename:
 		raise HTTPException(
 			status_code=400, detail='Uploaded file must have a filename'
@@ -205,7 +215,7 @@ async def upload_segy(
 
 	if reused and meta is not None:
 		print(f'Reusing trace store for {file.filename}')
-		_register_trace_store(file_id, store_dir, key1_byte, key2_byte)
+		_register_trace_store(file_id, store_dir, key1_byte, key2_byte, state=state)
 		FILE_REGISTRY[file_id] = {
 			'store_path': str(store_dir),
 			'dt': meta.get('dt'),
@@ -221,7 +231,7 @@ async def upload_segy(
 		key2_byte,
 		source_sha256=source_sha256,
 	)
-	_register_trace_store(file_id, store_dir, key1_byte, key2_byte)
+	_register_trace_store(file_id, store_dir, key1_byte, key2_byte, state=state)
 	if isinstance(meta, dict):
 		FILE_REGISTRY[file_id] = {
 			'store_path': str(store_dir),

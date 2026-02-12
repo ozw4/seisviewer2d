@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import Any, Literal
 
 import numpy as np
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, Field
 
 from app.api._helpers import (
@@ -18,9 +18,11 @@ from app.api._helpers import (
 	_maybe_attach_fbpick_offsets,
 	coerce_section_f32,
 	get_reader,
+	get_state,
 	get_section_and_meta_from_pipeline_tap,
 )
 from app.api.schemas import PipelineSpec
+from app.core.state import AppState
 from app.utils.fbpick import _MODEL_PATH as FBPICK_MODEL_PATH
 from app.utils.pipeline import apply_pipeline
 from app.utils.segy_meta import get_dt_for_file
@@ -97,7 +99,9 @@ def _resolve_dt(file_id: str, meta: dict[str, Any] | None) -> float:
 	return float(dt)
 
 
-def _compute_probability_map(req: FbpickPredictRequest) -> _ProbabilityPayload:
+def _compute_probability_map(
+	req: FbpickPredictRequest, *, state: AppState
+) -> _ProbabilityPayload:
 	if not Path(FBPICK_MODEL_PATH).exists():
 		raise HTTPException(status_code=409, detail='FB pick model weights not found')
 
@@ -110,7 +114,7 @@ def _compute_probability_map(req: FbpickPredictRequest) -> _ProbabilityPayload:
 		)
 
 	forced_offset_byte = OFFSET_BYTE_FIXED if USE_FBPICK_OFFSET else None
-	reader = get_reader(req.file_id, req.key1_byte, req.key2_byte)
+	reader = get_reader(req.file_id, req.key1_byte, req.key2_byte, state=state)
 
 	meta_source = getattr(reader, 'meta', None)
 	dt = _resolve_dt(
@@ -126,6 +130,7 @@ def _compute_probability_map(req: FbpickPredictRequest) -> _ProbabilityPayload:
 				pipeline_key=pipeline_key,
 				tap_label=tap_label,
 				offset_byte=forced_offset_byte if USE_FBPICK_OFFSET else None,
+				state=state,
 			)
 		except PipelineTapNotFoundError as exc:
 			raise HTTPException(status_code=404, detail=str(exc)) from exc
@@ -176,7 +181,9 @@ def _compute_probability_map(req: FbpickPredictRequest) -> _ProbabilityPayload:
 	return _ProbabilityPayload(prob=prob, dt=dt, source=source)
 
 
-def _load_probability_map(req: FbpickPredictRequest) -> _ProbabilityPayload:
+def _load_probability_map(
+	req: FbpickPredictRequest, *, state: AppState
+) -> _ProbabilityPayload:
 	key = (req.file_id, req.key1_val, req.pipeline_key, req.tap_label, _model_version())
 	if _last_prob_state.key == key and _last_prob_state.value is not None:
 		return _ProbabilityPayload(
@@ -184,7 +191,7 @@ def _load_probability_map(req: FbpickPredictRequest) -> _ProbabilityPayload:
 			dt=float(_last_prob_state.dt),
 			source=_last_prob_state.source or 'unknown',
 		)
-	payload = _compute_probability_map(req)
+	payload = _compute_probability_map(req, state=state)
 	_last_prob_state.key = key
 	_last_prob_state.value = payload.prob
 	_last_prob_state.dt = payload.dt
@@ -267,8 +274,9 @@ def _compute_picks(
 
 
 @router.post('/fbpick_predict')
-def fbpick_predict(req: FbpickPredictRequest) -> dict[str, Any]:
-	payload = _load_probability_map(req)
+def fbpick_predict(req: FbpickPredictRequest, request: Request) -> dict[str, Any]:
+	state = get_state(request.app)
+	payload = _load_probability_map(req, state=state)
 	picks, accepted_ratio = _compute_picks(
 		payload.prob,
 		payload.dt,

@@ -11,10 +11,10 @@ def test_picks_are_isolated_per_key1_val(tmp_path, monkeypatch):
 
 	# /picks が参照するヘルパをモック（軽量に）
 	monkeypatch.setattr(ep, '_filename_for_file_id', lambda fid: 'LineX.sgy')
-	monkeypatch.setattr(ep, 'get_ntraces_for', lambda fid: 5)
+	monkeypatch.setattr(ep, 'get_ntraces_for', lambda fid, state=None: 5)
 
 	# key1_val=0 -> sec_map=[0,1,2], key1_val=1 -> sec_map=[3,4]
-	def fake_get_trace_seq(file_id, key1_val, key1_byte):
+	def fake_get_trace_seq(file_id, key1_val, key1_byte, state=None):
 		if key1_val == 0:
 			return np.array([0, 1, 2], dtype=np.int64)
 		if key1_val == 1:
@@ -75,9 +75,9 @@ def test_picks_are_isolated_per_key1_val(tmp_path, monkeypatch):
 def test_delete_whole_section_only_affects_that_section(tmp_path, monkeypatch):
 	monkeypatch.setenv('PICKS_NPY_DIR', str(tmp_path / 'picks_npy'))
 	monkeypatch.setattr(ep, '_filename_for_file_id', lambda fid: 'LineY.sgy')
-	monkeypatch.setattr(ep, 'get_ntraces_for', lambda fid: 5)
+	monkeypatch.setattr(ep, 'get_ntraces_for', lambda fid, state=None: 5)
 
-	def fake_get_trace_seq(file_id, key1_val, key1_byte):
+	def fake_get_trace_seq(file_id, key1_val, key1_byte, state=None):
 		return (
 			np.array([0, 1, 2], dtype=np.int64)
 			if key1_val == 0
@@ -115,11 +115,11 @@ def test_delete_whole_section_only_affects_that_section(tmp_path, monkeypatch):
 def test_post_trace_out_of_range_returns_400(tmp_path, monkeypatch):
 	monkeypatch.setenv('PICKS_NPY_DIR', str(tmp_path / 'picks_npy'))
 	monkeypatch.setattr(ep, '_filename_for_file_id', lambda fid: 'LineZ.sgy')
-	monkeypatch.setattr(ep, 'get_ntraces_for', lambda fid: 5)
+	monkeypatch.setattr(ep, 'get_ntraces_for', lambda fid, state=None: 5)
 	monkeypatch.setattr(
 		ep,
 		'get_trace_seq_for_value',
-		lambda fid, val, b: np.array([10, 11], dtype=np.int64),
+		lambda fid, val, b, state=None: np.array([10, 11], dtype=np.int64),
 	)  # セクション幅2
 
 	client = TestClient(app, raise_server_exceptions=False)
