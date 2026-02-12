@@ -27,6 +27,7 @@ Thumbs.db
 *.segy
 *.pth
 *.gz
+*.patch
 picks.json
 picks_by_name.json
 package-lock.json
