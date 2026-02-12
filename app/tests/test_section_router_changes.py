@@ -260,7 +260,7 @@ def test_get_section_returns_json_for_value(monkeypatch):
 	assert 'key1 99 not found' in str(ei.value)
 
 
-def test_get_section_window_bin_happy_path(monkeypatch):
+def test_get_section_window_bin_happy_path(monkeypatch, tmp_path):
 	class _StubReader:
 		key1_byte = 189
 		key2_byte = 193
@@ -278,6 +278,18 @@ def test_get_section_window_bin_happy_path(monkeypatch):
 	monkeypatch.setattr(
 		sec, 'get_reader', lambda fid, kb1, kb2: _StubReader(), raising=True
 	)
+
+	# TraceStore の場所と baseline を用意（apply_scaling_from_baseline が参照）
+	sec.FILE_REGISTRY['f'] = {'store_path': str(tmp_path)}
+	baseline = {
+		'key1_values': [7],
+		'mu_section_by_key1': [0.0],
+		'sigma_section_by_key1': [1.0],
+		'mu_traces': [0.0, 0.0, 0.0],
+		'sigma_traces': [1.0, 1.0, 1.0],
+		'trace_spans_by_key1': {'7': [[0, 3]]},
+	}
+	(tmp_path / 'baseline_raw.json').write_text(json.dumps(baseline), encoding='utf-8')
 	res = sec.get_section_window_bin(
 		file_id='f',
 		key1_val=7,
