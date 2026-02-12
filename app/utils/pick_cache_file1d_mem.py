@@ -4,8 +4,7 @@ from pathlib import Path
 import numpy as np
 from numpy.lib.format import open_memmap
 
-ROOT = Path(os.getenv('PICKS_NPY_DIR', '/workspace/app_data/picks_npy'))
-ROOT.mkdir(parents=True, exist_ok=True)
+DEFAULT_PICKS_NPY_DIR = '/workspace/app_data/picks_npy'
 
 DTYPE = np.float32
 NAN = np.float32(np.nan)
@@ -15,8 +14,18 @@ def _safe(name: str) -> str:
 	return name.replace('/', '_').replace('\\', '_')
 
 
+def get_root_dir() -> Path:
+	return Path(os.getenv('PICKS_NPY_DIR', DEFAULT_PICKS_NPY_DIR))
+
+
+def ensure_root_dir() -> Path:
+	root = get_root_dir()
+	root.mkdir(parents=True, exist_ok=True)
+	return root
+
+
 def _p(file_name: str) -> Path:
-	return ROOT / f'{_safe(file_name)}.npy'
+	return ensure_root_dir() / f'{_safe(file_name)}.npy'
 
 
 def _init_file(p: Path, ntraces: int) -> None:
