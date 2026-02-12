@@ -62,6 +62,8 @@ class TraceStoreSectionReader:
 		self.section_cache: dict[int, SectionView] = {}
 		self._trace_seq_cache: dict[int, np.ndarray] = {}
 		self._trace_seq_disp_cache: dict[int, np.ndarray] = {}
+		self._sorted_to_original: np.ndarray | None = None
+		self._sorted_to_original_loaded = False
 		self.dtype = self.traces.dtype
 		scale_val = self.meta.get('scale') if isinstance(self.meta, dict) else None
 		self.scale = float(scale_val) if isinstance(scale_val, (int, float)) else None
@@ -69,6 +71,34 @@ class TraceStoreSectionReader:
 
 	def _header_path(self, byte: int) -> Path:
 		return self.store_dir / f'headers_byte_{byte}.npy'
+
+	def _get_sorted_to_original(self) -> np.ndarray | None:
+		"""Lazily load ``sorted_to_original`` from index metadata when available."""
+		if self._sorted_to_original_loaded:
+			return self._sorted_to_original
+
+		index_path = self.store_dir / 'index.npz'
+		if not index_path.exists():
+			print(
+				f'[WARN][FALLBACK] Missing index.npz in {self.store_dir}; '
+				'new headers keep original SEG-Y order'
+			)
+			self._sorted_to_original_loaded = True
+			return None
+
+		with np.load(index_path) as idx:
+			if 'sorted_to_original' not in idx.files:
+				print(
+					f'[WARN][FALLBACK] index.npz has no sorted_to_original in '
+					f'{self.store_dir}; new headers keep original SEG-Y order'
+				)
+				self._sorted_to_original_loaded = True
+				return None
+			self._sorted_to_original = np.asarray(
+				idx['sorted_to_original'], dtype=np.int64
+			)
+		self._sorted_to_original_loaded = True
+		return self._sorted_to_original
 
 	def ensure_header(self, header_byte: int) -> np.ndarray:
 		"""Ensure the header array for ``header_byte`` exists on disk and return it."""
@@ -84,6 +114,18 @@ class TraceStoreSectionReader:
 		) as f:
 			f.mmap()
 			values = f.attributes(header_byte)[:].astype(np.int32)
+
+		sorted_to_original = self._get_sorted_to_original()
+		if sorted_to_original is not None:
+			if values.shape[0] != sorted_to_original.shape[0]:
+				msg = (
+					'Header length does not match sorted_to_original: '
+					f'header_byte={header_byte}, '
+					f'header_len={values.shape[0]}, '
+					f'sorted_to_original_len={sorted_to_original.shape[0]}'
+				)
+				raise ValueError(msg)
+			values = values[sorted_to_original]
 
 		tmp_path = path.with_name(path.stem + '_tmp.npy')
 		np.save(tmp_path, values)

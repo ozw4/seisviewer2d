@@ -44,10 +44,14 @@ class _FakeSegy:
 		key1: np.ndarray,  # (n_traces,) int
 		key2: np.ndarray,  # (n_traces,) int
 		interval_us: int | None,
+		extra_headers: dict[int, np.ndarray] | None = None,
 	) -> None:
 		self._traces = np.asarray(traces)
 		self._key1 = np.asarray(key1)
 		self._key2 = np.asarray(key2)
+		self._extra_headers = {
+			int(byte): np.asarray(arr) for byte, arr in (extra_headers or {}).items()
+		}
 		self.tracecount = int(self._traces.shape[0])
 		self.samples = np.arange(self._traces.shape[1], dtype=np.int32)
 		self.bin = _FakeBin(interval_us)
@@ -69,6 +73,8 @@ class _FakeSegy:
 			return _Attr(self._key1)
 		if int(byte) == 193:
 			return _Attr(self._key2)
+		if int(byte) in self._extra_headers:
+			return _Attr(self._extra_headers[int(byte)])
 		# その他のバイト要求はゼロ配列
 		return _Attr(np.zeros_like(self._key1))
 
@@ -82,13 +88,20 @@ def _patch_segyio(
 	key1: np.ndarray,
 	key2: np.ndarray,
 	dt_us: int | None = 2000,
+	extra_headers: dict[int, np.ndarray] | None = None,
 ):
 	"""Monkeypatch segyio.open と segyio.BinField.Interval を差し替え。"""
 	import segyio  # type: ignore
 
 	def _open_stub(_path, _mode='r', ignore_geometry=True):
 		# ingest中に複数回 open されるため、都度 fresh なオブジェクトを返す
-		return _FakeSegy(traces=traces, key1=key1, key2=key2, interval_us=dt_us)
+		return _FakeSegy(
+			traces=traces,
+			key1=key1,
+			key2=key2,
+			interval_us=dt_us,
+			extra_headers=extra_headers,
+		)
 
 	monkeypatch.setattr(segyio, 'open', _open_stub, raising=True)
 
@@ -232,6 +245,52 @@ def test_ingest_quantize_int8_with_auto_scale(tmp_path: Path, monkeypatch):
 	# 期待量子化値と一致（order はそのまま）
 	q_expected = np.clip(np.round(traces * scale), -127, 127).astype(np.int8)
 	np.testing.assert_array_equal(mm[:], q_expected[expected_order])
+
+
+def test_reader_ensure_header_aligns_with_tracestore_order(tmp_path: Path, monkeypatch):
+	traces = np.array(
+		[
+			[1.0, 0.5, -0.5, 0.0],  # idx 0
+			[2.0, 0.0, 1.0, -1.0],  # idx 1
+			[0.1, 0.2, 0.3, 0.4],  # idx 2
+			[3.0, 3.0, 3.0, 3.0],  # idx 3
+			[-1.0, -0.1, 0.0, 0.1],  # idx 4
+		],
+		dtype=np.float32,
+	)
+	key1 = np.array([10, 20, 10, 20, 10], dtype=np.int32)
+	key2 = np.array([2, 1, 3, 2, 1], dtype=np.int32)
+	offset_byte = 37
+	offset = np.array([700, 100, 900, 300, 500], dtype=np.int32)
+	original_index = np.arange(traces.shape[0], dtype=np.int64)
+	expected_order = np.lexsort([original_index, key2, key1])
+
+	_patch_segyio(
+		monkeypatch,
+		traces,
+		key1,
+		key2,
+		dt_us=2000,
+		extra_headers={offset_byte: offset},
+	)
+
+	segy_path = tmp_path / 'dummy_offset.segy'
+	segy_path.write_bytes(b'stub')
+	store_dir = tmp_path / 'store_offset'
+	SegyIngestor.from_segy(
+		path=segy_path,
+		store_dir=store_dir,
+		key1_byte=189,
+		key2_byte=193,
+		dtype='float32',
+		quantize=False,
+	)
+
+	reader = TraceStoreSectionReader(store_dir, key1_byte=189, key2_byte=193)
+	got = reader.get_header(offset_byte)
+
+	np.testing.assert_array_equal(got, offset[expected_order].astype(np.int32))
+	assert (store_dir / f'headers_byte_{offset_byte}.npy').exists()
 
 
 def test_ingest_respects_build_lock(tmp_path: Path, monkeypatch):
