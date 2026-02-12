@@ -249,4 +249,6 @@ async def file_info(file_id: Annotated[str, Query()]) -> dict[str, str]:
 	path = rec.get('path') or rec.get('store_path')
 	if not path:
 		raise HTTPException(status_code=404, detail='Unknown file_id')
-	return {'file_name': Path(path).name}
+
+	name = Path(str(path).replace('\\', '/')).name
+	return {'file_name': name}
