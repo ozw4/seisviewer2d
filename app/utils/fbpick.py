@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from functools import lru_cache
+import logging
+import threading
 from pathlib import Path
 
 import numpy as np
@@ -14,11 +15,15 @@ from app.utils.signal_utils import zscore_per_trace_np
 from .model import NetAE
 from .model_utils import inflate_input_convs_to_2ch
 
-__all__ = ['_MODEL_PATH', 'infer_prob_map', 'make_offset_channel']
+__all__ = ['_MODEL_PATH', 'get_fbpick_model', 'infer_prob_map', 'make_offset_channel']
+
+logger = logging.getLogger(__name__)
 
 _MODEL_PATH = (
 	Path(__file__).resolve().parents[2] / 'model' / 'fbpick_edgenext_small.pth'
 )
+_MODEL: tuple[torch.nn.Module, torch.device] | None = None
+_MODEL_LOCK = threading.Lock()
 
 
 _OFFSET_VECTOR_NDIM = 1
@@ -29,7 +34,6 @@ def _device() -> torch.device:
 	return torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
 
-@lru_cache(maxsize=1)
 def _load_model() -> tuple[torch.nn.Module, torch.device]:
 	device = _device()
 
@@ -44,12 +48,24 @@ def _load_model() -> tuple[torch.nn.Module, torch.device]:
 	if use_offset:
 		inflate_input_convs_to_2ch(model, verbose=True, init_mode='zero')
 
+	logger.info('Loading fbpick model from %s (device=%s)', _MODEL_PATH, device)
 	state = torch.load(_MODEL_PATH, map_location='cpu', weights_only=False)
 	if isinstance(state, dict) and 'model_ema' in state:
 		state = state['model_ema']
 	model.load_state_dict(state, strict=True)
 	model.eval().to(device)
 	return model, device
+
+
+def get_fbpick_model() -> tuple[torch.nn.Module, torch.device]:
+	"""Return the singleton fbpick model and device (lazy-loaded)."""
+	global _MODEL
+	if _MODEL is not None:
+		return _MODEL
+	with _MODEL_LOCK:
+		if _MODEL is None:
+			_MODEL = _load_model()
+	return _MODEL
 
 
 @torch.no_grad()
@@ -165,7 +181,7 @@ def infer_prob_map(
 	arr = np.ascontiguousarray(section, dtype=np.float32)
 	arr = zscore_per_trace_np(arr, axis=1, eps=1e-6)
 	h, w = arr.shape
-	model, device = _load_model()
+	model, device = get_fbpick_model()
 
 	if offsets is None:
 		x = torch.from_numpy(arr).unsqueeze(0).unsqueeze(0).to(device)
