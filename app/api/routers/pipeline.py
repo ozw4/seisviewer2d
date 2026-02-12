@@ -27,6 +27,12 @@ from app.api.schemas import (
 	PipelineSectionResponse,
 	PipelineSpec,
 )
+from app.services.pipeline_artifacts import (
+	get_job_dir,
+	maybe_cleanup_expired_jobs,
+	read_artifact,
+	write_artifact,
+)
 from app.utils.pipeline import apply_pipeline, pipeline_key
 from app.utils.utils import to_builtin
 
@@ -84,8 +90,15 @@ def _run_pipeline_all_job(job_id: str, req: PipelineAllRequest, pipe_key: str) -
 				val = v
 				if req.downsample_quicklook and isinstance(v, np.ndarray):
 					val = v[::4, ::4]
+				payload_obj = to_builtin(val)
 				print('PIPELINE_CACHE_SET all', (*base_key, k))
-				pipeline_tap_cache.set((*base_key, k), to_builtin(val))
+				pipeline_tap_cache.set((*base_key, k), payload_obj)
+				write_artifact(
+					job_id=job_id,
+					key1_val=int(key1_val),
+					tap_label=str(k),
+					payload=payload_obj,
+				)
 
 			job['progress'] = (idx + 1) / total
 
@@ -229,6 +242,8 @@ def pipeline_all(
 	offset_byte: Annotated[int | None, Query()] = None,  # pass-throughで受ける
 	taps: Annotated[list[str] | None, Body()] = None,
 ):
+	maybe_cleanup_expired_jobs()
+
 	tap_names = taps or []
 
 	# pass-through + 同期フォールバック（sectionと同一ロジック）
@@ -259,6 +274,7 @@ def pipeline_all(
 		'key1_byte': key1_byte,
 		'pipeline_key': pipe_key,
 		'offset_byte': forced_offset_byte,  # artifact側も同じ値で参照
+		'artifacts_dir': str(get_job_dir(job_id)),
 	}
 
 	threading.Thread(
@@ -290,6 +306,12 @@ def pipeline_job_artifact(
 	if job is None:
 		raise HTTPException(status_code=404, detail='Job ID not found')
 
+	maybe_cleanup_expired_jobs()
+
+	disk_payload = read_artifact(job_id=job_id, key1_val=key1_val, tap_label=tap)
+	if disk_payload is not None:
+		return disk_payload
+
 	base_key = (
 		job.get('file_id'),
 		key1_val,
@@ -299,6 +321,7 @@ def pipeline_job_artifact(
 		job.get('offset_byte'),
 	)
 
+	# Migration compatibility: fall back to in-memory LRU when disk artifact is absent.
 	print('PIPELINE_CACHE_GET artifact', (*base_key, tap))
 
 	payload = pipeline_tap_cache.get((*base_key, tap))

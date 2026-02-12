@@ -3,11 +3,8 @@
 from __future__ import annotations
 
 import contextlib
-import gzip
-from pathlib import Path
-from typing import TYPE_CHECKING, Annotated, Any, Literal
+from typing import TYPE_CHECKING, Annotated, Literal
 
-import msgpack
 import numpy as np
 from fastapi import APIRouter, HTTPException, Query
 from fastapi.responses import JSONResponse, Response
@@ -19,12 +16,9 @@ else:  # pragma: no cover - runtime alias for type checkers
 	NDArray = np.ndarray
 
 from app.api._helpers import (
-	EXPECTED_SECTION_NDIM,
 	OFFSET_BYTE_FIXED,
 	USE_FBPICK_OFFSET,
 	PipelineTapNotFoundError,
-	apply_scaling_from_baseline,
-	coerce_section_f32,
 	get_reader,
 	get_section_from_pipeline_tap,
 	window_section_cache,
@@ -34,11 +28,11 @@ from app.api.baselines import (
 	BaselineComputationError,
 	get_or_create_raw_baseline,
 )
-from app.utils.segy_meta import FILE_REGISTRY, get_dt_for_file
-from app.utils.utils import (
-	SectionView,
-	quantize_float32,
+from app.services.section_service import (
+	SectionServiceInternalError,
+	build_section_window_payload,
 )
+from app.utils.segy_meta import FILE_REGISTRY, get_dt_for_file
 
 router = APIRouter()
 
@@ -295,82 +289,37 @@ def get_section_window_bin(
 			headers={'Content-Encoding': 'gzip'},
 		)
 
-	reader = None
 	try:
-		if pipeline_key and tap_label:
-			section_arr = get_section_from_pipeline_tap(
-				file_id=file_id,
-				key1_val=key1_val,
-				key1_byte=key1_byte,
-				pipeline_key=pipeline_key,
-				tap_label=tap_label,
-				offset_byte=forced_offset_byte,
-			)
-			section_view = SectionView(
-				arr=section_arr, dtype=section_arr.dtype, scale=None
-			)
-		else:
-			reader = get_reader(file_id, key1_byte, key2_byte)
-			section_view = reader.get_section(key1_val)
+		compressed = build_section_window_payload(
+			file_id=file_id,
+			key1_val=key1_val,
+			key1_byte=key1_byte,
+			key2_byte=key2_byte,
+			offset_byte=forced_offset_byte,
+			x0=x0,
+			x1=x1,
+			y0=y0,
+			y1=y1,
+			step_x=step_x,
+			step_y=step_y,
+			transpose=transpose,
+			pipeline_key=pipeline_key,
+			tap_label=tap_label,
+			scaling_mode=mode,
+			reader_getter=get_reader,
+			pipeline_section_getter=get_section_from_pipeline_tap,
+			dt_resolver=get_dt_for_file,
+		)
+	except SectionServiceInternalError as exc:
+		raise HTTPException(
+			status_code=500,
+			detail=str(exc),
+		) from exc
 	except PipelineTapNotFoundError as exc:
 		raise HTTPException(status_code=409, detail=str(exc)) from exc
 	except ValueError as exc:
 		raise HTTPException(status_code=400, detail=str(exc)) from exc
 
-	base = section_view.arr
-	if base.ndim != EXPECTED_SECTION_NDIM:
-		raise HTTPException(status_code=500, detail='Section data must be 2D')
-
-	n_traces, n_samples = base.shape
-	if not (0 <= x0 <= x1 < n_traces):
-		raise HTTPException(status_code=400, detail='Trace range out of bounds')
-	if not (0 <= y0 <= y1 < n_samples):
-		raise HTTPException(status_code=400, detail='Sample range out of bounds')
-	if step_x < 1 or step_y < 1:
-		raise HTTPException(status_code=400, detail='Steps must be >= 1')
-
-	sub = base[x0 : x1 + 1 : step_x, y0 : y1 + 1 : step_y]
-	if sub.size == 0:
-		raise HTTPException(status_code=400, detail='Requested window is empty')
-
-	prepared = coerce_section_f32(sub, section_view.scale)
-	registry_entry = FILE_REGISTRY.get(file_id)
-	store_dir: str | None = None
-	if isinstance(registry_entry, dict):
-		maybe_store = registry_entry.get('store_path')
-		if isinstance(maybe_store, str):
-			store_dir = maybe_store
-	else:
-		maybe_store = getattr(registry_entry, 'store_path', None)
-		if isinstance(maybe_store, (str, Path)):
-			store_dir = str(maybe_store)
-	if store_dir is None and reader is not None:
-		maybe_store = getattr(reader, 'store_dir', None)
-		if isinstance(maybe_store, (str, Path)):
-			store_dir = str(maybe_store)
-	if store_dir is None:
-		raise HTTPException(status_code=500, detail='Trace store path unavailable')
-	prepared = apply_scaling_from_baseline(
-		prepared,
-		mode,
-		file_id,
-		key1_val,
-		store_dir,
-		x0=x0,
-		x1=x1,
-		step_x=step_x,
-	)
-	view = prepared.T if transpose else prepared
-	window_view = np.ascontiguousarray(view, dtype=np.float32)
-	scale_val, q = quantize_float32(window_view)
-	obj: dict[str, Any] = {
-		'scale': scale_val,
-		'shape': window_view.shape,
-		'data': q.tobytes(),
-		'dt': get_dt_for_file(file_id),
-	}
-	payload = msgpack.packb(obj)
-	compressed = gzip.compress(payload)
 	window_section_cache.set(cache_key, compressed)
 	return Response(
 		compressed,
