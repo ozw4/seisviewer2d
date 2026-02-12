@@ -32,5 +32,7 @@ jobs:
       - name: Run tests
         env:
           PYTHONPATH: ${{ github.workspace }}
+          PICKS_NPY_DIR: ${{ runner.temp }}/seisviewer2d_test_app_data/picks_npy
         run: |
+          mkdir -p "$PICKS_NPY_DIR"
           pytest -q
