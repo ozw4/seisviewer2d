@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import logging
 import os
-from collections import OrderedDict
 from contextlib import suppress
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -13,11 +12,14 @@ import numpy as np
 from fastapi import HTTPException
 from numpy.typing import NDArray
 
+from app.core.state import DEFAULT_STATE, AppState, LRUCache
 from app.utils.fbpick import _MODEL_PATH as FBPICK_MODEL_PATH
 from app.utils.segy_meta import FILE_REGISTRY, get_dt_for_file, load_baseline
 from app.utils.utils import TraceStoreSectionReader
 
 if TYPE_CHECKING:
+	from fastapi import FastAPI
+
 	from app.api.schemas import PipelineSpec
 
 USE_FBPICK_OFFSET = 'offset' in FBPICK_MODEL_PATH.name.lower()
@@ -29,7 +31,7 @@ logger = logging.getLogger(__name__)
 
 NORM_EPS = np.float32(float(os.getenv('NORM_EPS', '1e-6')))
 
-_TRACE_STATS_CACHE: dict[tuple[str, int, int], tuple[np.ndarray, np.ndarray, int]] = {}
+_TRACE_STATS_CACHE = DEFAULT_STATE.trace_stats_cache
 
 
 def coerce_section_f32(arr: NDArray, scale: float | None) -> NDArray[np.float32]:
@@ -143,32 +145,21 @@ def apply_scaling_from_baseline(
 	return arr
 
 
-class LRUCache(OrderedDict):
-	"""A tiny ordered cache used for in-memory tap storage."""
-
-	def __init__(self, capacity: int = 16):
-		super().__init__()
-		self.capacity = capacity
-
-	def get(self, key):
-		if key in self:
-			self.move_to_end(key)
-			return super().__getitem__(key)
-		return None
-
-	def set(self, key, value):
-		if key in self:
-			self.move_to_end(key)
-		super().__setitem__(key, value)
-		if len(self) > self.capacity:
-			self.popitem(last=False)
+def get_state(app: FastAPI | None = None) -> AppState:
+	"""Return app-scoped state when available, else module default state."""
+	if app is None:
+		return DEFAULT_STATE
+	sv = getattr(getattr(app, 'state', None), 'sv', None)
+	if isinstance(sv, AppState):
+		return sv
+	return DEFAULT_STATE
 
 
-cached_readers: dict[str, TraceStoreSectionReader] = {}
-fbpick_cache: dict[tuple, bytes] = {}
-jobs: dict[str, dict[str, object]] = {}
-pipeline_tap_cache = LRUCache(16)
-window_section_cache = LRUCache(32)
+cached_readers = DEFAULT_STATE.cached_readers
+fbpick_cache = DEFAULT_STATE.fbpick_cache
+jobs = DEFAULT_STATE.jobs
+pipeline_tap_cache = DEFAULT_STATE.pipeline_tap_cache
+window_section_cache = DEFAULT_STATE.window_section_cache
 
 
 class PipelineTapNotFoundError(LookupError):
@@ -340,6 +331,8 @@ def get_raw_section(
 
 
 __all__ = [
+	'AppState',
+	'DEFAULT_STATE',
 	'EXPECTED_SECTION_NDIM',
 	'OFFSET_BYTE_FIXED',
 	'USE_FBPICK_OFFSET',
@@ -353,6 +346,7 @@ __all__ = [
 	'cached_readers',
 	'coerce_section_f32',
 	'fbpick_cache',
+	'get_state',
 	'get_raw_section',
 	'get_reader',
 	'get_section_and_meta_from_pipeline_tap',
