@@ -6,7 +6,6 @@ import asyncio
 import hashlib
 import json
 import logging
-import pathlib
 import re
 import threading
 from pathlib import Path
@@ -16,6 +15,11 @@ from uuid import uuid4
 from fastapi import APIRouter, File, Form, HTTPException, Query, Request, UploadFile
 
 from app.api._helpers import get_state
+from app.core.paths import (
+    get_processed_upload_dir,
+    get_trace_store_dir,
+    get_upload_dir,
+)
 from app.core.state import AppState
 from app.utils.ingest import SegyIngestor
 from app.utils.segy_meta import FILE_REGISTRY
@@ -24,14 +28,9 @@ from app.utils.utils import TraceStoreSectionReader
 router = APIRouter()
 logger = logging.getLogger(__name__)
 
-BASE_DIR = pathlib.Path(__file__).resolve().parent.parent
-UPLOAD_DIR = BASE_DIR / 'uploads'
-UPLOAD_DIR.mkdir(exist_ok=True)
-
-PROCESSED_DIR = UPLOAD_DIR / 'processed'
-
-TRACE_DIR = PROCESSED_DIR / 'traces'
-TRACE_DIR.mkdir(parents=True, exist_ok=True)
+UPLOAD_DIR = get_upload_dir()
+PROCESSED_DIR = get_processed_upload_dir()
+TRACE_DIR = get_trace_store_dir()
 
 
 def _trace_store_complete(store_dir: Path, key1_byte: int, key2_byte: int) -> bool:
@@ -188,6 +187,7 @@ async def upload_segy(
     store_dir = TRACE_DIR / safe_name
     file_id = str(uuid4())
     raw_path = UPLOAD_DIR / safe_name
+    raw_path.parent.mkdir(parents=True, exist_ok=True)
     data = await file.read()
     source_sha256 = hashlib.sha256(data).hexdigest()
     await asyncio.to_thread(raw_path.write_bytes, data)

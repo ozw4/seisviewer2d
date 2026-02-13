@@ -40,3 +40,27 @@ def get_pipeline_jobs_dir() -> Path:
     if override:
         return Path(override).expanduser()
     return get_app_data_dir() / 'pipeline_jobs'
+
+
+def get_upload_dir() -> Path:
+    """Return the upload root directory path (without creating it)."""
+    override = os.getenv('SV_UPLOAD_DIR')
+    if override:
+        return Path(override).expanduser()
+    return get_app_data_dir() / 'uploads'
+
+
+def get_processed_upload_dir() -> Path:
+    """Return the processed-upload directory path (without creating it)."""
+    override = os.getenv('SV_PROCESSED_DIR')
+    if override:
+        return Path(override).expanduser()
+    return get_upload_dir() / 'processed'
+
+
+def get_trace_store_dir() -> Path:
+    """Return the trace-store directory path (without creating it)."""
+    override = os.getenv('SV_TRACE_DIR')
+    if override:
+        return Path(override).expanduser()
+    return get_processed_upload_dir() / 'traces'

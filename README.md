@@ -42,7 +42,7 @@ It installs Python deps, Node 20, and Playwright for the UI tests.
 `POST /upload_segy` converts the uploaded SEG-Y into a cached “trace store” under:
 
 ```
-app/api/uploads/processed/traces/<safe_filename>/
+<app_data_dir>/uploads/processed/traces/<safe_filename>/
   traces.npy
   index.npz
   meta.json
@@ -182,6 +182,16 @@ Pipeline job artifacts are persisted on disk.
 
 - `PIPELINE_JOBS_DIR` (highest priority): direct override for pipeline artifacts.
 - Default when unset: `<app_data_dir>/pipeline_jobs`
+
+Upload and trace-store artifacts are persisted on disk.
+
+- `SV_UPLOAD_DIR` (highest priority): direct override for upload root.
+- `SV_PROCESSED_DIR` (highest priority): direct override for processed upload root.
+- `SV_TRACE_DIR` (highest priority): direct override for trace-store root.
+- Defaults when unset:
+  - upload root: `<app_data_dir>/uploads`
+  - processed upload root: `<app_data_dir>/uploads/processed`
+  - trace-store root: `<app_data_dir>/uploads/processed/traces`
 
 `<app_data_dir>` is resolved in this order:
 
