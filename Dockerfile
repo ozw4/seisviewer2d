@@ -35,6 +35,9 @@ RUN --mount=type=cache,target=/root/.cache/pip,sharing=locked \
     --mount=type=bind,source=.devcontainer/requirements-dev.txt,target=requirements-dev.txt \
     python -m pip install -r requirements-dev.txt
 
+RUN --mount=type=cache,target=/root/.cache/pip,sharing=locked \
+    python -m pip install --no-cache-dir ruff
+
 RUN python -m playwright install --with-deps chromium
 RUN curl -fsSL https://deb.nodesource.com/setup_20.x | bash - \
  && apt-get install -y nodejs

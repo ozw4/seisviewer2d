@@ -22,8 +22,8 @@ ignore = ["E203", "E501"]
 ]
 
 [format]
-# ★ Python はタブインデント運用
-indent-style = "tab"
+# ★ Python space
+indent-style = "space"
 # 既存のクォートを尊重（差分最小）
 quote-style = "preserve"
 # Docstring 内コードはまず触らない（差分最小）
