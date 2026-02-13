@@ -17,6 +17,7 @@ from app.api._helpers import (
     OFFSET_BYTE_FIXED,
     USE_FBPICK_OFFSET,
     _maybe_attach_fbpick_offsets,
+    build_pipeline_tap_cache_key,
     coerce_section_f32,
     get_reader,
     reject_legacy_key1_query_params,
@@ -53,6 +54,36 @@ class PipelineAllRequest(BaseModel):
     downsample_quicklook: bool = True
 
 
+def _required_job_str(job: dict[str, object], *, field: str) -> str:
+    value = job.get(field)
+    if isinstance(value, str) and value:
+        return value
+    raise HTTPException(
+        status_code=500,
+        detail=f'Job metadata is inconsistent: {field}',
+    )
+
+
+def _required_job_int(job: dict[str, object], *, field: str) -> int:
+    value = job.get(field)
+    if isinstance(value, int):
+        return value
+    raise HTTPException(
+        status_code=500,
+        detail=f'Job metadata is inconsistent: {field}',
+    )
+
+
+def _optional_job_int(job: dict[str, object], *, field: str) -> int | None:
+    value = job.get(field)
+    if value is None or isinstance(value, int):
+        return value
+    raise HTTPException(
+        status_code=500,
+        detail=f'Job metadata is inconsistent: {field}',
+    )
+
+
 def _run_pipeline_all_job(
     job_id: str, req: PipelineAllRequest, pipe_key: str, state: AppState
 ) -> None:
@@ -60,11 +91,12 @@ def _run_pipeline_all_job(
     job['status'] = 'running'
     try:
         reader = get_reader(req.file_id, req.key1_byte, req.key2_byte, state=state)
-        key1_vals = reader.get_key1_values().tolist()
-        total = len(key1_vals) or 1
+        key1_values = reader.get_key1_values().tolist()
+        total = len(key1_values) or 1
         taps = req.taps
-        for idx, key1 in enumerate(key1_vals):
-            view = reader.get_section(int(key1))
+        for idx, key1 in enumerate(key1_values):
+            key1_value = int(key1)
+            view = reader.get_section(key1_value)
             section = coerce_section_f32(view.arr, view.scale)
 
             dt = float(get_dt_for_file(req.file_id))
@@ -75,31 +107,32 @@ def _run_pipeline_all_job(
                 meta,
                 spec=req.spec,
                 reader=reader,
-                key1=int(key1),
+                key1=key1_value,
                 offset_byte=req.offset_byte,  # already forced by caller
             )
 
             out = apply_pipeline(section, spec=req.spec, meta=meta, taps=taps)
-
-            base_key = (
-                req.file_id,
-                int(key1),
-                req.key1_byte,
-                pipe_key,
-                None,  # window_hash (all-jobは常にNone)
-                req.offset_byte,  # pass-through (forced by caller)
-            )
 
             for k, v in out.items():
                 val = v
                 if req.downsample_quicklook and isinstance(v, np.ndarray):
                     val = v[::4, ::4]
                 payload_obj = to_builtin(val)
-                logger.debug('PIPELINE_CACHE_SET all %s', (*base_key, k))
-                state.pipeline_tap_cache.set((*base_key, k), payload_obj)
+                cache_key = build_pipeline_tap_cache_key(
+                    file_id=req.file_id,
+                    key1=key1_value,
+                    key1_byte=req.key1_byte,
+                    key2_byte=req.key2_byte,
+                    pipeline_key=pipe_key,
+                    window_hash=None,  # all-job artifacts are always full section
+                    offset_byte=req.offset_byte,  # pass-through (forced by caller)
+                    tap_label=str(k),
+                )
+                logger.debug('PIPELINE_CACHE_SET all %s', cache_key)
+                state.pipeline_tap_cache.set(cache_key, payload_obj)
                 write_artifact(
                     job_id=job_id,
-                    key1=int(key1),
+                    key1=key1_value,
                     tap_label=str(k),
                     payload=payload_obj,
                 )
@@ -129,6 +162,12 @@ def pipeline_section(
     window: Annotated[dict[str, int | float] | None, Body()] = None,
     list_only: Annotated[bool, Query()] = False,
 ):
+    if list_only and window is not None:
+        raise HTTPException(
+            status_code=422,
+            detail='window is not supported when list_only=true',
+        )
+
     state = get_state(request.app)
     reader = get_reader(file_id, key1_byte, key2_byte, state=state)
     view = reader.get_section(key1)
@@ -180,20 +219,20 @@ def pipeline_section(
         # ★ list_only でもサーバ側で計算して cache に置く（返すのはラベルだけ）
         labels = tap_names if tap_names else ['final']
 
-        # フルセクション基準で保存（window 指定が無ければ window_hash は None）
-        base_key = (
-            file_id,
-            key1,
-            key1_byte,
-            pipe_key,
-            None,  # window_hash（フル配列）
-            forced_offset_byte,  # pass-through/fallback 済み
-        )
-
         # 既存 cache を確認し、無いものだけ計算
         misses: list[str] = []
         for label in labels:
-            payload = state.pipeline_tap_cache.get((*base_key, label))
+            cache_key = build_pipeline_tap_cache_key(
+                file_id=file_id,
+                key1=key1,
+                key1_byte=key1_byte,
+                key2_byte=key2_byte,
+                pipeline_key=pipe_key,
+                window_hash=None,  # list_only is full-section only
+                offset_byte=forced_offset_byte,
+                tap_label=label,
+            )
+            payload = state.pipeline_tap_cache.get(cache_key)
             if payload is None:
                 misses.append(label)
 
@@ -201,27 +240,38 @@ def pipeline_section(
             out = apply_pipeline(section, spec=spec, meta=meta, taps=misses)
             for k, v in out.items():
                 val = to_builtin(v)
-                state.pipeline_tap_cache.set((*base_key, k), val)
+                cache_key = build_pipeline_tap_cache_key(
+                    file_id=file_id,
+                    key1=key1,
+                    key1_byte=key1_byte,
+                    key2_byte=key2_byte,
+                    pipeline_key=pipe_key,
+                    window_hash=None,
+                    offset_byte=forced_offset_byte,
+                    tap_label=str(k),
+                )
+                state.pipeline_tap_cache.set(cache_key, val)
 
         # レスポンスは軽量（ラベル存在のみ）
         return {'taps': dict.fromkeys(labels, True), 'pipeline_key': pipe_key}
 
     if tap_names:
-        base_key = (
-            file_id,
-            key1,
-            key1_byte,
-            pipe_key,
-            window_hash,  # sectionはwindow付きならこれが入る
-            forced_offset_byte,  # pass-through or fallback
-        )
-
         taps_out: dict[str, Any] = {}
         misses: list[str] = []
 
         for tap in tap_names:
-            logger.debug('PIPELINE_CACHE_GET pipelinesection %s', (*base_key, tap))
-            payload = state.pipeline_tap_cache.get((*base_key, tap))
+            cache_key = build_pipeline_tap_cache_key(
+                file_id=file_id,
+                key1=key1,
+                key1_byte=key1_byte,
+                key2_byte=key2_byte,
+                pipeline_key=pipe_key,
+                window_hash=window_hash,  # window-specific taps have non-None hash
+                offset_byte=forced_offset_byte,
+                tap_label=tap,
+            )
+            logger.debug('PIPELINE_CACHE_GET pipelinesection %s', cache_key)
+            payload = state.pipeline_tap_cache.get(cache_key)
             if payload is not None:
                 taps_out[tap] = payload
             else:
@@ -232,7 +282,17 @@ def pipeline_section(
             for k, v in out.items():
                 val = to_builtin(v)
                 taps_out[k] = val
-                state.pipeline_tap_cache.set((*base_key, k), val)
+                cache_key = build_pipeline_tap_cache_key(
+                    file_id=file_id,
+                    key1=key1,
+                    key1_byte=key1_byte,
+                    key2_byte=key2_byte,
+                    pipeline_key=pipe_key,
+                    window_hash=window_hash,
+                    offset_byte=forced_offset_byte,
+                    tap_label=str(k),
+                )
+                state.pipeline_tap_cache.set(cache_key, val)
 
         return {'taps': taps_out, 'pipeline_key': pipe_key}
 
@@ -282,6 +342,7 @@ def pipeline_all(
         'message': '',
         'file_id': file_id,
         'key1_byte': key1_byte,
+        'key2_byte': key2_byte,
         'pipeline_key': pipe_key,
         'offset_byte': forced_offset_byte,  # artifact側も同じ値で参照
         'artifacts_dir': str(get_job_dir(job_id)),
@@ -329,19 +390,27 @@ def pipeline_job_artifact(
     if disk_payload is not None:
         return disk_payload
 
-    base_key = (
-        job.get('file_id'),
-        key1,
-        job.get('key1_byte'),
-        job.get('pipeline_key'),
-        None,  # window_hash は常に None
-        job.get('offset_byte'),
+    job_file_id = _required_job_str(job, field='file_id')
+    job_pipeline_key = _required_job_str(job, field='pipeline_key')
+    job_key1_byte = _required_job_int(job, field='key1_byte')
+    job_key2_byte = _required_job_int(job, field='key2_byte')
+    job_offset_byte = _optional_job_int(job, field='offset_byte')
+
+    cache_key = build_pipeline_tap_cache_key(
+        file_id=job_file_id,
+        key1=key1,
+        key1_byte=job_key1_byte,
+        key2_byte=job_key2_byte,
+        pipeline_key=job_pipeline_key,
+        window_hash=None,  # /pipeline/all artifacts are always full-section taps
+        offset_byte=job_offset_byte,
+        tap_label=tap,
     )
 
     # Migration compatibility: fall back to in-memory LRU when disk artifact is absent.
-    logger.debug('PIPELINE_CACHE_GET artifact %s', (*base_key, tap))
+    logger.debug('PIPELINE_CACHE_GET artifact %s', cache_key)
 
-    payload = state.pipeline_tap_cache.get((*base_key, tap))
+    payload = state.pipeline_tap_cache.get(cache_key)
     if payload is None:
         raise HTTPException(status_code=404, detail='Artifact not ready')
     return payload

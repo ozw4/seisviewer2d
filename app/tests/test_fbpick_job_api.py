@@ -30,7 +30,7 @@ class _DummyReader:
         self._section = np.asarray(section, dtype=np.float32)
         self.meta = {'dt': float(dt)}
 
-    def get_section(self, _key1_val: int) -> _DummyView:
+    def get_section(self, _key1: int) -> _DummyView:
         return _DummyView(self._section, 1.0)
 
 
@@ -86,19 +86,18 @@ def test_fbpick_cache_hit_marks_job_done_and_get_returns_payload(_fb_env, monkey
     monkeypatch.setattr(fbpick_mod.threading, 'Thread', _NoThread, raising=True)
 
     state = app.state.sv
-    cache_key = (
-        'fid',
-        1,
-        189,
-        193,
-        None,
-        128,
-        6016,
-        32,
-        True,
-        None,
-        None,
-        'fbpick',
+    cache_key = fbpick_mod._build_fbpick_cache_key(
+        file_id='fid',
+        key1=1,
+        key1_byte=189,
+        key2_byte=193,
+        offset_byte=None,
+        tile_h=128,
+        tile_w=6016,
+        overlap=32,
+        amp=True,
+        pipeline_key=None,
+        tap_label=None,
     )
     payload_gz = _pack_payload(shape=(3, 4), dt=0.002)
     state.fbpick_cache[cache_key] = payload_gz

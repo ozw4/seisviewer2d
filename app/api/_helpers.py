@@ -265,11 +265,58 @@ def _pipeline_payload_to_array(payload: object, *, tap_label: str) -> np.ndarray
     return np.ascontiguousarray(arr)
 
 
+def build_pipeline_tap_cache_base_key(
+    *,
+    file_id: str,
+    key1: int,
+    key1_byte: int,
+    key2_byte: int,
+    pipeline_key: str,
+    window_hash: str | None,
+    offset_byte: int | None,
+) -> tuple[str, int, int, int, str, str | None, int | None]:
+    """Build the canonical base key for ``pipeline_tap_cache``."""
+    return (
+        file_id,
+        int(key1),
+        int(key1_byte),
+        int(key2_byte),
+        pipeline_key,
+        window_hash,
+        offset_byte,
+    )
+
+
+def build_pipeline_tap_cache_key(
+    *,
+    file_id: str,
+    key1: int,
+    key1_byte: int,
+    key2_byte: int,
+    pipeline_key: str,
+    window_hash: str | None,
+    offset_byte: int | None,
+    tap_label: str,
+) -> tuple[str, int, int, int, str, str | None, int | None, str]:
+    """Build the canonical full key for ``pipeline_tap_cache``."""
+    base_key = build_pipeline_tap_cache_base_key(
+        file_id=file_id,
+        key1=key1,
+        key1_byte=key1_byte,
+        key2_byte=key2_byte,
+        pipeline_key=pipeline_key,
+        window_hash=window_hash,
+        offset_byte=offset_byte,
+    )
+    return (*base_key, tap_label)
+
+
 def get_section_from_pipeline_tap(
     *,
     file_id: str,
     key1: int,
     key1_byte: int,
+    key2_byte: int,
     pipeline_key: str,
     tap_label: str,
     offset_byte: int | None = None,
@@ -281,6 +328,7 @@ def get_section_from_pipeline_tap(
         file_id=file_id,
         key1=key1,
         key1_byte=key1_byte,
+        key2_byte=key2_byte,
         pipeline_key=pipeline_key,
         tap_label=tap_label,
         offset_byte=offset_byte,
@@ -295,6 +343,7 @@ def get_section_and_meta_from_pipeline_tap(
     file_id: str,
     key1: int,
     key1_byte: int,
+    key2_byte: int,
     pipeline_key: str,
     tap_label: str,
     offset_byte: int | None = None,
@@ -303,8 +352,17 @@ def get_section_and_meta_from_pipeline_tap(
 ) -> tuple[np.ndarray, dict[str, Any] | None]:
     """Return tap payload as ``float32`` along with optional metadata."""
     sv = _resolve_state(app=app, state=state)
-    base_key = (file_id, key1, key1_byte, pipeline_key, None, offset_byte)
-    payload = sv.pipeline_tap_cache.get((*base_key, tap_label))
+    cache_key = build_pipeline_tap_cache_key(
+        file_id=file_id,
+        key1=key1,
+        key1_byte=key1_byte,
+        key2_byte=key2_byte,
+        pipeline_key=pipeline_key,
+        window_hash=None,
+        offset_byte=offset_byte,
+        tap_label=tap_label,
+    )
+    payload = sv.pipeline_tap_cache.get(cache_key)
     if payload is None:
         msg = (
             f'Pipeline tap {tap_label!r} for pipeline {pipeline_key!r} '
@@ -387,6 +445,8 @@ __all__ = [
     '_pipeline_payload_to_array',
     '_spec_uses_fbpick',
     '_update_file_registry',
+    'build_pipeline_tap_cache_base_key',
+    'build_pipeline_tap_cache_key',
     'coerce_section_f32',
     'get_state',
     'get_raw_section',

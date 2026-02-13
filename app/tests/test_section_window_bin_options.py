@@ -332,7 +332,7 @@ def test_get_section_window_bin_pipeline_key_tap_label_window_uses_expected_tap(
     arr_b = np.arange(4 * 5, dtype=np.float32).reshape(4, 5) + 100.0
 
     pipeline_key = 'pk1'
-    base_key = ('f', 7, 189, pipeline_key, None, None)
+    base_key = ('f', 7, 189, 193, pipeline_key, None, None)
     state.pipeline_tap_cache.set((*base_key, 'tapA'), {'data': arr_a})
     state.pipeline_tap_cache.set((*base_key, 'tapB'), {'data': arr_b})
 

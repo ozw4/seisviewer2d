@@ -23,7 +23,7 @@ class _DummyReader:
         self._arr = arr
         self.meta = {'dt': 0.002}
 
-    def get_section(self, _key1_val: int) -> _View:
+    def get_section(self, _key1: int) -> _View:
         return _View(arr=self._arr, scale=1.0)
 
 
@@ -146,7 +146,7 @@ def test_pipeline_section_cache_hit_same_key_and_tap(_pipeline_env):
     assert calls['n'] == 1
     assert out2 == out1
 
-    cache_key = ('fid', 1, 189, 'pk', None, 7, 'tapA')
+    cache_key = ('fid', 1, 189, 193, 'pk', None, 7, 'tapA')
     assert state.pipeline_tap_cache.get(cache_key) == out1['taps']['tapA']
 
 
@@ -194,8 +194,8 @@ def test_pipeline_section_cache_separates_by_window_hash(_pipeline_env):
     _, h2 = _clean_window_and_hash(w2, section)
     assert h1 != h2
 
-    k1 = ('fid', 1, 189, 'pk', h1, 7, 'tapA')
-    k2 = ('fid', 1, 189, 'pk', h2, 7, 'tapA')
+    k1 = ('fid', 1, 189, 193, 'pk', h1, 7, 'tapA')
+    k2 = ('fid', 1, 189, 193, 'pk', h2, 7, 'tapA')
     assert state.pipeline_tap_cache.get(k1) == out1['taps']['tapA']
     assert state.pipeline_tap_cache.get(k2) == out2['taps']['tapA']
 
@@ -204,7 +204,7 @@ def test_pipeline_section_list_only_hits_cache_and_does_not_compute(_pipeline_en
     client, state, calls = _pipeline_env
 
     # list_only の cache キーは window_hash=None 固定
-    base = ('fid', 1, 189, 'pk', None, 7)
+    base = ('fid', 1, 189, 193, 'pk', None, 7)
     state.pipeline_tap_cache.set((*base, 'tapA'), {'cached': True})
     state.pipeline_tap_cache.set((*base, 'tapB'), {'cached': True})
 
@@ -224,7 +224,7 @@ def test_pipeline_section_list_only_hits_cache_and_does_not_compute(_pipeline_en
 def test_pipeline_section_list_only_computes_only_misses(_pipeline_env):
     client, state, calls = _pipeline_env
 
-    base = ('fid', 1, 189, 'pk', None, 7)
+    base = ('fid', 1, 189, 193, 'pk', None, 7)
     state.pipeline_tap_cache.set((*base, 'tapA'), {'cached': True})
 
     out = _post_pipeline_section(
@@ -244,3 +244,21 @@ def test_pipeline_section_list_only_computes_only_misses(_pipeline_env):
     cached_b = state.pipeline_tap_cache.get((*base, 'tapB'))
     assert isinstance(cached_b, dict)
     assert cached_b.get('label') == 'tapB'
+
+
+def test_pipeline_section_list_only_rejects_window(_pipeline_env):
+    client, _state, _calls = _pipeline_env
+    r = client.post(
+        '/pipeline/section',
+        params={
+            'file_id': 'fid',
+            'key1': 1,
+            'offset_byte': 7,
+            'list_only': 'true',
+        },
+        json={
+            'spec': {'steps': []},
+            'window': {'tr_min': 0, 'tr_max': 5, 't_min': 0, 't_max': 3},
+        },
+    )
+    assert r.status_code == 422

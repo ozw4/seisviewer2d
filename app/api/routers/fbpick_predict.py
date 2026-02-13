@@ -129,6 +129,7 @@ def _compute_probability_map(
                 file_id=req.file_id,
                 key1=req.key1,
                 key1_byte=req.key1_byte,
+                key2_byte=req.key2_byte,
                 pipeline_key=pipeline_key,
                 tap_label=tap_label,
                 offset_byte=forced_offset_byte if USE_FBPICK_OFFSET else None,

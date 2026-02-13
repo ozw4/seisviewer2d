@@ -38,6 +38,7 @@ def _load_section_view(
             file_id=file_id,
             key1=key1,
             key1_byte=key1_byte,
+            key2_byte=key2_byte,
             pipeline_key=pipeline_key,
             tap_label=tap_label,
             offset_byte=offset_byte,

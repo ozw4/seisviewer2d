@@ -71,6 +71,7 @@ def pipeline_env(tmp_path: Path, monkeypatch):
     reader = _StubReader([10, 20])
     monkeypatch.setattr(pipe, 'get_reader', lambda *a, **k: reader, raising=True)
     monkeypatch.setattr(pipe, 'get_dt_for_file', lambda _fid: 0.002, raising=True)
+    monkeypatch.setattr(pipe, 'pipeline_key', lambda _spec: 'pk', raising=True)
 
     started = threading.Event()
     proceed = threading.Event()
@@ -136,7 +137,7 @@ def test_pipeline_all_job_status_and_artifact_flow(pipeline_env):
     art_q = client.get(
         f'/pipeline/job/{job_id}/artifact', params={'key1': 10, 'tap': 'final'}
     )
-    assert art_q.status_code == 404
+    assert art_q.status_code == 404, art_q.text
     assert art_q.json()['detail'] == 'Artifact not ready'
 
     # ---- run the captured job in a real thread (controlled) ----
@@ -175,7 +176,7 @@ def test_pipeline_all_job_status_and_artifact_flow(pipeline_env):
     offset_byte = job.get('offset_byte')
 
     # key1=10 の cache を消して disk read を強制（disk 経由で取れればOK）
-    base_key_10 = (file_id, 10, 189, pipe_key, None, offset_byte)
+    base_key_10 = (file_id, 10, 189, 193, pipe_key, None, offset_byte)
     cache_key_10 = (*base_key_10, 'final')
     state.pipeline_tap_cache.pop(cache_key_10, None)
 
@@ -200,7 +201,7 @@ def test_pipeline_all_job_status_and_artifact_flow(pipeline_env):
     assert art20.json() == {'value': 20.0, 'dt': 0.002}
 
     # cache も消すと 404（fallback 不能）
-    base_key_20 = (file_id, 20, 189, pipe_key, None, offset_byte)
+    base_key_20 = (file_id, 20, 189, 193, pipe_key, None, offset_byte)
     cache_key_20 = (*base_key_20, 'final')
     state.pipeline_tap_cache.pop(cache_key_20, None)
 
@@ -209,3 +210,23 @@ def test_pipeline_all_job_status_and_artifact_flow(pipeline_env):
     )
     assert art20_nf.status_code == 404
     assert art20_nf.json()['detail'] == 'Artifact not ready'
+
+
+def test_pipeline_job_artifact_returns_500_when_job_metadata_inconsistent(
+    pipeline_env,
+):
+    client, _pipe, state, _started, _proceed, _jobs_dir = pipeline_env
+    job_id = 'broken-job'
+    state.jobs[job_id] = {
+        'status': 'done',
+        'progress': 1.0,
+        'message': '',
+        'file_id': 'f1',
+        # pipeline_key / key1_byte / key2_byte are intentionally missing
+    }
+
+    res = client.get(
+        f'/pipeline/job/{job_id}/artifact', params={'key1': 10, 'tap': 'final'}
+    )
+    assert res.status_code == 500
+    assert res.json()['detail'] == 'Job metadata is inconsistent: pipeline_key'

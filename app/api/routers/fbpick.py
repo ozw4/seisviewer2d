@@ -31,6 +31,61 @@ from app.utils.utils import quantize_float32
 router = APIRouter()
 
 
+def _fbpick_model_version() -> str:
+    model_path = FBPICK_MODEL_PATH
+
+    model_name = getattr(model_path, 'name', None)
+    if not isinstance(model_name, str) or not model_name:
+        model_name = 'unknown-model'
+
+    exists = getattr(model_path, 'exists', None)
+    if not callable(exists):
+        return model_name
+    if not bool(exists()):
+        return 'missing'
+
+    stat_fn = getattr(model_path, 'stat', None)
+    if not callable(stat_fn):
+        return model_name
+
+    model_stat = stat_fn()
+    mtime_ns = getattr(model_stat, 'st_mtime_ns', None)
+    if isinstance(mtime_ns, int):
+        return f'{model_name}:{mtime_ns}'
+    return model_name
+
+
+def _build_fbpick_cache_key(
+    *,
+    file_id: str,
+    key1: int,
+    key1_byte: int,
+    key2_byte: int,
+    offset_byte: int | None,
+    tile_h: int,
+    tile_w: int,
+    overlap: int,
+    amp: bool,
+    pipeline_key: str | None,
+    tap_label: str | None,
+) -> tuple[Any, ...]:
+    return (
+        file_id,
+        int(key1),
+        int(key1_byte),
+        int(key2_byte),
+        offset_byte,
+        int(tile_h),
+        int(tile_w),
+        int(overlap),
+        bool(amp),
+        pipeline_key,
+        tap_label,
+        _fbpick_model_version(),
+        'fbpick',
+    )
+
+
 class FbpickRequest(BaseModel):
     model_config = ConfigDict(extra='forbid')
 
@@ -66,6 +121,7 @@ def _run_fbpick_job(job_id: str, req: FbpickRequest, state: AppState) -> None:
                 file_id=req.file_id,
                 key1=key1,
                 key1_byte=req.key1_byte,
+                key2_byte=req.key2_byte,
                 pipeline_key=req.pipeline_key,
                 tap_label=req.tap_label,
                 offset_byte=forced_offset_byte,
@@ -128,19 +184,18 @@ def fbpick_section_bin(req: FbpickRequest, request: Request):
     pipeline_key = req.pipeline_key
     tap_label = req.tap_label
     key1 = req.key1
-    cache_key = (
-        req.file_id,
-        key1,
-        req.key1_byte,
-        req.key2_byte,
-        forced_offset_byte,
-        req.tile_h,
-        req.tile_w,
-        req.overlap,
-        bool(req.amp),
-        pipeline_key,
-        tap_label,
-        'fbpick',
+    cache_key = _build_fbpick_cache_key(
+        file_id=req.file_id,
+        key1=key1,
+        key1_byte=req.key1_byte,
+        key2_byte=req.key2_byte,
+        offset_byte=forced_offset_byte,
+        tile_h=req.tile_h,
+        tile_w=req.tile_w,
+        overlap=req.overlap,
+        amp=req.amp,
+        pipeline_key=pipeline_key,
+        tap_label=tap_label,
     )
     section_override: np.ndarray | None = None
     wants_pipeline = bool(pipeline_key and tap_label)
@@ -150,6 +205,7 @@ def fbpick_section_bin(req: FbpickRequest, request: Request):
                 file_id=req.file_id,
                 key1=key1,
                 key1_byte=req.key1_byte,
+                key2_byte=req.key2_byte,
                 pipeline_key=pipeline_key,
                 tap_label=tap_label,
                 offset_byte=forced_offset_byte,
@@ -165,7 +221,7 @@ def fbpick_section_bin(req: FbpickRequest, request: Request):
         job_state['section_override'] = section_override
     state.jobs[job_id] = job_state
 
-    req2 = req.copy(update={'offset_byte': forced_offset_byte})
+    req2 = req.model_copy(update={'offset_byte': forced_offset_byte})
 
     if cache_key in state.fbpick_cache:
         state.jobs[job_id]['status'] = 'done'

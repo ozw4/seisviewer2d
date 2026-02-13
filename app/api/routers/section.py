@@ -46,6 +46,60 @@ class SectionMeta(BaseModel):
     scale: float | None = None
 
 
+def _build_window_section_cache_key(
+    *,
+    file_id: str,
+    key1: int,
+    key1_byte: int,
+    key2_byte: int,
+    offset_byte: int | None,
+    x0: int,
+    x1: int,
+    y0: int,
+    y1: int,
+    step_x: int,
+    step_y: int,
+    transpose: bool,
+    pipeline_key: str | None,
+    tap_label: str | None,
+    scaling_mode: str,
+) -> tuple[
+    str,
+    int,
+    int,
+    int,
+    int | None,
+    int,
+    int,
+    int,
+    int,
+    int,
+    int,
+    bool,
+    str | None,
+    str | None,
+    str,
+]:
+    """Build the canonical cache key for section-window binary payloads."""
+    return (
+        file_id,
+        int(key1),
+        int(key1_byte),
+        int(key2_byte),
+        offset_byte,
+        int(x0),
+        int(x1),
+        int(y0),
+        int(y1),
+        int(step_x),
+        int(step_y),
+        bool(transpose),
+        pipeline_key,
+        tap_label,
+        str(scaling_mode),
+    )
+
+
 def get_ntraces_for(
     file_id: str,
     key1_byte: int | None = None,
@@ -197,23 +251,21 @@ def get_section_stats(
         raise HTTPException(status_code=500, detail=str(exc)) from exc
     response_payload = dict(payload)
     if key1 is not None:
-        key1 = int(key1)
+        key1_value = int(key1)
         key1_values = response_payload.get('key1_values') or []
         try:
-            pos = key1_values.index(key1)
+            pos = key1_values.index(key1_value)
         except ValueError as exc:
             raise HTTPException(
                 status_code=404,
-                detail=f'key1 {key1} not found in baseline',
+                detail=f'key1 {key1_value} not found in baseline',
             ) from exc
         trace_spans_map = response_payload.get('trace_spans_by_key1') or {}
-        trace_spans = trace_spans_map.get(str(key1))
-        if trace_spans is None:
-            trace_spans = trace_spans_map.get(str(int(key1)))
+        trace_spans = trace_spans_map.get(str(key1_value))
         if trace_spans is None:
             trace_spans = []
         selected = {
-            'key1': key1,
+            'key1': key1_value,
             'mu_section': response_payload['mu_section_by_key1'][pos],
             'sigma_section': response_payload['sigma_section_by_key1'][pos],
             'trace_spans': trace_spans,
@@ -288,22 +340,22 @@ def get_section_window_bin(
     if mode not in {'amax', 'tracewise'}:
         raise HTTPException(status_code=400, detail='Unsupported scaling mode')
     forced_offset_byte = OFFSET_BYTE_FIXED if USE_FBPICK_OFFSET else offset_byte
-    cache_key = (
-        file_id,
-        key1,
-        key1_byte,
-        key2_byte,
-        forced_offset_byte,
-        x0,
-        x1,
-        y0,
-        y1,
-        step_x,
-        step_y,
-        transpose,
-        pipeline_key,
-        tap_label,
-        mode,
+    cache_key = _build_window_section_cache_key(
+        file_id=file_id,
+        key1=key1,
+        key1_byte=key1_byte,
+        key2_byte=key2_byte,
+        offset_byte=forced_offset_byte,
+        x0=x0,
+        x1=x1,
+        y0=y0,
+        y1=y1,
+        step_x=step_x,
+        step_y=step_y,
+        transpose=transpose,
+        pipeline_key=pipeline_key,
+        tap_label=tap_label,
+        scaling_mode=mode,
     )
 
     cached_payload = state.window_section_cache.get(cache_key)
