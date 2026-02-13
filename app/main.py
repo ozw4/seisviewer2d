@@ -1,8 +1,6 @@
 """FastAPI application entry point."""
 
-from contextlib import asynccontextmanager
 from pathlib import Path
-from typing import AsyncIterator
 
 from fastapi import FastAPI
 from fastapi.responses import HTMLResponse
@@ -16,19 +14,11 @@ from app.api.routers import (
 	section_router,
 	upload_router,
 )
-from app.core.state import AppState, create_app_state
+from app.core.state import create_app_state
 
 STATIC_DIR = (Path(__file__).parent / 'static').resolve()
 
-
-@asynccontextmanager
-async def lifespan(app: FastAPI) -> AsyncIterator[None]:
-	if not isinstance(getattr(app.state, 'sv', None), AppState):
-		app.state.sv = create_app_state()
-	yield
-
-
-app = FastAPI(lifespan=lifespan)
+app = FastAPI()
 app.state.sv = create_app_state()
 
 # 静的ファイル (HTML, JS)
