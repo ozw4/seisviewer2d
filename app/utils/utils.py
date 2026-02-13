@@ -3,12 +3,15 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 from pathlib import Path
 from typing import NamedTuple
 
 import numpy as np
 import segyio
+
+logger = logging.getLogger(__name__)
 
 
 class SectionView(NamedTuple):
@@ -67,7 +70,7 @@ class TraceStoreSectionReader:
 		self.dtype = self.traces.dtype
 		scale_val = self.meta.get('scale') if isinstance(self.meta, dict) else None
 		self.scale = float(scale_val) if isinstance(scale_val, (int, float)) else None
-		print('Initialized TraceStoreSectionReader with scale:', self.scale)
+		logger.info('Initialized TraceStoreSectionReader with scale: %s', self.scale)
 
 	def _header_path(self, byte: int) -> Path:
 		return self.store_dir / f'headers_byte_{byte}.npy'
@@ -79,18 +82,18 @@ class TraceStoreSectionReader:
 
 		index_path = self.store_dir / 'index.npz'
 		if not index_path.exists():
-			print(
-				f'[WARN][FALLBACK] Missing index.npz in {self.store_dir}; '
-				'new headers keep original SEG-Y order'
+			logger.warning(
+				'[FALLBACK] Missing index.npz in %s; new headers keep original SEG-Y order',
+				self.store_dir,
 			)
 			self._sorted_to_original_loaded = True
 			return None
 
 		with np.load(index_path) as idx:
 			if 'sorted_to_original' not in idx.files:
-				print(
-					f'[WARN][FALLBACK] index.npz has no sorted_to_original in '
-					f'{self.store_dir}; new headers keep original SEG-Y order'
+				logger.warning(
+					'[FALLBACK] index.npz has no sorted_to_original in %s; new headers keep original SEG-Y order',
+					self.store_dir,
 				)
 				self._sorted_to_original_loaded = True
 				return None
@@ -106,7 +109,7 @@ class TraceStoreSectionReader:
 		if path.exists():
 			return np.load(path, mmap_mode='r')
 
-		print(f'Extracting header byte {header_byte} for {self.store_dir}')
+		logger.info('Extracting header byte %s for %s', header_byte, self.store_dir)
 		with segyio.open(
 			self.meta['original_segy_path'],
 			'r',
@@ -149,7 +152,7 @@ class TraceStoreSectionReader:
 
 		key1s = self.get_header(self.key1_byte)
 		indices = np.flatnonzero(key1s == key1_val).astype(np.int64)
-		print(len(indices), 'indices found for key1_val:', key1_val)
+		logger.debug('%s indices found for key1_val: %s', len(indices), key1_val)
 		if indices.size == 0:
 			msg = f'Key1 value {key1_val} not found'
 			raise ValueError(msg)

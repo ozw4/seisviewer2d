@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import json
+import logging
 import pathlib
 import re
 import threading
@@ -21,6 +22,7 @@ from app.utils.segy_meta import FILE_REGISTRY
 from app.utils.utils import TraceStoreSectionReader
 
 router = APIRouter()
+logger = logging.getLogger(__name__)
 
 BASE_DIR = pathlib.Path(__file__).resolve().parent.parent
 UPLOAD_DIR = BASE_DIR / 'uploads'
@@ -140,7 +142,7 @@ async def open_segy(
 			status_code=404,
 			detail=f'Trace store not found for {original_name}',
 		)
-	print(f'Opening existing trace store for {original_name}')
+	logger.info('Opening existing trace store for %s', original_name)
 	file_id = str(uuid4())
 	reused = _trace_store_complete(store_dir, key1_byte, key2_byte)
 	if reused:
@@ -181,7 +183,7 @@ async def upload_segy(
 		raise HTTPException(
 			status_code=400, detail='Uploaded file must have a filename'
 		)
-	print(f'Uploading file: {file.filename}')
+	logger.info('Uploading file: %s', file.filename)
 	safe_name = re.sub(r'[^A-Za-z0-9_.-]', '_', file.filename)
 	store_dir = TRACE_DIR / safe_name
 	file_id = str(uuid4())
@@ -214,7 +216,7 @@ async def upload_segy(
 				raise HTTPException(status_code=409, detail=msg) from exc
 
 	if reused and meta is not None:
-		print(f'Reusing trace store for {file.filename}')
+		logger.info('Reusing trace store for %s', file.filename)
 		_register_trace_store(file_id, store_dir, key1_byte, key2_byte, state=state)
 		FILE_REGISTRY[file_id] = {
 			'store_path': str(store_dir),

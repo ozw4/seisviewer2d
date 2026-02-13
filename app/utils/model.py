@@ -1,8 +1,12 @@
 # %%
+import logging
+
 import timm
 import torch
 import torch.nn.functional as F
 from torch import nn
+
+logger = logging.getLogger(__name__)
 
 
 def adjust_first_conv_padding(backbone: nn.Module, padding=(1, 1)):
@@ -11,7 +15,7 @@ def adjust_first_conv_padding(backbone: nn.Module, padding=(1, 1)):
 		if isinstance(m, nn.Conv2d):
 			m.padding = padding
 
-			print(f'Adjusted first Conv2d padding to {padding}')
+			logger.info('Adjusted first Conv2d padding to %s', padding)
 			break
 
 
@@ -392,7 +396,7 @@ class NetAE(nn.Module):
 			x = b(x)
 			pre_feats.append(x[:, :1])
 			if getattr(self, 'print_shapes', False):
-				print(f'[pre] {tuple(x.shape)}')
+				logger.debug('[pre] %s', tuple(x.shape))
 
 		# backbone → deepest-first
 		feats = self.backbone(x)[::-1]
@@ -428,7 +432,7 @@ class NetAE(nn.Module):
 
 		if getattr(self, 'print_shapes', False):
 			for i, f in enumerate(feats):
-				print(f'Encoder feature {i} shape:', f.shape)
+				logger.debug('Encoder feature %s shape: %s', i, tuple(f.shape))
 		dec = self.decoder(feats)
 
 		y = self.seg_head(dec[-1])  # 低解像度 → 後段で補間

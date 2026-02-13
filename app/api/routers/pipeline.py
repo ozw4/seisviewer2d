@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 import threading
 from typing import Annotated, Any
 from uuid import uuid4
@@ -37,6 +38,7 @@ from app.utils.pipeline import apply_pipeline, pipeline_key
 from app.utils.utils import to_builtin
 
 router = APIRouter()
+logger = logging.getLogger(__name__)
 
 
 class PipelineAllRequest(BaseModel):
@@ -93,7 +95,7 @@ def _run_pipeline_all_job(
 				if req.downsample_quicklook and isinstance(v, np.ndarray):
 					val = v[::4, ::4]
 				payload_obj = to_builtin(val)
-				print('PIPELINE_CACHE_SET all', (*base_key, k))
+				logger.debug('PIPELINE_CACHE_SET all %s', (*base_key, k))
 				state.pipeline_tap_cache.set((*base_key, k), payload_obj)
 				write_artifact(
 					job_id=job_id,
@@ -216,7 +218,7 @@ def pipeline_section(
 		misses: list[str] = []
 
 		for tap in tap_names:
-			print('PIPELINE_CACHE_GET pipelinesection', (*base_key, tap))
+			logger.debug('PIPELINE_CACHE_GET pipelinesection %s', (*base_key, tap))
 			payload = state.pipeline_tap_cache.get((*base_key, tap))
 			if payload is not None:
 				taps_out[tap] = payload
@@ -331,7 +333,7 @@ def pipeline_job_artifact(
 	)
 
 	# Migration compatibility: fall back to in-memory LRU when disk artifact is absent.
-	print('PIPELINE_CACHE_GET artifact', (*base_key, tap))
+	logger.debug('PIPELINE_CACHE_GET artifact %s', (*base_key, tap))
 
 	payload = state.pipeline_tap_cache.get((*base_key, tap))
 	if payload is None:

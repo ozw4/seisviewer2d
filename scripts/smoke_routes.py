@@ -2,11 +2,14 @@
 
 from __future__ import annotations
 
+import logging
+
 from fastapi.testclient import TestClient
 
 from app.main import app
 
 client = TestClient(app, raise_server_exceptions=False)
+logger = logging.getLogger(__name__)
 
 
 ROUTES: list[dict[str, object]] = [
@@ -193,11 +196,12 @@ def main() -> None:
 		response = client.request(method, path, **kwargs)
 		status = response.status_code
 		ok = status in expected
-		print(f'{method} {path} -> {status} (expected {sorted(expected)})')
+		logger.info('%s %s -> %s (expected %s)', method, path, status, sorted(expected))
 		if not ok:
 			raise SystemExit(1)
-	print('Smoke route checks completed.')
+	logger.info('Smoke route checks completed.')
 
 
 if __name__ == '__main__':
+	logging.basicConfig(level=logging.INFO)
 	main()

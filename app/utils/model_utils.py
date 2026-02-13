@@ -1,7 +1,11 @@
 from __future__ import annotations
 
+import logging
+
 import torch
 from torch import nn
+
+logger = logging.getLogger(__name__)
 
 
 def _dup_or_init_like(
@@ -37,7 +41,7 @@ def _inflate_conv_in_to_2(conv: nn.Conv2d, *, verbose: bool, init_mode: str) -> 
 	"""Make conv.in_channels = 2 (keep out_channels)."""
 	if conv.in_channels == 2:
 		if verbose:
-			print(f'[inflate] keep in=2 for {conv}')
+			logger.debug('[inflate] keep in=2 for %s', conv)
 		return
 	assert conv.in_channels == 1, f'in_channels must be 1 or 2, got {conv.in_channels}'
 	out_ch = conv.out_channels
@@ -63,7 +67,7 @@ def _inflate_conv_in_to_2(conv: nn.Conv2d, *, verbose: bool, init_mode: str) -> 
 	conv.bias = new_conv.bias
 	conv.in_channels = new_conv.in_channels
 	if verbose:
-		print(f'[inflate] {type(conv).__name__}: in 1→2')
+		logger.debug('[inflate] %s: in 1→2', type(conv).__name__)
 
 
 def _replace_seq_conv_bn_to_2x(
@@ -102,7 +106,11 @@ def _replace_seq_conv_bn_to_2x(
 
 	seq[conv_idx] = new_conv
 	if verbose:
-		print(f'[inflate] {seq.__class__.__name__}[{conv_idx}]: (in,out) → (2,2)')
+		logger.debug(
+			'[inflate] %s[%s]: (in,out) → (2,2)',
+			seq.__class__.__name__,
+			conv_idx,
+		)
 
 	if (
 		bn_idx is not None
@@ -140,7 +148,11 @@ def _replace_seq_conv_bn_to_2x(
 					new_bn.running_var.copy_(rv[:2])
 		seq[bn_idx] = new_bn
 		if verbose:
-			print(f'[inflate] {seq.__class__.__name__}[{bn_idx}]: BN channels → 2')
+			logger.debug(
+				'[inflate] %s[%s]: BN channels → 2',
+				seq.__class__.__name__,
+				bn_idx,
+			)
 
 
 def inflate_input_convs_to_2ch(
@@ -188,9 +200,12 @@ def inflate_input_convs_to_2ch(
 			if conv.in_channels == 1:
 				_inflate_conv_in_to_2(conv, verbose=verbose, init_mode=init_mode)
 			elif verbose:
-				print(f'[inflate] backbone first conv already in={conv.in_channels}')
+				logger.debug(
+					'[inflate] backbone first conv already in=%s',
+					conv.in_channels,
+				)
 		elif verbose:
-			print('[inflate][WARN] backbone first Conv2d not found')
+			logger.warning('[inflate] backbone first Conv2d not found')
 
 	if verbose:
-		print('[inflate] done.')
+		logger.debug('[inflate] done.')
