@@ -9,7 +9,7 @@ from typing import Any, Literal
 
 import numpy as np
 from fastapi import APIRouter, HTTPException, Request
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 from app.api._helpers import (
     OFFSET_BYTE_FIXED,
@@ -49,8 +49,10 @@ _last_prob_state = _LastProbabilityState()
 
 
 class FbpickPredictRequest(BaseModel):
+    model_config = ConfigDict(extra='forbid')
+
     file_id: str
-    key1_val: int
+    key1: int
     key1_byte: int = 189
     key2_byte: int = 193
     pipeline_key: str | None = None
@@ -125,7 +127,7 @@ def _compute_probability_map(
         try:
             section, tap_meta = get_section_and_meta_from_pipeline_tap(
                 file_id=req.file_id,
-                key1_val=req.key1_val,
+                key1=req.key1,
                 key1_byte=req.key1_byte,
                 pipeline_key=pipeline_key,
                 tap_label=tap_label,
@@ -138,7 +140,7 @@ def _compute_probability_map(
         dt = _resolve_dt(req.file_id, meta_for_dt)
         source = f'pipeline:{tap_label}'
     else:
-        view = reader.get_section(req.key1_val)
+        view = reader.get_section(req.key1)
         section = coerce_section_f32(view.arr, view.scale)
         source = 'raw'
 
@@ -166,7 +168,7 @@ def _compute_probability_map(
             meta,
             spec=spec,
             reader=reader,
-            key1_val=req.key1_val,
+            key1=req.key1,
             offset_byte=forced_offset_byte if USE_FBPICK_OFFSET else None,
         )
 
@@ -184,7 +186,7 @@ def _compute_probability_map(
 def _load_probability_map(
     req: FbpickPredictRequest, *, state: AppState
 ) -> _ProbabilityPayload:
-    key = (req.file_id, req.key1_val, req.pipeline_key, req.tap_label, _model_version())
+    key = (req.file_id, req.key1, req.pipeline_key, req.tap_label, _model_version())
     if _last_prob_state.key == key and _last_prob_state.value is not None:
         return _ProbabilityPayload(
             prob=_last_prob_state.value,
@@ -286,7 +288,7 @@ def fbpick_predict(req: FbpickPredictRequest, request: Request) -> dict[str, Any
     logger.info(
         'fbpick_predict file_id=%s key1=%d method=%s sigma_ms_max=%.2f dt=%.6f accepted_ratio=%.3f source=%s',
         req.file_id,
-        req.key1_val,
+        req.key1,
         req.method,
         req.sigma_ms_max,
         payload.dt,

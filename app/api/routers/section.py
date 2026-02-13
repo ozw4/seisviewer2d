@@ -6,7 +6,7 @@ import contextlib
 from typing import TYPE_CHECKING, Annotated, Literal
 
 import numpy as np
-from fastapi import APIRouter, HTTPException, Query, Request
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import JSONResponse, Response
 from pydantic import BaseModel
 
@@ -20,6 +20,7 @@ from app.api._helpers import (
     USE_FBPICK_OFFSET,
     PipelineTapNotFoundError,
     get_reader,
+    reject_legacy_key1_query_params,
     get_state,
     get_section_from_pipeline_tap,
 )
@@ -89,12 +90,12 @@ def get_ntraces_for(
 
 def get_trace_seq_for_value(
     file_id: str,
-    key1_val: int,
+    key1: int,
     key1_byte: int,
     *,
     state: AppState,
 ) -> NDArray[np.int64]:
-    """Return display-aligned trace ordering for ``key1_val`` of ``file_id``."""
+    """Return display-aligned trace ordering for ``key1`` of ``file_id``."""
     key2_byte = 193
     ent = FILE_REGISTRY.get(file_id)
     if ent is None:
@@ -106,7 +107,7 @@ def get_trace_seq_for_value(
         key2_byte = int(getattr(maybe_reader, 'key2_byte', 193))
 
     reader = get_reader(file_id, int(key1_byte), key2_byte, state=state)
-    target_val = int(key1_val)
+    target_val = int(key1)
 
     get_trace_seq = getattr(reader, 'get_trace_seq_for_section', None)
     if callable(get_trace_seq):
@@ -144,19 +145,19 @@ def get_key1_values(
     return JSONResponse(content={'values': payload})
 
 
-@router.get('/get_section')
+@router.get('/get_section', dependencies=[Depends(reject_legacy_key1_query_params)])
 def get_section(
     request: Request,
     file_id: Annotated[str, Query(...)],
-    key1_val: Annotated[int, Query(...)],
+    key1: Annotated[int, Query(...)],
     key1_byte: Annotated[int, Query()] = 189,
     key2_byte: Annotated[int, Query()] = 193,
 ) -> JSONResponse:
-    """Return the section for the ``key1_val`` trace grouping."""
+    """Return the section for the ``key1`` trace grouping."""
     try:
         state = get_state(request.app)
         reader = get_reader(file_id, key1_byte, key2_byte, state=state)
-        view = reader.get_section(key1_val)
+        view = reader.get_section(key1)
         payload = view.arr.tolist()
         return JSONResponse(content={'section': payload})
     except ValueError as exc:
@@ -165,12 +166,12 @@ def get_section(
         raise HTTPException(status_code=500, detail=str(exc)) from exc
 
 
-@router.get('/section/stats')
+@router.get('/section/stats', dependencies=[Depends(reject_legacy_key1_query_params)])
 def get_section_stats(
     request: Request,
     file_id: Annotated[str, Query(...)],
     baseline: Annotated[str, Query(...)],
-    key1_idx: Annotated[int | None, Query()] = None,
+    key1: Annotated[int | None, Query()] = None,
     key1_byte: Annotated[int, Query()] = 189,
     key2_byte: Annotated[int, Query()] = 193,
     step_x: Annotated[int | None, Query()] = None,
@@ -195,24 +196,24 @@ def get_section_stats(
     except BaselineComputationError as exc:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
     response_payload = dict(payload)
-    if key1_idx is not None:
-        key1_val = int(key1_idx)
+    if key1 is not None:
+        key1 = int(key1)
         key1_values = response_payload.get('key1_values') or []
         try:
-            pos = key1_values.index(key1_val)
+            pos = key1_values.index(key1)
         except ValueError as exc:
             raise HTTPException(
                 status_code=404,
-                detail=f'key1_idx {key1_val} not found in baseline',
+                detail=f'key1 {key1} not found in baseline',
             ) from exc
         trace_spans_map = response_payload.get('trace_spans_by_key1') or {}
-        trace_spans = trace_spans_map.get(str(key1_val))
+        trace_spans = trace_spans_map.get(str(key1))
         if trace_spans is None:
-            trace_spans = trace_spans_map.get(str(int(key1_val)))
+            trace_spans = trace_spans_map.get(str(int(key1)))
         if trace_spans is None:
             trace_spans = []
         selected = {
-            'key1_value': key1_val,
+            'key1': key1,
             'mu_section': response_payload['mu_section_by_key1'][pos],
             'sigma_section': response_payload['sigma_section_by_key1'][pos],
             'trace_spans': trace_spans,
@@ -257,11 +258,13 @@ def get_section_meta(
     )
 
 
-@router.get('/get_section_window_bin')
+@router.get(
+    '/get_section_window_bin', dependencies=[Depends(reject_legacy_key1_query_params)]
+)
 def get_section_window_bin(
     request: Request,
     file_id: Annotated[str, Query(...)],
-    key1_val: Annotated[int, Query(...)],
+    key1: Annotated[int, Query(...)],
     x0: Annotated[int, Query(...)],
     x1: Annotated[int, Query(...)],
     y0: Annotated[int, Query(...)],
@@ -287,7 +290,7 @@ def get_section_window_bin(
     forced_offset_byte = OFFSET_BYTE_FIXED if USE_FBPICK_OFFSET else offset_byte
     cache_key = (
         file_id,
-        key1_val,
+        key1,
         key1_byte,
         key2_byte,
         forced_offset_byte,
@@ -314,7 +317,7 @@ def get_section_window_bin(
     try:
         compressed = build_section_window_payload(
             file_id=file_id,
-            key1_val=key1_val,
+            key1=key1,
             key1_byte=key1_byte,
             key2_byte=key2_byte,
             offset_byte=forced_offset_byte,

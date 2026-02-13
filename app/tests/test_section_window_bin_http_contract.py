@@ -17,19 +17,19 @@ from fastapi.testclient import TestClient
 # isn't installed in the test environment.
 sys.modules.setdefault('segyio', types.ModuleType('segyio'))
 
-from app.api.routers import section as sec
-from app.main import app
+from app.api.routers import section as sec  # noqa: E402
+from app.main import app  # noqa: E402
 
 
-def _write_baseline(store_dir: Path, *, key1_val: int, n_traces: int) -> None:
+def _write_baseline(store_dir: Path, *, key1: int, n_traces: int) -> None:
     """Write a minimal baseline_raw.json compatible with load_baseline()."""
     baseline = {
-        'key1_values': [int(key1_val)],
+        'key1_values': [int(key1)],
         'mu_section_by_key1': [0.0],
         'sigma_section_by_key1': [1.0],
         'mu_traces': [0.0] * int(n_traces),
         'sigma_traces': [1.0] * int(n_traces),
-        'trace_spans_by_key1': {str(int(key1_val)): [[0, int(n_traces)]]},
+        'trace_spans_by_key1': {str(int(key1)): [[0, int(n_traces)]]},
     }
     (store_dir / 'baseline_raw.json').write_text(json.dumps(baseline), encoding='utf-8')
 
@@ -66,7 +66,7 @@ def _clean_env(monkeypatch):
 def test_get_section_window_bin_payload_includes_dt_and_matches_resolver(
     monkeypatch, tmp_path: Path
 ):
-    key1_val = 7
+    key1 = 7
 
     class _StubReader:
         key1_byte = 189
@@ -84,14 +84,14 @@ def test_get_section_window_bin_payload_includes_dt_and_matches_resolver(
     )
 
     sec.FILE_REGISTRY['f'] = {'store_path': str(tmp_path)}
-    _write_baseline(tmp_path, key1_val=key1_val, n_traces=5)
+    _write_baseline(tmp_path, key1=key1, n_traces=5)
 
     with TestClient(app) as client:
         resp = client.get(
             '/get_section_window_bin',
             params={
                 'file_id': 'f',
-                'key1_val': key1_val,
+                'key1': key1,
                 'x0': 0,
                 'x1': 4,
                 'y0': 0,
@@ -126,7 +126,7 @@ def test_get_section_window_bin_payload_includes_dt_and_matches_resolver(
 def test_get_section_window_bin_out_of_bounds_returns_400(
     monkeypatch, tmp_path: Path, params: dict, expected_detail: str
 ):
-    key1_val = 7
+    key1 = 7
 
     class _StubReader:
         key1_byte = 189
@@ -144,14 +144,14 @@ def test_get_section_window_bin_out_of_bounds_returns_400(
     )
 
     sec.FILE_REGISTRY['f'] = {'store_path': str(tmp_path)}
-    _write_baseline(tmp_path, key1_val=key1_val, n_traces=5)
+    _write_baseline(tmp_path, key1=key1, n_traces=5)
 
     with TestClient(app) as client:
         resp = client.get(
             '/get_section_window_bin',
             params={
                 'file_id': 'f',
-                'key1_val': key1_val,
+                'key1': key1,
                 'transpose': False,
                 'scaling': 'amax',
                 **params,
@@ -165,14 +165,14 @@ def test_get_section_window_bin_out_of_bounds_returns_400(
 def test_get_section_window_bin_step_less_than_one_is_422(tmp_path: Path):
     # step_x/step_y have Query(ge=1), so FastAPI validation rejects them before service.
     sec.FILE_REGISTRY['f'] = {'store_path': str(tmp_path)}
-    _write_baseline(tmp_path, key1_val=7, n_traces=1)
+    _write_baseline(tmp_path, key1=7, n_traces=1)
 
     with TestClient(app) as client:
         resp = client.get(
             '/get_section_window_bin',
             params={
                 'file_id': 'f',
-                'key1_val': 7,
+                'key1': 7,
                 'x0': 0,
                 'x1': 0,
                 'y0': 0,
@@ -202,7 +202,7 @@ def test_get_section_window_bin_value_error_maps_to_400(monkeypatch, tmp_path: P
             '/get_section_window_bin',
             params={
                 'file_id': 'f',
-                'key1_val': 7,
+                'key1': 7,
                 'x0': 0,
                 'x1': 0,
                 'y0': 0,

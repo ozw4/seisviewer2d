@@ -24,7 +24,7 @@ class SectionServiceInternalError(RuntimeError):
 def _load_section_view(
     *,
     file_id: str,
-    key1_val: int,
+    key1: int,
     key1_byte: int,
     key2_byte: int,
     offset_byte: int | None,
@@ -36,7 +36,7 @@ def _load_section_view(
     if pipeline_key and tap_label:
         section_arr = pipeline_section_getter(
             file_id=file_id,
-            key1_val=key1_val,
+            key1=key1,
             key1_byte=key1_byte,
             pipeline_key=pipeline_key,
             tap_label=tap_label,
@@ -47,7 +47,7 @@ def _load_section_view(
             None,
         )
     reader = reader_getter(file_id, key1_byte, key2_byte)
-    return reader.get_section(key1_val), reader
+    return reader.get_section(key1), reader
 
 
 def _resolve_store_dir(*, file_id: str, reader: TraceStoreSectionReader | None) -> str:
@@ -73,7 +73,7 @@ def _resolve_store_dir(*, file_id: str, reader: TraceStoreSectionReader | None) 
 def build_section_window_payload(
     *,
     file_id: str,
-    key1_val: int,
+    key1: int,
     key1_byte: int,
     key2_byte: int,
     offset_byte: int | None,
@@ -99,7 +99,7 @@ def build_section_window_payload(
 
     section_view, reader = _load_section_view(
         file_id=file_id,
-        key1_val=key1_val,
+        key1=key1,
         key1_byte=key1_byte,
         key2_byte=key2_byte,
         offset_byte=offset_byte,
@@ -130,7 +130,7 @@ def build_section_window_payload(
         prepared,
         scaling=mode,
         file_id=file_id,
-        key1_val=key1_val,
+        key1=key1,
         store_dir=store_dir,
         trace_stats_cache=trace_stats_cache,
         x0=x0,

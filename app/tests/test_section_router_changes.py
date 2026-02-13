@@ -30,7 +30,7 @@ def _make_stub_reader(key1s: np.ndarray, key2s: np.ndarray):
     """Minimal reader stub implementing the unified public API used by section router:
     - get_key1_values()
     - get_trace_seq_for_value(...), with legacy alias get_trace_seq_for_section(...)
-    - get_section(key1_val)  (returns synthetic data)
+    - get_section(key1)  (returns synthetic data)
     Also exposes .ntraces and optional .traces.shape fallback like legacy tests.
     """
     r = type('_StubReader', (), {})()
@@ -45,24 +45,24 @@ def _make_stub_reader(key1s: np.ndarray, key2s: np.ndarray):
     r.unique_key1 = np.unique(r.key1s)
     r.ntraces = int(r.key1s.size)
 
-    def get_trace_seq_for_value(key1_val: int, align_to: str = 'display'):
-        idx = np.flatnonzero(r.key1s == key1_val).astype(np.int64)
+    def get_trace_seq_for_value(key1: int, align_to: str = 'display'):
+        idx = np.flatnonzero(r.key1s == key1).astype(np.int64)
         if idx.size == 0:
-            raise ValueError(f'Key1 value {key1_val} not found')
+            raise ValueError(f'Key1 value {key1} not found')
         if align_to == 'original':
             return idx
         order = np.argsort(r.key2s[idx], kind='stable')
         return idx[order]
 
     # Legacy alias kept for older call sites inside router (if any remain)
-    def get_trace_seq_for_section(key1_val: int, align_to: str = 'display'):
-        return get_trace_seq_for_value(key1_val, align_to=align_to)
+    def get_trace_seq_for_section(key1: int, align_to: str = 'display'):
+        return get_trace_seq_for_value(key1, align_to=align_to)
 
     def get_key1_values():
         return r.unique_key1
 
-    def get_section(key1_val: int):
-        idx = np.where(r.key1s == key1_val)[0]
+    def get_section(key1: int):
+        idx = np.where(r.key1s == key1)[0]
         if idx.size == 0:
             raise ValueError('Key1 value not found')
         order = np.argsort(r.key2s[idx], kind='stable')
@@ -84,7 +84,7 @@ def _make_stub_reader(key1s: np.ndarray, key2s: np.ndarray):
 def _make_tracestore_like_reader(key1s: np.ndarray, key2s: np.ndarray):
     """TraceStore-like stub:
     - Provides public get_header(byte) only (no _get_header),
-    - get_key1_values(), get_section(key1_val) returning SectionView,
+    - get_key1_values(), get_section(key1) returning SectionView,
     - meta['n_traces'] present.
     This verifies the router uses the public API.
     """
@@ -107,8 +107,8 @@ def _make_tracestore_like_reader(key1s: np.ndarray, key2s: np.ndarray):
     def get_key1_values():
         return np.unique(_k1)
 
-    def get_section(key1_val: int):
-        idx = np.where(_k1 == key1_val)[0]
+    def get_section(key1: int):
+        idx = np.where(_k1 == key1)[0]
         if idx.size == 0:
             raise ValueError('Key1 value not found')
         order = np.argsort(_k2[idx], kind='stable')
@@ -199,7 +199,7 @@ def test_get_trace_seq_for_with_stub_reader_matches_legacy(monkeypatch):
     for v in vals:
         seq = sec.get_trace_seq_for_value(
             'lineA',
-            key1_val=int(v),
+            key1=int(v),
             key1_byte=189,
             state=sec.get_state(app),
         )
@@ -222,7 +222,7 @@ def test_get_trace_seq_for_with_tracestore_uses_public_get_header(monkeypatch):
     # unique_key1 = [7,8,9] → value=9
     seq = sec.get_trace_seq_for_value(
         'lineB',
-        key1_val=9,
+        key1=9,
         key1_byte=189,
         state=sec.get_state(app),
     )
@@ -234,14 +234,14 @@ def test_get_trace_seq_for_with_tracestore_uses_public_get_header(monkeypatch):
     with pytest.raises(ValueError):
         sec.get_trace_seq_for_value(
             'lineB',
-            key1_val=999,
+            key1=999,
             key1_byte=189,
             state=sec.get_state(app),
         )
 
 
 def test_get_section_returns_json_for_value(monkeypatch):
-    # Reader returns specific values and captures the key1_val it received.
+    # Reader returns specific values and captures the key1 it received.
     received = {'val': None}
 
     class _StubReader:
@@ -251,8 +251,8 @@ def test_get_section_returns_json_for_value(monkeypatch):
         def get_key1_values(self):
             return np.array([10, 20, 30], dtype=np.int32)
 
-        def get_section(self, key1_val: int):
-            received['val'] = key1_val
+        def get_section(self, key1: int):
+            received['val'] = key1
             arr = np.array([[1.0, 2.0], [3.0, 4.0]], dtype=np.float32)
             return SectionView(arr=arr, dtype=arr.dtype, scale=None)
 
@@ -266,7 +266,7 @@ def test_get_section_returns_json_for_value(monkeypatch):
         file_id='f',
         key1_byte=189,
         key2_byte=193,
-        key1_val=20,
+        key1=20,
         request=SimpleNamespace(app=app),
     )
     data = json.loads(resp.body)
@@ -278,8 +278,8 @@ def test_get_section_returns_json_for_value(monkeypatch):
         key1_byte = 189
         key2_byte = 193
 
-        def get_section(self, key1_val: int):
-            raise ValueError(f'key1 {key1_val} not found')
+        def get_section(self, key1: int):
+            raise ValueError(f'key1 {key1} not found')
 
     monkeypatch.setattr(
         sec,
@@ -292,7 +292,7 @@ def test_get_section_returns_json_for_value(monkeypatch):
             file_id='f',
             key1_byte=189,
             key2_byte=193,
-            key1_val=99,
+            key1=99,
             request=SimpleNamespace(app=app),
         )
     # (FastAPI HTTPException) don't overfit type; message check is enough
@@ -307,7 +307,7 @@ def test_get_section_window_bin_happy_path(monkeypatch, tmp_path):
         def get_key1_values(self):
             return np.array([7], dtype=np.int32)
 
-        def get_section(self, key1_val: int):
+        def get_section(self, key1: int):
             # 3 traces x 5 samples
             arr = np.array(
                 [[0, 1, 2, 3, 4], [5, 6, 7, 8, 9], [1, 2, 3, 4, 5]], dtype=np.float32
@@ -334,7 +334,7 @@ def test_get_section_window_bin_happy_path(monkeypatch, tmp_path):
     (tmp_path / 'baseline_raw.json').write_text(json.dumps(baseline), encoding='utf-8')
     res = sec.get_section_window_bin(
         file_id='f',
-        key1_val=7,
+        key1=7,
         key1_byte=189,
         key2_byte=193,
         offset_byte=None,

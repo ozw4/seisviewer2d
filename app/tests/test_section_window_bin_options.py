@@ -19,19 +19,19 @@ from app.utils.utils import SectionView
 def _write_baseline(
     store_dir: Path,
     *,
-    key1_val: int,
+    key1: int,
     section_mean: float,
     section_std: float,
     trace_means: list[float],
     trace_stds: list[float],
 ) -> None:
     baseline = {
-        'key1_values': [int(key1_val)],
+        'key1_values': [int(key1)],
         'mu_section_by_key1': [float(section_mean)],
         'sigma_section_by_key1': [float(section_std)],
         'mu_traces': [float(v) for v in trace_means],
         'sigma_traces': [float(v) for v in trace_stds],
-        'trace_spans_by_key1': {str(int(key1_val)): [[0, int(len(trace_means))]]},
+        'trace_spans_by_key1': {str(int(key1)): [[0, int(len(trace_means))]]},
     }
     (store_dir / 'baseline_raw.json').write_text(json.dumps(baseline), encoding='utf-8')
 
@@ -74,7 +74,7 @@ def test_get_section_window_bin_step_xy_downsample_shape_and_values(
         def get_key1_values(self):
             return np.array([7], dtype=np.int32)
 
-        def get_section(self, key1_val: int):
+        def get_section(self, key1: int):
             arr = np.arange(5 * 6, dtype=np.float32).reshape(5, 6)
             return SectionView(arr=arr, dtype=arr.dtype, scale=None)
 
@@ -85,7 +85,7 @@ def test_get_section_window_bin_step_xy_downsample_shape_and_values(
     sec.FILE_REGISTRY['f'] = {'store_path': str(tmp_path), 'dt': 0.004}
     _write_baseline(
         tmp_path,
-        key1_val=7,
+        key1=7,
         section_mean=0.0,
         section_std=1.0,
         trace_means=[0.0] * 5,
@@ -94,7 +94,7 @@ def test_get_section_window_bin_step_xy_downsample_shape_and_values(
 
     res = sec.get_section_window_bin(
         file_id='f',
-        key1_val=7,
+        key1=7,
         key1_byte=189,
         key2_byte=193,
         offset_byte=None,
@@ -130,7 +130,7 @@ def test_get_section_window_bin_transpose_true_swaps_axes_and_transposes_values(
         def get_key1_values(self):
             return np.array([7], dtype=np.int32)
 
-        def get_section(self, key1_val: int):
+        def get_section(self, key1: int):
             arr = np.arange(5 * 6, dtype=np.float32).reshape(5, 6)
             return SectionView(arr=arr, dtype=arr.dtype, scale=None)
 
@@ -141,7 +141,7 @@ def test_get_section_window_bin_transpose_true_swaps_axes_and_transposes_values(
     sec.FILE_REGISTRY['f'] = {'store_path': str(tmp_path), 'dt': 0.004}
     _write_baseline(
         tmp_path,
-        key1_val=7,
+        key1=7,
         section_mean=0.0,
         section_std=1.0,
         trace_means=[0.0] * 5,
@@ -151,7 +151,7 @@ def test_get_section_window_bin_transpose_true_swaps_axes_and_transposes_values(
     # Pick a non-square window so axis swap is visible: (4 traces x 3 samples) -> (3 x 4)
     res = sec.get_section_window_bin(
         file_id='f',
-        key1_val=7,
+        key1=7,
         key1_byte=189,
         key2_byte=193,
         offset_byte=None,
@@ -185,7 +185,7 @@ def test_get_section_window_bin_scaling_amax_vs_tracewise(monkeypatch, tmp_path)
         def get_key1_values(self):
             return np.array([7], dtype=np.int32)
 
-        def get_section(self, key1_val: int):
+        def get_section(self, key1: int):
             arr = np.array(
                 [
                     [0, 1, 2, 3],
@@ -203,7 +203,7 @@ def test_get_section_window_bin_scaling_amax_vs_tracewise(monkeypatch, tmp_path)
     sec.FILE_REGISTRY['f'] = {'store_path': str(tmp_path), 'dt': 0.004}
     _write_baseline(
         tmp_path,
-        key1_val=7,
+        key1=7,
         section_mean=0.0,
         section_std=1.0,
         trace_means=[0.0, 10.0, 20.0],
@@ -212,7 +212,7 @@ def test_get_section_window_bin_scaling_amax_vs_tracewise(monkeypatch, tmp_path)
 
     params = dict(
         file_id='f',
-        key1_val=7,
+        key1=7,
         key1_byte=189,
         key2_byte=193,
         offset_byte=None,
@@ -250,7 +250,7 @@ def test_get_section_window_bin_tracewise_clamp_saturates_int8(monkeypatch, tmp_
         def get_key1_values(self):
             return np.array([7], dtype=np.int32)
 
-        def get_section(self, key1_val: int):
+        def get_section(self, key1: int):
             arr = np.array(
                 [
                     [0, 1, 2, 3],
@@ -269,7 +269,7 @@ def test_get_section_window_bin_tracewise_clamp_saturates_int8(monkeypatch, tmp_
     # trace_stds[1]=0 triggers clamp to eps -> very large inv_std -> int8 saturation
     _write_baseline(
         tmp_path,
-        key1_val=7,
+        key1=7,
         section_mean=0.0,
         section_std=1.0,
         trace_means=[0.0, 10.0, 20.0],
@@ -278,7 +278,7 @@ def test_get_section_window_bin_tracewise_clamp_saturates_int8(monkeypatch, tmp_
 
     res = sec.get_section_window_bin(
         file_id='f',
-        key1_val=7,
+        key1=7,
         key1_byte=189,
         key2_byte=193,
         offset_byte=None,
@@ -320,7 +320,7 @@ def test_get_section_window_bin_pipeline_key_tap_label_window_uses_expected_tap(
     sec.FILE_REGISTRY['f'] = {'store_path': str(tmp_path), 'dt': 0.004}
     _write_baseline(
         tmp_path,
-        key1_val=7,
+        key1=7,
         section_mean=0.0,
         section_std=1.0,
         trace_means=[0.0] * 4,
@@ -346,7 +346,7 @@ def test_get_section_window_bin_pipeline_key_tap_label_window_uses_expected_tap(
 
     res = sec.get_section_window_bin(
         file_id='f',
-        key1_val=7,
+        key1=7,
         key1_byte=189,
         key2_byte=193,
         offset_byte=None,

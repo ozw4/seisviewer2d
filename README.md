@@ -115,13 +115,13 @@ Most UI reads use the binary window endpoint (fast path).
 ### Sections
 
 - `GET /get_key1_values?file_id=...&key1_byte=...&key2_byte=...`
-- `GET /get_section?file_id=...&key1_val=...` (JSON, mostly for debugging)
+- `GET /get_section?file_id=...&key1=...` (JSON, mostly for debugging)
 - `GET /get_section_meta?file_id=...`: shape/dt/dtype/scale
 - `GET /section/stats?file_id=...&baseline=raw`: per-file stats used for normalization
 
 #### Fast window fetch
 
-`GET /get_section_window_bin?file_id=...&key1_val=...&x0=...&x1=...&y0=...&y1=...`
+`GET /get_section_window_bin?file_id=...&key1=...&x0=...&x1=...&y0=...&y1=...`
 
 - returns `application/octet-stream`
 - response body is **gzip-compressed msgpack**
@@ -154,11 +154,11 @@ Currently registered operations:
 
 Endpoints:
 
-- `POST /pipeline/section?file_id=...&key1_val=...`: run a pipeline on one section
+- `POST /pipeline/section?file_id=...&key1=...`: run a pipeline on one section
   - `list_only=true` caches taps and only returns tap labels
 - `POST /pipeline/all?file_id=...`: run the pipeline for all key1 values (background)
 - `GET /pipeline/job/{job_id}/status`
-- `GET /pipeline/job/{job_id}/artifact?key1_val=...&tap=...`
+- `GET /pipeline/job/{job_id}/artifact?key1=...&tap=...`
 
 ### First-break picking
 
@@ -192,9 +192,9 @@ Pipeline job artifacts are persisted on disk.
 
 Endpoints:
 
-- `GET /picks?file_id=...&key1_val=...&key1_byte=...`
-- `POST /picks` (JSON): `{file_id, trace, time, key1_val, key1_byte}`
-- `DELETE /picks?file_id=...&key1_val=...&key1_byte=...&trace=...`
+- `GET /picks?file_id=...&key1=...&key1_byte=...`
+- `POST /picks` (JSON): `{file_id, trace, time, key1, key1_byte}`
+- `DELETE /picks?file_id=...&key1=...&key1_byte=...&trace=...`
 - `GET /export_manual_picks_all_npy?file_id=...`: export all key1 sections to a 2D int32 `.npy`
 
 ## Project layout

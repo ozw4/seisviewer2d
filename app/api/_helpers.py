@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 import numpy as np
-from fastapi import HTTPException
+from fastapi import HTTPException, Request
 from numpy.typing import NDArray
 
 from app.core.state import AppState, LRUCache
@@ -32,6 +32,21 @@ logger = logging.getLogger(__name__)
 NORM_EPS = np.float32(float(os.getenv('NORM_EPS', '1e-6')))
 
 
+def reject_legacy_key1_query_params(request: Request) -> None:
+    """Reject legacy key1 query parameters for non-compatible endpoints."""
+    legacy_val = 'key1' + '_val'
+    legacy_idx = 'key1' + '_idx'
+    present = [
+        name for name in (legacy_val, legacy_idx) if name in request.query_params
+    ]
+    if present:
+        names = ', '.join(sorted(present))
+        raise HTTPException(
+            status_code=422,
+            detail=f'Legacy query parameter(s) are not supported: {names}; use key1',
+        )
+
+
 def coerce_section_f32(arr: NDArray, scale: float | None) -> NDArray[np.float32]:
     out = arr if arr.dtype == np.float32 else arr.astype(np.float32, copy=False)
     if not out.flags.writeable:
@@ -51,7 +66,7 @@ def apply_scaling_from_baseline(
     arr: NDArray[np.float32],
     scaling: str | None,
     file_id: str,
-    key1_val: int,
+    key1: int,
     store_dir: str | Path,
     *,
     trace_stats_cache: dict[tuple[Any, ...], tuple[np.ndarray, np.ndarray | None, int]],
@@ -80,7 +95,7 @@ def apply_scaling_from_baseline(
         raise HTTPException(
             status_code=500, detail='Failed to load baseline statistics'
         ) from exc
-    key1_int = int(key1_val)
+    key1_int = int(key1)
     index = baseline['key1_index'].get(key1_int)
     if index is None:
         raise HTTPException(
@@ -185,7 +200,7 @@ def _maybe_attach_fbpick_offsets(
     *,
     spec: PipelineSpec,
     reader: TraceStoreSectionReader,
-    key1_val: int,
+    key1: int,
     offset_byte: int | None,
     trace_slice: slice | None = None,
 ) -> dict[str, Any]:
@@ -197,7 +212,7 @@ def _maybe_attach_fbpick_offsets(
     get_offsets = getattr(reader, 'get_offsets_for_section', None)
     if get_offsets is None:
         return meta
-    offsets = get_offsets(key1_val, offset_byte)
+    offsets = get_offsets(key1, offset_byte)
     if trace_slice is not None:
         offsets = offsets[trace_slice]
     offsets = np.ascontiguousarray(offsets, dtype=np.float32)
@@ -253,7 +268,7 @@ def _pipeline_payload_to_array(payload: object, *, tap_label: str) -> np.ndarray
 def get_section_from_pipeline_tap(
     *,
     file_id: str,
-    key1_val: int,
+    key1: int,
     key1_byte: int,
     pipeline_key: str,
     tap_label: str,
@@ -264,7 +279,7 @@ def get_section_from_pipeline_tap(
     """Return the cached pipeline tap output as a ``float32`` array."""
     arr, _ = get_section_and_meta_from_pipeline_tap(
         file_id=file_id,
-        key1_val=key1_val,
+        key1=key1,
         key1_byte=key1_byte,
         pipeline_key=pipeline_key,
         tap_label=tap_label,
@@ -278,7 +293,7 @@ def get_section_from_pipeline_tap(
 def get_section_and_meta_from_pipeline_tap(
     *,
     file_id: str,
-    key1_val: int,
+    key1: int,
     key1_byte: int,
     pipeline_key: str,
     tap_label: str,
@@ -288,12 +303,12 @@ def get_section_and_meta_from_pipeline_tap(
 ) -> tuple[np.ndarray, dict[str, Any] | None]:
     """Return tap payload as ``float32`` along with optional metadata."""
     sv = _resolve_state(app=app, state=state)
-    base_key = (file_id, key1_val, key1_byte, pipeline_key, None, offset_byte)
+    base_key = (file_id, key1, key1_byte, pipeline_key, None, offset_byte)
     payload = sv.pipeline_tap_cache.get((*base_key, tap_label))
     if payload is None:
         msg = (
             f'Pipeline tap {tap_label!r} for pipeline {pipeline_key!r} '
-            f'and key1={key1_val} is not available. '
+            f'and key1={key1} is not available. '
             'Please re-run the pipeline.'
         )
         raise PipelineTapNotFoundError(msg)
@@ -343,7 +358,7 @@ def get_reader(
 def get_raw_section(
     *,
     file_id: str,
-    key1_val: int,
+    key1: int,
     key1_byte: int,
     key2_byte: int,
     app: FastAPI | None = None,
@@ -351,7 +366,7 @@ def get_raw_section(
 ) -> np.ndarray:
     """Load the RAW seismic section as ``float32``."""
     reader = get_reader(file_id, key1_byte, key2_byte, app=app, state=state)
-    view = reader.get_section(key1_val)
+    view = reader.get_section(key1)
     base = view.arr
     arr = coerce_section_f32(base, view.scale)
     if arr.ndim != EXPECTED_SECTION_NDIM:
@@ -378,4 +393,5 @@ __all__ = [
     'get_reader',
     'get_section_and_meta_from_pipeline_tap',
     'get_section_from_pipeline_tap',
+    'reject_legacy_key1_query_params',
 ]

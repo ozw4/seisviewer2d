@@ -97,7 +97,7 @@ def _post_pipeline_section(
     client: TestClient,
     *,
     file_id: str,
-    key1_val: int,
+    key1: int,
     offset_byte: int,
     spec_steps: list[dict] | None = None,
     taps: list[str] | None = None,
@@ -107,7 +107,7 @@ def _post_pipeline_section(
     spec_steps = spec_steps or []
     params = {
         'file_id': file_id,
-        'key1_val': key1_val,
+        'key1': key1,
         'offset_byte': offset_byte,
         'list_only': str(list_only).lower(),
     }
@@ -128,7 +128,7 @@ def test_pipeline_section_cache_hit_same_key_and_tap(_pipeline_env):
     out1 = _post_pipeline_section(
         client,
         file_id='fid',
-        key1_val=1,
+        key1=1,
         offset_byte=7,
         taps=['tapA'],
     )
@@ -139,7 +139,7 @@ def test_pipeline_section_cache_hit_same_key_and_tap(_pipeline_env):
     out2 = _post_pipeline_section(
         client,
         file_id='fid',
-        key1_val=1,
+        key1=1,
         offset_byte=7,
         taps=['tapA'],
     )
@@ -159,7 +159,7 @@ def test_pipeline_section_cache_separates_by_window_hash(_pipeline_env):
     out1 = _post_pipeline_section(
         client,
         file_id='fid',
-        key1_val=1,
+        key1=1,
         offset_byte=7,
         taps=['tapA'],
         window=w1,
@@ -169,7 +169,7 @@ def test_pipeline_section_cache_separates_by_window_hash(_pipeline_env):
     out1b = _post_pipeline_section(
         client,
         file_id='fid',
-        key1_val=1,
+        key1=1,
         offset_byte=7,
         taps=['tapA'],
         window=w1,
@@ -180,7 +180,7 @@ def test_pipeline_section_cache_separates_by_window_hash(_pipeline_env):
     out2 = _post_pipeline_section(
         client,
         file_id='fid',
-        key1_val=1,
+        key1=1,
         offset_byte=7,
         taps=['tapA'],
         window=w2,
@@ -211,7 +211,7 @@ def test_pipeline_section_list_only_hits_cache_and_does_not_compute(_pipeline_en
     out = _post_pipeline_section(
         client,
         file_id='fid',
-        key1_val=1,
+        key1=1,
         offset_byte=7,
         taps=['tapA', 'tapB'],
         list_only=True,
@@ -230,7 +230,7 @@ def test_pipeline_section_list_only_computes_only_misses(_pipeline_env):
     out = _post_pipeline_section(
         client,
         file_id='fid',
-        key1_val=1,
+        key1=1,
         offset_byte=7,
         taps=['tapA', 'tapB'],
         list_only=True,

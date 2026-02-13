@@ -40,9 +40,9 @@ class _StubReader:
     def get_key1_values(self):
         return self._key1_vals
 
-    def get_section(self, key1_val: int):
-        # section[0,0] が key1_val になるように固定値で埋める
-        arr = np.full((4, 8), float(key1_val), dtype=np.float32)
+    def get_section(self, key1: int):
+        # section[0,0] が key1 になるように固定値で埋める
+        arr = np.full((4, 8), float(key1), dtype=np.float32)
         return SimpleNamespace(arr=arr, scale=None)
 
 
@@ -116,7 +116,7 @@ def test_pipeline_all_job_status_and_artifact_flow(pipeline_env):
     assert r0.json()['detail'] == 'Job ID not found'
 
     r0b = client.get(
-        '/pipeline/job/missing/artifact', params={'key1_val': 10, 'tap': 'final'}
+        '/pipeline/job/missing/artifact', params={'key1': 10, 'tap': 'final'}
     )
     assert r0b.status_code == 404
     assert r0b.json()['detail'] == 'Job ID not found'
@@ -134,7 +134,7 @@ def test_pipeline_all_job_status_and_artifact_flow(pipeline_env):
 
     # queued の間は artifact は当然無い
     art_q = client.get(
-        f'/pipeline/job/{job_id}/artifact', params={'key1_val': 10, 'tap': 'final'}
+        f'/pipeline/job/{job_id}/artifact', params={'key1': 10, 'tap': 'final'}
     )
     assert art_q.status_code == 404
     assert art_q.json()['detail'] == 'Artifact not ready'
@@ -153,7 +153,7 @@ def test_pipeline_all_job_status_and_artifact_flow(pipeline_env):
 
     # running 中（最初の apply_pipeline で停止中）は artifact はまだ無い
     art_r = client.get(
-        f'/pipeline/job/{job_id}/artifact', params={'key1_val': 10, 'tap': 'final'}
+        f'/pipeline/job/{job_id}/artifact', params={'key1': 10, 'tap': 'final'}
     )
     assert art_r.status_code == 404
     assert art_r.json()['detail'] == 'Artifact not ready'
@@ -180,7 +180,7 @@ def test_pipeline_all_job_status_and_artifact_flow(pipeline_env):
     state.pipeline_tap_cache.pop(cache_key_10, None)
 
     art10 = client.get(
-        f'/pipeline/job/{job_id}/artifact', params={'key1_val': 10, 'tap': 'final'}
+        f'/pipeline/job/{job_id}/artifact', params={'key1': 10, 'tap': 'final'}
     )
     assert art10.status_code == 200
     assert art10.json() == {'value': 10.0, 'dt': 0.002}
@@ -194,7 +194,7 @@ def test_pipeline_all_job_status_and_artifact_flow(pipeline_env):
 
     # cache は残っているはずなので取得できる
     art20 = client.get(
-        f'/pipeline/job/{job_id}/artifact', params={'key1_val': 20, 'tap': 'final'}
+        f'/pipeline/job/{job_id}/artifact', params={'key1': 20, 'tap': 'final'}
     )
     assert art20.status_code == 200
     assert art20.json() == {'value': 20.0, 'dt': 0.002}
@@ -205,7 +205,7 @@ def test_pipeline_all_job_status_and_artifact_flow(pipeline_env):
     state.pipeline_tap_cache.pop(cache_key_20, None)
 
     art20_nf = client.get(
-        f'/pipeline/job/{job_id}/artifact', params={'key1_val': 20, 'tap': 'final'}
+        f'/pipeline/job/{job_id}/artifact', params={'key1': 20, 'tap': 'final'}
     )
     assert art20_nf.status_code == 404
     assert art20_nf.json()['detail'] == 'Artifact not ready'

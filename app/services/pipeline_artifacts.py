@@ -44,8 +44,8 @@ def safe_filename(label: str) -> str:
     return f'{clean}__{digest}'
 
 
-def _artifact_path(job_id: str, key1_val: int, tap_label: str) -> Path:
-    return get_job_dir(job_id) / str(int(key1_val)) / f'{safe_filename(tap_label)}.bin'
+def _artifact_path(job_id: str, key1: int, tap_label: str) -> Path:
+    return get_job_dir(job_id) / str(int(key1)) / f'{safe_filename(tap_label)}.bin'
 
 
 def _ttl_seconds() -> int:
@@ -91,9 +91,9 @@ def maybe_cleanup_expired_jobs() -> int:
     return cleanup_expired_jobs(now_ts=now)
 
 
-def write_artifact(*, job_id: str, key1_val: int, tap_label: str, payload: Any) -> Path:
+def write_artifact(*, job_id: str, key1: int, tap_label: str, payload: Any) -> Path:
     """Persist one artifact payload atomically and return its output path."""
-    out_path = _artifact_path(job_id, key1_val, tap_label)
+    out_path = _artifact_path(job_id, key1, tap_label)
     out_path.parent.mkdir(parents=True, exist_ok=True)
     packed = msgpack.packb(payload, use_bin_type=True)
     tmp_path = out_path.with_name(f'{out_path.name}.tmp')
@@ -104,9 +104,9 @@ def write_artifact(*, job_id: str, key1_val: int, tap_label: str, payload: Any) 
     return out_path
 
 
-def read_artifact(*, job_id: str, key1_val: int, tap_label: str) -> Any | None:
+def read_artifact(*, job_id: str, key1: int, tap_label: str) -> Any | None:
     """Load a persisted artifact payload, returning ``None`` when absent."""
-    in_path = _artifact_path(job_id, key1_val, tap_label)
+    in_path = _artifact_path(job_id, key1, tap_label)
     if not in_path.is_file():
         return None
     packed = in_path.read_bytes()

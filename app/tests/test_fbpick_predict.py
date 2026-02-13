@@ -35,7 +35,7 @@ def test_expectation_method_returns_times(client, monkeypatch):
         '/fbpick_predict',
         json={
             'file_id': 'abc',
-            'key1_val': 1,
+            'key1': 1,
             'key1_byte': 189,
             'key2_byte': 193,
             'method': 'expectation',
@@ -59,7 +59,7 @@ def test_argmax_with_sigma_gate_filters_rows(client, monkeypatch):
         '/fbpick_predict',
         json={
             'file_id': 'abc',
-            'key1_val': 2,
+            'key1': 2,
             'method': 'argmax',
             'sigma_ms_max': 1.0,
         },
@@ -81,7 +81,7 @@ def test_invalid_probability_map_rejected(client, monkeypatch, prob):
         '/fbpick_predict',
         json={
             'file_id': 'bad',
-            'key1_val': 0,
+            'key1': 0,
             'method': 'expectation',
             'sigma_ms_max': 10.0,
         },

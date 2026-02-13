@@ -70,7 +70,7 @@ def test_fbpick_section_bin_returns_409_when_weights_missing(_fb_env, monkeypatc
         fbpick_mod, 'FBPICK_MODEL_PATH', _DummyPath(False), raising=True
     )
 
-    r = client.post('/fbpick_section_bin', json={'file_id': 'fid', 'key1_val': 1})
+    r = client.post('/fbpick_section_bin', json={'file_id': 'fid', 'key1': 1})
     assert r.status_code == 409
     assert r.json().get('detail') == 'FB pick model weights not found'
 
@@ -103,7 +103,7 @@ def test_fbpick_cache_hit_marks_job_done_and_get_returns_payload(_fb_env, monkey
     payload_gz = _pack_payload(shape=(3, 4), dt=0.002)
     state.fbpick_cache[cache_key] = payload_gz
 
-    r = client.post('/fbpick_section_bin', json={'file_id': 'fid', 'key1_val': 1})
+    r = client.post('/fbpick_section_bin', json={'file_id': 'fid', 'key1': 1})
     assert r.status_code == 200
     out = r.json()
     assert out['status'] == 'done'
@@ -138,7 +138,7 @@ def test_get_fbpick_section_bin_returns_404_until_done(_fb_env, monkeypatch):
 
     monkeypatch.setattr(fbpick_mod.threading, 'Thread', _NoOpThread, raising=True)
 
-    r = client.post('/fbpick_section_bin', json={'file_id': 'fid', 'key1_val': 1})
+    r = client.post('/fbpick_section_bin', json={'file_id': 'fid', 'key1': 1})
     assert r.status_code == 200
     job_id = r.json()['job_id']
 
@@ -162,7 +162,7 @@ def test_get_fbpick_section_bin_returns_404_when_payload_missing(_fb_env, monkey
 
     monkeypatch.setattr(fbpick_mod.threading, 'Thread', _NoOpThread, raising=True)
 
-    r = client.post('/fbpick_section_bin', json={'file_id': 'fid', 'key1_val': 1})
+    r = client.post('/fbpick_section_bin', json={'file_id': 'fid', 'key1': 1})
     assert r.status_code == 200
     job_id = r.json()['job_id']
 
@@ -213,7 +213,7 @@ def test_fbpick_job_run_produces_gzip_msgpack_with_shape_data_dt(_fb_env, monkey
 
     monkeypatch.setattr(fbpick_mod.threading, 'Thread', _SyncThread, raising=True)
 
-    r = client.post('/fbpick_section_bin', json={'file_id': 'fid', 'key1_val': 1})
+    r = client.post('/fbpick_section_bin', json={'file_id': 'fid', 'key1': 1})
     assert r.status_code == 200
     out = r.json()
     assert out['status'] == 'done'

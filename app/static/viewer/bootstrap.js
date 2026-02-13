@@ -92,7 +92,7 @@ if (!(typeof window.defaultDt === 'number' && Number.isFinite(window.defaultDt) 
 }
 
 // Read initial values from existing DOM / globals
-const slider = document.getElementById('key1_idx_slider');
+const slider = document.getElementById('key1_slider');
 
 const initial = {
   fileId: document.getElementById('file_id')?.value || (window.currentFileId || ''),

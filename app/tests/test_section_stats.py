@@ -153,13 +153,13 @@ def test_section_stats_endpoint(sample_store):
     client = TestClient(app)
     resp = client.get(
         '/section/stats',
-        params={'file_id': file_id, 'baseline': 'raw', 'key1_idx': 20},
+        params={'file_id': file_id, 'baseline': 'raw', 'key1': 20},
     )
     assert resp.status_code == 200
     payload = resp.json()
     assert payload['key1_values'] == [10, 20]
     selected = payload['selected_key1']
-    assert selected['key1_value'] == 20
+    assert selected['key1'] == 20
     assert selected['trace_spans'] == [[2, 3]]
     assert selected['trace_range'] == [2, 3]
     assert selected['mu_section'] == pytest.approx(-1.0 / 3.0)
@@ -176,6 +176,6 @@ def test_section_stats_endpoint(sample_store):
     assert bad_step.status_code == 400
     not_found = client.get(
         '/section/stats',
-        params={'file_id': file_id, 'baseline': 'raw', 'key1_idx': 999},
+        params={'file_id': file_id, 'baseline': 'raw', 'key1': 999},
     )
     assert not_found.status_code == 404

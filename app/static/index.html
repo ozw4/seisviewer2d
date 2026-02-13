@@ -359,8 +359,8 @@
   <div id="mainContent">
     <div id="viewerColumn">
       <div id="controls">
-        <label for="key1_idx_slider">key1 value:</label>
-        <input type="range" id="key1_idx_slider" min="0" max="10000" value="0" step="1" oninput="onKey1Input()"
+        <label for="key1_slider">key1 value:</label>
+        <input type="range" id="key1_slider" min="0" max="10000" value="0" step="1" oninput="onKey1Input()"
           onchange="onKey1Change()" />
         <input type="number" id="key1_val_display" value="0" min="0" max="10000" step="1" style="width: 60px;"
           onchange="syncSliderWithInput(); fetchAndPlot()" />
@@ -672,7 +672,7 @@
     }
 
     function _sliderKey1Idx() {
-        const el = document.getElementById('key1_idx_slider');
+        const el = document.getElementById('key1_slider');
         const v = Number.parseInt(el?.value ?? '0', 10);
         return Number.isFinite(v) ? v : 0;
       }
@@ -738,12 +738,12 @@
                 file_id: fileId,
                 trace: op.trace,
                 time: op.time,
-                key1_val: key1Val,
+                key1: key1Val,
                 key1_byte: key1Byte
               }),
             });
           } else {
-            const url = `/picks?file_id=${encodeURIComponent(fileId)}&trace=${op.trace}&key1_val=${encodeURIComponent(key1Val)}&key1_byte=${key1Byte}`;
+            const url = `/picks?file_id=${encodeURIComponent(fileId)}&trace=${op.trace}&key1=${encodeURIComponent(key1Val)}&key1_byte=${key1Byte}`;
             await fetch(url, { method: 'DELETE' });
           }
         }
@@ -797,7 +797,7 @@
       const [x0, x1] = visibleXRng();
       const mode = latestWindowRender?.mode || (latestSeismicData ? 'full' : 'none');
       const st = {
-        key1: key1Values?.[parseInt(document.getElementById('key1_idx_slider')?.value || '0', 10)],
+        key1: key1Values?.[parseInt(document.getElementById('key1_slider')?.value || '0', 10)],
         layer: document.getElementById('layerSelect')?.value,
         mode, stepX: latestWindowRender?.stepX, stepY: latestWindowRender?.stepY,
         x0, x1, renderedStart, renderedEnd, savedXRange, picksCount: picks?.length || 0
@@ -889,7 +889,7 @@
     function currentUiRevision() {
       const sel = document.getElementById('layerSelect');
       const layer = sel ? sel.value : 'raw';
-      const slider = document.getElementById('key1_idx_slider');
+      const slider = document.getElementById('key1_slider');
       const idx = slider ? parseInt(slider.value, 10) : 0;
       const key1Val = key1Values[idx];
       const pKey = window.latestPipelineKey || '';
@@ -945,7 +945,7 @@
       const { includePredicted = false, onlyVisible = false } = opts;
 
       const dt = (window.defaultDt ?? defaultDt);
-      const k1Idx = parseInt(document.getElementById('key1_idx_slider').value, 10) | 0;
+      const k1Idx = parseInt(document.getElementById('key1_slider').value, 10) | 0;
       const key1Val = key1Values?.[k1Idx];
       const layer = document.getElementById('layerSelect')?.value || 'raw';
 
@@ -1095,7 +1095,7 @@
       for (let i = 0; i < K; i++) {
         const key1Val = key1Values[i];
         if (key1Val === undefined) continue;
-        const url = `/picks?file_id=${encodeURIComponent(currentFileId)}&key1_val=${encodeURIComponent(key1Val)}&key1_byte=${currentKey1Byte}`;
+        const url = `/picks?file_id=${encodeURIComponent(currentFileId)}&key1=${encodeURIComponent(key1Val)}&key1_byte=${currentKey1Byte}`;
         const r = await fetch(url);
         if (!r.ok) continue;
         const j = await r.json();
@@ -1511,7 +1511,7 @@
     }
 
     function recomputeFbPicks() {
-      const slider = document.getElementById('key1_idx_slider');
+      const slider = document.getElementById('key1_slider');
       if (!slider) return;
       const idx0 = parseInt(slider.value, 10);
       const keyAtNow = key1Values[idx0];
@@ -1542,7 +1542,7 @@
     }
 
     async function predictFromFb() {
-      const idx0 = parseInt(document.getElementById('key1_idx_slider').value, 10);
+      const idx0 = parseInt(document.getElementById('key1_slider').value, 10);
       const keyAtStart = key1Values[idx0];
       const layerAtStart = (document.getElementById('layerSelect')?.value) || 'raw';
       const pipelineKeyAtStart = window.latestPipelineKey || null;
@@ -1567,7 +1567,7 @@
 
         const body = {
           file_id: currentFileId,
-          key1_val: keyAtStart,
+          key1: keyAtStart,
           key1_byte: currentKey1Byte,
           key2_byte: currentKey2Byte,
           method,
@@ -1610,7 +1610,7 @@
           ? data.picks.map(p => ({ trace: p.trace, time: p.time }))
           : [];
 
-        const idxNow = parseInt(document.getElementById('key1_idx_slider').value, 10);
+        const idxNow = parseInt(document.getElementById('key1_slider').value, 10);
         const keyNow = key1Values[idxNow];
         const layerNow = (document.getElementById('layerSelect')?.value) || 'raw';
         const pipelineKeyNow = window.latestPipelineKey || null;
@@ -2038,14 +2038,14 @@
     }
 
     function updateKey1Display() {
-      const slider = document.getElementById('key1_idx_slider');
+      const slider = document.getElementById('key1_slider');
       const display = document.getElementById('key1_val_display');
       const idx = parseInt(slider.value);
       display.value = key1Values[idx] ?? '';
     }
 
     function syncSliderWithInput() {
-      const slider = document.getElementById('key1_idx_slider');
+      const slider = document.getElementById('key1_slider');
       const display = document.getElementById('key1_val_display');
       const val = parseInt(display.value);
       const idx = key1Values.indexOf(val);
@@ -2054,7 +2054,7 @@
     }
 
     function stepKey1(delta) {
-      const slider = document.getElementById('key1_idx_slider');
+      const slider = document.getElementById('key1_slider');
       let value = parseInt(slider.value) + delta;
       value = Math.max(slider.min, Math.min(slider.max, value));
       slider.value = value;
@@ -2062,7 +2062,7 @@
     }
 
     function setKey1SliderMax(max) {
-      document.getElementById('key1_idx_slider').max = max;
+      document.getElementById('key1_slider').max = max;
     }
 
     async function fetchKey1Values() {
@@ -2073,7 +2073,7 @@
         setKey1SliderMax(key1Values.length - 1);
         document.getElementById('key1_val_display').min = key1Values[0];
         document.getElementById('key1_val_display').max = key1Values[key1Values.length - 1];
-        document.getElementById('key1_idx_slider').value = 0;
+        document.getElementById('key1_slider').value = 0;
         updateKey1Display();
       }
     }
@@ -2108,11 +2108,11 @@
         return;
       }
       if (!currentFileId) return;
-      const idx = parseInt(document.getElementById('key1_idx_slider').value);
+      const idx = parseInt(document.getElementById('key1_slider').value);
       const key1Val = key1Values?.[idx];
       if (key1Val === undefined) return;
       try {
-        const res = await fetch(`/picks?file_id=${currentFileId}&key1_val=${encodeURIComponent(key1Val)}&key1_byte=${currentKey1Byte}`);
+        const res = await fetch(`/picks?file_id=${currentFileId}&key1=${encodeURIComponent(key1Val)}&key1_byte=${currentKey1Byte}`);
         if (res.ok) {
           const data = await res.json();
           picks = (data.picks || []).map(p => ({ trace: p.trace, time: p.time }));
@@ -2186,12 +2186,12 @@
       const fileId = currentFileId;
       const idxRaw = Number.isInteger(key1IdxOrVal)
         ? key1IdxOrVal
-        : parseInt(document.getElementById('key1_idx_slider').value, 10);
+        : parseInt(document.getElementById('key1_slider').value, 10);
       const idx = Number.isFinite(idxRaw) ? idxRaw : 0;
       const key1Val = key1Values?.[idx];
       if (key1Val === undefined) return [];
       try {
-        const r = await fetch(`/picks?file_id=${encodeURIComponent(fileId)}&key1_val=${encodeURIComponent(key1Val)}&key1_byte=${currentKey1Byte}`);
+        const r = await fetch(`/picks?file_id=${encodeURIComponent(fileId)}&key1=${encodeURIComponent(key1Val)}&key1_byte=${currentKey1Byte}`);
         if (!r.ok) return [];
         const j = await r.json();
         const arr = (j.picks || []).map(p => ({ trace: (p.trace | 0), time: +p.time }));
@@ -2218,7 +2218,7 @@
       console.log('--- fetchAndPlot start ---');
       console.time('Total fetchAndPlot');
 
-      const index = parseInt(document.getElementById('key1_idx_slider').value);
+      const index = parseInt(document.getElementById('key1_slider').value);
       const key1Val = key1Values[index];
 
       // ★ FB予測キャッシュ取得：レイヤ＆パイプラインキーでキー統一
@@ -2287,7 +2287,7 @@
         const [nTracesMeta, nSamplesMeta] = meta;
         const qFull = new URLSearchParams({
           file_id: currentFileId,
-          key1_val: String(key1Val),
+          key1: String(key1Val),
           key1_byte: String(currentKey1Byte),
           key2_byte: String(currentKey2Byte),
           x0: '0', x1: String(nTracesMeta - 1),
@@ -2411,7 +2411,7 @@
       const currentLayer = sel ? sel.value : 'raw';
       if (windowData.requestedLayer !== currentLayer) return;
 
-      const slider = document.getElementById('key1_idx_slider');
+      const slider = document.getElementById('key1_slider');
       const idx = slider ? parseInt(slider.value, 10) : 0;
       const key1Val = key1Values[idx];
       if (windowData.key1 !== key1Val) return;
@@ -2542,7 +2542,7 @@
       const currentLayer = sel ? sel.value : 'raw';
       if (windowData.requestedLayer !== currentLayer) return;
 
-      const slider = document.getElementById('key1_idx_slider');
+      const slider = document.getElementById('key1_slider');
       const idx = slider ? parseInt(slider.value, 10) : 0;
       const key1Val = key1Values[idx];
       if (windowData.key1 !== key1Val) return;
@@ -2725,7 +2725,7 @@
     function renderLatestView(startOverride = null, endOverride = null) {
       const sel = document.getElementById('layerSelect');
       const layer = sel ? sel.value : 'raw';
-      const slider = document.getElementById('key1_idx_slider');
+      const slider = document.getElementById('key1_slider');
       const idx = slider ? parseInt(slider.value, 10) : 0;
       const key1Val = key1Values[idx];
 
@@ -2762,13 +2762,13 @@
     }
 
     async function fetchWindowAndPlot() {
-      D('WINDOW@req', { key1: key1Values?.[parseInt(document.getElementById('key1_idx_slider')?.value || '0', 10)] });
+      D('WINDOW@req', { key1: key1Values?.[parseInt(document.getElementById('key1_slider')?.value || '0', 10)] });
       if (!currentFileId) return;
       if (!sectionShape) {
         await fetchSectionMeta();
         if (!sectionShape) return;
       }
-      const slider = document.getElementById('key1_idx_slider');
+      const slider = document.getElementById('key1_slider');
       if (!slider) return;
       const idx = parseInt(slider.value, 10);
       const key1Val = key1Values[idx];
@@ -2821,7 +2821,7 @@
       // ★ 加工後配列は保持しないため、上記ショートカットは全て削除
       const params = new URLSearchParams({
         file_id: currentFileId,
-        key1_val: String(key1Val),
+        key1: String(key1Val),
         key1_byte: String(currentKey1Byte),
         key2_byte: String(currentKey2Byte),
         x0: String(windowInfo.x0),
@@ -3419,7 +3419,7 @@
     window.addEventListener('DOMContentLoaded', () => {
       console.info('[viewer] DOMContentLoaded hook');
       const fileIdEl = document.getElementById('file_id');
-      const slider = document.getElementById('key1_idx_slider');
+      const slider = document.getElementById('key1_slider');
 
       const boot = async () => {
         if (fileIdEl && fileIdEl.value && !currentFileId) {

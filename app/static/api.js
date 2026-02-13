@@ -67,7 +67,7 @@ async function fetchSectionWithPipeline(
 ) {
   const url = new URL('/pipeline/section', location.origin);
   url.searchParams.set('file_id', fileId);
-  url.searchParams.set('key1_val', String(key1Val));
+  url.searchParams.set('key1', String(key1Val));
   url.searchParams.set('key1_byte', String(key1Byte));
   url.searchParams.set('key2_byte', String(key2Byte));
   url.searchParams.set('list_only', '1');

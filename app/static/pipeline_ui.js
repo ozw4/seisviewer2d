@@ -579,7 +579,7 @@
       '[pipeline] precheck: fileId=%o, key1Values.len=%o, slider? %o',
       window.currentFileId,
       Array.isArray(window.key1Values) ? window.key1Values.length : '(none)',
-      !!document.getElementById('key1_idx_slider')
+      !!document.getElementById('key1_slider')
     );
     savePipelineToLocalStorage(pipelineState.graph);
 
@@ -588,7 +588,7 @@
       updateLayerSelect({});
       return;
     }
-    const slider = document.getElementById('key1_idx_slider');
+    const slider = document.getElementById('key1_slider');
     if (!slider || !Array.isArray(window.key1Values) || !window.key1Values.length) {
       console.info('[pipeline] abort: slider/key1Values not ready', {
         sliderFound: !!slider,

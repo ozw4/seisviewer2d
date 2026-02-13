@@ -10,7 +10,7 @@ from typing import Annotated, Any
 from uuid import uuid4
 
 import numpy as np
-from fastapi import APIRouter, Body, HTTPException, Query, Request
+from fastapi import APIRouter, Body, Depends, HTTPException, Query, Request
 from pydantic import BaseModel, Field
 
 from app.api._helpers import (
@@ -19,6 +19,7 @@ from app.api._helpers import (
     _maybe_attach_fbpick_offsets,
     coerce_section_f32,
     get_reader,
+    reject_legacy_key1_query_params,
     get_state,
 )
 from app.api.schemas import (
@@ -62,8 +63,8 @@ def _run_pipeline_all_job(
         key1_vals = reader.get_key1_values().tolist()
         total = len(key1_vals) or 1
         taps = req.taps
-        for idx, key1_val in enumerate(key1_vals):
-            view = reader.get_section(int(key1_val))
+        for idx, key1 in enumerate(key1_vals):
+            view = reader.get_section(int(key1))
             section = coerce_section_f32(view.arr, view.scale)
 
             dt = float(get_dt_for_file(req.file_id))
@@ -74,7 +75,7 @@ def _run_pipeline_all_job(
                 meta,
                 spec=req.spec,
                 reader=reader,
-                key1_val=int(key1_val),
+                key1=int(key1),
                 offset_byte=req.offset_byte,  # already forced by caller
             )
 
@@ -82,7 +83,7 @@ def _run_pipeline_all_job(
 
             base_key = (
                 req.file_id,
-                int(key1_val),
+                int(key1),
                 req.key1_byte,
                 pipe_key,
                 None,  # window_hash (all-jobは常にNone)
@@ -98,7 +99,7 @@ def _run_pipeline_all_job(
                 state.pipeline_tap_cache.set((*base_key, k), payload_obj)
                 write_artifact(
                     job_id=job_id,
-                    key1_val=int(key1_val),
+                    key1=int(key1),
                     tap_label=str(k),
                     payload=payload_obj,
                 )
@@ -111,11 +112,15 @@ def _run_pipeline_all_job(
         job['message'] = str(e)
 
 
-@router.post('/pipeline/section', response_model=PipelineSectionResponse)
+@router.post(
+    '/pipeline/section',
+    response_model=PipelineSectionResponse,
+    dependencies=[Depends(reject_legacy_key1_query_params)],
+)
 def pipeline_section(
     request: Request,
     file_id: Annotated[str, Query(...)],
-    key1_val: Annotated[int, Query(...)],
+    key1: Annotated[int, Query(...)],
     spec: Annotated[PipelineSpec, Body(...)],
     key1_byte: Annotated[int, Query()] = 189,
     key2_byte: Annotated[int, Query()] = 193,
@@ -126,7 +131,7 @@ def pipeline_section(
 ):
     state = get_state(request.app)
     reader = get_reader(file_id, key1_byte, key2_byte, state=state)
-    view = reader.get_section(key1_val)
+    view = reader.get_section(key1)
     section = coerce_section_f32(view.arr, view.scale)
 
     trace_slice: slice | None = None
@@ -163,7 +168,7 @@ def pipeline_section(
         meta,
         spec=spec,
         reader=reader,
-        key1_val=key1_val,
+        key1=key1,
         offset_byte=forced_offset_byte,
         trace_slice=trace_slice,
     )
@@ -178,7 +183,7 @@ def pipeline_section(
         # フルセクション基準で保存（window 指定が無ければ window_hash は None）
         base_key = (
             file_id,
-            key1_val,
+            key1,
             key1_byte,
             pipe_key,
             None,  # window_hash（フル配列）
@@ -204,7 +209,7 @@ def pipeline_section(
     if tap_names:
         base_key = (
             file_id,
-            key1_val,
+            key1,
             key1_byte,
             pipe_key,
             window_hash,  # sectionはwindow付きならこれが入る
@@ -302,11 +307,15 @@ def pipeline_job_status(request: Request, job_id: str) -> PipelineJobStatusRespo
     }
 
 
-@router.get('/pipeline/job/{job_id}/artifact', response_model=Any)
+@router.get(
+    '/pipeline/job/{job_id}/artifact',
+    response_model=Any,
+    dependencies=[Depends(reject_legacy_key1_query_params)],
+)
 def pipeline_job_artifact(
     request: Request,
     job_id: str,
-    key1_val: Annotated[int, Query(...)],
+    key1: Annotated[int, Query(...)],
     tap: Annotated[str, Query(...)],
 ):
     state = get_state(request.app)
@@ -316,13 +325,13 @@ def pipeline_job_artifact(
 
     maybe_cleanup_expired_jobs()
 
-    disk_payload = read_artifact(job_id=job_id, key1_val=key1_val, tap_label=tap)
+    disk_payload = read_artifact(job_id=job_id, key1=key1, tap_label=tap)
     if disk_payload is not None:
         return disk_payload
 
     base_key = (
         job.get('file_id'),
-        key1_val,
+        key1,
         job.get('key1_byte'),
         job.get('pipeline_key'),
         None,  # window_hash は常に None

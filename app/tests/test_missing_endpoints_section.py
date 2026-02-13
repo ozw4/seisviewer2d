@@ -97,9 +97,9 @@ def test_get_section_meta_contract_and_dt_from_meta_json(
         def get_key1_values(self):
             return np.asarray([10, 20], dtype=np.int32)
 
-        def get_trace_seq_for_value(self, key1_val: int, align_to: str = "display"):
+        def get_trace_seq_for_value(self, key1: int, align_to: str = "display"):
             assert align_to == "display"
-            assert int(key1_val) == 10
+            assert int(key1) == 10
             return np.arange(4, dtype=np.int64)
 
         def get_n_samples(self) -> int:
@@ -150,8 +150,8 @@ def test_get_section_meta_dt_from_segy_header(
         def get_key1_values(self):
             return np.asarray([7], dtype=np.int32)
 
-        def get_trace_seq_for_value(self, key1_val: int, align_to: str = "display"):
-            captured["key1_val"] = int(key1_val)
+        def get_trace_seq_for_value(self, key1: int, align_to: str = "display"):
+            captured["key1"] = int(key1)
             captured["align_to"] = align_to
             return np.arange(3, dtype=np.int64)
 
@@ -181,7 +181,7 @@ def test_get_section_meta_dt_from_segy_header(
     assert out["scale"] is None
 
     assert captured == {
-        "key1_val": 7,
+        "key1": 7,
         "align_to": "display",
         "file_id": file_id,
         "kb1": 191,
