@@ -8,10 +8,10 @@ from app.api.routers.section import router as section_router
 from app.api.routers.upload import router as upload_router
 
 __all__ = [
-	'fbpick_router',
-	'fbpick_predict_router',
-	'picks_router',
-	'pipeline_router',
-	'section_router',
-	'upload_router',
+    'fbpick_router',
+    'fbpick_predict_router',
+    'picks_router',
+    'pipeline_router',
+    'section_router',
+    'upload_router',
 ]
