@@ -59,6 +59,9 @@ def _pipeline_env(monkeypatch):
     monkeypatch.setattr(
         pipeline_mod, 'get_reader', lambda *a, **k: reader, raising=True
     )
+    monkeypatch.setattr(
+        pipeline_mod, 'get_dt_for_file', lambda _fid: 0.002, raising=True
+    )
     monkeypatch.setattr(pipeline_mod, 'pipeline_key', lambda _spec: 'pk', raising=True)
     monkeypatch.setattr(
         pipeline_mod,

@@ -70,6 +70,7 @@ def pipeline_env(tmp_path: Path, monkeypatch):
 
     reader = _StubReader([10, 20])
     monkeypatch.setattr(pipe, 'get_reader', lambda *a, **k: reader, raising=True)
+    monkeypatch.setattr(pipe, 'get_dt_for_file', lambda _fid: 0.002, raising=True)
 
     started = threading.Event()
     proceed = threading.Event()

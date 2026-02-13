@@ -35,6 +35,7 @@ from app.services.pipeline_artifacts import (
 )
 from app.core.state import AppState
 from app.utils.pipeline import apply_pipeline, pipeline_key
+from app.utils.segy_meta import get_dt_for_file
 from app.utils.utils import to_builtin
 
 router = APIRouter()
@@ -65,9 +66,7 @@ def _run_pipeline_all_job(
             view = reader.get_section(int(key1_val))
             section = coerce_section_f32(view.arr, view.scale)
 
-            dt = 0.002
-            if hasattr(reader, 'meta'):
-                dt = getattr(reader, 'meta', {}).get('dt', dt)
+            dt = float(get_dt_for_file(req.file_id))
             meta = {'dt': dt}
 
             # offsetをreqからそのまま適用（pass-through）
@@ -149,9 +148,7 @@ def pipeline_section(
             json.dumps(clean_window, sort_keys=True).encode()
         ).hexdigest()[:8]
 
-    dt = 0.002
-    if hasattr(reader, 'meta'):
-        dt = getattr(reader, 'meta', {}).get('dt', dt)
+    dt = float(get_dt_for_file(file_id))
     meta = {'dt': dt}
 
     # pass-through + 同期フォールバック
