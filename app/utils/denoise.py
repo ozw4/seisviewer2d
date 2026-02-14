@@ -16,9 +16,7 @@ __all__ = ['denoise_tensor', 'get_denoise_model', 'get_model']
 logger = logging.getLogger(__name__)
 
 _MODEL_PATH = (
-    Path(__file__).resolve().parents[2]
-    / 'model'
-    / 'recon_replace_eq_edgenext_small.pth'
+    Path(__file__).resolve().parents[2] / 'model' / 'recon_replace_edgenext_small.pth'
 )
 _MODEL: torch.nn.Module | None = None
 _DEVICE: torch.device | None = None

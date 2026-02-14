@@ -31,6 +31,7 @@ logger = logging.getLogger(__name__)
 UPLOAD_DIR = get_upload_dir()
 PROCESSED_DIR = get_processed_upload_dir()
 TRACE_DIR = get_trace_store_dir()
+UPLOAD_CHUNK_SIZE = 4 * 1024 * 1024
 
 
 def _trace_store_complete(store_dir: Path, key1_byte: int, key2_byte: int) -> bool:
@@ -188,11 +189,19 @@ async def upload_segy(
     file_id = str(uuid4())
     raw_path = UPLOAD_DIR / safe_name
     raw_path.parent.mkdir(parents=True, exist_ok=True)
-    data = await file.read()
-    source_sha256 = hashlib.sha256(data).hexdigest()
-    await asyncio.to_thread(raw_path.write_bytes, data)
+    tmp_path = raw_path.with_suffix(raw_path.suffix + f'.{uuid4().hex}.tmp')
+    hasher = hashlib.sha256()
+    with tmp_path.open('wb') as temp_file:
+        while True:
+            chunk = await file.read(UPLOAD_CHUNK_SIZE)
+            if not chunk:
+                break
+            hasher.update(chunk)
+            temp_file.write(chunk)
+    tmp_path.replace(raw_path)
+    source_sha256 = hasher.hexdigest()
     try:
-        source_stat = raw_path.stat()
+        source_size = raw_path.stat().st_size
     except OSError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
 
@@ -204,7 +213,7 @@ async def upload_segy(
             key1_byte,
             key2_byte,
             source_sha256=source_sha256,
-            source_size=source_stat.st_size,
+            source_size=source_size,
         )
         if meta is not None:
             reused = True

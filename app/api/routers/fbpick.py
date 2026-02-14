@@ -12,14 +12,14 @@ from fastapi.responses import Response
 from pydantic import BaseModel, ConfigDict
 
 from app.api._helpers import (
-    coerce_section_f32,
     OFFSET_BYTE_FIXED,
     USE_FBPICK_OFFSET,
     PipelineTapNotFoundError,
     _maybe_attach_fbpick_offsets,
+    coerce_section_f32,
     get_reader,
-    get_state,
     get_section_from_pipeline_tap,
+    get_state,
 )
 from app.api.binary_codec import pack_msgpack_gzip
 from app.api.schemas import PipelineSpec

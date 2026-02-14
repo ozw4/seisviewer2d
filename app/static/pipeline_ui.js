@@ -36,6 +36,7 @@
       addButtonEl: null,
       draggedId: null,
       runToken: 0,
+      initDiagnosticsLogged: false,
     };
 
 
@@ -573,13 +574,104 @@
     }
   }
 
+  function runInitDiagnostics() {
+    const required = [
+      { id: 'pipelineRunButton', reason: 'RUN click handler cannot be attached' },
+      { id: 'layerSelect', reason: 'Pipeline layer selection cannot be updated' },
+      { id: 'key1_slider', reason: 'Primary key1 source is unavailable' },
+      { id: 'key1_val_display', reason: 'Fallback key1 source by value is unavailable' },
+    ];
+    const missing = required
+      .filter((entry) => !document.getElementById(entry.id))
+      .map((entry) => ({ id: entry.id, reason: entry.reason }));
+    if (missing.length) {
+      console.error('[pipeline][BLOCKER] init diagnostics: missing critical DOM elements', { missing });
+      return;
+    }
+    if (DEBUG_PIPELINE) {
+      console.info('[pipeline] init diagnostics: critical DOM elements are present');
+    }
+  }
+
+  function resolvePipelineRunKey1() {
+    const key1Values = Array.isArray(window.key1Values) ? window.key1Values : null;
+    const slider = document.getElementById('key1_slider');
+    const display = document.getElementById('key1_val_display');
+    const store = window.store && typeof window.store.get === 'function' ? window.store.get() : null;
+    const storeIndexRaw = store && store.key1Index !== undefined ? store.key1Index : null;
+    const storeIndex = Number.parseInt(storeIndexRaw, 10);
+    const context = {
+      key1ValuesLen: key1Values ? key1Values.length : null,
+      sliderFound: !!slider,
+      sliderValue: slider ? slider.value : null,
+      displayFound: !!display,
+      displayValue: display ? display.value : null,
+      storeFound: !!store,
+      storeIndexRaw,
+      storeIndex: Number.isInteger(storeIndex) ? storeIndex : null,
+    };
+
+    if (!key1Values || !key1Values.length) {
+      return { ok: false, context: { ...context, reason: 'key1Values unavailable' } };
+    }
+
+    if (slider) {
+      const sliderIndex = Number.parseInt(slider.value, 10);
+      if (Number.isInteger(sliderIndex) && sliderIndex >= 0 && sliderIndex < key1Values.length) {
+        const key1Val = key1Values[sliderIndex];
+        if (key1Val !== undefined) {
+          return { ok: true, source: 'key1_slider', key1Val, key1Index: sliderIndex, context };
+        }
+      }
+    }
+
+    if (display) {
+      const displayValue = Number(display.value);
+      if (Number.isFinite(displayValue)) {
+        const displayIndex = key1Values.indexOf(displayValue);
+        if (displayIndex >= 0) {
+          const key1Val = key1Values[displayIndex];
+          if (key1Val !== undefined) {
+            const fallbackContext = { ...context, displayIndex };
+            console.warn('[pipeline][FALLBACK] key1 resolved via #key1_val_display', fallbackContext);
+            return {
+              ok: true,
+              source: 'key1_val_display',
+              key1Val,
+              key1Index: displayIndex,
+              context: fallbackContext,
+            };
+          }
+        }
+      }
+    }
+
+    if (Number.isInteger(storeIndex) && storeIndex >= 0 && storeIndex < key1Values.length) {
+      const key1Val = key1Values[storeIndex];
+      if (key1Val !== undefined) {
+        const fallbackContext = { ...context, resolvedStoreIndex: storeIndex };
+        console.warn('[pipeline][FALLBACK] key1 resolved via window.store.get().key1Index', fallbackContext);
+        return {
+          ok: true,
+          source: 'store.key1Index',
+          key1Val,
+          key1Index: storeIndex,
+          context: fallbackContext,
+        };
+      }
+    }
+
+    return { ok: false, context: { ...context, reason: 'no valid key1 source resolved' } };
+  }
+
   async function runPipeline() {
     console.info('[pipeline] runPipeline() ENTER');
     console.info(
-      '[pipeline] precheck: fileId=%o, key1Values.len=%o, slider? %o',
+      '[pipeline] precheck: fileId=%o, key1Values.len=%o, slider? %o, key1_val_display? %o',
       window.currentFileId,
       Array.isArray(window.key1Values) ? window.key1Values.length : '(none)',
-      !!document.getElementById('key1_slider')
+      !!document.getElementById('key1_slider'),
+      !!document.getElementById('key1_val_display')
     );
     savePipelineToLocalStorage(pipelineState.graph);
 
@@ -588,21 +680,19 @@
       updateLayerSelect({});
       return;
     }
-    const slider = document.getElementById('key1_slider');
-    if (!slider || !Array.isArray(window.key1Values) || !window.key1Values.length) {
-      console.info('[pipeline] abort: slider/key1Values not ready', {
-        sliderFound: !!slider,
-        len: Array.isArray(window.key1Values) ? window.key1Values.length : null,
-      });
+    const resolvedKey1 = resolvePipelineRunKey1();
+    if (!resolvedKey1.ok) {
+      console.error('[pipeline][BLOCKER] abort: key1 source not ready', resolvedKey1.context);
       updateLayerSelect({});
       return;
     }
-    const idx = parseInt(slider.value, 10);
-    const key1Val = window.key1Values[idx];
-    if (key1Val === undefined) {
-      updateLayerSelect({});
-      return;
-    }
+    const key1Val = resolvedKey1.key1Val;
+    console.info(
+      '[pipeline] runPipeline key1 resolved: value=%o index=%o source=%o',
+      key1Val,
+      resolvedKey1.key1Index,
+      resolvedKey1.source
+    );
     const { spec, taps } = graphToSpec(pipelineState.graph);
 
     // 常に final を含めておく
@@ -648,6 +738,23 @@
         );
       }
       if (runId !== pipelineState.runToken) return;
+      const activeKey1 = resolvePipelineRunKey1();
+      if (!activeKey1.ok || activeKey1.key1Val !== key1Val) {
+        console.warn(
+          '[pipeline][FALLBACK] key1 changed during run; discarding stale pipeline result',
+          {
+            startedWith: key1Val,
+            activeNow: activeKey1.ok ? activeKey1.key1Val : null,
+            activeSource: activeKey1.ok ? activeKey1.source : null,
+            resolverContext: activeKey1.context,
+          }
+        );
+        window.latestTapData = {};
+        window.latestPipelineKey = null;
+        updateLayerSelect({});
+        emitPipelineEvent('run:error', { message: 'key1 changed during run; result discarded' });
+        return;
+      }
       window.latestTapData = tapMap || {};
       window.latestPipelineKey = pipelineKey || null;
       updateLayerSelect(tapMap || {});
@@ -687,6 +794,10 @@
     pipelineState.inspectorTitleEl = document.getElementById('pipelineInspectorTitle');
     pipelineState.addMenuEl = document.getElementById('pipelineAddMenu');
     pipelineState.addButtonEl = document.getElementById('pipelineAddButton');
+    if (!pipelineState.initDiagnosticsLogged) {
+      runInitDiagnostics();
+      pipelineState.initDiagnosticsLogged = true;
+    }
 
     pipelineState.graph = loadPipelineFromLocalStorage();
     if (DEBUG_PIPELINE) console.info('[pipeline] initPipelineUI(): graph=', pipelineState.graph);
@@ -807,4 +918,3 @@
     }
   });
 })();
-
