@@ -126,7 +126,8 @@ def get_section_and_meta_from_pipeline_tap(
         offset_byte=offset_byte,
         tap_label=tap_label,
     )
-    payload = state.pipeline_tap_cache.get(cache_key)
+    with state.lock:
+        payload = state.pipeline_tap_cache.get(cache_key)
     if payload is None:
         msg = (
             f'Pipeline tap {tap_label!r} for pipeline {pipeline_key!r} '

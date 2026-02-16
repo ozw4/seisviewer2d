@@ -104,14 +104,20 @@ class FbpickRequest(BaseModel):
 
 
 def _run_fbpick_job(job_id: str, req: FbpickRequest, state: AppState) -> None:
-    job = state.jobs[job_id]
-    job['status'] = 'running'
     try:
+        with state.lock:
+            job = state.jobs.get(job_id)
+            if job is None:
+                return
+            job['status'] = 'running'
+            cache_key = job.get('cache_key')
+            section_override = job.pop('section_override', None)
+        if cache_key is None:
+            raise RuntimeError('FB pick job metadata is inconsistent: cache_key')
+
         forced_offset_byte = OFFSET_BYTE_FIXED if USE_FBPICK_OFFSET else None
         key1 = req.key1
 
-        cache_key = job['cache_key']
-        section_override = job.pop('section_override', None)
         reader: object | None = None
         if USE_FBPICK_OFFSET and forced_offset_byte is not None:
             reader = get_reader(req.file_id, req.key1_byte, req.key2_byte, state=state)
@@ -167,11 +173,19 @@ def _run_fbpick_job(job_id: str, req: FbpickRequest, state: AppState) -> None:
             'shape': q.shape,
             'data': q.tobytes(),
         }
-        state.fbpick_cache[cache_key] = pack_msgpack_gzip(obj)
-        job['status'] = 'done'
+        packed_payload = pack_msgpack_gzip(obj)
+        with state.lock:
+            state.fbpick_cache[cache_key] = packed_payload
+        with state.lock:
+            job = state.jobs.get(job_id)
+            if job is not None:
+                job['status'] = 'done'
     except Exception as e:  # noqa: BLE001
-        job['status'] = 'error'
-        job['message'] = str(e)
+        with state.lock:
+            job = state.jobs.get(job_id)
+            if job is not None:
+                job['status'] = 'error'
+                job['message'] = str(e)
 
 
 @router.post('/fbpick_section_bin')
@@ -200,7 +214,9 @@ def fbpick_section_bin(req: FbpickRequest, request: Request):
     )
     section_override: np.ndarray | None = None
     wants_pipeline = bool(pipeline_key and tap_label)
-    if cache_key not in state.fbpick_cache and wants_pipeline:
+    with state.lock:
+        cache_hit = cache_key in state.fbpick_cache
+    if not cache_hit and wants_pipeline:
         try:
             section_override = get_section_from_pipeline_tap(
                 file_id=req.file_id,
@@ -220,36 +236,48 @@ def fbpick_section_bin(req: FbpickRequest, request: Request):
     job_state: dict[str, object] = {'status': 'queued', 'cache_key': cache_key}
     if section_override is not None:
         job_state['section_override'] = section_override
-    state.jobs[job_id] = job_state
+    with state.lock:
+        state.jobs[job_id] = job_state
+        cache_hit = cache_key in state.fbpick_cache
 
     req2 = req.model_copy(update={'offset_byte': forced_offset_byte})
 
-    if cache_key in state.fbpick_cache:
-        state.jobs[job_id]['status'] = 'done'
+    if cache_hit:
+        with state.lock:
+            job = state.jobs.get(job_id)
+            if job is not None:
+                job['status'] = 'done'
     else:
         threading.Thread(
             target=_run_fbpick_job, args=(job_id, req2, state), daemon=True
         ).start()
-    return {'job_id': job_id, 'status': state.jobs[job_id]['status']}
+    with state.lock:
+        job = state.jobs.get(job_id)
+        status = job.get('status', 'unknown') if job is not None else 'unknown'
+    return {'job_id': job_id, 'status': status}
 
 
 @router.get('/fbpick_job_status')
 def fbpick_job_status(request: Request, job_id: Annotated[str, Query(...)]):
     state = get_state(request.app)
-    job = state.jobs.get(job_id)
-    if job is None:
-        raise HTTPException(status_code=404, detail='Job ID not found')
-    return {'status': job.get('status', 'unknown'), 'message': job.get('message', '')}
+    with state.lock:
+        job = state.jobs.get(job_id)
+        if job is None:
+            raise HTTPException(status_code=404, detail='Job ID not found')
+        status = job.get('status', 'unknown')
+        message = job.get('message', '')
+    return {'status': status, 'message': message}
 
 
 @router.get('/get_fbpick_section_bin')
 def get_fbpick_section_bin(request: Request, job_id: Annotated[str, Query(...)]):
     state = get_state(request.app)
-    job = state.jobs.get(job_id)
-    if job is None or job.get('status') != 'done':
-        raise HTTPException(status_code=404, detail='Result not ready')
-    cache_key = job.get('cache_key')
-    payload = state.fbpick_cache.get(cache_key)
+    with state.lock:
+        job = state.jobs.get(job_id)
+        if job is None or job.get('status') != 'done':
+            raise HTTPException(status_code=404, detail='Result not ready')
+        cache_key = job.get('cache_key')
+        payload = state.fbpick_cache.get(cache_key)
     if payload is None:
         raise HTTPException(status_code=404, detail='Result missing')
     return Response(

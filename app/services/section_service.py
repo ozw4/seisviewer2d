@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import threading
 from pathlib import Path
 from typing import Any, Callable, Literal
 
@@ -88,6 +89,7 @@ def build_section_window_payload(
     trace_stats_cache: dict[tuple[Any, ...], tuple[np.ndarray, np.ndarray | None, int]],
     reader_getter: Callable[[str, int, int], TraceStoreSectionReader],
     pipeline_section_getter: Callable[..., np.ndarray],
+    trace_stats_lock: threading.RLock | None = None,
     dt_resolver: Callable[[str], float] = get_dt_for_file,
 ) -> bytes:
     """Build the compressed binary payload for a section window."""
@@ -131,6 +133,7 @@ def build_section_window_payload(
         key1=key1,
         store_dir=store_dir,
         trace_stats_cache=trace_stats_cache,
+        trace_stats_lock=trace_stats_lock,
         x0=x0,
         x1=x1,
         step_x=step_x,

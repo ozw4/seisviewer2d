@@ -85,8 +85,11 @@ def _optional_job_int(job: dict[str, object], *, field: str) -> int | None:
 def _run_pipeline_all_job(
     job_id: str, req: PipelineAllRequest, pipe_key: str, state: AppState
 ) -> None:
-    job = state.jobs[job_id]
-    job['status'] = 'running'
+    with state.lock:
+        job = state.jobs.get(job_id)
+        if job is None:
+            return
+        job['status'] = 'running'
     try:
         reader = get_reader(req.file_id, req.key1_byte, req.key2_byte, state=state)
         key1_values = reader.get_key1_values().tolist()
@@ -127,7 +130,8 @@ def _run_pipeline_all_job(
                     tap_label=str(k),
                 )
                 logger.debug('PIPELINE_CACHE_SET all %s', cache_key)
-                state.pipeline_tap_cache.set(cache_key, payload_obj)
+                with state.lock:
+                    state.pipeline_tap_cache.set(cache_key, payload_obj)
                 write_artifact(
                     job_id=job_id,
                     key1=key1_value,
@@ -135,12 +139,22 @@ def _run_pipeline_all_job(
                     payload=payload_obj,
                 )
 
-            job['progress'] = (idx + 1) / total
+            with state.lock:
+                job = state.jobs.get(job_id)
+                if job is None:
+                    return
+                job['progress'] = (idx + 1) / total
 
-        job['status'] = 'done'
+        with state.lock:
+            job = state.jobs.get(job_id)
+            if job is not None:
+                job['status'] = 'done'
     except Exception as e:  # noqa: BLE001
-        job['status'] = 'error'
-        job['message'] = str(e)
+        with state.lock:
+            job = state.jobs.get(job_id)
+            if job is not None:
+                job['status'] = 'error'
+                job['message'] = str(e)
 
 
 @router.post(
@@ -230,7 +244,8 @@ def pipeline_section(
                 offset_byte=forced_offset_byte,
                 tap_label=label,
             )
-            payload = state.pipeline_tap_cache.get(cache_key)
+            with state.lock:
+                payload = state.pipeline_tap_cache.get(cache_key)
             if payload is None:
                 misses.append(label)
 
@@ -248,7 +263,8 @@ def pipeline_section(
                     offset_byte=forced_offset_byte,
                     tap_label=str(k),
                 )
-                state.pipeline_tap_cache.set(cache_key, val)
+                with state.lock:
+                    state.pipeline_tap_cache.set(cache_key, val)
 
         # レスポンスは軽量（ラベル存在のみ）
         return {'taps': dict.fromkeys(labels, True), 'pipeline_key': pipe_key}
@@ -269,7 +285,8 @@ def pipeline_section(
                 tap_label=tap,
             )
             logger.debug('PIPELINE_CACHE_GET pipelinesection %s', cache_key)
-            payload = state.pipeline_tap_cache.get(cache_key)
+            with state.lock:
+                payload = state.pipeline_tap_cache.get(cache_key)
             if payload is not None:
                 taps_out[tap] = payload
             else:
@@ -290,7 +307,8 @@ def pipeline_section(
                     offset_byte=forced_offset_byte,
                     tap_label=str(k),
                 )
-                state.pipeline_tap_cache.set(cache_key, val)
+                with state.lock:
+                    state.pipeline_tap_cache.set(cache_key, val)
 
         return {'taps': taps_out, 'pipeline_key': pipe_key}
 
@@ -334,35 +352,42 @@ def pipeline_all(
     job_id = str(uuid4())
     pipe_key = pipeline_key(spec)
 
-    state.jobs[job_id] = {
-        'status': 'queued',
-        'progress': 0.0,
-        'message': '',
-        'file_id': file_id,
-        'key1_byte': key1_byte,
-        'key2_byte': key2_byte,
-        'pipeline_key': pipe_key,
-        'offset_byte': forced_offset_byte,  # artifact側も同じ値で参照
-        'artifacts_dir': str(get_job_dir(job_id)),
-    }
+    with state.lock:
+        state.jobs[job_id] = {
+            'status': 'queued',
+            'progress': 0.0,
+            'message': '',
+            'file_id': file_id,
+            'key1_byte': key1_byte,
+            'key2_byte': key2_byte,
+            'pipeline_key': pipe_key,
+            'offset_byte': forced_offset_byte,  # artifact側も同じ値で参照
+            'artifacts_dir': str(get_job_dir(job_id)),
+        }
 
     threading.Thread(
         target=_run_pipeline_all_job, args=(job_id, req, pipe_key, state), daemon=True
     ).start()
 
-    return {'job_id': job_id, 'state': state.jobs[job_id]['status']}
+    with state.lock:
+        status = state.jobs[job_id]['status']
+    return {'job_id': job_id, 'state': status}
 
 
 @router.get('/pipeline/job/{job_id}/status', response_model=PipelineJobStatusResponse)
 def pipeline_job_status(request: Request, job_id: str) -> PipelineJobStatusResponse:
     state = get_state(request.app)
-    job = state.jobs.get(job_id)
-    if job is None:
-        raise HTTPException(status_code=404, detail='Job ID not found')
+    with state.lock:
+        job = state.jobs.get(job_id)
+        if job is None:
+            raise HTTPException(status_code=404, detail='Job ID not found')
+        job_state = job.get('status', 'unknown')
+        progress = job.get('progress', 0.0)
+        message = job.get('message', '')
     return {
-        'state': job.get('status', 'unknown'),
-        'progress': job.get('progress', 0.0),
-        'message': job.get('message', ''),
+        'state': job_state,
+        'progress': progress,
+        'message': message,
     }
 
 
@@ -378,9 +403,11 @@ def pipeline_job_artifact(
     tap: Annotated[str, Query(...)],
 ):
     state = get_state(request.app)
-    job = state.jobs.get(job_id)
-    if job is None:
-        raise HTTPException(status_code=404, detail='Job ID not found')
+    with state.lock:
+        job = state.jobs.get(job_id)
+        if job is None:
+            raise HTTPException(status_code=404, detail='Job ID not found')
+        job_snapshot = dict(job)
 
     maybe_cleanup_expired_jobs()
 
@@ -388,11 +415,11 @@ def pipeline_job_artifact(
     if disk_payload is not None:
         return disk_payload
 
-    job_file_id = _required_job_str(job, field='file_id')
-    job_pipeline_key = _required_job_str(job, field='pipeline_key')
-    job_key1_byte = _required_job_int(job, field='key1_byte')
-    job_key2_byte = _required_job_int(job, field='key2_byte')
-    job_offset_byte = _optional_job_int(job, field='offset_byte')
+    job_file_id = _required_job_str(job_snapshot, field='file_id')
+    job_pipeline_key = _required_job_str(job_snapshot, field='pipeline_key')
+    job_key1_byte = _required_job_int(job_snapshot, field='key1_byte')
+    job_key2_byte = _required_job_int(job_snapshot, field='key2_byte')
+    job_offset_byte = _optional_job_int(job_snapshot, field='offset_byte')
 
     cache_key = build_pipeline_tap_cache_key(
         file_id=job_file_id,
@@ -408,7 +435,8 @@ def pipeline_job_artifact(
     # Migration compatibility: fall back to in-memory LRU when disk artifact is absent.
     logger.debug('PIPELINE_CACHE_GET artifact %s', cache_key)
 
-    payload = state.pipeline_tap_cache.get(cache_key)
+    with state.lock:
+        payload = state.pipeline_tap_cache.get(cache_key)
     if payload is None:
         raise HTTPException(status_code=404, detail='Artifact not ready')
     return payload

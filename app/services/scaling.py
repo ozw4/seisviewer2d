@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import contextlib
 import logging
+import threading
 from pathlib import Path
 from typing import Any
 
@@ -23,6 +25,7 @@ def apply_scaling_from_baseline(
     store_dir: str | Path,
     *,
     trace_stats_cache: dict[tuple[Any, ...], tuple[np.ndarray, np.ndarray | None, int]],
+    trace_stats_lock: threading.RLock | None = None,
     x0: int,
     x1: int,
     step_x: int,
@@ -61,14 +64,22 @@ def apply_scaling_from_baseline(
     spans = baseline['trace_spans'].get(key1_int)
     if spans is None:
         raise UnprocessableError('Baseline trace spans missing for key1 value')
+    lock_ctx = (
+        trace_stats_lock if trace_stats_lock is not None else contextlib.nullcontext()
+    )
     store_key = baseline['store_key']
     idx_full_key = (store_key, key1_int, 'idx_full')
-    idx_full_payload = trace_stats_cache.get(idx_full_key)
+    with lock_ctx:
+        idx_full_payload = trace_stats_cache.get(idx_full_key)
     if idx_full_payload is None:
-        idx_full = np.concatenate(
+        idx_full_candidate = np.concatenate(
             [np.arange(int(s), int(e), dtype=np.int64) for (s, e) in spans]
         )
-        trace_stats_cache[idx_full_key] = (idx_full, None, 0)  # slot reuse
+        with lock_ctx:
+            idx_full_payload = trace_stats_cache.setdefault(
+                idx_full_key, (idx_full_candidate, None, 0)
+            )
+        idx_full = idx_full_payload[0]
     else:
         idx_full = idx_full_payload[0]  # unpack tuple
 
@@ -83,14 +94,15 @@ def apply_scaling_from_baseline(
 
     # Gather per-trace stats for the selected window (cache by x0,x1,step_x)
     trace_key = (store_key, key1_int, x0, x1, step_x)
-    cached = trace_stats_cache.get(trace_key)
+    with lock_ctx:
+        cached = trace_stats_cache.get(trace_key)
     if cached is None:
         trace_mean = baseline['trace_mean']
         trace_inv = baseline['trace_inv_std']
         mean_vec = trace_mean[sel_global].astype(np.float32, copy=False)
         inv_vec = trace_inv[sel_global].astype(np.float32, copy=False)
-        trace_stats_cache[trace_key] = (mean_vec, inv_vec, 0)
-        cached = trace_stats_cache[trace_key]
+        with lock_ctx:
+            cached = trace_stats_cache.setdefault(trace_key, (mean_vec, inv_vec, 0))
     mean_vec, inv_vec, _ = cached
     if inv_vec is None:
         raise InternalError('Trace statistics cache entry is invalid')

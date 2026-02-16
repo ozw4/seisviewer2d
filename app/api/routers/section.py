@@ -359,7 +359,8 @@ def get_section_window_bin(
         scaling_mode=mode,
     )
 
-    cached_payload = state.window_section_cache.get(cache_key)
+    with state.lock:
+        cached_payload = state.window_section_cache.get(cache_key)
     if cached_payload is not None:
         return Response(
             cached_payload,
@@ -385,6 +386,7 @@ def get_section_window_bin(
             tap_label=tap_label,
             scaling_mode=mode,
             trace_stats_cache=state.trace_stats_cache,
+            trace_stats_lock=state.lock,
             reader_getter=lambda fid, kb1, kb2: get_reader(fid, kb1, kb2, state=state),
             pipeline_section_getter=lambda **kwargs: get_section_from_pipeline_tap(
                 **kwargs, state=state
@@ -401,7 +403,12 @@ def get_section_window_bin(
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
-    state.window_section_cache.set(cache_key, compressed)
+    with state.lock:
+        cached_payload = state.window_section_cache.get(cache_key)
+        if cached_payload is None:
+            state.window_section_cache.set(cache_key, compressed)
+        else:
+            compressed = cached_payload
     return Response(
         compressed,
         media_type='application/octet-stream',

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import threading
 from collections import OrderedDict
 from dataclasses import dataclass, field
 from typing import Any
@@ -36,6 +37,7 @@ class LRUCache(OrderedDict):
 class AppState:
     """Shared mutable state used by API helpers and routers."""
 
+    lock: threading.RLock = field(default_factory=threading.RLock, repr=False)
     cached_readers: dict[str, TraceStoreSectionReader] = field(default_factory=dict)
     fbpick_cache: dict[tuple[Any, ...], bytes] = field(default_factory=dict)
     jobs: dict[str, dict[str, object]] = field(default_factory=dict)
