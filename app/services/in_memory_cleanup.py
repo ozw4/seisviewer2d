@@ -47,10 +47,10 @@ def _job_expiry_ts(job: dict[str, object], now_ts: float) -> float:
 
 
 def _job_kind(job: dict[str, object]) -> str:
-    if 'pipeline_key' in job:
-        return 'pipeline'
     if 'cache_key' in job:
         return 'fbpick'
+    if 'pipeline_key' in job:
+        return 'pipeline'
     return 'other'
 
 

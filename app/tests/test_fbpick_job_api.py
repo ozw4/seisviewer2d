@@ -241,3 +241,115 @@ def test_fbpick_job_run_produces_gzip_msgpack_with_shape_data_dt(_fb_env, monkey
     assert isinstance(cached, (bytes, bytearray))
     assert cached[:2] == b'\x1f\x8b'  # gzip magic
     assert gzip.decompress(cached) == gr.content
+
+
+def test_fbpick_pipeline_request_keeps_job_state_array_free(_fb_env, monkeypatch):
+    client, fbpick_mod = _fb_env
+    monkeypatch.setattr(fbpick_mod, 'FBPICK_MODEL_PATH', _DummyPath(True), raising=True)
+
+    calls = {'count': 0}
+
+    def _unexpected_tap_lookup(**_kwargs):
+        calls['count'] += 1
+        raise AssertionError('request handler must not materialize pipeline tap data')
+
+    class _NoOpThread:
+        def __init__(self, *args, **kwargs):
+            _ = args, kwargs
+
+        def start(self):
+            return None
+
+    monkeypatch.setattr(
+        fbpick_mod,
+        'get_section_from_pipeline_tap',
+        _unexpected_tap_lookup,
+        raising=True,
+    )
+    monkeypatch.setattr(fbpick_mod.threading, 'Thread', _NoOpThread, raising=True)
+
+    r = client.post(
+        '/fbpick_section_bin',
+        json={
+            'file_id': 'fid',
+            'key1': 1,
+            'pipeline_key': 'pk',
+            'tap_label': 'tapA',
+        },
+    )
+    assert r.status_code == 200, r.text
+
+    job_id = r.json()['job_id']
+    state = fbpick_mod.get_state(app)
+    job = state.jobs[job_id]
+
+    assert 'section_override' not in job
+    assert not any(isinstance(v, np.ndarray) for v in job.values())
+    assert job.get('pipeline_key') == 'pk'
+    assert job.get('tap_label') == 'tapA'
+    assert job.get('offset_byte') is None
+    assert calls['count'] == 0
+
+
+def test_fbpick_pipeline_worker_fetches_tap_and_caches_payload(_fb_env, monkeypatch):
+    client, fbpick_mod = _fb_env
+    monkeypatch.setattr(fbpick_mod, 'FBPICK_MODEL_PATH', _DummyPath(True), raising=True)
+
+    section = np.asarray([[0.1, 0.2], [0.3, 0.4]], dtype=np.float32)
+    tap_calls: list[dict[str, object]] = []
+
+    def _fake_tap_lookup(**kwargs):
+        tap_calls.append(dict(kwargs))
+        return section
+
+    def _fake_apply_pipeline(section_arr, *, spec, meta, taps=None):
+        _ = spec, meta, taps
+        return {'fbpick': {'prob': np.asarray(section_arr, dtype=np.float32)}}
+
+    class _SyncThread:
+        def __init__(self, *args, **kwargs):
+            _ = args
+            self._target = kwargs.get('target')
+            self._args = kwargs.get('args', ())
+            self._kwargs = kwargs.get('kwargs', {})
+
+        def start(self):
+            assert callable(self._target)
+            self._target(*self._args, **self._kwargs)
+
+    monkeypatch.setattr(
+        fbpick_mod, 'get_section_from_pipeline_tap', _fake_tap_lookup, raising=True
+    )
+    monkeypatch.setattr(
+        fbpick_mod, 'apply_pipeline', _fake_apply_pipeline, raising=True
+    )
+    monkeypatch.setattr(fbpick_mod.threading, 'Thread', _SyncThread, raising=True)
+
+    r = client.post(
+        '/fbpick_section_bin',
+        json={
+            'file_id': 'fid',
+            'key1': 1,
+            'pipeline_key': 'pk',
+            'tap_label': 'tapA',
+        },
+    )
+    assert r.status_code == 200, r.text
+
+    job_id = r.json()['job_id']
+    state = fbpick_mod.get_state(app)
+    job = state.jobs[job_id]
+
+    assert len(tap_calls) == 1
+    assert tap_calls[0].get('pipeline_key') == 'pk'
+    assert tap_calls[0].get('tap_label') == 'tapA'
+    assert job.get('status') == 'done'
+    assert 'section_override' not in job
+    assert not any(isinstance(v, np.ndarray) for v in job.values())
+
+    cache_key = job['cache_key']
+    payload = state.fbpick_cache.get(cache_key)
+    assert payload is not None
+
+    gr = client.get('/get_fbpick_section_bin', params={'job_id': job_id})
+    assert gr.status_code == 200

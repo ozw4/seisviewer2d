@@ -22,10 +22,7 @@ from app.services.fbpick_support import (
     _maybe_attach_fbpick_offsets,
 )
 from app.services.in_memory_cleanup import cleanup_in_memory_state
-from app.services.pipeline_taps import (
-    PipelineTapNotFoundError,
-    get_section_from_pipeline_tap,
-)
+from app.services.pipeline_taps import get_section_from_pipeline_tap
 from app.services.reader import coerce_section_f32, get_reader
 from app.utils.fbpick import _MODEL_PATH as FBPICK_MODEL_PATH
 from app.utils.pipeline import apply_pipeline
@@ -113,38 +110,49 @@ def _run_fbpick_job(job_id: str, req: FbpickRequest, state: AppState) -> None:
                 return
             job['status'] = 'running'
             cache_key = job.get('cache_key')
-            section_override = job.pop('section_override', None)
+            file_id_obj = job.get('file_id', req.file_id)
+            key1_obj = job.get('key1', req.key1)
+            key1_byte_obj = job.get('key1_byte', req.key1_byte)
+            key2_byte_obj = job.get('key2_byte', req.key2_byte)
+            pipeline_key_obj = job.get('pipeline_key', req.pipeline_key)
+            tap_label_obj = job.get('tap_label', req.tap_label)
+            offset_byte_obj = job.get('offset_byte', req.offset_byte)
         if cache_key is None:
             raise RuntimeError('FB pick job metadata is inconsistent: cache_key')
+        if not isinstance(file_id_obj, str) or not file_id_obj:
+            raise RuntimeError('FB pick job metadata is inconsistent: file_id')
+        file_id = file_id_obj
 
-        forced_offset_byte = OFFSET_BYTE_FIXED if USE_FBPICK_OFFSET else None
-        key1 = req.key1
+        key1 = int(key1_obj)
+        key1_byte = int(key1_byte_obj)
+        key2_byte = int(key2_byte_obj)
+        pipeline_key = (
+            str(pipeline_key_obj) if isinstance(pipeline_key_obj, str) else None
+        )
+        tap_label = str(tap_label_obj) if isinstance(tap_label_obj, str) else None
+        offset_byte = int(offset_byte_obj) if isinstance(offset_byte_obj, int) else None
 
         reader: object | None = None
-        if USE_FBPICK_OFFSET and forced_offset_byte is not None:
-            reader = get_reader(req.file_id, req.key1_byte, req.key2_byte, state=state)
-        if section_override is not None:
-            section = np.asarray(section_override, dtype=np.float32)
-        elif req.pipeline_key and req.tap_label:
+        if USE_FBPICK_OFFSET and offset_byte is not None:
+            reader = get_reader(file_id, key1_byte, key2_byte, state=state)
+        if pipeline_key and tap_label:
             section = get_section_from_pipeline_tap(
-                file_id=req.file_id,
+                file_id=file_id,
                 key1=key1,
-                key1_byte=req.key1_byte,
-                key2_byte=req.key2_byte,
-                pipeline_key=req.pipeline_key,
-                tap_label=req.tap_label,
-                offset_byte=forced_offset_byte,
+                key1_byte=key1_byte,
+                key2_byte=key2_byte,
+                pipeline_key=pipeline_key,
+                tap_label=tap_label,
+                offset_byte=offset_byte,
                 state=state,
             )
-            section = np.asarray(section, dtype=np.float32)
         else:
             if reader is None:
-                reader = get_reader(
-                    req.file_id, req.key1_byte, req.key2_byte, state=state
-                )
+                reader = get_reader(file_id, key1_byte, key2_byte, state=state)
             view = reader.get_section(key1)
             section = coerce_section_f32(view.arr, view.scale)
-        section = np.ascontiguousarray(section, dtype=np.float32)
+
+        section = np.ascontiguousarray(np.asarray(section, dtype=np.float32))
         spec = PipelineSpec(
             steps=[
                 {
@@ -165,7 +173,7 @@ def _run_fbpick_job(job_id: str, req: FbpickRequest, state: AppState) -> None:
                 spec=spec,
                 reader=reader,
                 key1=key1,
-                offset_byte=forced_offset_byte,
+                offset_byte=offset_byte,
             )
         out = apply_pipeline(section, spec=spec, meta=meta, taps=None)
         prob = out['fbpick']['prob']
@@ -217,35 +225,23 @@ def fbpick_section_bin(req: FbpickRequest, request: Request):
         pipeline_key=pipeline_key,
         tap_label=tap_label,
     )
-    section_override: np.ndarray | None = None
-    wants_pipeline = bool(pipeline_key and tap_label)
     with state.lock:
         payload = state.fbpick_cache.get(cache_key)
         cache_hit = payload is not None
-    if not cache_hit and wants_pipeline:
-        try:
-            section_override = get_section_from_pipeline_tap(
-                file_id=req.file_id,
-                key1=key1,
-                key1_byte=req.key1_byte,
-                key2_byte=req.key2_byte,
-                pipeline_key=pipeline_key,
-                tap_label=tap_label,
-                offset_byte=forced_offset_byte,
-                state=state,
-            )
-        except PipelineTapNotFoundError as exc:
-            raise HTTPException(status_code=409, detail=str(exc)) from exc
-        except (TypeError, ValueError) as exc:
-            raise HTTPException(status_code=409, detail=str(exc)) from exc
     job_id = str(uuid4())
     job_state: dict[str, object] = {
         'status': 'queued',
         'cache_key': cache_key,
         'created_ts': time.time(),
+        'file_id': req.file_id,
+        'key1': key1,
+        'key1_byte': req.key1_byte,
+        'key2_byte': req.key2_byte,
+        'pipeline_key': pipeline_key,
+        'tap_label': tap_label,
+        'offset_byte': forced_offset_byte,
     }
-    if section_override is not None:
-        job_state['section_override'] = section_override
+    assert not any(isinstance(value, np.ndarray) for value in job_state.values())
     with state.lock:
         state.jobs[job_id] = job_state
         payload = state.fbpick_cache.get(cache_key)
