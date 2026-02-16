@@ -11,19 +11,20 @@ from fastapi import APIRouter, HTTPException, Query, Request
 from fastapi.responses import Response
 from pydantic import BaseModel, ConfigDict
 
-from app.api._helpers import (
-    OFFSET_BYTE_FIXED,
-    USE_FBPICK_OFFSET,
-    PipelineTapNotFoundError,
-    _maybe_attach_fbpick_offsets,
-    coerce_section_f32,
-    get_reader,
-    get_section_from_pipeline_tap,
-    get_state,
-)
+from app.api._helpers import get_state
 from app.api.binary_codec import pack_msgpack_gzip
 from app.api.schemas import PipelineSpec
 from app.core.state import AppState
+from app.services.fbpick_support import (
+    OFFSET_BYTE_FIXED,
+    USE_FBPICK_OFFSET,
+    _maybe_attach_fbpick_offsets,
+)
+from app.services.pipeline_taps import (
+    PipelineTapNotFoundError,
+    get_section_from_pipeline_tap,
+)
+from app.services.reader import coerce_section_f32, get_reader
 from app.utils.fbpick import _MODEL_PATH as FBPICK_MODEL_PATH
 from app.utils.pipeline import apply_pipeline
 from app.utils.utils import quantize_float32

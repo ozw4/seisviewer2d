@@ -13,16 +13,7 @@ import numpy as np
 from fastapi import APIRouter, Body, Depends, HTTPException, Query, Request
 from pydantic import BaseModel, Field
 
-from app.api._helpers import (
-    OFFSET_BYTE_FIXED,
-    USE_FBPICK_OFFSET,
-    _maybe_attach_fbpick_offsets,
-    build_pipeline_tap_cache_key,
-    coerce_section_f32,
-    get_reader,
-    reject_legacy_key1_query_params,
-    get_state,
-)
+from app.api._helpers import reject_legacy_key1_query_params, get_state
 from app.api.schemas import (
     PipelineAllResponse,
     PipelineJobStatusResponse,
@@ -35,6 +26,13 @@ from app.services.pipeline_artifacts import (
     read_artifact,
     write_artifact,
 )
+from app.services.fbpick_support import (
+    OFFSET_BYTE_FIXED,
+    USE_FBPICK_OFFSET,
+    _maybe_attach_fbpick_offsets,
+)
+from app.services.pipeline_taps import build_pipeline_tap_cache_key
+from app.services.reader import coerce_section_f32, get_reader
 from app.core.state import AppState
 from app.utils.pipeline import apply_pipeline, pipeline_key
 from app.utils.segy_meta import get_dt_for_file

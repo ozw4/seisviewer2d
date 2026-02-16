@@ -15,15 +15,7 @@ if TYPE_CHECKING:
 else:  # pragma: no cover - runtime alias for type checkers
     NDArray = np.ndarray
 
-from app.api._helpers import (
-    OFFSET_BYTE_FIXED,
-    USE_FBPICK_OFFSET,
-    PipelineTapNotFoundError,
-    get_reader,
-    reject_legacy_key1_query_params,
-    get_state,
-    get_section_from_pipeline_tap,
-)
+from app.api._helpers import reject_legacy_key1_query_params, get_state
 from app.api.baselines import (
     BASELINE_STAGE_RAW,
     BaselineComputationError,
@@ -31,6 +23,12 @@ from app.api.baselines import (
 )
 from app.core.state import AppState
 from app.services.errors import DomainError
+from app.services.fbpick_support import OFFSET_BYTE_FIXED, USE_FBPICK_OFFSET
+from app.services.pipeline_taps import (
+    PipelineTapNotFoundError,
+    get_section_from_pipeline_tap,
+)
+from app.services.reader import get_reader
 from app.services.section_service import (
     SectionServiceInternalError,
     build_section_window_payload,
@@ -217,8 +215,8 @@ def get_section(
         return JSONResponse(content={'section': payload})
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
-    except DomainError as exc:
-        raise HTTPException(status_code=exc.status_code, detail=exc.detail) from exc
+    except DomainError:
+        raise
     except Exception as exc:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
 
@@ -400,8 +398,6 @@ def get_section_window_bin(
         ) from exc
     except PipelineTapNotFoundError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
-    except DomainError as exc:
-        raise HTTPException(status_code=exc.status_code, detail=exc.detail) from exc
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 

@@ -15,13 +15,10 @@ from fastapi.responses import FileResponse
 from pydantic import BaseModel, ConfigDict
 from starlette.background import BackgroundTask
 
-from app.api._helpers import (
-    _filename_for_file_id,
-    get_reader,
-    reject_legacy_key1_query_params,
-    get_state,
-)
+from app.api._helpers import reject_legacy_key1_query_params, get_state
 from app.api.routers.section import get_ntraces_for, get_trace_seq_for_value
+from app.services.reader import get_reader
+from app.services.registry import _filename_for_file_id
 from app.utils.pick_cache_file1d_mem import (
     clear_by_traceseq,
     clear_section,

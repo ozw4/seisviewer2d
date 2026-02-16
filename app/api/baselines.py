@@ -13,8 +13,9 @@ from typing import TYPE_CHECKING, Any
 
 import numpy as np
 
-from app.api._helpers import get_reader, get_state
+from app.api._helpers import get_state
 from app.core.state import AppState
+from app.services.reader import get_reader
 from app.utils.segy_meta import FILE_REGISTRY, get_dt_for_file
 
 if TYPE_CHECKING:
