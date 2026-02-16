@@ -2,18 +2,12 @@
 
 from __future__ import annotations
 
-import contextlib
-from typing import TYPE_CHECKING, Annotated, Literal
+from typing import Annotated, Literal
 
 import numpy as np
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import JSONResponse, Response
 from pydantic import BaseModel
-
-if TYPE_CHECKING:
-    from numpy.typing import NDArray
-else:  # pragma: no cover - runtime alias for type checkers
-    NDArray = np.ndarray
 
 from app.api._helpers import reject_legacy_key1_query_params, get_state
 from app.api.baselines import (
@@ -21,7 +15,6 @@ from app.api.baselines import (
     BaselineComputationError,
     get_or_create_raw_baseline,
 )
-from app.core.state import AppState
 from app.services.errors import DomainError
 from app.services.fbpick_support import OFFSET_BYTE_FIXED, USE_FBPICK_OFFSET
 from app.services.pipeline_taps import (
@@ -33,7 +26,7 @@ from app.services.section_service import (
     SectionServiceInternalError,
     build_section_window_payload,
 )
-from app.utils.segy_meta import FILE_REGISTRY, get_dt_for_file
+from app.utils.segy_meta import get_dt_for_file
 
 router = APIRouter()
 
@@ -97,90 +90,6 @@ def _build_window_section_cache_key(
         tap_label,
         str(scaling_mode),
     )
-
-
-def get_ntraces_for(
-    file_id: str,
-    key1_byte: int | None = None,
-    key2_byte: int | None = None,
-    *,
-    state: AppState,
-) -> int:
-    """Return total number of traces for ``file_id``.
-    Always uses ``get_reader`` (lazy-safe). Falls back to registry meta if needed.
-    """
-    ent = FILE_REGISTRY.get(file_id)
-    if ent is None:
-        raise KeyError(f'file_id not found: {file_id}')
-
-    kb1 = 189 if key1_byte is None else int(key1_byte)
-    kb2 = 193 if key2_byte is None else int(key2_byte)
-
-    # Prefer an actual reader (lazy open). If it fails, try registry meta.
-    with contextlib.suppress(Exception):
-        reader = get_reader(file_id, kb1, kb2, state=state)
-        ntraces = getattr(reader, 'ntraces', None)
-        if ntraces is None:
-            meta = getattr(reader, 'meta', None)
-            if isinstance(meta, dict):
-                ntraces = meta.get('n_traces')
-        if ntraces is None and hasattr(reader, 'traces'):
-            ntraces = getattr(reader.traces, 'shape', (None,))[0]
-        if ntraces is None and hasattr(reader, 'key1s'):
-            ntraces = len(reader.key1s)
-        if ntraces is not None:
-            return int(ntraces)
-
-    # Fallback: registry meta (if present)
-    meta = getattr(ent, 'meta', None)
-    if isinstance(ent, dict) and meta is None:
-        meta = ent.get('meta')
-    if isinstance(meta, dict) and 'n_traces' in meta:
-        return int(meta['n_traces'])
-
-    raise AttributeError('Unable to determine number of traces for file')
-
-
-def get_trace_seq_for_value(
-    file_id: str,
-    key1: int,
-    key1_byte: int,
-    *,
-    state: AppState,
-) -> NDArray[np.int64]:
-    """Return display-aligned trace ordering for ``key1`` of ``file_id``."""
-    key2_byte = 193
-    ent = FILE_REGISTRY.get(file_id)
-    if ent is None:
-        raise KeyError(f'file_id not found: {file_id}')
-    maybe_reader = getattr(ent, 'reader', None)
-    if maybe_reader is None and isinstance(ent, dict):
-        maybe_reader = ent.get('reader')
-    if maybe_reader is not None:
-        key2_byte = int(getattr(maybe_reader, 'key2_byte', 193))
-
-    reader = get_reader(file_id, int(key1_byte), key2_byte, state=state)
-    target_val = int(key1)
-
-    get_trace_seq = getattr(reader, 'get_trace_seq_for_section', None)
-    if callable(get_trace_seq):
-        seq = get_trace_seq(target_val, align_to='display')
-        return np.asarray(seq, dtype=np.int64)
-
-    get_header = getattr(reader, 'get_header', None)
-    if callable(get_header):
-        key1_headers = np.asarray(get_header(int(key1_byte)), dtype=np.int64)
-        indices = np.flatnonzero(key1_headers == target_val)
-        if indices.size == 0:
-            msg = f'Key1 value {target_val} not found'
-            raise ValueError(msg)
-        key2_src = int(getattr(reader, 'key2_byte', key2_byte))
-        key2_headers = np.asarray(get_header(key2_src), dtype=np.int64)
-        order = np.argsort(key2_headers[indices], kind='stable')
-        return np.asarray(indices[order], dtype=np.int64)
-
-    msg = 'Reader cannot provide trace sequence information'
-    raise AttributeError(msg)
 
 
 @router.get('/get_key1_values')

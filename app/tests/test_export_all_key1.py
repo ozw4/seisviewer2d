@@ -36,9 +36,13 @@ def test_export_all_key1_basic(monkeypatch):
     )
     monkeypatch.setattr(ep, '_filename_for_file_id', lambda file_id: 'lineA.sgy')
     monkeypatch.setattr(ep, 'get_dt_for_file', lambda file_id: 0.004)  # 4 ms
-    monkeypatch.setattr(ep, 'get_ntraces_for', lambda file_id, state=None: 5)
+    monkeypatch.setattr(
+        ep,
+        'get_ntraces_for',
+        lambda file_id, key1_byte, key2_byte=193, state=None: 5,
+    )
 
-    def fake_get_trace_seq(file_id, key1, key1_byte, state=None):
+    def fake_get_trace_seq(file_id, key1, key1_byte, key2_byte=193, state=None):
         if key1 == 100:
             return np.array([0, 1, 2], dtype=np.int64)
         if key1 == 200:
@@ -111,11 +115,17 @@ def test_export_all_key1_empty_is_all_minus1(monkeypatch):
     )
     monkeypatch.setattr(ep, '_filename_for_file_id', lambda file_id: 'lineB.sgy')
     monkeypatch.setattr(ep, 'get_dt_for_file', lambda file_id: 0.002)
-    monkeypatch.setattr(ep, 'get_ntraces_for', lambda file_id, state=None: 2)
+    monkeypatch.setattr(
+        ep,
+        'get_ntraces_for',
+        lambda file_id, key1_byte, key2_byte=193, state=None: 2,
+    )
     monkeypatch.setattr(
         ep,
         'get_trace_seq_for_value',
-        lambda file_id, key1, key1_byte, state=None: np.array([0, 1], dtype=np.int64),
+        lambda file_id, key1, key1_byte, key2_byte=193, state=None: np.array(
+            [0, 1], dtype=np.int64
+        ),
     )
     monkeypatch.setattr(ep, 'to_pairs_for_section', lambda *args, **kwargs: [])
 
@@ -131,3 +141,57 @@ def test_export_all_key1_empty_is_all_minus1(monkeypatch):
     arr = np.load(io.BytesIO(r.content))
     assert arr.shape == (1, 2)
     assert arr.tolist() == [[-1, -1]]
+
+
+def test_export_all_key1_forwards_default_and_override_key2(monkeypatch):
+    class FakeReader:
+        key1_byte = 189
+
+        def get_key1_values(self):
+            return [10]
+
+        @property
+        def traces(self):
+            return np.zeros((2, 10), dtype=np.float32)
+
+        def get_n_samples(self):
+            return int(self.traces.shape[-1])
+
+    seen_ntr: list[int] = []
+    seen_seq: list[int] = []
+
+    monkeypatch.setattr(
+        ep, 'get_reader', lambda file_id, key1_byte, key2_byte, state=None: FakeReader()
+    )
+    monkeypatch.setattr(ep, '_filename_for_file_id', lambda file_id: 'lineC.sgy')
+    monkeypatch.setattr(ep, 'get_dt_for_file', lambda file_id: 0.004)
+    monkeypatch.setattr(
+        ep,
+        'get_ntraces_for',
+        lambda file_id, key1_byte, key2_byte=193, state=None: (
+            seen_ntr.append(int(key2_byte)) or 2
+        ),
+    )
+    monkeypatch.setattr(
+        ep,
+        'get_trace_seq_for_value',
+        lambda file_id, key1, key1_byte, key2_byte=193, state=None: (
+            seen_seq.append(int(key2_byte)) or np.array([0, 1], dtype=np.int64)
+        ),
+    )
+    monkeypatch.setattr(ep, 'to_pairs_for_section', lambda *args, **kwargs: [])
+
+    client = TestClient(app, raise_server_exceptions=False)
+
+    r = client.get(
+        '/export_manual_picks_all_npy', params={'file_id': 'Z', 'key1_byte': 189}
+    )
+    assert r.status_code == 200
+    r = client.get(
+        '/export_manual_picks_all_npy',
+        params={'file_id': 'Z', 'key1_byte': 189, 'key2_byte': 321},
+    )
+    assert r.status_code == 200
+
+    assert seen_ntr == [193, 321]
+    assert seen_seq == [193, 321]

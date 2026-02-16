@@ -13,11 +13,17 @@ def test_picks_memmap_roundtrip(monkeypatch):
         "_filename_for_file_id",
         lambda fid: "LineA.sgy" if fid == file_id else None,
     )
-    monkeypatch.setattr(picks, "get_ntraces_for", lambda fid, state=None: 20)
+    monkeypatch.setattr(
+        picks,
+        "get_ntraces_for",
+        lambda fid, key1_byte, key2_byte=193, state=None: 20,
+    )
     monkeypatch.setattr(
         picks,
         "get_trace_seq_for_value",
-        lambda fid, key1, key1_byte, state=None: np.arange(0, 12, dtype=np.int64),
+        lambda fid, key1, key1_byte, key2_byte=193, state=None: np.arange(
+            0, 12, dtype=np.int64
+        ),
     )
 
     store: dict[int, float] = {}

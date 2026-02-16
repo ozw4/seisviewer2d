@@ -739,11 +739,12 @@
                 trace: op.trace,
                 time: op.time,
                 key1: key1Val,
-                key1_byte: key1Byte
+                key1_byte: key1Byte,
+                key2_byte: currentKey2Byte
               }),
             });
           } else {
-            const url = `/picks?file_id=${encodeURIComponent(fileId)}&trace=${op.trace}&key1=${encodeURIComponent(key1Val)}&key1_byte=${key1Byte}`;
+            const url = `/picks?file_id=${encodeURIComponent(fileId)}&trace=${op.trace}&key1=${encodeURIComponent(key1Val)}&key1_byte=${key1Byte}&key2_byte=${currentKey2Byte}`;
             await fetch(url, { method: 'DELETE' });
           }
         }
@@ -1095,7 +1096,7 @@
       for (let i = 0; i < K; i++) {
         const key1Val = key1Values[i];
         if (key1Val === undefined) continue;
-        const url = `/picks?file_id=${encodeURIComponent(currentFileId)}&key1=${encodeURIComponent(key1Val)}&key1_byte=${currentKey1Byte}`;
+        const url = `/picks?file_id=${encodeURIComponent(currentFileId)}&key1=${encodeURIComponent(key1Val)}&key1_byte=${currentKey1Byte}&key2_byte=${currentKey2Byte}`;
         const r = await fetch(url);
         if (!r.ok) continue;
         const j = await r.json();
@@ -2112,7 +2113,7 @@
       const key1Val = key1Values?.[idx];
       if (key1Val === undefined) return;
       try {
-        const res = await fetch(`/picks?file_id=${currentFileId}&key1=${encodeURIComponent(key1Val)}&key1_byte=${currentKey1Byte}`);
+        const res = await fetch(`/picks?file_id=${currentFileId}&key1=${encodeURIComponent(key1Val)}&key1_byte=${currentKey1Byte}&key2_byte=${currentKey2Byte}`);
         if (res.ok) {
           const data = await res.json();
           picks = (data.picks || []).map(p => ({ trace: p.trace, time: p.time }));
@@ -2191,7 +2192,7 @@
       const key1Val = key1Values?.[idx];
       if (key1Val === undefined) return [];
       try {
-        const r = await fetch(`/picks?file_id=${encodeURIComponent(fileId)}&key1=${encodeURIComponent(key1Val)}&key1_byte=${currentKey1Byte}`);
+        const r = await fetch(`/picks?file_id=${encodeURIComponent(fileId)}&key1=${encodeURIComponent(key1Val)}&key1_byte=${currentKey1Byte}&key2_byte=${currentKey2Byte}`);
         if (!r.ok) return [];
         const j = await r.json();
         const arr = (j.picks || []).map(p => ({ trace: (p.trace | 0), time: +p.time }));

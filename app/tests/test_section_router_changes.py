@@ -9,16 +9,19 @@ import pytest
 
 from app.api.routers import section as sec
 from app.main import app
+from app.services import section_index as secidx
+from app.services.errors import ConflictError
+from app.utils.segy_meta import FILE_REGISTRY
 from app.utils.utils import SectionView
 
 
 @pytest.fixture(autouse=True)
 def _clean_registry(monkeypatch):
     # Ensure a clean FILE_REGISTRY and harmless dt function for binary endpoints.
-    sec.FILE_REGISTRY.clear()
+    FILE_REGISTRY.clear()
     monkeypatch.setattr(sec, 'get_dt_for_file', lambda _fid: 0.004, raising=True)
     yield
-    sec.FILE_REGISTRY.clear()
+    FILE_REGISTRY.clear()
 
 
 # -------------------------
@@ -131,43 +134,21 @@ def _make_tracestore_like_reader(key1s: np.ndarray, key2s: np.ndarray):
 # -------------------------
 
 
-def test_get_ntraces_for_prefers_get_reader_and_fallbacks(monkeypatch):
-    # Always mutate the same dict object; don't rebind FILE_REGISTRY.
-    assert isinstance(sec.FILE_REGISTRY, dict)
-
-    # 1) get_reader が返す reader を優先
-    sec.FILE_REGISTRY.clear()
-    sec.FILE_REGISTRY.update({'f1': {}})
-
+def test_get_ntraces_for_uses_reader_and_fails_fast(monkeypatch):
     r = _make_stub_reader(
         key1s=np.array([1, 1, 2, 3, 3], dtype=np.int32),
         key2s=np.array([5, 2, 9, 1, 1], dtype=np.int32),
     )
-    monkeypatch.setattr(sec, 'get_reader', lambda file_id, kb1, kb2, state=None: r)
-    assert sec.get_ntraces_for('f1', state=sec.get_state(app)) == 5
-
-    # 2) get_reader が失敗した場合は registry.meta にフォールバック
-    sec.FILE_REGISTRY.clear()
-    sec.FILE_REGISTRY.update({'f2': {'meta': {'n_traces': 8}}})
+    monkeypatch.setattr(secidx, 'get_reader', lambda file_id, kb1, kb2, state=None: r)
+    assert secidx.get_ntraces_for('f1', 189, 193, state=sec.get_state(app)) == 5
 
     def boom(*a, **k):
-        raise RuntimeError('no reader')
+        raise ConflictError('trace store not built')
 
-    monkeypatch.setattr(sec, 'get_reader', boom)
-    assert 'f2' in sec.FILE_REGISTRY
-    assert sec.get_ntraces_for('f2', state=sec.get_state(app)) == 8
+    monkeypatch.setattr(secidx, 'get_reader', boom)
+    with pytest.raises(ConflictError, match='trace store not built'):
+        secidx.get_ntraces_for('f2', 189, 193, state=sec.get_state(app))
 
-    # 3) reader.meta['n_traces'] / TraceStore 風のフォールバック
-    t = _make_tracestore_like_reader(
-        key1s=np.array([10, 10, 20, 20, 30], dtype=np.int32),
-        key2s=np.array([1, 2, 3, 4, 5], dtype=np.int32),
-    )
-    sec.FILE_REGISTRY.clear()
-    sec.FILE_REGISTRY.update({'f2': {}})
-    monkeypatch.setattr(sec, 'get_reader', lambda file_id, kb1, kb2, state=None: t)
-    assert sec.get_ntraces_for('f2', state=sec.get_state(app)) == 5
-
-    # 4) traces.shape[0] フォールバック
     r2 = _make_stub_reader(
         key1s=np.array([7, 8, 9], dtype=np.int32),
         key2s=np.array([0, 0, 0], dtype=np.int32),
@@ -178,29 +159,23 @@ def test_get_ntraces_for_prefers_get_reader_and_fallbacks(monkeypatch):
         shape = (3, 100)
 
     r2.traces = _Traces()  # type: ignore[attr-defined]
-    sec.FILE_REGISTRY.clear()
-    sec.FILE_REGISTRY.update({'f3': {}})
-    monkeypatch.setattr(sec, 'get_reader', lambda file_id, kb1, kb2, state=None: r2)
-    assert sec.get_ntraces_for('f3', state=sec.get_state(app)) == 3
+    monkeypatch.setattr(secidx, 'get_reader', lambda file_id, kb1, kb2, state=None: r2)
+    assert secidx.get_ntraces_for('f3', 189, 193, state=sec.get_state(app)) == 3
 
 
 def test_get_trace_seq_for_with_stub_reader_matches_legacy(monkeypatch):
     key1s = np.array([1, 1, 2, 1, 2, 3, 3, 1, 2, 3], dtype=np.int32)
     key2s = np.array([5, 2, 9, 2, 1, 1, 1, 2, 5, 1], dtype=np.int32)
     r = _make_stub_reader(key1s, key2s)
-    sec.FILE_REGISTRY['lineA'] = {'reader': r}
-
-    # ensure per-request reader is used
-    monkeypatch.setattr(
-        sec, 'get_reader', lambda fid, kb1, kb2, state=None: r, raising=True
-    )
+    monkeypatch.setattr(secidx, 'get_reader', lambda fid, kb1, kb2, state=None: r)
 
     vals = r.get_key1_values()
     for v in vals:
-        seq = sec.get_trace_seq_for_value(
+        seq = secidx.get_trace_seq_for_value(
             'lineA',
             key1=int(v),
             key1_byte=189,
+            key2_byte=193,
             state=sec.get_state(app),
         )
         indices = np.where(r.key1s == v)[0]
@@ -208,34 +183,17 @@ def test_get_trace_seq_for_with_stub_reader_matches_legacy(monkeypatch):
         assert np.array_equal(seq, expected)
 
 
-def test_get_trace_seq_for_with_tracestore_uses_public_get_header(monkeypatch):
+def test_get_trace_seq_for_requires_reader_method(monkeypatch):
     key1s = np.array([9, 9, 9, 8, 8, 7], dtype=np.int32)
     key2s = np.array([3, 1, 2, 5, 4, 0], dtype=np.int32)
     t = _make_tracestore_like_reader(key1s, key2s)
-    sec.FILE_REGISTRY['lineB'] = {'reader': t}
-
-    # ensure per-request reader is used
-    monkeypatch.setattr(
-        sec, 'get_reader', lambda fid, kb1, kb2, state=None: t, raising=True
-    )
-
-    # unique_key1 = [7,8,9] → value=9
-    seq = sec.get_trace_seq_for_value(
-        'lineB',
-        key1=9,
-        key1_byte=189,
-        state=sec.get_state(app),
-    )
-    idx = np.where(key1s == 9)[0]
-    expected = idx[np.argsort(key2s[idx], kind='stable')]
-    assert np.array_equal(seq, expected)
-
-    # also verify missing value raises ValueError
-    with pytest.raises(ValueError):
-        sec.get_trace_seq_for_value(
+    monkeypatch.setattr(secidx, 'get_reader', lambda fid, kb1, kb2, state=None: t)
+    with pytest.raises(ConflictError, match='trace sequence'):
+        secidx.get_trace_seq_for_value(
             'lineB',
-            key1=999,
+            key1=9,
             key1_byte=189,
+            key2_byte=193,
             state=sec.get_state(app),
         )
 
@@ -322,7 +280,7 @@ def test_get_section_window_bin_happy_path(monkeypatch, tmp_path):
     )
 
     # TraceStore の場所と baseline を用意（apply_scaling_from_baseline が参照）
-    sec.FILE_REGISTRY['f'] = {'store_path': str(tmp_path)}
+    FILE_REGISTRY['f'] = {'store_path': str(tmp_path)}
     baseline = {
         'key1_values': [7],
         'mu_section_by_key1': [0.0],

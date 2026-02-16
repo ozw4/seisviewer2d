@@ -19,6 +19,7 @@ sys.modules.setdefault('segyio', types.ModuleType('segyio'))
 
 from app.api.routers import section as sec  # noqa: E402
 from app.main import app  # noqa: E402
+from app.utils.segy_meta import FILE_REGISTRY  # noqa: E402
 
 
 def _write_baseline(store_dir: Path, *, key1: int, n_traces: int) -> None:
@@ -45,7 +46,7 @@ def _clean_env(monkeypatch):
     # Make quantization deterministic.
     monkeypatch.setenv('FIXED_INT8_SCALE', '1')
 
-    sec.FILE_REGISTRY.clear()
+    FILE_REGISTRY.clear()
     state = sec.get_state(app)
     state.window_section_cache.clear()
     state.trace_stats_cache.clear()
@@ -57,7 +58,7 @@ def _clean_env(monkeypatch):
 
     yield
 
-    sec.FILE_REGISTRY.clear()
+    FILE_REGISTRY.clear()
     state.window_section_cache.clear()
     state.trace_stats_cache.clear()
     state.cached_readers.clear()
@@ -83,7 +84,7 @@ def test_get_section_window_bin_payload_includes_dt_and_matches_resolver(
         raising=True,
     )
 
-    sec.FILE_REGISTRY['f'] = {'store_path': str(tmp_path)}
+    FILE_REGISTRY['f'] = {'store_path': str(tmp_path)}
     _write_baseline(tmp_path, key1=key1, n_traces=5)
 
     with TestClient(app) as client:
@@ -143,7 +144,7 @@ def test_get_section_window_bin_out_of_bounds_returns_400(
         raising=True,
     )
 
-    sec.FILE_REGISTRY['f'] = {'store_path': str(tmp_path)}
+    FILE_REGISTRY['f'] = {'store_path': str(tmp_path)}
     _write_baseline(tmp_path, key1=key1, n_traces=5)
 
     with TestClient(app) as client:
@@ -164,7 +165,7 @@ def test_get_section_window_bin_out_of_bounds_returns_400(
 
 def test_get_section_window_bin_step_less_than_one_is_422(tmp_path: Path):
     # step_x/step_y have Query(ge=1), so FastAPI validation rejects them before service.
-    sec.FILE_REGISTRY['f'] = {'store_path': str(tmp_path)}
+    FILE_REGISTRY['f'] = {'store_path': str(tmp_path)}
     _write_baseline(tmp_path, key1=7, n_traces=1)
 
     with TestClient(app) as client:
@@ -195,7 +196,7 @@ def test_get_section_window_bin_value_error_maps_to_400(monkeypatch, tmp_path: P
     monkeypatch.setattr(
         sec, 'build_section_window_payload', _raise_value_error, raising=True
     )
-    sec.FILE_REGISTRY['f'] = {'store_path': str(tmp_path)}
+    FILE_REGISTRY['f'] = {'store_path': str(tmp_path)}
 
     with TestClient(app) as client:
         resp = client.get(
