@@ -146,7 +146,7 @@ def test_get_fbpick_section_bin_returns_404_until_done(_fb_env, monkeypatch):
     assert gr.json().get('detail') == 'Result not ready'
 
 
-def test_get_fbpick_section_bin_returns_404_when_payload_missing(_fb_env, monkeypatch):
+def test_get_fbpick_section_bin_returns_410_when_payload_missing(_fb_env, monkeypatch):
     client, fbpick_mod = _fb_env
     monkeypatch.setattr(fbpick_mod, 'FBPICK_MODEL_PATH', _DummyPath(True), raising=True)
 
@@ -171,8 +171,9 @@ def test_get_fbpick_section_bin_returns_404_when_payload_missing(_fb_env, monkey
     assert cache_key not in state.fbpick_cache
 
     gr = client.get('/get_fbpick_section_bin', params={'job_id': job_id})
-    assert gr.status_code == 404
-    assert gr.json().get('detail') == 'Result missing'
+    assert gr.status_code == 410
+    assert gr.json().get('detail') == 'Result expired'
+    assert state.jobs[job_id]['status'] == 'expired'
 
 
 def test_fbpick_job_run_produces_gzip_msgpack_with_shape_data_dt(_fb_env, monkeypatch):

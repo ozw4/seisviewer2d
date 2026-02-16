@@ -39,7 +39,8 @@ def get_reader(
     state: AppState,
 ) -> TraceStoreSectionReader:
     cache_key = f'{file_id}_{key1_byte}_{key2_byte}'
-    reader = state.cached_readers.get(cache_key)
+    with state.lock:
+        reader = state.cached_readers.get(cache_key)
     if reader is None:
         rec = FILE_REGISTRY.get(file_id)
         if rec is None:
@@ -50,8 +51,12 @@ def get_reader(
         p = Path(store_path)
         if not p.is_dir():
             raise ConflictError('trace store not built')
-        reader = TraceStoreSectionReader(p, key1_byte, key2_byte)
-        state.cached_readers[cache_key] = reader
+        fresh_reader = TraceStoreSectionReader(p, key1_byte, key2_byte)
+        with state.lock:
+            reader = state.cached_readers.get(cache_key)
+            if reader is None:
+                state.cached_readers[cache_key] = fresh_reader
+                reader = fresh_reader
     dt_val = get_dt_for_file(file_id)
     meta_attr = getattr(reader, 'meta', None)
     if isinstance(meta_attr, dict):

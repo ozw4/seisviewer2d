@@ -58,6 +58,11 @@ def _ttl_seconds() -> int:
     return ttl_hours * 3600
 
 
+def pipeline_jobs_ttl_seconds() -> int:
+    """Return TTL in seconds used for pipeline jobs and artifacts."""
+    return _ttl_seconds()
+
+
 def cleanup_expired_jobs(*, now_ts: float | None = None) -> int:
     """Remove job directories older than TTL and return removed count."""
     base = get_pipeline_jobs_base_dir()
@@ -118,6 +123,7 @@ __all__ = [
     'get_job_dir',
     'get_pipeline_jobs_base_dir',
     'maybe_cleanup_expired_jobs',
+    'pipeline_jobs_ttl_seconds',
     'read_artifact',
     'safe_filename',
     'write_artifact',

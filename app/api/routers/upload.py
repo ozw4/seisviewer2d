@@ -119,7 +119,8 @@ def _register_trace_store(
 ) -> TraceStoreSectionReader:
     reader = TraceStoreSectionReader(store_dir, key1_byte, key2_byte)
     cache_key = f'{file_id}_{key1_byte}_{key2_byte}'
-    state.cached_readers[cache_key] = reader
+    with state.lock:
+        state.cached_readers[cache_key] = reader
     threading.Thread(target=reader.preload_all_sections, daemon=True).start()
     for b in {key1_byte, key2_byte}:
         threading.Thread(target=reader.ensure_header, args=(b,), daemon=True).start()

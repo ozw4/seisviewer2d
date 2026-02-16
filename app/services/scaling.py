@@ -24,7 +24,7 @@ def apply_scaling_from_baseline(
     key1: int,
     store_dir: str | Path,
     *,
-    trace_stats_cache: dict[tuple[Any, ...], tuple[np.ndarray, np.ndarray | None, int]],
+    trace_stats_cache: Any,
     trace_stats_lock: threading.RLock | None = None,
     x0: int,
     x1: int,

@@ -375,7 +375,8 @@ def get_or_create_raw_baseline(
         raise BaselineComputationError('Baseline computation is already in progress')
     try:
         cache_key = f'{file_id}_{int(key1_byte)}_{int(key2_byte)}'
-        state.cached_readers.pop(cache_key, None)
+        with state.lock:
+            state.cached_readers.pop(cache_key, None)
         payload = _compute_baseline(
             file_id=file_id,
             artifacts=artifacts,

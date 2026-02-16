@@ -86,7 +86,7 @@ def build_section_window_payload(
     pipeline_key: str | None,
     tap_label: str | None,
     scaling_mode: Literal['amax', 'tracewise'],
-    trace_stats_cache: dict[tuple[Any, ...], tuple[np.ndarray, np.ndarray | None, int]],
+    trace_stats_cache: Any,
     reader_getter: Callable[[str, int, int], TraceStoreSectionReader],
     pipeline_section_getter: Callable[..., np.ndarray],
     trace_stats_lock: threading.RLock | None = None,

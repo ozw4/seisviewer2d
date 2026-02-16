@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import threading
+import time
 from typing import Annotated, Any
 from uuid import uuid4
 
@@ -20,6 +21,7 @@ from app.services.fbpick_support import (
     USE_FBPICK_OFFSET,
     _maybe_attach_fbpick_offsets,
 )
+from app.services.in_memory_cleanup import cleanup_in_memory_state
 from app.services.pipeline_taps import (
     PipelineTapNotFoundError,
     get_section_from_pipeline_tap,
@@ -180,12 +182,14 @@ def _run_fbpick_job(job_id: str, req: FbpickRequest, state: AppState) -> None:
             job = state.jobs.get(job_id)
             if job is not None:
                 job['status'] = 'done'
+                job['finished_ts'] = time.time()
     except Exception as e:  # noqa: BLE001
         with state.lock:
             job = state.jobs.get(job_id)
             if job is not None:
                 job['status'] = 'error'
                 job['message'] = str(e)
+                job['finished_ts'] = time.time()
 
 
 @router.post('/fbpick_section_bin')
@@ -193,6 +197,7 @@ def fbpick_section_bin(req: FbpickRequest, request: Request):
     if not FBPICK_MODEL_PATH.exists():
         raise HTTPException(status_code=409, detail='FB pick model weights not found')
     state = get_state(request.app)
+    cleanup_in_memory_state(state)
 
     forced_offset_byte = OFFSET_BYTE_FIXED if USE_FBPICK_OFFSET else None
 
@@ -215,7 +220,8 @@ def fbpick_section_bin(req: FbpickRequest, request: Request):
     section_override: np.ndarray | None = None
     wants_pipeline = bool(pipeline_key and tap_label)
     with state.lock:
-        cache_hit = cache_key in state.fbpick_cache
+        payload = state.fbpick_cache.get(cache_key)
+        cache_hit = payload is not None
     if not cache_hit and wants_pipeline:
         try:
             section_override = get_section_from_pipeline_tap(
@@ -233,12 +239,17 @@ def fbpick_section_bin(req: FbpickRequest, request: Request):
         except (TypeError, ValueError) as exc:
             raise HTTPException(status_code=409, detail=str(exc)) from exc
     job_id = str(uuid4())
-    job_state: dict[str, object] = {'status': 'queued', 'cache_key': cache_key}
+    job_state: dict[str, object] = {
+        'status': 'queued',
+        'cache_key': cache_key,
+        'created_ts': time.time(),
+    }
     if section_override is not None:
         job_state['section_override'] = section_override
     with state.lock:
         state.jobs[job_id] = job_state
-        cache_hit = cache_key in state.fbpick_cache
+        payload = state.fbpick_cache.get(cache_key)
+        cache_hit = payload is not None
 
     req2 = req.model_copy(update={'offset_byte': forced_offset_byte})
 
@@ -247,6 +258,7 @@ def fbpick_section_bin(req: FbpickRequest, request: Request):
             job = state.jobs.get(job_id)
             if job is not None:
                 job['status'] = 'done'
+                job['finished_ts'] = time.time()
     else:
         threading.Thread(
             target=_run_fbpick_job, args=(job_id, req2, state), daemon=True
@@ -260,6 +272,7 @@ def fbpick_section_bin(req: FbpickRequest, request: Request):
 @router.get('/fbpick_job_status')
 def fbpick_job_status(request: Request, job_id: Annotated[str, Query(...)]):
     state = get_state(request.app)
+    cleanup_in_memory_state(state)
     with state.lock:
         job = state.jobs.get(job_id)
         if job is None:
@@ -272,14 +285,22 @@ def fbpick_job_status(request: Request, job_id: Annotated[str, Query(...)]):
 @router.get('/get_fbpick_section_bin')
 def get_fbpick_section_bin(request: Request, job_id: Annotated[str, Query(...)]):
     state = get_state(request.app)
+    cleanup_in_memory_state(state)
     with state.lock:
         job = state.jobs.get(job_id)
-        if job is None or job.get('status') != 'done':
+        if job is None:
+            raise HTTPException(status_code=404, detail='Result not ready')
+        status = job.get('status')
+        if status == 'expired':
+            raise HTTPException(status_code=410, detail='Result expired')
+        if status != 'done':
             raise HTTPException(status_code=404, detail='Result not ready')
         cache_key = job.get('cache_key')
         payload = state.fbpick_cache.get(cache_key)
-    if payload is None:
-        raise HTTPException(status_code=404, detail='Result missing')
+        if payload is None:
+            job['status'] = 'expired'
+            job['finished_ts'] = time.time()
+            raise HTTPException(status_code=410, detail='Result expired')
     return Response(
         payload,
         media_type='application/octet-stream',

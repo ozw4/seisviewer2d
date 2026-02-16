@@ -6,6 +6,7 @@ import hashlib
 import json
 import logging
 import threading
+import time
 from typing import Annotated, Any
 from uuid import uuid4
 
@@ -26,6 +27,7 @@ from app.services.pipeline_artifacts import (
     read_artifact,
     write_artifact,
 )
+from app.services.in_memory_cleanup import cleanup_in_memory_state
 from app.services.fbpick_support import (
     OFFSET_BYTE_FIXED,
     USE_FBPICK_OFFSET,
@@ -149,12 +151,14 @@ def _run_pipeline_all_job(
             job = state.jobs.get(job_id)
             if job is not None:
                 job['status'] = 'done'
+                job['finished_ts'] = time.time()
     except Exception as e:  # noqa: BLE001
         with state.lock:
             job = state.jobs.get(job_id)
             if job is not None:
                 job['status'] = 'error'
                 job['message'] = str(e)
+                job['finished_ts'] = time.time()
 
 
 @router.post(
@@ -328,6 +332,7 @@ def pipeline_all(
     taps: Annotated[list[str] | None, Body()] = None,
 ):
     state = get_state(request.app)
+    cleanup_in_memory_state(state)
     maybe_cleanup_expired_jobs()
 
     tap_names = taps or []
@@ -357,6 +362,7 @@ def pipeline_all(
             'status': 'queued',
             'progress': 0.0,
             'message': '',
+            'created_ts': time.time(),
             'file_id': file_id,
             'key1_byte': key1_byte,
             'key2_byte': key2_byte,
@@ -377,6 +383,7 @@ def pipeline_all(
 @router.get('/pipeline/job/{job_id}/status', response_model=PipelineJobStatusResponse)
 def pipeline_job_status(request: Request, job_id: str) -> PipelineJobStatusResponse:
     state = get_state(request.app)
+    cleanup_in_memory_state(state)
     with state.lock:
         job = state.jobs.get(job_id)
         if job is None:
@@ -403,6 +410,7 @@ def pipeline_job_artifact(
     tap: Annotated[str, Query(...)],
 ):
     state = get_state(request.app)
+    cleanup_in_memory_state(state)
     with state.lock:
         job = state.jobs.get(job_id)
         if job is None:
