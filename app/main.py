@@ -2,10 +2,11 @@
 
 from pathlib import Path
 
-from fastapi import FastAPI
-from fastapi.responses import HTMLResponse
+from fastapi import FastAPI, Request
+from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
+from app.api._helpers import _domain_error_to_http
 from app.api.routers import (
     fbpick_predict_router,
     fbpick_router,
@@ -15,6 +16,7 @@ from app.api.routers import (
     upload_router,
 )
 from app.core.state import create_app_state
+from app.services.errors import DomainError
 
 STATIC_DIR = (Path(__file__).parent / 'static').resolve()
 
@@ -35,6 +37,17 @@ app.include_router(fbpick_router)
 app.include_router(fbpick_predict_router)
 app.include_router(pipeline_router)
 app.include_router(picks_router)
+
+
+@app.exception_handler(DomainError)
+async def handle_domain_error(_: Request, exc: DomainError) -> JSONResponse:
+    """Convert service-layer domain errors into HTTP responses."""
+    http_exc = _domain_error_to_http(exc)
+    return JSONResponse(
+        status_code=http_exc.status_code,
+        content={'detail': http_exc.detail},
+        headers=http_exc.headers,
+    )
 
 
 @app.get('/', response_class=HTMLResponse)

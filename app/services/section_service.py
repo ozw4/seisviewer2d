@@ -7,12 +7,9 @@ from typing import Any, Callable, Literal
 
 import numpy as np
 
-from app.api._helpers import (
-    EXPECTED_SECTION_NDIM,
-    apply_scaling_from_baseline,
-    coerce_section_f32,
-)
 from app.api.binary_codec import pack_quantized_array_gzip
+from app.services.reader import EXPECTED_SECTION_NDIM, coerce_section_f32
+from app.services.scaling import apply_scaling_from_baseline
 from app.utils.segy_meta import FILE_REGISTRY, get_dt_for_file
 from app.utils.utils import SectionView, TraceStoreSectionReader
 

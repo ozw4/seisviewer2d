@@ -30,6 +30,7 @@ from app.api.baselines import (
     get_or_create_raw_baseline,
 )
 from app.core.state import AppState
+from app.services.errors import DomainError
 from app.services.section_service import (
     SectionServiceInternalError,
     build_section_window_payload,
@@ -216,6 +217,8 @@ def get_section(
         return JSONResponse(content={'section': payload})
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except DomainError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=exc.detail) from exc
     except Exception as exc:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
 
@@ -397,6 +400,8 @@ def get_section_window_bin(
         ) from exc
     except PipelineTapNotFoundError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except DomainError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=exc.detail) from exc
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
