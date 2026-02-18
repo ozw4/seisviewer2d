@@ -1260,7 +1260,9 @@
       latestWindowRender = null;
       windowFetchToken += 1;
       uiResetNonce++;
-      if (window.pipelineUI && typeof window.pipelineUI.prepareForNewSection === 'function') {
+      if (window.pipelineEvents && typeof window.pipelineEvents.emit === 'function') {
+        window.pipelineEvents.emit('section:prepare', {});
+      } else if (window.pipelineUI && typeof window.pipelineUI.prepareForNewSection === 'function') {
         window.pipelineUI.prepareForNewSection();
       } else {
         latestTapData = {};
@@ -1535,118 +1537,21 @@
 
 
     window.addEventListener('DOMContentLoaded', () => {
-      const overlay = document.getElementById('ppOverlay');
-      const statusEl = document.getElementById('ppStatus');
-      const barInner = document.getElementById('ppBarInner');
-      const cancelBtn = document.getElementById('ppCancelBtn');
-
-      if (!overlay || !statusEl || !barInner || !cancelBtn) {
-        return;
-      }
-
-      let totalStepsCount = 1;
-
-      function setText(msg) {
-        statusEl.textContent = msg || '';
-      }
-
-      function setProgress(pct) {
-        const clamped = Math.max(0, Math.min(100, Math.round(pct)));
-        barInner.style.width = `${clamped}%`;
-      }
-
-      function openOverlay(totalSteps = 1, initialText = 'Preparing…') {
-        totalStepsCount = Math.max(1, Number(totalSteps) || 1);
-        overlay.classList.add('show');
-        setText(initialText);
-        setProgress(0);
-      }
-
-      function stepOverlay(index, name) {
-        const idx = Math.max(0, Number(index) || 0);
-        const pct = Math.round((idx / totalStepsCount) * 100);
-        const label = name ? `(${idx}/${totalStepsCount}) ${name}` : `Step ${idx}/${totalStepsCount}`;
-        setText(label);
-        setProgress(pct);
-      }
-
-      function closeOverlay() {
-        overlay.classList.remove('show');
-      }
-
-      function errorOverlay(message) {
-        setText(`Error: ${message}`);
-        setProgress(100);
-        setTimeout(() => closeOverlay(), 1200);
-      }
-
-      const progressApi = {
-        open: openOverlay,
-        progress: setProgress,
-        step: stepOverlay,
-        text: setText,
-        close: closeOverlay,
-        error: errorOverlay,
-      };
-
-      window.pipelineProgress = progressApi;
-
-      cancelBtn.addEventListener('click', () => {
-        try {
+      const createProgressOverlay = window.createPipelineProgressOverlay;
+      if (typeof createProgressOverlay !== 'function') return;
+      const progressApi = createProgressOverlay({
+        overlayId: 'ppOverlay',
+        statusId: 'ppStatus',
+        barId: 'ppBarInner',
+        cancelId: 'ppCancelBtn',
+        onCancel: () => {
           if (window.pipelineUI && typeof window.pipelineUI.cancel === 'function') {
             window.pipelineUI.cancel();
           }
-        } catch (err) {
-          console.warn('pipeline cancel threw', err);
-        }
-        closeOverlay();
+        },
       });
-
-      function attachPipelineHandlers() {
-        const ui = window.pipelineUI;
-        if (!ui) return;
-
-        if (typeof ui.on === 'function') {
-          ui.on('run:start', (event) => {
-            const total = event && typeof event.totalSteps === 'number' ? event.totalSteps : 1;
-            openOverlay(total, 'Submitting…');
-          });
-          ui.on('run:step', (event) => {
-            const idx = event && typeof event.index === 'number' ? event.index : 0;
-            const name = event && typeof event.name === 'string' ? event.name : 'Processing…';
-            stepOverlay(idx, name);
-          });
-          ui.on('run:finish', (event) => {
-            const total = event && typeof event.totalSteps === 'number' ? event.totalSteps : totalStepsCount;
-            stepOverlay(total, 'Done');
-            setTimeout(() => closeOverlay(), 400);
-          });
-          ui.on('run:error', (event) => {
-            const message = event && typeof event.message === 'string' ? event.message : 'failed';
-            errorOverlay(message);
-          });
-          return;
-        }
-
-        if (typeof ui.run === 'function' && !ui.__progressWrapped) {
-          const originalRun = ui.run.bind(ui);
-          ui.__progressWrapped = true;
-          ui.run = async function progressWrappedRun(...args) {
-            openOverlay(1, 'Running pipeline…');
-            try {
-              const result = await originalRun(...args);
-              setProgress(100);
-              setTimeout(() => closeOverlay(), 400);
-              return result;
-            } catch (err) {
-              errorOverlay((err && err.message) || 'failed');
-              throw err;
-            }
-          };
-        }
-      }
-
-      attachPipelineHandlers();
+      if (!progressApi) return;
+      window.pipelineProgress = progressApi;
     });
 
     window.addEventListener('DOMContentLoaded', () => {
