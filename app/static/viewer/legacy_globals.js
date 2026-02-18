@@ -9,6 +9,7 @@
     var savedXRange = null;
     var savedYRange = null;
     var latestSeismicData = null;
+    // Kept for compatibility with pipeline_ui fallback checks; no full-section data is stored.
     var rawSeismicData = null;
     var latestTapData = {};
     var latestPipelineKey = null;
@@ -41,11 +42,6 @@
     // UI-adjustable threshold for Wiggle/Heatmap decision (persisted)
     let WIGGLE_DENSITY_THRESHOLD = 0.10;
     const WIGGLE_MAX_POINTS = 1_000_000;
-    // Always prefer window API on first load (skip full raw drawing path)
-    const ALWAYS_WINDOW_FIRST = true;
-
-    const cache = new Map(); // key -> { f32: Float32Array }
-    const CACHE_LIMIT = 12;
 
     const __pickOps = new Map();
     let flushPickOpsDebounced = null;

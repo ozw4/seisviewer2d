@@ -45,7 +45,7 @@
     }
     function viewerState(tag = 'STATE') {
       const [x0, x1] = visibleXRng();
-      const mode = latestWindowRender?.mode || (latestSeismicData ? 'full' : 'none');
+      const mode = latestWindowRender?.mode || 'none';
       const st = {
         key1: key1Values?.[parseInt(document.getElementById('key1_slider')?.value || '0', 10)],
         layer: document.getElementById('layerSelect')?.value,
@@ -58,11 +58,6 @@
     // ローカル→サーバ疑い時に呼べる即席ダンプ
 
     var currentScaling = 'amax';
-
-    function cacheKey(val, mode) {
-      const scaleKey = mode === 'raw' ? currentScaling : mode;
-      return `${val}|${mode}|${scaleKey}`;
-    }
     var sectionShape = null;
     var renderedStart = null;
     var renderedEnd = null;
@@ -829,11 +824,39 @@
       applyDragMode();
     }
 
-    function getSeismicForProcessing() {
-      const sel = document.getElementById('layerSelect');
-      const layer = sel?.value || 'raw';
-      // ★ 加工レイヤは window API 経由のみ。配列は raw のみ保持。
-      return (layer === 'raw' && Array.isArray(rawSeismicData)) ? rawSeismicData : null;
+    function getTraceSamplesForProcessing(trace) {
+      const win = latestWindowRender;
+      if (!win || win.effectiveLayer !== 'raw') return null;
+
+      const rows = Number(win.shape?.[0] ?? 0);
+      const cols = Number(win.shape?.[1] ?? 0);
+      if (!rows || !cols) return null;
+
+      const x0 = Number(win.x0);
+      const stepX = Number(win.stepX) || 1;
+      const col = Math.round((trace - x0) / stepX);
+      if (col < 0 || col >= cols) return null;
+
+      const valuesI8 = win.valuesI8 instanceof Int8Array ? win.valuesI8 : null;
+      const valuesF32 = !valuesI8 && win.values && win.values.length != null ? win.values : null;
+      if (!valuesI8 && !valuesF32) return null;
+
+      const total = rows * cols;
+      if (valuesI8 && valuesI8.length < total) return null;
+      if (valuesF32 && valuesF32.length < total) return null;
+
+      const scale = Number(win.scale) || 1;
+      const samples = new Float32Array(rows);
+      for (let r = 0; r < rows; r++) {
+        const idx = r * cols + col;
+        samples[r] = valuesI8 ? (valuesI8[idx] / scale) : valuesF32[idx];
+      }
+
+      return {
+        samples,
+        sampleStart: Number(win.y0) || 0,
+        sampleStep: Number(win.stepY) || 1,
+      };
     }
 
     // 3-point parabolic interpolation around index i (for peak/trough). Returns a float index.
@@ -879,18 +902,22 @@
 
       const refineMode = (document.getElementById('snap_refine')?.value) || 'none';
 
-      const seismic = getSeismicForProcessing(); // raw or current TAP layer
-      if (!seismic || !seismic[trace]) return timeSec;
-
       const dt = (window.defaultDt ?? defaultDt);
-      const arr = seismic[trace]; // Float32Array (one trace)
-      if (!arr || !arr.length) return timeSec;
+      const traceView = getTraceSamplesForProcessing(trace);
+      if (!traceView) return timeSec;
 
-      const i0 = Math.round(timeSec / dt);
+      const { samples: arr, sampleStart, sampleStep } = traceView;
+      if (!arr || !arr.length) return timeSec;
+      const dtEff = dt * sampleStep;
+      if (!Number.isFinite(dtEff) || dtEff <= 0) return timeSec;
+
+      const i0Abs = Math.round(timeSec / dt);
+      const i0 = Math.round((i0Abs - sampleStart) / sampleStep);
+      if (!Number.isFinite(i0) || i0 < 0 || i0 >= arr.length) return timeSec;
 
       // ±window in samples
       const ms = parseFloat(document.getElementById('snap_ms')?.value) || 4;
-      const rad = Math.max(1, Math.round((ms / 1000) / dt));
+      const rad = Math.max(1, Math.round((ms / 1000) / dtEff));
 
       // keep one-sample margin for central differences
       const lo = Math.max(1, i0 - rad);
@@ -955,56 +982,9 @@
         if (refineMode === 'zc') idxFloat = zeroCrossRefine(arr, idx);
       }
 
-      return idxFloat * dt;
+      const idxAbs = sampleStart + idxFloat * sampleStep;
+      return idxAbs * dt;
     }
-
-    function putCacheF32(key, f32) {
-      if (cache.size >= CACHE_LIMIT) {
-        const oldestKey = cache.keys().next().value;
-        const old = cache.get(oldestKey);
-        if (old) old.f32 = null;
-        cache.delete(oldestKey);
-      }
-      cache.set(key, { f32 });
-
-      const canCheckMemory = performance.memory && performance.memory.usedJSHeapSize > 0;
-      const used = canCheckMemory ? performance.memory.usedJSHeapSize : 0;
-
-      const hardLimit = (typeof cfg === 'object' && Number.isFinite(cfg.HARD_LIMIT_BYTES))
-        ? cfg.HARD_LIMIT_BYTES
-        : 512 * 1024 * 1024;
-
-      console.log('--- putCache called ---');
-      console.log('Keys:', Array.from(cache.keys()));
-      console.log('Cache size:', cache.size);
-      if (canCheckMemory) {
-        console.log(`used: ${(used / 1024 / 1024).toFixed(1)} MB / ${(hardLimit / 1024 / 1024).toFixed(0)} MB`);
-      }
-
-      if (canCheckMemory && used > hardLimit) {
-        console.warn(`⚠ Memory limit exceeded! (${(used / 1024 / 1024).toFixed(1)} MB > ${(hardLimit / 1024 / 1024).toFixed(0)} MB)`);
-        let removed = 0;
-        while (cache.size > 1) {
-          const removedKey = cache.keys().next().value;
-          const entry = cache.get(removedKey);
-          if (entry) entry.f32 = null;
-          cache.delete(removedKey);
-          removed++;
-        }
-        console.warn(`Evicted ${removed} items due to hard heap limit.`);
-        console.log('Remaining keys:', Array.from(cache.keys()));
-      }
-      console.log('------------------------');
-    }
-
-    function getCacheF32(key) {
-      if (!cache.has(key)) return null;
-      const entry = cache.get(key);
-      cache.delete(key); cache.set(key, entry); // refresh LRU
-      return entry;
-    }
-
-
 
     function wantWiggleForWindow({ tracesVisible, samplesVisible, widthPx }) {
       const density = tracesVisible / Math.max(1, widthPx);
@@ -1277,99 +1257,6 @@
 
       await fetchPicks();
 
-      // 🪄 Window-first ならフルraw構築をスキップして即ウィンドウ描画へ
-      if (shouldPreferWindowFirst()) {
-          latestWindowRender = null;
-          windowFetchToken += 1;
-          uiResetNonce++;
-          if (window.pipelineUI && typeof window.pipelineUI.prepareForNewSection === 'function') {
-              window.pipelineUI.prepareForNewSection();
-            } else {
-              latestTapData = { };
-              latestPipelineKey = null;
-              const sel = document.getElementById('layerSelect');
-              if (sel) {
-                  sel.innerHTML = '';
-                  sel.appendChild(new Option('raw', 'raw'));
-                  sel.value = 'raw';
-                }
-            }
-          latestSeismicData = null;
-          renderLatestView();
-          fetchWindowAndPlot();
-          console.timeEnd('Total fetchAndPlot');
-          console.log('--- fetchAndPlot end ---');
-          return;
-        }
-
-      console.time('Cache lookup');
-      const hit = getCacheF32(cacheKey(key1Val, 'raw'));
-      console.timeEnd('Cache lookup');
-
-      let traces;
-      let f32 = hit ? hit.f32 : null;
-
-      if (f32) {
-        console.time('Decode from cache');
-        const [nTraces, nSamples] = sectionShape;
-        traces = new Array(nTraces);
-        for (let i = 0; i < nTraces; i++) {
-          traces[i] = f32.subarray(i * nSamples, (i + 1) * nSamples);
-        }
-        console.timeEnd('Decode from cache');
-        rawSeismicData = traces;
-      } else {
-        console.time('Fetch binary');
-        const meta = sectionShape || await fetchSectionMeta();
-        if (!meta) {
-          console.timeEnd('Fetch binary');
-          alert('Failed to load section meta');
-          return;
-        }
-        const [nTracesMeta, nSamplesMeta] = meta;
-        const qFull = new URLSearchParams({
-          file_id: currentFileId,
-          key1: String(key1Val),
-          key1_byte: String(currentKey1Byte),
-          key2_byte: String(currentKey2Byte),
-          x0: '0', x1: String(nTracesMeta - 1),
-          y0: '0', y1: String(nSamplesMeta - 1),
-          step_x: '1', step_y: '1',
-          transpose: '0',
-        });
-        qFull.set('scaling', currentScaling);
-        const res = await fetch(`/get_section_window_bin?${qFull.toString()}`);
-        if (!res.ok) {
-          console.timeEnd('Fetch binary');
-          alert('Failed to load section');
-          return;
-        }
-        const bin = new Uint8Array(await res.arrayBuffer());
-        console.timeEnd('Fetch binary');
-
-        console.time('Decode & cache');
-        const obj = msgpack.decode(bin);
-        applyServerDt(obj);
-        const int8 = new Int8Array(obj.data.buffer);
-        f32 = Float32Array.from(int8, (v) => v / obj.scale);
-        putCacheF32(cacheKey(key1Val, 'raw'), f32);
-        // Keep sectionShape from /get_section_meta only. Sanity-check payload shape if needed:
-        if (Array.isArray(sectionShape) && Array.isArray(obj.shape)) {
-          const [mt, ms] = sectionShape;
-          const [pt0, pt1] = obj.shape;
-          if ((pt0 * pt1) !== (mt * ms)) {
-            console.warn('shape mismatch vs meta', { meta: sectionShape, payload: obj.shape });
-          }
-        }
-        const [nTraces, nSamples] = meta;
-        traces = new Array(nTraces);
-        for (let i = 0; i < nTraces; i++) {
-          traces[i] = f32.subarray(i * nSamples, (i + 1) * nSamples);
-        }
-        console.timeEnd('Decode & cache');
-        rawSeismicData = traces;
-      }
-
       latestWindowRender = null;
       windowFetchToken += 1;
       uiResetNonce++;
@@ -1386,54 +1273,18 @@
         }
       }
 
-      const totalTraces = rawSeismicData ? rawSeismicData.length : (sectionShape ? sectionShape[0] : 0);
-      const [s, e] = totalTraces > 0
-        ? (savedXRange ? visibleTraceIndices(savedXRange, totalTraces) : [0, totalTraces - 1])
-        : [0, 0];
-      drawSelectedLayer(s, e);
+      latestSeismicData = null;
+      renderLatestView();
+      fetchWindowAndPlot();
 
       console.timeEnd('Total fetchAndPlot');
       console.log('--- fetchAndPlot end ---');
     }
 
-    function shouldPreferWindowFirst() {
-      if (ALWAYS_WINDOW_FIRST) return true;
-      const win = currentVisibleWindow();
-      const plotDiv = document.getElementById('plot');
-      if (!win || !plotDiv) return false;
-      const { step_x, step_y } = computeStepsForWindow({
-        tracesVisible: win.nTraces,
-        samplesVisible: win.nSamples,
-        widthPx: plotDiv.clientWidth || 1,
-        heightPx: plotDiv.clientHeight || 1,
-      });
-      return (step_x > 1 || step_y > 1);
-    }
-
     function drawSelectedLayer(start = null, end = null) {
       D('DRAW@selectLayer', { layer: document.getElementById('layerSelect')?.value, start, end });
-      const sel = document.getElementById('layerSelect');
-      const layer = sel ? sel.value : 'raw';
-      // ★ 加工レイヤのフル配列は保持しない（window API に任せる）
-      latestSeismicData = (layer === 'raw') ? rawSeismicData : null;
-
-      if (shouldPreferWindowFirst()) {
-        // 最初からウィンドウ版に任せる（フル描画をスキップ）
-        latestSeismicData = null;
-        renderLatestView();      // 既存：必要なら状態維持（スピナー等を出すならここ）
-        fetchWindowAndPlot();    // 即時フェッチ
-        return;
-      }
-
-      // 低負荷なら従来どおりフル描画
-      const total = latestSeismicData ? latestSeismicData.length : (sectionShape ? sectionShape[0] : 0);
-      const s = (typeof start === 'number') ? start : 0;
-      const e = (typeof end === 'number') ? end : Math.max(0, total - 1);
-      if (latestSeismicData) {
-        plotSeismicData(latestSeismicData, defaultDt, s, e);
-      } else {
-        renderLatestView();
-      }
+      latestSeismicData = null;
+      renderLatestView();
       scheduleWindowFetch();
     }
 
@@ -1446,16 +1297,7 @@
       const key1Val = key1Values[idx];
 
       if (latestSeismicData) {
-        const startTrace = typeof startOverride === 'number'
-          ? startOverride
-          : (typeof renderedStart === 'number' ? renderedStart : 0);
-        const endTrace = typeof endOverride === 'number'
-          ? endOverride
-          : (typeof renderedEnd === 'number'
-            ? renderedEnd
-            : latestSeismicData.length - 1);
-        plotSeismicData(latestSeismicData, defaultDt, startTrace, endTrace);
-        return;
+        latestSeismicData = null;
       }
 
       if (
@@ -1476,182 +1318,8 @@
         }
       }
     }
-
-
-    function visibleTraceIndices(range, total) {
-      let start = Math.floor(range[0]);
-      let end = Math.ceil(range[1]);
-      start = Math.max(0, start);
-      end = Math.min(total - 1, end);
-      return [start, end];
-    }
-
     function clickModeForCurrentState() {
       return isPickMode ? 'event' : 'event+select';
-    }
-
-
-    function plotSeismicData(seismic, dt, startTrace = 0, endTrace = seismic.length - 1) {
-      snapshotAxesRangesFromDOM();
-      const totalTraces = seismic.length;
-      startTrace = Math.max(0, startTrace);
-      endTrace = Math.min(totalTraces - 1, endTrace);
-      const nTraces = endTrace - startTrace + 1;
-      const nSamples = seismic[0].length;
-      const plotDiv = document.getElementById('plot');
-
-      const widthPx = plotDiv.clientWidth || 1;
-      const xRange = savedXRange ?? [0, totalTraces - 1];
-      const visibleTraces = endTrace - startTrace + 1;
-      const density = visibleTraces / widthPx;
-      const mode = document.getElementById('layerSelect').value;
-      const fbMode = mode === 'fbprob'; // 使っていないが残置可
-
-      let traces = [];
-      const gain = parseFloat(document.getElementById('gain').value) || 1.0;
-      const AMP_LIMIT = 3.0;
-      let defaultXRange;
-      let defaultYRange;
-
-      if (!fbMode && density < WIGGLE_DENSITY_THRESHOLD) {
-        downsampleFactor = 1;
-        setGrid({ x0: startTrace, stepX: 1, y0: 0, stepY: 1 });
-        const time = new Float32Array(nSamples);
-        for (let t = 0; t < nSamples; t++) time[t] = t * dt;
-        for (let i = startTrace; i <= endTrace; i++) {
-          const raw = seismic[i];
-          const baseX = new Float32Array(nSamples);
-          const shiftedFullX = new Float32Array(nSamples);
-          const shiftedPosX = new Float32Array(nSamples);
-          for (let j = 0; j < nSamples; j++) {
-            let val = raw[j] * gain ;
-            if (val > AMP_LIMIT) val = AMP_LIMIT;
-            if (val < -AMP_LIMIT) val = -AMP_LIMIT;
-            baseX[j] = i;
-            shiftedFullX[j] = val + i;
-            shiftedPosX[j] = (val < 0 ? 0 : val) + i;
-          }
-
-          traces.push({ type: 'scatter', mode: 'lines', x: baseX, y: time, line: { width: 0 }, hoverinfo: 'x+y', showlegend: false });
-          traces.push({ type: 'scatter', mode: 'lines', x: shiftedPosX, y: time, fill: 'tonextx', fillcolor: 'black', line: { width: 0 }, opacity: 0.6, hoverinfo: 'skip', showlegend: false });
-          traces.push({ type: 'scatter', mode: 'lines', x: shiftedFullX, y: time, line: { color: 'black', width: 0.5 }, hoverinfo: 'skip', showlegend: false });
-        }
-        defaultXRange = [startTrace, endTrace];
-        defaultYRange = [nSamples * dt, 0];
-      } else {
-        const MAX_POINTS = 3_000_000;
-        let factor = 1;
-        while (Math.floor(nTraces / factor) * Math.floor(nSamples / factor) > MAX_POINTS) factor++;
-        const nTracesDS = Math.floor(nTraces / factor);
-        const nSamplesDS = Math.floor(nSamples / factor);
-        console.log('Downsampling factor:', factor);
-        console.log('Final dimensions:', nTracesDS, 'x', nSamplesDS);
-
-        setGrid({ x0: startTrace, stepX: factor, y0: 0, stepY: factor });
-        const time = new Float32Array(nSamplesDS);
-        for (let t = 0; t < nSamplesDS; t++) time[t] = t * dt * factor;
-
-        const zData = Array.from({ length: nSamplesDS }, () => new Float32Array(nTracesDS));
-
-        for (let i = startTrace, col = 0; col < nTracesDS; i += factor, col++) {
-          const trace = seismic[i];
-          for (let j = 0, row = 0; row < nSamplesDS; j += factor, row++) {
-            if (fbMode) {
-              const val = trace[j] * 255;
-              zData[row][col] = val;
-            } else {
-              zData[row][col] = trace[j];
-            }
-          }
-        }
-
-        const g = Math.max(gain, 1e-9);
-        const zMin = fbMode ? 0 : -AMP_LIMIT / g;
-        const zMax = fbMode ? 255 : AMP_LIMIT / g;
-
-        const xVals = new Float32Array(nTracesDS);
-        for (let i = 0; i < nTracesDS; i++) xVals[i] = startTrace + i * factor;
-        downsampleFactor = factor;
-
-        const cmName = document.getElementById('colormap')?.value || 'Greys';
-        const reverse = document.getElementById('cmReverse')?.checked || false;
-        const cm = COLORMAPS[cmName] || 'Greys';
-        const isDiv = cmName === 'RdBu' || cmName === 'BWR';
-
-        traces = [{
-          type: 'heatmap',
-          x: xVals,
-          y: time,
-          z: zData,
-          colorscale: cm,
-          reversescale: reverse,
-          zmin: zMin,
-          zmax: zMax,
-          ...(fbMode ? {} : (isDiv ? { zmid: 0 } : {})),
-          showscale: false,
-          hoverinfo: 'x+y',
-          hovertemplate: '',
-        }];
-        const halfX = factor * 0.5;
-        const halfY = dt * factor * 0.5;
-        defaultXRange = [startTrace - halfX, (startTrace + (nTracesDS - 1) * factor) + halfX];
-        defaultYRange = [ (nSamplesDS * dt * factor) - halfY, 0 - halfY ];
-      }
-
-      const layout = {
-        xaxis: {
-          title: 'Trace', showgrid: false, tickfont: { color: '#000' }, titlefont: { color: '#000' },
-          autorange: false, range: savedXRange ?? defaultXRange
-        },
-        yaxis: {
-          title: 'Time (s)', showgrid: false, tickfont: { color: '#000' }, titlefont: { color: '#000' },
-          autorange: false, range: savedYRange ?? defaultYRange
-        },
-        clickmode: clickModeForCurrentState(),
-        uirevision: currentUiRevision(),
-        paper_bgcolor: '#fff', plot_bgcolor: '#fff',
-        margin: { t: 10, r: 10, l: 60, b: 40 },
-        dragmode: effectiveDragMode(),
-        ...(fbMode ? { title: 'First-break Probability' } : {}),
-      };
-
-      const manualShapes = picks.map(p => ({
-        type: 'line',
-        x0: p.trace - 0.4, x1: p.trace + 0.4,
-        y0: p.time, y1: p.time,
-        line: { color: 'red', width: 2 }
-      }));
-
-      const showPred = document.getElementById('showFbPred')?.checked;
-      const predShapes = (showPred ? predictedPicks : [])
-        .filter(p => p.trace >= startTrace && p.trace <= endTrace)
-        .map(p => ({
-          type: 'line',
-          x0: p.trace - 0.4, x1: p.trace + 0.4,
-          y0: p.time, y1: p.time,
-          line: { color: '#1f77b4', width: 5, dash: 'dot' }
-        }));
-
-      layout.shapes = [...manualShapes, ...predShapes];
-
-      withSuppressedRelayout(Plotly.react(plotDiv, traces, layout, {
-        responsive: true,
-        editable: true,
-        modeBarButtonsToAdd: ['eraseshape'],
-        edits: { shapePosition: false },
-        doubleClick: false,
-        doubleClickDelay: 300
-      }));
-      setTimeout(() => {
-          withSuppressedRelayout(Plotly.Plots.resize(plotDiv));
-        }, 50);
-      requestAnimationFrame(applyDragMode);
-      renderedStart = startTrace;
-      renderedEnd = endTrace;
-      console.log(`Rendered traces ${startTrace}-${endTrace}`);
-      installPlotlyViewportHandlersOnce();
-      attachPickListeners(plotDiv);
-      installCustomDoubleClick(plotDiv);
     }
 
     function pickOnTrace(trace) {
@@ -2014,7 +1682,6 @@
           renderedEnd = null;
           latestWindowRender = null;
           windowFetchToken += 1;
-          rawSeismicData = null;
           latestSeismicData = null;
           latestTapData = {};
           fbPredReqId += 1;
@@ -2031,8 +1698,6 @@
             try { windowFetchCtrl.abort(); } catch (_) { }
             windowFetchCtrl = null;
           }
-
-          cache.clear();
 
 
           await fetchCurrentFileName();
