@@ -824,7 +824,7 @@
       applyDragMode();
     }
 
-    function getTraceSamplesForProcessing(trace) {
+    function getTraceSamplesForProcessingRange(trace, rowLoIncl, rowHiIncl) {
       const win = latestWindowRender;
       if (!win || win.effectiveLayer !== 'raw') return null;
 
@@ -837,6 +837,13 @@
       const col = Math.round((trace - x0) / stepX);
       if (col < 0 || col >= cols) return null;
 
+      const loReq = Math.round(Number(rowLoIncl));
+      const hiReq = Math.round(Number(rowHiIncl));
+      if (!Number.isFinite(loReq) || !Number.isFinite(hiReq)) return null;
+      const lo = Math.max(0, Math.min(rows - 1, loReq));
+      const hi = Math.max(0, Math.min(rows - 1, hiReq));
+      if (hi < lo) return null;
+
       const valuesI8 = win.valuesI8 instanceof Int8Array ? win.valuesI8 : null;
       const valuesF32 = !valuesI8 && win.values && win.values.length != null ? win.values : null;
       if (!valuesI8 && !valuesF32) return null;
@@ -846,16 +853,19 @@
       if (valuesF32 && valuesF32.length < total) return null;
 
       const scale = Number(win.scale) || 1;
-      const samples = new Float32Array(rows);
-      for (let r = 0; r < rows; r++) {
+      const len = hi - lo + 1;
+      const samples = new Float32Array(len);
+      for (let r = lo; r <= hi; r++) {
         const idx = r * cols + col;
-        samples[r] = valuesI8 ? (valuesI8[idx] / scale) : valuesF32[idx];
+        samples[r - lo] = valuesI8 ? (valuesI8[idx] / scale) : valuesF32[idx];
       }
+
+      const sampleStep = Number(win.stepY) || 1;
 
       return {
         samples,
-        sampleStart: Number(win.y0) || 0,
-        sampleStep: Number(win.stepY) || 1,
+        sampleStart: (Number(win.y0) || 0) + lo * sampleStep,
+        sampleStep,
       };
     }
 
@@ -895,7 +905,7 @@
     }
 
     // Adjust a pick's time (seconds) on a given trace to the nearest feature in ±window.
-    // Uses the *original* data of the currently selected layer (raw or pipeline layer).
+    // Snap is supported only when raw layer data is available in latestWindowRender.
     function adjustPickToFeature(trace, timeSec) {
       const mode = (document.getElementById('snap_mode')?.value) || 'none';
       if (mode === 'none') return timeSec;
@@ -903,25 +913,42 @@
       const refineMode = (document.getElementById('snap_refine')?.value) || 'none';
 
       const dt = (window.defaultDt ?? defaultDt);
-      const traceView = getTraceSamplesForProcessing(trace);
-      if (!traceView) return timeSec;
-
-      const { samples: arr, sampleStart, sampleStep } = traceView;
-      if (!arr || !arr.length) return timeSec;
+      if (!Number.isFinite(dt) || dt <= 0) return timeSec;
+      const win = latestWindowRender;
+      if (!win || win.effectiveLayer !== 'raw') return timeSec;
+      const rows = Number(win.shape?.[0] ?? 0);
+      const cols = Number(win.shape?.[1] ?? 0);
+      if (!rows || !cols) return timeSec;
+      const sampleStartWin = Number(win.y0) || 0;
+      const sampleStep = Number(win.stepY) || 1;
       const dtEff = dt * sampleStep;
       if (!Number.isFinite(dtEff) || dtEff <= 0) return timeSec;
 
       const i0Abs = Math.round(timeSec / dt);
-      const i0 = Math.round((i0Abs - sampleStart) / sampleStep);
-      if (!Number.isFinite(i0) || i0 < 0 || i0 >= arr.length) return timeSec;
+      if (!Number.isFinite(i0Abs)) return timeSec;
+      const i0Win = Math.round((i0Abs - sampleStartWin) / sampleStep);
+      if (!Number.isFinite(i0Win) || i0Win < 0 || i0Win >= rows) return timeSec;
 
       // ±window in samples
       const ms = parseFloat(document.getElementById('snap_ms')?.value) || 4;
       const rad = Math.max(1, Math.round((ms / 1000) / dtEff));
 
+      const loWin = Math.max(0, i0Win - rad);
+      const hiWin = Math.min(rows - 1, i0Win + rad);
+      const sliceLo = Math.max(0, loWin - 1);
+      const sliceHi = Math.min(rows - 1, hiWin + 1);
+      const traceView = getTraceSamplesForProcessingRange(trace, sliceLo, sliceHi);
+      if (!traceView || !traceView.samples) return timeSec;
+      const arr = traceView.samples;
+      if (arr.length < 3) return timeSec;
+
+      const i0 = i0Win - sliceLo;
+      if (!Number.isFinite(i0) || i0 < 0 || i0 >= arr.length) return timeSec;
+
       // keep one-sample margin for central differences
-      const lo = Math.max(1, i0 - rad);
-      const hi = Math.min(arr.length - 2, i0 + rad);
+      const lo = Math.max(1, loWin - sliceLo);
+      const hi = Math.min(arr.length - 2, hiWin - sliceLo);
+      if (lo > hi) return timeSec;
 
       let idx = i0;
 
@@ -982,7 +1009,7 @@
         if (refineMode === 'zc') idxFloat = zeroCrossRefine(arr, idx);
       }
 
-      const idxAbs = sampleStart + idxFloat * sampleStep;
+      const idxAbs = traceView.sampleStart + idxFloat * traceView.sampleStep;
       return idxAbs * dt;
     }
 
