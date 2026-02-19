@@ -111,6 +111,9 @@
       plotDiv.on('plotly_relayout', (ev) => {
         if (suppressRelayout) return;
         isRelayouting = false;
+        if (typeof pickOverlayDirty !== 'undefined' && pickOverlayDirty && typeof schedulePickOverlayUpdate === 'function') {
+          schedulePickOverlayUpdate();
+        }
         const result = handleRelayout(ev);
         if (result && typeof result.catch === 'function') {
           result.catch((err) => console.warn('handleRelayout failed', err));

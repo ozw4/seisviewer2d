@@ -242,6 +242,8 @@
     let suppressRelayout = false;       // ignore relayouts we cause internally
     let isRelayouting = false;          // true while user is actively adjusting viewport
     let forceFullExtentOnce = false;    // next window calc uses full extent with no padding
+    let pickOverlayRaf = 0;
+    let pickOverlayDirty = false;
 
     // 追加：現在のFB計算に紐づくレイヤ/パイプラインキー
     let currentFbLayer = 'raw';
@@ -319,6 +321,81 @@
         suppressRelayout = false;
         throw err;
       }
+    }
+
+    function schedulePickOverlayUpdate() {
+      pickOverlayDirty = true;
+      if (pickOverlayRaf !== 0) return;
+      pickOverlayRaf = requestAnimationFrame(() => {
+        pickOverlayRaf = 0;
+        flushPickOverlayUpdate();
+        if (pickOverlayDirty && !isRelayouting) {
+          schedulePickOverlayUpdate();
+        }
+      });
+    }
+
+    function flushPickOverlayUpdate() {
+      if (!pickOverlayDirty) return;
+      if (isRelayouting) return;
+
+      const plotDiv = document.getElementById('plot');
+      if (!plotDiv) {
+        pickOverlayDirty = false;
+        return;
+      }
+
+      let xMin = null;
+      let xMax = null;
+
+      const xaRange = plotDiv?._fullLayout?.xaxis?.range;
+      if (
+        Array.isArray(xaRange) &&
+        xaRange.length === 2 &&
+        Number.isFinite(xaRange[0]) &&
+        Number.isFinite(xaRange[1])
+      ) {
+        xMin = Math.floor(Math.min(xaRange[0], xaRange[1]));
+        xMax = Math.ceil(Math.max(xaRange[0], xaRange[1]));
+      }
+
+      if (Number.isFinite(renderedStart) && Number.isFinite(renderedEnd)) {
+        const rs = Math.floor(Math.min(renderedStart, renderedEnd));
+        const re = Math.ceil(Math.max(renderedStart, renderedEnd));
+        if (Number.isFinite(xMin) && Number.isFinite(xMax)) {
+          xMin = Math.max(xMin, rs);
+          xMax = Math.min(xMax, re);
+        } else {
+          xMin = rs;
+          xMax = re;
+        }
+      }
+
+      if (!(Number.isFinite(xMin) && Number.isFinite(xMax) && xMin <= xMax)) {
+        const wx0 = Number(latestWindowRender?.x0);
+        const wx1 = Number(latestWindowRender?.x1);
+        if (Number.isFinite(wx0) && Number.isFinite(wx1)) {
+          xMin = Math.floor(Math.min(wx0, wx1));
+          xMax = Math.ceil(Math.max(wx0, wx1));
+        }
+      }
+
+      if (!(Number.isFinite(xMin) && Number.isFinite(xMax) && xMin <= xMax)) {
+        pickOverlayDirty = false;
+        return;
+      }
+
+      const showPred = !!document.getElementById('showFbPred')?.checked;
+      const newShapes = buildPickShapes({
+        manualPicks: picks,
+        predicted: showPred ? predictedPicks : [],
+        xMin,
+        xMax,
+        showPredicted: showPred,
+      });
+
+      pickOverlayDirty = false;
+      safeRelayout(plotDiv, { shapes: newShapes });
     }
 
     // 統一キー関数（FB予測キャッシュ用）
@@ -820,8 +897,22 @@
       btn.classList.toggle('active', isPickMode);
       linePickStart = null;
       deleteRangeStart = null;
-      renderLatestView();
-      applyDragMode();
+      const plotDiv = document.getElementById('plot');
+      if (plotDiv) {
+        const relayoutResult = safeRelayout(plotDiv, {
+          clickmode: clickModeForCurrentState(),
+        });
+        if (relayoutResult && typeof relayoutResult.finally === 'function') {
+          relayoutResult.finally(() => {
+            applyDragMode();
+          });
+        } else {
+          applyDragMode();
+        }
+      } else {
+        applyDragMode();
+      }
+      schedulePickOverlayUpdate();
     }
 
     function getTraceSamplesForProcessingRange(trace, rowLoIncl, rowHiIncl) {
@@ -1392,9 +1483,7 @@
           picks = picks.filter(p => Math.round(p.trace) < start || Math.round(p.trace) > end);
           await Promise.all(promises);
           D('PICKS@handlePickNormalized:line', { range: [start, end], count: picks.length });
-          setTimeout(() => {
-            try { renderLatestView(); } catch (e) { console.warn('renderLatestView failed', e); }
-          }, 0);
+          schedulePickOverlayUpdate();
           return;
         }
 
@@ -1429,7 +1518,7 @@
           }
           await Promise.all(promises);
           D('PICKS@handlePickNormalized:line', { range: [xStart, xEnd], count: picks.length });
-          renderLatestView();
+          schedulePickOverlayUpdate();
           return;
         }
 
@@ -1447,7 +1536,7 @@
         promises.push(postPick(trInt, tAdj));
         await Promise.all(promises);
         D('PICKS@handlePickNormalized:single', { add: { trace: trInt, time: tAdj }, count: picks.length });
-        renderLatestView();
+        schedulePickOverlayUpdate();
       } finally {
         handlePickNormalized._busy = false;
         const next = handlePickNormalized._queued;
