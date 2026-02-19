@@ -255,6 +255,7 @@
       installPlotlyViewportHandlersOnce();
       attachPickListeners(plotDiv);
       installCustomDoubleClick(plotDiv);
+      plotDiv.__svPlotMode = 'wiggle';
     }
 
     function renderWindowHeatmap(windowData) {
@@ -284,6 +285,22 @@
 
       const plotDiv = document.getElementById('plot');
       if (!plotDiv) return;
+
+      const resolveHeatmapTraceIndex = (gd) => {
+        if (typeof window.heatmapTraceIndex === 'function') {
+          const idxFromHelper = window.heatmapTraceIndex(gd);
+          if (Number.isInteger(idxFromHelper) && idxFromHelper >= 0) return idxFromHelper;
+        }
+        const data = Array.isArray(gd?.data) ? gd.data : [];
+        for (let i = 0; i < data.length; i++) {
+          const tr = data[i];
+          if (tr && tr.type === 'heatmap') return i;
+        }
+        return -1;
+      };
+      const heatIdx = resolveHeatmapTraceIndex(plotDiv);
+      const prevMode = plotDiv.__svPlotMode;
+      const needsReactInit = heatIdx < 0 || prevMode !== 'heatmap';
 
       const { shape, x0, x1, y0, y1, effectiveLayer } = windowData;
       let { stepX, stepY } = windowData;
@@ -390,42 +407,11 @@
       const g = Math.max(gain, 1e-9);
       const zMin = fbMode ? 0 : -AMP_LIMIT / g;
       const zMax = fbMode ? 255 : AMP_LIMIT / g;
-      const traces = [{
-        type: 'heatmap',
-        x: xVals,
-        y: yVals,
-        z: zData,
-        colorscale: cm,
-        reversescale: reverse,
-        zmin: zMin,
-        zmax: zMax,
-        ...(fbMode ? {} : (isDiv ? { zmid: 0 } : {})),
-        showscale: false,
-        hoverinfo: 'x+y',
-        hovertemplate: '',
-      }];
-
-      const dt = window.defaultDt ?? defaultDt;
-      const layout = buildLayout({
-        mode: 'heatmap',
-        x0,
-        x1,
-        y0,
-        y1,
-        stepX,
-        stepY,
-        totalSamples: sectionShape ? sectionShape[1] : (y1 - y0 + 1),
-        dt,
-        savedXRange,
-        savedYRange,
-        clickmode: clickModeForCurrentState(),
-        dragmode: effectiveDragMode(),
-        uirevision: currentUiRevision(),
-        fbTitle: fbMode ? 'First-break Probability' : null,
-      });
+      const zMid = (!fbMode && isDiv) ? 0 : null;
+      const fbTitle = fbMode ? 'First-break Probability' : null;
 
       const showPred = !!document.getElementById('showFbPred')?.checked;
-      layout.shapes = buildPickShapes({
+      const pickShapes = buildPickShapes({
         manualPicks: picks,
         predicted: showPred ? predictedPicks : [],
         xMin: x0,
@@ -433,19 +419,74 @@
         showPredicted: showPred,
       });
 
-      withSuppressedRelayout(Plotly.react(plotDiv, traces, layout, {
-        responsive: true,
-        editable: true,
-        modeBarButtonsToAdd: ['eraseshape'],
-        edits: { shapePosition: false },
-        doubleClick: false,
-        doubleClickDelay: 300,
-      }));
-      setTimeout(() => { withSuppressedRelayout(Plotly.Plots.resize(plotDiv)); }, 50);
+      if (needsReactInit) {
+        const traces = [{
+          type: 'heatmap',
+          x: xVals,
+          y: yVals,
+          z: zData,
+          colorscale: cm,
+          reversescale: reverse,
+          zmin: zMin,
+          zmax: zMax,
+          zmid: zMid,
+          showscale: false,
+          hoverinfo: 'x+y',
+          hovertemplate: '',
+        }];
+
+        const dt = window.defaultDt ?? defaultDt;
+        const layout = buildLayout({
+          mode: 'heatmap',
+          x0,
+          x1,
+          y0,
+          y1,
+          stepX,
+          stepY,
+          totalSamples: sectionShape ? sectionShape[1] : (y1 - y0 + 1),
+          dt,
+          savedXRange,
+          savedYRange,
+          clickmode: clickModeForCurrentState(),
+          dragmode: effectiveDragMode(),
+          uirevision: currentUiRevision(),
+          fbTitle,
+        });
+        layout.shapes = pickShapes;
+
+        withSuppressedRelayout(Plotly.react(plotDiv, traces, layout, {
+          responsive: true,
+          editable: true,
+          modeBarButtonsToAdd: ['eraseshape'],
+          edits: { shapePosition: false },
+          doubleClick: false,
+          doubleClickDelay: 300,
+        }));
+        setTimeout(() => { withSuppressedRelayout(Plotly.Plots.resize(plotDiv)); }, 50);
+      } else {
+        const diffUpdatePromise = Promise.resolve()
+          .then(() => Plotly.restyle(plotDiv, {
+            x: [xVals],
+            y: [yVals],
+            z: [zData],
+            colorscale: [cm],
+            reversescale: [reverse],
+            zmin: [zMin],
+            zmax: [zMax],
+            zmid: [zMid],
+          }, [heatIdx]))
+          .then(() => Plotly.relayout(plotDiv, {
+            shapes: pickShapes,
+            title: fbTitle ?? '',
+          }));
+        withSuppressedRelayout(diffUpdatePromise);
+      }
       requestAnimationFrame(applyDragMode);
       installPlotlyViewportHandlersOnce();
       attachPickListeners(plotDiv);
       installCustomDoubleClick(plotDiv);
+      plotDiv.__svPlotMode = 'heatmap';
       const [x0v, x1v] = visibleXRng();
        D('RENDER@wiggle:shapes', {
         manualInWin: picks.filter(p => p.trace >= windowData.x0 && p.trace <= windowData.x1).length,
