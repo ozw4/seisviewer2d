@@ -1,45 +1,53 @@
 # seisviewer2d
 
-`seisviewer2d` is a small **FastAPI** app for exploring 2D (or pseudo-2D) seismic data stored in **SEG-Y**.
+`seisviewer2d` is a small **FastAPI** app for exploring 2D (or pseudo‑2D) seismic data stored in **SEG‑Y**.
 
 It ships with a browser-based viewer (`/upload` → `/`) that can:
 
-- ingest a SEG-Y into a cached **TraceStore** (NumPy-backed, section-friendly layout)
+- ingest a SEG‑Y into a cached **TraceStore** (NumPy‑backed, section‑friendly layout)
 - fetch section windows efficiently using **gzip + msgpack + uint8 quantization**
 - run a small processing **pipeline** (currently: `bandpass`, `denoise`, `fbpick`)
 - create/edit **manual picks** and export them as `.npy`
 
-> Tip: once the server is running, open the interactive API docs at `/docs`.
+Once the server is running, open the interactive API docs at `/docs`.
 
 ## Quick start
 
 ### Local (Python)
 
-1. Install dependencies:
+1) Install Python dependencies:
 
 ```bash
 python -m pip install -r .devcontainer/requirements-dev.txt
 ```
 
-2. Start the server:
+2) Build the frontend bundle (required if `app/static/assets/main.js` is missing):
+
+```bash
+cd app
+npm install
+npm run build
+```
+
+3) Start the server:
 
 ```bash
 uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
 ```
 
-3. Open the UI:
+4) Open the UI:
 
 - Upload/open page: `http://localhost:8000/upload`
 - Viewer: `http://localhost:8000/`
 
-### Dev container (recommended for GPU + UI tests)
+### Dev container (recommended for GPU and browser testing)
 
 This repo includes a dev container based on an NVIDIA PyTorch image (see `Dockerfile`).
-It installs Python deps, Node 20, and Playwright for the UI tests.
+It installs Python deps, Node 20, and Playwright.
 
 ## What happens on upload
 
-`POST /upload_segy` converts the uploaded SEG-Y into a cached “trace store” under:
+`POST /upload_segy` converts the uploaded SEG‑Y into a cached “trace store” under:
 
 ```
 <app_data_dir>/uploads/processed/traces/<safe_filename>/
@@ -49,50 +57,53 @@ It installs Python deps, Node 20, and Playwright for the UI tests.
   baseline_raw.json
 ```
 
-Trace grouping and ordering are controlled by two SEG-Y trace-header words:
+Notes:
 
-- `key1_byte` (default `189`) groups traces into a “section” (one section per key1 value)
-- `key2_byte` (default `193`) orders traces within a section (stable sort)
+- `baseline_raw.json` is created lazily (first requested via `/get_section_meta` or `/section/stats`).
+- Trace grouping and ordering are controlled by two SEG‑Y trace-header byte offsets:
+  - `key1_byte` (default `189`) groups traces into a “section” (one section per key1 value)
+  - `key2_byte` (default `193`) orders traces within a section (stable sort)
 
-The UI lets you choose both bytes.
+The upload UI lets you choose both bytes.
 
 ### Reusing an existing TraceStore
 
-- `POST /upload_segy` will reuse an existing trace store when it matches **(key1_byte, key2_byte)** and the source file hash.
-- `POST /open_segy` opens an existing trace store by filename (used by the upload page to “re-open last data”).
+- `POST /upload_segy` will reuse an existing trace store when it matches `(key1_byte, key2_byte)` and the source file hash.
+- `POST /open_segy` opens an existing trace store by `original_name` (used by the upload page to re-open previous data).
 
-## Model weights (optional)
+If an on-disk trace store exists but does not match the requested bytes or the file hash, it is moved aside with an `.old-<uuid>` suffix.
+
+## Model weights
 
 Two pipeline operations use PyTorch weights that are **not included** in this repository:
 
-- `denoise` transform: expects `model/recon_replace_eq_edgenext_small.pth`
+- `denoise` transform: expects `model/recon_replace_edgenext_small.pth`
 - `fbpick` analyzer: expects `model/fbpick_edgenext_small.pth`
 
 Create a `model/` directory at the repo root and place the weights there:
 
 ```
 model/
-  recon_replace_eq_edgenext_small.pth
+  recon_replace_edgenext_small.pth
   fbpick_edgenext_small.pth
 ```
 
-If the weights are missing, the FB-pick endpoints will return HTTP 409.
+Behavior when weights are missing:
+
+- `fbpick` endpoints return HTTP 409 (`FB pick model weights not found`).
+- Any pipeline that includes `denoise` or `fbpick` will fail when it reaches that step.
+
+Offset-aware `fbpick` variant (optional): the code supports injecting an “offset channel” when the fbpick weights filename contains `offset` (see `app/services/fbpick_support.py`).
 
 ## Frontend
 
 The UI is served from `app/static/`.
 
-- `/upload` lets you upload a SEG-Y or re-open the previously processed dataset.
+- `/upload` lets you upload a SEG‑Y or re-open a previously processed dataset.
 - `/` is the viewer with a side panel for pipeline steps.
 
-Keyboard shortcuts:
-
-- `N`: toggle between the `raw` layer and the first computed layer in the layer dropdown
-- Hold `Alt`: temporary pan mode
-
-### Rebuilding frontend assets (optional)
-
-Static assets are committed, but if you modify the web sources you can rebuild:
+The main viewer page (`app/static/index.html`) expects a small Vite-built bundle at `/static/assets/main.js`.
+If you change frontend sources under `app/web/`, rebuild with:
 
 ```bash
 cd app
@@ -100,43 +111,58 @@ npm install
 npm run build
 ```
 
-The build output is written into `app/static/assets/` (see `app/vite.config.ts`).
+Keyboard shortcuts:
+
+- `N`: toggle between the `raw` layer and the first computed layer in the layer dropdown
+- Hold `Alt`: temporary pan mode
 
 ## API overview
 
-Most UI reads use the binary window endpoint (fast path).
+Most UI reads use the binary window endpoint (`/get_section_window_bin`) as the fast path.
 
 ### Upload / open
 
-- `POST /upload_segy` (form-data): upload SEG-Y, build/reuse trace store → `{file_id, reused_trace_store}`
-- `POST /open_segy` (form-data): open an existing trace store by `original_name` → `{file_id, reused_trace_store}`
-- `GET /file_info?file_id=...`: return the stored dataset basename
+- `POST /upload_segy` (multipart/form-data): upload SEG‑Y, build/reuse trace store
+  - form fields: `segy` (file), `key1_byte` (int), `key2_byte` (int)
+  - returns: `{ "file_id": "...", "reused_trace_store": true|false }`
+- `POST /open_segy` (multipart/form-data): open an existing trace store by `original_name`
+  - form fields: `original_name` (string), `key1_byte` (int), `key2_byte` (int)
+  - returns: `{ "file_id": "...", "reused_trace_store": true|false }`
+- `GET /file_info?file_id=<FILE_ID>`: return the stored dataset basename
 
 ### Sections
 
-- `GET /get_key1_values?file_id=...&key1_byte=...&key2_byte=...`
-- `GET /get_section?file_id=...&key1=...` (JSON, mostly for debugging)
-- `GET /get_section_meta?file_id=...`: shape/dt/dtype/scale
-- `GET /section/stats?file_id=...&baseline=raw`: per-file stats used for normalization
+- `GET /get_key1_values?file_id=<FILE_ID>&key1_byte=<BYTE>&key2_byte=<BYTE>`
+- `GET /get_section?file_id=<FILE_ID>&key1=<KEY1>` (JSON; mainly for debugging)
+- `GET /get_section_meta?file_id=<FILE_ID>&key1_byte=<BYTE>&key2_byte=<BYTE>`: shape/dt/dtype/scale
+- `GET /section/stats?file_id=<FILE_ID>&baseline=raw&key1_byte=<BYTE>&key2_byte=<BYTE>`: per-file stats used for normalization
 
 #### Fast window fetch
 
-`GET /get_section_window_bin?file_id=...&key1=...&x0=...&x1=...&y0=...&y1=...`
+`GET /get_section_window_bin` returns `application/octet-stream` with `Content-Encoding: gzip`.
+The body is msgpack of a quantized uint8 array.
 
-- returns `application/octet-stream`
-- response body is **gzip-compressed msgpack**
-- payload contains:
-  - `shape`: window shape (after transpose if requested)
-  - `scale`: float scale for de-quantization
-  - `data`: raw bytes (uint8) of the quantized window
-  - `dt`: sample interval (seconds)
+Required query params:
 
-Parameters:
+- `file_id`, `key1`
+- `x0`, `x1` (trace indices, inclusive)
+- `y0`, `y1` (sample indices, inclusive)
 
-- `step_x`, `step_y`: integer downsampling for traces/samples
-- `transpose` (default `true`): matches the viewer’s expected orientation
+Optional query params:
+
+- `key1_byte` (default `189`), `key2_byte` (default `193`)
+- `step_x`, `step_y` (integer downsampling, default `1`)
+- `transpose` (default `true`, matches the viewer’s expected orientation)
 - `scaling`: `amax` (section-wise) or `tracewise` normalization using baseline stats
 - `pipeline_key` + `tap_label`: fetch from a cached pipeline tap instead of raw
+- `offset_byte`: included in the pipeline-tap cache key (use the same value you used when generating taps)
+
+Payload fields:
+
+- `shape`: window shape (after transpose if requested)
+- `scale`: float scale for de-quantization
+- `data`: raw bytes (uint8) of the quantized window
+- `dt`: sample interval (seconds)
 
 ### Pipeline
 
@@ -154,44 +180,56 @@ Currently registered operations:
 
 Endpoints:
 
-- `POST /pipeline/section?file_id=...&key1=...`: run a pipeline on one section
-  - `list_only=true` caches taps and only returns tap labels
-- `POST /pipeline/all?file_id=...`: run the pipeline for all key1 values (background)
-- `GET /pipeline/job/{job_id}/status`
-- `GET /pipeline/job/{job_id}/artifact?key1=...&tap=...`
+- `POST /pipeline/section?file_id=<FILE_ID>&key1=<KEY1>`: run a pipeline on one section
+  - query params: `key1_byte` (default `189`), `key2_byte` (default `193`), `offset_byte` (optional), `list_only` (bool)
+  - body: a `PipelineSpec`; optional body fields `taps` (list of labels) and `window` (slice)
+  - `list_only=true` caches taps and returns only tap labels (window slicing is not supported with `list_only=true`)
+- `POST /pipeline/all?file_id=<FILE_ID>`: run the pipeline for all key1 values (background job)
+  - query params: `key1_byte`, `key2_byte`, `offset_byte`, `downsample_quicklook`
+  - body: a `PipelineSpec`; optional body field `taps` (list of labels)
+- `GET /pipeline/job/<JOB_ID>/status`
+- `GET /pipeline/job/<JOB_ID>/artifact?key1=<KEY1>&tap=<TAP_LABEL>`
 
 ### First-break picking
 
-- `POST /fbpick_section_bin`: start an async job to compute a probability map
-- `GET /fbpick_job_status?job_id=...`
-- `GET /get_fbpick_section_bin?job_id=...`: fetch probability map (gzip+msgpack, quantized)
+Probability map (binary):
 
-For “picks from probability” (server-side):
+- `POST /fbpick_section_bin` (JSON): start an async job to compute a probability map
+  - body: `file_id`, `key1`, `key1_byte`, `key2_byte`, plus tiling params (`tile_h`, `tile_w`, `overlap`, `amp`)
+  - optional body fields: `pipeline_key` + `tap_label` (run fbpick on a cached tap)
+  - returns: `{ "job_id": "...", "status": "queued"|"running"|"done" }`
+- `GET /fbpick_job_status?job_id=<JOB_ID>`
+- `GET /get_fbpick_section_bin?job_id=<JOB_ID>`: fetch probability map (gzip+msgpack, quantized)
 
-- `POST /fbpick_predict`: returns `{dt, picks[]}` where `picks` contains `{trace, time}`
+Picks from probability (server-side):
+
+- `POST /fbpick_predict` (JSON): returns `{dt, picks[]}` where `picks` contains `{trace, time}`
   - supports `method=argmax|expectation` and a `sigma_ms_max` gate
+  - optional body fields: `pipeline_key` + `tap_label`
 
 ### Manual picks
 
 Manual picks are stored in a memmapped `.npy` file per dataset.
 
-- `PICKS_NPY_DIR` (highest priority): direct override for memmap files.
+- `PICKS_NPY_DIR` (highest priority): direct override for memmap files
 - Default when unset: `<app_data_dir>/picks_npy`
 
 Pipeline job artifacts are persisted on disk.
 
-- `PIPELINE_JOBS_DIR` (highest priority): direct override for pipeline artifacts.
+- `PIPELINE_JOBS_DIR` (highest priority): direct override for pipeline artifacts
 - Default when unset: `<app_data_dir>/pipeline_jobs`
 
 Upload and trace-store artifacts are persisted on disk.
 
-- `SV_UPLOAD_DIR` (highest priority): direct override for upload root.
-- `SV_PROCESSED_DIR` (highest priority): direct override for processed upload root.
-- `SV_TRACE_DIR` (highest priority): direct override for trace-store root.
-- Defaults when unset:
-  - upload root: `<app_data_dir>/uploads`
-  - processed upload root: `<app_data_dir>/uploads/processed`
-  - trace-store root: `<app_data_dir>/uploads/processed/traces`
+- `SV_UPLOAD_DIR` (highest priority): direct override for upload root
+- `SV_PROCESSED_DIR` (highest priority): direct override for processed upload root
+- `SV_TRACE_DIR` (highest priority): direct override for trace-store root
+
+Defaults when unset:
+
+- upload root: `<app_data_dir>/uploads`
+- processed upload root: `<app_data_dir>/uploads/processed`
+- trace-store root: `<app_data_dir>/uploads/processed/traces`
 
 `<app_data_dir>` is resolved in this order:
 
@@ -202,10 +240,10 @@ Upload and trace-store artifacts are persisted on disk.
 
 Endpoints:
 
-- `GET /picks?file_id=...&key1=...&key1_byte=...`
+- `GET /picks?file_id=<FILE_ID>&key1=<KEY1>&key1_byte=<BYTE>`
 - `POST /picks` (JSON): `{file_id, trace, time, key1, key1_byte}`
-- `DELETE /picks?file_id=...&key1=...&key1_byte=...&trace=...`
-- `GET /export_manual_picks_all_npy?file_id=...`: export all key1 sections to a 2D int32 `.npy`
+- `DELETE /picks?file_id=<FILE_ID>&key1=<KEY1>&key1_byte=<BYTE>&trace=<TRACE>`
+- `GET /export_manual_picks_all_npy?file_id=<FILE_ID>&key1_byte=<BYTE>&key2_byte=<BYTE>`: export all key1 sections to a 2D int32 `.npy`
 
 ## Project layout
 
@@ -214,12 +252,15 @@ app/
   main.py                 # FastAPI app + static mounting
   api/
     routers/              # upload/section/pipeline/picks/fbpick
-    _helpers.py           # shared state/cache helpers (to be refactored)
+    _helpers.py           # shared API helpers
     baselines.py          # raw baseline stats used for scaling
     schemas.py            # pydantic models for requests/responses
+  core/                   # app state + data-dir resolution
+  services/               # TraceStore readers, caching, pipeline taps, persistence
   static/                 # HTML/JS viewer served at / and /upload
-  utils/                  # SEG-Y ingest, TraceStore reader, pipeline ops
-  tests/                  # backend + frontend smoke tests
+  web/                    # Vite sources that build into static/assets
+  utils/                  # SEG-Y ingest, ML wrappers, pipeline ops
+  tests/                  # backend and JS unit tests
 .devcontainer/requirements-dev.txt
 Dockerfile
 ```
