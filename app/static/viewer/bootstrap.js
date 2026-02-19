@@ -56,6 +56,19 @@ const toNum = (v, d) => {
 };
 const toStr = (v, d) => (v == null ? d : String(v));
 const toBool = (v) => (typeof v === 'string' ? v === 'true' : !!v);
+const readAxisRange = (ev, axisName) => {
+  if (!ev || typeof ev !== 'object') return null;
+  const packed = ev[`${axisName}.range`];
+  if (Array.isArray(packed) && packed.length === 2) {
+    return [packed[0], packed[1]];
+  }
+  const k0 = `${axisName}.range[0]`;
+  const k1 = `${axisName}.range[1]`;
+  if (k0 in ev && k1 in ev) {
+    return [ev[k0], ev[k1]];
+  }
+  return null;
+};
 
 // Make available to non-module scripts
 window.cfg = cfg;
@@ -202,11 +215,13 @@ if (typeof window.handleRelayout === 'function') {
   const _rel = window.handleRelayout;
   window.handleRelayout = async function (ev) {
     await _rel(ev);
-    if ('xaxis.range[0]' in ev && 'xaxis.range[1]' in ev) {
-      window.savedXRange = [ev['xaxis.range[0]'], ev['xaxis.range[1]']];
+    const xRange = readAxisRange(ev, 'xaxis');
+    if (xRange) {
+      window.savedXRange = xRange;
     }
-    if ('yaxis.range[0]' in ev && 'yaxis.range[1]' in ev) {
-      const y0 = ev['yaxis.range[0]'], y1 = ev['yaxis.range[1]'];
+    const yRange = readAxisRange(ev, 'yaxis');
+    if (yRange) {
+      const y0 = yRange[0], y1 = yRange[1];
       window.savedYRange = y0 > y1 ? [y0, y1] : [y1, y0];
     }
     store.patch({ savedXRange: window.savedXRange, savedYRange: window.savedYRange });

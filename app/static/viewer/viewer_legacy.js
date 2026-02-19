@@ -116,6 +116,23 @@
       }
     }
 
+    function readAxisRange(ev, axisName) {
+      if (!ev || typeof ev !== 'object') return null;
+
+      const packed = ev[`${axisName}.range`];
+      if (Array.isArray(packed) && packed.length === 2) {
+        return [packed[0], packed[1]];
+      }
+
+      const k0 = `${axisName}.range[0]`;
+      const k1 = `${axisName}.range[1]`;
+      if (k0 in ev && k1 in ev) {
+        return [ev[k0], ev[k1]];
+      }
+
+      return null;
+    }
+
     function filenameFromContentDisposition(disposition) {
       if (!disposition) return null;
       const utfMatch = /filename\*=UTF-8''([^;\n]+)/i.exec(disposition);
@@ -438,6 +455,34 @@
         if (!/^(xaxis|yaxis)(\d+)?\.autorange$/.test(key)) continue;
         if (ev[key] === true) return true;
       }
+
+      const keys = Object.keys(ev);
+      const onlyRangeLikeKeys = keys.length > 0 && keys.every((key) =>
+        /^(xaxis|yaxis)(\d+)?\.(range(\[\d+\])?|autorange)$/.test(key)
+      );
+      if (!onlyRangeLikeKeys) return false;
+
+      const xRange = readAxisRange(ev, 'xaxis');
+      const yRange = readAxisRange(ev, 'yaxis');
+      if (!xRange || !yRange || !Array.isArray(sectionShape) || sectionShape.length < 2) {
+        return false;
+      }
+
+      const totalTraces = Number(sectionShape[0]);
+      const totalSamples = Number(sectionShape[1]);
+      const dt = window.defaultDt ?? defaultDt;
+      if (!Number.isFinite(totalTraces) || !Number.isFinite(totalSamples) || totalTraces <= 0 || totalSamples <= 0) {
+        return false;
+      }
+      if (!Number.isFinite(dt) || dt <= 0) return false;
+
+      const xMin = Math.min(xRange[0], xRange[1]);
+      const xMax = Math.max(xRange[0], xRange[1]);
+      const yMin = Math.min(yRange[0], yRange[1]);
+      const yMax = Math.max(yRange[0], yRange[1]);
+      const fullX = xMin <= 0 && xMax >= (totalTraces - 1);
+      const fullY = yMin <= 0 && yMax >= ((totalSamples - 1) * dt);
+      if (fullX && fullY) return true;
 
       return false;
     }
@@ -1609,12 +1654,14 @@
       if (!gd) return;
 
       // range 更新
-      if ('xaxis.range[0]' in ev && 'xaxis.range[1]' in ev) {
-        savedXRange = [ev['xaxis.range[0]'], ev['xaxis.range[1]']];
+      const xRange = readAxisRange(ev, 'xaxis');
+      if (xRange) {
+        savedXRange = xRange;
       }
-      if ('yaxis.range[0]' in ev && 'yaxis.range[1]' in ev) {
-        const y0 = ev['yaxis.range[0]'];
-        const y1 = ev['yaxis.range[1]'];
+      const yRange = readAxisRange(ev, 'yaxis');
+      if (yRange) {
+        const y0 = yRange[0];
+        const y1 = yRange[1];
         savedYRange = y0 > y1 ? [y0, y1] : [y1, y0];
       }
 
