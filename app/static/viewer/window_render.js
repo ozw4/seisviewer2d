@@ -98,6 +98,22 @@
         suppressRelayout = false;
         return promiseLike;
       }
+    function maybeResizePlot(plotDiv, force) {
+      if (!plotDiv) return Promise.resolve(false);
+
+      const w = Number(plotDiv.clientWidth);
+      const h = Number(plotDiv.clientHeight);
+      if (!Number.isFinite(w) || !Number.isFinite(h) || w <= 0 || h <= 0) {
+        return Promise.resolve(false);
+      }
+
+      const prev = plotDiv.__svLastSize;
+      const changed = !prev || prev.w !== w || prev.h !== h;
+      if (!force && !changed) return Promise.resolve(false);
+
+      plotDiv.__svLastSize = { w, h };
+      return withSuppressedRelayout(Promise.resolve(Plotly.Plots.resize(plotDiv)));
+    }
     function installPlotlyViewportHandlersOnce() {
       const plotDiv = document.getElementById('plot');
       if (!plotDiv || plotDiv.__viewportHandlersInstalled) return;
@@ -155,6 +171,7 @@
 
       const plotDiv = document.getElementById('plot');
       if (!plotDiv) return;
+      const needsReactInit = plotDiv.__svPlotMode !== 'wiggle';
 
       const { shape, x0, x1, y0, y1 } = windowData;
       const rows = Number(shape?.[0] ?? 0);
@@ -250,7 +267,7 @@
         doubleClick: false,
         doubleClickDelay: 300,
       }));
-      setTimeout(() => { withSuppressedRelayout(Plotly.Plots.resize(plotDiv)); }, 50);
+      setTimeout(() => { maybeResizePlot(plotDiv, needsReactInit); }, 50);
       requestAnimationFrame(applyDragMode);
       installPlotlyViewportHandlersOnce();
       attachPickListeners(plotDiv);
@@ -463,7 +480,7 @@
           doubleClick: false,
           doubleClickDelay: 300,
         }));
-        setTimeout(() => { withSuppressedRelayout(Plotly.Plots.resize(plotDiv)); }, 50);
+        setTimeout(() => { maybeResizePlot(plotDiv, true); }, 50);
       } else {
         const diffUpdatePromise = Promise.resolve()
           .then(() => Plotly.restyle(plotDiv, {
