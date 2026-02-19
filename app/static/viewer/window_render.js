@@ -114,6 +114,27 @@
       plotDiv.__svLastSize = { w, h };
       return withSuppressedRelayout(Promise.resolve(Plotly.Plots.resize(plotDiv)));
     }
+    function resolveWiggleTraceIndices(gd) {
+      const data = Array.isArray(gd?.data) ? gd.data : [];
+      const idxs = [];
+      for (let i = 0; i < data.length; i++) {
+        const tr = data[i];
+        if (tr && tr.meta && tr.meta.svRole === 'wiggle') idxs.push(i);
+      }
+      return idxs;
+    }
+    function makeWiggleSig(opts) {
+      const styleKey = 'base:line0:skip|fill:tonextx:black:0.6:line0:skip|line:black:0.5:x+y';
+      return JSON.stringify({
+        displayTraceCount: opts.displayTraceCount,
+        plotTraceCount: opts.plotTraceCount,
+        pointsPerTrace: opts.pointsPerTrace,
+        stepX: opts.stepX,
+        stepY: opts.stepY,
+        ampSource: opts.ampSource,
+        styleKey,
+      });
+    }
     function installPlotlyViewportHandlersOnce() {
       const plotDiv = document.getElementById('plot');
       if (!plotDiv || plotDiv.__viewportHandlersInstalled) return;
@@ -171,7 +192,6 @@
 
       const plotDiv = document.getElementById('plot');
       if (!plotDiv) return;
-      const needsReactInit = plotDiv.__svPlotMode !== 'wiggle';
 
       const { shape, x0, x1, y0, y1 } = windowData;
       const rows = Number(shape?.[0] ?? 0);
@@ -187,17 +207,39 @@
       if (useF32 && windowData.values.length < N) return;
 
       const scale = Number(windowData.scale) || 1;
+      const stepX = windowData.stepX || 1;
+      const stepY = windowData.stepY || 1;
+      const expectedTraceCount = cols * 3;
+      const wiggleSig = makeWiggleSig({
+        displayTraceCount: cols,
+        plotTraceCount: expectedTraceCount,
+        pointsPerTrace: rows,
+        stepX,
+        stepY,
+        ampSource: useI8 ? 'scaled-int8' : 'float32',
+      });
+      const prevWiggleSig = typeof plotDiv.__svWiggleSig === 'string' ? plotDiv.__svWiggleSig : null;
+      const prevMode = plotDiv.__svPlotMode;
+      const hasPlotData = Array.isArray(plotDiv.data) && plotDiv.data.length > 0;
+      const wiggleIdxs = resolveWiggleTraceIndices(plotDiv);
+      const needsReactInit = (
+        !hasPlotData ||
+        prevMode !== 'wiggle' ||
+        prevWiggleSig !== wiggleSig ||
+        wiggleIdxs.length !== expectedTraceCount
+      );
 
       setGrid({ x0, stepX: 1, y0, stepY: 1 });
       const dt = window.defaultDt ?? defaultDt;
       const time = new Float32Array(rows);
-      for (let r = 0; r < rows; r++) time[r] = (y0 + r * (windowData.stepY || 1)) * dt;
+      for (let r = 0; r < rows; r++) time[r] = (y0 + r * stepY) * dt;
 
-      const traces = [];
+      const traces = needsReactInit ? [] : null;
+      const wiggleX = [];
+      const wiggleY = [];
       const gain = parseFloat(document.getElementById('gain').value) || 1.0;
       const AMP_LIMIT = 3.0;
 
-      const stepX = windowData.stepX || 1;
       for (let c = 0; c < cols; c++) {
         const baseX = new Float32Array(rows);
         const shiftedFullX = new Float32Array(rows);
@@ -215,9 +257,43 @@
           shiftedPosX[r] = traceIndex + (val < 0 ? 0 : val);
         }
 
-        traces.push({ type: 'scatter', mode: 'lines', x: baseX, y: time, line: { width: 0 }, hoverinfo: 'skip', showlegend: false });
-        traces.push({ type: 'scatter', mode: 'lines', x: shiftedPosX, y: time, fill: 'tonextx', fillcolor: 'black', line: { width: 0 }, opacity: 0.6, hoverinfo: 'skip', showlegend: false });
-        traces.push({ type: 'scatter', mode: 'lines', x: shiftedFullX, y: time, line: { color: 'black', width: 0.5 }, hoverinfo: 'x+y', showlegend: false });
+        if (needsReactInit) {
+          traces.push({
+            type: 'scatter',
+            mode: 'lines',
+            x: baseX,
+            y: time,
+            line: { width: 0 },
+            hoverinfo: 'skip',
+            showlegend: false,
+            meta: { svRole: 'wiggle' },
+          });
+          traces.push({
+            type: 'scatter',
+            mode: 'lines',
+            x: shiftedPosX,
+            y: time,
+            fill: 'tonextx',
+            fillcolor: 'black',
+            line: { width: 0 },
+            opacity: 0.6,
+            hoverinfo: 'skip',
+            showlegend: false,
+            meta: { svRole: 'wiggle' },
+          });
+          traces.push({
+            type: 'scatter',
+            mode: 'lines',
+            x: shiftedFullX,
+            y: time,
+            line: { color: 'black', width: 0.5 },
+            hoverinfo: 'x+y',
+            showlegend: false,
+            meta: { svRole: 'wiggle' },
+          });
+        }
+        wiggleX.push(baseX, shiftedPosX, shiftedFullX);
+        wiggleY.push(time, time, time);
 
         const [x0v, x1v] = visibleXRng();
         D('RENDER@wiggle:shapes', {
@@ -231,48 +307,61 @@
       renderedStart = x0;
       renderedEnd = endTrace;
 
-      const totalSamples = sectionShape ? sectionShape[1] : (typeof y1 === 'number' ? y1 - y0 + 1 : rows);
-      const layout = buildLayout({
-        mode: 'wiggle',
-        x0,
-        x1: endTrace,
-        y0,
-        y1,
-        stepX: 1,
-        stepY: 1,
-        totalSamples,
-        dt,
-        savedXRange,
-        savedYRange,
-        clickmode: clickModeForCurrentState(),
-        dragmode: effectiveDragMode(),
-        uirevision: currentUiRevision(),
-        fbTitle: null,
-      });
-
       const showPred = !!document.getElementById('showFbPred')?.checked;
-      layout.shapes = buildPickShapes({
+      const pickShapes = buildPickShapes({
         manualPicks: picks,
         predicted: showPred ? predictedPicks : [],
         xMin: x0,
         xMax: endTrace,
         showPredicted: showPred,
       });
+      if (needsReactInit) {
+        const totalSamples = sectionShape ? sectionShape[1] : (typeof y1 === 'number' ? y1 - y0 + 1 : rows);
+        const layout = buildLayout({
+          mode: 'wiggle',
+          x0,
+          x1: endTrace,
+          y0,
+          y1,
+          stepX: 1,
+          stepY: 1,
+          totalSamples,
+          dt,
+          savedXRange,
+          savedYRange,
+          clickmode: clickModeForCurrentState(),
+          dragmode: effectiveDragMode(),
+          uirevision: currentUiRevision(),
+          fbTitle: null,
+        });
+        layout.shapes = pickShapes;
 
-      withSuppressedRelayout(Plotly.react(plotDiv, traces, layout, {
-        responsive: true,
-        editable: true,
-        modeBarButtonsToAdd: ['eraseshape'],
-        edits: { shapePosition: false },
-        doubleClick: false,
-        doubleClickDelay: 300,
-      }));
-      setTimeout(() => { maybeResizePlot(plotDiv, needsReactInit); }, 50);
+        withSuppressedRelayout(Plotly.react(plotDiv, traces, layout, {
+          responsive: true,
+          editable: true,
+          modeBarButtonsToAdd: ['eraseshape'],
+          edits: { shapePosition: false },
+          doubleClick: false,
+          doubleClickDelay: 300,
+        }));
+        setTimeout(() => { maybeResizePlot(plotDiv, true); }, 50);
+      } else {
+        const diffUpdatePromise = Promise.resolve()
+          .then(() => Plotly.restyle(plotDiv, {
+            x: wiggleX,
+            y: wiggleY,
+          }, wiggleIdxs))
+          .then(() => Plotly.relayout(plotDiv, {
+            shapes: pickShapes,
+          }));
+        withSuppressedRelayout(diffUpdatePromise);
+      }
       requestAnimationFrame(applyDragMode);
       installPlotlyViewportHandlersOnce();
       attachPickListeners(plotDiv);
       installCustomDoubleClick(plotDiv);
       plotDiv.__svPlotMode = 'wiggle';
+      plotDiv.__svWiggleSig = wiggleSig;
     }
 
     function renderWindowHeatmap(windowData) {
