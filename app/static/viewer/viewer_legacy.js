@@ -264,6 +264,9 @@
     let forceFullExtentOnce = false;    // next window calc uses full extent with no padding
     let pickOverlayRaf = 0;
     let pickOverlayDirty = false;
+    let pendingHotkeyXPanDelta = 0;
+    let hotkeyXPanRaf = 0;
+    let plotHover = false;
 
     // 追加：現在のFB計算に紐づくレイヤ/パイプラインキー
     let currentFbLayer = 'raw';
@@ -571,11 +574,286 @@
       return !(tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || el?.isContentEditable);
     }
 
+    const HOTKEY_PAN_MIN_TRACES = 10;
+    const HOTKEY_PAN_RATIO = 0.10;
+    const HOTKEY_GAIN_TARGET = 1.2;
+    const HOTKEY_GAIN_QUANTILE = 0.99;
+    const HOTKEY_GAIN_MAX_SAMPLES = 50000;
+
+    function getSectionFullRanges() {
+      if (!Array.isArray(sectionShape) || sectionShape.length < 2) return null;
+      const totalTraces = Number(sectionShape[0]);
+      const totalSamples = Number(sectionShape[1]);
+      const dt = window.defaultDt ?? defaultDt;
+      if (!Number.isFinite(totalTraces) || totalTraces <= 0) return null;
+      if (!Number.isFinite(totalSamples) || totalSamples <= 0) return null;
+      if (!Number.isFinite(dt) || dt <= 0) return null;
+      return {
+        xRange: [0, totalTraces - 1],
+        yRange: [(totalSamples - 1) * dt, 0],
+      };
+    }
+
+    function getCurrentXAxisRangeForHotkey() {
+      const plotDiv = document.getElementById('plot');
+      const xRange = plotDiv?._fullLayout?.xaxis?.range;
+      if (
+        Array.isArray(xRange) &&
+        xRange.length === 2 &&
+        Number.isFinite(xRange[0]) &&
+        Number.isFinite(xRange[1])
+      ) {
+        return [Number(xRange[0]), Number(xRange[1])];
+      }
+      if (
+        Array.isArray(savedXRange) &&
+        savedXRange.length === 2 &&
+        Number.isFinite(savedXRange[0]) &&
+        Number.isFinite(savedXRange[1])
+      ) {
+        return [Number(savedXRange[0]), Number(savedXRange[1])];
+      }
+      if (Number.isFinite(renderedStart) && Number.isFinite(renderedEnd)) {
+        return [Number(renderedStart), Number(renderedEnd)];
+      }
+      const full = getSectionFullRanges();
+      return full ? [full.xRange[0], full.xRange[1]] : null;
+    }
+
+    function shiftAndClampXRange(range, delta) {
+      if (!Array.isArray(range) || range.length !== 2) return null;
+      if (!Number.isFinite(range[0]) || !Number.isFinite(range[1])) return null;
+
+      const reversed = range[0] > range[1];
+      let lo = Math.min(range[0], range[1]) + delta;
+      let hi = Math.max(range[0], range[1]) + delta;
+
+      const totalTraces = Number(sectionShape?.[0]);
+      if (Number.isFinite(totalTraces) && totalTraces > 0) {
+        const minTrace = 0;
+        const maxTrace = totalTraces - 1;
+        const span = hi - lo;
+
+        if (span >= (maxTrace - minTrace)) {
+          lo = minTrace;
+          hi = maxTrace;
+        } else {
+          if (lo < minTrace) {
+            hi += (minTrace - lo);
+            lo = minTrace;
+          }
+          if (hi > maxTrace) {
+            lo -= (hi - maxTrace);
+            hi = maxTrace;
+          }
+          lo = Math.max(minTrace, lo);
+          hi = Math.min(maxTrace, hi);
+        }
+      }
+
+      return reversed ? [hi, lo] : [lo, hi];
+    }
+
+    function queueHotkeyXAxisPan(delta) {
+      if (!Number.isFinite(delta) || delta === 0) return;
+      pendingHotkeyXPanDelta += delta;
+      if (hotkeyXPanRaf !== 0) return;
+      hotkeyXPanRaf = requestAnimationFrame(() => {
+        hotkeyXPanRaf = 0;
+        const totalDelta = pendingHotkeyXPanDelta;
+        pendingHotkeyXPanDelta = 0;
+        if (!totalDelta) return;
+
+        const plotDiv = document.getElementById('plot');
+        const curRange = getCurrentXAxisRangeForHotkey();
+        if (!plotDiv || !curRange || typeof window.Plotly?.relayout !== 'function') return;
+        const nextRange = shiftAndClampXRange(curRange, totalDelta);
+        if (!nextRange) return;
+
+        const relayoutResult = window.Plotly.relayout(plotDiv, { 'xaxis.range': nextRange });
+        if (relayoutResult && typeof relayoutResult.catch === 'function') {
+          relayoutResult.catch((err) => console.warn('Hotkey pan relayout failed', err));
+        }
+      });
+    }
+
+    function runHotkeyFullView() {
+      const full = getSectionFullRanges();
+      if (!full) {
+        console.warn('[HOTKEY] Full view skipped: section metadata is not ready');
+        return;
+      }
+
+      savedXRange = [full.xRange[0], full.xRange[1]];
+      savedYRange = [Math.max(full.yRange[0], full.yRange[1]), Math.min(full.yRange[0], full.yRange[1])];
+      forceFullExtentOnce = true;
+
+      const plotDiv = document.getElementById('plot');
+      if (plotDiv && typeof window.Plotly?.relayout === 'function') {
+        const relayoutResult = window.Plotly.relayout(plotDiv, {
+          'xaxis.range': full.xRange,
+          'yaxis.range': full.yRange,
+        });
+        if (relayoutResult && typeof relayoutResult.catch === 'function') {
+          relayoutResult.catch((err) => console.warn('Hotkey full-view relayout failed', err));
+        }
+      }
+
+      requestWindowFetch({ immediate: true });
+    }
+
+    function runHotkeyStepKey1(delta) {
+      const slider = document.getElementById('key1_slider');
+      if (!slider) return;
+      const prev = Number(slider.value);
+      stepKey1(delta);
+      updateKey1Display();
+      const next = Number(slider.value);
+      if (!Number.isFinite(prev) || !Number.isFinite(next) || next === prev) return;
+      const maybePromise = onKey1Change();
+      if (maybePromise && typeof maybePromise.catch === 'function') {
+        maybePromise.catch((err) => console.warn('Hotkey key1 change failed', err));
+      }
+    }
+
+    function toggleLayerByHotkey() {
+      const sel = document.getElementById('layerSelect');
+      if (!sel) return;
+      if (sel.options.length > 1) {
+        sel.value = sel.value === 'raw' ? sel.options[1].value : 'raw';
+        drawSelectedLayer();
+      }
+    }
+
+    function setGainFromHotkey(nextGain) {
+      const gainEl = document.getElementById('gain');
+      if (!gainEl) return false;
+      let value = Number(nextGain);
+      if (!Number.isFinite(value)) return false;
+
+      const min = parseFloat(gainEl.min);
+      const max = parseFloat(gainEl.max);
+      if (Number.isFinite(min)) value = Math.max(min, value);
+      if (Number.isFinite(max)) value = Math.min(max, value);
+
+      gainEl.value = String(value);
+      onGainChange();
+      return true;
+    }
+
+    function estimateAbsQuantileFromWindow(win, quantile = HOTKEY_GAIN_QUANTILE, maxSamples = HOTKEY_GAIN_MAX_SAMPLES) {
+      if (!win || typeof win !== 'object') return null;
+
+      const valuesI8 = win.valuesI8 instanceof Int8Array ? win.valuesI8 : null;
+      const valuesRaw = !valuesI8 && win.values && win.values.length != null ? win.values : null;
+      const source = valuesI8 || valuesRaw;
+      if (!source || source.length === 0) return null;
+
+      const stride = Math.max(1, Math.ceil(source.length / Math.max(1, maxSamples)));
+      const scale = valuesI8 ? (Number(win.scale) || 1) : 1;
+      if (valuesI8 && (!Number.isFinite(scale) || scale === 0)) return null;
+
+      const sampled = [];
+      for (let i = 0; i < source.length; i += stride) {
+        const raw = Number(source[i]);
+        if (!Number.isFinite(raw)) continue;
+        const amp = Math.abs(valuesI8 ? (raw / scale) : raw);
+        if (!Number.isFinite(amp)) continue;
+        sampled.push(amp);
+      }
+      if (sampled.length === 0) return null;
+
+      sampled.sort((a, b) => a - b);
+      const qRaw = Number(quantile);
+      const q = Number.isFinite(qRaw) ? Math.max(0, Math.min(1, qRaw)) : HOTKEY_GAIN_QUANTILE;
+      const idx = Math.min(sampled.length - 1, Math.floor((sampled.length - 1) * q));
+      return sampled[idx];
+    }
+
+    function runHotkeyAutoGain() {
+      if (!latestWindowRender) {
+        console.warn('[HOTKEY] Auto gain skipped: latest window is not available');
+        return;
+      }
+      const q = estimateAbsQuantileFromWindow(latestWindowRender);
+      if (!Number.isFinite(q) || q <= 0) {
+        console.warn('[HOTKEY] Auto gain skipped: amplitude estimate is invalid');
+        return;
+      }
+      const nextGain = HOTKEY_GAIN_TARGET / q;
+      if (!setGainFromHotkey(nextGain)) {
+        console.warn('[HOTKEY] Auto gain skipped: gain slider is not available');
+      }
+    }
+
+    function handleViewerHotkey(e) {
+      if (!canUseGlobalHotkey()) return;
+      if (e.ctrlKey || e.metaKey) return;
+      if (!plotHover) return;
+
+      const keyRaw = typeof e.key === 'string' ? e.key : '';
+      const key = keyRaw.toLowerCase();
+      const allowWithAlt = key === 'g' && e.shiftKey;
+      if (e.altKey && !allowWithAlt) return;
+
+      if (keyRaw === 'ArrowLeft' || keyRaw === 'ArrowRight') {
+        e.preventDefault();
+        const xRange = getCurrentXAxisRangeForHotkey();
+        if (!xRange) return;
+        const visibleWidth = Math.max(1, Math.abs(xRange[1] - xRange[0]) + 1);
+        const step = Math.max(HOTKEY_PAN_MIN_TRACES, Math.round(visibleWidth * HOTKEY_PAN_RATIO));
+        queueHotkeyXAxisPan(keyRaw === 'ArrowLeft' ? -step : step);
+        return;
+      }
+
+      if (key === 'r') {
+        e.preventDefault();
+        if (e.repeat) return;
+        runHotkeyFullView();
+        return;
+      }
+
+      if (key === 'a' || key === 'd' || keyRaw === 'PageUp' || keyRaw === 'PageDown') {
+        e.preventDefault();
+        if (e.repeat) return;
+        const delta = (key === 'a' || keyRaw === 'PageUp') ? -1 : 1;
+        runHotkeyStepKey1(delta);
+        return;
+      }
+
+      if (key === 'g') {
+        e.preventDefault();
+        if (e.repeat) return;
+        if (e.shiftKey) {
+          if (!setGainFromHotkey(1)) {
+            console.warn('[HOTKEY] Gain reset skipped: gain slider is not available');
+          }
+        } else {
+          runHotkeyAutoGain();
+        }
+        return;
+      }
+
+      if (key === 'p') {
+        e.preventDefault();
+        if (e.repeat) return;
+        togglePickMode();
+        return;
+      }
+
+      if (key === 'n') {
+        e.preventDefault();
+        if (e.repeat) return;
+        toggleLayerByHotkey();
+      }
+    }
+
     // Alt 押してる間だけ pan
     window.addEventListener('keydown', (e) => {
       if (!canUseGlobalHotkey()) return;
       if (e.key === 'Alt' || e.altKey) setAltPan(true);
     });
+    window.addEventListener('keydown', handleViewerHotkey);
     window.addEventListener('keyup', (e) => {
       if (e.key === 'Alt' || !e.altKey) setAltPan(false);
     });
@@ -1782,6 +2060,13 @@
       console.info('[viewer] DOMContentLoaded hook');
       const fileIdEl = document.getElementById('file_id');
       const slider = document.getElementById('key1_slider');
+      const plotDiv = document.getElementById('plot');
+
+      if (plotDiv) {
+        plotHover = plotDiv.matches(':hover');
+        plotDiv.addEventListener('mouseenter', () => { plotHover = true; });
+        plotDiv.addEventListener('mouseleave', () => { plotHover = false; });
+      }
 
       const boot = async () => {
         if (fileIdEl && fileIdEl.value && !currentFileId) {
@@ -1844,22 +2129,6 @@
             ? fetchAndPlotDebounced.flush()
             : fetchAndPlot();
         });
-      }
-    });
-
-    // Toggle between raw and first tap with the "n" key
-    window.addEventListener('keydown', (e) => {
-      if (
-        e.key.toLowerCase() === 'n' &&
-        !e.ctrlKey && !e.altKey && !e.metaKey &&
-        !['INPUT', 'SELECT', 'TEXTAREA'].includes(document.activeElement.tagName)
-      ) {
-        const sel = document.getElementById('layerSelect');
-        if (!sel) return;
-        if (sel.options.length > 1) {
-          sel.value = sel.value === 'raw' ? sel.options[1].value : 'raw';
-          drawSelectedLayer();
-        }
       }
     });
 
