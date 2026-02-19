@@ -241,6 +241,9 @@
 
     let suppressRelayout = false;       // ignore relayouts we cause internally
     let isRelayouting = false;          // true while user is actively adjusting viewport
+    let pendingResetFetch = false;      // reset event arrived while dragging; run once after settle
+    let lastImmediateWindowFetchAt = 0; // immediate-reset fetch dedup
+    const RESET_FETCH_DEDUP_MS = 100;
     let forceFullExtentOnce = false;    // next window calc uses full extent with no padding
     let pickOverlayRaf = 0;
     let pickOverlayDirty = false;
@@ -424,7 +427,56 @@
       return wantWig ? 'wiggle' : 'heatmap';
     }
 
-    function checkModeFlipAndRefetch() {
+    function isResetRelayout(ev) {
+      if (!ev || typeof ev !== 'object') return false;
+
+      if (ev['xaxis.autorange'] === true || ev['yaxis.autorange'] === true) {
+        return true;
+      }
+
+      for (const key of Object.keys(ev)) {
+        if (!/^(xaxis|yaxis)(\d+)?\.autorange$/.test(key)) continue;
+        if (ev[key] === true) return true;
+      }
+
+      return false;
+    }
+
+    function requestWindowFetch({ immediate = false } = {}) {
+      const plotDiv = document.getElementById('plot');
+      if (!plotDiv) return;
+
+      if (!immediate) {
+        scheduleWindowFetch();
+        return;
+      }
+
+      const now = Date.now();
+      if (now - lastImmediateWindowFetchAt < RESET_FETCH_DEDUP_MS) return;
+      lastImmediateWindowFetchAt = now;
+
+      if (typeof scheduleWindowFetch?.cancel === 'function') {
+        scheduleWindowFetch.cancel();
+      }
+      if (typeof scheduleWindowFetch?.flush === 'function') {
+        scheduleWindowFetch.flush();
+        return;
+      }
+
+      const result = fetchWindowAndPlot();
+      if (result && typeof result.catch === 'function') {
+        result.catch((err) => console.warn('Window fetch failed', err));
+      }
+    }
+
+    function flushPendingResetFetchIfNeeded() {
+      if (!pendingResetFetch) return;
+      if (suppressRelayout || isRelayouting) return;
+      pendingResetFetch = false;
+      checkModeFlipAndRefetch({ immediate: true });
+    }
+
+    function checkModeFlipAndRefetch({ immediate = false } = {}) {
         const desired = currentDesiredMode();
         if (!desired) return;
           const cur = (latestWindowRender && latestWindowRender.mode) || null;
@@ -441,7 +493,7 @@
                     latestWindowRender.stepY !== 1 ||
                     latestWindowRender.x0 > win.x0 || latestWindowRender.x1 < win.x1 ||
                     latestWindowRender.y0 > win.y0 || latestWindowRender.y1 < win.y1;
-              if (needFresh) scheduleWindowFetch();
+              if (needFresh) requestWindowFetch({ immediate });
               return;
             }
 
@@ -461,7 +513,7 @@
             latestWindowRender.x0 > win.x0 || latestWindowRender.x1 < win.x1 ||
             latestWindowRender.y0 > win.y0 || latestWindowRender.y1 < win.y1;
 
-        if (needFresh) scheduleWindowFetch();
+        if (needFresh) requestWindowFetch({ immediate });
     }
 
     // （任意：すでに入れているならそのままでOK）
@@ -1547,10 +1599,14 @@
 
     async function handleRelayout(ev) {
       if (suppressRelayout) return;
+      if (!ev || typeof ev !== 'object') return;
+
+      flushPendingResetFetchIfNeeded();
 
       D('RELAYOUT@begin', { keys: Object.keys(ev), isRelayouting, pickMode: isPickMode });
 
       const gd = document.getElementById('plot');
+      if (!gd) return;
 
       // range 更新
       if ('xaxis.range[0]' in ev && 'xaxis.range[1]' in ev) {
@@ -1562,11 +1618,16 @@
         savedYRange = y0 > y1 ? [y0, y1] : [y1, y0];
       }
 
-      // autorange のときはレンジ再取得して終了（shape同期はしない）
-      if ('xaxis.autorange' in ev || 'yaxis.autorange' in ev) {
+      // reset/autorange は debounce をバイパスして即 fetch（shape同期はしない）
+      if (isResetRelayout(ev)) {
         await new Promise(r => requestAnimationFrame(r));
         snapshotAxesRangesFromDOM();
-        checkModeFlipAndRefetch();
+        if (isRelayouting) {
+          pendingResetFetch = true;
+          return;
+        }
+        pendingResetFetch = false;
+        checkModeFlipAndRefetch({ immediate: true });
         return;
       }
 
