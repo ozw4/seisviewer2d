@@ -61,10 +61,66 @@
       margin-right: 0.5em;
     }
 
+    #plotViewport {
+      position: relative;
+      flex: 1;
+      min-height: 0;
+      display: flex;
+    }
+
     #plot {
       flex: 1;
       width: 100%;
       min-height: 0;
+    }
+
+    #windowLoadingOverlay {
+      position: absolute;
+      inset: 0;
+      display: none;
+      align-items: flex-end;
+      justify-content: flex-end;
+      background: rgba(255, 255, 255, .24);
+      pointer-events: none;
+      z-index: 30;
+    }
+
+    #windowLoadingOverlay.show {
+      display: flex;
+    }
+
+    .windowLoadingBox {
+      display: inline-flex;
+      align-items: center;
+      gap: .55em;
+      padding: .45em .7em;
+      border-radius: 8px;
+      border: 1px solid rgba(0, 0, 0, .15);
+      background: rgba(255, 255, 255, .86);
+      color: #222;
+      font-size: .86em;
+      box-shadow: 0 2px 8px rgba(0, 0, 0, .08);
+    }
+
+    .windowLoadingSpinner {
+      width: 14px;
+      height: 14px;
+      border: 2px solid rgba(0, 0, 0, .2);
+      border-top-color: #007bff;
+      border-radius: 50%;
+      animation: windowLoadingSpin .8s linear infinite;
+      flex: 0 0 auto;
+    }
+
+    @keyframes windowLoadingSpin {
+      to {
+        transform: rotate(360deg);
+      }
+    }
+
+    #windowLoadingMessage {
+      white-space: nowrap;
+      line-height: 1.2;
     }
 
     #pickModeBtn.active {
@@ -428,7 +484,15 @@
         </select>
         <label><input type="checkbox" id="cmReverse" onchange="onColormapChange()">reverse</label>
       </div>
-      <div id="plot"></div>
+      <div id="plotViewport">
+        <div id="plot"></div>
+        <div id="windowLoadingOverlay" aria-live="polite" aria-atomic="true">
+          <div class="windowLoadingBox">
+            <span class="windowLoadingSpinner" aria-hidden="true"></span>
+            <span id="windowLoadingMessage">Loading window...</span>
+          </div>
+        </div>
+      </div>
     </div>
     <aside id="pipelinePanel">
       <div class="pipeline-header">

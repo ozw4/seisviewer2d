@@ -66,6 +66,34 @@
 
       return { step_x: stepX, step_y: stepY };
     }
+
+    function buildWindowLoadingMessage({ mode, stepX, stepY }) {
+      return `Loading window... Mode: ${mode}, stepX=${stepX}, stepY=${stepY}`;
+    }
+
+    function showLoading(message) {
+      const overlay = document.getElementById('windowLoadingOverlay');
+      if (!overlay) return;
+      const messageEl = document.getElementById('windowLoadingMessage');
+      if (messageEl) {
+        messageEl.textContent = message || 'Loading window...';
+      }
+      overlay.style.pointerEvents = window.windowLoadingBlocksInput === true ? 'auto' : 'none';
+      overlay.classList.add('show');
+    }
+
+    function hideLoading() {
+      const overlay = document.getElementById('windowLoadingOverlay');
+      if (!overlay) return;
+      overlay.classList.remove('show');
+    }
+
+    function bumpWindowFetchId() {
+      activeWindowFetchId += 1;
+      windowFetchToken = activeWindowFetchId;
+      return activeWindowFetchId;
+    }
+
     async function fetchWindowAndPlot() {
       D('WINDOW@req', { key1: key1Values?.[parseInt(document.getElementById('key1_slider')?.value || '0', 10)] });
       if (!currentFileId) return;
@@ -143,11 +171,16 @@
       params.set('transpose', '1');
       params.set('scaling', currentScaling);
 
-      const requestId = ++windowFetchToken;
+      const requestId = bumpWindowFetchId();
+      showLoading(buildWindowLoadingMessage({
+        mode,
+        stepX: step_x,
+        stepY: step_y,
+      }));
 
       // ---- Abort older in-flight window fetch, then create a new controller
       if (windowFetchCtrl) {
-        try { windowFetchCtrl.abort(); } catch (_) { }
+        windowFetchCtrl.abort();
       }
       const ctrl = new AbortController();
       windowFetchCtrl = ctrl;
@@ -159,7 +192,7 @@
           return;
         }
         const bin = new Uint8Array(await res.arrayBuffer());
-        if (requestId !== windowFetchToken) return; // stale
+        if (requestId !== activeWindowFetchId) return; // stale
 
         const obj = msgpack.decode(bin);
         applyServerDt(obj);
@@ -210,10 +243,12 @@
 
       } catch (err) {
         if (err && err.name === 'AbortError') {
+          console.debug('Window fetch aborted', { requestId });
           return; // canceled on purpose
         }
-        if (requestId === windowFetchToken) console.warn('Window fetch error', err);
+        if (requestId === activeWindowFetchId) console.warn('Window fetch error', err);
       } finally {
         if (windowFetchCtrl === ctrl) windowFetchCtrl = null;
+        if (requestId === activeWindowFetchId) hideLoading();
       }
     }

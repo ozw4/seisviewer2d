@@ -14,6 +14,7 @@
     var latestTapData = {};
     var latestPipelineKey = null;
     var latestWindowRender = null;
+    var activeWindowFetchId = 0;
     var windowFetchToken = 0;
     let windowFetchCtrl = null; // active window-fetch controller (if any)
     let cfg;

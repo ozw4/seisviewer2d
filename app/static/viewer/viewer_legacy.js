@@ -1187,7 +1187,7 @@
       if (sel) sel.value = currentScaling;
       try { localStorage.setItem('scaling_mode', currentScaling); } catch (_) {}
       if (windowFetchCtrl) {
-        try { windowFetchCtrl.abort(); } catch (_) {}
+        windowFetchCtrl.abort();
         windowFetchCtrl = null;
       }
       scheduleWindowFetch();
@@ -1751,7 +1751,12 @@
       await fetchPicks();
 
       latestWindowRender = null;
-      windowFetchToken += 1;
+      bumpWindowFetchId();
+      if (windowFetchCtrl) {
+        windowFetchCtrl.abort();
+        windowFetchCtrl = null;
+      }
+      if (typeof hideLoading === 'function') hideLoading();
       uiResetNonce++;
       if (window.pipelineEvents && typeof window.pipelineEvents.emit === 'function') {
         window.pipelineEvents.emit('section:prepare', {});
@@ -1769,7 +1774,6 @@
       }
 
       latestSeismicData = null;
-      renderLatestView();
       fetchWindowAndPlot();
 
       console.timeEnd('Total fetchAndPlot');
@@ -2095,7 +2099,8 @@
           renderedStart = null;
           renderedEnd = null;
           latestWindowRender = null;
-          windowFetchToken += 1;
+          bumpWindowFetchId();
+          if (typeof hideLoading === 'function') hideLoading();
           latestSeismicData = null;
           latestTapData = {};
           fbPredReqId += 1;
@@ -2109,7 +2114,7 @@
           latestPipelineKey = null;
           window.latestPipelineKey = null;
           if (windowFetchCtrl) {
-            try { windowFetchCtrl.abort(); } catch (_) { }
+            windowFetchCtrl.abort();
             windowFetchCtrl = null;
           }
 
