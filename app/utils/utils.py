@@ -103,6 +103,21 @@ class TraceStoreSectionReader:
         self._sorted_to_original_loaded = True
         return self._sorted_to_original
 
+    def get_sorted_to_original(self) -> np.ndarray:
+        """Return the ``sorted -> original`` trace index mapping."""
+        sorted_to_original = self._get_sorted_to_original()
+        if sorted_to_original is None:
+            msg = f'sorted_to_original is missing in {self.store_dir}/index.npz'
+            raise ValueError(msg)
+        n_traces = int(self.traces.shape[0])
+        if sorted_to_original.shape != (n_traces,):
+            msg = (
+                'sorted_to_original shape mismatch: '
+                f'expected {(n_traces,)}, got {sorted_to_original.shape}'
+            )
+            raise ValueError(msg)
+        return sorted_to_original
+
     def ensure_header(self, header_byte: int) -> np.ndarray:
         """Ensure the header array for ``header_byte`` exists on disk and return it."""
         path = self._header_path(header_byte)

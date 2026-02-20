@@ -163,25 +163,20 @@
         setTimeout(() => URL.revokeObjectURL(url), 1000);
       }
 
-    async function exportAllPickIndexMatrixNpz() {
+    async function exportManualPicksNpz() {
       if (!currentFileId) {
         alert('file_id not loaded.');
         return;
       }
 
-      const debounced = ensureFlushPickOpsDebounced();
-      if (typeof debounced?.flush === 'function') {
-        await debounced.flush();
-      } else {
-        await flushPickOps();
-      }
+      await flushPickOps();
 
       const params = new URLSearchParams({
         file_id: String(currentFileId),
         key1_byte: String(currentKey1Byte),
         key2_byte: String(currentKey2Byte),
       });
-      const response = await fetch(`/export_manual_picks_all_npz?${params.toString()}`);
+      const response = await fetch(`/export_manual_picks_npz?${params.toString()}`);
       if (!response.ok) {
         alert(`Export failed: HTTP ${response.status}`);
         return;
@@ -190,8 +185,61 @@
       const blob = await response.blob();
       const disposition = response.headers.get('content-disposition');
       const filename = filenameFromContentDisposition(disposition)
-        || `manual_picks_idx_ALL_${currentFileId}.npz`;
+        || `manual_picks_time_v1_${currentFileId}.npz`;
       saveBlob(blob, filename);
+    }
+
+    async function importManualPicksNpz(file) {
+      if (!file) {
+        return;
+      }
+      if (!currentFileId) {
+        alert('file_id not loaded.');
+        return;
+      }
+
+      await flushPickOps();
+
+      const modeNode = document.getElementById('manual-picks-import-mode');
+      const mode = modeNode && modeNode.value === 'merge' ? 'merge' : 'replace';
+      const params = new URLSearchParams({
+        file_id: String(currentFileId),
+        key1_byte: String(currentKey1Byte),
+        key2_byte: String(currentKey2Byte),
+        mode,
+      });
+      const form = new FormData();
+      form.append('file', file);
+      const response = await fetch(`/import_manual_picks_npz?${params.toString()}`, {
+        method: 'POST',
+        body: form,
+      });
+      if (!response.ok) {
+        const detail = await response.text();
+        alert(`Import failed: HTTP ${response.status} ${detail}`);
+        return;
+      }
+
+      await reloadPicksForCurrentSection();
+      renderLatestView();
+    }
+
+    function triggerManualPicksImportNpz() {
+      const node = document.getElementById('manual-picks-import-input');
+      if (!node) {
+        return;
+      }
+      node.value = '';
+      node.click();
+    }
+
+    async function onManualPicksImportInputChange(ev) {
+      const node = ev && ev.target ? ev.target : null;
+      const file = node && node.files && node.files[0] ? node.files[0] : null;
+      await importManualPicksNpz(file);
+      if (node) {
+        node.value = '';
+      }
     }
 
     let suppressRelayout = false;       // ignore relayouts we cause internally
