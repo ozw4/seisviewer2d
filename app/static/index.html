@@ -465,6 +465,10 @@
           FB
           predicted</label>
 
+        <label id="fbpick_model_select_label" style="margin-left:8px; display:none;">FB model:
+          <select id="fbpick_model_select" disabled></select>
+        </label>
+
         <button id="predictFbBtn" onclick="predictFromFb()">Predict from FB</button>
         <button type="button" id="export-manual-picks-npz" onclick="exportManualPicksNpz()">Export manual picks (.npz)</button>
         <button type="button" id="import-manual-picks-npz" onclick="triggerManualPicksImportNpz()">Import manual picks (.npz)</button>
