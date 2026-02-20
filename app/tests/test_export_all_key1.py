@@ -10,7 +10,7 @@ from app.main import app
 def test_export_all_key1_basic(monkeypatch):
     """Ensure export uses memmap-backed picks for each section."""
     assert any(
-        getattr(r, 'path', '') == '/export_manual_picks_all_npy'
+        getattr(r, 'path', '') == '/export_manual_picks_all_npz'
         for r in app.router.routes
     ), (
         f'route not found. routes={[getattr(r, "path", None) for r in app.router.routes]}'
@@ -70,17 +70,22 @@ def test_export_all_key1_basic(monkeypatch):
     client = TestClient(app, raise_server_exceptions=False)
 
     r = client.get(
-        '/export_manual_picks_all_npy',
+        '/export_manual_picks_all_npz',
         params={'file_id': 'X', 'key1_byte': 189, 'key2_byte': 193},
     )
     assert r.status_code == 200
 
-    arr = np.load(io.BytesIO(r.content))
-    # width=max(3,2)=3
-    assert arr.shape == (2, 3)
-    # dt=0.004 ⇒ 0.012/0.004=3, 0.020/0.004=5, 0.0/0.004=0
-    assert arr[0].tolist() == [3, -1, 5]  # key1=100 row
-    assert arr[1].tolist() == [-1, 0, -1]  # key1=200 row
+    with np.load(io.BytesIO(r.content)) as z:
+        arr = z['picks_idx']
+        assert arr.shape == (2, 3)
+        assert arr[0].tolist() == [3, -1, 5]
+        assert arr[1].tolist() == [-1, 0, -1]
+        assert z['key1_values'].tolist() == [100, 200]
+        assert np.isclose(float(z['dt']), 0.004)
+        assert int(z['key1_byte']) == 189
+        assert int(z['key2_byte']) == 193
+        assert str(np.asarray(z['file_id']).item()) == 'X'
+
     assert calls == [
         ('lineA.sgy', 5, (0, 1, 2)),
         ('lineA.sgy', 5, (3, 4)),
@@ -90,7 +95,7 @@ def test_export_all_key1_basic(monkeypatch):
 def test_export_all_key1_empty_is_all_minus1(monkeypatch):
     """Empty memmap rows stay -1 with computed section widths."""
     assert any(
-        getattr(r, 'path', '') == '/export_manual_picks_all_npy'
+        getattr(r, 'path', '') == '/export_manual_picks_all_npz'
         for r in app.router.routes
     ), (
         f'route not found. routes={[getattr(r, "path", None) for r in app.router.routes]}'
@@ -133,14 +138,20 @@ def test_export_all_key1_empty_is_all_minus1(monkeypatch):
     client = TestClient(app, raise_server_exceptions=False)
 
     r = client.get(
-        '/export_manual_picks_all_npy',
+        '/export_manual_picks_all_npz',
         params={'file_id': 'Y', 'key1_byte': 189, 'key2_byte': 193},
     )
     assert r.status_code == 200
 
-    arr = np.load(io.BytesIO(r.content))
-    assert arr.shape == (1, 2)
-    assert arr.tolist() == [[-1, -1]]
+    with np.load(io.BytesIO(r.content)) as z:
+        arr = z['picks_idx']
+        assert arr.shape == (1, 2)
+        assert arr.tolist() == [[-1, -1]]
+        assert z['key1_values'].tolist() == [10]
+        assert np.isclose(float(z['dt']), 0.002)
+        assert int(z['key1_byte']) == 189
+        assert int(z['key2_byte']) == 193
+        assert str(np.asarray(z['file_id']).item()) == 'Y'
 
 
 def test_export_all_key1_forwards_default_and_override_key2(monkeypatch):
@@ -184,14 +195,23 @@ def test_export_all_key1_forwards_default_and_override_key2(monkeypatch):
     client = TestClient(app, raise_server_exceptions=False)
 
     r = client.get(
-        '/export_manual_picks_all_npy', params={'file_id': 'Z', 'key1_byte': 189}
+        '/export_manual_picks_all_npz', params={'file_id': 'Z', 'key1_byte': 189}
     )
     assert r.status_code == 200
+    with np.load(io.BytesIO(r.content)) as z:
+        assert int(z['key1_byte']) == 189
+        assert int(z['key2_byte']) == 193
+        assert str(np.asarray(z['file_id']).item()) == 'Z'
+
     r = client.get(
-        '/export_manual_picks_all_npy',
+        '/export_manual_picks_all_npz',
         params={'file_id': 'Z', 'key1_byte': 189, 'key2_byte': 321},
     )
     assert r.status_code == 200
+    with np.load(io.BytesIO(r.content)) as z:
+        assert int(z['key1_byte']) == 189
+        assert int(z['key2_byte']) == 321
+        assert str(np.asarray(z['file_id']).item()) == 'Z'
 
     assert seen_ntr == [193, 321]
     assert seen_seq == [193, 321]

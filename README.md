@@ -243,7 +243,7 @@ Endpoints:
 - `GET /picks?file_id=<FILE_ID>&key1=<KEY1>&key1_byte=<BYTE>`
 - `POST /picks` (JSON): `{file_id, trace, time, key1, key1_byte}`
 - `DELETE /picks?file_id=<FILE_ID>&key1=<KEY1>&key1_byte=<BYTE>&trace=<TRACE>`
-- `GET /export_manual_picks_all_npy?file_id=<FILE_ID>&key1_byte=<BYTE>&key2_byte=<BYTE>`: export all key1 sections to a 2D int32 `.npy`
+- `GET /export_manual_picks_all_npz?file_id=<FILE_ID>&key1_byte=<BYTE>&key2_byte=<BYTE>`: export all key1 sections to a 2D int32 `.npz` (`picks_idx` + metadata)
 
 ## Project layout
 

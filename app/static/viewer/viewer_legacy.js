@@ -148,23 +148,6 @@
       return match && match[1] ? match[1] : null;
     }
 
-    // 手動ピック -> インデックスベクトル（-1は欠損）
-    function buildPickIndexVector(picksArr, nTraces, nSamples, dt) {
-      const last = new Map();
-      for (const p of (picksArr || [])) {
-        const tr = Math.round(p.trace);
-        if (tr >= 0 && tr < nTraces && Number.isFinite(p.time)) last.set(tr, p.time);
-      }
-      const vec = new Int32Array(nTraces);
-      vec.fill(-1);
-      for (const [tr, t] of last) {
-        let idx = Math.round(t / dt);
-        if (!Number.isFinite(idx) || idx < 0 || idx >= nSamples) idx = -1;
-        vec[tr] = idx;
-      }
-      return vec;
-    }
-
     function saveBlob(uint8OrBlob, filename) {
         const blob = (uint8OrBlob instanceof Blob)
           ? uint8OrBlob
@@ -180,80 +163,35 @@
         setTimeout(() => URL.revokeObjectURL(url), 1000);
       }
 
-    // .npy エンコーダ（1D/2D両対応）
-    function npyEncode(data, shape, descr = '<i4') {
-      const magic = new Uint8Array([0x93, 0x4E, 0x55, 0x4D, 0x50, 0x59]); // \x93NUMPY
-      const ver = new Uint8Array([0x01, 0x00]); // v1.0
-      const shapeTxt = `(${shape.join(', ')}${shape.length === 1 ? ',' : ''})`;
-
-      // v1.0 ヘッダは Python 辞書表現・末尾カンマなし・改行で終端
-      let headerDict =
-        "{'descr': '" + descr + "', 'fortran_order': False, 'shape': " + shapeTxt + ", }";
-      // ↑ 末尾カンマを削る
-      headerDict = headerDict.replace(/,\s*}$/, ' }');
-
-      // 最後に改行を必ず入れる
-      let header = headerDict + '\n';
-
-      // 16B アライン（magic+ver+hlen(2B)+header の合計が16の倍数になるようパディング）
-      const fixed = magic.length + ver.length + 2;
-      const pad = (16 - ((fixed + header.length) % 16)) % 16;
-      header += ' '.repeat(pad);
-
-      const hbytes = new TextEncoder().encode(header);
-      const hlenLE = new Uint8Array(2);
-      new DataView(hlenLE.buffer).setUint16(0, hbytes.length, true);
-
-      const out = new Uint8Array(magic.length + ver.length + 2 + hbytes.length + data.byteLength);
-      let o = 0;
-      out.set(magic, o); o += magic.length;
-      out.set(ver, o); o += ver.length;
-      out.set(hlenLE, o); o += 2;
-      out.set(hbytes, o); o += hbytes.length;
-      out.set(new Uint8Array(data.buffer, data.byteOffset, data.byteLength), o);
-      return out;
-    }
-
-
-    // ★唯一のエクスポータ：全 key1 を [K, Ntr] 行列で書き出し
-    async function exportAllPickIndexMatrixNpy() {
-      if (!sectionShape || sectionShape.length < 2) {
-        alert('Section shape is unknown yet.');
-        return;
-      }
-      if (!Array.isArray(key1Values) || key1Values.length === 0) {
-        alert('key1 values not loaded.');
-        return;
-      }
-
+    async function exportAllPickIndexMatrixNpz() {
       if (!currentFileId) {
         alert('file_id not loaded.');
         return;
       }
 
-      const nTraces = sectionShape[0];
-      const nSamples = sectionShape[1];
-      const dt = (window.defaultDt ?? defaultDt);
-      const K = key1Values.length;
-
-      const buf = new Int32Array(K * nTraces);
-      buf.fill(-1);
-
-      for (let i = 0; i < K; i++) {
-        const key1Val = key1Values[i];
-        if (key1Val === undefined) continue;
-        const url = `/picks?file_id=${encodeURIComponent(currentFileId)}&key1=${encodeURIComponent(key1Val)}&key1_byte=${currentKey1Byte}&key2_byte=${currentKey2Byte}`;
-        const r = await fetch(url);
-        if (!r.ok) continue;
-        const j = await r.json();
-        const arr = (j.picks || []).map(p => ({ trace: (p.trace | 0), time: +p.time }));
-        const vec = buildPickIndexVector(arr, nTraces, nSamples, dt);
-        buf.set(vec, i * nTraces);
+      const debounced = ensureFlushPickOpsDebounced();
+      if (typeof debounced?.flush === 'function') {
+        await debounced.flush();
+      } else {
+        await flushPickOps();
       }
 
-      const npy = npyEncode(buf, [K, nTraces], '<i4');
-      const base = currentFileName || currentFileId || 'picks';
-      saveBlob(npy, `manual_picks_idx_ALL_${base}.npy`);
+      const params = new URLSearchParams({
+        file_id: String(currentFileId),
+        key1_byte: String(currentKey1Byte),
+        key2_byte: String(currentKey2Byte),
+      });
+      const response = await fetch(`/export_manual_picks_all_npz?${params.toString()}`);
+      if (!response.ok) {
+        alert(`Export failed: HTTP ${response.status}`);
+        return;
+      }
+
+      const blob = await response.blob();
+      const disposition = response.headers.get('content-disposition');
+      const filename = filenameFromContentDisposition(disposition)
+        || `manual_picks_idx_ALL_${currentFileId}.npz`;
+      saveBlob(blob, filename);
     }
 
     let suppressRelayout = false;       // ignore relayouts we cause internally
