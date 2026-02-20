@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import io
 import re
 import tempfile
 from datetime import datetime, timezone
@@ -189,9 +190,9 @@ async def import_manual_picks_npz(
         )
     dt = float(dt_raw)
 
+    blob = await file.read()
     try:
-        file.file.seek(0)
-        npz = np.load(file.file, allow_pickle=False)
+        npz = np.load(io.BytesIO(blob), allow_pickle=False)
     except (OSError, ValueError) as exc:
         raise HTTPException(status_code=400, detail=f'Invalid npz: {exc}') from exc
 
