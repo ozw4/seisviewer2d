@@ -76,8 +76,8 @@ async def post_pick(m: PickPostModel, request: Request) -> dict[str, str]:
     return {'status': 'ok'}
 
 
-@router.get('/export_manual_picks_all_npy')
-async def export_manual_picks_all_npy(
+@router.get('/export_manual_picks_all_npz')
+async def export_manual_picks_all_npz(
     request: Request,
     file_id: Annotated[str, Query(...)],
     key1_byte: Annotated[int, Query()] = 189,
@@ -89,10 +89,7 @@ async def export_manual_picks_all_npy(
     if key1_values is None or len(key1_values) == 0:
         raise HTTPException(status_code=409, detail='No key1 values found for file')
 
-    try:
-        key1_list = [int(v) for v in np.asarray(key1_values).ravel()]
-    except Exception:  # noqa: BLE001
-        key1_list = [int(v) for v in key1_values]
+    key1_list = [int(v) for v in np.asarray(key1_values).ravel()]
 
     file_name = _filename_for_file_id(file_id)
     if not file_name:
@@ -124,10 +121,10 @@ async def export_manual_picks_all_npy(
     dt = float(dt)
 
     n_samples: int | None = None
-    try:
-        n_samples = int(reader.get_n_samples())
-    except Exception:  # noqa: BLE001
-        n_samples = None
+    if hasattr(reader, 'get_n_samples'):
+        n_samples_raw = reader.get_n_samples()
+        if n_samples_raw is not None:
+            n_samples = int(n_samples_raw)
 
     for i, sec_map in enumerate(sec_maps):
         row_picks = await asyncio.to_thread(
@@ -140,11 +137,12 @@ async def export_manual_picks_all_npy(
         for pick in row_picks:
             trace_val = pick.get('trace') if isinstance(pick, dict) else None
             time_val = pick.get('time') if isinstance(pick, dict) else None
-            try:
-                trace_idx = int(trace_val)
-                time_sec = float(time_val)
-            except (TypeError, ValueError):
+            if not isinstance(trace_val, (int, np.integer)):
                 continue
+            if not isinstance(time_val, (int, float, np.integer, np.floating)):
+                continue
+            trace_idx = int(trace_val)
+            time_sec = float(time_val)
             if not np.isfinite(time_sec):
                 continue
             latest_by_trace[trace_idx] = time_sec
@@ -164,14 +162,29 @@ async def export_manual_picks_all_npy(
             mat[i, trace_idx] = idx_val
 
     # ---- 一時ファイルは with 内で確実に書いて閉じる（SIM115対応 & 安定）
-    with tempfile.NamedTemporaryFile(delete=False, suffix='.npy') as tmp:
-        np.save(tmp, mat)
+    source_sha256 = None
+    meta = getattr(reader, 'meta', None)
+    if isinstance(meta, dict):
+        source_sha256 = meta.get('source_sha256')
+    payload: dict[str, object] = {
+        'picks_idx': mat,
+        'key1_values': np.asarray(key1_list, dtype=np.int64),
+        'dt': np.float64(dt),
+        'key1_byte': np.int32(key1_byte),
+        'key2_byte': np.int32(key2_byte),
+        'file_id': np.asarray(str(file_id)),
+    }
+    if isinstance(source_sha256, str) and source_sha256:
+        payload['source_sha256'] = np.asarray(source_sha256)
+
+    with tempfile.NamedTemporaryFile(delete=False, suffix='.npz') as tmp:
+        np.savez_compressed(tmp, **payload)
         tmp.flush()
         os.fsync(tmp.fileno())
         tmp_path = Path(tmp.name)
 
     safe_base = re.sub(r'[^-_.a-zA-Z0-9]', '_', Path(file_name).stem) or 'file'
-    download_name = f'pvec_idx_all_{safe_base}.npy'
+    download_name = f'pvec_idx_all_{safe_base}.npz'
 
     background = BackgroundTask(lambda path=tmp_path: path.unlink(missing_ok=True))
     return FileResponse(

@@ -164,7 +164,7 @@ ROUTES: list[dict[str, object]] = [
     },
     {
         'method': 'GET',
-        'path': '/export_manual_picks_all_npy',
+        'path': '/export_manual_picks_all_npz',
         'params': {'file_id': 'missing', 'key1_byte': 189, 'key2_byte': 193},
         'expected': {404},
     },
