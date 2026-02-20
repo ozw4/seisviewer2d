@@ -6,11 +6,12 @@ import asyncio
 import os
 import re
 import tempfile
+from io import BytesIO
 from pathlib import Path
 from typing import Annotated
 
 import numpy as np
-from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from fastapi import APIRouter, Depends, File, HTTPException, Query, Request, UploadFile
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, ConfigDict
 from starlette.background import BackgroundTask
@@ -20,14 +21,25 @@ from app.services.reader import get_reader
 from app.services.registry import _filename_for_file_id
 from app.services.section_index import get_ntraces_for, get_trace_seq_for_value
 from app.utils.pick_cache_file1d_mem import (
+    clear_all,
     clear_by_traceseq,
     clear_section,
+    set_many_by_traceseq,
     set_by_traceseq,
     to_pairs_for_section,
 )
 from app.utils.segy_meta import get_dt_for_file
 
 router = APIRouter()
+
+
+def _read_scalar(npz: np.lib.npyio.NpzFile, key: str):
+    if key not in npz.files:
+        raise HTTPException(400, f'Missing required key in npz: {key}')
+    arr = np.asarray(npz[key])
+    if arr.shape != ():
+        raise HTTPException(400, f'npz key {key} must be scalar')
+    return arr.item()
 
 
 class PickPostModel(BaseModel):
@@ -219,3 +231,144 @@ async def delete_pick(
         trace_seq = int(sec_map[trace])
         await asyncio.to_thread(clear_by_traceseq, fname, ntr, trace_seq)
     return {'status': 'ok'}
+
+
+@router.post('/import_manual_picks_all_npz')
+async def import_manual_picks_all_npz(
+    request: Request,
+    file_id: str,
+    file: Annotated[UploadFile, File()],
+    key1_byte: Annotated[int, Query()] = 189,
+    key2_byte: Annotated[int, Query()] = 193,
+    mode: Annotated[str, Query()] = 'replace',
+) -> dict[str, str | int]:
+    if mode not in {'replace', 'merge'}:
+        raise HTTPException(400, 'mode must be replace or merge')
+
+    state = get_state(request.app)
+    file_name = _filename_for_file_id(file_id)
+    if not file_name:
+        raise HTTPException(404, 'file_id not found')
+
+    body = await file.read()
+    if len(body) == 0:
+        raise HTTPException(400, 'uploaded npz file is empty')
+
+    with np.load(BytesIO(body), allow_pickle=False) as npz:
+        if 'picks_idx' not in npz.files:
+            raise HTTPException(400, 'Missing required key in npz: picks_idx')
+        if 'key1_values' not in npz.files:
+            raise HTTPException(400, 'Missing required key in npz: key1_values')
+
+        picks_idx = np.asarray(npz['picks_idx'])
+        key1_values = np.asarray(npz['key1_values'])
+        npz_dt = _read_scalar(npz, 'dt')
+        npz_key1_byte = _read_scalar(npz, 'key1_byte')
+        npz_key2_byte = _read_scalar(npz, 'key2_byte')
+        npz_file_id = _read_scalar(npz, 'file_id')
+
+        if not isinstance(npz_file_id, str):
+            raise HTTPException(400, 'npz file_id must be string scalar')
+        if npz_file_id != file_id:
+            raise HTTPException(409, 'file_id mismatch between query and npz')
+
+        if not isinstance(npz_key1_byte, (int, np.integer)):
+            raise HTTPException(400, 'npz key1_byte must be int scalar')
+        if not isinstance(npz_key2_byte, (int, np.integer)):
+            raise HTTPException(400, 'npz key2_byte must be int scalar')
+        if int(npz_key1_byte) != key1_byte:
+            raise HTTPException(409, 'key1_byte mismatch between query and npz')
+        if int(npz_key2_byte) != key2_byte:
+            raise HTTPException(409, 'key2_byte mismatch between query and npz')
+
+        if not isinstance(npz_dt, (int, float, np.integer, np.floating)):
+            raise HTTPException(400, 'npz dt must be numeric scalar')
+        cur_dt_raw = get_dt_for_file(file_id)
+        if not isinstance(cur_dt_raw, (int, float, np.integer, np.floating)):
+            raise HTTPException(409, 'Current dt is missing or invalid for file')
+        if abs(float(npz_dt) - float(cur_dt_raw)) > 1e-9:
+            raise HTTPException(409, 'dt mismatch between current file and npz')
+        dt = float(npz_dt)
+
+        if picks_idx.ndim != 2:
+            raise HTTPException(400, 'picks_idx must be a 2D integer array')
+        if key1_values.ndim != 1:
+            raise HTTPException(400, 'key1_values must be a 1D integer array')
+        if not np.issubdtype(picks_idx.dtype, np.integer):
+            raise HTTPException(400, 'picks_idx must be integer dtype')
+        if not np.issubdtype(key1_values.dtype, np.integer):
+            raise HTTPException(400, 'key1_values must be integer dtype')
+
+        n_sections, width = int(picks_idx.shape[0]), int(picks_idx.shape[1])
+        if key1_values.shape[0] != n_sections:
+            raise HTTPException(409, 'picks_idx rows and key1_values length must match')
+
+        reader = get_reader(file_id, key1_byte, key2_byte, state=state)
+        cur_key1_values = reader.get_key1_values()
+        if cur_key1_values is None or len(cur_key1_values) == 0:
+            raise HTTPException(409, 'No key1 values found for current file')
+
+        reader_meta = getattr(reader, 'meta', None)
+        source_sha256_cur = None
+        if isinstance(reader_meta, dict):
+            source_sha256_cur = reader_meta.get('source_sha256')
+        if 'source_sha256' in npz.files and source_sha256_cur is not None:
+            source_sha256_npz = _read_scalar(npz, 'source_sha256')
+            if not isinstance(source_sha256_npz, str):
+                raise HTTPException(400, 'npz source_sha256 must be string scalar')
+            if source_sha256_npz != source_sha256_cur:
+                raise HTTPException(
+                    409, 'source_sha256 mismatch between current file and npz'
+                )
+
+        ntraces = get_ntraces_for(file_id, key1_byte, key2_byte, state=state)
+
+        sec_maps: list[np.ndarray] = []
+        for val in key1_values:
+            key1 = int(val)
+            sec_map = get_trace_seq_for_value(
+                file_id, key1, key1_byte, key2_byte, state=state
+            )
+            sec_maps.append(sec_map)
+            if sec_map.size > width:
+                raise HTTPException(
+                    409,
+                    f'import width is too small for key1={key1}: {width} < {sec_map.size}',
+                )
+
+    if mode == 'replace':
+        await asyncio.to_thread(clear_all, file_name, ntraces)
+
+    trace_seq_chunks: list[np.ndarray] = []
+    time_chunks: list[np.ndarray] = []
+    inserted = 0
+    skipped_negative = 0
+    picks_idx_i64 = np.asarray(picks_idx, dtype=np.int64)
+    for i, sec_map in enumerate(sec_maps):
+        sec_size = int(sec_map.size)
+        if sec_size == 0:
+            continue
+        row_vals = picks_idx_i64[i, :sec_size]
+        negative_mask = row_vals < 0
+        skipped_negative += int(np.count_nonzero(negative_mask))
+        keep_mask = row_vals >= 0
+        if not np.any(keep_mask):
+            continue
+        trace_seq_chunks.append(np.asarray(sec_map[keep_mask], dtype=np.int64))
+        time_chunks.append(np.asarray(row_vals[keep_mask] * dt, dtype=np.float32))
+
+    if trace_seq_chunks:
+        trace_seq_all = np.concatenate(trace_seq_chunks)
+        time_all = np.concatenate(time_chunks)
+        inserted = await asyncio.to_thread(
+            set_many_by_traceseq, file_name, ntraces, trace_seq_all, time_all
+        )
+
+    return {
+        'status': 'ok',
+        'mode': mode,
+        'sections': n_sections,
+        'inserted': inserted,
+        'skipped_negative': skipped_negative,
+        'cleared': 'all' if mode == 'replace' else 0,
+    }

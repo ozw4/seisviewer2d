@@ -1,557 +1,649 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="en">
-
-<head>
-  <meta charset="utf-8" />
-  <title>Seismic Wiggle Viewer</title>
-  <style>
-    :root {
-      color-scheme: light;
-    }
-
-    body {
-      margin: 0;
-      font-family: sans-serif;
-      background-color: #fff;
-      color: #000;
-      height: 100vh;
-      display: flex;
-      flex-direction: column;
-    }
-
-    header {
-      background: #f0f0f0;
-      padding: 0.8em 1.2em;
-      font-size: 1.2em;
-      border-bottom: 1px solid #ccc;
-      display: flex;
-      justify-content: space-between;
-      align-items: center;
-    }
-
-    #mainContent {
-      flex: 1;
-      display: flex;
-      min-height: 0;
-      background: #fff;
-    }
-
-    #viewerColumn {
-      flex: 1;
-      display: flex;
-      flex-direction: column;
-      min-width: 0;
-    }
-
-    #controls {
-      padding: 0.5em 1em;
-      background: #fafafa;
-      border-bottom: 1px solid #ccc;
-      display: flex;
-      gap: 1em;
-      align-items: center;
-      flex-wrap: wrap;
-      overflow-y: auto;
-    }
-
-    input,
-    button {
-      font-size: 1em;
-      padding: 0.2em 0.4em;
-      margin-right: 0.5em;
-    }
-
-    #plotViewport {
-      position: relative;
-      flex: 1;
-      min-height: 0;
-      display: flex;
-    }
-
-    #plot {
-      flex: 1;
-      width: 100%;
-      min-height: 0;
-    }
-
-    #windowLoadingOverlay {
-      position: absolute;
-      inset: 0;
-      display: none;
-      align-items: flex-end;
-      justify-content: flex-end;
-      background: rgba(255, 255, 255, .24);
-      pointer-events: none;
-      z-index: 30;
-    }
-
-    #windowLoadingOverlay.show {
-      display: flex;
-    }
-
-    .windowLoadingBox {
-      display: inline-flex;
-      align-items: center;
-      gap: .55em;
-      padding: .45em .7em;
-      border-radius: 8px;
-      border: 1px solid rgba(0, 0, 0, .15);
-      background: rgba(255, 255, 255, .86);
-      color: #222;
-      font-size: .86em;
-      box-shadow: 0 2px 8px rgba(0, 0, 0, .08);
-    }
-
-    .windowLoadingSpinner {
-      width: 14px;
-      height: 14px;
-      border: 2px solid rgba(0, 0, 0, .2);
-      border-top-color: #007bff;
-      border-radius: 50%;
-      animation: windowLoadingSpin .8s linear infinite;
-      flex: 0 0 auto;
-    }
-
-    @keyframes windowLoadingSpin {
-      to {
-        transform: rotate(360deg);
+  <head>
+    <meta charset="utf-8" />
+    <title>Seismic Wiggle Viewer</title>
+    <style>
+      :root {
+        color-scheme: light;
       }
-    }
 
-    #windowLoadingMessage {
-      white-space: nowrap;
-      line-height: 1.2;
-    }
+      body {
+        margin: 0;
+        font-family: sans-serif;
+        background-color: #fff;
+        color: #000;
+        height: 100vh;
+        display: flex;
+        flex-direction: column;
+      }
 
-    #pickModeBtn.active {
-      background: #007bff;
-      color: #fff;
-    }
+      header {
+        background: #f0f0f0;
+        padding: 0.8em 1.2em;
+        font-size: 1.2em;
+        border-bottom: 1px solid #ccc;
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+      }
 
-    #pipelinePanel {
-      width: 320px;
-      max-width: 100%;
-      border-left: 1px solid #ddd;
-      background: #fdfdfd;
-      display: flex;
-      flex-direction: column;
-      min-height: 0;
-    }
+      #mainContent {
+        flex: 1;
+        display: flex;
+        min-height: 0;
+        background: #fff;
+      }
 
-    .pipeline-header {
-      display: flex;
-      justify-content: space-between;
-      align-items: center;
-      padding: 0.75em 1em;
-      border-bottom: 1px solid #ddd;
-      background: #f7f7f7;
-      font-weight: 600;
-    }
+      #viewerColumn {
+        flex: 1;
+        display: flex;
+        flex-direction: column;
+        min-width: 0;
+      }
 
-    .pipeline-header .pipeline-actions {
-      display: inline-flex;
-      gap: 0.5em;
-      align-items: center;
-    }
+      #controls {
+        padding: 0.5em 1em;
+        background: #fafafa;
+        border-bottom: 1px solid #ccc;
+        display: flex;
+        gap: 1em;
+        align-items: center;
+        flex-wrap: wrap;
+        overflow-y: auto;
+      }
 
-    .pipeline-add {
-      position: relative;
-      display: inline-flex;
-      flex-direction: column;
-      align-items: flex-end;
-    }
+      input,
+      button {
+        font-size: 1em;
+        padding: 0.2em 0.4em;
+        margin-right: 0.5em;
+      }
 
-    .pipeline-add button {
-      margin-right: 0;
-    }
+      #plotViewport {
+        position: relative;
+        flex: 1;
+        min-height: 0;
+        display: flex;
+      }
 
-    .pipeline-add-menu {
-      position: absolute;
-      top: 100%;
-      right: 0;
-      background: #fff;
-      border: 1px solid #ccc;
-      border-radius: 4px;
-      box-shadow: 0 4px 10px rgba(0, 0, 0, .08);
-      padding: .25em 0;
-      margin-top: .3em;
-      display: none;
-      min-width: 160px;
-      z-index: 20;
-    }
+      #plot {
+        flex: 1;
+        width: 100%;
+        min-height: 0;
+      }
 
-    .pipeline-add-menu.open {
-      display: block;
-    }
+      #windowLoadingOverlay {
+        position: absolute;
+        inset: 0;
+        display: none;
+        align-items: flex-end;
+        justify-content: flex-end;
+        background: rgba(255, 255, 255, 0.24);
+        pointer-events: none;
+        z-index: 30;
+      }
 
-    .pipeline-add-menu button {
-      display: block;
-      width: 100%;
-      background: transparent;
-      border: 0;
-      text-align: left;
-      padding: .45em 1em;
-      font-size: .95em;
-      cursor: pointer;
-    }
+      #windowLoadingOverlay.show {
+        display: flex;
+      }
 
-    .pipeline-add-menu button:hover,
-    .pipeline-add-menu button:focus {
-      background: #eef3ff;
-    }
+      .windowLoadingBox {
+        display: inline-flex;
+        align-items: center;
+        gap: 0.55em;
+        padding: 0.45em 0.7em;
+        border-radius: 8px;
+        border: 1px solid rgba(0, 0, 0, 0.15);
+        background: rgba(255, 255, 255, 0.86);
+        color: #222;
+        font-size: 0.86em;
+        box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
+      }
 
-    #pipelineCards {
-      flex: 1;
-      overflow-y: auto;
-      padding: 1em;
-      background: #fafafa;
-    }
+      .windowLoadingSpinner {
+        width: 14px;
+        height: 14px;
+        border: 2px solid rgba(0, 0, 0, 0.2);
+        border-top-color: #007bff;
+        border-radius: 50%;
+        animation: windowLoadingSpin 0.8s linear infinite;
+        flex: 0 0 auto;
+      }
 
-    .pipeline-card {
-      border: 1px solid #d2d2d2;
-      border-radius: 8px;
-      padding: .75em;
-      background: #fff;
-      display: flex;
-      flex-direction: column;
-      gap: .5em;
-      box-shadow: 0 1px 2px rgba(0, 0, 0, .04);
-    }
+      @keyframes windowLoadingSpin {
+        to {
+          transform: rotate(360deg);
+        }
+      }
 
-    .pipeline-card+.pipeline-card {
-      margin-top: .75em;
-    }
+      #windowLoadingMessage {
+        white-space: nowrap;
+        line-height: 1.2;
+      }
 
-    .pipeline-card.disabled {
-      opacity: .6;
-    }
+      #pickModeBtn.active {
+        background: #007bff;
+        color: #fff;
+      }
 
-    .pipeline-card.inspecting {
-      border-color: #4c8bf5;
-      box-shadow: 0 0 0 1px rgba(76, 139, 245, .25);
-    }
+      #pipelinePanel {
+        width: 320px;
+        max-width: 100%;
+        border-left: 1px solid #ddd;
+        background: #fdfdfd;
+        display: flex;
+        flex-direction: column;
+        min-height: 0;
+      }
 
-    .pipeline-card.is-dragging {
-      opacity: .6;
-    }
+      .pipeline-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        padding: 0.75em 1em;
+        border-bottom: 1px solid #ddd;
+        background: #f7f7f7;
+        font-weight: 600;
+      }
 
-    .pipeline-card-header {
-      display: flex;
-      justify-content: space-between;
-      align-items: center;
-      gap: .5em;
-    }
+      .pipeline-header .pipeline-actions {
+        display: inline-flex;
+        gap: 0.5em;
+        align-items: center;
+      }
 
-    .pipeline-card-title {
-      display: inline-flex;
-      align-items: center;
-      gap: .4em;
-      font-weight: 600;
-      font-size: .95em;
-    }
+      .pipeline-add {
+        position: relative;
+        display: inline-flex;
+        flex-direction: column;
+        align-items: flex-end;
+      }
 
-    .drag-handle {
-      cursor: grab;
-      color: #666;
-      font-size: 1.1em;
-      line-height: 1;
-      user-select: none;
-    }
+      .pipeline-add button {
+        margin-right: 0;
+      }
 
-    .pipeline-card-controls {
-      display: flex;
-      flex-wrap: wrap;
-      gap: .75em;
-      font-size: .85em;
-    }
+      .pipeline-add-menu {
+        position: absolute;
+        top: 100%;
+        right: 0;
+        background: #fff;
+        border: 1px solid #ccc;
+        border-radius: 4px;
+        box-shadow: 0 4px 10px rgba(0, 0, 0, 0.08);
+        padding: 0.25em 0;
+        margin-top: 0.3em;
+        display: none;
+        min-width: 160px;
+        z-index: 20;
+      }
 
-    .pipeline-card-controls label {
-      display: inline-flex;
-      align-items: center;
-      gap: .35em;
-      cursor: pointer;
-    }
+      .pipeline-add-menu.open {
+        display: block;
+      }
 
-    .pipeline-label {
-      display: flex;
-      flex-direction: column;
-      gap: .3em;
-      font-size: .85em;
-    }
+      .pipeline-add-menu button {
+        display: block;
+        width: 100%;
+        background: transparent;
+        border: 0;
+        text-align: left;
+        padding: 0.45em 1em;
+        font-size: 0.95em;
+        cursor: pointer;
+      }
 
-    .pipeline-label-input {
-      font-size: .95em;
-      padding: .35em .45em;
-      border: 1px solid #ccc;
-      border-radius: 4px;
-    }
+      .pipeline-add-menu button:hover,
+      .pipeline-add-menu button:focus {
+        background: #eef3ff;
+      }
 
-    .pipeline-card button {
-      font-size: .85em;
-      padding: .35em .6em;
-      margin-right: 0;
-    }
+      #pipelineCards {
+        flex: 1;
+        overflow-y: auto;
+        padding: 1em;
+        background: #fafafa;
+      }
 
-    .pipeline-empty {
-      color: #666;
-      font-size: .9em;
-      padding: .5em .25em;
-      text-align: center;
-    }
+      .pipeline-card {
+        border: 1px solid #d2d2d2;
+        border-radius: 8px;
+        padding: 0.75em;
+        background: #fff;
+        display: flex;
+        flex-direction: column;
+        gap: 0.5em;
+        box-shadow: 0 1px 2px rgba(0, 0, 0, 0.04);
+      }
 
-    .pipeline-inspector {
-      border-top: 1px solid #ddd;
-      padding: .9em 1em;
-      background: #fff;
-    }
+      .pipeline-card + .pipeline-card {
+        margin-top: 0.75em;
+      }
 
-    .pipeline-inspector.hidden {
-      display: none;
-    }
+      .pipeline-card.disabled {
+        opacity: 0.6;
+      }
 
-    .pipeline-inspector h3 {
-      margin: 0 0 .6em 0;
-      font-size: 1em;
-    }
+      .pipeline-card.inspecting {
+        border-color: #4c8bf5;
+        box-shadow: 0 0 0 1px rgba(76, 139, 245, 0.25);
+      }
 
-    .pipeline-inspector form {
-      display: flex;
-      flex-direction: column;
-      gap: .6em;
-    }
+      .pipeline-card.is-dragging {
+        opacity: 0.6;
+      }
 
-    .pipeline-inspector label {
-      display: flex;
-      flex-direction: column;
-      gap: .3em;
-      font-size: .85em;
-    }
+      .pipeline-card-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        gap: 0.5em;
+      }
 
-    .pipeline-inspector input,
-    .pipeline-inspector select {
-      font-size: .95em;
-      padding: .35em .45em;
-      border: 1px solid #ccc;
-      border-radius: 4px;
-    }
+      .pipeline-card-title {
+        display: inline-flex;
+        align-items: center;
+        gap: 0.4em;
+        font-weight: 600;
+        font-size: 0.95em;
+      }
 
-    .pipeline-inspector-actions {
-      display: flex;
-      justify-content: flex-end;
-      gap: .5em;
-      margin-top: .4em;
-    }
+      .drag-handle {
+        cursor: grab;
+        color: #666;
+        font-size: 1.1em;
+        line-height: 1;
+        user-select: none;
+      }
 
-    /* Pipeline progress overlay */
-    #ppOverlay {
-      position: fixed;
-      inset: 0;
-      background: rgba(0, 0, 0, .25);
-      display: none;
-      align-items: center;
-      justify-content: center;
-      z-index: 9999;
-    }
+      .pipeline-card-controls {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 0.75em;
+        font-size: 0.85em;
+      }
 
-    #ppOverlay.show {
-      display: flex;
-    }
+      .pipeline-card-controls label {
+        display: inline-flex;
+        align-items: center;
+        gap: 0.35em;
+        cursor: pointer;
+      }
 
-    .ppCard {
-      min-width: 320px;
-      max-width: 90vw;
-      background: #fff;
-      border: 1px solid #e3e3e3;
-      border-radius: 10px;
-      box-shadow: 0 10px 30px rgba(0, 0, 0, .15);
-      padding: 16px 18px;
-      color: #222;
-    }
+      .pipeline-label {
+        display: flex;
+        flex-direction: column;
+        gap: 0.3em;
+        font-size: 0.85em;
+      }
 
-    .ppTitle {
-      font-weight: 700;
-      margin-bottom: 8px;
-    }
+      .pipeline-label-input {
+        font-size: 0.95em;
+        padding: 0.35em 0.45em;
+        border: 1px solid #ccc;
+        border-radius: 4px;
+      }
 
-    .ppStatus {
-      font-size: .95em;
-      color: #444;
-      margin: 8px 0 12px;
-    }
+      .pipeline-card button {
+        font-size: 0.85em;
+        padding: 0.35em 0.6em;
+        margin-right: 0;
+      }
 
-    .ppBar {
-      height: 8px;
-      background: #eee;
-      border-radius: 9999px;
-      overflow: hidden;
-    }
+      .pipeline-empty {
+        color: #666;
+        font-size: 0.9em;
+        padding: 0.5em 0.25em;
+        text-align: center;
+      }
 
-    .ppBarInner {
-      height: 100%;
-      width: 0%;
-      background: #4c8bf5;
-      transition: width .2s ease;
-    }
+      .pipeline-inspector {
+        border-top: 1px solid #ddd;
+        padding: 0.9em 1em;
+        background: #fff;
+      }
 
-    .ppActions {
-      display: flex;
-      justify-content: flex-end;
-      gap: .5em;
-      margin-top: 10px;
-    }
+      .pipeline-inspector.hidden {
+        display: none;
+      }
 
-    .hidden {
-      display: none !important;
-    }
-  </style>
-</head>
+      .pipeline-inspector h3 {
+        margin: 0 0 0.6em 0;
+        font-size: 1em;
+      }
 
-<body>
-  <header>
-    <span>Seismic Wiggle Viewer</span>
-    <a href="/upload">Open SEG-Y</a>
-  </header>
-  <input type="hidden" id="file_id" />
-  <div id="mainContent">
-    <div id="viewerColumn">
-      <div id="controls">
-        <label for="key1_slider">key1 value:</label>
-        <input type="range" id="key1_slider" min="0" max="10000" value="0" step="1" oninput="onKey1Input()"
-          onchange="onKey1Change()" />
-        <input type="number" id="key1_val_display" value="0" min="0" max="10000" step="1" style="width: 60px;"
-          onchange="syncSliderWithInput(); fetchAndPlot()" />
-        <button onclick="fetchAndPlot()">Plot</button>
-        <button id="pickModeBtn" onclick="togglePickMode()">Pick Mode: OFF</button>
-        <select id="layerSelect" onchange="drawSelectedLayer()">
-          <option value="raw" selected>raw</option>
-        </select>
-        <label style="margin-left:8px">Normalization:
-          <select id="scalingMode" onchange="onScalingChange()">
-            <option value="amax" selected>AMAX</option>
-            <option value="tracewise">Tracewise</option>
+      .pipeline-inspector form {
+        display: flex;
+        flex-direction: column;
+        gap: 0.6em;
+      }
+
+      .pipeline-inspector label {
+        display: flex;
+        flex-direction: column;
+        gap: 0.3em;
+        font-size: 0.85em;
+      }
+
+      .pipeline-inspector input,
+      .pipeline-inspector select {
+        font-size: 0.95em;
+        padding: 0.35em 0.45em;
+        border: 1px solid #ccc;
+        border-radius: 4px;
+      }
+
+      .pipeline-inspector-actions {
+        display: flex;
+        justify-content: flex-end;
+        gap: 0.5em;
+        margin-top: 0.4em;
+      }
+
+      /* Pipeline progress overlay */
+      #ppOverlay {
+        position: fixed;
+        inset: 0;
+        background: rgba(0, 0, 0, 0.25);
+        display: none;
+        align-items: center;
+        justify-content: center;
+        z-index: 9999;
+      }
+
+      #ppOverlay.show {
+        display: flex;
+      }
+
+      .ppCard {
+        min-width: 320px;
+        max-width: 90vw;
+        background: #fff;
+        border: 1px solid #e3e3e3;
+        border-radius: 10px;
+        box-shadow: 0 10px 30px rgba(0, 0, 0, 0.15);
+        padding: 16px 18px;
+        color: #222;
+      }
+
+      .ppTitle {
+        font-weight: 700;
+        margin-bottom: 8px;
+      }
+
+      .ppStatus {
+        font-size: 0.95em;
+        color: #444;
+        margin: 8px 0 12px;
+      }
+
+      .ppBar {
+        height: 8px;
+        background: #eee;
+        border-radius: 9999px;
+        overflow: hidden;
+      }
+
+      .ppBarInner {
+        height: 100%;
+        width: 0%;
+        background: #4c8bf5;
+        transition: width 0.2s ease;
+      }
+
+      .ppActions {
+        display: flex;
+        justify-content: flex-end;
+        gap: 0.5em;
+        margin-top: 10px;
+      }
+
+      .hidden {
+        display: none !important;
+      }
+    </style>
+  </head>
+
+  <body>
+    <header>
+      <span>Seismic Wiggle Viewer</span>
+      <a href="/upload">Open SEG-Y</a>
+    </header>
+    <input type="hidden" id="file_id" />
+    <div id="mainContent">
+      <div id="viewerColumn">
+        <div id="controls">
+          <label for="key1_slider">key1 value:</label>
+          <input
+            type="range"
+            id="key1_slider"
+            min="0"
+            max="10000"
+            value="0"
+            step="1"
+            oninput="onKey1Input()"
+            onchange="onKey1Change()"
+          />
+          <input
+            type="number"
+            id="key1_val_display"
+            value="0"
+            min="0"
+            max="10000"
+            step="1"
+            style="width: 60px"
+            onchange="
+              syncSliderWithInput();
+              fetchAndPlot();
+            "
+          />
+          <button onclick="fetchAndPlot()">Plot</button>
+          <button id="pickModeBtn" onclick="togglePickMode()">
+            Pick Mode: OFF
+          </button>
+          <select id="layerSelect" onchange="drawSelectedLayer()">
+            <option value="raw" selected>raw</option>
           </select>
-        </label>
-        <label style="margin-left:8px">σmax (ms):
-          <input id="sigma_ms_max" type="number" value="20" step="1" min="1" style="width:5em"
-            oninput="onSigmaChange()">
-        </label>
-        <label style="margin-left:8px">Pick:
-          <select id="pick_method" onchange="onPickMethodChange()">
-            <option value="argmax" selected>argmax</option>
-            <option value="expectation">expectation</option>
-          </select>
-        </label>
-        <label style="margin-left:8px">Snap:
-          <select id="snap_mode" onchange="localStorage.setItem('snap_mode', this.value)">
-            <option value="none" selected>none</option>
-            <option value="peak">peak ↑</option>
-            <option value="trough">trough ↓</option>
-            <option value="rise">rise ⇑</option>
-          </select>
-        </label>
-        <label style="margin-left:8px">Subsample:
-          <select id="snap_refine" onchange="localStorage.setItem('snap_refine', this.value)">
-            <option value="none" selected>none</option>
-            <option value="parabolic">parabolic (peak/trough)</option>
-            <option value="zc">zero-cross (rise)</option>
-          </select>
-        </label>
-        <label>±ms:
-          <input id="snap_ms" type="number" value="4" step="0.5" style="width:4.2em"
-            oninput="localStorage.setItem('snap_ms', this.value)">
-        </label>
-        <label><input type="checkbox" id="showFbPred"
-            onchange="localStorage.setItem('showFbPred', this.checked); drawSelectedLayer(renderedStart, renderedEnd)">Show
-          FB
-          predicted</label>
+          <label style="margin-left: 8px"
+            >Normalization:
+            <select id="scalingMode" onchange="onScalingChange()">
+              <option value="amax" selected>AMAX</option>
+              <option value="tracewise">Tracewise</option>
+            </select>
+          </label>
+          <label style="margin-left: 8px"
+            >σmax (ms):
+            <input
+              id="sigma_ms_max"
+              type="number"
+              value="20"
+              step="1"
+              min="1"
+              style="width: 5em"
+              oninput="onSigmaChange()"
+            />
+          </label>
+          <label style="margin-left: 8px"
+            >Pick:
+            <select id="pick_method" onchange="onPickMethodChange()">
+              <option value="argmax" selected>argmax</option>
+              <option value="expectation">expectation</option>
+            </select>
+          </label>
+          <label style="margin-left: 8px"
+            >Snap:
+            <select
+              id="snap_mode"
+              onchange="localStorage.setItem('snap_mode', this.value)"
+            >
+              <option value="none" selected>none</option>
+              <option value="peak">peak ↑</option>
+              <option value="trough">trough ↓</option>
+              <option value="rise">rise ⇑</option>
+            </select>
+          </label>
+          <label style="margin-left: 8px"
+            >Subsample:
+            <select
+              id="snap_refine"
+              onchange="localStorage.setItem('snap_refine', this.value)"
+            >
+              <option value="none" selected>none</option>
+              <option value="parabolic">parabolic (peak/trough)</option>
+              <option value="zc">zero-cross (rise)</option>
+            </select>
+          </label>
+          <label
+            >±ms:
+            <input
+              id="snap_ms"
+              type="number"
+              value="4"
+              step="0.5"
+              style="width: 4.2em"
+              oninput="localStorage.setItem('snap_ms', this.value)"
+            />
+          </label>
+          <label
+            ><input
+              type="checkbox"
+              id="showFbPred"
+              onchange="
+                localStorage.setItem('showFbPred', this.checked);
+                drawSelectedLayer(renderedStart, renderedEnd);
+              "
+            />Show FB predicted</label
+          >
 
-        <button id="predictFbBtn" onclick="predictFromFb()">Predict from FB</button>
-        <button type="button" id="export-npy-all-key1" onclick="exportAllPickIndexMatrixNpz()">Export manual picks (.npz)</button>
-        <label for="gain">Gain:</label>
-        <input type="range" id="gain" min="0.1" max="5" step="0.1" value="1" oninput="onGainChange()" />
-        <span id="gain_display">1×</span>
-        <label style="margin-left:8px">Wiggle threshold:
-        <input id="wiggle_density" type="number" min="0.02" max="0.30" step="0.01" value="0.20"
-          oninput="onWiggleDensityChange()">
-        </label>
-        <label for="colormap">Colormap:</label>
-        <select id="colormap" onchange="onColormapChange()">
-          <option value="Greys">Greys</option>
-          <option value="RdBu">RdBu</option>
-          <option value="BWR">BWR</option>
-          <option value="Cividis">Cividis</option>
-          <option value="Jet">Jet</option>
-        </select>
-        <label><input type="checkbox" id="cmReverse" onchange="onColormapChange()">reverse</label>
-      </div>
-      <div id="plotViewport">
-        <div id="plot"></div>
-        <div id="windowLoadingOverlay" aria-live="polite" aria-atomic="true">
-          <div class="windowLoadingBox">
-            <span class="windowLoadingSpinner" aria-hidden="true"></span>
-            <span id="windowLoadingMessage">Loading window...</span>
-          </div>
+          <button id="predictFbBtn" onclick="predictFromFb()">
+            Predict from FB
+          </button>
+          <button
+            type="button"
+            id="export-npy-all-key1"
+            onclick="exportAllPickIndexMatrixNpz()"
+          >
+            Export manual picks (.npz)
+          </button>
+          <select id="import-npz-all-mode" style="margin-left: 4px">
+            <option value="replace" selected>replace</option>
+            <option value="merge">merge</option>
+          </select>
+          <input type="file" id="import-npz-all-key1" accept=".npz" />
+          <button
+            type="button"
+            id="import-npy-all-key1"
+            onclick="importAllPickIndexMatrixNpz()"
+          >
+            Import manual picks (.npz)
+          </button>
+          <label for="gain">Gain:</label>
+          <input
+            type="range"
+            id="gain"
+            min="0.1"
+            max="5"
+            step="0.1"
+            value="1"
+            oninput="onGainChange()"
+          />
+          <span id="gain_display">1×</span>
+          <label style="margin-left: 8px"
+            >Wiggle threshold:
+            <input
+              id="wiggle_density"
+              type="number"
+              min="0.02"
+              max="0.30"
+              step="0.01"
+              value="0.20"
+              oninput="onWiggleDensityChange()"
+            />
+          </label>
+          <label for="colormap">Colormap:</label>
+          <select id="colormap" onchange="onColormapChange()">
+            <option value="Greys">Greys</option>
+            <option value="RdBu">RdBu</option>
+            <option value="BWR">BWR</option>
+            <option value="Cividis">Cividis</option>
+            <option value="Jet">Jet</option>
+          </select>
+          <label
+            ><input
+              type="checkbox"
+              id="cmReverse"
+              onchange="onColormapChange()"
+            />reverse</label
+          >
         </div>
-      </div>
-    </div>
-    <aside id="pipelinePanel">
-      <div class="pipeline-header">
-        <span>Pipeline</span>
-        <div class="pipeline-actions">
-          <button type="button" id="pipelineRunButton">▶ Run</button>
-          <div class="pipeline-add">
-            <button type="button" id="pipelineAddButton">+ Add Step ▾</button>
-            <div class="pipeline-add-menu" id="pipelineAddMenu">
-              <button type="button" data-step="bandpass">Bandpass</button>
-              <button type="button" data-step="denoise">Denoise</button>
+        <div id="plotViewport">
+          <div id="plot"></div>
+          <div id="windowLoadingOverlay" aria-live="polite" aria-atomic="true">
+            <div class="windowLoadingBox">
+              <span class="windowLoadingSpinner" aria-hidden="true"></span>
+              <span id="windowLoadingMessage">Loading window...</span>
             </div>
           </div>
         </div>
       </div>
-      <div id="pipelineCards"></div>
-      <div id="pipelineInspector" class="pipeline-inspector hidden">
-        <h3 id="pipelineInspectorTitle">Inspector</h3>
-        <form id="pipelineInspectorForm">
-          <div id="pipelineInspectorFields"></div>
-          <div class="pipeline-inspector-actions">
-            <button type="button" id="pipelineInspectorClose">Close</button>
-            <button type="submit" id="pipelineInspectorSave">Save</button>
+      <aside id="pipelinePanel">
+        <div class="pipeline-header">
+          <span>Pipeline</span>
+          <div class="pipeline-actions">
+            <button type="button" id="pipelineRunButton">▶ Run</button>
+            <div class="pipeline-add">
+              <button type="button" id="pipelineAddButton">+ Add Step ▾</button>
+              <div class="pipeline-add-menu" id="pipelineAddMenu">
+                <button type="button" data-step="bandpass">Bandpass</button>
+                <button type="button" data-step="denoise">Denoise</button>
+              </div>
+            </div>
           </div>
-        </form>
-      </div>
-    </aside>
-  </div>
-  <script type="module" src="/static/assets/main.js"></script>
-  <script src="/static/api.js"></script>
-  <script src="/static/pipeline/events.js"></script>
-  <script src="/static/pipeline/progressOverlay.js"></script>
-  <script src="/static/pipeline/storage.js"></script>
-  <script src="/static/pipeline/state.js"></script>
-  <script src="/static/pipeline/render/cards.js"></script>
-  <script src="/static/pipeline/render/inspector.js"></script>
-  <script src="/static/pipeline/run.js"></script>
-  <script src="/static/pipeline/index.js"></script>
-  <script src="/static/pipeline_ui.js"></script>
-  <script type="module" src="/static/viewer/bootstrap.js"></script>
-  <script type="module" src="/static/viewer/seis_heatmap_globals.js"></script>
-  <script src="/static/viewer/restyle_only.js"></script>
-  <script src="/static/viewer/legacy_globals.js"></script>
-  <script src="/static/viewer/picks_ops.js"></script>
-  <script src="/static/viewer/window_render.js"></script>
-  <script src="/static/viewer/window_fetch.js"></script>
-  <script src="/static/viewer/viewer_legacy.js"></script>
-  <div id="ppOverlay">
-    <div class="ppCard">
-      <div class="ppTitle">Pipeline running…</div>
-      <div id="ppStatus" class="ppStatus">Preparing…</div>
-      <div class="ppBar">
-        <div id="ppBarInner" class="ppBarInner"></div>
-      </div>
-      <div class="ppActions">
-        <button id="ppCancelBtn" type="button">Cancel</button>
+        </div>
+        <div id="pipelineCards"></div>
+        <div id="pipelineInspector" class="pipeline-inspector hidden">
+          <h3 id="pipelineInspectorTitle">Inspector</h3>
+          <form id="pipelineInspectorForm">
+            <div id="pipelineInspectorFields"></div>
+            <div class="pipeline-inspector-actions">
+              <button type="button" id="pipelineInspectorClose">Close</button>
+              <button type="submit" id="pipelineInspectorSave">Save</button>
+            </div>
+          </form>
+        </div>
+      </aside>
+    </div>
+    <script type="module" src="/static/assets/main.js"></script>
+    <script src="/static/api.js"></script>
+    <script src="/static/pipeline/events.js"></script>
+    <script src="/static/pipeline/progressOverlay.js"></script>
+    <script src="/static/pipeline/storage.js"></script>
+    <script src="/static/pipeline/state.js"></script>
+    <script src="/static/pipeline/render/cards.js"></script>
+    <script src="/static/pipeline/render/inspector.js"></script>
+    <script src="/static/pipeline/run.js"></script>
+    <script src="/static/pipeline/index.js"></script>
+    <script src="/static/pipeline_ui.js"></script>
+    <script type="module" src="/static/viewer/bootstrap.js"></script>
+    <script type="module" src="/static/viewer/seis_heatmap_globals.js"></script>
+    <script src="/static/viewer/restyle_only.js"></script>
+    <script src="/static/viewer/legacy_globals.js"></script>
+    <script src="/static/viewer/picks_ops.js"></script>
+    <script src="/static/viewer/window_render.js"></script>
+    <script src="/static/viewer/window_fetch.js"></script>
+    <script src="/static/viewer/viewer_legacy.js"></script>
+    <div id="ppOverlay">
+      <div class="ppCard">
+        <div class="ppTitle">Pipeline running…</div>
+        <div id="ppStatus" class="ppStatus">Preparing…</div>
+        <div class="ppBar">
+          <div id="ppBarInner" class="ppBarInner"></div>
+        </div>
+        <div class="ppActions">
+          <button id="ppCancelBtn" type="button">Cancel</button>
+        </div>
       </div>
     </div>
-  </div>
-</body>
-
+  </body>
 </html>

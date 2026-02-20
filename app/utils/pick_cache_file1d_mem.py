@@ -76,6 +76,35 @@ def set_by_traceseq(
     del mm
 
 
+def clear_all(file_name: str, ntraces: int) -> None:
+    mm = _open(file_name, ntraces, 'r+')
+    mm[:] = NAN
+    mm.flush()
+    del mm
+
+
+def set_many_by_traceseq(
+    file_name: str, ntraces: int, trace_seq_arr, time_s_arr
+) -> int:
+    idx = np.asarray(trace_seq_arr, dtype=np.int64)
+    vals = np.asarray(time_s_arr, dtype=np.float32)
+    if idx.ndim != 1:
+        raise RuntimeError('trace_seq_arr must be 1D')
+    if vals.ndim != 1:
+        raise RuntimeError('time_s_arr must be 1D')
+    if idx.size != vals.size:
+        raise RuntimeError('trace_seq_arr and time_s_arr must have the same length')
+    if idx.size == 0:
+        return 0
+    if np.any((idx < 0) | (idx >= ntraces)):
+        raise RuntimeError('trace_seq_arr contains out-of-range index')
+    mm = _open(file_name, ntraces, 'r+')
+    mm[idx] = vals
+    mm.flush()
+    del mm
+    return int(idx.size)
+
+
 def clear_by_traceseq(file_name: str, ntraces: int, trace_seq: int) -> None:
     if not (0 <= trace_seq < ntraces):
         return

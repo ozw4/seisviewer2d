@@ -169,6 +169,17 @@ ROUTES: list[dict[str, object]] = [
         'expected': {404},
     },
     {
+        'method': 'POST',
+        'path': '/import_manual_picks_all_npz',
+        'params': {
+            'file_id': 'missing',
+            'key1_byte': 189,
+            'key2_byte': 193,
+            'mode': 'replace',
+        },
+        'expected': {422, 404},
+    },
+    {
         'method': 'DELETE',
         'path': '/picks',
         'params': {
