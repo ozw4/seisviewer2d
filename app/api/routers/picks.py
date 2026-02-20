@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 import re
 import tempfile
-from datetime import UTC, datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Annotated
 
@@ -141,7 +141,7 @@ async def export_manual_picks_npz(
         'n_samples': np.int64(n_samples),
         'dt': np.float64(dt),
         'format_version': np.int64(1),
-        'exported_at': np.asarray(datetime.now(UTC).isoformat()),
+        'exported_at': np.asarray(datetime.now(timezone.utc).isoformat()),
         'export_app': np.asarray('seisviewer2d'),
         'source_hint': np.asarray(str(file_name)),
     }
