@@ -15,8 +15,8 @@ from app.api._helpers import get_state
 from app.api.schemas import PipelineSpec
 from app.core.state import AppState
 from app.services.fbpick_support import (
+    DEFAULT_FBPICK_MODEL_ID,
     OFFSET_BYTE_FIXED,
-    USE_FBPICK_OFFSET,
     _maybe_attach_fbpick_offsets,
 )
 from app.services.pipeline_taps import (
@@ -24,7 +24,7 @@ from app.services.pipeline_taps import (
     get_section_and_meta_from_pipeline_tap,
 )
 from app.services.reader import coerce_section_f32, get_reader
-from app.utils.fbpick import _MODEL_PATH as FBPICK_MODEL_PATH
+from app.utils.fbpick_models import model_version, resolve_model_path
 from app.utils.pipeline import apply_pipeline
 from app.utils.segy_meta import get_dt_for_file
 
@@ -58,21 +58,30 @@ class FbpickPredictRequest(BaseModel):
     key2_byte: int = 193
     pipeline_key: str | None = None
     tap_label: str | None = None
+    model_id: str | None = None
     method: Literal['argmax', 'expectation'] = 'argmax'
     sigma_ms_max: float = Field(
         gt=0, description='Standard deviation gate in milliseconds'
     )
 
 
-def _model_version() -> str:
-    path = Path(FBPICK_MODEL_PATH)
-    if not path.exists():
-        return 'missing'
-    try:
-        stat = path.stat()
-    except OSError:
-        return path.name
-    return f'{path.name}:{stat.st_mtime_ns}'
+@dataclass
+class _ModelSelection:
+    model_id: str
+    model_path: Path
+    model_ver: str
+    uses_offset: bool
+
+
+def _resolve_model_selection(model_id: str | None) -> _ModelSelection:
+    path = resolve_model_path(model_id, require_exists=True)
+    chosen_id = DEFAULT_FBPICK_MODEL_ID if model_id is None else model_id
+    return _ModelSelection(
+        model_id=chosen_id,
+        model_path=path,
+        model_ver=model_version(path),
+        uses_offset='offset' in chosen_id.lower(),
+    )
 
 
 @dataclass
@@ -103,11 +112,11 @@ def _resolve_dt(file_id: str, meta: dict[str, Any] | None) -> float:
 
 
 def _compute_probability_map(
-    req: FbpickPredictRequest, *, state: AppState
+    req: FbpickPredictRequest,
+    *,
+    state: AppState,
+    model_sel: _ModelSelection,
 ) -> _ProbabilityPayload:
-    if not Path(FBPICK_MODEL_PATH).exists():
-        raise HTTPException(status_code=409, detail='FB pick model weights not found')
-
     pipeline_key = req.pipeline_key
     tap_label = req.tap_label
     if (pipeline_key is None) ^ (tap_label is None):
@@ -116,7 +125,7 @@ def _compute_probability_map(
             detail='pipeline_key and tap_label must be provided together',
         )
 
-    forced_offset_byte = OFFSET_BYTE_FIXED if USE_FBPICK_OFFSET else None
+    forced_offset_byte = OFFSET_BYTE_FIXED if model_sel.uses_offset else None
     reader = get_reader(req.file_id, req.key1_byte, req.key2_byte, state=state)
 
     meta_source = getattr(reader, 'meta', None)
@@ -133,7 +142,7 @@ def _compute_probability_map(
                 key2_byte=req.key2_byte,
                 pipeline_key=pipeline_key,
                 tap_label=tap_label,
-                offset_byte=forced_offset_byte if USE_FBPICK_OFFSET else None,
+                offset_byte=forced_offset_byte,
                 state=state,
             )
         except PipelineTapNotFoundError as exc:
@@ -159,6 +168,7 @@ def _compute_probability_map(
                     'tile': _DEFAULT_TILE,
                     'overlap': _DEFAULT_OVERLAP,
                     'amp': _DEFAULT_AMP,
+                    'model_id': model_sel.model_id,
                 },
             }
         ]
@@ -171,7 +181,8 @@ def _compute_probability_map(
             spec=spec,
             reader=reader,
             key1=req.key1,
-            offset_byte=forced_offset_byte if USE_FBPICK_OFFSET else None,
+            offset_byte=forced_offset_byte,
+            section_shape=(int(section.shape[0]), int(section.shape[1])),
         )
 
     out = apply_pipeline(section, spec=spec, meta=meta, taps=None)
@@ -188,14 +199,28 @@ def _compute_probability_map(
 def _load_probability_map(
     req: FbpickPredictRequest, *, state: AppState
 ) -> _ProbabilityPayload:
-    key = (req.file_id, req.key1, req.pipeline_key, req.tap_label, _model_version())
+    model_sel = _resolve_model_selection(req.model_id)
+    forced_offset_byte = OFFSET_BYTE_FIXED if model_sel.uses_offset else None
+    key = (
+        req.file_id,
+        req.key1,
+        req.pipeline_key,
+        req.tap_label,
+        model_sel.model_id,
+        model_sel.model_ver,
+        int(_DEFAULT_TILE[0]),
+        int(_DEFAULT_TILE[1]),
+        int(_DEFAULT_OVERLAP),
+        bool(_DEFAULT_AMP),
+        forced_offset_byte,
+    )
     if _last_prob_state.key == key and _last_prob_state.value is not None:
         return _ProbabilityPayload(
             prob=_last_prob_state.value,
             dt=float(_last_prob_state.dt),
             source=_last_prob_state.source or 'unknown',
         )
-    payload = _compute_probability_map(req, state=state)
+    payload = _compute_probability_map(req, state=state, model_sel=model_sel)
     _last_prob_state.key = key
     _last_prob_state.value = payload.prob
     _last_prob_state.dt = payload.dt

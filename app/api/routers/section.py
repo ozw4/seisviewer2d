@@ -16,7 +16,7 @@ from app.api.baselines import (
     get_or_create_raw_baseline,
 )
 from app.services.errors import DomainError
-from app.services.fbpick_support import OFFSET_BYTE_FIXED, USE_FBPICK_OFFSET
+from app.services.fbpick_support import DEFAULT_FBPICK_MODEL_ID, OFFSET_BYTE_FIXED
 from app.services.pipeline_taps import (
     PipelineTapNotFoundError,
     get_section_from_pipeline_tap,
@@ -249,7 +249,8 @@ def get_section_window_bin(
     mode = mode.lower()
     if mode not in {'amax', 'tracewise'}:
         raise HTTPException(status_code=400, detail='Unsupported scaling mode')
-    forced_offset_byte = OFFSET_BYTE_FIXED if USE_FBPICK_OFFSET else offset_byte
+    uses_offset = "offset" in DEFAULT_FBPICK_MODEL_ID.lower()
+    forced_offset_byte = OFFSET_BYTE_FIXED if uses_offset else offset_byte
     cache_key = _build_window_section_cache_key(
         file_id=file_id,
         key1=key1,

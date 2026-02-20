@@ -87,3 +87,60 @@ def test_invalid_probability_map_rejected(client, monkeypatch, prob):
         },
     )
     assert res.status_code == 422
+
+
+def test_predict_accepts_model_id(client, monkeypatch):
+    prob = np.array([[0.0, 1.0, 0.0]], dtype=np.float32)
+    _set_prob(monkeypatch, prob)
+
+    res = client.post(
+        '/fbpick_predict',
+        json={
+            'file_id': 'abc',
+            'key1': 1,
+            'model_id': 'fbpick_demo.pth',
+            'method': 'argmax',
+            'sigma_ms_max': 5.0,
+        },
+    )
+    assert res.status_code == 200
+    assert len(res.json()['picks']) == 1
+
+
+def test_predict_offset_model_returns_422_without_offsets(client, monkeypatch):
+    class _View:
+        def __init__(self):
+            self.arr = np.ones((2, 3), dtype=np.float32)
+            self.scale = 1.0
+
+    class _Reader:
+        def __init__(self):
+            self.meta = {'dt': 0.004}
+
+        def get_section(self, _key1):
+            return _View()
+
+    monkeypatch.setattr(
+        fbpick_predict_mod,
+        '_resolve_model_selection',
+        lambda _model_id: fbpick_predict_mod._ModelSelection(
+            model_id='fbpick_offset_demo.pth',
+            model_path=fbpick_predict_mod.Path('model/fbpick_offset_demo.pth'),
+            model_ver='fbpick_offset_demo.pth:1',
+            uses_offset=True,
+        ),
+    )
+    monkeypatch.setattr(fbpick_predict_mod, 'get_reader', lambda *a, **k: _Reader())
+    monkeypatch.setattr(fbpick_predict_mod, 'get_dt_for_file', lambda _fid: 0.004)
+
+    res = client.post(
+        '/fbpick_predict',
+        json={
+            'file_id': 'abc',
+            'key1': 1,
+            'model_id': 'fbpick_offset_demo.pth',
+            'method': 'argmax',
+            'sigma_ms_max': 5.0,
+        },
+    )
+    assert res.status_code == 422

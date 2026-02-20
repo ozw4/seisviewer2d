@@ -10,6 +10,7 @@ import torch
 from .bandpass import bandpass_np
 from .denoise import denoise_tensor
 from .fbpick import infer_prob_map
+from .fbpick_models import model_version, resolve_model_path
 
 
 class Transform(Protocol):
@@ -106,6 +107,13 @@ def op_fbpick(x: np.ndarray, *, params: dict, meta: dict) -> dict:
         offsets = meta.get("offsets")
     if offsets is not None:
         kwargs["offsets"] = offsets
+
+    model_id = params.get("model_id") if isinstance(params, dict) else None
+    if model_id is not None:
+        model_path = resolve_model_path(model_id, require_exists=True)
+        kwargs["model_path"] = model_path
+        kwargs["uses_offset"] = "offset" in model_path.name.lower()
+        _ = model_version(model_path)
 
     prob = infer_prob_map(arr, **kwargs)
     return {"prob": prob}

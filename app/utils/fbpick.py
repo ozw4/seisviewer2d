@@ -10,6 +10,7 @@ import numpy as np
 import torch
 import torch.nn.functional as torch_nn_func
 
+from app.utils.fbpick_models import resolve_model_path
 from app.utils.signal_utils import zscore_per_trace_np
 
 from .model import NetAE
@@ -23,6 +24,7 @@ _MODEL_PATH = (
     Path(__file__).resolve().parents[2] / 'model' / 'fbpick_edgenext_small.pth'
 )
 _MODEL: tuple[torch.nn.Module, torch.device] | None = None
+_MODEL_KEY: str | None = None
 _MODEL_LOCK = threading.Lock()
 
 
@@ -34,10 +36,13 @@ def _device() -> torch.device:
     return torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
 
-def _load_model() -> tuple[torch.nn.Module, torch.device]:
+def _load_model(
+    model_path: Path,
+    *,
+    uses_offset: bool,
+) -> tuple[torch.nn.Module, torch.device]:
     device = _device()
 
-    use_offset = 'offset' in _MODEL_PATH.name
     model = NetAE(
         backbone='edgenext_small.usi_in1k',
         pretrained=False,
@@ -45,11 +50,11 @@ def _load_model() -> tuple[torch.nn.Module, torch.device]:
         pre_stages=2,
         pre_stage_strides=((1, 1), (1, 2)),
     )
-    if use_offset:
+    if uses_offset:
         inflate_input_convs_to_2ch(model, verbose=True, init_mode='zero')
 
-    logger.info('Loading fbpick model from %s (device=%s)', _MODEL_PATH, device)
-    state = torch.load(_MODEL_PATH, map_location='cpu', weights_only=False)
+    logger.info('Loading fbpick model from %s (device=%s)', model_path, device)
+    state = torch.load(model_path, map_location='cpu', weights_only=False)
     if isinstance(state, dict) and 'model_ema' in state:
         state = state['model_ema']
     model.load_state_dict(state, strict=True)
@@ -57,14 +62,27 @@ def _load_model() -> tuple[torch.nn.Module, torch.device]:
     return model, device
 
 
-def get_fbpick_model() -> tuple[torch.nn.Module, torch.device]:
+def get_fbpick_model(
+    model_path: Path | None = None,
+    *,
+    uses_offset: bool | None = None,
+) -> tuple[torch.nn.Module, torch.device]:
     """Return the singleton fbpick model and device (lazy-loaded)."""
-    global _MODEL
-    if _MODEL is not None:
+    global _MODEL, _MODEL_KEY
+    active_model_path = _MODEL_PATH if model_path is None else Path(model_path)
+    active_uses_offset = 'offset' in active_model_path.name.lower()
+    if uses_offset is not None:
+        logger.warning(
+            'uses_offset argument is ignored; filename rule is used for %s',
+            active_model_path.name,
+        )
+    key = str(active_model_path)
+    if _MODEL is not None and _MODEL_KEY == key:
         return _MODEL
     with _MODEL_LOCK:
-        if _MODEL is None:
-            _MODEL = _load_model()
+        if _MODEL is None or _MODEL_KEY != key:
+            _MODEL = _load_model(active_model_path, uses_offset=active_uses_offset)
+            _MODEL_KEY = key
     return _MODEL
 
 
@@ -173,6 +191,9 @@ def infer_prob_map(
     overlap: int = 32,
     tau: float = 1.0,
     offsets: np.ndarray | None = None,
+    model_path: Path | None = None,
+    uses_offset: bool | None = None,
+    model_id: str | None = None,
 ) -> np.ndarray:
     """Infer first-break probability for ``section``.
 
@@ -181,7 +202,15 @@ def infer_prob_map(
     arr = np.ascontiguousarray(section, dtype=np.float32)
     arr = zscore_per_trace_np(arr, axis=1, eps=1e-6)
     h, w = arr.shape
-    model, device = get_fbpick_model()
+
+    resolved_model_path = model_path
+    if model_id is not None:
+        resolved_model_path = resolve_model_path(model_id, require_exists=True)
+
+    model, device = get_fbpick_model(
+        resolved_model_path,
+        uses_offset=uses_offset,
+    )
 
     if offsets is None:
         x = torch.from_numpy(arr).unsqueeze(0).unsqueeze(0).to(device)

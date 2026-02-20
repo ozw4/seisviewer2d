@@ -9,14 +9,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from app.main import app
-
-
-class _DummyPath:
-    def __init__(self, exists: bool):
-        self._exists = bool(exists)
-
-    def exists(self) -> bool:
-        return self._exists
+from app.services.errors import ConflictError
 
 
 class _DummyView:
@@ -55,7 +48,16 @@ def _fb_env(monkeypatch) -> tuple[TestClient, object]:
     state = app.state.sv
     state.jobs.clear()
     state.fbpick_cache.clear()
-    monkeypatch.setattr(fbpick_mod, 'USE_FBPICK_OFFSET', False, raising=True)
+    monkeypatch.setattr(
+        fbpick_mod,
+        '_resolve_model_selection',
+        lambda model_id: (
+            'fbpick_edgenext_small.pth' if model_id is None else model_id,
+            False,
+            'fbpick_edgenext_small.pth:123',
+        ),
+        raising=True,
+    )
 
     with TestClient(app) as client:
         yield client, fbpick_mod
@@ -67,7 +69,12 @@ def _fb_env(monkeypatch) -> tuple[TestClient, object]:
 def test_fbpick_section_bin_returns_409_when_weights_missing(_fb_env, monkeypatch):
     client, fbpick_mod = _fb_env
     monkeypatch.setattr(
-        fbpick_mod, 'FBPICK_MODEL_PATH', _DummyPath(False), raising=True
+        fbpick_mod,
+        '_resolve_model_selection',
+        lambda _model_id: (_ for _ in ()).throw(
+            ConflictError('FB pick model weights not found')
+        ),
+        raising=True,
     )
 
     r = client.post('/fbpick_section_bin', json={'file_id': 'fid', 'key1': 1})
@@ -77,7 +84,6 @@ def test_fbpick_section_bin_returns_409_when_weights_missing(_fb_env, monkeypatc
 
 def test_fbpick_cache_hit_marks_job_done_and_get_returns_payload(_fb_env, monkeypatch):
     client, fbpick_mod = _fb_env
-    monkeypatch.setattr(fbpick_mod, 'FBPICK_MODEL_PATH', _DummyPath(True), raising=True)
 
     class _NoThread:
         def __init__(self, *a, **k):
@@ -98,6 +104,8 @@ def test_fbpick_cache_hit_marks_job_done_and_get_returns_payload(_fb_env, monkey
         amp=True,
         pipeline_key=None,
         tap_label=None,
+        model_id='fbpick_edgenext_small.pth',
+        model_ver='fbpick_edgenext_small.pth:123',
     )
     payload_gz = _pack_payload(shape=(3, 4), dt=0.002)
     state.fbpick_cache[cache_key] = payload_gz
@@ -124,7 +132,6 @@ def test_fbpick_cache_hit_marks_job_done_and_get_returns_payload(_fb_env, monkey
 
 def test_get_fbpick_section_bin_returns_404_until_done(_fb_env, monkeypatch):
     client, fbpick_mod = _fb_env
-    monkeypatch.setattr(fbpick_mod, 'FBPICK_MODEL_PATH', _DummyPath(True), raising=True)
 
     class _NoOpThread:
         def __init__(self, target, args, daemon):
@@ -148,7 +155,6 @@ def test_get_fbpick_section_bin_returns_404_until_done(_fb_env, monkeypatch):
 
 def test_get_fbpick_section_bin_returns_410_when_payload_missing(_fb_env, monkeypatch):
     client, fbpick_mod = _fb_env
-    monkeypatch.setattr(fbpick_mod, 'FBPICK_MODEL_PATH', _DummyPath(True), raising=True)
 
     class _NoOpThread:
         def __init__(self, target, args, daemon):
@@ -178,7 +184,6 @@ def test_get_fbpick_section_bin_returns_410_when_payload_missing(_fb_env, monkey
 
 def test_fbpick_job_run_produces_gzip_msgpack_with_shape_data_dt(_fb_env, monkeypatch):
     client, fbpick_mod = _fb_env
-    monkeypatch.setattr(fbpick_mod, 'FBPICK_MODEL_PATH', _DummyPath(True), raising=True)
     monkeypatch.setattr(
         fbpick_mod, '_maybe_attach_fbpick_offsets', lambda meta, **k: meta, raising=True
     )
@@ -245,7 +250,6 @@ def test_fbpick_job_run_produces_gzip_msgpack_with_shape_data_dt(_fb_env, monkey
 
 def test_fbpick_pipeline_request_keeps_job_state_array_free(_fb_env, monkeypatch):
     client, fbpick_mod = _fb_env
-    monkeypatch.setattr(fbpick_mod, 'FBPICK_MODEL_PATH', _DummyPath(True), raising=True)
 
     calls = {'count': 0}
 
@@ -293,7 +297,6 @@ def test_fbpick_pipeline_request_keeps_job_state_array_free(_fb_env, monkeypatch
 
 def test_fbpick_pipeline_worker_fetches_tap_and_caches_payload(_fb_env, monkeypatch):
     client, fbpick_mod = _fb_env
-    monkeypatch.setattr(fbpick_mod, 'FBPICK_MODEL_PATH', _DummyPath(True), raising=True)
 
     section = np.asarray([[0.1, 0.2], [0.3, 0.4]], dtype=np.float32)
     tap_calls: list[dict[str, object]] = []
@@ -353,3 +356,90 @@ def test_fbpick_pipeline_worker_fetches_tap_and_caches_payload(_fb_env, monkeypa
 
     gr = client.get('/get_fbpick_section_bin', params={'job_id': job_id})
     assert gr.status_code == 200
+
+
+def test_fbpick_cache_key_isolated_by_model_id(_fb_env, monkeypatch):
+    client, fbpick_mod = _fb_env
+    monkeypatch.setattr(
+        fbpick_mod,
+        '_resolve_model_selection',
+        lambda model_id: (
+            'fbpick_edgenext_small.pth' if model_id is None else model_id,
+            False,
+            f'{model_id}:111',
+        ),
+        raising=True,
+    )
+
+    class _NoOpThread:
+        def __init__(self, target, args, daemon):
+            self._target = target
+            self._args = args
+            self._daemon = daemon
+
+        def start(self):
+            return None
+
+    monkeypatch.setattr(fbpick_mod.threading, 'Thread', _NoOpThread, raising=True)
+
+    r1 = client.post(
+        '/fbpick_section_bin',
+        json={'file_id': 'fid', 'key1': 1, 'model_id': 'fbpick_a.pth'},
+    )
+    r2 = client.post(
+        '/fbpick_section_bin',
+        json={'file_id': 'fid', 'key1': 1, 'model_id': 'fbpick_b.pth'},
+    )
+    assert r1.status_code == 200
+    assert r2.status_code == 200
+    state = fbpick_mod.get_state(app)
+    job1 = state.jobs[r1.json()['job_id']]
+    job2 = state.jobs[r2.json()['job_id']]
+    assert job1['cache_key'] != job2['cache_key']
+
+
+def test_offset_model_enforces_offset_byte_37_in_job_state(_fb_env, monkeypatch):
+    client, fbpick_mod = _fb_env
+    monkeypatch.setattr(
+        fbpick_mod,
+        '_resolve_model_selection',
+        lambda model_id: (str(model_id), True, f'{model_id}:111'),
+        raising=True,
+    )
+
+    class _NoOpThread:
+        def __init__(self, target, args, daemon):
+            self._target = target
+            self._args = args
+            self._daemon = daemon
+
+        def start(self):
+            return None
+
+    monkeypatch.setattr(fbpick_mod.threading, 'Thread', _NoOpThread, raising=True)
+    r = client.post(
+        '/fbpick_section_bin',
+        json={'file_id': 'fid', 'key1': 1, 'model_id': 'fbpick_offset_demo.pth'},
+    )
+    assert r.status_code == 200
+    state = fbpick_mod.get_state(app)
+    job = state.jobs[r.json()['job_id']]
+    assert job.get('offset_byte') == 37
+
+
+def test_fbpick_models_endpoint_lists_models(_fb_env, monkeypatch):
+    client, fbpick_mod = _fb_env
+    monkeypatch.setattr(
+        fbpick_mod,
+        'list_fbpick_models',
+        lambda: [
+            {'id': 'fbpick_edgenext_small.pth', 'uses_offset': False},
+            {'id': 'fbpick_offset_demo.pth', 'uses_offset': True},
+        ],
+        raising=True,
+    )
+    r = client.get('/fbpick_models')
+    assert r.status_code == 200
+    body = r.json()
+    assert body['default_model_id'] == 'fbpick_edgenext_small.pth'
+    assert len(body['models']) == 2

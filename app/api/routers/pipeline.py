@@ -30,8 +30,8 @@ from app.services.pipeline_artifacts import (
 from app.services.in_memory_cleanup import cleanup_in_memory_state
 from app.services.fbpick_support import (
     OFFSET_BYTE_FIXED,
-    USE_FBPICK_OFFSET,
     _maybe_attach_fbpick_offsets,
+    _spec_uses_offset,
 )
 from app.services.pipeline_taps import build_pipeline_tap_cache_key
 from app.services.reader import coerce_section_f32, get_reader
@@ -112,6 +112,7 @@ def _run_pipeline_all_job(
                 reader=reader,
                 key1=key1_value,
                 offset_byte=req.offset_byte,  # already forced by caller
+                section_shape=(int(section.shape[0]), int(section.shape[1])),
             )
 
             out = apply_pipeline(section, spec=req.spec, meta=meta, taps=taps)
@@ -215,7 +216,7 @@ def pipeline_section(
     # None で来ていて、かつ FBPICK モードなら固定オフセットに揃える
     forced_offset_byte = (
         OFFSET_BYTE_FIXED
-        if (USE_FBPICK_OFFSET and offset_byte is None)
+        if (_spec_uses_offset(spec) and offset_byte is None)
         else offset_byte
     )
 
@@ -226,6 +227,7 @@ def pipeline_section(
         key1=key1,
         offset_byte=forced_offset_byte,
         trace_slice=trace_slice,
+        section_shape=(int(section.shape[0]), int(section.shape[1])),
     )
 
     pipe_key = pipeline_key(spec)
@@ -340,7 +342,7 @@ def pipeline_all(
     # pass-through + 同期フォールバック（sectionと同一ロジック）
     forced_offset_byte = (
         OFFSET_BYTE_FIXED
-        if (USE_FBPICK_OFFSET and offset_byte is None)
+        if (_spec_uses_offset(spec) and offset_byte is None)
         else offset_byte
     )
 
