@@ -17,7 +17,7 @@ def _write_min_store(
     store = tmp_path / 'store'
     store.mkdir(parents=True, exist_ok=True)
 
-    # ダミー traces と headers を保存（TraceStoreSectionReader は index.npz を参照しない）
+    # ダミー traces と headers を保存
     n_traces = int(key1s.size)
     traces = np.arange(n_traces * n_samples, dtype=np.float32).reshape(
         n_traces, n_samples
@@ -30,6 +30,7 @@ def _write_min_store(
         key1_values=np.unique(key1s),
         key1_offsets=np.array([], dtype=np.int32),
         key1_counts=np.array([], dtype=np.int32),
+        sorted_to_original=np.arange(n_traces, dtype=np.int64),
     )
 
     meta = {

@@ -65,6 +65,17 @@ def _open(file_name: str, ntraces: int, mode: str = 'r+') -> np.memmap:
     return open_memmap(p, mode=mode, dtype=DTYPE)
 
 
+def open_for_write(file_name: str, ntraces: int) -> np.memmap:
+    return _open(file_name, ntraces, 'r+')
+
+
+def load_all(file_name: str, ntraces: int) -> np.ndarray:
+    mm = _open(file_name, ntraces, 'r')
+    values = np.asarray(mm, dtype=DTYPE).copy()
+    del mm
+    return values
+
+
 def set_by_traceseq(
     file_name: str, ntraces: int, trace_seq: int, time_s: float
 ) -> None:
