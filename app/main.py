@@ -7,6 +7,7 @@ from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 from app.api.routers import (
+    batch_apply_router,
     fbpick_predict_router,
     fbpick_router,
     picks_router,
@@ -35,6 +36,7 @@ app.include_router(section_router)
 app.include_router(fbpick_router)
 app.include_router(fbpick_predict_router)
 app.include_router(pipeline_router)
+app.include_router(batch_apply_router)
 app.include_router(picks_router)
 
 
