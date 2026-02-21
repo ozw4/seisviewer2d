@@ -1,0 +1,441 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Batch Apply</title>
+  <style>
+    :root {
+      --bg-top: #f2f6fb;
+      --bg-bottom: #e7eef7;
+      --ink: #11243a;
+      --muted: #536273;
+      --line: #ccd7e4;
+      --card: #ffffff;
+      --accent: #0f766e;
+      --accent-2: #0b5f58;
+      --warn: #b45309;
+      --danger: #b91c1c;
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      font-family: "Segoe UI", Tahoma, sans-serif;
+      color: var(--ink);
+      background: linear-gradient(180deg, var(--bg-top), var(--bg-bottom));
+      min-height: 100vh;
+    }
+
+    header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 0.9rem 1.2rem;
+      border-bottom: 1px solid var(--line);
+      background: rgba(255, 255, 255, 0.82);
+      backdrop-filter: blur(3px);
+    }
+
+    header h1 {
+      font-size: 1.05rem;
+      margin: 0;
+      letter-spacing: 0.02em;
+    }
+
+    header nav {
+      display: flex;
+      gap: 0.7rem;
+      font-size: 0.92rem;
+    }
+
+    header nav a {
+      color: #0b5f58;
+      text-decoration: none;
+      border: 1px solid #93c5c0;
+      padding: 0.28rem 0.55rem;
+      border-radius: 6px;
+      background: #ecfdf9;
+    }
+
+    main {
+      max-width: 1220px;
+      margin: 0 auto;
+      padding: 1rem;
+      display: grid;
+      gap: 1rem;
+      grid-template-columns: 1fr;
+    }
+
+    @media (min-width: 940px) {
+      main {
+        grid-template-columns: minmax(520px, 1fr) minmax(360px, 0.82fr);
+      }
+    }
+
+    .card {
+      background: var(--card);
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      padding: 1rem;
+      box-shadow: 0 7px 24px rgba(22, 44, 71, 0.06);
+    }
+
+    .card h2 {
+      margin: 0 0 0.75rem 0;
+      font-size: 1rem;
+      letter-spacing: 0.02em;
+    }
+
+    .grid-two {
+      display: grid;
+      grid-template-columns: 1fr;
+      gap: 0.7rem;
+    }
+
+    @media (min-width: 620px) {
+      .grid-two {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+      }
+    }
+
+    .field {
+      display: flex;
+      flex-direction: column;
+      gap: 0.32rem;
+    }
+
+    label {
+      font-size: 0.86rem;
+      color: var(--muted);
+    }
+
+    input,
+    select,
+    button {
+      font-size: 0.92rem;
+      border-radius: 7px;
+      border: 1px solid var(--line);
+      padding: 0.42rem 0.56rem;
+      background: #fff;
+      color: var(--ink);
+    }
+
+    input[type="checkbox"] {
+      width: 1rem;
+      height: 1rem;
+      padding: 0;
+      accent-color: var(--accent);
+    }
+
+    .inline-check {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.42rem;
+      margin-right: 0.9rem;
+      margin-top: 0.22rem;
+      color: var(--ink);
+    }
+
+    fieldset {
+      border: 1px solid var(--line);
+      border-radius: 9px;
+      margin: 0;
+      padding: 0.7rem;
+    }
+
+    legend {
+      font-size: 0.83rem;
+      color: var(--muted);
+      padding: 0 0.3rem;
+    }
+
+    .section-stack {
+      display: flex;
+      flex-direction: column;
+      gap: 0.8rem;
+    }
+
+    .hint {
+      margin: 0.2rem 0 0;
+      font-size: 0.8rem;
+      color: var(--muted);
+    }
+
+    .danger {
+      color: var(--danger);
+      font-weight: 600;
+      font-size: 0.85rem;
+      min-height: 1.1rem;
+    }
+
+    .status-row {
+      display: flex;
+      gap: 0.6rem;
+      align-items: center;
+      flex-wrap: wrap;
+      margin-bottom: 0.7rem;
+    }
+
+    #jobStateBadge {
+      font-size: 0.82rem;
+      border: 1px solid var(--line);
+      border-radius: 999px;
+      padding: 0.16rem 0.58rem;
+      background: #f8fafc;
+    }
+
+    #jobProgress {
+      width: 100%;
+      height: 0.8rem;
+      accent-color: var(--accent);
+    }
+
+    #jobMessage {
+      margin: 0.4rem 0 0;
+      padding: 0.45rem 0.55rem;
+      border-radius: 7px;
+      border: 1px solid #f3d8bd;
+      background: #fff7ed;
+      color: var(--warn);
+      font-size: 0.84rem;
+      white-space: pre-wrap;
+      min-height: 2.3rem;
+    }
+
+    .btn-row {
+      display: flex;
+      gap: 0.55rem;
+      flex-wrap: wrap;
+      margin-bottom: 0.65rem;
+    }
+
+    .primary {
+      background: var(--accent);
+      border-color: var(--accent);
+      color: #fff;
+      font-weight: 600;
+    }
+
+    .primary:disabled {
+      background: #9aa4b2;
+      border-color: #9aa4b2;
+      cursor: not-allowed;
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 0.88rem;
+    }
+
+    th,
+    td {
+      border-bottom: 1px solid #e3e9f1;
+      padding: 0.44rem 0.35rem;
+      text-align: left;
+      vertical-align: top;
+    }
+
+    th {
+      font-size: 0.78rem;
+      color: var(--muted);
+      letter-spacing: 0.02em;
+    }
+
+    #filesEmpty {
+      font-size: 0.85rem;
+      color: var(--muted);
+      margin-top: 0.2rem;
+    }
+
+    .download-link {
+      color: #065f46;
+      text-decoration: none;
+      border: 1px solid #c7e6d7;
+      padding: 0.2rem 0.44rem;
+      border-radius: 6px;
+      background: #f0fdf4;
+      font-size: 0.8rem;
+      display: inline-block;
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>Batch Apply</h1>
+    <nav>
+      <a href="/">Viewer</a>
+      <a href="/upload">Open SEG-Y</a>
+    </nav>
+  </header>
+
+  <main>
+    <section class="card section-stack">
+      <h2>Job Config</h2>
+      <div class="danger" id="formError" role="alert"></div>
+      <form id="batchApplyForm" class="section-stack">
+        <div class="grid-two">
+          <div class="field">
+            <label for="fileIdInput">file_id</label>
+            <input id="fileIdInput" type="text" placeholder="required" />
+            <p class="hint" id="fileNameHint">Dataset: unknown</p>
+          </div>
+          <div class="field">
+            <label for="fbpickModelSelect">FB model</label>
+            <select id="fbpickModelSelect" disabled>
+              <option value="">(loading...)</option>
+            </select>
+            <p class="hint">Only fbpick model selection is supported in this PR.</p>
+          </div>
+          <div class="field">
+            <label for="key1ByteInput">key1_byte</label>
+            <input id="key1ByteInput" type="number" value="189" />
+          </div>
+          <div class="field">
+            <label for="key2ByteInput">key2_byte</label>
+            <input id="key2ByteInput" type="number" value="193" />
+          </div>
+        </div>
+
+        <fieldset>
+          <legend>Targets (Fixed Order: bandpass -> denoise -> fbpick)</legend>
+          <label class="inline-check"><input id="enableBandpass" type="checkbox" /> bandpass</label>
+          <label class="inline-check"><input id="enableDenoise" type="checkbox" checked /> denoise</label>
+          <label class="inline-check"><input id="enableFbpick" type="checkbox" checked /> fbpick</label>
+        </fieldset>
+
+        <fieldset>
+          <legend>Bandpass Params</legend>
+          <div class="grid-two">
+            <div class="field">
+              <label for="bandpassLowHz">low_hz</label>
+              <input id="bandpassLowHz" type="number" value="5" step="0.1" min="0" />
+            </div>
+            <div class="field">
+              <label for="bandpassHighHz">high_hz</label>
+              <input id="bandpassHighHz" type="number" value="60" step="0.1" min="0" />
+            </div>
+            <div class="field">
+              <label for="bandpassTaper">taper</label>
+              <input id="bandpassTaper" type="number" value="0.1" step="0.05" min="0" />
+            </div>
+          </div>
+        </fieldset>
+
+        <fieldset>
+          <legend>Denoise Params</legend>
+          <div class="grid-two">
+            <div class="field">
+              <label for="denoiseChunkH">chunk_h</label>
+              <input id="denoiseChunkH" type="number" value="128" step="1" min="1" />
+            </div>
+            <div class="field">
+              <label for="denoiseOverlap">overlap</label>
+              <input id="denoiseOverlap" type="number" value="32" step="1" min="0" />
+            </div>
+            <div class="field">
+              <label for="denoiseMaskRatio">mask_ratio</label>
+              <input id="denoiseMaskRatio" type="number" value="0.5" step="0.05" min="0" max="1" />
+            </div>
+            <div class="field">
+              <label for="denoiseNoiseStd">noise_std</label>
+              <input id="denoiseNoiseStd" type="number" value="1.0" step="0.1" min="0" />
+            </div>
+            <div class="field">
+              <label for="denoiseMaskNoiseMode">mask_noise_mode</label>
+              <select id="denoiseMaskNoiseMode">
+                <option value="replace" selected>replace</option>
+                <option value="add">add</option>
+              </select>
+            </div>
+            <div class="field">
+              <label for="denoisePassesBatch">passes_batch</label>
+              <input id="denoisePassesBatch" type="number" value="4" step="1" min="1" />
+            </div>
+          </div>
+        </fieldset>
+
+        <fieldset>
+          <legend>Pick Options</legend>
+          <div class="grid-two">
+            <div class="field">
+              <label for="pickMethod">method</label>
+              <select id="pickMethod">
+                <option value="expectation">expectation</option>
+                <option value="argmax" selected>argmax</option>
+              </select>
+            </div>
+            <div class="field">
+              <label for="sigmaMsMax">sigma_ms_max (blank = none)</label>
+              <input id="sigmaMsMax" type="number" placeholder="e.g. 20" step="0.1" min="0" />
+            </div>
+            <div class="field">
+              <label for="snapMode">snap.mode</label>
+              <select id="snapMode">
+                <option value="peak" selected>peak</option>
+                <option value="trough">trough</option>
+                <option value="rise">rise</option>
+              </select>
+            </div>
+            <div class="field">
+              <label for="snapRefine">snap.refine</label>
+              <select id="snapRefine">
+                <option value="none">none</option>
+                <option value="parabolic" selected>parabolic</option>
+                <option value="zc">zc</option>
+              </select>
+            </div>
+            <div class="field">
+              <label for="snapWindowMs">snap.window_ms</label>
+              <input id="snapWindowMs" type="number" value="20" step="0.5" min="0" />
+            </div>
+          </div>
+          <div style="margin-top: 0.45rem;">
+            <label class="inline-check"><input id="subsampleCheck" type="checkbox" /> subsample (argmax)</label>
+            <label class="inline-check"><input id="snapEnabledCheck" type="checkbox" /> snap.enabled</label>
+            <label class="inline-check"><input id="savePicksCheck" type="checkbox" checked /> save_picks</label>
+          </div>
+        </fieldset>
+      </form>
+    </section>
+
+    <section class="section-stack">
+      <section class="card">
+        <h2>Execution</h2>
+        <div class="btn-row">
+          <button class="primary" id="runBtn" type="button">Run Batch Apply</button>
+          <button id="refreshFilesBtn" type="button" disabled>Refresh Files</button>
+        </div>
+        <div class="status-row">
+          <strong>Job:</strong>
+          <span id="currentJobId">-</span>
+          <span id="jobStateBadge">idle</span>
+        </div>
+        <progress id="jobProgress" value="0" max="1"></progress>
+        <pre id="jobMessage"></pre>
+      </section>
+
+      <section class="card">
+        <h2>Artifacts</h2>
+        <div id="filesEmpty">No files yet. Run a job first.</div>
+        <table id="filesTable" hidden>
+          <thead>
+            <tr>
+              <th>Name</th>
+              <th>Size</th>
+              <th>Download</th>
+            </tr>
+          </thead>
+          <tbody id="filesBody"></tbody>
+        </table>
+      </section>
+    </section>
+  </main>
+
+  <script type="module" src="/static/batch_apply.js"></script>
+</body>
+</html>

@@ -61,3 +61,10 @@ async def upload() -> str:
     """Return the upload page."""
     upload_path = STATIC_DIR / 'upload.html'
     return upload_path.read_text(encoding='utf-8')
+
+
+@app.get('/batch', response_class=HTMLResponse)
+async def batch() -> str:
+    """Return the batch apply page."""
+    batch_path = STATIC_DIR / 'batch_apply.html'
+    return batch_path.read_text(encoding='utf-8')
