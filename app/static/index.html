@@ -29,6 +29,13 @@
       align-items: center;
     }
 
+    .headerLinks {
+      display: inline-flex;
+      gap: 0.5em;
+      align-items: center;
+      font-size: 0.8em;
+    }
+
     #mainContent {
       flex: 1;
       display: flex;
@@ -409,7 +416,10 @@
 <body>
   <header>
     <span>Seismic Wiggle Viewer</span>
-    <a href="/upload">Open SEG-Y</a>
+    <div class="headerLinks">
+      <a id="batchApplyLink" href="/batch" target="_blank" rel="noopener" onclick="openBatchApplyPage(event)">Batch Apply</a>
+      <a href="/upload">Open SEG-Y</a>
+    </div>
   </header>
   <input type="hidden" id="file_id" />
   <div id="mainContent">
@@ -464,6 +474,10 @@
             onchange="localStorage.setItem('showFbPred', this.checked); drawSelectedLayer(renderedStart, renderedEnd)">Show
           FB
           predicted</label>
+
+        <label id="fbpick_model_select_label" style="margin-left:8px; display:none;">FB model:
+          <select id="fbpick_model_select" disabled></select>
+        </label>
 
         <button id="predictFbBtn" onclick="predictFromFb()">Predict from FB</button>
         <button type="button" id="export-manual-picks-npz" onclick="exportManualPicksNpz()">Export manual picks (.npz)</button>
@@ -529,6 +543,21 @@
       </div>
     </aside>
   </div>
+  <script>
+    function openBatchApplyPage(event) {
+      if (event) event.preventDefault();
+      const params = new URLSearchParams(window.location.search || '');
+      const fileId = params.get('file_id') || localStorage.getItem('file_id') || '';
+      const key1Byte = params.get('key1_byte') || localStorage.getItem('key1_byte') || '';
+      const key2Byte = params.get('key2_byte') || localStorage.getItem('key2_byte') || '';
+      const target = new URL('/batch', window.location.origin);
+      if (fileId) target.searchParams.set('file_id', fileId);
+      if (key1Byte) target.searchParams.set('key1_byte', key1Byte);
+      if (key2Byte) target.searchParams.set('key2_byte', key2Byte);
+      const opened = window.open(target.toString(), '_blank', 'noopener,noreferrer');
+      if (opened) opened.opener = null;
+    }
+  </script>
   <script type="module" src="/static/assets/main.js"></script>
   <script src="/static/api.js"></script>
   <script src="/static/pipeline/events.js"></script>

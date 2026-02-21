@@ -19,6 +19,12 @@ from app.services.fbpick_support import (
     OFFSET_BYTE_FIXED,
     _maybe_attach_fbpick_offsets,
 )
+from app.services.fbpick_predict_math import (
+    apply_sigma_gate,
+    expectation_idx_and_sigma_ms,
+    pick_index_from_prob,
+    sigma_ms_from_prob,
+)
 from app.services.pipeline_taps import (
     PipelineTapNotFoundError,
     get_section_and_meta_from_pipeline_tap,
@@ -228,32 +234,6 @@ def _load_probability_map(
     return payload
 
 
-def _chunked_expectations(
-    prob: np.ndarray,
-) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
-    n_traces, n_samples = prob.shape
-    indices = np.arange(n_samples, dtype=np.float64)
-    indices_sq = indices * indices
-    sums = np.empty(n_traces, dtype=np.float64)
-    sum_i = np.empty(n_traces, dtype=np.float64)
-    sum_i2 = np.empty(n_traces, dtype=np.float64)
-    for start in range(0, n_traces, _CHUNK_SIZE):
-        end = min(start + _CHUNK_SIZE, n_traces)
-        chunk = prob[start:end]
-        if not np.all(np.isfinite(chunk)):
-            raise HTTPException(
-                status_code=422, detail='Probability map contains NaN or Inf'
-            )
-        sums[start:end] = np.sum(chunk, axis=1, dtype=np.float64)
-        sum_i[start:end] = np.einsum(
-            'ij,j->i', chunk, indices, dtype=np.float64, optimize=True
-        )
-        sum_i2[start:end] = np.einsum(
-            'ij,j->i', chunk, indices_sq, dtype=np.float64, optimize=True
-        )
-    return sums, sum_i, sum_i2
-
-
 def _compute_picks(
     prob: np.ndarray,
     dt: float,
@@ -265,38 +245,22 @@ def _compute_picks(
     n_traces, n_samples = prob.shape
     if n_traces == 0 or n_samples == 0:
         return [], 0.0
-    method_norm = method.lower()
-    if method_norm not in {'argmax', 'expectation'}:
-        raise HTTPException(status_code=422, detail='Unsupported method')
-    sums, sum_i, sum_i2 = _chunked_expectations(prob)
-    if not np.all(np.isfinite(sums)):
-        raise HTTPException(status_code=422, detail='Probability sum invalid')
-    if np.any(sums <= 0):
-        raise HTTPException(
-            status_code=422, detail='Probability mass is zero for a trace'
-        )
-    mu = sum_i / sums
-    second_moment = sum_i2 / sums
-    var = np.maximum(second_moment - mu * mu, 0.0)
-    if not np.all(np.isfinite(mu)) or not np.all(np.isfinite(var)):
-        raise HTTPException(status_code=422, detail='Expectation calculation failed')
-    sigma = np.sqrt(var)
-    dt_ms = dt * 1000.0
-    sigma_ms = sigma * dt_ms
-    mask = sigma_ms <= sigma_ms_max
-    accepted = int(np.count_nonzero(mask))
-    if method_norm == 'expectation':
-        idx = mu
-    else:
-        idx = np.empty(n_traces, dtype=np.float64)
-        for start in range(0, n_traces, _CHUNK_SIZE):
-            end = min(start + _CHUNK_SIZE, n_traces)
-            chunk = prob[start:end]
-            idx[start:end] = np.argmax(chunk, axis=1, keepdims=False)
-    times = idx * dt
+
+    try:
+        if method.lower() == 'expectation':
+            idx, sigma_ms = expectation_idx_and_sigma_ms(prob, dt=dt, chunk=_CHUNK_SIZE)
+        else:
+            idx = pick_index_from_prob(prob, method=method, chunk=_CHUNK_SIZE)
+            sigma_ms = sigma_ms_from_prob(prob, dt=dt, chunk=_CHUNK_SIZE)
+        gated_idx = apply_sigma_gate(idx, sigma_ms, sigma_ms_max=sigma_ms_max)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    accepted = int(np.count_nonzero(np.isfinite(gated_idx)))
+    times = gated_idx * dt
     picks: list[dict[str, float]] = []
-    for trace_idx, keep in enumerate(mask):
-        if keep:
+    for trace_idx in range(n_traces):
+        if np.isfinite(gated_idx[trace_idx]):
             picks.append({'trace': int(trace_idx), 'time': float(times[trace_idx])})
     accepted_ratio = accepted / n_traces if n_traces else 0.0
     return picks, accepted_ratio

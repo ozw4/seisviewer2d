@@ -7,6 +7,7 @@ from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 from app.api.routers import (
+    batch_apply_router,
     fbpick_predict_router,
     fbpick_router,
     picks_router,
@@ -35,6 +36,7 @@ app.include_router(section_router)
 app.include_router(fbpick_router)
 app.include_router(fbpick_predict_router)
 app.include_router(pipeline_router)
+app.include_router(batch_apply_router)
 app.include_router(picks_router)
 
 
@@ -59,3 +61,10 @@ async def upload() -> str:
     """Return the upload page."""
     upload_path = STATIC_DIR / 'upload.html'
     return upload_path.read_text(encoding='utf-8')
+
+
+@app.get('/batch', response_class=HTMLResponse)
+async def batch() -> str:
+    """Return the batch apply page."""
+    batch_path = STATIC_DIR / 'batch_apply.html'
+    return batch_path.read_text(encoding='utf-8')
