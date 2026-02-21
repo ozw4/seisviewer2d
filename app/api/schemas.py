@@ -76,6 +76,24 @@ class PipelineJobStatusResponse(BaseModel):
     message: str
 
 
+class SnapOptions(BaseModel):
+    """Configuration for optional raw-waveform snap refinement."""
+
+    enabled: bool = False
+    mode: Literal['peak', 'trough', 'rise'] = 'peak'
+    refine: Literal['none', 'parabolic', 'zc'] = 'parabolic'
+    window_ms: float = 20.0
+
+
+class PickOptions(BaseModel):
+    """Configuration for predicted-pick generation from probability maps."""
+
+    method: Literal['expectation', 'argmax'] = 'expectation'
+    subsample: bool = False
+    sigma_ms_max: float | None = None
+    snap: SnapOptions = Field(default_factory=SnapOptions)
+
+
 class BatchApplyRequest(BaseModel):
     """Request model for ``/batch/apply``."""
 
@@ -83,6 +101,8 @@ class BatchApplyRequest(BaseModel):
     key1_byte: int = 189
     key2_byte: int = 193
     pipeline_spec: PipelineSpec
+    pick_options: PickOptions = Field(default_factory=PickOptions)
+    save_picks: bool = False
 
 
 class BatchApplyResponse(BaseModel):

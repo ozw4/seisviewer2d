@@ -144,6 +144,7 @@ def test_batch_apply_lifecycle_files_download_and_path_traversal(
         del meta, spec, denoise_taps, fbpick_label
         denoise = np.asarray(section, dtype=np.float32, order='C')
         prob = np.zeros_like(section, dtype=np.float16)
+        prob[:, 0] = np.float16(1.0)
         return denoise, prob
 
     monkeypatch.setattr(batch_apply_service, '_write_job_meta', _gated_write_job_meta)
