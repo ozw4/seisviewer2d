@@ -15,16 +15,22 @@ from app.api._helpers import get_state
 from app.api.schemas import PipelineSpec
 from app.core.state import AppState
 from app.services.fbpick_support import (
+    DEFAULT_FBPICK_MODEL_ID,
     OFFSET_BYTE_FIXED,
-    USE_FBPICK_OFFSET,
     _maybe_attach_fbpick_offsets,
+)
+from app.services.fbpick_predict_math import (
+    apply_sigma_gate,
+    expectation_idx_and_sigma_ms,
+    pick_index_from_prob,
+    sigma_ms_from_prob,
 )
 from app.services.pipeline_taps import (
     PipelineTapNotFoundError,
     get_section_and_meta_from_pipeline_tap,
 )
 from app.services.reader import coerce_section_f32, get_reader
-from app.utils.fbpick import _MODEL_PATH as FBPICK_MODEL_PATH
+from app.utils.fbpick_models import model_version, resolve_model_path
 from app.utils.pipeline import apply_pipeline
 from app.utils.segy_meta import get_dt_for_file
 
@@ -58,21 +64,30 @@ class FbpickPredictRequest(BaseModel):
     key2_byte: int = 193
     pipeline_key: str | None = None
     tap_label: str | None = None
+    model_id: str | None = None
     method: Literal['argmax', 'expectation'] = 'argmax'
     sigma_ms_max: float = Field(
         gt=0, description='Standard deviation gate in milliseconds'
     )
 
 
-def _model_version() -> str:
-    path = Path(FBPICK_MODEL_PATH)
-    if not path.exists():
-        return 'missing'
-    try:
-        stat = path.stat()
-    except OSError:
-        return path.name
-    return f'{path.name}:{stat.st_mtime_ns}'
+@dataclass
+class _ModelSelection:
+    model_id: str
+    model_path: Path
+    model_ver: str
+    uses_offset: bool
+
+
+def _resolve_model_selection(model_id: str | None) -> _ModelSelection:
+    path = resolve_model_path(model_id, require_exists=True)
+    chosen_id = DEFAULT_FBPICK_MODEL_ID if model_id is None else model_id
+    return _ModelSelection(
+        model_id=chosen_id,
+        model_path=path,
+        model_ver=model_version(path),
+        uses_offset='offset' in chosen_id.lower(),
+    )
 
 
 @dataclass
@@ -103,11 +118,11 @@ def _resolve_dt(file_id: str, meta: dict[str, Any] | None) -> float:
 
 
 def _compute_probability_map(
-    req: FbpickPredictRequest, *, state: AppState
+    req: FbpickPredictRequest,
+    *,
+    state: AppState,
+    model_sel: _ModelSelection,
 ) -> _ProbabilityPayload:
-    if not Path(FBPICK_MODEL_PATH).exists():
-        raise HTTPException(status_code=409, detail='FB pick model weights not found')
-
     pipeline_key = req.pipeline_key
     tap_label = req.tap_label
     if (pipeline_key is None) ^ (tap_label is None):
@@ -116,7 +131,7 @@ def _compute_probability_map(
             detail='pipeline_key and tap_label must be provided together',
         )
 
-    forced_offset_byte = OFFSET_BYTE_FIXED if USE_FBPICK_OFFSET else None
+    forced_offset_byte = OFFSET_BYTE_FIXED if model_sel.uses_offset else None
     reader = get_reader(req.file_id, req.key1_byte, req.key2_byte, state=state)
 
     meta_source = getattr(reader, 'meta', None)
@@ -133,7 +148,7 @@ def _compute_probability_map(
                 key2_byte=req.key2_byte,
                 pipeline_key=pipeline_key,
                 tap_label=tap_label,
-                offset_byte=forced_offset_byte if USE_FBPICK_OFFSET else None,
+                offset_byte=forced_offset_byte,
                 state=state,
             )
         except PipelineTapNotFoundError as exc:
@@ -159,6 +174,7 @@ def _compute_probability_map(
                     'tile': _DEFAULT_TILE,
                     'overlap': _DEFAULT_OVERLAP,
                     'amp': _DEFAULT_AMP,
+                    'model_id': model_sel.model_id,
                 },
             }
         ]
@@ -171,7 +187,8 @@ def _compute_probability_map(
             spec=spec,
             reader=reader,
             key1=req.key1,
-            offset_byte=forced_offset_byte if USE_FBPICK_OFFSET else None,
+            offset_byte=forced_offset_byte,
+            section_shape=(int(section.shape[0]), int(section.shape[1])),
         )
 
     out = apply_pipeline(section, spec=spec, meta=meta, taps=None)
@@ -188,45 +205,33 @@ def _compute_probability_map(
 def _load_probability_map(
     req: FbpickPredictRequest, *, state: AppState
 ) -> _ProbabilityPayload:
-    key = (req.file_id, req.key1, req.pipeline_key, req.tap_label, _model_version())
+    model_sel = _resolve_model_selection(req.model_id)
+    forced_offset_byte = OFFSET_BYTE_FIXED if model_sel.uses_offset else None
+    key = (
+        req.file_id,
+        req.key1,
+        req.pipeline_key,
+        req.tap_label,
+        model_sel.model_id,
+        model_sel.model_ver,
+        int(_DEFAULT_TILE[0]),
+        int(_DEFAULT_TILE[1]),
+        int(_DEFAULT_OVERLAP),
+        bool(_DEFAULT_AMP),
+        forced_offset_byte,
+    )
     if _last_prob_state.key == key and _last_prob_state.value is not None:
         return _ProbabilityPayload(
             prob=_last_prob_state.value,
             dt=float(_last_prob_state.dt),
             source=_last_prob_state.source or 'unknown',
         )
-    payload = _compute_probability_map(req, state=state)
+    payload = _compute_probability_map(req, state=state, model_sel=model_sel)
     _last_prob_state.key = key
     _last_prob_state.value = payload.prob
     _last_prob_state.dt = payload.dt
     _last_prob_state.source = payload.source
     return payload
-
-
-def _chunked_expectations(
-    prob: np.ndarray,
-) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
-    n_traces, n_samples = prob.shape
-    indices = np.arange(n_samples, dtype=np.float64)
-    indices_sq = indices * indices
-    sums = np.empty(n_traces, dtype=np.float64)
-    sum_i = np.empty(n_traces, dtype=np.float64)
-    sum_i2 = np.empty(n_traces, dtype=np.float64)
-    for start in range(0, n_traces, _CHUNK_SIZE):
-        end = min(start + _CHUNK_SIZE, n_traces)
-        chunk = prob[start:end]
-        if not np.all(np.isfinite(chunk)):
-            raise HTTPException(
-                status_code=422, detail='Probability map contains NaN or Inf'
-            )
-        sums[start:end] = np.sum(chunk, axis=1, dtype=np.float64)
-        sum_i[start:end] = np.einsum(
-            'ij,j->i', chunk, indices, dtype=np.float64, optimize=True
-        )
-        sum_i2[start:end] = np.einsum(
-            'ij,j->i', chunk, indices_sq, dtype=np.float64, optimize=True
-        )
-    return sums, sum_i, sum_i2
 
 
 def _compute_picks(
@@ -240,38 +245,22 @@ def _compute_picks(
     n_traces, n_samples = prob.shape
     if n_traces == 0 or n_samples == 0:
         return [], 0.0
-    method_norm = method.lower()
-    if method_norm not in {'argmax', 'expectation'}:
-        raise HTTPException(status_code=422, detail='Unsupported method')
-    sums, sum_i, sum_i2 = _chunked_expectations(prob)
-    if not np.all(np.isfinite(sums)):
-        raise HTTPException(status_code=422, detail='Probability sum invalid')
-    if np.any(sums <= 0):
-        raise HTTPException(
-            status_code=422, detail='Probability mass is zero for a trace'
-        )
-    mu = sum_i / sums
-    second_moment = sum_i2 / sums
-    var = np.maximum(second_moment - mu * mu, 0.0)
-    if not np.all(np.isfinite(mu)) or not np.all(np.isfinite(var)):
-        raise HTTPException(status_code=422, detail='Expectation calculation failed')
-    sigma = np.sqrt(var)
-    dt_ms = dt * 1000.0
-    sigma_ms = sigma * dt_ms
-    mask = sigma_ms <= sigma_ms_max
-    accepted = int(np.count_nonzero(mask))
-    if method_norm == 'expectation':
-        idx = mu
-    else:
-        idx = np.empty(n_traces, dtype=np.float64)
-        for start in range(0, n_traces, _CHUNK_SIZE):
-            end = min(start + _CHUNK_SIZE, n_traces)
-            chunk = prob[start:end]
-            idx[start:end] = np.argmax(chunk, axis=1, keepdims=False)
-    times = idx * dt
+
+    try:
+        if method.lower() == 'expectation':
+            idx, sigma_ms = expectation_idx_and_sigma_ms(prob, dt=dt, chunk=_CHUNK_SIZE)
+        else:
+            idx = pick_index_from_prob(prob, method=method, chunk=_CHUNK_SIZE)
+            sigma_ms = sigma_ms_from_prob(prob, dt=dt, chunk=_CHUNK_SIZE)
+        gated_idx = apply_sigma_gate(idx, sigma_ms, sigma_ms_max=sigma_ms_max)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    accepted = int(np.count_nonzero(np.isfinite(gated_idx)))
+    times = gated_idx * dt
     picks: list[dict[str, float]] = []
-    for trace_idx, keep in enumerate(mask):
-        if keep:
+    for trace_idx in range(n_traces):
+        if np.isfinite(gated_idx[trace_idx]):
             picks.append({'trace': int(trace_idx), 'time': float(times[trace_idx])})
     accepted_ratio = accepted / n_traces if n_traces else 0.0
     return picks, accepted_ratio

@@ -63,7 +63,8 @@
     var renderedEnd = null;
     var picks = [];
     var predictedPicks = [];
-    const fbPredCache = new Map(); // key: "key1|layer|pipelineKey"
+    const fbPredCache = new Map(); // key: "key1|layer|pipelineKey|modelId"
+    const FBPICK_MODEL_STORAGE_KEY = 'fbpick_model_id';
     var currentFbKey = null;
     var fbPredReqId = 0;
     var downsampleFactor = 1;
@@ -258,6 +259,88 @@
     let currentFbLayer = 'raw';
     let currentFbPipelineKey = null;
 
+    function getSelectedFbModelId() {
+      const sel = document.getElementById('fbpick_model_select');
+      if (!sel || !sel.value) return null;
+      return sel.value;
+    }
+
+    function updateFbModelStorageFromSelect() {
+      const selected = getSelectedFbModelId();
+      if (!selected) {
+        localStorage.removeItem(FBPICK_MODEL_STORAGE_KEY);
+        return;
+      }
+      localStorage.setItem(FBPICK_MODEL_STORAGE_KEY, selected);
+    }
+
+    function onFbModelChange() {
+      updateFbModelStorageFromSelect();
+      recomputeFbPicks();
+    }
+
+    async function initFbModelSelect() {
+      const sel = document.getElementById('fbpick_model_select');
+      const label = document.getElementById('fbpick_model_select_label');
+      if (!sel || !label) {
+        console.warn('[FBPICK] model select UI is missing');
+        return;
+      }
+
+      sel.innerHTML = '';
+      sel.disabled = true;
+      label.style.display = 'none';
+
+      try {
+        const response = await fetch('/fbpick_models');
+        if (!response.ok) {
+          throw new Error(`/fbpick_models failed (${response.status})`);
+        }
+
+        const payload = await response.json();
+        const models = Array.isArray(payload?.models) ? payload.models : [];
+        const defaultModelId = typeof payload?.default_model_id === 'string'
+          ? payload.default_model_id
+          : null;
+
+        if (models.length === 0) {
+          console.warn('[FBPICK] model list is empty');
+          return;
+        }
+
+        for (const model of models) {
+          const modelId = typeof model?.id === 'string' ? model.id : '';
+          if (!modelId) continue;
+          const usesOffset = model?.uses_offset === true;
+          const optionText = usesOffset ? `${modelId} (offset)` : modelId;
+          sel.appendChild(new Option(optionText, modelId));
+        }
+
+        if (sel.options.length === 0) {
+          console.warn('[FBPICK] model list had no valid ids');
+          return;
+        }
+
+        const savedModelId = localStorage.getItem(FBPICK_MODEL_STORAGE_KEY);
+        const hasSaved = savedModelId && Array.from(sel.options).some((opt) => opt.value === savedModelId);
+        const hasDefault = defaultModelId && Array.from(sel.options).some((opt) => opt.value === defaultModelId);
+
+        if (hasSaved) {
+          sel.value = savedModelId;
+        } else if (hasDefault) {
+          sel.value = defaultModelId;
+        } else {
+          sel.selectedIndex = 0;
+        }
+
+        updateFbModelStorageFromSelect();
+        sel.disabled = false;
+        label.style.display = '';
+      } catch (err) {
+        console.warn('[FBPICK] failed to initialize model list', err);
+      }
+    }
+
     let dragOverride = null; // 一時上書き（'pan' を入れる）
 
     function getBaseDragMode() {
@@ -408,8 +491,8 @@
     }
 
     // 統一キー関数（FB予測キャッシュ用）
-    function fbCacheKey(fileId, k1, layer, pKey) {
-      return `${fileId}|${k1}|${layer}|${pKey ?? 'raw'}`;
+    function fbCacheKey(fileId, k1, layer, pKey, modelId) {
+      return `${fileId}|${k1}|${layer}|${pKey ?? 'raw'}|${modelId ?? ''}`;
     }
 
     // 一時上書きの適用
@@ -1046,9 +1129,10 @@
       const keyAtNow = key1Values[idx0];
       const layerNow = (document.getElementById('layerSelect')?.value) || 'raw';
       const pKeyNow = window.latestPipelineKey || null;
+      const modelIdNow = getSelectedFbModelId();
       const method = document.getElementById('pick_method').value;
       const sigma = Number(document.getElementById('sigma_ms_max').value) || 20;
-      const cacheKeyStr = fbCacheKey(currentFileId, keyAtNow, layerNow, pKeyNow);
+      const cacheKeyStr = fbCacheKey(currentFileId, keyAtNow, layerNow, pKeyNow, modelIdNow);
       const cached = getCachedFbEntry(cacheKeyStr, method, sigma);
       if (cached) {
         predictedPicks = (cached.picks || []).slice();
@@ -1075,9 +1159,10 @@
       const keyAtStart = key1Values[idx0];
       const layerAtStart = (document.getElementById('layerSelect')?.value) || 'raw';
       const pipelineKeyAtStart = window.latestPipelineKey || null;
+      const modelIdAtStart = getSelectedFbModelId();
       const method = document.getElementById('pick_method').value;
       const sigmaMax = Number(document.getElementById('sigma_ms_max').value) || 20;
-      const cacheKeyStr = fbCacheKey(currentFileId, keyAtStart, layerAtStart, pipelineKeyAtStart);
+      const cacheKeyStr = fbCacheKey(currentFileId, keyAtStart, layerAtStart, pipelineKeyAtStart, modelIdAtStart);
 
       const cached = getCachedFbEntry(cacheKeyStr, method, sigmaMax);
       const reqToken = ++fbPredReqId;
@@ -1101,6 +1186,7 @@
           key2_byte: currentKey2Byte,
           method,
           sigma_ms_max: sigmaMax,
+          model_id: modelIdAtStart,
         };
         if (layerAtStart && layerAtStart !== 'raw' && pipelineKeyAtStart) {
           body.pipeline_key = pipelineKeyAtStart;
@@ -1143,10 +1229,12 @@
         const keyNow = key1Values[idxNow];
         const layerNow = (document.getElementById('layerSelect')?.value) || 'raw';
         const pipelineKeyNow = window.latestPipelineKey || null;
+        const modelIdNow = getSelectedFbModelId();
         if (reqToken !== fbPredReqId ||
           keyNow !== keyAtStart ||
           layerNow !== layerAtStart ||
-          pipelineKeyNow !== pipelineKeyAtStart) {
+          pipelineKeyNow !== pipelineKeyAtStart ||
+          modelIdNow !== modelIdAtStart) {
           return;
         }
 
@@ -1725,10 +1813,11 @@
       // ★ FB予測キャッシュ取得：レイヤ＆パイプラインキーでキー統一
       const layerCur = (document.getElementById('layerSelect')?.value) || 'raw';
       const pKeyCur = window.latestPipelineKey || null;
+      const modelIdCur = getSelectedFbModelId();
       const methodCur = document.getElementById('pick_method').value;
       const sigmaCur = Number(document.getElementById('sigma_ms_max').value) || 20;
       const cachedEntry = getCachedFbEntry(
-        fbCacheKey(currentFileId, key1Val, layerCur, pKeyCur),
+        fbCacheKey(currentFileId, key1Val, layerCur, pKeyCur, modelIdCur),
         methodCur,
         sigmaCur,
       );
@@ -2050,6 +2139,7 @@
       console.info('[viewer] DOMContentLoaded hook');
       const fileIdEl = document.getElementById('file_id');
       const slider = document.getElementById('key1_slider');
+      const fbpickModelSelect = document.getElementById('fbpick_model_select');
       const plotDiv = document.getElementById('plot');
 
       if (plotDiv) {
@@ -2074,6 +2164,12 @@
       loadSettings().catch((err) => console.warn('loadSettings failed', err)).finally(() => {
         boot().catch((err) => console.warn('initial picks load failed', err));
       });
+
+      initFbModelSelect().catch((err) => console.warn('initFbModelSelect failed', err));
+
+      if (fbpickModelSelect) {
+        fbpickModelSelect.addEventListener('change', onFbModelChange);
+      }
 
       if (fileIdEl) {
         fileIdEl.addEventListener('change', async () => {

@@ -17,42 +17,29 @@ from app.api.binary_codec import pack_msgpack_gzip
 from app.api.schemas import PipelineSpec
 from app.core.state import AppState
 from app.services.fbpick_support import (
+    DEFAULT_FBPICK_MODEL_ID,
     OFFSET_BYTE_FIXED,
-    USE_FBPICK_OFFSET,
     _maybe_attach_fbpick_offsets,
 )
 from app.services.in_memory_cleanup import cleanup_in_memory_state
 from app.services.pipeline_taps import get_section_from_pipeline_tap
 from app.services.reader import coerce_section_f32, get_reader
-from app.utils.fbpick import _MODEL_PATH as FBPICK_MODEL_PATH
+from app.utils.fbpick_models import (
+    list_fbpick_models,
+    model_version,
+    resolve_model_path,
+)
 from app.utils.pipeline import apply_pipeline
 from app.utils.utils import quantize_float32
 
 router = APIRouter()
 
 
-def _fbpick_model_version() -> str:
-    model_path = FBPICK_MODEL_PATH
-
-    model_name = getattr(model_path, 'name', None)
-    if not isinstance(model_name, str) or not model_name:
-        model_name = 'unknown-model'
-
-    exists = getattr(model_path, 'exists', None)
-    if not callable(exists):
-        return model_name
-    if not bool(exists()):
-        return 'missing'
-
-    stat_fn = getattr(model_path, 'stat', None)
-    if not callable(stat_fn):
-        return model_name
-
-    model_stat = stat_fn()
-    mtime_ns = getattr(model_stat, 'st_mtime_ns', None)
-    if isinstance(mtime_ns, int):
-        return f'{model_name}:{mtime_ns}'
-    return model_name
+def _resolve_model_selection(model_id: str | None) -> tuple[str, bool, str]:
+    model_path = resolve_model_path(model_id, require_exists=True)
+    chosen_model_id = DEFAULT_FBPICK_MODEL_ID if model_id is None else model_id
+    uses_offset = 'offset' in chosen_model_id.lower()
+    return chosen_model_id, uses_offset, model_version(model_path)
 
 
 def _build_fbpick_cache_key(
@@ -68,6 +55,8 @@ def _build_fbpick_cache_key(
     amp: bool,
     pipeline_key: str | None,
     tap_label: str | None,
+    model_id: str,
+    model_ver: str,
 ) -> tuple[Any, ...]:
     return (
         file_id,
@@ -81,7 +70,8 @@ def _build_fbpick_cache_key(
         bool(amp),
         pipeline_key,
         tap_label,
-        _fbpick_model_version(),
+        model_id,
+        model_ver,
         'fbpick',
     )
 
@@ -100,6 +90,7 @@ class FbpickRequest(BaseModel):
     amp: bool = True
     pipeline_key: str | None = None
     tap_label: str | None = None
+    model_id: str | None = None
 
 
 def _run_fbpick_job(job_id: str, req: FbpickRequest, state: AppState) -> None:
@@ -117,6 +108,7 @@ def _run_fbpick_job(job_id: str, req: FbpickRequest, state: AppState) -> None:
             pipeline_key_obj = job.get('pipeline_key', req.pipeline_key)
             tap_label_obj = job.get('tap_label', req.tap_label)
             offset_byte_obj = job.get('offset_byte', req.offset_byte)
+            model_id_obj = job.get('model_id', req.model_id)
         if cache_key is None:
             raise RuntimeError('FB pick job metadata is inconsistent: cache_key')
         if not isinstance(file_id_obj, str) or not file_id_obj:
@@ -131,9 +123,10 @@ def _run_fbpick_job(job_id: str, req: FbpickRequest, state: AppState) -> None:
         )
         tap_label = str(tap_label_obj) if isinstance(tap_label_obj, str) else None
         offset_byte = int(offset_byte_obj) if isinstance(offset_byte_obj, int) else None
+        model_id = str(model_id_obj) if isinstance(model_id_obj, str) else None
 
         reader: object | None = None
-        if USE_FBPICK_OFFSET and offset_byte is not None:
+        if offset_byte is not None:
             reader = get_reader(file_id, key1_byte, key2_byte, state=state)
         if pipeline_key and tap_label:
             section = get_section_from_pipeline_tap(
@@ -162,6 +155,7 @@ def _run_fbpick_job(job_id: str, req: FbpickRequest, state: AppState) -> None:
                         'tile': (req.tile_h, req.tile_w),
                         'overlap': req.overlap,
                         'amp': req.amp,
+                        'model_id': model_id,
                     },
                 }
             ]
@@ -174,6 +168,7 @@ def _run_fbpick_job(job_id: str, req: FbpickRequest, state: AppState) -> None:
                 reader=reader,
                 key1=key1,
                 offset_byte=offset_byte,
+                section_shape=(int(section.shape[0]), int(section.shape[1])),
             )
         out = apply_pipeline(section, spec=spec, meta=meta, taps=None)
         prob = out['fbpick']['prob']
@@ -202,12 +197,11 @@ def _run_fbpick_job(job_id: str, req: FbpickRequest, state: AppState) -> None:
 
 @router.post('/fbpick_section_bin')
 def fbpick_section_bin(req: FbpickRequest, request: Request):
-    if not FBPICK_MODEL_PATH.exists():
-        raise HTTPException(status_code=409, detail='FB pick model weights not found')
     state = get_state(request.app)
     cleanup_in_memory_state(state)
 
-    forced_offset_byte = OFFSET_BYTE_FIXED if USE_FBPICK_OFFSET else None
+    chosen_model_id, uses_offset, model_ver = _resolve_model_selection(req.model_id)
+    forced_offset_byte = OFFSET_BYTE_FIXED if uses_offset else None
 
     pipeline_key = req.pipeline_key
     tap_label = req.tap_label
@@ -224,6 +218,8 @@ def fbpick_section_bin(req: FbpickRequest, request: Request):
         amp=req.amp,
         pipeline_key=pipeline_key,
         tap_label=tap_label,
+        model_id=chosen_model_id,
+        model_ver=model_ver,
     )
     with state.lock:
         payload = state.fbpick_cache.get(cache_key)
@@ -240,6 +236,7 @@ def fbpick_section_bin(req: FbpickRequest, request: Request):
         'pipeline_key': pipeline_key,
         'tap_label': tap_label,
         'offset_byte': forced_offset_byte,
+        'model_id': chosen_model_id,
     }
     assert not any(isinstance(value, np.ndarray) for value in job_state.values())
     with state.lock:
@@ -247,7 +244,9 @@ def fbpick_section_bin(req: FbpickRequest, request: Request):
         payload = state.fbpick_cache.get(cache_key)
         cache_hit = payload is not None
 
-    req2 = req.model_copy(update={'offset_byte': forced_offset_byte})
+    req2 = req.model_copy(
+        update={'offset_byte': forced_offset_byte, 'model_id': chosen_model_id}
+    )
 
     if cache_hit:
         with state.lock:
@@ -263,6 +262,19 @@ def fbpick_section_bin(req: FbpickRequest, request: Request):
         job = state.jobs.get(job_id)
         status = job.get('status', 'unknown') if job is not None else 'unknown'
     return {'job_id': job_id, 'status': status}
+
+
+@router.get('/fbpick_models')
+def get_fbpick_models() -> dict[str, object]:
+    models = list_fbpick_models()
+    default_model_id: str | None = None
+    if models:
+        model_ids = [str(item['id']) for item in models]
+        if DEFAULT_FBPICK_MODEL_ID in model_ids:
+            default_model_id = DEFAULT_FBPICK_MODEL_ID
+        else:
+            default_model_id = model_ids[0]
+    return {'default_model_id': default_model_id, 'models': models}
 
 
 @router.get('/fbpick_job_status')
