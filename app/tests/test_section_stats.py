@@ -9,7 +9,6 @@ from fastapi.testclient import TestClient
 from app.api.baselines import BASELINE_FILENAME_RAW, get_or_create_raw_baseline
 from app.api._helpers import get_state
 from app.main import app
-from app.utils.segy_meta import FILE_REGISTRY
 
 
 @pytest.fixture
@@ -47,11 +46,13 @@ def sample_store(tmp_path):
     }
     (store / 'meta.json').write_text(json.dumps(meta), encoding='utf-8')
     file_id = 'file_test'
-    FILE_REGISTRY[file_id] = {'store_path': str(store), 'dt': 0.004}
+    app.state.sv.file_registry.set_record(
+        file_id, {'store_path': str(store), 'dt': 0.004}
+    )
     get_state(app).cached_readers.clear()
     yield file_id, store
     get_state(app).cached_readers.clear()
-    FILE_REGISTRY.pop(file_id, None)
+    app.state.sv.file_registry.pop(file_id, None)
     baseline_path = store / BASELINE_FILENAME_RAW
     if baseline_path.exists():
         baseline_path.unlink()

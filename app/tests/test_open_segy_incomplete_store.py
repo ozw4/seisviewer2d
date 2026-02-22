@@ -9,7 +9,6 @@ from fastapi.testclient import TestClient
 
 from app.api._helpers import get_state
 from app.main import app
-from app.utils.segy_meta import FILE_REGISTRY
 
 KEY1 = 189
 KEY2 = 193
@@ -38,7 +37,7 @@ def _open_env(tmp_path: Path, monkeypatch):
     """Isolate TRACE_DIR and stub ingest for /open_segy tests."""
     from app.api.routers import upload as upload_mod
 
-    FILE_REGISTRY.clear()
+    app.state.sv.file_registry.clear()
     get_state(app).cached_readers.clear()
 
     upload_root = tmp_path / 'uploads'
@@ -158,8 +157,10 @@ def test_open_segy_rebuilds_incomplete_store_from_original_path(
     assert not list(Path(upload_mod.TRACE_DIR).glob(f'{original_name}.old-*'))
 
     file_id = payload['file_id']
-    assert FILE_REGISTRY[file_id]['store_path'] == str(store_dir)
-    assert FILE_REGISTRY[file_id]['dt'] == pytest.approx(0.002)
+    rec = app.state.sv.file_registry.get_record(file_id)
+    assert isinstance(rec, dict)
+    assert rec['store_path'] == str(store_dir)
+    assert rec['dt'] == pytest.approx(0.002)
 
 
 def test_open_segy_incomplete_store_without_original_path_returns_500(_open_env):

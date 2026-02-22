@@ -11,7 +11,6 @@ from app.core.state import create_app_state
 from app.services import batch_apply_service
 from app.services.pipeline_artifacts import get_job_dir
 from app.services.reader import coerce_section_f32
-from app.utils.segy_meta import FILE_REGISTRY
 from app.utils.utils import TraceStoreSectionReader
 
 KEY1 = 189
@@ -44,13 +43,6 @@ def _write_min_store(
     return store
 
 
-@pytest.fixture(autouse=True)
-def _cleanup_registry() -> None:
-    FILE_REGISTRY.pop('file-a', None)
-    yield
-    FILE_REGISTRY.pop('file-a', None)
-
-
 def _job_request() -> BatchApplyRequest:
     return BatchApplyRequest(
         file_id='file-a',
@@ -75,7 +67,6 @@ def test_batch_apply_outputs_3d_saved_with_padding_and_done(
     key2s = np.array([2, 5, 1, 3, 4], dtype=np.int32)
     traces = np.arange(5 * 3, dtype=np.float32).reshape(5, 3)
     store = _write_min_store(tmp_path, key1s, key2s, traces)
-    FILE_REGISTRY['file-a'] = {'store_path': str(store), 'dt': 0.002}
 
     def _stub_pipeline_outputs(*, section, meta, spec, denoise_taps, fbpick_label):
         del meta, spec, denoise_taps, fbpick_label
@@ -88,6 +79,7 @@ def test_batch_apply_outputs_3d_saved_with_padding_and_done(
     )
 
     state = create_app_state()
+    state.file_registry.set_record('file-a', {'store_path': str(store), 'dt': 0.002})
     job_id = 'job3d'
     state.jobs[job_id] = {
         'status': 'queued',
@@ -146,7 +138,6 @@ def test_batch_apply_stops_on_section_failure_and_sets_error(
     key2s = np.array([2, 5, 1, 3, 4], dtype=np.int32)
     traces = np.arange(5 * 3, dtype=np.float32).reshape(5, 3)
     store = _write_min_store(tmp_path, key1s, key2s, traces)
-    FILE_REGISTRY['file-a'] = {'store_path': str(store), 'dt': 0.002}
 
     def _stub_pipeline_outputs(*, section, meta, spec, denoise_taps, fbpick_label):
         del meta, spec, denoise_taps, fbpick_label
@@ -169,6 +160,7 @@ def test_batch_apply_stops_on_section_failure_and_sets_error(
     monkeypatch.setattr(batch_apply_service, '_load_section_and_key2', _failing_load)
 
     state = create_app_state()
+    state.file_registry.set_record('file-a', {'store_path': str(store), 'dt': 0.002})
     job_id = 'joberr'
     state.jobs[job_id] = {
         'status': 'queued',

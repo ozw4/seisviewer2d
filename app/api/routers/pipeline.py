@@ -37,7 +37,6 @@ from app.services.pipeline_taps import build_pipeline_tap_cache_key
 from app.services.reader import coerce_section_f32, get_reader
 from app.core.state import AppState
 from app.utils.pipeline import apply_pipeline, pipeline_key
-from app.utils.segy_meta import get_dt_for_file
 from app.utils.utils import to_builtin
 
 router = APIRouter()
@@ -102,7 +101,7 @@ def _run_pipeline_all_job(
             view = reader.get_section(key1_value)
             section = coerce_section_f32(view.arr, view.scale)
 
-            dt = float(get_dt_for_file(req.file_id))
+            dt = float(state.file_registry.get_dt(req.file_id))
             meta = {'dt': dt}
 
             # offsetをreqからそのまま適用（pass-through）
@@ -209,7 +208,7 @@ def pipeline_section(
             json.dumps(clean_window, sort_keys=True).encode()
         ).hexdigest()[:8]
 
-    dt = float(get_dt_for_file(file_id))
+    dt = float(state.file_registry.get_dt(file_id))
     meta = {'dt': dt}
 
     # pass-through + 同期フォールバック

@@ -25,8 +25,12 @@ def _client_with_base_patches(
 ):
     file_name = 'lineA.sgy'
     n_traces = int(len(sorted_to_original))
-    monkeypatch.setattr(ep, '_filename_for_file_id', lambda file_id: file_name)
-    monkeypatch.setattr(ep, 'get_dt_for_file', lambda file_id: dt)
+    monkeypatch.setattr(ep, '_filename_for_file_id', lambda file_id, **_: file_name)
+    monkeypatch.setattr(
+        app.state.sv.file_registry,
+        'get_dt',
+        lambda file_id: dt,
+    )
     monkeypatch.setattr(
         ep,
         'get_ntraces_for',

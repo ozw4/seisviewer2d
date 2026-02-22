@@ -9,6 +9,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from app.core.settings import Settings
+from app.services.file_registry import FileRegistry
 
 
 class LRUCache(OrderedDict):
@@ -195,6 +196,7 @@ class AppState:
 
     lock: threading.RLock = field(default_factory=threading.RLock, repr=False)
     settings: Settings = field(default_factory=Settings.from_env)
+    file_registry: FileRegistry = field(default_factory=FileRegistry)
     cached_readers: LRUCache = field(init=False)
     fbpick_cache: ExpiringLRUCache = field(init=False)
     jobs: dict[str, dict[str, object]] = field(default_factory=dict)

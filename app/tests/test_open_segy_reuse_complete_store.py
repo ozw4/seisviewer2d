@@ -9,7 +9,6 @@ from fastapi.testclient import TestClient
 
 from app.api._helpers import get_state
 from app.main import app
-from app.utils.segy_meta import FILE_REGISTRY
 
 KEY1 = 189
 KEY2 = 193
@@ -48,7 +47,7 @@ def _open_env(tmp_path: Path, monkeypatch):
     """Isolate TRACE_DIR and prevent side-effect threads for /open_segy reuse tests."""
     from app.api.routers import upload as upload_mod
 
-    FILE_REGISTRY.clear()
+    app.state.sv.file_registry.clear()
     get_state(app).cached_readers.clear()
 
     upload_root = tmp_path / 'uploads'
@@ -112,8 +111,10 @@ def test_open_segy_reuses_complete_store_sets_reused_true(_open_env):
     assert calls['ingest'] == 0
 
     file_id = payload['file_id']
-    assert FILE_REGISTRY[file_id]['store_path'] == str(store_dir)
-    assert FILE_REGISTRY[file_id]['dt'] == pytest.approx(0.004)
+    rec = app.state.sv.file_registry.get_record(file_id)
+    assert isinstance(rec, dict)
+    assert rec['store_path'] == str(store_dir)
+    assert rec['dt'] == pytest.approx(0.004)
 
     assert captured['register'] is not None
     reg_file_id, reg_store, reg_k1, reg_k2 = captured['register']
@@ -150,8 +151,10 @@ def test_open_segy_sanitizes_original_name_and_prevents_path_traversal(_open_env
 
     file_id = payload['file_id']
     # 罠ではなく、TRACE_DIR 配下のサニタイズ名ストアが開かれていること
-    assert FILE_REGISTRY[file_id]['store_path'] == str(store_dir)
-    assert FILE_REGISTRY[file_id]['dt'] == pytest.approx(0.006)
+    rec = app.state.sv.file_registry.get_record(file_id)
+    assert isinstance(rec, dict)
+    assert rec['store_path'] == str(store_dir)
+    assert rec['dt'] == pytest.approx(0.006)
 
     assert captured['register'] is not None
     _reg_file_id, reg_store, _reg_k1, _reg_k2 = captured['register']

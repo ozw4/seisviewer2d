@@ -11,7 +11,7 @@ def test_picks_memmap_roundtrip(monkeypatch):
     monkeypatch.setattr(
         picks,
         "_filename_for_file_id",
-        lambda fid: "LineA.sgy" if fid == file_id else None,
+        lambda fid, **_: "LineA.sgy" if fid == file_id else None,
     )
     monkeypatch.setattr(
         picks,

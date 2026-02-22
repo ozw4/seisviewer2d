@@ -131,7 +131,11 @@ def test_predict_offset_model_returns_422_without_offsets(client, monkeypatch):
         ),
     )
     monkeypatch.setattr(fbpick_predict_mod, 'get_reader', lambda *a, **k: _Reader())
-    monkeypatch.setattr(fbpick_predict_mod, 'get_dt_for_file', lambda _fid: 0.004)
+    monkeypatch.setattr(
+        app.state.sv.file_registry,
+        'get_dt',
+        lambda _fid: 0.004,
+    )
 
     res = client.post(
         '/fbpick_predict',

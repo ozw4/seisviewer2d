@@ -13,7 +13,6 @@ import pytest
 
 from app.api.routers import section as sec
 from app.main import app
-from app.utils.segy_meta import FILE_REGISTRY
 from app.utils.utils import SectionView
 
 
@@ -52,7 +51,7 @@ def _clean_section_env(monkeypatch):
     monkeypatch.setenv('FIXED_INT8_SCALE', '1')
 
     # Ensure a clean registry and caches.
-    FILE_REGISTRY.clear()
+    app.state.sv.file_registry.clear()
     state = sec.get_state(app)
     state.window_section_cache.clear()
     state.pipeline_tap_cache.clear()
@@ -60,9 +59,14 @@ def _clean_section_env(monkeypatch):
     state.cached_readers.clear()
 
     # Avoid relying on real dt resolution.
-    monkeypatch.setattr(sec, 'get_dt_for_file', lambda _fid: 0.004, raising=True)
+    monkeypatch.setattr(
+        app.state.sv.file_registry,
+        'get_dt',
+        lambda _fid: 0.004,
+        raising=True,
+    )
     yield
-    FILE_REGISTRY.clear()
+    app.state.sv.file_registry.clear()
 
 
 def test_get_section_window_bin_step_xy_downsample_shape_and_values(
@@ -83,7 +87,9 @@ def test_get_section_window_bin_step_xy_downsample_shape_and_values(
         sec, 'get_reader', lambda fid, kb1, kb2, state=None: _StubReader(), raising=True
     )
 
-    FILE_REGISTRY['f'] = {'store_path': str(tmp_path), 'dt': 0.004}
+    app.state.sv.file_registry.set_record(
+        'f', {'store_path': str(tmp_path), 'dt': 0.004}
+    )
     _write_baseline(
         tmp_path,
         key1=7,
@@ -139,7 +145,9 @@ def test_get_section_window_bin_transpose_true_swaps_axes_and_transposes_values(
         sec, 'get_reader', lambda fid, kb1, kb2, state=None: _StubReader(), raising=True
     )
 
-    FILE_REGISTRY['f'] = {'store_path': str(tmp_path), 'dt': 0.004}
+    app.state.sv.file_registry.set_record(
+        'f', {'store_path': str(tmp_path), 'dt': 0.004}
+    )
     _write_baseline(
         tmp_path,
         key1=7,
@@ -201,7 +209,9 @@ def test_get_section_window_bin_scaling_amax_vs_tracewise(monkeypatch, tmp_path)
         sec, 'get_reader', lambda fid, kb1, kb2, state=None: _StubReader(), raising=True
     )
 
-    FILE_REGISTRY['f'] = {'store_path': str(tmp_path), 'dt': 0.004}
+    app.state.sv.file_registry.set_record(
+        'f', {'store_path': str(tmp_path), 'dt': 0.004}
+    )
     _write_baseline(
         tmp_path,
         key1=7,
@@ -266,7 +276,9 @@ def test_get_section_window_bin_tracewise_clamp_saturates_int8(monkeypatch, tmp_
         sec, 'get_reader', lambda fid, kb1, kb2, state=None: _StubReader(), raising=True
     )
 
-    FILE_REGISTRY['f'] = {'store_path': str(tmp_path), 'dt': 0.004}
+    app.state.sv.file_registry.set_record(
+        'f', {'store_path': str(tmp_path), 'dt': 0.004}
+    )
     # trace_stds[1]=0 triggers clamp to eps -> very large inv_std -> int8 saturation
     _write_baseline(
         tmp_path,
@@ -318,7 +330,9 @@ def test_get_section_window_bin_pipeline_key_tap_label_window_uses_expected_tap(
     state.pipeline_tap_cache.clear()
     state.trace_stats_cache.clear()
 
-    FILE_REGISTRY['f'] = {'store_path': str(tmp_path), 'dt': 0.004}
+    app.state.sv.file_registry.set_record(
+        'f', {'store_path': str(tmp_path), 'dt': 0.004}
+    )
     _write_baseline(
         tmp_path,
         key1=7,

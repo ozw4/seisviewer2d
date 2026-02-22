@@ -15,8 +15,8 @@ import numpy as np
 
 from app.api._helpers import get_state
 from app.core.state import AppState
+from app.services.file_registry import FileRegistry
 from app.services.reader import get_reader
-from app.utils.segy_meta import FILE_REGISTRY, get_dt_for_file
 
 if TYPE_CHECKING:
     from fastapi import FastAPI
@@ -43,9 +43,9 @@ class _TraceStoreArtifacts:
     key1_counts: np.ndarray
 
 
-def _resolve_store_path(file_id: str) -> Path:
+def _resolve_store_path(file_id: str, file_registry: FileRegistry) -> Path:
     """Return the trace-store directory for ``file_id``."""
-    rec = FILE_REGISTRY.get(file_id)
+    rec = file_registry.get_record(file_id)
     if not isinstance(rec, dict):
         raise BaselineComputationError('TraceStore metadata missing')
     store_path = rec.get('store_path')
@@ -75,8 +75,10 @@ def _load_index_arrays(store_path: Path) -> tuple[np.ndarray, np.ndarray, np.nda
     return key1_values, key1_offsets, key1_counts
 
 
-def _load_trace_store_artifacts(file_id: str) -> _TraceStoreArtifacts:
-    store_path = _resolve_store_path(file_id)
+def _load_trace_store_artifacts(
+    file_id: str, file_registry: FileRegistry
+) -> _TraceStoreArtifacts:
+    store_path = _resolve_store_path(file_id, file_registry)
     meta = _load_meta(store_path)
     key1_values, key1_offsets, key1_counts = _load_index_arrays(store_path)
     if key1_values.size != key1_counts.size:
@@ -250,6 +252,7 @@ def _compute_trace_stats(
 def _prepare_payload(
     *,
     file_id: str,
+    file_registry: FileRegistry,
     artifacts: _TraceStoreArtifacts,
     key1_byte: int,
     key2_byte: int,
@@ -263,7 +266,7 @@ def _prepare_payload(
 ) -> dict[str, Any]:
     meta = artifacts.meta
     source_sha = meta.get('source_sha256')
-    dt_val = float(get_dt_for_file(file_id))
+    dt_val = float(file_registry.get_dt(file_id))
     return {
         'stage': BASELINE_STAGE_RAW,
         'ddof': 0,
@@ -295,6 +298,7 @@ def _write_baseline(store_path: Path, payload: dict[str, Any]) -> None:
 def _compute_baseline(
     *,
     file_id: str,
+    file_registry: FileRegistry,
     artifacts: _TraceStoreArtifacts,
     key1_byte: int,
     key2_byte: int,
@@ -331,6 +335,7 @@ def _compute_baseline(
     trace_spans_by_key1 = _spans_from_inverse(key1_values, inverse, n_groups)
     return _prepare_payload(
         file_id=file_id,
+        file_registry=file_registry,
         artifacts=artifacts,
         key1_byte=key1_byte,
         key2_byte=key2_byte,
@@ -353,7 +358,7 @@ def get_or_create_raw_baseline(
 ) -> dict[str, Any]:
     """Return the cached raw baseline for ``file_id`` computing it if required."""
     state = get_state(app)
-    artifacts = _load_trace_store_artifacts(file_id)
+    artifacts = _load_trace_store_artifacts(file_id, state.file_registry)
     meta = artifacts.meta
     expected_sha = meta.get('source_sha256')
     baseline = _load_baseline_if_valid(
@@ -379,6 +384,7 @@ def get_or_create_raw_baseline(
             state.cached_readers.pop(cache_key, None)
         payload = _compute_baseline(
             file_id=file_id,
+            file_registry=state.file_registry,
             artifacts=artifacts,
             key1_byte=key1_byte,
             key2_byte=key2_byte,

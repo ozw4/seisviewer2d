@@ -10,7 +10,6 @@ import pytest
 from fastapi.testclient import TestClient
 
 from app.main import app
-from app.utils.segy_meta import FILE_REGISTRY
 
 
 def _write_complete_store(
@@ -47,7 +46,7 @@ def _upload_env(
     """Isolate UPLOAD_DIR/TRACE_DIR into a temp folder and stub ingest."""
     from app.api.routers import upload as upload_mod
 
-    FILE_REGISTRY.clear()
+    app.state.sv.file_registry.clear()
     state = getattr(getattr(app, 'state', None), 'sv', None)
     if state is not None:
         getattr(state, 'cached_readers', {}).clear()

@@ -10,7 +10,7 @@ def test_picks_are_isolated_per_key1_val(tmp_path, monkeypatch):
     monkeypatch.setenv('PICKS_NPY_DIR', str(tmp_path / 'picks_npy'))
 
     # /picks が参照するヘルパをモック（軽量に）
-    monkeypatch.setattr(ep, '_filename_for_file_id', lambda fid: 'LineX.sgy')
+    monkeypatch.setattr(ep, '_filename_for_file_id', lambda fid, **_: 'LineX.sgy')
     monkeypatch.setattr(
         ep, 'get_ntraces_for', lambda fid, key1_byte, key2_byte=193, state=None: 5
     )
@@ -76,7 +76,7 @@ def test_picks_are_isolated_per_key1_val(tmp_path, monkeypatch):
 
 def test_delete_whole_section_only_affects_that_section(tmp_path, monkeypatch):
     monkeypatch.setenv('PICKS_NPY_DIR', str(tmp_path / 'picks_npy'))
-    monkeypatch.setattr(ep, '_filename_for_file_id', lambda fid: 'LineY.sgy')
+    monkeypatch.setattr(ep, '_filename_for_file_id', lambda fid, **_: 'LineY.sgy')
     monkeypatch.setattr(
         ep, 'get_ntraces_for', lambda fid, key1_byte, key2_byte=193, state=None: 5
     )
@@ -118,7 +118,7 @@ def test_delete_whole_section_only_affects_that_section(tmp_path, monkeypatch):
 
 def test_post_trace_out_of_range_returns_400(tmp_path, monkeypatch):
     monkeypatch.setenv('PICKS_NPY_DIR', str(tmp_path / 'picks_npy'))
-    monkeypatch.setattr(ep, '_filename_for_file_id', lambda fid: 'LineZ.sgy')
+    monkeypatch.setattr(ep, '_filename_for_file_id', lambda fid, **_: 'LineZ.sgy')
     monkeypatch.setattr(
         ep, 'get_ntraces_for', lambda fid, key1_byte, key2_byte=193, state=None: 5
     )
@@ -141,7 +141,7 @@ def test_post_trace_out_of_range_returns_400(tmp_path, monkeypatch):
 
 def test_picks_key2_byte_default_and_override_are_forwarded(tmp_path, monkeypatch):
     monkeypatch.setenv('PICKS_NPY_DIR', str(tmp_path / 'picks_npy'))
-    monkeypatch.setattr(ep, '_filename_for_file_id', lambda fid: 'LineK.sgy')
+    monkeypatch.setattr(ep, '_filename_for_file_id', lambda fid, **_: 'LineK.sgy')
 
     seen_ntr: list[tuple[int, int]] = []
     seen_seq: list[tuple[int, int]] = []

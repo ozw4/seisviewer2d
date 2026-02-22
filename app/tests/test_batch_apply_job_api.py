@@ -13,7 +13,6 @@ from fastapi.testclient import TestClient
 from app.api.routers import batch_apply as batch_apply_router_module
 from app.main import app
 from app.services import batch_apply_service
-from app.utils.segy_meta import FILE_REGISTRY
 
 KEY1 = 189
 KEY2 = 193
@@ -95,12 +94,12 @@ def _clear_jobs_table() -> None:
     with state.lock:
         state.jobs.clear()
     state.cached_readers.clear()
-    FILE_REGISTRY.pop('file-a', None)
+    app.state.sv.file_registry.pop('file-a', None)
     yield
     with state.lock:
         state.jobs.clear()
     state.cached_readers.clear()
-    FILE_REGISTRY.pop('file-a', None)
+    app.state.sv.file_registry.pop('file-a', None)
 
 
 def test_batch_job_status_unknown_job_id() -> None:
@@ -121,7 +120,9 @@ def test_batch_apply_lifecycle_files_download_and_path_traversal(
         key2s=np.array([2, 1, 1], dtype=np.int32),
         n_samples=4,
     )
-    FILE_REGISTRY['file-a'] = {'store_path': store_path, 'dt': 0.002}
+    app.state.sv.file_registry.set_record(
+        'file-a', {'store_path': store_path, 'dt': 0.002}
+    )
 
     CapturedThread.instances.clear()
     monkeypatch.setattr(

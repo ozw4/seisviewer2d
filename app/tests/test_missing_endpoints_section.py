@@ -9,20 +9,19 @@ import pytest
 from fastapi.testclient import TestClient
 
 from app.main import app
-from app.utils.segy_meta import FILE_REGISTRY
 
 
 @pytest.fixture()
 def client() -> TestClient:
-    """HTTP client with clean FILE_REGISTRY and AppState caches per test."""
-    FILE_REGISTRY.clear()
+    """HTTP client with clean file registry and AppState caches per test."""
+    app.state.sv.file_registry.clear()
     state = app.state.sv
     state.cached_readers.clear()
     state.window_section_cache.clear()
     state.trace_stats_cache.clear()
     with TestClient(app) as c:
         yield c
-    FILE_REGISTRY.clear()
+    app.state.sv.file_registry.clear()
     state.cached_readers.clear()
     state.window_section_cache.clear()
     state.trace_stats_cache.clear()
@@ -88,7 +87,7 @@ def test_get_section_meta_contract_and_dt_from_meta_json(
         json.dumps({"dt": 0.004, "original_segy_path": "/tmp/does-not-matter.sgy"}),
         encoding="utf-8",
     )
-    FILE_REGISTRY[file_id] = {"store_path": str(store_dir)}
+    app.state.sv.file_registry.set_record(file_id, {"store_path": str(store_dir)})
 
     class _StubReader:
         dtype = np.dtype("float32")
@@ -139,7 +138,7 @@ def test_get_section_meta_dt_from_segy_header(
     buf = bytearray(offset + 2)
     buf[offset : offset + 2] = int(us).to_bytes(2, byteorder="big", signed=False)
     segy_path.write_bytes(bytes(buf))
-    FILE_REGISTRY[file_id] = {"path": str(segy_path)}
+    app.state.sv.file_registry.set_record(file_id, {"path": str(segy_path)})
 
     captured: dict[str, object] = {}
 

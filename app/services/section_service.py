@@ -11,7 +11,6 @@ import numpy as np
 from app.api.binary_codec import pack_quantized_array_gzip
 from app.services.reader import EXPECTED_SECTION_NDIM, coerce_section_f32
 from app.services.scaling import apply_scaling_from_baseline
-from app.utils.segy_meta import FILE_REGISTRY, get_dt_for_file
 from app.utils.utils import SectionView, TraceStoreSectionReader
 
 
@@ -49,21 +48,21 @@ def _load_section_view(
     return reader.get_section(key1), reader
 
 
-def _resolve_store_dir(*, file_id: str, reader: TraceStoreSectionReader | None) -> str:
-    registry_entry = FILE_REGISTRY.get(file_id)
+def _resolve_store_dir(
+    *,
+    file_id: str,
+    reader: TraceStoreSectionReader | None,
+    store_dir_resolver: Callable[[str], str],
+) -> str:
     store_dir: str | None = None
-    if isinstance(registry_entry, dict):
-        maybe_store = registry_entry.get('store_path')
-        if isinstance(maybe_store, str):
-            store_dir = maybe_store
-    else:
-        maybe_store = getattr(registry_entry, 'store_path', None)
-        if isinstance(maybe_store, (str, Path)):
-            store_dir = str(maybe_store)
-    if store_dir is None and reader is not None:
+    if reader is not None:
         maybe_store = getattr(reader, 'store_dir', None)
         if isinstance(maybe_store, (str, Path)):
             store_dir = str(maybe_store)
+    if store_dir is None:
+        resolved_store = store_dir_resolver(file_id)
+        if isinstance(resolved_store, str) and resolved_store:
+            store_dir = resolved_store
     if store_dir is None:
         raise SectionServiceInternalError('Trace store path unavailable')
     return store_dir
@@ -89,8 +88,9 @@ def build_section_window_payload(
     trace_stats_cache: Any,
     reader_getter: Callable[[str, int, int], TraceStoreSectionReader],
     pipeline_section_getter: Callable[..., np.ndarray],
+    store_dir_resolver: Callable[[str], str],
     trace_stats_lock: threading.RLock | None = None,
-    dt_resolver: Callable[[str], float] = get_dt_for_file,
+    dt_resolver: Callable[[str], float] | None = None,
 ) -> bytes:
     """Build the compressed binary payload for a section window."""
     mode = scaling_mode.lower()
@@ -125,7 +125,13 @@ def build_section_window_payload(
         raise ValueError('Requested window is empty')
 
     prepared = coerce_section_f32(sub, section_view.scale)
-    store_dir = _resolve_store_dir(file_id=file_id, reader=reader)
+    if dt_resolver is None:
+        raise SectionServiceInternalError('dt resolver is required')
+    store_dir = _resolve_store_dir(
+        file_id=file_id,
+        reader=reader,
+        store_dir_resolver=store_dir_resolver,
+    )
     prepared = apply_scaling_from_baseline(
         prepared,
         scaling=mode,

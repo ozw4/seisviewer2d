@@ -22,7 +22,6 @@ from app.core.paths import (
 )
 from app.core.state import AppState
 from app.utils.ingest import SegyIngestor
-from app.utils.segy_meta import FILE_REGISTRY
 from app.utils.utils import TraceStoreSectionReader
 
 router = APIRouter()
@@ -165,10 +164,11 @@ async def open_segy(
         )
     _register_trace_store(file_id, store_dir, key1_byte, key2_byte, state=state)
     if isinstance(meta, dict):
-        FILE_REGISTRY[file_id] = {
-            'store_path': str(store_dir),
-            'dt': meta.get('dt'),
-        }
+        state.file_registry.update(
+            file_id,
+            store_path=str(store_dir),
+            dt=meta.get('dt'),
+        )
     return {'file_id': file_id, 'reused_trace_store': reused}
 
 
@@ -228,10 +228,11 @@ async def upload_segy(
     if reused and meta is not None:
         logger.info('Reusing trace store for %s', file.filename)
         _register_trace_store(file_id, store_dir, key1_byte, key2_byte, state=state)
-        FILE_REGISTRY[file_id] = {
-            'store_path': str(store_dir),
-            'dt': meta.get('dt'),
-        }
+        state.file_registry.update(
+            file_id,
+            store_path=str(store_dir),
+            dt=meta.get('dt'),
+        )
         return {'file_id': file_id, 'reused_trace_store': True}
 
     store_dir.mkdir(parents=True, exist_ok=True)
@@ -245,22 +246,24 @@ async def upload_segy(
     )
     _register_trace_store(file_id, store_dir, key1_byte, key2_byte, state=state)
     if isinstance(meta, dict):
-        FILE_REGISTRY[file_id] = {
-            'store_path': str(store_dir),
-            'dt': meta.get('dt'),
-        }
+        state.file_registry.update(
+            file_id,
+            store_path=str(store_dir),
+            dt=meta.get('dt'),
+        )
     else:
-        FILE_REGISTRY[file_id] = {'store_path': str(store_dir)}
+        state.file_registry.update(file_id, store_path=str(store_dir))
     return {'file_id': file_id, 'reused_trace_store': False}
 
 
 @router.get('/file_info')
-async def file_info(file_id: Annotated[str, Query()]) -> dict[str, str]:
+async def file_info(
+    request: Request,
+    file_id: Annotated[str, Query()],
+) -> dict[str, str]:
     """Return basename for a given ``file_id``."""
-    rec = FILE_REGISTRY.get(file_id) or {}
-    path = rec.get('path') or rec.get('store_path')
-    if not path:
+    state = get_state(request.app)
+    name = state.file_registry.filename(file_id)
+    if name is None:
         raise HTTPException(status_code=404, detail='Unknown file_id')
-
-    name = Path(str(path).replace('\\', '/')).name
     return {'file_name': name}

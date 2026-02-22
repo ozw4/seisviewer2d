@@ -27,7 +27,6 @@ from app.services.pipeline_artifacts import get_job_dir
 from app.services.reader import coerce_section_f32, get_reader
 from app.utils.pick_snap import parabolic_refine, snap_pick_time_s
 from app.utils.pipeline import apply_pipeline
-from app.utils.segy_meta import get_dt_for_file
 from app.utils.utils import TraceStoreSectionReader
 
 
@@ -263,7 +262,7 @@ def run_batch_apply_job(job_id: str, req: BatchApplyRequest, state: AppState) ->
             )
             prob_padded.fill(0)
 
-        dt = float(get_dt_for_file(req.file_id))
+        dt = float(state.file_registry.get_dt(req.file_id))
         forced_offset_byte = (
             OFFSET_BYTE_FIXED if _spec_uses_offset(req.pipeline_spec) else None
         )

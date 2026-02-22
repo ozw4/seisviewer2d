@@ -17,7 +17,6 @@ from app.api.schemas import (
 )
 from app.core.state import AppState
 from app.services import batch_apply_service
-from app.utils.segy_meta import FILE_REGISTRY
 
 
 MANUAL_NPZ_KEYS = {
@@ -154,15 +153,6 @@ def test_batch_apply_writes_predicted_picks_npz_manual_compatible(
 ) -> None:
     file_id = 'pr5-picks-file'
     store_dir = _create_min_store(tmp_path)
-    monkeypatch.setitem(
-        FILE_REGISTRY,
-        file_id,
-        {
-            'store_path': str(store_dir),
-            'path': str(tmp_path / 'dummy.sgy'),
-            'dt': 0.002,
-        },
-    )
 
     job_root = tmp_path / 'jobs'
     monkeypatch.setattr(
@@ -210,6 +200,14 @@ def test_batch_apply_writes_predicted_picks_npz_manual_compatible(
     monkeypatch.setattr(batch_apply_service, 'snap_pick_time_s', _stub_snap)
 
     state = AppState()
+    state.file_registry.set_record(
+        file_id,
+        {
+            'store_path': str(store_dir),
+            'path': str(tmp_path / 'dummy.sgy'),
+            'dt': 0.002,
+        },
+    )
     job_id = 'job-pr5-picks'
     state.jobs[job_id] = {
         'status': 'queued',
@@ -256,15 +254,6 @@ def test_batch_apply_skips_predicted_picks_when_disabled(
 ) -> None:
     file_id = 'pr5-picks-disabled-file'
     store_dir = _create_min_store(tmp_path)
-    monkeypatch.setitem(
-        FILE_REGISTRY,
-        file_id,
-        {
-            'store_path': str(store_dir),
-            'path': str(tmp_path / 'dummy.sgy'),
-            'dt': 0.002,
-        },
-    )
 
     job_root = tmp_path / 'jobs'
     monkeypatch.setattr(
@@ -284,6 +273,14 @@ def test_batch_apply_skips_predicted_picks_when_disabled(
     )
 
     state = AppState()
+    state.file_registry.set_record(
+        file_id,
+        {
+            'store_path': str(store_dir),
+            'path': str(tmp_path / 'dummy.sgy'),
+            'dt': 0.002,
+        },
+    )
     job_id = 'job-pr5-picks-disabled'
     state.jobs[job_id] = {
         'status': 'queued',

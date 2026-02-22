@@ -11,17 +11,21 @@ from app.api.routers import section as sec
 from app.main import app
 from app.services import section_index as secidx
 from app.services.errors import ConflictError
-from app.utils.segy_meta import FILE_REGISTRY
 from app.utils.utils import SectionView
 
 
 @pytest.fixture(autouse=True)
 def _clean_registry(monkeypatch):
-    # Ensure a clean FILE_REGISTRY and harmless dt function for binary endpoints.
-    FILE_REGISTRY.clear()
-    monkeypatch.setattr(sec, 'get_dt_for_file', lambda _fid: 0.004, raising=True)
+    # Ensure a clean file registry and harmless dt function for binary endpoints.
+    app.state.sv.file_registry.clear()
+    monkeypatch.setattr(
+        app.state.sv.file_registry,
+        'get_dt',
+        lambda _fid: 0.004,
+        raising=True,
+    )
     yield
-    FILE_REGISTRY.clear()
+    app.state.sv.file_registry.clear()
 
 
 # -------------------------
@@ -280,7 +284,7 @@ def test_get_section_window_bin_happy_path(monkeypatch, tmp_path):
     )
 
     # TraceStore の場所と baseline を用意（apply_scaling_from_baseline が参照）
-    FILE_REGISTRY['f'] = {'store_path': str(tmp_path)}
+    app.state.sv.file_registry.set_record('f', {'store_path': str(tmp_path)})
     baseline = {
         'key1_values': [7],
         'mu_section_by_key1': [0.0],

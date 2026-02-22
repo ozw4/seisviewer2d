@@ -9,8 +9,7 @@ import numpy as np
 from numpy.typing import NDArray
 
 from app.core.state import AppState
-from app.services.errors import ConflictError, NotFoundError
-from app.utils.segy_meta import FILE_REGISTRY, get_dt_for_file
+from app.services.errors import ConflictError
 from app.utils.utils import TraceStoreSectionReader
 
 EXPECTED_SECTION_NDIM = 2
@@ -42,12 +41,7 @@ def get_reader(
     with state.lock:
         reader = state.cached_readers.get(cache_key)
     if reader is None:
-        rec = FILE_REGISTRY.get(file_id)
-        if rec is None:
-            raise NotFoundError('File ID not found')
-        store_path = rec.get('store_path') if isinstance(rec, dict) else None
-        if not isinstance(store_path, str):
-            raise ConflictError('trace store not built')
+        store_path = state.file_registry.get_store_path(file_id)
         p = Path(store_path)
         if not p.is_dir():
             raise ConflictError('trace store not built')
@@ -57,7 +51,7 @@ def get_reader(
             if reader is None:
                 state.cached_readers[cache_key] = fresh_reader
                 reader = fresh_reader
-    dt_val = get_dt_for_file(file_id)
+    dt_val = state.file_registry.get_dt(file_id)
     meta_attr = getattr(reader, 'meta', None)
     if isinstance(meta_attr, dict):
         if not isinstance(meta_attr.get('dt'), (int, float)) or meta_attr['dt'] <= 0:

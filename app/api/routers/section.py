@@ -26,7 +26,6 @@ from app.services.section_service import (
     SectionServiceInternalError,
     build_section_window_payload,
 )
-from app.utils.segy_meta import get_dt_for_file
 
 router = APIRouter()
 
@@ -204,7 +203,7 @@ def get_section_meta(
 
     dtype = str(reader.dtype) if reader.dtype is not None else None
     scale = float(reader.scale) if isinstance(reader.scale, (int, float)) else None
-    dt_val = float(get_dt_for_file(file_id))
+    dt_val = float(state.file_registry.get_dt(file_id))
     _ = get_or_create_raw_baseline(
         file_id=file_id,
         key1_byte=key1_byte,
@@ -301,7 +300,8 @@ def get_section_window_bin(
             pipeline_section_getter=lambda **kwargs: get_section_from_pipeline_tap(
                 **kwargs, state=state
             ),
-            dt_resolver=get_dt_for_file,
+            dt_resolver=lambda fid: state.file_registry.get_dt(fid),
+            store_dir_resolver=lambda fid: state.file_registry.get_store_path(fid),
         )
     except SectionServiceInternalError as exc:
         raise HTTPException(

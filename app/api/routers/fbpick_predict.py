@@ -32,7 +32,6 @@ from app.services.pipeline_taps import (
 from app.services.reader import coerce_section_f32, get_reader
 from app.utils.fbpick_models import model_version, resolve_model_path
 from app.utils.pipeline import apply_pipeline
-from app.utils.segy_meta import get_dt_for_file
 
 logger = logging.getLogger(__name__)
 
@@ -97,8 +96,13 @@ class _ProbabilityPayload:
     source: str
 
 
-def _resolve_dt(file_id: str, meta: dict[str, Any] | None) -> float:
-    dt_file = float(get_dt_for_file(file_id))
+def _resolve_dt(
+    file_id: str,
+    meta: dict[str, Any] | None,
+    *,
+    state: AppState,
+) -> float:
+    dt_file = float(state.file_registry.get_dt(file_id))
     dt = dt_file
     if isinstance(meta, dict) and 'dt' in meta:
         dt_meta = meta.get('dt')
@@ -136,7 +140,9 @@ def _compute_probability_map(
 
     meta_source = getattr(reader, 'meta', None)
     dt = _resolve_dt(
-        req.file_id, meta_source if isinstance(meta_source, dict) else None
+        req.file_id,
+        meta_source if isinstance(meta_source, dict) else None,
+        state=state,
     )
 
     if pipeline_key and tap_label:
@@ -154,7 +160,7 @@ def _compute_probability_map(
         except PipelineTapNotFoundError as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
         meta_for_dt = tap_meta if isinstance(tap_meta, dict) else None
-        dt = _resolve_dt(req.file_id, meta_for_dt)
+        dt = _resolve_dt(req.file_id, meta_for_dt, state=state)
         source = f'pipeline:{tap_label}'
     else:
         view = reader.get_section(req.key1)

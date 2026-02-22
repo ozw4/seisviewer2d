@@ -28,7 +28,6 @@ from app.utils.pick_cache_file1d_mem import (
     set_by_traceseq,
     to_pairs_for_section,
 )
-from app.utils.segy_meta import get_dt_for_file
 
 router = APIRouter()
 
@@ -81,7 +80,7 @@ async def get_picks(
     key2_byte: Annotated[int, Query()] = 193,
 ) -> dict[str, list[dict[str, int | float]]]:
     state = get_state(request.app)
-    fname = _filename_for_file_id(file_id)
+    fname = _filename_for_file_id(file_id, file_registry=state.file_registry)
     if not fname:
         raise HTTPException(404, 'file_id not found')
     ntr = get_ntraces_for(file_id, key1_byte, key2_byte, state=state)
@@ -93,7 +92,7 @@ async def get_picks(
 @router.post('/picks')
 async def post_pick(m: PickPostModel, request: Request) -> dict[str, str]:
     state = get_state(request.app)
-    fname = _filename_for_file_id(m.file_id)
+    fname = _filename_for_file_id(m.file_id, file_registry=state.file_registry)
     if not fname:
         raise HTTPException(404, 'file_id not found')
     ntr = get_ntraces_for(m.file_id, m.key1_byte, m.key2_byte, state=state)
@@ -114,14 +113,14 @@ async def export_manual_picks_npz(
     key1_byte: Annotated[int, Query()] = 189,
     key2_byte: Annotated[int, Query()] = 193,
 ) -> FileResponse:
-    file_name = _filename_for_file_id(file_id)
+    state = get_state(request.app)
+    file_name = _filename_for_file_id(file_id, file_registry=state.file_registry)
     if not file_name:
         raise HTTPException(status_code=404, detail='Filename not found for file_id')
-    state = get_state(request.app)
     reader = get_reader(file_id, key1_byte, key2_byte, state=state)
     n_traces = get_ntraces_for(file_id, key1_byte, key2_byte, state=state)
     n_samples = _validated_n_samples(reader)
-    dt_raw = get_dt_for_file(file_id)
+    dt_raw = state.file_registry.get_dt(file_id)
     if (
         not isinstance(dt_raw, (int, float, np.integer, np.floating))
         or float(dt_raw) <= 0
@@ -172,14 +171,14 @@ async def import_manual_picks_npz(
 ) -> dict[str, int | str]:
     if mode not in {'replace', 'merge'}:
         raise HTTPException(status_code=400, detail='mode must be replace or merge')
-    file_name = _filename_for_file_id(file_id)
+    state = get_state(request.app)
+    file_name = _filename_for_file_id(file_id, file_registry=state.file_registry)
     if not file_name:
         raise HTTPException(status_code=404, detail='Filename not found for file_id')
-    state = get_state(request.app)
     reader = get_reader(file_id, key1_byte, key2_byte, state=state)
     n_traces = int(get_ntraces_for(file_id, key1_byte, key2_byte, state=state))
     n_samples = _validated_n_samples(reader)
-    dt_raw = get_dt_for_file(file_id)
+    dt_raw = state.file_registry.get_dt(file_id)
     if (
         not isinstance(dt_raw, (int, float, np.integer, np.floating))
         or float(dt_raw) <= 0
@@ -260,7 +259,7 @@ async def delete_pick(
     trace: Annotated[int | None, Query()] = None,
 ) -> dict[str, str]:
     state = get_state(request.app)
-    fname = _filename_for_file_id(file_id)
+    fname = _filename_for_file_id(file_id, file_registry=state.file_registry)
     if not fname:
         raise HTTPException(404, 'file_id not found')
     ntr = get_ntraces_for(file_id, key1_byte, key2_byte, state=state)
