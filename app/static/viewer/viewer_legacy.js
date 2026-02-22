@@ -92,6 +92,10 @@
 
     async function onKey1Change() {
       updateKey1Display();
+      const slider = document.getElementById('key1_slider');
+      if (slider) {
+          slider.blur();
+        }
       const debounced = ensureFlushPickOpsDebounced();
       if (typeof debounced?.flush === 'function') {
         await debounced.flush();
