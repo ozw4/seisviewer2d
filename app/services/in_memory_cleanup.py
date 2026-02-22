@@ -2,24 +2,10 @@
 
 from __future__ import annotations
 
-import os
 import time
 
 from app.core.state import AppState
 from app.services.pipeline_artifacts import pipeline_jobs_ttl_seconds
-
-_DEFAULT_JOBS_MAX = 2000
-_DEFAULT_FBPICK_JOB_TTL_SEC = 1800
-
-
-def _env_positive_int(name: str, default: int) -> int:
-    raw = os.getenv(name)
-    if raw is None:
-        return default
-    value = int(raw)
-    if value <= 0:
-        raise ValueError(f'{name} must be > 0')
-    return value
 
 
 def _job_timestamp(job: dict[str, object], field: str) -> float | None:
@@ -59,11 +45,9 @@ def _job_kind(job: dict[str, object]) -> str:
 def cleanup_in_memory_state(state: AppState) -> None:
     """Evict terminal jobs by TTL and cap the total in-memory jobs count."""
     now_ts = time.time()
-    fbpick_ttl_sec = _env_positive_int(
-        'SV_FBPICK_JOB_TTL_SEC', _DEFAULT_FBPICK_JOB_TTL_SEC
-    )
-    jobs_max = _env_positive_int('SV_JOBS_MAX', _DEFAULT_JOBS_MAX)
-    pipeline_ttl_sec = pipeline_jobs_ttl_seconds()
+    fbpick_ttl_sec = state.settings.sv_fbpick_job_ttl_sec
+    jobs_max = state.settings.sv_jobs_max
+    pipeline_ttl_sec = pipeline_jobs_ttl_seconds(settings=state.settings)
 
     with state.lock:
         jobs = state.jobs

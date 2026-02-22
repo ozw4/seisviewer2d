@@ -14,12 +14,15 @@ from typing import Any
 import msgpack
 
 from app.core.paths import get_pipeline_jobs_dir
+from app.core.settings import (
+    Settings,
+    resolve_pipeline_jobs_cleanup_interval_sec,
+    resolve_pipeline_jobs_ttl_seconds as settings_pipeline_jobs_ttl_seconds,
+)
 
 _SAFE_LABEL_RE = re.compile(r'[^A-Za-z0-9._-]+')
 logger = logging.getLogger(__name__)
 
-_DEFAULT_TTL_HOURS = 48
-_DEFAULT_CLEANUP_INTERVAL_SEC = 600
 _last_cleanup_ts = 0.0
 
 
@@ -48,19 +51,11 @@ def _artifact_path(job_id: str, key1: int, tap_label: str) -> Path:
     return get_job_dir(job_id) / str(int(key1)) / f'{safe_filename(tap_label)}.bin'
 
 
-def _ttl_seconds() -> int:
-    raw = os.getenv('PIPELINE_JOBS_TTL_HOURS')
-    if raw is None:
-        return _DEFAULT_TTL_HOURS * 3600
-    ttl_hours = int(raw)
-    if ttl_hours <= 0:
-        raise ValueError('PIPELINE_JOBS_TTL_HOURS must be > 0')
-    return ttl_hours * 3600
-
-
-def pipeline_jobs_ttl_seconds() -> int:
+def pipeline_jobs_ttl_seconds(*, settings: Settings | None = None) -> int:
     """Return TTL in seconds used for pipeline jobs and artifacts."""
-    return _ttl_seconds()
+    if settings is not None:
+        return settings.pipeline_jobs_ttl_hours * 3600
+    return settings_pipeline_jobs_ttl_seconds()
 
 
 def cleanup_expired_jobs(*, now_ts: float | None = None) -> int:
@@ -69,7 +64,7 @@ def cleanup_expired_jobs(*, now_ts: float | None = None) -> int:
     if not base.is_dir():
         return 0
     now = time.time() if now_ts is None else float(now_ts)
-    ttl_sec = _ttl_seconds()
+    ttl_sec = pipeline_jobs_ttl_seconds()
     removed = 0
     for job_dir in base.iterdir():
         if not job_dir.is_dir():
@@ -90,7 +85,8 @@ def maybe_cleanup_expired_jobs() -> int:
     """Run TTL cleanup at most once per interval and return removed count."""
     global _last_cleanup_ts
     now = time.time()
-    if now - _last_cleanup_ts < _DEFAULT_CLEANUP_INTERVAL_SEC:
+    interval_sec = resolve_pipeline_jobs_cleanup_interval_sec()
+    if now - _last_cleanup_ts < interval_sec:
         return 0
     _last_cleanup_ts = now
     return cleanup_expired_jobs(now_ts=now)

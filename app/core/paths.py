@@ -2,65 +2,48 @@
 
 from __future__ import annotations
 
-import os
 from pathlib import Path
 
-APP_CACHE_DIRNAME = 'seisviewer2d'
-APP_DATA_DIRNAME = 'seisviewer2d_app_data'
+from app.core.settings import (
+    APP_CACHE_DIRNAME as _APP_CACHE_DIRNAME,
+    APP_DATA_DIRNAME as _APP_DATA_DIRNAME,
+    resolve_app_data_dir,
+    resolve_picks_npy_dir,
+    resolve_pipeline_jobs_dir,
+    resolve_processed_upload_dir,
+    resolve_trace_store_dir,
+    resolve_upload_dir,
+)
+
+APP_CACHE_DIRNAME = _APP_CACHE_DIRNAME
+APP_DATA_DIRNAME = _APP_DATA_DIRNAME
 
 
 def get_app_data_dir() -> Path:
     """Return the base writable directory for app-owned data."""
-    override = os.getenv('SV_APP_DATA_DIR')
-    if override:
-        return Path(override).expanduser()
-
-    runner_temp = os.getenv('RUNNER_TEMP')
-    if runner_temp:
-        return Path(runner_temp).expanduser() / APP_DATA_DIRNAME
-
-    xdg_cache_home = os.getenv('XDG_CACHE_HOME')
-    if xdg_cache_home:
-        return Path(xdg_cache_home).expanduser() / APP_CACHE_DIRNAME
-
-    return Path.home() / '.cache' / APP_CACHE_DIRNAME
+    return resolve_app_data_dir()
 
 
 def get_picks_npy_dir() -> Path:
     """Return the manual-picks memmap directory path (without creating it)."""
-    override = os.getenv('PICKS_NPY_DIR')
-    if override:
-        return Path(override).expanduser()
-    return get_app_data_dir() / 'picks_npy'
+    return resolve_picks_npy_dir()
 
 
 def get_pipeline_jobs_dir() -> Path:
     """Return the pipeline artifact directory path (without creating it)."""
-    override = os.getenv('PIPELINE_JOBS_DIR')
-    if override:
-        return Path(override).expanduser()
-    return get_app_data_dir() / 'pipeline_jobs'
+    return resolve_pipeline_jobs_dir()
 
 
 def get_upload_dir() -> Path:
     """Return the upload root directory path (without creating it)."""
-    override = os.getenv('SV_UPLOAD_DIR')
-    if override:
-        return Path(override).expanduser()
-    return get_app_data_dir() / 'uploads'
+    return resolve_upload_dir()
 
 
 def get_processed_upload_dir() -> Path:
     """Return the processed-upload directory path (without creating it)."""
-    override = os.getenv('SV_PROCESSED_DIR')
-    if override:
-        return Path(override).expanduser()
-    return get_upload_dir() / 'processed'
+    return resolve_processed_upload_dir()
 
 
 def get_trace_store_dir() -> Path:
     """Return the trace-store directory path (without creating it)."""
-    override = os.getenv('SV_TRACE_DIR')
-    if override:
-        return Path(override).expanduser()
-    return get_processed_upload_dir() / 'traces'
+    return resolve_trace_store_dir()

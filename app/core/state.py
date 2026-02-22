@@ -2,22 +2,13 @@
 
 from __future__ import annotations
 
-import os
 import threading
 import time
 from collections import OrderedDict
 from dataclasses import dataclass, field
 from typing import Any
 
-
-def _env_positive_int(name: str, default: int) -> int:
-    raw = os.getenv(name)
-    if raw is None:
-        return default
-    value = int(raw)
-    if value <= 0:
-        raise ValueError(f'{name} must be > 0')
-    return value
+from app.core.settings import Settings
 
 
 class LRUCache(OrderedDict):
@@ -203,31 +194,30 @@ class AppState:
     """Shared mutable state used by API helpers and routers."""
 
     lock: threading.RLock = field(default_factory=threading.RLock, repr=False)
-    cached_readers: LRUCache = field(
-        default_factory=lambda: LRUCache(
-            _env_positive_int('SV_CACHED_READERS_CAPACITY', 8)
-        )
-    )
-    fbpick_cache: ExpiringLRUCache = field(
-        default_factory=lambda: ExpiringLRUCache(
-            capacity=_env_positive_int('SV_FBPICK_CACHE_CAPACITY', 128),
-            ttl_sec=_env_positive_int('SV_FBPICK_CACHE_TTL_SEC', 1800),
-        )
-    )
+    settings: Settings = field(default_factory=Settings.from_env)
+    cached_readers: LRUCache = field(init=False)
+    fbpick_cache: ExpiringLRUCache = field(init=False)
     jobs: dict[str, dict[str, object]] = field(default_factory=dict)
     pipeline_tap_cache: LRUCache = field(default_factory=lambda: LRUCache(16))
     window_section_cache: LRUCache = field(default_factory=lambda: LRUCache(32))
-    trace_stats_cache: TraceStatsCache = field(
-        default_factory=lambda: TraceStatsCache(
-            max_sections=_env_positive_int('SV_TRACE_STATS_MAX_SECTIONS', 128),
-            max_windows=_env_positive_int('SV_TRACE_STATS_MAX_WINDOWS', 16),
+    trace_stats_cache: TraceStatsCache = field(init=False)
+
+    def __post_init__(self) -> None:
+        self.cached_readers = LRUCache(self.settings.sv_cached_readers_capacity)
+        self.fbpick_cache = ExpiringLRUCache(
+            capacity=self.settings.sv_fbpick_cache_capacity,
+            ttl_sec=self.settings.sv_fbpick_cache_ttl_sec,
         )
-    )
+        self.trace_stats_cache = TraceStatsCache(
+            max_sections=self.settings.sv_trace_stats_max_sections,
+            max_windows=self.settings.sv_trace_stats_max_windows,
+        )
 
 
-def create_app_state() -> AppState:
+def create_app_state(settings: Settings | None = None) -> AppState:
     """Create a fresh application state object."""
-    return AppState()
+    resolved = settings if settings is not None else Settings.from_env()
+    return AppState(settings=resolved)
 
 
 DEFAULT_STATE = create_app_state()
