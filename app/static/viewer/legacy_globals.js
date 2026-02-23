@@ -26,6 +26,19 @@
     let lastHover = null;
     let redrawPending = false;
     let USE_HEATMAP_POOLING = true;
+    window.SV_PERF = false;
+    window.SV_PERF_ROWS = [];
+    window.svPerfLog = function svPerfLog(rec) {
+      if (!window.SV_PERF) return;
+      const rows = Array.isArray(window.SV_PERF_ROWS)
+        ? window.SV_PERF_ROWS
+        : (window.SV_PERF_ROWS = []);
+      rows.push(rec);
+      if (rows.length > 60) {
+        rows.splice(0, rows.length - 60);
+      }
+      console.info('[svperf]', rec);
+    };
     {
       const params = new URLSearchParams(window.location.search);
       const poolParam = params.get('heatmap_pool');
@@ -36,6 +49,16 @@
         }
         if (norm === '1' || norm === 'true' || norm === 'on') {
           USE_HEATMAP_POOLING = true;
+        }
+      }
+      const perfParam = params.get('perf');
+      if (perfParam != null) {
+        const norm = perfParam.trim().toLowerCase();
+        if (norm === '0' || norm === 'false' || norm === 'off') {
+          window.SV_PERF = false;
+        }
+        if (norm === '1' || norm === 'true' || norm === 'on') {
+          window.SV_PERF = true;
         }
       }
     }

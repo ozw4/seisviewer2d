@@ -440,7 +440,12 @@
         pickOverlayDirty = false;
         return;
       }
-
+      if (window.SV_PERF_NO_SHAPES === true) {
+        pickOverlayDirty = false;
+        const cur = plotDiv?._fullLayout?.shapes;
+        if (Array.isArray(cur) && cur.length) safeRelayout(plotDiv, { shapes: [] });
+        return;
+      }
       let xMin = null;
       let xMax = null;
 

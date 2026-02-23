@@ -172,6 +172,13 @@
       params.set('scaling', currentScaling);
 
       const requestId = bumpWindowFetchId();
+      const perfEnabled = window.SV_PERF === true;
+      let tReq0 = null;
+      let tRes = null;
+      let tBuf = null;
+      let tDec0 = null;
+      let tDec1 = null;
+      let bytes = null;
       showLoading(buildWindowLoadingMessage({
         mode,
         stepX: step_x,
@@ -186,15 +193,22 @@
       windowFetchCtrl = ctrl;
 
       try {
+        if (perfEnabled) tReq0 = performance.now();
         const res = await fetch(`/get_section_window_bin?${params.toString()}`, { signal: ctrl.signal });
+        if (perfEnabled) tRes = performance.now();
         if (!res.ok) {
           console.warn('Window fetch failed', res.status);
           return;
         }
-        const bin = new Uint8Array(await res.arrayBuffer());
+        const buf = await res.arrayBuffer();
+        if (perfEnabled) tBuf = performance.now();
+        const bin = new Uint8Array(buf);
+        if (perfEnabled) bytes = bin.byteLength;
         if (requestId !== activeWindowFetchId) return; // stale
 
+        if (perfEnabled) tDec0 = performance.now();
         const obj = msgpack.decode(bin);
+        if (perfEnabled) tDec1 = performance.now();
         applyServerDt(obj);
 
         // Int8 のまま保持（Float32生成しない）
@@ -229,6 +243,16 @@
           scale: obj.scale,  // 後段で /scale
           quant: quantMeta,
           mode,
+          __perf: perfEnabled ? {
+            id: requestId,
+            mode,
+            bytes,
+            tReq0,
+            tRes,
+            tBuf,
+            tDec0,
+            tDec1,
+          } : null,
         };
 
         latestSeismicData = null;

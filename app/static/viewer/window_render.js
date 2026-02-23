@@ -197,6 +197,12 @@
       const rows = Number(shape?.[0] ?? 0);
       const cols = Number(shape?.[1] ?? 0);
       if (!rows || !cols) return;
+      const perf = windowData.__perf || null;
+      const perfEnabled = window.SV_PERF === true;
+      let tPrep0 = null;
+      let tPrep1 = null;
+      let tPlot0 = null;
+      let plotPromise = null;
 
       const useI8 = windowData.valuesI8 instanceof Int8Array;
       const useF32 = !useI8 && windowData.values && windowData.values.length != null;
@@ -229,6 +235,7 @@
         wiggleIdxs.length !== expectedTraceCount
       );
 
+      if (perfEnabled) tPrep0 = performance.now();
       setGrid({ x0, stepX: 1, y0, stepY: 1 });
       const dt = window.defaultDt ?? defaultDt;
       const time = new Float32Array(rows);
@@ -315,6 +322,9 @@
         xMax: endTrace,
         showPredicted: showPred,
       });
+      const noShapes = window.SV_PERF_NO_SHAPES === true;
+      const shapesForPlot = noShapes ? [] : pickShapes;
+      if (perfEnabled) tPrep1 = performance.now();
       if (needsReactInit) {
         const totalSamples = sectionShape ? sectionShape[1] : (typeof y1 === 'number' ? y1 - y0 + 1 : rows);
         const layout = buildLayout({
@@ -334,9 +344,10 @@
           uirevision: currentUiRevision(),
           fbTitle: null,
         });
-        layout.shapes = pickShapes;
+        layout.shapes = shapesForPlot;
 
-        withSuppressedRelayout(Plotly.react(plotDiv, traces, layout, {
+        if (perfEnabled) tPlot0 = performance.now();
+        plotPromise = withSuppressedRelayout(Plotly.react(plotDiv, traces, layout, {
           responsive: true,
           editable: true,
           modeBarButtonsToAdd: ['eraseshape'],
@@ -352,9 +363,31 @@
             y: wiggleY,
           }, wiggleIdxs))
           .then(() => Plotly.relayout(plotDiv, {
-            shapes: pickShapes,
+            shapes: shapesForPlot,
           }));
-        withSuppressedRelayout(diffUpdatePromise);
+        if (perfEnabled) tPlot0 = performance.now();
+        plotPromise = withSuppressedRelayout(diffUpdatePromise);
+      }
+      if (perfEnabled && plotPromise && typeof plotPromise.then === 'function') {
+        plotPromise.then(() => {
+          const tDone = performance.now();
+          window.svPerfLog({
+            kind: 'window',
+            mode: 'wiggle',
+            plot: needsReactInit ? 'react' : 'restyle',
+            rows,
+            cols,
+            stepX,
+            stepY,
+            shapes: shapesForPlot.length,
+            fetch_ms: perf ? (perf.tBuf - perf.tReq0) : null,
+            decode_ms: perf ? (perf.tDec1 - perf.tDec0) : null,
+            prep_ms: tPrep1 - tPrep0,
+            plotly_ms: tDone - tPlot0,
+            total_ms: perf ? (tDone - perf.tReq0) : null,
+            bytes: perf ? perf.bytes : null,
+          });
+        });
       }
       requestAnimationFrame(applyDragMode);
       installPlotlyViewportHandlersOnce();
@@ -413,6 +446,12 @@
       const rows = Number(shape?.[0] ?? 0);
       const cols = Number(shape?.[1] ?? 0);
       if (!rows || !cols) return;
+      const perf = windowData.__perf || null;
+      const perfEnabled = window.SV_PERF === true;
+      let tLut0 = null;
+      let tLut1 = null;
+      let tPlot0 = null;
+      let plotPromise = null;
 
       const useI8 = windowData.valuesI8 instanceof Int8Array;
       const useF32 = !useI8 && windowData.values && windowData.values.length != null;
@@ -435,6 +474,7 @@
       );
       const fallbackScale = Number(windowData.scale) || 1;
 
+      if (perfEnabled) tLut0 = performance.now();
       let zData;
       const poolingCandidate = (
         USE_HEATMAP_POOLING &&
@@ -494,6 +534,7 @@
         }
         zData = zRows;
       }
+      if (perfEnabled) tLut1 = performance.now();
 
       const xVals = new Float32Array(cols);
       for (let c = 0; c < cols; c++) xVals[c] = x0 + c * stepX;
@@ -524,6 +565,8 @@
         xMax: x1,
         showPredicted: showPred,
       });
+      const noShapes = window.SV_PERF_NO_SHAPES === true;
+      const shapesForPlot = noShapes ? [] : pickShapes;
 
       if (needsReactInit) {
         const traces = [{
@@ -559,9 +602,10 @@
           uirevision: currentUiRevision(),
           fbTitle,
         });
-        layout.shapes = pickShapes;
+        layout.shapes = shapesForPlot;
 
-        withSuppressedRelayout(Plotly.react(plotDiv, traces, layout, {
+        if (perfEnabled) tPlot0 = performance.now();
+        plotPromise = withSuppressedRelayout(Plotly.react(plotDiv, traces, layout, {
           responsive: true,
           editable: true,
           modeBarButtonsToAdd: ['eraseshape'],
@@ -583,10 +627,33 @@
             zmid: [zMid],
           }, [heatIdx]))
           .then(() => Plotly.relayout(plotDiv, {
-            shapes: pickShapes,
+            shapes: shapesForPlot,
             title: fbTitle ?? '',
           }));
-        withSuppressedRelayout(diffUpdatePromise);
+        if (perfEnabled) tPlot0 = performance.now();
+        plotPromise = withSuppressedRelayout(diffUpdatePromise);
+      }
+      if (perfEnabled && plotPromise && typeof plotPromise.then === 'function') {
+        plotPromise.then(() => {
+          const tDone = performance.now();
+          window.svPerfLog({
+            kind: 'window',
+            mode: 'heatmap',
+            plot: needsReactInit ? 'react' : 'restyle',
+            pool: poolingCandidate,
+            rows,
+            cols,
+            stepX,
+            stepY,
+            shapes: shapesForPlot.length,
+            fetch_ms: perf ? (perf.tBuf - perf.tReq0) : null,
+            decode_ms: perf ? (perf.tDec1 - perf.tDec0) : null,
+            lut_ms: tLut1 - tLut0,
+            plotly_ms: tDone - tPlot0,
+            total_ms: perf ? (tDone - perf.tReq0) : null,
+            bytes: perf ? perf.bytes : null,
+          });
+        });
       }
       requestAnimationFrame(applyDragMode);
       installPlotlyViewportHandlersOnce();
