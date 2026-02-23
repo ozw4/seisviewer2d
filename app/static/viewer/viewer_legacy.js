@@ -4,7 +4,7 @@
 
     let __dbg = { enabled: true };
     // 連続重複を抑制したいタグ（必要なら増やせる）
-      const DEDUP_TAGS = new Set(['RENDER@wiggle:shapes']);
+      const DEDUP_TAGS = new Set(['RENDER@picks']);
     const __lastLogKeyByTag = new Map();
     function __stableStringify(v) {
         if (v && typeof v === 'object') {
@@ -440,36 +440,13 @@
         pickOverlayDirty = false;
         return;
       }
-      if (window.SV_PERF_NO_SHAPES === true) {
-        pickOverlayDirty = false;
-        const cur = plotDiv?._fullLayout?.shapes;
-        if (Array.isArray(cur) && cur.length) safeRelayout(plotDiv, { shapes: [] });
-        return;
-      }
       let xMin = null;
       let xMax = null;
 
-      const xaRange = plotDiv?._fullLayout?.xaxis?.range;
-      if (
-        Array.isArray(xaRange) &&
-        xaRange.length === 2 &&
-        Number.isFinite(xaRange[0]) &&
-        Number.isFinite(xaRange[1])
-      ) {
-        xMin = Math.floor(Math.min(xaRange[0], xaRange[1]));
-        xMax = Math.ceil(Math.max(xaRange[0], xaRange[1]));
-      }
-
+      // Prefer the rendered window span so panning does not trim pick traces to viewport only.
       if (Number.isFinite(renderedStart) && Number.isFinite(renderedEnd)) {
-        const rs = Math.floor(Math.min(renderedStart, renderedEnd));
-        const re = Math.ceil(Math.max(renderedStart, renderedEnd));
-        if (Number.isFinite(xMin) && Number.isFinite(xMax)) {
-          xMin = Math.max(xMin, rs);
-          xMax = Math.min(xMax, re);
-        } else {
-          xMin = rs;
-          xMax = re;
-        }
+        xMin = Math.floor(Math.min(renderedStart, renderedEnd));
+        xMax = Math.ceil(Math.max(renderedStart, renderedEnd));
       }
 
       if (!(Number.isFinite(xMin) && Number.isFinite(xMax) && xMin <= xMax)) {
@@ -482,21 +459,53 @@
       }
 
       if (!(Number.isFinite(xMin) && Number.isFinite(xMax) && xMin <= xMax)) {
+        const xaRange = plotDiv?._fullLayout?.xaxis?.range;
+        if (
+          Array.isArray(xaRange) &&
+          xaRange.length === 2 &&
+          Number.isFinite(xaRange[0]) &&
+          Number.isFinite(xaRange[1])
+        ) {
+          xMin = Math.floor(Math.min(xaRange[0], xaRange[1]));
+          xMax = Math.ceil(Math.max(xaRange[0], xaRange[1]));
+        }
+      }
+
+      if (!(Number.isFinite(xMin) && Number.isFinite(xMax) && xMin <= xMax)) {
         pickOverlayDirty = false;
         return;
       }
 
       const showPred = !!document.getElementById('showFbPred')?.checked;
-      const newShapes = buildPickShapes({
+      const [manualPickTr, predPickTr] = buildPickMarkerTraces({
         manualPicks: picks,
         predicted: showPred ? predictedPicks : [],
         xMin,
         xMax,
         showPredicted: showPred,
       });
-
       pickOverlayDirty = false;
-      safeRelayout(plotDiv, { shapes: newShapes });
+      const resolver = (typeof resolvePickTraceIndices === 'function')
+        ? resolvePickTraceIndices
+        : window.resolvePickTraceIndices;
+      if (typeof resolver !== 'function') {
+        console.warn('[PICKS] resolvePickTraceIndices is not available');
+        return;
+      }
+      const { manualIdx, predIdx } = resolver(plotDiv);
+      if (manualIdx < 0 || predIdx < 0) {
+        console.warn('[PICKS] pick traces are missing; overlay restyle skipped');
+        if (typeof renderLatestView === 'function') renderLatestView();
+        return;
+      }
+      const restyleResult = Plotly.restyle(plotDiv, {
+        x: [manualPickTr.x, predPickTr.x],
+        y: [manualPickTr.y, predPickTr.y],
+        visible: [true, !!showPred],
+      }, [manualIdx, predIdx]);
+      if (restyleResult && typeof restyleResult.catch === 'function') {
+        restyleResult.catch((err) => console.warn('pick overlay restyle failed', err));
+      }
     }
 
     // 統一キー関数（FB予測キャッシュ用）
@@ -1905,8 +1914,32 @@
       return isPickMode ? 'event' : 'event+select';
     }
 
-    function pickOnTrace(trace) {
-      return picks.findIndex(p => Math.round(p.trace) === trace);
+    function removeAllPicksOnTrace(traceInt) {
+      for (let i = picks.length - 1; i >= 0; i--) {
+        if ((picks[i].trace | 0) === traceInt) picks.splice(i, 1);
+      }
+    }
+
+    function upsertLocalPick(traceInt, time) {
+      removeAllPicksOnTrace(traceInt);
+      picks.push({ trace: traceInt, time: +time });
+    }
+
+    function dedupeLocalPicksByTrace() {
+      const seen = new Set();
+      let removed = 0;
+      for (let i = picks.length - 1; i >= 0; i--) {
+        const trInt = picks[i].trace | 0;
+        if (seen.has(trInt)) {
+          picks.splice(i, 1);
+          removed += 1;
+          continue;
+        }
+        picks[i].trace = trInt;
+        picks[i].time = +picks[i].time;
+        seen.add(trInt);
+      }
+      return removed;
     }
 
     function toTraceInt(t) {
@@ -1927,6 +1960,12 @@
 
       try {
         if (!isPickMode) return;
+
+        const deduped = dedupeLocalPicksByTrace();
+        if (deduped > 0) {
+          console.warn(`[PICKS] removed ${deduped} duplicate local pick(s) before handling input`);
+          schedulePickOverlayUpdate();
+        }
 
         console.log('🔥 pick request', { trace, time, shiftKey, ctrlKey, altKey });
 
@@ -1971,12 +2010,12 @@
             const snapped = snapTimeFromDataY(y);
             const tAdj = adjustPickToFeature(x, snapped);
 
-            const idx = pickOnTrace(x);
-            if (idx >= 0) {
+            const hadExisting = picks.some(p => (p.trace | 0) === x);
+            removeAllPicksOnTrace(x);
+            if (hadExisting) {
               promises.push(deletePick(x));
-              picks.splice(idx, 1);
             }
-            picks.push({ trace: x, time: tAdj });
+            upsertLocalPick(x, tAdj);
             promises.push(postPick(x, tAdj));
           }
           await Promise.all(promises);
@@ -1988,14 +2027,14 @@
         linePickStart = null;
         deleteRangeStart = null;
 
-        const idx = pickOnTrace(trInt);
         const promises = [];
-        if (idx >= 0) {
+        const hadExisting = picks.some(p => (p.trace | 0) === trInt);
+        removeAllPicksOnTrace(trInt);
+        if (hadExisting) {
           promises.push(deletePick(trInt));
-          picks.splice(idx, 1);
         }
         const tAdj = adjustPickToFeature(trInt, time);
-        picks.push({ trace: trInt, time: tAdj });
+        upsertLocalPick(trInt, tAdj);
         promises.push(postPick(trInt, tAdj));
         await Promise.all(promises);
         D('PICKS@handlePickNormalized:single', { add: { trace: trInt, time: tAdj }, count: picks.length });
@@ -2043,86 +2082,7 @@
         checkModeFlipAndRefetch({ immediate: true });
         return;
       }
-
-      // ★ 本当に shape のプロパティが変わったときだけ同期（eraseshape 等の全置換は無視）
-      const shapePropKeys = Object.keys(ev).filter(k => /^shapes\[\d+\]\.(x0|x1|y0|y1|line\.color|line\.width|visible)$/.test(k));
-      if (shapePropKeys.length === 0 || !isPickMode) {
-        D('RELAYOUT@skip(no-shape-prop or not pickMode)', viewerState());
-        return;
-      }
-
-      // Plotly が layout 反映完了するのを待つ
-      await new Promise(r => requestAnimationFrame(r));
-
-      const fullShapes =
-        (gd && gd._fullLayout && Array.isArray(gd._fullLayout.shapes))
-          ? gd._fullLayout.shapes
-          : [];
-
-      // 可視Xレンジ
-      const xa = gd?._fullLayout?.xaxis;
-      const xr = (xa && Array.isArray(xa.range)) ? xa.range : [renderedStart ?? 0, renderedEnd ?? 0];
-      const xVis0 = Math.floor(Math.min(xr[0], xr[1]));
-      const xVis1 = Math.ceil(Math.max(xr[0], xr[1]));
-      const inView = (t) => t >= xVis0 && t <= xVis1;
-
-      // shapes → newMap（赤のみ・可視範囲のみ）
-      const newMap = new Map();
-      for (const s of fullShapes) {
-        if (!s || !s.line || s.line.color !== 'red') continue;
-        const tr = Math.round(((+s.x0) + (+s.x1)) / 2);
-        if (!inView(tr)) continue;
-        const time = ((+s.y0) + (+s.y1)) / 2;
-        newMap.set(tr, { trace: tr, time });
-      }
-
-      // 旧ローカル → oldMap（可視範囲のみ）
-      const oldMap = new Map();
-      for (const p of (picks || [])) {
-        const tr = Math.round(p.trace);
-        if (!inView(tr)) continue;
-        oldMap.set(tr, { trace: tr, time: +p.time });
-      }
-
-      // 差分計算
-      const del = [];
-      const add = [];
-      const upd = [];
-
-      for (const [tr, op] of oldMap) {
-        if (!newMap.has(tr)) {
-          del.push(tr);
-        } else {
-          const np = newMap.get(tr);
-          if (Math.abs(np.time - op.time) > 1e-9) upd.push(np);
-        }
-      }
-      for (const [tr, np] of newMap) {
-        if (!oldMap.has(tr)) add.push(np);
-      }
-
-      // サーバ反映（可視範囲の差分のみ）
-      await Promise.all([
-        ...del.map(t => deletePick(t)),
-        ...add.map(p => postPick(p.trace, p.time)),
-        ...upd.map(p => postPick(p.trace, p.time)),
-      ]);
-
-      // ローカル更新：不可視はそのまま、可視は差分適用
-      const kept = (picks || []).filter(p => {
-        const tr = Math.round(p.trace);
-        return tr < xVis0 || tr > xVis1 || !del.includes(tr);
-      });
-      const mergedMap = new Map(kept.map(p => [Math.round(p.trace), { trace: Math.round(p.trace), time: +p.time }]));
-      for (const p of add) mergedMap.set(p.trace, p);
-      for (const p of upd) mergedMap.set(p.trace, p);
-      picks = Array.from(mergedMap.values()).sort((a, b) => a.trace - b.trace);
-
-      D('RELAYOUT@sync', {
-        shapePropKeys, vis: [xVis0, xVis1],
-        del, add: add.map(p => p.trace), upd: upd.map(p => p.trace),
-        count: picks.length, sample: samplePicks(picks)
-      });
+      D('RELAYOUT@skip(shape-sync-removed)', viewerState());
     }
 
 

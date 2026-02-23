@@ -100,3 +100,77 @@ export function buildPickShapes({
 
   return [...manualShapes, ...(showPredicted ? predictedShapes : [])];
 }
+
+export function buildPickMarkerTraces({
+  manualPicks,
+  predicted,
+  xMin,
+  xMax,
+  showPredicted,
+}) {
+  const manualInRange = (manualPicks || []).filter((p) => (
+    p &&
+    typeof p.trace === 'number' &&
+    typeof p.time === 'number' &&
+    p.trace >= xMin &&
+    p.trace <= xMax
+  ));
+  const predInRange = (predicted || []).filter((p) => (
+    p &&
+    typeof p.trace === 'number' &&
+    typeof p.time === 'number' &&
+    p.trace >= xMin &&
+    p.trace <= xMax
+  ));
+
+  const manualX = new Float32Array(manualInRange.length);
+  const manualY = new Float32Array(manualInRange.length);
+  for (let i = 0; i < manualInRange.length; i++) {
+    manualX[i] = manualInRange[i].trace;
+    manualY[i] = manualInRange[i].time;
+  }
+
+  const predX = new Float32Array(predInRange.length);
+  const predY = new Float32Array(predInRange.length);
+  for (let i = 0; i < predInRange.length; i++) {
+    predX[i] = predInRange[i].trace;
+    predY[i] = predInRange[i].time;
+  }
+
+  const manualTrace = {
+    type: 'scattergl',
+    mode: 'markers',
+    x: manualX,
+    y: manualY,
+    marker: {
+      symbol: 'line-ew',
+      color: 'red',
+      size: 14,
+      line: { color: 'red', width: 2 },
+    },
+    hoverinfo: 'skip',
+    showlegend: false,
+    cliponaxis: false,
+    meta: { svRole: 'pick', svKind: 'manual' },
+  };
+
+  const predTrace = {
+    type: 'scattergl',
+    mode: 'markers',
+    x: predX,
+    y: predY,
+    marker: {
+      symbol: 'line-ew',
+      color: '#1f77b4',
+      size: 18,
+      line: { color: '#1f77b4', width: 4 },
+    },
+    visible: !!showPredicted,
+    hoverinfo: 'skip',
+    showlegend: false,
+    cliponaxis: false,
+    meta: { svRole: 'pick', svKind: 'pred' },
+  };
+
+  return [manualTrace, predTrace];
+}

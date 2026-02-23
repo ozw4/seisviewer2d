@@ -123,6 +123,39 @@
       }
       return idxs;
     }
+    function resolvePickTraceIndices(gd) {
+      const data = Array.isArray(gd?.data) ? gd.data : [];
+      const isPickIdx = (idx, kind) => (
+        Number.isInteger(idx) &&
+        idx >= 0 &&
+        idx < data.length &&
+        data[idx] &&
+        data[idx].meta &&
+        data[idx].meta.svRole === 'pick' &&
+        data[idx].meta.svKind === kind
+      );
+
+      const cachedManual = gd ? gd.__svPickIdxManual : -1;
+      const cachedPred = gd ? gd.__svPickIdxPred : -1;
+      if (isPickIdx(cachedManual, 'manual') && isPickIdx(cachedPred, 'pred')) {
+        return { manualIdx: cachedManual, predIdx: cachedPred };
+      }
+
+      let manualIdx = -1;
+      let predIdx = -1;
+      for (let i = 0; i < data.length; i++) {
+        const tr = data[i];
+        if (!tr || !tr.meta || tr.meta.svRole !== 'pick') continue;
+        if (tr.meta.svKind === 'manual' && manualIdx < 0) manualIdx = i;
+        if (tr.meta.svKind === 'pred' && predIdx < 0) predIdx = i;
+      }
+      if (gd) {
+        gd.__svPickIdxManual = manualIdx;
+        gd.__svPickIdxPred = predIdx;
+      }
+      return { manualIdx, predIdx };
+    }
+    window.resolvePickTraceIndices = resolvePickTraceIndices;
     function makeWiggleSig(opts) {
       const styleKey = 'base:line0:skip|fill:tonextx:black:0.6:line0:skip|line:black:0.5:x+y';
       return JSON.stringify({
@@ -228,11 +261,17 @@
       const prevMode = plotDiv.__svPlotMode;
       const hasPlotData = Array.isArray(plotDiv.data) && plotDiv.data.length > 0;
       const wiggleIdxs = resolveWiggleTraceIndices(plotDiv);
+      const pickTraceIdxs = resolvePickTraceIndices(plotDiv);
+      const hasPickTraces = pickTraceIdxs.manualIdx >= 0 && pickTraceIdxs.predIdx >= 0;
+      if (!hasPickTraces && hasPlotData && prevMode === 'wiggle') {
+        console.warn('[RENDER@wiggle][PICKS] missing pick traces; forcing react init');
+      }
       const needsReactInit = (
         !hasPlotData ||
         prevMode !== 'wiggle' ||
         prevWiggleSig !== wiggleSig ||
-        wiggleIdxs.length !== expectedTraceCount
+        wiggleIdxs.length !== expectedTraceCount ||
+        !hasPickTraces
       );
 
       if (perfEnabled) tPrep0 = performance.now();
@@ -301,12 +340,6 @@
         }
         wiggleX.push(baseX, shiftedPosX, shiftedFullX);
         wiggleY.push(time, time, time);
-
-        const [x0v, x1v] = visibleXRng();
-        D('RENDER@wiggle:shapes', {
-          manualInWin: picks.filter(p => p.trace >= windowData.x0 && p.trace <= windowData.x1).length,
-          vis: [x0v, x1v],
-        });
       }
 
       downsampleFactor = 1;
@@ -315,17 +348,28 @@
       renderedEnd = endTrace;
 
       const showPred = !!document.getElementById('showFbPred')?.checked;
-      const pickShapes = buildPickShapes({
+      const [manualPickTr, predPickTr] = buildPickMarkerTraces({
         manualPicks: picks,
         predicted: showPred ? predictedPicks : [],
         xMin: x0,
         xMax: endTrace,
         showPredicted: showPred,
       });
-      const noShapes = window.SV_PERF_NO_SHAPES === true;
-      const shapesForPlot = noShapes ? [] : pickShapes;
+      const pickManualCount = manualPickTr.x ? manualPickTr.x.length : 0;
+      const pickPredCount = predPickTr.x ? predPickTr.x.length : 0;
+      const [x0v, x1v] = visibleXRng();
+      D('RENDER@picks', {
+        mode: 'wiggle',
+        manualInWin: pickManualCount,
+        predInWin: pickPredCount,
+        vis: [x0v, x1v],
+      });
       if (perfEnabled) tPrep1 = performance.now();
       if (needsReactInit) {
+        traces.push(manualPickTr, predPickTr);
+        plotDiv.__svPickIdxManual = traces.length - 2;
+        plotDiv.__svPickIdxPred = traces.length - 1;
+
         const totalSamples = sectionShape ? sectionShape[1] : (typeof y1 === 'number' ? y1 - y0 + 1 : rows);
         const layout = buildLayout({
           mode: 'wiggle',
@@ -344,14 +388,10 @@
           uirevision: currentUiRevision(),
           fbTitle: null,
         });
-        layout.shapes = shapesForPlot;
 
         if (perfEnabled) tPlot0 = performance.now();
         plotPromise = withSuppressedRelayout(Plotly.react(plotDiv, traces, layout, {
           responsive: true,
-          editable: true,
-          modeBarButtonsToAdd: ['eraseshape'],
-          edits: { shapePosition: false },
           doubleClick: false,
           doubleClickDelay: 300,
         }));
@@ -362,9 +402,18 @@
             x: wiggleX,
             y: wiggleY,
           }, wiggleIdxs))
-          .then(() => Plotly.relayout(plotDiv, {
-            shapes: shapesForPlot,
-          }));
+          .then(() => {
+            const { manualIdx, predIdx } = resolvePickTraceIndices(plotDiv);
+            if (manualIdx < 0 || predIdx < 0) {
+              console.warn('[RENDER@wiggle][PICKS] pick traces missing on restyle path');
+              return;
+            }
+            return Plotly.restyle(plotDiv, {
+              x: [manualPickTr.x, predPickTr.x],
+              y: [manualPickTr.y, predPickTr.y],
+              visible: [true, !!showPred],
+            }, [manualIdx, predIdx]);
+          });
         if (perfEnabled) tPlot0 = performance.now();
         plotPromise = withSuppressedRelayout(diffUpdatePromise);
       }
@@ -379,7 +428,8 @@
             cols,
             stepX,
             stepY,
-            shapes: shapesForPlot.length,
+            pick_manual: pickManualCount,
+            pick_pred: pickPredCount,
             fetch_ms: perf ? (perf.tBuf - perf.tReq0) : null,
             decode_ms: perf ? (perf.tDec1 - perf.tDec0) : null,
             prep_ms: tPrep1 - tPrep0,
@@ -439,7 +489,12 @@
       };
       const heatIdx = resolveHeatmapTraceIndex(plotDiv);
       const prevMode = plotDiv.__svPlotMode;
-      const needsReactInit = heatIdx < 0 || prevMode !== 'heatmap';
+      const pickTraceIdxs = resolvePickTraceIndices(plotDiv);
+      const hasPickTraces = pickTraceIdxs.manualIdx >= 0 && pickTraceIdxs.predIdx >= 0;
+      if (!hasPickTraces && Array.isArray(plotDiv.data) && plotDiv.data.length > 0 && prevMode === 'heatmap') {
+        console.warn('[RENDER@heatmap][PICKS] missing pick traces; forcing react init');
+      }
+      const needsReactInit = heatIdx < 0 || prevMode !== 'heatmap' || !hasPickTraces;
 
       const { shape, x0, x1, y0, y1, effectiveLayer } = windowData;
       let { stepX, stepY } = windowData;
@@ -558,15 +613,22 @@
       const fbTitle = fbMode ? 'First-break Probability' : null;
 
       const showPred = !!document.getElementById('showFbPred')?.checked;
-      const pickShapes = buildPickShapes({
+      const [manualPickTr, predPickTr] = buildPickMarkerTraces({
         manualPicks: picks,
         predicted: showPred ? predictedPicks : [],
         xMin: x0,
         xMax: x1,
         showPredicted: showPred,
       });
-      const noShapes = window.SV_PERF_NO_SHAPES === true;
-      const shapesForPlot = noShapes ? [] : pickShapes;
+      const pickManualCount = manualPickTr.x ? manualPickTr.x.length : 0;
+      const pickPredCount = predPickTr.x ? predPickTr.x.length : 0;
+      const [x0v, x1v] = visibleXRng();
+      D('RENDER@picks', {
+        mode: 'heatmap',
+        manualInWin: pickManualCount,
+        predInWin: pickPredCount,
+        vis: [x0v, x1v],
+      });
 
       if (needsReactInit) {
         const traces = [{
@@ -583,6 +645,9 @@
           hoverinfo: 'x+y',
           hovertemplate: '',
         }];
+        traces.push(manualPickTr, predPickTr);
+        plotDiv.__svPickIdxManual = traces.length - 2;
+        plotDiv.__svPickIdxPred = traces.length - 1;
 
         const dt = window.defaultDt ?? defaultDt;
         const layout = buildLayout({
@@ -602,14 +667,10 @@
           uirevision: currentUiRevision(),
           fbTitle,
         });
-        layout.shapes = shapesForPlot;
 
         if (perfEnabled) tPlot0 = performance.now();
         plotPromise = withSuppressedRelayout(Plotly.react(plotDiv, traces, layout, {
           responsive: true,
-          editable: true,
-          modeBarButtonsToAdd: ['eraseshape'],
-          edits: { shapePosition: false },
           doubleClick: false,
           doubleClickDelay: 300,
         }));
@@ -626,8 +687,19 @@
             zmax: [zMax],
             zmid: [zMid],
           }, [heatIdx]))
+          .then(() => {
+            const { manualIdx, predIdx } = resolvePickTraceIndices(plotDiv);
+            if (manualIdx < 0 || predIdx < 0) {
+              console.warn('[RENDER@heatmap][PICKS] pick traces missing on restyle path');
+              return;
+            }
+            return Plotly.restyle(plotDiv, {
+              x: [manualPickTr.x, predPickTr.x],
+              y: [manualPickTr.y, predPickTr.y],
+              visible: [true, !!showPred],
+            }, [manualIdx, predIdx]);
+          })
           .then(() => Plotly.relayout(plotDiv, {
-            shapes: shapesForPlot,
             title: fbTitle ?? '',
           }));
         if (perfEnabled) tPlot0 = performance.now();
@@ -645,7 +717,8 @@
             cols,
             stepX,
             stepY,
-            shapes: shapesForPlot.length,
+            pick_manual: pickManualCount,
+            pick_pred: pickPredCount,
             fetch_ms: perf ? (perf.tBuf - perf.tReq0) : null,
             decode_ms: perf ? (perf.tDec1 - perf.tDec0) : null,
             lut_ms: tLut1 - tLut0,
@@ -660,9 +733,4 @@
       attachPickListeners(plotDiv);
       installCustomDoubleClick(plotDiv);
       plotDiv.__svPlotMode = 'heatmap';
-      const [x0v, x1v] = visibleXRng();
-       D('RENDER@wiggle:shapes', {
-        manualInWin: picks.filter(p => p.trace >= windowData.x0 && p.trace <= windowData.x1).length,
-        vis: [x0v, x1v],
-       });
     }
