@@ -157,7 +157,7 @@
     }
     window.resolvePickTraceIndices = resolvePickTraceIndices;
     function makeWiggleSig(opts) {
-      const styleKey = 'base:line0:skip|fill:tonextx:black:0.6:line0:skip|line:black:0.5:x+y';
+      const styleKey = 'base:line0:skip|fill:toself:black:0.6:line0:skip|line:black:0.5:x+y';
       return JSON.stringify({
         displayTraceCount: opts.displayTraceCount,
         plotTraceCount: opts.plotTraceCount,
@@ -248,7 +248,7 @@
       const scale = Number(windowData.scale) || 1;
       const stepX = windowData.stepX || 1;
       const stepY = windowData.stepY || 1;
-      const expectedTraceCount = cols * 3;
+      const expectedTraceCount = 3;
       const wiggleSig = makeWiggleSig({
         displayTraceCount: cols,
         plotTraceCount: expectedTraceCount,
@@ -281,16 +281,23 @@
       for (let r = 0; r < rows; r++) time[r] = (y0 + r * stepY) * dt;
 
       const traces = needsReactInit ? [] : null;
-      const wiggleX = [];
-      const wiggleY = [];
       const gain = parseFloat(document.getElementById('gain').value) || 1.0;
       const AMP_LIMIT = 3.0;
+      const lineSegLen = rows + 1;
+      const fillSegLen = (2 * rows) + 2;
+      const lenLine = cols * lineSegLen;
+      const lenFill = cols * fillSegLen;
+      const baseX = new Float32Array(lenLine);
+      const baseY = new Float32Array(lenLine);
+      const lineX = new Float32Array(lenLine);
+      const lineY = new Float32Array(lenLine);
+      const fillX = new Float32Array(lenFill);
+      const fillY = new Float32Array(lenFill);
 
       for (let c = 0; c < cols; c++) {
-        const baseX = new Float32Array(rows);
-        const shiftedFullX = new Float32Array(rows);
-        const shiftedPosX = new Float32Array(rows);
         const traceIndex = x0 + c * stepX;
+        const lineStart = c * lineSegLen;
+        const fillStart = c * fillSegLen;
         for (let r = 0; r < rows; r++) {
           const idxVal = r * cols + c;
           let val = (useI8 ? (windowData.valuesI8[idxVal] / scale)
@@ -298,48 +305,76 @@
           if (val > AMP_LIMIT) val = AMP_LIMIT;
           if (val < -AMP_LIMIT) val = -AMP_LIMIT;
 
-          baseX[r] = traceIndex;
-          shiftedFullX[r] = traceIndex + val;
-          shiftedPosX[r] = traceIndex + (val < 0 ? 0 : val);
+          const lineIdx = lineStart + r;
+          const fillBaseIdx = fillStart + r;
+          const fillPosIdx = fillStart + rows + (rows - 1 - r);
+          const posVal = val < 0 ? 0 : val;
+
+          baseX[lineIdx] = traceIndex;
+          baseY[lineIdx] = time[r];
+          lineX[lineIdx] = traceIndex + val;
+          lineY[lineIdx] = time[r];
+
+          fillX[fillBaseIdx] = traceIndex;
+          fillY[fillBaseIdx] = time[r];
+          fillX[fillPosIdx] = traceIndex + posVal;
+          fillY[fillPosIdx] = time[r];
         }
 
-        if (needsReactInit) {
-          traces.push({
-            type: 'scatter',
-            mode: 'lines',
-            x: baseX,
-            y: time,
-            line: { width: 0 },
-            hoverinfo: 'skip',
-            showlegend: false,
-            meta: { svRole: 'wiggle' },
-          });
-          traces.push({
-            type: 'scatter',
-            mode: 'lines',
-            x: shiftedPosX,
-            y: time,
-            fill: 'tonextx',
-            fillcolor: 'black',
-            line: { width: 0 },
-            opacity: 0.6,
-            hoverinfo: 'skip',
-            showlegend: false,
-            meta: { svRole: 'wiggle' },
-          });
-          traces.push({
-            type: 'scatter',
-            mode: 'lines',
-            x: shiftedFullX,
-            y: time,
-            line: { color: 'black', width: 0.5 },
-            hoverinfo: 'x+y',
-            showlegend: false,
-            meta: { svRole: 'wiggle' },
-          });
-        }
-        wiggleX.push(baseX, shiftedPosX, shiftedFullX);
-        wiggleY.push(time, time, time);
+        const lineNanIdx = lineStart + rows;
+        baseX[lineNanIdx] = NaN;
+        baseY[lineNanIdx] = NaN;
+        lineX[lineNanIdx] = NaN;
+        lineY[lineNanIdx] = NaN;
+
+        const fillCloseIdx = fillStart + (2 * rows);
+        const fillNanIdx = fillCloseIdx + 1;
+        fillX[fillCloseIdx] = traceIndex;
+        fillY[fillCloseIdx] = time[0];
+        fillX[fillNanIdx] = NaN;
+        fillY[fillNanIdx] = NaN;
+      }
+
+      const wiggleX = [baseX, fillX, lineX];
+      const wiggleY = [baseY, fillY, lineY];
+
+      if (needsReactInit) {
+        traces.push({
+          type: 'scatter',
+          mode: 'lines',
+          x: baseX,
+          y: baseY,
+          line: { width: 0 },
+          connectgaps: false,
+          hoverinfo: 'skip',
+          showlegend: false,
+          meta: { svRole: 'wiggle' },
+        });
+        traces.push({
+          type: 'scatter',
+          mode: 'lines',
+          x: fillX,
+          y: fillY,
+          fill: 'toself',
+          fillcolor: 'black',
+          line: { width: 0 },
+          opacity: 0.6,
+          connectgaps: false,
+          hoverinfo: 'skip',
+          showlegend: false,
+          meta: { svRole: 'wiggle' },
+        });
+        traces.push({
+          type: 'scatter',
+          mode: 'lines',
+          x: lineX,
+          y: lineY,
+          line: { color: 'black', width: 0.5 },
+          connectgaps: false,
+          hoverinfo: 'x+y',
+          showlegend: false,
+          meta: { svRole: 'wiggle' },
+        });
       }
 
       downsampleFactor = 1;
