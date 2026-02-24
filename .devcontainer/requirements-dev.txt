@@ -13,3 +13,4 @@ pytest>=8
 pytest-playwright>=0.5
 msgpack
 ruff
+seisai-engine @ git+https://github.com/ozw4/seisai.git@main#subdirectory=packages/seisai-engine

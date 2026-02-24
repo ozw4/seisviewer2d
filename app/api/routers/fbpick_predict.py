@@ -64,6 +64,7 @@ class FbpickPredictRequest(BaseModel):
     pipeline_key: str | None = None
     tap_label: str | None = None
     model_id: str | None = None
+    channel: str | None = None
     method: Literal['argmax', 'expectation'] = 'argmax'
     sigma_ms_max: float = Field(
         gt=0, description='Standard deviation gate in milliseconds'
@@ -94,6 +95,10 @@ class _ProbabilityPayload:
     prob: np.ndarray
     dt: float
     source: str
+
+
+def _effective_channel(channel: str | None) -> str:
+    return 'P' if channel is None else channel
 
 
 def _resolve_dt(
@@ -129,6 +134,7 @@ def _compute_probability_map(
 ) -> _ProbabilityPayload:
     pipeline_key = req.pipeline_key
     tap_label = req.tap_label
+    channel = _effective_channel(req.channel)
     if (pipeline_key is None) ^ (tap_label is None):
         raise HTTPException(
             status_code=422,
@@ -181,6 +187,7 @@ def _compute_probability_map(
                     'overlap': _DEFAULT_OVERLAP,
                     'amp': _DEFAULT_AMP,
                     'model_id': model_sel.model_id,
+                    'channel': channel,
                 },
             }
         ]
@@ -213,6 +220,7 @@ def _load_probability_map(
 ) -> _ProbabilityPayload:
     model_sel = _resolve_model_selection(req.model_id)
     forced_offset_byte = OFFSET_BYTE_FIXED if model_sel.uses_offset else None
+    channel = _effective_channel(req.channel)
     key = (
         req.file_id,
         req.key1,
@@ -225,6 +233,7 @@ def _load_probability_map(
         int(_DEFAULT_OVERLAP),
         bool(_DEFAULT_AMP),
         forced_offset_byte,
+        channel,
     )
     if _last_prob_state.key == key and _last_prob_state.value is not None:
         return _ProbabilityPayload(

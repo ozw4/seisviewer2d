@@ -13,7 +13,7 @@ from app.utils.utils import TraceStoreSectionReader
 if TYPE_CHECKING:
     from app.api.schemas import PipelineSpec
 
-DEFAULT_FBPICK_MODEL_ID = 'fbpick_edgenext_small.pth'
+DEFAULT_FBPICK_MODEL_ID = 'fbpick_edgenext_small.pt'
 OFFSET_BYTE_FIXED: int = 37
 
 

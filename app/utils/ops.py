@@ -10,7 +10,7 @@ import torch
 from .bandpass import bandpass_np
 from .denoise import denoise_tensor
 from .fbpick import infer_prob_map
-from .fbpick_models import model_version, resolve_model_path
+from .fbpick_models import resolve_model_path
 
 
 class Transform(Protocol):
@@ -84,8 +84,10 @@ def op_denoise(
 def op_fbpick(x: np.ndarray, *, params: dict, meta: dict) -> dict:
     """Run fbpick analyzer with safe param mapping."""
     amp = params.get("amp", params.get("use_amp", True))
-    overlap = int(params.get("overlap", 32))
+    overlap = params.get("overlap", 32)
     tau = float(params.get("tau", 1.0))
+    channel = params.get("channel")
+    tiles_per_batch = int(params.get("tiles_per_batch", 4))
 
     tile = params.get("tile")
     if tile is None:
@@ -96,7 +98,13 @@ def op_fbpick(x: np.ndarray, *, params: dict, meta: dict) -> dict:
 
     arr = np.ascontiguousarray(x, dtype=np.float32)
 
-    kwargs: dict[str, Any] = {"amp": bool(amp), "overlap": overlap, "tau": tau}
+    kwargs: dict[str, Any] = {
+        "amp": bool(amp),
+        "overlap": overlap,
+        "tau": tau,
+        "channel": channel,
+        "tiles_per_batch": tiles_per_batch,
+    }
     if tile is not None:
         kwargs["tile"] = tuple(tile)
 
@@ -112,8 +120,6 @@ def op_fbpick(x: np.ndarray, *, params: dict, meta: dict) -> dict:
     if model_id is not None:
         model_path = resolve_model_path(model_id, require_exists=True)
         kwargs["model_path"] = model_path
-        kwargs["uses_offset"] = "offset" in model_path.name.lower()
-        _ = model_version(model_path)
 
     prob = infer_prob_map(arr, **kwargs)
     return {"prob": prob}

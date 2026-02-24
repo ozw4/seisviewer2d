@@ -35,6 +35,10 @@ from app.utils.utils import quantize_float32
 router = APIRouter()
 
 
+def _effective_channel(channel: str | None) -> str:
+    return 'P' if channel is None else channel
+
+
 def _resolve_model_selection(model_id: str | None) -> tuple[str, bool, str]:
     model_path = resolve_model_path(model_id, require_exists=True)
     chosen_model_id = DEFAULT_FBPICK_MODEL_ID if model_id is None else model_id
@@ -57,7 +61,9 @@ def _build_fbpick_cache_key(
     tap_label: str | None,
     model_id: str,
     model_ver: str,
+    channel: str | None = None,
 ) -> tuple[Any, ...]:
+    effective_channel = _effective_channel(channel)
     return (
         file_id,
         int(key1),
@@ -72,6 +78,7 @@ def _build_fbpick_cache_key(
         tap_label,
         model_id,
         model_ver,
+        effective_channel,
         'fbpick',
     )
 
@@ -91,6 +98,7 @@ class FbpickRequest(BaseModel):
     pipeline_key: str | None = None
     tap_label: str | None = None
     model_id: str | None = None
+    channel: str | None = None
 
 
 def _run_fbpick_job(job_id: str, req: FbpickRequest, state: AppState) -> None:
@@ -109,6 +117,7 @@ def _run_fbpick_job(job_id: str, req: FbpickRequest, state: AppState) -> None:
             tap_label_obj = job.get('tap_label', req.tap_label)
             offset_byte_obj = job.get('offset_byte', req.offset_byte)
             model_id_obj = job.get('model_id', req.model_id)
+            channel_obj = job.get('channel', req.channel)
         if cache_key is None:
             raise RuntimeError('FB pick job metadata is inconsistent: cache_key')
         if not isinstance(file_id_obj, str) or not file_id_obj:
@@ -124,6 +133,8 @@ def _run_fbpick_job(job_id: str, req: FbpickRequest, state: AppState) -> None:
         tap_label = str(tap_label_obj) if isinstance(tap_label_obj, str) else None
         offset_byte = int(offset_byte_obj) if isinstance(offset_byte_obj, int) else None
         model_id = str(model_id_obj) if isinstance(model_id_obj, str) else None
+        raw_channel = channel_obj if isinstance(channel_obj, str) else None
+        channel = _effective_channel(raw_channel)
 
         reader: object | None = None
         if offset_byte is not None:
@@ -156,6 +167,7 @@ def _run_fbpick_job(job_id: str, req: FbpickRequest, state: AppState) -> None:
                         'overlap': req.overlap,
                         'amp': req.amp,
                         'model_id': model_id,
+                        'channel': channel,
                     },
                 }
             ]
@@ -205,6 +217,7 @@ def fbpick_section_bin(req: FbpickRequest, request: Request):
 
     pipeline_key = req.pipeline_key
     tap_label = req.tap_label
+    channel = _effective_channel(req.channel)
     key1 = req.key1
     cache_key = _build_fbpick_cache_key(
         file_id=req.file_id,
@@ -220,6 +233,7 @@ def fbpick_section_bin(req: FbpickRequest, request: Request):
         tap_label=tap_label,
         model_id=chosen_model_id,
         model_ver=model_ver,
+        channel=channel,
     )
     with state.lock:
         payload = state.fbpick_cache.get(cache_key)
@@ -237,6 +251,7 @@ def fbpick_section_bin(req: FbpickRequest, request: Request):
         'tap_label': tap_label,
         'offset_byte': forced_offset_byte,
         'model_id': chosen_model_id,
+        'channel': channel,
     }
     assert not any(isinstance(value, np.ndarray) for value in job_state.values())
     with state.lock:
@@ -245,7 +260,11 @@ def fbpick_section_bin(req: FbpickRequest, request: Request):
         cache_hit = payload is not None
 
     req2 = req.model_copy(
-        update={'offset_byte': forced_offset_byte, 'model_id': chosen_model_id}
+        update={
+            'offset_byte': forced_offset_byte,
+            'model_id': chosen_model_id,
+            'channel': channel,
+        }
     )
 
     if cache_hit:

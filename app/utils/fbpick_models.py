@@ -6,7 +6,7 @@ from pathlib import Path
 
 from app.services.errors import ConflictError, NotFoundError, UnprocessableError
 
-_MODEL_GLOB = 'fbpick_*.pth'
+_MODEL_GLOB = 'fbpick_*.pt'
 
 
 def fbpick_model_dir() -> Path:
@@ -30,9 +30,9 @@ def validate_model_id(model_id: str) -> str:
     """Validate a model identifier that is expected to be a file name."""
     if Path(model_id).name != model_id:
         raise UnprocessableError('model_id must be a plain file name')
-    if not model_id.startswith('fbpick_') or not model_id.endswith('.pth'):
+    if not model_id.startswith('fbpick_') or not model_id.endswith('.pt'):
         raise UnprocessableError(
-            "model_id must start with 'fbpick_' and end with '.pth'"
+            "model_id must start with 'fbpick_' and end with '.pt'"
         )
     return model_id
 
@@ -40,7 +40,7 @@ def validate_model_id(model_id: str) -> str:
 def resolve_model_path(
     model_id: str | None,
     *,
-    default_id: str = 'fbpick_edgenext_small.pth',
+    default_id: str = 'fbpick_edgenext_small.pt',
     require_exists: bool,
 ) -> Path:
     """Resolve ``model_id`` to a model file path under ``model/``."""
