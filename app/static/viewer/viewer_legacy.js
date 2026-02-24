@@ -83,6 +83,167 @@
       return `rev:${currentFileId}|${key1Val}|${layer}|${pKey}|${uiResetNonce}`;
     }
 
+    const OP_STATUS_IDS = {
+      export: 'op-status-export',
+      import: 'op-status-import',
+      predict: 'op-status-predict',
+    };
+    const OP_STATUS_CLASSES = ['is-idle', 'is-running', 'is-success', 'is-error'];
+    const OP_STATE_VERSION = {
+      export: 0,
+      import: 0,
+      predict: 0,
+    };
+    const OP_TOAST_SUCCESS_MS = 3500;
+    let toastSeq = 0;
+    const toastByKey = new Map();
+    const toastTimers = new Map();
+
+    function opStatusNode(op) {
+      const nodeId = OP_STATUS_IDS[op];
+      if (!nodeId) return null;
+      return document.getElementById(nodeId);
+    }
+
+    function setOpStatus(op, state, message = '') {
+      const node = opStatusNode(op);
+      if (!node) return;
+      const nextState = OP_STATUS_IDS[op] && OP_STATUS_CLASSES.includes(`is-${state}`)
+        ? state
+        : 'idle';
+      for (const className of OP_STATUS_CLASSES) {
+        node.classList.remove(className);
+      }
+      node.classList.add(`is-${nextState}`);
+      const valueNode = node.querySelector('.op-value');
+      if (valueNode) {
+        valueNode.textContent = message || nextState;
+      }
+    }
+
+    function beginOpStatus(op, message = 'running') {
+      if (!(op in OP_STATE_VERSION)) return 0;
+      OP_STATE_VERSION[op] += 1;
+      const token = OP_STATE_VERSION[op];
+      setOpStatus(op, 'running', message);
+      return token;
+    }
+
+    function setOpStatusIfCurrent(op, token, state, message = '') {
+      if (!(op in OP_STATE_VERSION)) return false;
+      if (OP_STATE_VERSION[op] !== token) return false;
+      setOpStatus(op, state, message);
+      return true;
+    }
+
+    function resetOpStatuses() {
+      for (const op of Object.keys(OP_STATUS_IDS)) {
+        OP_STATE_VERSION[op] += 1;
+        setOpStatus(op, 'idle', 'idle');
+      }
+    }
+
+    function removeToast(toastNode) {
+      if (!toastNode) return;
+      const toastId = toastNode.dataset.toastId || '';
+      if (toastTimers.has(toastId)) {
+        clearTimeout(toastTimers.get(toastId));
+        toastTimers.delete(toastId);
+      }
+      const dedupeKey = toastNode.dataset.toastKey || '';
+      if (dedupeKey) {
+        const mapped = toastByKey.get(dedupeKey);
+        if (mapped === toastNode) {
+          toastByKey.delete(dedupeKey);
+        }
+      }
+      toastNode.remove();
+    }
+
+    function pushToast({ level = 'info', title = '', message = '', sticky = false, dedupeKey = '' }) {
+      const host = document.getElementById('opToastHost');
+      if (!host) return null;
+
+      if (dedupeKey) {
+        const prev = toastByKey.get(dedupeKey);
+        if (prev) {
+          removeToast(prev);
+        }
+      }
+
+      const nextLevel = ['info', 'success', 'error'].includes(level) ? level : 'info';
+      const toast = document.createElement('div');
+      const toastId = String(++toastSeq);
+      toast.className = `toast toast-${nextLevel}`;
+      toast.dataset.toastId = toastId;
+      if (dedupeKey) {
+        toast.dataset.toastKey = dedupeKey;
+      }
+      toast.setAttribute('role', nextLevel === 'error' ? 'alert' : 'status');
+      toast.setAttribute('aria-live', nextLevel === 'error' ? 'assertive' : 'polite');
+
+      const head = document.createElement('div');
+      head.className = 'toast-head';
+      const titleNode = document.createElement('span');
+      titleNode.className = 'toast-title';
+      titleNode.textContent = title || 'Notice';
+      const closeBtn = document.createElement('button');
+      closeBtn.className = 'toast-close';
+      closeBtn.type = 'button';
+      closeBtn.setAttribute('aria-label', 'Close notification');
+      closeBtn.textContent = 'x';
+      closeBtn.addEventListener('click', () => removeToast(toast));
+      head.appendChild(titleNode);
+      head.appendChild(closeBtn);
+
+      const messageNode = document.createElement('div');
+      messageNode.className = 'toast-message';
+      messageNode.textContent = message || '';
+
+      toast.appendChild(head);
+      toast.appendChild(messageNode);
+      host.appendChild(toast);
+      if (dedupeKey) {
+        toastByKey.set(dedupeKey, toast);
+      }
+
+      if (!sticky) {
+        const timerId = setTimeout(() => removeToast(toast), OP_TOAST_SUCCESS_MS);
+        toastTimers.set(toastId, timerId);
+      }
+      return toast;
+    }
+
+    async function readErrorDetail(response) {
+      if (!response) return '';
+      try {
+        const contentType = response.headers?.get('content-type') || '';
+        if (contentType.includes('application/json')) {
+          const payload = await response.json();
+          if (payload && typeof payload.detail === 'string') {
+            return payload.detail;
+          }
+          if (payload && payload.detail != null) {
+            return String(payload.detail);
+          }
+          return payload ? JSON.stringify(payload) : '';
+        }
+        const text = await response.text();
+        if (!text) return '';
+        try {
+          const parsed = JSON.parse(text);
+          if (parsed && typeof parsed.detail === 'string') {
+            return parsed.detail;
+          }
+        } catch (_) {
+          // plain-text response
+        }
+        return text;
+      } catch (_) {
+        return '';
+      }
+    }
+
 
     // --- 追加：ハンドラ ---
     function onKey1Input() {
@@ -169,64 +330,184 @@
       }
 
     async function exportManualPicksNpz() {
-      if (!currentFileId) {
-        alert('file_id not loaded.');
-        return;
+      const token = beginOpStatus('export', 'preparing...');
+      const exportBtn = document.getElementById('export-manual-picks-npz');
+      if (exportBtn) exportBtn.disabled = true;
+      try {
+        if (!currentFileId) {
+          const message = 'file_id not loaded';
+          if (setOpStatusIfCurrent('export', token, 'error', message)) {
+            pushToast({
+              level: 'error',
+              title: 'Export failed',
+              message,
+              sticky: true,
+              dedupeKey: 'export:error',
+            });
+          }
+          return;
+        }
+
+        await flushPickOps();
+        if (!setOpStatusIfCurrent('export', token, 'running', 'exporting...')) return;
+
+        const params = new URLSearchParams({
+          file_id: String(currentFileId),
+          key1_byte: String(currentKey1Byte),
+          key2_byte: String(currentKey2Byte),
+        });
+        const response = await fetch(`/export_manual_picks_npz?${params.toString()}`);
+        if (!response.ok) {
+          const detail = await readErrorDetail(response);
+          const message = detail
+            ? `HTTP ${response.status}: ${detail}`
+            : `HTTP ${response.status}`;
+          if (setOpStatusIfCurrent('export', token, 'error', message)) {
+            pushToast({
+              level: 'error',
+              title: 'Export failed',
+              message,
+              sticky: true,
+              dedupeKey: 'export:error',
+            });
+          }
+          return;
+        }
+
+        const blob = await response.blob();
+        const disposition = response.headers.get('content-disposition');
+        const filename = filenameFromContentDisposition(disposition)
+          || `manual_picks_time_v1_${currentFileId}.npz`;
+        saveBlob(blob, filename);
+        if (setOpStatusIfCurrent('export', token, 'success', `saved ${filename}`)) {
+          pushToast({
+            level: 'success',
+            title: 'Export complete',
+            message: `Saved ${filename}`,
+            dedupeKey: 'export:success',
+          });
+        }
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        if (setOpStatusIfCurrent('export', token, 'error', message)) {
+          pushToast({
+            level: 'error',
+            title: 'Export failed',
+            message,
+            sticky: true,
+            dedupeKey: 'export:error',
+          });
+        }
+      } finally {
+        if (exportBtn) exportBtn.disabled = false;
       }
-
-      await flushPickOps();
-
-      const params = new URLSearchParams({
-        file_id: String(currentFileId),
-        key1_byte: String(currentKey1Byte),
-        key2_byte: String(currentKey2Byte),
-      });
-      const response = await fetch(`/export_manual_picks_npz?${params.toString()}`);
-      if (!response.ok) {
-        alert(`Export failed: HTTP ${response.status}`);
-        return;
-      }
-
-      const blob = await response.blob();
-      const disposition = response.headers.get('content-disposition');
-      const filename = filenameFromContentDisposition(disposition)
-        || `manual_picks_time_v1_${currentFileId}.npz`;
-      saveBlob(blob, filename);
     }
 
     async function importManualPicksNpz(file) {
       if (!file) {
         return;
       }
-      if (!currentFileId) {
-        alert('file_id not loaded.');
-        return;
-      }
-
-      await flushPickOps();
-
+      const token = beginOpStatus('import', 'preparing...');
+      const importBtn = document.getElementById('import-manual-picks-npz');
       const modeNode = document.getElementById('manual-picks-import-mode');
       const mode = modeNode && modeNode.value === 'merge' ? 'merge' : 'replace';
-      const params = new URLSearchParams({
-        file_id: String(currentFileId),
-        key1_byte: String(currentKey1Byte),
-        key2_byte: String(currentKey2Byte),
-        mode,
-      });
-      const form = new FormData();
-      form.append('file', file);
-      const response = await fetch(`/import_manual_picks_npz?${params.toString()}`, {
-        method: 'POST',
-        body: form,
-      });
-      if (!response.ok) {
-        const detail = await response.text();
-        alert(`Import failed: HTTP ${response.status} ${detail}`);
-        return;
-      }
+      if (importBtn) importBtn.disabled = true;
+      if (modeNode) modeNode.disabled = true;
+      try {
+        if (!currentFileId) {
+          const message = 'file_id not loaded';
+          if (setOpStatusIfCurrent('import', token, 'error', message)) {
+            pushToast({
+              level: 'error',
+              title: 'Import failed',
+              message,
+              sticky: true,
+              dedupeKey: 'import:error',
+            });
+          }
+          return;
+        }
 
-      await reloadPicksForCurrentSection();
-      renderLatestView();
+        await flushPickOps();
+        if (!setOpStatusIfCurrent('import', token, 'running', 'uploading...')) return;
+
+        const params = new URLSearchParams({
+          file_id: String(currentFileId),
+          key1_byte: String(currentKey1Byte),
+          key2_byte: String(currentKey2Byte),
+          mode,
+        });
+        const form = new FormData();
+        form.append('file', file);
+        const response = await fetch(`/import_manual_picks_npz?${params.toString()}`, {
+          method: 'POST',
+          body: form,
+        });
+        if (!response.ok) {
+          const detail = await readErrorDetail(response);
+          const message = detail
+            ? `HTTP ${response.status}: ${detail}`
+            : `HTTP ${response.status}`;
+          if (setOpStatusIfCurrent('import', token, 'error', message)) {
+            pushToast({
+              level: 'error',
+              title: 'Import failed',
+              message,
+              sticky: true,
+              dedupeKey: 'import:error',
+            });
+          }
+          return;
+        }
+
+        let payload = {};
+        try {
+          payload = await response.json();
+        } catch (_) {
+          payload = {};
+        }
+
+        if (!setOpStatusIfCurrent('import', token, 'running', 'reloading picks...')) return;
+        await reloadPicksForCurrentSection();
+        renderLatestView();
+        const applied = Number.isFinite(Number(payload?.applied))
+          ? Number(payload.applied)
+          : null;
+        const droppedNeg = Number.isFinite(Number(payload?.dropped_neg))
+          ? Number(payload.dropped_neg)
+          : 0;
+        const clampedHi = Number.isFinite(Number(payload?.clamped_hi))
+          ? Number(payload.clamped_hi)
+          : 0;
+        const summary = [
+          `mode=${mode}`,
+          applied === null ? null : `applied=${applied}`,
+          `dropped=${droppedNeg}`,
+          `clamped=${clampedHi}`,
+        ].filter(Boolean).join(', ');
+        if (setOpStatusIfCurrent('import', token, 'success', summary || 'imported')) {
+          pushToast({
+            level: 'success',
+            title: 'Import complete',
+            message: summary || 'Import completed.',
+            dedupeKey: 'import:success',
+          });
+        }
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        if (setOpStatusIfCurrent('import', token, 'error', message)) {
+          pushToast({
+            level: 'error',
+            title: 'Import failed',
+            message,
+            sticky: true,
+            dedupeKey: 'import:error',
+          });
+        }
+      } finally {
+        if (importBtn) importBtn.disabled = false;
+        if (modeNode) modeNode.disabled = false;
+      }
     }
 
     function triggerManualPicksImportNpz() {
@@ -1173,6 +1454,7 @@
     }
 
     async function predictFromFb() {
+      const statusToken = beginOpStatus('predict', 'checking cache...');
       const idx0 = parseInt(document.getElementById('key1_slider').value, 10);
       const keyAtStart = key1Values[idx0];
       const layerAtStart = (document.getElementById('layerSelect')?.value) || 'raw';
@@ -1188,14 +1470,38 @@
       if (btn) btn.disabled = true;
 
       try {
+        if (!currentFileId) {
+          const message = 'file_id not loaded';
+          if (setOpStatusIfCurrent('predict', statusToken, 'error', message)) {
+            pushToast({
+              level: 'error',
+              title: 'Predict failed',
+              message,
+              sticky: true,
+              dedupeKey: 'predict:error',
+            });
+          }
+          return;
+        }
+
         if (cached) {
           predictedPicks = (cached.picks || []).slice();
           currentFbKey = keyAtStart;
           currentFbLayer = layerAtStart;
           currentFbPipelineKey = pipelineKeyAtStart;
+          if (setOpStatusIfCurrent('predict', statusToken, 'success', `cached (${predictedPicks.length} picks)`)) {
+            pushToast({
+              level: 'success',
+              title: 'Predict complete',
+              message: `Cached result (${predictedPicks.length} picks).`,
+              dedupeKey: 'predict:success',
+            });
+          }
           renderLatestView();
           return;
         }
+
+        if (!setOpStatusIfCurrent('predict', statusToken, 'running', 'requesting FB picks...')) return;
 
         const body = {
           file_id: currentFileId,
@@ -1217,24 +1523,8 @@
           body: JSON.stringify(body),
         });
         if (!res.ok) {
-          let message = `fbpick_predict failed (${res.status})`;
-          try {
-            const text = await res.text();
-            if (text) {
-              try {
-                const parsed = JSON.parse(text);
-                if (parsed && typeof parsed.detail === 'string') {
-                  message = parsed.detail;
-                } else {
-                  message = text;
-                }
-              } catch (parseErr) {
-                message = text;
-              }
-            }
-          } catch (readErr) {
-            // ignore body read errors
-          }
+          const detail = await readErrorDetail(res);
+          const message = detail || `fbpick_predict failed (${res.status})`;
           throw new Error(message);
         }
 
@@ -1266,7 +1556,26 @@
           sigma_ms_max: sigmaMax,
         });
 
+        if (setOpStatusIfCurrent('predict', statusToken, 'success', `${picks.length} picks`)) {
+          pushToast({
+            level: 'success',
+            title: 'Predict complete',
+            message: `${picks.length} picks`,
+            dedupeKey: 'predict:success',
+          });
+        }
         renderLatestView();
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        if (setOpStatusIfCurrent('predict', statusToken, 'error', message)) {
+          pushToast({
+            level: 'error',
+            title: 'Predict failed',
+            message,
+            sticky: true,
+            dedupeKey: 'predict:error',
+          });
+        }
       } finally {
         if (btn) btn.disabled = false;
       }
@@ -2110,6 +2419,7 @@
       const slider = document.getElementById('key1_slider');
       const fbpickModelSelect = document.getElementById('fbpick_model_select');
       const plotDiv = document.getElementById('plot');
+      resetOpStatuses();
 
       if (plotDiv) {
         plotHover = plotDiv.matches(':hover');
@@ -2164,6 +2474,7 @@
           fbPredCache.clear();
           latestPipelineKey = null;
           window.latestPipelineKey = null;
+          resetOpStatuses();
           if (windowFetchCtrl) {
             windowFetchCtrl.abort();
             windowFetchCtrl = null;
