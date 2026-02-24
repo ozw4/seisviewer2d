@@ -210,6 +210,16 @@ Picks from probability (server-side):
 ### Manual picks
 
 Manual picks are stored in a memmapped `.npy` file per dataset.
+`GET /export_manual_picks_npz` writes manual-pick `.npz` in seisai(psn) compatible CSR
+(`n_traces`, `p_indptr`, `p_data`, `s_indptr`, `s_data`) and
+`POST /import_manual_picks_npz` accepts both CSR and legacy `picks_time_s` format.
+`manual_pick_format` is `seisai_csr`, and format versioning is represented by
+`format_version` (current value: `1`).
+
+These exported `.npz` files are seisai学習で使える and can be passed directly as
+`paths.phase_pick_files`.
+Example:
+`paths.phase_pick_files: ["/path/to/manual_picks_time_v1_lineA.npz"]`
 
 - `PICKS_NPY_DIR` (highest priority): direct override for memmap files
 - Default when unset: `<app_data_dir>/picks_npy`

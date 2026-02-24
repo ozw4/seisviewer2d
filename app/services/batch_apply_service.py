@@ -25,6 +25,7 @@ from app.services.fbpick_support import (
 )
 from app.services.pipeline_artifacts import get_job_dir
 from app.services.reader import coerce_section_f32, get_reader
+from app.utils.manual_pick_csr import empty_csr, picks_time_s_to_csr
 from app.utils.pick_snap import parabolic_refine, snap_pick_time_s
 from app.utils.pipeline import apply_pipeline
 from app.utils.utils import TraceStoreSectionReader
@@ -158,10 +159,22 @@ def _manual_pick_npz_payload(
     dt: float,
     source_hint: str,
 ) -> dict[str, object]:
-    n_traces = int(picks_time_s.shape[0])
+    picks_time_s_f32 = np.asarray(picks_time_s, dtype=np.float32)
+    n_traces = int(picks_time_s_f32.shape[0])
+    p_indptr, p_data = picks_time_s_to_csr(
+        picks_time_s_f32,
+        dt=float(dt),
+        n_samples=int(n_samples),
+    )
+    s_indptr, s_data = empty_csr(n_traces)
     return {
-        'picks_time_s': np.asarray(picks_time_s, dtype=np.float32),
+        'manual_pick_format': np.asarray('seisai_csr'),
+        'picks_time_s': picks_time_s_f32,
         'n_traces': np.int64(n_traces),
+        'p_indptr': p_indptr,
+        'p_data': p_data,
+        's_indptr': s_indptr,
+        's_data': s_data,
         'n_samples': np.int64(n_samples),
         'dt': np.float64(dt),
         'format_version': np.int64(1),

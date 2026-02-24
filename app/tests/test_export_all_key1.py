@@ -62,15 +62,33 @@ def test_export_manual_picks_npz_uses_original_order(monkeypatch, tmp_path):
         sorted_to_original,
     )
     mm = open_for_write(file_name, n_traces)
-    mm[:] = np.array([10.0, 20.0, 30.0], dtype=np.float32)
+    mm[:] = np.array([0.008, 0.012, 0.016], dtype=np.float32)
     mm.flush()
     del mm
 
     r = client.get('/export_manual_picks_npz', params={'file_id': 'X'})
     assert r.status_code == 200
     with np.load(io.BytesIO(r.content)) as z:
-        assert z['picks_time_s'].tolist() == [20.0, 30.0, 10.0]
+        np.testing.assert_allclose(
+            z['picks_time_s'],
+            np.asarray([0.012, 0.016, 0.008], dtype=np.float32),
+            equal_nan=True,
+        )
+        assert str(np.asarray(z['manual_pick_format']).item()) == 'seisai_csr'
         assert int(np.asarray(z['n_traces']).item()) == 3
+        p_indptr = np.asarray(z['p_indptr'])
+        p_data = np.asarray(z['p_data'])
+        assert p_indptr.shape == (4,)
+        assert int(p_indptr[-1]) == int(len(p_data))
+        assert p_indptr.dtype in (np.int32, np.int64)
+        assert p_data.dtype in (np.int32, np.int64)
+        s_indptr = np.asarray(z['s_indptr'])
+        s_data = np.asarray(z['s_data'])
+        assert s_indptr.shape == (4,)
+        assert int(s_indptr[-1]) == int(len(s_data))
+        assert int(s_indptr[-1]) == 0
+        assert s_indptr.dtype in (np.int32, np.int64)
+        assert s_data.dtype in (np.int32, np.int64)
         assert int(np.asarray(z['n_samples']).item()) == 1000
         assert float(np.asarray(z['dt']).item()) == 0.004
         assert int(np.asarray(z['format_version']).item()) == 1
@@ -132,6 +150,84 @@ def test_import_manual_picks_npz_merge_overwrites_only_non_nan(monkeypatch, tmp_
     assert r.status_code == 200
     stored = load_all(file_name, n_traces)
     assert stored.tolist() == [3.0, 11.0, 2.0]
+
+
+def test_import_manual_picks_npz_old_format_round_rule_on_export(monkeypatch, tmp_path):
+    sorted_to_original = np.array([0, 1, 2], dtype=np.int64)
+    client, file_name, n_traces = _client_with_base_patches(
+        monkeypatch,
+        tmp_path,
+        sorted_to_original,
+        dt=0.004,
+        n_samples=20,
+    )
+
+    buf = io.BytesIO()
+    np.savez(
+        buf,
+        picks_time_s=np.array([0.0039, 0.0081, 0.0], dtype=np.float32),
+        n_traces=np.int64(3),
+        n_samples=np.int64(20),
+        dt=np.float64(0.004),
+    )
+    buf.seek(0)
+    r = client.post(
+        '/import_manual_picks_npz',
+        params={'file_id': 'X', 'mode': 'replace'},
+        files={'file': ('picks_old.npz', buf.getvalue(), 'application/octet-stream')},
+    )
+    assert r.status_code == 200
+    stored = load_all(file_name, n_traces)
+    np.testing.assert_allclose(
+        stored,
+        np.asarray([0.0039, 0.0081, 0.0], dtype=np.float32),
+        equal_nan=True,
+    )
+
+    r2 = client.get('/export_manual_picks_npz', params={'file_id': 'X'})
+    assert r2.status_code == 200
+    with np.load(io.BytesIO(r2.content)) as z:
+        assert np.asarray(z['p_indptr']).tolist() == [0, 1, 2, 2]
+        assert np.asarray(z['p_data']).tolist() == [1, 2]
+
+
+def test_import_manual_picks_npz_csr_multiple_picks_uses_min_index(
+    monkeypatch, tmp_path
+):
+    sorted_to_original = np.array([0, 1, 2], dtype=np.int64)
+    client, file_name, n_traces = _client_with_base_patches(
+        monkeypatch,
+        tmp_path,
+        sorted_to_original,
+        dt=0.004,
+        n_samples=20,
+    )
+
+    buf = io.BytesIO()
+    np.savez(
+        buf,
+        n_traces=np.int64(3),
+        n_samples=np.int64(20),
+        dt=np.float64(0.004),
+        p_indptr=np.asarray([0, 3, 3, 5], dtype=np.int64),
+        p_data=np.asarray([5, 2, 4, 0, 3], dtype=np.int64),
+        s_indptr=np.asarray([0, 0, 0, 0], dtype=np.int64),
+        s_data=np.asarray([], dtype=np.int64),
+    )
+    buf.seek(0)
+    r = client.post(
+        '/import_manual_picks_npz',
+        params={'file_id': 'X', 'mode': 'replace'},
+        files={'file': ('picks_csr.npz', buf.getvalue(), 'application/octet-stream')},
+    )
+    assert r.status_code == 200
+
+    stored = load_all(file_name, n_traces)
+    np.testing.assert_allclose(
+        stored,
+        np.asarray([0.008, np.nan, 0.012], dtype=np.float32),
+        equal_nan=True,
+    )
 
 
 def test_import_manual_picks_npz_mismatch_returns_409(monkeypatch, tmp_path):

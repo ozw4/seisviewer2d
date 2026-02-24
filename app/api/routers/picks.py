@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import io
+import logging
 import re
 import tempfile
 from datetime import datetime, timezone
@@ -20,6 +21,11 @@ from app.api._helpers import get_state, reject_legacy_key1_query_params
 from app.services.reader import get_reader
 from app.services.registry import _filename_for_file_id
 from app.services.section_index import get_ntraces_for, get_trace_seq_for_value
+from app.utils.manual_pick_csr import (
+    csr_to_single_pick_times,
+    empty_csr,
+    picks_time_s_to_csr,
+)
 from app.utils.pick_cache_file1d_mem import (
     clear_by_traceseq,
     clear_section,
@@ -30,6 +36,7 @@ from app.utils.pick_cache_file1d_mem import (
 )
 
 router = APIRouter()
+logger = logging.getLogger(__name__)
 
 
 def _validated_n_samples(reader) -> int:
@@ -134,15 +141,24 @@ async def export_manual_picks_npz(
     sorted_to_original = _validated_sorted_to_original(reader, n_traces)
     p_orig = np.full((n_traces,), np.nan, dtype=np.float32)
     p_orig[sorted_to_original] = p_sorted
+    p_indptr, p_data = picks_time_s_to_csr(p_orig, dt=dt, n_samples=n_samples)
+    s_indptr, s_data = empty_csr(n_traces)
 
     payload: dict[str, object] = {
+        'manual_pick_format': np.asarray('seisai_csr'),
         'picks_time_s': p_orig,
         'n_traces': np.int64(n_traces),
+        'p_indptr': p_indptr,
+        'p_data': p_data,
+        's_indptr': s_indptr,
+        's_data': s_data,
         'n_samples': np.int64(n_samples),
         'dt': np.float64(dt),
+        'sorted_to_original': sorted_to_original.astype(np.int64, copy=False),
         'format_version': np.int64(1),
         'exported_at': np.asarray(datetime.now(timezone.utc).isoformat()),
         'export_app': np.asarray('seisviewer2d'),
+        'source': np.asarray(str(file_name)),
         'source_hint': np.asarray(str(file_name)),
     }
     with tempfile.NamedTemporaryFile(delete=False, suffix='.npz') as tmp:
@@ -196,36 +212,78 @@ async def import_manual_picks_npz(
         raise HTTPException(status_code=400, detail=f'Invalid npz: {exc}') from exc
 
     with npz:
-        for key in ('picks_time_s', 'n_traces', 'n_samples', 'dt'):
-            if key not in npz.files:
-                raise HTTPException(status_code=400, detail=f'Missing key: {key}')
-        picks_time_s = npz['picks_time_s']
-        if picks_time_s.ndim != 1:
-            raise HTTPException(status_code=400, detail='picks_time_s must be 1D')
-        if picks_time_s.shape[0] != n_traces:
-            raise HTTPException(status_code=409, detail='picks_time_s length mismatch')
-        if not np.issubdtype(picks_time_s.dtype, np.floating):
-            raise HTTPException(
-                status_code=400, detail='picks_time_s must be float dtype'
-            )
-        n_traces_npz = int(np.asarray(npz['n_traces']).item())
-        n_samples_npz = int(np.asarray(npz['n_samples']).item())
-        dt_npz = float(np.asarray(npz['dt']).item())
-        if n_traces_npz != n_traces:
-            raise HTTPException(status_code=409, detail='n_traces mismatch')
-        if n_samples_npz != n_samples:
-            raise HTTPException(status_code=409, detail='n_samples mismatch')
-        if abs(dt_npz - dt) > 1e-9:
-            raise HTTPException(status_code=409, detail='dt mismatch')
+        has_p_indptr = 'p_indptr' in npz.files
+        has_p_data = 'p_data' in npz.files
+        if has_p_indptr or has_p_data:
+            if not has_p_indptr:
+                raise HTTPException(status_code=400, detail='Missing key: p_indptr')
+            if not has_p_data:
+                raise HTTPException(status_code=400, detail='Missing key: p_data')
+            if 'n_traces' not in npz.files:
+                raise HTTPException(status_code=400, detail='Missing key: n_traces')
+            n_traces_npz = int(np.asarray(npz['n_traces']).item())
+            if n_traces_npz != n_traces:
+                raise HTTPException(status_code=409, detail='n_traces mismatch')
+            if 'n_samples' in npz.files:
+                n_samples_npz = int(np.asarray(npz['n_samples']).item())
+                if n_samples_npz != n_samples:
+                    raise HTTPException(status_code=409, detail='n_samples mismatch')
+            if 'dt' in npz.files:
+                dt_npz = float(np.asarray(npz['dt']).item())
+                if abs(dt_npz - dt) > 1e-9:
+                    raise HTTPException(status_code=409, detail='dt mismatch')
+            try:
+                p, traces_with_multiple = csr_to_single_pick_times(
+                    npz['p_indptr'],
+                    npz['p_data'],
+                    n_traces=n_traces,
+                    dt=dt,
+                    n_samples=n_samples,
+                )
+            except ValueError as exc:
+                raise HTTPException(
+                    status_code=400, detail=f'Invalid CSR: {exc}'
+                ) from exc
+            if traces_with_multiple > 0:
+                logger.warning(
+                    'Manual-pick CSR import: 複数pickがあるため最小indexを採用: traces=%d',
+                    traces_with_multiple,
+                )
+            dropped_neg = 0
+            clamped_hi = 0
+        else:
+            for key in ('picks_time_s', 'n_traces', 'n_samples', 'dt'):
+                if key not in npz.files:
+                    raise HTTPException(status_code=400, detail=f'Missing key: {key}')
+            picks_time_s = npz['picks_time_s']
+            if picks_time_s.ndim != 1:
+                raise HTTPException(status_code=400, detail='picks_time_s must be 1D')
+            if picks_time_s.shape[0] != n_traces:
+                raise HTTPException(
+                    status_code=409, detail='picks_time_s length mismatch'
+                )
+            if not np.issubdtype(picks_time_s.dtype, np.floating):
+                raise HTTPException(
+                    status_code=400, detail='picks_time_s must be float dtype'
+                )
+            n_traces_npz = int(np.asarray(npz['n_traces']).item())
+            n_samples_npz = int(np.asarray(npz['n_samples']).item())
+            dt_npz = float(np.asarray(npz['dt']).item())
+            if n_traces_npz != n_traces:
+                raise HTTPException(status_code=409, detail='n_traces mismatch')
+            if n_samples_npz != n_samples:
+                raise HTTPException(status_code=409, detail='n_samples mismatch')
+            if abs(dt_npz - dt) > 1e-9:
+                raise HTTPException(status_code=409, detail='dt mismatch')
 
-        p = picks_time_s.astype(np.float32, copy=True)
-        p[~np.isfinite(p)] = np.nan
-        dropped_neg = int(np.count_nonzero(p < 0))
-        p[p < 0] = np.nan
-        tmax = np.float32((n_samples - 1) * dt)
-        clamped_mask = p > tmax
-        clamped_hi = int(np.count_nonzero(clamped_mask))
-        p[clamped_mask] = tmax
+            p = picks_time_s.astype(np.float32, copy=True)
+            p[~np.isfinite(p)] = np.nan
+            dropped_neg = int(np.count_nonzero(p < 0))
+            p[p < 0] = np.nan
+            tmax = np.float32((n_samples - 1) * dt)
+            clamped_mask = p > tmax
+            clamped_hi = int(np.count_nonzero(clamped_mask))
+            p[clamped_mask] = tmax
         sorted_to_original = _validated_sorted_to_original(reader, n_traces)
         p_sorted = p[sorted_to_original]
 

@@ -20,8 +20,13 @@ from app.services import batch_apply_service
 
 
 MANUAL_NPZ_KEYS = {
+    'manual_pick_format',
     'picks_time_s',
     'n_traces',
+    'p_indptr',
+    'p_data',
+    's_indptr',
+    's_data',
     'n_samples',
     'dt',
     'format_version',
@@ -226,6 +231,7 @@ def test_batch_apply_writes_predicted_picks_npz_manual_compatible(
     assert predicted_npz.is_file()
     with np.load(predicted_npz, allow_pickle=False) as npz:
         assert set(npz.files) == MANUAL_NPZ_KEYS
+        assert str(np.asarray(npz['manual_pick_format']).item()) == 'seisai_csr'
         picks_time_s = npz['picks_time_s']
         assert picks_time_s.dtype == np.float32
         assert picks_time_s.shape == (4,)
@@ -236,6 +242,19 @@ def test_batch_apply_writes_predicted_picks_npz_manual_compatible(
         )
         assert np.asarray(npz['n_traces']).dtype == np.int64
         assert int(np.asarray(npz['n_traces']).item()) == 4
+        p_indptr = np.asarray(npz['p_indptr'])
+        p_data = np.asarray(npz['p_data'])
+        assert p_indptr.shape == (5,)
+        assert int(p_indptr[-1]) == int(p_data.shape[0])
+        assert p_indptr.dtype in (np.int32, np.int64)
+        assert p_data.dtype in (np.int32, np.int64)
+        s_indptr = np.asarray(npz['s_indptr'])
+        s_data = np.asarray(npz['s_data'])
+        assert s_indptr.shape == (5,)
+        assert int(s_indptr[-1]) == int(s_data.shape[0])
+        assert int(s_indptr[-1]) == 0
+        assert s_indptr.dtype in (np.int32, np.int64)
+        assert s_data.dtype in (np.int32, np.int64)
         assert np.asarray(npz['n_samples']).dtype == np.int64
         assert int(np.asarray(npz['n_samples']).item()) == 5
         assert np.asarray(npz['dt']).dtype == np.float64
