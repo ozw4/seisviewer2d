@@ -13,9 +13,6 @@ import pytest
 import segyio
 
 
-# -----------------------------
-# helpers
-# -----------------------------
 def _repo_root() -> Path:
     p = Path(__file__).resolve()
     for d in p.parents:
@@ -58,6 +55,7 @@ def _wait_http_ready(
                 return
             last = f"HTTP {r.status_code}"
         except httpx.RequestError as e:
+            # 起動直後は connection refused が普通に出るのでリトライ扱い
             last = str(e)
 
         time.sleep(0.2)
@@ -77,9 +75,10 @@ def _artifacts_root() -> Path:
     return Path(os.getenv("E2E_ARTIFACTS_DIR", "playwright-artifacts"))
 
 
-# -----------------------------
-# pytest hooks: test result access in fixtures
-# -----------------------------
+def _contains_any(s: str, parts: tuple[str, ...]) -> bool:
+    return any(p in s for p in parts)
+
+
 @pytest.hookimpl(hookwrapper=True)
 def pytest_runtest_makereport(item, call):
     outcome = yield
@@ -87,9 +86,6 @@ def pytest_runtest_makereport(item, call):
     setattr(item, f"rep_{rep.when}", rep)
 
 
-# -----------------------------
-# app build assets
-# -----------------------------
 @pytest.fixture(scope="session")
 def built_assets() -> None:
     assets = _repo_root() / "app/static/assets/main.js"
@@ -99,9 +95,6 @@ def built_assets() -> None:
         )
 
 
-# -----------------------------
-# tiny segy generator
-# -----------------------------
 def _write_tiny_segy(path: Path) -> None:
     n_traces = 12
     n_samples = 200
@@ -133,9 +126,6 @@ def tiny_segy_path(tmp_path_factory: pytest.TempPathFactory) -> Path:
     return p
 
 
-# -----------------------------
-# uvicorn server
-# -----------------------------
 @pytest.fixture(scope="session")
 def base_url(tmp_path_factory: pytest.TempPathFactory, built_assets: None):
     external = os.getenv("E2E_BASE_URL")
@@ -183,17 +173,11 @@ def base_url(tmp_path_factory: pytest.TempPathFactory, built_assets: None):
         log_fp.close()
 
 
-# -----------------------------
-# Playwright: disable proxy for chromium (optional but useful in proxied env)
-# -----------------------------
 @pytest.fixture(scope="session")
 def browser_type_launch_args():
     return {"args": ["--no-proxy-server"]}
 
 
-# -----------------------------
-# Playwright: tracing per test (3)
-# -----------------------------
 @pytest.fixture
 def context(browser, request):
     ctx = browser.new_context()
@@ -211,16 +195,62 @@ def context(browser, request):
     ctx.close()
 
 
-# -----------------------------
-# E2E debug collector (1)(2)
-# -----------------------------
 @dataclass
 class E2EDebug:
     artifact_dir: Path
-    not_found: list[str] = field(default_factory=list)  # 404一覧（URL特定）
-    request_failed: list[str] = field(default_factory=list)  # ネットワーク失敗
-    console_error: list[str] = field(default_factory=list)  # console.error
-    page_error: list[str] = field(default_factory=list)  # 例外（pageerror）
+    not_found: list[str] = field(default_factory=list)  # "404 METHOD URL"
+    request_failed: list[str] = field(
+        default_factory=list
+    )  # "REQ_FAILED METHOD URL (msg)"
+    console_error: list[str] = field(default_factory=list)
+    page_error: list[str] = field(default_factory=list)
+
+    def unexpected_404(
+        self,
+        allow_404: tuple[str, ...] = ("favicon.ico", ".map"),
+        allow_open_segy_404: bool = True,
+    ) -> list[str]:
+        out: list[str] = []
+        for x in self.not_found:
+            if _contains_any(x, allow_404):
+                continue
+            if allow_open_segy_404 and x.startswith("404 POST") and "/open_segy" in x:
+                continue
+            out.append(x)
+        return out
+
+    def unexpected_request_failed(
+        self,
+        allow_open_segy_aborted: bool = True,
+        allow_favicon_aborted: bool = True,
+    ) -> list[str]:
+        out: list[str] = []
+        for x in self.request_failed:
+            if (
+                allow_open_segy_aborted
+                and "/open_segy" in x
+                and "net::ERR_ABORTED" in x
+            ):
+                continue
+            if allow_favicon_aborted and "favicon.ico" in x and "ERR_ABORTED" in x:
+                continue
+            out.append(x)
+        return out
+
+    def assert_clean(self) -> None:
+        bad_404 = self.unexpected_404()
+        bad_req = self.unexpected_request_failed()
+
+        parts: list[str] = []
+        if bad_404:
+            parts.append("Unexpected 404 responses:\n" + "\n".join(bad_404))
+        if self.page_error:
+            parts.append("Page errors:\n" + "\n".join(self.page_error))
+        if bad_req:
+            parts.append("Request failed:\n" + "\n".join(bad_req))
+
+        if parts:
+            raise AssertionError("\n\n".join(parts))
 
 
 @pytest.fixture
@@ -244,7 +274,6 @@ def e2e_debug(page, request) -> E2EDebug:
             msg = fail.get("errorText") or fail.get("error_text") or str(fail)
         else:
             msg = getattr(fail, "error_text", str(fail))
-
         dbg.request_failed.append(f"REQ_FAILED {req.method} {req.url} ({msg})")
 
     def on_console(msg):
@@ -261,7 +290,6 @@ def e2e_debug(page, request) -> E2EDebug:
 
     yield dbg
 
-    # summary は常に保存
     (art_dir / "not_found.txt").write_text(
         "\n".join(dbg.not_found) + ("\n" if dbg.not_found else ""), encoding="utf-8"
     )
@@ -280,7 +308,6 @@ def e2e_debug(page, request) -> E2EDebug:
     rep_call = getattr(request.node, "rep_call", None)
     failed = bool(rep_call and rep_call.failed)
 
-    # 失敗時だけスクショ + HTML を保存 (2)
     if failed:
         page.screenshot(path=str(art_dir / "failure.png"), full_page=True)
         (art_dir / "failure.html").write_text(page.content(), encoding="utf-8")
