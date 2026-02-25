@@ -13,11 +13,14 @@ ARG GID=1000
 ARG HTTP_PROXY
 ARG HTTPS_PROXY
 ARG NO_PROXY
-#ENV CFLAGS="-w" CXXFLAGS="-w"
+
 ENV HTTP_PROXY=${HTTP_PROXY} \
     HTTPS_PROXY=${HTTPS_PROXY} \
     NO_PROXY=${NO_PROXY} \
     DEBIAN_FRONTEND=noninteractive
+
+# Playwright browsers shared path (root installs, non-root runs)
+ENV PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
 
 RUN echo "ttf-mscorefonts-installer msttcorefonts/accepted-mscorefonts-eula select true" | debconf-set-selections
 
@@ -51,15 +54,19 @@ RUN --mount=type=cache,target=/root/.cache/pip,sharing=locked \
 RUN --mount=type=cache,target=/root/.cache/pip,sharing=locked \
     python -m pip install --no-cache-dir ruff
 
-RUN python -m playwright install --with-deps chromium
-RUN curl -fsSL https://deb.nodesource.com/setup_20.x | bash - \
- && apt-get install -y nodejs
-RUN addgroup --gid $GID $USERNAME && \
-    adduser --disabled-password --gecos "" --shell "/bin/bash" --uid $UID --gid $GID $USERNAME
+# Install Playwright + Chromium into shared path
+RUN mkdir -p /ms-playwright \
+    && python -m playwright install --with-deps chromium \
+    && chmod -R a+rX /ms-playwright
+
+RUN addgroup --gid $GID $USERNAME \
+    && adduser --disabled-password --gecos "" --shell "/bin/bash" --uid $UID --gid $GID $USERNAME \
+    && chown -R $UID:$GID /ms-playwright
 
 USER $USERNAME
 
-COPY ruff.toml /home/$USERNAME
+COPY --chown=$UID:$GID ruff.toml /home/$USERNAME/
+
 ENV PYTHONPATH="/workspace:${PYTHONPATH}:"
 ENV PATH="$HOME/.local/bin:$PATH"
 WORKDIR /workspace

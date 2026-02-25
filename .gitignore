@@ -53,3 +53,4 @@ app/static/assets/
 app/static/plotly-*.min.js
 app/static/pako*.min.js
 app/static/msgpack*.min.js
+playwright-artifacts/
