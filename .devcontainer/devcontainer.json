@@ -53,8 +53,8 @@
                 "Gruntfuggly.todo-tree",
                 "christian-kohler.path-intellisense",
                 "github.copilot",
-                "eamodio.gitlens"
-
+                "eamodio.gitlens",
+                "openai.chatgpt"
             ]
         }
     }
