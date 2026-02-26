@@ -94,7 +94,7 @@ def _run_pipeline_outputs(
         fbpick_payload = out.get(fbpick_label)
         if not isinstance(fbpick_payload, dict) or 'prob' not in fbpick_payload:
             raise ValueError(f'fbpick output missing: {fbpick_label}')
-        prob = np.asarray(fbpick_payload['prob'], dtype=np.float16, order='C')
+        prob = np.asarray(fbpick_payload['prob'], dtype=np.float32, order='C')
 
     return denoise, prob
 
@@ -122,6 +122,8 @@ def _predict_section_picks_time_s(
             n_samples = int(prob.shape[1])
             idx = np.asarray(idx, dtype=np.float64).copy()
             for t in range(int(prob.shape[0])):
+                if not np.isfinite(idx[t]):
+                    continue
                 ii = int(idx[t])
                 if 1 <= ii <= (n_samples - 2):
                     idx[t] = parabolic_refine(prob[t], ii)
@@ -324,7 +326,7 @@ def run_batch_apply_job(job_id: str, req: BatchApplyRequest, state: AppState) ->
                     raise ValueError('fbpick prob output is missing')
                 if prob_out.shape != section.shape:
                     raise ValueError('fbpick prob shape mismatch')
-                prob_padded[i, :n_traces, :] = prob_out
+                prob_padded[i, :n_traces, :] = prob_out.astype(np.float16, copy=False)
             if save_picks_enabled:
                 if prob_out is None:
                     raise ValueError('fbpick prob output is missing for pick export')
