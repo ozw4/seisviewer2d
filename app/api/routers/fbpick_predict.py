@@ -14,16 +14,16 @@ from pydantic import BaseModel, ConfigDict, Field
 from app.api._helpers import get_state
 from app.api.schemas import PipelineSpec
 from app.core.state import AppState
-from app.services.fbpick_support import (
-    DEFAULT_FBPICK_MODEL_ID,
-    OFFSET_BYTE_FIXED,
-    _maybe_attach_fbpick_offsets,
-)
 from app.services.fbpick_predict_math import (
     apply_sigma_gate,
     expectation_idx_and_sigma_ms,
     pick_index_from_prob,
     sigma_ms_from_prob,
+)
+from app.services.fbpick_support import (
+    DEFAULT_FBPICK_MODEL_ID,
+    OFFSET_BYTE_FIXED,
+    _maybe_attach_fbpick_offsets,
 )
 from app.services.pipeline_taps import (
     PipelineTapNotFoundError,
@@ -260,7 +260,12 @@ def _compute_picks(
     n_traces, n_samples = prob.shape
     if n_traces == 0 or n_samples == 0:
         return [], 0.0
-
+    sums = np.sum(prob, axis=1, dtype=np.float64)
+    # 全トレースが「質量ゼロ」なら API として無効扱いで 422
+    if np.all(sums <= 0.0):
+        raise HTTPException(
+            status_code=422, detail='Probability mass is zero for a trace'
+        )
     try:
         if method.lower() == 'expectation':
             idx, sigma_ms = expectation_idx_and_sigma_ms(prob, dt=dt, chunk=_CHUNK_SIZE)

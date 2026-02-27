@@ -76,9 +76,15 @@ def op_denoise(
 ) -> np.ndarray:
     """Apply denoise transform."""
     _ = meta
-    x_t = torch.from_numpy(x.astype(np.float32)).unsqueeze(0).unsqueeze(0)
+    arr = np.ascontiguousarray(x, dtype=np.float32)
+    x_t = torch.from_numpy(arr).unsqueeze(0).unsqueeze(0)
     y_t = denoise_tensor(x_t, **params)
-    return y_t.squeeze(0).squeeze(0).numpy()
+    y = np.ascontiguousarray(y_t.squeeze(0).squeeze(0).numpy(), dtype=np.float32)
+    if y.shape != arr.shape:
+        raise ValueError(
+            f'Denoise output shape mismatch: got {y.shape}, expected {arr.shape}'
+        )
+    return y
 
 
 def op_fbpick(x: np.ndarray, *, params: dict, meta: dict) -> dict:
