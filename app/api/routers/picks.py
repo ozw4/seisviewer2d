@@ -5,11 +5,12 @@ from __future__ import annotations
 import asyncio
 import io
 import logging
+import os
 import re
 import tempfile
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Annotated
+from typing import Annotated, NamedTuple
 
 import numpy as np
 from fastapi import APIRouter, Depends, File, HTTPException, Query, Request, UploadFile
@@ -37,6 +38,8 @@ from app.utils.pick_cache_file1d_mem import (
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
+_GRSTAT_FIXED_KEY1_BYTE = 9
+_NUMBA_CACHE_DIR = '/tmp/numba'
 
 
 def _validated_n_samples(reader) -> int:
@@ -47,6 +50,19 @@ def _validated_n_samples(reader) -> int:
     if n_samples <= 0:
         raise HTTPException(status_code=409, detail='Invalid or missing n_samples')
     return n_samples
+
+
+def _validated_dt(state, file_id: str) -> float:
+    dt_raw = state.file_registry.get_dt(file_id)
+    if (
+        not isinstance(dt_raw, (int, float, np.integer, np.floating))
+        or float(dt_raw) <= 0
+    ):
+        raise HTTPException(
+            status_code=409,
+            detail='Invalid or missing sample interval (dt) for file',
+        )
+    return float(dt_raw)
 
 
 def _validated_sorted_to_original(reader, n_traces: int) -> np.ndarray:
@@ -65,6 +81,61 @@ def _validated_sorted_to_original(reader, n_traces: int) -> np.ndarray:
                 status_code=409, detail='sorted_to_original out of range'
             )
     return sorted_to_original
+
+
+class _PreparedManualPickExport(NamedTuple):
+    file_name: str
+    reader: object
+    n_traces: int
+    n_samples: int
+    dt: float
+    p_sorted: np.ndarray
+    sorted_to_original: np.ndarray
+    p_orig: np.ndarray
+
+
+def _prepare_manual_pick_export(
+    request: Request,
+    *,
+    file_id: str,
+    key1_byte: int,
+    key2_byte: int,
+) -> _PreparedManualPickExport:
+    state = get_state(request.app)
+    file_name = _filename_for_file_id(file_id, file_registry=state.file_registry)
+    if not file_name:
+        raise HTTPException(status_code=404, detail='Filename not found for file_id')
+    reader = get_reader(file_id, key1_byte, key2_byte, state=state)
+    n_traces = get_ntraces_for(file_id, key1_byte, key2_byte, state=state)
+    n_samples = _validated_n_samples(reader)
+    dt = _validated_dt(state, file_id)
+    p_sorted = load_all(file_name, n_traces)
+    sorted_to_original = _validated_sorted_to_original(reader, n_traces)
+    p_orig = np.full((n_traces,), np.nan, dtype=np.float32)
+    p_orig[sorted_to_original] = p_sorted
+    return _PreparedManualPickExport(
+        file_name=file_name,
+        reader=reader,
+        n_traces=n_traces,
+        n_samples=n_samples,
+        dt=dt,
+        p_sorted=p_sorted,
+        sorted_to_original=sorted_to_original,
+        p_orig=p_orig,
+    )
+
+
+def _load_numpy2fbcrd():
+    os.environ.setdefault('NUMBA_CACHE_DIR', _NUMBA_CACHE_DIR)
+    try:
+        from seisai_pick.pickio.io_grstat import numpy2fbcrd
+    except Exception as exc:  # noqa: BLE001
+        logger.exception('Failed to import numpy2fbcrd for grstat txt export')
+        raise HTTPException(
+            status_code=500,
+            detail='Failed to load grstat exporter dependency',
+        ) from exc
+    return numpy2fbcrd
 
 
 class PickPostModel(BaseModel):
@@ -120,57 +191,152 @@ async def export_manual_picks_npz(
     key1_byte: Annotated[int, Query()] = 189,
     key2_byte: Annotated[int, Query()] = 193,
 ) -> FileResponse:
-    state = get_state(request.app)
-    file_name = _filename_for_file_id(file_id, file_registry=state.file_registry)
-    if not file_name:
-        raise HTTPException(status_code=404, detail='Filename not found for file_id')
-    reader = get_reader(file_id, key1_byte, key2_byte, state=state)
-    n_traces = get_ntraces_for(file_id, key1_byte, key2_byte, state=state)
-    n_samples = _validated_n_samples(reader)
-    dt_raw = state.file_registry.get_dt(file_id)
-    if (
-        not isinstance(dt_raw, (int, float, np.integer, np.floating))
-        or float(dt_raw) <= 0
-    ):
-        raise HTTPException(
-            status_code=409,
-            detail='Invalid or missing sample interval (dt) for file',
-        )
-    dt = float(dt_raw)
-    p_sorted = load_all(file_name, n_traces)
-    sorted_to_original = _validated_sorted_to_original(reader, n_traces)
-    p_orig = np.full((n_traces,), np.nan, dtype=np.float32)
-    p_orig[sorted_to_original] = p_sorted
-    p_indptr, p_data = picks_time_s_to_csr(p_orig, dt=dt, n_samples=n_samples)
-    s_indptr, s_data = empty_csr(n_traces)
+    prepared = _prepare_manual_pick_export(
+        request,
+        file_id=file_id,
+        key1_byte=key1_byte,
+        key2_byte=key2_byte,
+    )
+    p_indptr, p_data = picks_time_s_to_csr(
+        prepared.p_orig,
+        dt=prepared.dt,
+        n_samples=prepared.n_samples,
+    )
+    s_indptr, s_data = empty_csr(prepared.n_traces)
 
     payload: dict[str, object] = {
         'manual_pick_format': np.asarray('seisai_csr'),
-        'picks_time_s': p_orig,
-        'n_traces': np.int64(n_traces),
+        'picks_time_s': prepared.p_orig,
+        'n_traces': np.int64(prepared.n_traces),
         'p_indptr': p_indptr,
         'p_data': p_data,
         's_indptr': s_indptr,
         's_data': s_data,
-        'n_samples': np.int64(n_samples),
-        'dt': np.float64(dt),
-        'sorted_to_original': sorted_to_original.astype(np.int64, copy=False),
+        'n_samples': np.int64(prepared.n_samples),
+        'dt': np.float64(prepared.dt),
+        'sorted_to_original': prepared.sorted_to_original.astype(np.int64, copy=False),
         'format_version': np.int64(1),
         'exported_at': np.asarray(datetime.now(timezone.utc).isoformat()),
         'export_app': np.asarray('seisviewer2d'),
-        'source': np.asarray(str(file_name)),
-        'source_hint': np.asarray(str(file_name)),
+        'source': np.asarray(str(prepared.file_name)),
+        'source_hint': np.asarray(str(prepared.file_name)),
     }
     with tempfile.NamedTemporaryFile(delete=False, suffix='.npz') as tmp:
         np.savez(tmp, **payload)
         tmp_path = Path(tmp.name)
 
-    safe_base = re.sub(r'[^-_.a-zA-Z0-9]', '_', Path(file_name).stem) or 'file'
+    safe_base = re.sub(r'[^-_.a-zA-Z0-9]', '_', Path(prepared.file_name).stem) or 'file'
     download_name = f'manual_picks_time_v1_{safe_base}.npz'
     background = BackgroundTask(lambda path=tmp_path: path.unlink(missing_ok=True))
     return FileResponse(
         tmp_path,
         media_type='application/octet-stream',
+        filename=download_name,
+        background=background,
+    )
+
+
+@router.get('/export_manual_picks_grstat_txt')
+async def export_manual_picks_grstat_txt(
+    request: Request,
+    file_id: Annotated[str, Query(...)],
+    key2_byte: Annotated[int, Query()] = 193,
+) -> FileResponse:
+    prepared = _prepare_manual_pick_export(
+        request,
+        file_id=file_id,
+        key1_byte=_GRSTAT_FIXED_KEY1_BYTE,
+        key2_byte=key2_byte,
+    )
+
+    ffid_values = np.asarray(prepared.reader.get_key1_values(), dtype=np.int64)
+    if ffid_values.ndim != 1:
+        raise HTTPException(status_code=409, detail='Invalid FFID header values')
+    if ffid_values.size == 0:
+        raise HTTPException(status_code=409, detail='No FFID values available')
+
+    trace_seq_rows: list[np.ndarray] = []
+    max_channels = 0
+    for rec_no in ffid_values:
+        try:
+            trace_seq = np.asarray(
+                prepared.reader.get_trace_seq_for_value(
+                    int(rec_no), align_to='display'
+                ),
+                dtype=np.int64,
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        if trace_seq.ndim != 1:
+            raise HTTPException(status_code=409, detail='Invalid trace index shape')
+        if np.any(trace_seq < 0) or np.any(trace_seq >= prepared.n_traces):
+            raise HTTPException(status_code=409, detail='Trace index out of range')
+        trace_seq_rows.append(trace_seq)
+        max_channels = max(max_channels, int(trace_seq.size))
+
+    if max_channels <= 0:
+        raise HTTPException(
+            status_code=409, detail='No traces available for FFID export'
+        )
+
+    fbnum = np.zeros((int(ffid_values.size), max_channels), dtype=np.float32)
+    for row_idx, trace_seq in enumerate(trace_seq_rows):
+        if trace_seq.size == 0:
+            continue
+        trace_times = np.asarray(prepared.p_sorted[trace_seq], dtype=np.float64)
+        valid_mask = np.isfinite(trace_times) & (trace_times > 0.0)
+        samples = np.zeros((trace_seq.size,), dtype=np.float32)
+        if np.any(valid_mask):
+            samples_valid = (trace_times[valid_mask] / float(prepared.dt)).astype(
+                np.float32, copy=False
+            )
+            # grstat writer treats 0 as no-pick and emits sentinel (-9999).
+            out_of_range = samples_valid >= float(prepared.n_samples)
+            if np.any(out_of_range):
+                logger.warning(
+                    'grstat export: samples over n_samples converted to no-pick: count=%d n_samples=%d',
+                    int(np.count_nonzero(out_of_range)),
+                    int(prepared.n_samples),
+                )
+                samples_valid[out_of_range] = np.float32(0.0)
+            samples[valid_mask] = samples_valid
+        fbnum[row_idx, : trace_seq.size] = samples
+
+    numpy2fbcrd = _load_numpy2fbcrd()
+    dt_ms = float(prepared.dt) * 1000.0
+    gather_numbers = [int(v) for v in ffid_values.tolist()]
+
+    with tempfile.NamedTemporaryFile(delete=False, suffix='.txt') as tmp:
+        tmp_path = Path(tmp.name)
+
+    try:
+        await asyncio.to_thread(
+            numpy2fbcrd,
+            dt=dt_ms,
+            fbnum=fbnum,
+            gather_range=gather_numbers,
+            output_name=str(tmp_path),
+            header_comment='manual first-break picks exported by seisviewer2d',
+        )
+    except ValueError as exc:
+        tmp_path.unlink(missing_ok=True)
+        raise HTTPException(
+            status_code=409, detail=f'grstat export failed: {exc}'
+        ) from exc
+    except Exception as exc:  # noqa: BLE001
+        tmp_path.unlink(missing_ok=True)
+        logger.exception('Unexpected grstat txt export failure')
+        raise HTTPException(
+            status_code=500,
+            detail=f'grstat export failed: {type(exc).__name__}',
+        ) from exc
+
+    safe_base = re.sub(r'[^-_.a-zA-Z0-9]', '_', Path(prepared.file_name).stem) or 'file'
+    download_name = f'manual_picks_grstat_v1_{safe_base}.txt'
+    background = BackgroundTask(lambda path=tmp_path: path.unlink(missing_ok=True))
+    return FileResponse(
+        tmp_path,
+        media_type='text/plain',
         filename=download_name,
         background=background,
     )
@@ -194,16 +360,7 @@ async def import_manual_picks_npz(
     reader = get_reader(file_id, key1_byte, key2_byte, state=state)
     n_traces = int(get_ntraces_for(file_id, key1_byte, key2_byte, state=state))
     n_samples = _validated_n_samples(reader)
-    dt_raw = state.file_registry.get_dt(file_id)
-    if (
-        not isinstance(dt_raw, (int, float, np.integer, np.floating))
-        or float(dt_raw) <= 0
-    ):
-        raise HTTPException(
-            status_code=409,
-            detail='Invalid or missing sample interval (dt) for file',
-        )
-    dt = float(dt_raw)
+    dt = _validated_dt(state, file_id)
 
     blob = await file.read()
     try:

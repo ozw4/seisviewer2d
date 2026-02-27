@@ -329,9 +329,15 @@
         setTimeout(() => URL.revokeObjectURL(url), 1000);
       }
 
-    async function exportManualPicksNpz() {
+    async function exportManualPicksFile({
+      endpoint,
+      buttonId,
+      fallbackFilename,
+      key1Byte,
+      includeKey1Byte = true,
+    }) {
       const token = beginOpStatus('export', 'preparing...');
-      const exportBtn = document.getElementById('export-manual-picks-npz');
+      const exportBtn = document.getElementById(buttonId);
       if (exportBtn) exportBtn.disabled = true;
       try {
         if (!currentFileId) {
@@ -353,10 +359,15 @@
 
         const params = new URLSearchParams({
           file_id: String(currentFileId),
-          key1_byte: String(currentKey1Byte),
           key2_byte: String(currentKey2Byte),
         });
-        const response = await fetch(`/export_manual_picks_npz?${params.toString()}`);
+        if (includeKey1Byte) {
+          const resolvedKey1Byte = Number.isFinite(Number(key1Byte))
+            ? String(parseInt(String(key1Byte), 10))
+            : String(currentKey1Byte);
+          params.set('key1_byte', resolvedKey1Byte);
+        }
+        const response = await fetch(`${endpoint}?${params.toString()}`);
         if (!response.ok) {
           const detail = await readErrorDetail(response);
           const message = detail
@@ -377,7 +388,7 @@
         const blob = await response.blob();
         const disposition = response.headers.get('content-disposition');
         const filename = filenameFromContentDisposition(disposition)
-          || `manual_picks_time_v1_${currentFileId}.npz`;
+          || fallbackFilename;
         saveBlob(blob, filename);
         if (setOpStatusIfCurrent('export', token, 'success', `saved ${filename}`)) {
           pushToast({
@@ -401,6 +412,23 @@
       } finally {
         if (exportBtn) exportBtn.disabled = false;
       }
+    }
+
+    async function exportManualPicksNpz() {
+      await exportManualPicksFile({
+        endpoint: '/export_manual_picks_npz',
+        buttonId: 'export-manual-picks-npz',
+        fallbackFilename: `manual_picks_time_v1_${currentFileId}.npz`,
+      });
+    }
+
+    async function exportManualPicksGrstatTxt() {
+      await exportManualPicksFile({
+        endpoint: '/export_manual_picks_grstat_txt',
+        buttonId: 'export-manual-picks-grstat-txt',
+        fallbackFilename: `manual_picks_grstat_v1_${currentFileId}.txt`,
+        includeKey1Byte: false,
+      });
     }
 
     async function importManualPicksNpz(file) {
