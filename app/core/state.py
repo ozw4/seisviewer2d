@@ -10,6 +10,7 @@ from typing import Any
 
 from app.core.settings import Settings
 from app.services.file_registry import FileRegistry
+from app.services.job_manager import JobManager
 
 
 class LRUCache(OrderedDict):
@@ -199,7 +200,7 @@ class AppState:
     file_registry: FileRegistry = field(default_factory=FileRegistry)
     cached_readers: LRUCache = field(init=False)
     fbpick_cache: ExpiringLRUCache = field(init=False)
-    jobs: dict[str, dict[str, object]] = field(default_factory=dict)
+    jobs: JobManager = field(default_factory=JobManager)
     pipeline_tap_cache: LRUCache = field(default_factory=lambda: LRUCache(16))
     window_section_cache: LRUCache = field(default_factory=lambda: LRUCache(32))
     trace_stats_cache: TraceStatsCache = field(init=False)

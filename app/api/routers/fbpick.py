@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import threading
-import time
 from typing import Annotated, Any
 from uuid import uuid4
 
@@ -107,7 +106,7 @@ def _run_fbpick_job(job_id: str, req: FbpickRequest, state: AppState) -> None:
             job = state.jobs.get(job_id)
             if job is None:
                 return
-            job['status'] = 'running'
+            state.jobs.set_status(job_id, 'running')
             cache_key = job.get('cache_key')
             file_id_obj = job.get('file_id', req.file_id)
             key1_obj = job.get('key1', req.key1)
@@ -194,17 +193,10 @@ def _run_fbpick_job(job_id: str, req: FbpickRequest, state: AppState) -> None:
         with state.lock:
             state.fbpick_cache[cache_key] = packed_payload
         with state.lock:
-            job = state.jobs.get(job_id)
-            if job is not None:
-                job['status'] = 'done'
-                job['finished_ts'] = time.time()
+            state.jobs.mark_done(job_id)
     except Exception as e:  # noqa: BLE001
         with state.lock:
-            job = state.jobs.get(job_id)
-            if job is not None:
-                job['status'] = 'error'
-                job['message'] = str(e)
-                job['finished_ts'] = time.time()
+            state.jobs.mark_error(job_id, str(e))
 
 
 @router.post('/fbpick_section_bin')
@@ -239,25 +231,23 @@ def fbpick_section_bin(req: FbpickRequest, request: Request):
         payload = state.fbpick_cache.get(cache_key)
         cache_hit = payload is not None
     job_id = str(uuid4())
-    job_state: dict[str, object] = {
-        'status': 'queued',
-        'cache_key': cache_key,
-        'created_ts': time.time(),
-        'file_id': req.file_id,
-        'key1': key1,
-        'key1_byte': req.key1_byte,
-        'key2_byte': req.key2_byte,
-        'pipeline_key': pipeline_key,
-        'tap_label': tap_label,
-        'offset_byte': forced_offset_byte,
-        'model_id': chosen_model_id,
-        'channel': channel,
-    }
-    assert not any(isinstance(value, np.ndarray) for value in job_state.values())
     with state.lock:
-        state.jobs[job_id] = job_state
+        job_state = state.jobs.create_fbpick_job(
+            job_id,
+            cache_key=cache_key,
+            file_id=req.file_id,
+            key1=key1,
+            key1_byte=req.key1_byte,
+            key2_byte=req.key2_byte,
+            pipeline_key=pipeline_key,
+            tap_label=tap_label,
+            offset_byte=forced_offset_byte,
+            model_id=chosen_model_id,
+            channel=channel,
+        )
         payload = state.fbpick_cache.get(cache_key)
         cache_hit = payload is not None
+    assert not any(isinstance(value, np.ndarray) for value in job_state.values())
 
     req2 = req.model_copy(
         update={
@@ -269,10 +259,7 @@ def fbpick_section_bin(req: FbpickRequest, request: Request):
 
     if cache_hit:
         with state.lock:
-            job = state.jobs.get(job_id)
-            if job is not None:
-                job['status'] = 'done'
-                job['finished_ts'] = time.time()
+            state.jobs.mark_done(job_id)
     else:
         threading.Thread(
             target=_run_fbpick_job, args=(job_id, req2, state), daemon=True
@@ -325,8 +312,7 @@ def get_fbpick_section_bin(request: Request, job_id: Annotated[str, Query(...)])
         cache_key = job.get('cache_key')
         payload = state.fbpick_cache.get(cache_key)
         if payload is None:
-            job['status'] = 'expired'
-            job['finished_ts'] = time.time()
+            state.jobs.mark_expired(job_id)
             raise HTTPException(status_code=410, detail='Result expired')
     return Response(
         payload,

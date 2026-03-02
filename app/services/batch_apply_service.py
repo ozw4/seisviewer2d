@@ -198,9 +198,9 @@ def run_batch_apply_job(job_id: str, req: BatchApplyRequest, state: AppState) ->
             if isinstance(created_ts_obj, (int, float))
             else time.time()
         )
-        job['status'] = 'running'
-        job['progress'] = 0.0
-        job['message'] = ''
+        state.jobs.set_status(job_id, 'running')
+        state.jobs.set_progress(job_id, 0.0)
+        state.jobs.set_message(job_id, '')
 
     try:
         denoise_taps = _denoise_tap_labels(req.pipeline_spec)
@@ -355,10 +355,9 @@ def run_batch_apply_job(job_id: str, req: BatchApplyRequest, state: AppState) ->
                 picks_sorted[trace_seq] = times_s
 
             with state.lock:
-                job = state.jobs.get(job_id)
-                if job is None:
+                if state.jobs.get(job_id) is None:
                     return
-                job['progress'] = float(i + 1) / float(total)
+                state.jobs.set_progress(job_id, float(i + 1) / float(total))
 
         key2_values_padded.flush()
         if denoise_padded is not None:
@@ -404,19 +403,11 @@ def run_batch_apply_job(job_id: str, req: BatchApplyRequest, state: AppState) ->
         _write_job_meta(job_dir=job_dir, payload=finished_meta)
 
         with state.lock:
-            job = state.jobs.get(job_id)
-            if job is not None:
-                job['status'] = 'done'
-                job['progress'] = 1.0
-                job['finished_ts'] = finished_ts
+            state.jobs.mark_done(job_id, finished_ts=finished_ts, progress_1=True)
     except Exception as e:  # noqa: BLE001
         finished_ts = time.time()
         with state.lock:
-            job = state.jobs.get(job_id)
-            if job is not None:
-                job['status'] = 'error'
-                job['message'] = str(e)
-                job['finished_ts'] = finished_ts
+            state.jobs.mark_error(job_id, str(e), finished_ts=finished_ts)
         if 'job_dir' in locals():
             error_meta: dict[str, object] = {
                 'job_id': job_id,

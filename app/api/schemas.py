@@ -5,6 +5,8 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
+from app.utils.validation import require_non_negative_int, require_positive_int
+
 TransformName = Literal['bandpass', 'denoise']
 AnalyzerName = Literal['fbpick']
 
@@ -53,50 +55,32 @@ class DenoiseParams(BaseModel):
     ckpt_path: str | None = None
     device: str | None = None
 
-    @staticmethod
-    def _is_int_value(value: object) -> bool:
-        return isinstance(value, int) and not isinstance(value, bool)
-
-    @classmethod
-    def _validate_positive_int_like(cls, value: object, *, name: str) -> None:
-        if not cls._is_int_value(value):
-            raise ValueError(f'{name} must be an int, got {value!r}')
-        if int(value) <= 0:
-            raise ValueError(f'{name} must be positive, got {int(value)}')
-
-    @classmethod
-    def _validate_non_negative_int_like(cls, value: object, *, name: str) -> None:
-        if not cls._is_int_value(value):
-            raise ValueError(f'{name} must be an int, got {value!r}')
-        if int(value) < 0:
-            raise ValueError(f'{name} must be non-negative, got {int(value)}')
-
     @classmethod
     def _validate_positive_tile_value(cls, value: object) -> None:
-        if cls._is_int_value(value):
-            cls._validate_positive_int_like(value, name='tile')
+        if isinstance(value, int) and not isinstance(value, bool):
+            require_positive_int(value, 'tile')
             return
         if isinstance(value, tuple | list) and len(value) == 2:
-            cls._validate_positive_int_like(value[0], name='tile[0]')
-            cls._validate_positive_int_like(value[1], name='tile[1]')
+            require_positive_int(value[0], 'tile[0]')
+            require_positive_int(value[1], 'tile[1]')
             return
         raise ValueError(f'tile must be int or pair of ints, got {value!r}')
 
     @classmethod
     def _validate_non_negative_overlap_value(cls, value: object) -> None:
-        if cls._is_int_value(value):
-            cls._validate_non_negative_int_like(value, name='overlap')
+        if isinstance(value, int) and not isinstance(value, bool):
+            require_non_negative_int(value, 'overlap')
             return
         if isinstance(value, tuple | list) and len(value) == 2:
-            cls._validate_non_negative_int_like(value[0], name='overlap[0]')
-            cls._validate_non_negative_int_like(value[1], name='overlap[1]')
+            require_non_negative_int(value[0], 'overlap[0]')
+            require_non_negative_int(value[1], 'overlap[1]')
             return
         raise ValueError(f'overlap must be int or pair of ints, got {value!r}')
 
     @model_validator(mode='after')
     def _check_bounds_and_canonicalize(self) -> 'DenoiseParams':
         if self.tile is None:
-            self._validate_non_negative_int_like(self.overlap, name='overlap')
+            require_non_negative_int(self.overlap, 'overlap')
             if int(self.overlap) >= self.chunk_h:
                 raise ValueError('overlap must be less than chunk_h')
         else:
@@ -125,28 +109,17 @@ class FbpickParams(BaseModel):
     model_id: str | None = None
     offsets: list[float] | None = None
 
-    @staticmethod
-    def _is_int_value(value: object) -> bool:
-        return isinstance(value, int) and not isinstance(value, bool)
-
-    @classmethod
-    def _validate_positive_int_like(cls, value: object, *, name: str) -> None:
-        if not cls._is_int_value(value):
-            raise ValueError(f'{name} must be an int, got {value!r}')
-        if int(value) <= 0:
-            raise ValueError(f'{name} must be positive, got {int(value)}')
-
     @model_validator(mode='after')
     def _check_values(self) -> 'FbpickParams':
         overlap = self.overlap
         if overlap is not None:
-            if self._is_int_value(overlap):
-                self._validate_positive_int_like(overlap, name='overlap')
+            if isinstance(overlap, int) and not isinstance(overlap, bool):
+                require_positive_int(overlap, 'overlap')
             elif isinstance(overlap, (tuple, list)):
                 if len(overlap) != 2:
                     raise ValueError(f'overlap must be a pair of ints, got {overlap!r}')
-                self._validate_positive_int_like(overlap[0], name='overlap[0]')
-                self._validate_positive_int_like(overlap[1], name='overlap[1]')
+                require_positive_int(overlap[0], 'overlap[0]')
+                require_positive_int(overlap[1], 'overlap[1]')
             else:
                 raise ValueError(
                     f'overlap must be int or pair of ints, got {overlap!r}'
@@ -158,8 +131,8 @@ class FbpickParams(BaseModel):
                 raise ValueError(f'tile must be a pair of ints, got {tile!r}')
             if len(tile) != 2:
                 raise ValueError(f'tile must be a pair of ints, got {tile!r}')
-            self._validate_positive_int_like(tile[0], name='tile[0]')
-            self._validate_positive_int_like(tile[1], name='tile[1]')
+            require_positive_int(tile[0], 'tile[0]')
+            require_positive_int(tile[1], 'tile[1]')
 
         model_id = self.model_id
         if model_id is not None:

@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import threading
-import time
 from pathlib import Path
 
 from fastapi import APIRouter, HTTPException, Query, Request
@@ -32,18 +31,14 @@ def batch_apply(req: BatchApplyRequest, request: Request) -> BatchApplyResponse:
 
     job_id = str(uuid4())
     with state.lock:
-        state.jobs[job_id] = {
-            'status': 'queued',
-            'progress': 0.0,
-            'message': '',
-            'created_ts': time.time(),
-            'file_id': req.file_id,
-            'key1_byte': req.key1_byte,
-            'key2_byte': req.key2_byte,
-            'artifacts_dir': str(get_job_dir(job_id)),
-            'job_type': 'batch_apply',
-        }
-        status = state.jobs[job_id]['status']
+        job_state = state.jobs.create_batch_apply_job(
+            job_id,
+            file_id=req.file_id,
+            key1_byte=req.key1_byte,
+            key2_byte=req.key2_byte,
+            artifacts_dir=str(get_job_dir(job_id)),
+        )
+        status = job_state['status']
 
     threading.Thread(
         target=run_batch_apply_job,

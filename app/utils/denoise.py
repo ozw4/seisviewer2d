@@ -10,6 +10,7 @@ import numpy as np
 import torch
 
 from .signal_utils import denorm_per_trace_tensor_b1hw, zscore_per_trace_tensor_b1hw
+from .validation import require_non_negative_int, require_positive_int
 
 __all__ = [
     '_MODEL_PATH',
@@ -42,34 +43,16 @@ def _viewer_api() -> _InferDenoiseHwFn:
     return infer_denoise_hw
 
 
-def _to_positive_int(value: object, *, name: str) -> int:
-    if isinstance(value, bool) or not isinstance(value, int | np.integer):
-        raise ValueError(f'{name} must be an int, got {value!r}')
-    int_value = int(value)
-    if int_value <= 0:
-        raise ValueError(f'{name} must be positive, got {int_value}')
-    return int_value
-
-
-def _to_non_negative_int(value: object, *, name: str) -> int:
-    if isinstance(value, bool) or not isinstance(value, int | np.integer):
-        raise ValueError(f'{name} must be an int, got {value!r}')
-    int_value = int(value)
-    if int_value < 0:
-        raise ValueError(f'{name} must be non-negative, got {int_value}')
-    return int_value
-
-
 def _normalize_tile(
     tile: int | tuple[int, int] | list[int],
 ) -> tuple[int, int]:
     if isinstance(tile, int | np.integer) and not isinstance(tile, bool):
-        tile_value = _to_positive_int(tile, name='tile')
+        tile_value = require_positive_int(tile, 'tile')
         return (tile_value, tile_value)
     if isinstance(tile, tuple | list) and len(tile) == 2:
         return (
-            _to_positive_int(tile[0], name='tile[0]'),
-            _to_positive_int(tile[1], name='tile[1]'),
+            require_positive_int(tile[0], 'tile[0]'),
+            require_positive_int(tile[1], 'tile[1]'),
         )
     raise ValueError(f'tile must be int or pair of ints, got {tile!r}')
 
@@ -78,11 +61,11 @@ def _normalize_overlap(
     overlap: int | tuple[int, int] | list[int], *, tile: tuple[int, int]
 ) -> tuple[int, int]:
     if isinstance(overlap, int | np.integer) and not isinstance(overlap, bool):
-        ov_h = _to_non_negative_int(overlap, name='overlap')
+        ov_h = require_non_negative_int(overlap, 'overlap')
         ov_w = 0
     elif isinstance(overlap, tuple | list) and len(overlap) == 2:
-        ov_h = _to_non_negative_int(overlap[0], name='overlap[0]')
-        ov_w = _to_non_negative_int(overlap[1], name='overlap[1]')
+        ov_h = require_non_negative_int(overlap[0], 'overlap[0]')
+        ov_w = require_non_negative_int(overlap[1], 'overlap[1]')
     else:
         raise ValueError(f'overlap must be int or pair of ints, got {overlap!r}')
     if ov_h >= tile[0] or ov_w >= tile[1]:
@@ -142,7 +125,7 @@ def denoise_tensor(
     if batch_size <= 0 or h <= 0 or w <= 0:
         raise ValueError(f'x must have positive shape, got {tuple(x.shape)}')
 
-    chunk_h_value = _to_positive_int(chunk_h, name='chunk_h')
+    chunk_h_value = require_positive_int(chunk_h, 'chunk_h')
 
     if isinstance(mask_ratio, bool):
         raise ValueError(f'mask_ratio must be a float in [0, 1], got {mask_ratio!r}')
@@ -174,12 +157,12 @@ def denoise_tensor(
         raise ValueError(f'seed must be an int, got {seed!r}')
     seed_value = int(seed)
 
-    passes_batch_value = _to_positive_int(passes_batch, name='passes_batch')
+    passes_batch_value = require_positive_int(passes_batch, 'passes_batch')
 
     amp_flag = bool(use_amp) if amp is None else bool(amp)
 
     if tile is None:
-        overlap_h = _to_non_negative_int(overlap, name='overlap')
+        overlap_h = require_non_negative_int(overlap, 'overlap')
         if overlap_h >= chunk_h_value:
             raise ValueError(
                 f'overlap must satisfy overlap < chunk_h, got overlap={overlap_h}, chunk_h={chunk_h_value}'
@@ -203,8 +186,8 @@ def denoise_tensor(
         'overlap': overlap_hw,
     }
     if tiles_per_batch is not None:
-        infer_kwargs['tiles_per_batch'] = _to_positive_int(
-            tiles_per_batch, name='tiles_per_batch'
+        infer_kwargs['tiles_per_batch'] = require_positive_int(
+            tiles_per_batch, 'tiles_per_batch'
         )
     if use_ema is not None and not isinstance(use_ema, bool):
         raise ValueError(f'use_ema must be bool or None, got {type(use_ema)}')

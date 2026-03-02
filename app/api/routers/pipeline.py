@@ -6,7 +6,6 @@ import hashlib
 import json
 import logging
 import threading
-import time
 from typing import Annotated, Any
 from uuid import uuid4
 
@@ -87,10 +86,9 @@ def _run_pipeline_all_job(
     job_id: str, req: PipelineAllRequest, pipe_key: str, state: AppState
 ) -> None:
     with state.lock:
-        job = state.jobs.get(job_id)
-        if job is None:
+        if state.jobs.get(job_id) is None:
             return
-        job['status'] = 'running'
+        state.jobs.set_status(job_id, 'running')
     try:
         reader = get_reader(req.file_id, req.key1_byte, req.key2_byte, state=state)
         key1_values = reader.get_key1_values().tolist()
@@ -142,23 +140,15 @@ def _run_pipeline_all_job(
                 )
 
             with state.lock:
-                job = state.jobs.get(job_id)
-                if job is None:
+                if state.jobs.get(job_id) is None:
                     return
-                job['progress'] = (idx + 1) / total
+                state.jobs.set_progress(job_id, (idx + 1) / total)
 
         with state.lock:
-            job = state.jobs.get(job_id)
-            if job is not None:
-                job['status'] = 'done'
-                job['finished_ts'] = time.time()
+            state.jobs.mark_done(job_id)
     except Exception as e:  # noqa: BLE001
         with state.lock:
-            job = state.jobs.get(job_id)
-            if job is not None:
-                job['status'] = 'error'
-                job['message'] = str(e)
-                job['finished_ts'] = time.time()
+            state.jobs.mark_error(job_id, str(e))
 
 
 @router.post(
@@ -359,25 +349,21 @@ def pipeline_all(
     pipe_key = pipeline_key(spec)
 
     with state.lock:
-        state.jobs[job_id] = {
-            'status': 'queued',
-            'progress': 0.0,
-            'message': '',
-            'created_ts': time.time(),
-            'file_id': file_id,
-            'key1_byte': key1_byte,
-            'key2_byte': key2_byte,
-            'pipeline_key': pipe_key,
-            'offset_byte': forced_offset_byte,  # artifact側も同じ値で参照
-            'artifacts_dir': str(get_job_dir(job_id)),
-        }
+        job_state = state.jobs.create_pipeline_all_job(
+            job_id,
+            file_id=file_id,
+            key1_byte=key1_byte,
+            key2_byte=key2_byte,
+            pipeline_key=pipe_key,
+            offset_byte=forced_offset_byte,
+            artifacts_dir=str(get_job_dir(job_id)),
+        )
+        status = job_state['status']
 
     threading.Thread(
         target=_run_pipeline_all_job, args=(job_id, req, pipe_key, state), daemon=True
     ).start()
 
-    with state.lock:
-        status = state.jobs[job_id]['status']
     return {'job_id': job_id, 'state': status}
 
 
