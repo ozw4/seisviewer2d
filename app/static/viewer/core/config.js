@@ -5,6 +5,8 @@ export const cfg = {
   WINDOW_FETCH_DEBOUNCE_MS: 120,
   FETCH_DEBOUNCE_MS: 200,
   WINDOW_MAX_POINTS: 5_000_000,
+  WINDOW_CACHE_MAX_BYTES: 134217728,
+  WINDOW_CACHE_MAX_ENTRIES: 24,
   LS_KEYS: { DT: 'segy.dt', WIGGLE_DENSITY: 'wiggle_density', DRAG_BASE: 'drag_base' },
 
   getDefaultDt() {
@@ -65,6 +67,8 @@ export const cfg = {
     return {
       HARD_LIMIT_BYTES: this.HARD_LIMIT_BYTES,
       WINDOW_MAX_POINTS: this.WINDOW_MAX_POINTS,
+      WINDOW_CACHE_MAX_BYTES: this.WINDOW_CACHE_MAX_BYTES,
+      WINDOW_CACHE_MAX_ENTRIES: this.WINDOW_CACHE_MAX_ENTRIES,
     };
   },
 };

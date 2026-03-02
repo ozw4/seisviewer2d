@@ -94,6 +94,162 @@
       return activeWindowFetchId;
     }
 
+    const WINDOW_CACHE_DEFAULT_MAX_BYTES = 128 * 1024 * 1024;
+    const WINDOW_CACHE_DEFAULT_MAX_ENTRIES = 24;
+    const windowPayloadCache = new Map();
+    const windowCacheStats = {
+      hits: 0,
+      misses: 0,
+      evicts: 0,
+      bytes: 0,
+      entries: 0,
+    };
+
+    function syncWindowCacheStats() {
+      windowCacheStats.entries = windowPayloadCache.size;
+      if (!Number.isFinite(windowCacheStats.bytes) || windowCacheStats.bytes < 0) {
+        windowCacheStats.bytes = 0;
+      }
+    }
+
+    function resetWindowCacheStats() {
+      windowCacheStats.hits = 0;
+      windowCacheStats.misses = 0;
+      windowCacheStats.evicts = 0;
+      windowCacheStats.bytes = 0;
+      windowCacheStats.entries = windowPayloadCache.size;
+    }
+
+    function readWindowCacheMaxBytes() {
+      const configured = (typeof cfg === 'object' && cfg !== null)
+        ? Number(cfg.WINDOW_CACHE_MAX_BYTES)
+        : NaN;
+      if (Number.isFinite(configured) && configured > 0) {
+        return Math.floor(configured);
+      }
+      return WINDOW_CACHE_DEFAULT_MAX_BYTES;
+    }
+
+    function readWindowCacheMaxEntries() {
+      const configured = (typeof cfg === 'object' && cfg !== null)
+        ? Number(cfg.WINDOW_CACHE_MAX_ENTRIES)
+        : NaN;
+      if (Number.isFinite(configured) && configured > 0) {
+        return Math.floor(configured);
+      }
+      return WINDOW_CACHE_DEFAULT_MAX_ENTRIES;
+    }
+
+    function estimateWindowPayloadBytes(payload) {
+      const valuesBytes = Number(payload?.valuesI8?.byteLength) || 0;
+      return valuesBytes + 512;
+    }
+
+    function evictWindowCacheIfNeeded() {
+      const maxEntries = readWindowCacheMaxEntries();
+      const maxBytes = readWindowCacheMaxBytes();
+      while (windowPayloadCache.size > 0
+        && (windowPayloadCache.size > maxEntries || windowCacheStats.bytes > maxBytes)) {
+        const oldestKey = windowPayloadCache.keys().next().value;
+        const oldestEntry = windowPayloadCache.get(oldestKey);
+        windowPayloadCache.delete(oldestKey);
+        windowCacheStats.bytes -= Number(oldestEntry?.bytes) || 0;
+        windowCacheStats.evicts += 1;
+      }
+      syncWindowCacheStats();
+    }
+
+    function windowCacheGet(key) {
+      const entry = windowPayloadCache.get(key);
+      if (!entry) {
+        windowCacheStats.misses += 1;
+        syncWindowCacheStats();
+        return null;
+      }
+      windowPayloadCache.delete(key);
+      windowPayloadCache.set(key, entry);
+      windowCacheStats.hits += 1;
+      syncWindowCacheStats();
+      return entry.payload;
+    }
+
+    function windowCacheSet(key, payload) {
+      const bytes = estimateWindowPayloadBytes(payload);
+      if (windowPayloadCache.has(key)) {
+        const prev = windowPayloadCache.get(key);
+        windowCacheStats.bytes -= Number(prev?.bytes) || 0;
+        windowPayloadCache.delete(key);
+      }
+      windowPayloadCache.set(key, {
+        payload,
+        bytes,
+        t: Date.now(),
+      });
+      windowCacheStats.bytes += bytes;
+      evictWindowCacheIfNeeded();
+      syncWindowCacheStats();
+      return payload;
+    }
+
+    function windowCachePeek(key) {
+      const entry = windowPayloadCache.get(key);
+      return entry ? entry.payload : null;
+    }
+
+    function windowCacheClear() {
+      windowPayloadCache.clear();
+      resetWindowCacheStats();
+      syncWindowCacheStats();
+    }
+
+    function buildWindowCacheKey({
+      fileId,
+      key1,
+      key1Byte,
+      key2Byte,
+      x0,
+      x1,
+      y0,
+      y1,
+      stepX,
+      stepY,
+      requestedLayer,
+      effectiveLayer,
+      pipelineKey,
+      tapLabel,
+      scaling,
+      transpose,
+      mode,
+    }) {
+      const enc = (value) => encodeURIComponent(value == null ? '' : String(value));
+      return [
+        'svwin',
+        `file=${enc(fileId)}`,
+        `k1=${enc(key1)}`,
+        `b1=${enc(key1Byte)}`,
+        `b2=${enc(key2Byte)}`,
+        `x=${enc(x0)}-${enc(x1)}`,
+        `y=${enc(y0)}-${enc(y1)}`,
+        `sx=${enc(stepX)}`,
+        `sy=${enc(stepY)}`,
+        `rql=${enc(requestedLayer)}`,
+        `layer=${enc(effectiveLayer)}`,
+        `pkey=${enc(pipelineKey)}`,
+        `tap=${enc(tapLabel)}`,
+        `sc=${enc(scaling)}`,
+        `tr=${enc(transpose)}`,
+        `mode=${enc(mode)}`,
+      ].join('|');
+    }
+
+    window.__svWindowCache = {
+      get: windowCacheGet,
+      peek: windowCachePeek,
+      set: windowCacheSet,
+      clear: windowCacheClear,
+      stats: windowCacheStats,
+    };
+
     async function fetchWindowAndPlot() {
       D('WINDOW@req', { key1: key1Values?.[parseInt(document.getElementById('key1_slider')?.value || '0', 10)] });
       if (!currentFileId) return;
@@ -168,8 +324,46 @@
         params.set('pipeline_key', pipelineKeyNow);
         params.set('tap_label', tapLabel);
       }
-      params.set('transpose', '1');
+      const transpose = '1';
+      params.set('transpose', transpose);
       params.set('scaling', currentScaling);
+      const cacheKey = buildWindowCacheKey({
+        fileId: currentFileId,
+        key1: key1Val,
+        key1Byte: currentKey1Byte,
+        key2Byte: currentKey2Byte,
+        x0: windowInfo.x0,
+        x1: windowInfo.x1,
+        y0: windowInfo.y0,
+        y1: windowInfo.y1,
+        stepX: step_x,
+        stepY: step_y,
+        requestedLayer,
+        effectiveLayer,
+        pipelineKey: tapLabel ? pipelineKeyNow : null,
+        tapLabel,
+        scaling: currentScaling,
+        transpose,
+        mode,
+      });
+      const cachedPayload = windowCacheGet(cacheKey);
+      if (cachedPayload) {
+        bumpWindowFetchId();
+        if (windowFetchCtrl) {
+          windowFetchCtrl.abort();
+          windowFetchCtrl = null;
+        }
+        latestSeismicData = null;
+        latestWindowRender = cachedPayload;
+        hideLoading();
+        if (isRelayouting) {
+          redrawPending = true;
+          return;
+        }
+        if (cachedPayload.mode === 'wiggle') renderWindowWiggle(cachedPayload);
+        else renderWindowHeatmap(cachedPayload);
+        return;
+      }
 
       const requestId = bumpWindowFetchId();
       const perfEnabled = window.SV_PERF === true;
@@ -255,6 +449,9 @@
           } : null,
         };
 
+        if (requestId !== activeWindowFetchId) return; // stale (decode/render phase)
+        const cachePayload = windowPayload.__perf ? { ...windowPayload, __perf: null } : windowPayload;
+        windowCacheSet(cacheKey, cachePayload);
         latestSeismicData = null;
         latestWindowRender = windowPayload;
         if (isRelayouting) {      // ドラッグ中なら描画は保留
