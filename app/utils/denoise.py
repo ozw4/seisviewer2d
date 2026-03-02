@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import logging
 import os
 from pathlib import Path
 from typing import Callable, Literal
@@ -22,16 +21,12 @@ __all__ = [
 
 _MODEL_PATH = Path(__file__).resolve().parents[2] / 'model' / 'denoise_default.pt'
 _NUMBA_CACHE_DIR = '/tmp/numba'
-_LEGACY_DEFAULT_CHUNK_H = 128
-_LEGACY_DEFAULT_OVERLAP = 32
-_LEGACY_DEFAULT_MASK_RATIO = 0.5
-_LEGACY_DEFAULT_NOISE_STD = 1.0
-_LEGACY_DEFAULT_MASK_NOISE_MODE = 'replace'
-_LEGACY_DEFAULT_SEED = 12345
-_LEGACY_DEFAULT_PASSES_BATCH = 4
+_DEFAULT_CHUNK_H = 128
+_DEFAULT_OVERLAP_H = 32
+_DEFAULT_TILE_W = 6016
+_DEFAULT_OVERLAP_W = 1024
 
 _InferDenoiseHwFn = Callable[..., np.ndarray]
-logger = logging.getLogger(__name__)
 
 
 def _viewer_api() -> _InferDenoiseHwFn:
@@ -104,52 +99,6 @@ def _resolve_ckpt_path(ckpt_path: Path | str | None) -> Path:
     return resolved
 
 
-def _warn_ignored_legacy_param(
-    *, name: str, value: object, legacy_default: object
-) -> None:
-    logger.warning(
-        '[DENOISE][IGNORED] %s=%r is ignored by seisai_engine-backed denoise (legacy default=%r)',
-        name,
-        value,
-        legacy_default,
-    )
-
-
-def _warn_ignored_legacy_args(
-    *,
-    mask_ratio: float,
-    noise_std: float,
-    mask_noise_mode: Literal['replace', 'add'],
-    seed: int,
-) -> None:
-    if float(mask_ratio) != _LEGACY_DEFAULT_MASK_RATIO:
-        _warn_ignored_legacy_param(
-            name='mask_ratio',
-            value=mask_ratio,
-            legacy_default=_LEGACY_DEFAULT_MASK_RATIO,
-        )
-    if float(noise_std) != _LEGACY_DEFAULT_NOISE_STD:
-        _warn_ignored_legacy_param(
-            name='noise_std', value=noise_std, legacy_default=_LEGACY_DEFAULT_NOISE_STD
-        )
-    if mask_noise_mode != _LEGACY_DEFAULT_MASK_NOISE_MODE:
-        _warn_ignored_legacy_param(
-            name='mask_noise_mode',
-            value=mask_noise_mode,
-            legacy_default=_LEGACY_DEFAULT_MASK_NOISE_MODE,
-        )
-    if (
-        isinstance(seed, bool)
-        or not isinstance(seed, int | np.integer)
-        or int(seed) != _LEGACY_DEFAULT_SEED
-    ):
-        _warn_ignored_legacy_param(
-            name='seed',
-            value=seed,
-            legacy_default=_LEGACY_DEFAULT_SEED,
-        )
-
-
 def get_denoise_ckpt_path(*, ckpt_path: Path | str | None = None) -> Path:
     """Return the resolved denoise checkpoint path."""
     return _resolve_ckpt_path(ckpt_path)
@@ -169,8 +118,8 @@ def get_model(*, ckpt_path: Path | str | None = None) -> Path:
 def denoise_tensor(
     x: torch.Tensor,
     *,
-    chunk_h: int = 128,
-    overlap: int | tuple[int, int] = 32,
+    chunk_h: int = _DEFAULT_CHUNK_H,
+    overlap: int | tuple[int, int] = _DEFAULT_OVERLAP_H,
     mask_ratio: float = 0.5,
     noise_std: float = 1.0,
     mask_noise_mode: Literal['replace', 'add'] = 'replace',
@@ -193,39 +142,66 @@ def denoise_tensor(
     if batch_size <= 0 or h <= 0 or w <= 0:
         raise ValueError(f'x must have positive shape, got {tuple(x.shape)}')
 
-    _warn_ignored_legacy_args(
-        mask_ratio=mask_ratio,
-        noise_std=noise_std,
-        mask_noise_mode=mask_noise_mode,
-        seed=seed,
-    )
-    if chunk_h != _LEGACY_DEFAULT_CHUNK_H:
-        _warn_ignored_legacy_param(
-            name='chunk_h', value=chunk_h, legacy_default=_LEGACY_DEFAULT_CHUNK_H
-        )
-    if passes_batch != _LEGACY_DEFAULT_PASSES_BATCH:
-        _warn_ignored_legacy_param(
-            name='passes_batch',
-            value=passes_batch,
-            legacy_default=_LEGACY_DEFAULT_PASSES_BATCH,
+    chunk_h_value = _to_positive_int(chunk_h, name='chunk_h')
+
+    if isinstance(mask_ratio, bool):
+        raise ValueError(f'mask_ratio must be a float in [0, 1], got {mask_ratio!r}')
+    try:
+        mask_ratio_value = float(mask_ratio)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(
+            f'mask_ratio must be a float in [0, 1], got {mask_ratio!r}'
+        ) from exc
+    if mask_ratio_value < 0.0 or mask_ratio_value > 1.0:
+        raise ValueError(f'mask_ratio must be in [0, 1], got {mask_ratio_value}')
+
+    if isinstance(noise_std, bool):
+        raise ValueError(f'noise_std must be a float >= 0, got {noise_std!r}')
+    try:
+        noise_std_value = float(noise_std)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(f'noise_std must be a float >= 0, got {noise_std!r}') from exc
+    if noise_std_value < 0.0:
+        raise ValueError(f'noise_std must be >= 0, got {noise_std_value}')
+
+    if mask_noise_mode not in ('replace', 'add'):
+        raise ValueError(
+            "mask_noise_mode must be either 'replace' or 'add', "
+            f'got {mask_noise_mode!r}'
         )
 
+    if isinstance(seed, bool) or not isinstance(seed, int | np.integer):
+        raise ValueError(f'seed must be an int, got {seed!r}')
+    seed_value = int(seed)
+
+    passes_batch_value = _to_positive_int(passes_batch, name='passes_batch')
+
     amp_flag = bool(use_amp) if amp is None else bool(amp)
+
+    if tile is None:
+        overlap_h = _to_non_negative_int(overlap, name='overlap')
+        if overlap_h >= chunk_h_value:
+            raise ValueError(
+                f'overlap must satisfy overlap < chunk_h, got overlap={overlap_h}, chunk_h={chunk_h_value}'
+            )
+        tile_hw = (chunk_h_value, _DEFAULT_TILE_W)
+        overlap_hw = (overlap_h, _DEFAULT_OVERLAP_W)
+    else:
+        tile_hw = _normalize_tile(tile)
+        overlap_hw = _normalize_overlap(overlap, tile=tile_hw)
 
     infer_kwargs: dict[str, object] = {
         'ckpt_path': _resolve_ckpt_path(ckpt_path),
         'device': device,
         'amp': amp_flag,
+        'mask_ratio': mask_ratio_value,
+        'noise_std': noise_std_value,
+        'mask_noise_mode': mask_noise_mode,
+        'seed': seed_value,
+        'passes_batch': passes_batch_value,
+        'tile': tile_hw,
+        'overlap': overlap_hw,
     }
-    if tile is not None:
-        tile_hw = _normalize_tile(tile)
-        overlap_hw = _normalize_overlap(overlap, tile=tile_hw)
-        infer_kwargs['tile'] = tile_hw
-        infer_kwargs['overlap'] = overlap_hw
-    elif overlap != _LEGACY_DEFAULT_OVERLAP:
-        _warn_ignored_legacy_param(
-            name='overlap', value=overlap, legacy_default=_LEGACY_DEFAULT_OVERLAP
-        )
     if tiles_per_batch is not None:
         infer_kwargs['tiles_per_batch'] = _to_positive_int(
             tiles_per_batch, name='tiles_per_batch'
