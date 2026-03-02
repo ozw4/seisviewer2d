@@ -52,9 +52,9 @@ def _fb_env(monkeypatch) -> tuple[TestClient, object]:
         fbpick_mod,
         '_resolve_model_selection',
         lambda model_id: (
-            'fbpick_edgenext_small.pth' if model_id is None else model_id,
+            'fbpick_edgenext_small.pt' if model_id is None else model_id,
             False,
-            'fbpick_edgenext_small.pth:123',
+            'fbpick_edgenext_small.pt:123',
         ),
         raising=True,
     )
@@ -104,8 +104,8 @@ def test_fbpick_cache_hit_marks_job_done_and_get_returns_payload(_fb_env, monkey
         amp=True,
         pipeline_key=None,
         tap_label=None,
-        model_id='fbpick_edgenext_small.pth',
-        model_ver='fbpick_edgenext_small.pth:123',
+        model_id='fbpick_edgenext_small.pt',
+        model_ver='fbpick_edgenext_small.pt:123',
     )
     payload_gz = _pack_payload(shape=(3, 4), dt=0.002)
     state.fbpick_cache[cache_key] = payload_gz
@@ -364,7 +364,7 @@ def test_fbpick_cache_key_isolated_by_model_id(_fb_env, monkeypatch):
         fbpick_mod,
         '_resolve_model_selection',
         lambda model_id: (
-            'fbpick_edgenext_small.pth' if model_id is None else model_id,
+            'fbpick_edgenext_small.pt' if model_id is None else model_id,
             False,
             f'{model_id}:111',
         ),
@@ -384,11 +384,11 @@ def test_fbpick_cache_key_isolated_by_model_id(_fb_env, monkeypatch):
 
     r1 = client.post(
         '/fbpick_section_bin',
-        json={'file_id': 'fid', 'key1': 1, 'model_id': 'fbpick_a.pth'},
+        json={'file_id': 'fid', 'key1': 1, 'model_id': 'fbpick_a.pt'},
     )
     r2 = client.post(
         '/fbpick_section_bin',
-        json={'file_id': 'fid', 'key1': 1, 'model_id': 'fbpick_b.pth'},
+        json={'file_id': 'fid', 'key1': 1, 'model_id': 'fbpick_b.pt'},
     )
     assert r1.status_code == 200
     assert r2.status_code == 200
@@ -419,7 +419,7 @@ def test_offset_model_enforces_offset_byte_37_in_job_state(_fb_env, monkeypatch)
     monkeypatch.setattr(fbpick_mod.threading, 'Thread', _NoOpThread, raising=True)
     r = client.post(
         '/fbpick_section_bin',
-        json={'file_id': 'fid', 'key1': 1, 'model_id': 'fbpick_offset_demo.pth'},
+        json={'file_id': 'fid', 'key1': 1, 'model_id': 'fbpick_offset_demo.pt'},
     )
     assert r.status_code == 200
     state = fbpick_mod.get_state(app)
@@ -433,13 +433,13 @@ def test_fbpick_models_endpoint_lists_models(_fb_env, monkeypatch):
         fbpick_mod,
         'list_fbpick_models',
         lambda: [
-            {'id': 'fbpick_edgenext_small.pth', 'uses_offset': False},
-            {'id': 'fbpick_offset_demo.pth', 'uses_offset': True},
+            {'id': 'fbpick_edgenext_small.pt', 'uses_offset': False},
+            {'id': 'fbpick_offset_demo.pt', 'uses_offset': True},
         ],
         raising=True,
     )
     r = client.get('/fbpick_models')
     assert r.status_code == 200
     body = r.json()
-    assert body['default_model_id'] == 'fbpick_edgenext_small.pth'
+    assert body['default_model_id'] == 'fbpick_edgenext_small.pt'
     assert len(body['models']) == 2

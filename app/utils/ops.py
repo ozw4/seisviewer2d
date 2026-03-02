@@ -96,11 +96,6 @@ def op_fbpick(x: np.ndarray, *, params: dict, meta: dict) -> dict:
     tiles_per_batch = int(params.get("tiles_per_batch", 4))
 
     tile = params.get("tile")
-    if tile is None:
-        chunk_h = params.get("chunk_h")
-        tile_w = params.get("tile_w")
-        if chunk_h is not None and tile_w is not None:
-            tile = (int(chunk_h), int(tile_w))
 
     arr = np.ascontiguousarray(x, dtype=np.float32)
 

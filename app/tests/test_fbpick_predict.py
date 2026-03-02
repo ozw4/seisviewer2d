@@ -98,7 +98,7 @@ def test_predict_accepts_model_id(client, monkeypatch):
         json={
             'file_id': 'abc',
             'key1': 1,
-            'model_id': 'fbpick_demo.pth',
+            'model_id': 'fbpick_demo.pt',
             'method': 'argmax',
             'sigma_ms_max': 5.0,
         },
@@ -124,9 +124,9 @@ def test_predict_offset_model_returns_422_without_offsets(client, monkeypatch):
         fbpick_predict_mod,
         '_resolve_model_selection',
         lambda _model_id: fbpick_predict_mod._ModelSelection(
-            model_id='fbpick_offset_demo.pth',
-            model_path=fbpick_predict_mod.Path('model/fbpick_offset_demo.pth'),
-            model_ver='fbpick_offset_demo.pth:1',
+            model_id='fbpick_offset_demo.pt',
+            model_path=fbpick_predict_mod.Path('model/fbpick_offset_demo.pt'),
+            model_ver='fbpick_offset_demo.pt:1',
             uses_offset=True,
         ),
     )
@@ -142,7 +142,7 @@ def test_predict_offset_model_returns_422_without_offsets(client, monkeypatch):
         json={
             'file_id': 'abc',
             'key1': 1,
-            'model_id': 'fbpick_offset_demo.pth',
+            'model_id': 'fbpick_offset_demo.pt',
             'method': 'argmax',
             'sigma_ms_max': 5.0,
         },

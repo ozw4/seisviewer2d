@@ -1,5 +1,6 @@
 """Pydantic models for describing pipeline operations."""
 
+from pathlib import Path
 from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
@@ -109,6 +110,68 @@ class DenoiseParams(BaseModel):
         return self
 
 
+class FbpickParams(BaseModel):
+    """Parameters for the fbpick analyzer."""
+
+    model_config = ConfigDict(extra='forbid')
+
+    amp: bool | None = None
+    use_amp: bool | None = None
+    overlap: int | tuple[int, int] | list[int] | None = None
+    tau: float | None = Field(default=None, ge=0.0)
+    tile: tuple[int, int] | list[int] | None = None
+    channel: str | int | None = None
+    tiles_per_batch: int | None = Field(default=None, ge=1)
+    model_id: str | None = None
+    offsets: list[float] | None = None
+
+    @staticmethod
+    def _is_int_value(value: object) -> bool:
+        return isinstance(value, int) and not isinstance(value, bool)
+
+    @classmethod
+    def _validate_positive_int_like(cls, value: object, *, name: str) -> None:
+        if not cls._is_int_value(value):
+            raise ValueError(f'{name} must be an int, got {value!r}')
+        if int(value) <= 0:
+            raise ValueError(f'{name} must be positive, got {int(value)}')
+
+    @model_validator(mode='after')
+    def _check_values(self) -> 'FbpickParams':
+        overlap = self.overlap
+        if overlap is not None:
+            if self._is_int_value(overlap):
+                self._validate_positive_int_like(overlap, name='overlap')
+            elif isinstance(overlap, (tuple, list)):
+                if len(overlap) != 2:
+                    raise ValueError(f'overlap must be a pair of ints, got {overlap!r}')
+                self._validate_positive_int_like(overlap[0], name='overlap[0]')
+                self._validate_positive_int_like(overlap[1], name='overlap[1]')
+            else:
+                raise ValueError(
+                    f'overlap must be int or pair of ints, got {overlap!r}'
+                )
+
+        tile = self.tile
+        if tile is not None:
+            if not isinstance(tile, (tuple, list)):
+                raise ValueError(f'tile must be a pair of ints, got {tile!r}')
+            if len(tile) != 2:
+                raise ValueError(f'tile must be a pair of ints, got {tile!r}')
+            self._validate_positive_int_like(tile[0], name='tile[0]')
+            self._validate_positive_int_like(tile[1], name='tile[1]')
+
+        model_id = self.model_id
+        if model_id is not None:
+            if Path(model_id).name != model_id:
+                raise ValueError('model_id must be a plain file name')
+            if not (model_id.startswith('fbpick_') and model_id.endswith('.pt')):
+                raise ValueError(
+                    "model_id must start with 'fbpick_' and end with '.pt'"
+                )
+        return self
+
+
 class PipelineOp(BaseModel):
     """Specification for a single pipeline operation."""
 
@@ -124,6 +187,10 @@ class PipelineOp(BaseModel):
             BandpassParams(**(self.params or {}))
         if self.name == 'denoise':
             self.params = DenoiseParams(**(self.params or {})).model_dump(
+                exclude_none=True
+            )
+        if self.name == 'fbpick':
+            self.params = FbpickParams(**(self.params or {})).model_dump(
                 exclude_none=True
             )
         return self
