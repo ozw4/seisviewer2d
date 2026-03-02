@@ -543,13 +543,15 @@
       let tPlot0 = null;
       let plotPromise = null;
 
-      const useI8 = windowData.valuesI8 instanceof Int8Array;
-      const useF32 = !useI8 && windowData.values && windowData.values.length != null;
-      if (!useI8 && !useF32) {
+      const N = rows * cols;
+      const hasWorkerRows = Array.isArray(windowData.zRows) && windowData.zRows.length === rows;
+      const hasWorkerBacking = windowData.zBacking instanceof Float32Array && windowData.zBacking.length >= N;
+      const useI8 = !hasWorkerRows && !hasWorkerBacking && windowData.valuesI8 instanceof Int8Array;
+      const useF32 = !hasWorkerRows && !hasWorkerBacking && !useI8 && windowData.values && windowData.values.length != null;
+      if (!hasWorkerRows && !hasWorkerBacking && !useI8 && !useF32) {
         console.warn('renderWindowHeatmap: missing values');
         return;
       }
-      const N = rows * cols;
       if (useI8 && windowData.valuesI8.length < N) return;
       if (useF32 && windowData.values.length < N) return;
 
@@ -566,63 +568,74 @@
 
       if (perfEnabled) tLut0 = performance.now();
       let zData;
-      const poolingCandidate = (
-        USE_HEATMAP_POOLING &&
-        useI8 &&
-        window.SeisHeatmap &&
-        typeof window.SeisHeatmap.toPlotlyHeatmapZ === 'function'
-      );
-      if (poolingCandidate) {
-        zData = window.SeisHeatmap.toPlotlyHeatmapZ({
-          i8: windowData.valuesI8,
-          rows,
-          cols,
-          quant: quantMeta,
-        });
-        const backing = zData.backing;
-        const total = rows * cols;
-        if (fbMode) {
-            for (let p = 0; p < total; p++) backing[p] = backing[p] * 255;
-          } else {
-          }
-      }
-      else {
+      let poolingCandidate = false;
+      if (hasWorkerRows) {
+        zData = windowData.zRows;
+      } else if (hasWorkerBacking) {
         const zRows = new Array(rows);
-        const hasLut = !!(quantMeta && 'lo' in quantMeta && 'hi' in quantMeta);
-        const lut = hasLut && window.SeisHeatmap && typeof window.SeisHeatmap.getQuantLUT === 'function'
-          ? window.SeisHeatmap.getQuantLUT(quantMeta)
-          : null;
-        let invScale = 1 / (fallbackScale || 1);
-        if (quantMeta && 'scale' in (quantMeta || {})) {
-          const scaleVal = Number(quantMeta.scale);
-          if (Number.isFinite(scaleVal) && scaleVal !== 0) {
-            invScale = 1 / scaleVal;
-          }
-        }
-        const srcF32 = useF32 ? windowData.values : null;
+        const backing = windowData.zBacking;
         for (let r = 0; r < rows; r++) {
-          const row = new Float32Array(cols);
-          const offset = r * cols;
-          for (let c = 0; c < cols; c++) {
-            let rawValue;
-            if (useI8) {
-              const q = windowData.valuesI8[offset + c];
-              if (lut) rawValue = lut[(q + 128) & 0xff];
-              else rawValue = q * invScale;
-            } else if (srcF32) {
-              rawValue = srcF32[offset + c];
-            } else {
-              rawValue = 0;
-            }
-            if (fbMode) {
-              row[c] = rawValue * 255;
-            } else {
-              row[c] = rawValue
+          zRows[r] = backing.subarray(r * cols, (r + 1) * cols);
+        }
+        windowData.zRows = zRows;
+        zData = zRows;
+      } else {
+        poolingCandidate = (
+          USE_HEATMAP_POOLING &&
+          useI8 &&
+          window.SeisHeatmap &&
+          typeof window.SeisHeatmap.toPlotlyHeatmapZ === 'function'
+        );
+        if (poolingCandidate) {
+          zData = window.SeisHeatmap.toPlotlyHeatmapZ({
+            i8: windowData.valuesI8,
+            rows,
+            cols,
+            quant: quantMeta,
+          });
+          const backing = zData.backing;
+          const total = rows * cols;
+          if (fbMode) {
+            for (let p = 0; p < total; p++) backing[p] = backing[p] * 255;
+          }
+        } else {
+          const zRows = new Array(rows);
+          const hasLut = !!(quantMeta && 'lo' in quantMeta && 'hi' in quantMeta);
+          const lut = hasLut && window.SeisHeatmap && typeof window.SeisHeatmap.getQuantLUT === 'function'
+            ? window.SeisHeatmap.getQuantLUT(quantMeta)
+            : null;
+          let invScale = 1 / (fallbackScale || 1);
+          if (quantMeta && 'scale' in (quantMeta || {})) {
+            const scaleVal = Number(quantMeta.scale);
+            if (Number.isFinite(scaleVal) && scaleVal !== 0) {
+              invScale = 1 / scaleVal;
             }
           }
-          zRows[r] = row;
+          const srcF32 = useF32 ? windowData.values : null;
+          for (let r = 0; r < rows; r++) {
+            const row = new Float32Array(cols);
+            const offset = r * cols;
+            for (let c = 0; c < cols; c++) {
+              let rawValue;
+              if (useI8) {
+                const q = windowData.valuesI8[offset + c];
+                if (lut) rawValue = lut[(q + 128) & 0xff];
+                else rawValue = q * invScale;
+              } else if (srcF32) {
+                rawValue = srcF32[offset + c];
+              } else {
+                rawValue = 0;
+              }
+              if (fbMode) {
+                row[c] = rawValue * 255;
+              } else {
+                row[c] = rawValue;
+              }
+            }
+            zRows[r] = row;
+          }
+          zData = zRows;
         }
-        zData = zRows;
       }
       if (perfEnabled) tLut1 = performance.now();
 

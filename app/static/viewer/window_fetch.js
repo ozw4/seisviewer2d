@@ -100,8 +100,19 @@
     const PREFETCH_DEFAULT_MAX_INFLIGHT = 2;
     const PREFETCH_DEFAULT_MARGIN_RATIO = 0.15;
     const PREFETCH_DEFAULT_ENABLE_Y = false;
+    const WINDOW_DECODE_USE_WORKER_DEFAULT = true;
+    const WINDOW_DECODE_WORKER_PATH_DEFAULT = '/static/viewer/window_decode_worker.js';
+    const DECODE_WORKER_KIND_MAIN = 'main';
+    const DECODE_WORKER_KIND_PREFETCH = 'prefetch';
     const windowPayloadCache = new Map();
     const prefetchInflight = new Map();
+    const decodeWorkerStates = {
+      [DECODE_WORKER_KIND_MAIN]: { worker: null, pending: new Map() },
+      [DECODE_WORKER_KIND_PREFETCH]: { worker: null, pending: new Map() },
+    };
+    let nextWorkerJobId = 1;
+    let activeMainDecodeJobId = null;
+    let hasWarnedDecodeFallback = false;
     const windowCacheStats = {
       hits: 0,
       misses: 0,
@@ -189,9 +200,36 @@
       return PREFETCH_DEFAULT_ENABLE_Y;
     }
 
+    function readWindowDecodeUseWorker() {
+      const configured = (typeof cfg === 'object' && cfg !== null)
+        ? cfg.WINDOW_DECODE_USE_WORKER
+        : undefined;
+      if (typeof configured === 'boolean') {
+        return configured;
+      }
+      return WINDOW_DECODE_USE_WORKER_DEFAULT;
+    }
+
+    function readWindowDecodeWorkerPath() {
+      const configured = (typeof cfg === 'object' && cfg !== null)
+        ? cfg.WINDOW_DECODE_WORKER_PATH
+        : undefined;
+      if (typeof configured === 'string' && configured.trim()) {
+        return configured.trim();
+      }
+      return WINDOW_DECODE_WORKER_PATH_DEFAULT;
+    }
+
+    function warnDecodeFallback(reason) {
+      if (hasWarnedDecodeFallback) return;
+      hasWarnedDecodeFallback = true;
+      console.warn('[FALLBACK] Window decode worker disabled; using main-thread decode', { reason });
+    }
+
     function estimateWindowPayloadBytes(payload) {
       const valuesBytes = Number(payload?.valuesI8?.byteLength) || 0;
-      return valuesBytes + 512;
+      const zBackingBytes = Number(payload?.zBacking?.byteLength) || 0;
+      return valuesBytes + zBackingBytes + 512;
     }
 
     function evictWindowCacheIfNeeded() {
@@ -365,9 +403,141 @@
       };
     }
 
-    function decodeWindowPayload(bin, payloadMeta, perfMeta, onInvalidShape) {
+    function resolveWindowShape(shapeRaw) {
+      const shape = Array.isArray(shapeRaw) ? shapeRaw : Array.from(shapeRaw ?? []);
+      if (shape.length !== 2) return null;
+      const rows = Math.trunc(Number(shape[0]));
+      const cols = Math.trunc(Number(shape[1]));
+      if (!Number.isFinite(rows) || !Number.isFinite(cols)) return null;
+      if (rows <= 0 || cols <= 0) return null;
+      return [rows, cols];
+    }
+
+    function resolveWindowQuantMeta(obj) {
+      return obj?.quant || (
+        (obj?.lo !== undefined && obj?.hi !== undefined)
+          ? { mode: obj.method || 'linear', lo: obj.lo, hi: obj.hi, mu: obj.mu ?? 255 }
+          : (obj?.scale != null ? { scale: obj.scale } : null)
+      );
+    }
+
+    function buildHeatmapRowsFromBacking(zBacking, rows, cols) {
+      const zRows = new Array(rows);
+      for (let r = 0; r < rows; r++) {
+        zRows[r] = zBacking.subarray(r * cols, (r + 1) * cols);
+      }
+      return zRows;
+    }
+
+    function flushDecodeWorkerPending(kind, reason) {
+      const state = decodeWorkerStates[kind];
+      if (!state) return;
+      for (const [, pending] of state.pending.entries()) {
+        pending.reject(new Error(reason || 'decode_worker_error'));
+      }
+      state.pending.clear();
+    }
+
+    function ensureDecodeWorker(kind) {
+      const state = decodeWorkerStates[kind];
+      if (!state) throw new Error(`Unknown decode worker kind: ${kind}`);
+      if (state.worker) return state.worker;
+      if (typeof Worker !== 'function') {
+        throw new Error('Worker is not supported in this browser');
+      }
+      const workerPath = readWindowDecodeWorkerPath();
+      const worker = new Worker(workerPath);
+      worker.onmessage = (event) => {
+        const msg = event?.data;
+        if (!msg || msg.type !== 'decoded') return;
+        const jobId = Number(msg.jobId);
+        if (!Number.isInteger(jobId)) return;
+        const pending = state.pending.get(jobId);
+        if (!pending) return;
+        state.pending.delete(jobId);
+        if (msg.ok) pending.resolve(msg);
+        else pending.reject(new Error(msg.error || 'worker_decode_failed'));
+      };
+      worker.onerror = (event) => {
+        console.warn('Window decode worker error', {
+          kind,
+          message: event?.message || null,
+        });
+        flushDecodeWorkerPending(kind, 'decode_worker_error');
+        try {
+          worker.terminate();
+        } catch (_) {
+          // ignore termination error
+        }
+        if (state.worker === worker) state.worker = null;
+      };
+      worker.onmessageerror = () => {
+        console.warn('Window decode worker message error', { kind });
+        flushDecodeWorkerPending(kind, 'decode_worker_message_error');
+        try {
+          worker.terminate();
+        } catch (_) {
+          // ignore termination error
+        }
+        if (state.worker === worker) state.worker = null;
+      };
+      state.worker = worker;
+      return worker;
+    }
+
+    function enqueueDecodeJob(kind, { bin, mode, fbMode, wantZ }) {
+      const worker = ensureDecodeWorker(kind);
+      const state = decodeWorkerStates[kind];
+      const jobId = nextWorkerJobId++;
+      const promise = new Promise((resolve, reject) => {
+        state.pending.set(jobId, { resolve, reject });
+        try {
+          worker.postMessage({
+            type: 'decode',
+            jobId,
+            bin,
+            mode,
+            fbMode: fbMode === true,
+            wantZ: wantZ === true,
+          }, [bin]);
+        } catch (err) {
+          state.pending.delete(jobId);
+          reject(err);
+        }
+      });
+      return { jobId, promise };
+    }
+
+    function cancelDecodeJob(kind, jobId, { resolveDropped = false } = {}) {
+      if (!Number.isInteger(jobId)) return;
+      const state = decodeWorkerStates[kind];
+      if (!state) return;
+      if (state.worker) {
+        try {
+          state.worker.postMessage({ type: 'cancel', jobId });
+        } catch (_) {
+          // no-op: stale job cancellation best-effort
+        }
+      }
+      const pending = state.pending.get(jobId);
+      if (!pending) return;
+      state.pending.delete(jobId);
+      if (resolveDropped) {
+        pending.resolve(null);
+      } else {
+        pending.reject(new Error('decode_job_canceled'));
+      }
+    }
+
+    function cancelActiveMainDecodeJob() {
+      if (!Number.isInteger(activeMainDecodeJobId)) return;
+      cancelDecodeJob(DECODE_WORKER_KIND_MAIN, activeMainDecodeJobId, { resolveDropped: true });
+      activeMainDecodeJobId = null;
+    }
+
+    function decodeWindowPayload(bin, payloadMeta, perfMeta, onInvalidShape, { applyDt = true } = {}) {
       const obj = msgpack.decode(bin);
-      applyServerDt(obj);
+      if (applyDt) applyServerDt(obj);
       const dataView = obj?.data;
       if (!dataView || !ArrayBuffer.isView(dataView)) {
         if (typeof onInvalidShape === 'function') {
@@ -375,29 +545,87 @@
         }
         return null;
       }
-      const valuesI8 = new Int8Array(dataView.buffer, dataView.byteOffset, dataView.byteLength);
-      const shapeRaw = Array.isArray(obj.shape) ? obj.shape : Array.from(obj.shape ?? []);
-      if (shapeRaw.length !== 2) {
+      const shape = resolveWindowShape(obj?.shape);
+      if (!shape) {
         if (typeof onInvalidShape === 'function') {
-          onInvalidShape(obj.shape);
+          onInvalidShape(obj?.shape);
         }
         return null;
       }
-      const rows = Number(shapeRaw[0]);
-      const cols = Number(shapeRaw[1]);
-      const quantMeta = obj.quant || (
-        (obj.lo !== undefined && obj.hi !== undefined)
-          ? { mode: obj.method || 'linear', lo: obj.lo, hi: obj.hi, mu: obj.mu ?? 255 }
-          : (obj.scale != null ? { scale: obj.scale } : null)
-      );
+      const [rows, cols] = shape;
+      const valuesI8 = new Int8Array(dataView.buffer, dataView.byteOffset, dataView.byteLength);
+      const total = rows * cols;
+      if (valuesI8.length < total) {
+        if (typeof onInvalidShape === 'function') {
+          onInvalidShape({ reason: 'insufficient_data_length', rows, cols, len: valuesI8.length });
+        }
+        return null;
+      }
+      const scaleRaw = Number(obj?.scale);
+      const scale = Number.isFinite(scaleRaw) ? scaleRaw : null;
       return {
         ...payloadMeta,
         shape: [rows, cols],
         valuesI8,
-        scale: obj.scale,
-        quant: quantMeta,
+        scale,
+        quant: resolveWindowQuantMeta(obj),
         __perf: perfMeta || null,
       };
+    }
+
+    function buildWindowPayloadFromWorkerDecoded(decoded, payloadMeta, perfMeta, onInvalidShape) {
+      if (!decoded || decoded.ok !== true) return null;
+      const rows = Math.trunc(Number(decoded.rows));
+      const cols = Math.trunc(Number(decoded.cols));
+      if (!Number.isFinite(rows) || !Number.isFinite(cols) || rows <= 0 || cols <= 0) {
+        if (typeof onInvalidShape === 'function') {
+          onInvalidShape({ reason: 'invalid_shape', rows: decoded.rows, cols: decoded.cols });
+        }
+        return null;
+      }
+      const total = rows * cols;
+      const scaleRaw = Number(decoded.scale);
+      const payload = {
+        ...payloadMeta,
+        shape: [rows, cols],
+        scale: Number.isFinite(scaleRaw) ? scaleRaw : null,
+        quant: decoded.quant ?? null,
+        __perf: perfMeta || null,
+      };
+      if (payloadMeta.mode === 'heatmap') {
+        if (!(decoded.zBuf instanceof ArrayBuffer)) {
+          if (typeof onInvalidShape === 'function') {
+            onInvalidShape({ reason: 'missing_z_buffer' });
+          }
+          return null;
+        }
+        const zBacking = new Float32Array(decoded.zBuf);
+        if (zBacking.length < total) {
+          if (typeof onInvalidShape === 'function') {
+            onInvalidShape({ reason: 'short_z_buffer', rows, cols, len: zBacking.length });
+          }
+          return null;
+        }
+        payload.zBacking = zBacking;
+        payload.zRows = buildHeatmapRowsFromBacking(zBacking, rows, cols);
+        return payload;
+      }
+
+      if (!(decoded.i8Buf instanceof ArrayBuffer)) {
+        if (typeof onInvalidShape === 'function') {
+          onInvalidShape({ reason: 'missing_i8_buffer' });
+        }
+        return null;
+      }
+      const valuesI8 = new Int8Array(decoded.i8Buf);
+      if (valuesI8.length < total) {
+        if (typeof onInvalidShape === 'function') {
+          onInvalidShape({ reason: 'short_i8_buffer', rows, cols, len: valuesI8.length });
+        }
+        return null;
+      }
+      payload.valuesI8 = valuesI8;
+      return payload;
     }
 
     function renderWindowPayload(windowPayload) {
@@ -454,6 +682,9 @@
         if (oldestKey == null) break;
         const oldest = prefetchInflight.get(oldestKey);
         if (oldest?.ctrl) oldest.ctrl.abort();
+        if (Number.isInteger(oldest?.decodeJobId)) {
+          cancelDecodeJob(DECODE_WORKER_KIND_PREFETCH, oldest.decodeJobId, { resolveDropped: true });
+        }
         prefetchInflight.delete(oldestKey);
       }
       return true;
@@ -463,6 +694,7 @@
       if (!readPrefetchEnabled()) return Promise.resolve(null);
       const maxInflight = readPrefetchMaxInflight();
       if (!Number.isFinite(maxInflight) || maxInflight <= 0) return Promise.resolve(null);
+      const workerEnabled = readWindowDecodeUseWorker();
 
       const { params, cacheKey, payloadMeta } = buildWindowRequestArtifacts(requestContext);
       const cached = windowCachePeek(cacheKey);
@@ -477,6 +709,7 @@
       windowCacheStats.prefetchStarted += 1;
 
       let promise = null;
+      let decodeJobId = null;
       promise = (async () => {
         try {
           const res = await fetch(`/get_section_window_bin?${params.toString()}`, { signal: ctrl.signal });
@@ -485,19 +718,49 @@
             return null;
           }
           const buf = await res.arrayBuffer();
-          const bin = new Uint8Array(buf);
-          const payload = decodeWindowPayload(
-            bin,
-            payloadMeta,
-            null,
-            (shape) => console.debug('Prefetch unexpected window shape', { cacheKey, shape }),
-          );
+          let payload = null;
+          if (workerEnabled) {
+            const decodeJob = enqueueDecodeJob(DECODE_WORKER_KIND_PREFETCH, {
+              bin: buf,
+              mode: payloadMeta.mode,
+              fbMode: payloadMeta.effectiveLayer === 'fbprob',
+              wantZ: payloadMeta.mode === 'heatmap',
+            });
+            decodeJobId = decodeJob.jobId;
+            const inflight = prefetchInflight.get(cacheKey);
+            if (inflight && inflight.promise === promise) {
+              inflight.decodeJobId = decodeJobId;
+            }
+            const decoded = await decodeJob.promise;
+            decodeJobId = null;
+            if (!decoded) return null;
+            payload = buildWindowPayloadFromWorkerDecoded(
+              decoded,
+              payloadMeta,
+              null,
+              (shape) => console.debug('Prefetch unexpected window shape', { cacheKey, shape }),
+            );
+          } else {
+            warnDecodeFallback('cfg.WINDOW_DECODE_USE_WORKER=false');
+            const bin = new Uint8Array(buf);
+            payload = decodeWindowPayload(
+              bin,
+              payloadMeta,
+              null,
+              (shape) => console.debug('Prefetch unexpected window shape', { cacheKey, shape }),
+              { applyDt: false },
+            );
+          }
           if (!payload) return null;
           const cachePayload = payload.__perf ? { ...payload, __perf: null } : payload;
           windowCacheSet(cacheKey, cachePayload);
           windowCacheStats.prefetchDone += 1;
           return cachePayload;
         } catch (err) {
+          if (Number.isInteger(decodeJobId)) {
+            cancelDecodeJob(DECODE_WORKER_KIND_PREFETCH, decodeJobId, { resolveDropped: true });
+            decodeJobId = null;
+          }
           if (err && err.name === 'AbortError') {
             console.debug('Prefetch aborted', { cacheKey });
             return null;
@@ -512,7 +775,12 @@
         }
       })();
 
-      prefetchInflight.set(cacheKey, { promise, ctrl, startedAt });
+      prefetchInflight.set(cacheKey, {
+        promise,
+        ctrl,
+        startedAt,
+        decodeJobId: null,
+      });
       return promise;
     }
 
@@ -697,7 +965,8 @@
 
       const pipelineKeyNow = window.latestPipelineKey || null;
       const mode = wantWiggle ? 'wiggle' : 'heatmap';
-       D('WINDOW@calc', { mode, step_x, step_y, x0: windowInfo.x0, x1: windowInfo.x1, y0: windowInfo.y0, y1: windowInfo.y1 });
+      const workerEnabled = readWindowDecodeUseWorker();
+      D('WINDOW@calc', { mode, step_x, step_y, x0: windowInfo.x0, x1: windowInfo.x1, y0: windowInfo.y0, y1: windowInfo.y1 });
       let effectiveLayer = requestedLayer;
       let tapLabel = null;
       if (requestedLayer !== 'raw') {
@@ -729,6 +998,7 @@
         mode,
       };
       const { params, cacheKey, payloadMeta } = buildWindowRequestArtifacts(requestContext);
+      cancelActiveMainDecodeJob();
       const cachedPayload = windowCacheGet(cacheKey);
       if (cachedPayload) {
         bumpWindowFetchId();
@@ -756,6 +1026,7 @@
       let tDec0 = null;
       let tDec1 = null;
       let bytes = null;
+      let decodeJobId = null;
       showLoading(buildWindowLoadingMessage({
         mode,
         stepX: step_x,
@@ -779,17 +1050,46 @@
         }
         const buf = await res.arrayBuffer();
         if (perfEnabled) tBuf = performance.now();
-        const bin = new Uint8Array(buf);
-        if (perfEnabled) bytes = bin.byteLength;
+        if (perfEnabled) bytes = buf.byteLength;
         if (requestId !== activeWindowFetchId) return; // stale
 
         if (perfEnabled) tDec0 = performance.now();
-        const windowPayload = decodeWindowPayload(
-          bin,
-          payloadMeta,
-          null,
-          (shape) => console.warn('Unexpected window shape', shape),
-        );
+        let windowPayload = null;
+        if (workerEnabled) {
+          const decodeJob = enqueueDecodeJob(DECODE_WORKER_KIND_MAIN, {
+            bin: buf,
+            mode,
+            fbMode: effectiveLayer === 'fbprob',
+            wantZ: mode === 'heatmap',
+          });
+          decodeJobId = decodeJob.jobId;
+          activeMainDecodeJobId = decodeJobId;
+          const decoded = await decodeJob.promise;
+          if (activeMainDecodeJobId === decodeJobId) {
+            activeMainDecodeJobId = null;
+          }
+          decodeJobId = null;
+          if (!decoded) return;
+          if (requestId !== activeWindowFetchId) return;
+          if (Number.isFinite(decoded?.dt) && decoded.dt > 0) {
+            applyServerDt({ dt: decoded.dt });
+          }
+          windowPayload = buildWindowPayloadFromWorkerDecoded(
+            decoded,
+            payloadMeta,
+            null,
+            (shape) => console.warn('Unexpected window shape', shape),
+          );
+        } else {
+          warnDecodeFallback('cfg.WINDOW_DECODE_USE_WORKER=false');
+          const bin = new Uint8Array(buf);
+          windowPayload = decodeWindowPayload(
+            bin,
+            payloadMeta,
+            null,
+            (shape) => console.warn('Unexpected window shape', shape),
+          );
+        }
         if (perfEnabled) tDec1 = performance.now();
         if (!windowPayload) return;
         windowPayload.__perf = perfEnabled ? {
@@ -817,12 +1117,28 @@
         maybePrefetchAroundCurrentViewport(requestContext);
 
       } catch (err) {
+        if (Number.isInteger(decodeJobId)) {
+          cancelDecodeJob(DECODE_WORKER_KIND_MAIN, decodeJobId, { resolveDropped: true });
+          if (activeMainDecodeJobId === decodeJobId) {
+            activeMainDecodeJobId = null;
+          }
+          decodeJobId = null;
+        }
         if (err && err.name === 'AbortError') {
+          cancelActiveMainDecodeJob();
           console.debug('Window fetch aborted', { requestId });
           return; // canceled on purpose
         }
+        if (err && err.message === 'decode_job_canceled') return;
         if (requestId === activeWindowFetchId) console.warn('Window fetch error', err);
       } finally {
+        if (Number.isInteger(decodeJobId)) {
+          cancelDecodeJob(DECODE_WORKER_KIND_MAIN, decodeJobId, { resolveDropped: true });
+          if (activeMainDecodeJobId === decodeJobId) {
+            activeMainDecodeJobId = null;
+          }
+          decodeJobId = null;
+        }
         if (windowFetchCtrl === ctrl) windowFetchCtrl = null;
         if (requestId === activeWindowFetchId) hideLoading();
       }
