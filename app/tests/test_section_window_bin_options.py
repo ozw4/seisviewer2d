@@ -13,7 +13,7 @@ import pytest
 
 from app.api.routers import section as sec
 from app.main import app
-from app.utils.utils import SectionView
+from app.trace_store.types import SectionView
 
 
 def _write_baseline(

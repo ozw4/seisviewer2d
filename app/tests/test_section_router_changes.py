@@ -11,7 +11,7 @@ from app.api.routers import section as sec
 from app.main import app
 from app.services import section_index as secidx
 from app.services.errors import ConflictError
-from app.utils.utils import SectionView
+from app.trace_store.types import SectionView
 
 
 @pytest.fixture(autouse=True)

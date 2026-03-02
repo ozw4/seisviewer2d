@@ -8,7 +8,7 @@ import numpy as np
 import pytest
 
 from app.utils.ingest import SegyIngestor
-from app.utils.utils import TraceStoreSectionReader
+from app.trace_store.reader import TraceStoreSectionReader
 
 
 class _Attr:

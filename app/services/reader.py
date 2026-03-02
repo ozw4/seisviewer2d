@@ -10,7 +10,7 @@ from numpy.typing import NDArray
 
 from app.core.state import AppState
 from app.services.errors import ConflictError
-from app.utils.utils import TraceStoreSectionReader
+from app.trace_store.reader import TraceStoreSectionReader
 
 EXPECTED_SECTION_NDIM = 2
 

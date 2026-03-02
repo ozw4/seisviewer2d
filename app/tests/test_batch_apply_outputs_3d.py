@@ -11,7 +11,7 @@ from app.core.state import create_app_state
 from app.services import batch_apply_service
 from app.services.pipeline_artifacts import get_job_dir
 from app.services.reader import coerce_section_f32
-from app.utils.utils import TraceStoreSectionReader
+from app.trace_store.reader import TraceStoreSectionReader
 
 KEY1 = 189
 KEY2 = 193

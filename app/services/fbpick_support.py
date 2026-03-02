@@ -8,7 +8,7 @@ import numpy as np
 
 from app.services.errors import UnprocessableError
 from app.utils.fbpick_models import validate_model_id
-from app.utils.utils import TraceStoreSectionReader
+from app.trace_store.reader import TraceStoreSectionReader
 
 if TYPE_CHECKING:
     from app.api.schemas import PipelineSpec

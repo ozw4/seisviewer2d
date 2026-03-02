@@ -28,7 +28,7 @@ from app.services.reader import coerce_section_f32, get_reader
 from app.utils.manual_pick_csr import empty_csr, picks_time_s_to_csr
 from app.utils.pick_snap import parabolic_refine, snap_pick_time_s
 from app.utils.pipeline import apply_pipeline
-from app.utils.utils import TraceStoreSectionReader
+from app.trace_store.reader import TraceStoreSectionReader
 
 
 def _write_job_meta(*, job_dir: Path, payload: dict[str, object]) -> Path:

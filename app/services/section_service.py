@@ -11,7 +11,8 @@ import numpy as np
 from app.api.binary_codec import pack_quantized_array_gzip
 from app.services.reader import EXPECTED_SECTION_NDIM, coerce_section_f32
 from app.services.scaling import apply_scaling_from_baseline
-from app.utils.utils import SectionView, TraceStoreSectionReader
+from app.trace_store.reader import TraceStoreSectionReader
+from app.trace_store.types import SectionView
 
 
 class SectionServiceInternalError(RuntimeError):

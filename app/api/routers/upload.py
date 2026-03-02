@@ -22,7 +22,7 @@ from app.core.paths import (
 )
 from app.core.state import AppState
 from app.utils.ingest import SegyIngestor
-from app.utils.utils import TraceStoreSectionReader
+from app.trace_store.reader import TraceStoreSectionReader
 
 router = APIRouter()
 logger = logging.getLogger(__name__)

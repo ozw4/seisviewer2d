@@ -7,7 +7,7 @@ import gzip
 import msgpack
 import numpy as np
 
-from app.utils.utils import quantize_float32
+from app.codec.quantize import quantize_float32
 
 
 def pack_msgpack_gzip(obj: dict[str, object]) -> bytes:

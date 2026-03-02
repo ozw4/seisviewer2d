@@ -30,7 +30,7 @@ from app.utils.fbpick_models import (
     resolve_model_path,
 )
 from app.utils.pipeline import apply_pipeline
-from app.utils.utils import quantize_float32
+from app.codec.quantize import quantize_float32
 
 router = APIRouter()
 

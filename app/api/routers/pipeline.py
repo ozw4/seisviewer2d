@@ -37,7 +37,7 @@ from app.services.pipeline_taps import build_pipeline_tap_cache_key
 from app.services.reader import coerce_section_f32, get_reader
 from app.core.state import AppState
 from app.utils.pipeline import apply_pipeline, pipeline_key
-from app.utils.utils import to_builtin
+from app.utils.serialization import to_builtin
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
