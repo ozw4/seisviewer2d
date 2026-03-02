@@ -96,11 +96,18 @@
 
     const WINDOW_CACHE_DEFAULT_MAX_BYTES = 128 * 1024 * 1024;
     const WINDOW_CACHE_DEFAULT_MAX_ENTRIES = 24;
+    const PREFETCH_DEFAULT_ENABLE = true;
+    const PREFETCH_DEFAULT_MAX_INFLIGHT = 2;
+    const PREFETCH_DEFAULT_MARGIN_RATIO = 0.15;
+    const PREFETCH_DEFAULT_ENABLE_Y = false;
     const windowPayloadCache = new Map();
+    const prefetchInflight = new Map();
     const windowCacheStats = {
       hits: 0,
       misses: 0,
       evicts: 0,
+      prefetchStarted: 0,
+      prefetchDone: 0,
       bytes: 0,
       entries: 0,
     };
@@ -116,6 +123,8 @@
       windowCacheStats.hits = 0;
       windowCacheStats.misses = 0;
       windowCacheStats.evicts = 0;
+      windowCacheStats.prefetchStarted = 0;
+      windowCacheStats.prefetchDone = 0;
       windowCacheStats.bytes = 0;
       windowCacheStats.entries = windowPayloadCache.size;
     }
@@ -138,6 +147,46 @@
         return Math.floor(configured);
       }
       return WINDOW_CACHE_DEFAULT_MAX_ENTRIES;
+    }
+
+    function readPrefetchEnabled() {
+      const configured = (typeof cfg === 'object' && cfg !== null)
+        ? cfg.PREFETCH_ENABLE
+        : undefined;
+      if (typeof configured === 'boolean') {
+        return configured;
+      }
+      return PREFETCH_DEFAULT_ENABLE;
+    }
+
+    function readPrefetchMaxInflight() {
+      const configured = (typeof cfg === 'object' && cfg !== null)
+        ? Number(cfg.PREFETCH_MAX_INFLIGHT)
+        : NaN;
+      if (Number.isFinite(configured) && configured > 0) {
+        return Math.floor(configured);
+      }
+      return PREFETCH_DEFAULT_MAX_INFLIGHT;
+    }
+
+    function readPrefetchMarginRatio() {
+      const configured = (typeof cfg === 'object' && cfg !== null)
+        ? Number(cfg.PREFETCH_MARGIN_RATIO)
+        : NaN;
+      if (Number.isFinite(configured) && configured > 0) {
+        return Math.min(0.49, Math.max(0.01, configured));
+      }
+      return PREFETCH_DEFAULT_MARGIN_RATIO;
+    }
+
+    function readPrefetchEnableY() {
+      const configured = (typeof cfg === 'object' && cfg !== null)
+        ? cfg.PREFETCH_ENABLE_Y
+        : undefined;
+      if (typeof configured === 'boolean') {
+        return configured;
+      }
+      return PREFETCH_DEFAULT_ENABLE_Y;
     }
 
     function estimateWindowPayloadBytes(payload) {
@@ -242,6 +291,360 @@
       ].join('|');
     }
 
+    function buildWindowRequestArtifacts({
+      fileId,
+      key1Val,
+      key1Byte,
+      key2Byte,
+      windowInfo,
+      stepX,
+      stepY,
+      requestedLayer,
+      effectiveLayer,
+      pipelineKey,
+      tapLabel,
+      scaling,
+      transpose,
+      mode,
+    }) {
+      const resolvedPipelineKey = (tapLabel && pipelineKey) ? pipelineKey : null;
+      const resolvedTapLabel = (tapLabel && resolvedPipelineKey) ? tapLabel : null;
+      const params = new URLSearchParams({
+        file_id: String(fileId),
+        key1: String(key1Val),
+        key1_byte: String(key1Byte),
+        key2_byte: String(key2Byte),
+        x0: String(windowInfo.x0),
+        x1: String(windowInfo.x1),
+        y0: String(windowInfo.y0),
+        y1: String(windowInfo.y1),
+        step_x: String(stepX),
+        step_y: String(stepY),
+      });
+      if (resolvedPipelineKey && resolvedTapLabel) {
+        params.set('pipeline_key', resolvedPipelineKey);
+        params.set('tap_label', resolvedTapLabel);
+      }
+      params.set('transpose', transpose);
+      params.set('scaling', scaling);
+
+      return {
+        params,
+        cacheKey: buildWindowCacheKey({
+          fileId,
+          key1: key1Val,
+          key1Byte,
+          key2Byte,
+          x0: windowInfo.x0,
+          x1: windowInfo.x1,
+          y0: windowInfo.y0,
+          y1: windowInfo.y1,
+          stepX,
+          stepY,
+          requestedLayer,
+          effectiveLayer,
+          pipelineKey: resolvedPipelineKey,
+          tapLabel: resolvedTapLabel,
+          scaling,
+          transpose,
+          mode,
+        }),
+        payloadMeta: {
+          key1: key1Val,
+          requestedLayer,
+          effectiveLayer,
+          pipelineKey: resolvedPipelineKey,
+          x0: windowInfo.x0,
+          x1: windowInfo.x1,
+          y0: windowInfo.y0,
+          y1: windowInfo.y1,
+          stepX,
+          stepY,
+          mode,
+        },
+      };
+    }
+
+    function decodeWindowPayload(bin, payloadMeta, perfMeta, onInvalidShape) {
+      const obj = msgpack.decode(bin);
+      applyServerDt(obj);
+      const dataView = obj?.data;
+      if (!dataView || !ArrayBuffer.isView(dataView)) {
+        if (typeof onInvalidShape === 'function') {
+          onInvalidShape({ reason: 'invalid_data_view' });
+        }
+        return null;
+      }
+      const valuesI8 = new Int8Array(dataView.buffer, dataView.byteOffset, dataView.byteLength);
+      const shapeRaw = Array.isArray(obj.shape) ? obj.shape : Array.from(obj.shape ?? []);
+      if (shapeRaw.length !== 2) {
+        if (typeof onInvalidShape === 'function') {
+          onInvalidShape(obj.shape);
+        }
+        return null;
+      }
+      const rows = Number(shapeRaw[0]);
+      const cols = Number(shapeRaw[1]);
+      const quantMeta = obj.quant || (
+        (obj.lo !== undefined && obj.hi !== undefined)
+          ? { mode: obj.method || 'linear', lo: obj.lo, hi: obj.hi, mu: obj.mu ?? 255 }
+          : (obj.scale != null ? { scale: obj.scale } : null)
+      );
+      return {
+        ...payloadMeta,
+        shape: [rows, cols],
+        valuesI8,
+        scale: obj.scale,
+        quant: quantMeta,
+        __perf: perfMeta || null,
+      };
+    }
+
+    function renderWindowPayload(windowPayload) {
+      if (!windowPayload) return;
+      if (windowPayload.mode === 'wiggle') renderWindowWiggle(windowPayload);
+      else renderWindowHeatmap(windowPayload);
+    }
+
+    function clampWindowInfoToSectionBounds(windowInfo) {
+      if (!Array.isArray(sectionShape) || sectionShape.length < 2) return null;
+      const totalTraces = Number(sectionShape[0]);
+      const totalSamples = Number(sectionShape[1]);
+      if (!Number.isFinite(totalTraces) || totalTraces <= 0) return null;
+      if (!Number.isFinite(totalSamples) || totalSamples <= 0) return null;
+
+      let x0 = Math.floor(Math.min(Number(windowInfo.x0), Number(windowInfo.x1)));
+      let x1 = Math.floor(Math.max(Number(windowInfo.x0), Number(windowInfo.x1)));
+      let y0 = Math.floor(Math.min(Number(windowInfo.y0), Number(windowInfo.y1)));
+      let y1 = Math.floor(Math.max(Number(windowInfo.y0), Number(windowInfo.y1)));
+      if (!Number.isFinite(x0) || !Number.isFinite(x1) || !Number.isFinite(y0) || !Number.isFinite(y1)) {
+        return null;
+      }
+
+      x0 = Math.max(0, x0);
+      x1 = Math.min(totalTraces - 1, x1);
+      y0 = Math.max(0, y0);
+      y1 = Math.min(totalSamples - 1, y1);
+      if (x1 < x0 || y1 < y0) return null;
+
+      return {
+        x0,
+        x1,
+        y0,
+        y1,
+        nTraces: x1 - x0 + 1,
+        nSamples: y1 - y0 + 1,
+      };
+    }
+
+    function abortOldestPrefetchIfNeeded() {
+      const maxInflight = readPrefetchMaxInflight();
+      if (!Number.isFinite(maxInflight) || maxInflight <= 0) return false;
+
+      while (prefetchInflight.size >= maxInflight && prefetchInflight.size > 0) {
+        let oldestKey = null;
+        let oldestStartedAt = Infinity;
+        for (const [key, inflight] of prefetchInflight.entries()) {
+          const startedAt = Number(inflight?.startedAt) || 0;
+          if (oldestKey == null || startedAt < oldestStartedAt) {
+            oldestKey = key;
+            oldestStartedAt = startedAt;
+          }
+        }
+        if (oldestKey == null) break;
+        const oldest = prefetchInflight.get(oldestKey);
+        if (oldest?.ctrl) oldest.ctrl.abort();
+        prefetchInflight.delete(oldestKey);
+      }
+      return true;
+    }
+
+    function prefetchWindowByRequest(requestContext) {
+      if (!readPrefetchEnabled()) return Promise.resolve(null);
+      const maxInflight = readPrefetchMaxInflight();
+      if (!Number.isFinite(maxInflight) || maxInflight <= 0) return Promise.resolve(null);
+
+      const { params, cacheKey, payloadMeta } = buildWindowRequestArtifacts(requestContext);
+      const cached = windowCachePeek(cacheKey);
+      if (cached) return Promise.resolve(cached);
+
+      const existing = prefetchInflight.get(cacheKey);
+      if (existing?.promise) return existing.promise;
+
+      abortOldestPrefetchIfNeeded();
+      const ctrl = new AbortController();
+      const startedAt = Date.now();
+      windowCacheStats.prefetchStarted += 1;
+
+      let promise = null;
+      promise = (async () => {
+        try {
+          const res = await fetch(`/get_section_window_bin?${params.toString()}`, { signal: ctrl.signal });
+          if (!res.ok) {
+            console.debug('Prefetch window fetch failed', { status: res.status, cacheKey });
+            return null;
+          }
+          const buf = await res.arrayBuffer();
+          const bin = new Uint8Array(buf);
+          const payload = decodeWindowPayload(
+            bin,
+            payloadMeta,
+            null,
+            (shape) => console.debug('Prefetch unexpected window shape', { cacheKey, shape }),
+          );
+          if (!payload) return null;
+          const cachePayload = payload.__perf ? { ...payload, __perf: null } : payload;
+          windowCacheSet(cacheKey, cachePayload);
+          windowCacheStats.prefetchDone += 1;
+          return cachePayload;
+        } catch (err) {
+          if (err && err.name === 'AbortError') {
+            console.debug('Prefetch aborted', { cacheKey });
+            return null;
+          }
+          console.debug('Prefetch window fetch error', { cacheKey, err });
+          return null;
+        } finally {
+          const active = prefetchInflight.get(cacheKey);
+          if (active && active.promise === promise) {
+            prefetchInflight.delete(cacheKey);
+          }
+        }
+      })();
+
+      prefetchInflight.set(cacheKey, { promise, ctrl, startedAt });
+      return promise;
+    }
+
+    function schedulePrefetchTask(task) {
+      if (typeof task !== 'function') return;
+      const run = () => {
+        try {
+          task();
+        } catch (err) {
+          console.debug('Prefetch schedule task error', err);
+        }
+      };
+      if (typeof window.requestIdleCallback === 'function') {
+        window.requestIdleCallback(() => run(), { timeout: 120 });
+        return;
+      }
+      setTimeout(run, 0);
+    }
+
+    function queuePrefetchWindow(requestContext, nextWindowInfo, compareBaseWindow) {
+      const baseWindow = clampWindowInfoToSectionBounds(compareBaseWindow || requestContext?.windowInfo);
+      if (!baseWindow) return;
+      const nextWindow = clampWindowInfoToSectionBounds(nextWindowInfo);
+      if (!nextWindow) return;
+      if (nextWindow.x0 === baseWindow.x0
+        && nextWindow.x1 === baseWindow.x1
+        && nextWindow.y0 === baseWindow.y0
+        && nextWindow.y1 === baseWindow.y1) {
+        return;
+      }
+      const prefetchContext = {
+        ...requestContext,
+        windowInfo: nextWindow,
+      };
+      schedulePrefetchTask(() => {
+        void prefetchWindowByRequest(prefetchContext);
+      });
+    }
+
+    function resolveViewportWindowForPrefetch(fallbackWindow) {
+      const dtBase = window.defaultDt ?? defaultDt;
+      let x0 = fallbackWindow.x0;
+      let x1 = fallbackWindow.x1;
+      if (Array.isArray(savedXRange) && savedXRange.length === 2) {
+        const xA = Number(savedXRange[0]);
+        const xB = Number(savedXRange[1]);
+        if (Number.isFinite(xA) && Number.isFinite(xB)) {
+          x0 = Math.floor(Math.min(xA, xB));
+          x1 = Math.ceil(Math.max(xA, xB));
+        }
+      }
+
+      let y0 = fallbackWindow.y0;
+      let y1 = fallbackWindow.y1;
+      if (Array.isArray(savedYRange) && savedYRange.length === 2 && Number.isFinite(dtBase) && dtBase > 0) {
+        const yA = Number(savedYRange[0]);
+        const yB = Number(savedYRange[1]);
+        if (Number.isFinite(yA) && Number.isFinite(yB)) {
+          y0 = Math.floor(Math.min(yA, yB) / dtBase);
+          y1 = Math.ceil(Math.max(yA, yB) / dtBase);
+        }
+      }
+
+      return clampWindowInfoToSectionBounds({ x0, x1, y0, y1 });
+    }
+
+    function maybePrefetchAroundCurrentViewport(requestContext) {
+      if (!readPrefetchEnabled()) return;
+      const latestWindow = latestWindowRender
+        ? clampWindowInfoToSectionBounds({
+          x0: latestWindowRender.x0,
+          x1: latestWindowRender.x1,
+          y0: latestWindowRender.y0,
+          y1: latestWindowRender.y1,
+        })
+        : null;
+      const baseWindow = latestWindow || clampWindowInfoToSectionBounds(requestContext?.windowInfo);
+      if (!baseWindow) return;
+      const viewportWindow = resolveViewportWindowForPrefetch(baseWindow);
+      if (!viewportWindow) return;
+
+      const marginRatio = readPrefetchMarginRatio();
+      const spanX = Math.max(1, baseWindow.x1 - baseWindow.x0 + 1);
+      const marginX = Math.max(1, Math.floor(spanX * marginRatio));
+      const guardX = Math.max(1, Math.floor(spanX * 0.05));
+      const shiftX = Math.max(1, spanX - 2 * guardX);
+      const nearLeftX = Math.abs(viewportWindow.x0 - baseWindow.x0) <= marginX;
+      const nearRightX = Math.abs(baseWindow.x1 - viewportWindow.x1) <= marginX;
+
+      if (nearLeftX) {
+        queuePrefetchWindow(requestContext, {
+          x0: baseWindow.x0 - shiftX,
+          x1: baseWindow.x1 - shiftX,
+          y0: baseWindow.y0,
+          y1: baseWindow.y1,
+        }, baseWindow);
+      }
+      if (nearRightX) {
+        queuePrefetchWindow(requestContext, {
+          x0: baseWindow.x0 + shiftX,
+          x1: baseWindow.x1 + shiftX,
+          y0: baseWindow.y0,
+          y1: baseWindow.y1,
+        }, baseWindow);
+      }
+
+      if (!readPrefetchEnableY()) return;
+      const spanY = Math.max(1, baseWindow.y1 - baseWindow.y0 + 1);
+      const marginY = Math.max(1, Math.floor(spanY * marginRatio));
+      const guardY = Math.max(1, Math.floor(spanY * 0.05));
+      const shiftY = Math.max(1, spanY - 2 * guardY);
+      const nearTopY = Math.abs(viewportWindow.y0 - baseWindow.y0) <= marginY;
+      const nearBottomY = Math.abs(baseWindow.y1 - viewportWindow.y1) <= marginY;
+
+      if (nearTopY) {
+        queuePrefetchWindow(requestContext, {
+          x0: baseWindow.x0,
+          x1: baseWindow.x1,
+          y0: baseWindow.y0 - shiftY,
+          y1: baseWindow.y1 - shiftY,
+        }, baseWindow);
+      }
+      if (nearBottomY) {
+        queuePrefetchWindow(requestContext, {
+          x0: baseWindow.x0,
+          x1: baseWindow.x1,
+          y0: baseWindow.y0 + shiftY,
+          y1: baseWindow.y1 + shiftY,
+        }, baseWindow);
+      }
+    }
+
     window.__svWindowCache = {
       get: windowCacheGet,
       peek: windowCachePeek,
@@ -308,44 +711,24 @@
       }
 
       // ★ 加工後配列は保持しないため、上記ショートカットは全て削除
-      const params = new URLSearchParams({
-        file_id: currentFileId,
-        key1: String(key1Val),
-        key1_byte: String(currentKey1Byte),
-        key2_byte: String(currentKey2Byte),
-        x0: String(windowInfo.x0),
-        x1: String(windowInfo.x1),
-        y0: String(windowInfo.y0),
-        y1: String(windowInfo.y1),
-        step_x: String(step_x),
-        step_y: String(step_y),
-      });
-      if (tapLabel && pipelineKeyNow) {
-        params.set('pipeline_key', pipelineKeyNow);
-        params.set('tap_label', tapLabel);
-      }
       const transpose = '1';
-      params.set('transpose', transpose);
-      params.set('scaling', currentScaling);
-      const cacheKey = buildWindowCacheKey({
+      const requestContext = {
         fileId: currentFileId,
-        key1: key1Val,
+        key1Val,
         key1Byte: currentKey1Byte,
         key2Byte: currentKey2Byte,
-        x0: windowInfo.x0,
-        x1: windowInfo.x1,
-        y0: windowInfo.y0,
-        y1: windowInfo.y1,
+        windowInfo,
         stepX: step_x,
         stepY: step_y,
         requestedLayer,
         effectiveLayer,
-        pipelineKey: tapLabel ? pipelineKeyNow : null,
+        pipelineKey: pipelineKeyNow,
         tapLabel,
         scaling: currentScaling,
         transpose,
         mode,
-      });
+      };
+      const { params, cacheKey, payloadMeta } = buildWindowRequestArtifacts(requestContext);
       const cachedPayload = windowCacheGet(cacheKey);
       if (cachedPayload) {
         bumpWindowFetchId();
@@ -360,8 +743,8 @@
           redrawPending = true;
           return;
         }
-        if (cachedPayload.mode === 'wiggle') renderWindowWiggle(cachedPayload);
-        else renderWindowHeatmap(cachedPayload);
+        renderWindowPayload(cachedPayload);
+        maybePrefetchAroundCurrentViewport(requestContext);
         return;
       }
 
@@ -401,53 +784,24 @@
         if (requestId !== activeWindowFetchId) return; // stale
 
         if (perfEnabled) tDec0 = performance.now();
-        const obj = msgpack.decode(bin);
-        if (perfEnabled) tDec1 = performance.now();
-        applyServerDt(obj);
-
-        // Int8 のまま保持（Float32生成しない）
-        const valuesI8 = new Int8Array(obj.data.buffer);
-        const shapeRaw = Array.isArray(obj.shape) ? obj.shape : Array.from(obj.shape ?? []);
-        if (shapeRaw.length !== 2) {
-          console.warn('Unexpected window shape', obj.shape);
-          return;
-        }
-        const rows = Number(shapeRaw[0]);
-        const cols = Number(shapeRaw[1]);
-
-        const quantMeta = obj.quant || (
-          (obj.lo !== undefined && obj.hi !== undefined)
-            ? { mode: obj.method || 'linear', lo: obj.lo, hi: obj.hi, mu: obj.mu ?? 255 }
-            : (obj.scale != null ? { scale: obj.scale } : null)
+        const windowPayload = decodeWindowPayload(
+          bin,
+          payloadMeta,
+          null,
+          (shape) => console.warn('Unexpected window shape', shape),
         );
-
-        const windowPayload = {
-          key1: key1Val,
-          requestedLayer,
-          effectiveLayer,
-          pipelineKey: tapLabel ? pipelineKeyNow : null,
-          x0: windowInfo.x0,
-          x1: windowInfo.x1,
-          y0: windowInfo.y0,
-          y1: windowInfo.y1,
-          stepX: step_x,
-          stepY: step_y,
-          shape: [rows, cols],
-          valuesI8,          // Int8保持
-          scale: obj.scale,  // 後段で /scale
-          quant: quantMeta,
+        if (perfEnabled) tDec1 = performance.now();
+        if (!windowPayload) return;
+        windowPayload.__perf = perfEnabled ? {
+          id: requestId,
           mode,
-          __perf: perfEnabled ? {
-            id: requestId,
-            mode,
-            bytes,
-            tReq0,
-            tRes,
-            tBuf,
-            tDec0,
-            tDec1,
-          } : null,
-        };
+          bytes,
+          tReq0,
+          tRes,
+          tBuf,
+          tDec0,
+          tDec1,
+        } : null;
 
         if (requestId !== activeWindowFetchId) return; // stale (decode/render phase)
         const cachePayload = windowPayload.__perf ? { ...windowPayload, __perf: null } : windowPayload;
@@ -459,8 +813,8 @@
           return;
         }
         D('WINDOW@recv', { mode, shape: windowPayload.shape, stepX: windowPayload.stepX, stepY: windowPayload.stepY });
-        if (mode === 'wiggle') renderWindowWiggle(windowPayload);
-        else renderWindowHeatmap(windowPayload);
+        renderWindowPayload(windowPayload);
+        maybePrefetchAroundCurrentViewport(requestContext);
 
       } catch (err) {
         if (err && err.name === 'AbortError') {
