@@ -3,8 +3,6 @@
 from __future__ import annotations
 
 import gzip
-import json
-from pathlib import Path
 from types import SimpleNamespace
 
 import msgpack
@@ -13,27 +11,7 @@ import pytest
 
 from app.api.routers import section as sec
 from app.main import app
-from app.trace_store.types import SectionView
-
-
-def _write_baseline(
-    store_dir: Path,
-    *,
-    key1: int,
-    section_mean: float,
-    section_std: float,
-    trace_means: list[float],
-    trace_stds: list[float],
-) -> None:
-    baseline = {
-        'key1_values': [int(key1)],
-        'mu_section_by_key1': [float(section_mean)],
-        'sigma_section_by_key1': [float(section_std)],
-        'mu_traces': [float(v) for v in trace_means],
-        'sigma_traces': [float(v) for v in trace_stds],
-        'trace_spans_by_key1': {str(int(key1)): [[0, int(len(trace_means))]]},
-    }
-    (store_dir / 'baseline_raw.json').write_text(json.dumps(baseline), encoding='utf-8')
+from app.tests._stubs import make_stub_reader, write_baseline_raw
 
 
 def _decode_window_payload(resp) -> tuple[np.ndarray, tuple[int, int], float]:
@@ -72,25 +50,16 @@ def _clean_section_env(monkeypatch):
 def test_get_section_window_bin_step_xy_downsample_shape_and_values(
     monkeypatch, tmp_path
 ):
-    class _StubReader:
-        key1_byte = 189
-        key2_byte = 193
-
-        def get_key1_values(self):
-            return np.array([7], dtype=np.int32)
-
-        def get_section(self, key1: int):
-            arr = np.arange(5 * 6, dtype=np.float32).reshape(5, 6)
-            return SectionView(arr=arr, dtype=arr.dtype, scale=None)
+    stub_reader = make_stub_reader(np.arange(5 * 6, dtype=np.float32).reshape(5, 6))
 
     monkeypatch.setattr(
-        sec, 'get_reader', lambda fid, kb1, kb2, state=None: _StubReader(), raising=True
+        sec, 'get_reader', lambda fid, kb1, kb2, state=None: stub_reader, raising=True
     )
 
     app.state.sv.file_registry.set_record(
         'f', {'store_path': str(tmp_path), 'dt': 0.004}
     )
-    _write_baseline(
+    write_baseline_raw(
         tmp_path,
         key1=7,
         section_mean=0.0,
@@ -130,25 +99,16 @@ def test_get_section_window_bin_step_xy_downsample_shape_and_values(
 def test_get_section_window_bin_transpose_true_swaps_axes_and_transposes_values(
     monkeypatch, tmp_path
 ):
-    class _StubReader:
-        key1_byte = 189
-        key2_byte = 193
-
-        def get_key1_values(self):
-            return np.array([7], dtype=np.int32)
-
-        def get_section(self, key1: int):
-            arr = np.arange(5 * 6, dtype=np.float32).reshape(5, 6)
-            return SectionView(arr=arr, dtype=arr.dtype, scale=None)
+    stub_reader = make_stub_reader(np.arange(5 * 6, dtype=np.float32).reshape(5, 6))
 
     monkeypatch.setattr(
-        sec, 'get_reader', lambda fid, kb1, kb2, state=None: _StubReader(), raising=True
+        sec, 'get_reader', lambda fid, kb1, kb2, state=None: stub_reader, raising=True
     )
 
     app.state.sv.file_registry.set_record(
         'f', {'store_path': str(tmp_path), 'dt': 0.004}
     )
-    _write_baseline(
+    write_baseline_raw(
         tmp_path,
         key1=7,
         section_mean=0.0,
@@ -187,32 +147,25 @@ def test_get_section_window_bin_transpose_true_swaps_axes_and_transposes_values(
 
 
 def test_get_section_window_bin_scaling_amax_vs_tracewise(monkeypatch, tmp_path):
-    class _StubReader:
-        key1_byte = 189
-        key2_byte = 193
-
-        def get_key1_values(self):
-            return np.array([7], dtype=np.int32)
-
-        def get_section(self, key1: int):
-            arr = np.array(
-                [
-                    [0, 1, 2, 3],
-                    [10, 11, 12, 13],
-                    [20, 21, 22, 23],
-                ],
-                dtype=np.float32,
-            )
-            return SectionView(arr=arr, dtype=arr.dtype, scale=None)
+    stub_reader = make_stub_reader(
+        np.array(
+            [
+                [0, 1, 2, 3],
+                [10, 11, 12, 13],
+                [20, 21, 22, 23],
+            ],
+            dtype=np.float32,
+        )
+    )
 
     monkeypatch.setattr(
-        sec, 'get_reader', lambda fid, kb1, kb2, state=None: _StubReader(), raising=True
+        sec, 'get_reader', lambda fid, kb1, kb2, state=None: stub_reader, raising=True
     )
 
     app.state.sv.file_registry.set_record(
         'f', {'store_path': str(tmp_path), 'dt': 0.004}
     )
-    _write_baseline(
+    write_baseline_raw(
         tmp_path,
         key1=7,
         section_mean=0.0,
@@ -254,33 +207,26 @@ def test_get_section_window_bin_scaling_amax_vs_tracewise(monkeypatch, tmp_path)
 
 
 def test_get_section_window_bin_tracewise_clamp_saturates_int8(monkeypatch, tmp_path):
-    class _StubReader:
-        key1_byte = 189
-        key2_byte = 193
-
-        def get_key1_values(self):
-            return np.array([7], dtype=np.int32)
-
-        def get_section(self, key1: int):
-            arr = np.array(
-                [
-                    [0, 1, 2, 3],
-                    [10, 11, 12, 13],
-                    [20, 21, 22, 23],
-                ],
-                dtype=np.float32,
-            )
-            return SectionView(arr=arr, dtype=arr.dtype, scale=None)
+    stub_reader = make_stub_reader(
+        np.array(
+            [
+                [0, 1, 2, 3],
+                [10, 11, 12, 13],
+                [20, 21, 22, 23],
+            ],
+            dtype=np.float32,
+        )
+    )
 
     monkeypatch.setattr(
-        sec, 'get_reader', lambda fid, kb1, kb2, state=None: _StubReader(), raising=True
+        sec, 'get_reader', lambda fid, kb1, kb2, state=None: stub_reader, raising=True
     )
 
     app.state.sv.file_registry.set_record(
         'f', {'store_path': str(tmp_path), 'dt': 0.004}
     )
     # trace_stds[1]=0 triggers clamp to eps -> very large inv_std -> int8 saturation
-    _write_baseline(
+    write_baseline_raw(
         tmp_path,
         key1=7,
         section_mean=0.0,
@@ -333,7 +279,7 @@ def test_get_section_window_bin_pipeline_key_tap_label_window_uses_expected_tap(
     app.state.sv.file_registry.set_record(
         'f', {'store_path': str(tmp_path), 'dt': 0.004}
     )
-    _write_baseline(
+    write_baseline_raw(
         tmp_path,
         key1=7,
         section_mean=0.0,

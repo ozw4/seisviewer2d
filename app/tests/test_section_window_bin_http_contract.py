@@ -2,11 +2,9 @@
 
 from __future__ import annotations
 
-import json
 import sys
 import types
 from pathlib import Path
-from types import SimpleNamespace
 
 import msgpack
 import numpy as np
@@ -19,19 +17,7 @@ sys.modules.setdefault('segyio', types.ModuleType('segyio'))
 
 from app.api.routers import section as sec  # noqa: E402
 from app.main import app  # noqa: E402
-
-
-def _write_baseline(store_dir: Path, *, key1: int, n_traces: int) -> None:
-    """Write a minimal baseline_raw.json compatible with load_baseline()."""
-    baseline = {
-        'key1_values': [int(key1)],
-        'mu_section_by_key1': [0.0],
-        'sigma_section_by_key1': [1.0],
-        'mu_traces': [0.0] * int(n_traces),
-        'sigma_traces': [1.0] * int(n_traces),
-        'trace_spans_by_key1': {str(int(key1)): [[0, int(n_traces)]]},
-    }
-    (store_dir / 'baseline_raw.json').write_text(json.dumps(baseline), encoding='utf-8')
+from app.tests._stubs import make_stub_reader, write_baseline_raw  # noqa: E402
 
 
 def _decode_payload(resp) -> dict:
@@ -71,24 +57,17 @@ def test_get_section_window_bin_payload_includes_dt_and_matches_resolver(
     monkeypatch, tmp_path: Path
 ):
     key1 = 7
-
-    class _StubReader:
-        key1_byte = 189
-        key2_byte = 193
-
-        def get_section(self, _key1_val: int):
-            arr = np.arange(5 * 6, dtype=np.float32).reshape(5, 6)
-            return SimpleNamespace(arr=arr, dtype=arr.dtype, scale=None)
+    stub_reader = make_stub_reader(np.arange(5 * 6, dtype=np.float32).reshape(5, 6))
 
     monkeypatch.setattr(
         sec,
         'get_reader',
-        lambda fid, kb1, kb2, state=None: _StubReader(),
+        lambda fid, kb1, kb2, state=None: stub_reader,
         raising=True,
     )
 
     app.state.sv.file_registry.set_record('f', {'store_path': str(tmp_path)})
-    _write_baseline(tmp_path, key1=key1, n_traces=5)
+    write_baseline_raw(tmp_path, key1=key1, n_traces=5)
 
     with TestClient(app) as client:
         resp = client.get(
@@ -131,24 +110,17 @@ def test_get_section_window_bin_out_of_bounds_returns_400(
     monkeypatch, tmp_path: Path, params: dict, expected_detail: str
 ):
     key1 = 7
-
-    class _StubReader:
-        key1_byte = 189
-        key2_byte = 193
-
-        def get_section(self, _key1_val: int):
-            arr = np.arange(5 * 6, dtype=np.float32).reshape(5, 6)
-            return SimpleNamespace(arr=arr, dtype=arr.dtype, scale=None)
+    stub_reader = make_stub_reader(np.arange(5 * 6, dtype=np.float32).reshape(5, 6))
 
     monkeypatch.setattr(
         sec,
         'get_reader',
-        lambda fid, kb1, kb2, state=None: _StubReader(),
+        lambda fid, kb1, kb2, state=None: stub_reader,
         raising=True,
     )
 
     app.state.sv.file_registry.set_record('f', {'store_path': str(tmp_path)})
-    _write_baseline(tmp_path, key1=key1, n_traces=5)
+    write_baseline_raw(tmp_path, key1=key1, n_traces=5)
 
     with TestClient(app) as client:
         resp = client.get(
@@ -169,7 +141,7 @@ def test_get_section_window_bin_out_of_bounds_returns_400(
 def test_get_section_window_bin_step_less_than_one_is_422(tmp_path: Path):
     # step_x/step_y have Query(ge=1), so FastAPI validation rejects them before service.
     app.state.sv.file_registry.set_record('f', {'store_path': str(tmp_path)})
-    _write_baseline(tmp_path, key1=7, n_traces=1)
+    write_baseline_raw(tmp_path, key1=7, n_traces=1)
 
     with TestClient(app) as client:
         resp = client.get(

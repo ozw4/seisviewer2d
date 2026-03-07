@@ -11,6 +11,7 @@ from app.core.state import create_app_state
 from app.services import batch_apply_service
 from app.services.pipeline_artifacts import get_job_dir
 from app.services.reader import coerce_section_f32
+from app.tests._stubs import make_pipeline_outputs_stub
 from app.trace_store.reader import TraceStoreSectionReader
 
 KEY1 = 189
@@ -68,14 +69,8 @@ def test_batch_apply_outputs_3d_saved_with_padding_and_done(
     traces = np.arange(5 * 3, dtype=np.float32).reshape(5, 3)
     store = _write_min_store(tmp_path, key1s, key2s, traces)
 
-    def _stub_pipeline_outputs(*, section, meta, spec, denoise_taps, fbpick_label):
-        del meta, spec, denoise_taps, fbpick_label
-        denoise = np.asarray(section, dtype=np.float32, order='C')
-        prob = np.ones(section.shape, dtype=np.float16)
-        return denoise, prob
-
     monkeypatch.setattr(
-        batch_apply_service, '_run_pipeline_outputs', _stub_pipeline_outputs
+        batch_apply_service, '_run_pipeline_outputs', make_pipeline_outputs_stub()
     )
 
     state = create_app_state()
@@ -139,12 +134,6 @@ def test_batch_apply_stops_on_section_failure_and_sets_error(
     traces = np.arange(5 * 3, dtype=np.float32).reshape(5, 3)
     store = _write_min_store(tmp_path, key1s, key2s, traces)
 
-    def _stub_pipeline_outputs(*, section, meta, spec, denoise_taps, fbpick_label):
-        del meta, spec, denoise_taps, fbpick_label
-        denoise = np.asarray(section, dtype=np.float32, order='C')
-        prob = np.ones(section.shape, dtype=np.float16)
-        return denoise, prob
-
     calls: list[int] = []
     orig_load = batch_apply_service._load_section_and_key2
 
@@ -155,7 +144,7 @@ def test_batch_apply_stops_on_section_failure_and_sets_error(
         return orig_load(reader=reader, key1=key1, key2_byte=key2_byte)
 
     monkeypatch.setattr(
-        batch_apply_service, '_run_pipeline_outputs', _stub_pipeline_outputs
+        batch_apply_service, '_run_pipeline_outputs', make_pipeline_outputs_stub()
     )
     monkeypatch.setattr(batch_apply_service, '_load_section_and_key2', _failing_load)
 
