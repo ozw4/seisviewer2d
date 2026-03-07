@@ -12,7 +12,6 @@ from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, ConfigDict, Field
 
 from app.api._helpers import get_state
-from app.api.schemas import PipelineSpec
 from app.core.state import AppState
 from app.services.fbpick_predict_math import (
     apply_sigma_gate,
@@ -22,14 +21,17 @@ from app.services.fbpick_predict_math import (
 )
 from app.services.fbpick_support import (
     DEFAULT_FBPICK_MODEL_ID,
-    OFFSET_BYTE_FIXED,
     _maybe_attach_fbpick_offsets,
 )
-from app.services.pipeline_taps import (
-    PipelineTapNotFoundError,
-    get_section_and_meta_from_pipeline_tap,
+from app.services.pipeline_execution import (
+    SectionSourceSpec,
+    build_fbpick_spec,
+    extract_fbpick_probability_map,
+    prepare_pipeline_execution,
+    resolve_effective_offset_byte,
+    run_pipeline_execution,
 )
-from app.services.reader import coerce_section_f32, get_reader
+from app.services.reader import get_reader
 from app.utils.fbpick_models import model_version, resolve_model_path
 from app.utils.pipeline import apply_pipeline
 
@@ -101,31 +103,6 @@ def _effective_channel(channel: str | None) -> str:
     return 'P' if channel is None else channel
 
 
-def _resolve_dt(
-    file_id: str,
-    meta: dict[str, Any] | None,
-    *,
-    state: AppState,
-) -> float:
-    dt_file = float(state.file_registry.get_dt(file_id))
-    dt = dt_file
-    if isinstance(meta, dict) and 'dt' in meta:
-        dt_meta = meta.get('dt')
-        if not isinstance(dt_meta, (int, float)):
-            raise HTTPException(status_code=422, detail='Invalid dt metadata')
-        if dt_meta <= 0:
-            raise HTTPException(status_code=422, detail='Non-positive dt metadata')
-        dt_meta_f = float(dt_meta)
-        if abs(dt_meta_f - dt_file) > 1e-9:
-            raise HTTPException(
-                status_code=409, detail='dt mismatch between tap and source'
-            )
-        dt = dt_meta_f
-    if dt <= 0:
-        raise HTTPException(status_code=422, detail='Non-positive dt value')
-    return float(dt)
-
-
 def _compute_probability_map(
     req: FbpickPredictRequest,
     *,
@@ -141,86 +118,51 @@ def _compute_probability_map(
             detail='pipeline_key and tap_label must be provided together',
         )
 
-    forced_offset_byte = OFFSET_BYTE_FIXED if model_sel.uses_offset else None
-    reader = get_reader(req.file_id, req.key1_byte, req.key2_byte, state=state)
-
-    meta_source = getattr(reader, 'meta', None)
-    dt = _resolve_dt(
-        req.file_id,
-        meta_source if isinstance(meta_source, dict) else None,
-        state=state,
+    spec = build_fbpick_spec(
+        model_id=model_sel.model_id,
+        channel=channel,
+        tile=_DEFAULT_TILE,
+        overlap=_DEFAULT_OVERLAP,
+        amp=_DEFAULT_AMP,
     )
-
-    if pipeline_key and tap_label:
-        try:
-            section, tap_meta = get_section_and_meta_from_pipeline_tap(
-                file_id=req.file_id,
-                key1=req.key1,
-                key1_byte=req.key1_byte,
-                key2_byte=req.key2_byte,
-                pipeline_key=pipeline_key,
-                tap_label=tap_label,
-                offset_byte=forced_offset_byte,
-                state=state,
-            )
-        except PipelineTapNotFoundError as exc:
-            raise HTTPException(status_code=404, detail=str(exc)) from exc
-        meta_for_dt = tap_meta if isinstance(tap_meta, dict) else None
-        dt = _resolve_dt(req.file_id, meta_for_dt, state=state)
-        source = f'pipeline:{tap_label}'
-    else:
-        view = reader.get_section(req.key1)
-        section = coerce_section_f32(view.arr, view.scale)
-        source = 'raw'
-
-    section = np.ascontiguousarray(section, dtype=np.float32)
-    if section.ndim != 2:
-        raise HTTPException(status_code=422, detail='Section must be 2D')
-
-    spec = PipelineSpec(
-        steps=[
-            {
-                'kind': 'analyzer',
-                'name': 'fbpick',
-                'params': {
-                    'tile': _DEFAULT_TILE,
-                    'overlap': _DEFAULT_OVERLAP,
-                    'amp': _DEFAULT_AMP,
-                    'model_id': model_sel.model_id,
-                    'channel': channel,
-                },
-            }
-        ]
-    )
-
-    meta: dict[str, Any] = {}
-    if reader is not None:
-        meta = _maybe_attach_fbpick_offsets(
-            meta,
-            spec=spec,
-            reader=reader,
+    context = prepare_pipeline_execution(
+        spec=spec,
+        source=SectionSourceSpec(
+            file_id=req.file_id,
             key1=req.key1,
-            offset_byte=forced_offset_byte,
-            section_shape=(int(section.shape[0]), int(section.shape[1])),
-        )
-
-    out = apply_pipeline(section, spec=spec, meta=meta, taps=None)
-    fbpick_out = out.get('fbpick') or out.get('final')
-    if not isinstance(fbpick_out, dict):
-        raise HTTPException(status_code=500, detail='fbpick analyzer output missing')
-    prob = np.asarray(fbpick_out.get('prob'), dtype=np.float32)
-    if prob.ndim != 2:
-        raise HTTPException(status_code=422, detail='Probability map must be 2D')
-
-    return _ProbabilityPayload(prob=prob, dt=dt, source=source)
+            key1_byte=req.key1_byte,
+            key2_byte=req.key2_byte,
+            pipeline_key=pipeline_key,
+            tap_label=tap_label,
+        ),
+        state=state,
+        validate_source_dt=True,
+        reader_getter=get_reader,
+        offset_attacher=_maybe_attach_fbpick_offsets,
+    )
+    out = run_pipeline_execution(context, taps=None, apply_fn=apply_pipeline)
+    prob = extract_fbpick_probability_map(out, label='fbpick')
+    source = (
+        f'pipeline:{tap_label}'
+        if context.source_kind == 'pipeline_tap' and tap_label is not None
+        else 'raw'
+    )
+    return _ProbabilityPayload(prob=prob, dt=context.dt, source=source)
 
 
 def _load_probability_map(
     req: FbpickPredictRequest, *, state: AppState
 ) -> _ProbabilityPayload:
     model_sel = _resolve_model_selection(req.model_id)
-    forced_offset_byte = OFFSET_BYTE_FIXED if model_sel.uses_offset else None
     channel = _effective_channel(req.channel)
+    spec = build_fbpick_spec(
+        model_id=model_sel.model_id,
+        channel=channel,
+        tile=_DEFAULT_TILE,
+        overlap=_DEFAULT_OVERLAP,
+        amp=_DEFAULT_AMP,
+    )
+    forced_offset_byte = resolve_effective_offset_byte(spec, None)
     key = (
         req.file_id,
         req.key1,

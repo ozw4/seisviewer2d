@@ -17,6 +17,7 @@ from app.api.schemas import (
 )
 from app.services.batch_apply_service import run_batch_apply_job
 from app.services.in_memory_cleanup import cleanup_in_memory_state
+from app.services.job_runner import start_job_thread
 from app.services.pipeline_artifacts import get_job_dir, maybe_cleanup_expired_jobs
 from uuid import uuid4
 
@@ -40,11 +41,11 @@ def batch_apply(req: BatchApplyRequest, request: Request) -> BatchApplyResponse:
         )
         status = job_state['status']
 
-    threading.Thread(
+    start_job_thread(
+        thread_factory=threading.Thread,
         target=run_batch_apply_job,
         args=(job_id, req, state),
-        daemon=True,
-    ).start()
+    )
 
     return {'job_id': job_id, 'state': status}
 

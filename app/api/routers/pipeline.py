@@ -26,20 +26,29 @@ from app.services.pipeline_artifacts import (
     read_artifact,
     write_artifact,
 )
+from app.services.fbpick_support import _maybe_attach_fbpick_offsets
 from app.services.in_memory_cleanup import cleanup_in_memory_state
-from app.services.fbpick_support import (
-    OFFSET_BYTE_FIXED,
-    _maybe_attach_fbpick_offsets,
-    _spec_uses_offset,
+from app.services.job_runner import (
+    run_job_with_lifecycle,
+    set_job_progress,
+    start_job_thread,
+)
+from app.services.pipeline_execution import (
+    SectionSourceSpec,
+    prepare_pipeline_execution,
+    resolve_effective_offset_byte,
+    run_pipeline_execution,
 )
 from app.services.pipeline_taps import build_pipeline_tap_cache_key
-from app.services.reader import coerce_section_f32, get_reader
+from app.services import reader as _reader_service
+from app.services.reader import get_reader
 from app.core.state import AppState
 from app.utils.pipeline import apply_pipeline, pipeline_key
 from app.utils.serialization import to_builtin
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
+coerce_section_f32 = _reader_service.coerce_section_f32
 
 
 class PipelineAllRequest(BaseModel):
@@ -82,73 +91,68 @@ def _optional_job_int(job: dict[str, object], *, field: str) -> int | None:
     )
 
 
+def _run_pipeline_all_job_body(
+    job_id: str, req: PipelineAllRequest, pipe_key: str, state: AppState
+) -> None:
+    reader = get_reader(req.file_id, req.key1_byte, req.key2_byte, state=state)
+    key1_values = reader.get_key1_values().tolist()
+    total = len(key1_values) or 1
+    taps = req.taps
+    for idx, key1 in enumerate(key1_values):
+        key1_value = int(key1)
+        context = prepare_pipeline_execution(
+            spec=req.spec,
+            source=SectionSourceSpec(
+                file_id=req.file_id,
+                key1=key1_value,
+                key1_byte=req.key1_byte,
+                key2_byte=req.key2_byte,
+                offset_byte=req.offset_byte,
+            ),
+            state=state,
+            reader=reader,
+            reader_getter=get_reader,
+            offset_attacher=_maybe_attach_fbpick_offsets,
+        )
+        out = run_pipeline_execution(context, taps=taps, apply_fn=apply_pipeline)
+
+        for k, v in out.items():
+            val = v
+            if req.downsample_quicklook and isinstance(v, np.ndarray):
+                val = v[::4, ::4]
+            payload_obj = to_builtin(val)
+            cache_key = build_pipeline_tap_cache_key(
+                file_id=req.file_id,
+                key1=key1_value,
+                key1_byte=req.key1_byte,
+                key2_byte=req.key2_byte,
+                pipeline_key=pipe_key,
+                window_hash=None,  # all-job artifacts are always full section
+                offset_byte=req.offset_byte,  # pass-through (forced by caller)
+                tap_label=str(k),
+            )
+            logger.debug('PIPELINE_CACHE_SET all %s', cache_key)
+            with state.lock:
+                state.pipeline_tap_cache.set(cache_key, payload_obj)
+            write_artifact(
+                job_id=job_id,
+                key1=key1_value,
+                tap_label=str(k),
+                payload=payload_obj,
+            )
+
+        if not set_job_progress(state, job_id, (idx + 1) / total):
+            return
+
+
 def _run_pipeline_all_job(
     job_id: str, req: PipelineAllRequest, pipe_key: str, state: AppState
 ) -> None:
-    with state.lock:
-        if state.jobs.get(job_id) is None:
-            return
-        state.jobs.set_status(job_id, 'running')
-    try:
-        reader = get_reader(req.file_id, req.key1_byte, req.key2_byte, state=state)
-        key1_values = reader.get_key1_values().tolist()
-        total = len(key1_values) or 1
-        taps = req.taps
-        for idx, key1 in enumerate(key1_values):
-            key1_value = int(key1)
-            view = reader.get_section(key1_value)
-            section = coerce_section_f32(view.arr, view.scale)
-
-            dt = float(state.file_registry.get_dt(req.file_id))
-            meta = {'dt': dt}
-
-            # offsetをreqからそのまま適用（pass-through）
-            meta = _maybe_attach_fbpick_offsets(
-                meta,
-                spec=req.spec,
-                reader=reader,
-                key1=key1_value,
-                offset_byte=req.offset_byte,  # already forced by caller
-                section_shape=(int(section.shape[0]), int(section.shape[1])),
-            )
-
-            out = apply_pipeline(section, spec=req.spec, meta=meta, taps=taps)
-
-            for k, v in out.items():
-                val = v
-                if req.downsample_quicklook and isinstance(v, np.ndarray):
-                    val = v[::4, ::4]
-                payload_obj = to_builtin(val)
-                cache_key = build_pipeline_tap_cache_key(
-                    file_id=req.file_id,
-                    key1=key1_value,
-                    key1_byte=req.key1_byte,
-                    key2_byte=req.key2_byte,
-                    pipeline_key=pipe_key,
-                    window_hash=None,  # all-job artifacts are always full section
-                    offset_byte=req.offset_byte,  # pass-through (forced by caller)
-                    tap_label=str(k),
-                )
-                logger.debug('PIPELINE_CACHE_SET all %s', cache_key)
-                with state.lock:
-                    state.pipeline_tap_cache.set(cache_key, payload_obj)
-                write_artifact(
-                    job_id=job_id,
-                    key1=key1_value,
-                    tap_label=str(k),
-                    payload=payload_obj,
-                )
-
-            with state.lock:
-                if state.jobs.get(job_id) is None:
-                    return
-                state.jobs.set_progress(job_id, (idx + 1) / total)
-
-        with state.lock:
-            state.jobs.mark_done(job_id)
-    except Exception as e:  # noqa: BLE001
-        with state.lock:
-            state.jobs.mark_error(job_id, str(e))
+    run_job_with_lifecycle(
+        state=state,
+        job_id=job_id,
+        worker=lambda: _run_pipeline_all_job_body(job_id, req, pipe_key, state),
+    )
 
 
 @router.post(
@@ -175,51 +179,27 @@ def pipeline_section(
         )
 
     state = get_state(request.app)
-    reader = get_reader(file_id, key1_byte, key2_byte, state=state)
-    view = reader.get_section(key1)
-    section = coerce_section_f32(view.arr, view.scale)
-
-    trace_slice: slice | None = None
-    window_hash = None
-    if window:
-        tr_min = int(window.get('tr_min', 0))
-        tr_max = int(window.get('tr_max', section.shape[0]))
-        t_min = int(window.get('t_min', 0))
-        t_max = int(window.get('t_max', section.shape[1]))
-        section = section[tr_min:tr_max, t_min:t_max]
-        trace_slice = slice(tr_min, tr_max)
-        clean_window = {
-            'tr_min': tr_min,
-            'tr_max': tr_max,
-            't_min': t_min,
-            't_max': t_max,
-        }
-        window_hash = hashlib.sha256(
-            json.dumps(clean_window, sort_keys=True).encode()
-        ).hexdigest()[:8]
-
-    dt = float(state.file_registry.get_dt(file_id))
-    meta = {'dt': dt}
-
-    # pass-through + 同期フォールバック
-    # None で来ていて、かつ FBPICK モードなら固定オフセットに揃える
-    forced_offset_byte = (
-        OFFSET_BYTE_FIXED
-        if (_spec_uses_offset(spec) and offset_byte is None)
-        else offset_byte
-    )
-
-    meta = _maybe_attach_fbpick_offsets(
-        meta,
+    context = prepare_pipeline_execution(
         spec=spec,
-        reader=reader,
-        key1=key1,
-        offset_byte=forced_offset_byte,
-        trace_slice=trace_slice,
-        section_shape=(int(section.shape[0]), int(section.shape[1])),
+        source=SectionSourceSpec(
+            file_id=file_id,
+            key1=key1,
+            key1_byte=key1_byte,
+            key2_byte=key2_byte,
+            offset_byte=offset_byte,
+            window=window,
+        ),
+        state=state,
+        reader_getter=get_reader,
+        offset_attacher=_maybe_attach_fbpick_offsets,
     )
-
+    window_hash = None
+    if context.window_bounds is not None:
+        window_hash = hashlib.sha256(
+            json.dumps(context.window_bounds, sort_keys=True).encode()
+        ).hexdigest()[:8]
     pipe_key = pipeline_key(spec)
+    forced_offset_byte = context.effective_offset_byte
 
     tap_names = taps or []
     if list_only:
@@ -245,7 +225,7 @@ def pipeline_section(
                 misses.append(label)
 
         if misses:
-            out = apply_pipeline(section, spec=spec, meta=meta, taps=misses)
+            out = run_pipeline_execution(context, taps=misses, apply_fn=apply_pipeline)
             for k, v in out.items():
                 val = to_builtin(v)
                 cache_key = build_pipeline_tap_cache_key(
@@ -288,7 +268,7 @@ def pipeline_section(
                 misses.append(tap)
 
         if misses:
-            out = apply_pipeline(section, spec=spec, meta=meta, taps=misses)
+            out = run_pipeline_execution(context, taps=misses, apply_fn=apply_pipeline)
             for k, v in out.items():
                 val = to_builtin(v)
                 taps_out[k] = val
@@ -307,7 +287,7 @@ def pipeline_section(
 
         return {'taps': taps_out, 'pipeline_key': pipe_key}
 
-    out = apply_pipeline(section, spec=spec, meta=meta, taps=None)
+    out = run_pipeline_execution(context, taps=None, apply_fn=apply_pipeline)
     return {'taps': to_builtin(out), 'pipeline_key': pipe_key}
 
 
@@ -328,12 +308,7 @@ def pipeline_all(
 
     tap_names = taps or []
 
-    # pass-through + 同期フォールバック（sectionと同一ロジック）
-    forced_offset_byte = (
-        OFFSET_BYTE_FIXED
-        if (_spec_uses_offset(spec) and offset_byte is None)
-        else offset_byte
-    )
+    forced_offset_byte = resolve_effective_offset_byte(spec, offset_byte)
 
     req = PipelineAllRequest(
         file_id=file_id,
@@ -360,9 +335,11 @@ def pipeline_all(
         )
         status = job_state['status']
 
-    threading.Thread(
-        target=_run_pipeline_all_job, args=(job_id, req, pipe_key, state), daemon=True
-    ).start()
+    start_job_thread(
+        thread_factory=threading.Thread,
+        target=_run_pipeline_all_job,
+        args=(job_id, req, pipe_key, state),
+    )
 
     return {'job_id': job_id, 'state': status}
 

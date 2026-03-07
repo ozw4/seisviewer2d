@@ -7,7 +7,7 @@ It ships with a browser-based viewer (`/upload` → `/`) that can:
 - ingest a SEG‑Y into a cached **TraceStore** (NumPy‑backed, section‑friendly layout)
 - fetch section windows efficiently using **gzip + msgpack + uint8 quantization**
 - run a small processing **pipeline** (currently: `bandpass`, `denoise`, `fbpick`)
-- create/edit **manual picks** and export them as `.npy`
+- create/edit **manual picks** stored in a memmapped `.npy` and export them as `.npz` / `.txt`
 
 Once the server is running, open the interactive API docs at `/docs`.
 
@@ -77,15 +77,15 @@ If an on-disk trace store exists but does not match the requested bytes or the f
 
 Two pipeline operations use PyTorch weights that are **not included** in this repository:
 
-- `denoise` transform: expects `model/recon_replace_edgenext_small.pth`
-- `fbpick` analyzer: expects `model/fbpick_edgenext_small.pth`
+- `denoise` transform: expects `model/denoise_default.pt`
+- `fbpick` analyzer: expects `model/fbpick_edgenext_small.pt`
 
 Create a `model/` directory at the repo root and place the weights there:
 
 ```
 model/
-  recon_replace_edgenext_small.pth
-  fbpick_edgenext_small.pth
+  denoise_default.pt
+  fbpick_edgenext_small.pt
 ```
 
 Behavior when weights are missing:
@@ -101,6 +101,7 @@ The UI is served from `app/static/`.
 
 - `/upload` lets you upload a SEG‑Y or re-open a previously processed dataset.
 - `/` is the viewer with a side panel for pipeline steps.
+- `/batch` is the batch-apply page for running pipeline jobs over all key1 values.
 
 The main viewer page (`app/static/index.html`) expects a small Vite-built bundle at `/static/assets/main.js`.
 If you change frontend sources under `app/web/`, rebuild with:
@@ -123,7 +124,7 @@ Most UI reads use the binary window endpoint (`/get_section_window_bin`) as the 
 ### Upload / open
 
 - `POST /upload_segy` (multipart/form-data): upload SEG‑Y, build/reuse trace store
-  - form fields: `segy` (file), `key1_byte` (int), `key2_byte` (int)
+  - form fields: `file` (file), `key1_byte` (int), `key2_byte` (int)
   - returns: `{ "file_id": "...", "reused_trace_store": true|false }`
 - `POST /open_segy` (multipart/form-data): open an existing trace store by `original_name`
   - form fields: `original_name` (string), `key1_byte` (int), `key2_byte` (int)
@@ -166,7 +167,13 @@ Payload fields:
 
 ### Pipeline
 
-Pipelines are defined by `PipelineSpec` (`steps[]`), where each step has:
+Pipeline request bodies are JSON objects shaped like
+`{"spec": ..., "taps": ..., "window": ...}`.
+`spec` is required, while `taps` and `window` are optional.
+`window` is accepted only by `POST /pipeline/section`, and it is not allowed when
+`list_only=true`.
+
+`spec` is a `PipelineSpec` (`steps[]`), where each step has:
 
 - `kind`: `transform` or `analyzer`
 - `name`: operation name
@@ -182,21 +189,50 @@ Endpoints:
 
 - `POST /pipeline/section?file_id=<FILE_ID>&key1=<KEY1>`: run a pipeline on one section
   - query params: `key1_byte` (default `189`), `key2_byte` (default `193`), `offset_byte` (optional), `list_only` (bool)
-  - body: a `PipelineSpec`; optional body fields `taps` (list of labels) and `window` (slice)
+  - body: `{"spec": <PipelineSpec>, "taps": ["tapA", "tapB"], "window": {"tr_min": 0, "tr_max": 128, "t_min": 0, "t_max": 1024}}`
   - `list_only=true` caches taps and returns only tap labels (window slicing is not supported with `list_only=true`)
 - `POST /pipeline/all?file_id=<FILE_ID>`: run the pipeline for all key1 values (background job)
   - query params: `key1_byte`, `key2_byte`, `offset_byte`, `downsample_quicklook`
-  - body: a `PipelineSpec`; optional body field `taps` (list of labels)
+  - body: `{"spec": <PipelineSpec>, "taps": ["tapA", "tapB"]}`
 - `GET /pipeline/job/<JOB_ID>/status`
 - `GET /pipeline/job/<JOB_ID>/artifact?key1=<KEY1>&tap=<TAP_LABEL>`
 
+### Batch apply
+
+Batch apply runs a pipeline over every key1 section and writes padded outputs under
+`<pipeline_jobs_dir>/<JOB_ID>/`.
+
+- `POST /batch/apply` (JSON): create a background job
+  - body:
+    - `file_id`, `key1_byte`, `key2_byte`
+    - `pipeline_spec`: `PipelineSpec`
+    - `pick_options`: `{method, subsample, sigma_ms_max, snap:{enabled, mode, refine, window_ms}}`
+    - `save_picks`: when `true` and the pipeline includes `fbpick`, also writes `predicted_picks_time_s.npz`
+  - returns: `{ "job_id": "...", "state": "queued" }`
+- `GET /batch/job/<JOB_ID>/status`: returns `{state, progress, message}`
+- `GET /batch/job/<JOB_ID>/files`: list generated artifacts
+- `GET /batch/job/<JOB_ID>/download?name=<FILE_NAME>`: download one artifact
+
+Typical output files:
+
+- `job_meta.json`
+- `key1_values.npy`
+- `key2_values_padded.npy`
+- `denoise_f32_padded.npy` (when the pipeline includes `denoise`)
+- `fbpick_prob_f16_padded.npy` (when the pipeline includes `fbpick`)
+- `predicted_picks_time_s.npz` (when `save_picks=true` and the pipeline includes `fbpick`)
+
 ### First-break picking
+
+Model discovery:
+
+- `GET /fbpick_models`: list available `model/fbpick_*.pt` weights and the default model id
 
 Probability map (binary):
 
 - `POST /fbpick_section_bin` (JSON): start an async job to compute a probability map
   - body: `file_id`, `key1`, `key1_byte`, `key2_byte`, plus tiling params (`tile_h`, `tile_w`, `overlap`, `amp`)
-  - optional body fields: `pipeline_key` + `tap_label` (run fbpick on a cached tap)
+  - optional body fields: `offset_byte`, `pipeline_key` + `tap_label` (run fbpick on a cached tap), `model_id`, `channel`
   - returns: `{ "job_id": "...", "status": "queued"|"running"|"done" }`
 - `GET /fbpick_job_status?job_id=<JOB_ID>`
 - `GET /get_fbpick_section_bin?job_id=<JOB_ID>`: fetch probability map (gzip+msgpack, quantized)
@@ -204,15 +240,19 @@ Probability map (binary):
 Picks from probability (server-side):
 
 - `POST /fbpick_predict` (JSON): returns `{dt, picks[]}` where `picks` contains `{trace, time}`
-  - supports `method=argmax|expectation` and a `sigma_ms_max` gate
-  - optional body fields: `pipeline_key` + `tap_label`
+  - body: `file_id`, `key1`, `key1_byte`, `key2_byte`, `method`, `sigma_ms_max`
+  - optional body fields: `pipeline_key` + `tap_label`, `model_id`, `channel`
 
 ### Manual picks
 
-Manual picks are stored in a memmapped `.npy` file per dataset.
-`GET /export_manual_picks_npz` writes manual-pick `.npz` in seisai(psn) compatible CSR
-(`n_traces`, `p_indptr`, `p_data`, `s_indptr`, `s_data`) and
-`POST /import_manual_picks_npz` accepts both CSR and legacy `picks_time_s` format.
+Manual picks are stored in a memmapped `.npy` file per dataset and exported on demand
+as `.npz` or `.txt`.
+`GET /export_manual_picks_npz` writes manual-pick `.npz` in seisai(psn)-compatible CSR
+(`n_traces`, `p_indptr`, `p_data`, `s_indptr`, `s_data`) and also includes
+`picks_time_s`.
+`GET /export_manual_picks_grstat_txt` writes a grstat-compatible `.txt`.
+`POST /import_manual_picks_npz` imports manual picks back into the memmap and accepts
+both CSR and legacy `picks_time_s` formats.
 `manual_pick_format` is `seisai_csr`, and format versioning is represented by
 `format_version` (current value: `1`).
 
@@ -250,10 +290,13 @@ Defaults when unset:
 
 Endpoints:
 
-- `GET /picks?file_id=<FILE_ID>&key1=<KEY1>&key1_byte=<BYTE>`
-- `POST /picks` (JSON): `{file_id, trace, time, key1, key1_byte}`
-- `DELETE /picks?file_id=<FILE_ID>&key1=<KEY1>&key1_byte=<BYTE>&trace=<TRACE>`
-- `GET /export_manual_picks_all_npz?file_id=<FILE_ID>&key1_byte=<BYTE>&key2_byte=<BYTE>`: export all key1 sections to a 2D int32 `.npz` (`picks_idx` + metadata)
+- `GET /picks?file_id=<FILE_ID>&key1=<KEY1>&key1_byte=<BYTE>&key2_byte=<BYTE>`
+- `POST /picks` (JSON): `{file_id, trace, time, key1, key1_byte, key2_byte?}`
+- `DELETE /picks?file_id=<FILE_ID>&key1=<KEY1>&key1_byte=<BYTE>&key2_byte=<BYTE>&trace=<TRACE>`
+- `GET /export_manual_picks_npz?file_id=<FILE_ID>&key1_byte=<BYTE>&key2_byte=<BYTE>`
+- `GET /export_manual_picks_grstat_txt?file_id=<FILE_ID>&key2_byte=<BYTE>`
+- `POST /import_manual_picks_npz?file_id=<FILE_ID>&key1_byte=<BYTE>&key2_byte=<BYTE>&mode=replace|merge` (multipart/form-data)
+  - form field: `file`
 
 ## Project layout
 
@@ -261,7 +304,7 @@ Endpoints:
 app/
   main.py                 # FastAPI app + static mounting
   api/
-    routers/              # upload/section/pipeline/picks/fbpick
+    routers/              # upload/section/pipeline/picks/fbpick/batch
     _helpers.py           # shared API helpers
     baselines.py          # raw baseline stats used for scaling
     schemas.py            # pydantic models for requests/responses

@@ -13,16 +13,24 @@ from pydantic import BaseModel, ConfigDict
 
 from app.api._helpers import get_state
 from app.api.binary_codec import pack_msgpack_gzip
-from app.api.schemas import PipelineSpec
 from app.core.state import AppState
 from app.services.fbpick_support import (
     DEFAULT_FBPICK_MODEL_ID,
-    OFFSET_BYTE_FIXED,
     _maybe_attach_fbpick_offsets,
 )
 from app.services.in_memory_cleanup import cleanup_in_memory_state
+from app.services.job_runner import run_job_with_lifecycle, start_job_thread
+from app.services.pipeline_execution import (
+    SectionSourceSpec,
+    build_fbpick_spec,
+    extract_fbpick_probability_map,
+    prepare_pipeline_execution,
+    resolve_effective_offset_byte,
+    run_pipeline_execution,
+)
 from app.services.pipeline_taps import get_section_from_pipeline_tap
-from app.services.reader import coerce_section_f32, get_reader
+from app.services import reader as _reader_service
+from app.services.reader import get_reader
 from app.utils.fbpick_models import (
     list_fbpick_models,
     model_version,
@@ -32,6 +40,7 @@ from app.utils.pipeline import apply_pipeline
 from app.codec.quantize import quantize_float32
 
 router = APIRouter()
+coerce_section_f32 = _reader_service.coerce_section_f32
 
 
 def _effective_channel(channel: str | None) -> str:
@@ -43,6 +52,13 @@ def _resolve_model_selection(model_id: str | None) -> tuple[str, bool, str]:
     chosen_model_id = DEFAULT_FBPICK_MODEL_ID if model_id is None else model_id
     uses_offset = 'offset' in chosen_model_id.lower()
     return chosen_model_id, uses_offset, model_version(model_path)
+
+
+def _get_section_and_meta_from_pipeline_tap(
+    **kwargs,
+) -> tuple[np.ndarray, dict[str, Any] | None]:
+    section = get_section_from_pipeline_tap(**kwargs)
+    return section, None
 
 
 def _build_fbpick_cache_key(
@@ -100,103 +116,80 @@ class FbpickRequest(BaseModel):
     channel: str | None = None
 
 
+def _run_fbpick_job_body(job_id: str, req: FbpickRequest, state: AppState) -> None:
+    with state.lock:
+        job = state.jobs.get(job_id)
+        if job is None:
+            return
+        cache_key = job.get('cache_key')
+        file_id_obj = job.get('file_id', req.file_id)
+        key1_obj = job.get('key1', req.key1)
+        key1_byte_obj = job.get('key1_byte', req.key1_byte)
+        key2_byte_obj = job.get('key2_byte', req.key2_byte)
+        pipeline_key_obj = job.get('pipeline_key', req.pipeline_key)
+        tap_label_obj = job.get('tap_label', req.tap_label)
+        offset_byte_obj = job.get('offset_byte', req.offset_byte)
+        model_id_obj = job.get('model_id', req.model_id)
+        channel_obj = job.get('channel', req.channel)
+    if cache_key is None:
+        raise RuntimeError('FB pick job metadata is inconsistent: cache_key')
+    if not isinstance(file_id_obj, str) or not file_id_obj:
+        raise RuntimeError('FB pick job metadata is inconsistent: file_id')
+    file_id = file_id_obj
+
+    key1 = int(key1_obj)
+    key1_byte = int(key1_byte_obj)
+    key2_byte = int(key2_byte_obj)
+    pipeline_key = str(pipeline_key_obj) if isinstance(pipeline_key_obj, str) else None
+    tap_label = str(tap_label_obj) if isinstance(tap_label_obj, str) else None
+    offset_byte = int(offset_byte_obj) if isinstance(offset_byte_obj, int) else None
+    model_id = str(model_id_obj) if isinstance(model_id_obj, str) else None
+    raw_channel = channel_obj if isinstance(channel_obj, str) else None
+    channel = _effective_channel(raw_channel)
+
+    spec = build_fbpick_spec(
+        model_id=model_id,
+        channel=channel,
+        tile=(req.tile_h, req.tile_w),
+        overlap=req.overlap,
+        amp=req.amp,
+    )
+    context = prepare_pipeline_execution(
+        spec=spec,
+        source=SectionSourceSpec(
+            file_id=file_id,
+            key1=key1,
+            key1_byte=key1_byte,
+            key2_byte=key2_byte,
+            pipeline_key=pipeline_key,
+            tap_label=tap_label,
+            offset_byte=offset_byte,
+        ),
+        state=state,
+        reader_getter=get_reader,
+        pipeline_tap_getter=_get_section_and_meta_from_pipeline_tap,
+        offset_attacher=_maybe_attach_fbpick_offsets,
+        include_dt=False,
+    )
+    out = run_pipeline_execution(context, taps=None, apply_fn=apply_pipeline)
+    prob = extract_fbpick_probability_map(out, label='fbpick')
+    scale, q = quantize_float32(prob, fixed_scale=127.0)
+    obj = {
+        'scale': scale,
+        'shape': q.shape,
+        'data': q.tobytes(),
+    }
+    packed_payload = pack_msgpack_gzip(obj)
+    with state.lock:
+        state.fbpick_cache[cache_key] = packed_payload
+
+
 def _run_fbpick_job(job_id: str, req: FbpickRequest, state: AppState) -> None:
-    try:
-        with state.lock:
-            job = state.jobs.get(job_id)
-            if job is None:
-                return
-            state.jobs.set_status(job_id, 'running')
-            cache_key = job.get('cache_key')
-            file_id_obj = job.get('file_id', req.file_id)
-            key1_obj = job.get('key1', req.key1)
-            key1_byte_obj = job.get('key1_byte', req.key1_byte)
-            key2_byte_obj = job.get('key2_byte', req.key2_byte)
-            pipeline_key_obj = job.get('pipeline_key', req.pipeline_key)
-            tap_label_obj = job.get('tap_label', req.tap_label)
-            offset_byte_obj = job.get('offset_byte', req.offset_byte)
-            model_id_obj = job.get('model_id', req.model_id)
-            channel_obj = job.get('channel', req.channel)
-        if cache_key is None:
-            raise RuntimeError('FB pick job metadata is inconsistent: cache_key')
-        if not isinstance(file_id_obj, str) or not file_id_obj:
-            raise RuntimeError('FB pick job metadata is inconsistent: file_id')
-        file_id = file_id_obj
-
-        key1 = int(key1_obj)
-        key1_byte = int(key1_byte_obj)
-        key2_byte = int(key2_byte_obj)
-        pipeline_key = (
-            str(pipeline_key_obj) if isinstance(pipeline_key_obj, str) else None
-        )
-        tap_label = str(tap_label_obj) if isinstance(tap_label_obj, str) else None
-        offset_byte = int(offset_byte_obj) if isinstance(offset_byte_obj, int) else None
-        model_id = str(model_id_obj) if isinstance(model_id_obj, str) else None
-        raw_channel = channel_obj if isinstance(channel_obj, str) else None
-        channel = _effective_channel(raw_channel)
-
-        reader: object | None = None
-        if offset_byte is not None:
-            reader = get_reader(file_id, key1_byte, key2_byte, state=state)
-        if pipeline_key and tap_label:
-            section = get_section_from_pipeline_tap(
-                file_id=file_id,
-                key1=key1,
-                key1_byte=key1_byte,
-                key2_byte=key2_byte,
-                pipeline_key=pipeline_key,
-                tap_label=tap_label,
-                offset_byte=offset_byte,
-                state=state,
-            )
-        else:
-            if reader is None:
-                reader = get_reader(file_id, key1_byte, key2_byte, state=state)
-            view = reader.get_section(key1)
-            section = coerce_section_f32(view.arr, view.scale)
-
-        section = np.ascontiguousarray(np.asarray(section, dtype=np.float32))
-        spec = PipelineSpec(
-            steps=[
-                {
-                    'kind': 'analyzer',
-                    'name': 'fbpick',
-                    'params': {
-                        'tile': (req.tile_h, req.tile_w),
-                        'overlap': req.overlap,
-                        'amp': req.amp,
-                        'model_id': model_id,
-                        'channel': channel,
-                    },
-                }
-            ]
-        )
-        meta: dict[str, Any] = {}
-        if reader is not None:
-            meta = _maybe_attach_fbpick_offsets(
-                meta,
-                spec=spec,
-                reader=reader,
-                key1=key1,
-                offset_byte=offset_byte,
-                section_shape=(int(section.shape[0]), int(section.shape[1])),
-            )
-        out = apply_pipeline(section, spec=spec, meta=meta, taps=None)
-        prob = out['fbpick']['prob']
-        scale, q = quantize_float32(prob, fixed_scale=127.0)
-        obj = {
-            'scale': scale,
-            'shape': q.shape,
-            'data': q.tobytes(),
-        }
-        packed_payload = pack_msgpack_gzip(obj)
-        with state.lock:
-            state.fbpick_cache[cache_key] = packed_payload
-        with state.lock:
-            state.jobs.mark_done(job_id)
-    except Exception as e:  # noqa: BLE001
-        with state.lock:
-            state.jobs.mark_error(job_id, str(e))
+    run_job_with_lifecycle(
+        state=state,
+        job_id=job_id,
+        worker=lambda: _run_fbpick_job_body(job_id, req, state),
+    )
 
 
 @router.post('/fbpick_section_bin')
@@ -204,8 +197,15 @@ def fbpick_section_bin(req: FbpickRequest, request: Request):
     state = get_state(request.app)
     cleanup_in_memory_state(state)
 
-    chosen_model_id, uses_offset, model_ver = _resolve_model_selection(req.model_id)
-    forced_offset_byte = OFFSET_BYTE_FIXED if uses_offset else None
+    chosen_model_id, _uses_offset, model_ver = _resolve_model_selection(req.model_id)
+    spec = build_fbpick_spec(
+        model_id=chosen_model_id,
+        channel=_effective_channel(req.channel),
+        tile=(req.tile_h, req.tile_w),
+        overlap=req.overlap,
+        amp=req.amp,
+    )
+    forced_offset_byte = resolve_effective_offset_byte(spec, None)
 
     pipeline_key = req.pipeline_key
     tap_label = req.tap_label
@@ -261,9 +261,11 @@ def fbpick_section_bin(req: FbpickRequest, request: Request):
         with state.lock:
             state.jobs.mark_done(job_id)
     else:
-        threading.Thread(
-            target=_run_fbpick_job, args=(job_id, req2, state), daemon=True
-        ).start()
+        start_job_thread(
+            thread_factory=threading.Thread,
+            target=_run_fbpick_job,
+            args=(job_id, req2, state),
+        )
     with state.lock:
         job = state.jobs.get(job_id)
         status = job.get('status', 'unknown') if job is not None else 'unknown'

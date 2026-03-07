@@ -24,7 +24,7 @@ function baseState() {
       passesBatch: '4',
     },
     fbpick: {
-      modelId: 'fbpick_edgenext_small.pth',
+      modelId: 'fbpick_edgenext_small.pt',
     },
     pick: {
       method: 'argmax',
@@ -50,7 +50,7 @@ test('buildBatchApplyRequest builds fixed-order steps and pick payload', () => {
     'fbpick',
   ]);
   expect(payload.pipeline_spec.steps[2].params).toEqual({
-    model_id: 'fbpick_edgenext_small.pth',
+    model_id: 'fbpick_edgenext_small.pt',
   });
   expect(payload.pick_options).toEqual({
     method: 'argmax',

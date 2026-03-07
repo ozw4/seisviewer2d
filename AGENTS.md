@@ -7,7 +7,7 @@ Test source bodies: app/tests/** → Use execution logs, coverage, and test name
 Large/minified vendor assets: app/static/plotly-*.min.js, app/static/msgpack*.min.js, app/static/pako*.min.js.
 
 ## Formatting Policy (Do NOT change indent width)
-Python: **ruff (formatter) with tabs**; ruff >= 0.6.9
+Python: **ruff (formatter) with spaces**; ruff >= 0.6.9
 Lint: ruff（E,F）
 JS/TS: prettier==3.x (**tabWidth=2, useTabs=false**), eslint
 
@@ -25,7 +25,7 @@ JS/TS: prettier==3.x (**tabWidth=2, useTabs=false**), eslint
 
 ## Constraints - Do NOT reformat unrelated files.
 - Only touch files in the current diff.
-- Never change indent width or tab/space policy (Python: **tabs**).
+- Never change indent width or tab/space policy (Python: **spaces**).
 - If formatting changes a file, explain why in the commit body.
 - Default to “fail fast” on errors—especially
 - Allow fallbacks only via an explicit flag (e.g., allow_fallback=False by default; set to True only when intentionally permitted).
