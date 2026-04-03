@@ -7,6 +7,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from app.core.state import AppState
+from app.services.job_manager import JobManager
 
 
 @dataclass(frozen=True)
@@ -38,7 +39,7 @@ def mark_job_running(
         if job is None:
             return False
         status = job.get('status')
-        if isinstance(status, str) and status.lower() == 'cancelled':
+        if JobManager.is_terminal_status_value(status):
             return False
         state.jobs.set_status(job_id, 'running')
         if progress is not None:
@@ -95,6 +96,7 @@ def run_job_with_lifecycle(
     start_progress: float | None = None,
     clear_message_on_start: bool = False,
     on_error: Callable[[Exception], JobFailure | None] | None = None,
+    on_cancel: Callable[[JobCancelledError], JobCompletion | None] | None = None,
 ) -> None:
     if not mark_job_running(
         state,
@@ -107,13 +109,17 @@ def run_job_with_lifecycle(
     try:
         completion = worker()
     except JobCancelledError as exc:
+        cancellation = on_cancel(exc) if on_cancel is not None else None
+        finished_ts = exc.finished_ts
+        if cancellation is not None and cancellation.finished_ts is not None:
+            finished_ts = cancellation.finished_ts
         with state.lock:
             if state.jobs.get(job_id) is None:
                 return
             state.jobs.mark_cancelled(
                 job_id,
                 exc.message,
-                finished_ts=exc.finished_ts,
+                finished_ts=finished_ts,
             )
         return
     except Exception as exc:  # noqa: BLE001

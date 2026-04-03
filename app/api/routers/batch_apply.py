@@ -17,6 +17,7 @@ from app.api.schemas import (
 )
 from app.services.batch_apply_service import run_batch_apply_job
 from app.services.in_memory_cleanup import cleanup_in_memory_state
+from app.services.job_manager import JobManager
 from app.services.job_runner import request_job_cancel, start_job_thread
 from app.services.pipeline_artifacts import get_job_dir, maybe_cleanup_expired_jobs
 from uuid import uuid4
@@ -59,7 +60,7 @@ def batch_job_status(request: Request, job_id: str) -> BatchJobStatusResponse:
         job = state.jobs.get(job_id)
         if job is None:
             raise HTTPException(status_code=404, detail='Job ID not found')
-        job_state = job.get('status', 'unknown')
+        job_state = JobManager.normalize_status_value(job.get('status', 'unknown'))
         progress = job.get('progress', 0.0)
         message = job.get('message', '')
     return {
@@ -85,7 +86,7 @@ def batch_job_cancel(request: Request, job_id: str) -> BatchJobStatusResponse:
         job = state.jobs.get(job_id)
         if job is None:
             raise HTTPException(status_code=404, detail='Job ID not found')
-        job_state = job.get('status', 'unknown')
+        job_state = JobManager.normalize_status_value(job.get('status', 'unknown'))
         progress = job.get('progress', 0.0)
         message = job.get('message', '')
     return {

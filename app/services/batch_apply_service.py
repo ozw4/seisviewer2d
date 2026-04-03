@@ -445,11 +445,6 @@ def _run_batch_apply_job_body(
         'outputs': output_files,
     }
     _write_job_meta(job_dir=job_dir, payload=finished_meta)
-    set_job_message(
-        state,
-        job_id,
-        f'Completed {n_key1} sections. {len(output_files)} artifact files are ready.',
-    )
     return JobCompletion(finished_ts=finished_ts)
 
 
@@ -474,6 +469,27 @@ def _handle_batch_apply_job_error(
     return JobFailure(finished_ts=finished_ts)
 
 
+def _handle_batch_apply_job_cancel(
+    job_id: str,
+    req: BatchApplyRequest,
+    *,
+    lifecycle: _BatchApplyLifecycle,
+    exc,
+) -> JobCompletion:
+    finished_ts = float(exc.finished_ts) if exc.finished_ts is not None else time.time()
+    if lifecycle.job_dir is not None:
+        cancelled_meta: dict[str, object] = {
+            'job_id': job_id,
+            'status': 'cancelled',
+            'created_ts': lifecycle.created_ts,
+            'finished_ts': finished_ts,
+            'request': req.model_dump(mode='json'),
+            'message': exc.message,
+        }
+        _write_job_meta(job_dir=lifecycle.job_dir, payload=cancelled_meta)
+    return JobCompletion(finished_ts=finished_ts)
+
+
 def run_batch_apply_job(job_id: str, req: BatchApplyRequest, state: AppState) -> None:
     """Run one batch job over all key1 sections and persist padded outputs."""
     lifecycle = _BatchApplyLifecycle(created_ts=_resolve_created_ts(state, job_id))
@@ -490,6 +506,12 @@ def run_batch_apply_job(job_id: str, req: BatchApplyRequest, state: AppState) ->
         start_progress=0.0,
         clear_message_on_start=True,
         on_error=lambda exc: _handle_batch_apply_job_error(
+            job_id,
+            req,
+            lifecycle=lifecycle,
+            exc=exc,
+        ),
+        on_cancel=lambda exc: _handle_batch_apply_job_cancel(
             job_id,
             req,
             lifecycle=lifecycle,

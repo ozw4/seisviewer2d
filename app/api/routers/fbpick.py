@@ -19,6 +19,7 @@ from app.services.fbpick_support import (
     _maybe_attach_fbpick_offsets,
 )
 from app.services.in_memory_cleanup import cleanup_in_memory_state
+from app.services.job_manager import JobManager
 from app.services.job_runner import run_job_with_lifecycle, start_job_thread
 from app.services.pipeline_execution import (
     SectionSourceSpec,
@@ -269,7 +270,7 @@ def fbpick_section_bin(req: FbpickRequest, request: Request):
     with state.lock:
         job = state.jobs.get(job_id)
         status = job.get('status', 'unknown') if job is not None else 'unknown'
-    return {'job_id': job_id, 'status': status}
+    return {'job_id': job_id, 'status': JobManager.normalize_status_value(status)}
 
 
 @router.get('/fbpick_models')
@@ -293,7 +294,7 @@ def fbpick_job_status(request: Request, job_id: Annotated[str, Query(...)]):
         job = state.jobs.get(job_id)
         if job is None:
             raise HTTPException(status_code=404, detail='Job ID not found')
-        status = job.get('status', 'unknown')
+        status = JobManager.normalize_status_value(job.get('status', 'unknown'))
         message = job.get('message', '')
     return {'status': status, 'message': message}
 
@@ -306,10 +307,10 @@ def get_fbpick_section_bin(request: Request, job_id: Annotated[str, Query(...)])
         job = state.jobs.get(job_id)
         if job is None:
             raise HTTPException(status_code=404, detail='Result not ready')
-        status = job.get('status')
+        status = JobManager.normalize_status_value(job.get('status'))
         if status == 'expired':
             raise HTTPException(status_code=410, detail='Result expired')
-        if status != 'done':
+        if not JobManager.is_ready_status_value(status):
             raise HTTPException(status_code=404, detail='Result not ready')
         cache_key = job.get('cache_key')
         payload = state.fbpick_cache.get(cache_key)

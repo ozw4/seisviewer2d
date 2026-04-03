@@ -28,6 +28,7 @@ from app.services.pipeline_artifacts import (
 )
 from app.services.fbpick_support import _maybe_attach_fbpick_offsets
 from app.services.in_memory_cleanup import cleanup_in_memory_state
+from app.services.job_manager import JobManager
 from app.services.job_runner import (
     ensure_job_not_cancelled,
     run_job_with_lifecycle,
@@ -155,12 +156,6 @@ def _run_pipeline_all_job_body(
         ensure_job_not_cancelled(state, job_id)
         if not set_job_progress(state, job_id, (idx + 1) / total):
             return
-
-    set_job_message(
-        state,
-        job_id,
-        f'Completed {len(key1_values)} sections. Pipeline artifacts are ready.',
-    )
 
 
 def _run_pipeline_all_job(
@@ -370,7 +365,7 @@ def pipeline_job_status(request: Request, job_id: str) -> PipelineJobStatusRespo
         job = state.jobs.get(job_id)
         if job is None:
             raise HTTPException(status_code=404, detail='Job ID not found')
-        job_state = job.get('status', 'unknown')
+        job_state = JobManager.normalize_status_value(job.get('status', 'unknown'))
         progress = job.get('progress', 0.0)
         message = job.get('message', '')
     return {
@@ -396,7 +391,7 @@ def pipeline_job_cancel(request: Request, job_id: str) -> PipelineJobStatusRespo
         job = state.jobs.get(job_id)
         if job is None:
             raise HTTPException(status_code=404, detail='Job ID not found')
-        job_state = job.get('status', 'unknown')
+        job_state = JobManager.normalize_status_value(job.get('status', 'unknown'))
         progress = job.get('progress', 0.0)
         message = job.get('message', '')
     return {

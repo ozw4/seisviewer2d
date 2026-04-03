@@ -12,8 +12,8 @@ JobStatus = Literal[
     'queued',
     'running',
     'cancel_requested',
-    'completed',
-    'failed',
+    'done',
+    'error',
     'cancelled',
     'expired',
     'unknown',
@@ -117,6 +117,41 @@ class JobManager:
 
     def clear(self) -> None:
         self._jobs.clear()
+
+    @staticmethod
+    def normalize_status_value(status: object) -> JobStatus:
+        if not isinstance(status, str):
+            return 'unknown'
+        normalized = status.strip().lower()
+        if normalized == 'completed':
+            return 'done'
+        if normalized == 'failed':
+            return 'error'
+        if normalized in {
+            'queued',
+            'running',
+            'cancel_requested',
+            'done',
+            'error',
+            'cancelled',
+            'expired',
+            'unknown',
+        }:
+            return normalized
+        return 'unknown'
+
+    @classmethod
+    def is_terminal_status_value(cls, status: object) -> bool:
+        return cls.normalize_status_value(status) in {
+            'done',
+            'error',
+            'cancelled',
+            'expired',
+        }
+
+    @classmethod
+    def is_ready_status_value(cls, status: object) -> bool:
+        return cls.normalize_status_value(status) == 'done'
 
     def create_pipeline_all_job(
         self,
@@ -240,9 +275,8 @@ class JobManager:
         job = self._jobs.get(job_id)
         if job is None:
             return False
-        status = job.get('status')
-        status_value = status.lower() if isinstance(status, str) else 'unknown'
-        if status_value in {'completed', 'failed', 'cancelled', 'expired'}:
+        status_value = self.normalize_status_value(job.get('status'))
+        if self.is_terminal_status_value(status_value):
             return False
         job['cancel_requested'] = True
         if status_value == 'queued':
@@ -272,8 +306,9 @@ class JobManager:
         job = self._jobs.get(job_id)
         if job is None:
             return
-        job['status'] = 'completed'
+        job['status'] = 'done'
         job['cancel_requested'] = False
+        job['message'] = ''
         if progress_1:
             job['progress'] = 1.0
         job['finished_ts'] = time.time() if finished_ts is None else float(finished_ts)
@@ -288,7 +323,7 @@ class JobManager:
         job = self._jobs.get(job_id)
         if job is None:
             return
-        job['status'] = 'failed'
+        job['status'] = 'error'
         job['cancel_requested'] = False
         job['message'] = message
         job['finished_ts'] = time.time() if finished_ts is None else float(finished_ts)
@@ -318,6 +353,7 @@ class JobManager:
         if job is None:
             return
         job['status'] = 'expired'
+        job['cancel_requested'] = False
         job['finished_ts'] = time.time() if finished_ts is None else float(finished_ts)
 
     @staticmethod
@@ -363,21 +399,20 @@ class JobManager:
         for job_id, raw_job in self._jobs.items():
             if not isinstance(raw_job, dict):
                 continue
-            status = raw_job.get('status')
-            status_value = status.lower() if isinstance(status, str) else ''
+            status_value = self.normalize_status_value(raw_job.get('status'))
             kind = self._job_kind(raw_job)
 
             ttl_sec: int | None = None
             if kind == 'fbpick' and status_value in {
-                'completed',
-                'failed',
+                'done',
+                'error',
                 'cancelled',
                 'expired',
             }:
                 ttl_sec = fbpick_ttl_sec
             elif kind == 'pipeline' and status_value in {
-                'completed',
-                'failed',
+                'done',
+                'error',
                 'cancelled',
             }:
                 ttl_sec = pipeline_ttl_sec
