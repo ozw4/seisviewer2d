@@ -3,6 +3,7 @@
 <meta charset="utf-8" />
 <head>
   <title>Open SEG-Y</title>
+  <link rel="stylesheet" href="/static/ui/status.css" />
   <style>
     body {
       margin: 0;
@@ -21,6 +22,104 @@
       display: flex;
       gap: 1em;
       align-items: center;
+      flex-wrap: wrap;
+      border-bottom: 1px solid #ddd;
+      background: #fafafa;
+    }
+    #recent_datasets_panel {
+      padding: 1em;
+      display: flex;
+      flex-direction: column;
+      gap: 0.8em;
+    }
+    .recent-datasets-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 1em;
+      flex-wrap: wrap;
+    }
+    .recent-datasets-header h2 {
+      margin: 0;
+      font-size: 1.05em;
+    }
+    .recent-datasets-state {
+      padding: 0.9em 1em;
+      border: 1px solid #ddd;
+      border-radius: 8px;
+      background: #f7f7f7;
+      color: #444;
+    }
+    .recent-datasets-state[data-state="error"] {
+      background: #fff2f2;
+      border-color: #e3b4b4;
+      color: #8a1f1f;
+    }
+    .recent-datasets-state[data-state="empty"] {
+      background: #fffdf3;
+      border-color: #e4d8a8;
+      color: #6f5a00;
+    }
+    .recent-datasets-list {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+      gap: 0.8em;
+    }
+    .recent-dataset-card {
+      border: 1px solid #d7d7d7;
+      border-radius: 10px;
+      background: #fff;
+      padding: 0.9em 1em;
+      display: flex;
+      flex-direction: column;
+      gap: 0.75em;
+      box-shadow: 0 1px 3px rgba(0, 0, 0, 0.04);
+    }
+    .recent-dataset-card-head {
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      gap: 0.75em;
+    }
+    .recent-dataset-name {
+      margin: 0;
+      font-size: 1em;
+      word-break: break-word;
+    }
+    .recent-dataset-badge {
+      display: inline-flex;
+      align-items: center;
+      border-radius: 999px;
+      background: #eaf2ff;
+      color: #234b93;
+      padding: 0.2em 0.6em;
+      font-size: 0.78em;
+      font-weight: 600;
+      white-space: nowrap;
+    }
+    .recent-dataset-meta {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 0.5em 0.8em;
+      font-size: 0.9em;
+    }
+    .recent-dataset-meta div {
+      min-width: 0;
+    }
+    .recent-dataset-label {
+      display: block;
+      color: #666;
+      font-size: 0.8em;
+      margin-bottom: 0.15em;
+    }
+    .recent-dataset-value {
+      display: block;
+      font-weight: 600;
+      word-break: break-word;
+    }
+    .recent-dataset-actions {
+      display: flex;
+      justify-content: flex-end;
     }
     input,
     button,
@@ -32,6 +131,7 @@
 </head>
 <body>
   <header>Open SEG-Y</header>
+  <div data-app-status-banner-host></div>
   <div id="controls">
     <label>
       SEG-Y file:
@@ -91,23 +191,220 @@
     <progress id="upload_progress" value="0" max="100" style="width: 200px;"></progress>
     <span id="progress_text">0%</span>
   </div>
+  <section id="recent_datasets_panel" aria-labelledby="recent_datasets_title">
+    <div class="recent-datasets-header">
+      <h2 id="recent_datasets_title">Recent Datasets</h2>
+      <button type="button" id="recent_refresh_btn">Refresh</button>
+    </div>
+    <div id="recent_datasets_state" class="recent-datasets-state" data-state="loading">Loading recent datasets...</div>
+    <div id="recent_datasets_list" class="recent-datasets-list"></div>
+  </section>
+  <script src="/static/ui/status.js"></script>
   <script>
     const progressBar = document.getElementById('upload_progress');
     const progressText = document.getElementById('progress_text');
     const uploadBtn = document.getElementById('upload_btn');
     const key1Select = document.getElementById('key1_byte');
     const key2Select = document.getElementById('key2_byte');
+    const recentDatasetsState = document.getElementById('recent_datasets_state');
+    const recentDatasetsList = document.getElementById('recent_datasets_list');
+    const recentRefreshBtn = document.getElementById('recent_refresh_btn');
+
+    let recentDatasets = [];
+
+    function setProgressStatus(message, level = 'info', options = {}) {
+      progressText.innerText = message;
+      window.appStatus.setBanner(message, level);
+      if (options.toast) {
+        window.appStatus.showToast(message, level, options.toastOptions || {});
+      }
+    }
+
+    function reportFailure(message, error, options = {}) {
+      if (error) {
+        console.error(message, error);
+      } else {
+        console.error(message);
+      }
+      window.appStatus.setBanner(message, 'error');
+      window.appStatus.showToast(message, 'error', {
+        sticky: options.sticky ?? false,
+        duration: options.duration,
+      });
+    }
+
+    function setRecentDatasetsState(state, message) {
+      recentDatasetsState.dataset.state = state;
+      recentDatasetsState.textContent = message;
+    }
+
+    function applyKeyByteSelection(key1Byte, key2Byte) {
+      key1Select.value = String(key1Byte);
+      key2Select.value = String(key2Byte);
+    }
+
+    function getLastOriginalName() {
+      return localStorage.getItem('last_original_name') || '';
+    }
+
+    function formatDt(dtSeconds) {
+      if (typeof dtSeconds !== 'number' || !Number.isFinite(dtSeconds) || dtSeconds <= 0) {
+        return '—';
+      }
+      const dtMs = dtSeconds * 1000;
+      const formatted = Number.isInteger(dtMs)
+        ? String(dtMs)
+        : dtMs.toFixed(3).replace(/\.0+$/, '').replace(/(\.\d*?)0+$/, '$1');
+      return formatted + ' ms';
+    }
+
+    function formatUpdatedAt(value) {
+      if (typeof value !== 'string' || !value) {
+        return '—';
+      }
+      const date = new Date(value);
+      if (Number.isNaN(date.getTime())) {
+        return value;
+      }
+      return new Intl.DateTimeFormat('ja-JP', {
+        dateStyle: 'medium',
+        timeStyle: 'short',
+      }).format(date);
+    }
+
+    function createMetaItem(label, value) {
+      const item = document.createElement('div');
+      const labelEl = document.createElement('span');
+      labelEl.className = 'recent-dataset-label';
+      labelEl.textContent = label;
+      const valueEl = document.createElement('span');
+      valueEl.className = 'recent-dataset-value';
+      valueEl.textContent = value;
+      item.append(labelEl, valueEl);
+      return item;
+    }
+
+    async function openExistingDataset(originalName, key1Byte, key2Byte, sourceLabel) {
+      const key1Value = String(key1Byte);
+      const key2Value = String(key2Byte);
+      applyKeyByteSelection(key1Value, key2Value);
+      setProgressStatus(sourceLabel + 'を開いています: ' + originalName);
+      const res = await openSegy(originalName, key1Value, key2Value);
+      if (res.ok) {
+        const result = await res.json();
+        handleSuccess(result.file_id, originalName, key1Value, key2Value);
+        return true;
+      }
+      if (res.status === 404) {
+        reportFailure('データセットが見つかりません: ' + originalName, null, { sticky: true });
+        await loadRecentDatasets({ showErrorToast: false });
+        return false;
+      }
+      const text = await res.text().catch(() => '');
+      reportFailure(text || 'Open failed', null, { sticky: true });
+      return false;
+    }
+
+    function renderRecentDatasets(datasets) {
+      recentDatasetsList.innerHTML = '';
+      const lastName = getLastOriginalName();
+      for (const dataset of datasets) {
+        const card = document.createElement('article');
+        card.className = 'recent-dataset-card';
+
+        const head = document.createElement('div');
+        head.className = 'recent-dataset-card-head';
+
+        const title = document.createElement('h3');
+        title.className = 'recent-dataset-name';
+        title.textContent = dataset.name || '—';
+        head.appendChild(title);
+
+        if (lastName && dataset.name === lastName) {
+          const badge = document.createElement('span');
+          badge.className = 'recent-dataset-badge';
+          badge.textContent = 'Last used';
+          head.appendChild(badge);
+        }
+
+        const meta = document.createElement('div');
+        meta.className = 'recent-dataset-meta';
+        meta.appendChild(createMetaItem('Key bytes', String(dataset.key1_byte) + ' / ' + String(dataset.key2_byte)));
+        meta.appendChild(createMetaItem('Shape', String(dataset.n_traces) + ' x ' + String(dataset.n_samples)));
+        meta.appendChild(createMetaItem('dt', formatDt(dataset.dt)));
+        meta.appendChild(createMetaItem('Last updated', formatUpdatedAt(dataset.updated_at)));
+
+        const actions = document.createElement('div');
+        actions.className = 'recent-dataset-actions';
+        const openBtn = document.createElement('button');
+        openBtn.type = 'button';
+        openBtn.textContent = 'Open';
+        openBtn.addEventListener('click', async () => {
+          const originalText = openBtn.textContent;
+          openBtn.disabled = true;
+          openBtn.textContent = 'Opening...';
+          try {
+            await openExistingDataset(dataset.name, dataset.key1_byte, dataset.key2_byte, '最近使ったデータ');
+          } catch (error) {
+            reportFailure('Open error occurred', error, { sticky: true });
+          } finally {
+            openBtn.disabled = false;
+            openBtn.textContent = originalText;
+          }
+        });
+        actions.appendChild(openBtn);
+
+        card.append(head, meta, actions);
+        recentDatasetsList.appendChild(card);
+      }
+    }
+
+    async function loadRecentDatasets(options = {}) {
+      const showErrorToast = options.showErrorToast ?? true;
+      setRecentDatasetsState('loading', 'Loading recent datasets...');
+      recentDatasetsList.innerHTML = '';
+      recentRefreshBtn.disabled = true;
+      try {
+        const response = await fetch('/recent_datasets');
+        if (!response.ok) {
+          throw new Error('HTTP ' + response.status);
+        }
+        const payload = await response.json();
+        const datasets = Array.isArray(payload.datasets) ? payload.datasets : [];
+        recentDatasets = datasets;
+        if (!datasets.length) {
+          const lastName = getLastOriginalName();
+          const emptyMessage = lastName
+            ? '最近使ったデータはありません。前回のデータ: ' + lastName
+            : '最近使ったデータはありません。';
+          setRecentDatasetsState('empty', emptyMessage);
+          return;
+        }
+        setRecentDatasetsState('ready', String(datasets.length) + ' datasets found.');
+        renderRecentDatasets(datasets);
+      } catch (error) {
+        recentDatasets = [];
+        setRecentDatasetsState('error', 'Recent datasets could not be loaded.');
+        if (showErrorToast) {
+          reportFailure('最近使ったデータ一覧の取得に失敗しました。', error, { sticky: false });
+        } else {
+          console.error('最近使ったデータ一覧の取得に失敗しました。', error);
+        }
+      } finally {
+        recentRefreshBtn.disabled = false;
+      }
+    }
 
     const savedKey1 = localStorage.getItem('last_key1_byte');
     if (savedKey1) key1Select.value = savedKey1;
     const savedKey2 = localStorage.getItem('last_key2_byte');
     if (savedKey2) key2Select.value = savedKey2;
 
-    const lastName = localStorage.getItem('last_original_name');
+    const lastName = getLastOriginalName();
     if (lastName) {
-      progressText.innerText = `前回のデータ: ${lastName}`;
+      setProgressStatus('前回のデータ: ' + lastName);
     } else {
-      progressText.innerText = '前回のデータ: ありません';
+      setProgressStatus('前回のデータ: ありません', 'warning');
     }
 
     function handleSuccess(fileId, originalName, key1Byte, key2Byte) {
@@ -118,7 +415,7 @@
       localStorage.setItem('last_key1_byte', key1Byte);
       localStorage.setItem('last_key2_byte', key2Byte);
       const params = new URLSearchParams({ file_id: fileId, key1_byte: key1Byte, key2_byte: key2Byte });
-      window.location.href = `/?${params.toString()}`;
+      window.location.href = '/?' + params.toString();
     }
 
     async function openSegy(originalName, key1Byte, key2Byte) {
@@ -141,7 +438,7 @@
           if (e.lengthComputable) {
             const percent = (e.loaded / e.total) * 100;
             progressBar.value = percent;
-            progressText.innerText = `${percent.toFixed(1)}%`;
+            setProgressStatus('アップロード中: ' + percent.toFixed(1) + '%');
           }
         };
         xhr.onload = async function () {
@@ -150,29 +447,34 @@
             handleSuccess(result.file_id, file.name, key1Byte, key2Byte);
           } else if (xhr.status === 409) {
             try {
+              setProgressStatus('既存データを再利用しています: ' + file.name);
               const res = await openSegy(file.name, key1Byte, key2Byte);
               if (res.ok) {
                 const result = await res.json();
                 handleSuccess(result.file_id, file.name, key1Byte, key2Byte);
               } else {
                 const text = await res.text().catch(() => '');
-                alert(text || 'Open failed');
+                reportFailure(text || 'Open failed', null, { sticky: true });
               }
             } catch (err) {
-              alert('Open error occurred');
+              reportFailure('Open error occurred', err, { sticky: true });
             }
           } else {
-            alert('Upload failed');
+            reportFailure('Upload failed (HTTP ' + xhr.status + ')', null, { sticky: true });
           }
           resolve();
         };
         xhr.onerror = function () {
-          alert('Upload error occurred');
+          reportFailure('Upload error occurred', null, { sticky: true });
           resolve();
         };
         xhr.send(formData);
       });
     }
+
+    recentRefreshBtn.addEventListener('click', () => {
+      void loadRecentDatasets({ showErrorToast: true });
+    });
 
     uploadBtn.addEventListener('click', async () => {
       uploadBtn.disabled = true;
@@ -180,42 +482,42 @@
       const key1Byte = key1Select.value;
       const key2Byte = key2Select.value;
       progressBar.value = 0;
-      progressText.innerText = '0%';
+      setProgressStatus('準備中: 0%');
       try {
         if (file) {
+          setProgressStatus('既存データを確認しています: ' + file.name);
           const res = await openSegy(file.name, key1Byte, key2Byte);
           if (res.ok) {
             const result = await res.json();
             handleSuccess(result.file_id, file.name, key1Byte, key2Byte);
           } else if (res.status === 404) {
+            setProgressStatus('アップロードを開始します: ' + file.name);
             await uploadSegy(file, key1Byte, key2Byte);
           } else {
             const text = await res.text().catch(() => '');
-            alert(text || 'Open failed');
+            reportFailure(text || 'Open failed', null, { sticky: true });
           }
         } else {
-          const lastName = localStorage.getItem('last_original_name');
-          if (!lastName) {
-            alert('存在しません。ファイルを選んでアップロードしてください.');
+          const lastOriginalName = getLastOriginalName();
+          if (!lastOriginalName) {
+            const guidance = recentDatasets.length
+              ? '最近使ったデータから選ぶか、ファイルを選んでアップロードしてください。'
+              : 'ファイルを選んでアップロードしてください。';
+            reportFailure('前回のデータは存在しません。' + guidance, null, {
+              sticky: true,
+            });
           } else {
-            const res = await openSegy(lastName, key1Byte, key2Byte);
-            if (res.ok) {
-              const result = await res.json();
-              handleSuccess(result.file_id, lastName, key1Byte, key2Byte);
-            } else if (res.status === 404) {
-              alert('存在しません。ファイルを選んでアップロードしてください.');
-            } else {
-              const text = await res.text().catch(() => '');
-              alert(text || 'Open failed');
-            }
+            await openExistingDataset(lastOriginalName, key1Byte, key2Byte, '前回のデータ');
           }
         }
       } catch (err) {
-        alert('Open error occurred');
+        reportFailure('Open error occurred', err, { sticky: true });
       } finally {
         uploadBtn.disabled = false;
       }
     });
+
+    void loadRecentDatasets({ showErrorToast: true });
   </script>
 </body>
 </html>

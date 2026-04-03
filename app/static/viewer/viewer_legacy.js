@@ -59,6 +59,7 @@
 
     var currentScaling = 'amax';
     var sectionShape = null;
+    var currentSectionDtSec = null;
     var renderedStart = null;
     var renderedEnd = null;
     var picks = [];
@@ -72,6 +73,7 @@
     var deleteRangeStart = null;
 
     let uiResetNonce = 0;
+    const MISSING_CONTEXT_VALUE = '—';
     function currentUiRevision() {
       const sel = document.getElementById('layerSelect');
       const layer = sel ? sel.value : 'raw';
@@ -83,6 +85,241 @@
     }
 
 
+    function getKey1Slider() {
+      return document.getElementById('key1_slider');
+    }
+
+    function getKey1ValueInput() {
+      return document.getElementById('key1_val_display');
+    }
+
+    function getSafeInt(value, fallback = 0) {
+      const parsed = Number.parseInt(value, 10);
+      return Number.isFinite(parsed) ? parsed : fallback;
+    }
+
+    function getKey1Count() {
+      return Array.isArray(key1Values) ? key1Values.length : 0;
+    }
+
+    function getClampedKey1Index(index) {
+      const total = getKey1Count();
+      if (!total) return 0;
+      return Math.max(0, Math.min(total - 1, getSafeInt(index, 0)));
+    }
+
+    function getCurrentKey1Index() {
+      return getClampedKey1Index(getKey1Slider()?.value);
+    }
+
+    function setCurrentKey1Index(index) {
+      const slider = getKey1Slider();
+      if (!slider) return false;
+      const total = getKey1Count();
+      const previous = getSafeInt(slider.value, 0);
+      const next = total ? getClampedKey1Index(index) : 0;
+      slider.value = String(next);
+      updateKey1Display();
+      return next !== previous;
+    }
+
+    function getCurrentKey1Value() {
+      const total = getKey1Count();
+      if (!total) return null;
+      return key1Values[getCurrentKey1Index()] ?? null;
+    }
+
+    function formatContextText(value) {
+      if (value === null || value === undefined || value === '') return MISSING_CONTEXT_VALUE;
+      return String(value);
+    }
+
+    function formatKeyBytes() {
+      const key1Text = Number.isFinite(currentKey1Byte) ? String(currentKey1Byte) : MISSING_CONTEXT_VALUE;
+      const key2Text = Number.isFinite(currentKey2Byte) ? String(currentKey2Byte) : MISSING_CONTEXT_VALUE;
+      return `${key1Text} / ${key2Text}`;
+    }
+
+    function formatSectionShape() {
+      if (!Array.isArray(sectionShape) || sectionShape.length < 2) return MISSING_CONTEXT_VALUE;
+      const nTraces = Number(sectionShape[0]);
+      const nSamples = Number(sectionShape[1]);
+      if (!Number.isFinite(nTraces) || !Number.isFinite(nSamples)) return MISSING_CONTEXT_VALUE;
+      return `${nTraces} x ${nSamples}`;
+    }
+
+    function formatDtMs() {
+      if (!Number.isFinite(currentSectionDtSec) || currentSectionDtSec <= 0) return MISSING_CONTEXT_VALUE;
+      const dtMs = currentSectionDtSec * 1000;
+      if (!Number.isFinite(dtMs) || dtMs <= 0) return MISSING_CONTEXT_VALUE;
+      if (Math.abs(dtMs - Math.round(dtMs)) < 1e-6) return String(Math.round(dtMs));
+      return dtMs.toFixed(3).replace(/\.0+$/, '').replace(/(\.\d*?)0+$/, '$1');
+    }
+
+    function getCurrentLayerName() {
+      const sel = document.getElementById('layerSelect');
+      return sel && sel.value ? sel.value : null;
+    }
+
+    function getCurrentScalingLabel() {
+      const sel = document.getElementById('scalingMode');
+      if (sel && sel.selectedIndex >= 0) {
+        return sel.options[sel.selectedIndex]?.text || sel.value || null;
+      }
+      if (currentScaling === 'tracewise') return 'Tracewise';
+      if (currentScaling === 'amax') return 'AMAX';
+      return null;
+    }
+
+    function setTextContentAndTitle(id, value) {
+      const el = document.getElementById(id);
+      if (!el) return;
+      const textValue = formatContextText(value);
+      el.textContent = textValue;
+      if ('title' in el) {
+        el.title = textValue === MISSING_CONTEXT_VALUE ? '' : textValue;
+      }
+    }
+
+    function updateNavButtonState(id, disabled) {
+      const btn = document.getElementById(id);
+      if (btn) btn.disabled = Boolean(disabled);
+    }
+
+    function renderContextBar() {
+      const total = getKey1Count();
+      const currentIndex = total ? getCurrentKey1Index() : 0;
+      const currentValue = total ? key1Values[currentIndex] : null;
+      const sectionText = total ? `${currentIndex + 1} / ${total}` : `${MISSING_CONTEXT_VALUE} / ${MISSING_CONTEXT_VALUE}`;
+      const key1ValueInput = getKey1ValueInput();
+      const jumpInput = document.getElementById('key1_jump_input');
+      const jumpGoBtn = document.getElementById('key1_jump_go_btn');
+
+      setTextContentAndTitle('context_file_name', currentFileName || null);
+      setTextContentAndTitle('context_section_position', sectionText);
+      setTextContentAndTitle('context_key1_value', currentValue);
+      setTextContentAndTitle('context_key_bytes', formatKeyBytes());
+      setTextContentAndTitle('context_section_shape', formatSectionShape());
+      setTextContentAndTitle('context_dt_ms', formatDtMs());
+      setTextContentAndTitle('context_layer', getCurrentLayerName());
+      setTextContentAndTitle('context_scaling', getCurrentScalingLabel());
+      setTextContentAndTitle('section_position_display', sectionText);
+
+      updateNavButtonState('sectionFirstBtn', total === 0 || currentIndex <= 0);
+      updateNavButtonState('sectionPrevBtn', total === 0 || currentIndex <= 0);
+      updateNavButtonState('sectionNextBtn', total === 0 || currentIndex >= total - 1);
+      updateNavButtonState('sectionLastBtn', total === 0 || currentIndex >= total - 1);
+      if (jumpGoBtn) jumpGoBtn.disabled = total === 0;
+
+      if (key1ValueInput) {
+        if (total > 0) {
+          key1ValueInput.min = String(key1Values[0]);
+          key1ValueInput.max = String(key1Values[total - 1]);
+        } else {
+          key1ValueInput.removeAttribute('min');
+          key1ValueInput.removeAttribute('max');
+        }
+        if (document.activeElement !== key1ValueInput) {
+          key1ValueInput.value = currentValue ?? '';
+        }
+      }
+
+      if (jumpInput) {
+        jumpInput.disabled = total === 0;
+        if (total > 0) {
+          jumpInput.min = String(key1Values[0]);
+          jumpInput.max = String(key1Values[total - 1]);
+          if (document.activeElement !== jumpInput) {
+            jumpInput.value = String(currentValue);
+          }
+        } else {
+          jumpInput.removeAttribute('min');
+          jumpInput.removeAttribute('max');
+          if (document.activeElement !== jumpInput) {
+            jumpInput.value = '';
+          }
+        }
+      }
+    }
+
+    async function flushSectionChange() {
+      const debounced = typeof ensureFlushPickOpsDebounced === 'function' ? ensureFlushPickOpsDebounced() : null;
+      if (typeof debounced?.flush === 'function') {
+        await debounced.flush();
+      } else if (typeof flushPickOps === 'function') {
+        await flushPickOps();
+      }
+      if (typeof fetchAndPlotDebounced?.flush === 'function') {
+        await fetchAndPlotDebounced.flush();
+        return;
+      }
+      await fetchAndPlot();
+    }
+
+    function notifySectionNavigation(message, level = 'warning') {
+      console.warn(`[viewer] ${message}`);
+      if (window.appStatus && typeof window.appStatus.showToast === 'function') {
+        window.appStatus.showToast(message, level);
+      }
+    }
+
+    async function goToSectionIndex(index) {
+      if (!getKey1Count()) {
+        renderContextBar();
+        return false;
+      }
+      const changed = setCurrentKey1Index(index);
+      if (!changed) {
+        renderContextBar();
+        return false;
+      }
+      await flushSectionChange();
+      return true;
+    }
+
+    function goToFirstSection() {
+      return goToSectionIndex(0);
+    }
+
+    function goToPreviousSection() {
+      return goToSectionIndex(getCurrentKey1Index() - 1);
+    }
+
+    function goToNextSection() {
+      return goToSectionIndex(getCurrentKey1Index() + 1);
+    }
+
+    function goToLastSection() {
+      return goToSectionIndex(getKey1Count() - 1);
+    }
+
+    function jumpToKey1Value() {
+      const jumpInput = document.getElementById('key1_jump_input');
+      if (!jumpInput || !getKey1Count()) {
+        renderContextBar();
+        return false;
+      }
+      const raw = jumpInput.value.trim();
+      if (!raw) {
+        renderContextBar();
+        return false;
+      }
+      const target = Number(raw);
+      if (!Number.isFinite(target)) {
+        notifySectionNavigation(`Invalid key1 value: ${raw}`);
+        return false;
+      }
+      const idx = key1Values.indexOf(target);
+      if (idx < 0) {
+        notifySectionNavigation(`Key1 value ${raw} was not found.`);
+        return false;
+      }
+      jumpInput.value = String(target);
+      return goToSectionIndex(idx);
+    }
+
+    window.renderContextBar = renderContextBar;
+
     // --- 追加：ハンドラ ---
     function onKey1Input() {
       updateKey1Display();
@@ -91,13 +328,7 @@
 
     async function onKey1Change() {
       updateKey1Display();
-      const debounced = ensureFlushPickOpsDebounced();
-      if (typeof debounced?.flush === 'function') {
-        await debounced.flush();
-      } else {
-        await flushPickOps();
-      }
-      fetchAndPlotDebounced.flush();
+      await flushSectionChange();
     }
 
 
@@ -201,16 +432,25 @@
     // ★唯一のエクスポータ：全 key1 を [K, Ntr] 行列で書き出し
     async function exportAllPickIndexMatrixNpy() {
       if (!sectionShape || sectionShape.length < 2) {
-        alert('Section shape is unknown yet.');
+        const message = 'Section shape is unknown yet.';
+        console.warn(message);
+        window.appStatus?.setBanner(message, 'error');
+        window.appStatus?.showToast(message, 'error', { sticky: true });
         return;
       }
       if (!Array.isArray(key1Values) || key1Values.length === 0) {
-        alert('key1 values not loaded.');
+        const message = 'key1 values not loaded.';
+        console.warn(message);
+        window.appStatus?.setBanner(message, 'error');
+        window.appStatus?.showToast(message, 'error', { sticky: true });
         return;
       }
 
       if (!currentFileId) {
-        alert('file_id not loaded.');
+        const message = 'file_id not loaded.';
+        console.warn(message);
+        window.appStatus?.setBanner(message, 'error');
+        window.appStatus?.showToast(message, 'error', { sticky: true });
         return;
       }
 
@@ -734,6 +974,7 @@
       currentScaling = rawValue === 'tracewise' ? 'tracewise' : 'amax';
       if (sel) sel.value = currentScaling;
       try { localStorage.setItem('scaling_mode', currentScaling); } catch (_) {}
+      renderContextBar();
       if (windowFetchCtrl) {
         try { windowFetchCtrl.abort(); } catch (_) {}
         windowFetchCtrl = null;
@@ -1060,43 +1301,59 @@
     }
 
     function updateKey1Display() {
-      const slider = document.getElementById('key1_slider');
-      const display = document.getElementById('key1_val_display');
-      const idx = parseInt(slider.value);
-      display.value = key1Values[idx] ?? '';
+      const display = getKey1ValueInput();
+      if (display) {
+        display.value = getCurrentKey1Value() ?? '';
+      }
+      renderContextBar();
     }
 
     function syncSliderWithInput() {
-      const slider = document.getElementById('key1_slider');
-      const display = document.getElementById('key1_val_display');
-      const val = parseInt(display.value);
-      const idx = key1Values.indexOf(val);
-      slider.value = idx >= 0 ? idx : 0;
-      display.value = key1Values[slider.value] ?? '';
+      const display = getKey1ValueInput();
+      const target = display ? Number(display.value) : NaN;
+      const idx = key1Values.indexOf(target);
+      setCurrentKey1Index(idx >= 0 ? idx : 0);
     }
 
     function stepKey1(delta) {
-      const slider = document.getElementById('key1_slider');
-      let value = parseInt(slider.value) + delta;
-      value = Math.max(slider.min, Math.min(slider.max, value));
-      slider.value = value;
-      updateKey1Display();
+      return setCurrentKey1Index(getCurrentKey1Index() + delta);
     }
 
     function setKey1SliderMax(max) {
-      document.getElementById('key1_slider').max = max;
+      const slider = getKey1Slider();
+      if (!slider) return;
+      slider.max = String(Math.max(max, 0));
+      renderContextBar();
     }
 
     async function fetchKey1Values() {
-      const res = await fetch(`/get_key1_values?file_id=${currentFileId}&key1_byte=${currentKey1Byte}&key2_byte=${currentKey2Byte}`);
-      if (res.ok) {
+      if (!currentFileId) {
+        key1Values = [];
+        setKey1SliderMax(0);
+        renderContextBar();
+        return [];
+      }
+      try {
+        const res = await fetch(`/get_key1_values?file_id=${currentFileId}&key1_byte=${currentKey1Byte}&key2_byte=${currentKey2Byte}`);
+        if (!res.ok) {
+          console.warn('get_key1_values failed', res.status);
+          key1Values = [];
+          setKey1SliderMax(0);
+          renderContextBar();
+          return [];
+        }
         const data = await res.json();
-        key1Values = data.values;
-        setKey1SliderMax(key1Values.length - 1);
-        document.getElementById('key1_val_display').min = key1Values[0];
-        document.getElementById('key1_val_display').max = key1Values[key1Values.length - 1];
-        document.getElementById('key1_slider').value = 0;
-        updateKey1Display();
+        key1Values = Array.isArray(data.values) ? data.values : [];
+        setKey1SliderMax(Math.max(key1Values.length - 1, 0));
+        setCurrentKey1Index(0);
+        renderContextBar();
+        return key1Values;
+      } catch (e) {
+        console.warn('get_key1_values error', e);
+        key1Values = [];
+        setKey1SliderMax(0);
+        renderContextBar();
+        return [];
       }
     }
 
@@ -1111,8 +1368,13 @@
       const scalingSel = document.getElementById('scalingMode');
       if (scalingSel) scalingSel.value = currentScaling;
       document.getElementById('file_id').value = currentFileId;
+      renderContextBar();
       if (!currentFileId) {
         currentFileName = '';
+        key1Values = [];
+        sectionShape = null;
+        currentSectionDtSec = null;
+        renderContextBar();
         return;
       }
       localStorage.setItem('file_id', currentFileId);
@@ -1121,7 +1383,9 @@
       await fetchCurrentFileName();
       await fetchKey1Values();
       await fetchSectionMeta();
+      renderContextBar();
       await fetchAndPlot();
+      renderContextBar();
     }
 
     async function fetchPicks() {
@@ -1158,7 +1422,14 @@
 
     // --- filename & picks loader (by filename) ---
     async function fetchSectionMeta() {
-      if (!currentFileId) return null;
+      if (!currentFileId) {
+        sectionShape = null;
+        currentSectionDtSec = null;
+        renderContextBar();
+        return null;
+      }
+      sectionShape = null;
+      currentSectionDtSec = null;
       try {
         const q = new URLSearchParams({
           file_id: currentFileId,
@@ -1168,17 +1439,21 @@
         const res = await fetch(`/get_section_meta?${q.toString()}`);
         if (!res.ok) {
           console.warn('get_section_meta failed', res.status);
+          renderContextBar();
           return null;
         }
         const meta = await res.json();
         if (Array.isArray(meta.shape) && meta.shape.length === 2) {
           sectionShape = [Number(meta.shape[0]), Number(meta.shape[1])];
-          applyServerDt(meta);
-          console.info('[META] sectionShape=', sectionShape, 'dt=', meta.dt);
-          return sectionShape;
         }
+        currentSectionDtSec = (typeof meta.dt === 'number' && isFinite(meta.dt) && meta.dt > 0) ? meta.dt : null;
+        applyServerDt(meta);
+        console.info('[META] sectionShape=', sectionShape, 'dt=', meta.dt);
+        renderContextBar();
+        return sectionShape;
       } catch (e) {
         console.warn('get_section_meta error', e);
+        renderContextBar();
       }
       return null;
     }
@@ -1186,12 +1461,14 @@
     async function fetchCurrentFileName() {
       if (!currentFileId) {
         currentFileName = '';
+        renderContextBar();
         return;
       }
       try {
         const r = await fetch(`/file_info?file_id=${encodeURIComponent(currentFileId)}`);
         if (!r.ok) {
           currentFileName = '';
+          renderContextBar();
           return;
         }
         const j = await r.json();
@@ -1200,6 +1477,7 @@
         currentFileName = '';
         console.warn('file_info failed', e);
       }
+      renderContextBar();
     }
 
     async function reloadPicksForCurrentSection(key1IdxOrVal) {
@@ -1240,7 +1518,7 @@
       console.log('--- fetchAndPlot start ---');
       console.time('Total fetchAndPlot');
 
-      const index = parseInt(document.getElementById('key1_slider').value);
+      const index = getCurrentKey1Index();
       const key1Val = key1Values[index];
 
       // ★ FB予測キャッシュ取得：レイヤ＆パイプラインキーでキー統一
@@ -1274,6 +1552,7 @@
           sel.value = 'raw';
         }
       }
+      renderContextBar();
 
       latestSeismicData = null;
       renderLatestView();
@@ -1285,6 +1564,7 @@
 
     function drawSelectedLayer(start = null, end = null) {
       D('DRAW@selectLayer', { layer: document.getElementById('layerSelect')?.value, start, end });
+      renderContextBar();
       latestSeismicData = null;
       renderLatestView();
       scheduleWindowFetch();
@@ -1557,7 +1837,7 @@
     window.addEventListener('DOMContentLoaded', () => {
       console.info('[viewer] DOMContentLoaded hook');
       const fileIdEl = document.getElementById('file_id');
-      const slider = document.getElementById('key1_slider');
+      const jumpInput = document.getElementById('key1_jump_input');
 
       const boot = async () => {
         if (fileIdEl && fileIdEl.value && !currentFileId) {
@@ -1565,12 +1845,18 @@
         }
         if (!currentFileId) {
           currentFileName = '';
+          currentSectionDtSec = null;
+          sectionShape = null;
+          renderContextBar();
           return;
         }
         if (!currentFileName) {
           await fetchCurrentFileName();
         }
+        renderContextBar();
       };
+
+      renderContextBar();
 
       loadSettings().catch((err) => console.warn('loadSettings failed', err)).finally(() => {
         boot().catch((err) => console.warn('initial picks load failed', err));
@@ -1579,8 +1865,10 @@
       if (fileIdEl) {
         fileIdEl.addEventListener('change', async () => {
           currentFileId = fileIdEl.value || '';
+          currentFileName = '';
           key1Values = [];
           sectionShape = null;
+          currentSectionDtSec = null;
           savedXRange = null;
           savedYRange = null;
           renderedStart = null;
@@ -1604,23 +1892,49 @@
             windowFetchCtrl = null;
           }
 
+          renderContextBar();
 
           await fetchCurrentFileName();
           await fetchKey1Values();
           await fetchSectionMeta();
-          (typeof fetchAndPlotDebounced?.flush === 'function')
-            ? fetchAndPlotDebounced.flush()
-            : fetchAndPlot();
+          renderContextBar();
+          await flushSectionChange();
         });
       }
-      if (slider) {
-        slider.addEventListener('change', () => {
-          // ピック読込は fetchAndPlot() 内に集約
-          (typeof fetchAndPlotDebounced?.flush === 'function')
-            ? fetchAndPlotDebounced.flush()
-            : fetchAndPlot();
+
+      if (jumpInput) {
+        jumpInput.addEventListener('keydown', (event) => {
+          if (event.key === 'Enter') {
+            event.preventDefault();
+            void jumpToKey1Value();
+          }
         });
       }
+
+      window.addEventListener('keydown', (event) => {
+        if (!canUseGlobalHotkey()) return;
+        if (event.ctrlKey || event.altKey || event.metaKey) return;
+
+        if (event.key === 'ArrowLeft') {
+          event.preventDefault();
+          void goToPreviousSection();
+          return;
+        }
+        if (event.key === 'ArrowRight') {
+          event.preventDefault();
+          void goToNextSection();
+          return;
+        }
+        if (event.key === 'Home') {
+          event.preventDefault();
+          void goToFirstSection();
+          return;
+        }
+        if (event.key === 'End') {
+          event.preventDefault();
+          void goToLastSection();
+        }
+      });
     });
 
     // Toggle between raw and first tap with the "n" key

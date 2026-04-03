@@ -8,6 +8,7 @@ import json
 import logging
 import re
 import threading
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Annotated
 from uuid import uuid4
@@ -32,6 +33,12 @@ UPLOAD_DIR = get_upload_dir()
 PROCESSED_DIR = get_processed_upload_dir()
 TRACE_DIR = get_trace_store_dir()
 UPLOAD_CHUNK_SIZE = 4 * 1024 * 1024
+TRACE_STORE_REQUIRED_FILES = ('meta.json', 'traces.npy', 'index.npz')
+ARCHIVED_TRACE_STORE_MARKER = '.old-'
+
+
+def _trace_store_required_files_present(store_dir: Path) -> bool:
+    return all((store_dir / name).exists() for name in TRACE_STORE_REQUIRED_FILES)
 
 
 def _trace_store_complete(store_dir: Path, key1_byte: int, key2_byte: int) -> bool:
@@ -42,11 +49,7 @@ def _trace_store_complete(store_dir: Path, key1_byte: int, key2_byte: int) -> bo
     if not store_dir.is_dir():
         return False
     meta_path = store_dir / 'meta.json'
-    if not (
-        (store_dir / 'traces.npy').exists()
-        and (store_dir / 'index.npz').exists()
-        and meta_path.exists()
-    ):
+    if not _trace_store_required_files_present(store_dir):
         return False
     meta = _load_trace_store_meta(meta_path)
     if not isinstance(meta, dict):
@@ -67,6 +70,97 @@ def _load_trace_store_meta(meta_path: Path) -> dict | None:
     if not isinstance(meta, dict):
         return None
     return meta
+
+
+def _is_archived_trace_store_name(name: str) -> bool:
+    return ARCHIVED_TRACE_STORE_MARKER in name
+
+
+def _coerce_int(value: object) -> int | None:
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, int):
+        return int(value)
+    if isinstance(value, float) and value.is_integer():
+        return int(value)
+    return None
+
+
+def _coerce_dt(value: object) -> float | None:
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, (int, float)) and float(value) > 0:
+        return float(value)
+    return None
+
+
+def _trace_store_display_name(store_dir: Path, meta: dict) -> str:
+    original_path = meta.get('original_segy_path')
+    if isinstance(original_path, str) and original_path:
+        normalized = original_path.replace('\\', '/')
+        basename = Path(normalized).name
+        if basename:
+            return basename
+    return store_dir.name
+
+
+def _trace_store_updated_timestamp(store_dir: Path) -> float | None:
+    try:
+        timestamps = [store_dir.stat().st_mtime]
+        for name in TRACE_STORE_REQUIRED_FILES:
+            timestamps.append((store_dir / name).stat().st_mtime)
+    except OSError:
+        return None
+    return max(timestamps) if timestamps else None
+
+
+def _build_recent_dataset_entry(
+    store_dir: Path,
+) -> tuple[float, dict[str, object]] | None:
+    if not store_dir.is_dir() or _is_archived_trace_store_name(store_dir.name):
+        return None
+    if not _trace_store_required_files_present(store_dir):
+        return None
+
+    meta = _load_trace_store_meta(store_dir / 'meta.json')
+    if meta is None:
+        return None
+
+    key_bytes = meta.get('key_bytes')
+    if not isinstance(key_bytes, dict):
+        return None
+
+    key1_byte = _coerce_int(key_bytes.get('key1'))
+    key2_byte = _coerce_int(key_bytes.get('key2'))
+    n_traces = _coerce_int(meta.get('n_traces'))
+    n_samples = _coerce_int(meta.get('n_samples'))
+    if key1_byte is None or key2_byte is None:
+        return None
+    if n_traces is None or n_traces <= 0:
+        return None
+    if n_samples is None or n_samples <= 0:
+        return None
+
+    updated_ts = _trace_store_updated_timestamp(store_dir)
+    if updated_ts is None:
+        return None
+
+    original_size = _coerce_int(meta.get('original_size'))
+    if original_size is not None and original_size < 0:
+        original_size = None
+
+    updated_at = datetime.fromtimestamp(updated_ts, tz=timezone.utc).isoformat()
+    entry = {
+        'name': _trace_store_display_name(store_dir, meta),
+        'key1_byte': key1_byte,
+        'key2_byte': key2_byte,
+        'dt': _coerce_dt(meta.get('dt')),
+        'n_traces': n_traces,
+        'n_samples': n_samples,
+        'original_size': original_size,
+        'updated_at': updated_at,
+    }
+    return updated_ts, entry
 
 
 def _trace_store_matches_source(
@@ -252,6 +346,27 @@ async def upload_segy(
     else:
         FILE_REGISTRY[file_id] = {'store_path': str(store_dir)}
     return {'file_id': file_id, 'reused_trace_store': False}
+
+
+@router.get('/recent_datasets')
+async def recent_datasets() -> dict[str, list[dict[str, object]]]:
+    if not TRACE_DIR.exists() or not TRACE_DIR.is_dir():
+        return {'datasets': []}
+
+    try:
+        store_dirs = list(TRACE_DIR.iterdir())
+    except OSError as exc:
+        logger.warning('Failed to list recent trace stores in %s: %s', TRACE_DIR, exc)
+        return {'datasets': []}
+
+    datasets: list[tuple[float, dict[str, object]]] = []
+    for store_dir in store_dirs:
+        item = _build_recent_dataset_entry(store_dir)
+        if item is not None:
+            datasets.append(item)
+
+    datasets.sort(key=lambda item: item[0], reverse=True)
+    return {'datasets': [item[1] for item in datasets]}
 
 
 @router.get('/file_info')
