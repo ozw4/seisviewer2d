@@ -63,7 +63,7 @@ async function fetchSectionWithPipeline(
   key1Val,
   spec,
   taps,
-  { key1Byte = 189, key2Byte = 193 } = {}
+  { key1Byte = 189, key2Byte = 193, signal } = {}
 ) {
   const url = new URL('/pipeline/section', location.origin);
   url.searchParams.set('file_id', fileId);
@@ -74,9 +74,25 @@ async function fetchSectionWithPipeline(
   const r = await fetch(url.toString(), {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
+    signal,
     body: JSON.stringify({ spec, taps }),
   });
-  if (!r.ok) throw new Error(`pipeline/section ${r.status}`);
+  if (!r.ok) {
+    let detail = '';
+    try {
+      const contentType = r.headers.get('content-type') || '';
+      if (contentType.includes('application/json')) {
+        const payload = await r.json();
+        detail = payload && typeof payload.detail === 'string' ? payload.detail : '';
+      } else {
+        detail = await r.text();
+      }
+    } catch {
+      detail = '';
+    }
+    const suffix = detail ? `: ${detail}` : '';
+    throw new Error(`pipeline/section ${r.status}${suffix}`);
+  }
   const json = await r.json();
   const out = {};
   for (const [name, val] of Object.entries(json.taps || {})) {

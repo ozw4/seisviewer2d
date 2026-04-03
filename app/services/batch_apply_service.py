@@ -23,7 +23,9 @@ from app.services import reader as _reader_service
 from app.services.job_runner import (
     JobCompletion,
     JobFailure,
+    ensure_job_not_cancelled,
     run_job_with_lifecycle,
+    set_job_message,
     set_job_progress,
 )
 from app.services.pipeline_artifacts import get_job_dir
@@ -70,6 +72,10 @@ def _fbpick_label(spec) -> str | None:
         if step.kind == 'analyzer' and step.name == 'fbpick':
             return step.label or step.name
     return None
+
+
+def _pipeline_step_names(spec) -> list[str]:
+    return [str(step.label or step.name) for step in spec.steps]
 
 
 def _load_key2_values(
@@ -239,6 +245,7 @@ def _run_batch_apply_job_body(
 ) -> JobCompletion | None:
     denoise_taps = _denoise_tap_labels(req.pipeline_spec)
     fbpick_label = _fbpick_label(req.pipeline_spec)
+    step_names = _pipeline_step_names(req.pipeline_spec)
     if not denoise_taps and fbpick_label is None:
         raise ValueError('No supported outputs in pipeline spec')
 
@@ -314,7 +321,14 @@ def _run_batch_apply_job_body(
     forced_offset_byte = resolve_effective_offset_byte(req.pipeline_spec, None)
 
     for i, key1 in enumerate(key1_values):
+        ensure_job_not_cancelled(state, job_id)
         key1_int = int(key1)
+        step_text = ' -> '.join(step_names) if step_names else 'pipeline'
+        set_job_message(
+            state,
+            job_id,
+            f'Running section {i + 1}/{total} (key1={key1_int}). Steps: {step_text}.',
+        )
         context = prepare_pipeline_execution(
             spec=req.pipeline_spec,
             source=SectionSourceSpec(
@@ -387,6 +401,7 @@ def _run_batch_apply_job_body(
                 raise ValueError('Predicted picks length mismatch')
             picks_sorted[trace_seq] = times_s
 
+        ensure_job_not_cancelled(state, job_id)
         if not set_job_progress(state, job_id, float(i + 1) / float(total)):
             return None
 
@@ -430,6 +445,11 @@ def _run_batch_apply_job_body(
         'outputs': output_files,
     }
     _write_job_meta(job_dir=job_dir, payload=finished_meta)
+    set_job_message(
+        state,
+        job_id,
+        f'Completed {n_key1} sections. {len(output_files)} artifact files are ready.',
+    )
     return JobCompletion(finished_ts=finished_ts)
 
 

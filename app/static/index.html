@@ -516,6 +516,82 @@
       align-items: center;
     }
 
+    .pipeline-run-status {
+      display: flex;
+      flex-direction: column;
+      gap: 0.35em;
+      padding: 0.75em 1em;
+      border-bottom: 1px solid #e5e7eb;
+      background: #fbfcfe;
+    }
+
+    .pipeline-run-status-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 0.75em;
+      flex-wrap: wrap;
+    }
+
+    .pipeline-run-badge {
+      display: inline-flex;
+      align-items: center;
+      padding: 0.18em 0.6em;
+      border-radius: 999px;
+      border: 1px solid #cbd5e1;
+      background: #f8fafc;
+      color: #475569;
+      font-size: 0.8em;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+    }
+
+    .pipeline-run-status.is-running .pipeline-run-badge,
+    .pipeline-run-status.is-cancel-requested .pipeline-run-badge {
+      border-color: #93c5fd;
+      background: #eff6ff;
+      color: #1d4ed8;
+    }
+
+    .pipeline-run-status.is-success .pipeline-run-badge {
+      border-color: #86efac;
+      background: #f0fdf4;
+      color: #166534;
+    }
+
+    .pipeline-run-status.is-error .pipeline-run-badge,
+    .pipeline-run-status.is-cancelled .pipeline-run-badge {
+      border-color: #fca5a5;
+      background: #fef2f2;
+      color: #991b1b;
+    }
+
+    .pipeline-run-summary {
+      font-size: 0.92em;
+      color: #0f172a;
+    }
+
+    .pipeline-run-detail {
+      font-size: 0.82em;
+      color: #475569;
+      white-space: pre-wrap;
+    }
+
+    .pipeline-run-detail.is-error,
+    .pipeline-run-detail.is-cancelled {
+      color: #991b1b;
+    }
+
+    .pipeline-run-note {
+      font-size: 0.78em;
+      color: #64748b;
+    }
+
+    #pipelineCancelButton[hidden] {
+      display: none;
+    }
+
     .pipeline-add {
       position: relative;
       display: inline-flex;
@@ -945,6 +1021,15 @@
             </div>
           </div>
         </div>
+      </div>
+      <div id="pipelineRunStatus" class="pipeline-run-status is-idle" role="status" aria-live="polite" aria-atomic="true">
+        <div class="pipeline-run-status-row">
+          <span id="pipelineRunBadge" class="pipeline-run-badge">idle</span>
+          <button type="button" id="pipelineCancelButton" hidden>Cancel Request</button>
+        </div>
+        <div id="pipelineRunSummary" class="pipeline-run-summary">Ready to run the current section.</div>
+        <div id="pipelineRunDetail" class="pipeline-run-detail">No pipeline request is active.</div>
+        <div id="pipelineRunNote" class="pipeline-run-note"></div>
       </div>
       <div id="pipelineCards"></div>
       <div id="pipelineInspector" class="pipeline-inspector hidden">

@@ -217,11 +217,14 @@ function createUi() {
     snapWindowMs: document.getElementById('snapWindowMs'),
     savePicksCheck: document.getElementById('savePicksCheck'),
     runBtn: document.getElementById('runBtn'),
+    cancelBtn: document.getElementById('cancelBtn'),
     refreshFilesBtn: document.getElementById('refreshFilesBtn'),
     currentJobId: document.getElementById('currentJobId'),
     jobStateBadge: document.getElementById('jobStateBadge'),
     jobProgress: document.getElementById('jobProgress'),
     jobMessage: document.getElementById('jobMessage'),
+    jobsEmpty: document.getElementById('jobsEmpty'),
+    jobHistory: document.getElementById('jobHistory'),
     filesTable: document.getElementById('filesTable'),
     filesBody: document.getElementById('filesBody'),
     filesEmpty: document.getElementById('filesEmpty'),
@@ -269,22 +272,134 @@ function setFormError(ui, message) {
   ui.formError.textContent = message || '';
 }
 
+function normalizeJobState(state) {
+  const value = String(state || 'idle').trim().toLowerCase();
+  if (value === 'done') return 'completed';
+  if (value === 'error') return 'failed';
+  return value || 'idle';
+}
+
+function formatBatchMessage(state, message) {
+  const normalizedState = normalizeJobState(state);
+  const text = String(message || '').trim();
+  const lower = text.toLowerCase();
+  if (normalizedState === 'cancelled') {
+    return text || 'The job was cancelled by the user.';
+  }
+  if (normalizedState === 'cancel_requested') {
+    return text || 'Cancel requested. The job will stop at the next safe point.';
+  }
+  if (!text) {
+    if (normalizedState === 'completed') {
+      return 'Batch job completed.';
+    }
+    if (normalizedState === 'queued') {
+      return 'The batch job is queued.';
+    }
+    if (normalizedState === 'running') {
+      return 'The batch job is running.';
+    }
+    return '';
+  }
+  if (lower.includes('fb pick model weights not found') || lower.includes('fbpick model not found')) {
+    return 'FB model file is missing. Place the model weights under model/ and retry.';
+  }
+  if (lower.includes('file_id is required') || lower.includes('file id not found')) {
+    return 'No dataset is loaded yet. Open data before starting a batch job.';
+  }
+  if (lower.includes('must be') || lower.includes('invalid')) {
+    return text;
+  }
+  if (lower.includes('failed to fetch') || lower.includes('networkerror')) {
+    return 'Network error while contacting the server. Check the connection and retry.';
+  }
+  if (normalizedState === 'failed' && !lower.includes('server')) {
+    return `The batch job failed. ${text}`;
+  }
+  return text;
+}
+
+function formatBatchUiError(error) {
+  const text = String((error && error.message) || error || '').trim();
+  if (!text) {
+    return 'The server returned an unexpected error. Check server logs.';
+  }
+  if (text.includes('file_id is required')) {
+    return 'No dataset is loaded yet. Open data before starting a batch job.';
+  }
+  if (text.includes('At least one pipeline step must be enabled')) {
+    return 'Enable at least one pipeline step before running batch apply.';
+  }
+  if (text.includes('Failed to fetch') || text.includes('NetworkError')) {
+    return 'Network error while contacting the server. Check the connection and retry.';
+  }
+  return text;
+}
+
 function setJobState(ui, { jobId, state, progress, message }) {
+  const normalizedState = normalizeJobState(state);
+  const formattedMessage = formatBatchMessage(normalizedState, message);
   ui.currentJobId.textContent = jobId || '-';
-  ui.jobStateBadge.textContent = state || 'idle';
+  ui.jobStateBadge.textContent = normalizedState.replaceAll('_', ' ');
+  ui.jobStateBadge.className = '';
+  ui.jobStateBadge.id = 'jobStateBadge';
+  ui.jobStateBadge.classList.add(`state-${normalizedState}`);
   const progressValue = Number(progress);
   ui.jobProgress.value = Number.isFinite(progressValue)
     ? Math.max(0, Math.min(1, progressValue))
     : 0;
-  ui.jobMessage.textContent = message || '';
-  if (state === 'error') {
+  ui.jobMessage.textContent = formattedMessage;
+  if (normalizedState === 'failed' || normalizedState === 'cancelled') {
     ui.jobMessage.style.borderColor = '#fecaca';
     ui.jobMessage.style.background = '#fef2f2';
     ui.jobMessage.style.color = '#991b1b';
+  } else if (normalizedState === 'completed') {
+    ui.jobMessage.style.borderColor = '#bbf7d0';
+    ui.jobMessage.style.background = '#f0fdf4';
+    ui.jobMessage.style.color = '#166534';
   } else {
     ui.jobMessage.style.borderColor = '#f3d8bd';
     ui.jobMessage.style.background = '#fff7ed';
     ui.jobMessage.style.color = '#b45309';
+  }
+}
+
+function renderJobHistory(ui, jobs, activeJobId) {
+  const list = Array.isArray(jobs) ? jobs : [];
+  ui.jobHistory.innerHTML = '';
+  ui.jobsEmpty.hidden = list.length > 0;
+  for (const job of list) {
+    const item = document.createElement('button');
+    item.type = 'button';
+    item.className = 'job-history-item';
+    if (job.jobId === activeJobId) {
+      item.classList.add('is-active');
+    }
+    item.dataset.jobId = job.jobId;
+
+    const head = document.createElement('div');
+    head.className = 'job-history-head';
+    const idNode = document.createElement('span');
+    idNode.className = 'job-history-id';
+    idNode.textContent = job.jobId;
+    const badge = document.createElement('span');
+    badge.className = `job-history-badge state-${job.state}`;
+    badge.textContent = job.state.replaceAll('_', ' ');
+    head.appendChild(idNode);
+    head.appendChild(badge);
+
+    const meta = document.createElement('div');
+    meta.className = 'job-history-meta';
+    meta.textContent = `Progress ${(Math.max(0, Math.min(1, Number(job.progress) || 0)) * 100).toFixed(0)}%`;
+
+    const messageNode = document.createElement('div');
+    messageNode.className = 'job-history-message';
+    messageNode.textContent = formatBatchMessage(job.state, job.message);
+
+    item.appendChild(head);
+    item.appendChild(meta);
+    item.appendChild(messageNode);
+    ui.jobHistory.appendChild(item);
   }
 }
 
@@ -327,12 +442,28 @@ function renderFiles(ui, files, jobId) {
 }
 
 async function fetchJsonOrThrow(url, options) {
-  const response = await fetch(url, options);
+  let response;
+  try {
+    response = await fetch(url, options);
+  } catch (error) {
+    throw new Error(formatBatchUiError(error));
+  }
   if (!response.ok) {
-    const text = await response.text().catch(() => '');
-    throw new Error(
+    let text = '';
+    try {
+      const contentType = response.headers.get('content-type') || '';
+      if (contentType.includes('application/json')) {
+        const payload = await response.json();
+        text = payload && typeof payload.detail === 'string' ? payload.detail : '';
+      } else {
+        text = await response.text();
+      }
+    } catch {
+      text = '';
+    }
+    throw new Error(formatBatchUiError(
       `HTTP ${response.status} ${response.statusText}${text ? `: ${text}` : ''}`
-    );
+    ));
   }
   return response.json();
 }
@@ -441,6 +572,54 @@ function startBatchUi() {
 
   let pollingTimer = null;
   let activeJobId = '';
+  let selectedJobId = '';
+  const recentJobs = [];
+
+  function upsertRecentJob(snapshot) {
+    const jobId = String(snapshot.jobId || '').trim();
+    if (!jobId) return;
+    const normalized = {
+      jobId,
+      state: normalizeJobState(snapshot.state),
+      progress: Number(snapshot.progress) || 0,
+      message: snapshot.message || '',
+    };
+    const index = recentJobs.findIndex((entry) => entry.jobId === jobId);
+    if (index >= 0) {
+      recentJobs[index] = { ...recentJobs[index], ...normalized };
+    } else {
+      recentJobs.unshift(normalized);
+    }
+    renderJobHistory(ui, recentJobs, selectedJobId || activeJobId);
+  }
+
+  function syncActionButtons(stateValue = ui.jobStateBadge.textContent) {
+    const normalized = normalizeJobState(stateValue);
+    const busy = ['queued', 'running', 'cancel_requested'].includes(normalized);
+    ui.runBtn.disabled = busy || !String(ui.fileIdInput.value || '').trim();
+    ui.cancelBtn.disabled = !activeJobId || !busy;
+    ui.refreshFilesBtn.disabled = !activeJobId || busy;
+  }
+
+  function selectJob(jobId) {
+    selectedJobId = jobId;
+    const snapshot = recentJobs.find((entry) => entry.jobId === jobId);
+    renderJobHistory(ui, recentJobs, selectedJobId || activeJobId);
+    if (!snapshot) {
+      return;
+    }
+    setJobState(ui, snapshot);
+    if (['queued', 'running', 'cancel_requested'].includes(snapshot.state)) {
+      activeJobId = jobId;
+      startPolling(jobId);
+      return;
+    }
+    stopPolling();
+    syncActionButtons(snapshot.state);
+    if (snapshot.state === 'completed') {
+      loadFiles(jobId);
+    }
+  }
 
   function enforceFileIdGuard() {
     const missing = !String(ui.fileIdInput.value || '').trim();
@@ -450,6 +629,7 @@ function startBatchUi() {
         ui,
         'file_id is missing. Open this page via Viewer Batch link or fill file_id.'
       );
+      syncActionButtons('idle');
       return false;
     }
     if (
@@ -459,7 +639,7 @@ function startBatchUi() {
       setFormError(ui, '');
     }
     if (pollingTimer === null) {
-      ui.runBtn.disabled = false;
+      syncActionButtons('idle');
     }
     return true;
   }
@@ -484,10 +664,11 @@ function startBatchUi() {
     } catch (error) {
       setJobState(ui, {
         jobId,
-        state: 'error',
+        state: 'failed',
         progress: ui.jobProgress.value,
         message: `Failed to fetch files: ${error.message}`,
       });
+      upsertRecentJob({ jobId, state: 'failed', progress: ui.jobProgress.value, message: `Failed to fetch files: ${error.message}` });
     }
   }
 
@@ -502,28 +683,34 @@ function startBatchUi() {
         progress: payload.progress,
         message: payload.message || '',
       });
+      upsertRecentJob({
+        jobId,
+        state: payload.state || 'unknown',
+        progress: payload.progress,
+        message: payload.message || '',
+      });
 
-      if (payload.state === 'done') {
+      const normalizedState = normalizeJobState(payload.state);
+      if (normalizedState === 'completed') {
         stopPolling();
-        ui.runBtn.disabled = false;
-        ui.refreshFilesBtn.disabled = false;
+        syncActionButtons(normalizedState);
         loadFiles(jobId);
-      } else if (payload.state === 'error') {
+      } else if (['failed', 'cancelled'].includes(normalizedState)) {
         stopPolling();
-        ui.runBtn.disabled = false;
-        ui.refreshFilesBtn.disabled = true;
+        syncActionButtons(normalizedState);
       } else {
-        ui.refreshFilesBtn.disabled = true;
+        syncActionButtons(normalizedState);
       }
     } catch (error) {
       stopPolling();
-      ui.runBtn.disabled = false;
       setJobState(ui, {
         jobId,
-        state: 'error',
+        state: 'failed',
         progress: ui.jobProgress.value,
         message: `Status polling failed: ${error.message}`,
       });
+      upsertRecentJob({ jobId, state: 'failed', progress: ui.jobProgress.value, message: `Status polling failed: ${error.message}` });
+      syncActionButtons('failed');
     }
   }
 
@@ -557,6 +744,48 @@ function startBatchUi() {
     }
   });
 
+  ui.cancelBtn.addEventListener('click', async () => {
+    if (!activeJobId) {
+      return;
+    }
+    try {
+      const payload = await fetchJsonOrThrow(
+        `/batch/job/${encodeURIComponent(activeJobId)}/cancel`,
+        { method: 'POST' }
+      );
+      setJobState(ui, {
+        jobId: activeJobId,
+        state: payload.state,
+        progress: payload.progress,
+        message: payload.message,
+      });
+      upsertRecentJob({
+        jobId: activeJobId,
+        state: payload.state,
+        progress: payload.progress,
+        message: payload.message,
+      });
+      syncActionButtons(payload.state);
+    } catch (error) {
+      setJobState(ui, {
+        jobId: activeJobId,
+        state: 'failed',
+        progress: ui.jobProgress.value,
+        message: `Failed to cancel job: ${error.message}`,
+      });
+      upsertRecentJob({ jobId: activeJobId, state: 'failed', progress: ui.jobProgress.value, message: `Failed to cancel job: ${error.message}` });
+      syncActionButtons('failed');
+    }
+  });
+
+  ui.jobHistory.addEventListener('click', (event) => {
+    const button = event.target.closest('.job-history-item');
+    if (!button) {
+      return;
+    }
+    selectJob(button.dataset.jobId || '');
+  });
+
   ui.runBtn.addEventListener('click', async () => {
     setFormError(ui, '');
     syncSavePicksControl(ui);
@@ -567,7 +796,7 @@ function startBatchUi() {
     try {
       payload = buildBatchApplyRequest(collectState(ui));
     } catch (error) {
-      setFormError(ui, error.message || String(error));
+      setFormError(ui, formatBatchUiError(error));
       return;
     }
 
@@ -575,8 +804,7 @@ function startBatchUi() {
     localStorage.setItem(LOCAL_STORAGE_KEYS.key1Byte, String(payload.key1_byte));
     localStorage.setItem(LOCAL_STORAGE_KEYS.key2Byte, String(payload.key2_byte));
 
-    ui.runBtn.disabled = true;
-    ui.refreshFilesBtn.disabled = true;
+    syncActionButtons('queued');
     setJobState(ui, {
       jobId: activeJobId,
       state: 'queued',
@@ -593,6 +821,7 @@ function startBatchUi() {
       if (!activeJobId) {
         throw new Error('Server did not return job_id');
       }
+      selectedJobId = activeJobId;
       renderFiles(ui, [], activeJobId);
       setJobState(ui, {
         jobId: activeJobId,
@@ -600,19 +829,22 @@ function startBatchUi() {
         progress: 0,
         message: '',
       });
+      upsertRecentJob({ jobId: activeJobId, state: response.state || 'queued', progress: 0, message: '' });
       startPolling(activeJobId);
     } catch (error) {
-      ui.runBtn.disabled = false;
       setJobState(ui, {
         jobId: activeJobId,
-        state: 'error',
+        state: 'failed',
         progress: 0,
         message: `Failed to start job: ${error.message}`,
       });
+      upsertRecentJob({ jobId: activeJobId, state: 'failed', progress: 0, message: `Failed to start job: ${error.message}` });
+      syncActionButtons('failed');
     }
   });
 
   enforceFileIdGuard();
+  syncActionButtons('idle');
 }
 
 if (typeof window !== 'undefined' && typeof document !== 'undefined') {

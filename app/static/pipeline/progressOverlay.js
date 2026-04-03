@@ -60,6 +60,8 @@
         attachedUI.off('run:step', handlers.onStep);
         attachedUI.off('run:finish', handlers.onFinish);
         attachedUI.off('run:error', handlers.onError);
+        attachedUI.off('run:cancel-requested', handlers.onCancelRequested);
+        attachedUI.off('run:cancelled', handlers.onCancelled);
       }
 
       handlers = {
@@ -81,12 +83,25 @@
           const message = event && typeof event.message === 'string' ? event.message : 'failed';
           errorOverlay(message);
         },
+        onCancelRequested: () => {
+          setText('Cancelling…');
+        },
+        onCancelled: (event) => {
+          const message = event && typeof event.message === 'string'
+            ? event.message
+            : 'The pipeline request was cancelled.';
+          setText(message);
+          setProgress(100);
+          setTimeout(() => closeOverlay(), 700);
+        },
       };
 
       pipelineUI.on('run:start', handlers.onStart);
       pipelineUI.on('run:step', handlers.onStep);
       pipelineUI.on('run:finish', handlers.onFinish);
       pipelineUI.on('run:error', handlers.onError);
+      pipelineUI.on('run:cancel-requested', handlers.onCancelRequested);
+      pipelineUI.on('run:cancelled', handlers.onCancelled);
       attachedUI = pipelineUI;
     }
 
@@ -96,7 +111,6 @@
         if (typeof options.onCancel === 'function') {
           options.onCancel();
         }
-        closeOverlay();
       });
     }
 

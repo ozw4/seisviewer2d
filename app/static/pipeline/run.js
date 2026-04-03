@@ -7,6 +7,11 @@
     const getPipelineUI = options.getPipelineUI;
     const getSavePipelineToLocalStorage = options.getSavePipelineToLocalStorage;
     const events = options.events;
+    const uiState = {
+      activeAbortController: null,
+      activeRunId: 0,
+      cancelRequested: false,
+    };
 
     function getState() {
       return state && typeof state.getState === 'function' ? state.getState() : null;
@@ -21,6 +26,112 @@
       if (events && typeof events.emit === 'function') {
         events.emit(eventName, payload);
       }
+    }
+
+    function getRunDom() {
+      return {
+        runButton: document.getElementById('pipelineRunButton'),
+        addButton: document.getElementById('pipelineAddButton'),
+        cancelButton: document.getElementById('pipelineCancelButton'),
+        statusRoot: document.getElementById('pipelineRunStatus'),
+        badge: document.getElementById('pipelineRunBadge'),
+        summary: document.getElementById('pipelineRunSummary'),
+        detail: document.getElementById('pipelineRunDetail'),
+        note: document.getElementById('pipelineRunNote'),
+      };
+    }
+
+    function setRunControlsBusy(isBusy) {
+      const { runButton, addButton, cancelButton } = getRunDom();
+      if (runButton) {
+        runButton.disabled = !!isBusy;
+        runButton.textContent = isBusy ? 'Running…' : '▶ Run';
+      }
+      if (addButton) {
+        addButton.disabled = !!isBusy;
+      }
+      if (cancelButton) {
+        cancelButton.hidden = !isBusy;
+        cancelButton.disabled = !isBusy;
+      }
+    }
+
+    function setRunStatus(status, summary, detail = '', note = '') {
+      const { statusRoot, badge, summary: summaryEl, detail: detailEl, note: noteEl } = getRunDom();
+      if (statusRoot) {
+        statusRoot.classList.remove(
+          'is-idle',
+          'is-running',
+          'is-success',
+          'is-error',
+          'is-cancelled',
+          'is-cancel-requested'
+        );
+        const classByStatus = {
+          idle: 'is-idle',
+          running: 'is-running',
+          success: 'is-success',
+          error: 'is-error',
+          cancelled: 'is-cancelled',
+          cancel_requested: 'is-cancel-requested',
+        };
+        statusRoot.classList.add(classByStatus[status] || 'is-idle');
+      }
+      if (badge) {
+        badge.textContent = status.replace('_', ' ');
+      }
+      if (summaryEl) {
+        summaryEl.textContent = summary || '';
+      }
+      if (detailEl) {
+        detailEl.textContent = detail || '';
+        detailEl.classList.toggle('is-error', status === 'error');
+        detailEl.classList.toggle('is-cancelled', status === 'cancelled');
+      }
+      if (noteEl) {
+        noteEl.textContent = note || '';
+      }
+    }
+
+    function formatStepList(steps) {
+      return (Array.isArray(steps) ? steps : [])
+        .map((step) => String(step.label || step.name || '').trim())
+        .filter(Boolean)
+        .join(' -> ');
+    }
+
+    function isAbortError(error) {
+      return !!error && (error.name === 'AbortError' || error.code === 20);
+    }
+
+    function normalizePipelineRunError(error) {
+      if (isAbortError(error)) {
+        return 'The pipeline request was cancelled in the viewer.';
+      }
+      const text = String((error && error.message) || error || '').trim();
+      const lower = text.toLowerCase();
+      if (!text) {
+        return 'The server returned an unexpected error. Check server logs.';
+      }
+      if (lower.includes('failed to fetch') || lower.includes('networkerror')) {
+        return 'Network error while contacting the server. Check the connection and retry.';
+      }
+      if (lower.includes('fb pick model weights not found') || lower.includes('fbpick model not found')) {
+        return 'FB model file is missing. Place the model weights under model/ and retry.';
+      }
+      if (lower.includes('file id not found') || lower.includes('no currentfileid')) {
+        return 'No section is loaded yet. Load data before running pipeline.';
+      }
+      if (lower.includes('model_id must') || lower.includes('must be') || lower.includes('unprocessable')) {
+        return `Some pipeline parameters are invalid. Review the step settings and retry.\n${text}`;
+      }
+      if (lower.includes('pipeline/section 4')) {
+        return text;
+      }
+      if (lower.includes('pipeline/section 5')) {
+        return `The server returned an unexpected error. Check server logs.\n${text}`;
+      }
+      return text;
     }
 
     function ensureProgressOverlayBridge() {
@@ -107,6 +218,8 @@
       const st = getState();
       if (!st) return;
 
+      cancel();
+
       window.latestTapData = {};
       window.latestPipelineKey = null;
       const sel = document.getElementById('layerSelect');
@@ -140,6 +253,22 @@
       if (debugPipeline) {
         console.debug('[pipeline] updateLayerSelect: names=', names, 'selected=', target);
       }
+    }
+
+    function cancel() {
+      if (!uiState.activeAbortController) {
+        return false;
+      }
+      uiState.cancelRequested = true;
+      uiState.activeAbortController.abort();
+      setRunStatus(
+        'cancel_requested',
+        'Cancelling the viewer request...',
+        'The current request has been aborted locally. The server may still finish the in-flight work.',
+        'Server-side step streaming is not available for this endpoint yet.'
+      );
+      emitPipelineEvent('run:cancel-requested', {});
+      return true;
     }
 
     function runInitDiagnostics() {
@@ -256,12 +385,14 @@
       if (!window.currentFileId) {
         console.info('[pipeline] abort: no currentFileId');
         updateLayerSelect({});
+        setRunStatus('error', 'Pipeline could not start.', 'No section is loaded yet. Load data before running pipeline.');
         return;
       }
       const resolvedKey1 = resolvePipelineRunKey1();
       if (!resolvedKey1.ok) {
         console.error('[pipeline][BLOCKER] abort: key1 source not ready', resolvedKey1.context);
         updateLayerSelect({});
+        setRunStatus('error', 'Pipeline could not start.', 'The current section is not ready yet. Wait for the viewer to finish loading and retry.');
         return;
       }
       const key1Val = resolvedKey1.key1Val;
@@ -293,20 +424,36 @@
             : (Array.isArray(window.rawSeismicData) ? window.rawSeismicData.length - 1 : 0);
           window.drawSelectedLayer(start, end);
         }
+        setRunStatus('idle', 'No enabled pipeline steps.', 'Enable at least one step before running the pipeline.');
         return;
       }
 
       const steps = Array.isArray(spec.steps) ? spec.steps : [];
+      const stepList = formatStepList(steps);
       const totalSteps = Math.max(steps.length, 1);
       const runId = state.nextRunToken();
-      emitPipelineEvent('run:start', { totalSteps });
+      uiState.activeRunId = runId;
+      uiState.cancelRequested = false;
+      uiState.activeAbortController = new AbortController();
+      setRunControlsBusy(true);
+      setRunStatus(
+        'running',
+        `Running ${steps.length} step${steps.length === 1 ? '' : 's'} for key1=${key1Val}.`,
+        stepList ? `Steps: ${stepList}` : 'The pipeline request is being sent to the server.',
+        'Live per-step progress is not streamed by this endpoint yet.'
+      );
+      emitPipelineEvent('run:start', { totalSteps, stepNames: steps.map((step) => step.label || step.name) });
       try {
         const response = await fetchSectionWithPipeline(
           window.currentFileId,
           key1Val,
           spec,
           tapsUnique,
-          { key1Byte: window.currentKey1Byte, key2Byte: window.currentKey2Byte }
+          {
+            key1Byte: window.currentKey1Byte,
+            key2Byte: window.currentKey2Byte,
+            signal: uiState.activeAbortController.signal,
+          }
         );
         const tapMap = response && response.taps ? response.taps : {};
         const pipelineKey = response && response.pipelineKey ? response.pipelineKey : null;
@@ -335,6 +482,12 @@
           window.latestPipelineKey = null;
           updateLayerSelect({});
           emitPipelineEvent('run:error', { message: 'key1 changed during run; result discarded' });
+          setRunStatus('error', 'Pipeline result was discarded.', 'The selected section changed while the pipeline was running. Retry on the current section.');
+          if (uiState.activeRunId === runId) {
+            uiState.activeAbortController = null;
+            uiState.cancelRequested = false;
+            setRunControlsBusy(false);
+          }
           return;
         }
         window.latestTapData = tapMap || {};
@@ -345,13 +498,37 @@
           : 'Complete';
         emitPipelineEvent('run:step', { index: totalSteps, name: finalName });
         emitPipelineEvent('run:finish', { totalSteps });
+        setRunStatus(
+          'success',
+          'Pipeline completed.',
+          stepList ? `Completed: ${stepList}` : 'The requested pipeline output is ready.',
+          'Use the layer selector to inspect the generated tap output.'
+        );
       } catch (error) {
         if (runId !== state.getRunToken()) return;
         console.warn('pipeline/section failed', error);
         window.latestTapData = {};
         window.latestPipelineKey = null;
         updateLayerSelect({});
-        emitPipelineEvent('run:error', { message: (error && error.message) || String(error) });
+        if (isAbortError(error)) {
+          emitPipelineEvent('run:cancelled', { message: 'The pipeline request was cancelled in the viewer.' });
+          setRunStatus(
+            'cancelled',
+            'Pipeline request cancelled.',
+            'The request was stopped in the viewer. The server may still finish the current in-flight work.',
+            'You can run the pipeline again on the current section.'
+          );
+        } else {
+          const message = normalizePipelineRunError(error);
+          emitPipelineEvent('run:error', { message });
+          setRunStatus('error', 'Pipeline failed.', message, 'Review the message above, adjust inputs if needed, and retry.');
+        }
+      }
+
+      if (uiState.activeRunId === runId) {
+        uiState.activeAbortController = null;
+        uiState.cancelRequested = false;
+        setRunControlsBusy(false);
       }
 
       if (typeof window.drawSelectedLayer === 'function') {
@@ -372,6 +549,7 @@
       resolvePipelineRunKey1,
       runPipeline,
       ensureProgressOverlayBridge,
+      cancel,
     };
   }
 

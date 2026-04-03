@@ -8,13 +8,23 @@ from typing import Literal, TypedDict
 from app.core.settings import Settings
 from app.services.pipeline_artifacts import pipeline_jobs_ttl_seconds
 
-JobStatus = Literal['queued', 'running', 'done', 'error', 'expired', 'unknown']
+JobStatus = Literal[
+    'queued',
+    'running',
+    'cancel_requested',
+    'completed',
+    'failed',
+    'cancelled',
+    'expired',
+    'unknown',
+]
 
 
 class PipelineAllJobState(TypedDict):
     status: JobStatus
     progress: float
     message: str
+    cancel_requested: bool
     created_ts: float
     finished_ts: float | None
     file_id: str
@@ -29,6 +39,7 @@ class BatchApplyJobState(TypedDict):
     status: JobStatus
     progress: float
     message: str
+    cancel_requested: bool
     created_ts: float
     finished_ts: float | None
     file_id: str
@@ -41,6 +52,7 @@ class BatchApplyJobState(TypedDict):
 class FbpickJobState(TypedDict):
     status: JobStatus
     message: str
+    cancel_requested: bool
     created_ts: float
     finished_ts: float | None
     cache_key: object
@@ -123,6 +135,7 @@ class JobManager:
             'status': 'queued',
             'progress': 0.0,
             'message': '',
+            'cancel_requested': False,
             'created_ts': created,
             'finished_ts': None,
             'file_id': file_id,
@@ -150,6 +163,7 @@ class JobManager:
             'status': 'queued',
             'progress': 0.0,
             'message': '',
+            'cancel_requested': False,
             'created_ts': created,
             'finished_ts': None,
             'file_id': file_id,
@@ -181,6 +195,7 @@ class JobManager:
         job: FbpickJobState = {
             'status': 'queued',
             'message': '',
+            'cancel_requested': False,
             'created_ts': created,
             'finished_ts': None,
             'cache_key': cache_key,
@@ -215,6 +230,38 @@ class JobManager:
             return
         job['message'] = message
 
+    def request_cancel(
+        self,
+        job_id: str,
+        *,
+        message: str = 'Cancel requested. The job will stop at the next safe point.',
+        finished_ts: float | None = None,
+    ) -> bool:
+        job = self._jobs.get(job_id)
+        if job is None:
+            return False
+        status = job.get('status')
+        status_value = status.lower() if isinstance(status, str) else 'unknown'
+        if status_value in {'completed', 'failed', 'cancelled', 'expired'}:
+            return False
+        job['cancel_requested'] = True
+        if status_value == 'queued':
+            job['status'] = 'cancelled'
+            job['message'] = 'The job was cancelled by the user before it started.'
+            job['finished_ts'] = (
+                time.time() if finished_ts is None else float(finished_ts)
+            )
+            return True
+        job['status'] = 'cancel_requested'
+        job['message'] = message
+        return True
+
+    def is_cancel_requested(self, job_id: str) -> bool:
+        job = self._jobs.get(job_id)
+        if job is None:
+            return False
+        return bool(job.get('cancel_requested'))
+
     def mark_done(
         self,
         job_id: str,
@@ -225,7 +272,8 @@ class JobManager:
         job = self._jobs.get(job_id)
         if job is None:
             return
-        job['status'] = 'done'
+        job['status'] = 'completed'
+        job['cancel_requested'] = False
         if progress_1:
             job['progress'] = 1.0
         job['finished_ts'] = time.time() if finished_ts is None else float(finished_ts)
@@ -240,7 +288,23 @@ class JobManager:
         job = self._jobs.get(job_id)
         if job is None:
             return
-        job['status'] = 'error'
+        job['status'] = 'failed'
+        job['cancel_requested'] = False
+        job['message'] = message
+        job['finished_ts'] = time.time() if finished_ts is None else float(finished_ts)
+
+    def mark_cancelled(
+        self,
+        job_id: str,
+        message: str,
+        *,
+        finished_ts: float | None = None,
+    ) -> None:
+        job = self._jobs.get(job_id)
+        if job is None:
+            return
+        job['status'] = 'cancelled'
+        job['cancel_requested'] = True
         job['message'] = message
         job['finished_ts'] = time.time() if finished_ts is None else float(finished_ts)
 
@@ -304,9 +368,18 @@ class JobManager:
             kind = self._job_kind(raw_job)
 
             ttl_sec: int | None = None
-            if kind == 'fbpick' and status_value in {'done', 'error', 'expired'}:
+            if kind == 'fbpick' and status_value in {
+                'completed',
+                'failed',
+                'cancelled',
+                'expired',
+            }:
                 ttl_sec = fbpick_ttl_sec
-            elif kind == 'pipeline' and status_value in {'done', 'error'}:
+            elif kind == 'pipeline' and status_value in {
+                'completed',
+                'failed',
+                'cancelled',
+            }:
                 ttl_sec = pipeline_ttl_sec
 
             if ttl_sec is None:

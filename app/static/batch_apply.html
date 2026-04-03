@@ -188,6 +188,33 @@
       background: #f8fafc;
     }
 
+    #jobStateBadge.state-queued,
+    #jobStateBadge.state-running,
+    #jobStateBadge.state-cancel_requested,
+    .job-history-badge.state-queued,
+    .job-history-badge.state-running,
+    .job-history-badge.state-cancel_requested {
+      border-color: #93c5fd;
+      background: #eff6ff;
+      color: #1d4ed8;
+    }
+
+    #jobStateBadge.state-completed,
+    .job-history-badge.state-completed {
+      border-color: #86efac;
+      background: #f0fdf4;
+      color: #166534;
+    }
+
+    #jobStateBadge.state-failed,
+    #jobStateBadge.state-cancelled,
+    .job-history-badge.state-failed,
+    .job-history-badge.state-cancelled {
+      border-color: #fca5a5;
+      background: #fef2f2;
+      color: #991b1b;
+    }
+
     #jobProgress {
       width: 100%;
       height: 0.8rem;
@@ -224,6 +251,63 @@
       background: #9aa4b2;
       border-color: #9aa4b2;
       cursor: not-allowed;
+    }
+
+    #cancelBtn:disabled {
+      cursor: not-allowed;
+      opacity: 0.6;
+    }
+
+    #jobHistory {
+      display: flex;
+      flex-direction: column;
+      gap: 0.55rem;
+    }
+
+    .job-history-item {
+      border: 1px solid #dbe4ef;
+      border-radius: 9px;
+      padding: 0.6rem 0.7rem;
+      background: #f8fbff;
+      cursor: pointer;
+    }
+
+    .job-history-item.is-active {
+      border-color: #7dd3fc;
+      background: #f0f9ff;
+    }
+
+    .job-history-head {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 0.6rem;
+      flex-wrap: wrap;
+      margin-bottom: 0.3rem;
+    }
+
+    .job-history-id {
+      font-family: ui-monospace, SFMono-Regular, monospace;
+      font-size: 0.8rem;
+    }
+
+    .job-history-badge {
+      font-size: 0.76rem;
+      border: 1px solid var(--line);
+      border-radius: 999px;
+      padding: 0.12rem 0.5rem;
+      background: #f8fafc;
+    }
+
+    .job-history-meta {
+      font-size: 0.8rem;
+      color: var(--muted);
+    }
+
+    .job-history-message {
+      font-size: 0.82rem;
+      color: var(--ink);
+      white-space: pre-wrap;
     }
 
     table {
@@ -408,6 +492,7 @@
         <h2>Execution</h2>
         <div class="btn-row">
           <button class="primary" id="runBtn" type="button">Run Batch Apply</button>
+          <button id="cancelBtn" type="button" disabled>Cancel Job</button>
           <button id="refreshFilesBtn" type="button" disabled>Refresh Files</button>
         </div>
         <div class="status-row">
@@ -417,6 +502,12 @@
         </div>
         <progress id="jobProgress" value="0" max="1"></progress>
         <pre id="jobMessage"></pre>
+      </section>
+
+      <section class="card">
+        <h2>Recent Jobs</h2>
+        <div id="jobsEmpty">No jobs yet.</div>
+        <div id="jobHistory"></div>
       </section>
 
       <section class="card">

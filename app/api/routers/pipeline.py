@@ -29,7 +29,10 @@ from app.services.pipeline_artifacts import (
 from app.services.fbpick_support import _maybe_attach_fbpick_offsets
 from app.services.in_memory_cleanup import cleanup_in_memory_state
 from app.services.job_runner import (
+    ensure_job_not_cancelled,
     run_job_with_lifecycle,
+    request_job_cancel,
+    set_job_message,
     set_job_progress,
     start_job_thread,
 )
@@ -98,8 +101,16 @@ def _run_pipeline_all_job_body(
     key1_values = reader.get_key1_values().tolist()
     total = len(key1_values) or 1
     taps = req.taps
+    step_names = [str(step.label or step.name) for step in req.spec.steps]
     for idx, key1 in enumerate(key1_values):
+        ensure_job_not_cancelled(state, job_id)
         key1_value = int(key1)
+        step_text = ' -> '.join(step_names) if step_names else 'pipeline'
+        set_job_message(
+            state,
+            job_id,
+            f'Running section {idx + 1}/{total} (key1={key1_value}). Steps: {step_text}.',
+        )
         context = prepare_pipeline_execution(
             spec=req.spec,
             source=SectionSourceSpec(
@@ -141,8 +152,15 @@ def _run_pipeline_all_job_body(
                 payload=payload_obj,
             )
 
+        ensure_job_not_cancelled(state, job_id)
         if not set_job_progress(state, job_id, (idx + 1) / total):
             return
+
+    set_job_message(
+        state,
+        job_id,
+        f'Completed {len(key1_values)} sections. Pipeline artifacts are ready.',
+    )
 
 
 def _run_pipeline_all_job(
@@ -348,6 +366,32 @@ def pipeline_all(
 def pipeline_job_status(request: Request, job_id: str) -> PipelineJobStatusResponse:
     state = get_state(request.app)
     cleanup_in_memory_state(state)
+    with state.lock:
+        job = state.jobs.get(job_id)
+        if job is None:
+            raise HTTPException(status_code=404, detail='Job ID not found')
+        job_state = job.get('status', 'unknown')
+        progress = job.get('progress', 0.0)
+        message = job.get('message', '')
+    return {
+        'state': job_state,
+        'progress': progress,
+        'message': message,
+    }
+
+
+@router.post('/pipeline/job/{job_id}/cancel', response_model=PipelineJobStatusResponse)
+def pipeline_job_cancel(request: Request, job_id: str) -> PipelineJobStatusResponse:
+    state = get_state(request.app)
+    cleanup_in_memory_state(state)
+
+    with state.lock:
+        job = state.jobs.get(job_id)
+        if job is None:
+            raise HTTPException(status_code=404, detail='Job ID not found')
+
+    request_job_cancel(state, job_id)
+
     with state.lock:
         job = state.jobs.get(job_id)
         if job is None:

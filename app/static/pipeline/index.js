@@ -305,6 +305,10 @@
       if (runButton) {
         runButton.addEventListener('click', () => runner.runPipeline());
       }
+      const cancelButton = document.getElementById('pipelineCancelButton');
+      if (cancelButton) {
+        cancelButton.addEventListener('click', () => runner.cancel());
+      }
 
       if (st.cardsContainer) {
         st.cardsContainer.addEventListener('dragover', cardsRenderer.handleDragOver);
@@ -363,6 +367,7 @@
       specToGraph: runner.specToGraph,
       schedulePipelineRun,
       runPipeline: runner.runPipeline,
+      cancel: runner.cancel,
       savePipelineToLocalStorage,
       loadPipelineFromLocalStorage,
       prepareForNewSection: runner.prepareForNewSection,
@@ -371,10 +376,6 @@
     pipelineUI.on = pipelineUI.on || eventBus.on;
     pipelineUI.off = pipelineUI.off || eventBus.off;
     pipelineUI._emit = pipelineUI._emit || eventBus.emit;
-    if (typeof pipelineUI.cancel !== 'function') {
-      pipelineUI.cancel = function noopCancel() {};
-    }
-
     let initStarted = false;
     function startPipelineUI() {
       if (initStarted) return;
