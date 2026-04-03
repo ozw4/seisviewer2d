@@ -100,9 +100,16 @@ def test_recent_datasets_returns_only_valid_stores(client: TestClient, tmp_path:
     assert datasets[0]['n_samples'] == 8
 
 
-def test_recent_datasets_excludes_archived_old_store_dirs(client: TestClient, tmp_path: Path):
+def test_recent_datasets_excludes_archived_old_store_dirs(
+    client: TestClient, tmp_path: Path
+):
     _write_store(tmp_path, 'line-a.sgy', mtime=100)
-    _write_store(tmp_path, 'line-a.sgy.old-deadbeef', original_name='line-a-archived.sgy', mtime=200)
+    _write_store(
+        tmp_path,
+        'line-a.sgy.old-deadbeef',
+        original_name='line-a-archived.sgy',
+        mtime=200,
+    )
 
     response = client.get('/recent_datasets')
 
@@ -111,7 +118,9 @@ def test_recent_datasets_excludes_archived_old_store_dirs(client: TestClient, tm
     assert [item['name'] for item in datasets] == ['line-a.sgy']
 
 
-def test_recent_datasets_are_sorted_by_updated_at_desc(client: TestClient, tmp_path: Path):
+def test_recent_datasets_are_sorted_by_updated_at_desc(
+    client: TestClient, tmp_path: Path
+):
     older_ts = 1_710_000_000
     newer_ts = 1_720_000_000
     _write_store(tmp_path, 'older-store.sgy', original_name='older.sgy', mtime=older_ts)
@@ -122,11 +131,19 @@ def test_recent_datasets_are_sorted_by_updated_at_desc(client: TestClient, tmp_p
     assert response.status_code == 200
     datasets = response.json()['datasets']
     assert [item['name'] for item in datasets] == ['newer.sgy', 'older.sgy']
-    assert datasets[0]['updated_at'] == datetime.fromtimestamp(newer_ts, timezone.utc).isoformat()
-    assert datasets[1]['updated_at'] == datetime.fromtimestamp(older_ts, timezone.utc).isoformat()
+    assert (
+        datasets[0]['updated_at']
+        == datetime.fromtimestamp(newer_ts, timezone.utc).isoformat()
+    )
+    assert (
+        datasets[1]['updated_at']
+        == datetime.fromtimestamp(older_ts, timezone.utc).isoformat()
+    )
 
 
-def test_recent_datasets_returns_only_basenames_not_paths(client: TestClient, tmp_path: Path):
+def test_recent_datasets_returns_only_basenames_not_paths(
+    client: TestClient, tmp_path: Path
+):
     _write_store(
         tmp_path,
         'stored-name.sgy',
@@ -142,7 +159,9 @@ def test_recent_datasets_returns_only_basenames_not_paths(client: TestClient, tm
     assert '\\' not in datasets[0]['name']
 
 
-def test_recent_datasets_ignores_malformed_meta_and_missing_fields(client: TestClient, tmp_path: Path):
+def test_recent_datasets_ignores_malformed_meta_and_missing_fields(
+    client: TestClient, tmp_path: Path
+):
     missing_meta_fields = tmp_path / 'missing-fields.sgy'
     missing_meta_fields.mkdir()
     np.save(missing_meta_fields / 'traces.npy', np.zeros((2, 2), dtype=np.float32))
