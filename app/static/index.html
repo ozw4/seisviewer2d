@@ -50,15 +50,235 @@
       min-width: 0;
     }
 
-    #controls {
-      padding: 0.5em 1em;
+    #controlsPanel {
+      --controls-panel-height: 270px;
+      display: flex;
+      flex-direction: column;
+      min-height: 0;
       background: #fafafa;
       border-bottom: 1px solid #ccc;
+    }
+
+    #controlsPanelBar {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 0.75em;
+      padding: 0.55em 1em;
+      background: #f3f4f6;
+      border-bottom: 1px solid #d1d5db;
+    }
+
+    .controls-panel-title {
+      font-size: 0.9em;
+      font-weight: 700;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+      color: #374151;
+    }
+
+    #controlsPanelToggle {
+      margin-right: 0;
+      padding: 0.3em 0.7em;
+      border: 1px solid #cbd5e1;
+      border-radius: 999px;
+      background: #fff;
+      color: #1f2937;
+      cursor: pointer;
+    }
+
+    #controlsPanelToggle:hover,
+    #controlsPanelToggle:focus-visible {
+      border-color: #94a3b8;
+      outline: none;
+    }
+
+    #controlsPanelBody {
+      display: flex;
+      flex-direction: column;
+      min-height: 0;
+      height: var(--controls-panel-height);
+    }
+
+    #controls {
+      flex: 1;
+      min-height: 0;
+      padding: 0.75em 1em;
+      background: #fafafa;
       display: flex;
       gap: 1em;
-      align-items: center;
+      align-items: stretch;
+      align-content: flex-start;
       flex-wrap: wrap;
       overflow-y: auto;
+    }
+
+    #controlsResizeHandle {
+      flex: 0 0 auto;
+      height: 12px;
+      cursor: row-resize;
+      border-top: 1px solid #d1d5db;
+      background:
+        linear-gradient(90deg, transparent 0, transparent calc(50% - 18px), #94a3b8 calc(50% - 18px), #94a3b8 calc(50% - 6px), transparent calc(50% - 6px), transparent calc(50% + 6px), #94a3b8 calc(50% + 6px), #94a3b8 calc(50% + 18px), transparent calc(50% + 18px));
+    }
+
+    #controlsPanel.is-collapsed #controlsPanelBody {
+      display: none;
+    }
+
+    #controlsPanel.is-resizing,
+    #controlsPanel.is-resizing * {
+      user-select: none;
+    }
+
+    .control-section {
+      display: flex;
+      flex: 1 1 260px;
+      min-width: 240px;
+      flex-direction: column;
+      gap: 0.7em;
+      padding: 0.8em 0.9em;
+      border: 1px solid #d8dee8;
+      border-radius: 10px;
+      background: #fff;
+      box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04);
+    }
+
+    .control-section-heading {
+      margin: 0;
+      font-size: 0.78em;
+      font-weight: 700;
+      letter-spacing: 0.06em;
+      text-transform: uppercase;
+      color: #475569;
+    }
+
+    .control-section-picking {
+      flex-basis: 360px;
+      border-color: #93c5fd;
+      background: linear-gradient(180deg, #f8fbff 0%, #ffffff 100%);
+    }
+
+    .control-section-picking .control-section-heading {
+      color: #1d4ed8;
+    }
+
+    .control-row {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.55em 0.75em;
+      align-items: center;
+    }
+
+    .control-field {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.35em;
+      margin: 0;
+      font-size: 0.92em;
+    }
+
+    .control-input-group {
+      display: flex;
+      align-items: center;
+      gap: 0.6em;
+      width: 100%;
+    }
+
+    .control-input-group input[type="range"] {
+      flex: 1 1 180px;
+      min-width: 140px;
+    }
+
+    .control-input-group input[type="number"] {
+      flex: 0 0 auto;
+    }
+
+    .control-button-row {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.5em;
+      align-items: center;
+    }
+
+    .control-button-row button {
+      margin-right: 0;
+    }
+
+    .control-stack {
+      display: flex;
+      flex-direction: column;
+      gap: 0.35em;
+    }
+
+    .control-subgroup {
+      display: flex;
+      flex-direction: column;
+      gap: 0.5em;
+      padding: 0.65em 0.7em;
+      border: 1px solid #e2e8f0;
+      border-radius: 8px;
+      background: #f8fafc;
+    }
+
+    .control-subgroup-title {
+      font-size: 0.78em;
+      font-weight: 700;
+      color: #475569;
+    }
+
+    .key1-display {
+      font-weight: 600;
+      color: #0f172a;
+    }
+
+    .control-section-status {
+      flex: 0 1 260px;
+    }
+
+    .control-section-status .op-status {
+      width: auto;
+      flex-direction: column;
+      align-items: stretch;
+    }
+
+    .control-section-status .op-status-chip {
+      max-width: none;
+      justify-content: space-between;
+    }
+
+    @media (max-width: 900px) {
+      .control-section {
+        min-width: min(100%, 280px);
+      }
+    }
+
+    @media (max-width: 640px) {
+      #controlsPanelBar {
+        padding: 0.55em 0.75em;
+      }
+
+      #controlsPanelBody {
+        height: auto;
+      }
+
+      #controls {
+        padding: 0.75em;
+      }
+
+      .control-section {
+        flex-basis: 100%;
+        min-width: 0;
+      }
+
+      .control-input-group {
+        align-items: stretch;
+        flex-direction: column;
+      }
+
+      #controlsResizeHandle {
+        display: none;
+      }
     }
 
     input,
@@ -559,101 +779,147 @@
   <input type="hidden" id="file_id" />
   <div id="mainContent">
     <div id="viewerColumn">
-      <div id="controls">
-        <label for="key1_slider">key1 value:</label>
-        <input type="range" id="key1_slider" min="0" max="10000" value="0" step="1" oninput="onKey1Input()"
-          onchange="onKey1Change()" />
-        <input type="number" id="key1_val_display" value="0" min="0" max="10000" step="1" style="width: 60px;"
-          onchange="syncSliderWithInput(); fetchAndPlot()" />
-        <button onclick="fetchAndPlot()">Plot</button>
-        <button id="pickModeBtn" onclick="togglePickMode()">Pick Mode: OFF</button>
-        <select id="layerSelect" onchange="drawSelectedLayer()">
-          <option value="raw" selected>raw</option>
-        </select>
-        <label style="margin-left:8px">Normalization:
-          <select id="scalingMode" onchange="onScalingChange()">
-            <option value="amax" selected>AMAX</option>
-            <option value="tracewise">Tracewise</option>
-          </select>
-        </label>
-        <label style="margin-left:8px">σmax (ms):
-          <input id="sigma_ms_max" type="number" value="20" step="1" min="1" style="width:5em"
-            oninput="onSigmaChange()">
-        </label>
-        <label style="margin-left:8px">Pick:
-          <select id="pick_method" onchange="onPickMethodChange()">
-            <option value="argmax" selected>argmax</option>
-            <option value="expectation">expectation</option>
-          </select>
-        </label>
-        <label style="margin-left:8px">Snap:
-          <select id="snap_mode" onchange="localStorage.setItem('snap_mode', this.value)">
-            <option value="none" selected>none</option>
-            <option value="peak">peak ↑</option>
-            <option value="trough">trough ↓</option>
-            <option value="rise">rise ⇑</option>
-          </select>
-        </label>
-        <label style="margin-left:8px">Subsample:
-          <select id="snap_refine" onchange="localStorage.setItem('snap_refine', this.value)">
-            <option value="none" selected>none</option>
-            <option value="parabolic">parabolic (peak/trough)</option>
-            <option value="zc">zero-cross (rise)</option>
-          </select>
-        </label>
-        <label>±ms:
-          <input id="snap_ms" type="number" value="4" step="0.5" style="width:4.2em"
-            oninput="localStorage.setItem('snap_ms', this.value)">
-        </label>
-        <label><input type="checkbox" id="showFbPred"
-            onchange="localStorage.setItem('showFbPred', this.checked); drawSelectedLayer(renderedStart, renderedEnd)">Show
-          FB
-          predicted</label>
+      <div id="controlsPanel">
+        <div id="controlsPanelBar">
+          <span class="controls-panel-title">Controls</span>
+          <button type="button" id="controlsPanelToggle" aria-expanded="true" aria-controls="controlsPanelBody">Hide Controls</button>
+        </div>
+        <div id="controlsPanelBody">
+          <div id="controls">
+            <section class="control-section control-section-navigation" aria-labelledby="controls-navigation-title">
+              <h2 id="controls-navigation-title" class="control-section-heading">Navigation</h2>
+              <div class="control-stack">
+                <label for="key1_slider" class="control-field">key1 value:
+                  <span class="key1-display">section selector</span>
+                </label>
+                <div class="control-input-group">
+                  <input type="range" id="key1_slider" min="0" max="10000" value="0" step="1" oninput="onKey1Input()"
+                    onchange="onKey1Change()" />
+                  <input type="number" id="key1_val_display" value="0" min="0" max="10000" step="1" style="width: 60px;"
+                    onchange="syncSliderWithInput(); fetchAndPlot()" />
+                  <button type="button" onclick="fetchAndPlot()">Plot</button>
+                </div>
+              </div>
+            </section>
 
-        <label id="fbpick_model_select_label" style="margin-left:8px; display:none;">FB model:
-          <select id="fbpick_model_select" disabled></select>
-        </label>
+            <section class="control-section control-section-picking" aria-labelledby="controls-picking-title">
+              <h2 id="controls-picking-title" class="control-section-heading">Picking</h2>
+              <div class="control-button-row">
+                <button id="pickModeBtn" onclick="togglePickMode()">Pick Mode: OFF</button>
+              </div>
+              <div class="control-row">
+                <label class="control-field">Pick method:
+                  <select id="pick_method" onchange="onPickMethodChange()">
+                    <option value="argmax" selected>argmax</option>
+                    <option value="expectation">expectation</option>
+                  </select>
+                </label>
+                <label class="control-field">σmax (ms):
+                  <input id="sigma_ms_max" type="number" value="20" step="1" min="1" style="width:5em"
+                    oninput="onSigmaChange()">
+                </label>
+                <label class="control-field">Snap:
+                  <select id="snap_mode" onchange="localStorage.setItem('snap_mode', this.value)">
+                    <option value="none" selected>none</option>
+                    <option value="peak">peak ↑</option>
+                    <option value="trough">trough ↓</option>
+                    <option value="rise">rise ⇑</option>
+                  </select>
+                </label>
+                <label class="control-field">Subsample:
+                  <select id="snap_refine" onchange="localStorage.setItem('snap_refine', this.value)">
+                    <option value="none" selected>none</option>
+                    <option value="parabolic">parabolic (peak/trough)</option>
+                    <option value="zc">zero-cross (rise)</option>
+                  </select>
+                </label>
+                <label class="control-field">±ms:
+                  <input id="snap_ms" type="number" value="4" step="0.5" style="width:4.2em"
+                    oninput="localStorage.setItem('snap_ms', this.value)">
+                </label>
+              </div>
+              <div class="control-row">
+                <label class="control-field"><input type="checkbox" id="showFbPred"
+                    onchange="localStorage.setItem('showFbPred', this.checked); drawSelectedLayer(renderedStart, renderedEnd)">Show FB predicted</label>
+                <label id="fbpick_model_select_label" class="control-field" style="display:none;">FB model:
+                  <select id="fbpick_model_select" disabled></select>
+                </label>
+                <button id="predictFbBtn" type="button" onclick="predictFromFb()">Predict from FB</button>
+              </div>
+              <div class="control-subgroup" aria-label="Manual picks import and export">
+                <div class="control-subgroup-title">Manual Picks</div>
+                <div class="control-button-row">
+                  <button type="button" id="export-manual-picks-npz" onclick="exportManualPicksNpz()">Export manual picks (.npz)</button>
+                  <button type="button" id="export-manual-picks-grstat-txt" onclick="exportManualPicksGrstatTxt()">Export manual picks (.txt IRAS)</button>
+                  <button type="button" id="import-manual-picks-npz" onclick="triggerManualPicksImportNpz()">Import manual picks (.npz)</button>
+                </div>
+                <div class="control-row">
+                  <label class="control-field">Import mode:
+                    <select id="manual-picks-import-mode">
+                      <option value="replace" selected>replace</option>
+                      <option value="merge">merge</option>
+                    </select>
+                  </label>
+                </div>
+              </div>
+              <input type="file" id="manual-picks-import-input" accept=".npz" style="display:none" onchange="onManualPicksImportInputChange(event)">
+            </section>
 
-        <button id="predictFbBtn" onclick="predictFromFb()">Predict from FB</button>
-        <button type="button" id="export-manual-picks-npz" onclick="exportManualPicksNpz()">Export manual picks (.npz)</button>
-        <button type="button" id="export-manual-picks-grstat-txt" onclick="exportManualPicksGrstatTxt()">Export manual picks (.txt IRAS)</button>
-        <button type="button" id="import-manual-picks-npz" onclick="triggerManualPicksImportNpz()">Import manual picks (.npz)</button>
-        <label style="margin-left:8px">Import mode:
-          <select id="manual-picks-import-mode">
-            <option value="replace" selected>replace</option>
-            <option value="merge">merge</option>
-          </select>
-        </label>
-        <input type="file" id="manual-picks-import-input" accept=".npz" style="display:none" onchange="onManualPicksImportInputChange(event)">
-        <label for="gain">Gain:</label>
-        <input type="range" id="gain" min="0.1" max="5" step="0.1" value="1" oninput="onGainChange()" />
-        <span id="gain_display">1×</span>
-        <label style="margin-left:8px">Wiggle threshold:
-        <input id="wiggle_density" type="number" min="0.02" max="0.30" step="0.01" value="0.20"
-          oninput="onWiggleDensityChange()">
-        </label>
-        <label for="colormap">Colormap:</label>
-        <select id="colormap" onchange="onColormapChange()">
-          <option value="Greys">Greys</option>
-          <option value="RdBu">RdBu</option>
-          <option value="BWR">BWR</option>
-          <option value="Cividis">Cividis</option>
-          <option value="Jet">Jet</option>
-        </select>
-        <label><input type="checkbox" id="cmReverse" onchange="onColormapChange()">reverse</label>
-        <div id="opStatusLine" class="op-status" role="status" aria-live="polite" aria-atomic="false">
-          <span id="op-status-export" class="op-status-chip is-idle">
-            <span class="op-label">Export:</span>
-            <span class="op-value">idle</span>
-          </span>
-          <span id="op-status-import" class="op-status-chip is-idle">
-            <span class="op-label">Import:</span>
-            <span class="op-value">idle</span>
-          </span>
-          <span id="op-status-predict" class="op-status-chip is-idle">
-            <span class="op-label">Predict:</span>
-            <span class="op-value">idle</span>
-          </span>
+            <section class="control-section control-section-display" aria-labelledby="controls-display-title">
+              <h2 id="controls-display-title" class="control-section-heading">Display</h2>
+              <div class="control-row">
+                <label class="control-field">Layer:
+                  <select id="layerSelect" onchange="drawSelectedLayer()">
+                    <option value="raw" selected>raw</option>
+                  </select>
+                </label>
+                <label class="control-field">Normalization:
+                  <select id="scalingMode" onchange="onScalingChange()">
+                    <option value="amax" selected>AMAX</option>
+                    <option value="tracewise">Tracewise</option>
+                  </select>
+                </label>
+                <label class="control-field">Colormap:
+                  <select id="colormap" onchange="onColormapChange()">
+                    <option value="Greys">Greys</option>
+                    <option value="RdBu">RdBu</option>
+                    <option value="BWR">BWR</option>
+                    <option value="Cividis">Cividis</option>
+                    <option value="Jet">Jet</option>
+                  </select>
+                </label>
+                <label class="control-field"><input type="checkbox" id="cmReverse" onchange="onColormapChange()">reverse</label>
+              </div>
+              <div class="control-row">
+                <label for="gain" class="control-field">Gain:</label>
+                <input type="range" id="gain" min="0.1" max="5" step="0.1" value="1" oninput="onGainChange()" />
+                <span id="gain_display">1×</span>
+                <label class="control-field">Wiggle threshold:
+                  <input id="wiggle_density" type="number" min="0.02" max="0.30" step="0.01" value="0.20"
+                    oninput="onWiggleDensityChange()">
+                </label>
+              </div>
+            </section>
+
+            <section class="control-section control-section-status" aria-labelledby="controls-status-title">
+              <h2 id="controls-status-title" class="control-section-heading">Status</h2>
+              <div id="opStatusLine" class="op-status" role="status" aria-live="polite" aria-atomic="false">
+                <span id="op-status-export" class="op-status-chip is-idle">
+                  <span class="op-label">Export:</span>
+                  <span class="op-value">idle</span>
+                </span>
+                <span id="op-status-import" class="op-status-chip is-idle">
+                  <span class="op-label">Import:</span>
+                  <span class="op-value">idle</span>
+                </span>
+                <span id="op-status-predict" class="op-status-chip is-idle">
+                  <span class="op-label">Predict:</span>
+                  <span class="op-value">idle</span>
+                </span>
+              </div>
+            </section>
+          </div>
+          <div id="controlsResizeHandle" role="separator" aria-orientation="horizontal" aria-label="Resize controls panel"></div>
         </div>
       </div>
       <div id="plotViewport">
@@ -709,7 +975,9 @@
       if (opened) opened.opener = null;
     }
   </script>
-  <script type="module" src="/static/assets/main.js"></script>
+  <script src="/static/plotly-2.29.1.min.js"></script>
+  <script src="/static/pako.min.js"></script>
+  <script src="/static/msgpack.min.js"></script>
   <script src="/static/api.js"></script>
   <script src="/static/pipeline/events.js"></script>
   <script src="/static/pipeline/progressOverlay.js"></script>
@@ -728,6 +996,131 @@
   <script src="/static/viewer/window_render.js"></script>
   <script src="/static/viewer/window_fetch.js"></script>
   <script src="/static/viewer/viewer_legacy.js"></script>
+  <script>
+    (function initControlsPanel() {
+      const STORAGE_OPEN = 'sv.controls_panel.open';
+      const STORAGE_HEIGHT = 'sv.controls_panel.height';
+      const DEFAULT_HEIGHT = 270;
+      const MIN_HEIGHT = 120;
+      const MOBILE_BREAKPOINT = 640;
+
+      function clampHeight(nextHeight) {
+        const viewportHeight = window.innerHeight || document.documentElement.clientHeight || DEFAULT_HEIGHT;
+        const maxHeight = Math.max(MIN_HEIGHT, Math.floor(viewportHeight * 0.6));
+        return Math.min(maxHeight, Math.max(MIN_HEIGHT, Math.round(nextHeight)));
+      }
+
+      function isMobileLayout() {
+        return window.innerWidth <= MOBILE_BREAKPOINT;
+      }
+
+      function schedulePlotResize() {
+        const plotDiv = document.getElementById('plot');
+        if (!plotDiv || typeof window.maybeResizePlot !== 'function') return;
+        window.requestAnimationFrame(() => {
+          window.maybeResizePlot(plotDiv, true).catch((err) => console.warn('controls panel resize failed', err));
+        });
+      }
+
+      window.addEventListener('DOMContentLoaded', () => {
+        const panel = document.getElementById('controlsPanel');
+        const body = document.getElementById('controlsPanelBody');
+        const toggle = document.getElementById('controlsPanelToggle');
+        const handle = document.getElementById('controlsResizeHandle');
+        if (!panel || !body || !toggle || !handle) return;
+
+        let dragging = false;
+        let dragStartY = 0;
+        let dragStartHeight = DEFAULT_HEIGHT;
+        let currentHeight = DEFAULT_HEIGHT;
+        let isOpen = true;
+
+        function persistState() {
+          try {
+            localStorage.setItem(STORAGE_OPEN, isOpen ? 'true' : 'false');
+            localStorage.setItem(STORAGE_HEIGHT, String(currentHeight));
+          } catch (_) {
+          }
+        }
+
+        function applyHeight(nextHeight, options) {
+          currentHeight = clampHeight(nextHeight);
+          if (isMobileLayout()) {
+            body.style.removeProperty('height');
+          } else {
+            body.style.height = currentHeight + 'px';
+          }
+          if (!options || options.persist !== false) persistState();
+        }
+
+        function applyOpenState(nextOpen, options) {
+          isOpen = !!nextOpen;
+          panel.classList.toggle('is-collapsed', !isOpen);
+          toggle.setAttribute('aria-expanded', isOpen ? 'true' : 'false');
+          toggle.textContent = isOpen ? 'Hide Controls' : 'Show Controls';
+          body.hidden = !isOpen;
+          if (isOpen) {
+            applyHeight(currentHeight, { persist: false });
+          }
+          if (!options || options.persist !== false) persistState();
+          schedulePlotResize();
+        }
+
+        try {
+          const storedOpen = localStorage.getItem(STORAGE_OPEN);
+          if (storedOpen === 'false') isOpen = false;
+          const storedHeight = Number(localStorage.getItem(STORAGE_HEIGHT));
+          if (Number.isFinite(storedHeight) && storedHeight > 0) {
+            currentHeight = clampHeight(storedHeight);
+          }
+        } catch (_) {
+        }
+
+        applyHeight(currentHeight, { persist: false });
+        applyOpenState(isOpen, { persist: false });
+
+        toggle.addEventListener('click', () => {
+          applyOpenState(!isOpen);
+        });
+
+        handle.addEventListener('pointerdown', (event) => {
+          if (!isOpen || isMobileLayout()) return;
+          dragging = true;
+          dragStartY = event.clientY;
+          dragStartHeight = body.getBoundingClientRect().height;
+          panel.classList.add('is-resizing');
+          handle.setPointerCapture(event.pointerId);
+          event.preventDefault();
+        });
+
+        handle.addEventListener('pointermove', (event) => {
+          if (!dragging) return;
+          const deltaY = event.clientY - dragStartY;
+          applyHeight(dragStartHeight + deltaY, { persist: false });
+          schedulePlotResize();
+        });
+
+        function finishDrag(event) {
+          if (!dragging) return;
+          dragging = false;
+          panel.classList.remove('is-resizing');
+          if (event && typeof handle.releasePointerCapture === 'function' && handle.hasPointerCapture(event.pointerId)) {
+            handle.releasePointerCapture(event.pointerId);
+          }
+          persistState();
+          schedulePlotResize();
+        }
+
+        handle.addEventListener('pointerup', finishDrag);
+        handle.addEventListener('pointercancel', finishDrag);
+
+        window.addEventListener('resize', () => {
+          applyHeight(currentHeight, { persist: false });
+          schedulePlotResize();
+        });
+      });
+    })();
+  </script>
   <div id="ppOverlay">
     <div class="ppCard">
       <div class="ppTitle">Pipeline running…</div>

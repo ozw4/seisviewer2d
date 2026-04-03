@@ -19,8 +19,8 @@ ENV HTTP_PROXY=${HTTP_PROXY} \
     NO_PROXY=${NO_PROXY} \
     DEBIAN_FRONTEND=noninteractive
 
-# Playwright browsers shared path (root installs, non-root runs)
 ENV PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
+ENV PYTHONPATH="/workspace:${PYTHONPATH}:"
 
 RUN echo "ttf-mscorefonts-installer msttcorefonts/accepted-mscorefonts-eula select true" | debconf-set-selections
 
@@ -32,6 +32,7 @@ RUN --mount=type=cache,target=/var/lib/apt,sharing=locked \
     gnupg \
     git \
     git-lfs \
+    gh \
     fontconfig \
     ttf-mscorefonts-installer \
     && git lfs install --system \
@@ -48,27 +49,25 @@ RUN --mount=type=cache,target=/root/.cache/pip,sharing=locked \
     pip install torchaudio==2.7.0
 
 RUN --mount=type=cache,target=/root/.cache/pip,sharing=locked \
-    --mount=type=bind,source=.devcontainer/requirements-dev.txt,target=requirements-dev.txt \
-    python -m pip install -r requirements-dev.txt
+    --mount=type=bind,source=.devcontainer/requirements-dev.txt,target=/tmp/requirements-dev.txt \
+    python -m pip install -r /tmp/requirements-dev.txt
 
 RUN --mount=type=cache,target=/root/.cache/pip,sharing=locked \
     python -m pip install --no-cache-dir ruff
 
-# Install Playwright + Chromium into shared path
 RUN mkdir -p /ms-playwright \
     && python -m playwright install --with-deps chromium \
     && chmod -R a+rX /ms-playwright
 
 RUN addgroup --gid $GID $USERNAME \
-    && adduser --disabled-password --gecos "" --shell "/bin/bash" --uid $UID --gid $GID $USERNAME \
+    && adduser --disabled-password --gecos "" --shell /bin/bash --uid $UID --gid $GID $USERNAME \
     && chown -R $UID:$GID /ms-playwright
 
 USER $USERNAME
 
-COPY --chown=$UID:$GID ruff.toml /home/$USERNAME/
-
-ENV PYTHONPATH="/workspace:${PYTHONPATH}:"
-ENV PATH="$HOME/.local/bin:$PATH"
+ENV PATH="/home/${USERNAME}/.local/bin:${PATH}"
 WORKDIR /workspace
+
+COPY --chown=$UID:$GID ruff.toml /home/$USERNAME/
 
 CMD ["/bin/bash"]

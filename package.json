@@ -1,0 +1,14 @@
+{
+	"name": "seisviewer2d-refactor-view-devtools",
+	"private": true,
+	"type": "module",
+	"scripts": {
+		"test:e2e": "playwright test",
+		"test:e2e:ui": "playwright test --ui",
+		"test:e2e:debug": "playwright test --debug",
+		"codegen": "playwright codegen http://127.0.0.1:8000/upload"
+	},
+	"devDependencies": {
+		"@playwright/test": "^1.58.2"
+	}
+}

@@ -41,7 +41,9 @@ test/
 *.so
 *.o
 *.a
-
+node_modules/
+playwright-report/
+test-results/
 node_modules/
 web/dist/
 static/assets/
