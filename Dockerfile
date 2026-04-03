@@ -1,6 +1,5 @@
 # syntax=docker/dockerfile:1
 
-
 FROM nvcr.io/nvidia/pytorch:24.09-py3 AS develop
 
 ARG USERNAME=dcuser
@@ -10,7 +9,7 @@ ARG GID=1000
 ARG HTTP_PROXY
 ARG HTTPS_PROXY
 ARG NO_PROXY
-#ENV CFLAGS="-w" CXXFLAGS="-w"
+
 ENV HTTP_PROXY=${HTTP_PROXY} \
     HTTPS_PROXY=${HTTPS_PROXY} \
     NO_PROXY=${NO_PROXY} \
@@ -21,7 +20,9 @@ RUN echo "ttf-mscorefonts-installer msttcorefonts/accepted-mscorefonts-eula sele
 RUN --mount=type=cache,target=/var/lib/apt,sharing=locked \
     --mount=type=cache,target=/var/cache/apt,sharing=locked \
     apt-get update && apt-get install -y --no-install-recommends \
+    ca-certificates \
     fontconfig \
+    git \
     ttf-mscorefonts-installer \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
@@ -36,15 +37,26 @@ RUN --mount=type=cache,target=/root/.cache/pip,sharing=locked \
     python -m pip install -r requirements-dev.txt
 
 RUN python -m playwright install --with-deps chromium
+
 RUN curl -fsSL https://deb.nodesource.com/setup_20.x | bash - \
- && apt-get install -y nodejs
+ && apt-get update \
+ && apt-get install -y --no-install-recommends nodejs \
+ && npm install -g @openai/codex@latest \
+ && codex --version \
+ && npm cache clean --force \
+ && rm -rf /var/lib/apt/lists/*
+
 RUN addgroup --gid $GID $USERNAME && \
-    adduser --disabled-password --gecos "" --shell "/sbin/nologin" --uid $UID --gid $GID $USERNAME
+    adduser --disabled-password --gecos "" --shell "/bin/bash" --uid $UID --gid $GID $USERNAME && \
+    mkdir -p /home/$USERNAME/.codex && \
+    chown -R $USERNAME:$USERNAME /home/$USERNAME
 
 USER $USERNAME
+ENV HOME=/home/$USERNAME \
+    CODEX_HOME=/home/$USERNAME/.codex \
+    PYTHONPATH="${PYTHONPATH}:/workspace/konietse-DAS-CN2S-cb0ee28:/workspace"
 
-COPY ruff.toml /home/$USERNAME
-ENV PYTHONPATH="${PYTHONPATH}:/workspace/konietse-DAS-CN2S-cb0ee28:/workspace"
+COPY --chown=$USERNAME:$USERNAME ruff.toml /home/$USERNAME/
 WORKDIR /workspace
 
 CMD ["/bin/bash"]
