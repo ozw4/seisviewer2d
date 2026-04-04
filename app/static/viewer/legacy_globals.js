@@ -1,6 +1,6 @@
     /* Adopt globals provided by /static/viewer/bootstrap.js */
     var setGrid, getPlotEnv, dataXYFromClient, traceAtPixel, timeAtPixel, pixelForTrace,
-        snapTraceFromDataX, snapTimeFromDataY, buildLayout, buildPickShapes, buildPickMarkerTraces;
+        snapTraceFromDataX, snapTimeFromDataY, buildLayout, buildPickShapes, buildPickMarkerTraces, buildPendingPickMarkerTrace;
     var key1Values = [];
     var currentFileId = '';
     var currentFileName = ''; // NEW: basename (e.g., LineA.sgy)

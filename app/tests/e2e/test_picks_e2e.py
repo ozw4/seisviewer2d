@@ -13,7 +13,7 @@ def _get_query_param(url: str, key: str) -> str:
     return v[0]
 
 
-def _click_plot_center(page) -> None:
+def _click_plot_center(page, *, modifiers: list[str] | None = None) -> None:
     x, y = page.evaluate(
         """() => {
           const env = getPlotEnv();
@@ -24,7 +24,14 @@ def _click_plot_center(page) -> None:
         }"""
     )
     assert x is not None and y is not None
-    page.mouse.click(x, y)
+    pressed = modifiers or []
+    for key in pressed:
+        page.keyboard.down(key)
+    try:
+        page.mouse.click(x, y)
+    finally:
+        for key in reversed(pressed):
+            page.keyboard.up(key)
 
 
 @pytest.mark.e2e
@@ -109,5 +116,92 @@ def test_add_single_pick_then_get(page, base_url, tiny_segy_path, e2e_debug):
         time.sleep(0.1)
 
     assert matched, f"Pick not found via GET /picks. last={last}"
+
+    e2e_debug.assert_clean()
+
+
+@pytest.mark.e2e
+def test_pending_pick_anchors_are_visible_without_write(
+    page, base_url, tiny_segy_path, e2e_debug
+):
+    page.set_default_timeout(60_000)
+
+    page.goto(f"{base_url}/upload", wait_until="domcontentloaded")
+    page.select_option("#key1_byte", "189")
+    page.select_option("#key2_byte", "193")
+    page.set_input_files("#upload_segy", str(tiny_segy_path))
+    page.click("#upload_btn")
+
+    page.wait_for_url("**/?file_id=*", timeout=60_000)
+    page.wait_for_load_state("domcontentloaded")
+
+    plot_btn = page.locator("button:has-text('Plot')")
+    with page.expect_response(
+        lambda r: "/get_section_window_bin" in r.url and r.status == 200,
+        timeout=60_000,
+    ):
+        plot_btn.click()
+
+    page.wait_for_selector("#plot.js-plotly-plot", timeout=60_000)
+    page.wait_for_selector("#plot .plot-container", timeout=60_000)
+
+    page.select_option("#snap_mode", "none")
+    page.select_option("#snap_refine", "none")
+
+    page.locator("#pickModeBtn").click()
+    page.wait_for_function(
+        "() => document.getElementById('pickModeBtn')?.classList.contains('active') === true"
+    )
+
+    pick_posts: list[dict] = []
+
+    def on_request(req):
+        if req.method == "POST" and "/picks" in req.url:
+            body = req.post_data
+            if body:
+                pick_posts.append(json.loads(body))
+
+    page.on("request", on_request)
+
+    _click_plot_center(page, modifiers=["Shift"])
+    page.wait_for_function(
+        """() => {
+          const text = document.getElementById('pendingPickStatus')?.textContent || '';
+          return text.includes('Line pick anchor:');
+        }"""
+    )
+    page.wait_for_function(
+        """() => {
+          const gd = document.getElementById('plot');
+          const tr = Array.isArray(gd?.data)
+            ? gd.data.find((item) => item?.meta?.svRole === 'pick' && item?.meta?.svKind === 'pending')
+            : null;
+          return !!(tr && tr.visible && Array.isArray(tr.x) ? tr.x.length === 1 : tr?.x?.length === 1);
+        }"""
+    )
+    assert pick_posts == []
+
+    page.keyboard.up("Shift")
+    page.wait_for_function(
+        "() => document.getElementById('pendingPickStatus')?.hidden === true"
+    )
+
+    _click_plot_center(page, modifiers=["Control"])
+    page.wait_for_function(
+        """() => {
+          const text = document.getElementById('pendingPickStatus')?.textContent || '';
+          return text.includes('Delete range anchor:');
+        }"""
+    )
+    page.wait_for_function(
+        """() => {
+          const gd = document.getElementById('plot');
+          const tr = Array.isArray(gd?.data)
+            ? gd.data.find((item) => item?.meta?.svRole === 'pick' && item?.meta?.svKind === 'pending')
+            : null;
+          return !!(tr && tr.visible && tr.mode === 'lines' && tr.x?.length === 2 && tr.y?.length === 2);
+        }"""
+    )
+    assert pick_posts == []
 
     e2e_debug.assert_clean()

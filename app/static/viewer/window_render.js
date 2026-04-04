@@ -137,23 +137,31 @@
 
       const cachedManual = gd ? gd.__svPickIdxManual : -1;
       const cachedPred = gd ? gd.__svPickIdxPred : -1;
-      if (isPickIdx(cachedManual, 'manual') && isPickIdx(cachedPred, 'pred')) {
-        return { manualIdx: cachedManual, predIdx: cachedPred };
+      const cachedPending = gd ? gd.__svPickIdxPending : -1;
+      if (
+        isPickIdx(cachedManual, 'manual') &&
+        isPickIdx(cachedPred, 'pred') &&
+        isPickIdx(cachedPending, 'pending')
+      ) {
+        return { manualIdx: cachedManual, predIdx: cachedPred, pendingIdx: cachedPending };
       }
 
       let manualIdx = -1;
       let predIdx = -1;
+      let pendingIdx = -1;
       for (let i = 0; i < data.length; i++) {
         const tr = data[i];
         if (!tr || !tr.meta || tr.meta.svRole !== 'pick') continue;
         if (tr.meta.svKind === 'manual' && manualIdx < 0) manualIdx = i;
         if (tr.meta.svKind === 'pred' && predIdx < 0) predIdx = i;
+        if (tr.meta.svKind === 'pending' && pendingIdx < 0) pendingIdx = i;
       }
       if (gd) {
         gd.__svPickIdxManual = manualIdx;
         gd.__svPickIdxPred = predIdx;
+        gd.__svPickIdxPending = pendingIdx;
       }
-      return { manualIdx, predIdx };
+      return { manualIdx, predIdx, pendingIdx };
     }
     window.resolvePickTraceIndices = resolvePickTraceIndices;
     function makeWiggleSig(opts) {
@@ -262,7 +270,7 @@
       const hasPlotData = Array.isArray(plotDiv.data) && plotDiv.data.length > 0;
       const wiggleIdxs = resolveWiggleTraceIndices(plotDiv);
       const pickTraceIdxs = resolvePickTraceIndices(plotDiv);
-      const hasPickTraces = pickTraceIdxs.manualIdx >= 0 && pickTraceIdxs.predIdx >= 0;
+      const hasPickTraces = pickTraceIdxs.manualIdx >= 0 && pickTraceIdxs.predIdx >= 0 && pickTraceIdxs.pendingIdx >= 0;
       if (!hasPickTraces && hasPlotData && prevMode === 'wiggle') {
         console.warn('[RENDER@wiggle][PICKS] missing pick traces; forcing react init');
       }
@@ -390,6 +398,13 @@
         xMax: endTrace,
         showPredicted: showPred,
       });
+      const pendingPickTr = buildPendingPickMarkerTrace({
+        pending: typeof window.getPendingPickOverlayState === 'function'
+          ? window.getPendingPickOverlayState()
+          : null,
+        yMin: Math.min(time[0], time[rows - 1]),
+        yMax: Math.max(time[0], time[rows - 1]),
+      });
       const pickManualCount = manualPickTr.x ? manualPickTr.x.length : 0;
       const pickPredCount = predPickTr.x ? predPickTr.x.length : 0;
       const [x0v, x1v] = visibleXRng();
@@ -401,9 +416,10 @@
       });
       if (perfEnabled) tPrep1 = performance.now();
       if (needsReactInit) {
-        traces.push(manualPickTr, predPickTr);
-        plotDiv.__svPickIdxManual = traces.length - 2;
-        plotDiv.__svPickIdxPred = traces.length - 1;
+        traces.push(manualPickTr, predPickTr, pendingPickTr);
+        plotDiv.__svPickIdxManual = traces.length - 3;
+        plotDiv.__svPickIdxPred = traces.length - 2;
+        plotDiv.__svPickIdxPending = traces.length - 1;
 
         const totalSamples = sectionShape ? sectionShape[1] : (typeof y1 === 'number' ? y1 - y0 + 1 : rows);
         const layout = buildLayout({
@@ -438,16 +454,19 @@
             y: wiggleY,
           }, wiggleIdxs))
           .then(() => {
-            const { manualIdx, predIdx } = resolvePickTraceIndices(plotDiv);
-            if (manualIdx < 0 || predIdx < 0) {
+            const { manualIdx, predIdx, pendingIdx } = resolvePickTraceIndices(plotDiv);
+            if (manualIdx < 0 || predIdx < 0 || pendingIdx < 0) {
               console.warn('[RENDER@wiggle][PICKS] pick traces missing on restyle path');
               return;
             }
             return Plotly.restyle(plotDiv, {
-              x: [manualPickTr.x, predPickTr.x],
-              y: [manualPickTr.y, predPickTr.y],
-              visible: [true, !!showPred],
-            }, [manualIdx, predIdx]);
+              x: [manualPickTr.x, predPickTr.x, pendingPickTr.x],
+              y: [manualPickTr.y, predPickTr.y, pendingPickTr.y],
+              visible: [true, !!showPred, !!pendingPickTr.visible],
+              mode: [manualPickTr.mode, predPickTr.mode, pendingPickTr.mode],
+              marker: [manualPickTr.marker, predPickTr.marker, pendingPickTr.marker],
+              line: [manualPickTr.line, predPickTr.line, pendingPickTr.line],
+            }, [manualIdx, predIdx, pendingIdx]);
           });
         if (perfEnabled) tPlot0 = performance.now();
         plotPromise = withSuppressedRelayout(diffUpdatePromise);
@@ -525,7 +544,7 @@
       const heatIdx = resolveHeatmapTraceIndex(plotDiv);
       const prevMode = plotDiv.__svPlotMode;
       const pickTraceIdxs = resolvePickTraceIndices(plotDiv);
-      const hasPickTraces = pickTraceIdxs.manualIdx >= 0 && pickTraceIdxs.predIdx >= 0;
+      const hasPickTraces = pickTraceIdxs.manualIdx >= 0 && pickTraceIdxs.predIdx >= 0 && pickTraceIdxs.pendingIdx >= 0;
       if (!hasPickTraces && Array.isArray(plotDiv.data) && plotDiv.data.length > 0 && prevMode === 'heatmap') {
         console.warn('[RENDER@heatmap][PICKS] missing pick traces; forcing react init');
       }
@@ -668,6 +687,13 @@
         xMax: x1,
         showPredicted: showPred,
       });
+      const pendingPickTr = buildPendingPickMarkerTrace({
+        pending: typeof window.getPendingPickOverlayState === 'function'
+          ? window.getPendingPickOverlayState()
+          : null,
+        yMin: Math.min(yVals[0], yVals[rows - 1]),
+        yMax: Math.max(yVals[0], yVals[rows - 1]),
+      });
       const pickManualCount = manualPickTr.x ? manualPickTr.x.length : 0;
       const pickPredCount = predPickTr.x ? predPickTr.x.length : 0;
       const [x0v, x1v] = visibleXRng();
@@ -693,9 +719,10 @@
           hoverinfo: 'x+y',
           hovertemplate: '',
         }];
-        traces.push(manualPickTr, predPickTr);
-        plotDiv.__svPickIdxManual = traces.length - 2;
-        plotDiv.__svPickIdxPred = traces.length - 1;
+        traces.push(manualPickTr, predPickTr, pendingPickTr);
+        plotDiv.__svPickIdxManual = traces.length - 3;
+        plotDiv.__svPickIdxPred = traces.length - 2;
+        plotDiv.__svPickIdxPending = traces.length - 1;
 
         const dt = window.defaultDt ?? defaultDt;
         const layout = buildLayout({
@@ -736,16 +763,19 @@
             zmid: [zMid],
           }, [heatIdx]))
           .then(() => {
-            const { manualIdx, predIdx } = resolvePickTraceIndices(plotDiv);
-            if (manualIdx < 0 || predIdx < 0) {
+            const { manualIdx, predIdx, pendingIdx } = resolvePickTraceIndices(plotDiv);
+            if (manualIdx < 0 || predIdx < 0 || pendingIdx < 0) {
               console.warn('[RENDER@heatmap][PICKS] pick traces missing on restyle path');
               return;
             }
             return Plotly.restyle(plotDiv, {
-              x: [manualPickTr.x, predPickTr.x],
-              y: [manualPickTr.y, predPickTr.y],
-              visible: [true, !!showPred],
-            }, [manualIdx, predIdx]);
+              x: [manualPickTr.x, predPickTr.x, pendingPickTr.x],
+              y: [manualPickTr.y, predPickTr.y, pendingPickTr.y],
+              visible: [true, !!showPred, !!pendingPickTr.visible],
+              mode: [manualPickTr.mode, predPickTr.mode, pendingPickTr.mode],
+              marker: [manualPickTr.marker, predPickTr.marker, pendingPickTr.marker],
+              line: [manualPickTr.line, predPickTr.line, pendingPickTr.line],
+            }, [manualIdx, predIdx, pendingIdx]);
           })
           .then(() => Plotly.relayout(plotDiv, {
             title: fbTitle ?? '',

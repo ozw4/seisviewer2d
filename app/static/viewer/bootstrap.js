@@ -1,7 +1,7 @@
 // /viewer/bootstrap.js
 import { createStore } from './store.js';
 import * as GridCore from './core/grid.js';
-import { buildLayout, buildPickShapes, buildPickMarkerTraces } from './core/layout.js';
+import { buildLayout, buildPickShapes, buildPickMarkerTraces, buildPendingPickMarkerTrace } from './core/layout.js';
 import { initPrefs, getPref } from './settings/prefs.js';
 import { cfg } from './core/config.js';
 import { debounce, throttle, rafDebounce } from './core/utils/timing.js';
@@ -164,6 +164,7 @@ window.timeAtPixel = GridCore.timeAtPixel;
 window.buildLayout = buildLayout;
 window.buildPickShapes = buildPickShapes;
 window.buildPickMarkerTraces = buildPickMarkerTraces;
+window.buildPendingPickMarkerTrace = buildPendingPickMarkerTrace;
 
 // Initialize preferences (applies to DOM & sets listeners)
 initPrefs({

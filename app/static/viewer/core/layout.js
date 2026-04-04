@@ -174,3 +174,73 @@ export function buildPickMarkerTraces({
 
   return [manualTrace, predTrace];
 }
+
+export function buildPendingPickMarkerTrace({
+  pending,
+  yMin,
+  yMax,
+}) {
+  const hiddenTrace = {
+    type: 'scatter',
+    mode: 'markers',
+    x: [],
+    y: [],
+    visible: false,
+    hoverinfo: 'skip',
+    showlegend: false,
+    cliponaxis: false,
+    meta: { svRole: 'pick', svKind: 'pending' },
+  };
+
+  if (!pending || typeof pending !== 'object') return hiddenTrace;
+
+  if (
+    pending.kind === 'line' &&
+    Number.isFinite(pending.trace) &&
+    Number.isFinite(pending.time)
+  ) {
+    return {
+      type: 'scatter',
+      mode: 'markers',
+      x: new Float32Array([pending.trace]),
+      y: new Float32Array([pending.time]),
+      marker: {
+        symbol: 'diamond-open',
+        color: '#f59e0b',
+        size: 16,
+        line: { color: '#b45309', width: 2 },
+      },
+      hoverinfo: 'skip',
+      showlegend: false,
+      cliponaxis: false,
+      visible: true,
+      meta: { svRole: 'pick', svKind: 'pending' },
+    };
+  }
+
+  if (
+    pending.kind === 'delete-range' &&
+    Number.isFinite(pending.trace) &&
+    Number.isFinite(yMin) &&
+    Number.isFinite(yMax)
+  ) {
+    return {
+      type: 'scatter',
+      mode: 'lines',
+      x: new Float32Array([pending.trace, pending.trace]),
+      y: new Float32Array([yMin, yMax]),
+      line: {
+        color: '#b91c1c',
+        width: 2,
+        dash: 'dash',
+      },
+      hoverinfo: 'skip',
+      showlegend: false,
+      cliponaxis: false,
+      visible: true,
+      meta: { svRole: 'pick', svKind: 'pending' },
+    };
+  }
+
+  return hiddenTrace;
+}

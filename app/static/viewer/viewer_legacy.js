@@ -72,6 +72,76 @@
     var linePickStart = null;
     var deleteRangeStart = null;
     let manualPickUndoStack = [];
+
+    function formatPendingPickTime(time) {
+      return Number(time).toFixed(3);
+    }
+
+    function getPendingPickOverlayState() {
+      if (linePickStart && Number.isFinite(linePickStart.trace) && Number.isFinite(linePickStart.time)) {
+        return {
+          kind: 'line',
+          trace: linePickStart.trace | 0,
+          time: Number(linePickStart.time),
+        };
+      }
+      if (deleteRangeStart !== null && Number.isFinite(deleteRangeStart)) {
+        return {
+          kind: 'delete-range',
+          trace: deleteRangeStart | 0,
+        };
+      }
+      return null;
+    }
+
+    function renderPendingPickStatus() {
+      const node = document.getElementById('pendingPickStatus');
+      if (!node) return;
+      const pending = getPendingPickOverlayState();
+      if (!pending) {
+        node.textContent = '';
+        node.hidden = true;
+        return;
+      }
+      if (pending.kind === 'line') {
+        node.textContent = `Line pick anchor: trace ${pending.trace}, time ${formatPendingPickTime(pending.time)} s`;
+      } else {
+        node.textContent = `Delete range anchor: trace ${pending.trace}`;
+      }
+      node.hidden = false;
+    }
+
+    function syncPendingPickUi() {
+      renderPendingPickStatus();
+      schedulePickOverlayUpdate();
+    }
+
+    function clearPendingPickState(reason = '', options = {}) {
+      const keepLine = options.keepLine === true;
+      const keepDeleteRange = options.keepDeleteRange === true;
+      const prevLine = !!linePickStart;
+      const prevDelete = deleteRangeStart !== null;
+      if (!keepLine) linePickStart = null;
+      if (!keepDeleteRange) deleteRangeStart = null;
+      if (prevLine || prevDelete || reason) {
+        D('PICKS@pending:clear', { reason, keepLine, keepDeleteRange });
+      }
+      syncPendingPickUi();
+    }
+
+    function setLinePickAnchor(trace, time) {
+      linePickStart = { trace: trace | 0, time: Number(time) };
+      deleteRangeStart = null;
+      syncPendingPickUi();
+    }
+
+    function setDeleteRangeAnchor(trace) {
+      deleteRangeStart = trace | 0;
+      linePickStart = null;
+      syncPendingPickUi();
+    }
+
+    window.getPendingPickOverlayState = getPendingPickOverlayState;
     let manualPickRedoStack = [];
     let applyingManualPickHistory = false;
 
@@ -611,8 +681,7 @@
     function clearManualPickHistory() {
       manualPickUndoStack = [];
       manualPickRedoStack = [];
-      linePickStart = null;
-      deleteRangeStart = null;
+      clearPendingPickState('manual-history-clear');
       updateManualPickHistoryButtons();
     }
 
@@ -879,6 +948,33 @@
       });
     }
 
+    function resolvePendingPickYRange(plotDiv) {
+      const yaRange = plotDiv?._fullLayout?.yaxis?.range;
+      if (
+        Array.isArray(yaRange) &&
+        yaRange.length === 2 &&
+        Number.isFinite(yaRange[0]) &&
+        Number.isFinite(yaRange[1])
+      ) {
+        return {
+          yMin: Math.min(yaRange[0], yaRange[1]),
+          yMax: Math.max(yaRange[0], yaRange[1]),
+        };
+      }
+
+      const dt = Number(window.defaultDt ?? defaultDt) || 1;
+      const wy0 = Number(latestWindowRender?.y0);
+      const wy1 = Number(latestWindowRender?.y1);
+      if (Number.isFinite(wy0) && Number.isFinite(wy1)) {
+        return {
+          yMin: Math.min(wy0 * dt, wy1 * dt),
+          yMax: Math.max(wy0 * dt, wy1 * dt),
+        };
+      }
+
+      return { yMin: 0, yMax: 0 };
+    }
+
     function flushPickOverlayUpdate() {
       if (!pickOverlayDirty) return;
       if (isRelayouting) return;
@@ -932,6 +1028,12 @@
         xMax,
         showPredicted: showPred,
       });
+      const { yMin, yMax } = resolvePendingPickYRange(plotDiv);
+      const pendingPickTr = buildPendingPickMarkerTrace({
+        pending: getPendingPickOverlayState(),
+        yMin,
+        yMax,
+      });
       pickOverlayDirty = false;
       const resolver = (typeof resolvePickTraceIndices === 'function')
         ? resolvePickTraceIndices
@@ -940,17 +1042,20 @@
         console.warn('[PICKS] resolvePickTraceIndices is not available');
         return;
       }
-      const { manualIdx, predIdx } = resolver(plotDiv);
-      if (manualIdx < 0 || predIdx < 0) {
+      const { manualIdx, predIdx, pendingIdx } = resolver(plotDiv);
+      if (manualIdx < 0 || predIdx < 0 || pendingIdx < 0) {
         console.warn('[PICKS] pick traces are missing; overlay restyle skipped');
         if (typeof renderLatestView === 'function') renderLatestView();
         return;
       }
       const restyleResult = Plotly.restyle(plotDiv, {
-        x: [manualPickTr.x, predPickTr.x],
-        y: [manualPickTr.y, predPickTr.y],
-        visible: [true, !!showPred],
-      }, [manualIdx, predIdx]);
+        x: [manualPickTr.x, predPickTr.x, pendingPickTr.x],
+        y: [manualPickTr.y, predPickTr.y, pendingPickTr.y],
+        visible: [true, !!showPred, !!pendingPickTr.visible],
+        mode: [manualPickTr.mode, predPickTr.mode, pendingPickTr.mode],
+        marker: [manualPickTr.marker, predPickTr.marker, pendingPickTr.marker],
+        line: [manualPickTr.line, predPickTr.line, pendingPickTr.line],
+      }, [manualIdx, predIdx, pendingIdx]);
       if (restyleResult && typeof restyleResult.catch === 'function') {
         restyleResult.catch((err) => console.warn('pick overlay restyle failed', err));
       }
@@ -1851,8 +1956,7 @@
       const btn = document.getElementById('pickModeBtn');
       btn.textContent = isPickMode ? 'Pick Mode: ON' : 'Pick Mode: OFF';
       btn.classList.toggle('active', isPickMode);
-      linePickStart = null;
-      deleteRangeStart = null;
+      clearPendingPickState('toggle-pick-mode');
       const plotDiv = document.getElementById('plot');
       if (plotDiv) {
         const relayoutResult = safeRelayout(plotDiv, {
@@ -2462,12 +2566,11 @@
 
         if (ctrlKey) {
           if (deleteRangeStart === null) {
-            deleteRangeStart = trInt;
-            linePickStart = null;
+            setDeleteRangeAnchor(trInt);
             return;
           }
           const x0 = deleteRangeStart;
-          deleteRangeStart = null;
+          clearPendingPickState('delete-range-complete');
           const x1 = trInt;
           const start = Math.min(x0, x1);
           const end = Math.max(x0, x1);
@@ -2487,13 +2590,12 @@
 
         if (shiftKey) {
           if (!linePickStart) {
-            linePickStart = { trace: trInt, time };
-            deleteRangeStart = null;
+            setLinePickAnchor(trInt, time);
             return;
           }
 
           const { trace: x0, time: y0 } = linePickStart;
-          linePickStart = { trace: trInt, time };
+          setLinePickAnchor(trInt, time);
           const x1 = trInt;
           const y1 = time;
           const xStart = Math.round(Math.min(x0, x1));
@@ -2528,8 +2630,7 @@
           return;
         }
 
-        linePickStart = null;
-        deleteRangeStart = null;
+        clearPendingPickState('single-pick');
 
         const promises = [];
         const before = getLocalPickOnTrace(trInt);
@@ -2699,6 +2800,6 @@
 
     window.addEventListener('keyup', (e) => {
       if (e.key === 'Shift') {
-        linePickStart = null;
+        clearPendingPickState('shift-keyup', { keepDeleteRange: true });
       }
     });

@@ -410,6 +410,17 @@
       color: #991b1b;
     }
 
+    .pending-pick-status {
+      margin-top: 0.45em;
+      font-size: 0.82em;
+      color: #92400e;
+      min-height: 1.3em;
+    }
+
+    .pending-pick-status[hidden] {
+      display: none;
+    }
+
     #opToastHost {
       position: fixed;
       right: 12px;
@@ -995,6 +1006,7 @@
                   <span class="op-value">idle</span>
                 </span>
               </div>
+              <div id="pendingPickStatus" class="pending-pick-status" aria-live="polite" aria-atomic="true" hidden></div>
             </section>
           </div>
           <div id="controlsResizeHandle" role="separator" aria-orientation="horizontal" aria-label="Resize controls panel"></div>
