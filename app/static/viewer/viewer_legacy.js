@@ -71,6 +71,9 @@
     var isPickMode = false;
     var linePickStart = null;
     var deleteRangeStart = null;
+    let manualPickUndoStack = [];
+    let manualPickRedoStack = [];
+    let applyingManualPickHistory = false;
 
     let uiResetNonce = 0;
     function currentUiRevision() {
@@ -497,6 +500,7 @@
 
         if (!setOpStatusIfCurrent('import', token, 'running', 'reloading picks...')) return;
         await reloadPicksForCurrentSection();
+        clearManualPickHistory();
         renderLatestView();
         const applied = Number.isFinite(Number(payload?.applied))
           ? Number(payload.applied)
@@ -571,6 +575,141 @@
     // 追加：現在のFB計算に紐づくレイヤ/パイプラインキー
     let currentFbLayer = 'raw';
     let currentFbPipelineKey = null;
+
+    function currentManualPickHistorySectionKey() {
+      const slider = document.getElementById('key1_slider');
+      const idx = slider ? parseInt(slider.value, 10) : 0;
+      const key1Val = key1Values?.[idx];
+      return `${currentFileId}|${currentKey1Byte}|${currentKey2Byte}|${key1Val ?? 'unknown'}`;
+    }
+
+    function cloneManualPick(pick) {
+      if (!pick || !Number.isFinite(pick.trace) || !Number.isFinite(pick.time)) {
+        return null;
+      }
+      return { trace: (pick.trace | 0), time: +pick.time };
+    }
+
+    function getLocalPickOnTrace(traceInt) {
+      const found = picks.find((p) => (p.trace | 0) === traceInt);
+      return cloneManualPick(found);
+    }
+
+    function manualPickStateEquals(a, b) {
+      if (a == null && b == null) return true;
+      if (!a || !b) return false;
+      return (a.trace | 0) === (b.trace | 0) && +a.time === +b.time;
+    }
+
+    function updateManualPickHistoryButtons() {
+      const undoBtn = document.getElementById('manual-picks-undo');
+      const redoBtn = document.getElementById('manual-picks-redo');
+      if (undoBtn) undoBtn.disabled = manualPickUndoStack.length === 0;
+      if (redoBtn) redoBtn.disabled = manualPickRedoStack.length === 0;
+    }
+
+    function clearManualPickHistory() {
+      manualPickUndoStack = [];
+      manualPickRedoStack = [];
+      linePickStart = null;
+      deleteRangeStart = null;
+      updateManualPickHistoryButtons();
+    }
+
+    function pushManualPickHistoryEntry(entry) {
+      if (!entry || !Array.isArray(entry.changes) || entry.changes.length === 0) {
+        updateManualPickHistoryButtons();
+        return;
+      }
+      manualPickUndoStack.push(entry);
+      manualPickRedoStack = [];
+      updateManualPickHistoryButtons();
+    }
+
+    function applyManualPickState(traceInt, pickState) {
+      removeAllPicksOnTrace(traceInt);
+      if (pickState) {
+        upsertLocalPick(traceInt, pickState.time);
+        queueUpsert(traceInt, pickState.time);
+        return;
+      }
+      queueDelete(traceInt);
+    }
+
+    function recordManualPickHistory(changes) {
+      if (applyingManualPickHistory) return;
+      const normalizedChanges = Array.isArray(changes)
+        ? changes
+          .map((change) => {
+            const trace = change?.trace | 0;
+            const before = cloneManualPick(change?.before);
+            const after = cloneManualPick(change?.after);
+            if (!Number.isFinite(trace) || manualPickStateEquals(before, after)) {
+              return null;
+            }
+            return { trace, before, after };
+          })
+          .filter(Boolean)
+        : [];
+      if (normalizedChanges.length === 0) {
+        updateManualPickHistoryButtons();
+        return;
+      }
+      pushManualPickHistoryEntry({
+        sectionKey: currentManualPickHistorySectionKey(),
+        changes: normalizedChanges,
+      });
+    }
+
+    function applyManualPickHistoryEntry(entry, direction) {
+      if (!entry || !Array.isArray(entry.changes) || entry.changes.length === 0) return false;
+      const sectionKey = currentManualPickHistorySectionKey();
+      if (entry.sectionKey !== sectionKey) {
+        console.warn('[PICKS] manual pick history scope mismatch; clearing history', {
+          entrySectionKey: entry.sectionKey,
+          currentSectionKey: sectionKey,
+        });
+        clearManualPickHistory();
+        return false;
+      }
+      const useBefore = direction === 'undo';
+      applyingManualPickHistory = true;
+      try {
+        for (const change of entry.changes) {
+          const trace = change.trace | 0;
+          const targetState = useBefore ? change.before : change.after;
+          applyManualPickState(trace, targetState);
+        }
+        schedulePickOverlayUpdate();
+        return true;
+      } finally {
+        applyingManualPickHistory = false;
+      }
+    }
+
+    function undoManualPickEdit() {
+      if (manualPickUndoStack.length === 0) {
+        updateManualPickHistoryButtons();
+        return;
+      }
+      const entry = manualPickUndoStack.pop();
+      if (applyManualPickHistoryEntry(entry, 'undo')) {
+        manualPickRedoStack.push(entry);
+      }
+      updateManualPickHistoryButtons();
+    }
+
+    function redoManualPickEdit() {
+      if (manualPickRedoStack.length === 0) {
+        updateManualPickHistoryButtons();
+        return;
+      }
+      const entry = manualPickRedoStack.pop();
+      if (applyManualPickHistoryEntry(entry, 'redo')) {
+        manualPickUndoStack.push(entry);
+      }
+      updateManualPickHistoryButtons();
+    }
 
     function getSelectedFbModelId() {
       const sel = document.getElementById('fbpick_model_select');
@@ -1184,11 +1323,24 @@
 
     function handleViewerHotkey(e) {
       if (!canUseGlobalHotkey()) return;
-      if (e.ctrlKey || e.metaKey) return;
-      if (!plotHover) return;
-
       const keyRaw = typeof e.key === 'string' ? e.key : '';
       const key = keyRaw.toLowerCase();
+
+      if (e.ctrlKey || e.metaKey) {
+        const isUndo = key === 'z' && !e.shiftKey;
+        const isRedo = (key === 'z' && e.shiftKey) || key === 'y';
+        if (isUndo || isRedo) {
+          e.preventDefault();
+          if (isUndo) {
+            undoManualPickEdit();
+          } else {
+            redoManualPickEdit();
+          }
+        }
+        return;
+      }
+      if (!plotHover) return;
+
       const allowWithAlt = key === 'g' && e.shiftKey;
       if (e.altKey && !allowWithAlt) return;
 
@@ -2126,6 +2278,7 @@
 
     async function reloadPicksForCurrentSection(key1IdxOrVal) {
       if (!currentFileId) return [];
+      clearManualPickHistory();
 
       const fileId = currentFileId;
       const idxRaw = Number.isInteger(key1IdxOrVal)
@@ -2158,6 +2311,7 @@
     }
 
     async function fetchAndPlot() {
+      clearManualPickHistory();
       snapshotAxesRangesFromDOM();
       console.log('--- fetchAndPlot start ---');
       console.time('Total fetchAndPlot');
@@ -2318,9 +2472,14 @@
           const start = Math.min(x0, x1);
           const end = Math.max(x0, x1);
           const toDelete = picks.filter(p => Math.round(p.trace) >= start && Math.round(p.trace) <= end);
+          const historyChanges = toDelete.map((p) => {
+            const before = cloneManualPick(p);
+            return { trace: before.trace, before, after: null };
+          });
           const promises = toDelete.map(p => deletePick(Math.round(p.trace)));
           picks = picks.filter(p => Math.round(p.trace) < start || Math.round(p.trace) > end);
           await Promise.all(promises);
+          recordManualPickHistory(historyChanges);
           D('PICKS@handlePickNormalized:line', { range: [start, end], count: picks.length });
           schedulePickOverlayUpdate();
           return;
@@ -2342,20 +2501,28 @@
           const slope = x1 === x0 ? 0 : (y1 - y0) / (x1 - x0);
 
           const promises = [];
+          const historyChanges = [];
           for (let x = xStart; x <= xEnd; x++) {
             const y = x1 === x0 ? y1 : y0 + slope * (x - x0);
             const snapped = snapTimeFromDataY(y);
             const tAdj = adjustPickToFeature(x, snapped);
 
-            const hadExisting = picks.some(p => (p.trace | 0) === x);
+            const before = getLocalPickOnTrace(x);
+            const hadExisting = !!before;
             removeAllPicksOnTrace(x);
             if (hadExisting) {
               promises.push(deletePick(x));
             }
             upsertLocalPick(x, tAdj);
             promises.push(postPick(x, tAdj));
+            historyChanges.push({
+              trace: x,
+              before,
+              after: { trace: x, time: tAdj },
+            });
           }
           await Promise.all(promises);
+          recordManualPickHistory(historyChanges);
           D('PICKS@handlePickNormalized:line', { range: [xStart, xEnd], count: picks.length });
           schedulePickOverlayUpdate();
           return;
@@ -2365,7 +2532,8 @@
         deleteRangeStart = null;
 
         const promises = [];
-        const hadExisting = picks.some(p => (p.trace | 0) === trInt);
+        const before = getLocalPickOnTrace(trInt);
+        const hadExisting = !!before;
         removeAllPicksOnTrace(trInt);
         if (hadExisting) {
           promises.push(deletePick(trInt));
@@ -2374,6 +2542,7 @@
         upsertLocalPick(trInt, tAdj);
         promises.push(postPick(trInt, tAdj));
         await Promise.all(promises);
+        recordManualPickHistory([{ trace: trInt, before, after: { trace: trInt, time: tAdj } }]);
         D('PICKS@handlePickNormalized:single', { add: { trace: trInt, time: tAdj }, count: picks.length });
         schedulePickOverlayUpdate();
       } finally {
@@ -2448,6 +2617,7 @@
       const fbpickModelSelect = document.getElementById('fbpick_model_select');
       const plotDiv = document.getElementById('plot');
       resetOpStatuses();
+      updateManualPickHistoryButtons();
 
       if (plotDiv) {
         plotHover = plotDiv.matches(':hover');
