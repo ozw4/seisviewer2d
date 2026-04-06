@@ -108,6 +108,81 @@ def _archive_trace_store(store_dir: Path) -> None:
     store_dir.rename(archive_dir)
 
 
+def _touch_trace_store_meta(store_dir: Path) -> None:
+    meta_path = store_dir / 'meta.json'
+    if not meta_path.exists():
+        return
+    meta_path.touch()
+
+
+def _trace_store_summary(store_dir: Path) -> dict | None:
+    meta_path = store_dir / 'meta.json'
+    meta = _load_trace_store_meta(meta_path)
+    if meta is None:
+        logger.warning('Skipping trace store with unreadable metadata: %s', store_dir)
+        return None
+
+    key_bytes = meta.get('key_bytes')
+    if not isinstance(key_bytes, dict):
+        logger.warning(
+            'Skipping trace store with invalid key byte metadata: %s', store_dir
+        )
+        return None
+
+    key1_byte = key_bytes.get('key1')
+    key2_byte = key_bytes.get('key2')
+    if not isinstance(key1_byte, int) or not isinstance(key2_byte, int):
+        logger.warning('Skipping trace store with missing key bytes: %s', store_dir)
+        return None
+
+    if not _trace_store_complete(store_dir, key1_byte, key2_byte):
+        logger.warning(
+            'Skipping incomplete trace store in recent datasets: %s', store_dir
+        )
+        return None
+
+    try:
+        last_used_ts = meta_path.stat().st_mtime
+    except OSError:
+        logger.warning(
+            'Skipping trace store with unreadable metadata mtime: %s', store_dir
+        )
+        return None
+
+    original_name = meta.get('original_name')
+    if not isinstance(original_name, str) or not original_name:
+        original_name = store_dir.name
+
+    summary = {
+        'original_name': original_name,
+        'store_name': store_dir.name,
+        'key1_byte': key1_byte,
+        'key2_byte': key2_byte,
+        'last_used_ts': last_used_ts,
+    }
+    for key in ('dt', 'n_traces', 'n_samples'):
+        value = meta.get(key)
+        if isinstance(value, (int, float)):
+            summary[key] = value
+    return summary
+
+
+def _list_recent_dataset_summaries() -> list[dict]:
+    summaries: list[dict] = []
+    if not TRACE_DIR.exists():
+        return summaries
+
+    for child in TRACE_DIR.iterdir():
+        if not child.is_dir():
+            continue
+        summary = _trace_store_summary(child)
+        if summary is not None:
+            summaries.append(summary)
+
+    summaries.sort(key=lambda item: item['last_used_ts'], reverse=True)
+    return summaries
+
+
 def _register_trace_store(
     file_id: str,
     store_dir: Path,
@@ -124,6 +199,11 @@ def _register_trace_store(
     for b in {key1_byte, key2_byte}:
         threading.Thread(target=reader.ensure_header, args=(b,), daemon=True).start()
     return reader
+
+
+@router.get('/recent_datasets')
+async def recent_datasets():
+    return {'datasets': _list_recent_dataset_summaries()}
 
 
 @router.post('/open_segy')
@@ -163,6 +243,7 @@ async def open_segy(
             key2_byte,
         )
     _register_trace_store(file_id, store_dir, key1_byte, key2_byte, state=state)
+    _touch_trace_store_meta(store_dir)
     if isinstance(meta, dict):
         state.file_registry.update(
             file_id,
@@ -228,6 +309,7 @@ async def upload_segy(
     if reused and meta is not None:
         logger.info('Reusing trace store for %s', file.filename)
         _register_trace_store(file_id, store_dir, key1_byte, key2_byte, state=state)
+        _touch_trace_store_meta(store_dir)
         state.file_registry.update(
             file_id,
             store_path=str(store_dir),
@@ -245,6 +327,7 @@ async def upload_segy(
         source_sha256=source_sha256,
     )
     _register_trace_store(file_id, store_dir, key1_byte, key2_byte, state=state)
+    _touch_trace_store_meta(store_dir)
     if isinstance(meta, dict):
         state.file_registry.update(
             file_id,
