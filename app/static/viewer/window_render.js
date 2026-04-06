@@ -189,7 +189,17 @@
       plotDiv.on('plotly_relayout', (ev) => {
         if (suppressRelayout) return;
         isRelayouting = false;
-        if (typeof pickOverlayDirty !== 'undefined' && pickOverlayDirty && typeof schedulePickOverlayUpdate === 'function') {
+        const shouldRefreshPendingOverlay = (
+          typeof window.hasPendingPickOverlayState === 'function' &&
+          window.hasPendingPickOverlayState()
+        );
+        if (
+          typeof schedulePickOverlayUpdate === 'function' &&
+          (
+            (typeof pickOverlayDirty !== 'undefined' && pickOverlayDirty) ||
+            shouldRefreshPendingOverlay
+          )
+        ) {
           schedulePickOverlayUpdate();
         }
         const result = handleRelayout(ev);

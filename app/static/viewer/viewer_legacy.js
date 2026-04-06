@@ -94,6 +94,10 @@
       return null;
     }
 
+    function hasPendingPickOverlayState() {
+      return getPendingPickOverlayState() !== null;
+    }
+
     function renderPendingPickStatus() {
       const node = document.getElementById('pendingPickStatus');
       if (!node) return;
@@ -142,6 +146,7 @@
     }
 
     window.getPendingPickOverlayState = getPendingPickOverlayState;
+    window.hasPendingPickOverlayState = hasPendingPickOverlayState;
     let manualPickRedoStack = [];
     let applyingManualPickHistory = false;
 

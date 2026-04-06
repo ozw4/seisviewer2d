@@ -163,7 +163,8 @@ def test_pending_pick_anchors_are_visible_without_write(
 
     page.on("request", on_request)
 
-    _click_plot_center(page, modifiers=["Shift"])
+    page.keyboard.down("Shift")
+    _click_plot_center(page)
     page.wait_for_function(
         """() => {
           const text = document.getElementById('pendingPickStatus')?.textContent || '';
@@ -203,5 +204,34 @@ def test_pending_pick_anchors_are_visible_without_write(
         }"""
     )
     assert pick_posts == []
+    page.evaluate(
+        """async () => {
+          const gd = document.getElementById('plot');
+          const yaxis = gd?._fullLayout?.yaxis;
+          if (!gd || !Array.isArray(yaxis?.range) || yaxis.range.length !== 2) {
+            throw new Error('plot y-axis range is unavailable');
+          }
+          const y0 = Number(yaxis.range[0]);
+          const y1 = Number(yaxis.range[1]);
+          const center = (y0 + y1) * 0.5;
+          const span = Math.max(Math.abs(y0 - y1) * 0.4, 1e-3);
+          await Plotly.relayout(gd, { 'yaxis.range': [center + span * 0.5, center - span * 0.5] });
+        }"""
+    )
+    page.wait_for_function(
+        """() => {
+          const gd = document.getElementById('plot');
+          const yaxis = gd?._fullLayout?.yaxis;
+          const tr = Array.isArray(gd?.data)
+            ? gd.data.find((item) => item?.meta?.svRole === 'pick' && item?.meta?.svKind === 'pending')
+            : null;
+          if (!Array.isArray(yaxis?.range) || !tr || !Array.isArray(tr.y) || tr.y.length !== 2) {
+            return false;
+          }
+          const expectedMin = Math.min(yaxis.range[0], yaxis.range[1]);
+          const expectedMax = Math.max(yaxis.range[0], yaxis.range[1]);
+          return Math.abs(tr.y[0] - expectedMin) < 1e-6 && Math.abs(tr.y[1] - expectedMax) < 1e-6;
+        }"""
+    )
 
     e2e_debug.assert_clean()
