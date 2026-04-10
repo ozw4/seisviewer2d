@@ -86,15 +86,6 @@ def pytest_runtest_makereport(item, call):
     setattr(item, f"rep_{rep.when}", rep)
 
 
-@pytest.fixture(scope="session")
-def built_assets() -> None:
-    assets = _repo_root() / "app/static/assets/main.js"
-    if not assets.exists():
-        raise AssertionError(
-            f"missing {assets}; run: cd app && npm ci && npm run build"
-        )
-
-
 def _write_tiny_segy(path: Path) -> None:
     n_traces = 12
     n_samples = 200
@@ -127,7 +118,7 @@ def tiny_segy_path(tmp_path_factory: pytest.TempPathFactory) -> Path:
 
 
 @pytest.fixture(scope="session")
-def base_url(tmp_path_factory: pytest.TempPathFactory, built_assets: None):
+def base_url(tmp_path_factory: pytest.TempPathFactory):
     external = os.getenv("E2E_BASE_URL")
     if external:
         url = external.rstrip("/")

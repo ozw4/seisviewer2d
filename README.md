@@ -21,7 +21,7 @@ Once the server is running, open the interactive API docs at `/docs`.
 python -m pip install -r .devcontainer/requirements-dev.txt
 ```
 
-2) Build the frontend bundle (required if `app/static/assets/main.js` is missing):
+2) Build the frontend bundle:
 
 ```bash
 cd app

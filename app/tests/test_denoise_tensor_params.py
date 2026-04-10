@@ -1,3 +1,5 @@
+from pathlib import Path
+
 import numpy as np
 import pytest
 import torch
@@ -7,6 +9,7 @@ from app.utils import denoise as denoise_mod
 
 def test_denoise_tensor_passes_kwargs_with_default_tile_overlap(
     monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
 ) -> None:
     captured: dict[str, object] = {}
 
@@ -15,6 +18,8 @@ def test_denoise_tensor_passes_kwargs_with_default_tile_overlap(
         return np.asarray(section_hw, dtype=np.float32)
 
     monkeypatch.setattr(denoise_mod, '_viewer_api', lambda: fake_infer)
+    ckpt = tmp_path / 'dummy.pt'
+    ckpt.write_bytes(b'')
 
     x = torch.arange(64 * 32, dtype=torch.float32).reshape(1, 1, 64, 32)
     _ = denoise_mod.denoise_tensor(
@@ -27,6 +32,7 @@ def test_denoise_tensor_passes_kwargs_with_default_tile_overlap(
         seed=777,
         passes_batch=3,
         use_amp=False,
+        ckpt_path=ckpt,
     )
 
     kwargs = captured['kwargs']

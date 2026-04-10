@@ -1,69 +1,64 @@
-services:
-  seisview:
-    image: seisviewer2d-dev:latest
-    build:
-      context: ..
-      dockerfile: Dockerfile
-      target: develop
-      args:
-        HTTP_PROXY: ${HTTP_PROXY
+
+{
+    "name": "NGC-PYTORCH-DEVC",
+    "service": "seisview",
+    "dockerComposeFile": "./compose-dev.yaml",
+    "workspaceFolder": "/workspace",
+    "remoteUser": "dcuser",
+    "updateRemoteUserUID": false,
+    "forwardPorts": [8000],
+    "postCreateCommand": "codex --version && gh --version && specify check"
+    "customizations": {
+        "vscode": {
+            "settings": {
+                "dev.containers.dockerComposePath": "compose.yaml",
+                "extensions.autoCheckUpdates": false,
+                "extensions.autoUpdate": false,
+                "extensions.ignoreRecommendations": true,
+                "files.insertFinalNewline": true,
+                "files.trimTrailingWhitespace": true,
+                "files.watcherExclude": {
+                    "**": true
+                },
+                "telemetry.telemetryLevel": "off",
+                "update.mode": "none",
+                "python.analysis.typeCheckingMode": "basic",
+                "editor.formatOnPaste": true,
+                "notebook.formatOnSave.enabled": true,
+                "notebook.codeActionsOnSave": {
+                    "notebook.source.fixAll": "explicit",
+                    "notebook.source.organizeImports": "explicit"
+                },
+                "[python]": {
+                    "editor.formatOnSave": true,
+                    "editor.codeActionsOnSave": {
+                        "source.fixAll": "explicit",
+                        "source.organizeImports": "explicit"
+                    },
+                    "editor.defaultFormatter": "charliermarsh.ruff"
+                },
+                "ruff.nativeServer": true,
+                "ruff.configuration": "/home/dcuser/ruff.toml"
+            },
+            "extensions": [
+                "ms-python.python",
+                "ms-python.debugpy",
+                "ms-python.vscode-pylance",
+                "charliermarsh.ruff",
+                "ms-toolsai.jupyter",
+                "njpwerner.autodocstring",
+                "tamasfe.even-better-toml",
+                "VisualStudioExptTeam.vscodeintellicode",
+                "VisualStudioExptTeam.intellicode-api-usage-examples",
+                "usernamehw.errorlens",
+                "oderwat.indent-rainbow",
+                "Gruntfuggly.todo-tree",
+                "christian-kohler.path-intellisense",
+                "github.copilot",
+                "eamodio.gitlens"
+
+            ]
+        }
+    }
 }
-        HTTPS_PROXY: ${HTTPS_PROXY
-}
-        NO_PROXY: ${NO_PROXY
-}
-        USERNAME: dcuser
-        UID: ${UID: -1000
-}
-        GID: ${GID: -1000
-}
-    environment:
-      HTTP_PROXY: ${HTTP_PROXY
-}
-      HTTPS_PROXY: ${HTTPS_PROXY
-}
-      NO_PROXY: ${NO_PROXY
-}
-      NVIDIA_VISIBLE_DEVICES: all
-      OPENAI_API_KEY: ${OPENAI_API_KEY
-}
-      GH_TOKEN: ${GH_TOKEN
-}
-      GITHUB_TOKEN: ${GITHUB_TOKEN
-}
-      GITHUB_PAT_TOKEN: ${GITHUB_PAT_TOKEN
-}
-      PLAYWRIGHT_BROWSERS_PATH: /ms-playwright
-      PYTHONPATH: /workspace
-    logging:
-      driver: local
-      options:
-        max-size: 3m
-        max-file: "3"
-    deploy:
-      resources:
-        reservations:
-          devices:
-            - driver: nvidia
-              count: all
-              capabilities: [gpu
-]
-    ipc: host
-    init: true
-    volumes:
-      - type: bind
-        source: /dev/shm
-        target: /dev/shm
-      - type: bind
-        source: ../
-        target: /workspace
-      - type: bind
-        source: ${HOME
-}/.gitconfig
-        target: /home/dcuser/.gitconfig
-        read_only: true
-    working_dir: /workspace
-    ports:
-      - "8000:8000"
-    stdin_open: true
-    tty: true
+
