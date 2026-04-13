@@ -114,6 +114,7 @@
       plotDiv.__svLastSize = { w, h };
       return withSuppressedRelayout(Promise.resolve(Plotly.Plots.resize(plotDiv)));
     }
+    window.maybeResizePlot = maybeResizePlot;
     function resolveWiggleTraceIndices(gd) {
       const data = Array.isArray(gd?.data) ? gd.data : [];
       const idxs = [];

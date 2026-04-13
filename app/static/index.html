@@ -291,14 +291,37 @@
     #plotViewport {
       position: relative;
       flex: 1;
+      min-width: 0;
       min-height: 0;
       display: flex;
     }
 
     #plot {
       flex: 1;
+      min-width: 0;
       width: 100%;
+      height: 100%;
       min-height: 0;
+      display: flex;
+      align-items: stretch;
+    }
+
+    #plot>.plot-container {
+      flex: 1 1 auto;
+      min-width: 0;
+      min-height: 0;
+      width: 100%;
+      height: 100%;
+      display: flex;
+      position: relative;
+    }
+
+    #plot>.plot-container>.svg-container {
+      flex: 1 1 auto;
+      min-width: 0;
+      min-height: 0;
+      width: 100% !important;
+      height: 100% !important;
     }
 
     #windowLoadingOverlay {

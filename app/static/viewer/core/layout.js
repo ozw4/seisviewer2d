@@ -202,8 +202,8 @@ export function buildPendingPickMarkerTrace({
     return {
       type: 'scatter',
       mode: 'markers',
-      x: new Float32Array([pending.trace]),
-      y: new Float32Array([pending.time]),
+      x: [pending.trace],
+      y: [pending.time],
       marker: {
         symbol: 'diamond-open',
         color: '#f59e0b',
@@ -227,8 +227,8 @@ export function buildPendingPickMarkerTrace({
     return {
       type: 'scatter',
       mode: 'lines',
-      x: new Float32Array([pending.trace, pending.trace]),
-      y: new Float32Array([yMin, yMax]),
+      x: [pending.trace, pending.trace],
+      y: [yMin, yMax],
       line: {
         color: '#b91c1c',
         width: 2,
