@@ -28,6 +28,106 @@
       font-size: 1em;
       padding: 0.2em 0.4em;
     }
+    #status_panel {
+      margin: 0 1em 1em;
+      padding: 0.85em 1em;
+      border: 1px solid #d1d5db;
+      border-radius: 10px;
+      background: #f8fafc;
+      display: flex;
+      flex-direction: column;
+      gap: 0.4em;
+      max-width: 780px;
+    }
+    #stage_badge {
+      display: inline-flex;
+      align-items: center;
+      width: fit-content;
+      padding: 0.18em 0.6em;
+      border-radius: 999px;
+      border: 1px solid #cbd5e1;
+      background: #fff;
+      color: #475569;
+      font-size: 0.84em;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.03em;
+    }
+    #status_panel.stage-uploading #stage_badge,
+    #status_panel.stage-uploaded #stage_badge,
+    #status_panel.stage-ingesting #stage_badge,
+    #status_panel.stage-opening #stage_badge {
+      border-color: #93c5fd;
+      background: #eff6ff;
+      color: #1d4ed8;
+    }
+    #status_panel.stage-ready #stage_badge {
+      border-color: #86efac;
+      background: #f0fdf4;
+      color: #166534;
+    }
+    #status_panel.stage-failed #stage_badge {
+      border-color: #fca5a5;
+      background: #fef2f2;
+      color: #991b1b;
+    }
+    #status_summary {
+      font-weight: 600;
+    }
+    #status_detail {
+      color: #475569;
+      font-size: 0.92em;
+      white-space: pre-wrap;
+    }
+    #recent_panel {
+      margin: 0 1em 1em;
+      padding: 0.85em 1em;
+      border: 1px solid #d1d5db;
+      border-radius: 10px;
+      background: #f8fafc;
+      display: flex;
+      flex-direction: column;
+      gap: 0.6em;
+      max-width: 780px;
+    }
+    #recent_panel h2 {
+      margin: 0;
+      font-size: 1em;
+    }
+    #recent_state {
+      color: #475569;
+      font-size: 0.92em;
+    }
+    #recent_list {
+      display: flex;
+      flex-direction: column;
+      gap: 0.5em;
+    }
+    .recent-item {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 0.8em;
+      padding: 0.65em 0.75em;
+      border: 1px solid #d1d5db;
+      border-radius: 8px;
+      background: #fff;
+    }
+    .recent-item-main {
+      min-width: 0;
+      display: flex;
+      flex-direction: column;
+      gap: 0.2em;
+    }
+    .recent-item-name {
+      font-weight: 600;
+      word-break: break-word;
+    }
+    .recent-item-meta,
+    .recent-item-extra {
+      color: #475569;
+      font-size: 0.9em;
+    }
   </style>
 </head>
 <body>
@@ -91,26 +191,191 @@
     <progress id="upload_progress" value="0" max="100" style="width: 200px;"></progress>
     <span id="progress_text">0%</span>
   </div>
+  <div id="status_panel" class="stage-idle" role="status" aria-live="polite" aria-atomic="true">
+    <span id="stage_badge">idle</span>
+    <div id="status_summary">Choose a SEG-Y file to begin.</div>
+    <div id="status_detail"></div>
+  </div>
+  <section id="recent_panel" aria-labelledby="recent_heading">
+    <h2 id="recent_heading">Recent datasets</h2>
+    <div id="recent_state">Loading recent datasets...</div>
+    <div id="recent_list"></div>
+  </section>
   <script>
     const progressBar = document.getElementById('upload_progress');
     const progressText = document.getElementById('progress_text');
     const uploadBtn = document.getElementById('upload_btn');
     const key1Select = document.getElementById('key1_byte');
     const key2Select = document.getElementById('key2_byte');
+    const statusPanel = document.getElementById('status_panel');
+    const stageBadge = document.getElementById('stage_badge');
+    const statusSummary = document.getElementById('status_summary');
+    const statusDetail = document.getElementById('status_detail');
+    const recentState = document.getElementById('recent_state');
+    const recentList = document.getElementById('recent_list');
+    const RECENT_DATASET_LIMIT = 10;
 
     const savedKey1 = localStorage.getItem('last_key1_byte');
     if (savedKey1) key1Select.value = savedKey1;
     const savedKey2 = localStorage.getItem('last_key2_byte');
     if (savedKey2) key2Select.value = savedKey2;
 
+    function setUploadState(stage, summary, detail = '') {
+      statusPanel.className = `stage-${stage}`;
+      stageBadge.textContent = stage;
+      statusSummary.textContent = summary;
+      statusDetail.textContent = detail;
+    }
+
+    async function readResponseDetail(response) {
+      try {
+        const contentType = response.headers.get('content-type') || '';
+        if (contentType.includes('application/json')) {
+          const payload = await response.json();
+          if (payload && typeof payload.detail === 'string') {
+            return payload.detail;
+          }
+        }
+        return await response.text();
+      } catch {
+        return '';
+      }
+    }
+
+    function mapUploadError(message) {
+      const text = String(message || '').trim();
+      const lower = text.toLowerCase();
+      if (!text) {
+        return 'The server returned an unexpected error. Check server logs.';
+      }
+      if (lower.includes('network') || lower.includes('failed to fetch')) {
+        return 'Network error while contacting the server. Check the connection and retry.';
+      }
+      if (lower.includes('uploaded file must have a filename')) {
+        return 'Select a SEG-Y file before opening.';
+      }
+      if (lower.includes('trace store not found')) {
+        return 'The selected dataset is not prepared yet. Upload the SEG-Y file and retry.';
+      }
+      if (lower.includes('unable to archive existing trace store')) {
+        return 'The server could not replace the existing TraceStore. Check file permissions and retry.';
+      }
+      return text;
+    }
+
     const lastName = localStorage.getItem('last_original_name');
     if (lastName) {
       progressText.innerText = `前回のデータ: ${lastName}`;
+      setUploadState('idle', `Last dataset: ${lastName}`, 'You can reopen it or upload a new SEG-Y file.');
     } else {
       progressText.innerText = '前回のデータ: ありません';
+      setUploadState('idle', 'No previous dataset is stored in this browser.', 'Choose a SEG-Y file to upload and ingest.');
+    }
+
+    function syncKeyByteSelectors(key1Byte, key2Byte) {
+      key1Select.value = String(key1Byte);
+      key2Select.value = String(key2Byte);
+    }
+
+    function formatRecentExtra(item) {
+      const parts = [];
+      if (typeof item.dt === 'number') parts.push(`dt ${item.dt}`);
+      if (typeof item.n_traces === 'number') parts.push(`traces ${item.n_traces}`);
+      if (typeof item.n_samples === 'number') parts.push(`samples ${item.n_samples}`);
+      return parts.join(' | ');
+    }
+
+    function renderRecentDatasets(items, stateText = '') {
+      recentList.innerHTML = '';
+      if (stateText) {
+        recentState.textContent = stateText;
+      }
+      if (!Array.isArray(items) || items.length === 0) {
+        return;
+      }
+      for (const item of items.slice(0, RECENT_DATASET_LIMIT)) {
+        const row = document.createElement('div');
+        row.className = 'recent-item';
+
+        const main = document.createElement('div');
+        main.className = 'recent-item-main';
+
+        const name = document.createElement('div');
+        name.className = 'recent-item-name';
+        name.textContent = item.original_name || item.store_name || 'Unnamed dataset';
+
+        const meta = document.createElement('div');
+        meta.className = 'recent-item-meta';
+        meta.textContent = `key1 ${item.key1_byte}, key2 ${item.key2_byte}`;
+
+        const extra = document.createElement('div');
+        extra.className = 'recent-item-extra';
+        extra.textContent = formatRecentExtra(item);
+
+        main.appendChild(name);
+        main.appendChild(meta);
+        if (extra.textContent) {
+          main.appendChild(extra);
+        }
+
+        const button = document.createElement('button');
+        button.type = 'button';
+        button.textContent = 'Open';
+        button.addEventListener('click', async () => {
+          uploadBtn.disabled = true;
+          button.disabled = true;
+          syncKeyByteSelectors(item.key1_byte, item.key2_byte);
+          progressBar.value = 0;
+          progressText.innerText = '0%';
+          setUploadState('opening', `Opening ${item.original_name}...`, 'Loading the prepared TraceStore from the server.');
+          try {
+            const res = await openSegy(item.original_name, item.key1_byte, item.key2_byte);
+            if (res.ok) {
+              const result = await res.json();
+              handleSuccess(result.file_id, item.original_name, item.key1_byte, item.key2_byte);
+              return;
+            }
+            if (res.status === 404) {
+              setUploadState('failed', 'Prepared dataset not found.', 'The selected recent dataset is no longer available. Refreshing the recent list...');
+              await loadRecentDatasets();
+              return;
+            }
+            const text = mapUploadError(await readResponseDetail(res));
+            setUploadState('failed', 'Open failed.', text);
+          } catch (err) {
+            setUploadState('failed', 'Open failed.', mapUploadError(err && err.message));
+          } finally {
+            button.disabled = false;
+            uploadBtn.disabled = false;
+          }
+        });
+
+        row.appendChild(main);
+        row.appendChild(button);
+        recentList.appendChild(row);
+      }
+    }
+
+    async function loadRecentDatasets() {
+      recentState.textContent = 'Loading recent datasets...';
+      recentList.innerHTML = '';
+      const response = await fetch('/recent_datasets');
+      if (!response.ok) {
+        const text = mapUploadError(await readResponseDetail(response));
+        recentState.textContent = `Unable to load recent datasets: ${text}`;
+        return;
+      }
+      const payload = await response.json();
+      const datasets = Array.isArray(payload && payload.datasets) ? payload.datasets : [];
+      if (datasets.length === 0) {
+        renderRecentDatasets([], 'No reusable TraceStore is available on the server.');
+        return;
+      }
+      renderRecentDatasets(datasets, `Showing ${Math.min(datasets.length, RECENT_DATASET_LIMIT)} recent dataset(s).`);
     }
 
     function handleSuccess(fileId, originalName, key1Byte, key2Byte) {
+      setUploadState('ready', 'TraceStore is ready.', 'Opening the viewer...');
       localStorage.setItem('file_id', fileId);
       localStorage.setItem('key1_byte', key1Byte);
       localStorage.setItem('key2_byte', key2Byte);
@@ -118,7 +383,9 @@
       localStorage.setItem('last_key1_byte', key1Byte);
       localStorage.setItem('last_key2_byte', key2Byte);
       const params = new URLSearchParams({ file_id: fileId, key1_byte: key1Byte, key2_byte: key2Byte });
-      window.location.href = `/?${params.toString()}`;
+      window.setTimeout(() => {
+        window.location.href = `/?${params.toString()}`;
+      }, 150);
     }
 
     async function openSegy(originalName, key1Byte, key2Byte) {
@@ -137,12 +404,26 @@
         formData.append('key2_byte', key2Byte);
         const xhr = new XMLHttpRequest();
         xhr.open('POST', '/upload_segy', true);
+        xhr.upload.onloadstart = function () {
+          setUploadState('uploading', 'Uploading SEG-Y file...', 'The file is being sent to the server.');
+        };
         xhr.upload.onprogress = function (e) {
           if (e.lengthComputable) {
             const percent = (e.loaded / e.total) * 100;
             progressBar.value = percent;
             progressText.innerText = `${percent.toFixed(1)}%`;
+            setUploadState('uploading', 'Uploading SEG-Y file...', `${percent.toFixed(1)}% transferred.`);
           }
+        };
+        xhr.upload.onloadend = function () {
+          progressBar.value = 100;
+          progressText.innerText = '100.0%';
+          setUploadState('uploaded', 'Upload finished.', 'Server-side ingest has started. Building TraceStore...');
+          window.setTimeout(() => {
+            if (statusPanel.classList.contains('stage-uploaded')) {
+              setUploadState('ingesting', 'Building TraceStore...', 'The upload is complete. The server is preparing the dataset now.');
+            }
+          }, 250);
         };
         xhr.onload = async function () {
           if (xhr.status === 200) {
@@ -150,29 +431,43 @@
             handleSuccess(result.file_id, file.name, key1Byte, key2Byte);
           } else if (xhr.status === 409) {
             try {
+              setUploadState('ingesting', 'Upload finished.', 'An existing TraceStore was detected. Reopening the prepared dataset...');
               const res = await openSegy(file.name, key1Byte, key2Byte);
               if (res.ok) {
                 const result = await res.json();
                 handleSuccess(result.file_id, file.name, key1Byte, key2Byte);
               } else {
-                const text = await res.text().catch(() => '');
-                alert(text || 'Open failed');
+                const text = mapUploadError(await readResponseDetail(res));
+                setUploadState('failed', 'Open failed.', text);
               }
             } catch (err) {
-              alert('Open error occurred');
+              setUploadState('failed', 'Open failed.', mapUploadError(err && err.message));
             }
           } else {
-            alert('Upload failed');
+            let detail = xhr.responseText || '';
+            try {
+              const payload = JSON.parse(xhr.responseText || '{}');
+              if (payload && typeof payload.detail === 'string') {
+                detail = payload.detail;
+              }
+            } catch {
+              detail = xhr.responseText || '';
+            }
+            setUploadState('failed', 'Upload failed.', mapUploadError(detail));
           }
           resolve();
         };
         xhr.onerror = function () {
-          alert('Upload error occurred');
+          setUploadState('failed', 'Upload failed.', 'Network error while uploading the file. Check the connection and retry.');
           resolve();
         };
         xhr.send(formData);
       });
     }
+
+    loadRecentDatasets().catch((err) => {
+      recentState.textContent = `Unable to load recent datasets: ${mapUploadError(err && err.message)}`;
+    });
 
     uploadBtn.addEventListener('click', async () => {
       uploadBtn.disabled = true;
@@ -183,35 +478,38 @@
       progressText.innerText = '0%';
       try {
         if (file) {
+          setUploadState('opening', 'Checking for an existing TraceStore...', 'If a prepared dataset already exists, it will be reopened instead of re-ingested.');
           const res = await openSegy(file.name, key1Byte, key2Byte);
           if (res.ok) {
             const result = await res.json();
             handleSuccess(result.file_id, file.name, key1Byte, key2Byte);
           } else if (res.status === 404) {
+            setUploadState('uploading', 'No prepared TraceStore found.', 'Uploading the SEG-Y file now.');
             await uploadSegy(file, key1Byte, key2Byte);
           } else {
-            const text = await res.text().catch(() => '');
-            alert(text || 'Open failed');
+            const text = mapUploadError(await readResponseDetail(res));
+            setUploadState('failed', 'Open failed.', text);
           }
         } else {
-          const lastName = localStorage.getItem('last_original_name');
-          if (!lastName) {
-            alert('存在しません。ファイルを選んでアップロードしてください.');
+          const savedName = localStorage.getItem('last_original_name');
+          if (!savedName) {
+            setUploadState('failed', 'No dataset selected.', 'Choose a SEG-Y file to upload, or reopen a previously ingested dataset.');
           } else {
-            const res = await openSegy(lastName, key1Byte, key2Byte);
+            setUploadState('opening', `Opening ${savedName}...`, 'Loading the prepared TraceStore from the server.');
+            const res = await openSegy(savedName, key1Byte, key2Byte);
             if (res.ok) {
               const result = await res.json();
-              handleSuccess(result.file_id, lastName, key1Byte, key2Byte);
+              handleSuccess(result.file_id, savedName, key1Byte, key2Byte);
             } else if (res.status === 404) {
-              alert('存在しません。ファイルを選んでアップロードしてください.');
+              setUploadState('failed', 'Prepared dataset not found.', 'Choose the SEG-Y file and upload it again to rebuild the TraceStore.');
             } else {
-              const text = await res.text().catch(() => '');
-              alert(text || 'Open failed');
+              const text = mapUploadError(await readResponseDetail(res));
+              setUploadState('failed', 'Open failed.', text);
             }
           }
         }
       } catch (err) {
-        alert('Open error occurred');
+        setUploadState('failed', 'Open failed.', mapUploadError(err && err.message));
       } finally {
         uploadBtn.disabled = false;
       }

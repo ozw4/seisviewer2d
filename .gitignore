@@ -27,7 +27,9 @@ Thumbs.db
 *.segy
 *.pth
 *.gz
-*.json
+*.patch
+picks.json
+picks_by_name.json
 
 data/
 output/
@@ -38,5 +40,19 @@ test/
 *.so
 *.o
 *.a
-
 node_modules/
+playwright-report/
+test-results/
+node_modules/
+web/dist/
+static/assets/
+
+# Vite build artifacts
+app/static/assets/
+
+# legacy vendored libs (now bundled via Vite)
+app/static/plotly-*.min.js
+app/static/pako*.min.js
+app/static/msgpack*.min.js
+playwright-artifacts/
+snippest_code/

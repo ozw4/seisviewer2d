@@ -3,181 +3,350 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
-import pathlib
+import logging
 import re
 import threading
 from pathlib import Path
+from typing import Annotated
 from uuid import uuid4
 
-import numpy as np
-import segyio
-from fastapi import APIRouter, File, Form, HTTPException, Query, UploadFile
+from fastapi import APIRouter, File, Form, HTTPException, Query, Request, UploadFile
 
-from app.api._helpers import SEGYS, _update_file_registry, cached_readers
-from app.utils.segy_meta import FILE_REGISTRY, read_segy_dt_seconds
-from app.utils.utils import TraceStoreSectionReader
+from app.api._helpers import get_state
+from app.core.paths import (
+    get_processed_upload_dir,
+    get_trace_store_dir,
+    get_upload_dir,
+)
+from app.core.state import AppState
+from app.utils.ingest import SegyIngestor
+from app.trace_store.reader import TraceStoreSectionReader
 
 router = APIRouter()
+logger = logging.getLogger(__name__)
 
-BASE_DIR = pathlib.Path(__file__).resolve().parent.parent
-UPLOAD_DIR = BASE_DIR / 'uploads'
-UPLOAD_DIR.mkdir(exist_ok=True)
+UPLOAD_DIR = get_upload_dir()
+PROCESSED_DIR = get_processed_upload_dir()
+TRACE_DIR = get_trace_store_dir()
+UPLOAD_CHUNK_SIZE = 4 * 1024 * 1024
 
-PROCESSED_DIR = UPLOAD_DIR / 'processed'
 
-TRACE_DIR = PROCESSED_DIR / 'traces'
-TRACE_DIR.mkdir(parents=True, exist_ok=True)
+def _trace_store_complete(store_dir: Path, key1_byte: int, key2_byte: int) -> bool:
+    """Return True only when a trace store exists AND its metadata indicates
+    it was built for the requested key bytes. Header files are not part of
+    the completion predicate (they are generated on demand).
+    """
+    if not store_dir.is_dir():
+        return False
+    meta_path = store_dir / 'meta.json'
+    if not (
+        (store_dir / 'traces.npy').exists()
+        and (store_dir / 'index.npz').exists()
+        and meta_path.exists()
+    ):
+        return False
+    meta = _load_trace_store_meta(meta_path)
+    if not isinstance(meta, dict):
+        return False
+    kb = meta.get('key_bytes')
+    return (
+        isinstance(kb, dict)
+        and kb.get('key1') == key1_byte
+        and kb.get('key2') == key2_byte
+    )
+
+
+def _load_trace_store_meta(meta_path: Path) -> dict | None:
+    try:
+        meta = json.loads(meta_path.read_text())
+    except (OSError, json.JSONDecodeError):
+        return None
+    if not isinstance(meta, dict):
+        return None
+    return meta
+
+
+def _trace_store_matches_source(
+    store_dir: Path,
+    key1_byte: int,
+    key2_byte: int,
+    *,
+    source_sha256: str | None = None,
+    source_size: int | None = None,
+) -> dict | None:
+    if not _trace_store_complete(store_dir, key1_byte, key2_byte):
+        return None
+    meta_path = store_dir / 'meta.json'
+    meta = _load_trace_store_meta(meta_path)
+    if meta is None:
+        return None
+    key_bytes = meta.get('key_bytes')
+    if not isinstance(key_bytes, dict):
+        return None
+    if key_bytes.get('key1') != key1_byte or key_bytes.get('key2') != key2_byte:
+        return None
+    # --- Prefer exact identity via content hash when available ---
+    meta_hash = meta.get('source_sha256')
+    if isinstance(source_sha256, str) and isinstance(meta_hash, str):
+        return meta if meta_hash == source_sha256 else None
+
+    # --- Fallback: size match only (for legacy stores without hash) ---
+    if isinstance(source_size, int):
+        original_size = meta.get('original_size')
+        if isinstance(original_size, int) and original_size == source_size:
+            return meta
+        return None
+    return meta
+
+
+def _archive_trace_store(store_dir: Path) -> None:
+    if not store_dir.exists():
+        return
+    archive_dir = store_dir.parent / f'{store_dir.name}.old-{uuid4().hex}'
+    store_dir.rename(archive_dir)
+
+
+def _touch_trace_store_meta(store_dir: Path) -> None:
+    meta_path = store_dir / 'meta.json'
+    if not meta_path.exists():
+        return
+    meta_path.touch()
+
+
+def _trace_store_summary(store_dir: Path) -> dict | None:
+    meta_path = store_dir / 'meta.json'
+    meta = _load_trace_store_meta(meta_path)
+    if meta is None:
+        logger.warning('Skipping trace store with unreadable metadata: %s', store_dir)
+        return None
+
+    key_bytes = meta.get('key_bytes')
+    if not isinstance(key_bytes, dict):
+        logger.warning(
+            'Skipping trace store with invalid key byte metadata: %s', store_dir
+        )
+        return None
+
+    key1_byte = key_bytes.get('key1')
+    key2_byte = key_bytes.get('key2')
+    if not isinstance(key1_byte, int) or not isinstance(key2_byte, int):
+        logger.warning('Skipping trace store with missing key bytes: %s', store_dir)
+        return None
+
+    if not _trace_store_complete(store_dir, key1_byte, key2_byte):
+        logger.warning(
+            'Skipping incomplete trace store in recent datasets: %s', store_dir
+        )
+        return None
+
+    try:
+        last_used_ts = meta_path.stat().st_mtime
+    except OSError:
+        logger.warning(
+            'Skipping trace store with unreadable metadata mtime: %s', store_dir
+        )
+        return None
+
+    original_name = meta.get('original_name')
+    if not isinstance(original_name, str) or not original_name:
+        original_name = store_dir.name
+
+    summary = {
+        'original_name': original_name,
+        'store_name': store_dir.name,
+        'key1_byte': key1_byte,
+        'key2_byte': key2_byte,
+        'last_used_ts': last_used_ts,
+    }
+    for key in ('dt', 'n_traces', 'n_samples'):
+        value = meta.get(key)
+        if isinstance(value, (int, float)):
+            summary[key] = value
+    return summary
+
+
+def _list_recent_dataset_summaries() -> list[dict]:
+    summaries: list[dict] = []
+    if not TRACE_DIR.exists():
+        return summaries
+
+    for child in TRACE_DIR.iterdir():
+        if not child.is_dir():
+            continue
+        summary = _trace_store_summary(child)
+        if summary is not None:
+            summaries.append(summary)
+
+    summaries.sort(key=lambda item: item['last_used_ts'], reverse=True)
+    return summaries
+
+
+def _register_trace_store(
+    file_id: str,
+    store_dir: Path,
+    key1_byte: int,
+    key2_byte: int,
+    *,
+    state: AppState,
+) -> TraceStoreSectionReader:
+    reader = TraceStoreSectionReader(store_dir, key1_byte, key2_byte)
+    cache_key = f'{file_id}_{key1_byte}_{key2_byte}'
+    with state.lock:
+        state.cached_readers[cache_key] = reader
+    threading.Thread(target=reader.preload_all_sections, daemon=True).start()
+    for b in {key1_byte, key2_byte}:
+        threading.Thread(target=reader.ensure_header, args=(b,), daemon=True).start()
+    return reader
+
+
+@router.get('/recent_datasets')
+async def recent_datasets():
+    return {'datasets': _list_recent_dataset_summaries()}
 
 
 @router.post('/open_segy')
 async def open_segy(
-	original_name: str = Form(...),
-	key1_byte: int = Form(189),
-	key2_byte: int = Form(193),
+    request: Request,
+    original_name: Annotated[str, Form(...)],
+    key1_byte: Annotated[int, Form()] = 189,
+    key2_byte: Annotated[int, Form()] = 193,
 ):
-	safe_name = re.sub(r'[^A-Za-z0-9_.-]', '_', original_name)
-	store_dir = TRACE_DIR / safe_name
-	meta_path = store_dir / 'meta.json'
-	if not meta_path.exists():
-		raise HTTPException(
-			status_code=404,
-			detail=f'Trace store not found for {original_name}',
-		)
-	print(f'Opening existing trace store for {original_name}')
-	file_id = str(uuid4())
-	reader = TraceStoreSectionReader(store_dir, key1_byte, key2_byte)
-	SEGYS[file_id] = str(store_dir)
-	cache_key = f'{file_id}_{key1_byte}_{key2_byte}'
-	cached_readers[cache_key] = reader
-	threading.Thread(target=reader.preload_all_sections, daemon=True).start()
-	for b in {key1_byte, key2_byte}:
-		threading.Thread(target=reader.ensure_header, args=(b,), daemon=True).start()
-	segy_path = (
-		reader.meta.get('original_segy_path') if isinstance(reader.meta, dict) else None
-	)
-	dt_meta = None
-	if isinstance(reader.meta, dict):
-		dt_meta = reader.meta.get('dt')
-	if (
-		dt_meta is None or not isinstance(dt_meta, (int, float)) or dt_meta <= 0
-	) and isinstance(segy_path, str):
-		dt_meta = read_segy_dt_seconds(segy_path)
-	_update_file_registry(
-		file_id,
-		path=segy_path if isinstance(segy_path, str) else None,
-		store_path=str(store_dir),
-		dt=dt_meta,
-	)
-	return {'file_id': file_id, 'reused_trace_store': True}
+    state = get_state(request.app)
+    safe_name = re.sub(r'[^A-Za-z0-9_.-]', '_', original_name)
+    store_dir = TRACE_DIR / safe_name
+    meta_path = store_dir / 'meta.json'
+    if not meta_path.exists():
+        raise HTTPException(
+            status_code=404,
+            detail=f'Trace store not found for {original_name}',
+        )
+    logger.info('Opening existing trace store for %s', original_name)
+    file_id = str(uuid4())
+    reused = _trace_store_complete(store_dir, key1_byte, key2_byte)
+    if reused:
+        meta = json.loads(meta_path.read_text())
+    else:
+        meta = json.loads(meta_path.read_text())
+        segy_path = meta.get('original_segy_path') if isinstance(meta, dict) else None
+        if not isinstance(segy_path, str):
+            raise HTTPException(
+                status_code=500,
+                detail='Trace store incomplete and SEG-Y path unavailable',
+            )
+        meta = await asyncio.to_thread(
+            SegyIngestor.from_segy,
+            segy_path,
+            store_dir,
+            key1_byte,
+            key2_byte,
+        )
+    _register_trace_store(file_id, store_dir, key1_byte, key2_byte, state=state)
+    _touch_trace_store_meta(store_dir)
+    if isinstance(meta, dict):
+        state.file_registry.update(
+            file_id,
+            store_path=str(store_dir),
+            dt=meta.get('dt'),
+        )
+    return {'file_id': file_id, 'reused_trace_store': reused}
 
 
 @router.post('/upload_segy')
 async def upload_segy(
-	file: UploadFile = File(...),
-	key1_byte: int = Form(189),
-	key2_byte: int = Form(193),
+    request: Request,
+    file: Annotated[UploadFile, File(...)],
+    key1_byte: Annotated[int, Form()] = 189,
+    key2_byte: Annotated[int, Form()] = 193,
 ):
-	if not file.filename:
-		raise HTTPException(
-			status_code=400, detail='Uploaded file must have a filename'
-		)
-	print(f'Uploading file: {file.filename}')
-	safe_name = re.sub(r'[^A-Za-z0-9_.-]', '_', file.filename)
-	store_dir = TRACE_DIR / safe_name
-	meta_path = store_dir / 'meta.json'
-	file_id = str(uuid4())
+    state = get_state(request.app)
+    if not file.filename:
+        raise HTTPException(
+            status_code=400, detail='Uploaded file must have a filename'
+        )
+    logger.info('Uploading file: %s', file.filename)
+    safe_name = re.sub(r'[^A-Za-z0-9_.-]', '_', file.filename)
+    store_dir = TRACE_DIR / safe_name
+    file_id = str(uuid4())
+    raw_path = UPLOAD_DIR / safe_name
+    raw_path.parent.mkdir(parents=True, exist_ok=True)
+    tmp_path = raw_path.with_suffix(raw_path.suffix + f'.{uuid4().hex}.tmp')
+    hasher = hashlib.sha256()
+    with tmp_path.open('wb') as temp_file:
+        while True:
+            chunk = await file.read(UPLOAD_CHUNK_SIZE)
+            if not chunk:
+                break
+            hasher.update(chunk)
+            temp_file.write(chunk)
+    tmp_path.replace(raw_path)
+    source_sha256 = hasher.hexdigest()
+    try:
+        source_size = raw_path.stat().st_size
+    except OSError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
 
-	if meta_path.exists():
-		print(f'Reusing trace store for {file.filename}')
-		reader = TraceStoreSectionReader(store_dir, key1_byte, key2_byte)
-		SEGYS[file_id] = str(store_dir)
-		cache_key = f'{file_id}_{key1_byte}_{key2_byte}'
-		cached_readers[cache_key] = reader
-		threading.Thread(target=reader.preload_all_sections, daemon=True).start()
-		for b in {key1_byte, key2_byte}:
-			threading.Thread(
-				target=reader.ensure_header, args=(b,), daemon=True
-			).start()
-		segy_path = (
-			reader.meta.get('original_segy_path')
-			if isinstance(reader.meta, dict)
-			else None
-		)
-		dt_meta = None
-		if isinstance(reader.meta, dict):
-			dt_meta = reader.meta.get('dt')
-		if (
-			dt_meta is None or not isinstance(dt_meta, (int, float)) or dt_meta <= 0
-		) and isinstance(segy_path, str):
-			dt_meta = read_segy_dt_seconds(segy_path)
-		_update_file_registry(
-			file_id,
-			path=segy_path if isinstance(segy_path, str) else None,
-			store_path=str(store_dir),
-			dt=dt_meta,
-		)
-		return {'file_id': file_id, 'reused_trace_store': True}
+    meta: dict | None = None
+    reused = False
+    if store_dir.exists():
+        meta = _trace_store_matches_source(
+            store_dir,
+            key1_byte,
+            key2_byte,
+            source_sha256=source_sha256,
+            source_size=source_size,
+        )
+        if meta is not None:
+            reused = True
+        else:
+            try:
+                _archive_trace_store(store_dir)
+            except OSError as exc:
+                msg = f'Unable to archive existing trace store: {exc}'
+                raise HTTPException(status_code=409, detail=msg) from exc
 
-	raw_path = UPLOAD_DIR / safe_name
-	data = await file.read()
-	await asyncio.to_thread(raw_path.write_bytes, data)
-	store_dir.mkdir(parents=True, exist_ok=True)
-	traces_tmp = store_dir / 'traces.npy.tmp'
-	dt_seconds = read_segy_dt_seconds(str(raw_path)) or 0.002
+    if reused and meta is not None:
+        logger.info('Reusing trace store for %s', file.filename)
+        _register_trace_store(file_id, store_dir, key1_byte, key2_byte, state=state)
+        _touch_trace_store_meta(store_dir)
+        state.file_registry.update(
+            file_id,
+            store_path=str(store_dir),
+            dt=meta.get('dt'),
+        )
+        return {'file_id': file_id, 'reused_trace_store': True}
 
-	with segyio.open(raw_path, 'r', ignore_geometry=True) as segy:
-		segy.mmap()
-		n_traces = segy.tracecount
-		n_samples = len(segy.trace[0])
-		mm = np.lib.format.open_memmap(
-			traces_tmp,
-			mode='w+',
-			dtype=np.float32,
-			shape=(n_traces, n_samples),
-		)
-		for i in range(n_traces):
-			tr = segy.trace[i].astype(np.float32)
-			mean = tr.mean()
-			std = tr.std()
-			if std == 0:
-				std = 1.0
-			mm[i] = (tr - mean) / std
-		del mm
-	traces_tmp.replace(store_dir / 'traces.npy')
-	meta = {
-		'n_traces': int(n_traces),
-		'n_samples': int(n_samples),
-		'original_segy_path': str(raw_path),
-		'version': 1,
-		'normalized': True,
-		'dt': dt_seconds,
-	}
-	tmp_meta = store_dir / 'meta.json.tmp'
-	tmp_meta.write_text(json.dumps(meta))
-	tmp_meta.replace(meta_path)
-
-	reader = TraceStoreSectionReader(store_dir, key1_byte, key2_byte)
-	SEGYS[file_id] = str(store_dir)
-	cache_key = f'{file_id}_{key1_byte}_{key2_byte}'
-	cached_readers[cache_key] = reader
-	threading.Thread(target=reader.preload_all_sections, daemon=True).start()
-	for b in {key1_byte, key2_byte}:
-		threading.Thread(target=reader.ensure_header, args=(b,), daemon=True).start()
-	_update_file_registry(
-		file_id,
-		path=str(raw_path),
-		store_path=str(store_dir),
-		dt=dt_seconds,
-	)
-	return {'file_id': file_id, 'reused_trace_store': False}
+    store_dir.mkdir(parents=True, exist_ok=True)
+    meta = await asyncio.to_thread(
+        SegyIngestor.from_segy,
+        str(raw_path),
+        store_dir,
+        key1_byte,
+        key2_byte,
+        source_sha256=source_sha256,
+    )
+    _register_trace_store(file_id, store_dir, key1_byte, key2_byte, state=state)
+    _touch_trace_store_meta(store_dir)
+    if isinstance(meta, dict):
+        state.file_registry.update(
+            file_id,
+            store_path=str(store_dir),
+            dt=meta.get('dt'),
+        )
+    else:
+        state.file_registry.update(file_id, store_path=str(store_dir))
+    return {'file_id': file_id, 'reused_trace_store': False}
 
 
 @router.get('/file_info')
-async def file_info(file_id: str = Query(...)) -> dict[str, str]:
-	"""Return basename for a given ``file_id``."""
-	rec = FILE_REGISTRY.get(file_id) or {}
-	path = rec.get('path') or rec.get('store_path')
-	if not path:
-		raise HTTPException(status_code=404, detail='Unknown file_id')
-	return {'file_name': Path(path).name}
+async def file_info(
+    request: Request,
+    file_id: Annotated[str, Query()],
+) -> dict[str, str]:
+    """Return basename for a given ``file_id``."""
+    state = get_state(request.app)
+    name = state.file_registry.filename(file_id)
+    if name is None:
+        raise HTTPException(status_code=404, detail='Unknown file_id')
+    return {'file_name': name}

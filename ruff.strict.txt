@@ -1,0 +1,38 @@
+target-version = "py310"
+fix = true
+
+[pylint]
+max-statements = 80
+
+[lint]
+select = ["ALL"]
+ignore = [
+    # ★ Blackと競合するやつは無視（超重要）
+    "E203",  # スライス前の空白
+    "E501",  # 行が長い（行長はBlackに任せる）
+
+    # 既存の無視設定はそのまま
+    "COM812", "COM819", "D206", "D300",
+    "E111", "E114", "E117",
+    "E741", "E742", "E743",
+    "ERA001", "G004", "ISC001", "ISC002",
+    "Q000", "Q001", "Q002", "Q003",
+    "T20", "W191","N806",
+    "D100", "D101", "D102", "D103", "D104", "D107",
+    "D205", "D400", "D415", "D417",
+    "ANN001", "ANN002", "ANN003", "ANN201", "ANN202", "ANN204", "ANN401",
+    "PLR0912", "PLR0913", "PLR0915",
+    "EM101", "EM102",
+    "PT018","TRY003", "N812", "RUF002", "RUF003", "RUF013",
+    "RET504", "PLR2004", "S101", "C901",
+    "FBT001","FBT002",
+]
+
+per-file-ignores = { "app/tests/**" = ["S101", "SLF001", "ARG001", "ARG002", "ARG005", "PLR2004", "PT011", "PT018","INP001"] }
+
+
+[format]
+docstring-code-format = true
+indent-style = "tab"
+quote-style = "single"
+

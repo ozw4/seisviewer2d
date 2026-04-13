@@ -3,7 +3,13 @@ export function debounce(fn, wait, { leading = false, trailing = true } = {}) {
   let lastArgs;
   let lastThis;
   let invoked = false;
-  return function debounced(...args) {
+  function clearState() {
+    invoked = false;
+    t = null;
+    lastArgs = undefined;
+    lastThis = undefined;
+  }
+  function debounced(...args) {
     lastArgs = args;
     lastThis = this;
     if (t) clearTimeout(t);
@@ -15,10 +21,27 @@ export function debounce(fn, wait, { leading = false, trailing = true } = {}) {
       if (trailing) {
         fn.apply(lastThis, lastArgs);
       }
-      invoked = false;
-      t = null;
+      clearState();
     }, wait);
+  }
+  debounced.flush = function flush(...args) {
+    if (t) {
+      clearTimeout(t);
+    }
+    if (args.length > 0) {
+      lastArgs = args;
+      lastThis = this;
+    }
+    const applyArgs = Array.isArray(lastArgs) ? lastArgs : [];
+    const applyThis = lastThis ?? this;
+    clearState();
+    return fn.apply(applyThis, applyArgs);
   };
+  debounced.cancel = function cancel() {
+    if (t) clearTimeout(t);
+    clearState();
+  };
+  return debounced;
 }
 
 export function throttle(fn, wait) {

@@ -1,0 +1,53 @@
+name: pytest
+
+on:
+  pull_request:
+  push:
+    branches:
+      - develop
+      - "develop_*"
+      - main
+  workflow_dispatch:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.10"]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Install dependencies
+        run: |
+          pip install -r .devcontainer/requirements-dev.txt
+
+      - name: Build frontend bundle
+        run: |
+          cd app
+          npm ci
+          npm run build
+
+      - name: Install Playwright browsers
+        run: |
+          python -m playwright install --with-deps chromium
+          python -m playwright install --list
+
+      - name: Run tests
+        env:
+          PYTHONPATH: ${{ github.workspace }}
+          PICKS_NPY_DIR: ${{ runner.temp }}/seisviewer2d_test_app_data/picks_npy
+        run: |
+          mkdir -p "$PICKS_NPY_DIR"
+          pytest -q

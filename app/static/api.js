@@ -60,18 +60,39 @@ function normalizeTapValue(value) {
 
 async function fetchSectionWithPipeline(
   fileId,
-  key1Idx,
+  key1Val,
   spec,
   taps,
-  { key1Byte = 189, key2Byte = 193 } = {}
+  { key1Byte = 189, key2Byte = 193, signal } = {}
 ) {
-  const url = `/pipeline/section?file_id=${encodeURIComponent(fileId)}&key1_idx=${key1Idx}&key1_byte=${key1Byte}&key2_byte=${key2Byte}`;
-  const r = await fetch(url, {
+  const url = new URL('/pipeline/section', location.origin);
+  url.searchParams.set('file_id', fileId);
+  url.searchParams.set('key1', String(key1Val));
+  url.searchParams.set('key1_byte', String(key1Byte));
+  url.searchParams.set('key2_byte', String(key2Byte));
+  url.searchParams.set('list_only', '1');
+  const r = await fetch(url.toString(), {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
+    signal,
     body: JSON.stringify({ spec, taps }),
   });
-  if (!r.ok) throw new Error(`pipeline/section ${r.status}`);
+  if (!r.ok) {
+    let detail = '';
+    try {
+      const contentType = r.headers.get('content-type') || '';
+      if (contentType.includes('application/json')) {
+        const payload = await r.json();
+        detail = payload && typeof payload.detail === 'string' ? payload.detail : '';
+      } else {
+        detail = await r.text();
+      }
+    } catch {
+      detail = '';
+    }
+    const suffix = detail ? `: ${detail}` : '';
+    throw new Error(`pipeline/section ${r.status}${suffix}`);
+  }
   const json = await r.json();
   const out = {};
   for (const [name, val] of Object.entries(json.taps || {})) {
@@ -81,6 +102,6 @@ async function fetchSectionWithPipeline(
       console.warn('normalizeTapValue failed', name, e);
     }
   }
-  cacheSet(`${fileId}:${key1Idx}:${json.pipeline_key}`, out);
+  cacheSet(`${fileId}:${key1Val}:${json.pipeline_key}`, out);
   return { taps: out, pipelineKey: json.pipeline_key };
 }

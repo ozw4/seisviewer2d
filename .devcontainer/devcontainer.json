@@ -1,3 +1,4 @@
+
 {
     "name": "NGC-PYTORCH-DEVC",
     "service": "seisview",
@@ -6,6 +7,7 @@
     "remoteUser": "dcuser",
     "updateRemoteUserUID": false,
     "forwardPorts": [8000],
+    "postCreateCommand": "codex --version && gh --version && specify check"
     "customizations": {
         "vscode": {
             "settings": {
@@ -59,3 +61,4 @@
         }
     }
 }
+
