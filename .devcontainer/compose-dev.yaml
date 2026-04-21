@@ -48,6 +48,10 @@ services:
         source: ${HOME}/.gitconfig
         target: /home/dcuser/.gitconfig
         read_only: true
+      - type: bind
+        source: /home/aiuser4/Desktop/issue_forge
+        target: /workspace/vendor/issue_forge
+        read_only: true
     working_dir: /workspace
     ports:
       - "8000:8000"
