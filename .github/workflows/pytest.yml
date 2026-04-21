@@ -29,9 +29,16 @@ jobs:
         with:
           node-version: "22"
 
-      - name: Install dependencies
+      - name: Configure Git LFS for pip VCS installs
         run: |
-          pip install -r .devcontainer/requirements-dev.txt
+          git lfs version
+          git lfs install --skip-smudge
+
+      - name: Install dependencies
+        env:
+          GIT_LFS_SKIP_SMUDGE: "1"
+        run: |
+          python -m pip install -r .devcontainer/requirements-dev.txt
 
       - name: Build frontend bundle
         run: |
