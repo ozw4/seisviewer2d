@@ -1277,6 +1277,70 @@
       return !(tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || el?.isContentEditable);
     }
 
+    let shortcutsDialogLastActiveElement = null;
+
+    function getShortcutsOverlay() {
+      return document.getElementById('viewerShortcutsOverlay');
+    }
+
+    function getShortcutsDialog() {
+      return document.getElementById('viewerShortcutsDialog');
+    }
+
+    function getShortcutsButton() {
+      return document.getElementById('viewerShortcutsButton');
+    }
+
+    function isShortcutsDialogOpen() {
+      const overlay = getShortcutsOverlay();
+      return !!overlay && overlay.hidden === false;
+    }
+
+    function isShortcutHelpOpenKey(event) {
+      const keyRaw = typeof event?.key === 'string' ? event.key : '';
+      return keyRaw === '?' || (keyRaw === '/' && event.shiftKey);
+    }
+
+    function openShortcutsDialog() {
+      const overlay = getShortcutsOverlay();
+      const dialog = getShortcutsDialog();
+      const closeBtn = document.getElementById('viewerShortcutsClose');
+      if (!overlay || !dialog) return;
+      if (isShortcutsDialogOpen()) return;
+      shortcutsDialogLastActiveElement = document.activeElement instanceof HTMLElement
+        ? document.activeElement
+        : null;
+      overlay.hidden = false;
+      window.requestAnimationFrame(() => {
+        if (closeBtn && typeof closeBtn.focus === 'function') {
+          closeBtn.focus({ preventScroll: true });
+          return;
+        }
+        if (typeof dialog.focus === 'function') {
+          dialog.focus({ preventScroll: true });
+        }
+      });
+    }
+
+    function closeShortcutsDialog(options) {
+      const overlay = getShortcutsOverlay();
+      if (!overlay || overlay.hidden) return;
+      overlay.hidden = true;
+      const restoreFocus = !options || options.restoreFocus !== false;
+      if (!restoreFocus) return;
+      const fallback = getShortcutsButton();
+      const target =
+        shortcutsDialogLastActiveElement &&
+        shortcutsDialogLastActiveElement.isConnected &&
+        typeof shortcutsDialogLastActiveElement.focus === 'function'
+          ? shortcutsDialogLastActiveElement
+          : fallback;
+      shortcutsDialogLastActiveElement = null;
+      if (target && typeof target.focus === 'function') {
+        target.focus({ preventScroll: true });
+      }
+    }
+
     const HOTKEY_PAN_MIN_TRACES = 10;
     const HOTKEY_PAN_RATIO = 0.10;
     const HOTKEY_GAIN_TARGET = 1.2;
@@ -1490,9 +1554,27 @@
     }
 
     function handleViewerHotkey(e) {
-      if (!canUseGlobalHotkey()) return;
       const keyRaw = typeof e.key === 'string' ? e.key : '';
       const key = keyRaw.toLowerCase();
+
+      if (isShortcutsDialogOpen()) {
+        if (keyRaw === 'Escape') {
+          e.preventDefault();
+          closeShortcutsDialog();
+        } else if (isShortcutHelpOpenKey(e)) {
+          e.preventDefault();
+        }
+        return;
+      }
+
+      if (!canUseGlobalHotkey()) return;
+
+      if (isShortcutHelpOpenKey(e)) {
+        e.preventDefault();
+        if (e.repeat) return;
+        openShortcutsDialog();
+        return;
+      }
 
       if (e.ctrlKey || e.metaKey) {
         const isUndo = key === 'z' && !e.shiftKey;
@@ -1566,7 +1648,7 @@
 
     // Alt 押してる間だけ pan
     window.addEventListener('keydown', (e) => {
-      if (!canUseGlobalHotkey()) return;
+      if (isShortcutsDialogOpen() || !canUseGlobalHotkey()) return;
       if (e.key === 'Alt' || e.altKey) setAltPan(true);
     });
     window.addEventListener('keydown', handleViewerHotkey);
@@ -2809,8 +2891,25 @@
       const slider = document.getElementById('key1_slider');
       const fbpickModelSelect = document.getElementById('fbpick_model_select');
       const plotDiv = document.getElementById('plot');
+      const shortcutsButton = getShortcutsButton();
+      const shortcutsOverlay = getShortcutsOverlay();
+      const shortcutsClose = document.getElementById('viewerShortcutsClose');
       resetOpStatuses();
       updateManualPickHistoryButtons();
+
+      if (shortcutsButton) {
+        shortcutsButton.addEventListener('click', () => openShortcutsDialog());
+      }
+      if (shortcutsClose) {
+        shortcutsClose.addEventListener('click', () => closeShortcutsDialog());
+      }
+      if (shortcutsOverlay) {
+        shortcutsOverlay.addEventListener('click', (event) => {
+          if (event.target === shortcutsOverlay) {
+            closeShortcutsDialog();
+          }
+        });
+      }
 
       if (plotDiv) {
         plotHover = plotDiv.matches(':hover');
