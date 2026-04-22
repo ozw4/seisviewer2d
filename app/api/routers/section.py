@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import time
 from typing import Annotated, Literal
 
 import numpy as np
@@ -35,6 +36,38 @@ class SectionMeta(BaseModel):
     dt: float
     dtype: str | None = None
     scale: float | None = None
+
+
+def _format_ms(value: float) -> str:
+    """Format a duration in milliseconds for response headers."""
+    return f'{max(float(value), 0.0):.3f}'
+
+
+def _build_window_perf_headers(
+    *,
+    cache_state: str,
+    total_ms: float,
+    build_ms: float,
+    pack_ms: float,
+    payload_bytes: int,
+) -> dict[str, str]:
+    total_str = _format_ms(total_ms)
+    build_str = _format_ms(build_ms)
+    pack_str = _format_ms(pack_ms)
+    return {
+        'Content-Encoding': 'gzip',
+        'Server-Timing': (
+            f'sv_total;dur={total_str}, '
+            f'sv_build;dur={build_str}, '
+            f'sv_pack;dur={pack_str}, '
+            f'sv_cache;desc="{cache_state}"'
+        ),
+        'X-SV-Cache': cache_state,
+        'X-SV-Server-Ms': total_str,
+        'X-SV-Build-Ms': build_str,
+        'X-SV-Pack-Ms': pack_str,
+        'X-SV-Bytes': str(int(payload_bytes)),
+    }
 
 
 def _build_window_section_cache_key(
@@ -243,6 +276,7 @@ def get_section_window_bin(
     ] = None,
 ) -> Response:
     """Return a quantized window of a section, optionally via a pipeline tap."""
+    route_started = time.perf_counter()
     state = get_state(request.app)
     mode = 'amax' if scaling is None else scaling
     mode = mode.lower()
@@ -274,9 +308,16 @@ def get_section_window_bin(
         return Response(
             cached_payload,
             media_type='application/octet-stream',
-            headers={'Content-Encoding': 'gzip'},
+            headers=_build_window_perf_headers(
+                cache_state='hit',
+                total_ms=(time.perf_counter() - route_started) * 1000.0,
+                build_ms=0.0,
+                pack_ms=0.0,
+                payload_bytes=len(cached_payload),
+            ),
         )
 
+    perf_timings_ms: dict[str, float] = {}
     try:
         compressed = build_section_window_payload(
             file_id=file_id,
@@ -302,6 +343,7 @@ def get_section_window_bin(
             ),
             dt_resolver=lambda fid: state.file_registry.get_dt(fid),
             store_dir_resolver=lambda fid: state.file_registry.get_store_path(fid),
+            perf_timings_ms=perf_timings_ms,
         )
     except SectionServiceInternalError as exc:
         raise HTTPException(
@@ -317,10 +359,18 @@ def get_section_window_bin(
         cached_payload = state.window_section_cache.get(cache_key)
         if cached_payload is None:
             state.window_section_cache.set(cache_key, compressed)
+            cache_state = 'miss'
         else:
             compressed = cached_payload
+            cache_state = 'hit-after-build'
     return Response(
         compressed,
         media_type='application/octet-stream',
-        headers={'Content-Encoding': 'gzip'},
+        headers=_build_window_perf_headers(
+            cache_state=cache_state,
+            total_ms=(time.perf_counter() - route_started) * 1000.0,
+            build_ms=perf_timings_ms.get('build_ms', 0.0),
+            pack_ms=perf_timings_ms.get('pack_ms', 0.0),
+            payload_bytes=len(compressed),
+        ),
     )
