@@ -1,6 +1,7 @@
 # app/tests/test_section_router_changes.py
 import gzip
 import json
+import math
 from types import SimpleNamespace
 
 import msgpack
@@ -262,6 +263,10 @@ def test_get_section_returns_json_for_value(monkeypatch):
 
 
 def test_get_section_window_bin_happy_path(monkeypatch, tmp_path):
+    state = sec.get_state(app)
+    state.window_section_cache.clear()
+    state.trace_stats_cache.clear()
+
     class _StubReader:
         key1_byte = 189
         key2_byte = 193
@@ -311,6 +316,11 @@ def test_get_section_window_bin_happy_path(monkeypatch, tmp_path):
         request=SimpleNamespace(app=app),
     )
     assert res.headers.get('Content-Encoding') == 'gzip'
+    assert res.headers.get('X-SV-Cache') == 'miss'
+    assert 'sv_cache;desc="miss"' in res.headers.get('Server-Timing', '')
+    assert int(res.headers['X-SV-Bytes']) == len(res.body)
+    for name in ('X-SV-Server-Ms', 'X-SV-Build-Ms', 'X-SV-Pack-Ms'):
+        assert math.isfinite(float(res.headers[name]))
     payload = msgpack.unpackb(gzip.decompress(res.body))
     assert (
         'scale' in payload
