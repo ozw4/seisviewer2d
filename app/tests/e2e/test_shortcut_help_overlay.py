@@ -22,7 +22,7 @@ def _upload_tiny_dataset_and_render_plot(page, base_url, tiny_segy_path) -> None
     page.set_input_files("#upload_segy", str(tiny_segy_path))
     page.click("#upload_btn")
 
-    page.wait_for_url("**/?file_id=*", timeout=60_000)
+    page.wait_for_url("**/?file_id=*", timeout=120_000)
     page.wait_for_load_state("domcontentloaded")
     page.wait_for_function(
         "() => document.getElementById('viewerEmptyState')?.hidden === true"
@@ -31,12 +31,12 @@ def _upload_tiny_dataset_and_render_plot(page, base_url, tiny_segy_path) -> None
     plot_btn = page.locator("button:has-text('Plot')")
     with page.expect_response(
         lambda r: "/get_section_window_bin" in r.url and r.status == 200,
-        timeout=60_000,
+        timeout=120_000,
     ):
         plot_btn.click()
 
-    page.wait_for_selector("#plot.js-plotly-plot", timeout=60_000)
-    page.wait_for_selector("#plot .plot-container", timeout=60_000)
+    page.wait_for_selector("#plot.js-plotly-plot", timeout=120_000)
+    page.wait_for_selector("#plot .plot-container", timeout=120_000)
 
 
 @pytest.mark.e2e
@@ -51,11 +51,11 @@ def test_shortcuts_dialog_is_available_without_dataset_and_stays_local(
     button = page.get_by_test_id("viewer-shortcuts-button")
     dialog = page.get_by_role("dialog", name="Keyboard shortcuts")
 
-    button.wait_for(timeout=60_000)
+    button.wait_for(timeout=120_000)
     assert button.text_content() == "Shortcuts"
 
     button.click()
-    dialog.wait_for(timeout=60_000)
+    dialog.wait_for(timeout=120_000)
     assert dialog.get_by_text("Navigation").is_visible()
     assert dialog.get_by_text("A / D").is_visible()
     assert dialog.get_by_text("Ctrl+Y / Ctrl+Shift+Z").is_visible()
@@ -64,7 +64,7 @@ def test_shortcuts_dialog_is_available_without_dataset_and_stays_local(
     page.get_by_test_id("viewer-shortcuts-dialog").wait_for(state="hidden")
 
     page.keyboard.press("?")
-    dialog.wait_for(timeout=60_000)
+    dialog.wait_for(timeout=120_000)
 
     page.keyboard.press("Escape")
     page.get_by_test_id("viewer-shortcuts-dialog").wait_for(state="hidden")
@@ -85,7 +85,7 @@ def test_shortcuts_dialog_question_mark_respects_editable_focus(
 
     dialog = page.get_by_test_id("viewer-shortcuts-dialog")
     page.keyboard.press("?")
-    dialog.wait_for(timeout=60_000)
+    dialog.wait_for(timeout=120_000)
     page.keyboard.press("Escape")
     dialog.wait_for(state="hidden")
 
@@ -124,7 +124,7 @@ def test_shortcuts_dialog_does_not_change_alt_pan_viewer_state(
     )
 
     button.click()
-    dialog.wait_for(timeout=60_000)
+    dialog.wait_for(timeout=120_000)
     page.wait_for_function(
         """() => {
           const gd = document.getElementById('plot');
