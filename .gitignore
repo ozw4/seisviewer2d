@@ -56,3 +56,8 @@ app/static/pako*.min.js
 app/static/msgpack*.min.js
 playwright-artifacts/
 snippest_code/
+
+.work/
+vendor/issue_forge/
+.work
+vendor/issue_forge
