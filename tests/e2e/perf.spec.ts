@@ -1,4 +1,9 @@
 import { test, expect } from '@playwright/test';
+import {
+	attachSvPerfRows,
+	attachSvPerfSummary,
+	type SvPerfRow,
+} from './helpers/perfArtifacts';
 
 type RecentDataset = {
 	original_name: string;
@@ -13,28 +18,6 @@ type RecentDatasetsResponse = {
 type OpenSegyResponse = {
 	file_id: string;
 	reused_trace_store: boolean;
-};
-
-type ViewerPerfRow = {
-	kind: 'window';
-	mode?: string;
-	plot?: string;
-	rows?: number;
-	cols?: number;
-	stepX?: number;
-	stepY?: number;
-	fetch_ms?: number | null;
-	decode_ms?: number | null;
-	lut_ms?: number | null;
-	prep_ms?: number | null;
-	plotly_ms?: number | null;
-	total_ms?: number | null;
-	bytes?: number | null;
-};
-
-type ViewerWindow = Window & {
-	SV_PERF?: boolean;
-	SV_PERF_ROWS?: ViewerPerfRow[];
 };
 
 const DEFAULT_KEY1_BYTE = 189;
@@ -63,6 +46,28 @@ function parseOptionalNumberEnv(name: string): number | null {
 function toFiniteNumber(value: unknown): number | null {
 	return typeof value === 'number' && Number.isFinite(value) ? value : null;
 }
+
+function findLatestWindowRow(rows: SvPerfRow[]): SvPerfRow | null {
+	for (let index = rows.length - 1; index >= 0; index -= 1) {
+		const row = rows[index];
+		if (row?.kind === 'window') {
+			return row;
+		}
+	}
+	return null;
+}
+
+test('perf artifact helper stores empty rows when SV_PERF_ROWS is missing', async (
+	{ page },
+	testInfo,
+) => {
+	await page.goto('/upload');
+
+	const rows = await attachSvPerfRows(page, testInfo, 'upload-no-perf');
+	await attachSvPerfSummary(page, testInfo, 'upload-no-perf');
+
+	expect(rows).toEqual([]);
+});
 
 test('viewer initial render perf attaches JSON artifact', async ({ page, request }, testInfo) => {
 	const originalName = process.env.SV_PERF_ORIGINAL_NAME?.trim() || null;
@@ -122,7 +127,7 @@ test('viewer initial render perf attaches JSON artifact', async ({ page, request
 
 	await page.goto(`/?${viewerParams.toString()}`, { waitUntil: 'domcontentloaded' });
 	await page.waitForFunction(
-		() => (window as ViewerWindow).SV_PERF === true,
+		() => (globalThis as { SV_PERF?: boolean }).SV_PERF === true,
 		null,
 		{ timeout: 60_000 },
 	);
@@ -137,24 +142,18 @@ test('viewer initial render perf attaches JSON artifact', async ({ page, request
 
 	await page.waitForFunction(
 		() => {
-			const rows = (window as ViewerWindow).SV_PERF_ROWS;
+			const rows = (globalThis as { SV_PERF_ROWS?: Array<{ kind?: string }> }).SV_PERF_ROWS;
 			return Array.isArray(rows) && rows.some((row) => row?.kind === 'window');
 		},
 		null,
 		{ timeout: 60_000 },
 	);
 
-	const perfRow = await page.evaluate(() => {
-		const rows = (window as ViewerWindow).SV_PERF_ROWS;
-		if (!Array.isArray(rows)) return null;
-		for (let index = rows.length - 1; index >= 0; index -= 1) {
-			const row = rows[index];
-			if (row?.kind === 'window') {
-				return row;
-			}
-		}
-		return null;
-	});
+	const rows = await attachSvPerfRows(page, testInfo, 'viewer-initial-render');
+	await attachSvPerfSummary(page, testInfo, 'viewer-initial-render');
+	expect(rows.some((row) => row.kind === 'window')).toBeTruthy();
+
+	const perfRow = findLatestWindowRow(rows);
 
 	expect(perfRow).not.toBeNull();
 	expect(perfRow?.kind).toBe('window');
