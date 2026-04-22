@@ -306,6 +306,72 @@
       align-items: stretch;
     }
 
+    #viewerEmptyState {
+      position: absolute;
+      inset: 0;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 1.5rem;
+      z-index: 20;
+    }
+
+    #viewerEmptyState[hidden] {
+      display: none;
+    }
+
+    .viewer-empty-state-card {
+      width: min(100%, 34rem);
+      padding: 1.75rem;
+      border: 1px solid #d7deea;
+      border-radius: 16px;
+      background: linear-gradient(180deg, #ffffff 0%, #f8fbff 100%);
+      box-shadow: 0 10px 30px rgba(15, 23, 42, 0.08);
+      text-align: center;
+    }
+
+    .viewer-empty-state-title {
+      margin: 0;
+      font-size: 1.5rem;
+      color: #0f172a;
+    }
+
+    .viewer-empty-state-description {
+      margin: 0.85rem 0 0;
+      font-size: 1rem;
+      line-height: 1.5;
+      color: #334155;
+    }
+
+    .viewer-empty-state-action {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      margin-top: 1.1rem;
+      padding: 0.7rem 1rem;
+      border-radius: 999px;
+      border: 1px solid #0f172a;
+      background: #0f172a;
+      color: #fff;
+      font-weight: 600;
+      text-decoration: none;
+    }
+
+    .viewer-empty-state-action:hover,
+    .viewer-empty-state-action:focus-visible {
+      background: #1e293b;
+      border-color: #1e293b;
+      outline: 2px solid #93c5fd;
+      outline-offset: 2px;
+    }
+
+    .viewer-empty-state-helper {
+      margin: 0.9rem 0 0;
+      font-size: 0.94rem;
+      line-height: 1.5;
+      color: #475569;
+    }
+
     #plot>.plot-container {
       flex: 1 1 auto;
       min-width: 0;
@@ -1037,6 +1103,19 @@
       </div>
       <div id="plotViewport">
         <div id="plot"></div>
+        <section id="viewerEmptyState" hidden aria-live="polite" aria-atomic="true">
+          <div class="viewer-empty-state-card" aria-labelledby="viewerEmptyStateTitle"
+            aria-describedby="viewerEmptyStateDescription viewerEmptyStateHelper">
+            <h2 id="viewerEmptyStateTitle" class="viewer-empty-state-title">No dataset open</h2>
+            <p id="viewerEmptyStateDescription" class="viewer-empty-state-description">
+              Open or upload a SEG-Y file to start exploring sections.
+            </p>
+            <a id="viewerEmptyStateAction" class="viewer-empty-state-action" href="/upload">Open SEG-Y</a>
+            <p id="viewerEmptyStateHelper" class="viewer-empty-state-helper">
+              After opening a dataset, the viewer will show the first available section.
+            </p>
+          </div>
+        </section>
         <div id="windowLoadingOverlay" aria-live="polite" aria-atomic="true">
           <div class="windowLoadingBox">
             <span class="windowLoadingSpinner" aria-hidden="true"></span>

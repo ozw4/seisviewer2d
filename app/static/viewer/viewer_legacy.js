@@ -221,6 +221,64 @@
       }
     }
 
+    const VIEWER_EMPTY_STATE_COPY = {
+      'no-dataset': {
+        title: 'No dataset open',
+        description: 'Open or upload a SEG-Y file to start exploring sections.',
+        helper: 'After opening a dataset, the viewer will show the first available section.',
+      },
+      unavailable: {
+        title: 'Dataset unavailable',
+        description: 'The previously selected dataset could not be opened. Open or upload a SEG-Y file to continue.',
+        helper: 'After opening a dataset, the viewer will show the first available section.',
+      },
+    };
+
+    function getViewerEmptyStateNodes() {
+      return {
+        root: document.getElementById('viewerEmptyState'),
+        title: document.getElementById('viewerEmptyStateTitle'),
+        description: document.getElementById('viewerEmptyStateDescription'),
+        helper: document.getElementById('viewerEmptyStateHelper'),
+      };
+    }
+
+    function clearPlotSurface() {
+      const plotDiv = document.getElementById('plot');
+      if (!plotDiv) return;
+      if (typeof window.Plotly?.purge === 'function') {
+        try { window.Plotly.purge(plotDiv); } catch (_) { }
+      }
+      plotDiv.innerHTML = '';
+      plotDiv.classList.remove('js-plotly-plot');
+    }
+
+    function showViewerEmptyState(kind = 'no-dataset') {
+      const copy = VIEWER_EMPTY_STATE_COPY[kind] || VIEWER_EMPTY_STATE_COPY['no-dataset'];
+      const { root, title, description, helper } = getViewerEmptyStateNodes();
+      if (title) title.textContent = copy.title;
+      if (description) description.textContent = copy.description;
+      if (helper) helper.textContent = copy.helper;
+      if (typeof hideLoading === 'function') hideLoading();
+      clearPlotSurface();
+      if (root) {
+        root.dataset.state = kind;
+        root.hidden = false;
+      }
+    }
+
+    function hideViewerEmptyState() {
+      const { root } = getViewerEmptyStateNodes();
+      if (!root) return;
+      root.hidden = true;
+      delete root.dataset.state;
+    }
+
+    function isViewerEmptyStateVisible() {
+      const { root } = getViewerEmptyStateNodes();
+      return !!root && root.hidden === false;
+    }
+
     function removeToast(toastNode) {
       if (!toastNode) return;
       const toastId = toastNode.dataset.toastId || '';
@@ -2296,14 +2354,33 @@
       document.getElementById('file_id').value = currentFileId;
       if (!currentFileId) {
         currentFileName = '';
+        key1Values = [];
+        sectionShape = null;
+        showViewerEmptyState('no-dataset');
         return;
       }
       localStorage.setItem('file_id', currentFileId);
       localStorage.setItem('key1_byte', currentKey1Byte);
       localStorage.setItem('key2_byte', currentKey2Byte);
       await fetchCurrentFileName();
+      if (!currentFileName) {
+        key1Values = [];
+        sectionShape = null;
+        showViewerEmptyState('unavailable');
+        return;
+      }
       await fetchKey1Values();
+      if (!Array.isArray(key1Values) || key1Values.length === 0) {
+        sectionShape = null;
+        showViewerEmptyState('unavailable');
+        return;
+      }
       await fetchSectionMeta();
+      if (!Array.isArray(sectionShape) || sectionShape.length < 2) {
+        showViewerEmptyState('unavailable');
+        return;
+      }
+      hideViewerEmptyState();
       await fetchAndPlot();
     }
 
@@ -2424,6 +2501,16 @@
       snapshotAxesRangesFromDOM();
       console.log('--- fetchAndPlot start ---');
       console.time('Total fetchAndPlot');
+
+      if (!currentFileId) {
+        showViewerEmptyState('no-dataset');
+        return;
+      }
+      if (!Array.isArray(key1Values) || key1Values.length === 0) {
+        showViewerEmptyState('unavailable');
+        return;
+      }
+      hideViewerEmptyState();
 
       const index = parseInt(document.getElementById('key1_slider').value);
       const key1Val = key1Values[index];
@@ -2735,6 +2822,9 @@
         if (fileIdEl && fileIdEl.value && !currentFileId) {
           currentFileId = fileIdEl.value;
         }
+        if (isViewerEmptyStateVisible()) {
+          return;
+        }
         if (!currentFileId) {
           currentFileName = '';
           return;
@@ -2744,7 +2834,10 @@
         }
       };
 
-      loadSettings().catch((err) => console.warn('loadSettings failed', err)).finally(() => {
+      loadSettings().catch((err) => {
+        console.warn('loadSettings failed', err);
+        showViewerEmptyState(currentFileId ? 'unavailable' : 'no-dataset');
+      }).finally(() => {
         boot().catch((err) => console.warn('initial picks load failed', err));
       });
 
@@ -2783,11 +2876,27 @@
             windowFetchCtrl.abort();
             windowFetchCtrl = null;
           }
-
-
+          if (!currentFileId) {
+            currentFileName = '';
+            showViewerEmptyState('no-dataset');
+            return;
+          }
           await fetchCurrentFileName();
+          if (!currentFileName) {
+            showViewerEmptyState('unavailable');
+            return;
+          }
           await fetchKey1Values();
+          if (!Array.isArray(key1Values) || key1Values.length === 0) {
+            showViewerEmptyState('unavailable');
+            return;
+          }
           await fetchSectionMeta();
+          if (!Array.isArray(sectionShape) || sectionShape.length < 2) {
+            showViewerEmptyState('unavailable');
+            return;
+          }
+          hideViewerEmptyState();
           (typeof fetchAndPlotDebounced?.flush === 'function')
             ? fetchAndPlotDebounced.flush()
             : fetchAndPlot();
