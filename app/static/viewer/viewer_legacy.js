@@ -265,6 +265,7 @@
         root.dataset.state = kind;
         root.hidden = false;
       }
+      updateSectionNavigation({ syncDisplay: true, syncJumpInput: true });
     }
 
     function hideViewerEmptyState() {
@@ -277,6 +278,156 @@
     function isViewerEmptyStateVisible() {
       const { root } = getViewerEmptyStateNodes();
       return !!root && root.hidden === false;
+    }
+
+    function getSectionNavNodes() {
+      return {
+        slider: document.getElementById('key1_slider'),
+        display: document.getElementById('key1_val_display'),
+        prev: document.getElementById('sectionNavPrev'),
+        next: document.getElementById('sectionNavNext'),
+        position: document.getElementById('sectionNavPosition'),
+        key1Current: document.getElementById('sectionNavKey1Current'),
+        jumpInput: document.getElementById('sectionNavKey1Input'),
+        jumpGo: document.getElementById('sectionNavKey1Go'),
+        validation: document.getElementById('sectionNavValidation'),
+      };
+    }
+
+    function setSectionNavValidation(message = '') {
+      const { validation } = getSectionNavNodes();
+      if (!validation) return;
+      const text = typeof message === 'string' ? message.trim() : '';
+      validation.textContent = text;
+      validation.hidden = text.length === 0;
+    }
+
+    function clearSectionNavValidation() {
+      setSectionNavValidation('');
+    }
+
+    function resolveKey1Value(rawValue) {
+      if (!Array.isArray(key1Values) || key1Values.length === 0) {
+        return { ok: false, message: 'No sections are available.' };
+      }
+      const text = String(rawValue ?? '').trim();
+      if (!text) {
+        return { ok: false, message: 'Enter a key1 value.' };
+      }
+      const value = Number(text);
+      if (!Number.isFinite(value) || !Number.isInteger(value)) {
+        return { ok: false, message: 'Enter a valid integer key1 value.' };
+      }
+      const index = key1Values.indexOf(value);
+      if (index < 0) {
+        return { ok: false, message: `key1 ${value} is not available in this dataset.` };
+      }
+      return { ok: true, index, value };
+    }
+
+    function getCurrentKey1Index() {
+      const { slider } = getSectionNavNodes();
+      if (!slider || !Array.isArray(key1Values) || key1Values.length === 0) return -1;
+      let idx = parseInt(slider.value, 10);
+      if (!Number.isFinite(idx)) idx = 0;
+      idx = Math.max(0, Math.min(key1Values.length - 1, idx));
+      if (slider.value !== String(idx)) {
+        slider.value = String(idx);
+      }
+      return idx;
+    }
+
+    function updateSectionNavigation(options = {}) {
+      const syncDisplay = options.syncDisplay !== false;
+      const syncJumpInput = options.syncJumpInput === true;
+      const nodes = getSectionNavNodes();
+      const hasSections = Array.isArray(key1Values) && key1Values.length > 0;
+      const disabled = !currentFileId || !hasSections;
+
+      let idx = -1;
+      if (nodes.slider) {
+        nodes.slider.min = '0';
+        nodes.slider.max = hasSections ? String(key1Values.length - 1) : '0';
+        if (!hasSections) {
+          nodes.slider.value = '0';
+        }
+        nodes.slider.disabled = disabled;
+      }
+      if (hasSections) {
+        idx = getCurrentKey1Index();
+      }
+
+      if (nodes.display) {
+        nodes.display.disabled = false;
+        if (hasSections) {
+          nodes.display.min = String(key1Values[0]);
+          nodes.display.max = String(key1Values[key1Values.length - 1]);
+          if (syncDisplay && idx >= 0) {
+            nodes.display.value = String(key1Values[idx]);
+          }
+        } else {
+          nodes.display.removeAttribute('min');
+          nodes.display.removeAttribute('max');
+          if (syncDisplay) {
+            nodes.display.value = '';
+          }
+        }
+      }
+
+      if (nodes.prev) {
+        nodes.prev.disabled = disabled || idx <= 0;
+      }
+      if (nodes.next) {
+        nodes.next.disabled = disabled || idx < 0 || idx >= key1Values.length - 1;
+      }
+      if (nodes.position) {
+        nodes.position.textContent = hasSections && idx >= 0
+          ? `Section ${idx + 1} / ${key1Values.length}`
+          : 'Section - / -';
+      }
+      if (nodes.key1Current) {
+        nodes.key1Current.textContent = hasSections && idx >= 0
+          ? `key1: ${key1Values[idx]}`
+          : 'key1: -';
+      }
+      if (nodes.jumpInput) {
+        nodes.jumpInput.disabled = disabled;
+        if (!disabled) {
+          nodes.jumpInput.min = String(key1Values[0]);
+          nodes.jumpInput.max = String(key1Values[key1Values.length - 1]);
+          if (syncJumpInput && idx >= 0) {
+            nodes.jumpInput.value = String(key1Values[idx]);
+          }
+        } else {
+          nodes.jumpInput.removeAttribute('min');
+          nodes.jumpInput.removeAttribute('max');
+          if (syncJumpInput) {
+            nodes.jumpInput.value = '';
+          }
+        }
+      }
+      if (nodes.jumpGo) {
+        nodes.jumpGo.disabled = disabled;
+      }
+      if (disabled) {
+        clearSectionNavValidation();
+      }
+    }
+
+    function selectKey1Index(index, options = {}) {
+      const { slider } = getSectionNavNodes();
+      if (!slider || !Array.isArray(key1Values) || key1Values.length === 0) return false;
+      const prevIndex = getCurrentKey1Index();
+      let nextIndex = Number(index);
+      if (!Number.isFinite(nextIndex)) return false;
+      nextIndex = Math.trunc(nextIndex);
+      nextIndex = Math.max(0, Math.min(key1Values.length - 1, nextIndex));
+      slider.value = String(nextIndex);
+      updateSectionNavigation({
+        syncDisplay: true,
+        syncJumpInput: options.syncJumpInput === true,
+      });
+      return nextIndex !== prevIndex;
     }
 
     function removeToast(toastNode) {
@@ -384,22 +535,85 @@
     // --- 追加：ハンドラ ---
     function onKey1Input() {
       updateKey1Display();
+      clearSectionNavValidation();
+      if (!currentFileId || !Array.isArray(key1Values) || key1Values.length === 0) return;
       fetchAndPlotDebounced();        // 入力が止まってから実行
     }
 
-    async function onKey1Change() {
+    async function onKey1Change(options = {}) {
+      const immediate = options.immediate !== false;
       updateKey1Display();
+      clearSectionNavValidation();
       const slider = document.getElementById('key1_slider');
       if (slider) {
           slider.blur();
         }
+      if (!currentFileId || !Array.isArray(key1Values) || key1Values.length === 0) return;
       const debounced = ensureFlushPickOpsDebounced();
       if (typeof debounced?.flush === 'function') {
         await debounced.flush();
       } else {
         await flushPickOps();
       }
-      fetchAndPlotDebounced.flush();
+      if (immediate) {
+        fetchAndPlotDebounced.flush();
+      } else {
+        fetchAndPlotDebounced();
+      }
+    }
+
+    function onKey1ValueDisplayInput() {
+      clearSectionNavValidation();
+    }
+
+    function syncSliderWithInput() {
+      const { display } = getSectionNavNodes();
+      if (!display) return false;
+      const resolved = resolveKey1Value(display.value);
+      if (!resolved.ok) {
+        setSectionNavValidation(resolved.message);
+        updateSectionNavigation({ syncDisplay: true });
+        return false;
+      }
+      clearSectionNavValidation();
+      selectKey1Index(resolved.index);
+      return true;
+    }
+
+    function onKey1ValueDisplayChange() {
+      if (!syncSliderWithInput()) return;
+      onKey1Change({ immediate: false }).catch((err) => console.warn('key1 input change failed', err));
+    }
+
+    function onSectionNavJumpInput() {
+      clearSectionNavValidation();
+    }
+
+    function onSectionNavJumpKeyDown(event) {
+      if (!event || event.key !== 'Enter') return;
+      event.preventDefault();
+      goToSectionByKey1();
+    }
+
+    function goToSectionByKey1() {
+      const { jumpInput } = getSectionNavNodes();
+      if (!jumpInput) return;
+      const resolved = resolveKey1Value(jumpInput.value);
+      if (!resolved.ok) {
+        setSectionNavValidation(resolved.message);
+        return;
+      }
+      clearSectionNavValidation();
+      selectKey1Index(resolved.index, { syncJumpInput: true });
+      onKey1Change({ immediate: true }).catch((err) => console.warn('key1 jump failed', err));
+    }
+
+    function goToPreviousSection() {
+      changeSectionByDelta(-1);
+    }
+
+    function goToNextSection() {
+      changeSectionByDelta(1);
     }
 
 
@@ -1469,18 +1683,17 @@
       requestWindowFetch({ immediate: true });
     }
 
+    function changeSectionByDelta(delta) {
+      if (!Number.isFinite(delta) || delta === 0) return;
+      const idx = getCurrentKey1Index();
+      if (idx < 0) return;
+      const changed = selectKey1Index(idx + delta);
+      if (!changed) return;
+      onKey1Change({ immediate: true }).catch((err) => console.warn('Section delta change failed', err));
+    }
+
     function runHotkeyStepKey1(delta) {
-      const slider = document.getElementById('key1_slider');
-      if (!slider) return;
-      const prev = Number(slider.value);
-      stepKey1(delta);
-      updateKey1Display();
-      const next = Number(slider.value);
-      if (!Number.isFinite(prev) || !Number.isFinite(next) || next === prev) return;
-      const maybePromise = onKey1Change();
-      if (maybePromise && typeof maybePromise.catch === 'function') {
-        maybePromise.catch((err) => console.warn('Hotkey key1 change failed', err));
-      }
+      changeSectionByDelta(delta);
     }
 
     function toggleLayerByHotkey() {
@@ -2383,31 +2596,19 @@
     }
 
     function updateKey1Display() {
-      const slider = document.getElementById('key1_slider');
-      const display = document.getElementById('key1_val_display');
-      const idx = parseInt(slider.value);
-      display.value = key1Values[idx] ?? '';
-    }
-
-    function syncSliderWithInput() {
-      const slider = document.getElementById('key1_slider');
-      const display = document.getElementById('key1_val_display');
-      const val = parseInt(display.value);
-      const idx = key1Values.indexOf(val);
-      slider.value = idx >= 0 ? idx : 0;
-      display.value = key1Values[slider.value] ?? '';
+      updateSectionNavigation({ syncDisplay: true });
     }
 
     function stepKey1(delta) {
-      const slider = document.getElementById('key1_slider');
-      let value = parseInt(slider.value) + delta;
-      value = Math.max(slider.min, Math.min(slider.max, value));
-      slider.value = value;
-      updateKey1Display();
+      const idx = getCurrentKey1Index();
+      if (idx < 0) return false;
+      return selectKey1Index(idx + delta);
     }
 
     function setKey1SliderMax(max) {
-      document.getElementById('key1_slider').max = max;
+      const { slider } = getSectionNavNodes();
+      if (!slider) return;
+      slider.max = String(Math.max(0, Number(max) || 0));
     }
 
     async function fetchKey1Values() {
@@ -2416,10 +2617,12 @@
         const data = await res.json();
         key1Values = data.values;
         setKey1SliderMax(key1Values.length - 1);
-        document.getElementById('key1_val_display').min = key1Values[0];
-        document.getElementById('key1_val_display').max = key1Values[key1Values.length - 1];
         document.getElementById('key1_slider').value = 0;
-        updateKey1Display();
+        clearSectionNavValidation();
+        updateSectionNavigation({ syncDisplay: true, syncJumpInput: true });
+      } else {
+        key1Values = [];
+        updateSectionNavigation({ syncDisplay: true, syncJumpInput: true });
       }
     }
 
@@ -2438,6 +2641,7 @@
         currentFileName = '';
         key1Values = [];
         sectionShape = null;
+        updateSectionNavigation({ syncDisplay: true, syncJumpInput: true });
         showViewerEmptyState('no-dataset');
         return;
       }
@@ -2448,17 +2652,20 @@
       if (!currentFileName) {
         key1Values = [];
         sectionShape = null;
+        updateSectionNavigation({ syncDisplay: true, syncJumpInput: true });
         showViewerEmptyState('unavailable');
         return;
       }
       await fetchKey1Values();
       if (!Array.isArray(key1Values) || key1Values.length === 0) {
         sectionShape = null;
+        updateSectionNavigation({ syncDisplay: true, syncJumpInput: true });
         showViewerEmptyState('unavailable');
         return;
       }
       await fetchSectionMeta();
       if (!Array.isArray(sectionShape) || sectionShape.length < 2) {
+        updateSectionNavigation({ syncDisplay: true, syncJumpInput: true });
         showViewerEmptyState('unavailable');
         return;
       }
@@ -2896,6 +3103,7 @@
       const shortcutsClose = document.getElementById('viewerShortcutsClose');
       resetOpStatuses();
       updateManualPickHistoryButtons();
+      updateSectionNavigation({ syncDisplay: true, syncJumpInput: true });
 
       if (shortcutsButton) {
         shortcutsButton.addEventListener('click', () => openShortcutsDialog());
@@ -2975,6 +3183,7 @@
             windowFetchCtrl.abort();
             windowFetchCtrl = null;
           }
+          updateSectionNavigation({ syncDisplay: true, syncJumpInput: true });
           if (!currentFileId) {
             currentFileName = '';
             showViewerEmptyState('no-dataset');
@@ -2982,28 +3191,23 @@
           }
           await fetchCurrentFileName();
           if (!currentFileName) {
+            updateSectionNavigation({ syncDisplay: true, syncJumpInput: true });
             showViewerEmptyState('unavailable');
             return;
           }
           await fetchKey1Values();
           if (!Array.isArray(key1Values) || key1Values.length === 0) {
+            updateSectionNavigation({ syncDisplay: true, syncJumpInput: true });
             showViewerEmptyState('unavailable');
             return;
           }
           await fetchSectionMeta();
           if (!Array.isArray(sectionShape) || sectionShape.length < 2) {
+            updateSectionNavigation({ syncDisplay: true, syncJumpInput: true });
             showViewerEmptyState('unavailable');
             return;
           }
           hideViewerEmptyState();
-          (typeof fetchAndPlotDebounced?.flush === 'function')
-            ? fetchAndPlotDebounced.flush()
-            : fetchAndPlot();
-        });
-      }
-      if (slider) {
-        slider.addEventListener('change', () => {
-          // ピック読込は fetchAndPlot() 内に集約
           (typeof fetchAndPlotDebounced?.flush === 'function')
             ? fetchAndPlotDebounced.flush()
             : fetchAndPlot();
