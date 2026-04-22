@@ -256,6 +256,51 @@
       color: #0f172a;
     }
 
+    .section-nav-summary {
+      display: flex;
+      flex-direction: column;
+      gap: 0.15em;
+      padding: 0.65em 0.75em;
+      border: 1px solid #dbe3ef;
+      border-radius: 8px;
+      background: #f8fbff;
+    }
+
+    .section-nav-position {
+      font-weight: 700;
+      color: #0f172a;
+    }
+
+    .section-nav-key1-current {
+      color: #334155;
+      font-size: 0.92em;
+    }
+
+    .section-nav-inline {
+      width: 100%;
+      justify-content: space-between;
+    }
+
+    .section-nav-inline .control-input-group {
+      width: auto;
+      flex: 1 1 0;
+    }
+
+    .section-nav-inline input[type="number"] {
+      width: 100%;
+      min-width: 0;
+    }
+
+    .section-nav-validation {
+      min-height: 1.3em;
+      font-size: 0.84em;
+      color: #b45309;
+    }
+
+    .section-nav-validation[hidden] {
+      display: none;
+    }
+
     .control-section-status {
       flex: 0 1 260px;
     }
@@ -1124,16 +1169,34 @@
             <section class="control-section control-section-navigation" aria-labelledby="controls-navigation-title">
               <h2 id="controls-navigation-title" class="control-section-heading">Navigation</h2>
               <div class="control-stack">
-                <label for="key1_slider" class="control-field">key1 value:
-                  <span class="key1-display">section selector</span>
+                <div class="section-nav-summary">
+                  <div id="sectionNavPosition" class="section-nav-position" data-testid="section-nav-position">Section - / -</div>
+                  <div id="sectionNavKey1Current" class="section-nav-key1-current" data-testid="section-nav-key1-current">key1: -</div>
+                </div>
+                <div class="control-button-row">
+                  <button type="button" id="sectionNavPrev" data-testid="section-nav-prev" onclick="goToPreviousSection()" disabled>Previous</button>
+                  <button type="button" id="sectionNavNext" data-testid="section-nav-next" onclick="goToNextSection()" disabled>Next</button>
+                </div>
+                <label for="key1_slider" class="control-field">Section slider:
+                  <span class="key1-display">ordered key1 values</span>
                 </label>
                 <div class="control-input-group">
-                  <input type="range" id="key1_slider" min="0" max="10000" value="0" step="1" oninput="onKey1Input()"
+                  <input type="range" id="key1_slider" min="0" max="0" value="0" step="1" data-testid="section-nav-slider" oninput="onKey1Input()"
                     onchange="onKey1Change()" />
-                  <input type="number" id="key1_val_display" value="0" min="0" max="10000" step="1" style="width: 60px;"
-                    onchange="syncSliderWithInput(); fetchAndPlot()" />
+                  <input type="number" id="key1_val_display" value="" min="0" max="0" step="1" style="width: 80px;"
+                    oninput="onKey1ValueDisplayInput()" onchange="onKey1ValueDisplayChange()" />
                   <button type="button" onclick="fetchAndPlot()">Plot</button>
                 </div>
+                <label for="sectionNavKey1Input" class="control-field">Jump to key1:</label>
+                <div class="control-row section-nav-inline">
+                  <div class="control-input-group">
+                    <input type="number" id="sectionNavKey1Input" value="" step="1" inputmode="numeric"
+                      data-testid="section-nav-key1-input" oninput="onSectionNavJumpInput()"
+                      onkeydown="onSectionNavJumpKeyDown(event)" disabled />
+                  </div>
+                  <button type="button" id="sectionNavKey1Go" data-testid="section-nav-key1-go" onclick="goToSectionByKey1()" disabled>Go</button>
+                </div>
+                <div id="sectionNavValidation" class="section-nav-validation" data-testid="section-nav-validation" hidden aria-live="polite"></div>
               </div>
             </section>
 

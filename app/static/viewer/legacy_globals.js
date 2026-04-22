@@ -181,4 +181,4 @@
     // スライダ用：入力中は遅延、確定時は即時
     let fetchAndPlotDebounced = makeDebounced(() => {
       try { fetchAndPlot(); } catch (e) { console.warn(e); }
-    }, 120); // 100〜200msくらいが体感◎
+    }, 300); // keep section auto-plot responsive without flooding requests
