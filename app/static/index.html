@@ -36,6 +36,30 @@
       font-size: 0.8em;
     }
 
+    .headerLinks a,
+    .headerLinks button {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      padding: 0.45em 0.8em;
+      border: 1px solid #d1d5db;
+      border-radius: 999px;
+      background: #fff;
+      color: #111827;
+      text-decoration: none;
+      font: inherit;
+      cursor: pointer;
+    }
+
+    .headerLinks a:hover,
+    .headerLinks a:focus-visible,
+    .headerLinks button:hover,
+    .headerLinks button:focus-visible {
+      border-color: #94a3b8;
+      background: #f8fafc;
+      outline: none;
+    }
+
     #mainContent {
       flex: 1;
       display: flex;
@@ -590,6 +614,140 @@
       color: #991b1b;
     }
 
+    #viewerShortcutsOverlay {
+      position: fixed;
+      inset: 0;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 1rem;
+      background: rgba(15, 23, 42, 0.36);
+      z-index: 9700;
+    }
+
+    #viewerShortcutsOverlay[hidden] {
+      display: none;
+    }
+
+    .viewer-shortcuts-dialog {
+      width: min(42rem, calc(100vw - 2rem));
+      max-height: min(42rem, calc(100vh - 2rem));
+      overflow: auto;
+      border: 1px solid #d1d5db;
+      border-radius: 18px;
+      background: #fff;
+      box-shadow: 0 24px 60px rgba(15, 23, 42, 0.24);
+      padding: 1.25rem;
+      color: #0f172a;
+    }
+
+    .viewer-shortcuts-header {
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      gap: 1rem;
+    }
+
+    .viewer-shortcuts-header h2 {
+      margin: 0;
+      font-size: 1.25rem;
+    }
+
+    .viewer-shortcuts-intro {
+      margin: 0.45rem 0 0;
+      color: #475569;
+      line-height: 1.45;
+    }
+
+    .viewer-shortcuts-close {
+      margin-right: 0;
+      padding: 0.45rem 0.75rem;
+      border: 1px solid #cbd5e1;
+      border-radius: 999px;
+      background: #f8fafc;
+      color: #0f172a;
+      cursor: pointer;
+      white-space: nowrap;
+    }
+
+    .viewer-shortcuts-close:hover,
+    .viewer-shortcuts-close:focus-visible {
+      border-color: #94a3b8;
+      background: #eff6ff;
+      outline: none;
+    }
+
+    .viewer-shortcuts-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+      gap: 0.9rem;
+      margin-top: 1rem;
+    }
+
+    .viewer-shortcuts-group {
+      border: 1px solid #e2e8f0;
+      border-radius: 14px;
+      background: #f8fafc;
+      padding: 0.95rem 1rem;
+    }
+
+    .viewer-shortcuts-group h3 {
+      margin: 0 0 0.75rem;
+      font-size: 0.86rem;
+      font-weight: 700;
+      letter-spacing: 0.05em;
+      text-transform: uppercase;
+      color: #334155;
+    }
+
+    .viewer-shortcuts-list {
+      margin: 0;
+      padding: 0;
+      list-style: none;
+      display: flex;
+      flex-direction: column;
+      gap: 0.6rem;
+    }
+
+    .viewer-shortcuts-item {
+      display: grid;
+      grid-template-columns: minmax(0, 9.5rem) minmax(0, 1fr);
+      gap: 0.75rem;
+      align-items: start;
+    }
+
+    .viewer-shortcuts-key {
+      font-weight: 700;
+      color: #1d4ed8;
+    }
+
+    .viewer-shortcuts-desc {
+      color: #1e293b;
+      line-height: 1.45;
+    }
+
+    .viewer-shortcuts-note {
+      margin: 1rem 0 0;
+      font-size: 0.92rem;
+      line-height: 1.5;
+      color: #475569;
+    }
+
+    @media (max-width: 640px) {
+      .viewer-shortcuts-dialog {
+        padding: 1rem;
+      }
+
+      .viewer-shortcuts-header {
+        flex-direction: column;
+      }
+
+      .viewer-shortcuts-item {
+        grid-template-columns: 1fr;
+        gap: 0.2rem;
+      }
+    }
+
     #pipelinePanel {
       width: 320px;
       max-width: 100%;
@@ -948,6 +1106,7 @@
   <header>
     <span>Seismic Wiggle Viewer</span>
     <div class="headerLinks">
+      <button type="button" id="viewerShortcutsButton" data-testid="viewer-shortcuts-button">Shortcuts</button>
       <a id="batchApplyLink" href="/batch" target="_blank" rel="noopener" onclick="openBatchApplyPage(event)">Batch Apply</a>
       <a href="/upload">Open SEG-Y</a>
     </div>
@@ -1159,6 +1318,98 @@
         </form>
       </div>
     </aside>
+  </div>
+  <div id="viewerShortcutsOverlay" hidden>
+    <section id="viewerShortcutsDialog" class="viewer-shortcuts-dialog" role="dialog" aria-modal="true"
+      aria-labelledby="viewerShortcutsTitle" aria-describedby="viewerShortcutsNote" tabindex="-1"
+      data-testid="viewer-shortcuts-dialog">
+      <div class="viewer-shortcuts-header">
+        <div>
+          <h2 id="viewerShortcutsTitle">Keyboard shortcuts</h2>
+          <p class="viewer-shortcuts-intro">Existing viewer shortcuts grouped by purpose.</p>
+        </div>
+        <button type="button" id="viewerShortcutsClose" class="viewer-shortcuts-close"
+          aria-label="Close keyboard shortcuts" data-testid="viewer-shortcuts-close">Close</button>
+      </div>
+      <div class="viewer-shortcuts-grid">
+        <section class="viewer-shortcuts-group" aria-labelledby="viewerShortcutsNavigationTitle">
+          <h3 id="viewerShortcutsNavigationTitle">Navigation</h3>
+          <ul class="viewer-shortcuts-list">
+            <li class="viewer-shortcuts-item">
+              <span class="viewer-shortcuts-key">A / D</span>
+              <span class="viewer-shortcuts-desc">Previous / next section</span>
+            </li>
+            <li class="viewer-shortcuts-item">
+              <span class="viewer-shortcuts-key">PageUp / PageDown</span>
+              <span class="viewer-shortcuts-desc">Previous / next section</span>
+            </li>
+            <li class="viewer-shortcuts-item">
+              <span class="viewer-shortcuts-key">ArrowLeft / ArrowRight</span>
+              <span class="viewer-shortcuts-desc">Pan horizontally</span>
+            </li>
+            <li class="viewer-shortcuts-item">
+              <span class="viewer-shortcuts-key">R</span>
+              <span class="viewer-shortcuts-desc">Reset to full view</span>
+            </li>
+          </ul>
+        </section>
+        <section class="viewer-shortcuts-group" aria-labelledby="viewerShortcutsDisplayTitle">
+          <h3 id="viewerShortcutsDisplayTitle">Display</h3>
+          <ul class="viewer-shortcuts-list">
+            <li class="viewer-shortcuts-item">
+              <span class="viewer-shortcuts-key">G</span>
+              <span class="viewer-shortcuts-desc">Auto gain</span>
+            </li>
+            <li class="viewer-shortcuts-item">
+              <span class="viewer-shortcuts-key">Shift+G</span>
+              <span class="viewer-shortcuts-desc">Reset gain</span>
+            </li>
+            <li class="viewer-shortcuts-item">
+              <span class="viewer-shortcuts-key">N</span>
+              <span class="viewer-shortcuts-desc">Switch between the raw layer and the first computed layer</span>
+            </li>
+          </ul>
+        </section>
+        <section class="viewer-shortcuts-group" aria-labelledby="viewerShortcutsPickingTitle">
+          <h3 id="viewerShortcutsPickingTitle">Picking</h3>
+          <ul class="viewer-shortcuts-list">
+            <li class="viewer-shortcuts-item">
+              <span class="viewer-shortcuts-key">P</span>
+              <span class="viewer-shortcuts-desc">Toggle pick mode</span>
+            </li>
+            <li class="viewer-shortcuts-item">
+              <span class="viewer-shortcuts-key">Ctrl+Z</span>
+              <span class="viewer-shortcuts-desc">Undo manual pick action</span>
+            </li>
+            <li class="viewer-shortcuts-item">
+              <span class="viewer-shortcuts-key">Ctrl+Y / Ctrl+Shift+Z</span>
+              <span class="viewer-shortcuts-desc">Redo manual pick action</span>
+            </li>
+          </ul>
+        </section>
+        <section class="viewer-shortcuts-group" aria-labelledby="viewerShortcutsInteractionTitle">
+          <h3 id="viewerShortcutsInteractionTitle">Interaction</h3>
+          <ul class="viewer-shortcuts-list">
+            <li class="viewer-shortcuts-item">
+              <span class="viewer-shortcuts-key">Alt</span>
+              <span class="viewer-shortcuts-desc">Temporarily use pan interaction while held</span>
+            </li>
+            <li class="viewer-shortcuts-item">
+              <span class="viewer-shortcuts-key">?</span>
+              <span class="viewer-shortcuts-desc">Open shortcut help</span>
+            </li>
+            <li class="viewer-shortcuts-item">
+              <span class="viewer-shortcuts-key">Esc</span>
+              <span class="viewer-shortcuts-desc">Close shortcut help</span>
+            </li>
+          </ul>
+        </section>
+      </div>
+      <p id="viewerShortcutsNote" class="viewer-shortcuts-note">
+        Section, display, and pick-mode shortcuts are active while the plot area is hovered. Shortcut help and manual
+        pick undo/redo stay available across the viewer page unless focus is inside an editable control.
+      </p>
+    </section>
   </div>
   <div id="opToastHost" aria-live="polite" aria-atomic="false"></div>
   <script>
