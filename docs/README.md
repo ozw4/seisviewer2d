@@ -133,7 +133,7 @@ npm ci
 npm run build
 cd ..
 npm ci
-npx playwright install chromium
+npx playwright install --with-deps chromium
 SV_APP_DATA_DIR="$(pwd)/app_data" \
 PLAYWRIGHT_PERF_BENCHMARK=1 \
 SV_PERF_CI=1 \
