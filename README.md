@@ -54,12 +54,15 @@ It installs Python deps, Node 20, and Playwright.
   traces.npy
   index.npz
   meta.json
-  baseline_raw.json
+  baseline_raw.k1_189.k2_193.json
+  baseline_raw.k1_189.k2_193.npz
 ```
 
 Notes:
 
-- `baseline_raw.json` is created lazily (first requested via `/get_section_meta` or `/section/stats`).
+- Upload/open ingest writes the raw-baseline artifacts for the store's key-byte pair.
+- The `.json` manifest stores the small metadata, while the `.npz` stores the large per-trace arrays (`mu_traces`, `sigma_traces`, `zero_var_mask`).
+- Legacy stores without precomputed baseline artifacts can still backfill them on first `/get_section_meta` or `/section/stats`.
 - Trace grouping and ordering are controlled by two SEG‑Y trace-header byte offsets:
   - `key1_byte` (default `189`) groups traces into a “section” (one section per key1 value)
   - `key2_byte` (default `193`) orders traces within a section (stable sort)

@@ -70,6 +70,26 @@ def _build_window_perf_headers(
     }
 
 
+def _build_meta_perf_headers(
+    *,
+    total_ms: float,
+    baseline_ms: float,
+    baseline_source: str,
+) -> dict[str, str]:
+    total_str = _format_ms(total_ms)
+    baseline_str = _format_ms(baseline_ms)
+    return {
+        'Server-Timing': (
+            f'sv_total;dur={total_str}, '
+            f'sv_baseline;dur={baseline_str}, '
+            f'sv_baseline_source;desc="{baseline_source}"'
+        ),
+        'X-SV-Server-Ms': total_str,
+        'X-SV-Baseline-Ms': baseline_str,
+        'X-SV-Baseline-Source': baseline_source,
+    }
+
+
 def _build_window_section_cache_key(
     *,
     file_id: str,
@@ -224,7 +244,8 @@ def get_section_meta(
     file_id: Annotated[str, Query(...)],
     key1_byte: Annotated[int, Query()] = 189,
     key2_byte: Annotated[int, Query()] = 193,
-) -> SectionMeta:
+) -> JSONResponse:
+    route_started = time.perf_counter()
     state = get_state(request.app)
     reader = get_reader(file_id, key1_byte, key2_byte, state=state)
 
@@ -237,18 +258,30 @@ def get_section_meta(
     dtype = str(reader.dtype) if reader.dtype is not None else None
     scale = float(reader.scale) if isinstance(reader.scale, (int, float)) else None
     dt_val = float(state.file_registry.get_dt(file_id))
-    _ = get_or_create_raw_baseline(
+    baseline_status: dict[str, str] = {}
+    baseline_started = time.perf_counter()
+    get_or_create_raw_baseline(
         file_id=file_id,
         key1_byte=key1_byte,
         key2_byte=key2_byte,
         app=request.app,
+        include_arrays=False,
+        status=baseline_status,
     )
-
-    return SectionMeta(
+    baseline_ms = (time.perf_counter() - baseline_started) * 1000.0
+    payload = SectionMeta(
         shape=[n_traces, n_samples],  # セクション内 [traces, samples]
         dt=dt_val,
         dtype=dtype,
         scale=scale,
+    )
+    return JSONResponse(
+        content=payload.model_dump(),
+        headers=_build_meta_perf_headers(
+            total_ms=(time.perf_counter() - route_started) * 1000.0,
+            baseline_ms=baseline_ms,
+            baseline_source=baseline_status.get('source', 'unknown'),
+        ),
     )
 
 

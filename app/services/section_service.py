@@ -142,6 +142,8 @@ def build_section_window_payload(
         file_id=file_id,
         key1=key1,
         store_dir=store_dir,
+        key1_byte=key1_byte,
+        key2_byte=key2_byte,
         trace_stats_cache=trace_stats_cache,
         trace_stats_lock=trace_stats_lock,
         x0=x0,

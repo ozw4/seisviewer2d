@@ -10,6 +10,14 @@ from typing import Any
 import numpy as np
 import segyio
 
+from app.utils.baseline_artifacts import (
+    build_raw_baseline_payload,
+    build_trace_spans_by_key1,
+    write_raw_baseline_artifacts,
+)
+
+ZERO_STD_EPS = 1e-12
+
 
 class SegyIngestor:
     """Build TraceStore artifacts from a raw SEG-Y file."""
@@ -105,6 +113,8 @@ class SegyIngestor:
                 dtype=final_dtype,
                 shape=(n_traces, n_samples),
             )
+            trace_sum = np.empty(n_traces, dtype=np.float64)
+            trace_sumsq = np.empty(n_traces, dtype=np.float64)
             try:
                 chunk_size = 512
                 with segyio.open(str(segy_path), 'r', ignore_geometry=True) as f_traces:
@@ -113,6 +123,7 @@ class SegyIngestor:
                         chunk_end = min(chunk_start + chunk_size, n_traces)
                         chunk_indices = order[chunk_start:chunk_end]
                         for row_offset, trace_idx in enumerate(chunk_indices):
+                            row_idx = chunk_start + row_offset
                             trace = np.asarray(
                                 f_traces.trace[int(trace_idx)], dtype=np.float32
                             )
@@ -130,10 +141,17 @@ class SegyIngestor:
                                     -127,
                                     127,
                                 ).astype(np.int8)
-                                mm[chunk_start + row_offset] = q
+                                mm[row_idx] = q
                             else:
                                 row = trace.astype(final_dtype, copy=False)
-                                mm[chunk_start + row_offset] = row
+                                mm[row_idx] = row
+                            trace_sum[row_idx] = trace.sum(dtype=np.float64)
+                            trace_sumsq[row_idx] = np.einsum(
+                                'i,i->',
+                                trace,
+                                trace,
+                                dtype=np.float64,
+                            )
             finally:
                 mm.flush()
                 del mm
@@ -193,6 +211,58 @@ class SegyIngestor:
             }
             if quantize:
                 meta['scale'] = scale_val
+
+            n_samples_f64 = float(n_samples)
+            mu_traces = trace_sum / n_samples_f64
+            trace_var = np.maximum(
+                (trace_sumsq / n_samples_f64) - np.square(mu_traces),
+                0.0,
+            )
+            sigma_traces = np.sqrt(trace_var)
+            zero_var_mask = sigma_traces <= ZERO_STD_EPS
+            if zero_var_mask.any():
+                sigma_traces = sigma_traces.copy()
+                sigma_traces[zero_var_mask] = 1.0
+            section_sum = np.add.reduceat(
+                trace_sum,
+                key1_offsets.astype(np.int64, copy=False),
+            )
+            section_sumsq = np.add.reduceat(
+                trace_sumsq,
+                key1_offsets.astype(np.int64, copy=False),
+            )
+            total_samples = key1_counts.astype(np.float64, copy=False) * n_samples_f64
+            mu_sections = section_sum / total_samples
+            section_var = np.maximum(
+                (section_sumsq / total_samples) - np.square(mu_sections),
+                0.0,
+            )
+            sigma_sections = np.sqrt(section_var)
+            baseline_payload = build_raw_baseline_payload(
+                dtype_base=str(final_dtype),
+                dt=dt_seconds,
+                key1_values=key1_values,
+                mu_sections=mu_sections,
+                sigma_sections=sigma_sections,
+                mu_traces=mu_traces,
+                sigma_traces=sigma_traces,
+                zero_var_mask=zero_var_mask,
+                trace_spans_by_key1=build_trace_spans_by_key1(
+                    key1_values.astype(np.int64, copy=False),
+                    key1_offsets.astype(np.int64, copy=False),
+                    key1_counts.astype(np.int64, copy=False),
+                ),
+                source_sha256=(str(source_sha256) if source_sha256 else None),
+                key1_byte=key1_byte,
+                key2_byte=key2_byte,
+                serialize_arrays=False,
+            )
+            write_raw_baseline_artifacts(
+                store_path,
+                key1_byte=key1_byte,
+                key2_byte=key2_byte,
+                payload=baseline_payload,
+            )
             with meta_tmp.open('w', encoding='utf-8') as fh:
                 json.dump(meta, fh)
             os.replace(meta_tmp, store_path / 'meta.json')

@@ -9,6 +9,11 @@ import pytest
 
 from app.utils.ingest import SegyIngestor
 from app.trace_store.reader import TraceStoreSectionReader
+from app.utils.baseline_artifacts import (
+    BASELINE_STAGE_RAW,
+    build_baseline_manifest_path,
+    build_baseline_npz_path,
+)
 
 
 class _Attr:
@@ -151,7 +156,19 @@ def test_ingest_builds_artifacts_float32(tmp_path: Path, monkeypatch):
     h2 = store_dir / 'headers_byte_193.npy'
     index_path = store_dir / 'index.npz'
     meta_path = store_dir / 'meta.json'
-    for p in [traces_path, h1, h2, index_path, meta_path]:
+    baseline_manifest = build_baseline_manifest_path(
+        store_dir,
+        stage=BASELINE_STAGE_RAW,
+        key1_byte=189,
+        key2_byte=193,
+    )
+    baseline_npz = build_baseline_npz_path(
+        store_dir,
+        stage=BASELINE_STAGE_RAW,
+        key1_byte=189,
+        key2_byte=193,
+    )
+    for p in [traces_path, h1, h2, index_path, meta_path, baseline_manifest, baseline_npz]:
         assert p.exists(), f'missing: {p}'
 
     # 余計な拡張子の混入がないか（.tmp.npy / .tmp.npz など）
@@ -194,6 +211,18 @@ def test_ingest_builds_artifacts_float32(tmp_path: Path, monkeypatch):
     assert 'original_segy_path' in m
     assert 'original_mtime' in m
     assert 'original_size' in m
+
+    baseline = json.loads(baseline_manifest.read_text(encoding='utf-8'))
+    assert baseline['key1_byte'] == 189
+    assert baseline['key2_byte'] == 193
+    assert baseline['trace_spans_by_key1'] == {'10': [[0, 3]], '20': [[3, 5]]}
+    with np.load(baseline_npz, allow_pickle=False) as arrays:
+        np.testing.assert_allclose(
+            arrays['mu_traces'],
+            traces[expected_order].mean(axis=1, dtype=np.float64).astype(np.float32),
+            rtol=0,
+            atol=0,
+        )
 
     # Reader で実読（key1=10 のセクションが 3 本、key2 昇順で並ぶ）
     reader = TraceStoreSectionReader(store_dir, key1_byte=189, key2_byte=193)
