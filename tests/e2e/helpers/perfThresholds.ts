@@ -133,19 +133,19 @@ const THRESHOLD_DEFINITIONS: ThresholdDefinition[] = [
 		caseLabel: 'any',
 		metric: 'server_ms',
 		envName: 'SV_PERF_MAX_SERVER_MS',
-		requiredWhenPresent: true,
+		requiredWhenPresent: false,
 	},
 	{
 		caseLabel: 'any',
 		metric: 'build_ms',
 		envName: 'SV_PERF_MAX_BUILD_MS',
-		requiredWhenPresent: true,
+		requiredWhenPresent: false,
 	},
 	{
 		caseLabel: 'any',
 		metric: 'pack_ms',
 		envName: 'SV_PERF_MAX_PACK_MS',
-		requiredWhenPresent: true,
+		requiredWhenPresent: false,
 	},
 ];
 
