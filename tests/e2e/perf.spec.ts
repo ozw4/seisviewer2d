@@ -33,7 +33,9 @@ test('perf artifact helper stores empty rows when SV_PERF_ROWS is missing', asyn
 
 test('viewer initial render perf attaches JSON artifact', async ({ page, request }, testInfo) => {
 	const datasetConfig = readPerfDatasetConfig();
-	const maxTotalMs = parseOptionalNumberEnv('SV_PERF_MAX_TOTAL_MS');
+	const maxTotalMs =
+		parseOptionalNumberEnv('SV_PERF_MAX_COLD_TOTAL_MS') ??
+		parseOptionalNumberEnv('SV_PERF_MAX_TOTAL_MS');
 
 	const dataset = await resolveDataset(request, datasetConfig);
 
