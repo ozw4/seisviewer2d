@@ -4,6 +4,21 @@ import {
 } from '@playwright/test';
 import { readSvPerfRows, type SvPerfRow } from './perfArtifacts';
 
+export type PerfCaseLabel =
+	| 'cold-initial'
+	| 'warm-initial'
+	| 'zoom-in'
+	| 'pan-after-zoom';
+
+export type WindowMetricName =
+	| 'fetch_ms'
+	| 'decode_ms'
+	| 'lut_ms'
+	| 'prep_ms'
+	| 'plotly_ms'
+	| 'total_ms'
+	| 'bytes';
+
 export type PlotAxisRange = [number, number];
 
 export type PlotRanges = {
@@ -37,7 +52,7 @@ export type WindowResponseMetadata = {
 };
 
 type MeasuredPerfScenarioResult = {
-	label: string;
+	label: PerfCaseLabel;
 	status: 'measured';
 	windowRowsBefore: number;
 	windowRowsAfter: number;
@@ -48,7 +63,7 @@ type MeasuredPerfScenarioResult = {
 };
 
 type SkippedPerfScenarioResult = {
-	label: string;
+	label: PerfCaseLabel;
 	status: 'skipped';
 	skipReason: string;
 	windowRowsBefore: number;
@@ -84,6 +99,22 @@ export function findLatestWindowRow(rows: SvPerfRow[]): SvPerfRow | null {
 	for (let index = rows.length - 1; index >= 0; index -= 1) {
 		const row = rows[index];
 		if (row?.kind === 'window') {
+			return row;
+		}
+	}
+	return null;
+}
+
+export function findLatestWindowRowWithMetric(
+	rows: SvPerfRow[],
+	metric: WindowMetricName,
+): SvPerfRow | null {
+	for (let index = rows.length - 1; index >= 0; index -= 1) {
+		const row = rows[index];
+		if (row?.kind !== 'window') {
+			continue;
+		}
+		if (toFiniteNumber(row[metric]) !== null) {
 			return row;
 		}
 	}
@@ -201,7 +232,7 @@ export async function readWindowResponseMetadata(
 
 export async function measurePerfScenario(
 	page: Page,
-	label: string,
+	label: PerfCaseLabel,
 	action: () => Promise<void>,
 	options: MeasurePerfScenarioOptions = {},
 ): Promise<PerfScenarioResult> {
@@ -288,7 +319,7 @@ export async function measurePerfScenario(
 }
 
 export function buildSkippedPerfScenarioResult(
-	label: string,
+	label: PerfCaseLabel,
 	skipReason: string,
 	rows: SvPerfRow[] = [],
 ): PerfScenarioResult {

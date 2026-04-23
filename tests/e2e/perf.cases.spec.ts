@@ -1,11 +1,10 @@
-import { test, expect, type Page } from '@playwright/test';
+import { test, expect, type Page, type TestInfo } from '@playwright/test';
 import { buildSvPerfArtifactMetadata, readSvPerfRows } from './helpers/perfArtifacts';
 import {
 	buildDatasetSkipReason,
 	buildOpenPreparedStoreSkipReason,
 	buildViewerPerfUrl,
 	openPreparedStore,
-	parseOptionalNumberEnv,
 	readPerfDatasetConfig,
 	resolveDataset,
 } from './helpers/perfDataset';
@@ -14,40 +13,22 @@ import {
 	buildSkippedPerfScenarioResult,
 	buildZoomedRange,
 	findLatestWindowRow,
+	findLatestWindowRowWithMetric,
 	measurePerfScenario,
 	readPlotRanges,
 	relayoutPlot,
 	toFiniteNumber,
+	type PerfCaseLabel,
 	type PerfScenarioResult,
 	type PlotRanges,
 } from './helpers/perfScenarios';
+import {
+	buildPerfThresholdFailureMessage,
+	evaluatePerfThresholds,
+} from './helpers/perfThresholds';
 
 const DEFAULT_ZOOM_RATIO = 0.4;
 const DEFAULT_PAN_SHIFT_RATIO = 0.9;
-
-type ScenarioThresholdEnv = {
-	total: string;
-	plotly: string;
-};
-
-const THRESHOLD_ENV_BY_LABEL: Record<string, ScenarioThresholdEnv> = {
-	'cold-initial': {
-		total: 'SV_PERF_MAX_COLD_TOTAL_MS',
-		plotly: 'SV_PERF_MAX_COLD_PLOTLY_MS',
-	},
-	'warm-initial': {
-		total: 'SV_PERF_MAX_WARM_TOTAL_MS',
-		plotly: 'SV_PERF_MAX_WARM_PLOTLY_MS',
-	},
-	'zoom-in': {
-		total: 'SV_PERF_MAX_ZOOM_TOTAL_MS',
-		plotly: 'SV_PERF_MAX_ZOOM_PLOTLY_MS',
-	},
-	'pan-after-zoom': {
-		total: 'SV_PERF_MAX_PAN_TOTAL_MS',
-		plotly: 'SV_PERF_MAX_PAN_PLOTLY_MS',
-	},
-};
 
 function parseBoundedNumberEnv(
 	name: string,
@@ -85,35 +66,98 @@ function assertScenarioMetrics(result: Extract<PerfScenarioResult, { status: 'me
 	const latestWindowRow = findLatestWindowRow(result.deltaRows);
 	expect(latestWindowRow).not.toBeNull();
 	expect(result.latestWindowRow).toEqual(latestWindowRow);
-	const totalMs = toFiniteNumber(latestWindowRow?.total_ms);
-	const plotlyMs = toFiniteNumber(latestWindowRow?.plotly_ms);
-	const thresholdEnv = THRESHOLD_ENV_BY_LABEL[result.label];
-	const maxTotalMs = parseOptionalNumberEnv(thresholdEnv.total);
-	const maxPlotlyMs = parseOptionalNumberEnv(thresholdEnv.plotly);
+	const totalMs = toFiniteNumber(
+		findLatestWindowRowWithMetric(result.deltaWindowRows, 'total_ms')?.total_ms,
+	);
+	const plotlyMs = toFiniteNumber(
+		findLatestWindowRowWithMetric(result.deltaWindowRows, 'plotly_ms')?.plotly_ms,
+	);
 
 	if (result.label === 'cold-initial' || result.label === 'warm-initial') {
 		expect(totalMs).not.toBeNull();
 	} else {
 		expect(plotlyMs).not.toBeNull();
 	}
-
-	if (maxTotalMs !== null && totalMs !== null) {
-		expect(totalMs).toBeLessThanOrEqual(maxTotalMs);
-	}
-
-	if (maxPlotlyMs !== null) {
-		expect(plotlyMs).not.toBeNull();
-		expect(plotlyMs!).toBeLessThanOrEqual(maxPlotlyMs);
-	}
 }
 
-function buildRangeSkipReason(label: string): string {
+function buildRangeSkipReason(label: PerfCaseLabel): string {
 	return `${label} skipped because #plot axis ranges are unavailable.`;
 }
 
 async function openWarmViewerPage(coldPage: Page): Promise<Page> {
 	const warmPage = await coldPage.context().newPage();
 	return warmPage;
+}
+
+async function attachViewerPerfArtifacts(
+	testInfo: TestInfo,
+	options: {
+		page: Page;
+		viewerUrl: string;
+		dataset: {
+			original_name: string;
+			key1_byte: number;
+			key2_byte: number;
+		};
+		openPayload: {
+			reused_trace_store: boolean;
+		};
+		cases: PerfScenarioResult[];
+	},
+): Promise<string | null> {
+	const metadata = buildSvPerfArtifactMetadata(options.page, testInfo, 'viewer-perf-cases');
+	const summary = {
+		metadata: {
+			...metadata,
+			url: options.viewerUrl,
+		},
+		dataset: {
+			original_name: options.dataset.original_name,
+			key1_byte: options.dataset.key1_byte,
+			key2_byte: options.dataset.key2_byte,
+		},
+		openSegy: {
+			reused_trace_store: options.openPayload.reused_trace_store,
+		},
+		cases: options.cases,
+	};
+	const rowsArtifact = {
+		metadata: {
+			...metadata,
+			url: options.viewerUrl,
+		},
+		dataset: {
+			original_name: options.dataset.original_name,
+			key1_byte: options.dataset.key1_byte,
+			key2_byte: options.dataset.key2_byte,
+		},
+		cases: options.cases.map((scenario) => ({
+			label: scenario.label,
+			status: scenario.status,
+			skipReason: scenario.status === 'skipped' ? scenario.skipReason : null,
+			rows: scenario.deltaRows,
+		})),
+	};
+
+	await testInfo.attach('viewer-perf-cases-summary.json', {
+		body: Buffer.from(`${JSON.stringify(summary, null, 2)}\n`, 'utf-8'),
+		contentType: 'application/json',
+	});
+	await testInfo.attach('viewer-perf-cases-sv-perf-rows.json', {
+		body: Buffer.from(`${JSON.stringify(rowsArtifact, null, 2)}\n`, 'utf-8'),
+		contentType: 'application/json',
+	});
+
+	const thresholdArtifact = evaluatePerfThresholds(options.cases, {
+		...metadata,
+		label: 'viewer-perf-thresholds',
+	});
+	await testInfo.attach('viewer-perf-threshold-results.json', {
+		body: Buffer.from(`${JSON.stringify(thresholdArtifact, null, 2)}\n`, 'utf-8'),
+		contentType: 'application/json',
+	});
+
+	return buildPerfThresholdFailureMessage(thresholdArtifact.failures);
 }
 
 test('viewer perf cases attach JSON artifacts', async ({ page, request }, testInfo) => {
@@ -137,16 +181,17 @@ test('viewer perf cases attach JSON artifacts', async ({ page, request }, testIn
 
 	const viewerUrl = buildViewerPerfUrl(openPayload!.file_id, dataset!);
 	const cases: PerfScenarioResult[] = [];
-
-	const coldInitial = await measurePerfScenario(page, 'cold-initial', async () => {
-		await page.goto(viewerUrl, { waitUntil: 'domcontentloaded' });
-	});
-	cases.push(coldInitial);
-	assertMeasuredScenario(coldInitial);
-	assertScenarioMetrics(coldInitial);
-
-	const warmPage = await openWarmViewerPage(page);
+	let warmPage: Page | null = null;
+	let thresholdFailureMessage: string | null = null;
 	try {
+		const coldInitial = await measurePerfScenario(page, 'cold-initial', async () => {
+			await page.goto(viewerUrl, { waitUntil: 'domcontentloaded' });
+		});
+		cases.push(coldInitial);
+		assertMeasuredScenario(coldInitial);
+		assertScenarioMetrics(coldInitial);
+
+		warmPage = await openWarmViewerPage(page);
 		const warmInitial = await measurePerfScenario(warmPage, 'warm-initial', async () => {
 			await warmPage.goto(viewerUrl, { waitUntil: 'domcontentloaded' });
 		});
@@ -226,50 +271,20 @@ test('viewer perf cases attach JSON artifacts', async ({ page, request }, testIn
 		if (panResult.status === 'measured') {
 			assertScenarioMetrics(panResult);
 		}
-
-		const metadata = buildSvPerfArtifactMetadata(warmPage, testInfo, 'viewer-perf-cases');
-		const summary = {
-			metadata: {
-				...metadata,
-				url: viewerUrl,
-			},
-			dataset: {
-				original_name: dataset!.original_name,
-				key1_byte: dataset!.key1_byte,
-				key2_byte: dataset!.key2_byte,
-			},
-			openSegy: {
-				reused_trace_store: openPayload!.reused_trace_store,
-			},
-			cases,
-		};
-		const rowsArtifact = {
-			metadata: {
-				...metadata,
-				url: viewerUrl,
-			},
-			dataset: {
-				original_name: dataset!.original_name,
-				key1_byte: dataset!.key1_byte,
-				key2_byte: dataset!.key2_byte,
-			},
-			cases: cases.map((scenario) => ({
-				label: scenario.label,
-				status: scenario.status,
-				skipReason: scenario.status === 'skipped' ? scenario.skipReason : null,
-				rows: scenario.deltaRows,
-			})),
-		};
-
-		await testInfo.attach('viewer-perf-cases-summary.json', {
-			body: Buffer.from(`${JSON.stringify(summary, null, 2)}\n`, 'utf-8'),
-			contentType: 'application/json',
-		});
-		await testInfo.attach('viewer-perf-cases-sv-perf-rows.json', {
-			body: Buffer.from(`${JSON.stringify(rowsArtifact, null, 2)}\n`, 'utf-8'),
-			contentType: 'application/json',
-		});
 	} finally {
-		await warmPage.close();
+		thresholdFailureMessage = await attachViewerPerfArtifacts(testInfo, {
+			page: warmPage ?? page,
+			viewerUrl,
+			dataset: dataset!,
+			openPayload: openPayload!,
+			cases,
+		});
+		if (warmPage) {
+			await warmPage.close();
+		}
+	}
+
+	if (thresholdFailureMessage) {
+		throw new Error(thresholdFailureMessage);
 	}
 });
