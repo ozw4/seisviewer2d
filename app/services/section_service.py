@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import threading
+import time
 from pathlib import Path
 from typing import Any, Callable, Literal
 
@@ -92,8 +93,10 @@ def build_section_window_payload(
     store_dir_resolver: Callable[[str], str],
     trace_stats_lock: threading.RLock | None = None,
     dt_resolver: Callable[[str], float] | None = None,
+    perf_timings_ms: dict[str, float] | None = None,
 ) -> bytes:
     """Build the compressed binary payload for a section window."""
+    build_started = time.perf_counter()
     mode = scaling_mode.lower()
     if mode not in {'amax', 'tracewise'}:
         raise ValueError('Unsupported scaling mode')
@@ -148,12 +151,18 @@ def build_section_window_payload(
     view = prepared.T if transpose else prepared
     window_view = np.ascontiguousarray(view, dtype=np.float32)
     dt_val = dt_resolver(file_id)
-    return pack_quantized_array_gzip(
+    build_ms = (time.perf_counter() - build_started) * 1000.0
+    pack_started = time.perf_counter()
+    payload = pack_quantized_array_gzip(
         window_view,
         scale=None,
         dt=dt_val,
         extra=None,
     )
+    if perf_timings_ms is not None:
+        perf_timings_ms['pack_ms'] = (time.perf_counter() - pack_started) * 1000.0
+        perf_timings_ms['build_ms'] = build_ms
+    return payload
 
 
 __all__ = ['SectionServiceInternalError', 'build_section_window_payload']

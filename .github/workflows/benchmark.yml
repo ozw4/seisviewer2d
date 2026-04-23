@@ -1,0 +1,137 @@
+name: viewer-benchmark
+
+on:
+  workflow_dispatch:
+    inputs:
+      perf_dataset:
+        description: Override SV_PERF_ORIGINAL_NAME
+        required: false
+        default: ""
+      perf_max_total_ms:
+        description: Override total-ms thresholds for all benchmark cases
+        required: false
+        default: ""
+  schedule:
+    - cron: "0 18 * * *"
+  push:
+    branches:
+      - main
+  pull_request:
+    types:
+      - opened
+      - synchronize
+      - reopened
+      - labeled
+
+permissions:
+  contents: read
+
+jobs:
+  viewer-benchmark:
+    if: github.event_name != 'pull_request' || contains(github.event.pull_request.labels.*.name, 'benchmark')
+    runs-on: ubuntu-latest
+    env:
+      CI: "true"
+      PYTHONPATH: ${{ github.workspace }}
+      NO_PROXY: 127.0.0.1,localhost
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
+          cache: pip
+          cache-dependency-path: .devcontainer/requirements-dev.txt
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Configure Git LFS for pip VCS installs
+        run: |
+          git lfs version
+          git lfs install --skip-smudge
+
+      - name: Resolve benchmark environment
+        env:
+          INPUT_PERF_DATASET: ${{ github.event.inputs.perf_dataset || '' }}
+          INPUT_PERF_MAX_TOTAL_MS: ${{ github.event.inputs.perf_max_total_ms || '' }}
+        run: |
+          perf_dataset="${INPUT_PERF_DATASET:-}"
+          if [ -z "$perf_dataset" ]; then
+            perf_dataset="ci-benchmark.sgy"
+          fi
+
+          perf_max_total_ms="${INPUT_PERF_MAX_TOTAL_MS:-}"
+
+          {
+            echo "SV_APP_DATA_DIR=${RUNNER_TEMP}/seisviewer2d_perf_data"
+            echo "SV_PERF_CI=1"
+            echo "SV_PERF_ARTIFACTS=1"
+            echo "SV_PERF_ORIGINAL_NAME=${perf_dataset}"
+            echo "SV_PERF_KEY1_BYTE=189"
+            echo "SV_PERF_KEY2_BYTE=193"
+            echo "PLAYWRIGHT_PERF_BENCHMARK=1"
+            echo "SV_PERF_MAX_ANY_FETCH_MS=6000"
+            echo "SV_PERF_MAX_ANY_DECODE_MS=3000"
+            echo "SV_PERF_MAX_SERVER_MS=2500"
+            echo "SV_PERF_MAX_ZOOM_PLOTLY_MS=5000"
+            echo "SV_PERF_MAX_PAN_PLOTLY_MS=5000"
+          } >> "$GITHUB_ENV"
+
+          if [ -n "$perf_max_total_ms" ]; then
+            {
+              echo "SV_PERF_MAX_COLD_TOTAL_MS=${perf_max_total_ms}"
+              echo "SV_PERF_MAX_WARM_TOTAL_MS=${perf_max_total_ms}"
+              echo "SV_PERF_MAX_ZOOM_TOTAL_MS=${perf_max_total_ms}"
+              echo "SV_PERF_MAX_PAN_TOTAL_MS=${perf_max_total_ms}"
+            } >> "$GITHUB_ENV"
+          else
+            {
+              echo "SV_PERF_MAX_COLD_TOTAL_MS=8000"
+              echo "SV_PERF_MAX_WARM_TOTAL_MS=6000"
+            } >> "$GITHUB_ENV"
+          fi
+
+      - name: Install dependencies
+        env:
+          GIT_LFS_SKIP_SMUDGE: "1"
+        run: python -m pip install -r .devcontainer/requirements-dev.txt
+
+      - name: Build frontend bundle
+        run: |
+          cd app
+          npm ci
+          npm run build
+
+      - name: Install root Playwright dependencies
+        run: npm ci
+
+      - name: Install Playwright browsers
+        run: |
+          npx playwright install --with-deps chromium
+          npx playwright install --list
+
+      - name: Create deterministic perf TraceStore
+        run: python scripts/create_perf_tracestore.py
+
+      - name: Run viewer benchmark
+        run: |
+          rm -rf viewer-perf-results playwright-report test-results
+          npx playwright test tests/e2e/perf.cases.spec.ts \
+            --project=chromium \
+            --workers=1 \
+            --retries=0
+
+      - name: Upload benchmark artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: viewer-benchmark-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            playwright-report
+            test-results
+            viewer-perf-results
+          retention-days: 30
+          if-no-files-found: ignore
