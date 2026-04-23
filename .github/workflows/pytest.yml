@@ -66,7 +66,6 @@ jobs:
         env:
           PYTHONPATH: ${{ github.workspace }}
           NO_PROXY: 127.0.0.1,localhost
-          no_proxy: 127.0.0.1,localhost
         run: npx playwright test tests/e2e/smoke.spec.ts --project=chromium --workers=1
 
       - name: Upload Playwright report
