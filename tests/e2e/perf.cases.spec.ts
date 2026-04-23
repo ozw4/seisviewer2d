@@ -154,6 +154,7 @@ async function attachViewerPerfArtifacts(
 
 	const thresholdArtifact = evaluatePerfThresholds(options.cases, {
 		...metadata,
+		url: options.viewerUrl,
 		label: 'viewer-perf-thresholds',
 	});
 	const datasetMetadata = {
