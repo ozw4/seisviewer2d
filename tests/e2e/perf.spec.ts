@@ -2,60 +2,22 @@ import { test, expect } from '@playwright/test';
 import {
 	attachSvPerfRows,
 	attachSvPerfSummary,
-	type SvPerfRow,
 } from './helpers/perfArtifacts';
-
-type RecentDataset = {
-	original_name: string;
-	key1_byte: number;
-	key2_byte: number;
-};
-
-type RecentDatasetsResponse = {
-	datasets?: RecentDataset[];
-};
-
-type OpenSegyResponse = {
-	file_id: string;
-	reused_trace_store: boolean;
-};
-
-const DEFAULT_KEY1_BYTE = 189;
-const DEFAULT_KEY2_BYTE = 193;
-
-function parseIntEnv(name: string, fallback: number): number {
-	const raw = process.env[name];
-	if (!raw) return fallback;
-	const value = Number.parseInt(raw, 10);
-	if (!Number.isInteger(value)) {
-		throw new Error(`${name} must be an integer`);
-	}
-	return value;
-}
-
-function parseOptionalNumberEnv(name: string): number | null {
-	const raw = process.env[name];
-	if (!raw) return null;
-	const value = Number(raw);
-	if (!Number.isFinite(value)) {
-		throw new Error(`${name} must be a number`);
-	}
-	return value;
-}
-
-function toFiniteNumber(value: unknown): number | null {
-	return typeof value === 'number' && Number.isFinite(value) ? value : null;
-}
-
-function findLatestWindowRow(rows: SvPerfRow[]): SvPerfRow | null {
-	for (let index = rows.length - 1; index >= 0; index -= 1) {
-		const row = rows[index];
-		if (row?.kind === 'window') {
-			return row;
-		}
-	}
-	return null;
-}
+import {
+	buildDatasetSkipReason,
+	buildOpenPreparedStoreSkipReason,
+	buildViewerPerfUrl,
+	openPreparedStore,
+	parseOptionalNumberEnv,
+	readPerfDatasetConfig,
+	resolveDataset,
+} from './helpers/perfDataset';
+import {
+	findLatestWindowRow,
+	readWindowResponseMetadata,
+	toFiniteNumber,
+	waitForViewerPerfReady,
+} from './helpers/perfScenarios';
 
 test('perf artifact helper stores empty rows when SV_PERF_ROWS is missing', async (
 	{ page },
@@ -70,75 +32,35 @@ test('perf artifact helper stores empty rows when SV_PERF_ROWS is missing', asyn
 });
 
 test('viewer initial render perf attaches JSON artifact', async ({ page, request }, testInfo) => {
-	const originalName = process.env.SV_PERF_ORIGINAL_NAME?.trim() || null;
-	const key1Byte = parseIntEnv('SV_PERF_KEY1_BYTE', DEFAULT_KEY1_BYTE);
-	const key2Byte = parseIntEnv('SV_PERF_KEY2_BYTE', DEFAULT_KEY2_BYTE);
+	const datasetConfig = readPerfDatasetConfig();
 	const maxTotalMs = parseOptionalNumberEnv('SV_PERF_MAX_TOTAL_MS');
 
-	const recentResponse = await request.get('/recent_datasets');
-	expect(recentResponse.ok()).toBeTruthy();
-
-	const recentPayload = (await recentResponse.json()) as RecentDatasetsResponse;
-	const datasets = Array.isArray(recentPayload.datasets) ? recentPayload.datasets : [];
-	const matchingDatasets = datasets.filter(
-		(dataset) =>
-			dataset.original_name &&
-			dataset.key1_byte === key1Byte &&
-			dataset.key2_byte === key2Byte,
-	);
-	const dataset = originalName
-		? matchingDatasets.find((item) => item.original_name === originalName)
-		: matchingDatasets[0];
+	const dataset = await resolveDataset(request, datasetConfig);
 
 	test.skip(
 		!dataset,
-		originalName
-			? `No reusable TraceStore matched ${originalName} with key1_byte=${key1Byte} key2_byte=${key2Byte}.`
-			: `No reusable TraceStore matched key1_byte=${key1Byte} key2_byte=${key2Byte}.`,
+		buildDatasetSkipReason(datasetConfig),
 	);
 
-	const openResponse = await request.post('/open_segy', {
-		multipart: {
-			original_name: dataset.original_name,
-			key1_byte: String(key1Byte),
-			key2_byte: String(key2Byte),
-		},
-	});
+	const openPayload = await openPreparedStore(request, dataset!);
 	test.skip(
-		openResponse.status() === 404,
-		`TraceStore ${dataset.original_name} is no longer available for perf measurement.`,
+		!openPayload,
+		buildOpenPreparedStoreSkipReason(dataset!),
 	);
-	expect(openResponse.ok()).toBeTruthy();
+	expect(openPayload?.file_id).toBeTruthy();
 
-	const openPayload = (await openResponse.json()) as OpenSegyResponse;
-	expect(openPayload.file_id).toBeTruthy();
-
-	const viewerParams = new URLSearchParams({
-		file_id: openPayload.file_id,
-		key1_byte: String(key1Byte),
-		key2_byte: String(key2Byte),
-		perf: '1',
-	});
 	const windowResponsePromise = page.waitForResponse(
 		(response) =>
 			response.url().includes('/get_section_window_bin') && response.status() === 200,
 		{ timeout: 60_000 },
 	);
 
-	await page.goto(`/?${viewerParams.toString()}`, { waitUntil: 'domcontentloaded' });
-	await page.waitForFunction(
-		() => (globalThis as { SV_PERF?: boolean }).SV_PERF === true,
-		null,
-		{ timeout: 60_000 },
-	);
-	await page.waitForFunction(
-		() => document.getElementById('viewerEmptyState')?.hidden === true,
-		null,
-		{ timeout: 60_000 },
-	);
+	await page.goto(buildViewerPerfUrl(openPayload!.file_id, dataset!), {
+		waitUntil: 'domcontentloaded',
+	});
+	await waitForViewerPerfReady(page);
 
 	const windowResponse = await windowResponsePromise;
-	await windowResponse.finished();
 
 	await page.waitForFunction(
 		() => {
@@ -159,36 +81,22 @@ test('viewer initial render perf attaches JSON artifact', async ({ page, request
 	expect(perfRow?.kind).toBe('window');
 	expect(toFiniteNumber(perfRow?.total_ms)).not.toBeNull();
 
-	const responseHeaders = await windowResponse.allHeaders();
-	const contentLengthHeader = responseHeaders['content-length'];
-	const parsedContentLength = contentLengthHeader
-		? Number.parseInt(contentLengthHeader, 10)
-		: Number.NaN;
-	const requestTiming = windowResponse.request().timing();
+	const responseMetadata = await readWindowResponseMetadata(windowResponse);
 	const artifact = {
 		dataset: {
 			original_name: dataset.original_name,
-			key1_byte: key1Byte,
-			key2_byte: key2Byte,
+			key1_byte: dataset.key1_byte,
+			key2_byte: dataset.key2_byte,
 		},
 		open_segy: {
 			reused_trace_store: openPayload.reused_trace_store,
 		},
 		get_section_window_bin: {
-			url: windowResponse.url(),
-			status: windowResponse.status(),
-			content_length: Number.isFinite(parsedContentLength) ? parsedContentLength : null,
-			request_timing: {
-				startTime: toFiniteNumber(requestTiming.startTime),
-				domainLookupStart: toFiniteNumber(requestTiming.domainLookupStart),
-				domainLookupEnd: toFiniteNumber(requestTiming.domainLookupEnd),
-				connectStart: toFiniteNumber(requestTiming.connectStart),
-				secureConnectionStart: toFiniteNumber(requestTiming.secureConnectionStart),
-				connectEnd: toFiniteNumber(requestTiming.connectEnd),
-				requestStart: toFiniteNumber(requestTiming.requestStart),
-				responseStart: toFiniteNumber(requestTiming.responseStart),
-				responseEnd: toFiniteNumber(requestTiming.responseEnd),
-			},
+			url: responseMetadata.url,
+			status: responseMetadata.status,
+			content_length: responseMetadata.contentLength,
+			request_timing: responseMetadata.requestTiming,
+			headers: responseMetadata.headers,
 		},
 		sv_perf_window: {
 			mode: perfRow?.mode ?? null,
