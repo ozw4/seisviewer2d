@@ -1,4 +1,8 @@
+import { mkdir, writeFile } from 'node:fs/promises';
+import path from 'node:path';
 import { type Page, type TestInfo } from '@playwright/test';
+
+const PERF_ARTIFACTS_DIR = 'viewer-perf-results';
 
 export type SvPerfRow = {
 	kind?: string;
@@ -85,4 +89,24 @@ export async function attachSvPerfSummary(
 		body: Buffer.from(`${JSON.stringify(summary, null, 2)}\n`, 'utf-8'),
 		contentType: 'application/json',
 	});
+}
+
+export function shouldWritePerfArtifacts(): boolean {
+	return process.env.SV_PERF_ARTIFACTS === '1';
+}
+
+export async function writePerfArtifactJson(
+	filename: string,
+	payload: unknown,
+): Promise<void> {
+	if (!shouldWritePerfArtifacts()) {
+		return;
+	}
+
+	await mkdir(PERF_ARTIFACTS_DIR, { recursive: true });
+	await writeFile(
+		path.join(PERF_ARTIFACTS_DIR, filename),
+		`${JSON.stringify(payload, null, 2)}\n`,
+		'utf-8',
+	);
 }

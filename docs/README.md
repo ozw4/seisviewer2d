@@ -117,6 +117,43 @@ Keyboard shortcuts:
 - `N`: toggle between the `raw` layer and the first computed layer in the layer dropdown
 - Hold `Alt`: temporary pan mode
 
+## Viewer benchmark
+
+The dedicated GitHub Actions workflow is `viewer-benchmark`.
+
+- It runs on `workflow_dispatch`, on pushes to `main`, on the daily schedule, and on pull requests only when the PR has the `benchmark` label.
+- The workflow creates a deterministic TraceStore with `SV_PERF_ORIGINAL_NAME=ci-benchmark.sgy`, runs only `tests/e2e/perf.cases.spec.ts`, and uploads `playwright-report/`, `test-results/`, and `viewer-perf-results/`.
+- `workflow_dispatch` accepts optional `perf_dataset` and `perf_max_total_ms` overrides.
+
+Local benchmark command:
+
+```bash
+cd app
+npm ci
+npm run build
+cd ..
+npm ci
+npx playwright install chromium
+SV_APP_DATA_DIR="$(pwd)/app_data" \
+PLAYWRIGHT_PERF_BENCHMARK=1 \
+SV_PERF_CI=1 \
+SV_PERF_ARTIFACTS=1 \
+SV_PERF_ORIGINAL_NAME=ci-benchmark.sgy \
+SV_PERF_KEY1_BYTE=189 \
+SV_PERF_KEY2_BYTE=193 \
+python scripts/create_perf_tracestore.py
+SV_APP_DATA_DIR="$(pwd)/app_data" \
+PLAYWRIGHT_PERF_BENCHMARK=1 \
+SV_PERF_CI=1 \
+SV_PERF_ARTIFACTS=1 \
+SV_PERF_ORIGINAL_NAME=ci-benchmark.sgy \
+SV_PERF_KEY1_BYTE=189 \
+SV_PERF_KEY2_BYTE=193 \
+npx playwright test tests/e2e/perf.cases.spec.ts --project=chromium --workers=1 --retries=0
+```
+
+The benchmark JSON files are written to `viewer-perf-results/`.
+
 ## API overview
 
 Most UI reads use the binary window endpoint (`/get_section_window_bin`) as the fast path.
