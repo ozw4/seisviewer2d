@@ -1,5 +1,9 @@
 import { test, expect, type Page, type TestInfo } from '@playwright/test';
-import { buildSvPerfArtifactMetadata, readSvPerfRows } from './helpers/perfArtifacts';
+import {
+	buildSvPerfArtifactMetadata,
+	readSvPerfRows,
+	writePerfArtifactJson,
+} from './helpers/perfArtifacts';
 import {
 	buildDatasetSkipReason,
 	buildOpenPreparedStoreSkipReason,
@@ -150,12 +154,46 @@ async function attachViewerPerfArtifacts(
 
 	const thresholdArtifact = evaluatePerfThresholds(options.cases, {
 		...metadata,
+		url: options.viewerUrl,
 		label: 'viewer-perf-thresholds',
 	});
+	const datasetMetadata = {
+		metadata: {
+			...metadata,
+			url: options.viewerUrl,
+		},
+		dataset: {
+			original_name: options.dataset.original_name,
+			key1_byte: options.dataset.key1_byte,
+			key2_byte: options.dataset.key2_byte,
+		},
+		openSegy: {
+			reused_trace_store: options.openPayload.reused_trace_store,
+		},
+	};
+	const serverTiming = {
+		metadata: {
+			...metadata,
+			url: options.viewerUrl,
+		},
+		cases: options.cases.map((scenario) => ({
+			label: scenario.label,
+			status: scenario.status,
+			skipReason: scenario.status === 'skipped' ? scenario.skipReason : null,
+			responses: scenario.responses,
+		})),
+	};
 	await testInfo.attach('viewer-perf-threshold-results.json', {
 		body: Buffer.from(`${JSON.stringify(thresholdArtifact, null, 2)}\n`, 'utf-8'),
 		contentType: 'application/json',
 	});
+	await Promise.all([
+		writePerfArtifactJson('sv-perf-summary.json', summary),
+		writePerfArtifactJson('sv-perf-rows.json', rowsArtifact),
+		writePerfArtifactJson('viewer-perf-threshold-results.json', thresholdArtifact),
+		writePerfArtifactJson('dataset-metadata.json', datasetMetadata),
+		writePerfArtifactJson('server-timing.json', serverTiming),
+	]);
 
 	return buildPerfThresholdFailureMessage(thresholdArtifact.failures);
 }

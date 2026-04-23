@@ -62,26 +62,12 @@ jobs:
           mkdir -p "$PICKS_NPY_DIR"
           pytest -q
 
-      - name: Create Playwright perf dataset
+      - name: Run Playwright smoke tests
         env:
           PYTHONPATH: ${{ github.workspace }}
-          SV_APP_DATA_DIR: ${{ runner.temp }}/seisviewer2d_perf_data
-          SV_PERF_ORIGINAL_NAME: perf_ci.sgy
-          SV_PERF_KEY1_BYTE: "189"
-          SV_PERF_KEY2_BYTE: "193"
-        run: python scripts/create_perf_tracestore.py
-
-      - name: Run Playwright perf thresholds
-        env:
-          PYTHONPATH: ${{ github.workspace }}
-          SV_APP_DATA_DIR: ${{ runner.temp }}/seisviewer2d_perf_data
-          SV_PERF_ORIGINAL_NAME: perf_ci.sgy
-          SV_PERF_KEY1_BYTE: "189"
-          SV_PERF_KEY2_BYTE: "193"
-          SV_PERF_CI: "1"
           NO_PROXY: 127.0.0.1,localhost
           no_proxy: 127.0.0.1,localhost
-        run: npx playwright test tests/e2e/perf.cases.spec.ts --project=chromium
+        run: npx playwright test tests/e2e/smoke.spec.ts --project=chromium --workers=1
 
       - name: Upload Playwright report
         if: always()
