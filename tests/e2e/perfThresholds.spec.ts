@@ -184,14 +184,19 @@ test('evaluatePerfThresholds uses CI defaults and reports exceeded metrics', asy
 	);
 });
 
-test('evaluatePerfThresholds lets explicit env overrides replace CI defaults and require server headers', async () => {
+test('evaluatePerfThresholds lets explicit env overrides replace CI defaults and skips missing response-only metrics on no-response paths', async () => {
 	setPerfEnv('SV_PERF_CI', '1');
 	setPerfEnv('SV_PERF_MAX_COLD_TOTAL_MS', '1200');
 	setPerfEnv('SV_PERF_MAX_SERVER_MS', '50');
+	setPerfEnv('SV_PERF_MAX_BUILD_MS', '40');
+	setPerfEnv('SV_PERF_MAX_PACK_MS', '30');
 
 	const artifact = evaluatePerfThresholds(
 		[
-			buildMeasuredScenario('cold-initial', { total_ms: 1_500 }),
+			{
+				...buildMeasuredScenario('cold-initial', { total_ms: 1_500 }),
+				responses: [],
+			},
 			buildMeasuredScenario('warm-initial', { total_ms: 2_500 }, { xSvServerMs: '45.5' }),
 		],
 		BASE_METADATA,
@@ -209,7 +214,7 @@ test('evaluatePerfThresholds lets explicit env overrides replace CI defaults and
 				caseLabel: 'any',
 				metric: 'server_ms',
 				max: 50,
-				required: true,
+				required: false,
 			}),
 		]),
 	);
@@ -220,13 +225,78 @@ test('evaluatePerfThresholds lets explicit env overrides replace CI defaults and
 				metric: 'total_ms',
 				status: 'fail',
 			}),
+		]),
+	);
+	expect(artifact.results).toEqual(
+		expect.arrayContaining([
 			expect.objectContaining({
 				caseLabel: 'cold-initial',
 				metric: 'server_ms',
-				status: 'missing-required',
+				actual: null,
+				status: 'missing-allowed',
+			}),
+			expect.objectContaining({
+				caseLabel: 'cold-initial',
+				metric: 'build_ms',
+				actual: null,
+				status: 'missing-allowed',
+			}),
+			expect.objectContaining({
+				caseLabel: 'cold-initial',
+				metric: 'pack_ms',
+				actual: null,
+				status: 'missing-allowed',
+			}),
+			expect.objectContaining({
+				caseLabel: 'warm-initial',
+				metric: 'server_ms',
+				actual: 45.5,
+				status: 'pass',
 			}),
 		]),
 	);
+});
+
+test('evaluatePerfThresholds fails response-only thresholds when present and above the configured max', async () => {
+	setPerfEnv('SV_PERF_MAX_SERVER_MS', '50');
+
+	const artifact = evaluatePerfThresholds(
+		[
+			buildMeasuredScenario('warm-initial', { total_ms: 2_500 }, { xSvServerMs: '55.5' }),
+		],
+		BASE_METADATA,
+	);
+
+	expect(artifact.failures).toEqual([
+		expect.objectContaining({
+			caseLabel: 'warm-initial',
+			metric: 'server_ms',
+			actual: 55.5,
+			max: 50,
+			status: 'fail',
+		}),
+	]);
+});
+
+test('evaluatePerfThresholds still fails required client-side thresholds when the metric is missing', async () => {
+	setPerfEnv('SV_PERF_MAX_COLD_PLOTLY_MS', '1000');
+
+	const artifact = evaluatePerfThresholds(
+		[
+			buildMeasuredScenario('cold-initial', { plotly_ms: null }),
+		],
+		BASE_METADATA,
+	);
+
+	expect(artifact.failures).toEqual([
+		expect.objectContaining({
+			caseLabel: 'cold-initial',
+			metric: 'plotly_ms',
+			actual: null,
+			max: 1000,
+			status: 'missing-required',
+		}),
+	]);
 });
 
 test('evaluatePerfThresholds keeps explicit zoom total checks optional for cached paths', async () => {
