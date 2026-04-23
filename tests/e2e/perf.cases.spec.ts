@@ -33,6 +33,8 @@ import {
 
 const DEFAULT_ZOOM_RATIO = 0.4;
 const DEFAULT_PAN_SHIFT_RATIO = 0.9;
+const PERF_CASES_TEST_TIMEOUT_MS = 180_000;
+const OPTIONAL_RELAYOUT_WINDOW_ROW_TIMEOUT_MS = 5_000;
 
 function parseBoundedNumberEnv(
 	name: string,
@@ -199,6 +201,8 @@ async function attachViewerPerfArtifacts(
 }
 
 test('viewer perf cases attach JSON artifacts', async ({ page, request }, testInfo) => {
+	test.setTimeout(PERF_CASES_TEST_TIMEOUT_MS);
+
 	const datasetConfig = readPerfDatasetConfig();
 	const zoomRatio = parseBoundedNumberEnv('SV_PERF_ZOOM_RATIO', DEFAULT_ZOOM_RATIO, {
 		gt: 0,
@@ -230,14 +234,15 @@ test('viewer perf cases attach JSON artifacts', async ({ page, request }, testIn
 		assertScenarioMetrics(coldInitial);
 
 		warmPage = await openWarmViewerPage(page);
-		const warmInitial = await measurePerfScenario(warmPage, 'warm-initial', async () => {
-			await warmPage.goto(viewerUrl, { waitUntil: 'domcontentloaded' });
+		const warmViewerPage = warmPage;
+		const warmInitial = await measurePerfScenario(warmViewerPage, 'warm-initial', async () => {
+			await warmViewerPage.goto(viewerUrl, { waitUntil: 'domcontentloaded' });
 		});
 		cases.push(warmInitial);
 		assertMeasuredScenario(warmInitial);
 		assertScenarioMetrics(warmInitial);
 
-		const fullRanges = await readPlotRanges(warmPage);
+		const fullRanges = await readPlotRanges(warmViewerPage);
 		let zoomResult: PerfScenarioResult;
 		let zoomedRanges: PlotRanges | null = null;
 
@@ -245,7 +250,7 @@ test('viewer perf cases attach JSON artifacts', async ({ page, request }, testIn
 			zoomResult = buildSkippedPerfScenarioResult(
 				'zoom-in',
 				buildRangeSkipReason('zoom-in'),
-				await readSvPerfRows(warmPage),
+				await readSvPerfRows(warmViewerPage),
 			);
 		} else {
 			const nextZoomX = buildZoomedRange(fullRanges.x, zoomRatio);
@@ -254,16 +259,17 @@ test('viewer perf cases attach JSON artifacts', async ({ page, request }, testIn
 				zoomResult = buildSkippedPerfScenarioResult(
 					'zoom-in',
 					'zoom-in skipped because the current viewport is too small to shrink safely.',
-					await readSvPerfRows(warmPage),
+					await readSvPerfRows(warmViewerPage),
 				);
 			} else {
-				zoomResult = await measurePerfScenario(warmPage, 'zoom-in', async () => {
-					await relayoutPlot(warmPage, { x: nextZoomX, y: nextZoomY });
+				zoomResult = await measurePerfScenario(warmViewerPage, 'zoom-in', async () => {
+					await relayoutPlot(warmViewerPage, { x: nextZoomX, y: nextZoomY });
 				}, {
+					windowRowTimeoutMs: OPTIONAL_RELAYOUT_WINDOW_ROW_TIMEOUT_MS,
 					skipOnMissingWindowRowReason:
 						'zoom-in skipped because relayout did not produce a new window measurement.',
 				});
-				zoomedRanges = await readPlotRanges(warmPage);
+				zoomedRanges = await readPlotRanges(warmViewerPage);
 			}
 		}
 		cases.push(zoomResult);
@@ -276,13 +282,13 @@ test('viewer perf cases attach JSON artifacts', async ({ page, request }, testIn
 			panResult = buildSkippedPerfScenarioResult(
 				'pan-after-zoom',
 				buildRangeSkipReason('pan-after-zoom'),
-				await readSvPerfRows(warmPage),
+				await readSvPerfRows(warmViewerPage),
 			);
 		} else if (zoomResult.status !== 'measured' || !zoomedRanges) {
 			panResult = buildSkippedPerfScenarioResult(
 				'pan-after-zoom',
 				'pan-after-zoom skipped because zoom-in did not produce a reusable viewport.',
-				await readSvPerfRows(warmPage),
+				await readSvPerfRows(warmViewerPage),
 			);
 		} else {
 			const nextPanX = buildPanAfterZoomRange(
@@ -294,12 +300,13 @@ test('viewer perf cases attach JSON artifacts', async ({ page, request }, testIn
 				panResult = buildSkippedPerfScenarioResult(
 					'pan-after-zoom',
 					'x range is too small to pan safely',
-					await readSvPerfRows(warmPage),
+					await readSvPerfRows(warmViewerPage),
 				);
 			} else {
-				panResult = await measurePerfScenario(warmPage, 'pan-after-zoom', async () => {
-					await relayoutPlot(warmPage, { x: nextPanX, y: zoomedRanges!.y });
+				panResult = await measurePerfScenario(warmViewerPage, 'pan-after-zoom', async () => {
+					await relayoutPlot(warmViewerPage, { x: nextPanX, y: zoomedRanges!.y });
 				}, {
+					windowRowTimeoutMs: OPTIONAL_RELAYOUT_WINDOW_ROW_TIMEOUT_MS,
 					skipOnMissingWindowRowReason:
 						'pan-after-zoom skipped because relayout did not produce a new window measurement.',
 				});

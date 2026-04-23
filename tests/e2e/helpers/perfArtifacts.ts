@@ -24,7 +24,7 @@ export type SvPerfRow = {
 export type SvPerfArtifactMetadata = {
 	label: string;
 	url: string;
-	browserName: string;
+	browserName: string | undefined;
 	viewport: { width: number; height: number } | null;
 	createdAt: string;
 };
