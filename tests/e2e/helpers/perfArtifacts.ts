@@ -25,7 +25,7 @@ export type SvPerfArtifactMetadata = {
 	createdAt: string;
 };
 
-function buildSvPerfArtifactMetadata(
+export function buildSvPerfArtifactMetadata(
 	page: Page,
 	testInfo: TestInfo,
 	label: string,
