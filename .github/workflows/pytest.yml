@@ -40,6 +40,11 @@ jobs:
         run: |
           python -m pip install -r .devcontainer/requirements-dev.txt
 
+      - name: Install Python Playwright browsers
+        run: |
+          python -m playwright install --with-deps chromium
+          python -m playwright install --list
+
       - name: Build frontend bundle
         run: |
           cd app
@@ -49,9 +54,9 @@ jobs:
       - name: Install root Playwright dependencies
         run: npm ci
 
-      - name: Install Playwright browsers
+      - name: Install JS Playwright browsers
         run: |
-          npx playwright install --with-deps chromium
+          npx playwright install chromium
           npx playwright install --list
 
       - name: Run tests
