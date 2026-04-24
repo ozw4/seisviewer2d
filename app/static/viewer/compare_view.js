@@ -675,8 +675,10 @@
     const cols = Number(payloadA.shape?.[1] ?? 0);
     const rmsByTrace = metricsApi.computeRmsByTrace(a, b, rows, cols);
     const rawLimit = metricsApi.percentileAbs(displayDiff, 99);
-    const noDifference = !Number.isFinite(rawLimit) || rawLimit <= 0;
-    const diffLimit = noDifference ? EPSILON_DIFF_LIMIT : rawLimit;
+    const noDifference = !Number.isFinite(stats.maxAbs) || stats.maxAbs <= 0;
+    const diffLimit = noDifference
+      ? EPSILON_DIFF_LIMIT
+      : ((Number.isFinite(rawLimit) && rawLimit > 0) ? rawLimit : stats.maxAbs);
     const expression = state.diffMode === 'a_minus_b' ? 'A - B' : 'B - A';
 
     if (ui.compareDiffExpression) ui.compareDiffExpression.textContent = expression;
