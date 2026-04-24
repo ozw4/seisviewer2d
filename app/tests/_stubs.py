@@ -7,6 +7,7 @@ from typing import Sequence
 import numpy as np
 
 from app.trace_store.types import SectionView
+from app.utils.baseline_artifacts import build_raw_baseline_payload, write_raw_baseline_artifacts
 
 
 def make_stub_reader(
@@ -38,11 +39,15 @@ def write_baseline_raw(
     store_dir: Path,
     *,
     key1: int,
+    key1_byte: int = 189,
+    key2_byte: int = 193,
+    source_sha256: str | None = None,
     n_traces: int | None = None,
     section_mean: float = 0.0,
     section_std: float = 1.0,
     trace_means: Sequence[float] | None = None,
     trace_stds: Sequence[float] | None = None,
+    legacy_only: bool = False,
 ) -> None:
     if trace_means is None and trace_stds is None:
         if n_traces is None:
@@ -59,15 +64,35 @@ def write_baseline_raw(
     else:
         raise ValueError('trace_means and trace_stds must be provided together')
 
-    baseline = {
-        'key1_values': [int(key1)],
-        'mu_section_by_key1': [float(section_mean)],
-        'sigma_section_by_key1': [float(section_std)],
-        'mu_traces': trace_means_values,
-        'sigma_traces': trace_stds_values,
-        'trace_spans_by_key1': {str(int(key1)): [[0, int(len(trace_means_values))]]},
-    }
-    (store_dir / 'baseline_raw.json').write_text(json.dumps(baseline), encoding='utf-8')
+    payload = build_raw_baseline_payload(
+        dtype_base='float32',
+        dt=0.004,
+        key1_values=np.asarray([int(key1)], dtype=np.int64),
+        mu_sections=np.asarray([float(section_mean)], dtype=np.float32),
+        sigma_sections=np.asarray([float(section_std)], dtype=np.float32),
+        mu_traces=np.asarray(trace_means_values, dtype=np.float32),
+        sigma_traces=np.asarray(trace_stds_values, dtype=np.float32),
+        zero_var_mask=np.asarray(
+            [float(v) <= 0.0 for v in trace_stds_values],
+            dtype=bool,
+        ),
+        trace_spans_by_key1={str(int(key1)): [[0, int(len(trace_means_values))]]},
+        source_sha256=source_sha256,
+        key1_byte=key1_byte,
+        key2_byte=key2_byte,
+    )
+    if legacy_only:
+        (store_dir / 'baseline_raw.json').write_text(
+            json.dumps(payload),
+            encoding='utf-8',
+        )
+        return
+    write_raw_baseline_artifacts(
+        store_dir,
+        key1_byte=key1_byte,
+        key2_byte=key2_byte,
+        payload=payload,
+    )
 
 
 def make_pipeline_outputs_stub():

@@ -10,6 +10,12 @@ import pytest
 from fastapi.testclient import TestClient
 
 from app.main import app
+from app.tests._stubs import write_baseline_raw
+from app.utils.baseline_artifacts import (
+    BASELINE_STAGE_RAW,
+    build_baseline_manifest_path,
+    build_baseline_npz_path,
+)
 
 
 def _write_complete_store(
@@ -37,6 +43,14 @@ def _write_complete_store(
     if meta_overrides:
         meta.update(meta_overrides)
     (store_dir / 'meta.json').write_text(json.dumps(meta), encoding='utf-8')
+    write_baseline_raw(
+        store_dir,
+        key1=1,
+        n_traces=2,
+        key1_byte=key1_byte,
+        key2_byte=key2_byte,
+        source_sha256=meta.get('source_sha256'),
+    )
 
 
 @pytest.fixture()
@@ -94,6 +108,14 @@ def _upload_env(
         if source_sha256 is not None:
             meta['source_sha256'] = str(source_sha256)
         (store_path / 'meta.json').write_text(json.dumps(meta), encoding='utf-8')
+        write_baseline_raw(
+            store_path,
+            key1=1,
+            n_traces=2,
+            key1_byte=key1_byte,
+            key2_byte=key2_byte,
+            source_sha256=source_sha256,
+        )
         return meta
 
     monkeypatch.setattr(
@@ -233,3 +255,89 @@ def test_upload_segy_bad_store_triggers_rebuild(_upload_env, case: str):
     meta = _load_meta(Path(upload_mod.TRACE_DIR) / 'broken.segy')
     assert meta.get('key_bytes') == {'key1': 189, 'key2': 193}
     assert meta.get('source_sha256') == hashlib.sha256(data).hexdigest()
+
+
+@pytest.mark.parametrize('baseline_mode', ['missing', 'legacy_json_only'])
+def test_upload_segy_rebuilds_store_without_split_baseline_artifact(
+    _upload_env, baseline_mode: str
+):
+    client, upload_mod, calls = _upload_env
+    data = b'abc123'
+    store_dir = Path(upload_mod.TRACE_DIR) / 'missing-baseline.segy'
+    source_sha256 = hashlib.sha256(data).hexdigest()
+
+    _write_complete_store(
+        store_dir,
+        key1_byte=189,
+        key2_byte=193,
+        meta_overrides={'source_sha256': source_sha256},
+    )
+    if baseline_mode == 'legacy_json_only':
+        write_baseline_raw(
+            store_dir,
+            key1=1,
+            n_traces=2,
+            key1_byte=189,
+            key2_byte=193,
+            source_sha256=source_sha256,
+            legacy_only=True,
+        )
+    build_baseline_manifest_path(
+        store_dir,
+        stage=BASELINE_STAGE_RAW,
+        key1_byte=189,
+        key2_byte=193,
+    ).unlink()
+    build_baseline_npz_path(
+        store_dir,
+        stage=BASELINE_STAGE_RAW,
+        key1_byte=189,
+        key2_byte=193,
+    ).unlink()
+
+    out = _upload(
+        client,
+        name='missing-baseline.segy',
+        data=data,
+        key1_byte=189,
+        key2_byte=193,
+    )
+    assert out['reused_trace_store'] is False
+    assert calls['ingest'] == 1
+    archived = list(Path(upload_mod.TRACE_DIR).glob('missing-baseline.segy.old-*'))
+    assert len(archived) == 1
+
+
+def test_upload_segy_rebuilds_store_with_stale_baseline_artifact(_upload_env):
+    client, upload_mod, calls = _upload_env
+    data = b'abc123'
+    source_sha256 = hashlib.sha256(data).hexdigest()
+    store_dir = Path(upload_mod.TRACE_DIR) / 'stale-baseline.segy'
+
+    _write_complete_store(
+        store_dir,
+        key1_byte=189,
+        key2_byte=193,
+        meta_overrides={'source_sha256': source_sha256},
+    )
+    write_baseline_raw(
+        store_dir,
+        key1=1,
+        n_traces=2,
+        key1_byte=189,
+        key2_byte=193,
+        source_sha256='stale-sha',
+    )
+
+    out = _upload(
+        client,
+        name='stale-baseline.segy',
+        data=data,
+        key1_byte=189,
+        key2_byte=193,
+    )
+
+    assert out['reused_trace_store'] is False
+    assert calls['ingest'] == 1
+    archived = list(Path(upload_mod.TRACE_DIR).glob('stale-baseline.segy.old-*'))
+    assert len(archived) == 1

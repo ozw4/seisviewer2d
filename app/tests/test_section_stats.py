@@ -9,6 +9,11 @@ from fastapi.testclient import TestClient
 from app.api.baselines import BASELINE_FILENAME_RAW, get_or_create_raw_baseline
 from app.api._helpers import get_state
 from app.main import app
+from app.utils.baseline_artifacts import (
+    BASELINE_STAGE_RAW,
+    build_baseline_manifest_path,
+    build_baseline_npz_path,
+)
 
 
 @pytest.fixture
@@ -53,9 +58,22 @@ def sample_store(tmp_path):
     yield file_id, store
     get_state(app).cached_readers.clear()
     app.state.sv.file_registry.pop(file_id, None)
-    baseline_path = store / BASELINE_FILENAME_RAW
-    if baseline_path.exists():
-        baseline_path.unlink()
+    for path in (
+        build_baseline_manifest_path(
+            store, stage=BASELINE_STAGE_RAW, key1_byte=189, key2_byte=193
+        ),
+        build_baseline_npz_path(
+            store, stage=BASELINE_STAGE_RAW, key1_byte=189, key2_byte=193
+        ),
+        build_baseline_manifest_path(
+            store, stage=BASELINE_STAGE_RAW, key1_byte=200, key2_byte=193
+        ),
+        build_baseline_npz_path(
+            store, stage=BASELINE_STAGE_RAW, key1_byte=200, key2_byte=193
+        ),
+        store / BASELINE_FILENAME_RAW,
+    ):
+        path.unlink(missing_ok=True)
 
 
 def test_get_or_create_raw_baseline(sample_store):
@@ -93,8 +111,16 @@ def test_get_or_create_raw_baseline(sample_store):
             float(np.sqrt(8.0 / 9.0)),
         ],
     )
-    baseline_path = store / BASELINE_FILENAME_RAW
-    assert baseline_path.is_file()
+    assert (
+        build_baseline_manifest_path(
+            store, stage=BASELINE_STAGE_RAW, key1_byte=189, key2_byte=193
+        ).is_file()
+    )
+    assert (
+        build_baseline_npz_path(
+            store, stage=BASELINE_STAGE_RAW, key1_byte=189, key2_byte=193
+        ).is_file()
+    )
 
 
 def test_baseline_recompute_on_source_change(sample_store):
@@ -112,6 +138,45 @@ def test_baseline_recompute_on_source_change(sample_store):
     )
     assert second['source_sha256'] == 'sha2'
     assert second['computed_at'] != first['computed_at']
+
+
+def test_get_or_create_raw_baseline_recovers_from_torn_split_artifacts(sample_store):
+    file_id, store = sample_store
+    first = get_or_create_raw_baseline(
+        file_id=file_id,
+        key1_byte=189,
+        key2_byte=193,
+        app=app,
+    )
+    manifest_path = build_baseline_manifest_path(
+        store,
+        stage=BASELINE_STAGE_RAW,
+        key1_byte=189,
+        key2_byte=193,
+    )
+    npz_path = build_baseline_npz_path(
+        store,
+        stage=BASELINE_STAGE_RAW,
+        key1_byte=189,
+        key2_byte=193,
+    )
+    manifest = json.loads(manifest_path.read_text(encoding='utf-8'))
+    manifest['artifact_id'] = 'stale-artifact-id'
+    manifest_path.write_text(json.dumps(manifest), encoding='utf-8')
+
+    get_state(app).cached_readers.clear()
+    second = get_or_create_raw_baseline(
+        file_id=file_id,
+        key1_byte=189,
+        key2_byte=193,
+        app=app,
+    )
+
+    assert second['source_sha256'] == 'sha1'
+    assert second['computed_at'] != first['computed_at']
+    repaired_manifest = json.loads(manifest_path.read_text(encoding='utf-8'))
+    with np.load(npz_path, allow_pickle=False) as arrays:
+        assert repaired_manifest['artifact_id'] == str(arrays['artifact_id'])
 
 
 def test_baseline_recompute_on_key1_byte_change(sample_store):

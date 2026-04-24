@@ -5,9 +5,8 @@ from __future__ import annotations
 import json
 import os
 import time
-from contextlib import contextmanager, suppress
+from contextlib import suppress
 from dataclasses import dataclass
-from datetime import datetime, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -17,15 +16,27 @@ from app.api._helpers import get_state
 from app.core.state import AppState
 from app.services.file_registry import FileRegistry
 from app.services.reader import get_reader
+from app.utils.baseline_artifacts import (
+    BASELINE_STAGE_RAW,
+    LEGACY_BASELINE_FILENAME_RAW,
+    build_legacy_baseline_path,
+    build_raw_baseline_payload,
+    merge_baseline_payload,
+    read_split_baseline_payload,
+    SplitBaselineArtifactsError,
+    write_raw_baseline_artifacts,
+)
 
 if TYPE_CHECKING:
     from fastapi import FastAPI
 
-BASELINE_STAGE_RAW = 'raw'
-BASELINE_FILENAME_RAW = 'baseline_raw.json'
+BASELINE_FILENAME_RAW = LEGACY_BASELINE_FILENAME_RAW
 BASELINE_LOCK_NAME = '.baseline_raw.lock'
 ZERO_STD_EPS = 1e-12
 WAIT_FOR_LOCK_SECONDS = 5.0
+BASELINE_SOURCE_PRECOMPUTED = 'precomputed'
+BASELINE_SOURCE_LEGACY_JSON = 'legacy-json'
+BASELINE_SOURCE_COMPUTED_FALLBACK = 'computed-fallback'
 
 
 class BaselineComputationError(RuntimeError):
@@ -144,48 +155,137 @@ def _spans_from_inverse(
     }
 
 
-def _baseline_path(store_path: Path) -> Path:
-    return store_path / BASELINE_FILENAME_RAW
-
-
-def _load_baseline_if_valid(
-    store_path: Path,
-    *,
-    expected_sha: str | None,
-    expected_key1_byte: int | None,
-) -> dict[str, Any] | None:
-    baseline_path = _baseline_path(store_path)
-    if not baseline_path.is_file():
-        return None
+def _load_json_payload(path: Path) -> dict[str, Any]:
     try:
-        payload = json.loads(baseline_path.read_text(encoding='utf-8'))
+        payload = json.loads(path.read_text(encoding='utf-8'))
     except json.JSONDecodeError as exc:
-        raise BaselineComputationError(
-            f'Corrupted baseline payload: {baseline_path}'
-        ) from exc
-    if payload.get('stage') != BASELINE_STAGE_RAW:
-        return None
-    if payload.get('source_sha256') != expected_sha:
-        return None
-    if expected_key1_byte is not None:
-        stored_key1 = payload.get('key1_byte')
-        if stored_key1 is None or int(stored_key1) != int(expected_key1_byte):
-            return None
+        raise BaselineComputationError(f'Corrupted baseline payload: {path}') from exc
+    if not isinstance(payload, dict):
+        raise BaselineComputationError(f'Baseline payload must be an object: {path}')
     return payload
 
 
-@contextmanager
-def _baseline_lock(store_path: Path):
-    lock_path = store_path / BASELINE_LOCK_NAME
-    fd = None
+def _baseline_payload_matches(
+    payload: dict[str, Any],
+    *,
+    expected_sha: str | None,
+    expected_key1_byte: int,
+    expected_key2_byte: int,
+) -> bool:
+    if payload.get('stage') != BASELINE_STAGE_RAW:
+        return False
+    if payload.get('source_sha256') != expected_sha:
+        return False
+    stored_key1 = payload.get('key1_byte')
+    stored_key2 = payload.get('key2_byte')
+    if stored_key1 is None or stored_key2 is None:
+        return False
+    return int(stored_key1) == int(expected_key1_byte) and int(stored_key2) == int(
+        expected_key2_byte
+    )
+
+
+def _strip_payload_arrays(payload: dict[str, Any]) -> dict[str, Any]:
+    slim = dict(payload)
+    slim.pop('mu_traces', None)
+    slim.pop('sigma_traces', None)
+    slim.pop('zero_var_mask', None)
+    return slim
+
+
+def _json_ready_payload(payload: dict[str, Any]) -> dict[str, Any]:
+    return merge_baseline_payload(
+        _strip_payload_arrays(payload),
+        mu_traces=np.asarray(payload.get('mu_traces'), dtype=np.float32),
+        sigma_traces=np.asarray(payload.get('sigma_traces'), dtype=np.float32),
+        zero_var_mask=np.asarray(payload.get('zero_var_mask'), dtype=bool),
+    )
+
+
+def _load_split_baseline_if_valid(
+    store_path: Path,
+    *,
+    expected_sha: str | None,
+    expected_key1_byte: int,
+    expected_key2_byte: int,
+    include_arrays: bool,
+) -> dict[str, Any] | None:
     try:
-        fd = os.open(lock_path, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
-        yield
-    finally:
-        if fd is not None:
-            os.close(fd)
-        with suppress(FileNotFoundError):
-            lock_path.unlink()
+        resolved = read_split_baseline_payload(
+            store_path,
+            stage=BASELINE_STAGE_RAW,
+            key1_byte=expected_key1_byte,
+            key2_byte=expected_key2_byte,
+            include_arrays=include_arrays,
+        )
+    except SplitBaselineArtifactsError:
+        return None
+    if resolved is None:
+        return None
+    payload, _cache_key = resolved
+    if not _baseline_payload_matches(
+        payload,
+        expected_sha=expected_sha,
+        expected_key1_byte=expected_key1_byte,
+        expected_key2_byte=expected_key2_byte,
+    ):
+        return None
+    if include_arrays:
+        return payload
+    return _strip_payload_arrays(payload)
+
+
+def _load_legacy_baseline_if_valid(
+    store_path: Path,
+    *,
+    expected_sha: str | None,
+    expected_key1_byte: int,
+    expected_key2_byte: int,
+    include_arrays: bool,
+) -> dict[str, Any] | None:
+    baseline_path = build_legacy_baseline_path(store_path)
+    if not baseline_path.is_file():
+        return None
+    payload = _load_json_payload(baseline_path)
+    if not _baseline_payload_matches(
+        payload,
+        expected_sha=expected_sha,
+        expected_key1_byte=expected_key1_byte,
+        expected_key2_byte=expected_key2_byte,
+    ):
+        return None
+    if include_arrays:
+        return payload
+    return _strip_payload_arrays(payload)
+
+
+def _load_existing_baseline(
+    store_path: Path,
+    *,
+    expected_sha: str | None,
+    expected_key1_byte: int,
+    expected_key2_byte: int,
+    include_arrays: bool,
+) -> tuple[dict[str, Any], str] | None:
+    payload = _load_split_baseline_if_valid(
+        store_path,
+        expected_sha=expected_sha,
+        expected_key1_byte=expected_key1_byte,
+        expected_key2_byte=expected_key2_byte,
+        include_arrays=include_arrays,
+    )
+    if payload is not None:
+        return payload, BASELINE_SOURCE_PRECOMPUTED
+    payload = _load_legacy_baseline_if_valid(
+        store_path,
+        expected_sha=expected_sha,
+        expected_key1_byte=expected_key1_byte,
+        expected_key2_byte=expected_key2_byte,
+        include_arrays=include_arrays,
+    )
+    if payload is not None:
+        return payload, BASELINE_SOURCE_LEGACY_JSON
+    return None
 
 
 def _acquire_lock_or_wait(store_path: Path) -> bool:
@@ -267,32 +367,21 @@ def _prepare_payload(
     meta = artifacts.meta
     source_sha = meta.get('source_sha256')
     dt_val = float(file_registry.get_dt(file_id))
-    return {
-        'stage': BASELINE_STAGE_RAW,
-        'ddof': 0,
-        'method': 'mean_std',
-        'dtype_base': str(meta.get('dtype', '')),
-        'dt': dt_val,
-        'key1_values': key1_values.astype(np.int64).tolist(),
-        'mu_section_by_key1': mu_sections.astype(np.float32, copy=False).tolist(),
-        'sigma_section_by_key1': sigma_sections.astype(np.float32, copy=False).tolist(),
-        'mu_traces': mu_traces.astype(np.float32, copy=False).tolist(),
-        'sigma_traces': sigma_traces.astype(np.float32, copy=False).tolist(),
-        'zero_var_mask': zero_mask.astype(bool, copy=False).tolist(),
-        # No backward compat: replace single-span trace_index_map with multi-span layout.
-        'trace_spans_by_key1': trace_spans_by_key1,
-        'source_sha256': source_sha,
-        'computed_at': datetime.now(timezone.utc).isoformat(),
-        'key1_byte': int(key1_byte),
-        'key2_byte': int(key2_byte),
-    }
-
-
-def _write_baseline(store_path: Path, payload: dict[str, Any]) -> None:
-    baseline_path = _baseline_path(store_path)
-    temp_path = baseline_path.with_suffix('.tmp')
-    temp_path.write_text(json.dumps(payload), encoding='utf-8')
-    temp_path.replace(baseline_path)
+    return build_raw_baseline_payload(
+        dtype_base=str(meta.get('dtype', '')),
+        dt=dt_val,
+        key1_values=key1_values,
+        mu_sections=mu_sections,
+        sigma_sections=sigma_sections,
+        mu_traces=mu_traces,
+        sigma_traces=sigma_traces,
+        zero_var_mask=zero_mask,
+        trace_spans_by_key1=trace_spans_by_key1,
+        source_sha256=(str(source_sha) if isinstance(source_sha, str) else None),
+        key1_byte=key1_byte,
+        key2_byte=key2_byte,
+        serialize_arrays=False,
+    )
 
 
 def _compute_baseline(
@@ -355,28 +444,44 @@ def get_or_create_raw_baseline(
     key1_byte: int,
     key2_byte: int,
     app: FastAPI,
+    include_arrays: bool = True,
+    status: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Return the cached raw baseline for ``file_id`` computing it if required."""
     state = get_state(app)
     artifacts = _load_trace_store_artifacts(file_id, state.file_registry)
     meta = artifacts.meta
     expected_sha = meta.get('source_sha256')
-    baseline = _load_baseline_if_valid(
+    existing = _load_existing_baseline(
         artifacts.store_path,
         expected_sha=expected_sha,
         expected_key1_byte=key1_byte,
+        expected_key2_byte=key2_byte,
+        include_arrays=include_arrays,
     )
-    if baseline is not None:
-        return baseline
+    if existing is not None:
+        payload, source = existing
+        if status is not None:
+            status['source'] = source
+        if include_arrays:
+            return _json_ready_payload(payload)
+        return payload
     lock_acquired = _acquire_lock_or_wait(artifacts.store_path)
     if not lock_acquired:
-        baseline = _load_baseline_if_valid(
+        existing = _load_existing_baseline(
             artifacts.store_path,
             expected_sha=expected_sha,
             expected_key1_byte=key1_byte,
+            expected_key2_byte=key2_byte,
+            include_arrays=include_arrays,
         )
-        if baseline is not None:
-            return baseline
+        if existing is not None:
+            payload, source = existing
+            if status is not None:
+                status['source'] = source
+            if include_arrays:
+                return _json_ready_payload(payload)
+            return payload
         raise BaselineComputationError('Baseline computation is already in progress')
     try:
         cache_key = f'{file_id}_{int(key1_byte)}_{int(key2_byte)}'
@@ -390,13 +495,25 @@ def get_or_create_raw_baseline(
             key2_byte=key2_byte,
             state=state,
         )
-        _write_baseline(artifacts.store_path, payload)
-        return payload
+        write_raw_baseline_artifacts(
+            artifacts.store_path,
+            key1_byte=key1_byte,
+            key2_byte=key2_byte,
+            payload=payload,
+        )
+        if status is not None:
+            status['source'] = BASELINE_SOURCE_COMPUTED_FALLBACK
+        if include_arrays:
+            return _json_ready_payload(payload)
+        return _strip_payload_arrays(payload)
     finally:
         _release_lock(artifacts.store_path)
 
 
 __all__ = [
+    'BASELINE_SOURCE_COMPUTED_FALLBACK',
+    'BASELINE_SOURCE_LEGACY_JSON',
+    'BASELINE_SOURCE_PRECOMPUTED',
     'BASELINE_STAGE_RAW',
     'BaselineComputationError',
     'get_or_create_raw_baseline',

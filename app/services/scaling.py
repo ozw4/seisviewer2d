@@ -24,6 +24,8 @@ def apply_scaling_from_baseline(
     key1: int,
     store_dir: str | Path,
     *,
+    key1_byte: int,
+    key2_byte: int,
     trace_stats_cache: Any,
     trace_stats_lock: threading.RLock | None = None,
     x0: int,
@@ -38,7 +40,11 @@ def apply_scaling_from_baseline(
     if not np.all(np.isfinite(arr)):
         raise UnprocessableError('Section contains non-finite values')
     try:
-        baseline = load_baseline(store_dir)
+        baseline = load_baseline(
+            store_dir,
+            key1_byte=key1_byte,
+            key2_byte=key2_byte,
+        )
     except FileNotFoundError as exc:
         raise InternalError('Baseline statistics not found') from exc
     except ValueError as exc:
