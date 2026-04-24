@@ -147,6 +147,17 @@ def _append_pipeline_layer_option(page, label: str = "denoise") -> None:
     )
 
 
+def _set_latest_tap_data(page, tap_map: dict[str, object]) -> None:
+    page.evaluate(
+        """
+        ({ tapMap }) => {
+          window.latestTapData = tapMap;
+        }
+        """,
+        {"tapMap": tap_map},
+    )
+
+
 def _install_compare_controlled_fetch_stubs(page) -> None:
     _install_compare_window_stubs(page)
     page.evaluate(
@@ -621,4 +632,164 @@ def test_compare_view_playwright_scales_probability_layers_to_display_range(
     assert rendered["z"][1] == pytest.approx([255.0, 127.5])
     assert rendered["zmin"] == pytest.approx(0)
     assert rendered["zmax"] == pytest.approx(255)
+    e2e_debug.assert_clean()
+
+
+@pytest.mark.e2e
+def test_compare_view_playwright_allows_mixed_domain_side_by_side(
+    page, base_url, e2e_debug
+):
+    page.set_default_timeout(60_000)
+    page.goto(f"{base_url}/", wait_until="domcontentloaded")
+
+    def handle_window(route, _request):
+        route.fulfill(
+            status=200,
+            headers={"content-type": "application/octet-stream"},
+            body=b"x",
+        )
+
+    page.route("**/get_section_window_bin?*", handle_window)
+    _install_compare_window_stubs(page)
+    _append_pipeline_layer_option(page, label="fbprob")
+    _set_latest_tap_data(page, {"fbprob": {"prob": [[0.1, 0.9], [0.2, 0.8]]}})
+    page.wait_for_function(
+        "() => document.getElementById('compareSourceBSelect')?.value === 'pipeline_tap:pipe-1:fbprob'"
+    )
+
+    page.select_option("#compareModeSelect", "side_by_side")
+    page.wait_for_function(
+        "() => Array.isArray(document.getElementById('comparePlotB')?.data?.[0]?.z)"
+    )
+
+    assert page.evaluate(
+        "() => (document.getElementById('compareStatus')?.textContent || '').trim()"
+    ) == ""
+    assert page.evaluate(
+        "() => document.getElementById('comparePlotA')?.data?.length || 0"
+    ) == 1
+    assert page.evaluate(
+        "() => document.getElementById('comparePlotB')?.data?.length || 0"
+    ) == 1
+    e2e_debug.assert_clean()
+
+
+@pytest.mark.e2e
+def test_compare_view_playwright_rejects_mixed_domain_difference(
+    page, base_url, e2e_debug
+):
+    page.set_default_timeout(60_000)
+    page.goto(f"{base_url}/", wait_until="domcontentloaded")
+
+    def handle_window(route, _request):
+        route.fulfill(
+            status=200,
+            headers={"content-type": "application/octet-stream"},
+            body=b"x",
+        )
+
+    page.route("**/get_section_window_bin?*", handle_window)
+    _install_compare_window_stubs(page)
+    _append_pipeline_layer_option(page, label="fbprob")
+    _set_latest_tap_data(page, {"fbprob": {"prob": [[0.1, 0.9], [0.2, 0.8]]}})
+    page.wait_for_function(
+        "() => document.getElementById('compareSourceBSelect')?.value === 'pipeline_tap:pipe-1:fbprob'"
+    )
+
+    page.select_option("#compareModeSelect", "difference")
+    page.wait_for_function(
+        """
+        () => (
+          document.getElementById('compareStatus')?.textContent || ''
+        ).includes('Difference is disabled for amplitude-vs-probability sources.')
+        """
+    )
+
+    assert (
+        page.locator("#compareStatus").text_content()
+        == "Difference is disabled for amplitude-vs-probability sources."
+    )
+    e2e_debug.assert_clean()
+
+
+@pytest.mark.e2e
+def test_compare_view_playwright_rejects_probability_final_tap_in_difference(
+    page, base_url, e2e_debug
+):
+    page.set_default_timeout(60_000)
+    page.goto(f"{base_url}/", wait_until="domcontentloaded")
+
+    def handle_window(route, _request):
+        route.fulfill(
+            status=200,
+            headers={"content-type": "application/octet-stream"},
+            body=b"x",
+        )
+
+    page.route("**/get_section_window_bin?*", handle_window)
+    _install_compare_window_stubs(page)
+    _append_pipeline_layer_option(page, label="final")
+    _set_latest_tap_data(page, {"final": {"prob": [[0.1, 0.9], [0.2, 0.8]]}})
+    page.wait_for_function(
+        "() => document.getElementById('compareSourceBSelect')?.value === 'pipeline_tap:pipe-1:final'"
+    )
+
+    page.select_option("#compareModeSelect", "difference")
+    page.wait_for_function(
+        """
+        () => (
+          document.getElementById('compareStatus')?.textContent || ''
+        ).includes('Difference is disabled for amplitude-vs-probability sources.')
+        """
+    )
+
+    assert (
+        page.locator("#compareStatus").text_content()
+        == "Difference is disabled for amplitude-vs-probability sources."
+    )
+    e2e_debug.assert_clean()
+
+
+@pytest.mark.e2e
+def test_compare_view_playwright_allows_probability_difference(
+    page, base_url, e2e_debug
+):
+    page.set_default_timeout(60_000)
+    page.goto(f"{base_url}/", wait_until="domcontentloaded")
+
+    def handle_window(route, _request):
+        route.fulfill(
+            status=200,
+            headers={"content-type": "application/octet-stream"},
+            body=b"x",
+        )
+
+    page.route("**/get_section_window_bin?*", handle_window)
+    _install_compare_window_stubs(page)
+    _append_pipeline_layer_option(page, label="fbprob")
+    _append_pipeline_layer_option(page, label="final")
+    _set_latest_tap_data(
+        page,
+        {
+            "fbprob": {"prob": [[0.1, 0.9], [0.2, 0.8]]},
+            "final": {"prob": [[0.4, 0.6], [0.3, 0.7]]},
+        },
+    )
+    page.wait_for_function(
+        "() => document.getElementById('compareSourceBSelect')?.value === 'pipeline_tap:pipe-1:fbprob'"
+    )
+
+    page.select_option("#compareModeSelect", "side_by_side")
+    page.select_option("#compareSourceASelect", "pipeline_tap:pipe-1:final")
+    page.select_option("#compareModeSelect", "difference")
+    page.wait_for_function(
+        "() => Array.isArray(document.getElementById('comparePlotDiff')?.data?.[0]?.z)"
+    )
+
+    assert page.evaluate(
+        "() => (document.getElementById('compareStatus')?.textContent || '').trim()"
+    ) == ""
+    assert page.evaluate(
+        "() => document.getElementById('comparePlotDiff')?.data?.length || 0"
+    ) == 1
     e2e_debug.assert_clean()

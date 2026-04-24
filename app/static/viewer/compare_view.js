@@ -2,7 +2,7 @@
   const AMP_LIMIT = 3.0;
   const DIFF_NOTE = 'Diff is computed from decoded displayed window values.';
   const EPSILON_DIFF_LIMIT = 1e-6;
-  const DOMAIN_MISMATCH_MESSAGE = 'Cannot compare sources: source domains differ.';
+  const DOMAIN_MISMATCH_MESSAGE = 'Difference is disabled for amplitude-vs-probability sources.';
 
   const state = {
     mode: 'single',
@@ -97,6 +97,18 @@
   function inferSourceDomain(source) {
     const next = cloneSource(source);
     if (next.type !== 'pipeline_tap') return 'amplitude';
+    const tapData = window.latestTapData?.[next.tapLabel];
+    if (tapData && typeof tapData === 'object') {
+      const domain = String(tapData.domain || '').toLowerCase();
+      if (domain === 'amplitude' || domain === 'probability') return domain;
+      if (Object.prototype.hasOwnProperty.call(tapData, 'prob')) return 'probability';
+      if (
+        Object.prototype.hasOwnProperty.call(tapData, 'data') ||
+        Object.prototype.hasOwnProperty.call(tapData, 'values')
+      ) {
+        return 'amplitude';
+      }
+    }
     const label = String(next.tapLabel || '').toLowerCase();
     if (label.includes('fbpick') || label.includes('fbprob') || label.includes('prob')) {
       return 'probability';
@@ -445,7 +457,7 @@
   }
 
   function isMixedDomainDifference() {
-    if (state.mode === 'single') return false;
+    if (state.mode !== 'difference') return false;
     const domainA = inferSourceDomain(state.sourceA);
     const domainB = inferSourceDomain(state.sourceB);
     return domainA !== domainB;
@@ -708,13 +720,6 @@
     updateSurfaceVisibility();
     clearCompareStatus();
     if (state.mode === 'side_by_side') {
-      if (isMixedDomainDifference()) {
-        purgeComparePlots();
-        updateSurfaceVisibility();
-        clearSummaryMetrics();
-        setCompareStatus(DOMAIN_MISMATCH_MESSAGE, true);
-        return;
-      }
       await renderSideBySide(state.lastResult);
       return;
     }
