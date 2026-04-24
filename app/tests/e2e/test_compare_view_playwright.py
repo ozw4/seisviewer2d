@@ -147,6 +147,168 @@ def _append_pipeline_layer_option(page, label: str = "denoise") -> None:
     )
 
 
+def _install_compare_controlled_fetch_stubs(page) -> None:
+    _install_compare_window_stubs(page)
+    page.evaluate(
+        """
+        () => {
+          window.__compareFetchSeq = 0;
+          window.__compareFetchCalls = [];
+          window.__loadingEvents = [];
+          window.__loadingVisible = false;
+
+          window.showLoading = (message) => {
+            window.__loadingVisible = true;
+            window.__loadingEvents.push({ type: 'show', message: String(message || '') });
+          };
+          window.hideLoading = () => {
+            window.__loadingVisible = false;
+            window.__loadingEvents.push({ type: 'hide' });
+          };
+
+          window.decodeWindowPayload = (bin, payloadMeta, _perfMeta, _onInvalidShape, options = {}) => {
+            window.__compareApplyDt = options?.applyDt ?? null;
+            const view = bin instanceof Uint8Array ? bin : new Uint8Array(bin || []);
+            const value = Number(view[0] || 0);
+            return {
+              ...payloadMeta,
+              shape: [1, 1],
+              dt: 0.002,
+              zBacking: new Float32Array([value]),
+            };
+          };
+
+          window.fetch = (url, { signal } = {}) => {
+            let resolvePromise;
+            let rejectPromise;
+            const call = {
+              id: ++window.__compareFetchSeq,
+              url,
+              aborted: false,
+              settled: false,
+            };
+            const promise = new Promise((resolve, reject) => {
+              resolvePromise = resolve;
+              rejectPromise = reject;
+            });
+            const cleanup = () => {
+              if (signal && typeof signal.removeEventListener === 'function') {
+                signal.removeEventListener('abort', onAbort);
+              }
+            };
+            const onAbort = () => {
+              if (call.settled) return;
+              call.aborted = true;
+              call.settled = true;
+              cleanup();
+              rejectPromise(new DOMException('The operation was aborted.', 'AbortError'));
+            };
+            call.respond = (value) => {
+              if (call.settled) return;
+              call.settled = true;
+              cleanup();
+              const body = new Uint8Array([value]).buffer;
+              resolvePromise({
+                ok: true,
+                status: 200,
+                headers: { get: () => 'application/octet-stream' },
+                arrayBuffer: async () => body,
+              });
+            };
+
+            if (signal?.aborted) {
+              onAbort();
+            } else if (signal && typeof signal.addEventListener === 'function') {
+              signal.addEventListener('abort', onAbort, { once: true });
+            }
+
+            window.__compareFetchCalls.push(call);
+            return promise;
+          };
+
+          window.__resolveCompareFetch = (callId, value) => {
+            const call = window.__compareFetchCalls.find((entry) => entry.id === callId);
+            if (call) call.respond(value);
+          };
+        }
+        """
+    )
+
+
+def _install_compare_worker_decode_race_stubs(page) -> None:
+    _install_compare_window_stubs(page)
+    page.evaluate(
+        """
+        () => {
+          window.readWindowDecodeUseWorker = () => true;
+          window.__compareWorkerJobSeq = 0;
+          window.__compareWorkerJobs = [];
+          window.__cancelledDecodeJobs = [];
+
+          window.fetch = async () => ({
+            ok: true,
+            status: 200,
+            headers: { get: () => 'application/octet-stream' },
+            arrayBuffer: async () => new Uint8Array([0]).buffer,
+          });
+
+          window.enqueueDecodeJob = () => {
+            let resolvePromise;
+            const job = {
+              jobId: ++window.__compareWorkerJobSeq,
+              settled: false,
+            };
+            const promise = new Promise((resolve) => {
+              resolvePromise = resolve;
+            });
+            job.resolveValue = (value) => {
+              if (job.settled) return;
+              job.settled = true;
+              resolvePromise({
+                ok: true,
+                rows: 1,
+                cols: 1,
+                dt: 0.002,
+                zBuf: new Float32Array([value]).buffer,
+              });
+            };
+            job.drop = () => {
+              if (job.settled) return;
+              job.settled = true;
+              resolvePromise(null);
+            };
+            window.__compareWorkerJobs.push(job);
+            return { jobId: job.jobId, promise };
+          };
+
+          window.cancelDecodeJob = (_scope, jobId) => {
+            const job = window.__compareWorkerJobs.find((entry) => entry.jobId === jobId);
+            if (!job || job.settled) return;
+            window.__cancelledDecodeJobs.push(jobId);
+            job.drop();
+          };
+
+          window.__resolveCompareDecodeJob = (jobId, value) => {
+            const job = window.__compareWorkerJobs.find((entry) => entry.jobId === jobId);
+            if (job) job.resolveValue(value);
+          };
+
+          window.buildWindowPayloadFromWorkerDecoded = (decoded, payloadMeta) => {
+            if (!decoded) return null;
+            const backing = new Float32Array(decoded.zBuf);
+            return {
+              ...payloadMeta,
+              shape: [1, 1],
+              dt: decoded.dt,
+              zBacking: new Float32Array(backing),
+              zRows: [new Float32Array(backing)],
+            };
+          };
+        }
+        """
+    )
+
+
 @pytest.mark.e2e
 def test_compare_view_playwright_refetches_when_auto_source_b_changes(
     page, base_url, e2e_debug
@@ -186,6 +348,80 @@ def test_compare_view_playwright_refetches_when_auto_source_b_changes(
         and query.get("tap_label") == ["denoise"]
         for query in queries
     )
+    e2e_debug.assert_clean()
+
+
+@pytest.mark.e2e
+def test_compare_view_playwright_old_finally_does_not_abort_latest_fetch(
+    page, base_url, e2e_debug
+):
+    page.set_default_timeout(60_000)
+    page.goto(f"{base_url}/", wait_until="domcontentloaded")
+
+    _install_compare_controlled_fetch_stubs(page)
+
+    page.select_option("#compareModeSelect", "side_by_side")
+    page.wait_for_function("() => window.__compareFetchCalls.length === 1")
+
+    page.evaluate("() => { void window.compareView.fetchWindowAndRender(); }")
+    page.wait_for_function("() => window.__compareFetchCalls.length === 2")
+    page.wait_for_function("() => window.__compareFetchCalls[0]?.aborted === true")
+    page.wait_for_timeout(50)
+
+    assert page.evaluate("() => window.__compareFetchCalls[1]?.aborted") is False
+
+    page.evaluate("() => { window.__resolveCompareFetch(2, 9); }")
+    page.wait_for_function(
+        "() => Array.isArray(document.getElementById('comparePlotA')?.data?.[0]?.z)"
+    )
+
+    rendered = page.evaluate(
+        """
+        () => Array.from(
+          document.getElementById('comparePlotA').data[0].z,
+          (row) => Array.from(row),
+        )
+        """
+    )
+    assert rendered == [[9.0]]
+    assert page.evaluate("() => window.__loadingVisible") is False
+    e2e_debug.assert_clean()
+
+
+@pytest.mark.e2e
+def test_compare_view_playwright_old_cleanup_does_not_cancel_latest_decode_job(
+    page, base_url, e2e_debug
+):
+    page.set_default_timeout(60_000)
+    page.goto(f"{base_url}/", wait_until="domcontentloaded")
+
+    _install_compare_worker_decode_race_stubs(page)
+
+    page.select_option("#compareModeSelect", "side_by_side")
+    page.wait_for_function("() => window.__compareWorkerJobs.length === 1")
+
+    page.evaluate("() => { void window.compareView.fetchWindowAndRender(); }")
+    page.wait_for_function("() => window.__compareWorkerJobs.length === 2")
+    page.wait_for_function("() => window.__cancelledDecodeJobs.includes(1)")
+    page.wait_for_timeout(50)
+
+    assert page.evaluate("() => window.__cancelledDecodeJobs.includes(2)") is False
+
+    page.evaluate("() => { window.__resolveCompareDecodeJob(2, 22); }")
+    page.wait_for_function(
+        "() => Array.isArray(document.getElementById('comparePlotA')?.data?.[0]?.z)"
+    )
+
+    rendered = page.evaluate(
+        """
+        () => Array.from(
+          document.getElementById('comparePlotA').data[0].z,
+          (row) => Array.from(row),
+        )
+        """
+    )
+    assert rendered == [[22.0]]
+    assert page.evaluate("() => window.__cancelledDecodeJobs.slice()") == [1]
     e2e_debug.assert_clean()
 
 

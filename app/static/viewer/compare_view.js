@@ -221,13 +221,10 @@
     if (ui.compareStatMaxAbs) ui.compareStatMaxAbs.textContent = '-';
   }
 
-  function cancelActiveCompareFetch() {
-    if (state.fetchCtrl) {
-      state.fetchCtrl.abort();
-      state.fetchCtrl = null;
-    }
-    while (state.decodeJobs.length > 0) {
-      const jobId = state.decodeJobs.pop();
+  function cancelCompareDecodeJobs(decodeJobs) {
+    const jobs = Array.isArray(decodeJobs) ? decodeJobs : [];
+    while (jobs.length > 0) {
+      const jobId = jobs.pop();
       if (typeof window.cancelDecodeJob === 'function' && Number.isInteger(jobId)) {
         try {
           window.cancelDecodeJob('main', jobId, { resolveDropped: true });
@@ -236,6 +233,22 @@
         }
       }
     }
+  }
+
+  function cancelTrackedCompareFetch(ctrl, decodeJobs) {
+    if (ctrl) ctrl.abort();
+    cancelCompareDecodeJobs(decodeJobs);
+  }
+
+  function isCurrentCompareFetch(fetchToken, ctrl) {
+    return fetchToken === state.fetchToken && state.fetchCtrl === ctrl;
+  }
+
+  function cancelActiveCompareFetch() {
+    cancelTrackedCompareFetch(state.fetchCtrl, state.decodeJobs);
+    state.fetchCtrl = null;
+    state.decodeJobs = [];
+    if (typeof window.hideLoading === 'function') window.hideLoading();
   }
 
   function updateSurfaceVisibility() {
@@ -358,7 +371,7 @@
     return payload.zBacking instanceof Float32Array ? payload : null;
   }
 
-  async function decodeComparePayload(buffer, payloadMeta, token) {
+  async function decodeComparePayload(buffer, payloadMeta, token, ctrl, decodeJobs) {
     const workerEnabled = typeof window.readWindowDecodeUseWorker === 'function'
       ? window.readWindowDecodeUseWorker()
       : true;
@@ -370,12 +383,12 @@
         wantZ: true,
       });
       const jobId = Number(decodeJob?.jobId);
-      if (Number.isInteger(jobId)) state.decodeJobs.push(jobId);
+      if (Number.isInteger(jobId)) decodeJobs.push(jobId);
       try {
         const decoded = await decodeJob.promise;
-        const jobIndex = state.decodeJobs.indexOf(jobId);
-        if (jobIndex >= 0) state.decodeJobs.splice(jobIndex, 1);
-        if (token !== state.fetchToken || !decoded) return null;
+        const jobIndex = decodeJobs.indexOf(jobId);
+        if (jobIndex >= 0) decodeJobs.splice(jobIndex, 1);
+        if (!isCurrentCompareFetch(token, ctrl) || !decoded) return null;
         const payload = window.buildWindowPayloadFromWorkerDecoded(
           decoded,
           payloadMeta,
@@ -384,8 +397,8 @@
         );
         return ensureCompareHeatmapPayload(payload);
       } catch (err) {
-        const jobIndex = state.decodeJobs.indexOf(jobId);
-        if (jobIndex >= 0) state.decodeJobs.splice(jobIndex, 1);
+        const jobIndex = decodeJobs.indexOf(jobId);
+        if (jobIndex >= 0) decodeJobs.splice(jobIndex, 1);
         throw err;
       }
     }
@@ -400,7 +413,7 @@
     return ensureCompareHeatmapPayload(payload);
   }
 
-  async function fetchComparePayload(source, requestBase, fetchToken, cachePromises) {
+  async function fetchComparePayload(source, requestBase, fetchToken, cachePromises, signal, ctrl, decodeJobs) {
     const requestContext = buildRequestContextForSource(source, requestBase);
     const artifacts = window.buildWindowRequestArtifacts(requestContext);
     const cacheKey = artifacts.cacheKey;
@@ -411,7 +424,7 @@
       if (cachedPayload) return ensureCompareHeatmapPayload(cachedPayload);
 
       const response = await fetch(`/get_section_window_bin?${artifacts.params.toString()}`, {
-        signal: state.fetchCtrl?.signal,
+        signal,
       });
       if (!response.ok) {
         const detail = await readCompareErrorDetail(response);
@@ -419,9 +432,9 @@
         throw new Error(`Compare fetch failed (${response.status})${suffix}`);
       }
       const buffer = await response.arrayBuffer();
-      if (fetchToken !== state.fetchToken) return null;
-      const payload = await decodeComparePayload(buffer, artifacts.payloadMeta, fetchToken);
-      if (!payload) return null;
+      if (!isCurrentCompareFetch(fetchToken, ctrl)) return null;
+      const payload = await decodeComparePayload(buffer, artifacts.payloadMeta, fetchToken, ctrl, decodeJobs);
+      if (!payload || !isCurrentCompareFetch(fetchToken, ctrl)) return null;
       const cachePayload = payload.__perf ? { ...payload, __perf: null } : payload;
       window.windowCacheSet(cacheKey, cachePayload);
       return cachePayload;
@@ -762,7 +775,10 @@
     cancelActiveCompareFetch();
     state.fetchToken += 1;
     const token = state.fetchToken;
-    state.fetchCtrl = new AbortController();
+    const ctrl = new AbortController();
+    const decodeJobs = [];
+    state.fetchCtrl = ctrl;
+    state.decodeJobs = decodeJobs;
 
     if (typeof window.showLoading === 'function') {
       window.showLoading(`Loading compare view... stepX=${step_x}, stepY=${step_y}`);
@@ -784,10 +800,10 @@
     const cachePromises = new Map();
     try {
       const [payloadA, payloadB] = await Promise.all([
-        fetchComparePayload(state.sourceA, requestBase, token, cachePromises),
-        fetchComparePayload(state.sourceB, requestBase, token, cachePromises),
+        fetchComparePayload(state.sourceA, requestBase, token, cachePromises, ctrl.signal, ctrl, decodeJobs),
+        fetchComparePayload(state.sourceB, requestBase, token, cachePromises, ctrl.signal, ctrl, decodeJobs),
       ]);
-      if (token !== state.fetchToken || !payloadA || !payloadB) return null;
+      if (!isCurrentCompareFetch(token, ctrl) || !payloadA || !payloadB) return null;
 
       const shapeA = Array.isArray(payloadA.shape) ? payloadA.shape.join('x') : '';
       const shapeB = Array.isArray(payloadB.shape) ? payloadB.shape.join('x') : '';
@@ -820,8 +836,12 @@
       setCompareStatus(err instanceof Error ? err.message : String(err), true);
       return null;
     } finally {
-      cancelActiveCompareFetch();
-      if (typeof window.hideLoading === 'function') window.hideLoading();
+      cancelTrackedCompareFetch(ctrl, decodeJobs);
+      if (state.fetchCtrl === ctrl) {
+        state.fetchCtrl = null;
+        state.decodeJobs = [];
+        if (typeof window.hideLoading === 'function') window.hideLoading();
+      }
     }
   }
 
