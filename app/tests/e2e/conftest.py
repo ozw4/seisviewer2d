@@ -214,16 +214,25 @@ class E2EDebug:
         self,
         allow_open_segy_aborted: bool = True,
         allow_favicon_aborted: bool = True,
+        allow_window_fetch_aborted: bool = True,
     ) -> list[str]:
         out: list[str] = []
         for x in self.request_failed:
+            is_aborted = "ERR_ABORTED" in x
             if (
                 allow_open_segy_aborted
                 and "/open_segy" in x
-                and "net::ERR_ABORTED" in x
+                and is_aborted
             ):
                 continue
-            if allow_favicon_aborted and "favicon.ico" in x and "ERR_ABORTED" in x:
+            if allow_favicon_aborted and "favicon.ico" in x and is_aborted:
+                continue
+            if (
+                allow_window_fetch_aborted
+                and x.startswith("REQ_FAILED GET ")
+                and "/get_section_window_bin" in x
+                and is_aborted
+            ):
                 continue
             out.append(x)
         return out
