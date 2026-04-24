@@ -44,18 +44,25 @@ function cacheGet(key) {
   return _pipelineSectionCache.get(key);
 }
 
-function normalizeTapValue(value) {
-  let mat = value;
-  if (value && typeof value === 'object') {
-    if (value.data) {
-      mat = value.data;
-    } else if (value.prob) {
-      mat = value.prob;
-    }
-  }
+function normalizeTapMatrix(mat) {
   return Array.isArray(mat)
     ? mat.map((row) => Float32Array.from(row))
     : mat;
+}
+
+function normalizeTapValue(value) {
+  if (value && typeof value === 'object') {
+    if (Object.prototype.hasOwnProperty.call(value, 'data')) {
+      return { ...value, data: normalizeTapMatrix(value.data) };
+    }
+    if (Object.prototype.hasOwnProperty.call(value, 'prob')) {
+      return { ...value, prob: normalizeTapMatrix(value.prob) };
+    }
+    if (Object.prototype.hasOwnProperty.call(value, 'values')) {
+      return { ...value, values: normalizeTapMatrix(value.values) };
+    }
+  }
+  return normalizeTapMatrix(value);
 }
 
 async function fetchSectionWithPipeline(
