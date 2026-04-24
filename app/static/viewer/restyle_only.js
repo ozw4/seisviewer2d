@@ -12,6 +12,10 @@
       window.heatmapTraceIndex = heatmapTraceIndex;
 
       window.restyleColorAndGain = function () {
+        if (window.compareView && typeof window.compareView.isActive === 'function' && window.compareView.isActive()) {
+          window.compareView.restylePlots();
+          return;
+        }
         const plotDiv = document.getElementById('plot');
         if (!plotDiv) throw new Error('plot div not found');
         const idx = heatmapTraceIndex(plotDiv);

@@ -256,6 +256,9 @@
     function showViewerEmptyState(kind = 'no-dataset') {
       const copy = VIEWER_EMPTY_STATE_COPY[kind] || VIEWER_EMPTY_STATE_COPY['no-dataset'];
       const { root, title, description, helper } = getViewerEmptyStateNodes();
+      if (window.compareView && typeof window.compareView.reset === 'function') {
+        window.compareView.reset({ forceHide: true });
+      }
       if (title) title.textContent = copy.title;
       if (description) description.textContent = copy.description;
       if (helper) helper.textContent = copy.helper;
@@ -648,6 +651,7 @@
 
       return null;
     }
+    window.readAxisRange = readAxisRange;
 
     function filenameFromContentDisposition(disposition) {
       if (!disposition) return null;
@@ -1895,6 +1899,7 @@
         savedYRange = null;
       }
     }
+    window.applyServerDt = applyServerDt;
 
     const COLORMAPS = {
       Greys: 'Greys',
@@ -2594,6 +2599,7 @@
         nSamples: y1 - y0 + 1,
       };
     }
+    window.currentVisibleWindow = currentVisibleWindow;
 
     function updateKey1Display() {
       updateSectionNavigation({ syncDisplay: true });
@@ -2731,6 +2737,7 @@
       }
       return null;
     }
+    window.fetchSectionMeta = fetchSectionMeta;
 
     async function fetchCurrentFileName() {
       if (!currentFileId) {
@@ -2858,6 +2865,12 @@
 
 
     function renderLatestView(startOverride = null, endOverride = null) {
+      if (window.compareView && typeof window.compareView.isActive === 'function' && window.compareView.isActive()) {
+        window.compareView.renderFromCache().catch((err) => {
+          console.warn('compare render failed', err);
+        });
+        return;
+      }
       const sel = document.getElementById('layerSelect');
       const layer = sel ? sel.value : 'raw';
       const slider = document.getElementById('key1_slider');

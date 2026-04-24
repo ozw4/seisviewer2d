@@ -8,4 +8,5 @@ test('upload page loads', async ({ page }) => {
 test('main viewer page loads', async ({ page }) => {
 	await page.goto('/');
 	await expect(page.locator('body')).toBeVisible();
+	await expect(page.getByTestId('compare-mode-select')).toHaveValue('single');
 });

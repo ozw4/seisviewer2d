@@ -375,6 +375,126 @@
       align-items: stretch;
     }
 
+    #compareSurface {
+      position: absolute;
+      inset: 0;
+      display: flex;
+      flex-direction: column;
+      gap: 0.75rem;
+      padding: 0.75rem;
+      min-width: 0;
+      min-height: 0;
+      background: #fff;
+    }
+
+    #compareSurface[hidden] {
+      display: none;
+    }
+
+    .compare-status {
+      padding: 0.55rem 0.7rem;
+      border: 1px solid #cbd5e1;
+      border-radius: 10px;
+      background: #f8fafc;
+      color: #334155;
+      font-size: 0.9rem;
+    }
+
+    .compare-status[hidden] {
+      display: none;
+    }
+
+    .compare-status.is-error {
+      border-color: #fca5a5;
+      background: #fef2f2;
+      color: #991b1b;
+    }
+
+    .compare-grid {
+      flex: 1;
+      min-height: 0;
+      display: grid;
+      gap: 0.75rem;
+    }
+
+    .compare-grid-side {
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+
+    .compare-grid-diff {
+      grid-template-columns: minmax(0, 1fr);
+      grid-template-rows: minmax(0, 1fr) auto auto;
+    }
+
+    .compare-panel {
+      display: flex;
+      flex-direction: column;
+      min-width: 0;
+      min-height: 0;
+      border: 1px solid #dbe3ef;
+      border-radius: 12px;
+      background: #fff;
+      box-shadow: 0 1px 2px rgba(15, 23, 42, 0.05);
+      overflow: hidden;
+    }
+
+    .compare-panel-header {
+      padding: 0.65rem 0.8rem;
+      border-bottom: 1px solid #e2e8f0;
+      background: #f8fafc;
+      font-size: 0.82rem;
+      font-weight: 700;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+      color: #334155;
+    }
+
+    .compare-plot {
+      flex: 1;
+      min-height: 260px;
+    }
+
+    .compare-note {
+      padding: 0.8rem 0.8rem 0;
+      font-size: 0.88rem;
+      line-height: 1.4;
+      color: #475569;
+    }
+
+    .compare-metrics {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 0.65rem;
+      padding: 0.8rem;
+    }
+
+    #compareRmsPlot {
+      min-height: 180px;
+    }
+
+    .compare-metric {
+      display: flex;
+      flex-direction: column;
+      gap: 0.2rem;
+      padding: 0.55rem 0.65rem;
+      border: 1px solid #e2e8f0;
+      border-radius: 10px;
+      background: #f8fafc;
+    }
+
+    .compare-metric-label {
+      font-size: 0.78rem;
+      color: #64748b;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+    }
+
+    .compare-metric-value {
+      font-size: 1rem;
+      font-weight: 700;
+      color: #0f172a;
+    }
+
     #viewerEmptyState {
       position: absolute;
       inset: 0;
@@ -790,6 +910,14 @@
       .viewer-shortcuts-item {
         grid-template-columns: 1fr;
         gap: 0.2rem;
+      }
+
+      .compare-grid-side {
+        grid-template-columns: minmax(0, 1fr);
+      }
+
+      .compare-metrics {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
       }
     }
 
@@ -1299,6 +1427,38 @@
                     oninput="onWiggleDensityChange()">
                 </label>
               </div>
+              <div class="control-subgroup" aria-labelledby="controls-compare-title">
+                <div id="controls-compare-title" class="control-subgroup-title">Compare</div>
+                <div class="control-row">
+                  <label class="control-field">Compare mode:
+                    <select id="compareModeSelect" data-testid="compare-mode-select">
+                      <option value="single" selected>Single</option>
+                      <option value="side_by_side">Side-by-side</option>
+                      <option value="difference">Difference</option>
+                    </select>
+                  </label>
+                  <label class="control-field">Diff:
+                    <select id="compareDiffModeSelect">
+                      <option value="b_minus_a" selected>B - A</option>
+                      <option value="a_minus_b">A - B</option>
+                    </select>
+                  </label>
+                  <label class="control-field"><input type="checkbox" id="compareShowRms" checked>RMS(B - A) by trace</label>
+                </div>
+                <div class="control-row">
+                  <label class="control-field">A:
+                    <select id="compareSourceASelect">
+                      <option value="raw" selected>raw</option>
+                    </select>
+                  </label>
+                  <label class="control-field">B:
+                    <select id="compareSourceBSelect">
+                      <option value="raw" selected>raw</option>
+                    </select>
+                  </label>
+                </div>
+                <div id="compareStatus" class="compare-status" hidden aria-live="polite"></div>
+              </div>
             </section>
 
             <section class="control-section control-section-status" aria-labelledby="controls-status-title">
@@ -1325,6 +1485,51 @@
       </div>
       <div id="plotViewport">
         <div id="plot"></div>
+        <div id="compareSurface" hidden>
+          <div id="compareStatusViewport" class="compare-status" hidden aria-live="polite"></div>
+          <div id="compareSideBySide" class="compare-grid compare-grid-side" hidden>
+            <section class="compare-panel">
+              <div id="compareSourceALabel" class="compare-panel-header">A: raw</div>
+              <div id="comparePlotA" class="compare-plot"></div>
+            </section>
+            <section class="compare-panel">
+              <div id="compareSourceBLabel" class="compare-panel-header">B: raw</div>
+              <div id="comparePlotB" class="compare-plot"></div>
+            </section>
+          </div>
+          <div id="compareDiffView" class="compare-grid compare-grid-diff" hidden>
+            <section class="compare-panel">
+              <div id="compareDiffExpression" class="compare-panel-header">B - A</div>
+              <div id="comparePlotDiff" class="compare-plot"></div>
+            </section>
+            <section class="compare-panel">
+              <div class="compare-panel-header">Metrics</div>
+              <div id="compareNotice" class="compare-note" hidden></div>
+              <div class="compare-metrics">
+                <div class="compare-metric">
+                  <span class="compare-metric-label">mean(B - A)</span>
+                  <span id="compareStatMean" class="compare-metric-value">-</span>
+                </div>
+                <div class="compare-metric">
+                  <span class="compare-metric-label">std(B - A)</span>
+                  <span id="compareStatStd" class="compare-metric-value">-</span>
+                </div>
+                <div class="compare-metric">
+                  <span class="compare-metric-label">rms(B - A)</span>
+                  <span id="compareStatRms" class="compare-metric-value">-</span>
+                </div>
+                <div class="compare-metric">
+                  <span class="compare-metric-label">max_abs(B - A)</span>
+                  <span id="compareStatMaxAbs" class="compare-metric-value">-</span>
+                </div>
+              </div>
+            </section>
+            <section id="compareRmsSection" class="compare-panel" hidden>
+              <div class="compare-panel-header">RMS(B - A) by trace</div>
+              <div id="compareRmsPlot" class="compare-plot"></div>
+            </section>
+          </div>
+        </div>
         <section id="viewerEmptyState" hidden aria-live="polite" aria-atomic="true">
           <div class="viewer-empty-state-card" aria-labelledby="viewerEmptyStateTitle"
             aria-describedby="viewerEmptyStateDescription viewerEmptyStateHelper">
@@ -1511,6 +1716,8 @@
   <script src="/static/viewer/window_render.js"></script>
   <script src="/static/viewer/window_fetch.js"></script>
   <script src="/static/viewer/viewer_legacy.js"></script>
+  <script src="/static/viewer/compare_metrics.js"></script>
+  <script src="/static/viewer/compare_view.js"></script>
   <script>
     (function initControlsPanel() {
       const STORAGE_OPEN = 'sv.controls_panel.open';

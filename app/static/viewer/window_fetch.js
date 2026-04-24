@@ -66,6 +66,7 @@
 
       return { step_x: stepX, step_y: stepY };
     }
+    window.computeStepsForWindow = computeStepsForWindow;
 
     function buildWindowLoadingMessage({ mode, stepX, stepY }) {
       return `Loading window... Mode: ${mode}, stepX=${stepX}, stepY=${stepY}`;
@@ -81,12 +82,14 @@
       overlay.style.pointerEvents = window.windowLoadingBlocksInput === true ? 'auto' : 'none';
       overlay.classList.add('show');
     }
+    window.showLoading = showLoading;
 
     function hideLoading() {
       const overlay = document.getElementById('windowLoadingOverlay');
       if (!overlay) return;
       overlay.classList.remove('show');
     }
+    window.hideLoading = hideLoading;
 
     function bumpWindowFetchId() {
       activeWindowFetchId += 1;
@@ -209,6 +212,7 @@
       }
       return WINDOW_DECODE_USE_WORKER_DEFAULT;
     }
+    window.readWindowDecodeUseWorker = readWindowDecodeUseWorker;
 
     function readWindowDecodeWorkerPath() {
       const configured = (typeof cfg === 'object' && cfg !== null)
@@ -259,6 +263,7 @@
       syncWindowCacheStats();
       return entry.payload;
     }
+    window.windowCacheGet = windowCacheGet;
 
     function windowCacheSet(key, payload) {
       const bytes = estimateWindowPayloadBytes(payload);
@@ -277,6 +282,7 @@
       syncWindowCacheStats();
       return payload;
     }
+    window.windowCacheSet = windowCacheSet;
 
     function windowCachePeek(key) {
       const entry = windowPayloadCache.get(key);
@@ -402,6 +408,7 @@
         },
       };
     }
+    window.buildWindowRequestArtifacts = buildWindowRequestArtifacts;
 
     function resolveWindowShape(shapeRaw) {
       const shape = Array.isArray(shapeRaw) ? shapeRaw : Array.from(shapeRaw ?? []);
@@ -507,6 +514,7 @@
       });
       return { jobId, promise };
     }
+    window.enqueueDecodeJob = enqueueDecodeJob;
 
     function cancelDecodeJob(kind, jobId, { resolveDropped = false } = {}) {
       if (!Number.isInteger(jobId)) return;
@@ -528,6 +536,7 @@
         pending.reject(new Error('decode_job_canceled'));
       }
     }
+    window.cancelDecodeJob = cancelDecodeJob;
 
     function cancelActiveMainDecodeJob() {
       if (!Number.isInteger(activeMainDecodeJobId)) return;
@@ -568,10 +577,12 @@
         shape: [rows, cols],
         valuesI8,
         scale,
+        dt: Number.isFinite(Number(obj?.dt)) ? Number(obj.dt) : null,
         quant: resolveWindowQuantMeta(obj),
         __perf: perfMeta || null,
       };
     }
+    window.decodeWindowPayload = decodeWindowPayload;
 
     function buildWindowPayloadFromWorkerDecoded(decoded, payloadMeta, perfMeta, onInvalidShape) {
       if (!decoded || decoded.ok !== true) return null;
@@ -589,6 +600,7 @@
         ...payloadMeta,
         shape: [rows, cols],
         scale: Number.isFinite(scaleRaw) ? scaleRaw : null,
+        dt: Number.isFinite(Number(decoded.dt)) ? Number(decoded.dt) : null,
         quant: decoded.quant ?? null,
         __perf: perfMeta || null,
       };
@@ -627,6 +639,7 @@
       payload.valuesI8 = valuesI8;
       return payload;
     }
+    window.buildWindowPayloadFromWorkerDecoded = buildWindowPayloadFromWorkerDecoded;
 
     function renderWindowPayload(windowPayload) {
       if (!windowPayload) return;
@@ -922,6 +935,9 @@
     };
 
     async function fetchWindowAndPlot() {
+      if (window.compareView && typeof window.compareView.isActive === 'function' && window.compareView.isActive()) {
+        return window.compareView.fetchWindowAndRender();
+      }
       D('WINDOW@req', { key1: key1Values?.[parseInt(document.getElementById('key1_slider')?.value || '0', 10)] });
       if (!currentFileId) return;
       if (!sectionShape) {
@@ -1143,3 +1159,4 @@
         if (requestId === activeWindowFetchId) hideLoading();
       }
     }
+    window.fetchWindowAndPlot = fetchWindowAndPlot;
