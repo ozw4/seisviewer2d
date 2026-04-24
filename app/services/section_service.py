@@ -150,16 +150,15 @@ def build_section_window_payload(
         x1=x1,
         step_x=step_x,
     )
-    view = prepared.T if transpose else prepared
-    window_view = np.ascontiguousarray(view, dtype=np.float32)
     dt_val = dt_resolver(file_id)
     build_ms = (time.perf_counter() - build_started) * 1000.0
     pack_started = time.perf_counter()
     payload = pack_quantized_array_gzip(
-        window_view,
+        prepared,
         scale=None,
         dt=dt_val,
         extra=None,
+        transpose=transpose,
     )
     if perf_timings_ms is not None:
         perf_timings_ms['pack_ms'] = (time.perf_counter() - pack_started) * 1000.0
