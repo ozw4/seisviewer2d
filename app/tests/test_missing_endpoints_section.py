@@ -112,9 +112,13 @@ def test_get_section_meta_contract_and_dt_from_meta_json(
 
     monkeypatch.setattr(sec, "get_reader", _stub_get_reader, raising=True)
     # baseline 作成は重い/外部依存になりやすいので、契約テストでは呼べることだけ担保して stub
-    monkeypatch.setattr(
-        sec, "get_or_create_raw_baseline", lambda **_k: {}, raising=True
-    )
+    def _stub_baseline(**kwargs):
+        status = kwargs.get("status")
+        if isinstance(status, dict):
+            status["source"] = "precomputed"
+        return {}
+
+    monkeypatch.setattr(sec, "get_or_create_raw_baseline", _stub_baseline, raising=True)
 
     r = client.get("/get_section_meta", params={"file_id": file_id})
     assert r.status_code == 200
@@ -124,6 +128,10 @@ def test_get_section_meta_contract_and_dt_from_meta_json(
     assert out["dt"] == pytest.approx(0.004)
     assert out["dtype"] == "float32"
     assert out["scale"] == pytest.approx(2.5)
+    assert r.headers["x-sv-baseline-source"] == "precomputed"
+    assert float(r.headers["x-sv-baseline-ms"]) >= 0.0
+    assert float(r.headers["x-sv-server-ms"]) >= 0.0
+    assert "sv_baseline;dur=" in r.headers["server-timing"]
 
 
 def test_get_section_meta_dt_from_segy_header(
@@ -164,9 +172,13 @@ def test_get_section_meta_dt_from_segy_header(
         return _StubReader()
 
     monkeypatch.setattr(sec, "get_reader", _stub_get_reader, raising=True)
-    monkeypatch.setattr(
-        sec, "get_or_create_raw_baseline", lambda **_k: {}, raising=True
-    )
+    def _stub_baseline(**kwargs):
+        status = kwargs.get("status")
+        if isinstance(status, dict):
+            status["source"] = "precomputed"
+        return {}
+
+    monkeypatch.setattr(sec, "get_or_create_raw_baseline", _stub_baseline, raising=True)
 
     r = client.get(
         "/get_section_meta",
@@ -178,6 +190,9 @@ def test_get_section_meta_dt_from_segy_header(
     assert out["dt"] == pytest.approx(us / 1_000_000.0)
     assert out["dtype"] == "int16"
     assert out["scale"] is None
+    assert r.headers["x-sv-baseline-source"] == "precomputed"
+    assert float(r.headers["x-sv-baseline-ms"]) >= 0.0
+    assert float(r.headers["x-sv-server-ms"]) >= 0.0
 
     assert captured == {
         "key1": 7,

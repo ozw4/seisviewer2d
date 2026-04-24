@@ -9,6 +9,7 @@ from fastapi.testclient import TestClient
 
 from app.api._helpers import get_state
 from app.main import app
+from app.tests._stubs import write_baseline_raw
 
 KEY1 = 189
 KEY2 = 193
@@ -21,6 +22,7 @@ def _write_complete_store(
     key2_byte: int,
     dt: float = 0.002,
     meta_overrides: dict | None = None,
+    with_baseline: bool = True,
 ) -> None:
     store_dir.mkdir(parents=True, exist_ok=True)
     traces = np.zeros((2, 4), dtype=np.float32)
@@ -40,6 +42,15 @@ def _write_complete_store(
     if meta_overrides:
         meta.update(meta_overrides)
     (store_dir / 'meta.json').write_text(json.dumps(meta), encoding='utf-8')
+    if with_baseline:
+        write_baseline_raw(
+            store_dir,
+            key1=1,
+            n_traces=2,
+            key1_byte=key1_byte,
+            key2_byte=key2_byte,
+            source_sha256=meta.get('source_sha256'),
+        )
 
 
 @pytest.fixture()
@@ -119,6 +130,101 @@ def test_open_segy_reuses_complete_store_sets_reused_true(_open_env):
     assert captured['register'] is not None
     reg_file_id, reg_store, reg_k1, reg_k2 = captured['register']
     assert reg_file_id == file_id
+    assert reg_store == str(store_dir)
+    assert reg_k1 == KEY1
+    assert reg_k2 == KEY2
+
+
+@pytest.mark.parametrize('baseline_mode', ['missing', 'legacy_json_only'])
+def test_open_segy_rebuilds_store_without_split_baseline_artifact(
+    _open_env, monkeypatch, baseline_mode: str
+):
+    client, upload_mod, captured, calls = _open_env
+    original_name = 'legacy-no-baseline.segy'
+    store_dir = Path(upload_mod.TRACE_DIR) / original_name
+    _write_complete_store(
+        store_dir,
+        key1_byte=KEY1,
+        key2_byte=KEY2,
+        dt=0.004,
+        with_baseline=False,
+    )
+    if baseline_mode == 'legacy_json_only':
+        write_baseline_raw(
+            store_dir,
+            key1=1,
+            n_traces=2,
+            key1_byte=KEY1,
+            key2_byte=KEY2,
+            legacy_only=True,
+        )
+    rebuilt = {'count': 0}
+
+    def _fake_from_segy(
+        segy_path: str,
+        rebuild_store_dir: Path,
+        key1_byte: int,
+        key2_byte: int,
+        *,
+        source_sha256: str | None = None,
+    ) -> dict:
+        rebuilt['count'] += 1
+        traces = np.zeros((2, 4), dtype=np.float32)
+        np.save(rebuild_store_dir / 'traces.npy', traces)
+        np.savez(
+            rebuild_store_dir / 'index.npz',
+            key1_values=np.asarray([1], dtype=np.int32),
+            key1_offsets=np.asarray([0], dtype=np.int64),
+            key1_counts=np.asarray([2], dtype=np.int64),
+        )
+        meta = {
+            'key_bytes': {'key1': int(key1_byte), 'key2': int(key2_byte)},
+            'dt': 0.004,
+            'original_segy_path': segy_path,
+            'original_size': 0,
+        }
+        if source_sha256 is not None:
+            meta['source_sha256'] = source_sha256
+        (rebuild_store_dir / 'meta.json').write_text(
+            json.dumps(meta),
+            encoding='utf-8',
+        )
+        write_baseline_raw(
+            rebuild_store_dir,
+            key1=1,
+            n_traces=2,
+            key1_byte=key1_byte,
+            key2_byte=key2_byte,
+            source_sha256=source_sha256,
+        )
+        return meta
+
+    monkeypatch.setattr(
+        upload_mod.SegyIngestor, 'from_segy', _fake_from_segy, raising=True
+    )
+
+    res = client.post(
+        '/open_segy',
+        data={
+            'original_name': original_name,
+            'key1_byte': str(KEY1),
+            'key2_byte': str(KEY2),
+        },
+    )
+    assert res.status_code == 200, res.text
+    payload = res.json()
+    assert payload['reused_trace_store'] is False
+    assert calls['ingest'] == 0
+    assert rebuilt['count'] == 1
+
+    file_id = payload['file_id']
+    rec = app.state.sv.file_registry.get_record(file_id)
+    assert isinstance(rec, dict)
+    assert rec['store_path'] == str(store_dir)
+    assert rec['dt'] == pytest.approx(0.004)
+
+    assert captured['register'] is not None
+    _reg_file_id, reg_store, reg_k1, reg_k2 = captured['register']
     assert reg_store == str(store_dir)
     assert reg_k1 == KEY1
     assert reg_k2 == KEY2

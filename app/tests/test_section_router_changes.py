@@ -12,6 +12,7 @@ from app.api.routers import section as sec
 from app.main import app
 from app.services import section_index as secidx
 from app.services.errors import ConflictError
+from app.tests._stubs import write_baseline_raw
 from app.trace_store.types import SectionView
 
 
@@ -290,15 +291,7 @@ def test_get_section_window_bin_happy_path(monkeypatch, tmp_path):
 
     # TraceStore の場所と baseline を用意（apply_scaling_from_baseline が参照）
     app.state.sv.file_registry.set_record('f', {'store_path': str(tmp_path)})
-    baseline = {
-        'key1_values': [7],
-        'mu_section_by_key1': [0.0],
-        'sigma_section_by_key1': [1.0],
-        'mu_traces': [0.0, 0.0, 0.0],
-        'sigma_traces': [1.0, 1.0, 1.0],
-        'trace_spans_by_key1': {'7': [[0, 3]]},
-    }
-    (tmp_path / 'baseline_raw.json').write_text(json.dumps(baseline), encoding='utf-8')
+    write_baseline_raw(tmp_path, key1=7, n_traces=3)
     res = sec.get_section_window_bin(
         file_id='f',
         key1=7,

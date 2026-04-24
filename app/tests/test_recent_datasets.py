@@ -1,10 +1,12 @@
 import json
 from pathlib import Path
 
+import pytest
 from fastapi.testclient import TestClient
 
 from app.main import app
 from app.api.routers import upload as upload_mod
+from app.tests._stubs import write_baseline_raw
 
 
 def _write_store(
@@ -19,6 +21,9 @@ def _write_store(
     meta_text: str | None = None,
     traces: bool = True,
     index: bool = True,
+    source_sha256: str | None = None,
+    baseline_source_sha256: str | None = None,
+    with_baseline: bool = True,
 ) -> None:
     store_dir.mkdir(parents=True, exist_ok=True)
     if traces:
@@ -37,10 +42,20 @@ def _write_store(
                 'dt': dt,
                 'n_traces': n_traces,
                 'n_samples': n_samples,
+                'source_sha256': source_sha256,
             }
         ),
         encoding='utf-8',
     )
+    if traces and index and with_baseline:
+        write_baseline_raw(
+            store_dir,
+            key1=1,
+            n_traces=2,
+            key1_byte=key1,
+            key2_byte=key2,
+            source_sha256=baseline_source_sha256,
+        )
 
 
 def test_recent_datasets_lists_complete_stores_sorted_by_meta_mtime(
@@ -122,3 +137,79 @@ def test_recent_datasets_lists_complete_stores_sorted_by_meta_mtime(
     assert datasets[0]['n_samples'] == 64
     assert datasets[0]['last_used_ts'] == newer_mtime
     assert datasets[1]['last_used_ts'] == older_mtime
+
+
+@pytest.mark.parametrize('baseline_mode', ['missing', 'legacy_json_only'])
+def test_recent_datasets_skips_store_without_split_baseline_artifact(
+    tmp_path, monkeypatch, baseline_mode: str
+):
+    trace_dir = tmp_path / 'trace_store'
+    monkeypatch.setattr(upload_mod, 'TRACE_DIR', trace_dir, raising=True)
+
+    legacy = trace_dir / 'legacy.segy'
+    _write_store(
+        legacy,
+        key1=189,
+        key2=193,
+        dt=0.002,
+        n_traces=32,
+        n_samples=128,
+        original_name='legacy.segy',
+        with_baseline=False,
+    )
+    if baseline_mode == 'legacy_json_only':
+        write_baseline_raw(
+            legacy,
+            key1=1,
+            n_traces=2,
+            key1_byte=189,
+            key2_byte=193,
+            legacy_only=True,
+        )
+
+    client = TestClient(app)
+    response = client.get('/recent_datasets')
+
+    assert response.status_code == 200
+    assert response.json()['datasets'] == []
+
+
+def test_recent_datasets_skips_store_with_stale_baseline_artifact(
+    tmp_path, monkeypatch
+):
+    trace_dir = tmp_path / 'trace_store'
+    monkeypatch.setattr(upload_mod, 'TRACE_DIR', trace_dir, raising=True)
+
+    healthy = trace_dir / 'healthy.segy'
+    stale = trace_dir / 'stale.segy'
+
+    _write_store(
+        healthy,
+        key1=189,
+        key2=193,
+        dt=0.002,
+        n_traces=32,
+        n_samples=128,
+        original_name='healthy.segy',
+        source_sha256='sha-healthy',
+        baseline_source_sha256='sha-healthy',
+    )
+    _write_store(
+        stale,
+        key1=189,
+        key2=193,
+        dt=0.002,
+        n_traces=32,
+        n_samples=128,
+        original_name='stale.segy',
+        source_sha256='sha-store',
+        baseline_source_sha256='sha-baseline',
+    )
+
+    client = TestClient(app)
+    response = client.get('/recent_datasets')
+
+    assert response.status_code == 200
+    assert [item['original_name'] for item in response.json()['datasets']] == [
+        'healthy.segy'
+    ]

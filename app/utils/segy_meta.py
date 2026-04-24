@@ -10,11 +10,17 @@ from typing import Any
 
 import numpy as np
 
+from app.utils.baseline_artifacts import (
+    BASELINE_STAGE_RAW,
+    SplitBaselineArtifactsError,
+    build_baseline_manifest_path,
+    build_legacy_baseline_path,
+    read_split_baseline_payload,
+)
+
 HEADER_SAMPLE_INTERVAL_OFFSET = 3200 + 16
 SAMPLE_INTERVAL_BYTES = 2
 MICROSECONDS_PER_SECOND = 1_000_000.0
-
-BASELINE_FILENAME_RAW = 'baseline_raw.json'
 
 logger = logging.getLogger(__name__)
 
@@ -40,17 +46,53 @@ def read_segy_dt_seconds(path: str) -> float | None:
         return None
 
 
-def load_baseline(store_dir: str | Path) -> dict[str, Any]:
-    """Return cached baseline statistics for ``store_dir``."""
-    store_path = Path(store_dir)
-    baseline_path = store_path / BASELINE_FILENAME_RAW
-    cache_key = str(baseline_path.resolve())
-    entry = _BASELINE_CACHE.get(cache_key)
-    if entry is not None:
-        return entry
-    if not baseline_path.is_file():
-        raise FileNotFoundError(f'baseline payload not found: {baseline_path}')
-    payload = json.loads(baseline_path.read_text(encoding='utf-8'))
+def _load_json_payload(path: Path) -> dict[str, Any]:
+    payload = json.loads(path.read_text(encoding='utf-8'))
+    if not isinstance(payload, dict):
+        raise ValueError('Baseline payload must be a JSON object')
+    return payload
+
+
+def _payload_matches_key_bytes(
+    payload: dict[str, Any], *, key1_byte: int, key2_byte: int
+) -> bool:
+    if payload.get('stage') != BASELINE_STAGE_RAW:
+        return False
+    try:
+        stored_key1 = int(payload['key1_byte'])
+        stored_key2 = int(payload['key2_byte'])
+    except (KeyError, TypeError, ValueError):
+        return False
+    return stored_key1 == int(key1_byte) and stored_key2 == int(key2_byte)
+
+
+def _load_legacy_baseline_payload(
+    store_path: Path,
+    *,
+    key1_byte: int,
+    key2_byte: int,
+) -> tuple[dict[str, Any], str] | None:
+    legacy_path = build_legacy_baseline_path(store_path)
+    if not legacy_path.is_file():
+        return None
+    payload = _load_json_payload(legacy_path)
+    if not _payload_matches_key_bytes(
+        payload,
+        key1_byte=key1_byte,
+        key2_byte=key2_byte,
+    ):
+        return None
+    cache_key = f'legacy-json|{legacy_path.resolve()}|{legacy_path.stat().st_mtime_ns}'
+    return payload, cache_key
+
+
+def _build_baseline_entry(
+    *,
+    payload: dict[str, Any],
+    store_path: Path,
+    key1_byte: int,
+    key2_byte: int,
+) -> dict[str, Any]:
     key1_values = np.ascontiguousarray(
         np.asarray(payload.get('key1_values'), dtype=np.int64)
     )
@@ -74,7 +116,7 @@ def load_baseline(store_dir: str | Path) -> dict[str, Any]:
         logger.info(
             'Clamped %d section std values to eps (%s)',
             int(section_clamp_mask.sum()),
-            baseline_path,
+            store_path,
         )
     safe_sigma_section = sigma_section.copy()
     np.maximum(safe_sigma_section, NORM_EPS, out=safe_sigma_section)
@@ -97,7 +139,7 @@ def load_baseline(store_dir: str | Path) -> dict[str, Any]:
         logger.info(
             'Clamped %d trace std values to eps (%s)',
             int(trace_clamp_mask.sum()),
-            baseline_path,
+            store_path,
         )
     safe_sigma_traces = sigma_traces.copy()
     np.maximum(safe_sigma_traces, NORM_EPS, out=safe_sigma_traces)
@@ -116,8 +158,8 @@ def load_baseline(store_dir: str | Path) -> dict[str, Any]:
                 raise ValueError('Baseline trace span is out of bounds')
             span_list.append((start, end))
         trace_spans[key_int] = span_list
-    entry = {
-        'store_key': str(store_path.resolve()),
+    return {
+        'store_key': f'{store_path.resolve()}::{int(key1_byte)}::{int(key2_byte)}',
         'key1_values': key1_values,
         'key1_index': {int(val): idx for idx, val in enumerate(key1_values.tolist())},
         'section_mean': mu_section,
@@ -128,5 +170,49 @@ def load_baseline(store_dir: str | Path) -> dict[str, Any]:
         'trace_clamp_mask': trace_clamp_mask,
         'trace_spans': trace_spans,
     }
+
+
+def load_baseline(
+    store_dir: str | Path, *, key1_byte: int, key2_byte: int
+) -> dict[str, Any]:
+    """Return cached baseline statistics for ``store_dir`` and key bytes."""
+    store_path = Path(store_dir)
+    try:
+        resolved = read_split_baseline_payload(
+            store_path,
+            stage=BASELINE_STAGE_RAW,
+            key1_byte=key1_byte,
+            key2_byte=key2_byte,
+            include_arrays=True,
+        )
+    except SplitBaselineArtifactsError:
+        resolved = None
+    if resolved is None:
+        resolved = _load_legacy_baseline_payload(
+            store_path,
+            key1_byte=key1_byte,
+            key2_byte=key2_byte,
+        )
+    if resolved is None:
+        manifest_path = build_baseline_manifest_path(
+            store_path,
+            stage=BASELINE_STAGE_RAW,
+            key1_byte=key1_byte,
+            key2_byte=key2_byte,
+        )
+        legacy_path = build_legacy_baseline_path(store_path)
+        raise FileNotFoundError(
+            f'baseline payload not found: {manifest_path} or {legacy_path}'
+        )
+    payload, cache_key = resolved
+    entry = _BASELINE_CACHE.get(cache_key)
+    if entry is not None:
+        return entry
+    entry = _build_baseline_entry(
+        payload=payload,
+        store_path=store_path,
+        key1_byte=key1_byte,
+        key2_byte=key2_byte,
+    )
     _BASELINE_CACHE[cache_key] = entry
     return entry

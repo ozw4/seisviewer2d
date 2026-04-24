@@ -4,12 +4,15 @@ import hashlib
 import json
 import os
 import shutil
-from datetime import datetime, timezone
 from pathlib import Path
 
 import numpy as np
 
 from app.core.paths import get_trace_store_dir, get_upload_dir
+from app.utils.baseline_artifacts import (
+    build_raw_baseline_payload,
+    write_raw_baseline_artifacts,
+)
 
 DEFAULT_ORIGINAL_NAME = 'perf_ci.sgy'
 DEFAULT_KEY1_BYTE = 189
@@ -113,24 +116,20 @@ def _compute_baseline_payload(
     ) / total_samples
     section_std = np.sqrt(np.maximum(section_mean_sq - np.square(section_mean), 0.0))
 
-    return {
-        'stage': 'raw',
-        'ddof': 0,
-        'method': 'mean_std',
-        'dtype_base': 'float32',
-        'dt': DEFAULT_DT_SECONDS,
-        'key1_values': unique_key1.astype(np.int64, copy=False).tolist(),
-        'mu_section_by_key1': section_mean.astype(np.float32, copy=False).tolist(),
-        'sigma_section_by_key1': section_std.astype(np.float32, copy=False).tolist(),
-        'mu_traces': trace_mean.astype(np.float32, copy=False).tolist(),
-        'sigma_traces': trace_std.astype(np.float32, copy=False).tolist(),
-        'zero_var_mask': zero_mask.astype(bool, copy=False).tolist(),
-        'trace_spans_by_key1': trace_spans_by_key1,
-        'source_sha256': source_sha256,
-        'computed_at': datetime.now(timezone.utc).isoformat(),
-        'key1_byte': int(key1_byte),
-        'key2_byte': int(key2_byte),
-    }
+    return build_raw_baseline_payload(
+        dtype_base='float32',
+        dt=DEFAULT_DT_SECONDS,
+        key1_values=unique_key1,
+        mu_sections=section_mean,
+        sigma_sections=section_std,
+        mu_traces=trace_mean,
+        sigma_traces=trace_std,
+        zero_var_mask=zero_mask,
+        trace_spans_by_key1=trace_spans_by_key1,
+        source_sha256=source_sha256,
+        key1_byte=key1_byte,
+        key2_byte=key2_byte,
+    )
 
 
 def main() -> None:
@@ -192,9 +191,11 @@ def main() -> None:
         key1_byte=key1_byte,
         key2_byte=key2_byte,
     )
-    (store_dir / 'baseline_raw.json').write_text(
-        json.dumps(baseline_payload),
-        encoding='utf-8',
+    write_raw_baseline_artifacts(
+        store_dir,
+        key1_byte=key1_byte,
+        key2_byte=key2_byte,
+        payload=baseline_payload,
     )
 
     output = {

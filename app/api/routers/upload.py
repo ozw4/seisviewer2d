@@ -22,6 +22,7 @@ from app.core.paths import (
 )
 from app.core.state import AppState
 from app.utils.ingest import SegyIngestor
+from app.utils.baseline_artifacts import has_split_baseline_artifacts
 from app.trace_store.reader import TraceStoreSectionReader
 
 router = APIRouter()
@@ -34,10 +35,7 @@ UPLOAD_CHUNK_SIZE = 4 * 1024 * 1024
 
 
 def _trace_store_complete(store_dir: Path, key1_byte: int, key2_byte: int) -> bool:
-    """Return True only when a trace store exists AND its metadata indicates
-    it was built for the requested key bytes. Header files are not part of
-    the completion predicate (they are generated on demand).
-    """
+    """Return True only when the requested trace store artifacts are present."""
     if not store_dir.is_dir():
         return False
     meta_path = store_dir / 'meta.json'
@@ -51,10 +49,20 @@ def _trace_store_complete(store_dir: Path, key1_byte: int, key2_byte: int) -> bo
     if not isinstance(meta, dict):
         return False
     kb = meta.get('key_bytes')
-    return (
+    if not (
         isinstance(kb, dict)
         and kb.get('key1') == key1_byte
         and kb.get('key2') == key2_byte
+    ):
+        return False
+    source_sha256 = meta.get('source_sha256')
+    if source_sha256 is not None and not isinstance(source_sha256, str):
+        return False
+    return has_split_baseline_artifacts(
+        store_dir,
+        key1_byte=key1_byte,
+        key2_byte=key2_byte,
+        source_sha256=source_sha256,
     )
 
 
@@ -230,6 +238,11 @@ async def open_segy(
     else:
         meta = json.loads(meta_path.read_text())
         segy_path = meta.get('original_segy_path') if isinstance(meta, dict) else None
+        source_sha256 = (
+            meta.get('source_sha256')
+            if isinstance(meta, dict) and isinstance(meta.get('source_sha256'), str)
+            else None
+        )
         if not isinstance(segy_path, str):
             raise HTTPException(
                 status_code=500,
@@ -241,6 +254,7 @@ async def open_segy(
             store_dir,
             key1_byte,
             key2_byte,
+            source_sha256=source_sha256,
         )
     _register_trace_store(file_id, store_dir, key1_byte, key2_byte, state=state)
     _touch_trace_store_meta(store_dir)
