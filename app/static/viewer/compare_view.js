@@ -703,8 +703,8 @@
       );
       if (state.showRmsByTrace) {
         await renderRmsPlot(ui.compareRmsPlot, payloadA, rmsByTrace);
-      } else if (ui.compareRmsPlot && typeof window.Plotly?.purge === 'function') {
-        window.Plotly.purge(ui.compareRmsPlot);
+      } else if (ui.compareRmsPlot) {
+        purgeComparePlot(ui.compareRmsPlot);
       }
     } finally {
       state.suppressRelayout = false;
@@ -852,17 +852,24 @@
     }
   }
 
-  function purgeComparePlots() {
-    const ui = getUi();
-    const plots = [ui.comparePlotA, ui.comparePlotB, ui.comparePlotDiff, ui.compareRmsPlot];
-    for (const plotDiv of plots) {
-      if (!plotDiv || typeof window.Plotly?.purge !== 'function') continue;
+  function purgeComparePlot(plotDiv) {
+    if (!plotDiv) return;
+    if (typeof window.Plotly?.purge === 'function') {
       try {
         window.Plotly.purge(plotDiv);
       } catch (_) {
         // Ignore purge errors for empty divs.
       }
-      plotDiv.innerHTML = '';
+    }
+    delete plotDiv.__svCompareRole;
+    plotDiv.innerHTML = '';
+  }
+
+  function purgeComparePlots() {
+    const ui = getUi();
+    const plots = [ui.comparePlotA, ui.comparePlotB, ui.comparePlotDiff, ui.compareRmsPlot];
+    for (const plotDiv of plots) {
+      purgeComparePlot(plotDiv);
     }
   }
 
