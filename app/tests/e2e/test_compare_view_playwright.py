@@ -793,3 +793,111 @@ def test_compare_view_playwright_allows_probability_difference(
         "() => document.getElementById('comparePlotDiff')?.data?.length || 0"
     ) == 1
     e2e_debug.assert_clean()
+
+
+@pytest.mark.e2e
+def test_compare_view_playwright_uses_max_abs_for_sparse_difference_scale(
+    page, base_url, e2e_debug
+):
+    page.set_default_timeout(60_000)
+    page.goto(f"{base_url}/", wait_until="domcontentloaded")
+
+    def handle_window(route, _request):
+        route.fulfill(
+            status=200,
+            headers={"content-type": "application/octet-stream"},
+            body=b"x",
+        )
+
+    page.route("**/get_section_window_bin?*", handle_window)
+    _install_compare_window_stubs(page)
+    _append_pipeline_layer_option(page, label="sparse")
+    page.evaluate(
+        """
+        () => {
+          window.decodeWindowPayload = (_bin, payloadMeta, _perfMeta, _onInvalidShape, options = {}) => {
+            window.__compareApplyDt = options?.applyDt ?? null;
+            const isRaw = !payloadMeta.effectiveLayer || payloadMeta.effectiveLayer === 'raw';
+            const backing = isRaw
+              ? new Float32Array([0, 0, 0, 0])
+              : new Float32Array([0, 0, 0, 5]);
+            return {
+              ...payloadMeta,
+              shape: [2, 2],
+              dt: 0.002,
+              zBacking: backing,
+            };
+          };
+        }
+        """
+    )
+    page.wait_for_function(
+        "() => document.getElementById('compareSourceBSelect')?.value === 'pipeline_tap:pipe-1:sparse'"
+    )
+
+    page.select_option("#compareModeSelect", "difference")
+    page.wait_for_function(
+        """
+        () => {
+          const trace = document.getElementById('comparePlotDiff')?.data?.[0];
+          return !!trace && Array.isArray(trace.z) && trace.z[1]?.[1] === 5;
+        }
+        """
+    )
+
+    rendered_b_minus_a = page.evaluate(
+        """
+        () => {
+          const trace = document.getElementById('comparePlotDiff').data[0];
+          return {
+            notice: (document.getElementById('compareNotice')?.textContent || '').trim(),
+            z: Array.from(trace.z, (row) => Array.from(row)),
+            zmin: trace.zmin,
+            zmax: trace.zmax,
+            zmid: trace.zmid,
+          };
+        }
+        """
+    )
+
+    assert rendered_b_minus_a["notice"] == (
+        "Diff is computed from decoded displayed window values."
+    )
+    assert rendered_b_minus_a["z"] == [[0, 0], [0, 5]]
+    assert rendered_b_minus_a["zmin"] == pytest.approx(-5)
+    assert rendered_b_minus_a["zmax"] == pytest.approx(5)
+    assert rendered_b_minus_a["zmid"] == pytest.approx(0)
+
+    page.select_option("#compareDiffModeSelect", "a_minus_b")
+    page.wait_for_function(
+        """
+        () => {
+          const trace = document.getElementById('comparePlotDiff')?.data?.[0];
+          return !!trace && Array.isArray(trace.z) && trace.z[1]?.[1] === -5;
+        }
+        """
+    )
+
+    rendered_a_minus_b = page.evaluate(
+        """
+        () => {
+          const trace = document.getElementById('comparePlotDiff').data[0];
+          return {
+            notice: (document.getElementById('compareNotice')?.textContent || '').trim(),
+            z: Array.from(trace.z, (row) => Array.from(row)),
+            zmin: trace.zmin,
+            zmax: trace.zmax,
+            zmid: trace.zmid,
+          };
+        }
+        """
+    )
+
+    assert rendered_a_minus_b["notice"] == (
+        "Diff is computed from decoded displayed window values."
+    )
+    assert rendered_a_minus_b["z"] == [[0, 0], [0, -5]]
+    assert rendered_a_minus_b["zmin"] == pytest.approx(-5)
+    assert rendered_a_minus_b["zmax"] == pytest.approx(5)
+    assert rendered_a_minus_b["zmid"] == pytest.approx(0)
+    e2e_debug.assert_clean()
