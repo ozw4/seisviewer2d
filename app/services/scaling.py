@@ -12,7 +12,7 @@ import numpy as np
 from numpy.typing import NDArray
 
 from app.services.errors import BadRequestError, InternalError, UnprocessableError
-from app.utils.segy_meta import load_baseline
+from app.utils.segy_meta import NORM_EPS, load_baseline
 
 logger = logging.getLogger(__name__)
 
@@ -119,4 +119,60 @@ def apply_scaling_from_baseline(
     return arr
 
 
-__all__ = ['apply_scaling_from_baseline']
+def apply_scaling_from_reference_section(
+    arr: NDArray[np.float32],
+    reference: NDArray[np.float32],
+    scaling: str | None,
+    *,
+    x0: int,
+    x1: int,
+    step_x: int,
+) -> NDArray[np.float32]:
+    """Normalize ``arr`` in-place using statistics from ``reference``."""
+    mode = 'amax' if scaling is None else str(scaling)
+    mode = mode.lower()
+    if mode not in {'amax', 'tracewise'}:
+        raise BadRequestError('Unsupported scaling mode')
+    if arr.ndim != 2 or reference.ndim != 2:
+        raise UnprocessableError('Reference source must be 2D')
+    if not np.all(np.isfinite(arr)) or not np.all(np.isfinite(reference)):
+        raise UnprocessableError('Section contains non-finite values')
+    if x0 < 0 or x1 < x0 or step_x < 1:
+        raise BadRequestError('Invalid window parameters')
+    if x1 >= reference.shape[0]:
+        raise UnprocessableError('Reference source trace range out of bounds')
+
+    if mode == 'amax':
+        mean = np.float32(np.mean(reference, dtype=np.float64))
+        std = np.float32(np.std(reference, dtype=np.float64))
+        if not (np.isfinite(mean) and np.isfinite(std)):
+            raise UnprocessableError('Reference source statistics contain non-finite values')
+        inv_std = np.float32(1.0) / np.maximum(std, NORM_EPS)
+        arr -= mean
+        arr *= inv_std
+        return arr
+
+    n_traces = int(arr.shape[0])
+    sel = np.arange(0, reference.shape[0], dtype=np.int64)[x0 : x1 + 1 : step_x]
+    if sel.shape[0] != n_traces:
+        raise UnprocessableError('Trace count mismatch for reference source')
+    reference_window = reference[sel, :]
+    mean_vec = np.mean(reference_window, axis=1, dtype=np.float64).astype(
+        np.float32,
+        copy=False,
+    )
+    std_vec = np.std(reference_window, axis=1, dtype=np.float64).astype(
+        np.float32,
+        copy=False,
+    )
+    if not np.all(np.isfinite(mean_vec)) or not np.all(np.isfinite(std_vec)):
+        raise UnprocessableError('Reference source trace statistics contain non-finite values')
+    np.maximum(std_vec, NORM_EPS, out=std_vec)
+    inv_vec = np.empty_like(std_vec, dtype=np.float32)
+    np.reciprocal(std_vec, out=inv_vec)
+    arr -= mean_vec[:, None]
+    arr *= inv_vec[:, None]
+    return arr
+
+
+__all__ = ['apply_scaling_from_baseline', 'apply_scaling_from_reference_section']

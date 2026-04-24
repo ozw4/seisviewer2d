@@ -11,7 +11,10 @@ import numpy as np
 
 from app.api.binary_codec import pack_quantized_array_gzip
 from app.services.reader import EXPECTED_SECTION_NDIM, coerce_section_f32
-from app.services.scaling import apply_scaling_from_baseline
+from app.services.scaling import (
+    apply_scaling_from_baseline,
+    apply_scaling_from_reference_section,
+)
 from app.trace_store.reader import TraceStoreSectionReader
 from app.trace_store.types import SectionView
 
@@ -70,6 +73,36 @@ def _resolve_store_dir(
     return store_dir
 
 
+def _validate_reference_source(
+    reference_pipeline_key: str | None,
+    reference_tap_label: str | None,
+) -> tuple[str | None, str | None]:
+    has_pipeline_key = bool(reference_pipeline_key)
+    has_tap_label = bool(reference_tap_label)
+    if has_pipeline_key != has_tap_label:
+        raise ValueError(
+            'reference_pipeline_key and reference_tap_label must be provided together'
+        )
+    if not has_pipeline_key:
+        return None, None
+    return reference_pipeline_key, reference_tap_label
+
+
+def _source_matches(
+    *,
+    pipeline_key: str | None,
+    tap_label: str | None,
+    reference_pipeline_key: str | None,
+    reference_tap_label: str | None,
+) -> bool:
+    return (
+        bool(pipeline_key)
+        and bool(tap_label)
+        and pipeline_key == reference_pipeline_key
+        and tap_label == reference_tap_label
+    )
+
+
 def build_section_window_payload(
     *,
     file_id: str,
@@ -93,6 +126,8 @@ def build_section_window_payload(
     store_dir_resolver: Callable[[str], str],
     trace_stats_lock: threading.RLock | None = None,
     dt_resolver: Callable[[str], float] | None = None,
+    reference_pipeline_key: str | None = None,
+    reference_tap_label: str | None = None,
     perf_timings_ms: dict[str, float] | None = None,
 ) -> bytes:
     """Build the compressed binary payload for a section window."""
@@ -100,6 +135,10 @@ def build_section_window_payload(
     mode = scaling_mode.lower()
     if mode not in {'amax', 'tracewise'}:
         raise ValueError('Unsupported scaling mode')
+    reference_pipeline_key, reference_tap_label = _validate_reference_source(
+        reference_pipeline_key,
+        reference_tap_label,
+    )
 
     section_view, reader = _load_section_view(
         file_id=file_id,
@@ -131,25 +170,60 @@ def build_section_window_payload(
     prepared = coerce_section_f32(sub, section_view.scale)
     if dt_resolver is None:
         raise SectionServiceInternalError('dt resolver is required')
-    store_dir = _resolve_store_dir(
-        file_id=file_id,
-        reader=reader,
-        store_dir_resolver=store_dir_resolver,
-    )
-    prepared = apply_scaling_from_baseline(
-        prepared,
-        scaling=mode,
-        file_id=file_id,
-        key1=key1,
-        store_dir=store_dir,
-        key1_byte=key1_byte,
-        key2_byte=key2_byte,
-        trace_stats_cache=trace_stats_cache,
-        trace_stats_lock=trace_stats_lock,
-        x0=x0,
-        x1=x1,
-        step_x=step_x,
-    )
+    if reference_pipeline_key and reference_tap_label:
+        if _source_matches(
+            pipeline_key=pipeline_key,
+            tap_label=tap_label,
+            reference_pipeline_key=reference_pipeline_key,
+            reference_tap_label=reference_tap_label,
+        ):
+            reference_base = base
+            reference_scale = section_view.scale
+        else:
+            reference_view, _ = _load_section_view(
+                file_id=file_id,
+                key1=key1,
+                key1_byte=key1_byte,
+                key2_byte=key2_byte,
+                offset_byte=offset_byte,
+                pipeline_key=reference_pipeline_key,
+                tap_label=reference_tap_label,
+                reader_getter=reader_getter,
+                pipeline_section_getter=pipeline_section_getter,
+            )
+            reference_base = reference_view.arr
+            reference_scale = reference_view.scale
+        if reference_base.ndim != EXPECTED_SECTION_NDIM:
+            raise SectionServiceInternalError('Reference source data must be 2D')
+        reference_prepared = coerce_section_f32(reference_base, reference_scale)
+        prepared = apply_scaling_from_reference_section(
+            prepared,
+            reference_prepared,
+            scaling=mode,
+            x0=x0,
+            x1=x1,
+            step_x=step_x,
+        )
+    else:
+        store_dir = _resolve_store_dir(
+            file_id=file_id,
+            reader=reader,
+            store_dir_resolver=store_dir_resolver,
+        )
+        prepared = apply_scaling_from_baseline(
+            prepared,
+            scaling=mode,
+            file_id=file_id,
+            key1=key1,
+            store_dir=store_dir,
+            key1_byte=key1_byte,
+            key2_byte=key2_byte,
+            trace_stats_cache=trace_stats_cache,
+            trace_stats_lock=trace_stats_lock,
+            x0=x0,
+            x1=x1,
+            step_x=step_x,
+        )
     dt_val = dt_resolver(file_id)
     build_ms = (time.perf_counter() - build_started) * 1000.0
     pack_started = time.perf_counter()

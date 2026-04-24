@@ -251,6 +251,16 @@
       color: #475569;
     }
 
+    .compare-status {
+      min-height: 1.3em;
+      font-size: 0.84em;
+      color: #b45309;
+    }
+
+    .compare-status[hidden] {
+      display: none;
+    }
+
     .key1-display {
       font-weight: 600;
       color: #0f172a;
@@ -1299,6 +1309,20 @@
                     oninput="onWiggleDensityChange()">
                 </label>
               </div>
+              <div class="control-subgroup" aria-label="Compare mode">
+                <div class="control-subgroup-title">Compare</div>
+                <div class="control-row">
+                  <label class="control-field"><input type="checkbox" id="compareModeToggle">Compare</label>
+                  <label class="control-field">A source:
+                    <select id="compareSourceA"></select>
+                  </label>
+                  <label class="control-field">B source:
+                    <select id="compareSourceB"></select>
+                  </label>
+                  <label class="control-field"><input type="checkbox" id="compareShowDiff" checked>Show A-B</label>
+                </div>
+                <div id="compareStatus" class="compare-status" aria-live="polite" aria-atomic="true" hidden></div>
+              </div>
             </section>
 
             <section class="control-section control-section-status" aria-labelledby="controls-status-title">
@@ -1510,6 +1534,7 @@
   <script src="/static/viewer/picks_ops.js"></script>
   <script src="/static/viewer/window_render.js"></script>
   <script src="/static/viewer/window_fetch.js"></script>
+  <script src="/static/viewer/compare.js"></script>
   <script src="/static/viewer/viewer_legacy.js"></script>
   <script>
     (function initControlsPanel() {

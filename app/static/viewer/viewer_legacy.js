@@ -1353,6 +1353,9 @@
     }
 
     function currentDesiredMode() {
+      if (typeof isCompareModeEnabled === 'function' && isCompareModeEnabled()) {
+        return typeof compareCurrentDesiredMode === 'function' ? compareCurrentDesiredMode() : null;
+      }
       const win = currentVisibleWindow();
       const plotDiv = document.getElementById('plot');
       if (!win || !plotDiv) return null;
@@ -1442,6 +1445,12 @@
     }
 
     function checkModeFlipAndRefetch({ immediate = false } = {}) {
+        if (typeof isCompareModeEnabled === 'function' && isCompareModeEnabled()) {
+            if (typeof checkCompareModeFlipAndRefetch === 'function') {
+                checkCompareModeFlipAndRefetch({ immediate });
+            }
+            return;
+          }
         const desired = currentDesiredMode();
         if (!desired) return;
           const cur = (latestWindowRender && latestWindowRender.mode) || null;
@@ -2820,6 +2829,7 @@
       await fetchPicks();
 
       latestWindowRender = null;
+      if (typeof clearCompareRender === 'function') clearCompareRender();
       bumpWindowFetchId();
       if (windowFetchCtrl) {
         windowFetchCtrl.abort();
@@ -2840,6 +2850,7 @@
           sel.appendChild(new Option('raw', 'raw'));
           sel.value = 'raw';
         }
+        if (typeof updateCompareSourceOptions === 'function') updateCompareSourceOptions();
       }
 
       latestSeismicData = null;
@@ -2852,12 +2863,21 @@
     function drawSelectedLayer(start = null, end = null) {
       D('DRAW@selectLayer', { layer: document.getElementById('layerSelect')?.value, start, end });
       latestSeismicData = null;
+      if (typeof isCompareModeEnabled === 'function' && isCompareModeEnabled()) {
+        if (typeof renderCompareLatestView === 'function') renderCompareLatestView();
+        scheduleWindowFetch();
+        return;
+      }
       renderLatestView();
       scheduleWindowFetch();
     }
 
 
     function renderLatestView(startOverride = null, endOverride = null) {
+      if (typeof isCompareModeEnabled === 'function' && isCompareModeEnabled()) {
+        if (typeof renderCompareLatestView === 'function') renderCompareLatestView();
+        return;
+      }
       const sel = document.getElementById('layerSelect');
       const layer = sel ? sel.value : 'raw';
       const slider = document.getElementById('key1_slider');
@@ -3038,6 +3058,12 @@
     async function handleRelayout(ev) {
       if (suppressRelayout) return;
       if (!ev || typeof ev !== 'object') return;
+      if (typeof isCompareModeEnabled === 'function' && isCompareModeEnabled()) {
+        if (typeof handleCompareRelayout === 'function') {
+          await handleCompareRelayout(ev);
+        }
+        return;
+      }
 
       flushPendingResetFetchIfNeeded();
 
@@ -3164,6 +3190,7 @@
           renderedStart = null;
           renderedEnd = null;
           latestWindowRender = null;
+          if (typeof clearCompareRender === 'function') clearCompareRender();
           bumpWindowFetchId();
           if (typeof hideLoading === 'function') hideLoading();
           latestSeismicData = null;
