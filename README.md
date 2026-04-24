@@ -1,10 +1,10 @@
 # seisviewer2d
 
-`seisviewer2d` is a small **FastAPI** app for exploring 2D (or pseudo‑2D) seismic data stored in **SEG‑Y**.
+`seisviewer2d` is a small **FastAPI** app for exploring 2D (or pseudo-2D) seismic data stored in **SEG-Y**.
 
 It ships with a browser-based viewer (`/upload` → `/`) that can:
 
-- ingest a SEG‑Y into a cached **TraceStore** (NumPy‑backed, section‑friendly layout)
+- ingest a SEG-Y into a cached **TraceStore** (NumPy-backed, section-friendly layout)
 - fetch section windows efficiently using **gzip + msgpack + uint8 quantization**
 - run a small processing **pipeline** (currently: `bandpass`, `denoise`, `fbpick`)
 - create/edit **manual picks** stored in a memmapped `.npy` and export them as `.npz` / `.txt`
@@ -47,9 +47,9 @@ It installs Python deps, Node 20, and Playwright.
 
 ## What happens on upload
 
-`POST /upload_segy` converts the uploaded SEG‑Y into a cached “trace store” under:
+`POST /upload_segy` converts the uploaded SEG-Y into a cached “trace store” under:
 
-```
+```text
 <app_data_dir>/uploads/processed/traces/<safe_filename>/
   traces.npy
   index.npz
@@ -60,10 +60,13 @@ It installs Python deps, Node 20, and Playwright.
 
 Notes:
 
-- Upload/open ingest writes the raw-baseline artifacts for the store's key-byte pair.
+- Upload/open ingest writes the split raw-baseline artifacts for the store's key-byte pair:
+  - `baseline_raw.k1_<key1_byte>.k2_<key2_byte>.json`
+  - `baseline_raw.k1_<key1_byte>.k2_<key2_byte>.npz`
 - The `.json` manifest stores the small metadata, while the `.npz` stores the large per-trace arrays (`mu_traces`, `sigma_traces`, `zero_var_mask`).
-- Legacy stores without precomputed baseline artifacts can still backfill them on first `/get_section_meta` or `/section/stats`.
-- Trace grouping and ordering are controlled by two SEG‑Y trace-header byte offsets:
+- Reusing or listing an existing TraceStore requires these split raw-baseline artifacts for the requested key-byte pair. A legacy `baseline_raw.json` alone is not enough for `/open_segy` or recent-dataset listing reuse.
+- `/get_section_meta` and `/section/stats` can still create or read baseline artifacts for a dataset that is already opened and registered, but missing split baseline artifacts are treated as incomplete reusable TraceStore state.
+- Trace grouping and ordering are controlled by two SEG-Y trace-header byte offsets:
   - `key1_byte` (default `189`) groups traces into a “section” (one section per key1 value)
   - `key2_byte` (default `193`) orders traces within a section (stable sort)
 
@@ -71,10 +74,11 @@ The upload UI lets you choose both bytes.
 
 ### Reusing an existing TraceStore
 
-- `POST /upload_segy` will reuse an existing trace store when it matches `(key1_byte, key2_byte)` and the source file hash.
-- `POST /open_segy` opens an existing trace store by `original_name` (used by the upload page to re-open previous data).
+- `POST /upload_segy` will reuse an existing trace store only when it matches `(key1_byte, key2_byte)`, the source file hash, and has the split raw-baseline artifacts for that key-byte pair.
+- `POST /open_segy` opens an existing trace store by `original_name` (used by the upload page to re-open previous data). The trace store must include the split raw-baseline artifacts for the requested key-byte pair to be reused directly.
+- Recent-dataset listing uses the same completeness rule and skips trace stores that are missing the split raw-baseline artifacts.
 
-If an on-disk trace store exists but does not match the requested bytes or the file hash, it is moved aside with an `.old-<uuid>` suffix.
+If an on-disk trace store exists but does not match the requested bytes, the file hash, or the required split raw-baseline artifacts, it is treated as incomplete for reuse. When the original SEG-Y is still available, the app can rebuild the trace store and write the required split baseline artifacts; otherwise the dataset cannot be reopened from that incomplete store.
 
 ## Model weights
 
@@ -85,7 +89,7 @@ Two pipeline operations use PyTorch weights that are **not included** in this re
 
 Create a `model/` directory at the repo root and place the weights there:
 
-```
+```text
 model/
   denoise_default.pt
   fbpick_edgenext_small.pt
@@ -102,7 +106,7 @@ Offset-aware `fbpick` variant (optional): the code supports injecting an “offs
 
 The UI is served from `app/static/`.
 
-- `/upload` lets you upload a SEG‑Y or re-open a previously processed dataset.
+- `/upload` lets you upload a SEG-Y or re-open a previously processed dataset.
 - `/` is the viewer with a side panel for pipeline steps.
 - `/batch` is the batch-apply page for running pipeline jobs over all key1 values.
 
@@ -163,7 +167,7 @@ Most UI reads use the binary window endpoint (`/get_section_window_bin`) as the 
 
 ### Upload / open
 
-- `POST /upload_segy` (multipart/form-data): upload SEG‑Y, build/reuse trace store
+- `POST /upload_segy` (multipart/form-data): upload SEG-Y, build/reuse trace store
   - form fields: `file` (file), `key1_byte` (int), `key2_byte` (int)
   - returns: `{ "file_id": "...", "reused_trace_store": true|false }`
 - `POST /open_segy` (multipart/form-data): open an existing trace store by `original_name`
@@ -340,7 +344,7 @@ Endpoints:
 
 ## Project layout
 
-```
+```text
 app/
   main.py                 # FastAPI app + static mounting
   api/
