@@ -1,6 +1,26 @@
 (function () {
+  function assertFiniteArray(values, name) {
+    if (!(values instanceof Float32Array)) {
+      throw new Error(`${name} must be Float32Array.`);
+    }
+    for (let i = 0; i < values.length; i += 1) {
+      if (!Number.isFinite(values[i])) {
+        throw new Error(`${name} contains non-finite value at index ${i}.`);
+      }
+    }
+  }
+
+  function assertComparableArrays(a, b) {
+    assertFiniteArray(a, 'a');
+    assertFiniteArray(b, 'b');
+    if (a.length !== b.length) {
+      throw new Error('Compare inputs must have the same length.');
+    }
+  }
+
   function computeDiff(a, b, mode) {
-    const len = Math.min(a?.length || 0, b?.length || 0);
+    assertComparableArrays(a, b);
+    const len = a.length;
     const diff = new Float32Array(len);
     const subtractBMinusA = mode !== 'a_minus_b';
     for (let i = 0; i < len; i += 1) {
@@ -10,7 +30,8 @@
   }
 
   function computeSummaryStats(diff) {
-    const len = diff?.length || 0;
+    assertFiniteArray(diff, 'diff');
+    const len = diff.length;
     if (!len) {
       return {
         mean: 0,
@@ -24,7 +45,7 @@
     let sumSq = 0;
     let maxAbs = 0;
     for (let i = 0; i < len; i += 1) {
-      const value = Number(diff[i]) || 0;
+      const value = diff[i];
       const absValue = Math.abs(value);
       sum += value;
       sumSq += value * value;
@@ -42,16 +63,22 @@
   }
 
   function computeRmsByTrace(a, b, height, width) {
-    const rows = Math.max(0, Number(height) | 0);
-    const cols = Math.max(0, Number(width) | 0);
+    assertComparableArrays(a, b);
+    const rows = Number(height);
+    const cols = Number(width);
+    if (!Number.isInteger(rows) || rows <= 0 || !Number.isInteger(cols) || cols <= 0) {
+      throw new Error('RMS shape must be positive integers.');
+    }
+    if ((rows * cols) !== a.length) {
+      throw new Error('RMS shape does not match input length.');
+    }
     const out = new Float32Array(cols);
-    if (!rows || !cols) return out;
 
     for (let ix = 0; ix < cols; ix += 1) {
       let sumSq = 0;
       for (let iy = 0; iy < rows; iy += 1) {
         const k = (iy * cols) + ix;
-        const d = (Number(b[k]) || 0) - (Number(a[k]) || 0);
+        const d = b[k] - a[k];
         sumSq += d * d;
       }
       out[ix] = Math.sqrt(sumSq / rows);
@@ -60,7 +87,8 @@
   }
 
   function percentileAbs(values, percentile) {
-    const len = values?.length || 0;
+    assertFiniteArray(values, 'values');
+    const len = values.length;
     if (!len) return 0;
 
     const pRaw = Number(percentile);
@@ -69,7 +97,7 @@
     const stride = Math.max(1, Math.ceil(len / sampleLimit));
     const sampled = [];
     for (let i = 0; i < len; i += stride) {
-      sampled.push(Math.abs(Number(values[i]) || 0));
+      sampled.push(Math.abs(values[i]));
     }
     if (!sampled.length) return 0;
     sampled.sort((a, b) => a - b);
