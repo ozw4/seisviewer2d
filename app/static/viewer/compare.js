@@ -1,6 +1,7 @@
 (function () {
   const AXIS_MARGIN = 0.035;
   const AMP_LIMIT = 3.0;
+  const COMPARE_CACHE_PURPOSE = 'compare';
   let latestCompareRender = null;
   let compareSyncing = false;
 
@@ -199,6 +200,7 @@
       scaling: currentScaling,
       transpose: '1',
       mode: decision.mode,
+      purpose: COMPARE_CACHE_PURPOSE,
     };
     const artifacts = buildWindowRequestArtifacts(requestContext);
     return { source, requestContext, ...artifacts };
@@ -206,7 +208,7 @@
 
   async function fetchComparePayload(request, ctrl, requestId) {
     const cached = windowCacheGet(request.cacheKey);
-    if (cached) return cached;
+    if (cached && canUseCachedComparePayload(cached, request.source)) return cached;
 
     const res = await fetch(`/get_section_window_bin?${request.params.toString()}`, { signal: ctrl.signal });
     if (!res.ok) {
@@ -244,14 +246,56 @@
     return Number.isFinite(fallback) && fallback > 0 ? fallback : null;
   }
 
-  function payloadToF32(payload) {
+  function payloadShapeInfo(payload) {
     if (!payload || !Array.isArray(payload.shape) || payload.shape.length !== 2) return null;
     const rows = Number(payload.shape[0]);
     const cols = Number(payload.shape[1]);
     if (!Number.isInteger(rows) || !Number.isInteger(cols) || rows <= 0 || cols <= 0) return null;
-    const total = rows * cols;
+    return { rows, cols, total: rows * cols };
+  }
+
+  function payloadInvScale(payload) {
+    const payloadScale = Number(payload?.scale);
+    const quantScale = Number(payload?.quant?.scale);
+    const scale = Number.isFinite(payloadScale) && payloadScale !== 0
+      ? payloadScale
+      : quantScale;
+    return Number.isFinite(scale) && scale !== 0 ? 1 / scale : 1;
+  }
+
+  function payloadHasComputeValues(payload) {
+    const shape = payloadShapeInfo(payload);
+    if (!shape) return false;
+    return (
+      (payload.valuesI8 instanceof Int8Array && payload.valuesI8.length >= shape.total) ||
+      (payload.values instanceof Float32Array && payload.values.length >= shape.total)
+    );
+  }
+
+  function canUseCachedComparePayload(payload, source) {
+    if (source?.domain !== 'probability') return true;
+    return payloadHasComputeValues(payload);
+  }
+
+  function sourceDomain(options) {
+    if (typeof options === 'string') return options;
+    return options?.domain || '';
+  }
+
+  function payloadToF32(payload, options = {}) {
+    const shape = payloadShapeInfo(payload);
+    if (!shape) return null;
+    const { rows, cols, total } = shape;
     let out = null;
-    if (payload.zBacking instanceof Float32Array && payload.zBacking.length >= total) {
+    if (payload.valuesI8 instanceof Int8Array && payload.valuesI8.length >= total) {
+      const invScale = payloadInvScale(payload);
+      out = new Float32Array(total);
+      for (let i = 0; i < total; i++) out[i] = payload.valuesI8[i] * invScale;
+    } else if (payload.values instanceof Float32Array && payload.values.length >= total) {
+      out = new Float32Array(payload.values.subarray(0, total));
+    } else if (sourceDomain(options) === 'probability') {
+      return null;
+    } else if (payload.zBacking instanceof Float32Array && payload.zBacking.length >= total) {
       out = new Float32Array(payload.zBacking.subarray(0, total));
     } else if (Array.isArray(payload.zRows) && payload.zRows.length === rows) {
       out = new Float32Array(total);
@@ -260,13 +304,6 @@
         if (!row || row.length < cols) return null;
         out.set(row.subarray ? row.subarray(0, cols) : Array.from(row).slice(0, cols), r * cols);
       }
-    } else if (payload.values instanceof Float32Array && payload.values.length >= total) {
-      out = new Float32Array(payload.values.subarray(0, total));
-    } else if (payload.valuesI8 instanceof Int8Array && payload.valuesI8.length >= total) {
-      const scale = Number(payload.scale) || Number(payload.quant?.scale) || 1;
-      const invScale = scale === 0 ? 1 : 1 / scale;
-      out = new Float32Array(total);
-      for (let i = 0; i < total; i++) out[i] = payload.valuesI8[i] * invScale;
     }
     return out;
   }
@@ -607,8 +644,8 @@
   }
 
   function buildCompareRender(aPayload, bPayload, sources, decision, validation, windowInfo) {
-    const aValues = payloadToF32(aPayload);
-    const bValues = payloadToF32(bPayload);
+    const aValues = payloadToF32(aPayload, sources.a);
+    const bValues = payloadToF32(bPayload, sources.b);
     if (!aValues || !bValues) {
       return null;
     }

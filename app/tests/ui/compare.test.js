@@ -17,6 +17,14 @@ function scale(panel) {
   return window.__svCompare.compareHeatmapScale(panel, 2);
 }
 
+function expectF32Values(actual, expected) {
+  expect(actual).toBeInstanceOf(Float32Array);
+  expect(actual).toHaveLength(expected.length);
+  expected.forEach((value, index) => {
+    expect(actual[index]).toBeCloseTo(value, 6);
+  });
+}
+
 test('compare heatmap scales mixed-domain source panels independently', () => {
   expect(scale({ kind: 'source', domain: 'amplitude' })).toMatchObject({
     zmin: -1.5,
@@ -59,4 +67,59 @@ test('compare heatmap uses signed amplitude scale for amplitude diff values', ()
     zmax: 1.5,
     signed: true,
   });
+});
+
+test('compare payload decode prefers quantized compute values over display backing', () => {
+  const payload = {
+    shape: [1, 2],
+    valuesI8: new Int8Array([32, 64]),
+    scale: 128,
+    zBacking: new Float32Array([64, 128]),
+  };
+
+  const values = window.__svCompare.payloadToF32(payload, { domain: 'probability' });
+
+  expectF32Values(values, [0.25, 0.5]);
+});
+
+test('compare payload decode rejects display backing for probability sources', () => {
+  expect(window.__svCompare.payloadToF32({
+    shape: [1, 2],
+    zBacking: new Float32Array([64, 128]),
+  }, { domain: 'probability' })).toBeNull();
+
+  expect(window.__svCompare.payloadToF32({
+    shape: [1, 2],
+    zRows: [new Float32Array([64, 128])],
+  }, { domain: 'probability' })).toBeNull();
+});
+
+test('compare payload decode keeps amplitude display backing fallback', () => {
+  const values = window.__svCompare.payloadToF32({
+    shape: [1, 2],
+    zBacking: new Float32Array([1.5, -2.25]),
+  }, { domain: 'amplitude' });
+
+  expectF32Values(values, [1.5, -2.25]);
+});
+
+test('probability diff uses decoded probability values, not display-scaled backing', () => {
+  const sourceA = window.__svCompare.payloadToF32({
+    shape: [1, 1],
+    valuesI8: new Int8Array([80]),
+    scale: 100,
+    zBacking: new Float32Array([204]),
+  }, { domain: 'probability' });
+  const sourceB = window.__svCompare.payloadToF32({
+    shape: [1, 1],
+    valuesI8: new Int8Array([20]),
+    scale: 100,
+    zBacking: new Float32Array([51]),
+  }, { domain: 'probability' });
+
+  const diff = window.__svCompare.subtractF32(sourceA, sourceB);
+
+  expectF32Values(sourceA, [0.8]);
+  expectF32Values(sourceB, [0.2]);
+  expectF32Values(diff, [0.6]);
 });

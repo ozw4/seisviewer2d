@@ -312,10 +312,12 @@
       scaling,
       transpose,
       mode,
+      purpose,
     }) {
       const enc = (value) => encodeURIComponent(value == null ? '' : String(value));
-      return [
-        'svwin',
+      const parts = ['svwin'];
+      if (purpose) parts.push(`purpose=${enc(purpose)}`);
+      parts.push(
         `file=${enc(fileId)}`,
         `k1=${enc(key1)}`,
         `b1=${enc(key1Byte)}`,
@@ -333,7 +335,8 @@
         `sc=${enc(scaling)}`,
         `tr=${enc(transpose)}`,
         `mode=${enc(mode)}`,
-      ].join('|');
+      );
+      return parts.join('|');
     }
 
     function buildWindowRequestArtifacts({
@@ -353,6 +356,7 @@
       scaling,
       transpose,
       mode,
+      purpose,
     }) {
       const resolvedPipelineKey = (tapLabel && pipelineKey) ? pipelineKey : null;
       const resolvedTapLabel = (tapLabel && resolvedPipelineKey) ? tapLabel : null;
@@ -407,6 +411,7 @@
           scaling,
           transpose,
           mode,
+          purpose,
         }),
         payloadMeta: {
           key1: key1Val,
@@ -421,6 +426,7 @@
           stepX,
           stepY,
           mode,
+          purpose,
         },
       };
     }
