@@ -493,11 +493,8 @@
     const cmName = document.getElementById('colormap')?.value || 'Greys';
     const reverse = !!document.getElementById('cmReverse')?.checked;
     const cm = (window.COLORMAPS && window.COLORMAPS[cmName]) || 'Greys';
-    const g = Math.max(gain, 1e-9);
-    const isProbability = render.sources.a.domain === 'probability' || render.sources.b.domain === 'probability';
-    const zMin = isProbability ? 0 : -AMP_LIMIT / g;
-    const zMax = isProbability ? 1 / g : AMP_LIMIT / g;
-    const isDiv = !isProbability && (cmName === 'RdBu' || cmName === 'BWR');
+    const scale = compareHeatmapScale(panel, gain);
+    const isDiv = scale.signed && (cmName === 'RdBu' || cmName === 'BWR');
     return {
       type: 'heatmap',
       x: xVals,
@@ -507,8 +504,8 @@
       yaxis: axisRef('y', axisIndex),
       colorscale: cm,
       reversescale: reverse,
-      zmin: zMin,
-      zmax: zMax,
+      zmin: scale.zmin,
+      zmax: scale.zmax,
       zmid: isDiv ? 0 : null,
       showscale: false,
       hoverinfo: 'x+y',
@@ -516,15 +513,39 @@
     };
   }
 
+  function compareHeatmapScale(panel, gain) {
+    const g = Math.max(Number(gain) || 1.0, 1e-9);
+    if (panel?.kind === 'source' && panel.domain === 'probability') {
+      return { zmin: 0, zmax: 1 / g, signed: false };
+    }
+    if (panel?.kind === 'diff' && panel.domain === 'probability') {
+      return { zmin: -1 / g, zmax: 1 / g, signed: true };
+    }
+    return { zmin: -AMP_LIMIT / g, zmax: AMP_LIMIT / g, signed: true };
+  }
+
   function buildComparePanels(render) {
     const panels = [
-      { kind: 'source', role: 'A', label: render.sources.a.label, values: render.a.values },
-      { kind: 'source', role: 'B', label: render.sources.b.label, values: render.b.values },
+      {
+        kind: 'source',
+        role: 'A',
+        domain: render.sources.a.domain,
+        label: render.sources.a.label,
+        values: render.a.values,
+      },
+      {
+        kind: 'source',
+        role: 'B',
+        domain: render.sources.b.domain,
+        label: render.sources.b.label,
+        values: render.b.values,
+      },
     ];
     if (compareShowDiffEnabled() && render.diffAvailable && render.diffValues) {
       panels.push({
         kind: 'diff',
         role: 'A-B',
+        domain: render.sources.a.domain,
         label: `${render.sources.a.label} - ${render.sources.b.label}`,
         left: render.sources.a.label,
         right: render.sources.b.label,
@@ -869,6 +890,8 @@
     subtractF32,
     payloadToF32,
     resolveSourceDomain,
+    compareHeatmapScale,
+    buildComparePanels,
   };
 
   if (document.readyState === 'loading') {
