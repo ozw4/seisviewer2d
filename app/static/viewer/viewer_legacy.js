@@ -1445,49 +1445,49 @@
     }
 
     function checkModeFlipAndRefetch({ immediate = false } = {}) {
-        if (typeof isCompareModeEnabled === 'function' && isCompareModeEnabled()) {
-            if (typeof checkCompareModeFlipAndRefetch === 'function') {
-                checkCompareModeFlipAndRefetch({ immediate });
-            }
-            return;
-          }
-        const desired = currentDesiredMode();
-        if (!desired) return;
-          const cur = (latestWindowRender && latestWindowRender.mode) || null;
-        const plotDiv = document.getElementById('plot');
-        const win = currentVisibleWindow();
-        if (!plotDiv || !win) return;
+      if (typeof isCompareModeEnabled === 'function' && isCompareModeEnabled()) {
+        if (typeof checkCompareModeFlipAndRefetch === 'function') {
+          checkCompareModeFlipAndRefetch({ immediate });
+        }
+        return;
+      }
+      const desired = currentDesiredMode();
+      if (!desired) return;
+      const cur = (latestWindowRender && latestWindowRender.mode) || null;
+      const plotDiv = document.getElementById('plot');
+      const win = currentVisibleWindow();
+      if (!plotDiv || !win) return;
 
-          if (desired === 'wiggle') {
-              // wiggle は step=1 前提。モード不一致 or step不一致 or ウィンドウ外なら再フェッチ
-                const needFresh =
-                    !latestWindowRender ||
-                    cur !== 'wiggle' ||
-                    latestWindowRender.stepX !== 1 ||
-                    latestWindowRender.stepY !== 1 ||
-                    latestWindowRender.x0 > win.x0 || latestWindowRender.x1 < win.x1 ||
-                    latestWindowRender.y0 > win.y0 || latestWindowRender.y1 < win.y1;
-              if (needFresh) requestWindowFetch({ immediate });
-              return;
-            }
-
-          // heatmap の場合：現在の可視窓と描画サイズから必要 step を再計算して比較
-          const { step_x, step_y } = computeStepsForWindow({
-              tracesVisible: win.nTraces,
-              samplesVisible: win.nSamples,
-              widthPx: plotDiv.clientWidth || 1,
-              heightPx: plotDiv.clientHeight || 1,
-            });
-
+      if (desired === 'wiggle') {
+        // wiggle は step=1 前提。モード不一致 or step不一致 or ウィンドウ外なら再フェッチ
         const needFresh =
-            !latestWindowRender ||
-            cur !== 'heatmap' ||
-            latestWindowRender.stepX !== step_x ||
-            latestWindowRender.stepY !== step_y ||
-            latestWindowRender.x0 > win.x0 || latestWindowRender.x1 < win.x1 ||
-            latestWindowRender.y0 > win.y0 || latestWindowRender.y1 < win.y1;
-
+          !latestWindowRender ||
+          cur !== 'wiggle' ||
+          latestWindowRender.stepX !== 1 ||
+          latestWindowRender.stepY !== 1 ||
+          latestWindowRender.x0 > win.x0 || latestWindowRender.x1 < win.x1 ||
+          latestWindowRender.y0 > win.y0 || latestWindowRender.y1 < win.y1;
         if (needFresh) requestWindowFetch({ immediate });
+        return;
+      }
+
+      // heatmap の場合：現在の可視窓と描画サイズから必要 step を再計算して比較
+      const { step_x, step_y } = computeStepsForWindow({
+        tracesVisible: win.nTraces,
+        samplesVisible: win.nSamples,
+        widthPx: plotDiv.clientWidth || 1,
+        heightPx: plotDiv.clientHeight || 1,
+      });
+
+      const needFresh =
+        !latestWindowRender ||
+        cur !== 'heatmap' ||
+        latestWindowRender.stepX !== step_x ||
+        latestWindowRender.stepY !== step_y ||
+        latestWindowRender.x0 > win.x0 || latestWindowRender.x1 < win.x1 ||
+        latestWindowRender.y0 > win.y0 || latestWindowRender.y1 < win.y1;
+
+      if (needFresh) requestWindowFetch({ immediate });
     }
 
     // （任意：すでに入れているならそのままでOK）
