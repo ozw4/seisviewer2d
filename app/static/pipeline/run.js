@@ -232,6 +232,9 @@
         sel.appendChild(new Option('raw', 'raw'));
         sel.value = 'raw';
       }
+      if (typeof window.updateCompareSourceOptions === 'function') {
+        window.updateCompareSourceOptions();
+      }
     }
 
     function updateLayerSelect(tapMap) {
@@ -250,6 +253,9 @@
       }
       sel.value = target;
       state.setDesiredLayer(target);
+      if (typeof window.updateCompareSourceOptions === 'function') {
+        window.updateCompareSourceOptions();
+      }
       if (debugPipeline) {
         console.debug('[pipeline] updateLayerSelect: names=', names, 'selected=', target);
       }

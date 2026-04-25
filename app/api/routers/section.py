@@ -106,6 +106,8 @@ def _build_window_section_cache_key(
     transpose: bool,
     pipeline_key: str | None,
     tap_label: str | None,
+    reference_pipeline_key: str | None,
+    reference_tap_label: str | None,
     scaling_mode: str,
 ) -> tuple[
     str,
@@ -120,6 +122,8 @@ def _build_window_section_cache_key(
     int,
     int,
     bool,
+    str | None,
+    str | None,
     str | None,
     str | None,
     str,
@@ -140,6 +144,8 @@ def _build_window_section_cache_key(
         bool(transpose),
         pipeline_key,
         tap_label,
+        reference_pipeline_key,
+        reference_tap_label,
         str(scaling_mode),
     )
 
@@ -304,6 +310,8 @@ def get_section_window_bin(
     transpose: Annotated[bool, Query()] = True,
     pipeline_key: Annotated[str | None, Query()] = None,
     tap_label: Annotated[str | None, Query()] = None,
+    reference_pipeline_key: Annotated[str | None, Query()] = None,
+    reference_tap_label: Annotated[str | None, Query()] = None,
     scaling: Annotated[
         Literal['amax', 'tracewise'] | None, Query(description='Normalization mode')
     ] = None,
@@ -332,6 +340,8 @@ def get_section_window_bin(
         transpose=transpose,
         pipeline_key=pipeline_key,
         tap_label=tap_label,
+        reference_pipeline_key=reference_pipeline_key,
+        reference_tap_label=reference_tap_label,
         scaling_mode=mode,
     )
 
@@ -367,6 +377,8 @@ def get_section_window_bin(
             transpose=transpose,
             pipeline_key=pipeline_key,
             tap_label=tap_label,
+            reference_pipeline_key=reference_pipeline_key,
+            reference_tap_label=reference_tap_label,
             scaling_mode=mode,
             trace_stats_cache=state.trace_stats_cache,
             trace_stats_lock=state.lock,

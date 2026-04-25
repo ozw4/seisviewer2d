@@ -329,3 +329,117 @@ def test_get_section_window_bin_pipeline_key_tap_label_window_uses_expected_tap(
 
     expected = arr_b[0 : 3 + 1 : 2, 1 : 4 + 1 : 2]
     assert np.array_equal(q, expected.astype(np.int8))
+
+
+def test_get_section_window_bin_amax_can_use_pipeline_tap_reference(
+    monkeypatch, tmp_path
+):
+    state = sec.get_state(app)
+
+    app.state.sv.file_registry.set_record(
+        'f', {'store_path': str(tmp_path), 'dt': 0.004}
+    )
+    write_baseline_raw(
+        tmp_path,
+        key1=7,
+        section_mean=0.0,
+        section_std=1.0,
+        trace_means=[0.0] * 2,
+        trace_stds=[1.0] * 2,
+    )
+
+    arr_a = np.array([[0.0, 0.0], [2.0, 2.0]], dtype=np.float32)
+    arr_b = np.array([[3.0, 5.0], [7.0, 9.0]], dtype=np.float32)
+    pipeline_key = 'pk1'
+    base_key = ('f', 7, 189, 193, pipeline_key, None, None)
+    state.pipeline_tap_cache.set((*base_key, 'tapA'), {'data': arr_a})
+    state.pipeline_tap_cache.set((*base_key, 'tapB'), {'data': arr_b})
+
+    monkeypatch.setattr(
+        sec,
+        'get_reader',
+        lambda *a, **k: (_ for _ in ()).throw(AssertionError('get_reader called')),
+        raising=True,
+    )
+
+    res = sec.get_section_window_bin(
+        file_id='f',
+        key1=7,
+        key1_byte=189,
+        key2_byte=193,
+        offset_byte=None,
+        x0=0,
+        x1=1,
+        y0=0,
+        y1=1,
+        step_x=1,
+        step_y=1,
+        transpose=False,
+        pipeline_key=pipeline_key,
+        tap_label='tapB',
+        reference_pipeline_key=pipeline_key,
+        reference_tap_label='tapA',
+        scaling='amax',
+        request=SimpleNamespace(app=app),
+    )
+    q, (h, w), scale = _decode_window_payload(res)
+    assert scale == pytest.approx(1.0)
+    assert (h, w) == (2, 2)
+    assert np.array_equal(q, np.array([[2, 4], [6, 8]], dtype=np.int8))
+
+
+def test_get_section_window_bin_tracewise_can_use_pipeline_tap_reference(
+    monkeypatch, tmp_path
+):
+    state = sec.get_state(app)
+
+    app.state.sv.file_registry.set_record(
+        'f', {'store_path': str(tmp_path), 'dt': 0.004}
+    )
+    write_baseline_raw(
+        tmp_path,
+        key1=7,
+        section_mean=0.0,
+        section_std=1.0,
+        trace_means=[0.0] * 2,
+        trace_stds=[1.0] * 2,
+    )
+
+    arr_a = np.array([[0.0, 2.0], [10.0, 12.0]], dtype=np.float32)
+    arr_b = np.array([[2.0, 4.0], [14.0, 16.0]], dtype=np.float32)
+    pipeline_key = 'pk1'
+    base_key = ('f', 7, 189, 193, pipeline_key, None, None)
+    state.pipeline_tap_cache.set((*base_key, 'tapA'), {'data': arr_a})
+    state.pipeline_tap_cache.set((*base_key, 'tapB'), {'data': arr_b})
+
+    monkeypatch.setattr(
+        sec,
+        'get_reader',
+        lambda *a, **k: (_ for _ in ()).throw(AssertionError('get_reader called')),
+        raising=True,
+    )
+
+    res = sec.get_section_window_bin(
+        file_id='f',
+        key1=7,
+        key1_byte=189,
+        key2_byte=193,
+        offset_byte=None,
+        x0=0,
+        x1=1,
+        y0=0,
+        y1=1,
+        step_x=1,
+        step_y=1,
+        transpose=False,
+        pipeline_key=pipeline_key,
+        tap_label='tapB',
+        reference_pipeline_key=pipeline_key,
+        reference_tap_label='tapA',
+        scaling='tracewise',
+        request=SimpleNamespace(app=app),
+    )
+    q, (h, w), scale = _decode_window_payload(res)
+    assert scale == pytest.approx(1.0)
+    assert (h, w) == (2, 2)
+    assert np.array_equal(q, np.array([[1, 3], [3, 5]], dtype=np.int8))
