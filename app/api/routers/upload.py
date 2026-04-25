@@ -8,6 +8,7 @@ import json
 import logging
 import re
 import threading
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Annotated
 from uuid import uuid4
@@ -23,6 +24,7 @@ from app.core.paths import (
 from app.core.state import AppState
 from app.utils.ingest import SegyIngestor
 from app.utils.baseline_artifacts import has_split_baseline_artifacts
+from app.utils.header_qc import inspect_segy_header_qc
 from app.trace_store.reader import TraceStoreSectionReader
 
 router = APIRouter()
@@ -32,6 +34,23 @@ UPLOAD_DIR = get_upload_dir()
 PROCESSED_DIR = get_processed_upload_dir()
 TRACE_DIR = get_trace_store_dir()
 UPLOAD_CHUNK_SIZE = 4 * 1024 * 1024
+
+
+@dataclass(frozen=True)
+class SavedUpload:
+    original_name: str
+    safe_name: str
+    raw_path: Path
+    source_sha256: str
+    source_size: int
+
+
+def _safe_upload_name(filename: str) -> str:
+    return re.sub(r'[^A-Za-z0-9_.-]', '_', filename)
+
+
+def _staged_upload_dir() -> Path:
+    return UPLOAD_DIR / 'staged'
 
 
 def _trace_store_complete(store_dir: Path, key1_byte: int, key2_byte: int) -> bool:
@@ -209,6 +228,139 @@ def _register_trace_store(
     return reader
 
 
+async def _save_upload_file(
+    file: UploadFile,
+    safe_name: str,
+    *,
+    raw_path: Path,
+) -> SavedUpload:
+    original_name = file.filename or safe_name
+    raw_path.parent.mkdir(parents=True, exist_ok=True)
+    tmp_path = raw_path.with_suffix(raw_path.suffix + f'.{uuid4().hex}.tmp')
+    hasher = hashlib.sha256()
+    try:
+        with tmp_path.open('wb') as temp_file:
+            while True:
+                chunk = await file.read(UPLOAD_CHUNK_SIZE)
+                if not chunk:
+                    break
+                hasher.update(chunk)
+                temp_file.write(chunk)
+        tmp_path.replace(raw_path)
+        source_size = raw_path.stat().st_size
+    except OSError as exc:
+        tmp_path.unlink(missing_ok=True)
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    return SavedUpload(
+        original_name=original_name,
+        safe_name=safe_name,
+        raw_path=raw_path,
+        source_sha256=hasher.hexdigest(),
+        source_size=int(source_size),
+    )
+
+
+async def _ingest_saved_segy(
+    *,
+    request: Request,
+    original_name: str,
+    safe_name: str,
+    raw_path: Path,
+    source_sha256: str,
+    source_size: int,
+    key1_byte: int,
+    key2_byte: int,
+) -> dict:
+    state = get_state(request.app)
+    store_dir = TRACE_DIR / safe_name
+    file_id = str(uuid4())
+
+    meta: dict | None = None
+    reused = False
+    if store_dir.exists():
+        meta = _trace_store_matches_source(
+            store_dir,
+            key1_byte,
+            key2_byte,
+            source_sha256=source_sha256,
+            source_size=source_size,
+        )
+        if meta is not None:
+            reused = True
+        else:
+            try:
+                _archive_trace_store(store_dir)
+            except OSError as exc:
+                msg = f'Unable to archive existing trace store: {exc}'
+                raise HTTPException(status_code=409, detail=msg) from exc
+
+    if reused and meta is not None:
+        logger.info('Reusing trace store for %s', original_name)
+        _register_trace_store(file_id, store_dir, key1_byte, key2_byte, state=state)
+        _touch_trace_store_meta(store_dir)
+        state.file_registry.update(
+            file_id,
+            store_path=str(store_dir),
+            dt=meta.get('dt'),
+        )
+        return {'file_id': file_id, 'reused_trace_store': True}
+
+    store_dir.mkdir(parents=True, exist_ok=True)
+    meta = await asyncio.to_thread(
+        SegyIngestor.from_segy,
+        str(raw_path),
+        store_dir,
+        key1_byte,
+        key2_byte,
+        source_sha256=source_sha256,
+    )
+    _register_trace_store(file_id, store_dir, key1_byte, key2_byte, state=state)
+    _touch_trace_store_meta(store_dir)
+    if isinstance(meta, dict):
+        state.file_registry.update(
+            file_id,
+            store_path=str(store_dir),
+            dt=meta.get('dt'),
+        )
+    else:
+        state.file_registry.update(file_id, store_path=str(store_dir))
+    return {'file_id': file_id, 'reused_trace_store': False}
+
+
+def _selected_header_qc_summary(
+    header_qc: object,
+    *,
+    key1_byte: int,
+    key2_byte: int,
+) -> dict | None:
+    if not isinstance(header_qc, dict):
+        return None
+
+    pairs = header_qc.get('recommended_pairs')
+    if isinstance(pairs, list):
+        for pair in pairs:
+            if not isinstance(pair, dict):
+                continue
+            if (
+                pair.get('key1_byte') == key1_byte
+                and pair.get('key2_byte') == key2_byte
+            ):
+                warnings = pair.get('warnings')
+                return {
+                    'selected_pair_score': pair.get('score'),
+                    'confidence': pair.get('confidence', 'unknown'),
+                    'warnings': warnings if isinstance(warnings, list) else [],
+                }
+
+    warnings = header_qc.get('warnings')
+    return {
+        'selected_pair_score': None,
+        'confidence': 'unknown',
+        'warnings': warnings if isinstance(warnings, list) else [],
+    }
+
+
 @router.get('/recent_datasets')
 async def recent_datasets():
     return {'datasets': _list_recent_dataset_summaries()}
@@ -274,83 +426,113 @@ async def upload_segy(
     key1_byte: Annotated[int, Form()] = 189,
     key2_byte: Annotated[int, Form()] = 193,
 ):
-    state = get_state(request.app)
     if not file.filename:
         raise HTTPException(
             status_code=400, detail='Uploaded file must have a filename'
         )
     logger.info('Uploading file: %s', file.filename)
-    safe_name = re.sub(r'[^A-Za-z0-9_.-]', '_', file.filename)
-    store_dir = TRACE_DIR / safe_name
-    file_id = str(uuid4())
-    raw_path = UPLOAD_DIR / safe_name
-    raw_path.parent.mkdir(parents=True, exist_ok=True)
-    tmp_path = raw_path.with_suffix(raw_path.suffix + f'.{uuid4().hex}.tmp')
-    hasher = hashlib.sha256()
-    with tmp_path.open('wb') as temp_file:
-        while True:
-            chunk = await file.read(UPLOAD_CHUNK_SIZE)
-            if not chunk:
-                break
-            hasher.update(chunk)
-            temp_file.write(chunk)
-    tmp_path.replace(raw_path)
-    source_sha256 = hasher.hexdigest()
-    try:
-        source_size = raw_path.stat().st_size
-    except OSError as exc:
-        raise HTTPException(status_code=422, detail=str(exc)) from exc
-
-    meta: dict | None = None
-    reused = False
-    if store_dir.exists():
-        meta = _trace_store_matches_source(
-            store_dir,
-            key1_byte,
-            key2_byte,
-            source_sha256=source_sha256,
-            source_size=source_size,
-        )
-        if meta is not None:
-            reused = True
-        else:
-            try:
-                _archive_trace_store(store_dir)
-            except OSError as exc:
-                msg = f'Unable to archive existing trace store: {exc}'
-                raise HTTPException(status_code=409, detail=msg) from exc
-
-    if reused and meta is not None:
-        logger.info('Reusing trace store for %s', file.filename)
-        _register_trace_store(file_id, store_dir, key1_byte, key2_byte, state=state)
-        _touch_trace_store_meta(store_dir)
-        state.file_registry.update(
-            file_id,
-            store_path=str(store_dir),
-            dt=meta.get('dt'),
-        )
-        return {'file_id': file_id, 'reused_trace_store': True}
-
-    store_dir.mkdir(parents=True, exist_ok=True)
-    meta = await asyncio.to_thread(
-        SegyIngestor.from_segy,
-        str(raw_path),
-        store_dir,
-        key1_byte,
-        key2_byte,
-        source_sha256=source_sha256,
+    safe_name = _safe_upload_name(file.filename)
+    saved = await _save_upload_file(file, safe_name, raw_path=UPLOAD_DIR / safe_name)
+    return await _ingest_saved_segy(
+        request=request,
+        original_name=saved.original_name,
+        safe_name=saved.safe_name,
+        raw_path=saved.raw_path,
+        source_sha256=saved.source_sha256,
+        source_size=saved.source_size,
+        key1_byte=key1_byte,
+        key2_byte=key2_byte,
     )
-    _register_trace_store(file_id, store_dir, key1_byte, key2_byte, state=state)
-    _touch_trace_store_meta(store_dir)
-    if isinstance(meta, dict):
-        state.file_registry.update(
-            file_id,
-            store_path=str(store_dir),
-            dt=meta.get('dt'),
+
+
+@router.post('/stage_segy')
+async def stage_segy(
+    request: Request,
+    file: Annotated[UploadFile, File(...)],
+):
+    state = get_state(request.app)
+    if not file.filename:
+        raise HTTPException(
+            status_code=400, detail='Uploaded file must have a filename'
         )
-    else:
-        state.file_registry.update(file_id, store_path=str(store_dir))
-    return {'file_id': file_id, 'reused_trace_store': False}
+
+    staged_id = uuid4().hex
+    safe_name = _safe_upload_name(file.filename)
+    raw_path = _staged_upload_dir() / staged_id / safe_name
+    saved = await _save_upload_file(file, safe_name, raw_path=raw_path)
+    try:
+        header_qc = await asyncio.to_thread(inspect_segy_header_qc, saved.raw_path)
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(
+            status_code=422,
+            detail=f'Unable to inspect SEG-Y headers: {exc}',
+        ) from exc
+
+    record = {
+        'original_name': saved.original_name,
+        'safe_name': saved.safe_name,
+        'raw_path': str(saved.raw_path),
+        'source_sha256': saved.source_sha256,
+        'source_size': saved.source_size,
+        'header_qc': header_qc,
+    }
+    with state.lock:
+        state.staged_uploads.set(staged_id, record)
+
+    return {
+        'staged_id': staged_id,
+        'file': {
+            'original_name': saved.original_name,
+            'safe_name': saved.safe_name,
+            'size': saved.source_size,
+            'sha256': saved.source_sha256,
+        },
+        **header_qc,
+    }
+
+
+@router.post('/ingest_staged_segy')
+async def ingest_staged_segy(
+    request: Request,
+    staged_id: Annotated[str, Form(...)],
+    key1_byte: Annotated[int, Form()] = 189,
+    key2_byte: Annotated[int, Form()] = 193,
+):
+    state = get_state(request.app)
+    with state.lock:
+        staged = state.staged_uploads.get(staged_id)
+    if staged is None:
+        raise HTTPException(status_code=404, detail='Staged SEG-Y not found')
+    if key1_byte == key2_byte:
+        raise HTTPException(
+            status_code=400,
+            detail='key1_byte and key2_byte must be different',
+        )
+    if not isinstance(staged, dict):
+        raise HTTPException(status_code=404, detail='Staged SEG-Y not found')
+
+    raw_path = Path(str(staged.get('raw_path', '')))
+    if not raw_path.is_file():
+        raise HTTPException(status_code=410, detail='Staged SEG-Y file is missing')
+
+    result = await _ingest_saved_segy(
+        request=request,
+        original_name=str(staged.get('original_name') or staged.get('safe_name')),
+        safe_name=str(staged.get('safe_name')),
+        raw_path=raw_path,
+        source_sha256=str(staged.get('source_sha256')),
+        source_size=int(staged.get('source_size')),
+        key1_byte=key1_byte,
+        key2_byte=key2_byte,
+    )
+    summary = _selected_header_qc_summary(
+        staged.get('header_qc'),
+        key1_byte=key1_byte,
+        key2_byte=key2_byte,
+    )
+    if summary is not None:
+        result['header_qc'] = summary
+    return result
 
 
 @router.get('/file_info')
