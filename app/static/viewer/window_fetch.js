@@ -1,4 +1,7 @@
     function maybeFetchIfOutOfWindow() {
+      if (typeof isCompareModeEnabled === 'function' && isCompareModeEnabled()) {
+        return;
+      }
       if (!latestWindowRender || !sectionShape) {
         scheduleWindowFetch();
         return;
@@ -304,13 +307,17 @@
       effectiveLayer,
       pipelineKey,
       tapLabel,
+      referencePipelineKey,
+      referenceTapLabel,
       scaling,
       transpose,
       mode,
+      purpose,
     }) {
       const enc = (value) => encodeURIComponent(value == null ? '' : String(value));
-      return [
-        'svwin',
+      const parts = ['svwin'];
+      if (purpose) parts.push(`purpose=${enc(purpose)}`);
+      parts.push(
         `file=${enc(fileId)}`,
         `k1=${enc(key1)}`,
         `b1=${enc(key1Byte)}`,
@@ -323,10 +330,13 @@
         `layer=${enc(effectiveLayer)}`,
         `pkey=${enc(pipelineKey)}`,
         `tap=${enc(tapLabel)}`,
+        `rpkey=${enc(referencePipelineKey)}`,
+        `rtap=${enc(referenceTapLabel)}`,
         `sc=${enc(scaling)}`,
         `tr=${enc(transpose)}`,
         `mode=${enc(mode)}`,
-      ].join('|');
+      );
+      return parts.join('|');
     }
 
     function buildWindowRequestArtifacts({
@@ -341,12 +351,21 @@
       effectiveLayer,
       pipelineKey,
       tapLabel,
+      referencePipelineKey,
+      referenceTapLabel,
       scaling,
       transpose,
       mode,
+      purpose,
     }) {
       const resolvedPipelineKey = (tapLabel && pipelineKey) ? pipelineKey : null;
       const resolvedTapLabel = (tapLabel && resolvedPipelineKey) ? tapLabel : null;
+      const resolvedReferencePipelineKey = (referenceTapLabel && referencePipelineKey)
+        ? referencePipelineKey
+        : null;
+      const resolvedReferenceTapLabel = (
+        referenceTapLabel && resolvedReferencePipelineKey
+      ) ? referenceTapLabel : null;
       const params = new URLSearchParams({
         file_id: String(fileId),
         key1: String(key1Val),
@@ -362,6 +381,10 @@
       if (resolvedPipelineKey && resolvedTapLabel) {
         params.set('pipeline_key', resolvedPipelineKey);
         params.set('tap_label', resolvedTapLabel);
+      }
+      if (resolvedReferencePipelineKey && resolvedReferenceTapLabel) {
+        params.set('reference_pipeline_key', resolvedReferencePipelineKey);
+        params.set('reference_tap_label', resolvedReferenceTapLabel);
       }
       params.set('transpose', transpose);
       params.set('scaling', scaling);
@@ -383,15 +406,19 @@
           effectiveLayer,
           pipelineKey: resolvedPipelineKey,
           tapLabel: resolvedTapLabel,
+          referencePipelineKey: resolvedReferencePipelineKey,
+          referenceTapLabel: resolvedReferenceTapLabel,
           scaling,
           transpose,
           mode,
+          purpose,
         }),
         payloadMeta: {
           key1: key1Val,
           requestedLayer,
           effectiveLayer,
           pipelineKey: resolvedPipelineKey,
+          referencePipelineKey: resolvedReferencePipelineKey,
           x0: windowInfo.x0,
           x1: windowInfo.x1,
           y0: windowInfo.y0,
@@ -399,6 +426,7 @@
           stepX,
           stepY,
           mode,
+          purpose,
         },
       };
     }
@@ -563,11 +591,14 @@
       }
       const scaleRaw = Number(obj?.scale);
       const scale = Number.isFinite(scaleRaw) ? scaleRaw : null;
+      const dtRaw = Number(obj?.dt);
+      const dt = Number.isFinite(dtRaw) && dtRaw > 0 ? dtRaw : null;
       return {
         ...payloadMeta,
         shape: [rows, cols],
         valuesI8,
         scale,
+        dt,
         quant: resolveWindowQuantMeta(obj),
         __perf: perfMeta || null,
       };
@@ -585,10 +616,12 @@
       }
       const total = rows * cols;
       const scaleRaw = Number(decoded.scale);
+      const dtRaw = Number(decoded.dt);
       const payload = {
         ...payloadMeta,
         shape: [rows, cols],
         scale: Number.isFinite(scaleRaw) ? scaleRaw : null,
+        dt: Number.isFinite(dtRaw) && dtRaw > 0 ? dtRaw : null,
         quant: decoded.quant ?? null,
         __perf: perfMeta || null,
       };
@@ -922,6 +955,9 @@
     };
 
     async function fetchWindowAndPlot() {
+      if (typeof isCompareModeEnabled === 'function' && isCompareModeEnabled()) {
+        return fetchCompareAndPlot();
+      }
       D('WINDOW@req', { key1: key1Values?.[parseInt(document.getElementById('key1_slider')?.value || '0', 10)] });
       if (!currentFileId) return;
       if (!sectionShape) {

@@ -120,6 +120,19 @@ Keyboard shortcuts:
 - `N`: toggle between the `raw` layer and the first computed layer in the layer dropdown
 - Hold `Alt`: temporary pan mode
 
+Compare mode:
+
+- The viewer can switch Compare mode on from the Display controls.
+- Source A and Source B can each be `raw` or any available pipeline tap output.
+- `Show A-B` adds a third fixed-order panel. With it enabled the order is A, B, A-B; with it disabled the order is A, B.
+- A-B is computed in the browser as `A_scaled - B_scaled` from windows fetched with the same `file_id`, `key1`, viewport, downsampling, transpose, and scaling parameters.
+- `scaling=amax` uses the A reference section statistics and does not apply per-trace scaling to the diff.
+- `scaling=tracewise` uses A's baseline trace statistics for B as well; the diff does not subtract A's trace mean again after subtraction.
+- There is no diff-specific gain. The existing Gain control is applied uniformly to A, B, and A-B.
+- Compare mode does not provide a manual Heatmap/Wiggle selector. It uses the same automatic switching as the normal viewer, using the per-panel width for the decision.
+- If either source is probability-domain data, Compare mode uses heatmap rendering for all visible panels.
+- A-B is available only when A and B have the same domain, shape, sample interval, and grid. Mixed-domain A/B comparison is allowed with `Show A-B` off, but A-B is disabled.
+
 ## Viewer benchmark
 
 The dedicated GitHub Actions workflow is `viewer-benchmark`.
