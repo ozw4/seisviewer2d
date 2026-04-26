@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 from pathlib import Path
 
@@ -8,6 +9,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from app.main import app
+from app.tests._stubs import write_baseline_raw
 
 
 def _qc_payload() -> dict:
@@ -144,11 +146,16 @@ def test_stage_segy_returns_qc_and_stores_metadata(_staged_env):
 def test_ingest_staged_segy_ingests_valid_stage(_staged_env):
     client, upload_mod, calls = _staged_env
     staged = _stage(client)
+    staged_id = staged['staged_id']
+    record = app.state.sv.staged_uploads.get(staged_id)
+    assert isinstance(record, dict)
+    staged_path = Path(record['raw_path'])
+    staged_dir = staged_path.parent
 
     response = client.post(
         '/ingest_staged_segy',
         data={
-            'staged_id': staged['staged_id'],
+            'staged_id': staged_id,
             'key1_byte': '189',
             'key2_byte': '193',
         },
@@ -169,7 +176,97 @@ def test_ingest_staged_segy_ingests_valid_stage(_staged_env):
             encoding='utf-8'
         )
     )
+    durable_raw_path = (
+        Path(upload_mod.UPLOAD_DIR)
+        / 'raw'
+        / staged['file']['sha256']
+        / 'line_001.sgy'
+    )
     assert meta['key_bytes'] == {'key1': 189, 'key2': 193}
+    assert meta['original_segy_path'] == str(durable_raw_path)
+    assert durable_raw_path.read_bytes() == b'segy'
+    assert not staged_path.exists()
+    assert not staged_dir.exists()
+    assert app.state.sv.staged_uploads.get(staged_id) is None
+
+
+def test_stage_segy_qc_failure_removes_staged_file(_staged_env, monkeypatch):
+    client, upload_mod, calls = _staged_env
+
+    def _raise_qc(_path: str | Path) -> dict:
+        calls['qc'] += 1
+        raise RuntimeError('bad headers')
+
+    monkeypatch.setattr(upload_mod, 'inspect_segy_header_qc', _raise_qc, raising=True)
+
+    response = client.post(
+        '/stage_segy',
+        files={'file': ('bad.sgy', b'bad-data', 'application/octet-stream')},
+    )
+
+    assert response.status_code == 422
+    assert calls == {'qc': 1, 'ingest': 0}
+    assert len(app.state.sv.staged_uploads) == 0
+    staged_root = Path(upload_mod.UPLOAD_DIR) / 'staged'
+    assert not staged_root.exists() or list(staged_root.iterdir()) == []
+
+
+def test_ingest_staged_segy_reused_store_metadata_points_to_durable_raw(
+    _staged_env,
+):
+    client, upload_mod, calls = _staged_env
+    data = b'reuse-me'
+    source_sha256 = hashlib.sha256(data).hexdigest()
+    store_dir = Path(upload_mod.TRACE_DIR) / 'line_001.sgy'
+    old_staged_path = Path(upload_mod.UPLOAD_DIR) / 'staged' / 'old' / 'line_001.sgy'
+    store_dir.mkdir(parents=True, exist_ok=True)
+    np.save(store_dir / 'traces.npy', np.zeros((2, 4), dtype=np.float32))
+    np.savez(
+        store_dir / 'index.npz',
+        key1_values=np.asarray([1], dtype=np.int32),
+        key1_offsets=np.asarray([0], dtype=np.int64),
+        key1_counts=np.asarray([2], dtype=np.int64),
+    )
+    (store_dir / 'meta.json').write_text(
+        json.dumps(
+            {
+                'key_bytes': {'key1': 189, 'key2': 193},
+                'dt': 0.002,
+                'original_segy_path': str(old_staged_path),
+                'original_size': len(data),
+                'source_sha256': source_sha256,
+            }
+        ),
+        encoding='utf-8',
+    )
+    write_baseline_raw(
+        store_dir,
+        key1=1,
+        n_traces=2,
+        key1_byte=189,
+        key2_byte=193,
+        source_sha256=source_sha256,
+    )
+    staged = _stage(client, data=data)
+
+    response = client.post(
+        '/ingest_staged_segy',
+        data={
+            'staged_id': staged['staged_id'],
+            'key1_byte': '189',
+            'key2_byte': '193',
+        },
+    )
+
+    assert response.status_code == 200, response.text
+    assert response.json()['reused_trace_store'] is True
+    assert calls == {'qc': 1, 'ingest': 0}
+    durable_raw_path = (
+        Path(upload_mod.UPLOAD_DIR) / 'raw' / source_sha256 / 'line_001.sgy'
+    )
+    meta = json.loads((store_dir / 'meta.json').read_text(encoding='utf-8'))
+    assert meta['original_segy_path'] == str(durable_raw_path)
+    assert durable_raw_path.read_bytes() == data
 
 
 def test_ingest_staged_segy_invalid_id_returns_404(_staged_env):
@@ -219,6 +316,23 @@ def test_ingest_staged_segy_missing_file_returns_410(_staged_env):
 
     assert response.status_code == 410
     assert calls['ingest'] == 0
+
+
+@pytest.mark.parametrize('endpoint', ['/upload_segy', '/stage_segy'])
+@pytest.mark.parametrize('filename', ['.', '..'])
+def test_segy_upload_rejects_dot_filenames(_staged_env, endpoint: str, filename: str):
+    client, _upload_mod, calls = _staged_env
+    kwargs = {
+        'files': {'file': (filename, b'data', 'application/octet-stream')},
+    }
+    if endpoint == '/upload_segy':
+        kwargs['data'] = {'key1_byte': '189', 'key2_byte': '193'}
+
+    response = client.post(endpoint, **kwargs)
+
+    assert response.status_code == 400
+    assert response.json()['detail'] == 'Uploaded file must have a safe filename'
+    assert calls == {'qc': 0, 'ingest': 0}
 
 
 def test_upload_segy_still_returns_existing_basic_shape(_staged_env):
