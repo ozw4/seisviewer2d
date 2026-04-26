@@ -7,6 +7,7 @@ import hashlib
 import json
 import logging
 import re
+import shutil
 import threading
 from dataclasses import dataclass
 from pathlib import Path
@@ -46,11 +47,65 @@ class SavedUpload:
 
 
 def _safe_upload_name(filename: str) -> str:
-    return re.sub(r'[^A-Za-z0-9_.-]', '_', filename)
+    safe_name = re.sub(r'[^A-Za-z0-9_.-]', '_', filename)
+    if safe_name in {'', '.', '..'}:
+        raise HTTPException(
+            status_code=400,
+            detail='Uploaded file must have a safe filename',
+        )
+    return safe_name
 
 
 def _staged_upload_dir() -> Path:
     return UPLOAD_DIR / 'staged'
+
+
+def _cleanup_staged_upload(raw_path: Path) -> None:
+    try:
+        raw_path.unlink(missing_ok=True)
+    except OSError:
+        logger.warning('Unable to delete staged SEG-Y file: %s', raw_path)
+
+    staged_dir = raw_path.parent
+    if staged_dir.parent != _staged_upload_dir():
+        return
+    shutil.rmtree(staged_dir, ignore_errors=True)
+
+
+def _sha256_file(path: Path) -> str:
+    hasher = hashlib.sha256()
+    with path.open('rb') as fh:
+        for chunk in iter(lambda: fh.read(UPLOAD_CHUNK_SIZE), b''):
+            hasher.update(chunk)
+    return hasher.hexdigest()
+
+
+def _promote_staged_segy_to_raw(
+    *,
+    staged_path: Path,
+    safe_name: str,
+    source_sha256: str,
+) -> Path:
+    raw_dir = UPLOAD_DIR / 'raw' / source_sha256
+    raw_path = raw_dir / safe_name
+    raw_dir.mkdir(parents=True, exist_ok=True)
+
+    if raw_path.exists():
+        if raw_path.is_file() and _sha256_file(raw_path) == source_sha256:
+            return raw_path
+        raw_path = raw_dir / f'{raw_path.stem}.{uuid4().hex}{raw_path.suffix}'
+
+    tmp_path = raw_path.with_suffix(raw_path.suffix + f'.{uuid4().hex}.tmp')
+    try:
+        shutil.copy2(staged_path, tmp_path)
+        tmp_path.replace(raw_path)
+    except OSError as exc:
+        tmp_path.unlink(missing_ok=True)
+        raise HTTPException(
+            status_code=422,
+            detail=f'Unable to promote staged SEG-Y: {exc}',
+        ) from exc
+    return raw_path
 
 
 def _trace_store_complete(store_dir: Path, key1_byte: int, key2_byte: int) -> bool:
@@ -93,6 +148,53 @@ def _load_trace_store_meta(meta_path: Path) -> dict | None:
     if not isinstance(meta, dict):
         return None
     return meta
+
+
+def _ensure_trace_store_meta_raw_path(
+    store_dir: Path,
+    meta: dict,
+    *,
+    raw_path: Path,
+    source_sha256: str,
+    source_size: int,
+) -> dict:
+    updated = dict(meta)
+    changed = False
+    raw_path_text = str(raw_path)
+
+    if updated.get('original_segy_path') != raw_path_text:
+        updated['original_segy_path'] = raw_path_text
+        changed = True
+    if updated.get('original_size') != source_size:
+        updated['original_size'] = source_size
+        changed = True
+    if updated.get('source_sha256') != source_sha256:
+        updated['source_sha256'] = source_sha256
+        changed = True
+
+    try:
+        original_mtime = raw_path.stat().st_mtime
+    except OSError:
+        original_mtime = None
+    if original_mtime is not None and updated.get('original_mtime') != original_mtime:
+        updated['original_mtime'] = original_mtime
+        changed = True
+
+    if not changed:
+        return meta
+
+    meta_path = store_dir / 'meta.json'
+    tmp_path = meta_path.with_suffix(meta_path.suffix + f'.{uuid4().hex}.tmp')
+    try:
+        tmp_path.write_text(json.dumps(updated), encoding='utf-8')
+        tmp_path.replace(meta_path)
+    except OSError as exc:
+        tmp_path.unlink(missing_ok=True)
+        raise HTTPException(
+            status_code=409,
+            detail=f'Unable to update trace store metadata: {exc}',
+        ) from exc
+    return updated
 
 
 def _trace_store_matches_source(
@@ -296,6 +398,13 @@ async def _ingest_saved_segy(
                 raise HTTPException(status_code=409, detail=msg) from exc
 
     if reused and meta is not None:
+        meta = _ensure_trace_store_meta_raw_path(
+            store_dir,
+            meta,
+            raw_path=raw_path,
+            source_sha256=source_sha256,
+            source_size=source_size,
+        )
         logger.info('Reusing trace store for %s', original_name)
         _register_trace_store(file_id, store_dir, key1_byte, key2_byte, state=state)
         _touch_trace_store_meta(store_dir)
@@ -463,6 +572,7 @@ async def stage_segy(
     try:
         header_qc = await asyncio.to_thread(inspect_segy_header_qc, saved.raw_path)
     except Exception as exc:  # noqa: BLE001
+        _cleanup_staged_upload(saved.raw_path)
         raise HTTPException(
             status_code=422,
             detail=f'Unable to inspect SEG-Y headers: {exc}',
@@ -515,16 +625,27 @@ async def ingest_staged_segy(
     if not raw_path.is_file():
         raise HTTPException(status_code=410, detail='Staged SEG-Y file is missing')
 
+    safe_name = str(staged.get('safe_name'))
+    source_sha256 = str(staged.get('source_sha256'))
+    source_size = int(staged.get('source_size'))
+    durable_raw_path = _promote_staged_segy_to_raw(
+        staged_path=raw_path,
+        safe_name=safe_name,
+        source_sha256=source_sha256,
+    )
     result = await _ingest_saved_segy(
         request=request,
         original_name=str(staged.get('original_name') or staged.get('safe_name')),
-        safe_name=str(staged.get('safe_name')),
-        raw_path=raw_path,
-        source_sha256=str(staged.get('source_sha256')),
-        source_size=int(staged.get('source_size')),
+        safe_name=safe_name,
+        raw_path=durable_raw_path,
+        source_sha256=source_sha256,
+        source_size=source_size,
         key1_byte=key1_byte,
         key2_byte=key2_byte,
     )
+    with state.lock:
+        state.staged_uploads.pop(staged_id, None)
+    _cleanup_staged_upload(raw_path)
     summary = _selected_header_qc_summary(
         staged.get('header_qc'),
         key1_byte=key1_byte,
