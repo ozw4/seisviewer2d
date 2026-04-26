@@ -200,6 +200,7 @@ class AppState:
     file_registry: FileRegistry = field(default_factory=FileRegistry)
     cached_readers: LRUCache = field(init=False)
     fbpick_cache: ExpiringLRUCache = field(init=False)
+    staged_uploads: ExpiringLRUCache = field(init=False)
     jobs: JobManager = field(default_factory=JobManager)
     pipeline_tap_cache: LRUCache = field(default_factory=lambda: LRUCache(16))
     window_section_cache: LRUCache = field(default_factory=lambda: LRUCache(32))
@@ -211,6 +212,7 @@ class AppState:
             capacity=self.settings.sv_fbpick_cache_capacity,
             ttl_sec=self.settings.sv_fbpick_cache_ttl_sec,
         )
+        self.staged_uploads = ExpiringLRUCache(capacity=16, ttl_sec=3600)
         self.trace_stats_cache = TraceStatsCache(
             max_sections=self.settings.sv_trace_stats_max_sections,
             max_windows=self.settings.sv_trace_stats_max_windows,
