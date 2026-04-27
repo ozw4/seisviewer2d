@@ -7,9 +7,12 @@ import msgpack
 import numpy as np
 import pytest
 from fastapi import HTTPException
+from fastapi.testclient import TestClient
 
 from app.api.routers import section as sec
 from app.main import app
+from app.services import section_service as svc
+from app.services.fbpick_support import OFFSET_BYTE_FIXED
 from app.tests._stubs import make_stub_reader, write_baseline_raw
 
 
@@ -136,6 +139,23 @@ def test_lmo_zero_shift_matches_existing_window(monkeypatch, tmp_path):
     )
 
     assert plain.body == lmo.body
+
+
+def test_lmo_default_offset_byte_uses_fixed_offset_constant(monkeypatch, tmp_path):
+    section = np.arange(2 * 4, dtype=np.float32).reshape(2, 4)
+    requested_offset_bytes: list[int] = []
+    reader = _install_reader(monkeypatch, tmp_path, section, offsets=[0.0, 0.0])
+    original_get_offsets = reader.get_offsets_for_section
+
+    def _recording_get_offsets(key1_val: int, offset_byte: int):
+        requested_offset_bytes.append(int(offset_byte))
+        return original_get_offsets(key1_val, offset_byte)
+
+    reader.get_offsets_for_section = _recording_get_offsets
+
+    _window_response(lmo_enabled=True, lmo_velocity_mps=1000.0)
+
+    assert requested_offset_bytes == [OFFSET_BYTE_FIXED]
 
 
 def test_lmo_fractional_sample_shift_uses_linear_interpolation(monkeypatch, tmp_path):
@@ -337,6 +357,67 @@ def test_lmo_invalid_parameters_return_400(
 
     assert exc_info.value.status_code == 400
     assert detail in str(exc_info.value.detail)
+
+
+@pytest.mark.parametrize('lmo_offset_byte', [0, 241, -1])
+def test_lmo_invalid_offset_byte_query_is_422(lmo_offset_byte: int):
+    with TestClient(app) as client:
+        resp = client.get(
+            '/get_section_window_bin',
+            params={
+                'file_id': 'f',
+                'key1': 7,
+                'x0': 0,
+                'x1': 1,
+                'y0': 0,
+                'y1': 3,
+                'lmo_enabled': True,
+                'lmo_velocity_mps': 1.0,
+                'lmo_offset_byte': lmo_offset_byte,
+            },
+        )
+
+    assert resp.status_code == 422
+
+
+@pytest.mark.parametrize('lmo_offset_byte', [0, 241, -1])
+def test_lmo_invalid_offset_byte_service_raises_value_error(
+    monkeypatch,
+    tmp_path,
+    lmo_offset_byte: int,
+):
+    section = np.arange(2 * 4, dtype=np.float32).reshape(2, 4)
+    reader = _install_reader(monkeypatch, tmp_path, section, offsets=[0.0, 1.0])
+
+    with pytest.raises(
+        ValueError,
+        match='lmo_offset_byte must be between 1 and 240',
+    ):
+        svc.build_section_window_payload(
+            file_id='f',
+            key1=7,
+            key1_byte=189,
+            key2_byte=193,
+            offset_byte=None,
+            x0=0,
+            x1=1,
+            y0=0,
+            y1=3,
+            step_x=1,
+            step_y=1,
+            transpose=False,
+            pipeline_key=None,
+            tap_label=None,
+            scaling_mode='amax',
+            lmo_enabled=True,
+            lmo_velocity_mps=1.0,
+            lmo_offset_byte=lmo_offset_byte,
+            trace_stats_cache={},
+            reader_getter=lambda _fid, _kb1, _kb2: reader,
+            pipeline_section_getter=lambda **_kwargs: None,
+            store_dir_resolver=lambda _fid: str(tmp_path),
+            dt_resolver=lambda _fid: 1.0,
+        )
 
 
 @pytest.mark.parametrize(

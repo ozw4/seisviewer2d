@@ -15,6 +15,7 @@ from app.services.linear_moveout import (
     compute_lmo_shift_seconds,
     resample_lmo_window,
 )
+from app.services.fbpick_support import OFFSET_BYTE_FIXED
 from app.services.reader import EXPECTED_SECTION_NDIM, coerce_section_f32
 from app.services.scaling import (
     apply_scaling_from_baseline,
@@ -194,6 +195,12 @@ def _load_lmo_shift_samples(
     polarity: int,
 ) -> np.ndarray:
     """Load raw offsets and return per-section LMO shifts in sample units."""
+    try:
+        offset_byte_int = int(offset_byte)
+    except (TypeError, ValueError) as exc:
+        raise ValueError('lmo_offset_byte must be between 1 and 240') from exc
+    if not (1 <= offset_byte_int <= 240):
+        raise ValueError('lmo_offset_byte must be between 1 and 240')
     if velocity_mps is None:
         raise ValueError('lmo_velocity_mps is required when lmo_enabled=true')
     dt_val = float(dt)
@@ -204,7 +211,7 @@ def _load_lmo_shift_samples(
     if not callable(get_offsets):
         raise ValueError('Offset header unavailable for LMO')
     try:
-        offsets_raw = get_offsets(key1, int(offset_byte))
+        offsets_raw = get_offsets(key1, offset_byte_int)
     except Exception as exc:  # noqa: BLE001
         raise ValueError('Failed to read offsets for LMO') from exc
     if offsets_raw is None:
@@ -257,7 +264,7 @@ def build_section_window_payload(
     reference_tap_label: str | None = None,
     lmo_enabled: bool = False,
     lmo_velocity_mps: float | None = None,
-    lmo_offset_byte: int = 37,
+    lmo_offset_byte: int = OFFSET_BYTE_FIXED,
     lmo_offset_scale: float = 1.0,
     lmo_offset_mode: str = 'absolute',
     lmo_ref_mode: str = 'min',
