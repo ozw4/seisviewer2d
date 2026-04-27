@@ -55,6 +55,7 @@
     }
     #status_panel.stage-uploading #stage_badge,
     #status_panel.stage-uploaded #stage_badge,
+    #status_panel.stage-analyzing #stage_badge,
     #status_panel.stage-ingesting #stage_badge,
     #status_panel.stage-opening #stage_badge {
       border-color: #93c5fd;
@@ -128,6 +129,70 @@
       color: #475569;
       font-size: 0.9em;
     }
+    #headerQcPanel {
+      margin: 0 1em 1em;
+      padding: 0.85em 1em;
+      border: 1px solid #d1d5db;
+      border-radius: 10px;
+      background: #fff;
+      max-width: 780px;
+    }
+    #headerQcPanel h2,
+    #headerQcPanel h3 {
+      margin: 0 0 0.7em;
+    }
+    #headerQcSummary {
+      display: grid;
+      grid-template-columns: max-content 1fr;
+      gap: 0.35em 0.8em;
+      margin-bottom: 1em;
+    }
+    #headerQcSummary dt {
+      color: #475569;
+      font-weight: 600;
+    }
+    #headerQcSummary dd {
+      margin: 0;
+    }
+    #recommendedPairs {
+      display: flex;
+      flex-direction: column;
+      gap: 0.6em;
+      margin-bottom: 1em;
+    }
+    .header-qc-pair {
+      border: 1px solid #d1d5db;
+      border-radius: 8px;
+      padding: 0.75em;
+      background: #f8fafc;
+      display: flex;
+      flex-direction: column;
+      gap: 0.5em;
+    }
+    .header-qc-pair-title {
+      font-weight: 700;
+    }
+    .header-qc-pair-meta,
+    .header-qc-empty {
+      color: #475569;
+      font-size: 0.92em;
+    }
+    .header-qc-list {
+      margin: 0;
+      padding-left: 1.25em;
+    }
+    #headerStatsTable {
+      width: 100%;
+      border-collapse: collapse;
+      margin-top: 0.65em;
+    }
+    #headerStatsTable th,
+    #headerStatsTable td {
+      border-top: 1px solid #e5e7eb;
+      padding: 0.45em;
+      text-align: left;
+      vertical-align: top;
+    }
   </style>
 </head>
 <body>
@@ -187,6 +252,7 @@
         <option value="197">SHOT_POINT (byte 197)</option>
       </select>
     </label>
+    <button id="analyzeHeadersBtn" disabled>Analyze headers</button>
     <button id="upload_btn">Open</button>
     <progress id="upload_progress" value="0" max="100" style="width: 200px;"></progress>
     <span id="progress_text">0%</span>
@@ -196,24 +262,60 @@
     <div id="status_summary">Choose a SEG-Y file to begin.</div>
     <div id="status_detail"></div>
   </div>
+  <section id="headerQcPanel" aria-labelledby="headerQcHeading" hidden>
+    <h2 id="headerQcHeading">SEG-Y header QC</h2>
+    <dl id="headerQcSummary"></dl>
+    <h3>Recommended key pairs</h3>
+    <div id="recommendedPairs"></div>
+    <details>
+      <summary>Header statistics</summary>
+      <table id="headerStatsTable">
+        <thead>
+          <tr>
+            <th>Byte</th>
+            <th>Name</th>
+            <th>Unique count</th>
+            <th>Unique ratio</th>
+            <th>Group p50</th>
+            <th>Key1 score</th>
+            <th>Warnings</th>
+          </tr>
+        </thead>
+        <tbody></tbody>
+      </table>
+    </details>
+  </section>
   <section id="recent_panel" aria-labelledby="recent_heading">
     <h2 id="recent_heading">Recent datasets</h2>
     <div id="recent_state">Loading recent datasets...</div>
     <div id="recent_list"></div>
   </section>
   <script>
+    const uploadInput = document.getElementById('upload_segy');
     const progressBar = document.getElementById('upload_progress');
     const progressText = document.getElementById('progress_text');
     const uploadBtn = document.getElementById('upload_btn');
+    const analyzeHeadersBtn = document.getElementById('analyzeHeadersBtn');
     const key1Select = document.getElementById('key1_byte');
     const key2Select = document.getElementById('key2_byte');
     const statusPanel = document.getElementById('status_panel');
     const stageBadge = document.getElementById('stage_badge');
     const statusSummary = document.getElementById('status_summary');
     const statusDetail = document.getElementById('status_detail');
+    const headerQcPanel = document.getElementById('headerQcPanel');
+    const headerQcSummary = document.getElementById('headerQcSummary');
+    const recommendedPairs = document.getElementById('recommendedPairs');
+    const headerStatsTableBody = document.querySelector('#headerStatsTable tbody');
     const recentState = document.getElementById('recent_state');
     const recentList = document.getElementById('recent_list');
     const RECENT_DATASET_LIMIT = 10;
+    let selectedFile = null;
+    let stagedId = null;
+    let headerQc = null;
+    let isAnalyzing = false;
+    let isOpening = false;
+    let selectedFileRevision = 0;
+    let activeAnalysisRevision = null;
 
     const savedKey1 = localStorage.getItem('last_key1_byte');
     if (savedKey1) key1Select.value = savedKey1;
@@ -225,6 +327,21 @@
       stageBadge.textContent = stage;
       statusSummary.textContent = summary;
       statusDetail.textContent = detail;
+    }
+
+    function updateActionButtons() {
+      analyzeHeadersBtn.disabled = !selectedFile || isAnalyzing || isOpening;
+      if (selectedFile) {
+        uploadBtn.disabled = !stagedId || isAnalyzing || isOpening;
+      } else {
+        uploadBtn.disabled = isAnalyzing || isOpening;
+      }
+    }
+
+    function isCurrentAnalysis(file, revision) {
+      return selectedFile === file
+        && selectedFileRevision === revision
+        && activeAnalysisRevision === revision;
     }
 
     async function readResponseDetail(response) {
@@ -277,6 +394,287 @@
       key2Select.value = String(key2Byte);
     }
 
+    function formatValue(value) {
+      if (value === null || value === undefined || value === '') {
+        return 'n/a';
+      }
+      if (typeof value === 'number') {
+        return Number.isInteger(value) ? String(value) : String(Number(value.toFixed(4)));
+      }
+      return String(value);
+    }
+
+    function formatFileSize(size) {
+      if (typeof size !== 'number' || !Number.isFinite(size)) {
+        return 'n/a';
+      }
+      if (size < 1024) {
+        return `${size} B`;
+      }
+      const units = ['KB', 'MB', 'GB'];
+      let value = size / 1024;
+      for (const unit of units) {
+        if (value < 1024 || unit === units[units.length - 1]) {
+          return `${value.toFixed(value < 10 ? 1 : 0)} ${unit}`;
+        }
+        value /= 1024;
+      }
+      return `${size} B`;
+    }
+
+    function formatWarnings(warnings) {
+      return Array.isArray(warnings) && warnings.length > 0 ? warnings.join('; ') : 'none';
+    }
+
+    function appendSummaryRow(label, value) {
+      const dt = document.createElement('dt');
+      dt.textContent = label;
+      const dd = document.createElement('dd');
+      dd.textContent = value;
+      headerQcSummary.appendChild(dt);
+      headerQcSummary.appendChild(dd);
+    }
+
+    function appendList(parent, items) {
+      if (!Array.isArray(items) || items.length === 0) {
+        return;
+      }
+      const list = document.createElement('ul');
+      list.className = 'header-qc-list';
+      for (const item of items) {
+        const li = document.createElement('li');
+        li.textContent = String(item);
+        list.appendChild(li);
+      }
+      parent.appendChild(list);
+    }
+
+    function applyRecommendedPair(pair) {
+      key1Select.value = String(pair.key1_byte);
+      key2Select.value = String(pair.key2_byte);
+    }
+
+    function hideHeaderQcPanel() {
+      headerQcPanel.hidden = true;
+      headerQcSummary.innerHTML = '';
+      recommendedPairs.innerHTML = '';
+      headerStatsTableBody.innerHTML = '';
+    }
+
+    function renderRecommendedPairs(pairs) {
+      recommendedPairs.innerHTML = '';
+      if (!Array.isArray(pairs) || pairs.length === 0) {
+        const empty = document.createElement('div');
+        empty.className = 'header-qc-empty';
+        empty.textContent = 'No confident key pair found. Please choose key bytes manually.';
+        recommendedPairs.appendChild(empty);
+        return;
+      }
+      for (const pair of pairs) {
+        const card = document.createElement('div');
+        card.className = 'header-qc-pair';
+        card.dataset.testid = 'recommended-pair';
+
+        const title = document.createElement('div');
+        title.className = 'header-qc-pair-title';
+        title.textContent = `${formatValue(pair.key1_name)} byte ${formatValue(pair.key1_byte)} / ${formatValue(pair.key2_name)} byte ${formatValue(pair.key2_byte)}`;
+
+        const meta = document.createElement('div');
+        meta.className = 'header-qc-pair-meta';
+        meta.textContent = `score: ${formatValue(pair.score)} / confidence: ${formatValue(pair.confidence)}`;
+
+        const reasonsLabel = document.createElement('div');
+        reasonsLabel.textContent = 'Reasons:';
+        const warnings = document.createElement('div');
+        warnings.className = 'header-qc-pair-meta';
+        warnings.textContent = `Warnings: ${formatWarnings(pair.warnings)}`;
+
+        const button = document.createElement('button');
+        button.type = 'button';
+        button.textContent = 'Use this';
+        button.dataset.testid = 'use-recommended-pair';
+        button.addEventListener('click', () => applyRecommendedPair(pair));
+
+        card.appendChild(title);
+        card.appendChild(meta);
+        card.appendChild(reasonsLabel);
+        appendList(card, pair.reasons);
+        card.appendChild(warnings);
+        card.appendChild(button);
+        recommendedPairs.appendChild(card);
+      }
+    }
+
+    function renderHeaderStats(headers) {
+      headerStatsTableBody.innerHTML = '';
+      if (!Array.isArray(headers)) {
+        return;
+      }
+      for (const header of headers) {
+        const row = document.createElement('tr');
+        const values = [
+          header.byte,
+          header.name,
+          header.unique_count,
+          header.unique_ratio,
+          header.group_size && header.group_size.p50,
+          header.key1_score,
+          formatWarnings(header.warnings),
+        ];
+        for (const value of values) {
+          const cell = document.createElement('td');
+          cell.textContent = formatValue(value);
+          row.appendChild(cell);
+        }
+        headerStatsTableBody.appendChild(row);
+      }
+    }
+
+    function renderHeaderQc(payload) {
+      const file = payload && payload.file ? payload.file : {};
+      const segy = payload && payload.segy ? payload.segy : {};
+      headerQcSummary.innerHTML = '';
+      appendSummaryRow('File', formatValue(file.original_name));
+      appendSummaryRow('File size', formatFileSize(file.size));
+      appendSummaryRow('Traces', formatValue(segy.n_traces));
+      appendSummaryRow('Samples', formatValue(segy.n_samples));
+      appendSummaryRow('Sample interval', `${formatValue(segy.dt)} s`);
+      appendSummaryRow('Warnings', formatWarnings(payload && payload.warnings));
+      renderRecommendedPairs(payload && payload.recommended_pairs);
+      renderHeaderStats(payload && payload.headers);
+      headerQcPanel.hidden = false;
+    }
+
+    function resetSelectedFileState(file) {
+      selectedFileRevision += 1;
+      activeAnalysisRevision = null;
+      isAnalyzing = false;
+      selectedFile = file || null;
+      stagedId = null;
+      headerQc = null;
+      hideHeaderQcPanel();
+      progressBar.value = 0;
+      progressText.innerText = '0%';
+      if (selectedFile) {
+        setUploadState('idle', `${selectedFile.name} selected.`, 'Analyze headers before opening this SEG-Y file.');
+      } else if (lastName) {
+        setUploadState('idle', `Last dataset: ${lastName}`, 'You can reopen it or upload a new SEG-Y file.');
+      } else {
+        setUploadState('idle', 'No previous dataset is stored in this browser.', 'Choose a SEG-Y file to upload and ingest.');
+      }
+      updateActionButtons();
+    }
+
+    async function analyzeHeaders() {
+      if (!selectedFile) {
+        setUploadState('failed', 'Please select a SEG-Y file first.');
+        return;
+      }
+      const analysisFile = selectedFile;
+      const analysisRevision = selectedFileRevision;
+      activeAnalysisRevision = analysisRevision;
+      isAnalyzing = true;
+      stagedId = null;
+      headerQc = null;
+      hideHeaderQcPanel();
+      progressBar.value = 0;
+      progressText.innerText = 'Analyzing headers...';
+      setUploadState('analyzing', 'Analyzing headers...', 'Inspecting SEG-Y trace headers.');
+      updateActionButtons();
+
+      try {
+        const form = new FormData();
+        form.append('file', analysisFile);
+        const response = await fetch('/stage_segy', { method: 'POST', body: form });
+        if (!isCurrentAnalysis(analysisFile, analysisRevision)) {
+          return;
+        }
+        if (!response.ok) {
+          const detail = mapUploadError(await readResponseDetail(response));
+          throw new Error(detail);
+        }
+        const payload = await response.json();
+        if (!isCurrentAnalysis(analysisFile, analysisRevision)) {
+          return;
+        }
+        stagedId = payload.staged_id;
+        headerQc = payload;
+        renderHeaderQc(payload);
+
+        const best = Array.isArray(payload.recommended_pairs) ? payload.recommended_pairs[0] : null;
+        if (best) {
+          applyRecommendedPair(best);
+          setUploadState('ready', 'Header analysis complete.', 'Review the recommended key pairs or adjust key bytes before opening.');
+        } else {
+          setUploadState('ready', 'No confident key pair found. Please choose key bytes manually.', 'Header analysis completed without a recommended pair.');
+        }
+        progressText.innerText = 'Ready';
+      } catch (err) {
+        if (!isCurrentAnalysis(analysisFile, analysisRevision)) {
+          return;
+        }
+        stagedId = null;
+        headerQc = null;
+        hideHeaderQcPanel();
+        const detail = mapUploadError(err && err.message);
+        setUploadState('failed', 'Failed to analyze SEG-Y headers.', detail);
+        progressText.innerText = '0%';
+      } finally {
+        if (activeAnalysisRevision === analysisRevision) {
+          activeAnalysisRevision = null;
+          isAnalyzing = false;
+          updateActionButtons();
+        }
+      }
+    }
+
+    async function openStagedSegy() {
+      if (!stagedId) {
+        setUploadState('failed', 'Please run Analyze headers first.');
+        updateActionButtons();
+        return;
+      }
+      const key1Byte = key1Select.value;
+      const key2Byte = key2Select.value;
+      if (key1Byte === key2Byte) {
+        setUploadState('failed', 'key1_byte and key2_byte must differ.');
+        return;
+      }
+
+      isOpening = true;
+      setUploadState('opening', 'Opening...', 'Building or reopening the TraceStore from the staged SEG-Y file.');
+      progressText.innerText = 'Opening...';
+      updateActionButtons();
+      try {
+        const form = new FormData();
+        form.append('staged_id', stagedId);
+        form.append('key1_byte', key1Byte);
+        form.append('key2_byte', key2Byte);
+        const response = await fetch('/ingest_staged_segy', { method: 'POST', body: form });
+        if (!response.ok) {
+          const detail = mapUploadError(await readResponseDetail(response));
+          if (response.status === 404 || response.status === 410) {
+            stagedId = null;
+            headerQc = null;
+            hideHeaderQcPanel();
+            throw new Error('Staged SEG-Y expired. Please run Analyze headers again.');
+          }
+          throw new Error(detail || 'Failed to open staged SEG-Y.');
+        }
+        const payload = await response.json();
+        const originalName = headerQc && headerQc.file && headerQc.file.original_name
+          ? headerQc.file.original_name
+          : selectedFile.name;
+        handleSuccess(payload.file_id, originalName, key1Byte, key2Byte);
+      } catch (err) {
+        setUploadState('failed', 'Failed to open staged SEG-Y.', mapUploadError(err && err.message));
+        progressText.innerText = 'Ready';
+      } finally {
+        isOpening = false;
+        updateActionButtons();
+      }
+    }
+
     function formatRecentExtra(item) {
       const parts = [];
       if (typeof item.dt === 'number') parts.push(`dt ${item.dt}`);
@@ -322,7 +720,8 @@
         button.type = 'button';
         button.textContent = 'Open';
         button.addEventListener('click', async () => {
-          uploadBtn.disabled = true;
+          isOpening = true;
+          updateActionButtons();
           button.disabled = true;
           syncKeyByteSelectors(item.key1_byte, item.key2_byte);
           progressBar.value = 0;
@@ -345,8 +744,9 @@
           } catch (err) {
             setUploadState('failed', 'Open failed.', mapUploadError(err && err.message));
           } finally {
+            isOpening = false;
             button.disabled = false;
-            uploadBtn.disabled = false;
+            updateActionButtons();
           }
         });
 
@@ -396,124 +796,52 @@
       return fetch('/open_segy', { method: 'POST', body: fd });
     }
 
-    async function uploadSegy(file, key1Byte, key2Byte) {
-      return new Promise((resolve) => {
-        const formData = new FormData();
-        formData.append('file', file);
-        formData.append('key1_byte', key1Byte);
-        formData.append('key2_byte', key2Byte);
-        const xhr = new XMLHttpRequest();
-        xhr.open('POST', '/upload_segy', true);
-        xhr.upload.onloadstart = function () {
-          setUploadState('uploading', 'Uploading SEG-Y file...', 'The file is being sent to the server.');
-        };
-        xhr.upload.onprogress = function (e) {
-          if (e.lengthComputable) {
-            const percent = (e.loaded / e.total) * 100;
-            progressBar.value = percent;
-            progressText.innerText = `${percent.toFixed(1)}%`;
-            setUploadState('uploading', 'Uploading SEG-Y file...', `${percent.toFixed(1)}% transferred.`);
-          }
-        };
-        xhr.upload.onloadend = function () {
-          progressBar.value = 100;
-          progressText.innerText = '100.0%';
-          setUploadState('uploaded', 'Upload finished.', 'Server-side ingest has started. Building TraceStore...');
-          window.setTimeout(() => {
-            if (statusPanel.classList.contains('stage-uploaded')) {
-              setUploadState('ingesting', 'Building TraceStore...', 'The upload is complete. The server is preparing the dataset now.');
-            }
-          }, 250);
-        };
-        xhr.onload = async function () {
-          if (xhr.status === 200) {
-            const result = JSON.parse(xhr.responseText);
-            handleSuccess(result.file_id, file.name, key1Byte, key2Byte);
-          } else if (xhr.status === 409) {
-            try {
-              setUploadState('ingesting', 'Upload finished.', 'An existing TraceStore was detected. Reopening the prepared dataset...');
-              const res = await openSegy(file.name, key1Byte, key2Byte);
-              if (res.ok) {
-                const result = await res.json();
-                handleSuccess(result.file_id, file.name, key1Byte, key2Byte);
-              } else {
-                const text = mapUploadError(await readResponseDetail(res));
-                setUploadState('failed', 'Open failed.', text);
-              }
-            } catch (err) {
-              setUploadState('failed', 'Open failed.', mapUploadError(err && err.message));
-            }
-          } else {
-            let detail = xhr.responseText || '';
-            try {
-              const payload = JSON.parse(xhr.responseText || '{}');
-              if (payload && typeof payload.detail === 'string') {
-                detail = payload.detail;
-              }
-            } catch {
-              detail = xhr.responseText || '';
-            }
-            setUploadState('failed', 'Upload failed.', mapUploadError(detail));
-          }
-          resolve();
-        };
-        xhr.onerror = function () {
-          setUploadState('failed', 'Upload failed.', 'Network error while uploading the file. Check the connection and retry.');
-          resolve();
-        };
-        xhr.send(formData);
-      });
-    }
-
     loadRecentDatasets().catch((err) => {
       recentState.textContent = `Unable to load recent datasets: ${mapUploadError(err && err.message)}`;
     });
 
     uploadBtn.addEventListener('click', async () => {
-      uploadBtn.disabled = true;
-      const file = document.getElementById('upload_segy').files[0];
+      if (selectedFile) {
+        await openStagedSegy();
+        return;
+      }
+      isOpening = true;
+      updateActionButtons();
       const key1Byte = key1Select.value;
       const key2Byte = key2Select.value;
       progressBar.value = 0;
       progressText.innerText = '0%';
       try {
-        if (file) {
-          setUploadState('opening', 'Checking for an existing TraceStore...', 'If a prepared dataset already exists, it will be reopened instead of re-ingested.');
-          const res = await openSegy(file.name, key1Byte, key2Byte);
+        const savedName = localStorage.getItem('last_original_name');
+        if (!savedName) {
+          setUploadState('failed', 'No dataset selected.', 'Choose a SEG-Y file to upload, or reopen a previously ingested dataset.');
+        } else {
+          setUploadState('opening', `Opening ${savedName}...`, 'Loading the prepared TraceStore from the server.');
+          const res = await openSegy(savedName, key1Byte, key2Byte);
           if (res.ok) {
             const result = await res.json();
-            handleSuccess(result.file_id, file.name, key1Byte, key2Byte);
+            handleSuccess(result.file_id, savedName, key1Byte, key2Byte);
           } else if (res.status === 404) {
-            setUploadState('uploading', 'No prepared TraceStore found.', 'Uploading the SEG-Y file now.');
-            await uploadSegy(file, key1Byte, key2Byte);
+            setUploadState('failed', 'Prepared dataset not found.', 'Choose the SEG-Y file and upload it again to rebuild the TraceStore.');
           } else {
             const text = mapUploadError(await readResponseDetail(res));
             setUploadState('failed', 'Open failed.', text);
-          }
-        } else {
-          const savedName = localStorage.getItem('last_original_name');
-          if (!savedName) {
-            setUploadState('failed', 'No dataset selected.', 'Choose a SEG-Y file to upload, or reopen a previously ingested dataset.');
-          } else {
-            setUploadState('opening', `Opening ${savedName}...`, 'Loading the prepared TraceStore from the server.');
-            const res = await openSegy(savedName, key1Byte, key2Byte);
-            if (res.ok) {
-              const result = await res.json();
-              handleSuccess(result.file_id, savedName, key1Byte, key2Byte);
-            } else if (res.status === 404) {
-              setUploadState('failed', 'Prepared dataset not found.', 'Choose the SEG-Y file and upload it again to rebuild the TraceStore.');
-            } else {
-              const text = mapUploadError(await readResponseDetail(res));
-              setUploadState('failed', 'Open failed.', text);
-            }
           }
         }
       } catch (err) {
         setUploadState('failed', 'Open failed.', mapUploadError(err && err.message));
       } finally {
-        uploadBtn.disabled = false;
+        isOpening = false;
+        updateActionButtons();
       }
     });
+
+    uploadInput.addEventListener('change', () => {
+      resetSelectedFileState(uploadInput.files && uploadInput.files[0]);
+    });
+
+    analyzeHeadersBtn.addEventListener('click', analyzeHeaders);
+    updateActionButtons();
   </script>
 </body>
 </html>
