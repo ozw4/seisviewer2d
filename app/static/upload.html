@@ -668,7 +668,7 @@
         handleSuccess(payload.file_id, originalName, key1Byte, key2Byte);
       } catch (err) {
         setUploadState('failed', 'Failed to open staged SEG-Y.', mapUploadError(err && err.message));
-        progressText.innerText = 'Ready';
+        progressText.innerText = 'Failed to open staged SEG-Y.';
       } finally {
         isOpening = false;
         updateActionButtons();
