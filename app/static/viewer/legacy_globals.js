@@ -26,8 +26,10 @@
       refTrace: 'lmo_ref_trace',
       polarity: 'lmo_polarity',
     });
-    const LMO_OFFSET_MODES = new Set(['absolute', 'signed']);
-    const LMO_REF_MODES = new Set(['min', 'first', 'center', 'trace', 'zero']);
+    const LMO_FIXED_OFFSET_MODE = 'absolute';
+    const LMO_FIXED_REF_MODE = 'min';
+    const LMO_FIXED_REF_TRACE = 0;
+    const LMO_FIXED_POLARITY = 1;
     const lmoSectionOffsetCache = new Map();
     const lmoSectionOffsetInflight = new Map();
     const lmoShiftSecondsCache = new Map();
@@ -96,10 +98,10 @@
         velocityMps: Number(state.velocityMps),
         offsetByte: Number(state.offsetByte),
         offsetScale: Number(state.offsetScale),
-        offsetMode: String(state.offsetMode),
-        refMode: String(state.refMode),
-        refTrace: Number(state.refTrace),
-        polarity: Number(state.polarity) === -1 ? -1 : 1,
+        offsetMode: LMO_FIXED_OFFSET_MODE,
+        refMode: LMO_FIXED_REF_MODE,
+        refTrace: LMO_FIXED_REF_TRACE,
+        polarity: LMO_FIXED_POLARITY,
       };
     }
 
@@ -124,26 +126,32 @@
     }
 
     function normalizeLinearMoveoutState(value = {}, base = LMO_DEFAULTS) {
-      const source = { ...base, ...(value && typeof value === 'object' ? value : {}) };
-      const velocity = parseLmoFiniteNumber(source.velocityMps);
+      const baseState = base && typeof base === 'object' ? base : LMO_DEFAULTS;
+      const source = { ...baseState, ...(value && typeof value === 'object' ? value : {}) };
+      const baseVelocity = parseLmoInteger(baseState.velocityMps);
+      const baseOffsetByte = parseLmoInteger(baseState.offsetByte);
+      const baseOffsetScale = parseLmoFiniteNumber(baseState.offsetScale);
+      const velocity = parseLmoInteger(source.velocityMps);
       const offsetByte = parseLmoInteger(source.offsetByte);
       const offsetScale = parseLmoFiniteNumber(source.offsetScale);
-      const refTrace = parseLmoInteger(source.refTrace);
-      const polarity = Number(source.polarity);
-      const offsetMode = String(source.offsetMode);
-      const refMode = String(source.refMode);
 
       return {
-        enabled: parseLmoBoolean(source.enabled, LMO_DEFAULTS.enabled),
-        velocityMps: velocity !== null && velocity > 0 ? velocity : LMO_DEFAULTS.velocityMps,
+        enabled: parseLmoBoolean(source.enabled, parseLmoBoolean(baseState.enabled, LMO_DEFAULTS.enabled)),
+        velocityMps: velocity !== null && velocity > 0
+          ? velocity
+          : (baseVelocity !== null && baseVelocity > 0 ? baseVelocity : LMO_DEFAULTS.velocityMps),
         offsetByte: offsetByte !== null && offsetByte >= 1 && offsetByte <= 240
           ? offsetByte
-          : LMO_DEFAULTS.offsetByte,
-        offsetScale: offsetScale !== null && offsetScale !== 0 ? offsetScale : LMO_DEFAULTS.offsetScale,
-        offsetMode: LMO_OFFSET_MODES.has(offsetMode) ? offsetMode : LMO_DEFAULTS.offsetMode,
-        refMode: LMO_REF_MODES.has(refMode) ? refMode : LMO_DEFAULTS.refMode,
-        refTrace: refTrace !== null && refTrace >= 0 ? refTrace : LMO_DEFAULTS.refTrace,
-        polarity: polarity === -1 || polarity === 1 ? polarity : LMO_DEFAULTS.polarity,
+          : (baseOffsetByte !== null && baseOffsetByte >= 1 && baseOffsetByte <= 240
+            ? baseOffsetByte
+            : LMO_DEFAULTS.offsetByte),
+        offsetScale: offsetScale !== null && offsetScale !== 0
+          ? offsetScale
+          : (baseOffsetScale !== null && baseOffsetScale !== 0 ? baseOffsetScale : LMO_DEFAULTS.offsetScale),
+        offsetMode: LMO_FIXED_OFFSET_MODE,
+        refMode: LMO_FIXED_REF_MODE,
+        refTrace: LMO_FIXED_REF_TRACE,
+        polarity: LMO_FIXED_POLARITY,
       };
     }
 
@@ -195,19 +203,15 @@
       const velocityMps = document.getElementById('lmoVelocityMps');
       const offsetByte = document.getElementById('lmoOffsetByte');
       const offsetScale = document.getElementById('lmoOffsetScale');
-      const offsetMode = document.getElementById('lmoOffsetMode');
-      const refMode = document.getElementById('lmoRefMode');
-      const refTrace = document.getElementById('lmoRefTrace');
-      const polarity = document.getElementById('lmoPolarity');
 
       if (enabled) snapshot.enabled = !!enabled.checked;
       if (velocityMps) snapshot.velocityMps = velocityMps.value;
       if (offsetByte) snapshot.offsetByte = offsetByte.value;
       if (offsetScale) snapshot.offsetScale = offsetScale.value;
-      if (offsetMode) snapshot.offsetMode = offsetMode.value;
-      if (refMode) snapshot.refMode = refMode.value;
-      if (refTrace) snapshot.refTrace = refTrace.value;
-      if (polarity) snapshot.polarity = polarity.value;
+      snapshot.offsetMode = LMO_FIXED_OFFSET_MODE;
+      snapshot.refMode = LMO_FIXED_REF_MODE;
+      snapshot.refTrace = LMO_FIXED_REF_TRACE;
+      snapshot.polarity = LMO_FIXED_POLARITY;
       return snapshot;
     }
 
@@ -224,20 +228,10 @@
       }
 
       const enabled = document.getElementById('lmoEnabled');
-      const offsetMode = document.getElementById('lmoOffsetMode');
-      const refMode = document.getElementById('lmoRefMode');
-      const refTrace = document.getElementById('lmoRefTrace');
-      const polarity = document.getElementById('lmoPolarity');
-
       if (enabled) enabled.checked = lmo.enabled;
       setNumberValue('lmoVelocityMps', lmo.velocityMps);
       setNumberValue('lmoOffsetByte', lmo.offsetByte);
       setNumberValue('lmoOffsetScale', lmo.offsetScale);
-      if (offsetMode) offsetMode.value = lmo.offsetMode;
-      if (refMode) refMode.value = lmo.refMode;
-      setNumberValue('lmoRefTrace', lmo.refTrace);
-      if (refTrace) refTrace.disabled = lmo.refMode !== 'trace';
-      if (polarity) polarity.value = String(lmo.polarity);
     }
 
     function dispatchLinearMoveoutChange() {
@@ -250,7 +244,7 @@
     }
 
     function getCurrentLinearMoveout() {
-      return cloneLinearMoveoutState(currentLinearMoveout);
+      return cloneLinearMoveoutState(normalizeLinearMoveoutState(currentLinearMoveout, LMO_DEFAULTS));
     }
 
     function setCurrentLinearMoveout(patch, options = {}) {
@@ -274,10 +268,6 @@
         `v=${formatLmoNumber(lmo.velocityMps)}`,
         `ob=${lmo.offsetByte}`,
         `os=${formatLmoNumber(lmo.offsetScale)}`,
-        `om=${lmo.offsetMode}`,
-        `rm=${lmo.refMode}`,
-        `rt=${lmo.refTrace}`,
-        `p=${lmo.polarity}`,
       ].join('|');
     }
 
@@ -540,8 +530,8 @@
 
     function bindLinearMoveoutControls() {
       if (window.__linearMoveoutControlsBound) return;
-      const numberIds = ['lmoVelocityMps', 'lmoOffsetByte', 'lmoOffsetScale', 'lmoRefTrace'];
-      const changeIds = ['lmoEnabled', 'lmoOffsetMode', 'lmoRefMode', 'lmoPolarity'];
+      const numberIds = ['lmoVelocityMps', 'lmoOffsetByte', 'lmoOffsetScale'];
+      const changeIds = ['lmoEnabled'];
       let foundControl = false;
 
       for (const id of numberIds) {

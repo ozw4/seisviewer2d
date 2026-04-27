@@ -106,19 +106,17 @@ def test_playwright_lmo_window_request_artifacts_are_canonical(
         "lmo_velocity_mps": "2000",
         "lmo_offset_byte": "41",
         "lmo_offset_scale": "2.5",
-        "lmo_offset_mode": "signed",
-        "lmo_ref_mode": "trace",
-        "lmo_ref_trace": "12",
-        "lmo_polarity": "-1",
+        "lmo_offset_mode": "absolute",
+        "lmo_ref_mode": "min",
+        "lmo_ref_trace": "0",
+        "lmo_polarity": "1",
     }.items():
         assert enabled_params[param] == value
     assert (
-        "lmo=lmo:on|v=2000|ob=41|os=2.5|om=signed|rm=trace|rt=12|p=-1"
+        "lmo=lmo:on|v=2000|ob=41|os=2.5"
         in result["enabled"]["cacheKey"]
     )
-    assert result["enabled"]["payloadLmoKey"] == (
-        "lmo:on|v=2000|ob=41|os=2.5|om=signed|rm=trace|rt=12|p=-1"
-    )
+    assert result["enabled"]["payloadLmoKey"] == "lmo:on|v=2000|ob=41|os=2.5"
     assert result["enabled"]["requestLmoKey"] == result["enabled"]["payloadLmoKey"]
 
     e2e_debug.assert_clean()
