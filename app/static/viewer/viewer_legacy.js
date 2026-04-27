@@ -85,10 +85,11 @@
           time: Number(linePickStart.time),
         };
       }
-      if (deleteRangeStart !== null && Number.isFinite(deleteRangeStart)) {
+      const deleteAnchor = normalizeDeleteRangeAnchor(deleteRangeStart);
+      if (deleteAnchor) {
         return {
           kind: 'delete-range',
-          trace: deleteRangeStart | 0,
+          trace: deleteAnchor.trace,
         };
       }
       return null;
@@ -139,8 +140,24 @@
       syncPendingPickUi();
     }
 
-    function setDeleteRangeAnchor(trace) {
-      deleteRangeStart = trace | 0;
+    function normalizeDeleteRangeAnchor(anchor) {
+      if (anchor === null || anchor === undefined) return null;
+      if (typeof anchor === 'object') {
+        const trace = Number(anchor.trace);
+        const time = Number(anchor.time);
+        if (!Number.isFinite(trace)) return null;
+        return {
+          trace: trace | 0,
+          time: Number.isFinite(time) ? time : NaN,
+        };
+      }
+      const trace = Number(anchor);
+      if (!Number.isFinite(trace)) return null;
+      return { trace: trace | 0, time: NaN };
+    }
+
+    function setDeleteRangeAnchor(trace, time) {
+      deleteRangeStart = { trace: trace | 0, time: Number(time) };
       linePickStart = null;
       syncPendingPickUi();
     }
@@ -942,6 +959,71 @@
       return cloneManualPick(found);
     }
 
+    function localPickDisplayTime(pick) {
+      const trace = Number(pick?.trace);
+      const rawTime = Number(pick?.time);
+      if (!Number.isFinite(trace) || !Number.isFinite(rawTime)) return NaN;
+      const converter = window.pickRawTimeToDisplayTime || window.rawTimeToDisplayTime;
+      if (typeof converter !== 'function') return NaN;
+      return Number(converter(trace, rawTime, pick));
+    }
+
+    function getLocalPickOnTraceForDisplayClick(traceInt, displayTime) {
+      const targetTime = Number(displayTime);
+      if (!Number.isFinite(targetTime)) return null;
+
+      let best = null;
+      let bestDistance = Infinity;
+      for (const pick of picks) {
+        if ((pick?.trace | 0) !== traceInt) continue;
+        const pickDisplayTime = localPickDisplayTime(pick);
+        if (!Number.isFinite(pickDisplayTime)) continue;
+        const distance = Math.abs(targetTime - pickDisplayTime);
+        if (distance < bestDistance) {
+          best = pick;
+          bestDistance = distance;
+        }
+      }
+      return best ? cloneManualPick(best) : null;
+    }
+
+    function getLocalPicksInTraceRangeForDisplayDelete(anchor, trace, displayTime) {
+      const startAnchor = normalizeDeleteRangeAnchor(anchor);
+      if (!startAnchor) return [];
+
+      const x0 = startAnchor.trace;
+      const x1 = trace | 0;
+      const y0 = Number(startAnchor.time);
+      const y1 = Number(displayTime);
+      const start = Math.min(x0, x1);
+      const end = Math.max(x0, x1);
+      const canInterpolateTime = Number.isFinite(y0) && Number.isFinite(y1);
+      const slope = canInterpolateTime && x1 !== x0 ? (y1 - y0) / (x1 - x0) : 0;
+      const nearestByTrace = new Map();
+
+      for (const pick of picks) {
+        const traceInt = pick?.trace | 0;
+        if (traceInt < start || traceInt > end) continue;
+
+        const pickDisplayTime = localPickDisplayTime(pick);
+        if (!Number.isFinite(pickDisplayTime)) continue;
+
+        const targetDisplayTime = canInterpolateTime
+          ? (x1 === x0 ? y1 : y0 + slope * (traceInt - x0))
+          : pickDisplayTime;
+        const distance = Math.abs(targetDisplayTime - pickDisplayTime);
+        const current = nearestByTrace.get(traceInt);
+        if (!current || distance < current.distance) {
+          nearestByTrace.set(traceInt, { pick, distance });
+        }
+      }
+
+      return Array.from(nearestByTrace.values())
+        .map(({ pick }) => cloneManualPick(pick))
+        .filter(Boolean)
+        .sort((a, b) => a.trace - b.trace);
+    }
+
     function manualPickStateEquals(a, b) {
       if (a == null && b == null) return true;
       if (!a || !b) return false;
@@ -1304,6 +1386,7 @@
         xMin,
         xMax,
         showPredicted: showPred,
+        timeTransform: window.pickRawTimeToDisplayTime,
       });
       const { yMin, yMax } = resolvePendingPickYRange(plotDiv);
       const pendingPickTr = buildPendingPickMarkerTrace({
@@ -2943,6 +3026,24 @@
       return Math.max(0, Math.round(t));
     }
 
+    async function displayPickTimeToRawTime(traceInt, displayTime) {
+      const converter = window.displayTimeToRawTime;
+      if (typeof converter !== 'function') {
+        console.warn('LMO pick save skipped because the display/raw time converter is not available.');
+        return null;
+      }
+      let rawTime = converter(traceInt, displayTime);
+      if (!Number.isFinite(rawTime) && typeof window.ensureLmoPickOffsetsReady === 'function') {
+        await window.ensureLmoPickOffsetsReady();
+        rawTime = converter(traceInt, displayTime);
+      }
+      if (!Number.isFinite(rawTime)) {
+        console.warn('LMO pick save skipped because section offsets are not ready.');
+        return null;
+      }
+      return rawTime;
+    }
+
     async function handlePickNormalized({ trace, time, shiftKey, ctrlKey, altKey }) {
       if (isPickMode && dragOverride === 'pan') return;
       if (!Number.isFinite(trace) || !Number.isFinite(time)) return;
@@ -2967,21 +3068,28 @@
 
         if (ctrlKey) {
           if (deleteRangeStart === null) {
-            setDeleteRangeAnchor(trInt);
+            setDeleteRangeAnchor(trInt, time);
             return;
           }
-          const x0 = deleteRangeStart;
+          const deleteAnchor = normalizeDeleteRangeAnchor(deleteRangeStart);
           clearPendingPickState('delete-range-complete');
+          if (!deleteAnchor) return;
+          const x0 = deleteAnchor.trace;
           const x1 = trInt;
           const start = Math.min(x0, x1);
           const end = Math.max(x0, x1);
-          const toDelete = picks.filter(p => Math.round(p.trace) >= start && Math.round(p.trace) <= end);
+          const toDelete = getLocalPicksInTraceRangeForDisplayDelete(deleteAnchor, trInt, time);
+          if (toDelete.length === 0) {
+            D('PICKS@handlePickNormalized:delete-range-empty', { range: [start, end] });
+            return;
+          }
+          const deleteTraces = new Set(toDelete.map((p) => p.trace | 0));
           const historyChanges = toDelete.map((p) => {
             const before = cloneManualPick(p);
             return { trace: before.trace, before, after: null };
           });
-          const promises = toDelete.map(p => deletePick(Math.round(p.trace)));
-          picks = picks.filter(p => Math.round(p.trace) < start || Math.round(p.trace) > end);
+          const promises = toDelete.map(p => deletePick(p.trace));
+          picks = picks.filter(p => !deleteTraces.has(p.trace | 0));
           await Promise.all(promises);
           recordManualPickHistory(historyChanges);
           D('PICKS@handlePickNormalized:line', { range: [start, end], count: picks.length });
@@ -3005,23 +3113,32 @@
 
           const promises = [];
           const historyChanges = [];
+          const linePickWrites = [];
           for (let x = xStart; x <= xEnd; x++) {
             const y = x1 === x0 ? y1 : y0 + slope * (x - x0);
             const snapped = snapTimeFromDataY(y);
-            const tAdj = adjustPickToFeature(x, snapped);
+            const displayTime = adjustPickToFeature(x, snapped);
+            const rawTime = await displayPickTimeToRawTime(x, displayTime);
+            if (rawTime === null) return;
 
-            const before = getLocalPickOnTrace(x);
+            const before = getLocalPickOnTraceForDisplayClick(x, displayTime);
+            linePickWrites.push({ trace: x, before, rawTime });
+          }
+
+          for (const write of linePickWrites) {
+            const x = write.trace;
+            const before = write.before;
             const hadExisting = !!before;
             removeAllPicksOnTrace(x);
             if (hadExisting) {
               promises.push(deletePick(x));
             }
-            upsertLocalPick(x, tAdj);
-            promises.push(postPick(x, tAdj));
+            upsertLocalPick(x, write.rawTime);
+            promises.push(postPick(x, write.rawTime));
             historyChanges.push({
               trace: x,
               before,
-              after: { trace: x, time: tAdj },
+              after: { trace: x, time: write.rawTime },
             });
           }
           await Promise.all(promises);
@@ -3033,19 +3150,26 @@
 
         clearPendingPickState('single-pick');
 
+        const displayTime = adjustPickToFeature(trInt, time);
+        const rawTime = await displayPickTimeToRawTime(trInt, displayTime);
+        if (rawTime === null) return;
+
         const promises = [];
-        const before = getLocalPickOnTrace(trInt);
+        const before = getLocalPickOnTraceForDisplayClick(trInt, displayTime);
         const hadExisting = !!before;
         removeAllPicksOnTrace(trInt);
         if (hadExisting) {
           promises.push(deletePick(trInt));
         }
-        const tAdj = adjustPickToFeature(trInt, time);
-        upsertLocalPick(trInt, tAdj);
-        promises.push(postPick(trInt, tAdj));
+        upsertLocalPick(trInt, rawTime);
+        promises.push(postPick(trInt, rawTime));
         await Promise.all(promises);
-        recordManualPickHistory([{ trace: trInt, before, after: { trace: trInt, time: tAdj } }]);
-        D('PICKS@handlePickNormalized:single', { add: { trace: trInt, time: tAdj }, count: picks.length });
+        recordManualPickHistory([{ trace: trInt, before, after: { trace: trInt, time: rawTime } }]);
+        D('PICKS@handlePickNormalized:single', {
+          add: { trace: trInt, time: rawTime },
+          displayTime,
+          count: picks.length,
+        });
         schedulePickOverlayUpdate();
       } finally {
         handlePickNormalized._busy = false;
@@ -3246,4 +3370,11 @@
       if (e.key === 'Shift') {
         clearPendingPickState('shift-keyup', { keepDeleteRange: true });
       }
+    });
+
+    window.addEventListener('lmo:change', () => {
+      if (linePickStart || deleteRangeStart !== null) {
+        clearPendingPickState('lmo-change');
+      }
+      schedulePickOverlayUpdate();
     });
