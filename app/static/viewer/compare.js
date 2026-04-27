@@ -39,6 +39,16 @@
     return !!document.getElementById('compareModeToggle')?.checked;
   }
 
+  function currentCompareLmoKey() {
+    return typeof window.currentLmoKey === 'function'
+      ? window.currentLmoKey()
+      : 'lmo:off';
+  }
+
+  function isCompareLmoCurrent(lmoKey) {
+    return lmoKey === currentCompareLmoKey();
+  }
+
   function compareShowDiffEnabled() {
     return !!document.getElementById('compareShowDiff')?.checked;
   }
@@ -207,8 +217,15 @@
   }
 
   async function fetchComparePayload(request, ctrl, requestId) {
+    if (!isCompareLmoCurrent(request.payloadMeta?.lmoKey)) return null;
     const cached = windowCacheGet(request.cacheKey);
-    if (cached && canUseCachedComparePayload(cached, request.source)) return cached;
+    if (
+      cached &&
+      isCompareLmoCurrent(cached.lmoKey) &&
+      canUseCachedComparePayload(cached, request.source)
+    ) {
+      return cached;
+    }
 
     const res = await fetch(`/get_section_window_bin?${request.params.toString()}`, { signal: ctrl.signal });
     if (!res.ok) {
@@ -228,6 +245,7 @@
     }
     const buf = await res.arrayBuffer();
     if (requestId !== activeWindowFetchId) return null;
+    if (!isCompareLmoCurrent(request.payloadMeta?.lmoKey)) return null;
     const payload = decodeWindowPayload(
       new Uint8Array(buf),
       request.payloadMeta,
@@ -235,6 +253,7 @@
       (shape) => console.warn('Unexpected compare window shape', shape),
     );
     if (!payload) return null;
+    if (!isCompareLmoCurrent(payload.lmoKey)) return null;
     windowCacheSet(request.cacheKey, payload);
     return payload;
   }
@@ -600,6 +619,7 @@
     const sources = getCompareSources();
     if (render.key1 !== key1Val || sourcePairKey(render.sources) !== sourcePairKey(sources)) return false;
     if (render.scaling !== currentScaling) return false;
+    if (!isCompareLmoCurrent(render.lmoKey)) return false;
 
     const plotDiv = document.getElementById('plot');
     if (!plotDiv) return false;
@@ -657,6 +677,7 @@
       sources,
       sourcePair: sourcePairKey(sources),
       scaling: currentScaling,
+      lmoKey: aPayload.lmoKey,
       mode: decision.mode,
       panelCount: decision.panelCount,
       stepX: decision.stepX,
@@ -707,6 +728,7 @@
     const decision = decideCompareWindowMode(windowInfo, plotDiv, sources);
     const requestA = buildCompareRequest(sources.a, sources.a, key1Val, windowInfo, decision);
     const requestB = buildCompareRequest(sources.b, sources.a, key1Val, windowInfo, decision);
+    const lmoKey = requestA.payloadMeta?.lmoKey;
 
     const requestId = bumpWindowFetchId();
     if (windowFetchCtrl) windowFetchCtrl.abort();
@@ -726,6 +748,9 @@
         : fetchComparePayload(requestB, ctrl, requestId);
       const [aPayload, bPayload] = await Promise.all([aPromise, bPromise]);
       if (requestId !== activeWindowFetchId || !aPayload || !bPayload) return true;
+      if (!isCompareLmoCurrent(lmoKey) || aPayload.lmoKey !== lmoKey || bPayload.lmoKey !== lmoKey) {
+        return true;
+      }
 
       const validation = validateComparePair(aPayload, bPayload, sources);
       const render = buildCompareRender(aPayload, bPayload, sources, decision, validation, windowInfo);
@@ -771,6 +796,7 @@
     if (latestCompareRender.key1 !== currentCompareKey1()) return true;
     if (sourcePairKey(latestCompareRender.sources) !== sourcePairKey(sources)) return true;
     if (latestCompareRender.scaling !== currentScaling) return true;
+    if (!isCompareLmoCurrent(latestCompareRender.lmoKey)) return true;
     if (latestCompareRender.mode !== decision.mode) return true;
     if (latestCompareRender.stepX !== decision.stepX || latestCompareRender.stepY !== decision.stepY) return true;
     if (latestCompareRender.x0 > win.x0 || latestCompareRender.x1 < win.x1) return true;
