@@ -35,6 +35,11 @@ def make_stub_reader(
             arr = np.array(section, dtype=np.float32, copy=True)
             return SectionView(arr=arr, dtype=arr.dtype, scale=None)
 
+        def get_trace_seq_for_value(self, _key1_val: int, align_to: str = 'display'):
+            if align_to not in {'display', 'original'}:
+                raise ValueError("align_to must be 'display' or 'original'")
+            return np.arange(section.shape[0], dtype=np.int64)
+
         def get_offsets_for_section(self, _key1_val: int, _offset_byte: int):
             if offsets_arr is None:
                 raise ValueError('offsets unavailable')
