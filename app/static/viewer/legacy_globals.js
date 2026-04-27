@@ -6,6 +6,29 @@
     var currentFileName = ''; // NEW: basename (e.g., LineA.sgy)
     var currentKey1Byte = 189;
     var currentKey2Byte = 193;
+    const LMO_DEFAULTS = Object.freeze({
+      enabled: false,
+      velocityMps: 1500,
+      offsetByte: 37,
+      offsetScale: 1.0,
+      offsetMode: 'absolute',
+      refMode: 'min',
+      refTrace: 0,
+      polarity: 1,
+    });
+    const LMO_STORAGE_KEYS = Object.freeze({
+      enabled: 'lmo_enabled',
+      velocityMps: 'lmo_velocity_mps',
+      offsetByte: 'lmo_offset_byte',
+      offsetScale: 'lmo_offset_scale',
+      offsetMode: 'lmo_offset_mode',
+      refMode: 'lmo_ref_mode',
+      refTrace: 'lmo_ref_trace',
+      polarity: 'lmo_polarity',
+    });
+    const LMO_OFFSET_MODES = new Set(['absolute', 'signed']);
+    const LMO_REF_MODES = new Set(['min', 'first', 'center', 'trace', 'zero']);
+    var currentLinearMoveout = { ...LMO_DEFAULTS };
     var savedXRange = null;
     var savedYRange = null;
     var latestSeismicData = null;
@@ -61,6 +84,242 @@
           window.SV_PERF = true;
         }
       }
+    }
+
+    function cloneLinearMoveoutState(state = currentLinearMoveout) {
+      return {
+        enabled: !!state.enabled,
+        velocityMps: Number(state.velocityMps),
+        offsetByte: Number(state.offsetByte),
+        offsetScale: Number(state.offsetScale),
+        offsetMode: String(state.offsetMode),
+        refMode: String(state.refMode),
+        refTrace: Number(state.refTrace),
+        polarity: Number(state.polarity) === -1 ? -1 : 1,
+      };
+    }
+
+    function parseLmoBoolean(value, def) {
+      if (typeof value === 'boolean') return value;
+      if (typeof value === 'string') {
+        const norm = value.trim().toLowerCase();
+        if (norm === 'true' || norm === '1' || norm === 'on') return true;
+        if (norm === 'false' || norm === '0' || norm === 'off') return false;
+      }
+      return def;
+    }
+
+    function parseLmoFiniteNumber(value) {
+      const parsed = Number(value);
+      return Number.isFinite(parsed) ? parsed : null;
+    }
+
+    function parseLmoInteger(value) {
+      const parsed = Number(value);
+      return Number.isInteger(parsed) ? parsed : null;
+    }
+
+    function normalizeLinearMoveoutState(value = {}, base = LMO_DEFAULTS) {
+      const source = { ...base, ...(value && typeof value === 'object' ? value : {}) };
+      const velocity = parseLmoFiniteNumber(source.velocityMps);
+      const offsetByte = parseLmoInteger(source.offsetByte);
+      const offsetScale = parseLmoFiniteNumber(source.offsetScale);
+      const refTrace = parseLmoInteger(source.refTrace);
+      const polarity = Number(source.polarity);
+      const offsetMode = String(source.offsetMode);
+      const refMode = String(source.refMode);
+
+      return {
+        enabled: parseLmoBoolean(source.enabled, LMO_DEFAULTS.enabled),
+        velocityMps: velocity !== null && velocity > 0 ? velocity : LMO_DEFAULTS.velocityMps,
+        offsetByte: offsetByte !== null && offsetByte >= 1 && offsetByte <= 240
+          ? offsetByte
+          : LMO_DEFAULTS.offsetByte,
+        offsetScale: offsetScale !== null && offsetScale !== 0 ? offsetScale : LMO_DEFAULTS.offsetScale,
+        offsetMode: LMO_OFFSET_MODES.has(offsetMode) ? offsetMode : LMO_DEFAULTS.offsetMode,
+        refMode: LMO_REF_MODES.has(refMode) ? refMode : LMO_DEFAULTS.refMode,
+        refTrace: refTrace !== null && refTrace >= 0 ? refTrace : LMO_DEFAULTS.refTrace,
+        polarity: polarity === -1 || polarity === 1 ? polarity : LMO_DEFAULTS.polarity,
+      };
+    }
+
+    function linearMoveoutStatesEqual(a, b) {
+      return a.enabled === b.enabled
+        && a.velocityMps === b.velocityMps
+        && a.offsetByte === b.offsetByte
+        && a.offsetScale === b.offsetScale
+        && a.offsetMode === b.offsetMode
+        && a.refMode === b.refMode
+        && a.refTrace === b.refTrace
+        && a.polarity === b.polarity;
+    }
+
+    function formatLmoNumber(value) {
+      return String(Number(value));
+    }
+
+    function readStoredLinearMoveoutState() {
+      const stored = {};
+      try {
+        for (const [field, key] of Object.entries(LMO_STORAGE_KEYS)) {
+          const value = localStorage.getItem(key);
+          if (value !== null) stored[field] = value;
+        }
+      } catch (_) {
+      }
+      return normalizeLinearMoveoutState(stored, LMO_DEFAULTS);
+    }
+
+    function persistLinearMoveoutState(state = currentLinearMoveout) {
+      const lmo = normalizeLinearMoveoutState(state, LMO_DEFAULTS);
+      try {
+        localStorage.setItem(LMO_STORAGE_KEYS.enabled, lmo.enabled ? 'true' : 'false');
+        localStorage.setItem(LMO_STORAGE_KEYS.velocityMps, formatLmoNumber(lmo.velocityMps));
+        localStorage.setItem(LMO_STORAGE_KEYS.offsetByte, String(lmo.offsetByte));
+        localStorage.setItem(LMO_STORAGE_KEYS.offsetScale, formatLmoNumber(lmo.offsetScale));
+        localStorage.setItem(LMO_STORAGE_KEYS.offsetMode, lmo.offsetMode);
+        localStorage.setItem(LMO_STORAGE_KEYS.refMode, lmo.refMode);
+        localStorage.setItem(LMO_STORAGE_KEYS.refTrace, String(lmo.refTrace));
+        localStorage.setItem(LMO_STORAGE_KEYS.polarity, String(lmo.polarity));
+      } catch (_) {
+      }
+    }
+
+    function getLinearMoveoutControlSnapshot() {
+      const snapshot = cloneLinearMoveoutState(currentLinearMoveout);
+      const enabled = document.getElementById('lmoEnabled');
+      const velocityMps = document.getElementById('lmoVelocityMps');
+      const offsetByte = document.getElementById('lmoOffsetByte');
+      const offsetScale = document.getElementById('lmoOffsetScale');
+      const offsetMode = document.getElementById('lmoOffsetMode');
+      const refMode = document.getElementById('lmoRefMode');
+      const refTrace = document.getElementById('lmoRefTrace');
+      const polarity = document.getElementById('lmoPolarity');
+
+      if (enabled) snapshot.enabled = !!enabled.checked;
+      if (velocityMps) snapshot.velocityMps = velocityMps.value;
+      if (offsetByte) snapshot.offsetByte = offsetByte.value;
+      if (offsetScale) snapshot.offsetScale = offsetScale.value;
+      if (offsetMode) snapshot.offsetMode = offsetMode.value;
+      if (refMode) snapshot.refMode = refMode.value;
+      if (refTrace) snapshot.refTrace = refTrace.value;
+      if (polarity) snapshot.polarity = polarity.value;
+      return snapshot;
+    }
+
+    function syncLinearMoveoutControls(options = {}) {
+      const skipActiveNumber = options.skipActiveNumber === true;
+      const lmo = normalizeLinearMoveoutState(currentLinearMoveout, LMO_DEFAULTS);
+      const active = document.activeElement;
+
+      function setNumberValue(id, value) {
+        const el = document.getElementById(id);
+        if (!el) return;
+        if (skipActiveNumber && el === active) return;
+        el.value = formatLmoNumber(value);
+      }
+
+      const enabled = document.getElementById('lmoEnabled');
+      const offsetMode = document.getElementById('lmoOffsetMode');
+      const refMode = document.getElementById('lmoRefMode');
+      const refTrace = document.getElementById('lmoRefTrace');
+      const polarity = document.getElementById('lmoPolarity');
+
+      if (enabled) enabled.checked = lmo.enabled;
+      setNumberValue('lmoVelocityMps', lmo.velocityMps);
+      setNumberValue('lmoOffsetByte', lmo.offsetByte);
+      setNumberValue('lmoOffsetScale', lmo.offsetScale);
+      if (offsetMode) offsetMode.value = lmo.offsetMode;
+      if (refMode) refMode.value = lmo.refMode;
+      setNumberValue('lmoRefTrace', lmo.refTrace);
+      if (refTrace) refTrace.disabled = lmo.refMode !== 'trace';
+      if (polarity) polarity.value = String(lmo.polarity);
+    }
+
+    function dispatchLinearMoveoutChange() {
+      window.dispatchEvent(new CustomEvent('lmo:change', {
+        detail: {
+          lmo: window.getCurrentLinearMoveout(),
+          key: window.currentLmoKey(),
+        },
+      }));
+    }
+
+    function getCurrentLinearMoveout() {
+      return cloneLinearMoveoutState(currentLinearMoveout);
+    }
+
+    function setCurrentLinearMoveout(patch, options = {}) {
+      const next = normalizeLinearMoveoutState(patch, currentLinearMoveout);
+      const changed = !linearMoveoutStatesEqual(next, currentLinearMoveout);
+      currentLinearMoveout = next;
+      window.currentLinearMoveout = currentLinearMoveout;
+      if (options.persist !== false) persistLinearMoveoutState(currentLinearMoveout);
+      if (options.applyDom !== false) syncLinearMoveoutControls({
+        skipActiveNumber: options.skipActiveNumber === true,
+      });
+      if (changed) dispatchLinearMoveoutChange();
+      return getCurrentLinearMoveout();
+    }
+
+    function currentLmoKey() {
+      const lmo = normalizeLinearMoveoutState(currentLinearMoveout, LMO_DEFAULTS);
+      if (!lmo.enabled) return 'lmo:off';
+      return [
+        'lmo:on',
+        `v=${formatLmoNumber(lmo.velocityMps)}`,
+        `ob=${lmo.offsetByte}`,
+        `os=${formatLmoNumber(lmo.offsetScale)}`,
+        `om=${lmo.offsetMode}`,
+        `rm=${lmo.refMode}`,
+        `rt=${lmo.refTrace}`,
+        `p=${lmo.polarity}`,
+      ].join('|');
+    }
+
+    function onLinearMoveoutControlChange(options = {}) {
+      return setCurrentLinearMoveout(getLinearMoveoutControlSnapshot(), options);
+    }
+
+    function bindLinearMoveoutControls() {
+      if (window.__linearMoveoutControlsBound) return;
+      const numberIds = ['lmoVelocityMps', 'lmoOffsetByte', 'lmoOffsetScale', 'lmoRefTrace'];
+      const changeIds = ['lmoEnabled', 'lmoOffsetMode', 'lmoRefMode', 'lmoPolarity'];
+      let foundControl = false;
+
+      for (const id of numberIds) {
+        const el = document.getElementById(id);
+        if (!el) continue;
+        foundControl = true;
+        el.addEventListener('input', () => onLinearMoveoutControlChange({
+          applyDom: false,
+        }));
+        el.addEventListener('change', () => onLinearMoveoutControlChange());
+      }
+      for (const id of changeIds) {
+        const el = document.getElementById(id);
+        if (!el) continue;
+        foundControl = true;
+        el.addEventListener('change', () => onLinearMoveoutControlChange());
+      }
+      if (foundControl) window.__linearMoveoutControlsBound = true;
+    }
+
+    function initLinearMoveoutControls() {
+      syncLinearMoveoutControls();
+      bindLinearMoveoutControls();
+    }
+
+    currentLinearMoveout = readStoredLinearMoveoutState();
+    window.currentLinearMoveout = currentLinearMoveout;
+    window.getCurrentLinearMoveout = getCurrentLinearMoveout;
+    window.setCurrentLinearMoveout = setCurrentLinearMoveout;
+    window.currentLmoKey = currentLmoKey;
+    window.onLinearMoveoutControlChange = onLinearMoveoutControlChange;
+    persistLinearMoveoutState(currentLinearMoveout);
+    initLinearMoveoutControls();
+    if (document.readyState === 'loading') {
+      document.addEventListener('DOMContentLoaded', initLinearMoveoutControls, { once: true });
     }
     // === A-7: Coordinate utilities (provided by /static/viewer/core via bootstrap) ===
     // UI-adjustable threshold for Wiggle/Heatmap decision (persisted)
