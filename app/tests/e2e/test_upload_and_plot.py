@@ -10,6 +10,8 @@ def test_upload_redirect_and_plot(page, base_url, tiny_segy_path, e2e_debug):
     page.select_option("#key1_byte", "189")
     page.select_option("#key2_byte", "193")
     page.set_input_files("#upload_segy", str(tiny_segy_path))
+    page.click("#analyzeHeadersBtn")
+    page.wait_for_function("() => !document.getElementById('upload_btn')?.disabled")
 
     page.click("#upload_btn")
     page.wait_for_url("**/?file_id=*", timeout=60_000)
