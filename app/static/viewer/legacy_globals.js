@@ -28,6 +28,10 @@
     });
     const LMO_OFFSET_MODES = new Set(['absolute', 'signed']);
     const LMO_REF_MODES = new Set(['min', 'first', 'center', 'trace', 'zero']);
+    const lmoSectionOffsetCache = new Map();
+    const lmoSectionOffsetInflight = new Map();
+    const lmoShiftSecondsCache = new Map();
+    const lmoPickOverlayWarningKeys = new Set();
     var currentLinearMoveout = { ...LMO_DEFAULTS };
     var savedXRange = null;
     var savedYRange = null;
@@ -277,6 +281,259 @@
       ].join('|');
     }
 
+    function currentKey1ValueForLmoPickTransform() {
+      const slider = document.getElementById('key1_slider');
+      const idxRaw = slider ? parseInt(slider.value, 10) : 0;
+      const idx = Number.isFinite(idxRaw) ? idxRaw : 0;
+      return Array.isArray(key1Values) ? key1Values[idx] : undefined;
+    }
+
+    function lmoPickOffsetCacheKey(context) {
+      return [
+        context.fileId,
+        context.key1,
+        context.key1Byte,
+        context.key2Byte,
+        context.offsetByte,
+      ].map((value) => encodeURIComponent(String(value))).join('|');
+    }
+
+    function lmoPickShiftCacheKey(context) {
+      return `${lmoPickOffsetCacheKey(context)}|${context.lmoKey}`;
+    }
+
+    function currentLmoPickContext() {
+      const lmo = getCurrentLinearMoveout();
+      if (!lmo.enabled) return { enabled: false, lmo, lmoKey: 'lmo:off' };
+      const key1 = currentKey1ValueForLmoPickTransform();
+      if (!currentFileId || key1 === undefined) {
+        return null;
+      }
+      return {
+        enabled: true,
+        fileId: currentFileId,
+        key1,
+        key1Byte: currentKey1Byte,
+        key2Byte: currentKey2Byte,
+        offsetByte: lmo.offsetByte,
+        lmo,
+        lmoKey: currentLmoKey(),
+      };
+    }
+
+    function decodeSectionOffsetsPayload(buffer) {
+      if (!window.msgpack || typeof window.msgpack.decode !== 'function') {
+        throw new Error('msgpack decoder is not available');
+      }
+      const payload = window.msgpack.decode(new Uint8Array(buffer));
+      if (!payload || payload.dtype !== 'float32') {
+        throw new Error('Unexpected section offsets payload dtype');
+      }
+      const shape = Array.isArray(payload.shape) ? payload.shape : [];
+      const n = Number(shape[0]);
+      if (!Number.isInteger(n) || n <= 0) {
+        throw new Error('Unexpected section offsets payload shape');
+      }
+      const rawOffsets = payload.offsets;
+      let bytes = null;
+      if (rawOffsets instanceof Uint8Array) {
+        bytes = rawOffsets;
+      } else if (rawOffsets instanceof ArrayBuffer) {
+        bytes = new Uint8Array(rawOffsets);
+      } else if (ArrayBuffer.isView(rawOffsets)) {
+        bytes = new Uint8Array(rawOffsets.buffer, rawOffsets.byteOffset, rawOffsets.byteLength);
+      }
+      if (!bytes || bytes.byteLength !== n * Float32Array.BYTES_PER_ELEMENT) {
+        throw new Error('Unexpected section offsets byte length');
+      }
+      const aligned = bytes.byteOffset % Float32Array.BYTES_PER_ELEMENT === 0
+        ? bytes
+        : new Uint8Array(bytes);
+      return new Float32Array(aligned.buffer, aligned.byteOffset, n).slice();
+    }
+
+    function requestSectionOffsetsForLmoPickTransform(context) {
+      const offsetKey = lmoPickOffsetCacheKey(context);
+      if (lmoSectionOffsetCache.has(offsetKey)) {
+        return Promise.resolve(lmoSectionOffsetCache.get(offsetKey));
+      }
+      if (lmoSectionOffsetInflight.has(offsetKey)) {
+        return lmoSectionOffsetInflight.get(offsetKey);
+      }
+
+      const params = new URLSearchParams({
+        file_id: String(context.fileId),
+        key1: String(context.key1),
+        key1_byte: String(context.key1Byte),
+        key2_byte: String(context.key2Byte),
+        offset_byte: String(context.offsetByte),
+      });
+      let loaded = false;
+      const promise = fetch(`/get_section_offsets_bin?${params.toString()}`)
+        .then((response) => {
+          if (!response.ok) {
+            throw new Error(`section offsets request failed with status ${response.status}`);
+          }
+          return response.arrayBuffer();
+        })
+        .then((buffer) => {
+          const offsets = decodeSectionOffsetsPayload(buffer);
+          lmoSectionOffsetCache.set(offsetKey, offsets);
+          loaded = true;
+          return offsets;
+        })
+        .catch((err) => {
+          console.warn('LMO section offsets fetch failed', err);
+          throw err;
+        })
+        .finally(() => {
+          lmoSectionOffsetInflight.delete(offsetKey);
+          if (loaded && typeof schedulePickOverlayUpdate === 'function') {
+            schedulePickOverlayUpdate();
+          }
+        });
+      lmoSectionOffsetInflight.set(offsetKey, promise);
+      return promise;
+    }
+
+    function lmoReferenceOffset(values, lmo) {
+      if (lmo.refMode === 'min') {
+        let best = Infinity;
+        for (const value of values) best = Math.min(best, value);
+        return best;
+      }
+      if (lmo.refMode === 'first') return values[0];
+      if (lmo.refMode === 'center') return values[Math.floor(values.length / 2)];
+      if (lmo.refMode === 'zero') return 0;
+      if (lmo.refMode === 'trace') {
+        const refTrace = lmo.refTrace | 0;
+        if (refTrace < 0 || refTrace >= values.length) return NaN;
+        return values[refTrace];
+      }
+      return NaN;
+    }
+
+    function computeLmoShiftSecondsForOffsets(offsets, lmo) {
+      const n = offsets ? offsets.length : 0;
+      const velocity = Number(lmo.velocityMps);
+      const scale = Number(lmo.offsetScale);
+      if (!n || !Number.isFinite(velocity) || velocity <= 0 || !Number.isFinite(scale) || scale === 0) {
+        return null;
+      }
+
+      const values = new Float64Array(n);
+      for (let i = 0; i < n; i++) {
+        const scaled = Number(offsets[i]) * scale;
+        if (!Number.isFinite(scaled)) return null;
+        values[i] = lmo.offsetMode === 'absolute' ? Math.abs(scaled) : scaled;
+      }
+
+      const ref = lmoReferenceOffset(values, lmo);
+      const polarity = Number(lmo.polarity) === -1 ? -1 : 1;
+      if (!Number.isFinite(ref)) return null;
+
+      const shifts = new Float64Array(n);
+      for (let i = 0; i < n; i++) {
+        const shift = polarity * (values[i] - ref) / velocity;
+        if (!Number.isFinite(shift)) return null;
+        shifts[i] = shift;
+      }
+      return shifts;
+    }
+
+    function warnLmoPickOverlaySkipped(context) {
+      const key = context?.lmoKey || currentLmoKey();
+      if (lmoPickOverlayWarningKeys.has(key)) return;
+      lmoPickOverlayWarningKeys.add(key);
+      console.warn('LMO pick overlay skipped because section offsets are not ready.');
+    }
+
+    function getCurrentLmoShiftSeconds() {
+      const context = currentLmoPickContext();
+      if (!context) return null;
+      if (!context.enabled) return { shifts: null, lmo: context.lmo, lmoKey: context.lmoKey };
+
+      const shiftKey = lmoPickShiftCacheKey(context);
+      if (lmoShiftSecondsCache.has(shiftKey)) {
+        return { shifts: lmoShiftSecondsCache.get(shiftKey), lmo: context.lmo, lmoKey: context.lmoKey };
+      }
+
+      const offsetKey = lmoPickOffsetCacheKey(context);
+      const offsets = lmoSectionOffsetCache.get(offsetKey);
+      if (!offsets) {
+        requestSectionOffsetsForLmoPickTransform(context).catch(() => {});
+        return null;
+      }
+
+      const shifts = computeLmoShiftSecondsForOffsets(offsets, context.lmo);
+      if (!shifts) return null;
+      lmoShiftSecondsCache.set(shiftKey, shifts);
+      return { shifts, lmo: context.lmo, lmoKey: context.lmoKey };
+    }
+
+    function ensureLmoPickOffsetsReady() {
+      const context = currentLmoPickContext();
+      if (!context) return Promise.resolve(false);
+      if (!context.enabled) return Promise.resolve(true);
+      const current = getCurrentLmoShiftSeconds();
+      if (current?.shifts) return Promise.resolve(true);
+      return requestSectionOffsetsForLmoPickTransform(context)
+        .then(() => {
+          const updated = getCurrentLmoShiftSeconds();
+          return !!updated?.shifts;
+        })
+        .catch(() => false);
+    }
+
+    function getLmoShiftSecondsForTrace(trace) {
+      const context = currentLmoPickContext();
+      if (!context) return NaN;
+      if (!context.enabled) return 0;
+
+      const current = getCurrentLmoShiftSeconds();
+      const shifts = current?.shifts;
+      const traceIndex = Math.round(Number(trace));
+      if (
+        !shifts ||
+        !Number.isInteger(traceIndex) ||
+        traceIndex < 0 ||
+        traceIndex >= shifts.length
+      ) {
+        warnLmoPickOverlaySkipped(context);
+        return NaN;
+      }
+      return shifts[traceIndex];
+    }
+
+    function rawTimeToDisplayTime(trace, rawTime) {
+      const raw = Number(rawTime);
+      if (!Number.isFinite(raw)) return NaN;
+      const context = currentLmoPickContext();
+      if (!context) return NaN;
+      if (!context.enabled) return raw;
+      const shift = getLmoShiftSecondsForTrace(trace);
+      return Number.isFinite(shift) ? raw - shift : NaN;
+    }
+
+    function displayTimeToRawTime(trace, displayTime) {
+      const display = Number(displayTime);
+      if (!Number.isFinite(display)) return NaN;
+      const context = currentLmoPickContext();
+      if (!context) return NaN;
+      if (!context.enabled) return display;
+      const shift = getLmoShiftSecondsForTrace(trace);
+      return Number.isFinite(shift) ? display + shift : NaN;
+    }
+
+    function pickRawTimeToDisplayTime(trace, rawTime) {
+      const display = rawTimeToDisplayTime(trace, rawTime);
+      if (!Number.isFinite(display)) {
+        const context = currentLmoPickContext();
+        if (context?.enabled) warnLmoPickOverlaySkipped(context);
+      }
+      return display;
+    }
+
     function onLinearMoveoutControlChange(options = {}) {
       return setCurrentLinearMoveout(getLinearMoveoutControlSnapshot(), options);
     }
@@ -315,6 +572,11 @@
     window.getCurrentLinearMoveout = getCurrentLinearMoveout;
     window.setCurrentLinearMoveout = setCurrentLinearMoveout;
     window.currentLmoKey = currentLmoKey;
+    window.rawTimeToDisplayTime = rawTimeToDisplayTime;
+    window.displayTimeToRawTime = displayTimeToRawTime;
+    window.getLmoShiftSecondsForTrace = getLmoShiftSecondsForTrace;
+    window.ensureLmoPickOffsetsReady = ensureLmoPickOffsetsReady;
+    window.pickRawTimeToDisplayTime = pickRawTimeToDisplayTime;
     window.onLinearMoveoutControlChange = onLinearMoveoutControlChange;
     persistLinearMoveoutState(currentLinearMoveout);
     initLinearMoveoutControls();

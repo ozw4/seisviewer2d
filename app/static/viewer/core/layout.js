@@ -71,9 +71,9 @@ export function buildPickShapes({
   xMin,
   xMax,
   showPredicted,
+  timeTransform = null,
 }) {
-  const manualShapes = (manualPicks || [])
-    .filter((p) => p && typeof p.trace === 'number' && p.trace >= xMin && p.trace <= xMax)
+  const manualShapes = resolvePicksInRange(manualPicks, xMin, xMax, timeTransform)
     .map((p) => ({
       xref: 'x',
       yref: 'y',
@@ -85,8 +85,7 @@ export function buildPickShapes({
       line: { color: 'red', width: 2 },
     }));
 
-  const predictedShapes = (predicted || [])
-    .filter((p) => p && typeof p.trace === 'number' && p.trace >= xMin && p.trace <= xMax)
+  const predictedShapes = resolvePicksInRange(predicted, xMin, xMax, timeTransform)
     .map((p) => ({
       xref: 'x',
       yref: 'y',
@@ -107,21 +106,10 @@ export function buildPickMarkerTraces({
   xMin,
   xMax,
   showPredicted,
+  timeTransform = null,
 }) {
-  const manualInRange = (manualPicks || []).filter((p) => (
-    p &&
-    typeof p.trace === 'number' &&
-    typeof p.time === 'number' &&
-    p.trace >= xMin &&
-    p.trace <= xMax
-  ));
-  const predInRange = (predicted || []).filter((p) => (
-    p &&
-    typeof p.trace === 'number' &&
-    typeof p.time === 'number' &&
-    p.trace >= xMin &&
-    p.trace <= xMax
-  ));
+  const manualInRange = resolvePicksInRange(manualPicks, xMin, xMax, timeTransform);
+  const predInRange = resolvePicksInRange(predicted, xMin, xMax, timeTransform);
 
   const manualX = new Float32Array(manualInRange.length);
   const manualY = new Float32Array(manualInRange.length);
@@ -173,6 +161,30 @@ export function buildPickMarkerTraces({
   };
 
   return [manualTrace, predTrace];
+}
+
+function resolvePickDisplayPoint(pick, timeTransform) {
+  if (!pick) return null;
+  const trace = Number(pick.trace);
+  const rawTime = Number(pick.time);
+  if (!Number.isFinite(trace) || !Number.isFinite(rawTime)) return null;
+
+  let displayTime = rawTime;
+  if (typeof timeTransform === 'function') {
+    displayTime = Number(timeTransform(trace, rawTime, pick));
+  }
+  if (!Number.isFinite(displayTime)) return null;
+  return { trace, time: displayTime };
+}
+
+function resolvePicksInRange(picks, xMin, xMax, timeTransform) {
+  return (picks || [])
+    .map((pick) => resolvePickDisplayPoint(pick, timeTransform))
+    .filter((point) => (
+      point &&
+      point.trace >= xMin &&
+      point.trace <= xMax
+    ));
 }
 
 export function buildPendingPickMarkerTrace({
