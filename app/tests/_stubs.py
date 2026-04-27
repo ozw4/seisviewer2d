@@ -13,10 +13,16 @@ from app.utils.baseline_artifacts import build_raw_baseline_payload, write_raw_b
 def make_stub_reader(
     section_arr: np.ndarray,
     *,
+    offsets: Sequence[float] | np.ndarray | None = None,
     key1_values: Sequence[int] = (7,),
     key_bytes: tuple[int, int] = (189, 193),
 ):
     section = np.asarray(section_arr, dtype=np.float32)
+    offsets_arr = (
+        None
+        if offsets is None
+        else np.asarray(offsets, dtype=np.float32)
+    )
     key1_values_arr = np.asarray(key1_values, dtype=np.int32)
     key1_byte = int(key_bytes[0])
     key2_byte = int(key_bytes[1])
@@ -28,6 +34,11 @@ def make_stub_reader(
         def get_section(self, _key1_val: int):
             arr = np.array(section, dtype=np.float32, copy=True)
             return SectionView(arr=arr, dtype=arr.dtype, scale=None)
+
+        def get_offsets_for_section(self, _key1_val: int, _offset_byte: int):
+            if offsets_arr is None:
+                raise ValueError('offsets unavailable')
+            return np.array(offsets_arr, dtype=np.float32, copy=True)
 
     _StubReader.key1_byte = key1_byte
     _StubReader.key2_byte = key2_byte

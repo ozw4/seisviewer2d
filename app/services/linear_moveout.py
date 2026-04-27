@@ -39,6 +39,78 @@ def compute_lmo_shift_seconds(
     return np.asarray(shifts, dtype=np.float64)
 
 
+def compute_lmo_raw_sample_bounds(
+    *,
+    y0: int,
+    y1: int,
+    shift_samples: np.ndarray,
+    n_samples: int,
+) -> tuple[int, int]:
+    """Return the clamped raw sample range needed for an LMO display window."""
+    shifts = np.asarray(shift_samples, dtype=np.float64)
+    if shifts.ndim != 1 or shifts.size == 0:
+        raise ValueError('shift_samples must be a non-empty 1D array')
+    if not np.all(np.isfinite(shifts)):
+        raise ValueError('shift_samples contain NaN or Inf')
+    sample_count = int(n_samples)
+    if sample_count <= 0:
+        raise ValueError('n_samples must be greater than 0')
+
+    raw_y0 = int(np.floor(int(y0) + float(np.min(shifts)))) - 1
+    raw_y1 = int(np.ceil(int(y1) + float(np.max(shifts)))) + 1
+    raw_y0 = min(sample_count - 1, max(0, raw_y0))
+    raw_y1 = min(sample_count - 1, max(0, raw_y1))
+    return raw_y0, raw_y1
+
+
+def resample_lmo_window(
+    expanded: np.ndarray,
+    *,
+    y0: int,
+    y1: int,
+    step_y: int,
+    raw_y0: int,
+    shift_samples: np.ndarray,
+) -> np.ndarray:
+    """Interpolate an expanded raw window onto the LMO display sample grid."""
+    arr = np.asarray(expanded, dtype=np.float32)
+    if arr.ndim != 2:
+        raise ValueError('expanded window must be 2D')
+    if int(step_y) < 1:
+        raise ValueError('step_y must be >= 1')
+
+    shifts = np.asarray(shift_samples, dtype=np.float64)
+    if shifts.ndim != 1:
+        raise ValueError('shift_samples must be a 1D array')
+    if shifts.shape[0] != arr.shape[0]:
+        raise ValueError('shift_samples length must match trace count')
+    if not np.all(np.isfinite(shifts)):
+        raise ValueError('shift_samples contain NaN or Inf')
+
+    display_samples = np.arange(int(y0), int(y1) + 1, int(step_y), dtype=np.float64)
+    if display_samples.size == 0:
+        raise ValueError('Requested window is empty')
+
+    out = np.zeros((arr.shape[0], display_samples.size), dtype=np.float32)
+    raw_width = int(arr.shape[1])
+    if raw_width == 0:
+        return out
+
+    max_source = float(raw_width - 1)
+    for trace_idx, shift in enumerate(shifts):
+        source = display_samples + float(shift) - float(raw_y0)
+        valid = (source >= 0.0) & (source <= max_source)
+        if not np.any(valid):
+            continue
+        source_valid = source[valid]
+        lo = np.floor(source_valid).astype(np.int64)
+        hi = np.minimum(lo + 1, raw_width - 1)
+        frac = (source_valid - lo).astype(np.float32, copy=False)
+        row = arr[trace_idx]
+        out[trace_idx, valid] = row[lo] * (1.0 - frac) + row[hi] * frac
+    return out
+
+
 def _validate_offsets(offsets: np.ndarray) -> np.ndarray:
     arr = np.asarray(offsets)
     if arr.ndim != 1:
@@ -114,4 +186,8 @@ def _reference_offset(
     return float(x[int(ref_trace)])
 
 
-__all__ = ['compute_lmo_shift_seconds']
+__all__ = [
+    'compute_lmo_raw_sample_bounds',
+    'compute_lmo_shift_seconds',
+    'resample_lmo_window',
+]
