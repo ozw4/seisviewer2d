@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -16,15 +17,17 @@ HEADER_CANDIDATES: list[tuple[int, str]] = [
     (21, "CDP"),
     (25, "CDP_TRACE"),
     (37, "OFFSET"),
-    (115, "NS"),
-    (117, "DT"),
     (189, "INLINE_3D"),
     (193, "CROSSLINE_3D"),
-    (197, "SHOT_POINT"),
+]
+
+METADATA_HEADER_CANDIDATES: list[tuple[int, str]] = [
+    (117, "DT"),
 ]
 
 _CANDIDATE_NAMES = dict(HEADER_CANDIDATES)
 _MAX_PAIR_GROUPS = 64
+_MAX_QC_TRACES = 50_000
 
 _KEY1_PRIOR = {
     1: 0.20,
@@ -34,11 +37,8 @@ _KEY1_PRIOR = {
     21: 0.70,
     25: 0.45,
     37: 0.20,
-    115: 0.0,
-    117: 0.0,
     189: 1.0,
     193: 0.65,
-    197: 0.65,
 }
 
 _KEY2_PRIOR = {
@@ -49,12 +49,16 @@ _KEY2_PRIOR = {
     21: 0.45,
     25: 0.80,
     37: 0.75,
-    115: 0.0,
-    117: 0.0,
     189: 0.45,
     193: 1.0,
-    197: 0.55,
 }
+
+
+@dataclass(frozen=True, slots=True)
+class Key1Grouping:
+    order: np.ndarray
+    starts: np.ndarray
+    ends: np.ndarray
 
 
 def inspect_segy_header_qc(path: str | Path) -> dict:
@@ -62,21 +66,24 @@ def inspect_segy_header_qc(path: str | Path) -> dict:
     segy_path = Path(path)
     header_values: dict[int, np.ndarray] = {}
     unavailable: dict[int, str] = {}
+    metadata_header_values: dict[int, np.ndarray] = {}
 
     with segyio.open(str(segy_path), 'r', ignore_geometry=True) as segy_file:
         n_traces = int(getattr(segy_file, 'tracecount', 0))
         n_samples = len(getattr(segy_file, 'samples', []))
         raw_dt = _read_binary_dt(segy_file)
+        trace_selector = _sample_trace_selector(n_traces)
+        expected_count = _selector_length(trace_selector, n_traces)
 
         for byte, _name in HEADER_CANDIDATES:
             try:
-                values = np.asarray(segy_file.attributes(byte)[:])
+                values = _read_header_values(segy_file, byte, trace_selector)
             except Exception as exc:  # noqa: BLE001
                 unavailable[byte] = f'Header could not be read: {exc}'
                 continue
 
-            if values.ndim != 1 or int(values.shape[0]) != n_traces:
-                unavailable[byte] = 'Header length does not match trace count'
+            if values.ndim != 1 or int(values.shape[0]) != expected_count:
+                unavailable[byte] = 'Header length does not match inspected trace count'
                 continue
 
             try:
@@ -84,9 +91,22 @@ def inspect_segy_header_qc(path: str | Path) -> dict:
             except (TypeError, ValueError) as exc:
                 unavailable[byte] = f'Header values are not integer-like: {exc}'
 
-    dt = _dt_seconds(raw_dt)
-    if dt is None and 117 in header_values:
-        dt = _dt_from_header_values(header_values[117])
+        dt = _dt_seconds(raw_dt)
+        if dt is None:
+            for byte, _name in METADATA_HEADER_CANDIDATES:
+                try:
+                    values = _read_header_values(segy_file, byte, trace_selector)
+                except Exception:  # noqa: BLE001
+                    continue
+                if values.ndim != 1 or int(values.shape[0]) != expected_count:
+                    continue
+                try:
+                    metadata_header_values[byte] = values.astype(np.int64, copy=False)
+                except (TypeError, ValueError):
+                    continue
+
+    if dt is None and 117 in metadata_header_values:
+        dt = _dt_from_header_values(metadata_header_values[117])
 
     return _build_qc_result(
         n_traces=n_traces,
@@ -95,6 +115,29 @@ def inspect_segy_header_qc(path: str | Path) -> dict:
         header_values=header_values,
         unavailable=unavailable,
     )
+
+
+def _sample_trace_selector(
+    n_traces: int,
+    max_qc_traces: int = _MAX_QC_TRACES,
+) -> slice | np.ndarray:
+    if n_traces <= max_qc_traces:
+        return slice(None)
+    return np.linspace(0, n_traces - 1, max_qc_traces, dtype=np.int64)
+
+
+def _selector_length(selector: slice | np.ndarray, n_traces: int) -> int:
+    if isinstance(selector, slice):
+        return len(range(*selector.indices(max(n_traces, 0))))
+    return int(selector.size)
+
+
+def _read_header_values(
+    segy_file: Any,
+    byte: int,
+    trace_selector: slice | np.ndarray,
+) -> np.ndarray:
+    return np.asarray(segy_file.attributes(byte)[trace_selector])
 
 
 def _read_binary_dt(segy_file: Any) -> Any:
@@ -136,7 +179,7 @@ def _build_qc_result(
             warning = unavailable.get(byte, 'Header is unavailable')
             item = _unavailable_header(byte, name, warning)
         else:
-            item = _score_key1_header(byte, name, values, n_traces)
+            item = _score_key1_header(byte, name, values, int(values.size))
         headers.append(item)
         headers_by_byte[byte] = item
 
@@ -304,6 +347,7 @@ def _rank_pairs(
         key1_stats = headers_by_byte[key1_byte]
         if key1_values is None:
             continue
+        key1_grouping = _build_key1_grouping(key1_values)
         for key2_byte, key2_name in HEADER_CANDIDATES:
             if key1_byte == key2_byte:
                 continue
@@ -314,7 +358,7 @@ def _rank_pairs(
                 _score_pair(
                     key1_byte=key1_byte,
                     key1_name=key1_name,
-                    key1_values=key1_values,
+                    key1_grouping=key1_grouping,
                     key1_stats=key1_stats,
                     key2_byte=key2_byte,
                     key2_name=key2_name,
@@ -329,13 +373,13 @@ def _score_pair(
     *,
     key1_byte: int,
     key1_name: str,
-    key1_values: np.ndarray,
+    key1_grouping: Key1Grouping,
     key1_stats: dict,
     key2_byte: int,
     key2_name: str,
     key2_values: np.ndarray,
 ) -> dict:
-    pair_metrics = _key2_within_group_metrics(key1_values, key2_values)
+    pair_metrics = _key2_within_group_metrics(key1_grouping, key2_values)
     key1_score = float(key1_stats.get('key1_score') or 0.0)
     key2_quality = (
         0.55 * pair_metrics['median_unique_ratio']
@@ -377,18 +421,10 @@ def _score_pair(
     }
 
 
-def _key2_within_group_metrics(
-    key1_values: np.ndarray,
-    key2_values: np.ndarray,
-) -> dict[str, float]:
-    if key1_values.size == 0 or key2_values.size == 0:
-        return {
-            'median_unique_ratio': 0.0,
-            'median_duplicate_rate': 1.0,
-            'monotonic_fraction': 0.0,
-            'constant_section_fraction': 1.0,
-            'evaluated_groups': 0.0,
-        }
+def _build_key1_grouping(key1_values: np.ndarray) -> Key1Grouping:
+    if key1_values.size == 0:
+        empty = np.asarray([], dtype=np.int64)
+        return Key1Grouping(order=empty, starts=empty, ends=empty)
 
     order = np.argsort(key1_values, kind='stable')
     sorted_key1 = key1_values[order]
@@ -402,14 +438,29 @@ def _key2_within_group_metrics(
         )
         starts = starts[sampled]
         ends = ends[sampled]
+    return Key1Grouping(order=order, starts=starts, ends=ends)
+
+
+def _key2_within_group_metrics(
+    key1_grouping: Key1Grouping,
+    key2_values: np.ndarray,
+) -> dict[str, float]:
+    if key1_grouping.order.size == 0 or key2_values.size == 0:
+        return {
+            'median_unique_ratio': 0.0,
+            'median_duplicate_rate': 1.0,
+            'monotonic_fraction': 0.0,
+            'constant_section_fraction': 1.0,
+            'evaluated_groups': 0.0,
+        }
 
     unique_ratios: list[float] = []
     duplicate_rates: list[float] = []
     monotonic: list[float] = []
     constant: list[float] = []
 
-    for start, end in zip(starts, ends):
-        group_order = order[int(start) : int(end)]
+    for start, end in zip(key1_grouping.starts, key1_grouping.ends):
+        group_order = key1_grouping.order[int(start) : int(end)]
         if group_order.size <= 1:
             continue
         values = key2_values[group_order]
