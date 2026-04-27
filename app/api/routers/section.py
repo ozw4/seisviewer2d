@@ -109,27 +109,17 @@ def _build_window_section_cache_key(
     reference_pipeline_key: str | None,
     reference_tap_label: str | None,
     scaling_mode: str,
-) -> tuple[
-    str,
-    int,
-    int,
-    int,
-    int | None,
-    int,
-    int,
-    int,
-    int,
-    int,
-    int,
-    bool,
-    str | None,
-    str | None,
-    str | None,
-    str | None,
-    str,
-]:
+    lmo_enabled: bool = False,
+    lmo_velocity_mps: float | None = None,
+    lmo_offset_byte: int = 37,
+    lmo_offset_scale: float = 1.0,
+    lmo_offset_mode: str = 'absolute',
+    lmo_ref_mode: str = 'min',
+    lmo_ref_trace: int | None = None,
+    lmo_polarity: int = 1,
+) -> tuple[object, ...]:
     """Build the canonical cache key for section-window binary payloads."""
-    return (
+    base_key: tuple[object, ...] = (
         file_id,
         int(key1),
         int(key1_byte),
@@ -147,6 +137,20 @@ def _build_window_section_cache_key(
         reference_pipeline_key,
         reference_tap_label,
         str(scaling_mode),
+    )
+    if not bool(lmo_enabled):
+        return base_key
+    return (
+        *base_key,
+        'lmo',
+        True,
+        None if lmo_velocity_mps is None else float(lmo_velocity_mps),
+        int(lmo_offset_byte),
+        float(lmo_offset_scale),
+        str(lmo_offset_mode),
+        str(lmo_ref_mode),
+        None if lmo_ref_trace is None else int(lmo_ref_trace),
+        int(lmo_polarity),
     )
 
 
@@ -315,6 +319,14 @@ def get_section_window_bin(
     scaling: Annotated[
         Literal['amax', 'tracewise'] | None, Query(description='Normalization mode')
     ] = None,
+    lmo_enabled: Annotated[bool, Query()] = False,
+    lmo_velocity_mps: Annotated[float | None, Query()] = None,
+    lmo_offset_byte: Annotated[int, Query()] = 37,
+    lmo_offset_scale: Annotated[float, Query()] = 1.0,
+    lmo_offset_mode: Annotated[str, Query()] = 'absolute',
+    lmo_ref_mode: Annotated[str, Query()] = 'min',
+    lmo_ref_trace: Annotated[int | None, Query()] = None,
+    lmo_polarity: Annotated[int, Query()] = 1,
 ) -> Response:
     """Return a quantized window of a section, optionally via a pipeline tap."""
     route_started = time.perf_counter()
@@ -343,6 +355,14 @@ def get_section_window_bin(
         reference_pipeline_key=reference_pipeline_key,
         reference_tap_label=reference_tap_label,
         scaling_mode=mode,
+        lmo_enabled=lmo_enabled,
+        lmo_velocity_mps=lmo_velocity_mps,
+        lmo_offset_byte=lmo_offset_byte,
+        lmo_offset_scale=lmo_offset_scale,
+        lmo_offset_mode=lmo_offset_mode,
+        lmo_ref_mode=lmo_ref_mode,
+        lmo_ref_trace=lmo_ref_trace,
+        lmo_polarity=lmo_polarity,
     )
 
     with state.lock:
@@ -380,6 +400,14 @@ def get_section_window_bin(
             reference_pipeline_key=reference_pipeline_key,
             reference_tap_label=reference_tap_label,
             scaling_mode=mode,
+            lmo_enabled=lmo_enabled,
+            lmo_velocity_mps=lmo_velocity_mps,
+            lmo_offset_byte=lmo_offset_byte,
+            lmo_offset_scale=lmo_offset_scale,
+            lmo_offset_mode=lmo_offset_mode,
+            lmo_ref_mode=lmo_ref_mode,
+            lmo_ref_trace=lmo_ref_trace,
+            lmo_polarity=lmo_polarity,
             trace_stats_cache=state.trace_stats_cache,
             trace_stats_lock=state.lock,
             reader_getter=lambda fid, kb1, kb2: get_reader(fid, kb1, kb2, state=state),
