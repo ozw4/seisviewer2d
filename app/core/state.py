@@ -6,7 +6,7 @@ import threading
 import time
 from collections import OrderedDict
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, Callable
 
 from app.core.settings import Settings
 from app.services.file_registry import FileRegistry
@@ -48,6 +48,7 @@ class ExpiringLRUCache(OrderedDict):
         ttl_sec: int = 1800,
         *,
         time_fn: Any = time.time,
+        on_discard: Callable[[Any, Any, str], None] | None = None,
     ):
         super().__init__()
         if capacity <= 0:
@@ -57,13 +58,35 @@ class ExpiringLRUCache(OrderedDict):
         self.capacity = capacity
         self.ttl_sec = ttl_sec
         self._time_fn = time_fn
+        self._on_discard = on_discard
+
+    def set_on_discard(
+        self, on_discard: Callable[[Any, Any, str], None] | None
+    ) -> None:
+        """Set a callback invoked when an entry is expired or evicted."""
+        self._on_discard = on_discard
+
+    def _notify_discard(self, key, item, reason: str) -> None:
+        if self._on_discard is None:
+            return
+        _, value = item
+        self._on_discard(key, value, reason)
+
+    def _pop_stored_item(self, key):
+        if not super().__contains__(key):
+            return None
+        item = super().__getitem__(key)
+        super().__delitem__(key)
+        return item
 
     def __contains__(self, key) -> bool:
         if not super().__contains__(key):
             return False
         expires_at, _ = super().__getitem__(key)
         if expires_at <= self._time_fn():
-            super().pop(key, None)
+            item = self._pop_stored_item(key)
+            if item is not None:
+                self._notify_discard(key, item, 'expired')
             return False
         return True
 
@@ -73,7 +96,8 @@ class ExpiringLRUCache(OrderedDict):
         expires_at = float(self._time_fn()) + float(self.ttl_sec)
         super().__setitem__(key, (expires_at, value))
         if len(self) > self.capacity:
-            self.popitem(last=False)
+            evicted_key, evicted_item = self.popitem(last=False)
+            self._notify_discard(evicted_key, evicted_item, 'capacity')
 
     def get(self, key, default=None):
         item = super().get(key)
@@ -81,19 +105,34 @@ class ExpiringLRUCache(OrderedDict):
             return default
         expires_at, value = item
         if expires_at <= self._time_fn():
-            super().pop(key, None)
+            item = self._pop_stored_item(key)
+            if item is not None:
+                self._notify_discard(key, item, 'expired')
             return default
         self.move_to_end(key)
         return value
 
     def pop(self, key, default=None):
-        item = super().pop(key, None)
+        item = self._pop_stored_item(key)
         if item is None:
             return default
         expires_at, value = item
         if expires_at <= self._time_fn():
+            self._notify_discard(key, item, 'expired')
             return default
         return value
+
+    def purge_expired(self) -> int:
+        """Remove expired entries and return the number removed."""
+        now = self._time_fn()
+        expired_keys = [
+            key for key, (expires_at, _) in super().items() if expires_at <= now
+        ]
+        for key in expired_keys:
+            item = self._pop_stored_item(key)
+            if item is not None:
+                self._notify_discard(key, item, 'expired')
+        return len(expired_keys)
 
     def set(self, key, value):
         self[key] = value

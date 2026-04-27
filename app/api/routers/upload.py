@@ -9,6 +9,7 @@ import logging
 import re
 import shutil
 import threading
+import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Annotated
@@ -23,6 +24,10 @@ from app.core.paths import (
     get_upload_dir,
 )
 from app.core.state import AppState
+from app.services.staged_upload_cleanup import (
+    cleanup_staged_upload,
+    cleanup_stale_staged_upload_dirs,
+)
 from app.utils.ingest import SegyIngestor
 from app.utils.baseline_artifacts import has_split_baseline_artifacts
 from app.utils.header_qc import inspect_segy_header_qc
@@ -35,6 +40,8 @@ UPLOAD_DIR = get_upload_dir()
 PROCESSED_DIR = get_processed_upload_dir()
 TRACE_DIR = get_trace_store_dir()
 UPLOAD_CHUNK_SIZE = 4 * 1024 * 1024
+STAGED_UPLOAD_CLEANUP_INTERVAL_SEC = 600
+_last_staged_cleanup_ts = 0.0
 
 
 @dataclass(frozen=True)
@@ -61,15 +68,49 @@ def _staged_upload_dir() -> Path:
 
 
 def _cleanup_staged_upload(raw_path: Path) -> None:
-    try:
-        raw_path.unlink(missing_ok=True)
-    except OSError:
-        logger.warning('Unable to delete staged SEG-Y file: %s', raw_path)
+    cleanup_staged_upload(raw_path, staged_root=_staged_upload_dir())
 
-    staged_dir = raw_path.parent
-    if staged_dir.parent != _staged_upload_dir():
+
+def _cleanup_discarded_staged_upload(_key, value, _reason: str) -> None:
+    if not isinstance(value, dict):
         return
-    shutil.rmtree(staged_dir, ignore_errors=True)
+    raw_path = value.get('raw_path')
+    if not isinstance(raw_path, (str, Path)):
+        return
+    _cleanup_staged_upload(Path(raw_path))
+
+
+def _ensure_staged_upload_cleanup_callback(state: AppState) -> None:
+    state.staged_uploads.set_on_discard(_cleanup_discarded_staged_upload)
+
+
+def cleanup_staged_uploads(
+    state: AppState,
+    *,
+    force: bool = False,
+    now_ts: float | None = None,
+) -> int:
+    """Purge expired staged records and stale staged directories."""
+    global _last_staged_cleanup_ts
+
+    now = time.time() if now_ts is None else float(now_ts)
+    with state.lock:
+        _ensure_staged_upload_cleanup_callback(state)
+        removed = state.staged_uploads.purge_expired()
+        active_ids = set(state.staged_uploads.keys())
+        ttl_sec = state.staged_uploads.ttl_sec
+
+    if not force and now - _last_staged_cleanup_ts < STAGED_UPLOAD_CLEANUP_INTERVAL_SEC:
+        return removed
+
+    _last_staged_cleanup_ts = now
+    removed += cleanup_stale_staged_upload_dirs(
+        staged_root=_staged_upload_dir(),
+        ttl_sec=ttl_sec,
+        active_ids=active_ids,
+        now_ts=now,
+    )
+    return removed
 
 
 def _sha256_file(path: Path) -> str:
@@ -560,6 +601,7 @@ async def stage_segy(
     file: Annotated[UploadFile, File(...)],
 ):
     state = get_state(request.app)
+    cleanup_staged_uploads(state)
     if not file.filename:
         raise HTTPException(
             status_code=400, detail='Uploaded file must have a filename'
@@ -609,6 +651,7 @@ async def ingest_staged_segy(
     key2_byte: Annotated[int, Form()] = 193,
 ):
     state = get_state(request.app)
+    cleanup_staged_uploads(state)
     with state.lock:
         staged = state.staged_uploads.get(staged_id)
     if staged is None:

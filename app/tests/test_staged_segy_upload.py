@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 from pathlib import Path
 
 import numpy as np
@@ -209,6 +210,85 @@ def test_stage_segy_qc_failure_removes_staged_file(_staged_env, monkeypatch):
     assert len(app.state.sv.staged_uploads) == 0
     staged_root = Path(upload_mod.UPLOAD_DIR) / 'staged'
     assert not staged_root.exists() or list(staged_root.iterdir()) == []
+
+
+def test_staged_upload_capacity_eviction_removes_staged_file(
+    _staged_env,
+    monkeypatch,
+):
+    client, _upload_mod, _calls = _staged_env
+    cache = app.state.sv.staged_uploads
+    monkeypatch.setattr(cache, 'capacity', 1)
+
+    first = _stage(client, name='first.sgy', data=b'first')
+    first_record = app.state.sv.staged_uploads.get(first['staged_id'])
+    assert isinstance(first_record, dict)
+    first_path = Path(first_record['raw_path'])
+    first_dir = first_path.parent
+
+    second = _stage(client, name='second.sgy', data=b'second')
+    second_record = app.state.sv.staged_uploads.get(second['staged_id'])
+    assert isinstance(second_record, dict)
+    second_path = Path(second_record['raw_path'])
+
+    assert app.state.sv.staged_uploads.get(first['staged_id']) is None
+    assert not first_path.exists()
+    assert not first_dir.exists()
+    assert second_path.exists()
+
+
+def test_staged_upload_ttl_expiry_removes_staged_file(_staged_env, monkeypatch):
+    client, _upload_mod, _calls = _staged_env
+    cache = app.state.sv.staged_uploads
+    clock = {'now': 1000.0}
+    monkeypatch.setattr(cache, 'ttl_sec', 1)
+    monkeypatch.setattr(cache, '_time_fn', lambda: clock['now'])
+
+    staged = _stage(client)
+    record = app.state.sv.staged_uploads.get(staged['staged_id'])
+    assert isinstance(record, dict)
+    staged_path = Path(record['raw_path'])
+    staged_dir = staged_path.parent
+
+    clock['now'] = 1002.0
+    assert app.state.sv.staged_uploads.get(staged['staged_id']) is None
+    assert not staged_path.exists()
+    assert not staged_dir.exists()
+
+
+def test_stale_staged_upload_dir_cleanup_removes_orphan(_staged_env):
+    _client, upload_mod, _calls = _staged_env
+    state = app.state.sv
+    now = 10_000.0
+    staged_root = Path(upload_mod.UPLOAD_DIR) / 'staged'
+    stale_dir = staged_root / 'orphaned-stage'
+    stale_file = stale_dir / 'orphan.sgy'
+    stale_dir.mkdir(parents=True)
+    stale_file.write_bytes(b'orphan')
+    stale_mtime = now - float(state.staged_uploads.ttl_sec) - 1.0
+    os.utime(stale_dir, (stale_mtime, stale_mtime))
+    os.utime(stale_file, (stale_mtime, stale_mtime))
+
+    removed = upload_mod.cleanup_staged_uploads(state, force=True, now_ts=now)
+
+    assert removed == 1
+    assert not stale_dir.exists()
+
+
+def test_staged_upload_cleanup_refuses_paths_outside_staged_root(
+    _staged_env,
+    tmp_path: Path,
+):
+    _client, upload_mod, _calls = _staged_env
+    outside_dir = tmp_path / 'outside'
+    outside_path = outside_dir / 'unsafe.sgy'
+    outside_dir.mkdir()
+    outside_path.write_bytes(b'unsafe')
+
+    upload_mod._cleanup_staged_upload(outside_path)
+
+    assert outside_path.exists()
+    assert outside_dir.exists()
 
 
 def test_ingest_staged_segy_reused_store_metadata_points_to_durable_raw(
