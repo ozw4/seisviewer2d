@@ -16,13 +16,31 @@ from app.services.fbpick_support import OFFSET_BYTE_FIXED
 from app.tests._stubs import make_stub_reader, write_baseline_raw
 
 
-def _decode_window_payload(resp) -> tuple[np.ndarray, tuple[int, int], float]:
+def _unpack_window_response(resp) -> dict[str, object]:
     assert resp.headers.get('Content-Encoding') == 'gzip'
-    payload = msgpack.unpackb(gzip.decompress(resp.body))
+    return msgpack.unpackb(gzip.decompress(resp.body), raw=False)
+
+
+def _decode_window_payload(resp) -> tuple[np.ndarray, tuple[int, int], float]:
+    payload = _unpack_window_response(resp)
     shape = tuple(int(x) for x in payload['shape'])
     scale = float(payload['scale'])
     data = np.frombuffer(payload['data'], dtype=np.int8).reshape(shape)
     return data, (shape[0], shape[1]), scale
+
+
+def _assert_same_window_payload(first, second) -> None:
+    first_payload = _unpack_window_response(first)
+    second_payload = _unpack_window_response(second)
+
+    assert first_payload.keys() == second_payload.keys()
+    assert first_payload['shape'] == second_payload['shape']
+    assert first_payload['scale'] == second_payload['scale']
+    assert first_payload.get('dt') == second_payload.get('dt')
+
+    first_data = np.frombuffer(first_payload['data'], dtype=np.int8)
+    second_data = np.frombuffer(second_payload['data'], dtype=np.int8)
+    np.testing.assert_array_equal(first_data, second_data)
 
 
 @pytest.fixture(autouse=True)
@@ -119,7 +137,7 @@ def test_lmo_disabled_ignores_lmo_params_for_payload_and_cache(monkeypatch, tmp_
         lmo_ref_trace=None,
     )
 
-    assert first.body == second.body
+    _assert_same_window_payload(first, second)
     assert first.headers['X-SV-Cache'] == 'miss'
     assert second.headers['X-SV-Cache'] == 'hit'
 
@@ -138,7 +156,7 @@ def test_lmo_zero_shift_matches_existing_window(monkeypatch, tmp_path):
         lmo_velocity_mps=1000.0,
     )
 
-    assert plain.body == lmo.body
+    _assert_same_window_payload(plain, lmo)
 
 
 def test_lmo_default_offset_byte_uses_fixed_offset_constant(monkeypatch, tmp_path):
@@ -325,7 +343,9 @@ def test_lmo_enabled_cache_key_includes_lmo_params(monkeypatch, tmp_path):
 
     assert slow.headers['X-SV-Cache'] == 'miss'
     assert fast.headers['X-SV-Cache'] == 'miss'
-    assert slow.body != fast.body
+    slow_data, _, _ = _decode_window_payload(slow)
+    fast_data, _, _ = _decode_window_payload(fast)
+    assert not np.array_equal(slow_data, fast_data)
 
 
 @pytest.mark.parametrize(
