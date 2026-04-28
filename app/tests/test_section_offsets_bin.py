@@ -61,11 +61,13 @@ def _clean_state():
     state = sec.get_state(app)
     state.cached_readers.clear()
     state.window_section_cache.clear()
+    state.section_offsets_cache.clear()
     state.trace_stats_cache.clear()
     yield
     app.state.sv.file_registry.clear()
     state.cached_readers.clear()
     state.window_section_cache.clear()
+    state.section_offsets_cache.clear()
     state.trace_stats_cache.clear()
 
 
@@ -135,6 +137,7 @@ def test_get_section_offsets_bin_defaults_offset_byte_to_37(monkeypatch):
 def test_get_section_offsets_bin_uses_cache_key_metadata(monkeypatch):
     reader = _OffsetsReader(offsets=[1.0, 2.0, 3.0])
     _install_reader(monkeypatch, reader)
+    state = sec.get_state(app)
     params = {
         'file_id': 'f',
         'key1': 7,
@@ -157,6 +160,8 @@ def test_get_section_offsets_bin_uses_cache_key_metadata(monkeypatch):
     np.testing.assert_allclose(first_offsets, np.array([1.0, 2.0, 3.0], dtype=np.float32))
     np.testing.assert_allclose(second_offsets, first_offsets)
     assert reader.requested_offset_bytes == [37]
+    assert len(state.section_offsets_cache) == 1
+    assert len(state.window_section_cache) == 0
 
 
 def test_get_section_offsets_bin_unknown_file_id_returns_404():

@@ -3044,6 +3044,29 @@
       return rawTime;
     }
 
+    async function ensureLinePickLmoOffsetsReady() {
+      const lmo = typeof window.getCurrentLinearMoveout === 'function'
+        ? window.getCurrentLinearMoveout()
+        : null;
+      if (!lmo || !lmo.enabled) return true;
+      if (typeof window.ensureLmoPickOffsetsReady !== 'function') {
+        console.warn('LMO line pick skipped because section offsets are not available.');
+        return false;
+      }
+      const ready = await window.ensureLmoPickOffsetsReady();
+      if (!ready) {
+        console.warn('LMO line pick skipped because section offsets are not ready.');
+        return false;
+      }
+      return true;
+    }
+
+    function displayPickTimeToRawTimeSync(traceInt, displayTime) {
+      return typeof window.displayTimeToRawTime === 'function'
+        ? window.displayTimeToRawTime(traceInt, displayTime)
+        : displayTime;
+    }
+
     async function handlePickNormalized({ trace, time, shiftKey, ctrlKey, altKey }) {
       if (isPickMode && dragOverride === 'pan') return;
       if (!Number.isFinite(trace) || !Number.isFinite(time)) return;
@@ -3111,6 +3134,8 @@
           const xEnd = Math.round(Math.max(x0, x1));
           const slope = x1 === x0 ? 0 : (y1 - y0) / (x1 - x0);
 
+          if (!(await ensureLinePickLmoOffsetsReady())) return;
+
           const promises = [];
           const historyChanges = [];
           const linePickWrites = [];
@@ -3118,8 +3143,11 @@
             const y = x1 === x0 ? y1 : y0 + slope * (x - x0);
             const snapped = snapTimeFromDataY(y);
             const displayTime = adjustPickToFeature(x, snapped);
-            const rawTime = await displayPickTimeToRawTime(x, displayTime);
-            if (rawTime === null) return;
+            const rawTime = displayPickTimeToRawTimeSync(x, displayTime);
+            if (!Number.isFinite(rawTime)) {
+              console.warn('LMO line pick skipped because display-to-raw time conversion failed.');
+              return;
+            }
 
             const before = getLocalPickOnTraceForDisplayClick(x, displayTime);
             linePickWrites.push({ trace: x, before, rawTime });

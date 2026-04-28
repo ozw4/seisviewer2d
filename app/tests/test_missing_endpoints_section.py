@@ -18,12 +18,14 @@ def client() -> TestClient:
     state = app.state.sv
     state.cached_readers.clear()
     state.window_section_cache.clear()
+    state.section_offsets_cache.clear()
     state.trace_stats_cache.clear()
     with TestClient(app) as c:
         yield c
     app.state.sv.file_registry.clear()
     state.cached_readers.clear()
     state.window_section_cache.clear()
+    state.section_offsets_cache.clear()
     state.trace_stats_cache.clear()
 
 

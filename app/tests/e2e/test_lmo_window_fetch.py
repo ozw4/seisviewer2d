@@ -93,7 +93,7 @@ def test_playwright_lmo_window_request_artifacts_are_canonical(
     assert result["disabledA"]["params"]["lmo_enabled"] == "false"
     assert result["disabledA"]["payloadLmoKey"] == "lmo:off"
     assert result["disabledA"]["requestLmoKey"] == "lmo:off"
-    assert "lmo=lmo:off" in result["disabledA"]["cacheKey"]
+    assert "lmo=lmo%3Aoff" in result["disabledA"]["cacheKey"]
     for param in lmo_params:
         assert param not in result["disabledA"]["params"]
 
@@ -113,7 +113,7 @@ def test_playwright_lmo_window_request_artifacts_are_canonical(
     }.items():
         assert enabled_params[param] == value
     assert (
-        "lmo=lmo:on|v=2000|ob=41|os=2.5"
+        "lmo=lmo%3Aon%7Cv%3D2000%7Cob%3D41%7Cos%3D2.5"
         in result["enabled"]["cacheKey"]
     )
     assert result["enabled"]["payloadLmoKey"] == "lmo:on|v=2000|ob=41|os=2.5"

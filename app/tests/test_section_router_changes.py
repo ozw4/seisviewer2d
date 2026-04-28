@@ -266,6 +266,7 @@ def test_get_section_returns_json_for_value(monkeypatch):
 def test_get_section_window_bin_happy_path(monkeypatch, tmp_path):
     state = sec.get_state(app)
     state.window_section_cache.clear()
+    state.section_offsets_cache.clear()
     state.trace_stats_cache.clear()
 
     class _StubReader:

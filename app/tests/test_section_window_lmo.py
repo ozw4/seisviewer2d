@@ -50,6 +50,7 @@ def _clean_section_lmo_env(monkeypatch):
     app.state.sv.file_registry.clear()
     state = sec.get_state(app)
     state.window_section_cache.clear()
+    state.section_offsets_cache.clear()
     state.pipeline_tap_cache.clear()
     state.trace_stats_cache.clear()
     state.cached_readers.clear()
@@ -63,6 +64,7 @@ def _clean_section_lmo_env(monkeypatch):
     yield
     app.state.sv.file_registry.clear()
     state.window_section_cache.clear()
+    state.section_offsets_cache.clear()
     state.pipeline_tap_cache.clear()
     state.trace_stats_cache.clear()
     state.cached_readers.clear()

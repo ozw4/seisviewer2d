@@ -337,7 +337,7 @@ def get_section_offsets_bin(
     )
 
     with state.lock:
-        cached_payload = state.window_section_cache.get(cache_key)
+        cached_payload = state.section_offsets_cache.get(cache_key)
     if cached_payload is not None:
         return Response(
             cached_payload,
@@ -366,9 +366,9 @@ def get_section_offsets_bin(
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
     with state.lock:
-        cached_payload = state.window_section_cache.get(cache_key)
+        cached_payload = state.section_offsets_cache.get(cache_key)
         if cached_payload is None:
-            state.window_section_cache.set(cache_key, compressed)
+            state.section_offsets_cache.set(cache_key, compressed)
             cache_state = 'miss'
         else:
             compressed = cached_payload
