@@ -30,6 +30,9 @@
     const LMO_FIXED_REF_MODE = 'min';
     const LMO_FIXED_REF_TRACE = 0;
     const LMO_FIXED_POLARITY = 1;
+    const LMO_SECTION_OFFSET_CACHE_MAX_ENTRIES = 64;
+    const LMO_SHIFT_SECONDS_CACHE_MAX_ENTRIES = 128;
+    const LMO_WARNING_KEY_MAX_ENTRIES = 128;
     const lmoSectionOffsetCache = new Map();
     const lmoSectionOffsetInflight = new Map();
     const lmoShiftSecondsCache = new Map();
@@ -123,6 +126,43 @@
     function parseLmoInteger(value) {
       const parsed = Number(value);
       return Number.isInteger(parsed) ? parsed : null;
+    }
+
+    function setBoundedMapEntry(map, key, value, maxEntries) {
+      if (map.has(key)) {
+        map.delete(key);
+      }
+      map.set(key, value);
+
+      while (map.size > maxEntries) {
+        const oldestKey = map.keys().next().value;
+        if (oldestKey === undefined) break;
+        map.delete(oldestKey);
+      }
+
+      return value;
+    }
+
+    function addBoundedSetEntry(set, value, maxEntries) {
+      if (set.has(value)) {
+        set.delete(value);
+      }
+      set.add(value);
+
+      while (set.size > maxEntries) {
+        const oldestValue = set.values().next().value;
+        if (oldestValue === undefined) break;
+        set.delete(oldestValue);
+      }
+
+      return value;
+    }
+
+    function clearLinearMoveoutRuntimeCaches() {
+      lmoSectionOffsetCache.clear();
+      lmoSectionOffsetInflight.clear();
+      lmoShiftSecondsCache.clear();
+      lmoPickOverlayWarningKeys.clear();
     }
 
     function normalizeLinearMoveoutState(value = {}, base = LMO_DEFAULTS) {
@@ -368,7 +408,12 @@
         })
         .then((buffer) => {
           const offsets = decodeSectionOffsetsPayload(buffer);
-          lmoSectionOffsetCache.set(offsetKey, offsets);
+          setBoundedMapEntry(
+            lmoSectionOffsetCache,
+            offsetKey,
+            offsets,
+            LMO_SECTION_OFFSET_CACHE_MAX_ENTRIES,
+          );
           loaded = true;
           return offsets;
         })
@@ -434,7 +479,7 @@
     function warnLmoPickOverlaySkipped(context) {
       const key = context?.lmoKey || currentLmoKey();
       if (lmoPickOverlayWarningKeys.has(key)) return;
-      lmoPickOverlayWarningKeys.add(key);
+      addBoundedSetEntry(lmoPickOverlayWarningKeys, key, LMO_WARNING_KEY_MAX_ENTRIES);
       console.warn('LMO pick overlay skipped because section offsets are not ready.');
     }
 
@@ -457,7 +502,7 @@
 
       const shifts = computeLmoShiftSecondsForOffsets(offsets, context.lmo);
       if (!shifts) return null;
-      lmoShiftSecondsCache.set(shiftKey, shifts);
+      setBoundedMapEntry(lmoShiftSecondsCache, shiftKey, shifts, LMO_SHIFT_SECONDS_CACHE_MAX_ENTRIES);
       return { shifts, lmo: context.lmo, lmoKey: context.lmoKey };
     }
 
@@ -566,6 +611,7 @@
     window.displayTimeToRawTime = displayTimeToRawTime;
     window.getLmoShiftSecondsForTrace = getLmoShiftSecondsForTrace;
     window.ensureLmoPickOffsetsReady = ensureLmoPickOffsetsReady;
+    window.clearLinearMoveoutRuntimeCaches = clearLinearMoveoutRuntimeCaches;
     window.pickRawTimeToDisplayTime = pickRawTimeToDisplayTime;
     window.onLinearMoveoutControlChange = onLinearMoveoutControlChange;
     persistLinearMoveoutState(currentLinearMoveout);

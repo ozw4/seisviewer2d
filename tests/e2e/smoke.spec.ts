@@ -1,7 +1,5 @@
 import { test, expect } from '@playwright/test';
 
-const BASE_URL = process.env.PLAYWRIGHT_BASE_URL ?? 'http://127.0.0.1:8000';
-
 type LinearMoveoutState = {
 	enabled: boolean;
 	velocityMps: number;
@@ -23,17 +21,17 @@ declare global {
 }
 
 test('upload page loads', async ({ page }) => {
-	await page.goto(`${BASE_URL}/upload`);
+	await page.goto('/upload');
 	await expect(page).toHaveTitle(/Open SEG-Y/i);
 });
 
 test('main viewer page loads', async ({ page }) => {
-	await page.goto(`${BASE_URL}/`);
+	await page.goto('/');
 	await expect(page.locator('body')).toBeVisible();
 });
 
 test('viewer linear moveout controls persist normalized state', async ({ page }) => {
-	await page.goto(`${BASE_URL}/`);
+	await page.goto('/');
 
 	await expect(page.getByText('Linear Moveout')).toBeVisible();
 	await expect(page.locator('#lmoEnabled')).not.toBeChecked();

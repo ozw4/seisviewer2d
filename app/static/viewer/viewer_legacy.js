@@ -3306,7 +3306,11 @@
 
       if (fileIdEl) {
         fileIdEl.addEventListener('change', async () => {
+          const previousFileId = currentFileId;
           currentFileId = fileIdEl.value || '';
+          if (currentFileId !== previousFileId && typeof clearLinearMoveoutRuntimeCaches === 'function') {
+            clearLinearMoveoutRuntimeCaches();
+          }
           key1Values = [];
           sectionShape = null;
           savedXRange = null;
