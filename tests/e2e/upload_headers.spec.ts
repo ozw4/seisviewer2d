@@ -1,6 +1,5 @@
 import { expect, test, type Page } from '@playwright/test';
 
-const BASE_URL = process.env.PLAYWRIGHT_BASE_URL ?? 'http://127.0.0.1:8000';
 
 function headerQcPayload(stagedId: string, recommendedPairs = [
 	{
@@ -70,7 +69,7 @@ async function gotoUpload(page: Page) {
 			body: JSON.stringify({ datasets: [] }),
 		});
 	});
-	await page.goto(`${BASE_URL}/upload`);
+	await page.goto('/upload');
 }
 
 async function selectSegyFile(page: Page, name = 'line001.sgy') {
