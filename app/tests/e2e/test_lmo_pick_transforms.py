@@ -97,10 +97,10 @@ def test_playwright_lmo_pick_helpers_apply_display_raw_transforms(
 
     assert result == {
         "beforeReadyIsNaN": True,
-        "display": 5,
-        "rawFromDisplay": 9,
-        "manualY": [5],
-        "predictedY": [5],
+        "display": 6,
+        "rawFromDisplay": 8,
+        "manualY": [6],
+        "predictedY": [6],
         "offsetFetches": 1,
         "offDisplay": 9,
         "offRaw": 5,

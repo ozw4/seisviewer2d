@@ -1314,7 +1314,7 @@
                 <div class="control-row">
                   <label class="control-field"><input type="checkbox" id="lmoEnabled">Enable LMO</label>
                   <label class="control-field">Velocity:
-                    <input id="lmoVelocityMps" type="number" min="0.000001" step="1" value="1500" style="width: 7em;">
+                    <input id="lmoVelocityMps" type="number" min="1" step="1" inputmode="numeric" pattern="[0-9]*" value="1500" style="width: 7em;">
                     m/s
                   </label>
                   <label class="control-field">Offset byte:
@@ -1322,32 +1322,6 @@
                   </label>
                   <label class="control-field">Offset scale:
                     <input id="lmoOffsetScale" type="number" step="0.1" value="1" style="width: 6em;">
-                  </label>
-                </div>
-                <div class="control-row">
-                  <label class="control-field">Offset mode:
-                    <select id="lmoOffsetMode">
-                      <option value="absolute" selected>absolute</option>
-                      <option value="signed">signed</option>
-                    </select>
-                  </label>
-                  <label class="control-field">Reference mode:
-                    <select id="lmoRefMode">
-                      <option value="min" selected>min</option>
-                      <option value="first">first</option>
-                      <option value="center">center</option>
-                      <option value="trace">trace</option>
-                      <option value="zero">zero</option>
-                    </select>
-                  </label>
-                  <label class="control-field">Reference trace:
-                    <input id="lmoRefTrace" type="number" min="0" step="1" value="0" style="width: 6em;" disabled>
-                  </label>
-                  <label class="control-field">Polarity:
-                    <select id="lmoPolarity">
-                      <option value="1" selected>normal</option>
-                      <option value="-1">reverse</option>
-                    </select>
                   </label>
                 </div>
               </div>
