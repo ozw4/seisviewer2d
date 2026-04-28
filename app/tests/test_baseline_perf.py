@@ -40,12 +40,14 @@ def _clean_state():
     app.state.sv.file_registry.clear()
     state.cached_readers.clear()
     state.window_section_cache.clear()
+    state.section_offsets_cache.clear()
     state.trace_stats_cache.clear()
     _BASELINE_CACHE.clear()
     yield
     app.state.sv.file_registry.clear()
     state.cached_readers.clear()
     state.window_section_cache.clear()
+    state.section_offsets_cache.clear()
     state.trace_stats_cache.clear()
     _BASELINE_CACHE.clear()
 
@@ -54,6 +56,7 @@ def _clear_runtime_caches() -> None:
     state = get_state(app)
     state.cached_readers.clear()
     state.window_section_cache.clear()
+    state.section_offsets_cache.clear()
     state.trace_stats_cache.clear()
     _BASELINE_CACHE.clear()
 

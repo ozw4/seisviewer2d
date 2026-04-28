@@ -243,6 +243,7 @@ class AppState:
     jobs: JobManager = field(default_factory=JobManager)
     pipeline_tap_cache: LRUCache = field(default_factory=lambda: LRUCache(16))
     window_section_cache: LRUCache = field(default_factory=lambda: LRUCache(32))
+    section_offsets_cache: LRUCache = field(default_factory=lambda: LRUCache(64))
     trace_stats_cache: TraceStatsCache = field(init=False)
 
     def __post_init__(self) -> None:

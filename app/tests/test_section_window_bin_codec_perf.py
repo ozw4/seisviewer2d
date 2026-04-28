@@ -34,6 +34,7 @@ def _clean_env(monkeypatch):
     state.cached_readers.clear()
     state.pipeline_tap_cache.clear()
     state.window_section_cache.clear()
+    state.section_offsets_cache.clear()
     state.trace_stats_cache.clear()
     _BASELINE_CACHE.clear()
     yield
@@ -41,6 +42,7 @@ def _clean_env(monkeypatch):
     state.cached_readers.clear()
     state.pipeline_tap_cache.clear()
     state.window_section_cache.clear()
+    state.section_offsets_cache.clear()
     state.trace_stats_cache.clear()
     _BASELINE_CACHE.clear()
 
@@ -164,6 +166,7 @@ def _clear_runtime_caches() -> None:
     state.cached_readers.clear()
     state.pipeline_tap_cache.clear()
     state.window_section_cache.clear()
+    state.section_offsets_cache.clear()
     state.trace_stats_cache.clear()
     _BASELINE_CACHE.clear()
 

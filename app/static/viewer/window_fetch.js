@@ -292,6 +292,40 @@
       syncWindowCacheStats();
     }
 
+    function getSafeLmoKey() {
+      return typeof window.currentLmoKey === 'function'
+        ? window.currentLmoKey()
+        : 'lmo:off';
+    }
+
+    function getSafeLmoState() {
+      if (typeof window.getCurrentLinearMoveout !== 'function') {
+        return { enabled: false };
+      }
+      return window.getCurrentLinearMoveout();
+    }
+
+    function appendLinearMoveoutParams(params) {
+      const lmo = getSafeLmoState();
+      if (!lmo || !lmo.enabled) {
+        params.set('lmo_enabled', 'false');
+        return;
+      }
+
+      params.set('lmo_enabled', 'true');
+      params.set('lmo_velocity_mps', String(lmo.velocityMps));
+      params.set('lmo_offset_byte', String(lmo.offsetByte));
+      params.set('lmo_offset_scale', String(lmo.offsetScale));
+      params.set('lmo_offset_mode', lmo.offsetMode);
+      params.set('lmo_ref_mode', lmo.refMode);
+      params.set('lmo_ref_trace', String(lmo.refTrace));
+      params.set('lmo_polarity', String(lmo.polarity));
+    }
+
+    function isCurrentLmoKey(lmoKey) {
+      return lmoKey === getSafeLmoKey();
+    }
+
     function buildWindowCacheKey({
       fileId,
       key1,
@@ -313,6 +347,7 @@
       transpose,
       mode,
       purpose,
+      lmoKey,
     }) {
       const enc = (value) => encodeURIComponent(value == null ? '' : String(value));
       const parts = ['svwin'];
@@ -335,6 +370,7 @@
         `sc=${enc(scaling)}`,
         `tr=${enc(transpose)}`,
         `mode=${enc(mode)}`,
+        `lmo=${enc(lmoKey || 'lmo:off')}`,
       );
       return parts.join('|');
     }
@@ -366,6 +402,7 @@
       const resolvedReferenceTapLabel = (
         referenceTapLabel && resolvedReferencePipelineKey
       ) ? referenceTapLabel : null;
+      const lmoKey = getSafeLmoKey();
       const params = new URLSearchParams({
         file_id: String(fileId),
         key1: String(key1Val),
@@ -388,6 +425,28 @@
       }
       params.set('transpose', transpose);
       params.set('scaling', scaling);
+      appendLinearMoveoutParams(params);
+
+      const resolvedRequestContext = {
+        fileId,
+        key1Val,
+        key1Byte,
+        key2Byte,
+        windowInfo,
+        stepX,
+        stepY,
+        requestedLayer,
+        effectiveLayer,
+        pipelineKey: resolvedPipelineKey,
+        tapLabel: resolvedTapLabel,
+        referencePipelineKey: resolvedReferencePipelineKey,
+        referenceTapLabel: resolvedReferenceTapLabel,
+        scaling,
+        transpose,
+        mode,
+        purpose,
+        lmoKey,
+      };
 
       return {
         params,
@@ -412,7 +471,9 @@
           transpose,
           mode,
           purpose,
+          lmoKey,
         }),
+        requestContext: resolvedRequestContext,
         payloadMeta: {
           key1: key1Val,
           requestedLayer,
@@ -427,6 +488,7 @@
           stepY,
           mode,
           purpose,
+          lmoKey,
         },
       };
     }
@@ -751,6 +813,7 @@
             return null;
           }
           const buf = await res.arrayBuffer();
+          if (!isCurrentLmoKey(payloadMeta.lmoKey)) return null;
           let payload = null;
           if (workerEnabled) {
             const decodeJob = enqueueDecodeJob(DECODE_WORKER_KIND_PREFETCH, {
@@ -767,6 +830,7 @@
             const decoded = await decodeJob.promise;
             decodeJobId = null;
             if (!decoded) return null;
+            if (!isCurrentLmoKey(payloadMeta.lmoKey)) return null;
             payload = buildWindowPayloadFromWorkerDecoded(
               decoded,
               payloadMeta,
@@ -785,6 +849,7 @@
             );
           }
           if (!payload) return null;
+          if (!isCurrentLmoKey(payload.lmoKey)) return null;
           const cachePayload = payload.__perf ? { ...payload, __perf: null } : payload;
           windowCacheSet(cacheKey, cachePayload);
           windowCacheStats.prefetchDone += 1;
@@ -1033,10 +1098,11 @@
         transpose,
         mode,
       };
-      const { params, cacheKey, payloadMeta } = buildWindowRequestArtifacts(requestContext);
+      const { params, cacheKey, payloadMeta, requestContext: resolvedRequestContext } = buildWindowRequestArtifacts(requestContext);
       cancelActiveMainDecodeJob();
       const cachedPayload = windowCacheGet(cacheKey);
       if (cachedPayload) {
+        if (!isCurrentLmoKey(cachedPayload.lmoKey)) return;
         bumpWindowFetchId();
         if (windowFetchCtrl) {
           windowFetchCtrl.abort();
@@ -1050,7 +1116,7 @@
           return;
         }
         renderWindowPayload(cachedPayload);
-        maybePrefetchAroundCurrentViewport(requestContext);
+        maybePrefetchAroundCurrentViewport(resolvedRequestContext);
         return;
       }
 
@@ -1088,6 +1154,7 @@
         if (perfEnabled) tBuf = performance.now();
         if (perfEnabled) bytes = buf.byteLength;
         if (requestId !== activeWindowFetchId) return; // stale
+        if (!isCurrentLmoKey(payloadMeta.lmoKey)) return;
 
         if (perfEnabled) tDec0 = performance.now();
         let windowPayload = null;
@@ -1107,6 +1174,7 @@
           decodeJobId = null;
           if (!decoded) return;
           if (requestId !== activeWindowFetchId) return;
+          if (!isCurrentLmoKey(payloadMeta.lmoKey)) return;
           if (Number.isFinite(decoded?.dt) && decoded.dt > 0) {
             applyServerDt({ dt: decoded.dt });
           }
@@ -1128,6 +1196,7 @@
         }
         if (perfEnabled) tDec1 = performance.now();
         if (!windowPayload) return;
+        if (!isCurrentLmoKey(windowPayload.lmoKey)) return;
         windowPayload.__perf = perfEnabled ? {
           id: requestId,
           mode,
@@ -1140,6 +1209,7 @@
         } : null;
 
         if (requestId !== activeWindowFetchId) return; // stale (decode/render phase)
+        if (!isCurrentLmoKey(windowPayload.lmoKey)) return;
         const cachePayload = windowPayload.__perf ? { ...windowPayload, __perf: null } : windowPayload;
         windowCacheSet(cacheKey, cachePayload);
         latestSeismicData = null;
@@ -1150,7 +1220,7 @@
         }
         D('WINDOW@recv', { mode, shape: windowPayload.shape, stepX: windowPayload.stepX, stepY: windowPayload.stepY });
         renderWindowPayload(windowPayload);
-        maybePrefetchAroundCurrentViewport(requestContext);
+        maybePrefetchAroundCurrentViewport(resolvedRequestContext);
 
       } catch (err) {
         if (Number.isInteger(decodeJobId)) {
@@ -1179,3 +1249,12 @@
         if (requestId === activeWindowFetchId) hideLoading();
       }
     }
+
+    window.addEventListener('lmo:change', () => {
+      if (typeof scheduleWindowFetch === 'function') {
+        scheduleWindowFetch();
+      }
+      if (typeof schedulePickOverlayUpdate === 'function') {
+        schedulePickOverlayUpdate();
+      }
+    });

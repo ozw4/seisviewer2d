@@ -55,6 +55,7 @@ def _clean_env(monkeypatch):
     app.state.sv.file_registry.clear()
     state = sec.get_state(app)
     state.window_section_cache.clear()
+    state.section_offsets_cache.clear()
     state.trace_stats_cache.clear()
     state.cached_readers.clear()
 
@@ -70,6 +71,7 @@ def _clean_env(monkeypatch):
 
     app.state.sv.file_registry.clear()
     state.window_section_cache.clear()
+    state.section_offsets_cache.clear()
     state.trace_stats_cache.clear()
     state.cached_readers.clear()
 
@@ -122,6 +124,7 @@ def test_get_section_window_bin_second_request_returns_cache_hit_headers(
     stub_reader = make_stub_reader(np.arange(5 * 6, dtype=np.float32).reshape(5, 6))
     state = sec.get_state(app)
     state.window_section_cache.clear()
+    state.section_offsets_cache.clear()
     state.trace_stats_cache.clear()
 
     monkeypatch.setattr(

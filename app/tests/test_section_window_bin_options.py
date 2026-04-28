@@ -32,6 +32,7 @@ def _clean_section_env(monkeypatch):
     app.state.sv.file_registry.clear()
     state = sec.get_state(app)
     state.window_section_cache.clear()
+    state.section_offsets_cache.clear()
     state.pipeline_tap_cache.clear()
     state.trace_stats_cache.clear()
     state.cached_readers.clear()
@@ -273,6 +274,7 @@ def test_get_section_window_bin_pipeline_key_tap_label_window_uses_expected_tap(
 ):
     state = sec.get_state(app)
     state.window_section_cache.clear()
+    state.section_offsets_cache.clear()
     state.pipeline_tap_cache.clear()
     state.trace_stats_cache.clear()
 

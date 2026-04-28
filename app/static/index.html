@@ -1309,6 +1309,22 @@
                     oninput="onWiggleDensityChange()">
                 </label>
               </div>
+              <div class="control-subgroup" aria-label="Linear Moveout">
+                <div class="control-subgroup-title">Linear Moveout</div>
+                <div class="control-row">
+                  <label class="control-field"><input type="checkbox" id="lmoEnabled">Enable LMO</label>
+                  <label class="control-field">Velocity:
+                    <input id="lmoVelocityMps" type="number" min="1" step="1" inputmode="numeric" pattern="[0-9]*" value="1500" style="width: 7em;">
+                    m/s
+                  </label>
+                  <label class="control-field">Offset byte:
+                    <input id="lmoOffsetByte" type="number" min="1" max="240" step="1" value="37" style="width: 5.5em;">
+                  </label>
+                  <label class="control-field">Offset scale:
+                    <input id="lmoOffsetScale" type="number" step="0.1" value="1" style="width: 6em;">
+                  </label>
+                </div>
+              </div>
               <div class="control-subgroup" aria-label="Compare mode">
                 <div class="control-subgroup-title">Compare</div>
                 <div class="control-row">

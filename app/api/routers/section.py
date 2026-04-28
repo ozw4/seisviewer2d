@@ -25,6 +25,7 @@ from app.services.pipeline_taps import (
 from app.services.reader import get_reader
 from app.services.section_service import (
     SectionServiceInternalError,
+    build_section_offsets_payload,
     build_section_window_payload,
 )
 
@@ -109,27 +110,17 @@ def _build_window_section_cache_key(
     reference_pipeline_key: str | None,
     reference_tap_label: str | None,
     scaling_mode: str,
-) -> tuple[
-    str,
-    int,
-    int,
-    int,
-    int | None,
-    int,
-    int,
-    int,
-    int,
-    int,
-    int,
-    bool,
-    str | None,
-    str | None,
-    str | None,
-    str | None,
-    str,
-]:
+    lmo_enabled: bool = False,
+    lmo_velocity_mps: float | None = None,
+    lmo_offset_byte: int = OFFSET_BYTE_FIXED,
+    lmo_offset_scale: float = 1.0,
+    lmo_offset_mode: str = 'absolute',
+    lmo_ref_mode: str = 'min',
+    lmo_ref_trace: int | None = None,
+    lmo_polarity: int = 1,
+) -> tuple[object, ...]:
     """Build the canonical cache key for section-window binary payloads."""
-    return (
+    base_key: tuple[object, ...] = (
         file_id,
         int(key1),
         int(key1_byte),
@@ -147,6 +138,39 @@ def _build_window_section_cache_key(
         reference_pipeline_key,
         reference_tap_label,
         str(scaling_mode),
+    )
+    if not bool(lmo_enabled):
+        return base_key
+    return (
+        *base_key,
+        'lmo',
+        True,
+        None if lmo_velocity_mps is None else float(lmo_velocity_mps),
+        int(lmo_offset_byte),
+        float(lmo_offset_scale),
+        str(lmo_offset_mode),
+        str(lmo_ref_mode),
+        None if lmo_ref_trace is None else int(lmo_ref_trace),
+        int(lmo_polarity),
+    )
+
+
+def _build_section_offsets_cache_key(
+    *,
+    file_id: str,
+    key1: int,
+    key1_byte: int,
+    key2_byte: int,
+    offset_byte: int,
+) -> tuple[object, ...]:
+    """Build the canonical cache key for section-offset binary payloads."""
+    return (
+        'section_offsets',
+        file_id,
+        int(key1),
+        int(key1_byte),
+        int(key2_byte),
+        int(offset_byte),
     )
 
 
@@ -292,6 +316,75 @@ def get_section_meta(
 
 
 @router.get(
+    '/get_section_offsets_bin', dependencies=[Depends(reject_legacy_key1_query_params)]
+)
+def get_section_offsets_bin(
+    request: Request,
+    file_id: Annotated[str, Query(...)],
+    key1: Annotated[int, Query(...)],
+    key1_byte: Annotated[int, Query(ge=1, le=240)] = 189,
+    key2_byte: Annotated[int, Query(ge=1, le=240)] = 193,
+    offset_byte: Annotated[int, Query(ge=1, le=240)] = OFFSET_BYTE_FIXED,
+) -> Response:
+    """Return per-trace offsets for a section as float32 bytes."""
+    state = get_state(request.app)
+    cache_key = _build_section_offsets_cache_key(
+        file_id=file_id,
+        key1=key1,
+        key1_byte=key1_byte,
+        key2_byte=key2_byte,
+        offset_byte=offset_byte,
+    )
+
+    with state.lock:
+        cached_payload = state.section_offsets_cache.get(cache_key)
+    if cached_payload is not None:
+        return Response(
+            cached_payload,
+            media_type='application/octet-stream',
+            headers={
+                'Content-Encoding': 'gzip',
+                'X-SV-Cache': 'hit',
+                'X-SV-Bytes': str(len(cached_payload)),
+            },
+        )
+
+    try:
+        compressed = build_section_offsets_payload(
+            file_id=file_id,
+            key1=key1,
+            key1_byte=key1_byte,
+            key2_byte=key2_byte,
+            offset_byte=offset_byte,
+            reader_getter=lambda fid, kb1, kb2: get_reader(
+                fid, kb1, kb2, state=state
+            ),
+        )
+    except SectionServiceInternalError as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    with state.lock:
+        cached_payload = state.section_offsets_cache.get(cache_key)
+        if cached_payload is None:
+            state.section_offsets_cache.set(cache_key, compressed)
+            cache_state = 'miss'
+        else:
+            compressed = cached_payload
+            cache_state = 'hit-after-build'
+    return Response(
+        compressed,
+        media_type='application/octet-stream',
+        headers={
+            'Content-Encoding': 'gzip',
+            'X-SV-Cache': cache_state,
+            'X-SV-Bytes': str(len(compressed)),
+        },
+    )
+
+
+@router.get(
     '/get_section_window_bin', dependencies=[Depends(reject_legacy_key1_query_params)]
 )
 def get_section_window_bin(
@@ -315,6 +408,14 @@ def get_section_window_bin(
     scaling: Annotated[
         Literal['amax', 'tracewise'] | None, Query(description='Normalization mode')
     ] = None,
+    lmo_enabled: Annotated[bool, Query()] = False,
+    lmo_velocity_mps: Annotated[float | None, Query()] = None,
+    lmo_offset_byte: Annotated[int, Query(ge=1, le=240)] = OFFSET_BYTE_FIXED,
+    lmo_offset_scale: Annotated[float, Query()] = 1.0,
+    lmo_offset_mode: Annotated[str, Query()] = 'absolute',
+    lmo_ref_mode: Annotated[str, Query()] = 'min',
+    lmo_ref_trace: Annotated[int | None, Query()] = None,
+    lmo_polarity: Annotated[int, Query()] = 1,
 ) -> Response:
     """Return a quantized window of a section, optionally via a pipeline tap."""
     route_started = time.perf_counter()
@@ -343,6 +444,14 @@ def get_section_window_bin(
         reference_pipeline_key=reference_pipeline_key,
         reference_tap_label=reference_tap_label,
         scaling_mode=mode,
+        lmo_enabled=lmo_enabled,
+        lmo_velocity_mps=lmo_velocity_mps,
+        lmo_offset_byte=lmo_offset_byte,
+        lmo_offset_scale=lmo_offset_scale,
+        lmo_offset_mode=lmo_offset_mode,
+        lmo_ref_mode=lmo_ref_mode,
+        lmo_ref_trace=lmo_ref_trace,
+        lmo_polarity=lmo_polarity,
     )
 
     with state.lock:
@@ -380,6 +489,14 @@ def get_section_window_bin(
             reference_pipeline_key=reference_pipeline_key,
             reference_tap_label=reference_tap_label,
             scaling_mode=mode,
+            lmo_enabled=lmo_enabled,
+            lmo_velocity_mps=lmo_velocity_mps,
+            lmo_offset_byte=lmo_offset_byte,
+            lmo_offset_scale=lmo_offset_scale,
+            lmo_offset_mode=lmo_offset_mode,
+            lmo_ref_mode=lmo_ref_mode,
+            lmo_ref_trace=lmo_ref_trace,
+            lmo_polarity=lmo_polarity,
             trace_stats_cache=state.trace_stats_cache,
             trace_stats_lock=state.lock,
             reader_getter=lambda fid, kb1, kb2: get_reader(fid, kb1, kb2, state=state),

@@ -9,7 +9,13 @@ from typing import Any, Callable, Literal
 
 import numpy as np
 
-from app.api.binary_codec import pack_quantized_array_gzip
+from app.api.binary_codec import pack_msgpack_gzip, pack_quantized_array_gzip
+from app.services.linear_moveout import (
+    compute_lmo_raw_sample_bounds,
+    compute_lmo_shift_seconds,
+    resample_lmo_window,
+)
+from app.services.fbpick_support import OFFSET_BYTE_FIXED
 from app.services.reader import EXPECTED_SECTION_NDIM, coerce_section_f32
 from app.services.scaling import (
     apply_scaling_from_baseline,
@@ -21,6 +27,77 @@ from app.trace_store.types import SectionView
 
 class SectionServiceInternalError(RuntimeError):
     """Raised when service detects an internal data/state inconsistency."""
+
+
+def _validate_section_offsets(
+    offsets_raw: object,
+    *,
+    n_traces: int,
+) -> np.ndarray:
+    try:
+        offsets = np.asarray(offsets_raw, dtype=np.float32)
+    except (TypeError, ValueError) as exc:
+        raise ValueError('Offsets must be numeric') from exc
+    if offsets.ndim != 1:
+        raise ValueError('Offsets must be a 1D array')
+    if offsets.size == 0:
+        raise ValueError('Offsets must not be empty')
+    if not np.all(np.isfinite(offsets)):
+        raise ValueError('Offsets contain NaN or Inf')
+    if int(offsets.shape[0]) != int(n_traces):
+        raise ValueError('Offsets length does not match section trace count')
+    return np.ascontiguousarray(offsets, dtype=np.float32)
+
+
+def build_section_offsets_payload(
+    *,
+    file_id: str,
+    key1: int,
+    key1_byte: int,
+    key2_byte: int,
+    offset_byte: int,
+    reader_getter: Callable[[str, int, int], TraceStoreSectionReader],
+) -> bytes:
+    """Build the compressed binary payload for per-trace section offsets."""
+    reader = reader_getter(file_id, key1_byte, key2_byte)
+
+    try:
+        trace_indices = reader.get_trace_seq_for_value(key1, align_to='display')
+    except ValueError:
+        raise
+    except Exception as exc:  # noqa: BLE001
+        raise ValueError('Failed to resolve section trace count') from exc
+
+    trace_indices_arr = np.asarray(trace_indices)
+    if trace_indices_arr.ndim != 1:
+        raise SectionServiceInternalError('Section trace index must be 1D')
+    n_traces = int(trace_indices_arr.shape[0])
+    if n_traces <= 0:
+        raise ValueError('Section trace count must be greater than 0')
+
+    get_offsets = getattr(reader, 'get_offsets_for_section', None)
+    if not callable(get_offsets):
+        raise ValueError('Offset header unavailable')
+    try:
+        offsets_raw = get_offsets(key1, int(offset_byte))
+    except ValueError:
+        raise
+    except Exception as exc:  # noqa: BLE001
+        raise ValueError('Failed to read offsets') from exc
+
+    offsets = _validate_section_offsets(offsets_raw, n_traces=n_traces)
+    return pack_msgpack_gzip(
+        {
+            'file_id': str(file_id),
+            'key1': int(key1),
+            'key1_byte': int(key1_byte),
+            'key2_byte': int(key2_byte),
+            'offset_byte': int(offset_byte),
+            'dtype': 'float32',
+            'shape': [int(offsets.shape[0])],
+            'offsets': offsets.tobytes(),
+        }
+    )
 
 
 def _load_section_view(
@@ -103,6 +180,63 @@ def _source_matches(
     )
 
 
+def _load_lmo_shift_samples(
+    *,
+    reader: TraceStoreSectionReader,
+    key1: int,
+    n_traces: int,
+    dt: float,
+    velocity_mps: float | None,
+    offset_byte: int,
+    offset_scale: float,
+    offset_mode: str,
+    ref_mode: str,
+    ref_trace: int | None,
+    polarity: int,
+) -> np.ndarray:
+    """Load raw offsets and return per-section LMO shifts in sample units."""
+    try:
+        offset_byte_int = int(offset_byte)
+    except (TypeError, ValueError) as exc:
+        raise ValueError('lmo_offset_byte must be between 1 and 240') from exc
+    if not (1 <= offset_byte_int <= 240):
+        raise ValueError('lmo_offset_byte must be between 1 and 240')
+    if velocity_mps is None:
+        raise ValueError('lmo_velocity_mps is required when lmo_enabled=true')
+    dt_val = float(dt)
+    if not np.isfinite(dt_val) or dt_val <= 0.0:
+        raise ValueError('dt must be finite and greater than 0 for LMO')
+
+    get_offsets = getattr(reader, 'get_offsets_for_section', None)
+    if not callable(get_offsets):
+        raise ValueError('Offset header unavailable for LMO')
+    try:
+        offsets_raw = get_offsets(key1, offset_byte_int)
+    except Exception as exc:  # noqa: BLE001
+        raise ValueError('Failed to read offsets for LMO') from exc
+    if offsets_raw is None:
+        raise ValueError('Offsets are required for LMO')
+
+    offsets = np.asarray(offsets_raw)
+    if offsets.ndim == 1 and offsets.size == 0:
+        raise ValueError('offsets must not be empty')
+    if offsets.ndim == 1 and offsets.shape[0] != int(n_traces):
+        raise ValueError('Offsets length does not match section trace count')
+
+    shift_seconds = compute_lmo_shift_seconds(
+        offsets,
+        velocity_mps=velocity_mps,
+        offset_scale=offset_scale,
+        offset_mode=offset_mode,
+        ref_mode=ref_mode,
+        ref_trace=ref_trace,
+        polarity=polarity,
+    )
+    if shift_seconds.shape[0] != int(n_traces):
+        raise ValueError('Offsets length does not match section trace count')
+    return shift_seconds / dt_val
+
+
 def build_section_window_payload(
     *,
     file_id: str,
@@ -128,6 +262,14 @@ def build_section_window_payload(
     dt_resolver: Callable[[str], float] | None = None,
     reference_pipeline_key: str | None = None,
     reference_tap_label: str | None = None,
+    lmo_enabled: bool = False,
+    lmo_velocity_mps: float | None = None,
+    lmo_offset_byte: int = OFFSET_BYTE_FIXED,
+    lmo_offset_scale: float = 1.0,
+    lmo_offset_mode: str = 'absolute',
+    lmo_ref_mode: str = 'min',
+    lmo_ref_trace: int | None = None,
+    lmo_polarity: int = 1,
     perf_timings_ms: dict[str, float] | None = None,
 ) -> bytes:
     """Build the compressed binary payload for a section window."""
@@ -162,14 +304,48 @@ def build_section_window_payload(
         raise ValueError('Sample range out of bounds')
     if step_x < 1 or step_y < 1:
         raise ValueError('Steps must be >= 1')
+    if dt_resolver is None:
+        raise SectionServiceInternalError('dt resolver is required')
+    dt_val = dt_resolver(file_id)
 
-    sub = base[x0 : x1 + 1 : step_x, y0 : y1 + 1 : step_y]
+    raw_reader = reader
+    selected_shift_samples: np.ndarray | None = None
+    raw_y0 = int(y0)
+    raw_y1 = int(y1)
+    if bool(lmo_enabled):
+        if raw_reader is None:
+            raw_reader = reader_getter(file_id, key1_byte, key2_byte)
+        shift_samples = _load_lmo_shift_samples(
+            reader=raw_reader,
+            key1=key1,
+            n_traces=n_traces,
+            dt=dt_val,
+            velocity_mps=lmo_velocity_mps,
+            offset_byte=lmo_offset_byte,
+            offset_scale=lmo_offset_scale,
+            offset_mode=lmo_offset_mode,
+            ref_mode=lmo_ref_mode,
+            ref_trace=lmo_ref_trace,
+            polarity=lmo_polarity,
+        )
+        selected_shift_samples = shift_samples[x0 : x1 + 1 : step_x]
+        raw_y0, raw_y1 = compute_lmo_raw_sample_bounds(
+            y0=y0,
+            y1=y1,
+            shift_samples=selected_shift_samples,
+            n_samples=n_samples,
+        )
+
+    sample_slice = (
+        slice(raw_y0, raw_y1 + 1)
+        if selected_shift_samples is not None
+        else slice(y0, y1 + 1, step_y)
+    )
+    sub = base[x0 : x1 + 1 : step_x, sample_slice]
     if sub.size == 0:
         raise ValueError('Requested window is empty')
 
     prepared = coerce_section_f32(sub, section_view.scale)
-    if dt_resolver is None:
-        raise SectionServiceInternalError('dt resolver is required')
     if reference_pipeline_key and reference_tap_label:
         if _source_matches(
             pipeline_key=pipeline_key,
@@ -207,7 +383,7 @@ def build_section_window_payload(
     else:
         store_dir = _resolve_store_dir(
             file_id=file_id,
-            reader=reader,
+            reader=raw_reader if raw_reader is not None else reader,
             store_dir_resolver=store_dir_resolver,
         )
         prepared = apply_scaling_from_baseline(
@@ -224,7 +400,15 @@ def build_section_window_payload(
             x1=x1,
             step_x=step_x,
         )
-    dt_val = dt_resolver(file_id)
+    if selected_shift_samples is not None:
+        prepared = resample_lmo_window(
+            prepared,
+            y0=y0,
+            y1=y1,
+            step_y=step_y,
+            raw_y0=raw_y0,
+            shift_samples=selected_shift_samples,
+        )
     build_ms = (time.perf_counter() - build_started) * 1000.0
     pack_started = time.perf_counter()
     payload = pack_quantized_array_gzip(
@@ -240,4 +424,8 @@ def build_section_window_payload(
     return payload
 
 
-__all__ = ['SectionServiceInternalError', 'build_section_window_payload']
+__all__ = [
+    'SectionServiceInternalError',
+    'build_section_offsets_payload',
+    'build_section_window_payload',
+]

@@ -408,6 +408,7 @@
         xMin: x0,
         xMax: endTrace,
         showPredicted: showPred,
+        timeTransform: window.pickRawTimeToDisplayTime,
       });
       const pendingPickTr = buildPendingPickMarkerTrace({
         pending: typeof window.getPendingPickOverlayState === 'function'
@@ -697,6 +698,7 @@
         xMin: x0,
         xMax: x1,
         showPredicted: showPred,
+        timeTransform: window.pickRawTimeToDisplayTime,
       });
       const pendingPickTr = buildPendingPickMarkerTrace({
         pending: typeof window.getPendingPickOverlayState === 'function'
