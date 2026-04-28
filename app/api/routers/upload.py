@@ -8,7 +8,6 @@ import json
 import logging
 import re
 import shutil
-import threading
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -28,10 +27,10 @@ from app.services.staged_upload_cleanup import (
     cleanup_staged_upload,
     cleanup_stale_staged_upload_dirs,
 )
+from app.services.trace_store_registration import register_trace_store
 from app.utils.ingest import SegyIngestor
 from app.utils.baseline_artifacts import has_split_baseline_artifacts
 from app.utils.header_qc import inspect_segy_header_qc
-from app.trace_store.reader import TraceStoreSectionReader
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -278,13 +277,6 @@ def _archive_trace_store(store_dir: Path) -> None:
     store_dir.rename(archive_dir)
 
 
-def _touch_trace_store_meta(store_dir: Path) -> None:
-    meta_path = store_dir / 'meta.json'
-    if not meta_path.exists():
-        return
-    meta_path.touch()
-
-
 def _trace_store_summary(store_dir: Path) -> dict | None:
     meta_path = store_dir / 'meta.json'
     meta = _load_trace_store_meta(meta_path)
@@ -351,24 +343,6 @@ def _list_recent_dataset_summaries() -> list[dict]:
 
     summaries.sort(key=lambda item: item['last_used_ts'], reverse=True)
     return summaries
-
-
-def _register_trace_store(
-    file_id: str,
-    store_dir: Path,
-    key1_byte: int,
-    key2_byte: int,
-    *,
-    state: AppState,
-) -> TraceStoreSectionReader:
-    reader = TraceStoreSectionReader(store_dir, key1_byte, key2_byte)
-    cache_key = f'{file_id}_{key1_byte}_{key2_byte}'
-    with state.lock:
-        state.cached_readers[cache_key] = reader
-    threading.Thread(target=reader.preload_all_sections, daemon=True).start()
-    for b in {key1_byte, key2_byte}:
-        threading.Thread(target=reader.ensure_header, args=(b,), daemon=True).start()
-    return reader
 
 
 async def _save_upload_file(
@@ -447,12 +421,15 @@ async def _ingest_saved_segy(
             source_size=source_size,
         )
         logger.info('Reusing trace store for %s', original_name)
-        _register_trace_store(file_id, store_dir, key1_byte, key2_byte, state=state)
-        _touch_trace_store_meta(store_dir)
-        state.file_registry.update(
-            file_id,
-            store_path=str(store_dir),
-            dt=meta.get('dt'),
+        register_trace_store(
+            state=state,
+            file_id=file_id,
+            store_dir=store_dir,
+            key1_byte=key1_byte,
+            key2_byte=key2_byte,
+            dt=meta.get('dt') if isinstance(meta, dict) else None,
+            update_registry=True,
+            touch_meta=True,
         )
         return {'file_id': file_id, 'reused_trace_store': True}
 
@@ -465,16 +442,16 @@ async def _ingest_saved_segy(
         key2_byte,
         source_sha256=source_sha256,
     )
-    _register_trace_store(file_id, store_dir, key1_byte, key2_byte, state=state)
-    _touch_trace_store_meta(store_dir)
-    if isinstance(meta, dict):
-        state.file_registry.update(
-            file_id,
-            store_path=str(store_dir),
-            dt=meta.get('dt'),
-        )
-    else:
-        state.file_registry.update(file_id, store_path=str(store_dir))
+    register_trace_store(
+        state=state,
+        file_id=file_id,
+        store_dir=store_dir,
+        key1_byte=key1_byte,
+        key2_byte=key2_byte,
+        dt=meta.get('dt') if isinstance(meta, dict) else None,
+        update_registry=True,
+        touch_meta=True,
+    )
     return {'file_id': file_id, 'reused_trace_store': False}
 
 
@@ -558,14 +535,16 @@ async def open_segy(
             key2_byte,
             source_sha256=source_sha256,
         )
-    _register_trace_store(file_id, store_dir, key1_byte, key2_byte, state=state)
-    _touch_trace_store_meta(store_dir)
-    if isinstance(meta, dict):
-        state.file_registry.update(
-            file_id,
-            store_path=str(store_dir),
-            dt=meta.get('dt'),
-        )
+    register_trace_store(
+        state=state,
+        file_id=file_id,
+        store_dir=store_dir,
+        key1_byte=key1_byte,
+        key2_byte=key2_byte,
+        dt=meta.get('dt') if isinstance(meta, dict) else None,
+        update_registry=True,
+        touch_meta=True,
+    )
     return {'file_id': file_id, 'reused_trace_store': reused}
 
 
