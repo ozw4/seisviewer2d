@@ -370,7 +370,7 @@
         `sc=${enc(scaling)}`,
         `tr=${enc(transpose)}`,
         `mode=${enc(mode)}`,
-        `lmo=${lmoKey || 'lmo:off'}`,
+        `lmo=${enc(lmoKey || 'lmo:off')}`,
       );
       return parts.join('|');
     }
