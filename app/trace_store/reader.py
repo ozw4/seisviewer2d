@@ -10,6 +10,11 @@ from pathlib import Path
 import numpy as np
 import segyio
 
+from app.services.trace_store_headers import (
+    resolve_header_source_store_path,
+    validate_same_sorted_trace_order,
+    write_header_array_atomic,
+)
 from app.trace_store.types import SectionView
 
 logger = logging.getLogger(__name__)
@@ -239,14 +244,75 @@ class TraceStoreSectionReader:
         if path.exists():
             return np.load(path, mmap_mode='r')
 
+        inherited = self._ensure_header_from_parent_store(header_byte)
+        if inherited is not None:
+            return inherited
+
+        return self._ensure_header_from_original_segy(header_byte)
+
+    def _ensure_header_from_parent_store(self, header_byte: int) -> np.ndarray | None:
+        """Materialize ``header_byte`` from a derived TraceStore parent, if configured."""
+        source_path = resolve_header_source_store_path(
+            self.meta,
+            target_store_dir=self.store_dir,
+        )
+        if source_path is None:
+            return None
+        if not source_path.exists():
+            msg = f'Header source TraceStore does not exist: {source_path}'
+            raise ValueError(msg)
+        if not source_path.is_dir():
+            msg = f'Header source TraceStore is not a directory: {source_path}'
+            raise ValueError(msg)
+        if source_path.resolve() == self.store_dir.resolve():
+            msg = f'Header source TraceStore points to the target store: {source_path}'
+            raise ValueError(msg)
+
+        expected_n_traces = int(self.traces.shape[0])
+        validate_same_sorted_trace_order(
+            target_store_dir=self.store_dir,
+            source_store_dir=source_path,
+            expected_n_traces=expected_n_traces,
+        )
+        parent_reader = TraceStoreSectionReader(
+            source_path,
+            self.key1_byte,
+            self.key2_byte,
+        )
+        values = parent_reader.ensure_header(header_byte)
+        return write_header_array_atomic(
+            store_dir=self.store_dir,
+            header_byte=header_byte,
+            values=values,
+            expected_n_traces=expected_n_traces,
+        )
+
+    def _ensure_header_from_original_segy(self, header_byte: int) -> np.ndarray:
+        """Materialize ``header_byte`` from the original SEG-Y source."""
+        original_segy_path = self.meta.get('original_segy_path')
+        if not isinstance(original_segy_path, str) or not original_segy_path.strip():
+            msg = (
+                f'No usable header source for byte {header_byte} in {self.store_dir}: '
+                'missing derived header source and original_segy_path'
+            )
+            raise ValueError(msg)
+
+        segy_path = Path(original_segy_path)
+        if not segy_path.is_file():
+            msg = (
+                f'No usable header source for byte {header_byte} in {self.store_dir}: '
+                f'original SEG-Y path is not a file: {segy_path}'
+            )
+            raise ValueError(msg)
+
         logger.info('Extracting header byte %s for %s', header_byte, self.store_dir)
         with segyio.open(
-            self.meta['original_segy_path'],
+            str(segy_path),
             'r',
             ignore_geometry=True,
         ) as f:
             f.mmap()
-            values = f.attributes(header_byte)[:].astype(np.int32)
+            values = np.asarray(f.attributes(header_byte)[:])
 
         sorted_to_original = self._get_sorted_to_original()
         if sorted_to_original is not None:
@@ -260,10 +326,12 @@ class TraceStoreSectionReader:
                 raise ValueError(msg)
             values = values[sorted_to_original]
 
-        tmp_path = path.with_name(path.stem + '_tmp.npy')
-        np.save(tmp_path, values)
-        tmp_path.replace(path)
-        return np.load(path, mmap_mode='r')
+        return write_header_array_atomic(
+            store_dir=self.store_dir,
+            header_byte=header_byte,
+            values=values,
+            expected_n_traces=int(self.traces.shape[0]),
+        )
 
     def get_header(self, byte: int) -> np.ndarray:
         """Return the header array for ``byte``."""
