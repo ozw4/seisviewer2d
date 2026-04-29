@@ -49,11 +49,15 @@ def _ensure_finite_f64(name: str, value: np.ndarray) -> np.ndarray:
 
 def _ensure_index_i64(name: str, value: np.ndarray) -> np.ndarray:
     arr = _ensure_1d_array(name, value)
-    arr_f64 = _ensure_finite_f64(name, arr)
-    if not np.all(arr_f64 == np.trunc(arr_f64)):
-        msg = f'{name} must contain integer values'
+    if np.issubdtype(arr.dtype, np.floating):
+        arr_f64 = _ensure_finite_f64(name, arr)
+        if not np.all(arr_f64 == np.trunc(arr_f64)):
+            msg = f'{name} must contain integer values'
+            raise ValueError(msg)
+    if not np.issubdtype(arr.dtype, np.integer):
+        msg = f'{name} must have an integer dtype'
         raise ValueError(msg)
-    return arr_f64.astype(np.int64, copy=False)
+    return np.ascontiguousarray(arr, dtype=np.int64)
 
 
 def _validate_section_spans(
@@ -110,16 +114,16 @@ def compute_raw_baseline_stats(
     trace_sum_f64 = _ensure_finite_f64('trace_sum', trace_sum_arr)
     trace_sumsq_f64 = _ensure_finite_f64('trace_sumsq', trace_sumsq_arr)
 
-    key1_values_arr = _ensure_1d_array('key1_values', key1_values)
+    key1_values_i64 = _ensure_index_i64('key1_values', key1_values)
     key1_offsets_i64 = _ensure_index_i64('key1_offsets', key1_offsets)
     key1_counts_i64 = _ensure_index_i64('key1_counts', key1_counts)
     if (
-        key1_values_arr.shape != key1_offsets_i64.shape
-        or key1_values_arr.shape != key1_counts_i64.shape
+        key1_values_i64.shape != key1_offsets_i64.shape
+        or key1_values_i64.shape != key1_counts_i64.shape
     ):
         msg = 'key1_values, key1_offsets, and key1_counts must have matching shapes'
         raise ValueError(msg)
-    if key1_values_arr.size == 0:
+    if key1_values_i64.size == 0:
         msg = 'key1 sections must not be empty'
         raise ValueError(msg)
 
@@ -158,7 +162,7 @@ def compute_raw_baseline_stats(
         mu_sections=np.asarray(mu_sections, dtype=np.float32),
         sigma_sections=np.asarray(sigma_sections, dtype=np.float32),
         trace_spans_by_key1=build_trace_spans_by_key1(
-            key1_values_arr.astype(np.int64, copy=False),
+            key1_values_i64,
             key1_offsets_i64,
             key1_counts_i64,
         ),

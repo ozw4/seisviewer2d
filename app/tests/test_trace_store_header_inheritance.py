@@ -271,6 +271,102 @@ def test_derived_reader_rejects_missing_sorted_to_original_in_parent_index(
         _reader(child).ensure_header(HEADER_BYTE)
 
 
+def test_derived_reader_rejects_non_integer_sorted_to_original_in_child_index(
+    tmp_path: Path,
+) -> None:
+    parent = tmp_path / 'parent'
+    child = tmp_path / 'child'
+    _write_store(parent, header_values=np.array([1, 2, 3], dtype=np.int32))
+    _write_store(
+        child,
+        sorted_to_original=np.array([0.0, 1.0, 2.0], dtype=np.float64),
+        derived={'header_source_store_path': str(parent)},
+    )
+
+    with pytest.raises(ValueError, match='target.*integer dtype'):
+        _reader(child).ensure_header(HEADER_BYTE)
+
+
+def test_derived_reader_rejects_non_integer_sorted_to_original_in_parent_index(
+    tmp_path: Path,
+) -> None:
+    parent = tmp_path / 'parent'
+    child = tmp_path / 'child'
+    _write_store(
+        parent,
+        sorted_to_original=np.array([0.0, 1.0, 2.0], dtype=np.float64),
+        header_values=np.array([1, 2, 3], dtype=np.int32),
+    )
+    _write_store(child, derived={'header_source_store_path': str(parent)})
+
+    with pytest.raises(ValueError, match='source.*integer dtype'):
+        _reader(child).ensure_header(HEADER_BYTE)
+
+
+def test_derived_reader_rejects_duplicate_sorted_to_original_in_child_index(
+    tmp_path: Path,
+) -> None:
+    parent = tmp_path / 'parent'
+    child = tmp_path / 'child'
+    _write_store(parent, header_values=np.array([1, 2, 3], dtype=np.int32))
+    _write_store(
+        child,
+        sorted_to_original=np.array([0, 1, 1], dtype=np.int64),
+        derived={'header_source_store_path': str(parent)},
+    )
+
+    with pytest.raises(ValueError, match='target.*permutation'):
+        _reader(child).ensure_header(HEADER_BYTE)
+
+
+def test_derived_reader_rejects_duplicate_sorted_to_original_in_parent_index(
+    tmp_path: Path,
+) -> None:
+    parent = tmp_path / 'parent'
+    child = tmp_path / 'child'
+    _write_store(
+        parent,
+        sorted_to_original=np.array([0, 1, 1], dtype=np.int64),
+        header_values=np.array([1, 2, 3], dtype=np.int32),
+    )
+    _write_store(child, derived={'header_source_store_path': str(parent)})
+
+    with pytest.raises(ValueError, match='source.*permutation'):
+        _reader(child).ensure_header(HEADER_BYTE)
+
+
+def test_derived_reader_rejects_out_of_range_sorted_to_original_in_child_index(
+    tmp_path: Path,
+) -> None:
+    parent = tmp_path / 'parent'
+    child = tmp_path / 'child'
+    _write_store(parent, header_values=np.array([1, 2, 3], dtype=np.int32))
+    _write_store(
+        child,
+        sorted_to_original=np.array([0, 1, 3], dtype=np.int64),
+        derived={'header_source_store_path': str(parent)},
+    )
+
+    with pytest.raises(ValueError, match='target.*outside'):
+        _reader(child).ensure_header(HEADER_BYTE)
+
+
+def test_derived_reader_rejects_out_of_range_sorted_to_original_in_parent_index(
+    tmp_path: Path,
+) -> None:
+    parent = tmp_path / 'parent'
+    child = tmp_path / 'child'
+    _write_store(
+        parent,
+        sorted_to_original=np.array([0, 1, 3], dtype=np.int64),
+        header_values=np.array([1, 2, 3], dtype=np.int32),
+    )
+    _write_store(child, derived={'header_source_store_path': str(parent)})
+
+    with pytest.raises(ValueError, match='source.*outside'):
+        _reader(child).ensure_header(HEADER_BYTE)
+
+
 def test_derived_reader_rejects_sorted_to_original_mismatch(tmp_path: Path) -> None:
     parent = tmp_path / 'parent'
     child = tmp_path / 'child'

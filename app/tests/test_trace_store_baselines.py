@@ -288,6 +288,16 @@ def test_compute_raw_baseline_stats_rejects_non_finite_trace_stats(
         _compute_with(**overrides)
 
 
+def test_compute_raw_baseline_stats_rejects_float_key1_values() -> None:
+    with pytest.raises(ValueError, match='integer dtype'):
+        _compute_with(key1_values=np.asarray([10.0, 20.0], dtype=np.float64))
+
+
+def test_compute_raw_baseline_stats_rejects_non_finite_key1_values() -> None:
+    with pytest.raises(ValueError, match='finite'):
+        _compute_with(key1_values=np.asarray([10.0, np.inf], dtype=np.float64))
+
+
 @pytest.mark.parametrize(
     'overrides',
     [

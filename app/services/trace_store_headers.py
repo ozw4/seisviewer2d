@@ -8,6 +8,8 @@ from uuid import uuid4
 
 import numpy as np
 
+from app.services.trace_store_index_validation import validate_sorted_to_original
+
 
 def _non_empty_path_value(
     derived: Mapping[str, Any],
@@ -65,16 +67,11 @@ def _load_sorted_to_original(
         if 'sorted_to_original' not in index.files:
             msg = f'{role} TraceStore index.npz is missing sorted_to_original: {index_path}'
             raise ValueError(msg)
-        sorted_to_original = np.asarray(index['sorted_to_original'])
-
-    expected_shape = (int(expected_n_traces),)
-    if sorted_to_original.shape != expected_shape:
-        msg = (
-            f'{role} sorted_to_original shape mismatch: '
-            f'expected {expected_shape}, got {sorted_to_original.shape}'
+        return validate_sorted_to_original(
+            index['sorted_to_original'],
+            expected_n_traces=expected_n_traces,
+            role=role,
         )
-        raise ValueError(msg)
-    return sorted_to_original
 
 
 def validate_same_sorted_trace_order(
