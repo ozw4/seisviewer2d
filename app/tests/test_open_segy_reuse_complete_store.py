@@ -73,7 +73,16 @@ def _open_env(tmp_path: Path, monkeypatch):
     captured: dict[str, object] = {'register': None}
 
     def _fake_register(
-        file_id: str, store_dir: Path, key1_byte: int, key2_byte: int, *, state
+        *,
+        state,
+        file_id,
+        store_dir,
+        key1_byte,
+        key2_byte,
+        dt=None,
+        update_registry=True,
+        touch_meta=True,
+        **_kwargs,
     ):
         captured['register'] = (
             str(file_id),
@@ -81,10 +90,20 @@ def _open_env(tmp_path: Path, monkeypatch):
             int(key1_byte),
             int(key2_byte),
         )
+        if touch_meta:
+            meta_path = Path(store_dir) / 'meta.json'
+            if meta_path.exists():
+                meta_path.touch()
+        if update_registry:
+            state.file_registry.update(
+                file_id,
+                store_path=str(store_dir),
+                dt=dt,
+            )
         return None
 
     monkeypatch.setattr(
-        upload_mod, '_register_trace_store', _fake_register, raising=True
+        upload_mod, 'register_trace_store', _fake_register, raising=True
     )
 
     calls: dict[str, int] = {'ingest': 0}
