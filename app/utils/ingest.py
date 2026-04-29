@@ -10,13 +10,7 @@ from typing import Any
 import numpy as np
 import segyio
 
-from app.utils.baseline_artifacts import (
-    build_raw_baseline_payload,
-    build_trace_spans_by_key1,
-    write_raw_baseline_artifacts,
-)
-
-ZERO_STD_EPS = 1e-12
+from app.services.trace_store_baselines import write_trace_store_raw_baseline_artifacts
 
 
 class SegyIngestor:
@@ -212,56 +206,19 @@ class SegyIngestor:
             if quantize:
                 meta['scale'] = scale_val
 
-            n_samples_f64 = float(n_samples)
-            mu_traces = trace_sum / n_samples_f64
-            trace_var = np.maximum(
-                (trace_sumsq / n_samples_f64) - np.square(mu_traces),
-                0.0,
-            )
-            sigma_traces = np.sqrt(trace_var)
-            zero_var_mask = sigma_traces <= ZERO_STD_EPS
-            if zero_var_mask.any():
-                sigma_traces = sigma_traces.copy()
-                sigma_traces[zero_var_mask] = 1.0
-            section_sum = np.add.reduceat(
-                trace_sum,
-                key1_offsets.astype(np.int64, copy=False),
-            )
-            section_sumsq = np.add.reduceat(
-                trace_sumsq,
-                key1_offsets.astype(np.int64, copy=False),
-            )
-            total_samples = key1_counts.astype(np.float64, copy=False) * n_samples_f64
-            mu_sections = section_sum / total_samples
-            section_var = np.maximum(
-                (section_sumsq / total_samples) - np.square(mu_sections),
-                0.0,
-            )
-            sigma_sections = np.sqrt(section_var)
-            baseline_payload = build_raw_baseline_payload(
+            write_trace_store_raw_baseline_artifacts(
+                store_path=store_path,
+                key1_byte=key1_byte,
+                key2_byte=key2_byte,
                 dtype_base=str(final_dtype),
                 dt=dt_seconds,
                 key1_values=key1_values,
-                mu_sections=mu_sections,
-                sigma_sections=sigma_sections,
-                mu_traces=mu_traces,
-                sigma_traces=sigma_traces,
-                zero_var_mask=zero_var_mask,
-                trace_spans_by_key1=build_trace_spans_by_key1(
-                    key1_values.astype(np.int64, copy=False),
-                    key1_offsets.astype(np.int64, copy=False),
-                    key1_counts.astype(np.int64, copy=False),
-                ),
+                key1_offsets=key1_offsets,
+                key1_counts=key1_counts,
+                trace_sum=trace_sum,
+                trace_sumsq=trace_sumsq,
+                n_samples=n_samples,
                 source_sha256=(str(source_sha256) if source_sha256 else None),
-                key1_byte=key1_byte,
-                key2_byte=key2_byte,
-                serialize_arrays=False,
-            )
-            write_raw_baseline_artifacts(
-                store_path,
-                key1_byte=key1_byte,
-                key2_byte=key2_byte,
-                payload=baseline_payload,
             )
             with meta_tmp.open('w', encoding='utf-8') as fh:
                 json.dump(meta, fh)
