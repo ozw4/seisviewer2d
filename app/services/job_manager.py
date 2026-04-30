@@ -49,6 +49,21 @@ class BatchApplyJobState(TypedDict):
     job_type: Literal['batch_apply']
 
 
+class StaticJobState(TypedDict):
+    status: JobStatus
+    progress: float
+    message: str
+    cancel_requested: bool
+    created_ts: float
+    finished_ts: float | None
+    file_id: str
+    key1_byte: int
+    key2_byte: int
+    artifacts_dir: str
+    job_type: Literal['statics']
+    statics_kind: str
+
+
 class FbpickJobState(TypedDict):
     status: JobStatus
     message: str
@@ -206,6 +221,42 @@ class JobManager:
             'key2_byte': int(key2_byte),
             'artifacts_dir': artifacts_dir,
             'job_type': 'batch_apply',
+        }
+        self._jobs[job_id] = job
+        return job
+
+    def create_static_job(
+        self,
+        job_id: str,
+        *,
+        file_id: str,
+        key1_byte: int,
+        key2_byte: int,
+        statics_kind: str,
+        artifacts_dir: str,
+        created_ts: float | None = None,
+    ) -> StaticJobState:
+        if not isinstance(file_id, str) or not file_id:
+            raise ValueError('file_id must be a non-empty string')
+        if not isinstance(statics_kind, str) or not statics_kind:
+            raise ValueError('statics_kind must be a non-empty string')
+        if not isinstance(artifacts_dir, str) or not artifacts_dir:
+            raise ValueError('artifacts_dir must be a non-empty string')
+
+        created = time.time() if created_ts is None else float(created_ts)
+        job: StaticJobState = {
+            'status': 'queued',
+            'progress': 0.0,
+            'message': '',
+            'cancel_requested': False,
+            'created_ts': created,
+            'finished_ts': None,
+            'file_id': file_id,
+            'key1_byte': int(key1_byte),
+            'key2_byte': int(key2_byte),
+            'artifacts_dir': artifacts_dir,
+            'job_type': 'statics',
+            'statics_kind': statics_kind,
         }
         self._jobs[job_id] = job
         return job
@@ -384,6 +435,8 @@ class JobManager:
     def _job_kind(job: dict[str, object]) -> str:
         if job.get('job_type') == 'batch_apply':
             return 'pipeline'
+        if job.get('job_type') == 'statics':
+            return 'pipeline'
         if 'cache_key' in job:
             return 'fbpick'
         if 'pipeline_key' in job:
@@ -445,4 +498,5 @@ __all__ = [
     'JobManager',
     'JobStatus',
     'PipelineAllJobState',
+    'StaticJobState',
 ]

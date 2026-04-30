@@ -1,0 +1,127 @@
+"""Static correction job APIs."""
+
+from __future__ import annotations
+
+from pathlib import Path
+
+from fastapi import APIRouter, HTTPException, Query, Request
+from fastapi.responses import FileResponse
+
+from app.api._helpers import get_state
+from app.api.schemas import StaticJobFilesResponse, StaticJobStatusResponse
+from app.core.state import AppState
+from app.services.in_memory_cleanup import cleanup_in_memory_state
+from app.services.job_manager import JobManager
+from app.services.job_runner import request_job_cancel
+from app.services.pipeline_artifacts import maybe_cleanup_expired_jobs
+
+router = APIRouter()
+
+
+def _get_static_job_or_404(state: AppState, job_id: str) -> dict[str, object]:
+    with state.lock:
+        job = state.jobs.get(job_id)
+        if job is None:
+            raise HTTPException(status_code=404, detail='Job ID not found')
+        if job.get('job_type') != 'statics':
+            raise HTTPException(status_code=404, detail='Job ID not found')
+        return dict(job)
+
+
+def _static_job_artifacts_dir(job: dict[str, object]) -> Path:
+    raw = job.get('artifacts_dir')
+    if not isinstance(raw, str) or not raw:
+        raise HTTPException(
+            status_code=500,
+            detail='Job metadata is inconsistent: artifacts_dir',
+        )
+    return Path(raw)
+
+
+def _static_job_status_payload(
+    job: dict[str, object],
+) -> StaticJobStatusResponse:
+    progress = job.get('progress', 0.0)
+    message = job.get('message', '')
+    return {
+        'state': JobManager.normalize_status_value(job.get('status', 'unknown')),
+        'progress': float(progress) if isinstance(progress, (int, float)) else 0.0,
+        'message': message if isinstance(message, str) else '',
+    }
+
+
+@router.get(
+    '/statics/job/{job_id}/status',
+    response_model=StaticJobStatusResponse,
+)
+def static_job_status(request: Request, job_id: str) -> StaticJobStatusResponse:
+    state = get_state(request.app)
+    cleanup_in_memory_state(state)
+    job = _get_static_job_or_404(state, job_id)
+    return _static_job_status_payload(job)
+
+
+@router.post(
+    '/statics/job/{job_id}/cancel',
+    response_model=StaticJobStatusResponse,
+)
+def static_job_cancel(request: Request, job_id: str) -> StaticJobStatusResponse:
+    state = get_state(request.app)
+    cleanup_in_memory_state(state)
+    _get_static_job_or_404(state, job_id)
+
+    request_job_cancel(state, job_id)
+
+    job = _get_static_job_or_404(state, job_id)
+    return _static_job_status_payload(job)
+
+
+@router.get(
+    '/statics/job/{job_id}/files',
+    response_model=StaticJobFilesResponse,
+)
+def static_job_files(request: Request, job_id: str) -> StaticJobFilesResponse:
+    state = get_state(request.app)
+    cleanup_in_memory_state(state)
+    job = _get_static_job_or_404(state, job_id)
+
+    maybe_cleanup_expired_jobs()
+    artifacts_dir = _static_job_artifacts_dir(job)
+    if not artifacts_dir.is_dir():
+        raise HTTPException(status_code=404, detail='Job artifacts not found')
+
+    files = []
+    for file_path in sorted(artifacts_dir.iterdir()):
+        if not file_path.is_file():
+            continue
+        files.append(
+            {
+                'name': file_path.name,
+                'size_bytes': int(file_path.stat().st_size),
+            }
+        )
+    return {'files': files}
+
+
+@router.get('/statics/job/{job_id}/download')
+def static_job_download(
+    request: Request,
+    job_id: str,
+    name: str = Query(...),
+) -> FileResponse:
+    state = get_state(request.app)
+    cleanup_in_memory_state(state)
+    job = _get_static_job_or_404(state, job_id)
+
+    if not name or Path(name).name != name:
+        raise HTTPException(status_code=400, detail='Invalid file name')
+
+    maybe_cleanup_expired_jobs()
+    artifacts_dir = _static_job_artifacts_dir(job)
+    if not artifacts_dir.is_dir():
+        raise HTTPException(status_code=404, detail='Job artifacts not found')
+    file_path = artifacts_dir / name
+    if not file_path.is_file():
+        raise HTTPException(status_code=404, detail='File not found')
+
+    return FileResponse(path=file_path, filename=name)
