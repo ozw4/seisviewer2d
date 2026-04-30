@@ -380,4 +380,4 @@ def test_statics_router_registered() -> None:
     assert '/statics/job/{job_id}/cancel' in paths
     assert '/statics/job/{job_id}/files' in paths
     assert '/statics/job/{job_id}/download' in paths
-    assert '/statics/datum/apply' not in paths
+    assert '/statics/datum/apply' in paths

@@ -316,6 +316,19 @@ class JobManager:
             return
         job['message'] = message
 
+    def set_static_corrected_file(
+        self,
+        job_id: str,
+        *,
+        corrected_file_id: str,
+        corrected_store_path: str,
+    ) -> None:
+        job = self._jobs.get(job_id)
+        if job is None:
+            return
+        job['corrected_file_id'] = corrected_file_id
+        job['corrected_store_path'] = corrected_store_path
+
     def request_cancel(
         self,
         job_id: str,

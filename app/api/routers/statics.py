@@ -2,18 +2,26 @@
 
 from __future__ import annotations
 
+import threading
 from pathlib import Path
+from uuid import uuid4
 
 from fastapi import APIRouter, HTTPException, Query, Request
 from fastapi.responses import FileResponse
 
 from app.api._helpers import get_state
-from app.api.schemas import StaticJobFilesResponse, StaticJobStatusResponse
+from app.api.schemas import (
+    DatumStaticApplyRequest,
+    DatumStaticApplyResponse,
+    StaticJobFilesResponse,
+    StaticJobStatusResponse,
+)
 from app.core.state import AppState
+from app.services.datum_static_service import run_datum_static_apply_job
 from app.services.in_memory_cleanup import cleanup_in_memory_state
 from app.services.job_manager import JobManager
-from app.services.job_runner import request_job_cancel
-from app.services.pipeline_artifacts import maybe_cleanup_expired_jobs
+from app.services.job_runner import request_job_cancel, start_job_thread
+from app.services.pipeline_artifacts import get_job_dir, maybe_cleanup_expired_jobs
 
 router = APIRouter()
 
@@ -48,6 +56,36 @@ def _static_job_status_payload(
         'progress': float(progress) if isinstance(progress, (int, float)) else 0.0,
         'message': message if isinstance(message, str) else '',
     }
+
+
+@router.post('/statics/datum/apply', response_model=DatumStaticApplyResponse)
+def datum_static_apply(
+    req: DatumStaticApplyRequest,
+    request: Request,
+) -> DatumStaticApplyResponse:
+    state = get_state(request.app)
+    cleanup_in_memory_state(state)
+    maybe_cleanup_expired_jobs()
+
+    job_id = str(uuid4())
+    with state.lock:
+        job_state = state.jobs.create_static_job(
+            job_id,
+            file_id=req.file_id,
+            key1_byte=req.key1_byte,
+            key2_byte=req.key2_byte,
+            statics_kind='datum',
+            artifacts_dir=str(get_job_dir(job_id)),
+        )
+        status = job_state['status']
+
+    start_job_thread(
+        thread_factory=threading.Thread,
+        target=run_datum_static_apply_job,
+        args=(job_id, req, state),
+    )
+
+    return {'job_id': job_id, 'state': status}
 
 
 @router.get(
