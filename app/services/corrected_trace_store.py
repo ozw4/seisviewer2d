@@ -16,8 +16,12 @@ import numpy as np
 from app.services.reader import coerce_section_f32
 from app.services.trace_store_baselines import write_trace_store_raw_baseline_artifacts
 from app.services.trace_store_headers import write_header_array_atomic
+from app.services.trace_store_index_validation import validate_sorted_to_original
 from app.trace_store.reader import TraceStoreSectionReader
-from app.utils.time_shift import shift_traces_linear
+from app.utils.time_shift import (
+    coerce_finite_float32_fill_value,
+    shift_traces_linear,
+)
 
 _HEADER_FILENAME_RE = re.compile(r'^headers_byte_(\d+)\.npy$')
 _RESERVED_DERIVED_KEYS = {
@@ -225,9 +229,10 @@ def _load_and_validate_index(source_path: Path, *, n_traces: int) -> _IndexData:
             key1_values = _ensure_index_i64('key1_values', index['key1_values'])
             key1_offsets = _ensure_index_i64('key1_offsets', index['key1_offsets'])
             key1_counts = _ensure_index_i64('key1_counts', index['key1_counts'])
-            sorted_to_original = _ensure_index_i64(
-                'sorted_to_original',
+            sorted_to_original = validate_sorted_to_original(
                 index['sorted_to_original'],
+                expected_n_traces=n_traces,
+                role='source',
             )
     except ValueError:
         raise
@@ -243,12 +248,6 @@ def _load_and_validate_index(source_path: Path, *, n_traces: int) -> _IndexData:
         raise ValueError(msg)
     if key1_values.size == 0:
         msg = 'source index.npz must contain at least one key1 section'
-        raise ValueError(msg)
-    if sorted_to_original.shape != (int(n_traces),):
-        msg = (
-            'sorted_to_original shape mismatch: '
-            f'expected {(int(n_traces),)}, got {sorted_to_original.shape}'
-        )
         raise ValueError(msg)
     if np.any(key1_offsets < 0):
         msg = 'key1_offsets must not contain negative values'
@@ -507,10 +506,7 @@ def build_time_shifted_trace_store(
     if output_dtype != 'float32':
         msg = 'output_dtype must be "float32"'
         raise ValueError(msg)
-    fill = float(fill_value)
-    if not np.isfinite(fill):
-        msg = 'fill_value must be finite'
-        raise ValueError(msg)
+    fill = coerce_finite_float32_fill_value(fill_value)
     if isinstance(chunk_size, bool):
         msg = 'chunk_size must be positive'
         raise ValueError(msg)

@@ -126,6 +126,11 @@ def _tmp_stores(tmp_path: Path) -> list[Path]:
     return list(tmp_path.glob('corrected.tmp-*'))
 
 
+def _assert_no_corrected_store(output: Path, tmp_path: Path) -> None:
+    assert not output.exists()
+    assert not _tmp_stores(tmp_path)
+
+
 def test_build_time_shifted_trace_store_writes_expected_shifted_traces(
     tmp_path: Path,
 ) -> None:
@@ -507,6 +512,104 @@ def test_build_time_shifted_trace_store_rejects_index_without_sorted_to_original
             output_store_path=output,
             trace_shift_s_sorted=np.zeros(traces.shape[0], dtype=np.float64),
         )
+
+
+def test_build_time_shifted_trace_store_rejects_duplicate_sorted_to_original(
+    tmp_path: Path,
+) -> None:
+    source = tmp_path / 'source'
+    output = tmp_path / 'corrected'
+    traces = _write_source_store(
+        source,
+        sorted_to_original=np.asarray([0, 1, 1], dtype=np.int64),
+    )
+
+    with pytest.raises(ValueError, match='permutation'):
+        build_time_shifted_trace_store(
+            source_store_path=source,
+            output_store_path=output,
+            trace_shift_s_sorted=np.zeros(traces.shape[0], dtype=np.float64),
+        )
+
+    _assert_no_corrected_store(output, tmp_path)
+
+
+def test_build_time_shifted_trace_store_rejects_out_of_range_sorted_to_original(
+    tmp_path: Path,
+) -> None:
+    source = tmp_path / 'source'
+    output = tmp_path / 'corrected'
+    traces = _write_source_store(
+        source,
+        sorted_to_original=np.asarray([0, 1, 3], dtype=np.int64),
+    )
+
+    with pytest.raises(ValueError, match='outside'):
+        build_time_shifted_trace_store(
+            source_store_path=source,
+            output_store_path=output,
+            trace_shift_s_sorted=np.zeros(traces.shape[0], dtype=np.float64),
+        )
+
+    _assert_no_corrected_store(output, tmp_path)
+
+
+def test_build_time_shifted_trace_store_rejects_negative_sorted_to_original(
+    tmp_path: Path,
+) -> None:
+    source = tmp_path / 'source'
+    output = tmp_path / 'corrected'
+    traces = _write_source_store(
+        source,
+        sorted_to_original=np.asarray([-1, 0, 1], dtype=np.int64),
+    )
+
+    with pytest.raises(ValueError, match='outside'):
+        build_time_shifted_trace_store(
+            source_store_path=source,
+            output_store_path=output,
+            trace_shift_s_sorted=np.zeros(traces.shape[0], dtype=np.float64),
+        )
+
+    _assert_no_corrected_store(output, tmp_path)
+
+
+def test_build_time_shifted_trace_store_rejects_non_integer_sorted_to_original(
+    tmp_path: Path,
+) -> None:
+    source = tmp_path / 'source'
+    output = tmp_path / 'corrected'
+    traces = _write_source_store(
+        source,
+        sorted_to_original=np.asarray([0.0, 1.0, 2.0], dtype=np.float64),
+    )
+
+    with pytest.raises(ValueError, match='integer dtype'):
+        build_time_shifted_trace_store(
+            source_store_path=source,
+            output_store_path=output,
+            trace_shift_s_sorted=np.zeros(traces.shape[0], dtype=np.float64),
+        )
+
+    _assert_no_corrected_store(output, tmp_path)
+
+
+def test_build_time_shifted_trace_store_rejects_fill_value_not_representable_as_float32(
+    tmp_path: Path,
+) -> None:
+    source = tmp_path / 'source'
+    output = tmp_path / 'corrected'
+    traces = _write_source_store(source)
+
+    with pytest.raises(ValueError, match='float32'):
+        build_time_shifted_trace_store(
+            source_store_path=source,
+            output_store_path=output,
+            trace_shift_s_sorted=np.zeros(traces.shape[0], dtype=np.float64),
+            fill_value=float(np.finfo(np.float64).max),
+        )
+
+    _assert_no_corrected_store(output, tmp_path)
 
 
 def test_build_time_shifted_trace_store_cleans_tmp_store_on_shift_failure(

@@ -154,3 +154,15 @@ def test_shift_traces_linear_rejects_non_finite_fill_value(fill_value: float) ->
             dt=1.0,
             fill_value=fill_value,
         )
+
+
+def test_shift_traces_linear_rejects_fill_value_not_representable_as_float32() -> None:
+    traces = np.zeros((1, 3), dtype=np.float32)
+
+    with pytest.raises(ValueError, match='float32'):
+        shift_traces_linear(
+            traces,
+            np.zeros((1,), dtype=np.float64),
+            dt=1.0,
+            fill_value=float(np.finfo(np.float64).max),
+        )

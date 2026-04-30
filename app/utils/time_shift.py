@@ -5,6 +5,16 @@ from __future__ import annotations
 import numpy as np
 
 
+def coerce_finite_float32_fill_value(fill_value: float) -> np.float32:
+    """Validate and return ``fill_value`` as a finite float32 scalar."""
+    fill = float(fill_value)
+    if not np.isfinite(fill):
+        raise ValueError('fill_value must be finite')
+    if abs(fill) > float(np.finfo(np.float32).max):
+        raise ValueError('fill_value must be representable as finite float32')
+    return np.float32(fill)
+
+
 def shift_traces_linear(
     traces: np.ndarray,
     shifts_s: np.ndarray,
@@ -33,9 +43,7 @@ def shift_traces_linear(
     if not np.all(np.isfinite(shifts)):
         raise ValueError('shifts_s must contain only finite values')
 
-    fill = float(fill_value)
-    if not np.isfinite(fill):
-        raise ValueError('fill_value must be finite')
+    fill = coerce_finite_float32_fill_value(fill_value)
 
     arr_f32 = np.asarray(arr, dtype=np.float32)
     out = np.full((n_traces, n_samples), fill, dtype=np.float32)
@@ -58,4 +66,4 @@ def shift_traces_linear(
     return np.ascontiguousarray(out, dtype=np.float32)
 
 
-__all__ = ['shift_traces_linear']
+__all__ = ['coerce_finite_float32_fill_value', 'shift_traces_linear']
