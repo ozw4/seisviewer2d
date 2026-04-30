@@ -178,8 +178,7 @@ def _validate_header_array(
         msg = f'{name} header byte {byte} must have a numeric dtype'
         raise ValueError(msg)
 
-    arr_f64 = arr.astype(np.float64, copy=False)
-    if not np.all(np.isfinite(arr_f64)):
+    if np.issubdtype(arr.dtype, np.floating) and not np.all(np.isfinite(arr)):
         msg = f'{name} header byte {byte} must contain only finite values'
         raise ValueError(msg)
     return arr
