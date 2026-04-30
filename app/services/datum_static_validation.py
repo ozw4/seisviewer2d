@@ -51,7 +51,6 @@ def validate_existing_static_headers(
     config: ExistingStaticHeaderConfig,
 ) -> ExistingStaticHeaderCheck:
     """Validate that configured existing SEG-Y static headers are all zero."""
-    _validate_existing_static_config(config)
     n_traces = int(reader.traces.shape[0])
     masks_by_name: dict[str, np.ndarray] = {}
     counts_by_name = {
@@ -211,7 +210,6 @@ def _read_static_header(
     byte: int,
 ) -> np.ndarray:
     try:
-        reader.ensure_header(byte)
         return reader.get_header(byte)
     except Exception as exc:
         msg = f'failed to read existing static header byte {byte}: {exc}'

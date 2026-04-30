@@ -18,10 +18,11 @@ class FakeReader:
         self.ensure_calls: list[int] = []
         self.get_calls: list[int] = []
 
-    def ensure_header(self, byte: int) -> None:
+    def ensure_header(self, byte: int) -> np.ndarray:
         self.ensure_calls.append(byte)
         if byte not in self.headers:
             raise ValueError(f'missing header byte {byte}')
+        return self.headers[byte]
 
     def get_header(self, byte: int) -> np.ndarray:
         self.get_calls.append(byte)
@@ -104,7 +105,7 @@ def test_validate_existing_static_headers_all_zero() -> None:
     assert result.nonzero_receiver_static_count == 0
     assert result.nonzero_total_static_count == 0
     assert result.nonzero_any_count == 0
-    assert reader.ensure_calls == [99, 101, 103]
+    assert reader.ensure_calls == []
     assert reader.get_calls == [99, 101, 103]
 
 
@@ -162,7 +163,7 @@ def test_validate_existing_static_headers_skips_none_byte() -> None:
     assert result.checked_bytes == (99, 103)
     assert result.receiver_static_byte is None
     assert result.nonzero_receiver_static_count == 0
-    assert reader.ensure_calls == [99, 103]
+    assert reader.ensure_calls == []
     assert reader.get_calls == [99, 103]
 
 
