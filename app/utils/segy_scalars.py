@@ -13,13 +13,11 @@ def apply_segy_scalar(values: np.ndarray, scalars: np.ndarray) -> np.ndarray:
         raise ValueError('values and scalars must have the same shape')
 
     scalar_f64 = scalar_arr.astype(np.float64, copy=False)
-    scale = np.ones(scalar_arr.shape, dtype=np.float64)
+    result = np.array(arr, dtype=np.float64, copy=True)
     positive = scalar_f64 > 0.0
     negative = scalar_f64 < 0.0
-    scale[positive] = scalar_f64[positive]
-    scale[negative] = 1.0 / np.abs(scalar_f64[negative])
-
-    result = arr * scale
+    result[positive] *= scalar_f64[positive]
+    result[negative] /= np.abs(scalar_f64[negative])
     if not np.all(np.isfinite(result)):
         raise ValueError('scaled values contain NaN or Inf')
     return np.asarray(result, dtype=np.float64)
