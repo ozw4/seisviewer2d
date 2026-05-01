@@ -338,6 +338,10 @@ def build_first_break_qc_inputs(
     metadata: dict[str, Any] = {
         'solution_artifact': solution_path.name,
         'solution_npz_path': str(solution_path),
+        'datum_elevation_m': solution.datum_elevation_m,
+        'replacement_velocity_m_s': solution.replacement_velocity_m_s,
+        'key1_byte': key1_byte,
+        'key2_byte': key2_byte,
         'offset_byte': int(offset_byte),
         'sign_convention': (
             'pick_time_after_datum_s = pick_time_raw_s + datum_trace_shift_s'
