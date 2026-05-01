@@ -100,10 +100,7 @@ def _base_inputs() -> FirstBreakQcInputs:
 
 def _metrics(inputs: FirstBreakQcInputs | None = None) -> FirstBreakQcMetrics:
     actual_inputs = _base_inputs() if inputs is None else inputs
-    metrics = compute_first_break_qc_metrics(actual_inputs)
-    linear_model = metrics.linear_moveout_model_s_sorted.copy()
-    linear_model[~metrics.residual_valid_mask_sorted] = np.nan
-    return replace(metrics, linear_moveout_model_s_sorted=linear_model)
+    return compute_first_break_qc_metrics(actual_inputs)
 
 
 def _write(
@@ -246,6 +243,25 @@ def test_write_first_break_qc_artifacts_writes_blank_for_invalid_pick_nan(
 
     invalid = rows[2]
     assert invalid['valid_pick'] == 'false'
+    assert invalid['pick_time_raw_s'] == ''
+    assert invalid['pick_time_after_datum_s'] == ''
+    assert invalid['linear_moveout_model_s'] == ''
+    assert invalid['residual_after_datum_s'] == ''
+
+
+def test_first_break_qc_compute_then_writer_allows_nan_pick(
+    tmp_path: Path,
+) -> None:
+    inputs = _base_inputs()
+    metrics = compute_first_break_qc_metrics(inputs)
+
+    paths = _write(tmp_path, inputs=inputs, metrics=metrics)
+    rows = _read_csv(paths.qc_csv)
+
+    assert paths.qc_json.is_file()
+    assert paths.qc_csv.is_file()
+    assert paths.residual_by_key1_csv.is_file()
+    invalid = rows[2]
     assert invalid['pick_time_raw_s'] == ''
     assert invalid['pick_time_after_datum_s'] == ''
     assert invalid['linear_moveout_model_s'] == ''

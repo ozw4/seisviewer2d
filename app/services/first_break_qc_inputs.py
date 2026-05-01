@@ -175,7 +175,10 @@ def load_datum_static_solution_npz(
             msg = f'n_traces mismatch: expected {n_traces}, got {solution_n_traces}'
             raise ValueError(msg)
 
-        solution_dt = _read_float_scalar(npz, 'dt')
+        solution_dt = _coerce_positive_finite_float(
+            _read_float_scalar(npz, 'dt'),
+            name='datum_static_solution.npz dt',
+        )
         if abs(solution_dt - dt) > _DT_TOLERANCE:
             msg = f'dt mismatch: expected {dt}, got {solution_dt}'
             raise ValueError(msg)

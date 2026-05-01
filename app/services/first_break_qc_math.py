@@ -418,13 +418,16 @@ def fit_linear_offset_model(
     intercept, slowness = np.linalg.lstsq(design, y, rcond=None)[0]
     model = np.asarray(intercept + slowness * np.abs(offset), dtype=np.float64)
     residual = np.full(picks.shape, np.nan, dtype=np.float64)
-    residual[valid_mask] = picks[valid_mask] - model[valid_mask]
     if (
         not np.isfinite(intercept)
         or not np.isfinite(slowness)
-        or not np.all(np.isfinite(model))
-        or not np.all(np.isfinite(residual[valid_mask]))
+        or not np.all(np.isfinite(model[valid_mask]))
     ):
+        msg = 'linear offset model produced NaN or Inf'
+        raise ValueError(msg)
+    model[~valid_mask] = np.nan
+    residual[valid_mask] = picks[valid_mask] - model[valid_mask]
+    if not np.all(np.isfinite(residual[valid_mask])):
         msg = 'linear offset model produced NaN or Inf'
         raise ValueError(msg)
 

@@ -158,6 +158,10 @@ def _resolve_input_artifacts(
         name=req.datum_solution.name,
         allowed_job_types={'statics'},
         allowed_statics_kinds={'datum'},
+        expected_file_id=req.file_id,
+        expected_key1_byte=req.key1_byte,
+        expected_key2_byte=req.key2_byte,
+        reference_label='datum_solution',
     )
 
     pick_source = req.pick_source
@@ -172,6 +176,10 @@ def _resolve_input_artifacts(
             job_id=pick_source.job_id,
             name=pick_source.name,
             allowed_job_types={'batch_apply'},
+            expected_file_id=req.file_id,
+            expected_key1_byte=req.key1_byte,
+            expected_key2_byte=req.key2_byte,
+            reference_label='pick_source',
         )
         return solution_path, pick_path
 
