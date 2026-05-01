@@ -23,6 +23,10 @@ def ensure_root_dir() -> Path:
     return root
 
 
+def path_for_file(file_name: str) -> Path:
+    return get_root_dir() / f'{_safe(file_name)}.npy'
+
+
 def _p(file_name: str) -> Path:
     return ensure_root_dir() / f'{_safe(file_name)}.npy'
 
