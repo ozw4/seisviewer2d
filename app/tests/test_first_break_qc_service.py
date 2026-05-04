@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import csv
 import json
 from pathlib import Path
 from types import SimpleNamespace
@@ -11,16 +12,35 @@ import app.services.first_break_qc_service as service
 from app.api.schemas import FirstBreakQcRequest
 from app.core.state import AppState, create_app_state
 
+KEY1_SORTED = np.asarray([10, 10, 20, 20], dtype=np.int64)
+KEY2_SORTED = np.asarray([1, 2, 1, 2], dtype=np.int64)
+OFFSET_SORTED = np.asarray([-1200.0, -400.0, 350.0, 1250.0], dtype=np.float64)
+PICKS_TIME_S = np.asarray([0.004, np.nan, 0.012, 0.020], dtype=np.float32)
+DT = 0.004
+N_SAMPLES = 8
+
 
 class _Reader:
     key1_byte = 189
     key2_byte = 193
 
     def __init__(self) -> None:
-        self.traces = np.zeros((4, 8), dtype=np.float32)
+        self.traces = np.zeros((4, N_SAMPLES), dtype=np.float32)
+        self.meta = {'dt': DT}
+        self.headers = {
+            189: KEY1_SORTED,
+            193: KEY2_SORTED,
+            37: OFFSET_SORTED,
+        }
 
     def get_n_samples(self) -> int:
-        return 8
+        return N_SAMPLES
+
+    def ensure_header(self, byte: int) -> np.ndarray:
+        return self.headers[int(byte)]
+
+    def get_sorted_to_original(self) -> np.ndarray:
+        return np.arange(4, dtype=np.int64)
 
 
 def _request(
@@ -71,7 +91,15 @@ def _setup_state(tmp_path: Path) -> tuple[AppState, Path]:
     return state, job_dir
 
 
-def _add_datum_job(state: AppState, tmp_path: Path, *, kind: str = 'datum') -> Path:
+def _add_datum_job(
+    state: AppState,
+    tmp_path: Path,
+    *,
+    kind: str = 'datum',
+    file_id: str = 'source-file-id',
+    key1_byte: int = 189,
+    key2_byte: int = 193,
+) -> Path:
     datum_dir = tmp_path / 'datum-job'
     datum_dir.mkdir(parents=True, exist_ok=True)
     solution = datum_dir / 'datum_static_solution.npz'
@@ -79,16 +107,24 @@ def _add_datum_job(state: AppState, tmp_path: Path, *, kind: str = 'datum') -> P
     with state.lock:
         state.jobs.create_static_job(
             'datum-job',
-            file_id='source-file-id',
-            key1_byte=189,
-            key2_byte=193,
+            file_id=file_id,
+            key1_byte=key1_byte,
+            key2_byte=key2_byte,
             statics_kind=kind,
             artifacts_dir=str(datum_dir),
         )
     return solution
 
 
-def _add_batch_job(state: AppState, tmp_path: Path, *, write_artifact: bool = True) -> Path:
+def _add_batch_job(
+    state: AppState,
+    tmp_path: Path,
+    *,
+    write_artifact: bool = True,
+    file_id: str = 'source-file-id',
+    key1_byte: int = 189,
+    key2_byte: int = 193,
+) -> Path:
     batch_dir = tmp_path / 'batch-job'
     batch_dir.mkdir(parents=True, exist_ok=True)
     artifact = batch_dir / 'predicted_picks_time_s.npz'
@@ -97,12 +133,58 @@ def _add_batch_job(state: AppState, tmp_path: Path, *, write_artifact: bool = Tr
     with state.lock:
         state.jobs.create_batch_apply_job(
             'batch-job',
-            file_id='source-file-id',
-            key1_byte=189,
-            key2_byte=193,
+            file_id=file_id,
+            key1_byte=key1_byte,
+            key2_byte=key2_byte,
             artifacts_dir=str(batch_dir),
         )
     return artifact
+
+
+def _write_real_datum_solution(path: Path) -> Path:
+    source_shift = np.zeros(4, dtype=np.float64)
+    receiver_shift = np.zeros(4, dtype=np.float64)
+    np.savez(
+        path,
+        trace_shift_s_sorted=source_shift + receiver_shift,
+        source_shift_s_sorted=source_shift,
+        receiver_shift_s_sorted=receiver_shift,
+        source_elevation_m_sorted=np.asarray([100.0, 105.0, 110.0, 115.0]),
+        receiver_elevation_m_sorted=np.asarray([90.0, 95.0, 100.0, 105.0]),
+        key1_sorted=KEY1_SORTED,
+        key2_sorted=KEY2_SORTED,
+        datum_elevation_m=np.float64(500.0),
+        replacement_velocity_m_s=np.float64(2000.0),
+        dt=np.float64(DT),
+        n_traces=np.int64(4),
+        key1_byte=np.int64(189),
+        key2_byte=np.int64(193),
+        source_elevation_byte=np.int64(45),
+        receiver_elevation_byte=np.int64(41),
+    )
+    return path
+
+
+def _write_real_pick_npz(path: Path) -> Path:
+    np.savez(
+        path,
+        picks_time_s=PICKS_TIME_S,
+        n_traces=np.int64(4),
+        n_samples=np.int64(N_SAMPLES),
+        dt=np.float64(DT),
+        sorted_to_original=np.arange(4, dtype=np.int64),
+    )
+    return path
+
+
+def _register_real_reader(state: AppState) -> None:
+    with state.lock:
+        state.cached_readers['source-file-id_189_193'] = _Reader()
+
+
+def _read_csv(path: Path) -> list[dict[str, str]]:
+    with path.open(encoding='utf-8', newline='') as handle:
+        return list(csv.DictReader(handle))
 
 
 def _add_manual_npz_job(state: AppState, tmp_path: Path) -> Path:
@@ -381,6 +463,124 @@ def test_first_break_qc_job_errors_when_batch_pick_source_job_is_not_batch_apply
     assert 'unsupported job_type' in str(job['message'])
 
 
+def test_first_break_qc_job_errors_when_datum_job_file_id_mismatch(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    state, _job_dir = _setup_state(tmp_path)
+    _add_datum_job(state, tmp_path, file_id='other-file-id')
+    _add_batch_job(state, tmp_path)
+    _patch_success_path(monkeypatch)
+
+    service.run_first_break_qc_job('qc-job', _request(), state)
+
+    with state.lock:
+        job = dict(state.jobs['qc-job'])
+    assert job['status'] == 'error'
+    assert 'datum_solution job datum-job metadata mismatch: file_id' in str(job['message'])
+
+
+def test_first_break_qc_job_errors_when_datum_job_key1_byte_mismatch(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    state, _job_dir = _setup_state(tmp_path)
+    _add_datum_job(state, tmp_path, key1_byte=191)
+    _add_batch_job(state, tmp_path)
+    _patch_success_path(monkeypatch)
+
+    service.run_first_break_qc_job('qc-job', _request(), state)
+
+    with state.lock:
+        job = dict(state.jobs['qc-job'])
+    assert job['status'] == 'error'
+    assert 'datum_solution job datum-job metadata mismatch: key1_byte' in str(job['message'])
+
+
+def test_first_break_qc_job_errors_when_datum_job_key2_byte_mismatch(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    state, _job_dir = _setup_state(tmp_path)
+    _add_datum_job(state, tmp_path, key2_byte=195)
+    _add_batch_job(state, tmp_path)
+    _patch_success_path(monkeypatch)
+
+    service.run_first_break_qc_job('qc-job', _request(), state)
+
+    with state.lock:
+        job = dict(state.jobs['qc-job'])
+    assert job['status'] == 'error'
+    assert 'datum_solution job datum-job metadata mismatch: key2_byte' in str(job['message'])
+
+
+def test_first_break_qc_job_errors_when_batch_pick_source_file_id_mismatch(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    state, _job_dir = _setup_state(tmp_path)
+    _add_datum_job(state, tmp_path)
+    _add_batch_job(state, tmp_path, file_id='other-file-id')
+    _patch_success_path(monkeypatch)
+
+    service.run_first_break_qc_job('qc-job', _request(), state)
+
+    with state.lock:
+        job = dict(state.jobs['qc-job'])
+    assert job['status'] == 'error'
+    assert 'pick_source job batch-job metadata mismatch: file_id' in str(job['message'])
+
+
+def test_first_break_qc_job_errors_when_batch_pick_source_key1_byte_mismatch(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    state, _job_dir = _setup_state(tmp_path)
+    _add_datum_job(state, tmp_path)
+    _add_batch_job(state, tmp_path, key1_byte=191)
+    _patch_success_path(monkeypatch)
+
+    service.run_first_break_qc_job('qc-job', _request(), state)
+
+    with state.lock:
+        job = dict(state.jobs['qc-job'])
+    assert job['status'] == 'error'
+    assert 'pick_source job batch-job metadata mismatch: key1_byte' in str(job['message'])
+
+
+def test_first_break_qc_job_errors_when_batch_pick_source_key2_byte_mismatch(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    state, _job_dir = _setup_state(tmp_path)
+    _add_datum_job(state, tmp_path)
+    _add_batch_job(state, tmp_path, key2_byte=195)
+    _patch_success_path(monkeypatch)
+
+    service.run_first_break_qc_job('qc-job', _request(), state)
+
+    with state.lock:
+        job = dict(state.jobs['qc-job'])
+    assert job['status'] == 'error'
+    assert 'pick_source job batch-job metadata mismatch: key2_byte' in str(job['message'])
+
+
+def test_first_break_qc_job_accepts_matching_datum_and_batch_pick_jobs(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    state, _job_dir = _setup_state(tmp_path)
+    _add_datum_job(state, tmp_path)
+    _add_batch_job(state, tmp_path)
+    _patch_success_path(monkeypatch)
+
+    service.run_first_break_qc_job('qc-job', _request(), state)
+
+    with state.lock:
+        job = dict(state.jobs['qc-job'])
+    assert job['status'] == 'done'
+
+
 def test_first_break_qc_job_errors_when_input_shapes_mismatch(
     tmp_path: Path,
     monkeypatch,
@@ -446,3 +646,29 @@ def test_first_break_qc_job_does_not_register_corrected_file(
         job = dict(state.jobs['qc-job'])
     assert 'corrected_file_id' not in job
     assert 'corrected_store_path' not in job
+
+
+def test_first_break_qc_service_real_compute_writer_allows_nan_pick(
+    tmp_path: Path,
+) -> None:
+    state, job_dir = _setup_state(tmp_path)
+    solution = _add_datum_job(state, tmp_path)
+    picks = _add_batch_job(state, tmp_path)
+    _write_real_datum_solution(solution)
+    _write_real_pick_npz(picks)
+    _register_real_reader(state)
+
+    service.run_first_break_qc_job('qc-job', _request(), state)
+
+    with state.lock:
+        job = dict(state.jobs['qc-job'])
+    assert job['status'] == 'done'
+    payload = json.loads((job_dir / 'first_break_qc.json').read_text(encoding='utf-8'))
+    json.dumps(payload, allow_nan=False)
+    rows = _read_csv(job_dir / 'first_break_qc.csv')
+    invalid = rows[1]
+    assert invalid['pick_time_raw_s'] == ''
+    assert invalid['pick_time_after_datum_s'] == ''
+    assert invalid['linear_moveout_model_s'] == ''
+    assert invalid['residual_after_datum_s'] == ''
+    assert (job_dir / 'residual_by_key1.csv').is_file()

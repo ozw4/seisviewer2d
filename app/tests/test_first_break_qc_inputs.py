@@ -185,6 +185,62 @@ def test_load_datum_static_solution_npz_rejects_dt_mismatch(
         _load_solution(path)
 
 
+def test_load_datum_static_solution_npz_rejects_nan_dt(tmp_path: Path) -> None:
+    path = _write_solution(tmp_path / 'datum_static_solution.npz', dt=np.float64(np.nan))
+
+    with pytest.raises(ValueError, match='datum_static_solution.npz dt'):
+        _load_solution(path)
+
+
+@pytest.mark.parametrize('bad_dt', [np.float64(np.inf), np.float64(-np.inf)])
+def test_load_datum_static_solution_npz_rejects_inf_dt(
+    tmp_path: Path,
+    bad_dt: np.float64,
+) -> None:
+    path = _write_solution(tmp_path / 'datum_static_solution.npz', dt=bad_dt)
+
+    with pytest.raises(ValueError, match='datum_static_solution.npz dt'):
+        _load_solution(path)
+
+
+@pytest.mark.parametrize('bad_dt', [np.float64(0.0), np.float64(-0.004)])
+def test_load_datum_static_solution_npz_rejects_non_positive_dt(
+    tmp_path: Path,
+    bad_dt: np.float64,
+) -> None:
+    path = _write_solution(tmp_path / 'datum_static_solution.npz', dt=bad_dt)
+
+    with pytest.raises(ValueError, match='datum_static_solution.npz dt'):
+        _load_solution(path)
+
+
+def test_load_datum_static_solution_npz_accepts_matching_positive_finite_dt(
+    tmp_path: Path,
+) -> None:
+    path = _write_solution(tmp_path / 'datum_static_solution.npz', dt=np.float64(DT))
+
+    solution = _load_solution(path)
+
+    assert solution.dt == pytest.approx(DT)
+
+
+@pytest.mark.parametrize('bad_dt', [np.nan, np.inf, -np.inf, 0.0, -0.004])
+def test_load_datum_static_solution_npz_rejects_invalid_expected_dt(
+    tmp_path: Path,
+    bad_dt: float,
+) -> None:
+    path = _write_solution(tmp_path / 'datum_static_solution.npz')
+
+    with pytest.raises(ValueError, match='expected_dt'):
+        load_datum_static_solution_npz(
+            path,
+            expected_n_traces=4,
+            expected_dt=bad_dt,
+            expected_key1_byte=KEY1_BYTE,
+            expected_key2_byte=KEY2_BYTE,
+        )
+
+
 def test_load_datum_static_solution_npz_rejects_n_traces_mismatch(
     tmp_path: Path,
 ) -> None:

@@ -29,6 +29,10 @@ def resolve_job_artifact_path(
     name: str,
     allowed_job_types: set[str] | None = None,
     allowed_statics_kinds: set[str] | None = None,
+    expected_file_id: str | None = None,
+    expected_key1_byte: int | None = None,
+    expected_key2_byte: int | None = None,
+    reference_label: str = 'referenced',
 ) -> Path:
     """Resolve a job artifact by job id and file name without accepting paths."""
     artifact_name = _plain_artifact_name(name)
@@ -51,6 +55,15 @@ def resolve_job_artifact_path(
                 f'job {job_id} has unsupported statics_kind: {statics_kind}'
             )
 
+    _validate_expected_job_metadata(
+        job_id=job_id,
+        job=job,
+        reference_label=reference_label,
+        expected_file_id=expected_file_id,
+        expected_key1_byte=expected_key1_byte,
+        expected_key2_byte=expected_key2_byte,
+    )
+
     artifacts_dir_raw = job.get('artifacts_dir')
     if not isinstance(artifacts_dir_raw, str) or not artifacts_dir_raw:
         raise ValueError(f'job {job_id} has no artifacts_dir')
@@ -63,6 +76,58 @@ def resolve_job_artifact_path(
     if not artifact_path.is_file():
         raise ValueError(f'job artifact not found: {artifact_name}')
     return artifact_path
+
+
+def _validate_expected_job_metadata(
+    *,
+    job_id: str,
+    job: dict[str, object],
+    reference_label: str,
+    expected_file_id: str | None,
+    expected_key1_byte: int | None,
+    expected_key2_byte: int | None,
+) -> None:
+    _validate_expected_job_field(
+        job_id=job_id,
+        job=job,
+        reference_label=reference_label,
+        field='file_id',
+        expected=expected_file_id,
+    )
+    _validate_expected_job_field(
+        job_id=job_id,
+        job=job,
+        reference_label=reference_label,
+        field='key1_byte',
+        expected=expected_key1_byte,
+    )
+    _validate_expected_job_field(
+        job_id=job_id,
+        job=job,
+        reference_label=reference_label,
+        field='key2_byte',
+        expected=expected_key2_byte,
+    )
+
+
+def _validate_expected_job_field(
+    *,
+    job_id: str,
+    job: dict[str, object],
+    reference_label: str,
+    field: str,
+    expected: object | None,
+) -> None:
+    if expected is None:
+        return
+    actual = job.get(field)
+    if actual == expected:
+        return
+    msg = (
+        f'{reference_label} job {job_id} metadata mismatch: '
+        f'{field} expected {expected!r}, got {actual!r}'
+    )
+    raise ValueError(msg)
 
 
 __all__ = ['resolve_job_artifact_path']

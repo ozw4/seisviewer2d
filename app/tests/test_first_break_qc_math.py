@@ -127,7 +127,22 @@ def test_first_break_qc_linear_offset_model_recovers_intercept_and_slowness() ->
     assert metrics.linear_offset_fit.slowness_s_per_offset_unit == pytest.approx(0.0001)
     assert metrics.linear_offset_fit.r2 == pytest.approx(1.0)
     expected_model = 0.100 + 0.0001 * np.abs(_base_inputs().offset_sorted)
-    np.testing.assert_allclose(metrics.linear_moveout_model_s_sorted, expected_model)
+    expected_model[~_base_inputs().valid_pick_mask_sorted] = np.nan
+    np.testing.assert_allclose(
+        metrics.linear_moveout_model_s_sorted,
+        expected_model,
+        equal_nan=True,
+    )
+
+
+def test_first_break_qc_metrics_linear_model_nan_for_invalid_pick() -> None:
+    metrics = compute_first_break_qc_metrics(_base_inputs())
+    invalid_mask = ~_base_inputs().valid_pick_mask_sorted
+
+    assert np.all(np.isnan(metrics.linear_moveout_model_s_sorted[invalid_mask]))
+    assert np.all(np.isnan(metrics.residual_after_datum_s_sorted[invalid_mask]))
+    assert np.all(np.isfinite(metrics.linear_moveout_model_s_sorted[~invalid_mask]))
+    assert np.all(np.isfinite(metrics.residual_after_datum_s_sorted[~invalid_mask]))
 
 
 def test_first_break_qc_linear_offset_model_uses_abs_offset() -> None:
