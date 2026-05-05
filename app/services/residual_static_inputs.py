@@ -6,7 +6,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 import json
 from pathlib import Path
-from typing import Any, Literal
+from typing import Any
 
 import numpy as np
 
@@ -22,9 +22,11 @@ from app.services.pick_source_loader import (
     load_manual_memmap_pick_source,
     load_npz_pick_source,
 )
+from app.services.residual_static_types import (
+    MoveoutModel,
+    ResidualStaticSolverInputs,
+)
 from app.trace_store.reader import TraceStoreSectionReader
-
-MoveoutModel = Literal['linear_abs_offset', 'none']
 
 _DT_TOLERANCE = 1e-9
 _CORRECTED_FILE_MANIFEST = 'corrected_file.json'
@@ -38,47 +40,6 @@ class ResidualStaticResolvedArtifacts:
     datum_source_file_id: str
     datum_corrected_file_id: str
     pick_source_artifact_name: str | None
-
-
-@dataclass(frozen=True)
-class ResidualStaticSolverInputs:
-    picks_time_s_sorted: np.ndarray
-    valid_pick_mask_sorted: np.ndarray
-    pick_time_after_datum_s_sorted: np.ndarray
-    datum_trace_shift_s_sorted: np.ndarray
-
-    source_id_sorted: np.ndarray
-    receiver_id_sorted: np.ndarray
-    source_unique_ids: np.ndarray
-    receiver_unique_ids: np.ndarray
-    source_index_sorted: np.ndarray
-    receiver_index_sorted: np.ndarray
-    source_valid_pick_counts: np.ndarray
-    receiver_valid_pick_counts: np.ndarray
-
-    offset_sorted: np.ndarray | None
-    abs_offset_sorted: np.ndarray | None
-
-    key1_sorted: np.ndarray
-    key2_sorted: np.ndarray
-    source_elevation_m_sorted: np.ndarray
-    receiver_elevation_m_sorted: np.ndarray
-
-    dt: float
-    n_traces: int
-    n_samples: int
-    key1_byte: int
-    key2_byte: int
-    source_id_byte: int
-    receiver_id_byte: int
-    offset_byte: int | None
-    moveout_model: MoveoutModel
-
-    input_file_id: str
-    datum_source_file_id: str
-    datum_job_id: str
-    pick_source_kind: str
-    metadata: dict[str, Any]
 
 
 def resolve_residual_static_input_artifacts(
@@ -649,6 +610,8 @@ def _request_offset_byte(
         if moveout_model == 'linear_abs_offset':
             raise ValueError('offset_byte is required for linear_abs_offset moveout')
         return None
+    if moveout_model == 'none':
+        raise ValueError('offset_byte must be None for none moveout')
     return _validate_header_byte(raw_offset_byte, name='offset_byte')
 
 

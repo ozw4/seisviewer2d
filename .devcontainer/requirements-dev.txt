@@ -6,6 +6,7 @@ tqdm
 segyio
 numba
 fastapi
+pydantic>=2,<3
 httpx
 uvicorn[standard]
 python-multipart

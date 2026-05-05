@@ -14,7 +14,7 @@ from app.services.residual_static_design_matrix import (
     pack_residual_static_parameters,
     unpack_residual_static_parameters,
 )
-from app.services.residual_static_inputs import ResidualStaticSolverInputs
+from app.services.residual_static_types import ResidualStaticSolverInputs
 
 PICK_TIME_AFTER_DATUM = np.asarray([0.100, 0.110, 0.120, 0.130])
 VALID_PICK_MASK = np.asarray([True, True, True, True])

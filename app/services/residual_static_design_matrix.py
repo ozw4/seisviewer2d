@@ -3,13 +3,10 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Literal
 
 import numpy as np
 
-from app.services.residual_static_inputs import ResidualStaticSolverInputs
-
-MoveoutModel = Literal['linear_abs_offset', 'none']
+from app.services.residual_static_types import MoveoutModel, ResidualStaticSolverInputs
 
 
 @dataclass(frozen=True)
