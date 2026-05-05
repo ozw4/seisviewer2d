@@ -81,6 +81,10 @@ class _Reader:
 
 
 def _request(**overrides: Any) -> ResidualStaticApplyRequest:
+    overrides = dict(overrides)
+    source_id_byte = overrides.pop('source_id_byte', SOURCE_ID_BYTE)
+    receiver_id_byte = overrides.pop('receiver_id_byte', RECEIVER_ID_BYTE)
+    offset_byte = overrides.pop('offset_byte', OFFSET_BYTE)
     payload: dict[str, Any] = {
         'file_id': CORRECTED_FILE_ID,
         'key1_byte': KEY1_BYTE,
@@ -94,9 +98,11 @@ def _request(**overrides: Any) -> ResidualStaticApplyRequest:
             'job_id': 'pick-job',
             'name': 'predicted_picks_time_s.npz',
         },
-        'source_id_byte': SOURCE_ID_BYTE,
-        'receiver_id_byte': RECEIVER_ID_BYTE,
-        'offset_byte': OFFSET_BYTE,
+        'geometry': {
+            'source_id_byte': source_id_byte,
+            'receiver_id_byte': receiver_id_byte,
+        },
+        'offset': {'offset_byte': offset_byte},
         'moveout': {'model': 'linear_abs_offset'},
     }
     payload.update(overrides)

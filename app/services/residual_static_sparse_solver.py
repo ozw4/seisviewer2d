@@ -19,7 +19,7 @@ from app.services.residual_static_design_matrix import (
     evaluate_residual_static_model,
     unpack_residual_static_parameters,
 )
-from app.services.residual_static_inputs import ResidualStaticSolverInputs
+from app.services.residual_static_types import ResidualStaticSolverInputs
 
 ResidualStaticGauge = Literal['zero_mean_source_receiver']
 

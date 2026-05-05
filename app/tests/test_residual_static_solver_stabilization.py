@@ -9,7 +9,6 @@ from scipy import sparse
 from app.services.residual_static_design_matrix import (
     build_residual_static_column_layout,
 )
-from app.services.residual_static_inputs import ResidualStaticSolverInputs
 from app.services.residual_static_sparse_solver import (
     ResidualStaticLsmrOptions,
     ResidualStaticStabilizationOptions,
@@ -23,6 +22,7 @@ from app.services.residual_static_sparse_solver import (
     validate_residual_static_stabilization_options,
     validate_residual_static_used_mask,
 )
+from app.services.residual_static_types import ResidualStaticSolverInputs
 
 SOURCE_DELAY_S = np.asarray([-0.012, 0.004, 0.008], dtype=np.float64)
 RECEIVER_DELAY_S = np.asarray([-0.006, -0.002, 0.003, 0.005], dtype=np.float64)

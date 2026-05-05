@@ -13,7 +13,6 @@ from app.services.residual_static_design_matrix import (
     ResidualStaticModelEvaluation,
     build_residual_static_observation_matrix_triplets,
 )
-from app.services.residual_static_inputs import ResidualStaticSolverInputs
 from app.services.residual_static_sparse_solver import (
     ResidualStaticLsmrDiagnostics,
     ResidualStaticLsmrOptions,
@@ -22,6 +21,7 @@ from app.services.residual_static_sparse_solver import (
     solve_residual_static_least_squares,
     validate_lsmr_options,
 )
+from app.services.residual_static_types import ResidualStaticSolverInputs
 
 PICK_TIME_AFTER_DATUM = np.asarray([0.100, 0.110, 0.120, 0.130])
 VALID_PICK_MASK = np.asarray([True, True, True, True])
