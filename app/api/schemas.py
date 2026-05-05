@@ -444,3 +444,49 @@ class FirstBreakQcJobResponse(BaseModel):
 
     job_id: str
     state: str
+
+
+class ResidualStaticDatumSolutionRequest(FirstBreakQcDatumSolutionRequest):
+    """Datum static solution artifact reference for residual statics."""
+
+
+class ResidualStaticPickSourceRequest(FirstBreakQcPickSourceRequest):
+    """First-break pick source reference for residual static estimation."""
+
+
+class ResidualStaticMoveoutRequest(BaseModel):
+    """Moveout model configuration for residual static estimation."""
+
+    model: Literal['linear_abs_offset', 'none'] = 'linear_abs_offset'
+
+
+class ResidualStaticApplyRequest(BaseModel):
+    """Request model for future ``/statics/residual/apply`` jobs."""
+
+    file_id: str
+    key1_byte: int = 189
+    key2_byte: int = 193
+    datum_solution: ResidualStaticDatumSolutionRequest
+    pick_source: ResidualStaticPickSourceRequest
+    source_id_byte: int
+    receiver_id_byte: int
+    offset_byte: int | None = 37
+    moveout: ResidualStaticMoveoutRequest = Field(
+        default_factory=ResidualStaticMoveoutRequest,
+    )
+
+    @model_validator(mode='after')
+    def _check_values(self) -> 'ResidualStaticApplyRequest':
+        if not self.file_id:
+            raise ValueError('file_id must be a non-empty string')
+        require_positive_int(self.key1_byte, 'key1_byte')
+        require_positive_int(self.key2_byte, 'key2_byte')
+        require_positive_int(self.source_id_byte, 'source_id_byte')
+        require_positive_int(self.receiver_id_byte, 'receiver_id_byte')
+        if self.source_id_byte == self.receiver_id_byte:
+            raise ValueError('source_id_byte and receiver_id_byte must differ')
+        if self.offset_byte is not None:
+            require_positive_int(self.offset_byte, 'offset_byte')
+        if self.moveout.model == 'linear_abs_offset' and self.offset_byte is None:
+            raise ValueError('offset_byte is required for linear_abs_offset moveout')
+        return self
