@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from contextlib import nullcontext
 from dataclasses import dataclass
 import json
@@ -253,9 +254,13 @@ def apply_residual_static_correction_to_trace_store(
     state: object,
     options: ResidualStaticTraceStoreApplyOptions,
     corrected_file_id: str | None = None,
+    progress_callback: Callable[[float, str], None] | None = None,
+    cancel_check: Callable[[], bool] | None = None,
 ) -> ResidualStaticCorrectedStoreResult:
     """Create, register, and describe a residual-corrected TraceStore."""
     _validate_apply_options(options)
+    _notify_progress(progress_callback, 0.0, 'validating_residual_static_trace_shift')
+    _raise_if_cancelled(cancel_check)
     source_path = Path(source_store_path)
     _validate_registry_source_path(
         state=state,
@@ -278,6 +283,7 @@ def apply_residual_static_correction_to_trace_store(
         solution,
         max_abs_shift_ms=options.max_abs_shift_ms,
     )
+    _raise_if_cancelled(cancel_check)
 
     resolved_file_id = str(corrected_file_id or uuid4())
     output_store_path = _corrected_store_path(
@@ -293,8 +299,18 @@ def apply_residual_static_correction_to_trace_store(
     )
     corrected_file_json_path = Path(artifacts_dir) / _CORRECTED_FILE_NAME
 
+    def builder_progress_callback(progress: float, message: str) -> None:
+        mapped = 0.10 + (0.75 * max(0.0, min(1.0, float(progress))))
+        _notify_progress(progress_callback, mapped, message)
+
     build_result = None
     try:
+        _notify_progress(
+            progress_callback,
+            0.10,
+            'building_residual_corrected_trace_store',
+        )
+        _raise_if_cancelled(cancel_check)
         build_result = build_time_shifted_trace_store(
             source_store_path=source_path,
             output_store_path=output_store_path,
@@ -304,7 +320,20 @@ def apply_residual_static_correction_to_trace_store(
             derived_metadata=derived_metadata,
             from_file_id=source_file_id,
             original_segy_path=source_meta.original_segy_path,
+            progress_callback=(
+                builder_progress_callback
+                if progress_callback is not None
+                else None
+            ),
+            cancel_check=cancel_check,
         )
+        _raise_if_cancelled(cancel_check)
+        _notify_progress(
+            progress_callback,
+            0.90,
+            'registering_residual_corrected_trace_store',
+        )
+        _raise_if_cancelled(cancel_check)
         register_trace_store(
             state=state,
             file_id=resolved_file_id,
@@ -315,6 +344,8 @@ def apply_residual_static_correction_to_trace_store(
             update_registry=True,
             touch_meta=True,
         )
+        _raise_if_cancelled(cancel_check)
+        _notify_progress(progress_callback, 0.97, 'writing_corrected_file_manifest')
         _write_json_atomic(
             corrected_file_json_path,
             _build_corrected_file_payload(
@@ -350,6 +381,21 @@ def apply_residual_static_correction_to_trace_store(
         key2_byte=key2_byte,
         dt=build_result.dt,
     )
+
+
+def _notify_progress(
+    progress_callback: Callable[[float, str], None] | None,
+    progress: float,
+    message: str,
+) -> None:
+    if progress_callback is None:
+        return
+    progress_callback(float(progress), message)
+
+
+def _raise_if_cancelled(cancel_check: Callable[[], bool] | None) -> None:
+    if cancel_check is not None and cancel_check():
+        raise RuntimeError('residual static TraceStore apply cancelled')
 
 
 def _validate_apply_options(options: ResidualStaticTraceStoreApplyOptions) -> None:
