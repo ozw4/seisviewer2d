@@ -438,6 +438,7 @@ def _run_datum_static_apply_job_body(
             fill_value=req.apply.fill_value,
             output_dtype=req.apply.output_dtype,
             from_file_id=req.file_id,
+            original_segy_path=_reader_original_segy_path(reader),
             header_bytes_to_materialize=header_bytes_to_materialize,
             derived_metadata={
                 'statics_kind': 'datum',
