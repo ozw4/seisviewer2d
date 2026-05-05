@@ -418,6 +418,115 @@ def _require_positive_finite_float(value: object, name: str) -> float:
     return out
 
 
+class StaticLinkageGeometryRequest(BaseModel):
+    """Geometry header configuration for static linkage."""
+
+    model_config = ConfigDict(extra='forbid')
+
+    source_x_byte: int = 73
+    source_y_byte: int = 77
+    receiver_x_byte: int = 81
+    receiver_y_byte: int = 85
+    coordinate_scalar_byte: int = 71
+
+    @field_validator(
+        'source_x_byte',
+        'source_y_byte',
+        'receiver_x_byte',
+        'receiver_y_byte',
+        'coordinate_scalar_byte',
+        mode='before',
+    )
+    @classmethod
+    def _check_header_byte(cls, value: object, info: Any) -> int:
+        return require_trace_header_byte(value, info.field_name)
+
+    @model_validator(mode='after')
+    def _check_unique_headers(self) -> 'StaticLinkageGeometryRequest':
+        header_bytes = (
+            self.source_x_byte,
+            self.source_y_byte,
+            self.receiver_x_byte,
+            self.receiver_y_byte,
+            self.coordinate_scalar_byte,
+        )
+        if len(set(header_bytes)) != len(header_bytes):
+            raise ValueError('geometry header bytes must be unique')
+        return self
+
+
+class StaticLinkageOptionsRequest(BaseModel):
+    """Linkage options for static linkage geometry building."""
+
+    model_config = ConfigDict(extra='forbid')
+
+    mode: Literal['none', 'auto_threshold']
+    threshold_m: float | None = None
+    receiver_location_interval_m: float | None = None
+    prefer_receiver_anchor: bool = True
+
+    @field_validator('threshold_m', mode='before')
+    @classmethod
+    def _check_threshold_m(cls, value: object) -> float | None:
+        if value is None:
+            return None
+        return _require_positive_finite_float(value, 'linkage.threshold_m')
+
+    @field_validator('receiver_location_interval_m', mode='before')
+    @classmethod
+    def _check_receiver_location_interval_m(cls, value: object) -> float | None:
+        if value is None:
+            return None
+        return _require_positive_finite_float(
+            value,
+            'linkage.receiver_location_interval_m',
+        )
+
+    @field_validator('prefer_receiver_anchor', mode='before')
+    @classmethod
+    def _check_prefer_receiver_anchor(cls, value: object) -> bool:
+        return _require_bool(value, 'linkage.prefer_receiver_anchor')
+
+    @model_validator(mode='after')
+    def _check_mode_options(self) -> 'StaticLinkageOptionsRequest':
+        if self.mode == 'auto_threshold' and self.threshold_m is None:
+            raise ValueError('linkage.threshold_m is required for auto_threshold')
+        if self.mode == 'none':
+            if self.threshold_m is not None:
+                raise ValueError('linkage.threshold_m must be null for none mode')
+            if self.receiver_location_interval_m is not None:
+                raise ValueError(
+                    'linkage.receiver_location_interval_m must be null for none mode'
+                )
+        return self
+
+
+class StaticLinkageBuildRequest(BaseModel):
+    """Request model for future ``/statics/linkage/build`` jobs."""
+
+    model_config = ConfigDict(extra='forbid')
+
+    file_id: str
+    key1_byte: int = 189
+    key2_byte: int = 193
+    geometry: StaticLinkageGeometryRequest = Field(
+        default_factory=StaticLinkageGeometryRequest,
+    )
+    linkage: StaticLinkageOptionsRequest
+
+    @field_validator('file_id', mode='before')
+    @classmethod
+    def _check_file_id(cls, value: object) -> str:
+        if not isinstance(value, str) or not value:
+            raise ValueError('file_id must be a non-empty string')
+        return value
+
+    @field_validator('key1_byte', 'key2_byte', mode='before')
+    @classmethod
+    def _check_key_header_byte(cls, value: object, info: Any) -> int:
+        return require_trace_header_byte(value, info.field_name)
+
+
 class FirstBreakQcDatumSolutionRequest(BaseModel):
     """Datum static solution artifact reference for first-break QC."""
 
