@@ -4,6 +4,7 @@ from pathlib import Path
 from types import ModuleType
 
 import app.services.residual_static_design_matrix as design_matrix
+import app.services.residual_static_artifacts as residual_static_artifacts
 import app.services.residual_static_robust_solver as robust_solver
 import app.services.residual_static_sparse_solver as sparse_solver
 import app.services.residual_static_types as residual_static_types
@@ -44,4 +45,13 @@ def test_residual_static_robust_solver_does_not_import_api_schema_reader_or_segy
 
     assert 'app.api.schemas' not in source
     assert 'app.trace_store.reader' not in source
+    assert 'segyio' not in source
+
+
+def test_residual_static_artifacts_does_not_import_api_schema_reader_or_segyio() -> None:
+    source = _module_source(residual_static_artifacts)
+
+    assert 'app.api.schemas' not in source
+    assert 'app.trace_store.reader' not in source
+    assert 'TraceStoreSectionReader' not in source
     assert 'segyio' not in source
