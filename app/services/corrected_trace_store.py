@@ -374,6 +374,7 @@ def _build_meta(
     shift_summary: dict[str, float],
     derived_metadata: Mapping[str, Any] | None,
     from_file_id: str | None,
+    original_segy_path: str | None,
 ) -> dict[str, Any]:
     derived_extra = dict(derived_metadata or {})
     reserved = sorted(_RESERVED_DERIVED_KEYS.intersection(derived_extra))
@@ -414,7 +415,7 @@ def _build_meta(
         },
         'sorted_by': ['key1', 'key2'],
         'dt': source_meta.dt,
-        'original_segy_path': None,
+        'original_segy_path': original_segy_path,
         'source_sha256': None,
         'derived': derived,
     }
@@ -492,6 +493,7 @@ def build_time_shifted_trace_store(
     output_dtype: str = 'float32',
     derived_metadata: Mapping[str, Any] | None = None,
     from_file_id: str | None = None,
+    original_segy_path: str | None = None,
     header_bytes_to_materialize: Iterable[int] = (),
     chunk_size: int = 512,
     progress_callback: Callable[[float, str], None] | None = None,
@@ -539,6 +541,7 @@ def build_time_shifted_trace_store(
         shift_summary=shift_summary,
         derived_metadata=derived_metadata,
         from_file_id=from_file_id,
+        original_segy_path=original_segy_path,
     )
     _raise_if_cancelled(cancel_check)
 
