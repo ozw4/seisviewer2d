@@ -1,6 +1,7 @@
 timm
 numpy<2
 pandas
+scipy
 tqdm
 segyio
 numba
