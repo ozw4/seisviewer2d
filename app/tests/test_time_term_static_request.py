@@ -97,6 +97,7 @@ def _payload() -> dict[str, Any]:
         },
         'moveout': {
             'model': 'head_wave_linear_offset',
+            'distance_source': 'geometry',
             'offset_byte': 37,
             'allow_missing_offset': False,
         },
@@ -105,9 +106,11 @@ def _payload() -> dict[str, Any]:
             'gauge': 'mean_zero',
             'robust': {
                 'enabled': True,
+                'method': 'mad',
+                'threshold': 3.5,
                 'max_iterations': 5,
-                'mad_threshold': 3.5,
                 'min_used_fraction': 0.5,
+                'min_used_observations': 1,
             },
         },
         'apply': {
@@ -260,10 +263,62 @@ def test_time_term_request_rejects_invalid_units() -> None:
 
 def test_time_term_request_rejects_invalid_moveout_offset_config() -> None:
     payload = _payload()
+    payload['moveout']['distance_source'] = 'offset_header'
     payload['moveout']['offset_byte'] = None
 
     with pytest.raises(ValidationError, match='moveout.offset_byte is required'):
         _validate(payload)
+
+
+def test_time_term_request_accepts_reciprocal_head_wave_model() -> None:
+    payload = _payload()
+    payload['moveout']['model'] = 'reciprocal_head_wave'
+
+    req = _validate(payload)
+
+    assert req.moveout.model == 'reciprocal_head_wave'
+
+
+def test_time_term_request_accepts_distance_source_geometry_without_offset_byte() -> None:
+    payload = _payload()
+    payload['moveout']['distance_source'] = 'geometry'
+    payload['moveout']['offset_byte'] = None
+
+    req = _validate(payload)
+
+    assert req.moveout.distance_source == 'geometry'
+    assert req.moveout.offset_byte is None
+
+
+def test_time_term_request_accepts_distance_source_offset_header_with_offset_byte() -> None:
+    payload = _payload()
+    payload['moveout']['distance_source'] = 'offset_header'
+    payload['moveout']['offset_byte'] = 37
+
+    req = _validate(payload)
+
+    assert req.moveout.distance_source == 'offset_header'
+    assert req.moveout.offset_byte == 37
+
+
+def test_time_term_request_accepts_distance_source_auto_without_offset_byte() -> None:
+    payload = _payload()
+    payload['moveout']['distance_source'] = 'auto'
+    payload['moveout']['offset_byte'] = None
+
+    req = _validate(payload)
+
+    assert req.moveout.distance_source == 'auto'
+    assert req.moveout.offset_byte is None
+
+
+def test_time_term_request_accepts_max_geometry_offset_mismatch() -> None:
+    payload = _payload()
+    payload['moveout']['max_geometry_offset_mismatch_m'] = 2.5
+
+    req = _validate(payload)
+
+    assert req.moveout.max_geometry_offset_mismatch_m == pytest.approx(2.5)
 
 
 def test_time_term_linkage_required_rejects_missing_job() -> None:
@@ -279,8 +334,9 @@ def test_time_term_linkage_required_rejects_missing_job() -> None:
     [
         (('solver', 'damping'), -0.1, 'solver.damping'),
         (('solver', 'robust', 'max_iterations'), 0, 'max_iterations'),
-        (('solver', 'robust', 'mad_threshold'), 0.0, 'mad_threshold'),
+        (('solver', 'robust', 'threshold'), 0.0, 'threshold'),
         (('solver', 'robust', 'min_used_fraction'), 1.1, 'min_used_fraction'),
+        (('solver', 'robust', 'min_used_observations'), 0, 'min_used_observations'),
         (('apply', 'max_abs_shift_ms'), 0.0, 'max_abs_shift_ms'),
     ],
 )
@@ -296,6 +352,25 @@ def test_time_term_request_rejects_invalid_solver_and_apply_values(
     target[field_path[-1]] = value
 
     with pytest.raises(ValidationError, match=match):
+        _validate(payload)
+
+
+@pytest.mark.parametrize('method', ['mad', 'sigma'])
+def test_time_term_request_accepts_robust_method(method: str) -> None:
+    payload = _payload()
+    payload['solver']['robust']['method'] = method
+
+    req = _validate(payload)
+
+    assert req.solver.robust.method == method
+    assert req.solver.robust.threshold == pytest.approx(3.5)
+
+
+def test_time_term_request_rejects_unknown_robust_method() -> None:
+    payload = _payload()
+    payload['solver']['robust']['method'] = 'median'
+
+    with pytest.raises(ValidationError, match='method'):
         _validate(payload)
 
 

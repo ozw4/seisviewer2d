@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -24,60 +24,15 @@ from app.services.pick_source_loader import (
 )
 from app.services.reader import get_reader
 from app.services.residual_static_inputs import load_source_receiver_id_headers_sorted
+from app.services.time_term_types import (
+    ORDER,
+    SIGN_CONVENTION,
+    TimeTermInversionInputs,
+)
 from app.trace_store.reader import TraceStoreSectionReader
 from app.utils.segy_scalars import apply_segy_scalar
 
-ORDER = 'trace_store_sorted'
-SIGN_CONVENTION = (
-    'pick_time_after_static_s = pick_time_raw_s '
-    '+ datum_trace_shift_s + residual_applied_shift_s; '
-    'residual_applied_shift_s is an applied event-time shift, not an estimated delay'
-)
 _DT_TOLERANCE = 1e-9
-
-
-@dataclass(frozen=True)
-class TimeTermInversionInputs:
-    """Trace-level arrays aligned to TraceStore sorted trace order."""
-
-    n_traces: int
-    n_samples: int
-    dt: float
-    key1_byte: int
-    key2_byte: int
-
-    pick_time_raw_s_sorted: np.ndarray
-    valid_pick_mask_sorted: np.ndarray
-
-    datum_trace_shift_s_sorted: np.ndarray
-    residual_applied_shift_s_sorted: np.ndarray
-    pick_time_after_static_s_sorted: np.ndarray
-
-    source_node_id_sorted: np.ndarray
-    receiver_node_id_sorted: np.ndarray
-    n_nodes: int
-
-    source_id_sorted: np.ndarray
-    receiver_id_sorted: np.ndarray
-    offset_sorted: np.ndarray | None
-
-    source_x_m_sorted: np.ndarray
-    source_y_m_sorted: np.ndarray
-    receiver_x_m_sorted: np.ndarray
-    receiver_y_m_sorted: np.ndarray
-    source_elevation_m_sorted: np.ndarray
-    receiver_elevation_m_sorted: np.ndarray
-    source_depth_m_sorted: np.ndarray
-
-    input_file_id: str
-    pick_source_description: str
-    datum_solution_path: Path | None
-    residual_solution_path: Path | None
-    linkage_artifact_path: Path | None
-
-    order: str = ORDER
-    sign_convention: str = SIGN_CONVENTION
-    metadata: dict[str, object] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -309,8 +264,12 @@ def build_time_term_inversion_inputs_from_sources(
             'linkage_mode': linkage.mode,
             'coordinate_unit': request.geometry.coordinate_unit,
             'elevation_unit': request.geometry.elevation_unit,
+            'distance_source': request.moveout.distance_source,
             'offset_byte': request.moveout.offset_byte,
             'allow_missing_offset': request.moveout.allow_missing_offset,
+            'max_geometry_offset_mismatch_m': (
+                request.moveout.max_geometry_offset_mismatch_m
+            ),
         },
     )
     validate_time_term_inversion_inputs(inputs, offset_required=_offset_required(request))
@@ -888,15 +847,27 @@ def _load_optional_offset_header_sorted(
     moveout = request.moveout
     if moveout.model == 'none':
         return None
+    if (
+        moveout.distance_source == 'geometry'
+        and moveout.max_geometry_offset_mismatch_m is None
+    ):
+        return None
     if moveout.offset_byte is None:
-        if moveout.allow_missing_offset:
-            return None
-        raise ValueError('offset_byte is required by moveout configuration')
+        if moveout.distance_source == 'offset_header':
+            raise ValueError('offset_byte is required by moveout configuration')
+        if moveout.max_geometry_offset_mismatch_m is not None:
+            raise ValueError('offset_byte is required for geometry offset QC')
+        return None
     n_traces = _coerce_positive_int(expected_n_traces, name='expected_n_traces')
     try:
         values = _read_reader_header(reader, byte=moveout.offset_byte, role='offset')
     except ValueError:
-        if moveout.allow_missing_offset:
+        if (
+            moveout.distance_source == 'auto'
+            and moveout.max_geometry_offset_mismatch_m is None
+        ):
+            return None
+        if moveout.allow_missing_offset and moveout.distance_source != 'offset_header':
             return None
         raise
     offset = _coerce_1d_finite_float64(
@@ -931,8 +902,7 @@ def _normalize_linear_unit(values: np.ndarray, *, unit: str, name: str) -> np.nd
 def _offset_required(request: TimeTermStaticApplyRequest) -> bool:
     return (
         request.moveout.model != 'none'
-        and not request.moveout.allow_missing_offset
-        and request.moveout.offset_byte is not None
+        and request.moveout.distance_source == 'offset_header'
     )
 
 

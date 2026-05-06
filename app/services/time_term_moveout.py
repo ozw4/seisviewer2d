@@ -7,7 +7,7 @@ from typing import Literal
 
 import numpy as np
 
-from app.services.time_term_static_inputs import TimeTermInversionInputs
+from app.services.time_term_types import TimeTermInversionInputs
 
 TimeTermMoveoutModel = Literal[
     'head_wave_linear_offset',

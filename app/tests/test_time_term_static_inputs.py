@@ -337,10 +337,7 @@ def test_time_term_inputs_builds_full_object_with_shifts_geometry_and_linkage(
     assert inputs.n_nodes > 0
     np.testing.assert_array_equal(inputs.source_id_sorted, [100, 100, 200, 300])
     np.testing.assert_array_equal(inputs.receiver_id_sorted, [1, 2, 1, 2])
-    np.testing.assert_allclose(
-        inputs.offset_sorted,
-        np.asarray([-100.0, -50.0, 50.0, 100.0]) * 0.3048,
-    )
+    assert inputs.offset_sorted is None
 
     np.testing.assert_allclose(
         inputs.source_x_m_sorted,
@@ -363,6 +360,34 @@ def test_time_term_inputs_builds_full_object_with_shifts_geometry_and_linkage(
         np.asarray([900.0, 100.0, 300.0, 200.0]) * 0.3048,
     )
     assert inputs.sign_convention.startswith('pick_time_after_static_s')
+
+
+def test_time_term_inputs_loads_offset_for_offset_header_distance(
+    tmp_path: Path,
+) -> None:
+    linkage_path = _write_linkage(tmp_path / GEOMETRY_LINKAGE_NPZ_NAME)
+    req = _request(
+        moveout={
+            'model': 'head_wave_linear_offset',
+            'distance_source': 'offset_header',
+            'offset_byte': OFFSET_BYTE,
+            'allow_missing_offset': False,
+        },
+    )
+
+    inputs = build_time_term_inversion_inputs_from_sources(
+        request=req,
+        reader=_Reader(),
+        pick_source=_pick_source(),
+        expected_dt=DT,
+        expected_n_samples=N_SAMPLES,
+        linkage_artifact_path=linkage_path,
+    )
+
+    np.testing.assert_allclose(
+        inputs.offset_sorted,
+        np.asarray([-100.0, -50.0, 50.0, 100.0]) * 0.3048,
+    )
 
 
 def test_time_term_inputs_loads_manual_pick_export_original_to_sorted_order(
@@ -580,12 +605,20 @@ def test_time_term_inputs_rejects_non_finite_geometry(tmp_path: Path) -> None:
 
 def test_time_term_inputs_requires_offset_when_moveout_requires_offset(
     tmp_path: Path,
-    ) -> None:
+) -> None:
     linkage_path = _write_linkage(tmp_path / GEOMETRY_LINKAGE_NPZ_NAME)
+    req = _request(
+        moveout={
+            'model': 'head_wave_linear_offset',
+            'distance_source': 'offset_header',
+            'offset_byte': OFFSET_BYTE,
+            'allow_missing_offset': False,
+        },
+    )
 
     with pytest.raises(ValueError, match='failed to read offset header'):
         build_time_term_inversion_inputs_from_sources(
-            request=_request(),
+            request=req,
             reader=_Reader(missing_headers={OFFSET_BYTE}),
             pick_source=_pick_source(),
             expected_dt=DT,
@@ -599,6 +632,7 @@ def test_time_term_inputs_allows_missing_offset_when_configured(tmp_path: Path) 
     req = _request(
         moveout={
             'model': 'head_wave_linear_offset',
+            'distance_source': 'auto',
             'offset_byte': OFFSET_BYTE,
             'allow_missing_offset': True,
         },
@@ -606,6 +640,48 @@ def test_time_term_inputs_allows_missing_offset_when_configured(tmp_path: Path) 
 
     inputs = build_time_term_inversion_inputs_from_sources(
         request=req,
+        reader=_Reader(missing_headers={OFFSET_BYTE}),
+        pick_source=_pick_source(),
+        expected_dt=DT,
+        expected_n_samples=N_SAMPLES,
+        linkage_artifact_path=linkage_path,
+    )
+
+    assert inputs.offset_sorted is None
+
+
+def test_time_term_inputs_auto_distance_treats_missing_default_offset_as_optional(
+    tmp_path: Path,
+) -> None:
+    linkage_path = _write_linkage(tmp_path / GEOMETRY_LINKAGE_NPZ_NAME)
+    req = _request(
+        moveout={
+            'model': 'head_wave_linear_offset',
+            'distance_source': 'auto',
+            'allow_missing_offset': False,
+        },
+    )
+
+    inputs = build_time_term_inversion_inputs_from_sources(
+        request=req,
+        reader=_Reader(missing_headers={OFFSET_BYTE}),
+        pick_source=_pick_source(),
+        expected_dt=DT,
+        expected_n_samples=N_SAMPLES,
+        linkage_artifact_path=linkage_path,
+    )
+
+    assert req.moveout.offset_byte == OFFSET_BYTE
+    assert inputs.offset_sorted is None
+
+
+def test_time_term_inputs_geometry_distance_does_not_read_default_offset_header(
+    tmp_path: Path,
+) -> None:
+    linkage_path = _write_linkage(tmp_path / GEOMETRY_LINKAGE_NPZ_NAME)
+
+    inputs = build_time_term_inversion_inputs_from_sources(
+        request=_request(),
         reader=_Reader(missing_headers={OFFSET_BYTE}),
         pick_source=_pick_source(),
         expected_dt=DT,
@@ -638,8 +714,16 @@ def test_time_term_inputs_rejects_no_valid_picks(tmp_path: Path) -> None:
 
 def test_summarize_time_term_inversion_inputs_is_json_safe(tmp_path: Path) -> None:
     linkage_path = _write_linkage(tmp_path / GEOMETRY_LINKAGE_NPZ_NAME)
+    req = _request(
+        moveout={
+            'model': 'head_wave_linear_offset',
+            'distance_source': 'offset_header',
+            'offset_byte': OFFSET_BYTE,
+            'allow_missing_offset': False,
+        },
+    )
     inputs = build_time_term_inversion_inputs_from_sources(
-        request=_request(),
+        request=req,
         reader=_Reader(),
         pick_source=_pick_source(),
         expected_dt=DT,
