@@ -13,6 +13,7 @@ _NUMERIC_MODULE_PATHS = [
     'app/services/time_term_design_matrix.py',
     'app/services/time_term_sparse_solver.py',
     'app/services/time_term_robust_solver.py',
+    'app/services/time_term_apply_shift.py',
 ]
 
 
@@ -41,6 +42,7 @@ def test_time_term_numeric_services_do_not_import_api_reader_or_segyio(
         'app/services/time_term_design_matrix.py',
         'app/services/time_term_sparse_solver.py',
         'app/services/time_term_robust_solver.py',
+        'app/services/time_term_apply_shift.py',
     ],
 )
 def test_time_term_numeric_services_do_not_import_static_inputs(path: str) -> None:
@@ -56,6 +58,7 @@ def test_time_term_numeric_services_import_without_segyio(
         'app.services.time_term_design_matrix',
         'app.services.time_term_sparse_solver',
         'app.services.time_term_robust_solver',
+        'app.services.time_term_apply_shift',
         'app.services.time_term_static_inputs',
         'app.trace_store.reader',
     ):
@@ -68,6 +71,7 @@ def test_time_term_numeric_services_import_without_segyio(
         'app.services.time_term_design_matrix',
         'app.services.time_term_sparse_solver',
         'app.services.time_term_robust_solver',
+        'app.services.time_term_apply_shift',
     ):
         importlib.import_module(module_name)
 
