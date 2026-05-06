@@ -8,7 +8,7 @@ import numpy as np
 from scipy import sparse
 
 from app.services.time_term_moveout import TimeTermMoveoutResult
-from app.services.time_term_static_inputs import TimeTermInversionInputs
+from app.services.time_term_types import TimeTermInversionInputs
 
 
 @dataclass(frozen=True)

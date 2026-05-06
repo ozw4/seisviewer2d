@@ -14,7 +14,7 @@ from app.services.time_term_moveout import (
     compute_time_term_moveout,
     summarize_time_term_moveout,
 )
-from app.services.time_term_static_inputs import TimeTermInversionInputs
+from app.services.time_term_types import TimeTermInversionInputs
 
 N_TRACES = 5
 N_SAMPLES = 64
