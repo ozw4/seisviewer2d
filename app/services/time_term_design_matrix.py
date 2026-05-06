@@ -30,6 +30,8 @@ class TimeTermDesignMatrix:
     used_trace_mask_sorted: np.ndarray
     row_trace_index_sorted: np.ndarray
     trace_to_row_index_sorted: np.ndarray
+    source_node_id_sorted: np.ndarray
+    receiver_node_id_sorted: np.ndarray
 
     row_source_node_id: np.ndarray
     row_receiver_node_id: np.ndarray
@@ -173,6 +175,8 @@ def build_time_term_design_matrix(
         used_trace_mask_sorted=used_trace_mask,
         row_trace_index_sorted=row_trace_index,
         trace_to_row_index_sorted=trace_to_row_index,
+        source_node_id_sorted=np.ascontiguousarray(source_node_id, dtype=np.int64),
+        receiver_node_id_sorted=np.ascontiguousarray(receiver_node_id, dtype=np.int64),
         row_source_node_id=row_source_node_id,
         row_receiver_node_id=row_receiver_node_id,
         row_pick_time_after_static_s=row_pick_time_after_static,
