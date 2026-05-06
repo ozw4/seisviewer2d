@@ -583,6 +583,161 @@ def test_write_geometry_linkage_artifacts_rejects_negative_distance(
         )
 
 
+def test_write_geometry_linkage_artifacts_rejects_receiver_anchor_linked_to_source(
+    tmp_path: Path,
+) -> None:
+    tables, linkage = _auto_case()
+    index = _first_record_index(linkage, 'receiver_anchor')
+    bad_records = _replace_record(
+        linkage.records,
+        index,
+        linked_to_kind='source',
+        linked_to_id=0,
+    )
+    bad_linkage = replace(linkage, records=bad_records)
+
+    with pytest.raises(ValueError, match='receiver_anchor.*linked_to_kind receiver'):
+        write_geometry_linkage_artifacts(
+            job_dir=tmp_path,
+            tables=tables,
+            linkage=bad_linkage,
+        )
+
+
+def test_write_geometry_linkage_artifacts_rejects_source_fallback_linked_to_receiver(
+    tmp_path: Path,
+) -> None:
+    tables, linkage = _auto_case()
+    index = _first_record_index(linkage, 'source_fallback')
+    bad_records = _replace_record(
+        linkage.records,
+        index,
+        linked_to_kind='receiver',
+        linked_to_id=0,
+    )
+    bad_linkage = replace(linkage, records=bad_records)
+
+    with pytest.raises(ValueError, match='source_fallback.*linked_to_kind source'):
+        write_geometry_linkage_artifacts(
+            job_dir=tmp_path,
+            tables=tables,
+            linkage=bad_linkage,
+        )
+
+
+@pytest.mark.parametrize('method', ['receiver_seed', 'source_independent'])
+def test_write_geometry_linkage_artifacts_rejects_unlinked_record_with_link(
+    tmp_path: Path,
+    method: str,
+) -> None:
+    tables, linkage = _auto_case()
+    index = _first_record_index(linkage, method)
+    bad_records = _replace_record(
+        linkage.records,
+        index,
+        linked_to_kind='receiver',
+        linked_to_id=0,
+        distance_m=0.0,
+    )
+    bad_linkage = replace(linkage, records=bad_records)
+
+    with pytest.raises(ValueError, match=f'{method}.*empty link'):
+        write_geometry_linkage_artifacts(
+            job_dir=tmp_path,
+            tables=tables,
+            linkage=bad_linkage,
+        )
+
+
+def test_write_geometry_linkage_artifacts_rejects_source_fallback_self_link(
+    tmp_path: Path,
+) -> None:
+    tables, linkage = _auto_case()
+    index = _first_record_index(linkage, 'source_fallback')
+    endpoint_id = int(linkage.records[index].endpoint_id)
+    bad_records = _replace_record(
+        linkage.records,
+        index,
+        linked_to_id=endpoint_id,
+        distance_m=0.0,
+    )
+    bad_linkage = replace(linkage, records=bad_records)
+
+    with pytest.raises(ValueError, match='source_fallback must not self-link'):
+        write_geometry_linkage_artifacts(
+            job_dir=tmp_path,
+            tables=tables,
+            linkage=bad_linkage,
+        )
+
+
+def test_write_geometry_linkage_artifacts_rejects_linked_endpoint_out_of_range(
+    tmp_path: Path,
+) -> None:
+    tables, linkage = _auto_case()
+    index = _first_record_index(linkage, 'receiver_anchor')
+    bad_records = _replace_record(
+        linkage.records,
+        index,
+        linked_to_id=linkage.n_receiver_endpoints,
+    )
+    bad_linkage = replace(linkage, records=bad_records)
+
+    with pytest.raises(ValueError, match='out of range for receiver'):
+        write_geometry_linkage_artifacts(
+            job_dir=tmp_path,
+            tables=tables,
+            linkage=bad_linkage,
+        )
+
+
+def test_write_geometry_linkage_artifacts_rejects_linked_node_mismatch(
+    tmp_path: Path,
+) -> None:
+    tables, linkage = _auto_case()
+    index = _first_record_index(linkage, 'receiver_anchor')
+    source_id = int(linkage.records[index].endpoint_id)
+    bad_records = _replace_record(
+        linkage.records,
+        index,
+        linked_to_id=1,
+        distance_m=float(
+            np.hypot(
+                tables.source_endpoints.x_m[source_id] - tables.receiver_endpoints.x_m[1],
+                tables.source_endpoints.y_m[source_id] - tables.receiver_endpoints.y_m[1],
+            )
+        ),
+    )
+    bad_linkage = replace(linkage, records=bad_records)
+
+    with pytest.raises(ValueError, match='linked receiver node'):
+        write_geometry_linkage_artifacts(
+            job_dir=tmp_path,
+            tables=tables,
+            linkage=bad_linkage,
+        )
+
+
+def test_write_geometry_linkage_artifacts_rejects_record_distance_mismatch(
+    tmp_path: Path,
+) -> None:
+    tables, linkage = _auto_case()
+    index = _first_record_index(linkage, 'receiver_anchor')
+    bad_records = _replace_record(
+        linkage.records,
+        index,
+        distance_m=float(linkage.records[index].distance_m or 0.0) + 1.0,
+    )
+    bad_linkage = replace(linkage, records=bad_records)
+
+    with pytest.raises(ValueError, match='distance_m.*endpoint geometry distance'):
+        write_geometry_linkage_artifacts(
+            job_dir=tmp_path,
+            tables=tables,
+            linkage=bad_linkage,
+        )
+
+
 def test_write_geometry_linkage_artifacts_cleans_up_tmp_file_on_npz_failure(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -617,3 +772,22 @@ def _assert_json_contains_no_nan_or_inf(value: object) -> None:
         return
     if isinstance(value, float):
         assert np.isfinite(value)
+
+
+def _first_record_index(linkage: GeometryLinkageResult, method: str) -> int:
+    for index, record in enumerate(linkage.records):
+        if record.method == method:
+            return index
+    raise AssertionError(f'missing record method: {method}')
+
+
+def _replace_record(
+    records: tuple[Any, ...],
+    index: int,
+    **changes: object,
+) -> tuple[Any, ...]:
+    return (
+        *records[:index],
+        replace(records[index], **changes),
+        *records[index + 1 :],
+    )
