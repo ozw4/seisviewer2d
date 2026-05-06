@@ -14,7 +14,7 @@ from app.services.time_term_design_matrix import (
     summarize_time_term_design_matrix,
 )
 from app.services.time_term_moveout import TimeTermMoveoutResult
-from app.services.time_term_static_inputs import TimeTermInversionInputs
+from app.services.time_term_types import TimeTermInversionInputs
 
 N_TRACES = 4
 N_SAMPLES = 64

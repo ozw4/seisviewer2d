@@ -106,8 +106,10 @@ def _payload() -> dict[str, Any]:
             'robust': {
                 'enabled': True,
                 'max_iterations': 5,
-                'mad_threshold': 3.5,
+                'method': 'mad',
+                'threshold': 3.5,
                 'min_used_fraction': 0.5,
+                'min_used_observations': 1,
             },
         },
         'apply': {
@@ -261,8 +263,87 @@ def test_time_term_request_rejects_invalid_units() -> None:
 def test_time_term_request_rejects_invalid_moveout_offset_config() -> None:
     payload = _payload()
     payload['moveout']['offset_byte'] = None
+    payload['moveout']['distance_source'] = 'offset_header'
 
     with pytest.raises(ValidationError, match='moveout.offset_byte is required'):
+        _validate(payload)
+
+
+def test_time_term_request_accepts_reciprocal_head_wave_model() -> None:
+    payload = _payload()
+    payload['moveout']['model'] = 'reciprocal_head_wave'
+
+    req = _validate(payload)
+
+    assert req.moveout.model == 'reciprocal_head_wave'
+
+
+def test_time_term_request_accepts_distance_source_geometry() -> None:
+    payload = _payload()
+    payload['moveout']['distance_source'] = 'geometry'
+    payload['moveout']['offset_byte'] = None
+
+    req = _validate(payload)
+
+    assert req.moveout.distance_source == 'geometry'
+    assert req.moveout.offset_byte is None
+
+
+def test_time_term_request_accepts_distance_source_offset_header_with_offset_byte() -> None:
+    payload = _payload()
+    payload['moveout']['distance_source'] = 'offset_header'
+    payload['moveout']['offset_byte'] = 37
+
+    req = _validate(payload)
+
+    assert req.moveout.distance_source == 'offset_header'
+    assert req.moveout.offset_byte == 37
+
+
+def test_time_term_request_rejects_offset_header_distance_without_offset_byte() -> None:
+    payload = _payload()
+    payload['moveout']['distance_source'] = 'offset_header'
+    payload['moveout']['offset_byte'] = None
+
+    with pytest.raises(ValidationError, match='moveout.offset_byte is required'):
+        _validate(payload)
+
+
+def test_time_term_request_accepts_robust_method_mad() -> None:
+    payload = _payload()
+    payload['solver']['robust']['method'] = 'mad'
+    payload['solver']['robust']['threshold'] = 3.5
+
+    req = _validate(payload)
+
+    assert req.solver.robust.method == 'mad'
+    assert req.solver.robust.threshold == pytest.approx(3.5)
+
+
+def test_time_term_request_accepts_robust_method_sigma() -> None:
+    payload = _payload()
+    payload['solver']['robust']['method'] = 'sigma'
+    payload['solver']['robust']['threshold'] = 2.5
+
+    req = _validate(payload)
+
+    assert req.solver.robust.method == 'sigma'
+    assert req.solver.robust.threshold == pytest.approx(2.5)
+
+
+def test_time_term_request_rejects_unknown_robust_method() -> None:
+    payload = _payload()
+    payload['solver']['robust']['method'] = 'iqr'
+
+    with pytest.raises(ValidationError, match='method'):
+        _validate(payload)
+
+
+def test_time_term_request_rejects_non_positive_robust_threshold() -> None:
+    payload = _payload()
+    payload['solver']['robust']['threshold'] = 0.0
+
+    with pytest.raises(ValidationError, match='solver.robust.threshold'):
         _validate(payload)
 
 
@@ -279,8 +360,9 @@ def test_time_term_linkage_required_rejects_missing_job() -> None:
     [
         (('solver', 'damping'), -0.1, 'solver.damping'),
         (('solver', 'robust', 'max_iterations'), 0, 'max_iterations'),
-        (('solver', 'robust', 'mad_threshold'), 0.0, 'mad_threshold'),
+        (('solver', 'robust', 'threshold'), 0.0, 'threshold'),
         (('solver', 'robust', 'min_used_fraction'), 1.1, 'min_used_fraction'),
+        (('solver', 'robust', 'min_used_observations'), 0, 'min_used_observations'),
         (('apply', 'max_abs_shift_ms'), 0.0, 'max_abs_shift_ms'),
     ],
 )

@@ -1026,11 +1026,16 @@ class TimeTermStaticMoveoutRequest(BaseModel):
 
     model_config = ConfigDict(extra='forbid')
 
-    model: Literal['head_wave_linear_offset', 'linear_offset', 'none'] = (
-        'head_wave_linear_offset'
-    )
+    model: Literal[
+        'head_wave_linear_offset',
+        'reciprocal_head_wave',
+        'linear_offset',
+        'none',
+    ] = 'head_wave_linear_offset'
+    distance_source: Literal['geometry', 'offset_header', 'auto'] = 'geometry'
     offset_byte: int | None = 37
     allow_missing_offset: bool = False
+    max_geometry_offset_mismatch_m: float | None = None
 
     @field_validator('offset_byte', mode='before')
     @classmethod
@@ -1044,16 +1049,25 @@ class TimeTermStaticMoveoutRequest(BaseModel):
     def _check_allow_missing_offset(cls, value: object) -> bool:
         return _require_bool(value, 'moveout.allow_missing_offset')
 
+    @field_validator('max_geometry_offset_mismatch_m', mode='before')
+    @classmethod
+    def _check_max_geometry_offset_mismatch_m(
+        cls,
+        value: object,
+    ) -> float | None:
+        if value is None:
+            return None
+        return _require_nonnegative_finite_float(
+            value,
+            'moveout.max_geometry_offset_mismatch_m',
+        )
+
     @model_validator(mode='after')
     def _check_offset_requirement(self) -> 'TimeTermStaticMoveoutRequest':
-        if (
-            self.model != 'none'
-            and not self.allow_missing_offset
-            and self.offset_byte is None
-        ):
+        if self.distance_source == 'offset_header' and self.offset_byte is None:
             raise ValueError(
-                'moveout.offset_byte is required when moveout.model is not none '
-                'and moveout.allow_missing_offset is false'
+                'moveout.offset_byte is required when '
+                'moveout.distance_source is offset_header'
             )
         return self
 
@@ -1064,9 +1078,11 @@ class TimeTermStaticRobustRequest(BaseModel):
     model_config = ConfigDict(extra='forbid')
 
     enabled: bool = True
+    method: Literal['mad', 'sigma'] = 'mad'
     max_iterations: int = 5
-    mad_threshold: float = 3.5
+    threshold: float = 3.5
     min_used_fraction: float = 0.5
+    min_used_observations: int = 1
 
     @field_validator('enabled', mode='before')
     @classmethod
@@ -1078,12 +1094,12 @@ class TimeTermStaticRobustRequest(BaseModel):
     def _check_max_iterations(cls, value: object) -> int:
         return _require_positive_int(value, 'solver.robust.max_iterations')
 
-    @field_validator('mad_threshold', mode='before')
+    @field_validator('threshold', mode='before')
     @classmethod
-    def _check_mad_threshold(cls, value: object) -> float:
+    def _check_threshold(cls, value: object) -> float:
         return _require_positive_finite_float(
             value,
-            'solver.robust.mad_threshold',
+            'solver.robust.threshold',
         )
 
     @field_validator('min_used_fraction', mode='before')
@@ -1096,6 +1112,11 @@ class TimeTermStaticRobustRequest(BaseModel):
         if fraction > 1.0:
             raise ValueError('solver.robust.min_used_fraction must be <= 1')
         return fraction
+
+    @field_validator('min_used_observations', mode='before')
+    @classmethod
+    def _check_min_used_observations(cls, value: object) -> int:
+        return _require_positive_int(value, 'solver.robust.min_used_observations')
 
 
 class TimeTermStaticSolverRequest(BaseModel):
