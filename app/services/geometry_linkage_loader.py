@@ -27,6 +27,8 @@ _KNOWN_RECORD_METHODS = {
     'source_fallback',
     'source_independent',
 }
+_DISTANCE_RTOL = 1.0e-9
+_DISTANCE_ATOL = 1.0e-9
 
 _SCALAR_FIELDS = (
     'schema_version',
@@ -1117,6 +1119,15 @@ def _validate_records(
     _validate_record_values(
         n_source_endpoints=n_source_endpoints,
         n_receiver_endpoints=n_receiver_endpoints,
+        source_endpoint_x_m=source_endpoint_x_m,
+        source_endpoint_y_m=source_endpoint_y_m,
+        source_node_id_by_endpoint=source_node_id_by_endpoint,
+        receiver_endpoint_x_m=receiver_endpoint_x_m,
+        receiver_endpoint_y_m=receiver_endpoint_y_m,
+        receiver_node_id_by_endpoint=receiver_node_id_by_endpoint,
+        record_endpoint_kind=record_endpoint_kind,
+        record_endpoint_id=record_endpoint_id,
+        record_node_id=record_node_id,
         record_linked_to_kind=record_linked_to_kind,
         record_linked_to_id=record_linked_to_id,
         record_distance_m=record_distance_m,
@@ -1141,6 +1152,15 @@ def _validate_record_values(
     *,
     n_source_endpoints: int,
     n_receiver_endpoints: int,
+    source_endpoint_x_m: np.ndarray,
+    source_endpoint_y_m: np.ndarray,
+    source_node_id_by_endpoint: np.ndarray,
+    receiver_endpoint_x_m: np.ndarray,
+    receiver_endpoint_y_m: np.ndarray,
+    receiver_node_id_by_endpoint: np.ndarray,
+    record_endpoint_kind: np.ndarray,
+    record_endpoint_id: np.ndarray,
+    record_node_id: np.ndarray,
     record_linked_to_kind: np.ndarray,
     record_linked_to_id: np.ndarray,
     record_distance_m: np.ndarray,
@@ -1162,6 +1182,9 @@ def _validate_record_values(
     for index, linked_to_kind in enumerate(record_linked_to_kind):
         linked_to_id = int(record_linked_to_id[index])
         distance_m = float(record_distance_m[index])
+        endpoint_kind = str(record_endpoint_kind[index])
+        endpoint_id = int(record_endpoint_id[index])
+        method = str(record_method[index])
         if linked_to_kind == '':
             if linked_to_id != -1:
                 raise ValueError(
@@ -1171,21 +1194,150 @@ def _validate_record_values(
                 raise ValueError(
                     f'record_distance_m[{index}] must be NaN when record_linked_to_kind is empty'
                 )
-            continue
-
-        endpoint_count = (
-            n_source_endpoints
-            if linked_to_kind == 'source'
-            else n_receiver_endpoints
+        else:
+            endpoint_count = (
+                n_source_endpoints
+                if linked_to_kind == 'source'
+                else n_receiver_endpoints
+            )
+            if linked_to_id < 0 or linked_to_id >= endpoint_count:
+                raise ValueError(
+                    f'record_linked_to_id[{index}] is out of range for {linked_to_kind}'
+                )
+            if not np.isfinite(distance_m) or distance_m < 0.0:
+                raise ValueError(
+                    f'record_distance_m[{index}] must be finite and greater than or equal to 0'
+                )
+        _validate_record_method_link_contract(
+            index=index,
+            endpoint_kind=endpoint_kind,
+            endpoint_id=endpoint_id,
+            node_id=int(record_node_id[index]),
+            linked_to_kind=str(linked_to_kind),
+            linked_to_id=linked_to_id,
+            distance_m=distance_m,
+            method=method,
+            source_endpoint_x_m=source_endpoint_x_m,
+            source_endpoint_y_m=source_endpoint_y_m,
+            source_node_id_by_endpoint=source_node_id_by_endpoint,
+            receiver_endpoint_x_m=receiver_endpoint_x_m,
+            receiver_endpoint_y_m=receiver_endpoint_y_m,
+            receiver_node_id_by_endpoint=receiver_node_id_by_endpoint,
         )
-        if linked_to_id < 0 or linked_to_id >= endpoint_count:
+
+
+def _validate_record_method_link_contract(
+    *,
+    index: int,
+    endpoint_kind: str,
+    endpoint_id: int,
+    node_id: int,
+    linked_to_kind: str,
+    linked_to_id: int,
+    distance_m: float,
+    method: str,
+    source_endpoint_x_m: np.ndarray,
+    source_endpoint_y_m: np.ndarray,
+    source_node_id_by_endpoint: np.ndarray,
+    receiver_endpoint_x_m: np.ndarray,
+    receiver_endpoint_y_m: np.ndarray,
+    receiver_node_id_by_endpoint: np.ndarray,
+) -> None:
+    no_link_endpoint_kind_by_method = {
+        'receiver_seed': 'receiver',
+        'none_mode_receiver_independent': 'receiver',
+        'none_mode_source_independent': 'source',
+        'source_independent': 'source',
+    }
+    no_link_endpoint_kind = no_link_endpoint_kind_by_method.get(method)
+    if no_link_endpoint_kind is not None:
+        if endpoint_kind != no_link_endpoint_kind:
             raise ValueError(
-                f'record_linked_to_id[{index}] is out of range for {linked_to_kind}'
+                f'record_method[{index}] {method!r} requires {no_link_endpoint_kind} endpoint'
             )
-        if not np.isfinite(distance_m) or distance_m < 0.0:
+        if linked_to_kind != '' or linked_to_id != -1 or not np.isnan(distance_m):
             raise ValueError(
-                f'record_distance_m[{index}] must be finite and greater than or equal to 0'
+                f'record_method[{index}] {method!r} requires empty link and NaN distance_m'
             )
+        return
+
+    if method == 'receiver_anchor':
+        if endpoint_kind != 'source':
+            raise ValueError(
+                f'record_method[{index}] receiver_anchor requires source endpoint'
+            )
+        if linked_to_kind != 'receiver':
+            raise ValueError(
+                f'record_method[{index}] receiver_anchor requires linked_to_kind receiver'
+            )
+        expected_node_id = int(receiver_node_id_by_endpoint[linked_to_id])
+        if node_id != expected_node_id:
+            raise ValueError(
+                f'record_node_id[{index}] does not match linked receiver node'
+            )
+        expected_distance_m = float(
+            np.hypot(
+                source_endpoint_x_m[endpoint_id]
+                - receiver_endpoint_x_m[linked_to_id],
+                source_endpoint_y_m[endpoint_id]
+                - receiver_endpoint_y_m[linked_to_id],
+            )
+        )
+        _validate_record_distance_matches(
+            index=index,
+            distance_m=distance_m,
+            expected_distance_m=expected_distance_m,
+        )
+        return
+
+    if method == 'source_fallback':
+        if endpoint_kind != 'source':
+            raise ValueError(
+                f'record_method[{index}] source_fallback requires source endpoint'
+            )
+        if linked_to_kind != 'source':
+            raise ValueError(
+                f'record_method[{index}] source_fallback requires linked_to_kind source'
+            )
+        if linked_to_id == endpoint_id:
+            raise ValueError(
+                f'record_linked_to_id[{index}] source_fallback must not self-link'
+            )
+        expected_node_id = int(source_node_id_by_endpoint[linked_to_id])
+        if node_id != expected_node_id:
+            raise ValueError(
+                f'record_node_id[{index}] does not match linked source node'
+            )
+        expected_distance_m = float(
+            np.hypot(
+                source_endpoint_x_m[endpoint_id]
+                - source_endpoint_x_m[linked_to_id],
+                source_endpoint_y_m[endpoint_id]
+                - source_endpoint_y_m[linked_to_id],
+            )
+        )
+        _validate_record_distance_matches(
+            index=index,
+            distance_m=distance_m,
+            expected_distance_m=expected_distance_m,
+        )
+
+
+def _validate_record_distance_matches(
+    *,
+    index: int,
+    distance_m: float,
+    expected_distance_m: float,
+) -> None:
+    if not np.isclose(
+        distance_m,
+        expected_distance_m,
+        rtol=_DISTANCE_RTOL,
+        atol=_DISTANCE_ATOL,
+    ):
+        raise ValueError(
+            f'record_distance_m[{index}] does not match endpoint geometry distance'
+        )
 
 
 def _validate_record_methods_for_mode(

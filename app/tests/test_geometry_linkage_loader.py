@@ -332,6 +332,129 @@ def test_load_geometry_linkage_artifact_rejects_invalid_record_distance(
         load_geometry_linkage_artifact(path)
 
 
+def test_load_geometry_linkage_artifact_rejects_receiver_anchor_linked_to_source(
+    tmp_path: Path,
+) -> None:
+    payload = _payload()
+    index = _first_record_index(payload, 'receiver_anchor')
+    payload['record_linked_to_kind'] = payload['record_linked_to_kind'].astype('<U8')
+    payload['record_linked_to_id'] = payload['record_linked_to_id'].copy()
+    payload['record_linked_to_kind'][index] = 'source'
+    payload['record_linked_to_id'][index] = 0
+    path = _write_payload(tmp_path, payload)
+
+    with pytest.raises(ValueError, match='receiver_anchor.*linked_to_kind receiver'):
+        load_geometry_linkage_artifact(path)
+
+
+def test_load_geometry_linkage_artifact_rejects_source_fallback_linked_to_receiver(
+    tmp_path: Path,
+) -> None:
+    payload = _payload()
+    index = _first_record_index(payload, 'source_fallback')
+    payload['record_linked_to_kind'] = payload['record_linked_to_kind'].astype('<U8')
+    payload['record_linked_to_id'] = payload['record_linked_to_id'].copy()
+    payload['record_linked_to_kind'][index] = 'receiver'
+    payload['record_linked_to_id'][index] = 0
+    path = _write_payload(tmp_path, payload)
+
+    with pytest.raises(ValueError, match='source_fallback.*linked_to_kind source'):
+        load_geometry_linkage_artifact(path)
+
+
+@pytest.mark.parametrize(
+    ('mode', 'method'),
+    [
+        ('auto_threshold', 'receiver_seed'),
+        ('auto_threshold', 'source_independent'),
+        ('none', 'none_mode_receiver_independent'),
+        ('none', 'none_mode_source_independent'),
+    ],
+)
+def test_load_geometry_linkage_artifact_rejects_unlinked_method_with_link(
+    tmp_path: Path,
+    mode: str,
+    method: str,
+) -> None:
+    payload = _payload(mode=mode)
+    index = _first_record_index(payload, method)
+    payload['record_linked_to_kind'] = payload['record_linked_to_kind'].astype('<U8')
+    payload['record_linked_to_id'] = payload['record_linked_to_id'].copy()
+    payload['record_distance_m'] = payload['record_distance_m'].copy()
+    payload['record_linked_to_kind'][index] = 'receiver'
+    payload['record_linked_to_id'][index] = 0
+    payload['record_distance_m'][index] = 0.0
+    path = _write_payload(tmp_path, payload)
+
+    with pytest.raises(ValueError, match=f'{method!r} requires empty link'):
+        load_geometry_linkage_artifact(path)
+
+
+def test_load_geometry_linkage_artifact_rejects_source_fallback_self_link(
+    tmp_path: Path,
+) -> None:
+    payload = _payload()
+    index = _first_record_index(payload, 'source_fallback')
+    endpoint_id = int(payload['record_endpoint_id'][index])
+    payload['record_linked_to_id'] = payload['record_linked_to_id'].copy()
+    payload['record_distance_m'] = payload['record_distance_m'].copy()
+    payload['record_linked_to_id'][index] = endpoint_id
+    payload['record_distance_m'][index] = 0.0
+    path = _write_payload(tmp_path, payload)
+
+    with pytest.raises(ValueError, match='source_fallback must not self-link'):
+        load_geometry_linkage_artifact(path)
+
+
+def test_load_geometry_linkage_artifact_rejects_linked_endpoint_out_of_range(
+    tmp_path: Path,
+) -> None:
+    payload = _payload()
+    index = _first_record_index(payload, 'receiver_anchor')
+    payload['record_linked_to_id'] = payload['record_linked_to_id'].copy()
+    payload['record_linked_to_id'][index] = int(payload['n_receiver_endpoints'].item())
+    path = _write_payload(tmp_path, payload)
+
+    with pytest.raises(ValueError, match='out of range for receiver'):
+        load_geometry_linkage_artifact(path)
+
+
+def test_load_geometry_linkage_artifact_rejects_linked_node_mismatch(
+    tmp_path: Path,
+) -> None:
+    payload = _payload()
+    index = _first_record_index(payload, 'receiver_anchor')
+    payload['record_linked_to_id'] = payload['record_linked_to_id'].copy()
+    payload['record_distance_m'] = payload['record_distance_m'].copy()
+    payload['record_linked_to_id'][index] = 1
+    source_id = int(payload['record_endpoint_id'][index])
+    payload['record_distance_m'][index] = float(
+        np.hypot(
+            payload['source_endpoint_x_m'][source_id]
+            - payload['receiver_endpoint_x_m'][1],
+            payload['source_endpoint_y_m'][source_id]
+            - payload['receiver_endpoint_y_m'][1],
+        )
+    )
+    path = _write_payload(tmp_path, payload)
+
+    with pytest.raises(ValueError, match='linked receiver node'):
+        load_geometry_linkage_artifact(path)
+
+
+def test_load_geometry_linkage_artifact_rejects_record_distance_mismatch(
+    tmp_path: Path,
+) -> None:
+    payload = _payload()
+    index = _first_record_index(payload, 'receiver_anchor')
+    payload['record_distance_m'] = payload['record_distance_m'].copy()
+    payload['record_distance_m'][index] += 1.0
+    path = _write_payload(tmp_path, payload)
+
+    with pytest.raises(ValueError, match='record_distance_m.*does not match'):
+        load_geometry_linkage_artifact(path)
+
+
 def test_load_geometry_linkage_artifact_validates_record_order(
     tmp_path: Path,
 ) -> None:
@@ -474,6 +597,12 @@ def _metadata() -> GeometryLinkageArtifactMetadata:
         coordinate_scalar_byte=71,
         header_source_segy_path='/data/input.sgy',
     )
+
+
+def _first_record_index(payload: dict[str, np.ndarray], method: str) -> int:
+    matches = np.flatnonzero(payload['record_method'] == method)
+    assert matches.size > 0
+    return int(matches[0])
 
 
 def _write_payload(tmp_path: Path, payload: dict[str, np.ndarray]) -> Path:

@@ -40,6 +40,8 @@ _KNOWN_METHODS = {
     'source_fallback',
     'source_independent',
 }
+_DISTANCE_RTOL = 1.0e-9
+_DISTANCE_ATOL = 1.0e-9
 
 _CSV_COLUMNS = [
     'endpoint_kind',
@@ -676,6 +678,16 @@ def _validate_records(
             record.distance_m,
             name=f'records[{index}].distance_m',
         )
+        _validate_record_method_link_contract(
+            record,
+            index=index,
+            source_endpoint_x_m=source_endpoint_x_m,
+            source_endpoint_y_m=source_endpoint_y_m,
+            receiver_endpoint_x_m=receiver_endpoint_x_m,
+            receiver_endpoint_y_m=receiver_endpoint_y_m,
+            source_node_id_by_endpoint=source_node_id_by_endpoint,
+            receiver_node_id_by_endpoint=receiver_node_id_by_endpoint,
+        )
     return tuple(records)
 
 
@@ -726,6 +738,152 @@ def _validate_record_link(record: EndpointLinkageRecord, *, index: int) -> None:
     linked_to_id = int(record.linked_to_id)
     if linked_to_id < 0:
         raise ValueError(f'records[{index}].linked_to_id must be nonnegative')
+
+
+def _validate_record_method_link_contract(
+    record: EndpointLinkageRecord,
+    *,
+    index: int,
+    source_endpoint_x_m: np.ndarray,
+    source_endpoint_y_m: np.ndarray,
+    receiver_endpoint_x_m: np.ndarray,
+    receiver_endpoint_y_m: np.ndarray,
+    source_node_id_by_endpoint: np.ndarray,
+    receiver_node_id_by_endpoint: np.ndarray,
+) -> None:
+    no_link_endpoint_kind_by_method = {
+        'receiver_seed': 'receiver',
+        'none_mode_receiver_independent': 'receiver',
+        'none_mode_source_independent': 'source',
+        'source_independent': 'source',
+    }
+    no_link_endpoint_kind = no_link_endpoint_kind_by_method.get(record.method)
+    if no_link_endpoint_kind is not None:
+        if record.endpoint_kind != no_link_endpoint_kind:
+            raise ValueError(
+                f'records[{index}].method {record.method!r} requires '
+                f'{no_link_endpoint_kind} endpoint'
+            )
+        if (
+            record.linked_to_kind is not None
+            or record.linked_to_id is not None
+            or record.distance_m is not None
+        ):
+            raise ValueError(
+                f'records[{index}].method {record.method!r} requires empty link '
+                'and no distance_m'
+            )
+        return
+
+    if record.method == 'receiver_anchor':
+        if record.endpoint_kind != 'source':
+            raise ValueError(
+                f'records[{index}].receiver_anchor requires source endpoint'
+            )
+        if record.linked_to_kind != 'receiver':
+            raise ValueError(
+                f'records[{index}].receiver_anchor requires linked_to_kind receiver'
+            )
+        linked_receiver_id = _record_linked_to_id_in_range(
+            record,
+            index=index,
+            endpoint_count=int(receiver_endpoint_x_m.shape[0]),
+            linked_to_kind='receiver',
+        )
+        expected_node_id = int(receiver_node_id_by_endpoint[linked_receiver_id])
+        if int(record.node_id) != expected_node_id:
+            raise ValueError(
+                f'records[{index}].node_id must match linked receiver node'
+            )
+        endpoint_id = int(record.endpoint_id)
+        expected_distance_m = float(
+            np.hypot(
+                source_endpoint_x_m[endpoint_id]
+                - receiver_endpoint_x_m[linked_receiver_id],
+                source_endpoint_y_m[endpoint_id]
+                - receiver_endpoint_y_m[linked_receiver_id],
+            )
+        )
+        _validate_record_distance_matches(
+            record,
+            index=index,
+            expected_distance_m=expected_distance_m,
+        )
+        return
+
+    if record.method == 'source_fallback':
+        if record.endpoint_kind != 'source':
+            raise ValueError(
+                f'records[{index}].source_fallback requires source endpoint'
+            )
+        if record.linked_to_kind != 'source':
+            raise ValueError(
+                f'records[{index}].source_fallback requires linked_to_kind source'
+            )
+        linked_source_id = _record_linked_to_id_in_range(
+            record,
+            index=index,
+            endpoint_count=int(source_endpoint_x_m.shape[0]),
+            linked_to_kind='source',
+        )
+        endpoint_id = int(record.endpoint_id)
+        if linked_source_id == endpoint_id:
+            raise ValueError(f'records[{index}].source_fallback must not self-link')
+        expected_node_id = int(source_node_id_by_endpoint[linked_source_id])
+        if int(record.node_id) != expected_node_id:
+            raise ValueError(
+                f'records[{index}].node_id must match linked source node'
+            )
+        expected_distance_m = float(
+            np.hypot(
+                source_endpoint_x_m[endpoint_id] - source_endpoint_x_m[linked_source_id],
+                source_endpoint_y_m[endpoint_id] - source_endpoint_y_m[linked_source_id],
+            )
+        )
+        _validate_record_distance_matches(
+            record,
+            index=index,
+            expected_distance_m=expected_distance_m,
+        )
+
+
+def _record_linked_to_id_in_range(
+    record: EndpointLinkageRecord,
+    *,
+    index: int,
+    endpoint_count: int,
+    linked_to_kind: str,
+) -> int:
+    if record.linked_to_id is None:
+        raise ValueError(
+            f'records[{index}].linked_to_id is required for {record.method}'
+        )
+    linked_to_id = int(record.linked_to_id)
+    if linked_to_id < 0 or linked_to_id >= endpoint_count:
+        raise ValueError(
+            f'records[{index}].linked_to_id is out of range for {linked_to_kind}'
+        )
+    return linked_to_id
+
+
+def _validate_record_distance_matches(
+    record: EndpointLinkageRecord,
+    *,
+    index: int,
+    expected_distance_m: float,
+) -> None:
+    if record.distance_m is None:
+        raise ValueError(f'records[{index}].distance_m is required for {record.method}')
+    distance_m = float(record.distance_m)
+    if not np.isclose(
+        distance_m,
+        expected_distance_m,
+        rtol=_DISTANCE_RTOL,
+        atol=_DISTANCE_ATOL,
+    ):
+        raise ValueError(
+            f'records[{index}].distance_m must match endpoint geometry distance'
+        )
 
 
 def _record_arrays(
