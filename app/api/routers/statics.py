@@ -21,6 +21,7 @@ from app.api.schemas import (
     StaticLinkageBuildResponse,
     StaticJobFilesResponse,
     StaticJobStatusResponse,
+    TimeTermStaticApplyRequest,
 )
 from app.core.state import AppState
 from app.services.datum_static_service import run_datum_static_apply_job
@@ -31,6 +32,7 @@ from app.services.job_manager import JobManager
 from app.services.job_runner import request_job_cancel, start_job_thread
 from app.services.pipeline_artifacts import get_job_dir, maybe_cleanup_expired_jobs
 from app.services.residual_static_service import run_residual_static_apply_job
+from app.services.time_term_static_service import validate_time_term_request
 
 router = APIRouter()
 
@@ -191,6 +193,26 @@ def residual_static_apply(
     )
 
     return {'job_id': job_id, 'state': status}
+
+
+@router.post('/statics/time-term/apply')
+def time_term_static_apply(
+    req: TimeTermStaticApplyRequest,
+    request: Request,
+) -> dict[str, str]:
+    state = get_state(request.app)
+    cleanup_in_memory_state(state)
+    maybe_cleanup_expired_jobs()
+
+    try:
+        validate_time_term_request(req, state=state)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    raise HTTPException(
+        status_code=501,
+        detail='time-term inversion solver is not implemented yet',
+    )
 
 
 @router.get(
