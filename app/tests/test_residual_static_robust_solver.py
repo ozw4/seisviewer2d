@@ -70,9 +70,7 @@ def _synthetic_inputs(
         offset_byte = None
 
     pick_time_after_datum = (
-        moveout_s
-        + SOURCE_DELAY_S[source_index]
-        + RECEIVER_DELAY_S[receiver_index]
+        moveout_s + SOURCE_DELAY_S[source_index] + RECEIVER_DELAY_S[receiver_index]
     )
     if noise_s is not None:
         pick_time_after_datum = pick_time_after_datum + noise_s
@@ -268,7 +266,9 @@ def test_outlier_mask_mad_rejects_large_centered_residual() -> None:
         threshold=4.0,
     )
 
-    np.testing.assert_array_equal(outlier_mask, [False, False, False, False, False, True])
+    np.testing.assert_array_equal(
+        outlier_mask, [False, False, False, False, False, True]
+    )
     assert center_s == pytest.approx(0.0005)
     assert scale_s > 0.0
     assert cutoff_s == pytest.approx(4.0 * scale_s)
@@ -281,7 +281,9 @@ def test_outlier_mask_sigma_rejects_large_centered_residual() -> None:
         threshold=2.0,
     )
 
-    np.testing.assert_array_equal(outlier_mask, [False, False, False, False, False, True])
+    np.testing.assert_array_equal(
+        outlier_mask, [False, False, False, False, False, True]
+    )
     assert center_s == pytest.approx(1.0 / 60.0)
     assert scale_s > 0.0
     assert cutoff_s == pytest.approx(2.0 * scale_s)
@@ -314,7 +316,9 @@ def test_robust_disabled_runs_single_stabilized_solve() -> None:
     assert result.initial_solver_result is result.final_solver_result
     assert result.iteration_summaries == ()
     assert result.n_rejected_total == 0
-    np.testing.assert_array_equal(result.final_used_mask_sorted, np.ones(20, dtype=bool))
+    np.testing.assert_array_equal(
+        result.final_used_mask_sorted, np.ones(20, dtype=bool)
+    )
 
 
 def test_robust_mad_rejects_synthetic_pick_outlier() -> None:
@@ -359,7 +363,7 @@ def test_robust_sigma_rejects_synthetic_pick_outlier() -> None:
     result = solve_residual_static_robust_least_squares(
         inputs,
         stabilization_options=_stabilization_options(),
-        robust_options=ResidualStaticRobustOptions(method='sigma', threshold=2.0),
+        robust_options=ResidualStaticRobustOptions(method='sigma', threshold=2.5),
         lsmr_options=_lsmr_options(),
     )
 
@@ -460,7 +464,9 @@ def test_robust_final_result_honors_estimated_delay_limit() -> None:
     with pytest.raises(ValueError, match='max_abs_estimated_delay_ms'):
         solve_residual_static_robust_least_squares(
             _synthetic_inputs(),
-            stabilization_options=_stabilization_options(max_abs_estimated_delay_ms=1.0),
+            stabilization_options=_stabilization_options(
+                max_abs_estimated_delay_ms=1.0
+            ),
             robust_options=ResidualStaticRobustOptions(),
             lsmr_options=_lsmr_options(),
         )
