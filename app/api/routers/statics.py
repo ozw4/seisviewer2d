@@ -17,12 +17,15 @@ from app.api.schemas import (
     FirstBreakQcRequest,
     ResidualStaticApplyRequest,
     ResidualStaticApplyResponse,
+    StaticLinkageBuildRequest,
+    StaticLinkageBuildResponse,
     StaticJobFilesResponse,
     StaticJobStatusResponse,
 )
 from app.core.state import AppState
 from app.services.datum_static_service import run_datum_static_apply_job
 from app.services.first_break_qc_service import run_first_break_qc_job
+from app.services.geometry_linkage_service import run_geometry_linkage_build_job
 from app.services.in_memory_cleanup import cleanup_in_memory_state
 from app.services.job_manager import JobManager
 from app.services.job_runner import request_job_cancel, start_job_thread
@@ -118,6 +121,39 @@ def first_break_qc(
     start_job_thread(
         thread_factory=threading.Thread,
         target=run_first_break_qc_job,
+        args=(job_id, req, state),
+    )
+
+    return {'job_id': job_id, 'state': status}
+
+
+@router.post(
+    '/statics/linkage/build',
+    response_model=StaticLinkageBuildResponse,
+)
+def static_linkage_build(
+    req: StaticLinkageBuildRequest,
+    request: Request,
+) -> StaticLinkageBuildResponse:
+    state = get_state(request.app)
+    cleanup_in_memory_state(state)
+    maybe_cleanup_expired_jobs()
+
+    job_id = str(uuid4())
+    with state.lock:
+        job_state = state.jobs.create_static_job(
+            job_id,
+            file_id=req.file_id,
+            key1_byte=req.key1_byte,
+            key2_byte=req.key2_byte,
+            statics_kind='geometry_linkage',
+            artifacts_dir=str(get_job_dir(job_id)),
+        )
+        status = job_state['status']
+
+    start_job_thread(
+        thread_factory=threading.Thread,
+        target=run_geometry_linkage_build_job,
         args=(job_id, req, state),
     )
 

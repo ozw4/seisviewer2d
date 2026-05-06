@@ -527,6 +527,15 @@ class StaticLinkageBuildRequest(BaseModel):
         return require_trace_header_byte(value, info.field_name)
 
 
+class StaticLinkageBuildResponse(BaseModel):
+    """Response model for creating a static linkage build job."""
+
+    model_config = ConfigDict(extra='forbid')
+
+    job_id: str
+    state: str
+
+
 class FirstBreakQcDatumSolutionRequest(BaseModel):
     """Datum static solution artifact reference for first-break QC."""
 
