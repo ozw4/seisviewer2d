@@ -18,7 +18,9 @@ jobs register, but the static-correction APIs are primarily developer-facing.
   - Estimates source/receiver node time terms, converts estimated delays to applied weathering shifts, writes artifacts, and can register a time-term-corrected TraceStore.
 - Refraction statics: `POST /statics/refraction/apply`
   - API entry point for first-break based near-surface refraction statics.
-  - Initial issue adds job/schema plumbing only; GLI solver and TraceStore application are follow-up work.
+  - Current implementation builds the refraction input model, writes QC/preview
+    artifacts, then fails at the solver step because GLI solving and TraceStore
+    application are follow-up work.
 
 The detailed time-term inversion API, sign convention, apply modes, and artifact
 contract are documented in [time_term_static_correction.md](time_term_static_correction.md).
@@ -48,5 +50,5 @@ trace order. The order is controlled by the uploaded/opened TraceStore key bytes
 
 Do not reorder artifact arrays before applying them to a TraceStore. Per-trace
 shift fields named `*_sorted` are aligned with this sorted order.
-Refraction statics per-trace arrays must also use this TraceStore sorted trace
-order when the solver and apply workflow are implemented.
+Refraction statics input-model per-trace arrays also use this TraceStore sorted
+trace order.

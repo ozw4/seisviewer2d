@@ -343,6 +343,31 @@ def test_offset_header_distance_applies_coordinate_scalar(
     assert model.distance_m_sorted[0] == pytest.approx(expected_offset_m)
 
 
+def test_offset_header_distance_allows_missing_offsets_when_configured() -> None:
+    moveout = _moveout(
+        distance_source='offset_header',
+        offset_byte=11,
+        allow_missing_offset=True,
+    )
+    headers = _headers(3, offset=np.asarray([np.nan, np.inf, 30.0]))
+
+    model = _build(
+        np.asarray([0.005, 0.006, 0.007]),
+        headers=headers,
+        moveout=moveout,
+    )
+
+    assert model.offset_m_sorted is not None
+    np.testing.assert_allclose(
+        model.offset_m_sorted,
+        np.asarray([np.nan, np.nan, 30.0]),
+        equal_nan=True,
+    )
+    np.testing.assert_allclose(model.distance_m_sorted, [10.0, 20.0, 30.0])
+    assert model.valid_observation_mask_sorted.tolist() == [True, True, True]
+    assert model.rejection_reason_sorted.tolist() == ['ok', 'ok', 'ok']
+
+
 def test_auto_distance_falls_back_to_offset_when_geometry_distance_is_invalid() -> None:
     moveout = _moveout(distance_source='auto', offset_byte=11)
     headers = _headers(

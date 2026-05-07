@@ -1255,7 +1255,14 @@ def _select_distance(
         if offset_m is None:
             raise ValueError('offset_byte is required for offset_header distance_source')
         distance = offset_m.copy()
-        valid = np.isfinite(distance) & (distance > 0.0)
+        offset_valid = np.isfinite(distance) & (distance > 0.0)
+        if moveout.allow_missing_offset:
+            missing_offset = ~offset_valid
+            geometry_fallback = missing_offset & geometry_distance_valid
+            distance[geometry_fallback] = geometry_distance[geometry_fallback]
+            valid = offset_valid | geometry_fallback
+        else:
+            valid = offset_valid
     elif source == 'auto':
         distance = geometry_distance.copy()
         valid = geometry_distance_valid.copy()
