@@ -68,6 +68,7 @@ def _compute(
     config_payload: dict[str, Any] = {
         'model': 'head_wave_linear_offset',
         'refractor_velocity_m_s': 2500.0,
+        'offset_byte': 37,
     }
     config_payload.update(config_overrides)
     return compute_time_term_moveout(
@@ -145,6 +146,11 @@ def test_head_wave_moveout_rejects_non_finite_geometry() -> None:
 def test_head_wave_moveout_rejects_missing_offset_when_offset_requested() -> None:
     with pytest.raises(ValueError, match='offset_sorted is required'):
         _compute(_inputs(offset_sorted=None), distance_source='offset_header')
+
+
+def test_head_wave_moveout_rejects_missing_offset_byte_when_offset_requested() -> None:
+    with pytest.raises(ValueError, match='offset_byte is required'):
+        _compute(distance_source='offset_header', offset_byte=None)
 
 
 def test_head_wave_moveout_rejects_non_finite_offset() -> None:

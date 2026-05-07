@@ -1134,13 +1134,21 @@ class TimeTermStaticSolverRequest(BaseModel):
 
 
 class TimeTermStaticApplyOptions(BaseModel):
-    """Options for a future corrected TraceStore output."""
+    """Options for time-term artifact output and corrected TraceStore registration."""
 
     model_config = ConfigDict(extra='forbid')
 
+    interpolation: Literal['linear'] = 'linear'
+    fill_value: float = 0.0
+    mode: Literal['weathering_only'] = 'weathering_only'
     register_corrected_file: bool = False
     max_abs_shift_ms: float = 250.0
     output_dtype: Literal['float32'] = 'float32'
+
+    @field_validator('fill_value', mode='before')
+    @classmethod
+    def _check_fill_value(cls, value: object) -> float:
+        return _require_finite_float(value, 'apply.fill_value')
 
     @field_validator('register_corrected_file', mode='before')
     @classmethod
@@ -1189,3 +1197,12 @@ class TimeTermStaticApplyRequest(BaseModel):
         if not self.file_id:
             raise ValueError('file_id must be a non-empty string')
         return self
+
+
+class TimeTermStaticApplyResponse(BaseModel):
+    """Response model for creating a time-term static apply job."""
+
+    model_config = ConfigDict(extra='forbid')
+
+    job_id: str
+    state: str

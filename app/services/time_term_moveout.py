@@ -31,6 +31,7 @@ class TimeTermMoveoutConfig:
     model: TimeTermMoveoutModel
     refractor_velocity_m_s: float
     distance_source: MoveoutDistanceSource = 'geometry'
+    offset_byte: int | None = None
     allow_missing_offset: bool = False
     max_geometry_offset_mismatch_m: float | None = None
 
@@ -61,6 +62,12 @@ def compute_time_term_moveout(
     n_traces = _coerce_positive_int(inputs.n_traces, name='n_traces')
     model = _validate_model(config.model)
     distance_source = _validate_distance_source(config.distance_source)
+    offset_byte = _validate_optional_trace_header_byte(
+        config.offset_byte,
+        name='offset_byte',
+    )
+    if model != 'none' and distance_source == 'offset_header' and offset_byte is None:
+        raise ValueError('offset_byte is required for offset_header distance')
     refractor_velocity = _coerce_positive_finite_float(
         config.refractor_velocity_m_s,
         name='refractor_velocity_m_s',
@@ -339,6 +346,17 @@ def _validate_distance_source(value: object) -> MoveoutDistanceSource:
     if value in _DISTANCE_SOURCES:
         return value  # type: ignore[return-value]
     raise ValueError(f'unsupported distance_source: {value!r}')
+
+
+def _validate_optional_trace_header_byte(value: object, *, name: str) -> int | None:
+    if value is None:
+        return None
+    if isinstance(value, bool) or not isinstance(value, (int, np.integer)):
+        raise ValueError(f'{name} must be an integer SEG-Y trace header byte')
+    byte = int(value)
+    if byte < 1 or byte > 240:
+        raise ValueError(f'{name} must be in the range 1..240')
+    return byte
 
 
 def _validate_node_range(
