@@ -133,6 +133,16 @@ Compare mode:
 - If either source is probability-domain data, Compare mode uses heatmap rendering for all visible panels.
 - A-B is available only when A and B have the same domain, shape, sample interval, and grid. Mixed-domain A/B comparison is allowed with `Show A-B` off, but A-B is disabled.
 
+## Static correction
+
+This viewer supports backend workflows for datum statics, first-break QC,
+residual statics, geometry linkage, and time-term statics.
+
+See:
+
+- `static_correction.md`
+- `time_term_static_correction.md`
+
 ## Viewer benchmark
 
 The dedicated GitHub Actions workflow is `viewer-benchmark`.
