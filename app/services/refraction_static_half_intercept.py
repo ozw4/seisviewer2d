@@ -997,7 +997,15 @@ def _build_endpoint_result(
         elevation_sorted = inputs.receiver_elevation_m_sorted
         row_key = inputs.receiver_endpoint_key_sorted[rows.row_trace_index_sorted]
 
-    positions = _first_occurrence_positions(key_sorted)
+    known_node_mask = np.fromiter(
+        (int(node) in node_pos for node in node_id_sorted.tolist()),
+        dtype=bool,
+        count=int(node_id_sorted.shape[0]),
+    )
+    candidate_positions = np.flatnonzero(known_node_mask)
+    positions = candidate_positions[
+        _first_occurrence_positions(key_sorted[candidate_positions])
+    ]
     n_endpoints = int(positions.shape[0])
     endpoint_key = key_sorted[positions].astype(_ENDPOINT_KEY_DTYPE, copy=False)
     endpoint_id = endpoint_id_sorted[positions].astype(np.int64, copy=False)

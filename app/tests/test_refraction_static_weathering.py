@@ -4,10 +4,12 @@ import csv
 from dataclasses import replace
 import json
 from pathlib import Path
+from types import SimpleNamespace
 
 import numpy as np
 import pytest
 
+import app.services.refraction_static_weathering as weathering_module
 from app.services.refraction_static_weathering import (
     REFRACTION_WEATHERING_NODES_CSV_NAME,
     REFRACTION_WEATHERING_QC_JSON_NAME,
@@ -27,6 +29,7 @@ from app.tests.test_refraction_static_half_intercept import (
     TRUE_HALF_INTERCEPT_S,
     WEATHERING_VELOCITY_M_S,
     _build_result,
+    _input_model,
     _model,
 )
 
@@ -42,6 +45,41 @@ def test_public_apis_are_importable() -> None:
     assert callable(build_refraction_weathering_thickness_model)
     assert callable(compute_weathering_thickness_from_half_intercept_time)
     assert callable(compute_weathering_thickness_scalar)
+
+
+def test_high_level_pipeline_calls_half_intercept_stage(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    _inputs, _design, _solved, half = _build_result()
+    calls: list[dict[str, object]] = []
+
+    def _capture_estimate(**kwargs: object):
+        calls.append(kwargs)
+        return half
+
+    monkeypatch.setattr(
+        weathering_module,
+        'estimate_refraction_half_intercept_times_from_first_breaks',
+        _capture_estimate,
+    )
+    req = SimpleNamespace(model=_model())
+    state = object()
+
+    result = estimate_weathering_thickness_from_first_breaks(
+        req=req,  # type: ignore[arg-type]
+        state=state,  # type: ignore[arg-type]
+        job_dir=tmp_path,
+    )
+
+    assert calls == [{'req': req, 'state': state, 'job_dir': tmp_path}]
+    expected_node_thickness = TRUE_HALF_INTERCEPT_S * _conversion_factor()
+    np.testing.assert_allclose(
+        result.node_weathering_thickness_m[:5],
+        expected_node_thickness,
+        rtol=1.0e-9,
+    )
+    assert (tmp_path / REFRACTION_WEATHERING_QC_JSON_NAME).is_file()
 
 
 def test_math_helper_converts_half_intercepts_and_preserves_nan() -> None:
@@ -373,6 +411,33 @@ def test_unknown_invalid_trace_nodes_are_marked() -> None:
             half,
             source_node_id_sorted=source_node_id_sorted,
         ),
+        model=_model(),
+    )
+
+    assert result.source_weathering_status_sorted[-1] == 'missing_node'
+    assert np.isnan(result.source_weathering_thickness_m_sorted[-1])
+
+
+def test_invalid_trace_unknown_nodes_from_half_intercept_do_not_emit_endpoints() -> None:
+    inputs = _input_model()
+    source_node_id_sorted = inputs.source_node_id_sorted.copy()
+    source_endpoint_key_sorted = inputs.source_endpoint_key_sorted.astype(object).copy()
+    source_node_id_sorted[-1] = 999
+    source_endpoint_key_sorted[-1] = 'source:999'
+
+    _inputs, _design, _solved, half = _build_result(
+        input_model=replace(
+            inputs,
+            source_node_id_sorted=source_node_id_sorted,
+            source_endpoint_key_sorted=source_endpoint_key_sorted,
+        ),
+    )
+
+    assert 999 not in half.source_node_id.tolist()
+    assert 'source:999' not in half.source_endpoint_key.tolist()
+
+    result = build_refraction_weathering_thickness_model(
+        half_intercept_result=half,
         model=_model(),
     )
 

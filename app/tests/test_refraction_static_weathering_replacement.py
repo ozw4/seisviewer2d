@@ -459,7 +459,7 @@ def test_max_abs_shift_marks_status_without_clipping() -> None:
     assert result.trace_static_status_sorted[0] == 'exceeds_max_abs_shift'
     assert result.trace_static_valid_mask_sorted[0] == np.False_
     assert result.qc['exceeds_max_abs_shift_count'] == 6
-    assert result.qc['invalid_trace_shift_count'] == 7
+    assert result.qc['invalid_trace_shift_count'] == 1
 
 
 def test_max_abs_shift_marks_node_and_endpoint_status_without_clipping() -> None:

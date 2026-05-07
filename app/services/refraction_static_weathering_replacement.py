@@ -1009,7 +1009,7 @@ def _build_qc(
             np.count_nonzero(np.abs(valid_trace_shift_ms) <= _ZERO_SHIFT_ATOL_S * 1000.0)
         ),
         'invalid_trace_shift_count': int(
-            trace_shift_s.shape[0] - np.count_nonzero(trace_static_valid_mask)
+            np.count_nonzero(~np.isfinite(trace_shift_s))
         ),
         'max_abs_shift_ms': _json_optional_float(max_abs_shift_ms),
         'exceeds_max_abs_shift_count': int(
