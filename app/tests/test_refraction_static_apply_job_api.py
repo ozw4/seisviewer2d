@@ -8,6 +8,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 import app.api.routers.statics as statics_router_module
+import app.services.refraction_static_service as refraction_service_module
 from app.api.schemas import RefractionStaticApplyRequest
 from app.main import app
 from app.services.refraction_static_service import run_refraction_static_apply_job
@@ -166,6 +167,7 @@ def test_refraction_static_apply_endpoint_rejects_invalid_schema_without_job(
 def test_run_refraction_static_apply_job_writes_request_and_fails(
     client: TestClient,
     tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     job_id = 'refraction-job-id'
     job_dir = tmp_path / 'jobs' / job_id
@@ -179,6 +181,17 @@ def test_run_refraction_static_apply_job_writes_request_and_fails(
             statics_kind='refraction',
             artifacts_dir=str(job_dir),
         )
+    built: list[dict[str, Any]] = []
+
+    def _capture_builder(**kwargs: Any) -> object:
+        built.append(kwargs)
+        return object()
+
+    monkeypatch.setattr(
+        refraction_service_module,
+        'build_refraction_static_input_model',
+        _capture_builder,
+    )
 
     run_refraction_static_apply_job(job_id, req, client.app.state.sv)
 
@@ -188,6 +201,9 @@ def test_run_refraction_static_apply_job_writes_request_and_fails(
     assert request_payload['job_id'] == job_id
     assert request_payload['statics_kind'] == 'refraction'
     assert request_payload['request']['file_id'] == 'raw-file-id'
+    assert len(built) == 1
+    assert built[0]['req'] is req
+    assert built[0]['job_dir'] == job_dir
     with client.app.state.sv.lock:
         job = dict(client.app.state.sv.jobs[job_id])
     assert job['status'] == 'error'

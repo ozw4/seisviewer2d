@@ -11,6 +11,7 @@ from uuid import uuid4
 from app.api.schemas import RefractionStaticApplyRequest
 from app.core.state import AppState
 from app.services.job_runner import JobCompletion, JobFailure, run_job_with_lifecycle
+from app.services.refraction_static_inputs import build_refraction_static_input_model
 
 _REQUEST_JSON_NAME = 'refraction_static_request.json'
 _NOT_IMPLEMENTED_MESSAGE = 'Refraction statics solver is not implemented yet.'
@@ -79,6 +80,13 @@ def _run_refraction_static_apply_job_body(
             'request': req.model_dump(mode='json'),
         },
     )
+    _set_job_progress_message(
+        state,
+        job_id,
+        progress=0.20,
+        message='building_refraction_static_input_model',
+    )
+    build_refraction_static_input_model(req=req, state=state, job_dir=job_dir)
     raise NotImplementedError(_NOT_IMPLEMENTED_MESSAGE)
 
 
