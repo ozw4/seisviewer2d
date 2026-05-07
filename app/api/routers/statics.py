@@ -15,6 +15,8 @@ from app.api.schemas import (
     DatumStaticApplyResponse,
     FirstBreakQcJobResponse,
     FirstBreakQcRequest,
+    RefractionStaticApplyRequest,
+    RefractionStaticApplyResponse,
     ResidualStaticApplyRequest,
     ResidualStaticApplyResponse,
     StaticLinkageBuildRequest,
@@ -32,6 +34,7 @@ from app.services.in_memory_cleanup import cleanup_in_memory_state
 from app.services.job_manager import JobManager
 from app.services.job_runner import request_job_cancel, start_job_thread
 from app.services.pipeline_artifacts import get_job_dir, maybe_cleanup_expired_jobs
+from app.services.refraction_static_service import run_refraction_static_apply_job
 from app.services.residual_static_service import run_residual_static_apply_job
 from app.services.time_term_static_service import run_time_term_static_apply_job
 
@@ -223,6 +226,39 @@ def time_term_static_apply(
     start_job_thread(
         thread_factory=threading.Thread,
         target=run_time_term_static_apply_job,
+        args=(job_id, req, state),
+    )
+
+    return {'job_id': job_id, 'state': status}
+
+
+@router.post(
+    '/statics/refraction/apply',
+    response_model=RefractionStaticApplyResponse,
+)
+def refraction_static_apply(
+    req: RefractionStaticApplyRequest,
+    request: Request,
+) -> RefractionStaticApplyResponse:
+    state = get_state(request.app)
+    cleanup_in_memory_state(state)
+    maybe_cleanup_expired_jobs()
+
+    job_id = str(uuid4())
+    with state.lock:
+        job_state = state.jobs.create_static_job(
+            job_id,
+            file_id=req.file_id,
+            key1_byte=req.key1_byte,
+            key2_byte=req.key2_byte,
+            statics_kind='refraction',
+            artifacts_dir=str(get_job_dir(job_id)),
+        )
+        status = job_state['status']
+
+    start_job_thread(
+        thread_factory=threading.Thread,
+        target=run_refraction_static_apply_job,
         args=(job_id, req, state),
     )
 

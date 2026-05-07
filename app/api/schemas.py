@@ -1232,3 +1232,386 @@ class TimeTermStaticApplyResponse(BaseModel):
 
     job_id: str
     state: str
+
+
+class RefractionStaticPickSourceRequest(BaseModel):
+    """First-break pick source reference for refraction static inversion."""
+
+    model_config = ConfigDict(extra='forbid')
+
+    kind: Literal['batch_predicted_npz', 'manual_npz_artifact', 'manual_memmap']
+    job_id: str | None = None
+    artifact_name: str | None = None
+
+    @model_validator(mode='after')
+    def _check_ref(self) -> 'RefractionStaticPickSourceRequest':
+        if self.kind == 'manual_memmap':
+            if self.job_id is not None or self.artifact_name is not None:
+                raise ValueError(
+                    'pick_source.job_id/artifact_name must be omitted for manual_memmap'
+                )
+            return self
+
+        if not self.job_id:
+            raise ValueError('pick_source.job_id is required for artifact sources')
+        if self.kind == 'batch_predicted_npz':
+            self.artifact_name = self.artifact_name or 'predicted_picks_time_s.npz'
+        if not self.artifact_name:
+            raise ValueError(
+                'pick_source.artifact_name is required for artifact sources'
+            )
+        _validate_artifact_basename(
+            self.artifact_name,
+            'pick_source.artifact_name',
+        )
+        if self.kind == 'manual_npz_artifact' and not self.artifact_name.endswith(
+            '.npz'
+        ):
+            raise ValueError('pick_source.artifact_name must end with .npz')
+        return self
+
+
+class RefractionStaticGeometryRequest(BaseModel):
+    """Trace header configuration for refraction static inversion."""
+
+    model_config = ConfigDict(extra='forbid')
+
+    source_id_byte: int = 9
+    receiver_id_byte: int = 13
+    source_x_byte: int = 73
+    source_y_byte: int = 77
+    receiver_x_byte: int = 81
+    receiver_y_byte: int = 85
+    source_elevation_byte: int = 45
+    receiver_elevation_byte: int = 41
+    source_depth_byte: int | None = None
+    coordinate_scalar_byte: int = 71
+    elevation_scalar_byte: int = 69
+    coordinate_unit: Literal['m', 'ft'] = 'm'
+    elevation_unit: Literal['m', 'ft'] = 'm'
+
+    @field_validator(
+        'source_id_byte',
+        'receiver_id_byte',
+        'source_x_byte',
+        'source_y_byte',
+        'receiver_x_byte',
+        'receiver_y_byte',
+        'source_elevation_byte',
+        'receiver_elevation_byte',
+        'coordinate_scalar_byte',
+        'elevation_scalar_byte',
+        mode='before',
+    )
+    @classmethod
+    def _check_header_byte(cls, value: object, info: Any) -> int:
+        return require_trace_header_byte(value, f'geometry.{info.field_name}')
+
+    @field_validator('source_depth_byte', mode='before')
+    @classmethod
+    def _check_optional_header_byte(cls, value: object) -> int | None:
+        if value is None:
+            return None
+        return require_trace_header_byte(value, 'geometry.source_depth_byte')
+
+    @model_validator(mode='after')
+    def _check_distinct_endpoint_ids(self) -> 'RefractionStaticGeometryRequest':
+        if self.source_id_byte == self.receiver_id_byte:
+            raise ValueError('geometry.source_id_byte and receiver_id_byte must differ')
+        return self
+
+
+class RefractionStaticLinkageRequest(BaseModel):
+    """Source/receiver endpoint linkage artifact reference."""
+
+    model_config = ConfigDict(extra='forbid')
+
+    mode: Literal['required', 'none'] = 'required'
+    job_id: str | None = None
+    artifact_name: str = 'geometry_linkage.npz'
+
+    @field_validator('artifact_name', mode='before')
+    @classmethod
+    def _check_artifact_name(cls, value: object) -> str:
+        if not isinstance(value, str):
+            raise ValueError('linkage.artifact_name must be a plain file name')
+        return _validate_artifact_basename(value, 'linkage.artifact_name')
+
+    @model_validator(mode='after')
+    def _check_ref(self) -> 'RefractionStaticLinkageRequest':
+        if self.mode == 'required' and not self.job_id:
+            raise ValueError('linkage.job_id is required when linkage.mode is required')
+        if self.mode == 'none' and self.job_id is not None:
+            raise ValueError('linkage.job_id must be omitted when linkage.mode is none')
+        if self.job_id is not None and not self.job_id:
+            raise ValueError('linkage.job_id must be a non-empty string')
+        return self
+
+
+class RefractionStaticModelRequest(BaseModel):
+    """Near-surface model options for refraction static inversion."""
+
+    model_config = ConfigDict(extra='forbid')
+
+    method: Literal['gli_variable_thickness'] = 'gli_variable_thickness'
+    weathering_velocity_m_s: float
+    bedrock_velocity_mode: Literal['solve_global', 'fixed_global'] = 'solve_global'
+    bedrock_velocity_m_s: float | None = None
+    initial_bedrock_velocity_m_s: float | None = 2500.0
+    min_bedrock_velocity_m_s: float = 1200.0
+    max_bedrock_velocity_m_s: float = 6000.0
+
+    @field_validator(
+        'weathering_velocity_m_s',
+        'min_bedrock_velocity_m_s',
+        'max_bedrock_velocity_m_s',
+        mode='before',
+    )
+    @classmethod
+    def _check_positive_velocity(cls, value: object, info: Any) -> float:
+        return _require_positive_finite_float(value, f'model.{info.field_name}')
+
+    @field_validator(
+        'bedrock_velocity_m_s',
+        'initial_bedrock_velocity_m_s',
+        mode='before',
+    )
+    @classmethod
+    def _check_optional_positive_velocity(cls, value: object, info: Any) -> float | None:
+        if value is None:
+            return None
+        return _require_positive_finite_float(value, f'model.{info.field_name}')
+
+    @model_validator(mode='after')
+    def _check_velocity_values(self) -> 'RefractionStaticModelRequest':
+        if self.min_bedrock_velocity_m_s >= self.max_bedrock_velocity_m_s:
+            raise ValueError(
+                'model.min_bedrock_velocity_m_s must be less than '
+                'model.max_bedrock_velocity_m_s'
+            )
+        if self.min_bedrock_velocity_m_s <= self.weathering_velocity_m_s:
+            raise ValueError(
+                'model.min_bedrock_velocity_m_s must be greater than '
+                'model.weathering_velocity_m_s'
+            )
+        if self.max_bedrock_velocity_m_s <= self.weathering_velocity_m_s:
+            raise ValueError(
+                'model.max_bedrock_velocity_m_s must be greater than '
+                'model.weathering_velocity_m_s'
+            )
+        if self.bedrock_velocity_mode == 'fixed_global':
+            if self.bedrock_velocity_m_s is None:
+                raise ValueError(
+                    'model.bedrock_velocity_m_s is required when '
+                    'model.bedrock_velocity_mode is fixed_global'
+                )
+            if self.bedrock_velocity_m_s <= self.weathering_velocity_m_s:
+                raise ValueError(
+                    'model.bedrock_velocity_m_s must be greater than '
+                    'model.weathering_velocity_m_s'
+                )
+            if not (
+                self.min_bedrock_velocity_m_s
+                <= self.bedrock_velocity_m_s
+                <= self.max_bedrock_velocity_m_s
+            ):
+                raise ValueError(
+                    'model.bedrock_velocity_m_s must be within bedrock velocity bounds'
+                )
+        return self
+
+
+class RefractionStaticOffsetRequest(BaseModel):
+    """Offset source and filtering options for refraction statics."""
+
+    model_config = ConfigDict(extra='forbid')
+
+    distance_source: Literal['geometry', 'offset_header'] = 'geometry'
+    offset_byte: int | None = 37
+    min_offset_m: float | None = None
+    max_offset_m: float | None = None
+    allow_missing_offset: bool = False
+    max_geometry_offset_mismatch_m: float | None = None
+
+    @field_validator('offset_byte', mode='before')
+    @classmethod
+    def _check_offset_byte(cls, value: object) -> int | None:
+        if value is None:
+            return None
+        return require_trace_header_byte(value, 'offset.offset_byte')
+
+    @field_validator('min_offset_m', 'max_offset_m', mode='before')
+    @classmethod
+    def _check_offset_gate(cls, value: object, info: Any) -> float | None:
+        if value is None:
+            return None
+        return _require_nonnegative_finite_float(value, f'offset.{info.field_name}')
+
+    @field_validator('allow_missing_offset', mode='before')
+    @classmethod
+    def _check_allow_missing_offset(cls, value: object) -> bool:
+        return _require_bool(value, 'offset.allow_missing_offset')
+
+    @field_validator('max_geometry_offset_mismatch_m', mode='before')
+    @classmethod
+    def _check_max_geometry_offset_mismatch_m(cls, value: object) -> float | None:
+        if value is None:
+            return None
+        return _require_nonnegative_finite_float(
+            value,
+            'offset.max_geometry_offset_mismatch_m',
+        )
+
+    @model_validator(mode='after')
+    def _check_offset_values(self) -> 'RefractionStaticOffsetRequest':
+        if self.distance_source == 'offset_header' and self.offset_byte is None:
+            raise ValueError(
+                'offset.offset_byte is required when '
+                'offset.distance_source is offset_header'
+            )
+        if (
+            self.min_offset_m is not None
+            and self.max_offset_m is not None
+            and self.min_offset_m >= self.max_offset_m
+        ):
+            raise ValueError('offset.min_offset_m must be less than offset.max_offset_m')
+        return self
+
+
+class RefractionStaticRobustRequest(BaseModel):
+    """Robust outlier-rejection options for refraction inversion."""
+
+    model_config = ConfigDict(extra='forbid')
+
+    enabled: bool = True
+    method: Literal['mad', 'sigma'] = 'mad'
+    threshold: float = 3.5
+    max_iterations: int = 5
+    min_used_fraction: float = 0.5
+    min_used_observations: int = 1
+
+    @field_validator('enabled', mode='before')
+    @classmethod
+    def _check_enabled(cls, value: object) -> bool:
+        return _require_bool(value, 'solver.robust.enabled')
+
+    @field_validator('threshold', mode='before')
+    @classmethod
+    def _check_threshold(cls, value: object) -> float:
+        return _require_positive_finite_float(
+            value,
+            'solver.robust.threshold',
+        )
+
+    @field_validator('max_iterations', mode='before')
+    @classmethod
+    def _check_max_iterations(cls, value: object) -> int:
+        return _require_positive_int(value, 'solver.robust.max_iterations')
+
+    @field_validator('min_used_fraction', mode='before')
+    @classmethod
+    def _check_min_used_fraction(cls, value: object) -> float:
+        fraction = _require_positive_finite_float(
+            value,
+            'solver.robust.min_used_fraction',
+        )
+        if fraction > 1.0:
+            raise ValueError('solver.robust.min_used_fraction must be <= 1')
+        return fraction
+
+    @field_validator('min_used_observations', mode='before')
+    @classmethod
+    def _check_min_used_observations(cls, value: object) -> int:
+        return _require_positive_int(value, 'solver.robust.min_used_observations')
+
+
+class RefractionStaticSolverRequest(BaseModel):
+    """Solver options for refraction static inversion."""
+
+    model_config = ConfigDict(extra='forbid')
+
+    damping: float = 0.01
+    robust: RefractionStaticRobustRequest = Field(
+        default_factory=RefractionStaticRobustRequest,
+    )
+
+    @field_validator('damping', mode='before')
+    @classmethod
+    def _check_damping(cls, value: object) -> float:
+        return _require_nonnegative_finite_float(value, 'solver.damping')
+
+
+class RefractionStaticApplyOptions(BaseModel):
+    """Options for eventual refraction static TraceStore application."""
+
+    model_config = ConfigDict(extra='forbid')
+
+    mode: Literal['refraction_from_raw'] = 'refraction_from_raw'
+    interpolation: Literal['linear'] = 'linear'
+    fill_value: float = 0.0
+    max_abs_shift_ms: float = 250.0
+    output_dtype: Literal['float32'] = 'float32'
+    register_corrected_file: bool = False
+
+    @field_validator('fill_value', mode='before')
+    @classmethod
+    def _check_fill_value(cls, value: object) -> float:
+        return _require_finite_float(value, 'apply.fill_value')
+
+    @field_validator('max_abs_shift_ms', mode='before')
+    @classmethod
+    def _check_max_abs_shift_ms(cls, value: object) -> float:
+        return _require_positive_finite_float(value, 'apply.max_abs_shift_ms')
+
+    @field_validator('register_corrected_file', mode='before')
+    @classmethod
+    def _check_register_corrected_file_bool(cls, value: object) -> bool:
+        return _require_bool(value, 'apply.register_corrected_file')
+
+
+class RefractionStaticApplyRequest(BaseModel):
+    """Request model for ``/statics/refraction/apply`` jobs."""
+
+    model_config = ConfigDict(extra='forbid')
+
+    file_id: str
+    key1_byte: int = 189
+    key2_byte: int = 193
+    pick_source: RefractionStaticPickSourceRequest
+    geometry: RefractionStaticGeometryRequest = Field(
+        default_factory=RefractionStaticGeometryRequest,
+    )
+    linkage: RefractionStaticLinkageRequest = Field(
+        default_factory=RefractionStaticLinkageRequest,
+    )
+    model: RefractionStaticModelRequest
+    offset: RefractionStaticOffsetRequest = Field(
+        default_factory=RefractionStaticOffsetRequest,
+    )
+    solver: RefractionStaticSolverRequest = Field(
+        default_factory=RefractionStaticSolverRequest,
+    )
+    apply: RefractionStaticApplyOptions = Field(
+        default_factory=RefractionStaticApplyOptions,
+    )
+
+    @field_validator('file_id', mode='before')
+    @classmethod
+    def _check_file_id(cls, value: object) -> str:
+        if not isinstance(value, str) or not value:
+            raise ValueError('file_id must be a non-empty string')
+        return value
+
+    @field_validator('key1_byte', 'key2_byte', mode='before')
+    @classmethod
+    def _check_key_header_byte(cls, value: object, info: Any) -> int:
+        return require_trace_header_byte(value, info.field_name)
+
+
+class RefractionStaticApplyResponse(BaseModel):
+    """Response model for creating a refraction static apply job."""
+
+    model_config = ConfigDict(extra='forbid')
+
+    job_id: str
+    state: str
