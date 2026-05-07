@@ -11,10 +11,14 @@ from uuid import uuid4
 from app.api.schemas import RefractionStaticApplyRequest
 from app.core.state import AppState
 from app.services.job_runner import JobCompletion, JobFailure, run_job_with_lifecycle
-from app.services.refraction_static_inputs import build_refraction_static_input_model
+from app.services.refraction_static_bedrock import (
+    estimate_global_bedrock_slowness_from_first_breaks,
+)
 
 _REQUEST_JSON_NAME = 'refraction_static_request.json'
-_NOT_IMPLEMENTED_MESSAGE = 'Refraction statics solver is not implemented yet.'
+_NOT_IMPLEMENTED_MESSAGE = (
+    'Refraction statics weathering-thickness conversion is not implemented yet.'
+)
 
 
 def _write_json_atomic(path: Path, payload: dict[str, Any]) -> None:
@@ -84,9 +88,19 @@ def _run_refraction_static_apply_job_body(
         state,
         job_id,
         progress=0.20,
-        message='building_refraction_static_input_model',
+        message='estimating_refraction_bedrock_velocity',
     )
-    build_refraction_static_input_model(req=req, state=state, job_dir=job_dir)
+    estimate_global_bedrock_slowness_from_first_breaks(
+        req=req,
+        state=state,
+        job_dir=job_dir,
+    )
+    _set_job_progress_message(
+        state,
+        job_id,
+        progress=0.50,
+        message='refraction_bedrock_velocity_solved',
+    )
     raise NotImplementedError(_NOT_IMPLEMENTED_MESSAGE)
 
 

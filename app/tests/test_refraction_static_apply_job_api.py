@@ -164,7 +164,7 @@ def test_refraction_static_apply_endpoint_rejects_invalid_schema_without_job(
         assert len(client.app.state.sv.jobs) == 0
 
 
-def test_run_refraction_static_apply_job_writes_request_and_fails(
+def test_run_refraction_static_apply_job_estimates_bedrock_then_fails(
     client: TestClient,
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -181,16 +181,16 @@ def test_run_refraction_static_apply_job_writes_request_and_fails(
             statics_kind='refraction',
             artifacts_dir=str(job_dir),
         )
-    built: list[dict[str, Any]] = []
+    estimates: list[dict[str, Any]] = []
 
-    def _capture_builder(**kwargs: Any) -> object:
-        built.append(kwargs)
+    def _capture_estimate(**kwargs: Any) -> object:
+        estimates.append(kwargs)
         return object()
 
     monkeypatch.setattr(
         refraction_service_module,
-        'build_refraction_static_input_model',
-        _capture_builder,
+        'estimate_global_bedrock_slowness_from_first_breaks',
+        _capture_estimate,
     )
 
     run_refraction_static_apply_job(job_id, req, client.app.state.sv)
@@ -201,10 +201,13 @@ def test_run_refraction_static_apply_job_writes_request_and_fails(
     assert request_payload['job_id'] == job_id
     assert request_payload['statics_kind'] == 'refraction'
     assert request_payload['request']['file_id'] == 'raw-file-id'
-    assert len(built) == 1
-    assert built[0]['req'] is req
-    assert built[0]['job_dir'] == job_dir
+    assert len(estimates) == 1
+    assert estimates[0]['req'] is req
+    assert estimates[0]['job_dir'] == job_dir
     with client.app.state.sv.lock:
         job = dict(client.app.state.sv.jobs[job_id])
     assert job['status'] == 'error'
-    assert job['message'] == 'Refraction statics solver is not implemented yet.'
+    assert (
+        job['message']
+        == 'Refraction statics weathering-thickness conversion is not implemented yet.'
+    )
