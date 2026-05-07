@@ -416,6 +416,12 @@ def test_linkage_none_creates_separate_source_and_receiver_nodes() -> None:
     assert set(model.node_kind.tolist()) == {'source', 'receiver'}
 
 
+def test_unlinked_endpoint_table_counts_valid_observations_only() -> None:
+    model = _build(np.asarray([0.005, np.nan, 0.007]), headers=_headers(3))
+
+    np.testing.assert_array_equal(model.endpoint_table.pick_count, [1, 0, 1, 1, 0, 1])
+
+
 def test_endpoint_keys_include_header_ids_when_coordinates_match() -> None:
     headers = _headers(
         2,
@@ -582,6 +588,123 @@ def test_build_refraction_static_input_model_loads_npz_original_order(
     np.testing.assert_allclose(model.pick_time_s_sorted, [0.010, 0.020, 0.030, 0.040])
     np.testing.assert_array_equal(model.sorted_trace_index, sorted_to_original)
     assert model.metadata['pick_source_metadata']['accepted_pick_key'] == 'picks_time_s'
+
+
+def test_build_refraction_static_input_model_rejects_missing_pick_artifact(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    sorted_to_original = np.asarray([0, 1, 2, 3], dtype=np.int64)
+    reader = _FakeReader(headers=_headers(4), sorted_to_original=sorted_to_original)
+    monkeypatch.setattr(inputs_module, 'get_reader', lambda *args, **kwargs: reader)
+
+    state = AppState()
+    job_dir = tmp_path / 'pick-job'
+    job_dir.mkdir()
+    state.jobs.create_batch_apply_job(
+        'pick-job',
+        file_id='line-a',
+        key1_byte=189,
+        key2_byte=193,
+        artifacts_dir=str(job_dir),
+    )
+    req = RefractionStaticApplyRequest(
+        file_id='line-a',
+        pick_source={
+            'kind': 'batch_predicted_npz',
+            'job_id': 'pick-job',
+        },
+        geometry=_geometry(),
+        linkage={'mode': 'none'},
+        model=RefractionStaticModelRequest(weathering_velocity_m_s=800.0),
+    )
+
+    with pytest.raises(ValueError, match='job artifact not found'):
+        build_refraction_static_input_model(req=req, state=state)
+
+
+def test_build_refraction_static_input_model_rejects_unsupported_pick_artifact_key(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    sorted_to_original = np.asarray([0, 1, 2, 3], dtype=np.int64)
+    reader = _FakeReader(headers=_headers(4), sorted_to_original=sorted_to_original)
+    monkeypatch.setattr(inputs_module, 'get_reader', lambda *args, **kwargs: reader)
+
+    state = AppState()
+    job_dir = tmp_path / 'pick-job'
+    job_dir.mkdir()
+    state.jobs.create_batch_apply_job(
+        'pick-job',
+        file_id='line-a',
+        key1_byte=189,
+        key2_byte=193,
+        artifacts_dir=str(job_dir),
+    )
+    np.savez(
+        job_dir / 'predicted_picks_time_s.npz',
+        travel_time_s=np.asarray([0.010, 0.020, 0.030, 0.040], dtype=np.float32),
+    )
+    req = RefractionStaticApplyRequest(
+        file_id='line-a',
+        pick_source={
+            'kind': 'batch_predicted_npz',
+            'job_id': 'pick-job',
+        },
+        geometry=_geometry(),
+        linkage={'mode': 'none'},
+        model=RefractionStaticModelRequest(weathering_velocity_m_s=800.0),
+    )
+
+    with pytest.raises(ValueError, match='unsupported pick artifact key'):
+        build_refraction_static_input_model(req=req, state=state)
+
+
+def test_build_refraction_static_input_model_rejects_cross_file_linkage_artifact(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    sorted_to_original = np.asarray([0, 1, 2, 3], dtype=np.int64)
+    reader = _FakeReader(headers=_headers(4), sorted_to_original=sorted_to_original)
+    monkeypatch.setattr(inputs_module, 'get_reader', lambda *args, **kwargs: reader)
+
+    state = AppState()
+    pick_dir = tmp_path / 'pick-job'
+    pick_dir.mkdir()
+    state.jobs.create_batch_apply_job(
+        'pick-job',
+        file_id='line-a',
+        key1_byte=189,
+        key2_byte=193,
+        artifacts_dir=str(pick_dir),
+    )
+    np.savez(
+        pick_dir / 'predicted_picks_time_s.npz',
+        pick_time_s=np.asarray([0.010, 0.020, 0.030, 0.040], dtype=np.float32),
+    )
+    linkage_dir = tmp_path / 'linkage-job'
+    linkage_dir.mkdir()
+    state.jobs.create_static_job(
+        'linkage-job',
+        file_id='line-b',
+        key1_byte=189,
+        key2_byte=193,
+        statics_kind='geometry_linkage',
+        artifacts_dir=str(linkage_dir),
+    )
+    req = RefractionStaticApplyRequest(
+        file_id='line-a',
+        pick_source={
+            'kind': 'batch_predicted_npz',
+            'job_id': 'pick-job',
+        },
+        geometry=_geometry(),
+        linkage={'job_id': 'linkage-job'},
+        model=RefractionStaticModelRequest(weathering_velocity_m_s=800.0),
+    )
+
+    with pytest.raises(ValueError, match='metadata mismatch: file_id'):
+        build_refraction_static_input_model(req=req, state=state)
 
 
 class _FakeReader:

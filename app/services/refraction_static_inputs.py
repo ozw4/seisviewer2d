@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import csv
 from collections.abc import Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 import json
 from pathlib import Path
 from typing import Any
@@ -353,6 +353,13 @@ def build_refraction_static_input_model_from_arrays(
             'offset, and linkage filtering.'
         )
 
+    endpoint_table = _endpoint_table_with_pick_counts(
+        node_mapping.endpoint_table,
+        source_node_id=node_mapping.source_node_id_sorted,
+        receiver_node_id=node_mapping.receiver_node_id_sorted,
+        valid_observation_mask=valid_observation,
+    )
+
     input_model = RefractionStaticInputModel(
         file_id=str(file_id),
         n_traces=n_traces,
@@ -385,7 +392,7 @@ def build_refraction_static_input_model_from_arrays(
         node_kind=node_mapping.node_kind,
         rejection_reason_sorted=np.ascontiguousarray(rejection_reason, dtype='<U32'),
         qc=qc,
-        endpoint_table=node_mapping.endpoint_table,
+        endpoint_table=endpoint_table,
         metadata=dict(metadata or {}),
     )
     if job_dir is not None:
@@ -611,6 +618,7 @@ def _resolve_linkage_artifact(
             name=artifact_name,
             allowed_job_types={'statics'},
             allowed_statics_kinds={'geometry_linkage'},
+            expected_file_id=req.file_id,
             expected_key1_byte=req.key1_byte,
             expected_key2_byte=req.key2_byte,
             reference_label='linkage',
@@ -1154,6 +1162,38 @@ def _endpoint_table_from_nodes(
         y_m=np.ascontiguousarray(node_y, dtype=np.float64),
         elevation_m=np.ascontiguousarray(node_z, dtype=np.float64),
         kind=np.ascontiguousarray(node_kind, dtype='<U16'),
+        pick_count=np.ascontiguousarray(pick_count, dtype=np.int64),
+    )
+
+
+def _endpoint_table_with_pick_counts(
+    endpoint_table: RefractionEndpointTable,
+    *,
+    source_node_id: np.ndarray,
+    receiver_node_id: np.ndarray,
+    valid_observation_mask: np.ndarray,
+) -> RefractionEndpointTable:
+    n_nodes = int(endpoint_table.node_id.shape[0])
+    valid = np.asarray(valid_observation_mask, dtype=bool)
+    source = np.asarray(source_node_id, dtype=np.int64)
+    receiver = np.asarray(receiver_node_id, dtype=np.int64)
+    if source.shape != valid.shape or receiver.shape != valid.shape:
+        raise ValueError('node id arrays must match valid observation mask shape')
+
+    referenced = np.concatenate(
+        (
+            source[valid & (source >= 0)],
+            receiver[valid & (receiver >= 0)],
+        )
+    )
+    if referenced.size:
+        pick_count = np.bincount(referenced, minlength=n_nodes)
+        if pick_count.shape[0] != n_nodes:
+            raise ValueError('node id outside endpoint table')
+    else:
+        pick_count = np.zeros(n_nodes, dtype=np.int64)
+    return replace(
+        endpoint_table,
         pick_count=np.ascontiguousarray(pick_count, dtype=np.int64),
     )
 
