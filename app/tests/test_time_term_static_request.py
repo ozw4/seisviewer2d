@@ -367,6 +367,45 @@ def test_time_term_request_accepts_robust_method(method: str) -> None:
     assert req.solver.robust.threshold == pytest.approx(3.5)
 
 
+def test_time_term_request_accepts_reference_node_gauge() -> None:
+    payload = _payload()
+    payload['solver']['gauge'] = 'reference_node'
+    payload['solver']['reference_node_id'] = 0
+
+    req = _validate(payload)
+
+    assert req.solver.gauge == 'reference_node'
+    assert req.solver.reference_node_id == 0
+
+
+def test_time_term_request_rejects_reference_node_gauge_without_reference_node_id() -> None:
+    payload = _payload()
+    payload['solver']['gauge'] = 'reference_node'
+
+    with pytest.raises(ValidationError, match='reference_node_id'):
+        _validate(payload)
+
+
+@pytest.mark.parametrize('reference_node_id', [-1, True, 1.5, '0'])
+def test_time_term_request_rejects_invalid_reference_node_id(
+    reference_node_id: object,
+) -> None:
+    payload = _payload()
+    payload['solver']['gauge'] = 'reference_node'
+    payload['solver']['reference_node_id'] = reference_node_id
+
+    with pytest.raises(ValidationError, match='reference_node_id'):
+        _validate(payload)
+
+
+def test_time_term_request_rejects_reference_node_id_without_reference_gauge() -> None:
+    payload = _payload()
+    payload['solver']['reference_node_id'] = 0
+
+    with pytest.raises(ValidationError, match='reference_node_id'):
+        _validate(payload)
+
+
 def test_time_term_request_rejects_unknown_robust_method() -> None:
     payload = _payload()
     payload['solver']['robust']['method'] = 'median'

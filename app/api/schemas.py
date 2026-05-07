@@ -1122,7 +1122,8 @@ class TimeTermStaticSolverRequest(BaseModel):
     model_config = ConfigDict(extra='forbid')
 
     damping: float = 0.01
-    gauge: Literal['mean_zero'] = 'mean_zero'
+    gauge: Literal['mean_zero', 'reference_node'] = 'mean_zero'
+    reference_node_id: int | None = None
     robust: TimeTermStaticRobustRequest = Field(
         default_factory=TimeTermStaticRobustRequest,
     )
@@ -1131,6 +1132,31 @@ class TimeTermStaticSolverRequest(BaseModel):
     @classmethod
     def _check_damping(cls, value: object) -> float:
         return _require_nonnegative_finite_float(value, 'solver.damping')
+
+    @field_validator('reference_node_id', mode='before')
+    @classmethod
+    def _check_reference_node_id(cls, value: object) -> int | None:
+        if value is None:
+            return None
+        if isinstance(value, bool) or not isinstance(value, int):
+            raise ValueError('solver.reference_node_id must be a non-negative integer')
+        if value < 0:
+            raise ValueError('solver.reference_node_id must be a non-negative integer')
+        return value
+
+    @model_validator(mode='after')
+    def _check_reference_node_gauge(self) -> 'TimeTermStaticSolverRequest':
+        if self.gauge == 'reference_node' and self.reference_node_id is None:
+            raise ValueError(
+                'solver.reference_node_id is required when '
+                "solver.gauge is 'reference_node'"
+            )
+        if self.gauge != 'reference_node' and self.reference_node_id is not None:
+            raise ValueError(
+                'solver.reference_node_id is only allowed when '
+                "solver.gauge is 'reference_node'"
+            )
+        return self
 
 
 class TimeTermStaticApplyOptions(BaseModel):
