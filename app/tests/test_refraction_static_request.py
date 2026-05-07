@@ -100,10 +100,6 @@ def _minimal_payload() -> dict[str, Any]:
             'kind': 'batch_predicted_npz',
             'job_id': 'first-break-job-id',
         },
-        'linkage': {
-            'mode': 'required',
-            'job_id': 'linkage-job-id',
-        },
         'model': {
             'weathering_velocity_m_s': 800.0,
         },
@@ -138,6 +134,8 @@ def test_refraction_static_request_accepts_fully_populated_valid_request() -> No
     assert req.key2_byte == 193
     assert req.pick_source.artifact_name == 'predicted_picks_time_s.npz'
     assert req.geometry.source_depth_byte is None
+    assert req.linkage.mode == 'required'
+    assert req.linkage.job_id == 'linkage-job-id'
     assert req.linkage.artifact_name == 'geometry_linkage.npz'
     assert req.model.method == 'gli_variable_thickness'
     assert req.model.bedrock_velocity_m_s is None
@@ -157,6 +155,8 @@ def test_refraction_static_request_accepts_minimal_valid_request_and_defaults() 
     assert req.geometry.source_depth_byte is None
     assert req.geometry.coordinate_unit == 'm'
     assert req.geometry.elevation_unit == 'm'
+    assert req.linkage.mode == 'optional'
+    assert req.linkage.job_id is None
     assert req.linkage.artifact_name == 'geometry_linkage.npz'
     assert req.model.method == 'gli_variable_thickness'
     assert req.model.bedrock_velocity_mode == 'solve_global'
