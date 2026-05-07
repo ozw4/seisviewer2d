@@ -384,6 +384,11 @@ def _sparse_solver_options_from_time_term_request(
     return TimeTermSparseSolverOptions(
         damping_lambda=req.solver.damping,
         gauge=req.solver.gauge,
+        reference_node_id=(
+            req.solver.reference_node_id
+            if req.solver.gauge == 'reference_node'
+            else None
+        ),
         min_observations=req.solver.robust.min_used_observations,
         max_abs_node_time_term_ms=req.apply.max_abs_shift_ms,
         max_abs_estimated_trace_delay_ms=req.apply.max_abs_shift_ms,
