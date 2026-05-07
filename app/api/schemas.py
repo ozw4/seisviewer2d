@@ -1254,8 +1254,8 @@ class RefractionStaticPickSourceRequest(BaseModel):
 
         if not self.job_id:
             raise ValueError('pick_source.job_id is required for artifact sources')
-        if self.kind == 'batch_predicted_npz':
-            self.artifact_name = self.artifact_name or 'predicted_picks_time_s.npz'
+        if self.kind == 'batch_predicted_npz' and self.artifact_name is None:
+            self.artifact_name = 'predicted_picks_time_s.npz'
         if not self.artifact_name:
             raise ValueError(
                 'pick_source.artifact_name is required for artifact sources'
@@ -1326,7 +1326,7 @@ class RefractionStaticLinkageRequest(BaseModel):
 
     model_config = ConfigDict(extra='forbid')
 
-    mode: Literal['required', 'none'] = 'required'
+    mode: Literal['required', 'optional', 'none'] = 'required'
     job_id: str | None = None
     artifact_name: str = 'geometry_linkage.npz'
 
@@ -1357,9 +1357,10 @@ class RefractionStaticModelRequest(BaseModel):
     weathering_velocity_m_s: float
     bedrock_velocity_mode: Literal['solve_global', 'fixed_global'] = 'solve_global'
     bedrock_velocity_m_s: float | None = None
-    initial_bedrock_velocity_m_s: float | None = 2500.0
+    initial_bedrock_velocity_m_s: float | None = None
     min_bedrock_velocity_m_s: float = 1200.0
     max_bedrock_velocity_m_s: float = 6000.0
+    max_weathering_thickness_m: float | None = None
 
     @field_validator(
         'weathering_velocity_m_s',
@@ -1374,6 +1375,7 @@ class RefractionStaticModelRequest(BaseModel):
     @field_validator(
         'bedrock_velocity_m_s',
         'initial_bedrock_velocity_m_s',
+        'max_weathering_thickness_m',
         mode='before',
     )
     @classmethod
@@ -1399,6 +1401,23 @@ class RefractionStaticModelRequest(BaseModel):
                 'model.max_bedrock_velocity_m_s must be greater than '
                 'model.weathering_velocity_m_s'
             )
+        if (
+            self.initial_bedrock_velocity_m_s is not None
+            and self.initial_bedrock_velocity_m_s <= self.weathering_velocity_m_s
+        ):
+            raise ValueError(
+                'model.initial_bedrock_velocity_m_s must be greater than '
+                'model.weathering_velocity_m_s'
+            )
+        if self.initial_bedrock_velocity_m_s is not None and not (
+            self.min_bedrock_velocity_m_s
+            <= self.initial_bedrock_velocity_m_s
+            <= self.max_bedrock_velocity_m_s
+        ):
+            raise ValueError(
+                'model.initial_bedrock_velocity_m_s must be within '
+                'bedrock velocity bounds'
+            )
         if self.bedrock_velocity_mode == 'fixed_global':
             if self.bedrock_velocity_m_s is None:
                 raise ValueError(
@@ -1418,15 +1437,21 @@ class RefractionStaticModelRequest(BaseModel):
                 raise ValueError(
                     'model.bedrock_velocity_m_s must be within bedrock velocity bounds'
                 )
+        elif self.bedrock_velocity_m_s is not None:
+            raise ValueError(
+                'model.bedrock_velocity_m_s is only allowed when '
+                'model.bedrock_velocity_mode is fixed_global'
+            )
         return self
 
 
-class RefractionStaticOffsetRequest(BaseModel):
-    """Offset source and filtering options for refraction statics."""
+class RefractionStaticMoveoutRequest(BaseModel):
+    """Moveout distance source and filtering options for refraction statics."""
 
     model_config = ConfigDict(extra='forbid')
 
-    distance_source: Literal['geometry', 'offset_header'] = 'geometry'
+    model: Literal['head_wave_linear_offset'] = 'head_wave_linear_offset'
+    distance_source: Literal['geometry', 'offset_header', 'auto'] = 'geometry'
     offset_byte: int | None = 37
     min_offset_m: float | None = None
     max_offset_m: float | None = None
@@ -1438,19 +1463,19 @@ class RefractionStaticOffsetRequest(BaseModel):
     def _check_offset_byte(cls, value: object) -> int | None:
         if value is None:
             return None
-        return require_trace_header_byte(value, 'offset.offset_byte')
+        return require_trace_header_byte(value, 'moveout.offset_byte')
 
     @field_validator('min_offset_m', 'max_offset_m', mode='before')
     @classmethod
     def _check_offset_gate(cls, value: object, info: Any) -> float | None:
         if value is None:
             return None
-        return _require_nonnegative_finite_float(value, f'offset.{info.field_name}')
+        return _require_nonnegative_finite_float(value, f'moveout.{info.field_name}')
 
     @field_validator('allow_missing_offset', mode='before')
     @classmethod
     def _check_allow_missing_offset(cls, value: object) -> bool:
-        return _require_bool(value, 'offset.allow_missing_offset')
+        return _require_bool(value, 'moveout.allow_missing_offset')
 
     @field_validator('max_geometry_offset_mismatch_m', mode='before')
     @classmethod
@@ -1459,22 +1484,24 @@ class RefractionStaticOffsetRequest(BaseModel):
             return None
         return _require_nonnegative_finite_float(
             value,
-            'offset.max_geometry_offset_mismatch_m',
+            'moveout.max_geometry_offset_mismatch_m',
         )
 
     @model_validator(mode='after')
-    def _check_offset_values(self) -> 'RefractionStaticOffsetRequest':
+    def _check_offset_values(self) -> 'RefractionStaticMoveoutRequest':
         if self.distance_source == 'offset_header' and self.offset_byte is None:
             raise ValueError(
-                'offset.offset_byte is required when '
-                'offset.distance_source is offset_header'
+                'moveout.offset_byte is required when '
+                'moveout.distance_source is offset_header'
             )
         if (
             self.min_offset_m is not None
             and self.max_offset_m is not None
             and self.min_offset_m >= self.max_offset_m
         ):
-            raise ValueError('offset.min_offset_m must be less than offset.max_offset_m')
+            raise ValueError(
+                'moveout.min_offset_m must be less than moveout.max_offset_m'
+            )
         return self
 
 
@@ -1531,6 +1558,8 @@ class RefractionStaticSolverRequest(BaseModel):
     model_config = ConfigDict(extra='forbid')
 
     damping: float = 0.01
+    min_picks_per_node: int = 1
+    max_abs_half_intercept_time_ms: float = 500.0
     robust: RefractionStaticRobustRequest = Field(
         default_factory=RefractionStaticRobustRequest,
     )
@@ -1539,6 +1568,19 @@ class RefractionStaticSolverRequest(BaseModel):
     @classmethod
     def _check_damping(cls, value: object) -> float:
         return _require_nonnegative_finite_float(value, 'solver.damping')
+
+    @field_validator('min_picks_per_node', mode='before')
+    @classmethod
+    def _check_min_picks_per_node(cls, value: object) -> int:
+        return _require_positive_int(value, 'solver.min_picks_per_node')
+
+    @field_validator('max_abs_half_intercept_time_ms', mode='before')
+    @classmethod
+    def _check_max_abs_half_intercept_time_ms(cls, value: object) -> float:
+        return _require_positive_finite_float(
+            value,
+            'solver.max_abs_half_intercept_time_ms',
+        )
 
 
 class RefractionStaticApplyOptions(BaseModel):
@@ -1585,8 +1627,8 @@ class RefractionStaticApplyRequest(BaseModel):
         default_factory=RefractionStaticLinkageRequest,
     )
     model: RefractionStaticModelRequest
-    offset: RefractionStaticOffsetRequest = Field(
-        default_factory=RefractionStaticOffsetRequest,
+    moveout: RefractionStaticMoveoutRequest = Field(
+        default_factory=RefractionStaticMoveoutRequest,
     )
     solver: RefractionStaticSolverRequest = Field(
         default_factory=RefractionStaticSolverRequest,

@@ -67,8 +67,10 @@ def _payload() -> dict[str, Any]:
             'initial_bedrock_velocity_m_s': 2500.0,
             'min_bedrock_velocity_m_s': 1200.0,
             'max_bedrock_velocity_m_s': 6000.0,
+            'max_weathering_thickness_m': None,
         },
-        'offset': {
+        'moveout': {
+            'model': 'head_wave_linear_offset',
             'distance_source': 'geometry',
             'offset_byte': 37,
             'min_offset_m': None,
@@ -78,6 +80,8 @@ def _payload() -> dict[str, Any]:
         },
         'solver': {
             'damping': 0.01,
+            'min_picks_per_node': 1,
+            'max_abs_half_intercept_time_ms': 500.0,
             'robust': {
                 'enabled': True,
                 'method': 'mad',
