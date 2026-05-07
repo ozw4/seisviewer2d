@@ -1067,6 +1067,8 @@ def _unknown_invalid_weathering_status(status: np.ndarray) -> np.ndarray:
             'clipped_half_intercept_lower',
             'clipped_half_intercept_upper',
             'exceeds_max_thickness',
+            'invalid_surface_elevation',
+            'invalid_refractor_elevation',
             'missing_node',
         ],
     )

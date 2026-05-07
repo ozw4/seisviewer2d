@@ -309,26 +309,75 @@ def test_weathering_status_priority_preserves_higher_priority_statuses() -> None
     assert result.qc['zero_thickness_node_count'] == 0
 
 
-def test_missing_endpoint_and_trace_nodes_are_marked() -> None:
+def test_unknown_endpoint_nodes_raise() -> None:
     _inputs, _design, _solved, half = _build_result()
     source_node_id = half.source_node_id.copy()
     source_node_id[0] = 999
+
+    with pytest.raises(RefractionWeatheringThicknessError, match='source_node_id'):
+        build_refraction_weathering_thickness_model(
+            half_intercept_result=replace(half, source_node_id=source_node_id),
+            model=_model(),
+        )
+
+    receiver_node_id = half.receiver_node_id.copy()
+    receiver_node_id[0] = 999
+
+    with pytest.raises(RefractionWeatheringThicknessError, match='receiver_node_id'):
+        build_refraction_weathering_thickness_model(
+            half_intercept_result=replace(half, receiver_node_id=receiver_node_id),
+            model=_model(),
+        )
+
+
+def test_unknown_valid_trace_nodes_raise() -> None:
+    _inputs, _design, _solved, half = _build_result()
     source_node_id_sorted = half.source_node_id_sorted.copy()
     source_node_id_sorted[0] = 999
+
+    with pytest.raises(
+        RefractionWeatheringThicknessError,
+        match='source_node_id_sorted',
+    ):
+        build_refraction_weathering_thickness_model(
+            half_intercept_result=replace(
+                half,
+                source_node_id_sorted=source_node_id_sorted,
+            ),
+            model=_model(),
+        )
+
+    receiver_node_id_sorted = half.receiver_node_id_sorted.copy()
+    receiver_node_id_sorted[0] = 999
+
+    with pytest.raises(
+        RefractionWeatheringThicknessError,
+        match='receiver_node_id_sorted',
+    ):
+        build_refraction_weathering_thickness_model(
+            half_intercept_result=replace(
+                half,
+                receiver_node_id_sorted=receiver_node_id_sorted,
+            ),
+            model=_model(),
+        )
+
+
+def test_unknown_invalid_trace_nodes_are_marked() -> None:
+    _inputs, _design, _solved, half = _build_result()
+    source_node_id_sorted = half.source_node_id_sorted.copy()
+    source_node_id_sorted[-1] = 999
 
     result = build_refraction_weathering_thickness_model(
         half_intercept_result=replace(
             half,
-            source_node_id=source_node_id,
             source_node_id_sorted=source_node_id_sorted,
         ),
         model=_model(),
     )
 
-    assert result.source_weathering_status[0] == 'missing_node'
-    assert np.isnan(result.source_weathering_thickness_m[0])
-    assert result.source_weathering_status_sorted[0] == 'missing_node'
-    assert np.isnan(result.source_weathering_thickness_m_sorted[0])
+    assert result.source_weathering_status_sorted[-1] == 'missing_node'
+    assert np.isnan(result.source_weathering_thickness_m_sorted[-1])
 
 
 def test_invalid_surface_elevation_yields_nan_refractor() -> None:

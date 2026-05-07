@@ -340,6 +340,40 @@ def test_statuses_preserve_inactive_invalid_and_inherited_conditions() -> None:
     assert result.qc['exceeds_max_thickness_count'] == 1
 
 
+def test_elevation_only_weathering_statuses_do_not_block_replacement_shift() -> None:
+    status = np.asarray(
+        [
+            'invalid_surface_elevation',
+            'invalid_refractor_elevation',
+            'ok',
+            'ok',
+            'ok',
+            'inactive',
+        ],
+        dtype='<U32',
+    )
+
+    result = build_refraction_weathering_replacement_statics(
+        weathering_result=_weathering_result(node_status=status),
+        apply_options=_apply_options(),
+    )
+
+    expected_node_shift = np.asarray([10.0, 12.0], dtype=np.float64) * (
+        SLOWNESS_DELTA_S_PER_M
+    )
+    np.testing.assert_allclose(
+        result.node_weathering_replacement_shift_s[:2],
+        expected_node_shift,
+        rtol=1.0e-12,
+    )
+    assert result.node_static_status[:2].tolist() == ['ok', 'ok']
+    assert result.source_static_status[0] == 'ok'
+    assert result.receiver_static_status[1] == 'ok'
+    assert result.trace_static_status_sorted[0] == 'ok'
+    assert np.isfinite(result.weathering_replacement_trace_shift_s_sorted[0])
+    assert result.qc['invalid_weathering_thickness_count'] == 0
+
+
 def test_status_priority_is_deterministic_for_components_and_traces() -> None:
     thickness = np.asarray([np.nan, 12.0, 15.0, 18.0, 20.0, np.nan])
     status = np.asarray(

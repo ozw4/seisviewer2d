@@ -258,6 +258,20 @@ def build_refraction_weathering_thickness_model(
         model=model,
     )
     node_pos = {int(node): index for index, node in enumerate(data.node_id.tolist())}
+    _validate_endpoint_nodes(data.source_node_id, node_pos, name='source_node_id')
+    _validate_endpoint_nodes(data.receiver_node_id, node_pos, name='receiver_node_id')
+    _validate_valid_observation_nodes(
+        data.source_node_id_sorted,
+        data.valid_observation_mask_sorted,
+        node_pos,
+        name='source_node_id_sorted',
+    )
+    _validate_valid_observation_nodes(
+        data.receiver_node_id_sorted,
+        data.valid_observation_mask_sorted,
+        node_pos,
+        name='receiver_node_id_sorted',
+    )
 
     node_thickness = compute_weathering_thickness_from_half_intercept_time(
         half_intercept_time_s=data.node_half_intercept_time_s,
@@ -801,6 +815,44 @@ def _map_node_table(
         np.ascontiguousarray(solution_status, dtype=_STATUS_DTYPE),
         np.ascontiguousarray(missing, dtype=bool),
     )
+
+
+def _validate_endpoint_nodes(
+    endpoint_node_id: np.ndarray,
+    node_pos: dict[int, int],
+    *,
+    name: str,
+) -> None:
+    missing = sorted({int(node) for node in endpoint_node_id.tolist()} - node_pos.keys())
+    if missing:
+        raise RefractionWeatheringThicknessError(
+            f'{name} references unknown node_id values: {missing}'
+        )
+
+
+def _validate_valid_observation_nodes(
+    node_id_sorted: np.ndarray,
+    valid_observation_mask_sorted: np.ndarray,
+    node_pos: dict[int, int],
+    *,
+    name: str,
+) -> None:
+    node_ids = np.asarray(node_id_sorted, dtype=np.int64)
+    valid = np.asarray(valid_observation_mask_sorted, dtype=bool)
+    if node_ids.shape != valid.shape:
+        raise RefractionWeatheringThicknessError(
+            f'{name} and valid_observation_mask_sorted shape mismatch'
+        )
+    known = np.fromiter(
+        (int(node) in node_pos for node in node_ids.tolist()),
+        dtype=bool,
+        count=int(node_ids.shape[0]),
+    )
+    missing = sorted({int(node) for node in node_ids[valid & ~known].tolist()})
+    if missing:
+        raise RefractionWeatheringThicknessError(
+            f'{name} references unknown node_id values for valid observations: {missing}'
+        )
 
 
 def _map_trace_table(
