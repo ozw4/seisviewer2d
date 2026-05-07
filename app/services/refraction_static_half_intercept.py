@@ -156,6 +156,8 @@ class RefractionHalfInterceptTimeResult:
     receiver_residual_rms_s: np.ndarray
 
     sorted_trace_index: np.ndarray
+    source_elevation_m_sorted: np.ndarray
+    receiver_elevation_m_sorted: np.ndarray
     source_node_id_sorted: np.ndarray
     receiver_node_id_sorted: np.ndarray
     source_half_intercept_time_s_sorted: np.ndarray
@@ -467,6 +469,8 @@ def build_refraction_half_intercept_time_model(
         receiver_pick_count=receiver_endpoint.pick_count,
         receiver_residual_rms_s=receiver_endpoint.residual_rms_s,
         sorted_trace_index=inputs.sorted_trace_index,
+        source_elevation_m_sorted=inputs.source_elevation_m_sorted,
+        receiver_elevation_m_sorted=inputs.receiver_elevation_m_sorted,
         source_node_id_sorted=inputs.source_node_id_sorted,
         receiver_node_id_sorted=inputs.receiver_node_id_sorted,
         source_half_intercept_time_s_sorted=source_half_sorted,
