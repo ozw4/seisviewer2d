@@ -9,6 +9,7 @@ import pytest
 from fastapi.testclient import TestClient
 from pydantic import ValidationError
 
+import app.api.routers.statics as statics_router_module
 from app.api.schemas import TimeTermStaticApplyRequest
 from app.main import app
 from app.services.geometry_linkage_artifacts import (
@@ -469,25 +470,47 @@ def test_time_term_linkage_rejects_negative_node_ids(
         )
 
 
-def test_time_term_apply_endpoint_returns_not_implemented_after_validation(
+def test_time_term_apply_endpoint_creates_async_job(
     client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
+    started: list[dict[str, Any]] = []
+    monkeypatch.setattr(
+        statics_router_module,
+        'start_job_thread',
+        lambda **kwargs: started.append(kwargs),
+    )
     _install_trace_store(client, tmp_path)
     _install_linkage_job(client, tmp_path)
 
     response = client.post('/statics/time-term/apply', json=_payload())
 
-    assert response.status_code == 501
-    assert response.json() == {
-        'detail': 'time-term inversion solver is not implemented yet'
-    }
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload['state'] == 'queued'
+    assert len(started) == 1
+    assert started[0]['target'] is statics_router_module.run_time_term_static_apply_job
+    with client.app.state.sv.lock:
+        job = dict(client.app.state.sv.jobs[payload['job_id']])
+    assert job['job_type'] == 'statics'
+    assert job['statics_kind'] == 'time_term'
 
 
-def test_time_term_apply_endpoint_returns_validation_error_before_not_implemented(
+def test_time_term_apply_endpoint_rejects_invalid_schema_without_starting_job(
     client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    response = client.post('/statics/time-term/apply', json=_payload())
+    started: list[dict[str, Any]] = []
+    monkeypatch.setattr(
+        statics_router_module,
+        'start_job_thread',
+        lambda **kwargs: started.append(kwargs),
+    )
+    payload = _payload()
+    payload['file_id'] = ''
 
-    assert response.status_code == 400
-    assert 'file_id not found' in response.json()['detail']
+    response = client.post('/statics/time-term/apply', json=payload)
+
+    assert response.status_code == 422
+    assert started == []
