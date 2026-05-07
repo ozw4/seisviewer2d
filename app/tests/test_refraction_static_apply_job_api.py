@@ -164,7 +164,7 @@ def test_refraction_static_apply_endpoint_rejects_invalid_schema_without_job(
         assert len(client.app.state.sv.jobs) == 0
 
 
-def test_run_refraction_static_apply_job_estimates_bedrock_then_fails(
+def test_run_refraction_static_apply_job_estimates_half_intercepts_then_fails(
     client: TestClient,
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -189,7 +189,7 @@ def test_run_refraction_static_apply_job_estimates_bedrock_then_fails(
 
     monkeypatch.setattr(
         refraction_service_module,
-        'estimate_global_bedrock_slowness_from_first_breaks',
+        'estimate_refraction_half_intercept_times_from_first_breaks',
         _capture_estimate,
     )
 

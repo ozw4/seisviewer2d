@@ -11,8 +11,8 @@ from uuid import uuid4
 from app.api.schemas import RefractionStaticApplyRequest
 from app.core.state import AppState
 from app.services.job_runner import JobCompletion, JobFailure, run_job_with_lifecycle
-from app.services.refraction_static_bedrock import (
-    estimate_global_bedrock_slowness_from_first_breaks,
+from app.services.refraction_static_half_intercept import (
+    estimate_refraction_half_intercept_times_from_first_breaks,
 )
 
 _REQUEST_JSON_NAME = 'refraction_static_request.json'
@@ -88,9 +88,9 @@ def _run_refraction_static_apply_job_body(
         state,
         job_id,
         progress=0.20,
-        message='estimating_refraction_bedrock_velocity',
+        message='estimating_refraction_half_intercept_times',
     )
-    estimate_global_bedrock_slowness_from_first_breaks(
+    estimate_refraction_half_intercept_times_from_first_breaks(
         req=req,
         state=state,
         job_dir=job_dir,
@@ -99,7 +99,7 @@ def _run_refraction_static_apply_job_body(
         state,
         job_id,
         progress=0.50,
-        message='refraction_bedrock_velocity_solved',
+        message='refraction_half_intercept_times_estimated',
     )
     raise NotImplementedError(_NOT_IMPLEMENTED_MESSAGE)
 
