@@ -443,7 +443,6 @@ def _apply_refraction_solution_to_trace_store(
         qc = _build_apply_qc_payload(
             req=request,
             job_id=job_id,
-            source=source,
             corrected_file_id=corrected_file_id,
             build_result=build_result,
             validation=validation,
@@ -458,7 +457,6 @@ def _apply_refraction_solution_to_trace_store(
                 job_id=job_id,
                 corrected_file_id=corrected_file_id,
                 build_result=build_result,
-                source=source,
                 validation=validation,
                 solution=solution,
             ),
@@ -723,7 +721,6 @@ def _build_corrected_file_payload(
     job_id: str,
     corrected_file_id: str,
     build_result: TimeShiftedTraceStoreResult,
-    source: _SourceTraceStoreContext,
     validation: RefractionTraceShiftValidationResult,
     solution: LoadedRefractionStaticSolutionForApply,
 ) -> dict[str, object]:
@@ -739,10 +736,8 @@ def _build_corrected_file_payload(
         'interpolation': req.apply.interpolation,
         'fill_value': float(req.apply.fill_value),
         'output_dtype': req.apply.output_dtype,
-        'store_path': str(build_result.store_path),
         'store_name': build_result.store_path.name,
         'derived_from_file_id': req.file_id,
-        'derived_from_store_path': str(source.store_path),
         'derived_by': 'refraction_static_correction',
         'source_job_id': job_id,
         'job_id': job_id,
@@ -769,7 +764,6 @@ def _build_apply_qc_payload(
     *,
     req: RefractionStaticApplyRequest,
     job_id: str,
-    source: _SourceTraceStoreContext,
     corrected_file_id: str,
     build_result: TimeShiftedTraceStoreResult,
     validation: RefractionTraceShiftValidationResult,
@@ -808,8 +802,7 @@ def _build_apply_qc_payload(
         'source_solution_artifact': (
             solution.source_solution_artifact or REFRACTION_STATIC_SOLUTION_NPZ_NAME
         ),
-        'source_trace_store_path': str(source.store_path),
-        'corrected_trace_store_path': str(build_result.store_path),
+        'corrected_store_name': build_result.store_path.name,
         'corrected_tracestore_path_written': bool(corrected_tracestore_path_written),
     }
 
@@ -829,8 +822,8 @@ def _corrected_artifact_names() -> list[str]:
 
 def _corrected_store_path(*, source_store_path: Path, job_id: str) -> Path:
     source_name = _safe_store_name_component(source_store_path.name)
-    job_prefix = _safe_store_name_component(str(job_id)[:8])
-    store_name = f'{source_name}.statics.refraction.{job_prefix}'
+    safe_job_id = _safe_store_name_component(str(job_id))
+    store_name = f'{source_name}.statics.refraction.{safe_job_id}'
     output_path = source_store_path.parent / store_name
     if output_path.exists() or output_path.is_symlink():
         raise RefractionStaticTraceStoreApplyError(

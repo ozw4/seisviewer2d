@@ -1243,6 +1243,7 @@ def _status_counts(values: object) -> dict[str, int]:
 
 
 def _write_npz_atomic(path: Path, payload: dict[str, np.ndarray]) -> None:
+    _validate_no_object_arrays(payload, artifact_name=path.name)
     tmp_path = path.with_name(f'{path.name}.{uuid4().hex}.tmp')
     try:
         with tmp_path.open('wb') as handle:

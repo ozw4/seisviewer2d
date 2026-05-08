@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import csv
+from dataclasses import replace
 import json
 from pathlib import Path
 
@@ -8,6 +9,7 @@ import numpy as np
 import pytest
 from fastapi.testclient import TestClient
 
+import app.services.refraction_static_artifacts as artifact_module
 from app.api.schemas import RefractionStaticApplyRequest
 from app.main import app
 from app.services.refraction_static_artifacts import (
@@ -18,6 +20,8 @@ from app.services.refraction_static_artifacts import (
     REFRACTION_STATIC_COMPONENTS_CSV_NAME,
     REFRACTION_STATIC_QC_JSON_NAME,
     REFRACTION_STATIC_SOLUTION_NPZ_NAME,
+    RefractionStaticArtifactError,
+    write_refraction_static_solution_npz,
     write_refraction_static_artifacts,
 )
 from app.services.refraction_static_datum import RefractionDatumStaticsResult
@@ -433,6 +437,114 @@ def test_refraction_static_artifacts_manifest_and_download_visibility(
     finally:
         with state.lock:
             state.jobs.clear()
+
+
+def test_write_refraction_static_artifacts_rejects_missing_job_dir(
+    tmp_path: Path,
+) -> None:
+    with pytest.raises(RefractionStaticArtifactError, match='missing job directory'):
+        write_refraction_static_artifacts(
+            result=_result(),
+            req=_request(),
+            job_dir=tmp_path / 'missing',
+        )
+
+
+def test_write_refraction_static_artifacts_rejects_non_writable_job_dir(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(artifact_module.os, 'access', lambda _path, _mode: False)
+
+    with pytest.raises(RefractionStaticArtifactError, match='not writable'):
+        write_refraction_static_artifacts(
+            result=_result(),
+            req=_request(),
+            job_dir=tmp_path,
+        )
+
+
+def test_write_refraction_static_artifacts_validation_failures(
+    tmp_path: Path,
+) -> None:
+    cases = [
+        (
+            replace(_result(), refraction_trace_shift_s_sorted=np.zeros(3)),
+            'trace-order array length mismatch',
+        ),
+        (
+            replace(_result(), node_x_m=np.zeros(2)),
+            'node array length mismatch',
+        ),
+        (
+            replace(_result(), source_x_m=np.zeros(1)),
+            'source endpoint array length mismatch',
+        ),
+        (
+            replace(_result(), receiver_x_m=np.zeros(1)),
+            'receiver endpoint array length mismatch',
+        ),
+        (
+            replace(_result(), residual_time_s=np.zeros(2)),
+            'residual array length mismatch',
+        ),
+        (
+            replace(_result(), bedrock_velocity_m_s=float('nan')),
+            'non-finite required scalar bedrock_velocity_m_s',
+        ),
+    ]
+
+    for index, (result, message) in enumerate(cases):
+        job_dir = tmp_path / f'case-{index}'
+        job_dir.mkdir()
+        with pytest.raises(RefractionStaticArtifactError, match=message):
+            write_refraction_static_artifacts(
+                result=result,
+                req=_request(),
+                job_dir=job_dir,
+            )
+
+
+def test_write_refraction_static_artifacts_detects_missing_artifact_after_write(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        artifact_module,
+        'write_refraction_static_components_csv',
+        lambda **_kwargs: None,
+    )
+
+    with pytest.raises(
+        RefractionStaticArtifactError,
+        match='artifact file missing after write: refraction_static_components.csv',
+    ):
+        write_refraction_static_artifacts(
+            result=_result(),
+            req=_request(),
+            job_dir=tmp_path,
+        )
+
+
+def test_write_refraction_static_solution_rejects_object_arrays(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        artifact_module,
+        'build_refraction_static_solution_arrays',
+        lambda **_kwargs: {'bad_object': np.asarray([object()], dtype=object)},
+    )
+
+    with pytest.raises(
+        RefractionStaticArtifactError,
+        match='object array is not allowed for bad_object',
+    ):
+        write_refraction_static_solution_npz(
+            result=_result(),
+            req=_request(),
+            path=tmp_path / REFRACTION_STATIC_SOLUTION_NPZ_NAME,
+        )
 
 
 def _read_csv(path: Path) -> list[dict[str, str]]:

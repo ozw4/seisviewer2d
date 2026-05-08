@@ -221,7 +221,7 @@ def test_apply_refraction_statics_builds_and_registers_corrected_trace_store(
     assert result.corrected_file_id != SOURCE_FILE_ID
     corrected_store = result.corrected_trace_store_path
     assert corrected_store is not None
-    assert corrected_store.name == 'line001.sgy.statics.refraction.ref-job-'
+    assert corrected_store.name == 'line001.sgy.statics.refraction.ref-job-386'
     assert state.file_registry.get_store_path(result.corrected_file_id) == str(
         corrected_store
     )
@@ -262,6 +262,8 @@ def test_apply_refraction_statics_builds_and_registers_corrected_trace_store(
     assert corrected_manifest['statics_kind'] == 'refraction'
     assert corrected_manifest['sign_convention'] == 'corrected(t) = raw(t - shift_s)'
     assert corrected_manifest['n_traces'] == 4
+    assert 'store_path' not in corrected_manifest
+    assert 'derived_from_store_path' not in corrected_manifest
     assert REFRACTION_STATIC_APPLY_QC_JSON_NAME in corrected_manifest['artifact_names']
 
     qc = json.loads(
@@ -271,6 +273,8 @@ def test_apply_refraction_statics_builds_and_registers_corrected_trace_store(
     assert qc['n_valid_trace_shifts'] == 4
     assert qc['n_invalid_trace_shifts'] == 0
     assert qc['max_abs_applied_shift_ms'] == pytest.approx(8.0)
+    assert 'source_trace_store_path' not in qc
+    assert 'corrected_trace_store_path' not in qc
 
 
 def test_apply_refraction_statics_from_solution_artifact(
@@ -318,7 +322,9 @@ def test_apply_refraction_statics_rejects_sorted_order_mismatch_without_output(
         )
 
     assert len(state.file_registry.records) == 1
-    assert not (source_store.parent / 'line001.sgy.statics.refraction.ref-job-').exists()
+    assert not (
+        source_store.parent / 'line001.sgy.statics.refraction.ref-job-386'
+    ).exists()
     assert not (job_dir / CORRECTED_FILE_JSON_NAME).exists()
 
 
@@ -345,6 +351,8 @@ def test_apply_refraction_statics_cleans_built_store_on_registration_failure(
         )
 
     assert len(state.file_registry.records) == 1
-    assert not (source_store.parent / 'line001.sgy.statics.refraction.ref-job-').exists()
+    assert not (
+        source_store.parent / 'line001.sgy.statics.refraction.ref-job-386'
+    ).exists()
     assert not (job_dir / CORRECTED_FILE_JSON_NAME).exists()
     assert not (job_dir / REFRACTION_STATIC_APPLY_QC_JSON_NAME).exists()

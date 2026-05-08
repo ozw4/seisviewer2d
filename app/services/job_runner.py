@@ -13,6 +13,7 @@ from app.services.job_manager import JobManager
 @dataclass(frozen=True)
 class JobCompletion:
     finished_ts: float | None = None
+    message: str | None = None
 
 
 @dataclass(frozen=True)
@@ -143,6 +144,8 @@ def run_job_with_lifecycle(
             finished_ts=finished_ts,
             progress_1=progress_1_on_done,
         )
+        if completion is not None and completion.message is not None:
+            state.jobs.set_message(job_id, completion.message)
 
 
 def start_job_thread(

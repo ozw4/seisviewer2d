@@ -21,6 +21,7 @@ from app.services.refraction_static_weathering_replacement import (
 )
 
 _REQUEST_JSON_NAME = 'refraction_static_request.json'
+_ARTIFACT_ONLY_DONE_MESSAGE = 'refraction_static_artifacts_written_artifact_only'
 
 
 def _write_json_atomic(path: Path, payload: dict[str, Any]) -> None:
@@ -171,9 +172,12 @@ def _run_refraction_static_apply_job_body(
         state,
         job_id,
         progress=1.0,
-        message='refraction_static_artifacts_written',
+        message=_ARTIFACT_ONLY_DONE_MESSAGE,
     )
-    return JobCompletion(finished_ts=time.time())
+    return JobCompletion(
+        finished_ts=time.time(),
+        message=_ARTIFACT_ONLY_DONE_MESSAGE,
+    )
 
 
 def _handle_refraction_static_job_error(_exc: Exception) -> JobFailure:

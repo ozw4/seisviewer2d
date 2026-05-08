@@ -250,7 +250,7 @@ def test_run_refraction_static_apply_job_writes_artifacts_and_completes(
         job = dict(client.app.state.sv.jobs[job_id])
     assert job['status'] == 'done'
     assert job['progress'] == pytest.approx(1.0)
-    assert job['message'] == ''
+    assert job['message'] == 'refraction_static_artifacts_written_artifact_only'
 
 
 def test_run_refraction_static_apply_job_registers_corrected_file_when_requested(
