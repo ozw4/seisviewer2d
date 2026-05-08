@@ -32,3 +32,12 @@ If the issue touches browser behavior, also run:
 - Do not add fallback behavior unless the issue requires it.
 - Keep background processing explicit and easy to reason about.
 - Explain cache, API, and schema changes in the PR body.
+
+
+## Current Project guidance
+
+This repository contains seismic viewing and processing tools. For refraction statics work, read the design document first:
+
+- `docs/statics/refraction_iras_phase1_design.md`
+
+Do not assume access to original IRAS manuals or external IRAS reference files. The original IRAS materials are intentionally not stored in this repository. The design document is the canonical Phase 1 implementation reference.
