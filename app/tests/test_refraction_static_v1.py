@@ -24,6 +24,12 @@ from app.services.refraction_static_v1 import (
     estimate_global_v1_from_direct_arrivals,
     write_refraction_v1_artifacts,
 )
+from app.tests._refraction_static_synthetic import (
+    SYNTHETIC_V1_M_S,
+    SYNTHETIC_V1_TOLERANCE_M_S,
+    synthetic_direct_arrival_input_model,
+    synthetic_first_layer_request,
+)
 
 
 def _geometry() -> RefractionStaticGeometryRequest:
@@ -126,26 +132,36 @@ def _input_model(
 
 def test_v1_estimate_global_from_direct_arrivals(tmp_path: Path) -> None:
     result = estimate_global_v1_from_direct_arrivals(
-        input_model=_input_model(),
-        first_layer=_first_layer(),
+        input_model=synthetic_direct_arrival_input_model(),
+        first_layer=synthetic_first_layer_request(),
     )
 
-    assert result.resolved_weathering_velocity_m_s == pytest.approx(800.0)
+    assert result.resolved_weathering_velocity_m_s == pytest.approx(
+        SYNTHETIC_V1_M_S,
+        abs=SYNTHETIC_V1_TOLERANCE_M_S,
+    )
     assert result.qc['v1_status'] == 'estimated'
-    assert result.qc['n_used_groups'] == 3
+    assert result.qc['n_used_groups'] == 6
     assert set(result.group_status.tolist()) == {'ok'}
+    assert np.any(result.group_n_used < result.group_n_candidates)
 
     paths = write_refraction_v1_artifacts(tmp_path, result)
     assert paths['qc_json'].name == REFRACTION_V1_QC_JSON_NAME
     assert paths['estimates_csv'].name == REFRACTION_V1_ESTIMATES_CSV_NAME
 
     qc = json.loads((tmp_path / REFRACTION_V1_QC_JSON_NAME).read_text())
-    assert qc['resolved_weathering_velocity_m_s'] == pytest.approx(800.0)
+    assert qc['resolved_weathering_velocity_m_s'] == pytest.approx(
+        SYNTHETIC_V1_M_S,
+        abs=SYNTHETIC_V1_TOLERANCE_M_S,
+    )
     with (tmp_path / REFRACTION_V1_ESTIMATES_CSV_NAME).open(newline='') as handle:
         rows = list(csv.DictReader(handle))
-    assert len(rows) == 3
+    assert len(rows) == 6
     assert rows[0]['group_kind'] == 'source_endpoint'
-    assert float(rows[0]['v1_m_s']) == pytest.approx(800.0)
+    assert float(rows[0]['v1_m_s']) == pytest.approx(
+        SYNTHETIC_V1_M_S,
+        abs=SYNTHETIC_V1_TOLERANCE_M_S,
+    )
 
 
 def test_v1_estimate_robust_to_outlier_picks() -> None:

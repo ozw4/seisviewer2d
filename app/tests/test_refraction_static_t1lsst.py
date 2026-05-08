@@ -9,6 +9,7 @@ import numpy as np
 import pytest
 
 from app.api.schemas import RefractionStaticApplyRequest
+from app.main import app
 from app.services.refraction_static_artifacts import (
     REFRACTION_STATIC_ARTIFACTS_JSON_NAME,
     write_refraction_static_artifacts,
@@ -25,6 +26,18 @@ from app.services.refraction_static_weathering import (
 )
 from app.services.refraction_static_weathering_replacement import (
     compute_weathering_replacement_shift_s,
+)
+from app.tests._refraction_static_synthetic import (
+    SYNTHETIC_SH1_TOLERANCE_M,
+    SYNTHETIC_T1_TOLERANCE_MS,
+    SYNTHETIC_V2_M_S,
+    SYNTHETIC_V2_TOLERANCE_M_S,
+    SYNTHETIC_WCOR_TOLERANCE_MS,
+    expected_sh1_m_for_node,
+    expected_t1_s_for_node,
+    expected_wcor_s_for_node,
+    run_synthetic_refraction_statics,
+    synthetic_refraction_apply_request,
 )
 from app.tests.test_refraction_static_artifacts import _request, _result
 
@@ -118,6 +131,49 @@ def test_t1lsst_1layer_matches_existing_weathering_replacement_shift() -> None:
     )
 
     np.testing.assert_allclose(t1lsst, existing)
+
+
+def test_t1lsst_1layer_matches_existing_weathering_replacement(
+    tmp_path: Path,
+) -> None:
+    req = synthetic_refraction_apply_request(conversion_mode='t1lsst_1layer')
+    result = run_synthetic_refraction_statics(state=app.state.sv, req=req)
+
+    paths = write_refraction_static_artifacts(
+        result=result,
+        req=req,
+        job_dir=tmp_path,
+    )
+
+    assert result.bedrock_velocity_m_s == pytest.approx(
+        SYNTHETIC_V2_M_S,
+        abs=SYNTHETIC_V2_TOLERANCE_M_S,
+    )
+    assert paths.refraction_t1lsst_1layer_components_csv is not None
+    rows = _read_csv(paths.refraction_t1lsst_1layer_components_csv)
+    assert rows
+
+    for row in rows:
+        node_id = int(row['node_id'])
+        expected_t1_ms = expected_t1_s_for_node(node_id) * 1000.0
+        expected_wcor_ms = expected_wcor_s_for_node(node_id) * 1000.0
+        assert float(row['t1_ms']) == pytest.approx(
+            expected_t1_ms,
+            abs=SYNTHETIC_T1_TOLERANCE_MS,
+        )
+        assert float(row['sh1_weathering_thickness_m']) == pytest.approx(
+            expected_sh1_m_for_node(node_id),
+            abs=SYNTHETIC_SH1_TOLERANCE_M,
+        )
+        assert float(row['weathering_correction_ms']) == pytest.approx(
+            expected_wcor_ms,
+            abs=SYNTHETIC_WCOR_TOLERANCE_MS,
+        )
+        assert float(row['weathering_correction_ms']) < 0.0
+        assert float(row['total_applied_shift_ms']) == pytest.approx(
+            float(row['total_static_ms']),
+            abs=SYNTHETIC_WCOR_TOLERANCE_MS,
+        )
 
 
 def test_t1lsst_1layer_rejects_v2_less_than_or_equal_v1() -> None:

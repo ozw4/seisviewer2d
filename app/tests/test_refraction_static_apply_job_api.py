@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import csv
+from dataclasses import replace
 import json
 from pathlib import Path
 from types import SimpleNamespace
@@ -11,6 +12,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 import app.api.routers.statics as statics_router_module
+import app.services.refraction_static_inputs as refraction_inputs_module
 import app.services.refraction_static_service as refraction_service_module
 from app.api.schemas import RefractionStaticApplyRequest
 from app.main import app
@@ -36,6 +38,21 @@ from app.services.refraction_static_artifacts import (
 from app.services.refraction_static_service import run_refraction_static_apply_job
 from app.services.refraction_static_v1 import RefractionV1EstimateResult
 from app.services.trace_store_registration import trace_store_cache_key
+from app.tests._refraction_static_synthetic import (
+    SYNTHETIC_SH1_TOLERANCE_M,
+    SYNTHETIC_T1_TOLERANCE_MS,
+    SYNTHETIC_V1_M_S,
+    SYNTHETIC_V1_TOLERANCE_M_S,
+    SYNTHETIC_V2_M_S,
+    SYNTHETIC_V2_TOLERANCE_M_S,
+    SYNTHETIC_WCOR_TOLERANCE_MS,
+    expected_sh1_m_for_node,
+    expected_t1_s_for_node,
+    expected_wcor_s_for_node,
+    synthetic_direct_arrival_input_model,
+    synthetic_refracted_arrival_input_model,
+    synthetic_refraction_apply_request,
+)
 from app.tests.test_refraction_static_apply_trace_store import (
     DT,
     KEY1,
@@ -327,6 +344,7 @@ def test_run_refraction_static_apply_job_estimates_v1_before_downstream_work(
         'robust_enabled': True,
         'robust_threshold': 3.5,
     }
+    payload['moveout']['min_offset_m'] = 240.0
     req = RefractionStaticApplyRequest.model_validate(payload)
     with client.app.state.sv.lock:
         client.app.state.sv.jobs.create_static_job(
@@ -339,8 +357,10 @@ def test_run_refraction_static_apply_job_estimates_v1_before_downstream_work(
         )
 
     input_model = object()
+    weathering_input_model = object()
     replacement_result = object()
     datum_result = object()
+    build_calls: list[RefractionStaticApplyRequest] = []
     replacement_calls: list[dict[str, Any]] = []
     artifact_calls: list[dict[str, Any]] = []
     v1_write_calls: list[dict[str, Any]] = []
@@ -366,15 +386,26 @@ def test_run_refraction_static_apply_job_estimates_v1_before_downstream_work(
         },
     )
 
+    def _build_input_model(**kwargs: Any) -> object:
+        build_req = kwargs['req']
+        build_calls.append(build_req)
+        if len(build_calls) == 1:
+            return input_model
+        return weathering_input_model
+
+    def _estimate_v1(**kwargs: Any) -> RefractionV1EstimateResult:
+        assert kwargs['input_model'] is input_model
+        return estimate
+
     monkeypatch.setattr(
         refraction_service_module,
         'build_refraction_static_input_model',
-        lambda **_kwargs: input_model,
+        _build_input_model,
     )
     monkeypatch.setattr(
         refraction_service_module,
         'estimate_global_v1_from_direct_arrivals',
-        lambda **_kwargs: estimate,
+        _estimate_v1,
     )
 
     def _capture_v1_write(*args: Any, **kwargs: Any) -> object:
@@ -414,10 +445,13 @@ def test_run_refraction_static_apply_job_estimates_v1_before_downstream_work(
 
     assert len(v1_write_calls) == 1
     assert v1_write_calls[0]['args'] == (job_dir, estimate)
+    assert len(build_calls) == 2
+    assert build_calls[0].moveout.min_offset_m is None
+    assert build_calls[1].moveout.min_offset_m == pytest.approx(240.0)
     assert len(replacement_calls) == 1
     resolved_req = replacement_calls[0]['req']
     assert resolved_req is not req
-    assert replacement_calls[0]['input_model'] is input_model
+    assert replacement_calls[0]['input_model'] is weathering_input_model
     assert resolved_req.model.first_layer_mode == 'estimate_direct_arrival'
     assert resolved_req.model.resolved_weathering_velocity_m_s == pytest.approx(812.5)
     replacement_resolved = replacement_calls[0]['resolved_first_layer']
@@ -742,6 +776,195 @@ def test_refraction_static_register_corrected_file_lists_new_artifacts(
         RECEIVER_STATIC_TABLE_CSV_NAME,
         SOURCE_RECEIVER_STATIC_TABLE_NPZ_NAME,
     }.issubset(listed)
+
+
+def test_refraction_static_job_writes_v1_t1lsst_and_static_table_artifacts(
+    client: TestClient,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    job_id = 'refraction-synthetic-one-layer-e2e'
+    job_dir = tmp_path / 'jobs' / job_id
+    req = synthetic_refraction_apply_request(
+        first_layer_mode='estimate_direct_arrival',
+        conversion_mode='t1lsst_1layer',
+    )
+    req = req.model_copy(
+        update={
+            'model': req.model.model_copy(
+                update={
+                    'first_layer': req.model.first_layer.model_copy(
+                        update={
+                            'max_direct_offset_m': 180.0,
+                            'min_picks_per_fit': 3,
+                            'min_groups': 5,
+                        }
+                    )
+                }
+            ),
+            'moveout': req.moveout.model_copy(update={'min_offset_m': 240.0}),
+        }
+    )
+    refracted_input = synthetic_refracted_arrival_input_model()
+    direct_input = synthetic_direct_arrival_input_model()
+    direct_mask = direct_input.distance_m_sorted <= 180.0
+    mixed_input = replace(
+        refracted_input,
+        pick_time_s_sorted=np.where(
+            direct_mask,
+            direct_input.pick_time_s_sorted,
+            refracted_input.pick_time_s_sorted,
+        ),
+    )
+    weathering_input = replace(
+        mixed_input,
+        valid_observation_mask_sorted=(
+            mixed_input.valid_observation_mask_sorted
+            & (mixed_input.distance_m_sorted >= 240.0)
+        ),
+    )
+    build_calls: list[RefractionStaticApplyRequest] = []
+    _create_refraction_job(client, job_id=job_id, req=req, job_dir=job_dir)
+
+    def _build_synthetic_input_model(**kwargs: Any) -> object:
+        build_req = kwargs['req']
+        build_calls.append(build_req)
+        if build_req.moveout.min_offset_m is None:
+            return mixed_input
+        assert build_req.moveout.min_offset_m == pytest.approx(240.0)
+        return weathering_input
+
+    monkeypatch.setattr(
+        refraction_service_module,
+        'build_refraction_static_input_model',
+        _build_synthetic_input_model,
+    )
+
+    run_refraction_static_apply_job(job_id, req, client.app.state.sv)
+
+    assert len(build_calls) == 2
+    assert build_calls[0].moveout.min_offset_m is None
+    assert build_calls[1].moveout.min_offset_m == pytest.approx(240.0)
+    with client.app.state.sv.lock:
+        job = dict(client.app.state.sv.jobs[job_id])
+    assert job['status'] == 'done'
+    names = _job_file_names(job_dir)
+    assert {
+        REFRACTION_V1_QC_JSON_NAME,
+        REFRACTION_V1_ESTIMATES_CSV_NAME,
+        REFRACTION_T1LSST_1LAYER_COMPONENTS_CSV_NAME,
+        SOURCE_STATIC_TABLE_CSV_NAME,
+        RECEIVER_STATIC_TABLE_CSV_NAME,
+        SOURCE_RECEIVER_STATIC_TABLE_NPZ_NAME,
+        REFRACTION_STATIC_ARTIFACTS_JSON_NAME,
+    }.issubset(names)
+
+    manifest = json.loads(
+        (job_dir / REFRACTION_STATIC_ARTIFACTS_JSON_NAME).read_text(encoding='utf-8')
+    )
+    manifest_names = {item['name'] for item in manifest['artifacts']}
+    assert {
+        REFRACTION_V1_QC_JSON_NAME,
+        REFRACTION_V1_ESTIMATES_CSV_NAME,
+        REFRACTION_T1LSST_1LAYER_COMPONENTS_CSV_NAME,
+        SOURCE_STATIC_TABLE_CSV_NAME,
+        RECEIVER_STATIC_TABLE_CSV_NAME,
+        SOURCE_RECEIVER_STATIC_TABLE_NPZ_NAME,
+    }.issubset(manifest_names)
+
+    v1_qc = json.loads((job_dir / REFRACTION_V1_QC_JSON_NAME).read_text())
+    assert v1_qc['resolved_weathering_velocity_m_s'] == pytest.approx(
+        SYNTHETIC_V1_M_S,
+        abs=SYNTHETIC_V1_TOLERANCE_M_S,
+    )
+    with np.load(job_dir / REFRACTION_STATIC_SOLUTION_NPZ_NAME, allow_pickle=False) as data:
+        assert data['v1_mode'].item() == 'estimate_direct_arrival'
+        assert data['resolved_weathering_velocity_m_s'].item() == pytest.approx(
+            SYNTHETIC_V1_M_S,
+            abs=SYNTHETIC_V1_TOLERANCE_M_S,
+        )
+        assert data['v2_refractor_velocity_m_s'].item() == pytest.approx(
+            SYNTHETIC_V2_M_S,
+            abs=SYNTHETIC_V2_TOLERANCE_M_S,
+        )
+
+    rows = _read_csv(job_dir / REFRACTION_T1LSST_1LAYER_COMPONENTS_CSV_NAME)
+    assert rows
+    for row in rows:
+        node_id = int(row['node_id'])
+        assert float(row['t1_ms']) == pytest.approx(
+            expected_t1_s_for_node(node_id) * 1000.0,
+            abs=SYNTHETIC_T1_TOLERANCE_MS,
+        )
+        assert float(row['sh1_weathering_thickness_m']) == pytest.approx(
+            expected_sh1_m_for_node(node_id),
+            abs=SYNTHETIC_SH1_TOLERANCE_M,
+        )
+        assert float(row['weathering_correction_ms']) == pytest.approx(
+            expected_wcor_s_for_node(node_id) * 1000.0,
+            abs=SYNTHETIC_WCOR_TOLERANCE_MS,
+        )
+        assert float(row['total_applied_shift_ms']) == pytest.approx(
+            float(row['total_static_ms']),
+            abs=SYNTHETIC_WCOR_TOLERANCE_MS,
+        )
+
+    source_rows = _read_csv(job_dir / SOURCE_STATIC_TABLE_CSV_NAME)
+    receiver_rows = _read_csv(job_dir / RECEIVER_STATIC_TABLE_CSV_NAME)
+    assert len(source_rows) == 6
+    assert len(receiver_rows) == 12
+    listed = _listed_job_files(client, job_id)
+    assert manifest_names.issubset(listed)
+
+
+def test_refraction_static_legacy_request_still_works(
+    client: TestClient,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    job_id = 'refraction-legacy-synthetic-one-layer-e2e'
+    job_dir = tmp_path / 'jobs' / job_id
+    req = synthetic_refraction_apply_request()
+    _create_refraction_job(client, job_id=job_id, req=req, job_dir=job_dir)
+
+    def _build_synthetic_input_model(**_kwargs: Any) -> object:
+        return synthetic_refracted_arrival_input_model()
+
+    monkeypatch.setattr(
+        refraction_service_module,
+        'build_refraction_static_input_model',
+        _build_synthetic_input_model,
+    )
+    monkeypatch.setattr(
+        refraction_inputs_module,
+        'build_refraction_static_input_model',
+        _build_synthetic_input_model,
+    )
+
+    run_refraction_static_apply_job(job_id, req, client.app.state.sv)
+
+    with client.app.state.sv.lock:
+        job = dict(client.app.state.sv.jobs[job_id])
+    assert job['status'] == 'done'
+    assert REFRACTION_STATIC_SOLUTION_NPZ_NAME in _job_file_names(job_dir)
+    assert REFRACTION_V1_QC_JSON_NAME not in _job_file_names(job_dir)
+    assert REFRACTION_V1_ESTIMATES_CSV_NAME not in _job_file_names(job_dir)
+
+    with np.load(job_dir / REFRACTION_STATIC_SOLUTION_NPZ_NAME, allow_pickle=False) as data:
+        assert data['v1_mode'].item() == 'constant'
+        assert data['v1_weathering_velocity_m_s'].item() == pytest.approx(
+            SYNTHETIC_V1_M_S,
+            abs=SYNTHETIC_V1_TOLERANCE_M_S,
+        )
+        assert data['v2_refractor_velocity_m_s'].item() == pytest.approx(
+            SYNTHETIC_V2_M_S,
+            abs=SYNTHETIC_V2_TOLERANCE_M_S,
+        )
+        np.testing.assert_allclose(
+            data['node_t1_time_s'] * 1000.0,
+            [expected_t1_s_for_node(index) * 1000.0 for index in range(12)],
+            atol=SYNTHETIC_T1_TOLERANCE_MS,
+        )
 
 
 def test_run_refraction_static_apply_job_writes_real_artifacts_and_corrected_store(

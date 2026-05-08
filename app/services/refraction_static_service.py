@@ -94,8 +94,9 @@ def resolve_refraction_first_layer_request(
             'model.first_layer.mode is estimate_direct_arrival'
         )
 
+    v1_req = _request_without_moveout_offset_gates(req)
     input_model = build_refraction_static_input_model(
-        req=req,
+        req=v1_req,
         state=state,
         job_dir=job_dir,
     )
@@ -143,6 +144,18 @@ def _request_with_resolved_first_layer_velocity(
         }
     )
     return req.model_copy(update={'model': resolved_model})
+
+
+def _request_without_moveout_offset_gates(
+    req: RefractionStaticApplyRequest,
+) -> RefractionStaticApplyRequest:
+    moveout = req.moveout.model_copy(
+        update={
+            'min_offset_m': None,
+            'max_offset_m': None,
+        }
+    )
+    return req.model_copy(update={'moveout': moveout})
 
 
 def _write_json_atomic(path: Path, payload: dict[str, Any]) -> None:
@@ -227,11 +240,18 @@ def _run_refraction_static_apply_job_body(
         progress=0.20,
         message='computing_refraction_weathering_replacement_statics',
     )
+    weathering_input_model = first_layer.input_model
+    if first_layer.resolved.mode == 'estimate_direct_arrival':
+        weathering_input_model = build_refraction_static_input_model(
+            req=active_req,
+            state=state,
+            job_dir=job_dir,
+        )
     replacement_result = compute_weathering_replacement_statics_from_first_breaks(
         req=active_req,
         state=state,
         job_dir=job_dir,
-        input_model=first_layer.input_model,
+        input_model=weathering_input_model,
         resolved_first_layer=first_layer.resolved,
     )
     _set_job_progress_message(

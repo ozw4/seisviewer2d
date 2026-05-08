@@ -7,11 +7,20 @@ from pathlib import Path
 import numpy as np
 import pytest
 
+from app.main import app
 from app.services.refraction_static_artifacts import (
     RECEIVER_STATIC_TABLE_CSV_NAME,
     SOURCE_RECEIVER_STATIC_TABLE_NPZ_NAME,
     SOURCE_STATIC_TABLE_CSV_NAME,
     write_refraction_static_artifacts,
+)
+from app.tests._refraction_static_synthetic import (
+    SYNTHETIC_RECEIVER_NODE_ID,
+    SYNTHETIC_SOURCE_NODE_ID,
+    SYNTHETIC_WCOR_TOLERANCE_MS,
+    expected_wcor_s_for_node,
+    run_synthetic_refraction_statics,
+    synthetic_refraction_apply_request,
 )
 from app.tests.test_refraction_static_artifacts import _request, _result
 
@@ -113,6 +122,73 @@ def test_receiver_static_table_has_one_row_per_receiver_endpoint(
     assert [row['endpoint_kind'] for row in rows] == ['receiver', 'receiver']
     assert [row['receiver_endpoint_key'] for row in rows] == ['r0', 'r1']
     assert [int(row['receiver_node_id']) for row in rows] == [1, 2]
+
+
+def test_source_receiver_static_tables_have_one_row_per_endpoint(
+    tmp_path: Path,
+) -> None:
+    req = synthetic_refraction_apply_request()
+    result = run_synthetic_refraction_statics(state=app.state.sv, req=req)
+
+    paths = write_refraction_static_artifacts(
+        result=result,
+        req=req,
+        job_dir=tmp_path,
+    )
+
+    source_rows = _read_csv(paths.source_static_table_csv)
+    receiver_rows = _read_csv(paths.receiver_static_table_csv)
+    trace_rows = _read_csv(paths.refraction_statics_csv)
+    assert len(source_rows) == int(SYNTHETIC_SOURCE_NODE_ID.shape[0])
+    assert len(receiver_rows) == int(SYNTHETIC_RECEIVER_NODE_ID.shape[0])
+    assert {int(row['source_node_id']) for row in source_rows} == set(
+        SYNTHETIC_SOURCE_NODE_ID.tolist()
+    )
+    assert {int(row['receiver_node_id']) for row in receiver_rows} == set(
+        SYNTHETIC_RECEIVER_NODE_ID.tolist()
+    )
+
+    for row in source_rows:
+        node_id = int(row['source_node_id'])
+        expected_wcor_ms = expected_wcor_s_for_node(node_id) * 1000.0
+        assert float(row['weathering_correction_ms']) == pytest.approx(
+            expected_wcor_ms,
+            abs=SYNTHETIC_WCOR_TOLERANCE_MS,
+        )
+        assert float(row['total_static_ms']) == pytest.approx(
+            expected_wcor_ms,
+            abs=SYNTHETIC_WCOR_TOLERANCE_MS,
+        )
+        assert float(row['total_applied_shift_ms']) == pytest.approx(
+            expected_wcor_ms,
+            abs=SYNTHETIC_WCOR_TOLERANCE_MS,
+        )
+
+    for row in receiver_rows:
+        node_id = int(row['receiver_node_id'])
+        expected_wcor_ms = expected_wcor_s_for_node(node_id) * 1000.0
+        assert float(row['weathering_correction_ms']) == pytest.approx(
+            expected_wcor_ms,
+            abs=SYNTHETIC_WCOR_TOLERANCE_MS,
+        )
+        assert float(row['total_applied_shift_ms']) == pytest.approx(
+            float(row['total_static_ms']),
+            abs=SYNTHETIC_WCOR_TOLERANCE_MS,
+        )
+
+    for row in trace_rows:
+        expected_trace_shift_ms = (
+            float(row['source_refraction_shift_ms'])
+            + float(row['receiver_refraction_shift_ms'])
+        )
+        assert float(row['refraction_trace_shift_ms']) == pytest.approx(
+            expected_trace_shift_ms,
+            abs=SYNTHETIC_WCOR_TOLERANCE_MS,
+        )
+        assert float(row['weathering_replacement_trace_shift_ms']) == pytest.approx(
+            expected_trace_shift_ms,
+            abs=SYNTHETIC_WCOR_TOLERANCE_MS,
+        )
 
 
 def test_source_receiver_static_tables_match_npz(tmp_path: Path) -> None:
