@@ -16,7 +16,10 @@ from app.services.refraction_static_solver import (
     solve_refraction_static_bounded_ls,
     solve_refraction_static_bounded_ls_from_matrix,
 )
-from app.services.refraction_static_types import RefractionStaticDesignMatrix
+from app.services.refraction_static_types import (
+    RefractionStaticDesignMatrix,
+    ResolvedRefractionFirstLayer,
+)
 
 ACTIVE_NODE_ID = np.asarray([10, 20, 30, 40], dtype=np.int64)
 TRUE_HALF_INTERCEPT_S = np.asarray([0.010, 0.020, 0.015, 0.012], dtype=np.float64)
@@ -168,6 +171,36 @@ def test_solve_global_recovers_parameters_residuals_and_qc() -> None:
     assert result.qc['residual_rms_ms'] == pytest.approx(0.0, abs=1.0e-6)
     assert result.qc['half_intercept_time_clipped_lower_count'] == 0
     assert result.qc['solver_status'] == 'success'
+
+
+def test_refraction_static_bedrock_bounds_use_resolved_v1() -> None:
+    design = _design_matrix_solve_global()
+    model = _model(
+        weathering_velocity_m_s=None,
+        first_layer={
+            'mode': 'estimate_direct_arrival',
+            'min_direct_offset_m': 20.0,
+            'max_direct_offset_m': 140.0,
+        },
+    )
+    resolved_first_layer = ResolvedRefractionFirstLayer(
+        mode='estimate_direct_arrival',
+        weathering_velocity_m_s=1300.0,
+        status='estimated',
+        qc={},
+    )
+
+    with pytest.raises(
+        RefractionStaticSolverError,
+        match='model.min_bedrock_velocity_m_s must be greater than '
+        'model.weathering_velocity_m_s',
+    ):
+        solve_refraction_static_bounded_ls(
+            design_matrix=design,
+            model=model,
+            solver=_solver(),
+            resolved_first_layer=resolved_first_layer,
+        )
 
 
 def test_fixed_global_solves_without_slowness_column_and_models_original_pick_time() -> None:

@@ -19,6 +19,7 @@ from app.core.state import AppState
 from app.services.refraction_static_design_matrix import (
     build_refraction_static_design_matrix,
 )
+from app.services.refraction_static_first_layer import resolve_weathering_velocity_m_s
 from app.services.refraction_static_solver import (
     RefractionStaticSolverError,
     solve_refraction_static_bounded_ls,
@@ -28,6 +29,7 @@ from app.services.refraction_static_types import (
     RefractionStaticDesignMatrix,
     RefractionStaticInputModel,
     RefractionStaticSolverResult,
+    ResolvedRefractionFirstLayer,
 )
 
 REFRACTION_BEDROCK_QC_JSON_NAME = 'refraction_bedrock_velocity_qc.json'
@@ -57,6 +59,7 @@ def estimate_global_bedrock_slowness_from_first_breaks(
     req: RefractionStaticApplyRequest,
     state: AppState,
     job_dir: Path | None = None,
+    resolved_first_layer: ResolvedRefractionFirstLayer | None = None,
 ) -> RefractionBedrockSlownessResult:
     """Build refraction inputs from a request and estimate global bedrock slowness."""
     _require_solve_global(req.model)
@@ -75,6 +78,7 @@ def estimate_global_bedrock_slowness_from_first_breaks(
         model=req.model,
         solver=req.solver,
         job_dir=job_dir,
+        resolved_first_layer=resolved_first_layer,
     )
 
 
@@ -85,6 +89,7 @@ def estimate_global_bedrock_slowness_from_input_model(
     solver: RefractionStaticSolverRequest,
     job_dir: Path | None = None,
     include_debug_objects: bool = False,
+    resolved_first_layer: ResolvedRefractionFirstLayer | None = None,
 ) -> RefractionBedrockSlownessResult:
     """Estimate global bedrock slowness from an already-built input model."""
     _require_solve_global(model)
@@ -93,6 +98,7 @@ def estimate_global_bedrock_slowness_from_input_model(
         design_matrix = build_refraction_static_design_matrix(
             input_model=input_model,
             model=model,
+            resolved_first_layer=resolved_first_layer,
         )
     except ValueError as exc:
         raise RefractionBedrockSlownessError(str(exc)) from exc
@@ -103,6 +109,7 @@ def estimate_global_bedrock_slowness_from_input_model(
             design_matrix=design_matrix,
             model=model,
             solver=solver,
+            resolved_first_layer=resolved_first_layer,
         )
     except RefractionStaticSolverError as exc:
         raise RefractionBedrockSlownessError(str(exc)) from exc
@@ -114,6 +121,7 @@ def estimate_global_bedrock_slowness_from_input_model(
         solver=solver,
         input_qc=input_qc,
         include_debug_objects=include_debug_objects,
+        resolved_first_layer=resolved_first_layer,
     )
     if job_dir is not None:
         write_refraction_bedrock_debug_artifacts(Path(job_dir), result)
@@ -263,6 +271,7 @@ def _build_bedrock_result(
     solver: RefractionStaticSolverRequest,
     input_qc: dict[str, Any],
     include_debug_objects: bool,
+    resolved_first_layer: ResolvedRefractionFirstLayer | None,
 ) -> RefractionBedrockSlownessResult:
     _validate_solver_success(solver_result)
     _validate_row_lengths(solver_result)
@@ -288,7 +297,11 @@ def _build_bedrock_result(
         raise RefractionBedrockSlownessError(
             'solver bedrock velocity does not match solved bedrock slowness'
         )
-    weathering_velocity = float(model.weathering_velocity_m_s)
+    weathering_velocity = resolve_weathering_velocity_m_s(
+        model=model,
+        resolved_first_layer=resolved_first_layer,
+        name='model.weathering_velocity_m_s',
+    )
     if velocity <= weathering_velocity:
         raise RefractionBedrockSlownessError(
             'solved bedrock velocity must be greater than weathering velocity'
@@ -331,6 +344,7 @@ def _build_bedrock_result(
         bedrock_velocity=velocity,
         bedrock_slowness_at_lower_bound=at_max_velocity,
         bedrock_slowness_at_upper_bound=at_min_velocity,
+        resolved_first_layer=resolved_first_layer,
     )
     result = RefractionBedrockSlownessResult(
         bedrock_velocity_mode='solve_global',
@@ -436,6 +450,7 @@ def _build_result_qc(
     bedrock_velocity: float,
     bedrock_slowness_at_lower_bound: bool,
     bedrock_slowness_at_upper_bound: bool,
+    resolved_first_layer: ResolvedRefractionFirstLayer | None,
 ) -> dict[str, Any]:
     n_observations = int(solver_result.observed_pick_time_s.shape[0])
     n_used = int(np.count_nonzero(solver_result.used_row_mask))
@@ -443,7 +458,13 @@ def _build_result_qc(
     qc: dict[str, Any] = {
         'method': 'gli_variable_thickness',
         'bedrock_velocity_mode': 'solve_global',
-        'weathering_velocity_m_s': float(model.weathering_velocity_m_s),
+        'weathering_velocity_m_s': float(
+            resolve_weathering_velocity_m_s(
+                model=model,
+                resolved_first_layer=resolved_first_layer,
+                name='model.weathering_velocity_m_s',
+            )
+        ),
         'bedrock_slowness_s_per_m': float(bedrock_slowness),
         'bedrock_velocity_m_s': float(bedrock_velocity),
         'bedrock_velocity_status': bedrock_velocity_status,

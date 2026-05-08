@@ -13,12 +13,17 @@ import numpy as np
 
 from app.api.schemas import RefractionStaticApplyRequest, RefractionStaticModelRequest
 from app.core.state import AppState
+from app.services.refraction_static_first_layer import (
+    resolve_weathering_velocity_m_s,
+)
 from app.services.refraction_static_half_intercept import (
     estimate_refraction_half_intercept_times_from_first_breaks,
 )
 from app.services.refraction_static_types import (
     RefractionHalfInterceptTimeResult,
+    RefractionStaticInputModel,
     RefractionWeatheringThicknessResult,
+    ResolvedRefractionFirstLayer,
 )
 
 REFRACTION_WEATHERING_QC_JSON_NAME = 'refraction_weathering_thickness_qc.json'
@@ -167,18 +172,30 @@ def estimate_weathering_thickness_from_first_breaks(
     req: RefractionStaticApplyRequest,
     state: AppState,
     job_dir: Path | None = None,
+    input_model: RefractionStaticInputModel | None = None,
+    resolved_first_layer: ResolvedRefractionFirstLayer | None = None,
 ) -> RefractionWeatheringThicknessResult:
     """Estimate half-intercepts from first breaks, then convert to thickness."""
     try:
-        half_intercept_result = estimate_refraction_half_intercept_times_from_first_breaks(
-            req=req,
-            state=state,
-            job_dir=job_dir,
+        half_intercept_kwargs: dict[str, Any] = {
+            'req': req,
+            'state': state,
+            'job_dir': job_dir,
+        }
+        if input_model is not None:
+            half_intercept_kwargs['input_model'] = input_model
+        if resolved_first_layer is not None:
+            half_intercept_kwargs['resolved_first_layer'] = resolved_first_layer
+        half_intercept_result = (
+            estimate_refraction_half_intercept_times_from_first_breaks(
+                **half_intercept_kwargs
+            )
         )
         return build_refraction_weathering_thickness_model(
             half_intercept_result=half_intercept_result,
             model=req.model,
             job_dir=job_dir,
+            resolved_first_layer=resolved_first_layer,
         )
     except RefractionWeatheringThicknessError:
         raise
@@ -191,12 +208,14 @@ def build_refraction_weathering_thickness_model(
     half_intercept_result: RefractionHalfInterceptTimeResult,
     model: RefractionStaticModelRequest,
     job_dir: Path | None = None,
+    resolved_first_layer: ResolvedRefractionFirstLayer | None = None,
 ) -> RefractionWeatheringThicknessResult:
     """Convert GLI half-intercept times to a weathering-thickness model."""
     data = _validate_half_intercept_result(half_intercept_result)
     velocity = _validate_velocity_context(
         half_intercept_result=half_intercept_result,
         model=model,
+        resolved_first_layer=resolved_first_layer,
     )
     node_pos = {int(node): index for index, node in enumerate(data.node_id.tolist())}
     _validate_endpoint_nodes(data.source_node_id, node_pos, name='source_node_id')
@@ -725,6 +744,7 @@ def _validate_velocity_context(
     *,
     half_intercept_result: RefractionHalfInterceptTimeResult,
     model: RefractionStaticModelRequest,
+    resolved_first_layer: ResolvedRefractionFirstLayer | None,
 ) -> _VelocityContext:
     mode = _validate_velocity_mode(
         _required(half_intercept_result, 'bedrock_velocity_mode')
@@ -735,7 +755,11 @@ def _validate_velocity_context(
             'bedrock_velocity_mode does not match the half-intercept result'
         )
     weathering_velocity = _positive_finite(
-        _required(model, 'weathering_velocity_m_s'),
+        resolve_weathering_velocity_m_s(
+            model=model,
+            resolved_first_layer=resolved_first_layer,
+            name='model.weathering_velocity_m_s',
+        ),
         name='model.weathering_velocity_m_s',
     )
     result_weathering_velocity = _positive_finite(

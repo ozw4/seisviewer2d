@@ -8,9 +8,11 @@ import numpy as np
 from scipy import sparse
 
 from app.api.schemas import RefractionStaticModelRequest
+from app.services.refraction_static_first_layer import resolve_weathering_velocity_m_s
 from app.services.refraction_static_types import (
     RefractionStaticDesignMatrix,
     RefractionStaticInputModel,
+    ResolvedRefractionFirstLayer,
 )
 
 BedrockVelocityMode = Literal['solve_global', 'fixed_global']
@@ -24,6 +26,7 @@ def build_refraction_static_design_matrix(
     *,
     input_model: RefractionStaticInputModel,
     model: RefractionStaticModelRequest,
+    resolved_first_layer: ResolvedRefractionFirstLayer | None = None,
 ) -> RefractionStaticDesignMatrix:
     """Build the physical GLI sparse system from a refraction input model."""
     method = getattr(model, 'method', None)
@@ -35,7 +38,11 @@ def build_refraction_static_design_matrix(
         getattr(model, 'bedrock_velocity_mode', None)
     )
     weathering_velocity = _coerce_positive_finite_float(
-        getattr(model, 'weathering_velocity_m_s', None),
+        resolve_weathering_velocity_m_s(
+            model=model,
+            resolved_first_layer=resolved_first_layer,
+            name='model.weathering_velocity_m_s',
+        ),
         name='model.weathering_velocity_m_s',
     )
     fixed_velocity = getattr(model, 'bedrock_velocity_m_s', None)

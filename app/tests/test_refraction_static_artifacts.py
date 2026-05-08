@@ -24,7 +24,10 @@ from app.services.refraction_static_artifacts import (
     write_refraction_static_solution_npz,
     write_refraction_static_artifacts,
 )
-from app.services.refraction_static_types import RefractionDatumStaticsResult
+from app.services.refraction_static_types import (
+    RefractionDatumStaticsResult,
+    ResolvedRefractionFirstLayer,
+)
 
 
 REQUIRED_TRACE_ARRAYS = {
@@ -128,6 +131,32 @@ def _request() -> RefractionStaticApplyRequest:
                 'register_corrected_file': False,
             },
         }
+    )
+
+
+def _estimated_v1_request() -> RefractionStaticApplyRequest:
+    payload = _request().model_dump(mode='json')
+    payload['model']['weathering_velocity_m_s'] = None
+    payload['model']['first_layer'] = {
+        'mode': 'estimate_direct_arrival',
+        'weathering_velocity_m_s': 812.5,
+        'min_direct_offset_m': 20.0,
+        'max_direct_offset_m': 140.0,
+    }
+    return RefractionStaticApplyRequest.model_validate(payload)
+
+
+def _resolved_estimated_v1() -> ResolvedRefractionFirstLayer:
+    return ResolvedRefractionFirstLayer(
+        mode='estimate_direct_arrival',
+        weathering_velocity_m_s=812.5,
+        status='estimated',
+        qc={
+            'v1_mode': 'estimate_direct_arrival',
+            'weathering_velocity_m_s': 812.5,
+            'resolved_weathering_velocity_m_s': 812.5,
+            'v1_status': 'estimated',
+        },
     )
 
 
@@ -280,6 +309,18 @@ def _result() -> RefractionDatumStaticsResult:
     )
 
 
+def _result_with_weathering_velocity(
+    weathering_velocity_m_s: float,
+) -> RefractionDatumStaticsResult:
+    return replace(
+        _result(),
+        weathering_velocity_m_s=weathering_velocity_m_s,
+        replacement_slowness_delta_s_per_m=(
+            (1.0 / 2500.0) - (1.0 / weathering_velocity_m_s)
+        ),
+    )
+
+
 def test_write_refraction_static_artifacts_npz_schema(tmp_path: Path) -> None:
     paths = write_refraction_static_artifacts(
         result=_result(),
@@ -300,7 +341,10 @@ def test_write_refraction_static_artifacts_npz_schema(tmp_path: Path) -> None:
         assert data['artifact_version'].item() == '1.0'
         assert data['method'].item() == 'gli_variable_thickness'
         assert data['sign_convention'].item() == 'corrected(t) = raw(t - shift_s)'
+        assert data['v1_mode'].item() == 'constant'
+        assert data['v1_weathering_velocity_m_s'].item() == pytest.approx(800.0)
         assert data['weathering_velocity_m_s'].item() == pytest.approx(800.0)
+        assert data['resolved_weathering_velocity_m_s'].item() == pytest.approx(800.0)
         assert data['bedrock_velocity_m_s'].item() == pytest.approx(2500.0)
         assert REQUIRED_TRACE_ARRAYS.issubset(data.files)
         assert REQUIRED_NODE_ARRAYS.issubset(data.files)
@@ -333,6 +377,21 @@ def test_write_refraction_static_artifacts_npz_schema(tmp_path: Path) -> None:
         assert data['node_datum_status'].tolist() == ['ok', 'ok', 'inactive']
         for key in data.files:
             assert data[key].dtype != object
+
+
+def test_refraction_static_solution_npz_contains_v1_aliases(tmp_path: Path) -> None:
+    path = tmp_path / REFRACTION_STATIC_SOLUTION_NPZ_NAME
+    write_refraction_static_solution_npz(
+        result=_result_with_weathering_velocity(812.5),
+        req=_estimated_v1_request(),
+        path=path,
+        resolved_first_layer=_resolved_estimated_v1(),
+    )
+
+    with np.load(path, allow_pickle=False) as data:
+        assert data['v1_mode'].item() == 'estimate_direct_arrival'
+        assert data['v1_weathering_velocity_m_s'].item() == pytest.approx(812.5)
+        assert data['resolved_weathering_velocity_m_s'].item() == pytest.approx(812.5)
 
 
 def test_write_refraction_static_artifacts_qc_json(tmp_path: Path) -> None:
@@ -371,6 +430,10 @@ def test_write_refraction_static_artifacts_qc_json(tmp_path: Path) -> None:
         'register_corrected_file': False,
     }
     assert payload['velocity']['bedrock_velocity_status'] == 'solved'
+    assert payload['velocity']['v1_mode'] == 'constant'
+    assert payload['velocity']['resolved_weathering_velocity_m_s'] == pytest.approx(
+        800.0
+    )
     assert payload['observations']['n_valid_observations'] == 3
     assert payload['observations']['n_used_observations'] == 2
     assert payload['status_counts']['node_solution_status']['solved'] == 2
@@ -381,6 +444,20 @@ def test_write_refraction_static_artifacts_qc_json(tmp_path: Path) -> None:
     assert len(payload['artifacts']) == 6
     json.dumps(payload, allow_nan=False)
     assert not _contains_absolute_path(payload)
+
+
+def test_refraction_static_qc_contains_v1_mode() -> None:
+    payload = artifact_module.build_refraction_static_qc_payload(
+        result=_result_with_weathering_velocity(812.5),
+        req=_estimated_v1_request(),
+        resolved_first_layer=_resolved_estimated_v1(),
+    )
+
+    assert payload['velocity']['v1_mode'] == 'estimate_direct_arrival'
+    assert payload['velocity']['v1_status'] == 'estimated'
+    assert payload['velocity']['resolved_weathering_velocity_m_s'] == pytest.approx(
+        812.5
+    )
 
 
 def test_write_refraction_static_artifacts_csvs(tmp_path: Path) -> None:

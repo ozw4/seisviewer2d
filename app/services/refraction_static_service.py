@@ -3,12 +3,13 @@
 from __future__ import annotations
 
 import json
+from dataclasses import dataclass
 from pathlib import Path
 import time
 from typing import Any
 from uuid import uuid4
 
-from app.api.schemas import RefractionStaticApplyRequest
+from app.api.schemas import RefractionStaticApplyRequest, RefractionStaticModelRequest
 from app.core.state import AppState
 from app.services.job_runner import JobCompletion, JobFailure, run_job_with_lifecycle
 from app.services.refraction_static_apply_trace_store import (
@@ -16,12 +17,132 @@ from app.services.refraction_static_apply_trace_store import (
 )
 from app.services.refraction_static_artifacts import write_refraction_static_artifacts
 from app.services.refraction_static_datum import build_refraction_datum_statics
+from app.services.refraction_static_inputs import build_refraction_static_input_model
+from app.services.refraction_static_types import (
+    RefractionStaticInputModel,
+    ResolvedRefractionFirstLayer,
+)
+from app.services.refraction_static_v1 import (
+    estimate_global_v1_from_direct_arrivals,
+    write_refraction_v1_artifacts,
+)
 from app.services.refraction_static_weathering_replacement import (
     compute_weathering_replacement_statics_from_first_breaks,
 )
 
 _REQUEST_JSON_NAME = 'refraction_static_request.json'
 _ARTIFACT_ONLY_DONE_MESSAGE = 'refraction_static_artifacts_written_artifact_only'
+
+
+@dataclass(frozen=True)
+class _ResolvedFirstLayerRequest:
+    req: RefractionStaticApplyRequest
+    resolved: ResolvedRefractionFirstLayer
+    input_model: RefractionStaticInputModel | None
+
+
+class RefractionFirstLayerNotImplemented(NotImplementedError):
+    """Raised when a requested first-layer mode is accepted but not implemented."""
+
+
+def normalize_refraction_first_layer_request(
+    model: RefractionStaticModelRequest,
+) -> ResolvedRefractionFirstLayer:
+    """Resolve the first-layer/V1 request block to the V1 used downstream."""
+    mode = model.first_layer_mode
+    velocity = float(model.resolved_weathering_velocity_m_s)
+    status = 'estimated' if mode == 'estimate_direct_arrival' else 'resolved_constant'
+    return ResolvedRefractionFirstLayer(
+        mode=mode,
+        weathering_velocity_m_s=velocity,
+        status=status,
+        qc={
+            'v1_mode': mode,
+            'weathering_velocity_m_s': velocity,
+            'resolved_weathering_velocity_m_s': velocity,
+            'v1_status': status,
+        },
+    )
+
+
+def resolve_refraction_first_layer_request(
+    *,
+    req: RefractionStaticApplyRequest,
+    state: AppState,
+    job_dir: Path,
+) -> _ResolvedFirstLayerRequest:
+    """Resolve V1 for a full refraction statics request."""
+    mode = req.model.first_layer_mode
+    if mode == 'constant':
+        return _ResolvedFirstLayerRequest(
+            req=req,
+            resolved=normalize_refraction_first_layer_request(req.model),
+            input_model=None,
+        )
+
+    first_layer = req.model.first_layer
+    if first_layer is None:
+        raise ValueError('model.first_layer is required for V1 estimation')
+    if req.model.weathering_velocity_m_s is not None:
+        raise ValueError(
+            'model.weathering_velocity_m_s must be omitted when '
+            'model.first_layer.mode is estimate_direct_arrival'
+        )
+    if first_layer.weathering_velocity_m_s is not None:
+        raise ValueError(
+            'model.first_layer.weathering_velocity_m_s must be omitted when '
+            'model.first_layer.mode is estimate_direct_arrival'
+        )
+
+    input_model = build_refraction_static_input_model(
+        req=req,
+        state=state,
+        job_dir=job_dir,
+    )
+    estimate = estimate_global_v1_from_direct_arrivals(
+        input_model=input_model,
+        first_layer=first_layer,
+    )
+    write_refraction_v1_artifacts(job_dir, estimate)
+    resolved_req = _request_with_resolved_first_layer_velocity(
+        req,
+        weathering_velocity_m_s=estimate.resolved_weathering_velocity_m_s,
+    )
+    return _ResolvedFirstLayerRequest(
+        req=resolved_req,
+        resolved=ResolvedRefractionFirstLayer(
+            mode='estimate_direct_arrival',
+            weathering_velocity_m_s=estimate.resolved_weathering_velocity_m_s,
+            status='estimated',
+            qc={
+                **estimate.qc,
+                'weathering_velocity_m_s': (
+                    estimate.resolved_weathering_velocity_m_s
+                ),
+            },
+        ),
+        input_model=input_model,
+    )
+
+
+def _request_with_resolved_first_layer_velocity(
+    req: RefractionStaticApplyRequest,
+    *,
+    weathering_velocity_m_s: float,
+) -> RefractionStaticApplyRequest:
+    first_layer = req.model.first_layer
+    if first_layer is None:
+        raise ValueError('model.first_layer is required for V1 estimation')
+    resolved_first_layer = first_layer.model_copy(
+        update={'weathering_velocity_m_s': float(weathering_velocity_m_s)}
+    )
+    resolved_model = req.model.model_copy(
+        update={
+            'weathering_velocity_m_s': None,
+            'first_layer': resolved_first_layer,
+        }
+    )
+    return req.model_copy(update={'model': resolved_model})
 
 
 def _write_json_atomic(path: Path, payload: dict[str, Any]) -> None:
@@ -67,6 +188,7 @@ def _run_refraction_static_apply_job_body(
     req: RefractionStaticApplyRequest,
     state: AppState,
 ) -> JobCompletion | None:
+    req = RefractionStaticApplyRequest.model_validate(req)
     _set_job_progress_message(
         state,
         job_id,
@@ -90,13 +212,27 @@ def _run_refraction_static_apply_job_body(
     _set_job_progress_message(
         state,
         job_id,
+        progress=0.12,
+        message='resolving_refraction_first_layer',
+    )
+    first_layer = resolve_refraction_first_layer_request(
+        req=req,
+        state=state,
+        job_dir=job_dir,
+    )
+    active_req = first_layer.req
+    _set_job_progress_message(
+        state,
+        job_id,
         progress=0.20,
         message='computing_refraction_weathering_replacement_statics',
     )
     replacement_result = compute_weathering_replacement_statics_from_first_breaks(
-        req=req,
+        req=active_req,
         state=state,
         job_dir=job_dir,
+        input_model=first_layer.input_model,
+        resolved_first_layer=first_layer.resolved,
     )
     _set_job_progress_message(
         state,
@@ -112,13 +248,14 @@ def _run_refraction_static_apply_job_body(
     )
     datum_result = build_refraction_datum_statics(
         weathering_replacement_result=replacement_result,
-        datum=req.datum,
-        apply_options=req.apply,
+        datum=active_req.datum,
+        apply_options=active_req.apply,
         job_dir=job_dir,
         state=state,
-        file_id=req.file_id,
-        key1_byte=req.key1_byte,
-        key2_byte=req.key2_byte,
+        file_id=active_req.file_id,
+        key1_byte=active_req.key1_byte,
+        key2_byte=active_req.key2_byte,
+        resolved_first_layer=first_layer.resolved,
     )
     _set_job_progress_message(
         state,
@@ -134,10 +271,11 @@ def _run_refraction_static_apply_job_body(
     )
     write_refraction_static_artifacts(
         result=datum_result,
-        req=req,
+        req=active_req,
         job_dir=job_dir,
+        resolved_first_layer=first_layer.resolved,
     )
-    if req.apply.register_corrected_file:
+    if active_req.apply.register_corrected_file:
         _set_job_progress_message(
             state,
             job_id,
@@ -145,7 +283,7 @@ def _run_refraction_static_apply_job_body(
             message='applying_refraction_static_trace_shift',
         )
         corrected_result = apply_refraction_statics_to_trace_store(
-            req=req,
+            req=active_req,
             result=datum_result,
             state=state,
             job_id=job_id,
@@ -209,4 +347,10 @@ def run_refraction_static_apply_job(
     )
 
 
-__all__ = ['run_refraction_static_apply_job']
+__all__ = [
+    'RefractionFirstLayerNotImplemented',
+    'ResolvedRefractionFirstLayer',
+    'normalize_refraction_first_layer_request',
+    'resolve_refraction_first_layer_request',
+    'run_refraction_static_apply_job',
+]

@@ -9,9 +9,11 @@ import numpy as np
 from scipy import optimize, sparse
 
 from app.api.schemas import RefractionStaticModelRequest, RefractionStaticSolverRequest
+from app.services.refraction_static_first_layer import resolve_weathering_velocity_m_s
 from app.services.refraction_static_types import (
     RefractionStaticDesignMatrix,
     RefractionStaticSolverResult,
+    ResolvedRefractionFirstLayer,
 )
 
 BedrockVelocityMode = Literal['solve_global', 'fixed_global']
@@ -83,6 +85,7 @@ def solve_refraction_static_bounded_ls(
     design_matrix: RefractionStaticDesignMatrix,
     model: RefractionStaticModelRequest,
     solver: RefractionStaticSolverRequest,
+    resolved_first_layer: ResolvedRefractionFirstLayer | None = None,
 ) -> RefractionStaticSolverResult:
     """Solve a refraction static design matrix with physical bounds."""
     return solve_refraction_static_bounded_ls_from_matrix(
@@ -101,6 +104,7 @@ def solve_refraction_static_bounded_ls(
         fixed_bedrock_slowness_s_per_m=design_matrix.fixed_bedrock_slowness_s_per_m,
         model=model,
         solver=solver,
+        resolved_first_layer=resolved_first_layer,
     )
 
 
@@ -121,6 +125,7 @@ def solve_refraction_static_bounded_ls_from_matrix(
     bedrock_velocity_mode: BedrockVelocityMode | None = None,
     fixed_bedrock_velocity_m_s: float | None = None,
     fixed_bedrock_slowness_s_per_m: float | None = None,
+    resolved_first_layer: ResolvedRefractionFirstLayer | None = None,
 ) -> RefractionStaticSolverResult:
     """Solve a bounded GLI system from already-built sparse arrays."""
     problem = _validate_problem(
@@ -139,6 +144,7 @@ def solve_refraction_static_bounded_ls_from_matrix(
         fixed_bedrock_slowness_s_per_m=fixed_bedrock_slowness_s_per_m,
         model=model,
         solver=solver,
+        resolved_first_layer=resolved_first_layer,
     )
     lower_bounds, upper_bounds = _build_bounds(problem)
     solve_result, used_mask, rejected_mask, robust_iteration_count = (
@@ -176,6 +182,7 @@ def _validate_problem(
     fixed_bedrock_slowness_s_per_m: float | None,
     model: RefractionStaticModelRequest,
     solver: RefractionStaticSolverRequest,
+    resolved_first_layer: ResolvedRefractionFirstLayer | None,
 ) -> _ValidatedProblem:
     if getattr(model, 'method', None) != 'gli_variable_thickness':
         raise RefractionStaticSolverError(
@@ -295,7 +302,11 @@ def _validate_problem(
     )
 
     weathering_velocity = _coerce_positive_finite_float(
-        getattr(model, 'weathering_velocity_m_s', None),
+        resolve_weathering_velocity_m_s(
+            model=model,
+            resolved_first_layer=resolved_first_layer,
+            name='model.weathering_velocity_m_s',
+        ),
         name='model.weathering_velocity_m_s',
     )
     min_velocity = _coerce_positive_finite_float(

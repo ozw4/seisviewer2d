@@ -18,9 +18,13 @@ from app.api.schemas import (
 )
 from app.core.state import AppState
 from app.services.job_artifact_refs import resolve_job_artifact_path
+from app.services.refraction_static_first_layer import (
+    validate_resolved_first_layer_velocity_match,
+)
 from app.services.refraction_static_types import (
     RefractionDatumStaticsResult,
     RefractionWeatheringReplacementStaticsResult,
+    ResolvedRefractionFirstLayer,
 )
 from app.services.refraction_static_weathering_replacement import (
     compute_weathering_replacement_statics_from_first_breaks,
@@ -278,13 +282,19 @@ def compute_datum_refraction_statics_from_first_breaks(
     req: RefractionStaticApplyRequest,
     state: AppState,
     job_dir: Path | None = None,
+    resolved_first_layer: ResolvedRefractionFirstLayer | None = None,
 ) -> RefractionDatumStaticsResult:
     """Run GLI weathering replacement, then compose datum refraction statics."""
     try:
+        replacement_kwargs: dict[str, Any] = {
+            'req': req,
+            'state': state,
+            'job_dir': job_dir,
+        }
+        if resolved_first_layer is not None:
+            replacement_kwargs['resolved_first_layer'] = resolved_first_layer
         replacement = compute_weathering_replacement_statics_from_first_breaks(
-            req=req,
-            state=state,
-            job_dir=job_dir,
+            **replacement_kwargs
         )
         return build_refraction_datum_statics(
             weathering_replacement_result=replacement,
@@ -295,6 +305,7 @@ def compute_datum_refraction_statics_from_first_breaks(
             file_id=req.file_id,
             key1_byte=req.key1_byte,
             key2_byte=req.key2_byte,
+            resolved_first_layer=resolved_first_layer,
         )
     except RefractionDatumStaticsError:
         raise
@@ -313,10 +324,14 @@ def build_refraction_datum_statics(
     key1_byte: int | None = None,
     key2_byte: int | None = None,
     floating_datum_artifact_path: Path | None = None,
+    resolved_first_layer: ResolvedRefractionFirstLayer | None = None,
 ) -> RefractionDatumStaticsResult:
     """Compose weathering replacement, floating datum, and flat datum shifts."""
     data = _validate_replacement_result(weathering_replacement_result)
-    velocity = _validate_velocity_context(weathering_replacement_result)
+    velocity = _validate_velocity_context(
+        weathering_replacement_result,
+        resolved_first_layer=resolved_first_layer,
+    )
     datum_req = _validate_datum_request(datum)
     max_abs_shift_ms = _resolve_max_abs_shift_ms(apply_options)
     artifact_path = _resolve_floating_datum_artifact_path(
@@ -1303,10 +1318,17 @@ def _validate_replacement_result(
 
 def _validate_velocity_context(
     result: RefractionWeatheringReplacementStaticsResult,
+    *,
+    resolved_first_layer: ResolvedRefractionFirstLayer | None,
 ) -> _VelocityContext:
     mode = _validate_velocity_mode(_required(result, 'bedrock_velocity_mode'))
     weathering_velocity = _positive_finite(
         _required(result, 'weathering_velocity_m_s'),
+        name='weathering_replacement_result.weathering_velocity_m_s',
+    )
+    weathering_velocity = validate_resolved_first_layer_velocity_match(
+        weathering_velocity_m_s=weathering_velocity,
+        resolved_first_layer=resolved_first_layer,
         name='weathering_replacement_result.weathering_velocity_m_s',
     )
     bedrock_slowness = _positive_finite(

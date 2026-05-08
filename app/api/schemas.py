@@ -418,6 +418,10 @@ def _require_positive_finite_float(value: object, name: str) -> float:
     return out
 
 
+def _velocity_values_match(left: float, right: float) -> bool:
+    return math.isclose(float(left), float(right), rel_tol=1.0e-9, abs_tol=1.0e-9)
+
+
 class StaticLinkageGeometryRequest(BaseModel):
     """Geometry header configuration for static linkage."""
 
@@ -1348,13 +1352,111 @@ class RefractionStaticLinkageRequest(BaseModel):
         return self
 
 
+class RefractionStaticFirstLayerRequest(BaseModel):
+    """First-layer / V1 configuration for refraction static inversion."""
+
+    model_config = ConfigDict(extra='forbid')
+
+    mode: Literal['constant', 'estimate_direct_arrival'] = 'constant'
+    weathering_velocity_m_s: float | None = None
+
+    min_weathering_velocity_m_s: float = 250.0
+    max_weathering_velocity_m_s: float = 1800.0
+
+    min_direct_offset_m: float | None = None
+    max_direct_offset_m: float | None = None
+
+    min_picks_per_fit: int = 5
+    min_groups: int = 3
+
+    robust_enabled: bool = True
+    robust_threshold: float = 3.5
+
+    @field_validator('weathering_velocity_m_s', mode='before')
+    @classmethod
+    def _check_optional_weathering_velocity(cls, value: object) -> float | None:
+        if value is None:
+            return None
+        return _require_positive_finite_float(
+            value,
+            'model.first_layer.weathering_velocity_m_s',
+        )
+
+    @field_validator(
+        'min_weathering_velocity_m_s',
+        'max_weathering_velocity_m_s',
+        mode='before',
+    )
+    @classmethod
+    def _check_weathering_velocity_bound(cls, value: object, info: Any) -> float:
+        return _require_positive_finite_float(
+            value,
+            f'model.first_layer.{info.field_name}',
+        )
+
+    @field_validator('min_direct_offset_m', 'max_direct_offset_m', mode='before')
+    @classmethod
+    def _check_direct_offset(cls, value: object, info: Any) -> float | None:
+        if value is None:
+            return None
+        return _require_nonnegative_finite_float(
+            value,
+            f'model.first_layer.{info.field_name}',
+        )
+
+    @field_validator('min_picks_per_fit', 'min_groups', mode='before')
+    @classmethod
+    def _check_positive_count(cls, value: object, info: Any) -> int:
+        return _require_positive_int(value, f'model.first_layer.{info.field_name}')
+
+    @field_validator('robust_enabled', mode='before')
+    @classmethod
+    def _check_robust_enabled(cls, value: object) -> bool:
+        return _require_bool(value, 'model.first_layer.robust_enabled')
+
+    @field_validator('robust_threshold', mode='before')
+    @classmethod
+    def _check_robust_threshold(cls, value: object) -> float:
+        return _require_positive_finite_float(
+            value,
+            'model.first_layer.robust_threshold',
+        )
+
+    @model_validator(mode='after')
+    def _check_first_layer_values(self) -> 'RefractionStaticFirstLayerRequest':
+        if self.min_weathering_velocity_m_s >= self.max_weathering_velocity_m_s:
+            raise ValueError(
+                'model.first_layer.min_weathering_velocity_m_s must be less than '
+                'model.first_layer.max_weathering_velocity_m_s'
+            )
+        if self.mode == 'estimate_direct_arrival' and (
+            self.min_direct_offset_m is None or self.max_direct_offset_m is None
+        ):
+            raise ValueError(
+                'model.first_layer.min_direct_offset_m and '
+                'model.first_layer.max_direct_offset_m are required when '
+                'model.first_layer.mode is estimate_direct_arrival'
+            )
+        if (
+            self.min_direct_offset_m is not None
+            and self.max_direct_offset_m is not None
+            and self.min_direct_offset_m >= self.max_direct_offset_m
+        ):
+            raise ValueError(
+                'model.first_layer.min_direct_offset_m must be less than '
+                'model.first_layer.max_direct_offset_m'
+            )
+        return self
+
+
 class RefractionStaticModelRequest(BaseModel):
     """Near-surface model options for refraction static inversion."""
 
     model_config = ConfigDict(extra='forbid')
 
     method: Literal['gli_variable_thickness'] = 'gli_variable_thickness'
-    weathering_velocity_m_s: float
+    weathering_velocity_m_s: float | None = None
+    first_layer: RefractionStaticFirstLayerRequest | None = None
     bedrock_velocity_mode: Literal['solve_global', 'fixed_global'] = 'solve_global'
     bedrock_velocity_m_s: float | None = None
     initial_bedrock_velocity_m_s: float | None = None
@@ -1362,12 +1464,14 @@ class RefractionStaticModelRequest(BaseModel):
     max_bedrock_velocity_m_s: float = 6000.0
     max_weathering_thickness_m: float | None = None
 
-    @field_validator(
-        'weathering_velocity_m_s',
-        'min_bedrock_velocity_m_s',
-        'max_bedrock_velocity_m_s',
-        mode='before',
-    )
+    @field_validator('weathering_velocity_m_s', mode='before')
+    @classmethod
+    def _check_optional_weathering_velocity(cls, value: object) -> float | None:
+        if value is None:
+            return None
+        return _require_positive_finite_float(value, 'model.weathering_velocity_m_s')
+
+    @field_validator('min_bedrock_velocity_m_s', 'max_bedrock_velocity_m_s', mode='before')
     @classmethod
     def _check_positive_velocity(cls, value: object, info: Any) -> float:
         return _require_positive_finite_float(value, f'model.{info.field_name}')
@@ -1386,28 +1490,31 @@ class RefractionStaticModelRequest(BaseModel):
 
     @model_validator(mode='after')
     def _check_velocity_values(self) -> 'RefractionStaticModelRequest':
+        resolved_weathering_velocity = self._constant_weathering_velocity_or_none()
         if self.min_bedrock_velocity_m_s >= self.max_bedrock_velocity_m_s:
             raise ValueError(
                 'model.min_bedrock_velocity_m_s must be less than '
                 'model.max_bedrock_velocity_m_s'
             )
-        if self.min_bedrock_velocity_m_s <= self.weathering_velocity_m_s:
-            raise ValueError(
-                'model.min_bedrock_velocity_m_s must be greater than '
-                'model.weathering_velocity_m_s'
-            )
-        if self.max_bedrock_velocity_m_s <= self.weathering_velocity_m_s:
-            raise ValueError(
-                'model.max_bedrock_velocity_m_s must be greater than '
-                'model.weathering_velocity_m_s'
-            )
+        if resolved_weathering_velocity is not None:
+            if self.min_bedrock_velocity_m_s <= resolved_weathering_velocity:
+                raise ValueError(
+                    'model.min_bedrock_velocity_m_s must be greater than '
+                    'model.resolved_weathering_velocity_m_s'
+                )
+            if self.max_bedrock_velocity_m_s <= resolved_weathering_velocity:
+                raise ValueError(
+                    'model.max_bedrock_velocity_m_s must be greater than '
+                    'model.resolved_weathering_velocity_m_s'
+                )
         if (
             self.initial_bedrock_velocity_m_s is not None
-            and self.initial_bedrock_velocity_m_s <= self.weathering_velocity_m_s
+            and resolved_weathering_velocity is not None
+            and self.initial_bedrock_velocity_m_s <= resolved_weathering_velocity
         ):
             raise ValueError(
                 'model.initial_bedrock_velocity_m_s must be greater than '
-                'model.weathering_velocity_m_s'
+                'model.resolved_weathering_velocity_m_s'
             )
         if self.initial_bedrock_velocity_m_s is not None and not (
             self.min_bedrock_velocity_m_s
@@ -1424,10 +1531,13 @@ class RefractionStaticModelRequest(BaseModel):
                     'model.bedrock_velocity_m_s is required when '
                     'model.bedrock_velocity_mode is fixed_global'
                 )
-            if self.bedrock_velocity_m_s <= self.weathering_velocity_m_s:
+            if (
+                resolved_weathering_velocity is not None
+                and self.bedrock_velocity_m_s <= resolved_weathering_velocity
+            ):
                 raise ValueError(
                     'model.bedrock_velocity_m_s must be greater than '
-                    'model.weathering_velocity_m_s'
+                    'model.resolved_weathering_velocity_m_s'
                 )
             if not (
                 self.min_bedrock_velocity_m_s
@@ -1443,6 +1553,54 @@ class RefractionStaticModelRequest(BaseModel):
                 'model.bedrock_velocity_mode is fixed_global'
             )
         return self
+
+    @property
+    def first_layer_mode(self) -> Literal['constant', 'estimate_direct_arrival']:
+        first_layer = self.first_layer
+        if first_layer is None:
+            return 'constant'
+        return first_layer.mode
+
+    @property
+    def resolved_weathering_velocity_m_s(self) -> float:
+        value = self._constant_weathering_velocity_or_none()
+        if value is None:
+            raise ValueError(
+                'model.first_layer.mode="estimate_direct_arrival" requires a '
+                'resolved weathering velocity before downstream processing'
+            )
+        return value
+
+    def _constant_weathering_velocity_or_none(self) -> float | None:
+        legacy_velocity = self.weathering_velocity_m_s
+        first_layer = self.first_layer
+        if first_layer is None:
+            if legacy_velocity is None:
+                raise ValueError(
+                    'model.weathering_velocity_m_s is required when '
+                    'model.first_layer is omitted'
+                )
+            return legacy_velocity
+
+        first_layer_velocity = first_layer.weathering_velocity_m_s
+        if (
+            legacy_velocity is not None
+            and first_layer_velocity is not None
+            and not _velocity_values_match(legacy_velocity, first_layer_velocity)
+        ):
+            raise ValueError(
+                'model.weathering_velocity_m_s and '
+                'model.first_layer.weathering_velocity_m_s must match when both '
+                'are specified'
+            )
+        if first_layer.mode == 'estimate_direct_arrival':
+            return first_layer_velocity
+        if first_layer_velocity is None:
+            raise ValueError(
+                'model.first_layer.weathering_velocity_m_s is required when '
+                'model.first_layer.mode is constant'
+            )
+        return first_layer_velocity
 
 
 class RefractionStaticMoveoutRequest(BaseModel):

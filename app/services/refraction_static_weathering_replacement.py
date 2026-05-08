@@ -13,9 +13,14 @@ import numpy as np
 
 from app.api.schemas import RefractionStaticApplyOptions, RefractionStaticApplyRequest
 from app.core.state import AppState
+from app.services.refraction_static_first_layer import (
+    validate_resolved_first_layer_velocity_match,
+)
 from app.services.refraction_static_types import (
-    RefractionWeatheringThicknessResult,
+    RefractionStaticInputModel,
     RefractionWeatheringReplacementStaticsResult,
+    RefractionWeatheringThicknessResult,
+    ResolvedRefractionFirstLayer,
 )
 from app.services.refraction_static_weathering import (
     estimate_weathering_thickness_from_first_breaks,
@@ -210,18 +215,28 @@ def compute_weathering_replacement_statics_from_first_breaks(
     req: RefractionStaticApplyRequest,
     state: AppState,
     job_dir: Path | None = None,
+    input_model: RefractionStaticInputModel | None = None,
+    resolved_first_layer: ResolvedRefractionFirstLayer | None = None,
 ) -> RefractionWeatheringReplacementStaticsResult:
     """Run the GLI weathering model, then compute replacement static shifts."""
     try:
+        weathering_kwargs: dict[str, Any] = {
+            'req': req,
+            'state': state,
+            'job_dir': job_dir,
+        }
+        if input_model is not None:
+            weathering_kwargs['input_model'] = input_model
+        if resolved_first_layer is not None:
+            weathering_kwargs['resolved_first_layer'] = resolved_first_layer
         weathering_result = estimate_weathering_thickness_from_first_breaks(
-            req=req,
-            state=state,
-            job_dir=job_dir,
+            **weathering_kwargs
         )
         return build_refraction_weathering_replacement_statics(
             weathering_result=weathering_result,
             apply_options=req.apply,
             job_dir=job_dir,
+            resolved_first_layer=resolved_first_layer,
         )
     except RefractionWeatheringReplacementStaticsError:
         raise
@@ -234,10 +249,14 @@ def build_refraction_weathering_replacement_statics(
     weathering_result: RefractionWeatheringThicknessResult,
     apply_options: RefractionStaticApplyOptions | None = None,
     job_dir: Path | None = None,
+    resolved_first_layer: ResolvedRefractionFirstLayer | None = None,
 ) -> RefractionWeatheringReplacementStaticsResult:
     """Compute weathering-replacement statics from weathering thickness."""
     data = _validate_weathering_result(weathering_result)
-    velocity = _validate_velocity_context(weathering_result)
+    velocity = _validate_velocity_context(
+        weathering_result,
+        resolved_first_layer=resolved_first_layer,
+    )
     max_abs_shift_ms = _resolve_max_abs_shift_ms(apply_options)
 
     node_pos = {int(node): index for index, node in enumerate(data.node_id.tolist())}
@@ -846,10 +865,17 @@ def _validate_weathering_result(
 
 def _validate_velocity_context(
     weathering_result: RefractionWeatheringThicknessResult,
+    *,
+    resolved_first_layer: ResolvedRefractionFirstLayer | None,
 ) -> _VelocityContext:
     mode = _validate_velocity_mode(_required(weathering_result, 'bedrock_velocity_mode'))
     weathering_velocity = _positive_finite(
         _required(weathering_result, 'weathering_velocity_m_s'),
+        name='weathering_result.weathering_velocity_m_s',
+    )
+    weathering_velocity = validate_resolved_first_layer_velocity_match(
+        weathering_velocity_m_s=weathering_velocity,
+        resolved_first_layer=resolved_first_layer,
         name='weathering_result.weathering_velocity_m_s',
     )
     bedrock_slowness = _positive_finite(
