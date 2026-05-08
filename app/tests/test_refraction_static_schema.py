@@ -24,6 +24,24 @@ def _model_payload(**overrides: object) -> dict[str, object]:
     return payload
 
 
+def _refractor_cell_payload(**overrides: object) -> dict[str, object]:
+    payload: dict[str, object] = {
+        'number_of_cell_x': 20,
+        'size_of_cell_x_m': 500.0,
+        'x_coordinate_origin_m': 0.0,
+        'number_of_cell_y': 1,
+        'size_of_cell_y_m': 1000.0,
+        'y_coordinate_origin_m': 0.0,
+        'assignment_mode': 'midpoint',
+        'outside_grid_policy': 'reject',
+        'min_observations_per_cell': 5,
+        'velocity_smoothing_weight': 0.1,
+        'smoothing_reference_distance_m': 500.0,
+    }
+    payload.update(overrides)
+    return payload
+
+
 def test_refraction_static_legacy_weathering_velocity_request_still_valid() -> None:
     model = RefractionStaticModelRequest.model_validate(_model_payload())
 
@@ -160,3 +178,150 @@ def test_refraction_static_first_layer_estimate_requires_direct_offset_gate() ->
                 first_layer={'mode': 'estimate_direct_arrival'},
             )
         )
+
+
+def test_refraction_static_solve_cell_request_valid() -> None:
+    model = RefractionStaticModelRequest.model_validate(
+        _model_payload(
+            weathering_velocity_m_s=None,
+            first_layer={
+                'mode': 'constant',
+                'weathering_velocity_m_s': 800.0,
+            },
+            bedrock_velocity_mode='solve_cell',
+            initial_bedrock_velocity_m_s=2400.0,
+            refractor_cell=_refractor_cell_payload(
+                number_of_cell_x=20,
+                number_of_cell_y=2,
+                size_of_cell_y_m=1000.0,
+            ),
+        )
+    )
+
+    assert model.bedrock_velocity_mode == 'solve_cell'
+    assert model.refractor_cell is not None
+    assert model.refractor_cell.assignment_mode == 'midpoint'
+    assert model.refractor_cell.outside_grid_policy == 'reject'
+    assert model.refractor_cell.number_of_cell_x == 20
+    assert model.refractor_cell.number_of_cell_y == 2
+
+
+def test_refraction_static_solve_cell_requires_refractor_cell() -> None:
+    with pytest.raises(
+        ValidationError,
+        match='model.refractor_cell is required',
+    ):
+        RefractionStaticModelRequest.model_validate(
+            _model_payload(bedrock_velocity_mode='solve_cell')
+        )
+
+
+@pytest.mark.parametrize(
+    ('bedrock_velocity_mode', 'bedrock_velocity_m_s'),
+    [
+        ('solve_global', None),
+        ('fixed_global', 2500.0),
+    ],
+)
+def test_refraction_static_global_modes_reject_refractor_cell(
+    bedrock_velocity_mode: str,
+    bedrock_velocity_m_s: float | None,
+) -> None:
+    with pytest.raises(
+        ValidationError,
+        match='model.refractor_cell is only allowed',
+    ):
+        RefractionStaticModelRequest.model_validate(
+            _model_payload(
+                bedrock_velocity_mode=bedrock_velocity_mode,
+                bedrock_velocity_m_s=bedrock_velocity_m_s,
+                refractor_cell=_refractor_cell_payload(),
+            )
+        )
+
+
+@pytest.mark.parametrize(
+    ('field_name', 'value'),
+    [
+        ('number_of_cell_x', 0),
+        ('number_of_cell_y', 0),
+        ('min_observations_per_cell', 0),
+    ],
+)
+def test_refraction_static_refractor_cell_rejects_invalid_counts(
+    field_name: str,
+    value: object,
+) -> None:
+    with pytest.raises(
+        ValidationError,
+        match=f'model.refractor_cell.{field_name}',
+    ):
+        RefractionStaticModelRequest.model_validate(
+            _model_payload(
+                bedrock_velocity_mode='solve_cell',
+                refractor_cell=_refractor_cell_payload(**{field_name: value}),
+            )
+        )
+
+
+@pytest.mark.parametrize(
+    ('cell_overrides', 'error_field'),
+    [
+        ({'size_of_cell_x_m': 0.0}, 'size_of_cell_x_m'),
+        ({'size_of_cell_y_m': 0.0}, 'size_of_cell_y_m'),
+        (
+            {'number_of_cell_y': 2, 'size_of_cell_y_m': None},
+            'size_of_cell_y_m',
+        ),
+        ({'velocity_smoothing_weight': -0.1}, 'velocity_smoothing_weight'),
+        (
+            {'smoothing_reference_distance_m': 0.0},
+            'smoothing_reference_distance_m',
+        ),
+    ],
+)
+def test_refraction_static_refractor_cell_rejects_invalid_sizes(
+    cell_overrides: dict[str, object],
+    error_field: str,
+) -> None:
+    with pytest.raises(
+        ValidationError,
+        match=f'model.refractor_cell.{error_field}',
+    ):
+        RefractionStaticModelRequest.model_validate(
+            _model_payload(
+                bedrock_velocity_mode='solve_cell',
+                refractor_cell=_refractor_cell_payload(**cell_overrides),
+            )
+        )
+
+
+def test_refraction_static_refractor_cell_rejects_unknown_assignment_mode() -> None:
+    with pytest.raises(
+        ValidationError,
+        match='model.refractor_cell.assignment_mode',
+    ):
+        RefractionStaticModelRequest.model_validate(
+            _model_payload(
+                bedrock_velocity_mode='solve_cell',
+                refractor_cell=_refractor_cell_payload(
+                    assignment_mode='nearest',
+                ),
+            )
+        )
+
+
+def test_refraction_static_phase1_legacy_request_still_valid() -> None:
+    solve_global = RefractionStaticModelRequest.model_validate(_model_payload())
+    fixed_global = RefractionStaticModelRequest.model_validate(
+        _model_payload(
+            bedrock_velocity_mode='fixed_global',
+            bedrock_velocity_m_s=2500.0,
+            initial_bedrock_velocity_m_s=None,
+        )
+    )
+
+    assert solve_global.bedrock_velocity_mode == 'solve_global'
+    assert solve_global.refractor_cell is None
+    assert fixed_global.bedrock_velocity_mode == 'fixed_global'
+    assert fixed_global.refractor_cell is None
