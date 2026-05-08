@@ -6,7 +6,7 @@ import json
 from dataclasses import dataclass
 from pathlib import Path
 import time
-from typing import Any, Literal
+from typing import Any
 from uuid import uuid4
 
 from app.api.schemas import RefractionStaticApplyRequest, RefractionStaticModelRequest
@@ -18,7 +18,10 @@ from app.services.refraction_static_apply_trace_store import (
 from app.services.refraction_static_artifacts import write_refraction_static_artifacts
 from app.services.refraction_static_datum import build_refraction_datum_statics
 from app.services.refraction_static_inputs import build_refraction_static_input_model
-from app.services.refraction_static_types import RefractionStaticInputModel
+from app.services.refraction_static_types import (
+    RefractionStaticInputModel,
+    ResolvedRefractionFirstLayer,
+)
 from app.services.refraction_static_v1 import (
     estimate_global_v1_from_direct_arrivals,
     write_refraction_v1_artifacts,
@@ -29,14 +32,6 @@ from app.services.refraction_static_weathering_replacement import (
 
 _REQUEST_JSON_NAME = 'refraction_static_request.json'
 _ARTIFACT_ONLY_DONE_MESSAGE = 'refraction_static_artifacts_written_artifact_only'
-
-
-@dataclass(frozen=True)
-class ResolvedRefractionFirstLayer:
-    mode: Literal['constant', 'estimate_direct_arrival']
-    weathering_velocity_m_s: float
-    status: str
-    qc: dict[str, Any]
 
 
 @dataclass(frozen=True)
@@ -55,19 +50,17 @@ def normalize_refraction_first_layer_request(
 ) -> ResolvedRefractionFirstLayer:
     """Resolve the first-layer/V1 request block to the V1 used downstream."""
     mode = model.first_layer_mode
-    if mode == 'estimate_direct_arrival':
-        raise RefractionFirstLayerNotImplemented(
-            'model.first_layer.mode="estimate_direct_arrival" is not implemented yet'
-        )
     velocity = float(model.resolved_weathering_velocity_m_s)
+    status = 'estimated' if mode == 'estimate_direct_arrival' else 'resolved_constant'
     return ResolvedRefractionFirstLayer(
         mode=mode,
         weathering_velocity_m_s=velocity,
-        status='resolved_constant',
+        status=status,
         qc={
             'v1_mode': mode,
+            'weathering_velocity_m_s': velocity,
             'resolved_weathering_velocity_m_s': velocity,
-            'v1_status': 'resolved_constant',
+            'v1_status': status,
         },
     )
 
@@ -121,7 +114,12 @@ def resolve_refraction_first_layer_request(
             mode='estimate_direct_arrival',
             weathering_velocity_m_s=estimate.resolved_weathering_velocity_m_s,
             status='estimated',
-            qc=estimate.qc,
+            qc={
+                **estimate.qc,
+                'weathering_velocity_m_s': (
+                    estimate.resolved_weathering_velocity_m_s
+                ),
+            },
         ),
         input_model=input_model,
     )
@@ -234,6 +232,7 @@ def _run_refraction_static_apply_job_body(
         state=state,
         job_dir=job_dir,
         input_model=first_layer.input_model,
+        resolved_first_layer=first_layer.resolved,
     )
     _set_job_progress_message(
         state,
@@ -256,6 +255,7 @@ def _run_refraction_static_apply_job_body(
         file_id=active_req.file_id,
         key1_byte=active_req.key1_byte,
         key2_byte=active_req.key2_byte,
+        resolved_first_layer=first_layer.resolved,
     )
     _set_job_progress_message(
         state,
@@ -273,6 +273,7 @@ def _run_refraction_static_apply_job_body(
         result=datum_result,
         req=active_req,
         job_dir=job_dir,
+        resolved_first_layer=first_layer.resolved,
     )
     if active_req.apply.register_corrected_file:
         _set_job_progress_message(

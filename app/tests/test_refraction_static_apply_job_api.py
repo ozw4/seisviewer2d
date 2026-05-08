@@ -271,6 +271,9 @@ def test_run_refraction_static_apply_job_writes_artifacts_and_completes(
     assert len(replacements) == 1
     assert replacements[0]['req'] is req
     assert replacements[0]['job_dir'] == job_dir
+    replacement_resolved = replacements[0]['resolved_first_layer']
+    assert replacement_resolved.mode == 'constant'
+    assert replacement_resolved.weathering_velocity_m_s == pytest.approx(800.0)
     assert len(datum_builds) == 1
     assert datum_builds[0]['weathering_replacement_result'] is replacement_result
     assert datum_builds[0]['datum'] is req.datum
@@ -280,10 +283,14 @@ def test_run_refraction_static_apply_job_writes_artifacts_and_completes(
     assert datum_builds[0]['file_id'] == req.file_id
     assert datum_builds[0]['key1_byte'] == req.key1_byte
     assert datum_builds[0]['key2_byte'] == req.key2_byte
+    assert datum_builds[0]['resolved_first_layer'] is replacement_resolved
     assert len(artifact_writes) == 1
     assert artifact_writes[0]['result'] is datum_result
     assert artifact_writes[0]['req'] is req
     assert artifact_writes[0]['job_dir'] == job_dir
+    resolved_first_layer = artifact_writes[0]['resolved_first_layer']
+    assert resolved_first_layer.mode == 'constant'
+    assert resolved_first_layer.weathering_velocity_m_s == pytest.approx(800.0)
     with client.app.state.sv.lock:
         job = dict(client.app.state.sv.jobs[job_id])
     assert job['status'] == 'done'
@@ -404,8 +411,15 @@ def test_run_refraction_static_apply_job_estimates_v1_before_downstream_work(
     assert replacement_calls[0]['input_model'] is input_model
     assert resolved_req.model.first_layer_mode == 'estimate_direct_arrival'
     assert resolved_req.model.resolved_weathering_velocity_m_s == pytest.approx(812.5)
+    replacement_resolved = replacement_calls[0]['resolved_first_layer']
+    assert replacement_resolved.mode == 'estimate_direct_arrival'
+    assert replacement_resolved.weathering_velocity_m_s == pytest.approx(812.5)
     assert len(artifact_calls) == 1
     assert artifact_calls[0]['req'] is resolved_req
+    resolved_first_layer = artifact_calls[0]['resolved_first_layer']
+    assert resolved_first_layer is replacement_resolved
+    assert resolved_first_layer.mode == 'estimate_direct_arrival'
+    assert resolved_first_layer.weathering_velocity_m_s == pytest.approx(812.5)
 
 
 def test_run_refraction_static_apply_job_registers_corrected_file_when_requested(

@@ -10,6 +10,17 @@ import numpy as np
 
 
 BedrockVelocityMode = Literal['solve_global', 'fixed_global']
+RefractionFirstLayerMode = Literal['constant', 'estimate_direct_arrival']
+
+
+@dataclass(frozen=True)
+class ResolvedRefractionFirstLayer:
+    """Resolved V1/first-layer velocity used by downstream refraction statics."""
+
+    mode: RefractionFirstLayerMode
+    weathering_velocity_m_s: float
+    status: str
+    qc: dict[str, Any]
 
 
 @dataclass(frozen=True)
@@ -598,6 +609,7 @@ class RefractionStaticApplyTraceStoreResult:
 
 __all__ = [
     'BedrockVelocityMode',
+    'RefractionFirstLayerMode',
     'RefractionBedrockSlownessResult',
     'RefractionDatumStaticsResult',
     'RefractionEndpointTable',
@@ -610,4 +622,5 @@ __all__ = [
     'RefractionTraceShiftValidationResult',
     'RefractionWeatheringReplacementStaticsResult',
     'RefractionWeatheringThicknessResult',
+    'ResolvedRefractionFirstLayer',
 ]

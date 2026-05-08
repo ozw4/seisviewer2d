@@ -19,6 +19,7 @@ from app.services.refraction_static_bedrock import (
 from app.services.refraction_static_design_matrix import (
     build_refraction_static_design_matrix,
 )
+from app.services.refraction_static_first_layer import resolve_weathering_velocity_m_s
 from app.services.refraction_static_solver import solve_refraction_static_bounded_ls
 from app.services.refraction_static_types import (
     RefractionBedrockSlownessResult,
@@ -26,6 +27,7 @@ from app.services.refraction_static_types import (
     RefractionStaticDesignMatrix,
     RefractionStaticInputModel,
     RefractionStaticSolverResult,
+    ResolvedRefractionFirstLayer,
 )
 
 REFRACTION_HALF_INTERCEPT_QC_JSON_NAME = 'refraction_half_intercept_qc.json'
@@ -174,6 +176,7 @@ def estimate_refraction_half_intercept_times_from_first_breaks(
     state: AppState,
     job_dir: Path | None = None,
     input_model: RefractionStaticInputModel | None = None,
+    resolved_first_layer: ResolvedRefractionFirstLayer | None = None,
 ) -> RefractionHalfInterceptTimeResult:
     """Build inputs, solve the GLI system, and emit the half-intercept model."""
     from app.services.refraction_static_inputs import build_refraction_static_input_model
@@ -192,6 +195,7 @@ def estimate_refraction_half_intercept_times_from_first_breaks(
                 solver=req.solver,
                 job_dir=job_dir,
                 include_debug_objects=True,
+                resolved_first_layer=resolved_first_layer,
             )
             return build_refraction_half_intercept_time_model_from_bedrock_result(
                 bedrock_result=bedrock_result,
@@ -200,17 +204,23 @@ def estimate_refraction_half_intercept_times_from_first_breaks(
         design_matrix = build_refraction_static_design_matrix(
             input_model=input_model,
             model=req.model,
+            resolved_first_layer=resolved_first_layer,
         )
         solver_result = solve_refraction_static_bounded_ls(
             design_matrix=design_matrix,
             model=req.model,
             solver=req.solver,
+            resolved_first_layer=resolved_first_layer,
         )
         return build_refraction_half_intercept_time_model(
             input_model=input_model,
             design_matrix=design_matrix,
             solver_result=solver_result,
-            weathering_velocity_m_s=req.model.resolved_weathering_velocity_m_s,
+            weathering_velocity_m_s=resolve_weathering_velocity_m_s(
+                model=req.model,
+                resolved_first_layer=resolved_first_layer,
+                name='model.weathering_velocity_m_s',
+            ),
             min_picks_per_node=req.solver.min_picks_per_node,
             job_dir=job_dir,
         )

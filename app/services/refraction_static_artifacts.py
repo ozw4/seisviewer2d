@@ -17,6 +17,7 @@ from app.services.refraction_static_status import REFRACTION_STATIC_STATUSES
 from app.services.refraction_static_types import (
     RefractionDatumStaticsResult,
     RefractionStaticArtifactSet,
+    ResolvedRefractionFirstLayer,
 )
 from app.services.refraction_static_v1 import (
     REFRACTION_V1_ESTIMATES_CSV_NAME,
@@ -200,13 +201,23 @@ def write_refraction_static_artifacts(
     result: RefractionDatumStaticsResult,
     req: RefractionStaticApplyRequest,
     job_dir: Path,
+    resolved_first_layer: ResolvedRefractionFirstLayer | None = None,
 ) -> RefractionStaticArtifactSet:
     """Write the final refraction statics NPZ, QC, CSV, and manifest artifacts."""
     root = _validate_job_dir(job_dir)
     values = _validate_result(result)
     request = RefractionStaticApplyRequest.model_validate(req)
-    artifact_entries = _artifact_entries_for_request(request)
-    qc = build_refraction_static_qc_payload(result=values.result, req=request)
+    first_layer = _validate_resolved_first_layer(
+        result=values.result,
+        req=request,
+        resolved_first_layer=resolved_first_layer,
+    )
+    artifact_entries = _artifact_entries_for_request(request, first_layer)
+    qc = build_refraction_static_qc_payload(
+        result=values.result,
+        req=request,
+        resolved_first_layer=first_layer,
+    )
     manifest = _build_manifest_payload(artifact_entries)
 
     paths = RefractionStaticArtifactSet(
@@ -226,12 +237,14 @@ def write_refraction_static_artifacts(
         result=values.result,
         req=request,
         path=paths.solution_npz,
+        resolved_first_layer=first_layer,
     )
     write_refraction_static_qc_json(
         result=values.result,
         req=request,
         path=paths.qc_json,
         qc=qc,
+        resolved_first_layer=first_layer,
     )
     write_refraction_statics_csv(result=values.result, path=paths.refraction_statics_csv)
     write_near_surface_model_csv(result=values.result, path=paths.near_surface_model_csv)
@@ -253,7 +266,9 @@ def write_refraction_static_artifacts(
         paths.first_break_residuals_csv,
         paths.refraction_static_components_csv,
         paths.manifest_json,
-    ) + tuple(root / str(item['name']) for item in _v1_artifact_entries(request))
+    ) + tuple(
+        root / str(item['name']) for item in _v1_artifact_entries(request, first_layer)
+    )
     for artifact_path in artifact_paths:
         if not artifact_path.is_file():
             raise RefractionStaticArtifactError(
@@ -267,6 +282,7 @@ def write_refraction_static_solution_npz(
     result: RefractionDatumStaticsResult,
     req: RefractionStaticApplyRequest,
     path: Path,
+    resolved_first_layer: ResolvedRefractionFirstLayer | None = None,
 ) -> None:
     """Write the compressed, pickle-free machine-readable solution artifact."""
     values = _validate_result(result)
@@ -274,6 +290,7 @@ def write_refraction_static_solution_npz(
     payload = build_refraction_static_solution_arrays(
         result=values.result,
         req=request,
+        resolved_first_layer=resolved_first_layer,
     )
     _write_npz_atomic(Path(path), payload)
 
@@ -284,13 +301,20 @@ def write_refraction_static_qc_json(
     req: RefractionStaticApplyRequest,
     path: Path,
     qc: dict[str, Any] | None = None,
+    resolved_first_layer: ResolvedRefractionFirstLayer | None = None,
 ) -> dict[str, Any]:
     """Write and return the strict-JSON QC summary artifact."""
     values = _validate_result(result)
     request = RefractionStaticApplyRequest.model_validate(req)
+    first_layer = _validate_resolved_first_layer(
+        result=values.result,
+        req=request,
+        resolved_first_layer=resolved_first_layer,
+    )
     payload = qc if qc is not None else build_refraction_static_qc_payload(
         result=values.result,
         req=request,
+        resolved_first_layer=first_layer,
     )
     _write_json_atomic(Path(path), payload)
     return payload
@@ -340,9 +364,15 @@ def build_refraction_static_solution_arrays(
     *,
     result: RefractionDatumStaticsResult,
     req: RefractionStaticApplyRequest,
+    resolved_first_layer: ResolvedRefractionFirstLayer | None = None,
 ) -> dict[str, np.ndarray]:
     values = _validate_result(result)
     r = values.result
+    first_layer = _validate_resolved_first_layer(
+        result=r,
+        req=req,
+        resolved_first_layer=resolved_first_layer,
+    )
     arrays: dict[str, np.ndarray] = {
         'artifact_version': _scalar_str(ARTIFACT_VERSION),
         'method': _scalar_str(METHOD),
@@ -359,10 +389,13 @@ def build_refraction_static_solution_arrays(
         'n_rejected_by_robust': _scalar_int(
             np.count_nonzero(r.rejected_by_robust_mask)
         ),
-        'v1_mode': _scalar_str(req.model.first_layer_mode),
+        'v1_mode': _scalar_str(first_layer.mode),
+        'v1_weathering_velocity_m_s': _scalar_float(
+            first_layer.weathering_velocity_m_s
+        ),
         'weathering_velocity_m_s': _scalar_float(r.weathering_velocity_m_s),
         'resolved_weathering_velocity_m_s': _scalar_float(
-            r.weathering_velocity_m_s
+            first_layer.weathering_velocity_m_s
         ),
         'bedrock_velocity_m_s': _scalar_float(r.bedrock_velocity_m_s),
         'bedrock_slowness_s_per_m': _scalar_float(r.bedrock_slowness_s_per_m),
@@ -553,9 +586,15 @@ def build_refraction_static_qc_payload(
     *,
     result: RefractionDatumStaticsResult,
     req: RefractionStaticApplyRequest,
+    resolved_first_layer: ResolvedRefractionFirstLayer | None = None,
 ) -> dict[str, Any]:
     values = _validate_result(result)
     r = values.result
+    first_layer = _validate_resolved_first_layer(
+        result=r,
+        req=req,
+        resolved_first_layer=resolved_first_layer,
+    )
     residual_ms = r.residual_time_s[r.used_row_mask] * 1000.0
     refraction_ms = r.refraction_trace_shift_s_sorted * 1000.0
     valid_refraction_ms = refraction_ms[r.trace_static_valid_mask_sorted]
@@ -566,7 +605,7 @@ def build_refraction_static_qc_payload(
         ]
     )
     request = _request_summary(req)
-    artifact_entries = _artifact_entries_for_request(req)
+    artifact_entries = _artifact_entries_for_request(req, first_layer)
     payload: dict[str, Any] = {
         'artifact_version': ARTIFACT_VERSION,
         'method': METHOD,
@@ -575,15 +614,11 @@ def build_refraction_static_qc_payload(
         'sign_convention': SIGN_CONVENTION,
         'request': request,
         'velocity': {
-            'v1_mode': req.model.first_layer_mode,
-            'v1_status': (
-                'estimated'
-                if req.model.first_layer_mode == 'estimate_direct_arrival'
-                else 'resolved_constant'
-            ),
+            'v1_mode': first_layer.mode,
+            'v1_status': first_layer.status,
             'weathering_velocity_m_s': _json_float(r.weathering_velocity_m_s),
             'resolved_weathering_velocity_m_s': _json_float(
-                r.weathering_velocity_m_s
+                first_layer.weathering_velocity_m_s
             ),
             'bedrock_velocity_mode': r.bedrock_velocity_mode,
             'bedrock_velocity_m_s': _json_float(r.bedrock_velocity_m_s),
@@ -780,6 +815,65 @@ def _validate_result(result: RefractionDatumStaticsResult) -> _ValidatedResult:
         n_source_endpoints=n_source,
         n_receiver_endpoints=n_receiver,
         n_rows=n_rows,
+    )
+
+
+def _validate_resolved_first_layer(
+    *,
+    result: RefractionDatumStaticsResult,
+    req: RefractionStaticApplyRequest,
+    resolved_first_layer: ResolvedRefractionFirstLayer | None,
+) -> ResolvedRefractionFirstLayer:
+    expected_mode = req.model.first_layer_mode
+    result_velocity = float(result.weathering_velocity_m_s)
+    if resolved_first_layer is None:
+        try:
+            velocity = float(req.model.resolved_weathering_velocity_m_s)
+        except ValueError as exc:
+            raise RefractionStaticArtifactError(
+                'resolved first-layer weathering velocity is required'
+            ) from exc
+        status = (
+            'estimated'
+            if expected_mode == 'estimate_direct_arrival'
+            else 'resolved_constant'
+        )
+        resolved_first_layer = ResolvedRefractionFirstLayer(
+            mode=expected_mode,
+            weathering_velocity_m_s=velocity,
+            status=status,
+            qc={
+                'v1_mode': expected_mode,
+                'weathering_velocity_m_s': velocity,
+                'resolved_weathering_velocity_m_s': velocity,
+                'v1_status': status,
+            },
+        )
+
+    if resolved_first_layer.mode != expected_mode:
+        raise RefractionStaticArtifactError(
+            'resolved first-layer mode does not match request'
+        )
+    velocity = float(resolved_first_layer.weathering_velocity_m_s)
+    if not np.isfinite(velocity) or velocity <= 0.0:
+        raise RefractionStaticArtifactError(
+            'resolved first-layer weathering velocity must be finite and positive'
+        )
+    if not _velocities_close(velocity, result_velocity):
+        raise RefractionStaticArtifactError(
+            'resolved first-layer weathering velocity does not match result'
+        )
+    return resolved_first_layer
+
+
+def _velocities_close(left: float, right: float) -> bool:
+    return bool(
+        np.isclose(
+            float(left),
+            float(right),
+            rtol=1.0e-6,
+            atol=1.0e-6,
+        )
     )
 
 
@@ -1055,14 +1149,21 @@ def _request_summary(req: RefractionStaticApplyRequest) -> dict[str, Any]:
 
 def _artifact_entries_for_request(
     req: RefractionStaticApplyRequest,
+    resolved_first_layer: ResolvedRefractionFirstLayer | None = None,
 ) -> tuple[dict[str, str | bool], ...]:
-    return _ARTIFACTS + _v1_artifact_entries(req)
+    return _ARTIFACTS + _v1_artifact_entries(req, resolved_first_layer)
 
 
 def _v1_artifact_entries(
     req: RefractionStaticApplyRequest,
+    resolved_first_layer: ResolvedRefractionFirstLayer | None = None,
 ) -> tuple[dict[str, str | bool], ...]:
-    if req.model.first_layer_mode == 'estimate_direct_arrival':
+    mode = (
+        resolved_first_layer.mode
+        if resolved_first_layer is not None
+        else req.model.first_layer_mode
+    )
+    if mode == 'estimate_direct_arrival':
         return _V1_ARTIFACTS
     return ()
 
