@@ -109,6 +109,11 @@ EXPECTED_FILENAMES = {
     REFRACTION_STATIC_ARTIFACTS_JSON_NAME,
 }
 
+UPSTREAM_V1_ARTIFACT_NAMES = (
+    REFRACTION_V1_QC_JSON_NAME,
+    REFRACTION_V1_ESTIMATES_CSV_NAME,
+)
+
 
 def test_write_refraction_static_artifacts_npz_schema(tmp_path: Path) -> None:
     paths = write_refraction_static_artifacts(
@@ -234,14 +239,10 @@ def test_write_refraction_static_artifacts_qc_json(tmp_path: Path) -> None:
     assert payload['status_counts']['trace_static_status']['ok'] == 3
     assert payload['status_counts']['node_datum_status']['ok'] == 2
     assert payload['first_break_fit']['residual_rms_ms'] == pytest.approx(1.0)
-    assert len(payload['artifacts']) == 11
-    artifact_descriptions = {
-        item['name']: item['description'] for item in payload['artifacts']
-    }
-    assert 'constant V1 details' in artifact_descriptions[REFRACTION_V1_QC_JSON_NAME]
-    assert 'not produced for constant' in artifact_descriptions[
-        REFRACTION_V1_ESTIMATES_CSV_NAME
-    ]
+    assert len(payload['artifacts']) == 9
+    artifact_names = {item['name'] for item in payload['artifacts']}
+    assert REFRACTION_V1_QC_JSON_NAME not in artifact_names
+    assert REFRACTION_V1_ESTIMATES_CSV_NAME not in artifact_names
     json.dumps(payload, allow_nan=False)
     assert not _contains_absolute_path(payload)
 
@@ -310,19 +311,10 @@ def test_refraction_static_artifacts_manifest_and_download_visibility(
     manifest = json.loads(
         (tmp_path / REFRACTION_STATIC_ARTIFACTS_JSON_NAME).read_text(encoding='utf-8')
     )
-    assert {item['name'] for item in manifest['artifacts']} == {
-        REFRACTION_STATIC_SOLUTION_NPZ_NAME,
-        REFRACTION_STATIC_QC_JSON_NAME,
-        REFRACTION_STATICS_CSV_NAME,
-        NEAR_SURFACE_MODEL_CSV_NAME,
-        FIRST_BREAK_RESIDUALS_CSV_NAME,
-        REFRACTION_STATIC_COMPONENTS_CSV_NAME,
-        SOURCE_STATIC_TABLE_CSV_NAME,
-        RECEIVER_STATIC_TABLE_CSV_NAME,
-        SOURCE_RECEIVER_STATIC_TABLE_NPZ_NAME,
-        REFRACTION_V1_QC_JSON_NAME,
-        REFRACTION_V1_ESTIMATES_CSV_NAME,
-    }
+    assert {item['name'] for item in manifest['artifacts']} == (
+        EXPECTED_FILENAMES - {REFRACTION_STATIC_ARTIFACTS_JSON_NAME}
+    )
+    assert {item['origin'] for item in manifest['artifacts']} == {'final'}
 
     state = app.state.sv
     with state.lock:
@@ -352,7 +344,72 @@ def test_refraction_static_artifacts_manifest_and_download_visibility(
             state.jobs.clear()
 
 
-def test_refraction_static_manifest_marks_constant_v1_artifacts_optional(
+def test_refraction_static_manifest_includes_v1_artifacts_after_v1_estimation(
+    tmp_path: Path,
+) -> None:
+    _write_upstream_v1_artifacts(tmp_path)
+
+    write_refraction_static_artifacts(
+        result=_result_with_weathering_velocity(812.5),
+        req=_estimated_v1_request(),
+        job_dir=tmp_path,
+        resolved_first_layer=_resolved_estimated_v1(),
+        upstream_artifact_names=UPSTREAM_V1_ARTIFACT_NAMES,
+    )
+
+    manifest = json.loads(
+        (tmp_path / REFRACTION_STATIC_ARTIFACTS_JSON_NAME).read_text(encoding='utf-8')
+    )
+    artifacts = {item['name']: item for item in manifest['artifacts']}
+    assert artifacts[REFRACTION_V1_QC_JSON_NAME]['required'] is True
+    assert artifacts[REFRACTION_V1_QC_JSON_NAME]['origin'] == 'upstream'
+    assert artifacts[REFRACTION_V1_ESTIMATES_CSV_NAME]['required'] is True
+    assert artifacts[REFRACTION_V1_ESTIMATES_CSV_NAME]['origin'] == 'upstream'
+    assert artifacts[REFRACTION_STATIC_SOLUTION_NPZ_NAME]['origin'] == 'final'
+
+    qc = json.loads((tmp_path / REFRACTION_STATIC_QC_JSON_NAME).read_text())
+    qc_artifacts = {item['name']: item for item in qc['artifacts']}
+    assert REFRACTION_V1_QC_JSON_NAME in qc_artifacts
+    assert REFRACTION_V1_ESTIMATES_CSV_NAME in qc_artifacts
+
+
+def test_refraction_static_artifact_writer_missing_upstream_v1_artifacts_error_is_clear(
+    tmp_path: Path,
+) -> None:
+    with pytest.raises(
+        RefractionStaticArtifactError,
+        match='declared upstream artifact missing: refraction_v1_qc.json',
+    ):
+        write_refraction_static_artifacts(
+            result=_result_with_weathering_velocity(812.5),
+            req=_estimated_v1_request(),
+            job_dir=tmp_path,
+            resolved_first_layer=_resolved_estimated_v1(),
+            upstream_artifact_names=UPSTREAM_V1_ARTIFACT_NAMES,
+        )
+
+
+def test_refraction_static_artifact_writer_estimated_v1_omits_unprovided_upstream_artifacts(
+    tmp_path: Path,
+) -> None:
+    write_refraction_static_artifacts(
+        result=_result_with_weathering_velocity(812.5),
+        req=_estimated_v1_request(),
+        job_dir=tmp_path,
+        resolved_first_layer=_resolved_estimated_v1(),
+    )
+
+    manifest = json.loads(
+        (tmp_path / REFRACTION_STATIC_ARTIFACTS_JSON_NAME).read_text(encoding='utf-8')
+    )
+    artifacts = {item['name']: item for item in manifest['artifacts']}
+    assert REFRACTION_V1_QC_JSON_NAME not in artifacts
+    assert REFRACTION_V1_ESTIMATES_CSV_NAME not in artifacts
+    assert not (tmp_path / REFRACTION_V1_QC_JSON_NAME).exists()
+    assert not (tmp_path / REFRACTION_V1_ESTIMATES_CSV_NAME).exists()
+
+
+def test_refraction_static_artifact_writer_constant_v1_does_not_require_v1_files(
     tmp_path: Path,
 ) -> None:
     write_refraction_static_artifacts(
@@ -365,15 +422,16 @@ def test_refraction_static_manifest_marks_constant_v1_artifacts_optional(
         (tmp_path / REFRACTION_STATIC_ARTIFACTS_JSON_NAME).read_text(encoding='utf-8')
     )
     artifacts = {item['name']: item for item in manifest['artifacts']}
-    assert artifacts[REFRACTION_V1_QC_JSON_NAME]['required'] is False
-    assert artifacts[REFRACTION_V1_ESTIMATES_CSV_NAME]['required'] is False
+    assert REFRACTION_V1_QC_JSON_NAME not in artifacts
+    assert REFRACTION_V1_ESTIMATES_CSV_NAME not in artifacts
     assert not (tmp_path / REFRACTION_V1_QC_JSON_NAME).exists()
     assert not (tmp_path / REFRACTION_V1_ESTIMATES_CSV_NAME).exists()
 
     qc = json.loads((tmp_path / REFRACTION_STATIC_QC_JSON_NAME).read_text())
     qc_artifacts = {item['name']: item for item in qc['artifacts']}
-    assert REFRACTION_V1_QC_JSON_NAME in qc_artifacts
-    assert REFRACTION_V1_ESTIMATES_CSV_NAME in qc_artifacts
+    assert REFRACTION_V1_QC_JSON_NAME not in qc_artifacts
+    assert REFRACTION_V1_ESTIMATES_CSV_NAME not in qc_artifacts
+    assert qc['velocity']['v1_mode'] == 'constant'
 
 
 def test_refraction_static_manifest_strict_json(tmp_path: Path) -> None:
@@ -393,6 +451,7 @@ def test_refraction_static_manifest_strict_json(tmp_path: Path) -> None:
         'name',
         'kind',
         'required',
+        'origin',
     }.issubset(payload['artifacts'][0])
 
 
@@ -539,3 +598,14 @@ def _contains_absolute_path(value: object) -> bool:
     if isinstance(value, list):
         return any(_contains_absolute_path(item) for item in value)
     return False
+
+
+def _write_upstream_v1_artifacts(root: Path) -> None:
+    (root / REFRACTION_V1_QC_JSON_NAME).write_text(
+        '{"v1_status":"estimated"}',
+        encoding='utf-8',
+    )
+    (root / REFRACTION_V1_ESTIMATES_CSV_NAME).write_text(
+        'group_kind,group_key,status\nsource_endpoint,source:1,ok\n',
+        encoding='utf-8',
+    )

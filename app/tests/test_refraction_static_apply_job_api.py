@@ -505,6 +505,10 @@ def test_refraction_static_job_uses_resolved_first_layer_dataclass_downstream(
     assert resolved_first_layer is replacement_resolved
     assert resolved_first_layer.mode == 'estimate_direct_arrival'
     assert resolved_first_layer.weathering_velocity_m_s == pytest.approx(812.5)
+    assert artifact_calls[0]['upstream_artifact_names'] == (
+        REFRACTION_V1_QC_JSON_NAME,
+        REFRACTION_V1_ESTIMATES_CSV_NAME,
+    )
 
 
 def test_run_refraction_static_apply_job_registers_corrected_file_when_requested(
@@ -623,11 +627,8 @@ def test_run_refraction_static_apply_job_artifact_only_writes_real_final_artifac
     assert qc['status_counts']['node_solution_status']['solved'] == 2
     assert qc['status_counts']['node_weathering_status']['zero_thickness'] == 1
     assert qc['status_counts']['trace_static_status']['not_observed'] == 1
-    expected_qc_artifacts = (
-        FINAL_REFRACTION_ARTIFACTS - {REFRACTION_STATIC_ARTIFACTS_JSON_NAME}
-    ) | {
-        REFRACTION_V1_QC_JSON_NAME,
-        REFRACTION_V1_ESTIMATES_CSV_NAME,
+    expected_qc_artifacts = FINAL_REFRACTION_ARTIFACTS - {
+        REFRACTION_STATIC_ARTIFACTS_JSON_NAME
     }
     assert {item['name'] for item in qc['artifacts']} == expected_qc_artifacts
 
@@ -683,11 +684,44 @@ def test_refraction_static_job_lists_v1_artifacts_when_v1_estimated(
     manifest = json.loads(
         (job_dir / REFRACTION_STATIC_ARTIFACTS_JSON_NAME).read_text(encoding='utf-8')
     )
-    manifest_names = {item['name'] for item in manifest['artifacts']}
+    manifest_artifacts = {item['name']: item for item in manifest['artifacts']}
+    manifest_names = set(manifest_artifacts)
     assert REFRACTION_V1_QC_JSON_NAME in manifest_names
     assert REFRACTION_V1_ESTIMATES_CSV_NAME in manifest_names
+    assert manifest_artifacts[REFRACTION_V1_QC_JSON_NAME]['origin'] == 'upstream'
+    assert (
+        manifest_artifacts[REFRACTION_V1_ESTIMATES_CSV_NAME]['origin'] == 'upstream'
+    )
     qc = json.loads((job_dir / REFRACTION_STATIC_QC_JSON_NAME).read_text())
     assert REFRACTION_V1_QC_JSON_NAME in {item['name'] for item in qc['artifacts']}
+
+
+def test_refraction_static_download_new_v1_artifacts(
+    client: TestClient,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    job_id = 'refraction-download-new-v1-artifacts-e2e'
+    job_dir = tmp_path / 'jobs' / job_id
+    payload = _payload()
+    _enable_v1_estimation(payload)
+    req = RefractionStaticApplyRequest.model_validate(payload)
+    _create_refraction_job(client, job_id=job_id, req=req, job_dir=job_dir)
+    _stub_upstream_refraction_result(monkeypatch, datum_result=_artifact_result())
+    _stub_v1_estimation(monkeypatch)
+
+    run_refraction_static_apply_job(job_id, req, client.app.state.sv)
+
+    for artifact_name in (
+        REFRACTION_V1_QC_JSON_NAME,
+        REFRACTION_V1_ESTIMATES_CSV_NAME,
+    ):
+        response = client.get(
+            f'/statics/job/{job_id}/download',
+            params={'name': artifact_name},
+        )
+        assert response.status_code == 200
+        assert response.content
 
 
 def test_refraction_static_job_lists_t1lsst_artifact_when_conversion_enabled(

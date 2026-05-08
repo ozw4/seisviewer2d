@@ -26,6 +26,8 @@ from app.services.refraction_static_types import (
     ResolvedRefractionFirstLayer,
 )
 from app.services.refraction_static_v1 import (
+    REFRACTION_V1_ESTIMATES_CSV_NAME,
+    REFRACTION_V1_QC_JSON_NAME,
     estimate_global_v1_from_direct_arrivals,
     write_refraction_v1_artifacts,
 )
@@ -42,6 +44,7 @@ class _ResolvedFirstLayerRequest:
     req: RefractionStaticApplyRequest
     resolved: ResolvedRefractionFirstLayer
     input_model: RefractionStaticInputModel | None
+    upstream_artifact_names: tuple[str, ...] = ()
 
 
 class RefractionFirstLayerNotImplemented(NotImplementedError):
@@ -102,6 +105,10 @@ def resolve_refraction_first_layer_request(
             },
         ),
         input_model=input_model,
+        upstream_artifact_names=(
+            REFRACTION_V1_QC_JSON_NAME,
+            REFRACTION_V1_ESTIMATES_CSV_NAME,
+        ),
     )
 
 
@@ -253,6 +260,7 @@ def _run_refraction_static_apply_job_body(
         req=active_req,
         job_dir=job_dir,
         resolved_first_layer=first_layer.resolved,
+        upstream_artifact_names=first_layer.upstream_artifact_names,
     )
     if active_req.apply.register_corrected_file:
         _set_job_progress_message(
