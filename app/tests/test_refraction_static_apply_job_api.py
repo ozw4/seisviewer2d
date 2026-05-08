@@ -576,6 +576,13 @@ def test_run_refraction_static_apply_job_artifact_only_writes_real_final_artifac
         'zero_thickness'
     ] == 1
 
+    request_download = client.get(
+        f'/statics/job/{job_id}/download',
+        params={'name': REQUEST_JSON_NAME},
+    )
+    assert request_download.status_code == 200
+    assert request_download.json()['job_id'] == job_id
+
 
 def test_refraction_static_job_lists_v1_artifacts_when_v1_estimated(
     client: TestClient,

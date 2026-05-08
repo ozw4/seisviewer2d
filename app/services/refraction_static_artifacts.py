@@ -41,6 +41,7 @@ SOURCE_STATIC_TABLE_CSV_NAME = 'source_static_table.csv'
 RECEIVER_STATIC_TABLE_CSV_NAME = 'receiver_static_table.csv'
 SOURCE_RECEIVER_STATIC_TABLE_NPZ_NAME = 'source_receiver_static_table.npz'
 REFRACTION_STATIC_ARTIFACTS_JSON_NAME = 'refraction_static_artifacts.json'
+REFRACTION_STATIC_REQUEST_JSON_NAME = 'refraction_static_request.json'
 
 ARTIFACT_VERSION = '1.0'
 METHOD = 'gli_variable_thickness'
@@ -155,7 +156,10 @@ _T1LSST_1LAYER_ARTIFACTS: tuple[dict[str, str | bool], ...] = (
 REFRACTION_STATIC_REGISTERED_ARTIFACT_NAMES = frozenset(
     str(item['name'])
     for item in _ARTIFACTS + _V1_ARTIFACTS + _T1LSST_1LAYER_ARTIFACTS
-) | {REFRACTION_STATIC_ARTIFACTS_JSON_NAME}
+) | {
+    REFRACTION_STATIC_ARTIFACTS_JSON_NAME,
+    REFRACTION_STATIC_REQUEST_JSON_NAME,
+}
 
 _TRACE_STATICS_COLUMNS = (
     'sorted_trace_index',
@@ -267,7 +271,6 @@ _SOURCE_STATIC_TABLE_COLUMNS = (
     'elevation_correction_ms',
     'total_static_ms',
     'total_applied_shift_ms',
-    'sign_convention',
     'solution_status',
     'weathering_status',
     'datum_status',
@@ -299,7 +302,6 @@ _RECEIVER_STATIC_TABLE_COLUMNS = (
     'elevation_correction_ms',
     'total_static_ms',
     'total_applied_shift_ms',
-    'sign_convention',
     'solution_status',
     'weathering_status',
     'datum_status',
@@ -1492,7 +1494,6 @@ def _source_static_table_rows(
                 'total_applied_shift_ms': _csv_ms(
                     result.source_refraction_shift_s[index]
                 ),
-                'sign_convention': SIGN_CONVENTION,
                 'solution_status': str(
                     node_context['solution_status'].get(node_id, 'missing_solution')
                 ),
@@ -1562,7 +1563,6 @@ def _receiver_static_table_rows(
                 'total_applied_shift_ms': _csv_ms(
                     result.receiver_refraction_shift_s[index]
                 ),
-                'sign_convention': SIGN_CONVENTION,
                 'solution_status': str(
                     node_context['solution_status'].get(node_id, 'missing_solution')
                 ),
@@ -2066,6 +2066,7 @@ __all__ = [
     'REFRACTION_STATICS_CSV_NAME',
     'REFRACTION_STATIC_ARTIFACTS_JSON_NAME',
     'REFRACTION_STATIC_COMPONENTS_CSV_NAME',
+    'REFRACTION_STATIC_REQUEST_JSON_NAME',
     'REFRACTION_STATIC_REGISTERED_ARTIFACT_NAMES',
     'REFRACTION_STATIC_QC_JSON_NAME',
     'REFRACTION_STATIC_SOLUTION_NPZ_NAME',
