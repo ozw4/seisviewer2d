@@ -14,8 +14,9 @@ import numpy as np
 from app.api.schemas import RefractionStaticApplyOptions, RefractionStaticApplyRequest
 from app.core.state import AppState
 from app.services.refraction_static_types import (
-    RefractionWeatheringThicknessResult,
+    RefractionStaticInputModel,
     RefractionWeatheringReplacementStaticsResult,
+    RefractionWeatheringThicknessResult,
 )
 from app.services.refraction_static_weathering import (
     estimate_weathering_thickness_from_first_breaks,
@@ -210,13 +211,19 @@ def compute_weathering_replacement_statics_from_first_breaks(
     req: RefractionStaticApplyRequest,
     state: AppState,
     job_dir: Path | None = None,
+    input_model: RefractionStaticInputModel | None = None,
 ) -> RefractionWeatheringReplacementStaticsResult:
     """Run the GLI weathering model, then compute replacement static shifts."""
     try:
+        weathering_kwargs: dict[str, Any] = {
+            'req': req,
+            'state': state,
+            'job_dir': job_dir,
+        }
+        if input_model is not None:
+            weathering_kwargs['input_model'] = input_model
         weathering_result = estimate_weathering_thickness_from_first_breaks(
-            req=req,
-            state=state,
-            job_dir=job_dir,
+            **weathering_kwargs
         )
         return build_refraction_weathering_replacement_statics(
             weathering_result=weathering_result,

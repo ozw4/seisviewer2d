@@ -1429,6 +1429,14 @@ class RefractionStaticFirstLayerRequest(BaseModel):
                 'model.first_layer.min_weathering_velocity_m_s must be less than '
                 'model.first_layer.max_weathering_velocity_m_s'
             )
+        if self.mode == 'estimate_direct_arrival' and (
+            self.min_direct_offset_m is None or self.max_direct_offset_m is None
+        ):
+            raise ValueError(
+                'model.first_layer.min_direct_offset_m and '
+                'model.first_layer.max_direct_offset_m are required when '
+                'model.first_layer.mode is estimate_direct_arrival'
+            )
         if (
             self.min_direct_offset_m is not None
             and self.max_direct_offset_m is not None
@@ -1557,9 +1565,9 @@ class RefractionStaticModelRequest(BaseModel):
     def resolved_weathering_velocity_m_s(self) -> float:
         value = self._constant_weathering_velocity_or_none()
         if value is None:
-            raise NotImplementedError(
-                'model.first_layer.mode="estimate_direct_arrival" is not '
-                'implemented yet'
+            raise ValueError(
+                'model.first_layer.mode="estimate_direct_arrival" requires a '
+                'resolved weathering velocity before downstream processing'
             )
         return value
 
@@ -1586,7 +1594,7 @@ class RefractionStaticModelRequest(BaseModel):
                 'are specified'
             )
         if first_layer.mode == 'estimate_direct_arrival':
-            return None
+            return first_layer_velocity
         if first_layer_velocity is None:
             raise ValueError(
                 'model.first_layer.weathering_velocity_m_s is required when '

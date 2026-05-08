@@ -18,6 +18,7 @@ from app.services.refraction_static_half_intercept import (
 )
 from app.services.refraction_static_types import (
     RefractionHalfInterceptTimeResult,
+    RefractionStaticInputModel,
     RefractionWeatheringThicknessResult,
 )
 
@@ -167,13 +168,21 @@ def estimate_weathering_thickness_from_first_breaks(
     req: RefractionStaticApplyRequest,
     state: AppState,
     job_dir: Path | None = None,
+    input_model: RefractionStaticInputModel | None = None,
 ) -> RefractionWeatheringThicknessResult:
     """Estimate half-intercepts from first breaks, then convert to thickness."""
     try:
-        half_intercept_result = estimate_refraction_half_intercept_times_from_first_breaks(
-            req=req,
-            state=state,
-            job_dir=job_dir,
+        half_intercept_kwargs: dict[str, Any] = {
+            'req': req,
+            'state': state,
+            'job_dir': job_dir,
+        }
+        if input_model is not None:
+            half_intercept_kwargs['input_model'] = input_model
+        half_intercept_result = (
+            estimate_refraction_half_intercept_times_from_first_breaks(
+                **half_intercept_kwargs
+            )
         )
         return build_refraction_weathering_thickness_model(
             half_intercept_result=half_intercept_result,

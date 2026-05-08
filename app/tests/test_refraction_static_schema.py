@@ -95,7 +95,11 @@ def test_refraction_static_first_layer_estimate_direct_arrival_schema_valid() ->
     model = RefractionStaticModelRequest.model_validate(
         _model_payload(
             weathering_velocity_m_s=None,
-            first_layer={'mode': 'estimate_direct_arrival'},
+            first_layer={
+                'mode': 'estimate_direct_arrival',
+                'min_direct_offset_m': 20.0,
+                'max_direct_offset_m': 140.0,
+            },
         )
     )
 
@@ -107,3 +111,16 @@ def test_refraction_static_first_layer_estimate_direct_arrival_schema_valid() ->
         match='estimate_direct_arrival',
     ):
         normalize_refraction_first_layer_request(model)
+
+
+def test_refraction_static_first_layer_estimate_requires_direct_offset_gate() -> None:
+    with pytest.raises(
+        ValidationError,
+        match='min_direct_offset_m and .*max_direct_offset_m are required',
+    ):
+        RefractionStaticModelRequest.model_validate(
+            _model_payload(
+                weathering_velocity_m_s=None,
+                first_layer={'mode': 'estimate_direct_arrival'},
+            )
+        )

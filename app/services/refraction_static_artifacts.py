@@ -18,6 +18,10 @@ from app.services.refraction_static_types import (
     RefractionDatumStaticsResult,
     RefractionStaticArtifactSet,
 )
+from app.services.refraction_static_v1 import (
+    REFRACTION_V1_ESTIMATES_CSV_NAME,
+    REFRACTION_V1_QC_JSON_NAME,
+)
 
 REFRACTION_STATIC_SOLUTION_NPZ_NAME = 'refraction_static_solution.npz'
 REFRACTION_STATIC_QC_JSON_NAME = 'refraction_static_qc.json'
@@ -69,6 +73,21 @@ _ARTIFACTS: tuple[dict[str, str | bool], ...] = (
         'kind': 'csv',
         'required': True,
         'description': 'Source/receiver endpoint static component table',
+    },
+)
+
+_V1_ARTIFACTS: tuple[dict[str, str | bool], ...] = (
+    {
+        'name': REFRACTION_V1_QC_JSON_NAME,
+        'kind': 'json',
+        'required': True,
+        'description': 'Direct-arrival V1 estimation QC summary',
+    },
+    {
+        'name': REFRACTION_V1_ESTIMATES_CSV_NAME,
+        'kind': 'csv',
+        'required': True,
+        'description': 'Per-source direct-arrival V1 estimates',
     },
 )
 
@@ -186,8 +205,9 @@ def write_refraction_static_artifacts(
     root = _validate_job_dir(job_dir)
     values = _validate_result(result)
     request = RefractionStaticApplyRequest.model_validate(req)
+    artifact_entries = _artifact_entries_for_request(request)
     qc = build_refraction_static_qc_payload(result=values.result, req=request)
-    manifest = _build_manifest_payload()
+    manifest = _build_manifest_payload(artifact_entries)
 
     paths = RefractionStaticArtifactSet(
         job_dir=root,
@@ -198,7 +218,7 @@ def write_refraction_static_artifacts(
         first_break_residuals_csv=root / FIRST_BREAK_RESIDUALS_CSV_NAME,
         refraction_static_components_csv=root / REFRACTION_STATIC_COMPONENTS_CSV_NAME,
         manifest_json=root / REFRACTION_STATIC_ARTIFACTS_JSON_NAME,
-        artifact_names=tuple(item['name'] for item in _ARTIFACTS),
+        artifact_names=tuple(str(item['name']) for item in artifact_entries),
         qc=qc,
     )
 
@@ -225,7 +245,7 @@ def write_refraction_static_artifacts(
     )
     _write_json_atomic(paths.manifest_json, manifest)
 
-    for artifact_path in (
+    artifact_paths = (
         paths.solution_npz,
         paths.qc_json,
         paths.refraction_statics_csv,
@@ -233,7 +253,8 @@ def write_refraction_static_artifacts(
         paths.first_break_residuals_csv,
         paths.refraction_static_components_csv,
         paths.manifest_json,
-    ):
+    ) + tuple(root / str(item['name']) for item in _v1_artifact_entries(request))
+    for artifact_path in artifact_paths:
         if not artifact_path.is_file():
             raise RefractionStaticArtifactError(
                 f'artifact file missing after write: {artifact_path.name}'
@@ -338,6 +359,7 @@ def build_refraction_static_solution_arrays(
         'n_rejected_by_robust': _scalar_int(
             np.count_nonzero(r.rejected_by_robust_mask)
         ),
+        'v1_mode': _scalar_str(req.model.first_layer_mode),
         'weathering_velocity_m_s': _scalar_float(r.weathering_velocity_m_s),
         'resolved_weathering_velocity_m_s': _scalar_float(
             r.weathering_velocity_m_s
@@ -544,6 +566,7 @@ def build_refraction_static_qc_payload(
         ]
     )
     request = _request_summary(req)
+    artifact_entries = _artifact_entries_for_request(req)
     payload: dict[str, Any] = {
         'artifact_version': ARTIFACT_VERSION,
         'method': METHOD,
@@ -553,6 +576,11 @@ def build_refraction_static_qc_payload(
         'request': request,
         'velocity': {
             'v1_mode': req.model.first_layer_mode,
+            'v1_status': (
+                'estimated'
+                if req.model.first_layer_mode == 'estimate_direct_arrival'
+                else 'resolved_constant'
+            ),
             'weathering_velocity_m_s': _json_float(r.weathering_velocity_m_s),
             'resolved_weathering_velocity_m_s': _json_float(
                 r.weathering_velocity_m_s
@@ -675,7 +703,7 @@ def build_refraction_static_qc_payload(
             'node_weathering_status': _status_counts(r.node_weathering_status),
             'node_datum_status': _status_counts(r.node_datum_status),
         },
-        'artifacts': _artifact_list_for_qc(),
+        'artifacts': _artifact_list_for_qc(artifact_entries),
         'warnings': [],
     }
     _assert_strict_json(payload, artifact_name=REFRACTION_STATIC_QC_JSON_NAME)
@@ -1025,7 +1053,23 @@ def _request_summary(req: RefractionStaticApplyRequest) -> dict[str, Any]:
     }
 
 
-def _build_manifest_payload() -> dict[str, Any]:
+def _artifact_entries_for_request(
+    req: RefractionStaticApplyRequest,
+) -> tuple[dict[str, str | bool], ...]:
+    return _ARTIFACTS + _v1_artifact_entries(req)
+
+
+def _v1_artifact_entries(
+    req: RefractionStaticApplyRequest,
+) -> tuple[dict[str, str | bool], ...]:
+    if req.model.first_layer_mode == 'estimate_direct_arrival':
+        return _V1_ARTIFACTS
+    return ()
+
+
+def _build_manifest_payload(
+    artifact_entries: tuple[dict[str, str | bool], ...],
+) -> dict[str, Any]:
     return {
         'artifact_version': ARTIFACT_VERSION,
         'job_kind': 'statics',
@@ -1036,19 +1080,21 @@ def _build_manifest_payload() -> dict[str, Any]:
                 'kind': str(item['kind']),
                 'required': bool(item['required']),
             }
-            for item in _ARTIFACTS
+            for item in artifact_entries
         ],
     }
 
 
-def _artifact_list_for_qc() -> list[dict[str, str]]:
+def _artifact_list_for_qc(
+    artifact_entries: tuple[dict[str, str | bool], ...],
+) -> list[dict[str, str]]:
     return [
         {
             'name': str(item['name']),
             'kind': str(item['kind']),
             'description': str(item['description']),
         }
-        for item in _ARTIFACTS
+        for item in artifact_entries
     ]
 
 

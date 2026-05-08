@@ -173,16 +173,18 @@ def estimate_refraction_half_intercept_times_from_first_breaks(
     req: RefractionStaticApplyRequest,
     state: AppState,
     job_dir: Path | None = None,
+    input_model: RefractionStaticInputModel | None = None,
 ) -> RefractionHalfInterceptTimeResult:
     """Build inputs, solve the GLI system, and emit the half-intercept model."""
     from app.services.refraction_static_inputs import build_refraction_static_input_model
 
     try:
-        input_model = build_refraction_static_input_model(
-            req=req,
-            state=state,
-            job_dir=job_dir,
-        )
+        if input_model is None:
+            input_model = build_refraction_static_input_model(
+                req=req,
+                state=state,
+                job_dir=job_dir,
+            )
         if req.model.bedrock_velocity_mode == 'solve_global':
             bedrock_result = estimate_global_bedrock_slowness_from_input_model(
                 input_model=input_model,
