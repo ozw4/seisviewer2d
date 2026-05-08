@@ -81,6 +81,7 @@ class _ValidatedProblem:
     fixed_bedrock_slowness_s_per_m: float | None
     damping: float
     max_abs_half_intercept_time_s: float
+    min_picks_per_node: int
     robust_enabled: bool
     robust_method: RobustMethod
     robust_threshold: float
@@ -394,6 +395,10 @@ def _validate_problem(
         )
         / 1000.0
     )
+    min_picks_per_node = _coerce_positive_int(
+        getattr(solver, 'min_picks_per_node', None),
+        name='solver.min_picks_per_node',
+    )
     robust = getattr(solver, 'robust', None)
     if robust is None:
         raise RefractionStaticSolverError('solver.robust is required')
@@ -438,6 +443,7 @@ def _validate_problem(
         fixed_bedrock_slowness_s_per_m=fixed_slowness,
         damping=damping,
         max_abs_half_intercept_time_s=max_half_intercept_time_s,
+        min_picks_per_node=min_picks_per_node,
         robust_enabled=robust_enabled,
         robust_method=robust_method,
         robust_threshold=robust_threshold,
@@ -998,6 +1004,9 @@ def _build_qc(
         'n_parameters': int(problem.n_parameters),
         'bedrock_velocity_m_s': float(bedrock_velocity),
         'bedrock_slowness_s_per_m': float(bedrock_slowness),
+        'weathering_velocity_m_s': float(problem.weathering_velocity_m_s),
+        'min_bedrock_velocity_m_s': float(problem.min_bedrock_velocity_m_s),
+        'max_bedrock_velocity_m_s': float(problem.max_bedrock_velocity_m_s),
         'bedrock_slowness_clipped': bool(
             slowness_clipped_lower or slowness_clipped_upper
         ),
@@ -1024,6 +1033,10 @@ def _build_qc(
         'robust_threshold': float(problem.robust_threshold),
         'robust_iteration_count': int(robust_iteration_count),
         'damping': float(problem.damping),
+        'min_picks_per_node': int(problem.min_picks_per_node),
+        'max_abs_half_intercept_time_ms': float(
+            problem.max_abs_half_intercept_time_s * 1000.0
+        ),
         'damping_applied_to': (
             'half_intercept_time_columns'
             if solve_result.n_damping_rows
