@@ -9,6 +9,9 @@ from uuid import uuid4
 
 import numpy as np
 
+from app.services.refraction_static_status import (
+    classify_refraction_endpoint_static_status,
+)
 from app.services.refraction_static_types import RefractionDatumStaticsResult
 
 REFRACTION_T1LSST_1LAYER_COMPONENTS_CSV_NAME = (
@@ -95,6 +98,30 @@ def compose_t1lsst_1layer_static_table_components(
     solution_status = _node_lookup(result.node_id, result.node_solution_status)
     weathering_status = _node_lookup(result.node_id, result.node_weathering_status)
     flat_datum = _nan_if_none(result.flat_datum_elevation_m)
+    source_static_status = _endpoint_static_status_array(
+        node_id=result.source_node_id,
+        x_m=result.source_x_m,
+        y_m=result.source_y_m,
+        surface_elevation_m=result.source_surface_elevation_m,
+        t1_s=result.source_half_intercept_time_s,
+        weathering_thickness_m=result.source_weathering_thickness_m,
+        total_shift_s=result.source_refraction_shift_s,
+        datum_status=result.source_datum_status,
+        node_solution_status=solution_status,
+        node_weathering_status=weathering_status,
+    )
+    receiver_static_status = _endpoint_static_status_array(
+        node_id=result.receiver_node_id,
+        x_m=result.receiver_x_m,
+        y_m=result.receiver_y_m,
+        surface_elevation_m=result.receiver_surface_elevation_m,
+        t1_s=result.receiver_half_intercept_time_s,
+        weathering_thickness_m=result.receiver_weathering_thickness_m,
+        total_shift_s=result.receiver_refraction_shift_s,
+        datum_status=result.receiver_datum_status,
+        node_solution_status=solution_status,
+        node_weathering_status=weathering_status,
+    )
 
     rows: list[dict[str, object]] = []
     for index in range(int(result.source_endpoint_key.shape[0])):
@@ -127,7 +154,7 @@ def compose_t1lsst_1layer_static_table_components(
                 solution_status=solution_status.get(node_id, 'missing_node'),
                 weathering_status=weathering_status.get(node_id, 'missing_node'),
                 datum_status=result.source_datum_status[index],
-                static_status=result.source_datum_status[index],
+                static_status=source_static_status[index],
             )
         )
 
@@ -161,7 +188,7 @@ def compose_t1lsst_1layer_static_table_components(
                 solution_status=solution_status.get(node_id, 'missing_node'),
                 weathering_status=weathering_status.get(node_id, 'missing_node'),
                 datum_status=result.receiver_datum_status[index],
-                static_status=result.receiver_datum_status[index],
+                static_status=receiver_static_status[index],
             )
         )
     return rows
@@ -248,6 +275,41 @@ def _node_lookup(node_id: np.ndarray, values: np.ndarray) -> dict[int, Any]:
     }
 
 
+def _endpoint_static_status_array(
+    *,
+    node_id: np.ndarray,
+    x_m: np.ndarray,
+    y_m: np.ndarray,
+    surface_elevation_m: np.ndarray,
+    t1_s: np.ndarray,
+    weathering_thickness_m: np.ndarray,
+    total_shift_s: np.ndarray,
+    datum_status: np.ndarray,
+    node_solution_status: dict[int, Any],
+    node_weathering_status: dict[int, Any],
+) -> np.ndarray:
+    statuses: list[str] = []
+    for index, raw_node_id in enumerate(np.asarray(node_id).tolist()):
+        endpoint_node_id = int(raw_node_id)
+        solution_status = node_solution_status.get(endpoint_node_id, 'missing_solution')
+        weathering_status = node_weathering_status.get(endpoint_node_id, 'missing_node')
+        statuses.append(
+            classify_refraction_endpoint_static_status(
+                node_missing=endpoint_node_id not in node_solution_status,
+                x_m=x_m[index],
+                y_m=y_m[index],
+                surface_elevation_m=surface_elevation_m[index],
+                t1_s=t1_s[index],
+                weathering_thickness_m=weathering_thickness_m[index],
+                total_shift_s=total_shift_s[index],
+                solution_status=solution_status,
+                weathering_status=weathering_status,
+                datum_status=datum_status[index],
+            )
+        )
+    return _string_array(statuses)
+
+
 def _coerce_float_array(
     value: object,
     *,
@@ -263,6 +325,12 @@ def _coerce_float_array(
     if not allow_nonfinite and not np.all(np.isfinite(array)):
         raise RefractionT1LSSTError(f'{name} must contain finite values')
     return np.ascontiguousarray(array, dtype=np.float64)
+
+
+def _string_array(value: object) -> np.ndarray:
+    raw = [str(item) for item in np.asarray(value).tolist()]
+    max_len = max([1, *(len(item) for item in raw)])
+    return np.ascontiguousarray(raw, dtype=f'<U{max_len}')
 
 
 def _positive_finite(value: object, *, name: str) -> float:

@@ -13,7 +13,10 @@ from uuid import uuid4
 import numpy as np
 
 from app.api.schemas import RefractionStaticApplyRequest
-from app.services.refraction_static_status import REFRACTION_STATIC_STATUSES
+from app.services.refraction_static_status import (
+    REFRACTION_STATIC_STATUSES,
+    classify_refraction_endpoint_static_status,
+)
 from app.services.refraction_static_t1lsst import (
     REFRACTION_T1LSST_1LAYER_COMPONENTS_CSV_NAME,
     write_refraction_t1lsst_1layer_components_csv,
@@ -1714,53 +1717,18 @@ def _endpoint_static_status(
     weathering_status: object,
     datum_status: object,
 ) -> str:
-    solution = str(solution_status)
-    weathering = str(weathering_status)
-    datum = str(datum_status)
-    if node_missing or 'missing_node' in {solution, weathering, datum}:
-        return 'missing_linkage'
-    if not all(
-        np.isfinite(_float_or_nan(value))
-        for value in (x_m, y_m, surface_elevation_m)
-    ):
-        return 'missing_geometry'
-    if 'inactive' in {solution, weathering, datum}:
-        return 'inactive_endpoint'
-    if 'low_fold' in {solution, weathering, datum}:
-        return 'insufficient_pick_fold'
-    if (
-        not np.isfinite(_float_or_nan(t1_s))
-        or solution in {'invalid_solution', 'missing_solution'}
-        or weathering == 'invalid_half_intercept'
-    ):
-        return 'invalid_t1'
-    if (
-        not np.isfinite(_float_or_nan(weathering_thickness_m))
-        or weathering
-        in {
-            'invalid_weathering_thickness',
-            'negative_weathering_thickness',
-            'negative_thickness',
-            'exceeds_max_thickness',
-            'invalid_weathering_replacement',
-        }
-        or datum == 'invalid_weathering_replacement'
-    ):
-        return 'invalid_weathering_thickness'
-    if datum in {
-        'invalid_datum_shift',
-        'invalid_floating_datum_elevation',
-        'invalid_flat_datum_elevation',
-        'floating_datum_below_refractor',
-        'flat_datum_below_refractor',
-    }:
-        return 'invalid_datum'
-    for status in (datum, weathering, solution):
-        if status not in {'ok', 'solved', 'zero_thickness'}:
-            return status
-    if not np.isfinite(_float_or_nan(total_shift_s)):
-        return 'not_applied'
-    return 'ok'
+    return classify_refraction_endpoint_static_status(
+        node_missing=node_missing,
+        x_m=x_m,
+        y_m=y_m,
+        surface_elevation_m=surface_elevation_m,
+        t1_s=t1_s,
+        weathering_thickness_m=weathering_thickness_m,
+        total_shift_s=total_shift_s,
+        solution_status=solution_status,
+        weathering_status=weathering_status,
+        datum_status=datum_status,
+    )
 
 
 def _request_summary(req: RefractionStaticApplyRequest) -> dict[str, Any]:

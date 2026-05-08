@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import csv
+from dataclasses import replace
 from pathlib import Path
 
 import numpy as np
@@ -165,6 +166,80 @@ def test_static_tables_include_inactive_endpoint_status(tmp_path: Path) -> None:
 
     with np.load(paths.source_receiver_static_table_npz, allow_pickle=False) as data:
         assert data['receiver_static_status'].tolist() == ['ok', 'inactive_endpoint']
+
+
+def test_static_tables_include_missing_linkage_status(tmp_path: Path) -> None:
+    result = replace(
+        _result(),
+        receiver_node_id=np.asarray([1, 99], dtype=np.int64),
+    )
+
+    paths = write_refraction_static_artifacts(
+        result=result,
+        req=_request(),
+        job_dir=tmp_path,
+    )
+
+    receiver_rows = _read_csv(paths.receiver_static_table_csv)
+    missing = next(row for row in receiver_rows if row['receiver_endpoint_key'] == 'r1')
+    assert missing['solution_status'] == 'missing_solution'
+    assert missing['weathering_status'] == 'missing_node'
+    assert missing['static_status'] == 'missing_linkage'
+
+    with np.load(paths.source_receiver_static_table_npz, allow_pickle=False) as data:
+        assert data['receiver_static_status'].tolist() == ['ok', 'missing_linkage']
+
+
+def test_static_tables_include_missing_geometry_status(tmp_path: Path) -> None:
+    source_x = np.asarray([np.nan, 50.0], dtype=np.float64)
+    result = replace(_result(), source_x_m=source_x)
+
+    paths = write_refraction_static_artifacts(
+        result=result,
+        req=_request(),
+        job_dir=tmp_path,
+    )
+
+    source_rows = _read_csv(paths.source_static_table_csv)
+    missing = next(row for row in source_rows if row['source_endpoint_key'] == 's0')
+    assert missing['solution_status'] == 'solved'
+    assert missing['weathering_status'] == 'ok'
+    assert missing['static_status'] == 'missing_geometry'
+
+    with np.load(paths.source_receiver_static_table_npz, allow_pickle=False) as data:
+        assert data['source_static_status'].tolist() == ['missing_geometry', 'ok']
+
+
+def test_static_tables_include_insufficient_pick_fold_status(tmp_path: Path) -> None:
+    result = replace(
+        _result(),
+        node_solution_status=np.asarray(['solved', 'low_fold', 'inactive'], dtype='<U16'),
+    )
+
+    paths = write_refraction_static_artifacts(
+        result=result,
+        req=_request(),
+        job_dir=tmp_path,
+    )
+
+    source_rows = _read_csv(paths.source_static_table_csv)
+    receiver_rows = _read_csv(paths.receiver_static_table_csv)
+    source = next(row for row in source_rows if row['source_endpoint_key'] == 's1')
+    receiver = next(row for row in receiver_rows if row['receiver_endpoint_key'] == 'r0')
+    assert source['solution_status'] == 'low_fold'
+    assert receiver['solution_status'] == 'low_fold'
+    assert source['static_status'] == 'insufficient_pick_fold'
+    assert receiver['static_status'] == 'insufficient_pick_fold'
+
+    with np.load(paths.source_receiver_static_table_npz, allow_pickle=False) as data:
+        assert data['source_static_status'].tolist() == [
+            'ok',
+            'insufficient_pick_fold',
+        ]
+        assert data['receiver_static_status'].tolist() == [
+            'insufficient_pick_fold',
+            'inactive_endpoint',
+        ]
 
 
 def test_static_tables_are_pickle_free_npz(tmp_path: Path) -> None:

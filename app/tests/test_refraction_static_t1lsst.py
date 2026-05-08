@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import csv
+from dataclasses import replace
 import json
 from pathlib import Path
 
@@ -175,6 +176,38 @@ def test_t1lsst_1layer_artifact_contains_sign_convention(tmp_path: Path) -> None
     assert REFRACTION_T1LSST_1LAYER_COMPONENTS_CSV_NAME in {
         item['name'] for item in manifest['artifacts']
     }
+
+
+def test_t1lsst_1layer_static_status_follows_invalid_weathering(
+    tmp_path: Path,
+) -> None:
+    result = replace(
+        _result(),
+        node_weathering_status=np.asarray(
+            ['invalid_weathering_thickness', 'zero_thickness', 'inactive'],
+            dtype='<U32',
+        ),
+        source_weathering_thickness_m=np.asarray([np.nan, 12.0]),
+        source_weathering_replacement_shift_s=np.asarray([np.nan, -0.0102]),
+        source_refraction_shift_s=np.asarray([np.nan, 0.0023]),
+    )
+
+    paths = write_refraction_static_artifacts(
+        result=result,
+        req=_t1lsst_request(),
+        job_dir=tmp_path,
+    )
+
+    assert paths.refraction_t1lsst_1layer_components_csv is not None
+    rows = _read_csv(paths.refraction_t1lsst_1layer_components_csv)
+    source = next(
+        row
+        for row in rows
+        if row['endpoint_kind'] == 'source' and row['endpoint_key'] == 's0'
+    )
+    assert source['datum_status'] == 'ok'
+    assert source['weathering_status'] == 'invalid_weathering_thickness'
+    assert source['static_status'] == 'invalid_weathering_thickness'
 
 
 def _read_csv(path: Path) -> list[dict[str, str]]:
