@@ -18,8 +18,11 @@ from app.api.schemas import (
 )
 from app.core.state import AppState
 from app.services.job_artifact_refs import resolve_job_artifact_path
-from app.services.refraction_static_weathering_replacement import (
+from app.services.refraction_static_types import (
+    RefractionDatumStaticsResult,
     RefractionWeatheringReplacementStaticsResult,
+)
+from app.services.refraction_static_weathering_replacement import (
     compute_weathering_replacement_statics_from_first_breaks,
 )
 
@@ -162,116 +165,6 @@ _TRACE_PREVIEW_COLUMNS = (
 
 class RefractionDatumStaticsError(ValueError):
     """Raised when datum refraction static outputs cannot be built."""
-
-
-@dataclass(frozen=True)
-class RefractionDatumStaticsResult:
-    """Composed refraction static components in TraceStore sorted trace order."""
-
-    bedrock_velocity_mode: Literal['solve_global', 'fixed_global']
-    bedrock_slowness_s_per_m: float
-    bedrock_velocity_m_s: float
-    weathering_velocity_m_s: float
-    replacement_slowness_delta_s_per_m: float
-
-    datum_mode: str
-    floating_datum_mode: str
-    flat_datum_elevation_m: float | None
-
-    node_id: np.ndarray
-    node_x_m: np.ndarray
-    node_y_m: np.ndarray
-    node_surface_elevation_m: np.ndarray
-    node_kind: np.ndarray
-    node_weathering_thickness_m: np.ndarray
-    node_refractor_elevation_m: np.ndarray
-    node_half_intercept_time_s: np.ndarray
-    node_weathering_replacement_shift_s: np.ndarray
-    node_floating_datum_elevation_m: np.ndarray
-    node_solution_status: np.ndarray
-    node_datum_status: np.ndarray
-    node_weathering_status: np.ndarray
-    node_pick_count: np.ndarray
-    node_used_pick_count: np.ndarray
-    node_rejected_pick_count: np.ndarray
-    node_residual_rms_s: np.ndarray
-    node_residual_mad_s: np.ndarray
-
-    source_endpoint_key: np.ndarray
-    source_id: np.ndarray
-    source_node_id: np.ndarray
-    source_x_m: np.ndarray
-    source_y_m: np.ndarray
-    source_surface_elevation_m: np.ndarray
-    source_half_intercept_time_s: np.ndarray
-    source_weathering_thickness_m: np.ndarray
-    source_refractor_elevation_m: np.ndarray
-    source_floating_datum_elevation_m: np.ndarray
-    source_weathering_replacement_shift_s: np.ndarray
-    source_floating_datum_elevation_shift_s: np.ndarray
-    source_flat_datum_shift_s: np.ndarray
-    source_refraction_shift_s: np.ndarray
-    source_datum_status: np.ndarray
-
-    receiver_endpoint_key: np.ndarray
-    receiver_id: np.ndarray
-    receiver_node_id: np.ndarray
-    receiver_x_m: np.ndarray
-    receiver_y_m: np.ndarray
-    receiver_surface_elevation_m: np.ndarray
-    receiver_half_intercept_time_s: np.ndarray
-    receiver_weathering_thickness_m: np.ndarray
-    receiver_refractor_elevation_m: np.ndarray
-    receiver_floating_datum_elevation_m: np.ndarray
-    receiver_weathering_replacement_shift_s: np.ndarray
-    receiver_floating_datum_elevation_shift_s: np.ndarray
-    receiver_flat_datum_shift_s: np.ndarray
-    receiver_refraction_shift_s: np.ndarray
-    receiver_datum_status: np.ndarray
-
-    sorted_trace_index: np.ndarray
-    valid_observation_mask_sorted: np.ndarray
-    used_observation_mask_sorted: np.ndarray
-    source_node_id_sorted: np.ndarray
-    receiver_node_id_sorted: np.ndarray
-    source_surface_elevation_m_sorted: np.ndarray
-    receiver_surface_elevation_m_sorted: np.ndarray
-    source_floating_datum_elevation_m_sorted: np.ndarray
-    receiver_floating_datum_elevation_m_sorted: np.ndarray
-    source_weathering_thickness_m_sorted: np.ndarray
-    receiver_weathering_thickness_m_sorted: np.ndarray
-    source_refractor_elevation_m_sorted: np.ndarray
-    receiver_refractor_elevation_m_sorted: np.ndarray
-    source_half_intercept_time_s_sorted: np.ndarray
-    receiver_half_intercept_time_s_sorted: np.ndarray
-    source_weathering_replacement_shift_s_sorted: np.ndarray
-    receiver_weathering_replacement_shift_s_sorted: np.ndarray
-    source_floating_datum_elevation_shift_s_sorted: np.ndarray
-    receiver_floating_datum_elevation_shift_s_sorted: np.ndarray
-    source_flat_datum_shift_s_sorted: np.ndarray
-    receiver_flat_datum_shift_s_sorted: np.ndarray
-    source_refraction_shift_s_sorted: np.ndarray
-    receiver_refraction_shift_s_sorted: np.ndarray
-    weathering_replacement_trace_shift_s_sorted: np.ndarray
-    floating_datum_elevation_shift_s_sorted: np.ndarray
-    flat_datum_shift_s_sorted: np.ndarray
-    refraction_trace_shift_s_sorted: np.ndarray
-    trace_static_status_sorted: np.ndarray
-    trace_static_valid_mask_sorted: np.ndarray
-    estimated_first_break_time_s_sorted: np.ndarray
-    first_break_residual_s_sorted: np.ndarray
-
-    row_trace_index_sorted: np.ndarray
-    row_source_node_id: np.ndarray
-    row_receiver_node_id: np.ndarray
-    row_distance_m: np.ndarray
-    observed_pick_time_s: np.ndarray
-    modeled_pick_time_s: np.ndarray
-    residual_time_s: np.ndarray
-    used_row_mask: np.ndarray
-    rejected_by_robust_mask: np.ndarray
-
-    qc: dict[str, Any]
 
 
 @dataclass(frozen=True)

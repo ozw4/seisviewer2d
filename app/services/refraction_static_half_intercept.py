@@ -14,20 +14,18 @@ import numpy as np
 from app.api.schemas import RefractionStaticApplyRequest
 from app.core.state import AppState
 from app.services.refraction_static_bedrock import (
-    RefractionBedrockSlownessResult,
     estimate_global_bedrock_slowness_from_input_model,
 )
 from app.services.refraction_static_design_matrix import (
-    RefractionStaticDesignMatrix,
     build_refraction_static_design_matrix,
 )
-from app.services.refraction_static_inputs import (
+from app.services.refraction_static_solver import solve_refraction_static_bounded_ls
+from app.services.refraction_static_types import (
+    RefractionBedrockSlownessResult,
+    RefractionHalfInterceptTimeResult,
+    RefractionStaticDesignMatrix,
     RefractionStaticInputModel,
-    build_refraction_static_input_model,
-)
-from app.services.refraction_static_solver import (
     RefractionStaticSolverResult,
-    solve_refraction_static_bounded_ls,
 )
 
 REFRACTION_HALF_INTERCEPT_QC_JSON_NAME = 'refraction_half_intercept_qc.json'
@@ -106,85 +104,6 @@ class RefractionHalfInterceptTimeError(ValueError):
 
 
 @dataclass(frozen=True)
-class RefractionHalfInterceptTimeResult:
-    """Full node, endpoint, trace-order, and QC output for GLI half-intercepts."""
-
-    bedrock_velocity_mode: Literal['solve_global', 'fixed_global']
-    bedrock_slowness_s_per_m: float
-    bedrock_velocity_m_s: float
-    weathering_velocity_m_s: float
-
-    node_id: np.ndarray
-    node_x_m: np.ndarray
-    node_y_m: np.ndarray
-    node_elevation_m: np.ndarray
-    node_kind: np.ndarray
-
-    node_half_intercept_time_s: np.ndarray
-    node_half_intercept_time_ms: np.ndarray
-    node_solution_status: np.ndarray
-
-    node_pick_count: np.ndarray
-    node_used_pick_count: np.ndarray
-    node_rejected_pick_count: np.ndarray
-    node_residual_mean_s: np.ndarray
-    node_residual_median_s: np.ndarray
-    node_residual_rms_s: np.ndarray
-    node_residual_mad_s: np.ndarray
-    node_residual_max_abs_s: np.ndarray
-
-    source_endpoint_key: np.ndarray
-    source_id: np.ndarray
-    source_node_id: np.ndarray
-    source_x_m: np.ndarray
-    source_y_m: np.ndarray
-    source_elevation_m: np.ndarray
-    source_half_intercept_time_s: np.ndarray
-    source_solution_status: np.ndarray
-    source_pick_count: np.ndarray
-    source_residual_rms_s: np.ndarray
-
-    receiver_endpoint_key: np.ndarray
-    receiver_id: np.ndarray
-    receiver_node_id: np.ndarray
-    receiver_x_m: np.ndarray
-    receiver_y_m: np.ndarray
-    receiver_elevation_m: np.ndarray
-    receiver_half_intercept_time_s: np.ndarray
-    receiver_solution_status: np.ndarray
-    receiver_pick_count: np.ndarray
-    receiver_residual_rms_s: np.ndarray
-
-    sorted_trace_index: np.ndarray
-    source_endpoint_key_sorted: np.ndarray
-    receiver_endpoint_key_sorted: np.ndarray
-    source_elevation_m_sorted: np.ndarray
-    receiver_elevation_m_sorted: np.ndarray
-    source_node_id_sorted: np.ndarray
-    receiver_node_id_sorted: np.ndarray
-    source_half_intercept_time_s_sorted: np.ndarray
-    receiver_half_intercept_time_s_sorted: np.ndarray
-    estimated_intercept_time_sum_s_sorted: np.ndarray
-    estimated_bedrock_moveout_time_s_sorted: np.ndarray
-    estimated_first_break_time_s_sorted: np.ndarray
-    first_break_residual_s_sorted: np.ndarray
-    valid_observation_mask_sorted: np.ndarray
-    used_observation_mask_sorted: np.ndarray
-
-    row_trace_index_sorted: np.ndarray
-    row_source_node_id: np.ndarray
-    row_receiver_node_id: np.ndarray
-    row_distance_m: np.ndarray
-    observed_pick_time_s: np.ndarray
-    modeled_pick_time_s: np.ndarray
-    residual_time_s: np.ndarray
-    used_row_mask: np.ndarray
-    rejected_by_robust_mask: np.ndarray
-
-    qc: dict[str, Any]
-
-
-@dataclass(frozen=True)
 class _ValidatedInputs:
     n_traces: int
     node_id: np.ndarray
@@ -256,6 +175,8 @@ def estimate_refraction_half_intercept_times_from_first_breaks(
     job_dir: Path | None = None,
 ) -> RefractionHalfInterceptTimeResult:
     """Build inputs, solve the GLI system, and emit the half-intercept model."""
+    from app.services.refraction_static_inputs import build_refraction_static_input_model
+
     try:
         input_model = build_refraction_static_input_model(
             req=req,

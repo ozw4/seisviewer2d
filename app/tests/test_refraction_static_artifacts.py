@@ -24,7 +24,7 @@ from app.services.refraction_static_artifacts import (
     write_refraction_static_solution_npz,
     write_refraction_static_artifacts,
 )
-from app.services.refraction_static_datum import RefractionDatumStaticsResult
+from app.services.refraction_static_types import RefractionDatumStaticsResult
 
 
 REQUIRED_TRACE_ARRAYS = {

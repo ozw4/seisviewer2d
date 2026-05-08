@@ -9,7 +9,10 @@ import numpy as np
 from scipy import optimize, sparse
 
 from app.api.schemas import RefractionStaticModelRequest, RefractionStaticSolverRequest
-from app.services.refraction_static_design_matrix import RefractionStaticDesignMatrix
+from app.services.refraction_static_types import (
+    RefractionStaticDesignMatrix,
+    RefractionStaticSolverResult,
+)
 
 BedrockVelocityMode = Literal['solve_global', 'fixed_global']
 RobustMethod = Literal['mad', 'sigma']
@@ -20,45 +23,6 @@ _ROBUST_SCALE_FLOOR_S = 1.0e-12
 
 class RefractionStaticSolverError(ValueError):
     """Raised when the bounded refraction static solve cannot be completed."""
-
-
-@dataclass(frozen=True)
-class RefractionStaticSolverResult:
-    """Output from the bounded GLI least-squares solver."""
-
-    parameter_vector: np.ndarray
-
-    active_node_id: np.ndarray
-    active_node_half_intercept_time_s: np.ndarray
-
-    node_id: np.ndarray
-    node_half_intercept_time_s: np.ndarray
-    node_solution_status: np.ndarray
-
-    bedrock_velocity_mode: BedrockVelocityMode
-    bedrock_slowness_s_per_m: float
-    bedrock_velocity_m_s: float
-
-    row_trace_index_sorted: np.ndarray
-    row_source_node_id: np.ndarray
-    row_receiver_node_id: np.ndarray
-    row_distance_m: np.ndarray
-    observed_pick_time_s: np.ndarray
-    modeled_pick_time_s: np.ndarray
-    residual_time_s: np.ndarray
-    used_row_mask: np.ndarray
-    rejected_by_robust_mask: np.ndarray
-
-    solver_status: str
-    solver_message: str
-    solver_cost: float
-    solver_optimality: float | None
-    solver_nit: int | None
-    robust_iteration_count: int
-
-    lower_bounds: np.ndarray
-    upper_bounds: np.ndarray
-    qc: dict[str, Any]
 
 
 @dataclass(frozen=True)

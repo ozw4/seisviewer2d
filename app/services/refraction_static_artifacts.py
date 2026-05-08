@@ -13,8 +13,11 @@ from uuid import uuid4
 import numpy as np
 
 from app.api.schemas import RefractionStaticApplyRequest
-from app.services.refraction_static_datum import RefractionDatumStaticsResult
 from app.services.refraction_static_status import REFRACTION_STATIC_STATUSES
+from app.services.refraction_static_types import (
+    RefractionDatumStaticsResult,
+    RefractionStaticArtifactSet,
+)
 
 REFRACTION_STATIC_SOLUTION_NPZ_NAME = 'refraction_static_solution.npz'
 REFRACTION_STATIC_QC_JSON_NAME = 'refraction_static_qc.json'
@@ -161,20 +164,6 @@ _COMPONENT_COLUMNS = (
 
 class RefractionStaticArtifactError(ValueError):
     """Raised when final refraction static artifacts cannot be written."""
-
-
-@dataclass(frozen=True)
-class RefractionStaticArtifactSet:
-    job_dir: Path
-    solution_npz: Path
-    qc_json: Path
-    refraction_statics_csv: Path
-    near_surface_model_csv: Path
-    first_break_residuals_csv: Path
-    refraction_static_components_csv: Path
-    manifest_json: Path | None
-    artifact_names: tuple[str, ...]
-    qc: dict[str, Any]
 
 
 @dataclass(frozen=True)
