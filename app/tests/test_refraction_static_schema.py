@@ -311,6 +311,21 @@ def test_refraction_static_refractor_cell_rejects_unknown_assignment_mode() -> N
         )
 
 
+def test_refraction_static_refractor_cell_rejects_unknown_outside_grid_policy() -> None:
+    with pytest.raises(
+        ValidationError,
+        match='model.refractor_cell.outside_grid_policy',
+    ):
+        RefractionStaticModelRequest.model_validate(
+            _model_payload(
+                bedrock_velocity_mode='solve_cell',
+                refractor_cell=_refractor_cell_payload(
+                    outside_grid_policy='clip',
+                ),
+            )
+        )
+
+
 def test_refraction_static_phase1_legacy_request_still_valid() -> None:
     solve_global = RefractionStaticModelRequest.model_validate(_model_payload())
     fixed_global = RefractionStaticModelRequest.model_validate(

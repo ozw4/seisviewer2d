@@ -1094,6 +1094,12 @@ def _validate_result(result: RefractionDatumStaticsResult) -> _ValidatedResult:
         raise RefractionStaticArtifactError(
             'result must be a RefractionDatumStaticsResult instance'
         )
+    if result.bedrock_velocity_mode == 'solve_cell':
+        raise RefractionStaticArtifactError(
+            'model.bedrock_velocity_mode=solve_cell is not supported by final '
+            'refraction static artifacts until cell V2 artifacts and static '
+            'tables are implemented'
+        )
     n_traces = _length(result.sorted_trace_index, name='sorted_trace_index')
     if n_traces <= 0:
         raise RefractionStaticArtifactError('sorted_trace_index must not be empty')

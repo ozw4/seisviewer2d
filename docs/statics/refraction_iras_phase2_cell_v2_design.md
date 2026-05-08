@@ -136,6 +136,10 @@ refractor_cell: RefractionStaticRefractorCellRequest | None = None
 - `velocity_smoothing_weight` must be finite and greater than or equal to 0.
 - `smoothing_reference_distance_m`, if provided, must be a positive finite
   float.
+- `velocity_smoothing_weight` and `smoothing_reference_distance_m` are reserved
+  request fields in this phase. They are validated and preserved in the request
+  model, but they do not add smoothing rows or otherwise affect the Phase 2 MVP
+  bounded least-squares solve.
 - Existing Phase 1 `solve_global` and `fixed_global` requests remain valid.
 
 ## Grid Assignment Contract
@@ -239,3 +243,9 @@ design-matrix, and bounded solver functions described above. Full refraction
 static apply-job artifacts, datum/static conversion tables, browser controls,
 and smoothing regularization remain outside this phase unless a later issue
 explicitly adds them.
+
+Public `/statics/refraction/apply` jobs reject
+`model.bedrock_velocity_mode="solve_cell"` until final cell-aware refraction
+artifacts and source/receiver static tables are implemented. The final artifact
+writers also reject `solve_cell` results so a per-cell V2 solve cannot be
+serialized as scalar global-V2 artifacts.

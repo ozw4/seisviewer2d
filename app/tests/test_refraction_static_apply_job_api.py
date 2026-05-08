@@ -235,6 +235,50 @@ def test_refraction_static_apply_endpoint_rejects_invalid_schema_without_job(
         assert len(client.app.state.sv.jobs) == 0
 
 
+def test_refraction_static_apply_endpoint_rejects_solve_cell_without_job(
+    client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    started: list[dict[str, Any]] = []
+    monkeypatch.setattr(
+        statics_router_module,
+        'start_job_thread',
+        lambda **kwargs: started.append(kwargs),
+    )
+    payload = _payload()
+    payload['model'].update(
+        {
+            'weathering_velocity_m_s': None,
+            'first_layer': {
+                'mode': 'constant',
+                'weathering_velocity_m_s': 800.0,
+            },
+            'bedrock_velocity_mode': 'solve_cell',
+            'initial_bedrock_velocity_m_s': 2400.0,
+            'refractor_cell': {
+                'number_of_cell_x': 4,
+                'size_of_cell_x_m': 500.0,
+                'x_coordinate_origin_m': 0.0,
+                'number_of_cell_y': 1,
+                'size_of_cell_y_m': 1000.0,
+                'y_coordinate_origin_m': 0.0,
+                'assignment_mode': 'midpoint',
+                'outside_grid_policy': 'reject',
+                'min_observations_per_cell': 5,
+                'velocity_smoothing_weight': 0.0,
+            },
+        }
+    )
+
+    response = client.post('/statics/refraction/apply', json=payload)
+
+    assert response.status_code == 422
+    assert 'model.bedrock_velocity_mode=solve_cell is not supported' in response.text
+    assert started == []
+    with client.app.state.sv.lock:
+        assert len(client.app.state.sv.jobs) == 0
+
+
 def test_refraction_static_rejects_public_estimated_v1_value(
     client: TestClient,
     monkeypatch: pytest.MonkeyPatch,
