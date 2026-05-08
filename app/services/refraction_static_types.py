@@ -156,6 +156,14 @@ class RefractionStaticSolverResult:
     upper_bounds: np.ndarray
     qc: dict[str, Any]
 
+    active_cell_id: np.ndarray | None = None
+    inactive_cell_id: np.ndarray | None = None
+    cell_bedrock_slowness_s_per_m: np.ndarray | None = None
+    cell_bedrock_velocity_m_s: np.ndarray | None = None
+    cell_velocity_status: np.ndarray | None = None
+    row_midpoint_cell_id: np.ndarray | None = None
+    row_midpoint_bedrock_velocity_m_s: np.ndarray | None = None
+
 
 @dataclass(frozen=True)
 class RefractionBedrockSlownessResult:

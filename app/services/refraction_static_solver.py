@@ -16,7 +16,7 @@ from app.services.refraction_static_types import (
     ResolvedRefractionFirstLayer,
 )
 
-BedrockVelocityMode = Literal['solve_global', 'fixed_global']
+BedrockVelocityMode = Literal['solve_global', 'fixed_global', 'solve_cell']
 RobustMethod = Literal['mad', 'sigma']
 
 _BOUND_TOL = 1.0e-10
@@ -34,6 +34,11 @@ class _ValidatedProblem:
     active_node_id: np.ndarray
     inactive_node_id: np.ndarray
     bedrock_slowness_col: int | None
+    bedrock_slowness_cell_col_start: int | None
+    active_cell_id: np.ndarray
+    inactive_cell_id: np.ndarray
+    row_midpoint_cell_id: np.ndarray
+    row_midpoint_cell_col: np.ndarray
     row_distance_m: np.ndarray
     observed_pick_time_s: np.ndarray
     row_trace_index_sorted: np.ndarray
@@ -43,6 +48,8 @@ class _ValidatedProblem:
     weathering_velocity_m_s: float
     min_bedrock_velocity_m_s: float
     max_bedrock_velocity_m_s: float
+    initial_bedrock_velocity_m_s: float
+    initial_bedrock_slowness_s_per_m: float
     fixed_bedrock_velocity_m_s: float | None
     fixed_bedrock_slowness_s_per_m: float | None
     damping: float
@@ -67,6 +74,24 @@ class _ValidatedProblem:
     def n_active_nodes(self) -> int:
         return int(self.active_node_id.shape[0])
 
+    @property
+    def n_active_cells(self) -> int:
+        return int(self.active_cell_id.shape[0])
+
+    @property
+    def cell_slowness_cols(self) -> np.ndarray:
+        if self.mode != 'solve_cell':
+            return np.empty(0, dtype=np.int64)
+        if self.bedrock_slowness_cell_col_start is None:
+            raise RefractionStaticSolverError(
+                'solve_cell mode requires cell slowness columns'
+            )
+        return np.arange(
+            int(self.bedrock_slowness_cell_col_start),
+            int(self.bedrock_slowness_cell_col_start) + self.n_active_cells,
+            dtype=np.int64,
+        )
+
 
 @dataclass(frozen=True)
 class _InternalSolveResult:
@@ -78,6 +103,17 @@ class _InternalSolveResult:
     nit: int | None
     n_damping_rows: int
     n_augmented_rows: int
+
+
+@dataclass(frozen=True)
+class _CellBedrockSolution:
+    active_cell_id: np.ndarray
+    inactive_cell_id: np.ndarray
+    cell_bedrock_slowness_s_per_m: np.ndarray
+    cell_bedrock_velocity_m_s: np.ndarray
+    cell_velocity_status: np.ndarray
+    row_midpoint_cell_id: np.ndarray
+    row_midpoint_bedrock_velocity_m_s: np.ndarray
 
 
 def solve_refraction_static_bounded_ls(
@@ -102,6 +138,13 @@ def solve_refraction_static_bounded_ls(
         bedrock_velocity_mode=design_matrix.bedrock_velocity_mode,
         fixed_bedrock_velocity_m_s=design_matrix.fixed_bedrock_velocity_m_s,
         fixed_bedrock_slowness_s_per_m=design_matrix.fixed_bedrock_slowness_s_per_m,
+        bedrock_slowness_cell_col_start=(
+            design_matrix.bedrock_slowness_cell_col_start
+        ),
+        active_cell_id=design_matrix.active_cell_id,
+        inactive_cell_id=design_matrix.inactive_cell_id,
+        row_midpoint_cell_id=design_matrix.row_midpoint_cell_id,
+        row_midpoint_cell_col=design_matrix.row_midpoint_cell_col,
         model=model,
         solver=solver,
         resolved_first_layer=resolved_first_layer,
@@ -125,6 +168,11 @@ def solve_refraction_static_bounded_ls_from_matrix(
     bedrock_velocity_mode: BedrockVelocityMode | None = None,
     fixed_bedrock_velocity_m_s: float | None = None,
     fixed_bedrock_slowness_s_per_m: float | None = None,
+    bedrock_slowness_cell_col_start: int | None = None,
+    active_cell_id: np.ndarray | None = None,
+    inactive_cell_id: np.ndarray | None = None,
+    row_midpoint_cell_id: np.ndarray | None = None,
+    row_midpoint_cell_col: np.ndarray | None = None,
     resolved_first_layer: ResolvedRefractionFirstLayer | None = None,
 ) -> RefractionStaticSolverResult:
     """Solve a bounded GLI system from already-built sparse arrays."""
@@ -142,6 +190,11 @@ def solve_refraction_static_bounded_ls_from_matrix(
         bedrock_velocity_mode=bedrock_velocity_mode,
         fixed_bedrock_velocity_m_s=fixed_bedrock_velocity_m_s,
         fixed_bedrock_slowness_s_per_m=fixed_bedrock_slowness_s_per_m,
+        bedrock_slowness_cell_col_start=bedrock_slowness_cell_col_start,
+        active_cell_id=active_cell_id,
+        inactive_cell_id=inactive_cell_id,
+        row_midpoint_cell_id=row_midpoint_cell_id,
+        row_midpoint_cell_col=row_midpoint_cell_col,
         model=model,
         solver=solver,
         resolved_first_layer=resolved_first_layer,
@@ -180,6 +233,11 @@ def _validate_problem(
     bedrock_velocity_mode: BedrockVelocityMode | None,
     fixed_bedrock_velocity_m_s: float | None,
     fixed_bedrock_slowness_s_per_m: float | None,
+    bedrock_slowness_cell_col_start: int | None,
+    active_cell_id: np.ndarray | None,
+    inactive_cell_id: np.ndarray | None,
+    row_midpoint_cell_id: np.ndarray | None,
+    row_midpoint_cell_col: np.ndarray | None,
     model: RefractionStaticModelRequest,
     solver: RefractionStaticSolverRequest,
     resolved_first_layer: ResolvedRefractionFirstLayer | None,
@@ -254,8 +312,28 @@ def _validate_problem(
             'active and inactive node IDs must be disjoint'
         )
 
+    (
+        cell_col_start,
+        active_cells,
+        inactive_cells,
+        row_cell_id,
+        row_cell_col,
+    ) = _validate_cell_slowness_columns(
+        mode=mode,
+        bedrock_slowness_cell_col_start=bedrock_slowness_cell_col_start,
+        active_cell_id=active_cell_id,
+        inactive_cell_id=inactive_cell_id,
+        row_midpoint_cell_id=row_midpoint_cell_id,
+        row_midpoint_cell_col=row_midpoint_cell_col,
+        n_active_nodes=int(active_nodes.shape[0]),
+        n_parameters=n_parameters,
+        n_observations=n_observations,
+    )
+
     n_active = int(active_nodes.shape[0])
     expected_parameters = n_active + (1 if mode == 'solve_global' else 0)
+    if mode == 'solve_cell':
+        expected_parameters = n_active + int(active_cells.shape[0])
     if n_parameters != expected_parameters:
         raise RefractionStaticSolverError(
             'refraction design matrix parameter count does not match active nodes'
@@ -271,6 +349,11 @@ def _validate_problem(
         matrix,
         n_active_nodes=n_active,
         bedrock_slowness_col=slowness_col,
+        cell_slowness_cols=(
+            np.arange(cell_col_start, n_parameters, dtype=np.int64)
+            if cell_col_start is not None
+            else None
+        ),
     )
 
     trace_index = (
@@ -348,6 +431,9 @@ def _validate_problem(
                 'model.initial_bedrock_velocity_m_s must be within '
                 'bedrock velocity bounds'
             )
+    else:
+        initial_velocity = 0.5 * (min_velocity + max_velocity)
+    initial_slowness = 1.0 / float(initial_velocity)
 
     fixed_velocity, fixed_slowness = _validate_fixed_velocity(
         mode=mode,
@@ -405,6 +491,11 @@ def _validate_problem(
         active_node_id=active_nodes,
         inactive_node_id=inactive_nodes,
         bedrock_slowness_col=slowness_col,
+        bedrock_slowness_cell_col_start=cell_col_start,
+        active_cell_id=active_cells,
+        inactive_cell_id=inactive_cells,
+        row_midpoint_cell_id=row_cell_id,
+        row_midpoint_cell_col=row_cell_col,
         row_distance_m=distance,
         observed_pick_time_s=observed_pick_time,
         row_trace_index_sorted=trace_index,
@@ -414,6 +505,8 @@ def _validate_problem(
         weathering_velocity_m_s=weathering_velocity,
         min_bedrock_velocity_m_s=min_velocity,
         max_bedrock_velocity_m_s=max_velocity,
+        initial_bedrock_velocity_m_s=float(initial_velocity),
+        initial_bedrock_slowness_s_per_m=float(initial_slowness),
         fixed_bedrock_velocity_m_s=fixed_velocity,
         fixed_bedrock_slowness_s_per_m=fixed_slowness,
         damping=damping,
@@ -452,9 +545,114 @@ def _validate_slowness_column(
         return col
     if bedrock_slowness_col is not None:
         raise RefractionStaticSolverError(
-            'fixed_global mode must not include a bedrock slowness column'
+            f'{mode} mode must not include a global bedrock slowness column'
         )
     return None
+
+
+def _validate_cell_slowness_columns(
+    *,
+    mode: BedrockVelocityMode,
+    bedrock_slowness_cell_col_start: int | None,
+    active_cell_id: np.ndarray | None,
+    inactive_cell_id: np.ndarray | None,
+    row_midpoint_cell_id: np.ndarray | None,
+    row_midpoint_cell_col: np.ndarray | None,
+    n_active_nodes: int,
+    n_parameters: int,
+    n_observations: int,
+) -> tuple[int | None, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+    empty_cells = np.empty(0, dtype=np.int64)
+    empty_rows = np.empty(0, dtype=np.int64)
+    if mode != 'solve_cell':
+        if (
+            bedrock_slowness_cell_col_start is not None
+            or active_cell_id is not None
+            or inactive_cell_id is not None
+            or row_midpoint_cell_id is not None
+            or row_midpoint_cell_col is not None
+        ):
+            raise RefractionStaticSolverError(
+                'cell slowness columns are only allowed for solve_cell mode'
+            )
+        return None, empty_cells, empty_cells, empty_rows, empty_rows
+
+    if (
+        bedrock_slowness_cell_col_start is None
+        or active_cell_id is None
+        or row_midpoint_cell_id is None
+        or row_midpoint_cell_col is None
+    ):
+        raise RefractionStaticSolverError(
+            'solve_cell mode requires cell slowness columns'
+        )
+    if isinstance(bedrock_slowness_cell_col_start, (bool, np.bool_)):
+        raise RefractionStaticSolverError(
+            'bedrock_slowness_cell_col_start must be an integer'
+        )
+    cell_col_start = int(bedrock_slowness_cell_col_start)
+    if cell_col_start != n_active_nodes:
+        raise RefractionStaticSolverError(
+            'cell slowness columns must follow active node columns'
+        )
+    active_cells = _coerce_1d_integer_int64(active_cell_id, name='active_cell_id')
+    if active_cells.size <= 0:
+        raise RefractionStaticSolverError(
+            'at least one active refractor cell is required'
+        )
+    if np.unique(active_cells).shape[0] != active_cells.shape[0]:
+        raise RefractionStaticSolverError('active cell IDs must be unique')
+    inactive_cells = (
+        np.empty(0, dtype=np.int64)
+        if inactive_cell_id is None
+        else _coerce_1d_integer_int64(inactive_cell_id, name='inactive_cell_id')
+    )
+    if inactive_cells.size and np.intersect1d(active_cells, inactive_cells).size:
+        raise RefractionStaticSolverError(
+            'active and inactive cell IDs must be disjoint'
+        )
+    expected_parameters = n_active_nodes + int(active_cells.shape[0])
+    if n_parameters != expected_parameters:
+        raise RefractionStaticSolverError(
+            'refraction design matrix parameter count does not match active cells'
+        )
+    if cell_col_start < 0 or cell_col_start >= n_parameters:
+        raise RefractionStaticSolverError(
+            'bedrock_slowness_cell_col_start is out of range'
+        )
+    row_cell_id = _coerce_1d_integer_int64(
+        row_midpoint_cell_id,
+        name='row_midpoint_cell_id',
+        expected_shape=(n_observations,),
+    )
+    row_cell_col = _coerce_1d_integer_int64(
+        row_midpoint_cell_col,
+        name='row_midpoint_cell_col',
+        expected_shape=(n_observations,),
+    )
+    cell_id_to_col = {
+        int(cell_id): cell_col_start + index
+        for index, cell_id in enumerate(active_cells.tolist())
+    }
+    expected_cols = np.asarray(
+        [cell_id_to_col.get(int(cell_id), -1) for cell_id in row_cell_id.tolist()],
+        dtype=np.int64,
+    )
+    if np.any(expected_cols < 0):
+        raise RefractionStaticSolverError(
+            'row_midpoint_cell_id contains a cell ID without an active column'
+        )
+    if not np.array_equal(row_cell_col, expected_cols):
+        raise RefractionStaticSolverError(
+            'row_midpoint_cell_col does not match active cell column mapping'
+        )
+    return (
+        cell_col_start,
+        active_cells,
+        inactive_cells,
+        np.ascontiguousarray(row_cell_id, dtype=np.int64),
+        np.ascontiguousarray(row_cell_col, dtype=np.int64),
+    )
 
 
 def _validate_matrix_structure(
@@ -462,6 +660,7 @@ def _validate_matrix_structure(
     *,
     n_active_nodes: int,
     bedrock_slowness_col: int | None,
+    cell_slowness_cols: np.ndarray | None = None,
 ) -> None:
     row_abs_sum = np.asarray(np.abs(matrix).sum(axis=1)).ravel()
     if np.any(row_abs_sum == 0.0):
@@ -481,6 +680,12 @@ def _validate_matrix_structure(
         raise RefractionStaticSolverError(
             'refraction design matrix contains an all-zero bedrock slowness column'
         )
+    if cell_slowness_cols is not None and cell_slowness_cols.size:
+        zero_cell_cols = cell_slowness_cols[col_abs_sum[cell_slowness_cols] == 0.0]
+        if zero_cell_cols.size:
+            raise RefractionStaticSolverError(
+                'refraction design matrix contains an all-zero cell slowness column'
+            )
 
 
 def _validate_fixed_velocity(
@@ -493,7 +698,7 @@ def _validate_fixed_velocity(
     fixed_bedrock_velocity_m_s: float | None,
     fixed_bedrock_slowness_s_per_m: float | None,
 ) -> tuple[float | None, float | None]:
-    if mode == 'solve_global':
+    if mode in ('solve_global', 'solve_cell'):
         if getattr(model, 'bedrock_velocity_m_s', None) is not None:
             raise RefractionStaticSolverError(
                 'model.bedrock_velocity_m_s is only allowed for fixed_global mode'
@@ -563,6 +768,16 @@ def _build_bounds(problem: _ValidatedProblem) -> tuple[np.ndarray, np.ndarray]:
         upper_slowness = 1.0 / problem.min_bedrock_velocity_m_s
         lower[problem.bedrock_slowness_col] = lower_slowness
         upper[problem.bedrock_slowness_col] = upper_slowness
+    if problem.mode == 'solve_cell':
+        cell_cols = problem.cell_slowness_cols
+        if cell_cols.size <= 0:
+            raise RefractionStaticSolverError(
+                'solve_cell mode requires cell slowness columns'
+            )
+        lower_slowness = 1.0 / problem.max_bedrock_velocity_m_s
+        upper_slowness = 1.0 / problem.min_bedrock_velocity_m_s
+        lower[cell_cols] = lower_slowness
+        upper[cell_cols] = upper_slowness
     if lower.shape != (problem.n_parameters,) or upper.shape != (problem.n_parameters,):
         raise RefractionStaticSolverError('bounds shape mismatch')
     if np.any(~np.isfinite(lower)) or np.any(~np.isfinite(upper)):
@@ -675,6 +890,9 @@ def _solve_once(
         matrix_used,
         n_active_nodes=problem.n_active_nodes,
         bedrock_slowness_col=problem.bedrock_slowness_col,
+        cell_slowness_cols=(
+            problem.cell_slowness_cols if problem.mode == 'solve_cell' else None
+        ),
     )
     rhs_used = problem.rhs_s[used_mask]
     matrix_aug, rhs_aug, n_damping_rows = _augment_with_damping(
@@ -683,6 +901,16 @@ def _solve_once(
         n_active_nodes=problem.n_active_nodes,
         damping=problem.damping,
     )
+
+    if problem.mode == 'solve_cell':
+        return _solve_once_with_initial_value(
+            problem,
+            matrix_aug=matrix_aug,
+            rhs_aug=rhs_aug,
+            lower_bounds=lower_bounds,
+            upper_bounds=upper_bounds,
+            n_damping_rows=n_damping_rows,
+        )
 
     # SciPy 1.14 ``lsq_linear`` does not accept ``x0``; bounds define the feasible
     # region and TRF computes its own strictly feasible starting point.
@@ -696,6 +924,79 @@ def _solve_once(
         lsmr_tol=1.0e-12,
         lsmr_maxiter=max(matrix_aug.shape) * 20,
     )
+    return _internal_result_from_raw_solver(
+        raw,
+        problem=problem,
+        n_damping_rows=n_damping_rows,
+        n_augmented_rows=int(matrix_aug.shape[0]),
+    )
+
+
+def _solve_once_with_initial_value(
+    problem: _ValidatedProblem,
+    *,
+    matrix_aug: sparse.csr_matrix,
+    rhs_aug: np.ndarray,
+    lower_bounds: np.ndarray,
+    upper_bounds: np.ndarray,
+    n_damping_rows: int,
+) -> _InternalSolveResult:
+    x0 = _build_initial_parameter_vector(
+        problem,
+        lower_bounds=lower_bounds,
+        upper_bounds=upper_bounds,
+    )
+
+    def residual_fn(values: np.ndarray) -> np.ndarray:
+        return np.asarray(matrix_aug @ values - rhs_aug, dtype=np.float64)
+
+    def jac_fn(_values: np.ndarray) -> sparse.csr_matrix:
+        return matrix_aug
+
+    raw = optimize.least_squares(
+        residual_fn,
+        x0,
+        jac=jac_fn,
+        bounds=(lower_bounds, upper_bounds),
+        method='trf',
+        tr_solver='lsmr',
+        ftol=1.0e-12,
+        xtol=1.0e-12,
+        gtol=1.0e-12,
+        max_nfev=max(matrix_aug.shape) * 20,
+    )
+    return _internal_result_from_raw_solver(
+        raw,
+        problem=problem,
+        n_damping_rows=n_damping_rows,
+        n_augmented_rows=int(matrix_aug.shape[0]),
+    )
+
+
+def _build_initial_parameter_vector(
+    problem: _ValidatedProblem,
+    *,
+    lower_bounds: np.ndarray,
+    upper_bounds: np.ndarray,
+) -> np.ndarray:
+    x0 = np.ascontiguousarray(
+        0.5 * (lower_bounds + upper_bounds),
+        dtype=np.float64,
+    )
+    if problem.mode == 'solve_cell':
+        x0[problem.cell_slowness_cols] = problem.initial_bedrock_slowness_s_per_m
+    if np.any(x0 < lower_bounds) or np.any(x0 > upper_bounds):
+        raise RefractionStaticSolverError('initial parameter vector is outside bounds')
+    return x0
+
+
+def _internal_result_from_raw_solver(
+    raw: Any,
+    *,
+    problem: _ValidatedProblem,
+    n_damping_rows: int,
+    n_augmented_rows: int,
+) -> _InternalSolveResult:
     if not bool(getattr(raw, 'success', False)):
         raise RefractionStaticSolverError(
             f"refraction static bounded solver failed: {getattr(raw, 'message', '')}"
@@ -704,15 +1005,18 @@ def _solve_once(
     if parameter_vector.shape != (problem.n_parameters,):
         raise RefractionStaticSolverError('solver parameter vector shape mismatch')
     _validate_all_finite(parameter_vector, name='solver parameter_vector')
+    nit = getattr(raw, 'nit', None)
+    if nit is None:
+        nit = getattr(raw, 'nfev', None)
     return _InternalSolveResult(
         parameter_vector=parameter_vector,
         raw_status=_optional_int(getattr(raw, 'status', None)),
         raw_message=str(getattr(raw, 'message', '')),
         cost=_coerce_finite_float(getattr(raw, 'cost', 0.0), name='solver_cost'),
         optimality=_optional_finite_float(getattr(raw, 'optimality', None)),
-        nit=_optional_int(getattr(raw, 'nit', None)),
+        nit=_optional_int(nit),
         n_damping_rows=n_damping_rows,
-        n_augmented_rows=int(matrix_aug.shape[0]),
+        n_augmented_rows=n_augmented_rows,
     )
 
 
@@ -785,7 +1089,7 @@ def _build_result(
         )
     )
 
-    bedrock_slowness, bedrock_velocity = _extract_bedrock_solution(
+    bedrock_slowness, bedrock_velocity, cell_solution = _extract_bedrock_solution(
         problem,
         parameter_vector,
         lower_bounds=lower_bounds,
@@ -802,6 +1106,7 @@ def _build_result(
         robust_iteration_count=robust_iteration_count,
         bedrock_slowness=bedrock_slowness,
         bedrock_velocity=bedrock_velocity,
+        cell_solution=cell_solution,
         lower_bounds=lower_bounds,
         upper_bounds=upper_bounds,
     )
@@ -849,6 +1154,17 @@ def _build_result(
         lower_bounds=np.ascontiguousarray(lower_bounds, dtype=np.float64),
         upper_bounds=np.ascontiguousarray(upper_bounds, dtype=np.float64),
         qc=qc,
+        active_cell_id=cell_solution.active_cell_id,
+        inactive_cell_id=cell_solution.inactive_cell_id,
+        cell_bedrock_slowness_s_per_m=(
+            cell_solution.cell_bedrock_slowness_s_per_m
+        ),
+        cell_bedrock_velocity_m_s=cell_solution.cell_bedrock_velocity_m_s,
+        cell_velocity_status=cell_solution.cell_velocity_status,
+        row_midpoint_cell_id=cell_solution.row_midpoint_cell_id,
+        row_midpoint_bedrock_velocity_m_s=(
+            cell_solution.row_midpoint_bedrock_velocity_m_s
+        ),
     )
 
 
@@ -883,7 +1199,8 @@ def _extract_bedrock_solution(
     *,
     lower_bounds: np.ndarray,
     upper_bounds: np.ndarray,
-) -> tuple[float, float]:
+) -> tuple[float, float, _CellBedrockSolution]:
+    empty_cell_solution = _empty_cell_bedrock_solution()
     if problem.mode == 'fixed_global':
         if (
             problem.fixed_bedrock_slowness_s_per_m is None
@@ -895,6 +1212,19 @@ def _extract_bedrock_solution(
         return (
             float(problem.fixed_bedrock_slowness_s_per_m),
             float(problem.fixed_bedrock_velocity_m_s),
+            empty_cell_solution,
+        )
+    if problem.mode == 'solve_cell':
+        cell_solution = _extract_cell_bedrock_solution(
+            problem,
+            parameter_vector,
+            lower_bounds=lower_bounds,
+            upper_bounds=upper_bounds,
+        )
+        return (
+            float(np.median(cell_solution.cell_bedrock_slowness_s_per_m)),
+            float(np.median(cell_solution.cell_bedrock_velocity_m_s)),
+            cell_solution,
         )
     if problem.bedrock_slowness_col is None:
         raise RefractionStaticSolverError(
@@ -926,7 +1256,85 @@ def _extract_bedrock_solution(
         raise RefractionStaticSolverError(
             'computed bedrock slowness is above configured bounds'
         )
-    return slowness, velocity
+    return slowness, velocity, empty_cell_solution
+
+
+def _extract_cell_bedrock_solution(
+    problem: _ValidatedProblem,
+    parameter_vector: np.ndarray,
+    *,
+    lower_bounds: np.ndarray,
+    upper_bounds: np.ndarray,
+) -> _CellBedrockSolution:
+    cell_cols = problem.cell_slowness_cols
+    if cell_cols.size <= 0:
+        raise RefractionStaticSolverError(
+            'solve_cell mode requires cell slowness columns'
+        )
+    slowness = np.ascontiguousarray(parameter_vector[cell_cols], dtype=np.float64)
+    if np.any(~np.isfinite(slowness)) or np.any(slowness <= 0.0):
+        raise RefractionStaticSolverError(
+            'computed cell bedrock slowness must be positive and finite'
+        )
+    lower = lower_bounds[cell_cols]
+    upper = upper_bounds[cell_cols]
+    if np.any(slowness < lower - 1.0e-12) or np.any(slowness > upper + 1.0e-12):
+        raise RefractionStaticSolverError(
+            'computed cell bedrock slowness values are outside configured bounds'
+        )
+    velocity = np.ascontiguousarray(1.0 / slowness, dtype=np.float64)
+    if np.any(~np.isfinite(velocity)):
+        raise RefractionStaticSolverError(
+            'computed cell bedrock velocity must be finite'
+        )
+    if np.any(
+        (velocity < problem.min_bedrock_velocity_m_s - 1.0e-8)
+        | (velocity > problem.max_bedrock_velocity_m_s + 1.0e-8)
+    ):
+        raise RefractionStaticSolverError(
+            'computed cell bedrock velocity is outside configured bounds'
+        )
+    if np.any(velocity <= problem.weathering_velocity_m_s):
+        raise RefractionStaticSolverError(
+            'computed cell bedrock velocity must be greater than weathering velocity'
+        )
+    status = _build_cell_velocity_status(
+        slowness,
+        lower_slowness_bounds=lower,
+        upper_slowness_bounds=upper,
+    )
+    row_cell_index = problem.row_midpoint_cell_col - int(
+        problem.bedrock_slowness_cell_col_start or 0
+    )
+    if np.any(row_cell_index < 0) or np.any(row_cell_index >= velocity.shape[0]):
+        raise RefractionStaticSolverError(
+            'row_midpoint_cell_col is outside active cell slowness columns'
+        )
+    row_velocity = np.ascontiguousarray(velocity[row_cell_index], dtype=np.float64)
+    return _CellBedrockSolution(
+        active_cell_id=np.ascontiguousarray(problem.active_cell_id, dtype=np.int64),
+        inactive_cell_id=np.ascontiguousarray(problem.inactive_cell_id, dtype=np.int64),
+        cell_bedrock_slowness_s_per_m=slowness,
+        cell_bedrock_velocity_m_s=velocity,
+        cell_velocity_status=status,
+        row_midpoint_cell_id=np.ascontiguousarray(
+            problem.row_midpoint_cell_id,
+            dtype=np.int64,
+        ),
+        row_midpoint_bedrock_velocity_m_s=row_velocity,
+    )
+
+
+def _empty_cell_bedrock_solution() -> _CellBedrockSolution:
+    return _CellBedrockSolution(
+        active_cell_id=np.empty(0, dtype=np.int64),
+        inactive_cell_id=np.empty(0, dtype=np.int64),
+        cell_bedrock_slowness_s_per_m=np.empty(0, dtype=np.float64),
+        cell_bedrock_velocity_m_s=np.empty(0, dtype=np.float64),
+        cell_velocity_status=np.empty(0, dtype='<U16'),
+        row_midpoint_cell_id=np.empty(0, dtype=np.int64),
+        row_midpoint_bedrock_velocity_m_s=np.empty(0, dtype=np.float64),
+    )
 
 
 def _build_active_node_status(
@@ -938,6 +1346,18 @@ def _build_active_node_status(
     status = np.full(values.shape, 'solved', dtype='<U16')
     status[values <= lower_bounds + _BOUND_TOL] = 'clipped_lower'
     status[values >= upper_bounds - _BOUND_TOL] = 'clipped_upper'
+    return status
+
+
+def _build_cell_velocity_status(
+    slowness_values: np.ndarray,
+    *,
+    lower_slowness_bounds: np.ndarray,
+    upper_slowness_bounds: np.ndarray,
+) -> np.ndarray:
+    status = np.full(slowness_values.shape, 'solved', dtype='<U16')
+    status[slowness_values <= lower_slowness_bounds + _BOUND_TOL] = 'clipped_upper'
+    status[slowness_values >= upper_slowness_bounds - _BOUND_TOL] = 'clipped_lower'
     return status
 
 
@@ -953,6 +1373,7 @@ def _build_qc(
     robust_iteration_count: int,
     bedrock_slowness: float,
     bedrock_velocity: float,
+    cell_solution: _CellBedrockSolution,
     lower_bounds: np.ndarray,
     upper_bounds: np.ndarray,
 ) -> dict[str, Any]:
@@ -977,11 +1398,20 @@ def _build_qc(
         'used_fraction': float(np.count_nonzero(used_mask) / problem.n_observations),
         'n_active_nodes': int(problem.n_active_nodes),
         'n_parameters': int(problem.n_parameters),
+        'bedrock_velocity_solution_kind': (
+            'per_cell' if problem.mode == 'solve_cell' else 'global'
+        ),
         'bedrock_velocity_m_s': float(bedrock_velocity),
         'bedrock_slowness_s_per_m': float(bedrock_slowness),
         'weathering_velocity_m_s': float(problem.weathering_velocity_m_s),
         'min_bedrock_velocity_m_s': float(problem.min_bedrock_velocity_m_s),
         'max_bedrock_velocity_m_s': float(problem.max_bedrock_velocity_m_s),
+        'initial_bedrock_velocity_m_s': float(
+            problem.initial_bedrock_velocity_m_s
+        ),
+        'initial_bedrock_slowness_s_per_m': float(
+            problem.initial_bedrock_slowness_s_per_m
+        ),
         'bedrock_slowness_clipped': bool(
             slowness_clipped_lower or slowness_clipped_upper
         ),
@@ -1025,6 +1455,40 @@ def _build_qc(
             {
                 'fixed_bedrock_velocity_m_s': float(bedrock_velocity),
                 'fixed_bedrock_slowness_s_per_m': float(bedrock_slowness),
+            }
+        )
+    if problem.mode == 'solve_cell':
+        cell_velocity = cell_solution.cell_bedrock_velocity_m_s
+        cell_slowness = cell_solution.cell_bedrock_slowness_s_per_m
+        qc.update(
+            {
+                'n_total_cells': int(
+                    cell_solution.active_cell_id.shape[0]
+                    + cell_solution.inactive_cell_id.shape[0]
+                ),
+                'n_active_cells': int(cell_solution.active_cell_id.shape[0]),
+                'n_inactive_cells': int(cell_solution.inactive_cell_id.shape[0]),
+                'cell_bedrock_velocity_min_m_s': float(np.min(cell_velocity)),
+                'cell_bedrock_velocity_median_m_s': float(np.median(cell_velocity)),
+                'cell_bedrock_velocity_max_m_s': float(np.max(cell_velocity)),
+                'cell_bedrock_slowness_min_s_per_m': float(np.min(cell_slowness)),
+                'cell_bedrock_slowness_median_s_per_m': float(
+                    np.median(cell_slowness)
+                ),
+                'cell_bedrock_slowness_max_s_per_m': float(np.max(cell_slowness)),
+                'cell_velocity_clipped_lower_count': int(
+                    np.count_nonzero(
+                        cell_solution.cell_velocity_status == 'clipped_lower'
+                    )
+                ),
+                'cell_velocity_clipped_upper_count': int(
+                    np.count_nonzero(
+                        cell_solution.cell_velocity_status == 'clipped_upper'
+                    )
+                ),
+                'cell_velocity_solved_count': int(
+                    np.count_nonzero(cell_solution.cell_velocity_status == 'solved')
+                ),
             }
         )
     return qc
@@ -1075,6 +1539,8 @@ def _validate_used_observation_count(
     n_used = int(np.count_nonzero(used_mask))
     if n_used < problem.robust_min_used_observations:
         raise RefractionStaticSolverError(message)
+    if problem.mode == 'solve_cell' and n_used < problem.n_parameters:
+        raise RefractionStaticSolverError(message)
     if require_fraction:
         used_fraction = n_used / problem.n_observations
         if used_fraction < problem.robust_min_used_fraction:
@@ -1086,8 +1552,10 @@ def _validate_bedrock_velocity_mode(value: object) -> BedrockVelocityMode:
         return 'solve_global'
     if value == 'fixed_global':
         return 'fixed_global'
+    if value == 'solve_cell':
+        return 'solve_cell'
     raise RefractionStaticSolverError(
-        'model.bedrock_velocity_mode must be solve_global or fixed_global'
+        'model.bedrock_velocity_mode must be solve_global, fixed_global, or solve_cell'
     )
 
 
