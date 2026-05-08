@@ -142,6 +142,7 @@ def test_v1_estimate_global_from_direct_arrivals(tmp_path: Path) -> None:
     )
     assert result.qc['v1_status'] == 'estimated'
     assert result.qc['n_used_groups'] == 6
+    assert result.qc['group_status_counts'] == {'ok': 6}
     assert set(result.group_status.tolist()) == {'ok'}
     assert np.any(result.group_n_used < result.group_n_candidates)
 
@@ -205,10 +206,52 @@ def test_v1_estimate_fails_with_insufficient_picks() -> None:
         )
 
 
-def test_v1_estimate_rejects_velocity_outside_bounds() -> None:
+def test_v1_estimate_partial_failures_reports_status_counts() -> None:
+    offsets = (20.0, 40.0, 60.0, 80.0, 100.0, 120.0)
+    overrides = {
+        (2, offset_index): 0.016 + offset / 2200.0
+        for offset_index, offset in enumerate(offsets)
+    }
+    for source_index in range(3, 7):
+        for offset_index in (4, 5):
+            overrides[(source_index, offset_index)] = np.nan
+    model = _input_model(
+        intercept_by_source=(0.010, 0.012, 0.014, 0.016, 0.018, 0.020, 0.022),
+        offsets_m=offsets,
+        pick_overrides=overrides,
+    )
+
+    with pytest.raises(RefractionV1EstimationError) as exc_info:
+        estimate_global_v1_from_direct_arrivals(
+            input_model=model,
+            first_layer=_first_layer(
+                min_groups=3,
+                min_weathering_velocity_m_s=500.0,
+                max_weathering_velocity_m_s=1200.0,
+            ),
+        )
+
+    message = str(exc_info.value)
+    assert message.startswith('Insufficient valid direct-arrival V1 groups')
+    assert '2 valid groups, require at least 3' in message
+    assert 'Status counts:' in message
+    assert 'ok=2' in message
+    assert 'velocity_out_of_bounds=1' in message
+    assert 'insufficient_picks=4' in message
+    assert 'No valid direct-arrival V1 groups remain within' not in message
+    assert exc_info.value.n_valid_groups == 2
+    assert exc_info.value.min_groups == 3
+    assert exc_info.value.group_status_counts == {
+        'insufficient_picks': 4,
+        'ok': 2,
+        'velocity_out_of_bounds': 1,
+    }
+
+
+def test_v1_estimate_all_out_of_bounds_error_mentions_velocity_bounds() -> None:
     model = _input_model(v1_m_s=2200.0)
 
-    with pytest.raises(RefractionV1EstimationError, match='velocity bounds'):
+    with pytest.raises(RefractionV1EstimationError) as exc_info:
         estimate_global_v1_from_direct_arrivals(
             input_model=model,
             first_layer=_first_layer(
@@ -216,3 +259,33 @@ def test_v1_estimate_rejects_velocity_outside_bounds() -> None:
                 max_weathering_velocity_m_s=1200.0,
             ),
         )
+
+    message = str(exc_info.value)
+    assert message.startswith(
+        'No valid direct-arrival V1 groups remain within '
+        'model.first_layer velocity bounds'
+    )
+    assert '0 valid groups, require at least 3' in message
+    assert 'Status counts: velocity_out_of_bounds=3.' in message
+    assert exc_info.value.n_valid_groups == 0
+    assert exc_info.value.min_groups == 3
+    assert exc_info.value.group_status_counts == {'velocity_out_of_bounds': 3}
+
+
+def test_v1_estimate_insufficient_groups_error_reports_valid_and_required_counts() -> None:
+    model = _input_model(intercept_by_source=(0.010, 0.012))
+
+    with pytest.raises(RefractionV1EstimationError) as exc_info:
+        estimate_global_v1_from_direct_arrivals(
+            input_model=model,
+            first_layer=_first_layer(min_groups=3),
+        )
+
+    message = str(exc_info.value)
+    assert message.startswith('Insufficient valid direct-arrival V1 groups')
+    assert '2 valid groups, require at least 3' in message
+    assert 'Status counts: ok=2.' in message
+    assert 'velocity bounds' not in message
+    assert exc_info.value.n_valid_groups == 2
+    assert exc_info.value.min_groups == 3
+    assert exc_info.value.group_status_counts == {'ok': 2}
