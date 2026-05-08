@@ -61,7 +61,7 @@ from app.tests.test_refraction_static_apply_trace_store import (
     _valid_result,
     _write_source_store,
 )
-from app.tests.test_refraction_static_artifacts import _result as _artifact_result
+from app.tests._refraction_static_artifact_helpers import _result as _artifact_result
 
 
 FINAL_REFRACTION_ARTIFACTS = {
@@ -235,6 +235,36 @@ def test_refraction_static_apply_endpoint_rejects_invalid_schema_without_job(
         assert len(client.app.state.sv.jobs) == 0
 
 
+def test_refraction_static_rejects_public_estimated_v1_value(
+    client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    started: list[dict[str, Any]] = []
+    monkeypatch.setattr(
+        statics_router_module,
+        'start_job_thread',
+        lambda **kwargs: started.append(kwargs),
+    )
+    payload = _payload()
+    payload['model']['weathering_velocity_m_s'] = None
+    payload['model']['first_layer'] = {
+        'mode': 'estimate_direct_arrival',
+        'weathering_velocity_m_s': 812.5,
+        'min_direct_offset_m': 20.0,
+        'max_direct_offset_m': 140.0,
+    }
+
+    response = client.post('/statics/refraction/apply', json=payload)
+
+    assert response.status_code == 422
+    assert 'model.first_layer.weathering_velocity_m_s must be omitted' in (
+        response.text
+    )
+    assert started == []
+    with client.app.state.sv.lock:
+        assert len(client.app.state.sv.jobs) == 0
+
+
 def test_run_refraction_static_apply_job_writes_artifacts_and_completes(
     client: TestClient,
     tmp_path: Path,
@@ -324,7 +354,7 @@ def test_run_refraction_static_apply_job_writes_artifacts_and_completes(
     assert job['message'] == 'refraction_static_artifacts_written_artifact_only'
 
 
-def test_run_refraction_static_apply_job_estimates_v1_before_downstream_work(
+def test_refraction_static_job_uses_resolved_first_layer_dataclass_downstream(
     client: TestClient,
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -362,6 +392,7 @@ def test_run_refraction_static_apply_job_estimates_v1_before_downstream_work(
     datum_result = object()
     build_calls: list[RefractionStaticApplyRequest] = []
     replacement_calls: list[dict[str, Any]] = []
+    datum_calls: list[dict[str, Any]] = []
     artifact_calls: list[dict[str, Any]] = []
     v1_write_calls: list[dict[str, Any]] = []
     estimate = RefractionV1EstimateResult(
@@ -420,6 +451,10 @@ def test_run_refraction_static_apply_job_estimates_v1_before_downstream_work(
         artifact_calls.append(kwargs)
         return object()
 
+    def _capture_datum_build(**kwargs: Any) -> object:
+        datum_calls.append(kwargs)
+        return datum_result
+
     monkeypatch.setattr(
         refraction_service_module,
         'write_refraction_v1_artifacts',
@@ -433,7 +468,7 @@ def test_run_refraction_static_apply_job_estimates_v1_before_downstream_work(
     monkeypatch.setattr(
         refraction_service_module,
         'build_refraction_datum_statics',
-        lambda **_kwargs: datum_result,
+        _capture_datum_build,
     )
     monkeypatch.setattr(
         refraction_service_module,
@@ -447,22 +482,33 @@ def test_run_refraction_static_apply_job_estimates_v1_before_downstream_work(
     assert v1_write_calls[0]['args'] == (job_dir, estimate)
     assert len(build_calls) == 2
     assert build_calls[0].moveout.min_offset_m is None
+    assert build_calls[1] is req
     assert build_calls[1].moveout.min_offset_m == pytest.approx(240.0)
     assert len(replacement_calls) == 1
-    resolved_req = replacement_calls[0]['req']
-    assert resolved_req is not req
+    downstream_req = replacement_calls[0]['req']
+    assert downstream_req is req
     assert replacement_calls[0]['input_model'] is weathering_input_model
-    assert resolved_req.model.first_layer_mode == 'estimate_direct_arrival'
-    assert resolved_req.model.resolved_weathering_velocity_m_s == pytest.approx(812.5)
+    assert downstream_req.model.first_layer_mode == 'estimate_direct_arrival'
+    assert downstream_req.model.first_layer is not None
+    assert downstream_req.model.first_layer.weathering_velocity_m_s is None
+    with pytest.raises(ValueError, match='requires a resolved weathering velocity'):
+        _ = downstream_req.model.resolved_weathering_velocity_m_s
     replacement_resolved = replacement_calls[0]['resolved_first_layer']
     assert replacement_resolved.mode == 'estimate_direct_arrival'
     assert replacement_resolved.weathering_velocity_m_s == pytest.approx(812.5)
+    assert len(datum_calls) == 1
+    assert datum_calls[0]['weathering_replacement_result'] is replacement_result
+    assert datum_calls[0]['resolved_first_layer'] is replacement_resolved
     assert len(artifact_calls) == 1
-    assert artifact_calls[0]['req'] is resolved_req
+    assert artifact_calls[0]['req'] is req
     resolved_first_layer = artifact_calls[0]['resolved_first_layer']
     assert resolved_first_layer is replacement_resolved
     assert resolved_first_layer.mode == 'estimate_direct_arrival'
     assert resolved_first_layer.weathering_velocity_m_s == pytest.approx(812.5)
+    assert artifact_calls[0]['upstream_artifact_names'] == (
+        REFRACTION_V1_QC_JSON_NAME,
+        REFRACTION_V1_ESTIMATES_CSV_NAME,
+    )
 
 
 def test_run_refraction_static_apply_job_registers_corrected_file_when_requested(
@@ -581,11 +627,8 @@ def test_run_refraction_static_apply_job_artifact_only_writes_real_final_artifac
     assert qc['status_counts']['node_solution_status']['solved'] == 2
     assert qc['status_counts']['node_weathering_status']['zero_thickness'] == 1
     assert qc['status_counts']['trace_static_status']['not_observed'] == 1
-    expected_qc_artifacts = (
-        FINAL_REFRACTION_ARTIFACTS - {REFRACTION_STATIC_ARTIFACTS_JSON_NAME}
-    ) | {
-        REFRACTION_V1_QC_JSON_NAME,
-        REFRACTION_V1_ESTIMATES_CSV_NAME,
+    expected_qc_artifacts = FINAL_REFRACTION_ARTIFACTS - {
+        REFRACTION_STATIC_ARTIFACTS_JSON_NAME
     }
     assert {item['name'] for item in qc['artifacts']} == expected_qc_artifacts
 
@@ -641,11 +684,44 @@ def test_refraction_static_job_lists_v1_artifacts_when_v1_estimated(
     manifest = json.loads(
         (job_dir / REFRACTION_STATIC_ARTIFACTS_JSON_NAME).read_text(encoding='utf-8')
     )
-    manifest_names = {item['name'] for item in manifest['artifacts']}
+    manifest_artifacts = {item['name']: item for item in manifest['artifacts']}
+    manifest_names = set(manifest_artifacts)
     assert REFRACTION_V1_QC_JSON_NAME in manifest_names
     assert REFRACTION_V1_ESTIMATES_CSV_NAME in manifest_names
+    assert manifest_artifacts[REFRACTION_V1_QC_JSON_NAME]['origin'] == 'upstream'
+    assert (
+        manifest_artifacts[REFRACTION_V1_ESTIMATES_CSV_NAME]['origin'] == 'upstream'
+    )
     qc = json.loads((job_dir / REFRACTION_STATIC_QC_JSON_NAME).read_text())
     assert REFRACTION_V1_QC_JSON_NAME in {item['name'] for item in qc['artifacts']}
+
+
+def test_refraction_static_download_new_v1_artifacts(
+    client: TestClient,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    job_id = 'refraction-download-new-v1-artifacts-e2e'
+    job_dir = tmp_path / 'jobs' / job_id
+    payload = _payload()
+    _enable_v1_estimation(payload)
+    req = RefractionStaticApplyRequest.model_validate(payload)
+    _create_refraction_job(client, job_id=job_id, req=req, job_dir=job_dir)
+    _stub_upstream_refraction_result(monkeypatch, datum_result=_artifact_result())
+    _stub_v1_estimation(monkeypatch)
+
+    run_refraction_static_apply_job(job_id, req, client.app.state.sv)
+
+    for artifact_name in (
+        REFRACTION_V1_QC_JSON_NAME,
+        REFRACTION_V1_ESTIMATES_CSV_NAME,
+    ):
+        response = client.get(
+            f'/statics/job/{job_id}/download',
+            params={'name': artifact_name},
+        )
+        assert response.status_code == 200
+        assert response.content
 
 
 def test_refraction_static_job_lists_t1lsst_artifact_when_conversion_enabled(

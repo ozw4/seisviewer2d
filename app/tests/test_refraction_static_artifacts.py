@@ -7,11 +7,8 @@ from pathlib import Path
 
 import numpy as np
 import pytest
-from fastapi.testclient import TestClient
 
 import app.services.refraction_static_artifacts as artifact_module
-from app.api.schemas import RefractionStaticApplyRequest
-from app.main import app
 from app.services.refraction_static_artifacts import (
     FIRST_BREAK_RESIDUALS_CSV_NAME,
     NEAR_SURFACE_MODEL_CSV_NAME,
@@ -29,9 +26,12 @@ from app.services.refraction_static_artifacts import (
     write_refraction_static_solution_npz,
     write_refraction_static_artifacts,
 )
-from app.services.refraction_static_types import (
-    RefractionDatumStaticsResult,
-    ResolvedRefractionFirstLayer,
+from app.tests._refraction_static_artifact_helpers import (
+    _estimated_v1_request,
+    _request,
+    _resolved_estimated_v1,
+    _result,
+    _result_with_weathering_velocity,
 )
 
 
@@ -109,227 +109,10 @@ EXPECTED_FILENAMES = {
     REFRACTION_STATIC_ARTIFACTS_JSON_NAME,
 }
 
-
-def _request() -> RefractionStaticApplyRequest:
-    return RefractionStaticApplyRequest.model_validate(
-        {
-            'file_id': 'raw-file-id',
-            'key1_byte': 189,
-            'key2_byte': 193,
-            'pick_source': {
-                'kind': 'batch_predicted_npz',
-                'job_id': 'pick-job',
-                'artifact_name': 'predicted_picks_time_s.npz',
-            },
-            'linkage': {'mode': 'none'},
-            'model': {
-                'method': 'gli_variable_thickness',
-                'weathering_velocity_m_s': 800.0,
-                'bedrock_velocity_mode': 'solve_global',
-            },
-            'datum': {
-                'mode': 'floating_and_flat',
-                'floating_datum_mode': 'constant',
-                'floating_datum_elevation_m': 120.0,
-                'flat_datum_elevation_m': 300.0,
-            },
-            'apply': {
-                'mode': 'refraction_from_raw',
-                'interpolation': 'linear',
-                'fill_value': 0.0,
-                'max_abs_shift_ms': 250.0,
-                'output_dtype': 'float32',
-                'register_corrected_file': False,
-            },
-        }
-    )
-
-
-def _estimated_v1_request() -> RefractionStaticApplyRequest:
-    payload = _request().model_dump(mode='json')
-    payload['model']['weathering_velocity_m_s'] = None
-    payload['model']['first_layer'] = {
-        'mode': 'estimate_direct_arrival',
-        'weathering_velocity_m_s': 812.5,
-        'min_direct_offset_m': 20.0,
-        'max_direct_offset_m': 140.0,
-    }
-    return RefractionStaticApplyRequest.model_validate(payload)
-
-
-def _resolved_estimated_v1() -> ResolvedRefractionFirstLayer:
-    return ResolvedRefractionFirstLayer(
-        mode='estimate_direct_arrival',
-        weathering_velocity_m_s=812.5,
-        status='estimated',
-        qc={
-            'v1_mode': 'estimate_direct_arrival',
-            'weathering_velocity_m_s': 812.5,
-            'resolved_weathering_velocity_m_s': 812.5,
-            'v1_status': 'estimated',
-        },
-    )
-
-
-def _result() -> RefractionDatumStaticsResult:
-    n_traces = 4
-    sorted_trace_index = np.arange(n_traces, dtype=np.int64)
-    valid_observation = np.asarray([True, True, True, False], dtype=bool)
-    used_observation = np.asarray([True, False, True, False], dtype=bool)
-    trace_valid = np.asarray([True, True, False, True], dtype=bool)
-    trace_status = np.asarray(
-        ['ok', 'ok', 'not_observed', 'ok'],
-        dtype='<U32',
-    )
-
-    node_id = np.asarray([0, 1, 2], dtype=np.int64)
-    node_surface = np.asarray([100.0, 110.0, 120.0], dtype=np.float64)
-    node_thickness = np.asarray([10.0, 12.0, 14.0], dtype=np.float64)
-    node_half = np.asarray([0.010, 0.012, 0.014], dtype=np.float64)
-    node_weathering_shift = np.asarray([-0.0085, -0.0102, -0.0119])
-
-    source_node_sorted = np.asarray([0, 1, 0, 1], dtype=np.int64)
-    receiver_node_sorted = np.asarray([1, 2, 2, 1], dtype=np.int64)
-    source_half_sorted = np.asarray([0.010, 0.012, 0.010, 0.012])
-    receiver_half_sorted = np.asarray([0.012, 0.014, 0.014, 0.012])
-    source_thickness_sorted = np.asarray([10.0, 12.0, 10.0, 12.0])
-    receiver_thickness_sorted = np.asarray([12.0, 14.0, 14.0, 12.0])
-    source_weathering_sorted = np.asarray([-0.0085, -0.0102, -0.0085, -0.0102])
-    receiver_weathering_sorted = np.asarray([-0.0102, -0.0119, -0.0119, -0.0102])
-    weathering_trace = source_weathering_sorted + receiver_weathering_sorted
-    source_floating_sorted = np.asarray([0.0010, 0.0015, 0.0010, 0.0015])
-    receiver_floating_sorted = np.asarray([0.0015, 0.0020, 0.0020, 0.0015])
-    source_flat_sorted = np.asarray([0.010, 0.011, 0.010, 0.011])
-    receiver_flat_sorted = np.asarray([0.011, 0.012, 0.012, 0.011])
-    source_refraction_sorted = (
-        source_weathering_sorted + source_floating_sorted + source_flat_sorted
-    )
-    receiver_refraction_sorted = (
-        receiver_weathering_sorted + receiver_floating_sorted + receiver_flat_sorted
-    )
-    refraction_trace = source_refraction_sorted + receiver_refraction_sorted
-    refraction_trace[2] = np.nan
-
-    return RefractionDatumStaticsResult(
-        bedrock_velocity_mode='solve_global',
-        bedrock_slowness_s_per_m=1.0 / 2500.0,
-        bedrock_velocity_m_s=2500.0,
-        weathering_velocity_m_s=800.0,
-        replacement_slowness_delta_s_per_m=(1.0 / 2500.0) - (1.0 / 800.0),
-        datum_mode='floating_and_flat',
-        floating_datum_mode='constant',
-        flat_datum_elevation_m=300.0,
-        node_id=node_id,
-        node_x_m=np.asarray([0.0, 50.0, 100.0]),
-        node_y_m=np.asarray([0.0, 5.0, 10.0]),
-        node_surface_elevation_m=node_surface,
-        node_kind=np.asarray(['source', 'both', 'receiver'], dtype='<U16'),
-        node_weathering_thickness_m=node_thickness,
-        node_refractor_elevation_m=node_surface - node_thickness,
-        node_half_intercept_time_s=node_half,
-        node_weathering_replacement_shift_s=node_weathering_shift,
-        node_floating_datum_elevation_m=np.asarray([120.0, 120.0, 120.0]),
-        node_solution_status=np.asarray(['solved', 'solved', 'inactive'], dtype='<U16'),
-        node_datum_status=np.asarray(['ok', 'ok', 'inactive'], dtype='<U16'),
-        node_weathering_status=np.asarray(
-            ['ok', 'zero_thickness', 'inactive'],
-            dtype='<U16',
-        ),
-        node_pick_count=np.asarray([4, 3, 2], dtype=np.int64),
-        node_used_pick_count=np.asarray([4, 2, 1], dtype=np.int64),
-        node_rejected_pick_count=np.asarray([0, 1, 1], dtype=np.int64),
-        node_residual_rms_s=np.asarray([0.001, 0.002, 0.003]),
-        node_residual_mad_s=np.asarray([0.0005, 0.0010, 0.0015]),
-        source_endpoint_key=np.asarray(['s0', 's1'], dtype='<U2'),
-        source_id=np.asarray([100, 101], dtype=np.int64),
-        source_node_id=np.asarray([0, 1], dtype=np.int64),
-        source_x_m=np.asarray([0.0, 50.0]),
-        source_y_m=np.asarray([0.0, 5.0]),
-        source_surface_elevation_m=np.asarray([100.0, 110.0]),
-        source_half_intercept_time_s=np.asarray([0.010, 0.012]),
-        source_weathering_thickness_m=np.asarray([10.0, 12.0]),
-        source_refractor_elevation_m=np.asarray([90.0, 98.0]),
-        source_floating_datum_elevation_m=np.asarray([120.0, 120.0]),
-        source_weathering_replacement_shift_s=np.asarray([-0.0085, -0.0102]),
-        source_floating_datum_elevation_shift_s=np.asarray([0.0010, 0.0015]),
-        source_flat_datum_shift_s=np.asarray([0.010, 0.011]),
-        source_refraction_shift_s=np.asarray([0.0025, 0.0023]),
-        source_datum_status=np.asarray(['ok', 'ok'], dtype='<U16'),
-        receiver_endpoint_key=np.asarray(['r0', 'r1'], dtype='<U2'),
-        receiver_id=np.asarray([200, 201], dtype=np.int64),
-        receiver_node_id=np.asarray([1, 2], dtype=np.int64),
-        receiver_x_m=np.asarray([55.0, 105.0]),
-        receiver_y_m=np.asarray([5.0, 10.0]),
-        receiver_surface_elevation_m=np.asarray([110.0, 120.0]),
-        receiver_half_intercept_time_s=np.asarray([0.012, 0.014]),
-        receiver_weathering_thickness_m=np.asarray([12.0, 14.0]),
-        receiver_refractor_elevation_m=np.asarray([98.0, 106.0]),
-        receiver_floating_datum_elevation_m=np.asarray([120.0, 120.0]),
-        receiver_weathering_replacement_shift_s=np.asarray([-0.0102, -0.0119]),
-        receiver_floating_datum_elevation_shift_s=np.asarray([0.0015, 0.0020]),
-        receiver_flat_datum_shift_s=np.asarray([0.011, 0.012]),
-        receiver_refraction_shift_s=np.asarray([0.0023, 0.0021]),
-        receiver_datum_status=np.asarray(['ok', 'ok'], dtype='<U16'),
-        sorted_trace_index=sorted_trace_index,
-        valid_observation_mask_sorted=valid_observation,
-        used_observation_mask_sorted=used_observation,
-        source_node_id_sorted=source_node_sorted,
-        receiver_node_id_sorted=receiver_node_sorted,
-        source_surface_elevation_m_sorted=np.asarray([100.0, 110.0, 100.0, 110.0]),
-        receiver_surface_elevation_m_sorted=np.asarray([110.0, 120.0, 120.0, 110.0]),
-        source_floating_datum_elevation_m_sorted=np.full(n_traces, 120.0),
-        receiver_floating_datum_elevation_m_sorted=np.full(n_traces, 120.0),
-        source_weathering_thickness_m_sorted=source_thickness_sorted,
-        receiver_weathering_thickness_m_sorted=receiver_thickness_sorted,
-        source_refractor_elevation_m_sorted=np.asarray([90.0, 98.0, 90.0, 98.0]),
-        receiver_refractor_elevation_m_sorted=np.asarray([98.0, 106.0, 106.0, 98.0]),
-        source_half_intercept_time_s_sorted=source_half_sorted,
-        receiver_half_intercept_time_s_sorted=receiver_half_sorted,
-        source_weathering_replacement_shift_s_sorted=source_weathering_sorted,
-        receiver_weathering_replacement_shift_s_sorted=receiver_weathering_sorted,
-        source_floating_datum_elevation_shift_s_sorted=source_floating_sorted,
-        receiver_floating_datum_elevation_shift_s_sorted=receiver_floating_sorted,
-        source_flat_datum_shift_s_sorted=source_flat_sorted,
-        receiver_flat_datum_shift_s_sorted=receiver_flat_sorted,
-        source_refraction_shift_s_sorted=source_refraction_sorted,
-        receiver_refraction_shift_s_sorted=receiver_refraction_sorted,
-        weathering_replacement_trace_shift_s_sorted=weathering_trace,
-        floating_datum_elevation_shift_s_sorted=(
-            source_floating_sorted + receiver_floating_sorted
-        ),
-        flat_datum_shift_s_sorted=source_flat_sorted + receiver_flat_sorted,
-        refraction_trace_shift_s_sorted=refraction_trace,
-        trace_static_status_sorted=trace_status,
-        trace_static_valid_mask_sorted=trace_valid,
-        estimated_first_break_time_s_sorted=np.asarray([0.05, 0.06, 0.07, np.nan]),
-        first_break_residual_s_sorted=np.asarray([0.001, -0.002, -0.001, np.nan]),
-        row_trace_index_sorted=np.asarray([0, 1, 2], dtype=np.int64),
-        row_source_node_id=np.asarray([0, 1, 0], dtype=np.int64),
-        row_receiver_node_id=np.asarray([1, 2, 2], dtype=np.int64),
-        row_distance_m=np.asarray([100.0, 200.0, 300.0]),
-        observed_pick_time_s=np.asarray([0.050, 0.060, 0.070]),
-        modeled_pick_time_s=np.asarray([0.049, 0.062, 0.071]),
-        residual_time_s=np.asarray([0.001, -0.002, -0.001]),
-        used_row_mask=np.asarray([True, False, True], dtype=bool),
-        rejected_by_robust_mask=np.asarray([False, True, False], dtype=bool),
-        qc={
-            'robust_iteration_count': 1,
-            'floating_datum_below_refractor_count': 0,
-            'flat_datum_below_refractor_count': 0,
-        },
-    )
-
-
-def _result_with_weathering_velocity(
-    weathering_velocity_m_s: float,
-) -> RefractionDatumStaticsResult:
-    return replace(
-        _result(),
-        weathering_velocity_m_s=weathering_velocity_m_s,
-        replacement_slowness_delta_s_per_m=(
-            (1.0 / 2500.0) - (1.0 / weathering_velocity_m_s)
-        ),
-    )
+UPSTREAM_V1_ARTIFACT_NAMES = (
+    REFRACTION_V1_QC_JSON_NAME,
+    REFRACTION_V1_ESTIMATES_CSV_NAME,
+)
 
 
 def test_write_refraction_static_artifacts_npz_schema(tmp_path: Path) -> None:
@@ -456,14 +239,10 @@ def test_write_refraction_static_artifacts_qc_json(tmp_path: Path) -> None:
     assert payload['status_counts']['trace_static_status']['ok'] == 3
     assert payload['status_counts']['node_datum_status']['ok'] == 2
     assert payload['first_break_fit']['residual_rms_ms'] == pytest.approx(1.0)
-    assert len(payload['artifacts']) == 11
-    artifact_descriptions = {
-        item['name']: item['description'] for item in payload['artifacts']
-    }
-    assert 'constant V1 details' in artifact_descriptions[REFRACTION_V1_QC_JSON_NAME]
-    assert 'not produced for constant' in artifact_descriptions[
-        REFRACTION_V1_ESTIMATES_CSV_NAME
-    ]
+    assert len(payload['artifacts']) == 9
+    artifact_names = {item['name'] for item in payload['artifacts']}
+    assert REFRACTION_V1_QC_JSON_NAME not in artifact_names
+    assert REFRACTION_V1_ESTIMATES_CSV_NAME not in artifact_names
     json.dumps(payload, allow_nan=False)
     assert not _contains_absolute_path(payload)
 
@@ -520,6 +299,10 @@ def test_write_refraction_static_artifacts_csvs(tmp_path: Path) -> None:
 def test_refraction_static_artifacts_manifest_and_download_visibility(
     tmp_path: Path,
 ) -> None:
+    from fastapi.testclient import TestClient
+
+    from app.main import app
+
     write_refraction_static_artifacts(
         result=_result(),
         req=_request(),
@@ -528,19 +311,10 @@ def test_refraction_static_artifacts_manifest_and_download_visibility(
     manifest = json.loads(
         (tmp_path / REFRACTION_STATIC_ARTIFACTS_JSON_NAME).read_text(encoding='utf-8')
     )
-    assert {item['name'] for item in manifest['artifacts']} == {
-        REFRACTION_STATIC_SOLUTION_NPZ_NAME,
-        REFRACTION_STATIC_QC_JSON_NAME,
-        REFRACTION_STATICS_CSV_NAME,
-        NEAR_SURFACE_MODEL_CSV_NAME,
-        FIRST_BREAK_RESIDUALS_CSV_NAME,
-        REFRACTION_STATIC_COMPONENTS_CSV_NAME,
-        SOURCE_STATIC_TABLE_CSV_NAME,
-        RECEIVER_STATIC_TABLE_CSV_NAME,
-        SOURCE_RECEIVER_STATIC_TABLE_NPZ_NAME,
-        REFRACTION_V1_QC_JSON_NAME,
-        REFRACTION_V1_ESTIMATES_CSV_NAME,
-    }
+    assert {item['name'] for item in manifest['artifacts']} == (
+        EXPECTED_FILENAMES - {REFRACTION_STATIC_ARTIFACTS_JSON_NAME}
+    )
+    assert {item['origin'] for item in manifest['artifacts']} == {'final'}
 
     state = app.state.sv
     with state.lock:
@@ -570,7 +344,72 @@ def test_refraction_static_artifacts_manifest_and_download_visibility(
             state.jobs.clear()
 
 
-def test_refraction_static_manifest_marks_constant_v1_artifacts_optional(
+def test_refraction_static_manifest_includes_v1_artifacts_after_v1_estimation(
+    tmp_path: Path,
+) -> None:
+    _write_upstream_v1_artifacts(tmp_path)
+
+    write_refraction_static_artifacts(
+        result=_result_with_weathering_velocity(812.5),
+        req=_estimated_v1_request(),
+        job_dir=tmp_path,
+        resolved_first_layer=_resolved_estimated_v1(),
+        upstream_artifact_names=UPSTREAM_V1_ARTIFACT_NAMES,
+    )
+
+    manifest = json.loads(
+        (tmp_path / REFRACTION_STATIC_ARTIFACTS_JSON_NAME).read_text(encoding='utf-8')
+    )
+    artifacts = {item['name']: item for item in manifest['artifacts']}
+    assert artifacts[REFRACTION_V1_QC_JSON_NAME]['required'] is True
+    assert artifacts[REFRACTION_V1_QC_JSON_NAME]['origin'] == 'upstream'
+    assert artifacts[REFRACTION_V1_ESTIMATES_CSV_NAME]['required'] is True
+    assert artifacts[REFRACTION_V1_ESTIMATES_CSV_NAME]['origin'] == 'upstream'
+    assert artifacts[REFRACTION_STATIC_SOLUTION_NPZ_NAME]['origin'] == 'final'
+
+    qc = json.loads((tmp_path / REFRACTION_STATIC_QC_JSON_NAME).read_text())
+    qc_artifacts = {item['name']: item for item in qc['artifacts']}
+    assert REFRACTION_V1_QC_JSON_NAME in qc_artifacts
+    assert REFRACTION_V1_ESTIMATES_CSV_NAME in qc_artifacts
+
+
+def test_refraction_static_artifact_writer_missing_upstream_v1_artifacts_error_is_clear(
+    tmp_path: Path,
+) -> None:
+    with pytest.raises(
+        RefractionStaticArtifactError,
+        match='declared upstream artifact missing: refraction_v1_qc.json',
+    ):
+        write_refraction_static_artifacts(
+            result=_result_with_weathering_velocity(812.5),
+            req=_estimated_v1_request(),
+            job_dir=tmp_path,
+            resolved_first_layer=_resolved_estimated_v1(),
+            upstream_artifact_names=UPSTREAM_V1_ARTIFACT_NAMES,
+        )
+
+
+def test_refraction_static_artifact_writer_estimated_v1_omits_unprovided_upstream_artifacts(
+    tmp_path: Path,
+) -> None:
+    write_refraction_static_artifacts(
+        result=_result_with_weathering_velocity(812.5),
+        req=_estimated_v1_request(),
+        job_dir=tmp_path,
+        resolved_first_layer=_resolved_estimated_v1(),
+    )
+
+    manifest = json.loads(
+        (tmp_path / REFRACTION_STATIC_ARTIFACTS_JSON_NAME).read_text(encoding='utf-8')
+    )
+    artifacts = {item['name']: item for item in manifest['artifacts']}
+    assert REFRACTION_V1_QC_JSON_NAME not in artifacts
+    assert REFRACTION_V1_ESTIMATES_CSV_NAME not in artifacts
+    assert not (tmp_path / REFRACTION_V1_QC_JSON_NAME).exists()
+    assert not (tmp_path / REFRACTION_V1_ESTIMATES_CSV_NAME).exists()
+
+
+def test_refraction_static_artifact_writer_constant_v1_does_not_require_v1_files(
     tmp_path: Path,
 ) -> None:
     write_refraction_static_artifacts(
@@ -583,15 +422,16 @@ def test_refraction_static_manifest_marks_constant_v1_artifacts_optional(
         (tmp_path / REFRACTION_STATIC_ARTIFACTS_JSON_NAME).read_text(encoding='utf-8')
     )
     artifacts = {item['name']: item for item in manifest['artifacts']}
-    assert artifacts[REFRACTION_V1_QC_JSON_NAME]['required'] is False
-    assert artifacts[REFRACTION_V1_ESTIMATES_CSV_NAME]['required'] is False
+    assert REFRACTION_V1_QC_JSON_NAME not in artifacts
+    assert REFRACTION_V1_ESTIMATES_CSV_NAME not in artifacts
     assert not (tmp_path / REFRACTION_V1_QC_JSON_NAME).exists()
     assert not (tmp_path / REFRACTION_V1_ESTIMATES_CSV_NAME).exists()
 
     qc = json.loads((tmp_path / REFRACTION_STATIC_QC_JSON_NAME).read_text())
     qc_artifacts = {item['name']: item for item in qc['artifacts']}
-    assert REFRACTION_V1_QC_JSON_NAME in qc_artifacts
-    assert REFRACTION_V1_ESTIMATES_CSV_NAME in qc_artifacts
+    assert REFRACTION_V1_QC_JSON_NAME not in qc_artifacts
+    assert REFRACTION_V1_ESTIMATES_CSV_NAME not in qc_artifacts
+    assert qc['velocity']['v1_mode'] == 'constant'
 
 
 def test_refraction_static_manifest_strict_json(tmp_path: Path) -> None:
@@ -611,6 +451,7 @@ def test_refraction_static_manifest_strict_json(tmp_path: Path) -> None:
         'name',
         'kind',
         'required',
+        'origin',
     }.issubset(payload['artifacts'][0])
 
 
@@ -757,3 +598,14 @@ def _contains_absolute_path(value: object) -> bool:
     if isinstance(value, list):
         return any(_contains_absolute_path(item) for item in value)
     return False
+
+
+def _write_upstream_v1_artifacts(root: Path) -> None:
+    (root / REFRACTION_V1_QC_JSON_NAME).write_text(
+        '{"v1_status":"estimated"}',
+        encoding='utf-8',
+    )
+    (root / REFRACTION_V1_ESTIMATES_CSV_NAME).write_text(
+        'group_kind,group_key,status\nsource_endpoint,source:1,ok\n',
+        encoding='utf-8',
+    )

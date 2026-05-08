@@ -9,7 +9,6 @@ import numpy as np
 import pytest
 
 from app.api.schemas import RefractionStaticApplyRequest
-from app.main import app
 from app.services.refraction_static_artifacts import (
     REFRACTION_STATIC_ARTIFACTS_JSON_NAME,
     write_refraction_static_artifacts,
@@ -39,7 +38,7 @@ from app.tests._refraction_static_synthetic import (
     run_synthetic_refraction_statics,
     synthetic_refraction_apply_request,
 )
-from app.tests.test_refraction_static_artifacts import _request, _result
+from app.tests._refraction_static_artifact_helpers import _request, _result
 
 
 def _t1lsst_request() -> RefractionStaticApplyRequest:
@@ -137,7 +136,7 @@ def test_t1lsst_1layer_matches_existing_weathering_replacement(
     tmp_path: Path,
 ) -> None:
     req = synthetic_refraction_apply_request(conversion_mode='t1lsst_1layer')
-    result = run_synthetic_refraction_statics(state=app.state.sv, req=req)
+    result = run_synthetic_refraction_statics(req=req)
 
     paths = write_refraction_static_artifacts(
         result=result,

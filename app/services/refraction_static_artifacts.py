@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import csv
+from collections.abc import Iterable
 from dataclasses import dataclass
 import json
 import os
@@ -113,35 +114,23 @@ _V1_ARTIFACTS: tuple[dict[str, str | bool], ...] = (
         'name': REFRACTION_V1_QC_JSON_NAME,
         'kind': 'json',
         'required': True,
+        'origin': 'upstream',
         'description': 'Direct-arrival V1 estimation QC summary',
     },
     {
         'name': REFRACTION_V1_ESTIMATES_CSV_NAME,
         'kind': 'csv',
         'required': True,
+        'origin': 'upstream',
         'description': 'Per-source direct-arrival V1 estimates',
     },
 )
 
-_OPTIONAL_CONSTANT_V1_ARTIFACTS: tuple[dict[str, str | bool], ...] = (
+_V1_ARTIFACT_NAMES = frozenset(
     {
-        'name': REFRACTION_V1_QC_JSON_NAME,
-        'kind': 'json',
-        'required': False,
-        'description': (
-            'Optional standalone V1 QC summary; constant V1 details are recorded '
-            f'in {REFRACTION_STATIC_QC_JSON_NAME}'
-        ),
-    },
-    {
-        'name': REFRACTION_V1_ESTIMATES_CSV_NAME,
-        'kind': 'csv',
-        'required': False,
-        'description': (
-            'Optional per-source direct-arrival V1 estimates; not produced for '
-            'constant first-layer mode'
-        ),
-    },
+        REFRACTION_V1_QC_JSON_NAME,
+        REFRACTION_V1_ESTIMATES_CSV_NAME,
+    }
 )
 
 _T1LSST_1LAYER_ARTIFACTS: tuple[dict[str, str | bool], ...] = (
@@ -333,8 +322,17 @@ def write_refraction_static_artifacts(
     req: RefractionStaticApplyRequest,
     job_dir: Path,
     resolved_first_layer: ResolvedRefractionFirstLayer | None = None,
+    upstream_artifact_names: Iterable[str] = (),
 ) -> RefractionStaticArtifactSet:
-    """Write the final refraction statics NPZ, QC, CSV, and manifest artifacts."""
+    """Write final refraction statics artifacts and an artifact manifest.
+
+    This writer owns only the final refraction statics artifacts it writes in
+    this function.  Upstream artifacts, currently the direct-arrival V1 QC and
+    estimates files, are included in the manifest only when their plain file
+    names are passed via ``upstream_artifact_names``.  Declared upstream
+    artifacts must already exist in ``job_dir`` and are validated with a
+    dedicated upstream-artifact error.
+    """
     root = _validate_job_dir(job_dir)
     values = _validate_result(result)
     request = RefractionStaticApplyRequest.model_validate(req)
@@ -343,11 +341,21 @@ def write_refraction_static_artifacts(
         req=request,
         resolved_first_layer=resolved_first_layer,
     )
-    artifact_entries = _artifact_entries_for_request(request, first_layer)
+    upstream_names = _validate_upstream_artifact_names(
+        upstream_artifact_names,
+        resolved_first_layer=first_layer,
+    )
+    _validate_declared_upstream_artifacts(root, upstream_names)
+    artifact_entries = _artifact_entries_for_request(
+        request,
+        first_layer,
+        upstream_artifact_names=upstream_names,
+    )
     qc = build_refraction_static_qc_payload(
         result=values.result,
         req=request,
         resolved_first_layer=first_layer,
+        upstream_artifact_names=upstream_names,
     )
     manifest = _build_manifest_payload(artifact_entries)
     _assert_strict_json(manifest, artifact_name=REFRACTION_STATIC_ARTIFACTS_JSON_NAME)
@@ -434,15 +442,12 @@ def write_refraction_static_artifacts(
         artifact_paths = artifact_paths + (
             paths.refraction_t1lsst_1layer_components_csv,
         )
-    artifact_paths = artifact_paths + tuple(
-        root / str(item['name']) for item in _v1_artifact_entries(request, first_layer)
-        if bool(item['required'])
-    )
     for artifact_path in artifact_paths:
         if not artifact_path.is_file():
             raise RefractionStaticArtifactError(
                 f'artifact file missing after write: {artifact_path.name}'
             )
+    _validate_declared_upstream_artifacts(root, upstream_names)
     return paths
 
 
@@ -891,6 +896,7 @@ def build_refraction_static_qc_payload(
     result: RefractionDatumStaticsResult,
     req: RefractionStaticApplyRequest,
     resolved_first_layer: ResolvedRefractionFirstLayer | None = None,
+    upstream_artifact_names: Iterable[str] = (),
 ) -> dict[str, Any]:
     values = _validate_result(result)
     r = values.result
@@ -909,7 +915,15 @@ def build_refraction_static_qc_payload(
         ]
     )
     request = _request_summary(req)
-    artifact_entries = _artifact_entries_for_request(req, first_layer)
+    upstream_names = _validate_upstream_artifact_names(
+        upstream_artifact_names,
+        resolved_first_layer=first_layer,
+    )
+    artifact_entries = _artifact_entries_for_request(
+        req,
+        first_layer,
+        upstream_artifact_names=upstream_names,
+    )
     payload: dict[str, Any] = {
         'artifact_version': ARTIFACT_VERSION,
         'method': METHOD,
@@ -1752,11 +1766,18 @@ def _request_summary(req: RefractionStaticApplyRequest) -> dict[str, Any]:
 def _artifact_entries_for_request(
     req: RefractionStaticApplyRequest,
     resolved_first_layer: ResolvedRefractionFirstLayer | None = None,
+    *,
+    upstream_artifact_names: Iterable[str] = (),
 ) -> tuple[dict[str, str | bool], ...]:
     return (
         _ARTIFACTS
         + _t1lsst_artifact_entries(req)
-        + _v1_artifact_entries(req, resolved_first_layer)
+        + _upstream_artifact_entries(
+            _validate_upstream_artifact_names(
+                upstream_artifact_names,
+                resolved_first_layer=resolved_first_layer,
+            )
+        )
     )
 
 
@@ -1768,18 +1789,69 @@ def _t1lsst_artifact_entries(
     return ()
 
 
-def _v1_artifact_entries(
-    req: RefractionStaticApplyRequest,
-    resolved_first_layer: ResolvedRefractionFirstLayer | None = None,
-) -> tuple[dict[str, str | bool], ...]:
+def _validate_upstream_artifact_names(
+    names: Iterable[str],
+    *,
+    resolved_first_layer: ResolvedRefractionFirstLayer | None,
+) -> tuple[str, ...]:
+    seen: set[str] = set()
+    values: list[str] = []
+    for name in names:
+        if not isinstance(name, str):
+            raise RefractionStaticArtifactError(
+                'upstream artifact names must be strings'
+            )
+        if name in seen:
+            continue
+        if name not in _V1_ARTIFACT_NAMES:
+            raise RefractionStaticArtifactError(
+                f'unsupported upstream artifact: {name}'
+            )
+        seen.add(name)
+        values.append(name)
+
+    if not values:
+        return ()
+
     mode = (
         resolved_first_layer.mode
         if resolved_first_layer is not None
-        else req.model.first_layer_mode
+        else None
     )
-    if mode == 'estimate_direct_arrival':
-        return _V1_ARTIFACTS
-    return _OPTIONAL_CONSTANT_V1_ARTIFACTS
+    if mode != 'estimate_direct_arrival':
+        raise RefractionStaticArtifactError(
+            'upstream V1 artifacts are only valid when first-layer mode is '
+            'estimate_direct_arrival'
+        )
+
+    value_set = set(values)
+    if value_set != _V1_ARTIFACT_NAMES:
+        expected = ', '.join(sorted(_V1_ARTIFACT_NAMES))
+        raise RefractionStaticArtifactError(
+            f'upstream V1 artifacts must include both: {expected}'
+        )
+    return tuple(
+        str(item['name']) for item in _V1_ARTIFACTS if str(item['name']) in value_set
+    )
+
+
+def _validate_declared_upstream_artifacts(
+    root: Path,
+    names: tuple[str, ...],
+) -> None:
+    for name in names:
+        artifact_path = root / name
+        if not artifact_path.is_file():
+            raise RefractionStaticArtifactError(
+                f'declared upstream artifact missing: {name}'
+            )
+
+
+def _upstream_artifact_entries(
+    names: tuple[str, ...],
+) -> tuple[dict[str, str | bool], ...]:
+    name_set = set(names)
+    return tuple(item for item in _V1_ARTIFACTS if str(item['name']) in name_set)
 
 
 def _build_manifest_payload(
@@ -1794,6 +1866,7 @@ def _build_manifest_payload(
                 'name': str(item['name']),
                 'kind': str(item['kind']),
                 'required': bool(item['required']),
+                'origin': str(item.get('origin', 'final')),
             }
             for item in artifact_entries
         ],

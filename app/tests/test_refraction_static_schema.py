@@ -4,7 +4,9 @@ import pytest
 from pydantic import ValidationError
 
 from app.api.schemas import RefractionStaticModelRequest
-from app.services.refraction_static_service import normalize_refraction_first_layer_request
+from app.services.refraction_static_first_layer import (
+    normalize_refraction_first_layer_request,
+)
 
 
 def _model_payload(**overrides: object) -> dict[str, object]:
@@ -88,7 +90,7 @@ def test_refraction_static_rejects_conflicting_legacy_and_first_layer_v1() -> No
         )
 
 
-def test_refraction_static_first_layer_estimate_direct_arrival_schema_valid() -> None:
+def test_refraction_static_estimate_direct_arrival_public_request_valid_without_v1() -> None:
     model = RefractionStaticModelRequest.model_validate(
         _model_payload(
             weathering_velocity_m_s=None,
@@ -110,26 +112,41 @@ def test_refraction_static_first_layer_estimate_direct_arrival_schema_valid() ->
         normalize_refraction_first_layer_request(model)
 
 
-def test_refraction_static_resolved_v1_estimated_path() -> None:
-    model = RefractionStaticModelRequest.model_validate(
-        _model_payload(
-            weathering_velocity_m_s=None,
-            first_layer={
-                'mode': 'estimate_direct_arrival',
-                'weathering_velocity_m_s': 812.5,
-                'min_direct_offset_m': 20.0,
-                'max_direct_offset_m': 140.0,
-            },
+def test_refraction_static_model_rejects_estimated_first_layer_v1_value() -> None:
+    with pytest.raises(
+        ValidationError,
+        match='model.first_layer.weathering_velocity_m_s must be omitted when '
+        'model.first_layer.mode is estimate_direct_arrival',
+    ):
+        RefractionStaticModelRequest.model_validate(
+            _model_payload(
+                weathering_velocity_m_s=None,
+                first_layer={
+                    'mode': 'estimate_direct_arrival',
+                    'weathering_velocity_m_s': 812.5,
+                    'min_direct_offset_m': 20.0,
+                    'max_direct_offset_m': 140.0,
+                },
+            )
         )
-    )
 
-    resolved = normalize_refraction_first_layer_request(model)
 
-    assert resolved.mode == 'estimate_direct_arrival'
-    assert resolved.status == 'estimated'
-    assert resolved.weathering_velocity_m_s == pytest.approx(812.5)
-    assert resolved.qc['v1_mode'] == 'estimate_direct_arrival'
-    assert resolved.qc['resolved_weathering_velocity_m_s'] == pytest.approx(812.5)
+def test_refraction_static_model_rejects_estimated_legacy_v1_value() -> None:
+    with pytest.raises(
+        ValidationError,
+        match='model.weathering_velocity_m_s must be omitted when '
+        'model.first_layer.mode is estimate_direct_arrival',
+    ):
+        RefractionStaticModelRequest.model_validate(
+            _model_payload(
+                weathering_velocity_m_s=812.5,
+                first_layer={
+                    'mode': 'estimate_direct_arrival',
+                    'min_direct_offset_m': 20.0,
+                    'max_direct_offset_m': 140.0,
+                },
+            )
+        )
 
 
 def test_refraction_static_first_layer_estimate_requires_direct_offset_gate() -> None:

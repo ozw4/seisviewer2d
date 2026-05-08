@@ -10,17 +10,23 @@ import app.services.refraction_static_bedrock as bedrock
 import app.services.refraction_static_design_matrix as design_matrix
 import app.services.refraction_static_half_intercept as half_intercept
 import app.services.refraction_static_solver as solver
+import app.services.refraction_static_t1lsst as t1lsst
 import app.services.refraction_static_types as refraction_types
+import app.services.refraction_static_v1 as v1
 import app.services.refraction_static_weathering as weathering
 
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 _FORBIDDEN_IMPORTS = {
+    'app.api.routers',
+    'app.main',
     'app.services.reader',
+    'app.services.refraction_static_service',
     'app.services.refraction_static_inputs',
     'app.trace_store.reader',
     'segyio',
 }
+_FORBIDDEN_IMPORT_PREFIXES = ('app.api.routers.',)
 
 
 def _module_source(module: ModuleType) -> str:
@@ -41,7 +47,12 @@ for name in {sorted(_FORBIDDEN_IMPORTS)!r}:
 
 importlib.import_module({module_name!r})
 
-print(json.dumps(sorted(name for name in {sorted(_FORBIDDEN_IMPORTS)!r} if name in sys.modules)))
+forbidden = set({sorted(_FORBIDDEN_IMPORTS)!r})
+imported = []
+for name in sys.modules:
+    if name in forbidden or name.startswith({_FORBIDDEN_IMPORT_PREFIXES!r}):
+        imported.append(name)
+print(json.dumps(sorted(imported)))
 """
     result = subprocess.run(
         [sys.executable, '-c', code],
@@ -83,3 +94,34 @@ def test_numeric_refraction_modules_import_without_tracestore_readers() -> None:
         'app.services.refraction_static_weathering',
     ):
         assert _forbidden_modules_imported_by(module_name) == set()
+
+
+def test_refraction_static_v1_imports_without_reader_or_segyio() -> None:
+    assert v1.RefractionV1EstimateResult is not None
+
+    assert _forbidden_modules_imported_by('app.services.refraction_static_v1') == set()
+
+
+def test_refraction_static_t1lsst_imports_without_reader_or_segyio() -> None:
+    assert t1lsst.RefractionT1LSSTError is not None
+
+    assert (
+        _forbidden_modules_imported_by('app.services.refraction_static_t1lsst')
+        == set()
+    )
+
+
+def test_refraction_static_schema_tests_do_not_import_service_or_reader() -> None:
+    assert (
+        _forbidden_modules_imported_by('app.tests.test_refraction_static_schema')
+        == set()
+    )
+
+
+def test_refraction_static_artifact_helpers_do_not_import_app_main() -> None:
+    assert (
+        _forbidden_modules_imported_by(
+            'app.tests._refraction_static_artifact_helpers'
+        )
+        == set()
+    )

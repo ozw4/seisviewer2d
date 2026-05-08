@@ -9,7 +9,7 @@ import time
 from typing import Any
 from uuid import uuid4
 
-from app.api.schemas import RefractionStaticApplyRequest, RefractionStaticModelRequest
+from app.api.schemas import RefractionStaticApplyRequest
 from app.core.state import AppState
 from app.services.job_runner import JobCompletion, JobFailure, run_job_with_lifecycle
 from app.services.refraction_static_apply_trace_store import (
@@ -17,12 +17,17 @@ from app.services.refraction_static_apply_trace_store import (
 )
 from app.services.refraction_static_artifacts import write_refraction_static_artifacts
 from app.services.refraction_static_datum import build_refraction_datum_statics
+from app.services.refraction_static_first_layer import (
+    normalize_refraction_first_layer_request,
+)
 from app.services.refraction_static_inputs import build_refraction_static_input_model
 from app.services.refraction_static_types import (
     RefractionStaticInputModel,
     ResolvedRefractionFirstLayer,
 )
 from app.services.refraction_static_v1 import (
+    REFRACTION_V1_ESTIMATES_CSV_NAME,
+    REFRACTION_V1_QC_JSON_NAME,
     estimate_global_v1_from_direct_arrivals,
     write_refraction_v1_artifacts,
 )
@@ -39,30 +44,11 @@ class _ResolvedFirstLayerRequest:
     req: RefractionStaticApplyRequest
     resolved: ResolvedRefractionFirstLayer
     input_model: RefractionStaticInputModel | None
+    upstream_artifact_names: tuple[str, ...] = ()
 
 
 class RefractionFirstLayerNotImplemented(NotImplementedError):
     """Raised when a requested first-layer mode is accepted but not implemented."""
-
-
-def normalize_refraction_first_layer_request(
-    model: RefractionStaticModelRequest,
-) -> ResolvedRefractionFirstLayer:
-    """Resolve the first-layer/V1 request block to the V1 used downstream."""
-    mode = model.first_layer_mode
-    velocity = float(model.resolved_weathering_velocity_m_s)
-    status = 'estimated' if mode == 'estimate_direct_arrival' else 'resolved_constant'
-    return ResolvedRefractionFirstLayer(
-        mode=mode,
-        weathering_velocity_m_s=velocity,
-        status=status,
-        qc={
-            'v1_mode': mode,
-            'weathering_velocity_m_s': velocity,
-            'resolved_weathering_velocity_m_s': velocity,
-            'v1_status': status,
-        },
-    )
 
 
 def resolve_refraction_first_layer_request(
@@ -105,12 +91,8 @@ def resolve_refraction_first_layer_request(
         first_layer=first_layer,
     )
     write_refraction_v1_artifacts(job_dir, estimate)
-    resolved_req = _request_with_resolved_first_layer_velocity(
-        req,
-        weathering_velocity_m_s=estimate.resolved_weathering_velocity_m_s,
-    )
     return _ResolvedFirstLayerRequest(
-        req=resolved_req,
+        req=req,
         resolved=ResolvedRefractionFirstLayer(
             mode='estimate_direct_arrival',
             weathering_velocity_m_s=estimate.resolved_weathering_velocity_m_s,
@@ -123,27 +105,11 @@ def resolve_refraction_first_layer_request(
             },
         ),
         input_model=input_model,
+        upstream_artifact_names=(
+            REFRACTION_V1_QC_JSON_NAME,
+            REFRACTION_V1_ESTIMATES_CSV_NAME,
+        ),
     )
-
-
-def _request_with_resolved_first_layer_velocity(
-    req: RefractionStaticApplyRequest,
-    *,
-    weathering_velocity_m_s: float,
-) -> RefractionStaticApplyRequest:
-    first_layer = req.model.first_layer
-    if first_layer is None:
-        raise ValueError('model.first_layer is required for V1 estimation')
-    resolved_first_layer = first_layer.model_copy(
-        update={'weathering_velocity_m_s': float(weathering_velocity_m_s)}
-    )
-    resolved_model = req.model.model_copy(
-        update={
-            'weathering_velocity_m_s': None,
-            'first_layer': resolved_first_layer,
-        }
-    )
-    return req.model_copy(update={'model': resolved_model})
 
 
 def _request_without_moveout_offset_gates(
@@ -294,6 +260,7 @@ def _run_refraction_static_apply_job_body(
         req=active_req,
         job_dir=job_dir,
         resolved_first_layer=first_layer.resolved,
+        upstream_artifact_names=first_layer.upstream_artifact_names,
     )
     if active_req.apply.register_corrected_file:
         _set_job_progress_message(

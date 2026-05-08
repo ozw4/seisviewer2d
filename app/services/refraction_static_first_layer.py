@@ -33,6 +33,26 @@ def resolve_weathering_velocity_m_s(
     return velocity
 
 
+def normalize_refraction_first_layer_request(
+    model: Any,
+) -> ResolvedRefractionFirstLayer:
+    """Resolve a schema model's first-layer/V1 block to the downstream V1."""
+    mode = getattr(model, 'first_layer_mode')
+    velocity = float(getattr(model, 'resolved_weathering_velocity_m_s'))
+    status = 'estimated' if mode == 'estimate_direct_arrival' else 'resolved_constant'
+    return ResolvedRefractionFirstLayer(
+        mode=mode,
+        weathering_velocity_m_s=velocity,
+        status=status,
+        qc={
+            'v1_mode': mode,
+            'weathering_velocity_m_s': velocity,
+            'resolved_weathering_velocity_m_s': velocity,
+            'v1_status': status,
+        },
+    )
+
+
 def validate_resolved_first_layer_velocity_match(
     *,
     weathering_velocity_m_s: Any,
@@ -89,4 +109,3 @@ def _positive_finite(value: Any, *, name: str) -> float:
 
 def _velocities_close(left: float, right: float) -> bool:
     return bool(np.isclose(float(left), float(right), rtol=1.0e-6, atol=1.0e-6))
-

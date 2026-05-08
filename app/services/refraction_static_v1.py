@@ -38,6 +38,21 @@ _CSV_COLUMNS = (
 class RefractionV1EstimationError(ValueError):
     """Raised when direct-arrival V1 cannot be estimated."""
 
+    def __init__(
+        self,
+        message: str,
+        *,
+        n_valid_groups: int | None = None,
+        min_groups: int | None = None,
+        group_status_counts: dict[str, int] | None = None,
+    ) -> None:
+        super().__init__(message)
+        self.n_valid_groups = n_valid_groups
+        self.min_groups = min_groups
+        self.group_status_counts = (
+            dict(group_status_counts) if group_status_counts is not None else None
+        )
+
 
 @dataclass(frozen=True)
 class RefractionV1EstimateResult:
@@ -172,14 +187,32 @@ def estimate_global_v1_from_direct_arrivals(
     n_valid_groups = int(np.count_nonzero(valid_group_mask))
     if n_valid_groups < min_groups:
         status_counts = _status_counts(group_status_arr)
-        if status_counts.get('velocity_out_of_bounds', 0) > 0:
+        if _all_groups_velocity_out_of_bounds(
+            n_valid_groups=n_valid_groups,
+            status_counts=status_counts,
+        ):
             raise RefractionV1EstimationError(
-                'No valid direct-arrival V1 groups remain within '
-                'model.first_layer velocity bounds.'
+                _v1_group_failure_message(
+                    'No valid direct-arrival V1 groups remain within '
+                    'model.first_layer velocity bounds',
+                    n_valid_groups=n_valid_groups,
+                    min_groups=min_groups,
+                    status_counts=status_counts,
+                ),
+                n_valid_groups=n_valid_groups,
+                min_groups=min_groups,
+                group_status_counts=status_counts,
             )
         raise RefractionV1EstimationError(
-            'Insufficient valid direct-arrival V1 groups: '
-            f'{n_valid_groups} valid groups, require at least {min_groups}.'
+            _v1_group_failure_message(
+                'Insufficient valid direct-arrival V1 groups',
+                n_valid_groups=n_valid_groups,
+                min_groups=min_groups,
+                status_counts=status_counts,
+            ),
+            n_valid_groups=n_valid_groups,
+            min_groups=min_groups,
+            group_status_counts=status_counts,
         )
 
     valid_v1 = group_v1_arr[valid_group_mask]
@@ -471,6 +504,51 @@ def _residual_mad(residual_s: np.ndarray) -> float:
 def _status_counts(status: np.ndarray) -> dict[str, int]:
     values, counts = np.unique(np.asarray(status).astype(str), return_counts=True)
     return {str(value): int(count) for value, count in zip(values, counts, strict=True)}
+
+
+def _all_groups_velocity_out_of_bounds(
+    *,
+    n_valid_groups: int,
+    status_counts: dict[str, int],
+) -> bool:
+    n_groups = sum(status_counts.values())
+    return (
+        n_valid_groups == 0
+        and n_groups > 0
+        and status_counts.get('velocity_out_of_bounds', 0) == n_groups
+    )
+
+
+def _v1_group_failure_message(
+    prefix: str,
+    *,
+    n_valid_groups: int,
+    min_groups: int,
+    status_counts: dict[str, int],
+) -> str:
+    return (
+        f'{prefix}: {n_valid_groups} valid groups, require at least {min_groups}. '
+        f'Status counts: {_format_status_counts(status_counts)}.'
+    )
+
+
+def _format_status_counts(status_counts: dict[str, int]) -> str:
+    preferred_order = (
+        'ok',
+        'velocity_out_of_bounds',
+        'insufficient_picks',
+        'insufficient_picks_after_robust',
+        'nonpositive_slope',
+        'insufficient_offset_aperture',
+        'invalid_residual_statistics',
+        'nonfinite_candidate',
+        'fit_failed',
+    )
+    ordered = [status for status in preferred_order if status in status_counts]
+    ordered.extend(sorted(set(status_counts) - set(ordered)))
+    if not ordered:
+        return 'none'
+    return ', '.join(f'{status}={status_counts[status]}' for status in ordered)
 
 
 def _estimate_rows(result: RefractionV1EstimateResult) -> list[dict[str, object]]:

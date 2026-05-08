@@ -25,7 +25,7 @@ from app.services.refraction_static_artifacts import (
     write_refraction_static_solution_npz,
 )
 from app.services.trace_store_registration import trace_store_cache_key
-from app.tests.test_refraction_static_artifacts import _result as _artifact_result
+from app.tests._refraction_static_artifact_helpers import _result as _artifact_result
 
 KEY1 = 189
 KEY2 = 193
