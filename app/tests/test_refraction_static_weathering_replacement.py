@@ -192,6 +192,38 @@ def _weathering_result(
             int(sorted_trace_index.shape[0]),
             dtype=np.float64,
         ),
+        row_trace_index_sorted=np.flatnonzero(valid_observation).astype(np.int64),
+        row_source_node_id=source_sorted[valid_observation].astype(np.int64),
+        row_receiver_node_id=receiver_sorted[valid_observation].astype(np.int64),
+        row_distance_m=np.linspace(
+            100.0,
+            300.0,
+            int(np.count_nonzero(valid_observation)),
+            dtype=np.float64,
+        ),
+        observed_pick_time_s=np.linspace(
+            0.05,
+            0.07,
+            int(np.count_nonzero(valid_observation)),
+            dtype=np.float64,
+        ),
+        modeled_pick_time_s=np.linspace(
+            0.049,
+            0.071,
+            int(np.count_nonzero(valid_observation)),
+            dtype=np.float64,
+        ),
+        residual_time_s=np.linspace(
+            0.001,
+            -0.001,
+            int(np.count_nonzero(valid_observation)),
+            dtype=np.float64,
+        ),
+        used_row_mask=np.ones(int(np.count_nonzero(valid_observation)), dtype=bool),
+        rejected_by_robust_mask=np.zeros(
+            int(np.count_nonzero(valid_observation)),
+            dtype=bool,
+        ),
         qc={'method': 'gli_variable_thickness'},
     )
 

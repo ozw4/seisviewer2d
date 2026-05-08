@@ -11,6 +11,7 @@ from uuid import uuid4
 from app.api.schemas import RefractionStaticApplyRequest
 from app.core.state import AppState
 from app.services.job_runner import JobCompletion, JobFailure, run_job_with_lifecycle
+from app.services.refraction_static_artifacts import write_refraction_static_artifacts
 from app.services.refraction_static_datum import build_refraction_datum_statics
 from app.services.refraction_static_weathering_replacement import (
     compute_weathering_replacement_statics_from_first_breaks,
@@ -18,7 +19,7 @@ from app.services.refraction_static_weathering_replacement import (
 
 _REQUEST_JSON_NAME = 'refraction_static_request.json'
 _NOT_IMPLEMENTED_MESSAGE = (
-    'Refraction statics final artifact writing is not implemented yet.'
+    'Refraction statics TraceStore application is not implemented yet.'
 )
 
 
@@ -108,7 +109,7 @@ def _run_refraction_static_apply_job_body(
         progress=0.75,
         message='computing_refraction_datum_statics',
     )
-    build_refraction_datum_statics(
+    datum_result = build_refraction_datum_statics(
         weathering_replacement_result=replacement_result,
         datum=req.datum,
         apply_options=req.apply,
@@ -124,7 +125,27 @@ def _run_refraction_static_apply_job_body(
         progress=0.85,
         message='refraction_datum_statics_computed',
     )
-    raise NotImplementedError(_NOT_IMPLEMENTED_MESSAGE)
+    _set_job_progress_message(
+        state,
+        job_id,
+        progress=0.90,
+        message='writing_refraction_static_artifacts',
+    )
+    write_refraction_static_artifacts(
+        result=datum_result,
+        req=req,
+        job_dir=job_dir,
+    )
+    if req.apply.register_corrected_file:
+        raise NotImplementedError(_NOT_IMPLEMENTED_MESSAGE)
+
+    _set_job_progress_message(
+        state,
+        job_id,
+        progress=1.0,
+        message='refraction_static_artifacts_written',
+    )
+    return JobCompletion(finished_ts=time.time())
 
 
 def _handle_refraction_static_job_error(_exc: Exception) -> JobFailure:
