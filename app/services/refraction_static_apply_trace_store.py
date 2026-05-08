@@ -739,6 +739,7 @@ def _build_corrected_file_payload(
         'store_name': build_result.store_path.name,
         'derived_from_file_id': req.file_id,
         'derived_by': 'refraction_static_correction',
+        'derivation': 'refraction_static_correction',
         'source_job_id': job_id,
         'job_id': job_id,
         'key1_byte': int(req.key1_byte),
