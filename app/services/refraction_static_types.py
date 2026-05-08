@@ -9,7 +9,7 @@ from typing import Any, Literal
 import numpy as np
 
 
-BedrockVelocityMode = Literal['solve_global', 'fixed_global']
+BedrockVelocityMode = Literal['solve_global', 'fixed_global', 'solve_cell']
 RefractionFirstLayerMode = Literal['constant', 'estimate_direct_arrival']
 
 
@@ -104,6 +104,18 @@ class RefractionStaticDesignMatrix:
     n_parameters: int
 
     qc: dict[str, Any]
+
+    bedrock_slowness_cell_col_start: int | None = None
+    active_cell_id: np.ndarray | None = None
+    inactive_cell_id: np.ndarray | None = None
+    cell_id_to_col: dict[int, int] | None = None
+    row_midpoint_cell_id: np.ndarray | None = None
+    row_midpoint_cell_col: np.ndarray | None = None
+    cell_assignment_mode: str | None = None
+    n_total_cells: int | None = None
+    n_active_cells: int | None = None
+    n_inactive_cells: int | None = None
+    rejection_reason_sorted: np.ndarray | None = None
 
 
 @dataclass(frozen=True)
