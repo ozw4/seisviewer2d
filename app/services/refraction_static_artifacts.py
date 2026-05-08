@@ -267,6 +267,7 @@ _SOURCE_STATIC_TABLE_COLUMNS = (
     'elevation_correction_ms',
     'total_static_ms',
     'total_applied_shift_ms',
+    'sign_convention',
     'solution_status',
     'weathering_status',
     'datum_status',
@@ -298,6 +299,7 @@ _RECEIVER_STATIC_TABLE_COLUMNS = (
     'elevation_correction_ms',
     'total_static_ms',
     'total_applied_shift_ms',
+    'sign_convention',
     'solution_status',
     'weathering_status',
     'datum_status',
@@ -365,7 +367,9 @@ def write_refraction_static_artifacts(
         receiver_static_table_csv=root / RECEIVER_STATIC_TABLE_CSV_NAME,
         source_receiver_static_table_npz=root / SOURCE_RECEIVER_STATIC_TABLE_NPZ_NAME,
         manifest_json=root / REFRACTION_STATIC_ARTIFACTS_JSON_NAME,
-        artifact_names=tuple(str(item['name']) for item in artifact_entries),
+        artifact_names=tuple(
+            str(item['name']) for item in artifact_entries if bool(item['required'])
+        ),
         qc=qc,
         refraction_t1lsst_1layer_components_csv=t1lsst_components_path,
     )
@@ -1488,6 +1492,7 @@ def _source_static_table_rows(
                 'total_applied_shift_ms': _csv_ms(
                     result.source_refraction_shift_s[index]
                 ),
+                'sign_convention': SIGN_CONVENTION,
                 'solution_status': str(
                     node_context['solution_status'].get(node_id, 'missing_solution')
                 ),
@@ -1557,6 +1562,7 @@ def _receiver_static_table_rows(
                 'total_applied_shift_ms': _csv_ms(
                     result.receiver_refraction_shift_s[index]
                 ),
+                'sign_convention': SIGN_CONVENTION,
                 'solution_status': str(
                     node_context['solution_status'].get(node_id, 'missing_solution')
                 ),

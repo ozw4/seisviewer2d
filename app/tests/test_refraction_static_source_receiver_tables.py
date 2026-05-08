@@ -9,6 +9,7 @@ import pytest
 
 from app.services.refraction_static_artifacts import (
     RECEIVER_STATIC_TABLE_CSV_NAME,
+    SIGN_CONVENTION,
     SOURCE_RECEIVER_STATIC_TABLE_NPZ_NAME,
     SOURCE_STATIC_TABLE_CSV_NAME,
     write_refraction_static_artifacts,
@@ -37,6 +38,7 @@ SOURCE_COLUMNS = [
     'elevation_correction_ms',
     'total_static_ms',
     'total_applied_shift_ms',
+    'sign_convention',
     'solution_status',
     'weathering_status',
     'datum_status',
@@ -68,6 +70,7 @@ RECEIVER_COLUMNS = [
     'elevation_correction_ms',
     'total_static_ms',
     'total_applied_shift_ms',
+    'sign_convention',
     'solution_status',
     'weathering_status',
     'datum_status',
@@ -95,6 +98,7 @@ def test_source_static_table_has_one_row_per_source_endpoint(
     assert [row['endpoint_kind'] for row in rows] == ['source', 'source']
     assert [row['source_endpoint_key'] for row in rows] == ['s0', 's1']
     assert [int(row['source_node_id']) for row in rows] == [0, 1]
+    assert {row['sign_convention'] for row in rows} == {SIGN_CONVENTION}
 
 
 def test_receiver_static_table_has_one_row_per_receiver_endpoint(
@@ -113,6 +117,7 @@ def test_receiver_static_table_has_one_row_per_receiver_endpoint(
     assert [row['endpoint_kind'] for row in rows] == ['receiver', 'receiver']
     assert [row['receiver_endpoint_key'] for row in rows] == ['r0', 'r1']
     assert [int(row['receiver_node_id']) for row in rows] == [1, 2]
+    assert {row['sign_convention'] for row in rows} == {SIGN_CONVENTION}
 
 
 def test_source_receiver_static_tables_match_npz(tmp_path: Path) -> None:

@@ -350,8 +350,6 @@ def test_write_refraction_static_artifacts_npz_schema(tmp_path: Path) -> None:
         SOURCE_STATIC_TABLE_CSV_NAME,
         RECEIVER_STATIC_TABLE_CSV_NAME,
         SOURCE_RECEIVER_STATIC_TABLE_NPZ_NAME,
-        REFRACTION_V1_QC_JSON_NAME,
-        REFRACTION_V1_ESTIMATES_CSV_NAME,
     )
     with np.load(paths.solution_npz, allow_pickle=False) as data:
         assert data['artifact_version'].item() == '1.0'
