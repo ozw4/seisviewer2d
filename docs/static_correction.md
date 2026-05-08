@@ -23,6 +23,8 @@ jobs register, but the static-correction APIs are primarily developer-facing.
   - When requested, applies the final refraction shifts to a derived TraceStore
     and registers the corrected file for viewer access. SEG-Y writing is not
     part of this workflow.
+  - The IRAS-compatible 1-layer V1/T1LSST/source-receiver table workflow is
+    documented in [refraction_static.md](refraction_static.md).
 
 The detailed time-term inversion API, sign convention, apply modes, and artifact
 contract are documented in [time_term_static_correction.md](time_term_static_correction.md).

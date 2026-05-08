@@ -141,6 +141,7 @@ residual statics, geometry linkage, and time-term statics.
 See:
 
 - `static_correction.md`
+- `refraction_static.md`
 - `time_term_static_correction.md`
 
 ## Viewer benchmark
