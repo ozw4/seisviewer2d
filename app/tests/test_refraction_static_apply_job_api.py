@@ -26,6 +26,9 @@ from app.services.refraction_static_artifacts import (
     REFRACTION_STATIC_COMPONENTS_CSV_NAME,
     REFRACTION_STATIC_QC_JSON_NAME,
     REFRACTION_STATIC_SOLUTION_NPZ_NAME,
+    RECEIVER_STATIC_TABLE_CSV_NAME,
+    SOURCE_RECEIVER_STATIC_TABLE_NPZ_NAME,
+    SOURCE_STATIC_TABLE_CSV_NAME,
 )
 from app.services.refraction_static_service import run_refraction_static_apply_job
 from app.services.refraction_static_v1 import RefractionV1EstimateResult
@@ -48,6 +51,9 @@ FINAL_REFRACTION_ARTIFACTS = {
     NEAR_SURFACE_MODEL_CSV_NAME,
     FIRST_BREAK_RESIDUALS_CSV_NAME,
     REFRACTION_STATIC_COMPONENTS_CSV_NAME,
+    SOURCE_STATIC_TABLE_CSV_NAME,
+    RECEIVER_STATIC_TABLE_CSV_NAME,
+    SOURCE_RECEIVER_STATIC_TABLE_NPZ_NAME,
     REFRACTION_STATIC_ARTIFACTS_JSON_NAME,
 }
 REQUEST_JSON_NAME = 'refraction_static_request.json'

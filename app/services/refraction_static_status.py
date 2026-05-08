@@ -5,6 +5,13 @@ from __future__ import annotations
 REFRACTION_STATIC_STATUSES: frozenset[str] = frozenset(
     {
         'ok',
+        'inactive_endpoint',
+        'missing_geometry',
+        'missing_linkage',
+        'insufficient_pick_fold',
+        'invalid_t1',
+        'invalid_datum',
+        'not_applied',
         'solved',
         'not_observed',
         'inactive',

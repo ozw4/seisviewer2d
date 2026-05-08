@@ -20,7 +20,10 @@ from app.services.refraction_static_artifacts import (
     REFRACTION_STATIC_COMPONENTS_CSV_NAME,
     REFRACTION_STATIC_QC_JSON_NAME,
     REFRACTION_STATIC_SOLUTION_NPZ_NAME,
+    RECEIVER_STATIC_TABLE_CSV_NAME,
     RefractionStaticArtifactError,
+    SOURCE_RECEIVER_STATIC_TABLE_NPZ_NAME,
+    SOURCE_STATIC_TABLE_CSV_NAME,
     write_refraction_static_solution_npz,
     write_refraction_static_artifacts,
 )
@@ -66,6 +69,9 @@ REQUIRED_NODE_ARRAYS = {
     'node_weathering_thickness_m',
     'node_half_intercept_time_s',
     'node_weathering_replacement_shift_s',
+    'node_t1_time_s',
+    'node_sh1_weathering_thickness_m',
+    'node_weathering_correction_s',
     'node_solution_status',
     'node_weathering_status',
     'node_datum_status',
@@ -95,6 +101,9 @@ EXPECTED_FILENAMES = {
     NEAR_SURFACE_MODEL_CSV_NAME,
     FIRST_BREAK_RESIDUALS_CSV_NAME,
     REFRACTION_STATIC_COMPONENTS_CSV_NAME,
+    SOURCE_STATIC_TABLE_CSV_NAME,
+    RECEIVER_STATIC_TABLE_CSV_NAME,
+    SOURCE_RECEIVER_STATIC_TABLE_NPZ_NAME,
     REFRACTION_STATIC_ARTIFACTS_JSON_NAME,
 }
 
@@ -336,6 +345,9 @@ def test_write_refraction_static_artifacts_npz_schema(tmp_path: Path) -> None:
         NEAR_SURFACE_MODEL_CSV_NAME,
         FIRST_BREAK_RESIDUALS_CSV_NAME,
         REFRACTION_STATIC_COMPONENTS_CSV_NAME,
+        SOURCE_STATIC_TABLE_CSV_NAME,
+        RECEIVER_STATIC_TABLE_CSV_NAME,
+        SOURCE_RECEIVER_STATIC_TABLE_NPZ_NAME,
     )
     with np.load(paths.solution_npz, allow_pickle=False) as data:
         assert data['artifact_version'].item() == '1.0'
@@ -346,6 +358,7 @@ def test_write_refraction_static_artifacts_npz_schema(tmp_path: Path) -> None:
         assert data['weathering_velocity_m_s'].item() == pytest.approx(800.0)
         assert data['resolved_weathering_velocity_m_s'].item() == pytest.approx(800.0)
         assert data['bedrock_velocity_m_s'].item() == pytest.approx(2500.0)
+        assert data['v2_refractor_velocity_m_s'].item() == pytest.approx(2500.0)
         assert REQUIRED_TRACE_ARRAYS.issubset(data.files)
         assert REQUIRED_NODE_ARRAYS.issubset(data.files)
         assert REQUIRED_ROW_ARRAYS.issubset(data.files)
@@ -441,7 +454,7 @@ def test_write_refraction_static_artifacts_qc_json(tmp_path: Path) -> None:
     assert payload['status_counts']['trace_static_status']['ok'] == 3
     assert payload['status_counts']['node_datum_status']['ok'] == 2
     assert payload['first_break_fit']['residual_rms_ms'] == pytest.approx(1.0)
-    assert len(payload['artifacts']) == 6
+    assert len(payload['artifacts']) == 9
     json.dumps(payload, allow_nan=False)
     assert not _contains_absolute_path(payload)
 
@@ -513,6 +526,9 @@ def test_refraction_static_artifacts_manifest_and_download_visibility(
         NEAR_SURFACE_MODEL_CSV_NAME,
         FIRST_BREAK_RESIDUALS_CSV_NAME,
         REFRACTION_STATIC_COMPONENTS_CSV_NAME,
+        SOURCE_STATIC_TABLE_CSV_NAME,
+        RECEIVER_STATIC_TABLE_CSV_NAME,
+        SOURCE_RECEIVER_STATIC_TABLE_NPZ_NAME,
     }
 
     state = app.state.sv
