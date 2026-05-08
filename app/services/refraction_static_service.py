@@ -9,7 +9,7 @@ import time
 from typing import Any
 from uuid import uuid4
 
-from app.api.schemas import RefractionStaticApplyRequest, RefractionStaticModelRequest
+from app.api.schemas import RefractionStaticApplyRequest
 from app.core.state import AppState
 from app.services.job_runner import JobCompletion, JobFailure, run_job_with_lifecycle
 from app.services.refraction_static_apply_trace_store import (
@@ -17,6 +17,9 @@ from app.services.refraction_static_apply_trace_store import (
 )
 from app.services.refraction_static_artifacts import write_refraction_static_artifacts
 from app.services.refraction_static_datum import build_refraction_datum_statics
+from app.services.refraction_static_first_layer import (
+    normalize_refraction_first_layer_request,
+)
 from app.services.refraction_static_inputs import build_refraction_static_input_model
 from app.services.refraction_static_types import (
     RefractionStaticInputModel,
@@ -43,26 +46,6 @@ class _ResolvedFirstLayerRequest:
 
 class RefractionFirstLayerNotImplemented(NotImplementedError):
     """Raised when a requested first-layer mode is accepted but not implemented."""
-
-
-def normalize_refraction_first_layer_request(
-    model: RefractionStaticModelRequest,
-) -> ResolvedRefractionFirstLayer:
-    """Resolve the first-layer/V1 request block to the V1 used downstream."""
-    mode = model.first_layer_mode
-    velocity = float(model.resolved_weathering_velocity_m_s)
-    status = 'estimated' if mode == 'estimate_direct_arrival' else 'resolved_constant'
-    return ResolvedRefractionFirstLayer(
-        mode=mode,
-        weathering_velocity_m_s=velocity,
-        status=status,
-        qc={
-            'v1_mode': mode,
-            'weathering_velocity_m_s': velocity,
-            'resolved_weathering_velocity_m_s': velocity,
-            'v1_status': status,
-        },
-    )
 
 
 def resolve_refraction_first_layer_request(

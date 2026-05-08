@@ -154,7 +154,7 @@ def synthetic_direct_arrival_input_model() -> RefractionStaticInputModel:
 
 def run_synthetic_refraction_statics(
     *,
-    state: Any,
+    state: Any | None = None,
     req: RefractionStaticApplyRequest | None = None,
     input_model: RefractionStaticInputModel | None = None,
 ) -> RefractionDatumStaticsResult:

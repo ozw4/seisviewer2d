@@ -179,10 +179,12 @@ def estimate_refraction_half_intercept_times_from_first_breaks(
     resolved_first_layer: ResolvedRefractionFirstLayer | None = None,
 ) -> RefractionHalfInterceptTimeResult:
     """Build inputs, solve the GLI system, and emit the half-intercept model."""
-    from app.services.refraction_static_inputs import build_refraction_static_input_model
-
     try:
         if input_model is None:
+            from app.services.refraction_static_inputs import (
+                build_refraction_static_input_model,
+            )
+
             input_model = build_refraction_static_input_model(
                 req=req,
                 state=state,

@@ -61,7 +61,7 @@ from app.tests.test_refraction_static_apply_trace_store import (
     _valid_result,
     _write_source_store,
 )
-from app.tests.test_refraction_static_artifacts import _result as _artifact_result
+from app.tests._refraction_static_artifact_helpers import _result as _artifact_result
 
 
 FINAL_REFRACTION_ARTIFACTS = {

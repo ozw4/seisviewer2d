@@ -4,7 +4,9 @@ import pytest
 from pydantic import ValidationError
 
 from app.api.schemas import RefractionStaticModelRequest
-from app.services.refraction_static_service import normalize_refraction_first_layer_request
+from app.services.refraction_static_first_layer import (
+    normalize_refraction_first_layer_request,
+)
 
 
 def _model_payload(**overrides: object) -> dict[str, object]:

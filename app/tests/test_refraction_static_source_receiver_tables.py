@@ -7,7 +7,6 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-from app.main import app
 from app.services.refraction_static_artifacts import (
     RECEIVER_STATIC_TABLE_CSV_NAME,
     SOURCE_RECEIVER_STATIC_TABLE_NPZ_NAME,
@@ -22,7 +21,7 @@ from app.tests._refraction_static_synthetic import (
     run_synthetic_refraction_statics,
     synthetic_refraction_apply_request,
 )
-from app.tests.test_refraction_static_artifacts import _request, _result
+from app.tests._refraction_static_artifact_helpers import _request, _result
 
 
 SOURCE_COLUMNS = [
@@ -128,7 +127,7 @@ def test_source_receiver_static_tables_have_one_row_per_endpoint(
     tmp_path: Path,
 ) -> None:
     req = synthetic_refraction_apply_request()
-    result = run_synthetic_refraction_statics(state=app.state.sv, req=req)
+    result = run_synthetic_refraction_statics(req=req)
 
     paths = write_refraction_static_artifacts(
         result=result,
