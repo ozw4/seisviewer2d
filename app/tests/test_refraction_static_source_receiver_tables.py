@@ -171,8 +171,12 @@ def test_source_receiver_static_tables_have_one_row_per_endpoint(
             expected_wcor_ms,
             abs=SYNTHETIC_WCOR_TOLERANCE_MS,
         )
+        assert float(row['total_static_ms']) == pytest.approx(
+            expected_wcor_ms,
+            abs=SYNTHETIC_WCOR_TOLERANCE_MS,
+        )
         assert float(row['total_applied_shift_ms']) == pytest.approx(
-            float(row['total_static_ms']),
+            expected_wcor_ms,
             abs=SYNTHETIC_WCOR_TOLERANCE_MS,
         )
 

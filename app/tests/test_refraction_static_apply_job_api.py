@@ -925,10 +925,37 @@ def test_refraction_static_legacy_request_still_works(
     job_id = 'refraction-legacy-synthetic-one-layer-e2e'
     job_dir = tmp_path / 'jobs' / job_id
     req = synthetic_refraction_apply_request()
+    req = req.model_copy(
+        update={'moveout': req.moveout.model_copy(update={'min_offset_m': 240.0})}
+    )
     _create_refraction_job(client, job_id=job_id, req=req, job_dir=job_dir)
+    refracted_input = synthetic_refracted_arrival_input_model()
+    direct_input = synthetic_direct_arrival_input_model()
+    direct_mask = direct_input.distance_m_sorted <= 180.0
+    mixed_input = replace(
+        refracted_input,
+        pick_time_s_sorted=np.where(
+            direct_mask,
+            direct_input.pick_time_s_sorted,
+            refracted_input.pick_time_s_sorted,
+        ),
+    )
+    weathering_input = replace(
+        mixed_input,
+        valid_observation_mask_sorted=(
+            mixed_input.valid_observation_mask_sorted
+            & (mixed_input.distance_m_sorted >= 240.0)
+        ),
+    )
+    build_calls: list[RefractionStaticApplyRequest] = []
 
-    def _build_synthetic_input_model(**_kwargs: Any) -> object:
-        return synthetic_refracted_arrival_input_model()
+    def _build_synthetic_input_model(**kwargs: Any) -> object:
+        build_req = kwargs['req']
+        build_calls.append(build_req)
+        if build_req.moveout.min_offset_m is None:
+            return mixed_input
+        assert build_req.moveout.min_offset_m == pytest.approx(240.0)
+        return weathering_input
 
     monkeypatch.setattr(
         refraction_service_module,
@@ -943,6 +970,8 @@ def test_refraction_static_legacy_request_still_works(
 
     run_refraction_static_apply_job(job_id, req, client.app.state.sv)
 
+    assert len(build_calls) == 1
+    assert build_calls[0].moveout.min_offset_m == pytest.approx(240.0)
     with client.app.state.sv.lock:
         job = dict(client.app.state.sv.jobs[job_id])
     assert job['status'] == 'done'
