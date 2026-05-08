@@ -25,6 +25,10 @@ from app.services.geometry_linkage_loader import (
 )
 from app.services.job_artifact_refs import resolve_job_artifact_path
 from app.services.reader import get_reader
+from app.services.refraction_static_types import (
+    RefractionEndpointTable,
+    RefractionStaticInputModel,
+)
 from app.services.trace_store_index_validation import validate_sorted_to_original
 from app.trace_store.reader import TraceStoreSectionReader
 from app.utils.pick_cache_file1d_mem import path_for_file
@@ -80,59 +84,6 @@ _PREVIEW_COLUMNS = (
     'source_node_id',
     'receiver_node_id',
 )
-
-
-@dataclass(frozen=True)
-class RefractionEndpointTable:
-    node_id: np.ndarray
-    endpoint_id: np.ndarray
-    x_m: np.ndarray
-    y_m: np.ndarray
-    elevation_m: np.ndarray
-    kind: np.ndarray
-    pick_count: np.ndarray
-
-
-@dataclass(frozen=True)
-class RefractionStaticInputModel:
-    file_id: str
-    n_traces: int
-
-    sorted_trace_index: np.ndarray
-    pick_time_s_sorted: np.ndarray
-    valid_pick_mask_sorted: np.ndarray
-    valid_observation_mask_sorted: np.ndarray
-
-    source_id_sorted: np.ndarray
-    receiver_id_sorted: np.ndarray
-
-    source_x_m_sorted: np.ndarray
-    source_y_m_sorted: np.ndarray
-    receiver_x_m_sorted: np.ndarray
-    receiver_y_m_sorted: np.ndarray
-
-    source_elevation_m_sorted: np.ndarray
-    receiver_elevation_m_sorted: np.ndarray
-    source_depth_m_sorted: np.ndarray | None
-
-    geometry_distance_m_sorted: np.ndarray
-    offset_m_sorted: np.ndarray | None
-    distance_m_sorted: np.ndarray
-
-    source_endpoint_key_sorted: np.ndarray
-    receiver_endpoint_key_sorted: np.ndarray
-
-    source_node_id_sorted: np.ndarray
-    receiver_node_id_sorted: np.ndarray
-    node_x_m: np.ndarray
-    node_y_m: np.ndarray
-    node_elevation_m: np.ndarray
-    node_kind: np.ndarray
-
-    rejection_reason_sorted: np.ndarray
-    qc: dict[str, Any]
-    endpoint_table: RefractionEndpointTable
-    metadata: dict[str, Any]
 
 
 @dataclass(frozen=True)

@@ -27,7 +27,7 @@ from app.services.refraction_static_half_intercept import (
     build_refraction_half_intercept_time_model_from_bedrock_result,
     estimate_refraction_half_intercept_times_from_first_breaks,
 )
-from app.services.refraction_static_inputs import (
+from app.services.refraction_static_types import (
     RefractionEndpointTable,
     RefractionStaticInputModel,
 )

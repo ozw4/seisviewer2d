@@ -9,7 +9,6 @@ from scipy import sparse
 import app.services.refraction_static_solver as solver_module
 from app.api.schemas import RefractionStaticModelRequest, RefractionStaticSolverRequest
 from app.services.refraction_static_design_matrix import (
-    RefractionStaticDesignMatrix,
     build_refraction_static_design_matrix_from_arrays,
 )
 from app.services.refraction_static_solver import (
@@ -17,6 +16,7 @@ from app.services.refraction_static_solver import (
     solve_refraction_static_bounded_ls,
     solve_refraction_static_bounded_ls_from_matrix,
 )
+from app.services.refraction_static_types import RefractionStaticDesignMatrix
 
 ACTIVE_NODE_ID = np.asarray([10, 20, 30, 40], dtype=np.int64)
 TRUE_HALF_INTERCEPT_S = np.asarray([0.010, 0.020, 0.015, 0.012], dtype=np.float64)

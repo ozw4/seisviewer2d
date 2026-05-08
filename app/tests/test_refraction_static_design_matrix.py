@@ -8,12 +8,12 @@ from scipy import sparse
 
 from app.api.schemas import RefractionStaticModelRequest
 from app.services.refraction_static_design_matrix import (
-    RefractionStaticDesignMatrix,
     build_refraction_static_design_matrix,
     build_refraction_static_design_matrix_from_arrays,
 )
-from app.services.refraction_static_inputs import (
+from app.services.refraction_static_types import (
     RefractionEndpointTable,
+    RefractionStaticDesignMatrix,
     RefractionStaticInputModel,
 )
 

@@ -2,50 +2,22 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
 from typing import Any, Literal
 
 import numpy as np
 from scipy import sparse
 
 from app.api.schemas import RefractionStaticModelRequest
-from app.services.refraction_static_inputs import RefractionStaticInputModel
+from app.services.refraction_static_types import (
+    RefractionStaticDesignMatrix,
+    RefractionStaticInputModel,
+)
 
 BedrockVelocityMode = Literal['solve_global', 'fixed_global']
 
 
 class RefractionStaticDesignMatrixError(ValueError):
     """Raised when refraction static design matrix inputs are inconsistent."""
-
-
-@dataclass(frozen=True)
-class RefractionStaticDesignMatrix:
-    matrix: sparse.csr_matrix
-    rhs_s: np.ndarray
-
-    observed_pick_time_s: np.ndarray
-    row_trace_index_sorted: np.ndarray
-    row_source_node_id: np.ndarray
-    row_receiver_node_id: np.ndarray
-    row_distance_m: np.ndarray
-
-    active_node_id: np.ndarray
-    inactive_node_id: np.ndarray
-    node_id_to_col: dict[int, int]
-    source_node_col: np.ndarray
-    receiver_node_col: np.ndarray
-
-    bedrock_slowness_col: int | None
-    bedrock_velocity_mode: BedrockVelocityMode
-    fixed_bedrock_velocity_m_s: float | None
-    fixed_bedrock_slowness_s_per_m: float | None
-
-    n_total_nodes: int
-    n_active_nodes: int
-    n_observations: int
-    n_parameters: int
-
-    qc: dict[str, Any]
 
 
 def build_refraction_static_design_matrix(

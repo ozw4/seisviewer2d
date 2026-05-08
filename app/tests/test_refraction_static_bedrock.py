@@ -21,7 +21,7 @@ from app.services.refraction_static_bedrock import (
 from app.services.refraction_static_design_matrix import (
     build_refraction_static_design_matrix,
 )
-from app.services.refraction_static_inputs import (
+from app.services.refraction_static_types import (
     RefractionEndpointTable,
     RefractionStaticInputModel,
 )
@@ -629,8 +629,10 @@ def test_lower_level_can_retain_debug_objects() -> None:
 def test_estimate_wraps_high_level_input_builder_errors(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    import app.services.refraction_static_inputs as inputs_module
+
     monkeypatch.setattr(
-        bedrock_module,
+        inputs_module,
         'build_refraction_static_input_model',
         lambda **_kwargs: (_ for _ in ()).throw(ValueError('input builder failed')),
     )

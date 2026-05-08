@@ -3,10 +3,9 @@
 from __future__ import annotations
 
 import csv
-from dataclasses import dataclass
 import json
 from pathlib import Path
-from typing import Any, Literal
+from typing import Any
 from uuid import uuid4
 
 import numpy as np
@@ -18,17 +17,17 @@ from app.api.schemas import (
 )
 from app.core.state import AppState
 from app.services.refraction_static_design_matrix import (
-    RefractionStaticDesignMatrix,
     build_refraction_static_design_matrix,
-)
-from app.services.refraction_static_inputs import (
-    RefractionStaticInputModel,
-    build_refraction_static_input_model,
 )
 from app.services.refraction_static_solver import (
     RefractionStaticSolverError,
-    RefractionStaticSolverResult,
     solve_refraction_static_bounded_ls,
+)
+from app.services.refraction_static_types import (
+    RefractionBedrockSlownessResult,
+    RefractionStaticDesignMatrix,
+    RefractionStaticInputModel,
+    RefractionStaticSolverResult,
 )
 
 REFRACTION_BEDROCK_QC_JSON_NAME = 'refraction_bedrock_velocity_qc.json'
@@ -53,42 +52,6 @@ class RefractionBedrockSlownessError(ValueError):
     """Raised when global bedrock slowness cannot be estimated."""
 
 
-@dataclass(frozen=True)
-class RefractionBedrockSlownessResult:
-    """Integration result for the solve-global bedrock slowness workflow."""
-
-    bedrock_velocity_mode: Literal['solve_global']
-    weathering_velocity_m_s: float
-
-    bedrock_slowness_s_per_m: float
-    bedrock_velocity_m_s: float
-    bedrock_velocity_status: str
-
-    min_bedrock_velocity_m_s: float
-    max_bedrock_velocity_m_s: float
-    lower_bedrock_slowness_s_per_m: float
-    upper_bedrock_slowness_s_per_m: float
-
-    active_node_id: np.ndarray
-    active_node_half_intercept_time_s: np.ndarray
-
-    row_trace_index_sorted: np.ndarray
-    row_source_node_id: np.ndarray
-    row_receiver_node_id: np.ndarray
-    row_distance_m: np.ndarray
-    observed_pick_time_s: np.ndarray
-    modeled_pick_time_s: np.ndarray
-    residual_time_s: np.ndarray
-    used_row_mask: np.ndarray
-    rejected_by_robust_mask: np.ndarray
-
-    input_model: RefractionStaticInputModel | None
-    design_matrix: RefractionStaticDesignMatrix | None
-    solver_result: RefractionStaticSolverResult
-
-    qc: dict[str, Any]
-
-
 def estimate_global_bedrock_slowness_from_first_breaks(
     *,
     req: RefractionStaticApplyRequest,
@@ -97,6 +60,8 @@ def estimate_global_bedrock_slowness_from_first_breaks(
 ) -> RefractionBedrockSlownessResult:
     """Build refraction inputs from a request and estimate global bedrock slowness."""
     _require_solve_global(req.model)
+    from app.services.refraction_static_inputs import build_refraction_static_input_model
+
     try:
         input_model = build_refraction_static_input_model(
             req=req,
