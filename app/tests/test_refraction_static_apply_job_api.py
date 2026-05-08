@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
@@ -252,7 +253,7 @@ def test_run_refraction_static_apply_job_writes_artifacts_and_completes(
     assert job['message'] == ''
 
 
-def test_run_refraction_static_apply_job_fails_after_artifacts_when_registering(
+def test_run_refraction_static_apply_job_registers_corrected_file_when_requested(
     client: TestClient,
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -271,6 +272,7 @@ def test_run_refraction_static_apply_job_fails_after_artifacts_when_registering(
             statics_kind='refraction',
             artifacts_dir=str(job_dir),
         )
+    apply_calls: list[dict[str, Any]] = []
 
     monkeypatch.setattr(
         refraction_service_module,
@@ -287,12 +289,27 @@ def test_run_refraction_static_apply_job_fails_after_artifacts_when_registering(
         'write_refraction_static_artifacts',
         lambda **_kwargs: object(),
     )
+    monkeypatch.setattr(
+        refraction_service_module,
+        'apply_refraction_statics_to_trace_store',
+        lambda **kwargs: (
+            apply_calls.append(kwargs)
+            or SimpleNamespace(
+                corrected_file_id='corrected-refraction-file-id',
+                corrected_trace_store_path=job_dir / 'corrected-store',
+            )
+        ),
+    )
 
     run_refraction_static_apply_job(job_id, req, client.app.state.sv)
 
     with client.app.state.sv.lock:
         job = dict(client.app.state.sv.jobs[job_id])
-    assert job['status'] == 'error'
-    assert job['message'] == (
-        'Refraction statics TraceStore application is not implemented yet.'
-    )
+    assert len(apply_calls) == 1
+    assert apply_calls[0]['req'] is req
+    assert apply_calls[0]['state'] is client.app.state.sv
+    assert apply_calls[0]['job_id'] == job_id
+    assert apply_calls[0]['job_dir'] == job_dir
+    assert job['status'] == 'done'
+    assert job['corrected_file_id'] == 'corrected-refraction-file-id'
+    assert job['corrected_store_path'] == str(job_dir / 'corrected-store')

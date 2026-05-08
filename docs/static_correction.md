@@ -19,8 +19,10 @@ jobs register, but the static-correction APIs are primarily developer-facing.
 - Refraction statics: `POST /statics/refraction/apply`
   - API entry point for first-break based near-surface refraction statics.
   - Builds the GLI variable-thickness near-surface model and writes the final
-    refraction statics artifact package. TraceStore application and SEG-Y
-    writing are not implemented in this workflow yet.
+    refraction statics artifact package.
+  - When requested, applies the final refraction shifts to a derived TraceStore
+    and registers the corrected file for viewer access. SEG-Y writing is not
+    part of this workflow.
 
 The detailed time-term inversion API, sign convention, apply modes, and artifact
 contract are documented in [time_term_static_correction.md](time_term_static_correction.md).
@@ -85,8 +87,35 @@ convention is:
 corrected(t) = raw(t - shift_s)
 ```
 
-Until TraceStore application is implemented, refraction jobs with
-`apply.register_corrected_file=false` complete as artifact-only jobs. Jobs that
-request corrected-file registration write the artifacts, then fail with a clear
-message that refraction TraceStore application is not implemented yet. The
-workflow does not write SEG-Y files or SEG-Y static headers.
+## Refraction Statics TraceStore Application
+
+Refraction jobs with `apply.register_corrected_file=false` complete as
+artifact-only jobs. They write the final refraction statics artifacts and do not
+create `corrected_file.json`.
+
+Refraction jobs with `apply.register_corrected_file=true` write the same
+solution artifacts, then apply `refraction_trace_shift_s_sorted` to the source
+TraceStore in sorted trace order. Application uses linear interpolation and the
+repo-wide statics sign convention:
+
+```text
+corrected(t) = raw(t - shift_s)
+```
+
+Positive shifts delay events in the corrected TraceStore. Negative shifts move
+events earlier. Samples shifted outside the source time range use
+`apply.fill_value`, and the P0 output dtype is `float32`.
+
+Before writing the derived TraceStore, the backend verifies that
+`sorted_trace_index` matches the source TraceStore `sorted_to_original` index,
+that every trace static is valid, that shifts are finite, and that no shift
+exceeds `apply.max_abs_shift_ms`. Failed validation does not register a
+corrected file.
+
+Corrected outputs add:
+
+- `corrected_file.json`: corrected file registration metadata and provenance.
+- `refraction_static_apply_qc.json`: apply summary, shift statistics, status
+  counts, and corrected TraceStore write status.
+
+The workflow does not write SEG-Y files or SEG-Y static headers.
