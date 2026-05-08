@@ -14,6 +14,7 @@ import numpy as np
 
 from app.api.schemas import RefractionStaticApplyRequest
 from app.services.refraction_static_datum import RefractionDatumStaticsResult
+from app.services.refraction_static_status import REFRACTION_STATIC_STATUSES
 
 REFRACTION_STATIC_SOLUTION_NPZ_NAME = 'refraction_static_solution.npz'
 REFRACTION_STATIC_QC_JSON_NAME = 'refraction_static_qc.json'
@@ -865,39 +866,6 @@ _STATUS_ARRAY_NAMES = (
     'receiver_datum_status',
 )
 
-_KNOWN_STATUSES = {
-    'ok',
-    'not_observed',
-    'inactive',
-    'low_fold',
-    'clipped_lower',
-    'clipped_upper',
-    'clipped_half_intercept_lower',
-    'clipped_half_intercept_upper',
-    'exceeds_max_abs_shift',
-    'exceeds_max_thickness',
-    'invalid_shift',
-    'invalid_solution',
-    'missing_solution',
-    'invalid_velocity',
-    'invalid_bedrock_velocity',
-    'invalid_surface_elevation',
-    'invalid_floating_datum_elevation',
-    'invalid_flat_datum_elevation',
-    'invalid_weathering_replacement',
-    'invalid_weathering_thickness',
-    'negative_weathering_thickness',
-    'negative_thickness',
-    'invalid_half_intercept',
-    'invalid_refractor_elevation',
-    'invalid_datum_shift',
-    'floating_datum_below_refractor',
-    'flat_datum_below_refractor',
-    'missing_endpoint',
-    'missing_node',
-}
-
-
 def _trace_statics_rows(result: RefractionDatumStaticsResult) -> list[dict[str, object]]:
     rows: list[dict[str, object]] = []
     for index in range(int(result.sorted_trace_index.shape[0])):
@@ -1100,7 +1068,7 @@ def _validate_status_array(value: object, *, name: str) -> None:
         {
             str(item)
             for item in np.asarray(value).tolist()
-            if str(item) not in _KNOWN_STATUSES
+            if str(item) not in REFRACTION_STATIC_STATUSES
         }
     )
     if unknown:

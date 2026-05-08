@@ -138,7 +138,7 @@ def _result() -> RefractionDatumStaticsResult:
     used_observation = np.asarray([True, False, True, False], dtype=bool)
     trace_valid = np.asarray([True, True, False, True], dtype=bool)
     trace_status = np.asarray(
-        ['ok', 'ok', 'exceeds_max_abs_shift', 'not_observed'],
+        ['ok', 'ok', 'not_observed', 'ok'],
         dtype='<U32',
     )
 
@@ -189,9 +189,12 @@ def _result() -> RefractionDatumStaticsResult:
         node_half_intercept_time_s=node_half,
         node_weathering_replacement_shift_s=node_weathering_shift,
         node_floating_datum_elevation_m=np.asarray([120.0, 120.0, 120.0]),
-        node_solution_status=np.asarray(['ok', 'ok', 'low_fold'], dtype='<U16'),
-        node_datum_status=np.asarray(['ok', 'ok', 'ok'], dtype='<U16'),
-        node_weathering_status=np.asarray(['ok', 'ok', 'low_fold'], dtype='<U16'),
+        node_solution_status=np.asarray(['solved', 'solved', 'inactive'], dtype='<U16'),
+        node_datum_status=np.asarray(['ok', 'ok', 'inactive'], dtype='<U16'),
+        node_weathering_status=np.asarray(
+            ['ok', 'zero_thickness', 'inactive'],
+            dtype='<U16',
+        ),
         node_pick_count=np.asarray([4, 3, 2], dtype=np.int64),
         node_used_pick_count=np.asarray([4, 2, 1], dtype=np.int64),
         node_rejected_pick_count=np.asarray([0, 1, 1], dtype=np.int64),
@@ -311,6 +314,23 @@ def test_write_refraction_static_artifacts_npz_schema(tmp_path: Path) -> None:
         assert data['valid_observation_mask_sorted'].dtype == bool
         assert data['source_surface_elevation_m_sorted'].dtype == np.float64
         assert data['trace_static_status_sorted'].dtype.kind == 'U'
+        assert data['trace_static_status_sorted'].tolist() == [
+            'ok',
+            'ok',
+            'not_observed',
+            'ok',
+        ]
+        assert data['node_solution_status'].tolist() == [
+            'solved',
+            'solved',
+            'inactive',
+        ]
+        assert data['node_weathering_status'].tolist() == [
+            'ok',
+            'zero_thickness',
+            'inactive',
+        ]
+        assert data['node_datum_status'].tolist() == ['ok', 'ok', 'inactive']
         for key in data.files:
             assert data[key].dtype != object
 
@@ -353,6 +373,10 @@ def test_write_refraction_static_artifacts_qc_json(tmp_path: Path) -> None:
     assert payload['velocity']['bedrock_velocity_status'] == 'solved'
     assert payload['observations']['n_valid_observations'] == 3
     assert payload['observations']['n_used_observations'] == 2
+    assert payload['status_counts']['node_solution_status']['solved'] == 2
+    assert payload['status_counts']['node_weathering_status']['zero_thickness'] == 1
+    assert payload['status_counts']['trace_static_status']['ok'] == 3
+    assert payload['status_counts']['node_datum_status']['ok'] == 2
     assert payload['first_break_fit']['residual_rms_ms'] == pytest.approx(1.0)
     assert len(payload['artifacts']) == 6
     json.dumps(payload, allow_nan=False)
@@ -369,6 +393,7 @@ def test_write_refraction_static_artifacts_csvs(tmp_path: Path) -> None:
     trace_rows = _read_csv(paths.refraction_statics_csv)
     assert len(trace_rows) == 4
     assert [int(row['sorted_trace_index']) for row in trace_rows] == [0, 1, 2, 3]
+    assert trace_rows[0]['trace_static_status'] == 'ok'
     assert 'source_half_intercept_time_ms' in trace_rows[0]
     assert float(trace_rows[0]['source_half_intercept_time_ms']) == pytest.approx(10.0)
     assert float(trace_rows[0]['estimated_first_break_time_ms']) == pytest.approx(50.0)
@@ -377,6 +402,8 @@ def test_write_refraction_static_artifacts_csvs(tmp_path: Path) -> None:
     model_rows = _read_csv(paths.near_surface_model_csv)
     assert len(model_rows) == 3
     assert model_rows[0]['weathering_thickness_m'] == '10.0'
+    assert model_rows[0]['solution_status'] == 'solved'
+    assert model_rows[1]['weathering_status'] == 'zero_thickness'
     assert float(model_rows[0]['half_intercept_time_ms']) == pytest.approx(10.0)
 
     residual_rows = _read_csv(paths.first_break_residuals_csv)
@@ -503,6 +530,28 @@ def test_write_refraction_static_artifacts_validation_failures(
                 req=_request(),
                 job_dir=job_dir,
             )
+
+
+def test_write_refraction_static_artifacts_rejects_unknown_status(
+    tmp_path: Path,
+) -> None:
+    result = replace(
+        _result(),
+        node_solution_status=np.asarray(
+            ['solved', 'definitely_unknown_status', 'inactive'],
+            dtype='<U32',
+        ),
+    )
+
+    with pytest.raises(
+        RefractionStaticArtifactError,
+        match='unknown status array values in node_solution_status.*definitely_unknown_status',
+    ):
+        write_refraction_static_artifacts(
+            result=result,
+            req=_request(),
+            job_dir=tmp_path,
+        )
 
 
 def test_write_refraction_static_artifacts_detects_missing_artifact_after_write(
