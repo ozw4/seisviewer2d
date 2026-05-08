@@ -137,12 +137,15 @@ class RefractionWeatheringReplacementStaticsResult:
     node_kind: np.ndarray
     node_weathering_thickness_m: np.ndarray
     node_refractor_elevation_m: np.ndarray
+    node_half_intercept_time_s: np.ndarray
+    node_solution_status: np.ndarray
     node_weathering_status: np.ndarray
     node_weathering_replacement_shift_s: np.ndarray
     node_weathering_replacement_shift_ms: np.ndarray
     node_static_status: np.ndarray
     node_pick_count: np.ndarray
     node_used_pick_count: np.ndarray
+    node_rejected_pick_count: np.ndarray
     node_residual_rms_s: np.ndarray
     node_residual_mad_s: np.ndarray
 
@@ -152,7 +155,9 @@ class RefractionWeatheringReplacementStaticsResult:
     source_x_m: np.ndarray
     source_y_m: np.ndarray
     source_surface_elevation_m: np.ndarray
+    source_half_intercept_time_s: np.ndarray
     source_weathering_thickness_m: np.ndarray
+    source_refractor_elevation_m: np.ndarray
     source_weathering_replacement_shift_s: np.ndarray
     source_static_status: np.ndarray
 
@@ -162,7 +167,9 @@ class RefractionWeatheringReplacementStaticsResult:
     receiver_x_m: np.ndarray
     receiver_y_m: np.ndarray
     receiver_surface_elevation_m: np.ndarray
+    receiver_half_intercept_time_s: np.ndarray
     receiver_weathering_thickness_m: np.ndarray
+    receiver_refractor_elevation_m: np.ndarray
     receiver_weathering_replacement_shift_s: np.ndarray
     receiver_static_status: np.ndarray
 
@@ -173,8 +180,12 @@ class RefractionWeatheringReplacementStaticsResult:
     receiver_endpoint_key_sorted: np.ndarray
     source_node_id_sorted: np.ndarray
     receiver_node_id_sorted: np.ndarray
+    source_half_intercept_time_s_sorted: np.ndarray
+    receiver_half_intercept_time_s_sorted: np.ndarray
     source_weathering_thickness_m_sorted: np.ndarray
     receiver_weathering_thickness_m_sorted: np.ndarray
+    source_refractor_elevation_m_sorted: np.ndarray
+    receiver_refractor_elevation_m_sorted: np.ndarray
     source_weathering_replacement_shift_s_sorted: np.ndarray
     receiver_weathering_replacement_shift_s_sorted: np.ndarray
     weathering_replacement_trace_shift_s_sorted: np.ndarray
@@ -184,6 +195,16 @@ class RefractionWeatheringReplacementStaticsResult:
     trace_static_valid_mask_sorted: np.ndarray
     estimated_first_break_time_s_sorted: np.ndarray
     first_break_residual_s_sorted: np.ndarray
+
+    row_trace_index_sorted: np.ndarray
+    row_source_node_id: np.ndarray
+    row_receiver_node_id: np.ndarray
+    row_distance_m: np.ndarray
+    observed_pick_time_s: np.ndarray
+    modeled_pick_time_s: np.ndarray
+    residual_time_s: np.ndarray
+    used_row_mask: np.ndarray
+    rejected_by_robust_mask: np.ndarray
 
     qc: dict[str, Any]
 
@@ -206,9 +227,12 @@ class _ValidatedWeathering:
     node_kind: np.ndarray
     node_weathering_thickness_m: np.ndarray
     node_refractor_elevation_m: np.ndarray
+    node_half_intercept_time_s: np.ndarray
+    node_solution_status: np.ndarray
     node_weathering_status: np.ndarray
     node_pick_count: np.ndarray
     node_used_pick_count: np.ndarray
+    node_rejected_pick_count: np.ndarray
     node_residual_rms_s: np.ndarray
     node_residual_mad_s: np.ndarray
     source_endpoint_key: np.ndarray
@@ -217,7 +241,9 @@ class _ValidatedWeathering:
     source_x_m: np.ndarray
     source_y_m: np.ndarray
     source_surface_elevation_m: np.ndarray
+    source_half_intercept_time_s: np.ndarray
     source_weathering_thickness_m: np.ndarray
+    source_refractor_elevation_m: np.ndarray
     source_weathering_status: np.ndarray
     receiver_endpoint_key: np.ndarray
     receiver_id: np.ndarray
@@ -225,7 +251,9 @@ class _ValidatedWeathering:
     receiver_x_m: np.ndarray
     receiver_y_m: np.ndarray
     receiver_surface_elevation_m: np.ndarray
+    receiver_half_intercept_time_s: np.ndarray
     receiver_weathering_thickness_m: np.ndarray
+    receiver_refractor_elevation_m: np.ndarray
     receiver_weathering_status: np.ndarray
     sorted_trace_index: np.ndarray
     valid_observation_mask_sorted: np.ndarray
@@ -234,12 +262,25 @@ class _ValidatedWeathering:
     receiver_endpoint_key_sorted: np.ndarray
     source_node_id_sorted: np.ndarray
     receiver_node_id_sorted: np.ndarray
+    source_half_intercept_time_s_sorted: np.ndarray
+    receiver_half_intercept_time_s_sorted: np.ndarray
     source_weathering_thickness_m_sorted: np.ndarray
     receiver_weathering_thickness_m_sorted: np.ndarray
+    source_refractor_elevation_m_sorted: np.ndarray
+    receiver_refractor_elevation_m_sorted: np.ndarray
     source_weathering_status_sorted: np.ndarray
     receiver_weathering_status_sorted: np.ndarray
     estimated_first_break_time_s_sorted: np.ndarray
     first_break_residual_s_sorted: np.ndarray
+    row_trace_index_sorted: np.ndarray
+    row_source_node_id: np.ndarray
+    row_receiver_node_id: np.ndarray
+    row_distance_m: np.ndarray
+    observed_pick_time_s: np.ndarray
+    modeled_pick_time_s: np.ndarray
+    residual_time_s: np.ndarray
+    used_row_mask: np.ndarray
+    rejected_by_robust_mask: np.ndarray
 
     @property
     def n_nodes(self) -> int:
@@ -382,6 +423,8 @@ def build_refraction_weathering_replacement_statics(
         node_kind=data.node_kind,
         node_weathering_thickness_m=data.node_weathering_thickness_m,
         node_refractor_elevation_m=data.node_refractor_elevation_m,
+        node_half_intercept_time_s=data.node_half_intercept_time_s,
+        node_solution_status=data.node_solution_status,
         node_weathering_status=data.node_weathering_status,
         node_weathering_replacement_shift_s=node_shift,
         node_weathering_replacement_shift_ms=np.ascontiguousarray(
@@ -391,6 +434,7 @@ def build_refraction_weathering_replacement_statics(
         node_static_status=node_static_status,
         node_pick_count=data.node_pick_count,
         node_used_pick_count=data.node_used_pick_count,
+        node_rejected_pick_count=data.node_rejected_pick_count,
         node_residual_rms_s=data.node_residual_rms_s,
         node_residual_mad_s=data.node_residual_mad_s,
         source_endpoint_key=data.source_endpoint_key,
@@ -399,7 +443,9 @@ def build_refraction_weathering_replacement_statics(
         source_x_m=data.source_x_m,
         source_y_m=data.source_y_m,
         source_surface_elevation_m=data.source_surface_elevation_m,
+        source_half_intercept_time_s=data.source_half_intercept_time_s,
         source_weathering_thickness_m=data.source_weathering_thickness_m,
+        source_refractor_elevation_m=data.source_refractor_elevation_m,
         source_weathering_replacement_shift_s=source_shift,
         source_static_status=source_static_status,
         receiver_endpoint_key=data.receiver_endpoint_key,
@@ -408,7 +454,9 @@ def build_refraction_weathering_replacement_statics(
         receiver_x_m=data.receiver_x_m,
         receiver_y_m=data.receiver_y_m,
         receiver_surface_elevation_m=data.receiver_surface_elevation_m,
+        receiver_half_intercept_time_s=data.receiver_half_intercept_time_s,
         receiver_weathering_thickness_m=data.receiver_weathering_thickness_m,
+        receiver_refractor_elevation_m=data.receiver_refractor_elevation_m,
         receiver_weathering_replacement_shift_s=receiver_shift,
         receiver_static_status=receiver_static_status,
         sorted_trace_index=data.sorted_trace_index,
@@ -418,11 +466,21 @@ def build_refraction_weathering_replacement_statics(
         receiver_endpoint_key_sorted=data.receiver_endpoint_key_sorted,
         source_node_id_sorted=data.source_node_id_sorted,
         receiver_node_id_sorted=data.receiver_node_id_sorted,
+        source_half_intercept_time_s_sorted=(
+            data.source_half_intercept_time_s_sorted
+        ),
+        receiver_half_intercept_time_s_sorted=(
+            data.receiver_half_intercept_time_s_sorted
+        ),
         source_weathering_thickness_m_sorted=(
             data.source_weathering_thickness_m_sorted
         ),
         receiver_weathering_thickness_m_sorted=(
             data.receiver_weathering_thickness_m_sorted
+        ),
+        source_refractor_elevation_m_sorted=data.source_refractor_elevation_m_sorted,
+        receiver_refractor_elevation_m_sorted=(
+            data.receiver_refractor_elevation_m_sorted
         ),
         source_weathering_replacement_shift_s_sorted=source_shift_sorted,
         receiver_weathering_replacement_shift_s_sorted=receiver_shift_sorted,
@@ -435,6 +493,15 @@ def build_refraction_weathering_replacement_statics(
             data.estimated_first_break_time_s_sorted
         ),
         first_break_residual_s_sorted=data.first_break_residual_s_sorted,
+        row_trace_index_sorted=data.row_trace_index_sorted,
+        row_source_node_id=data.row_source_node_id,
+        row_receiver_node_id=data.row_receiver_node_id,
+        row_distance_m=data.row_distance_m,
+        observed_pick_time_s=data.observed_pick_time_s,
+        modeled_pick_time_s=data.modeled_pick_time_s,
+        residual_time_s=data.residual_time_s,
+        used_row_mask=data.used_row_mask,
+        rejected_by_robust_mask=data.rejected_by_robust_mask,
         qc=qc,
     )
     if job_dir is not None:
@@ -582,6 +649,18 @@ def _validate_weathering_result(
             expected_shape=node_shape,
             allow_nonfinite=True,
         ),
+        node_half_intercept_time_s=_coerce_1d_float(
+            _required(weathering_result, 'node_half_intercept_time_s'),
+            name='weathering_result.node_half_intercept_time_s',
+            expected_shape=node_shape,
+            allow_nonfinite=True,
+        ),
+        node_solution_status=_coerce_1d_string(
+            _required(weathering_result, 'node_solution_status'),
+            name='weathering_result.node_solution_status',
+            expected_shape=node_shape,
+            dtype=_STATUS_DTYPE,
+        ),
         node_weathering_status=_coerce_1d_string(
             _required(weathering_result, 'node_weathering_status'),
             name='weathering_result.node_weathering_status',
@@ -596,6 +675,11 @@ def _validate_weathering_result(
         node_used_pick_count=_coerce_1d_integer(
             _required(weathering_result, 'node_used_pick_count'),
             name='weathering_result.node_used_pick_count',
+            expected_shape=node_shape,
+        ),
+        node_rejected_pick_count=_coerce_1d_integer(
+            _required(weathering_result, 'node_rejected_pick_count'),
+            name='weathering_result.node_rejected_pick_count',
             expected_shape=node_shape,
         ),
         node_residual_rms_s=_coerce_1d_float(
@@ -639,9 +723,21 @@ def _validate_weathering_result(
             expected_shape=source_shape,
             allow_nonfinite=True,
         ),
+        source_half_intercept_time_s=_coerce_1d_float(
+            _required(weathering_result, 'source_half_intercept_time_s'),
+            name='weathering_result.source_half_intercept_time_s',
+            expected_shape=source_shape,
+            allow_nonfinite=True,
+        ),
         source_weathering_thickness_m=_coerce_1d_float(
             _required(weathering_result, 'source_weathering_thickness_m'),
             name='weathering_result.source_weathering_thickness_m',
+            expected_shape=source_shape,
+            allow_nonfinite=True,
+        ),
+        source_refractor_elevation_m=_coerce_1d_float(
+            _required(weathering_result, 'source_refractor_elevation_m'),
+            name='weathering_result.source_refractor_elevation_m',
             expected_shape=source_shape,
             allow_nonfinite=True,
         ),
@@ -680,9 +776,21 @@ def _validate_weathering_result(
             expected_shape=receiver_shape,
             allow_nonfinite=True,
         ),
+        receiver_half_intercept_time_s=_coerce_1d_float(
+            _required(weathering_result, 'receiver_half_intercept_time_s'),
+            name='weathering_result.receiver_half_intercept_time_s',
+            expected_shape=receiver_shape,
+            allow_nonfinite=True,
+        ),
         receiver_weathering_thickness_m=_coerce_1d_float(
             _required(weathering_result, 'receiver_weathering_thickness_m'),
             name='weathering_result.receiver_weathering_thickness_m',
+            expected_shape=receiver_shape,
+            allow_nonfinite=True,
+        ),
+        receiver_refractor_elevation_m=_coerce_1d_float(
+            _required(weathering_result, 'receiver_refractor_elevation_m'),
+            name='weathering_result.receiver_refractor_elevation_m',
             expected_shape=receiver_shape,
             allow_nonfinite=True,
         ),
@@ -723,6 +831,18 @@ def _validate_weathering_result(
             name='weathering_result.receiver_node_id_sorted',
             expected_shape=trace_shape,
         ),
+        source_half_intercept_time_s_sorted=_coerce_1d_float(
+            _required(weathering_result, 'source_half_intercept_time_s_sorted'),
+            name='weathering_result.source_half_intercept_time_s_sorted',
+            expected_shape=trace_shape,
+            allow_nonfinite=True,
+        ),
+        receiver_half_intercept_time_s_sorted=_coerce_1d_float(
+            _required(weathering_result, 'receiver_half_intercept_time_s_sorted'),
+            name='weathering_result.receiver_half_intercept_time_s_sorted',
+            expected_shape=trace_shape,
+            allow_nonfinite=True,
+        ),
         source_weathering_thickness_m_sorted=_coerce_1d_float(
             _required(weathering_result, 'source_weathering_thickness_m_sorted'),
             name='weathering_result.source_weathering_thickness_m_sorted',
@@ -732,6 +852,18 @@ def _validate_weathering_result(
         receiver_weathering_thickness_m_sorted=_coerce_1d_float(
             _required(weathering_result, 'receiver_weathering_thickness_m_sorted'),
             name='weathering_result.receiver_weathering_thickness_m_sorted',
+            expected_shape=trace_shape,
+            allow_nonfinite=True,
+        ),
+        source_refractor_elevation_m_sorted=_coerce_1d_float(
+            _required(weathering_result, 'source_refractor_elevation_m_sorted'),
+            name='weathering_result.source_refractor_elevation_m_sorted',
+            expected_shape=trace_shape,
+            allow_nonfinite=True,
+        ),
+        receiver_refractor_elevation_m_sorted=_coerce_1d_float(
+            _required(weathering_result, 'receiver_refractor_elevation_m_sorted'),
+            name='weathering_result.receiver_refractor_elevation_m_sorted',
             expected_shape=trace_shape,
             allow_nonfinite=True,
         ),
@@ -758,6 +890,42 @@ def _validate_weathering_result(
             name='weathering_result.first_break_residual_s_sorted',
             expected_shape=trace_shape,
             allow_nonfinite=True,
+        ),
+        row_trace_index_sorted=_coerce_1d_integer(
+            _required(weathering_result, 'row_trace_index_sorted'),
+            name='weathering_result.row_trace_index_sorted',
+        ),
+        row_source_node_id=_coerce_1d_integer(
+            _required(weathering_result, 'row_source_node_id'),
+            name='weathering_result.row_source_node_id',
+        ),
+        row_receiver_node_id=_coerce_1d_integer(
+            _required(weathering_result, 'row_receiver_node_id'),
+            name='weathering_result.row_receiver_node_id',
+        ),
+        row_distance_m=_coerce_1d_float(
+            _required(weathering_result, 'row_distance_m'),
+            name='weathering_result.row_distance_m',
+        ),
+        observed_pick_time_s=_coerce_1d_float(
+            _required(weathering_result, 'observed_pick_time_s'),
+            name='weathering_result.observed_pick_time_s',
+        ),
+        modeled_pick_time_s=_coerce_1d_float(
+            _required(weathering_result, 'modeled_pick_time_s'),
+            name='weathering_result.modeled_pick_time_s',
+        ),
+        residual_time_s=_coerce_1d_float(
+            _required(weathering_result, 'residual_time_s'),
+            name='weathering_result.residual_time_s',
+        ),
+        used_row_mask=_coerce_1d_bool(
+            _required(weathering_result, 'used_row_mask'),
+            name='weathering_result.used_row_mask',
+        ),
+        rejected_by_robust_mask=_coerce_1d_bool(
+            _required(weathering_result, 'rejected_by_robust_mask'),
+            name='weathering_result.rejected_by_robust_mask',
         ),
     )
 

@@ -11,15 +11,17 @@ from uuid import uuid4
 from app.api.schemas import RefractionStaticApplyRequest
 from app.core.state import AppState
 from app.services.job_runner import JobCompletion, JobFailure, run_job_with_lifecycle
+from app.services.refraction_static_apply_trace_store import (
+    apply_refraction_statics_to_trace_store,
+)
+from app.services.refraction_static_artifacts import write_refraction_static_artifacts
 from app.services.refraction_static_datum import build_refraction_datum_statics
 from app.services.refraction_static_weathering_replacement import (
     compute_weathering_replacement_statics_from_first_breaks,
 )
 
 _REQUEST_JSON_NAME = 'refraction_static_request.json'
-_NOT_IMPLEMENTED_MESSAGE = (
-    'Refraction statics final artifact writing is not implemented yet.'
-)
+_ARTIFACT_ONLY_DONE_MESSAGE = 'refraction_static_artifacts_written_artifact_only'
 
 
 def _write_json_atomic(path: Path, payload: dict[str, Any]) -> None:
@@ -108,7 +110,7 @@ def _run_refraction_static_apply_job_body(
         progress=0.75,
         message='computing_refraction_datum_statics',
     )
-    build_refraction_datum_statics(
+    datum_result = build_refraction_datum_statics(
         weathering_replacement_result=replacement_result,
         datum=req.datum,
         apply_options=req.apply,
@@ -124,7 +126,58 @@ def _run_refraction_static_apply_job_body(
         progress=0.85,
         message='refraction_datum_statics_computed',
     )
-    raise NotImplementedError(_NOT_IMPLEMENTED_MESSAGE)
+    _set_job_progress_message(
+        state,
+        job_id,
+        progress=0.90,
+        message='writing_refraction_static_artifacts',
+    )
+    write_refraction_static_artifacts(
+        result=datum_result,
+        req=req,
+        job_dir=job_dir,
+    )
+    if req.apply.register_corrected_file:
+        _set_job_progress_message(
+            state,
+            job_id,
+            progress=0.92,
+            message='applying_refraction_static_trace_shift',
+        )
+        corrected_result = apply_refraction_statics_to_trace_store(
+            req=req,
+            result=datum_result,
+            state=state,
+            job_id=job_id,
+            job_dir=job_dir,
+        )
+        if corrected_result.corrected_file_id is not None:
+            with state.lock:
+                state.jobs.set_static_corrected_file(
+                    job_id,
+                    corrected_file_id=corrected_result.corrected_file_id,
+                    corrected_store_path=str(
+                        corrected_result.corrected_trace_store_path
+                    ),
+                )
+        _set_job_progress_message(
+            state,
+            job_id,
+            progress=1.0,
+            message='refraction_corrected_trace_store_registered',
+        )
+        return JobCompletion(finished_ts=time.time())
+
+    _set_job_progress_message(
+        state,
+        job_id,
+        progress=1.0,
+        message=_ARTIFACT_ONLY_DONE_MESSAGE,
+    )
+    return JobCompletion(
+        finished_ts=time.time(),
+        message=_ARTIFACT_ONLY_DONE_MESSAGE,
+    )
 
 
 def _handle_refraction_static_job_error(_exc: Exception) -> JobFailure:

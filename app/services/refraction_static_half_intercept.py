@@ -171,6 +171,16 @@ class RefractionHalfInterceptTimeResult:
     valid_observation_mask_sorted: np.ndarray
     used_observation_mask_sorted: np.ndarray
 
+    row_trace_index_sorted: np.ndarray
+    row_source_node_id: np.ndarray
+    row_receiver_node_id: np.ndarray
+    row_distance_m: np.ndarray
+    observed_pick_time_s: np.ndarray
+    modeled_pick_time_s: np.ndarray
+    residual_time_s: np.ndarray
+    used_row_mask: np.ndarray
+    rejected_by_robust_mask: np.ndarray
+
     qc: dict[str, Any]
 
 
@@ -421,6 +431,7 @@ def build_refraction_half_intercept_time_model(
         node_used_pick_count=node_aggregation.used_pick_count,
         source_endpoint=source_endpoint,
         receiver_endpoint=receiver_endpoint,
+        solver_result=solver_result,
         source_receiver_linkage_used=bool(
             getattr(input_model, 'qc', {}).get('linkage_used', False)
         ),
@@ -485,6 +496,15 @@ def build_refraction_half_intercept_time_model(
         first_break_residual_s_sorted=residual_sorted,
         valid_observation_mask_sorted=inputs.valid_observation_mask_sorted,
         used_observation_mask_sorted=used_observation_sorted,
+        row_trace_index_sorted=rows.row_trace_index_sorted,
+        row_source_node_id=rows.row_source_node_id,
+        row_receiver_node_id=rows.row_receiver_node_id,
+        row_distance_m=rows.row_distance_m,
+        observed_pick_time_s=rows.observed_pick_time_s,
+        modeled_pick_time_s=rows.modeled_pick_time_s,
+        residual_time_s=rows.residual_time_s,
+        used_row_mask=rows.used_row_mask,
+        rejected_by_robust_mask=rows.rejected_by_robust_mask,
         qc=qc,
     )
     if job_dir is not None:
@@ -1134,6 +1154,7 @@ def _build_qc(
     node_used_pick_count: np.ndarray,
     source_endpoint: _EndpointResult,
     receiver_endpoint: _EndpointResult,
+    solver_result: RefractionStaticSolverResult,
     source_receiver_linkage_used: bool,
 ) -> dict[str, Any]:
     finite_half_ms = node_half_s[np.isfinite(node_half_s)] * 1000.0
@@ -1180,6 +1201,11 @@ def _build_qc(
         'residual_median_ms': _residual_stat(residual_ms, 'median'),
         'residual_p95_abs_ms': _residual_stat(residual_ms, 'p95_abs'),
         'residual_max_abs_ms': _residual_stat(residual_ms, 'max_abs'),
+        'robust_enabled': bool(getattr(solver_result, 'qc', {}).get('robust_enabled', False)),
+        'robust_method': str(getattr(solver_result, 'qc', {}).get('robust_method', '')),
+        'robust_iteration_count': int(
+            getattr(solver_result, 'robust_iteration_count', 0)
+        ),
         'source_receiver_linkage_used': bool(source_receiver_linkage_used),
     }
     _assert_json_safe(qc)

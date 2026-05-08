@@ -166,6 +166,16 @@ class RefractionWeatheringThicknessResult:
     estimated_first_break_time_s_sorted: np.ndarray
     first_break_residual_s_sorted: np.ndarray
 
+    row_trace_index_sorted: np.ndarray
+    row_source_node_id: np.ndarray
+    row_receiver_node_id: np.ndarray
+    row_distance_m: np.ndarray
+    observed_pick_time_s: np.ndarray
+    modeled_pick_time_s: np.ndarray
+    residual_time_s: np.ndarray
+    used_row_mask: np.ndarray
+    rejected_by_robust_mask: np.ndarray
+
     qc: dict[str, Any]
 
 
@@ -215,6 +225,15 @@ class _ValidatedHalfIntercept:
     receiver_node_id_sorted: np.ndarray
     estimated_first_break_time_s_sorted: np.ndarray
     first_break_residual_s_sorted: np.ndarray
+    row_trace_index_sorted: np.ndarray
+    row_source_node_id: np.ndarray
+    row_receiver_node_id: np.ndarray
+    row_distance_m: np.ndarray
+    observed_pick_time_s: np.ndarray
+    modeled_pick_time_s: np.ndarray
+    residual_time_s: np.ndarray
+    used_row_mask: np.ndarray
+    rejected_by_robust_mask: np.ndarray
 
     @property
     def n_nodes(self) -> int:
@@ -453,6 +472,15 @@ def build_refraction_weathering_thickness_model(
         receiver_weathering_status_sorted=receiver_status_sorted,
         estimated_first_break_time_s_sorted=data.estimated_first_break_time_s_sorted,
         first_break_residual_s_sorted=data.first_break_residual_s_sorted,
+        row_trace_index_sorted=data.row_trace_index_sorted,
+        row_source_node_id=data.row_source_node_id,
+        row_receiver_node_id=data.row_receiver_node_id,
+        row_distance_m=data.row_distance_m,
+        observed_pick_time_s=data.observed_pick_time_s,
+        modeled_pick_time_s=data.modeled_pick_time_s,
+        residual_time_s=data.residual_time_s,
+        used_row_mask=data.used_row_mask,
+        rejected_by_robust_mask=data.rejected_by_robust_mask,
         qc=qc,
     )
     if job_dir is not None:
@@ -735,6 +763,42 @@ def _validate_half_intercept_result(
             name='half_intercept_result.first_break_residual_s_sorted',
             expected_shape=trace_shape,
             allow_nonfinite=True,
+        ),
+        row_trace_index_sorted=_coerce_1d_integer(
+            _required(half_intercept_result, 'row_trace_index_sorted'),
+            name='half_intercept_result.row_trace_index_sorted',
+        ),
+        row_source_node_id=_coerce_1d_integer(
+            _required(half_intercept_result, 'row_source_node_id'),
+            name='half_intercept_result.row_source_node_id',
+        ),
+        row_receiver_node_id=_coerce_1d_integer(
+            _required(half_intercept_result, 'row_receiver_node_id'),
+            name='half_intercept_result.row_receiver_node_id',
+        ),
+        row_distance_m=_coerce_1d_float(
+            _required(half_intercept_result, 'row_distance_m'),
+            name='half_intercept_result.row_distance_m',
+        ),
+        observed_pick_time_s=_coerce_1d_float(
+            _required(half_intercept_result, 'observed_pick_time_s'),
+            name='half_intercept_result.observed_pick_time_s',
+        ),
+        modeled_pick_time_s=_coerce_1d_float(
+            _required(half_intercept_result, 'modeled_pick_time_s'),
+            name='half_intercept_result.modeled_pick_time_s',
+        ),
+        residual_time_s=_coerce_1d_float(
+            _required(half_intercept_result, 'residual_time_s'),
+            name='half_intercept_result.residual_time_s',
+        ),
+        used_row_mask=_coerce_1d_bool(
+            _required(half_intercept_result, 'used_row_mask'),
+            name='half_intercept_result.used_row_mask',
+        ),
+        rejected_by_robust_mask=_coerce_1d_bool(
+            _required(half_intercept_result, 'rejected_by_robust_mask'),
+            name='half_intercept_result.rejected_by_robust_mask',
         ),
     )
 

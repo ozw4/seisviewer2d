@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
@@ -170,7 +171,7 @@ def test_refraction_static_apply_endpoint_rejects_invalid_schema_without_job(
         assert len(client.app.state.sv.jobs) == 0
 
 
-def test_run_refraction_static_apply_job_computes_replacement_then_fails(
+def test_run_refraction_static_apply_job_writes_artifacts_and_completes(
     client: TestClient,
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -189,7 +190,9 @@ def test_run_refraction_static_apply_job_computes_replacement_then_fails(
         )
     replacements: list[dict[str, Any]] = []
     datum_builds: list[dict[str, Any]] = []
+    artifact_writes: list[dict[str, Any]] = []
     replacement_result = object()
+    datum_result = object()
 
     def _capture_replacement(**kwargs: Any) -> object:
         replacements.append(kwargs)
@@ -197,6 +200,10 @@ def test_run_refraction_static_apply_job_computes_replacement_then_fails(
 
     def _capture_datum_build(**kwargs: Any) -> object:
         datum_builds.append(kwargs)
+        return datum_result
+
+    def _capture_artifact_write(**kwargs: Any) -> object:
+        artifact_writes.append(kwargs)
         return object()
 
     monkeypatch.setattr(
@@ -208,6 +215,11 @@ def test_run_refraction_static_apply_job_computes_replacement_then_fails(
         refraction_service_module,
         'build_refraction_datum_statics',
         _capture_datum_build,
+    )
+    monkeypatch.setattr(
+        refraction_service_module,
+        'write_refraction_static_artifacts',
+        _capture_artifact_write,
     )
 
     run_refraction_static_apply_job(job_id, req, client.app.state.sv)
@@ -230,10 +242,74 @@ def test_run_refraction_static_apply_job_computes_replacement_then_fails(
     assert datum_builds[0]['file_id'] == req.file_id
     assert datum_builds[0]['key1_byte'] == req.key1_byte
     assert datum_builds[0]['key2_byte'] == req.key2_byte
+    assert len(artifact_writes) == 1
+    assert artifact_writes[0]['result'] is datum_result
+    assert artifact_writes[0]['req'] is req
+    assert artifact_writes[0]['job_dir'] == job_dir
     with client.app.state.sv.lock:
         job = dict(client.app.state.sv.jobs[job_id])
-    assert job['status'] == 'error'
-    assert (
-        job['message']
-        == 'Refraction statics final artifact writing is not implemented yet.'
+    assert job['status'] == 'done'
+    assert job['progress'] == pytest.approx(1.0)
+    assert job['message'] == 'refraction_static_artifacts_written_artifact_only'
+
+
+def test_run_refraction_static_apply_job_registers_corrected_file_when_requested(
+    client: TestClient,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    job_id = 'refraction-job-id'
+    job_dir = tmp_path / 'jobs' / job_id
+    payload = _payload()
+    payload['apply']['register_corrected_file'] = True
+    req = RefractionStaticApplyRequest.model_validate(payload)
+    with client.app.state.sv.lock:
+        client.app.state.sv.jobs.create_static_job(
+            job_id,
+            file_id=req.file_id,
+            key1_byte=req.key1_byte,
+            key2_byte=req.key2_byte,
+            statics_kind='refraction',
+            artifacts_dir=str(job_dir),
+        )
+    apply_calls: list[dict[str, Any]] = []
+
+    monkeypatch.setattr(
+        refraction_service_module,
+        'compute_weathering_replacement_statics_from_first_breaks',
+        lambda **_kwargs: object(),
     )
+    monkeypatch.setattr(
+        refraction_service_module,
+        'build_refraction_datum_statics',
+        lambda **_kwargs: object(),
+    )
+    monkeypatch.setattr(
+        refraction_service_module,
+        'write_refraction_static_artifacts',
+        lambda **_kwargs: object(),
+    )
+    monkeypatch.setattr(
+        refraction_service_module,
+        'apply_refraction_statics_to_trace_store',
+        lambda **kwargs: (
+            apply_calls.append(kwargs)
+            or SimpleNamespace(
+                corrected_file_id='corrected-refraction-file-id',
+                corrected_trace_store_path=job_dir / 'corrected-store',
+            )
+        ),
+    )
+
+    run_refraction_static_apply_job(job_id, req, client.app.state.sv)
+
+    with client.app.state.sv.lock:
+        job = dict(client.app.state.sv.jobs[job_id])
+    assert len(apply_calls) == 1
+    assert apply_calls[0]['req'] is req
+    assert apply_calls[0]['state'] is client.app.state.sv
+    assert apply_calls[0]['job_id'] == job_id
+    assert apply_calls[0]['job_dir'] == job_dir
+    assert job['status'] == 'done'
+    assert job['corrected_file_id'] == 'corrected-refraction-file-id'
+    assert job['corrected_store_path'] == str(job_dir / 'corrected-store')
