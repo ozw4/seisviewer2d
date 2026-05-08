@@ -3,12 +3,13 @@
 from __future__ import annotations
 
 import json
+from dataclasses import dataclass
 from pathlib import Path
 import time
-from typing import Any
+from typing import Any, Literal
 from uuid import uuid4
 
-from app.api.schemas import RefractionStaticApplyRequest
+from app.api.schemas import RefractionStaticApplyRequest, RefractionStaticModelRequest
 from app.core.state import AppState
 from app.services.job_runner import JobCompletion, JobFailure, run_job_with_lifecycle
 from app.services.refraction_static_apply_trace_store import (
@@ -22,6 +23,40 @@ from app.services.refraction_static_weathering_replacement import (
 
 _REQUEST_JSON_NAME = 'refraction_static_request.json'
 _ARTIFACT_ONLY_DONE_MESSAGE = 'refraction_static_artifacts_written_artifact_only'
+
+
+@dataclass(frozen=True)
+class ResolvedRefractionFirstLayer:
+    mode: Literal['constant', 'estimate_direct_arrival']
+    weathering_velocity_m_s: float
+    status: str
+    qc: dict[str, Any]
+
+
+class RefractionFirstLayerNotImplemented(NotImplementedError):
+    """Raised when a requested first-layer mode is accepted but not implemented."""
+
+
+def normalize_refraction_first_layer_request(
+    model: RefractionStaticModelRequest,
+) -> ResolvedRefractionFirstLayer:
+    """Resolve the first-layer/V1 request block to the V1 used downstream."""
+    mode = model.first_layer_mode
+    if mode == 'estimate_direct_arrival':
+        raise RefractionFirstLayerNotImplemented(
+            'model.first_layer.mode="estimate_direct_arrival" is not implemented yet'
+        )
+    velocity = float(model.resolved_weathering_velocity_m_s)
+    return ResolvedRefractionFirstLayer(
+        mode=mode,
+        weathering_velocity_m_s=velocity,
+        status='resolved_constant',
+        qc={
+            'v1_mode': mode,
+            'resolved_weathering_velocity_m_s': velocity,
+            'v1_status': 'resolved_constant',
+        },
+    )
 
 
 def _write_json_atomic(path: Path, payload: dict[str, Any]) -> None:
@@ -67,6 +102,8 @@ def _run_refraction_static_apply_job_body(
     req: RefractionStaticApplyRequest,
     state: AppState,
 ) -> JobCompletion | None:
+    req = RefractionStaticApplyRequest.model_validate(req)
+    normalize_refraction_first_layer_request(req.model)
     _set_job_progress_message(
         state,
         job_id,
@@ -209,4 +246,9 @@ def run_refraction_static_apply_job(
     )
 
 
-__all__ = ['run_refraction_static_apply_job']
+__all__ = [
+    'RefractionFirstLayerNotImplemented',
+    'ResolvedRefractionFirstLayer',
+    'normalize_refraction_first_layer_request',
+    'run_refraction_static_apply_job',
+]

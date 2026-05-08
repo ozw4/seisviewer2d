@@ -35,7 +35,7 @@ def build_refraction_static_design_matrix(
         getattr(model, 'bedrock_velocity_mode', None)
     )
     weathering_velocity = _coerce_positive_finite_float(
-        getattr(model, 'weathering_velocity_m_s', None),
+        getattr(model, 'resolved_weathering_velocity_m_s', None),
         name='model.weathering_velocity_m_s',
     )
     fixed_velocity = getattr(model, 'bedrock_velocity_m_s', None)

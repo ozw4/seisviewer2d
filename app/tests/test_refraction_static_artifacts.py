@@ -301,6 +301,7 @@ def test_write_refraction_static_artifacts_npz_schema(tmp_path: Path) -> None:
         assert data['method'].item() == 'gli_variable_thickness'
         assert data['sign_convention'].item() == 'corrected(t) = raw(t - shift_s)'
         assert data['weathering_velocity_m_s'].item() == pytest.approx(800.0)
+        assert data['resolved_weathering_velocity_m_s'].item() == pytest.approx(800.0)
         assert data['bedrock_velocity_m_s'].item() == pytest.approx(2500.0)
         assert REQUIRED_TRACE_ARRAYS.issubset(data.files)
         assert REQUIRED_NODE_ARRAYS.issubset(data.files)
@@ -371,6 +372,10 @@ def test_write_refraction_static_artifacts_qc_json(tmp_path: Path) -> None:
         'register_corrected_file': False,
     }
     assert payload['velocity']['bedrock_velocity_status'] == 'solved'
+    assert payload['velocity']['v1_mode'] == 'constant'
+    assert payload['velocity']['resolved_weathering_velocity_m_s'] == pytest.approx(
+        800.0
+    )
     assert payload['observations']['n_valid_observations'] == 3
     assert payload['observations']['n_used_observations'] == 2
     assert payload['status_counts']['node_solution_status']['solved'] == 2

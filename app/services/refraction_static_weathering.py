@@ -735,7 +735,7 @@ def _validate_velocity_context(
             'bedrock_velocity_mode does not match the half-intercept result'
         )
     weathering_velocity = _positive_finite(
-        _required(model, 'weathering_velocity_m_s'),
+        getattr(model, 'resolved_weathering_velocity_m_s', None),
         name='model.weathering_velocity_m_s',
     )
     result_weathering_velocity = _positive_finite(

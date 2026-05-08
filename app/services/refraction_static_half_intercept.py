@@ -208,7 +208,7 @@ def estimate_refraction_half_intercept_times_from_first_breaks(
             input_model=input_model,
             design_matrix=design_matrix,
             solver_result=solver_result,
-            weathering_velocity_m_s=req.model.weathering_velocity_m_s,
+            weathering_velocity_m_s=req.model.resolved_weathering_velocity_m_s,
             min_picks_per_node=req.solver.min_picks_per_node,
             job_dir=job_dir,
         )

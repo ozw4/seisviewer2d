@@ -288,7 +288,7 @@ def _build_bedrock_result(
         raise RefractionBedrockSlownessError(
             'solver bedrock velocity does not match solved bedrock slowness'
         )
-    weathering_velocity = float(model.weathering_velocity_m_s)
+    weathering_velocity = float(model.resolved_weathering_velocity_m_s)
     if velocity <= weathering_velocity:
         raise RefractionBedrockSlownessError(
             'solved bedrock velocity must be greater than weathering velocity'
@@ -443,7 +443,7 @@ def _build_result_qc(
     qc: dict[str, Any] = {
         'method': 'gli_variable_thickness',
         'bedrock_velocity_mode': 'solve_global',
-        'weathering_velocity_m_s': float(model.weathering_velocity_m_s),
+        'weathering_velocity_m_s': float(model.resolved_weathering_velocity_m_s),
         'bedrock_slowness_s_per_m': float(bedrock_slowness),
         'bedrock_velocity_m_s': float(bedrock_velocity),
         'bedrock_velocity_status': bedrock_velocity_status,

@@ -339,6 +339,9 @@ def build_refraction_static_solution_arrays(
             np.count_nonzero(r.rejected_by_robust_mask)
         ),
         'weathering_velocity_m_s': _scalar_float(r.weathering_velocity_m_s),
+        'resolved_weathering_velocity_m_s': _scalar_float(
+            r.weathering_velocity_m_s
+        ),
         'bedrock_velocity_m_s': _scalar_float(r.bedrock_velocity_m_s),
         'bedrock_slowness_s_per_m': _scalar_float(r.bedrock_slowness_s_per_m),
         'replacement_slowness_delta_s_per_m': _scalar_float(
@@ -549,7 +552,11 @@ def build_refraction_static_qc_payload(
         'sign_convention': SIGN_CONVENTION,
         'request': request,
         'velocity': {
+            'v1_mode': req.model.first_layer_mode,
             'weathering_velocity_m_s': _json_float(r.weathering_velocity_m_s),
+            'resolved_weathering_velocity_m_s': _json_float(
+                r.weathering_velocity_m_s
+            ),
             'bedrock_velocity_mode': r.bedrock_velocity_mode,
             'bedrock_velocity_m_s': _json_float(r.bedrock_velocity_m_s),
             'bedrock_slowness_s_per_m': _json_float(r.bedrock_slowness_s_per_m),

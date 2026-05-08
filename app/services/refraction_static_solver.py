@@ -295,7 +295,7 @@ def _validate_problem(
     )
 
     weathering_velocity = _coerce_positive_finite_float(
-        getattr(model, 'weathering_velocity_m_s', None),
+        getattr(model, 'resolved_weathering_velocity_m_s', None),
         name='model.weathering_velocity_m_s',
     )
     min_velocity = _coerce_positive_finite_float(
