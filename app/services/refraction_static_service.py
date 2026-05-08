@@ -105,12 +105,8 @@ def resolve_refraction_first_layer_request(
         first_layer=first_layer,
     )
     write_refraction_v1_artifacts(job_dir, estimate)
-    resolved_req = _request_with_resolved_first_layer_velocity(
-        req,
-        weathering_velocity_m_s=estimate.resolved_weathering_velocity_m_s,
-    )
     return _ResolvedFirstLayerRequest(
-        req=resolved_req,
+        req=req,
         resolved=ResolvedRefractionFirstLayer(
             mode='estimate_direct_arrival',
             weathering_velocity_m_s=estimate.resolved_weathering_velocity_m_s,
@@ -124,26 +120,6 @@ def resolve_refraction_first_layer_request(
         ),
         input_model=input_model,
     )
-
-
-def _request_with_resolved_first_layer_velocity(
-    req: RefractionStaticApplyRequest,
-    *,
-    weathering_velocity_m_s: float,
-) -> RefractionStaticApplyRequest:
-    first_layer = req.model.first_layer
-    if first_layer is None:
-        raise ValueError('model.first_layer is required for V1 estimation')
-    resolved_first_layer = first_layer.model_copy(
-        update={'weathering_velocity_m_s': float(weathering_velocity_m_s)}
-    )
-    resolved_model = req.model.model_copy(
-        update={
-            'weathering_velocity_m_s': None,
-            'first_layer': resolved_first_layer,
-        }
-    )
-    return req.model_copy(update={'model': resolved_model})
 
 
 def _request_without_moveout_offset_gates(

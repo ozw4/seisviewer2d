@@ -150,7 +150,6 @@ def _estimated_v1_request() -> RefractionStaticApplyRequest:
     payload['model']['weathering_velocity_m_s'] = None
     payload['model']['first_layer'] = {
         'mode': 'estimate_direct_arrival',
-        'weathering_velocity_m_s': 812.5,
         'min_direct_offset_m': 20.0,
         'max_direct_offset_m': 140.0,
     }

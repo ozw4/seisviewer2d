@@ -1429,6 +1429,14 @@ class RefractionStaticFirstLayerRequest(BaseModel):
                 'model.first_layer.min_weathering_velocity_m_s must be less than '
                 'model.first_layer.max_weathering_velocity_m_s'
             )
+        if (
+            self.mode == 'estimate_direct_arrival'
+            and self.weathering_velocity_m_s is not None
+        ):
+            raise ValueError(
+                'model.first_layer.weathering_velocity_m_s must be omitted when '
+                'model.first_layer.mode is estimate_direct_arrival'
+            )
         if self.mode == 'estimate_direct_arrival' and (
             self.min_direct_offset_m is None or self.max_direct_offset_m is None
         ):
@@ -1583,6 +1591,18 @@ class RefractionStaticModelRequest(BaseModel):
             return legacy_velocity
 
         first_layer_velocity = first_layer.weathering_velocity_m_s
+        if first_layer.mode == 'estimate_direct_arrival':
+            if legacy_velocity is not None:
+                raise ValueError(
+                    'model.weathering_velocity_m_s must be omitted when '
+                    'model.first_layer.mode is estimate_direct_arrival'
+                )
+            if first_layer_velocity is not None:
+                raise ValueError(
+                    'model.first_layer.weathering_velocity_m_s must be omitted when '
+                    'model.first_layer.mode is estimate_direct_arrival'
+                )
+            return None
         if (
             legacy_velocity is not None
             and first_layer_velocity is not None
@@ -1593,8 +1613,6 @@ class RefractionStaticModelRequest(BaseModel):
                 'model.first_layer.weathering_velocity_m_s must match when both '
                 'are specified'
             )
-        if first_layer.mode == 'estimate_direct_arrival':
-            return first_layer_velocity
         if first_layer_velocity is None:
             raise ValueError(
                 'model.first_layer.weathering_velocity_m_s is required when '
