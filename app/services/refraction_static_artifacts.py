@@ -14,6 +14,10 @@ import numpy as np
 
 from app.api.schemas import RefractionStaticApplyRequest
 from app.services.refraction_static_status import REFRACTION_STATIC_STATUSES
+from app.services.refraction_static_t1lsst import (
+    REFRACTION_T1LSST_1LAYER_COMPONENTS_CSV_NAME,
+    write_refraction_t1lsst_1layer_components_csv,
+)
 from app.services.refraction_static_types import (
     RefractionDatumStaticsResult,
     RefractionStaticArtifactSet,
@@ -37,6 +41,8 @@ METHOD = 'gli_variable_thickness'
 WORKFLOW = 'refraction_statics'
 STATIC_COMPONENT = 'final_refraction'
 SIGN_CONVENTION = 'corrected(t) = raw(t - shift_s)'
+POSITIVE_SHIFT_DESCRIPTION = 'event appears later in corrected data'
+NEGATIVE_SHIFT_DESCRIPTION = 'event appears earlier in corrected data'
 
 _ARTIFACTS: tuple[dict[str, str | bool], ...] = (
     {
@@ -89,6 +95,15 @@ _V1_ARTIFACTS: tuple[dict[str, str | bool], ...] = (
         'kind': 'csv',
         'required': True,
         'description': 'Per-source direct-arrival V1 estimates',
+    },
+)
+
+_T1LSST_1LAYER_ARTIFACTS: tuple[dict[str, str | bool], ...] = (
+    {
+        'name': REFRACTION_T1LSST_1LAYER_COMPONENTS_CSV_NAME,
+        'kind': 'csv',
+        'required': True,
+        'description': 'T1LSST-compatible one-layer source/receiver components',
     },
 )
 
@@ -219,6 +234,11 @@ def write_refraction_static_artifacts(
         resolved_first_layer=first_layer,
     )
     manifest = _build_manifest_payload(artifact_entries)
+    t1lsst_components_path = (
+        root / REFRACTION_T1LSST_1LAYER_COMPONENTS_CSV_NAME
+        if request.conversion.mode == 't1lsst_1layer'
+        else None
+    )
 
     paths = RefractionStaticArtifactSet(
         job_dir=root,
@@ -231,6 +251,7 @@ def write_refraction_static_artifacts(
         manifest_json=root / REFRACTION_STATIC_ARTIFACTS_JSON_NAME,
         artifact_names=tuple(str(item['name']) for item in artifact_entries),
         qc=qc,
+        refraction_t1lsst_1layer_components_csv=t1lsst_components_path,
     )
 
     write_refraction_static_solution_npz(
@@ -256,6 +277,11 @@ def write_refraction_static_artifacts(
         result=values.result,
         path=paths.refraction_static_components_csv,
     )
+    if paths.refraction_t1lsst_1layer_components_csv is not None:
+        write_refraction_t1lsst_1layer_components_csv(
+            result=values.result,
+            path=paths.refraction_t1lsst_1layer_components_csv,
+        )
     _write_json_atomic(paths.manifest_json, manifest)
 
     artifact_paths = (
@@ -266,7 +292,12 @@ def write_refraction_static_artifacts(
         paths.first_break_residuals_csv,
         paths.refraction_static_components_csv,
         paths.manifest_json,
-    ) + tuple(
+    )
+    if paths.refraction_t1lsst_1layer_components_csv is not None:
+        artifact_paths = artifact_paths + (
+            paths.refraction_t1lsst_1layer_components_csv,
+        )
+    artifact_paths = artifact_paths + tuple(
         root / str(item['name']) for item in _v1_artifact_entries(request, first_layer)
     )
     for artifact_path in artifact_paths:
@@ -611,7 +642,7 @@ def build_refraction_static_qc_payload(
         'method': METHOD,
         'workflow': WORKFLOW,
         'static_component': STATIC_COMPONENT,
-        'sign_convention': SIGN_CONVENTION,
+        'sign_convention': _sign_convention_qc_payload(req),
         'request': request,
         'velocity': {
             'v1_mode': first_layer.mode,
@@ -743,6 +774,18 @@ def build_refraction_static_qc_payload(
     }
     _assert_strict_json(payload, artifact_name=REFRACTION_STATIC_QC_JSON_NAME)
     return payload
+
+
+def _sign_convention_qc_payload(
+    req: RefractionStaticApplyRequest,
+) -> str | dict[str, str]:
+    if req.conversion.mode != 't1lsst_1layer':
+        return SIGN_CONVENTION
+    return {
+        'trace_shift_s': SIGN_CONVENTION,
+        'positive_shift': POSITIVE_SHIFT_DESCRIPTION,
+        'negative_shift': NEGATIVE_SHIFT_DESCRIPTION,
+    }
 
 
 def _validate_job_dir(job_dir: Path) -> Path:
@@ -1151,7 +1194,19 @@ def _artifact_entries_for_request(
     req: RefractionStaticApplyRequest,
     resolved_first_layer: ResolvedRefractionFirstLayer | None = None,
 ) -> tuple[dict[str, str | bool], ...]:
-    return _ARTIFACTS + _v1_artifact_entries(req, resolved_first_layer)
+    return (
+        _ARTIFACTS
+        + _t1lsst_artifact_entries(req)
+        + _v1_artifact_entries(req, resolved_first_layer)
+    )
+
+
+def _t1lsst_artifact_entries(
+    req: RefractionStaticApplyRequest,
+) -> tuple[dict[str, str | bool], ...]:
+    if req.conversion.mode == 't1lsst_1layer':
+        return _T1LSST_1LAYER_ARTIFACTS
+    return ()
 
 
 def _v1_artifact_entries(
@@ -1425,6 +1480,7 @@ __all__ = [
     'REFRACTION_STATIC_COMPONENTS_CSV_NAME',
     'REFRACTION_STATIC_QC_JSON_NAME',
     'REFRACTION_STATIC_SOLUTION_NPZ_NAME',
+    'REFRACTION_T1LSST_1LAYER_COMPONENTS_CSV_NAME',
     'RefractionStaticArtifactError',
     'RefractionStaticArtifactSet',
     'build_refraction_static_qc_payload',

@@ -1,0 +1,182 @@
+from __future__ import annotations
+
+import csv
+import json
+from pathlib import Path
+
+import numpy as np
+import pytest
+
+from app.api.schemas import RefractionStaticApplyRequest
+from app.services.refraction_static_artifacts import (
+    REFRACTION_STATIC_ARTIFACTS_JSON_NAME,
+    write_refraction_static_artifacts,
+)
+from app.services.refraction_static_t1lsst import (
+    REFRACTION_T1LSST_1LAYER_COMPONENTS_CSV_NAME,
+    T1LSST_SIGN_CONVENTION,
+    RefractionT1LSSTError,
+    compute_t1lsst_1layer_thickness,
+    compute_t1lsst_1layer_weathering_correction,
+)
+from app.services.refraction_static_weathering import (
+    compute_weathering_thickness_from_half_intercept_time,
+)
+from app.services.refraction_static_weathering_replacement import (
+    compute_weathering_replacement_shift_s,
+)
+from app.tests.test_refraction_static_artifacts import _request, _result
+
+
+def _t1lsst_request() -> RefractionStaticApplyRequest:
+    payload = _request().model_dump(mode='json')
+    payload['conversion'] = {'mode': 't1lsst_1layer'}
+    return RefractionStaticApplyRequest.model_validate(payload)
+
+
+def test_refraction_static_conversion_request_accepts_t1lsst_1layer() -> None:
+    req = _t1lsst_request()
+
+    assert req.conversion.mode == 't1lsst_1layer'
+
+
+def test_t1lsst_1layer_scalar_formula() -> None:
+    t1_s = 0.010
+    v1_m_s = 800.0
+    v2_m_s = 2400.0
+
+    sh1 = compute_t1lsst_1layer_thickness(
+        np.asarray([t1_s]),
+        v1_m_s=v1_m_s,
+        v2_m_s=v2_m_s,
+    )[0]
+    wcor = compute_t1lsst_1layer_weathering_correction(
+        np.asarray([sh1]),
+        v1_m_s=v1_m_s,
+        v2_m_s=v2_m_s,
+    )[0]
+
+    expected_sh1 = t1_s * v2_m_s * v1_m_s / np.sqrt(v2_m_s**2 - v1_m_s**2)
+    assert sh1 == pytest.approx(expected_sh1)
+    assert wcor == pytest.approx(expected_sh1 * (1.0 / v2_m_s - 1.0 / v1_m_s))
+    assert wcor < 0.0
+
+
+def test_t1lsst_1layer_vector_formula() -> None:
+    t1_s = np.asarray([0.010, 0.012, 0.014], dtype=np.float64)
+    v1_m_s = 800.0
+    v2_m_s = 2500.0
+
+    sh1 = compute_t1lsst_1layer_thickness(
+        t1_s,
+        v1_m_s=v1_m_s,
+        v2_m_s=v2_m_s,
+    )
+    wcor = compute_t1lsst_1layer_weathering_correction(
+        sh1,
+        v1_m_s=v1_m_s,
+        v2_m_s=v2_m_s,
+    )
+
+    np.testing.assert_allclose(
+        sh1,
+        t1_s * v2_m_s * v1_m_s / np.sqrt(v2_m_s**2 - v1_m_s**2),
+    )
+    np.testing.assert_allclose(wcor, sh1 * (1.0 / v2_m_s - 1.0 / v1_m_s))
+
+
+def test_t1lsst_1layer_matches_existing_weathering_thickness() -> None:
+    t1_s = np.asarray([0.010, 0.012, 0.014], dtype=np.float64)
+
+    t1lsst = compute_t1lsst_1layer_thickness(
+        t1_s,
+        v1_m_s=800.0,
+        v2_m_s=2500.0,
+    )
+    existing = compute_weathering_thickness_from_half_intercept_time(
+        half_intercept_time_s=t1_s,
+        weathering_velocity_m_s=800.0,
+        bedrock_velocity_m_s=2500.0,
+    )
+
+    np.testing.assert_allclose(t1lsst, existing)
+
+
+def test_t1lsst_1layer_matches_existing_weathering_replacement_shift() -> None:
+    sh1_m = np.asarray([10.0, 12.0, 14.0], dtype=np.float64)
+
+    t1lsst = compute_t1lsst_1layer_weathering_correction(
+        sh1_m,
+        v1_m_s=800.0,
+        v2_m_s=2500.0,
+    )
+    existing = compute_weathering_replacement_shift_s(
+        weathering_thickness_m=sh1_m,
+        weathering_velocity_m_s=800.0,
+        bedrock_velocity_m_s=2500.0,
+    )
+
+    np.testing.assert_allclose(t1lsst, existing)
+
+
+def test_t1lsst_1layer_rejects_v2_less_than_or_equal_v1() -> None:
+    with pytest.raises(RefractionT1LSSTError, match='v2_m_s must be greater'):
+        compute_t1lsst_1layer_thickness(
+            np.asarray([0.010]),
+            v1_m_s=800.0,
+            v2_m_s=800.0,
+        )
+
+    with pytest.raises(RefractionT1LSSTError, match='v2_m_s must be greater'):
+        compute_t1lsst_1layer_weathering_correction(
+            np.asarray([10.0]),
+            v1_m_s=800.0,
+            v2_m_s=799.0,
+        )
+
+
+def test_t1lsst_1layer_artifact_contains_sign_convention(tmp_path: Path) -> None:
+    paths = write_refraction_static_artifacts(
+        result=_result(),
+        req=_t1lsst_request(),
+        job_dir=tmp_path,
+    )
+
+    t1lsst_path = paths.refraction_t1lsst_1layer_components_csv
+    assert t1lsst_path is not None
+    assert t1lsst_path.name == REFRACTION_T1LSST_1LAYER_COMPONENTS_CSV_NAME
+    assert t1lsst_path.is_file()
+    assert REFRACTION_T1LSST_1LAYER_COMPONENTS_CSV_NAME in paths.artifact_names
+
+    rows = _read_csv(t1lsst_path)
+    assert len(rows) == 4
+    assert {row['endpoint_kind'] for row in rows} == {'source', 'receiver'}
+    assert rows[0]['sign_convention'] == T1LSST_SIGN_CONVENTION
+    assert rows[0]['endpoint_kind'] == 'source'
+    assert float(rows[0]['t1_ms']) == pytest.approx(10.0)
+    assert float(rows[0]['sh1_weathering_thickness_m']) == pytest.approx(10.0)
+    assert float(rows[0]['weathering_correction_ms']) == pytest.approx(-8.5)
+    assert float(rows[0]['total_applied_shift_ms']) == pytest.approx(
+        float(rows[0]['total_static_ms'])
+    )
+
+    qc = json.loads(paths.qc_json.read_text(encoding='utf-8'))
+    assert qc['sign_convention'] == {
+        'trace_shift_s': T1LSST_SIGN_CONVENTION,
+        'positive_shift': 'event appears later in corrected data',
+        'negative_shift': 'event appears earlier in corrected data',
+    }
+
+    manifest = json.loads(
+        (tmp_path / REFRACTION_STATIC_ARTIFACTS_JSON_NAME).read_text(
+            encoding='utf-8'
+        )
+    )
+    assert REFRACTION_T1LSST_1LAYER_COMPONENTS_CSV_NAME in {
+        item['name'] for item in manifest['artifacts']
+    }
+
+
+def _read_csv(path: Path) -> list[dict[str, str]]:
+    with path.open(encoding='utf-8', newline='') as handle:
+        return list(csv.DictReader(handle))

@@ -1888,6 +1888,14 @@ class RefractionStaticApplyOptions(BaseModel):
         return _require_bool(value, 'apply.register_corrected_file')
 
 
+class RefractionStaticConversionRequest(BaseModel):
+    """Conversion/output mode for refraction static component artifacts."""
+
+    model_config = ConfigDict(extra='forbid')
+
+    mode: Literal['existing', 't1lsst_1layer'] = 'existing'
+
+
 class RefractionStaticApplyRequest(BaseModel):
     """Request model for ``/statics/refraction/apply`` jobs."""
 
@@ -1912,6 +1920,9 @@ class RefractionStaticApplyRequest(BaseModel):
     )
     datum: RefractionStaticDatumRequest = Field(
         default_factory=RefractionStaticDatumRequest,
+    )
+    conversion: RefractionStaticConversionRequest = Field(
+        default_factory=RefractionStaticConversionRequest,
     )
     apply: RefractionStaticApplyOptions = Field(
         default_factory=RefractionStaticApplyOptions,

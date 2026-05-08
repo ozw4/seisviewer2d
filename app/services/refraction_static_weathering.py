@@ -19,6 +19,10 @@ from app.services.refraction_static_first_layer import (
 from app.services.refraction_static_half_intercept import (
     estimate_refraction_half_intercept_times_from_first_breaks,
 )
+from app.services.refraction_static_t1lsst import (
+    RefractionT1LSSTError,
+    compute_t1lsst_1layer_thickness,
+)
 from app.services.refraction_static_types import (
     RefractionHalfInterceptTimeResult,
     RefractionStaticInputModel,
@@ -432,23 +436,23 @@ def compute_weathering_thickness_from_half_intercept_time(
     bedrock_velocity_m_s: float,
 ) -> np.ndarray:
     """Convert half-intercept time to weathering thickness with the GLI relation."""
-    half = _coerce_float_array(
-        half_intercept_time_s,
-        name='half_intercept_time_s',
-        allow_nonfinite=True,
-    )
-    vw = _positive_finite(
-        weathering_velocity_m_s,
-        name='weathering_velocity_m_s',
-    )
-    vb = _positive_finite(bedrock_velocity_m_s, name='bedrock_velocity_m_s')
-    if vb <= vw:
-        raise RefractionWeatheringThicknessError(
-            'bedrock_velocity_m_s must be greater than weathering_velocity_m_s'
+    try:
+        return compute_t1lsst_1layer_thickness(
+            t1_s=half_intercept_time_s,
+            v1_m_s=weathering_velocity_m_s,
+            v2_m_s=bedrock_velocity_m_s,
         )
-    denom = np.sqrt(vb * vb - vw * vw)
-    thickness = half * vb * vw / denom
-    return np.ascontiguousarray(thickness, dtype=np.float64)
+    except RefractionT1LSSTError as exc:
+        if str(exc) == 'v2_m_s must be greater than v1_m_s':
+            raise RefractionWeatheringThicknessError(
+                'bedrock_velocity_m_s must be greater than weathering_velocity_m_s'
+            ) from exc
+        raise RefractionWeatheringThicknessError(
+            str(exc)
+            .replace('t1_s', 'half_intercept_time_s')
+            .replace('v1_m_s', 'weathering_velocity_m_s')
+            .replace('v2_m_s', 'bedrock_velocity_m_s')
+        ) from exc
 
 
 def compute_weathering_thickness_scalar(

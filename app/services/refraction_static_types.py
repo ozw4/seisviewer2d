@@ -556,6 +556,7 @@ class RefractionStaticArtifactSet:
     manifest_json: Path | None
     artifact_names: tuple[str, ...]
     qc: dict[str, Any]
+    refraction_t1lsst_1layer_components_csv: Path | None = None
 
 
 @dataclass(frozen=True)
