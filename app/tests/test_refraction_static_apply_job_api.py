@@ -92,6 +92,12 @@ def _payload() -> dict[str, Any]:
                 'min_used_observations': 1,
             },
         },
+        'datum': {
+            'mode': 'floating_and_flat',
+            'floating_datum_mode': 'constant',
+            'flat_datum_elevation_m': 200.0,
+            'floating_datum_elevation_m': 100.0,
+        },
         'apply': {
             'mode': 'refraction_from_raw',
             'interpolation': 'linear',
@@ -182,15 +188,26 @@ def test_run_refraction_static_apply_job_computes_replacement_then_fails(
             artifacts_dir=str(job_dir),
         )
     replacements: list[dict[str, Any]] = []
+    datum_builds: list[dict[str, Any]] = []
+    replacement_result = object()
 
     def _capture_replacement(**kwargs: Any) -> object:
         replacements.append(kwargs)
+        return replacement_result
+
+    def _capture_datum_build(**kwargs: Any) -> object:
+        datum_builds.append(kwargs)
         return object()
 
     monkeypatch.setattr(
         refraction_service_module,
         'compute_weathering_replacement_statics_from_first_breaks',
         _capture_replacement,
+    )
+    monkeypatch.setattr(
+        refraction_service_module,
+        'build_refraction_datum_statics',
+        _capture_datum_build,
     )
 
     run_refraction_static_apply_job(job_id, req, client.app.state.sv)
@@ -204,10 +221,19 @@ def test_run_refraction_static_apply_job_computes_replacement_then_fails(
     assert len(replacements) == 1
     assert replacements[0]['req'] is req
     assert replacements[0]['job_dir'] == job_dir
+    assert len(datum_builds) == 1
+    assert datum_builds[0]['weathering_replacement_result'] is replacement_result
+    assert datum_builds[0]['datum'] is req.datum
+    assert datum_builds[0]['apply_options'] is req.apply
+    assert datum_builds[0]['job_dir'] == job_dir
+    assert datum_builds[0]['state'] is client.app.state.sv
+    assert datum_builds[0]['file_id'] == req.file_id
+    assert datum_builds[0]['key1_byte'] == req.key1_byte
+    assert datum_builds[0]['key2_byte'] == req.key2_byte
     with client.app.state.sv.lock:
         job = dict(client.app.state.sv.jobs[job_id])
     assert job['status'] == 'error'
     assert (
         job['message']
-        == 'Refraction statics datum correction computation is not implemented yet.'
+        == 'Refraction statics final artifact writing is not implemented yet.'
     )

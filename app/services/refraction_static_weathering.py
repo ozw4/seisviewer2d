@@ -148,6 +148,8 @@ class RefractionWeatheringThicknessResult:
     valid_observation_mask_sorted: np.ndarray
     used_observation_mask_sorted: np.ndarray
 
+    source_endpoint_key_sorted: np.ndarray
+    receiver_endpoint_key_sorted: np.ndarray
     source_node_id_sorted: np.ndarray
     receiver_node_id_sorted: np.ndarray
 
@@ -207,6 +209,8 @@ class _ValidatedHalfIntercept:
     used_observation_mask_sorted: np.ndarray
     source_surface_elevation_m_sorted: np.ndarray
     receiver_surface_elevation_m_sorted: np.ndarray
+    source_endpoint_key_sorted: np.ndarray
+    receiver_endpoint_key_sorted: np.ndarray
     source_node_id_sorted: np.ndarray
     receiver_node_id_sorted: np.ndarray
     estimated_first_break_time_s_sorted: np.ndarray
@@ -435,6 +439,8 @@ def build_refraction_weathering_thickness_model(
         sorted_trace_index=data.sorted_trace_index,
         valid_observation_mask_sorted=data.valid_observation_mask_sorted,
         used_observation_mask_sorted=data.used_observation_mask_sorted,
+        source_endpoint_key_sorted=data.source_endpoint_key_sorted,
+        receiver_endpoint_key_sorted=data.receiver_endpoint_key_sorted,
         source_node_id_sorted=data.source_node_id_sorted,
         receiver_node_id_sorted=data.receiver_node_id_sorted,
         source_half_intercept_time_s_sorted=source_half_sorted,
@@ -697,6 +703,16 @@ def _validate_half_intercept_result(
             name='half_intercept_result.receiver_elevation_m_sorted',
             expected_shape=trace_shape,
             allow_nonfinite=True,
+        ),
+        source_endpoint_key_sorted=_coerce_1d_string(
+            _required(half_intercept_result, 'source_endpoint_key_sorted'),
+            name='half_intercept_result.source_endpoint_key_sorted',
+            expected_shape=trace_shape,
+        ),
+        receiver_endpoint_key_sorted=_coerce_1d_string(
+            _required(half_intercept_result, 'receiver_endpoint_key_sorted'),
+            name='half_intercept_result.receiver_endpoint_key_sorted',
+            expected_shape=trace_shape,
         ),
         source_node_id_sorted=_coerce_1d_integer(
             _required(half_intercept_result, 'source_node_id_sorted'),

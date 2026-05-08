@@ -11,13 +11,14 @@ from uuid import uuid4
 from app.api.schemas import RefractionStaticApplyRequest
 from app.core.state import AppState
 from app.services.job_runner import JobCompletion, JobFailure, run_job_with_lifecycle
+from app.services.refraction_static_datum import build_refraction_datum_statics
 from app.services.refraction_static_weathering_replacement import (
     compute_weathering_replacement_statics_from_first_breaks,
 )
 
 _REQUEST_JSON_NAME = 'refraction_static_request.json'
 _NOT_IMPLEMENTED_MESSAGE = (
-    'Refraction statics datum correction computation is not implemented yet.'
+    'Refraction statics final artifact writing is not implemented yet.'
 )
 
 
@@ -90,7 +91,7 @@ def _run_refraction_static_apply_job_body(
         progress=0.20,
         message='computing_refraction_weathering_replacement_statics',
     )
-    compute_weathering_replacement_statics_from_first_breaks(
+    replacement_result = compute_weathering_replacement_statics_from_first_breaks(
         req=req,
         state=state,
         job_dir=job_dir,
@@ -98,8 +99,30 @@ def _run_refraction_static_apply_job_body(
     _set_job_progress_message(
         state,
         job_id,
-        progress=0.80,
+        progress=0.70,
         message='refraction_weathering_replacement_statics_computed',
+    )
+    _set_job_progress_message(
+        state,
+        job_id,
+        progress=0.75,
+        message='computing_refraction_datum_statics',
+    )
+    build_refraction_datum_statics(
+        weathering_replacement_result=replacement_result,
+        datum=req.datum,
+        apply_options=req.apply,
+        job_dir=job_dir,
+        state=state,
+        file_id=req.file_id,
+        key1_byte=req.key1_byte,
+        key2_byte=req.key2_byte,
+    )
+    _set_job_progress_message(
+        state,
+        job_id,
+        progress=0.85,
+        message='refraction_datum_statics_computed',
     )
     raise NotImplementedError(_NOT_IMPLEMENTED_MESSAGE)
 

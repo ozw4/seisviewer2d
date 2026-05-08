@@ -100,6 +100,14 @@ def _weathering_result(
     node_x = node_id.astype(np.float64) * 100.0
     zeros_nodes = np.zeros(n_nodes, dtype=np.float64)
     endpoint_keys = np.asarray([f'endpoint:{int(node)}' for node in node_id])
+    source_key_sorted = np.asarray(
+        [f'endpoint:{int(node)}' for node in source_sorted],
+        dtype=object,
+    )
+    receiver_key_sorted = np.asarray(
+        [f'endpoint:{int(node)}' for node in receiver_sorted],
+        dtype=object,
+    )
     return RefractionWeatheringThicknessResult(
         bedrock_velocity_mode='solve_global',
         bedrock_slowness_s_per_m=BEDROCK_SLOWNESS_S_PER_M,
@@ -150,6 +158,8 @@ def _weathering_result(
         sorted_trace_index=sorted_trace_index,
         valid_observation_mask_sorted=valid_observation,
         used_observation_mask_sorted=used_observation,
+        source_endpoint_key_sorted=source_key_sorted,
+        receiver_endpoint_key_sorted=receiver_key_sorted,
         source_node_id_sorted=source_sorted,
         receiver_node_id_sorted=receiver_sorted,
         source_half_intercept_time_s_sorted=np.zeros(

@@ -1583,6 +1583,125 @@ class RefractionStaticSolverRequest(BaseModel):
         )
 
 
+class RefractionStaticDatumRequest(BaseModel):
+    """Datum options for GLI refraction static composition."""
+
+    model_config = ConfigDict(extra='forbid')
+
+    mode: Literal[
+        'floating_and_flat',
+        'floating_only',
+        'flat_only',
+        'none',
+    ] = 'none'
+    floating_datum_mode: Literal[
+        'smoothed_topography',
+        'constant',
+        'surface',
+        'from_artifact',
+    ] = 'smoothed_topography'
+    flat_datum_elevation_m: float | None = None
+    floating_datum_elevation_m: float | None = None
+    smoothing_radius_m: float | None = None
+    smoothing_window_nodes: int | None = 11
+    smoothing_method: Literal['moving_average', 'median'] = 'moving_average'
+    floating_datum_job_id: str | None = None
+    floating_datum_artifact_name: str | None = None
+    allow_flat_datum_above_topography: bool = True
+    allow_flat_datum_below_refractor: bool = False
+
+    @field_validator(
+        'flat_datum_elevation_m',
+        'floating_datum_elevation_m',
+        mode='before',
+    )
+    @classmethod
+    def _check_optional_elevation(
+        cls,
+        value: object,
+        info: Any,
+    ) -> float | None:
+        if value is None:
+            return None
+        return _require_finite_float(value, f'datum.{info.field_name}')
+
+    @field_validator('smoothing_radius_m', mode='before')
+    @classmethod
+    def _check_smoothing_radius(cls, value: object) -> float | None:
+        if value is None:
+            return None
+        return _require_positive_finite_float(value, 'datum.smoothing_radius_m')
+
+    @field_validator('smoothing_window_nodes', mode='before')
+    @classmethod
+    def _check_smoothing_window_nodes(cls, value: object) -> int | None:
+        if value is None:
+            return None
+        window = _require_positive_int(value, 'datum.smoothing_window_nodes')
+        if window % 2 == 0:
+            raise ValueError('datum.smoothing_window_nodes must be odd')
+        return window
+
+    @field_validator('floating_datum_artifact_name', mode='before')
+    @classmethod
+    def _check_floating_datum_artifact_name(cls, value: object) -> str | None:
+        if value is None:
+            return None
+        if not isinstance(value, str):
+            raise ValueError(
+                'datum.floating_datum_artifact_name must be a plain file name'
+            )
+        return _validate_artifact_basename(
+            value,
+            'datum.floating_datum_artifact_name',
+        )
+
+    @field_validator(
+        'allow_flat_datum_above_topography',
+        'allow_flat_datum_below_refractor',
+        mode='before',
+    )
+    @classmethod
+    def _check_bool(cls, value: object, info: Any) -> bool:
+        return _require_bool(value, f'datum.{info.field_name}')
+
+    @model_validator(mode='after')
+    def _check_datum_config(self) -> 'RefractionStaticDatumRequest':
+        if self.mode in {'flat_only', 'floating_and_flat'}:
+            if self.flat_datum_elevation_m is None:
+                raise ValueError(
+                    'datum.flat_datum_elevation_m is required for flat datum modes'
+                )
+        if self.floating_datum_mode == 'constant':
+            if self.floating_datum_elevation_m is None:
+                raise ValueError(
+                    'datum.floating_datum_elevation_m is required when '
+                    'floating_datum_mode is constant'
+                )
+        if self.floating_datum_mode == 'from_artifact':
+            if not self.floating_datum_job_id:
+                raise ValueError(
+                    'datum.floating_datum_job_id is required when '
+                    'floating_datum_mode is from_artifact'
+                )
+            if not self.floating_datum_artifact_name:
+                raise ValueError(
+                    'datum.floating_datum_artifact_name is required when '
+                    'floating_datum_mode is from_artifact'
+                )
+        elif self.floating_datum_job_id is not None:
+            raise ValueError(
+                'datum.floating_datum_job_id is only allowed when '
+                'floating_datum_mode is from_artifact'
+            )
+        elif self.floating_datum_artifact_name is not None:
+            raise ValueError(
+                'datum.floating_datum_artifact_name is only allowed when '
+                'floating_datum_mode is from_artifact'
+            )
+        return self
+
+
 class RefractionStaticApplyOptions(BaseModel):
     """Options for eventual refraction static TraceStore application."""
 
@@ -1632,6 +1751,9 @@ class RefractionStaticApplyRequest(BaseModel):
     )
     solver: RefractionStaticSolverRequest = Field(
         default_factory=RefractionStaticSolverRequest,
+    )
+    datum: RefractionStaticDatumRequest = Field(
+        default_factory=RefractionStaticDatumRequest,
     )
     apply: RefractionStaticApplyOptions = Field(
         default_factory=RefractionStaticApplyOptions,

@@ -169,6 +169,8 @@ class RefractionWeatheringReplacementStaticsResult:
     sorted_trace_index: np.ndarray
     valid_observation_mask_sorted: np.ndarray
     used_observation_mask_sorted: np.ndarray
+    source_endpoint_key_sorted: np.ndarray
+    receiver_endpoint_key_sorted: np.ndarray
     source_node_id_sorted: np.ndarray
     receiver_node_id_sorted: np.ndarray
     source_weathering_thickness_m_sorted: np.ndarray
@@ -228,6 +230,8 @@ class _ValidatedWeathering:
     sorted_trace_index: np.ndarray
     valid_observation_mask_sorted: np.ndarray
     used_observation_mask_sorted: np.ndarray
+    source_endpoint_key_sorted: np.ndarray
+    receiver_endpoint_key_sorted: np.ndarray
     source_node_id_sorted: np.ndarray
     receiver_node_id_sorted: np.ndarray
     source_weathering_thickness_m_sorted: np.ndarray
@@ -410,6 +414,8 @@ def build_refraction_weathering_replacement_statics(
         sorted_trace_index=data.sorted_trace_index,
         valid_observation_mask_sorted=data.valid_observation_mask_sorted,
         used_observation_mask_sorted=data.used_observation_mask_sorted,
+        source_endpoint_key_sorted=data.source_endpoint_key_sorted,
+        receiver_endpoint_key_sorted=data.receiver_endpoint_key_sorted,
         source_node_id_sorted=data.source_node_id_sorted,
         receiver_node_id_sorted=data.receiver_node_id_sorted,
         source_weathering_thickness_m_sorted=(
@@ -695,6 +701,16 @@ def _validate_weathering_result(
         used_observation_mask_sorted=_coerce_1d_bool(
             _required(weathering_result, 'used_observation_mask_sorted'),
             name='weathering_result.used_observation_mask_sorted',
+            expected_shape=trace_shape,
+        ),
+        source_endpoint_key_sorted=_coerce_1d_string(
+            _required(weathering_result, 'source_endpoint_key_sorted'),
+            name='weathering_result.source_endpoint_key_sorted',
+            expected_shape=trace_shape,
+        ),
+        receiver_endpoint_key_sorted=_coerce_1d_string(
+            _required(weathering_result, 'receiver_endpoint_key_sorted'),
+            name='weathering_result.receiver_endpoint_key_sorted',
             expected_shape=trace_shape,
         ),
         source_node_id_sorted=_coerce_1d_integer(

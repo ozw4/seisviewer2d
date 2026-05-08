@@ -10,6 +10,7 @@ from app.api.schemas import (
     RefractionStaticApplyOptions,
     RefractionStaticApplyRequest,
     RefractionStaticApplyResponse,
+    RefractionStaticDatumRequest,
     RefractionStaticGeometryRequest,
     RefractionStaticLinkageRequest,
     RefractionStaticModelRequest,
@@ -82,6 +83,19 @@ def _payload() -> dict[str, Any]:
                 'min_used_observations': 1,
             },
         },
+        'datum': {
+            'mode': 'floating_and_flat',
+            'floating_datum_mode': 'constant',
+            'flat_datum_elevation_m': 200.0,
+            'floating_datum_elevation_m': 100.0,
+            'smoothing_radius_m': None,
+            'smoothing_window_nodes': 11,
+            'smoothing_method': 'moving_average',
+            'floating_datum_job_id': None,
+            'floating_datum_artifact_name': None,
+            'allow_flat_datum_above_topography': True,
+            'allow_flat_datum_below_refractor': False,
+        },
         'apply': {
             'mode': 'refraction_from_raw',
             'interpolation': 'linear',
@@ -122,6 +136,7 @@ def test_refraction_static_schema_models_forbid_extra_fields() -> None:
         RefractionStaticMoveoutRequest,
         RefractionStaticRobustRequest,
         RefractionStaticSolverRequest,
+        RefractionStaticDatumRequest,
         RefractionStaticApplyOptions,
         RefractionStaticApplyRequest,
         RefractionStaticApplyResponse,
@@ -144,6 +159,7 @@ def test_refraction_static_request_accepts_fully_populated_valid_request() -> No
     assert req.model.bedrock_velocity_m_s is None
     assert req.moveout.model == 'head_wave_linear_offset'
     assert req.solver.robust.enabled is True
+    assert req.datum.mode == 'floating_and_flat'
     assert req.apply.register_corrected_file is False
 
 
@@ -183,12 +199,44 @@ def test_refraction_static_request_accepts_minimal_valid_request_and_defaults() 
     assert req.solver.robust.max_iterations == 5
     assert req.solver.robust.min_used_fraction == 0.5
     assert req.solver.robust.min_used_observations == 1
+    assert req.datum.mode == 'none'
+    assert req.datum.floating_datum_mode == 'smoothed_topography'
+    assert req.datum.flat_datum_elevation_m is None
+    assert req.datum.smoothing_window_nodes == 11
+    assert req.datum.allow_flat_datum_above_topography is True
+    assert req.datum.allow_flat_datum_below_refractor is False
     assert req.apply.mode == 'refraction_from_raw'
     assert req.apply.interpolation == 'linear'
     assert req.apply.fill_value == 0.0
     assert req.apply.max_abs_shift_ms == 250.0
     assert req.apply.output_dtype == 'float32'
     assert req.apply.register_corrected_file is False
+
+
+def test_refraction_datum_request_defaults_to_inactive_mode() -> None:
+    datum = RefractionStaticDatumRequest()
+
+    assert datum.mode == 'none'
+    assert datum.flat_datum_elevation_m is None
+
+
+@pytest.mark.parametrize(
+    'mutator',
+    [
+        lambda payload: payload.pop('datum'),
+        lambda payload: payload.update({'datum': {}}),
+    ],
+)
+def test_refraction_static_request_defaults_missing_or_empty_datum(
+    mutator: Any,
+) -> None:
+    payload = _payload()
+    mutator(payload)
+
+    req = _validate(payload)
+
+    assert req.datum.mode == 'none'
+    assert req.datum.flat_datum_elevation_m is None
 
 
 @pytest.mark.parametrize(
@@ -640,6 +688,99 @@ def test_refraction_solver_rejects_invalid_values(
 ) -> None:
     payload = _payload()
     mutator(payload)
+
+    with pytest.raises(ValidationError, match=match):
+        _validate(payload)
+
+
+def test_refraction_datum_accepts_floating_and_flat_request() -> None:
+    payload = _payload()
+    payload['datum'] = {
+        'mode': 'floating_and_flat',
+        'floating_datum_mode': 'constant',
+        'flat_datum_elevation_m': 200.0,
+        'floating_datum_elevation_m': 100.0,
+        'smoothing_radius_m': None,
+        'smoothing_window_nodes': 11,
+        'smoothing_method': 'moving_average',
+        'floating_datum_job_id': None,
+        'floating_datum_artifact_name': None,
+        'allow_flat_datum_above_topography': True,
+        'allow_flat_datum_below_refractor': False,
+    }
+
+    req = _validate(payload)
+
+    assert req.datum.mode == 'floating_and_flat'
+    assert req.datum.floating_datum_mode == 'constant'
+    assert req.datum.flat_datum_elevation_m == 200.0
+    assert req.datum.floating_datum_elevation_m == 100.0
+
+
+@pytest.mark.parametrize(
+    ('datum_payload', 'match'),
+    [
+        (
+            {
+                'mode': 'floating_and_flat',
+                'floating_datum_mode': 'surface',
+            },
+            'flat_datum_elevation_m',
+        ),
+        (
+            {
+                'mode': 'flat_only',
+                'floating_datum_mode': 'surface',
+            },
+            'flat_datum_elevation_m',
+        ),
+        (
+            {
+                'mode': 'floating_only',
+                'floating_datum_mode': 'constant',
+            },
+            'floating_datum_elevation_m',
+        ),
+        (
+            {
+                'mode': 'floating_only',
+                'floating_datum_mode': 'smoothed_topography',
+                'smoothing_radius_m': 0.0,
+            },
+            'smoothing_radius_m',
+        ),
+        (
+            {
+                'mode': 'floating_only',
+                'floating_datum_mode': 'smoothed_topography',
+                'smoothing_window_nodes': 4,
+            },
+            'smoothing_window_nodes',
+        ),
+        (
+            {
+                'mode': 'floating_only',
+                'floating_datum_mode': 'from_artifact',
+                'floating_datum_job_id': 'job-id',
+                'floating_datum_artifact_name': 'nested/floating.csv',
+            },
+            'floating_datum_artifact_name',
+        ),
+        (
+            {
+                'mode': 'none',
+                'allow_flat_datum_below_refractor': 0,
+            },
+            'allow_flat_datum_below_refractor',
+        ),
+    ],
+)
+def test_refraction_datum_rejects_invalid_values(
+    datum_payload: dict[str, Any],
+    match: str,
+) -> None:
+    payload = _payload()
+    payload['datum'] = datum_payload
 
     with pytest.raises(ValidationError, match=match):
         _validate(payload)

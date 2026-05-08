@@ -606,6 +606,7 @@ def test_build_refraction_static_input_model_loads_npz_original_order(
         geometry=_geometry(),
         linkage={'mode': 'none'},
         model=RefractionStaticModelRequest(weathering_velocity_m_s=800.0),
+        datum={'mode': 'none'},
     )
 
     model = build_refraction_static_input_model(req=req, state=state)
@@ -642,6 +643,7 @@ def test_build_refraction_static_input_model_rejects_missing_pick_artifact(
         geometry=_geometry(),
         linkage={'mode': 'none'},
         model=RefractionStaticModelRequest(weathering_velocity_m_s=800.0),
+        datum={'mode': 'none'},
     )
 
     with pytest.raises(ValueError, match='job artifact not found'):
@@ -679,6 +681,7 @@ def test_build_refraction_static_input_model_rejects_unsupported_pick_artifact_k
         geometry=_geometry(),
         linkage={'mode': 'none'},
         model=RefractionStaticModelRequest(weathering_velocity_m_s=800.0),
+        datum={'mode': 'none'},
     )
 
     with pytest.raises(ValueError, match='unsupported pick artifact key'):
@@ -726,6 +729,7 @@ def test_build_refraction_static_input_model_rejects_cross_file_linkage_artifact
         geometry=_geometry(),
         linkage={'job_id': 'linkage-job'},
         model=RefractionStaticModelRequest(weathering_velocity_m_s=800.0),
+        datum={'mode': 'none'},
     )
 
     with pytest.raises(ValueError, match='metadata mismatch: file_id'):
