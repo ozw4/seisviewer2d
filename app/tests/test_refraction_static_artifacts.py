@@ -20,6 +20,8 @@ from app.services.refraction_static_artifacts import (
     REFRACTION_STATIC_COMPONENTS_CSV_NAME,
     REFRACTION_STATIC_QC_JSON_NAME,
     REFRACTION_STATIC_SOLUTION_NPZ_NAME,
+    REFRACTION_V1_ESTIMATES_CSV_NAME,
+    REFRACTION_V1_QC_JSON_NAME,
     RECEIVER_STATIC_TABLE_CSV_NAME,
     RefractionStaticArtifactError,
     SOURCE_RECEIVER_STATIC_TABLE_NPZ_NAME,
@@ -348,6 +350,8 @@ def test_write_refraction_static_artifacts_npz_schema(tmp_path: Path) -> None:
         SOURCE_STATIC_TABLE_CSV_NAME,
         RECEIVER_STATIC_TABLE_CSV_NAME,
         SOURCE_RECEIVER_STATIC_TABLE_NPZ_NAME,
+        REFRACTION_V1_QC_JSON_NAME,
+        REFRACTION_V1_ESTIMATES_CSV_NAME,
     )
     with np.load(paths.solution_npz, allow_pickle=False) as data:
         assert data['artifact_version'].item() == '1.0'
@@ -454,7 +458,14 @@ def test_write_refraction_static_artifacts_qc_json(tmp_path: Path) -> None:
     assert payload['status_counts']['trace_static_status']['ok'] == 3
     assert payload['status_counts']['node_datum_status']['ok'] == 2
     assert payload['first_break_fit']['residual_rms_ms'] == pytest.approx(1.0)
-    assert len(payload['artifacts']) == 9
+    assert len(payload['artifacts']) == 11
+    artifact_descriptions = {
+        item['name']: item['description'] for item in payload['artifacts']
+    }
+    assert 'constant V1 details' in artifact_descriptions[REFRACTION_V1_QC_JSON_NAME]
+    assert 'not produced for constant' in artifact_descriptions[
+        REFRACTION_V1_ESTIMATES_CSV_NAME
+    ]
     json.dumps(payload, allow_nan=False)
     assert not _contains_absolute_path(payload)
 
@@ -529,6 +540,8 @@ def test_refraction_static_artifacts_manifest_and_download_visibility(
         SOURCE_STATIC_TABLE_CSV_NAME,
         RECEIVER_STATIC_TABLE_CSV_NAME,
         SOURCE_RECEIVER_STATIC_TABLE_NPZ_NAME,
+        REFRACTION_V1_QC_JSON_NAME,
+        REFRACTION_V1_ESTIMATES_CSV_NAME,
     }
 
     state = app.state.sv
@@ -557,6 +570,50 @@ def test_refraction_static_artifacts_manifest_and_download_visibility(
     finally:
         with state.lock:
             state.jobs.clear()
+
+
+def test_refraction_static_manifest_marks_constant_v1_artifacts_optional(
+    tmp_path: Path,
+) -> None:
+    write_refraction_static_artifacts(
+        result=_result(),
+        req=_request(),
+        job_dir=tmp_path,
+    )
+
+    manifest = json.loads(
+        (tmp_path / REFRACTION_STATIC_ARTIFACTS_JSON_NAME).read_text(encoding='utf-8')
+    )
+    artifacts = {item['name']: item for item in manifest['artifacts']}
+    assert artifacts[REFRACTION_V1_QC_JSON_NAME]['required'] is False
+    assert artifacts[REFRACTION_V1_ESTIMATES_CSV_NAME]['required'] is False
+    assert not (tmp_path / REFRACTION_V1_QC_JSON_NAME).exists()
+    assert not (tmp_path / REFRACTION_V1_ESTIMATES_CSV_NAME).exists()
+
+    qc = json.loads((tmp_path / REFRACTION_STATIC_QC_JSON_NAME).read_text())
+    qc_artifacts = {item['name']: item for item in qc['artifacts']}
+    assert REFRACTION_V1_QC_JSON_NAME in qc_artifacts
+    assert REFRACTION_V1_ESTIMATES_CSV_NAME in qc_artifacts
+
+
+def test_refraction_static_manifest_strict_json(tmp_path: Path) -> None:
+    write_refraction_static_artifacts(
+        result=_result(),
+        req=_request(),
+        job_dir=tmp_path,
+    )
+
+    payload = json.loads(
+        (tmp_path / REFRACTION_STATIC_ARTIFACTS_JSON_NAME).read_text(encoding='utf-8')
+    )
+    json.dumps(payload, allow_nan=False)
+    assert payload['job_kind'] == 'statics'
+    assert payload['statics_kind'] == 'refraction'
+    assert {
+        'name',
+        'kind',
+        'required',
+    }.issubset(payload['artifacts'][0])
 
 
 def test_write_refraction_static_artifacts_rejects_missing_job_dir(

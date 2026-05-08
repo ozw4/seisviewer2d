@@ -119,6 +119,27 @@ _V1_ARTIFACTS: tuple[dict[str, str | bool], ...] = (
     },
 )
 
+_OPTIONAL_CONSTANT_V1_ARTIFACTS: tuple[dict[str, str | bool], ...] = (
+    {
+        'name': REFRACTION_V1_QC_JSON_NAME,
+        'kind': 'json',
+        'required': False,
+        'description': (
+            'Optional standalone V1 QC summary; constant V1 details are recorded '
+            f'in {REFRACTION_STATIC_QC_JSON_NAME}'
+        ),
+    },
+    {
+        'name': REFRACTION_V1_ESTIMATES_CSV_NAME,
+        'kind': 'csv',
+        'required': False,
+        'description': (
+            'Optional per-source direct-arrival V1 estimates; not produced for '
+            'constant first-layer mode'
+        ),
+    },
+)
+
 _T1LSST_1LAYER_ARTIFACTS: tuple[dict[str, str | bool], ...] = (
     {
         'name': REFRACTION_T1LSST_1LAYER_COMPONENTS_CSV_NAME,
@@ -127,6 +148,11 @@ _T1LSST_1LAYER_ARTIFACTS: tuple[dict[str, str | bool], ...] = (
         'description': 'T1LSST-compatible one-layer source/receiver components',
     },
 )
+
+REFRACTION_STATIC_REGISTERED_ARTIFACT_NAMES = frozenset(
+    str(item['name'])
+    for item in _ARTIFACTS + _V1_ARTIFACTS + _T1LSST_1LAYER_ARTIFACTS
+) | {REFRACTION_STATIC_ARTIFACTS_JSON_NAME}
 
 _TRACE_STATICS_COLUMNS = (
     'sorted_trace_index',
@@ -317,6 +343,7 @@ def write_refraction_static_artifacts(
         resolved_first_layer=first_layer,
     )
     manifest = _build_manifest_payload(artifact_entries)
+    _assert_strict_json(manifest, artifact_name=REFRACTION_STATIC_ARTIFACTS_JSON_NAME)
     t1lsst_components_path = (
         root / REFRACTION_T1LSST_1LAYER_COMPONENTS_CSV_NAME
         if request.conversion.mode == 't1lsst_1layer'
@@ -400,6 +427,7 @@ def write_refraction_static_artifacts(
         )
     artifact_paths = artifact_paths + tuple(
         root / str(item['name']) for item in _v1_artifact_entries(request, first_layer)
+        if bool(item['required'])
     )
     for artifact_path in artifact_paths:
         if not artifact_path.is_file():
@@ -1777,7 +1805,7 @@ def _v1_artifact_entries(
     )
     if mode == 'estimate_direct_arrival':
         return _V1_ARTIFACTS
-    return ()
+    return _OPTIONAL_CONSTANT_V1_ARTIFACTS
 
 
 def _build_manifest_payload(
@@ -2064,9 +2092,12 @@ __all__ = [
     'REFRACTION_STATICS_CSV_NAME',
     'REFRACTION_STATIC_ARTIFACTS_JSON_NAME',
     'REFRACTION_STATIC_COMPONENTS_CSV_NAME',
+    'REFRACTION_STATIC_REGISTERED_ARTIFACT_NAMES',
     'REFRACTION_STATIC_QC_JSON_NAME',
     'REFRACTION_STATIC_SOLUTION_NPZ_NAME',
     'REFRACTION_T1LSST_1LAYER_COMPONENTS_CSV_NAME',
+    'REFRACTION_V1_ESTIMATES_CSV_NAME',
+    'REFRACTION_V1_QC_JSON_NAME',
     'RECEIVER_STATIC_TABLE_CSV_NAME',
     'SOURCE_RECEIVER_STATIC_TABLE_NPZ_NAME',
     'SOURCE_STATIC_TABLE_CSV_NAME',
