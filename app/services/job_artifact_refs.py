@@ -5,6 +5,14 @@ from __future__ import annotations
 from pathlib import Path
 
 from app.core.state import AppState
+from app.services.refraction_static_artifacts import (
+    REFRACTION_STATIC_REGISTERED_ARTIFACT_NAMES,
+)
+
+
+_REGISTERED_STATIC_ARTIFACT_NAMES_BY_KIND = {
+    'refraction': REFRACTION_STATIC_REGISTERED_ARTIFACT_NAMES,
+}
 
 
 def _plain_artifact_name(name: str) -> str:
@@ -54,6 +62,11 @@ def resolve_job_artifact_path(
             raise ValueError(
                 f'job {job_id} has unsupported statics_kind: {statics_kind}'
             )
+        if isinstance(statics_kind, str):
+            _validate_registered_static_artifact_name(
+                statics_kind=statics_kind,
+                artifact_name=artifact_name,
+            )
 
     _validate_expected_job_metadata(
         job_id=job_id,
@@ -76,6 +89,22 @@ def resolve_job_artifact_path(
     if not artifact_path.is_file():
         raise ValueError(f'job artifact not found: {artifact_name}')
     return artifact_path
+
+
+def _validate_registered_static_artifact_name(
+    *,
+    statics_kind: str,
+    artifact_name: str,
+) -> None:
+    registered_names = _REGISTERED_STATIC_ARTIFACT_NAMES_BY_KIND.get(statics_kind)
+    if registered_names is None:
+        return
+    if artifact_name in registered_names:
+        return
+    raise ValueError(
+        f'job artifact {artifact_name!r} is not registered for '
+        f'statics_kind {statics_kind!r}'
+    )
 
 
 def _validate_expected_job_metadata(

@@ -553,9 +553,13 @@ class RefractionStaticArtifactSet:
     near_surface_model_csv: Path
     first_break_residuals_csv: Path
     refraction_static_components_csv: Path
+    source_static_table_csv: Path
+    receiver_static_table_csv: Path
+    source_receiver_static_table_npz: Path
     manifest_json: Path | None
     artifact_names: tuple[str, ...]
     qc: dict[str, Any]
+    refraction_t1lsst_1layer_components_csv: Path | None = None
 
 
 @dataclass(frozen=True)

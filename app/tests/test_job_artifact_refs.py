@@ -5,6 +5,15 @@ from pathlib import Path
 import pytest
 
 from app.core.state import create_app_state
+from app.services.refraction_static_artifacts import (
+    REFRACTION_T1LSST_1LAYER_COMPONENTS_CSV_NAME,
+    REFRACTION_V1_ESTIMATES_CSV_NAME,
+    REFRACTION_V1_QC_JSON_NAME,
+    REFRACTION_STATIC_REQUEST_JSON_NAME,
+    RECEIVER_STATIC_TABLE_CSV_NAME,
+    SOURCE_RECEIVER_STATIC_TABLE_NPZ_NAME,
+    SOURCE_STATIC_TABLE_CSV_NAME,
+)
 from app.services.job_artifact_refs import resolve_job_artifact_path
 
 
@@ -103,4 +112,76 @@ def test_resolve_job_artifact_path_rejects_wrong_statics_kind(
             job_id='qc-job',
             name='artifact.npz',
             allowed_statics_kinds={'datum'},
+        )
+
+
+@pytest.mark.parametrize(
+    'artifact_name',
+    [
+        REFRACTION_V1_QC_JSON_NAME,
+        REFRACTION_V1_ESTIMATES_CSV_NAME,
+        REFRACTION_T1LSST_1LAYER_COMPONENTS_CSV_NAME,
+        REFRACTION_STATIC_REQUEST_JSON_NAME,
+        SOURCE_STATIC_TABLE_CSV_NAME,
+        RECEIVER_STATIC_TABLE_CSV_NAME,
+        SOURCE_RECEIVER_STATIC_TABLE_NPZ_NAME,
+    ],
+)
+def test_resolve_job_artifact_path_accepts_refraction_registered_artifacts(
+    tmp_path: Path,
+    artifact_name: str,
+) -> None:
+    state = create_app_state()
+    job_dir = tmp_path / 'refraction'
+    job_dir.mkdir()
+    artifact = job_dir / artifact_name
+    artifact.write_bytes(b'data')
+    with state.lock:
+        state.jobs.create_static_job(
+            'refraction-job',
+            file_id='file-a',
+            key1_byte=189,
+            key2_byte=193,
+            statics_kind='refraction',
+            artifacts_dir=str(job_dir),
+        )
+
+    resolved = resolve_job_artifact_path(
+        state,
+        job_id='refraction-job',
+        name=artifact_name,
+        allowed_job_types={'statics'},
+        allowed_statics_kinds={'refraction'},
+        expected_file_id='file-a',
+        expected_key1_byte=189,
+        expected_key2_byte=193,
+    )
+
+    assert resolved == artifact
+
+
+def test_resolve_job_artifact_path_rejects_unregistered_refraction_artifact(
+    tmp_path: Path,
+) -> None:
+    state = create_app_state()
+    job_dir = tmp_path / 'refraction'
+    job_dir.mkdir()
+    (job_dir / 'debug-only.npz').write_bytes(b'data')
+    with state.lock:
+        state.jobs.create_static_job(
+            'refraction-job',
+            file_id='file-a',
+            key1_byte=189,
+            key2_byte=193,
+            statics_kind='refraction',
+            artifacts_dir=str(job_dir),
+        )
+
+    with pytest.raises(ValueError, match='not registered for statics_kind'):
+        resolve_job_artifact_path(
+            state,
+            job_id='refraction-job',
+            name='debug-only.npz',
+            allowed_job_types={'statics'},
+            allowed_statics_kinds={'refraction'},
         )

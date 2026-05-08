@@ -2,9 +2,18 @@
 
 from __future__ import annotations
 
+import numpy as np
+
 REFRACTION_STATIC_STATUSES: frozenset[str] = frozenset(
     {
         'ok',
+        'inactive_endpoint',
+        'missing_geometry',
+        'missing_linkage',
+        'insufficient_pick_fold',
+        'invalid_t1',
+        'invalid_datum',
+        'not_applied',
         'solved',
         'not_observed',
         'inactive',
@@ -38,4 +47,79 @@ REFRACTION_STATIC_STATUSES: frozenset[str] = frozenset(
     }
 )
 
-__all__ = ['REFRACTION_STATIC_STATUSES']
+
+def classify_refraction_endpoint_static_status(
+    *,
+    node_missing: bool,
+    x_m: object,
+    y_m: object,
+    surface_elevation_m: object,
+    t1_s: object,
+    weathering_thickness_m: object,
+    total_shift_s: object,
+    solution_status: object,
+    weathering_status: object,
+    datum_status: object,
+) -> str:
+    """Classify final endpoint static status from solution/weathering/datum inputs."""
+    solution = str(solution_status)
+    weathering = str(weathering_status)
+    datum = str(datum_status)
+    if node_missing or 'missing_node' in {solution, weathering, datum}:
+        return 'missing_linkage'
+    if not all(
+        np.isfinite(_float_or_nan(value))
+        for value in (x_m, y_m, surface_elevation_m)
+    ):
+        return 'missing_geometry'
+    if 'inactive' in {solution, weathering, datum}:
+        return 'inactive_endpoint'
+    if 'low_fold' in {solution, weathering, datum}:
+        return 'insufficient_pick_fold'
+    if (
+        not np.isfinite(_float_or_nan(t1_s))
+        or solution in {'invalid_solution', 'missing_solution'}
+        or weathering == 'invalid_half_intercept'
+    ):
+        return 'invalid_t1'
+    if (
+        not np.isfinite(_float_or_nan(weathering_thickness_m))
+        or weathering
+        in {
+            'invalid_weathering_thickness',
+            'negative_weathering_thickness',
+            'negative_thickness',
+            'exceeds_max_thickness',
+            'invalid_weathering_replacement',
+        }
+        or datum == 'invalid_weathering_replacement'
+    ):
+        return 'invalid_weathering_thickness'
+    if datum in {
+        'invalid_datum_shift',
+        'invalid_floating_datum_elevation',
+        'invalid_flat_datum_elevation',
+        'floating_datum_below_refractor',
+        'flat_datum_below_refractor',
+    }:
+        return 'invalid_datum'
+    for status in (datum, weathering, solution):
+        if status not in {'ok', 'solved', 'zero_thickness'}:
+            return status
+    if not np.isfinite(_float_or_nan(total_shift_s)):
+        return 'not_applied'
+    return 'ok'
+
+
+def _float_or_nan(value: object) -> float:
+    try:
+        out = float(value)
+    except (TypeError, ValueError):
+        return float('nan')
+    return out if np.isfinite(out) else float('nan')
+
+
+__all__ = [
+    'REFRACTION_STATIC_STATUSES',
+    'classify_refraction_endpoint_static_status',
+]

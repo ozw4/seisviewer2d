@@ -31,6 +31,7 @@ from app.services.datum_static_service import run_datum_static_apply_job
 from app.services.first_break_qc_service import run_first_break_qc_job
 from app.services.geometry_linkage_service import run_geometry_linkage_build_job
 from app.services.in_memory_cleanup import cleanup_in_memory_state
+from app.services.job_artifact_refs import resolve_job_artifact_path
 from app.services.job_manager import JobManager
 from app.services.job_runner import request_job_cancel, start_job_thread
 from app.services.pipeline_artifacts import get_job_dir, maybe_cleanup_expired_jobs
@@ -326,17 +327,23 @@ def static_job_download(
 ) -> FileResponse:
     state = get_state(request.app)
     cleanup_in_memory_state(state)
-    job = _get_static_job_or_404(state, job_id)
-
-    if not name or Path(name).name != name:
-        raise HTTPException(status_code=400, detail='Invalid file name')
+    _get_static_job_or_404(state, job_id)
 
     maybe_cleanup_expired_jobs()
-    artifacts_dir = _static_job_artifacts_dir(job)
-    if not artifacts_dir.is_dir():
-        raise HTTPException(status_code=404, detail='Job artifacts not found')
-    file_path = artifacts_dir / name
-    if not file_path.is_file():
-        raise HTTPException(status_code=404, detail='File not found')
+    try:
+        file_path = resolve_job_artifact_path(
+            state,
+            job_id=job_id,
+            name=name,
+            allowed_job_types={'statics'},
+        )
+    except ValueError as exc:
+        if 'artifact name must be a plain file name' in str(exc):
+            raise HTTPException(status_code=400, detail='Invalid file name') from exc
+        if 'artifacts_dir is not a directory' in str(exc):
+            raise HTTPException(status_code=404, detail='Job artifacts not found') from exc
+        if 'job artifact not found' in str(exc):
+            raise HTTPException(status_code=404, detail='File not found') from exc
+        raise HTTPException(status_code=404, detail='File not found') from exc
 
     return FileResponse(path=file_path, filename=name)

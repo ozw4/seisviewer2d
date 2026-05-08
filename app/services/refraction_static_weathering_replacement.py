@@ -16,6 +16,10 @@ from app.core.state import AppState
 from app.services.refraction_static_first_layer import (
     validate_resolved_first_layer_velocity_match,
 )
+from app.services.refraction_static_t1lsst import (
+    RefractionT1LSSTError,
+    compute_t1lsst_1layer_weathering_correction,
+)
 from app.services.refraction_static_types import (
     RefractionStaticInputModel,
     RefractionWeatheringReplacementStaticsResult,
@@ -449,22 +453,23 @@ def compute_weathering_replacement_shift_s(
     bedrock_velocity_m_s: float,
 ) -> np.ndarray:
     """Compute ``shift = z * (1/vb - 1/vw)`` in seconds."""
-    thickness = _coerce_float_array(
-        weathering_thickness_m,
-        name='weathering_thickness_m',
-        allow_nonfinite=True,
-    )
-    vw = _positive_finite(
-        weathering_velocity_m_s,
-        name='weathering_velocity_m_s',
-    )
-    vb = _positive_finite(bedrock_velocity_m_s, name='bedrock_velocity_m_s')
-    if vb <= vw:
-        raise RefractionWeatheringReplacementStaticsError(
-            'bedrock_velocity_m_s must be greater than weathering_velocity_m_s'
+    try:
+        return compute_t1lsst_1layer_weathering_correction(
+            sh1_m=weathering_thickness_m,
+            v1_m_s=weathering_velocity_m_s,
+            v2_m_s=bedrock_velocity_m_s,
         )
-    delta = 1.0 / vb - 1.0 / vw
-    return np.ascontiguousarray(thickness * delta, dtype=np.float64)
+    except RefractionT1LSSTError as exc:
+        if str(exc) == 'v2_m_s must be greater than v1_m_s':
+            raise RefractionWeatheringReplacementStaticsError(
+                'bedrock_velocity_m_s must be greater than weathering_velocity_m_s'
+            ) from exc
+        raise RefractionWeatheringReplacementStaticsError(
+            str(exc)
+            .replace('sh1_m', 'weathering_thickness_m')
+            .replace('v1_m_s', 'weathering_velocity_m_s')
+            .replace('v2_m_s', 'bedrock_velocity_m_s')
+        ) from exc
 
 
 def compute_weathering_replacement_shift_scalar_s(
