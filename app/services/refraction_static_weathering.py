@@ -48,6 +48,15 @@ _ZERO_THICKNESS_ATOL_M = 1.0e-9
 _SLOWNESS_RTOL = 1.0e-6
 _VELOCITY_RTOL = 1.0e-6
 _FORMULA_TEXT = 'z = T * vb * vw / sqrt(vb^2 - vw^2)'
+_LOW_FOLD_V2_CELL_STATUS = 'low_fold_v2_cell'
+_CELL_THRESHOLD_QC_KEYS = (
+    'min_observations_per_cell',
+    'n_low_fold_cells',
+    'n_observations_rejected_by_low_fold_cell',
+    'low_fold_cell_rejection_reason',
+    'low_fold_cell_id',
+    'cell_observation_count',
+)
 _STATUS_PRIORITY = {
     'ok': 0,
     'solved': 0,
@@ -65,8 +74,13 @@ _STATUS_PRIORITY = {
     'missing_solution': 9,
     'invalid_half_intercept': 9,
     'inactive': 10,
-    'missing_endpoint': 11,
-    'missing_node': 11,
+    'outside_refractor_cell_grid': 11,
+    'inactive_v2_cell': 12,
+    'low_fold_v2_cell': 13,
+    'invalid_local_v2': 14,
+    'v2_not_greater_than_v1': 15,
+    'missing_endpoint': 16,
+    'missing_node': 16,
 }
 
 _NODE_COLUMNS = (
@@ -290,6 +304,9 @@ def build_refraction_weathering_thickness_model(
         data=data,
         model=model,
         velocity=velocity,
+        low_fold_cell_id=_low_fold_cell_id_from_qc(
+            getattr(half_intercept_result, 'qc', {})
+        ),
     )
     node_bedrock_velocity = (
         local_v2.node_v2_m_s
@@ -442,6 +459,7 @@ def build_refraction_weathering_thickness_model(
         source_weathering_status=source_status,
         receiver_weathering_thickness_m=receiver_thickness,
         receiver_weathering_status=receiver_status,
+        upstream_qc=getattr(half_intercept_result, 'qc', {}),
     )
 
     result = RefractionWeatheringThicknessResult(
@@ -617,6 +635,7 @@ def _build_local_v2_model(
     data: _ValidatedHalfIntercept,
     model: RefractionStaticModelRequest,
     velocity: _VelocityContext,
+    low_fold_cell_id: np.ndarray,
 ) -> _LocalV2Model | None:
     if velocity.mode != 'solve_cell':
         return None
@@ -637,6 +656,7 @@ def _build_local_v2_model(
         active_cell_id=data.active_cell_id,
         cell_bedrock_velocity_m_s=data.cell_bedrock_velocity_m_s,
         weathering_velocity_m_s=velocity.weathering_velocity_m_s,
+        low_fold_cell_id=low_fold_cell_id,
     )
     source = _project_local_v2(
         grid=grid,
@@ -645,6 +665,7 @@ def _build_local_v2_model(
         active_cell_id=data.active_cell_id,
         cell_bedrock_velocity_m_s=data.cell_bedrock_velocity_m_s,
         weathering_velocity_m_s=velocity.weathering_velocity_m_s,
+        low_fold_cell_id=low_fold_cell_id,
     )
     receiver = _project_local_v2(
         grid=grid,
@@ -653,6 +674,7 @@ def _build_local_v2_model(
         active_cell_id=data.active_cell_id,
         cell_bedrock_velocity_m_s=data.cell_bedrock_velocity_m_s,
         weathering_velocity_m_s=velocity.weathering_velocity_m_s,
+        low_fold_cell_id=low_fold_cell_id,
     )
     source_sorted = _map_endpoint_local_v2_to_trace_order(
         endpoint_key_sorted=data.source_endpoint_key_sorted,
@@ -695,6 +717,7 @@ def _project_local_v2(
     active_cell_id: np.ndarray,
     cell_bedrock_velocity_m_s: np.ndarray,
     weathering_velocity_m_s: float,
+    low_fold_cell_id: np.ndarray,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     assignment = assign_points_to_refraction_cells(grid, x_m=x_m, y_m=y_m)
     cell_id = np.ascontiguousarray(assignment.cell_id, dtype=np.int64)
@@ -710,6 +733,13 @@ def _project_local_v2(
         int(raw_cell): float(cell_velocity[index])
         for index, raw_cell in enumerate(active_cells.tolist())
     }
+    low_fold_cells = {
+        int(value)
+        for value in _coerce_1d_integer(
+            low_fold_cell_id,
+            name='low_fold_cell_id',
+        ).tolist()
+    }
     for index, raw_cell in enumerate(cell_id.tolist()):
         cell = int(raw_cell)
         if cell < 0:
@@ -717,7 +747,11 @@ def _project_local_v2(
             continue
         value = velocity_by_cell.get(cell)
         if value is None:
-            status[index] = 'inactive_v2_cell'
+            status[index] = (
+                _LOW_FOLD_V2_CELL_STATUS
+                if cell in low_fold_cells
+                else 'inactive_v2_cell'
+            )
             continue
         v2[index] = value
         if not np.isfinite(value) or value <= 0.0:
@@ -1455,6 +1489,7 @@ def _build_qc(
     source_weathering_status: np.ndarray,
     receiver_weathering_thickness_m: np.ndarray,
     receiver_weathering_status: np.ndarray,
+    upstream_qc: dict[str, Any],
 ) -> dict[str, Any]:
     ok_nodes = node_weathering_status == 'ok'
     finite_ok_thickness = node_weathering_thickness_m[
@@ -1541,8 +1576,23 @@ def _build_qc(
         'receiver_weathering_status_counts': _status_counts(receiver_weathering_status),
         'thickness_formula': _FORMULA_TEXT,
     }
+    _copy_cell_threshold_qc(qc, upstream_qc)
     _assert_json_safe(qc)
     return qc
+
+
+def _low_fold_cell_id_from_qc(qc: dict[str, Any]) -> np.ndarray:
+    values = qc.get('low_fold_cell_id', [])
+    return _coerce_1d_integer(
+        np.asarray(values, dtype=np.int64),
+        name='low_fold_cell_id',
+    )
+
+
+def _copy_cell_threshold_qc(payload: dict[str, Any], upstream: dict[str, Any]) -> None:
+    for key in _CELL_THRESHOLD_QC_KEYS:
+        if key in upstream:
+            payload[key] = upstream[key]
 
 
 def _required(owner: object, field: str, *, allow_none: bool = False) -> object:

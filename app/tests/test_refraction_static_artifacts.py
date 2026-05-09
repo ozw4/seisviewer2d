@@ -399,6 +399,44 @@ def test_solve_cell_writes_refractor_velocity_grid_npz(tmp_path: Path) -> None:
         )
 
 
+def test_solve_cell_writes_low_fold_refractor_velocity_artifacts(
+    tmp_path: Path,
+) -> None:
+    paths = write_refraction_static_artifacts(
+        result=_solve_cell_low_fold_result(),
+        req=_solve_cell_request(),
+        job_dir=tmp_path,
+    )
+
+    assert paths.refraction_refractor_velocity_cells_csv is not None
+    rows = _read_csv(paths.refraction_refractor_velocity_cells_csv)
+    assert rows[1]['active'] == 'false'
+    assert rows[1]['velocity_status'] == 'low_fold'
+    assert rows[1]['v2_m_s'] == ''
+    assert int(rows[1]['n_observations']) == 1
+    assert int(rows[1]['n_used_observations']) == 0
+    assert int(rows[1]['n_rejected_observations']) == 1
+
+    assert paths.refraction_refractor_velocity_qc_json is not None
+    cell_qc = json.loads(
+        paths.refraction_refractor_velocity_qc_json.read_text(encoding='utf-8')
+    )
+    assert cell_qc['min_observations_per_cell'] == 2
+    assert cell_qc['n_low_fold_cells'] == 1
+    assert cell_qc['n_observations_rejected_by_low_fold_cell'] == 1
+    assert (
+        cell_qc['low_fold_cell_rejection_reason']
+        == 'below_min_observations_per_cell'
+    )
+
+    source_rows = _read_csv(paths.source_static_table_csv)
+    receiver_rows = _read_csv(paths.receiver_static_table_csv)
+    assert source_rows[1]['v2_status'] == 'low_fold_v2_cell'
+    assert source_rows[1]['static_status'] == 'low_fold_v2_cell'
+    assert receiver_rows[0]['v2_status'] == 'low_fold_v2_cell'
+    assert receiver_rows[0]['static_status'] == 'low_fold_v2_cell'
+
+
 def test_solve_cell_manifest_registers_cell_velocity_artifacts(
     tmp_path: Path,
 ) -> None:
@@ -821,6 +859,101 @@ def _solve_cell_result():
             ['ok', 'inactive_v2_cell', 'inactive_v2_cell', 'ok'],
             dtype='<U32',
         ),
+    )
+
+
+def _solve_cell_low_fold_result():
+    base = _solve_cell_result()
+    qc = dict(base.qc)
+    qc.update(
+        {
+            'min_observations_per_cell': 2,
+            'n_low_fold_cells': 1,
+            'n_observations_rejected_by_low_fold_cell': 1,
+            'low_fold_cell_rejection_reason': 'below_min_observations_per_cell',
+            'low_fold_cell_id': [1],
+            'cell_observation_count': [2, 1, 0],
+        }
+    )
+    return replace(
+        base,
+        active_cell_id=np.asarray([0], dtype=np.int64),
+        inactive_cell_id=np.asarray([1, 2], dtype=np.int64),
+        cell_bedrock_slowness_s_per_m=np.asarray([1.0 / 2400.0], dtype=np.float64),
+        cell_bedrock_velocity_m_s=np.asarray([2400.0], dtype=np.float64),
+        cell_velocity_status=np.asarray(['solved'], dtype='<U16'),
+        row_midpoint_cell_id=np.asarray([0, 0, 0], dtype=np.int64),
+        node_v2_cell_id=np.asarray([0, 1, 2], dtype=np.int64),
+        node_v2_m_s=np.asarray([2400.0, np.nan, np.nan], dtype=np.float64),
+        node_v2_status=np.asarray(
+            ['ok', 'low_fold_v2_cell', 'inactive_v2_cell'],
+            dtype='<U32',
+        ),
+        node_datum_status=np.asarray(
+            ['ok', 'low_fold_v2_cell', 'inactive_v2_cell'],
+            dtype='<U32',
+        ),
+        source_v2_cell_id=np.asarray([0, 1], dtype=np.int64),
+        source_v2_m_s=np.asarray([2400.0, np.nan], dtype=np.float64),
+        source_v2_status=np.asarray(['ok', 'low_fold_v2_cell'], dtype='<U32'),
+        source_datum_status=np.asarray(['ok', 'low_fold_v2_cell'], dtype='<U32'),
+        source_refraction_shift_s=np.asarray([0.0025, np.nan], dtype=np.float64),
+        receiver_v2_cell_id=np.asarray([1, 2], dtype=np.int64),
+        receiver_v2_m_s=np.asarray([np.nan, np.nan], dtype=np.float64),
+        receiver_v2_status=np.asarray(
+            ['low_fold_v2_cell', 'inactive_v2_cell'],
+            dtype='<U32',
+        ),
+        receiver_datum_status=np.asarray(
+            ['low_fold_v2_cell', 'inactive_v2_cell'],
+            dtype='<U32',
+        ),
+        receiver_refraction_shift_s=np.asarray([np.nan, np.nan], dtype=np.float64),
+        source_v2_cell_id_sorted=np.asarray([0, 1, 0, 1], dtype=np.int64),
+        source_v2_m_s_sorted=np.asarray(
+            [2400.0, np.nan, 2400.0, np.nan],
+            dtype=np.float64,
+        ),
+        source_v2_status_sorted=np.asarray(
+            ['ok', 'low_fold_v2_cell', 'ok', 'low_fold_v2_cell'],
+            dtype='<U32',
+        ),
+        receiver_v2_cell_id_sorted=np.asarray([1, 2, 2, 1], dtype=np.int64),
+        receiver_v2_m_s_sorted=np.asarray(
+            [np.nan, np.nan, np.nan, np.nan],
+            dtype=np.float64,
+        ),
+        receiver_v2_status_sorted=np.asarray(
+            [
+                'low_fold_v2_cell',
+                'inactive_v2_cell',
+                'inactive_v2_cell',
+                'low_fold_v2_cell',
+            ],
+            dtype='<U32',
+        ),
+        receiver_refraction_shift_s_sorted=np.asarray(
+            [np.nan, np.nan, np.nan, np.nan],
+            dtype=np.float64,
+        ),
+        refraction_trace_shift_s_sorted=np.asarray(
+            [np.nan, np.nan, np.nan, np.nan],
+            dtype=np.float64,
+        ),
+        trace_static_status_sorted=np.asarray(
+            [
+                'low_fold_v2_cell',
+                'inactive_v2_cell',
+                'inactive_v2_cell',
+                'low_fold_v2_cell',
+            ],
+            dtype='<U32',
+        ),
+        trace_static_valid_mask_sorted=np.asarray(
+            [False, False, False, False],
+            dtype=bool,
+        ),
+        qc=qc,
     )
 
 

@@ -19,6 +19,7 @@ def _model(
     *,
     number_of_cell_x: int = 4,
     size_of_cell_x_m: float = 10.0,
+    min_observations_per_cell: int = 1,
     **overrides: Any,
 ) -> RefractionStaticModelRequest:
     payload: dict[str, Any] = {
@@ -39,7 +40,7 @@ def _model(
             'y_coordinate_origin_m': 0.0,
             'assignment_mode': 'midpoint',
             'outside_grid_policy': 'reject',
-            'min_observations_per_cell': 1,
+            'min_observations_per_cell': min_observations_per_cell,
             'velocity_smoothing_weight': 0.0,
             'smoothing_reference_distance_m': None,
         },
@@ -247,6 +248,34 @@ def test_cell_design_matrix_marks_empty_cells_inactive() -> None:
     assert design.n_active_cells == 2
     assert design.n_inactive_cells == 2
     assert design.matrix.shape[1] == design.n_active_nodes + 2
+
+
+def test_cell_design_matrix_rejects_cells_below_min_observations_per_cell() -> None:
+    design = build_refraction_static_design_matrix(
+        input_model=_input_model(
+            midpoint_x_m=[5.0, 5.0, 15.0, 25.0, 25.0],
+            source_node_id=[10, 20, 30, 40, 50],
+            receiver_node_id=[20, 30, 40, 50, 60],
+            distance_m=[100.0, 110.0, 120.0, 130.0, 140.0],
+        ),
+        model=_model(number_of_cell_x=4, min_observations_per_cell=2),
+    )
+
+    np.testing.assert_array_equal(design.row_trace_index_sorted, [0, 1, 3, 4])
+    np.testing.assert_array_equal(design.row_midpoint_cell_id, [0, 0, 2, 2])
+    np.testing.assert_array_equal(design.active_cell_id, [0, 2])
+    np.testing.assert_array_equal(design.inactive_cell_id, [1, 3])
+    assert design.rejection_reason_sorted is not None
+    assert design.rejection_reason_sorted[2] == 'below_min_observations_per_cell'
+    assert design.qc['min_observations_per_cell'] == 2
+    assert design.qc['n_low_fold_cells'] == 1
+    assert design.qc['low_fold_cell_id'] == [1]
+    assert design.qc['n_observations_rejected_by_low_fold_cell'] == 1
+    assert design.qc['low_fold_cell_rejection_reason'] == (
+        'below_min_observations_per_cell'
+    )
+    assert design.qc['cell_observation_count'] == [2, 1, 2, 0]
+    assert design.qc['n_observations_used'] == 4
 
 
 def test_cell_design_matrix_qc_reports_observation_counts_per_cell() -> None:

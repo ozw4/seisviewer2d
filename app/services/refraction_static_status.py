@@ -46,6 +46,7 @@ REFRACTION_STATIC_STATUSES: frozenset[str] = frozenset(
         'missing_node',
         'outside_refractor_cell_grid',
         'inactive_v2_cell',
+        'low_fold_v2_cell',
         'invalid_local_v2',
         'v2_not_greater_than_v1',
     }
@@ -55,6 +56,7 @@ LOCAL_V2_STATUS_VALUES: frozenset[str] = frozenset(
     {
         'outside_refractor_cell_grid',
         'inactive_v2_cell',
+        'low_fold_v2_cell',
         'invalid_local_v2',
         'v2_not_greater_than_v1',
     }

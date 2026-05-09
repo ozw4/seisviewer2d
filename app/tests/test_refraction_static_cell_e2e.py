@@ -8,6 +8,7 @@ from pathlib import Path
 import numpy as np
 import pytest
 
+from app.api.schemas import RefractionStaticApplyRequest
 from app.services.refraction_static_artifacts import (
     REFRACTION_REFRACTOR_VELOCITY_CELLS_CSV_NAME,
     REFRACTION_REFRACTOR_VELOCITY_GRID_NPZ_NAME,
@@ -172,6 +173,41 @@ def test_solve_cell_e2e_rejects_outside_grid_observations(
         )
     )
     assert cell_qc['n_observations_outside_grid'] == 1
+
+
+def test_solve_cell_e2e_rejects_low_fold_cells_and_projects_status(
+    tmp_path: Path,
+) -> None:
+    payload = synthetic_cell_refraction_apply_request().model_dump(mode='json')
+    payload['model']['refractor_cell']['min_observations_per_cell'] = 20
+    req = RefractionStaticApplyRequest.model_validate(payload)
+
+    result = run_synthetic_cell_refraction_statics(req=req)
+
+    np.testing.assert_array_equal(result.active_cell_id, [1])
+    np.testing.assert_array_equal(result.inactive_cell_id, [0, 2])
+    assert result.row_midpoint_cell_id is not None
+    assert set(result.row_midpoint_cell_id.tolist()) == {1}
+    assert result.qc['min_observations_per_cell'] == 20
+    assert result.qc['n_low_fold_cells'] == 2
+    assert result.qc['low_fold_cell_id'] == [0, 2]
+    assert result.qc['n_observations_rejected_by_low_fold_cell'] == 30
+    assert 'low_fold_v2_cell' in result.source_v2_status.tolist()
+    assert 'low_fold_v2_cell' in result.receiver_v2_status.tolist()
+
+    paths = write_refraction_static_artifacts(result=result, req=req, job_dir=tmp_path)
+    cell_rows = _read_csv(paths.refraction_refractor_velocity_cells_csv)
+    assert [row['velocity_status'] for row in cell_rows] == [
+        'low_fold',
+        'solved',
+        'low_fold',
+    ]
+    cell_qc = json.loads(
+        paths.refraction_refractor_velocity_qc_json.read_text(encoding='utf-8')
+    )
+    assert cell_qc['min_observations_per_cell'] == 20
+    assert cell_qc['n_low_fold_cells'] == 2
+    assert cell_qc['n_observations_rejected_by_low_fold_cell'] == 30
 
 
 def test_solve_cell_e2e_inactive_endpoint_cell_status(

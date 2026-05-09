@@ -53,6 +53,14 @@ _SLOWNESS_RTOL = 1.0e-8
 _ZERO_SHIFT_ATOL_S = 1.0e-12
 _FORMULA_TEXT = 'shift = z * (1/vb - 1/vw)'
 _SIGN_CONVENTION_TEXT = 'corrected(t) = raw(t - shift_s)'
+_CELL_THRESHOLD_QC_KEYS = (
+    'min_observations_per_cell',
+    'n_low_fold_cells',
+    'n_observations_rejected_by_low_fold_cell',
+    'low_fold_cell_rejection_reason',
+    'low_fold_cell_id',
+    'cell_observation_count',
+)
 
 _STATUS_PRIORITY = {
     'ok': 0,
@@ -69,10 +77,11 @@ _STATUS_PRIORITY = {
     'invalid_velocity': 11,
     'outside_refractor_cell_grid': 12,
     'inactive_v2_cell': 13,
-    'invalid_local_v2': 14,
-    'v2_not_greater_than_v1': 15,
-    'missing_endpoint': 16,
-    'missing_node': 17,
+    'low_fold_v2_cell': 14,
+    'invalid_local_v2': 15,
+    'v2_not_greater_than_v1': 16,
+    'missing_endpoint': 17,
+    'missing_node': 18,
 }
 
 _NODE_COLUMNS = (
@@ -438,6 +447,7 @@ def build_refraction_weathering_replacement_statics(
         trace_static_status=trace_static_status,
         trace_static_valid_mask=trace_static_valid,
         max_abs_shift_ms=max_abs_shift_ms,
+        upstream_qc=getattr(weathering_result, 'qc', {}),
     )
 
     result = RefractionWeatheringReplacementStaticsResult(
@@ -1275,6 +1285,7 @@ def _classify_component_status(
             'invalid_velocity',
             'outside_refractor_cell_grid',
             'inactive_v2_cell',
+            'low_fold_v2_cell',
             'invalid_local_v2',
             'v2_not_greater_than_v1',
             'inactive',
@@ -1288,6 +1299,12 @@ def _classify_component_status(
         np.ascontiguousarray(shift, dtype=np.float64),
         np.ascontiguousarray(status, dtype=_STATUS_DTYPE),
     )
+
+
+def _copy_cell_threshold_qc(payload: dict[str, Any], upstream: dict[str, Any]) -> None:
+    for key in _CELL_THRESHOLD_QC_KEYS:
+        if key in upstream:
+            payload[key] = upstream[key]
 
 
 def _map_endpoint_component(
@@ -1393,6 +1410,7 @@ def _build_qc(
     trace_static_status: np.ndarray,
     trace_static_valid_mask: np.ndarray,
     max_abs_shift_ms: float | None,
+    upstream_qc: dict[str, Any],
 ) -> dict[str, Any]:
     valid_node_shift_ms = _valid_shift_ms(node_shift_s, node_static_status)
     valid_source_shift_ms = _valid_shift_ms(source_shift_s, source_static_status)
@@ -1465,6 +1483,7 @@ def _build_qc(
         'sign_convention': _SIGN_CONVENTION_TEXT,
         'formula': _FORMULA_TEXT,
     }
+    _copy_cell_threshold_qc(qc, upstream_qc)
     _assert_json_safe(qc)
     return qc
 
@@ -1506,6 +1525,7 @@ def _unknown_invalid_weathering_status(status: np.ndarray) -> np.ndarray:
             'missing_node',
             'outside_refractor_cell_grid',
             'inactive_v2_cell',
+            'low_fold_v2_cell',
             'invalid_local_v2',
             'v2_not_greater_than_v1',
         ],

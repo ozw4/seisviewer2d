@@ -223,9 +223,19 @@ receiver_T_col      1
 cell_slowness_col   offset_m
 ```
 
-Cells with no used observations are inactive and do not add solver columns.
-The current implementation validates `min_observations_per_cell` but active
-cell selection is based on observation presence after filtering.
+Cells with no selected observations are inactive and do not add solver columns.
+Cells with at least one selected observation but fewer than
+`min_observations_per_cell` selected observations are low-fold cells. Low-fold
+cells are inactive, do not add slowness columns, and do not receive solved V2
+values. Their observations are rejected from the inversion with:
+
+```text
+below_min_observations_per_cell
+```
+
+The threshold is applied after the base valid-observation filter and
+outside-grid rejection. A cell becomes active only when its selected observation
+count is greater than or equal to `min_observations_per_cell`.
 
 ## 8. Slowness bounds from velocity bounds
 
@@ -305,6 +315,7 @@ Endpoint status values include:
 ok
 outside_refractor_cell_grid
 inactive_v2_cell
+low_fold_v2_cell
 invalid_local_v2
 v2_not_greater_than_v1
 ```
@@ -449,10 +460,21 @@ residual_p95_abs_ms
 smoothing_neighbor_count
 ```
 
+`velocity_status` is `solved` for solved active cells, `inactive` for empty
+inactive cells, and `low_fold` for cells rejected by
+`min_observations_per_cell`.
+
 `refraction_refractor_velocity_grid.npz` contains the same per-cell arrays with
 pickle disabled. `refraction_refractor_velocity_qc.json` records grid shape,
-assignment mode, outside-grid counts, used observations, velocity statistics,
-and smoothing-row counts.
+assignment mode, outside-grid counts, low-fold threshold and rejection counts,
+used observations, velocity statistics, and smoothing-row counts. It includes:
+
+```text
+min_observations_per_cell
+n_low_fold_cells
+n_observations_rejected_by_low_fold_cell
+low_fold_cell_rejection_reason
+```
 
 `source_static_table.csv` adds cell-aware V2 fields:
 
@@ -575,8 +597,9 @@ pick_time_s = T1_source_s + T1_receiver_s + offset_m * s_cell(midpoint)
 ```
 
 The E2E tests assert that noiseless solves recover the active cell V2 values,
-T1, SH1, WCOR, source/receiver static tables, inactive cell endpoint status,
-outside-grid rejection, smoothing behavior, and pickle-free NPZ artifacts.
+T1, SH1, WCOR, source/receiver static tables, inactive and low-fold cell
+endpoint status, outside-grid rejection, smoothing behavior, and pickle-free
+NPZ artifacts.
 
 ## 15. Known limitations
 
@@ -588,5 +611,3 @@ outside-grid rejection, smoothing behavior, and pickle-free NPZ artifacts.
 - Does not store original IRAS documents in repo.
 - Does not estimate spatially varying V1.
 - Does not perform tomography or path-weighted inversion.
-- `min_observations_per_cell` is schema-validated but is not currently a
-  per-cell rejection threshold in the solver.
