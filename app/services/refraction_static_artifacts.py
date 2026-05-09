@@ -258,6 +258,7 @@ _RESIDUAL_COLUMNS = (
     'residual_ms',
     'used',
     'rejected_by_robust',
+    'rejection_reason',
 )
 
 _COMPONENT_COLUMNS = (
@@ -1985,6 +1986,8 @@ def _near_surface_model_rows(result: RefractionDatumStaticsResult) -> list[dict[
 def _first_break_residual_rows(result: RefractionDatumStaticsResult) -> list[dict[str, object]]:
     rows: list[dict[str, object]] = []
     for row_index in range(int(result.row_trace_index_sorted.shape[0])):
+        rejected_by_robust = bool(result.rejected_by_robust_mask[row_index])
+        used = bool(result.used_row_mask[row_index])
         rows.append(
             {
                 'row_index': row_index,
@@ -1995,11 +1998,27 @@ def _first_break_residual_rows(result: RefractionDatumStaticsResult) -> list[dic
                 'observed_pick_time_ms': _csv_ms(result.observed_pick_time_s[row_index]),
                 'modeled_pick_time_ms': _csv_ms(result.modeled_pick_time_s[row_index]),
                 'residual_ms': _csv_ms(result.residual_time_s[row_index]),
-                'used': _csv_bool(result.used_row_mask[row_index]),
-                'rejected_by_robust': _csv_bool(result.rejected_by_robust_mask[row_index]),
+                'used': _csv_bool(used),
+                'rejected_by_robust': _csv_bool(rejected_by_robust),
+                'rejection_reason': _residual_rejection_reason(
+                    used=used,
+                    rejected_by_robust=rejected_by_robust,
+                ),
             }
         )
     return rows
+
+
+def _residual_rejection_reason(
+    *,
+    used: bool,
+    rejected_by_robust: bool,
+) -> str:
+    if rejected_by_robust:
+        return 'robust_outlier'
+    if not used:
+        return 'not_used'
+    return 'ok'
 
 
 def _component_rows(result: RefractionDatumStaticsResult) -> list[dict[str, object]]:
