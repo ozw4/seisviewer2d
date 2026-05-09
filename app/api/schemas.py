@@ -2037,13 +2037,6 @@ class RefractionStaticConversionRequest(BaseModel):
     mode: Literal['existing', 't1lsst_1layer'] = 'existing'
 
 
-REFRACTION_SOLVE_CELL_APPLY_UNSUPPORTED_MESSAGE = (
-    'model.bedrock_velocity_mode=solve_cell is not supported by '
-    '/statics/refraction/apply until cell V2 artifacts and static tables '
-    'are implemented'
-)
-
-
 class RefractionStaticApplyRequest(BaseModel):
     """Request model for ``/statics/refraction/apply`` jobs."""
 
@@ -2092,8 +2085,6 @@ class RefractionStaticApplyRequest(BaseModel):
     def _check_supported_refraction_apply_model(
         self,
     ) -> 'RefractionStaticApplyRequest':
-        if self.model.bedrock_velocity_mode == 'solve_cell':
-            raise ValueError(REFRACTION_SOLVE_CELL_APPLY_UNSUPPORTED_MESSAGE)
         return self
 
 

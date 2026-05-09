@@ -235,7 +235,7 @@ def test_refraction_static_apply_endpoint_rejects_invalid_schema_without_job(
         assert len(client.app.state.sv.jobs) == 0
 
 
-def test_refraction_static_apply_endpoint_rejects_solve_cell_without_job(
+def test_refraction_static_apply_endpoint_starts_solve_cell_job(
     client: TestClient,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -272,11 +272,13 @@ def test_refraction_static_apply_endpoint_rejects_solve_cell_without_job(
 
     response = client.post('/statics/refraction/apply', json=payload)
 
-    assert response.status_code == 422
-    assert 'model.bedrock_velocity_mode=solve_cell is not supported' in response.text
-    assert started == []
+    assert response.status_code == 200
+    assert response.json()['state'] == 'queued'
+    assert len(started) == 1
+    assert started[0]['target'] is statics_router_module.run_refraction_static_apply_job
+    assert started[0]['args'][1].model.bedrock_velocity_mode == 'solve_cell'
     with client.app.state.sv.lock:
-        assert len(client.app.state.sv.jobs) == 0
+        assert len(client.app.state.sv.jobs) == 1
 
 
 def test_refraction_static_rejects_public_estimated_v1_value(

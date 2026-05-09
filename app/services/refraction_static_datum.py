@@ -21,6 +21,7 @@ from app.services.job_artifact_refs import resolve_job_artifact_path
 from app.services.refraction_static_first_layer import (
     validate_resolved_first_layer_velocity_match,
 )
+from app.services.refraction_static_status import LOCAL_V2_STATUS_VALUES
 from app.services.refraction_static_types import (
     RefractionDatumStaticsResult,
     RefractionWeatheringReplacementStaticsResult,
@@ -57,12 +58,16 @@ _STATUS_PRIORITY = {
     'flat_datum_below_refractor': 5,
     'floating_datum_below_refractor': 6,
     'invalid_weathering_replacement': 7,
-    'invalid_flat_datum_elevation': 8,
-    'invalid_floating_datum_elevation': 9,
-    'invalid_surface_elevation': 10,
-    'invalid_bedrock_velocity': 11,
-    'missing_endpoint': 12,
-    'missing_node': 13,
+    'outside_refractor_cell_grid': 8,
+    'inactive_v2_cell': 9,
+    'invalid_local_v2': 10,
+    'v2_not_greater_than_v1': 11,
+    'invalid_flat_datum_elevation': 12,
+    'invalid_floating_datum_elevation': 13,
+    'invalid_surface_elevation': 14,
+    'invalid_bedrock_velocity': 15,
+    'missing_endpoint': 16,
+    'missing_node': 17,
 }
 
 _INVALID_TRACE_STATUSES = {
@@ -73,6 +78,10 @@ _INVALID_TRACE_STATUSES = {
     'invalid_floating_datum_elevation',
     'invalid_flat_datum_elevation',
     'invalid_weathering_replacement',
+    'outside_refractor_cell_grid',
+    'inactive_v2_cell',
+    'invalid_local_v2',
+    'v2_not_greater_than_v1',
     'floating_datum_below_refractor',
     'flat_datum_below_refractor',
     'invalid_datum_shift',
@@ -89,6 +98,10 @@ _UPSTREAM_REPLACEMENT_STATUS_TO_DATUM_STATUS = {
     'invalid_shift': 'invalid_weathering_replacement',
     'negative_weathering_thickness': 'invalid_weathering_replacement',
     'invalid_weathering_thickness': 'invalid_weathering_replacement',
+    'outside_refractor_cell_grid': 'outside_refractor_cell_grid',
+    'inactive_v2_cell': 'inactive_v2_cell',
+    'invalid_local_v2': 'invalid_local_v2',
+    'v2_not_greater_than_v1': 'v2_not_greater_than_v1',
 }
 _UPSTREAM_REPLACEMENT_NON_INVALID_STATUSES = {
     'ok',
@@ -173,7 +186,7 @@ class RefractionDatumStaticsError(ValueError):
 
 @dataclass(frozen=True)
 class _VelocityContext:
-    mode: Literal['solve_global', 'fixed_global']
+    mode: Literal['solve_global', 'fixed_global', 'solve_cell']
     bedrock_slowness_s_per_m: float
     bedrock_velocity_m_s: float
     weathering_velocity_m_s: float
@@ -199,6 +212,9 @@ class _ValidatedReplacement:
     node_rejected_pick_count: np.ndarray
     node_residual_rms_s: np.ndarray
     node_residual_mad_s: np.ndarray
+    node_v2_cell_id: np.ndarray | None
+    node_v2_m_s: np.ndarray | None
+    node_v2_status: np.ndarray | None
     source_endpoint_key: np.ndarray
     source_id: np.ndarray
     source_node_id: np.ndarray
@@ -210,6 +226,9 @@ class _ValidatedReplacement:
     source_refractor_elevation_m: np.ndarray
     source_weathering_replacement_shift_s: np.ndarray
     source_static_status: np.ndarray
+    source_v2_cell_id: np.ndarray | None
+    source_v2_m_s: np.ndarray | None
+    source_v2_status: np.ndarray | None
     receiver_endpoint_key: np.ndarray
     receiver_id: np.ndarray
     receiver_node_id: np.ndarray
@@ -221,6 +240,9 @@ class _ValidatedReplacement:
     receiver_refractor_elevation_m: np.ndarray
     receiver_weathering_replacement_shift_s: np.ndarray
     receiver_static_status: np.ndarray
+    receiver_v2_cell_id: np.ndarray | None
+    receiver_v2_m_s: np.ndarray | None
+    receiver_v2_status: np.ndarray | None
     sorted_trace_index: np.ndarray
     valid_observation_mask_sorted: np.ndarray
     used_observation_mask_sorted: np.ndarray
@@ -245,6 +267,12 @@ class _ValidatedReplacement:
     weathering_replacement_trace_shift_s_sorted: np.ndarray
     source_static_status_sorted: np.ndarray
     receiver_static_status_sorted: np.ndarray
+    source_v2_cell_id_sorted: np.ndarray | None
+    source_v2_m_s_sorted: np.ndarray | None
+    source_v2_status_sorted: np.ndarray | None
+    receiver_v2_cell_id_sorted: np.ndarray | None
+    receiver_v2_m_s_sorted: np.ndarray | None
+    receiver_v2_status_sorted: np.ndarray | None
     trace_static_status_sorted: np.ndarray
     trace_static_valid_mask_sorted: np.ndarray
     estimated_first_break_time_s_sorted: np.ndarray
@@ -689,6 +717,21 @@ def build_refraction_datum_statics(
         used_row_mask=data.used_row_mask,
         rejected_by_robust_mask=data.rejected_by_robust_mask,
         qc=qc,
+        node_v2_cell_id=data.node_v2_cell_id,
+        node_v2_m_s=data.node_v2_m_s,
+        node_v2_status=data.node_v2_status,
+        source_v2_cell_id=data.source_v2_cell_id,
+        source_v2_m_s=data.source_v2_m_s,
+        source_v2_status=data.source_v2_status,
+        receiver_v2_cell_id=data.receiver_v2_cell_id,
+        receiver_v2_m_s=data.receiver_v2_m_s,
+        receiver_v2_status=data.receiver_v2_status,
+        source_v2_cell_id_sorted=data.source_v2_cell_id_sorted,
+        source_v2_m_s_sorted=data.source_v2_m_s_sorted,
+        source_v2_status_sorted=data.source_v2_status_sorted,
+        receiver_v2_cell_id_sorted=data.receiver_v2_cell_id_sorted,
+        receiver_v2_m_s_sorted=data.receiver_v2_m_s_sorted,
+        receiver_v2_status_sorted=data.receiver_v2_status_sorted,
     )
     if job_dir is not None:
         write_refraction_datum_statics_artifacts(Path(job_dir), result)
@@ -1083,6 +1126,26 @@ def _validate_replacement_result(
             expected_shape=node_shape,
             allow_nonfinite=True,
         ),
+        node_v2_cell_id=_optional_1d_integer(
+            result,
+            'node_v2_cell_id',
+            name='weathering_replacement_result.node_v2_cell_id',
+            expected_shape=node_shape,
+        ),
+        node_v2_m_s=_optional_1d_float(
+            result,
+            'node_v2_m_s',
+            name='weathering_replacement_result.node_v2_m_s',
+            expected_shape=node_shape,
+            allow_nonfinite=True,
+        ),
+        node_v2_status=_optional_1d_string(
+            result,
+            'node_v2_status',
+            name='weathering_replacement_result.node_v2_status',
+            expected_shape=node_shape,
+            dtype=_STATUS_DTYPE,
+        ),
         source_endpoint_key=source_endpoint_key,
         source_id=_coerce_1d_integer(
             _required(result, 'source_id'),
@@ -1115,6 +1178,26 @@ def _validate_replacement_result(
         source_static_status=_coerce_1d_string(
             _required(result, 'source_static_status'),
             name='weathering_replacement_result.source_static_status',
+            expected_shape=source_shape,
+            dtype=_STATUS_DTYPE,
+        ),
+        source_v2_cell_id=_optional_1d_integer(
+            result,
+            'source_v2_cell_id',
+            name='weathering_replacement_result.source_v2_cell_id',
+            expected_shape=source_shape,
+        ),
+        source_v2_m_s=_optional_1d_float(
+            result,
+            'source_v2_m_s',
+            name='weathering_replacement_result.source_v2_m_s',
+            expected_shape=source_shape,
+            allow_nonfinite=True,
+        ),
+        source_v2_status=_optional_1d_string(
+            result,
+            'source_v2_status',
+            name='weathering_replacement_result.source_v2_status',
             expected_shape=source_shape,
             dtype=_STATUS_DTYPE,
         ),
@@ -1153,6 +1236,26 @@ def _validate_replacement_result(
         receiver_static_status=_coerce_1d_string(
             _required(result, 'receiver_static_status'),
             name='weathering_replacement_result.receiver_static_status',
+            expected_shape=receiver_shape,
+            dtype=_STATUS_DTYPE,
+        ),
+        receiver_v2_cell_id=_optional_1d_integer(
+            result,
+            'receiver_v2_cell_id',
+            name='weathering_replacement_result.receiver_v2_cell_id',
+            expected_shape=receiver_shape,
+        ),
+        receiver_v2_m_s=_optional_1d_float(
+            result,
+            'receiver_v2_m_s',
+            name='weathering_replacement_result.receiver_v2_m_s',
+            expected_shape=receiver_shape,
+            allow_nonfinite=True,
+        ),
+        receiver_v2_status=_optional_1d_string(
+            result,
+            'receiver_v2_status',
+            name='weathering_replacement_result.receiver_v2_status',
             expected_shape=receiver_shape,
             dtype=_STATUS_DTYPE,
         ),
@@ -1264,6 +1367,46 @@ def _validate_replacement_result(
             _required(result, 'trace_static_valid_mask_sorted'),
             name='weathering_replacement_result.trace_static_valid_mask_sorted',
             expected_shape=trace_shape,
+        ),
+        source_v2_cell_id_sorted=_optional_1d_integer(
+            result,
+            'source_v2_cell_id_sorted',
+            name='weathering_replacement_result.source_v2_cell_id_sorted',
+            expected_shape=trace_shape,
+        ),
+        source_v2_m_s_sorted=_optional_1d_float(
+            result,
+            'source_v2_m_s_sorted',
+            name='weathering_replacement_result.source_v2_m_s_sorted',
+            expected_shape=trace_shape,
+            allow_nonfinite=True,
+        ),
+        source_v2_status_sorted=_optional_1d_string(
+            result,
+            'source_v2_status_sorted',
+            name='weathering_replacement_result.source_v2_status_sorted',
+            expected_shape=trace_shape,
+            dtype=_STATUS_DTYPE,
+        ),
+        receiver_v2_cell_id_sorted=_optional_1d_integer(
+            result,
+            'receiver_v2_cell_id_sorted',
+            name='weathering_replacement_result.receiver_v2_cell_id_sorted',
+            expected_shape=trace_shape,
+        ),
+        receiver_v2_m_s_sorted=_optional_1d_float(
+            result,
+            'receiver_v2_m_s_sorted',
+            name='weathering_replacement_result.receiver_v2_m_s_sorted',
+            expected_shape=trace_shape,
+            allow_nonfinite=True,
+        ),
+        receiver_v2_status_sorted=_optional_1d_string(
+            result,
+            'receiver_v2_status_sorted',
+            name='weathering_replacement_result.receiver_v2_status_sorted',
+            expected_shape=trace_shape,
+            dtype=_STATUS_DTYPE,
         ),
         estimated_first_break_time_s_sorted=_coerce_1d_float(
             _required(result, 'estimated_first_break_time_s_sorted'),
@@ -2402,6 +2545,7 @@ def _endpoint_nan_mask(status: np.ndarray) -> np.ndarray:
             'flat_datum_below_refractor',
             'invalid_datum_shift',
             'inactive',
+            *LOCAL_V2_STATUS_VALUES,
         ],
     )
 
@@ -2422,6 +2566,7 @@ def _trace_nan_mask(status: np.ndarray) -> np.ndarray:
             'flat_datum_below_refractor',
             'invalid_datum_shift',
             'inactive',
+            *LOCAL_V2_STATUS_VALUES,
         ],
     )
 
@@ -2708,6 +2853,25 @@ def _coerce_1d_float(
     return out
 
 
+def _optional_1d_float(
+    owner: object,
+    field: str,
+    *,
+    name: str,
+    expected_shape: tuple[int, ...] | None = None,
+    allow_nonfinite: bool = False,
+) -> np.ndarray | None:
+    value = getattr(owner, field, None)
+    if value is None:
+        return None
+    return _coerce_1d_float(
+        value,
+        name=name,
+        expected_shape=expected_shape,
+        allow_nonfinite=allow_nonfinite,
+    )
+
+
 def _coerce_1d_integer(
     values: object,
     *,
@@ -2733,6 +2897,19 @@ def _coerce_1d_integer(
     if not np.all(arr_f64 == np.rint(arr_f64)):
         raise RefractionDatumStaticsError(f'{name} must contain integer values')
     return np.ascontiguousarray(arr_f64, dtype=np.int64)
+
+
+def _optional_1d_integer(
+    owner: object,
+    field: str,
+    *,
+    name: str,
+    expected_shape: tuple[int, ...] | None = None,
+) -> np.ndarray | None:
+    value = getattr(owner, field, None)
+    if value is None:
+        return None
+    return _coerce_1d_integer(value, name=name, expected_shape=expected_shape)
 
 
 def _coerce_1d_bool(
@@ -2770,6 +2947,25 @@ def _coerce_1d_string(
     return np.ascontiguousarray(arr.astype(dtype, copy=False))
 
 
+def _optional_1d_string(
+    owner: object,
+    field: str,
+    *,
+    name: str,
+    expected_shape: tuple[int, ...] | None = None,
+    dtype: object = _ENDPOINT_KEY_DTYPE,
+) -> np.ndarray | None:
+    value = getattr(owner, field, None)
+    if value is None:
+        return None
+    return _coerce_1d_string(
+        value,
+        name=name,
+        expected_shape=expected_shape,
+        dtype=dtype,
+    )
+
+
 def _finite_float(value: object, *, name: str) -> float:
     if isinstance(value, (bool, np.bool_)):
         raise RefractionDatumStaticsError(f'{name} must be finite')
@@ -2797,13 +2993,17 @@ def _positive_finite(value: object, *, name: str) -> float:
     return out
 
 
-def _validate_velocity_mode(value: object) -> Literal['solve_global', 'fixed_global']:
+def _validate_velocity_mode(
+    value: object,
+) -> Literal['solve_global', 'fixed_global', 'solve_cell']:
     if value == 'solve_global':
         return 'solve_global'
     if value == 'fixed_global':
         return 'fixed_global'
+    if value == 'solve_cell':
+        return 'solve_cell'
     raise RefractionDatumStaticsError(
-        'bedrock_velocity_mode must be solve_global or fixed_global'
+        'bedrock_velocity_mode must be solve_global, fixed_global, or solve_cell'
     )
 
 

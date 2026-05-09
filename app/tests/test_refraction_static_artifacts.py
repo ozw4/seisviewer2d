@@ -508,10 +508,6 @@ def test_write_refraction_static_artifacts_validation_failures(
             replace(_result(), bedrock_velocity_m_s=float('nan')),
             'non-finite required scalar bedrock_velocity_m_s',
         ),
-        (
-            replace(_result(), bedrock_velocity_mode='solve_cell'),
-            'model.bedrock_velocity_mode=solve_cell is not supported',
-        ),
     ]
 
     for index, (result, message) in enumerate(cases):
@@ -523,6 +519,18 @@ def test_write_refraction_static_artifacts_validation_failures(
                 req=_request(),
                 job_dir=job_dir,
             )
+
+
+def test_solve_cell_artifacts_require_local_v2_arrays(tmp_path: Path) -> None:
+    with pytest.raises(
+        RefractionStaticArtifactError,
+        match='solve_cell result requires node_v2_cell_id',
+    ):
+        write_refraction_static_solution_npz(
+            result=replace(_result(), bedrock_velocity_mode='solve_cell'),
+            req=_request(),
+            path=tmp_path / REFRACTION_STATIC_SOLUTION_NPZ_NAME,
+        )
 
 
 def test_write_refraction_static_artifacts_rejects_unknown_status(

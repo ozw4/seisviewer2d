@@ -17,6 +17,7 @@ from app.services.refraction_static_bedrock import (
     estimate_global_bedrock_slowness_from_input_model,
 )
 from app.services.refraction_static_design_matrix import (
+    OUTSIDE_REFRACTOR_CELL_GRID_REASON,
     build_refraction_static_design_matrix,
 )
 from app.services.refraction_static_first_layer import resolve_weathering_velocity_m_s
@@ -337,6 +338,11 @@ def build_refraction_half_intercept_time_model(
         node_half_s=node_half_s,
         node_status=node_status,
     )
+    row_bedrock_velocity_m_s = (
+        solver_result.row_midpoint_bedrock_velocity_m_s
+        if mode == 'solve_cell'
+        else None
+    )
     (
         source_half_sorted,
         receiver_half_sorted,
@@ -351,6 +357,7 @@ def build_refraction_half_intercept_time_model(
         node_pos=node_pos,
         node_half_s=node_half_s,
         bedrock_velocity_m_s=bedrock_velocity,
+        row_bedrock_velocity_m_s=row_bedrock_velocity_m_s,
     )
 
     qc = _build_qc(
@@ -441,6 +448,17 @@ def build_refraction_half_intercept_time_model(
         used_row_mask=rows.used_row_mask,
         rejected_by_robust_mask=rows.rejected_by_robust_mask,
         qc=qc,
+        active_cell_id=solver_result.active_cell_id,
+        inactive_cell_id=solver_result.inactive_cell_id,
+        cell_bedrock_slowness_s_per_m=(
+            solver_result.cell_bedrock_slowness_s_per_m
+        ),
+        cell_bedrock_velocity_m_s=solver_result.cell_bedrock_velocity_m_s,
+        cell_velocity_status=solver_result.cell_velocity_status,
+        row_midpoint_cell_id=solver_result.row_midpoint_cell_id,
+        row_midpoint_bedrock_velocity_m_s=(
+            solver_result.row_midpoint_bedrock_velocity_m_s
+        ),
     )
     if job_dir is not None:
         write_refraction_half_intercept_artifacts(Path(job_dir), result)
@@ -632,9 +650,9 @@ def _validate_rows(
         raise RefractionHalfInterceptTimeError(
             'design_matrix.row_trace_index_sorted must be unique'
         )
-    expected_trace = np.flatnonzero(inputs.valid_observation_mask_sorted).astype(
-        np.int64,
-        copy=False,
+    expected_trace = _expected_design_trace_indices(
+        inputs=inputs,
+        design_matrix=design_matrix,
     )
     if not np.array_equal(design_trace, expected_trace):
         raise RefractionHalfInterceptTimeError(
@@ -801,6 +819,27 @@ def _validate_node_references(
             raise RefractionHalfInterceptTimeError(
                 f'unknown node ID in design rows: {int(node)}'
             )
+
+
+def _expected_design_trace_indices(
+    *,
+    inputs: _ValidatedInputs,
+    design_matrix: RefractionStaticDesignMatrix,
+) -> np.ndarray:
+    valid_mask = np.asarray(inputs.valid_observation_mask_sorted, dtype=bool)
+    if getattr(design_matrix, 'bedrock_velocity_mode', None) != 'solve_cell':
+        return np.flatnonzero(valid_mask).astype(np.int64, copy=False)
+
+    rejection_reason = getattr(design_matrix, 'rejection_reason_sorted', None)
+    if rejection_reason is None:
+        return np.flatnonzero(valid_mask).astype(np.int64, copy=False)
+    reason = _coerce_1d_string(
+        rejection_reason,
+        name='design_matrix.rejection_reason_sorted',
+        expected_shape=(inputs.n_traces,),
+    ).astype(str, copy=False)
+    inside_mask = reason != OUTSIDE_REFRACTOR_CELL_GRID_REASON
+    return np.flatnonzero(valid_mask & inside_mask).astype(np.int64, copy=False)
 
 
 def _build_node_solution_arrays(
@@ -1023,6 +1062,7 @@ def _build_trace_order_arrays(
     node_pos: dict[int, int],
     node_half_s: np.ndarray,
     bedrock_velocity_m_s: float,
+    row_bedrock_velocity_m_s: np.ndarray | None = None,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
     n_traces = inputs.n_traces
     source_half = np.full(n_traces, np.nan, dtype=np.float64)
@@ -1032,9 +1072,21 @@ def _build_trace_order_arrays(
     estimated = np.full(n_traces, np.nan, dtype=np.float64)
     residual = np.full(n_traces, np.nan, dtype=np.float64)
     used = np.zeros(n_traces, dtype=bool)
+    trace_bedrock_velocity = np.full(n_traces, bedrock_velocity_m_s, dtype=np.float64)
+    if row_bedrock_velocity_m_s is not None:
+        row_velocity = _coerce_1d_float(
+            row_bedrock_velocity_m_s,
+            name='solver_result.row_midpoint_bedrock_velocity_m_s',
+            expected_shape=rows.row_trace_index_sorted.shape,
+        )
+        trace_bedrock_velocity.fill(np.nan)
+        trace_bedrock_velocity[rows.row_trace_index_sorted] = row_velocity
 
     valid_indices = np.flatnonzero(inputs.valid_observation_mask_sorted)
     for trace_index in valid_indices.tolist():
+        trace_velocity = float(trace_bedrock_velocity[trace_index])
+        if not np.isfinite(trace_velocity) or trace_velocity <= 0.0:
+            continue
         source_node = int(inputs.source_node_id_sorted[trace_index])
         receiver_node = int(inputs.receiver_node_id_sorted[trace_index])
         source_idx = node_pos[source_node]
@@ -1050,14 +1102,17 @@ def _build_trace_order_arrays(
         source_half[trace_index] = source_value
         receiver_half[trace_index] = receiver_value
         intercept_sum[trace_index] = source_value + receiver_value
-        moveout[trace_index] = distance / bedrock_velocity_m_s
+        moveout[trace_index] = distance / trace_velocity
         estimated[trace_index] = intercept_sum[trace_index] + moveout[trace_index]
         residual[trace_index] = pick_time - estimated[trace_index]
 
     for row_index, trace_index in enumerate(rows.row_trace_index_sorted.tolist()):
         used[trace_index] = bool(rows.used_row_mask[row_index])
 
-    finite_required = inputs.valid_observation_mask_sorted & np.isfinite(source_half)
+    finite_required = inputs.valid_observation_mask_sorted & np.isfinite(
+        trace_bedrock_velocity
+    )
+    finite_required &= np.isfinite(source_half)
     finite_required &= np.isfinite(receiver_half)
     if np.any(~np.isfinite(estimated[finite_required])):
         raise RefractionHalfInterceptTimeError(
@@ -1077,7 +1132,7 @@ def _build_trace_order_arrays(
 
 def _build_qc(
     *,
-    mode: Literal['solve_global', 'fixed_global'],
+    mode: Literal['solve_global', 'fixed_global', 'solve_cell'],
     bedrock_slowness_s_per_m: float,
     bedrock_velocity_m_s: float,
     weathering_velocity_m_s: float,
@@ -1143,6 +1198,19 @@ def _build_qc(
         ),
         'source_receiver_linkage_used': bool(source_receiver_linkage_used),
     }
+    if mode == 'solve_cell':
+        solver_qc = getattr(solver_result, 'qc', {})
+        for key in (
+            'bedrock_velocity_solution_kind',
+            'n_total_cells',
+            'n_active_cells',
+            'n_inactive_cells',
+            'cell_bedrock_velocity_min_m_s',
+            'cell_bedrock_velocity_median_m_s',
+            'cell_bedrock_velocity_max_m_s',
+        ):
+            if key in solver_qc:
+                qc[key] = solver_qc[key]
     _assert_json_safe(qc)
     return qc
 
@@ -1197,13 +1265,17 @@ def _resolve_min_picks_per_node(
     return 1
 
 
-def _validate_velocity_mode(value: object) -> Literal['solve_global', 'fixed_global']:
+def _validate_velocity_mode(
+    value: object,
+) -> Literal['solve_global', 'fixed_global', 'solve_cell']:
     if value == 'solve_global':
         return 'solve_global'
     if value == 'fixed_global':
         return 'fixed_global'
+    if value == 'solve_cell':
+        return 'solve_cell'
     raise RefractionHalfInterceptTimeError(
-        'bedrock_velocity_mode must be solve_global or fixed_global'
+        'bedrock_velocity_mode must be solve_global, fixed_global, or solve_cell'
     )
 
 

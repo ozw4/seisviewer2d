@@ -44,6 +44,19 @@ REFRACTION_STATIC_STATUSES: frozenset[str] = frozenset(
         'flat_datum_below_refractor',
         'missing_endpoint',
         'missing_node',
+        'outside_refractor_cell_grid',
+        'inactive_v2_cell',
+        'invalid_local_v2',
+        'v2_not_greater_than_v1',
+    }
+)
+
+LOCAL_V2_STATUS_VALUES: frozenset[str] = frozenset(
+    {
+        'outside_refractor_cell_grid',
+        'inactive_v2_cell',
+        'invalid_local_v2',
+        'v2_not_greater_than_v1',
     }
 )
 
@@ -72,6 +85,9 @@ def classify_refraction_endpoint_static_status(
         for value in (x_m, y_m, surface_elevation_m)
     ):
         return 'missing_geometry'
+    for status in (datum, weathering, solution):
+        if status in LOCAL_V2_STATUS_VALUES:
+            return status
     if 'inactive' in {solution, weathering, datum}:
         return 'inactive_endpoint'
     if 'low_fold' in {solution, weathering, datum}:
@@ -120,6 +136,7 @@ def _float_or_nan(value: object) -> float:
 
 
 __all__ = [
+    'LOCAL_V2_STATUS_VALUES',
     'REFRACTION_STATIC_STATUSES',
     'classify_refraction_endpoint_static_status',
 ]

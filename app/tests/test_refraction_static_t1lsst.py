@@ -78,7 +78,7 @@ def test_t1lsst_1layer_scalar_formula() -> None:
 def test_t1lsst_1layer_vector_formula() -> None:
     t1_s = np.asarray([0.010, 0.012, 0.014], dtype=np.float64)
     v1_m_s = 800.0
-    v2_m_s = 2500.0
+    v2_m_s = np.asarray([2200.0, 2500.0, 3000.0], dtype=np.float64)
 
     sh1 = compute_t1lsst_1layer_thickness(
         t1_s,

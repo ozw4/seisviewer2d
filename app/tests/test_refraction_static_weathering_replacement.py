@@ -255,6 +255,21 @@ def test_math_helper_computes_vector_scalar_and_preserves_nan() -> None:
     ) == pytest.approx(12.0 * SLOWNESS_DELTA_S_PER_M)
 
 
+def test_math_helper_accepts_vector_bedrock_velocity() -> None:
+    thickness = np.asarray([10.0, 12.0, 14.0], dtype=np.float64)
+    bedrock_velocity = np.asarray([2200.0, 2500.0, 3000.0], dtype=np.float64)
+
+    shift = compute_weathering_replacement_shift_s(
+        weathering_thickness_m=thickness,
+        weathering_velocity_m_s=WEATHERING_VELOCITY_M_S,
+        bedrock_velocity_m_s=bedrock_velocity,
+    )
+
+    expected = thickness * (1.0 / bedrock_velocity - 1.0 / WEATHERING_VELOCITY_M_S)
+    np.testing.assert_allclose(shift, expected, rtol=1.0e-12)
+    assert np.all(shift < 0.0)
+
+
 @pytest.mark.parametrize(
     ('weathering_velocity', 'bedrock_velocity', 'match'),
     [

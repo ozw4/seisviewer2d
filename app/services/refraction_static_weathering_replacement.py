@@ -16,6 +16,7 @@ from app.core.state import AppState
 from app.services.refraction_static_first_layer import (
     validate_resolved_first_layer_velocity_match,
 )
+from app.services.refraction_static_status import LOCAL_V2_STATUS_VALUES
 from app.services.refraction_static_t1lsst import (
     RefractionT1LSSTError,
     compute_t1lsst_1layer_weathering_correction,
@@ -66,8 +67,12 @@ _STATUS_PRIORITY = {
     'invalid_weathering_thickness': 9,
     'inactive': 10,
     'invalid_velocity': 11,
-    'missing_endpoint': 12,
-    'missing_node': 13,
+    'outside_refractor_cell_grid': 12,
+    'inactive_v2_cell': 13,
+    'invalid_local_v2': 14,
+    'v2_not_greater_than_v1': 15,
+    'missing_endpoint': 16,
+    'missing_node': 17,
 }
 
 _NODE_COLUMNS = (
@@ -134,7 +139,7 @@ class RefractionWeatheringReplacementStaticsError(ValueError):
 
 @dataclass(frozen=True)
 class _VelocityContext:
-    mode: Literal['solve_global', 'fixed_global']
+    mode: Literal['solve_global', 'fixed_global', 'solve_cell']
     bedrock_slowness_s_per_m: float
     bedrock_velocity_m_s: float
     weathering_velocity_m_s: float
@@ -158,6 +163,9 @@ class _ValidatedWeathering:
     node_rejected_pick_count: np.ndarray
     node_residual_rms_s: np.ndarray
     node_residual_mad_s: np.ndarray
+    node_v2_cell_id: np.ndarray | None
+    node_v2_m_s: np.ndarray | None
+    node_v2_status: np.ndarray | None
     source_endpoint_key: np.ndarray
     source_id: np.ndarray
     source_node_id: np.ndarray
@@ -168,6 +176,9 @@ class _ValidatedWeathering:
     source_weathering_thickness_m: np.ndarray
     source_refractor_elevation_m: np.ndarray
     source_weathering_status: np.ndarray
+    source_v2_cell_id: np.ndarray | None
+    source_v2_m_s: np.ndarray | None
+    source_v2_status: np.ndarray | None
     receiver_endpoint_key: np.ndarray
     receiver_id: np.ndarray
     receiver_node_id: np.ndarray
@@ -178,6 +189,9 @@ class _ValidatedWeathering:
     receiver_weathering_thickness_m: np.ndarray
     receiver_refractor_elevation_m: np.ndarray
     receiver_weathering_status: np.ndarray
+    receiver_v2_cell_id: np.ndarray | None
+    receiver_v2_m_s: np.ndarray | None
+    receiver_v2_status: np.ndarray | None
     sorted_trace_index: np.ndarray
     valid_observation_mask_sorted: np.ndarray
     used_observation_mask_sorted: np.ndarray
@@ -193,6 +207,12 @@ class _ValidatedWeathering:
     receiver_refractor_elevation_m_sorted: np.ndarray
     source_weathering_status_sorted: np.ndarray
     receiver_weathering_status_sorted: np.ndarray
+    source_v2_cell_id_sorted: np.ndarray | None
+    source_v2_m_s_sorted: np.ndarray | None
+    source_v2_status_sorted: np.ndarray | None
+    receiver_v2_cell_id_sorted: np.ndarray | None
+    receiver_v2_m_s_sorted: np.ndarray | None
+    receiver_v2_status_sorted: np.ndarray | None
     estimated_first_break_time_s_sorted: np.ndarray
     first_break_residual_s_sorted: np.ndarray
     row_trace_index_sorted: np.ndarray
@@ -267,10 +287,35 @@ def build_refraction_weathering_replacement_statics(
     _validate_endpoint_nodes(data.source_node_id, node_pos, name='source_node_id')
     _validate_endpoint_nodes(data.receiver_node_id, node_pos, name='receiver_node_id')
 
-    node_raw_shift = compute_weathering_replacement_shift_s(
+    node_v2 = _local_or_scalar_v2(
+        data.node_v2_m_s,
+        shape=data.node_weathering_thickness_m.shape,
+        scalar_v2_m_s=velocity.bedrock_velocity_m_s,
+    )
+    source_v2 = _local_or_scalar_v2(
+        data.source_v2_m_s,
+        shape=data.source_weathering_thickness_m.shape,
+        scalar_v2_m_s=velocity.bedrock_velocity_m_s,
+    )
+    receiver_v2 = _local_or_scalar_v2(
+        data.receiver_v2_m_s,
+        shape=data.receiver_weathering_thickness_m.shape,
+        scalar_v2_m_s=velocity.bedrock_velocity_m_s,
+    )
+    source_v2_sorted = _local_or_scalar_v2(
+        data.source_v2_m_s_sorted,
+        shape=data.source_weathering_thickness_m_sorted.shape,
+        scalar_v2_m_s=velocity.bedrock_velocity_m_s,
+    )
+    receiver_v2_sorted = _local_or_scalar_v2(
+        data.receiver_v2_m_s_sorted,
+        shape=data.receiver_weathering_thickness_m_sorted.shape,
+        scalar_v2_m_s=velocity.bedrock_velocity_m_s,
+    )
+    node_raw_shift = _compute_weathering_replacement_shift_with_local_v2(
         weathering_thickness_m=data.node_weathering_thickness_m,
         weathering_velocity_m_s=velocity.weathering_velocity_m_s,
-        bedrock_velocity_m_s=velocity.bedrock_velocity_m_s,
+        bedrock_velocity_m_s=node_v2,
     )
     node_shift, node_static_status = _classify_component_status(
         weathering_status=data.node_weathering_status,
@@ -278,46 +323,90 @@ def build_refraction_weathering_replacement_statics(
         raw_shift_s=node_raw_shift,
         max_abs_shift_ms=max_abs_shift_ms,
     )
+    if data.node_v2_status is not None:
+        node_static_status = _overlay_local_v2_status(
+            node_static_status,
+            data.node_v2_status,
+        )
+        node_shift = _nan_for_status(node_shift, node_static_status)
 
-    source_shift, source_static_status = _map_endpoint_component(
-        endpoint_node_id=data.source_node_id,
-        endpoint_weathering_thickness_m=data.source_weathering_thickness_m,
-        endpoint_weathering_status=data.source_weathering_status,
-        node_pos=node_pos,
-        node_shift_s=node_shift,
+    source_raw_shift = _compute_weathering_replacement_shift_with_local_v2(
+        weathering_thickness_m=data.source_weathering_thickness_m,
+        weathering_velocity_m_s=velocity.weathering_velocity_m_s,
+        bedrock_velocity_m_s=source_v2,
+    )
+    source_shift, source_static_status = _classify_component_status(
+        weathering_status=data.source_weathering_status,
+        weathering_thickness_m=data.source_weathering_thickness_m,
+        raw_shift_s=source_raw_shift,
         max_abs_shift_ms=max_abs_shift_ms,
     )
-    receiver_shift, receiver_static_status = _map_endpoint_component(
-        endpoint_node_id=data.receiver_node_id,
-        endpoint_weathering_thickness_m=data.receiver_weathering_thickness_m,
-        endpoint_weathering_status=data.receiver_weathering_status,
-        node_pos=node_pos,
-        node_shift_s=node_shift,
-        max_abs_shift_ms=max_abs_shift_ms,
-    )
+    if data.source_v2_status is not None:
+        source_static_status = _overlay_local_v2_status(
+            source_static_status,
+            data.source_v2_status,
+        )
+        source_shift = _nan_for_status(source_shift, source_static_status)
 
-    (
-        source_shift_sorted,
-        source_static_status_sorted,
-    ) = _map_trace_component(
-        node_id_sorted=data.source_node_id_sorted,
-        thickness_m_sorted=data.source_weathering_thickness_m_sorted,
-        weathering_status_sorted=data.source_weathering_status_sorted,
-        node_pos=node_pos,
-        node_shift_s=node_shift,
+    receiver_raw_shift = _compute_weathering_replacement_shift_with_local_v2(
+        weathering_thickness_m=data.receiver_weathering_thickness_m,
+        weathering_velocity_m_s=velocity.weathering_velocity_m_s,
+        bedrock_velocity_m_s=receiver_v2,
+    )
+    receiver_shift, receiver_static_status = _classify_component_status(
+        weathering_status=data.receiver_weathering_status,
+        weathering_thickness_m=data.receiver_weathering_thickness_m,
+        raw_shift_s=receiver_raw_shift,
         max_abs_shift_ms=max_abs_shift_ms,
     )
-    (
-        receiver_shift_sorted,
-        receiver_static_status_sorted,
-    ) = _map_trace_component(
-        node_id_sorted=data.receiver_node_id_sorted,
-        thickness_m_sorted=data.receiver_weathering_thickness_m_sorted,
-        weathering_status_sorted=data.receiver_weathering_status_sorted,
-        node_pos=node_pos,
-        node_shift_s=node_shift,
+    if data.receiver_v2_status is not None:
+        receiver_static_status = _overlay_local_v2_status(
+            receiver_static_status,
+            data.receiver_v2_status,
+        )
+        receiver_shift = _nan_for_status(receiver_shift, receiver_static_status)
+
+    source_raw_shift_sorted = _compute_weathering_replacement_shift_with_local_v2(
+        weathering_thickness_m=data.source_weathering_thickness_m_sorted,
+        weathering_velocity_m_s=velocity.weathering_velocity_m_s,
+        bedrock_velocity_m_s=source_v2_sorted,
+    )
+    source_shift_sorted, source_static_status_sorted = _classify_component_status(
+        weathering_status=data.source_weathering_status_sorted,
+        weathering_thickness_m=data.source_weathering_thickness_m_sorted,
+        raw_shift_s=source_raw_shift_sorted,
         max_abs_shift_ms=max_abs_shift_ms,
     )
+    if data.source_v2_status_sorted is not None:
+        source_static_status_sorted = _overlay_local_v2_status(
+            source_static_status_sorted,
+            data.source_v2_status_sorted,
+        )
+        source_shift_sorted = _nan_for_status(
+            source_shift_sorted,
+            source_static_status_sorted,
+        )
+
+    receiver_raw_shift_sorted = _compute_weathering_replacement_shift_with_local_v2(
+        weathering_thickness_m=data.receiver_weathering_thickness_m_sorted,
+        weathering_velocity_m_s=velocity.weathering_velocity_m_s,
+        bedrock_velocity_m_s=receiver_v2_sorted,
+    )
+    receiver_shift_sorted, receiver_static_status_sorted = _classify_component_status(
+        weathering_status=data.receiver_weathering_status_sorted,
+        weathering_thickness_m=data.receiver_weathering_thickness_m_sorted,
+        raw_shift_s=receiver_raw_shift_sorted,
+        max_abs_shift_ms=max_abs_shift_ms,
+    )
+    if data.receiver_v2_status_sorted is not None:
+        receiver_static_status_sorted = _overlay_local_v2_status(
+            receiver_static_status_sorted,
+            data.receiver_v2_status_sorted,
+        )
+        receiver_shift_sorted = _nan_for_status(
+            receiver_shift_sorted,
+            receiver_static_status_sorted,
+        )
     trace_shift = _combine_trace_shifts(source_shift_sorted, receiver_shift_sorted)
     trace_static_status = _classify_trace_status(
         source_status=source_static_status_sorted,
@@ -440,6 +529,21 @@ def build_refraction_weathering_replacement_statics(
         used_row_mask=data.used_row_mask,
         rejected_by_robust_mask=data.rejected_by_robust_mask,
         qc=qc,
+        node_v2_cell_id=data.node_v2_cell_id,
+        node_v2_m_s=data.node_v2_m_s,
+        node_v2_status=data.node_v2_status,
+        source_v2_cell_id=data.source_v2_cell_id,
+        source_v2_m_s=data.source_v2_m_s,
+        source_v2_status=data.source_v2_status,
+        receiver_v2_cell_id=data.receiver_v2_cell_id,
+        receiver_v2_m_s=data.receiver_v2_m_s,
+        receiver_v2_status=data.receiver_v2_status,
+        source_v2_cell_id_sorted=data.source_v2_cell_id_sorted,
+        source_v2_m_s_sorted=data.source_v2_m_s_sorted,
+        source_v2_status_sorted=data.source_v2_status_sorted,
+        receiver_v2_cell_id_sorted=data.receiver_v2_cell_id_sorted,
+        receiver_v2_m_s_sorted=data.receiver_v2_m_s_sorted,
+        receiver_v2_status_sorted=data.receiver_v2_status_sorted,
     )
     if job_dir is not None:
         write_refraction_weathering_replacement_artifacts(Path(job_dir), result)
@@ -450,7 +554,7 @@ def compute_weathering_replacement_shift_s(
     *,
     weathering_thickness_m: np.ndarray,
     weathering_velocity_m_s: float,
-    bedrock_velocity_m_s: float,
+    bedrock_velocity_m_s: float | np.ndarray,
 ) -> np.ndarray:
     """Compute ``shift = z * (1/vb - 1/vw)`` in seconds."""
     try:
@@ -485,6 +589,58 @@ def compute_weathering_replacement_shift_scalar_s(
         bedrock_velocity_m_s=bedrock_velocity_m_s,
     )
     return float(value[0])
+
+
+def _compute_weathering_replacement_shift_with_local_v2(
+    *,
+    weathering_thickness_m: np.ndarray,
+    weathering_velocity_m_s: float,
+    bedrock_velocity_m_s: np.ndarray,
+) -> np.ndarray:
+    thickness = np.asarray(weathering_thickness_m, dtype=np.float64)
+    v2 = np.asarray(bedrock_velocity_m_s, dtype=np.float64)
+    if thickness.shape != v2.shape:
+        raise RefractionWeatheringReplacementStaticsError(
+            'weathering_thickness_m and bedrock_velocity_m_s shape mismatch'
+        )
+    out = np.full(thickness.shape, np.nan, dtype=np.float64)
+    valid = np.isfinite(thickness) & np.isfinite(v2) & (v2 > weathering_velocity_m_s)
+    if np.any(valid):
+        out[valid] = compute_weathering_replacement_shift_s(
+            weathering_thickness_m=thickness[valid],
+            weathering_velocity_m_s=weathering_velocity_m_s,
+            bedrock_velocity_m_s=v2[valid],
+        )
+    return np.ascontiguousarray(out, dtype=np.float64)
+
+
+def _local_or_scalar_v2(
+    local_v2_m_s: np.ndarray | None,
+    *,
+    shape: tuple[int, ...],
+    scalar_v2_m_s: float,
+) -> np.ndarray:
+    if local_v2_m_s is None:
+        return np.full(shape, scalar_v2_m_s, dtype=np.float64)
+    return np.ascontiguousarray(local_v2_m_s, dtype=np.float64)
+
+
+def _overlay_local_v2_status(
+    component_status: np.ndarray,
+    local_v2_status: np.ndarray,
+) -> np.ndarray:
+    status = np.asarray(component_status).astype(_STATUS_DTYPE, copy=True)
+    local = np.asarray(local_v2_status).astype(str, copy=False)
+    invalid_local = np.isin(local, list(LOCAL_V2_STATUS_VALUES))
+    status[invalid_local] = local[invalid_local]
+    return np.ascontiguousarray(status, dtype=_STATUS_DTYPE)
+
+
+def _nan_for_status(values: np.ndarray, status: np.ndarray) -> np.ndarray:
+    out = np.ascontiguousarray(values, dtype=np.float64).copy()
+    text = np.asarray(status).astype(str, copy=False)
+    out[np.isin(text, list(LOCAL_V2_STATUS_VALUES))] = np.nan
+    return out
 
 
 def write_refraction_weathering_replacement_artifacts(
@@ -632,6 +788,26 @@ def _validate_weathering_result(
             expected_shape=node_shape,
             allow_nonfinite=True,
         ),
+        node_v2_cell_id=_optional_1d_integer(
+            weathering_result,
+            'node_v2_cell_id',
+            name='weathering_result.node_v2_cell_id',
+            expected_shape=node_shape,
+        ),
+        node_v2_m_s=_optional_1d_float(
+            weathering_result,
+            'node_v2_m_s',
+            name='weathering_result.node_v2_m_s',
+            expected_shape=node_shape,
+            allow_nonfinite=True,
+        ),
+        node_v2_status=_optional_1d_string(
+            weathering_result,
+            'node_v2_status',
+            name='weathering_result.node_v2_status',
+            expected_shape=node_shape,
+            dtype=_STATUS_DTYPE,
+        ),
         source_endpoint_key=source_endpoint_key,
         source_id=_coerce_1d_integer(
             _required(weathering_result, 'source_id'),
@@ -685,6 +861,26 @@ def _validate_weathering_result(
             expected_shape=source_shape,
             dtype=_STATUS_DTYPE,
         ),
+        source_v2_cell_id=_optional_1d_integer(
+            weathering_result,
+            'source_v2_cell_id',
+            name='weathering_result.source_v2_cell_id',
+            expected_shape=source_shape,
+        ),
+        source_v2_m_s=_optional_1d_float(
+            weathering_result,
+            'source_v2_m_s',
+            name='weathering_result.source_v2_m_s',
+            expected_shape=source_shape,
+            allow_nonfinite=True,
+        ),
+        source_v2_status=_optional_1d_string(
+            weathering_result,
+            'source_v2_status',
+            name='weathering_result.source_v2_status',
+            expected_shape=source_shape,
+            dtype=_STATUS_DTYPE,
+        ),
         receiver_endpoint_key=receiver_endpoint_key,
         receiver_id=_coerce_1d_integer(
             _required(weathering_result, 'receiver_id'),
@@ -735,6 +931,26 @@ def _validate_weathering_result(
         receiver_weathering_status=_coerce_1d_string(
             _required(weathering_result, 'receiver_weathering_status'),
             name='weathering_result.receiver_weathering_status',
+            expected_shape=receiver_shape,
+            dtype=_STATUS_DTYPE,
+        ),
+        receiver_v2_cell_id=_optional_1d_integer(
+            weathering_result,
+            'receiver_v2_cell_id',
+            name='weathering_result.receiver_v2_cell_id',
+            expected_shape=receiver_shape,
+        ),
+        receiver_v2_m_s=_optional_1d_float(
+            weathering_result,
+            'receiver_v2_m_s',
+            name='weathering_result.receiver_v2_m_s',
+            expected_shape=receiver_shape,
+            allow_nonfinite=True,
+        ),
+        receiver_v2_status=_optional_1d_string(
+            weathering_result,
+            'receiver_v2_status',
+            name='weathering_result.receiver_v2_status',
             expected_shape=receiver_shape,
             dtype=_STATUS_DTYPE,
         ),
@@ -814,6 +1030,46 @@ def _validate_weathering_result(
         receiver_weathering_status_sorted=_coerce_1d_string(
             _required(weathering_result, 'receiver_weathering_status_sorted'),
             name='weathering_result.receiver_weathering_status_sorted',
+            expected_shape=trace_shape,
+            dtype=_STATUS_DTYPE,
+        ),
+        source_v2_cell_id_sorted=_optional_1d_integer(
+            weathering_result,
+            'source_v2_cell_id_sorted',
+            name='weathering_result.source_v2_cell_id_sorted',
+            expected_shape=trace_shape,
+        ),
+        source_v2_m_s_sorted=_optional_1d_float(
+            weathering_result,
+            'source_v2_m_s_sorted',
+            name='weathering_result.source_v2_m_s_sorted',
+            expected_shape=trace_shape,
+            allow_nonfinite=True,
+        ),
+        source_v2_status_sorted=_optional_1d_string(
+            weathering_result,
+            'source_v2_status_sorted',
+            name='weathering_result.source_v2_status_sorted',
+            expected_shape=trace_shape,
+            dtype=_STATUS_DTYPE,
+        ),
+        receiver_v2_cell_id_sorted=_optional_1d_integer(
+            weathering_result,
+            'receiver_v2_cell_id_sorted',
+            name='weathering_result.receiver_v2_cell_id_sorted',
+            expected_shape=trace_shape,
+        ),
+        receiver_v2_m_s_sorted=_optional_1d_float(
+            weathering_result,
+            'receiver_v2_m_s_sorted',
+            name='weathering_result.receiver_v2_m_s_sorted',
+            expected_shape=trace_shape,
+            allow_nonfinite=True,
+        ),
+        receiver_v2_status_sorted=_optional_1d_string(
+            weathering_result,
+            'receiver_v2_status_sorted',
+            name='weathering_result.receiver_v2_status_sorted',
             expected_shape=trace_shape,
             dtype=_STATUS_DTYPE,
         ),
@@ -963,6 +1219,8 @@ def _classify_component_status(
     _assign(status, invalid_shift, 'invalid_shift')
     _assign(status, negative_thickness, 'negative_weathering_thickness')
     _assign(status, invalid_thickness | unknown_invalid, 'invalid_weathering_thickness')
+    for local_status in LOCAL_V2_STATUS_VALUES:
+        _assign(status, inherited == local_status, local_status)
     _assign(status, inherited == 'inactive', 'inactive')
     _assign(status, inherited == 'missing_node', 'missing_node')
 
@@ -972,6 +1230,10 @@ def _classify_component_status(
             'missing_node',
             'missing_endpoint',
             'invalid_velocity',
+            'outside_refractor_cell_grid',
+            'inactive_v2_cell',
+            'invalid_local_v2',
+            'v2_not_greater_than_v1',
             'inactive',
             'invalid_weathering_thickness',
             'negative_weathering_thickness',
@@ -1199,6 +1461,10 @@ def _unknown_invalid_weathering_status(status: np.ndarray) -> np.ndarray:
             'invalid_surface_elevation',
             'invalid_refractor_elevation',
             'missing_node',
+            'outside_refractor_cell_grid',
+            'inactive_v2_cell',
+            'invalid_local_v2',
+            'v2_not_greater_than_v1',
         ],
     )
     return ~known
@@ -1268,6 +1534,25 @@ def _coerce_1d_float(
     return arr
 
 
+def _optional_1d_float(
+    owner: object,
+    field: str,
+    *,
+    name: str,
+    expected_shape: tuple[int, ...] | None = None,
+    allow_nonfinite: bool = False,
+) -> np.ndarray | None:
+    value = getattr(owner, field, None)
+    if value is None:
+        return None
+    return _coerce_1d_float(
+        value,
+        name=name,
+        expected_shape=expected_shape,
+        allow_nonfinite=allow_nonfinite,
+    )
+
+
 def _coerce_1d_integer(
     values: object,
     *,
@@ -1301,6 +1586,19 @@ def _coerce_1d_integer(
             f'{name} must contain integer values'
         )
     return np.ascontiguousarray(arr_f64, dtype=np.int64)
+
+
+def _optional_1d_integer(
+    owner: object,
+    field: str,
+    *,
+    name: str,
+    expected_shape: tuple[int, ...] | None = None,
+) -> np.ndarray | None:
+    value = getattr(owner, field, None)
+    if value is None:
+        return None
+    return _coerce_1d_integer(value, name=name, expected_shape=expected_shape)
 
 
 def _coerce_1d_bool(
@@ -1338,6 +1636,25 @@ def _coerce_1d_string(
     return np.ascontiguousarray(arr.astype(dtype, copy=False))
 
 
+def _optional_1d_string(
+    owner: object,
+    field: str,
+    *,
+    name: str,
+    expected_shape: tuple[int, ...] | None = None,
+    dtype: object = _ENDPOINT_KEY_DTYPE,
+) -> np.ndarray | None:
+    value = getattr(owner, field, None)
+    if value is None:
+        return None
+    return _coerce_1d_string(
+        value,
+        name=name,
+        expected_shape=expected_shape,
+        dtype=dtype,
+    )
+
+
 def _positive_finite(value: object, *, name: str) -> float:
     if isinstance(value, (bool, np.bool_)):
         raise RefractionWeatheringReplacementStaticsError(
@@ -1356,13 +1673,17 @@ def _positive_finite(value: object, *, name: str) -> float:
     return out
 
 
-def _validate_velocity_mode(value: object) -> Literal['solve_global', 'fixed_global']:
+def _validate_velocity_mode(
+    value: object,
+) -> Literal['solve_global', 'fixed_global', 'solve_cell']:
     if value == 'solve_global':
         return 'solve_global'
     if value == 'fixed_global':
         return 'fixed_global'
+    if value == 'solve_cell':
+        return 'solve_cell'
     raise RefractionWeatheringReplacementStaticsError(
-        'bedrock_velocity_mode must be solve_global or fixed_global'
+        'bedrock_velocity_mode must be solve_global, fixed_global, or solve_cell'
     )
 
 

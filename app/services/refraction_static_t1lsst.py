@@ -54,13 +54,13 @@ class RefractionT1LSSTError(ValueError):
 def compute_t1lsst_1layer_thickness(
     t1_s: np.ndarray,
     v1_m_s: float,
-    v2_m_s: float,
+    v2_m_s: float | np.ndarray,
 ) -> np.ndarray:
     """Compute one-layer ``SH1`` weathering thickness from T1, V1, and V2."""
     t1 = _coerce_float_array(t1_s, name='t1_s', allow_nonfinite=True)
     v1 = _positive_finite(v1_m_s, name='v1_m_s')
-    v2 = _positive_finite(v2_m_s, name='v2_m_s')
-    if v2 <= v1:
+    v2 = _positive_finite_float_array(v2_m_s, name='v2_m_s')
+    if np.any(v2 <= v1):
         raise RefractionT1LSSTError('v2_m_s must be greater than v1_m_s')
     denom = np.sqrt(v2 * v2 - v1 * v1)
     return np.ascontiguousarray(t1 * v2 * v1 / denom, dtype=np.float64)
@@ -69,13 +69,13 @@ def compute_t1lsst_1layer_thickness(
 def compute_t1lsst_1layer_weathering_correction(
     sh1_m: np.ndarray,
     v1_m_s: float,
-    v2_m_s: float,
+    v2_m_s: float | np.ndarray,
 ) -> np.ndarray:
     """Compute one-layer ``WCOR`` from SH1, V1, and V2 in seconds."""
     sh1 = _coerce_float_array(sh1_m, name='sh1_m', allow_nonfinite=True)
     v1 = _positive_finite(v1_m_s, name='v1_m_s')
-    v2 = _positive_finite(v2_m_s, name='v2_m_s')
-    if v2 <= v1:
+    v2 = _positive_finite_float_array(v2_m_s, name='v2_m_s')
+    if np.any(v2 <= v1):
         raise RefractionT1LSSTError('v2_m_s must be greater than v1_m_s')
     return np.ascontiguousarray(sh1 * (1.0 / v2 - 1.0 / v1), dtype=np.float64)
 
@@ -94,6 +94,16 @@ def compose_t1lsst_1layer_static_table_components(
         raise RefractionT1LSSTError(
             'result.bedrock_velocity_m_s must be greater than result.weathering_velocity_m_s'
         )
+    source_v2 = _endpoint_v2_m_s(
+        result.source_v2_m_s,
+        shape=int(result.source_endpoint_key.shape[0]),
+        scalar_v2_m_s=v2,
+    )
+    receiver_v2 = _endpoint_v2_m_s(
+        result.receiver_v2_m_s,
+        shape=int(result.receiver_endpoint_key.shape[0]),
+        scalar_v2_m_s=v2,
+    )
 
     solution_status = _node_lookup(result.node_id, result.node_solution_status)
     weathering_status = _node_lookup(result.node_id, result.node_weathering_status)
@@ -140,7 +150,7 @@ def compose_t1lsst_1layer_static_table_components(
                 flat_datum_elevation_m=flat_datum,
                 t1_s=result.source_half_intercept_time_s[index],
                 v1_m_s=v1,
-                v2_m_s=v2,
+                v2_m_s=source_v2[index],
                 sh1_m=result.source_weathering_thickness_m[index],
                 refractor_elevation_m=result.source_refractor_elevation_m[index],
                 weathering_correction_s=(
@@ -174,7 +184,7 @@ def compose_t1lsst_1layer_static_table_components(
                 flat_datum_elevation_m=flat_datum,
                 t1_s=result.receiver_half_intercept_time_s[index],
                 v1_m_s=v1,
-                v2_m_s=v2,
+                v2_m_s=receiver_v2[index],
                 sh1_m=result.receiver_weathering_thickness_m[index],
                 refractor_elevation_m=result.receiver_refractor_elevation_m[index],
                 weathering_correction_s=(
@@ -333,6 +343,17 @@ def _string_array(value: object) -> np.ndarray:
     return np.ascontiguousarray(raw, dtype=f'<U{max_len}')
 
 
+def _endpoint_v2_m_s(
+    value: object,
+    *,
+    shape: int,
+    scalar_v2_m_s: float,
+) -> np.ndarray:
+    if value is None:
+        return np.full(int(shape), float(scalar_v2_m_s), dtype=np.float64)
+    return np.ascontiguousarray(value, dtype=np.float64)
+
+
 def _positive_finite(value: object, *, name: str) -> float:
     if isinstance(value, bool):
         raise RefractionT1LSSTError(f'{name} must be finite and positive')
@@ -341,6 +362,16 @@ def _positive_finite(value: object, *, name: str) -> float:
     except (TypeError, ValueError) as exc:
         raise RefractionT1LSSTError(f'{name} must be finite and positive') from exc
     if not np.isfinite(out) or out <= 0.0:
+        raise RefractionT1LSSTError(f'{name} must be finite and positive')
+    return out
+
+
+def _positive_finite_float_array(value: object, *, name: str) -> np.ndarray:
+    raw = np.asarray(value, dtype=np.float64)
+    out = _coerce_float_array(value, name=name)
+    if raw.ndim == 0:
+        return np.asarray(_positive_finite(value, name=name), dtype=np.float64)
+    if np.any(out <= 0.0):
         raise RefractionT1LSSTError(f'{name} must be finite and positive')
     return out
 

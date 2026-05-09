@@ -13,6 +13,10 @@ import numpy as np
 
 from app.api.schemas import RefractionStaticApplyRequest, RefractionStaticModelRequest
 from app.core.state import AppState
+from app.services.refraction_static_cell_grid import (
+    assign_points_to_refraction_cells,
+    build_refraction_cell_grid,
+)
 from app.services.refraction_static_first_layer import (
     resolve_weathering_velocity_m_s,
 )
@@ -44,6 +48,26 @@ _ZERO_THICKNESS_ATOL_M = 1.0e-9
 _SLOWNESS_RTOL = 1.0e-6
 _VELOCITY_RTOL = 1.0e-6
 _FORMULA_TEXT = 'z = T * vb * vw / sqrt(vb^2 - vw^2)'
+_STATUS_PRIORITY = {
+    'ok': 0,
+    'solved': 0,
+    'zero_thickness': 1,
+    'clipped_lower': 2,
+    'clipped_half_intercept_lower': 2,
+    'clipped_upper': 3,
+    'clipped_half_intercept_upper': 3,
+    'low_fold': 4,
+    'invalid_refractor_elevation': 5,
+    'invalid_surface_elevation': 6,
+    'exceeds_max_thickness': 7,
+    'negative_thickness': 8,
+    'invalid_solution': 9,
+    'missing_solution': 9,
+    'invalid_half_intercept': 9,
+    'inactive': 10,
+    'missing_endpoint': 11,
+    'missing_node': 11,
+}
 
 _NODE_COLUMNS = (
     'node_id',
@@ -108,11 +132,30 @@ class RefractionWeatheringThicknessError(ValueError):
 
 @dataclass(frozen=True)
 class _VelocityContext:
-    mode: Literal['solve_global', 'fixed_global']
+    mode: Literal['solve_global', 'fixed_global', 'solve_cell']
     bedrock_slowness_s_per_m: float
     bedrock_velocity_m_s: float
     weathering_velocity_m_s: float
     max_weathering_thickness_m: float | None
+
+
+@dataclass(frozen=True)
+class _LocalV2Model:
+    node_cell_id: np.ndarray
+    node_v2_m_s: np.ndarray
+    node_v2_status: np.ndarray
+    source_cell_id: np.ndarray
+    source_v2_m_s: np.ndarray
+    source_v2_status: np.ndarray
+    receiver_cell_id: np.ndarray
+    receiver_v2_m_s: np.ndarray
+    receiver_v2_status: np.ndarray
+    source_cell_id_sorted: np.ndarray
+    source_v2_m_s_sorted: np.ndarray
+    source_v2_status_sorted: np.ndarray
+    receiver_cell_id_sorted: np.ndarray
+    receiver_v2_m_s_sorted: np.ndarray
+    receiver_v2_status_sorted: np.ndarray
 
 
 @dataclass(frozen=True)
@@ -129,6 +172,10 @@ class _ValidatedHalfIntercept:
     node_rejected_pick_count: np.ndarray
     node_residual_rms_s: np.ndarray
     node_residual_mad_s: np.ndarray
+    active_cell_id: np.ndarray | None
+    inactive_cell_id: np.ndarray | None
+    cell_bedrock_velocity_m_s: np.ndarray | None
+    cell_velocity_status: np.ndarray | None
     source_endpoint_key: np.ndarray
     source_id: np.ndarray
     source_node_id: np.ndarray
@@ -237,10 +284,30 @@ def build_refraction_weathering_thickness_model(
         name='receiver_node_id_sorted',
     )
 
-    node_thickness = compute_weathering_thickness_from_half_intercept_time(
+    local_v2 = _build_local_v2_model(
+        data=data,
+        model=model,
+        velocity=velocity,
+    )
+    node_bedrock_velocity = (
+        local_v2.node_v2_m_s
+        if local_v2 is not None
+        else np.full(data.node_half_intercept_time_s.shape, velocity.bedrock_velocity_m_s)
+    )
+    source_bedrock_velocity = (
+        local_v2.source_v2_m_s
+        if local_v2 is not None
+        else np.full(data.source_node_id.shape, velocity.bedrock_velocity_m_s)
+    )
+    receiver_bedrock_velocity = (
+        local_v2.receiver_v2_m_s
+        if local_v2 is not None
+        else np.full(data.receiver_node_id.shape, velocity.bedrock_velocity_m_s)
+    )
+    node_thickness = _compute_weathering_thickness_with_local_v2(
         half_intercept_time_s=data.node_half_intercept_time_s,
         weathering_velocity_m_s=velocity.weathering_velocity_m_s,
-        bedrock_velocity_m_s=velocity.bedrock_velocity_m_s,
+        bedrock_velocity_m_s=node_bedrock_velocity,
     )
     node_refractor = _compute_refractor_elevation(
         data.node_surface_elevation_m,
@@ -254,13 +321,23 @@ def build_refraction_weathering_thickness_model(
         refractor_elevation_m=node_refractor,
         max_weathering_thickness_m=velocity.max_weathering_thickness_m,
     )
+    if local_v2 is not None:
+        node_status = _overlay_local_v2_status(
+            node_status,
+            local_v2.node_v2_status,
+        )
 
-    source_half, source_thickness, source_status, source_missing = _map_node_table(
+    source_half, _source_node_thickness, source_status, source_missing = _map_node_table(
         node_id=data.source_node_id,
         node_pos=node_pos,
         node_half_intercept_time_s=data.node_half_intercept_time_s,
         node_weathering_thickness_m=node_thickness,
         node_solution_status=data.node_solution_status,
+    )
+    source_thickness = _compute_weathering_thickness_with_local_v2(
+        half_intercept_time_s=source_half,
+        weathering_velocity_m_s=velocity.weathering_velocity_m_s,
+        bedrock_velocity_m_s=source_bedrock_velocity,
     )
     source_refractor = _compute_refractor_elevation(
         data.source_surface_elevation_m,
@@ -275,10 +352,15 @@ def build_refraction_weathering_thickness_model(
         max_weathering_thickness_m=velocity.max_weathering_thickness_m,
         missing_node_mask=source_missing,
     )
+    if local_v2 is not None:
+        source_status = _overlay_local_v2_status(
+            source_status,
+            local_v2.source_v2_status,
+        )
 
     (
         receiver_half,
-        receiver_thickness,
+        _receiver_node_thickness,
         receiver_status,
         receiver_missing,
     ) = _map_node_table(
@@ -287,6 +369,11 @@ def build_refraction_weathering_thickness_model(
         node_half_intercept_time_s=data.node_half_intercept_time_s,
         node_weathering_thickness_m=node_thickness,
         node_solution_status=data.node_solution_status,
+    )
+    receiver_thickness = _compute_weathering_thickness_with_local_v2(
+        half_intercept_time_s=receiver_half,
+        weathering_velocity_m_s=velocity.weathering_velocity_m_s,
+        bedrock_velocity_m_s=receiver_bedrock_velocity,
     )
     receiver_refractor = _compute_refractor_elevation(
         data.receiver_surface_elevation_m,
@@ -301,35 +388,47 @@ def build_refraction_weathering_thickness_model(
         max_weathering_thickness_m=velocity.max_weathering_thickness_m,
         missing_node_mask=receiver_missing,
     )
+    if local_v2 is not None:
+        receiver_status = _overlay_local_v2_status(
+            receiver_status,
+            local_v2.receiver_v2_status,
+        )
 
-    (
-        source_half_sorted,
-        source_thickness_sorted,
-        source_refractor_sorted,
-        source_status_sorted,
-    ) = _map_trace_table(
-        node_id_sorted=data.source_node_id_sorted,
-        node_pos=node_pos,
-        node_half_intercept_time_s=data.node_half_intercept_time_s,
-        node_weathering_thickness_m=node_thickness,
-        node_solution_status=data.node_solution_status,
-        surface_elevation_m_sorted=data.source_surface_elevation_m_sorted,
-        max_weathering_thickness_m=velocity.max_weathering_thickness_m,
+    source_half_sorted, source_thickness_sorted, source_refractor_sorted, source_status_sorted = (
+        _map_trace_table_from_endpoints(
+            endpoint_key_sorted=data.source_endpoint_key_sorted,
+            endpoint_key=data.source_endpoint_key,
+            node_id_sorted=data.source_node_id_sorted,
+            node_pos=node_pos,
+            endpoint_half_intercept_time_s=source_half,
+            endpoint_weathering_thickness_m=source_thickness,
+            endpoint_solution_status=source_status,
+            surface_elevation_m_sorted=data.source_surface_elevation_m_sorted,
+            max_weathering_thickness_m=velocity.max_weathering_thickness_m,
+        )
     )
-    (
-        receiver_half_sorted,
-        receiver_thickness_sorted,
-        receiver_refractor_sorted,
-        receiver_status_sorted,
-    ) = _map_trace_table(
-        node_id_sorted=data.receiver_node_id_sorted,
-        node_pos=node_pos,
-        node_half_intercept_time_s=data.node_half_intercept_time_s,
-        node_weathering_thickness_m=node_thickness,
-        node_solution_status=data.node_solution_status,
-        surface_elevation_m_sorted=data.receiver_surface_elevation_m_sorted,
-        max_weathering_thickness_m=velocity.max_weathering_thickness_m,
+    receiver_half_sorted, receiver_thickness_sorted, receiver_refractor_sorted, receiver_status_sorted = (
+        _map_trace_table_from_endpoints(
+            endpoint_key_sorted=data.receiver_endpoint_key_sorted,
+            endpoint_key=data.receiver_endpoint_key,
+            node_id_sorted=data.receiver_node_id_sorted,
+            node_pos=node_pos,
+            endpoint_half_intercept_time_s=receiver_half,
+            endpoint_weathering_thickness_m=receiver_thickness,
+            endpoint_solution_status=receiver_status,
+            surface_elevation_m_sorted=data.receiver_surface_elevation_m_sorted,
+            max_weathering_thickness_m=velocity.max_weathering_thickness_m,
+        )
     )
+    if local_v2 is not None:
+        source_status_sorted = _overlay_local_v2_status(
+            source_status_sorted,
+            local_v2.source_v2_status_sorted,
+        )
+        receiver_status_sorted = _overlay_local_v2_status(
+            receiver_status_sorted,
+            local_v2.receiver_v2_status_sorted,
+        )
 
     qc = _build_qc(
         velocity=velocity,
@@ -423,6 +522,41 @@ def build_refraction_weathering_thickness_model(
         used_row_mask=data.used_row_mask,
         rejected_by_robust_mask=data.rejected_by_robust_mask,
         qc=qc,
+        node_v2_cell_id=(
+            None if local_v2 is None else local_v2.node_cell_id
+        ),
+        node_v2_m_s=None if local_v2 is None else local_v2.node_v2_m_s,
+        node_v2_status=None if local_v2 is None else local_v2.node_v2_status,
+        source_v2_cell_id=(
+            None if local_v2 is None else local_v2.source_cell_id
+        ),
+        source_v2_m_s=None if local_v2 is None else local_v2.source_v2_m_s,
+        source_v2_status=None if local_v2 is None else local_v2.source_v2_status,
+        receiver_v2_cell_id=(
+            None if local_v2 is None else local_v2.receiver_cell_id
+        ),
+        receiver_v2_m_s=None if local_v2 is None else local_v2.receiver_v2_m_s,
+        receiver_v2_status=(
+            None if local_v2 is None else local_v2.receiver_v2_status
+        ),
+        source_v2_cell_id_sorted=(
+            None if local_v2 is None else local_v2.source_cell_id_sorted
+        ),
+        source_v2_m_s_sorted=(
+            None if local_v2 is None else local_v2.source_v2_m_s_sorted
+        ),
+        source_v2_status_sorted=(
+            None if local_v2 is None else local_v2.source_v2_status_sorted
+        ),
+        receiver_v2_cell_id_sorted=(
+            None if local_v2 is None else local_v2.receiver_cell_id_sorted
+        ),
+        receiver_v2_m_s_sorted=(
+            None if local_v2 is None else local_v2.receiver_v2_m_s_sorted
+        ),
+        receiver_v2_status_sorted=(
+            None if local_v2 is None else local_v2.receiver_v2_status_sorted
+        ),
     )
     if job_dir is not None:
         write_refraction_weathering_thickness_artifacts(Path(job_dir), result)
@@ -433,7 +567,7 @@ def compute_weathering_thickness_from_half_intercept_time(
     *,
     half_intercept_time_s: np.ndarray,
     weathering_velocity_m_s: float,
-    bedrock_velocity_m_s: float,
+    bedrock_velocity_m_s: float | np.ndarray,
 ) -> np.ndarray:
     """Convert half-intercept time to weathering thickness with the GLI relation."""
     try:
@@ -468,6 +602,186 @@ def compute_weathering_thickness_scalar(
         bedrock_velocity_m_s=bedrock_velocity_m_s,
     )
     return float(value[0])
+
+
+def _build_local_v2_model(
+    *,
+    data: _ValidatedHalfIntercept,
+    model: RefractionStaticModelRequest,
+    velocity: _VelocityContext,
+) -> _LocalV2Model | None:
+    if velocity.mode != 'solve_cell':
+        return None
+    refractor_cell = getattr(model, 'refractor_cell', None)
+    if refractor_cell is None:
+        raise RefractionWeatheringThicknessError(
+            'model.refractor_cell is required when model.bedrock_velocity_mode is solve_cell'
+        )
+    if data.active_cell_id is None or data.cell_bedrock_velocity_m_s is None:
+        raise RefractionWeatheringThicknessError(
+            'solve_cell half-intercept result requires active cell velocities'
+        )
+    grid = build_refraction_cell_grid(refractor_cell)
+    node = _project_local_v2(
+        grid=grid,
+        x_m=data.node_x_m,
+        y_m=data.node_y_m,
+        active_cell_id=data.active_cell_id,
+        cell_bedrock_velocity_m_s=data.cell_bedrock_velocity_m_s,
+        weathering_velocity_m_s=velocity.weathering_velocity_m_s,
+    )
+    source = _project_local_v2(
+        grid=grid,
+        x_m=data.source_x_m,
+        y_m=data.source_y_m,
+        active_cell_id=data.active_cell_id,
+        cell_bedrock_velocity_m_s=data.cell_bedrock_velocity_m_s,
+        weathering_velocity_m_s=velocity.weathering_velocity_m_s,
+    )
+    receiver = _project_local_v2(
+        grid=grid,
+        x_m=data.receiver_x_m,
+        y_m=data.receiver_y_m,
+        active_cell_id=data.active_cell_id,
+        cell_bedrock_velocity_m_s=data.cell_bedrock_velocity_m_s,
+        weathering_velocity_m_s=velocity.weathering_velocity_m_s,
+    )
+    source_sorted = _map_endpoint_local_v2_to_trace_order(
+        endpoint_key_sorted=data.source_endpoint_key_sorted,
+        endpoint_key=data.source_endpoint_key,
+        endpoint_cell_id=source[0],
+        endpoint_v2_m_s=source[1],
+        endpoint_v2_status=source[2],
+    )
+    receiver_sorted = _map_endpoint_local_v2_to_trace_order(
+        endpoint_key_sorted=data.receiver_endpoint_key_sorted,
+        endpoint_key=data.receiver_endpoint_key,
+        endpoint_cell_id=receiver[0],
+        endpoint_v2_m_s=receiver[1],
+        endpoint_v2_status=receiver[2],
+    )
+    return _LocalV2Model(
+        node_cell_id=node[0],
+        node_v2_m_s=node[1],
+        node_v2_status=node[2],
+        source_cell_id=source[0],
+        source_v2_m_s=source[1],
+        source_v2_status=source[2],
+        receiver_cell_id=receiver[0],
+        receiver_v2_m_s=receiver[1],
+        receiver_v2_status=receiver[2],
+        source_cell_id_sorted=source_sorted[0],
+        source_v2_m_s_sorted=source_sorted[1],
+        source_v2_status_sorted=source_sorted[2],
+        receiver_cell_id_sorted=receiver_sorted[0],
+        receiver_v2_m_s_sorted=receiver_sorted[1],
+        receiver_v2_status_sorted=receiver_sorted[2],
+    )
+
+
+def _project_local_v2(
+    *,
+    grid: object,
+    x_m: np.ndarray,
+    y_m: np.ndarray,
+    active_cell_id: np.ndarray,
+    cell_bedrock_velocity_m_s: np.ndarray,
+    weathering_velocity_m_s: float,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    assignment = assign_points_to_refraction_cells(grid, x_m=x_m, y_m=y_m)
+    cell_id = np.ascontiguousarray(assignment.cell_id, dtype=np.int64)
+    v2 = np.full(cell_id.shape, np.nan, dtype=np.float64)
+    status = np.full(cell_id.shape, 'ok', dtype=_STATUS_DTYPE)
+    active_cells = _coerce_1d_integer(active_cell_id, name='active_cell_id')
+    cell_velocity = _coerce_1d_float(
+        cell_bedrock_velocity_m_s,
+        name='cell_bedrock_velocity_m_s',
+        expected_shape=active_cells.shape,
+    )
+    velocity_by_cell = {
+        int(raw_cell): float(cell_velocity[index])
+        for index, raw_cell in enumerate(active_cells.tolist())
+    }
+    for index, raw_cell in enumerate(cell_id.tolist()):
+        cell = int(raw_cell)
+        if cell < 0:
+            status[index] = 'outside_refractor_cell_grid'
+            continue
+        value = velocity_by_cell.get(cell)
+        if value is None:
+            status[index] = 'inactive_v2_cell'
+            continue
+        v2[index] = value
+        if not np.isfinite(value) or value <= 0.0:
+            status[index] = 'invalid_local_v2'
+        elif value <= weathering_velocity_m_s:
+            status[index] = 'v2_not_greater_than_v1'
+    return (
+        np.ascontiguousarray(cell_id, dtype=np.int64),
+        np.ascontiguousarray(v2, dtype=np.float64),
+        np.ascontiguousarray(status, dtype=_STATUS_DTYPE),
+    )
+
+
+def _map_endpoint_local_v2_to_trace_order(
+    *,
+    endpoint_key_sorted: np.ndarray,
+    endpoint_key: np.ndarray,
+    endpoint_cell_id: np.ndarray,
+    endpoint_v2_m_s: np.ndarray,
+    endpoint_v2_status: np.ndarray,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    key_to_index = _endpoint_key_to_index(endpoint_key)
+    n_traces = int(endpoint_key_sorted.shape[0])
+    cell_id = np.full(n_traces, -1, dtype=np.int64)
+    v2 = np.full(n_traces, np.nan, dtype=np.float64)
+    status = np.full(n_traces, 'missing_endpoint', dtype=_STATUS_DTYPE)
+    for index, raw_key in enumerate(endpoint_key_sorted.tolist()):
+        endpoint_index = key_to_index.get(str(raw_key))
+        if endpoint_index is None:
+            continue
+        cell_id[index] = int(endpoint_cell_id[endpoint_index])
+        v2[index] = float(endpoint_v2_m_s[endpoint_index])
+        status[index] = str(endpoint_v2_status[endpoint_index])
+    return (
+        np.ascontiguousarray(cell_id, dtype=np.int64),
+        np.ascontiguousarray(v2, dtype=np.float64),
+        np.ascontiguousarray(status, dtype=_STATUS_DTYPE),
+    )
+
+
+def _compute_weathering_thickness_with_local_v2(
+    *,
+    half_intercept_time_s: np.ndarray,
+    weathering_velocity_m_s: float,
+    bedrock_velocity_m_s: np.ndarray,
+) -> np.ndarray:
+    half = np.asarray(half_intercept_time_s, dtype=np.float64)
+    v2 = np.asarray(bedrock_velocity_m_s, dtype=np.float64)
+    if half.shape != v2.shape:
+        raise RefractionWeatheringThicknessError(
+            'half_intercept_time_s and bedrock_velocity_m_s shape mismatch'
+        )
+    out = np.full(half.shape, np.nan, dtype=np.float64)
+    valid = np.isfinite(half) & np.isfinite(v2) & (v2 > weathering_velocity_m_s)
+    if np.any(valid):
+        out[valid] = compute_weathering_thickness_from_half_intercept_time(
+            half_intercept_time_s=half[valid],
+            weathering_velocity_m_s=weathering_velocity_m_s,
+            bedrock_velocity_m_s=v2[valid],
+        )
+    return np.ascontiguousarray(out, dtype=np.float64)
+
+
+def _overlay_local_v2_status(
+    weathering_status: np.ndarray,
+    local_v2_status: np.ndarray,
+) -> np.ndarray:
+    status = np.asarray(weathering_status).astype(_STATUS_DTYPE, copy=True)
+    local = np.asarray(local_v2_status).astype(str, copy=False)
+    invalid_local = local != 'ok'
+    status[invalid_local] = local[invalid_local]
+    return np.ascontiguousarray(status, dtype=_STATUS_DTYPE)
 
 
 def write_refraction_weathering_thickness_artifacts(
@@ -591,6 +905,27 @@ def _validate_half_intercept_result(
             name='half_intercept_result.node_residual_mad_s',
             expected_shape=node_shape,
             allow_nonfinite=True,
+        ),
+        active_cell_id=_optional_1d_integer(
+            half_intercept_result,
+            'active_cell_id',
+            name='half_intercept_result.active_cell_id',
+        ),
+        inactive_cell_id=_optional_1d_integer(
+            half_intercept_result,
+            'inactive_cell_id',
+            name='half_intercept_result.inactive_cell_id',
+        ),
+        cell_bedrock_velocity_m_s=_optional_1d_float(
+            half_intercept_result,
+            'cell_bedrock_velocity_m_s',
+            name='half_intercept_result.cell_bedrock_velocity_m_s',
+        ),
+        cell_velocity_status=_optional_1d_string(
+            half_intercept_result,
+            'cell_velocity_status',
+            name='half_intercept_result.cell_velocity_status',
+            dtype=_STATUS_DTYPE,
         ),
         source_endpoint_key=source_endpoint_key,
         source_id=_coerce_1d_integer(
@@ -916,12 +1251,83 @@ def _map_trace_table(
         max_weathering_thickness_m=max_weathering_thickness_m,
         missing_node_mask=missing,
     )
+    inherited = solution_status.astype(str, copy=False)
+    inherited_mask = ~np.isin(inherited, ['ok', 'solved'])
+    status[inherited_mask] = inherited[inherited_mask]
     return (
         np.ascontiguousarray(half, dtype=np.float64),
         np.ascontiguousarray(thickness, dtype=np.float64),
         np.ascontiguousarray(refractor, dtype=np.float64),
         status,
     )
+
+
+def _map_trace_table_from_endpoints(
+    *,
+    endpoint_key_sorted: np.ndarray,
+    endpoint_key: np.ndarray,
+    node_id_sorted: np.ndarray,
+    node_pos: dict[int, int],
+    endpoint_half_intercept_time_s: np.ndarray,
+    endpoint_weathering_thickness_m: np.ndarray,
+    endpoint_solution_status: np.ndarray,
+    surface_elevation_m_sorted: np.ndarray,
+    max_weathering_thickness_m: float | None,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+    key_to_index = _endpoint_key_to_index(endpoint_key)
+    n_traces = int(endpoint_key_sorted.shape[0])
+    half = np.full(n_traces, np.nan, dtype=np.float64)
+    thickness = np.full(n_traces, np.nan, dtype=np.float64)
+    solution_status = np.full(n_traces, 'missing_endpoint', dtype=_STATUS_DTYPE)
+    missing = np.zeros(n_traces, dtype=bool)
+    for index, raw_key in enumerate(endpoint_key_sorted.tolist()):
+        if int(node_id_sorted[index]) not in node_pos:
+            missing[index] = True
+            continue
+        endpoint_index = key_to_index.get(str(raw_key))
+        if endpoint_index is None:
+            missing[index] = True
+            continue
+        half[index] = float(endpoint_half_intercept_time_s[endpoint_index])
+        thickness[index] = float(endpoint_weathering_thickness_m[endpoint_index])
+        solution_status[index] = str(endpoint_solution_status[endpoint_index])
+    surface = np.asarray(surface_elevation_m_sorted, dtype=np.float64)
+    refractor = _compute_refractor_elevation(surface, thickness)
+    status = _classify_weathering_status(
+        solution_status=solution_status,
+        half_intercept_time_s=half,
+        thickness_m=thickness,
+        surface_elevation_m=surface,
+        refractor_elevation_m=refractor,
+        max_weathering_thickness_m=max_weathering_thickness_m,
+        missing_node_mask=missing,
+    )
+    status = _merge_weathering_status(
+        status,
+        solution_status,
+    )
+    return (
+        np.ascontiguousarray(half, dtype=np.float64),
+        np.ascontiguousarray(thickness, dtype=np.float64),
+        np.ascontiguousarray(refractor, dtype=np.float64),
+        status,
+    )
+
+
+def _endpoint_key_to_index(endpoint_key: np.ndarray) -> dict[str, int]:
+    out: dict[str, int] = {}
+    for index, raw_key in enumerate(endpoint_key.tolist()):
+        key = str(raw_key)
+        if not key:
+            raise RefractionWeatheringThicknessError(
+                'endpoint_key contains an empty value'
+            )
+        if key in out:
+            raise RefractionWeatheringThicknessError(
+                f'endpoint_key contains duplicate value: {key}'
+            )
+        out[key] = index
+    return out
 
 
 def _classify_weathering_status(
@@ -979,6 +1385,28 @@ def _classify_weathering_status(
     status[invalid_half] = 'invalid_half_intercept'
     status[inactive] = 'inactive'
     status[missing] = 'missing_node'
+    return np.ascontiguousarray(status, dtype=_STATUS_DTYPE)
+
+
+def _merge_weathering_status(base: np.ndarray, inherited: np.ndarray) -> np.ndarray:
+    status = np.asarray(base).astype(_STATUS_DTYPE, copy=True)
+    inherited_text = np.asarray(inherited).astype(str, copy=False)
+    if status.shape != inherited_text.shape:
+        raise RefractionWeatheringThicknessError('weathering status shape mismatch')
+    for index, raw_value in enumerate(inherited_text.tolist()):
+        value = str(raw_value)
+        normalized = {
+            'clipped_lower': 'clipped_half_intercept_lower',
+            'clipped_upper': 'clipped_half_intercept_upper',
+            'invalid_solution': 'invalid_half_intercept',
+            'missing_solution': 'invalid_half_intercept',
+            'missing_endpoint': 'missing_node',
+        }.get(value, value)
+        if _STATUS_PRIORITY.get(normalized, 0) > _STATUS_PRIORITY.get(
+            str(status[index]),
+            0,
+        ):
+            status[index] = normalized
     return np.ascontiguousarray(status, dtype=_STATUS_DTYPE)
 
 
@@ -1141,6 +1569,25 @@ def _coerce_1d_float(
     return arr
 
 
+def _optional_1d_float(
+    owner: object,
+    field: str,
+    *,
+    name: str,
+    expected_shape: tuple[int, ...] | None = None,
+    allow_nonfinite: bool = False,
+) -> np.ndarray | None:
+    value = getattr(owner, field, None)
+    if value is None:
+        return None
+    return _coerce_1d_float(
+        value,
+        name=name,
+        expected_shape=expected_shape,
+        allow_nonfinite=allow_nonfinite,
+    )
+
+
 def _coerce_1d_integer(
     values: object,
     *,
@@ -1166,6 +1613,19 @@ def _coerce_1d_integer(
     if not np.all(arr_f64 == np.rint(arr_f64)):
         raise RefractionWeatheringThicknessError(f'{name} must contain integer values')
     return np.ascontiguousarray(arr_f64, dtype=np.int64)
+
+
+def _optional_1d_integer(
+    owner: object,
+    field: str,
+    *,
+    name: str,
+    expected_shape: tuple[int, ...] | None = None,
+) -> np.ndarray | None:
+    value = getattr(owner, field, None)
+    if value is None:
+        return None
+    return _coerce_1d_integer(value, name=name, expected_shape=expected_shape)
 
 
 def _coerce_1d_bool(
@@ -1203,6 +1663,25 @@ def _coerce_1d_string(
     return np.ascontiguousarray(arr.astype(dtype, copy=False))
 
 
+def _optional_1d_string(
+    owner: object,
+    field: str,
+    *,
+    name: str,
+    expected_shape: tuple[int, ...] | None = None,
+    dtype: object = _ENDPOINT_KEY_DTYPE,
+) -> np.ndarray | None:
+    value = getattr(owner, field, None)
+    if value is None:
+        return None
+    return _coerce_1d_string(
+        value,
+        name=name,
+        expected_shape=expected_shape,
+        dtype=dtype,
+    )
+
+
 def _positive_finite(value: object, *, name: str) -> float:
     if isinstance(value, (bool, np.bool_)):
         raise RefractionWeatheringThicknessError(f'{name} must be finite and positive')
@@ -1225,13 +1704,17 @@ def _optional_positive_finite(value: object, *, name: str) -> float | None:
     return _positive_finite(value, name=name)
 
 
-def _validate_velocity_mode(value: object) -> Literal['solve_global', 'fixed_global']:
+def _validate_velocity_mode(
+    value: object,
+) -> Literal['solve_global', 'fixed_global', 'solve_cell']:
     if value == 'solve_global':
         return 'solve_global'
     if value == 'fixed_global':
         return 'fixed_global'
+    if value == 'solve_cell':
+        return 'solve_cell'
     raise RefractionWeatheringThicknessError(
-        'bedrock_velocity_mode must be solve_global or fixed_global'
+        'bedrock_velocity_mode must be solve_global, fixed_global, or solve_cell'
     )
 
 

@@ -244,6 +244,7 @@ _SOURCE_STATIC_TABLE_COLUMNS = (
     'source_endpoint_key',
     'source_id',
     'source_node_id',
+    'source_v2_cell_id',
     'x_m',
     'y_m',
     'surface_elevation_m',
@@ -275,6 +276,7 @@ _RECEIVER_STATIC_TABLE_COLUMNS = (
     'receiver_endpoint_key',
     'receiver_id',
     'receiver_node_id',
+    'receiver_v2_cell_id',
     'x_m',
     'y_m',
     'surface_elevation_m',
@@ -570,42 +572,40 @@ def build_source_receiver_static_table_arrays(
 ) -> dict[str, np.ndarray]:
     values = _validate_result(result)
     r = values.result
-    source_t1_s = _endpoint_node_values(
-        r.source_node_id,
-        r.node_id,
-        r.node_half_intercept_time_s,
+    source_t1_s = _float_array(r.source_half_intercept_time_s)
+    source_sh1_m = _float_array(r.source_weathering_thickness_m)
+    source_weathering_correction_s = _float_array(
+        r.source_weathering_replacement_shift_s
     )
-    source_sh1_m = _endpoint_node_values(
-        r.source_node_id,
-        r.node_id,
-        r.node_weathering_thickness_m,
-    )
-    source_weathering_correction_s = _endpoint_node_values(
-        r.source_node_id,
-        r.node_id,
-        r.node_weathering_replacement_shift_s,
-    )
-    receiver_t1_s = _endpoint_node_values(
-        r.receiver_node_id,
-        r.node_id,
-        r.node_half_intercept_time_s,
-    )
-    receiver_sh1_m = _endpoint_node_values(
-        r.receiver_node_id,
-        r.node_id,
-        r.node_weathering_thickness_m,
-    )
-    receiver_weathering_correction_s = _endpoint_node_values(
-        r.receiver_node_id,
-        r.node_id,
-        r.node_weathering_replacement_shift_s,
+    receiver_t1_s = _float_array(r.receiver_half_intercept_time_s)
+    receiver_sh1_m = _float_array(r.receiver_weathering_thickness_m)
+    receiver_weathering_correction_s = _float_array(
+        r.receiver_weathering_replacement_shift_s
     )
     source_static_status = _source_static_status_array(r)
     receiver_static_status = _receiver_static_status_array(r)
+    source_v2 = _endpoint_v2_m_s(
+        r.source_v2_m_s,
+        shape=values.n_source_endpoints,
+        scalar_v2_m_s=r.bedrock_velocity_m_s,
+    )
+    receiver_v2 = _endpoint_v2_m_s(
+        r.receiver_v2_m_s,
+        shape=values.n_receiver_endpoints,
+        scalar_v2_m_s=r.bedrock_velocity_m_s,
+    )
     arrays: dict[str, np.ndarray] = {
         'source_endpoint_key': _string_array(r.source_endpoint_key),
         'source_id': _int_array(r.source_id),
         'source_node_id': _int_array(r.source_node_id),
+        'source_v2_cell_id': _endpoint_cell_id_array(
+            r.source_v2_cell_id,
+            values.n_source_endpoints,
+        ),
+        'source_v2_status': _endpoint_v2_status_array(
+            r.source_v2_status,
+            values.n_source_endpoints,
+        ),
         'source_x_m': _float_array(r.source_x_m),
         'source_y_m': _float_array(r.source_y_m),
         'source_surface_elevation_m': _float_array(r.source_surface_elevation_m),
@@ -614,10 +614,7 @@ def build_source_receiver_static_table_arrays(
             r.weathering_velocity_m_s,
             values.n_source_endpoints,
         ),
-        'source_v2_m_s': _filled_float_array(
-            r.bedrock_velocity_m_s,
-            values.n_source_endpoints,
-        ),
+        'source_v2_m_s': source_v2,
         'source_sh1_m': source_sh1_m,
         'source_weathering_correction_s': source_weathering_correction_s,
         'source_elevation_correction_s': _sum_float_arrays(
@@ -630,6 +627,14 @@ def build_source_receiver_static_table_arrays(
         'receiver_endpoint_key': _string_array(r.receiver_endpoint_key),
         'receiver_id': _int_array(r.receiver_id),
         'receiver_node_id': _int_array(r.receiver_node_id),
+        'receiver_v2_cell_id': _endpoint_cell_id_array(
+            r.receiver_v2_cell_id,
+            values.n_receiver_endpoints,
+        ),
+        'receiver_v2_status': _endpoint_v2_status_array(
+            r.receiver_v2_status,
+            values.n_receiver_endpoints,
+        ),
         'receiver_x_m': _float_array(r.receiver_x_m),
         'receiver_y_m': _float_array(r.receiver_y_m),
         'receiver_surface_elevation_m': _float_array(
@@ -640,10 +645,7 @@ def build_source_receiver_static_table_arrays(
             r.weathering_velocity_m_s,
             values.n_receiver_endpoints,
         ),
-        'receiver_v2_m_s': _filled_float_array(
-            r.bedrock_velocity_m_s,
-            values.n_receiver_endpoints,
-        ),
+        'receiver_v2_m_s': receiver_v2,
         'receiver_sh1_m': receiver_sh1_m,
         'receiver_weathering_correction_s': receiver_weathering_correction_s,
         'receiver_elevation_correction_s': _sum_float_arrays(
@@ -766,8 +768,34 @@ def build_refraction_static_solution_arrays(
         'source_weathering_replacement_shift_s_sorted': _float_array(
             r.source_weathering_replacement_shift_s_sorted
         ),
+        'source_v2_cell_id_sorted': _endpoint_cell_id_array(
+            r.source_v2_cell_id_sorted,
+            values.n_traces,
+        ),
+        'source_v2_m_s_sorted': _endpoint_v2_m_s(
+            r.source_v2_m_s_sorted,
+            shape=values.n_traces,
+            scalar_v2_m_s=r.bedrock_velocity_m_s,
+        ),
+        'source_v2_status_sorted': _endpoint_v2_status_array(
+            r.source_v2_status_sorted,
+            values.n_traces,
+        ),
         'receiver_weathering_replacement_shift_s_sorted': _float_array(
             r.receiver_weathering_replacement_shift_s_sorted
+        ),
+        'receiver_v2_cell_id_sorted': _endpoint_cell_id_array(
+            r.receiver_v2_cell_id_sorted,
+            values.n_traces,
+        ),
+        'receiver_v2_m_s_sorted': _endpoint_v2_m_s(
+            r.receiver_v2_m_s_sorted,
+            shape=values.n_traces,
+            scalar_v2_m_s=r.bedrock_velocity_m_s,
+        ),
+        'receiver_v2_status_sorted': _endpoint_v2_status_array(
+            r.receiver_v2_status_sorted,
+            values.n_traces,
         ),
         'source_floating_datum_elevation_shift_s_sorted': _float_array(
             r.source_floating_datum_elevation_shift_s_sorted
@@ -804,6 +832,16 @@ def build_refraction_static_solution_arrays(
         'node_weathering_replacement_shift_s': _float_array(
             r.node_weathering_replacement_shift_s
         ),
+        'node_v2_cell_id': _endpoint_cell_id_array(r.node_v2_cell_id, values.n_nodes),
+        'node_v2_m_s': _endpoint_v2_m_s(
+            r.node_v2_m_s,
+            shape=values.n_nodes,
+            scalar_v2_m_s=r.bedrock_velocity_m_s,
+        ),
+        'node_v2_status': _endpoint_v2_status_array(
+            r.node_v2_status,
+            values.n_nodes,
+        ),
         'node_t1_time_s': _float_array(r.node_half_intercept_time_s),
         'node_sh1_weathering_thickness_m': _float_array(
             r.node_weathering_thickness_m
@@ -822,6 +860,19 @@ def build_refraction_static_solution_arrays(
         'source_endpoint_key': _string_array(r.source_endpoint_key),
         'source_id': _int_array(r.source_id),
         'source_node_id': _int_array(r.source_node_id),
+        'source_v2_cell_id': _endpoint_cell_id_array(
+            r.source_v2_cell_id,
+            values.n_source_endpoints,
+        ),
+        'source_v2_m_s': _endpoint_v2_m_s(
+            r.source_v2_m_s,
+            shape=values.n_source_endpoints,
+            scalar_v2_m_s=r.bedrock_velocity_m_s,
+        ),
+        'source_v2_status': _endpoint_v2_status_array(
+            r.source_v2_status,
+            values.n_source_endpoints,
+        ),
         'source_x_m': _float_array(r.source_x_m),
         'source_y_m': _float_array(r.source_y_m),
         'source_surface_elevation_m': _float_array(r.source_surface_elevation_m),
@@ -849,6 +900,19 @@ def build_refraction_static_solution_arrays(
         'receiver_endpoint_key': _string_array(r.receiver_endpoint_key),
         'receiver_id': _int_array(r.receiver_id),
         'receiver_node_id': _int_array(r.receiver_node_id),
+        'receiver_v2_cell_id': _endpoint_cell_id_array(
+            r.receiver_v2_cell_id,
+            values.n_receiver_endpoints,
+        ),
+        'receiver_v2_m_s': _endpoint_v2_m_s(
+            r.receiver_v2_m_s,
+            shape=values.n_receiver_endpoints,
+            scalar_v2_m_s=r.bedrock_velocity_m_s,
+        ),
+        'receiver_v2_status': _endpoint_v2_status_array(
+            r.receiver_v2_status,
+            values.n_receiver_endpoints,
+        ),
         'receiver_x_m': _float_array(r.receiver_x_m),
         'receiver_y_m': _float_array(r.receiver_y_m),
         'receiver_surface_elevation_m': _float_array(
@@ -945,9 +1009,9 @@ def build_refraction_static_qc_payload(
                 r.replacement_slowness_delta_s_per_m
             ),
             'bedrock_velocity_status': (
-                'solved'
-                if r.bedrock_velocity_mode == 'solve_global'
-                else 'fixed'
+                'per_cell'
+                if r.bedrock_velocity_mode == 'solve_cell'
+                else ('solved' if r.bedrock_velocity_mode == 'solve_global' else 'fixed')
             ),
         },
         'datum': {
@@ -1094,12 +1158,6 @@ def _validate_result(result: RefractionDatumStaticsResult) -> _ValidatedResult:
         raise RefractionStaticArtifactError(
             'result must be a RefractionDatumStaticsResult instance'
         )
-    if result.bedrock_velocity_mode == 'solve_cell':
-        raise RefractionStaticArtifactError(
-            'model.bedrock_velocity_mode=solve_cell is not supported by final '
-            'refraction static artifacts until cell V2 artifacts and static '
-            'tables are implemented'
-        )
     n_traces = _length(result.sorted_trace_index, name='sorted_trace_index')
     if n_traces <= 0:
         raise RefractionStaticArtifactError('sorted_trace_index must not be empty')
@@ -1144,6 +1202,14 @@ def _validate_result(result: RefractionDatumStaticsResult) -> _ValidatedResult:
             raise RefractionStaticArtifactError(f'non-finite required scalar {name}')
     for name in _STATUS_ARRAY_NAMES:
         _validate_status_array(getattr(result, name), name=name)
+    if result.bedrock_velocity_mode == 'solve_cell':
+        _validate_solve_cell_local_v2_arrays(
+            result=result,
+            n_traces=n_traces,
+            n_nodes=n_nodes,
+            n_source=n_source,
+            n_receiver=n_receiver,
+        )
     return _ValidatedResult(
         result=result,
         n_traces=n_traces,
@@ -1152,6 +1218,45 @@ def _validate_result(result: RefractionDatumStaticsResult) -> _ValidatedResult:
         n_receiver_endpoints=n_receiver,
         n_rows=n_rows,
     )
+
+
+def _validate_solve_cell_local_v2_arrays(
+    *,
+    result: RefractionDatumStaticsResult,
+    n_traces: int,
+    n_nodes: int,
+    n_source: int,
+    n_receiver: int,
+) -> None:
+    expected_lengths = {
+        'node_v2_cell_id': n_nodes,
+        'node_v2_m_s': n_nodes,
+        'node_v2_status': n_nodes,
+        'source_v2_cell_id': n_source,
+        'source_v2_m_s': n_source,
+        'source_v2_status': n_source,
+        'receiver_v2_cell_id': n_receiver,
+        'receiver_v2_m_s': n_receiver,
+        'receiver_v2_status': n_receiver,
+        'source_v2_cell_id_sorted': n_traces,
+        'source_v2_m_s_sorted': n_traces,
+        'source_v2_status_sorted': n_traces,
+        'receiver_v2_cell_id_sorted': n_traces,
+        'receiver_v2_m_s_sorted': n_traces,
+        'receiver_v2_status_sorted': n_traces,
+    }
+    for name, expected_length in expected_lengths.items():
+        value = getattr(result, name)
+        if value is None:
+            raise RefractionStaticArtifactError(
+                f'solve_cell result requires {name}'
+            )
+        if _length(value, name=name) != expected_length:
+            raise RefractionStaticArtifactError(
+                f'solve_cell local V2 array length mismatch for {name}'
+            )
+        if name.endswith('_status'):
+            _validate_status_array(value, name=name)
 
 
 def _validate_resolved_first_layer(
@@ -1470,12 +1575,21 @@ def _source_static_table_rows(
     node_context = _node_context(result)
     static_status = _source_static_status_array(result)
     flat_datum = _nan_if_none(result.flat_datum_elevation_m)
+    source_v2 = _endpoint_v2_m_s(
+        result.source_v2_m_s,
+        shape=int(result.source_endpoint_key.shape[0]),
+        scalar_v2_m_s=result.bedrock_velocity_m_s,
+    )
+    source_v2_cell_id = _endpoint_cell_id_array(
+        result.source_v2_cell_id,
+        int(result.source_endpoint_key.shape[0]),
+    )
     rows: list[dict[str, object]] = []
     for index in range(int(result.source_endpoint_key.shape[0])):
         node_id = int(result.source_node_id[index])
-        t1_s = node_context['t1_s'].get(node_id)
-        sh1_m = node_context['weathering_thickness'].get(node_id)
-        weathering_correction_s = node_context['weathering_correction'].get(node_id)
+        t1_s = result.source_half_intercept_time_s[index]
+        sh1_m = result.source_weathering_thickness_m[index]
+        weathering_correction_s = result.source_weathering_replacement_shift_s[index]
         elevation_correction_s = _sum_correction_s(
             result.source_floating_datum_elevation_shift_s[index],
             result.source_flat_datum_shift_s[index],
@@ -1486,6 +1600,7 @@ def _source_static_table_rows(
                 'source_endpoint_key': str(result.source_endpoint_key[index]),
                 'source_id': int(result.source_id[index]),
                 'source_node_id': node_id,
+                'source_v2_cell_id': _csv_cell_id(source_v2_cell_id[index]),
                 'x_m': _csv_float(result.source_x_m[index]),
                 'y_m': _csv_float(result.source_y_m[index]),
                 'surface_elevation_m': _csv_float(
@@ -1497,7 +1612,7 @@ def _source_static_table_rows(
                 'flat_datum_elevation_m': _csv_float(flat_datum),
                 't1_ms': _csv_ms(t1_s),
                 'v1_m_s': _csv_float(result.weathering_velocity_m_s),
-                'v2_m_s': _csv_float(result.bedrock_velocity_m_s),
+                'v2_m_s': _csv_float(source_v2[index]),
                 'sh1_weathering_thickness_m': _csv_float(sh1_m),
                 'refractor_elevation_m': _csv_float(
                     result.source_refractor_elevation_m[index]
@@ -1539,12 +1654,21 @@ def _receiver_static_table_rows(
     node_context = _node_context(result)
     static_status = _receiver_static_status_array(result)
     flat_datum = _nan_if_none(result.flat_datum_elevation_m)
+    receiver_v2 = _endpoint_v2_m_s(
+        result.receiver_v2_m_s,
+        shape=int(result.receiver_endpoint_key.shape[0]),
+        scalar_v2_m_s=result.bedrock_velocity_m_s,
+    )
+    receiver_v2_cell_id = _endpoint_cell_id_array(
+        result.receiver_v2_cell_id,
+        int(result.receiver_endpoint_key.shape[0]),
+    )
     rows: list[dict[str, object]] = []
     for index in range(int(result.receiver_endpoint_key.shape[0])):
         node_id = int(result.receiver_node_id[index])
-        t1_s = node_context['t1_s'].get(node_id)
-        sh1_m = node_context['weathering_thickness'].get(node_id)
-        weathering_correction_s = node_context['weathering_correction'].get(node_id)
+        t1_s = result.receiver_half_intercept_time_s[index]
+        sh1_m = result.receiver_weathering_thickness_m[index]
+        weathering_correction_s = result.receiver_weathering_replacement_shift_s[index]
         elevation_correction_s = _sum_correction_s(
             result.receiver_floating_datum_elevation_shift_s[index],
             result.receiver_flat_datum_shift_s[index],
@@ -1555,6 +1679,7 @@ def _receiver_static_table_rows(
                 'receiver_endpoint_key': str(result.receiver_endpoint_key[index]),
                 'receiver_id': int(result.receiver_id[index]),
                 'receiver_node_id': node_id,
+                'receiver_v2_cell_id': _csv_cell_id(receiver_v2_cell_id[index]),
                 'x_m': _csv_float(result.receiver_x_m[index]),
                 'y_m': _csv_float(result.receiver_y_m[index]),
                 'surface_elevation_m': _csv_float(
@@ -1566,7 +1691,7 @@ def _receiver_static_table_rows(
                 'flat_datum_elevation_m': _csv_float(flat_datum),
                 't1_ms': _csv_ms(t1_s),
                 'v1_m_s': _csv_float(result.weathering_velocity_m_s),
-                'v2_m_s': _csv_float(result.bedrock_velocity_m_s),
+                'v2_m_s': _csv_float(receiver_v2[index]),
                 'sh1_weathering_thickness_m': _csv_float(sh1_m),
                 'refractor_elevation_m': _csv_float(
                     result.receiver_refractor_elevation_m[index]
@@ -1650,16 +1775,8 @@ def _source_static_status_array(result: RefractionDatumStaticsResult) -> np.ndar
         x_m=result.source_x_m,
         y_m=result.source_y_m,
         surface_elevation_m=result.source_surface_elevation_m,
-        t1_s=_endpoint_node_values(
-            result.source_node_id,
-            result.node_id,
-            result.node_half_intercept_time_s,
-        ),
-        weathering_thickness_m=_endpoint_node_values(
-            result.source_node_id,
-            result.node_id,
-            result.node_weathering_thickness_m,
-        ),
+        t1_s=result.source_half_intercept_time_s,
+        weathering_thickness_m=result.source_weathering_thickness_m,
         total_shift_s=result.source_refraction_shift_s,
         datum_status=result.source_datum_status,
         node_solution_status=node_context['solution_status'],
@@ -1674,16 +1791,8 @@ def _receiver_static_status_array(result: RefractionDatumStaticsResult) -> np.nd
         x_m=result.receiver_x_m,
         y_m=result.receiver_y_m,
         surface_elevation_m=result.receiver_surface_elevation_m,
-        t1_s=_endpoint_node_values(
-            result.receiver_node_id,
-            result.node_id,
-            result.node_half_intercept_time_s,
-        ),
-        weathering_thickness_m=_endpoint_node_values(
-            result.receiver_node_id,
-            result.node_id,
-            result.node_weathering_thickness_m,
-        ),
+        t1_s=result.receiver_half_intercept_time_s,
+        weathering_thickness_m=result.receiver_weathering_thickness_m,
         total_shift_s=result.receiver_refraction_shift_s,
         datum_status=result.receiver_datum_status,
         node_solution_status=node_context['solution_status'],
@@ -1938,6 +2047,29 @@ def _filled_float_array(value: object, shape: int) -> np.ndarray:
     return np.full(int(shape), float(value), dtype=np.float64)
 
 
+def _endpoint_v2_m_s(
+    value: object,
+    *,
+    shape: int,
+    scalar_v2_m_s: float,
+) -> np.ndarray:
+    if value is None:
+        return _filled_float_array(scalar_v2_m_s, shape)
+    return np.ascontiguousarray(value, dtype=np.float64)
+
+
+def _endpoint_cell_id_array(value: object, shape: int) -> np.ndarray:
+    if value is None:
+        return np.full(int(shape), -1, dtype=np.int64)
+    return np.ascontiguousarray(value, dtype=np.int64)
+
+
+def _endpoint_v2_status_array(value: object, shape: int) -> np.ndarray:
+    if value is None:
+        return _string_array(np.full(int(shape), 'ok', dtype='<U2'))
+    return _string_array(value)
+
+
 def _sum_float_arrays(left: object, right: object) -> np.ndarray:
     left_arr = np.asarray(left, dtype=np.float64)
     right_arr = np.asarray(right, dtype=np.float64)
@@ -2022,6 +2154,13 @@ def _csv_int(value: object) -> str | int:
         return int(value)
     except (TypeError, ValueError):
         return ''
+
+
+def _csv_cell_id(value: object) -> str | int:
+    out = _csv_int(value)
+    if out == '' or int(out) < 0:
+        return ''
+    return out
 
 
 def _stat(values: object, stat: str) -> float | None:

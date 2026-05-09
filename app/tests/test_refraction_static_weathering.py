@@ -104,6 +104,25 @@ def test_math_helper_converts_half_intercepts_and_preserves_nan() -> None:
     ) == pytest.approx(0.010 * _conversion_factor())
 
 
+def test_math_helper_accepts_vector_bedrock_velocity() -> None:
+    half = np.asarray([0.010, 0.012, 0.014], dtype=np.float64)
+    bedrock_velocity = np.asarray([2200.0, 2500.0, 3000.0], dtype=np.float64)
+
+    thickness = compute_weathering_thickness_from_half_intercept_time(
+        half_intercept_time_s=half,
+        weathering_velocity_m_s=WEATHERING_VELOCITY_M_S,
+        bedrock_velocity_m_s=bedrock_velocity,
+    )
+
+    expected = (
+        half
+        * bedrock_velocity
+        * WEATHERING_VELOCITY_M_S
+        / np.sqrt(bedrock_velocity * bedrock_velocity - WEATHERING_VELOCITY_M_S**2)
+    )
+    np.testing.assert_allclose(thickness, expected, rtol=1.0e-12)
+
+
 def test_build_weathering_model_maps_nodes_endpoints_and_trace_order(
     tmp_path: Path,
 ) -> None:

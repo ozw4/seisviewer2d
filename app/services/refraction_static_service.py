@@ -10,7 +10,6 @@ from typing import Any
 from uuid import uuid4
 
 from app.api.schemas import (
-    REFRACTION_SOLVE_CELL_APPLY_UNSUPPORTED_MESSAGE,
     RefractionStaticApplyRequest,
 )
 from app.core.state import AppState
@@ -171,8 +170,6 @@ def _run_refraction_static_apply_job_body(
     state: AppState,
 ) -> JobCompletion | None:
     req = RefractionStaticApplyRequest.model_validate(req)
-    if req.model.bedrock_velocity_mode == 'solve_cell':
-        raise ValueError(REFRACTION_SOLVE_CELL_APPLY_UNSUPPORTED_MESSAGE)
     _set_job_progress_message(
         state,
         job_id,

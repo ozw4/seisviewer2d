@@ -281,6 +281,14 @@ class RefractionHalfInterceptTimeResult:
 
     qc: dict[str, Any]
 
+    active_cell_id: np.ndarray | None = None
+    inactive_cell_id: np.ndarray | None = None
+    cell_bedrock_slowness_s_per_m: np.ndarray | None = None
+    cell_bedrock_velocity_m_s: np.ndarray | None = None
+    cell_velocity_status: np.ndarray | None = None
+    row_midpoint_cell_id: np.ndarray | None = None
+    row_midpoint_bedrock_velocity_m_s: np.ndarray | None = None
+
 
 @dataclass(frozen=True)
 class RefractionWeatheringThicknessResult:
@@ -365,6 +373,22 @@ class RefractionWeatheringThicknessResult:
     rejected_by_robust_mask: np.ndarray
 
     qc: dict[str, Any]
+
+    node_v2_cell_id: np.ndarray | None = None
+    node_v2_m_s: np.ndarray | None = None
+    node_v2_status: np.ndarray | None = None
+    source_v2_cell_id: np.ndarray | None = None
+    source_v2_m_s: np.ndarray | None = None
+    source_v2_status: np.ndarray | None = None
+    receiver_v2_cell_id: np.ndarray | None = None
+    receiver_v2_m_s: np.ndarray | None = None
+    receiver_v2_status: np.ndarray | None = None
+    source_v2_cell_id_sorted: np.ndarray | None = None
+    source_v2_m_s_sorted: np.ndarray | None = None
+    source_v2_status_sorted: np.ndarray | None = None
+    receiver_v2_cell_id_sorted: np.ndarray | None = None
+    receiver_v2_m_s_sorted: np.ndarray | None = None
+    receiver_v2_status_sorted: np.ndarray | None = None
 
 
 @dataclass(frozen=True)
@@ -454,6 +478,22 @@ class RefractionWeatheringReplacementStaticsResult:
     rejected_by_robust_mask: np.ndarray
 
     qc: dict[str, Any]
+
+    node_v2_cell_id: np.ndarray | None = None
+    node_v2_m_s: np.ndarray | None = None
+    node_v2_status: np.ndarray | None = None
+    source_v2_cell_id: np.ndarray | None = None
+    source_v2_m_s: np.ndarray | None = None
+    source_v2_status: np.ndarray | None = None
+    receiver_v2_cell_id: np.ndarray | None = None
+    receiver_v2_m_s: np.ndarray | None = None
+    receiver_v2_status: np.ndarray | None = None
+    source_v2_cell_id_sorted: np.ndarray | None = None
+    source_v2_m_s_sorted: np.ndarray | None = None
+    source_v2_status_sorted: np.ndarray | None = None
+    receiver_v2_cell_id_sorted: np.ndarray | None = None
+    receiver_v2_m_s_sorted: np.ndarray | None = None
+    receiver_v2_status_sorted: np.ndarray | None = None
 
 
 @dataclass(frozen=True)
@@ -564,6 +604,22 @@ class RefractionDatumStaticsResult:
     rejected_by_robust_mask: np.ndarray
 
     qc: dict[str, Any]
+
+    node_v2_cell_id: np.ndarray | None = None
+    node_v2_m_s: np.ndarray | None = None
+    node_v2_status: np.ndarray | None = None
+    source_v2_cell_id: np.ndarray | None = None
+    source_v2_m_s: np.ndarray | None = None
+    source_v2_status: np.ndarray | None = None
+    receiver_v2_cell_id: np.ndarray | None = None
+    receiver_v2_m_s: np.ndarray | None = None
+    receiver_v2_status: np.ndarray | None = None
+    source_v2_cell_id_sorted: np.ndarray | None = None
+    source_v2_m_s_sorted: np.ndarray | None = None
+    source_v2_status_sorted: np.ndarray | None = None
+    receiver_v2_cell_id_sorted: np.ndarray | None = None
+    receiver_v2_m_s_sorted: np.ndarray | None = None
+    receiver_v2_status_sorted: np.ndarray | None = None
 
 
 @dataclass(frozen=True)
