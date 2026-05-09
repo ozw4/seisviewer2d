@@ -374,6 +374,12 @@ class RefractionWeatheringThicknessResult:
 
     qc: dict[str, Any]
 
+    active_cell_id: np.ndarray | None = None
+    inactive_cell_id: np.ndarray | None = None
+    cell_bedrock_slowness_s_per_m: np.ndarray | None = None
+    cell_bedrock_velocity_m_s: np.ndarray | None = None
+    cell_velocity_status: np.ndarray | None = None
+    row_midpoint_cell_id: np.ndarray | None = None
     node_v2_cell_id: np.ndarray | None = None
     node_v2_m_s: np.ndarray | None = None
     node_v2_status: np.ndarray | None = None
@@ -479,6 +485,12 @@ class RefractionWeatheringReplacementStaticsResult:
 
     qc: dict[str, Any]
 
+    active_cell_id: np.ndarray | None = None
+    inactive_cell_id: np.ndarray | None = None
+    cell_bedrock_slowness_s_per_m: np.ndarray | None = None
+    cell_bedrock_velocity_m_s: np.ndarray | None = None
+    cell_velocity_status: np.ndarray | None = None
+    row_midpoint_cell_id: np.ndarray | None = None
     node_v2_cell_id: np.ndarray | None = None
     node_v2_m_s: np.ndarray | None = None
     node_v2_status: np.ndarray | None = None
@@ -605,6 +617,12 @@ class RefractionDatumStaticsResult:
 
     qc: dict[str, Any]
 
+    active_cell_id: np.ndarray | None = None
+    inactive_cell_id: np.ndarray | None = None
+    cell_bedrock_slowness_s_per_m: np.ndarray | None = None
+    cell_bedrock_velocity_m_s: np.ndarray | None = None
+    cell_velocity_status: np.ndarray | None = None
+    row_midpoint_cell_id: np.ndarray | None = None
     node_v2_cell_id: np.ndarray | None = None
     node_v2_m_s: np.ndarray | None = None
     node_v2_status: np.ndarray | None = None
@@ -638,6 +656,9 @@ class RefractionStaticArtifactSet:
     artifact_names: tuple[str, ...]
     qc: dict[str, Any]
     refraction_t1lsst_1layer_components_csv: Path | None = None
+    refraction_refractor_velocity_cells_csv: Path | None = None
+    refraction_refractor_velocity_grid_npz: Path | None = None
+    refraction_refractor_velocity_qc_json: Path | None = None
 
 
 @dataclass(frozen=True)

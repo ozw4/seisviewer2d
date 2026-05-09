@@ -14,6 +14,7 @@ from uuid import uuid4
 import numpy as np
 
 from app.api.schemas import RefractionStaticApplyRequest
+from app.services.refraction_static_cell_grid import build_refraction_cell_grid
 from app.services.refraction_static_status import (
     REFRACTION_STATIC_STATUSES,
     classify_refraction_endpoint_static_status,
@@ -41,6 +42,13 @@ REFRACTION_STATIC_COMPONENTS_CSV_NAME = 'refraction_static_components.csv'
 SOURCE_STATIC_TABLE_CSV_NAME = 'source_static_table.csv'
 RECEIVER_STATIC_TABLE_CSV_NAME = 'receiver_static_table.csv'
 SOURCE_RECEIVER_STATIC_TABLE_NPZ_NAME = 'source_receiver_static_table.npz'
+REFRACTION_REFRACTOR_VELOCITY_CELLS_CSV_NAME = (
+    'refraction_refractor_velocity_cells.csv'
+)
+REFRACTION_REFRACTOR_VELOCITY_GRID_NPZ_NAME = (
+    'refraction_refractor_velocity_grid.npz'
+)
+REFRACTION_REFRACTOR_VELOCITY_QC_JSON_NAME = 'refraction_refractor_velocity_qc.json'
 REFRACTION_STATIC_ARTIFACTS_JSON_NAME = 'refraction_static_artifacts.json'
 REFRACTION_STATIC_REQUEST_JSON_NAME = 'refraction_static_request.json'
 
@@ -142,9 +150,35 @@ _T1LSST_1LAYER_ARTIFACTS: tuple[dict[str, str | bool], ...] = (
     },
 )
 
+_REFRACTOR_CELL_VELOCITY_ARTIFACTS: tuple[dict[str, str | bool], ...] = (
+    {
+        'name': REFRACTION_REFRACTOR_VELOCITY_CELLS_CSV_NAME,
+        'kind': 'csv',
+        'required': True,
+        'description': 'Per-cell refractor velocity grid and QC metrics',
+    },
+    {
+        'name': REFRACTION_REFRACTOR_VELOCITY_GRID_NPZ_NAME,
+        'kind': 'npz',
+        'required': True,
+        'description': 'Machine-readable refractor velocity cell grid',
+    },
+    {
+        'name': REFRACTION_REFRACTOR_VELOCITY_QC_JSON_NAME,
+        'kind': 'json',
+        'required': True,
+        'description': 'Refractor velocity cell QC summary',
+    },
+)
+
 REFRACTION_STATIC_REGISTERED_ARTIFACT_NAMES = frozenset(
     str(item['name'])
-    for item in _ARTIFACTS + _V1_ARTIFACTS + _T1LSST_1LAYER_ARTIFACTS
+    for item in (
+        _ARTIFACTS
+        + _V1_ARTIFACTS
+        + _T1LSST_1LAYER_ARTIFACTS
+        + _REFRACTOR_CELL_VELOCITY_ARTIFACTS
+    )
 ) | {
     REFRACTION_STATIC_ARTIFACTS_JSON_NAME,
     REFRACTION_STATIC_REQUEST_JSON_NAME,
@@ -253,6 +287,7 @@ _SOURCE_STATIC_TABLE_COLUMNS = (
     't1_ms',
     'v1_m_s',
     'v2_m_s',
+    'v2_status',
     'sh1_weathering_thickness_m',
     'refractor_elevation_m',
     'weathering_correction_ms',
@@ -285,6 +320,7 @@ _RECEIVER_STATIC_TABLE_COLUMNS = (
     't1_ms',
     'v1_m_s',
     'v2_m_s',
+    'v2_status',
     'sh1_weathering_thickness_m',
     'refractor_elevation_m',
     'weathering_correction_ms',
@@ -301,6 +337,30 @@ _RECEIVER_STATIC_TABLE_COLUMNS = (
     'used_pick_count',
     'residual_rms_ms',
     'residual_mad_ms',
+)
+
+_REFRACTOR_VELOCITY_CELL_COLUMNS = (
+    'cell_id',
+    'ix',
+    'iy',
+    'x_min_m',
+    'x_max_m',
+    'y_min_m',
+    'y_max_m',
+    'x_center_m',
+    'y_center_m',
+    'active',
+    'n_observations',
+    'n_used_observations',
+    'n_rejected_observations',
+    'v2_m_s',
+    'slowness_s_per_m',
+    'velocity_status',
+    'residual_rms_ms',
+    'residual_mad_ms',
+    'residual_mean_ms',
+    'residual_p95_abs_ms',
+    'smoothing_neighbor_count',
 )
 
 
@@ -366,6 +426,22 @@ def write_refraction_static_artifacts(
         if request.conversion.mode == 't1lsst_1layer'
         else None
     )
+    cell_velocity_artifacts_enabled = request.model.bedrock_velocity_mode == 'solve_cell'
+    cell_velocity_cells_path = (
+        root / REFRACTION_REFRACTOR_VELOCITY_CELLS_CSV_NAME
+        if cell_velocity_artifacts_enabled
+        else None
+    )
+    cell_velocity_grid_path = (
+        root / REFRACTION_REFRACTOR_VELOCITY_GRID_NPZ_NAME
+        if cell_velocity_artifacts_enabled
+        else None
+    )
+    cell_velocity_qc_path = (
+        root / REFRACTION_REFRACTOR_VELOCITY_QC_JSON_NAME
+        if cell_velocity_artifacts_enabled
+        else None
+    )
 
     paths = RefractionStaticArtifactSet(
         job_dir=root,
@@ -384,6 +460,9 @@ def write_refraction_static_artifacts(
         ),
         qc=qc,
         refraction_t1lsst_1layer_components_csv=t1lsst_components_path,
+        refraction_refractor_velocity_cells_csv=cell_velocity_cells_path,
+        refraction_refractor_velocity_grid_npz=cell_velocity_grid_path,
+        refraction_refractor_velocity_qc_json=cell_velocity_qc_path,
     )
 
     write_refraction_static_solution_npz(
@@ -421,6 +500,26 @@ def write_refraction_static_artifacts(
         result=values.result,
         path=paths.source_receiver_static_table_npz,
     )
+    if (
+        paths.refraction_refractor_velocity_cells_csv is not None
+        and paths.refraction_refractor_velocity_grid_npz is not None
+        and paths.refraction_refractor_velocity_qc_json is not None
+    ):
+        write_refraction_refractor_velocity_cells_csv(
+            result=values.result,
+            req=request,
+            path=paths.refraction_refractor_velocity_cells_csv,
+        )
+        write_refraction_refractor_velocity_grid_npz(
+            result=values.result,
+            req=request,
+            path=paths.refraction_refractor_velocity_grid_npz,
+        )
+        write_refraction_refractor_velocity_qc_json(
+            result=values.result,
+            req=request,
+            path=paths.refraction_refractor_velocity_qc_json,
+        )
     if paths.refraction_t1lsst_1layer_components_csv is not None:
         write_refraction_t1lsst_1layer_components_csv(
             result=values.result,
@@ -443,6 +542,16 @@ def write_refraction_static_artifacts(
     if paths.refraction_t1lsst_1layer_components_csv is not None:
         artifact_paths = artifact_paths + (
             paths.refraction_t1lsst_1layer_components_csv,
+        )
+    if (
+        paths.refraction_refractor_velocity_cells_csv is not None
+        and paths.refraction_refractor_velocity_grid_npz is not None
+        and paths.refraction_refractor_velocity_qc_json is not None
+    ):
+        artifact_paths = artifact_paths + (
+            paths.refraction_refractor_velocity_cells_csv,
+            paths.refraction_refractor_velocity_grid_npz,
+            paths.refraction_refractor_velocity_qc_json,
         )
     for artifact_path in artifact_paths:
         if not artifact_path.is_file():
@@ -564,6 +673,267 @@ def write_source_receiver_static_table_npz(
     values = _validate_result(result)
     payload = build_source_receiver_static_table_arrays(result=values.result)
     _write_npz_atomic(Path(path), payload)
+
+
+def write_refraction_refractor_velocity_cells_csv(
+    *,
+    result: RefractionDatumStaticsResult,
+    req: RefractionStaticApplyRequest,
+    path: Path,
+) -> None:
+    arrays = build_refraction_refractor_velocity_grid_arrays(
+        result=result,
+        req=req,
+    )
+    rows = _refractor_velocity_cell_rows(arrays)
+    _write_csv_atomic(Path(path), _REFRACTOR_VELOCITY_CELL_COLUMNS, rows)
+
+
+def write_refraction_refractor_velocity_grid_npz(
+    *,
+    result: RefractionDatumStaticsResult,
+    req: RefractionStaticApplyRequest,
+    path: Path,
+) -> None:
+    arrays = build_refraction_refractor_velocity_grid_arrays(
+        result=result,
+        req=req,
+    )
+    _validate_no_object_arrays(
+        arrays,
+        artifact_name=REFRACTION_REFRACTOR_VELOCITY_GRID_NPZ_NAME,
+    )
+    _write_npz_atomic(Path(path), arrays)
+
+
+def write_refraction_refractor_velocity_qc_json(
+    *,
+    result: RefractionDatumStaticsResult,
+    req: RefractionStaticApplyRequest,
+    path: Path,
+) -> dict[str, Any]:
+    payload = build_refraction_refractor_velocity_qc_payload(
+        result=result,
+        req=req,
+    )
+    _write_json_atomic(Path(path), payload)
+    return payload
+
+
+def build_refraction_refractor_velocity_grid_arrays(
+    *,
+    result: RefractionDatumStaticsResult,
+    req: RefractionStaticApplyRequest,
+) -> dict[str, np.ndarray]:
+    values = _validate_result(result)
+    request = RefractionStaticApplyRequest.model_validate(req)
+    if request.model.bedrock_velocity_mode != 'solve_cell':
+        raise RefractionStaticArtifactError(
+            'refractor cell velocity artifacts require solve_cell request mode'
+        )
+    if values.result.bedrock_velocity_mode != 'solve_cell':
+        raise RefractionStaticArtifactError(
+            'refractor cell velocity artifacts require solve_cell result mode'
+        )
+    refractor_cell = request.model.refractor_cell
+    if refractor_cell is None:
+        raise RefractionStaticArtifactError(
+            'model.refractor_cell is required for cell velocity artifacts'
+        )
+
+    grid = build_refraction_cell_grid(refractor_cell)
+    n_total_cells = int(grid.cell_id.shape[0])
+    active_cell_id = _required_cell_int_array(
+        values.result.active_cell_id,
+        name='active_cell_id',
+    )
+    inactive_cell_id = _required_cell_int_array(
+        values.result.inactive_cell_id,
+        name='inactive_cell_id',
+    )
+    cell_slowness = _required_cell_float_array(
+        values.result.cell_bedrock_slowness_s_per_m,
+        name='cell_bedrock_slowness_s_per_m',
+    )
+    cell_velocity = _required_cell_float_array(
+        values.result.cell_bedrock_velocity_m_s,
+        name='cell_bedrock_velocity_m_s',
+    )
+    cell_status = _required_cell_status_array(
+        values.result.cell_velocity_status,
+        name='cell_velocity_status',
+    )
+    row_midpoint_cell_id = _required_cell_int_array(
+        values.result.row_midpoint_cell_id,
+        name='row_midpoint_cell_id',
+    )
+    if row_midpoint_cell_id.shape != (values.n_rows,):
+        raise RefractionStaticArtifactError(
+            'row_midpoint_cell_id length must match residual rows'
+        )
+    active_shape = active_cell_id.shape
+    for name, array in (
+        ('cell_bedrock_slowness_s_per_m', cell_slowness),
+        ('cell_bedrock_velocity_m_s', cell_velocity),
+        ('cell_velocity_status', cell_status),
+    ):
+        if array.shape != active_shape:
+            raise RefractionStaticArtifactError(
+                f'{name} length must match active_cell_id'
+            )
+    _validate_refractor_velocity_cell_ids(
+        grid_cell_id=grid.cell_id,
+        active_cell_id=active_cell_id,
+        inactive_cell_id=inactive_cell_id,
+    )
+
+    active_cell_mask = np.zeros(n_total_cells, dtype=bool)
+    v2_m_s = np.full(n_total_cells, np.nan, dtype=np.float64)
+    slowness_s_per_m = np.full(n_total_cells, np.nan, dtype=np.float64)
+    velocity_status = np.full(n_total_cells, 'inactive', dtype='<U32')
+    smoothing_neighbor_count = _active_neighbor_count_by_cell(
+        active_cell_id=active_cell_id,
+        n_total_cells=n_total_cells,
+        number_of_cell_x=grid.number_of_cell_x,
+        number_of_cell_y=grid.number_of_cell_y,
+    )
+    for index, raw_cell_id in enumerate(active_cell_id.tolist()):
+        cell_id = int(raw_cell_id)
+        active_cell_mask[cell_id] = True
+        v2_m_s[cell_id] = float(cell_velocity[index])
+        slowness_s_per_m[cell_id] = float(cell_slowness[index])
+        velocity_status[cell_id] = str(cell_status[index])
+
+    n_observations = np.zeros(n_total_cells, dtype=np.int64)
+    n_used_observations = np.zeros(n_total_cells, dtype=np.int64)
+    valid_row_cell = (
+        (row_midpoint_cell_id >= 0)
+        & (row_midpoint_cell_id < n_total_cells)
+    )
+    np.add.at(n_observations, row_midpoint_cell_id[valid_row_cell], 1)
+    used_row = valid_row_cell & np.asarray(values.result.used_row_mask, dtype=bool)
+    np.add.at(n_used_observations, row_midpoint_cell_id[used_row], 1)
+    residual_stats = _per_cell_residual_stats_ms(
+        row_midpoint_cell_id=row_midpoint_cell_id,
+        residual_time_s=values.result.residual_time_s,
+        used_row_mask=values.result.used_row_mask,
+        n_total_cells=n_total_cells,
+    )
+
+    arrays = {
+        'cell_id': np.ascontiguousarray(grid.cell_id, dtype=np.int64),
+        'ix': np.ascontiguousarray(grid.ix, dtype=np.int64),
+        'iy': np.ascontiguousarray(grid.iy, dtype=np.int64),
+        'x_min_m': np.ascontiguousarray(grid.x_min_m, dtype=np.float64),
+        'x_max_m': np.ascontiguousarray(grid.x_max_m, dtype=np.float64),
+        'y_min_m': np.ascontiguousarray(grid.y_min_m, dtype=np.float64),
+        'y_max_m': np.ascontiguousarray(grid.y_max_m, dtype=np.float64),
+        'x_center_m': np.ascontiguousarray(grid.x_center_m, dtype=np.float64),
+        'y_center_m': np.ascontiguousarray(grid.y_center_m, dtype=np.float64),
+        'active_cell_mask': np.ascontiguousarray(active_cell_mask, dtype=bool),
+        'n_observations_per_cell': np.ascontiguousarray(
+            n_observations,
+            dtype=np.int64,
+        ),
+        'n_used_observations_per_cell': np.ascontiguousarray(
+            n_used_observations,
+            dtype=np.int64,
+        ),
+        'n_rejected_observations_per_cell': np.ascontiguousarray(
+            n_observations - n_used_observations,
+            dtype=np.int64,
+        ),
+        'v2_m_s': np.ascontiguousarray(v2_m_s, dtype=np.float64),
+        'slowness_s_per_m': np.ascontiguousarray(slowness_s_per_m, dtype=np.float64),
+        'velocity_status': _string_array(velocity_status),
+        'residual_rms_ms': residual_stats['rms'],
+        'residual_mad_ms': residual_stats['mad'],
+        'residual_mean_ms': residual_stats['mean'],
+        'residual_p95_abs_ms': residual_stats['p95_abs'],
+        'smoothing_neighbor_count': np.ascontiguousarray(
+            smoothing_neighbor_count,
+            dtype=np.int64,
+        ),
+    }
+    _validate_no_object_arrays(
+        arrays,
+        artifact_name=REFRACTION_REFRACTOR_VELOCITY_GRID_NPZ_NAME,
+    )
+    return arrays
+
+
+def build_refraction_refractor_velocity_qc_payload(
+    *,
+    result: RefractionDatumStaticsResult,
+    req: RefractionStaticApplyRequest,
+) -> dict[str, Any]:
+    request = RefractionStaticApplyRequest.model_validate(req)
+    arrays = build_refraction_refractor_velocity_grid_arrays(
+        result=result,
+        req=request,
+    )
+    refractor_cell = request.model.refractor_cell
+    if refractor_cell is None:
+        raise RefractionStaticArtifactError(
+            'model.refractor_cell is required for cell velocity QC'
+        )
+    active_mask = np.asarray(arrays['active_cell_mask'], dtype=bool)
+    velocity = np.asarray(arrays['v2_m_s'], dtype=np.float64)
+    active_velocity = velocity[active_mask & np.isfinite(velocity)]
+    n_total = int(arrays['cell_id'].shape[0])
+    n_active = int(np.count_nonzero(active_mask))
+    n_observations_in_grid = int(np.sum(arrays['n_observations_per_cell']))
+    n_valid_observations = int(np.count_nonzero(result.valid_observation_mask_sorted))
+    default_outside_observations = max(0, n_valid_observations - n_observations_in_grid)
+    n_used = int(np.sum(arrays['n_used_observations_per_cell']))
+    n_smoothing_rows = _qc_int(
+        result.qc,
+        'n_cell_smoothing_rows',
+        default=_estimated_cell_smoothing_rows(
+            active_cell_mask=active_mask,
+            number_of_cell_x=int(refractor_cell.number_of_cell_x),
+            number_of_cell_y=int(refractor_cell.number_of_cell_y),
+            velocity_smoothing_weight=float(
+                refractor_cell.velocity_smoothing_weight
+            ),
+        ),
+    )
+    payload: dict[str, Any] = {
+        'artifact_version': ARTIFACT_VERSION,
+        'bedrock_velocity_mode': 'solve_cell',
+        'cell_assignment_mode': refractor_cell.assignment_mode,
+        'outside_grid_policy': refractor_cell.outside_grid_policy,
+        'number_of_cell_x': int(refractor_cell.number_of_cell_x),
+        'number_of_cell_y': int(refractor_cell.number_of_cell_y),
+        'size_of_cell_x_m': float(refractor_cell.size_of_cell_x_m),
+        'size_of_cell_y_m': _json_float(refractor_cell.size_of_cell_y_m),
+        'n_total_cells': n_total,
+        'n_active_cells': n_active,
+        'n_inactive_cells': int(n_total - n_active),
+        'n_observations_outside_grid': _qc_int(
+            result.qc,
+            'n_observations_outside_grid',
+            default=default_outside_observations,
+        ),
+        'n_used_observations': n_used,
+        'velocity_min_m_s': _stat(active_velocity, 'min'),
+        'velocity_median_m_s': _stat(active_velocity, 'median'),
+        'velocity_max_m_s': _stat(active_velocity, 'max'),
+        'velocity_smoothing_weight': float(
+            refractor_cell.velocity_smoothing_weight
+        ),
+        'smoothing_reference_distance_m': _qc_optional_float(
+            result.qc,
+            'smoothing_reference_distance_m',
+            default=refractor_cell.smoothing_reference_distance_m,
+        ),
+        'n_cell_smoothing_rows': n_smoothing_rows,
+    }
+    _assert_strict_json(
+        payload,
+        artifact_name=REFRACTION_REFRACTOR_VELOCITY_QC_JSON_NAME,
+    )
+    return payload
 
 
 def build_source_receiver_static_table_arrays(
@@ -1123,6 +1493,15 @@ def build_refraction_static_qc_payload(
         'artifacts': _artifact_list_for_qc(artifact_entries),
         'warnings': [],
     }
+    if r.bedrock_velocity_mode == 'solve_cell':
+        payload['velocity']['cell_velocity_qc_artifact'] = (
+            REFRACTION_REFRACTOR_VELOCITY_QC_JSON_NAME
+        )
+        payload['refractor_velocity_cells'] = {
+            'cells_csv_artifact': REFRACTION_REFRACTOR_VELOCITY_CELLS_CSV_NAME,
+            'grid_npz_artifact': REFRACTION_REFRACTOR_VELOCITY_GRID_NPZ_NAME,
+            'qc_json_artifact': REFRACTION_REFRACTOR_VELOCITY_QC_JSON_NAME,
+        }
     _assert_strict_json(payload, artifact_name=REFRACTION_STATIC_QC_JSON_NAME)
     return payload
 
@@ -1209,6 +1588,7 @@ def _validate_result(result: RefractionDatumStaticsResult) -> _ValidatedResult:
             n_nodes=n_nodes,
             n_source=n_source,
             n_receiver=n_receiver,
+            n_rows=n_rows,
         )
     return _ValidatedResult(
         result=result,
@@ -1227,6 +1607,7 @@ def _validate_solve_cell_local_v2_arrays(
     n_nodes: int,
     n_source: int,
     n_receiver: int,
+    n_rows: int,
 ) -> None:
     expected_lengths = {
         'node_v2_cell_id': n_nodes,
@@ -1257,6 +1638,40 @@ def _validate_solve_cell_local_v2_arrays(
             )
         if name.endswith('_status'):
             _validate_status_array(value, name=name)
+    active_cell_id = _required_cell_int_array(
+        result.active_cell_id,
+        name='active_cell_id',
+    )
+    for name in (
+        'cell_bedrock_slowness_s_per_m',
+        'cell_bedrock_velocity_m_s',
+        'cell_velocity_status',
+    ):
+        value = getattr(result, name)
+        if value is None:
+            raise RefractionStaticArtifactError(f'solve_cell result requires {name}')
+        if _length(value, name=name) != int(active_cell_id.shape[0]):
+            raise RefractionStaticArtifactError(
+                f'solve_cell cell array length mismatch for {name}'
+            )
+        if name.endswith('_status'):
+            _validate_status_array(value, name=name)
+    inactive_cell_id = _required_cell_int_array(
+        result.inactive_cell_id,
+        name='inactive_cell_id',
+    )
+    if np.intersect1d(active_cell_id, inactive_cell_id).size:
+        raise RefractionStaticArtifactError(
+            'active_cell_id and inactive_cell_id must not overlap'
+        )
+    row_midpoint_cell_id = _required_cell_int_array(
+        result.row_midpoint_cell_id,
+        name='row_midpoint_cell_id',
+    )
+    if int(row_midpoint_cell_id.shape[0]) != n_rows:
+        raise RefractionStaticArtifactError(
+            'solve_cell row_midpoint_cell_id length mismatch'
+        )
 
 
 def _validate_resolved_first_layer(
@@ -1584,6 +1999,10 @@ def _source_static_table_rows(
         result.source_v2_cell_id,
         int(result.source_endpoint_key.shape[0]),
     )
+    source_v2_status = _endpoint_v2_status_array(
+        result.source_v2_status,
+        int(result.source_endpoint_key.shape[0]),
+    )
     rows: list[dict[str, object]] = []
     for index in range(int(result.source_endpoint_key.shape[0])):
         node_id = int(result.source_node_id[index])
@@ -1613,6 +2032,7 @@ def _source_static_table_rows(
                 't1_ms': _csv_ms(t1_s),
                 'v1_m_s': _csv_float(result.weathering_velocity_m_s),
                 'v2_m_s': _csv_float(source_v2[index]),
+                'v2_status': str(source_v2_status[index]),
                 'sh1_weathering_thickness_m': _csv_float(sh1_m),
                 'refractor_elevation_m': _csv_float(
                     result.source_refractor_elevation_m[index]
@@ -1663,6 +2083,10 @@ def _receiver_static_table_rows(
         result.receiver_v2_cell_id,
         int(result.receiver_endpoint_key.shape[0]),
     )
+    receiver_v2_status = _endpoint_v2_status_array(
+        result.receiver_v2_status,
+        int(result.receiver_endpoint_key.shape[0]),
+    )
     rows: list[dict[str, object]] = []
     for index in range(int(result.receiver_endpoint_key.shape[0])):
         node_id = int(result.receiver_node_id[index])
@@ -1692,6 +2116,7 @@ def _receiver_static_table_rows(
                 't1_ms': _csv_ms(t1_s),
                 'v1_m_s': _csv_float(result.weathering_velocity_m_s),
                 'v2_m_s': _csv_float(receiver_v2[index]),
+                'v2_status': str(receiver_v2_status[index]),
                 'sh1_weathering_thickness_m': _csv_float(sh1_m),
                 'refractor_elevation_m': _csv_float(
                     result.receiver_refractor_elevation_m[index]
@@ -1886,6 +2311,7 @@ def _artifact_entries_for_request(
 ) -> tuple[dict[str, str | bool], ...]:
     return (
         _ARTIFACTS
+        + _refractor_cell_velocity_artifact_entries(req)
         + _t1lsst_artifact_entries(req)
         + _upstream_artifact_entries(
             _validate_upstream_artifact_names(
@@ -1894,6 +2320,14 @@ def _artifact_entries_for_request(
             )
         )
     )
+
+
+def _refractor_cell_velocity_artifact_entries(
+    req: RefractionStaticApplyRequest,
+) -> tuple[dict[str, str | bool], ...]:
+    if req.model.bedrock_velocity_mode == 'solve_cell':
+        return _REFRACTOR_CELL_VELOCITY_ARTIFACTS
+    return ()
 
 
 def _t1lsst_artifact_entries(
@@ -1999,6 +2433,203 @@ def _artifact_list_for_qc(
         }
         for item in artifact_entries
     ]
+
+
+def _refractor_velocity_cell_rows(
+    arrays: dict[str, np.ndarray],
+) -> list[dict[str, object]]:
+    rows: list[dict[str, object]] = []
+    n_cells = int(arrays['cell_id'].shape[0])
+    for index in range(n_cells):
+        rows.append(
+            {
+                'cell_id': int(arrays['cell_id'][index]),
+                'ix': int(arrays['ix'][index]),
+                'iy': int(arrays['iy'][index]),
+                'x_min_m': _csv_grid_float(arrays['x_min_m'][index]),
+                'x_max_m': _csv_grid_float(arrays['x_max_m'][index]),
+                'y_min_m': _csv_grid_float(arrays['y_min_m'][index]),
+                'y_max_m': _csv_grid_float(arrays['y_max_m'][index]),
+                'x_center_m': _csv_grid_float(arrays['x_center_m'][index]),
+                'y_center_m': _csv_grid_float(arrays['y_center_m'][index]),
+                'active': _csv_bool(arrays['active_cell_mask'][index]),
+                'n_observations': int(
+                    arrays['n_observations_per_cell'][index]
+                ),
+                'n_used_observations': int(
+                    arrays['n_used_observations_per_cell'][index]
+                ),
+                'n_rejected_observations': int(
+                    arrays['n_rejected_observations_per_cell'][index]
+                ),
+                'v2_m_s': _csv_float(arrays['v2_m_s'][index]),
+                'slowness_s_per_m': _csv_float(
+                    arrays['slowness_s_per_m'][index]
+                ),
+                'velocity_status': str(arrays['velocity_status'][index]),
+                'residual_rms_ms': _csv_float(arrays['residual_rms_ms'][index]),
+                'residual_mad_ms': _csv_float(arrays['residual_mad_ms'][index]),
+                'residual_mean_ms': _csv_float(arrays['residual_mean_ms'][index]),
+                'residual_p95_abs_ms': _csv_float(
+                    arrays['residual_p95_abs_ms'][index]
+                ),
+                'smoothing_neighbor_count': int(
+                    arrays['smoothing_neighbor_count'][index]
+                ),
+            }
+        )
+    return rows
+
+
+def _required_cell_int_array(value: object, *, name: str) -> np.ndarray:
+    if value is None:
+        raise RefractionStaticArtifactError(f'solve_cell result requires {name}')
+    return _int_array(value)
+
+
+def _required_cell_float_array(value: object, *, name: str) -> np.ndarray:
+    if value is None:
+        raise RefractionStaticArtifactError(f'solve_cell result requires {name}')
+    return _float_array(value)
+
+
+def _required_cell_status_array(value: object, *, name: str) -> np.ndarray:
+    if value is None:
+        raise RefractionStaticArtifactError(f'solve_cell result requires {name}')
+    status = _string_array(value)
+    _validate_status_array(status, name=name)
+    return status
+
+
+def _validate_refractor_velocity_cell_ids(
+    *,
+    grid_cell_id: np.ndarray,
+    active_cell_id: np.ndarray,
+    inactive_cell_id: np.ndarray,
+) -> None:
+    grid_ids = {int(value) for value in np.asarray(grid_cell_id).tolist()}
+    active_ids = [int(value) for value in np.asarray(active_cell_id).tolist()]
+    inactive_ids = [int(value) for value in np.asarray(inactive_cell_id).tolist()]
+    combined = active_ids + inactive_ids
+    if len(combined) != len(set(combined)):
+        raise RefractionStaticArtifactError(
+            'active and inactive refractor cell IDs must be unique'
+        )
+    combined_ids = set(combined)
+    if combined_ids != grid_ids:
+        missing = sorted(grid_ids - combined_ids)
+        extra = sorted(combined_ids - grid_ids)
+        raise RefractionStaticArtifactError(
+            'solve_cell refractor cell IDs do not cover the configured grid: '
+            f'missing={missing}, extra={extra}'
+        )
+
+
+def _active_neighbor_count_by_cell(
+    *,
+    active_cell_id: np.ndarray,
+    n_total_cells: int,
+    number_of_cell_x: int,
+    number_of_cell_y: int,
+) -> np.ndarray:
+    active = {int(value) for value in np.asarray(active_cell_id).tolist()}
+    counts = np.zeros(int(n_total_cells), dtype=np.int64)
+    for cell_id in active:
+        ix = cell_id % int(number_of_cell_x)
+        iy = cell_id // int(number_of_cell_x)
+        neighbors = []
+        if ix > 0:
+            neighbors.append(cell_id - 1)
+        if ix + 1 < int(number_of_cell_x):
+            neighbors.append(cell_id + 1)
+        if iy > 0:
+            neighbors.append(cell_id - int(number_of_cell_x))
+        if iy + 1 < int(number_of_cell_y):
+            neighbors.append(cell_id + int(number_of_cell_x))
+        counts[cell_id] = sum(1 for neighbor in neighbors if neighbor in active)
+    return np.ascontiguousarray(counts, dtype=np.int64)
+
+
+def _estimated_cell_smoothing_rows(
+    *,
+    active_cell_mask: np.ndarray,
+    number_of_cell_x: int,
+    number_of_cell_y: int,
+    velocity_smoothing_weight: float,
+) -> int:
+    if float(velocity_smoothing_weight) == 0.0:
+        return 0
+    active = {
+        index
+        for index, enabled in enumerate(np.asarray(active_cell_mask, dtype=bool))
+        if bool(enabled)
+    }
+    n_edges = 0
+    for cell_id in active:
+        ix = cell_id % int(number_of_cell_x)
+        iy = cell_id // int(number_of_cell_x)
+        right = cell_id + 1
+        down = cell_id + int(number_of_cell_x)
+        if ix + 1 < int(number_of_cell_x) and right in active:
+            n_edges += 1
+        if iy + 1 < int(number_of_cell_y) and down in active:
+            n_edges += 1
+    return n_edges
+
+
+def _per_cell_residual_stats_ms(
+    *,
+    row_midpoint_cell_id: np.ndarray,
+    residual_time_s: np.ndarray,
+    used_row_mask: np.ndarray,
+    n_total_cells: int,
+) -> dict[str, np.ndarray]:
+    row_cell = np.asarray(row_midpoint_cell_id, dtype=np.int64)
+    residual_ms = np.asarray(residual_time_s, dtype=np.float64) * 1000.0
+    used = np.asarray(used_row_mask, dtype=bool)
+    out = {
+        'rms': np.full(int(n_total_cells), np.nan, dtype=np.float64),
+        'mad': np.full(int(n_total_cells), np.nan, dtype=np.float64),
+        'mean': np.full(int(n_total_cells), np.nan, dtype=np.float64),
+        'p95_abs': np.full(int(n_total_cells), np.nan, dtype=np.float64),
+    }
+    for cell_id in range(int(n_total_cells)):
+        values = residual_ms[(row_cell == cell_id) & used]
+        for stat, key in (
+            ('rms', 'rms'),
+            ('mad', 'mad'),
+            ('mean', 'mean'),
+            ('p95_abs', 'p95_abs'),
+        ):
+            stat_value = _residual_stat(values, stat)
+            if stat_value is not None:
+                out[key][cell_id] = float(stat_value)
+    return {
+        key: np.ascontiguousarray(value, dtype=np.float64)
+        for key, value in out.items()
+    }
+
+
+def _qc_int(qc: dict[str, Any], key: str, *, default: int) -> int:
+    raw = qc.get(key)
+    if raw is None:
+        return int(default)
+    try:
+        return int(raw)
+    except (TypeError, ValueError) as exc:
+        raise RefractionStaticArtifactError(
+            f'QC field {key} must be an integer'
+        ) from exc
+
+
+def _qc_optional_float(
+    qc: dict[str, Any],
+    key: str,
+    *,
+    default: float | None,
+) -> float | None:
+    raw = qc.get(key, default)
+    return _json_float(raw)
 
 
 def _length(value: object, *, name: str) -> int:
@@ -2136,6 +2767,22 @@ def _csv_float(value: object) -> str | float:
     except (TypeError, ValueError):
         return ''
     return out if np.isfinite(out) else ''
+
+
+def _csv_grid_float(value: object) -> str | float:
+    if value is None:
+        return ''
+    try:
+        out = float(value)
+    except (TypeError, ValueError):
+        return ''
+    if np.isnan(out):
+        return ''
+    if np.isposinf(out):
+        return 'inf'
+    if np.isneginf(out):
+        return '-inf'
+    return out
 
 
 def _csv_ms(value_s: object) -> str | float:
@@ -2281,6 +2928,9 @@ def _assert_strict_json(payload: dict[str, Any], *, artifact_name: str) -> None:
 __all__ = [
     'FIRST_BREAK_RESIDUALS_CSV_NAME',
     'NEAR_SURFACE_MODEL_CSV_NAME',
+    'REFRACTION_REFRACTOR_VELOCITY_CELLS_CSV_NAME',
+    'REFRACTION_REFRACTOR_VELOCITY_GRID_NPZ_NAME',
+    'REFRACTION_REFRACTOR_VELOCITY_QC_JSON_NAME',
     'REFRACTION_STATICS_CSV_NAME',
     'REFRACTION_STATIC_ARTIFACTS_JSON_NAME',
     'REFRACTION_STATIC_COMPONENTS_CSV_NAME',
@@ -2296,11 +2946,16 @@ __all__ = [
     'SOURCE_STATIC_TABLE_CSV_NAME',
     'RefractionStaticArtifactError',
     'RefractionStaticArtifactSet',
+    'build_refraction_refractor_velocity_grid_arrays',
+    'build_refraction_refractor_velocity_qc_payload',
     'build_refraction_static_qc_payload',
     'build_refraction_static_solution_arrays',
     'build_source_receiver_static_table_arrays',
     'write_first_break_residuals_csv',
     'write_near_surface_model_csv',
+    'write_refraction_refractor_velocity_cells_csv',
+    'write_refraction_refractor_velocity_grid_npz',
+    'write_refraction_refractor_velocity_qc_json',
     'write_refraction_static_artifacts',
     'write_refraction_static_components_csv',
     'write_refraction_static_qc_json',
