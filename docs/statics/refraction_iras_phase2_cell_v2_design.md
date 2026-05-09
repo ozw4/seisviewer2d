@@ -246,8 +246,10 @@ upper_slowness_s_per_m = 1 / min_bedrock_velocity_m_s
 For `solve_cell`, every active cell slowness parameter uses these bounds.
 `initial_bedrock_velocity_m_s`, when provided, initializes all active cells;
 otherwise the solver chooses a value within the configured bounds. The scalar
-`bedrock_velocity_m_s` and `bedrock_slowness_s_per_m` fields in result objects
-are summary medians across active cells.
+`bedrock_slowness_s_per_m` field in result objects is the median active-cell
+slowness, and scalar `bedrock_velocity_m_s` is its reciprocal. Per-cell
+`cell_bedrock_slowness_s_per_m` and `cell_bedrock_velocity_m_s` arrays remain
+the authoritative cell-based values.
 
 ## 9. Smoothing regularization equation
 

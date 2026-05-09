@@ -62,6 +62,33 @@ def test_solve_cell_e2e_recovers_noiseless_v2_t1_sh1_wcor() -> None:
     assert np.all(result.trace_static_valid_mask_sorted)
 
 
+def test_solve_cell_e2e_even_active_cell_count_does_not_fail() -> None:
+    result = run_synthetic_cell_refraction_statics(
+        input_model=synthetic_cell_refracted_arrival_input_model(
+            allowed_midpoint_cell_ids=(0, 1),
+        )
+    )
+
+    assert result.bedrock_velocity_mode == 'solve_cell'
+    assert result.bedrock_velocity_m_s == pytest.approx(
+        1.0 / result.bedrock_slowness_s_per_m
+    )
+    assert result.active_cell_id is not None
+    assert result.cell_bedrock_velocity_m_s is not None
+    assert result.cell_bedrock_slowness_s_per_m is not None
+    np.testing.assert_array_equal(result.active_cell_id, [0, 1])
+    np.testing.assert_allclose(
+        result.cell_bedrock_velocity_m_s,
+        SYNTHETIC_CELL_V2_M_S[:2],
+        atol=SYNTHETIC_CELL_V2_TOLERANCE_M_S,
+    )
+    np.testing.assert_allclose(
+        result.cell_bedrock_slowness_s_per_m,
+        1.0 / SYNTHETIC_CELL_V2_M_S[:2],
+        atol=1.0e-10,
+    )
+
+
 def test_solve_cell_e2e_robust_rejects_outliers() -> None:
     input_model = synthetic_cell_refracted_arrival_input_model()
     pick_time = input_model.pick_time_s_sorted.copy()

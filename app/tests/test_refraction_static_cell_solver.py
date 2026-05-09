@@ -363,20 +363,18 @@ def test_cell_smoothing_zero_weight_reproduces_unsmoothed_solve() -> None:
     assert zero_weight_result.qc['n_cell_smoothing_rows'] == 0
 
 
-def test_cell_solver_reports_median_velocity_summary() -> None:
+def test_solve_cell_summary_velocity_is_reciprocal_of_summary_slowness() -> None:
     result = solve_refraction_static_bounded_ls(
         design_matrix=_cell_design(),
         model=_cell_model(),
         solver=_solver(),
     )
 
+    expected_slowness = float(np.median(TRUE_CELL_BEDROCK_SLOWNESS_S_PER_M))
+
     assert result.bedrock_velocity_mode == 'solve_cell'
-    assert result.bedrock_velocity_m_s == pytest.approx(
-        float(np.median(TRUE_CELL_BEDROCK_VELOCITY_M_S))
-    )
-    assert result.bedrock_slowness_s_per_m == pytest.approx(
-        float(np.median(TRUE_CELL_BEDROCK_SLOWNESS_S_PER_M))
-    )
+    assert result.bedrock_slowness_s_per_m == pytest.approx(expected_slowness)
+    assert result.bedrock_velocity_m_s == pytest.approx(1.0 / expected_slowness)
     assert result.qc['bedrock_velocity_solution_kind'] == 'per_cell'
     assert result.qc['cell_bedrock_velocity_min_m_s'] == pytest.approx(2000.0)
     assert result.qc['cell_bedrock_velocity_median_m_s'] == pytest.approx(2500.0)

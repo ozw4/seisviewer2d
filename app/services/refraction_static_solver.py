@@ -1456,9 +1456,12 @@ def _extract_bedrock_solution(
             lower_bounds=lower_bounds,
             upper_bounds=upper_bounds,
         )
+        summary_slowness = float(
+            np.median(cell_solution.cell_bedrock_slowness_s_per_m)
+        )
         return (
-            float(np.median(cell_solution.cell_bedrock_slowness_s_per_m)),
-            float(np.median(cell_solution.cell_bedrock_velocity_m_s)),
+            summary_slowness,
+            float(1.0 / summary_slowness),
             cell_solution,
         )
     if problem.bedrock_slowness_col is None:
