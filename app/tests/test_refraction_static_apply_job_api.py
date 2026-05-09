@@ -23,6 +23,9 @@ from app.services.refraction_static_apply_trace_store import (
 from app.services.refraction_static_artifacts import (
     FIRST_BREAK_RESIDUALS_CSV_NAME,
     NEAR_SURFACE_MODEL_CSV_NAME,
+    REFRACTION_REFRACTOR_VELOCITY_CELLS_CSV_NAME,
+    REFRACTION_REFRACTOR_VELOCITY_GRID_NPZ_NAME,
+    REFRACTION_REFRACTOR_VELOCITY_QC_JSON_NAME,
     REFRACTION_STATICS_CSV_NAME,
     REFRACTION_STATIC_ARTIFACTS_JSON_NAME,
     REFRACTION_STATIC_COMPONENTS_CSV_NAME,
@@ -49,6 +52,8 @@ from app.tests._refraction_static_synthetic import (
     expected_sh1_m_for_node,
     expected_t1_s_for_node,
     expected_wcor_s_for_node,
+    synthetic_cell_refracted_arrival_input_model,
+    synthetic_cell_refraction_apply_request,
     synthetic_direct_arrival_input_model,
     synthetic_refracted_arrival_input_model,
     synthetic_refraction_apply_request,
@@ -820,6 +825,44 @@ def test_refraction_static_job_lists_source_receiver_tables(
         RECEIVER_STATIC_TABLE_CSV_NAME,
         SOURCE_RECEIVER_STATIC_TABLE_NPZ_NAME,
     }.issubset(listed)
+
+
+def test_refraction_static_job_lists_solve_cell_artifacts(
+    client: TestClient,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    job_id = 'refraction-solve-cell-artifacts-e2e'
+    job_dir = tmp_path / 'jobs' / job_id
+    req = synthetic_cell_refraction_apply_request()
+    input_model = synthetic_cell_refracted_arrival_input_model()
+    _create_refraction_job(client, job_id=job_id, req=req, job_dir=job_dir)
+    monkeypatch.setattr(
+        refraction_inputs_module,
+        'build_refraction_static_input_model',
+        lambda **_kwargs: input_model,
+    )
+
+    run_refraction_static_apply_job(job_id, req, client.app.state.sv)
+
+    with client.app.state.sv.lock:
+        job = dict(client.app.state.sv.jobs[job_id])
+    assert job['status'] == 'done'
+    listed = _listed_job_files(client, job_id)
+    assert {
+        REFRACTION_REFRACTOR_VELOCITY_CELLS_CSV_NAME,
+        REFRACTION_REFRACTOR_VELOCITY_GRID_NPZ_NAME,
+        REFRACTION_REFRACTOR_VELOCITY_QC_JSON_NAME,
+    }.issubset(listed)
+    manifest = json.loads(
+        (job_dir / REFRACTION_STATIC_ARTIFACTS_JSON_NAME).read_text(encoding='utf-8')
+    )
+    manifest_names = {item['name'] for item in manifest['artifacts']}
+    assert {
+        REFRACTION_REFRACTOR_VELOCITY_CELLS_CSV_NAME,
+        REFRACTION_REFRACTOR_VELOCITY_GRID_NPZ_NAME,
+        REFRACTION_REFRACTOR_VELOCITY_QC_JSON_NAME,
+    }.issubset(manifest_names)
 
 
 def test_refraction_static_download_new_artifacts(
