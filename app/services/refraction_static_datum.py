@@ -48,6 +48,14 @@ _FROM_ARTIFACT_MESSAGE = (
     'floating datum artifact must be provided or resolvable for '
     'floating_datum_mode=from_artifact'
 )
+_CELL_THRESHOLD_QC_KEYS = (
+    'min_observations_per_cell',
+    'n_low_fold_cells',
+    'n_observations_rejected_by_low_fold_cell',
+    'low_fold_cell_rejection_reason',
+    'low_fold_cell_id',
+    'cell_observation_count',
+)
 
 _STATUS_PRIORITY = {
     'ok': 0,
@@ -60,14 +68,15 @@ _STATUS_PRIORITY = {
     'invalid_weathering_replacement': 7,
     'outside_refractor_cell_grid': 8,
     'inactive_v2_cell': 9,
-    'invalid_local_v2': 10,
-    'v2_not_greater_than_v1': 11,
-    'invalid_flat_datum_elevation': 12,
-    'invalid_floating_datum_elevation': 13,
-    'invalid_surface_elevation': 14,
-    'invalid_bedrock_velocity': 15,
-    'missing_endpoint': 16,
-    'missing_node': 17,
+    'low_fold_v2_cell': 10,
+    'invalid_local_v2': 11,
+    'v2_not_greater_than_v1': 12,
+    'invalid_flat_datum_elevation': 13,
+    'invalid_floating_datum_elevation': 14,
+    'invalid_surface_elevation': 15,
+    'invalid_bedrock_velocity': 16,
+    'missing_endpoint': 17,
+    'missing_node': 18,
 }
 
 _INVALID_TRACE_STATUSES = {
@@ -80,6 +89,7 @@ _INVALID_TRACE_STATUSES = {
     'invalid_weathering_replacement',
     'outside_refractor_cell_grid',
     'inactive_v2_cell',
+    'low_fold_v2_cell',
     'invalid_local_v2',
     'v2_not_greater_than_v1',
     'floating_datum_below_refractor',
@@ -100,6 +110,7 @@ _UPSTREAM_REPLACEMENT_STATUS_TO_DATUM_STATUS = {
     'invalid_weathering_thickness': 'invalid_weathering_replacement',
     'outside_refractor_cell_grid': 'outside_refractor_cell_grid',
     'inactive_v2_cell': 'inactive_v2_cell',
+    'low_fold_v2_cell': 'low_fold_v2_cell',
     'invalid_local_v2': 'invalid_local_v2',
     'v2_not_greater_than_v1': 'v2_not_greater_than_v1',
 }
@@ -589,6 +600,7 @@ def build_refraction_datum_statics(
         source_status=source_status,
         receiver_status=receiver_status,
         max_abs_shift_ms=max_abs_shift_ms,
+        upstream_qc=getattr(weathering_replacement_result, 'qc', {}),
     )
 
     result = RefractionDatumStaticsResult(
@@ -2674,6 +2686,7 @@ def _build_qc(
     source_status: np.ndarray,
     receiver_status: np.ndarray,
     max_abs_shift_ms: float | None,
+    upstream_qc: dict[str, Any],
 ) -> dict[str, Any]:
     valid_weathering_ms = weathering_replacement_trace_shift_s[trace_valid_mask] * 1000.0
     valid_floating_ms = floating_datum_shift_s[trace_valid_mask] * 1000.0
@@ -2779,6 +2792,7 @@ def _build_qc(
         'formula_to_floating': _FORMULA_TO_FLOATING_TEXT,
         'formula_to_flat': _FORMULA_TO_FLAT_TEXT,
     }
+    _copy_cell_threshold_qc(qc, upstream_qc)
     _assert_json_safe(qc)
     return qc
 
@@ -3084,6 +3098,12 @@ def _assign_inherited_replacement_status(
     known.update(_UPSTREAM_REPLACEMENT_NON_INVALID_STATUSES)
     unknown = ~np.isin(inherited, list(known))
     _assign(status, unknown, 'invalid_weathering_replacement')
+
+
+def _copy_cell_threshold_qc(payload: dict[str, Any], upstream: dict[str, Any]) -> None:
+    for key in _CELL_THRESHOLD_QC_KEYS:
+        if key in upstream:
+            payload[key] = upstream[key]
 
 
 def _assign(status: np.ndarray, mask: np.ndarray, value: str) -> None:

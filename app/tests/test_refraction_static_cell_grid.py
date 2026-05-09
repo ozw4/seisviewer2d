@@ -52,6 +52,31 @@ def test_cell_grid_builds_1d_line_cells() -> None:
     assert grid.size_of_cell_y_m == float('inf')
 
 
+def test_line_2d_projected_requires_origin_and_azimuth() -> None:
+    payload = _cell_request().model_dump(mode='json')
+    payload['coordinate_mode'] = 'line_2d_projected'
+
+    with pytest.raises(ValueError, match='line_origin_x_m'):
+        RefractionStaticRefractorCellRequest.model_validate(payload)
+
+
+def test_line_2d_projected_rejects_number_of_cell_y_greater_than_one() -> None:
+    payload = _cell_request().model_dump(mode='json')
+    payload.update(
+        {
+            'coordinate_mode': 'line_2d_projected',
+            'line_origin_x_m': 1000.0,
+            'line_origin_y_m': 2000.0,
+            'line_azimuth_deg': 45.0,
+            'number_of_cell_y': 2,
+            'size_of_cell_y_m': 25.0,
+        }
+    )
+
+    with pytest.raises(ValueError, match='number_of_cell_y must be 1'):
+        RefractionStaticRefractorCellRequest.model_validate(payload)
+
+
 def test_cell_grid_builds_2d_cells_with_row_major_ids() -> None:
     grid = build_refraction_cell_grid(
         _cell_request(

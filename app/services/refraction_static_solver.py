@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Any, Literal
 
 import numpy as np
@@ -26,6 +26,14 @@ RobustMethod = Literal['mad', 'sigma']
 
 _BOUND_TOL = 1.0e-10
 _ROBUST_SCALE_FLOOR_S = 1.0e-12
+_CELL_THRESHOLD_QC_KEYS = (
+    'min_observations_per_cell',
+    'n_low_fold_cells',
+    'n_observations_rejected_by_low_fold_cell',
+    'low_fold_cell_rejection_reason',
+    'low_fold_cell_id',
+    'cell_observation_count',
+)
 
 
 class RefractionStaticSolverError(ValueError):
@@ -141,7 +149,7 @@ def solve_refraction_static_bounded_ls(
     resolved_first_layer: ResolvedRefractionFirstLayer | None = None,
 ) -> RefractionStaticSolverResult:
     """Solve a refraction static design matrix with physical bounds."""
-    return solve_refraction_static_bounded_ls_from_matrix(
+    result = solve_refraction_static_bounded_ls_from_matrix(
         matrix=design_matrix.matrix,
         rhs_s=design_matrix.rhs_s,
         active_node_id=design_matrix.active_node_id,
@@ -169,6 +177,17 @@ def solve_refraction_static_bounded_ls(
         solver=solver,
         resolved_first_layer=resolved_first_layer,
     )
+    if design_matrix.bedrock_velocity_mode != 'solve_cell':
+        return result
+    design_qc = getattr(design_matrix, 'qc', {})
+    extra_qc = {
+        key: design_qc[key]
+        for key in _CELL_THRESHOLD_QC_KEYS
+        if key in design_qc
+    }
+    if not extra_qc:
+        return result
+    return replace(result, qc={**result.qc, **extra_qc})
 
 
 def solve_refraction_static_bounded_ls_from_matrix(
@@ -1456,9 +1475,12 @@ def _extract_bedrock_solution(
             lower_bounds=lower_bounds,
             upper_bounds=upper_bounds,
         )
+        summary_slowness = float(
+            np.median(cell_solution.cell_bedrock_slowness_s_per_m)
+        )
         return (
-            float(np.median(cell_solution.cell_bedrock_slowness_s_per_m)),
-            float(np.median(cell_solution.cell_bedrock_velocity_m_s)),
+            summary_slowness,
+            float(1.0 / summary_slowness),
             cell_solution,
         )
     if problem.bedrock_slowness_col is None:

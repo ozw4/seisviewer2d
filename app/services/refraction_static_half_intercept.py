@@ -17,6 +17,7 @@ from app.services.refraction_static_bedrock import (
     estimate_global_bedrock_slowness_from_input_model,
 )
 from app.services.refraction_static_design_matrix import (
+    LOW_FOLD_CELL_REJECTION_REASON,
     OUTSIDE_REFRACTOR_CELL_GRID_REASON,
     build_refraction_static_design_matrix,
 )
@@ -838,8 +839,11 @@ def _expected_design_trace_indices(
         name='design_matrix.rejection_reason_sorted',
         expected_shape=(inputs.n_traces,),
     ).astype(str, copy=False)
-    inside_mask = reason != OUTSIDE_REFRACTOR_CELL_GRID_REASON
-    return np.flatnonzero(valid_mask & inside_mask).astype(np.int64, copy=False)
+    accepted_mask = ~np.isin(
+        reason,
+        [OUTSIDE_REFRACTOR_CELL_GRID_REASON, LOW_FOLD_CELL_REJECTION_REASON],
+    )
+    return np.flatnonzero(valid_mask & accepted_mask).astype(np.int64, copy=False)
 
 
 def _build_node_solution_arrays(
@@ -1208,6 +1212,12 @@ def _build_qc(
             'cell_bedrock_velocity_min_m_s',
             'cell_bedrock_velocity_median_m_s',
             'cell_bedrock_velocity_max_m_s',
+            'min_observations_per_cell',
+            'n_low_fold_cells',
+            'n_observations_rejected_by_low_fold_cell',
+            'low_fold_cell_rejection_reason',
+            'low_fold_cell_id',
+            'cell_observation_count',
         ):
             if key in solver_qc:
                 qc[key] = solver_qc[key]

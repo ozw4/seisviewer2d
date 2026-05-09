@@ -8,6 +8,10 @@ import numpy as np
 from scipy import sparse
 
 from app.api.schemas import RefractionStaticModelRequest
+from app.services.refraction_static_cell_coordinates import (
+    effective_refraction_cell_grid_config,
+    project_refraction_cell_coordinates,
+)
 from app.services.refraction_static_cell_grid import (
     assign_observation_midpoint_cells,
     build_refraction_cell_grid,
@@ -22,6 +26,8 @@ from app.services.refraction_static_types import (
 BedrockVelocityMode = Literal['solve_global', 'fixed_global', 'solve_cell']
 CellAssignmentMode = Literal['midpoint']
 OUTSIDE_REFRACTOR_CELL_GRID_REASON = 'outside_refractor_cell_grid'
+LOW_FOLD_CELL_REJECTION_REASON = 'below_min_observations_per_cell'
+LOW_FOLD_CELL_VELOCITY_STATUS = 'low_fold'
 
 
 class RefractionStaticDesignMatrixError(ValueError):
@@ -126,13 +132,24 @@ def build_refraction_static_cell_design_matrix(
             'model.refractor_cell is required when '
             'model.bedrock_velocity_mode is solve_cell'
         )
-    grid = build_refraction_cell_grid(refractor_cell)
-    assignment = assign_observation_midpoint_cells(
-        grid,
+    grid_config = effective_refraction_cell_grid_config(refractor_cell)
+    grid = build_refraction_cell_grid(grid_config)
+    projected = project_refraction_cell_coordinates(
         source_x_m=input_model.source_x_m_sorted,
         source_y_m=input_model.source_y_m_sorted,
         receiver_x_m=input_model.receiver_x_m_sorted,
         receiver_y_m=input_model.receiver_y_m_sorted,
+        mode=refractor_cell.coordinate_mode,
+        line_origin_x_m=refractor_cell.line_origin_x_m,
+        line_origin_y_m=refractor_cell.line_origin_y_m,
+        line_azimuth_deg=refractor_cell.line_azimuth_deg,
+    )
+    assignment = assign_observation_midpoint_cells(
+        grid,
+        source_x_m=projected.source_x_m,
+        source_y_m=projected.source_y_m,
+        receiver_x_m=projected.receiver_x_m,
+        receiver_y_m=projected.receiver_y_m,
     )
     return build_refraction_static_design_matrix_from_arrays(
         pick_time_s_sorted=input_model.pick_time_s_sorted,
@@ -148,7 +165,9 @@ def build_refraction_static_cell_design_matrix(
         number_of_cell_x=grid.number_of_cell_x,
         number_of_cell_y=grid.number_of_cell_y,
         cell_assignment_mode=refractor_cell.assignment_mode,
+        min_observations_per_cell=refractor_cell.min_observations_per_cell,
         rejection_reason_sorted=input_model.rejection_reason_sorted,
+        coordinate_qc=projected.qc,
     )
 
 
@@ -168,7 +187,9 @@ def build_refraction_static_design_matrix_from_arrays(
     number_of_cell_x: int | None = None,
     number_of_cell_y: int | None = None,
     cell_assignment_mode: CellAssignmentMode | None = None,
+    min_observations_per_cell: int | None = None,
     rejection_reason_sorted: np.ndarray | None = None,
+    coordinate_qc: dict[str, Any] | None = None,
 ) -> RefractionStaticDesignMatrix:
     """Build a refraction static design matrix from sorted observation arrays."""
     mode = _validate_bedrock_velocity_mode(bedrock_velocity_mode)
@@ -237,6 +258,9 @@ def build_refraction_static_design_matrix_from_arrays(
     n_cell_y: int | None = None
     assignment_mode: CellAssignmentMode | None = None
     n_observations_outside_grid = 0
+    n_observations_rejected_by_low_fold_cell = 0
+    min_cell_observations: int | None = None
+    low_fold_cell_id: np.ndarray | None = None
     cell_observation_counts: np.ndarray | None = None
     if mode == 'solve_cell':
         midpoint_cell_id = _coerce_1d_integer_int64(
@@ -251,6 +275,9 @@ def build_refraction_static_design_matrix_from_arrays(
             number_of_cell_y=number_of_cell_y,
         )
         assignment_mode = _validate_cell_assignment_mode(cell_assignment_mode)
+        min_cell_observations = _validate_min_observations_per_cell(
+            min_observations_per_cell
+        )
         _validate_midpoint_cell_ids(
             midpoint_cell_id,
             n_total_cells=total_cell_count,
@@ -258,7 +285,28 @@ def build_refraction_static_design_matrix_from_arrays(
         inside_grid_mask = midpoint_cell_id >= 0
         outside_grid_mask = valid_mask & ~inside_grid_mask
         n_observations_outside_grid = int(np.count_nonzero(outside_grid_mask))
-        selected_mask = valid_mask & inside_grid_mask
+        in_grid_selected_mask = valid_mask & inside_grid_mask
+        cell_observation_counts = np.bincount(
+            midpoint_cell_id[in_grid_selected_mask],
+            minlength=total_cell_count,
+        )
+        low_fold_cell_mask = (
+            (cell_observation_counts > 0)
+            & (cell_observation_counts < min_cell_observations)
+        )
+        low_fold_cell_id = np.ascontiguousarray(
+            np.flatnonzero(low_fold_cell_mask),
+            dtype=np.int64,
+        )
+        low_fold_row_mask = np.zeros(expected_shape, dtype=bool)
+        if low_fold_cell_id.size:
+            low_fold_row_mask[in_grid_selected_mask] = low_fold_cell_mask[
+                midpoint_cell_id[in_grid_selected_mask]
+            ]
+        n_observations_rejected_by_low_fold_cell = int(
+            np.count_nonzero(low_fold_row_mask)
+        )
+        selected_mask = in_grid_selected_mask & ~low_fold_row_mask
         if design_rejection_reason is None:
             design_rejection_reason = np.where(valid_mask, 'ok', '').astype('<U32')
         design_rejection_reason = np.ascontiguousarray(
@@ -268,12 +316,17 @@ def build_refraction_static_design_matrix_from_arrays(
         design_rejection_reason[outside_grid_mask] = (
             OUTSIDE_REFRACTOR_CELL_GRID_REASON
         )
+        design_rejection_reason[low_fold_row_mask] = (
+            LOW_FOLD_CELL_REJECTION_REASON
+        )
     elif (
         midpoint_cell_id_sorted is not None
         or n_total_cells is not None
         or number_of_cell_x is not None
         or number_of_cell_y is not None
         or cell_assignment_mode is not None
+        or min_observations_per_cell is not None
+        or coordinate_qc is not None
     ):
         raise RefractionStaticDesignMatrixError(
             'cell design matrix inputs are only allowed for solve_cell mode'
@@ -285,6 +338,11 @@ def build_refraction_static_design_matrix_from_arrays(
     )
     n_observations = int(row_trace_index.shape[0])
     if n_observations <= 0:
+        if mode == 'solve_cell' and n_observations_rejected_by_low_fold_cell > 0:
+            raise RefractionStaticDesignMatrixError(
+                'at least one valid refraction observation meeting '
+                'min_observations_per_cell is required'
+            )
         if mode == 'solve_cell' and n_observations_outside_grid > 0:
             raise RefractionStaticDesignMatrixError(
                 'at least one valid refraction observation inside the '
@@ -364,10 +422,6 @@ def build_refraction_static_design_matrix_from_arrays(
             row_midpoint_cell_id,
             cell_id_to_col=cell_id_to_col,
         )
-        cell_observation_counts = np.bincount(
-            row_midpoint_cell_id,
-            minlength=total_cell_count,
-        )
         active_cell_count = int(active_cell_id.shape[0])
         inactive_cell_count = int(inactive_cell_id.shape[0])
         n_parameters = int(active_node_id.shape[0]) + active_cell_count
@@ -433,6 +487,8 @@ def build_refraction_static_design_matrix_from_arrays(
             or cell_observation_counts is None
             or n_cell_x is None
             or n_cell_y is None
+            or min_cell_observations is None
+            or low_fold_cell_id is None
         ):
             raise RefractionStaticDesignMatrixError(
                 'solve_cell mode requires cell QC inputs'
@@ -440,14 +496,20 @@ def build_refraction_static_design_matrix_from_arrays(
         qc.update(
             _build_cell_qc(
                 cell_assignment_mode=assignment_mode,
+                min_observations_per_cell=min_cell_observations,
                 n_total_cells=total_cell_count,
                 active_cell_id=active_cell_id,
                 inactive_cell_id=inactive_cell_id,
+                low_fold_cell_id=low_fold_cell_id,
                 cell_observation_counts=cell_observation_counts,
                 n_observations_outside_grid=n_observations_outside_grid,
+                n_observations_rejected_by_low_fold_cell=(
+                    n_observations_rejected_by_low_fold_cell
+                ),
                 n_observations_used=n_observations,
                 number_of_cell_x=n_cell_x,
                 number_of_cell_y=n_cell_y,
+                coordinate_qc=coordinate_qc,
             )
         )
 
@@ -609,14 +671,18 @@ def _build_qc(
 def _build_cell_qc(
     *,
     cell_assignment_mode: CellAssignmentMode,
+    min_observations_per_cell: int,
     n_total_cells: int,
     active_cell_id: np.ndarray,
     inactive_cell_id: np.ndarray,
+    low_fold_cell_id: np.ndarray,
     cell_observation_counts: np.ndarray,
     n_observations_outside_grid: int,
+    n_observations_rejected_by_low_fold_cell: int,
     n_observations_used: int,
     number_of_cell_x: int,
     number_of_cell_y: int,
+    coordinate_qc: dict[str, Any] | None,
 ) -> dict[str, Any]:
     active_counts = cell_observation_counts[active_cell_id]
     if active_counts.size:
@@ -627,20 +693,38 @@ def _build_cell_qc(
         min_observations = None
         median_observations = None
         max_observations = None
-    return {
+    payload: dict[str, Any] = {
         'cell_assignment_mode': cell_assignment_mode,
         'n_total_cells': int(n_total_cells),
         'number_of_cell_x': int(number_of_cell_x),
         'number_of_cell_y': int(number_of_cell_y),
         'n_active_cells': int(active_cell_id.shape[0]),
         'n_inactive_cells': int(inactive_cell_id.shape[0]),
+        'min_observations_per_cell': int(min_observations_per_cell),
+        'n_low_fold_cells': int(low_fold_cell_id.shape[0]),
         'n_observations_outside_grid': int(n_observations_outside_grid),
+        'n_observations_rejected_by_low_fold_cell': int(
+            n_observations_rejected_by_low_fold_cell
+        ),
         'n_observations_used': int(n_observations_used),
         'outside_grid_rejection_reason': OUTSIDE_REFRACTOR_CELL_GRID_REASON,
+        'low_fold_cell_rejection_reason': LOW_FOLD_CELL_REJECTION_REASON,
+        'low_fold_cell_id': [int(value) for value in low_fold_cell_id.tolist()],
+        'cell_observation_count': [
+            int(value) for value in cell_observation_counts.tolist()
+        ],
         'min_observations_per_active_cell': min_observations,
         'median_observations_per_active_cell': median_observations,
         'max_observations_per_active_cell': max_observations,
     }
+    if coordinate_qc is not None:
+        payload.update(coordinate_qc)
+    else:
+        payload['coordinate_mode'] = 'grid_3d'
+        payload['line_origin_x_m'] = None
+        payload['line_origin_y_m'] = None
+        payload['line_azimuth_deg'] = None
+    return payload
 
 
 def _connectivity_qc(
@@ -831,6 +915,21 @@ def _validate_cell_assignment_mode(value: object) -> CellAssignmentMode:
     raise RefractionStaticDesignMatrixError(
         'model.refractor_cell.assignment_mode must be midpoint'
     )
+
+
+def _validate_min_observations_per_cell(value: int | None) -> int:
+    if value is None:
+        return 1
+    if isinstance(value, (bool, np.bool_)) or not isinstance(value, (int, np.integer)):
+        raise RefractionStaticDesignMatrixError(
+            'min_observations_per_cell must be a positive integer'
+        )
+    out = int(value)
+    if out <= 0:
+        raise RefractionStaticDesignMatrixError(
+            'min_observations_per_cell must be a positive integer'
+        )
+    return out
 
 
 def _validate_n_total_cells(value: int | None) -> int:

@@ -14,7 +14,15 @@ from uuid import uuid4
 import numpy as np
 
 from app.api.schemas import RefractionStaticApplyRequest
+from app.services.refraction_static_cell_coordinates import (
+    effective_refraction_cell_grid_config,
+    refraction_cell_coordinate_metadata_from_config,
+)
 from app.services.refraction_static_cell_grid import build_refraction_cell_grid
+from app.services.refraction_static_design_matrix import (
+    LOW_FOLD_CELL_REJECTION_REASON,
+    LOW_FOLD_CELL_VELOCITY_STATUS,
+)
 from app.services.refraction_static_status import (
     REFRACTION_STATIC_STATUSES,
     classify_refraction_endpoint_static_status,
@@ -741,7 +749,8 @@ def build_refraction_refractor_velocity_grid_arrays(
             'model.refractor_cell is required for cell velocity artifacts'
         )
 
-    grid = build_refraction_cell_grid(refractor_cell)
+    grid_config = effective_refraction_cell_grid_config(refractor_cell)
+    grid = build_refraction_cell_grid(grid_config)
     n_total_cells = int(grid.cell_id.shape[0])
     active_cell_id = _required_cell_int_array(
         values.result.active_cell_id,
@@ -803,6 +812,13 @@ def build_refraction_refractor_velocity_grid_arrays(
         v2_m_s[cell_id] = float(cell_velocity[index])
         slowness_s_per_m[cell_id] = float(cell_slowness[index])
         velocity_status[cell_id] = str(cell_status[index])
+    low_fold_cell_id = _qc_cell_id_array(
+        values.result.qc,
+        'low_fold_cell_id',
+        n_total_cells=n_total_cells,
+    )
+    if low_fold_cell_id.size:
+        velocity_status[low_fold_cell_id] = LOW_FOLD_CELL_VELOCITY_STATUS
 
     n_observations = np.zeros(n_total_cells, dtype=np.int64)
     n_used_observations = np.zeros(n_total_cells, dtype=np.int64)
@@ -811,8 +827,19 @@ def build_refraction_refractor_velocity_grid_arrays(
         & (row_midpoint_cell_id < n_total_cells)
     )
     np.add.at(n_observations, row_midpoint_cell_id[valid_row_cell], 1)
+    qc_observation_count = _qc_cell_count_array(
+        values.result.qc,
+        'cell_observation_count',
+        n_total_cells=n_total_cells,
+    )
+    if qc_observation_count is not None:
+        n_observations = qc_observation_count
     used_row = valid_row_cell & np.asarray(values.result.used_row_mask, dtype=bool)
     np.add.at(n_used_observations, row_midpoint_cell_id[used_row], 1)
+    if np.any(n_used_observations > n_observations):
+        raise RefractionStaticArtifactError(
+            'used observations per cell cannot exceed total observations per cell'
+        )
     residual_stats = _per_cell_residual_stats_ms(
         row_midpoint_cell_id=row_midpoint_cell_id,
         residual_time_s=values.result.residual_time_s,
@@ -877,6 +904,7 @@ def build_refraction_refractor_velocity_qc_payload(
         raise RefractionStaticArtifactError(
             'model.refractor_cell is required for cell velocity QC'
         )
+    grid_config = effective_refraction_cell_grid_config(refractor_cell)
     active_mask = np.asarray(arrays['active_cell_mask'], dtype=bool)
     velocity = np.asarray(arrays['v2_m_s'], dtype=np.float64)
     active_velocity = velocity[active_mask & np.isfinite(velocity)]
@@ -886,13 +914,27 @@ def build_refraction_refractor_velocity_qc_payload(
     n_valid_observations = int(np.count_nonzero(result.valid_observation_mask_sorted))
     default_outside_observations = max(0, n_valid_observations - n_observations_in_grid)
     n_used = int(np.sum(arrays['n_used_observations_per_cell']))
+    n_low_fold = int(
+        np.count_nonzero(
+            np.asarray(arrays['velocity_status']).astype(str, copy=False)
+            == LOW_FOLD_CELL_VELOCITY_STATUS
+        )
+    )
+    n_low_fold_rejected = int(
+        np.sum(
+            np.asarray(arrays['n_rejected_observations_per_cell'], dtype=np.int64)[
+                np.asarray(arrays['velocity_status']).astype(str, copy=False)
+                == LOW_FOLD_CELL_VELOCITY_STATUS
+            ]
+        )
+    )
     n_smoothing_rows = _qc_int(
         result.qc,
         'n_cell_smoothing_rows',
         default=_estimated_cell_smoothing_rows(
             active_cell_mask=active_mask,
-            number_of_cell_x=int(refractor_cell.number_of_cell_x),
-            number_of_cell_y=int(refractor_cell.number_of_cell_y),
+            number_of_cell_x=int(grid_config.number_of_cell_x),
+            number_of_cell_y=int(grid_config.number_of_cell_y),
             velocity_smoothing_weight=float(
                 refractor_cell.velocity_smoothing_weight
             ),
@@ -902,18 +944,40 @@ def build_refraction_refractor_velocity_qc_payload(
         'artifact_version': ARTIFACT_VERSION,
         'bedrock_velocity_mode': 'solve_cell',
         'cell_assignment_mode': refractor_cell.assignment_mode,
+        **refraction_cell_coordinate_metadata_from_config(refractor_cell),
         'outside_grid_policy': refractor_cell.outside_grid_policy,
-        'number_of_cell_x': int(refractor_cell.number_of_cell_x),
-        'number_of_cell_y': int(refractor_cell.number_of_cell_y),
-        'size_of_cell_x_m': float(refractor_cell.size_of_cell_x_m),
-        'size_of_cell_y_m': _json_float(refractor_cell.size_of_cell_y_m),
+        'number_of_cell_x': int(grid_config.number_of_cell_x),
+        'number_of_cell_y': int(grid_config.number_of_cell_y),
+        'size_of_cell_x_m': float(grid_config.size_of_cell_x_m),
+        'size_of_cell_y_m': _json_float(grid_config.size_of_cell_y_m),
         'n_total_cells': n_total,
         'n_active_cells': n_active,
         'n_inactive_cells': int(n_total - n_active),
+        'min_observations_per_cell': _qc_int(
+            result.qc,
+            'min_observations_per_cell',
+            default=int(refractor_cell.min_observations_per_cell),
+        ),
+        'n_low_fold_cells': _qc_int(
+            result.qc,
+            'n_low_fold_cells',
+            default=n_low_fold,
+        ),
         'n_observations_outside_grid': _qc_int(
             result.qc,
             'n_observations_outside_grid',
             default=default_outside_observations,
+        ),
+        'n_observations_rejected_by_low_fold_cell': _qc_int(
+            result.qc,
+            'n_observations_rejected_by_low_fold_cell',
+            default=n_low_fold_rejected,
+        ),
+        'low_fold_cell_rejection_reason': str(
+            result.qc.get(
+                'low_fold_cell_rejection_reason',
+                LOW_FOLD_CELL_REJECTION_REASON,
+            )
         ),
         'n_used_observations': n_used,
         'velocity_min_m_s': _stat(active_velocity, 'min'),
@@ -1494,10 +1558,19 @@ def build_refraction_static_qc_payload(
         'warnings': [],
     }
     if r.bedrock_velocity_mode == 'solve_cell':
+        refractor_cell = req.model.refractor_cell
+        if refractor_cell is None:
+            raise RefractionStaticArtifactError(
+                'model.refractor_cell is required for solve_cell QC'
+            )
+        coordinate_metadata = refraction_cell_coordinate_metadata_from_config(
+            refractor_cell
+        )
         payload['velocity']['cell_velocity_qc_artifact'] = (
             REFRACTION_REFRACTOR_VELOCITY_QC_JSON_NAME
         )
         payload['refractor_velocity_cells'] = {
+            **coordinate_metadata,
             'cells_csv_artifact': REFRACTION_REFRACTOR_VELOCITY_CELLS_CSV_NAME,
             'grid_npz_artifact': REFRACTION_REFRACTOR_VELOCITY_GRID_NPZ_NAME,
             'qc_json_artifact': REFRACTION_REFRACTOR_VELOCITY_QC_JSON_NAME,
@@ -2620,6 +2693,58 @@ def _qc_int(qc: dict[str, Any], key: str, *, default: int) -> int:
         raise RefractionStaticArtifactError(
             f'QC field {key} must be an integer'
         ) from exc
+
+
+def _qc_cell_id_array(
+    qc: dict[str, Any],
+    key: str,
+    *,
+    n_total_cells: int,
+) -> np.ndarray:
+    raw = qc.get(key, [])
+    arr = np.asarray(raw)
+    if arr.ndim != 1:
+        raise RefractionStaticArtifactError(f'QC field {key} must be one-dimensional')
+    if arr.size == 0:
+        return np.empty(0, dtype=np.int64)
+    try:
+        out = np.ascontiguousarray(arr, dtype=np.int64)
+    except (TypeError, ValueError) as exc:
+        raise RefractionStaticArtifactError(
+            f'QC field {key} must contain integer cell IDs'
+        ) from exc
+    if np.any(out < 0) or np.any(out >= n_total_cells):
+        raise RefractionStaticArtifactError(
+            f'QC field {key} contains out-of-range cell IDs'
+        )
+    return out
+
+
+def _qc_cell_count_array(
+    qc: dict[str, Any],
+    key: str,
+    *,
+    n_total_cells: int,
+) -> np.ndarray | None:
+    raw = qc.get(key)
+    if raw is None:
+        return None
+    arr = np.asarray(raw)
+    if arr.shape != (n_total_cells,):
+        raise RefractionStaticArtifactError(
+            f'QC field {key} must have one count per refractor cell'
+        )
+    try:
+        out = np.ascontiguousarray(arr, dtype=np.int64)
+    except (TypeError, ValueError) as exc:
+        raise RefractionStaticArtifactError(
+            f'QC field {key} must contain integer counts'
+        ) from exc
+    if np.any(out < 0):
+        raise RefractionStaticArtifactError(
+            f'QC field {key} must not contain negative counts'
+        )
+    return out
 
 
 def _qc_optional_float(

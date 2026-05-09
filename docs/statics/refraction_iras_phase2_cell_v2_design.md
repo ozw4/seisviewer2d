@@ -12,6 +12,8 @@ Phase 2 is in scope for:
 - `model.bedrock_velocity_mode="solve_cell"`.
 - `model.refractor_cell` request validation and grid construction.
 - Midpoint-cell first-break observation assignment.
+- `grid_3d` and manual `line_2d_projected` coordinate modes for cell
+  assignment.
 - Sparse GLI design-matrix columns for per-cell refractor slowness.
 - Bounded least-squares inversion of one active `V2` per cell.
 - Optional 4-neighbor smoothing regularization on active cell slowness.
@@ -29,6 +31,7 @@ Non-goals:
 - GRM or plus-minus methods.
 - SEG-Y static header write-back.
 - Browser controls for cell model editing.
+- Automatic 2D line origin or azimuth estimation.
 
 ## 2. Relationship to Phase 1
 
@@ -98,6 +101,7 @@ Cell V2 solve:
       "y_coordinate_origin_m": 0.0,
       "assignment_mode": "midpoint",
       "outside_grid_policy": "reject",
+      "coordinate_mode": "grid_3d",
       "min_observations_per_cell": 5,
       "velocity_smoothing_weight": 0.0,
       "smoothing_reference_distance_m": null
@@ -112,6 +116,45 @@ Cell V2 solve:
 `model.bedrock_velocity_m_s` is only allowed with
 `model.bedrock_velocity_mode="fixed_global"` and must be omitted for
 `solve_cell`.
+
+For a crooked or diagonal 2D line whose map X/Y coordinates are not already
+inline/crossline coordinates, request an explicit line projection:
+
+```json
+{
+  "model": {
+    "method": "gli_variable_thickness",
+    "first_layer": {
+      "mode": "constant",
+      "weathering_velocity_m_s": 800.0
+    },
+    "bedrock_velocity_mode": "solve_cell",
+    "initial_bedrock_velocity_m_s": 2600.0,
+    "min_bedrock_velocity_m_s": 1200.0,
+    "max_bedrock_velocity_m_s": 6000.0,
+    "refractor_cell": {
+      "number_of_cell_x": 20,
+      "size_of_cell_x_m": 500.0,
+      "x_coordinate_origin_m": 0.0,
+      "number_of_cell_y": 1,
+      "size_of_cell_y_m": null,
+      "y_coordinate_origin_m": 0.0,
+      "assignment_mode": "midpoint",
+      "outside_grid_policy": "reject",
+      "coordinate_mode": "line_2d_projected",
+      "line_origin_x_m": 1000.0,
+      "line_origin_y_m": 2000.0,
+      "line_azimuth_deg": 45.0,
+      "min_observations_per_cell": 5,
+      "velocity_smoothing_weight": 0.0,
+      "smoothing_reference_distance_m": null
+    }
+  },
+  "conversion": {
+    "mode": "t1lsst_1layer"
+  }
+}
+```
 
 ## 4. Refractor cell grid definition
 
@@ -129,6 +172,10 @@ class RefractionStaticRefractorCellRequest(BaseModel):
 
     assignment_mode: Literal["midpoint"] = "midpoint"
     outside_grid_policy: Literal["reject"] = "reject"
+    coordinate_mode: Literal["grid_3d", "line_2d_projected"] = "grid_3d"
+    line_origin_x_m: float | None = None
+    line_origin_y_m: float | None = None
+    line_azimuth_deg: float | None = None
 
     min_observations_per_cell: int = 5
     velocity_smoothing_weight: float = 0.0
@@ -147,8 +194,24 @@ Validation rules:
 - `x_coordinate_origin_m` and `y_coordinate_origin_m` must be finite.
 - `assignment_mode="midpoint"` is the only Phase 2 assignment mode.
 - `outside_grid_policy="reject"` is the only Phase 2 outside-grid policy.
+- `coordinate_mode` must be `grid_3d` or `line_2d_projected`.
+- `line_origin_x_m`, `line_origin_y_m`, and `line_azimuth_deg`, when
+  provided, must be finite.
+- `coordinate_mode="line_2d_projected"` requires `line_origin_x_m`,
+  `line_origin_y_m`, and `line_azimuth_deg`.
+- `coordinate_mode="line_2d_projected"` requires `number_of_cell_y=1`.
 - `velocity_smoothing_weight` must be finite and non-negative.
 - `smoothing_reference_distance_m`, when provided, must be positive and finite.
+
+For `coordinate_mode="grid_3d"`, source, receiver, midpoint, and endpoint
+coordinates are assigned directly from their input map X/Y values. The line
+origin and azimuth fields are not used by `grid_3d` assignment and are reported
+as null in coordinate-mode QC metadata.
+
+For `coordinate_mode="line_2d_projected"`, `x_coordinate_origin_m` and
+`size_of_cell_x_m` are interpreted in projected inline meters. The line origin
+fields are map-coordinate inputs used only to compute projected inline and
+crossline distances.
 
 For `number_of_cell_y=1` with `size_of_cell_y_m=null`, the Y axis is treated as
 unbounded for assignment. Otherwise, each axis uses half-open cell intervals:
@@ -172,15 +235,49 @@ cell_id = iy * number_of_cell_x + ix
 `ix` and `iy` are zero-based. For a 1-D line grid, use
 `number_of_cell_y=1`; then `cell_id == ix`.
 
-## 6. Midpoint assignment convention
+## 6. Coordinate mode and midpoint assignment convention
+
+`coordinate_mode="grid_3d"` preserves the original Phase 2 behavior:
+
+```text
+cell_x_m = input_x_m
+cell_y_m = input_y_m
+```
+
+`coordinate_mode="line_2d_projected"` converts input map coordinates to a
+manual 2D line coordinate system before any midpoint or endpoint cell
+assignment. The line origin is (`line_origin_x_m`, `line_origin_y_m`), and
+`line_azimuth_deg` is measured clockwise from north:
+
+```text
+inline_unit_x = sin(line_azimuth_deg)
+inline_unit_y = cos(line_azimuth_deg)
+dx = input_x_m - line_origin_x_m
+dy = input_y_m - line_origin_y_m
+
+inline_m = dx * inline_unit_x + dy * inline_unit_y
+crossline_m = dx * inline_unit_y - dy * inline_unit_x
+
+cell_x_m = inline_m
+cell_y_m = 0
+```
+
+Projection values are rounded to 9 decimal places before assignment so exact
+line-grid boundaries remain stable after trigonometric roundoff. In line mode,
+the effective grid has `number_of_cell_y=1`, `size_of_cell_y_m=null`, and
+`y_coordinate_origin_m=0.0`; smoothing therefore only connects adjacent active
+inline cells.
 
 Phase 2 assigns each first-break observation to a cell by source/receiver
-midpoint:
+midpoint after applying the selected coordinate mode:
 
 ```text
 midpoint_x_m = 0.5 * (source_x_m + receiver_x_m)
 midpoint_y_m = 0.5 * (source_y_m + receiver_y_m)
 ```
+
+For `line_2d_projected`, `source_x_m` and `receiver_x_m` in this formula are
+projected inline coordinates, and `source_y_m` and `receiver_y_m` are zero.
 
 Rows with midpoint coordinates outside the refractor cell grid are rejected from
 the inversion with:
@@ -223,9 +320,19 @@ receiver_T_col      1
 cell_slowness_col   offset_m
 ```
 
-Cells with no used observations are inactive and do not add solver columns.
-The current implementation validates `min_observations_per_cell` but active
-cell selection is based on observation presence after filtering.
+Cells with no selected observations are inactive and do not add solver columns.
+Cells with at least one selected observation but fewer than
+`min_observations_per_cell` selected observations are low-fold cells. Low-fold
+cells are inactive, do not add slowness columns, and do not receive solved V2
+values. Their observations are rejected from the inversion with:
+
+```text
+below_min_observations_per_cell
+```
+
+The threshold is applied after the base valid-observation filter and
+outside-grid rejection. A cell becomes active only when its selected observation
+count is greater than or equal to `min_observations_per_cell`.
 
 ## 8. Slowness bounds from velocity bounds
 
@@ -246,8 +353,10 @@ upper_slowness_s_per_m = 1 / min_bedrock_velocity_m_s
 For `solve_cell`, every active cell slowness parameter uses these bounds.
 `initial_bedrock_velocity_m_s`, when provided, initializes all active cells;
 otherwise the solver chooses a value within the configured bounds. The scalar
-`bedrock_velocity_m_s` and `bedrock_slowness_s_per_m` fields in result objects
-are summary medians across active cells.
+`bedrock_slowness_s_per_m` field in result objects is the median active-cell
+slowness, and scalar `bedrock_velocity_m_s` is its reciprocal. Per-cell
+`cell_bedrock_slowness_s_per_m` and `cell_bedrock_velocity_m_s` arrays remain
+the authoritative cell-based values.
 
 ## 9. Smoothing regularization equation
 
@@ -303,6 +412,7 @@ Endpoint status values include:
 ok
 outside_refractor_cell_grid
 inactive_v2_cell
+low_fold_v2_cell
 invalid_local_v2
 v2_not_greater_than_v1
 ```
@@ -447,10 +557,31 @@ residual_p95_abs_ms
 smoothing_neighbor_count
 ```
 
+`velocity_status` is `solved` for solved active cells, `inactive` for empty
+inactive cells, and `low_fold` for cells rejected by
+`min_observations_per_cell`.
+
 `refraction_refractor_velocity_grid.npz` contains the same per-cell arrays with
 pickle disabled. `refraction_refractor_velocity_qc.json` records grid shape,
-assignment mode, outside-grid counts, used observations, velocity statistics,
-and smoothing-row counts.
+assignment mode, coordinate mode metadata, outside-grid counts, low-fold
+threshold and rejection counts, used observations, velocity statistics, and
+smoothing-row counts. It includes:
+
+```text
+coordinate_mode
+line_origin_x_m
+line_origin_y_m
+line_azimuth_deg
+min_observations_per_cell
+n_low_fold_cells
+n_observations_rejected_by_low_fold_cell
+low_fold_cell_rejection_reason
+```
+
+For `coordinate_mode="line_2d_projected"`, design-matrix QC also records
+projected inline/crossline min/max ranges for the projected source and receiver
+coordinates. These are diagnostic ranges only; the public cell artifacts remain
+indexed by `cell_id`, `ix`, and `iy`.
 
 `source_static_table.csv` adds cell-aware V2 fields:
 
@@ -543,7 +674,8 @@ receiver_v2_status_sorted
 ```
 
 `refraction_static_qc.json` sets `velocity.bedrock_velocity_status` to
-`per_cell` and points to the cell velocity QC artifact.
+`per_cell`, records coordinate mode metadata under `refractor_velocity_cells`,
+and points to the cell velocity QC artifact.
 
 ## 14. Synthetic test model
 
@@ -573,8 +705,9 @@ pick_time_s = T1_source_s + T1_receiver_s + offset_m * s_cell(midpoint)
 ```
 
 The E2E tests assert that noiseless solves recover the active cell V2 values,
-T1, SH1, WCOR, source/receiver static tables, inactive cell endpoint status,
-outside-grid rejection, smoothing behavior, and pickle-free NPZ artifacts.
+T1, SH1, WCOR, source/receiver static tables, inactive and low-fold cell
+endpoint status, outside-grid rejection, smoothing behavior, and pickle-free
+NPZ artifacts.
 
 ## 15. Known limitations
 
@@ -586,5 +719,3 @@ outside-grid rejection, smoothing behavior, and pickle-free NPZ artifacts.
 - Does not store original IRAS documents in repo.
 - Does not estimate spatially varying V1.
 - Does not perform tomography or path-weighted inversion.
-- `min_observations_per_cell` is schema-validated but is not currently a
-  per-cell rejection threshold in the solver.

@@ -1472,6 +1472,10 @@ class RefractionStaticRefractorCellRequest(BaseModel):
 
     assignment_mode: Literal['midpoint'] = 'midpoint'
     outside_grid_policy: Literal['reject'] = 'reject'
+    coordinate_mode: Literal['grid_3d', 'line_2d_projected'] = 'grid_3d'
+    line_origin_x_m: float | None = None
+    line_origin_y_m: float | None = None
+    line_azimuth_deg: float | None = None
 
     min_observations_per_cell: int = 5
     velocity_smoothing_weight: float = 0.0
@@ -1536,6 +1540,21 @@ class RefractionStaticRefractorCellRequest(BaseModel):
             )
         return 'reject'
 
+    @field_validator(
+        'line_origin_x_m',
+        'line_origin_y_m',
+        'line_azimuth_deg',
+        mode='before',
+    )
+    @classmethod
+    def _check_optional_line_coordinate(cls, value: object, info: Any) -> float | None:
+        if value is None:
+            return None
+        return _require_finite_float(
+            value,
+            f'model.refractor_cell.{info.field_name}',
+        )
+
     @field_validator('velocity_smoothing_weight', mode='before')
     @classmethod
     def _check_velocity_smoothing_weight(cls, value: object) -> float:
@@ -1561,6 +1580,23 @@ class RefractionStaticRefractorCellRequest(BaseModel):
                 'model.refractor_cell.size_of_cell_y_m is required when '
                 'model.refractor_cell.number_of_cell_y > 1'
             )
+        if self.coordinate_mode == 'line_2d_projected':
+            if (
+                self.line_origin_x_m is None
+                or self.line_origin_y_m is None
+                or self.line_azimuth_deg is None
+            ):
+                raise ValueError(
+                    'model.refractor_cell.line_origin_x_m, '
+                    'model.refractor_cell.line_origin_y_m, and '
+                    'model.refractor_cell.line_azimuth_deg are required when '
+                    'model.refractor_cell.coordinate_mode is line_2d_projected'
+                )
+            if self.number_of_cell_y != 1:
+                raise ValueError(
+                    'model.refractor_cell.number_of_cell_y must be 1 when '
+                    'model.refractor_cell.coordinate_mode is line_2d_projected'
+                )
         return self
 
 
