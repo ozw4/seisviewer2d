@@ -36,8 +36,13 @@ If the issue touches browser behavior, also run:
 
 ## Current Project guidance
 
-This repository contains seismic viewing and processing tools. For refraction statics work, read the design document first:
+This repository contains seismic viewing and processing tools. For refraction statics work, read the design documents first:
 
 - `docs/statics/refraction_iras_phase1_design.md`
 
-Do not assume access to original IRAS manuals or external IRAS reference files. The original IRAS materials are intentionally not stored in this repository. The design document is the canonical Phase 1 implementation reference.
+For Phase 2 refraction statics cell-based V2 work, read:
+
+- `docs/statics/refraction_iras_phase1_design.md`
+- `docs/statics/refraction_iras_phase2_cell_v2_design.md`
+
+Do not assume access to original IRAS manuals. The repo docs are the canonical implementation reference.
