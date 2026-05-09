@@ -174,8 +174,10 @@ class _ValidatedHalfIntercept:
     node_residual_mad_s: np.ndarray
     active_cell_id: np.ndarray | None
     inactive_cell_id: np.ndarray | None
+    cell_bedrock_slowness_s_per_m: np.ndarray | None
     cell_bedrock_velocity_m_s: np.ndarray | None
     cell_velocity_status: np.ndarray | None
+    row_midpoint_cell_id: np.ndarray | None
     source_endpoint_key: np.ndarray
     source_id: np.ndarray
     source_node_id: np.ndarray
@@ -522,6 +524,12 @@ def build_refraction_weathering_thickness_model(
         used_row_mask=data.used_row_mask,
         rejected_by_robust_mask=data.rejected_by_robust_mask,
         qc=qc,
+        active_cell_id=data.active_cell_id,
+        inactive_cell_id=data.inactive_cell_id,
+        cell_bedrock_slowness_s_per_m=data.cell_bedrock_slowness_s_per_m,
+        cell_bedrock_velocity_m_s=data.cell_bedrock_velocity_m_s,
+        cell_velocity_status=data.cell_velocity_status,
+        row_midpoint_cell_id=data.row_midpoint_cell_id,
         node_v2_cell_id=(
             None if local_v2 is None else local_v2.node_cell_id
         ),
@@ -916,6 +924,11 @@ def _validate_half_intercept_result(
             'inactive_cell_id',
             name='half_intercept_result.inactive_cell_id',
         ),
+        cell_bedrock_slowness_s_per_m=_optional_1d_float(
+            half_intercept_result,
+            'cell_bedrock_slowness_s_per_m',
+            name='half_intercept_result.cell_bedrock_slowness_s_per_m',
+        ),
         cell_bedrock_velocity_m_s=_optional_1d_float(
             half_intercept_result,
             'cell_bedrock_velocity_m_s',
@@ -926,6 +939,11 @@ def _validate_half_intercept_result(
             'cell_velocity_status',
             name='half_intercept_result.cell_velocity_status',
             dtype=_STATUS_DTYPE,
+        ),
+        row_midpoint_cell_id=_optional_1d_integer(
+            half_intercept_result,
+            'row_midpoint_cell_id',
+            name='half_intercept_result.row_midpoint_cell_id',
         ),
         source_endpoint_key=source_endpoint_key,
         source_id=_coerce_1d_integer(

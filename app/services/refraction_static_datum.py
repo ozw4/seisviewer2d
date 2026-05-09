@@ -212,6 +212,12 @@ class _ValidatedReplacement:
     node_rejected_pick_count: np.ndarray
     node_residual_rms_s: np.ndarray
     node_residual_mad_s: np.ndarray
+    active_cell_id: np.ndarray | None
+    inactive_cell_id: np.ndarray | None
+    cell_bedrock_slowness_s_per_m: np.ndarray | None
+    cell_bedrock_velocity_m_s: np.ndarray | None
+    cell_velocity_status: np.ndarray | None
+    row_midpoint_cell_id: np.ndarray | None
     node_v2_cell_id: np.ndarray | None
     node_v2_m_s: np.ndarray | None
     node_v2_status: np.ndarray | None
@@ -717,6 +723,12 @@ def build_refraction_datum_statics(
         used_row_mask=data.used_row_mask,
         rejected_by_robust_mask=data.rejected_by_robust_mask,
         qc=qc,
+        active_cell_id=data.active_cell_id,
+        inactive_cell_id=data.inactive_cell_id,
+        cell_bedrock_slowness_s_per_m=data.cell_bedrock_slowness_s_per_m,
+        cell_bedrock_velocity_m_s=data.cell_bedrock_velocity_m_s,
+        cell_velocity_status=data.cell_velocity_status,
+        row_midpoint_cell_id=data.row_midpoint_cell_id,
         node_v2_cell_id=data.node_v2_cell_id,
         node_v2_m_s=data.node_v2_m_s,
         node_v2_status=data.node_v2_status,
@@ -1125,6 +1137,37 @@ def _validate_replacement_result(
             name='weathering_replacement_result.node_residual_mad_s',
             expected_shape=node_shape,
             allow_nonfinite=True,
+        ),
+        active_cell_id=_optional_1d_integer(
+            result,
+            'active_cell_id',
+            name='weathering_replacement_result.active_cell_id',
+        ),
+        inactive_cell_id=_optional_1d_integer(
+            result,
+            'inactive_cell_id',
+            name='weathering_replacement_result.inactive_cell_id',
+        ),
+        cell_bedrock_slowness_s_per_m=_optional_1d_float(
+            result,
+            'cell_bedrock_slowness_s_per_m',
+            name='weathering_replacement_result.cell_bedrock_slowness_s_per_m',
+        ),
+        cell_bedrock_velocity_m_s=_optional_1d_float(
+            result,
+            'cell_bedrock_velocity_m_s',
+            name='weathering_replacement_result.cell_bedrock_velocity_m_s',
+        ),
+        cell_velocity_status=_optional_1d_string(
+            result,
+            'cell_velocity_status',
+            name='weathering_replacement_result.cell_velocity_status',
+            dtype=_STATUS_DTYPE,
+        ),
+        row_midpoint_cell_id=_optional_1d_integer(
+            result,
+            'row_midpoint_cell_id',
+            name='weathering_replacement_result.row_midpoint_cell_id',
         ),
         node_v2_cell_id=_optional_1d_integer(
             result,

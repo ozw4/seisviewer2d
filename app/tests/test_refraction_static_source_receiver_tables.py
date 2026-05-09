@@ -43,6 +43,7 @@ SOURCE_COLUMNS = [
     't1_ms',
     'v1_m_s',
     'v2_m_s',
+    'v2_status',
     'sh1_weathering_thickness_m',
     'refractor_elevation_m',
     'weathering_correction_ms',
@@ -75,6 +76,7 @@ RECEIVER_COLUMNS = [
     't1_ms',
     'v1_m_s',
     'v2_m_s',
+    'v2_status',
     'sh1_weathering_thickness_m',
     'refractor_elevation_m',
     'weathering_correction_ms',
@@ -622,36 +624,55 @@ def _solve_cell_result(result, **overrides):
     n_sources = int(result.source_endpoint_key.shape[0])
     n_receivers = int(result.receiver_endpoint_key.shape[0])
     n_traces = int(result.sorted_trace_index.shape[0])
+    n_rows = int(result.row_trace_index_sorted.shape[0])
+    n_cells = 3
+    bedrock_velocity = float(
+        overrides.get('bedrock_velocity_m_s', result.bedrock_velocity_m_s)
+    )
     defaults = {
         'bedrock_velocity_mode': 'solve_cell',
+        'active_cell_id': np.arange(n_cells, dtype=np.int64),
+        'inactive_cell_id': np.empty(0, dtype=np.int64),
+        'cell_bedrock_slowness_s_per_m': np.full(
+            n_cells,
+            1.0 / bedrock_velocity,
+            dtype=np.float64,
+        ),
+        'cell_bedrock_velocity_m_s': np.full(
+            n_cells,
+            bedrock_velocity,
+            dtype=np.float64,
+        ),
+        'cell_velocity_status': np.full(n_cells, 'solved', dtype='<U16'),
+        'row_midpoint_cell_id': np.arange(n_rows, dtype=np.int64) % n_cells,
         'node_v2_cell_id': np.arange(n_nodes, dtype=np.int64),
-        'node_v2_m_s': np.full(n_nodes, result.bedrock_velocity_m_s, dtype=np.float64),
+        'node_v2_m_s': np.full(n_nodes, bedrock_velocity, dtype=np.float64),
         'node_v2_status': np.full(n_nodes, 'ok', dtype='<U32'),
         'source_v2_cell_id': np.arange(n_sources, dtype=np.int64),
         'source_v2_m_s': np.full(
             n_sources,
-            result.bedrock_velocity_m_s,
+            bedrock_velocity,
             dtype=np.float64,
         ),
         'source_v2_status': np.full(n_sources, 'ok', dtype='<U32'),
         'receiver_v2_cell_id': np.arange(n_receivers, dtype=np.int64),
         'receiver_v2_m_s': np.full(
             n_receivers,
-            result.bedrock_velocity_m_s,
+            bedrock_velocity,
             dtype=np.float64,
         ),
         'receiver_v2_status': np.full(n_receivers, 'ok', dtype='<U32'),
         'source_v2_cell_id_sorted': np.zeros(n_traces, dtype=np.int64),
         'source_v2_m_s_sorted': np.full(
             n_traces,
-            result.bedrock_velocity_m_s,
+            bedrock_velocity,
             dtype=np.float64,
         ),
         'source_v2_status_sorted': np.full(n_traces, 'ok', dtype='<U32'),
         'receiver_v2_cell_id_sorted': np.zeros(n_traces, dtype=np.int64),
         'receiver_v2_m_s_sorted': np.full(
             n_traces,
-            result.bedrock_velocity_m_s,
+            bedrock_velocity,
             dtype=np.float64,
         ),
         'receiver_v2_status_sorted': np.full(n_traces, 'ok', dtype='<U32'),

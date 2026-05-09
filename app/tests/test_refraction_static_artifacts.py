@@ -8,10 +8,14 @@ from pathlib import Path
 import numpy as np
 import pytest
 
+from app.api.schemas import RefractionStaticApplyRequest
 import app.services.refraction_static_artifacts as artifact_module
 from app.services.refraction_static_artifacts import (
     FIRST_BREAK_RESIDUALS_CSV_NAME,
     NEAR_SURFACE_MODEL_CSV_NAME,
+    REFRACTION_REFRACTOR_VELOCITY_CELLS_CSV_NAME,
+    REFRACTION_REFRACTOR_VELOCITY_GRID_NPZ_NAME,
+    REFRACTION_REFRACTOR_VELOCITY_QC_JSON_NAME,
     REFRACTION_STATICS_CSV_NAME,
     REFRACTION_STATIC_ARTIFACTS_JSON_NAME,
     REFRACTION_STATIC_COMPONENTS_CSV_NAME,
@@ -107,6 +111,12 @@ EXPECTED_FILENAMES = {
     RECEIVER_STATIC_TABLE_CSV_NAME,
     SOURCE_RECEIVER_STATIC_TABLE_NPZ_NAME,
     REFRACTION_STATIC_ARTIFACTS_JSON_NAME,
+}
+
+CELL_VELOCITY_FILENAMES = {
+    REFRACTION_REFRACTOR_VELOCITY_CELLS_CSV_NAME,
+    REFRACTION_REFRACTOR_VELOCITY_GRID_NPZ_NAME,
+    REFRACTION_REFRACTOR_VELOCITY_QC_JSON_NAME,
 }
 
 UPSTREAM_V1_ARTIFACT_NAMES = (
@@ -339,6 +349,153 @@ def test_refraction_static_artifacts_manifest_and_download_visibility(
             )
             assert download.status_code == 200
             assert download.json()['artifact_version'] == '1.0'
+    finally:
+        with state.lock:
+            state.jobs.clear()
+
+
+def test_solve_cell_writes_refractor_velocity_cells_csv(tmp_path: Path) -> None:
+    paths = write_refraction_static_artifacts(
+        result=_solve_cell_result(),
+        req=_solve_cell_request(),
+        job_dir=tmp_path,
+    )
+
+    assert paths.refraction_refractor_velocity_cells_csv is not None
+    rows = _read_csv(paths.refraction_refractor_velocity_cells_csv)
+
+    assert [int(row['cell_id']) for row in rows] == [0, 1, 2]
+    assert rows[0]['active'] == 'true'
+    assert rows[0]['velocity_status'] == 'solved'
+    assert float(rows[0]['v2_m_s']) == pytest.approx(2400.0)
+    assert int(rows[0]['n_used_observations']) == 2
+    assert rows[2]['active'] == 'false'
+    assert rows[2]['velocity_status'] == 'inactive'
+    assert rows[2]['v2_m_s'] == ''
+    assert rows[2]['x_min_m'] == '200.0'
+
+
+def test_solve_cell_writes_refractor_velocity_grid_npz(tmp_path: Path) -> None:
+    paths = write_refraction_static_artifacts(
+        result=_solve_cell_result(),
+        req=_solve_cell_request(),
+        job_dir=tmp_path,
+    )
+
+    assert paths.refraction_refractor_velocity_grid_npz is not None
+    with np.load(paths.refraction_refractor_velocity_grid_npz, allow_pickle=False) as data:
+        np.testing.assert_array_equal(data['cell_id'], [0, 1, 2])
+        np.testing.assert_array_equal(data['active_cell_mask'], [True, True, False])
+        np.testing.assert_allclose(data['v2_m_s'][:2], [2400.0, 2600.0])
+        assert np.isnan(data['v2_m_s'][2])
+        assert data['velocity_status'].tolist() == ['solved', 'solved', 'inactive']
+        np.testing.assert_array_equal(
+            data['n_observations_per_cell'],
+            [2, 1, 0],
+        )
+        np.testing.assert_array_equal(
+            data['n_used_observations_per_cell'],
+            [2, 0, 0],
+        )
+
+
+def test_solve_cell_manifest_registers_cell_velocity_artifacts(
+    tmp_path: Path,
+) -> None:
+    paths = write_refraction_static_artifacts(
+        result=_solve_cell_result(),
+        req=_solve_cell_request(),
+        job_dir=tmp_path,
+    )
+
+    assert {path.name for path in tmp_path.iterdir()} == (
+        EXPECTED_FILENAMES | CELL_VELOCITY_FILENAMES
+    )
+    manifest = json.loads(paths.manifest_json.read_text(encoding='utf-8'))
+    artifact_names = {item['name'] for item in manifest['artifacts']}
+    assert CELL_VELOCITY_FILENAMES.issubset(artifact_names)
+
+    qc = json.loads(paths.qc_json.read_text(encoding='utf-8'))
+    assert qc['velocity']['cell_velocity_qc_artifact'] == (
+        REFRACTION_REFRACTOR_VELOCITY_QC_JSON_NAME
+    )
+    assert qc['refractor_velocity_cells']['grid_npz_artifact'] == (
+        REFRACTION_REFRACTOR_VELOCITY_GRID_NPZ_NAME
+    )
+
+
+def test_solve_global_does_not_write_cell_velocity_artifacts(
+    tmp_path: Path,
+) -> None:
+    paths = write_refraction_static_artifacts(
+        result=_result(),
+        req=_request(),
+        job_dir=tmp_path,
+    )
+
+    assert paths.refraction_refractor_velocity_cells_csv is None
+    assert not CELL_VELOCITY_FILENAMES.intersection(
+        {path.name for path in tmp_path.iterdir()}
+    )
+    manifest = json.loads(paths.manifest_json.read_text(encoding='utf-8'))
+    artifact_names = {item['name'] for item in manifest['artifacts']}
+    assert not CELL_VELOCITY_FILENAMES.intersection(artifact_names)
+
+
+def test_source_receiver_tables_include_v2_status_in_cell_mode(
+    tmp_path: Path,
+) -> None:
+    paths = write_refraction_static_artifacts(
+        result=_solve_cell_result(),
+        req=_solve_cell_request(),
+        job_dir=tmp_path,
+    )
+
+    source_rows = _read_csv(paths.source_static_table_csv)
+    receiver_rows = _read_csv(paths.receiver_static_table_csv)
+
+    assert source_rows[0]['source_v2_cell_id'] == '0'
+    assert source_rows[0]['v2_status'] == 'ok'
+    assert receiver_rows[1]['receiver_v2_cell_id'] == '2'
+    assert receiver_rows[1]['v2_status'] == 'inactive_v2_cell'
+
+
+def test_download_cell_velocity_artifacts(tmp_path: Path) -> None:
+    from fastapi.testclient import TestClient
+
+    from app.main import app
+
+    write_refraction_static_artifacts(
+        result=_solve_cell_result(),
+        req=_solve_cell_request(),
+        job_dir=tmp_path,
+    )
+
+    state = app.state.sv
+    with state.lock:
+        state.jobs.clear()
+        state.jobs.create_static_job(
+            'refraction-cell-artifacts-job',
+            file_id='raw-file-id',
+            key1_byte=189,
+            key2_byte=193,
+            statics_kind='refraction',
+            artifacts_dir=str(tmp_path),
+        )
+    try:
+        with TestClient(app) as client:
+            files = client.get('/statics/job/refraction-cell-artifacts-job/files')
+            assert files.status_code == 200
+            assert CELL_VELOCITY_FILENAMES.issubset(
+                {item['name'] for item in files.json()['files']}
+            )
+
+            download = client.get(
+                '/statics/job/refraction-cell-artifacts-job/download',
+                params={'name': REFRACTION_REFRACTOR_VELOCITY_QC_JSON_NAME},
+            )
+            assert download.status_code == 200
+            assert download.json()['bedrock_velocity_mode'] == 'solve_cell'
     finally:
         with state.lock:
             state.jobs.clear()
@@ -595,6 +752,76 @@ def test_write_refraction_static_solution_rejects_object_arrays(
             req=_request(),
             path=tmp_path / REFRACTION_STATIC_SOLUTION_NPZ_NAME,
         )
+
+
+def _solve_cell_request():
+    payload = _request().model_dump(mode='json')
+    payload['model'].update(
+        {
+            'bedrock_velocity_mode': 'solve_cell',
+            'initial_bedrock_velocity_m_s': 2500.0,
+            'min_bedrock_velocity_m_s': 1200.0,
+            'max_bedrock_velocity_m_s': 6000.0,
+            'refractor_cell': {
+                'number_of_cell_x': 3,
+                'size_of_cell_x_m': 100.0,
+                'x_coordinate_origin_m': 0.0,
+                'number_of_cell_y': 1,
+                'size_of_cell_y_m': None,
+                'assignment_mode': 'midpoint',
+                'outside_grid_policy': 'reject',
+                'min_observations_per_cell': 1,
+                'velocity_smoothing_weight': 1.5,
+                'smoothing_reference_distance_m': 200.0,
+            },
+        }
+    )
+    return RefractionStaticApplyRequest.model_validate(payload)
+
+
+def _solve_cell_result():
+    return replace(
+        _result(),
+        bedrock_velocity_mode='solve_cell',
+        bedrock_velocity_m_s=2500.0,
+        bedrock_slowness_s_per_m=1.0 / 2500.0,
+        active_cell_id=np.asarray([0, 1], dtype=np.int64),
+        inactive_cell_id=np.asarray([2], dtype=np.int64),
+        cell_bedrock_slowness_s_per_m=np.asarray(
+            [1.0 / 2400.0, 1.0 / 2600.0],
+            dtype=np.float64,
+        ),
+        cell_bedrock_velocity_m_s=np.asarray([2400.0, 2600.0], dtype=np.float64),
+        cell_velocity_status=np.asarray(['solved', 'solved'], dtype='<U16'),
+        row_midpoint_cell_id=np.asarray([0, 1, 0], dtype=np.int64),
+        node_v2_cell_id=np.asarray([0, 1, 2], dtype=np.int64),
+        node_v2_m_s=np.asarray([2400.0, 2600.0, np.nan], dtype=np.float64),
+        node_v2_status=np.asarray(
+            ['ok', 'ok', 'inactive_v2_cell'],
+            dtype='<U32',
+        ),
+        source_v2_cell_id=np.asarray([0, 1], dtype=np.int64),
+        source_v2_m_s=np.asarray([2400.0, 2600.0], dtype=np.float64),
+        source_v2_status=np.asarray(['ok', 'ok'], dtype='<U2'),
+        receiver_v2_cell_id=np.asarray([1, 2], dtype=np.int64),
+        receiver_v2_m_s=np.asarray([2600.0, np.nan], dtype=np.float64),
+        receiver_v2_status=np.asarray(['ok', 'inactive_v2_cell'], dtype='<U32'),
+        source_v2_cell_id_sorted=np.asarray([0, 1, 0, 1], dtype=np.int64),
+        source_v2_m_s_sorted=np.asarray(
+            [2400.0, 2600.0, 2400.0, 2600.0],
+            dtype=np.float64,
+        ),
+        source_v2_status_sorted=np.asarray(['ok', 'ok', 'ok', 'ok'], dtype='<U2'),
+        receiver_v2_cell_id_sorted=np.asarray([1, 2, 2, 1], dtype=np.int64),
+        receiver_v2_m_s_sorted=np.asarray(
+            [2600.0, np.nan, np.nan, 2600.0],
+            dtype=np.float64,
+        ),
+        receiver_v2_status_sorted=np.asarray(
+            ['ok', 'inactive_v2_cell', 'inactive_v2_cell', 'ok'],
+            dtype='<U32',
+        ),
+    )
 
 
 def _read_csv(path: Path) -> list[dict[str, str]]:
