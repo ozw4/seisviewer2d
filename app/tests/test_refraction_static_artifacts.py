@@ -13,6 +13,7 @@ import app.services.refraction_static_artifacts as artifact_module
 from app.services.refraction_static_artifacts import (
     FIRST_BREAK_RESIDUALS_CSV_NAME,
     NEAR_SURFACE_MODEL_CSV_NAME,
+    REFRACTION_CELL_SOLVER_HISTORY_CSV_NAME,
     REFRACTION_REFRACTOR_VELOCITY_CELLS_CSV_NAME,
     REFRACTION_REFRACTOR_VELOCITY_GRID_NPZ_NAME,
     REFRACTION_REFRACTOR_VELOCITY_QC_JSON_NAME,
@@ -114,6 +115,7 @@ EXPECTED_FILENAMES = {
 }
 
 CELL_VELOCITY_FILENAMES = {
+    REFRACTION_CELL_SOLVER_HISTORY_CSV_NAME,
     REFRACTION_REFRACTOR_VELOCITY_CELLS_CSV_NAME,
     REFRACTION_REFRACTOR_VELOCITY_GRID_NPZ_NAME,
     REFRACTION_REFRACTOR_VELOCITY_QC_JSON_NAME,
@@ -459,6 +461,9 @@ def test_solve_cell_manifest_registers_cell_velocity_artifacts(
     )
     assert qc['refractor_velocity_cells']['grid_npz_artifact'] == (
         REFRACTION_REFRACTOR_VELOCITY_GRID_NPZ_NAME
+    )
+    assert qc['refractor_velocity_cells']['solver_history_csv_artifact'] == (
+        REFRACTION_CELL_SOLVER_HISTORY_CSV_NAME
     )
 
 
