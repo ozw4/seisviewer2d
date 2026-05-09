@@ -9,6 +9,11 @@ import numpy as np
 from scipy import optimize, sparse
 
 from app.api.schemas import RefractionStaticModelRequest, RefractionStaticSolverRequest
+from app.services.refraction_static_cell_regularization import (
+    CellSlownessSmoothingRows,
+    augment_design_matrix_with_cell_smoothing,
+    build_cell_slowness_smoothing_rows,
+)
 from app.services.refraction_static_first_layer import resolve_weathering_velocity_m_s
 from app.services.refraction_static_types import (
     RefractionStaticDesignMatrix,
@@ -37,6 +42,9 @@ class _ValidatedProblem:
     bedrock_slowness_cell_col_start: int | None
     active_cell_id: np.ndarray
     inactive_cell_id: np.ndarray
+    n_total_cells: int | None
+    number_of_cell_x: int | None
+    number_of_cell_y: int | None
     row_midpoint_cell_id: np.ndarray
     row_midpoint_cell_col: np.ndarray
     row_distance_m: np.ndarray
@@ -61,6 +69,8 @@ class _ValidatedProblem:
     robust_max_iterations: int
     robust_min_used_fraction: float
     robust_min_used_observations: int
+    velocity_smoothing_weight: float
+    smoothing_reference_distance_m: float | None
 
     @property
     def n_observations(self) -> int:
@@ -102,6 +112,13 @@ class _InternalSolveResult:
     optimality: float | None
     nit: int | None
     n_damping_rows: int
+    n_cell_smoothing_edges: int
+    n_cell_smoothing_rows: int
+    smoothing_row_scale: float
+    smoothing_reference_distance_m: float | None
+    active_cell_neighbor_count_min: int | None
+    active_cell_neighbor_count_median: float | None
+    active_cell_neighbor_count_max: int | None
     n_augmented_rows: int
 
 
@@ -143,6 +160,9 @@ def solve_refraction_static_bounded_ls(
         ),
         active_cell_id=design_matrix.active_cell_id,
         inactive_cell_id=design_matrix.inactive_cell_id,
+        n_total_cells=design_matrix.n_total_cells,
+        number_of_cell_x=design_matrix.number_of_cell_x,
+        number_of_cell_y=design_matrix.number_of_cell_y,
         row_midpoint_cell_id=design_matrix.row_midpoint_cell_id,
         row_midpoint_cell_col=design_matrix.row_midpoint_cell_col,
         model=model,
@@ -171,6 +191,9 @@ def solve_refraction_static_bounded_ls_from_matrix(
     bedrock_slowness_cell_col_start: int | None = None,
     active_cell_id: np.ndarray | None = None,
     inactive_cell_id: np.ndarray | None = None,
+    n_total_cells: int | None = None,
+    number_of_cell_x: int | None = None,
+    number_of_cell_y: int | None = None,
     row_midpoint_cell_id: np.ndarray | None = None,
     row_midpoint_cell_col: np.ndarray | None = None,
     resolved_first_layer: ResolvedRefractionFirstLayer | None = None,
@@ -193,6 +216,9 @@ def solve_refraction_static_bounded_ls_from_matrix(
         bedrock_slowness_cell_col_start=bedrock_slowness_cell_col_start,
         active_cell_id=active_cell_id,
         inactive_cell_id=inactive_cell_id,
+        n_total_cells=n_total_cells,
+        number_of_cell_x=number_of_cell_x,
+        number_of_cell_y=number_of_cell_y,
         row_midpoint_cell_id=row_midpoint_cell_id,
         row_midpoint_cell_col=row_midpoint_cell_col,
         model=model,
@@ -236,6 +262,9 @@ def _validate_problem(
     bedrock_slowness_cell_col_start: int | None,
     active_cell_id: np.ndarray | None,
     inactive_cell_id: np.ndarray | None,
+    n_total_cells: int | None,
+    number_of_cell_x: int | None,
+    number_of_cell_y: int | None,
     row_midpoint_cell_id: np.ndarray | None,
     row_midpoint_cell_col: np.ndarray | None,
     model: RefractionStaticModelRequest,
@@ -328,6 +357,17 @@ def _validate_problem(
         n_active_nodes=int(active_nodes.shape[0]),
         n_parameters=n_parameters,
         n_observations=n_observations,
+    )
+    total_cells, n_cell_x, n_cell_y = _validate_cell_grid_shape(
+        mode=mode,
+        n_total_cells=n_total_cells,
+        number_of_cell_x=number_of_cell_x,
+        number_of_cell_y=number_of_cell_y,
+        active_cell_id=active_cells,
+        inactive_cell_id=inactive_cells,
+    )
+    velocity_smoothing_weight, smoothing_reference_distance_m = (
+        _validate_cell_smoothing_request(mode=mode, model=model)
     )
 
     n_active = int(active_nodes.shape[0])
@@ -494,6 +534,9 @@ def _validate_problem(
         bedrock_slowness_cell_col_start=cell_col_start,
         active_cell_id=active_cells,
         inactive_cell_id=inactive_cells,
+        n_total_cells=total_cells,
+        number_of_cell_x=n_cell_x,
+        number_of_cell_y=n_cell_y,
         row_midpoint_cell_id=row_cell_id,
         row_midpoint_cell_col=row_cell_col,
         row_distance_m=distance,
@@ -518,6 +561,8 @@ def _validate_problem(
         robust_max_iterations=robust_max_iterations,
         robust_min_used_fraction=robust_min_used_fraction,
         robust_min_used_observations=robust_min_used_observations,
+        velocity_smoothing_weight=velocity_smoothing_weight,
+        smoothing_reference_distance_m=smoothing_reference_distance_m,
     )
 
 
@@ -652,6 +697,116 @@ def _validate_cell_slowness_columns(
         inactive_cells,
         np.ascontiguousarray(row_cell_id, dtype=np.int64),
         np.ascontiguousarray(row_cell_col, dtype=np.int64),
+    )
+
+
+def _validate_cell_grid_shape(
+    *,
+    mode: BedrockVelocityMode,
+    n_total_cells: int | None,
+    number_of_cell_x: int | None,
+    number_of_cell_y: int | None,
+    active_cell_id: np.ndarray,
+    inactive_cell_id: np.ndarray,
+) -> tuple[int | None, int | None, int | None]:
+    if mode != 'solve_cell':
+        if (
+            n_total_cells is not None
+            or number_of_cell_x is not None
+            or number_of_cell_y is not None
+        ):
+            raise RefractionStaticSolverError(
+                'cell grid dimensions are only allowed for solve_cell mode'
+            )
+        return None, None, None
+    n_y = (
+        1
+        if number_of_cell_y is None
+        else _coerce_positive_int(number_of_cell_y, name='number_of_cell_y')
+    )
+    explicit_total = (
+        None
+        if n_total_cells is None
+        else _coerce_positive_int(n_total_cells, name='n_total_cells')
+    )
+    if number_of_cell_x is None:
+        n_x = _infer_cell_count_x(
+            n_total_cells=explicit_total,
+            active_cell_id=active_cell_id,
+            inactive_cell_id=inactive_cell_id,
+            number_of_cell_y=n_y,
+        )
+    else:
+        n_x = _coerce_positive_int(number_of_cell_x, name='number_of_cell_x')
+    total = n_x * n_y
+    if explicit_total is not None and explicit_total != total:
+        raise RefractionStaticSolverError(
+            'number_of_cell_x * number_of_cell_y must equal total cell count'
+        )
+    if active_cell_id.size and (
+        np.any(active_cell_id < 0) or np.any(active_cell_id >= total)
+    ):
+        raise RefractionStaticSolverError('active_cell_id contains an invalid cell ID')
+    if inactive_cell_id.size and (
+        np.any(inactive_cell_id < 0) or np.any(inactive_cell_id >= total)
+    ):
+        raise RefractionStaticSolverError('inactive_cell_id contains an invalid cell ID')
+    return total, n_x, n_y
+
+
+def _infer_cell_count_x(
+    *,
+    n_total_cells: int | None,
+    active_cell_id: np.ndarray,
+    inactive_cell_id: np.ndarray,
+    number_of_cell_y: int,
+) -> int:
+    if n_total_cells is not None:
+        if n_total_cells % number_of_cell_y != 0:
+            raise RefractionStaticSolverError(
+                'n_total_cells must be divisible by number_of_cell_y'
+            )
+        return int(n_total_cells // number_of_cell_y)
+    all_cell_id = np.concatenate((active_cell_id, inactive_cell_id))
+    if all_cell_id.size == 0:
+        return 1
+    inferred_total = int(np.max(all_cell_id)) + 1
+    if inferred_total % number_of_cell_y != 0:
+        raise RefractionStaticSolverError(
+            'inferred total cell count must be divisible by number_of_cell_y'
+        )
+    return int(inferred_total // number_of_cell_y)
+
+
+def _validate_cell_smoothing_request(
+    *,
+    mode: BedrockVelocityMode,
+    model: RefractionStaticModelRequest,
+) -> tuple[float, float | None]:
+    if mode != 'solve_cell':
+        return 0.0, None
+    refractor_cell = getattr(model, 'refractor_cell', None)
+    if refractor_cell is None:
+        raise RefractionStaticSolverError(
+            'model.refractor_cell is required when model.bedrock_velocity_mode is solve_cell'
+        )
+    weight = _coerce_nonnegative_finite_float(
+        getattr(refractor_cell, 'velocity_smoothing_weight', 0.0),
+        name='model.refractor_cell.velocity_smoothing_weight',
+    )
+    raw_reference_distance = getattr(
+        refractor_cell,
+        'smoothing_reference_distance_m',
+        None,
+    )
+    if raw_reference_distance is None:
+        return weight, None
+    return (
+        weight,
+        _coerce_positive_finite_float(
+            raw_reference_distance,
+            name='model.refractor_cell.smoothing_reference_distance_m',
+        ),
     )
 
 
@@ -895,9 +1050,20 @@ def _solve_once(
         ),
     )
     rhs_used = problem.rhs_s[used_mask]
+    smoothing_rows = _build_cell_smoothing_rows_for_used_data(
+        problem,
+        row_distance_m=problem.row_distance_m[used_mask],
+    )
+    matrix_smoothed, rhs_smoothed, _n_cell_smoothing_rows = (
+        augment_design_matrix_with_cell_smoothing(
+            matrix_used,
+            rhs_used,
+            smoothing_rows,
+        )
+    )
     matrix_aug, rhs_aug, n_damping_rows = _augment_with_damping(
-        matrix_used,
-        rhs_used,
+        matrix_smoothed,
+        rhs_smoothed,
         n_active_nodes=problem.n_active_nodes,
         damping=problem.damping,
     )
@@ -910,6 +1076,7 @@ def _solve_once(
             lower_bounds=lower_bounds,
             upper_bounds=upper_bounds,
             n_damping_rows=n_damping_rows,
+            smoothing_rows=smoothing_rows,
         )
 
     # SciPy 1.14 ``lsq_linear`` does not accept ``x0``; bounds define the feasible
@@ -928,6 +1095,7 @@ def _solve_once(
         raw,
         problem=problem,
         n_damping_rows=n_damping_rows,
+        smoothing_rows=smoothing_rows,
         n_augmented_rows=int(matrix_aug.shape[0]),
     )
 
@@ -940,6 +1108,7 @@ def _solve_once_with_initial_value(
     lower_bounds: np.ndarray,
     upper_bounds: np.ndarray,
     n_damping_rows: int,
+    smoothing_rows: CellSlownessSmoothingRows,
 ) -> _InternalSolveResult:
     x0 = _build_initial_parameter_vector(
         problem,
@@ -969,6 +1138,7 @@ def _solve_once_with_initial_value(
         raw,
         problem=problem,
         n_damping_rows=n_damping_rows,
+        smoothing_rows=smoothing_rows,
         n_augmented_rows=int(matrix_aug.shape[0]),
     )
 
@@ -990,11 +1160,60 @@ def _build_initial_parameter_vector(
     return x0
 
 
+def _build_cell_smoothing_rows_for_used_data(
+    problem: _ValidatedProblem,
+    *,
+    row_distance_m: np.ndarray,
+) -> CellSlownessSmoothingRows:
+    if problem.mode != 'solve_cell':
+        return build_cell_slowness_smoothing_rows(
+            active_cell_id=np.empty(0, dtype=np.int64),
+            velocity_smoothing_weight=0.0,
+            n_total_cells=1,
+            number_of_cell_x=1,
+            number_of_cell_y=1,
+            n_parameters=problem.n_parameters,
+        )
+    if problem.velocity_smoothing_weight == 0.0:
+        return build_cell_slowness_smoothing_rows(
+            active_cell_id=problem.active_cell_id,
+            velocity_smoothing_weight=0.0,
+            smoothing_reference_distance_m=problem.smoothing_reference_distance_m,
+            n_total_cells=problem.n_total_cells,
+            number_of_cell_x=problem.number_of_cell_x,
+            number_of_cell_y=problem.number_of_cell_y,
+            bedrock_slowness_cell_col_start=(
+                problem.bedrock_slowness_cell_col_start
+            ),
+            n_parameters=problem.n_parameters,
+        )
+    if (
+        problem.bedrock_slowness_cell_col_start is None
+        or problem.number_of_cell_x is None
+        or problem.number_of_cell_y is None
+    ):
+        raise RefractionStaticSolverError(
+            'solve_cell smoothing requires cell grid dimensions'
+        )
+    return build_cell_slowness_smoothing_rows(
+        active_cell_id=problem.active_cell_id,
+        velocity_smoothing_weight=problem.velocity_smoothing_weight,
+        smoothing_reference_distance_m=problem.smoothing_reference_distance_m,
+        row_distance_m=row_distance_m,
+        n_total_cells=problem.n_total_cells,
+        number_of_cell_x=problem.number_of_cell_x,
+        number_of_cell_y=problem.number_of_cell_y,
+        bedrock_slowness_cell_col_start=problem.bedrock_slowness_cell_col_start,
+        n_parameters=problem.n_parameters,
+    )
+
+
 def _internal_result_from_raw_solver(
     raw: Any,
     *,
     problem: _ValidatedProblem,
     n_damping_rows: int,
+    smoothing_rows: CellSlownessSmoothingRows,
     n_augmented_rows: int,
 ) -> _InternalSolveResult:
     if not bool(getattr(raw, 'success', False)):
@@ -1008,6 +1227,7 @@ def _internal_result_from_raw_solver(
     nit = getattr(raw, 'nit', None)
     if nit is None:
         nit = getattr(raw, 'nfev', None)
+    smoothing_qc = smoothing_rows.qc
     return _InternalSolveResult(
         parameter_vector=parameter_vector,
         raw_status=_optional_int(getattr(raw, 'status', None)),
@@ -1016,6 +1236,21 @@ def _internal_result_from_raw_solver(
         optimality=_optional_finite_float(getattr(raw, 'optimality', None)),
         nit=_optional_int(nit),
         n_damping_rows=n_damping_rows,
+        n_cell_smoothing_edges=int(smoothing_qc['n_cell_smoothing_edges']),
+        n_cell_smoothing_rows=int(smoothing_qc['n_cell_smoothing_rows']),
+        smoothing_row_scale=float(smoothing_qc['smoothing_row_scale']),
+        smoothing_reference_distance_m=smoothing_qc[
+            'smoothing_reference_distance_m'
+        ],
+        active_cell_neighbor_count_min=smoothing_qc[
+            'active_cell_neighbor_count_min'
+        ],
+        active_cell_neighbor_count_median=smoothing_qc[
+            'active_cell_neighbor_count_median'
+        ],
+        active_cell_neighbor_count_max=smoothing_qc[
+            'active_cell_neighbor_count_max'
+        ],
         n_augmented_rows=n_augmented_rows,
     )
 
@@ -1447,6 +1682,11 @@ def _build_qc(
             if solve_result.n_damping_rows
             else 'none'
         ),
+        'row_type_counts': {
+            'data': int(problem.n_observations),
+            'cell_smoothing': int(solve_result.n_cell_smoothing_rows),
+            'node_damping': int(solve_result.n_damping_rows),
+        },
         'n_damping_rows': int(solve_result.n_damping_rows),
         'n_augmented_rows': int(solve_result.n_augmented_rows),
     }
@@ -1463,7 +1703,9 @@ def _build_qc(
         qc.update(
             {
                 'n_total_cells': int(
-                    cell_solution.active_cell_id.shape[0]
+                    problem.n_total_cells
+                    if problem.n_total_cells is not None
+                    else cell_solution.active_cell_id.shape[0]
                     + cell_solution.inactive_cell_id.shape[0]
                 ),
                 'n_active_cells': int(cell_solution.active_cell_id.shape[0]),
@@ -1488,6 +1730,26 @@ def _build_qc(
                 ),
                 'cell_velocity_solved_count': int(
                     np.count_nonzero(cell_solution.cell_velocity_status == 'solved')
+                ),
+                'velocity_smoothing_weight': float(
+                    problem.velocity_smoothing_weight
+                ),
+                'smoothing_reference_distance_m': _json_optional_float(
+                    solve_result.smoothing_reference_distance_m
+                ),
+                'n_cell_smoothing_edges': int(
+                    solve_result.n_cell_smoothing_edges
+                ),
+                'n_cell_smoothing_rows': int(solve_result.n_cell_smoothing_rows),
+                'smoothing_row_scale': float(solve_result.smoothing_row_scale),
+                'active_cell_neighbor_count_min': (
+                    solve_result.active_cell_neighbor_count_min
+                ),
+                'active_cell_neighbor_count_median': (
+                    solve_result.active_cell_neighbor_count_median
+                ),
+                'active_cell_neighbor_count_max': (
+                    solve_result.active_cell_neighbor_count_max
                 ),
             }
         )

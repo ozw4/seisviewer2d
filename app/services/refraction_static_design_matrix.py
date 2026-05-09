@@ -145,6 +145,8 @@ def build_refraction_static_cell_design_matrix(
         n_traces=input_model.n_traces,
         midpoint_cell_id_sorted=assignment.cell_id,
         n_total_cells=int(grid.cell_id.shape[0]),
+        number_of_cell_x=grid.number_of_cell_x,
+        number_of_cell_y=grid.number_of_cell_y,
         cell_assignment_mode=refractor_cell.assignment_mode,
         rejection_reason_sorted=input_model.rejection_reason_sorted,
     )
@@ -163,6 +165,8 @@ def build_refraction_static_design_matrix_from_arrays(
     n_traces: int | None = None,
     midpoint_cell_id_sorted: np.ndarray | None = None,
     n_total_cells: int | None = None,
+    number_of_cell_x: int | None = None,
+    number_of_cell_y: int | None = None,
     cell_assignment_mode: CellAssignmentMode | None = None,
     rejection_reason_sorted: np.ndarray | None = None,
 ) -> RefractionStaticDesignMatrix:
@@ -229,6 +233,8 @@ def build_refraction_static_design_matrix_from_arrays(
     total_cell_count: int | None = None
     active_cell_count: int | None = None
     inactive_cell_count: int | None = None
+    n_cell_x: int | None = None
+    n_cell_y: int | None = None
     assignment_mode: CellAssignmentMode | None = None
     n_observations_outside_grid = 0
     cell_observation_counts: np.ndarray | None = None
@@ -239,6 +245,11 @@ def build_refraction_static_design_matrix_from_arrays(
             expected_shape=expected_shape,
         )
         total_cell_count = _validate_n_total_cells(n_total_cells)
+        n_cell_x, n_cell_y = _validate_cell_grid_shape(
+            n_total_cells=total_cell_count,
+            number_of_cell_x=number_of_cell_x,
+            number_of_cell_y=number_of_cell_y,
+        )
         assignment_mode = _validate_cell_assignment_mode(cell_assignment_mode)
         _validate_midpoint_cell_ids(
             midpoint_cell_id,
@@ -260,6 +271,8 @@ def build_refraction_static_design_matrix_from_arrays(
     elif (
         midpoint_cell_id_sorted is not None
         or n_total_cells is not None
+        or number_of_cell_x is not None
+        or number_of_cell_y is not None
         or cell_assignment_mode is not None
     ):
         raise RefractionStaticDesignMatrixError(
@@ -418,6 +431,8 @@ def build_refraction_static_design_matrix_from_arrays(
             or active_cell_id is None
             or inactive_cell_id is None
             or cell_observation_counts is None
+            or n_cell_x is None
+            or n_cell_y is None
         ):
             raise RefractionStaticDesignMatrixError(
                 'solve_cell mode requires cell QC inputs'
@@ -431,6 +446,8 @@ def build_refraction_static_design_matrix_from_arrays(
                 cell_observation_counts=cell_observation_counts,
                 n_observations_outside_grid=n_observations_outside_grid,
                 n_observations_used=n_observations,
+                number_of_cell_x=n_cell_x,
+                number_of_cell_y=n_cell_y,
             )
         )
 
@@ -466,6 +483,8 @@ def build_refraction_static_design_matrix_from_arrays(
         n_total_cells=total_cell_count,
         n_active_cells=active_cell_count,
         n_inactive_cells=inactive_cell_count,
+        number_of_cell_x=n_cell_x,
+        number_of_cell_y=n_cell_y,
         rejection_reason_sorted=design_rejection_reason,
     )
 
@@ -596,6 +615,8 @@ def _build_cell_qc(
     cell_observation_counts: np.ndarray,
     n_observations_outside_grid: int,
     n_observations_used: int,
+    number_of_cell_x: int,
+    number_of_cell_y: int,
 ) -> dict[str, Any]:
     active_counts = cell_observation_counts[active_cell_id]
     if active_counts.size:
@@ -609,6 +630,8 @@ def _build_cell_qc(
     return {
         'cell_assignment_mode': cell_assignment_mode,
         'n_total_cells': int(n_total_cells),
+        'number_of_cell_x': int(number_of_cell_x),
+        'number_of_cell_y': int(number_of_cell_y),
         'n_active_cells': int(active_cell_id.shape[0]),
         'n_inactive_cells': int(inactive_cell_id.shape[0]),
         'n_observations_outside_grid': int(n_observations_outside_grid),
@@ -820,6 +843,42 @@ def _validate_n_total_cells(value: int | None) -> int:
         raise RefractionStaticDesignMatrixError(
             'n_total_cells must be a positive integer for solve_cell mode'
         )
+    return out
+
+
+def _validate_cell_grid_shape(
+    *,
+    n_total_cells: int,
+    number_of_cell_x: int | None,
+    number_of_cell_y: int | None,
+) -> tuple[int, int]:
+    if number_of_cell_x is None:
+        n_x = int(n_total_cells)
+    else:
+        n_x = _validate_cell_grid_axis_count(
+            number_of_cell_x,
+            name='number_of_cell_x',
+        )
+    if number_of_cell_y is None:
+        n_y = 1
+    else:
+        n_y = _validate_cell_grid_axis_count(
+            number_of_cell_y,
+            name='number_of_cell_y',
+        )
+    if n_x * n_y != int(n_total_cells):
+        raise RefractionStaticDesignMatrixError(
+            'number_of_cell_x * number_of_cell_y must equal n_total_cells'
+        )
+    return n_x, n_y
+
+
+def _validate_cell_grid_axis_count(value: int, *, name: str) -> int:
+    if isinstance(value, (bool, np.bool_)) or not isinstance(value, (int, np.integer)):
+        raise RefractionStaticDesignMatrixError(f'{name} must be a positive integer')
+    out = int(value)
+    if out <= 0:
+        raise RefractionStaticDesignMatrixError(f'{name} must be a positive integer')
     return out
 
 

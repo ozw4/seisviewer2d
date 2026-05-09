@@ -115,6 +115,8 @@ class RefractionStaticDesignMatrix:
     n_total_cells: int | None = None
     n_active_cells: int | None = None
     n_inactive_cells: int | None = None
+    number_of_cell_x: int | None = None
+    number_of_cell_y: int | None = None
     rejection_reason_sorted: np.ndarray | None = None
 
 

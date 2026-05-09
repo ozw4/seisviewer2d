@@ -60,6 +60,19 @@ def _cell_model(**overrides: Any) -> RefractionStaticModelRequest:
     return RefractionStaticModelRequest.model_validate(payload)
 
 
+def _cell_model_with_smoothing(
+    *,
+    velocity_smoothing_weight: float,
+    smoothing_reference_distance_m: float | None = None,
+) -> RefractionStaticModelRequest:
+    payload = _cell_model().model_dump()
+    refractor_cell = dict(payload['refractor_cell'])
+    refractor_cell['velocity_smoothing_weight'] = velocity_smoothing_weight
+    refractor_cell['smoothing_reference_distance_m'] = smoothing_reference_distance_m
+    payload['refractor_cell'] = refractor_cell
+    return RefractionStaticModelRequest.model_validate(payload)
+
+
 def _global_model(**overrides: Any) -> RefractionStaticModelRequest:
     payload: dict[str, Any] = {
         'method': 'gli_variable_thickness',
@@ -257,6 +270,97 @@ def test_cell_solver_robust_rejects_outlier_rows() -> None:
         rtol=1.0e-7,
     )
     assert result.qc['n_rejected_by_robust'] == 1
+
+
+def test_cell_smoothing_does_not_enter_robust_rejection_mask(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    design = _cell_design()
+    captured_row_counts: list[int] = []
+
+    def no_outliers(
+        residual_s: np.ndarray,
+        *,
+        method: str,
+        threshold: float,
+    ) -> np.ndarray:
+        del method, threshold
+        captured_row_counts.append(int(residual_s.shape[0]))
+        return np.zeros(residual_s.shape, dtype=bool)
+
+    monkeypatch.setattr(
+        solver_module,
+        '_build_robust_outlier_mask',
+        no_outliers,
+    )
+
+    result = solve_refraction_static_bounded_ls(
+        design_matrix=design,
+        model=_cell_model_with_smoothing(
+            velocity_smoothing_weight=1.0,
+            smoothing_reference_distance_m=100.0,
+        ),
+        solver=_solver(robust={'enabled': True}),
+    )
+
+    assert captured_row_counts == [design.n_observations]
+    assert result.rejected_by_robust_mask.shape == (design.n_observations,)
+    assert result.used_row_mask.shape == (design.n_observations,)
+    assert result.qc['n_cell_smoothing_rows'] == 1
+    assert result.qc['n_rejected_by_robust'] == 0
+
+
+def test_cell_smoothing_reduces_velocity_contrast_in_noisy_synthetic() -> None:
+    pick_time = _pick_times()
+    pick_time = pick_time + np.where(ROW_MIDPOINT_CELL_ID == 0, 0.004, -0.004)
+    design = _cell_design(pick_time_s=pick_time)
+
+    unsmoothed = solve_refraction_static_bounded_ls(
+        design_matrix=design,
+        model=_cell_model(),
+        solver=_solver(),
+    )
+    smoothed = solve_refraction_static_bounded_ls(
+        design_matrix=design,
+        model=_cell_model_with_smoothing(
+            velocity_smoothing_weight=2.0,
+            smoothing_reference_distance_m=100.0,
+        ),
+        solver=_solver(),
+    )
+
+    assert unsmoothed.cell_bedrock_velocity_m_s is not None
+    assert smoothed.cell_bedrock_velocity_m_s is not None
+    unsmoothed_contrast = float(np.ptp(unsmoothed.cell_bedrock_velocity_m_s))
+    smoothed_contrast = float(np.ptp(smoothed.cell_bedrock_velocity_m_s))
+    assert smoothed_contrast < unsmoothed_contrast
+    assert smoothed.qc['n_cell_smoothing_rows'] == 1
+    assert smoothed.qc['smoothing_row_scale'] == pytest.approx(200.0)
+
+
+def test_cell_smoothing_zero_weight_reproduces_unsmoothed_solve() -> None:
+    design = _cell_design()
+
+    default_result = solve_refraction_static_bounded_ls(
+        design_matrix=design,
+        model=_cell_model(),
+        solver=_solver(),
+    )
+    zero_weight_result = solve_refraction_static_bounded_ls(
+        design_matrix=design,
+        model=_cell_model_with_smoothing(
+            velocity_smoothing_weight=0.0,
+            smoothing_reference_distance_m=100.0,
+        ),
+        solver=_solver(),
+    )
+
+    np.testing.assert_allclose(
+        zero_weight_result.parameter_vector,
+        default_result.parameter_vector,
+        atol=1.0e-10,
+    )
+    assert zero_weight_result.qc['n_cell_smoothing_rows'] == 0
 
 
 def test_cell_solver_reports_median_velocity_summary() -> None:
