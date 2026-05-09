@@ -508,6 +508,10 @@ def test_write_refraction_static_artifacts_validation_failures(
             replace(_result(), bedrock_velocity_m_s=float('nan')),
             'non-finite required scalar bedrock_velocity_m_s',
         ),
+        (
+            replace(_result(), bedrock_velocity_mode='solve_cell'),
+            'model.bedrock_velocity_mode=solve_cell is not supported',
+        ),
     ]
 
     for index, (result, message) in enumerate(cases):

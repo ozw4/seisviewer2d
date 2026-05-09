@@ -1457,6 +1457,113 @@ class RefractionStaticFirstLayerRequest(BaseModel):
         return self
 
 
+class RefractionStaticRefractorCellRequest(BaseModel):
+    """Spatial refractor V2 cell configuration for Phase 2 request contracts."""
+
+    model_config = ConfigDict(extra='forbid')
+
+    number_of_cell_x: int
+    size_of_cell_x_m: float
+    x_coordinate_origin_m: float
+
+    number_of_cell_y: int = 1
+    size_of_cell_y_m: float | None = None
+    y_coordinate_origin_m: float = 0.0
+
+    assignment_mode: Literal['midpoint'] = 'midpoint'
+    outside_grid_policy: Literal['reject'] = 'reject'
+
+    min_observations_per_cell: int = 5
+    velocity_smoothing_weight: float = 0.0
+    smoothing_reference_distance_m: float | None = None
+
+    @field_validator(
+        'number_of_cell_x',
+        'number_of_cell_y',
+        'min_observations_per_cell',
+        mode='before',
+    )
+    @classmethod
+    def _check_positive_count(cls, value: object, info: Any) -> int:
+        return _require_positive_int(
+            value,
+            f'model.refractor_cell.{info.field_name}',
+        )
+
+    @field_validator('size_of_cell_x_m', mode='before')
+    @classmethod
+    def _check_size_of_cell_x(cls, value: object) -> float:
+        return _require_positive_finite_float(
+            value,
+            'model.refractor_cell.size_of_cell_x_m',
+        )
+
+    @field_validator('size_of_cell_y_m', mode='before')
+    @classmethod
+    def _check_size_of_cell_y(cls, value: object) -> float | None:
+        if value is None:
+            return None
+        return _require_positive_finite_float(
+            value,
+            'model.refractor_cell.size_of_cell_y_m',
+        )
+
+    @field_validator(
+        'x_coordinate_origin_m',
+        'y_coordinate_origin_m',
+        mode='before',
+    )
+    @classmethod
+    def _check_origin(cls, value: object, info: Any) -> float:
+        return _require_finite_float(
+            value,
+            f'model.refractor_cell.{info.field_name}',
+        )
+
+    @field_validator('assignment_mode', mode='before')
+    @classmethod
+    def _check_assignment_mode(cls, value: object) -> Literal['midpoint']:
+        if value != 'midpoint':
+            raise ValueError('model.refractor_cell.assignment_mode must be midpoint')
+        return 'midpoint'
+
+    @field_validator('outside_grid_policy', mode='before')
+    @classmethod
+    def _check_outside_grid_policy(cls, value: object) -> Literal['reject']:
+        if value != 'reject':
+            raise ValueError(
+                'model.refractor_cell.outside_grid_policy must be reject'
+            )
+        return 'reject'
+
+    @field_validator('velocity_smoothing_weight', mode='before')
+    @classmethod
+    def _check_velocity_smoothing_weight(cls, value: object) -> float:
+        return _require_nonnegative_finite_float(
+            value,
+            'model.refractor_cell.velocity_smoothing_weight',
+        )
+
+    @field_validator('smoothing_reference_distance_m', mode='before')
+    @classmethod
+    def _check_smoothing_reference_distance(cls, value: object) -> float | None:
+        if value is None:
+            return None
+        return _require_positive_finite_float(
+            value,
+            'model.refractor_cell.smoothing_reference_distance_m',
+        )
+
+    @model_validator(mode='after')
+    def _check_cell_values(self) -> 'RefractionStaticRefractorCellRequest':
+        if self.number_of_cell_y > 1 and self.size_of_cell_y_m is None:
+            raise ValueError(
+                'model.refractor_cell.size_of_cell_y_m is required when '
+                'model.refractor_cell.number_of_cell_y > 1'
+            )
+        return self
+
+
 class RefractionStaticModelRequest(BaseModel):
     """Near-surface model options for refraction static inversion."""
 
@@ -1465,12 +1572,17 @@ class RefractionStaticModelRequest(BaseModel):
     method: Literal['gli_variable_thickness'] = 'gli_variable_thickness'
     weathering_velocity_m_s: float | None = None
     first_layer: RefractionStaticFirstLayerRequest | None = None
-    bedrock_velocity_mode: Literal['solve_global', 'fixed_global'] = 'solve_global'
+    bedrock_velocity_mode: Literal[
+        'solve_global',
+        'fixed_global',
+        'solve_cell',
+    ] = 'solve_global'
     bedrock_velocity_m_s: float | None = None
     initial_bedrock_velocity_m_s: float | None = None
     min_bedrock_velocity_m_s: float = 1200.0
     max_bedrock_velocity_m_s: float = 6000.0
     max_weathering_thickness_m: float | None = None
+    refractor_cell: RefractionStaticRefractorCellRequest | None = None
 
     @field_validator('weathering_velocity_m_s', mode='before')
     @classmethod
@@ -1559,6 +1671,17 @@ class RefractionStaticModelRequest(BaseModel):
             raise ValueError(
                 'model.bedrock_velocity_m_s is only allowed when '
                 'model.bedrock_velocity_mode is fixed_global'
+            )
+        if self.bedrock_velocity_mode == 'solve_cell':
+            if self.refractor_cell is None:
+                raise ValueError(
+                    'model.refractor_cell is required when '
+                    'model.bedrock_velocity_mode is solve_cell'
+                )
+        elif self.refractor_cell is not None:
+            raise ValueError(
+                'model.refractor_cell is only allowed when '
+                'model.bedrock_velocity_mode is solve_cell'
             )
         return self
 
@@ -1914,6 +2037,13 @@ class RefractionStaticConversionRequest(BaseModel):
     mode: Literal['existing', 't1lsst_1layer'] = 'existing'
 
 
+REFRACTION_SOLVE_CELL_APPLY_UNSUPPORTED_MESSAGE = (
+    'model.bedrock_velocity_mode=solve_cell is not supported by '
+    '/statics/refraction/apply until cell V2 artifacts and static tables '
+    'are implemented'
+)
+
+
 class RefractionStaticApplyRequest(BaseModel):
     """Request model for ``/statics/refraction/apply`` jobs."""
 
@@ -1957,6 +2087,14 @@ class RefractionStaticApplyRequest(BaseModel):
     @classmethod
     def _check_key_header_byte(cls, value: object, info: Any) -> int:
         return require_trace_header_byte(value, info.field_name)
+
+    @model_validator(mode='after')
+    def _check_supported_refraction_apply_model(
+        self,
+    ) -> 'RefractionStaticApplyRequest':
+        if self.model.bedrock_velocity_mode == 'solve_cell':
+            raise ValueError(REFRACTION_SOLVE_CELL_APPLY_UNSUPPORTED_MESSAGE)
+        return self
 
 
 class RefractionStaticApplyResponse(BaseModel):
