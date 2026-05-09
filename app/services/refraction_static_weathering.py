@@ -17,6 +17,10 @@ from app.services.refraction_static_cell_grid import (
     assign_points_to_refraction_cells,
     build_refraction_cell_grid,
 )
+from app.services.refraction_static_cell_coordinates import (
+    effective_refraction_cell_grid_config,
+    project_refraction_cell_points,
+)
 from app.services.refraction_static_first_layer import (
     resolve_weathering_velocity_m_s,
 )
@@ -648,9 +652,12 @@ def _build_local_v2_model(
         raise RefractionWeatheringThicknessError(
             'solve_cell half-intercept result requires active cell velocities'
         )
-    grid = build_refraction_cell_grid(refractor_cell)
+    grid = build_refraction_cell_grid(
+        effective_refraction_cell_grid_config(refractor_cell)
+    )
     node = _project_local_v2(
         grid=grid,
+        refractor_cell=refractor_cell,
         x_m=data.node_x_m,
         y_m=data.node_y_m,
         active_cell_id=data.active_cell_id,
@@ -660,6 +667,7 @@ def _build_local_v2_model(
     )
     source = _project_local_v2(
         grid=grid,
+        refractor_cell=refractor_cell,
         x_m=data.source_x_m,
         y_m=data.source_y_m,
         active_cell_id=data.active_cell_id,
@@ -669,6 +677,7 @@ def _build_local_v2_model(
     )
     receiver = _project_local_v2(
         grid=grid,
+        refractor_cell=refractor_cell,
         x_m=data.receiver_x_m,
         y_m=data.receiver_y_m,
         active_cell_id=data.active_cell_id,
@@ -712,6 +721,7 @@ def _build_local_v2_model(
 def _project_local_v2(
     *,
     grid: object,
+    refractor_cell: object,
     x_m: np.ndarray,
     y_m: np.ndarray,
     active_cell_id: np.ndarray,
@@ -719,7 +729,19 @@ def _project_local_v2(
     weathering_velocity_m_s: float,
     low_fold_cell_id: np.ndarray,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
-    assignment = assign_points_to_refraction_cells(grid, x_m=x_m, y_m=y_m)
+    projected = project_refraction_cell_points(
+        x_m=x_m,
+        y_m=y_m,
+        mode=getattr(refractor_cell, 'coordinate_mode', 'grid_3d'),
+        line_origin_x_m=getattr(refractor_cell, 'line_origin_x_m', None),
+        line_origin_y_m=getattr(refractor_cell, 'line_origin_y_m', None),
+        line_azimuth_deg=getattr(refractor_cell, 'line_azimuth_deg', None),
+    )
+    assignment = assign_points_to_refraction_cells(
+        grid,
+        x_m=projected.x_m,
+        y_m=projected.y_m,
+    )
     cell_id = np.ascontiguousarray(assignment.cell_id, dtype=np.int64)
     v2 = np.full(cell_id.shape, np.nan, dtype=np.float64)
     status = np.full(cell_id.shape, 'ok', dtype=_STATUS_DTYPE)

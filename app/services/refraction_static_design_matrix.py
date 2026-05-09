@@ -8,6 +8,10 @@ import numpy as np
 from scipy import sparse
 
 from app.api.schemas import RefractionStaticModelRequest
+from app.services.refraction_static_cell_coordinates import (
+    effective_refraction_cell_grid_config,
+    project_refraction_cell_coordinates,
+)
 from app.services.refraction_static_cell_grid import (
     assign_observation_midpoint_cells,
     build_refraction_cell_grid,
@@ -128,13 +132,24 @@ def build_refraction_static_cell_design_matrix(
             'model.refractor_cell is required when '
             'model.bedrock_velocity_mode is solve_cell'
         )
-    grid = build_refraction_cell_grid(refractor_cell)
-    assignment = assign_observation_midpoint_cells(
-        grid,
+    grid_config = effective_refraction_cell_grid_config(refractor_cell)
+    grid = build_refraction_cell_grid(grid_config)
+    projected = project_refraction_cell_coordinates(
         source_x_m=input_model.source_x_m_sorted,
         source_y_m=input_model.source_y_m_sorted,
         receiver_x_m=input_model.receiver_x_m_sorted,
         receiver_y_m=input_model.receiver_y_m_sorted,
+        mode=refractor_cell.coordinate_mode,
+        line_origin_x_m=refractor_cell.line_origin_x_m,
+        line_origin_y_m=refractor_cell.line_origin_y_m,
+        line_azimuth_deg=refractor_cell.line_azimuth_deg,
+    )
+    assignment = assign_observation_midpoint_cells(
+        grid,
+        source_x_m=projected.source_x_m,
+        source_y_m=projected.source_y_m,
+        receiver_x_m=projected.receiver_x_m,
+        receiver_y_m=projected.receiver_y_m,
     )
     return build_refraction_static_design_matrix_from_arrays(
         pick_time_s_sorted=input_model.pick_time_s_sorted,
@@ -152,6 +167,7 @@ def build_refraction_static_cell_design_matrix(
         cell_assignment_mode=refractor_cell.assignment_mode,
         min_observations_per_cell=refractor_cell.min_observations_per_cell,
         rejection_reason_sorted=input_model.rejection_reason_sorted,
+        coordinate_qc=projected.qc,
     )
 
 
@@ -173,6 +189,7 @@ def build_refraction_static_design_matrix_from_arrays(
     cell_assignment_mode: CellAssignmentMode | None = None,
     min_observations_per_cell: int | None = None,
     rejection_reason_sorted: np.ndarray | None = None,
+    coordinate_qc: dict[str, Any] | None = None,
 ) -> RefractionStaticDesignMatrix:
     """Build a refraction static design matrix from sorted observation arrays."""
     mode = _validate_bedrock_velocity_mode(bedrock_velocity_mode)
@@ -309,6 +326,7 @@ def build_refraction_static_design_matrix_from_arrays(
         or number_of_cell_y is not None
         or cell_assignment_mode is not None
         or min_observations_per_cell is not None
+        or coordinate_qc is not None
     ):
         raise RefractionStaticDesignMatrixError(
             'cell design matrix inputs are only allowed for solve_cell mode'
@@ -491,6 +509,7 @@ def build_refraction_static_design_matrix_from_arrays(
                 n_observations_used=n_observations,
                 number_of_cell_x=n_cell_x,
                 number_of_cell_y=n_cell_y,
+                coordinate_qc=coordinate_qc,
             )
         )
 
@@ -663,6 +682,7 @@ def _build_cell_qc(
     n_observations_used: int,
     number_of_cell_x: int,
     number_of_cell_y: int,
+    coordinate_qc: dict[str, Any] | None,
 ) -> dict[str, Any]:
     active_counts = cell_observation_counts[active_cell_id]
     if active_counts.size:
@@ -673,7 +693,7 @@ def _build_cell_qc(
         min_observations = None
         median_observations = None
         max_observations = None
-    return {
+    payload: dict[str, Any] = {
         'cell_assignment_mode': cell_assignment_mode,
         'n_total_cells': int(n_total_cells),
         'number_of_cell_x': int(number_of_cell_x),
@@ -697,6 +717,14 @@ def _build_cell_qc(
         'median_observations_per_active_cell': median_observations,
         'max_observations_per_active_cell': max_observations,
     }
+    if coordinate_qc is not None:
+        payload.update(coordinate_qc)
+    else:
+        payload['coordinate_mode'] = 'grid_3d'
+        payload['line_origin_x_m'] = None
+        payload['line_origin_y_m'] = None
+        payload['line_azimuth_deg'] = None
+    return payload
 
 
 def _connectivity_qc(

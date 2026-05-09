@@ -14,6 +14,10 @@ from uuid import uuid4
 import numpy as np
 
 from app.api.schemas import RefractionStaticApplyRequest
+from app.services.refraction_static_cell_coordinates import (
+    effective_refraction_cell_grid_config,
+    refraction_cell_coordinate_metadata_from_config,
+)
 from app.services.refraction_static_cell_grid import build_refraction_cell_grid
 from app.services.refraction_static_design_matrix import (
     LOW_FOLD_CELL_REJECTION_REASON,
@@ -745,7 +749,8 @@ def build_refraction_refractor_velocity_grid_arrays(
             'model.refractor_cell is required for cell velocity artifacts'
         )
 
-    grid = build_refraction_cell_grid(refractor_cell)
+    grid_config = effective_refraction_cell_grid_config(refractor_cell)
+    grid = build_refraction_cell_grid(grid_config)
     n_total_cells = int(grid.cell_id.shape[0])
     active_cell_id = _required_cell_int_array(
         values.result.active_cell_id,
@@ -899,6 +904,7 @@ def build_refraction_refractor_velocity_qc_payload(
         raise RefractionStaticArtifactError(
             'model.refractor_cell is required for cell velocity QC'
         )
+    grid_config = effective_refraction_cell_grid_config(refractor_cell)
     active_mask = np.asarray(arrays['active_cell_mask'], dtype=bool)
     velocity = np.asarray(arrays['v2_m_s'], dtype=np.float64)
     active_velocity = velocity[active_mask & np.isfinite(velocity)]
@@ -927,8 +933,8 @@ def build_refraction_refractor_velocity_qc_payload(
         'n_cell_smoothing_rows',
         default=_estimated_cell_smoothing_rows(
             active_cell_mask=active_mask,
-            number_of_cell_x=int(refractor_cell.number_of_cell_x),
-            number_of_cell_y=int(refractor_cell.number_of_cell_y),
+            number_of_cell_x=int(grid_config.number_of_cell_x),
+            number_of_cell_y=int(grid_config.number_of_cell_y),
             velocity_smoothing_weight=float(
                 refractor_cell.velocity_smoothing_weight
             ),
@@ -938,11 +944,12 @@ def build_refraction_refractor_velocity_qc_payload(
         'artifact_version': ARTIFACT_VERSION,
         'bedrock_velocity_mode': 'solve_cell',
         'cell_assignment_mode': refractor_cell.assignment_mode,
+        **refraction_cell_coordinate_metadata_from_config(refractor_cell),
         'outside_grid_policy': refractor_cell.outside_grid_policy,
-        'number_of_cell_x': int(refractor_cell.number_of_cell_x),
-        'number_of_cell_y': int(refractor_cell.number_of_cell_y),
-        'size_of_cell_x_m': float(refractor_cell.size_of_cell_x_m),
-        'size_of_cell_y_m': _json_float(refractor_cell.size_of_cell_y_m),
+        'number_of_cell_x': int(grid_config.number_of_cell_x),
+        'number_of_cell_y': int(grid_config.number_of_cell_y),
+        'size_of_cell_x_m': float(grid_config.size_of_cell_x_m),
+        'size_of_cell_y_m': _json_float(grid_config.size_of_cell_y_m),
         'n_total_cells': n_total,
         'n_active_cells': n_active,
         'n_inactive_cells': int(n_total - n_active),
@@ -1551,10 +1558,19 @@ def build_refraction_static_qc_payload(
         'warnings': [],
     }
     if r.bedrock_velocity_mode == 'solve_cell':
+        refractor_cell = req.model.refractor_cell
+        if refractor_cell is None:
+            raise RefractionStaticArtifactError(
+                'model.refractor_cell is required for solve_cell QC'
+            )
+        coordinate_metadata = refraction_cell_coordinate_metadata_from_config(
+            refractor_cell
+        )
         payload['velocity']['cell_velocity_qc_artifact'] = (
             REFRACTION_REFRACTOR_VELOCITY_QC_JSON_NAME
         )
         payload['refractor_velocity_cells'] = {
+            **coordinate_metadata,
             'cells_csv_artifact': REFRACTION_REFRACTOR_VELOCITY_CELLS_CSV_NAME,
             'grid_npz_artifact': REFRACTION_REFRACTOR_VELOCITY_GRID_NPZ_NAME,
             'qc_json_artifact': REFRACTION_REFRACTOR_VELOCITY_QC_JSON_NAME,

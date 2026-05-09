@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import replace
 from typing import Any
 
 import numpy as np
@@ -232,6 +233,49 @@ def test_cell_design_matrix_rejects_outside_grid_rows() -> None:
     assert design.qc['n_observations_used'] == 2
 
 
+def test_line_2d_projected_assigns_diagonal_line_by_inline_distance() -> None:
+    input_model = _input_model(
+        midpoint_x_m=[5.0, 25.0],
+        source_node_id=[10, 20],
+        receiver_node_id=[20, 30],
+        distance_m=[100.0, 200.0],
+    )
+    azimuth_rad = np.deg2rad(45.0)
+
+    def to_map(inline_m: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+        return (
+            inline_m * np.sin(azimuth_rad),
+            inline_m * np.cos(azimuth_rad),
+        )
+
+    source_x, source_y = to_map(input_model.source_x_m_sorted)
+    receiver_x, receiver_y = to_map(input_model.receiver_x_m_sorted)
+    diagonal_input = replace(
+        input_model,
+        source_x_m_sorted=source_x,
+        source_y_m_sorted=source_y,
+        receiver_x_m_sorted=receiver_x,
+        receiver_y_m_sorted=receiver_y,
+    )
+    payload = _model(number_of_cell_x=3).model_dump(mode='json')
+    payload['refractor_cell'].update(
+        {
+            'coordinate_mode': 'line_2d_projected',
+            'line_origin_x_m': 0.0,
+            'line_origin_y_m': 0.0,
+            'line_azimuth_deg': 45.0,
+        }
+    )
+    design = build_refraction_static_design_matrix(
+        input_model=diagonal_input,
+        model=RefractionStaticModelRequest.model_validate(payload),
+    )
+
+    np.testing.assert_array_equal(design.row_midpoint_cell_id, [0, 2])
+    assert design.qc['coordinate_mode'] == 'line_2d_projected'
+    assert design.qc['line_azimuth_deg'] == pytest.approx(45.0)
+
+
 def test_cell_design_matrix_marks_empty_cells_inactive() -> None:
     design = build_refraction_static_design_matrix(
         input_model=_input_model(
@@ -291,6 +335,7 @@ def test_cell_design_matrix_qc_reports_observation_counts_per_cell() -> None:
 
     assert design.qc['bedrock_velocity_mode'] == 'solve_cell'
     assert design.qc['cell_assignment_mode'] == 'midpoint'
+    assert design.qc['coordinate_mode'] == 'grid_3d'
     assert design.qc['n_total_cells'] == 4
     assert design.qc['n_active_cells'] == 3
     assert design.qc['n_inactive_cells'] == 1
