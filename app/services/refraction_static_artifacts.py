@@ -247,18 +247,28 @@ _NEAR_SURFACE_COLUMNS = (
     'residual_mad_ms',
 )
 
+# Keep the legacy millisecond residual columns and append explicit seconds/cell
+# aliases so residual rows can be joined to refractor-cell QC artifacts.
 _RESIDUAL_COLUMNS = (
     'row_index',
+    'observation_index',
     'sorted_trace_index',
     'source_node_id',
     'receiver_node_id',
     'distance_m',
     'observed_pick_time_ms',
+    'observed_pick_time_s',
     'modeled_pick_time_ms',
+    'modeled_pick_time_s',
     'residual_ms',
+    'residual_s',
     'used',
+    'used_in_solve',
     'rejected_by_robust',
     'rejection_reason',
+    'cell_id',
+    'cell_ix',
+    'cell_iy',
 )
 
 _COMPONENT_COLUMNS = (
@@ -348,27 +358,43 @@ _RECEIVER_STATIC_TABLE_COLUMNS = (
     'residual_mad_ms',
 )
 
+# Keep the original Phase 2 cell columns and add self-describing aliases used
+# by downstream QC checks; existing artifact names and column meanings remain.
 _REFRACTOR_VELOCITY_CELL_COLUMNS = (
     'cell_id',
     'ix',
     'iy',
+    'cell_ix',
+    'cell_iy',
+    'coordinate_mode',
     'x_min_m',
     'x_max_m',
     'y_min_m',
     'y_max_m',
     'x_center_m',
     'y_center_m',
+    'cell_center_x_m',
+    'cell_center_y_m',
+    'cell_center_inline_m',
+    'cell_center_crossline_m',
     'active',
     'n_observations',
     'n_used_observations',
     'n_rejected_observations',
+    'n_sources',
+    'n_receivers',
     'v2_m_s',
     'slowness_s_per_m',
+    'initial_v2_m_s',
+    'v2_update_from_initial_m_s',
     'velocity_status',
+    'status_reason',
     'residual_rms_ms',
     'residual_mad_ms',
     'residual_mean_ms',
     'residual_p95_abs_ms',
+    'smoothing_enabled',
+    'smoothing_weight',
     'smoothing_neighbor_count',
 )
 
@@ -492,6 +518,7 @@ def write_refraction_static_artifacts(
     write_first_break_residuals_csv(
         result=values.result,
         path=paths.first_break_residuals_csv,
+        req=request,
     )
     write_refraction_static_components_csv(
         result=values.result,
@@ -638,9 +665,10 @@ def write_first_break_residuals_csv(
     *,
     result: RefractionDatumStaticsResult,
     path: Path,
+    req: RefractionStaticApplyRequest | None = None,
 ) -> None:
     values = _validate_result(result)
-    rows = _first_break_residual_rows(values.result)
+    rows = _first_break_residual_rows(values.result, req=req)
     _write_csv_atomic(Path(path), _RESIDUAL_COLUMNS, rows)
 
 
@@ -821,6 +849,24 @@ def build_refraction_refractor_velocity_grid_arrays(
     if low_fold_cell_id.size:
         velocity_status[low_fold_cell_id] = LOW_FOLD_CELL_VELOCITY_STATUS
 
+    coordinate_mode = str(refractor_cell.coordinate_mode)
+    center_aliases = _refractor_cell_center_alias_arrays(
+        x_center_m=grid.x_center_m,
+        y_center_m=grid.y_center_m,
+        coordinate_mode=coordinate_mode,
+        line_origin_x_m=refractor_cell.line_origin_x_m,
+        line_origin_y_m=refractor_cell.line_origin_y_m,
+        line_azimuth_deg=refractor_cell.line_azimuth_deg,
+    )
+    initial_v2 = np.full(n_total_cells, np.nan, dtype=np.float64)
+    if request.model.initial_bedrock_velocity_m_s is not None:
+        initial_v2.fill(float(request.model.initial_bedrock_velocity_m_s))
+    v2_update = np.full(n_total_cells, np.nan, dtype=np.float64)
+    finite_update = np.isfinite(v2_m_s) & np.isfinite(initial_v2)
+    v2_update[finite_update] = v2_m_s[finite_update] - initial_v2[finite_update]
+    smoothing_weight = float(refractor_cell.velocity_smoothing_weight)
+    smoothing_enabled = bool(smoothing_weight > 0.0)
+
     n_observations = np.zeros(n_total_cells, dtype=np.int64)
     n_used_observations = np.zeros(n_total_cells, dtype=np.int64)
     valid_row_cell = (
@@ -841,23 +887,46 @@ def build_refraction_refractor_velocity_grid_arrays(
         raise RefractionStaticArtifactError(
             'used observations per cell cannot exceed total observations per cell'
         )
+    n_sources = _unique_observation_endpoint_count_by_cell(
+        row_midpoint_cell_id=row_midpoint_cell_id,
+        endpoint_id=values.result.row_source_node_id,
+        n_total_cells=n_total_cells,
+    )
+    n_receivers = _unique_observation_endpoint_count_by_cell(
+        row_midpoint_cell_id=row_midpoint_cell_id,
+        endpoint_id=values.result.row_receiver_node_id,
+        n_total_cells=n_total_cells,
+    )
     residual_stats = _per_cell_residual_stats_ms(
         row_midpoint_cell_id=row_midpoint_cell_id,
         residual_time_s=values.result.residual_time_s,
         used_row_mask=values.result.used_row_mask,
         n_total_cells=n_total_cells,
     )
+    status_reason = _refractor_cell_status_reasons(
+        velocity_status=velocity_status,
+        n_observations=n_observations,
+    )
 
     arrays = {
         'cell_id': np.ascontiguousarray(grid.cell_id, dtype=np.int64),
         'ix': np.ascontiguousarray(grid.ix, dtype=np.int64),
         'iy': np.ascontiguousarray(grid.iy, dtype=np.int64),
+        'cell_ix': np.ascontiguousarray(grid.ix, dtype=np.int64),
+        'cell_iy': np.ascontiguousarray(grid.iy, dtype=np.int64),
+        'coordinate_mode': _string_array(
+            np.full(n_total_cells, coordinate_mode, dtype=f'<U{len(coordinate_mode)}')
+        ),
         'x_min_m': np.ascontiguousarray(grid.x_min_m, dtype=np.float64),
         'x_max_m': np.ascontiguousarray(grid.x_max_m, dtype=np.float64),
         'y_min_m': np.ascontiguousarray(grid.y_min_m, dtype=np.float64),
         'y_max_m': np.ascontiguousarray(grid.y_max_m, dtype=np.float64),
         'x_center_m': np.ascontiguousarray(grid.x_center_m, dtype=np.float64),
         'y_center_m': np.ascontiguousarray(grid.y_center_m, dtype=np.float64),
+        'cell_center_x_m': center_aliases['x_m'],
+        'cell_center_y_m': center_aliases['y_m'],
+        'cell_center_inline_m': center_aliases['inline_m'],
+        'cell_center_crossline_m': center_aliases['crossline_m'],
         'active_cell_mask': np.ascontiguousarray(active_cell_mask, dtype=bool),
         'n_observations_per_cell': np.ascontiguousarray(
             n_observations,
@@ -871,13 +940,27 @@ def build_refraction_refractor_velocity_grid_arrays(
             n_observations - n_used_observations,
             dtype=np.int64,
         ),
+        'n_sources_per_cell': np.ascontiguousarray(n_sources, dtype=np.int64),
+        'n_receivers_per_cell': np.ascontiguousarray(n_receivers, dtype=np.int64),
         'v2_m_s': np.ascontiguousarray(v2_m_s, dtype=np.float64),
         'slowness_s_per_m': np.ascontiguousarray(slowness_s_per_m, dtype=np.float64),
+        'initial_v2_m_s': np.ascontiguousarray(initial_v2, dtype=np.float64),
+        'v2_update_from_initial_m_s': np.ascontiguousarray(
+            v2_update,
+            dtype=np.float64,
+        ),
         'velocity_status': _string_array(velocity_status),
+        'status_reason': _string_array(status_reason),
         'residual_rms_ms': residual_stats['rms'],
         'residual_mad_ms': residual_stats['mad'],
         'residual_mean_ms': residual_stats['mean'],
         'residual_p95_abs_ms': residual_stats['p95_abs'],
+        'smoothing_enabled': np.full(n_total_cells, smoothing_enabled, dtype=bool),
+        'smoothing_weight': np.full(
+            n_total_cells,
+            smoothing_weight,
+            dtype=np.float64,
+        ),
         'smoothing_neighbor_count': np.ascontiguousarray(
             smoothing_neighbor_count,
             dtype=np.int64,
@@ -1983,30 +2066,102 @@ def _near_surface_model_rows(result: RefractionDatumStaticsResult) -> list[dict[
     return rows
 
 
-def _first_break_residual_rows(result: RefractionDatumStaticsResult) -> list[dict[str, object]]:
+def _first_break_residual_rows(
+    result: RefractionDatumStaticsResult,
+    *,
+    req: RefractionStaticApplyRequest | None = None,
+) -> list[dict[str, object]]:
     rows: list[dict[str, object]] = []
+    cell_id_by_row, cell_ix_by_row, cell_iy_by_row = _residual_row_cell_context(
+        result,
+        req=req,
+    )
     for row_index in range(int(result.row_trace_index_sorted.shape[0])):
         rejected_by_robust = bool(result.rejected_by_robust_mask[row_index])
         used = bool(result.used_row_mask[row_index])
         rows.append(
             {
                 'row_index': row_index,
+                'observation_index': row_index,
                 'sorted_trace_index': int(result.row_trace_index_sorted[row_index]),
                 'source_node_id': int(result.row_source_node_id[row_index]),
                 'receiver_node_id': int(result.row_receiver_node_id[row_index]),
                 'distance_m': _csv_float(result.row_distance_m[row_index]),
                 'observed_pick_time_ms': _csv_ms(result.observed_pick_time_s[row_index]),
+                'observed_pick_time_s': _csv_float(result.observed_pick_time_s[row_index]),
                 'modeled_pick_time_ms': _csv_ms(result.modeled_pick_time_s[row_index]),
+                'modeled_pick_time_s': _csv_float(result.modeled_pick_time_s[row_index]),
                 'residual_ms': _csv_ms(result.residual_time_s[row_index]),
+                'residual_s': _csv_float(result.residual_time_s[row_index]),
                 'used': _csv_bool(used),
+                'used_in_solve': _csv_bool(used),
                 'rejected_by_robust': _csv_bool(rejected_by_robust),
                 'rejection_reason': _residual_rejection_reason(
                     used=used,
                     rejected_by_robust=rejected_by_robust,
                 ),
+                'cell_id': _csv_cell_id(cell_id_by_row[row_index]),
+                'cell_ix': _csv_cell_id(cell_ix_by_row[row_index]),
+                'cell_iy': _csv_cell_id(cell_iy_by_row[row_index]),
             }
         )
     return rows
+
+
+def _residual_row_cell_context(
+    result: RefractionDatumStaticsResult,
+    *,
+    req: RefractionStaticApplyRequest | None = None,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    n_rows = int(result.row_trace_index_sorted.shape[0])
+    empty = np.full(n_rows, -1, dtype=np.int64)
+    if result.bedrock_velocity_mode != 'solve_cell':
+        return empty, empty.copy(), empty.copy()
+
+    if result.row_midpoint_cell_id is None:
+        raise RefractionStaticArtifactError(
+            'solve_cell residual rows require row_midpoint_cell_id'
+        )
+    cell_id = np.ascontiguousarray(result.row_midpoint_cell_id, dtype=np.int64)
+    if cell_id.shape != (n_rows,):
+        raise RefractionStaticArtifactError(
+            'row_midpoint_cell_id length must match residual rows'
+        )
+    number_of_cell_x = _residual_cell_x_count(result=result, req=req)
+    cell_ix = np.full(n_rows, -1, dtype=np.int64)
+    cell_iy = np.full(n_rows, -1, dtype=np.int64)
+    if number_of_cell_x is not None:
+        valid = cell_id >= 0
+        cell_ix[valid] = cell_id[valid] % number_of_cell_x
+        cell_iy[valid] = cell_id[valid] // number_of_cell_x
+    return (
+        np.ascontiguousarray(cell_id, dtype=np.int64),
+        np.ascontiguousarray(cell_ix, dtype=np.int64),
+        np.ascontiguousarray(cell_iy, dtype=np.int64),
+    )
+
+
+def _residual_cell_x_count(
+    *,
+    result: RefractionDatumStaticsResult,
+    req: RefractionStaticApplyRequest | None,
+) -> int | None:
+    if req is not None:
+        request = RefractionStaticApplyRequest.model_validate(req)
+        refractor_cell = request.model.refractor_cell
+        if (
+            request.model.bedrock_velocity_mode == 'solve_cell'
+            and refractor_cell is not None
+        ):
+            return int(
+                effective_refraction_cell_grid_config(
+                    refractor_cell
+                ).number_of_cell_x
+            )
+    raw = result.qc.get('number_of_cell_x')
+    if raw is None:
+        return None
+    return _required_positive_qc_int(result.qc, 'number_of_cell_x')
 
 
 def _residual_rejection_reason(
@@ -2538,12 +2693,27 @@ def _refractor_velocity_cell_rows(
                 'cell_id': int(arrays['cell_id'][index]),
                 'ix': int(arrays['ix'][index]),
                 'iy': int(arrays['iy'][index]),
+                'cell_ix': int(arrays['cell_ix'][index]),
+                'cell_iy': int(arrays['cell_iy'][index]),
+                'coordinate_mode': str(arrays['coordinate_mode'][index]),
                 'x_min_m': _csv_grid_float(arrays['x_min_m'][index]),
                 'x_max_m': _csv_grid_float(arrays['x_max_m'][index]),
                 'y_min_m': _csv_grid_float(arrays['y_min_m'][index]),
                 'y_max_m': _csv_grid_float(arrays['y_max_m'][index]),
                 'x_center_m': _csv_grid_float(arrays['x_center_m'][index]),
                 'y_center_m': _csv_grid_float(arrays['y_center_m'][index]),
+                'cell_center_x_m': _csv_grid_float(
+                    arrays['cell_center_x_m'][index]
+                ),
+                'cell_center_y_m': _csv_grid_float(
+                    arrays['cell_center_y_m'][index]
+                ),
+                'cell_center_inline_m': _csv_grid_float(
+                    arrays['cell_center_inline_m'][index]
+                ),
+                'cell_center_crossline_m': _csv_grid_float(
+                    arrays['cell_center_crossline_m'][index]
+                ),
                 'active': _csv_bool(arrays['active_cell_mask'][index]),
                 'n_observations': int(
                     arrays['n_observations_per_cell'][index]
@@ -2554,23 +2724,129 @@ def _refractor_velocity_cell_rows(
                 'n_rejected_observations': int(
                     arrays['n_rejected_observations_per_cell'][index]
                 ),
+                'n_sources': int(arrays['n_sources_per_cell'][index]),
+                'n_receivers': int(arrays['n_receivers_per_cell'][index]),
                 'v2_m_s': _csv_float(arrays['v2_m_s'][index]),
                 'slowness_s_per_m': _csv_float(
                     arrays['slowness_s_per_m'][index]
                 ),
+                'initial_v2_m_s': _csv_float(arrays['initial_v2_m_s'][index]),
+                'v2_update_from_initial_m_s': _csv_float(
+                    arrays['v2_update_from_initial_m_s'][index]
+                ),
                 'velocity_status': str(arrays['velocity_status'][index]),
+                'status_reason': str(arrays['status_reason'][index]),
                 'residual_rms_ms': _csv_float(arrays['residual_rms_ms'][index]),
                 'residual_mad_ms': _csv_float(arrays['residual_mad_ms'][index]),
                 'residual_mean_ms': _csv_float(arrays['residual_mean_ms'][index]),
                 'residual_p95_abs_ms': _csv_float(
                     arrays['residual_p95_abs_ms'][index]
                 ),
+                'smoothing_enabled': _csv_bool(arrays['smoothing_enabled'][index]),
+                'smoothing_weight': _csv_float(arrays['smoothing_weight'][index]),
                 'smoothing_neighbor_count': int(
                     arrays['smoothing_neighbor_count'][index]
                 ),
             }
         )
     return rows
+
+
+def _refractor_cell_center_alias_arrays(
+    *,
+    x_center_m: np.ndarray,
+    y_center_m: np.ndarray,
+    coordinate_mode: str,
+    line_origin_x_m: float | None,
+    line_origin_y_m: float | None,
+    line_azimuth_deg: float | None,
+) -> dict[str, np.ndarray]:
+    x_center = np.asarray(x_center_m, dtype=np.float64)
+    y_center = np.asarray(y_center_m, dtype=np.float64)
+    if x_center.shape != y_center.shape:
+        raise RefractionStaticArtifactError(
+            'refractor cell center coordinate shape mismatch'
+        )
+
+    inline = np.full(x_center.shape, np.nan, dtype=np.float64)
+    crossline = np.full(x_center.shape, np.nan, dtype=np.float64)
+    center_x = np.ascontiguousarray(x_center, dtype=np.float64)
+    center_y = np.ascontiguousarray(y_center, dtype=np.float64)
+    if coordinate_mode == 'line_2d_projected':
+        origin_x = _required_finite_float(
+            line_origin_x_m,
+            name='model.refractor_cell.line_origin_x_m',
+        )
+        origin_y = _required_finite_float(
+            line_origin_y_m,
+            name='model.refractor_cell.line_origin_y_m',
+        )
+        azimuth_deg = _required_finite_float(
+            line_azimuth_deg,
+            name='model.refractor_cell.line_azimuth_deg',
+        )
+        inline = np.ascontiguousarray(x_center, dtype=np.float64)
+        crossline = np.ascontiguousarray(y_center, dtype=np.float64)
+        azimuth_rad = np.deg2rad(azimuth_deg)
+        inline_unit_x = float(np.sin(azimuth_rad))
+        inline_unit_y = float(np.cos(azimuth_rad))
+        center_x = np.ascontiguousarray(
+            origin_x + inline * inline_unit_x + crossline * inline_unit_y,
+            dtype=np.float64,
+        )
+        center_y = np.ascontiguousarray(
+            origin_y + inline * inline_unit_y - crossline * inline_unit_x,
+            dtype=np.float64,
+        )
+
+    return {
+        'x_m': center_x,
+        'y_m': center_y,
+        'inline_m': np.ascontiguousarray(inline, dtype=np.float64),
+        'crossline_m': np.ascontiguousarray(crossline, dtype=np.float64),
+    }
+
+
+def _unique_observation_endpoint_count_by_cell(
+    *,
+    row_midpoint_cell_id: np.ndarray,
+    endpoint_id: np.ndarray,
+    n_total_cells: int,
+) -> np.ndarray:
+    row_cell = np.asarray(row_midpoint_cell_id, dtype=np.int64)
+    endpoint = np.asarray(endpoint_id, dtype=np.int64)
+    if row_cell.shape != endpoint.shape:
+        raise RefractionStaticArtifactError(
+            'row endpoint arrays must match row_midpoint_cell_id shape'
+        )
+    counts = np.zeros(int(n_total_cells), dtype=np.int64)
+    for cell_id in range(int(n_total_cells)):
+        in_cell = row_cell == cell_id
+        if np.any(in_cell):
+            counts[cell_id] = int(np.unique(endpoint[in_cell]).shape[0])
+    return np.ascontiguousarray(counts, dtype=np.int64)
+
+
+def _refractor_cell_status_reasons(
+    *,
+    velocity_status: np.ndarray,
+    n_observations: np.ndarray,
+) -> np.ndarray:
+    status = np.asarray(velocity_status).astype(str, copy=False)
+    counts = np.asarray(n_observations, dtype=np.int64)
+    if status.shape != counts.shape:
+        raise RefractionStaticArtifactError(
+            'velocity_status and n_observations shape mismatch'
+        )
+    reasons: list[str] = []
+    for value, count in zip(status.tolist(), counts.tolist(), strict=True):
+        if value == LOW_FOLD_CELL_VELOCITY_STATUS:
+            reasons.append(LOW_FOLD_CELL_REJECTION_REASON)
+        elif value == 'inactive':
+            reasons.append('no_observations' if int(count) == 0 else 'inactive_cell')
+        else:
+            reasons.append(str(value))
+    return _string_array(reasons)
 
 
 def _required_cell_int_array(value: object, *, name: str) -> np.ndarray:
@@ -2712,6 +2988,23 @@ def _qc_int(qc: dict[str, Any], key: str, *, default: int) -> int:
         raise RefractionStaticArtifactError(
             f'QC field {key} must be an integer'
         ) from exc
+
+
+def _required_positive_qc_int(qc: dict[str, Any], key: str) -> int:
+    raw = qc.get(key)
+    if raw is None:
+        raise RefractionStaticArtifactError(f'QC field {key} is required')
+    try:
+        value = int(raw)
+    except (TypeError, ValueError) as exc:
+        raise RefractionStaticArtifactError(
+            f'QC field {key} must be an integer'
+        ) from exc
+    if value <= 0:
+        raise RefractionStaticArtifactError(
+            f'QC field {key} must be a positive integer'
+        )
+    return value
 
 
 def _qc_cell_id_array(
@@ -2886,6 +3179,16 @@ def _float_or_nan(value: object) -> float:
     except (TypeError, ValueError):
         return float('nan')
     return out if np.isfinite(out) else float('nan')
+
+
+def _required_finite_float(value: object, *, name: str) -> float:
+    try:
+        out = float(value)
+    except (TypeError, ValueError) as exc:
+        raise RefractionStaticArtifactError(f'{name} must be finite') from exc
+    if not np.isfinite(out):
+        raise RefractionStaticArtifactError(f'{name} must be finite')
+    return out
 
 
 def _sum_correction_s(left: object, right: object) -> float:
