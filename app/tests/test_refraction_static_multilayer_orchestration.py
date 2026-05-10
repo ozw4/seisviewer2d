@@ -152,6 +152,71 @@ def test_multilayer_orchestrator_dispatches_enabled_layers_in_order() -> None:
     assert result.qc['observation_gates']['vsub_t3']['max_offset_m'] is None
 
 
+def test_multilayer_orchestrator_applies_layer_cell_settings_to_layer_model() -> None:
+    dataset = make_2d_straight_two_layer_refraction_dataset()
+    model = RefractionStaticModelRequest.model_validate(
+        {
+            'method': 'multilayer_time_term',
+            'first_layer': {
+                'mode': 'constant',
+                'weathering_velocity_m_s': SYNTHETIC_MULTILAYER_V1_M_S,
+            },
+            'refractor_cell': {
+                'number_of_cell_x': 6,
+                'size_of_cell_x_m': 300.0,
+                'x_coordinate_origin_m': 0.0,
+                'number_of_cell_y': 1,
+                'size_of_cell_y_m': None,
+                'y_coordinate_origin_m': 0.0,
+                'assignment_mode': 'midpoint',
+                'outside_grid_policy': 'reject',
+                'coordinate_mode': 'grid_3d',
+                'min_observations_per_cell': 9,
+                'velocity_smoothing_weight': 0.25,
+                'smoothing_reference_distance_m': None,
+            },
+            'layers': [
+                _layer(
+                    'v2_t1',
+                    min_offset_m=300.0,
+                    max_offset_m=800.0,
+                    velocity_mode='solve_cell',
+                    initial_velocity_m_s=SYNTHETIC_MULTILAYER_V2_M_S,
+                    min_velocity_m_s=1600.0,
+                    max_velocity_m_s=3200.0,
+                    min_observations_per_cell=2,
+                    smoothing_weight=3.0,
+                )
+            ],
+        }
+    )
+    input_model = _input_model(dataset)
+    masks = build_refraction_layer_observation_masks(
+        input_model=input_model,
+        model=model,
+    )
+
+    def fake_solver(context: RefractionLayerSolverContext) -> RefractionLayerSolveResult:
+        assert context.model.refractor_cell is not None
+        assert context.model.refractor_cell.min_observations_per_cell == 2
+        assert context.model.refractor_cell.velocity_smoothing_weight == pytest.approx(
+            3.0
+        )
+        return _fake_layer_result(context)
+
+    result = solve_refraction_multilayer_time_terms(
+        input_model=input_model,
+        resolved_first_layer=_resolved_first_layer(),
+        normalized_layers=normalize_refraction_static_layers(model),
+        layer_masks=masks,
+        model=model,
+        solver=RefractionStaticSolverRequest(),
+        solver_dispatch={('v2_t1', 'solve_cell'): fake_solver},
+    )
+
+    assert result.layer_results[0].velocity_mode == 'solve_cell'
+
+
 def test_multilayer_orchestrator_rejects_unimplemented_deeper_layer() -> None:
     dataset = make_2d_straight_two_layer_refraction_dataset()
     model = _model(
@@ -255,6 +320,8 @@ def _layer(
     fixed_velocity_m_s: float | None = None,
     min_velocity_m_s: float,
     max_velocity_m_s: float,
+    min_observations_per_cell: int | None = None,
+    smoothing_weight: float | None = None,
 ) -> dict[str, object]:
     payload: dict[str, object] = {
         'kind': kind,
@@ -269,6 +336,10 @@ def _layer(
         payload['fixed_velocity_m_s'] = fixed_velocity_m_s
     else:
         payload['initial_velocity_m_s'] = initial_velocity_m_s
+    if min_observations_per_cell is not None:
+        payload['min_observations_per_cell'] = min_observations_per_cell
+    if smoothing_weight is not None:
+        payload['smoothing_weight'] = smoothing_weight
     return payload
 
 

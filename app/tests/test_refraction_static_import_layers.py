@@ -14,6 +14,7 @@ import pytest
 import app.services.refraction_static_bedrock as bedrock
 import app.services.refraction_static_design_matrix as design_matrix
 import app.services.refraction_static_half_intercept as half_intercept
+import app.services.refraction_static_layer_config as layer_config
 import app.services.refraction_static_solver as solver
 import app.services.refraction_static_t1lsst as t1lsst
 import app.services.refraction_static_types as refraction_types
@@ -329,6 +330,23 @@ def test_refraction_static_types_is_dependency_light() -> None:
     assert 'refraction_static_inputs' not in source
     assert 'segyio' not in source
     assert 'scipy' not in source
+
+
+def test_refraction_static_layer_config_is_dependency_light() -> None:
+    assert layer_config.RefractionStaticLayerConfig is not None
+
+    assert (
+        _forbidden_modules_imported_by(
+            'app.services.refraction_static_layer_config',
+            forbidden_imports=_TYPE_MODULE_FORBIDDEN_IMPORTS,
+        )
+        == set()
+    )
+
+    source = _module_source(layer_config)
+    assert 'app.api.schemas' not in source
+    assert 'app.services.refraction_static_service' not in source
+    assert 'app.services.refraction_static_inputs' not in source
 
 
 def test_numeric_refraction_modules_import_without_tracestore_readers() -> None:

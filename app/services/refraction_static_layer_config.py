@@ -5,10 +5,9 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
-from app.api.schemas import (
-    RefractionStaticLayerKind,
-    RefractionStaticLayerRequest,
-    RefractionStaticLayerVelocityMode,
+from app.services.refraction_static_types import (
+    RefractionLayerKind,
+    RefractionLayerVelocityMode,
 )
 
 
@@ -16,11 +15,11 @@ from app.api.schemas import (
 class RefractionStaticLayerConfig:
     """Resolved layer settings for downstream multi-layer time-term services."""
 
-    kind: RefractionStaticLayerKind
+    kind: RefractionLayerKind
     enabled: bool
     min_offset_m: float | None
     max_offset_m: float | None
-    velocity_mode: RefractionStaticLayerVelocityMode
+    velocity_mode: RefractionLayerVelocityMode
     initial_velocity_m_s: float | None
     fixed_velocity_m_s: float | None
     min_velocity_m_s: float | None
@@ -77,7 +76,7 @@ def _legacy_v2_layer_config(model: Any) -> RefractionStaticLayerConfig:
 
 def _layer_config(
     model: Any,
-    layer: RefractionStaticLayerRequest,
+    layer: Any,
 ) -> RefractionStaticLayerConfig:
     refractor_cell = getattr(model, 'refractor_cell', None)
     is_legacy_v2 = layer.kind == 'v2_t1'
@@ -121,7 +120,7 @@ def _layer_config(
 
 
 def _legacy_min_observations_per_cell(
-    layer: RefractionStaticLayerRequest,
+    layer: Any,
     refractor_cell: Any,
 ) -> int | None:
     if layer.kind != 'v2_t1' or layer.velocity_mode != 'solve_cell':
@@ -130,7 +129,7 @@ def _legacy_min_observations_per_cell(
 
 
 def _legacy_smoothing_weight(
-    layer: RefractionStaticLayerRequest,
+    layer: Any,
     refractor_cell: Any,
 ) -> float | None:
     if layer.kind != 'v2_t1' or layer.velocity_mode != 'solve_cell':

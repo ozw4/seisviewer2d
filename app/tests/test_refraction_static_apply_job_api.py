@@ -316,6 +316,47 @@ def test_refraction_static_rejects_public_estimated_v1_value(
         assert len(client.app.state.sv.jobs) == 0
 
 
+def test_run_refraction_static_apply_job_rejects_multilayer_request_explicitly(
+    client: TestClient,
+    tmp_path: Path,
+) -> None:
+    payload = _payload()
+    payload['model'] = {
+        'method': 'multilayer_time_term',
+        'first_layer': {
+            'mode': 'constant',
+            'weathering_velocity_m_s': 800.0,
+        },
+        'layers': [
+            {
+                'kind': 'v2_t1',
+                'enabled': True,
+                'min_offset_m': 300.0,
+                'max_offset_m': None,
+                'velocity_mode': 'solve_global',
+                'initial_velocity_m_s': 2400.0,
+                'min_velocity_m_s': 1200.0,
+                'max_velocity_m_s': 5000.0,
+            },
+        ],
+    }
+    payload['conversion'] = {'mode': 't1lsst_multilayer', 'layer_count': 1}
+    req = RefractionStaticApplyRequest.model_validate(payload)
+    job_id = 'refraction-multilayer-job-id'
+    job_dir = tmp_path / 'jobs' / job_id
+    _create_refraction_job(client, job_id=job_id, req=req, job_dir=job_dir)
+
+    run_refraction_static_apply_job(job_id, req, client.app.state.sv)
+
+    with client.app.state.sv.lock:
+        job = dict(client.app.state.sv.jobs[job_id])
+    assert job['status'] == 'error'
+    assert 'model.method=multilayer_time_term' in str(job['message'])
+    assert 'conversion.mode=t1lsst_multilayer' in str(job['message'])
+    assert REQUEST_JSON_NAME in _job_file_names(job_dir)
+    assert FINAL_REFRACTION_ARTIFACTS.isdisjoint(_job_file_names(job_dir))
+
+
 def test_run_refraction_static_apply_job_writes_artifacts_and_completes(
     client: TestClient,
     tmp_path: Path,

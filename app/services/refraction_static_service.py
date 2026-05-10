@@ -53,6 +53,10 @@ class RefractionFirstLayerNotImplemented(NotImplementedError):
     """Raised when a requested first-layer mode is accepted but not implemented."""
 
 
+class RefractionMultiLayerApplyNotImplemented(NotImplementedError):
+    """Raised when accepted multi-layer statics fields reach the apply service."""
+
+
 def resolve_refraction_first_layer_request(
     *,
     req: RefractionStaticApplyRequest,
@@ -126,6 +130,21 @@ def _request_without_moveout_offset_gates(
     return req.model_copy(update={'moveout': moveout})
 
 
+def _reject_unsupported_multilayer_apply(req: RefractionStaticApplyRequest) -> None:
+    unsupported: list[str] = []
+    if req.model.method == 'multilayer_time_term':
+        unsupported.append('model.method=multilayer_time_term')
+    if req.conversion.mode == 't1lsst_multilayer':
+        unsupported.append('conversion.mode=t1lsst_multilayer')
+    if not unsupported:
+        return
+    raise RefractionMultiLayerApplyNotImplemented(
+        'refraction static apply does not yet implement accepted multi-layer '
+        f'request fields: {", ".join(unsupported)}. Multi-layer apply '
+        'artifacts and conversion must be wired before this request can run.'
+    )
+
+
 def _write_json_atomic(path: Path, payload: dict[str, Any]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp_path = path.with_name(f'{path.name}.{uuid4().hex}.tmp')
@@ -190,6 +209,7 @@ def _run_refraction_static_apply_job_body(
             'request': req.model_dump(mode='json'),
         },
     )
+    _reject_unsupported_multilayer_apply(req)
     _set_job_progress_message(
         state,
         job_id,
@@ -338,6 +358,7 @@ def run_refraction_static_apply_job(
 
 __all__ = [
     'RefractionFirstLayerNotImplemented',
+    'RefractionMultiLayerApplyNotImplemented',
     'ResolvedRefractionFirstLayer',
     'normalize_refraction_first_layer_request',
     'resolve_refraction_first_layer_request',

@@ -238,6 +238,10 @@ def _model_for_layer(
         else model.max_bedrock_velocity_m_s
     )
     payload = model.model_dump(mode='python')
+    refractor_cell = _refractor_cell_payload_for_layer(
+        payload=payload,
+        config=config,
+    )
     payload.update(
         {
             'method': 'gli_variable_thickness',
@@ -254,16 +258,30 @@ def _model_for_layer(
             ),
             'min_bedrock_velocity_m_s': min_velocity,
             'max_bedrock_velocity_m_s': max_velocity,
-            'refractor_cell': (
-                payload.get('refractor_cell')
-                if config.velocity_mode == 'solve_cell'
-                else None
-            ),
+            'refractor_cell': refractor_cell,
             'layers': None,
             'allow_overlapping_layer_gates': False,
         }
     )
     return RefractionStaticModelRequest.model_validate(payload)
+
+
+def _refractor_cell_payload_for_layer(
+    *,
+    payload: Mapping[str, object],
+    config: RefractionStaticLayerConfig,
+) -> dict[str, object] | None:
+    if config.velocity_mode != 'solve_cell':
+        return None
+    raw_cell = payload.get('refractor_cell')
+    if raw_cell is None:
+        return None
+    cell = dict(raw_cell)
+    if config.min_observations_per_cell is not None:
+        cell['min_observations_per_cell'] = config.min_observations_per_cell
+    if config.smoothing_weight is not None:
+        cell['velocity_smoothing_weight'] = config.smoothing_weight
+    return cell
 
 
 def _solve_existing_time_term_layer(
