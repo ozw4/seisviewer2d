@@ -134,6 +134,25 @@ def test_t1lsst_2layer_supports_vectorized_endpoint_local_velocities() -> None:
     )
 
 
+def test_t1lsst_2layer_local_v2_greater_than_v3_statuses_endpoint() -> None:
+    result = compute_t1lsst_2layer_thicknesses_with_status(
+        t1_s=np.asarray([0.01, 0.01], dtype=np.float64),
+        t2_s=np.asarray([0.02, 0.02], dtype=np.float64),
+        v1_m_s=800.0,
+        v2_m_s=np.asarray([2400.0, 3800.0], dtype=np.float64),
+        v3_m_s=3600.0,
+    )
+
+    assert result.status.tolist() == ['ok', 'invalid_velocity_order']
+    assert np.isfinite(result.sh1_m[0])
+    assert np.isfinite(result.sh2_m[0])
+    assert result.weathering_correction_s is not None
+    assert np.isfinite(result.weathering_correction_s[0])
+    assert np.isnan(result.sh1_m[1])
+    assert np.isnan(result.sh2_m[1])
+    assert np.isnan(result.weathering_correction_s[1])
+
+
 def test_t1lsst_2layer_rejects_invalid_velocity_order() -> None:
     with pytest.raises(RefractionT1LSSTError, match='v2_m_s must be greater'):
         compute_t1lsst_2layer_thicknesses(
@@ -198,6 +217,24 @@ def test_t1lsst_2layer_negative_sh2_is_statused_and_nan_not_clipped() -> None:
     assert result.status.tolist() == ['invalid_negative_thickness']
     np.testing.assert_allclose(result.sh1_m, sh1_m)
     assert np.isnan(result.sh2_m[0])
+    assert result.weathering_correction_s is not None
+    assert np.isnan(result.weathering_correction_s[0])
+
+
+def test_t1lsst_2layer_negative_sh1_blanks_dependent_outputs() -> None:
+    result = compute_t1lsst_2layer_thicknesses_with_status(
+        t1_s=np.asarray([-0.001], dtype=np.float64),
+        t2_s=np.asarray([0.1], dtype=np.float64),
+        v1_m_s=800.0,
+        v2_m_s=2000.0,
+        v3_m_s=3000.0,
+    )
+
+    assert result.status.tolist() == ['invalid_negative_thickness']
+    assert np.isnan(result.sh1_m[0])
+    assert np.isnan(result.sh2_m[0])
+    assert result.weathering_correction_s is not None
+    assert np.isnan(result.weathering_correction_s[0])
 
 
 def _forward_t1_t2_s(

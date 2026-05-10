@@ -48,7 +48,6 @@ from app.services.refraction_static_layer_observations import (
 )
 from app.services.refraction_static_t1lsst import (
     compute_t1lsst_2layer_thicknesses_with_status,
-    compute_t1lsst_2layer_weathering_correction,
 )
 from app.services.refraction_static_types import (
     RefractionDatumStaticsResult,
@@ -799,14 +798,9 @@ def _compute_2layer_conversion(
             v1_m_s=v1_m_s,
             v2_m_s=v2,
             v3_m_s=v3_m_s,
+            strict_velocity_order=True,
         )
-        wcor = compute_t1lsst_2layer_weathering_correction(
-            sh1_m=thickness.sh1_m,
-            sh2_m=thickness.sh2_m,
-            v1_m_s=v1_m_s,
-            v2_m_s=v2,
-            v3_m_s=v3_m_s,
-        )
+        wcor = _required_2layer_wcor(thickness.weathering_correction_s)
         return _TwoLayerConversion(
             sh1_m=thickness.sh1_m,
             sh2_m=thickness.sh2_m,
@@ -818,23 +812,16 @@ def _compute_2layer_conversion(
     if status.shape != v2.shape:
         raise RefractionMultiLayerSolveError('local V2 status shape mismatch')
     invalid_local_v2 = ~np.isin(status.astype(str), list(_LOCAL_V2_OK_STATUS))
-    safe_v2 = np.array(v2, dtype=np.float64, copy=True, order='C')
-    safe_v2[invalid_local_v2] = 0.5 * (float(v1_m_s) + float(v3_m_s))
 
     thickness = compute_t1lsst_2layer_thicknesses_with_status(
         t1_s=t1_s,
         t2_s=t2_s,
         v1_m_s=v1_m_s,
-        v2_m_s=safe_v2,
+        v2_m_s=v2,
         v3_m_s=v3_m_s,
+        strict_velocity_order=False,
     )
-    wcor = compute_t1lsst_2layer_weathering_correction(
-        sh1_m=thickness.sh1_m,
-        sh2_m=thickness.sh2_m,
-        v1_m_s=v1_m_s,
-        v2_m_s=safe_v2,
-        v3_m_s=v3_m_s,
-    )
+    wcor = _required_2layer_wcor(thickness.weathering_correction_s)
 
     sh1 = np.array(thickness.sh1_m, dtype=np.float64, copy=True, order='C')
     sh2 = np.array(thickness.sh2_m, dtype=np.float64, copy=True, order='C')
@@ -939,6 +926,10 @@ def _required_result_array(value: object, *, name: str) -> np.ndarray:
     if arr.ndim != 1:
         raise RefractionMultiLayerSolveError(f'{name} must be one-dimensional')
     return np.ascontiguousarray(arr, dtype=np.float64)
+
+
+def _required_2layer_wcor(value: object) -> np.ndarray:
+    return _required_result_array(value, name='two-layer weathering_correction_s')
 
 
 def _required_layer_result(

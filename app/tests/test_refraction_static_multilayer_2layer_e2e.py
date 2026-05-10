@@ -606,6 +606,90 @@ def test_two_layer_local_v2_low_fold_endpoint_statuses_do_not_abort() -> None:
     )
 
 
+def test_two_layer_local_v2_invalid_velocity_order_writes_nan_artifacts(
+    tmp_path: Path,
+) -> None:
+    fixture = _make_two_layer_fixture(
+        coordinate_mode='line_2d_projected',
+        v2_velocity_mode='solve_cell',
+    )
+    workflow = compute_refraction_multilayer_datum_statics_from_input_model(
+        input_model=fixture.input_model,
+        model=fixture.model,
+        solver=RefractionStaticSolverRequest(
+            damping=0.0,
+            robust={'enabled': False},
+        ),
+        datum=RefractionStaticDatumRequest(mode='none'),
+        apply_options=RefractionStaticApplyOptions(max_abs_shift_ms=250.0),
+        resolved_first_layer=_resolved_first_layer(),
+    )
+    v2_layer = _layer(workflow.solve_result, 'v2_t1')
+    assert v2_layer.cell_velocity_m_s is not None
+    assert v2_layer.cell_slowness_s_per_m is not None
+    cell_velocity_m_s = np.asarray(v2_layer.cell_velocity_m_s, dtype=np.float64).copy()
+    bad_cell_id = 1
+    cell_velocity_m_s[bad_cell_id] = SYNTHETIC_MULTILAYER_V3_M_S + 200.0
+    cell_slowness_s_per_m = 1.0 / cell_velocity_m_s
+    patched_v2_layer = replace(
+        v2_layer,
+        cell_velocity_m_s=cell_velocity_m_s,
+        cell_slowness_s_per_m=cell_slowness_s_per_m,
+    )
+    patched_solve = replace(
+        workflow.solve_result,
+        layer_results=(patched_v2_layer, _layer(workflow.solve_result, 'v3_t2')),
+    )
+
+    replacement = build_refraction_multilayer_weathering_replacement_statics(
+        input_model=fixture.input_model,
+        model=fixture.model,
+        solve_result=patched_solve,
+        apply_options=RefractionStaticApplyOptions(max_abs_shift_ms=250.0),
+        resolved_first_layer=_resolved_first_layer(),
+    )
+
+    source_bad = replacement.source_v2_cell_id == bad_cell_id
+    receiver_bad = replacement.receiver_v2_cell_id == bad_cell_id
+    assert np.any(source_bad)
+    assert np.any(receiver_bad)
+    assert np.any(replacement.source_static_status == 'ok')
+    assert np.all(
+        replacement.source_static_status[source_bad] == 'invalid_velocity_order'
+    )
+    assert np.all(
+        replacement.receiver_static_status[receiver_bad] == 'invalid_velocity_order'
+    )
+    assert np.all(np.isnan(replacement.source_sh1_weathering_thickness_m[source_bad]))
+    assert np.all(np.isnan(replacement.source_sh2_weathering_thickness_m[source_bad]))
+    assert np.all(np.isnan(replacement.source_weathering_replacement_shift_s[source_bad]))
+
+    datum_result = build_refraction_datum_statics(
+        weathering_replacement_result=replacement,
+        datum=RefractionStaticDatumRequest(mode='none'),
+        apply_options=RefractionStaticApplyOptions(max_abs_shift_ms=250.0),
+        resolved_first_layer=_resolved_first_layer(),
+    )
+    source_path = tmp_path / 'source_static_table.csv'
+    table_path = tmp_path / 'source_receiver_static_table.npz'
+    write_source_static_table_csv(result=datum_result, path=source_path)
+    write_source_receiver_static_table_npz(result=datum_result, path=table_path)
+
+    bad_source_index = int(np.flatnonzero(source_bad)[0])
+    source_rows = _read_csv(source_path)
+    assert source_rows[bad_source_index]['static_status'] == 'invalid_velocity_order'
+    assert source_rows[bad_source_index]['sh1_weathering_thickness_m'] == ''
+    assert source_rows[bad_source_index]['sh2_weathering_thickness_m'] == ''
+    assert source_rows[bad_source_index]['weathering_correction_ms'] == ''
+    assert source_rows[bad_source_index]['total_static_ms'] == ''
+    with np.load(table_path, allow_pickle=False) as data:
+        assert data['source_static_status'][bad_source_index] == 'invalid_velocity_order'
+        assert np.isnan(data['source_sh1_m'][bad_source_index])
+        assert np.isnan(data['source_sh2_m'][bad_source_index])
+        assert np.isnan(data['source_weathering_correction_s'][bad_source_index])
+        assert np.isnan(data['source_total_static_s'][bad_source_index])
+
+
 def test_two_layer_invalid_sh2_preserves_explicit_sh1_in_artifacts(
     tmp_path: Path,
 ) -> None:
