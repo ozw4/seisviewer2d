@@ -3,11 +3,13 @@
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 import time
 from typing import Any
 from uuid import uuid4
+
+import numpy as np
 
 from app.api.schemas import (
     RefractionStaticApplyRequest,
@@ -27,6 +29,10 @@ from app.services.refraction_static_inputs import build_refraction_static_input_
 from app.services.refraction_static_layer_config import (
     RefractionStaticLayerConfig,
     normalize_refraction_static_layers,
+)
+from app.services.refraction_static_layer_observations import (
+    build_refraction_layer_observation_masks,
+    refraction_layer_observation_qc,
 )
 from app.services.refraction_static_types import (
     RefractionStaticInputModel,
@@ -210,6 +216,56 @@ def _legacy_model_for_v2_layer(
     return RefractionStaticModelRequest.model_validate(payload)
 
 
+def _solver_input_model_for_refraction_static_apply(
+    *,
+    req: RefractionStaticApplyRequest,
+    input_model: RefractionStaticInputModel | None,
+) -> RefractionStaticInputModel | None:
+    if input_model is None or req.model.method != 'multilayer_time_term':
+        return input_model
+    normalized_layers = normalize_refraction_static_layers(req.model)
+    if len(normalized_layers) != 1 or normalized_layers[0].kind != 'v2_t1':
+        raise RefractionMultiLayerApplyNotImplemented(
+            'refraction static apply can currently execute only a single '
+            'enabled v2_t1 layer'
+        )
+    layer_masks = input_model.layer_observation_masks
+    if layer_masks is None:
+        layer_masks = build_refraction_layer_observation_masks(
+            input_model=input_model,
+            model=req.model,
+        )
+    try:
+        used_mask = layer_masks.layer_used_mask_sorted['v2_t1']
+        rejection_reason = layer_masks.layer_rejection_reason_sorted['v2_t1']
+    except KeyError as exc:
+        raise RefractionMultiLayerApplyNotImplemented(
+            'enabled v2_t1 layer is missing observation masks'
+        ) from exc
+    used = np.ascontiguousarray(used_mask, dtype=bool)
+    reason = np.asarray(rejection_reason).astype('<U32', copy=False)
+    expected_shape = (int(input_model.n_traces),)
+    if used.shape != expected_shape:
+        raise RefractionMultiLayerApplyNotImplemented(
+            'enabled v2_t1 layer observation mask shape mismatch'
+        )
+    if reason.shape != expected_shape:
+        raise RefractionMultiLayerApplyNotImplemented(
+            'enabled v2_t1 layer rejection-reason shape mismatch'
+        )
+    return replace(
+        input_model,
+        valid_observation_mask_sorted=used,
+        rejection_reason_sorted=np.ascontiguousarray(reason, dtype='<U32'),
+        qc={
+            **input_model.qc,
+            'active_layer_kind': 'v2_t1',
+            'layers': refraction_layer_observation_qc(layer_masks),
+        },
+        layer_observation_masks=layer_masks,
+    )
+
+
 def _refractor_cell_payload_for_v2_layer(
     *,
     payload: dict[str, Any],
@@ -322,6 +378,10 @@ def _run_refraction_static_apply_job_body(
             state=state,
             job_dir=job_dir,
         )
+    weathering_input_model = _solver_input_model_for_refraction_static_apply(
+        req=input_req,
+        input_model=weathering_input_model,
+    )
     replacement_result = compute_weathering_replacement_statics_from_first_breaks(
         req=active_req,
         state=state,

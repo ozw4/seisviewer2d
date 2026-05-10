@@ -38,6 +38,10 @@ from app.services.refraction_static_artifacts import (
     SOURCE_RECEIVER_STATIC_TABLE_NPZ_NAME,
     SOURCE_STATIC_TABLE_CSV_NAME,
 )
+from app.services.refraction_static_layer_observations import (
+    build_refraction_layer_observation_masks,
+    refraction_layer_observation_qc,
+)
 from app.services.refraction_static_service import run_refraction_static_apply_job
 from app.services.refraction_static_v1 import RefractionV1EstimateResult
 from app.services.trace_store_registration import trace_store_cache_key
@@ -373,7 +377,7 @@ def test_run_refraction_static_apply_job_writes_multilayer_layer_qc(
                 'kind': 'v2_t1',
                 'enabled': True,
                 'min_offset_m': 0.0,
-                'max_offset_m': None,
+                'max_offset_m': 240.0,
                 'velocity_mode': 'solve_global',
                 'initial_velocity_m_s': 2500.0,
                 'min_velocity_m_s': 1200.0,
@@ -386,37 +390,16 @@ def test_run_refraction_static_apply_job_writes_multilayer_layer_qc(
     job_dir = tmp_path / 'jobs' / job_id
     _create_refraction_job(client, job_id=job_id, req=req, job_dir=job_dir)
 
-    layer_qc = {
-        'v2_t1': {
-            'enabled': True,
-            'n_candidate_observations': 4,
-            'n_used_observations': 3,
-            'min_offset_m': 0.0,
-            'max_offset_m': None,
-            'rejection_counts': {'ok': 3, 'outside_layer_offset_gate': 1},
-        },
-        'v3_t2': {
-            'enabled': False,
-            'n_candidate_observations': 0,
-            'n_used_observations': 0,
-            'min_offset_m': None,
-            'max_offset_m': None,
-            'rejection_counts': {'layer_not_configured': 4},
-        },
-        'vsub_t3': {
-            'enabled': False,
-            'n_candidate_observations': 0,
-            'n_used_observations': 0,
-            'min_offset_m': None,
-            'max_offset_m': None,
-            'rejection_counts': {'layer_not_configured': 4},
-        },
-    }
-    input_model = SimpleNamespace(qc={'layers': layer_qc})
+    input_model = synthetic_refracted_arrival_input_model()
+    expected_layer_masks = build_refraction_layer_observation_masks(
+        input_model=input_model,
+        model=req.model,
+    )
+    expected_layer_qc = refraction_layer_observation_qc(expected_layer_masks)
     replacement_result = object()
     datum_result = replace(
         _artifact_result(),
-        qc={**_artifact_result().qc, 'layers': layer_qc},
+        qc={**_artifact_result().qc, 'layers': expected_layer_qc},
     )
     build_calls: list[dict[str, Any]] = []
     replacement_calls: list[dict[str, Any]] = []
@@ -450,7 +433,18 @@ def test_run_refraction_static_apply_job_writes_multilayer_layer_qc(
     assert len(build_calls) == 1
     assert build_calls[0]['req'] is req
     assert len(replacement_calls) == 1
-    assert replacement_calls[0]['input_model'] is input_model
+    gated_input_model = replacement_calls[0]['input_model']
+    assert gated_input_model is not input_model
+    np.testing.assert_array_equal(
+        gated_input_model.valid_observation_mask_sorted,
+        expected_layer_masks.layer_used_mask_sorted['v2_t1'],
+    )
+    np.testing.assert_array_equal(
+        gated_input_model.rejection_reason_sorted,
+        expected_layer_masks.layer_rejection_reason_sorted['v2_t1'],
+    )
+    assert gated_input_model.qc['active_layer_kind'] == 'v2_t1'
+    assert gated_input_model.qc['layers'] == expected_layer_qc
     downstream_req = replacement_calls[0]['req']
     assert downstream_req is not req
     assert downstream_req.model.method == 'gli_variable_thickness'
@@ -469,7 +463,7 @@ def test_run_refraction_static_apply_job_writes_multilayer_layer_qc(
     qc = json.loads(
         (job_dir / REFRACTION_STATIC_QC_JSON_NAME).read_text(encoding='utf-8')
     )
-    assert qc['layers'] == layer_qc
+    assert qc['layers'] == expected_layer_qc
 
 
 def test_run_refraction_static_apply_job_writes_artifacts_and_completes(
