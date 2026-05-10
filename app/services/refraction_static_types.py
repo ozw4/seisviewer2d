@@ -659,6 +659,7 @@ class RefractionStaticArtifactSet:
     refraction_refractor_velocity_cells_csv: Path | None = None
     refraction_refractor_velocity_grid_npz: Path | None = None
     refraction_refractor_velocity_qc_json: Path | None = None
+    refraction_cell_solver_history_csv: Path | None = None
 
 
 @dataclass(frozen=True)

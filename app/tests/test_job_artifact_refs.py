@@ -6,6 +6,7 @@ import pytest
 
 from app.core.state import create_app_state
 from app.services.refraction_static_artifacts import (
+    REFRACTION_CELL_SOLVER_HISTORY_CSV_NAME,
     REFRACTION_T1LSST_1LAYER_COMPONENTS_CSV_NAME,
     REFRACTION_V1_ESTIMATES_CSV_NAME,
     REFRACTION_V1_QC_JSON_NAME,
@@ -121,6 +122,7 @@ def test_resolve_job_artifact_path_rejects_wrong_statics_kind(
         REFRACTION_V1_QC_JSON_NAME,
         REFRACTION_V1_ESTIMATES_CSV_NAME,
         REFRACTION_T1LSST_1LAYER_COMPONENTS_CSV_NAME,
+        REFRACTION_CELL_SOLVER_HISTORY_CSV_NAME,
         REFRACTION_STATIC_REQUEST_JSON_NAME,
         SOURCE_STATIC_TABLE_CSV_NAME,
         RECEIVER_STATIC_TABLE_CSV_NAME,
