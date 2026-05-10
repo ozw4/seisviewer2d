@@ -46,6 +46,7 @@ class RefractionLayerObservationMasks:
     layer_max_offset_m: np.ndarray
     layer_used_mask_sorted: dict[str, np.ndarray]
     layer_rejection_reason_sorted: dict[str, np.ndarray]
+    layer_candidate_count: dict[str, int]
     layer_observation_count: dict[str, int]
 
 

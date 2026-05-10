@@ -36,7 +36,7 @@ def _v3_layer(**overrides: object) -> dict[str, object]:
     payload: dict[str, object] = {
         'kind': 'v3_t2',
         'enabled': True,
-        'min_offset_m': 1801.0,
+        'min_offset_m': 1800.0,
         'max_offset_m': 3500.0,
         'velocity_mode': 'solve_global',
         'initial_velocity_m_s': 3500.0,
@@ -51,7 +51,7 @@ def _vsub_layer(**overrides: object) -> dict[str, object]:
     payload: dict[str, object] = {
         'kind': 'vsub_t3',
         'enabled': True,
-        'min_offset_m': 3501.0,
+        'min_offset_m': 3500.0,
         'max_offset_m': None,
         'velocity_mode': 'fixed_global',
         'fixed_velocity_m_s': 4500.0,

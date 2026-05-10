@@ -128,7 +128,7 @@ def test_non_overlapping_layer_gates_build_deterministic_masks_and_qc() -> None:
 
     qc = refraction_layer_observation_qc(masks)
     assert qc['v2_t1']['enabled'] is True
-    assert qc['v2_t1']['n_candidate_observations'] == 2
+    assert qc['v2_t1']['n_candidate_observations'] == 3
     assert qc['v2_t1']['n_used_observations'] == 2
     assert qc['v3_t2']['n_candidate_observations'] == 2
     assert qc['v3_t2']['n_used_observations'] == 2
@@ -146,23 +146,47 @@ def test_overlapping_layer_gates_are_rejected_by_default() -> None:
         )
 
 
-def test_boundary_touching_layer_gates_are_rejected_by_default() -> None:
-    with pytest.raises(ValidationError, match='offset gates must not overlap'):
-        _model(
-            [
-                _v2_layer(max_offset_m=100.0),
-                _v3_layer(min_offset_m=100.0),
-            ]
-        )
+def test_boundary_touching_layer_gates_are_adjacent_by_default() -> None:
+    model = _model(
+        [
+            _v2_layer(max_offset_m=100.0),
+            _v3_layer(min_offset_m=100.0),
+        ]
+    )
+
+    masks = _build_masks(model, offset_m=np.asarray([99.0, 100.0, 101.0]))
+
+    assert masks.layer_used_mask_sorted['v2_t1'].tolist() == [True, False, False]
+    assert masks.layer_used_mask_sorted['v3_t2'].tolist() == [False, True, True]
 
 
-def test_boundary_touching_layer_gates_are_rejected_by_mask_validation() -> None:
+def test_boundary_touching_layer_gates_are_adjacent_in_mask_validation() -> None:
     layer_model = SimpleNamespace(
         method='multilayer_time_term',
         allow_overlapping_layer_gates=False,
         layers=[
             RefractionStaticLayerRequest.model_validate(
                 _v2_layer(max_offset_m=100.0)
+            ),
+            RefractionStaticLayerRequest.model_validate(
+                _v3_layer(min_offset_m=100.0)
+            ),
+        ],
+    )
+
+    masks = _build_masks(layer_model, offset_m=np.asarray([99.0, 100.0, 101.0]))
+
+    assert masks.layer_used_mask_sorted['v2_t1'].tolist() == [True, False, False]
+    assert masks.layer_used_mask_sorted['v3_t2'].tolist() == [False, True, True]
+
+
+def test_true_overlap_is_rejected_by_mask_validation() -> None:
+    layer_model = SimpleNamespace(
+        method='multilayer_time_term',
+        allow_overlapping_layer_gates=False,
+        layers=[
+            RefractionStaticLayerRequest.model_validate(
+                _v2_layer(max_offset_m=150.0)
             ),
             RefractionStaticLayerRequest.model_validate(
                 _v3_layer(min_offset_m=100.0)
@@ -185,6 +209,30 @@ def test_observation_overlap_is_allowed_when_explicitly_configured() -> None:
     masks = _build_masks(allowed, offset_m=np.asarray([99.0, 100.0, 101.0]))
     assert masks.layer_used_mask_sorted['v2_t1'].tolist() == [True, True, False]
     assert masks.layer_used_mask_sorted['v3_t2'].tolist() == [False, True, True]
+
+
+def test_layer_candidate_count_includes_in_gate_base_rejections() -> None:
+    masks = _build_masks(
+        _model([_v2_layer(), _v3_layer(enabled=False)]),
+        offset_m=np.asarray([10.0, 20.0, 90.0, 150.0, np.nan]),
+        valid=np.asarray([True, False, False, True, True]),
+        reasons=np.asarray(
+            [
+                'ok',
+                'missing_pick',
+                'bad_geometry',
+                'ok',
+                'ok',
+            ]
+        ),
+    )
+
+    qc = refraction_layer_observation_qc(masks)
+
+    assert qc['v2_t1']['n_candidate_observations'] == 3
+    assert qc['v2_t1']['n_used_observations'] == 1
+    assert qc['v2_t1']['rejection_counts']['missing_pick'] == 1
+    assert qc['v2_t1']['rejection_counts']['bad_geometry'] == 1
 
 
 def test_disabled_deeper_layers_have_empty_masks_and_clear_qc() -> None:

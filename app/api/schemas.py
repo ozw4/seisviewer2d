@@ -2091,7 +2091,7 @@ class RefractionStaticModelRequest(BaseModel):
             for other in enabled_layers[index + 1 :]:
                 other_min = self._layer_gate_min_offset(other)
                 other_max = self._layer_gate_max_offset(other)
-                if max(layer_min, other_min) <= min(layer_max, other_max):
+                if max(layer_min, other_min) < min(layer_max, other_max):
                     raise ValueError(
                         'model.layers offset gates must not overlap unless '
                         'model.allow_overlapping_layer_gates is true'

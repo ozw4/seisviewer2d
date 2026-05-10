@@ -78,15 +78,20 @@ def build_refraction_layer_observation_masks_from_arrays(
     layer_max_offset_m: list[float] = []
     used_by_kind: dict[str, np.ndarray] = {}
     reason_by_kind: dict[str, np.ndarray] = {}
+    candidate_count_by_kind: dict[str, int] = {}
     count_by_kind: dict[str, int] = {}
 
     finite_offset = np.isfinite(offset)
+    exclusive_max_by_kind = (
+        _exclusive_touching_gate_max_by_kind(configs) if not allow_overlap else {}
+    )
     for kind, config in configs:
         layer_kind.append(kind)
         enabled = bool(config.enabled) if config is not None else False
         layer_enabled.append(enabled)
         layer_min_offset_m.append(_stored_min_offset(config))
         layer_max_offset_m.append(_stored_max_offset(config))
+        candidate_count = 0
 
         if config is None:
             used = np.zeros(expected_shape, dtype=bool)
@@ -103,7 +108,12 @@ def build_refraction_layer_observation_masks_from_arrays(
                 dtype=_REASON_DTYPE,
             )
         else:
-            in_gate = _layer_gate_mask(offset, config)
+            in_gate = _layer_gate_mask(
+                offset,
+                config,
+                exclusive_max=exclusive_max_by_kind.get(kind),
+            )
+            candidate_count = int(np.count_nonzero(finite_offset & in_gate))
             used = np.ascontiguousarray(base_valid & finite_offset & in_gate, dtype=bool)
             reason = np.asarray(base_reason, dtype=_REASON_DTYPE).copy()
             reason[used] = LAYER_REJECTION_OK
@@ -114,6 +124,7 @@ def build_refraction_layer_observation_masks_from_arrays(
 
         used_by_kind[kind] = np.ascontiguousarray(used, dtype=bool)
         reason_by_kind[kind] = np.ascontiguousarray(reason, dtype=_REASON_DTYPE)
+        candidate_count_by_kind[kind] = candidate_count
         count_by_kind[kind] = int(np.count_nonzero(used))
 
     if not allow_overlap:
@@ -126,6 +137,7 @@ def build_refraction_layer_observation_masks_from_arrays(
         layer_max_offset_m=np.asarray(layer_max_offset_m, dtype=np.float64),
         layer_used_mask_sorted=used_by_kind,
         layer_rejection_reason_sorted=reason_by_kind,
+        layer_candidate_count=candidate_count_by_kind,
         layer_observation_count=count_by_kind,
     )
 
@@ -140,13 +152,13 @@ def refraction_layer_observation_qc(
     max_offset = np.asarray(masks.layer_max_offset_m, dtype=np.float64)
     payload: dict[str, dict[str, Any]] = {}
     for index, kind in enumerate(kinds):
-        reasons = np.asarray(
-            masks.layer_rejection_reason_sorted[kind],
-        ).astype(str, copy=False)
-        candidate = int(np.count_nonzero(reasons == LAYER_REJECTION_OK))
+        reasons = np.asarray(masks.layer_rejection_reason_sorted[kind]).astype(
+            str,
+            copy=False,
+        )
         payload[kind] = {
             'enabled': bool(enabled[index]),
-            'n_candidate_observations': candidate if bool(enabled[index]) else 0,
+            'n_candidate_observations': int(masks.layer_candidate_count[kind]),
             'n_used_observations': int(masks.layer_observation_count[kind]),
             'min_offset_m': _json_optional_gate_value(min_offset[index]),
             'max_offset_m': _json_optional_gate_value(max_offset[index]),
@@ -168,6 +180,8 @@ def _layer_slots(
 def _layer_gate_mask(
     offset_m: np.ndarray,
     config: RefractionStaticLayerConfig,
+    *,
+    exclusive_max: float | None = None,
 ) -> np.ndarray:
     gate = np.ones(offset_m.shape, dtype=bool)
     finite_offset = np.isfinite(offset_m)
@@ -175,7 +189,11 @@ def _layer_gate_mask(
     if config.min_offset_m is not None:
         gate &= offset_m >= float(config.min_offset_m)
     if config.max_offset_m is not None:
-        gate &= offset_m <= float(config.max_offset_m)
+        max_offset = float(config.max_offset_m)
+        if exclusive_max is not None and max_offset == float(exclusive_max):
+            gate &= offset_m < max_offset
+        else:
+            gate &= offset_m <= max_offset
     return np.ascontiguousarray(gate, dtype=bool)
 
 
@@ -219,7 +237,28 @@ def _gates_overlap(
 ) -> bool:
     lower = max(min_a, min_b)
     upper = min(max_a, max_b)
-    return lower <= upper
+    return lower < upper
+
+
+def _exclusive_touching_gate_max_by_kind(
+    configs: tuple[tuple[RefractionLayerKind, RefractionStaticLayerConfig | None], ...],
+) -> dict[str, float]:
+    enabled = [
+        (kind, _stored_min_offset(config), _stored_max_offset(config))
+        for kind, config in configs
+        if config is not None and config.enabled
+    ]
+    exclusive: dict[str, float] = {}
+    for kind_a, _min_a, max_a in enabled:
+        if not np.isfinite(max_a):
+            continue
+        for kind_b, min_b, _max_b in enabled:
+            if kind_a == kind_b:
+                continue
+            if max_a == min_b:
+                exclusive[kind_a] = max_a
+                break
+    return exclusive
 
 
 def _stored_min_offset(config: RefractionStaticLayerConfig | None) -> float:
