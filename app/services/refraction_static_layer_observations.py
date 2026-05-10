@@ -143,12 +143,7 @@ def refraction_layer_observation_qc(
         reasons = np.asarray(
             masks.layer_rejection_reason_sorted[kind],
         ).astype(str, copy=False)
-        candidate = int(
-            np.count_nonzero(
-                (reasons == LAYER_REJECTION_OK)
-                | (reasons == LAYER_REJECTION_OUTSIDE_GATE)
-            )
-        )
+        candidate = int(np.count_nonzero(reasons == LAYER_REJECTION_OK))
         payload[kind] = {
             'enabled': bool(enabled[index]),
             'n_candidate_observations': candidate if bool(enabled[index]) else 0,

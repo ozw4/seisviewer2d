@@ -128,11 +128,11 @@ def test_non_overlapping_layer_gates_build_deterministic_masks_and_qc() -> None:
 
     qc = refraction_layer_observation_qc(masks)
     assert qc['v2_t1']['enabled'] is True
-    assert qc['v2_t1']['n_candidate_observations'] == 6
+    assert qc['v2_t1']['n_candidate_observations'] == 2
     assert qc['v2_t1']['n_used_observations'] == 2
-    assert qc['v3_t2']['n_candidate_observations'] == 6
+    assert qc['v3_t2']['n_candidate_observations'] == 2
     assert qc['v3_t2']['n_used_observations'] == 2
-    assert qc['vsub_t3']['n_candidate_observations'] == 6
+    assert qc['vsub_t3']['n_candidate_observations'] == 2
     assert qc['vsub_t3']['n_used_observations'] == 2
 
 
