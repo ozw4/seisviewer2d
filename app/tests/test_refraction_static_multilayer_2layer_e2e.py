@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import csv
 from dataclasses import dataclass, replace
+import json
 from pathlib import Path
 from typing import Literal
 
@@ -10,14 +11,24 @@ import pytest
 
 from app.api.schemas import (
     RefractionStaticApplyOptions,
+    RefractionStaticApplyRequest,
+    RefractionStaticConversionRequest,
     RefractionStaticDatumRequest,
+    RefractionStaticLinkageRequest,
     RefractionStaticModelRequest,
+    RefractionStaticPickSourceRequest,
     RefractionStaticSolverRequest,
 )
 from app.services.refraction_static_artifacts import (
     FIRST_BREAK_RESIDUALS_CSV_NAME,
     NEAR_SURFACE_MODEL_CSV_NAME,
     RECEIVER_STATIC_TABLE_CSV_NAME,
+    build_refraction_cell_solver_history_rows,
+    build_refraction_refractor_velocity_grid_arrays,
+    REFRACTION_CELL_SOLVER_HISTORY_CSV_NAME,
+    REFRACTION_REFRACTOR_VELOCITY_CELLS_CSV_NAME,
+    REFRACTION_REFRACTOR_VELOCITY_GRID_NPZ_NAME,
+    REFRACTION_REFRACTOR_VELOCITY_QC_JSON_NAME,
     REFRACTION_STATIC_ARTIFACTS_JSON_NAME,
     REFRACTION_STATIC_COMPONENTS_CSV_NAME,
     REFRACTION_STATIC_QC_JSON_NAME,
@@ -60,12 +71,18 @@ CoordinateMode = Literal['grid_3d', 'line_2d_projected']
 VelocityMode = Literal['solve_global', 'solve_cell']
 
 _V2_MIN_OFFSET_M = 200.0
-_V2_MAX_OFFSET_M = 800.0
+_V2_MAX_OFFSET_M = 1000.0
 _V3_MIN_OFFSET_M = 1000.0
 _V3_MAX_OFFSET_M = 1800.0
 _TIME_ATOL_S = 1.0e-8
 _THICKNESS_ATOL_M = 1.0e-5
 _STATIC_ATOL_S = 1.0e-8
+_CELL_VELOCITY_ARTIFACT_NAMES = {
+    REFRACTION_CELL_SOLVER_HISTORY_CSV_NAME,
+    REFRACTION_REFRACTOR_VELOCITY_CELLS_CSV_NAME,
+    REFRACTION_REFRACTOR_VELOCITY_GRID_NPZ_NAME,
+    REFRACTION_REFRACTOR_VELOCITY_QC_JSON_NAME,
+}
 
 
 @dataclass(frozen=True)
@@ -233,6 +250,187 @@ def test_two_layer_job_dir_writes_core_artifacts_and_solution_npz_contract(
             fixture.receiver_sh2_m,
             atol=_THICKNESS_ATOL_M,
         )
+
+    for artifact_name in _CELL_VELOCITY_ARTIFACT_NAMES:
+        assert not (job_dir / artifact_name).exists()
+    manifest = json.loads(
+        (job_dir / REFRACTION_STATIC_ARTIFACTS_JSON_NAME).read_text(
+            encoding='utf-8'
+        )
+    )
+    artifact_names = {item['name'] for item in manifest['artifacts']}
+    assert not _CELL_VELOCITY_ARTIFACT_NAMES.intersection(artifact_names)
+
+
+def test_two_layer_local_v2_job_dir_writes_cell_velocity_artifacts(
+    tmp_path: Path,
+) -> None:
+    fixture = _make_two_layer_fixture(
+        coordinate_mode='line_2d_projected',
+        v2_velocity_mode='solve_cell',
+    )
+    job_dir = tmp_path / 'job'
+
+    workflow = compute_refraction_multilayer_datum_statics_from_input_model(
+        input_model=fixture.input_model,
+        model=fixture.model,
+        solver=RefractionStaticSolverRequest(
+            damping=0.0,
+            robust={'enabled': False},
+        ),
+        datum=RefractionStaticDatumRequest(mode='none'),
+        apply_options=RefractionStaticApplyOptions(max_abs_shift_ms=250.0),
+        resolved_first_layer=_resolved_first_layer(),
+        job_dir=job_dir,
+    )
+
+    assert workflow.datum_result.bedrock_velocity_mode == 'solve_global'
+    for artifact_name in _CELL_VELOCITY_ARTIFACT_NAMES:
+        assert (job_dir / artifact_name).is_file()
+
+    manifest = json.loads(
+        (job_dir / REFRACTION_STATIC_ARTIFACTS_JSON_NAME).read_text(
+            encoding='utf-8'
+        )
+    )
+    artifact_names = {item['name'] for item in manifest['artifacts']}
+    assert _CELL_VELOCITY_ARTIFACT_NAMES <= artifact_names
+
+    qc = json.loads(
+        (job_dir / REFRACTION_STATIC_QC_JSON_NAME).read_text(encoding='utf-8')
+    )
+    assert qc['velocity']['cell_velocity_layer_kind'] == 'v2_t1'
+    assert qc['velocity']['cell_velocity_component'] == 'v2'
+    assert qc['refractor_velocity_cells']['cell_velocity_layer_kind'] == 'v2_t1'
+    assert qc['refractor_velocity_cells']['cell_velocity_component'] == 'v2'
+
+    cell_qc = json.loads(
+        (job_dir / REFRACTION_REFRACTOR_VELOCITY_QC_JSON_NAME).read_text(
+            encoding='utf-8'
+        )
+    )
+    assert cell_qc['cell_velocity_layer_kind'] == 'v2_t1'
+    assert cell_qc['cell_velocity_component'] == 'v2'
+
+    cell_rows = _read_csv(job_dir / REFRACTION_REFRACTOR_VELOCITY_CELLS_CSV_NAME)
+    assert cell_rows
+    assert {row['cell_velocity_layer_kind'] for row in cell_rows} == {'v2_t1'}
+    assert {row['cell_velocity_component'] for row in cell_rows} == {'v2'}
+
+    expected_v2_row_count = int(
+        np.count_nonzero(fixture.expected_layer_kind_sorted == 'v2_t1')
+    )
+    boundary_row = fixture.input_model.distance_m_sorted == _V2_MAX_OFFSET_M
+    assert np.any(boundary_row)
+    assert np.all(fixture.expected_layer_kind_sorted[boundary_row] == 'v3_t2')
+
+    with np.load(job_dir / REFRACTION_REFRACTOR_VELOCITY_GRID_NPZ_NAME) as data:
+        assert set(data['cell_velocity_layer_kind'].astype(str).tolist()) == {
+            'v2_t1'
+        }
+        assert set(data['cell_velocity_component'].astype(str).tolist()) == {'v2'}
+        np.testing.assert_allclose(
+            data['initial_v2_m_s'],
+            SYNTHETIC_MULTILAYER_V2_M_S,
+        )
+        assert int(np.sum(data['n_observations_per_cell'])) == expected_v2_row_count
+        assert (
+            int(np.sum(data['n_used_observations_per_cell']))
+            == expected_v2_row_count
+        )
+
+    history_rows = _read_csv(job_dir / REFRACTION_CELL_SOLVER_HISTORY_CSV_NAME)
+    assert int(history_rows[-1]['n_candidate_observations']) == expected_v2_row_count
+    assert int(history_rows[-1]['n_used_observations']) == expected_v2_row_count
+
+    residual_rows = _read_csv(job_dir / FIRST_BREAK_RESIDUALS_CSV_NAME)
+    v2_rows = [
+        row
+        for row, expected_layer in zip(
+            residual_rows,
+            fixture.expected_layer_kind_sorted.tolist(),
+            strict=True,
+        )
+        if expected_layer == 'v2_t1'
+    ]
+    assert v2_rows
+    assert all(row['cell_id'] != '' for row in v2_rows)
+    assert all(row['cell_ix'] != '' for row in v2_rows)
+    assert all(row['cell_iy'] != '' for row in v2_rows)
+
+
+def test_two_layer_local_v2_cell_artifacts_use_row_aligned_validity() -> None:
+    fixture = _make_two_layer_fixture(
+        coordinate_mode='line_2d_projected',
+        v2_velocity_mode='solve_cell',
+    )
+    n_traces = int(fixture.input_model.n_traces)
+    v2_indices = np.flatnonzero(fixture.expected_layer_kind_sorted == 'v2_t1')
+    v3_indices = np.flatnonzero(fixture.expected_layer_kind_sorted == 'v3_t2')
+    invalid_v3_index = int(v3_indices[0])
+    swapped_v2_index = int(v2_indices[0])
+    sorted_trace_index = np.arange(n_traces, dtype=np.int64)
+    sorted_trace_index[[swapped_v2_index, invalid_v3_index]] = sorted_trace_index[
+        [invalid_v3_index, swapped_v2_index]
+    ]
+    valid_observation = np.ones(n_traces, dtype=bool)
+    valid_observation[invalid_v3_index] = False
+    workflow = compute_refraction_multilayer_datum_statics_from_input_model(
+        input_model=fixture.input_model,
+        model=fixture.model,
+        solver=RefractionStaticSolverRequest(
+            damping=0.0,
+            robust={'enabled': False},
+        ),
+        datum=RefractionStaticDatumRequest(mode='none'),
+        apply_options=RefractionStaticApplyOptions(max_abs_shift_ms=250.0),
+        resolved_first_layer=_resolved_first_layer(),
+    )
+    result = replace(
+        workflow.datum_result,
+        sorted_trace_index=sorted_trace_index,
+        valid_observation_mask_sorted=valid_observation,
+        used_observation_mask_sorted=(
+            workflow.datum_result.used_observation_mask_sorted
+            & valid_observation
+        ),
+        row_trace_index_sorted=sorted_trace_index,
+        used_row_mask=workflow.datum_result.used_row_mask & valid_observation,
+    )
+    req = RefractionStaticApplyRequest(
+        file_id=fixture.input_model.file_id,
+        pick_source=RefractionStaticPickSourceRequest(kind='manual_memmap'),
+        linkage=RefractionStaticLinkageRequest(mode='none'),
+        model=fixture.model,
+        solver=RefractionStaticSolverRequest(
+            damping=0.0,
+            robust={'enabled': False},
+        ),
+        datum=RefractionStaticDatumRequest(mode='none'),
+        conversion=RefractionStaticConversionRequest(
+            mode='t1lsst_multilayer',
+            layer_count=2,
+        ),
+        apply=RefractionStaticApplyOptions(max_abs_shift_ms=250.0),
+    )
+
+    expected_v2_row_count = int(
+        np.count_nonzero(
+            valid_observation
+            & (fixture.expected_layer_kind_sorted == 'v2_t1')
+        )
+    )
+    arrays = build_refraction_refractor_velocity_grid_arrays(
+        result=result,
+        req=req,
+    )
+    assert int(np.sum(arrays['n_observations_per_cell'])) == expected_v2_row_count
+
+    history_rows = build_refraction_cell_solver_history_rows(
+        result=result,
+        req=req,
+    )
+    assert history_rows[-1].n_candidate_observations == expected_v2_row_count
 
 
 def test_two_layer_local_v2_low_fold_endpoint_statuses_do_not_abort() -> None:
