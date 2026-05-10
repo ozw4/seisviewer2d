@@ -203,7 +203,6 @@ def build_refraction_static_input_model_from_arrays(
     geometry: RefractionStaticGeometryRequest,
     linkage: RefractionStaticLinkageRequest | None,
     moveout: RefractionStaticMoveoutRequest,
-    model: RefractionStaticModelRequest | None = None,
     file_id: str = '',
     sorted_trace_index: np.ndarray | None = None,
     n_samples: int | None = None,
@@ -211,6 +210,7 @@ def build_refraction_static_input_model_from_arrays(
     linkage_artifact: LoadedGeometryLinkageArtifact | Mapping[str, object] | None = None,
     job_dir: Path | None = None,
     metadata: Mapping[str, Any] | None = None,
+    model: RefractionStaticModelRequest | None = None,
 ) -> RefractionStaticInputModel:
     """Build a refraction input bundle from already sorted arrays."""
     picks = _coerce_pick_array(pick_time_s_sorted)

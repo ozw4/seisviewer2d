@@ -11,6 +11,7 @@ from uuid import uuid4
 
 from app.api.schemas import (
     RefractionStaticApplyRequest,
+    RefractionStaticModelRequest,
 )
 from app.core.state import AppState
 from app.services.job_runner import JobCompletion, JobFailure, run_job_with_lifecycle
@@ -23,6 +24,10 @@ from app.services.refraction_static_first_layer import (
     normalize_refraction_first_layer_request,
 )
 from app.services.refraction_static_inputs import build_refraction_static_input_model
+from app.services.refraction_static_layer_config import (
+    RefractionStaticLayerConfig,
+    normalize_refraction_static_layers,
+)
 from app.services.refraction_static_types import (
     RefractionStaticInputModel,
     ResolvedRefractionFirstLayer,
@@ -132,10 +137,19 @@ def _request_without_moveout_offset_gates(
 
 def _reject_unsupported_multilayer_apply(req: RefractionStaticApplyRequest) -> None:
     unsupported: list[str] = []
-    if req.model.method == 'multilayer_time_term':
-        unsupported.append('model.method=multilayer_time_term')
     if req.conversion.mode == 't1lsst_multilayer':
         unsupported.append('conversion.mode=t1lsst_multilayer')
+    if req.model.method == 'multilayer_time_term':
+        unsupported_layers = [
+            config.kind
+            for config in normalize_refraction_static_layers(req.model)
+            if config.kind != 'v2_t1'
+        ]
+        if unsupported_layers:
+            unsupported.append(
+                'enabled multi-layer refraction layers='
+                f'{", ".join(unsupported_layers)}'
+            )
     if not unsupported:
         return
     raise RefractionMultiLayerApplyNotImplemented(
@@ -143,6 +157,75 @@ def _reject_unsupported_multilayer_apply(req: RefractionStaticApplyRequest) -> N
         f'request fields: {", ".join(unsupported)}. Multi-layer apply '
         'artifacts and conversion must be wired before this request can run.'
     )
+
+
+def _solver_request_for_refraction_static_apply(
+    req: RefractionStaticApplyRequest,
+) -> RefractionStaticApplyRequest:
+    if req.model.method != 'multilayer_time_term':
+        return req
+    normalized_layers = normalize_refraction_static_layers(req.model)
+    if len(normalized_layers) != 1 or normalized_layers[0].kind != 'v2_t1':
+        raise RefractionMultiLayerApplyNotImplemented(
+            'refraction static apply can currently execute only a single '
+            'enabled v2_t1 layer'
+        )
+    model = _legacy_model_for_v2_layer(
+        model=req.model,
+        config=normalized_layers[0],
+    )
+    return req.model_copy(update={'model': model})
+
+
+def _legacy_model_for_v2_layer(
+    *,
+    model: RefractionStaticModelRequest,
+    config: RefractionStaticLayerConfig,
+) -> RefractionStaticModelRequest:
+    payload = model.model_dump(mode='python')
+    payload.update(
+        {
+            'method': 'gli_variable_thickness',
+            'bedrock_velocity_mode': config.velocity_mode,
+            'bedrock_velocity_m_s': (
+                config.fixed_velocity_m_s
+                if config.velocity_mode == 'fixed_global'
+                else None
+            ),
+            'initial_bedrock_velocity_m_s': (
+                config.initial_velocity_m_s
+                if config.velocity_mode in ('solve_global', 'solve_cell')
+                else None
+            ),
+            'min_bedrock_velocity_m_s': config.min_velocity_m_s,
+            'max_bedrock_velocity_m_s': config.max_velocity_m_s,
+            'refractor_cell': _refractor_cell_payload_for_v2_layer(
+                payload=payload,
+                config=config,
+            ),
+            'layers': None,
+            'allow_overlapping_layer_gates': False,
+        }
+    )
+    return RefractionStaticModelRequest.model_validate(payload)
+
+
+def _refractor_cell_payload_for_v2_layer(
+    *,
+    payload: dict[str, Any],
+    config: RefractionStaticLayerConfig,
+) -> dict[str, Any] | None:
+    if config.velocity_mode != 'solve_cell':
+        return None
+    raw_cell = payload.get('refractor_cell')
+    if raw_cell is None:
+        return None
+    cell = dict(raw_cell)
+    if config.min_observations_per_cell is not None:
+        cell['min_observations_per_cell'] = config.min_observations_per_cell
+    if config.smoothing_weight is not None:
+        cell['velocity_smoothing_weight'] = config.smoothing_weight
+    return cell
 
 
 def _write_json_atomic(path: Path, payload: dict[str, Any]) -> None:
@@ -221,7 +304,8 @@ def _run_refraction_static_apply_job_body(
         state=state,
         job_dir=job_dir,
     )
-    active_req = first_layer.req
+    input_req = first_layer.req
+    active_req = _solver_request_for_refraction_static_apply(input_req)
     _set_job_progress_message(
         state,
         job_id,
@@ -229,9 +313,12 @@ def _run_refraction_static_apply_job_body(
         message='computing_refraction_weathering_replacement_statics',
     )
     weathering_input_model = first_layer.input_model
-    if first_layer.resolved.mode == 'estimate_direct_arrival':
+    if (
+        first_layer.resolved.mode == 'estimate_direct_arrival'
+        or input_req.model.method == 'multilayer_time_term'
+    ):
         weathering_input_model = build_refraction_static_input_model(
-            req=active_req,
+            req=input_req,
             state=state,
             job_dir=job_dir,
         )
