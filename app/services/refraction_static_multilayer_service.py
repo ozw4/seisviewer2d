@@ -1030,13 +1030,25 @@ def _cell_v2_static_model(
         raise RefractionMultiLayerSolveError(
             'solve_cell V2 layer must return active cell velocities'
         )
-    cell_status = (
-        np.full(layer.cell_velocity_m_s.shape, 'solved', dtype=_STATUS_DTYPE)
-        if layer.cell_velocity_status is None
-        else np.asarray(layer.cell_velocity_status).astype(_STATUS_DTYPE, copy=True)
-    )
     grid = build_refraction_cell_grid(
         effective_refraction_cell_grid_config(model.refractor_cell)
+    )
+    n_total_cells = int(grid.cell_id.shape[0])
+    cell_velocity_m_s = _cell_indexed_float_array(
+        layer.cell_velocity_m_s,
+        n_total_cells=n_total_cells,
+        name='cell_velocity_m_s',
+    )
+    cell_slowness_s_per_m = _cell_indexed_float_array(
+        layer.cell_slowness_s_per_m,
+        n_total_cells=n_total_cells,
+        name='cell_slowness_s_per_m',
+    )
+    cell_status = _cell_indexed_status_array(
+        layer.cell_velocity_status,
+        active_cell_id=layer.active_cell_id,
+        n_total_cells=n_total_cells,
+        name='cell_velocity_status',
     )
     node_cell, node_v2, node_status = _project_v2_to_points(
         grid=grid,
@@ -1044,7 +1056,7 @@ def _cell_v2_static_model(
         x_m=input_model.node_x_m,
         y_m=input_model.node_y_m,
         active_cell_id=layer.active_cell_id,
-        cell_velocity_m_s=layer.cell_velocity_m_s,
+        cell_velocity_m_s=cell_velocity_m_s,
         v1_m_s=v1_m_s,
         low_fold_cell_id=_low_fold_cell_id_from_qc(layer.qc),
     )
@@ -1054,7 +1066,7 @@ def _cell_v2_static_model(
         x_m=source.x_m,
         y_m=source.y_m,
         active_cell_id=layer.active_cell_id,
-        cell_velocity_m_s=layer.cell_velocity_m_s,
+        cell_velocity_m_s=cell_velocity_m_s,
         v1_m_s=v1_m_s,
         low_fold_cell_id=_low_fold_cell_id_from_qc(layer.qc),
     )
@@ -1064,7 +1076,7 @@ def _cell_v2_static_model(
         x_m=receiver.x_m,
         y_m=receiver.y_m,
         active_cell_id=layer.active_cell_id,
-        cell_velocity_m_s=layer.cell_velocity_m_s,
+        cell_velocity_m_s=cell_velocity_m_s,
         v1_m_s=v1_m_s,
         low_fold_cell_id=_low_fold_cell_id_from_qc(layer.qc),
     )
@@ -1119,11 +1131,11 @@ def _cell_v2_static_model(
         active_cell_id=np.ascontiguousarray(layer.active_cell_id, dtype=np.int64),
         inactive_cell_id=np.ascontiguousarray(layer.inactive_cell_id, dtype=np.int64),
         cell_bedrock_slowness_s_per_m=np.ascontiguousarray(
-            layer.cell_slowness_s_per_m,
+            cell_slowness_s_per_m,
             dtype=np.float64,
         ),
         cell_bedrock_velocity_m_s=np.ascontiguousarray(
-            layer.cell_velocity_m_s,
+            cell_velocity_m_s,
             dtype=np.float64,
         ),
         cell_velocity_status=cell_status,
@@ -1164,10 +1176,11 @@ def _project_v2_to_points(
         y_m=projected.y_m,
     )
     cell_id = np.ascontiguousarray(assignment.cell_id, dtype=np.int64)
-    velocity_by_cell = {
-        int(cell): float(cell_velocity_m_s[index])
-        for index, cell in enumerate(np.asarray(active_cell_id, dtype=np.int64).tolist())
-    }
+    velocity_by_cell = _active_velocity_by_cell_id(
+        active_cell_id=active_cell_id,
+        cell_velocity_m_s=cell_velocity_m_s,
+        n_total_cells=int(grid.cell_id.shape[0]),
+    )
     v2 = np.full(cell_id.shape, np.nan, dtype=np.float64)
     low_fold_cells = {int(cell) for cell in np.asarray(low_fold_cell_id).tolist()}
     status = np.full(cell_id.shape, 'ok', dtype=_STATUS_DTYPE)
@@ -1192,6 +1205,83 @@ def _project_v2_to_points(
         np.ascontiguousarray(v2, dtype=np.float64),
         status,
     )
+
+
+def _cell_indexed_float_array(
+    value: np.ndarray,
+    *,
+    n_total_cells: int,
+    name: str,
+) -> np.ndarray:
+    array = np.asarray(value, dtype=np.float64)
+    if array.ndim != 1:
+        raise RefractionMultiLayerSolveError(f'{name} must be one-dimensional')
+    if array.shape != (n_total_cells,):
+        raise RefractionMultiLayerSolveError(
+            f'{name} must be indexed by cell_id and have length {n_total_cells}'
+        )
+    return np.ascontiguousarray(array, dtype=np.float64)
+
+
+def _cell_indexed_status_array(
+    value: np.ndarray | None,
+    *,
+    active_cell_id: np.ndarray,
+    n_total_cells: int,
+    name: str,
+) -> np.ndarray:
+    if value is None:
+        status = np.full(n_total_cells, 'inactive', dtype=_STATUS_DTYPE)
+        active = _cell_id_array_in_range(
+            active_cell_id,
+            n_total_cells=n_total_cells,
+            name='active_cell_id',
+        )
+        status[active] = 'solved'
+        return status
+    status = np.asarray(value).astype(_STATUS_DTYPE, copy=True)
+    if status.ndim != 1:
+        raise RefractionMultiLayerSolveError(f'{name} must be one-dimensional')
+    if status.shape != (n_total_cells,):
+        raise RefractionMultiLayerSolveError(
+            f'{name} must be indexed by cell_id and have length {n_total_cells}'
+        )
+    return status
+
+
+def _active_velocity_by_cell_id(
+    *,
+    active_cell_id: np.ndarray,
+    cell_velocity_m_s: np.ndarray,
+    n_total_cells: int,
+) -> dict[int, float]:
+    active = _cell_id_array_in_range(
+        active_cell_id,
+        n_total_cells=n_total_cells,
+        name='active_cell_id',
+    )
+    velocity = _cell_indexed_float_array(
+        cell_velocity_m_s,
+        n_total_cells=n_total_cells,
+        name='cell_velocity_m_s',
+    )
+    return {int(cell): float(velocity[int(cell)]) for cell in active.tolist()}
+
+
+def _cell_id_array_in_range(
+    value: np.ndarray,
+    *,
+    n_total_cells: int,
+    name: str,
+) -> np.ndarray:
+    array = np.asarray(value, dtype=np.int64)
+    if array.ndim != 1:
+        raise RefractionMultiLayerSolveError(f'{name} must be one-dimensional')
+    if array.size and (np.any(array < 0) or np.any(array >= n_total_cells)):
+        raise RefractionMultiLayerSolveError(
+            f'{name} contains a cell ID outside the refractor grid'
+        )
+    return np.ascontiguousarray(array, dtype=np.int64)
 
 
 def _map_endpoint_v2_to_trace_order(
@@ -1606,6 +1696,29 @@ def _layer_result_from_half_intercept(
     is_cell = velocity_mode == 'solve_cell'
     global_velocity = None if is_cell else float(result.bedrock_velocity_m_s)
     global_slowness = None if is_cell else float(result.bedrock_slowness_s_per_m)
+    active_cell_id = _optional_cell_id_array(result.active_cell_id)
+    inactive_cell_id = _optional_cell_id_array(result.inactive_cell_id)
+    cell_velocity_m_s = _active_cell_float_values_to_cell_indexed(
+        result.cell_bedrock_velocity_m_s,
+        active_cell_id=active_cell_id,
+        inactive_cell_id=inactive_cell_id,
+        qc=result.qc,
+        name='cell_bedrock_velocity_m_s',
+    )
+    cell_slowness_s_per_m = _active_cell_float_values_to_cell_indexed(
+        result.cell_bedrock_slowness_s_per_m,
+        active_cell_id=active_cell_id,
+        inactive_cell_id=inactive_cell_id,
+        qc=result.qc,
+        name='cell_bedrock_slowness_s_per_m',
+    )
+    cell_velocity_status = _active_cell_status_to_cell_indexed(
+        result.cell_velocity_status,
+        active_cell_id=active_cell_id,
+        inactive_cell_id=inactive_cell_id,
+        qc=result.qc,
+        name='cell_velocity_status',
+    )
     qc = {
         **result.qc,
         'layer_kind': layer_kind,
@@ -1644,22 +1757,8 @@ def _layer_result_from_half_intercept(
         ),
         global_velocity_m_s=global_velocity,
         global_slowness_s_per_m=global_slowness,
-        cell_velocity_m_s=(
-            None
-            if result.cell_bedrock_velocity_m_s is None
-            else np.ascontiguousarray(
-                result.cell_bedrock_velocity_m_s,
-                dtype=np.float64,
-            )
-        ),
-        cell_slowness_s_per_m=(
-            None
-            if result.cell_bedrock_slowness_s_per_m is None
-            else np.ascontiguousarray(
-                result.cell_bedrock_slowness_s_per_m,
-                dtype=np.float64,
-            )
-        ),
+        cell_velocity_m_s=cell_velocity_m_s,
+        cell_slowness_s_per_m=cell_slowness_s_per_m,
         trace_predicted_time_s_sorted=np.ascontiguousarray(
             result.estimated_first_break_time_s_sorted,
             dtype=np.float64,
@@ -1674,21 +1773,9 @@ def _layer_result_from_half_intercept(
         ),
         layer_status='solved',
         qc=qc,
-        active_cell_id=(
-            None
-            if result.active_cell_id is None
-            else np.ascontiguousarray(result.active_cell_id, dtype=np.int64)
-        ),
-        inactive_cell_id=(
-            None
-            if result.inactive_cell_id is None
-            else np.ascontiguousarray(result.inactive_cell_id, dtype=np.int64)
-        ),
-        cell_velocity_status=(
-            None
-            if result.cell_velocity_status is None
-            else np.asarray(result.cell_velocity_status).astype(_STATUS_DTYPE, copy=True)
-        ),
+        active_cell_id=active_cell_id,
+        inactive_cell_id=inactive_cell_id,
+        cell_velocity_status=cell_velocity_status,
         row_midpoint_cell_id=(
             None
             if result.row_midpoint_cell_id is None
@@ -1704,6 +1791,111 @@ def _layer_result_from_half_intercept(
         ),
         rejected_by_robust_mask_sorted=_robust_rejection_mask_in_sorted_order(result),
     )
+
+
+def _optional_cell_id_array(value: np.ndarray | None) -> np.ndarray | None:
+    if value is None:
+        return None
+    return np.ascontiguousarray(value, dtype=np.int64)
+
+
+def _active_cell_float_values_to_cell_indexed(
+    value: np.ndarray | None,
+    *,
+    active_cell_id: np.ndarray | None,
+    inactive_cell_id: np.ndarray | None,
+    qc: Mapping[str, Any],
+    name: str,
+) -> np.ndarray | None:
+    if value is None:
+        return None
+    if active_cell_id is None or inactive_cell_id is None:
+        raise RefractionMultiLayerSolveError(
+            f'{name} requires active_cell_id and inactive_cell_id'
+        )
+    active_values = np.asarray(value, dtype=np.float64)
+    if active_values.ndim != 1:
+        raise RefractionMultiLayerSolveError(f'{name} must be one-dimensional')
+    if active_values.shape != active_cell_id.shape:
+        raise RefractionMultiLayerSolveError(
+            f'{name} from the cell solver must match active_cell_id length'
+        )
+    n_total_cells = _cell_indexed_count_from_ids(
+        active_cell_id=active_cell_id,
+        inactive_cell_id=inactive_cell_id,
+        qc=qc,
+    )
+    output = np.full(n_total_cells, np.nan, dtype=np.float64)
+    output[active_cell_id] = active_values
+    return np.ascontiguousarray(output, dtype=np.float64)
+
+
+def _active_cell_status_to_cell_indexed(
+    value: np.ndarray | None,
+    *,
+    active_cell_id: np.ndarray | None,
+    inactive_cell_id: np.ndarray | None,
+    qc: Mapping[str, Any],
+    name: str,
+) -> np.ndarray | None:
+    if value is None:
+        return None
+    if active_cell_id is None or inactive_cell_id is None:
+        raise RefractionMultiLayerSolveError(
+            f'{name} requires active_cell_id and inactive_cell_id'
+        )
+    active_status = np.asarray(value).astype(_STATUS_DTYPE, copy=True)
+    if active_status.ndim != 1:
+        raise RefractionMultiLayerSolveError(f'{name} must be one-dimensional')
+    if active_status.shape != active_cell_id.shape:
+        raise RefractionMultiLayerSolveError(
+            f'{name} from the cell solver must match active_cell_id length'
+        )
+    n_total_cells = _cell_indexed_count_from_ids(
+        active_cell_id=active_cell_id,
+        inactive_cell_id=inactive_cell_id,
+        qc=qc,
+    )
+    output = np.full(n_total_cells, 'inactive', dtype=_STATUS_DTYPE)
+    low_fold = _low_fold_cell_id_from_qc(qc)
+    if low_fold.size:
+        _cell_id_array_in_range(
+            low_fold,
+            n_total_cells=n_total_cells,
+            name='low_fold_cell_id',
+        )
+        output[low_fold] = 'low_fold'
+    output[active_cell_id] = active_status
+    return output
+
+
+def _cell_indexed_count_from_ids(
+    *,
+    active_cell_id: np.ndarray,
+    inactive_cell_id: np.ndarray,
+    qc: Mapping[str, Any],
+) -> int:
+    raw_total = qc.get('n_total_cells')
+    if raw_total is None:
+        all_cell_id = np.concatenate((active_cell_id, inactive_cell_id))
+        return int(np.max(all_cell_id)) + 1 if all_cell_id.size else 0
+    try:
+        n_total_cells = int(raw_total)
+    except (TypeError, ValueError) as exc:
+        raise RefractionMultiLayerSolveError('n_total_cells must be an integer') from exc
+    if n_total_cells <= 0:
+        raise RefractionMultiLayerSolveError('n_total_cells must be positive')
+    _cell_id_array_in_range(
+        active_cell_id,
+        n_total_cells=n_total_cells,
+        name='active_cell_id',
+    )
+    _cell_id_array_in_range(
+        inactive_cell_id,
+        n_total_cells=n_total_cells,
+        name='inactive_cell_id',
+    )
+    return n_total_cells
 
 
 def _robust_rejection_mask_in_sorted_order(

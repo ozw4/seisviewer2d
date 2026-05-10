@@ -166,18 +166,27 @@ def test_two_layer_local_v2_low_fold_endpoint_statuses_do_not_abort() -> None:
     assert v2_layer.cell_velocity_m_s is not None
     assert v2_layer.cell_slowness_s_per_m is not None
     assert v2_layer.cell_velocity_status is not None
-    low_fold_cell_id = int(v2_layer.active_cell_id[-1])
-    keep = v2_layer.active_cell_id != low_fold_cell_id
+    cell_velocity_m_s = np.asarray(
+        [2100.0, np.nan, 2600.0, np.nan, 3000.0],
+        dtype=np.float64,
+    )
+    cell_slowness_s_per_m = np.full(cell_velocity_m_s.shape, np.nan, dtype=np.float64)
+    valid_velocity = np.isfinite(cell_velocity_m_s)
+    cell_slowness_s_per_m[valid_velocity] = 1.0 / cell_velocity_m_s[valid_velocity]
+    cell_velocity_status = np.asarray(
+        ['solved', 'inactive', 'solved', 'low_fold', 'solved'],
+        dtype='<U32',
+    )
     patched_v2_layer = replace(
         v2_layer,
-        active_cell_id=np.ascontiguousarray(v2_layer.active_cell_id[keep]),
-        inactive_cell_id=np.asarray([low_fold_cell_id], dtype=np.int64),
-        cell_velocity_m_s=np.ascontiguousarray(v2_layer.cell_velocity_m_s[keep]),
-        cell_slowness_s_per_m=np.ascontiguousarray(v2_layer.cell_slowness_s_per_m[keep]),
-        cell_velocity_status=np.asarray(v2_layer.cell_velocity_status)[keep],
+        active_cell_id=np.asarray([0, 2, 4], dtype=np.int64),
+        inactive_cell_id=np.asarray([1, 3], dtype=np.int64),
+        cell_velocity_m_s=cell_velocity_m_s,
+        cell_slowness_s_per_m=cell_slowness_s_per_m,
+        cell_velocity_status=cell_velocity_status,
         qc={
             **v2_layer.qc,
-            'low_fold_cell_id': [low_fold_cell_id],
+            'low_fold_cell_id': [3],
             'n_low_fold_cells': 1,
         },
     )
@@ -196,6 +205,16 @@ def test_two_layer_local_v2_low_fold_endpoint_statuses_do_not_abort() -> None:
 
     source_low_fold = replacement.source_v2_status == 'low_fold_v2_cell'
     receiver_low_fold = replacement.receiver_v2_status == 'low_fold_v2_cell'
+    source_ok = replacement.source_v2_status == 'ok'
+    receiver_ok = replacement.receiver_v2_status == 'ok'
+    np.testing.assert_allclose(
+        replacement.source_v2_m_s[source_ok],
+        cell_velocity_m_s[replacement.source_v2_cell_id[source_ok]],
+    )
+    np.testing.assert_allclose(
+        replacement.receiver_v2_m_s[receiver_ok],
+        cell_velocity_m_s[replacement.receiver_v2_cell_id[receiver_ok]],
+    )
     assert np.any(source_low_fold)
     assert np.any(receiver_low_fold)
     assert np.all(np.isnan(replacement.source_weathering_thickness_m[source_low_fold]))

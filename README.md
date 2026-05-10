@@ -145,7 +145,14 @@ residual statics, geometry linkage, and time-term statics.
 See:
 
 - `docs/static_correction.md`
+- `docs/refraction_static.md`
 - `docs/time_term_static_correction.md`
+
+Refraction statics include the 1-layer V1/V2/T1 T1LSST workflow, cell-based
+local V2 support, and lower-level two-layer V3/T2 plus
+`t1lsst_multilayer` conversion support. Two-layer source/receiver outputs use
+the existing static table artifacts with added `t2`, `v3`, and `sh2` fields;
+the repo sign convention remains `corrected(t) = raw(t - shift_s)`.
 
 ## Viewer benchmark
 
