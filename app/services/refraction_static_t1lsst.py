@@ -1,8 +1,9 @@
-"""T1LSST-compatible one-layer conversion helpers for refraction statics."""
+"""T1LSST-compatible conversion helpers for refraction statics."""
 
 from __future__ import annotations
 
 import csv
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 from uuid import uuid4
@@ -48,7 +49,16 @@ _T1LSST_COMPONENT_COLUMNS = (
 
 
 class RefractionT1LSSTError(ValueError):
-    """Raised when T1LSST one-layer values cannot be computed or written."""
+    """Raised when T1LSST values cannot be computed or written."""
+
+
+@dataclass(frozen=True)
+class RefractionT1LSST2LayerThicknessResult:
+    """Two-layer T1LSST thicknesses with endpoint conversion status."""
+
+    sh1_m: np.ndarray
+    sh2_m: np.ndarray
+    status: np.ndarray
 
 
 def compute_t1lsst_1layer_thickness(
@@ -78,6 +88,94 @@ def compute_t1lsst_1layer_weathering_correction(
     if np.any(v2 <= v1):
         raise RefractionT1LSSTError('v2_m_s must be greater than v1_m_s')
     return np.ascontiguousarray(sh1 * (1.0 / v2 - 1.0 / v1), dtype=np.float64)
+
+
+def compute_t1lsst_2layer_thicknesses(
+    t1_s: np.ndarray,
+    t2_s: np.ndarray,
+    v1_m_s: np.ndarray | float,
+    v2_m_s: np.ndarray | float,
+    v3_m_s: np.ndarray | float,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Compute two-layer ``SH1`` and ``SH2`` thicknesses from T1/T2 terms.
+
+    Negative thicknesses are status-coded by
+    :func:`compute_t1lsst_2layer_thicknesses_with_status`; this convenience
+    wrapper returns the thickness arrays with invalid components set to NaN.
+    """
+    result = compute_t1lsst_2layer_thicknesses_with_status(
+        t1_s=t1_s,
+        t2_s=t2_s,
+        v1_m_s=v1_m_s,
+        v2_m_s=v2_m_s,
+        v3_m_s=v3_m_s,
+    )
+    return result.sh1_m, result.sh2_m
+
+
+def compute_t1lsst_2layer_thicknesses_with_status(
+    t1_s: np.ndarray,
+    t2_s: np.ndarray,
+    v1_m_s: np.ndarray | float,
+    v2_m_s: np.ndarray | float,
+    v3_m_s: np.ndarray | float,
+) -> RefractionT1LSST2LayerThicknessResult:
+    """Compute two-layer ``SH1``/``SH2`` and status-code invalid endpoints."""
+    t1, t2, v1, v2, v3 = _coerce_2layer_inputs(
+        t1_s=t1_s,
+        t2_s=t2_s,
+        v1_m_s=v1_m_s,
+        v2_m_s=v2_m_s,
+        v3_m_s=v3_m_s,
+    )
+
+    scos12 = np.sqrt(1.0 - (v1 / v2) ** 2)
+    sh1 = t1 * v1 / scos12
+    scos13 = np.sqrt(1.0 - (v1 / v3) ** 2)
+    scos23 = np.sqrt(1.0 - (v2 / v3) ** 2)
+    sh2 = (t2 - sh1 * scos13 / v1) * v2 / scos23
+
+    status = np.full(sh1.shape, 'ok', dtype='<U32')
+    negative_sh1 = np.isfinite(sh1) & (sh1 < 0.0)
+    negative_sh2 = np.isfinite(sh2) & (sh2 < 0.0)
+    invalid_negative = negative_sh1 | negative_sh2
+    status[invalid_negative] = 'invalid_negative_thickness'
+    sh1 = np.array(sh1, dtype=np.float64, copy=True, order='C')
+    sh2 = np.array(sh2, dtype=np.float64, copy=True, order='C')
+    sh1[negative_sh1] = np.nan
+    sh2[negative_sh2] = np.nan
+    return RefractionT1LSST2LayerThicknessResult(
+        sh1_m=sh1,
+        sh2_m=sh2,
+        status=np.array(status, dtype='<U32', copy=True, order='C'),
+    )
+
+
+def compute_t1lsst_2layer_weathering_correction(
+    sh1_m: np.ndarray,
+    sh2_m: np.ndarray,
+    v1_m_s: np.ndarray | float,
+    v2_m_s: np.ndarray | float,
+    v3_m_s: np.ndarray | float,
+) -> np.ndarray:
+    """Compute two-layer replacement ``WCOR`` to V3 in seconds."""
+    sh1 = _coerce_float_array(sh1_m, name='sh1_m', allow_nonfinite=True)
+    sh2 = _coerce_float_array(sh2_m, name='sh2_m', allow_nonfinite=True)
+    v1 = _positive_finite_float_array(v1_m_s, name='v1_m_s')
+    v2 = _positive_finite_float_array(v2_m_s, name='v2_m_s')
+    v3 = _positive_finite_float_array(v3_m_s, name='v3_m_s')
+    sh1, sh2, v1, v2, v3 = _broadcast_t1lsst_arrays(
+        (sh1, sh2, v1, v2, v3),
+        names=('sh1_m', 'sh2_m', 'v1_m_s', 'v2_m_s', 'v3_m_s'),
+    )
+    _validate_2layer_velocity_order(v1=v1, v2=v2, v3=v3)
+    return np.array(
+        sh1 * (1.0 / v3 - 1.0 / v1)
+        + sh2 * (1.0 / v3 - 1.0 / v2),
+        dtype=np.float64,
+        copy=True,
+        order='C',
+    )
 
 
 def compose_t1lsst_1layer_static_table_components(
@@ -354,6 +452,57 @@ def _endpoint_v2_m_s(
     return np.ascontiguousarray(value, dtype=np.float64)
 
 
+def _coerce_2layer_inputs(
+    *,
+    t1_s: object,
+    t2_s: object,
+    v1_m_s: object,
+    v2_m_s: object,
+    v3_m_s: object,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+    t1 = _coerce_float_array(t1_s, name='t1_s')
+    t2 = _coerce_float_array(t2_s, name='t2_s')
+    v1 = _positive_finite_float_array(v1_m_s, name='v1_m_s')
+    v2 = _positive_finite_float_array(v2_m_s, name='v2_m_s')
+    v3 = _positive_finite_float_array(v3_m_s, name='v3_m_s')
+    t1, t2, v1, v2, v3 = _broadcast_t1lsst_arrays(
+        (t1, t2, v1, v2, v3),
+        names=('t1_s', 't2_s', 'v1_m_s', 'v2_m_s', 'v3_m_s'),
+    )
+    _validate_2layer_velocity_order(v1=v1, v2=v2, v3=v3)
+    return t1, t2, v1, v2, v3
+
+
+def _broadcast_t1lsst_arrays(
+    arrays: tuple[np.ndarray, ...],
+    *,
+    names: tuple[str, ...],
+) -> tuple[np.ndarray, ...]:
+    try:
+        broadcasted = np.broadcast_arrays(*arrays)
+    except ValueError as exc:
+        joined = ', '.join(names)
+        raise RefractionT1LSSTError(
+            f'{joined} must be broadcastable to a common shape'
+        ) from exc
+    return tuple(
+        np.array(array, dtype=np.float64, copy=True, order='C')
+        for array in broadcasted
+    )
+
+
+def _validate_2layer_velocity_order(
+    *,
+    v1: np.ndarray,
+    v2: np.ndarray,
+    v3: np.ndarray,
+) -> None:
+    if np.any(v2 <= v1):
+        raise RefractionT1LSSTError('v2_m_s must be greater than v1_m_s')
+    if np.any(v3 <= v2):
+        raise RefractionT1LSSTError('v3_m_s must be greater than v2_m_s')
+
+
 def _positive_finite(value: object, *, name: str) -> float:
     if isinstance(value, bool):
         raise RefractionT1LSSTError(f'{name} must be finite and positive')
@@ -425,9 +574,13 @@ def _write_csv_atomic(
 __all__ = [
     'REFRACTION_T1LSST_1LAYER_COMPONENTS_CSV_NAME',
     'T1LSST_SIGN_CONVENTION',
+    'RefractionT1LSST2LayerThicknessResult',
     'RefractionT1LSSTError',
     'compute_t1lsst_1layer_thickness',
     'compute_t1lsst_1layer_weathering_correction',
+    'compute_t1lsst_2layer_thicknesses',
+    'compute_t1lsst_2layer_thicknesses_with_status',
+    'compute_t1lsst_2layer_weathering_correction',
     'compose_t1lsst_1layer_static_table_components',
     'write_refraction_t1lsst_1layer_components_csv',
 ]
