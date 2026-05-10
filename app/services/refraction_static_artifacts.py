@@ -1834,6 +1834,9 @@ def build_refraction_static_qc_payload(
             'qc_json_artifact': REFRACTION_REFRACTOR_VELOCITY_QC_JSON_NAME,
             'solver_history_csv_artifact': REFRACTION_CELL_SOLVER_HISTORY_CSV_NAME,
         }
+    layer_qc = r.qc.get('layers')
+    if isinstance(layer_qc, dict):
+        payload['layers'] = layer_qc
     _assert_strict_json(payload, artifact_name=REFRACTION_STATIC_QC_JSON_NAME)
     return payload
 

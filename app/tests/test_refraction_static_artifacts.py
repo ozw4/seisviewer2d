@@ -634,6 +634,35 @@ def test_refraction_static_artifact_writer_constant_v1_does_not_require_v1_files
     assert qc['velocity']['v1_mode'] == 'constant'
 
 
+def test_refraction_static_qc_includes_layer_observation_counts_when_present(
+    tmp_path: Path,
+) -> None:
+    layer_qc = {
+        'v2_t1': {
+            'enabled': True,
+            'n_candidate_observations': 3,
+            'n_used_observations': 2,
+            'min_offset_m': 0.0,
+            'max_offset_m': 1000.0,
+            'rejection_counts': {
+                'ok': 2,
+                'outside_layer_offset_gate': 1,
+            },
+        }
+    }
+    base = _result()
+    result = replace(base, qc={**base.qc, 'layers': layer_qc})
+
+    write_refraction_static_artifacts(
+        result=result,
+        req=_request(),
+        job_dir=tmp_path,
+    )
+
+    qc = json.loads((tmp_path / REFRACTION_STATIC_QC_JSON_NAME).read_text())
+    assert qc['layers'] == layer_qc
+
+
 def test_refraction_static_manifest_strict_json(tmp_path: Path) -> None:
     write_refraction_static_artifacts(
         result=_result(),

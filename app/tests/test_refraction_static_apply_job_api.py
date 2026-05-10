@@ -38,6 +38,10 @@ from app.services.refraction_static_artifacts import (
     SOURCE_RECEIVER_STATIC_TABLE_NPZ_NAME,
     SOURCE_STATIC_TABLE_CSV_NAME,
 )
+from app.services.refraction_static_layer_observations import (
+    build_refraction_layer_observation_masks,
+    refraction_layer_observation_qc,
+)
 from app.services.refraction_static_service import run_refraction_static_apply_job
 from app.services.refraction_static_v1 import RefractionV1EstimateResult
 from app.services.trace_store_registration import trace_store_cache_key
@@ -314,6 +318,152 @@ def test_refraction_static_rejects_public_estimated_v1_value(
     assert started == []
     with client.app.state.sv.lock:
         assert len(client.app.state.sv.jobs) == 0
+
+
+def test_run_refraction_static_apply_job_rejects_multilayer_conversion_explicitly(
+    client: TestClient,
+    tmp_path: Path,
+) -> None:
+    payload = _payload()
+    payload['model'] = {
+        'method': 'multilayer_time_term',
+        'first_layer': {
+            'mode': 'constant',
+            'weathering_velocity_m_s': 800.0,
+        },
+        'layers': [
+            {
+                'kind': 'v2_t1',
+                'enabled': True,
+                'min_offset_m': 300.0,
+                'max_offset_m': None,
+                'velocity_mode': 'solve_global',
+                'initial_velocity_m_s': 2400.0,
+                'min_velocity_m_s': 1200.0,
+                'max_velocity_m_s': 5000.0,
+            },
+        ],
+    }
+    payload['conversion'] = {'mode': 't1lsst_multilayer', 'layer_count': 1}
+    req = RefractionStaticApplyRequest.model_validate(payload)
+    job_id = 'refraction-multilayer-job-id'
+    job_dir = tmp_path / 'jobs' / job_id
+    _create_refraction_job(client, job_id=job_id, req=req, job_dir=job_dir)
+
+    run_refraction_static_apply_job(job_id, req, client.app.state.sv)
+
+    with client.app.state.sv.lock:
+        job = dict(client.app.state.sv.jobs[job_id])
+    assert job['status'] == 'error'
+    assert 'conversion.mode=t1lsst_multilayer' in str(job['message'])
+    assert REQUEST_JSON_NAME in _job_file_names(job_dir)
+    assert FINAL_REFRACTION_ARTIFACTS.isdisjoint(_job_file_names(job_dir))
+
+
+def test_run_refraction_static_apply_job_writes_multilayer_layer_qc(
+    client: TestClient,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    payload = _payload()
+    payload['model'] = {
+        'method': 'multilayer_time_term',
+        'first_layer': {
+            'mode': 'constant',
+            'weathering_velocity_m_s': 800.0,
+        },
+        'layers': [
+            {
+                'kind': 'v2_t1',
+                'enabled': True,
+                'min_offset_m': 0.0,
+                'max_offset_m': 240.0,
+                'velocity_mode': 'solve_global',
+                'initial_velocity_m_s': 2500.0,
+                'min_velocity_m_s': 1200.0,
+                'max_velocity_m_s': 6000.0,
+            },
+        ],
+    }
+    req = RefractionStaticApplyRequest.model_validate(payload)
+    job_id = 'refraction-multilayer-qc-job-id'
+    job_dir = tmp_path / 'jobs' / job_id
+    _create_refraction_job(client, job_id=job_id, req=req, job_dir=job_dir)
+
+    input_model = synthetic_refracted_arrival_input_model()
+    expected_layer_masks = build_refraction_layer_observation_masks(
+        input_model=input_model,
+        model=req.model,
+    )
+    expected_layer_qc = refraction_layer_observation_qc(expected_layer_masks)
+    replacement_result = object()
+    datum_result = replace(
+        _artifact_result(),
+        qc={**_artifact_result().qc, 'layers': expected_layer_qc},
+    )
+    build_calls: list[dict[str, Any]] = []
+    replacement_calls: list[dict[str, Any]] = []
+
+    def _build_input_model(**kwargs: Any) -> object:
+        build_calls.append(kwargs)
+        return input_model
+
+    def _capture_replacement(**kwargs: Any) -> object:
+        replacement_calls.append(kwargs)
+        return replacement_result
+
+    monkeypatch.setattr(
+        refraction_service_module,
+        'build_refraction_static_input_model',
+        _build_input_model,
+    )
+    monkeypatch.setattr(
+        refraction_service_module,
+        'compute_weathering_replacement_statics_from_first_breaks',
+        _capture_replacement,
+    )
+    monkeypatch.setattr(
+        refraction_service_module,
+        'build_refraction_datum_statics',
+        lambda **_kwargs: datum_result,
+    )
+
+    run_refraction_static_apply_job(job_id, req, client.app.state.sv)
+
+    assert len(build_calls) == 1
+    assert build_calls[0]['req'] is req
+    assert len(replacement_calls) == 1
+    gated_input_model = replacement_calls[0]['input_model']
+    assert gated_input_model is not input_model
+    np.testing.assert_array_equal(
+        gated_input_model.valid_observation_mask_sorted,
+        expected_layer_masks.layer_used_mask_sorted['v2_t1'],
+    )
+    np.testing.assert_array_equal(
+        gated_input_model.rejection_reason_sorted,
+        expected_layer_masks.layer_rejection_reason_sorted['v2_t1'],
+    )
+    assert gated_input_model.qc['active_layer_kind'] == 'v2_t1'
+    assert gated_input_model.qc['layers'] == expected_layer_qc
+    downstream_req = replacement_calls[0]['req']
+    assert downstream_req is not req
+    assert downstream_req.model.method == 'gli_variable_thickness'
+    assert downstream_req.model.layers is None
+    assert downstream_req.model.bedrock_velocity_mode == 'solve_global'
+    assert downstream_req.model.initial_bedrock_velocity_m_s == pytest.approx(2500.0)
+
+    with client.app.state.sv.lock:
+        job = dict(client.app.state.sv.jobs[job_id])
+    assert job['status'] == 'done'
+    assert REFRACTION_STATIC_QC_JSON_NAME in _job_file_names(job_dir)
+    request_payload = json.loads(
+        (job_dir / REQUEST_JSON_NAME).read_text(encoding='utf-8')
+    )
+    assert request_payload['request']['model']['method'] == 'multilayer_time_term'
+    qc = json.loads(
+        (job_dir / REFRACTION_STATIC_QC_JSON_NAME).read_text(encoding='utf-8')
+    )
+    assert qc['layers'] == expected_layer_qc
 
 
 def test_run_refraction_static_apply_job_writes_artifacts_and_completes(

@@ -11,6 +11,8 @@ import numpy as np
 
 BedrockVelocityMode = Literal['solve_global', 'fixed_global', 'solve_cell']
 RefractionFirstLayerMode = Literal['constant', 'estimate_direct_arrival']
+RefractionLayerKind = Literal['v2_t1', 'v3_t2', 'vsub_t3']
+RefractionLayerVelocityMode = BedrockVelocityMode
 
 
 @dataclass(frozen=True)
@@ -32,6 +34,20 @@ class RefractionEndpointTable:
     elevation_m: np.ndarray
     kind: np.ndarray
     pick_count: np.ndarray
+
+
+@dataclass(frozen=True)
+class RefractionLayerObservationMasks:
+    """Per-layer sorted-observation masks for multi-layer refraction branches."""
+
+    layer_kind: np.ndarray
+    layer_enabled: np.ndarray
+    layer_min_offset_m: np.ndarray
+    layer_max_offset_m: np.ndarray
+    layer_used_mask_sorted: dict[str, np.ndarray]
+    layer_rejection_reason_sorted: dict[str, np.ndarray]
+    layer_candidate_count: dict[str, int]
+    layer_observation_count: dict[str, int]
 
 
 @dataclass(frozen=True)
@@ -74,6 +90,7 @@ class RefractionStaticInputModel:
     qc: dict[str, Any]
     endpoint_table: RefractionEndpointTable
     metadata: dict[str, Any]
+    layer_observation_masks: RefractionLayerObservationMasks | None = None
 
 
 @dataclass(frozen=True)
@@ -165,6 +182,70 @@ class RefractionStaticSolverResult:
     cell_velocity_status: np.ndarray | None = None
     row_midpoint_cell_id: np.ndarray | None = None
     row_midpoint_bedrock_velocity_m_s: np.ndarray | None = None
+
+
+@dataclass(frozen=True)
+class RefractionLayerSolveResult:
+    """Dependency-light result container for one refraction layer solve."""
+
+    layer_kind: RefractionLayerKind
+    layer_index: int
+    velocity_mode: RefractionLayerVelocityMode
+
+    source_time_term_s: np.ndarray
+    receiver_time_term_s: np.ndarray
+    node_time_term_s: np.ndarray | None
+
+    global_velocity_m_s: float | None
+    global_slowness_s_per_m: float | None
+    cell_velocity_m_s: np.ndarray | None
+    cell_slowness_s_per_m: np.ndarray | None
+
+    trace_predicted_time_s_sorted: np.ndarray
+    trace_residual_s_sorted: np.ndarray
+    used_observation_mask_sorted: np.ndarray
+
+    layer_status: str
+    qc: dict[str, Any]
+
+
+@dataclass(frozen=True)
+class RefractionMultiLayerSolveResult:
+    """Dependency-light container for enabled multi-layer time-term solves."""
+
+    enabled_layer_kinds: tuple[RefractionLayerKind, ...]
+    layer_results: tuple[RefractionLayerSolveResult, ...]
+
+    source_endpoint_key: np.ndarray
+    receiver_endpoint_key: np.ndarray
+    source_node_id: np.ndarray
+    receiver_node_id: np.ndarray
+
+    qc: dict[str, Any]
+
+
+@dataclass(frozen=True)
+class RefractionMultiLayerStaticComponents:
+    """Dependency-light multi-layer time-term and static components."""
+
+    source_t1_s: np.ndarray
+    source_t2_s: np.ndarray | None
+    source_t3_s: np.ndarray | None
+    receiver_t1_s: np.ndarray
+    receiver_t2_s: np.ndarray | None
+    receiver_t3_s: np.ndarray | None
+
+    source_sh1_m: np.ndarray
+    source_sh2_m: np.ndarray | None
+    source_sh3_m: np.ndarray | None
+    receiver_sh1_m: np.ndarray
+    receiver_sh2_m: np.ndarray | None
+    receiver_sh3_m: np.ndarray | None
+
+    source_weathering_correction_s: np.ndarray
+    receiver_weathering_correction_s: np.ndarray
+
+    qc: dict[str, Any]
 
 
 @dataclass(frozen=True)
@@ -718,6 +799,12 @@ __all__ = [
     'RefractionDatumStaticsResult',
     'RefractionEndpointTable',
     'RefractionHalfInterceptTimeResult',
+    'RefractionLayerKind',
+    'RefractionLayerObservationMasks',
+    'RefractionLayerSolveResult',
+    'RefractionLayerVelocityMode',
+    'RefractionMultiLayerSolveResult',
+    'RefractionMultiLayerStaticComponents',
     'RefractionStaticApplyTraceStoreResult',
     'RefractionStaticArtifactSet',
     'RefractionStaticDesignMatrix',
