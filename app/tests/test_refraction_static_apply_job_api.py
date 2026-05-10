@@ -62,6 +62,10 @@ from app.tests._refraction_static_synthetic import (
     synthetic_refracted_arrival_input_model,
     synthetic_refraction_apply_request,
 )
+from app.tests.test_refraction_static_multilayer_2layer_e2e import (
+    _CELL_VELOCITY_ARTIFACT_NAMES,
+    _make_two_layer_fixture,
+)
 from app.tests.test_refraction_static_apply_trace_store import (
     DT,
     KEY1,
@@ -356,6 +360,166 @@ def test_run_refraction_static_apply_job_rejects_multilayer_conversion_explicitl
         job = dict(client.app.state.sv.jobs[job_id])
     assert job['status'] == 'error'
     assert 'conversion.mode=t1lsst_multilayer' in str(job['message'])
+    assert 'public two-layer refraction apply requires' in str(job['message'])
+    assert REQUEST_JSON_NAME in _job_file_names(job_dir)
+    assert FINAL_REFRACTION_ARTIFACTS.isdisjoint(_job_file_names(job_dir))
+
+
+def test_run_refraction_static_apply_job_completes_two_layer_global_v2_v3(
+    client: TestClient,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fixture = _make_two_layer_fixture(
+        coordinate_mode='grid_3d',
+        v2_velocity_mode='solve_global',
+    )
+    req = _two_layer_apply_request(fixture)
+    job_id = 'refraction-two-layer-global-job-id'
+    job_dir = tmp_path / 'jobs' / job_id
+    _create_refraction_job(client, job_id=job_id, req=req, job_dir=job_dir)
+    build_calls: list[dict[str, Any]] = []
+
+    def _build_input_model(**kwargs: Any) -> object:
+        build_calls.append(kwargs)
+        return fixture.input_model
+
+    monkeypatch.setattr(
+        refraction_service_module,
+        'build_refraction_static_input_model',
+        _build_input_model,
+    )
+
+    run_refraction_static_apply_job(job_id, req, client.app.state.sv)
+
+    with client.app.state.sv.lock:
+        job = dict(client.app.state.sv.jobs[job_id])
+    assert job['status'] == 'done'
+    assert job['message'] == 'refraction_static_artifacts_written_artifact_only'
+    assert len(build_calls) == 1
+    assert build_calls[0]['req'] is req
+    file_names = _job_file_names(job_dir)
+    assert REQUEST_JSON_NAME in file_names
+    assert FINAL_REFRACTION_ARTIFACTS.issubset(file_names)
+    assert _CELL_VELOCITY_ARTIFACT_NAMES.isdisjoint(file_names)
+
+    request_payload = json.loads(
+        (job_dir / REQUEST_JSON_NAME).read_text(encoding='utf-8')
+    )
+    assert request_payload['request']['model']['method'] == 'multilayer_time_term'
+    assert request_payload['request']['conversion'] == {
+        'mode': 't1lsst_multilayer',
+        'layer_count': 2,
+    }
+    qc = json.loads(
+        (job_dir / REFRACTION_STATIC_QC_JSON_NAME).read_text(encoding='utf-8')
+    )
+    assert qc['method'] == 'multilayer_time_term'
+    assert qc['conversion_mode'] == 't1lsst_multilayer'
+    assert qc['layer_count'] == 2
+    _assert_two_layer_solution_arrays(job_dir)
+
+
+def test_run_refraction_static_apply_job_completes_two_layer_cell_v2_global_v3(
+    client: TestClient,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fixture = _make_two_layer_fixture(
+        coordinate_mode='line_2d_projected',
+        v2_velocity_mode='solve_cell',
+    )
+    req = _two_layer_apply_request(fixture)
+    job_id = 'refraction-two-layer-cell-v2-job-id'
+    job_dir = tmp_path / 'jobs' / job_id
+    _create_refraction_job(client, job_id=job_id, req=req, job_dir=job_dir)
+
+    monkeypatch.setattr(
+        refraction_service_module,
+        'build_refraction_static_input_model',
+        lambda **_kwargs: fixture.input_model,
+    )
+
+    run_refraction_static_apply_job(job_id, req, client.app.state.sv)
+
+    with client.app.state.sv.lock:
+        job = dict(client.app.state.sv.jobs[job_id])
+    assert job['status'] == 'done'
+    file_names = _job_file_names(job_dir)
+    assert FINAL_REFRACTION_ARTIFACTS.issubset(file_names)
+    assert _CELL_VELOCITY_ARTIFACT_NAMES.issubset(file_names)
+    _assert_two_layer_solution_arrays(job_dir)
+
+    manifest = json.loads(
+        (job_dir / REFRACTION_STATIC_ARTIFACTS_JSON_NAME).read_text(encoding='utf-8')
+    )
+    listed = {item['name'] for item in manifest['artifacts']}
+    assert _CELL_VELOCITY_ARTIFACT_NAMES.issubset(listed)
+    qc = json.loads(
+        (job_dir / REFRACTION_STATIC_QC_JSON_NAME).read_text(encoding='utf-8')
+    )
+    assert qc['velocity']['cell_velocity_layer_kind'] == 'v2_t1'
+    assert qc['velocity']['cell_velocity_component'] == 'v2'
+
+
+def test_run_refraction_static_apply_job_rejects_vsub_t3_until_implemented(
+    client: TestClient,
+    tmp_path: Path,
+) -> None:
+    payload = _three_layer_apply_payload()
+    req = RefractionStaticApplyRequest.model_validate(payload)
+    job_id = 'refraction-vsub-t3-job-id'
+    job_dir = tmp_path / 'jobs' / job_id
+    _create_refraction_job(client, job_id=job_id, req=req, job_dir=job_dir)
+
+    run_refraction_static_apply_job(job_id, req, client.app.state.sv)
+
+    with client.app.state.sv.lock:
+        job = dict(client.app.state.sv.jobs[job_id])
+    assert job['status'] == 'error'
+    assert 'vsub_t3' in str(job['message'])
+    assert 'three-layer T1LSST conversion' in str(job['message'])
+    assert REQUEST_JSON_NAME in _job_file_names(job_dir)
+    assert FINAL_REFRACTION_ARTIFACTS.isdisjoint(_job_file_names(job_dir))
+
+
+def test_run_refraction_static_apply_job_rejects_cell_v3_until_implemented(
+    client: TestClient,
+    tmp_path: Path,
+) -> None:
+    fixture = _make_two_layer_fixture(
+        coordinate_mode='grid_3d',
+        v2_velocity_mode='solve_global',
+    )
+    payload = _two_layer_apply_payload(fixture)
+    payload['model']['layers'][1]['velocity_mode'] = 'solve_cell'
+    payload['model']['layers'][1]['initial_velocity_m_s'] = 3600.0
+    payload['model']['refractor_cell'] = {
+        'number_of_cell_x': 5,
+        'size_of_cell_x_m': 500.0,
+        'x_coordinate_origin_m': 0.0,
+        'number_of_cell_y': 1,
+        'size_of_cell_y_m': None,
+        'y_coordinate_origin_m': 0.0,
+        'assignment_mode': 'midpoint',
+        'outside_grid_policy': 'reject',
+        'coordinate_mode': 'grid_3d',
+        'min_observations_per_cell': 1,
+        'velocity_smoothing_weight': 0.0,
+        'smoothing_reference_distance_m': None,
+    }
+    req = RefractionStaticApplyRequest.model_validate(payload)
+    job_id = 'refraction-cell-v3-job-id'
+    job_dir = tmp_path / 'jobs' / job_id
+    _create_refraction_job(client, job_id=job_id, req=req, job_dir=job_dir)
+
+    run_refraction_static_apply_job(job_id, req, client.app.state.sv)
+
+    with client.app.state.sv.lock:
+        job = dict(client.app.state.sv.jobs[job_id])
+    assert job['status'] == 'error'
+    assert 'v3_t2 velocity_mode=solve_cell is not supported' in str(job['message'])
+    assert 'cell V3 is not implemented' in str(job['message'])
     assert REQUEST_JSON_NAME in _job_file_names(job_dir)
     assert FINAL_REFRACTION_ARTIFACTS.isdisjoint(_job_file_names(job_dir))
 
@@ -1430,6 +1594,106 @@ def test_run_refraction_static_apply_job_apply_failure_keeps_final_artifacts(
     listed = {item['name'] for item in files_response.json()['files']}
     assert FINAL_REFRACTION_ARTIFACTS.issubset(listed)
     assert CORRECTED_FILE_JSON_NAME not in listed
+
+
+def _two_layer_apply_payload(fixture: Any) -> dict[str, Any]:
+    payload = _payload()
+    payload['file_id'] = fixture.input_model.file_id
+    payload['model'] = fixture.model.model_dump(mode='json')
+    payload['solver'] = {
+        'damping': 0.0,
+        'min_picks_per_node': 1,
+        'max_abs_half_intercept_time_ms': 500.0,
+        'robust': {
+            'enabled': False,
+        },
+    }
+    payload['datum'] = {'mode': 'none'}
+    payload['conversion'] = {
+        'mode': 't1lsst_multilayer',
+        'layer_count': 2,
+    }
+    payload['apply']['max_abs_shift_ms'] = 250.0
+    payload['apply']['register_corrected_file'] = False
+    return payload
+
+
+def _two_layer_apply_request(fixture: Any) -> RefractionStaticApplyRequest:
+    return RefractionStaticApplyRequest.model_validate(
+        _two_layer_apply_payload(fixture)
+    )
+
+
+def _three_layer_apply_payload() -> dict[str, Any]:
+    payload = _payload()
+    payload['model'] = {
+        'method': 'multilayer_time_term',
+        'first_layer': {
+            'mode': 'constant',
+            'weathering_velocity_m_s': 800.0,
+        },
+        'layers': [
+            {
+                'kind': 'v2_t1',
+                'enabled': True,
+                'min_offset_m': 0.0,
+                'max_offset_m': 1000.0,
+                'velocity_mode': 'solve_global',
+                'initial_velocity_m_s': 2400.0,
+                'min_velocity_m_s': 1200.0,
+                'max_velocity_m_s': 3200.0,
+            },
+            {
+                'kind': 'v3_t2',
+                'enabled': True,
+                'min_offset_m': 1000.0,
+                'max_offset_m': 2000.0,
+                'velocity_mode': 'solve_global',
+                'initial_velocity_m_s': 3600.0,
+                'min_velocity_m_s': 2600.0,
+                'max_velocity_m_s': 4800.0,
+            },
+            {
+                'kind': 'vsub_t3',
+                'enabled': True,
+                'min_offset_m': 2000.0,
+                'max_offset_m': None,
+                'velocity_mode': 'fixed_global',
+                'fixed_velocity_m_s': 5200.0,
+                'min_velocity_m_s': 3600.0,
+                'max_velocity_m_s': 7000.0,
+            },
+        ],
+    }
+    payload['solver'] = {
+        'damping': 0.0,
+        'min_picks_per_node': 1,
+        'max_abs_half_intercept_time_ms': 500.0,
+        'robust': {
+            'enabled': False,
+        },
+    }
+    payload['datum'] = {'mode': 'none'}
+    payload['conversion'] = {
+        'mode': 't1lsst_multilayer',
+        'layer_count': 3,
+    }
+    return payload
+
+
+def _assert_two_layer_solution_arrays(job_dir: Path) -> None:
+    expected_arrays = {
+        'source_t2_time_s',
+        'source_v3_m_s',
+        'source_sh2_weathering_thickness_m',
+        'receiver_t2_time_s',
+        'receiver_v3_m_s',
+        'receiver_sh2_weathering_thickness_m',
+    }
+    with np.load(job_dir / REFRACTION_STATIC_SOLUTION_NPZ_NAME, allow_pickle=False) as data:
+        assert expected_arrays <= set(data.files)
+        for key in expected_arrays:
+            assert data[key].dtype != object
 
 
 def _create_refraction_job(

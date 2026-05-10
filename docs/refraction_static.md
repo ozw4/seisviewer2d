@@ -6,7 +6,7 @@ canonical implementation references are
 and
 [statics/refraction_iras_phase2_cell_v2_design.md](statics/refraction_iras_phase2_cell_v2_design.md).
 
-The public apply workflow is intentionally limited to a practical 1-layer model:
+The public apply workflow supports a practical 1-layer model:
 
 ```text
 first-break picks
@@ -17,13 +17,16 @@ first-break picks
   -> optionally apply trace shifts with the repo sign convention
 ```
 
-It does not claim full IRAS compatibility.
+It also supports the M3 two-layer public contract for
+`model.method="multilayer_time_term"` with `conversion.mode="t1lsst_multilayer"`
+and `conversion.layer_count=2`, when the enabled layers are exactly `v2_t1` and
+`v3_t2`. The `v2_t1` layer may use fixed, global solved, or cell solved V2; the
+`v3_t2` layer must use fixed or global solved V3. Cell V3, `vsub_t3`, and
+3-layer conversion remain out of scope.
 
-`POST /statics/refraction/apply` remains the public job entry point for the
-1-layer workflow. The two-layer V3/T2 and `t1lsst_multilayer` contract below
-documents the implemented lower-level solver, conversion, and artifact/table
-fields; the public apply job runner still rejects multi-layer apply requests
-until final job wiring is complete.
+`POST /statics/refraction/apply` is the public job entry point for both the
+1-layer workflow and this narrow two-layer workflow. It does not claim full IRAS
+compatibility.
 
 ## Terms
 
@@ -189,8 +192,9 @@ corrected(t) = raw(t - shift_s)
 
 ## V3/T2 and T1LSST 2-Layer Components
 
-The implemented two-layer path uses `model.method="multilayer_time_term"` with
-enabled layers ordered as `v2_t1` then `v3_t2`. Each layer solves:
+The implemented public two-layer path uses
+`model.method="multilayer_time_term"` with enabled layers ordered as `v2_t1`
+then `v3_t2`. Each layer solves:
 
 ```text
 pick_time_s = Tn_source_s + Tn_receiver_s + offset_m / Vn_m_s
@@ -442,8 +446,9 @@ global V1
 global V2
 cell V2
 T1 / SH1 / WCOR
-lower-level V3/T2 solve
-lower-level 2-layer T1LSST conversion
+two-layer V3/T2 solve
+public 2-layer V3/T2 apply
+public 2-layer T1LSST conversion
 source static table
 receiver static table
 station table export

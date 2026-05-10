@@ -1921,11 +1921,21 @@ def build_refraction_static_qc_payload(
         first_layer,
         upstream_artifact_names=upstream_names,
     )
+    method = r.qc.get('method')
+    if not isinstance(method, str) or not method:
+        method = req.model.method
+    conversion_mode = r.qc.get('conversion_mode')
+    if not isinstance(conversion_mode, str) or not conversion_mode:
+        conversion_mode = req.conversion.mode
+    layer_count = r.qc.get('layer_count')
+    if layer_count is None:
+        layer_count = req.conversion.layer_count
     payload: dict[str, Any] = {
         'artifact_version': ARTIFACT_VERSION,
-        'method': METHOD,
+        'method': method,
         'workflow': WORKFLOW,
         'static_component': STATIC_COMPONENT,
+        'conversion_mode': conversion_mode,
         'sign_convention': _sign_convention_qc_payload(req),
         'request': request,
         'velocity': {
@@ -2056,6 +2066,8 @@ def build_refraction_static_qc_payload(
         'artifacts': _artifact_list_for_qc(artifact_entries),
         'warnings': [],
     }
+    if layer_count is not None:
+        payload['layer_count'] = int(layer_count)
     if _request_has_cell_velocity_layer(req):
         refractor_cell = req.model.refractor_cell
         if refractor_cell is None:

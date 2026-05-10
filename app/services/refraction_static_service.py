@@ -21,7 +21,10 @@ from app.services.refraction_static_apply_trace_store import (
     apply_refraction_statics_to_trace_store,
 )
 from app.services.refraction_static_artifacts import write_refraction_static_artifacts
-from app.services.refraction_static_datum import build_refraction_datum_statics
+from app.services.refraction_static_datum import (
+    build_refraction_datum_statics,
+    write_refraction_datum_statics_artifacts,
+)
 from app.services.refraction_static_first_layer import (
     normalize_refraction_first_layer_request,
 )
@@ -34,7 +37,11 @@ from app.services.refraction_static_layer_observations import (
     build_refraction_layer_observation_masks,
     refraction_layer_observation_qc,
 )
+from app.services.refraction_static_multilayer_service import (
+    compute_refraction_multilayer_datum_statics_from_input_model,
+)
 from app.services.refraction_static_types import (
+    RefractionDatumStaticsResult,
     RefractionStaticInputModel,
     ResolvedRefractionFirstLayer,
 )
@@ -50,6 +57,12 @@ from app.services.refraction_static_weathering_replacement import (
 
 _REQUEST_JSON_NAME = 'refraction_static_request.json'
 _ARTIFACT_ONLY_DONE_MESSAGE = 'refraction_static_artifacts_written_artifact_only'
+_PUBLIC_TWO_LAYER_APPLY_CONTRACT = (
+    'public two-layer refraction apply requires '
+    'model.method=multilayer_time_term, '
+    'conversion.mode=t1lsst_multilayer, conversion.layer_count=2, '
+    'and exactly enabled layers v2_t1 and v3_t2'
+)
 
 
 @dataclass(frozen=True)
@@ -159,10 +172,47 @@ def _reject_unsupported_multilayer_apply(req: RefractionStaticApplyRequest) -> N
     if not unsupported:
         return
     raise RefractionMultiLayerApplyNotImplemented(
-        'refraction static apply does not yet implement accepted multi-layer '
-        f'request fields: {", ".join(unsupported)}. Multi-layer apply '
-        'artifacts and conversion must be wired before this request can run.'
+        'refraction static apply supports accepted multi-layer request fields '
+        'only for the M3 public two-layer contract. '
+        f'{_PUBLIC_TWO_LAYER_APPLY_CONTRACT}. Unsupported request fields: '
+        f'{", ".join(unsupported)}.'
     )
+
+
+def _is_public_two_layer_multilayer_apply(
+    req: RefractionStaticApplyRequest,
+) -> bool:
+    if (
+        req.model.method != 'multilayer_time_term'
+        or req.conversion.mode != 't1lsst_multilayer'
+    ):
+        return False
+    _require_public_two_layer_multilayer_apply(req)
+    return True
+
+
+def _require_public_two_layer_multilayer_apply(
+    req: RefractionStaticApplyRequest,
+) -> None:
+    normalized_layers = normalize_refraction_static_layers(req.model)
+    enabled_kinds = tuple(config.kind for config in normalized_layers)
+    if req.conversion.layer_count != 2 or enabled_kinds != ('v2_t1', 'v3_t2'):
+        enabled_text = ', '.join(enabled_kinds) if enabled_kinds else 'none'
+        raise RefractionMultiLayerApplyNotImplemented(
+            f'{_PUBLIC_TWO_LAYER_APPLY_CONTRACT}; got '
+            f'conversion.layer_count={req.conversion.layer_count!r}, '
+            f'enabled layers={enabled_text}. Public apply does not implement '
+            'vsub_t3 or three-layer T1LSST conversion.'
+        )
+
+    v3_config = normalized_layers[1]
+    if v3_config.velocity_mode not in ('fixed_global', 'solve_global'):
+        raise RefractionMultiLayerApplyNotImplemented(
+            f'{_PUBLIC_TWO_LAYER_APPLY_CONTRACT}; v3_t2 velocity_mode='
+            f'{v3_config.velocity_mode} is not supported. Public apply '
+            'currently requires global V3/T2 velocity; cell V3 is not '
+            'implemented.'
+        )
 
 
 def _solver_request_for_refraction_static_apply(
@@ -321,6 +371,117 @@ def _resolve_job_dir(state: AppState, job_id: str) -> Path:
     return Path(artifacts_dir)
 
 
+def _finish_refraction_static_apply_job(
+    *,
+    job_id: str,
+    req: RefractionStaticApplyRequest,
+    state: AppState,
+    job_dir: Path,
+    result: RefractionDatumStaticsResult,
+) -> JobCompletion:
+    if req.apply.register_corrected_file:
+        _set_job_progress_message(
+            state,
+            job_id,
+            progress=0.92,
+            message='applying_refraction_static_trace_shift',
+        )
+        corrected_result = apply_refraction_statics_to_trace_store(
+            req=req,
+            result=result,
+            state=state,
+            job_id=job_id,
+            job_dir=job_dir,
+        )
+        if corrected_result.corrected_file_id is not None:
+            with state.lock:
+                state.jobs.set_static_corrected_file(
+                    job_id,
+                    corrected_file_id=corrected_result.corrected_file_id,
+                    corrected_store_path=str(
+                        corrected_result.corrected_trace_store_path
+                    ),
+                )
+        _set_job_progress_message(
+            state,
+            job_id,
+            progress=1.0,
+            message='refraction_corrected_trace_store_registered',
+        )
+        return JobCompletion(finished_ts=time.time())
+
+    _set_job_progress_message(
+        state,
+        job_id,
+        progress=1.0,
+        message=_ARTIFACT_ONLY_DONE_MESSAGE,
+    )
+    return JobCompletion(
+        finished_ts=time.time(),
+        message=_ARTIFACT_ONLY_DONE_MESSAGE,
+    )
+
+
+def _run_public_two_layer_refraction_static_apply_job(
+    *,
+    job_id: str,
+    req: RefractionStaticApplyRequest,
+    state: AppState,
+    job_dir: Path,
+    first_layer: _ResolvedFirstLayerRequest,
+) -> JobCompletion:
+    _set_job_progress_message(
+        state,
+        job_id,
+        progress=0.20,
+        message='building_refraction_multilayer_input_model',
+    )
+    input_model = build_refraction_static_input_model(
+        req=req,
+        state=state,
+        job_dir=job_dir,
+    )
+    _set_job_progress_message(
+        state,
+        job_id,
+        progress=0.55,
+        message='computing_refraction_multilayer_datum_statics',
+    )
+    workflow = compute_refraction_multilayer_datum_statics_from_input_model(
+        input_model=input_model,
+        model=req.model,
+        solver=req.solver,
+        datum=req.datum,
+        apply_options=req.apply,
+        resolved_first_layer=first_layer.resolved,
+        state=state,
+        file_id=req.file_id,
+        key1_byte=req.key1_byte,
+        key2_byte=req.key2_byte,
+    )
+    _set_job_progress_message(
+        state,
+        job_id,
+        progress=0.90,
+        message='writing_refraction_static_artifacts',
+    )
+    write_refraction_datum_statics_artifacts(job_dir, workflow.datum_result)
+    write_refraction_static_artifacts(
+        result=workflow.datum_result,
+        req=req,
+        job_dir=job_dir,
+        resolved_first_layer=first_layer.resolved,
+        upstream_artifact_names=first_layer.upstream_artifact_names,
+    )
+    return _finish_refraction_static_apply_job(
+        job_id=job_id,
+        req=req,
+        state=state,
+        job_dir=job_dir,
+        result=workflow.datum_result,
+    )
+
+
 def _run_refraction_static_apply_job_body(
     *,
     job_id: str,
@@ -348,7 +509,9 @@ def _run_refraction_static_apply_job_body(
             'request': req.model_dump(mode='json'),
         },
     )
-    _reject_unsupported_multilayer_apply(req)
+    public_two_layer_apply = _is_public_two_layer_multilayer_apply(req)
+    if not public_two_layer_apply:
+        _reject_unsupported_multilayer_apply(req)
     _set_job_progress_message(
         state,
         job_id,
@@ -361,6 +524,15 @@ def _run_refraction_static_apply_job_body(
         job_dir=job_dir,
     )
     input_req = first_layer.req
+    if public_two_layer_apply:
+        return _run_public_two_layer_refraction_static_apply_job(
+            job_id=job_id,
+            req=input_req,
+            state=state,
+            job_dir=job_dir,
+            first_layer=first_layer,
+        )
+
     active_req = _solver_request_for_refraction_static_apply(input_req)
     _set_job_progress_message(
         state,
@@ -431,46 +603,12 @@ def _run_refraction_static_apply_job_body(
         resolved_first_layer=first_layer.resolved,
         upstream_artifact_names=first_layer.upstream_artifact_names,
     )
-    if active_req.apply.register_corrected_file:
-        _set_job_progress_message(
-            state,
-            job_id,
-            progress=0.92,
-            message='applying_refraction_static_trace_shift',
-        )
-        corrected_result = apply_refraction_statics_to_trace_store(
-            req=active_req,
-            result=datum_result,
-            state=state,
-            job_id=job_id,
-            job_dir=job_dir,
-        )
-        if corrected_result.corrected_file_id is not None:
-            with state.lock:
-                state.jobs.set_static_corrected_file(
-                    job_id,
-                    corrected_file_id=corrected_result.corrected_file_id,
-                    corrected_store_path=str(
-                        corrected_result.corrected_trace_store_path
-                    ),
-                )
-        _set_job_progress_message(
-            state,
-            job_id,
-            progress=1.0,
-            message='refraction_corrected_trace_store_registered',
-        )
-        return JobCompletion(finished_ts=time.time())
-
-    _set_job_progress_message(
-        state,
-        job_id,
-        progress=1.0,
-        message=_ARTIFACT_ONLY_DONE_MESSAGE,
-    )
-    return JobCompletion(
-        finished_ts=time.time(),
-        message=_ARTIFACT_ONLY_DONE_MESSAGE,
+    return _finish_refraction_static_apply_job(
+        job_id=job_id,
+        req=active_req,
+        state=state,
+        job_dir=job_dir,
+        result=datum_result,
     )
 
 
