@@ -217,8 +217,8 @@ def test_multilayer_orchestrator_applies_layer_cell_settings_to_layer_model() ->
     assert result.layer_results[0].velocity_mode == 'solve_cell'
 
 
-def test_multilayer_orchestrator_rejects_unimplemented_deeper_layer() -> None:
-    dataset = make_2d_straight_two_layer_refraction_dataset()
+def test_multilayer_orchestrator_rejects_unimplemented_vsub_layer() -> None:
+    dataset = make_2d_straight_three_layer_refraction_dataset()
     model = _model(
         [
             _layer(
@@ -233,11 +233,20 @@ def test_multilayer_orchestrator_rejects_unimplemented_deeper_layer() -> None:
             _layer(
                 'v3_t2',
                 min_offset_m=1000.0,
-                max_offset_m=None,
+                max_offset_m=1900.0,
                 velocity_mode='solve_global',
                 initial_velocity_m_s=SYNTHETIC_MULTILAYER_V3_M_S,
                 min_velocity_m_s=2600.0,
                 max_velocity_m_s=4800.0,
+            ),
+            _layer(
+                'vsub_t3',
+                min_offset_m=2200.0,
+                max_offset_m=None,
+                velocity_mode='fixed_global',
+                fixed_velocity_m_s=SYNTHETIC_MULTILAYER_VSUB_M_S,
+                min_velocity_m_s=3800.0,
+                max_velocity_m_s=6200.0,
             ),
         ]
     )
@@ -249,7 +258,7 @@ def test_multilayer_orchestrator_rejects_unimplemented_deeper_layer() -> None:
 
     with pytest.raises(
         RefractionMultiLayerSolveError,
-        match='v3_t2.*solve_global.*not implemented',
+        match='vsub_t3.*fixed_global.*not implemented',
     ):
         solve_refraction_multilayer_time_terms(
             input_model=input_model,
@@ -258,7 +267,6 @@ def test_multilayer_orchestrator_rejects_unimplemented_deeper_layer() -> None:
             layer_masks=masks,
             model=model,
             solver=RefractionStaticSolverRequest(),
-            solver_dispatch={('v2_t1', 'solve_global'): _fake_layer_result},
         )
 
 

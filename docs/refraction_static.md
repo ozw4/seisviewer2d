@@ -1,10 +1,12 @@
 # Refraction statics
 
-This page documents the Phase 1 IRAS-compatible refraction statics workflow
-implemented by `POST /statics/refraction/apply`. The canonical implementation
-reference is [statics/refraction_iras_phase1_design.md](statics/refraction_iras_phase1_design.md).
+This page documents the IRAS-compatible refraction statics workflows. The
+canonical implementation references are
+[statics/refraction_iras_phase1_design.md](statics/refraction_iras_phase1_design.md)
+and
+[statics/refraction_iras_phase2_cell_v2_design.md](statics/refraction_iras_phase2_cell_v2_design.md).
 
-The workflow is intentionally limited to a practical 1-layer model:
+The public apply workflow is intentionally limited to a practical 1-layer model:
 
 ```text
 first-break picks
@@ -17,15 +19,24 @@ first-break picks
 
 It does not claim full IRAS compatibility.
 
+`POST /statics/refraction/apply` remains the public job entry point for the
+1-layer workflow. The two-layer V3/T2 and `t1lsst_multilayer` contract below
+documents the implemented lower-level solver, conversion, and artifact/table
+fields; the public apply job runner still rejects multi-layer apply requests
+until final job wiring is complete.
+
 ## Terms
 
 | Term | Meaning | Unit |
 |---|---|---:|
 | V1 | Weathering velocity / first-layer velocity | m/s |
 | V2 | Bedrock velocity / refractor velocity | m/s |
+| V3 | Second refractor / replacement velocity for the 2-layer correction | m/s |
 | T1 | Source or receiver node half-intercept time from the GLI model | s in NPZ, ms in CSV |
+| T2 | Source or receiver half-intercept time for the V3 refractor branch | s in NPZ, ms in CSV |
 | SH1 | Weathering thickness derived from T1, V1, and V2 | m |
-| WCOR | Weathering correction from replacing the weathering layer with V2 | s in NPZ, ms in CSV |
+| SH2 | Second-layer thickness derived from T1, T2, V1, V2, and V3 | m |
+| WCOR | Weathering correction from replacing modeled near-surface layers with the replacement velocity | s in NPZ, ms in CSV |
 | total static | Final source, receiver, or trace static under the repo sign convention | s in NPZ, ms in CSV |
 | total applied shift | Shift value used when applying statics to traces | s in NPZ, ms in CSV |
 
@@ -176,6 +187,43 @@ component and includes `sign_convention` with:
 corrected(t) = raw(t - shift_s)
 ```
 
+## V3/T2 and T1LSST 2-Layer Components
+
+The implemented two-layer path uses `model.method="multilayer_time_term"` with
+enabled layers ordered as `v2_t1` then `v3_t2`. Each layer solves:
+
+```text
+pick_time_s = Tn_source_s + Tn_receiver_s + offset_m / Vn_m_s
+```
+
+For `v3_t2`, `velocity_mode` may be `solve_global` or `fixed_global`. Cell V3
+and Vsub/T3 are not implemented.
+
+For `conversion.mode="t1lsst_multilayer"` with `conversion.layer_count=2`, the
+two-layer conversion computes:
+
+```text
+SH1 = T1 * V1 / sqrt(1 - (V1 / V2)^2)
+SH2 = (T2 - SH1 * sqrt(1 - (V1 / V3)^2) / V1)
+      * V2 / sqrt(1 - (V2 / V3)^2)
+WCOR = SH1 * (1 / V3 - 1 / V1)
+     + SH2 * (1 / V3 - 1 / V2)
+```
+
+The conversion requires `V2 > V1` and `V3 > V2`. Negative SH2 is status-coded
+as `invalid_negative_thickness` and written as NaN rather than clipped. When V2
+is cell-based, endpoint-local V2 is projected by endpoint cell ID; the
+cell-velocity arrays are indexed by `cell_id`.
+
+Two-layer results use the same source/receiver tables and NPZ artifacts as the
+1-layer workflow, with added T2/V3/SH2 fields. `refraction_static_qc.json` and
+datum-result QC identify these outputs with:
+
+```text
+conversion_mode = t1lsst_multilayer
+layer_count = 2
+```
+
 ## Source and Receiver Static Tables
 
 `source_static_table.csv` has one row per source endpoint. Its source-specific
@@ -226,9 +274,19 @@ Both CSV tables then share these component columns:
 | `residual_rms_ms` | Node residual RMS in milliseconds. |
 | `residual_mad_ms` | Node residual MAD in milliseconds. |
 
+For two-layer `t1lsst_multilayer` results, the source and receiver CSV tables
+also include:
+
+| Column | Definition |
+|---|---|
+| `t2_ms` | T2 half-intercept time for the V3 branch in milliseconds. |
+| `v3_m_s` | Global V3 replacement velocity used by the two-layer correction. |
+| `sh2_weathering_thickness_m` | SH2 second-layer thickness from the two-layer T1LSST formula. |
+
 `source_receiver_static_table.npz` stores the machine-readable source and
 receiver tables. Time values in this NPZ are in seconds, and arrays are
-pickle-free.
+pickle-free. Two-layer results add `source_t2_s`, `source_v3_m_s`,
+`source_sh2_m`, `receiver_t2_s`, `receiver_v3_m_s`, and `receiver_sh2_m`.
 
 ## Example Request
 
@@ -309,6 +367,14 @@ When `conversion.mode="t1lsst_1layer"`, the job also writes:
 refraction_t1lsst_1layer_components.csv
 ```
 
+For two-layer `t1lsst_multilayer` results, the same core artifacts are used.
+`source_static_table.csv` and `receiver_static_table.csv` add `t2_ms`,
+`v3_m_s`, and `sh2_weathering_thickness_m`; `source_receiver_static_table.npz`
+adds the corresponding seconds/meter arrays. `refraction_static_solution.npz`
+adds `source_t2_time_s`, `source_v3_m_s`,
+`source_sh2_weathering_thickness_m`, `receiver_t2_time_s`,
+`receiver_v3_m_s`, and `receiver_sh2_weathering_thickness_m`.
+
 When `model.first_layer.mode="estimate_direct_arrival"`, the job also writes:
 
 ```text
@@ -330,13 +396,16 @@ and `source_receiver_static_table.npz`.
 
 ## Current Scope and Non-Goals
 
-Current Phase 1 scope:
+Current supported scope:
 
 ```text
 1-layer model
 global V1
 global V2
+cell V2
 T1 / SH1 / WCOR
+lower-level V3/T2 solve
+lower-level 2-layer T1LSST conversion
 source static table
 receiver static table
 station table export
@@ -346,13 +415,11 @@ Out of scope:
 
 ```text
 full IRAS compatibility
-V2 cell model
 3-D refractor velocity grid
 spatially varying V1 map
-V3/T2
 Vsub/T3
 GRM / plus-minus method
-multi-layer T1LSST
+3-layer T1LSST
 tomostatics
 SEG-Y header write-back
 UI documentation

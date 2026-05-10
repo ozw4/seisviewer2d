@@ -35,6 +35,7 @@ REFRACTION_STATIC_STATUSES: frozenset[str] = frozenset(
         'invalid_flat_datum_elevation',
         'invalid_weathering_replacement',
         'invalid_weathering_thickness',
+        'invalid_negative_thickness',
         'negative_weathering_thickness',
         'negative_thickness',
         'invalid_half_intercept',
@@ -105,6 +106,7 @@ def classify_refraction_endpoint_static_status(
         or weathering
         in {
             'invalid_weathering_thickness',
+            'invalid_negative_thickness',
             'negative_weathering_thickness',
             'negative_thickness',
             'exceeds_max_thickness',
