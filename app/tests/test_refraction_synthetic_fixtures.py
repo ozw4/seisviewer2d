@@ -5,6 +5,7 @@ import subprocess
 import sys
 
 import numpy as np
+import pytest
 
 from app.tests.fixtures.refraction_synthetic import (
     SyntheticRefractionCellDataset,
@@ -15,6 +16,18 @@ from app.tests.fixtures.refraction_synthetic import (
     make_rotated_2d_line_refraction_dataset,
     make_v2_spike_smoothing_dataset,
 )
+
+
+_SYNTHETIC_FIXTURE_MODULE = 'app.tests.fixtures.refraction_synthetic'
+_SYNTHETIC_FIXTURE_FORBIDDEN_IMPORTS = {'app.main', 'segyio', 'torch'}
+_SYNTHETIC_FIXTURE_FORBIDDEN_IMPORT_PREFIXES = (
+    'app.api',
+    'app.services',
+    'app.trace_store',
+    'app.utils',
+    'app.web',
+)
+_SYNTHETIC_FIXTURE_IMPORT_CHECK_TIMEOUT_S = 10.0
 
 
 def test_synthetic_clean_2d_builder_is_deterministic() -> None:
@@ -136,18 +149,42 @@ def test_synthetic_required_special_builders_mark_expected_rows() -> None:
 
 
 def test_synthetic_fixture_import_is_dependency_light() -> None:
-    script = """
+    _check_synthetic_fixture_import_is_dependency_light()
+
+
+def test_synthetic_fixture_import_timeout_failure_message_is_readable(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def fake_run(args: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
+        raise subprocess.TimeoutExpired(
+            cmd=args,
+            timeout=kwargs.get('timeout'),
+            output='partial stdout',
+            stderr='partial stderr',
+        )
+
+    monkeypatch.setattr(subprocess, 'run', fake_run)
+
+    with pytest.raises(AssertionError) as exc_info:
+        _check_synthetic_fixture_import_is_dependency_light()
+
+    message = str(exc_info.value)
+    assert f'module under test: {_SYNTHETIC_FIXTURE_MODULE}' in message
+    assert 'forbidden modules:' in message
+    assert 'app.main' in message
+    assert 'segyio' in message
+    assert 'torch' in message
+    assert 'stdout:\npartial stdout' in message
+    assert 'stderr:\npartial stderr' in message
+
+
+def _check_synthetic_fixture_import_is_dependency_light() -> None:
+    script = f"""
 import sys
-import app.tests.fixtures.refraction_synthetic as fixture
+import {_SYNTHETIC_FIXTURE_MODULE} as fixture
 fixture.make_clean_2d_cell_refraction_dataset()
-forbidden_exact = {'app.main', 'segyio', 'torch'}
-forbidden_prefix = (
-    'app.api',
-    'app.services',
-    'app.trace_store',
-    'app.utils',
-    'app.web',
-)
+forbidden_exact = {sorted(_SYNTHETIC_FIXTURE_FORBIDDEN_IMPORTS)!r}
+forbidden_prefix = {_SYNTHETIC_FIXTURE_FORBIDDEN_IMPORT_PREFIXES!r}
 loaded = [
     name for name in sys.modules
     if name in forbidden_exact or name.startswith(forbidden_prefix)
@@ -156,14 +193,35 @@ if loaded:
     raise SystemExit(','.join(sorted(loaded)))
 """
 
-    result = subprocess.run(
-        [sys.executable, '-c', script],
-        check=False,
-        capture_output=True,
-        text=True,
-    )
+    try:
+        result = subprocess.run(
+            [sys.executable, '-c', script],
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=_SYNTHETIC_FIXTURE_IMPORT_CHECK_TIMEOUT_S,
+        )
+    except subprocess.TimeoutExpired as exc:
+        raise AssertionError(
+            'Timed out while checking synthetic fixture dependency-light import layer\n'
+            f'module under test: {_SYNTHETIC_FIXTURE_MODULE}\n'
+            f'forbidden modules: {sorted(_SYNTHETIC_FIXTURE_FORBIDDEN_IMPORTS)!r}\n'
+            'forbidden module prefixes: '
+            f'{_SYNTHETIC_FIXTURE_FORBIDDEN_IMPORT_PREFIXES!r}\n'
+            f'timeout_s: {_SYNTHETIC_FIXTURE_IMPORT_CHECK_TIMEOUT_S}\n'
+            f'stdout:\n{_subprocess_output_text(exc.stdout)}\n'
+            f'stderr:\n{_subprocess_output_text(exc.stderr)}'
+        ) from exc
 
     assert result.returncode == 0, result.stderr or result.stdout
+
+
+def _subprocess_output_text(value: bytes | str | None) -> str:
+    if value is None:
+        return '<none>'
+    if isinstance(value, bytes):
+        value = value.decode(errors='replace')
+    return value if value else '<empty>'
 
 
 def _assert_dataset_equal(

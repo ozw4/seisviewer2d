@@ -6,6 +6,8 @@ import subprocess
 import sys
 from types import ModuleType
 
+import pytest
+
 import app.services.refraction_static_bedrock as bedrock
 import app.services.refraction_static_design_matrix as design_matrix
 import app.services.refraction_static_half_intercept as half_intercept
@@ -27,11 +29,20 @@ _FORBIDDEN_IMPORTS = {
     'segyio',
 }
 _FORBIDDEN_IMPORT_PREFIXES = ('app.api.routers.',)
+_IMPORT_LAYER_CHECK_TIMEOUT_S = 10.0
 
 
 def _module_source(module: ModuleType) -> str:
     path = Path(module.__file__ or '')
     return path.read_text(encoding='utf-8')
+
+
+def _subprocess_output_text(value: bytes | str | None) -> str:
+    if value is None:
+        return '<none>'
+    if isinstance(value, bytes):
+        value = value.decode(errors='replace')
+    return value if value else '<empty>'
 
 
 def _forbidden_modules_imported_by(module_name: str) -> set[str]:
@@ -54,14 +65,66 @@ for name in sys.modules:
         imported.append(name)
 print(json.dumps(sorted(imported)))
 """
-    result = subprocess.run(
-        [sys.executable, '-c', code],
-        cwd=_REPO_ROOT,
-        check=True,
-        capture_output=True,
-        text=True,
-    )
+    try:
+        result = subprocess.run(
+            [sys.executable, '-c', code],
+            cwd=_REPO_ROOT,
+            check=True,
+            capture_output=True,
+            text=True,
+            timeout=_IMPORT_LAYER_CHECK_TIMEOUT_S,
+        )
+    except subprocess.TimeoutExpired as exc:
+        raise AssertionError(
+            'Timed out while checking dependency-light import layer\n'
+            f'module under test: {module_name}\n'
+            f'forbidden modules: {sorted(_FORBIDDEN_IMPORTS)!r}\n'
+            f'forbidden module prefixes: {_FORBIDDEN_IMPORT_PREFIXES!r}\n'
+            f'timeout_s: {_IMPORT_LAYER_CHECK_TIMEOUT_S}\n'
+            f'stdout:\n{_subprocess_output_text(exc.stdout)}\n'
+            f'stderr:\n{_subprocess_output_text(exc.stderr)}'
+        ) from exc
     return set(json.loads(result.stdout))
+
+
+def test_refraction_static_import_layer_checks_use_timeout(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    captured: dict[str, object] = {}
+
+    def fake_run(args: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
+        captured['timeout'] = kwargs.get('timeout')
+        return subprocess.CompletedProcess(args, 0, stdout='[]', stderr='')
+
+    monkeypatch.setattr(subprocess, 'run', fake_run)
+
+    assert _forbidden_modules_imported_by('app.services.refraction_static_v1') == set()
+    assert captured['timeout'] == _IMPORT_LAYER_CHECK_TIMEOUT_S
+
+
+def test_import_layer_timeout_failure_message_is_readable(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def fake_run(args: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
+        raise subprocess.TimeoutExpired(
+            cmd=args,
+            timeout=kwargs.get('timeout'),
+            output='partial stdout',
+            stderr='partial stderr',
+        )
+
+    monkeypatch.setattr(subprocess, 'run', fake_run)
+
+    with pytest.raises(AssertionError) as exc_info:
+        _forbidden_modules_imported_by('app.services.refraction_static_v1')
+
+    message = str(exc_info.value)
+    assert 'module under test: app.services.refraction_static_v1' in message
+    assert 'forbidden modules:' in message
+    assert 'app.main' in message
+    assert 'segyio' in message
+    assert 'stdout:\npartial stdout' in message
+    assert 'stderr:\npartial stderr' in message
 
 
 def test_refraction_static_types_is_dependency_light() -> None:

@@ -709,7 +709,113 @@ T1, SH1, WCOR, source/receiver static tables, inactive and low-fold cell
 endpoint status, outside-grid rejection, smoothing behavior, and pickle-free
 NPZ artifacts.
 
-## 15. Known limitations
+## 15. M2.5 synthetic validation strategy
+
+M2.5 is a hardening milestone for the cell-based V2 workflow defined by this
+Phase 2 design and by the Phase 1 one-layer workflow in
+[`refraction_iras_phase1_design.md`](refraction_iras_phase1_design.md). It uses
+synthetic data as the primary validation source because the synthetic fixtures
+provide known-truth values for:
+
+```text
+V1
+cell V2
+T1
+SH1
+WCOR
+cell assignment
+residuals
+source/receiver static table values
+```
+
+The target is deterministic validation of the current model, not empirical
+qualification of field data. Real-data validation is deferred to later
+QC/viewer or production-readiness milestones where first-break picking quality,
+trace display, and operational data variability can be evaluated directly.
+
+M2.5 synthetic tests should cite this Phase 2 document for cell assignment,
+local V2 projection, smoothing, and artifacts, and the Phase 1 design for V1
+resolution, T1LSST one-layer conversion, and the repo static-shift convention.
+
+### Synthetic equations
+
+Synthetic picks are generated from known endpoint time terms and the known
+midpoint cell V2:
+
+```text
+pick_time_s = T1_source + T1_receiver + offset_m / V2_cell
+```
+
+Known SH1, T1, and WCOR values use the same one-layer equations as production
+conversion:
+
+```text
+T1 = SH1 * sqrt(V2^2 - V1^2) / (V1 * V2)
+SH1 = T1 * V1 * V2 / sqrt(V2^2 - V1^2)
+WCOR = SH1 * (1/V2 - 1/V1)
+```
+
+The sign convention under test is the repository convention:
+
+```text
+corrected(t) = raw(t - shift_s)
+```
+
+For valid one-layer cases with `V2 > V1`, WCOR is normally negative because
+the low-velocity weathering delay is replaced by faster bedrock velocity.
+
+### Fixture categories and guarantees
+
+- Clean 2D: recovers known V1, per-cell V2, T1, SH1, WCOR, residuals, and
+  source/receiver table values on a 1-D cell grid. This protects against basic
+  design-matrix, bounds, unit, and sign-convention regressions.
+- Rotated 2D line projection: uses `coordinate_mode="line_2d_projected"` on a
+  diagonal map line. This protects against assigning diagonal map X/Y cells
+  instead of projected inline cells.
+- Clean 3D grid: uses `coordinate_mode="grid_3d"` with multiple Y cells. This
+  protects against row-major cell ID mistakes, Y-axis interval mistakes, and
+  accidentally treating a 3-D grid as a 1-D line.
+- Low-fold / empty cells: includes cells with no observations and cells below
+  `min_observations_per_cell`. This protects against the low-fold threshold
+  becoming a no-op and against inactive cells receiving solved V2 values.
+- Outliers / bad picks: injects bad picks into otherwise known data. This
+  protects robust rejection, residual status reporting, and the separation of
+  data-row rejection from smoothing rows.
+- Smoothing: enables `velocity_smoothing_weight` on active neighbor cells. This
+  protects smoothing-row construction, neighbor counting, reference-distance
+  scaling, and the expectation that smoothing reduces local velocity jumps
+  without replacing the known broad trend.
+- QC artifacts: checks `refraction_static_qc.json`,
+  `refraction_refractor_velocity_qc.json`, and solution NPZ metadata. This
+  protects coordinate-mode reporting, outside-grid and low-fold counts,
+  smoothing-row counts, pickle-free arrays, and machine-readable status fields.
+- Source/receiver static tables: checks CSV and NPZ source/receiver tables
+  against known endpoint-local V2, T1, SH1, WCOR, elevation correction, total
+  static, and total applied shift values. This protects against using a global
+  summary V2 in local SH1/WCOR calculation and against dropping unresolved
+  endpoints from the tables.
+- Import-layer timeout: imports lightweight statics modules under a short
+  timeout and without SEG-Y/API-heavy dependencies. This protects the synthetic
+  validation suite from accidental request-path or import-time coupling to
+  heavy I/O.
+
+### Non-goals for M2.5
+
+M2.5 does not validate:
+
+```text
+real first-break picking quality
+raw trace display
+SEG-Y static header write-back
+multi-layer V3/T2 or Vsub/T3
+GRM / plus-minus
+tomostatics
+```
+
+Those topics require real-data QC, viewer behavior, or production-readiness
+coverage outside this synthetic hardening milestone.
+
+## 16. Known limitations
 
 - Uses midpoint-cell assignment, not raypath-integrated cell slowness.
 - Uses 1-layer T1LSST conversion only.
