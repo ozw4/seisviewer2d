@@ -216,8 +216,29 @@ is cell-based, endpoint-local V2 is projected by endpoint cell ID; the
 cell-velocity arrays are indexed by `cell_id`.
 
 Two-layer results use the same source/receiver tables and NPZ artifacts as the
-1-layer workflow, with added T2/V3/SH2 fields. `refraction_static_qc.json` and
-datum-result QC identify these outputs with:
+1-layer workflow, with added T2/V3/SH2 and interface-elevation fields. In
+1-layer output, `refractor_elevation_m` is the V1/V2 interface:
+
+```text
+refractor_elevation_m = surface_elevation_m - SH1
+```
+
+In 2-layer `t1lsst_multilayer` output, legacy `weathering_thickness_m` values
+represent the total replaced interval, and legacy `refractor_elevation_m` points
+to the final V3 replacement interface:
+
+```text
+weathering_thickness_m = SH1 + SH2
+layer1_base_elevation_m = surface_elevation_m - SH1
+final_refractor_elevation_m = surface_elevation_m - SH1 - SH2
+refractor_elevation_m = final_refractor_elevation_m
+```
+
+If SH2 is invalid and written as NaN, the total replaced interval and final
+refractor elevation are also NaN. The explicit SH1 fields remain the computed
+first-layer thickness.
+
+`refraction_static_qc.json` and datum-result QC identify these outputs with:
 
 ```text
 conversion_mode = t1lsst_multilayer
@@ -257,8 +278,8 @@ Both CSV tables then share these component columns:
 | `t1_ms` | Node T1 half-intercept time in milliseconds. |
 | `v1_m_s` | Resolved global V1 weathering velocity. |
 | `v2_m_s` | Solved or fixed global V2 refractor velocity. |
-| `sh1_weathering_thickness_m` | SH1 weathering thickness from the T1LSST 1-layer formula. |
-| `refractor_elevation_m` | Surface elevation minus SH1, when surface elevation is available. |
+| `sh1_weathering_thickness_m` | SH1 first-layer thickness from the T1LSST conversion. |
+| `refractor_elevation_m` | 1-layer: surface elevation minus SH1. Two-layer: final V3 replacement interface, equivalent to `final_refractor_elevation_m`. |
 | `weathering_correction_ms` | WCOR in milliseconds. Usually negative when `V2 > V1`. |
 | `floating_datum_correction_ms` | Floating datum correction component. |
 | `flat_datum_correction_ms` | Flat datum correction component. |
@@ -282,11 +303,16 @@ also include:
 | `t2_ms` | T2 half-intercept time for the V3 branch in milliseconds. |
 | `v3_m_s` | Global V3 replacement velocity used by the two-layer correction. |
 | `sh2_weathering_thickness_m` | SH2 second-layer thickness from the two-layer T1LSST formula. |
+| `layer1_base_elevation_m` | V1/V2 interface elevation, computed as surface elevation minus SH1. |
+| `final_refractor_elevation_m` | Final V3 replacement interface elevation, computed as surface elevation minus SH1 minus SH2. |
 
 `source_receiver_static_table.npz` stores the machine-readable source and
 receiver tables. Time values in this NPZ are in seconds, and arrays are
 pickle-free. Two-layer results add `source_t2_s`, `source_v3_m_s`,
-`source_sh2_m`, `receiver_t2_s`, `receiver_v3_m_s`, and `receiver_sh2_m`.
+`source_sh2_m`, `source_layer1_base_elevation_m`,
+`source_final_refractor_elevation_m`, `receiver_t2_s`, `receiver_v3_m_s`,
+`receiver_sh2_m`, `receiver_layer1_base_elevation_m`, and
+`receiver_final_refractor_elevation_m`.
 
 ## Example Request
 
@@ -368,12 +394,24 @@ refraction_t1lsst_1layer_components.csv
 ```
 
 For two-layer `t1lsst_multilayer` results, the same core artifacts are used.
-`source_static_table.csv` and `receiver_static_table.csv` add `t2_ms`,
-`v3_m_s`, and `sh2_weathering_thickness_m`; `source_receiver_static_table.npz`
-adds the corresponding seconds/meter arrays. `refraction_static_solution.npz`
-adds `source_t2_time_s`, `source_v3_m_s`,
-`source_sh2_weathering_thickness_m`, `receiver_t2_time_s`,
-`receiver_v3_m_s`, and `receiver_sh2_weathering_thickness_m`.
+`near_surface_model.csv` adds explicit `sh1_weathering_thickness_m`,
+`sh2_weathering_thickness_m`, `layer1_base_elevation_m`, and
+`final_refractor_elevation_m` columns, while legacy
+`weathering_thickness_m` stores SH1+SH2 and legacy `refractor_elevation_m`
+stores the final V3 interface. `source_static_table.csv` and
+`receiver_static_table.csv` add `t2_ms`, `v3_m_s`,
+`sh2_weathering_thickness_m`, `layer1_base_elevation_m`, and
+`final_refractor_elevation_m`; `source_receiver_static_table.npz` adds the
+corresponding seconds/meter arrays. `refraction_static_solution.npz` adds
+`node_sh2_weathering_thickness_m`, `node_layer1_base_elevation_m`,
+`node_final_refractor_elevation_m`, `source_t2_time_s`, `source_v3_m_s`,
+`source_sh1_weathering_thickness_m`, `source_sh2_weathering_thickness_m`,
+`source_layer1_base_elevation_m`, `source_final_refractor_elevation_m`,
+`receiver_t2_time_s`, `receiver_v3_m_s`,
+`receiver_sh1_weathering_thickness_m`,
+`receiver_sh2_weathering_thickness_m`,
+`receiver_layer1_base_elevation_m`, and
+`receiver_final_refractor_elevation_m`.
 
 When `model.first_layer.mode="estimate_direct_arrival"`, the job also writes:
 

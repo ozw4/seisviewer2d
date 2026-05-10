@@ -756,6 +756,28 @@ def build_refraction_datum_statics(
         receiver_v2_cell_id_sorted=data.receiver_v2_cell_id_sorted,
         receiver_v2_m_s_sorted=data.receiver_v2_m_s_sorted,
         receiver_v2_status_sorted=data.receiver_v2_status_sorted,
+        node_sh1_weathering_thickness_m=(
+            weathering_replacement_result.node_sh1_weathering_thickness_m
+        ),
+        node_sh2_weathering_thickness_m=(
+            weathering_replacement_result.node_sh2_weathering_thickness_m
+        ),
+        source_t2_time_s=weathering_replacement_result.source_t2_time_s,
+        source_v3_m_s=weathering_replacement_result.source_v3_m_s,
+        source_sh1_weathering_thickness_m=(
+            weathering_replacement_result.source_sh1_weathering_thickness_m
+        ),
+        source_sh2_weathering_thickness_m=(
+            weathering_replacement_result.source_sh2_weathering_thickness_m
+        ),
+        receiver_t2_time_s=weathering_replacement_result.receiver_t2_time_s,
+        receiver_v3_m_s=weathering_replacement_result.receiver_v3_m_s,
+        receiver_sh1_weathering_thickness_m=(
+            weathering_replacement_result.receiver_sh1_weathering_thickness_m
+        ),
+        receiver_sh2_weathering_thickness_m=(
+            weathering_replacement_result.receiver_sh2_weathering_thickness_m
+        ),
     )
     if job_dir is not None:
         write_refraction_datum_statics_artifacts(Path(job_dir), result)

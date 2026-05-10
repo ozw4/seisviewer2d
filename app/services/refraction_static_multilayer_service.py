@@ -255,17 +255,27 @@ def compute_refraction_multilayer_datum_statics_from_input_model(
             'layer_count': 2,
             'layers': solve_result.qc,
         },
+        node_sh1_weathering_thickness_m=_required_result_array(
+            weathering_replacement.node_sh1_weathering_thickness_m,
+            name='node_sh1_weathering_thickness_m',
+        ),
+        node_sh2_weathering_thickness_m=_required_result_array(
+            weathering_replacement.node_sh2_weathering_thickness_m,
+            name='node_sh2_weathering_thickness_m',
+        ),
         source_t2_time_s=components.source_t2_s,
         source_v3_m_s=_required_result_array(
             weathering_replacement.source_v3_m_s,
             name='source_v3_m_s',
         ),
+        source_sh1_weathering_thickness_m=components.source_sh1_m,
         source_sh2_weathering_thickness_m=components.source_sh2_m,
         receiver_t2_time_s=components.receiver_t2_s,
         receiver_v3_m_s=_required_result_array(
             weathering_replacement.receiver_v3_m_s,
             name='receiver_v3_m_s',
         ),
+        receiver_sh1_weathering_thickness_m=components.receiver_sh1_m,
         receiver_sh2_weathering_thickness_m=components.receiver_sh2_m,
     )
     if job_dir is not None:
@@ -451,6 +461,39 @@ def build_refraction_multilayer_weathering_replacement_statics(
         endpoint_values=receiver_conversion.sh1_m,
         name='receiver_sh1_m_sorted',
     )
+    source_sh2_sorted = _map_endpoint_values_to_trace_order(
+        endpoint_key_sorted=input_model.source_endpoint_key_sorted,
+        endpoint_key=source.endpoint_key,
+        endpoint_values=source_conversion.sh2_m,
+        name='source_sh2_m_sorted',
+    )
+    receiver_sh2_sorted = _map_endpoint_values_to_trace_order(
+        endpoint_key_sorted=input_model.receiver_endpoint_key_sorted,
+        endpoint_key=receiver.endpoint_key,
+        endpoint_values=receiver_conversion.sh2_m,
+        name='receiver_sh2_m_sorted',
+    )
+    node_surface = np.ascontiguousarray(input_model.node_elevation_m, dtype=np.float64)
+    node_total_thickness = _total_weathering_thickness(
+        node_conversion.sh1_m,
+        node_conversion.sh2_m,
+    )
+    source_total_thickness = _total_weathering_thickness(
+        source_conversion.sh1_m,
+        source_conversion.sh2_m,
+    )
+    receiver_total_thickness = _total_weathering_thickness(
+        receiver_conversion.sh1_m,
+        receiver_conversion.sh2_m,
+    )
+    source_total_thickness_sorted = _total_weathering_thickness(
+        source_sh1_sorted,
+        source_sh2_sorted,
+    )
+    receiver_total_thickness_sorted = _total_weathering_thickness(
+        receiver_sh1_sorted,
+        receiver_sh2_sorted,
+    )
     source_wcor_sorted = _map_endpoint_values_to_trace_order(
         endpoint_key_sorted=input_model.source_endpoint_key_sorted,
         endpoint_key=source.endpoint_key,
@@ -529,16 +572,10 @@ def build_refraction_multilayer_weathering_replacement_statics(
         node_id=node_id,
         node_x_m=np.ascontiguousarray(input_model.node_x_m, dtype=np.float64),
         node_y_m=np.ascontiguousarray(input_model.node_y_m, dtype=np.float64),
-        node_surface_elevation_m=np.ascontiguousarray(
-            input_model.node_elevation_m,
-            dtype=np.float64,
-        ),
+        node_surface_elevation_m=node_surface,
         node_kind=np.asarray(input_model.node_kind).astype('<U16', copy=True),
-        node_weathering_thickness_m=node_conversion.sh1_m,
-        node_refractor_elevation_m=(
-            np.ascontiguousarray(input_model.node_elevation_m, dtype=np.float64)
-            - node_conversion.sh1_m
-        ),
+        node_weathering_thickness_m=node_total_thickness,
+        node_refractor_elevation_m=node_surface - node_total_thickness,
         node_half_intercept_time_s=node_t1,
         node_solution_status=np.full(node_id.shape, 'solved', dtype=_STATUS_DTYPE),
         node_weathering_status=node_conversion.status,
@@ -561,8 +598,8 @@ def build_refraction_multilayer_weathering_replacement_statics(
         source_y_m=source.y_m,
         source_surface_elevation_m=source.elevation_m,
         source_half_intercept_time_s=source_t1,
-        source_weathering_thickness_m=source_conversion.sh1_m,
-        source_refractor_elevation_m=source.elevation_m - source_conversion.sh1_m,
+        source_weathering_thickness_m=source_total_thickness,
+        source_refractor_elevation_m=source.elevation_m - source_total_thickness,
         source_weathering_replacement_shift_s=(
             source_conversion.weathering_correction_s
         ),
@@ -574,9 +611,9 @@ def build_refraction_multilayer_weathering_replacement_statics(
         receiver_y_m=receiver.y_m,
         receiver_surface_elevation_m=receiver.elevation_m,
         receiver_half_intercept_time_s=receiver_t1,
-        receiver_weathering_thickness_m=receiver_conversion.sh1_m,
+        receiver_weathering_thickness_m=receiver_total_thickness,
         receiver_refractor_elevation_m=(
-            receiver.elevation_m - receiver_conversion.sh1_m
+            receiver.elevation_m - receiver_total_thickness
         ),
         receiver_weathering_replacement_shift_s=(
             receiver_conversion.weathering_correction_s
@@ -609,18 +646,18 @@ def build_refraction_multilayer_weathering_replacement_statics(
         ),
         source_half_intercept_time_s_sorted=source_t1_sorted,
         receiver_half_intercept_time_s_sorted=receiver_t1_sorted,
-        source_weathering_thickness_m_sorted=source_sh1_sorted,
-        receiver_weathering_thickness_m_sorted=receiver_sh1_sorted,
+        source_weathering_thickness_m_sorted=source_total_thickness_sorted,
+        receiver_weathering_thickness_m_sorted=receiver_total_thickness_sorted,
         source_refractor_elevation_m_sorted=(
             np.ascontiguousarray(input_model.source_elevation_m_sorted, dtype=np.float64)
-            - source_sh1_sorted
+            - source_total_thickness_sorted
         ),
         receiver_refractor_elevation_m_sorted=(
             np.ascontiguousarray(
                 input_model.receiver_elevation_m_sorted,
                 dtype=np.float64,
             )
-            - receiver_sh1_sorted
+            - receiver_total_thickness_sorted
         ),
         source_weathering_replacement_shift_s_sorted=source_wcor_sorted,
         receiver_weathering_replacement_shift_s_sorted=receiver_wcor_sorted,
@@ -674,11 +711,15 @@ def build_refraction_multilayer_weathering_replacement_statics(
         receiver_v2_cell_id_sorted=v2.receiver_v2_cell_id_sorted,
         receiver_v2_m_s_sorted=v2.receiver_v2_m_s_sorted,
         receiver_v2_status_sorted=v2.receiver_v2_status_sorted,
+        node_sh1_weathering_thickness_m=node_conversion.sh1_m,
+        node_sh2_weathering_thickness_m=node_conversion.sh2_m,
         source_t2_time_s=source_t2,
         source_v3_m_s=source_v3_m_s,
+        source_sh1_weathering_thickness_m=source_conversion.sh1_m,
         source_sh2_weathering_thickness_m=source_conversion.sh2_m,
         receiver_t2_time_s=receiver_t2,
         receiver_v3_m_s=receiver_v3_m_s,
+        receiver_sh1_weathering_thickness_m=receiver_conversion.sh1_m,
         receiver_sh2_weathering_thickness_m=receiver_conversion.sh2_m,
     )
 
@@ -811,6 +852,13 @@ def _compute_2layer_conversion(
     )
 
 
+def _total_weathering_thickness(sh1_m: np.ndarray, sh2_m: np.ndarray) -> np.ndarray:
+    return np.ascontiguousarray(
+        np.asarray(sh1_m, dtype=np.float64) + np.asarray(sh2_m, dtype=np.float64),
+        dtype=np.float64,
+    )
+
+
 def _cell_threshold_qc_from_layer(
     layer: RefractionLayerSolveResult,
 ) -> dict[str, Any]:
@@ -845,9 +893,17 @@ def _components_from_replacement(
         result.source_sh2_weathering_thickness_m,
         name='source_sh2_m',
     )
+    source_sh1 = _required_result_array(
+        result.source_sh1_weathering_thickness_m,
+        name='source_sh1_m',
+    )
     receiver_sh2 = _required_result_array(
         result.receiver_sh2_weathering_thickness_m,
         name='receiver_sh2_m',
+    )
+    receiver_sh1 = _required_result_array(
+        result.receiver_sh1_weathering_thickness_m,
+        name='receiver_sh1_m',
     )
     return RefractionMultiLayerStaticComponents(
         source_t1_s=np.ascontiguousarray(result.source_half_intercept_time_s),
@@ -856,10 +912,10 @@ def _components_from_replacement(
         receiver_t1_s=np.ascontiguousarray(result.receiver_half_intercept_time_s),
         receiver_t2_s=receiver_t2,
         receiver_t3_s=None,
-        source_sh1_m=np.ascontiguousarray(result.source_weathering_thickness_m),
+        source_sh1_m=source_sh1,
         source_sh2_m=source_sh2,
         source_sh3_m=None,
-        receiver_sh1_m=np.ascontiguousarray(result.receiver_weathering_thickness_m),
+        receiver_sh1_m=receiver_sh1,
         receiver_sh2_m=receiver_sh2,
         receiver_sh3_m=None,
         source_weathering_correction_s=np.ascontiguousarray(

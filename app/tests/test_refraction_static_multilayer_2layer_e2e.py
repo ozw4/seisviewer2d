@@ -37,15 +37,18 @@ from app.services.refraction_static_artifacts import (
     SIGN_CONVENTION,
     SOURCE_RECEIVER_STATIC_TABLE_NPZ_NAME,
     SOURCE_STATIC_TABLE_CSV_NAME,
+    write_near_surface_model_csv,
     write_refraction_statics_csv,
     write_receiver_static_table_csv,
     write_source_receiver_static_table_npz,
     write_source_static_table_csv,
 )
+from app.services.refraction_static_datum import build_refraction_datum_statics
 from app.services.refraction_static_layer_observations import (
     build_refraction_layer_observation_masks,
 )
 from app.services.refraction_static_multilayer_service import (
+    _components_from_replacement,
     build_refraction_multilayer_weathering_replacement_statics,
     compute_refraction_multilayer_datum_statics_from_input_model,
 )
@@ -214,20 +217,78 @@ def test_two_layer_job_dir_writes_core_artifacts_and_solution_npz_contract(
         't2_ms',
         'v3_m_s',
         'sh2_weathering_thickness_m',
+        'layer1_base_elevation_m',
+        'final_refractor_elevation_m',
     }
     assert required_columns <= set(source_rows[0])
     assert required_columns <= set(receiver_rows[0])
 
+    near_surface_rows = _read_csv(job_dir / NEAR_SURFACE_MODEL_CSV_NAME)
+    near_surface_columns = set(near_surface_rows[0])
+    assert {
+        'sh1_weathering_thickness_m',
+        'sh2_weathering_thickness_m',
+        'layer1_base_elevation_m',
+        'final_refractor_elevation_m',
+    } <= near_surface_columns
+    for row, sh1_m, sh2_m in zip(
+        near_surface_rows,
+        _fixture_node_sh1_m(fixture).tolist(),
+        _fixture_node_sh2_m(fixture).tolist(),
+        strict=True,
+    ):
+        expected_total = sh1_m + sh2_m
+        assert float(row['weathering_thickness_m']) == pytest.approx(
+            expected_total,
+            abs=_THICKNESS_ATOL_M,
+        )
+        assert float(row['layer1_base_elevation_m']) == pytest.approx(
+            -sh1_m,
+            abs=_THICKNESS_ATOL_M,
+        )
+        assert float(row['final_refractor_elevation_m']) == pytest.approx(
+            -expected_total,
+            abs=_THICKNESS_ATOL_M,
+        )
+        assert float(row['refractor_elevation_m']) == pytest.approx(
+            -expected_total,
+            abs=_THICKNESS_ATOL_M,
+        )
+
     with np.load(job_dir / REFRACTION_STATIC_SOLUTION_NPZ_NAME, allow_pickle=False) as data:
         expected_arrays = {
+            'node_sh2_weathering_thickness_m',
+            'node_layer1_base_elevation_m',
+            'node_final_refractor_elevation_m',
             'source_t2_time_s',
             'source_v3_m_s',
+            'source_sh1_weathering_thickness_m',
             'source_sh2_weathering_thickness_m',
+            'source_layer1_base_elevation_m',
+            'source_final_refractor_elevation_m',
             'receiver_t2_time_s',
             'receiver_v3_m_s',
+            'receiver_sh1_weathering_thickness_m',
             'receiver_sh2_weathering_thickness_m',
+            'receiver_layer1_base_elevation_m',
+            'receiver_final_refractor_elevation_m',
         }
         assert expected_arrays <= set(data.files)
+        np.testing.assert_allclose(
+            data['node_sh2_weathering_thickness_m'],
+            _fixture_node_sh2_m(fixture),
+            atol=_THICKNESS_ATOL_M,
+        )
+        np.testing.assert_allclose(
+            data['node_layer1_base_elevation_m'],
+            -_fixture_node_sh1_m(fixture),
+            atol=_THICKNESS_ATOL_M,
+        )
+        np.testing.assert_allclose(
+            data['node_final_refractor_elevation_m'],
+            -(_fixture_node_sh1_m(fixture) + _fixture_node_sh2_m(fixture)),
+            atol=_THICKNESS_ATOL_M,
+        )
         np.testing.assert_allclose(data['source_t2_time_s'], fixture.source_t2_s)
         np.testing.assert_allclose(
             data['source_v3_m_s'],
@@ -235,8 +296,23 @@ def test_two_layer_job_dir_writes_core_artifacts_and_solution_npz_contract(
             rtol=1.0e-9,
         )
         np.testing.assert_allclose(
+            data['source_sh1_weathering_thickness_m'],
+            fixture.source_sh1_m,
+            atol=_THICKNESS_ATOL_M,
+        )
+        np.testing.assert_allclose(
             data['source_sh2_weathering_thickness_m'],
             fixture.source_sh2_m,
+            atol=_THICKNESS_ATOL_M,
+        )
+        np.testing.assert_allclose(
+            data['source_layer1_base_elevation_m'],
+            -fixture.source_sh1_m,
+            atol=_THICKNESS_ATOL_M,
+        )
+        np.testing.assert_allclose(
+            data['source_final_refractor_elevation_m'],
+            -(fixture.source_sh1_m + fixture.source_sh2_m),
             atol=_THICKNESS_ATOL_M,
         )
         np.testing.assert_allclose(data['receiver_t2_time_s'], fixture.receiver_t2_s)
@@ -246,8 +322,23 @@ def test_two_layer_job_dir_writes_core_artifacts_and_solution_npz_contract(
             rtol=1.0e-9,
         )
         np.testing.assert_allclose(
+            data['receiver_sh1_weathering_thickness_m'],
+            fixture.receiver_sh1_m,
+            atol=_THICKNESS_ATOL_M,
+        )
+        np.testing.assert_allclose(
             data['receiver_sh2_weathering_thickness_m'],
             fixture.receiver_sh2_m,
+            atol=_THICKNESS_ATOL_M,
+        )
+        np.testing.assert_allclose(
+            data['receiver_layer1_base_elevation_m'],
+            -fixture.receiver_sh1_m,
+            atol=_THICKNESS_ATOL_M,
+        )
+        np.testing.assert_allclose(
+            data['receiver_final_refractor_elevation_m'],
+            -(fixture.receiver_sh1_m + fixture.receiver_sh2_m),
             atol=_THICKNESS_ATOL_M,
         )
 
@@ -513,6 +604,190 @@ def test_two_layer_local_v2_low_fold_endpoint_statuses_do_not_abort() -> None:
     assert np.all(
         replacement.receiver_static_status[receiver_low_fold] == 'low_fold_v2_cell'
     )
+
+
+def test_two_layer_invalid_sh2_preserves_explicit_sh1_in_artifacts(
+    tmp_path: Path,
+) -> None:
+    fixture = _make_two_layer_fixture(
+        coordinate_mode='grid_3d',
+        v2_velocity_mode='solve_global',
+    )
+    workflow = compute_refraction_multilayer_datum_statics_from_input_model(
+        input_model=fixture.input_model,
+        model=fixture.model,
+        solver=RefractionStaticSolverRequest(
+            damping=0.0,
+            robust={'enabled': False},
+        ),
+        datum=RefractionStaticDatumRequest(mode='none'),
+        apply_options=RefractionStaticApplyOptions(max_abs_shift_ms=250.0),
+        resolved_first_layer=_resolved_first_layer(),
+    )
+    v2_layer = _layer(workflow.solve_result, 'v2_t1')
+    v3_layer = _layer(workflow.solve_result, 'v3_t2')
+    assert v3_layer.node_time_term_s is not None
+
+    bad_source_index = 0
+    bad_receiver_index = 0
+    bad_node_index = 0
+    source_t2 = np.array(v3_layer.source_time_term_s, dtype=np.float64, copy=True)
+    receiver_t2 = np.array(v3_layer.receiver_time_term_s, dtype=np.float64, copy=True)
+    node_t2 = np.array(v3_layer.node_time_term_s, dtype=np.float64, copy=True)
+    source_t2[bad_source_index] = _invalid_negative_sh2_t2_s(
+        float(fixture.source_sh1_m[bad_source_index])
+    )
+    receiver_t2[bad_receiver_index] = _invalid_negative_sh2_t2_s(
+        float(fixture.receiver_sh1_m[bad_receiver_index])
+    )
+    node_t2[bad_node_index] = _invalid_negative_sh2_t2_s(
+        float(_fixture_node_sh1_m(fixture)[bad_node_index])
+    )
+    patched_v3_layer = replace(
+        v3_layer,
+        source_time_term_s=source_t2,
+        receiver_time_term_s=receiver_t2,
+        node_time_term_s=node_t2,
+    )
+    patched_solve = replace(
+        workflow.solve_result,
+        layer_results=(v2_layer, patched_v3_layer),
+    )
+
+    replacement = build_refraction_multilayer_weathering_replacement_statics(
+        input_model=fixture.input_model,
+        model=fixture.model,
+        solve_result=patched_solve,
+        apply_options=RefractionStaticApplyOptions(max_abs_shift_ms=250.0),
+        resolved_first_layer=_resolved_first_layer(),
+    )
+    components = _components_from_replacement(replacement)
+
+    assert replacement.source_sh1_weathering_thickness_m is not None
+    assert replacement.source_sh2_weathering_thickness_m is not None
+    assert replacement.receiver_sh1_weathering_thickness_m is not None
+    assert replacement.receiver_sh2_weathering_thickness_m is not None
+    np.testing.assert_allclose(
+        replacement.source_sh1_weathering_thickness_m[bad_source_index],
+        fixture.source_sh1_m[bad_source_index],
+        atol=_THICKNESS_ATOL_M,
+    )
+    assert np.isnan(
+        replacement.source_sh2_weathering_thickness_m[bad_source_index]
+    )
+    assert np.isnan(replacement.source_weathering_thickness_m[bad_source_index])
+    np.testing.assert_allclose(
+        components.source_sh1_m[bad_source_index],
+        fixture.source_sh1_m[bad_source_index],
+        atol=_THICKNESS_ATOL_M,
+    )
+    assert components.source_sh2_m is not None
+    assert np.isnan(components.source_sh2_m[bad_source_index])
+    np.testing.assert_allclose(
+        components.receiver_sh1_m[bad_receiver_index],
+        fixture.receiver_sh1_m[bad_receiver_index],
+        atol=_THICKNESS_ATOL_M,
+    )
+    assert components.receiver_sh2_m is not None
+    assert np.isnan(components.receiver_sh2_m[bad_receiver_index])
+
+    datum_result = build_refraction_datum_statics(
+        weathering_replacement_result=replacement,
+        datum=RefractionStaticDatumRequest(mode='none'),
+        apply_options=RefractionStaticApplyOptions(max_abs_shift_ms=250.0),
+        resolved_first_layer=_resolved_first_layer(),
+    )
+    near_surface_path = tmp_path / 'near_surface_model.csv'
+    source_path = tmp_path / 'source_static_table.csv'
+    receiver_path = tmp_path / 'receiver_static_table.csv'
+    table_path = tmp_path / 'source_receiver_static_table.npz'
+    write_near_surface_model_csv(result=datum_result, path=near_surface_path)
+    write_source_static_table_csv(result=datum_result, path=source_path)
+    write_receiver_static_table_csv(result=datum_result, path=receiver_path)
+    write_source_receiver_static_table_npz(result=datum_result, path=table_path)
+
+    near_surface_rows = _read_csv(near_surface_path)
+    node_sh1_m = _fixture_node_sh1_m(fixture)[bad_node_index]
+    assert float(
+        near_surface_rows[bad_node_index]['sh1_weathering_thickness_m']
+    ) == pytest.approx(node_sh1_m, abs=_THICKNESS_ATOL_M)
+    assert near_surface_rows[bad_node_index]['sh2_weathering_thickness_m'] == ''
+    assert near_surface_rows[bad_node_index]['weathering_thickness_m'] == ''
+    assert float(
+        near_surface_rows[bad_node_index]['layer1_base_elevation_m']
+    ) == pytest.approx(
+        datum_result.node_surface_elevation_m[bad_node_index] - node_sh1_m,
+        abs=_THICKNESS_ATOL_M,
+    )
+    assert near_surface_rows[bad_node_index]['final_refractor_elevation_m'] == ''
+
+    source_rows = _read_csv(source_path)
+    assert float(
+        source_rows[bad_source_index]['sh1_weathering_thickness_m']
+    ) == pytest.approx(
+        fixture.source_sh1_m[bad_source_index],
+        abs=_THICKNESS_ATOL_M,
+    )
+    assert source_rows[bad_source_index]['sh2_weathering_thickness_m'] == ''
+    assert float(
+        source_rows[bad_source_index]['layer1_base_elevation_m']
+    ) == pytest.approx(
+        datum_result.source_surface_elevation_m[bad_source_index]
+        - fixture.source_sh1_m[bad_source_index],
+        abs=_THICKNESS_ATOL_M,
+    )
+    assert source_rows[bad_source_index]['final_refractor_elevation_m'] == ''
+    assert source_rows[bad_source_index]['refractor_elevation_m'] == ''
+
+    receiver_rows = _read_csv(receiver_path)
+    assert float(
+        receiver_rows[bad_receiver_index]['sh1_weathering_thickness_m']
+    ) == pytest.approx(
+        fixture.receiver_sh1_m[bad_receiver_index],
+        abs=_THICKNESS_ATOL_M,
+    )
+    assert receiver_rows[bad_receiver_index]['sh2_weathering_thickness_m'] == ''
+    assert float(
+        receiver_rows[bad_receiver_index]['layer1_base_elevation_m']
+    ) == pytest.approx(
+        datum_result.receiver_surface_elevation_m[bad_receiver_index]
+        - fixture.receiver_sh1_m[bad_receiver_index],
+        abs=_THICKNESS_ATOL_M,
+    )
+    assert receiver_rows[bad_receiver_index]['final_refractor_elevation_m'] == ''
+    assert receiver_rows[bad_receiver_index]['refractor_elevation_m'] == ''
+
+    with np.load(table_path, allow_pickle=False) as data:
+        np.testing.assert_allclose(
+            data['source_sh1_m'][bad_source_index],
+            fixture.source_sh1_m[bad_source_index],
+            atol=_THICKNESS_ATOL_M,
+        )
+        assert np.isnan(data['source_sh2_m'][bad_source_index])
+        np.testing.assert_allclose(
+            data['source_layer1_base_elevation_m'][bad_source_index],
+            datum_result.source_surface_elevation_m[bad_source_index]
+            - fixture.source_sh1_m[bad_source_index],
+            atol=_THICKNESS_ATOL_M,
+        )
+        assert np.isnan(
+            data['source_final_refractor_elevation_m'][bad_source_index]
+        )
+        np.testing.assert_allclose(
+            data['receiver_sh1_m'][bad_receiver_index],
+            fixture.receiver_sh1_m[bad_receiver_index],
+            atol=_THICKNESS_ATOL_M,
+        )
+        assert np.isnan(data['receiver_sh2_m'][bad_receiver_index])
+        np.testing.assert_allclose(
+            data['receiver_layer1_base_elevation_m'][bad_receiver_index],
+            datum_result.receiver_surface_elevation_m[bad_receiver_index]
+            - fixture.receiver_sh1_m[bad_receiver_index],
+            atol=_THICKNESS_ATOL_M,
+        )
+        assert np.isnan(
+            data['receiver_final_refractor_elevation_m'][bad_receiver_index]
+        )
 
 
 def _make_two_layer_fixture(
@@ -870,6 +1145,26 @@ def _assert_two_layer_outputs_match_truth(
         atol=_STATIC_ATOL_S,
     )
     np.testing.assert_allclose(
+        outputs.result.source_weathering_thickness_m,
+        fixture.source_sh1_m + fixture.source_sh2_m,
+        atol=_THICKNESS_ATOL_M,
+    )
+    np.testing.assert_allclose(
+        outputs.result.source_refractor_elevation_m,
+        -(fixture.source_sh1_m + fixture.source_sh2_m),
+        atol=_THICKNESS_ATOL_M,
+    )
+    np.testing.assert_allclose(
+        outputs.result.receiver_weathering_thickness_m,
+        fixture.receiver_sh1_m + fixture.receiver_sh2_m,
+        atol=_THICKNESS_ATOL_M,
+    )
+    np.testing.assert_allclose(
+        outputs.result.receiver_refractor_elevation_m,
+        -(fixture.receiver_sh1_m + fixture.receiver_sh2_m),
+        atol=_THICKNESS_ATOL_M,
+    )
+    np.testing.assert_allclose(
         outputs.trace_shift_s_sorted,
         fixture.trace_shift_s_sorted,
         atol=_STATIC_ATOL_S,
@@ -949,6 +1244,36 @@ def _read_csv(path: Path) -> list[dict[str, str]]:
         return list(csv.DictReader(handle))
 
 
+def _invalid_negative_sh2_t2_s(sh1_m: float) -> float:
+    _, t2_s = _forward_t1_t2_s(
+        sh1_m=np.asarray([sh1_m], dtype=np.float64),
+        sh2_m=np.asarray([0.0], dtype=np.float64),
+    )
+    return float(t2_s[0] - 1.0e-3)
+
+
+def _fixture_node_sh1_m(fixture: _TwoLayerE2EFixture) -> np.ndarray:
+    station_index = np.arange(
+        fixture.input_model.node_elevation_m.shape[0],
+        dtype=np.float64,
+    )
+    return np.ascontiguousarray(
+        8.0 + 0.4 * (station_index % 5.0) + 0.02 * station_index,
+        dtype=np.float64,
+    )
+
+
+def _fixture_node_sh2_m(fixture: _TwoLayerE2EFixture) -> np.ndarray:
+    station_index = np.arange(
+        fixture.input_model.node_elevation_m.shape[0],
+        dtype=np.float64,
+    )
+    return np.ascontiguousarray(
+        14.0 + 0.5 * (station_index % 4.0) + 0.03 * station_index,
+        dtype=np.float64,
+    )
+
+
 def _assert_static_tables_match_truth(
     fixture: _TwoLayerE2EFixture,
     outputs: _StaticOutputs,
@@ -960,6 +1285,9 @@ def _assert_static_tables_match_truth(
         'v3_m_s',
         'sh1_weathering_thickness_m',
         'sh2_weathering_thickness_m',
+        'layer1_base_elevation_m',
+        'final_refractor_elevation_m',
+        'refractor_elevation_m',
         'weathering_correction_ms',
         'total_static_ms',
         'total_applied_shift_ms',
@@ -1033,6 +1361,20 @@ def _assert_rows_match_endpoint_truth(
             expected_sh2_m[index],
             abs=_THICKNESS_ATOL_M,
         )
+        layer1_base = -expected_sh1_m[index]
+        final_refractor = -(expected_sh1_m[index] + expected_sh2_m[index])
+        assert float(row['layer1_base_elevation_m']) == pytest.approx(
+            layer1_base,
+            abs=_THICKNESS_ATOL_M,
+        )
+        assert float(row['final_refractor_elevation_m']) == pytest.approx(
+            final_refractor,
+            abs=_THICKNESS_ATOL_M,
+        )
+        assert float(row['refractor_elevation_m']) == pytest.approx(
+            final_refractor,
+            abs=_THICKNESS_ATOL_M,
+        )
         assert float(row['weathering_correction_ms']) / 1000.0 == pytest.approx(
             expected_wcor_s[index],
             abs=_STATIC_ATOL_S,
@@ -1058,6 +1400,8 @@ def _assert_npz_tables_match_truth(
         'source_v3_m_s',
         'source_sh1_m',
         'source_sh2_m',
+        'source_layer1_base_elevation_m',
+        'source_final_refractor_elevation_m',
         'source_weathering_correction_s',
         'source_total_static_s',
         'receiver_t1_s',
@@ -1066,6 +1410,8 @@ def _assert_npz_tables_match_truth(
         'receiver_v3_m_s',
         'receiver_sh1_m',
         'receiver_sh2_m',
+        'receiver_layer1_base_elevation_m',
+        'receiver_final_refractor_elevation_m',
         'receiver_weathering_correction_s',
         'receiver_total_static_s',
     }
@@ -1090,6 +1436,16 @@ def _assert_npz_tables_match_truth(
     np.testing.assert_allclose(
         arrays['source_sh2_m'],
         fixture.source_sh2_m,
+        atol=_THICKNESS_ATOL_M,
+    )
+    np.testing.assert_allclose(
+        arrays['source_layer1_base_elevation_m'],
+        -fixture.source_sh1_m,
+        atol=_THICKNESS_ATOL_M,
+    )
+    np.testing.assert_allclose(
+        arrays['source_final_refractor_elevation_m'],
+        -(fixture.source_sh1_m + fixture.source_sh2_m),
         atol=_THICKNESS_ATOL_M,
     )
     np.testing.assert_allclose(
@@ -1122,6 +1478,16 @@ def _assert_npz_tables_match_truth(
     np.testing.assert_allclose(
         arrays['receiver_sh2_m'],
         fixture.receiver_sh2_m,
+        atol=_THICKNESS_ATOL_M,
+    )
+    np.testing.assert_allclose(
+        arrays['receiver_layer1_base_elevation_m'],
+        -fixture.receiver_sh1_m,
+        atol=_THICKNESS_ATOL_M,
+    )
+    np.testing.assert_allclose(
+        arrays['receiver_final_refractor_elevation_m'],
+        -(fixture.receiver_sh1_m + fixture.receiver_sh2_m),
         atol=_THICKNESS_ATOL_M,
     )
     np.testing.assert_allclose(

@@ -594,11 +594,15 @@ class RefractionWeatheringReplacementStaticsResult:
     receiver_v2_cell_id_sorted: np.ndarray | None = None
     receiver_v2_m_s_sorted: np.ndarray | None = None
     receiver_v2_status_sorted: np.ndarray | None = None
+    node_sh1_weathering_thickness_m: np.ndarray | None = None
+    node_sh2_weathering_thickness_m: np.ndarray | None = None
     source_t2_time_s: np.ndarray | None = None
     source_v3_m_s: np.ndarray | None = None
+    source_sh1_weathering_thickness_m: np.ndarray | None = None
     source_sh2_weathering_thickness_m: np.ndarray | None = None
     receiver_t2_time_s: np.ndarray | None = None
     receiver_v3_m_s: np.ndarray | None = None
+    receiver_sh1_weathering_thickness_m: np.ndarray | None = None
     receiver_sh2_weathering_thickness_m: np.ndarray | None = None
 
 
@@ -732,11 +736,15 @@ class RefractionDatumStaticsResult:
     receiver_v2_cell_id_sorted: np.ndarray | None = None
     receiver_v2_m_s_sorted: np.ndarray | None = None
     receiver_v2_status_sorted: np.ndarray | None = None
+    node_sh1_weathering_thickness_m: np.ndarray | None = None
+    node_sh2_weathering_thickness_m: np.ndarray | None = None
     source_t2_time_s: np.ndarray | None = None
     source_v3_m_s: np.ndarray | None = None
+    source_sh1_weathering_thickness_m: np.ndarray | None = None
     source_sh2_weathering_thickness_m: np.ndarray | None = None
     receiver_t2_time_s: np.ndarray | None = None
     receiver_v3_m_s: np.ndarray | None = None
+    receiver_sh1_weathering_thickness_m: np.ndarray | None = None
     receiver_sh2_weathering_thickness_m: np.ndarray | None = None
 
 
