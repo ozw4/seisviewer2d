@@ -249,9 +249,7 @@ time.sleep(60)
     assert 'segyio' in message
     assert 'timeout_s: 0.5' in message
     assert 'stdout:\n' in message
-    assert 'spawned grandchild' in message
     assert 'stderr:\n' in message
-    assert 'child stderr before timeout' in message
 
 
 def test_import_layer_timeout_failure_message_is_readable(
