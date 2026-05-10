@@ -332,6 +332,42 @@ _SOURCE_STATIC_TABLE_COLUMNS = (
     'residual_mad_ms',
 )
 
+_SOURCE_STATIC_TABLE_2LAYER_COLUMNS = (
+    'endpoint_kind',
+    'source_endpoint_key',
+    'source_id',
+    'source_node_id',
+    'source_v2_cell_id',
+    'x_m',
+    'y_m',
+    'surface_elevation_m',
+    'floating_datum_elevation_m',
+    'flat_datum_elevation_m',
+    't1_ms',
+    't2_ms',
+    'v1_m_s',
+    'v2_m_s',
+    'v2_status',
+    'v3_m_s',
+    'sh1_weathering_thickness_m',
+    'sh2_weathering_thickness_m',
+    'refractor_elevation_m',
+    'weathering_correction_ms',
+    'floating_datum_correction_ms',
+    'flat_datum_correction_ms',
+    'elevation_correction_ms',
+    'total_static_ms',
+    'total_applied_shift_ms',
+    'solution_status',
+    'weathering_status',
+    'datum_status',
+    'static_status',
+    'pick_count',
+    'used_pick_count',
+    'residual_rms_ms',
+    'residual_mad_ms',
+)
+
 _RECEIVER_STATIC_TABLE_COLUMNS = (
     'endpoint_kind',
     'receiver_endpoint_key',
@@ -348,6 +384,42 @@ _RECEIVER_STATIC_TABLE_COLUMNS = (
     'v2_m_s',
     'v2_status',
     'sh1_weathering_thickness_m',
+    'refractor_elevation_m',
+    'weathering_correction_ms',
+    'floating_datum_correction_ms',
+    'flat_datum_correction_ms',
+    'elevation_correction_ms',
+    'total_static_ms',
+    'total_applied_shift_ms',
+    'solution_status',
+    'weathering_status',
+    'datum_status',
+    'static_status',
+    'pick_count',
+    'used_pick_count',
+    'residual_rms_ms',
+    'residual_mad_ms',
+)
+
+_RECEIVER_STATIC_TABLE_2LAYER_COLUMNS = (
+    'endpoint_kind',
+    'receiver_endpoint_key',
+    'receiver_id',
+    'receiver_node_id',
+    'receiver_v2_cell_id',
+    'x_m',
+    'y_m',
+    'surface_elevation_m',
+    'floating_datum_elevation_m',
+    'flat_datum_elevation_m',
+    't1_ms',
+    't2_ms',
+    'v1_m_s',
+    'v2_m_s',
+    'v2_status',
+    'v3_m_s',
+    'sh1_weathering_thickness_m',
+    'sh2_weathering_thickness_m',
     'refractor_elevation_m',
     'weathering_correction_ms',
     'floating_datum_correction_ms',
@@ -757,7 +829,7 @@ def write_source_static_table_csv(
 ) -> None:
     values = _validate_result(result)
     rows = _source_static_table_rows(values.result)
-    _write_csv_atomic(Path(path), _SOURCE_STATIC_TABLE_COLUMNS, rows)
+    _write_csv_atomic(Path(path), _source_static_table_columns(values.result), rows)
 
 
 def write_receiver_static_table_csv(
@@ -767,7 +839,7 @@ def write_receiver_static_table_csv(
 ) -> None:
     values = _validate_result(result)
     rows = _receiver_static_table_rows(values.result)
-    _write_csv_atomic(Path(path), _RECEIVER_STATIC_TABLE_COLUMNS, rows)
+    _write_csv_atomic(Path(path), _receiver_static_table_columns(values.result), rows)
 
 
 def write_source_receiver_static_table_npz(
@@ -1348,6 +1420,32 @@ def build_source_receiver_static_table_arrays(
         'receiver_total_applied_shift_s': _float_array(r.receiver_refraction_shift_s),
         'receiver_static_status': receiver_static_status,
     }
+    if _has_source_2layer_static_fields(r):
+        assert r.source_t2_time_s is not None
+        assert r.source_v3_m_s is not None
+        assert r.source_sh2_weathering_thickness_m is not None
+        arrays.update(
+            {
+                'source_t2_s': _float_array(r.source_t2_time_s),
+                'source_v3_m_s': _float_array(r.source_v3_m_s),
+                'source_sh2_m': _float_array(
+                    r.source_sh2_weathering_thickness_m
+                ),
+            }
+        )
+    if _has_receiver_2layer_static_fields(r):
+        assert r.receiver_t2_time_s is not None
+        assert r.receiver_v3_m_s is not None
+        assert r.receiver_sh2_weathering_thickness_m is not None
+        arrays.update(
+            {
+                'receiver_t2_s': _float_array(r.receiver_t2_time_s),
+                'receiver_v3_m_s': _float_array(r.receiver_v3_m_s),
+                'receiver_sh2_m': _float_array(
+                    r.receiver_sh2_weathering_thickness_m
+                ),
+            }
+        )
     _validate_no_object_arrays(
         arrays,
         artifact_name=SOURCE_RECEIVER_STATIC_TABLE_NPZ_NAME,
@@ -1890,12 +1988,24 @@ def _validate_result(result: RefractionDatumStaticsResult) -> _ValidatedResult:
             raise RefractionStaticArtifactError(
                 f'source endpoint array length mismatch for {name}'
             )
+    _validate_optional_arrays(
+        result=result,
+        names=_SOURCE_2LAYER_STATIC_ARRAY_NAMES,
+        expected_length=n_source,
+        label='source two-layer endpoint',
+    )
     n_receiver = _length(result.receiver_endpoint_key, name='receiver_endpoint_key')
     for name in _RECEIVER_ARRAY_NAMES:
         if _length(getattr(result, name), name=name) != n_receiver:
             raise RefractionStaticArtifactError(
                 f'receiver endpoint array length mismatch for {name}'
             )
+    _validate_optional_arrays(
+        result=result,
+        names=_RECEIVER_2LAYER_STATIC_ARRAY_NAMES,
+        expected_length=n_receiver,
+        label='receiver two-layer endpoint',
+    )
     n_rows = _length(result.row_trace_index_sorted, name='row_trace_index_sorted')
     for name in _ROW_ARRAY_NAMES:
         if _length(getattr(result, name), name=name) != n_rows:
@@ -1933,6 +2043,28 @@ def _validate_result(result: RefractionDatumStaticsResult) -> _ValidatedResult:
         n_receiver_endpoints=n_receiver,
         n_rows=n_rows,
     )
+
+
+def _validate_optional_arrays(
+    *,
+    result: RefractionDatumStaticsResult,
+    names: tuple[str, ...],
+    expected_length: int,
+    label: str,
+) -> None:
+    present = [name for name in names if getattr(result, name) is not None]
+    if not present:
+        return
+    if len(present) != len(names):
+        missing = ', '.join(name for name in names if name not in present)
+        raise RefractionStaticArtifactError(
+            f'{label} arrays must be provided together; missing {missing}'
+        )
+    for name in names:
+        if _length(getattr(result, name), name=name) != expected_length:
+            raise RefractionStaticArtifactError(
+                f'{label} array length mismatch for {name}'
+            )
 
 
 def _validate_solve_cell_local_v2_arrays(
@@ -2138,6 +2270,12 @@ _SOURCE_ARRAY_NAMES = (
     'source_datum_status',
 )
 
+_SOURCE_2LAYER_STATIC_ARRAY_NAMES = (
+    'source_t2_time_s',
+    'source_v3_m_s',
+    'source_sh2_weathering_thickness_m',
+)
+
 _RECEIVER_ARRAY_NAMES = (
     'receiver_id',
     'receiver_node_id',
@@ -2153,6 +2291,12 @@ _RECEIVER_ARRAY_NAMES = (
     'receiver_flat_datum_shift_s',
     'receiver_refraction_shift_s',
     'receiver_datum_status',
+)
+
+_RECEIVER_2LAYER_STATIC_ARRAY_NAMES = (
+    'receiver_t2_time_s',
+    'receiver_v3_m_s',
+    'receiver_sh2_weathering_thickness_m',
 )
 
 _ROW_ARRAY_NAMES = (
@@ -2409,6 +2553,35 @@ def _component_rows(result: RefractionDatumStaticsResult) -> list[dict[str, obje
     return rows
 
 
+def _source_static_table_columns(
+    result: RefractionDatumStaticsResult,
+) -> tuple[str, ...]:
+    if _has_source_2layer_static_fields(result):
+        return _SOURCE_STATIC_TABLE_2LAYER_COLUMNS
+    return _SOURCE_STATIC_TABLE_COLUMNS
+
+
+def _receiver_static_table_columns(
+    result: RefractionDatumStaticsResult,
+) -> tuple[str, ...]:
+    if _has_receiver_2layer_static_fields(result):
+        return _RECEIVER_STATIC_TABLE_2LAYER_COLUMNS
+    return _RECEIVER_STATIC_TABLE_COLUMNS
+
+
+def _has_source_2layer_static_fields(result: RefractionDatumStaticsResult) -> bool:
+    return all(
+        getattr(result, name) is not None for name in _SOURCE_2LAYER_STATIC_ARRAY_NAMES
+    )
+
+
+def _has_receiver_2layer_static_fields(result: RefractionDatumStaticsResult) -> bool:
+    return all(
+        getattr(result, name) is not None
+        for name in _RECEIVER_2LAYER_STATIC_ARRAY_NAMES
+    )
+
+
 def _source_static_table_rows(
     result: RefractionDatumStaticsResult,
 ) -> list[dict[str, object]]:
@@ -2428,6 +2601,10 @@ def _source_static_table_rows(
         result.source_v2_status,
         int(result.source_endpoint_key.shape[0]),
     )
+    has_2layer_fields = _has_source_2layer_static_fields(result)
+    source_t2_time_s = result.source_t2_time_s
+    source_v3_m_s = result.source_v3_m_s
+    source_sh2_m = result.source_sh2_weathering_thickness_m
     rows: list[dict[str, object]] = []
     for index in range(int(result.source_endpoint_key.shape[0])):
         node_id = int(result.source_node_id[index])
@@ -2490,6 +2667,17 @@ def _source_static_table_rows(
                 'residual_mad_ms': _csv_ms(node_context['residual_mad'].get(node_id)),
             }
         )
+        if has_2layer_fields:
+            assert source_t2_time_s is not None
+            assert source_v3_m_s is not None
+            assert source_sh2_m is not None
+            rows[-1].update(
+                {
+                    't2_ms': _csv_ms(source_t2_time_s[index]),
+                    'v3_m_s': _csv_float(source_v3_m_s[index]),
+                    'sh2_weathering_thickness_m': _csv_float(source_sh2_m[index]),
+                }
+            )
     return rows
 
 
@@ -2512,6 +2700,10 @@ def _receiver_static_table_rows(
         result.receiver_v2_status,
         int(result.receiver_endpoint_key.shape[0]),
     )
+    has_2layer_fields = _has_receiver_2layer_static_fields(result)
+    receiver_t2_time_s = result.receiver_t2_time_s
+    receiver_v3_m_s = result.receiver_v3_m_s
+    receiver_sh2_m = result.receiver_sh2_weathering_thickness_m
     rows: list[dict[str, object]] = []
     for index in range(int(result.receiver_endpoint_key.shape[0])):
         node_id = int(result.receiver_node_id[index])
@@ -2574,6 +2766,17 @@ def _receiver_static_table_rows(
                 'residual_mad_ms': _csv_ms(node_context['residual_mad'].get(node_id)),
             }
         )
+        if has_2layer_fields:
+            assert receiver_t2_time_s is not None
+            assert receiver_v3_m_s is not None
+            assert receiver_sh2_m is not None
+            rows[-1].update(
+                {
+                    't2_ms': _csv_ms(receiver_t2_time_s[index]),
+                    'v3_m_s': _csv_float(receiver_v3_m_s[index]),
+                    'sh2_weathering_thickness_m': _csv_float(receiver_sh2_m[index]),
+                }
+            )
     return rows
 
 
