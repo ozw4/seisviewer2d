@@ -15,7 +15,17 @@ from app.api.schemas import (
     RefractionStaticSolverRequest,
 )
 from app.services.refraction_static_artifacts import (
+    FIRST_BREAK_RESIDUALS_CSV_NAME,
+    NEAR_SURFACE_MODEL_CSV_NAME,
+    RECEIVER_STATIC_TABLE_CSV_NAME,
+    REFRACTION_STATIC_ARTIFACTS_JSON_NAME,
+    REFRACTION_STATIC_COMPONENTS_CSV_NAME,
+    REFRACTION_STATIC_QC_JSON_NAME,
+    REFRACTION_STATIC_SOLUTION_NPZ_NAME,
+    REFRACTION_STATICS_CSV_NAME,
     SIGN_CONVENTION,
+    SOURCE_RECEIVER_STATIC_TABLE_NPZ_NAME,
+    SOURCE_STATIC_TABLE_CSV_NAME,
     write_refraction_statics_csv,
     write_receiver_static_table_csv,
     write_source_receiver_static_table_npz,
@@ -143,6 +153,86 @@ def test_two_layer_line_projected_local_v2_global_v3_e2e_recovers_tables(
     )
     _assert_layer_masks_select_expected_branches(fixture)
     _assert_two_layer_outputs_match_truth(fixture, outputs)
+
+
+def test_two_layer_job_dir_writes_core_artifacts_and_solution_npz_contract(
+    tmp_path: Path,
+) -> None:
+    fixture = _make_two_layer_fixture(
+        coordinate_mode='grid_3d',
+        v2_velocity_mode='solve_global',
+    )
+    job_dir = tmp_path / 'job'
+
+    compute_refraction_multilayer_datum_statics_from_input_model(
+        input_model=fixture.input_model,
+        model=fixture.model,
+        solver=RefractionStaticSolverRequest(
+            damping=0.0,
+            robust={'enabled': False},
+        ),
+        datum=RefractionStaticDatumRequest(mode='none'),
+        apply_options=RefractionStaticApplyOptions(max_abs_shift_ms=250.0),
+        resolved_first_layer=_resolved_first_layer(),
+        job_dir=job_dir,
+    )
+
+    for artifact_name in (
+        REFRACTION_STATIC_SOLUTION_NPZ_NAME,
+        REFRACTION_STATIC_QC_JSON_NAME,
+        REFRACTION_STATICS_CSV_NAME,
+        NEAR_SURFACE_MODEL_CSV_NAME,
+        FIRST_BREAK_RESIDUALS_CSV_NAME,
+        REFRACTION_STATIC_COMPONENTS_CSV_NAME,
+        SOURCE_STATIC_TABLE_CSV_NAME,
+        RECEIVER_STATIC_TABLE_CSV_NAME,
+        SOURCE_RECEIVER_STATIC_TABLE_NPZ_NAME,
+        REFRACTION_STATIC_ARTIFACTS_JSON_NAME,
+    ):
+        assert (job_dir / artifact_name).is_file()
+
+    source_rows = _read_csv(job_dir / SOURCE_STATIC_TABLE_CSV_NAME)
+    receiver_rows = _read_csv(job_dir / RECEIVER_STATIC_TABLE_CSV_NAME)
+    required_columns = {
+        't2_ms',
+        'v3_m_s',
+        'sh2_weathering_thickness_m',
+    }
+    assert required_columns <= set(source_rows[0])
+    assert required_columns <= set(receiver_rows[0])
+
+    with np.load(job_dir / REFRACTION_STATIC_SOLUTION_NPZ_NAME, allow_pickle=False) as data:
+        expected_arrays = {
+            'source_t2_time_s',
+            'source_v3_m_s',
+            'source_sh2_weathering_thickness_m',
+            'receiver_t2_time_s',
+            'receiver_v3_m_s',
+            'receiver_sh2_weathering_thickness_m',
+        }
+        assert expected_arrays <= set(data.files)
+        np.testing.assert_allclose(data['source_t2_time_s'], fixture.source_t2_s)
+        np.testing.assert_allclose(
+            data['source_v3_m_s'],
+            SYNTHETIC_MULTILAYER_V3_M_S,
+            rtol=1.0e-9,
+        )
+        np.testing.assert_allclose(
+            data['source_sh2_weathering_thickness_m'],
+            fixture.source_sh2_m,
+            atol=_THICKNESS_ATOL_M,
+        )
+        np.testing.assert_allclose(data['receiver_t2_time_s'], fixture.receiver_t2_s)
+        np.testing.assert_allclose(
+            data['receiver_v3_m_s'],
+            SYNTHETIC_MULTILAYER_V3_M_S,
+            rtol=1.0e-9,
+        )
+        np.testing.assert_allclose(
+            data['receiver_sh2_weathering_thickness_m'],
+            fixture.receiver_sh2_m,
+            atol=_THICKNESS_ATOL_M,
+        )
 
 
 def test_two_layer_local_v2_low_fold_endpoint_statuses_do_not_abort() -> None:

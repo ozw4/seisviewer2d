@@ -1741,6 +1741,32 @@ def build_refraction_static_solution_arrays(
         'used_row_mask': _bool_array(r.used_row_mask),
         'rejected_by_robust_mask': _bool_array(r.rejected_by_robust_mask),
     }
+    if _has_source_2layer_static_fields(r):
+        assert r.source_t2_time_s is not None
+        assert r.source_v3_m_s is not None
+        assert r.source_sh2_weathering_thickness_m is not None
+        arrays.update(
+            {
+                'source_t2_time_s': _float_array(r.source_t2_time_s),
+                'source_v3_m_s': _float_array(r.source_v3_m_s),
+                'source_sh2_weathering_thickness_m': _float_array(
+                    r.source_sh2_weathering_thickness_m
+                ),
+            }
+        )
+    if _has_receiver_2layer_static_fields(r):
+        assert r.receiver_t2_time_s is not None
+        assert r.receiver_v3_m_s is not None
+        assert r.receiver_sh2_weathering_thickness_m is not None
+        arrays.update(
+            {
+                'receiver_t2_time_s': _float_array(r.receiver_t2_time_s),
+                'receiver_v3_m_s': _float_array(r.receiver_v3_m_s),
+                'receiver_sh2_weathering_thickness_m': _float_array(
+                    r.receiver_sh2_weathering_thickness_m
+                ),
+            }
+        )
     _validate_no_object_arrays(arrays, artifact_name=REFRACTION_STATIC_SOLUTION_NPZ_NAME)
     return arrays
 

@@ -11,11 +11,16 @@ import numpy as np
 
 from app.api.schemas import (
     RefractionStaticApplyOptions,
+    RefractionStaticApplyRequest,
+    RefractionStaticConversionRequest,
     RefractionStaticDatumRequest,
+    RefractionStaticLinkageRequest,
     RefractionStaticModelRequest,
+    RefractionStaticPickSourceRequest,
     RefractionStaticSolverRequest,
 )
 from app.core.state import AppState
+from app.services.refraction_static_artifacts import write_refraction_static_artifacts
 from app.services.refraction_static_cell_coordinates import (
     effective_refraction_cell_grid_config,
     project_refraction_cell_points,
@@ -264,12 +269,62 @@ def compute_refraction_multilayer_datum_statics_from_input_model(
         receiver_sh2_weathering_thickness_m=components.receiver_sh2_m,
     )
     if job_dir is not None:
-        write_refraction_datum_statics_artifacts(Path(job_dir), datum_result)
+        root = Path(job_dir)
+        write_refraction_datum_statics_artifacts(root, datum_result)
+        write_refraction_static_artifacts(
+            result=datum_result,
+            req=_artifact_request_for_multilayer_workflow(
+                input_model=input_model,
+                model=model,
+                solver=solver,
+                datum=datum,
+                apply_options=apply_options,
+                file_id=file_id,
+                key1_byte=key1_byte,
+                key2_byte=key2_byte,
+            ),
+            job_dir=root,
+            resolved_first_layer=resolved_first_layer,
+        )
     return RefractionMultiLayerStaticsWorkflowResult(
         solve_result=solve_result,
         components=components,
         weathering_replacement_result=weathering_replacement,
         datum_result=datum_result,
+    )
+
+
+def _artifact_request_for_multilayer_workflow(
+    *,
+    input_model: RefractionStaticInputModel,
+    model: RefractionStaticModelRequest,
+    solver: RefractionStaticSolverRequest,
+    datum: RefractionStaticDatumRequest,
+    apply_options: RefractionStaticApplyOptions | None,
+    file_id: str | None,
+    key1_byte: int | None,
+    key2_byte: int | None,
+) -> RefractionStaticApplyRequest:
+    request = RefractionStaticApplyRequest(
+        file_id=file_id if file_id is not None else input_model.file_id,
+        pick_source=RefractionStaticPickSourceRequest(kind='manual_memmap'),
+        linkage=RefractionStaticLinkageRequest(mode='none'),
+        model=model,
+        solver=solver,
+        datum=datum,
+        conversion=RefractionStaticConversionRequest(
+            mode='t1lsst_multilayer',
+            layer_count=2,
+        ),
+        apply=apply_options or RefractionStaticApplyOptions(),
+    )
+    if key1_byte is None and key2_byte is None:
+        return request
+    return request.model_copy(
+        update={
+            'key1_byte': request.key1_byte if key1_byte is None else key1_byte,
+            'key2_byte': request.key2_byte if key2_byte is None else key2_byte,
+        }
     )
 
 
