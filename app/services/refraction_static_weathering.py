@@ -1615,6 +1615,9 @@ def _copy_cell_threshold_qc(payload: dict[str, Any], upstream: dict[str, Any]) -
     for key in _CELL_THRESHOLD_QC_KEYS:
         if key in upstream:
             payload[key] = upstream[key]
+    layer_qc = upstream.get('layers')
+    if isinstance(layer_qc, dict):
+        payload['layers'] = layer_qc
 
 
 def _required(owner: object, field: str, *, allow_none: bool = False) -> object:

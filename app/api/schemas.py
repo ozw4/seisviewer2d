@@ -1723,6 +1723,7 @@ class RefractionStaticModelRequest(BaseModel):
     max_weathering_thickness_m: float | None = None
     refractor_cell: RefractionStaticRefractorCellRequest | None = None
     layers: list[RefractionStaticLayerRequest] | None = None
+    allow_overlapping_layer_gates: bool = False
 
     @field_validator('weathering_velocity_m_s', mode='before')
     @classmethod
@@ -1747,6 +1748,11 @@ class RefractionStaticModelRequest(BaseModel):
         if value is None:
             return None
         return _require_positive_finite_float(value, f'model.{info.field_name}')
+
+    @field_validator('allow_overlapping_layer_gates', mode='before')
+    @classmethod
+    def _check_allow_overlapping_layer_gates(cls, value: object) -> bool:
+        return _require_bool(value, 'model.allow_overlapping_layer_gates')
 
     @model_validator(mode='after')
     def _check_velocity_values(self) -> 'RefractionStaticModelRequest':
@@ -1892,6 +1898,8 @@ class RefractionStaticModelRequest(BaseModel):
                 resolved_weathering_velocity=resolved_weathering_velocity,
             )
 
+        if not self.allow_overlapping_layer_gates:
+            self._check_multilayer_layer_gate_overlap(enabled_layers)
         self._check_multilayer_legacy_aliases()
         self._check_multilayer_velocity_sequence(enabled_layers)
 
@@ -2072,6 +2080,32 @@ class RefractionStaticModelRequest(BaseModel):
                     f'model.layers {deep_kind} configured velocity must be '
                     f'greater than {shallow_kind} minimum velocity'
                 )
+
+    def _check_multilayer_layer_gate_overlap(
+        self,
+        enabled_layers: list[RefractionStaticLayerRequest],
+    ) -> None:
+        for index, layer in enumerate(enabled_layers):
+            layer_min = self._layer_gate_min_offset(layer)
+            layer_max = self._layer_gate_max_offset(layer)
+            for other in enabled_layers[index + 1 :]:
+                other_min = self._layer_gate_min_offset(other)
+                other_max = self._layer_gate_max_offset(other)
+                if max(layer_min, other_min) <= min(layer_max, other_max):
+                    raise ValueError(
+                        'model.layers offset gates must not overlap unless '
+                        'model.allow_overlapping_layer_gates is true'
+                    )
+
+    def _layer_gate_min_offset(self, layer: RefractionStaticLayerRequest) -> float:
+        if layer.min_offset_m is None:
+            return float('-inf')
+        return float(layer.min_offset_m)
+
+    def _layer_gate_max_offset(self, layer: RefractionStaticLayerRequest) -> float:
+        if layer.max_offset_m is None:
+            return float('inf')
+        return float(layer.max_offset_m)
 
     def _layer_by_kind(
         self,

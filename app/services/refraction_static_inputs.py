@@ -16,6 +16,7 @@ from app.api.schemas import (
     RefractionStaticApplyRequest,
     RefractionStaticGeometryRequest,
     RefractionStaticLinkageRequest,
+    RefractionStaticModelRequest,
     RefractionStaticMoveoutRequest,
 )
 from app.core.state import AppState
@@ -25,6 +26,10 @@ from app.services.geometry_linkage_loader import (
 )
 from app.services.job_artifact_refs import resolve_job_artifact_path
 from app.services.reader import get_reader
+from app.services.refraction_static_layer_observations import (
+    build_refraction_layer_observation_masks,
+    refraction_layer_observation_qc,
+)
 from app.services.refraction_static_types import (
     RefractionEndpointTable,
     RefractionStaticInputModel,
@@ -176,6 +181,7 @@ def build_refraction_static_input_model(
         geometry=req.geometry,
         linkage=req.linkage,
         moveout=req.moveout,
+        model=req.model,
         sorted_trace_index=pick_source.sorted_trace_index,
         n_samples=n_samples,
         dt=dt,
@@ -197,6 +203,7 @@ def build_refraction_static_input_model_from_arrays(
     geometry: RefractionStaticGeometryRequest,
     linkage: RefractionStaticLinkageRequest | None,
     moveout: RefractionStaticMoveoutRequest,
+    model: RefractionStaticModelRequest | None = None,
     file_id: str = '',
     sorted_trace_index: np.ndarray | None = None,
     n_samples: int | None = None,
@@ -346,6 +353,19 @@ def build_refraction_static_input_model_from_arrays(
         endpoint_table=endpoint_table,
         metadata=dict(metadata or {}),
     )
+    if model is not None and getattr(model, 'layers', None) is not None:
+        layer_masks = build_refraction_layer_observation_masks(
+            input_model=input_model,
+            model=model,
+        )
+        input_model = replace(
+            input_model,
+            qc={
+                **input_model.qc,
+                'layers': refraction_layer_observation_qc(layer_masks),
+            },
+            layer_observation_masks=layer_masks,
+        )
     if job_dir is not None:
         write_refraction_static_input_artifacts(Path(job_dir), input_model)
     return input_model

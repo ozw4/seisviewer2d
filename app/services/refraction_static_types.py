@@ -37,6 +37,19 @@ class RefractionEndpointTable:
 
 
 @dataclass(frozen=True)
+class RefractionLayerObservationMasks:
+    """Per-layer sorted-observation masks for multi-layer refraction branches."""
+
+    layer_kind: np.ndarray
+    layer_enabled: np.ndarray
+    layer_min_offset_m: np.ndarray
+    layer_max_offset_m: np.ndarray
+    layer_used_mask_sorted: dict[str, np.ndarray]
+    layer_rejection_reason_sorted: dict[str, np.ndarray]
+    layer_observation_count: dict[str, int]
+
+
+@dataclass(frozen=True)
 class RefractionStaticInputModel:
     file_id: str
     n_traces: int
@@ -76,6 +89,7 @@ class RefractionStaticInputModel:
     qc: dict[str, Any]
     endpoint_table: RefractionEndpointTable
     metadata: dict[str, Any]
+    layer_observation_masks: RefractionLayerObservationMasks | None = None
 
 
 @dataclass(frozen=True)
@@ -785,6 +799,7 @@ __all__ = [
     'RefractionEndpointTable',
     'RefractionHalfInterceptTimeResult',
     'RefractionLayerKind',
+    'RefractionLayerObservationMasks',
     'RefractionLayerSolveResult',
     'RefractionLayerVelocityMode',
     'RefractionMultiLayerSolveResult',

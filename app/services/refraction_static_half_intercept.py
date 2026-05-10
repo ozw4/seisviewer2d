@@ -379,6 +379,9 @@ def build_refraction_half_intercept_time_model(
             getattr(input_model, 'qc', {}).get('linkage_used', False)
         ),
     )
+    layer_qc = getattr(input_model, 'qc', {}).get('layers')
+    if isinstance(layer_qc, dict):
+        qc['layers'] = layer_qc
 
     result = RefractionHalfInterceptTimeResult(
         bedrock_velocity_mode=mode,

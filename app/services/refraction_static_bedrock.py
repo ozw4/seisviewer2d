@@ -236,7 +236,7 @@ def _validate_input_quality(
             'velocity and median distance'
         )
 
-    return {
+    qc = {
         'n_valid_observations': n_valid,
         'n_active_nodes': n_active_nodes,
         'distance_aperture_m': distance_aperture,
@@ -248,6 +248,10 @@ def _validate_input_quality(
         'pick_time_s_median': pick_median,
         'pick_time_aperture_s': pick_aperture,
     }
+    layer_qc = getattr(input_model, 'qc', {}).get('layers')
+    if isinstance(layer_qc, dict):
+        qc['layers'] = layer_qc
+    return qc
 
 
 def _validate_design_matrix(design_matrix: RefractionStaticDesignMatrix) -> None:
