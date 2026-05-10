@@ -161,6 +161,7 @@ if loaded:
         check=False,
         capture_output=True,
         text=True,
+        timeout=10,
     )
 
     assert result.returncode == 0, result.stderr or result.stdout
