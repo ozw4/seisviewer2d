@@ -74,13 +74,7 @@ def solve_refraction_multilayer_time_terms(
     ]
     | None = None,
 ) -> RefractionMultiLayerSolveResult:
-    """Run enabled refraction layer solves in configured order.
-
-    The built-in dispatcher intentionally supports only the existing one-layer
-    V2/T1 solver path. Deeper-layer entries can be supplied through
-    ``solver_dispatch`` once their numerical solvers exist; otherwise they fail
-    with an explicit unsupported-combination error.
-    """
+    """Run enabled refraction layer solves in configured order."""
     if not normalized_layers:
         raise RefractionMultiLayerSolveError(
             'at least one enabled refraction layer is required'
@@ -110,6 +104,11 @@ def solve_refraction_multilayer_time_terms(
         )
         result = layer_solver(context)
         _validate_layer_result(result=result, config=config)
+        result = _validate_layer_velocity_sequence(
+            result=result,
+            previous_results=tuple(layer_results),
+            normalized_layers=normalized_layers,
+        )
         layer_results.append(result)
 
     source_endpoint_key, source_node_id = _unique_endpoint_key_nodes(
@@ -152,6 +151,8 @@ def _effective_solver_dispatch(
         ('v2_t1', 'fixed_global'): _solve_existing_time_term_layer,
         ('v2_t1', 'solve_global'): _solve_existing_time_term_layer,
         ('v2_t1', 'solve_cell'): _solve_existing_time_term_layer,
+        ('v3_t2', 'fixed_global'): _solve_existing_time_term_layer,
+        ('v3_t2', 'solve_global'): _solve_existing_time_term_layer,
     }
     if overrides is not None:
         dispatch.update(dict(overrides))
@@ -287,12 +288,17 @@ def _refractor_cell_payload_for_layer(
 def _solve_existing_time_term_layer(
     context: RefractionLayerSolverContext,
 ) -> RefractionLayerSolveResult:
-    result = estimate_refraction_half_intercept_times_from_first_breaks(
-        req=_LayerSolveRequest(context.model, context.solver),
-        state=_LayerSolveState(),
-        input_model=context.input_model,
-        resolved_first_layer=context.resolved_first_layer,
-    )
+    try:
+        result = estimate_refraction_half_intercept_times_from_first_breaks(
+            req=_LayerSolveRequest(context.model, context.solver),
+            state=_LayerSolveState(),
+            input_model=context.input_model,
+            resolved_first_layer=context.resolved_first_layer,
+        )
+    except ValueError as exc:
+        raise RefractionMultiLayerSolveError(
+            f'refraction layer {context.layer_config.kind} solve failed: {exc}'
+        ) from exc
     return _layer_result_from_half_intercept(
         result=result,
         layer_kind=context.layer_config.kind,
@@ -308,12 +314,28 @@ def _layer_result_from_half_intercept(
 ) -> RefractionLayerSolveResult:
     velocity_mode = result.bedrock_velocity_mode
     is_cell = velocity_mode == 'solve_cell'
+    global_velocity = None if is_cell else float(result.bedrock_velocity_m_s)
+    global_slowness = None if is_cell else float(result.bedrock_slowness_s_per_m)
     qc = {
         **result.qc,
         'layer_kind': layer_kind,
         'layer_index': layer_index,
         'velocity_mode': velocity_mode,
+        'n_observations': int(result.row_trace_index_sorted.shape[0]),
+        'n_sources': int(np.unique(result.row_source_node_id).shape[0]),
+        'n_receivers': int(np.unique(result.row_receiver_node_id).shape[0]),
+        'robust_iterations': int(result.qc.get('robust_iteration_count', 0)),
+        'n_rejected_by_robust': int(
+            np.count_nonzero(result.rejected_by_robust_mask)
+        ),
     }
+    qc.update(
+        _layer_velocity_qc_aliases(
+            layer_kind=layer_kind,
+            global_velocity_m_s=global_velocity,
+            global_slowness_s_per_m=global_slowness,
+        )
+    )
     return RefractionLayerSolveResult(
         layer_kind=layer_kind,
         layer_index=layer_index,
@@ -330,10 +352,8 @@ def _layer_result_from_half_intercept(
             result.node_half_intercept_time_s,
             dtype=np.float64,
         ),
-        global_velocity_m_s=None if is_cell else float(result.bedrock_velocity_m_s),
-        global_slowness_s_per_m=(
-            None if is_cell else float(result.bedrock_slowness_s_per_m)
-        ),
+        global_velocity_m_s=global_velocity,
+        global_slowness_s_per_m=global_slowness,
         cell_velocity_m_s=(
             None
             if result.cell_bedrock_velocity_m_s is None
@@ -367,6 +387,32 @@ def _layer_result_from_half_intercept(
     )
 
 
+def _layer_velocity_qc_aliases(
+    *,
+    layer_kind: RefractionLayerKind,
+    global_velocity_m_s: float | None,
+    global_slowness_s_per_m: float | None,
+) -> dict[str, float]:
+    if global_velocity_m_s is None or global_slowness_s_per_m is None:
+        return {}
+    if layer_kind == 'v2_t1':
+        return {
+            'v2_m_s': float(global_velocity_m_s),
+            'slowness2_s_per_m': float(global_slowness_s_per_m),
+        }
+    if layer_kind == 'v3_t2':
+        return {
+            'v3_m_s': float(global_velocity_m_s),
+            'slowness3_s_per_m': float(global_slowness_s_per_m),
+        }
+    if layer_kind == 'vsub_t3':
+        return {
+            'vsub_m_s': float(global_velocity_m_s),
+            'slowness_sub_s_per_m': float(global_slowness_s_per_m),
+        }
+    return {}
+
+
 def _validate_layer_result(
     *,
     result: RefractionLayerSolveResult,
@@ -386,6 +432,75 @@ def _validate_layer_result(
             f'refraction layer {config.kind} failed with status '
             f'{result.layer_status}'
         )
+
+
+def _validate_layer_velocity_sequence(
+    *,
+    result: RefractionLayerSolveResult,
+    previous_results: tuple[RefractionLayerSolveResult, ...],
+    normalized_layers: tuple[RefractionStaticLayerConfig, ...],
+) -> RefractionLayerSolveResult:
+    if result.layer_kind != 'v3_t2':
+        return result
+    current_velocity = _summary_velocity_m_s(result)
+    if current_velocity is None:
+        return result
+    reference = _prior_layer_velocity_reference(
+        layer_kind='v2_t1',
+        previous_results=previous_results,
+        normalized_layers=normalized_layers,
+    )
+    if reference is None:
+        return result
+    reference_kind, reference_velocity, reference_source = reference
+    if current_velocity <= reference_velocity:
+        raise RefractionMultiLayerSolveError(
+            f'refraction layer {result.layer_kind} velocity must be greater '
+            f'than {reference_kind} velocity ({current_velocity:.6g} <= '
+            f'{reference_velocity:.6g} m/s)'
+        )
+    return replace(
+        result,
+        qc={
+            **result.qc,
+            'velocity_sequence_reference_layer_kind': reference_kind,
+            'velocity_sequence_reference_m_s': float(reference_velocity),
+            'velocity_sequence_reference_source': reference_source,
+        },
+    )
+
+
+def _prior_layer_velocity_reference(
+    *,
+    layer_kind: RefractionLayerKind,
+    previous_results: tuple[RefractionLayerSolveResult, ...],
+    normalized_layers: tuple[RefractionStaticLayerConfig, ...],
+) -> tuple[RefractionLayerKind, float, str] | None:
+    for previous in reversed(previous_results):
+        if previous.layer_kind != layer_kind:
+            continue
+        velocity = _summary_velocity_m_s(previous)
+        if velocity is not None:
+            return layer_kind, velocity, 'solved_summary'
+    for config in normalized_layers:
+        if config.kind == layer_kind and config.min_velocity_m_s is not None:
+            return layer_kind, float(config.min_velocity_m_s), 'configured_min'
+    return None
+
+
+def _summary_velocity_m_s(result: RefractionLayerSolveResult) -> float | None:
+    if result.global_velocity_m_s is not None:
+        velocity = float(result.global_velocity_m_s)
+        if np.isfinite(velocity) and velocity > 0.0:
+            return velocity
+        return None
+    if result.cell_velocity_m_s is None:
+        return None
+    values = np.asarray(result.cell_velocity_m_s, dtype=np.float64)
+    values = values[np.isfinite(values) & (values > 0.0)]
+    if values.size == 0:
+        return None
+    return float(np.median(values))
 
 
 def _unique_endpoint_key_nodes(
