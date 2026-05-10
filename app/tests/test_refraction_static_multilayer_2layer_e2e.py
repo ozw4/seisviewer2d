@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import csv
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Literal
 
@@ -25,6 +25,7 @@ from app.services.refraction_static_layer_observations import (
     build_refraction_layer_observation_masks,
 )
 from app.services.refraction_static_multilayer_service import (
+    build_refraction_multilayer_weathering_replacement_statics,
     compute_refraction_multilayer_datum_statics_from_input_model,
 )
 from app.services.refraction_static_t1lsst import (
@@ -142,6 +143,69 @@ def test_two_layer_line_projected_local_v2_global_v3_e2e_recovers_tables(
     )
     _assert_layer_masks_select_expected_branches(fixture)
     _assert_two_layer_outputs_match_truth(fixture, outputs)
+
+
+def test_two_layer_local_v2_low_fold_endpoint_statuses_do_not_abort() -> None:
+    fixture = _make_two_layer_fixture(
+        coordinate_mode='line_2d_projected',
+        v2_velocity_mode='solve_cell',
+    )
+    workflow = compute_refraction_multilayer_datum_statics_from_input_model(
+        input_model=fixture.input_model,
+        model=fixture.model,
+        solver=RefractionStaticSolverRequest(
+            damping=0.0,
+            robust={'enabled': False},
+        ),
+        datum=RefractionStaticDatumRequest(mode='none'),
+        apply_options=RefractionStaticApplyOptions(max_abs_shift_ms=250.0),
+        resolved_first_layer=_resolved_first_layer(),
+    )
+    v2_layer = _layer(workflow.solve_result, 'v2_t1')
+    assert v2_layer.active_cell_id is not None
+    assert v2_layer.cell_velocity_m_s is not None
+    assert v2_layer.cell_slowness_s_per_m is not None
+    assert v2_layer.cell_velocity_status is not None
+    low_fold_cell_id = int(v2_layer.active_cell_id[-1])
+    keep = v2_layer.active_cell_id != low_fold_cell_id
+    patched_v2_layer = replace(
+        v2_layer,
+        active_cell_id=np.ascontiguousarray(v2_layer.active_cell_id[keep]),
+        inactive_cell_id=np.asarray([low_fold_cell_id], dtype=np.int64),
+        cell_velocity_m_s=np.ascontiguousarray(v2_layer.cell_velocity_m_s[keep]),
+        cell_slowness_s_per_m=np.ascontiguousarray(v2_layer.cell_slowness_s_per_m[keep]),
+        cell_velocity_status=np.asarray(v2_layer.cell_velocity_status)[keep],
+        qc={
+            **v2_layer.qc,
+            'low_fold_cell_id': [low_fold_cell_id],
+            'n_low_fold_cells': 1,
+        },
+    )
+    patched_solve = replace(
+        workflow.solve_result,
+        layer_results=(patched_v2_layer, _layer(workflow.solve_result, 'v3_t2')),
+    )
+
+    replacement = build_refraction_multilayer_weathering_replacement_statics(
+        input_model=fixture.input_model,
+        model=fixture.model,
+        solve_result=patched_solve,
+        apply_options=RefractionStaticApplyOptions(max_abs_shift_ms=250.0),
+        resolved_first_layer=_resolved_first_layer(),
+    )
+
+    source_low_fold = replacement.source_v2_status == 'low_fold_v2_cell'
+    receiver_low_fold = replacement.receiver_v2_status == 'low_fold_v2_cell'
+    assert np.any(source_low_fold)
+    assert np.any(receiver_low_fold)
+    assert np.all(np.isnan(replacement.source_weathering_thickness_m[source_low_fold]))
+    assert np.all(
+        np.isnan(replacement.receiver_weathering_thickness_m[receiver_low_fold])
+    )
+    assert np.all(replacement.source_static_status[source_low_fold] == 'low_fold_v2_cell')
+    assert np.all(
+        replacement.receiver_static_status[receiver_low_fold] == 'low_fold_v2_cell'
+    )
 
 
 def _make_two_layer_fixture(
@@ -522,18 +586,22 @@ def _compute_static_outputs(
         ),
         datum=RefractionStaticDatumRequest(mode='none'),
         apply_options=RefractionStaticApplyOptions(max_abs_shift_ms=250.0),
-        resolved_first_layer=ResolvedRefractionFirstLayer(
-            mode='constant',
-            weathering_velocity_m_s=SYNTHETIC_MULTILAYER_V1_M_S,
-            status='constant',
-            qc={'weathering_velocity_m_s': SYNTHETIC_MULTILAYER_V1_M_S},
-        ),
+        resolved_first_layer=_resolved_first_layer(),
     )
     return _write_static_outputs(
         tmp_path=tmp_path,
         solve_result=workflow.solve_result,
         components=workflow.components,
         result=workflow.datum_result,
+    )
+
+
+def _resolved_first_layer() -> ResolvedRefractionFirstLayer:
+    return ResolvedRefractionFirstLayer(
+        mode='constant',
+        weathering_velocity_m_s=SYNTHETIC_MULTILAYER_V1_M_S,
+        status='constant',
+        qc={'weathering_velocity_m_s': SYNTHETIC_MULTILAYER_V1_M_S},
     )
 
 

@@ -213,6 +213,7 @@ class RefractionLayerSolveResult:
     cell_velocity_status: np.ndarray | None = None
     row_midpoint_cell_id: np.ndarray | None = None
     row_midpoint_velocity_m_s: np.ndarray | None = None
+    rejected_by_robust_mask_sorted: np.ndarray | None = None
 
 
 @dataclass(frozen=True)

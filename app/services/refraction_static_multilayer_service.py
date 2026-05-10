@@ -66,6 +66,16 @@ _LAYER_INDEX_BY_KIND: dict[RefractionLayerKind, int] = {
 }
 _STATUS_DTYPE = '<U32'
 _SIGN_CONVENTION_TEXT = 'corrected(t) = raw(t - shift_s)'
+_LOCAL_V2_OK_STATUS = {'ok', 'solved'}
+_CELL_THRESHOLD_QC_KEYS = (
+    'cell_observation_count',
+    'low_fold_cell_id',
+    'low_fold_cell_rejection_reason',
+    'min_observations_per_cell',
+    'n_low_fold_cells',
+    'n_observations_outside_grid',
+    'n_observations_rejected_by_low_fold_cell',
+)
 
 
 class RefractionMultiLayerSolveError(ValueError):
@@ -318,65 +328,47 @@ def build_refraction_multilayer_weathering_replacement_statics(
         name='receiver_t2',
     )
 
-    node_thickness = compute_t1lsst_2layer_thicknesses_with_status(
+    node_conversion = _compute_2layer_conversion(
         t1_s=node_t1,
         t2_s=node_t2,
         v1_m_s=v1_m_s,
         v2_m_s=v2.node_v2_m_s,
         v3_m_s=v3_m_s,
+        v2_status=v2.node_v2_status,
     )
-    source_thickness = compute_t1lsst_2layer_thicknesses_with_status(
+    source_conversion = _compute_2layer_conversion(
         t1_s=source_t1,
         t2_s=source_t2,
         v1_m_s=v1_m_s,
         v2_m_s=v2.source_v2_m_s,
         v3_m_s=v3_m_s,
+        v2_status=v2.source_v2_status,
     )
-    receiver_thickness = compute_t1lsst_2layer_thicknesses_with_status(
+    receiver_conversion = _compute_2layer_conversion(
         t1_s=receiver_t1,
         t2_s=receiver_t2,
         v1_m_s=v1_m_s,
         v2_m_s=v2.receiver_v2_m_s,
         v3_m_s=v3_m_s,
-    )
-    node_wcor = compute_t1lsst_2layer_weathering_correction(
-        sh1_m=node_thickness.sh1_m,
-        sh2_m=node_thickness.sh2_m,
-        v1_m_s=v1_m_s,
-        v2_m_s=v2.node_v2_m_s,
-        v3_m_s=v3_m_s,
-    )
-    source_wcor = compute_t1lsst_2layer_weathering_correction(
-        sh1_m=source_thickness.sh1_m,
-        sh2_m=source_thickness.sh2_m,
-        v1_m_s=v1_m_s,
-        v2_m_s=v2.source_v2_m_s,
-        v3_m_s=v3_m_s,
-    )
-    receiver_wcor = compute_t1lsst_2layer_weathering_correction(
-        sh1_m=receiver_thickness.sh1_m,
-        sh2_m=receiver_thickness.sh2_m,
-        v1_m_s=v1_m_s,
-        v2_m_s=v2.receiver_v2_m_s,
-        v3_m_s=v3_m_s,
+        v2_status=v2.receiver_v2_status,
     )
 
     max_abs_shift_ms = (
         None if apply_options is None else float(apply_options.max_abs_shift_ms)
     )
     node_static_status = _status_from_conversion(
-        node_thickness.status,
-        node_wcor,
+        node_conversion.status,
+        node_conversion.weathering_correction_s,
         max_abs_shift_ms=max_abs_shift_ms,
     )
     source_static_status = _status_from_conversion(
-        source_thickness.status,
-        source_wcor,
+        source_conversion.status,
+        source_conversion.weathering_correction_s,
         max_abs_shift_ms=max_abs_shift_ms,
     )
     receiver_static_status = _status_from_conversion(
-        receiver_thickness.status,
-        receiver_wcor,
+        receiver_conversion.status,
+        receiver_conversion.weathering_correction_s,
         max_abs_shift_ms=max_abs_shift_ms,
     )
 
@@ -395,25 +387,25 @@ def build_refraction_multilayer_weathering_replacement_statics(
     source_sh1_sorted = _map_endpoint_values_to_trace_order(
         endpoint_key_sorted=input_model.source_endpoint_key_sorted,
         endpoint_key=source.endpoint_key,
-        endpoint_values=source_thickness.sh1_m,
+        endpoint_values=source_conversion.sh1_m,
         name='source_sh1_m_sorted',
     )
     receiver_sh1_sorted = _map_endpoint_values_to_trace_order(
         endpoint_key_sorted=input_model.receiver_endpoint_key_sorted,
         endpoint_key=receiver.endpoint_key,
-        endpoint_values=receiver_thickness.sh1_m,
+        endpoint_values=receiver_conversion.sh1_m,
         name='receiver_sh1_m_sorted',
     )
     source_wcor_sorted = _map_endpoint_values_to_trace_order(
         endpoint_key_sorted=input_model.source_endpoint_key_sorted,
         endpoint_key=source.endpoint_key,
-        endpoint_values=source_wcor,
+        endpoint_values=source_conversion.weathering_correction_s,
         name='source_wcor_s_sorted',
     )
     receiver_wcor_sorted = _map_endpoint_values_to_trace_order(
         endpoint_key_sorted=input_model.receiver_endpoint_key_sorted,
         endpoint_key=receiver.endpoint_key,
-        endpoint_values=receiver_wcor,
+        endpoint_values=receiver_conversion.weathering_correction_s,
         name='receiver_wcor_s_sorted',
     )
     source_status_sorted = _map_endpoint_strings_to_trace_order(
@@ -465,9 +457,14 @@ def build_refraction_multilayer_weathering_replacement_statics(
         'v3_velocity_mode': v3_layer.velocity_mode,
         'v3_m_s': float(v3_m_s),
         'layers': solve_result.qc,
+        **_cell_threshold_qc_from_layer(v2_layer),
     }
     source_v3_m_s = np.full(source.endpoint_key.shape, v3_m_s, dtype=np.float64)
     receiver_v3_m_s = np.full(receiver.endpoint_key.shape, v3_m_s, dtype=np.float64)
+    rejected_by_robust = _combined_rejected_by_robust_mask(
+        solve_result,
+        input_model.n_traces,
+    )
     return RefractionWeatheringReplacementStaticsResult(
         bedrock_velocity_mode=v3_layer.velocity_mode,
         bedrock_slowness_s_per_m=1.0 / v3_m_s,
@@ -482,16 +479,20 @@ def build_refraction_multilayer_weathering_replacement_statics(
             dtype=np.float64,
         ),
         node_kind=np.asarray(input_model.node_kind).astype('<U16', copy=True),
-        node_weathering_thickness_m=node_thickness.sh1_m,
+        node_weathering_thickness_m=node_conversion.sh1_m,
         node_refractor_elevation_m=(
             np.ascontiguousarray(input_model.node_elevation_m, dtype=np.float64)
-            - node_thickness.sh1_m
+            - node_conversion.sh1_m
         ),
         node_half_intercept_time_s=node_t1,
         node_solution_status=np.full(node_id.shape, 'solved', dtype=_STATUS_DTYPE),
-        node_weathering_status=node_thickness.status,
-        node_weathering_replacement_shift_s=node_wcor,
-        node_weathering_replacement_shift_ms=node_wcor * 1000.0,
+        node_weathering_status=node_conversion.status,
+        node_weathering_replacement_shift_s=(
+            node_conversion.weathering_correction_s
+        ),
+        node_weathering_replacement_shift_ms=(
+            node_conversion.weathering_correction_s * 1000.0
+        ),
         node_static_status=node_static_status,
         node_pick_count=node_pick_count,
         node_used_pick_count=node_used_pick_count,
@@ -505,9 +506,11 @@ def build_refraction_multilayer_weathering_replacement_statics(
         source_y_m=source.y_m,
         source_surface_elevation_m=source.elevation_m,
         source_half_intercept_time_s=source_t1,
-        source_weathering_thickness_m=source_thickness.sh1_m,
-        source_refractor_elevation_m=source.elevation_m - source_thickness.sh1_m,
-        source_weathering_replacement_shift_s=source_wcor,
+        source_weathering_thickness_m=source_conversion.sh1_m,
+        source_refractor_elevation_m=source.elevation_m - source_conversion.sh1_m,
+        source_weathering_replacement_shift_s=(
+            source_conversion.weathering_correction_s
+        ),
         source_static_status=source_static_status,
         receiver_endpoint_key=receiver.endpoint_key,
         receiver_id=receiver.endpoint_id,
@@ -516,11 +519,13 @@ def build_refraction_multilayer_weathering_replacement_statics(
         receiver_y_m=receiver.y_m,
         receiver_surface_elevation_m=receiver.elevation_m,
         receiver_half_intercept_time_s=receiver_t1,
-        receiver_weathering_thickness_m=receiver_thickness.sh1_m,
+        receiver_weathering_thickness_m=receiver_conversion.sh1_m,
         receiver_refractor_elevation_m=(
-            receiver.elevation_m - receiver_thickness.sh1_m
+            receiver.elevation_m - receiver_conversion.sh1_m
         ),
-        receiver_weathering_replacement_shift_s=receiver_wcor,
+        receiver_weathering_replacement_shift_s=(
+            receiver_conversion.weathering_correction_s
+        ),
         receiver_static_status=receiver_static_status,
         sorted_trace_index=np.ascontiguousarray(
             input_model.sorted_trace_index,
@@ -591,7 +596,7 @@ def build_refraction_multilayer_weathering_replacement_statics(
         modeled_pick_time_s=modeled,
         residual_time_s=residual,
         used_row_mask=used,
-        rejected_by_robust_mask=np.zeros(input_model.n_traces, dtype=bool),
+        rejected_by_robust_mask=rejected_by_robust,
         qc=qc,
         active_cell_id=v2.active_cell_id,
         inactive_cell_id=v2.inactive_cell_id,
@@ -616,10 +621,10 @@ def build_refraction_multilayer_weathering_replacement_statics(
         receiver_v2_status_sorted=v2.receiver_v2_status_sorted,
         source_t2_time_s=source_t2,
         source_v3_m_s=source_v3_m_s,
-        source_sh2_weathering_thickness_m=source_thickness.sh2_m,
+        source_sh2_weathering_thickness_m=source_conversion.sh2_m,
         receiver_t2_time_s=receiver_t2,
         receiver_v3_m_s=receiver_v3_m_s,
-        receiver_sh2_weathering_thickness_m=receiver_thickness.sh2_m,
+        receiver_sh2_weathering_thickness_m=receiver_conversion.sh2_m,
     )
 
 
@@ -658,6 +663,14 @@ class _V2StaticModel:
     receiver_v2_cell_id_sorted: np.ndarray | None = None
 
 
+@dataclass(frozen=True)
+class _TwoLayerConversion:
+    sh1_m: np.ndarray
+    sh2_m: np.ndarray
+    weathering_correction_s: np.ndarray
+    status: np.ndarray
+
+
 def _require_two_layer_t1lsst_layers(
     normalized_layers: tuple[RefractionStaticLayerConfig, ...],
 ) -> None:
@@ -667,10 +680,99 @@ def _require_two_layer_t1lsst_layers(
             'two-layer T1LSST statics requires enabled layers v2_t1 and v3_t2'
         )
     v3_mode = normalized_layers[1].velocity_mode
-    if v3_mode != 'solve_global':
+    if v3_mode not in ('solve_global', 'fixed_global'):
         raise RefractionMultiLayerSolveError(
             'two-layer T1LSST statics currently requires global V3/T2 velocity'
         )
+
+
+def _compute_2layer_conversion(
+    *,
+    t1_s: np.ndarray,
+    t2_s: np.ndarray,
+    v1_m_s: float,
+    v2_m_s: np.ndarray,
+    v3_m_s: float,
+    v2_status: np.ndarray | None,
+) -> _TwoLayerConversion:
+    v2 = np.asarray(v2_m_s, dtype=np.float64)
+    if v2_status is None:
+        thickness = compute_t1lsst_2layer_thicknesses_with_status(
+            t1_s=t1_s,
+            t2_s=t2_s,
+            v1_m_s=v1_m_s,
+            v2_m_s=v2,
+            v3_m_s=v3_m_s,
+        )
+        wcor = compute_t1lsst_2layer_weathering_correction(
+            sh1_m=thickness.sh1_m,
+            sh2_m=thickness.sh2_m,
+            v1_m_s=v1_m_s,
+            v2_m_s=v2,
+            v3_m_s=v3_m_s,
+        )
+        return _TwoLayerConversion(
+            sh1_m=thickness.sh1_m,
+            sh2_m=thickness.sh2_m,
+            weathering_correction_s=wcor,
+            status=thickness.status,
+        )
+
+    status = np.asarray(v2_status).astype(_STATUS_DTYPE, copy=True)
+    if status.shape != v2.shape:
+        raise RefractionMultiLayerSolveError('local V2 status shape mismatch')
+    invalid_local_v2 = ~np.isin(status.astype(str), list(_LOCAL_V2_OK_STATUS))
+    safe_v2 = np.array(v2, dtype=np.float64, copy=True, order='C')
+    safe_v2[invalid_local_v2] = 0.5 * (float(v1_m_s) + float(v3_m_s))
+
+    thickness = compute_t1lsst_2layer_thicknesses_with_status(
+        t1_s=t1_s,
+        t2_s=t2_s,
+        v1_m_s=v1_m_s,
+        v2_m_s=safe_v2,
+        v3_m_s=v3_m_s,
+    )
+    wcor = compute_t1lsst_2layer_weathering_correction(
+        sh1_m=thickness.sh1_m,
+        sh2_m=thickness.sh2_m,
+        v1_m_s=v1_m_s,
+        v2_m_s=safe_v2,
+        v3_m_s=v3_m_s,
+    )
+
+    sh1 = np.array(thickness.sh1_m, dtype=np.float64, copy=True, order='C')
+    sh2 = np.array(thickness.sh2_m, dtype=np.float64, copy=True, order='C')
+    wcor = np.array(wcor, dtype=np.float64, copy=True, order='C')
+    conversion_status = np.asarray(thickness.status).astype(_STATUS_DTYPE, copy=True)
+    conversion_status[invalid_local_v2] = status[invalid_local_v2]
+    sh1[invalid_local_v2] = np.nan
+    sh2[invalid_local_v2] = np.nan
+    wcor[invalid_local_v2] = np.nan
+    return _TwoLayerConversion(
+        sh1_m=sh1,
+        sh2_m=sh2,
+        weathering_correction_s=wcor,
+        status=conversion_status,
+    )
+
+
+def _cell_threshold_qc_from_layer(
+    layer: RefractionLayerSolveResult,
+) -> dict[str, Any]:
+    if layer.velocity_mode != 'solve_cell':
+        return {}
+    return {key: layer.qc[key] for key in _CELL_THRESHOLD_QC_KEYS if key in layer.qc}
+
+
+def _low_fold_cell_id_from_qc(qc: Mapping[str, Any]) -> np.ndarray:
+    raw = qc.get('low_fold_cell_id', ())
+    try:
+        arr = np.asarray(raw, dtype=np.int64)
+    except (TypeError, ValueError) as exc:
+        raise RefractionMultiLayerSolveError('low_fold_cell_id must be integer') from exc
+    if arr.ndim != 1:
+        raise RefractionMultiLayerSolveError('low_fold_cell_id must be one-dimensional')
+    return np.ascontiguousarray(arr, dtype=np.int64)
 
 
 def _components_from_replacement(
@@ -944,6 +1046,7 @@ def _cell_v2_static_model(
         active_cell_id=layer.active_cell_id,
         cell_velocity_m_s=layer.cell_velocity_m_s,
         v1_m_s=v1_m_s,
+        low_fold_cell_id=_low_fold_cell_id_from_qc(layer.qc),
     )
     source_cell, source_v2, source_status = _project_v2_to_points(
         grid=grid,
@@ -953,6 +1056,7 @@ def _cell_v2_static_model(
         active_cell_id=layer.active_cell_id,
         cell_velocity_m_s=layer.cell_velocity_m_s,
         v1_m_s=v1_m_s,
+        low_fold_cell_id=_low_fold_cell_id_from_qc(layer.qc),
     )
     receiver_cell, receiver_v2, receiver_status = _project_v2_to_points(
         grid=grid,
@@ -962,6 +1066,7 @@ def _cell_v2_static_model(
         active_cell_id=layer.active_cell_id,
         cell_velocity_m_s=layer.cell_velocity_m_s,
         v1_m_s=v1_m_s,
+        low_fold_cell_id=_low_fold_cell_id_from_qc(layer.qc),
     )
     source_sorted = _map_endpoint_v2_to_trace_order(
         endpoint_key_sorted=input_model.source_endpoint_key_sorted,
@@ -1043,6 +1148,7 @@ def _project_v2_to_points(
     active_cell_id: np.ndarray,
     cell_velocity_m_s: np.ndarray,
     v1_m_s: float,
+    low_fold_cell_id: np.ndarray,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     projected = project_refraction_cell_points(
         x_m=x_m,
@@ -1063,7 +1169,8 @@ def _project_v2_to_points(
         for index, cell in enumerate(np.asarray(active_cell_id, dtype=np.int64).tolist())
     }
     v2 = np.full(cell_id.shape, np.nan, dtype=np.float64)
-    status = np.full(cell_id.shape, 'solved', dtype=_STATUS_DTYPE)
+    low_fold_cells = {int(cell) for cell in np.asarray(low_fold_cell_id).tolist()}
+    status = np.full(cell_id.shape, 'ok', dtype=_STATUS_DTYPE)
     for index, raw_cell in enumerate(cell_id.tolist()):
         cell = int(raw_cell)
         if cell < 0:
@@ -1071,7 +1178,9 @@ def _project_v2_to_points(
             continue
         velocity = velocity_by_cell.get(cell)
         if velocity is None:
-            status[index] = 'inactive_v2_cell'
+            status[index] = (
+                'low_fold_v2_cell' if cell in low_fold_cells else 'inactive_v2_cell'
+            )
             continue
         v2[index] = velocity
         if not np.isfinite(velocity) or velocity <= 0.0:
@@ -1239,6 +1348,24 @@ def _combined_used_mask(
             )
         used |= mask
     return np.ascontiguousarray(used, dtype=bool)
+
+
+def _combined_rejected_by_robust_mask(
+    solve_result: RefractionMultiLayerSolveResult,
+    n_traces: int,
+) -> np.ndarray:
+    rejected = np.zeros(int(n_traces), dtype=bool)
+    for layer in solve_result.layer_results:
+        mask = layer.rejected_by_robust_mask_sorted
+        if mask is None:
+            continue
+        layer_rejected = np.asarray(mask, dtype=bool)
+        if layer_rejected.shape != rejected.shape:
+            raise RefractionMultiLayerSolveError(
+                f'{layer.layer_kind} robust rejection mask shape mismatch'
+            )
+        rejected |= layer_rejected
+    return np.ascontiguousarray(rejected, dtype=bool)
 
 
 def _node_pick_counts(
@@ -1575,7 +1702,32 @@ def _layer_result_from_half_intercept(
                 dtype=np.float64,
             )
         ),
+        rejected_by_robust_mask_sorted=_robust_rejection_mask_in_sorted_order(result),
     )
+
+
+def _robust_rejection_mask_in_sorted_order(
+    result: RefractionHalfInterceptTimeResult,
+) -> np.ndarray:
+    sorted_trace_index = np.asarray(result.sorted_trace_index, dtype=np.int64)
+    row_trace_index = np.asarray(result.row_trace_index_sorted, dtype=np.int64)
+    row_rejected = np.asarray(result.rejected_by_robust_mask, dtype=bool)
+    if row_trace_index.shape != row_rejected.shape:
+        raise RefractionMultiLayerSolveError(
+            'robust rejection rows must match row trace indices'
+        )
+    trace_position = {
+        int(trace): index for index, trace in enumerate(sorted_trace_index.tolist())
+    }
+    rejected = np.zeros(sorted_trace_index.shape, dtype=bool)
+    for row_index, raw_trace in enumerate(row_trace_index.tolist()):
+        position = trace_position.get(int(raw_trace))
+        if position is None:
+            raise RefractionMultiLayerSolveError(
+                'robust rejection row references unknown trace index'
+            )
+        rejected[position] = bool(row_rejected[row_index])
+    return np.ascontiguousarray(rejected, dtype=bool)
 
 
 def _layer_velocity_qc_aliases(

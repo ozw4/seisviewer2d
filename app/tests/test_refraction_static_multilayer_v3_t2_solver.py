@@ -12,6 +12,7 @@ from app.services.refraction_static_layer_observations import (
 )
 from app.services.refraction_static_multilayer_service import (
     RefractionMultiLayerSolveError,
+    build_refraction_multilayer_weathering_replacement_statics,
     solve_refraction_multilayer_time_terms,
 )
 from app.services.refraction_static_types import (
@@ -70,9 +71,11 @@ def test_v3_t2_solve_global_estimates_velocity_and_t2_terms() -> None:
 
 
 def test_v3_t2_fixed_global_solves_t2_terms() -> None:
+    input_model = _input_model()
+    model = _model(v3_velocity_mode='fixed_global')
     result = _run_multilayer(
-        input_model=_input_model(),
-        model=_model(v3_velocity_mode='fixed_global'),
+        input_model=input_model,
+        model=model,
         solver=RefractionStaticSolverRequest(
             damping=0.0,
             robust={'enabled': False},
@@ -89,6 +92,16 @@ def test_v3_t2_fixed_global_solves_t2_terms() -> None:
         0.0,
         atol=1.0e-9,
     )
+
+    replacement = build_refraction_multilayer_weathering_replacement_statics(
+        input_model=input_model,
+        model=model,
+        solve_result=result,
+        apply_options=None,
+        resolved_first_layer=_resolved_first_layer(),
+    )
+    assert replacement.bedrock_velocity_mode == 'fixed_global'
+    np.testing.assert_allclose(replacement.source_v3_m_s, V3_M_S)
 
 
 def test_v3_t2_robust_rejection_refits_after_large_outlier() -> None:
@@ -114,9 +127,20 @@ def test_v3_t2_robust_rejection_refits_after_large_outlier() -> None:
 
     assert layer.qc['n_rejected_by_robust'] >= 1
     assert layer.qc['robust_iterations'] >= 1
-    assert not bool(layer.used_observation_mask_sorted[outlier_v3_index])
+    assert not bool(layer.used_observation_mask_sorted[outlier_trace])
+    assert layer.rejected_by_robust_mask_sorted is not None
+    assert bool(layer.rejected_by_robust_mask_sorted[outlier_trace])
     assert layer.global_velocity_m_s == pytest.approx(V3_M_S, rel=1.0e-7)
     np.testing.assert_allclose(layer.node_time_term_s, T2_S, atol=1.0e-7)
+
+    replacement = build_refraction_multilayer_weathering_replacement_statics(
+        input_model=input_model,
+        model=_model(v3_velocity_mode='solve_global'),
+        solve_result=result,
+        apply_options=None,
+        resolved_first_layer=_resolved_first_layer(),
+    )
+    assert bool(replacement.rejected_by_robust_mask[outlier_trace])
 
 
 def test_v3_t2_insufficient_observations_reports_layer_kind() -> None:
@@ -149,16 +173,20 @@ def _run_multilayer(
     )
     return solve_refraction_multilayer_time_terms(
         input_model=input_model,
-        resolved_first_layer=ResolvedRefractionFirstLayer(
-            mode='constant',
-            weathering_velocity_m_s=V1_M_S,
-            status='constant',
-            qc={},
-        ),
+        resolved_first_layer=_resolved_first_layer(),
         normalized_layers=normalize_refraction_static_layers(model),
         layer_masks=masks,
         model=model,
         solver=solver,
+    )
+
+
+def _resolved_first_layer() -> ResolvedRefractionFirstLayer:
+    return ResolvedRefractionFirstLayer(
+        mode='constant',
+        weathering_velocity_m_s=V1_M_S,
+        status='constant',
+        qc={},
     )
 
 
