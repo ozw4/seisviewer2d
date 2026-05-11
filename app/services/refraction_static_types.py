@@ -845,6 +845,10 @@ class RefractionDatumStaticsResult:
     row_rejection_reason: np.ndarray | None = None
     row_velocity_m_s: np.ndarray | None = None
     layer_results: tuple[RefractionLayerSolveResult, ...] | None = None
+    source_depth_m: np.ndarray | None = None
+    source_depth_shift_s: np.ndarray | None = None
+    source_depth_status: np.ndarray | None = None
+    source_depth_field_correction_qc: dict[str, Any] | None = None
 
 
 @dataclass(frozen=True)

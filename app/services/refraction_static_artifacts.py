@@ -1117,7 +1117,7 @@ def write_refraction_static_components_csv(
 ) -> None:
     values = _validate_result(result)
     rows = _component_rows(values.result)
-    _write_csv_atomic(Path(path), _COMPONENT_COLUMNS, rows)
+    _write_csv_atomic(Path(path), _component_columns(values.result), rows)
 
 
 def write_source_static_table_csv(
@@ -1859,6 +1859,17 @@ def build_source_receiver_static_table_arrays(
         'receiver_total_applied_shift_s': _float_array(r.receiver_refraction_shift_s),
         'receiver_static_status': receiver_static_status,
     }
+    if _has_source_depth_field_correction(r):
+        assert r.source_depth_m is not None
+        assert r.source_depth_shift_s is not None
+        assert r.source_depth_status is not None
+        arrays.update(
+            {
+                'source_depth_m': _float_array(r.source_depth_m),
+                'source_depth_shift_s': _float_array(r.source_depth_shift_s),
+                'source_depth_status': _string_array(r.source_depth_status),
+            }
+        )
     if _has_source_2layer_static_fields(r):
         assert r.source_t2_time_s is not None
         assert r.source_v3_m_s is not None
@@ -2234,6 +2245,17 @@ def build_refraction_static_solution_arrays(
         'used_row_mask': _bool_array(r.used_row_mask),
         'rejected_by_robust_mask': _bool_array(r.rejected_by_robust_mask),
     }
+    if _has_source_depth_field_correction(r):
+        assert r.source_depth_m is not None
+        assert r.source_depth_shift_s is not None
+        assert r.source_depth_status is not None
+        arrays.update(
+            {
+                'source_depth_m': _float_array(r.source_depth_m),
+                'source_depth_shift_s': _float_array(r.source_depth_shift_s),
+                'source_depth_status': _string_array(r.source_depth_status),
+            }
+        )
     if _has_node_2layer_static_fields(r):
         assert r.node_sh2_weathering_thickness_m is not None
         node_sh1_m = _node_sh1_weathering_thickness_m(r)
@@ -2537,6 +2559,17 @@ def build_refraction_static_qc_payload(
         'artifacts': _artifact_list_for_qc(artifact_entries),
         'warnings': [],
     }
+    source_depth_qc = _source_depth_field_correction_qc(r, req)
+    if source_depth_qc:
+        payload['field_corrections'] = {'source_depth': source_depth_qc}
+        payload['source_depth_double_count_guard'] = source_depth_qc[
+            'source_depth_double_count_guard'
+        ]
+        warnings = source_depth_qc.get('warnings')
+        if isinstance(warnings, list):
+            payload['warnings'].extend(str(item) for item in warnings)
+    else:
+        payload['source_depth_double_count_guard'] = 'not_applicable'
     if layer_count is not None:
         payload['layer_count'] = int(layer_count)
     layer_velocity_modes = _layer_velocity_modes_for_request(req)
@@ -2633,6 +2666,31 @@ def _sign_convention_qc_payload(
     }
 
 
+def _source_depth_field_correction_qc(
+    result: RefractionDatumStaticsResult,
+    req: RefractionStaticApplyRequest,
+) -> dict[str, Any]:
+    if not _has_source_depth_field_correction(result):
+        if req.field_corrections.source_depth.mode != 'none':
+            raise RefractionStaticArtifactError(
+                'source-depth field correction artifacts require source-depth '
+                'component arrays'
+            )
+        return {}
+    qc = result.source_depth_field_correction_qc
+    if not isinstance(qc, dict):
+        raise RefractionStaticArtifactError(
+            'source_depth_field_correction_qc is required when source-depth '
+            'component arrays are present'
+        )
+    payload = dict(qc)
+    payload.setdefault('source_depth_mode', req.field_corrections.source_depth.mode)
+    payload.setdefault('component_name', 'source_depth_shift_s')
+    payload.setdefault('source_depth_double_count_guard', 'checked')
+    payload.setdefault('warnings', [])
+    return payload
+
+
 def _validate_job_dir(job_dir: Path) -> Path:
     try:
         root = Path(job_dir)
@@ -2676,6 +2734,12 @@ def _validate_result(result: RefractionDatumStaticsResult) -> _ValidatedResult:
             raise RefractionStaticArtifactError(
                 f'source endpoint array length mismatch for {name}'
             )
+    _validate_optional_arrays(
+        result=result,
+        names=('source_depth_m', 'source_depth_shift_s', 'source_depth_status'),
+        expected_length=n_source,
+        label='source-depth endpoint',
+    )
     _validate_optional_arrays(
         result=result,
         names=_SOURCE_2LAYER_STATIC_ARRAY_NAMES,
@@ -3365,10 +3429,11 @@ def _residual_rejection_reason(
 def _component_rows(result: RefractionDatumStaticsResult) -> list[dict[str, object]]:
     node_pick_count = _node_lookup(result.node_id, result.node_pick_count)
     node_residual_rms = _node_lookup(result.node_id, result.node_residual_rms_s)
+    has_source_depth = _has_source_depth_field_correction(result)
     rows: list[dict[str, object]] = []
     for index in range(int(result.source_endpoint_key.shape[0])):
         node_id = int(result.source_node_id[index])
-        rows.append(
+        row = (
             {
                 'kind': 'source',
                 'endpoint_key': str(result.source_endpoint_key[index]),
@@ -3390,9 +3455,21 @@ def _component_rows(result: RefractionDatumStaticsResult) -> list[dict[str, obje
                 'residual_rms_ms': _csv_ms(node_residual_rms.get(node_id)),
             }
         )
+        if has_source_depth:
+            assert result.source_depth_shift_s is not None
+            assert result.source_depth_status is not None
+            row.update(
+                {
+                    'source_depth_shift_ms': _csv_ms(
+                        result.source_depth_shift_s[index]
+                    ),
+                    'source_depth_status': str(result.source_depth_status[index]),
+                }
+            )
+        rows.append(row)
     for index in range(int(result.receiver_endpoint_key.shape[0])):
         node_id = int(result.receiver_node_id[index])
-        rows.append(
+        row = (
             {
                 'kind': 'receiver',
                 'endpoint_key': str(result.receiver_endpoint_key[index]),
@@ -3414,17 +3491,43 @@ def _component_rows(result: RefractionDatumStaticsResult) -> list[dict[str, obje
                 'residual_rms_ms': _csv_ms(node_residual_rms.get(node_id)),
             }
         )
+        if has_source_depth:
+            row.update(
+                {
+                    'source_depth_shift_ms': '',
+                    'source_depth_status': 'not_applicable',
+                }
+            )
+        rows.append(row)
     return rows
+
+
+def _component_columns(result: RefractionDatumStaticsResult) -> tuple[str, ...]:
+    if not _has_source_depth_field_correction(result):
+        return _COMPONENT_COLUMNS
+    return _insert_after(
+        _COMPONENT_COLUMNS,
+        'flat_datum_shift_ms',
+        ('source_depth_shift_ms', 'source_depth_status'),
+    )
 
 
 def _source_static_table_columns(
     result: RefractionDatumStaticsResult,
 ) -> tuple[str, ...]:
     if _has_source_3layer_static_fields(result):
-        return _SOURCE_STATIC_TABLE_3LAYER_COLUMNS
-    if _has_source_2layer_static_fields(result):
-        return _SOURCE_STATIC_TABLE_2LAYER_COLUMNS
-    return _SOURCE_STATIC_TABLE_COLUMNS
+        columns = _SOURCE_STATIC_TABLE_3LAYER_COLUMNS
+    elif _has_source_2layer_static_fields(result):
+        columns = _SOURCE_STATIC_TABLE_2LAYER_COLUMNS
+    else:
+        columns = _SOURCE_STATIC_TABLE_COLUMNS
+    if _has_source_depth_field_correction(result):
+        return _insert_after(
+            columns,
+            'weathering_correction_ms',
+            ('source_depth_m', 'source_depth_shift_ms', 'source_depth_status'),
+        )
+    return columns
 
 
 def _near_surface_columns(result: RefractionDatumStaticsResult) -> tuple[str, ...]:
@@ -3443,6 +3546,37 @@ def _receiver_static_table_columns(
     if _has_receiver_2layer_static_fields(result):
         return _RECEIVER_STATIC_TABLE_2LAYER_COLUMNS
     return _RECEIVER_STATIC_TABLE_COLUMNS
+
+
+def _insert_after(
+    columns: tuple[str, ...],
+    anchor: str,
+    additions: tuple[str, ...],
+) -> tuple[str, ...]:
+    try:
+        index = columns.index(anchor)
+    except ValueError as exc:
+        raise RefractionStaticArtifactError(
+            f'column anchor not found: {anchor}'
+        ) from exc
+    return columns[: index + 1] + additions + columns[index + 1 :]
+
+
+def _has_source_depth_field_correction(
+    result: RefractionDatumStaticsResult,
+) -> bool:
+    present = (
+        result.source_depth_m is not None,
+        result.source_depth_shift_s is not None,
+        result.source_depth_status is not None,
+    )
+    if not any(present):
+        return False
+    if not all(present):
+        raise RefractionStaticArtifactError(
+            'source-depth field correction arrays must be provided together'
+        )
+    return True
 
 
 def _has_node_3layer_static_fields(result: RefractionDatumStaticsResult) -> bool:
@@ -3557,6 +3691,7 @@ def _source_static_table_rows(
     source_sh2_m = result.source_sh2_weathering_thickness_m
     source_sh3_m = result.source_sh3_weathering_thickness_m
     source_sh1_m = _source_sh1_weathering_thickness_m(result)
+    has_source_depth = _has_source_depth_field_correction(result)
     rows: list[dict[str, object]] = []
     for index in range(int(result.source_endpoint_key.shape[0])):
         node_id = int(result.source_node_id[index])
@@ -3622,6 +3757,19 @@ def _source_static_table_rows(
                 'residual_mad_ms': _csv_ms(node_context['residual_mad'].get(node_id)),
             }
         )
+        if has_source_depth:
+            assert result.source_depth_m is not None
+            assert result.source_depth_shift_s is not None
+            assert result.source_depth_status is not None
+            rows[-1].update(
+                {
+                    'source_depth_m': _csv_float(result.source_depth_m[index]),
+                    'source_depth_shift_ms': _csv_ms(
+                        result.source_depth_shift_s[index]
+                    ),
+                    'source_depth_status': str(result.source_depth_status[index]),
+                }
+            )
         if has_2layer_fields:
             assert source_t2_time_s is not None
             assert source_v3_m_s is not None

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import replace
 import re
 from typing import Any
 
@@ -19,9 +20,13 @@ from app.api.schemas import (
 )
 from app.services.refraction_static_service import (
     RefractionFieldCorrectionNotImplemented,
+    _with_source_depth_field_correction,
     reject_unsupported_refraction_field_corrections,
 )
+from app.services.refraction_static_source_depth import resolve_refraction_source_depth
+from app.services.refraction_static_types import ResolvedRefractionFirstLayer
 from app.tests._refraction_static_synthetic import (
+    SYNTHETIC_V1_M_S,
     run_synthetic_refraction_statics,
     synthetic_refracted_arrival_input_model,
     synthetic_refraction_apply_request,
@@ -160,6 +165,98 @@ def test_refraction_static_source_depth_mode_is_no_longer_rejected_by_service() 
     )
 
     reject_unsupported_refraction_field_corrections(req)
+
+
+def test_source_depth_weathering_time_adds_source_only_component() -> None:
+    req = RefractionStaticApplyRequest.model_validate(
+        _payload_with_field_corrections(
+            {
+                'source_depth': {
+                    'mode': 'weathering_velocity_time',
+                    'source_depth_byte': 115,
+                }
+            }
+        )
+    )
+    input_model = synthetic_refracted_arrival_input_model()
+    source_depth_m_sorted = (
+        2.0 + np.asarray(input_model.source_node_id_sorted, dtype=np.float64)
+    )
+    source_depth_result = resolve_refraction_source_depth(
+        source_endpoint_key_sorted=input_model.source_endpoint_key_sorted,
+        source_endpoint_id_sorted=input_model.source_node_id_sorted,
+        source_node_id_sorted=input_model.source_node_id_sorted,
+        source_depth_m_sorted=source_depth_m_sorted,
+        mode='weathering_velocity_time',
+        source_depth_byte=115,
+    )
+    input_with_depth = replace(
+        input_model,
+        source_depth_m_sorted=source_depth_m_sorted,
+        source_depth_result=source_depth_result,
+    )
+    base_result = run_synthetic_refraction_statics(
+        req=req,
+        input_model=input_with_depth,
+    )
+
+    result_with_component = _with_source_depth_field_correction(
+        result=base_result,
+        input_model=input_with_depth,
+        req=req,
+        resolved_first_layer=ResolvedRefractionFirstLayer(
+            mode='constant',
+            weathering_velocity_m_s=SYNTHETIC_V1_M_S,
+            status='constant',
+            qc={},
+        ),
+    )
+
+    shift_by_source_key = {
+        str(key): float(depth) / SYNTHETIC_V1_M_S
+        for key, depth in zip(
+            source_depth_result.source_endpoint_key,
+            source_depth_result.source_depth_m,
+            strict=True,
+        )
+    }
+    expected_source_shift = np.asarray(
+        [shift_by_source_key[str(key)] for key in base_result.source_endpoint_key],
+        dtype=np.float64,
+    )
+    np.testing.assert_allclose(
+        result_with_component.source_depth_shift_s,
+        expected_source_shift,
+    )
+    np.testing.assert_allclose(
+        result_with_component.source_refraction_shift_s,
+        base_result.source_refraction_shift_s,
+    )
+    np.testing.assert_allclose(
+        result_with_component.source_refraction_shift_s_sorted,
+        base_result.source_refraction_shift_s_sorted,
+    )
+    np.testing.assert_allclose(
+        result_with_component.refraction_trace_shift_s_sorted,
+        base_result.refraction_trace_shift_s_sorted,
+    )
+    np.testing.assert_array_equal(
+        result_with_component.trace_static_status_sorted,
+        base_result.trace_static_status_sorted,
+    )
+    np.testing.assert_array_equal(
+        result_with_component.trace_static_valid_mask_sorted,
+        base_result.trace_static_valid_mask_sorted,
+    )
+    np.testing.assert_allclose(
+        result_with_component.receiver_refraction_shift_s,
+        base_result.receiver_refraction_shift_s,
+    )
+    assert result_with_component.source_depth_field_correction_qc is not None
+    assert (
+        result_with_component.source_depth_field_correction_qc['component_name']
+        == 'source_depth_shift_s'
+    )
 
 
 def test_refraction_static_uphole_header_mode_requires_header_byte() -> None:

@@ -34,6 +34,8 @@ The implemented public workflows are:
 - Refractor-cell coordinate modes `grid_3d` and `line_2d_projected`.
 - Source and receiver static table exports for 1-, 2-, and 3-layer results.
 - Optional TraceStore registration using the repo static-shift sign convention.
+- M4 source-depth field correction with
+  `field_corrections.source_depth.mode="weathering_velocity_time"`.
 
 V3/T2 and Vsub/T3 `solve_cell` are schema/internal solver capabilities, but
 they are not public T1LSST apply capabilities. Public T1LSST apply rejects cell
@@ -49,7 +51,8 @@ Current non-goals are:
 
 - GRM.
 - Plus-minus.
-- Source depth / uphole correction.
+- Uphole correction.
+- Manual source/receiver statics.
 - SEG-Y static header write-back.
 - Refraction tomography.
 - Path-integrated or raypath-weighted cell slowness.
@@ -408,6 +411,21 @@ for artifact-only and apply jobs. Trace-level final shifts in
 `apply.register_corrected_file=true`, `refraction_trace_shift_s_sorted` is the
 shift array applied to the source TraceStore.
 
+When source-depth field correction is enabled with
+`field_corrections.source_depth.mode="weathering_velocity_time"`, source depth
+is positive downward and the source-only component is:
+
+```text
+source_depth_shift_s = +source_depth_m / V1_m_s
+```
+
+The value is stored in the same applied-shift convention. It is written to
+source endpoint field-correction columns and QC only. It is not folded into
+`source_refraction_shift_s`, `source_refraction_shift_s_sorted`, or
+`refraction_trace_shift_s_sorted`; trace-level composition is reserved for a
+later field-correction composition workflow. Receiver endpoint totals are
+unchanged by this component.
+
 ## 7. Artifact List
 
 Every public refraction statics job writes:
@@ -488,6 +506,9 @@ Source-specific identifier columns:
 | `source_id` | Source station ID read from the configured source header byte. |
 | `source_node_id` | Near-surface node ID assigned to the source endpoint. |
 | `source_v2_cell_id` | Endpoint-local V2 cell ID for cell V2 workflows, or blank/NaN when not cell-based. |
+| `source_depth_m` | Source depth in meters, positive downward. Present only when source-depth field correction is enabled. |
+| `source_depth_shift_ms` | Source-depth weathering-time shift in milliseconds. Present only when source-depth field correction is enabled. |
+| `source_depth_status` | Source-depth component status, including missing/invalid/max-shift states. Present only when source-depth field correction is enabled. |
 
 Receiver-specific identifier columns:
 
@@ -625,7 +646,8 @@ Recommended coverage for future changes:
 
 - GRM is not implemented.
 - Plus-minus is not implemented.
-- Source depth / uphole correction is not implemented.
+- Uphole correction is not implemented.
+- Manual source/receiver statics are not implemented.
 - SEG-Y header write-back is not implemented.
 - Path-integrated cell slowness is not implemented; cell velocity assignment is
   midpoint-based.

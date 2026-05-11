@@ -11,6 +11,8 @@ from uuid import uuid4
 import numpy as np
 
 from app.services.refraction_static_types import (
+    REFRACTION_FIELD_CORRECTION_COMPONENT_NAMES,
+    RefractionEndpointFieldCorrectionResult,
     RefractionSourceDepthResult,
     RefractionStaticInputModel,
 )
@@ -19,6 +21,7 @@ REFRACTION_SOURCE_DEPTH_QC_JSON_NAME = 'refraction_source_depth_qc.json'
 REFRACTION_SOURCE_DEPTH_SOURCES_CSV_NAME = 'refraction_source_depth_sources.csv'
 
 _STATUS_DTYPE = '<U32'
+_FIELD_STATUS_DTYPE = '<U48'
 _ENDPOINT_KEY_DTYPE = object
 _DEFAULT_INCONSISTENCY_TOLERANCE_M = 0.01
 _SOURCE_DEPTH_STATUSES = (
@@ -38,6 +41,10 @@ _SOURCE_DEPTH_COLUMNS = (
     'source_depth_pick_count',
     'source_depth_trace_count',
 )
+_SOURCE_DEPTH_COMPONENT = 'source_depth_shift_s'
+_NOT_APPLICABLE_STATUS = 'not_applicable'
+_SOURCE_DEPTH_SHIFT_FORMULA = 'source_depth_shift_s = +source_depth_m / V1_m_s'
+_SIGN_CONVENTION = 'corrected(t) = raw(t - shift_s)'
 
 
 def resolve_refraction_source_depth_for_input_model(
@@ -145,8 +152,8 @@ def resolve_refraction_source_depth(
 
         values = depth[trace_indices]
         finite = np.isfinite(values)
-        positive = finite & (values > 0.0)
-        valid_values = values[positive]
+        nonnegative = finite & (values >= 0.0)
+        valid_values = values[nonnegative]
         out_pick_count[endpoint_index] = int(valid_values.shape[0])
         if valid_values.size:
             out_depth[endpoint_index] = float(np.median(valid_values))
@@ -197,6 +204,200 @@ def write_refraction_source_depth_artifacts(
     return {
         'qc_json': qc_path,
         'sources_csv': source_path,
+    }
+
+
+def compute_source_depth_weathering_time_correction(
+    source_depth_m: np.ndarray,
+    v1_m_s: float,
+    *,
+    status: np.ndarray,
+    max_abs_shift_s: float | None,
+) -> RefractionEndpointFieldCorrectionResult:
+    """Compute source-depth weathering-time shifts for source endpoints.
+
+    ``source_depth_m`` is positive downward.  The returned
+    ``source_depth_shift_s`` values use the repo applied-shift convention:
+    ``corrected(t) = raw(t - shift_s)``.
+    """
+    depth = _coerce_1d_float(
+        source_depth_m,
+        name='source_depth_m',
+        expected_shape=np.asarray(source_depth_m).shape,
+    )
+    if depth.ndim != 1:
+        raise ValueError('source_depth_m must be one-dimensional')
+    endpoint_count = int(depth.shape[0])
+    status_array = _coerce_1d_string_status(
+        status,
+        name='status',
+        expected_shape=(endpoint_count,),
+    )
+    endpoint_id = np.arange(endpoint_count, dtype=np.int64)
+    endpoint_key = endpoint_id.astype('<U32')
+    return _compute_source_depth_weathering_time_correction_for_endpoints(
+        endpoint_key=endpoint_key,
+        endpoint_id=endpoint_id,
+        node_id=endpoint_id,
+        source_depth_m=depth,
+        source_depth_status=status_array,
+        v1_m_s=v1_m_s,
+        max_abs_shift_s=max_abs_shift_s,
+    )
+
+
+def compute_source_depth_weathering_time_correction_from_result(
+    result: RefractionSourceDepthResult,
+    v1_m_s: float,
+    *,
+    max_abs_shift_s: float | None,
+) -> RefractionEndpointFieldCorrectionResult:
+    """Compute source-depth field shifts from resolved endpoint depth rows."""
+    return _compute_source_depth_weathering_time_correction_for_endpoints(
+        endpoint_key=result.source_endpoint_key,
+        endpoint_id=result.source_endpoint_id,
+        node_id=result.source_node_id,
+        source_depth_m=result.source_depth_m,
+        source_depth_status=result.source_depth_status,
+        v1_m_s=v1_m_s,
+        max_abs_shift_s=max_abs_shift_s,
+    )
+
+
+def _compute_source_depth_weathering_time_correction_for_endpoints(
+    *,
+    endpoint_key: np.ndarray,
+    endpoint_id: np.ndarray,
+    node_id: np.ndarray,
+    source_depth_m: np.ndarray,
+    source_depth_status: np.ndarray,
+    v1_m_s: float,
+    max_abs_shift_s: float | None,
+) -> RefractionEndpointFieldCorrectionResult:
+    keys = _coerce_1d_string(endpoint_key, name='endpoint_key')
+    endpoint_count = int(keys.shape[0])
+    ids = _coerce_1d_integer(
+        endpoint_id,
+        name='endpoint_id',
+        expected_shape=(endpoint_count,),
+    )
+    nodes = _coerce_1d_integer(
+        node_id,
+        name='node_id',
+        expected_shape=(endpoint_count,),
+    )
+    depth = _coerce_1d_float(
+        source_depth_m,
+        name='source_depth_m',
+        expected_shape=(endpoint_count,),
+    )
+    depth_status = _coerce_1d_string_status(
+        source_depth_status,
+        name='source_depth_status',
+        expected_shape=(endpoint_count,),
+    )
+    v1 = _positive_finite_float(v1_m_s, name='v1_m_s')
+    max_shift = (
+        None
+        if max_abs_shift_s is None
+        else _nonnegative_finite_float(max_abs_shift_s, name='max_abs_shift_s')
+    )
+
+    component_status = depth_status.astype(_FIELD_STATUS_DTYPE, copy=True)
+    component_status[component_status == 'exceeds_max_abs_source_depth'] = (
+        'exceeds_max_abs_source_depth_shift'
+    )
+    shift = np.full(endpoint_count, np.nan, dtype=np.float64)
+
+    ok = component_status == 'ok'
+    missing = ok & np.isnan(depth)
+    component_status[missing] = 'missing_source_depth'
+    invalid = ok & (~np.isnan(depth)) & (~np.isfinite(depth) | (depth < 0.0))
+    component_status[invalid] = 'invalid_source_depth'
+    ok = component_status == 'ok'
+    shift[ok] = depth[ok] / v1
+    if max_shift is not None:
+        exceeds = ok & (np.abs(shift) > max_shift)
+        component_status[exceeds] = 'exceeds_max_abs_source_depth_shift'
+        shift[exceeds] = np.nan
+
+    total = np.where(component_status == 'ok', shift, np.nan).astype(np.float64)
+    zeros = np.zeros(endpoint_count, dtype=np.float64)
+    inactive_status = np.full(
+        endpoint_count,
+        _NOT_APPLICABLE_STATUS,
+        dtype=_FIELD_STATUS_DTYPE,
+    )
+    component_shift_s = {
+        'source_depth_shift_s': np.ascontiguousarray(shift, dtype=np.float64),
+        'uphole_shift_s': zeros.copy(),
+        'manual_static_shift_s': zeros.copy(),
+    }
+    component_status_by_name = {
+        'source_depth_shift_s': np.ascontiguousarray(
+            component_status,
+            dtype=_FIELD_STATUS_DTYPE,
+        ),
+        'uphole_shift_s': inactive_status.copy(),
+        'manual_static_shift_s': inactive_status.copy(),
+    }
+    qc = _source_depth_shift_qc(
+        source_depth_m=depth,
+        shift_s=shift,
+        status=component_status,
+        v1_m_s=v1,
+        max_abs_shift_s=max_shift,
+        n_source_endpoints=endpoint_count,
+    )
+    return RefractionEndpointFieldCorrectionResult(
+        endpoint_kind=np.full(endpoint_count, 'source', dtype='<U16'),
+        endpoint_key=np.ascontiguousarray(keys, dtype=object),
+        endpoint_id=np.ascontiguousarray(ids, dtype=np.int64),
+        node_id=np.ascontiguousarray(nodes, dtype=np.int64),
+        component_shift_s=component_shift_s,
+        component_status=component_status_by_name,
+        total_field_shift_s=np.ascontiguousarray(total, dtype=np.float64),
+        field_static_status=np.ascontiguousarray(
+            component_status,
+            dtype=_FIELD_STATUS_DTYPE,
+        ),
+        qc=qc,
+    )
+
+
+def _source_depth_shift_qc(
+    *,
+    source_depth_m: np.ndarray,
+    shift_s: np.ndarray,
+    status: np.ndarray,
+    v1_m_s: float,
+    max_abs_shift_s: float | None,
+    n_source_endpoints: int,
+) -> dict[str, Any]:
+    finite_shift = shift_s[np.isfinite(shift_s)]
+    finite_depth = source_depth_m[np.isfinite(source_depth_m)]
+    return {
+        'source_depth_mode': 'weathering_velocity_time',
+        'component_name': _SOURCE_DEPTH_COMPONENT,
+        'component_names': list(REFRACTION_FIELD_CORRECTION_COMPONENT_NAMES),
+        'source_depth_shift_formula': _SOURCE_DEPTH_SHIFT_FORMULA,
+        'sign_convention': _SIGN_CONVENTION,
+        'positive_shift': 'event appears later in corrected data',
+        'negative_shift': 'event appears earlier in corrected data',
+        'v1_m_s': float(v1_m_s),
+        'max_abs_shift_s': (
+            None if max_abs_shift_s is None else float(max_abs_shift_s)
+        ),
+        'n_source_endpoints': int(n_source_endpoints),
+        'n_ok_source_depth_shifts': int(np.count_nonzero(status == 'ok')),
+        'n_invalid_source_depth_shifts': int(np.count_nonzero(status != 'ok')),
+        'status_counts': _status_counts(status),
+        'min_source_depth_m': _finite_stat(finite_depth, 'min'),
+        'median_source_depth_m': _finite_stat(finite_depth, 'median'),
+        'max_source_depth_m': _finite_stat(finite_depth, 'max'),
+        'min_source_depth_shift_s': _finite_stat(finite_shift, 'min'),
+        'median_source_depth_shift_s': _finite_stat(finite_shift, 'median'),
+        'max_source_depth_shift_s': _finite_stat(finite_shift, 'max'),
     }
 
 
@@ -253,8 +454,8 @@ def _source_depth_status(
 
     finite = np.isfinite(values)
     nonfinite_invalid = np.isinf(values)
-    nonpositive = finite & (values <= 0.0)
-    if bool(np.any(nonfinite_invalid | nonpositive)):
+    negative = finite & (values < 0.0)
+    if bool(np.any(nonfinite_invalid | negative)):
         return 'invalid_source_depth'
     if depth_required and bool(np.any(np.isnan(values))):
         return 'missing_source_depth'
@@ -343,6 +544,18 @@ def _coerce_1d_string(values: object, *, name: str) -> np.ndarray:
     return np.ascontiguousarray(arr.astype(object, copy=False), dtype=object)
 
 
+def _coerce_1d_string_status(
+    values: object,
+    *,
+    name: str,
+    expected_shape: tuple[int, ...],
+) -> np.ndarray:
+    arr = np.asarray(values)
+    if arr.ndim != 1 or arr.shape != expected_shape:
+        raise ValueError(f'{name} shape mismatch: expected {expected_shape}, got {arr.shape}')
+    return np.ascontiguousarray(arr.astype(_FIELD_STATUS_DTYPE, copy=False))
+
+
 def _coerce_1d_integer(
     values: object,
     *,
@@ -422,6 +635,14 @@ def _finite_stat(values: np.ndarray, stat: str) -> float | None:
     raise ValueError(f'unsupported finite stat: {stat}')
 
 
+def _status_counts(status: np.ndarray) -> dict[str, int]:
+    out: dict[str, int] = {}
+    for raw_status in status.tolist():
+        item = str(raw_status)
+        out[item] = int(out.get(item, 0) + 1)
+    return out
+
+
 def _csv_float(value: float) -> str:
     if not np.isfinite(value):
         return ''
@@ -463,6 +684,8 @@ def _write_csv_atomic(
 __all__ = [
     'REFRACTION_SOURCE_DEPTH_QC_JSON_NAME',
     'REFRACTION_SOURCE_DEPTH_SOURCES_CSV_NAME',
+    'compute_source_depth_weathering_time_correction',
+    'compute_source_depth_weathering_time_correction_from_result',
     'resolve_refraction_source_depth',
     'resolve_refraction_source_depth_for_input_model',
     'write_refraction_source_depth_artifacts',

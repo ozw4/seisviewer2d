@@ -3,10 +3,13 @@ from __future__ import annotations
 import json
 
 import numpy as np
+import pytest
 
 from app.services.refraction_static_source_depth import (
     REFRACTION_SOURCE_DEPTH_QC_JSON_NAME,
     REFRACTION_SOURCE_DEPTH_SOURCES_CSV_NAME,
+    compute_source_depth_weathering_time_correction,
+    compute_source_depth_weathering_time_correction_from_result,
     resolve_refraction_source_depth,
     write_refraction_source_depth_artifacts,
 )
@@ -171,3 +174,85 @@ def test_source_depth_artifacts_write_qc_and_source_rows(tmp_path) -> None:
     text = paths['sources_csv'].read_text(encoding='utf-8')
     assert 'source_endpoint_key,source_endpoint_id,source_node_id' in text
     assert 'source:a,101,0,3.5,ok,1,1' in text
+
+
+def test_source_depth_weathering_time_shift_formula_and_sign() -> None:
+    result = compute_source_depth_weathering_time_correction(
+        _depths([0.0, 10.0]),
+        500.0,
+        status=np.asarray(['ok', 'ok'], dtype='<U32'),
+        max_abs_shift_s=None,
+    )
+
+    shift = result.component_shift_s['source_depth_shift_s']
+    np.testing.assert_allclose(shift, [0.0, 0.020])
+    np.testing.assert_array_equal(
+        result.component_status['source_depth_shift_s'],
+        ['ok', 'ok'],
+    )
+    assert result.qc['source_depth_shift_formula'] == (
+        'source_depth_shift_s = +source_depth_m / V1_m_s'
+    )
+    assert result.qc['sign_convention'] == 'corrected(t) = raw(t - shift_s)'
+
+
+def test_source_depth_weathering_time_uses_resolved_v1() -> None:
+    resolved_depth = resolve_refraction_source_depth(
+        source_endpoint_key_sorted=_keys(['source:a']),
+        source_endpoint_id_sorted=_ids([101]),
+        source_node_id_sorted=_ids([0]),
+        source_depth_m_sorted=_depths([8.0]),
+        mode='weathering_velocity_time',
+        source_depth_byte=115,
+    )
+
+    result = compute_source_depth_weathering_time_correction_from_result(
+        resolved_depth,
+        800.0,
+        max_abs_shift_s=None,
+    )
+
+    np.testing.assert_allclose(
+        result.component_shift_s['source_depth_shift_s'],
+        [0.010],
+    )
+    assert result.qc['v1_m_s'] == 800.0
+
+
+def test_source_depth_weathering_time_marks_missing_depth() -> None:
+    result = compute_source_depth_weathering_time_correction(
+        _depths([np.nan]),
+        800.0,
+        status=np.asarray(['missing_source_depth'], dtype='<U32'),
+        max_abs_shift_s=None,
+    )
+
+    assert result.component_status['source_depth_shift_s'].tolist() == [
+        'missing_source_depth'
+    ]
+    assert np.isnan(result.component_shift_s['source_depth_shift_s'][0])
+    assert np.isnan(result.total_field_shift_s[0])
+
+
+def test_source_depth_weathering_time_rejects_invalid_v1() -> None:
+    with pytest.raises(ValueError, match='v1_m_s must be positive'):
+        compute_source_depth_weathering_time_correction(
+            _depths([8.0]),
+            0.0,
+            status=np.asarray(['ok'], dtype='<U32'),
+            max_abs_shift_s=None,
+        )
+
+
+def test_source_depth_weathering_time_max_shift_status() -> None:
+    result = compute_source_depth_weathering_time_correction(
+        _depths([8.0]),
+        800.0,
+        status=np.asarray(['ok'], dtype='<U32'),
+        max_abs_shift_s=0.005,
+    )
+
+    assert result.component_status['source_depth_shift_s'].tolist() == [
+        'exceeds_max_abs_source_depth_shift'
+    ]
+    assert np.isnan(result.component_shift_s['source_depth_shift_s'][0])
