@@ -334,6 +334,13 @@ def test_refraction_static_types_is_dependency_light() -> None:
     assert refraction_types.RefractionLayerSolveResult is not None
     assert refraction_types.RefractionMultiLayerSolveResult is not None
     assert refraction_types.RefractionMultiLayerStaticComponents is not None
+    assert refraction_types.RefractionEndpointFieldCorrectionResult is not None
+    assert refraction_types.RefractionTraceFieldCorrectionResult is not None
+    assert refraction_types.REFRACTION_FIELD_CORRECTION_COMPONENT_NAMES == (
+        'source_depth_shift_s',
+        'uphole_shift_s',
+        'manual_static_shift_s',
+    )
     assert refraction_types.RefractionDatumStaticsResult is not None
 
     assert (

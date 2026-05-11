@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Literal
+from typing import Any, Final, Literal
 
 import numpy as np
 
@@ -13,6 +13,18 @@ BedrockVelocityMode = Literal['solve_global', 'fixed_global', 'solve_cell']
 RefractionFirstLayerMode = Literal['constant', 'estimate_direct_arrival']
 RefractionLayerKind = Literal['v2_t1', 'v3_t2', 'vsub_t3']
 RefractionLayerVelocityMode = BedrockVelocityMode
+RefractionFieldCorrectionComponentName = Literal[
+    'source_depth_shift_s',
+    'uphole_shift_s',
+    'manual_static_shift_s',
+]
+REFRACTION_FIELD_CORRECTION_COMPONENT_NAMES: Final[
+    tuple[RefractionFieldCorrectionComponentName, ...]
+] = (
+    'source_depth_shift_s',
+    'uphole_shift_s',
+    'manual_static_shift_s',
+)
 
 
 @dataclass(frozen=True)
@@ -253,6 +265,38 @@ class RefractionMultiLayerStaticComponents:
 
     source_weathering_correction_s: np.ndarray
     receiver_weathering_correction_s: np.ndarray
+
+    qc: dict[str, Any]
+
+
+@dataclass(frozen=True)
+class RefractionEndpointFieldCorrectionResult:
+    """Dependency-light endpoint-level source-depth, uphole, and manual statics."""
+
+    endpoint_kind: np.ndarray
+    endpoint_key: np.ndarray
+    endpoint_id: np.ndarray
+    node_id: np.ndarray
+
+    component_shift_s: dict[RefractionFieldCorrectionComponentName, np.ndarray]
+    component_status: dict[RefractionFieldCorrectionComponentName, np.ndarray]
+
+    total_field_shift_s: np.ndarray
+    field_static_status: np.ndarray
+    qc: dict[str, Any]
+
+
+@dataclass(frozen=True)
+class RefractionTraceFieldCorrectionResult:
+    """Dependency-light trace-order field static composition result."""
+
+    source_endpoint_key_sorted: np.ndarray
+    receiver_endpoint_key_sorted: np.ndarray
+
+    source_field_shift_s_sorted: np.ndarray
+    receiver_field_shift_s_sorted: np.ndarray
+    trace_field_shift_s_sorted: np.ndarray
+    trace_field_static_status_sorted: np.ndarray
 
     qc: dict[str, Any]
 
@@ -850,10 +894,13 @@ class RefractionStaticApplyTraceStoreResult:
 
 __all__ = [
     'BedrockVelocityMode',
+    'REFRACTION_FIELD_CORRECTION_COMPONENT_NAMES',
     'RefractionFirstLayerMode',
     'RefractionBedrockSlownessResult',
     'RefractionDatumStaticsResult',
     'RefractionEndpointTable',
+    'RefractionEndpointFieldCorrectionResult',
+    'RefractionFieldCorrectionComponentName',
     'RefractionHalfInterceptTimeResult',
     'RefractionLayerKind',
     'RefractionLayerObservationMasks',
@@ -867,6 +914,7 @@ __all__ = [
     'RefractionStaticInputModel',
     'RefractionStaticSolverResult',
     'RefractionTraceShiftValidationResult',
+    'RefractionTraceFieldCorrectionResult',
     'RefractionWeatheringReplacementStaticsResult',
     'RefractionWeatheringThicknessResult',
     'ResolvedRefractionFirstLayer',
