@@ -2474,12 +2474,14 @@ def _layer_rejection_reason_from_context(
         cell_id[in_grid_valid],
         minlength=int(grid.cell_id.shape[0]),
     )
+    min_observations_per_cell = (
+        context.layer_config.min_observations_per_cell
+        if context.layer_config.min_observations_per_cell is not None
+        else refractor_cell.min_observations_per_cell
+    )
     low_fold_cell = (
         (cell_observation_count > 0)
-        & (
-            cell_observation_count
-            < int(refractor_cell.min_observations_per_cell)
-        )
+        & (cell_observation_count < int(min_observations_per_cell))
     )
     low_fold = np.zeros(valid.shape, dtype=bool)
     if np.any(low_fold_cell):
