@@ -68,6 +68,10 @@ _LAYER_INDEX_BY_KIND: dict[RefractionLayerKind, int] = {
     'v3_t2': 2,
     'vsub_t3': 3,
 }
+_VELOCITY_SEQUENCE_REFERENCE_BY_KIND: dict[RefractionLayerKind, RefractionLayerKind] = {
+    'v3_t2': 'v2_t1',
+    'vsub_t3': 'v3_t2',
+}
 _STATUS_DTYPE = '<U32'
 _SIGN_CONVENTION_TEXT = 'corrected(t) = raw(t - shift_s)'
 _LOCAL_V2_OK_STATUS = {'ok', 'solved'}
@@ -1635,6 +1639,8 @@ def _effective_solver_dispatch(
         ('v2_t1', 'solve_cell'): _solve_existing_time_term_layer,
         ('v3_t2', 'fixed_global'): _solve_existing_time_term_layer,
         ('v3_t2', 'solve_global'): _solve_existing_time_term_layer,
+        ('vsub_t3', 'fixed_global'): _solve_existing_time_term_layer,
+        ('vsub_t3', 'solve_global'): _solve_existing_time_term_layer,
     }
     if overrides is not None:
         dispatch.update(dict(overrides))
@@ -2045,7 +2051,9 @@ def _layer_velocity_qc_aliases(
     if layer_kind == 'vsub_t3':
         return {
             'vsub_m_s': float(global_velocity_m_s),
+            'vsub_velocity_m_s': float(global_velocity_m_s),
             'slowness_sub_s_per_m': float(global_slowness_s_per_m),
+            'vsub_slowness_s_per_m': float(global_slowness_s_per_m),
         }
     return {}
 
@@ -2077,13 +2085,14 @@ def _validate_layer_velocity_sequence(
     previous_results: tuple[RefractionLayerSolveResult, ...],
     normalized_layers: tuple[RefractionStaticLayerConfig, ...],
 ) -> RefractionLayerSolveResult:
-    if result.layer_kind != 'v3_t2':
+    reference_layer_kind = _VELOCITY_SEQUENCE_REFERENCE_BY_KIND.get(result.layer_kind)
+    if reference_layer_kind is None:
         return result
     current_velocity = _summary_velocity_m_s(result)
     if current_velocity is None:
         return result
     reference = _prior_layer_velocity_reference(
-        layer_kind='v2_t1',
+        layer_kind=reference_layer_kind,
         previous_results=previous_results,
         normalized_layers=normalized_layers,
     )
