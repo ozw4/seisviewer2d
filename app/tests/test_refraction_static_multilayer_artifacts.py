@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import csv
 import json
 from pathlib import Path
 
@@ -223,3 +224,136 @@ def test_two_layer_artifact_manifest_regression_still_passes(
             SYNTHETIC_MULTILAYER_V3_M_S,
             rtol=1.0e-9,
         )
+
+
+def test_multilayer_residual_csv_contains_layer_kind_and_layer_index(
+    tmp_path: Path,
+) -> None:
+    job_dir = tmp_path / 'job'
+    compute_three_layer_workflow(job_dir=job_dir)
+
+    rows = _read_csv(job_dir / FIRST_BREAK_RESIDUALS_CSV_NAME)
+
+    expected_columns = {
+        'trace_index_sorted',
+        'layer_kind',
+        'layer_index',
+        'source_endpoint_key',
+        'receiver_endpoint_key',
+        'offset_m',
+        'observed_pick_time_s',
+        'modeled_pick_time_s',
+        'residual_time_s',
+        'used',
+        'rejected_by_robust',
+        'rejection_reason',
+        'midpoint_cell_id',
+        'row_velocity_m_s',
+    }
+    assert rows
+    assert expected_columns <= set(rows[0])
+    assert {'v2_t1', 'v3_t2', 'vsub_t3'} <= {
+        row['layer_kind'] for row in rows
+    }
+    vsub_rows = [row for row in rows if row['layer_kind'] == 'vsub_t3']
+    assert vsub_rows
+    assert {row['layer_index'] for row in vsub_rows} == {'3'}
+    assert all(row['residual_time_s'] != '' for row in vsub_rows)
+
+
+def test_multilayer_residual_csv_reports_cell_ids_for_solve_cell_layer(
+    tmp_path: Path,
+) -> None:
+    fixture = _make_two_layer_fixture(
+        coordinate_mode='line_2d_projected',
+        v2_velocity_mode='solve_cell',
+    )
+    job_dir = tmp_path / 'job'
+
+    compute_refraction_multilayer_datum_statics_from_input_model(
+        input_model=fixture.input_model,
+        model=fixture.model,
+        solver=RefractionStaticSolverRequest(
+            damping=0.0,
+            robust={'enabled': False},
+        ),
+        datum=RefractionStaticDatumRequest(mode='none'),
+        apply_options=RefractionStaticApplyOptions(max_abs_shift_ms=250.0),
+        resolved_first_layer=_resolved_first_layer(),
+        job_dir=job_dir,
+    )
+
+    rows = _read_csv(job_dir / FIRST_BREAK_RESIDUALS_CSV_NAME)
+    v2_rows = [row for row in rows if row['layer_kind'] == 'v2_t1']
+
+    assert v2_rows
+    assert all(row['midpoint_cell_id'] != '' for row in v2_rows)
+    assert all(row['row_velocity_m_s'] != '' for row in v2_rows)
+    assert {
+        round(float(row['row_velocity_m_s']), 6) for row in v2_rows
+    } == {round(SYNTHETIC_MULTILAYER_V2_M_S, 6)}
+
+
+def test_multilayer_endpoint_tables_include_layer_qc_fields(
+    tmp_path: Path,
+) -> None:
+    job_dir = tmp_path / 'job'
+    compute_three_layer_workflow(job_dir=job_dir)
+
+    source_rows = _read_csv(job_dir / SOURCE_STATIC_TABLE_CSV_NAME)
+    receiver_rows = _read_csv(job_dir / RECEIVER_STATIC_TABLE_CSV_NAME)
+
+    for row in (source_rows + receiver_rows):
+        assert 'pick_count_by_layer' in row
+        assert 'used_pick_count_by_layer' in row
+        assert 'residual_rms_by_layer_ms' in row
+        assert 'residual_mad_by_layer_ms' in row
+
+    assert any(
+        'vsub_t3' in json.loads(row['pick_count_by_layer'])
+        for row in source_rows + receiver_rows
+    )
+
+
+def test_two_layer_endpoint_tables_populate_layer_qc_fields(
+    tmp_path: Path,
+) -> None:
+    fixture = _make_two_layer_fixture(
+        coordinate_mode='grid_3d',
+        v2_velocity_mode='solve_global',
+    )
+    job_dir = tmp_path / 'job'
+
+    compute_refraction_multilayer_datum_statics_from_input_model(
+        input_model=fixture.input_model,
+        model=fixture.model,
+        solver=RefractionStaticSolverRequest(
+            damping=0.0,
+            robust={'enabled': False},
+        ),
+        datum=RefractionStaticDatumRequest(mode='none'),
+        apply_options=RefractionStaticApplyOptions(max_abs_shift_ms=250.0),
+        resolved_first_layer=_resolved_first_layer(),
+        job_dir=job_dir,
+    )
+
+    source_rows = _read_csv(job_dir / SOURCE_STATIC_TABLE_CSV_NAME)
+    receiver_rows = _read_csv(job_dir / RECEIVER_STATIC_TABLE_CSV_NAME)
+
+    for row in source_rows + receiver_rows:
+        pick_count_by_layer = json.loads(row['pick_count_by_layer'])
+        used_pick_count_by_layer = json.loads(row['used_pick_count_by_layer'])
+        residual_rms_by_layer_ms = json.loads(row['residual_rms_by_layer_ms'])
+        residual_mad_by_layer_ms = json.loads(row['residual_mad_by_layer_ms'])
+
+        assert pick_count_by_layer
+        assert used_pick_count_by_layer
+        assert residual_rms_by_layer_ms
+        assert residual_mad_by_layer_ms
+        assert set(pick_count_by_layer) <= {'v2_t1', 'v3_t2'}
+        assert set(used_pick_count_by_layer) <= {'v2_t1', 'v3_t2'}
+
+
+def _read_csv(path: Path) -> list[dict[str, str]]:
+    with Path(path).open(newline='', encoding='utf-8') as handle:
+        return list(csv.DictReader(handle))

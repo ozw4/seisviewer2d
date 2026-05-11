@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import csv
-from collections.abc import Iterable
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 import json
 import os
@@ -335,6 +335,15 @@ _RESIDUAL_COLUMNS = (
     'cell_id',
     'cell_ix',
     'cell_iy',
+    'trace_index_sorted',
+    'layer_kind',
+    'layer_index',
+    'source_endpoint_key',
+    'receiver_endpoint_key',
+    'offset_m',
+    'residual_time_s',
+    'midpoint_cell_id',
+    'row_velocity_m_s',
 )
 
 _COMPONENT_COLUMNS = (
@@ -431,6 +440,10 @@ _SOURCE_STATIC_TABLE_2LAYER_COLUMNS = (
     'used_pick_count',
     'residual_rms_ms',
     'residual_mad_ms',
+    'pick_count_by_layer',
+    'used_pick_count_by_layer',
+    'residual_rms_by_layer_ms',
+    'residual_mad_by_layer_ms',
 )
 
 _SOURCE_STATIC_TABLE_3LAYER_COLUMNS = (
@@ -475,6 +488,10 @@ _SOURCE_STATIC_TABLE_3LAYER_COLUMNS = (
     'used_pick_count',
     'residual_rms_ms',
     'residual_mad_ms',
+    'pick_count_by_layer',
+    'used_pick_count_by_layer',
+    'residual_rms_by_layer_ms',
+    'residual_mad_by_layer_ms',
 )
 
 _RECEIVER_STATIC_TABLE_COLUMNS = (
@@ -550,6 +567,10 @@ _RECEIVER_STATIC_TABLE_2LAYER_COLUMNS = (
     'used_pick_count',
     'residual_rms_ms',
     'residual_mad_ms',
+    'pick_count_by_layer',
+    'used_pick_count_by_layer',
+    'residual_rms_by_layer_ms',
+    'residual_mad_by_layer_ms',
 )
 
 _RECEIVER_STATIC_TABLE_3LAYER_COLUMNS = (
@@ -594,6 +615,10 @@ _RECEIVER_STATIC_TABLE_3LAYER_COLUMNS = (
     'used_pick_count',
     'residual_rms_ms',
     'residual_mad_ms',
+    'pick_count_by_layer',
+    'used_pick_count_by_layer',
+    'residual_rms_by_layer_ms',
+    'residual_mad_by_layer_ms',
 )
 
 # Keep the original Phase 2 cell columns and add self-describing aliases used
@@ -2316,6 +2341,16 @@ def build_refraction_static_qc_payload(
         payload['enabled_layer_kinds'] = [
             str(layer_kind) for layer_kind in enabled_layer_kinds
         ]
+    observation_gates = r.qc.get('observation_gates')
+    raw_layer_container = r.qc.get('layers')
+    if (
+        not isinstance(observation_gates, dict)
+        and isinstance(raw_layer_container, dict)
+        and isinstance(raw_layer_container.get('observation_gates'), dict)
+    ):
+        observation_gates = raw_layer_container.get('observation_gates')
+    if isinstance(observation_gates, dict):
+        payload['observation_gates'] = observation_gates
     if _request_has_cell_velocity_layer(req):
         refractor_cell = req.model.refractor_cell
         if refractor_cell is None:
@@ -2341,11 +2376,20 @@ def build_refraction_static_qc_payload(
             'qc_json_artifact': REFRACTION_REFRACTOR_VELOCITY_QC_JSON_NAME,
             'solver_history_csv_artifact': REFRACTION_CELL_SOLVER_HISTORY_CSV_NAME,
         }
-    layer_qc = r.qc.get('layers')
-    if isinstance(layer_qc, dict):
+    layer_qc = _final_layer_qc_payload(r.qc.get('layers'))
+    if layer_qc:
         payload['layers'] = layer_qc
     _assert_strict_json(payload, artifact_name=REFRACTION_STATIC_QC_JSON_NAME)
     return payload
+
+
+def _final_layer_qc_payload(raw_layers: object) -> dict[str, Any]:
+    if not isinstance(raw_layers, dict):
+        return {}
+    nested_layers = raw_layers.get('layers')
+    if isinstance(nested_layers, dict):
+        return dict(nested_layers)
+    return dict(raw_layers)
 
 
 def _sign_convention_qc_payload(
@@ -2874,9 +2918,28 @@ def _first_break_residual_rows(
         result,
         req=req,
     )
+    layer_kind_by_row, layer_index_by_row = _residual_row_layer_context(result)
+    source_key_by_row = _residual_row_string_context(
+        result,
+        'row_source_endpoint_key',
+    )
+    receiver_key_by_row = _residual_row_string_context(
+        result,
+        'row_receiver_endpoint_key',
+    )
+    rejection_reason_by_row = _residual_row_string_context(
+        result,
+        'row_rejection_reason',
+    )
+    row_velocity_m_s = _residual_row_velocity_context(result)
     for row_index in range(int(result.row_trace_index_sorted.shape[0])):
         rejected_by_robust = bool(result.rejected_by_robust_mask[row_index])
         used = bool(result.used_row_mask[row_index])
+        rejection_reason = _residual_rejection_reason(
+            used=used,
+            rejected_by_robust=rejected_by_robust,
+            explicit_reason=rejection_reason_by_row[row_index],
+        )
         rows.append(
             {
                 'row_index': row_index,
@@ -2894,16 +2957,102 @@ def _first_break_residual_rows(
                 'used': _csv_bool(used),
                 'used_in_solve': _csv_bool(used),
                 'rejected_by_robust': _csv_bool(rejected_by_robust),
-                'rejection_reason': _residual_rejection_reason(
-                    used=used,
-                    rejected_by_robust=rejected_by_robust,
-                ),
+                'rejection_reason': rejection_reason,
                 'cell_id': _csv_cell_id(cell_id_by_row[row_index]),
                 'cell_ix': _csv_cell_id(cell_ix_by_row[row_index]),
                 'cell_iy': _csv_cell_id(cell_iy_by_row[row_index]),
+                'trace_index_sorted': int(result.row_trace_index_sorted[row_index]),
+                'layer_kind': str(layer_kind_by_row[row_index]),
+                'layer_index': _csv_layer_index(layer_index_by_row[row_index]),
+                'source_endpoint_key': str(source_key_by_row[row_index]),
+                'receiver_endpoint_key': str(receiver_key_by_row[row_index]),
+                'offset_m': _csv_float(result.row_distance_m[row_index]),
+                'residual_time_s': _csv_float(result.residual_time_s[row_index]),
+                'midpoint_cell_id': _csv_cell_id(cell_id_by_row[row_index]),
+                'row_velocity_m_s': _csv_float(row_velocity_m_s[row_index]),
             }
         )
     return rows
+
+
+def _residual_row_layer_context(
+    result: RefractionDatumStaticsResult,
+) -> tuple[np.ndarray, np.ndarray]:
+    n_rows = int(result.row_trace_index_sorted.shape[0])
+    kind = np.full(n_rows, '', dtype='<U16')
+    index = np.zeros(n_rows, dtype=np.int64)
+    raw_kind = getattr(result, 'row_layer_kind', None)
+    raw_index = getattr(result, 'row_layer_index', None)
+    if raw_kind is not None:
+        kind = np.asarray(raw_kind).astype('<U16', copy=False)
+        if kind.shape != (n_rows,):
+            raise RefractionStaticArtifactError(
+                'row_layer_kind length must match residual rows'
+            )
+    if raw_index is not None:
+        index = np.asarray(raw_index, dtype=np.int64)
+        if index.shape != (n_rows,):
+            raise RefractionStaticArtifactError(
+                'row_layer_index length must match residual rows'
+            )
+    return np.ascontiguousarray(kind), np.ascontiguousarray(index)
+
+
+def _residual_row_string_context(
+    result: RefractionDatumStaticsResult,
+    field: str,
+) -> np.ndarray:
+    n_rows = int(result.row_trace_index_sorted.shape[0])
+    raw = getattr(result, field, None)
+    if raw is None:
+        return np.full(n_rows, '', dtype=object)
+    out = np.asarray(raw, dtype=object)
+    if out.shape != (n_rows,):
+        raise RefractionStaticArtifactError(
+            f'{field} length must match residual rows'
+        )
+    return np.ascontiguousarray(out, dtype=object)
+
+
+def _residual_row_velocity_context(
+    result: RefractionDatumStaticsResult,
+) -> np.ndarray:
+    n_rows = int(result.row_trace_index_sorted.shape[0])
+    raw = getattr(result, 'row_velocity_m_s', None)
+    if raw is not None:
+        out = np.asarray(raw, dtype=np.float64)
+        if out.shape != (n_rows,):
+            raise RefractionStaticArtifactError(
+                'row_velocity_m_s length must match residual rows'
+            )
+        return np.ascontiguousarray(out, dtype=np.float64)
+    return _row_velocity_from_cell_or_scalar(result, n_rows)
+
+
+def _row_velocity_from_cell_or_scalar(
+    result: RefractionDatumStaticsResult,
+    n_rows: int,
+) -> np.ndarray:
+    out = np.full(n_rows, _float_or_nan(result.bedrock_velocity_m_s), dtype=np.float64)
+    if result.row_midpoint_cell_id is None or result.cell_bedrock_velocity_m_s is None:
+        return np.ascontiguousarray(out, dtype=np.float64)
+    cell_id = np.asarray(result.row_midpoint_cell_id, dtype=np.int64)
+    if cell_id.shape != (n_rows,):
+        return np.ascontiguousarray(out, dtype=np.float64)
+    velocity = np.asarray(result.cell_bedrock_velocity_m_s, dtype=np.float64)
+    active_cell_id = result.active_cell_id
+    if active_cell_id is not None:
+        active = np.asarray(active_cell_id, dtype=np.int64)
+        if active.shape == velocity.shape:
+            out.fill(np.nan)
+            for raw_cell, raw_velocity in zip(active.tolist(), velocity.tolist(), strict=True):
+                rows = cell_id == int(raw_cell)
+                out[rows] = float(raw_velocity)
+            return np.ascontiguousarray(out, dtype=np.float64)
+    if velocity.ndim == 1 and velocity.size > int(np.max(cell_id, initial=-1)):
+        valid = (cell_id >= 0) & (cell_id < int(velocity.size))
+        out[valid] = velocity[cell_id[valid]]
+    return np.ascontiguousarray(out, dtype=np.float64)
 
 
 def _residual_row_cell_context(
@@ -2972,9 +3121,13 @@ def _residual_rejection_reason(
     *,
     used: bool,
     rejected_by_robust: bool,
+    explicit_reason: object = '',
 ) -> str:
     if rejected_by_robust:
         return 'robust_outlier'
+    reason = str(explicit_reason)
+    if reason:
+        return reason
     if not used:
         return 'not_used'
     return 'ok'
@@ -3150,6 +3303,7 @@ def _source_static_table_rows(
     result: RefractionDatumStaticsResult,
 ) -> list[dict[str, object]]:
     node_context = _node_context(result)
+    layer_context = _endpoint_layer_qc_context(result, endpoint='source')
     static_status = _source_static_status_array(result)
     flat_datum = _nan_if_none(result.flat_datum_elevation_m)
     source_v2 = _endpoint_v2_m_s(
@@ -3246,6 +3400,10 @@ def _source_static_table_rows(
             layer1_base = result.source_surface_elevation_m[index] - source_sh1_m[index]
             rows[-1].update(
                 {
+                    **_endpoint_layer_qc_row_fields(
+                        layer_context,
+                        str(result.source_endpoint_key[index]),
+                    ),
                     't2_ms': _csv_ms(source_t2_time_s[index]),
                     'v3_m_s': _csv_float(source_v3_m_s[index]),
                     'sh2_weathering_thickness_m': _csv_float(source_sh2_m[index]),
@@ -3278,6 +3436,7 @@ def _receiver_static_table_rows(
     result: RefractionDatumStaticsResult,
 ) -> list[dict[str, object]]:
     node_context = _node_context(result)
+    layer_context = _endpoint_layer_qc_context(result, endpoint='receiver')
     static_status = _receiver_static_status_array(result)
     flat_datum = _nan_if_none(result.flat_datum_elevation_m)
     receiver_v2 = _endpoint_v2_m_s(
@@ -3376,6 +3535,10 @@ def _receiver_static_table_rows(
             )
             rows[-1].update(
                 {
+                    **_endpoint_layer_qc_row_fields(
+                        layer_context,
+                        str(result.receiver_endpoint_key[index]),
+                    ),
                     't2_ms': _csv_ms(receiver_t2_time_s[index]),
                     'v3_m_s': _csv_float(receiver_v3_m_s[index]),
                     'sh2_weathering_thickness_m': _csv_float(receiver_sh2_m[index]),
@@ -3443,6 +3606,108 @@ def _node_context(result: RefractionDatumStaticsResult) -> dict[str, dict[int, A
         'residual_rms': _node_lookup(result.node_id, result.node_residual_rms_s),
         'residual_mad': _node_lookup(result.node_id, result.node_residual_mad_s),
     }
+
+
+def _endpoint_layer_qc_context(
+    result: RefractionDatumStaticsResult,
+    *,
+    endpoint: str,
+) -> dict[str, dict[str, dict[str, int | float]]]:
+    n_rows = int(result.row_trace_index_sorted.shape[0])
+    layer_kind, _layer_index = _residual_row_layer_context(result)
+    endpoint_field = (
+        'row_source_endpoint_key'
+        if endpoint == 'source'
+        else 'row_receiver_endpoint_key'
+    )
+    endpoint_key = _residual_row_string_context(result, endpoint_field)
+    used = np.asarray(result.used_row_mask, dtype=bool)
+    residual_s = np.asarray(result.residual_time_s, dtype=np.float64)
+    context: dict[str, dict[str, dict[str, Any]]] = {
+        'pick_count': {},
+        'used_pick_count': {},
+        'residual_values_ms': {},
+    }
+    for row_index in range(n_rows):
+        kind = str(layer_kind[row_index])
+        key = str(endpoint_key[row_index])
+        if not kind or not key:
+            continue
+        _increment_layer_count(context['pick_count'], key, kind)
+        if bool(used[row_index]):
+            _increment_layer_count(context['used_pick_count'], key, kind)
+            residual = residual_s[row_index]
+            if np.isfinite(residual):
+                values = context['residual_values_ms'].setdefault(key, {}).setdefault(
+                    kind,
+                    [],
+                )
+                values.append(float(residual) * 1000.0)
+    return {
+        'pick_count': context['pick_count'],
+        'used_pick_count': context['used_pick_count'],
+        'residual_rms_ms': _endpoint_layer_residual_stat(
+            context['residual_values_ms'],
+            stat='rms',
+        ),
+        'residual_mad_ms': _endpoint_layer_residual_stat(
+            context['residual_values_ms'],
+            stat='mad',
+        ),
+    }
+
+
+def _endpoint_layer_qc_row_fields(
+    layer_context: dict[str, dict[str, dict[str, int | float]]],
+    endpoint_key: str,
+) -> dict[str, str]:
+    return {
+        'pick_count_by_layer': _csv_json_object(
+            layer_context['pick_count'].get(endpoint_key, {})
+        ),
+        'used_pick_count_by_layer': _csv_json_object(
+            layer_context['used_pick_count'].get(endpoint_key, {})
+        ),
+        'residual_rms_by_layer_ms': _csv_json_object(
+            layer_context['residual_rms_ms'].get(endpoint_key, {})
+        ),
+        'residual_mad_by_layer_ms': _csv_json_object(
+            layer_context['residual_mad_ms'].get(endpoint_key, {})
+        ),
+    }
+
+
+def _increment_layer_count(
+    target: dict[str, dict[str, int]],
+    endpoint_key: str,
+    layer_kind: str,
+) -> None:
+    by_layer = target.setdefault(endpoint_key, {})
+    by_layer[layer_kind] = int(by_layer.get(layer_kind, 0)) + 1
+
+
+def _endpoint_layer_residual_stat(
+    values_by_endpoint: dict[str, dict[str, list[float]]],
+    *,
+    stat: str,
+) -> dict[str, dict[str, float]]:
+    out: dict[str, dict[str, float]] = {}
+    for endpoint_key, values_by_layer in values_by_endpoint.items():
+        by_layer: dict[str, float] = {}
+        for layer_kind, values in values_by_layer.items():
+            arr = np.asarray(values, dtype=np.float64)
+            if arr.size == 0:
+                continue
+            if stat == 'rms':
+                by_layer[layer_kind] = float(np.sqrt(np.mean(arr * arr)))
+            elif stat == 'mad':
+                by_layer[layer_kind] = float(np.median(np.abs(arr - np.median(arr))))
+            else:
+                raise RefractionStaticArtifactError(
+                    f'unsupported endpoint layer residual stat: {stat}'
+                )
+        out[endpoint_key] = by_layer
+    return out
 
 
 def _source_static_status_array(result: RefractionDatumStaticsResult) -> np.ndarray:
@@ -4517,6 +4782,18 @@ def _csv_cell_id(value: object) -> str | int:
     if out == '' or int(out) < 0:
         return ''
     return out
+
+
+def _csv_layer_index(value: object) -> str | int:
+    out = _csv_int(value)
+    if out == '' or int(out) <= 0:
+        return ''
+    return out
+
+
+def _csv_json_object(value: Mapping[str, object] | None) -> str:
+    payload = {} if value is None else dict(value)
+    return json.dumps(payload, sort_keys=True, separators=(',', ':'))
 
 
 def _stat(values: object, stat: str) -> float | None:

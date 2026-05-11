@@ -611,6 +611,12 @@ class RefractionWeatheringReplacementStaticsResult:
     receiver_sh1_weathering_thickness_m: np.ndarray | None = None
     receiver_sh2_weathering_thickness_m: np.ndarray | None = None
     receiver_sh3_weathering_thickness_m: np.ndarray | None = None
+    row_layer_kind: np.ndarray | None = None
+    row_layer_index: np.ndarray | None = None
+    row_source_endpoint_key: np.ndarray | None = None
+    row_receiver_endpoint_key: np.ndarray | None = None
+    row_rejection_reason: np.ndarray | None = None
+    row_velocity_m_s: np.ndarray | None = None
 
 
 @dataclass(frozen=True)
@@ -760,6 +766,12 @@ class RefractionDatumStaticsResult:
     receiver_sh1_weathering_thickness_m: np.ndarray | None = None
     receiver_sh2_weathering_thickness_m: np.ndarray | None = None
     receiver_sh3_weathering_thickness_m: np.ndarray | None = None
+    row_layer_kind: np.ndarray | None = None
+    row_layer_index: np.ndarray | None = None
+    row_source_endpoint_key: np.ndarray | None = None
+    row_receiver_endpoint_key: np.ndarray | None = None
+    row_rejection_reason: np.ndarray | None = None
+    row_velocity_m_s: np.ndarray | None = None
 
 
 @dataclass(frozen=True)
