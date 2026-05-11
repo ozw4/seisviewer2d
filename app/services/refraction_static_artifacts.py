@@ -371,6 +371,7 @@ _SOURCE_STATIC_TABLE_COLUMNS = (
     'v2_m_s',
     'v2_status',
     'sh1_weathering_thickness_m',
+    'total_weathering_thickness_m',
     'refractor_elevation_m',
     'weathering_correction_ms',
     'floating_datum_correction_ms',
@@ -382,6 +383,7 @@ _SOURCE_STATIC_TABLE_COLUMNS = (
     'weathering_status',
     'datum_status',
     'static_status',
+    'sign_convention',
     'pick_count',
     'used_pick_count',
     'residual_rms_ms',
@@ -407,6 +409,7 @@ _SOURCE_STATIC_TABLE_2LAYER_COLUMNS = (
     'v3_m_s',
     'sh1_weathering_thickness_m',
     'sh2_weathering_thickness_m',
+    'total_weathering_thickness_m',
     'layer1_base_elevation_m',
     'final_refractor_elevation_m',
     'refractor_elevation_m',
@@ -420,6 +423,7 @@ _SOURCE_STATIC_TABLE_2LAYER_COLUMNS = (
     'weathering_status',
     'datum_status',
     'static_status',
+    'sign_convention',
     'pick_count',
     'used_pick_count',
     'residual_rms_ms',
@@ -448,6 +452,7 @@ _SOURCE_STATIC_TABLE_3LAYER_COLUMNS = (
     'sh1_weathering_thickness_m',
     'sh2_weathering_thickness_m',
     'sh3_weathering_thickness_m',
+    'total_weathering_thickness_m',
     'layer1_base_elevation_m',
     'layer2_base_elevation_m',
     'final_refractor_elevation_m',
@@ -462,6 +467,7 @@ _SOURCE_STATIC_TABLE_3LAYER_COLUMNS = (
     'weathering_status',
     'datum_status',
     'static_status',
+    'sign_convention',
     'pick_count',
     'used_pick_count',
     'residual_rms_ms',
@@ -484,6 +490,7 @@ _RECEIVER_STATIC_TABLE_COLUMNS = (
     'v2_m_s',
     'v2_status',
     'sh1_weathering_thickness_m',
+    'total_weathering_thickness_m',
     'refractor_elevation_m',
     'weathering_correction_ms',
     'floating_datum_correction_ms',
@@ -495,6 +502,7 @@ _RECEIVER_STATIC_TABLE_COLUMNS = (
     'weathering_status',
     'datum_status',
     'static_status',
+    'sign_convention',
     'pick_count',
     'used_pick_count',
     'residual_rms_ms',
@@ -520,6 +528,7 @@ _RECEIVER_STATIC_TABLE_2LAYER_COLUMNS = (
     'v3_m_s',
     'sh1_weathering_thickness_m',
     'sh2_weathering_thickness_m',
+    'total_weathering_thickness_m',
     'layer1_base_elevation_m',
     'final_refractor_elevation_m',
     'refractor_elevation_m',
@@ -533,6 +542,7 @@ _RECEIVER_STATIC_TABLE_2LAYER_COLUMNS = (
     'weathering_status',
     'datum_status',
     'static_status',
+    'sign_convention',
     'pick_count',
     'used_pick_count',
     'residual_rms_ms',
@@ -561,6 +571,7 @@ _RECEIVER_STATIC_TABLE_3LAYER_COLUMNS = (
     'sh1_weathering_thickness_m',
     'sh2_weathering_thickness_m',
     'sh3_weathering_thickness_m',
+    'total_weathering_thickness_m',
     'layer1_base_elevation_m',
     'layer2_base_elevation_m',
     'final_refractor_elevation_m',
@@ -575,6 +586,7 @@ _RECEIVER_STATIC_TABLE_3LAYER_COLUMNS = (
     'weathering_status',
     'datum_status',
     'static_status',
+    'sign_convention',
     'pick_count',
     'used_pick_count',
     'residual_rms_ms',
@@ -1545,6 +1557,7 @@ def build_source_receiver_static_table_arrays(
         scalar_v2_m_s=r.bedrock_velocity_m_s,
     )
     arrays: dict[str, np.ndarray] = {
+        'sign_convention': _scalar_str(SIGN_CONVENTION),
         'source_endpoint_key': _string_array(r.source_endpoint_key),
         'source_id': _int_array(r.source_id),
         'source_node_id': _int_array(r.source_node_id),
@@ -1566,6 +1579,9 @@ def build_source_receiver_static_table_arrays(
         ),
         'source_v2_m_s': source_v2,
         'source_sh1_m': source_sh1_m,
+        'source_total_weathering_thickness_m': _float_array(
+            r.source_weathering_thickness_m
+        ),
         'source_weathering_correction_s': source_weathering_correction_s,
         'source_elevation_correction_s': _sum_float_arrays(
             r.source_floating_datum_elevation_shift_s,
@@ -1597,6 +1613,9 @@ def build_source_receiver_static_table_arrays(
         ),
         'receiver_v2_m_s': receiver_v2,
         'receiver_sh1_m': receiver_sh1_m,
+        'receiver_total_weathering_thickness_m': _float_array(
+            r.receiver_weathering_thickness_m
+        ),
         'receiver_weathering_correction_s': receiver_weathering_correction_s,
         'receiver_elevation_correction_s': _sum_float_arrays(
             r.receiver_floating_datum_elevation_shift_s,
@@ -3153,6 +3172,9 @@ def _source_static_table_rows(
                 'v2_m_s': _csv_float(source_v2[index]),
                 'v2_status': str(source_v2_status[index]),
                 'sh1_weathering_thickness_m': _csv_float(source_sh1_m[index]),
+                'total_weathering_thickness_m': _csv_float(
+                    result.source_weathering_thickness_m[index]
+                ),
                 'refractor_elevation_m': _csv_float(
                     result.source_refractor_elevation_m[index]
                 ),
@@ -3176,6 +3198,7 @@ def _source_static_table_rows(
                 ),
                 'datum_status': str(result.source_datum_status[index]),
                 'static_status': str(static_status[index]),
+                'sign_convention': SIGN_CONVENTION,
                 'pick_count': _csv_int(node_context['pick_count'].get(node_id)),
                 'used_pick_count': _csv_int(
                     node_context['used_pick_count'].get(node_id)
@@ -3277,6 +3300,9 @@ def _receiver_static_table_rows(
                 'v2_m_s': _csv_float(receiver_v2[index]),
                 'v2_status': str(receiver_v2_status[index]),
                 'sh1_weathering_thickness_m': _csv_float(receiver_sh1_m[index]),
+                'total_weathering_thickness_m': _csv_float(
+                    result.receiver_weathering_thickness_m[index]
+                ),
                 'refractor_elevation_m': _csv_float(
                     result.receiver_refractor_elevation_m[index]
                 ),
@@ -3300,6 +3326,7 @@ def _receiver_static_table_rows(
                 ),
                 'datum_status': str(result.receiver_datum_status[index]),
                 'static_status': str(static_status[index]),
+                'sign_convention': SIGN_CONVENTION,
                 'pick_count': _csv_int(node_context['pick_count'].get(node_id)),
                 'used_pick_count': _csv_int(
                     node_context['used_pick_count'].get(node_id)

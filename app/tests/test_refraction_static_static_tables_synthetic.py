@@ -109,6 +109,7 @@ def test_static_table_wcor_matches_known_truth_and_sign_convention(
             float(row['total_static_ms'])
         )
         assert row['static_status'] == 'ok'
+        assert row['sign_convention'] == 'corrected(t) = raw(t - shift_s)'
 
 
 def test_source_receiver_static_table_csv_and_npz_are_consistent(
@@ -192,6 +193,10 @@ def _assert_endpoint_row_matches_known_truth(
         expected_cell_sh1_m_for_node(node_id),
         abs=SYNTHETIC_SH1_TOLERANCE_M,
     )
+    assert float(row['total_weathering_thickness_m']) == pytest.approx(
+        expected_cell_sh1_m_for_node(node_id),
+        abs=SYNTHETIC_SH1_TOLERANCE_M,
+    )
     assert float(row['weathering_correction_ms']) == pytest.approx(
         expected_wcor_ms,
         abs=SYNTHETIC_WCOR_TOLERANCE_MS,
@@ -233,6 +238,9 @@ def _assert_npz_endpoint_matches_csv(
     assert float(table[f'{prefix}_sh1_m'][index]) == pytest.approx(
         float(row['sh1_weathering_thickness_m'])
     )
+    assert float(
+        table[f'{prefix}_total_weathering_thickness_m'][index]
+    ) == pytest.approx(float(row['total_weathering_thickness_m']))
     assert (
         float(table[f'{prefix}_weathering_correction_s'][index]) * 1000.0
     ) == pytest.approx(float(row['weathering_correction_ms']))
