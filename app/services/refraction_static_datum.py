@@ -66,17 +66,19 @@ _STATUS_PRIORITY = {
     'flat_datum_below_refractor': 5,
     'floating_datum_below_refractor': 6,
     'invalid_weathering_replacement': 7,
-    'outside_refractor_cell_grid': 8,
-    'inactive_v2_cell': 9,
-    'low_fold_v2_cell': 10,
-    'invalid_local_v2': 11,
-    'v2_not_greater_than_v1': 12,
-    'invalid_flat_datum_elevation': 13,
-    'invalid_floating_datum_elevation': 14,
-    'invalid_surface_elevation': 15,
-    'invalid_bedrock_velocity': 16,
-    'missing_endpoint': 17,
-    'missing_node': 18,
+    'invalid_nonfinite_input': 8,
+    'invalid_velocity_order': 9,
+    'outside_refractor_cell_grid': 10,
+    'inactive_v2_cell': 11,
+    'low_fold_v2_cell': 12,
+    'invalid_local_v2': 13,
+    'v2_not_greater_than_v1': 14,
+    'invalid_flat_datum_elevation': 15,
+    'invalid_floating_datum_elevation': 16,
+    'invalid_surface_elevation': 17,
+    'invalid_bedrock_velocity': 18,
+    'missing_endpoint': 19,
+    'missing_node': 20,
 }
 
 _INVALID_TRACE_STATUSES = {
@@ -87,6 +89,8 @@ _INVALID_TRACE_STATUSES = {
     'invalid_floating_datum_elevation',
     'invalid_flat_datum_elevation',
     'invalid_weathering_replacement',
+    'invalid_nonfinite_input',
+    'invalid_velocity_order',
     'outside_refractor_cell_grid',
     'inactive_v2_cell',
     'low_fold_v2_cell',
@@ -108,6 +112,8 @@ _UPSTREAM_REPLACEMENT_STATUS_TO_DATUM_STATUS = {
     'invalid_shift': 'invalid_weathering_replacement',
     'negative_weathering_thickness': 'invalid_weathering_replacement',
     'invalid_weathering_thickness': 'invalid_weathering_replacement',
+    'invalid_nonfinite_input': 'invalid_nonfinite_input',
+    'invalid_velocity_order': 'invalid_velocity_order',
     'outside_refractor_cell_grid': 'outside_refractor_cell_grid',
     'inactive_v2_cell': 'inactive_v2_cell',
     'low_fold_v2_cell': 'low_fold_v2_cell',
@@ -756,6 +762,28 @@ def build_refraction_datum_statics(
         receiver_v2_cell_id_sorted=data.receiver_v2_cell_id_sorted,
         receiver_v2_m_s_sorted=data.receiver_v2_m_s_sorted,
         receiver_v2_status_sorted=data.receiver_v2_status_sorted,
+        node_sh1_weathering_thickness_m=(
+            weathering_replacement_result.node_sh1_weathering_thickness_m
+        ),
+        node_sh2_weathering_thickness_m=(
+            weathering_replacement_result.node_sh2_weathering_thickness_m
+        ),
+        source_t2_time_s=weathering_replacement_result.source_t2_time_s,
+        source_v3_m_s=weathering_replacement_result.source_v3_m_s,
+        source_sh1_weathering_thickness_m=(
+            weathering_replacement_result.source_sh1_weathering_thickness_m
+        ),
+        source_sh2_weathering_thickness_m=(
+            weathering_replacement_result.source_sh2_weathering_thickness_m
+        ),
+        receiver_t2_time_s=weathering_replacement_result.receiver_t2_time_s,
+        receiver_v3_m_s=weathering_replacement_result.receiver_v3_m_s,
+        receiver_sh1_weathering_thickness_m=(
+            weathering_replacement_result.receiver_sh1_weathering_thickness_m
+        ),
+        receiver_sh2_weathering_thickness_m=(
+            weathering_replacement_result.receiver_sh2_weathering_thickness_m
+        ),
     )
     if job_dir is not None:
         write_refraction_datum_statics_artifacts(Path(job_dir), result)
@@ -2596,6 +2624,8 @@ def _endpoint_nan_mask(status: np.ndarray) -> np.ndarray:
             'invalid_floating_datum_elevation',
             'invalid_flat_datum_elevation',
             'invalid_weathering_replacement',
+            'invalid_nonfinite_input',
+            'invalid_velocity_order',
             'floating_datum_below_refractor',
             'flat_datum_below_refractor',
             'invalid_datum_shift',
@@ -2617,6 +2647,8 @@ def _trace_nan_mask(status: np.ndarray) -> np.ndarray:
             'invalid_floating_datum_elevation',
             'invalid_flat_datum_elevation',
             'invalid_weathering_replacement',
+            'invalid_nonfinite_input',
+            'invalid_velocity_order',
             'floating_datum_below_refractor',
             'flat_datum_below_refractor',
             'invalid_datum_shift',

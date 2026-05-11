@@ -35,6 +35,8 @@ REFRACTION_STATIC_STATUSES: frozenset[str] = frozenset(
         'invalid_flat_datum_elevation',
         'invalid_weathering_replacement',
         'invalid_weathering_thickness',
+        'invalid_nonfinite_input',
+        'invalid_velocity_order',
         'invalid_negative_thickness',
         'negative_weathering_thickness',
         'negative_thickness',
@@ -90,6 +92,8 @@ def classify_refraction_endpoint_static_status(
         return 'missing_geometry'
     for status in (datum, weathering, solution):
         if status in LOCAL_V2_STATUS_VALUES:
+            return status
+        if status in {'invalid_nonfinite_input', 'invalid_velocity_order'}:
             return status
     if 'inactive' in {solution, weathering, datum}:
         return 'inactive_endpoint'
