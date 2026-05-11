@@ -9,6 +9,7 @@ from typing import Any
 
 import numpy as np
 
+import app.services.refraction_static_t1lsst as refraction_t1lsst
 from app.api.schemas import (
     RefractionStaticApplyOptions,
     RefractionStaticApplyRequest,
@@ -214,9 +215,10 @@ def compute_refraction_multilayer_datum_statics_from_input_model(
     key2_byte: int | None = None,
     floating_datum_artifact_path: Path | None = None,
 ) -> RefractionMultiLayerStaticsWorkflowResult:
-    """Run the implemented two-layer time-term, T1LSST, and datum workflow."""
+    """Run the implemented multi-layer time-term, T1LSST, and datum workflow."""
     normalized_layers = normalize_refraction_static_layers(model)
-    _require_two_layer_t1lsst_layers(normalized_layers)
+    _require_multilayer_t1lsst_layers(normalized_layers)
+    layer_count = len(normalized_layers)
     layer_masks = build_refraction_layer_observation_masks(
         input_model=input_model,
         model=model,
@@ -255,7 +257,8 @@ def compute_refraction_multilayer_datum_statics_from_input_model(
             **datum_result.qc,
             'method': 'multilayer_time_term',
             'conversion_mode': 't1lsst_multilayer',
-            'layer_count': 2,
+            'layer_count': layer_count,
+            'enabled_layer_kinds': list(solve_result.enabled_layer_kinds),
             'layers': solve_result.qc,
         },
         node_sh1_weathering_thickness_m=_required_result_array(
@@ -266,20 +269,29 @@ def compute_refraction_multilayer_datum_statics_from_input_model(
             weathering_replacement.node_sh2_weathering_thickness_m,
             name='node_sh2_weathering_thickness_m',
         ),
+        node_sh3_weathering_thickness_m=(
+            weathering_replacement.node_sh3_weathering_thickness_m
+        ),
         source_t2_time_s=components.source_t2_s,
+        source_t3_time_s=components.source_t3_s,
         source_v3_m_s=_required_result_array(
             weathering_replacement.source_v3_m_s,
             name='source_v3_m_s',
         ),
+        source_vsub_m_s=weathering_replacement.source_vsub_m_s,
         source_sh1_weathering_thickness_m=components.source_sh1_m,
         source_sh2_weathering_thickness_m=components.source_sh2_m,
+        source_sh3_weathering_thickness_m=components.source_sh3_m,
         receiver_t2_time_s=components.receiver_t2_s,
+        receiver_t3_time_s=components.receiver_t3_s,
         receiver_v3_m_s=_required_result_array(
             weathering_replacement.receiver_v3_m_s,
             name='receiver_v3_m_s',
         ),
+        receiver_vsub_m_s=weathering_replacement.receiver_vsub_m_s,
         receiver_sh1_weathering_thickness_m=components.receiver_sh1_m,
         receiver_sh2_weathering_thickness_m=components.receiver_sh2_m,
+        receiver_sh3_weathering_thickness_m=components.receiver_sh3_m,
     )
     if job_dir is not None:
         root = Path(job_dir)
@@ -327,7 +339,7 @@ def _artifact_request_for_multilayer_workflow(
         datum=datum,
         conversion=RefractionStaticConversionRequest(
             mode='t1lsst_multilayer',
-            layer_count=2,
+            layer_count=len(normalize_refraction_static_layers(model)),
         ),
         apply=apply_options or RefractionStaticApplyOptions(),
     )
@@ -349,15 +361,27 @@ def build_refraction_multilayer_weathering_replacement_statics(
     apply_options: RefractionStaticApplyOptions | None,
     resolved_first_layer: ResolvedRefractionFirstLayer,
 ) -> RefractionWeatheringReplacementStaticsResult:
-    """Build two-layer T1LSST replacement statics from production layer solves."""
-    _require_two_layer_t1lsst_layers(normalize_refraction_static_layers(model))
+    """Build T1LSST replacement statics from production layer solves."""
+    normalized_layers = normalize_refraction_static_layers(model)
+    _require_multilayer_t1lsst_layers(normalized_layers)
+    layer_count = len(normalized_layers)
     v2_layer = _required_layer_result(solve_result, 'v2_t1')
     v3_layer = _required_layer_result(solve_result, 'v3_t2')
+    vsub_layer = (
+        _required_layer_result(solve_result, 'vsub_t3')
+        if layer_count == 3
+        else None
+    )
     v1_m_s = _positive_float(
         resolved_first_layer.weathering_velocity_m_s,
         name='resolved_first_layer.weathering_velocity_m_s',
     )
     v3_m_s = _required_global_velocity(v3_layer)
+    vsub_m_s = None if vsub_layer is None else _required_global_velocity(vsub_layer)
+    replacement_velocity_m_s = v3_m_s if vsub_m_s is None else vsub_m_s
+    replacement_velocity_mode = (
+        v3_layer.velocity_mode if vsub_layer is None else vsub_layer.velocity_mode
+    )
     node_id = _input_node_id(input_model)
     source = _endpoint_metadata(input_model, endpoint='source')
     receiver = _endpoint_metadata(input_model, endpoint='receiver')
@@ -395,31 +419,79 @@ def build_refraction_multilayer_weathering_replacement_statics(
         receiver,
         name='receiver_t2',
     )
-
-    node_conversion = _compute_2layer_conversion(
-        t1_s=node_t1,
-        t2_s=node_t2,
-        v1_m_s=v1_m_s,
-        v2_m_s=v2.node_v2_m_s,
-        v3_m_s=v3_m_s,
-        v2_status=v2.node_v2_status,
-    )
-    source_conversion = _compute_2layer_conversion(
-        t1_s=source_t1,
-        t2_s=source_t2,
-        v1_m_s=v1_m_s,
-        v2_m_s=v2.source_v2_m_s,
-        v3_m_s=v3_m_s,
-        v2_status=v2.source_v2_status,
-    )
-    receiver_conversion = _compute_2layer_conversion(
-        t1_s=receiver_t1,
-        t2_s=receiver_t2,
-        v1_m_s=v1_m_s,
-        v2_m_s=v2.receiver_v2_m_s,
-        v3_m_s=v3_m_s,
-        v2_status=v2.receiver_v2_status,
-    )
+    if vsub_layer is None:
+        source_t3 = receiver_t3 = None
+        node_conversion = _compute_2layer_conversion(
+            t1_s=node_t1,
+            t2_s=node_t2,
+            v1_m_s=v1_m_s,
+            v2_m_s=v2.node_v2_m_s,
+            v3_m_s=v3_m_s,
+            v2_status=v2.node_v2_status,
+        )
+        source_conversion = _compute_2layer_conversion(
+            t1_s=source_t1,
+            t2_s=source_t2,
+            v1_m_s=v1_m_s,
+            v2_m_s=v2.source_v2_m_s,
+            v3_m_s=v3_m_s,
+            v2_status=v2.source_v2_status,
+        )
+        receiver_conversion = _compute_2layer_conversion(
+            t1_s=receiver_t1,
+            t2_s=receiver_t2,
+            v1_m_s=v1_m_s,
+            v2_m_s=v2.receiver_v2_m_s,
+            v3_m_s=v3_m_s,
+            v2_status=v2.receiver_v2_status,
+        )
+    else:
+        assert vsub_m_s is not None
+        node_t3 = _layer_node_terms(
+            vsub_layer,
+            shape=node_id.shape,
+            name='vsub_t3',
+        )
+        source_t3 = _endpoint_terms(
+            vsub_layer.source_time_term_s,
+            source,
+            name='source_t3',
+        )
+        receiver_t3 = _endpoint_terms(
+            vsub_layer.receiver_time_term_s,
+            receiver,
+            name='receiver_t3',
+        )
+        node_conversion = _compute_3layer_conversion(
+            t1_s=node_t1,
+            t2_s=node_t2,
+            t3_s=node_t3,
+            v1_m_s=v1_m_s,
+            v2_m_s=v2.node_v2_m_s,
+            v3_m_s=v3_m_s,
+            vsub_m_s=vsub_m_s,
+            v2_status=v2.node_v2_status,
+        )
+        source_conversion = _compute_3layer_conversion(
+            t1_s=source_t1,
+            t2_s=source_t2,
+            t3_s=source_t3,
+            v1_m_s=v1_m_s,
+            v2_m_s=v2.source_v2_m_s,
+            v3_m_s=v3_m_s,
+            vsub_m_s=vsub_m_s,
+            v2_status=v2.source_v2_status,
+        )
+        receiver_conversion = _compute_3layer_conversion(
+            t1_s=receiver_t1,
+            t2_s=receiver_t2,
+            t3_s=receiver_t3,
+            v1_m_s=v1_m_s,
+            v2_m_s=v2.receiver_v2_m_s,
+            v3_m_s=v3_m_s,
+            vsub_m_s=vsub_m_s,
+            v2_status=v2.receiver_v2_status,
+        )
 
     max_abs_shift_ms = (
         None if apply_options is None else float(apply_options.max_abs_shift_ms)
@@ -476,26 +548,51 @@ def build_refraction_multilayer_weathering_replacement_statics(
         endpoint_values=receiver_conversion.sh2_m,
         name='receiver_sh2_m_sorted',
     )
+    source_sh3_sorted = (
+        None
+        if source_conversion.sh3_m is None
+        else _map_endpoint_values_to_trace_order(
+            endpoint_key_sorted=input_model.source_endpoint_key_sorted,
+            endpoint_key=source.endpoint_key,
+            endpoint_values=source_conversion.sh3_m,
+            name='source_sh3_m_sorted',
+        )
+    )
+    receiver_sh3_sorted = (
+        None
+        if receiver_conversion.sh3_m is None
+        else _map_endpoint_values_to_trace_order(
+            endpoint_key_sorted=input_model.receiver_endpoint_key_sorted,
+            endpoint_key=receiver.endpoint_key,
+            endpoint_values=receiver_conversion.sh3_m,
+            name='receiver_sh3_m_sorted',
+        )
+    )
     node_surface = np.ascontiguousarray(input_model.node_elevation_m, dtype=np.float64)
     node_total_thickness = _total_weathering_thickness(
         node_conversion.sh1_m,
         node_conversion.sh2_m,
+        node_conversion.sh3_m,
     )
     source_total_thickness = _total_weathering_thickness(
         source_conversion.sh1_m,
         source_conversion.sh2_m,
+        source_conversion.sh3_m,
     )
     receiver_total_thickness = _total_weathering_thickness(
         receiver_conversion.sh1_m,
         receiver_conversion.sh2_m,
+        receiver_conversion.sh3_m,
     )
     source_total_thickness_sorted = _total_weathering_thickness(
         source_sh1_sorted,
         source_sh2_sorted,
+        source_sh3_sorted,
     )
     receiver_total_thickness_sorted = _total_weathering_thickness(
         receiver_sh1_sorted,
         receiver_sh2_sorted,
+        receiver_sh3_sorted,
     )
     source_wcor_sorted = _map_endpoint_values_to_trace_order(
         endpoint_key_sorted=input_model.source_endpoint_key_sorted,
@@ -550,9 +647,10 @@ def build_refraction_multilayer_weathering_replacement_statics(
         'method': 'multilayer_time_term',
         'static_component': 't1lsst_multilayer_weathering_replacement',
         'conversion_mode': 't1lsst_multilayer',
-        'layer_count': 2,
+        'layer_count': layer_count,
+        'enabled_layer_kinds': list(solve_result.enabled_layer_kinds),
         'sign_convention': _SIGN_CONVENTION_TEXT,
-        'bedrock_velocity_mode': v3_layer.velocity_mode,
+        'bedrock_velocity_mode': replacement_velocity_mode,
         'weathering_velocity_m_s': float(v1_m_s),
         'v2_velocity_mode': v2_layer.velocity_mode,
         'v3_velocity_mode': v3_layer.velocity_mode,
@@ -560,18 +658,37 @@ def build_refraction_multilayer_weathering_replacement_statics(
         'layers': solve_result.qc,
         **_cell_threshold_qc_from_layer(v2_layer),
     }
+    if vsub_layer is not None:
+        qc.update(
+            {
+                'vsub_velocity_mode': vsub_layer.velocity_mode,
+                'vsub_m_s': float(replacement_velocity_m_s),
+            }
+        )
     source_v3_m_s = np.full(source.endpoint_key.shape, v3_m_s, dtype=np.float64)
     receiver_v3_m_s = np.full(receiver.endpoint_key.shape, v3_m_s, dtype=np.float64)
+    source_vsub_m_s = (
+        None
+        if vsub_layer is None
+        else np.full(source.endpoint_key.shape, replacement_velocity_m_s, dtype=np.float64)
+    )
+    receiver_vsub_m_s = (
+        None
+        if vsub_layer is None
+        else np.full(receiver.endpoint_key.shape, replacement_velocity_m_s, dtype=np.float64)
+    )
     rejected_by_robust = _combined_rejected_by_robust_mask(
         solve_result,
         input_model.n_traces,
     )
     return RefractionWeatheringReplacementStaticsResult(
-        bedrock_velocity_mode=v3_layer.velocity_mode,
-        bedrock_slowness_s_per_m=1.0 / v3_m_s,
-        bedrock_velocity_m_s=v3_m_s,
+        bedrock_velocity_mode=replacement_velocity_mode,
+        bedrock_slowness_s_per_m=1.0 / replacement_velocity_m_s,
+        bedrock_velocity_m_s=replacement_velocity_m_s,
         weathering_velocity_m_s=v1_m_s,
-        replacement_slowness_delta_s_per_m=1.0 / v3_m_s - 1.0 / v1_m_s,
+        replacement_slowness_delta_s_per_m=(
+            1.0 / replacement_velocity_m_s - 1.0 / v1_m_s
+        ),
         node_id=node_id,
         node_x_m=np.ascontiguousarray(input_model.node_x_m, dtype=np.float64),
         node_y_m=np.ascontiguousarray(input_model.node_y_m, dtype=np.float64),
@@ -716,14 +833,21 @@ def build_refraction_multilayer_weathering_replacement_statics(
         receiver_v2_status_sorted=v2.receiver_v2_status_sorted,
         node_sh1_weathering_thickness_m=node_conversion.sh1_m,
         node_sh2_weathering_thickness_m=node_conversion.sh2_m,
+        node_sh3_weathering_thickness_m=node_conversion.sh3_m,
         source_t2_time_s=source_t2,
+        source_t3_time_s=source_t3,
         source_v3_m_s=source_v3_m_s,
+        source_vsub_m_s=source_vsub_m_s,
         source_sh1_weathering_thickness_m=source_conversion.sh1_m,
         source_sh2_weathering_thickness_m=source_conversion.sh2_m,
+        source_sh3_weathering_thickness_m=source_conversion.sh3_m,
         receiver_t2_time_s=receiver_t2,
+        receiver_t3_time_s=receiver_t3,
         receiver_v3_m_s=receiver_v3_m_s,
+        receiver_vsub_m_s=receiver_vsub_m_s,
         receiver_sh1_weathering_thickness_m=receiver_conversion.sh1_m,
         receiver_sh2_weathering_thickness_m=receiver_conversion.sh2_m,
+        receiver_sh3_weathering_thickness_m=receiver_conversion.sh3_m,
     )
 
 
@@ -763,26 +887,37 @@ class _V2StaticModel:
 
 
 @dataclass(frozen=True)
-class _TwoLayerConversion:
+class _T1LSSTMultilayerConversion:
     sh1_m: np.ndarray
     sh2_m: np.ndarray
     weathering_correction_s: np.ndarray
     status: np.ndarray
+    sh3_m: np.ndarray | None = None
 
 
-def _require_two_layer_t1lsst_layers(
+def _require_multilayer_t1lsst_layers(
     normalized_layers: tuple[RefractionStaticLayerConfig, ...],
 ) -> None:
     kinds = tuple(config.kind for config in normalized_layers)
-    if kinds != ('v2_t1', 'v3_t2'):
+    if kinds not in (('v2_t1', 'v3_t2'), ('v2_t1', 'v3_t2', 'vsub_t3')):
+        enabled_text = ', '.join(kinds) if kinds else 'none'
         raise RefractionMultiLayerSolveError(
-            'two-layer T1LSST statics requires enabled layers v2_t1 and v3_t2'
+            'multi-layer T1LSST statics requires enabled layers v2_t1 and '
+            'v3_t2 for layer_count=2 or v2_t1, v3_t2, and vsub_t3 for '
+            f'layer_count=3; enabled layer kinds={enabled_text}'
         )
     v3_mode = normalized_layers[1].velocity_mode
     if v3_mode not in ('solve_global', 'fixed_global'):
         raise RefractionMultiLayerSolveError(
-            'two-layer T1LSST statics currently requires global V3/T2 velocity'
+            'multi-layer T1LSST statics currently requires global V3/T2 velocity'
         )
+    if len(normalized_layers) == 3:
+        vsub_mode = normalized_layers[2].velocity_mode
+        if vsub_mode not in ('solve_global', 'fixed_global'):
+            raise RefractionMultiLayerSolveError(
+                'multi-layer T1LSST statics currently requires global '
+                'Vsub/T3 velocity'
+            )
 
 
 def _compute_2layer_conversion(
@@ -793,7 +928,7 @@ def _compute_2layer_conversion(
     v2_m_s: np.ndarray,
     v3_m_s: float,
     v2_status: np.ndarray | None,
-) -> _TwoLayerConversion:
+) -> _T1LSSTMultilayerConversion:
     v2 = np.asarray(v2_m_s, dtype=np.float64)
     if v2_status is None:
         thickness = compute_t1lsst_2layer_thicknesses_with_status(
@@ -804,8 +939,8 @@ def _compute_2layer_conversion(
             v3_m_s=v3_m_s,
             strict_velocity_order=True,
         )
-        wcor = _required_2layer_wcor(thickness.weathering_correction_s)
-        return _TwoLayerConversion(
+        wcor = _required_multilayer_wcor(thickness.weathering_correction_s)
+        return _T1LSSTMultilayerConversion(
             sh1_m=thickness.sh1_m,
             sh2_m=thickness.sh2_m,
             weathering_correction_s=wcor,
@@ -825,7 +960,7 @@ def _compute_2layer_conversion(
         v3_m_s=v3_m_s,
         strict_velocity_order=False,
     )
-    wcor = _required_2layer_wcor(thickness.weathering_correction_s)
+    wcor = _required_multilayer_wcor(thickness.weathering_correction_s)
 
     sh1 = np.array(thickness.sh1_m, dtype=np.float64, copy=True, order='C')
     sh2 = np.array(thickness.sh2_m, dtype=np.float64, copy=True, order='C')
@@ -835,7 +970,7 @@ def _compute_2layer_conversion(
     sh1[invalid_local_v2] = np.nan
     sh2[invalid_local_v2] = np.nan
     wcor[invalid_local_v2] = np.nan
-    return _TwoLayerConversion(
+    return _T1LSSTMultilayerConversion(
         sh1_m=sh1,
         sh2_m=sh2,
         weathering_correction_s=wcor,
@@ -843,11 +978,84 @@ def _compute_2layer_conversion(
     )
 
 
-def _total_weathering_thickness(sh1_m: np.ndarray, sh2_m: np.ndarray) -> np.ndarray:
-    return np.ascontiguousarray(
-        np.asarray(sh1_m, dtype=np.float64) + np.asarray(sh2_m, dtype=np.float64),
-        dtype=np.float64,
+def _compute_3layer_conversion(
+    *,
+    t1_s: np.ndarray,
+    t2_s: np.ndarray,
+    t3_s: np.ndarray,
+    v1_m_s: float,
+    v2_m_s: np.ndarray,
+    v3_m_s: float,
+    vsub_m_s: float,
+    v2_status: np.ndarray | None,
+) -> _T1LSSTMultilayerConversion:
+    v2 = np.asarray(v2_m_s, dtype=np.float64)
+    try:
+        compute_3layer = refraction_t1lsst.compute_t1lsst_3layer_thicknesses_with_status
+    except AttributeError as exc:
+        raise RefractionMultiLayerSolveError(
+            'three-layer T1LSST conversion dependency is not available'
+        ) from exc
+    thickness = compute_3layer(
+        t1_s=t1_s,
+        t2_s=t2_s,
+        t3_s=t3_s,
+        v1_m_s=v1_m_s,
+        v2_m_s=v2,
+        v3_m_s=v3_m_s,
+        vsub_m_s=vsub_m_s,
+        strict_velocity_order=v2_status is None,
     )
+    wcor = _required_multilayer_wcor(thickness.weathering_correction_s)
+    if v2_status is None:
+        return _T1LSSTMultilayerConversion(
+            sh1_m=thickness.sh1_m,
+            sh2_m=thickness.sh2_m,
+            sh3_m=thickness.sh3_m,
+            weathering_correction_s=wcor,
+            status=thickness.status,
+        )
+
+    status = np.asarray(v2_status).astype(_STATUS_DTYPE, copy=True)
+    if status.shape != v2.shape:
+        raise RefractionMultiLayerSolveError('local V2 status shape mismatch')
+    invalid_local_v2 = ~np.isin(status.astype(str), list(_LOCAL_V2_OK_STATUS))
+
+    sh1 = np.array(thickness.sh1_m, dtype=np.float64, copy=True, order='C')
+    sh2 = np.array(thickness.sh2_m, dtype=np.float64, copy=True, order='C')
+    sh3 = np.array(thickness.sh3_m, dtype=np.float64, copy=True, order='C')
+    wcor = np.array(wcor, dtype=np.float64, copy=True, order='C')
+    conversion_status = np.asarray(thickness.status).astype(_STATUS_DTYPE, copy=True)
+    conversion_status[invalid_local_v2] = status[invalid_local_v2]
+    sh1[invalid_local_v2] = np.nan
+    sh2[invalid_local_v2] = np.nan
+    sh3[invalid_local_v2] = np.nan
+    wcor[invalid_local_v2] = np.nan
+    return _T1LSSTMultilayerConversion(
+        sh1_m=sh1,
+        sh2_m=sh2,
+        sh3_m=sh3,
+        weathering_correction_s=wcor,
+        status=conversion_status,
+    )
+
+
+def _total_weathering_thickness(
+    *thicknesses_m: np.ndarray | None,
+) -> np.ndarray:
+    arrays = [
+        np.asarray(thickness, dtype=np.float64)
+        for thickness in thicknesses_m
+        if thickness is not None
+    ]
+    if not arrays:
+        raise RefractionMultiLayerSolveError(
+            'at least one weathering thickness array is required'
+        )
+    total = np.array(arrays[0], dtype=np.float64, copy=True, order='C')
+    for array in arrays[1:]:
+        total = total + array
+    return np.ascontiguousarray(total, dtype=np.float64)
 
 
 def _cell_threshold_qc_from_layer(
@@ -896,19 +1104,47 @@ def _components_from_replacement(
         result.receiver_sh1_weathering_thickness_m,
         name='receiver_sh1_m',
     )
+    has_3layer_components = any(
+        value is not None
+        for value in (
+            result.source_t3_time_s,
+            result.receiver_t3_time_s,
+            result.source_sh3_weathering_thickness_m,
+            result.receiver_sh3_weathering_thickness_m,
+        )
+    )
+    source_t3 = receiver_t3 = source_sh3 = receiver_sh3 = None
+    if has_3layer_components:
+        source_t3 = _required_result_array(
+            result.source_t3_time_s,
+            name='source_t3_s',
+        )
+        receiver_t3 = _required_result_array(
+            result.receiver_t3_time_s,
+            name='receiver_t3_s',
+        )
+        source_sh3 = _required_result_array(
+            result.source_sh3_weathering_thickness_m,
+            name='source_sh3_m',
+        )
+        receiver_sh3 = _required_result_array(
+            result.receiver_sh3_weathering_thickness_m,
+            name='receiver_sh3_m',
+        )
+    layer_count = 3 if has_3layer_components else 2
     return RefractionMultiLayerStaticComponents(
         source_t1_s=np.ascontiguousarray(result.source_half_intercept_time_s),
         source_t2_s=source_t2,
-        source_t3_s=None,
+        source_t3_s=source_t3,
         receiver_t1_s=np.ascontiguousarray(result.receiver_half_intercept_time_s),
         receiver_t2_s=receiver_t2,
-        receiver_t3_s=None,
+        receiver_t3_s=receiver_t3,
         source_sh1_m=source_sh1,
         source_sh2_m=source_sh2,
-        source_sh3_m=None,
+        source_sh3_m=source_sh3,
         receiver_sh1_m=receiver_sh1,
         receiver_sh2_m=receiver_sh2,
-        receiver_sh3_m=None,
+        receiver_sh3_m=receiver_sh3,
         source_weathering_correction_s=np.ascontiguousarray(
             result.source_weathering_replacement_shift_s
         ),
@@ -917,7 +1153,7 @@ def _components_from_replacement(
         ),
         qc={
             'conversion_mode': 't1lsst_multilayer',
-            'layer_count': 2,
+            'layer_count': layer_count,
             'sign_convention': _SIGN_CONVENTION_TEXT,
         },
     )
@@ -932,8 +1168,8 @@ def _required_result_array(value: object, *, name: str) -> np.ndarray:
     return np.ascontiguousarray(arr, dtype=np.float64)
 
 
-def _required_2layer_wcor(value: object) -> np.ndarray:
-    return _required_result_array(value, name='two-layer weathering_correction_s')
+def _required_multilayer_wcor(value: object) -> np.ndarray:
+    return _required_result_array(value, name='multilayer weathering_correction_s')
 
 
 def _required_layer_result(

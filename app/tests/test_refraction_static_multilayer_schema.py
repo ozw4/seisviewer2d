@@ -256,5 +256,40 @@ def test_multilayer_conversion_requires_matching_enabled_layer_count() -> None:
 
     bad_payload = deepcopy(payload)
     bad_payload['conversion']['layer_count'] = 3
-    with pytest.raises(ValidationError, match='must match enabled refraction layers'):
+    with pytest.raises(
+        ValidationError,
+        match=(
+            'conversion.layer_count=3.*enabled layer kinds=v2_t1, v3_t2'
+        ),
+    ):
         RefractionStaticApplyRequest.model_validate(bad_payload)
+
+
+def test_multilayer_conversion_accepts_three_layer_contract() -> None:
+    payload = _apply_payload(
+        model=_multilayer_model([_v2_layer(), _v3_layer(), _vsub_layer()]),
+        conversion={'mode': 't1lsst_multilayer', 'layer_count': 3},
+    )
+    req = RefractionStaticApplyRequest.model_validate(payload)
+
+    assert req.conversion.mode == 't1lsst_multilayer'
+    assert req.conversion.layer_count == 3
+    assert [
+        layer.kind
+        for layer in normalize_refraction_static_layers(req.model)
+    ] == ['v2_t1', 'v3_t2', 'vsub_t3']
+
+
+def test_multilayer_conversion_rejects_layer_count_two_with_vsub_enabled() -> None:
+    payload = _apply_payload(
+        model=_multilayer_model([_v2_layer(), _v3_layer(), _vsub_layer()]),
+        conversion={'mode': 't1lsst_multilayer', 'layer_count': 2},
+    )
+
+    with pytest.raises(
+        ValidationError,
+        match=(
+            'conversion.layer_count=2.*enabled layer kinds=v2_t1, v3_t2, vsub_t3'
+        ),
+    ):
+        RefractionStaticApplyRequest.model_validate(payload)

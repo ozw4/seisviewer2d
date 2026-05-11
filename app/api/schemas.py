@@ -2592,8 +2592,16 @@ class RefractionStaticApplyRequest(BaseModel):
         if self.conversion.mode == 't1lsst_multilayer':
             enabled_count = self.model.enabled_refraction_layer_count
             if self.conversion.layer_count != enabled_count:
+                enabled_kinds = [
+                    layer.kind
+                    for layer in self.model.layers or []
+                    if layer.enabled
+                ]
+                enabled_text = ', '.join(enabled_kinds) if enabled_kinds else 'none'
                 raise ValueError(
-                    'conversion.layer_count must match enabled refraction layers'
+                    'conversion.layer_count must match enabled refraction layers; '
+                    f'conversion.layer_count={self.conversion.layer_count!r}, '
+                    f'enabled layer kinds={enabled_text}'
                 )
         return self
 

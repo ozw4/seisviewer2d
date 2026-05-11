@@ -145,10 +145,11 @@ See:
 - `time_term_static_correction.md`
 
 Refraction statics include the 1-layer V1/V2/T1 T1LSST workflow, cell-based
-local V2 support, and the public two-layer V3/T2
-`t1lsst_multilayer` workflow. Two-layer source/receiver outputs use the
-existing static table artifacts with added `t2`, `v3`, and `sh2` fields; the
-repo sign convention remains `corrected(t) = raw(t - shift_s)`.
+local V2 support, and the public two- and three-layer
+`t1lsst_multilayer` workflow. Multi-layer source/receiver outputs use the
+existing static table artifacts with added `t2`, `v3`, `sh2`, and, for
+three-layer runs, `t3`, `vsub`, and `sh3` fields; the repo sign convention
+remains `corrected(t) = raw(t - shift_s)`.
 
 ## Viewer benchmark
 
