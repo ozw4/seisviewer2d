@@ -45,6 +45,7 @@ SOURCE_COLUMNS = [
     'v2_m_s',
     'v2_status',
     'sh1_weathering_thickness_m',
+    'total_weathering_thickness_m',
     'refractor_elevation_m',
     'weathering_correction_ms',
     'floating_datum_correction_ms',
@@ -56,6 +57,7 @@ SOURCE_COLUMNS = [
     'weathering_status',
     'datum_status',
     'static_status',
+    'sign_convention',
     'pick_count',
     'used_pick_count',
     'residual_rms_ms',
@@ -78,6 +80,7 @@ RECEIVER_COLUMNS = [
     'v2_m_s',
     'v2_status',
     'sh1_weathering_thickness_m',
+    'total_weathering_thickness_m',
     'refractor_elevation_m',
     'weathering_correction_ms',
     'floating_datum_correction_ms',
@@ -89,6 +92,7 @@ RECEIVER_COLUMNS = [
     'weathering_status',
     'datum_status',
     'static_status',
+    'sign_convention',
     'pick_count',
     'used_pick_count',
     'residual_rms_ms',
@@ -545,6 +549,9 @@ def _assert_source_row_matches_npz(
     assert float(row['sh1_weathering_thickness_m']) == pytest.approx(
         float(data['source_sh1_m'][index])
     )
+    assert float(row['total_weathering_thickness_m']) == pytest.approx(
+        float(data['source_total_weathering_thickness_m'][index])
+    )
     assert float(row['weathering_correction_ms']) == pytest.approx(
         float(data['source_weathering_correction_s'][index]) * 1000.0
     )
@@ -558,6 +565,7 @@ def _assert_source_row_matches_npz(
         float(data['source_total_applied_shift_s'][index]) * 1000.0
     )
     assert row['static_status'] == str(data['source_static_status'][index])
+    assert row['sign_convention'] == str(data['sign_convention'])
 
 
 def _assert_receiver_row_matches_npz(
@@ -581,6 +589,9 @@ def _assert_receiver_row_matches_npz(
     assert float(row['sh1_weathering_thickness_m']) == pytest.approx(
         float(data['receiver_sh1_m'][index])
     )
+    assert float(row['total_weathering_thickness_m']) == pytest.approx(
+        float(data['receiver_total_weathering_thickness_m'][index])
+    )
     assert float(row['weathering_correction_ms']) == pytest.approx(
         float(data['receiver_weathering_correction_s'][index]) * 1000.0
     )
@@ -594,6 +605,7 @@ def _assert_receiver_row_matches_npz(
         float(data['receiver_total_applied_shift_s'][index]) * 1000.0
     )
     assert row['static_status'] == str(data['receiver_static_status'][index])
+    assert row['sign_convention'] == str(data['sign_convention'])
 
 
 def _read_csv(path: Path) -> list[dict[str, str]]:
