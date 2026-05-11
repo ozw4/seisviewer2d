@@ -392,10 +392,18 @@ def test_solve_cell_writes_refractor_velocity_cells_csv(tmp_path: Path) -> None:
     assert [int(row['cell_id']) for row in rows] == [0, 1, 2]
     assert rows[0]['active'] == 'true'
     assert rows[0]['velocity_status'] == 'solved'
+    assert float(rows[0]['velocity_m_s']) == pytest.approx(2400.0)
     assert float(rows[0]['v2_m_s']) == pytest.approx(2400.0)
+    assert float(rows[0]['initial_velocity_m_s']) == pytest.approx(2500.0)
+    assert float(rows[0]['initial_v2_m_s']) == pytest.approx(2500.0)
+    assert float(rows[0]['velocity_update_from_initial_m_s']) == pytest.approx(
+        -100.0
+    )
+    assert float(rows[0]['v2_update_from_initial_m_s']) == pytest.approx(-100.0)
     assert int(rows[0]['n_used_observations']) == 2
     assert rows[2]['active'] == 'false'
     assert rows[2]['velocity_status'] == 'inactive'
+    assert rows[2]['velocity_m_s'] == ''
     assert rows[2]['v2_m_s'] == ''
     assert rows[2]['x_min_m'] == '200.0'
 
@@ -411,7 +419,23 @@ def test_solve_cell_writes_refractor_velocity_grid_npz(tmp_path: Path) -> None:
     with np.load(paths.refraction_refractor_velocity_grid_npz, allow_pickle=False) as data:
         np.testing.assert_array_equal(data['cell_id'], [0, 1, 2])
         np.testing.assert_array_equal(data['active_cell_mask'], [True, True, False])
+        np.testing.assert_allclose(data['velocity_m_s'][:2], [2400.0, 2600.0])
         np.testing.assert_allclose(data['v2_m_s'][:2], [2400.0, 2600.0])
+        np.testing.assert_allclose(
+            data['velocity_m_s'],
+            data['v2_m_s'],
+            equal_nan=True,
+        )
+        np.testing.assert_allclose(
+            data['initial_velocity_m_s'],
+            data['initial_v2_m_s'],
+        )
+        np.testing.assert_allclose(
+            data['velocity_update_from_initial_m_s'],
+            data['v2_update_from_initial_m_s'],
+            equal_nan=True,
+        )
+        assert np.isnan(data['velocity_m_s'][2])
         assert np.isnan(data['v2_m_s'][2])
         assert data['velocity_status'].tolist() == ['solved', 'solved', 'inactive']
         np.testing.assert_array_equal(
@@ -565,6 +589,55 @@ def test_multiple_cell_velocity_layers_write_all_layer_artifacts(
     assert {row['cell_velocity_component'] for row in v3_rows} == {'v3'}
     assert {row['cell_velocity_layer_kind'] for row in vsub_rows} == {'vsub_t3'}
     assert {row['cell_velocity_component'] for row in vsub_rows} == {'vsub'}
+
+    with np.load(
+        tmp_path / REFRACTION_V3_REFRACTOR_VELOCITY_GRID_NPZ_NAME,
+        allow_pickle=False,
+    ) as v3_grid:
+        np.testing.assert_allclose(
+            v3_grid['velocity_m_s'],
+            np.asarray([3300.0, 3700.0, np.nan], dtype=np.float64),
+            equal_nan=True,
+        )
+        np.testing.assert_allclose(
+            v3_grid['velocity_m_s'],
+            v3_grid['v2_m_s'],
+            equal_nan=True,
+        )
+        np.testing.assert_allclose(
+            v3_grid['initial_velocity_m_s'],
+            v3_grid['initial_v2_m_s'],
+        )
+        np.testing.assert_allclose(
+            v3_grid['velocity_update_from_initial_m_s'],
+            v3_grid['v2_update_from_initial_m_s'],
+            equal_nan=True,
+        )
+        assert set(v3_grid['cell_velocity_layer_kind'].astype(str).tolist()) == {
+            'v3_t2'
+        }
+        assert set(v3_grid['cell_velocity_component'].astype(str).tolist()) == {'v3'}
+
+    with np.load(
+        tmp_path / REFRACTION_VSUB_REFRACTOR_VELOCITY_GRID_NPZ_NAME,
+        allow_pickle=False,
+    ) as vsub_grid:
+        np.testing.assert_allclose(
+            vsub_grid['velocity_m_s'],
+            np.asarray([np.nan, 4800.0, 5200.0], dtype=np.float64),
+            equal_nan=True,
+        )
+        np.testing.assert_allclose(
+            vsub_grid['velocity_m_s'],
+            vsub_grid['v2_m_s'],
+            equal_nan=True,
+        )
+        assert set(vsub_grid['cell_velocity_layer_kind'].astype(str).tolist()) == {
+            'vsub_t3'
+        }
+        assert set(vsub_grid['cell_velocity_component'].astype(str).tolist()) == {
+            'vsub'
+        }
 
     qc = json.loads(paths.qc_json.read_text(encoding='utf-8'))
     assert qc['velocity']['cell_velocity_layer_kinds'] == ['v3_t2', 'vsub_t3']
