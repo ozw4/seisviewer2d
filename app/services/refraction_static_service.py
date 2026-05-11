@@ -57,11 +57,12 @@ from app.services.refraction_static_weathering_replacement import (
 
 _REQUEST_JSON_NAME = 'refraction_static_request.json'
 _ARTIFACT_ONLY_DONE_MESSAGE = 'refraction_static_artifacts_written_artifact_only'
-_PUBLIC_TWO_LAYER_APPLY_CONTRACT = (
-    'public two-layer refraction apply requires '
+_PUBLIC_MULTILAYER_APPLY_CONTRACT = (
+    'public multi-layer refraction apply requires '
     'model.method=multilayer_time_term, '
-    'conversion.mode=t1lsst_multilayer, conversion.layer_count=2, '
-    'and exactly enabled layers v2_t1 and v3_t2'
+    'conversion.mode=t1lsst_multilayer, and exactly enabled layers '
+    'v2_t1 and v3_t2 for conversion.layer_count=2 or v2_t1, v3_t2, '
+    'and vsub_t3 for conversion.layer_count=3'
 )
 
 
@@ -173,13 +174,13 @@ def _reject_unsupported_multilayer_apply(req: RefractionStaticApplyRequest) -> N
         return
     raise RefractionMultiLayerApplyNotImplemented(
         'refraction static apply supports accepted multi-layer request fields '
-        'only for the M3 public two-layer contract. '
-        f'{_PUBLIC_TWO_LAYER_APPLY_CONTRACT}. Unsupported request fields: '
+        'only for the M3 public multi-layer contract. '
+        f'{_PUBLIC_MULTILAYER_APPLY_CONTRACT}. Unsupported request fields: '
         f'{", ".join(unsupported)}.'
     )
 
 
-def _is_public_two_layer_multilayer_apply(
+def _is_public_multilayer_apply(
     req: RefractionStaticApplyRequest,
 ) -> bool:
     if (
@@ -187,32 +188,49 @@ def _is_public_two_layer_multilayer_apply(
         or req.conversion.mode != 't1lsst_multilayer'
     ):
         return False
-    _require_public_two_layer_multilayer_apply(req)
+    _require_public_multilayer_apply(req)
     return True
 
 
-def _require_public_two_layer_multilayer_apply(
+def _require_public_multilayer_apply(
     req: RefractionStaticApplyRequest,
 ) -> None:
     normalized_layers = normalize_refraction_static_layers(req.model)
     enabled_kinds = tuple(config.kind for config in normalized_layers)
-    if req.conversion.layer_count != 2 or enabled_kinds != ('v2_t1', 'v3_t2'):
-        enabled_text = ', '.join(enabled_kinds) if enabled_kinds else 'none'
+    enabled_text = ', '.join(enabled_kinds) if enabled_kinds else 'none'
+    expected_by_count = {
+        2: ('v2_t1', 'v3_t2'),
+        3: ('v2_t1', 'v3_t2', 'vsub_t3'),
+    }
+    expected = expected_by_count.get(req.conversion.layer_count)
+    if expected is None or enabled_kinds != expected:
         raise RefractionMultiLayerApplyNotImplemented(
-            f'{_PUBLIC_TWO_LAYER_APPLY_CONTRACT}; got '
+            f'{_PUBLIC_MULTILAYER_APPLY_CONTRACT}; got '
             f'conversion.layer_count={req.conversion.layer_count!r}, '
-            f'enabled layers={enabled_text}. Public apply does not implement '
-            'vsub_t3 or three-layer T1LSST conversion.'
+            f'enabled layer kinds={enabled_text}.'
         )
 
     v3_config = normalized_layers[1]
     if v3_config.velocity_mode not in ('fixed_global', 'solve_global'):
         raise RefractionMultiLayerApplyNotImplemented(
-            f'{_PUBLIC_TWO_LAYER_APPLY_CONTRACT}; v3_t2 velocity_mode='
+            f'{_PUBLIC_MULTILAYER_APPLY_CONTRACT}; '
+            f'conversion.layer_count={req.conversion.layer_count!r}, '
+            f'enabled layer kinds={enabled_text}; v3_t2 velocity_mode='
             f'{v3_config.velocity_mode} is not supported. Public apply '
             'currently requires global V3/T2 velocity; cell V3 is not '
             'implemented.'
         )
+    if req.conversion.layer_count == 3:
+        vsub_config = normalized_layers[2]
+        if vsub_config.velocity_mode not in ('fixed_global', 'solve_global'):
+            raise RefractionMultiLayerApplyNotImplemented(
+                f'{_PUBLIC_MULTILAYER_APPLY_CONTRACT}; '
+                f'conversion.layer_count={req.conversion.layer_count!r}, '
+                f'enabled layer kinds={enabled_text}; vsub_t3 velocity_mode='
+                f'{vsub_config.velocity_mode} is not supported. Public apply '
+                'currently requires global Vsub/T3 velocity; cell Vsub is not '
+                'implemented.'
+            )
 
 
 def _solver_request_for_refraction_static_apply(
@@ -422,7 +440,7 @@ def _finish_refraction_static_apply_job(
     )
 
 
-def _run_public_two_layer_refraction_static_apply_job(
+def _run_public_multilayer_refraction_static_apply_job(
     *,
     job_id: str,
     req: RefractionStaticApplyRequest,
@@ -509,8 +527,8 @@ def _run_refraction_static_apply_job_body(
             'request': req.model_dump(mode='json'),
         },
     )
-    public_two_layer_apply = _is_public_two_layer_multilayer_apply(req)
-    if not public_two_layer_apply:
+    public_multilayer_apply = _is_public_multilayer_apply(req)
+    if not public_multilayer_apply:
         _reject_unsupported_multilayer_apply(req)
     _set_job_progress_message(
         state,
@@ -524,8 +542,8 @@ def _run_refraction_static_apply_job_body(
         job_dir=job_dir,
     )
     input_req = first_layer.req
-    if public_two_layer_apply:
-        return _run_public_two_layer_refraction_static_apply_job(
+    if public_multilayer_apply:
+        return _run_public_multilayer_refraction_static_apply_job(
             job_id=job_id,
             req=input_req,
             state=state,

@@ -6,8 +6,10 @@ from pathlib import Path
 import signal
 import subprocess
 import sys
+import tempfile
 import time
 from types import ModuleType
+from typing import TextIO
 
 import pytest
 
@@ -54,6 +56,12 @@ def _subprocess_output_text(value: bytes | str | None) -> str:
     return value if value else '<empty>'
 
 
+def _read_tmp_text(file_obj: TextIO) -> str:
+    file_obj.flush()
+    file_obj.seek(0)
+    return file_obj.read()
+
+
 def _import_check_failure_message(
     title: str,
     *,
@@ -91,53 +99,60 @@ def _run_import_check_subprocess(
     forbidden_modules: set[str],
     forbidden_module_prefixes: tuple[str, ...],
 ) -> subprocess.CompletedProcess[str]:
-    proc = subprocess.Popen(
-        [sys.executable, '-c', code],
-        cwd=_REPO_ROOT,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        text=True,
-        start_new_session=True,
-        env={**os.environ, **_IMPORT_LAYER_CHILD_ENV_OVERRIDES},
-    )
-    try:
-        stdout, stderr = proc.communicate(timeout=timeout_s)
-    except subprocess.TimeoutExpired as exc:
-        try:
-            os.killpg(proc.pid, signal.SIGKILL)
-        except ProcessLookupError:
-            pass
-        try:
-            stdout, stderr = proc.communicate(timeout=1.0)
-        except subprocess.TimeoutExpired as drain_exc:
-            stdout = drain_exc.stdout or exc.stdout
-            stderr = drain_exc.stderr or exc.stderr
-        raise AssertionError(
-            _import_check_failure_message(
-                'Timed out while checking dependency-light import layer',
-                module_name=module_name,
-                forbidden_modules=forbidden_modules,
-                forbidden_module_prefixes=forbidden_module_prefixes,
-                timeout_s=timeout_s,
-                stdout=stdout,
-                stderr=stderr,
-            )
-        ) from exc
-
-    if proc.returncode != 0:
-        raise AssertionError(
-            _import_check_failure_message(
-                'Dependency-light import subprocess failed',
-                module_name=module_name,
-                forbidden_modules=forbidden_modules,
-                forbidden_module_prefixes=forbidden_module_prefixes,
-                timeout_s=timeout_s,
-                stdout=stdout,
-                stderr=stderr,
-                returncode=proc.returncode,
-            )
+    with (
+        tempfile.NamedTemporaryFile(mode='w+', encoding='utf-8') as stdout_file,
+        tempfile.NamedTemporaryFile(mode='w+', encoding='utf-8') as stderr_file,
+    ):
+        proc = subprocess.Popen(
+            [sys.executable, '-c', code],
+            cwd=_REPO_ROOT,
+            stdout=stdout_file,
+            stderr=stderr_file,
+            text=True,
+            start_new_session=True,
+            env={**os.environ, **_IMPORT_LAYER_CHILD_ENV_OVERRIDES},
         )
-    return subprocess.CompletedProcess(proc.args, proc.returncode, stdout, stderr)
+        try:
+            returncode = proc.wait(timeout=timeout_s)
+        except subprocess.TimeoutExpired as exc:
+            try:
+                os.killpg(proc.pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+            try:
+                proc.wait(timeout=1.0)
+            except subprocess.TimeoutExpired:
+                pass
+            stdout = _read_tmp_text(stdout_file)
+            stderr = _read_tmp_text(stderr_file)
+            raise AssertionError(
+                _import_check_failure_message(
+                    'Timed out while checking dependency-light import layer',
+                    module_name=module_name,
+                    forbidden_modules=forbidden_modules,
+                    forbidden_module_prefixes=forbidden_module_prefixes,
+                    timeout_s=timeout_s,
+                    stdout=stdout,
+                    stderr=stderr,
+                )
+            ) from exc
+
+        stdout = _read_tmp_text(stdout_file)
+        stderr = _read_tmp_text(stderr_file)
+        if returncode != 0:
+            raise AssertionError(
+                _import_check_failure_message(
+                    'Dependency-light import subprocess failed',
+                    module_name=module_name,
+                    forbidden_modules=forbidden_modules,
+                    forbidden_module_prefixes=forbidden_module_prefixes,
+                    timeout_s=timeout_s,
+                    stdout=stdout,
+                    stderr=stderr,
+                    returncode=returncode,
+                )
+            )
+        return subprocess.CompletedProcess(proc.args, returncode, stdout, stderr)
 
 
 def _forbidden_modules_imported_by(
@@ -191,10 +206,13 @@ def test_refraction_static_import_layer_checks_use_process_group_timeout(
             self.args = args
             self.pid = 12345
             self.returncode = 0
+            stdout = kwargs['stdout']
+            assert hasattr(stdout, 'write')
+            stdout.write('[]')
 
-        def communicate(self, timeout: float | None = None) -> tuple[str, str]:
+        def wait(self, timeout: float | None = None) -> int:
             captured['timeout'] = timeout
-            return '[]', ''
+            return self.returncode
 
     monkeypatch.setattr(subprocess, 'Popen', FakePopen)
 
@@ -202,8 +220,10 @@ def test_refraction_static_import_layer_checks_use_process_group_timeout(
 
     kwargs = captured['kwargs']
     assert kwargs['cwd'] == _REPO_ROOT
-    assert kwargs['stdout'] == subprocess.PIPE
-    assert kwargs['stderr'] == subprocess.PIPE
+    assert kwargs['stdout'] != subprocess.PIPE
+    assert kwargs['stderr'] != subprocess.PIPE
+    assert hasattr(kwargs['stdout'], 'write')
+    assert hasattr(kwargs['stderr'], 'write')
     assert kwargs['text'] is True
     assert kwargs['start_new_session'] is True
     assert captured['timeout'] == _IMPORT_LAYER_CHECK_TIMEOUT_S
@@ -270,18 +290,23 @@ def test_import_layer_timeout_failure_message_is_readable(
             self.args = args
             self.pid = 67890
             self.returncode = None
-            self.communicate_calls = 0
+            self.wait_calls = 0
+            stdout = kwargs['stdout']
+            stderr = kwargs['stderr']
+            assert hasattr(stdout, 'write')
+            assert hasattr(stderr, 'write')
+            stdout.write('partial stdout')
+            stderr.write('partial stderr')
 
-        def communicate(self, timeout: float | None = None) -> tuple[str, str]:
-            self.communicate_calls += 1
-            if self.communicate_calls == 1:
+        def wait(self, timeout: float | None = None) -> int:
+            self.wait_calls += 1
+            if self.wait_calls == 1:
                 raise subprocess.TimeoutExpired(
                     cmd=self.args,
                     timeout=timeout,
-                    output='partial stdout',
-                    stderr='partial stderr',
                 )
-            return 'partial stdout', 'partial stderr'
+            self.returncode = -signal.SIGKILL
+            return self.returncode
 
     def fake_killpg(pid: int, sig: int) -> None:
         captured['killpg'] = (pid, sig)

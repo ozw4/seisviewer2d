@@ -217,7 +217,7 @@ def test_multilayer_orchestrator_applies_layer_cell_settings_to_layer_model() ->
     assert result.layer_results[0].velocity_mode == 'solve_cell'
 
 
-def test_multilayer_orchestrator_rejects_unimplemented_vsub_layer() -> None:
+def test_three_enabled_layers_are_solved_in_order_without_custom_dispatch() -> None:
     dataset = make_2d_straight_three_layer_refraction_dataset()
     model = _model(
         [
@@ -225,8 +225,8 @@ def test_multilayer_orchestrator_rejects_unimplemented_vsub_layer() -> None:
                 'v2_t1',
                 min_offset_m=300.0,
                 max_offset_m=800.0,
-                velocity_mode='solve_global',
-                initial_velocity_m_s=SYNTHETIC_MULTILAYER_V2_M_S,
+                velocity_mode='fixed_global',
+                fixed_velocity_m_s=SYNTHETIC_MULTILAYER_V2_M_S,
                 min_velocity_m_s=1600.0,
                 max_velocity_m_s=3200.0,
             ),
@@ -234,8 +234,8 @@ def test_multilayer_orchestrator_rejects_unimplemented_vsub_layer() -> None:
                 'v3_t2',
                 min_offset_m=1000.0,
                 max_offset_m=1900.0,
-                velocity_mode='solve_global',
-                initial_velocity_m_s=SYNTHETIC_MULTILAYER_V3_M_S,
+                velocity_mode='fixed_global',
+                fixed_velocity_m_s=SYNTHETIC_MULTILAYER_V3_M_S,
                 min_velocity_m_s=2600.0,
                 max_velocity_m_s=4800.0,
             ),
@@ -256,18 +256,29 @@ def test_multilayer_orchestrator_rejects_unimplemented_vsub_layer() -> None:
         model=model,
     )
 
-    with pytest.raises(
-        RefractionMultiLayerSolveError,
-        match='vsub_t3.*fixed_global.*not implemented',
-    ):
-        solve_refraction_multilayer_time_terms(
-            input_model=input_model,
-            resolved_first_layer=_resolved_first_layer(),
-            normalized_layers=normalize_refraction_static_layers(model),
-            layer_masks=masks,
-            model=model,
-            solver=RefractionStaticSolverRequest(),
-        )
+    result = solve_refraction_multilayer_time_terms(
+        input_model=input_model,
+        resolved_first_layer=_resolved_first_layer(),
+        normalized_layers=normalize_refraction_static_layers(model),
+        layer_masks=masks,
+        model=model,
+        solver=RefractionStaticSolverRequest(robust={'enabled': False}),
+    )
+
+    assert result.enabled_layer_kinds == ('v2_t1', 'v3_t2', 'vsub_t3')
+    assert [layer.layer_kind for layer in result.layer_results] == [
+        'v2_t1',
+        'v3_t2',
+        'vsub_t3',
+    ]
+    assert [layer.layer_index for layer in result.layer_results] == [1, 2, 3]
+    assert result.layer_results[2].global_velocity_m_s == pytest.approx(
+        SYNTHETIC_MULTILAYER_VSUB_M_S
+    )
+    assert 'vsub_t3' in result.qc['layers']
+    assert result.qc['observation_gates']['vsub_t3']['n_used_observations'] == int(
+        np.count_nonzero(masks.layer_used_mask_sorted['vsub_t3'])
+    )
 
 
 def test_multilayer_orchestrator_rejects_empty_layer_mask() -> None:

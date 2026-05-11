@@ -62,6 +62,12 @@ from app.tests._refraction_static_synthetic import (
     synthetic_refracted_arrival_input_model,
     synthetic_refraction_apply_request,
 )
+from app.tests._refraction_multilayer_synthetic import (
+    SYNTHETIC_MULTILAYER_V1_M_S,
+    SYNTHETIC_MULTILAYER_V2_M_S,
+    SYNTHETIC_MULTILAYER_V3_M_S,
+    SYNTHETIC_MULTILAYER_VSUB_M_S,
+)
 from app.tests.test_refraction_static_multilayer_2layer_e2e import (
     _CELL_VELOCITY_ARTIFACT_NAMES,
     _make_two_layer_fixture,
@@ -360,7 +366,7 @@ def test_run_refraction_static_apply_job_rejects_multilayer_conversion_explicitl
         job = dict(client.app.state.sv.jobs[job_id])
     assert job['status'] == 'error'
     assert 'conversion.mode=t1lsst_multilayer' in str(job['message'])
-    assert 'public two-layer refraction apply requires' in str(job['message'])
+    assert 'public multi-layer refraction apply requires' in str(job['message'])
     assert REQUEST_JSON_NAME in _job_file_names(job_dir)
     assert FINAL_REFRACTION_ARTIFACTS.isdisjoint(_job_file_names(job_dir))
 
@@ -462,13 +468,86 @@ def test_run_refraction_static_apply_job_completes_two_layer_cell_v2_global_v3(
     assert qc['velocity']['cell_velocity_component'] == 'v2'
 
 
-def test_run_refraction_static_apply_job_rejects_vsub_t3_until_implemented(
+def test_public_apply_accepts_three_layer_multilayer_request(
     client: TestClient,
     tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     payload = _three_layer_apply_payload()
     req = RefractionStaticApplyRequest.model_validate(payload)
     job_id = 'refraction-vsub-t3-job-id'
+    job_dir = tmp_path / 'jobs' / job_id
+    _create_refraction_job(client, job_id=job_id, req=req, job_dir=job_dir)
+    input_model = object()
+    build_calls: list[dict[str, Any]] = []
+    workflow_calls: list[dict[str, Any]] = []
+
+    def _build_input_model(**kwargs: Any) -> object:
+        build_calls.append(kwargs)
+        return input_model
+
+    def _compute_workflow(**kwargs: Any) -> SimpleNamespace:
+        workflow_calls.append(kwargs)
+        return SimpleNamespace(datum_result=_three_layer_contract_datum_result())
+
+    monkeypatch.setattr(
+        refraction_service_module,
+        'build_refraction_static_input_model',
+        _build_input_model,
+    )
+    monkeypatch.setattr(
+        refraction_service_module,
+        'compute_refraction_multilayer_datum_statics_from_input_model',
+        _compute_workflow,
+    )
+
+    run_refraction_static_apply_job(job_id, req, client.app.state.sv)
+
+    with client.app.state.sv.lock:
+        job = dict(client.app.state.sv.jobs[job_id])
+    assert job['status'] == 'done', job.get('message')
+    assert len(build_calls) == 1
+    assert build_calls[0]['req'] is req
+    assert len(workflow_calls) == 1
+    assert workflow_calls[0]['input_model'] is input_model
+    assert workflow_calls[0]['model'] is req.model
+    assert REQUEST_JSON_NAME in _job_file_names(job_dir)
+    assert FINAL_REFRACTION_ARTIFACTS.issubset(_job_file_names(job_dir))
+
+    qc = json.loads(
+        (job_dir / REFRACTION_STATIC_QC_JSON_NAME).read_text(encoding='utf-8')
+    )
+    assert qc['conversion_mode'] == 't1lsst_multilayer'
+    assert qc['layer_count'] == 3
+    assert qc['enabled_layer_kinds'] == ['v2_t1', 'v3_t2', 'vsub_t3']
+    _assert_three_layer_solution_arrays(job_dir)
+
+
+def test_public_apply_rejects_unsupported_vsub_cell_velocity_mode(
+    client: TestClient,
+    tmp_path: Path,
+) -> None:
+    payload = _three_layer_apply_payload()
+    payload['model']['refractor_cell'] = {
+        'number_of_cell_x': 5,
+        'size_of_cell_x_m': 500.0,
+        'x_coordinate_origin_m': 0.0,
+        'number_of_cell_y': 1,
+        'size_of_cell_y_m': None,
+        'y_coordinate_origin_m': 0.0,
+        'assignment_mode': 'midpoint',
+        'outside_grid_policy': 'reject',
+        'coordinate_mode': 'grid_3d',
+        'min_observations_per_cell': 1,
+        'velocity_smoothing_weight': 0.0,
+        'smoothing_reference_distance_m': None,
+    }
+    vsub_layer = payload['model']['layers'][2]
+    vsub_layer['velocity_mode'] = 'solve_cell'
+    vsub_layer['fixed_velocity_m_s'] = None
+    vsub_layer['initial_velocity_m_s'] = 5200.0
+    req = RefractionStaticApplyRequest.model_validate(payload)
+    job_id = 'refraction-vsub-cell-job-id'
     job_dir = tmp_path / 'jobs' / job_id
     _create_refraction_job(client, job_id=job_id, req=req, job_dir=job_dir)
 
@@ -477,10 +556,10 @@ def test_run_refraction_static_apply_job_rejects_vsub_t3_until_implemented(
     with client.app.state.sv.lock:
         job = dict(client.app.state.sv.jobs[job_id])
     assert job['status'] == 'error'
-    assert 'vsub_t3' in str(job['message'])
-    assert 'three-layer T1LSST conversion' in str(job['message'])
-    assert REQUEST_JSON_NAME in _job_file_names(job_dir)
-    assert FINAL_REFRACTION_ARTIFACTS.isdisjoint(_job_file_names(job_dir))
+    message = str(job['message'])
+    assert 'conversion.layer_count=3' in message
+    assert 'enabled layer kinds=v2_t1, v3_t2, vsub_t3' in message
+    assert 'vsub_t3 velocity_mode=solve_cell is not supported' in message
 
 
 def test_run_refraction_static_apply_job_rejects_cell_v3_until_implemented(
@@ -1626,40 +1705,48 @@ def _two_layer_apply_request(fixture: Any) -> RefractionStaticApplyRequest:
 
 def _three_layer_apply_payload() -> dict[str, Any]:
     payload = _payload()
+    layer_ranges = {
+        'v2_t1': (0.0, 1000.0),
+        'v3_t2': (1000.0, 2000.0),
+        'vsub_t3': (2000.0, None),
+    }
+    v2_min, v2_max = layer_ranges['v2_t1']
+    v3_min, v3_max = layer_ranges['v3_t2']
+    vsub_min, vsub_max = layer_ranges['vsub_t3']
     payload['model'] = {
         'method': 'multilayer_time_term',
         'first_layer': {
             'mode': 'constant',
-            'weathering_velocity_m_s': 800.0,
+            'weathering_velocity_m_s': SYNTHETIC_MULTILAYER_V1_M_S,
         },
         'layers': [
             {
                 'kind': 'v2_t1',
                 'enabled': True,
-                'min_offset_m': 0.0,
-                'max_offset_m': 1000.0,
-                'velocity_mode': 'solve_global',
-                'initial_velocity_m_s': 2400.0,
+                'min_offset_m': v2_min,
+                'max_offset_m': v2_max,
+                'velocity_mode': 'fixed_global',
+                'fixed_velocity_m_s': SYNTHETIC_MULTILAYER_V2_M_S,
                 'min_velocity_m_s': 1200.0,
                 'max_velocity_m_s': 3200.0,
             },
             {
                 'kind': 'v3_t2',
                 'enabled': True,
-                'min_offset_m': 1000.0,
-                'max_offset_m': 2000.0,
-                'velocity_mode': 'solve_global',
-                'initial_velocity_m_s': 3600.0,
+                'min_offset_m': v3_min,
+                'max_offset_m': v3_max,
+                'velocity_mode': 'fixed_global',
+                'fixed_velocity_m_s': SYNTHETIC_MULTILAYER_V3_M_S,
                 'min_velocity_m_s': 2600.0,
                 'max_velocity_m_s': 4800.0,
             },
             {
                 'kind': 'vsub_t3',
                 'enabled': True,
-                'min_offset_m': 2000.0,
-                'max_offset_m': None,
+                'min_offset_m': vsub_min,
+                'max_offset_m': vsub_max,
                 'velocity_mode': 'fixed_global',
-                'fixed_velocity_m_s': 5200.0,
+                'fixed_velocity_m_s': SYNTHETIC_MULTILAYER_VSUB_M_S,
                 'min_velocity_m_s': 3600.0,
                 'max_velocity_m_s': 7000.0,
             },
@@ -1694,6 +1781,134 @@ def _assert_two_layer_solution_arrays(job_dir: Path) -> None:
         assert expected_arrays <= set(data.files)
         for key in expected_arrays:
             assert data[key].dtype != object
+
+
+def _three_layer_contract_datum_result() -> Any:
+    result = _artifact_result()
+    node_sh1 = result.node_weathering_thickness_m
+    node_sh2 = np.asarray([4.0, 5.0, 6.0], dtype=np.float64)
+    node_sh3 = np.asarray([2.0, 3.0, 4.0], dtype=np.float64)
+    node_total = node_sh1 + node_sh2 + node_sh3
+
+    source_sh1 = result.source_weathering_thickness_m
+    source_sh2 = np.asarray([4.0, 5.0], dtype=np.float64)
+    source_sh3 = np.asarray([2.0, 3.0], dtype=np.float64)
+    source_total = source_sh1 + source_sh2 + source_sh3
+    source_sh2_sorted = np.asarray([4.0, 5.0, 4.0, 5.0], dtype=np.float64)
+    source_sh3_sorted = np.asarray([2.0, 3.0, 2.0, 3.0], dtype=np.float64)
+    source_total_sorted = (
+        result.source_weathering_thickness_m_sorted
+        + source_sh2_sorted
+        + source_sh3_sorted
+    )
+
+    receiver_sh1 = result.receiver_weathering_thickness_m
+    receiver_sh2 = np.asarray([5.0, 6.0], dtype=np.float64)
+    receiver_sh3 = np.asarray([3.0, 4.0], dtype=np.float64)
+    receiver_total = receiver_sh1 + receiver_sh2 + receiver_sh3
+    receiver_sh2_sorted = np.asarray([5.0, 6.0, 6.0, 5.0], dtype=np.float64)
+    receiver_sh3_sorted = np.asarray([3.0, 4.0, 4.0, 3.0], dtype=np.float64)
+    receiver_total_sorted = (
+        result.receiver_weathering_thickness_m_sorted
+        + receiver_sh2_sorted
+        + receiver_sh3_sorted
+    )
+
+    return replace(
+        result,
+        bedrock_velocity_mode='fixed_global',
+        bedrock_slowness_s_per_m=1.0 / SYNTHETIC_MULTILAYER_VSUB_M_S,
+        bedrock_velocity_m_s=SYNTHETIC_MULTILAYER_VSUB_M_S,
+        weathering_velocity_m_s=SYNTHETIC_MULTILAYER_V1_M_S,
+        replacement_slowness_delta_s_per_m=(
+            1.0 / SYNTHETIC_MULTILAYER_VSUB_M_S
+            - 1.0 / SYNTHETIC_MULTILAYER_V1_M_S
+        ),
+        qc={
+            **result.qc,
+            'method': 'multilayer_time_term',
+            'conversion_mode': 't1lsst_multilayer',
+            'layer_count': 3,
+            'enabled_layer_kinds': ['v2_t1', 'v3_t2', 'vsub_t3'],
+        },
+        node_weathering_thickness_m=node_total,
+        node_refractor_elevation_m=result.node_surface_elevation_m - node_total,
+        node_sh1_weathering_thickness_m=node_sh1,
+        node_sh2_weathering_thickness_m=node_sh2,
+        node_sh3_weathering_thickness_m=node_sh3,
+        source_weathering_thickness_m=source_total,
+        source_refractor_elevation_m=(
+            result.source_surface_elevation_m - source_total
+        ),
+        source_weathering_thickness_m_sorted=source_total_sorted,
+        source_refractor_elevation_m_sorted=(
+            result.source_surface_elevation_m_sorted - source_total_sorted
+        ),
+        source_t2_time_s=np.asarray([0.020, 0.022], dtype=np.float64),
+        source_t3_time_s=np.asarray([0.030, 0.033], dtype=np.float64),
+        source_v3_m_s=np.full(2, SYNTHETIC_MULTILAYER_V3_M_S, dtype=np.float64),
+        source_vsub_m_s=np.full(
+            2,
+            SYNTHETIC_MULTILAYER_VSUB_M_S,
+            dtype=np.float64,
+        ),
+        source_sh1_weathering_thickness_m=source_sh1,
+        source_sh2_weathering_thickness_m=source_sh2,
+        source_sh3_weathering_thickness_m=source_sh3,
+        receiver_weathering_thickness_m=receiver_total,
+        receiver_refractor_elevation_m=(
+            result.receiver_surface_elevation_m - receiver_total
+        ),
+        receiver_weathering_thickness_m_sorted=receiver_total_sorted,
+        receiver_refractor_elevation_m_sorted=(
+            result.receiver_surface_elevation_m_sorted - receiver_total_sorted
+        ),
+        receiver_t2_time_s=np.asarray([0.023, 0.025], dtype=np.float64),
+        receiver_t3_time_s=np.asarray([0.034, 0.037], dtype=np.float64),
+        receiver_v3_m_s=np.full(2, SYNTHETIC_MULTILAYER_V3_M_S, dtype=np.float64),
+        receiver_vsub_m_s=np.full(
+            2,
+            SYNTHETIC_MULTILAYER_VSUB_M_S,
+            dtype=np.float64,
+        ),
+        receiver_sh1_weathering_thickness_m=receiver_sh1,
+        receiver_sh2_weathering_thickness_m=receiver_sh2,
+        receiver_sh3_weathering_thickness_m=receiver_sh3,
+    )
+
+
+def _assert_three_layer_solution_arrays(job_dir: Path) -> None:
+    expected_arrays = {
+        'node_sh3_weathering_thickness_m',
+        'source_t3_time_s',
+        'source_vsub_m_s',
+        'source_sh3_weathering_thickness_m',
+        'receiver_t3_time_s',
+        'receiver_vsub_m_s',
+        'receiver_sh3_weathering_thickness_m',
+    }
+    with np.load(job_dir / REFRACTION_STATIC_SOLUTION_NPZ_NAME, allow_pickle=False) as data:
+        assert expected_arrays <= set(data.files)
+        for key in expected_arrays:
+            assert data[key].dtype != object
+        assert np.count_nonzero(np.isfinite(data['source_t3_time_s'])) > 0
+        assert np.count_nonzero(np.isfinite(data['receiver_t3_time_s'])) > 0
+        assert (
+            np.count_nonzero(
+                np.isfinite(data['source_sh3_weathering_thickness_m'])
+            )
+            > 0
+        )
+        np.testing.assert_allclose(
+            data['source_vsub_m_s'],
+            SYNTHETIC_MULTILAYER_VSUB_M_S,
+            rtol=1.0e-9,
+        )
+        np.testing.assert_allclose(
+            data['receiver_vsub_m_s'],
+            SYNTHETIC_MULTILAYER_VSUB_M_S,
+            rtol=1.0e-9,
+        )
 
 
 def _create_refraction_job(
