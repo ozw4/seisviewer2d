@@ -296,6 +296,59 @@ def test_refraction_static_qc_contains_v1_mode() -> None:
     )
 
 
+def test_source_depth_double_count_guard_qc_warning(tmp_path: Path) -> None:
+    request_payload = _request().model_dump(mode='json')
+    request_payload['geometry']['source_depth_byte'] = 115
+    request_payload['field_corrections'] = {
+        'source_depth': {'mode': 'weathering_velocity_time'}
+    }
+    req = RefractionStaticApplyRequest.model_validate(request_payload)
+    result = replace(
+        _result(),
+        source_depth_m=np.asarray([4.0, 8.0], dtype=np.float64),
+        source_depth_shift_s=np.asarray([0.005, 0.010], dtype=np.float64),
+        source_depth_status=np.asarray(['ok', 'ok'], dtype='<U48'),
+        source_depth_field_correction_qc={
+            'source_depth_mode': 'weathering_velocity_time',
+            'component_name': 'source_depth_shift_s',
+            'source_depth_shift_formula': (
+                'source_depth_shift_s = +source_depth_m / V1_m_s'
+            ),
+            'sign_convention': 'corrected(t) = raw(t - shift_s)',
+            'v1_m_s': 800.0,
+            'source_depth_double_count_guard': (
+                'warning_existing_datum_uses_source_depth'
+            ),
+            'warnings': ['source depth double-count warning'],
+        },
+    )
+
+    paths = write_refraction_static_artifacts(
+        result=result,
+        req=req,
+        job_dir=tmp_path,
+    )
+
+    qc = json.loads(paths.qc_json.read_text(encoding='utf-8'))
+    assert qc['source_depth_double_count_guard'] == (
+        'warning_existing_datum_uses_source_depth'
+    )
+    assert qc['field_corrections']['source_depth']['component_name'] == (
+        'source_depth_shift_s'
+    )
+    assert qc['warnings'] == ['source depth double-count warning']
+    source_rows = _read_csv(paths.source_static_table_csv)
+    assert source_rows[0]['source_depth_m'] == '4.0'
+    assert float(source_rows[1]['source_depth_shift_ms']) == pytest.approx(10.0)
+    component_rows = _read_csv(paths.refraction_static_components_csv)
+    assert component_rows[0]['source_depth_shift_ms'] == '5.0'
+    with np.load(paths.source_receiver_static_table_npz, allow_pickle=False) as data:
+        np.testing.assert_allclose(data['source_depth_shift_s'], [0.005, 0.010])
+        assert data['source_depth_status'].tolist() == ['ok', 'ok']
+    with np.load(paths.solution_npz, allow_pickle=False) as data:
+        np.testing.assert_allclose(data['source_depth_m'], [4.0, 8.0])
+
+
 def test_write_refraction_static_artifacts_csvs(tmp_path: Path) -> None:
     paths = write_refraction_static_artifacts(
         result=_result(),

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Literal
+from typing import Any, Final, Literal
 
 import numpy as np
 
@@ -13,6 +13,27 @@ BedrockVelocityMode = Literal['solve_global', 'fixed_global', 'solve_cell']
 RefractionFirstLayerMode = Literal['constant', 'estimate_direct_arrival']
 RefractionLayerKind = Literal['v2_t1', 'v3_t2', 'vsub_t3']
 RefractionLayerVelocityMode = BedrockVelocityMode
+RefractionSourceDepthMode = Literal['none', 'weathering_velocity_time']
+RefractionSourceDepthStatus = Literal[
+    'ok',
+    'missing_source_depth',
+    'invalid_source_depth',
+    'inconsistent_source_depth',
+    'exceeds_max_abs_source_depth',
+    'inactive_source_endpoint',
+]
+RefractionFieldCorrectionComponentName = Literal[
+    'source_depth_shift_s',
+    'uphole_shift_s',
+    'manual_static_shift_s',
+]
+REFRACTION_FIELD_CORRECTION_COMPONENT_NAMES: Final[
+    tuple[RefractionFieldCorrectionComponentName, ...]
+] = (
+    'source_depth_shift_s',
+    'uphole_shift_s',
+    'manual_static_shift_s',
+)
 
 
 @dataclass(frozen=True)
@@ -48,6 +69,20 @@ class RefractionLayerObservationMasks:
     layer_rejection_reason_sorted: dict[str, np.ndarray]
     layer_candidate_count: dict[str, int]
     layer_observation_count: dict[str, int]
+
+
+@dataclass(frozen=True)
+class RefractionSourceDepthResult:
+    """Resolved source-depth values aggregated to source endpoints."""
+
+    source_endpoint_key: np.ndarray
+    source_endpoint_id: np.ndarray
+    source_node_id: np.ndarray
+    source_depth_m: np.ndarray
+    source_depth_status: np.ndarray
+    source_depth_pick_count: np.ndarray
+    source_depth_trace_count: np.ndarray
+    qc: dict[str, Any]
 
 
 @dataclass(frozen=True)
@@ -91,6 +126,9 @@ class RefractionStaticInputModel:
     endpoint_table: RefractionEndpointTable
     metadata: dict[str, Any]
     layer_observation_masks: RefractionLayerObservationMasks | None = None
+    source_depth_result: RefractionSourceDepthResult | None = None
+    source_endpoint_id_sorted: np.ndarray | None = None
+    receiver_endpoint_id_sorted: np.ndarray | None = None
 
 
 @dataclass(frozen=True)
@@ -253,6 +291,38 @@ class RefractionMultiLayerStaticComponents:
 
     source_weathering_correction_s: np.ndarray
     receiver_weathering_correction_s: np.ndarray
+
+    qc: dict[str, Any]
+
+
+@dataclass(frozen=True)
+class RefractionEndpointFieldCorrectionResult:
+    """Dependency-light endpoint-level source-depth, uphole, and manual statics."""
+
+    endpoint_kind: np.ndarray
+    endpoint_key: np.ndarray
+    endpoint_id: np.ndarray
+    node_id: np.ndarray
+
+    component_shift_s: dict[RefractionFieldCorrectionComponentName, np.ndarray]
+    component_status: dict[RefractionFieldCorrectionComponentName, np.ndarray]
+
+    total_field_shift_s: np.ndarray
+    field_static_status: np.ndarray
+    qc: dict[str, Any]
+
+
+@dataclass(frozen=True)
+class RefractionTraceFieldCorrectionResult:
+    """Dependency-light trace-order field static composition result."""
+
+    source_endpoint_key_sorted: np.ndarray
+    receiver_endpoint_key_sorted: np.ndarray
+
+    source_field_shift_s_sorted: np.ndarray
+    receiver_field_shift_s_sorted: np.ndarray
+    trace_field_shift_s_sorted: np.ndarray
+    trace_field_static_status_sorted: np.ndarray
 
     qc: dict[str, Any]
 
@@ -775,6 +845,10 @@ class RefractionDatumStaticsResult:
     row_rejection_reason: np.ndarray | None = None
     row_velocity_m_s: np.ndarray | None = None
     layer_results: tuple[RefractionLayerSolveResult, ...] | None = None
+    source_depth_m: np.ndarray | None = None
+    source_depth_shift_s: np.ndarray | None = None
+    source_depth_status: np.ndarray | None = None
+    source_depth_field_correction_qc: dict[str, Any] | None = None
 
 
 @dataclass(frozen=True)
@@ -850,10 +924,13 @@ class RefractionStaticApplyTraceStoreResult:
 
 __all__ = [
     'BedrockVelocityMode',
+    'REFRACTION_FIELD_CORRECTION_COMPONENT_NAMES',
     'RefractionFirstLayerMode',
     'RefractionBedrockSlownessResult',
     'RefractionDatumStaticsResult',
     'RefractionEndpointTable',
+    'RefractionEndpointFieldCorrectionResult',
+    'RefractionFieldCorrectionComponentName',
     'RefractionHalfInterceptTimeResult',
     'RefractionLayerKind',
     'RefractionLayerObservationMasks',
@@ -861,12 +938,16 @@ __all__ = [
     'RefractionLayerVelocityMode',
     'RefractionMultiLayerSolveResult',
     'RefractionMultiLayerStaticComponents',
+    'RefractionSourceDepthMode',
+    'RefractionSourceDepthResult',
+    'RefractionSourceDepthStatus',
     'RefractionStaticApplyTraceStoreResult',
     'RefractionStaticArtifactSet',
     'RefractionStaticDesignMatrix',
     'RefractionStaticInputModel',
     'RefractionStaticSolverResult',
     'RefractionTraceShiftValidationResult',
+    'RefractionTraceFieldCorrectionResult',
     'RefractionWeatheringReplacementStaticsResult',
     'RefractionWeatheringThicknessResult',
     'ResolvedRefractionFirstLayer',
