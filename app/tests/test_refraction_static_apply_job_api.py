@@ -523,6 +523,57 @@ def test_public_apply_accepts_three_layer_multilayer_request(
     _assert_three_layer_solution_arrays(job_dir)
 
 
+def test_three_layer_job_downloads_source_receiver_static_tables(
+    client: TestClient,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    payload = _three_layer_apply_payload()
+    req = RefractionStaticApplyRequest.model_validate(payload)
+    job_id = 'refraction-vsub-t3-download-job-id'
+    job_dir = tmp_path / 'jobs' / job_id
+    _create_refraction_job(client, job_id=job_id, req=req, job_dir=job_dir)
+
+    monkeypatch.setattr(
+        refraction_service_module,
+        'build_refraction_static_input_model',
+        lambda **_kwargs: object(),
+    )
+    monkeypatch.setattr(
+        refraction_service_module,
+        'compute_refraction_multilayer_datum_statics_from_input_model',
+        lambda **_kwargs: SimpleNamespace(
+            datum_result=_three_layer_contract_datum_result()
+        ),
+    )
+
+    run_refraction_static_apply_job(job_id, req, client.app.state.sv)
+
+    with client.app.state.sv.lock:
+        job = dict(client.app.state.sv.jobs[job_id])
+    assert job['status'] == 'done', job.get('message')
+
+    manifest = json.loads(
+        (job_dir / REFRACTION_STATIC_ARTIFACTS_JSON_NAME).read_text(
+            encoding='utf-8'
+        )
+    )
+    manifest_names = {item['name'] for item in manifest['artifacts']}
+    assert {
+        SOURCE_STATIC_TABLE_CSV_NAME,
+        RECEIVER_STATIC_TABLE_CSV_NAME,
+        SOURCE_RECEIVER_STATIC_TABLE_NPZ_NAME,
+    }.issubset(manifest_names)
+
+    for artifact_name in manifest_names:
+        response = client.get(
+            f'/statics/job/{job_id}/download',
+            params={'name': artifact_name},
+        )
+        assert response.status_code == 200, artifact_name
+        assert response.content, artifact_name
+
+
 def test_public_apply_rejects_unsupported_vsub_cell_velocity_mode(
     client: TestClient,
     tmp_path: Path,

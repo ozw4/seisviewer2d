@@ -23,6 +23,9 @@ from app.services.refraction_static_design_matrix import (
     LOW_FOLD_CELL_REJECTION_REASON,
     LOW_FOLD_CELL_VELOCITY_STATUS,
 )
+from app.services.refraction_static_layer_config import (
+    normalize_refraction_static_layers,
+)
 from app.services.refraction_static_layer_observations import (
     build_refraction_layer_observation_masks_from_arrays,
 )
@@ -1927,7 +1930,11 @@ def build_refraction_static_solution_arrays(
         'source_half_intercept_time_s': _float_array(
             r.source_half_intercept_time_s
         ),
+        'source_t1_s': _float_array(r.source_half_intercept_time_s),
         'source_weathering_replacement_shift_s': _float_array(
+            r.source_weathering_replacement_shift_s
+        ),
+        'source_weathering_correction_s': _float_array(
             r.source_weathering_replacement_shift_s
         ),
         'source_floating_datum_elevation_shift_s': _float_array(
@@ -1936,6 +1943,7 @@ def build_refraction_static_solution_arrays(
         'source_flat_datum_shift_s': _float_array(r.source_flat_datum_shift_s),
         'source_refraction_shift_s': _float_array(r.source_refraction_shift_s),
         'source_datum_status': _string_array(r.source_datum_status),
+        'source_sh1_m': _source_sh1_weathering_thickness_m(r),
         'receiver_endpoint_key': _string_array(r.receiver_endpoint_key),
         'receiver_id': _int_array(r.receiver_id),
         'receiver_node_id': _int_array(r.receiver_node_id),
@@ -1969,7 +1977,11 @@ def build_refraction_static_solution_arrays(
         'receiver_half_intercept_time_s': _float_array(
             r.receiver_half_intercept_time_s
         ),
+        'receiver_t1_s': _float_array(r.receiver_half_intercept_time_s),
         'receiver_weathering_replacement_shift_s': _float_array(
+            r.receiver_weathering_replacement_shift_s
+        ),
+        'receiver_weathering_correction_s': _float_array(
             r.receiver_weathering_replacement_shift_s
         ),
         'receiver_floating_datum_elevation_shift_s': _float_array(
@@ -1980,6 +1992,7 @@ def build_refraction_static_solution_arrays(
             r.receiver_refraction_shift_s
         ),
         'receiver_datum_status': _string_array(r.receiver_datum_status),
+        'receiver_sh1_m': _receiver_sh1_weathering_thickness_m(r),
         'row_trace_index_sorted': _int_array(r.row_trace_index_sorted),
         'row_source_node_id': _int_array(r.row_source_node_id),
         'row_receiver_node_id': _int_array(r.row_receiver_node_id),
@@ -2028,9 +2041,13 @@ def build_refraction_static_solution_arrays(
         arrays.update(
             {
                 'source_t2_time_s': _float_array(r.source_t2_time_s),
+                'source_t2_s': _float_array(r.source_t2_time_s),
                 'source_v3_m_s': _float_array(r.source_v3_m_s),
                 'source_sh1_weathering_thickness_m': source_sh1_m,
                 'source_sh2_weathering_thickness_m': _float_array(
+                    r.source_sh2_weathering_thickness_m
+                ),
+                'source_sh2_m': _float_array(
                     r.source_sh2_weathering_thickness_m
                 ),
                 'source_layer1_base_elevation_m': _float_array(
@@ -2048,8 +2065,12 @@ def build_refraction_static_solution_arrays(
             arrays.update(
                 {
                     'source_t3_time_s': _float_array(r.source_t3_time_s),
+                    'source_t3_s': _float_array(r.source_t3_time_s),
                     'source_vsub_m_s': _float_array(r.source_vsub_m_s),
                     'source_sh3_weathering_thickness_m': _float_array(
+                        r.source_sh3_weathering_thickness_m
+                    ),
+                    'source_sh3_m': _float_array(
                         r.source_sh3_weathering_thickness_m
                     ),
                     'source_layer2_base_elevation_m': _float_array(
@@ -2066,9 +2087,13 @@ def build_refraction_static_solution_arrays(
         arrays.update(
             {
                 'receiver_t2_time_s': _float_array(r.receiver_t2_time_s),
+                'receiver_t2_s': _float_array(r.receiver_t2_time_s),
                 'receiver_v3_m_s': _float_array(r.receiver_v3_m_s),
                 'receiver_sh1_weathering_thickness_m': receiver_sh1_m,
                 'receiver_sh2_weathering_thickness_m': _float_array(
+                    r.receiver_sh2_weathering_thickness_m
+                ),
+                'receiver_sh2_m': _float_array(
                     r.receiver_sh2_weathering_thickness_m
                 ),
                 'receiver_layer1_base_elevation_m': _float_array(
@@ -2086,8 +2111,12 @@ def build_refraction_static_solution_arrays(
             arrays.update(
                 {
                     'receiver_t3_time_s': _float_array(r.receiver_t3_time_s),
+                    'receiver_t3_s': _float_array(r.receiver_t3_time_s),
                     'receiver_vsub_m_s': _float_array(r.receiver_vsub_m_s),
                     'receiver_sh3_weathering_thickness_m': _float_array(
+                        r.receiver_sh3_weathering_thickness_m
+                    ),
+                    'receiver_sh3_m': _float_array(
                         r.receiver_sh3_weathering_thickness_m
                     ),
                     'receiver_layer2_base_elevation_m': _float_array(
@@ -2279,6 +2308,9 @@ def build_refraction_static_qc_payload(
     }
     if layer_count is not None:
         payload['layer_count'] = int(layer_count)
+    layer_velocity_modes = _layer_velocity_modes_for_request(req)
+    if layer_velocity_modes:
+        payload['velocity']['layer_velocity_modes'] = layer_velocity_modes
     enabled_layer_kinds = r.qc.get('enabled_layer_kinds')
     if isinstance(enabled_layer_kinds, (list, tuple)):
         payload['enabled_layer_kinds'] = [
@@ -3520,6 +3552,17 @@ def _request_summary(req: RefractionStaticApplyRequest) -> dict[str, Any]:
         'model_method': req.model.method,
         'apply_mode': req.apply.mode,
         'register_corrected_file': bool(req.apply.register_corrected_file),
+    }
+
+
+def _layer_velocity_modes_for_request(
+    req: RefractionStaticApplyRequest,
+) -> dict[str, str]:
+    if req.model.method != 'multilayer_time_term':
+        return {}
+    return {
+        str(config.kind): str(config.velocity_mode)
+        for config in normalize_refraction_static_layers(req.model)
     }
 
 
