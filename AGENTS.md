@@ -39,10 +39,18 @@ If the issue touches browser behavior, also run:
 This repository contains seismic viewing and processing tools. For refraction statics work, read the design documents first:
 
 - `docs/statics/refraction_iras_phase1_design.md`
+- `docs/statics/refraction_multilayer_time_term.md`
 
 For Phase 2 refraction statics cell-based V2 work, read:
 
 - `docs/statics/refraction_iras_phase1_design.md`
 - `docs/statics/refraction_iras_phase2_cell_v2_design.md`
+- `docs/statics/refraction_multilayer_time_term.md`
+
+For multi-layer refraction statics, T1LSST, source/receiver static table, or public apply artifact changes, read:
+
+- `docs/statics/refraction_iras_phase1_design.md`
+- `docs/statics/refraction_iras_phase2_cell_v2_design.md`
+- `docs/statics/refraction_multilayer_time_term.md`
 
 Do not assume access to original IRAS manuals. The repo docs are the canonical implementation reference.

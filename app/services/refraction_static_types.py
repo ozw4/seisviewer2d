@@ -214,6 +214,8 @@ class RefractionLayerSolveResult:
     row_midpoint_cell_id: np.ndarray | None = None
     row_midpoint_velocity_m_s: np.ndarray | None = None
     rejected_by_robust_mask_sorted: np.ndarray | None = None
+    candidate_observation_mask_sorted: np.ndarray | None = None
+    rejection_reason_sorted: np.ndarray | None = None
 
 
 @dataclass(frozen=True)
@@ -611,6 +613,12 @@ class RefractionWeatheringReplacementStaticsResult:
     receiver_sh1_weathering_thickness_m: np.ndarray | None = None
     receiver_sh2_weathering_thickness_m: np.ndarray | None = None
     receiver_sh3_weathering_thickness_m: np.ndarray | None = None
+    row_layer_kind: np.ndarray | None = None
+    row_layer_index: np.ndarray | None = None
+    row_source_endpoint_key: np.ndarray | None = None
+    row_receiver_endpoint_key: np.ndarray | None = None
+    row_rejection_reason: np.ndarray | None = None
+    row_velocity_m_s: np.ndarray | None = None
 
 
 @dataclass(frozen=True)
@@ -760,6 +768,13 @@ class RefractionDatumStaticsResult:
     receiver_sh1_weathering_thickness_m: np.ndarray | None = None
     receiver_sh2_weathering_thickness_m: np.ndarray | None = None
     receiver_sh3_weathering_thickness_m: np.ndarray | None = None
+    row_layer_kind: np.ndarray | None = None
+    row_layer_index: np.ndarray | None = None
+    row_source_endpoint_key: np.ndarray | None = None
+    row_receiver_endpoint_key: np.ndarray | None = None
+    row_rejection_reason: np.ndarray | None = None
+    row_velocity_m_s: np.ndarray | None = None
+    layer_results: tuple[RefractionLayerSolveResult, ...] | None = None
 
 
 @dataclass(frozen=True)

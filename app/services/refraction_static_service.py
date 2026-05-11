@@ -217,8 +217,8 @@ def _require_public_multilayer_apply(
             f'conversion.layer_count={req.conversion.layer_count!r}, '
             f'enabled layer kinds={enabled_text}; v3_t2 velocity_mode='
             f'{v3_config.velocity_mode} is not supported. Public apply '
-            'currently requires global V3/T2 velocity; cell V3 is not '
-            'implemented.'
+            'currently requires global V3/T2 velocity; cell V3/T2 is '
+            'available only for internal layer solving.'
         )
     if req.conversion.layer_count == 3:
         vsub_config = normalized_layers[2]
@@ -228,8 +228,8 @@ def _require_public_multilayer_apply(
                 f'conversion.layer_count={req.conversion.layer_count!r}, '
                 f'enabled layer kinds={enabled_text}; vsub_t3 velocity_mode='
                 f'{vsub_config.velocity_mode} is not supported. Public apply '
-                'currently requires global Vsub/T3 velocity; cell Vsub is not '
-                'implemented.'
+                'currently requires global Vsub/T3 velocity; cell Vsub/T3 is '
+                'available only for internal layer solving.'
             )
 
 

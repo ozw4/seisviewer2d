@@ -309,6 +309,12 @@ class _ValidatedReplacement:
     residual_time_s: np.ndarray
     used_row_mask: np.ndarray
     rejected_by_robust_mask: np.ndarray
+    row_layer_kind: np.ndarray | None
+    row_layer_index: np.ndarray | None
+    row_source_endpoint_key: np.ndarray | None
+    row_receiver_endpoint_key: np.ndarray | None
+    row_rejection_reason: np.ndarray | None
+    row_velocity_m_s: np.ndarray | None
 
     @property
     def n_nodes(self) -> int:
@@ -797,6 +803,12 @@ def build_refraction_datum_statics(
         receiver_sh3_weathering_thickness_m=(
             weathering_replacement_result.receiver_sh3_weathering_thickness_m
         ),
+        row_layer_kind=data.row_layer_kind,
+        row_layer_index=data.row_layer_index,
+        row_source_endpoint_key=data.row_source_endpoint_key,
+        row_receiver_endpoint_key=data.row_receiver_endpoint_key,
+        row_rejection_reason=data.row_rejection_reason,
+        row_velocity_m_s=data.row_velocity_m_s,
     )
     if job_dir is not None:
         write_refraction_datum_statics_artifacts(Path(job_dir), result)
@@ -1551,6 +1563,41 @@ def _validate_replacement_result(
         rejected_by_robust_mask=_coerce_1d_bool(
             _required(result, 'rejected_by_robust_mask'),
             name='weathering_replacement_result.rejected_by_robust_mask',
+        ),
+        row_layer_kind=_optional_1d_string(
+            result,
+            'row_layer_kind',
+            name='weathering_replacement_result.row_layer_kind',
+            dtype=_STATUS_DTYPE,
+        ),
+        row_layer_index=_optional_1d_integer(
+            result,
+            'row_layer_index',
+            name='weathering_replacement_result.row_layer_index',
+        ),
+        row_source_endpoint_key=_optional_1d_string(
+            result,
+            'row_source_endpoint_key',
+            name='weathering_replacement_result.row_source_endpoint_key',
+            dtype=_ENDPOINT_KEY_DTYPE,
+        ),
+        row_receiver_endpoint_key=_optional_1d_string(
+            result,
+            'row_receiver_endpoint_key',
+            name='weathering_replacement_result.row_receiver_endpoint_key',
+            dtype=_ENDPOINT_KEY_DTYPE,
+        ),
+        row_rejection_reason=_optional_1d_string(
+            result,
+            'row_rejection_reason',
+            name='weathering_replacement_result.row_rejection_reason',
+            dtype=_STATUS_DTYPE,
+        ),
+        row_velocity_m_s=_optional_1d_float(
+            result,
+            'row_velocity_m_s',
+            name='weathering_replacement_result.row_velocity_m_s',
+            allow_nonfinite=True,
         ),
     )
 
