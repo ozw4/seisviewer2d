@@ -20,6 +20,7 @@ from app.api.schemas import (
 )
 from app.services.refraction_static_service import (
     RefractionFieldCorrectionNotImplemented,
+    _source_depth_double_count_guard_qc,
     _with_source_depth_field_correction,
     reject_unsupported_refraction_field_corrections,
 )
@@ -165,6 +166,32 @@ def test_refraction_static_source_depth_mode_is_no_longer_rejected_by_service() 
     )
 
     reject_unsupported_refraction_field_corrections(req)
+
+
+def test_source_depth_double_count_guard_warns_for_field_correction_byte() -> None:
+    payload = _payload_with_field_corrections(
+        {
+            'source_depth': {
+                'mode': 'weathering_velocity_time',
+                'source_depth_byte': 115,
+            }
+        }
+    )
+    payload['datum'] = {
+        'mode': 'flat_only',
+        'flat_datum_elevation_m': 300.0,
+    }
+    req = RefractionStaticApplyRequest.model_validate(payload)
+
+    guard, warnings = _source_depth_double_count_guard_qc(req)
+
+    assert guard == 'warning_existing_datum_uses_source_depth'
+    assert warnings == [
+        'source depth is configured while '
+        'field_corrections.source_depth.mode=weathering_velocity_time '
+        'and datum corrections are enabled; verify source depth is not '
+        'already included in datum source elevation handling.'
+    ]
 
 
 def test_source_depth_weathering_time_adds_source_only_component() -> None:

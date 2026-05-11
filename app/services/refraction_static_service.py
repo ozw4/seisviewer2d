@@ -578,11 +578,15 @@ def _source_depth_double_count_guard_qc(
 ) -> tuple[str, list[str]]:
     if req.field_corrections.source_depth.mode == 'none':
         return 'not_applicable', []
-    if req.datum.mode != 'none' and req.geometry.source_depth_byte is not None:
+    source_depth_byte_configured = (
+        req.geometry.source_depth_byte is not None
+        or req.field_corrections.source_depth.source_depth_byte is not None
+    )
+    if req.datum.mode != 'none' and source_depth_byte_configured:
         return (
             'warning_existing_datum_uses_source_depth',
             [
-                'geometry.source_depth_byte is configured while '
+                'source depth is configured while '
                 'field_corrections.source_depth.mode=weathering_velocity_time '
                 'and datum corrections are enabled; verify source depth is not '
                 'already included in datum source elevation handling.'
