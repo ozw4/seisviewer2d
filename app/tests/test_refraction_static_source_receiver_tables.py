@@ -225,6 +225,51 @@ def test_source_receiver_static_tables_match_npz(tmp_path: Path) -> None:
         _assert_receiver_row_matches_npz(receiver_rows[0], data, 0)
 
 
+def test_manual_static_components_are_written_to_endpoint_artifacts(
+    tmp_path: Path,
+) -> None:
+    base = _result()
+    result = replace(
+        base,
+        source_manual_static_shift_s=np.asarray([0.003, np.nan], dtype=np.float64),
+        source_manual_static_status=np.asarray(
+            ['ok', 'missing_manual_static'],
+            dtype='<U48',
+        ),
+        receiver_manual_static_shift_s=np.asarray(
+            [-0.004, np.nan],
+            dtype=np.float64,
+        ),
+        receiver_manual_static_status=np.asarray(
+            ['ok', 'missing_manual_static'],
+            dtype='<U48',
+        ),
+        manual_static_field_correction_qc={
+            'manual_static_mode': 'artifact_table',
+            'manual_static_sign_convention': 'applied_shift_s',
+            'component_name': 'manual_static_shift_s',
+        },
+    )
+
+    paths = write_refraction_static_artifacts(
+        result=result,
+        req=_request(),
+        job_dir=tmp_path,
+    )
+
+    source_rows = _read_csv(paths.source_static_table_csv)
+    receiver_rows = _read_csv(paths.receiver_static_table_csv)
+    assert float(source_rows[0]['manual_static_shift_ms']) == pytest.approx(3.0)
+    assert source_rows[0]['manual_static_status'] == 'ok'
+    assert float(receiver_rows[0]['manual_static_shift_ms']) == pytest.approx(-4.0)
+    assert receiver_rows[0]['manual_static_status'] == 'ok'
+    with np.load(paths.source_receiver_static_table_npz, allow_pickle=False) as data:
+        np.testing.assert_allclose(data['source_manual_static_shift_s'][0], 0.003)
+        np.testing.assert_allclose(data['receiver_manual_static_shift_s'][0], -0.004)
+        assert data['source_manual_static_status'][0] == 'ok'
+        assert data['receiver_manual_static_status'][0] == 'ok'
+
+
 def test_solve_cell_static_tables_use_endpoint_local_v2(tmp_path: Path) -> None:
     base = _result()
     source_v2 = np.asarray([2200.0, 3000.0], dtype=np.float64)

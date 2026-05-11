@@ -108,6 +108,25 @@ class RefractionUpholeResult:
 
 
 @dataclass(frozen=True)
+class RefractionManualStaticResult:
+    """Resolved manual static values matched to source and receiver endpoints."""
+
+    source_endpoint_key: np.ndarray
+    source_endpoint_id: np.ndarray | None
+    source_node_id: np.ndarray
+    source_manual_static_shift_s: np.ndarray
+    source_manual_static_status: np.ndarray
+
+    receiver_endpoint_key: np.ndarray
+    receiver_endpoint_id: np.ndarray | None
+    receiver_node_id: np.ndarray
+    receiver_manual_static_shift_s: np.ndarray
+    receiver_manual_static_status: np.ndarray
+
+    qc: dict[str, Any]
+
+
+@dataclass(frozen=True)
 class RefractionStaticInputModel:
     file_id: str
     n_traces: int
@@ -876,6 +895,11 @@ class RefractionDatumStaticsResult:
     source_uphole_shift_s: np.ndarray | None = None
     source_uphole_status: np.ndarray | None = None
     source_uphole_field_correction_qc: dict[str, Any] | None = None
+    source_manual_static_shift_s: np.ndarray | None = None
+    source_manual_static_status: np.ndarray | None = None
+    receiver_manual_static_shift_s: np.ndarray | None = None
+    receiver_manual_static_status: np.ndarray | None = None
+    manual_static_field_correction_qc: dict[str, Any] | None = None
 
 
 @dataclass(frozen=True)
@@ -963,6 +987,7 @@ __all__ = [
     'RefractionLayerObservationMasks',
     'RefractionLayerSolveResult',
     'RefractionLayerVelocityMode',
+    'RefractionManualStaticResult',
     'RefractionMultiLayerSolveResult',
     'RefractionMultiLayerStaticComponents',
     'RefractionSourceDepthMode',

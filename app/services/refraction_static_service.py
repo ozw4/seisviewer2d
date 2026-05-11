@@ -17,6 +17,7 @@ from app.api.schemas import (
 )
 from app.core.state import AppState
 from app.services.job_runner import JobCompletion, JobFailure, run_job_with_lifecycle
+from app.services.job_artifact_refs import resolve_job_artifact_path
 from app.services.refraction_static_apply_trace_store import (
     apply_refraction_statics_to_trace_store,
 )
@@ -36,6 +37,12 @@ from app.services.refraction_static_layer_config import (
 from app.services.refraction_static_layer_observations import (
     build_refraction_layer_observation_masks,
     refraction_layer_observation_qc,
+)
+from app.services.refraction_static_manual_static import (
+    RefractionManualStaticTableRow,
+    load_refraction_manual_static_table_rows,
+    manual_static_inline_rows,
+    resolve_refraction_manual_static,
 )
 from app.services.refraction_static_multilayer_service import (
     compute_refraction_multilayer_datum_statics_from_input_model,
@@ -95,17 +102,12 @@ class RefractionFieldCorrectionNotImplemented(NotImplementedError):
 def reject_unsupported_refraction_field_corrections(
     req: RefractionStaticApplyRequest,
 ) -> None:
-    """Reject configured M4 field-correction modes before expensive I/O."""
+    """Reject unsupported M4 field-correction modes before expensive I/O."""
     field_corrections = req.field_corrections
     unsupported: list[str] = []
     if field_corrections.uphole.mode not in {'none', 'header_time'}:
         unsupported.append(
             f'field_corrections.uphole.mode={field_corrections.uphole.mode}'
-        )
-    if field_corrections.manual_static.mode != 'none':
-        unsupported.append(
-            'field_corrections.manual_static.mode='
-            f'{field_corrections.manual_static.mode}'
         )
     if not unsupported:
         return
@@ -591,6 +593,153 @@ def _with_uphole_field_correction(
     )
 
 
+def _with_manual_static_field_correction(
+    *,
+    result: RefractionDatumStaticsResult,
+    input_model: RefractionStaticInputModel | None,
+    req: RefractionStaticApplyRequest,
+    state: AppState | None,
+) -> RefractionDatumStaticsResult:
+    correction = req.field_corrections.manual_static
+    if correction.mode == 'none':
+        return result
+    rows = _manual_static_rows_from_request(req=req, state=state)
+    source_endpoint_id = _endpoint_ids_for_result(
+        result_endpoint_key=result.source_endpoint_key,
+        input_endpoint_key=(
+            None if input_model is None else input_model.source_endpoint_key_sorted
+        ),
+        input_endpoint_id=(
+            None if input_model is None else input_model.source_endpoint_id_sorted
+        ),
+    )
+    receiver_endpoint_id = _endpoint_ids_for_result(
+        result_endpoint_key=result.receiver_endpoint_key,
+        input_endpoint_key=(
+            None if input_model is None else input_model.receiver_endpoint_key_sorted
+        ),
+        input_endpoint_id=(
+            None if input_model is None else input_model.receiver_endpoint_id_sorted
+        ),
+    )
+    manual_result = resolve_refraction_manual_static(
+        source_endpoint_key=result.source_endpoint_key,
+        source_endpoint_id=source_endpoint_id,
+        source_node_id=result.source_node_id,
+        receiver_endpoint_key=result.receiver_endpoint_key,
+        receiver_endpoint_id=receiver_endpoint_id,
+        receiver_node_id=result.receiver_node_id,
+        rows=rows,
+        mode=correction.mode,
+        sign_convention=correction.sign_convention,
+        allow_missing_endpoints=bool(correction.allow_missing_endpoints),
+    )
+    return replace(
+        result,
+        source_manual_static_shift_s=manual_result.source_manual_static_shift_s,
+        source_manual_static_status=manual_result.source_manual_static_status,
+        receiver_manual_static_shift_s=manual_result.receiver_manual_static_shift_s,
+        receiver_manual_static_status=manual_result.receiver_manual_static_status,
+        manual_static_field_correction_qc=manual_result.qc,
+        qc={
+            **result.qc,
+            'field_corrections': {
+                **(
+                    result.qc.get('field_corrections')
+                    if isinstance(result.qc.get('field_corrections'), dict)
+                    else {}
+                ),
+                'manual_static': manual_result.qc,
+            },
+        },
+    )
+
+
+def _manual_static_rows_from_request(
+    *,
+    req: RefractionStaticApplyRequest,
+    state: AppState | None,
+) -> tuple[RefractionManualStaticTableRow, ...]:
+    correction = req.field_corrections.manual_static
+    if correction.mode == 'inline_table':
+        return (
+            manual_static_inline_rows(
+                endpoint_kind='source',
+                entries=correction.source_inline_table,
+                sign_convention=correction.sign_convention or 'applied_shift_s',
+            )
+            + manual_static_inline_rows(
+                endpoint_kind='receiver',
+                entries=correction.receiver_inline_table,
+                sign_convention=correction.sign_convention or 'applied_shift_s',
+            )
+        )
+    if correction.mode != 'artifact_table':
+        raise RefractionFieldCorrectionNotImplemented(
+            'M4 field-correction follow-up implementation is required for '
+            f'field_corrections.manual_static.mode={correction.mode}.'
+        )
+    if state is None:
+        raise ValueError('manual static artifact table mode requires app state')
+
+    artifact_specs: dict[tuple[str, str], set[str]] = {}
+    for default_kind, artifact in (
+        ('source', correction.source_table_artifact),
+        ('receiver', correction.receiver_table_artifact),
+    ):
+        if artifact is None:
+            continue
+        key = (artifact.job_id, artifact.artifact_name)
+        artifact_specs.setdefault(key, set()).add(default_kind)
+
+    rows: list[RefractionManualStaticTableRow] = []
+    for (job_id, artifact_name), default_kinds in artifact_specs.items():
+        path = resolve_job_artifact_path(
+            state,
+            job_id=job_id,
+            name=artifact_name,
+            expected_file_id=req.file_id,
+            expected_key1_byte=req.key1_byte,
+            expected_key2_byte=req.key2_byte,
+            reference_label='manual static',
+        )
+        default_kind = next(iter(default_kinds)) if len(default_kinds) == 1 else None
+        rows.extend(
+            load_refraction_manual_static_table_rows(
+                path,
+                default_endpoint_kind=default_kind,
+            )
+        )
+    return tuple(rows)
+
+
+def _endpoint_ids_for_result(
+    *,
+    result_endpoint_key: np.ndarray,
+    input_endpoint_key: np.ndarray | None,
+    input_endpoint_id: np.ndarray | None,
+) -> np.ndarray | None:
+    result_keys = np.asarray(result_endpoint_key)
+    if input_endpoint_key is None or input_endpoint_id is None:
+        return None
+    key_values = np.asarray(input_endpoint_key)
+    id_values = np.asarray(input_endpoint_id)
+    if key_values.shape != id_values.shape:
+        return None
+    id_by_key: dict[str, int] = {}
+    for raw_key, raw_id in zip(key_values.tolist(), id_values.tolist(), strict=True):
+        key = str(raw_key)
+        if key and key not in id_by_key:
+            id_by_key[key] = int(raw_id)
+    out = np.empty(int(result_keys.shape[0]), dtype=np.int64)
+    for index, raw_key in enumerate(result_keys.tolist()):
+        key = str(raw_key)
+        if key not in id_by_key:
+            return None
+        out[index] = int(id_by_key[key])
+    return np.ascontiguousarray(out, dtype=np.int64)
+
+
 def _map_uphole_field_correction_to_sources(
     *,
     source_endpoint_key: np.ndarray,
@@ -735,6 +884,12 @@ def _run_public_multilayer_refraction_static_apply_job(
         input_model=input_model,
         req=req,
     )
+    datum_result = _with_manual_static_field_correction(
+        result=datum_result,
+        input_model=input_model,
+        req=req,
+        state=state,
+    )
     _set_job_progress_message(
         state,
         job_id,
@@ -823,6 +978,7 @@ def _run_refraction_static_apply_job_body(
         or input_req.model.method == 'multilayer_time_term'
         or input_req.field_corrections.source_depth.mode != 'none'
         or input_req.field_corrections.uphole.mode != 'none'
+        or input_req.field_corrections.manual_static.mode != 'none'
     ):
         weathering_input_model = build_refraction_static_input_model(
             req=input_req,
@@ -873,6 +1029,12 @@ def _run_refraction_static_apply_job_body(
         result=datum_result,
         input_model=weathering_input_model,
         req=active_req,
+    )
+    datum_result = _with_manual_static_field_correction(
+        result=datum_result,
+        input_model=weathering_input_model,
+        req=active_req,
+        state=state,
     )
     _set_job_progress_message(
         state,

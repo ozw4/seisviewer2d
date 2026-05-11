@@ -1881,6 +1881,27 @@ def build_source_receiver_static_table_arrays(
                 'source_uphole_status': _string_array(r.source_uphole_status),
             }
         )
+    if _has_manual_static_field_correction(r):
+        assert r.source_manual_static_shift_s is not None
+        assert r.source_manual_static_status is not None
+        assert r.receiver_manual_static_shift_s is not None
+        assert r.receiver_manual_static_status is not None
+        arrays.update(
+            {
+                'source_manual_static_shift_s': _float_array(
+                    r.source_manual_static_shift_s
+                ),
+                'source_manual_static_status': _string_array(
+                    r.source_manual_static_status
+                ),
+                'receiver_manual_static_shift_s': _float_array(
+                    r.receiver_manual_static_shift_s
+                ),
+                'receiver_manual_static_status': _string_array(
+                    r.receiver_manual_static_status
+                ),
+            }
+        )
     if _has_source_2layer_static_fields(r):
         assert r.source_t2_time_s is not None
         assert r.source_v3_m_s is not None
@@ -2278,6 +2299,27 @@ def build_refraction_static_solution_arrays(
                 'source_uphole_status': _string_array(r.source_uphole_status),
             }
         )
+    if _has_manual_static_field_correction(r):
+        assert r.source_manual_static_shift_s is not None
+        assert r.source_manual_static_status is not None
+        assert r.receiver_manual_static_shift_s is not None
+        assert r.receiver_manual_static_status is not None
+        arrays.update(
+            {
+                'source_manual_static_shift_s': _float_array(
+                    r.source_manual_static_shift_s
+                ),
+                'source_manual_static_status': _string_array(
+                    r.source_manual_static_status
+                ),
+                'receiver_manual_static_shift_s': _float_array(
+                    r.receiver_manual_static_shift_s
+                ),
+                'receiver_manual_static_status': _string_array(
+                    r.receiver_manual_static_status
+                ),
+            }
+        )
     if _has_node_2layer_static_fields(r):
         assert r.node_sh2_weathering_thickness_m is not None
         node_sh1_m = _node_sh1_weathering_thickness_m(r)
@@ -2583,6 +2625,7 @@ def build_refraction_static_qc_payload(
     }
     source_depth_qc = _source_depth_field_correction_qc(r, req)
     uphole_qc = _uphole_field_correction_qc(r, req)
+    manual_static_qc = _manual_static_field_correction_qc(r, req)
     field_corrections_qc: dict[str, Any] = {}
     if source_depth_qc:
         field_corrections_qc['source_depth'] = source_depth_qc
@@ -2596,6 +2639,8 @@ def build_refraction_static_qc_payload(
         payload['source_depth_double_count_guard'] = 'not_applicable'
     if uphole_qc:
         field_corrections_qc['uphole'] = uphole_qc
+    if manual_static_qc:
+        field_corrections_qc['manual_static'] = manual_static_qc
     if field_corrections_qc:
         payload['field_corrections'] = field_corrections_qc
     if layer_count is not None:
@@ -2741,6 +2786,32 @@ def _uphole_field_correction_qc(
     return payload
 
 
+def _manual_static_field_correction_qc(
+    result: RefractionDatumStaticsResult,
+    req: RefractionStaticApplyRequest,
+) -> dict[str, Any]:
+    if not _has_manual_static_field_correction(result):
+        if req.field_corrections.manual_static.mode != 'none':
+            raise RefractionStaticArtifactError(
+                'manual static field correction artifacts require manual '
+                'static component arrays'
+            )
+        return {}
+    qc = result.manual_static_field_correction_qc
+    if not isinstance(qc, dict):
+        raise RefractionStaticArtifactError(
+            'manual_static_field_correction_qc is required when manual static '
+            'component arrays are present'
+        )
+    payload = dict(qc)
+    payload.setdefault(
+        'manual_static_mode',
+        req.field_corrections.manual_static.mode,
+    )
+    payload.setdefault('component_name', 'manual_static_shift_s')
+    return payload
+
+
 def _validate_job_dir(job_dir: Path) -> Path:
     try:
         root = Path(job_dir)
@@ -2802,6 +2873,12 @@ def _validate_result(result: RefractionDatumStaticsResult) -> _ValidatedResult:
     )
     _validate_optional_arrays(
         result=result,
+        names=('source_manual_static_shift_s', 'source_manual_static_status'),
+        expected_length=n_source,
+        label='manual static source endpoint',
+    )
+    _validate_optional_arrays(
+        result=result,
         names=_SOURCE_2LAYER_STATIC_ARRAY_NAMES,
         expected_length=n_source,
         label='source two-layer endpoint',
@@ -2812,6 +2889,12 @@ def _validate_result(result: RefractionDatumStaticsResult) -> _ValidatedResult:
             raise RefractionStaticArtifactError(
                 f'receiver endpoint array length mismatch for {name}'
             )
+    _validate_optional_arrays(
+        result=result,
+        names=('receiver_manual_static_shift_s', 'receiver_manual_static_status'),
+        expected_length=n_receiver,
+        label='manual static receiver endpoint',
+    )
     _validate_optional_arrays(
         result=result,
         names=_RECEIVER_2LAYER_STATIC_ARRAY_NAMES,
@@ -3491,6 +3574,7 @@ def _component_rows(result: RefractionDatumStaticsResult) -> list[dict[str, obje
     node_residual_rms = _node_lookup(result.node_id, result.node_residual_rms_s)
     has_source_depth = _has_source_depth_field_correction(result)
     has_uphole = _has_uphole_field_correction(result)
+    has_manual_static = _has_manual_static_field_correction(result)
     rows: list[dict[str, object]] = []
     for index in range(int(result.source_endpoint_key.shape[0])):
         node_id = int(result.source_node_id[index])
@@ -3538,6 +3622,19 @@ def _component_rows(result: RefractionDatumStaticsResult) -> list[dict[str, obje
                     'uphole_status': str(result.source_uphole_status[index]),
                 }
             )
+        if has_manual_static:
+            assert result.source_manual_static_shift_s is not None
+            assert result.source_manual_static_status is not None
+            row.update(
+                {
+                    'manual_static_shift_ms': _csv_ms(
+                        result.source_manual_static_shift_s[index]
+                    ),
+                    'manual_static_status': str(
+                        result.source_manual_static_status[index]
+                    ),
+                }
+            )
         rows.append(row)
     for index in range(int(result.receiver_endpoint_key.shape[0])):
         node_id = int(result.receiver_node_id[index])
@@ -3577,6 +3674,19 @@ def _component_rows(result: RefractionDatumStaticsResult) -> list[dict[str, obje
                     'uphole_status': 'not_applicable',
                 }
             )
+        if has_manual_static:
+            assert result.receiver_manual_static_shift_s is not None
+            assert result.receiver_manual_static_status is not None
+            row.update(
+                {
+                    'manual_static_shift_ms': _csv_ms(
+                        result.receiver_manual_static_shift_s[index]
+                    ),
+                    'manual_static_status': str(
+                        result.receiver_manual_static_status[index]
+                    ),
+                }
+            )
         rows.append(row)
     return rows
 
@@ -3595,6 +3705,18 @@ def _component_columns(result: RefractionDatumStaticsResult) -> tuple[str, ...]:
             columns,
             anchor,
             ('uphole_shift_ms', 'uphole_status'),
+        )
+    if _has_manual_static_field_correction(result):
+        if 'uphole_status' in columns:
+            anchor = 'uphole_status'
+        elif 'source_depth_status' in columns:
+            anchor = 'source_depth_status'
+        else:
+            anchor = 'flat_datum_shift_ms'
+        columns = _insert_after(
+            columns,
+            anchor,
+            ('manual_static_shift_ms', 'manual_static_status'),
         )
     return columns
 
@@ -3625,6 +3747,18 @@ def _source_static_table_columns(
             anchor,
             ('uphole_time_ms', 'uphole_shift_ms', 'uphole_status'),
         )
+    if _has_manual_static_field_correction(result):
+        if 'uphole_status' in columns:
+            anchor = 'uphole_status'
+        elif 'source_depth_status' in columns:
+            anchor = 'source_depth_status'
+        else:
+            anchor = 'weathering_correction_ms'
+        columns = _insert_after(
+            columns,
+            anchor,
+            ('manual_static_shift_ms', 'manual_static_status'),
+        )
     return columns
 
 
@@ -3640,10 +3774,18 @@ def _receiver_static_table_columns(
     result: RefractionDatumStaticsResult,
 ) -> tuple[str, ...]:
     if _has_receiver_3layer_static_fields(result):
-        return _RECEIVER_STATIC_TABLE_3LAYER_COLUMNS
-    if _has_receiver_2layer_static_fields(result):
-        return _RECEIVER_STATIC_TABLE_2LAYER_COLUMNS
-    return _RECEIVER_STATIC_TABLE_COLUMNS
+        columns = _RECEIVER_STATIC_TABLE_3LAYER_COLUMNS
+    elif _has_receiver_2layer_static_fields(result):
+        columns = _RECEIVER_STATIC_TABLE_2LAYER_COLUMNS
+    else:
+        columns = _RECEIVER_STATIC_TABLE_COLUMNS
+    if _has_manual_static_field_correction(result):
+        columns = _insert_after(
+            columns,
+            'weathering_correction_ms',
+            ('manual_static_shift_ms', 'manual_static_status'),
+        )
+    return columns
 
 
 def _insert_after(
@@ -3690,6 +3832,24 @@ def _has_uphole_field_correction(
     if not all(present):
         raise RefractionStaticArtifactError(
             'uphole field correction arrays must be provided together'
+        )
+    return True
+
+
+def _has_manual_static_field_correction(
+    result: RefractionDatumStaticsResult,
+) -> bool:
+    present = (
+        result.source_manual_static_shift_s is not None,
+        result.source_manual_static_status is not None,
+        result.receiver_manual_static_shift_s is not None,
+        result.receiver_manual_static_status is not None,
+    )
+    if not any(present):
+        return False
+    if not all(present):
+        raise RefractionStaticArtifactError(
+            'manual static field correction arrays must be provided together'
         )
     return True
 
@@ -3808,6 +3968,7 @@ def _source_static_table_rows(
     source_sh1_m = _source_sh1_weathering_thickness_m(result)
     has_source_depth = _has_source_depth_field_correction(result)
     has_uphole = _has_uphole_field_correction(result)
+    has_manual_static = _has_manual_static_field_correction(result)
     rows: list[dict[str, object]] = []
     for index in range(int(result.source_endpoint_key.shape[0])):
         node_id = int(result.source_node_id[index])
@@ -3897,6 +4058,19 @@ def _source_static_table_rows(
                     'uphole_status': str(result.source_uphole_status[index]),
                 }
             )
+        if has_manual_static:
+            assert result.source_manual_static_shift_s is not None
+            assert result.source_manual_static_status is not None
+            rows[-1].update(
+                {
+                    'manual_static_shift_ms': _csv_ms(
+                        result.source_manual_static_shift_s[index]
+                    ),
+                    'manual_static_status': str(
+                        result.source_manual_static_status[index]
+                    ),
+                }
+            )
         if has_2layer_fields:
             assert source_t2_time_s is not None
             assert source_v3_m_s is not None
@@ -3965,6 +4139,7 @@ def _receiver_static_table_rows(
     receiver_sh2_m = result.receiver_sh2_weathering_thickness_m
     receiver_sh3_m = result.receiver_sh3_weathering_thickness_m
     receiver_sh1_m = _receiver_sh1_weathering_thickness_m(result)
+    has_manual_static = _has_manual_static_field_correction(result)
     rows: list[dict[str, object]] = []
     for index in range(int(result.receiver_endpoint_key.shape[0])):
         node_id = int(result.receiver_node_id[index])
@@ -4030,6 +4205,19 @@ def _receiver_static_table_rows(
                 'residual_mad_ms': _csv_ms(node_context['residual_mad'].get(node_id)),
             }
         )
+        if has_manual_static:
+            assert result.receiver_manual_static_shift_s is not None
+            assert result.receiver_manual_static_status is not None
+            rows[-1].update(
+                {
+                    'manual_static_shift_ms': _csv_ms(
+                        result.receiver_manual_static_shift_s[index]
+                    ),
+                    'manual_static_status': str(
+                        result.receiver_manual_static_status[index]
+                    ),
+                }
+            )
         if has_2layer_fields:
             assert receiver_t2_time_s is not None
             assert receiver_v3_m_s is not None

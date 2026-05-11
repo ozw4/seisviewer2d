@@ -38,6 +38,9 @@ The implemented public workflows are:
   `field_corrections.source_depth.mode="weathering_velocity_time"`.
 - M4 uphole-time field correction with
   `field_corrections.uphole.mode="header_time"`.
+- M4 manual source/receiver static import with
+  `field_corrections.manual_static.mode="artifact_table"` or
+  `field_corrections.manual_static.mode="inline_table"`.
 
 V3/T2 and Vsub/T3 `solve_cell` are schema/internal solver capabilities, but
 they are not public T1LSST apply capabilities. Public T1LSST apply rejects cell
@@ -54,7 +57,6 @@ Current non-goals are:
 - GRM.
 - Plus-minus.
 - Manual uphole correction tables.
-- Manual source/receiver statics.
 - SEG-Y static header write-back.
 - Refraction tomography.
 - Path-integrated or raypath-weighted cell slowness.
@@ -456,6 +458,42 @@ field-correction columns and QC only. It is not folded into
 later field-correction composition workflow. Receiver endpoint totals are
 unchanged by this component.
 
+When manual source/receiver static import is enabled with
+`field_corrections.manual_static.mode="artifact_table"` or
+`field_corrections.manual_static.mode="inline_table"`, the input must declare
+`field_corrections.manual_static.sign_convention`.
+`applied_shift_s` means the supplied values already use the repo convention:
+
+```text
+manual_static_shift_s = manual_static_s
+```
+
+`delay_positive_ms` means positive input values are delays that should advance
+the data:
+
+```text
+manual_static_shift_s = -manual_static_delay_s
+```
+
+Artifact tables are CSV files with `endpoint_kind` (`source` or `receiver`),
+`endpoint_key` and/or `endpoint_id`, and either `manual_static_ms` or
+`manual_static_s`. Separate source and receiver artifact references may omit
+`endpoint_kind`; combined tables must include it. Inline tables supply
+source/receiver endpoint-id values directly in the request. Matching is
+deterministic: `endpoint_kind + endpoint_key` is preferred, then
+`endpoint_kind + endpoint_id`. Node-id and coordinate matching are not used.
+Duplicate matched endpoint rows raise an error. Missing endpoint values are
+status-coded as `missing_manual_static` and may be rejected with
+`allow_missing_endpoints=false`; unmatched rows are counted as
+`unmatched_manual_static_row`.
+
+The source and receiver components are written to endpoint field-correction
+columns, `source_receiver_static_table.npz`, and QC only. They are not folded
+into `source_refraction_shift_s`, `receiver_refraction_shift_s`,
+`refraction_trace_shift_s_sorted`, or source/receiver endpoint totals;
+trace-level composition is reserved for a later field-correction composition
+workflow.
+
 ## 7. Artifact List
 
 Every public refraction statics job writes:
@@ -502,6 +540,10 @@ Uphole-time field correction with
 refraction_uphole_qc.json
 refraction_uphole_sources.csv
 ```
+
+Manual source/receiver static import writes endpoint component columns to the
+standard source/receiver static table artifacts and
+`source_receiver_static_table.npz`; it does not add a separate public artifact.
 
 V2/T1 `solve_cell` also writes:
 
@@ -558,6 +600,8 @@ Source-specific identifier columns:
 | `uphole_time_ms` | Source uphole time in milliseconds after source-endpoint aggregation. Present only when uphole-time field correction is enabled. |
 | `uphole_shift_ms` | Uphole-time source correction shift in milliseconds. Present only when uphole-time field correction is enabled. |
 | `uphole_status` | Uphole component status, including missing/invalid/inconsistent/max-time/inactive-source states. Present only when uphole-time field correction is enabled. |
+| `manual_static_shift_ms` | Manual source static component in milliseconds after sign-convention conversion. Present only when manual-static field correction is enabled. |
+| `manual_static_status` | Manual source static status, including ok/missing/invalid states. Present only when manual-static field correction is enabled. |
 
 Receiver-specific identifier columns:
 
@@ -567,6 +611,8 @@ Receiver-specific identifier columns:
 | `receiver_id` | Receiver station ID read from the configured receiver header byte. |
 | `receiver_node_id` | Near-surface node ID assigned to the receiver endpoint. |
 | `receiver_v2_cell_id` | Endpoint-local V2 cell ID for cell V2 workflows, or blank/NaN when not cell-based. |
+| `manual_static_shift_ms` | Manual receiver static component in milliseconds after sign-convention conversion. Present only when manual-static field correction is enabled. |
+| `manual_static_status` | Manual receiver static status, including ok/missing/invalid states. Present only when manual-static field correction is enabled. |
 
 Shared columns:
 
@@ -699,7 +745,6 @@ Recommended coverage for future changes:
 - GRM is not implemented.
 - Plus-minus is not implemented.
 - Manual uphole correction tables are not implemented.
-- Manual source/receiver statics are not implemented.
 - SEG-Y header write-back is not implemented.
 - Path-integrated cell slowness is not implemented; cell velocity assignment is
   midpoint-based.

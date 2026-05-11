@@ -21,6 +21,7 @@ from app.api.schemas import (
 from app.services.refraction_static_service import (
     RefractionFieldCorrectionNotImplemented,
     _source_depth_double_count_guard_qc,
+    _with_manual_static_field_correction,
     _with_source_depth_field_correction,
     _with_uphole_field_correction,
     reject_unsupported_refraction_field_corrections,
@@ -381,6 +382,72 @@ def test_uphole_header_time_adds_source_only_component() -> None:
     )
 
 
+def test_manual_static_inline_adds_source_and_receiver_components() -> None:
+    req = RefractionStaticApplyRequest.model_validate(
+        _payload_with_field_corrections(
+            {
+                'manual_static': {
+                    'mode': 'inline_table',
+                    'sign_convention': 'applied_shift_s',
+                    'source_inline_table': [
+                        {'endpoint_id': 0, 'value': 0.005},
+                    ],
+                    'receiver_inline_table': [
+                        {'endpoint_id': 1, 'value': -0.002},
+                    ],
+                }
+            }
+        )
+    )
+    input_model = synthetic_refracted_arrival_input_model()
+    input_model = replace(
+        input_model,
+        source_endpoint_id_sorted=np.asarray(
+            [
+                int(str(endpoint_key).split(':', maxsplit=1)[1])
+                for endpoint_key in input_model.source_endpoint_key_sorted
+            ],
+            dtype=np.int64,
+        ),
+        receiver_endpoint_id_sorted=np.asarray(
+            [
+                int(str(endpoint_key).split(':', maxsplit=1)[1])
+                for endpoint_key in input_model.receiver_endpoint_key_sorted
+            ],
+            dtype=np.int64,
+        ),
+    )
+    base_result = run_synthetic_refraction_statics(
+        req=req,
+        input_model=input_model,
+    )
+
+    result_with_component = _with_manual_static_field_correction(
+        result=base_result,
+        input_model=input_model,
+        req=req,
+        state=None,
+    )
+
+    assert result_with_component.source_manual_static_shift_s is not None
+    assert result_with_component.receiver_manual_static_shift_s is not None
+    assert result_with_component.source_manual_static_shift_s[0] == pytest.approx(
+        0.005
+    )
+    assert result_with_component.receiver_manual_static_shift_s[0] == pytest.approx(
+        -0.002
+    )
+    np.testing.assert_allclose(
+        result_with_component.refraction_trace_shift_s_sorted,
+        base_result.refraction_trace_shift_s_sorted,
+    )
+    assert result_with_component.manual_static_field_correction_qc is not None
+    assert (
+        result_with_component.manual_static_field_correction_qc['component_name']
+        == 'manual_static_shift_s'
+    )
+
+
 def test_refraction_static_uphole_manual_mode_requires_table_reference() -> None:
     with pytest.raises(
         ValidationError,
@@ -389,6 +456,35 @@ def test_refraction_static_uphole_manual_mode_requires_table_reference() -> None
         RefractionStaticApplyRequest.model_validate(
             _payload_with_field_corrections({'uphole': {'mode': 'manual_table'}})
         )
+
+
+@pytest.mark.parametrize(
+    'manual_static',
+    [
+        {
+            'mode': 'artifact_table',
+            'sign_convention': 'applied_shift_s',
+            'source_table_artifact': _artifact_ref('source_statics.csv'),
+        },
+        {
+            'mode': 'inline_table',
+            'sign_convention': 'applied_shift_s',
+            'source_inline_table': [
+                {'endpoint_id': 0, 'value': 0.001},
+            ],
+        },
+    ],
+)
+def test_refraction_static_manual_static_mode_is_supported_by_public_service(
+    manual_static: dict[str, Any],
+) -> None:
+    req = RefractionStaticApplyRequest.model_validate(
+        _payload_with_field_corrections(
+            {'manual_static': manual_static}
+        )
+    )
+
+    reject_unsupported_refraction_field_corrections(req)
 
 
 def test_refraction_static_manual_static_artifact_mode_requires_table_reference() -> None:
@@ -425,48 +521,16 @@ def test_refraction_static_manual_static_requires_explicit_sign_convention() -> 
         )
 
 
-@pytest.mark.parametrize(
-    ('field_corrections', 'expected_mode'),
-    [
-        (
+def test_refraction_static_unsupported_field_correction_modes_fail_clearly() -> None:
+    req = RefractionStaticApplyRequest.model_validate(
+        _payload_with_field_corrections(
             {
                 'uphole': {
                     'mode': 'manual_table',
                     'manual_table': _artifact_ref('uphole.csv'),
                 }
-            },
-            'field_corrections.uphole.mode=manual_table',
-        ),
-        (
-            {
-                'manual_static': {
-                    'mode': 'artifact_table',
-                    'sign_convention': 'applied_shift_s',
-                    'source_table_artifact': _artifact_ref('source_statics.csv'),
-                }
-            },
-            'field_corrections.manual_static.mode=artifact_table',
-        ),
-        (
-            {
-                'manual_static': {
-                    'mode': 'inline_table',
-                    'sign_convention': 'delay_positive_ms',
-                    'receiver_inline_table': [
-                        {'endpoint_id': 101, 'value': 4.5},
-                    ],
-                }
-            },
-            'field_corrections.manual_static.mode=inline_table',
-        ),
-    ],
-)
-def test_refraction_static_unsupported_field_correction_modes_fail_clearly(
-    field_corrections: dict[str, Any],
-    expected_mode: str,
-) -> None:
-    req = RefractionStaticApplyRequest.model_validate(
-        _payload_with_field_corrections(field_corrections)
+            }
+        )
     )
 
     with pytest.raises(
@@ -475,4 +539,7 @@ def test_refraction_static_unsupported_field_correction_modes_fail_clearly(
     ) as exc_info:
         reject_unsupported_refraction_field_corrections(req)
 
-    assert re.search(re.escape(expected_mode), str(exc_info.value))
+    assert re.search(
+        re.escape('field_corrections.uphole.mode=manual_table'),
+        str(exc_info.value),
+    )
