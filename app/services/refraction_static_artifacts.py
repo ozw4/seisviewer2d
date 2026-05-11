@@ -1902,6 +1902,23 @@ def build_source_receiver_static_table_arrays(
                 ),
             }
         )
+    if _has_field_correction_composition(r):
+        assert r.source_field_shift_s is not None
+        assert r.source_field_static_status is not None
+        assert r.receiver_field_shift_s is not None
+        assert r.receiver_field_static_status is not None
+        arrays.update(
+            {
+                'source_field_shift_s': _float_array(r.source_field_shift_s),
+                'source_field_static_status': _string_array(
+                    r.source_field_static_status
+                ),
+                'receiver_field_shift_s': _float_array(r.receiver_field_shift_s),
+                'receiver_field_static_status': _string_array(
+                    r.receiver_field_static_status
+                ),
+            }
+        )
     if _has_source_2layer_static_fields(r):
         assert r.source_t2_time_s is not None
         assert r.source_v3_m_s is not None
@@ -2320,6 +2337,47 @@ def build_refraction_static_solution_arrays(
                 ),
             }
         )
+    if _has_field_correction_composition(r):
+        assert r.source_field_shift_s is not None
+        assert r.source_field_static_status is not None
+        assert r.receiver_field_shift_s is not None
+        assert r.receiver_field_static_status is not None
+        assert r.source_field_shift_s_sorted is not None
+        assert r.receiver_field_shift_s_sorted is not None
+        assert r.trace_field_shift_s_sorted is not None
+        assert r.trace_field_static_status_sorted is not None
+        assert r.trace_field_static_valid_mask_sorted is not None
+        assert r.base_refraction_trace_shift_s_sorted is not None
+        arrays.update(
+            {
+                'source_field_shift_s': _float_array(r.source_field_shift_s),
+                'source_field_static_status': _string_array(
+                    r.source_field_static_status
+                ),
+                'receiver_field_shift_s': _float_array(r.receiver_field_shift_s),
+                'receiver_field_static_status': _string_array(
+                    r.receiver_field_static_status
+                ),
+                'source_field_shift_s_sorted': _float_array(
+                    r.source_field_shift_s_sorted
+                ),
+                'receiver_field_shift_s_sorted': _float_array(
+                    r.receiver_field_shift_s_sorted
+                ),
+                'trace_field_shift_s_sorted': _float_array(
+                    r.trace_field_shift_s_sorted
+                ),
+                'trace_field_static_status_sorted': _string_array(
+                    r.trace_field_static_status_sorted
+                ),
+                'trace_field_static_valid_mask_sorted': _bool_array(
+                    r.trace_field_static_valid_mask_sorted
+                ),
+                'base_refraction_trace_shift_s_sorted': _float_array(
+                    r.base_refraction_trace_shift_s_sorted
+                ),
+            }
+        )
     if _has_node_2layer_static_fields(r):
         assert r.node_sh2_weathering_thickness_m is not None
         node_sh1_m = _node_sh1_weathering_thickness_m(r)
@@ -2626,6 +2684,7 @@ def build_refraction_static_qc_payload(
     source_depth_qc = _source_depth_field_correction_qc(r, req)
     uphole_qc = _uphole_field_correction_qc(r, req)
     manual_static_qc = _manual_static_field_correction_qc(r, req)
+    composition_qc = _field_correction_composition_qc(r, req)
     field_corrections_qc: dict[str, Any] = {}
     if source_depth_qc:
         field_corrections_qc['source_depth'] = source_depth_qc
@@ -2641,6 +2700,8 @@ def build_refraction_static_qc_payload(
         field_corrections_qc['uphole'] = uphole_qc
     if manual_static_qc:
         field_corrections_qc['manual_static'] = manual_static_qc
+    if composition_qc:
+        field_corrections_qc['composition'] = composition_qc
     if field_corrections_qc:
         payload['field_corrections'] = field_corrections_qc
     if layer_count is not None:
@@ -2812,6 +2873,56 @@ def _manual_static_field_correction_qc(
     return payload
 
 
+def _field_correction_composition_qc(
+    result: RefractionDatumStaticsResult,
+    req: RefractionStaticApplyRequest,
+) -> dict[str, Any]:
+    if not _has_field_correction_composition(result):
+        if _field_correction_component_requested(req):
+            return {
+                'composition_enabled': bool(
+                    req.field_corrections.composition.enabled
+                ),
+                'apply_to_trace_shift': bool(
+                    req.field_corrections.composition.apply_to_trace_shift
+                ),
+                'invalid_component_policy': (
+                    req.field_corrections.composition.invalid_component_policy
+                ),
+                'sign_convention': SIGN_CONVENTION,
+                'status': 'not_composed',
+            }
+        return {}
+    qc = result.field_composition_qc
+    if not isinstance(qc, dict):
+        raise RefractionStaticArtifactError(
+            'field_composition_qc is required when field-composition arrays '
+            'are present'
+        )
+    payload = dict(qc)
+    payload.setdefault('composition_enabled', True)
+    payload.setdefault(
+        'apply_to_trace_shift',
+        bool(req.field_corrections.composition.apply_to_trace_shift),
+    )
+    payload.setdefault(
+        'invalid_component_policy',
+        req.field_corrections.composition.invalid_component_policy,
+    )
+    payload.setdefault('sign_convention', SIGN_CONVENTION)
+    return payload
+
+
+def _field_correction_component_requested(
+    req: RefractionStaticApplyRequest,
+) -> bool:
+    return (
+        req.field_corrections.source_depth.mode != 'none'
+        or req.field_corrections.uphole.mode != 'none'
+        or req.field_corrections.manual_static.mode != 'none'
+    )
+
+
 def _validate_job_dir(job_dir: Path) -> Path:
     try:
         root = Path(job_dir)
@@ -2879,6 +2990,12 @@ def _validate_result(result: RefractionDatumStaticsResult) -> _ValidatedResult:
     )
     _validate_optional_arrays(
         result=result,
+        names=('source_field_shift_s', 'source_field_static_status'),
+        expected_length=n_source,
+        label='source field-composition endpoint',
+    )
+    _validate_optional_arrays(
+        result=result,
         names=_SOURCE_2LAYER_STATIC_ARRAY_NAMES,
         expected_length=n_source,
         label='source two-layer endpoint',
@@ -2897,6 +3014,12 @@ def _validate_result(result: RefractionDatumStaticsResult) -> _ValidatedResult:
     )
     _validate_optional_arrays(
         result=result,
+        names=('receiver_field_shift_s', 'receiver_field_static_status'),
+        expected_length=n_receiver,
+        label='receiver field-composition endpoint',
+    )
+    _validate_optional_arrays(
+        result=result,
         names=_RECEIVER_2LAYER_STATIC_ARRAY_NAMES,
         expected_length=n_receiver,
         label='receiver two-layer endpoint',
@@ -2907,6 +3030,19 @@ def _validate_result(result: RefractionDatumStaticsResult) -> _ValidatedResult:
             raise RefractionStaticArtifactError(
                 f'residual array length mismatch for {name}'
             )
+    _validate_optional_arrays(
+        result=result,
+        names=(
+            'source_field_shift_s_sorted',
+            'receiver_field_shift_s_sorted',
+            'trace_field_shift_s_sorted',
+            'trace_field_static_status_sorted',
+            'trace_field_static_valid_mask_sorted',
+            'base_refraction_trace_shift_s_sorted',
+        ),
+        expected_length=n_traces,
+        label='trace field-composition',
+    )
     if np.any((result.row_trace_index_sorted < 0) | (result.row_trace_index_sorted >= n_traces)):
         raise RefractionStaticArtifactError(
             'row_trace_index_sorted contains out-of-range trace indices'
@@ -3575,6 +3711,7 @@ def _component_rows(result: RefractionDatumStaticsResult) -> list[dict[str, obje
     has_source_depth = _has_source_depth_field_correction(result)
     has_uphole = _has_uphole_field_correction(result)
     has_manual_static = _has_manual_static_field_correction(result)
+    has_field_composition = _has_field_correction_composition(result)
     rows: list[dict[str, object]] = []
     for index in range(int(result.source_endpoint_key.shape[0])):
         node_id = int(result.source_node_id[index])
@@ -3635,6 +3772,15 @@ def _component_rows(result: RefractionDatumStaticsResult) -> list[dict[str, obje
                     ),
                 }
             )
+        if has_field_composition:
+            assert result.source_field_shift_s is not None
+            assert result.source_field_static_status is not None
+            row.update(
+                {
+                    'field_shift_ms': _csv_ms(result.source_field_shift_s[index]),
+                    'field_status': str(result.source_field_static_status[index]),
+                }
+            )
         rows.append(row)
     for index in range(int(result.receiver_endpoint_key.shape[0])):
         node_id = int(result.receiver_node_id[index])
@@ -3687,6 +3833,15 @@ def _component_rows(result: RefractionDatumStaticsResult) -> list[dict[str, obje
                     ),
                 }
             )
+        if has_field_composition:
+            assert result.receiver_field_shift_s is not None
+            assert result.receiver_field_static_status is not None
+            row.update(
+                {
+                    'field_shift_ms': _csv_ms(result.receiver_field_shift_s[index]),
+                    'field_status': str(result.receiver_field_static_status[index]),
+                }
+            )
         rows.append(row)
     return rows
 
@@ -3718,6 +3873,21 @@ def _component_columns(result: RefractionDatumStaticsResult) -> tuple[str, ...]:
             anchor,
             ('manual_static_shift_ms', 'manual_static_status'),
         )
+    if _has_field_correction_composition(result):
+        anchor = (
+            'manual_static_status'
+            if 'manual_static_status' in columns
+            else (
+                'uphole_status'
+                if 'uphole_status' in columns
+                else (
+                    'source_depth_status'
+                    if 'source_depth_status' in columns
+                    else 'flat_datum_shift_ms'
+                )
+            )
+        )
+        columns = _insert_after(columns, anchor, ('field_shift_ms', 'field_status'))
     return columns
 
 
@@ -3759,6 +3929,20 @@ def _source_static_table_columns(
             anchor,
             ('manual_static_shift_ms', 'manual_static_status'),
         )
+    if _has_field_correction_composition(result):
+        if 'manual_static_status' in columns:
+            anchor = 'manual_static_status'
+        elif 'uphole_status' in columns:
+            anchor = 'uphole_status'
+        elif 'source_depth_status' in columns:
+            anchor = 'source_depth_status'
+        else:
+            anchor = 'weathering_correction_ms'
+        columns = _insert_after(
+            columns,
+            anchor,
+            ('source_field_shift_ms', 'source_field_status'),
+        )
     return columns
 
 
@@ -3784,6 +3968,17 @@ def _receiver_static_table_columns(
             columns,
             'weathering_correction_ms',
             ('manual_static_shift_ms', 'manual_static_status'),
+        )
+    if _has_field_correction_composition(result):
+        anchor = (
+            'manual_static_status'
+            if 'manual_static_status' in columns
+            else 'weathering_correction_ms'
+        )
+        columns = _insert_after(
+            columns,
+            anchor,
+            ('receiver_field_shift_ms', 'receiver_field_status'),
         )
     return columns
 
@@ -3850,6 +4045,31 @@ def _has_manual_static_field_correction(
     if not all(present):
         raise RefractionStaticArtifactError(
             'manual static field correction arrays must be provided together'
+        )
+    return True
+
+
+def _has_field_correction_composition(
+    result: RefractionDatumStaticsResult,
+) -> bool:
+    present = (
+        result.source_field_shift_s is not None,
+        result.source_field_static_status is not None,
+        result.receiver_field_shift_s is not None,
+        result.receiver_field_static_status is not None,
+        result.source_field_shift_s_sorted is not None,
+        result.receiver_field_shift_s_sorted is not None,
+        result.trace_field_shift_s_sorted is not None,
+        result.trace_field_static_status_sorted is not None,
+        result.trace_field_static_valid_mask_sorted is not None,
+        result.base_refraction_trace_shift_s_sorted is not None,
+        result.field_composition_qc is not None,
+    )
+    if not any(present):
+        return False
+    if not all(present):
+        raise RefractionStaticArtifactError(
+            'field-correction composition arrays must be provided together'
         )
     return True
 
@@ -3969,6 +4189,7 @@ def _source_static_table_rows(
     has_source_depth = _has_source_depth_field_correction(result)
     has_uphole = _has_uphole_field_correction(result)
     has_manual_static = _has_manual_static_field_correction(result)
+    has_field_composition = _has_field_correction_composition(result)
     rows: list[dict[str, object]] = []
     for index in range(int(result.source_endpoint_key.shape[0])):
         node_id = int(result.source_node_id[index])
@@ -4071,6 +4292,19 @@ def _source_static_table_rows(
                     ),
                 }
             )
+        if has_field_composition:
+            assert result.source_field_shift_s is not None
+            assert result.source_field_static_status is not None
+            rows[-1].update(
+                {
+                    'source_field_shift_ms': _csv_ms(
+                        result.source_field_shift_s[index]
+                    ),
+                    'source_field_status': str(
+                        result.source_field_static_status[index]
+                    ),
+                }
+            )
         if has_2layer_fields:
             assert source_t2_time_s is not None
             assert source_v3_m_s is not None
@@ -4140,6 +4374,7 @@ def _receiver_static_table_rows(
     receiver_sh3_m = result.receiver_sh3_weathering_thickness_m
     receiver_sh1_m = _receiver_sh1_weathering_thickness_m(result)
     has_manual_static = _has_manual_static_field_correction(result)
+    has_field_composition = _has_field_correction_composition(result)
     rows: list[dict[str, object]] = []
     for index in range(int(result.receiver_endpoint_key.shape[0])):
         node_id = int(result.receiver_node_id[index])
@@ -4215,6 +4450,19 @@ def _receiver_static_table_rows(
                     ),
                     'manual_static_status': str(
                         result.receiver_manual_static_status[index]
+                    ),
+                }
+            )
+        if has_field_composition:
+            assert result.receiver_field_shift_s is not None
+            assert result.receiver_field_static_status is not None
+            rows[-1].update(
+                {
+                    'receiver_field_shift_ms': _csv_ms(
+                        result.receiver_field_shift_s[index]
+                    ),
+                    'receiver_field_status': str(
+                        result.receiver_field_static_status[index]
                     ),
                 }
             )

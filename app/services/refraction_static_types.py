@@ -900,6 +900,17 @@ class RefractionDatumStaticsResult:
     receiver_manual_static_shift_s: np.ndarray | None = None
     receiver_manual_static_status: np.ndarray | None = None
     manual_static_field_correction_qc: dict[str, Any] | None = None
+    source_field_shift_s: np.ndarray | None = None
+    source_field_static_status: np.ndarray | None = None
+    receiver_field_shift_s: np.ndarray | None = None
+    receiver_field_static_status: np.ndarray | None = None
+    source_field_shift_s_sorted: np.ndarray | None = None
+    receiver_field_shift_s_sorted: np.ndarray | None = None
+    trace_field_shift_s_sorted: np.ndarray | None = None
+    trace_field_static_status_sorted: np.ndarray | None = None
+    trace_field_static_valid_mask_sorted: np.ndarray | None = None
+    base_refraction_trace_shift_s_sorted: np.ndarray | None = None
+    field_composition_qc: dict[str, Any] | None = None
 
 
 @dataclass(frozen=True)

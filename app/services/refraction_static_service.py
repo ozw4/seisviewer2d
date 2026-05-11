@@ -26,6 +26,11 @@ from app.services.refraction_static_datum import (
     build_refraction_datum_statics,
     write_refraction_datum_statics_artifacts,
 )
+from app.services.refraction_static_field_composition import (
+    compose_refraction_endpoint_field_corrections,
+    compose_refraction_final_trace_shift,
+    compose_refraction_trace_field_corrections,
+)
 from app.services.refraction_static_first_layer import (
     normalize_refraction_first_layer_request,
 )
@@ -655,6 +660,134 @@ def _with_manual_static_field_correction(
     )
 
 
+def _with_field_correction_composition(
+    *,
+    result: RefractionDatumStaticsResult,
+    input_model: RefractionStaticInputModel | None,
+    req: RefractionStaticApplyRequest,
+) -> RefractionDatumStaticsResult:
+    composition = req.field_corrections.composition
+    if (
+        not bool(composition.enabled)
+        or not _field_correction_components_requested(req)
+    ):
+        return result
+    if not _has_field_correction_components(result):
+        return result
+    if input_model is None:
+        raise ValueError('field-correction composition requires input trace endpoints')
+
+    source_endpoint_id = _endpoint_ids_for_result(
+        result_endpoint_key=result.source_endpoint_key,
+        input_endpoint_key=input_model.source_endpoint_key_sorted,
+        input_endpoint_id=input_model.source_endpoint_id_sorted,
+    )
+    receiver_endpoint_id = _endpoint_ids_for_result(
+        result_endpoint_key=result.receiver_endpoint_key,
+        input_endpoint_key=input_model.receiver_endpoint_key_sorted,
+        input_endpoint_id=input_model.receiver_endpoint_id_sorted,
+    )
+    source_field = compose_refraction_endpoint_field_corrections(
+        endpoint_kind='source',
+        endpoint_key=result.source_endpoint_key,
+        endpoint_id=source_endpoint_id,
+        node_id=result.source_node_id,
+        source_depth_shift_s=result.source_depth_shift_s,
+        source_depth_status=result.source_depth_status,
+        uphole_shift_s=result.source_uphole_shift_s,
+        uphole_status=result.source_uphole_status,
+        manual_static_shift_s=result.source_manual_static_shift_s,
+        manual_static_status=result.source_manual_static_status,
+    )
+    receiver_field = compose_refraction_endpoint_field_corrections(
+        endpoint_kind='receiver',
+        endpoint_key=result.receiver_endpoint_key,
+        endpoint_id=receiver_endpoint_id,
+        node_id=result.receiver_node_id,
+        manual_static_shift_s=result.receiver_manual_static_shift_s,
+        manual_static_status=result.receiver_manual_static_status,
+    )
+    trace_field = compose_refraction_trace_field_corrections(
+        source_endpoint_field=source_field,
+        receiver_endpoint_field=receiver_field,
+        source_endpoint_key_sorted=input_model.source_endpoint_key_sorted,
+        receiver_endpoint_key_sorted=input_model.receiver_endpoint_key_sorted,
+    )
+    final_shift = compose_refraction_final_trace_shift(
+        refraction_trace_shift_s_sorted=result.refraction_trace_shift_s_sorted,
+        trace_static_status_sorted=result.trace_static_status_sorted,
+        trace_static_valid_mask_sorted=result.trace_static_valid_mask_sorted,
+        trace_field_correction=trace_field,
+        apply_to_trace_shift=bool(composition.apply_to_trace_shift),
+        invalid_component_policy=composition.invalid_component_policy,
+    )
+    composition_qc = {
+        **final_shift.qc,
+        'source_endpoint_field': source_field.qc,
+        'receiver_endpoint_field': receiver_field.qc,
+        'trace_field': trace_field.qc,
+    }
+    updated = replace(
+        result,
+        source_field_shift_s=source_field.total_field_shift_s,
+        source_field_static_status=source_field.field_static_status,
+        receiver_field_shift_s=receiver_field.total_field_shift_s,
+        receiver_field_static_status=receiver_field.field_static_status,
+        source_field_shift_s_sorted=trace_field.source_field_shift_s_sorted,
+        receiver_field_shift_s_sorted=trace_field.receiver_field_shift_s_sorted,
+        trace_field_shift_s_sorted=trace_field.trace_field_shift_s_sorted,
+        trace_field_static_status_sorted=(
+            trace_field.trace_field_static_status_sorted
+        ),
+        trace_field_static_valid_mask_sorted=(
+            trace_field.trace_field_static_status_sorted == 'ok'
+        ),
+        base_refraction_trace_shift_s_sorted=(
+            final_shift.base_refraction_trace_shift_s_sorted
+        ),
+        field_composition_qc=composition_qc,
+        qc={
+            **result.qc,
+            'field_corrections': {
+                **(
+                    result.qc.get('field_corrections')
+                    if isinstance(result.qc.get('field_corrections'), dict)
+                    else {}
+                ),
+                'composition': composition_qc,
+            },
+        },
+    )
+    if not bool(composition.apply_to_trace_shift):
+        return updated
+    return replace(
+        updated,
+        refraction_trace_shift_s_sorted=final_shift.final_trace_shift_s_sorted,
+        trace_static_status_sorted=final_shift.final_trace_static_status_sorted,
+        trace_static_valid_mask_sorted=final_shift.final_trace_static_valid_mask_sorted,
+    )
+
+
+def _has_field_correction_components(result: RefractionDatumStaticsResult) -> bool:
+    return any(
+        value is not None
+        for value in (
+            result.source_depth_shift_s,
+            result.source_uphole_shift_s,
+            result.source_manual_static_shift_s,
+            result.receiver_manual_static_shift_s,
+        )
+    )
+
+
+def _field_correction_components_requested(req: RefractionStaticApplyRequest) -> bool:
+    return (
+        req.field_corrections.source_depth.mode != 'none'
+        or req.field_corrections.uphole.mode != 'none'
+        or req.field_corrections.manual_static.mode != 'none'
+    )
+
+
 def _manual_static_rows_from_request(
     *,
     req: RefractionStaticApplyRequest,
@@ -890,6 +1023,11 @@ def _run_public_multilayer_refraction_static_apply_job(
         req=req,
         state=state,
     )
+    datum_result = _with_field_correction_composition(
+        result=datum_result,
+        input_model=input_model,
+        req=req,
+    )
     _set_job_progress_message(
         state,
         job_id,
@@ -1036,6 +1174,11 @@ def _run_refraction_static_apply_job_body(
         req=active_req,
         state=state,
     )
+    datum_result = _with_field_correction_composition(
+        result=datum_result,
+        input_model=weathering_input_model,
+        req=active_req,
+    )
     _set_job_progress_message(
         state,
         job_id,
@@ -1102,4 +1245,5 @@ __all__ = [
     'reject_unsupported_refraction_field_corrections',
     'resolve_refraction_first_layer_request',
     'run_refraction_static_apply_job',
+    '_with_field_correction_composition',
 ]
