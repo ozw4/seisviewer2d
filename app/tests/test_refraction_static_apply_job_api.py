@@ -613,7 +613,7 @@ def test_public_apply_rejects_unsupported_vsub_cell_velocity_mode(
     assert 'vsub_t3 velocity_mode=solve_cell is not supported' in message
 
 
-def test_run_refraction_static_apply_job_rejects_cell_v3_until_implemented(
+def test_run_refraction_static_apply_job_rejects_cell_v3_until_publicly_wired(
     client: TestClient,
     tmp_path: Path,
 ) -> None:
@@ -649,7 +649,9 @@ def test_run_refraction_static_apply_job_rejects_cell_v3_until_implemented(
         job = dict(client.app.state.sv.jobs[job_id])
     assert job['status'] == 'error'
     assert 'v3_t2 velocity_mode=solve_cell is not supported' in str(job['message'])
-    assert 'cell V3 is not implemented' in str(job['message'])
+    assert 'cell V3/T2 is available only for internal layer solving' in str(
+        job['message']
+    )
     assert REQUEST_JSON_NAME in _job_file_names(job_dir)
     assert FINAL_REFRACTION_ARTIFACTS.isdisjoint(_job_file_names(job_dir))
 

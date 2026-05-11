@@ -297,6 +297,7 @@ def compute_refraction_multilayer_datum_statics_from_input_model(
         receiver_sh1_weathering_thickness_m=components.receiver_sh1_m,
         receiver_sh2_weathering_thickness_m=components.receiver_sh2_m,
         receiver_sh3_weathering_thickness_m=components.receiver_sh3_m,
+        layer_results=solve_result.layer_results,
     )
     if job_dir is not None:
         root = Path(job_dir)
@@ -947,14 +948,16 @@ def _require_multilayer_t1lsst_layers(
     v3_mode = normalized_layers[1].velocity_mode
     if v3_mode not in ('solve_global', 'fixed_global'):
         raise RefractionMultiLayerSolveError(
-            'multi-layer T1LSST statics currently requires global V3/T2 velocity'
+            'multi-layer T1LSST statics currently requires global V3/T2 velocity; '
+            'solve_cell V3/T2 is available only for internal layer solving'
         )
     if len(normalized_layers) == 3:
         vsub_mode = normalized_layers[2].velocity_mode
         if vsub_mode not in ('solve_global', 'fixed_global'):
             raise RefractionMultiLayerSolveError(
                 'multi-layer T1LSST statics currently requires global '
-                'Vsub/T3 velocity'
+                'Vsub/T3 velocity; solve_cell Vsub/T3 is available only for '
+                'internal layer solving'
             )
 
 
@@ -2094,8 +2097,10 @@ def _effective_solver_dispatch(
         ('v2_t1', 'solve_cell'): _solve_existing_time_term_layer,
         ('v3_t2', 'fixed_global'): _solve_existing_time_term_layer,
         ('v3_t2', 'solve_global'): _solve_existing_time_term_layer,
+        ('v3_t2', 'solve_cell'): _solve_existing_time_term_layer,
         ('vsub_t3', 'fixed_global'): _solve_existing_time_term_layer,
         ('vsub_t3', 'solve_global'): _solve_existing_time_term_layer,
+        ('vsub_t3', 'solve_cell'): _solve_existing_time_term_layer,
     }
     if overrides is not None:
         dispatch.update(dict(overrides))

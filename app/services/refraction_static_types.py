@@ -772,6 +772,7 @@ class RefractionDatumStaticsResult:
     row_receiver_endpoint_key: np.ndarray | None = None
     row_rejection_reason: np.ndarray | None = None
     row_velocity_m_s: np.ndarray | None = None
+    layer_results: tuple[RefractionLayerSolveResult, ...] | None = None
 
 
 @dataclass(frozen=True)
