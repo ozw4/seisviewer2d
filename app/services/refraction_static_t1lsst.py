@@ -62,6 +62,17 @@ class RefractionT1LSST2LayerThicknessResult:
     weathering_correction_s: np.ndarray | None = None
 
 
+@dataclass(frozen=True)
+class RefractionT1LSST3LayerThicknessResult:
+    """Three-layer T1LSST thicknesses with endpoint conversion status."""
+
+    sh1_m: np.ndarray
+    sh2_m: np.ndarray
+    sh3_m: np.ndarray
+    status: np.ndarray
+    weathering_correction_s: np.ndarray | None = None
+
+
 def compute_t1lsst_1layer_thickness(
     t1_s: np.ndarray,
     v1_m_s: float,
@@ -221,6 +232,179 @@ def compute_t1lsst_2layer_weathering_correction(
     return np.array(
         sh1 * (1.0 / v3 - 1.0 / v1)
         + sh2 * (1.0 / v3 - 1.0 / v2),
+        dtype=np.float64,
+        copy=True,
+        order='C',
+    )
+
+
+def compute_t1lsst_3layer_thicknesses(
+    t1_s: np.ndarray,
+    t2_s: np.ndarray,
+    t3_s: np.ndarray,
+    v1_m_s: np.ndarray | float,
+    v2_m_s: np.ndarray | float,
+    v3_m_s: np.ndarray | float,
+    vsub_m_s: np.ndarray | float,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Compute three-layer ``SH1``/``SH2``/``SH3`` thicknesses."""
+    result = compute_t1lsst_3layer_thicknesses_with_status(
+        t1_s=t1_s,
+        t2_s=t2_s,
+        t3_s=t3_s,
+        v1_m_s=v1_m_s,
+        v2_m_s=v2_m_s,
+        v3_m_s=v3_m_s,
+        vsub_m_s=vsub_m_s,
+        strict_velocity_order=True,
+    )
+    return result.sh1_m, result.sh2_m, result.sh3_m
+
+
+def compute_t1lsst_3layer_thicknesses_with_status(
+    t1_s: np.ndarray,
+    t2_s: np.ndarray,
+    t3_s: np.ndarray,
+    v1_m_s: np.ndarray | float,
+    v2_m_s: np.ndarray | float,
+    v3_m_s: np.ndarray | float,
+    vsub_m_s: np.ndarray | float,
+    *,
+    strict_velocity_order: bool = False,
+) -> RefractionT1LSST3LayerThicknessResult:
+    """Compute three-layer thicknesses and status-code invalid endpoints."""
+    if strict_velocity_order:
+        t1, t2, t3, v1, v2, v3, vsub = _coerce_3layer_inputs(
+            t1_s=t1_s,
+            t2_s=t2_s,
+            t3_s=t3_s,
+            v1_m_s=v1_m_s,
+            v2_m_s=v2_m_s,
+            v3_m_s=v3_m_s,
+            vsub_m_s=vsub_m_s,
+        )
+        invalid_nonfinite = np.zeros(t1.shape, dtype=bool)
+        invalid_velocity_order = np.zeros(t1.shape, dtype=bool)
+    else:
+        t1, t2, t3, v1, v2, v3, vsub = _coerce_3layer_status_inputs(
+            t1_s=t1_s,
+            t2_s=t2_s,
+            t3_s=t3_s,
+            v1_m_s=v1_m_s,
+            v2_m_s=v2_m_s,
+            v3_m_s=v3_m_s,
+            vsub_m_s=vsub_m_s,
+        )
+        invalid_nonfinite = ~(
+            np.isfinite(t1)
+            & np.isfinite(t2)
+            & np.isfinite(t3)
+            & np.isfinite(v1)
+            & np.isfinite(v2)
+            & np.isfinite(v3)
+            & np.isfinite(vsub)
+        )
+        invalid_velocity_order = (
+            ~invalid_nonfinite
+            & ((v1 <= 0.0) | (v2 <= v1) | (v3 <= v2) | (vsub <= v3))
+        )
+
+    status = np.full(t1.shape, 'ok', dtype='<U32')
+    status[invalid_nonfinite] = 'invalid_nonfinite_input'
+    status[invalid_velocity_order] = 'invalid_velocity_order'
+    valid = status == 'ok'
+    sh1 = np.full(t1.shape, np.nan, dtype=np.float64)
+    sh2 = np.full(t1.shape, np.nan, dtype=np.float64)
+    sh3 = np.full(t1.shape, np.nan, dtype=np.float64)
+    if np.any(valid):
+        valid_t1 = t1[valid]
+        valid_t2 = t2[valid]
+        valid_t3 = t3[valid]
+        valid_v1 = v1[valid]
+        valid_v2 = v2[valid]
+        valid_v3 = v3[valid]
+        valid_vsub = vsub[valid]
+        c12 = np.sqrt(1.0 - (valid_v1 / valid_v2) ** 2)
+        c13 = np.sqrt(1.0 - (valid_v1 / valid_v3) ** 2)
+        c23 = np.sqrt(1.0 - (valid_v2 / valid_v3) ** 2)
+        c1sub = np.sqrt(1.0 - (valid_v1 / valid_vsub) ** 2)
+        c2sub = np.sqrt(1.0 - (valid_v2 / valid_vsub) ** 2)
+        c3sub = np.sqrt(1.0 - (valid_v3 / valid_vsub) ** 2)
+        valid_sh1 = valid_t1 * valid_v1 / c12
+        valid_sh2 = (
+            (valid_t2 - valid_sh1 * c13 / valid_v1)
+            * valid_v2
+            / c23
+        )
+        valid_sh3 = (
+            valid_t3
+            - valid_sh1 * c1sub / valid_v1
+            - valid_sh2 * c2sub / valid_v2
+        ) * valid_v3 / c3sub
+        sh1[valid] = valid_sh1
+        sh2[valid] = valid_sh2
+        sh3[valid] = valid_sh3
+
+    invalid_negative = (
+        (np.isfinite(sh1) & (sh1 < 0.0))
+        | (np.isfinite(sh2) & (sh2 < 0.0))
+        | (np.isfinite(sh3) & (sh3 < 0.0))
+    )
+    status[invalid_negative] = 'invalid_negative_thickness'
+    sh1[invalid_negative] = np.nan
+    sh2[invalid_negative] = np.nan
+    sh3[invalid_negative] = np.nan
+    wcor = np.full(t1.shape, np.nan, dtype=np.float64)
+    wcor_valid = status == 'ok'
+    if np.any(wcor_valid):
+        wcor[wcor_valid] = (
+            sh1[wcor_valid] * (1.0 / vsub[wcor_valid] - 1.0 / v1[wcor_valid])
+            + sh2[wcor_valid] * (1.0 / vsub[wcor_valid] - 1.0 / v2[wcor_valid])
+            + sh3[wcor_valid] * (1.0 / vsub[wcor_valid] - 1.0 / v3[wcor_valid])
+        )
+    return RefractionT1LSST3LayerThicknessResult(
+        sh1_m=np.array(sh1, dtype=np.float64, copy=True, order='C'),
+        sh2_m=np.array(sh2, dtype=np.float64, copy=True, order='C'),
+        sh3_m=np.array(sh3, dtype=np.float64, copy=True, order='C'),
+        status=np.array(status, dtype='<U32', copy=True, order='C'),
+        weathering_correction_s=np.array(wcor, dtype=np.float64, copy=True, order='C'),
+    )
+
+
+def compute_t1lsst_3layer_weathering_correction(
+    sh1_m: np.ndarray,
+    sh2_m: np.ndarray,
+    sh3_m: np.ndarray,
+    v1_m_s: np.ndarray | float,
+    v2_m_s: np.ndarray | float,
+    v3_m_s: np.ndarray | float,
+    vsub_m_s: np.ndarray | float,
+) -> np.ndarray:
+    """Compute three-layer replacement ``WCOR`` to Vsub in seconds."""
+    sh1 = _coerce_float_array(sh1_m, name='sh1_m', allow_nonfinite=True)
+    sh2 = _coerce_float_array(sh2_m, name='sh2_m', allow_nonfinite=True)
+    sh3 = _coerce_float_array(sh3_m, name='sh3_m', allow_nonfinite=True)
+    v1 = _positive_finite_float_array(v1_m_s, name='v1_m_s')
+    v2 = _positive_finite_float_array(v2_m_s, name='v2_m_s')
+    v3 = _positive_finite_float_array(v3_m_s, name='v3_m_s')
+    vsub = _positive_finite_float_array(vsub_m_s, name='vsub_m_s')
+    sh1, sh2, sh3, v1, v2, v3, vsub = _broadcast_t1lsst_arrays(
+        (sh1, sh2, sh3, v1, v2, v3, vsub),
+        names=(
+            'sh1_m',
+            'sh2_m',
+            'sh3_m',
+            'v1_m_s',
+            'v2_m_s',
+            'v3_m_s',
+            'vsub_m_s',
+        ),
+    )
+    _validate_3layer_velocity_order(v1=v1, v2=v2, v3=v3, vsub=vsub)
+    return np.array(
+        sh1 * (1.0 / vsub - 1.0 / v1)
+        + sh2 * (1.0 / vsub - 1.0 / v2)
+        + sh3 * (1.0 / vsub - 1.0 / v3),
         dtype=np.float64,
         copy=True,
         order='C',
@@ -541,6 +725,86 @@ def _coerce_2layer_status_inputs(
     )
 
 
+def _coerce_3layer_inputs(
+    *,
+    t1_s: object,
+    t2_s: object,
+    t3_s: object,
+    v1_m_s: object,
+    v2_m_s: object,
+    v3_m_s: object,
+    vsub_m_s: object,
+) -> tuple[
+    np.ndarray,
+    np.ndarray,
+    np.ndarray,
+    np.ndarray,
+    np.ndarray,
+    np.ndarray,
+    np.ndarray,
+]:
+    t1 = _coerce_float_array(t1_s, name='t1_s')
+    t2 = _coerce_float_array(t2_s, name='t2_s')
+    t3 = _coerce_float_array(t3_s, name='t3_s')
+    v1 = _positive_finite_float_array(v1_m_s, name='v1_m_s')
+    v2 = _positive_finite_float_array(v2_m_s, name='v2_m_s')
+    v3 = _positive_finite_float_array(v3_m_s, name='v3_m_s')
+    vsub = _positive_finite_float_array(vsub_m_s, name='vsub_m_s')
+    t1, t2, t3, v1, v2, v3, vsub = _broadcast_t1lsst_arrays(
+        (t1, t2, t3, v1, v2, v3, vsub),
+        names=(
+            't1_s',
+            't2_s',
+            't3_s',
+            'v1_m_s',
+            'v2_m_s',
+            'v3_m_s',
+            'vsub_m_s',
+        ),
+    )
+    _validate_3layer_velocity_order(v1=v1, v2=v2, v3=v3, vsub=vsub)
+    return t1, t2, t3, v1, v2, v3, vsub
+
+
+def _coerce_3layer_status_inputs(
+    *,
+    t1_s: object,
+    t2_s: object,
+    t3_s: object,
+    v1_m_s: object,
+    v2_m_s: object,
+    v3_m_s: object,
+    vsub_m_s: object,
+) -> tuple[
+    np.ndarray,
+    np.ndarray,
+    np.ndarray,
+    np.ndarray,
+    np.ndarray,
+    np.ndarray,
+    np.ndarray,
+]:
+    t1 = _coerce_float_array(t1_s, name='t1_s', allow_nonfinite=True)
+    t2 = _coerce_float_array(t2_s, name='t2_s', allow_nonfinite=True)
+    t3 = _coerce_float_array(t3_s, name='t3_s', allow_nonfinite=True)
+    v1 = _coerce_float_array(v1_m_s, name='v1_m_s', allow_nonfinite=True)
+    v2 = _coerce_float_array(v2_m_s, name='v2_m_s', allow_nonfinite=True)
+    v3 = _coerce_float_array(v3_m_s, name='v3_m_s', allow_nonfinite=True)
+    vsub = _coerce_float_array(vsub_m_s, name='vsub_m_s', allow_nonfinite=True)
+    return _broadcast_t1lsst_arrays(
+        (t1, t2, t3, v1, v2, v3, vsub),
+        names=(
+            't1_s',
+            't2_s',
+            't3_s',
+            'v1_m_s',
+            'v2_m_s',
+            'v3_m_s',
+            'vsub_m_s',
+        ),
+    )
+
+
 def _broadcast_t1lsst_arrays(
     arrays: tuple[np.ndarray, ...],
     *,
@@ -569,6 +833,18 @@ def _validate_2layer_velocity_order(
         raise RefractionT1LSSTError('v2_m_s must be greater than v1_m_s')
     if np.any(v3 <= v2):
         raise RefractionT1LSSTError('v3_m_s must be greater than v2_m_s')
+
+
+def _validate_3layer_velocity_order(
+    *,
+    v1: np.ndarray,
+    v2: np.ndarray,
+    v3: np.ndarray,
+    vsub: np.ndarray,
+) -> None:
+    _validate_2layer_velocity_order(v1=v1, v2=v2, v3=v3)
+    if np.any(vsub <= v3):
+        raise RefractionT1LSSTError('vsub_m_s must be greater than v3_m_s')
 
 
 def _positive_finite(value: object, *, name: str) -> float:
@@ -643,12 +919,16 @@ __all__ = [
     'REFRACTION_T1LSST_1LAYER_COMPONENTS_CSV_NAME',
     'T1LSST_SIGN_CONVENTION',
     'RefractionT1LSST2LayerThicknessResult',
+    'RefractionT1LSST3LayerThicknessResult',
     'RefractionT1LSSTError',
     'compute_t1lsst_1layer_thickness',
     'compute_t1lsst_1layer_weathering_correction',
     'compute_t1lsst_2layer_thicknesses',
     'compute_t1lsst_2layer_thicknesses_with_status',
     'compute_t1lsst_2layer_weathering_correction',
+    'compute_t1lsst_3layer_thicknesses',
+    'compute_t1lsst_3layer_thicknesses_with_status',
+    'compute_t1lsst_3layer_weathering_correction',
     'compose_t1lsst_1layer_static_table_components',
     'write_refraction_t1lsst_1layer_components_csv',
 ]
