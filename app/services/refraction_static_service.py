@@ -82,6 +82,39 @@ class RefractionMultiLayerApplyNotImplemented(NotImplementedError):
     """Raised when accepted multi-layer statics fields reach the apply service."""
 
 
+class RefractionFieldCorrectionNotImplemented(NotImplementedError):
+    """Raised when M4 field-correction modes reach the apply service."""
+
+
+def reject_unsupported_refraction_field_corrections(
+    req: RefractionStaticApplyRequest,
+) -> None:
+    """Reject configured M4 field-correction modes before expensive I/O."""
+    field_corrections = req.field_corrections
+    unsupported: list[str] = []
+    if field_corrections.source_depth.mode != 'none':
+        unsupported.append(
+            'field_corrections.source_depth.mode='
+            f'{field_corrections.source_depth.mode}'
+        )
+    if field_corrections.uphole.mode != 'none':
+        unsupported.append(
+            f'field_corrections.uphole.mode={field_corrections.uphole.mode}'
+        )
+    if field_corrections.manual_static.mode != 'none':
+        unsupported.append(
+            'field_corrections.manual_static.mode='
+            f'{field_corrections.manual_static.mode}'
+        )
+    if not unsupported:
+        return
+    raise RefractionFieldCorrectionNotImplemented(
+        'M4 field-correction follow-up implementation is required for '
+        f'{", ".join(unsupported)}. Configure each field-correction mode to '
+        'none for the current public refraction apply workflow.'
+    )
+
+
 def resolve_refraction_first_layer_request(
     *,
     req: RefractionStaticApplyRequest,
@@ -366,6 +399,15 @@ def _write_json_atomic(path: Path, payload: dict[str, Any]) -> None:
         raise
 
 
+def _refraction_static_request_payload(
+    req: RefractionStaticApplyRequest,
+) -> dict[str, Any]:
+    payload = req.model_dump(mode='json')
+    if 'field_corrections' not in req.model_fields_set:
+        payload.pop('field_corrections', None)
+    return payload
+
+
 def _set_job_progress_message(
     state: AppState,
     job_id: str,
@@ -524,9 +566,10 @@ def _run_refraction_static_apply_job_body(
             'source_file_id': req.file_id,
             'key1_byte': req.key1_byte,
             'key2_byte': req.key2_byte,
-            'request': req.model_dump(mode='json'),
+            'request': _refraction_static_request_payload(req),
         },
     )
+    reject_unsupported_refraction_field_corrections(req)
     public_multilayer_apply = _is_public_multilayer_apply(req)
     if not public_multilayer_apply:
         _reject_unsupported_multilayer_apply(req)
@@ -660,10 +703,12 @@ def run_refraction_static_apply_job(
 
 
 __all__ = [
+    'RefractionFieldCorrectionNotImplemented',
     'RefractionFirstLayerNotImplemented',
     'RefractionMultiLayerApplyNotImplemented',
     'ResolvedRefractionFirstLayer',
     'normalize_refraction_first_layer_request',
+    'reject_unsupported_refraction_field_corrections',
     'resolve_refraction_first_layer_request',
     'run_refraction_static_apply_job',
 ]
