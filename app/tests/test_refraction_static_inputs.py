@@ -144,6 +144,8 @@ def _build(
     linkage_artifact: dict[str, object] | None = None,
     sorted_trace_index: np.ndarray | None = None,
     job_dir: Path | None = None,
+    source_depth_mode: str = 'none',
+    source_depth_invalidates_source_geometry: bool = True,
 ):
     geom = geometry or _geometry()
     data = headers if headers is not None else _headers(geometry=geom)
@@ -163,6 +165,11 @@ def _build(
         dt=0.001,
         linkage_artifact=linkage_artifact,
         job_dir=job_dir,
+        source_depth_mode=source_depth_mode,
+        source_depth_byte=geom.source_depth_byte,
+        source_depth_invalidates_source_geometry=(
+            source_depth_invalidates_source_geometry
+        ),
     )
 
 
@@ -287,6 +294,58 @@ def test_source_depth_is_loaded_when_configured() -> None:
 
     assert model.source_depth_m_sorted is not None
     assert model.source_depth_m_sorted[0] == pytest.approx(5.0)
+
+
+def test_source_depth_resolution_does_not_filter_missing_depth_when_required() -> None:
+    geom = _geometry(source_depth_byte=12)
+    headers = _headers(
+        2,
+        geometry=geom,
+        source_depth=np.asarray([np.nan, 4.0], dtype=np.float64),
+    )
+
+    model = _build(
+        np.asarray([0.005, 0.006]),
+        headers=headers,
+        geometry=geom,
+        source_depth_mode='weathering_velocity_time',
+        source_depth_invalidates_source_geometry=False,
+    )
+
+    assert model.valid_observation_mask_sorted.tolist() == [True, True]
+    assert model.source_depth_result is not None
+    assert model.source_depth_result.source_depth_status.tolist() == [
+        'missing_source_depth',
+        'ok',
+    ]
+    assert model.qc['source_depth']['n_missing_source_depth'] == 1
+
+
+def test_source_depth_uses_resolved_endpoint_ids_not_source_header_ids() -> None:
+    geom = _geometry(source_depth_byte=12)
+    headers = _headers(
+        2,
+        geometry=geom,
+        source_x=np.asarray([0.0, 100.0], dtype=np.float64),
+        receiver_x=np.asarray([10.0, 110.0], dtype=np.float64),
+        source_depth=np.asarray([2.0, 4.0], dtype=np.float64),
+    )
+    headers[geom.source_id_byte] = np.asarray([42, 42], dtype=np.int64)
+
+    model = _build(
+        np.asarray([0.005, 0.006], dtype=np.float64),
+        headers=headers,
+        geometry=geom,
+        source_depth_mode='weathering_velocity_time',
+    )
+
+    assert model.source_depth_result is not None
+    np.testing.assert_array_equal(model.source_endpoint_id_sorted, [0, 1])
+    np.testing.assert_array_equal(
+        model.source_depth_result.source_endpoint_id,
+        [0, 1],
+    )
+    np.testing.assert_array_equal(model.source_id_sorted, [42, 42])
 
 
 def test_nonfinite_source_and_receiver_geometry_are_rejected_by_mask() -> None:

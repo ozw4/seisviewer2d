@@ -92,11 +92,6 @@ def reject_unsupported_refraction_field_corrections(
     """Reject configured M4 field-correction modes before expensive I/O."""
     field_corrections = req.field_corrections
     unsupported: list[str] = []
-    if field_corrections.source_depth.mode != 'none':
-        unsupported.append(
-            'field_corrections.source_depth.mode='
-            f'{field_corrections.source_depth.mode}'
-        )
     if field_corrections.uphole.mode != 'none':
         unsupported.append(
             f'field_corrections.uphole.mode={field_corrections.uphole.mode}'

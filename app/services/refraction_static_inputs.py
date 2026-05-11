@@ -30,6 +30,9 @@ from app.services.refraction_static_layer_observations import (
     build_refraction_layer_observation_masks,
     refraction_layer_observation_qc,
 )
+from app.services.refraction_static_source_depth import (
+    resolve_refraction_source_depth_for_input_model,
+)
 from app.services.refraction_static_types import (
     RefractionEndpointTable,
     RefractionStaticInputModel,
@@ -141,6 +144,17 @@ class _NodeMapping:
     endpoint_table: RefractionEndpointTable
 
 
+@dataclass(frozen=True)
+class _SourceDepthInputConfig:
+    geometry: RefractionStaticGeometryRequest
+    mode: str
+    source_depth_byte: int | None
+    source_depth_unit: str | None
+    positive_down: bool
+    max_abs_source_depth_m: float
+    invalidates_source_geometry: bool
+
+
 def build_refraction_static_input_model(
     *,
     req: RefractionStaticApplyRequest,
@@ -157,6 +171,7 @@ def build_refraction_static_input_model(
     n_samples = _reader_n_samples(reader)
     dt = _reader_dt(reader, state=state, file_id=file_id)
     sorted_trace_index = _reader_sorted_to_original(reader, n_traces=n_traces)
+    source_depth_config = _source_depth_input_config(req)
 
     pick_source = _load_refraction_pick_source(
         req=req,
@@ -167,7 +182,12 @@ def build_refraction_static_input_model(
         dt=dt,
         sorted_trace_index=sorted_trace_index,
     )
-    headers = _load_refraction_trace_headers(reader=reader, req=req, n_traces=n_traces)
+    headers = _load_refraction_trace_headers(
+        reader=reader,
+        req=req,
+        n_traces=n_traces,
+        geometry=source_depth_config.geometry,
+    )
     linkage_artifact = _resolve_linkage_artifact(
         req=req,
         state=state,
@@ -178,7 +198,7 @@ def build_refraction_static_input_model(
         file_id=file_id,
         pick_time_s_sorted=pick_source.picks_time_s_sorted,
         trace_headers_sorted=headers,
-        geometry=req.geometry,
+        geometry=source_depth_config.geometry,
         linkage=req.linkage,
         moveout=req.moveout,
         model=req.model,
@@ -193,6 +213,58 @@ def build_refraction_static_input_model(
             'key1_byte': key1_byte,
             'key2_byte': key2_byte,
         },
+        source_depth_mode=source_depth_config.mode,
+        source_depth_byte=source_depth_config.source_depth_byte,
+        source_depth_unit=source_depth_config.source_depth_unit,
+        source_depth_positive_down=source_depth_config.positive_down,
+        max_abs_source_depth_m=source_depth_config.max_abs_source_depth_m,
+        source_depth_invalidates_source_geometry=(
+            source_depth_config.invalidates_source_geometry
+        ),
+    )
+
+
+def _source_depth_input_config(
+    req: RefractionStaticApplyRequest,
+) -> _SourceDepthInputConfig:
+    correction = req.field_corrections.source_depth
+    mode = str(correction.mode)
+    geometry = req.geometry
+    geometry_byte = geometry.source_depth_byte
+    correction_byte = correction.source_depth_byte
+    source_depth_unit: str | None = None
+    effective_byte = geometry_byte
+    invalidates_source_geometry = True
+
+    if mode != 'none':
+        if (
+            geometry_byte is not None
+            and correction_byte is not None
+            and int(geometry_byte) != int(correction_byte)
+        ):
+            raise ValueError(
+                'field_corrections.source_depth.source_depth_byte must match '
+                'geometry.source_depth_byte when both are provided'
+            )
+        effective_byte = correction_byte if correction_byte is not None else geometry_byte
+        if effective_byte is None:
+            raise ValueError(
+                'source_depth_byte is required when source_depth.mode is not none'
+            )
+        if geometry_byte is None:
+            geometry = geometry.model_copy(update={'source_depth_byte': effective_byte})
+        if correction_byte is not None:
+            source_depth_unit = str(correction.source_depth_unit)
+        invalidates_source_geometry = False
+
+    return _SourceDepthInputConfig(
+        geometry=geometry,
+        mode=mode,
+        source_depth_byte=effective_byte,
+        source_depth_unit=source_depth_unit,
+        positive_down=bool(correction.positive_down),
+        max_abs_source_depth_m=float(correction.max_abs_source_depth_m),
+        invalidates_source_geometry=invalidates_source_geometry,
     )
 
 
@@ -211,6 +283,12 @@ def build_refraction_static_input_model_from_arrays(
     job_dir: Path | None = None,
     metadata: Mapping[str, Any] | None = None,
     model: RefractionStaticModelRequest | None = None,
+    source_depth_mode: str = 'none',
+    source_depth_byte: int | None = None,
+    source_depth_unit: str | None = None,
+    source_depth_positive_down: bool = True,
+    max_abs_source_depth_m: float = 100.0,
+    source_depth_invalidates_source_geometry: bool | None = None,
 ) -> RefractionStaticInputModel:
     """Build a refraction input bundle from already sorted arrays."""
     picks = _coerce_pick_array(pick_time_s_sorted)
@@ -226,10 +304,17 @@ def build_refraction_static_input_model_from_arrays(
         n_samples=sample_count,
         dt=sample_interval,
     )
+    source_depth_invalidates = (
+        source_depth_mode == 'none'
+        if source_depth_invalidates_source_geometry is None
+        else bool(source_depth_invalidates_source_geometry)
+    )
     geometry_arrays = _build_geometry_arrays(
         trace_headers_sorted,
         geometry=geometry,
         n_traces=n_traces,
+        source_depth_unit=source_depth_unit,
+        source_depth_invalidates_source_geometry=source_depth_invalidates,
     )
     endpoint_mapping = _build_endpoint_mapping(geometry_arrays)
 
@@ -352,7 +437,30 @@ def build_refraction_static_input_model_from_arrays(
         qc=qc,
         endpoint_table=endpoint_table,
         metadata=dict(metadata or {}),
+        source_endpoint_id_sorted=endpoint_mapping.source_endpoint_id_sorted,
+        receiver_endpoint_id_sorted=endpoint_mapping.receiver_endpoint_id_sorted,
     )
+    if source_depth_mode != 'none':
+        source_depth_result = resolve_refraction_source_depth_for_input_model(
+            input_model=input_model,
+            mode=source_depth_mode,
+            source_depth_byte=(
+                source_depth_byte
+                if source_depth_byte is not None
+                else geometry.source_depth_byte
+            ),
+            positive_down=source_depth_positive_down,
+            max_abs_source_depth_m=max_abs_source_depth_m,
+            job_dir=job_dir,
+        )
+        input_model = replace(
+            input_model,
+            qc={
+                **input_model.qc,
+                'source_depth': source_depth_result.qc,
+            },
+            source_depth_result=source_depth_result,
+        )
     if model is not None and getattr(model, 'layers', None) is not None:
         layer_masks = build_refraction_layer_observation_masks(
             input_model=input_model,
@@ -612,8 +720,9 @@ def _load_refraction_trace_headers(
     reader: TraceStoreSectionReader,
     req: RefractionStaticApplyRequest,
     n_traces: int,
+    geometry: RefractionStaticGeometryRequest | None = None,
 ) -> dict[int, np.ndarray]:
-    geometry = req.geometry
+    geometry = req.geometry if geometry is None else geometry
     header_bytes = {
         geometry.source_id_byte,
         geometry.receiver_id_byte,
@@ -652,6 +761,8 @@ def _build_geometry_arrays(
     *,
     geometry: RefractionStaticGeometryRequest,
     n_traces: int,
+    source_depth_unit: str | None = None,
+    source_depth_invalidates_source_geometry: bool = True,
 ) -> _GeometryArrays:
     source_id = _coerce_id_header(
         _header(trace_headers_sorted, geometry.source_id_byte, 'source_id'),
@@ -749,17 +860,14 @@ def _build_geometry_arrays(
             _header(trace_headers_sorted, geometry.source_depth_byte, 'source_depth'),
             scalars=elevation_scalar,
             scalar_valid=elevation_scalar_valid,
-            unit=geometry.elevation_unit,
+            unit=geometry.elevation_unit if source_depth_unit is None else source_depth_unit,
             name='source_depth',
             n_traces=n_traces,
         )
 
-    valid_source = (
-        source_x_valid
-        & source_y_valid
-        & source_elevation_valid
-        & source_depth_valid
-    )
+    valid_source = source_x_valid & source_y_valid & source_elevation_valid
+    if source_depth_invalidates_source_geometry:
+        valid_source &= source_depth_valid
     valid_receiver = receiver_x_valid & receiver_y_valid & receiver_elevation_valid
     return _GeometryArrays(
         source_id=source_id,

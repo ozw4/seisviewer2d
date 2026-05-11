@@ -18,6 +18,7 @@ import app.services.refraction_static_design_matrix as design_matrix
 import app.services.refraction_static_half_intercept as half_intercept
 import app.services.refraction_static_layer_config as layer_config
 import app.services.refraction_static_solver as solver
+import app.services.refraction_static_source_depth as source_depth
 import app.services.refraction_static_t1lsst as t1lsst
 import app.services.refraction_static_types as refraction_types
 import app.services.refraction_static_v1 as v1
@@ -336,6 +337,7 @@ def test_refraction_static_types_is_dependency_light() -> None:
     assert refraction_types.RefractionMultiLayerStaticComponents is not None
     assert refraction_types.RefractionEndpointFieldCorrectionResult is not None
     assert refraction_types.RefractionTraceFieldCorrectionResult is not None
+    assert refraction_types.RefractionSourceDepthResult is not None
     assert refraction_types.REFRACTION_FIELD_CORRECTION_COMPONENT_NAMES == (
         'source_depth_shift_s',
         'uphole_shift_s',
@@ -353,6 +355,29 @@ def test_refraction_static_types_is_dependency_light() -> None:
 
     source = _module_source(refraction_types)
 
+    assert 'app.api.schemas' not in source
+    assert 'app.api.routers' not in source
+    assert 'app.main' not in source
+    assert 'app.services.reader' not in source
+    assert 'app.services.refraction_static_service' not in source
+    assert 'app.trace_store.reader' not in source
+    assert 'refraction_static_inputs' not in source
+    assert 'segyio' not in source
+    assert 'scipy' not in source
+
+
+def test_refraction_static_source_depth_is_dependency_light() -> None:
+    assert source_depth.resolve_refraction_source_depth is not None
+
+    assert (
+        _forbidden_modules_imported_by(
+            'app.services.refraction_static_source_depth',
+            forbidden_imports=_TYPE_MODULE_FORBIDDEN_IMPORTS,
+        )
+        == set()
+    )
+
+    source = _module_source(source_depth)
     assert 'app.api.schemas' not in source
     assert 'app.api.routers' not in source
     assert 'app.main' not in source

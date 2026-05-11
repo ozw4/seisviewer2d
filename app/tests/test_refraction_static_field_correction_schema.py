@@ -147,6 +147,21 @@ def test_refraction_static_source_depth_mode_accepts_existing_geometry_depth() -
     assert req.field_corrections.source_depth.source_depth_byte is None
 
 
+def test_refraction_static_source_depth_mode_is_no_longer_rejected_by_service() -> None:
+    req = RefractionStaticApplyRequest.model_validate(
+        _payload_with_field_corrections(
+            {
+                'source_depth': {
+                    'mode': 'weathering_velocity_time',
+                    'source_depth_byte': 115,
+                }
+            }
+        )
+    )
+
+    reject_unsupported_refraction_field_corrections(req)
+
+
 def test_refraction_static_uphole_header_mode_requires_header_byte() -> None:
     with pytest.raises(
         ValidationError,
@@ -204,15 +219,6 @@ def test_refraction_static_manual_static_requires_explicit_sign_convention() -> 
 @pytest.mark.parametrize(
     ('field_corrections', 'expected_mode'),
     [
-        (
-            {
-                'source_depth': {
-                    'mode': 'weathering_velocity_time',
-                    'source_depth_byte': 115,
-                }
-            },
-            'field_corrections.source_depth.mode=weathering_velocity_time',
-        ),
         (
             {
                 'uphole': {
