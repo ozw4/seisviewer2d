@@ -37,9 +37,14 @@ EXPECTED_CELL_COLUMNS = {
     'n_rejected_observations',
     'n_sources',
     'n_receivers',
+    'cell_velocity_layer_kind',
+    'cell_velocity_component',
+    'velocity_m_s',
     'v2_m_s',
     'slowness_s_per_m',
+    'initial_velocity_m_s',
     'initial_v2_m_s',
+    'velocity_update_from_initial_m_s',
     'v2_update_from_initial_m_s',
     'residual_rms_ms',
     'residual_mad_ms',
@@ -137,12 +142,20 @@ def test_cell_velocity_artifact_clean_synthetic_values_are_known_truth(
         assert float(row['cell_center_y_m']) == pytest.approx(0.0)
         assert row['cell_center_inline_m'] == ''
         assert row['cell_center_crossline_m'] == ''
+        assert row['cell_velocity_layer_kind'] == 'v2_t1'
+        assert row['cell_velocity_component'] == 'v2'
+        assert float(row['velocity_m_s']) == pytest.approx(true_v2, abs=1.0e-3)
         assert float(row['v2_m_s']) == pytest.approx(true_v2, abs=1.0e-3)
         assert float(row['slowness_s_per_m']) == pytest.approx(
             1.0 / true_v2,
             abs=1.0e-12,
         )
+        assert float(row['initial_velocity_m_s']) == pytest.approx(2600.0)
         assert float(row['initial_v2_m_s']) == pytest.approx(2600.0)
+        assert float(row['velocity_update_from_initial_m_s']) == pytest.approx(
+            true_v2 - 2600.0,
+            abs=1.0e-3,
+        )
         assert float(row['v2_update_from_initial_m_s']) == pytest.approx(
             true_v2 - 2600.0,
             abs=1.0e-3,
@@ -181,6 +194,7 @@ def test_cell_velocity_artifact_marks_low_fold_and_empty_cells(
     assert rows[EMPTY_CELL_ID]['velocity_status'] == 'inactive'
     assert rows[EMPTY_CELL_ID]['status_reason'] == 'no_observations'
     assert rows[EMPTY_CELL_ID]['n_observations'] == '0'
+    assert rows[EMPTY_CELL_ID]['velocity_m_s'] == ''
     assert rows[EMPTY_CELL_ID]['v2_m_s'] == ''
 
 

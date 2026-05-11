@@ -751,9 +751,12 @@ _REFRACTOR_VELOCITY_CELL_COLUMNS = (
     'n_receivers',
     'cell_velocity_layer_kind',
     'cell_velocity_component',
+    'velocity_m_s',
     'v2_m_s',
     'slowness_s_per_m',
+    'initial_velocity_m_s',
     'initial_v2_m_s',
+    'velocity_update_from_initial_m_s',
     'v2_update_from_initial_m_s',
     'velocity_status',
     'status_reason',
@@ -778,9 +781,13 @@ _CELL_SOLVER_HISTORY_COLUMNS = (
     'residual_rms_ms',
     'residual_mad_ms',
     'max_abs_residual_ms',
+    'median_velocity_m_s',
     'median_v2_m_s',
+    'min_velocity_m_s',
     'min_v2_m_s',
+    'max_velocity_m_s',
     'max_v2_m_s',
+    'max_abs_velocity_update_m_s',
     'max_abs_v2_update_m_s',
     'smoothing_weight',
     'damping_weight',
@@ -817,9 +824,13 @@ class RefractionCellSolverHistoryRow:
     residual_rms_ms: float | None
     residual_mad_ms: float | None
     max_abs_residual_ms: float | None
+    median_velocity_m_s: float | None
     median_v2_m_s: float | None
+    min_velocity_m_s: float | None
     min_v2_m_s: float | None
+    max_velocity_m_s: float | None
     max_v2_m_s: float | None
+    max_abs_velocity_update_m_s: float | None
     max_abs_v2_update_m_s: float | None
     smoothing_weight: float
     damping_weight: float
@@ -1442,9 +1453,15 @@ def build_refraction_refractor_velocity_grid_arrays(
         'cell_velocity_component': _string_array(
             np.full(n_total_cells, component, dtype=f'<U{len(component)}')
         ),
+        'velocity_m_s': np.ascontiguousarray(v2_m_s, dtype=np.float64),
         'v2_m_s': np.ascontiguousarray(v2_m_s, dtype=np.float64),
         'slowness_s_per_m': np.ascontiguousarray(slowness_s_per_m, dtype=np.float64),
+        'initial_velocity_m_s': np.ascontiguousarray(initial_v2, dtype=np.float64),
         'initial_v2_m_s': np.ascontiguousarray(initial_v2, dtype=np.float64),
+        'velocity_update_from_initial_m_s': np.ascontiguousarray(
+            v2_update,
+            dtype=np.float64,
+        ),
         'v2_update_from_initial_m_s': np.ascontiguousarray(
             v2_update,
             dtype=np.float64,
@@ -1498,7 +1515,7 @@ def build_refraction_refractor_velocity_qc_payload(
         )
     grid_config = effective_refraction_cell_grid_config(refractor_cell)
     active_mask = np.asarray(arrays['active_cell_mask'], dtype=bool)
-    velocity = np.asarray(arrays['v2_m_s'], dtype=np.float64)
+    velocity = np.asarray(arrays['velocity_m_s'], dtype=np.float64)
     active_velocity = velocity[active_mask & np.isfinite(velocity)]
     n_total = int(arrays['cell_id'].shape[0])
     n_active = int(np.count_nonzero(active_mask))
@@ -1644,11 +1661,11 @@ def build_refraction_cell_solver_history_rows(
     )
     cell_counts = _cell_solver_history_cell_counts(arrays)
     initial_v2 = _initial_cell_v2_m_s(request, layer_kind=resolved_layer_kind)
-    final_velocity = np.asarray(arrays['v2_m_s'], dtype=np.float64)
+    final_velocity = np.asarray(arrays['velocity_m_s'], dtype=np.float64)
     active_mask = np.asarray(arrays['active_cell_mask'], dtype=bool)
     active_final_v2 = final_velocity[active_mask & np.isfinite(final_velocity)]
     update = np.asarray(
-        arrays['v2_update_from_initial_m_s'],
+        arrays['velocity_update_from_initial_m_s'],
         dtype=np.float64,
     )
     active_update = update[active_mask & np.isfinite(update)]
@@ -1698,9 +1715,13 @@ def build_refraction_cell_solver_history_rows(
             residual_rms_ms=None,
             residual_mad_ms=None,
             max_abs_residual_ms=None,
+            median_velocity_m_s=initial_v2,
             median_v2_m_s=initial_v2,
+            min_velocity_m_s=initial_v2,
             min_v2_m_s=initial_v2,
+            max_velocity_m_s=initial_v2,
             max_v2_m_s=initial_v2,
+            max_abs_velocity_update_m_s=0.0,
             max_abs_v2_update_m_s=0.0,
             smoothing_weight=smoothing_weight,
             damping_weight=damping_weight,
@@ -1720,9 +1741,13 @@ def build_refraction_cell_solver_history_rows(
             residual_rms_ms=residual_stats['rms'],
             residual_mad_ms=residual_stats['mad'],
             max_abs_residual_ms=residual_stats['max_abs'],
+            median_velocity_m_s=_stat(active_final_v2, 'median'),
             median_v2_m_s=_stat(active_final_v2, 'median'),
+            min_velocity_m_s=_stat(active_final_v2, 'min'),
             min_v2_m_s=_stat(active_final_v2, 'min'),
+            max_velocity_m_s=_stat(active_final_v2, 'max'),
             max_v2_m_s=_stat(active_final_v2, 'max'),
+            max_abs_velocity_update_m_s=_history_max_abs(active_update),
             max_abs_v2_update_m_s=_history_max_abs(active_update),
             smoothing_weight=smoothing_weight,
             damping_weight=damping_weight,
@@ -4710,11 +4735,18 @@ def _refractor_velocity_cell_rows(
                 'cell_velocity_component': str(
                     arrays['cell_velocity_component'][index]
                 ),
+                'velocity_m_s': _csv_float(arrays['velocity_m_s'][index]),
                 'v2_m_s': _csv_float(arrays['v2_m_s'][index]),
                 'slowness_s_per_m': _csv_float(
                     arrays['slowness_s_per_m'][index]
                 ),
+                'initial_velocity_m_s': _csv_float(
+                    arrays['initial_velocity_m_s'][index]
+                ),
                 'initial_v2_m_s': _csv_float(arrays['initial_v2_m_s'][index]),
+                'velocity_update_from_initial_m_s': _csv_float(
+                    arrays['velocity_update_from_initial_m_s'][index]
+                ),
                 'v2_update_from_initial_m_s': _csv_float(
                     arrays['v2_update_from_initial_m_s'][index]
                 ),
@@ -4751,9 +4783,15 @@ def _cell_solver_history_csv_row(
         'residual_rms_ms': _csv_float(row.residual_rms_ms),
         'residual_mad_ms': _csv_float(row.residual_mad_ms),
         'max_abs_residual_ms': _csv_float(row.max_abs_residual_ms),
+        'median_velocity_m_s': _csv_float(row.median_velocity_m_s),
         'median_v2_m_s': _csv_float(row.median_v2_m_s),
+        'min_velocity_m_s': _csv_float(row.min_velocity_m_s),
         'min_v2_m_s': _csv_float(row.min_v2_m_s),
+        'max_velocity_m_s': _csv_float(row.max_velocity_m_s),
         'max_v2_m_s': _csv_float(row.max_v2_m_s),
+        'max_abs_velocity_update_m_s': _csv_float(
+            row.max_abs_velocity_update_m_s
+        ),
         'max_abs_v2_update_m_s': _csv_float(row.max_abs_v2_update_m_s),
         'smoothing_weight': _csv_float(row.smoothing_weight),
         'damping_weight': _csv_float(row.damping_weight),

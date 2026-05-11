@@ -42,6 +42,16 @@ def test_cell_solver_history_artifact_exists_for_solve_cell(
     assert [row['stage'] for row in rows] == ['initial', 'final']
     assert rows[0]['converged'] == 'false'
     assert rows[-1]['converged'] == 'true'
+    assert {
+        'median_velocity_m_s',
+        'min_velocity_m_s',
+        'max_velocity_m_s',
+        'max_abs_velocity_update_m_s',
+        'median_v2_m_s',
+        'min_v2_m_s',
+        'max_v2_m_s',
+        'max_abs_v2_update_m_s',
+    }.issubset(rows[0])
 
     manifest = json.loads(paths.manifest_json.read_text(encoding='utf-8'))
     artifact_names = {item['name'] for item in manifest['artifacts']}
@@ -83,6 +93,10 @@ def test_cell_solver_history_final_row_matches_qc_summary(
         abs=1.0e-12,
     )
     assert float(final['residual_rms_ms']) == pytest.approx(0.0, abs=1.0e-6)
+    assert final['median_velocity_m_s'] == final['median_v2_m_s']
+    assert final['min_velocity_m_s'] == final['min_v2_m_s']
+    assert final['max_velocity_m_s'] == final['max_v2_m_s']
+    assert final['max_abs_velocity_update_m_s'] == final['max_abs_v2_update_m_s']
 
 
 def test_cell_solver_history_records_robust_rejections(
