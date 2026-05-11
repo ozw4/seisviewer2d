@@ -931,13 +931,18 @@ def _compute_2layer_conversion(
 ) -> _T1LSSTMultilayerConversion:
     v2 = np.asarray(v2_m_s, dtype=np.float64)
     if v2_status is None:
+        _validate_global_2layer_velocity_order(
+            v1_m_s=v1_m_s,
+            v2_m_s=v2,
+            v3_m_s=v3_m_s,
+        )
         thickness = compute_t1lsst_2layer_thicknesses_with_status(
             t1_s=t1_s,
             t2_s=t2_s,
             v1_m_s=v1_m_s,
             v2_m_s=v2,
             v3_m_s=v3_m_s,
-            strict_velocity_order=True,
+            strict_velocity_order=False,
         )
         wcor = _required_multilayer_wcor(thickness.weathering_correction_s)
         return _T1LSSTMultilayerConversion(
@@ -996,6 +1001,14 @@ def _compute_3layer_conversion(
         raise RefractionMultiLayerSolveError(
             'three-layer T1LSST conversion dependency is not available'
         ) from exc
+    if v2_status is None:
+        _validate_global_3layer_velocity_order(
+            v1_m_s=v1_m_s,
+            v2_m_s=v2,
+            v3_m_s=v3_m_s,
+            vsub_m_s=vsub_m_s,
+            compute_3layer=compute_3layer,
+        )
     thickness = compute_3layer(
         t1_s=t1_s,
         t2_s=t2_s,
@@ -1004,7 +1017,7 @@ def _compute_3layer_conversion(
         v2_m_s=v2,
         v3_m_s=v3_m_s,
         vsub_m_s=vsub_m_s,
-        strict_velocity_order=v2_status is None,
+        strict_velocity_order=False,
     )
     wcor = _required_multilayer_wcor(thickness.weathering_correction_s)
     if v2_status is None:
@@ -1037,6 +1050,44 @@ def _compute_3layer_conversion(
         sh3_m=sh3,
         weathering_correction_s=wcor,
         status=conversion_status,
+    )
+
+
+def _validate_global_2layer_velocity_order(
+    *,
+    v1_m_s: float,
+    v2_m_s: np.ndarray,
+    v3_m_s: float,
+) -> None:
+    zeros = np.zeros(np.asarray(v2_m_s, dtype=np.float64).shape, dtype=np.float64)
+    compute_t1lsst_2layer_thicknesses_with_status(
+        t1_s=zeros,
+        t2_s=zeros,
+        v1_m_s=v1_m_s,
+        v2_m_s=v2_m_s,
+        v3_m_s=v3_m_s,
+        strict_velocity_order=True,
+    )
+
+
+def _validate_global_3layer_velocity_order(
+    *,
+    v1_m_s: float,
+    v2_m_s: np.ndarray,
+    v3_m_s: float,
+    vsub_m_s: float,
+    compute_3layer: Callable[..., object],
+) -> None:
+    zeros = np.zeros(np.asarray(v2_m_s, dtype=np.float64).shape, dtype=np.float64)
+    compute_3layer(
+        t1_s=zeros,
+        t2_s=zeros,
+        t3_s=zeros,
+        v1_m_s=v1_m_s,
+        v2_m_s=v2_m_s,
+        v3_m_s=v3_m_s,
+        vsub_m_s=vsub_m_s,
+        strict_velocity_order=True,
     )
 
 
