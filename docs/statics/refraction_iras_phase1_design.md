@@ -17,6 +17,10 @@ first-break picks
 
 The implementation must be self-contained. Developers and Codex should use this document as the implementation reference instead of relying on external IRAS manuals.
 
+For the completed M3 multi-layer public workflow, also read
+`docs/statics/refraction_multilayer_time_term.md`. Multi-layer items listed as
+Phase 1 non-goals are milestone-scoped and are not current product limitations.
+
 ---
 
 ## Scope

@@ -7,6 +7,11 @@ refractor velocity (`V2`) inversion in the refraction statics workflow. It is
 self-contained and should be read with
 `docs/statics/refraction_iras_phase1_design.md`.
 
+For the completed M3 multi-layer public workflow, also read
+`docs/statics/refraction_multilayer_time_term.md`. Multi-layer items listed as
+Phase 2 or M2.5 non-goals are milestone-scoped and are not current product
+limitations.
+
 Phase 2 is in scope for:
 
 - `model.bedrock_velocity_mode="solve_cell"`.

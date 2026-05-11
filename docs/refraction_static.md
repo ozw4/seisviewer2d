@@ -5,13 +5,15 @@ canonical implementation references are
 [statics/refraction_iras_phase1_design.md](statics/refraction_iras_phase1_design.md)
 and
 [statics/refraction_iras_phase2_cell_v2_design.md](statics/refraction_iras_phase2_cell_v2_design.md).
+The completed M3 multi-layer workflow is documented in
+[statics/refraction_multilayer_time_term.md](statics/refraction_multilayer_time_term.md).
 
 The public apply workflow supports a practical 1-layer model:
 
 ```text
 first-break picks
   -> resolve global V1
-  -> solve 1-layer GLI variable-thickness T1 and global V2
+  -> solve 1-layer GLI variable-thickness T1 and global or cell V2
   -> convert T1 to SH1 and WCOR
   -> export source and receiver static tables
   -> optionally apply trace shifts with the repo sign convention
@@ -28,7 +30,7 @@ and either:
 
 The `v2_t1` layer may use fixed, global solved, or cell solved V2; the `v3_t2`
 and `vsub_t3` layers must use fixed or global solved velocities. Cell V3 and
-cell Vsub remain out of scope.
+cell Vsub remain out of scope for public T1LSST apply.
 
 `POST /statics/refraction/apply` is the public job entry point for the
 1-layer workflow and the narrow two- and three-layer multi-layer workflows. It
@@ -208,7 +210,8 @@ pick_time_s = Tn_source_s + Tn_receiver_s + offset_m / Vn_m_s
 
 For `v3_t2`, `velocity_mode` may be `solve_global` or `fixed_global`. For
 three-layer requests, `vsub_t3` is enabled after `v3_t2` and may also use
-`solve_global` or `fixed_global`. Cell V3 and cell Vsub are not implemented.
+`solve_global` or `fixed_global`. Cell V3 and cell Vsub are internal solver
+capabilities only and are not accepted by public T1LSST apply.
 
 For `conversion.mode="t1lsst_multilayer"` with `conversion.layer_count=2`, the
 two-layer conversion computes:
@@ -263,9 +266,10 @@ The public three-layer apply contract uses
 `v3_t2`, then `vsub_t3`.
 
 `conversion.mode="t1lsst_multilayer"` with `conversion.layer_count=3` requires
-global V3 and global Vsub velocities. Cell V3 and cell Vsub remain unsupported.
-The three-layer T1LSST formulas are supplied by the dependent multi-layer
-conversion implementation and are not defined by this public apply contract.
+global V3 and global Vsub velocities. Cell V3 and cell Vsub remain unsupported
+in public T1LSST apply.
+The three-layer T1LSST formulas and artifact fields are defined in
+[statics/refraction_multilayer_time_term.md](statics/refraction_multilayer_time_term.md).
 
 `refraction_static_qc.json` and datum-result QC identify accepted three-layer
 jobs with:
@@ -478,6 +482,8 @@ Vsub/T3 solve
 public 2-layer V3/T2 apply
 public 3-layer Vsub/T3 apply
 public 2-layer T1LSST conversion
+public 3-layer T1LSST conversion
+2-D line and 3-D grid coordinate modes for cell V2
 source static table
 receiver static table
 station table export
@@ -487,10 +493,10 @@ Out of scope:
 
 ```text
 full IRAS compatibility
-3-D refractor velocity grid
 spatially varying V1 map
-cell V3
-cell Vsub
+public T1LSST apply with cell V3
+public T1LSST apply with cell Vsub
+path-integrated cell slowness
 GRM / plus-minus method
 tomostatics
 SEG-Y header write-back

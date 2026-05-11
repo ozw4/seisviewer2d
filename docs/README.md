@@ -142,6 +142,7 @@ See:
 
 - `static_correction.md`
 - `refraction_static.md`
+- `statics/refraction_multilayer_time_term.md`
 - `time_term_static_correction.md`
 
 Refraction statics include the 1-layer V1/V2/T1 T1LSST workflow, cell-based
