@@ -36,6 +36,10 @@ from app.services.refraction_static_datum import (
     build_refraction_datum_statics,
     write_refraction_datum_statics_artifacts,
 )
+from app.services.refraction_static_design_matrix import (
+    LOW_FOLD_CELL_REJECTION_REASON,
+    OUTSIDE_REFRACTOR_CELL_GRID_REASON,
+)
 from app.services.refraction_static_half_intercept import (
     estimate_refraction_half_intercept_times_from_first_breaks,
 )
@@ -642,9 +646,14 @@ def build_refraction_multilayer_weathering_replacement_statics(
         solve_result,
         input_model.n_traces,
     )
+    layer_rejection_reason = _combined_layer_rejection_reason(
+        solve_result,
+        input_model.n_traces,
+    )
     row_rejection_reason = _combined_rejection_reason(
         input_model=input_model,
         layer_kind=row_layer_kind,
+        layer_rejection_reason=layer_rejection_reason,
         used_mask=used,
         rejected_by_robust_mask=_combined_rejected_by_robust_mask(
             solve_result,
@@ -1961,6 +1970,7 @@ def _combined_rejection_reason(
     *,
     input_model: RefractionStaticInputModel,
     layer_kind: np.ndarray,
+    layer_rejection_reason: np.ndarray,
     used_mask: np.ndarray,
     rejected_by_robust_mask: np.ndarray,
 ) -> np.ndarray:
@@ -1971,7 +1981,12 @@ def _combined_rejection_reason(
     )
     valid = np.asarray(input_model.valid_observation_mask_sorted, dtype=bool)
     layer_assigned = np.asarray(layer_kind).astype(str, copy=False) != ''
+    layer_reason = np.asarray(layer_rejection_reason).astype(str, copy=False)
+    if layer_reason.shape != reason.shape:
+        raise RefractionMultiLayerSolveError('layer rejection-reason shape mismatch')
     reason[~valid] = base_reason[~valid]
+    has_layer_reason = layer_assigned & (layer_reason != '')
+    reason[has_layer_reason] = layer_reason[has_layer_reason]
     reason[valid & ~layer_assigned] = 'outside_layer_offset_gate'
     reason[np.asarray(used_mask, dtype=bool)] = 'ok'
     reason[np.asarray(rejected_by_robust_mask, dtype=bool)] = 'robust_outlier'
@@ -2007,6 +2022,14 @@ def _layer_trace_membership_mask(
     layer: RefractionLayerSolveResult,
     n_traces: int,
 ) -> np.ndarray:
+    candidate = layer.candidate_observation_mask_sorted
+    if candidate is not None:
+        candidate_mask = np.asarray(candidate, dtype=bool)
+        if candidate_mask.shape != (int(n_traces),):
+            raise RefractionMultiLayerSolveError(
+                f'{layer.layer_kind} candidate mask shape mismatch'
+            )
+        return np.ascontiguousarray(candidate_mask, dtype=bool)
     used = np.asarray(layer.used_observation_mask_sorted, dtype=bool)
     if used.shape != (int(n_traces),):
         raise RefractionMultiLayerSolveError(
@@ -2020,6 +2043,25 @@ def _layer_trace_membership_mask(
                 f'{layer.layer_kind} robust rejection mask shape mismatch'
             )
     return np.ascontiguousarray(used | rejected, dtype=bool)
+
+
+def _combined_layer_rejection_reason(
+    solve_result: RefractionMultiLayerSolveResult,
+    n_traces: int,
+) -> np.ndarray:
+    reason = np.full(int(n_traces), '', dtype=_STATUS_DTYPE)
+    for layer in solve_result.layer_results:
+        mask = _layer_trace_membership_mask(layer, n_traces)
+        raw_reason = layer.rejection_reason_sorted
+        if raw_reason is None:
+            continue
+        layer_reason = np.asarray(raw_reason).astype(_STATUS_DTYPE, copy=False)
+        if layer_reason.shape != reason.shape:
+            raise RefractionMultiLayerSolveError(
+                f'{layer.layer_kind} rejection-reason shape mismatch'
+            )
+        reason[mask] = layer_reason[mask]
+    return np.ascontiguousarray(reason, dtype=_STATUS_DTYPE)
 
 
 def _node_pick_counts(
@@ -2251,6 +2293,8 @@ def _solve_existing_time_term_layer(
         result=result,
         layer_kind=context.layer_config.kind,
         layer_index=context.layer_index,
+        candidate_observation_mask_sorted=context.input_model.valid_observation_mask_sorted,
+        rejection_reason_sorted=_layer_rejection_reason_from_context(context),
     )
 
 
@@ -2259,6 +2303,8 @@ def _layer_result_from_half_intercept(
     result: RefractionHalfInterceptTimeResult,
     layer_kind: RefractionLayerKind,
     layer_index: int,
+    candidate_observation_mask_sorted: np.ndarray | None = None,
+    rejection_reason_sorted: np.ndarray | None = None,
 ) -> RefractionLayerSolveResult:
     velocity_mode = result.bedrock_velocity_mode
     is_cell = velocity_mode == 'solve_cell'
@@ -2358,7 +2404,89 @@ def _layer_result_from_half_intercept(
             )
         ),
         rejected_by_robust_mask_sorted=_robust_rejection_mask_in_sorted_order(result),
+        candidate_observation_mask_sorted=(
+            None
+            if candidate_observation_mask_sorted is None
+            else np.ascontiguousarray(candidate_observation_mask_sorted, dtype=bool)
+        ),
+        rejection_reason_sorted=(
+            None
+            if rejection_reason_sorted is None
+            else np.ascontiguousarray(rejection_reason_sorted, dtype=_STATUS_DTYPE)
+        ),
     )
+
+
+def _layer_rejection_reason_from_context(
+    context: RefractionLayerSolverContext,
+) -> np.ndarray:
+    reason = np.asarray(context.input_model.rejection_reason_sorted).astype(
+        _STATUS_DTYPE,
+        copy=True,
+    )
+    valid = np.asarray(context.input_model.valid_observation_mask_sorted, dtype=bool)
+    if reason.shape != valid.shape:
+        raise RefractionMultiLayerSolveError(
+            f'{context.layer_config.kind} rejection-reason shape mismatch'
+        )
+    if context.layer_config.velocity_mode != 'solve_cell':
+        return np.ascontiguousarray(reason, dtype=_STATUS_DTYPE)
+    refractor_cell = context.model.refractor_cell
+    if refractor_cell is None:
+        raise RefractionMultiLayerSolveError(
+            f'{context.layer_config.kind} solve_cell layer requires refractor_cell'
+        )
+    grid = build_refraction_cell_grid(
+        effective_refraction_cell_grid_config(refractor_cell)
+    )
+    source_projected = project_refraction_cell_points(
+        x_m=context.input_model.source_x_m_sorted,
+        y_m=context.input_model.source_y_m_sorted,
+        mode=refractor_cell.coordinate_mode,
+        line_origin_x_m=refractor_cell.line_origin_x_m,
+        line_origin_y_m=refractor_cell.line_origin_y_m,
+        line_azimuth_deg=refractor_cell.line_azimuth_deg,
+    )
+    receiver_projected = project_refraction_cell_points(
+        x_m=context.input_model.receiver_x_m_sorted,
+        y_m=context.input_model.receiver_y_m_sorted,
+        mode=refractor_cell.coordinate_mode,
+        line_origin_x_m=refractor_cell.line_origin_x_m,
+        line_origin_y_m=refractor_cell.line_origin_y_m,
+        line_azimuth_deg=refractor_cell.line_azimuth_deg,
+    )
+    assignment = assign_observation_midpoint_cells(
+        grid,
+        source_x_m=source_projected.x_m,
+        source_y_m=source_projected.y_m,
+        receiver_x_m=receiver_projected.x_m,
+        receiver_y_m=receiver_projected.y_m,
+    )
+    cell_id = np.asarray(assignment.cell_id, dtype=np.int64)
+    if cell_id.shape != valid.shape:
+        raise RefractionMultiLayerSolveError(
+            f'{context.layer_config.kind} cell assignment shape mismatch'
+        )
+    inside_grid = cell_id >= 0
+    outside_grid = valid & ~inside_grid
+    in_grid_valid = valid & inside_grid
+    cell_observation_count = np.bincount(
+        cell_id[in_grid_valid],
+        minlength=int(grid.cell_id.shape[0]),
+    )
+    low_fold_cell = (
+        (cell_observation_count > 0)
+        & (
+            cell_observation_count
+            < int(refractor_cell.min_observations_per_cell)
+        )
+    )
+    low_fold = np.zeros(valid.shape, dtype=bool)
+    if np.any(low_fold_cell):
+        low_fold[in_grid_valid] = low_fold_cell[cell_id[in_grid_valid]]
+    reason[outside_grid] = OUTSIDE_REFRACTOR_CELL_GRID_REASON
+    reason[low_fold] = LOW_FOLD_CELL_REJECTION_REASON
+    return np.ascontiguousarray(reason, dtype=_STATUS_DTYPE)
 
 
 def _optional_cell_id_array(value: np.ndarray | None) -> np.ndarray | None:

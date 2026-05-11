@@ -543,9 +543,12 @@ Shared columns:
 | `residual_rms_by_layer_ms` | Per-layer residual RMS values for multi-layer results. |
 | `residual_mad_by_layer_ms` | Per-layer residual MAD values for multi-layer results. |
 
-`source_receiver_static_table.npz` stores the same source and receiver endpoint
-values as pickle-free arrays. Time arrays are in seconds. CSV time columns are
-in milliseconds.
+`source_receiver_static_table.npz` stores the stable source and receiver
+endpoint arrays used by downstream apply flows as pickle-free arrays. Time
+arrays are in seconds. CSV time columns are in milliseconds. The per-layer QC
+summary columns `pick_count_by_layer`, `used_pick_count_by_layer`,
+`residual_rms_by_layer_ms`, and `residual_mad_by_layer_ms` are CSV-only fields
+and are not part of the NPZ schema.
 
 ## 9. Cell and Coordinate Modes
 
