@@ -349,6 +349,56 @@ def test_source_depth_double_count_guard_qc_warning(tmp_path: Path) -> None:
         np.testing.assert_allclose(data['source_depth_m'], [4.0, 8.0])
 
 
+def test_uphole_field_correction_qc_and_static_tables(tmp_path: Path) -> None:
+    request_payload = _request().model_dump(mode='json')
+    request_payload['field_corrections'] = {
+        'uphole': {
+            'mode': 'header_time',
+            'uphole_time_byte': 95,
+            'uphole_time_unit': 's',
+        }
+    }
+    req = RefractionStaticApplyRequest.model_validate(request_payload)
+    result = replace(
+        _result(),
+        source_uphole_time_s=np.asarray([0.010, 0.020], dtype=np.float64),
+        source_uphole_shift_s=np.asarray([-0.010, -0.020], dtype=np.float64),
+        source_uphole_status=np.asarray(['ok', 'ok'], dtype='<U48'),
+        source_uphole_field_correction_qc={
+            'uphole_mode': 'header_time',
+            'component_name': 'uphole_shift_s',
+            'uphole_shift_formula': 'uphole_shift_s = -uphole_time_s',
+            'sign_convention': 'corrected(t) = raw(t - shift_s)',
+            'positive_time_means_delay': True,
+            'uphole_time_byte': 95,
+            'uphole_time_unit': 's',
+        },
+    )
+
+    paths = write_refraction_static_artifacts(
+        result=result,
+        req=req,
+        job_dir=tmp_path,
+    )
+
+    qc = json.loads(paths.qc_json.read_text(encoding='utf-8'))
+    assert qc['field_corrections']['uphole']['component_name'] == 'uphole_shift_s'
+    assert qc['field_corrections']['uphole']['sign_convention'] == (
+        'corrected(t) = raw(t - shift_s)'
+    )
+    source_rows = _read_csv(paths.source_static_table_csv)
+    assert float(source_rows[0]['uphole_time_ms']) == pytest.approx(10.0)
+    assert float(source_rows[1]['uphole_shift_ms']) == pytest.approx(-20.0)
+    component_rows = _read_csv(paths.refraction_static_components_csv)
+    assert component_rows[0]['uphole_shift_ms'] == '-10.0'
+    with np.load(paths.source_receiver_static_table_npz, allow_pickle=False) as data:
+        np.testing.assert_allclose(data['source_uphole_time_s'], [0.010, 0.020])
+        np.testing.assert_allclose(data['source_uphole_shift_s'], [-0.010, -0.020])
+        assert data['source_uphole_status'].tolist() == ['ok', 'ok']
+    with np.load(paths.solution_npz, allow_pickle=False) as data:
+        np.testing.assert_allclose(data['source_uphole_shift_s'], [-0.010, -0.020])
+
+
 def test_write_refraction_static_artifacts_csvs(tmp_path: Path) -> None:
     paths = write_refraction_static_artifacts(
         result=_result(),

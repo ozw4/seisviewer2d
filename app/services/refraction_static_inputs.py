@@ -37,6 +37,9 @@ from app.services.refraction_static_types import (
     RefractionEndpointTable,
     RefractionStaticInputModel,
 )
+from app.services.refraction_static_uphole import (
+    resolve_refraction_uphole_for_input_model,
+)
 from app.services.trace_store_index_validation import validate_sorted_to_original
 from app.trace_store.reader import TraceStoreSectionReader
 from app.utils.pick_cache_file1d_mem import path_for_file
@@ -155,6 +158,15 @@ class _SourceDepthInputConfig:
     invalidates_source_geometry: bool
 
 
+@dataclass(frozen=True)
+class _UpholeInputConfig:
+    mode: str
+    uphole_time_byte: int | None
+    uphole_time_unit: str
+    positive_time_means_delay: bool
+    max_abs_uphole_time_s: float
+
+
 def build_refraction_static_input_model(
     *,
     req: RefractionStaticApplyRequest,
@@ -172,6 +184,7 @@ def build_refraction_static_input_model(
     dt = _reader_dt(reader, state=state, file_id=file_id)
     sorted_trace_index = _reader_sorted_to_original(reader, n_traces=n_traces)
     source_depth_config = _source_depth_input_config(req)
+    uphole_config = _uphole_input_config(req)
 
     pick_source = _load_refraction_pick_source(
         req=req,
@@ -187,6 +200,7 @@ def build_refraction_static_input_model(
         req=req,
         n_traces=n_traces,
         geometry=source_depth_config.geometry,
+        uphole_time_byte=uphole_config.uphole_time_byte,
     )
     linkage_artifact = _resolve_linkage_artifact(
         req=req,
@@ -221,6 +235,11 @@ def build_refraction_static_input_model(
         source_depth_invalidates_source_geometry=(
             source_depth_config.invalidates_source_geometry
         ),
+        uphole_mode=uphole_config.mode,
+        uphole_time_byte=uphole_config.uphole_time_byte,
+        uphole_time_unit=uphole_config.uphole_time_unit,
+        uphole_positive_time_means_delay=uphole_config.positive_time_means_delay,
+        max_abs_uphole_time_s=uphole_config.max_abs_uphole_time_s,
     )
 
 
@@ -268,6 +287,23 @@ def _source_depth_input_config(
     )
 
 
+def _uphole_input_config(req: RefractionStaticApplyRequest) -> _UpholeInputConfig:
+    correction = req.field_corrections.uphole
+    mode = str(correction.mode)
+    uphole_time_byte = (
+        int(correction.uphole_time_byte)
+        if mode == 'header_time' and correction.uphole_time_byte is not None
+        else None
+    )
+    return _UpholeInputConfig(
+        mode=mode,
+        uphole_time_byte=uphole_time_byte,
+        uphole_time_unit=str(correction.uphole_time_unit),
+        positive_time_means_delay=bool(correction.positive_time_means_delay),
+        max_abs_uphole_time_s=float(correction.max_abs_uphole_time_s),
+    )
+
+
 def build_refraction_static_input_model_from_arrays(
     *,
     pick_time_s_sorted: np.ndarray,
@@ -289,6 +325,11 @@ def build_refraction_static_input_model_from_arrays(
     source_depth_positive_down: bool = True,
     max_abs_source_depth_m: float = 100.0,
     source_depth_invalidates_source_geometry: bool | None = None,
+    uphole_mode: str = 'none',
+    uphole_time_byte: int | None = None,
+    uphole_time_unit: str = 's',
+    uphole_positive_time_means_delay: bool = True,
+    max_abs_uphole_time_s: float = 1.0,
 ) -> RefractionStaticInputModel:
     """Build a refraction input bundle from already sorted arrays."""
     picks = _coerce_pick_array(pick_time_s_sorted)
@@ -460,6 +501,30 @@ def build_refraction_static_input_model_from_arrays(
                 'source_depth': source_depth_result.qc,
             },
             source_depth_result=source_depth_result,
+        )
+    if uphole_mode != 'none':
+        uphole_time_sorted = (
+            None
+            if uphole_time_byte is None
+            else _header(trace_headers_sorted, uphole_time_byte, 'uphole_time')
+        )
+        uphole_result = resolve_refraction_uphole_for_input_model(
+            input_model=input_model,
+            uphole_time_sorted=uphole_time_sorted,
+            mode=uphole_mode,
+            uphole_time_byte=uphole_time_byte,
+            uphole_time_unit=uphole_time_unit,
+            positive_time_means_delay=uphole_positive_time_means_delay,
+            max_abs_uphole_time_s=max_abs_uphole_time_s,
+            job_dir=job_dir,
+        )
+        input_model = replace(
+            input_model,
+            qc={
+                **input_model.qc,
+                'uphole': uphole_result.qc,
+            },
+            uphole_result=uphole_result,
         )
     if model is not None and getattr(model, 'layers', None) is not None:
         layer_masks = build_refraction_layer_observation_masks(
@@ -721,6 +786,7 @@ def _load_refraction_trace_headers(
     req: RefractionStaticApplyRequest,
     n_traces: int,
     geometry: RefractionStaticGeometryRequest | None = None,
+    uphole_time_byte: int | None = None,
 ) -> dict[int, np.ndarray]:
     geometry = req.geometry if geometry is None else geometry
     header_bytes = {
@@ -737,6 +803,8 @@ def _load_refraction_trace_headers(
     }
     if geometry.source_depth_byte is not None:
         header_bytes.add(geometry.source_depth_byte)
+    if uphole_time_byte is not None:
+        header_bytes.add(uphole_time_byte)
     if _offset_header_needed(req.moveout):
         if req.moveout.offset_byte is None:
             raise ValueError('moveout.offset_byte is required')

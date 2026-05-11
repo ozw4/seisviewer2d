@@ -2614,6 +2614,7 @@ class RefractionStaticUpholeCorrectionRequest(BaseModel):
     mode: Literal['none', 'header_time', 'manual_table'] = 'none'
     uphole_time_byte: int | None = None
     uphole_time_unit: Literal['s', 'ms'] = 's'
+    positive_time_means_delay: bool = True
     manual_table: RefractionStaticFieldCorrectionArtifactRequest | None = None
     max_abs_uphole_time_s: float = 1.0
 
@@ -2625,6 +2626,14 @@ class RefractionStaticUpholeCorrectionRequest(BaseModel):
         return require_trace_header_byte(
             value,
             'field_corrections.uphole.uphole_time_byte',
+        )
+
+    @field_validator('positive_time_means_delay', mode='before')
+    @classmethod
+    def _check_positive_time_means_delay(cls, value: object) -> bool:
+        return _require_bool(
+            value,
+            'field_corrections.uphole.positive_time_means_delay',
         )
 
     @field_validator('max_abs_uphole_time_s', mode='before')

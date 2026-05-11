@@ -54,6 +54,9 @@ from app.services.refraction_static_v1 import (
     estimate_global_v1_from_direct_arrivals,
     write_refraction_v1_artifacts,
 )
+from app.services.refraction_static_uphole import (
+    compute_uphole_time_correction_from_result,
+)
 from app.services.refraction_static_weathering_replacement import (
     compute_weathering_replacement_statics_from_first_breaks,
 )
@@ -95,7 +98,7 @@ def reject_unsupported_refraction_field_corrections(
     """Reject configured M4 field-correction modes before expensive I/O."""
     field_corrections = req.field_corrections
     unsupported: list[str] = []
-    if field_corrections.uphole.mode != 'none':
+    if field_corrections.uphole.mode not in {'none', 'header_time'}:
         unsupported.append(
             f'field_corrections.uphole.mode={field_corrections.uphole.mode}'
         )
@@ -536,6 +539,95 @@ def _with_source_depth_field_correction(
     )
 
 
+def _with_uphole_field_correction(
+    *,
+    result: RefractionDatumStaticsResult,
+    input_model: RefractionStaticInputModel | None,
+    req: RefractionStaticApplyRequest,
+) -> RefractionDatumStaticsResult:
+    correction = req.field_corrections.uphole
+    if correction.mode == 'none':
+        return result
+    if correction.mode != 'header_time':
+        raise RefractionFieldCorrectionNotImplemented(
+            'M4 field-correction follow-up implementation is required for '
+            f'field_corrections.uphole.mode={correction.mode}.'
+        )
+    if input_model is None or input_model.uphole_result is None:
+        raise ValueError('uphole field correction requires resolved uphole input rows')
+    field_result = compute_uphole_time_correction_from_result(
+        input_model.uphole_result,
+        positive_time_means_delay=bool(correction.positive_time_means_delay),
+        max_abs_uphole_time_s=float(correction.max_abs_uphole_time_s),
+    )
+    uphole_time, shift, status = _map_uphole_field_correction_to_sources(
+        source_endpoint_key=result.source_endpoint_key,
+        uphole_result=input_model.uphole_result,
+        field_result=field_result,
+    )
+    uphole_qc = {
+        **input_model.uphole_result.qc,
+        **field_result.qc,
+        'uphole_time_byte': correction.uphole_time_byte,
+        'uphole_time_unit': correction.uphole_time_unit,
+    }
+    return replace(
+        result,
+        source_uphole_time_s=uphole_time,
+        source_uphole_shift_s=shift,
+        source_uphole_status=status,
+        source_uphole_field_correction_qc=uphole_qc,
+        qc={
+            **result.qc,
+            'field_corrections': {
+                **(
+                    result.qc.get('field_corrections')
+                    if isinstance(result.qc.get('field_corrections'), dict)
+                    else {}
+                ),
+                'uphole': uphole_qc,
+            },
+        },
+    )
+
+
+def _map_uphole_field_correction_to_sources(
+    *,
+    source_endpoint_key: np.ndarray,
+    uphole_result: Any,
+    field_result: Any,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    endpoint_count = int(np.asarray(source_endpoint_key).shape[0])
+    uphole_out = np.full(endpoint_count, np.nan, dtype=np.float64)
+    shift_out = np.full(endpoint_count, np.nan, dtype=np.float64)
+    status_out = np.full(endpoint_count, 'missing_uphole_time', dtype='<U48')
+    time_by_key = {
+        str(raw_key): float(uphole_result.uphole_time_s[index])
+        for index, raw_key in enumerate(uphole_result.source_endpoint_key.tolist())
+    }
+    shift = field_result.component_shift_s['uphole_shift_s']
+    component_status = field_result.component_status['uphole_shift_s']
+    field_by_key = {
+        str(raw_key): (float(shift[index]), str(component_status[index]))
+        for index, raw_key in enumerate(field_result.endpoint_key.tolist())
+    }
+    for index, raw_key in enumerate(np.asarray(source_endpoint_key).tolist()):
+        key = str(raw_key)
+        if key in time_by_key:
+            uphole_out[index] = time_by_key[key]
+        field = field_by_key.get(key)
+        if field is None:
+            continue
+        shift_value, status_value = field
+        shift_out[index] = shift_value
+        status_out[index] = status_value
+    return (
+        np.ascontiguousarray(uphole_out, dtype=np.float64),
+        np.ascontiguousarray(shift_out, dtype=np.float64),
+        np.ascontiguousarray(status_out, dtype='<U48'),
+    )
+
+
 def _map_source_depth_field_correction_to_sources(
     *,
     source_endpoint_key: np.ndarray,
@@ -638,6 +730,11 @@ def _run_public_multilayer_refraction_static_apply_job(
         req=req,
         resolved_first_layer=first_layer.resolved,
     )
+    datum_result = _with_uphole_field_correction(
+        result=datum_result,
+        input_model=input_model,
+        req=req,
+    )
     _set_job_progress_message(
         state,
         job_id,
@@ -725,6 +822,7 @@ def _run_refraction_static_apply_job_body(
         first_layer.resolved.mode == 'estimate_direct_arrival'
         or input_req.model.method == 'multilayer_time_term'
         or input_req.field_corrections.source_depth.mode != 'none'
+        or input_req.field_corrections.uphole.mode != 'none'
     ):
         weathering_input_model = build_refraction_static_input_model(
             req=input_req,
@@ -770,6 +868,11 @@ def _run_refraction_static_apply_job_body(
         input_model=weathering_input_model,
         req=active_req,
         resolved_first_layer=first_layer.resolved,
+    )
+    datum_result = _with_uphole_field_correction(
+        result=datum_result,
+        input_model=weathering_input_model,
+        req=active_req,
     )
     _set_job_progress_message(
         state,

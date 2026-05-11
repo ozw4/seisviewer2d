@@ -1870,6 +1870,17 @@ def build_source_receiver_static_table_arrays(
                 'source_depth_status': _string_array(r.source_depth_status),
             }
         )
+    if _has_uphole_field_correction(r):
+        assert r.source_uphole_time_s is not None
+        assert r.source_uphole_shift_s is not None
+        assert r.source_uphole_status is not None
+        arrays.update(
+            {
+                'source_uphole_time_s': _float_array(r.source_uphole_time_s),
+                'source_uphole_shift_s': _float_array(r.source_uphole_shift_s),
+                'source_uphole_status': _string_array(r.source_uphole_status),
+            }
+        )
     if _has_source_2layer_static_fields(r):
         assert r.source_t2_time_s is not None
         assert r.source_v3_m_s is not None
@@ -2256,6 +2267,17 @@ def build_refraction_static_solution_arrays(
                 'source_depth_status': _string_array(r.source_depth_status),
             }
         )
+    if _has_uphole_field_correction(r):
+        assert r.source_uphole_time_s is not None
+        assert r.source_uphole_shift_s is not None
+        assert r.source_uphole_status is not None
+        arrays.update(
+            {
+                'source_uphole_time_s': _float_array(r.source_uphole_time_s),
+                'source_uphole_shift_s': _float_array(r.source_uphole_shift_s),
+                'source_uphole_status': _string_array(r.source_uphole_status),
+            }
+        )
     if _has_node_2layer_static_fields(r):
         assert r.node_sh2_weathering_thickness_m is not None
         node_sh1_m = _node_sh1_weathering_thickness_m(r)
@@ -2560,8 +2582,10 @@ def build_refraction_static_qc_payload(
         'warnings': [],
     }
     source_depth_qc = _source_depth_field_correction_qc(r, req)
+    uphole_qc = _uphole_field_correction_qc(r, req)
+    field_corrections_qc: dict[str, Any] = {}
     if source_depth_qc:
-        payload['field_corrections'] = {'source_depth': source_depth_qc}
+        field_corrections_qc['source_depth'] = source_depth_qc
         payload['source_depth_double_count_guard'] = source_depth_qc[
             'source_depth_double_count_guard'
         ]
@@ -2570,6 +2594,10 @@ def build_refraction_static_qc_payload(
             payload['warnings'].extend(str(item) for item in warnings)
     else:
         payload['source_depth_double_count_guard'] = 'not_applicable'
+    if uphole_qc:
+        field_corrections_qc['uphole'] = uphole_qc
+    if field_corrections_qc:
+        payload['field_corrections'] = field_corrections_qc
     if layer_count is not None:
         payload['layer_count'] = int(layer_count)
     layer_velocity_modes = _layer_velocity_modes_for_request(req)
@@ -2691,6 +2719,28 @@ def _source_depth_field_correction_qc(
     return payload
 
 
+def _uphole_field_correction_qc(
+    result: RefractionDatumStaticsResult,
+    req: RefractionStaticApplyRequest,
+) -> dict[str, Any]:
+    if not _has_uphole_field_correction(result):
+        if req.field_corrections.uphole.mode != 'none':
+            raise RefractionStaticArtifactError(
+                'uphole field correction artifacts require uphole component arrays'
+            )
+        return {}
+    qc = result.source_uphole_field_correction_qc
+    if not isinstance(qc, dict):
+        raise RefractionStaticArtifactError(
+            'source_uphole_field_correction_qc is required when uphole '
+            'component arrays are present'
+        )
+    payload = dict(qc)
+    payload.setdefault('uphole_mode', req.field_corrections.uphole.mode)
+    payload.setdefault('component_name', 'uphole_shift_s')
+    return payload
+
+
 def _validate_job_dir(job_dir: Path) -> Path:
     try:
         root = Path(job_dir)
@@ -2739,6 +2789,16 @@ def _validate_result(result: RefractionDatumStaticsResult) -> _ValidatedResult:
         names=('source_depth_m', 'source_depth_shift_s', 'source_depth_status'),
         expected_length=n_source,
         label='source-depth endpoint',
+    )
+    _validate_optional_arrays(
+        result=result,
+        names=(
+            'source_uphole_time_s',
+            'source_uphole_shift_s',
+            'source_uphole_status',
+        ),
+        expected_length=n_source,
+        label='uphole source endpoint',
     )
     _validate_optional_arrays(
         result=result,
@@ -3430,6 +3490,7 @@ def _component_rows(result: RefractionDatumStaticsResult) -> list[dict[str, obje
     node_pick_count = _node_lookup(result.node_id, result.node_pick_count)
     node_residual_rms = _node_lookup(result.node_id, result.node_residual_rms_s)
     has_source_depth = _has_source_depth_field_correction(result)
+    has_uphole = _has_uphole_field_correction(result)
     rows: list[dict[str, object]] = []
     for index in range(int(result.source_endpoint_key.shape[0])):
         node_id = int(result.source_node_id[index])
@@ -3466,6 +3527,17 @@ def _component_rows(result: RefractionDatumStaticsResult) -> list[dict[str, obje
                     'source_depth_status': str(result.source_depth_status[index]),
                 }
             )
+        if has_uphole:
+            assert result.source_uphole_shift_s is not None
+            assert result.source_uphole_status is not None
+            row.update(
+                {
+                    'uphole_shift_ms': _csv_ms(
+                        result.source_uphole_shift_s[index]
+                    ),
+                    'uphole_status': str(result.source_uphole_status[index]),
+                }
+            )
         rows.append(row)
     for index in range(int(result.receiver_endpoint_key.shape[0])):
         node_id = int(result.receiver_node_id[index])
@@ -3498,18 +3570,33 @@ def _component_rows(result: RefractionDatumStaticsResult) -> list[dict[str, obje
                     'source_depth_status': 'not_applicable',
                 }
             )
+        if has_uphole:
+            row.update(
+                {
+                    'uphole_shift_ms': '',
+                    'uphole_status': 'not_applicable',
+                }
+            )
         rows.append(row)
     return rows
 
 
 def _component_columns(result: RefractionDatumStaticsResult) -> tuple[str, ...]:
-    if not _has_source_depth_field_correction(result):
-        return _COMPONENT_COLUMNS
-    return _insert_after(
-        _COMPONENT_COLUMNS,
-        'flat_datum_shift_ms',
-        ('source_depth_shift_ms', 'source_depth_status'),
-    )
+    columns = _COMPONENT_COLUMNS
+    if _has_source_depth_field_correction(result):
+        columns = _insert_after(
+            columns,
+            'flat_datum_shift_ms',
+            ('source_depth_shift_ms', 'source_depth_status'),
+        )
+    if _has_uphole_field_correction(result):
+        anchor = 'source_depth_status' if 'source_depth_status' in columns else 'flat_datum_shift_ms'
+        columns = _insert_after(
+            columns,
+            anchor,
+            ('uphole_shift_ms', 'uphole_status'),
+        )
+    return columns
 
 
 def _source_static_table_columns(
@@ -3522,10 +3609,21 @@ def _source_static_table_columns(
     else:
         columns = _SOURCE_STATIC_TABLE_COLUMNS
     if _has_source_depth_field_correction(result):
-        return _insert_after(
+        columns = _insert_after(
             columns,
             'weathering_correction_ms',
             ('source_depth_m', 'source_depth_shift_ms', 'source_depth_status'),
+        )
+    if _has_uphole_field_correction(result):
+        anchor = (
+            'source_depth_status'
+            if 'source_depth_status' in columns
+            else 'weathering_correction_ms'
+        )
+        columns = _insert_after(
+            columns,
+            anchor,
+            ('uphole_time_ms', 'uphole_shift_ms', 'uphole_status'),
         )
     return columns
 
@@ -3575,6 +3673,23 @@ def _has_source_depth_field_correction(
     if not all(present):
         raise RefractionStaticArtifactError(
             'source-depth field correction arrays must be provided together'
+        )
+    return True
+
+
+def _has_uphole_field_correction(
+    result: RefractionDatumStaticsResult,
+) -> bool:
+    present = (
+        result.source_uphole_time_s is not None,
+        result.source_uphole_shift_s is not None,
+        result.source_uphole_status is not None,
+    )
+    if not any(present):
+        return False
+    if not all(present):
+        raise RefractionStaticArtifactError(
+            'uphole field correction arrays must be provided together'
         )
     return True
 
@@ -3692,6 +3807,7 @@ def _source_static_table_rows(
     source_sh3_m = result.source_sh3_weathering_thickness_m
     source_sh1_m = _source_sh1_weathering_thickness_m(result)
     has_source_depth = _has_source_depth_field_correction(result)
+    has_uphole = _has_uphole_field_correction(result)
     rows: list[dict[str, object]] = []
     for index in range(int(result.source_endpoint_key.shape[0])):
         node_id = int(result.source_node_id[index])
@@ -3768,6 +3884,17 @@ def _source_static_table_rows(
                         result.source_depth_shift_s[index]
                     ),
                     'source_depth_status': str(result.source_depth_status[index]),
+                }
+            )
+        if has_uphole:
+            assert result.source_uphole_time_s is not None
+            assert result.source_uphole_shift_s is not None
+            assert result.source_uphole_status is not None
+            rows[-1].update(
+                {
+                    'uphole_time_ms': _csv_ms(result.source_uphole_time_s[index]),
+                    'uphole_shift_ms': _csv_ms(result.source_uphole_shift_s[index]),
+                    'uphole_status': str(result.source_uphole_status[index]),
                 }
             )
         if has_2layer_fields:

@@ -22,6 +22,14 @@ RefractionSourceDepthStatus = Literal[
     'exceeds_max_abs_source_depth',
     'inactive_source_endpoint',
 ]
+RefractionUpholeStatus = Literal[
+    'ok',
+    'missing_uphole_time',
+    'invalid_uphole_time',
+    'inconsistent_uphole_time',
+    'exceeds_max_abs_uphole_time',
+    'inactive_source_endpoint',
+]
 RefractionFieldCorrectionComponentName = Literal[
     'source_depth_shift_s',
     'uphole_shift_s',
@@ -86,6 +94,20 @@ class RefractionSourceDepthResult:
 
 
 @dataclass(frozen=True)
+class RefractionUpholeResult:
+    """Resolved uphole-time values aggregated to source endpoints."""
+
+    source_endpoint_key: np.ndarray
+    source_endpoint_id: np.ndarray
+    source_node_id: np.ndarray
+    uphole_time_s: np.ndarray
+    uphole_status: np.ndarray
+    uphole_pick_count: np.ndarray
+    uphole_trace_count: np.ndarray
+    qc: dict[str, Any]
+
+
+@dataclass(frozen=True)
 class RefractionStaticInputModel:
     file_id: str
     n_traces: int
@@ -127,6 +149,7 @@ class RefractionStaticInputModel:
     metadata: dict[str, Any]
     layer_observation_masks: RefractionLayerObservationMasks | None = None
     source_depth_result: RefractionSourceDepthResult | None = None
+    uphole_result: RefractionUpholeResult | None = None
     source_endpoint_id_sorted: np.ndarray | None = None
     receiver_endpoint_id_sorted: np.ndarray | None = None
 
@@ -849,6 +872,10 @@ class RefractionDatumStaticsResult:
     source_depth_shift_s: np.ndarray | None = None
     source_depth_status: np.ndarray | None = None
     source_depth_field_correction_qc: dict[str, Any] | None = None
+    source_uphole_time_s: np.ndarray | None = None
+    source_uphole_shift_s: np.ndarray | None = None
+    source_uphole_status: np.ndarray | None = None
+    source_uphole_field_correction_qc: dict[str, Any] | None = None
 
 
 @dataclass(frozen=True)
@@ -941,6 +968,8 @@ __all__ = [
     'RefractionSourceDepthMode',
     'RefractionSourceDepthResult',
     'RefractionSourceDepthStatus',
+    'RefractionUpholeResult',
+    'RefractionUpholeStatus',
     'RefractionStaticApplyTraceStoreResult',
     'RefractionStaticArtifactSet',
     'RefractionStaticDesignMatrix',

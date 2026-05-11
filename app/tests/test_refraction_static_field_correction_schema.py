@@ -22,9 +22,11 @@ from app.services.refraction_static_service import (
     RefractionFieldCorrectionNotImplemented,
     _source_depth_double_count_guard_qc,
     _with_source_depth_field_correction,
+    _with_uphole_field_correction,
     reject_unsupported_refraction_field_corrections,
 )
 from app.services.refraction_static_source_depth import resolve_refraction_source_depth
+from app.services.refraction_static_uphole import resolve_refraction_uphole
 from app.services.refraction_static_types import ResolvedRefractionFirstLayer
 from app.tests._refraction_static_synthetic import (
     SYNTHETIC_V1_M_S,
@@ -296,6 +298,89 @@ def test_refraction_static_uphole_header_mode_requires_header_byte() -> None:
         )
 
 
+def test_refraction_static_uphole_header_mode_is_supported_by_service() -> None:
+    req = RefractionStaticApplyRequest.model_validate(
+        _payload_with_field_corrections(
+            {
+                'uphole': {
+                    'mode': 'header_time',
+                    'uphole_time_byte': 95,
+                    'uphole_time_unit': 'ms',
+                }
+            }
+        )
+    )
+
+    reject_unsupported_refraction_field_corrections(req)
+
+
+def test_uphole_header_time_adds_source_only_component() -> None:
+    req = RefractionStaticApplyRequest.model_validate(
+        _payload_with_field_corrections(
+            {
+                'uphole': {
+                    'mode': 'header_time',
+                    'uphole_time_byte': 95,
+                    'uphole_time_unit': 's',
+                }
+            }
+        )
+    )
+    input_model = synthetic_refracted_arrival_input_model()
+    uphole_time_s_sorted = (
+        0.010 + 0.001 * np.asarray(input_model.source_node_id_sorted, dtype=np.float64)
+    )
+    uphole_result = resolve_refraction_uphole(
+        source_endpoint_key_sorted=input_model.source_endpoint_key_sorted,
+        source_endpoint_id_sorted=input_model.source_node_id_sorted,
+        source_node_id_sorted=input_model.source_node_id_sorted,
+        uphole_time_sorted=uphole_time_s_sorted,
+        mode='header_time',
+        uphole_time_byte=95,
+    )
+    input_with_uphole = replace(input_model, uphole_result=uphole_result)
+    base_result = run_synthetic_refraction_statics(
+        req=req,
+        input_model=input_with_uphole,
+    )
+
+    result_with_component = _with_uphole_field_correction(
+        result=base_result,
+        input_model=input_with_uphole,
+        req=req,
+    )
+
+    shift_by_source_key = {
+        str(key): -float(uphole)
+        for key, uphole in zip(
+            uphole_result.source_endpoint_key,
+            uphole_result.uphole_time_s,
+            strict=True,
+        )
+    }
+    expected_source_shift = np.asarray(
+        [shift_by_source_key[str(key)] for key in base_result.source_endpoint_key],
+        dtype=np.float64,
+    )
+    np.testing.assert_allclose(
+        result_with_component.source_uphole_shift_s,
+        expected_source_shift,
+    )
+    np.testing.assert_allclose(
+        result_with_component.source_refraction_shift_s,
+        base_result.source_refraction_shift_s,
+    )
+    np.testing.assert_allclose(
+        result_with_component.refraction_trace_shift_s_sorted,
+        base_result.refraction_trace_shift_s_sorted,
+    )
+    assert result_with_component.source_uphole_field_correction_qc is not None
+    assert (
+        result_with_component.source_uphole_field_correction_qc['component_name']
+        == 'uphole_shift_s'
+    )
+
+
 def test_refraction_static_uphole_manual_mode_requires_table_reference() -> None:
     with pytest.raises(
         ValidationError,
@@ -346,12 +431,11 @@ def test_refraction_static_manual_static_requires_explicit_sign_convention() -> 
         (
             {
                 'uphole': {
-                    'mode': 'header_time',
-                    'uphole_time_byte': 119,
-                    'uphole_time_unit': 'ms',
+                    'mode': 'manual_table',
+                    'manual_table': _artifact_ref('uphole.csv'),
                 }
             },
-            'field_corrections.uphole.mode=header_time',
+            'field_corrections.uphole.mode=manual_table',
         ),
         (
             {

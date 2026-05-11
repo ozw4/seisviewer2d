@@ -36,6 +36,8 @@ The implemented public workflows are:
 - Optional TraceStore registration using the repo static-shift sign convention.
 - M4 source-depth field correction with
   `field_corrections.source_depth.mode="weathering_velocity_time"`.
+- M4 uphole-time field correction with
+  `field_corrections.uphole.mode="header_time"`.
 
 V3/T2 and Vsub/T3 `solve_cell` are schema/internal solver capabilities, but
 they are not public T1LSST apply capabilities. Public T1LSST apply rejects cell
@@ -51,7 +53,7 @@ Current non-goals are:
 
 - GRM.
 - Plus-minus.
-- Uphole correction.
+- Manual uphole correction tables.
 - Manual source/receiver statics.
 - SEG-Y static header write-back.
 - Refraction tomography.
@@ -426,6 +428,34 @@ source endpoint field-correction columns and QC only. It is not folded into
 later field-correction composition workflow. Receiver endpoint totals are
 unchanged by this component.
 
+When uphole-time field correction is enabled with
+`field_corrections.uphole.mode="header_time"`, the configured
+`field_corrections.uphole.uphole_time_byte` is loaded from sorted trace
+headers, converted to seconds using `field_corrections.uphole.uphole_time_unit`,
+and median-aggregated per source endpoint. With the default
+`field_corrections.uphole.positive_time_means_delay=true`, the source-only
+component is:
+
+```text
+uphole_shift_s = -uphole_time_s
+```
+
+If `positive_time_means_delay=false`, the component formula is:
+
+```text
+uphole_shift_s = +uphole_time_s
+```
+
+The value is stored in the same applied-shift convention and the selected
+formula is written to QC. Missing, invalid, inconsistent repeated endpoint
+values, values beyond `max_abs_uphole_time_s`, and inactive source endpoints
+are status-coded. The component is written to source endpoint
+field-correction columns and QC only. It is not folded into
+`source_refraction_shift_s`, `source_refraction_shift_s_sorted`, or
+`refraction_trace_shift_s_sorted`; trace-level composition is reserved for a
+later field-correction composition workflow. Receiver endpoint totals are
+unchanged by this component.
+
 ## 7. Artifact List
 
 Every public refraction statics job writes:
@@ -455,6 +485,22 @@ Direct-arrival V1 estimation also writes:
 ```text
 refraction_v1_qc.json
 refraction_v1_estimates.csv
+```
+
+Source-depth field correction with
+`field_corrections.source_depth.mode="weathering_velocity_time"` also writes:
+
+```text
+refraction_source_depth_qc.json
+refraction_source_depth_sources.csv
+```
+
+Uphole-time field correction with
+`field_corrections.uphole.mode="header_time"` also writes:
+
+```text
+refraction_uphole_qc.json
+refraction_uphole_sources.csv
 ```
 
 V2/T1 `solve_cell` also writes:
@@ -509,6 +555,9 @@ Source-specific identifier columns:
 | `source_depth_m` | Source depth in meters, positive downward. Present only when source-depth field correction is enabled. |
 | `source_depth_shift_ms` | Source-depth weathering-time shift in milliseconds. Present only when source-depth field correction is enabled. |
 | `source_depth_status` | Source-depth component status, including missing/invalid/max-shift states. Present only when source-depth field correction is enabled. |
+| `uphole_time_ms` | Source uphole time in milliseconds after source-endpoint aggregation. Present only when uphole-time field correction is enabled. |
+| `uphole_shift_ms` | Uphole-time source correction shift in milliseconds. Present only when uphole-time field correction is enabled. |
+| `uphole_status` | Uphole component status, including missing/invalid/inconsistent/max-time/inactive-source states. Present only when uphole-time field correction is enabled. |
 
 Receiver-specific identifier columns:
 
@@ -566,8 +615,11 @@ Shared columns:
 
 `source_receiver_static_table.npz` stores the stable source and receiver
 endpoint arrays used by downstream apply flows as pickle-free arrays. Time
-arrays are in seconds. CSV time columns are in milliseconds. The per-layer QC
-summary columns `pick_count_by_layer`, `used_pick_count_by_layer`,
+arrays are in seconds. When enabled, source-depth arrays
+`source_depth_m`, `source_depth_shift_s`, and `source_depth_status` and uphole
+arrays `source_uphole_time_s`, `source_uphole_shift_s`, and
+`source_uphole_status` are included. CSV time columns are in milliseconds. The
+per-layer QC summary columns `pick_count_by_layer`, `used_pick_count_by_layer`,
 `residual_rms_by_layer_ms`, and `residual_mad_by_layer_ms` are CSV-only fields
 and are not part of the NPZ schema.
 
@@ -646,7 +698,7 @@ Recommended coverage for future changes:
 
 - GRM is not implemented.
 - Plus-minus is not implemented.
-- Uphole correction is not implemented.
+- Manual uphole correction tables are not implemented.
 - Manual source/receiver statics are not implemented.
 - SEG-Y header write-back is not implemented.
 - Path-integrated cell slowness is not implemented; cell velocity assignment is
