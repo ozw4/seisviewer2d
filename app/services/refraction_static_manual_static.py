@@ -217,15 +217,18 @@ def resolve_refraction_manual_static(
             'rows for one or more endpoints'
         )
 
-    n_missing_source = int(np.count_nonzero(source_status == 'missing_manual_static'))
-    n_missing_receiver = int(
-        np.count_nonzero(receiver_status == 'missing_manual_static')
-    )
+    source_missing_mask = source_status == 'missing_manual_static'
+    receiver_missing_mask = receiver_status == 'missing_manual_static'
+    n_missing_source = int(np.count_nonzero(source_missing_mask))
+    n_missing_receiver = int(np.count_nonzero(receiver_missing_mask))
     if not bool(allow_missing_endpoints) and (n_missing_source or n_missing_receiver):
         raise ValueError(
             'missing_manual_static: manual static values are required for every '
             'source and receiver endpoint'
         )
+    if bool(allow_missing_endpoints):
+        source_shift[source_missing_mask] = 0.0
+        receiver_shift[receiver_missing_mask] = 0.0
 
     qc = _manual_static_qc(
         mode=mode_text,

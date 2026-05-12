@@ -168,6 +168,90 @@ def test_field_composition_invalid_policy_fail() -> None:
         )
 
 
+def test_field_composition_source_only_manual_static_with_missing_allowed() -> None:
+    source = compose_refraction_endpoint_field_corrections(
+        endpoint_kind='source',
+        endpoint_key=_keys(['s0', 's1']),
+        endpoint_id=_ids([0, 1]),
+        node_id=_ids([10, 11]),
+        manual_static_shift_s=_shifts([0.001, 0.0]),
+        manual_static_status=_statuses(['ok', 'missing_manual_static']),
+    )
+    receiver = compose_refraction_endpoint_field_corrections(
+        endpoint_kind='receiver',
+        endpoint_key=_keys(['r0', 'r1']),
+        endpoint_id=_ids([0, 1]),
+        node_id=_ids([20, 21]),
+        manual_static_shift_s=_shifts([0.0, 0.0]),
+        manual_static_status=_statuses(
+            ['missing_manual_static', 'missing_manual_static'],
+        ),
+    )
+    trace = compose_refraction_trace_field_corrections(
+        source_endpoint_field=source,
+        receiver_endpoint_field=receiver,
+        source_endpoint_key_sorted=_keys(['s0', 's1']),
+        receiver_endpoint_key_sorted=_keys(['r0', 'r1']),
+    )
+    result = compose_refraction_final_trace_shift(
+        refraction_trace_shift_s_sorted=_shifts([0.010, 0.020]),
+        trace_static_status_sorted=_statuses(['ok', 'ok']),
+        trace_static_valid_mask_sorted=np.asarray([True, True], dtype=bool),
+        trace_field_correction=trace,
+        apply_to_trace_shift=True,
+        invalid_component_policy='fail',
+    )
+
+    np.testing.assert_allclose(source.total_field_shift_s, [0.001, 0.0])
+    np.testing.assert_array_equal(source.field_static_status, ['ok', 'ok'])
+    np.testing.assert_allclose(receiver.total_field_shift_s, [0.0, 0.0])
+    np.testing.assert_array_equal(receiver.field_static_status, ['ok', 'ok'])
+    np.testing.assert_array_equal(trace.trace_field_static_status_sorted, ['ok', 'ok'])
+    np.testing.assert_allclose(result.final_trace_shift_s_sorted, [0.011, 0.020])
+
+
+def test_field_composition_receiver_only_manual_static_with_missing_allowed() -> None:
+    source = compose_refraction_endpoint_field_corrections(
+        endpoint_kind='source',
+        endpoint_key=_keys(['s0', 's1']),
+        endpoint_id=_ids([0, 1]),
+        node_id=_ids([10, 11]),
+        manual_static_shift_s=_shifts([0.0, 0.0]),
+        manual_static_status=_statuses(
+            ['missing_manual_static', 'missing_manual_static'],
+        ),
+    )
+    receiver = compose_refraction_endpoint_field_corrections(
+        endpoint_kind='receiver',
+        endpoint_key=_keys(['r0', 'r1']),
+        endpoint_id=_ids([0, 1]),
+        node_id=_ids([20, 21]),
+        manual_static_shift_s=_shifts([0.0, -0.002]),
+        manual_static_status=_statuses(['missing_manual_static', 'ok']),
+    )
+    trace = compose_refraction_trace_field_corrections(
+        source_endpoint_field=source,
+        receiver_endpoint_field=receiver,
+        source_endpoint_key_sorted=_keys(['s0', 's1']),
+        receiver_endpoint_key_sorted=_keys(['r0', 'r1']),
+    )
+    result = compose_refraction_final_trace_shift(
+        refraction_trace_shift_s_sorted=_shifts([0.010, 0.020]),
+        trace_static_status_sorted=_statuses(['ok', 'ok']),
+        trace_static_valid_mask_sorted=np.asarray([True, True], dtype=bool),
+        trace_field_correction=trace,
+        apply_to_trace_shift=True,
+        invalid_component_policy='fail',
+    )
+
+    np.testing.assert_allclose(source.total_field_shift_s, [0.0, 0.0])
+    np.testing.assert_array_equal(source.field_static_status, ['ok', 'ok'])
+    np.testing.assert_allclose(receiver.total_field_shift_s, [0.0, -0.002])
+    np.testing.assert_array_equal(receiver.field_static_status, ['ok', 'ok'])
+    np.testing.assert_array_equal(trace.trace_field_static_status_sorted, ['ok', 'ok'])
+    np.testing.assert_allclose(result.final_trace_shift_s_sorted, [0.010, 0.018])
+
+
 def test_field_composition_invalid_policy_skip_invalid_traces() -> None:
     source = compose_refraction_endpoint_field_corrections(
         endpoint_kind='source',

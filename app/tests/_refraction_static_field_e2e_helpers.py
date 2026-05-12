@@ -76,11 +76,15 @@ def field_apply_request(
     apply_to_trace_shift: bool,
     register_corrected_file: bool = False,
     invalid_component_policy: str = 'fail',
+    manual_static_endpoint_kind: str = 'both',
 ) -> RefractionStaticApplyRequest:
     manual_static = {
         'mode': 'inline_table',
         'sign_convention': dataset.manual_static_sign_convention,
-        'source_inline_table': [
+        'allow_missing_endpoints': True,
+    }
+    if manual_static_endpoint_kind in {'both', 'source'}:
+        manual_static['source_inline_table'] = [
             {
                 'endpoint_id': int(endpoint_id),
                 'value': _manual_static_request_value(
@@ -93,8 +97,9 @@ def field_apply_request(
                 dataset.source_manual_static_input_s.tolist(),
                 strict=True,
             )
-        ],
-        'receiver_inline_table': [
+        ]
+    if manual_static_endpoint_kind in {'both', 'receiver'}:
+        manual_static['receiver_inline_table'] = [
             {
                 'endpoint_id': int(endpoint_id),
                 'value': _manual_static_request_value(
@@ -107,9 +112,7 @@ def field_apply_request(
                 dataset.receiver_manual_static_input_s.tolist(),
                 strict=True,
             )
-        ],
-        'allow_missing_endpoints': True,
-    }
+        ]
     return RefractionStaticApplyRequest.model_validate(
         {
             'file_id': FIELD_FILE_ID,

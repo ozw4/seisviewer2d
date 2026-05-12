@@ -336,6 +336,13 @@ def _component_value_status(
     status: str,
 ) -> str:
     normalized = _normalize_status(status)
+    if (
+        component_name == 'manual_static_shift_s'
+        and normalized == 'missing_manual_static'
+        and np.isfinite(shift_s)
+        and shift_s == 0.0
+    ):
+        return _OK_STATUS
     if normalized not in _NOOP_STATUSES:
         return normalized
     if normalized == _OK_STATUS and not np.isfinite(shift_s):
