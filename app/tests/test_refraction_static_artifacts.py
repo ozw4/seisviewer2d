@@ -23,6 +23,7 @@ from app.services.refraction_static_artifacts import (
     REFRACTION_STATIC_HISTORY_JSON_NAME,
     REFRACTION_STATIC_QC_JSON_NAME,
     REFRACTION_STATIC_SOLUTION_NPZ_NAME,
+    REFRACTION_TIME_TERM_SPREADSHEET_CSV_NAME,
     REFRACTION_V3_CELL_SOLVER_HISTORY_CSV_NAME,
     REFRACTION_V3_REFRACTOR_VELOCITY_CELLS_CSV_NAME,
     REFRACTION_V3_REFRACTOR_VELOCITY_GRID_NPZ_NAME,
@@ -37,6 +38,9 @@ from app.services.refraction_static_artifacts import (
     RefractionStaticArtifactError,
     SOURCE_RECEIVER_STATIC_TABLE_NPZ_NAME,
     SOURCE_STATIC_TABLE_CSV_NAME,
+    TIME_TERM_SPREADSHEET_FORMAT_NAME,
+    TIME_TERM_SPREADSHEET_FORMAT_VERSION,
+    TIME_TERM_SPREADSHEET_SCHEMA_VERSION,
     write_refraction_static_solution_npz,
     write_refraction_static_artifacts,
 )
@@ -130,6 +134,7 @@ EXPECTED_FILENAMES = {
     SOURCE_STATIC_TABLE_CSV_NAME,
     RECEIVER_STATIC_TABLE_CSV_NAME,
     SOURCE_RECEIVER_STATIC_TABLE_NPZ_NAME,
+    REFRACTION_TIME_TERM_SPREADSHEET_CSV_NAME,
     REFRACTION_STATIC_ARTIFACTS_JSON_NAME,
 }
 
@@ -179,6 +184,7 @@ def test_write_refraction_static_artifacts_npz_schema(tmp_path: Path) -> None:
         SOURCE_STATIC_TABLE_CSV_NAME,
         RECEIVER_STATIC_TABLE_CSV_NAME,
         SOURCE_RECEIVER_STATIC_TABLE_NPZ_NAME,
+        REFRACTION_TIME_TERM_SPREADSHEET_CSV_NAME,
     )
     with np.load(paths.solution_npz, allow_pickle=False) as data:
         assert data['artifact_version'].item() == '1.0'
@@ -221,6 +227,159 @@ def test_write_refraction_static_artifacts_npz_schema(tmp_path: Path) -> None:
         assert data['node_datum_status'].tolist() == ['ok', 'ok', 'inactive']
         for key in data.files:
             assert data[key].dtype != object
+
+
+def test_time_term_spreadsheet_columns_are_stable(tmp_path: Path) -> None:
+    paths = write_refraction_static_artifacts(
+        result=_result(),
+        req=_request(),
+        job_dir=tmp_path,
+        source_job_id='refraction-job-505',
+    )
+
+    with paths.refraction_time_term_spreadsheet_csv.open(
+        encoding='utf-8',
+        newline='',
+    ) as handle:
+        reader = csv.DictReader(handle)
+        rows = list(reader)
+
+    assert paths.refraction_time_term_spreadsheet_csv.name == (
+        REFRACTION_TIME_TERM_SPREADSHEET_CSV_NAME
+    )
+    assert tuple(reader.fieldnames or ()) == (
+        'schema_version',
+        'format_name',
+        'format_version',
+        'source_job_id',
+        'endpoint_kind',
+        'endpoint_key',
+        'endpoint_id',
+        'station_id',
+        'node_id',
+        'x_m',
+        'y_m',
+        'elevation_m',
+        'surface_elevation_m',
+        't1_ms',
+        't2_ms',
+        't3_ms',
+        'v1_m_s',
+        'v2_m_s',
+        'v3_m_s',
+        'vsub_m_s',
+        'sh1_m',
+        'sh2_m',
+        'sh3_m',
+        'layer1_base_elevation_m',
+        'layer2_base_elevation_m',
+        'final_refractor_elevation_m',
+        'weathering_correction_ms',
+        'elevation_correction_ms',
+        'source_depth_correction_ms',
+        'uphole_correction_ms',
+        'manual_static_ms',
+        'field_correction_ms',
+        'total_applied_shift_ms',
+        'pick_count',
+        'used_pick_count',
+        'pick_count_by_layer',
+        'used_pick_count_by_layer',
+        'residual_rms_ms',
+        'residual_mad_ms',
+        'residual_rms_by_layer_ms',
+        'residual_mad_by_layer_ms',
+        'solution_status',
+        'weathering_status',
+        'datum_status',
+        'source_depth_status',
+        'uphole_status',
+        'manual_static_status',
+        'field_static_status',
+        'static_status',
+        'sign_convention',
+    )
+    assert rows[0]['schema_version'] == str(TIME_TERM_SPREADSHEET_SCHEMA_VERSION)
+    assert rows[0]['format_name'] == TIME_TERM_SPREADSHEET_FORMAT_NAME
+    assert rows[0]['format_version'] == str(TIME_TERM_SPREADSHEET_FORMAT_VERSION)
+    assert rows[0]['source_job_id'] == 'refraction-job-505'
+
+
+def test_time_term_spreadsheet_contains_one_row_per_endpoint(
+    tmp_path: Path,
+) -> None:
+    paths = write_refraction_static_artifacts(
+        result=_result(),
+        req=_request(),
+        job_dir=tmp_path,
+    )
+
+    rows = _read_csv(paths.refraction_time_term_spreadsheet_csv)
+
+    assert [row['endpoint_kind'] for row in rows] == [
+        'source',
+        'source',
+        'receiver',
+        'receiver',
+    ]
+    assert [row['endpoint_key'] for row in rows] == ['s0', 's1', 'r0', 'r1']
+    assert rows[0]['station_id'] == '100'
+    assert rows[2]['station_id'] == '200'
+    assert rows[0]['elevation_m'] == '100.000'
+    assert rows[0]['t1_ms'] == '10.000000'
+    assert rows[0]['t2_ms'] == ''
+    assert rows[0]['t3_ms'] == ''
+    assert rows[0]['sh1_m'] == '10.000'
+    assert rows[0]['sh2_m'] == ''
+    assert rows[0]['sh3_m'] == ''
+    assert rows[0]['sign_convention'] == 'corrected(t) = raw(t - shift_s)'
+
+
+def test_time_term_spreadsheet_units_are_explicit(tmp_path: Path) -> None:
+    paths = write_refraction_static_artifacts(
+        result=_result(),
+        req=_request(),
+        job_dir=tmp_path,
+    )
+
+    _rows, fieldnames = _read_csv_with_fieldnames(
+        paths.refraction_time_term_spreadsheet_csv
+    )
+
+    unit_columns = {
+        name
+        for name in fieldnames
+        if name
+        not in {
+            'schema_version',
+            'format_name',
+            'format_version',
+            'source_job_id',
+            'endpoint_kind',
+            'endpoint_key',
+            'endpoint_id',
+            'station_id',
+            'node_id',
+            'pick_count',
+            'used_pick_count',
+            'pick_count_by_layer',
+            'used_pick_count_by_layer',
+            'solution_status',
+            'weathering_status',
+            'datum_status',
+            'source_depth_status',
+            'uphole_status',
+            'manual_static_status',
+            'field_static_status',
+            'static_status',
+            'sign_convention',
+        }
+    }
+    assert unit_columns
+    assert all(
+        name.endswith(('_ms', '_m', '_m_s')) or name in {'x_m', 'y_m'}
+        for name in unit_columns
+    )
 
 
 def test_refraction_static_solution_npz_contains_v1_aliases(tmp_path: Path) -> None:
@@ -285,7 +444,7 @@ def test_write_refraction_static_artifacts_qc_json(tmp_path: Path) -> None:
     assert payload['status_counts']['trace_static_status']['ok'] == 3
     assert payload['status_counts']['node_datum_status']['ok'] == 2
     assert payload['first_break_fit']['residual_rms_ms'] == pytest.approx(1.0)
-    assert len(payload['artifacts']) == 10
+    assert len(payload['artifacts']) == 11
     artifact_names = {item['name'] for item in payload['artifacts']}
     assert REFRACTION_V1_QC_JSON_NAME not in artifact_names
     assert REFRACTION_V1_ESTIMATES_CSV_NAME not in artifact_names
@@ -1544,6 +1703,12 @@ def _solve_cell_low_fold_result():
 def _read_csv(path: Path) -> list[dict[str, str]]:
     with path.open(encoding='utf-8', newline='') as handle:
         return list(csv.DictReader(handle))
+
+
+def _read_csv_with_fieldnames(path: Path) -> tuple[list[dict[str, str]], list[str]]:
+    with path.open(encoding='utf-8', newline='') as handle:
+        reader = csv.DictReader(handle)
+        return list(reader), list(reader.fieldnames or [])
 
 
 def _contains_absolute_path(value: object) -> bool:
