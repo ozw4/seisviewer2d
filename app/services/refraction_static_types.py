@@ -925,6 +925,7 @@ class RefractionStaticArtifactSet:
     refraction_statics_csv: Path
     near_surface_model_csv: Path
     first_break_residuals_csv: Path
+    refraction_first_break_time_export_csv: Path
     refraction_static_components_csv: Path
     source_static_table_csv: Path
     receiver_static_table_csv: Path

@@ -68,6 +68,7 @@ REFRACTION_STATIC_QC_JSON_NAME = 'refraction_static_qc.json'
 REFRACTION_STATICS_CSV_NAME = 'refraction_statics.csv'
 NEAR_SURFACE_MODEL_CSV_NAME = 'near_surface_model.csv'
 FIRST_BREAK_RESIDUALS_CSV_NAME = 'first_break_residuals.csv'
+REFRACTION_FIRST_BREAK_TIME_EXPORT_CSV_NAME = 'refraction_first_break_time_export.csv'
 REFRACTION_STATIC_COMPONENTS_CSV_NAME = 'refraction_static_components.csv'
 SOURCE_STATIC_TABLE_CSV_NAME = 'source_static_table.csv'
 RECEIVER_STATIC_TABLE_CSV_NAME = 'receiver_static_table.csv'
@@ -213,6 +214,10 @@ NEGATIVE_SHIFT_DESCRIPTION = 'event appears earlier in corrected data'
 TIME_TERM_SPREADSHEET_FORMAT_NAME = 'time_term_spreadsheet'
 TIME_TERM_SPREADSHEET_FORMAT_VERSION = 1
 TIME_TERM_SPREADSHEET_SCHEMA_VERSION = 1
+FIRST_BREAK_TIME_EXPORT_SCHEMA_VERSION = 1
+FIRST_BREAK_TIME_EXPORT_SIGN_CONVENTION = (
+    'residual_ms = observed_pick_time_ms - modeled_pick_time_ms'
+)
 
 _ARTIFACTS: tuple[dict[str, str | bool], ...] = (
     {
@@ -250,6 +255,12 @@ _ARTIFACTS: tuple[dict[str, str | bool], ...] = (
         'kind': 'csv',
         'required': True,
         'description': 'GLI first-break residual table',
+    },
+    {
+        'name': REFRACTION_FIRST_BREAK_TIME_EXPORT_CSV_NAME,
+        'kind': 'csv',
+        'required': True,
+        'description': 'Observation-level first-break time QC export',
     },
     {
         'name': REFRACTION_STATIC_COMPONENTS_CSV_NAME,
@@ -523,6 +534,32 @@ _RESIDUAL_COLUMNS = (
     'residual_time_s',
     'midpoint_cell_id',
     'row_velocity_m_s',
+)
+
+_FIRST_BREAK_TIME_EXPORT_COLUMNS = (
+    'schema_version',
+    'trace_index_sorted',
+    'source_endpoint_key',
+    'receiver_endpoint_key',
+    'source_node_id',
+    'receiver_node_id',
+    'offset_m',
+    'midpoint_x_m',
+    'midpoint_y_m',
+    'cell_ix',
+    'cell_iy',
+    'layer_kind',
+    'used_for_layer',
+    'observed_pick_time_ms',
+    'modeled_pick_time_ms',
+    'residual_ms',
+    'moveout_time_ms',
+    'source_time_term_ms',
+    'receiver_time_term_ms',
+    'velocity_m_s',
+    'rejection_reason',
+    'observation_status',
+    'sign_convention',
 )
 
 _COMPONENT_COLUMNS = (
@@ -1035,6 +1072,9 @@ def write_refraction_static_artifacts(
         refraction_statics_csv=root / REFRACTION_STATICS_CSV_NAME,
         near_surface_model_csv=root / NEAR_SURFACE_MODEL_CSV_NAME,
         first_break_residuals_csv=root / FIRST_BREAK_RESIDUALS_CSV_NAME,
+        refraction_first_break_time_export_csv=(
+            root / REFRACTION_FIRST_BREAK_TIME_EXPORT_CSV_NAME
+        ),
         refraction_static_components_csv=root / REFRACTION_STATIC_COMPONENTS_CSV_NAME,
         source_static_table_csv=root / SOURCE_STATIC_TABLE_CSV_NAME,
         receiver_static_table_csv=root / RECEIVER_STATIC_TABLE_CSV_NAME,
@@ -1089,6 +1129,11 @@ def write_refraction_static_artifacts(
     write_first_break_residuals_csv(
         result=values.result,
         path=paths.first_break_residuals_csv,
+        req=request,
+    )
+    write_refraction_first_break_time_export_csv(
+        result=values.result,
+        path=paths.refraction_first_break_time_export_csv,
         req=request,
     )
     write_refraction_static_components_csv(
@@ -1155,6 +1200,7 @@ def write_refraction_static_artifacts(
         paths.refraction_statics_csv,
         paths.near_surface_model_csv,
         paths.first_break_residuals_csv,
+        paths.refraction_first_break_time_export_csv,
         paths.refraction_static_components_csv,
         paths.source_static_table_csv,
         paths.receiver_static_table_csv,
@@ -1274,6 +1320,17 @@ def write_first_break_residuals_csv(
     values = _validate_result(result)
     rows = _first_break_residual_rows(values.result, req=req)
     _write_csv_atomic(Path(path), _RESIDUAL_COLUMNS, rows)
+
+
+def write_refraction_first_break_time_export_csv(
+    *,
+    result: RefractionDatumStaticsResult,
+    path: Path,
+    req: RefractionStaticApplyRequest | None = None,
+) -> None:
+    values = _validate_result(result)
+    rows = _first_break_time_export_rows(values.result, req=req)
+    _write_csv_atomic(Path(path), _FIRST_BREAK_TIME_EXPORT_COLUMNS, rows)
 
 
 def write_refraction_static_components_csv(
@@ -4050,6 +4107,248 @@ def _first_break_residual_rows(
             }
         )
     return rows
+
+
+def _first_break_time_export_rows(
+    result: RefractionDatumStaticsResult,
+    *,
+    req: RefractionStaticApplyRequest | None = None,
+) -> list[dict[str, object]]:
+    rows: list[dict[str, object]] = []
+    _cell_id_by_row, cell_ix_by_row, cell_iy_by_row = _residual_row_cell_context(
+        result,
+        req=req,
+    )
+    layer_kind_by_row, _layer_index_by_row = _first_break_export_layer_context(
+        result,
+    )
+    source_key_by_row = _residual_row_string_context(
+        result,
+        'row_source_endpoint_key',
+    )
+    receiver_key_by_row = _residual_row_string_context(
+        result,
+        'row_receiver_endpoint_key',
+    )
+    rejection_reason_by_row = _residual_row_string_context(
+        result,
+        'row_rejection_reason',
+    )
+    row_velocity_m_s = _residual_row_velocity_context(result)
+    source_x_by_row = _row_endpoint_float_context(
+        result,
+        endpoint='source',
+        row_endpoint_key=source_key_by_row,
+        value_field='source_x_m',
+    )
+    source_y_by_row = _row_endpoint_float_context(
+        result,
+        endpoint='source',
+        row_endpoint_key=source_key_by_row,
+        value_field='source_y_m',
+    )
+    receiver_x_by_row = _row_endpoint_float_context(
+        result,
+        endpoint='receiver',
+        row_endpoint_key=receiver_key_by_row,
+        value_field='receiver_x_m',
+    )
+    receiver_y_by_row = _row_endpoint_float_context(
+        result,
+        endpoint='receiver',
+        row_endpoint_key=receiver_key_by_row,
+        value_field='receiver_y_m',
+    )
+    source_time_term_s, receiver_time_term_s = _first_break_row_time_terms(
+        result,
+        layer_kind_by_row=layer_kind_by_row,
+        source_key_by_row=source_key_by_row,
+        receiver_key_by_row=receiver_key_by_row,
+    )
+    moveout_time_s = _first_break_moveout_time_s(
+        modeled_pick_time_s=result.modeled_pick_time_s,
+        source_time_term_s=source_time_term_s,
+        receiver_time_term_s=receiver_time_term_s,
+    )
+    midpoint_x_m = _midpoint_coordinate(source_x_by_row, receiver_x_by_row)
+    midpoint_y_m = _midpoint_coordinate(source_y_by_row, receiver_y_by_row)
+
+    for row_index in range(int(result.row_trace_index_sorted.shape[0])):
+        rejected_by_robust = bool(result.rejected_by_robust_mask[row_index])
+        used = bool(result.used_row_mask[row_index])
+        rejection_reason = _residual_rejection_reason(
+            used=used,
+            rejected_by_robust=rejected_by_robust,
+            explicit_reason=rejection_reason_by_row[row_index],
+        )
+        rows.append(
+            {
+                'schema_version': FIRST_BREAK_TIME_EXPORT_SCHEMA_VERSION,
+                'trace_index_sorted': int(result.row_trace_index_sorted[row_index]),
+                'source_endpoint_key': str(source_key_by_row[row_index]),
+                'receiver_endpoint_key': str(receiver_key_by_row[row_index]),
+                'source_node_id': int(result.row_source_node_id[row_index]),
+                'receiver_node_id': int(result.row_receiver_node_id[row_index]),
+                'offset_m': _csv_float(result.row_distance_m[row_index]),
+                'midpoint_x_m': _csv_float(midpoint_x_m[row_index]),
+                'midpoint_y_m': _csv_float(midpoint_y_m[row_index]),
+                'cell_ix': _csv_cell_id(cell_ix_by_row[row_index]),
+                'cell_iy': _csv_cell_id(cell_iy_by_row[row_index]),
+                'layer_kind': str(layer_kind_by_row[row_index]),
+                'used_for_layer': _csv_bool(used),
+                'observed_pick_time_ms': _csv_ms(
+                    result.observed_pick_time_s[row_index]
+                ),
+                'modeled_pick_time_ms': _csv_ms(result.modeled_pick_time_s[row_index]),
+                'residual_ms': _csv_ms(result.residual_time_s[row_index]),
+                'moveout_time_ms': _csv_ms(moveout_time_s[row_index]),
+                'source_time_term_ms': _csv_ms(source_time_term_s[row_index]),
+                'receiver_time_term_ms': _csv_ms(receiver_time_term_s[row_index]),
+                'velocity_m_s': _csv_float(row_velocity_m_s[row_index]),
+                'rejection_reason': rejection_reason,
+                'observation_status': 'used' if used else 'rejected',
+                'sign_convention': FIRST_BREAK_TIME_EXPORT_SIGN_CONVENTION,
+            }
+        )
+    return rows
+
+
+def _first_break_export_layer_context(
+    result: RefractionDatumStaticsResult,
+) -> tuple[np.ndarray, np.ndarray]:
+    return _residual_row_layer_context(result)
+
+
+def _row_endpoint_float_context(
+    result: RefractionDatumStaticsResult,
+    *,
+    endpoint: str,
+    row_endpoint_key: np.ndarray,
+    value_field: str,
+) -> np.ndarray:
+    n_rows = int(result.row_trace_index_sorted.shape[0])
+    keys = (
+        result.source_endpoint_key
+        if endpoint == 'source'
+        else result.receiver_endpoint_key
+    )
+    values = getattr(result, value_field)
+    lookup = {
+        str(key): float(value)
+        for key, value in zip(
+            np.asarray(keys).tolist(),
+            np.asarray(values).tolist(),
+            strict=True,
+        )
+    }
+    out = np.full(n_rows, np.nan, dtype=np.float64)
+    for index, raw_key in enumerate(row_endpoint_key.tolist()):
+        value = lookup.get(str(raw_key))
+        if value is not None:
+            out[index] = value
+    return np.ascontiguousarray(out, dtype=np.float64)
+
+
+def _first_break_row_time_terms(
+    result: RefractionDatumStaticsResult,
+    *,
+    layer_kind_by_row: np.ndarray,
+    source_key_by_row: np.ndarray,
+    receiver_key_by_row: np.ndarray,
+) -> tuple[np.ndarray, np.ndarray]:
+    n_rows = int(result.row_trace_index_sorted.shape[0])
+    source = np.full(n_rows, np.nan, dtype=np.float64)
+    receiver = np.full(n_rows, np.nan, dtype=np.float64)
+    source_t1_sorted = np.asarray(
+        result.source_half_intercept_time_s_sorted,
+        dtype=np.float64,
+    )
+    receiver_t1_sorted = np.asarray(
+        result.receiver_half_intercept_time_s_sorted,
+        dtype=np.float64,
+    )
+    source_t2 = _endpoint_time_lookup(
+        result.source_endpoint_key,
+        result.source_t2_time_s,
+    )
+    receiver_t2 = _endpoint_time_lookup(
+        result.receiver_endpoint_key,
+        result.receiver_t2_time_s,
+    )
+    source_t3 = _endpoint_time_lookup(
+        result.source_endpoint_key,
+        result.source_t3_time_s,
+    )
+    receiver_t3 = _endpoint_time_lookup(
+        result.receiver_endpoint_key,
+        result.receiver_t3_time_s,
+    )
+    for row_index, trace_index in enumerate(result.row_trace_index_sorted.tolist()):
+        kind = str(layer_kind_by_row[row_index])
+        if kind == 'v3_t2':
+            source[row_index] = source_t2.get(
+                str(source_key_by_row[row_index]),
+                np.nan,
+            )
+            receiver[row_index] = receiver_t2.get(
+                str(receiver_key_by_row[row_index]),
+                np.nan,
+            )
+        elif kind == 'vsub_t3':
+            source[row_index] = source_t3.get(
+                str(source_key_by_row[row_index]),
+                np.nan,
+            )
+            receiver[row_index] = receiver_t3.get(
+                str(receiver_key_by_row[row_index]),
+                np.nan,
+            )
+        elif kind == 'v2_t1':
+            source[row_index] = source_t1_sorted[int(trace_index)]
+            receiver[row_index] = receiver_t1_sorted[int(trace_index)]
+    return (
+        np.ascontiguousarray(source, dtype=np.float64),
+        np.ascontiguousarray(receiver, dtype=np.float64),
+    )
+
+
+def _endpoint_time_lookup(
+    endpoint_key: np.ndarray,
+    values: np.ndarray | None,
+) -> dict[str, float]:
+    if values is None:
+        return {}
+    return {
+        str(key): float(value)
+        for key, value in zip(
+            np.asarray(endpoint_key).tolist(),
+            np.asarray(values, dtype=np.float64).tolist(),
+            strict=True,
+        )
+    }
+
+
+def _first_break_moveout_time_s(
+    *,
+    modeled_pick_time_s: np.ndarray,
+    source_time_term_s: np.ndarray,
+    receiver_time_term_s: np.ndarray,
+) -> np.ndarray:
+    modeled = np.asarray(modeled_pick_time_s, dtype=np.float64)
+    source = np.asarray(source_time_term_s, dtype=np.float64)
+    receiver = np.asarray(receiver_time_term_s, dtype=np.float64)
+    out = modeled - source - receiver
+    invalid = ~np.isfinite(modeled) | ~np.isfinite(source) | ~np.isfinite(receiver)
+    out[invalid] = np.nan
+    return np.ascontiguousarray(out, dtype=np.float64)
+
+
+def _midpoint_coordinate(left: np.ndarray, right: np.ndarray) -> np.ndarray:
+    left_arr = np.asarray(left, dtype=np.float64)
+    right_arr = np.asarray(right, dtype=np.float64)
+    out = 0.5 * (left_arr + right_arr)
+    out[~np.isfinite(left_arr) | ~np.isfinite(right_arr)] = np.nan
+    return np.ascontiguousarray(out, dtype=np.float64)
 
 
 def _residual_row_layer_context(
@@ -7287,6 +7586,7 @@ def _assert_strict_json(payload: dict[str, Any], *, artifact_name: str) -> None:
 
 __all__ = [
     'FIRST_BREAK_RESIDUALS_CSV_NAME',
+    'REFRACTION_FIRST_BREAK_TIME_EXPORT_CSV_NAME',
     'NEAR_SURFACE_MODEL_CSV_NAME',
     'REFRACTION_CELL_SOLVER_HISTORY_CSV_NAME',
     'REFRACTION_REFRACTOR_VELOCITY_CELLS_CSV_NAME',
@@ -7329,6 +7629,7 @@ __all__ = [
     'refraction_static_trace_shift_component_names',
     'write_first_break_residuals_csv',
     'write_near_surface_model_csv',
+    'write_refraction_first_break_time_export_csv',
     'write_refraction_cell_solver_history_csv',
     'write_refraction_refractor_velocity_cells_csv',
     'write_refraction_refractor_velocity_grid_npz',

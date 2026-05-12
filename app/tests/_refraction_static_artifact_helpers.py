@@ -212,6 +212,12 @@ def _result() -> RefractionDatumStaticsResult:
         residual_time_s=np.asarray([0.001, -0.002, -0.001]),
         used_row_mask=np.asarray([True, False, True], dtype=bool),
         rejected_by_robust_mask=np.asarray([False, True, False], dtype=bool),
+        row_layer_kind=np.asarray(['v2_t1', 'v2_t1', 'v2_t1'], dtype='<U16'),
+        row_layer_index=np.asarray([1, 1, 1], dtype=np.int64),
+        row_source_endpoint_key=np.asarray(['s0', 's1', 's0'], dtype='<U16'),
+        row_receiver_endpoint_key=np.asarray(['r0', 'r1', 'r1'], dtype='<U16'),
+        row_rejection_reason=np.asarray(['ok', '', 'ok'], dtype='<U32'),
+        row_velocity_m_s=np.full(3, 2500.0, dtype=np.float64),
         qc={
             'robust_iteration_count': 1,
             'floating_datum_below_refractor_count': 0,

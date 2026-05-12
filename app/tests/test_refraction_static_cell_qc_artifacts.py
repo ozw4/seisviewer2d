@@ -6,7 +6,10 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-from app.services.refraction_static_artifacts import write_refraction_static_artifacts
+from app.services.refraction_static_artifacts import (
+    REFRACTION_FIRST_BREAK_TIME_EXPORT_CSV_NAME,
+    write_refraction_static_artifacts,
+)
 from app.tests._refraction_static_synthetic import (
     SYNTHETIC_CELL_SIZE_X_M,
     SYNTHETIC_CELL_V2_M_S,
@@ -230,6 +233,28 @@ def test_observation_residual_artifact_includes_cell_ids_and_rejection_reason(
         assert float(row['residual_s']) == pytest.approx(0.0, abs=1.0e-8)
         assert row['used_in_solve'] == 'true'
         assert row['rejection_reason'] == 'ok'
+
+
+def test_first_break_time_export_contains_cell_indices_for_cell_solve(
+    tmp_path: Path,
+) -> None:
+    result, req, input_model = _clean_result()
+    expected_cell_id = synthetic_cell_midpoint_cell_id_sorted(input_model)
+
+    write_refraction_static_artifacts(
+        result=result,
+        req=req,
+        job_dir=tmp_path,
+    )
+
+    rows = _read_csv(tmp_path / REFRACTION_FIRST_BREAK_TIME_EXPORT_CSV_NAME)
+    for row in rows:
+        trace_index = int(row['trace_index_sorted'])
+        cell_id = int(expected_cell_id[trace_index])
+        assert int(row['cell_ix']) == cell_id
+        assert int(row['cell_iy']) == 0
+        assert row['layer_kind'] == 'v2_t1'
+        assert row['used_for_layer'] == 'true'
 
 
 def test_cell_velocity_artifact_records_smoothing_metadata(

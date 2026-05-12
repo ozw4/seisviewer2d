@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import csv
 import json
+import shutil
 from dataclasses import dataclass
 from pathlib import Path
 import time
@@ -20,8 +21,8 @@ from app.core.state import AppState
 from app.services.job_manager import JobManager
 from app.services.job_runner import JobCompletion, JobFailure, run_job_with_lifecycle
 from app.services.refraction_static_artifacts import (
-    FIRST_BREAK_RESIDUALS_CSV_NAME,
     RECEIVER_STATIC_TABLE_CSV_NAME,
+    REFRACTION_FIRST_BREAK_TIME_EXPORT_CSV_NAME,
     REFRACTION_STATIC_ARTIFACTS_JSON_NAME,
     REFRACTION_STATIC_REQUEST_JSON_NAME,
     REFRACTION_STATIC_SOLUTION_NPZ_NAME,
@@ -77,8 +78,7 @@ _FORMAT_SOURCE_ARTIFACTS: dict[
         REFRACTION_STATIC_SOLUTION_NPZ_NAME,
     ),
     'first_break_time': (
-        FIRST_BREAK_RESIDUALS_CSV_NAME,
-        REFRACTION_STATIC_SOLUTION_NPZ_NAME,
+        REFRACTION_FIRST_BREAK_TIME_EXPORT_CSV_NAME,
     ),
 }
 
@@ -317,6 +317,8 @@ def _generated_refraction_static_export_artifacts(
         names.append(REFRACTION_LSST_CSV_NAME)
     if 'lsst_plus' in requested_formats:
         names.append(REFRACTION_LSST_PLUS_CSV_NAME)
+    if 'first_break_time' in requested_formats:
+        names.append(REFRACTION_FIRST_BREAK_TIME_EXPORT_CSV_NAME)
     return tuple(names)
 
 
@@ -332,6 +334,8 @@ def _write_requested_export_artifacts(
             job_dir=job_dir,
             include_inactive_endpoints=bool(req.export.include_inactive_endpoints),
         )
+    if 'first_break_time' in source.requested_formats:
+        _copy_first_break_time_export(source=source, job_dir=job_dir)
     if (
         'lsst' not in source.requested_formats
         and 'lsst_plus' not in source.requested_formats
@@ -375,6 +379,25 @@ def _write_time_term_spreadsheet_export(
         source_job_id=source.source_job_id,
         include_inactive_endpoints=include_inactive_endpoints,
     )
+
+
+def _copy_first_break_time_export(
+    *,
+    source: ResolvedRefractionStaticExportSourceJob,
+    job_dir: Path,
+) -> None:
+    source_path = (
+        source.source_artifacts_dir / REFRACTION_FIRST_BREAK_TIME_EXPORT_CSV_NAME
+    )
+    dest_path = job_dir / REFRACTION_FIRST_BREAK_TIME_EXPORT_CSV_NAME
+    dest_path.parent.mkdir(parents=True, exist_ok=True)
+    tmp_path = dest_path.with_name(f'{dest_path.name}.{uuid4().hex}.tmp')
+    try:
+        shutil.copyfile(source_path, tmp_path)
+        tmp_path.replace(dest_path)
+    except Exception:
+        tmp_path.unlink(missing_ok=True)
+        raise
 
 
 def _load_lsst_export_bundle(

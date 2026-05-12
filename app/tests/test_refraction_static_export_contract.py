@@ -17,7 +17,9 @@ from app.api.schemas import (
 )
 from app.main import app
 from app.services.refraction_static_artifacts import (
+    FIRST_BREAK_TIME_EXPORT_SIGN_CONVENTION,
     RECEIVER_STATIC_TABLE_CSV_NAME,
+    REFRACTION_FIRST_BREAK_TIME_EXPORT_CSV_NAME,
     REFRACTION_STATIC_ARTIFACTS_JSON_NAME,
     REFRACTION_STATIC_REQUEST_JSON_NAME,
     REFRACTION_STATIC_SOLUTION_NPZ_NAME,
@@ -480,6 +482,56 @@ def test_run_refraction_static_export_job_writes_lsst_artifacts(
     ]
 
 
+def test_run_refraction_static_export_job_writes_first_break_time_artifact(
+    client: TestClient,
+    tmp_path: Path,
+) -> None:
+    _create_source_refraction_job(
+        client,
+        tmp_path,
+        artifact_names=(
+            REFRACTION_STATIC_REQUEST_JSON_NAME,
+            REFRACTION_STATIC_ARTIFACTS_JSON_NAME,
+            REFRACTION_FIRST_BREAK_TIME_EXPORT_CSV_NAME,
+        ),
+    )
+    req = RefractionStaticExportJobRequest.model_validate(
+        {
+            'source_job_id': 'source-refraction-job',
+            'export': {'enabled': True, 'formats': ['first_break_time']},
+        }
+    )
+    export_job_id = 'export-first-break-time-job'
+    export_job_dir = tmp_path / 'jobs' / export_job_id
+    with client.app.state.sv.lock:
+        client.app.state.sv.jobs.create_static_job(
+            export_job_id,
+            file_id='raw-file-id',
+            key1_byte=189,
+            key2_byte=193,
+            statics_kind='refraction_export',
+            artifacts_dir=str(export_job_dir),
+        )
+
+    run_refraction_static_export_job(export_job_id, req, client.app.state.sv)
+
+    rows = _read_csv_text(
+        (export_job_dir / REFRACTION_FIRST_BREAK_TIME_EXPORT_CSV_NAME).read_text(
+            encoding='utf-8'
+        )
+    )
+    assert rows[0]['source_endpoint_key'] == 'source:1001'
+    assert rows[0]['observed_pick_time_ms'] == '50.0'
+    assert rows[0]['modeled_pick_time_ms'] == '48.5'
+    assert rows[0]['residual_ms'] == '1.5'
+    meta = json.loads(
+        (export_job_dir / REFRACTION_STATIC_EXPORT_JOB_META_JSON_NAME).read_text(
+            encoding='utf-8',
+        )
+    )
+    assert meta['generated_artifacts'] == [REFRACTION_FIRST_BREAK_TIME_EXPORT_CSV_NAME]
+
+
 def _write_source_artifact_stub(path: Path, artifact_name: str) -> None:
     if artifact_name == SOURCE_STATIC_TABLE_CSV_NAME:
         _write_csv(
@@ -532,6 +584,36 @@ def _write_source_artifact_stub(path: Path, artifact_name: str) -> None:
                 'receiver_field_shift_ms': '-0.5',
                 'receiver_field_static_status': 'ok',
                 'receiver_total_with_field_shift_ms': '-3.75',
+            },
+        )
+        return
+    if artifact_name == REFRACTION_FIRST_BREAK_TIME_EXPORT_CSV_NAME:
+        _write_csv(
+            path,
+            {
+                'schema_version': '1',
+                'trace_index_sorted': '0',
+                'source_endpoint_key': 'source:1001',
+                'receiver_endpoint_key': 'receiver:2001',
+                'source_node_id': '10',
+                'receiver_node_id': '20',
+                'offset_m': '100.0',
+                'midpoint_x_m': '1005.0',
+                'midpoint_y_m': '2005.0',
+                'cell_ix': '',
+                'cell_iy': '',
+                'layer_kind': 'v2_t1',
+                'used_for_layer': 'true',
+                'observed_pick_time_ms': '50.0',
+                'modeled_pick_time_ms': '48.5',
+                'residual_ms': '1.5',
+                'moveout_time_ms': '27.5',
+                'source_time_term_ms': '12.5',
+                'receiver_time_term_ms': '8.5',
+                'velocity_m_s': '2400.0',
+                'rejection_reason': 'ok',
+                'observation_status': 'used',
+                'sign_convention': FIRST_BREAK_TIME_EXPORT_SIGN_CONVENTION,
             },
         )
         return
