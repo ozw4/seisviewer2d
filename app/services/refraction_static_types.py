@@ -910,6 +910,10 @@ class RefractionDatumStaticsResult:
     trace_field_static_status_sorted: np.ndarray | None = None
     trace_field_static_valid_mask_sorted: np.ndarray | None = None
     base_refraction_trace_shift_s_sorted: np.ndarray | None = None
+    final_trace_shift_s_sorted: np.ndarray | None = None
+    final_trace_static_status_sorted: np.ndarray | None = None
+    final_trace_static_valid_mask_sorted: np.ndarray | None = None
+    applied_field_shift_s_sorted: np.ndarray | None = None
     field_composition_qc: dict[str, Any] | None = None
 
 

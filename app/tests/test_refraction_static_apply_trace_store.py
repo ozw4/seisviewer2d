@@ -92,6 +92,83 @@ def _valid_result(
     )
 
 
+def _field_request(
+    *,
+    apply_to_trace_shift: bool = True,
+    invalid_component_policy: str = 'fail',
+) -> RefractionStaticApplyRequest:
+    payload = _request(register_corrected_file=True).model_dump(mode='json')
+    payload['geometry']['source_depth_byte'] = 115
+    payload['field_corrections'] = {
+        'source_depth': {
+            'mode': 'weathering_velocity_time',
+            'source_depth_byte': 115,
+        },
+        'uphole': {
+            'mode': 'header_time',
+            'uphole_time_byte': 95,
+            'uphole_time_unit': 's',
+        },
+        'manual_static': {
+            'mode': 'inline_table',
+            'sign_convention': 'applied_shift_s',
+            'source_inline_table': [{'endpoint_id': 10, 'value': 0.001}],
+            'receiver_inline_table': [{'endpoint_id': 20, 'value': 0.002}],
+        },
+        'composition': {
+            'enabled': True,
+            'apply_to_trace_shift': apply_to_trace_shift,
+            'invalid_component_policy': invalid_component_policy,
+        },
+    }
+    return RefractionStaticApplyRequest.model_validate(payload)
+
+
+def _field_result(
+    *,
+    field_shift_s: np.ndarray | None = None,
+    field_status: np.ndarray | None = None,
+    apply_to_trace_shift: bool = True,
+):
+    base = _valid_result()
+    refraction = np.asarray(base.refraction_trace_shift_s_sorted, dtype=np.float64)
+    if field_shift_s is None:
+        field_shift_s = np.asarray([0.004, -0.004, 0.0, 0.0], dtype=np.float64)
+    if field_status is None:
+        field_status = np.asarray(['ok', 'ok', 'ok', 'ok'], dtype='<U64')
+    field_shift = np.asarray(field_shift_s, dtype=np.float64)
+    status = np.asarray(field_status, dtype='<U64')
+    valid_field = (status == 'ok') & np.isfinite(field_shift)
+    applied_field = np.zeros(refraction.shape, dtype=np.float64)
+    final = refraction.copy()
+    if apply_to_trace_shift:
+        applied_field[valid_field] = field_shift[valid_field]
+        final[valid_field] = refraction[valid_field] + field_shift[valid_field]
+    return replace(
+        base,
+        source_field_shift_s=np.asarray([field_shift[0], field_shift[1]], dtype=np.float64),
+        source_field_static_status=np.asarray([status[0], status[1]], dtype='<U64'),
+        receiver_field_shift_s=np.asarray([0.0, 0.0], dtype=np.float64),
+        receiver_field_static_status=np.asarray(['ok', 'ok'], dtype='<U64'),
+        source_field_shift_s_sorted=field_shift.copy(),
+        receiver_field_shift_s_sorted=np.zeros(refraction.shape, dtype=np.float64),
+        base_refraction_trace_shift_s_sorted=refraction,
+        trace_field_shift_s_sorted=field_shift,
+        trace_field_static_status_sorted=status,
+        trace_field_static_valid_mask_sorted=valid_field,
+        final_trace_shift_s_sorted=final,
+        final_trace_static_status_sorted=base.trace_static_status_sorted,
+        final_trace_static_valid_mask_sorted=base.trace_static_valid_mask_sorted,
+        applied_field_shift_s_sorted=applied_field,
+        field_composition_qc={
+            'composition_enabled': True,
+            'apply_to_trace_shift': apply_to_trace_shift,
+            'invalid_component_policy': 'skip_invalid_traces',
+            'sign_convention': 'corrected(t) = raw(t - shift_s)',
+        },
+    )
+
+
 def _write_source_store(
     store: Path,
     *,
@@ -277,6 +354,153 @@ def test_apply_refraction_statics_builds_and_registers_corrected_trace_store(
     assert 'corrected_trace_store_path' not in qc
 
 
+def test_apply_tracestore_uses_final_shift_when_field_corrections_enabled(
+    tmp_path: Path,
+) -> None:
+    state, _source_store, _source_traces = _state_with_source_store(tmp_path)
+    req = _field_request(apply_to_trace_shift=True)
+    job_dir = tmp_path / 'jobs' / JOB_ID
+
+    result = apply_refraction_statics_to_trace_store(
+        req=req,
+        result=_field_result(apply_to_trace_shift=True),
+        state=state,
+        job_id=JOB_ID,
+        job_dir=job_dir,
+    )
+
+    assert result.corrected_trace_store_path is not None
+    corrected = np.load(result.corrected_trace_store_path / 'traces.npy')
+    assert [int(np.argmax(corrected[index])) for index in range(3)] == [9, 9, 6]
+    np.testing.assert_allclose(
+        result.applied_shift_s_sorted,
+        [0.004, 0.004, -0.008, 0.0],
+    )
+
+    corrected_manifest = json.loads(
+        (job_dir / CORRECTED_FILE_JSON_NAME).read_text(encoding='utf-8')
+    )
+    assert corrected_manifest['shift_field'] == 'final_trace_shift_s_sorted'
+    assert corrected_manifest['static_components_applied'] == [
+        'refraction',
+        'source_depth',
+        'uphole',
+        'manual_static',
+    ]
+    assert corrected_manifest['field_corrections_applied_to_trace_shift'] is True
+    assert corrected_manifest['sign_convention'] == 'corrected(t) = raw(t - shift_s)'
+
+    meta = json.loads(
+        (result.corrected_trace_store_path / 'meta.json').read_text(encoding='utf-8')
+    )
+    assert meta['derived']['shift_field'] == 'final_trace_shift_s_sorted'
+    assert meta['derived']['static_components_applied'] == [
+        'refraction',
+        'source_depth',
+        'uphole',
+        'manual_static',
+    ]
+
+
+def test_apply_tracestore_uses_refraction_shift_when_field_corrections_artifact_only(
+    tmp_path: Path,
+) -> None:
+    state, _source_store, _source_traces = _state_with_source_store(tmp_path)
+    req = _field_request(apply_to_trace_shift=False)
+    job_dir = tmp_path / 'jobs' / JOB_ID
+
+    result = apply_refraction_statics_to_trace_store(
+        req=req,
+        result=_field_result(apply_to_trace_shift=False),
+        state=state,
+        job_id=JOB_ID,
+        job_dir=job_dir,
+    )
+
+    assert result.corrected_trace_store_path is not None
+    corrected = np.load(result.corrected_trace_store_path / 'traces.npy')
+    assert [int(np.argmax(corrected[index])) for index in range(3)] == [8, 10, 6]
+    np.testing.assert_allclose(
+        result.applied_shift_s_sorted,
+        [0.0, 0.008, -0.008, 0.0],
+    )
+
+    corrected_manifest = json.loads(
+        (job_dir / CORRECTED_FILE_JSON_NAME).read_text(encoding='utf-8')
+    )
+    assert corrected_manifest['shift_field'] == 'refraction_trace_shift_s_sorted'
+    assert corrected_manifest['static_components_applied'] == ['refraction']
+    assert corrected_manifest['field_corrections_applied_to_trace_shift'] is False
+    assert corrected_manifest['field_correction_components_requested'] == [
+        'source_depth',
+        'uphole',
+        'manual_static',
+    ]
+
+
+def test_apply_tracestore_rejects_invalid_field_shift_when_policy_fail(
+    tmp_path: Path,
+) -> None:
+    state, source_store, _source_traces = _state_with_source_store(tmp_path)
+    req = _field_request(
+        apply_to_trace_shift=True,
+        invalid_component_policy='fail',
+    )
+    job_dir = tmp_path / 'jobs' / JOB_ID
+    result = _field_result(
+        field_status=np.asarray(['ok', 'missing_source_depth', 'ok', 'ok']),
+        apply_to_trace_shift=True,
+    )
+
+    with pytest.raises(
+        RefractionStaticTraceStoreApplyError,
+        match='invalid_trace_field_shift_count=1',
+    ):
+        apply_refraction_statics_to_trace_store(
+            req=req,
+            result=result,
+            state=state,
+            job_id=JOB_ID,
+            job_dir=job_dir,
+        )
+
+    assert not (
+        source_store.parent / 'line001.sgy.statics.refraction.ref-job-386'
+    ).exists()
+    assert not (job_dir / CORRECTED_FILE_JSON_NAME).exists()
+
+
+def test_apply_tracestore_skips_invalid_field_traces_when_policy_skip(
+    tmp_path: Path,
+) -> None:
+    state, _source_store, _source_traces = _state_with_source_store(tmp_path)
+    req = _field_request(
+        apply_to_trace_shift=True,
+        invalid_component_policy='skip_invalid_traces',
+    )
+    job_dir = tmp_path / 'jobs' / JOB_ID
+    result = _field_result(
+        field_status=np.asarray(['ok', 'missing_source_depth', 'ok', 'ok']),
+        apply_to_trace_shift=True,
+    )
+
+    applied = apply_refraction_statics_to_trace_store(
+        req=req,
+        result=result,
+        state=state,
+        job_id=JOB_ID,
+        job_dir=job_dir,
+    )
+
+    assert applied.corrected_trace_store_path is not None
+    corrected = np.load(applied.corrected_trace_store_path / 'traces.npy')
+    assert [int(np.argmax(corrected[index])) for index in range(3)] == [9, 10, 6]
+    np.testing.assert_allclose(
+        applied.applied_shift_s_sorted,
+        [0.004, 0.008, -0.008, 0.0],
+    )
+
+
 def test_apply_refraction_statics_from_solution_artifact(
     tmp_path: Path,
 ) -> None:
@@ -303,6 +527,33 @@ def test_apply_refraction_statics_from_solution_artifact(
     assert result.corrected_trace_store_path is not None
     corrected = np.load(result.corrected_trace_store_path / 'traces.npy')
     assert [int(np.argmax(corrected[i])) for i in range(3)] == [8, 10, 6]
+
+
+def test_apply_tracestore_from_solution_artifact_uses_final_shift_when_enabled(
+    tmp_path: Path,
+) -> None:
+    state, _source_store, _source_traces = _state_with_source_store(tmp_path)
+    req = _field_request(apply_to_trace_shift=True)
+    job_dir = tmp_path / 'jobs' / JOB_ID
+    solution_path = job_dir / REFRACTION_STATIC_SOLUTION_NPZ_NAME
+    job_dir.mkdir(parents=True)
+    write_refraction_static_solution_npz(
+        result=_field_result(apply_to_trace_shift=True),
+        req=req,
+        path=solution_path,
+    )
+
+    result = apply_refraction_statics_from_solution_artifact(
+        req=req,
+        solution_npz_path=solution_path,
+        state=state,
+        job_id=JOB_ID,
+        job_dir=job_dir,
+    )
+
+    assert result.corrected_trace_store_path is not None
+    corrected = np.load(result.corrected_trace_store_path / 'traces.npy')
+    assert [int(np.argmax(corrected[index])) for index in range(3)] == [9, 9, 6]
 
 
 def test_apply_refraction_statics_rejects_sorted_order_mismatch_without_output(

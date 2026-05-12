@@ -781,6 +781,12 @@ def _with_field_correction_composition(
         base_refraction_trace_shift_s_sorted=(
             final_shift.base_refraction_trace_shift_s_sorted
         ),
+        final_trace_shift_s_sorted=final_shift.final_trace_shift_s_sorted,
+        final_trace_static_status_sorted=final_shift.final_trace_static_status_sorted,
+        final_trace_static_valid_mask_sorted=(
+            final_shift.final_trace_static_valid_mask_sorted
+        ),
+        applied_field_shift_s_sorted=final_shift.applied_field_shift_s_sorted,
         field_composition_qc=composition_qc,
         qc={
             **result.qc,
@@ -794,14 +800,7 @@ def _with_field_correction_composition(
             },
         },
     )
-    if not bool(composition.apply_to_trace_shift):
-        return updated
-    return replace(
-        updated,
-        refraction_trace_shift_s_sorted=final_shift.final_trace_shift_s_sorted,
-        trace_static_status_sorted=final_shift.final_trace_static_status_sorted,
-        trace_static_valid_mask_sorted=final_shift.final_trace_static_valid_mask_sorted,
-    )
+    return updated
 
 
 def _has_field_correction_components(result: RefractionDatumStaticsResult) -> bool:

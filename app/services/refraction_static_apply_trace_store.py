@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from contextlib import nullcontext
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 import json
 from pathlib import Path
 import re
@@ -56,6 +56,8 @@ _OPTIONAL_SOLUTION_METADATA_KEYS = (
     'weathering_replacement_trace_shift_s_sorted',
     'floating_datum_elevation_shift_s_sorted',
     'flat_datum_shift_s_sorted',
+    'base_refraction_trace_shift_s_sorted',
+    'final_trace_shift_s_sorted',
     'bedrock_velocity_m_s',
     'weathering_velocity_m_s',
     'datum_mode',
@@ -77,6 +79,22 @@ class LoadedRefractionStaticSolutionForApply:
     sorted_trace_index: np.ndarray
     source_solution_artifact: str | None
     metadata: dict[str, object]
+    final_trace_shift_s_sorted: np.ndarray | None = None
+    final_trace_static_valid_mask_sorted: np.ndarray | None = None
+    final_trace_static_status_sorted: np.ndarray | None = None
+    trace_field_static_status_sorted: np.ndarray | None = None
+
+
+@dataclass(frozen=True)
+class _SelectedTraceShiftForApplication:
+    trace_shift_s_sorted: np.ndarray
+    trace_static_valid_mask_sorted: np.ndarray
+    trace_static_status_sorted: np.ndarray
+    shift_field: str
+    static_components_applied: tuple[str, ...]
+    field_corrections_applied_to_trace_shift: bool
+    requested_field_components: tuple[str, ...]
+    warnings: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -253,6 +271,43 @@ def load_refraction_static_solution_for_apply(
                 name='trace_static_status_sorted',
                 expected_shape=expected_shape,
             )
+            final_shifts = (
+                _require_1d_float64(
+                    data['final_trace_shift_s_sorted'],
+                    name='final_trace_shift_s_sorted',
+                    expected_shape=expected_shape,
+                    allow_nonfinite=True,
+                )
+                if 'final_trace_shift_s_sorted' in data.files
+                else None
+            )
+            final_valid_mask = (
+                _require_1d_bool(
+                    data['final_trace_static_valid_mask_sorted'],
+                    name='final_trace_static_valid_mask_sorted',
+                    expected_shape=expected_shape,
+                )
+                if 'final_trace_static_valid_mask_sorted' in data.files
+                else None
+            )
+            final_statuses = (
+                _require_1d_string(
+                    data['final_trace_static_status_sorted'],
+                    name='final_trace_static_status_sorted',
+                    expected_shape=expected_shape,
+                )
+                if 'final_trace_static_status_sorted' in data.files
+                else None
+            )
+            field_statuses = (
+                _require_1d_string(
+                    data['trace_field_static_status_sorted'],
+                    name='trace_field_static_status_sorted',
+                    expected_shape=expected_shape,
+                )
+                if 'trace_field_static_status_sorted' in data.files
+                else None
+            )
             sorted_trace_index = validate_sorted_to_original(
                 data['sorted_trace_index'],
                 expected_n_traces=n_traces,
@@ -279,6 +334,10 @@ def load_refraction_static_solution_for_apply(
         sorted_trace_index=sorted_trace_index,
         source_solution_artifact=path.name,
         metadata=metadata,
+        final_trace_shift_s_sorted=final_shifts,
+        final_trace_static_valid_mask_sorted=final_valid_mask,
+        final_trace_static_status_sorted=final_statuses,
+        trace_field_static_status_sorted=field_statuses,
     )
 
 
@@ -339,10 +398,19 @@ def _apply_refraction_solution_to_trace_store(
         source_sorted_trace_index=source.sorted_trace_index,
         n_traces=source.n_traces,
     )
+    selected_shift = _select_trace_shift_for_application(
+        req=request,
+        solution=solution,
+    )
+    selected_shift = _with_double_application_policy(
+        req=request,
+        source_meta=source.meta,
+        selected=selected_shift,
+    )
     validation = validate_refraction_trace_shifts_for_application(
-        trace_shift_s_sorted=solution.refraction_trace_shift_s_sorted,
-        trace_static_valid_mask_sorted=solution.trace_static_valid_mask_sorted,
-        trace_static_status_sorted=solution.trace_static_status_sorted,
+        trace_shift_s_sorted=selected_shift.trace_shift_s_sorted,
+        trace_static_valid_mask_sorted=selected_shift.trace_static_valid_mask_sorted,
+        trace_static_status_sorted=selected_shift.trace_static_status_sorted,
         n_traces=source.n_traces,
         max_abs_shift_ms=request.apply.max_abs_shift_ms,
         require_all_traces_valid=True,
@@ -360,6 +428,7 @@ def _apply_refraction_solution_to_trace_store(
         source_meta=source.meta,
         job_id=job_id,
         solution_artifact=solution.source_solution_artifact,
+        selected_shift=selected_shift,
     )
 
     build_result: TimeShiftedTraceStoreResult | None = None
@@ -402,6 +471,7 @@ def _apply_refraction_solution_to_trace_store(
             build_result=build_result,
             validation=validation,
             solution=solution,
+            selected_shift=selected_shift,
             corrected_tracestore_path_written=True,
         )
         _write_json_atomic(qc_json_path, qc)
@@ -414,6 +484,7 @@ def _apply_refraction_solution_to_trace_store(
                 build_result=build_result,
                 validation=validation,
                 solution=solution,
+                selected_shift=selected_shift,
             ),
         )
     except Exception:
@@ -633,7 +704,158 @@ def _solution_from_datum_result(
             ),
             'sign_convention': SIGN_CONVENTION,
         },
+        final_trace_shift_s_sorted=(
+            None
+            if result.final_trace_shift_s_sorted is None
+            else _require_1d_float64(
+                result.final_trace_shift_s_sorted,
+                name='final_trace_shift_s_sorted',
+                expected_shape=expected_shape,
+                allow_nonfinite=True,
+            )
+        ),
+        final_trace_static_valid_mask_sorted=(
+            None
+            if result.final_trace_static_valid_mask_sorted is None
+            else _require_1d_bool(
+                result.final_trace_static_valid_mask_sorted,
+                name='final_trace_static_valid_mask_sorted',
+                expected_shape=expected_shape,
+            )
+        ),
+        final_trace_static_status_sorted=(
+            None
+            if result.final_trace_static_status_sorted is None
+            else _require_1d_string(
+                result.final_trace_static_status_sorted,
+                name='final_trace_static_status_sorted',
+                expected_shape=expected_shape,
+            )
+        ),
+        trace_field_static_status_sorted=(
+            None
+            if result.trace_field_static_status_sorted is None
+            else _require_1d_string(
+                result.trace_field_static_status_sorted,
+                name='trace_field_static_status_sorted',
+                expected_shape=expected_shape,
+            )
+        ),
     )
+
+
+def _select_trace_shift_for_application(
+    *,
+    req: RefractionStaticApplyRequest,
+    solution: LoadedRefractionStaticSolutionForApply,
+) -> _SelectedTraceShiftForApplication:
+    requested_components = _requested_field_components(req)
+    field_corrections_applied = bool(
+        requested_components
+        and req.field_corrections.composition.enabled
+        and req.field_corrections.composition.apply_to_trace_shift
+    )
+    if not field_corrections_applied:
+        return _SelectedTraceShiftForApplication(
+            trace_shift_s_sorted=solution.refraction_trace_shift_s_sorted,
+            trace_static_valid_mask_sorted=solution.trace_static_valid_mask_sorted,
+            trace_static_status_sorted=solution.trace_static_status_sorted,
+            shift_field='refraction_trace_shift_s_sorted',
+            static_components_applied=('refraction',),
+            field_corrections_applied_to_trace_shift=False,
+            requested_field_components=requested_components,
+        )
+
+    if solution.final_trace_shift_s_sorted is None:
+        raise RefractionStaticTraceStoreApplyError(
+            'field_corrections.composition.apply_to_trace_shift=true requires '
+            'final_trace_shift_s_sorted'
+        )
+    if (
+        solution.final_trace_static_valid_mask_sorted is None
+        or solution.final_trace_static_status_sorted is None
+    ):
+        raise RefractionStaticTraceStoreApplyError(
+            'field_corrections.composition.apply_to_trace_shift=true requires '
+            'final trace static status arrays'
+        )
+    _validate_trace_field_policy_for_application(req=req, solution=solution)
+    return _SelectedTraceShiftForApplication(
+        trace_shift_s_sorted=solution.final_trace_shift_s_sorted,
+        trace_static_valid_mask_sorted=solution.final_trace_static_valid_mask_sorted,
+        trace_static_status_sorted=solution.final_trace_static_status_sorted,
+        shift_field='final_trace_shift_s_sorted',
+        static_components_applied=('refraction', *requested_components),
+        field_corrections_applied_to_trace_shift=True,
+        requested_field_components=requested_components,
+    )
+
+
+def _requested_field_components(
+    req: RefractionStaticApplyRequest,
+) -> tuple[str, ...]:
+    components: list[str] = []
+    if req.field_corrections.source_depth.mode != 'none':
+        components.append('source_depth')
+    if req.field_corrections.uphole.mode != 'none':
+        components.append('uphole')
+    if req.field_corrections.manual_static.mode != 'none':
+        components.append('manual_static')
+    return tuple(components)
+
+
+def _validate_trace_field_policy_for_application(
+    *,
+    req: RefractionStaticApplyRequest,
+    solution: LoadedRefractionStaticSolutionForApply,
+) -> None:
+    policy = req.field_corrections.composition.invalid_component_policy
+    if policy != 'fail':
+        return
+    statuses = solution.trace_field_static_status_sorted
+    if statuses is None:
+        raise RefractionStaticTraceStoreApplyError(
+            'field_corrections.composition.invalid_component_policy=fail '
+            'requires trace_field_static_status_sorted'
+        )
+    invalid_count = int(np.count_nonzero(np.asarray(statuses, dtype=str) != 'ok'))
+    if invalid_count:
+        raise RefractionStaticTraceStoreApplyError(
+            'invalid field-correction components prevent corrected TraceStore '
+            'creation; invalid_trace_field_shift_count='
+            f'{invalid_count}; trace_field_static_status_counts='
+            f'{_status_counts(statuses)}'
+        )
+
+
+def _with_double_application_policy(
+    *,
+    req: RefractionStaticApplyRequest,
+    source_meta: Mapping[str, object],
+    selected: _SelectedTraceShiftForApplication,
+) -> _SelectedTraceShiftForApplication:
+    source_derived = source_meta.get('derived')
+    if not isinstance(source_derived, dict):
+        return selected
+    components = _component_dicts(source_derived)
+    existing = [
+        component
+        for component in components
+        if component.get('name') == 'refraction_static_correction'
+    ]
+    if not existing:
+        return selected
+
+    policy = req.field_corrections.composition.double_application_policy
+    message = (
+        'source TraceStore already has refraction_static_correction lineage; '
+        'applying another refraction static correction may double-apply statics'
+    )
+    if policy == 'fail':
+        raise RefractionStaticTraceStoreApplyError(message)
+    if policy == 'warn':
+        return replace(selected, warnings=(*selected.warnings, message))
+    return selected
 
 
 def _build_derived_metadata(
@@ -641,6 +863,7 @@ def _build_derived_metadata(
     source_meta: Mapping[str, object],
     job_id: str,
     solution_artifact: str | None,
+    selected_shift: _SelectedTraceShiftForApplication,
 ) -> dict[str, object]:
     source_derived = source_meta.get('derived')
     components = _component_dicts(source_derived if isinstance(source_derived, dict) else {})
@@ -649,13 +872,19 @@ def _build_derived_metadata(
             'name': 'refraction_static_correction',
             'job_id': str(job_id),
             'solution_artifact': solution_artifact or REFRACTION_STATIC_SOLUTION_NPZ_NAME,
-            'shift_field': 'refraction_trace_shift_s_sorted',
+            'shift_field': selected_shift.shift_field,
             'value_kind': 'applied_event_time_shift_s',
             'apply_mode': 'refraction_from_raw',
+            'static_components_applied': list(
+                selected_shift.static_components_applied
+            ),
+            'field_corrections_applied_to_trace_shift': (
+                selected_shift.field_corrections_applied_to_trace_shift
+            ),
             'sign_convention': SIGN_CONVENTION,
         }
     )
-    return {
+    metadata: dict[str, object] = {
         'statics_kind': 'refraction',
         'derived_by': 'refraction_static_correction',
         'derivation': 'refraction_static_correction',
@@ -663,11 +892,21 @@ def _build_derived_metadata(
         'applied_to': 'raw_trace_store',
         'components': components,
         'solution_artifact': solution_artifact or REFRACTION_STATIC_SOLUTION_NPZ_NAME,
-        'shift_field': 'refraction_trace_shift_s_sorted',
+        'shift_field': selected_shift.shift_field,
         'value_kind': 'applied_event_time_shift_s',
         'apply_mode': 'refraction_from_raw',
+        'static_components_applied': list(selected_shift.static_components_applied),
+        'field_corrections_applied_to_trace_shift': (
+            selected_shift.field_corrections_applied_to_trace_shift
+        ),
+        'field_correction_components_requested': list(
+            selected_shift.requested_field_components
+        ),
         'refraction_sign_convention': SIGN_CONVENTION,
     }
+    if selected_shift.warnings:
+        metadata['warnings'] = list(selected_shift.warnings)
+    return metadata
 
 
 def _build_corrected_file_payload(
@@ -678,8 +917,9 @@ def _build_corrected_file_payload(
     build_result: TimeShiftedTraceStoreResult,
     validation: RefractionTraceShiftValidationResult,
     solution: LoadedRefractionStaticSolutionForApply,
+    selected_shift: _SelectedTraceShiftForApplication,
 ) -> dict[str, object]:
-    return {
+    payload: dict[str, object] = {
         'schema_version': 1,
         'artifact_kind': 'corrected_file',
         'source_file_id': req.file_id,
@@ -688,6 +928,14 @@ def _build_corrected_file_payload(
         'statics_kind': 'refraction',
         'apply_mode': req.apply.mode,
         'sign_convention': SIGN_CONVENTION,
+        'shift_field': selected_shift.shift_field,
+        'static_components_applied': list(selected_shift.static_components_applied),
+        'field_corrections_applied_to_trace_shift': (
+            selected_shift.field_corrections_applied_to_trace_shift
+        ),
+        'field_correction_components_requested': list(
+            selected_shift.requested_field_components
+        ),
         'interpolation': req.apply.interpolation,
         'fill_value': float(req.apply.fill_value),
         'output_dtype': req.apply.output_dtype,
@@ -714,6 +962,9 @@ def _build_corrected_file_payload(
         'artifact_names': _corrected_artifact_names(),
         'solution_metadata': _json_safe_mapping(solution.metadata),
     }
+    if selected_shift.warnings:
+        payload['warnings'] = list(selected_shift.warnings)
+    return payload
 
 
 def _build_apply_qc_payload(
@@ -724,15 +975,24 @@ def _build_apply_qc_payload(
     build_result: TimeShiftedTraceStoreResult,
     validation: RefractionTraceShiftValidationResult,
     solution: LoadedRefractionStaticSolutionForApply,
+    selected_shift: _SelectedTraceShiftForApplication,
     corrected_tracestore_path_written: bool,
 ) -> dict[str, Any]:
     shift_ms = validation.trace_shift_s_sorted * 1000.0
-    return {
+    payload: dict[str, Any] = {
         'schema_version': 1,
         'artifact_kind': 'refraction_static_apply_qc',
         'statics_kind': 'refraction',
         'apply_mode': req.apply.mode,
         'sign_convention': SIGN_CONVENTION,
+        'shift_field': selected_shift.shift_field,
+        'static_components_applied': list(selected_shift.static_components_applied),
+        'field_corrections_applied_to_trace_shift': (
+            selected_shift.field_corrections_applied_to_trace_shift
+        ),
+        'field_correction_components_requested': list(
+            selected_shift.requested_field_components
+        ),
         'source_file_id': req.file_id,
         'corrected_file_id': corrected_file_id,
         'job_id': job_id,
@@ -761,6 +1021,9 @@ def _build_apply_qc_payload(
         'corrected_store_name': build_result.store_path.name,
         'corrected_tracestore_path_written': bool(corrected_tracestore_path_written),
     }
+    if selected_shift.warnings:
+        payload['warnings'] = list(selected_shift.warnings)
+    return payload
 
 
 def _corrected_artifact_names() -> list[str]:

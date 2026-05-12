@@ -2366,6 +2366,13 @@ def build_refraction_static_solution_arrays(
                 r
             ),
             'final_trace_shift_s_sorted': _final_trace_shift_s_sorted(r),
+            'final_trace_static_status_sorted': (
+                _final_trace_static_status_sorted_array(r)
+            ),
+            'final_trace_static_valid_mask_sorted': (
+                _final_trace_static_valid_mask_sorted_array(r)
+            ),
+            'applied_field_shift_s_sorted': _applied_field_shift_s_sorted_array(r),
         }
     )
     if _has_node_2layer_static_fields(r):
@@ -3033,6 +3040,17 @@ def _validate_result(result: RefractionDatumStaticsResult) -> _ValidatedResult:
         ),
         expected_length=n_traces,
         label='trace field-composition',
+    )
+    _validate_optional_arrays(
+        result=result,
+        names=(
+            'final_trace_shift_s_sorted',
+            'final_trace_static_status_sorted',
+            'final_trace_static_valid_mask_sorted',
+            'applied_field_shift_s_sorted',
+        ),
+        expected_length=n_traces,
+        label='final trace field-composition',
     )
     if np.any((result.row_trace_index_sorted < 0) | (result.row_trace_index_sorted >= n_traces)):
         raise RefractionStaticArtifactError(
@@ -4337,11 +4355,37 @@ def _total_with_field_shift_s(
 def _final_trace_shift_s_sorted(
     result: RefractionDatumStaticsResult,
 ) -> np.ndarray:
+    if result.final_trace_shift_s_sorted is not None:
+        return _float_array(result.final_trace_shift_s_sorted)
     return _total_with_field_shift_s(
         refraction_shift_s=_base_refraction_trace_shift_s_sorted_array(result),
         field_shift_s=_trace_field_shift_s_sorted_array(result),
         field_status=_trace_field_static_status_sorted_array(result),
     )
+
+
+def _final_trace_static_status_sorted_array(
+    result: RefractionDatumStaticsResult,
+) -> np.ndarray:
+    if result.final_trace_static_status_sorted is not None:
+        return _string_array(result.final_trace_static_status_sorted)
+    return _string_array(result.trace_static_status_sorted)
+
+
+def _final_trace_static_valid_mask_sorted_array(
+    result: RefractionDatumStaticsResult,
+) -> np.ndarray:
+    if result.final_trace_static_valid_mask_sorted is not None:
+        return _bool_array(result.final_trace_static_valid_mask_sorted)
+    return _bool_array(result.trace_static_valid_mask_sorted)
+
+
+def _applied_field_shift_s_sorted_array(
+    result: RefractionDatumStaticsResult,
+) -> np.ndarray:
+    if result.applied_field_shift_s_sorted is not None:
+        return _float_array(result.applied_field_shift_s_sorted)
+    return np.zeros(int(result.sorted_trace_index.shape[0]), dtype=np.float64)
 
 
 def _has_node_3layer_static_fields(result: RefractionDatumStaticsResult) -> bool:
