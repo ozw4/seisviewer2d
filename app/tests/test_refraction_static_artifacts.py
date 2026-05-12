@@ -20,6 +20,7 @@ from app.services.refraction_static_artifacts import (
     REFRACTION_STATICS_CSV_NAME,
     REFRACTION_STATIC_ARTIFACTS_JSON_NAME,
     REFRACTION_STATIC_COMPONENTS_CSV_NAME,
+    REFRACTION_STATIC_HISTORY_JSON_NAME,
     REFRACTION_STATIC_QC_JSON_NAME,
     REFRACTION_STATIC_SOLUTION_NPZ_NAME,
     REFRACTION_V3_CELL_SOLVER_HISTORY_CSV_NAME,
@@ -125,6 +126,7 @@ EXPECTED_FILENAMES = {
     NEAR_SURFACE_MODEL_CSV_NAME,
     FIRST_BREAK_RESIDUALS_CSV_NAME,
     REFRACTION_STATIC_COMPONENTS_CSV_NAME,
+    REFRACTION_STATIC_HISTORY_JSON_NAME,
     SOURCE_STATIC_TABLE_CSV_NAME,
     RECEIVER_STATIC_TABLE_CSV_NAME,
     SOURCE_RECEIVER_STATIC_TABLE_NPZ_NAME,
@@ -169,6 +171,7 @@ def test_write_refraction_static_artifacts_npz_schema(tmp_path: Path) -> None:
     assert paths.artifact_names == (
         REFRACTION_STATIC_SOLUTION_NPZ_NAME,
         REFRACTION_STATIC_QC_JSON_NAME,
+        REFRACTION_STATIC_HISTORY_JSON_NAME,
         REFRACTION_STATICS_CSV_NAME,
         NEAR_SURFACE_MODEL_CSV_NAME,
         FIRST_BREAK_RESIDUALS_CSV_NAME,
@@ -282,7 +285,7 @@ def test_write_refraction_static_artifacts_qc_json(tmp_path: Path) -> None:
     assert payload['status_counts']['trace_static_status']['ok'] == 3
     assert payload['status_counts']['node_datum_status']['ok'] == 2
     assert payload['first_break_fit']['residual_rms_ms'] == pytest.approx(1.0)
-    assert len(payload['artifacts']) == 9
+    assert len(payload['artifacts']) == 10
     artifact_names = {item['name'] for item in payload['artifacts']}
     assert REFRACTION_V1_QC_JSON_NAME not in artifact_names
     assert REFRACTION_V1_ESTIMATES_CSV_NAME not in artifact_names

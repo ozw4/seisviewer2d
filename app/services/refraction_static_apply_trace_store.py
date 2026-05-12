@@ -26,8 +26,10 @@ from app.services.refraction_static_artifacts import (
     NEAR_SURFACE_MODEL_CSV_NAME,
     REFRACTION_STATICS_CSV_NAME,
     REFRACTION_STATIC_COMPONENTS_CSV_NAME,
+    REFRACTION_STATIC_HISTORY_JSON_NAME,
     REFRACTION_STATIC_QC_JSON_NAME,
     REFRACTION_STATIC_SOLUTION_NPZ_NAME,
+    refraction_static_double_application_qc,
 )
 from app.services.refraction_static_types import (
     RefractionDatumStaticsResult,
@@ -834,28 +836,17 @@ def _with_double_application_policy(
     source_meta: Mapping[str, object],
     selected: _SelectedTraceShiftForApplication,
 ) -> _SelectedTraceShiftForApplication:
-    source_derived = source_meta.get('derived')
-    if not isinstance(source_derived, dict):
+    qc = refraction_static_double_application_qc(req=req, source_meta=source_meta)
+    if qc.get('status') == 'checked':
         return selected
-    components = _component_dicts(source_derived)
-    existing = [
-        component
-        for component in components
-        if component.get('name') == 'refraction_static_correction'
-    ]
-    if not existing:
-        return selected
-
-    policy = req.field_corrections.composition.double_application_policy
-    message = (
-        'source TraceStore already has refraction_static_correction lineage; '
-        'applying another refraction static correction may double-apply statics'
+    message = str(
+        qc.get('message')
+        or 'static history double-application policy rejected the job'
     )
-    if policy == 'fail':
+    if qc.get('status') == 'duplicate_rejected':
         raise RefractionStaticTraceStoreApplyError(message)
-    if policy == 'warn':
-        return replace(selected, warnings=(*selected.warnings, message))
-    return selected
+    warnings = tuple(str(item) for item in qc.get('warnings', []) if item)
+    return replace(selected, warnings=(*selected.warnings, *warnings))
 
 
 def _build_derived_metadata(
@@ -1034,6 +1025,7 @@ def _corrected_artifact_names() -> list[str]:
         NEAR_SURFACE_MODEL_CSV_NAME,
         FIRST_BREAK_RESIDUALS_CSV_NAME,
         REFRACTION_STATIC_COMPONENTS_CSV_NAME,
+        REFRACTION_STATIC_HISTORY_JSON_NAME,
         CORRECTED_FILE_JSON_NAME,
         REFRACTION_STATIC_APPLY_QC_JSON_NAME,
     ]

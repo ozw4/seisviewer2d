@@ -511,6 +511,7 @@ refraction_static_components.csv
 source_static_table.csv
 receiver_static_table.csv
 source_receiver_static_table.npz
+refraction_static_history.json
 refraction_static_artifacts.json
 ```
 
@@ -580,7 +581,29 @@ corrected_file.json
 refraction_static_apply_qc.json
 ```
 
-## 8. Source and Receiver Table Columns
+## 8. Static History and Double-Application Guard
+
+Every public refraction statics job writes `refraction_static_history.json`.
+The history artifact records the repo sign convention, input file ID, output
+file ID when a corrected TraceStore is registered, the cumulative shift artifact
+and field, and each component with whether it was included in the trace-shift
+field. Field components use the request path
+`field_corrections.composition.apply_to_trace_shift`; when false, source-depth,
+uphole, and manual-static components may be written as artifacts without being
+included in the applied trace shift.
+
+`field_corrections.composition.double_application_policy` controls best-effort
+guards against applying components already present in input TraceStore lineage:
+
+- `warn`: proceed and write a QC/history warning.
+- `fail`: reject the job with a clear duplicate-component error.
+- `allow`: proceed and record that duplicate components were allowed.
+
+The guard reads TraceStore `meta.json` derived-component metadata when present.
+It does not inspect SEG-Y static headers and does not implement a project-wide
+static registry.
+
+## 9. Source and Receiver Table Columns
 
 The source and receiver static tables repeat the sign convention on every row:
 
@@ -687,7 +710,7 @@ milliseconds. The per-layer QC summary columns `pick_count_by_layer`,
 `residual_mad_by_layer_ms` are CSV-only fields and are not part of the NPZ
 schema.
 
-## 9. Cell and Coordinate Modes
+## 10. Cell and Coordinate Modes
 
 Velocity modes:
 
@@ -729,7 +752,7 @@ cell_y_m = 0
 Line mode requires `number_of_cell_y=1`; it does not estimate line origin or
 azimuth automatically.
 
-## 10. Recommended Synthetic Validation Tests
+## 11. Recommended Synthetic Validation Tests
 
 Recommended coverage for future changes:
 

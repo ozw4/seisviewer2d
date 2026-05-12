@@ -21,7 +21,12 @@ from app.services.job_artifact_refs import resolve_job_artifact_path
 from app.services.refraction_static_apply_trace_store import (
     apply_refraction_statics_to_trace_store,
 )
-from app.services.refraction_static_artifacts import write_refraction_static_artifacts
+from app.services.refraction_static_artifacts import (
+    REFRACTION_STATIC_HISTORY_JSON_NAME,
+    refraction_static_double_application_qc,
+    write_refraction_static_artifacts,
+    write_refraction_static_history_json,
+)
 from app.services.refraction_static_datum import (
     build_refraction_datum_statics,
     write_refraction_datum_statics_artifacts,
@@ -473,6 +478,13 @@ def _finish_refraction_static_apply_job(
                     corrected_store_path=str(
                         corrected_result.corrected_trace_store_path
                     ),
+                )
+            if isinstance(result, RefractionDatumStaticsResult):
+                write_refraction_static_history_json(
+                    result=result,
+                    req=req,
+                    path=job_dir / REFRACTION_STATIC_HISTORY_JSON_NAME,
+                    output_file_id=corrected_result.corrected_file_id,
                 )
         _set_job_progress_message(
             state,
@@ -1004,6 +1016,53 @@ def _source_depth_double_count_guard_qc(
     return 'checked', []
 
 
+def _with_static_history_double_application_qc(
+    *,
+    result: RefractionDatumStaticsResult,
+    req: RefractionStaticApplyRequest,
+    state: AppState,
+) -> RefractionDatumStaticsResult:
+    source_meta = _source_trace_store_meta_for_static_history(req=req, state=state)
+    if source_meta is None:
+        return result
+    qc = refraction_static_double_application_qc(req=req, source_meta=source_meta)
+    if qc.get('status') == 'duplicate_rejected':
+        message = qc.get('message')
+        raise ValueError(
+            str(message)
+            if message
+            else 'static history double-application policy rejected the job'
+        )
+    if qc.get('status') in {'duplicate_warned', 'duplicate_allowed'}:
+        return replace(
+            result,
+            qc={
+                **result.qc,
+                'static_history': qc,
+            },
+        )
+    return result
+
+
+def _source_trace_store_meta_for_static_history(
+    *,
+    req: RefractionStaticApplyRequest,
+    state: AppState,
+) -> dict[str, object] | None:
+    try:
+        store_path = Path(state.file_registry.get_store_path(req.file_id))
+    except Exception:  # noqa: BLE001
+        return None
+    meta_path = store_path / 'meta.json'
+    if not meta_path.is_file():
+        return None
+    try:
+        payload = json.loads(meta_path.read_text(encoding='utf-8'))
+    except Exception:  # noqa: BLE001
+        return None
+    return payload if isinstance(payload, dict) else None
+
+
 def _run_public_multilayer_refraction_static_apply_job(
     *,
     job_id: str,
@@ -1062,6 +1121,11 @@ def _run_public_multilayer_refraction_static_apply_job(
         result=datum_result,
         input_model=input_model,
         req=req,
+    )
+    datum_result = _with_static_history_double_application_qc(
+        result=datum_result,
+        req=req,
+        state=state,
     )
     _set_job_progress_message(
         state,
@@ -1216,6 +1280,11 @@ def _run_refraction_static_apply_job_body(
         result=datum_result,
         input_model=weathering_input_model,
         req=active_req,
+    )
+    datum_result = _with_static_history_double_application_qc(
+        result=datum_result,
+        req=active_req,
+        state=state,
     )
     _set_job_progress_message(
         state,
