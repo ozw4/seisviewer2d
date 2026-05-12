@@ -9,10 +9,16 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Literal, cast
 
-from app.services.refraction_static_export_types import (
-    REFRACTION_STATIC_EXPORT_SIGN_CONVENTION,
-    RefractionStaticEndpointKind,
+from app.services.refraction_static_export_units import (
+    REFRACTION_STATIC_REPO_SIGN_CONVENTION,
+    RefractionStaticExportUnitError,
+    RefractionStaticExportUnits,
+    RefractionStaticSignConventionError,
+    import_shift_seconds_from_row,
+    normalize_export_units,
+    validate_import_sign_convention,
 )
+from app.services.refraction_static_export_types import RefractionStaticEndpointKind
 from app.services.refraction_static_status import REFRACTION_STATIC_STATUSES
 
 CANONICAL_STATIC_TABLE_FORMAT_NAME = 'canonical_static_table'
@@ -66,6 +72,7 @@ _OPTIONAL_NUMERIC_COLUMNS = frozenset(
 _KNOWN_COLUMNS = frozenset(
     set(CANONICAL_STATIC_TABLE_REQUIRED_COLUMNS)
     | set(CANONICAL_STATIC_TABLE_OPTIONAL_COLUMNS)
+    | {'applied_shift_s', 'applied_shift'}
 )
 
 
@@ -114,6 +121,8 @@ def validate_canonical_static_table_csv(
     *,
     allowed_passthrough_statuses: Iterable[str] = (),
     supported_format_versions: Iterable[int] = (CANONICAL_STATIC_TABLE_FORMAT_VERSION,),
+    sign_convention_override: str | None = None,
+    shift_units: RefractionStaticExportUnits | str | None = None,
 ) -> RefractionStaticTableValidationResult:
     """Load and validate an M5 canonical static-table CSV."""
     table_path = Path(path)
@@ -126,6 +135,8 @@ def validate_canonical_static_table_csv(
         columns=columns,
         allowed_passthrough_statuses=allowed_passthrough_statuses,
         supported_format_versions=supported_format_versions,
+        sign_convention_override=sign_convention_override,
+        shift_units=shift_units,
     )
 
 
@@ -135,15 +146,26 @@ def validate_canonical_static_table_rows(
     columns: Sequence[str] | None = None,
     allowed_passthrough_statuses: Iterable[str] = (),
     supported_format_versions: Iterable[int] = (CANONICAL_STATIC_TABLE_FORMAT_VERSION,),
+    sign_convention_override: str | None = None,
+    shift_units: RefractionStaticExportUnits | str | None = None,
 ) -> RefractionStaticTableValidationResult:
     """Validate M5 canonical static-table rows and normalize shifts to seconds."""
     row_tuple = tuple(rows)
     supplied_columns = tuple(columns) if columns is not None else _columns_from_rows(row_tuple)
-    missing_columns = [
+    normalized_shift_units = _normalize_optional_units(shift_units)
+    required_columns = [
         column
         for column in CANONICAL_STATIC_TABLE_REQUIRED_COLUMNS
-        if column not in supplied_columns
+        if column not in {'applied_shift_ms', 'sign_convention'}
     ]
+    if sign_convention_override is None:
+        required_columns.append('sign_convention')
+    missing_columns = [column for column in required_columns if column not in supplied_columns]
+    if not _has_apply_shift_column(
+        supplied_columns,
+        metadata_units=normalized_shift_units,
+    ):
+        missing_columns.append('applied_shift_ms')
     warnings: list[str] = []
     errors: list[str] = []
     invalid_rows: set[int] = set()
@@ -222,21 +244,18 @@ def validate_canonical_static_table_rows(
             row_number=row_number,
             errors=errors,
         )
-        sign_convention = _required_text(
+        sign_convention = _sign_convention(
             row,
-            'sign_convention',
             row_number=row_number,
+            override=sign_convention_override,
             errors=errors,
         )
-        if (
-            sign_convention is not None
-            and sign_convention != REFRACTION_STATIC_EXPORT_SIGN_CONVENTION
-        ):
+        if sign_convention is not None and sign_convention != REFRACTION_STATIC_REPO_SIGN_CONVENTION:
             _row_error(
                 errors,
                 row_number,
                 'sign_convention must be '
-                f'{REFRACTION_STATIC_EXPORT_SIGN_CONVENTION!r}',
+                f'{REFRACTION_STATIC_REPO_SIGN_CONVENTION!r}',
             )
 
         applied_shift_s = _applied_shift_s(
@@ -244,6 +263,7 @@ def validate_canonical_static_table_rows(
             row_number=row_number,
             static_status=static_status,
             allowed_passthrough_statuses=passthrough_statuses,
+            metadata_units=normalized_shift_units,
             errors=errors,
         )
         _validate_static_status(
@@ -287,7 +307,7 @@ def validate_canonical_static_table_rows(
             and endpoint_kind is not None
             and endpoint_key is not None
             and static_status is not None
-            and sign_convention == REFRACTION_STATIC_EXPORT_SIGN_CONVENTION
+            and sign_convention == REFRACTION_STATIC_REPO_SIGN_CONVENTION
         ):
             normalized_rows.append(
                 RefractionStaticTableNormalizedRow(
@@ -326,6 +346,25 @@ def _columns_from_rows(rows: tuple[Mapping[str, Any], ...]) -> tuple[str, ...]:
                 columns.append(key)
                 seen.add(key)
     return tuple(columns)
+
+
+def _normalize_optional_units(
+    units: RefractionStaticExportUnits | str | None,
+) -> RefractionStaticExportUnits | None:
+    if units is None:
+        return None
+    return normalize_export_units(str(units))
+
+
+def _has_apply_shift_column(
+    columns: Sequence[str],
+    *,
+    metadata_units: RefractionStaticExportUnits | None,
+) -> bool:
+    column_set = set(columns)
+    if 'applied_shift_s' in column_set or 'applied_shift_ms' in column_set:
+        return True
+    return metadata_units is not None and 'applied_shift' in column_set
 
 
 def _required_text(
@@ -391,40 +430,113 @@ def _endpoint_kind(
     return cast(RefractionStaticEndpointKind, normalized)
 
 
+def _sign_convention(
+    row: Mapping[str, Any],
+    *,
+    row_number: int,
+    override: str | None,
+    errors: list[str],
+) -> str | None:
+    try:
+        return validate_import_sign_convention(
+            row.get('sign_convention'),
+            override=override,
+        )
+    except RefractionStaticSignConventionError as exc:
+        _row_error(errors, row_number, str(exc))
+        return None
+
+
 def _applied_shift_s(
     row: Mapping[str, Any],
     *,
     row_number: int,
     static_status: str | None,
     allowed_passthrough_statuses: set[str],
+    metadata_units: RefractionStaticExportUnits | None,
     errors: list[str],
 ) -> float | None:
-    raw_value = row.get('applied_shift_ms')
     if static_status == 'ok':
-        value = _required_float(
-            raw_value,
-            column='applied_shift_ms',
+        return _required_shift_s(
+            row,
             row_number=row_number,
+            metadata_units=metadata_units,
             errors=errors,
         )
-        return None if value is None else value / 1000.0
     if static_status in allowed_passthrough_statuses:
-        value = _optional_float(raw_value)
+        value = _optional_shift_s(
+            row,
+            row_number=row_number,
+            metadata_units=metadata_units,
+            errors=errors,
+        )
         if value is None:
             return None
         if math.isfinite(value):
-            return value / 1000.0
-        _row_error(errors, row_number, 'applied_shift_ms must be finite when present')
+            return value
+        _row_error(errors, row_number, 'applied shift must be finite when present')
         return None
-    if _optional_text(raw_value) is None:
+    if not _row_has_shift_value(row):
         return None
-    value = _required_float(
-        raw_value,
-        column='applied_shift_ms',
+    return _required_shift_s(
+        row,
         row_number=row_number,
+        metadata_units=metadata_units,
         errors=errors,
     )
-    return None if value is None else value / 1000.0
+
+
+def _required_shift_s(
+    row: Mapping[str, Any],
+    *,
+    row_number: int,
+    metadata_units: RefractionStaticExportUnits | None,
+    errors: list[str],
+) -> float | None:
+    try:
+        value, column = import_shift_seconds_from_row(
+            row,
+            base_name='applied_shift',
+            metadata_units=metadata_units,
+            required=True,
+        )
+    except RefractionStaticExportUnitError as exc:
+        _row_error(errors, row_number, str(exc))
+        return None
+    if value is None or column is None:
+        _row_error(errors, row_number, 'missing required value for applied_shift_ms')
+        return None
+    if not math.isfinite(value):
+        _row_error(errors, row_number, f'{column} must be finite')
+        return None
+    return value
+
+
+def _optional_shift_s(
+    row: Mapping[str, Any],
+    *,
+    row_number: int,
+    metadata_units: RefractionStaticExportUnits | None,
+    errors: list[str],
+) -> float | None:
+    try:
+        value, _column = import_shift_seconds_from_row(
+            row,
+            base_name='applied_shift',
+            metadata_units=metadata_units,
+            required=False,
+        )
+    except RefractionStaticExportUnitError as exc:
+        _row_error(errors, row_number, str(exc))
+        return None
+    return value
+
+
+def _row_has_shift_value(row: Mapping[str, Any]) -> bool:
+    return any(
+        _optional_text(row.get(column)) is not None
+        for column in ('applied_shift_ms', 'applied_shift_s', 'applied_shift')
+    )
 
 
 def _validate_static_status(

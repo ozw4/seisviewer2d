@@ -25,6 +25,10 @@ from app.services.refraction_static_design_matrix import (
     LOW_FOLD_CELL_REJECTION_REASON,
     LOW_FOLD_CELL_VELOCITY_STATUS,
 )
+from app.services.refraction_static_export_units import (
+    REFRACTION_STATIC_REPO_SIGN_CONVENTION,
+    seconds_to_export_units,
+)
 from app.services.refraction_static_layer_config import (
     normalize_refraction_static_layers,
 )
@@ -202,7 +206,7 @@ ARTIFACT_VERSION = '1.0'
 METHOD = 'gli_variable_thickness'
 WORKFLOW = 'refraction_statics'
 STATIC_COMPONENT = 'final_refraction'
-SIGN_CONVENTION = 'corrected(t) = raw(t - shift_s)'
+SIGN_CONVENTION = REFRACTION_STATIC_REPO_SIGN_CONVENTION
 POSITIVE_SHIFT_DESCRIPTION = 'event appears later in corrected data'
 NEGATIVE_SHIFT_DESCRIPTION = 'event appears earlier in corrected data'
 
@@ -6794,7 +6798,7 @@ def _csv_grid_float(value: object) -> str | float:
 
 def _csv_ms(value_s: object) -> str | float:
     out = _csv_float(value_s)
-    return '' if out == '' else float(out) * 1000.0
+    return '' if out == '' else seconds_to_export_units(out, 'milliseconds')
 
 
 def _csv_bool(value: object) -> str:

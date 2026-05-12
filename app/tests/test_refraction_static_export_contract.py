@@ -27,6 +27,9 @@ from app.services.refraction_static_export_service import (
     REFRACTION_STATIC_EXPORT_REQUEST_JSON_NAME,
     run_refraction_static_export_job,
 )
+from app.services.refraction_static_export_units import (
+    REFRACTION_STATIC_REPO_SIGN_CONVENTION,
+)
 from app.tests._refraction_static_synthetic import synthetic_refraction_apply_request
 
 
@@ -274,3 +277,4 @@ def test_run_refraction_static_export_job_writes_requested_format_metadata(
     assert meta['export']['requested_formats'] == list(
         REFRACTION_STATIC_DEFAULT_EXPORT_FORMATS
     )
+    assert meta['export']['sign_convention'] == REFRACTION_STATIC_REPO_SIGN_CONVENTION

@@ -5,6 +5,10 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Final, Literal
 
+from app.services.refraction_static_export_units import (
+    REFRACTION_STATIC_REPO_SIGN_CONVENTION,
+)
+
 RefractionStaticEndpointKind = Literal['source', 'receiver']
 RefractionStaticExportFormatName = Literal[
     'canonical_static_table',
@@ -16,7 +20,7 @@ RefractionStaticExportFormatName = Literal[
 RefractionStaticSignConvention = Literal['corrected(t) = raw(t - shift_s)']
 
 REFRACTION_STATIC_EXPORT_SIGN_CONVENTION: Final[RefractionStaticSignConvention] = (
-    'corrected(t) = raw(t - shift_s)'
+    REFRACTION_STATIC_REPO_SIGN_CONVENTION
 )
 REFRACTION_STATIC_EXPORT_UNITS: Final[str] = (
     'seconds_internal; milliseconds_csv; meters; meters_per_second'

@@ -27,6 +27,9 @@ from app.services.refraction_static_artifacts import (
     SOURCE_RECEIVER_STATIC_TABLE_NPZ_NAME,
     SOURCE_STATIC_TABLE_CSV_NAME,
 )
+from app.services.refraction_static_export_units import (
+    REFRACTION_STATIC_REPO_SIGN_CONVENTION,
+)
 
 REFRACTION_STATIC_EXPORT_REQUEST_JSON_NAME = 'refraction_static_export_request.json'
 REFRACTION_STATIC_EXPORT_JOB_META_JSON_NAME = 'job_meta.json'
@@ -266,6 +269,7 @@ def _refraction_static_export_job_payload(
             'requested_formats': list(source.requested_formats),
             'units': req.export.units,
             'rounding_ms': req.export.rounding_ms,
+            'sign_convention': REFRACTION_STATIC_REPO_SIGN_CONVENTION,
             'include_inactive_endpoints': bool(req.export.include_inactive_endpoints),
             'include_legacy_alias_columns': bool(
                 req.export.include_legacy_alias_columns
