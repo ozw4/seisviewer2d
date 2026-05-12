@@ -1191,6 +1191,11 @@ def _run_refraction_static_apply_job_body(
         progress=0.90,
         message='writing_refraction_static_artifacts',
     )
+    if (
+        isinstance(datum_result, RefractionDatumStaticsResult)
+        and datum_result.field_composition_qc is not None
+    ):
+        write_refraction_datum_statics_artifacts(job_dir, datum_result)
     write_refraction_static_artifacts(
         result=datum_result,
         req=active_req,

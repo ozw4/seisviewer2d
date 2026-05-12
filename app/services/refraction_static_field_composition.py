@@ -22,7 +22,7 @@ _STATUS_DTYPE = '<U64'
 _ENDPOINT_KEY_DTYPE = object
 _OK_STATUS = 'ok'
 _NOT_APPLICABLE_STATUS = 'not_applicable'
-_NOOP_STATUSES = {_OK_STATUS, _NOT_APPLICABLE_STATUS, 'none', ''}
+_NOOP_STATUSES = {_OK_STATUS, _NOT_APPLICABLE_STATUS, 'not_enabled', 'none', ''}
 _STATUS_PRIORITY = (
     'missing_manual_static',
     'missing_uphole_time',

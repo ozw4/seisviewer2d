@@ -196,6 +196,12 @@ _TRACE_PREVIEW_COLUMNS = (
     'first_break_residual_ms',
 )
 
+_FIELD_DISABLED_STATUS = 'not_enabled'
+_FIELD_NOT_APPLICABLE_STATUS = 'not_applicable'
+_FIELD_TOTAL_VALID_STATUSES = frozenset(
+    {'ok', _FIELD_DISABLED_STATUS, _FIELD_NOT_APPLICABLE_STATUS}
+)
+
 
 class RefractionDatumStaticsError(ValueError):
     """Raised when datum refraction static outputs cannot be built."""
@@ -936,7 +942,11 @@ def write_refraction_datum_statics_artifacts(
     _write_csv_atomic(node_path, _node_rows(result), _NODE_COLUMNS)
     _write_csv_atomic(source_path, _source_rows(result), _SOURCE_COLUMNS)
     _write_csv_atomic(receiver_path, _receiver_rows(result), _RECEIVER_COLUMNS)
-    _write_csv_atomic(trace_path, _trace_preview_rows(result), _TRACE_PREVIEW_COLUMNS)
+    _write_csv_atomic(
+        trace_path,
+        _trace_preview_rows(result),
+        _trace_preview_columns(result),
+    )
     return {
         'qc_json': qc_path,
         'nodes_csv': node_path,
@@ -3352,52 +3362,234 @@ def _receiver_rows(result: RefractionDatumStaticsResult) -> list[dict[str, Any]]
     return rows
 
 
+def _insert_after(
+    columns: tuple[str, ...],
+    anchor: str,
+    additions: tuple[str, ...],
+) -> tuple[str, ...]:
+    index = columns.index(anchor)
+    return columns[: index + 1] + additions + columns[index + 1 :]
+
+
+def _has_field_correction_composition(
+    result: RefractionDatumStaticsResult,
+) -> bool:
+    present = (
+        result.source_field_shift_s_sorted is not None,
+        result.receiver_field_shift_s_sorted is not None,
+        result.trace_field_shift_s_sorted is not None,
+        result.trace_field_static_status_sorted is not None,
+        result.base_refraction_trace_shift_s_sorted is not None,
+    )
+    if not any(present):
+        return False
+    if not all(present):
+        raise RefractionDatumStaticsError(
+            'field-correction composition arrays must be provided together'
+        )
+    return all(present)
+
+
+def _source_field_shift_s_sorted_array(
+    result: RefractionDatumStaticsResult,
+) -> np.ndarray:
+    if not _has_field_correction_composition(result):
+        return _disabled_field_float_array(int(result.sorted_trace_index.shape[0]))
+    return _optional_field_float_array(
+        result.source_field_shift_s_sorted,
+        int(result.sorted_trace_index.shape[0]),
+    )
+
+
+def _receiver_field_shift_s_sorted_array(
+    result: RefractionDatumStaticsResult,
+) -> np.ndarray:
+    if not _has_field_correction_composition(result):
+        return _disabled_field_float_array(int(result.sorted_trace_index.shape[0]))
+    return _optional_field_float_array(
+        result.receiver_field_shift_s_sorted,
+        int(result.sorted_trace_index.shape[0]),
+    )
+
+
+def _trace_field_shift_s_sorted_array(
+    result: RefractionDatumStaticsResult,
+) -> np.ndarray:
+    if not _has_field_correction_composition(result):
+        return _disabled_field_float_array(int(result.sorted_trace_index.shape[0]))
+    return _optional_field_float_array(
+        result.trace_field_shift_s_sorted,
+        int(result.sorted_trace_index.shape[0]),
+    )
+
+
+def _trace_field_static_status_sorted_array(
+    result: RefractionDatumStaticsResult,
+) -> np.ndarray:
+    if not _has_field_correction_composition(result):
+        return _disabled_field_status_array(int(result.sorted_trace_index.shape[0]))
+    return _optional_field_status_array(
+        result.trace_field_static_status_sorted,
+        int(result.sorted_trace_index.shape[0]),
+    )
+
+
+def _base_refraction_trace_shift_s_sorted_array(
+    result: RefractionDatumStaticsResult,
+) -> np.ndarray:
+    if result.base_refraction_trace_shift_s_sorted is None:
+        return np.ascontiguousarray(
+            result.refraction_trace_shift_s_sorted,
+            dtype=np.float64,
+        )
+    return np.ascontiguousarray(
+        result.base_refraction_trace_shift_s_sorted,
+        dtype=np.float64,
+    )
+
+
+def _optional_field_float_array(value: object, shape: int) -> np.ndarray:
+    if value is None:
+        raise RefractionDatumStaticsError('field correction array is missing')
+    arr = np.ascontiguousarray(value, dtype=np.float64)
+    if arr.shape != (int(shape),):
+        raise RefractionDatumStaticsError(
+            'field correction array has unexpected shape'
+        )
+    return arr
+
+
+def _optional_field_status_array(value: object, shape: int) -> np.ndarray:
+    if value is None:
+        raise RefractionDatumStaticsError(
+            'field correction status array is missing'
+        )
+    raw = [str(item) for item in np.asarray(value).tolist()]
+    max_len = max([1, *(len(item) for item in raw)])
+    arr = np.ascontiguousarray(raw, dtype=f'<U{max_len}')
+    if arr.shape != (int(shape),):
+        raise RefractionDatumStaticsError(
+            'field correction status array has unexpected shape'
+        )
+    return arr
+
+
+def _disabled_field_float_array(shape: int) -> np.ndarray:
+    return np.zeros(int(shape), dtype=np.float64)
+
+
+def _disabled_field_status_array(shape: int) -> np.ndarray:
+    return np.full(int(shape), _FIELD_DISABLED_STATUS, dtype='<U16')
+
+
+def _total_with_field_shift_s(
+    *,
+    refraction_shift_s: np.ndarray,
+    field_shift_s: np.ndarray,
+    field_status: np.ndarray,
+) -> np.ndarray:
+    refraction = np.asarray(refraction_shift_s, dtype=np.float64)
+    field = np.asarray(field_shift_s, dtype=np.float64)
+    status = np.asarray(field_status).astype(str)
+    out = np.full(refraction.shape, np.nan, dtype=np.float64)
+    valid = (
+        np.isin(status, tuple(_FIELD_TOTAL_VALID_STATUSES))
+        & np.isfinite(refraction)
+        & np.isfinite(field)
+    )
+    out[valid] = refraction[valid] + field[valid]
+    return np.ascontiguousarray(out, dtype=np.float64)
+
+
+def _final_trace_shift_s_sorted(
+    result: RefractionDatumStaticsResult,
+) -> np.ndarray:
+    return _total_with_field_shift_s(
+        refraction_shift_s=_base_refraction_trace_shift_s_sorted_array(result),
+        field_shift_s=_trace_field_shift_s_sorted_array(result),
+        field_status=_trace_field_static_status_sorted_array(result),
+    )
+
+
+def _trace_preview_columns(result: RefractionDatumStaticsResult) -> tuple[str, ...]:
+    columns = _insert_after(
+        _TRACE_PREVIEW_COLUMNS,
+        'flat_datum_shift_ms',
+        (
+            'source_field_shift_ms',
+            'receiver_field_shift_ms',
+            'trace_field_shift_ms',
+        ),
+    )
+    return _insert_after(
+        columns,
+        'refraction_trace_shift_ms',
+        ('final_trace_shift_ms', 'trace_field_static_status'),
+    )
+
+
 def _trace_preview_rows(result: RefractionDatumStaticsResult) -> list[dict[str, Any]]:
     rows: list[dict[str, Any]] = []
+    source_field_shift_s = _source_field_shift_s_sorted_array(result)
+    receiver_field_shift_s = _receiver_field_shift_s_sorted_array(result)
+    trace_field_shift_s = _trace_field_shift_s_sorted_array(result)
+    trace_field_status = _trace_field_static_status_sorted_array(result)
+    base_refraction_trace_shift_s = _base_refraction_trace_shift_s_sorted_array(result)
+    final_trace_shift_s = _final_trace_shift_s_sorted(result)
     for index in range(int(result.sorted_trace_index.shape[0])):
-        rows.append(
-            {
-                'sorted_trace_index': int(result.sorted_trace_index[index]),
-                'valid_observation': bool(result.valid_observation_mask_sorted[index]),
-                'used_observation': bool(result.used_observation_mask_sorted[index]),
-                'trace_static_valid': bool(
-                    result.trace_static_valid_mask_sorted[index]
-                ),
-                'source_node_id': int(result.source_node_id_sorted[index]),
-                'receiver_node_id': int(result.receiver_node_id_sorted[index]),
-                'source_surface_elevation_m': _csv_float(
-                    result.source_surface_elevation_m_sorted[index]
-                ),
-                'receiver_surface_elevation_m': _csv_float(
-                    result.receiver_surface_elevation_m_sorted[index]
-                ),
-                'source_floating_datum_elevation_m': _csv_float(
-                    result.source_floating_datum_elevation_m_sorted[index]
-                ),
-                'receiver_floating_datum_elevation_m': _csv_float(
-                    result.receiver_floating_datum_elevation_m_sorted[index]
-                ),
-                'weathering_replacement_trace_shift_ms': _csv_float(
-                    result.weathering_replacement_trace_shift_s_sorted[index] * 1000.0
-                ),
-                'floating_datum_elevation_shift_ms': _csv_float(
-                    result.floating_datum_elevation_shift_s_sorted[index] * 1000.0
-                ),
-                'flat_datum_shift_ms': _csv_float(
-                    result.flat_datum_shift_s_sorted[index] * 1000.0
-                ),
-                'refraction_trace_shift_ms': _csv_float(
-                    result.refraction_trace_shift_s_sorted[index] * 1000.0
-                ),
-                'trace_static_status': str(result.trace_static_status_sorted[index]),
-                'estimated_first_break_time_ms': _csv_float(
-                    result.estimated_first_break_time_s_sorted[index] * 1000.0
-                ),
-                'first_break_residual_ms': _csv_float(
-                    result.first_break_residual_s_sorted[index] * 1000.0
-                ),
-            }
-        )
+        row = {
+            'sorted_trace_index': int(result.sorted_trace_index[index]),
+            'valid_observation': bool(result.valid_observation_mask_sorted[index]),
+            'used_observation': bool(result.used_observation_mask_sorted[index]),
+            'trace_static_valid': bool(result.trace_static_valid_mask_sorted[index]),
+            'source_node_id': int(result.source_node_id_sorted[index]),
+            'receiver_node_id': int(result.receiver_node_id_sorted[index]),
+            'source_surface_elevation_m': _csv_float(
+                result.source_surface_elevation_m_sorted[index]
+            ),
+            'receiver_surface_elevation_m': _csv_float(
+                result.receiver_surface_elevation_m_sorted[index]
+            ),
+            'source_floating_datum_elevation_m': _csv_float(
+                result.source_floating_datum_elevation_m_sorted[index]
+            ),
+            'receiver_floating_datum_elevation_m': _csv_float(
+                result.receiver_floating_datum_elevation_m_sorted[index]
+            ),
+            'weathering_replacement_trace_shift_ms': _csv_float(
+                result.weathering_replacement_trace_shift_s_sorted[index] * 1000.0
+            ),
+            'floating_datum_elevation_shift_ms': _csv_float(
+                result.floating_datum_elevation_shift_s_sorted[index] * 1000.0
+            ),
+            'flat_datum_shift_ms': _csv_float(
+                result.flat_datum_shift_s_sorted[index] * 1000.0
+            ),
+            'source_field_shift_ms': _csv_float(
+                source_field_shift_s[index] * 1000.0
+            ),
+            'receiver_field_shift_ms': _csv_float(
+                receiver_field_shift_s[index] * 1000.0
+            ),
+            'trace_field_shift_ms': _csv_float(
+                trace_field_shift_s[index] * 1000.0
+            ),
+            'refraction_trace_shift_ms': _csv_float(
+                base_refraction_trace_shift_s[index] * 1000.0
+            ),
+            'final_trace_shift_ms': _csv_float(
+                final_trace_shift_s[index] * 1000.0
+            ),
+            'trace_field_static_status': str(trace_field_status[index]),
+            'trace_static_status': str(result.trace_static_status_sorted[index]),
+            'estimated_first_break_time_ms': _csv_float(
+                result.estimated_first_break_time_s_sorted[index] * 1000.0
+            ),
+            'first_break_residual_ms': _csv_float(
+                result.first_break_residual_s_sorted[index] * 1000.0
+            ),
+        }
+        rows.append(row)
     return rows
 
 
