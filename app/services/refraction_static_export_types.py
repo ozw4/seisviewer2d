@@ -33,6 +33,7 @@ class RefractionStaticEndpointExportRow:
 
     endpoint_kind: RefractionStaticEndpointKind
     endpoint_key: str
+    endpoint_id: str | int | None = None
     station_id: str | int | None = None
     node_id: int | None = None
     x_m: float | None = None
@@ -48,6 +49,7 @@ class RefractionStaticEndpointExportRow:
     sh1_m: float | None = None
     sh2_m: float | None = None
     sh3_m: float | None = None
+    total_weathering_thickness_m: float | None = None
     weathering_correction_s: float | None = None
     elevation_correction_s: float | None = None
     field_correction_s: float | None = None
@@ -61,6 +63,7 @@ class RefractionStaticExportBundle:
 
     source_rows: tuple[RefractionStaticEndpointExportRow, ...] = ()
     receiver_rows: tuple[RefractionStaticEndpointExportRow, ...] = ()
+    source_job_id: str | None = None
     sign_convention: str = REFRACTION_STATIC_EXPORT_SIGN_CONVENTION
     units: str = REFRACTION_STATIC_EXPORT_UNITS
 

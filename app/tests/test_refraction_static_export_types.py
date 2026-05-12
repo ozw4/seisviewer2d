@@ -76,6 +76,7 @@ def test_export_row_allows_multilayer_fields() -> None:
     row = RefractionStaticEndpointExportRow(
         endpoint_kind='source',
         endpoint_key='source:1001',
+        endpoint_id=1001,
         station_id=1001,
         node_id=7,
         x_m=1234.5,
@@ -91,6 +92,7 @@ def test_export_row_allows_multilayer_fields() -> None:
         sh1_m=8.0,
         sh2_m=12.0,
         sh3_m=16.0,
+        total_weathering_thickness_m=36.0,
         weathering_correction_s=-0.004,
         elevation_correction_s=0.001,
         field_correction_s=0.002,
@@ -116,6 +118,7 @@ def test_export_row_allows_multilayer_fields() -> None:
         'sh1_m',
         'sh2_m',
         'sh3_m',
+        'total_weathering_thickness_m',
         'field_correction_s',
         'total_applied_shift_s',
     } <= row_fields
@@ -142,10 +145,12 @@ def test_export_bundle_carries_sign_convention() -> None:
     bundle = RefractionStaticExportBundle(
         source_rows=(source,),
         receiver_rows=(receiver,),
+        source_job_id='refraction-job',
     )
 
     assert bundle.source_rows == (source,)
     assert bundle.receiver_rows == (receiver,)
+    assert bundle.source_job_id == 'refraction-job'
     assert bundle.sign_convention == REFRACTION_STATIC_EXPORT_SIGN_CONVENTION
     assert bundle.sign_convention == 'corrected(t) = raw(t - shift_s)'
     assert bundle.units == REFRACTION_STATIC_EXPORT_UNITS

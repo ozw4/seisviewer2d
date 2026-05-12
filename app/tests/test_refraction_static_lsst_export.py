@@ -1,0 +1,350 @@
+from __future__ import annotations
+
+import csv
+import io
+import json
+from pathlib import Path
+import subprocess
+import sys
+
+import pytest
+
+from app.services.refraction_static_export_types import (
+    REFRACTION_STATIC_EXPORT_SIGN_CONVENTION,
+    RefractionStaticEndpointExportRow,
+    RefractionStaticExportBundle,
+)
+from app.services.refraction_static_lsst_export import (
+    REFRACTION_LSST_CSV_NAME,
+    REFRACTION_LSST_FORMAT_NAME,
+    REFRACTION_LSST_FORMAT_VERSION,
+    REFRACTION_LSST_REQUIRED_COLUMNS,
+    RefractionStaticLsstExportError,
+    format_refraction_lsst_csv,
+    write_refraction_lsst_csv,
+)
+
+
+_REPO_ROOT = Path(__file__).resolve().parents[2]
+_FORBIDDEN_IMPORTS = {
+    'app.api.routers',
+    'app.api.schemas',
+    'app.main',
+    'app.services.refraction_static_service',
+    'app.trace_store.reader',
+    'numpy',
+    'segyio',
+}
+
+
+def test_lsst_export_imports_dependency_light() -> None:
+    code = f"""
+from __future__ import annotations
+
+import importlib
+import json
+import sys
+
+for name in {sorted(_FORBIDDEN_IMPORTS)!r}:
+    sys.modules.pop(name, None)
+
+module = importlib.import_module('app.services.refraction_static_lsst_export')
+assert module.format_refraction_lsst_csv is not None
+
+forbidden = set({sorted(_FORBIDDEN_IMPORTS)!r})
+print(json.dumps(sorted(name for name in sys.modules if name in forbidden)))
+"""
+    result = subprocess.run(
+        [sys.executable, '-c', code],
+        cwd=_REPO_ROOT,
+        check=True,
+        capture_output=True,
+        text=True,
+        timeout=10.0,
+    )
+
+    assert json.loads(result.stdout) == []
+
+
+def test_lsst_export_header_contains_required_schema_columns() -> None:
+    text = format_refraction_lsst_csv(_basic_bundle())
+    rows, fieldnames = _read_csv_text(text)
+
+    assert tuple(fieldnames) == REFRACTION_LSST_REQUIRED_COLUMNS
+    assert rows[0]['format_name'] == REFRACTION_LSST_FORMAT_NAME
+    assert rows[0]['format_version'] == str(REFRACTION_LSST_FORMAT_VERSION)
+    assert rows[0]['source_job_id'] == 'refraction-job-503'
+    assert rows[0]['sign_convention'] == REFRACTION_STATIC_EXPORT_SIGN_CONVENTION
+
+
+def test_lsst_export_emits_source_and_receiver_t1_rows() -> None:
+    text = format_refraction_lsst_csv(_basic_bundle())
+    rows, _fieldnames = _read_csv_text(text)
+
+    assert [row['endpoint_kind'] for row in rows] == ['source', 'receiver']
+    assert rows[0]['endpoint_key'] == 's100'
+    assert rows[0]['endpoint_id'] == '100'
+    assert rows[0]['t1_ms'] == '12.345600'
+    assert rows[0]['total_static_ms'] == '-3.250000'
+    assert rows[0]['total_applied_shift_ms'] == '-3.250000'
+    assert rows[0]['v1_m_s'] == '800.000'
+    assert rows[1]['endpoint_key'] == 'r200'
+    assert rows[1]['endpoint_id'] == '200'
+    assert rows[1]['t1_ms'] == '23.000000'
+    assert rows[1]['total_applied_shift_ms'] == '4.500000'
+    assert rows[1]['v2_m_s'] == '2300.000'
+
+
+def test_lsst_export_emits_multilayer_columns_when_available() -> None:
+    bundle = RefractionStaticExportBundle(
+        source_job_id='refraction-job-503',
+        source_rows=(
+            RefractionStaticEndpointExportRow(
+                endpoint_kind='source',
+                endpoint_key='s100',
+                endpoint_id=100,
+                node_id=10,
+                x_m=1000.0,
+                y_m=2000.0,
+                elevation_m=25.0,
+                t1_s=0.012,
+                t2_s=0.020,
+                t3_s=0.030,
+                v1_m_s=800.0,
+                v2_m_s=2400.0,
+                v3_m_s=3600.0,
+                vsub_m_s=5000.0,
+                sh1_m=8.0,
+                sh2_m=12.0,
+                sh3_m=16.0,
+                total_weathering_thickness_m=36.0,
+                weathering_correction_s=-0.003,
+                elevation_correction_s=0.001,
+                total_applied_shift_s=-0.004,
+            ),
+        ),
+        receiver_rows=(
+            RefractionStaticEndpointExportRow(
+                endpoint_kind='receiver',
+                endpoint_key='r200',
+                endpoint_id=200,
+                node_id=20,
+                x_m=1010.0,
+                y_m=2010.0,
+                elevation_m=30.0,
+                t1_s=0.011,
+                t2_s=0.021,
+                t3_s=0.031,
+                v1_m_s=800.0,
+                v2_m_s=2350.0,
+                v3_m_s=3650.0,
+                vsub_m_s=5100.0,
+                sh1_m=7.0,
+                sh2_m=11.0,
+                sh3_m=15.0,
+                total_weathering_thickness_m=33.0,
+                weathering_correction_s=-0.002,
+                elevation_correction_s=0.0015,
+                total_applied_shift_s=0.005,
+            ),
+        ),
+    )
+
+    rows, fieldnames = _read_csv_text(format_refraction_lsst_csv(bundle))
+
+    assert {
+        't2_ms',
+        't3_ms',
+        'v3_m_s',
+        'vsub_m_s',
+        'sh2_weathering_thickness_m',
+        'sh3_weathering_thickness_m',
+        'total_weathering_thickness_m',
+    } <= set(fieldnames)
+    assert rows[0]['t2_ms'] == '20.000000'
+    assert rows[0]['t3_ms'] == '30.000000'
+    assert rows[0]['v3_m_s'] == '3600.000'
+    assert rows[0]['vsub_m_s'] == '5000.000'
+    assert rows[0]['total_weathering_thickness_m'] == '36.000'
+    assert rows[1]['t2_ms'] == '21.000000'
+    assert rows[1]['t3_ms'] == '31.000000'
+    assert rows[1]['v3_m_s'] == '3650.000'
+    assert rows[1]['vsub_m_s'] == '5100.000'
+    assert rows[1]['total_weathering_thickness_m'] == '33.000'
+
+
+def test_lsst_export_rejects_invalid_rows_when_configured() -> None:
+    bundle = RefractionStaticExportBundle(
+        source_job_id='refraction-job-503',
+        source_rows=(
+            RefractionStaticEndpointExportRow(
+                endpoint_kind='source',
+                endpoint_key='s-bad',
+                static_status='inactive_endpoint',
+            ),
+        ),
+    )
+
+    with pytest.raises(RefractionStaticLsstExportError, match='inactive_endpoint'):
+        format_refraction_lsst_csv(
+            bundle,
+            fail_on_invalid_static_status=True,
+        )
+
+
+def test_lsst_export_marks_invalid_rows_when_included() -> None:
+    bundle = RefractionStaticExportBundle(
+        source_job_id='refraction-job-503',
+        source_rows=(
+            RefractionStaticEndpointExportRow(
+                endpoint_kind='source',
+                endpoint_key='s-bad',
+                endpoint_id=999,
+                static_status='inactive_endpoint',
+            ),
+        ),
+    )
+
+    rows, _fieldnames = _read_csv_text(
+        format_refraction_lsst_csv(
+            bundle,
+            fail_on_invalid_static_status=False,
+            include_inactive_endpoints=True,
+        )
+    )
+
+    assert rows == [
+        {
+            'format_name': 'lsst',
+            'format_version': '1',
+            'source_job_id': 'refraction-job-503',
+            'endpoint_kind': 'source',
+            'endpoint_key': 's-bad',
+            'endpoint_id': '999',
+            'node_id': '',
+            'x_m': '',
+            'y_m': '',
+            'surface_elevation_m': '',
+            't1_ms': '',
+            'v1_m_s': '',
+            'v2_m_s': '',
+            'sh1_weathering_thickness_m': '',
+            'weathering_correction_ms': '',
+            'elevation_correction_ms': '',
+            'total_static_ms': '',
+            'total_applied_shift_ms': '',
+            'static_status': 'inactive_endpoint',
+            'sign_convention': REFRACTION_STATIC_EXPORT_SIGN_CONVENTION,
+        }
+    ]
+
+
+def test_lsst_export_skips_invalid_rows_when_not_included() -> None:
+    bundle = RefractionStaticExportBundle(
+        source_job_id='refraction-job-503',
+        source_rows=(
+            RefractionStaticEndpointExportRow(
+                endpoint_kind='source',
+                endpoint_key='s-bad',
+                static_status='inactive_endpoint',
+            ),
+        ),
+    )
+
+    text = format_refraction_lsst_csv(
+        bundle,
+        fail_on_invalid_static_status=False,
+        include_inactive_endpoints=False,
+    )
+
+    rows, fieldnames = _read_csv_text(text)
+    assert fieldnames == list(REFRACTION_LSST_REQUIRED_COLUMNS)
+    assert rows == []
+
+
+def test_lsst_export_requires_source_job_id() -> None:
+    with pytest.raises(RefractionStaticLsstExportError, match='source_job_id'):
+        format_refraction_lsst_csv(_basic_bundle(source_job_id=None))
+
+
+def test_lsst_export_requires_documented_values_for_ok_rows() -> None:
+    bundle = RefractionStaticExportBundle(
+        source_job_id='refraction-job-503',
+        source_rows=(
+            RefractionStaticEndpointExportRow(
+                endpoint_kind='source',
+                endpoint_key='s-incomplete',
+                endpoint_id=100,
+                static_status='ok',
+            ),
+        ),
+    )
+
+    with pytest.raises(RefractionStaticLsstExportError, match='node_id'):
+        format_refraction_lsst_csv(bundle)
+
+
+def test_lsst_export_is_deterministic() -> None:
+    bundle = _basic_bundle()
+
+    assert format_refraction_lsst_csv(bundle) == format_refraction_lsst_csv(bundle)
+
+
+def test_lsst_export_writes_expected_file_name(tmp_path: Path) -> None:
+    path = tmp_path / REFRACTION_LSST_CSV_NAME
+
+    write_refraction_lsst_csv(_basic_bundle(), path)
+
+    assert path.read_text(encoding='utf-8') == format_refraction_lsst_csv(
+        _basic_bundle()
+    )
+
+
+def _read_csv_text(text: str) -> tuple[list[dict[str, str]], list[str]]:
+    reader = csv.DictReader(io.StringIO(text))
+    return list(reader), list(reader.fieldnames or ())
+
+
+def _basic_bundle(
+    *,
+    source_job_id: str | None = 'refraction-job-503',
+) -> RefractionStaticExportBundle:
+    return RefractionStaticExportBundle(
+        source_job_id=source_job_id,
+        source_rows=(
+            RefractionStaticEndpointExportRow(
+                endpoint_kind='source',
+                endpoint_key='s100',
+                endpoint_id=100,
+                node_id=10,
+                x_m=1000.0,
+                y_m=2000.0,
+                elevation_m=25.0,
+                t1_s=0.0123456,
+                v1_m_s=800.0,
+                v2_m_s=2400.0,
+                sh1_m=8.25,
+                weathering_correction_s=-0.004,
+                elevation_correction_s=0.00075,
+                total_applied_shift_s=-0.00325,
+            ),
+        ),
+        receiver_rows=(
+            RefractionStaticEndpointExportRow(
+                endpoint_kind='receiver',
+                endpoint_key='r200',
+                endpoint_id=200,
+                node_id=20,
+                x_m=1010.0,
+                y_m=2010.0,
+                elevation_m=30.0,
+                t1_s=0.023,
+                v1_m_s=800.0,
+                v2_m_s=2300.0,
+                sh1_m=9.5,
+                weathering_correction_s=-0.0025,
+                elevation_correction_s=0.001,
+                total_applied_shift_s=0.0045,
+            ),
+        ),
+    )
