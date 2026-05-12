@@ -7,6 +7,9 @@ and
 [statics/refraction_iras_phase2_cell_v2_design.md](statics/refraction_iras_phase2_cell_v2_design.md).
 The completed M3 multi-layer workflow is documented in
 [statics/refraction_multilayer_time_term.md](statics/refraction_multilayer_time_term.md).
+The M5 repo-owned IRAS-style export/import and static-table apply workflow is
+documented in
+[statics/refraction_m5_exports_table_workflow.md](statics/refraction_m5_exports_table_workflow.md).
 
 The public apply workflow supports a practical 1-layer model:
 
