@@ -20,6 +20,7 @@ from app.services.refraction_static_artifacts import (
     REFRACTION_STATICS_CSV_NAME,
     REFRACTION_STATIC_ARTIFACTS_JSON_NAME,
     REFRACTION_STATIC_COMPONENTS_CSV_NAME,
+    REFRACTION_STATIC_HISTORY_JSON_NAME,
     REFRACTION_STATIC_QC_JSON_NAME,
     REFRACTION_STATIC_SOLUTION_NPZ_NAME,
     REFRACTION_V3_CELL_SOLVER_HISTORY_CSV_NAME,
@@ -39,7 +40,15 @@ from app.services.refraction_static_artifacts import (
     write_refraction_static_solution_npz,
     write_refraction_static_artifacts,
 )
+from app.services.refraction_static_source_depth import (
+    REFRACTION_SOURCE_DEPTH_QC_JSON_NAME,
+    REFRACTION_SOURCE_DEPTH_SOURCES_CSV_NAME,
+)
 from app.services.refraction_static_types import RefractionLayerSolveResult
+from app.services.refraction_static_uphole import (
+    REFRACTION_UPHOLE_QC_JSON_NAME,
+    REFRACTION_UPHOLE_SOURCES_CSV_NAME,
+)
 from app.tests._refraction_static_artifact_helpers import (
     _estimated_v1_request,
     _request,
@@ -117,6 +126,7 @@ EXPECTED_FILENAMES = {
     NEAR_SURFACE_MODEL_CSV_NAME,
     FIRST_BREAK_RESIDUALS_CSV_NAME,
     REFRACTION_STATIC_COMPONENTS_CSV_NAME,
+    REFRACTION_STATIC_HISTORY_JSON_NAME,
     SOURCE_STATIC_TABLE_CSV_NAME,
     RECEIVER_STATIC_TABLE_CSV_NAME,
     SOURCE_RECEIVER_STATIC_TABLE_NPZ_NAME,
@@ -161,6 +171,7 @@ def test_write_refraction_static_artifacts_npz_schema(tmp_path: Path) -> None:
     assert paths.artifact_names == (
         REFRACTION_STATIC_SOLUTION_NPZ_NAME,
         REFRACTION_STATIC_QC_JSON_NAME,
+        REFRACTION_STATIC_HISTORY_JSON_NAME,
         REFRACTION_STATICS_CSV_NAME,
         NEAR_SURFACE_MODEL_CSV_NAME,
         FIRST_BREAK_RESIDUALS_CSV_NAME,
@@ -274,7 +285,7 @@ def test_write_refraction_static_artifacts_qc_json(tmp_path: Path) -> None:
     assert payload['status_counts']['trace_static_status']['ok'] == 3
     assert payload['status_counts']['node_datum_status']['ok'] == 2
     assert payload['first_break_fit']['residual_rms_ms'] == pytest.approx(1.0)
-    assert len(payload['artifacts']) == 9
+    assert len(payload['artifacts']) == 10
     artifact_names = {item['name'] for item in payload['artifacts']}
     assert REFRACTION_V1_QC_JSON_NAME not in artifact_names
     assert REFRACTION_V1_ESTIMATES_CSV_NAME not in artifact_names
@@ -397,6 +408,74 @@ def test_uphole_field_correction_qc_and_static_tables(tmp_path: Path) -> None:
         assert data['source_uphole_status'].tolist() == ['ok', 'ok']
     with np.load(paths.solution_npz, allow_pickle=False) as data:
         np.testing.assert_allclose(data['source_uphole_shift_s'], [-0.010, -0.020])
+
+
+def test_refraction_manifest_registers_field_correction_artifacts(
+    tmp_path: Path,
+) -> None:
+    request_payload = _request().model_dump(mode='json')
+    request_payload['field_corrections'] = {
+        'source_depth': {
+            'mode': 'weathering_velocity_time',
+            'source_depth_byte': 115,
+        },
+        'uphole': {
+            'mode': 'header_time',
+            'uphole_time_byte': 95,
+            'uphole_time_unit': 's',
+        },
+    }
+    req = RefractionStaticApplyRequest.model_validate(request_payload)
+    result = replace(
+        _result(),
+        source_depth_m=np.asarray([4.0, 8.0], dtype=np.float64),
+        source_depth_shift_s=np.asarray([0.005, 0.010], dtype=np.float64),
+        source_depth_status=np.asarray(['ok', 'ok'], dtype='<U48'),
+        source_depth_field_correction_qc={
+            'source_depth_mode': 'weathering_velocity_time',
+            'component_name': 'source_depth_shift_s',
+            'sign_convention': 'corrected(t) = raw(t - shift_s)',
+            'source_depth_double_count_guard': 'checked',
+        },
+        source_uphole_time_s=np.asarray([0.010, 0.020], dtype=np.float64),
+        source_uphole_shift_s=np.asarray([-0.010, -0.020], dtype=np.float64),
+        source_uphole_status=np.asarray(['ok', 'ok'], dtype='<U48'),
+        source_uphole_field_correction_qc={
+            'uphole_mode': 'header_time',
+            'component_name': 'uphole_shift_s',
+            'sign_convention': 'corrected(t) = raw(t - shift_s)',
+        },
+    )
+    upstream_names = (
+        REFRACTION_SOURCE_DEPTH_QC_JSON_NAME,
+        REFRACTION_SOURCE_DEPTH_SOURCES_CSV_NAME,
+        REFRACTION_UPHOLE_QC_JSON_NAME,
+        REFRACTION_UPHOLE_SOURCES_CSV_NAME,
+    )
+    for name in upstream_names:
+        (tmp_path / name).write_text('{}' if name.endswith('.json') else '', encoding='utf-8')
+
+    paths = write_refraction_static_artifacts(
+        result=result,
+        req=req,
+        job_dir=tmp_path,
+        upstream_artifact_names=upstream_names,
+    )
+
+    manifest = json.loads(paths.manifest_json.read_text(encoding='utf-8'))
+    artifacts = {item['name']: item for item in manifest['artifacts']}
+    for name in upstream_names:
+        assert artifacts[name]['origin'] == 'upstream'
+    qc = json.loads(paths.qc_json.read_text(encoding='utf-8'))
+    qc_artifacts = {item['name'] for item in qc['artifacts']}
+    assert set(upstream_names).issubset(qc_artifacts)
+    assert qc['field_corrections']['source_depth']['sign_convention'] == (
+        'corrected(t) = raw(t - shift_s)'
+    )
+    assert qc['field_corrections']['uphole']['sign_convention'] == (
+        'corrected(t) = raw(t - shift_s)'
+    )
+    json.dumps(qc, allow_nan=False)
 
 
 def test_write_refraction_static_artifacts_csvs(tmp_path: Path) -> None:

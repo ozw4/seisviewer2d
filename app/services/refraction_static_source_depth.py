@@ -491,6 +491,7 @@ def _source_depth_qc(
         'source_depth_mode': mode,
         'source_depth_byte': None if source_depth_byte is None else int(source_depth_byte),
         'source_depth_positive_down': bool(positive_down),
+        'sign_convention': _SIGN_CONVENTION,
         'max_abs_source_depth_m': float(max_abs_source_depth_m),
         'source_depth_inconsistency_tolerance_m': float(inconsistency_tolerance_m),
         'n_source_endpoints': int(n_source_endpoints),

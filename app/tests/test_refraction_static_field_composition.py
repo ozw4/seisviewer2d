@@ -111,7 +111,7 @@ def test_field_composition_final_shift_adds_refraction_shift() -> None:
     )
 
 
-def test_field_composition_apply_to_trace_shift_false_preserves_existing_shift() -> None:
+def test_field_composition_apply_to_trace_shift_false_keeps_final_composed_shift() -> None:
     trace = _trace_field()
     result = compose_refraction_final_trace_shift(
         refraction_trace_shift_s_sorted=_shifts([0.010, 0.020, -0.005]),
@@ -122,7 +122,10 @@ def test_field_composition_apply_to_trace_shift_false_preserves_existing_shift()
         invalid_component_policy='fail',
     )
 
-    np.testing.assert_allclose(result.final_trace_shift_s_sorted, [0.010, 0.020, -0.005])
+    np.testing.assert_allclose(
+        result.final_trace_shift_s_sorted,
+        [0.0155, 0.024, -0.0055],
+    )
     np.testing.assert_allclose(result.applied_field_shift_s_sorted, [0.0, 0.0, 0.0])
     assert result.qc['apply_to_trace_shift'] is False
 

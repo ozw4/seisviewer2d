@@ -910,6 +910,10 @@ class RefractionDatumStaticsResult:
     trace_field_static_status_sorted: np.ndarray | None = None
     trace_field_static_valid_mask_sorted: np.ndarray | None = None
     base_refraction_trace_shift_s_sorted: np.ndarray | None = None
+    final_trace_shift_s_sorted: np.ndarray | None = None
+    final_trace_static_status_sorted: np.ndarray | None = None
+    final_trace_static_valid_mask_sorted: np.ndarray | None = None
+    applied_field_shift_s_sorted: np.ndarray | None = None
     field_composition_qc: dict[str, Any] | None = None
 
 
@@ -925,6 +929,7 @@ class RefractionStaticArtifactSet:
     source_static_table_csv: Path
     receiver_static_table_csv: Path
     source_receiver_static_table_npz: Path
+    static_history_json: Path
     manifest_json: Path | None
     artifact_names: tuple[str, ...]
     qc: dict[str, Any]

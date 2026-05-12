@@ -171,6 +171,7 @@ def test_source_depth_artifacts_write_qc_and_source_rows(tmp_path) -> None:
     assert paths['sources_csv'] == tmp_path / REFRACTION_SOURCE_DEPTH_SOURCES_CSV_NAME
     qc = json.loads(paths['qc_json'].read_text(encoding='utf-8'))
     assert qc['n_sources_with_depth'] == 1
+    assert qc['sign_convention'] == 'corrected(t) = raw(t - shift_s)'
     text = paths['sources_csv'].read_text(encoding='utf-8')
     assert 'source_endpoint_key,source_endpoint_id,source_node_id' in text
     assert 'source:a,101,0,3.5,ok,1,1' in text

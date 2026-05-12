@@ -22,7 +22,7 @@ _STATUS_DTYPE = '<U64'
 _ENDPOINT_KEY_DTYPE = object
 _OK_STATUS = 'ok'
 _NOT_APPLICABLE_STATUS = 'not_applicable'
-_NOOP_STATUSES = {_OK_STATUS, _NOT_APPLICABLE_STATUS, 'none', ''}
+_NOOP_STATUSES = {_OK_STATUS, _NOT_APPLICABLE_STATUS, 'not_enabled', 'none', ''}
 _STATUS_PRIORITY = (
     'missing_manual_static',
     'missing_uphole_time',
@@ -252,9 +252,9 @@ def compose_refraction_final_trace_shift(
     final_status = np.ascontiguousarray(base_status.copy(), dtype=_STATUS_DTYPE)
     final_valid = np.ascontiguousarray(base_valid.copy(), dtype=bool)
     applied_field = np.zeros(n_traces, dtype=np.float64)
+    add_mask = base_valid & np.isfinite(base) & field_valid
+    final[add_mask] = base[add_mask] + field_shift[add_mask]
     if apply_field:
-        add_mask = base_valid & np.isfinite(base) & field_valid
-        final[add_mask] = base[add_mask] + field_shift[add_mask]
         applied_field[add_mask] = field_shift[add_mask]
         invalid_final = add_mask & ~np.isfinite(final)
         if bool(np.any(invalid_final)):

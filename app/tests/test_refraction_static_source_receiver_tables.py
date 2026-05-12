@@ -48,6 +48,18 @@ SOURCE_COLUMNS = [
     'total_weathering_thickness_m',
     'refractor_elevation_m',
     'weathering_correction_ms',
+    'source_depth_m',
+    'source_depth_shift_ms',
+    'source_depth_status',
+    'uphole_time_ms',
+    'uphole_shift_ms',
+    'uphole_status',
+    'manual_static_shift_ms',
+    'manual_static_status',
+    'source_field_shift_ms',
+    'source_field_status',
+    'source_field_static_status',
+    'source_total_with_field_shift_ms',
     'floating_datum_correction_ms',
     'flat_datum_correction_ms',
     'elevation_correction_ms',
@@ -83,6 +95,12 @@ RECEIVER_COLUMNS = [
     'total_weathering_thickness_m',
     'refractor_elevation_m',
     'weathering_correction_ms',
+    'manual_static_shift_ms',
+    'manual_static_status',
+    'receiver_field_shift_ms',
+    'receiver_field_status',
+    'receiver_field_static_status',
+    'receiver_total_with_field_shift_ms',
     'floating_datum_correction_ms',
     'flat_datum_correction_ms',
     'elevation_correction_ms',
@@ -600,6 +618,33 @@ def _assert_source_row_matches_npz(
     assert float(row['weathering_correction_ms']) == pytest.approx(
         float(data['source_weathering_correction_s'][index]) * 1000.0
     )
+    if 'source_depth_shift_ms' in row:
+        assert float(row['source_depth_shift_ms']) == pytest.approx(
+            float(data['source_depth_shift_s'][index]) * 1000.0
+        )
+        assert row['source_depth_status'] == str(data['source_depth_status'][index])
+    if 'uphole_shift_ms' in row:
+        assert float(row['uphole_shift_ms']) == pytest.approx(
+            float(data['source_uphole_shift_s'][index]) * 1000.0
+        )
+        assert row['uphole_status'] == str(data['source_uphole_status'][index])
+    if 'manual_static_shift_ms' in row:
+        assert float(row['manual_static_shift_ms']) == pytest.approx(
+            float(data['source_manual_static_shift_s'][index]) * 1000.0
+        )
+        assert row['manual_static_status'] == str(
+            data['source_manual_static_status'][index]
+        )
+    if 'source_field_shift_ms' in row:
+        assert float(row['source_field_shift_ms']) == pytest.approx(
+            float(data['source_field_shift_s'][index]) * 1000.0
+        )
+        assert row['source_field_static_status'] == str(
+            data['source_field_static_status'][index]
+        )
+        assert float(row['source_total_with_field_shift_ms']) == pytest.approx(
+            float(data['source_total_with_field_shift_s'][index]) * 1000.0
+        )
     assert float(row['elevation_correction_ms']) == pytest.approx(
         float(data['source_elevation_correction_s'][index]) * 1000.0
     )
@@ -640,6 +685,23 @@ def _assert_receiver_row_matches_npz(
     assert float(row['weathering_correction_ms']) == pytest.approx(
         float(data['receiver_weathering_correction_s'][index]) * 1000.0
     )
+    if 'manual_static_shift_ms' in row:
+        assert float(row['manual_static_shift_ms']) == pytest.approx(
+            float(data['receiver_manual_static_shift_s'][index]) * 1000.0
+        )
+        assert row['manual_static_status'] == str(
+            data['receiver_manual_static_status'][index]
+        )
+    if 'receiver_field_shift_ms' in row:
+        assert float(row['receiver_field_shift_ms']) == pytest.approx(
+            float(data['receiver_field_shift_s'][index]) * 1000.0
+        )
+        assert row['receiver_field_static_status'] == str(
+            data['receiver_field_static_status'][index]
+        )
+        assert float(row['receiver_total_with_field_shift_ms']) == pytest.approx(
+            float(data['receiver_total_with_field_shift_s'][index]) * 1000.0
+        )
     assert float(row['elevation_correction_ms']) == pytest.approx(
         float(data['receiver_elevation_correction_s'][index]) * 1000.0
     )

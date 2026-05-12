@@ -21,7 +21,12 @@ from app.services.job_artifact_refs import resolve_job_artifact_path
 from app.services.refraction_static_apply_trace_store import (
     apply_refraction_statics_to_trace_store,
 )
-from app.services.refraction_static_artifacts import write_refraction_static_artifacts
+from app.services.refraction_static_artifacts import (
+    REFRACTION_STATIC_HISTORY_JSON_NAME,
+    refraction_static_double_application_qc,
+    write_refraction_static_artifacts,
+    write_refraction_static_history_json,
+)
 from app.services.refraction_static_datum import (
     build_refraction_datum_statics,
     write_refraction_datum_statics_artifacts,
@@ -53,6 +58,8 @@ from app.services.refraction_static_multilayer_service import (
     compute_refraction_multilayer_datum_statics_from_input_model,
 )
 from app.services.refraction_static_source_depth import (
+    REFRACTION_SOURCE_DEPTH_QC_JSON_NAME,
+    REFRACTION_SOURCE_DEPTH_SOURCES_CSV_NAME,
     compute_source_depth_weathering_time_correction_from_result,
 )
 from app.services.refraction_static_types import (
@@ -67,6 +74,8 @@ from app.services.refraction_static_v1 import (
     write_refraction_v1_artifacts,
 )
 from app.services.refraction_static_uphole import (
+    REFRACTION_UPHOLE_QC_JSON_NAME,
+    REFRACTION_UPHOLE_SOURCES_CSV_NAME,
     compute_uphole_time_correction_from_result,
 )
 from app.services.refraction_static_weathering_replacement import (
@@ -470,6 +479,13 @@ def _finish_refraction_static_apply_job(
                         corrected_result.corrected_trace_store_path
                     ),
                 )
+            if isinstance(result, RefractionDatumStaticsResult):
+                write_refraction_static_history_json(
+                    result=result,
+                    req=req,
+                    path=job_dir / REFRACTION_STATIC_HISTORY_JSON_NAME,
+                    output_file_id=corrected_result.corrected_file_id,
+                )
         _set_job_progress_message(
             state,
             job_id,
@@ -488,6 +504,38 @@ def _finish_refraction_static_apply_job(
         finished_ts=time.time(),
         message=_ARTIFACT_ONLY_DONE_MESSAGE,
     )
+
+
+def _upstream_artifact_names_for_final_refraction_job(
+    *,
+    first_layer: _ResolvedFirstLayerRequest,
+    req: RefractionStaticApplyRequest,
+) -> tuple[str, ...]:
+    return (
+        first_layer.upstream_artifact_names
+        + _field_correction_upstream_artifact_names(req)
+    )
+
+
+def _field_correction_upstream_artifact_names(
+    req: RefractionStaticApplyRequest,
+) -> tuple[str, ...]:
+    names: list[str] = []
+    if req.field_corrections.source_depth.mode == 'weathering_velocity_time':
+        names.extend(
+            (
+                REFRACTION_SOURCE_DEPTH_QC_JSON_NAME,
+                REFRACTION_SOURCE_DEPTH_SOURCES_CSV_NAME,
+            )
+        )
+    if req.field_corrections.uphole.mode == 'header_time':
+        names.extend(
+            (
+                REFRACTION_UPHOLE_QC_JSON_NAME,
+                REFRACTION_UPHOLE_SOURCES_CSV_NAME,
+            )
+        )
+    return tuple(names)
 
 
 def _with_source_depth_field_correction(
@@ -745,6 +793,12 @@ def _with_field_correction_composition(
         base_refraction_trace_shift_s_sorted=(
             final_shift.base_refraction_trace_shift_s_sorted
         ),
+        final_trace_shift_s_sorted=final_shift.final_trace_shift_s_sorted,
+        final_trace_static_status_sorted=final_shift.final_trace_static_status_sorted,
+        final_trace_static_valid_mask_sorted=(
+            final_shift.final_trace_static_valid_mask_sorted
+        ),
+        applied_field_shift_s_sorted=final_shift.applied_field_shift_s_sorted,
         field_composition_qc=composition_qc,
         qc={
             **result.qc,
@@ -758,14 +812,7 @@ def _with_field_correction_composition(
             },
         },
     )
-    if not bool(composition.apply_to_trace_shift):
-        return updated
-    return replace(
-        updated,
-        refraction_trace_shift_s_sorted=final_shift.final_trace_shift_s_sorted,
-        trace_static_status_sorted=final_shift.final_trace_static_status_sorted,
-        trace_static_valid_mask_sorted=final_shift.final_trace_static_valid_mask_sorted,
-    )
+    return updated
 
 
 def _has_field_correction_components(result: RefractionDatumStaticsResult) -> bool:
@@ -969,6 +1016,53 @@ def _source_depth_double_count_guard_qc(
     return 'checked', []
 
 
+def _with_static_history_double_application_qc(
+    *,
+    result: RefractionDatumStaticsResult,
+    req: RefractionStaticApplyRequest,
+    state: AppState,
+) -> RefractionDatumStaticsResult:
+    source_meta = _source_trace_store_meta_for_static_history(req=req, state=state)
+    if source_meta is None:
+        return result
+    qc = refraction_static_double_application_qc(req=req, source_meta=source_meta)
+    if qc.get('status') == 'duplicate_rejected':
+        message = qc.get('message')
+        raise ValueError(
+            str(message)
+            if message
+            else 'static history double-application policy rejected the job'
+        )
+    if qc.get('status') in {'duplicate_warned', 'duplicate_allowed'}:
+        return replace(
+            result,
+            qc={
+                **result.qc,
+                'static_history': qc,
+            },
+        )
+    return result
+
+
+def _source_trace_store_meta_for_static_history(
+    *,
+    req: RefractionStaticApplyRequest,
+    state: AppState,
+) -> dict[str, object] | None:
+    try:
+        store_path = Path(state.file_registry.get_store_path(req.file_id))
+    except Exception:  # noqa: BLE001
+        return None
+    meta_path = store_path / 'meta.json'
+    if not meta_path.is_file():
+        return None
+    try:
+        payload = json.loads(meta_path.read_text(encoding='utf-8'))
+    except Exception:  # noqa: BLE001
+        return None
+    return payload if isinstance(payload, dict) else None
+
+
 def _run_public_multilayer_refraction_static_apply_job(
     *,
     job_id: str,
@@ -1028,6 +1122,11 @@ def _run_public_multilayer_refraction_static_apply_job(
         input_model=input_model,
         req=req,
     )
+    datum_result = _with_static_history_double_application_qc(
+        result=datum_result,
+        req=req,
+        state=state,
+    )
     _set_job_progress_message(
         state,
         job_id,
@@ -1040,7 +1139,10 @@ def _run_public_multilayer_refraction_static_apply_job(
         req=req,
         job_dir=job_dir,
         resolved_first_layer=first_layer.resolved,
-        upstream_artifact_names=first_layer.upstream_artifact_names,
+        upstream_artifact_names=_upstream_artifact_names_for_final_refraction_job(
+            first_layer=first_layer,
+            req=req,
+        ),
     )
     return _finish_refraction_static_apply_job(
         job_id=job_id,
@@ -1179,6 +1281,11 @@ def _run_refraction_static_apply_job_body(
         input_model=weathering_input_model,
         req=active_req,
     )
+    datum_result = _with_static_history_double_application_qc(
+        result=datum_result,
+        req=active_req,
+        state=state,
+    )
     _set_job_progress_message(
         state,
         job_id,
@@ -1191,12 +1298,20 @@ def _run_refraction_static_apply_job_body(
         progress=0.90,
         message='writing_refraction_static_artifacts',
     )
+    if (
+        isinstance(datum_result, RefractionDatumStaticsResult)
+        and datum_result.field_composition_qc is not None
+    ):
+        write_refraction_datum_statics_artifacts(job_dir, datum_result)
     write_refraction_static_artifacts(
         result=datum_result,
         req=active_req,
         job_dir=job_dir,
         resolved_first_layer=first_layer.resolved,
-        upstream_artifact_names=first_layer.upstream_artifact_names,
+        upstream_artifact_names=_upstream_artifact_names_for_final_refraction_job(
+            first_layer=first_layer,
+            req=active_req,
+        ),
     )
     return _finish_refraction_static_apply_job(
         job_id=job_id,

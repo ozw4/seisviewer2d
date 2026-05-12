@@ -424,11 +424,13 @@ source_depth_shift_s = +source_depth_m / V1_m_s
 ```
 
 The value is stored in the same applied-shift convention. It is written to
-source endpoint field-correction columns and QC only. It is not folded into
-`source_refraction_shift_s`, `source_refraction_shift_s_sorted`, or
-`refraction_trace_shift_s_sorted`; trace-level composition is reserved for a
-later field-correction composition workflow. Receiver endpoint totals are
-unchanged by this component.
+source endpoint field-correction columns and QC. It is not folded into legacy
+`source_refraction_shift_s` or `source_refraction_shift_s_sorted`; componentized
+field totals are reported separately in `source_field_shift_s` and
+`source_total_with_field_shift_s`. Trace-level field composition reports
+`base_refraction_trace_shift_s_sorted`, `trace_field_shift_s_sorted`, and
+`final_trace_shift_s_sorted` separately from the base refraction shift.
+Receiver endpoint legacy totals are unchanged by this component.
 
 When uphole-time field correction is enabled with
 `field_corrections.uphole.mode="header_time"`, the configured
@@ -452,11 +454,12 @@ The value is stored in the same applied-shift convention and the selected
 formula is written to QC. Missing, invalid, inconsistent repeated endpoint
 values, values beyond `max_abs_uphole_time_s`, and inactive source endpoints
 are status-coded. The component is written to source endpoint
-field-correction columns and QC only. It is not folded into
-`source_refraction_shift_s`, `source_refraction_shift_s_sorted`, or
-`refraction_trace_shift_s_sorted`; trace-level composition is reserved for a
-later field-correction composition workflow. Receiver endpoint totals are
-unchanged by this component.
+field-correction columns and QC. It is not folded into legacy
+`source_refraction_shift_s` or `source_refraction_shift_s_sorted`; componentized
+field totals are reported separately in `source_field_shift_s` and
+`source_total_with_field_shift_s`. Trace-level field composition reports the
+base refraction, field, and final trace shifts separately. Receiver endpoint
+legacy totals are unchanged by this component.
 
 When manual source/receiver static import is enabled with
 `field_corrections.manual_static.mode="artifact_table"` or
@@ -488,11 +491,10 @@ status-coded as `missing_manual_static` and may be rejected with
 `unmatched_manual_static_row`.
 
 The source and receiver components are written to endpoint field-correction
-columns, `source_receiver_static_table.npz`, and QC only. They are not folded
-into `source_refraction_shift_s`, `receiver_refraction_shift_s`,
-`refraction_trace_shift_s_sorted`, or source/receiver endpoint totals;
-trace-level composition is reserved for a later field-correction composition
-workflow.
+columns, `source_receiver_static_table.npz`, and QC. They are not folded into
+legacy `source_refraction_shift_s` or `receiver_refraction_shift_s`; componentized
+field totals are reported separately in source/receiver field columns and trace
+preview final-shift columns.
 
 ## 7. Artifact List
 
@@ -509,6 +511,7 @@ refraction_static_components.csv
 source_static_table.csv
 receiver_static_table.csv
 source_receiver_static_table.npz
+refraction_static_history.json
 refraction_static_artifacts.json
 ```
 
@@ -578,7 +581,29 @@ corrected_file.json
 refraction_static_apply_qc.json
 ```
 
-## 8. Source and Receiver Table Columns
+## 8. Static History and Double-Application Guard
+
+Every public refraction statics job writes `refraction_static_history.json`.
+The history artifact records the repo sign convention, input file ID, output
+file ID when a corrected TraceStore is registered, the cumulative shift artifact
+and field, and each component with whether it was included in the trace-shift
+field. Field components use the request path
+`field_corrections.composition.apply_to_trace_shift`; when false, source-depth,
+uphole, and manual-static components may be written as artifacts without being
+included in the applied trace shift.
+
+`field_corrections.composition.double_application_policy` controls best-effort
+guards against applying components already present in input TraceStore lineage:
+
+- `warn`: proceed and write a QC/history warning.
+- `fail`: reject the job with a clear duplicate-component error.
+- `allow`: proceed and record that duplicate components were allowed.
+
+The guard reads TraceStore `meta.json` derived-component metadata when present.
+It does not inspect SEG-Y static headers and does not implement a project-wide
+static registry.
+
+## 9. Source and Receiver Table Columns
 
 The source and receiver static tables repeat the sign convention on every row:
 
@@ -594,14 +619,18 @@ Source-specific identifier columns:
 | `source_id` | Source station ID read from the configured source header byte. |
 | `source_node_id` | Near-surface node ID assigned to the source endpoint. |
 | `source_v2_cell_id` | Endpoint-local V2 cell ID for cell V2 workflows, or blank/NaN when not cell-based. |
-| `source_depth_m` | Source depth in meters, positive downward. Present only when source-depth field correction is enabled. |
-| `source_depth_shift_ms` | Source-depth weathering-time shift in milliseconds. Present only when source-depth field correction is enabled. |
-| `source_depth_status` | Source-depth component status, including missing/invalid/max-shift states. Present only when source-depth field correction is enabled. |
-| `uphole_time_ms` | Source uphole time in milliseconds after source-endpoint aggregation. Present only when uphole-time field correction is enabled. |
-| `uphole_shift_ms` | Uphole-time source correction shift in milliseconds. Present only when uphole-time field correction is enabled. |
-| `uphole_status` | Uphole component status, including missing/invalid/inconsistent/max-time/inactive-source states. Present only when uphole-time field correction is enabled. |
-| `manual_static_shift_ms` | Manual source static component in milliseconds after sign-convention conversion. Present only when manual-static field correction is enabled. |
-| `manual_static_status` | Manual source static status, including ok/missing/invalid states. Present only when manual-static field correction is enabled. |
+| `source_depth_m` | Source depth in meters, positive downward; zero with `source_depth_status="not_enabled"` when disabled. |
+| `source_depth_shift_ms` | Source-depth weathering-time shift in milliseconds; zero when disabled. |
+| `source_depth_status` | Source-depth component status, including `not_enabled`, missing/invalid/max-shift states. |
+| `uphole_time_ms` | Source uphole time in milliseconds after source-endpoint aggregation; zero when disabled. |
+| `uphole_shift_ms` | Uphole-time source correction shift in milliseconds; zero when disabled. |
+| `uphole_status` | Uphole component status, including `not_enabled`, missing/invalid/inconsistent/max-time/inactive-source states. |
+| `manual_static_shift_ms` | Manual source static component in milliseconds after sign-convention conversion; zero when disabled. |
+| `manual_static_status` | Manual source static status, including `not_enabled`, ok/missing/invalid states. |
+| `source_field_shift_ms` | Sum of enabled source field-correction components in milliseconds; zero when disabled. |
+| `source_field_status` | Legacy alias for `source_field_static_status`, retained for CSV compatibility. |
+| `source_field_static_status` | Source field-composition status, including `not_enabled` and ok/error states. |
+| `source_total_with_field_shift_ms` | `total_applied_shift_ms + source_field_shift_ms` when the base and field shifts are valid; equals `total_applied_shift_ms` when field corrections are disabled. |
 
 Receiver-specific identifier columns:
 
@@ -611,8 +640,12 @@ Receiver-specific identifier columns:
 | `receiver_id` | Receiver station ID read from the configured receiver header byte. |
 | `receiver_node_id` | Near-surface node ID assigned to the receiver endpoint. |
 | `receiver_v2_cell_id` | Endpoint-local V2 cell ID for cell V2 workflows, or blank/NaN when not cell-based. |
-| `manual_static_shift_ms` | Manual receiver static component in milliseconds after sign-convention conversion. Present only when manual-static field correction is enabled. |
-| `manual_static_status` | Manual receiver static status, including ok/missing/invalid states. Present only when manual-static field correction is enabled. |
+| `manual_static_shift_ms` | Manual receiver static component in milliseconds after sign-convention conversion; zero when disabled. |
+| `manual_static_status` | Manual receiver static status, including `not_enabled`, ok/missing/invalid states. |
+| `receiver_field_shift_ms` | Sum of enabled receiver field-correction components in milliseconds; zero when disabled. |
+| `receiver_field_status` | Legacy alias for `receiver_field_static_status`, retained for CSV compatibility. |
+| `receiver_field_static_status` | Receiver field-composition status, including `not_enabled` and ok/error states. |
+| `receiver_total_with_field_shift_ms` | `total_applied_shift_ms + receiver_field_shift_ms` when the base and field shifts are valid; equals `total_applied_shift_ms` when field corrections are disabled. |
 
 Shared columns:
 
@@ -659,17 +692,27 @@ Shared columns:
 | `residual_rms_by_layer_ms` | Per-layer residual RMS values for multi-layer results. |
 | `residual_mad_by_layer_ms` | Per-layer residual MAD values for multi-layer results. |
 
+Trace preview CSVs include stable field-composition columns:
+`source_field_shift_ms`, `receiver_field_shift_ms`, `trace_field_shift_ms`,
+`refraction_trace_shift_ms`, `final_trace_shift_ms`, and
+`trace_field_static_status`. When field corrections are disabled, field shifts
+are zero, field status is `not_enabled`, and `final_trace_shift_ms` equals
+`refraction_trace_shift_ms` wherever the base refraction shift is finite.
+
 `source_receiver_static_table.npz` stores the stable source and receiver
 endpoint arrays used by downstream apply flows as pickle-free arrays. Time
-arrays are in seconds. When enabled, source-depth arrays
-`source_depth_m`, `source_depth_shift_s`, and `source_depth_status` and uphole
-arrays `source_uphole_time_s`, `source_uphole_shift_s`, and
-`source_uphole_status` are included. CSV time columns are in milliseconds. The
-per-layer QC summary columns `pick_count_by_layer`, `used_pick_count_by_layer`,
-`residual_rms_by_layer_ms`, and `residual_mad_by_layer_ms` are CSV-only fields
-and are not part of the NPZ schema.
+arrays are in seconds. Source-depth arrays `source_depth_m`,
+`source_depth_shift_s`, and `source_depth_status`, uphole arrays
+`source_uphole_time_s`, `source_uphole_shift_s`, and `source_uphole_status`,
+manual-static arrays, source/receiver field-shift arrays, and
+source/receiver total-with-field arrays are always present. Disabled
+components use zero shifts and `not_enabled` statuses. CSV time columns are in
+milliseconds. The per-layer QC summary columns `pick_count_by_layer`,
+`used_pick_count_by_layer`, `residual_rms_by_layer_ms`, and
+`residual_mad_by_layer_ms` are CSV-only fields and are not part of the NPZ
+schema.
 
-## 9. Cell and Coordinate Modes
+## 10. Cell and Coordinate Modes
 
 Velocity modes:
 
@@ -711,7 +754,7 @@ cell_y_m = 0
 Line mode requires `number_of_cell_y=1`; it does not estimate line origin or
 azimuth automatically.
 
-## 10. Recommended Synthetic Validation Tests
+## 11. Recommended Synthetic Validation Tests
 
 Recommended coverage for future changes:
 
@@ -740,7 +783,7 @@ Recommended coverage for future changes:
   `total_static_ms == total_applied_shift_ms`, and trace shift application
   uses `refraction_trace_shift_s_sorted`.
 
-## 11. Known Limitations
+## 12. Known Limitations
 
 - GRM is not implemented.
 - Plus-minus is not implemented.
