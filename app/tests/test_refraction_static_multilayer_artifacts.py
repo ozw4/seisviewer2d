@@ -25,6 +25,7 @@ from app.services.refraction_static_artifacts import (
     REFRACTION_STATIC_COMPONENTS_CSV_NAME,
     REFRACTION_STATIC_QC_JSON_NAME,
     REFRACTION_STATIC_SOLUTION_NPZ_NAME,
+    REFRACTION_TIME_TERM_SPREADSHEET_CSV_NAME,
     SOURCE_RECEIVER_STATIC_TABLE_NPZ_NAME,
     SOURCE_STATIC_TABLE_CSV_NAME,
     write_refraction_static_artifacts,
@@ -61,6 +62,7 @@ _CORE_FINAL_ARTIFACT_NAMES = {
     SOURCE_STATIC_TABLE_CSV_NAME,
     RECEIVER_STATIC_TABLE_CSV_NAME,
     SOURCE_RECEIVER_STATIC_TABLE_NPZ_NAME,
+    REFRACTION_TIME_TERM_SPREADSHEET_CSV_NAME,
 }
 
 _CELL_VELOCITY_ARTIFACT_NAMES = {
@@ -156,6 +158,35 @@ def test_three_layer_solution_npz_contains_t3_sh3_and_vsub_arrays(
         )
 
 
+def test_time_term_spreadsheet_contains_multilayer_values(
+    tmp_path: Path,
+) -> None:
+    job_dir = tmp_path / 'job'
+    compute_three_layer_workflow(job_dir=job_dir)
+
+    rows = _read_csv(job_dir / REFRACTION_TIME_TERM_SPREADSHEET_CSV_NAME)
+
+    assert rows
+    assert rows[0]['endpoint_kind'] == 'source'
+    assert rows[0]['t1_ms']
+    assert rows[0]['t2_ms']
+    assert rows[0]['t3_ms']
+    assert rows[0]['v1_m_s'] == f'{SYNTHETIC_MULTILAYER_V1_M_S:.3f}'
+    assert rows[0]['v2_m_s'] == f'{SYNTHETIC_MULTILAYER_V2_M_S:.3f}'
+    assert rows[0]['v3_m_s'] == f'{SYNTHETIC_MULTILAYER_V3_M_S:.3f}'
+    assert rows[0]['vsub_m_s'] == f'{SYNTHETIC_MULTILAYER_VSUB_M_S:.3f}'
+    assert rows[0]['sh1_m']
+    assert rows[0]['sh2_m']
+    assert rows[0]['sh3_m']
+    assert rows[0]['layer1_base_elevation_m']
+    assert rows[0]['layer2_base_elevation_m']
+    assert rows[0]['final_refractor_elevation_m']
+    assert rows[0]['pick_count_by_layer']
+    assert rows[0]['used_pick_count_by_layer']
+    assert rows[0]['residual_rms_by_layer_ms']
+    assert rows[0]['residual_mad_by_layer_ms']
+
+
 def test_three_layer_npz_is_pickle_free(tmp_path: Path) -> None:
     job_dir = tmp_path / 'job'
     compute_three_layer_workflow(job_dir=job_dir)
@@ -230,6 +261,14 @@ def test_two_layer_artifact_manifest_regression_still_passes(
             SYNTHETIC_MULTILAYER_V3_M_S,
             rtol=1.0e-9,
         )
+
+    rows = _read_csv(job_dir / REFRACTION_TIME_TERM_SPREADSHEET_CSV_NAME)
+    assert rows[0]['t2_ms']
+    assert rows[0]['t3_ms'] == ''
+    assert rows[0]['v3_m_s'] == f'{SYNTHETIC_MULTILAYER_V3_M_S:.3f}'
+    assert rows[0]['vsub_m_s'] == ''
+    assert rows[0]['sh2_m']
+    assert rows[0]['sh3_m'] == ''
 
 
 def test_multilayer_residual_csv_contains_layer_kind_and_layer_index(

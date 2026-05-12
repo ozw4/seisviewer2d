@@ -29,6 +29,7 @@ refraction_static_components.csv
 source_static_table.csv
 receiver_static_table.csv
 source_receiver_static_table.npz
+refraction_time_term_spreadsheet.csv
 refraction_static_history.json
 refraction_static_artifacts.json
 ```
@@ -222,21 +223,29 @@ TraceStore.
 
 ### `time_term_spreadsheet`
 
-`time_term_spreadsheet` is an endpoint-level diagnostic export for time terms,
-layer parameters, and residual summaries. It is derived from
-`source_static_table.csv`, `receiver_static_table.csv`,
-`source_receiver_static_table.npz`, and `refraction_static_solution.npz`.
+`time_term_spreadsheet` is the generated
+`refraction_time_term_spreadsheet.csv` endpoint export for spreadsheet review
+of time terms, layer parameters, static components, statuses, and residual
+summaries. It is derived from `source_static_table.csv`,
+`receiver_static_table.csv`, `source_receiver_static_table.npz`, and
+`refraction_static_solution.npz`.
 
-Required columns:
+Required columns, in deterministic order:
 
 ```text
+schema_version
 format_name
 format_version
 source_job_id
 endpoint_kind
 endpoint_key
 endpoint_id
+station_id
 node_id
+x_m
+y_m
+elevation_m
+surface_elevation_m
 t1_ms
 t2_ms
 t3_ms
@@ -244,6 +253,19 @@ v1_m_s
 v2_m_s
 v3_m_s
 vsub_m_s
+sh1_m
+sh2_m
+sh3_m
+layer1_base_elevation_m
+layer2_base_elevation_m
+final_refractor_elevation_m
+weathering_correction_ms
+elevation_correction_ms
+source_depth_correction_ms
+uphole_correction_ms
+manual_static_ms
+field_correction_ms
+total_applied_shift_ms
 pick_count
 used_pick_count
 pick_count_by_layer
@@ -253,11 +275,23 @@ residual_mad_ms
 residual_rms_by_layer_ms
 residual_mad_by_layer_ms
 solution_status
+weathering_status
+datum_status
+source_depth_status
+uphole_status
+manual_static_status
+field_static_status
+static_status
 sign_convention
 ```
 
-Layer-specific columns that do not apply to the job layer count should be blank
-in CSV rather than synthesized.
+The export writes one row per source endpoint followed by one row per receiver
+endpoint. Layer-specific numeric columns and optional component values that do
+not apply to the job should be blank in CSV rather than synthesized.
+Receiver rows use `not_applicable` for source-only source-depth and uphole
+status fields. All time/static/correction columns use milliseconds, coordinate
+and elevation columns use meters, velocity columns use meters per second, and
+`sign_convention` is the repo convention from Section 3.
 
 ### `first_break_time`
 
@@ -306,10 +340,24 @@ source_job_id
 endpoint_kind
 endpoint_key
 endpoint_id
-applied_shift_ms
 static_status
-sign_convention
 ```
+
+Shift columns:
+
+- `applied_shift_ms` is the default canonical shift column.
+- `applied_shift_s` is also accepted and is converted to seconds internally
+  without millisecond scaling.
+- An unqualified `applied_shift` column is accepted only when import metadata
+  explicitly declares `shift_units` as `milliseconds` or `seconds`.
+- A table must provide exactly one applied-shift column.
+
+Sign convention:
+
+- `sign_convention` is required in the table unless the import request provides
+  an explicit sign-convention override.
+- The table value or override must be exactly
+  `corrected(t) = raw(t - shift_s)`.
 
 Optional metadata columns:
 
@@ -343,7 +391,7 @@ elevation_correction_ms
 comment
 ```
 
-`applied_shift_ms` is authoritative for import. Existing total/component
+The applied-shift column is authoritative for import. Existing total/component
 columns are preserved as audit metadata unless a future schema version defines
 another explicit apply field.
 
@@ -354,10 +402,13 @@ The import validator must be deterministic and fail closed. A valid
 
 - `format_name` is `canonical_static_table`.
 - `format_version` is a supported integer version.
-- `sign_convention` is exactly `corrected(t) = raw(t - shift_s)`.
+- `sign_convention` is exactly `corrected(t) = raw(t - shift_s)`, or the import
+  request supplies that exact value as an explicit override.
 - `endpoint_kind` is `source` or `receiver`.
 - Every required column is present.
-- `applied_shift_ms` is finite for every row with `static_status="ok"`.
+- Exactly one of `applied_shift_ms`, `applied_shift_s`, or metadata-qualified
+  `applied_shift` is present.
+- The applied shift is finite for every row with `static_status="ok"`.
 - Rows with non-`ok` `static_status` are rejected for apply.
 - Endpoint identity is unique for each `endpoint_kind`.
 - The import request declares whether matching uses `endpoint_key` or

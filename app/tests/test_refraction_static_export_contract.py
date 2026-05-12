@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import csv
+import io
 import json
 from pathlib import Path
 from typing import Any
@@ -19,6 +21,7 @@ from app.services.refraction_static_artifacts import (
     REFRACTION_STATIC_ARTIFACTS_JSON_NAME,
     REFRACTION_STATIC_REQUEST_JSON_NAME,
     REFRACTION_STATIC_SOLUTION_NPZ_NAME,
+    REFRACTION_TIME_TERM_SPREADSHEET_CSV_NAME,
     SOURCE_RECEIVER_STATIC_TABLE_NPZ_NAME,
     SOURCE_STATIC_TABLE_CSV_NAME,
 )
@@ -26,6 +29,13 @@ from app.services.refraction_static_export_service import (
     REFRACTION_STATIC_EXPORT_JOB_META_JSON_NAME,
     REFRACTION_STATIC_EXPORT_REQUEST_JSON_NAME,
     run_refraction_static_export_job,
+)
+from app.services.refraction_static_export_units import (
+    REFRACTION_STATIC_REPO_SIGN_CONVENTION,
+)
+from app.services.refraction_static_lsst_export import (
+    REFRACTION_LSST_CSV_NAME,
+    REFRACTION_LSST_PLUS_CSV_NAME,
 )
 from app.tests._refraction_static_synthetic import synthetic_refraction_apply_request
 
@@ -74,7 +84,7 @@ def _create_source_refraction_job(
     job_dir = tmp_path / 'jobs' / job_id
     job_dir.mkdir(parents=True)
     for artifact_name in artifact_names:
-        (job_dir / artifact_name).write_bytes(b'data')
+        _write_source_artifact_stub(job_dir / artifact_name, artifact_name)
 
     state = client.app.state.sv
     with state.lock:
@@ -274,3 +284,271 @@ def test_run_refraction_static_export_job_writes_requested_format_metadata(
     assert meta['export']['requested_formats'] == list(
         REFRACTION_STATIC_DEFAULT_EXPORT_FORMATS
     )
+    assert meta['export']['sign_convention'] == REFRACTION_STATIC_REPO_SIGN_CONVENTION
+    assert meta['generated_artifacts'] == [REFRACTION_TIME_TERM_SPREADSHEET_CSV_NAME]
+    spreadsheet_rows = _read_csv_text(
+        (export_job_dir / REFRACTION_TIME_TERM_SPREADSHEET_CSV_NAME).read_text(
+            encoding='utf-8',
+        )
+    )
+    assert [row['endpoint_kind'] for row in spreadsheet_rows] == [
+        'source',
+        'receiver',
+    ]
+    assert spreadsheet_rows[0]['source_job_id'] == 'source-refraction-job'
+    assert spreadsheet_rows[0]['endpoint_key'] == 'source:1001'
+    assert spreadsheet_rows[0]['total_applied_shift_ms'] == '12.500000'
+    assert spreadsheet_rows[1]['endpoint_key'] == 'receiver:2001'
+    assert spreadsheet_rows[1]['total_applied_shift_ms'] == '-3.250000'
+
+
+def test_run_refraction_static_export_job_time_term_spreadsheet_filters_inactive(
+    client: TestClient,
+    tmp_path: Path,
+) -> None:
+    source_dir = _create_source_refraction_job(
+        client,
+        tmp_path,
+        artifact_names=_source_artifacts_for_default_export(),
+    )
+    with (source_dir / SOURCE_STATIC_TABLE_CSV_NAME).open(
+        encoding='utf-8',
+        newline='',
+    ) as handle:
+        source_rows = list(csv.DictReader(handle))
+    inactive_row = dict(source_rows[0])
+    inactive_row.update(
+        {
+            'source_endpoint_key': 'source:inactive',
+            'source_id': '1002',
+            'source_node_id': '11',
+            'static_status': 'inactive',
+        }
+    )
+    _write_csv_rows(source_dir / SOURCE_STATIC_TABLE_CSV_NAME, source_rows + [inactive_row])
+
+    req = RefractionStaticExportJobRequest.model_validate(
+        {
+            'source_job_id': 'source-refraction-job',
+            'export': {
+                'enabled': True,
+                'formats': ['time_term_spreadsheet'],
+                'include_inactive_endpoints': False,
+            },
+        }
+    )
+    export_job_id = 'export-job-filtered'
+    export_job_dir = tmp_path / 'jobs' / export_job_id
+    with client.app.state.sv.lock:
+        client.app.state.sv.jobs.create_static_job(
+            export_job_id,
+            file_id='raw-file-id',
+            key1_byte=189,
+            key2_byte=193,
+            statics_kind='refraction_export',
+            artifacts_dir=str(export_job_dir),
+        )
+
+    run_refraction_static_export_job(export_job_id, req, client.app.state.sv)
+
+    rows = _read_csv_text(
+        (export_job_dir / REFRACTION_TIME_TERM_SPREADSHEET_CSV_NAME).read_text(
+            encoding='utf-8',
+        )
+    )
+    assert [row['endpoint_key'] for row in rows] == ['source:1001', 'receiver:2001']
+
+
+def test_run_refraction_static_export_job_time_term_spreadsheet_includes_inactive(
+    client: TestClient,
+    tmp_path: Path,
+) -> None:
+    source_dir = _create_source_refraction_job(
+        client,
+        tmp_path,
+        artifact_names=_source_artifacts_for_default_export(),
+    )
+    with (source_dir / SOURCE_STATIC_TABLE_CSV_NAME).open(
+        encoding='utf-8',
+        newline='',
+    ) as handle:
+        source_rows = list(csv.DictReader(handle))
+    inactive_row = dict(source_rows[0])
+    inactive_row.update(
+        {
+            'source_endpoint_key': 'source:inactive',
+            'source_id': '1002',
+            'source_node_id': '11',
+            'static_status': 'inactive',
+        }
+    )
+    _write_csv_rows(source_dir / SOURCE_STATIC_TABLE_CSV_NAME, source_rows + [inactive_row])
+
+    req = RefractionStaticExportJobRequest.model_validate(
+        {
+            'source_job_id': 'source-refraction-job',
+            'export': {
+                'enabled': True,
+                'formats': ['time_term_spreadsheet'],
+                'include_inactive_endpoints': True,
+            },
+        }
+    )
+    export_job_id = 'export-job-with-inactive'
+    export_job_dir = tmp_path / 'jobs' / export_job_id
+    with client.app.state.sv.lock:
+        client.app.state.sv.jobs.create_static_job(
+            export_job_id,
+            file_id='raw-file-id',
+            key1_byte=189,
+            key2_byte=193,
+            statics_kind='refraction_export',
+            artifacts_dir=str(export_job_dir),
+        )
+
+    run_refraction_static_export_job(export_job_id, req, client.app.state.sv)
+
+    rows = _read_csv_text(
+        (export_job_dir / REFRACTION_TIME_TERM_SPREADSHEET_CSV_NAME).read_text(
+            encoding='utf-8',
+        )
+    )
+    assert [row['endpoint_key'] for row in rows] == [
+        'source:1001',
+        'source:inactive',
+        'receiver:2001',
+    ]
+    assert rows[1]['static_status'] == 'inactive'
+
+
+def test_run_refraction_static_export_job_writes_lsst_artifacts(
+    client: TestClient,
+    tmp_path: Path,
+) -> None:
+    _create_source_refraction_job(
+        client,
+        tmp_path,
+        artifact_names=(
+            REFRACTION_STATIC_REQUEST_JSON_NAME,
+            REFRACTION_STATIC_ARTIFACTS_JSON_NAME,
+            SOURCE_STATIC_TABLE_CSV_NAME,
+            RECEIVER_STATIC_TABLE_CSV_NAME,
+        ),
+    )
+    req = RefractionStaticExportJobRequest.model_validate(
+        {
+            'source_job_id': 'source-refraction-job',
+            'export': {'enabled': True, 'formats': ['lsst', 'lsst_plus']},
+        }
+    )
+    export_job_id = 'export-job'
+    export_job_dir = tmp_path / 'jobs' / export_job_id
+    with client.app.state.sv.lock:
+        client.app.state.sv.jobs.create_static_job(
+            export_job_id,
+            file_id='raw-file-id',
+            key1_byte=189,
+            key2_byte=193,
+            statics_kind='refraction_export',
+            artifacts_dir=str(export_job_dir),
+        )
+
+    run_refraction_static_export_job(export_job_id, req, client.app.state.sv)
+
+    lsst_rows = _read_csv_text(
+        (export_job_dir / REFRACTION_LSST_CSV_NAME).read_text(encoding='utf-8')
+    )
+    lsst_plus_rows = _read_csv_text(
+        (export_job_dir / REFRACTION_LSST_PLUS_CSV_NAME).read_text(encoding='utf-8')
+    )
+    assert [row['endpoint_kind'] for row in lsst_rows] == ['source', 'receiver']
+    assert lsst_rows[0]['endpoint_key'] == 'source:1001'
+    assert lsst_rows[0]['total_applied_shift_ms'] == '12.500000'
+    assert lsst_rows[1]['endpoint_key'] == 'receiver:2001'
+    assert lsst_rows[1]['total_applied_shift_ms'] == '-3.250000'
+    assert lsst_plus_rows[0]['format_name'] == 'lsst_plus'
+    assert lsst_plus_rows[0]['source_field_shift_ms'] == '1.500000'
+    assert lsst_plus_rows[1]['receiver_field_shift_ms'] == '-0.500000'
+    meta = json.loads(
+        (export_job_dir / REFRACTION_STATIC_EXPORT_JOB_META_JSON_NAME).read_text(
+            encoding='utf-8',
+        )
+    )
+    assert meta['generated_artifacts'] == [
+        REFRACTION_LSST_CSV_NAME,
+        REFRACTION_LSST_PLUS_CSV_NAME,
+    ]
+
+
+def _write_source_artifact_stub(path: Path, artifact_name: str) -> None:
+    if artifact_name == SOURCE_STATIC_TABLE_CSV_NAME:
+        _write_csv(
+            path,
+            {
+                'endpoint_kind': 'source',
+                'source_endpoint_key': 'source:1001',
+                'source_id': '1001',
+                'source_node_id': '10',
+                'x_m': '1000.0',
+                'y_m': '2000.0',
+                'surface_elevation_m': '25.0',
+                't1_ms': '12.5',
+                'v1_m_s': '800.0',
+                'v2_m_s': '2400.0',
+                'sh1_weathering_thickness_m': '8.0',
+                'weathering_correction_ms': '10.0',
+                'elevation_correction_ms': '2.5',
+                'total_static_ms': '12.5',
+                'total_applied_shift_ms': '12.5',
+                'static_status': 'ok',
+                'sign_convention': REFRACTION_STATIC_REPO_SIGN_CONVENTION,
+                'source_field_shift_ms': '1.5',
+                'source_field_static_status': 'ok',
+                'source_total_with_field_shift_ms': '14.0',
+            },
+        )
+        return
+    if artifact_name == RECEIVER_STATIC_TABLE_CSV_NAME:
+        _write_csv(
+            path,
+            {
+                'endpoint_kind': 'receiver',
+                'receiver_endpoint_key': 'receiver:2001',
+                'receiver_id': '2001',
+                'receiver_node_id': '20',
+                'x_m': '1010.0',
+                'y_m': '2010.0',
+                'surface_elevation_m': '30.0',
+                't1_ms': '8.5',
+                'v1_m_s': '800.0',
+                'v2_m_s': '2300.0',
+                'sh1_weathering_thickness_m': '7.0',
+                'weathering_correction_ms': '-4.0',
+                'elevation_correction_ms': '0.75',
+                'total_static_ms': '-3.25',
+                'total_applied_shift_ms': '-3.25',
+                'static_status': 'ok',
+                'sign_convention': REFRACTION_STATIC_REPO_SIGN_CONVENTION,
+                'receiver_field_shift_ms': '-0.5',
+                'receiver_field_static_status': 'ok',
+                'receiver_total_with_field_shift_ms': '-3.75',
+            },
+        )
+        return
+    path.write_bytes(b'data')
+
+
+def _write_csv(path: Path, row: dict[str, str]) -> None:
+    _write_csv_rows(path, [row])
+
+
+def _write_csv_rows(path: Path, rows: list[dict[str, str]]) -> None:
+    assert rows
+    with path.open('w', encoding='utf-8', newline='') as handle:
+        writer = csv.DictWriter(handle, fieldnames=list(rows[0]))
+        writer.writeheader()
+        writer.writerows(rows)
+
+
+def _read_csv_text(text: str) -> list[dict[str, str]]:
+    return list(csv.DictReader(io.StringIO(text)))

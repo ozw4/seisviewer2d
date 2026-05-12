@@ -25,6 +25,10 @@ from app.services.refraction_static_design_matrix import (
     LOW_FOLD_CELL_REJECTION_REASON,
     LOW_FOLD_CELL_VELOCITY_STATUS,
 )
+from app.services.refraction_static_export_units import (
+    REFRACTION_STATIC_REPO_SIGN_CONVENTION,
+    seconds_to_export_units,
+)
 from app.services.refraction_static_layer_config import (
     normalize_refraction_static_layers,
 )
@@ -68,6 +72,7 @@ REFRACTION_STATIC_COMPONENTS_CSV_NAME = 'refraction_static_components.csv'
 SOURCE_STATIC_TABLE_CSV_NAME = 'source_static_table.csv'
 RECEIVER_STATIC_TABLE_CSV_NAME = 'receiver_static_table.csv'
 SOURCE_RECEIVER_STATIC_TABLE_NPZ_NAME = 'source_receiver_static_table.npz'
+REFRACTION_TIME_TERM_SPREADSHEET_CSV_NAME = 'refraction_time_term_spreadsheet.csv'
 REFRACTION_STATIC_HISTORY_JSON_NAME = 'refraction_static_history.json'
 REFRACTION_REFRACTOR_VELOCITY_CELLS_CSV_NAME = (
     'refraction_refractor_velocity_cells.csv'
@@ -202,9 +207,12 @@ ARTIFACT_VERSION = '1.0'
 METHOD = 'gli_variable_thickness'
 WORKFLOW = 'refraction_statics'
 STATIC_COMPONENT = 'final_refraction'
-SIGN_CONVENTION = 'corrected(t) = raw(t - shift_s)'
+SIGN_CONVENTION = REFRACTION_STATIC_REPO_SIGN_CONVENTION
 POSITIVE_SHIFT_DESCRIPTION = 'event appears later in corrected data'
 NEGATIVE_SHIFT_DESCRIPTION = 'event appears earlier in corrected data'
+TIME_TERM_SPREADSHEET_FORMAT_NAME = 'time_term_spreadsheet'
+TIME_TERM_SPREADSHEET_FORMAT_VERSION = 1
+TIME_TERM_SPREADSHEET_SCHEMA_VERSION = 1
 
 _ARTIFACTS: tuple[dict[str, str | bool], ...] = (
     {
@@ -266,6 +274,12 @@ _ARTIFACTS: tuple[dict[str, str | bool], ...] = (
         'kind': 'npz',
         'required': True,
         'description': 'Machine-readable source/receiver endpoint static tables',
+    },
+    {
+        'name': REFRACTION_TIME_TERM_SPREADSHEET_CSV_NAME,
+        'kind': 'csv',
+        'required': True,
+        'description': 'Spreadsheet endpoint time terms, layers, statics, and statuses',
     },
 )
 
@@ -786,6 +800,59 @@ _RECEIVER_STATIC_TABLE_3LAYER_COLUMNS = (
     'residual_mad_by_layer_ms',
 )
 
+_TIME_TERM_SPREADSHEET_COLUMNS = (
+    'schema_version',
+    'format_name',
+    'format_version',
+    'source_job_id',
+    'endpoint_kind',
+    'endpoint_key',
+    'endpoint_id',
+    'station_id',
+    'node_id',
+    'x_m',
+    'y_m',
+    'elevation_m',
+    'surface_elevation_m',
+    't1_ms',
+    't2_ms',
+    't3_ms',
+    'v1_m_s',
+    'v2_m_s',
+    'v3_m_s',
+    'vsub_m_s',
+    'sh1_m',
+    'sh2_m',
+    'sh3_m',
+    'layer1_base_elevation_m',
+    'layer2_base_elevation_m',
+    'final_refractor_elevation_m',
+    'weathering_correction_ms',
+    'elevation_correction_ms',
+    'source_depth_correction_ms',
+    'uphole_correction_ms',
+    'manual_static_ms',
+    'field_correction_ms',
+    'total_applied_shift_ms',
+    'pick_count',
+    'used_pick_count',
+    'pick_count_by_layer',
+    'used_pick_count_by_layer',
+    'residual_rms_ms',
+    'residual_mad_ms',
+    'residual_rms_by_layer_ms',
+    'residual_mad_by_layer_ms',
+    'solution_status',
+    'weathering_status',
+    'datum_status',
+    'source_depth_status',
+    'uphole_status',
+    'manual_static_status',
+    'field_static_status',
+    'static_status',
+    'sign_convention',
+)
+
 # Keep the original Phase 2 cell columns and add self-describing aliases used
 # by downstream QC checks; existing artifact names and column meanings remain.
 _REFRACTOR_VELOCITY_CELL_COLUMNS = (
@@ -908,6 +975,7 @@ def write_refraction_static_artifacts(
     job_dir: Path,
     resolved_first_layer: ResolvedRefractionFirstLayer | None = None,
     upstream_artifact_names: Iterable[str] = (),
+    source_job_id: str | None = None,
 ) -> RefractionStaticArtifactSet:
     """Write final refraction statics artifacts and an artifact manifest.
 
@@ -971,6 +1039,9 @@ def write_refraction_static_artifacts(
         source_static_table_csv=root / SOURCE_STATIC_TABLE_CSV_NAME,
         receiver_static_table_csv=root / RECEIVER_STATIC_TABLE_CSV_NAME,
         source_receiver_static_table_npz=root / SOURCE_RECEIVER_STATIC_TABLE_NPZ_NAME,
+        refraction_time_term_spreadsheet_csv=(
+            root / REFRACTION_TIME_TERM_SPREADSHEET_CSV_NAME
+        ),
         static_history_json=root / REFRACTION_STATIC_HISTORY_JSON_NAME,
         manifest_json=root / REFRACTION_STATIC_ARTIFACTS_JSON_NAME,
         artifact_names=tuple(
@@ -1036,6 +1107,11 @@ def write_refraction_static_artifacts(
         result=values.result,
         path=paths.source_receiver_static_table_npz,
     )
+    write_refraction_time_term_spreadsheet_csv(
+        result=values.result,
+        path=paths.refraction_time_term_spreadsheet_csv,
+        source_job_id=source_job_id,
+    )
     write_refraction_static_history_json(
         result=values.result,
         req=request,
@@ -1083,6 +1159,7 @@ def write_refraction_static_artifacts(
         paths.source_static_table_csv,
         paths.receiver_static_table_csv,
         paths.source_receiver_static_table_npz,
+        paths.refraction_time_term_spreadsheet_csv,
         paths.static_history_json,
         paths.manifest_json,
     )
@@ -1237,6 +1314,37 @@ def write_source_receiver_static_table_npz(
     values = _validate_result(result)
     payload = build_source_receiver_static_table_arrays(result=values.result)
     _write_npz_atomic(Path(path), payload)
+
+
+def write_refraction_time_term_spreadsheet_csv(
+    *,
+    result: RefractionDatumStaticsResult,
+    path: Path,
+    source_job_id: str | None = None,
+) -> None:
+    values = _validate_result(result)
+    rows = _time_term_spreadsheet_rows(
+        values.result,
+        source_job_id=source_job_id,
+    )
+    _write_csv_atomic(Path(path), _TIME_TERM_SPREADSHEET_COLUMNS, rows)
+
+
+def write_refraction_time_term_spreadsheet_csv_from_static_tables(
+    *,
+    source_rows: Iterable[Mapping[str, object]],
+    receiver_rows: Iterable[Mapping[str, object]],
+    path: Path,
+    source_job_id: str | None = None,
+    include_inactive_endpoints: bool = True,
+) -> None:
+    rows = _time_term_spreadsheet_rows_from_static_tables(
+        source_rows=source_rows,
+        receiver_rows=receiver_rows,
+        source_job_id=source_job_id,
+        include_inactive_endpoints=include_inactive_endpoints,
+    )
+    _write_csv_atomic(Path(path), _TIME_TERM_SPREADSHEET_COLUMNS, rows)
 
 
 def write_refraction_refractor_velocity_cells_csv(
@@ -5149,6 +5257,204 @@ def _receiver_static_table_rows(
     return rows
 
 
+def _time_term_spreadsheet_rows(
+    result: RefractionDatumStaticsResult,
+    *,
+    source_job_id: str | None,
+) -> list[dict[str, object]]:
+    rows: list[dict[str, object]] = []
+    job_id = '' if source_job_id is None else str(source_job_id)
+    for row in _source_static_table_rows(result):
+        rows.append(
+            _time_term_spreadsheet_endpoint_row(
+                row,
+                endpoint_prefix='source',
+                source_job_id=job_id,
+            )
+        )
+    for row in _receiver_static_table_rows(result):
+        rows.append(
+            _time_term_spreadsheet_endpoint_row(
+                row,
+                endpoint_prefix='receiver',
+                source_job_id=job_id,
+            )
+        )
+    return rows
+
+
+def _time_term_spreadsheet_rows_from_static_tables(
+    *,
+    source_rows: Iterable[Mapping[str, object]],
+    receiver_rows: Iterable[Mapping[str, object]],
+    source_job_id: str | None,
+    include_inactive_endpoints: bool,
+) -> list[dict[str, object]]:
+    rows: list[dict[str, object]] = []
+    job_id = '' if source_job_id is None else str(source_job_id)
+    for row in source_rows:
+        _validate_time_term_static_table_row(row, endpoint_kind='source')
+        if not _include_time_term_static_table_row(
+            row,
+            include_inactive_endpoints=include_inactive_endpoints,
+        ):
+            continue
+        rows.append(
+            _time_term_spreadsheet_endpoint_row(
+                row,
+                endpoint_prefix='source',
+                source_job_id=job_id,
+            )
+        )
+    for row in receiver_rows:
+        _validate_time_term_static_table_row(row, endpoint_kind='receiver')
+        if not _include_time_term_static_table_row(
+            row,
+            include_inactive_endpoints=include_inactive_endpoints,
+        ):
+            continue
+        rows.append(
+            _time_term_spreadsheet_endpoint_row(
+                row,
+                endpoint_prefix='receiver',
+                source_job_id=job_id,
+            )
+        )
+    return rows
+
+
+def _validate_time_term_static_table_row(
+    row: Mapping[str, object],
+    *,
+    endpoint_kind: str,
+) -> None:
+    if row.get('sign_convention') != SIGN_CONVENTION:
+        raise RefractionStaticArtifactError(
+            f'{endpoint_kind} static table sign_convention must be {SIGN_CONVENTION!r}'
+        )
+    if row.get('endpoint_kind') != endpoint_kind:
+        raise RefractionStaticArtifactError(
+            f'{endpoint_kind} static table contains endpoint_kind '
+            f'{row.get("endpoint_kind")!r}'
+        )
+
+
+def _include_time_term_static_table_row(
+    row: Mapping[str, object],
+    *,
+    include_inactive_endpoints: bool,
+) -> bool:
+    status = str(row.get('static_status', '')).strip()
+    return status == 'ok' or bool(include_inactive_endpoints)
+
+
+def _time_term_spreadsheet_endpoint_row(
+    row: Mapping[str, object],
+    *,
+    endpoint_prefix: str,
+    source_job_id: str,
+) -> dict[str, object]:
+    if endpoint_prefix not in {'source', 'receiver'}:
+        raise RefractionStaticArtifactError(
+            f'unsupported spreadsheet endpoint prefix: {endpoint_prefix}'
+        )
+    endpoint_kind = str(row.get('endpoint_kind', ''))
+    endpoint_key = row.get(f'{endpoint_prefix}_endpoint_key')
+    endpoint_id = row.get(f'{endpoint_prefix}_id')
+    node_id = row.get(f'{endpoint_prefix}_node_id')
+    layer1_base = row.get('layer1_base_elevation_m')
+    if layer1_base in (None, ''):
+        layer1_base = row.get('refractor_elevation_m')
+    final_refractor = row.get('final_refractor_elevation_m')
+    if final_refractor in (None, ''):
+        final_refractor = row.get('refractor_elevation_m')
+    field_shift_column = f'{endpoint_prefix}_field_shift_ms'
+    field_status_column = f'{endpoint_prefix}_field_static_status'
+
+    source_depth_correction = ''
+    source_depth_status = _FIELD_NOT_APPLICABLE_STATUS
+    uphole_correction = ''
+    uphole_status = _FIELD_NOT_APPLICABLE_STATUS
+    if endpoint_prefix == 'source':
+        source_depth_correction = row.get('source_depth_shift_ms', '')
+        source_depth_status = str(row.get('source_depth_status', ''))
+        uphole_correction = row.get('uphole_shift_ms', '')
+        uphole_status = str(row.get('uphole_status', ''))
+
+    out = {
+        'schema_version': str(TIME_TERM_SPREADSHEET_SCHEMA_VERSION),
+        'format_name': TIME_TERM_SPREADSHEET_FORMAT_NAME,
+        'format_version': str(TIME_TERM_SPREADSHEET_FORMAT_VERSION),
+        'source_job_id': source_job_id,
+        'endpoint_kind': endpoint_kind,
+        'endpoint_key': _spreadsheet_text(endpoint_key),
+        'endpoint_id': _spreadsheet_text(endpoint_id),
+        'station_id': _spreadsheet_text(endpoint_id),
+        'node_id': _spreadsheet_int(node_id),
+        'x_m': _spreadsheet_m(row.get('x_m')),
+        'y_m': _spreadsheet_m(row.get('y_m')),
+        'elevation_m': _spreadsheet_m(row.get('surface_elevation_m')),
+        'surface_elevation_m': _spreadsheet_m(row.get('surface_elevation_m')),
+        't1_ms': _spreadsheet_ms(row.get('t1_ms')),
+        't2_ms': _spreadsheet_ms(row.get('t2_ms')),
+        't3_ms': _spreadsheet_ms(row.get('t3_ms')),
+        'v1_m_s': _spreadsheet_velocity(row.get('v1_m_s')),
+        'v2_m_s': _spreadsheet_velocity(row.get('v2_m_s')),
+        'v3_m_s': _spreadsheet_velocity(row.get('v3_m_s')),
+        'vsub_m_s': _spreadsheet_velocity(row.get('vsub_m_s')),
+        'sh1_m': _spreadsheet_m(row.get('sh1_weathering_thickness_m')),
+        'sh2_m': _spreadsheet_m(row.get('sh2_weathering_thickness_m')),
+        'sh3_m': _spreadsheet_m(row.get('sh3_weathering_thickness_m')),
+        'layer1_base_elevation_m': _spreadsheet_m(layer1_base),
+        'layer2_base_elevation_m': _spreadsheet_m(
+            row.get('layer2_base_elevation_m')
+        ),
+        'final_refractor_elevation_m': _spreadsheet_m(final_refractor),
+        'weathering_correction_ms': _spreadsheet_ms(
+            row.get('weathering_correction_ms')
+        ),
+        'elevation_correction_ms': _spreadsheet_ms(
+            row.get('elevation_correction_ms')
+        ),
+        'source_depth_correction_ms': _spreadsheet_ms(source_depth_correction),
+        'uphole_correction_ms': _spreadsheet_ms(uphole_correction),
+        'manual_static_ms': _spreadsheet_ms(row.get('manual_static_shift_ms')),
+        'field_correction_ms': _spreadsheet_ms(row.get(field_shift_column)),
+        'total_applied_shift_ms': _spreadsheet_ms(
+            row.get('total_applied_shift_ms')
+        ),
+        'pick_count': _spreadsheet_int(row.get('pick_count')),
+        'used_pick_count': _spreadsheet_int(row.get('used_pick_count')),
+        'pick_count_by_layer': _spreadsheet_text(row.get('pick_count_by_layer')),
+        'used_pick_count_by_layer': _spreadsheet_text(
+            row.get('used_pick_count_by_layer')
+        ),
+        'residual_rms_ms': _spreadsheet_ms(row.get('residual_rms_ms')),
+        'residual_mad_ms': _spreadsheet_ms(row.get('residual_mad_ms')),
+        'residual_rms_by_layer_ms': _spreadsheet_text(
+            row.get('residual_rms_by_layer_ms')
+        ),
+        'residual_mad_by_layer_ms': _spreadsheet_text(
+            row.get('residual_mad_by_layer_ms')
+        ),
+        'solution_status': _spreadsheet_text(row.get('solution_status')),
+        'weathering_status': _spreadsheet_text(row.get('weathering_status')),
+        'datum_status': _spreadsheet_text(row.get('datum_status')),
+        'source_depth_status': source_depth_status,
+        'uphole_status': uphole_status,
+        'manual_static_status': _spreadsheet_text(row.get('manual_static_status')),
+        'field_static_status': _spreadsheet_text(row.get(field_status_column)),
+        'static_status': _spreadsheet_text(row.get('static_status')),
+        'sign_convention': SIGN_CONVENTION,
+    }
+    missing = set(_TIME_TERM_SPREADSHEET_COLUMNS) - set(out)
+    if missing:
+        raise RefractionStaticArtifactError(
+            'time-term spreadsheet row missing columns: ' + ', '.join(sorted(missing))
+        )
+    return out
+
+
 def _node_lookup(node_id: np.ndarray, values: np.ndarray) -> dict[int, Any]:
     return {
         int(raw_node): values[index]
@@ -6794,7 +7100,7 @@ def _csv_grid_float(value: object) -> str | float:
 
 def _csv_ms(value_s: object) -> str | float:
     out = _csv_float(value_s)
-    return '' if out == '' else float(out) * 1000.0
+    return '' if out == '' else seconds_to_export_units(out, 'milliseconds')
 
 
 def _csv_bool(value: object) -> str:
@@ -6822,6 +7128,41 @@ def _csv_layer_index(value: object) -> str | int:
     if out == '' or int(out) <= 0:
         return ''
     return out
+
+
+def _spreadsheet_text(value: object) -> str:
+    if value is None:
+        return ''
+    return str(value)
+
+
+def _spreadsheet_int(value: object) -> str:
+    out = _csv_int(value)
+    return '' if out == '' else str(out)
+
+
+def _spreadsheet_ms(value: object) -> str:
+    return _spreadsheet_fixed(value, decimals=6)
+
+
+def _spreadsheet_m(value: object) -> str:
+    return _spreadsheet_fixed(value, decimals=3)
+
+
+def _spreadsheet_velocity(value: object) -> str:
+    return _spreadsheet_fixed(value, decimals=3)
+
+
+def _spreadsheet_fixed(value: object, *, decimals: int) -> str:
+    if value is None or value == '':
+        return ''
+    try:
+        numeric = float(value)
+    except (TypeError, ValueError):
+        return ''
+    if not np.isfinite(numeric):
+        return ''
+    return f'{numeric:.{decimals}f}'
 
 
 def _csv_json_object(value: Mapping[str, object] | None) -> str:
@@ -6966,6 +7307,7 @@ __all__ = [
     'REFRACTION_STATIC_REQUEST_JSON_NAME',
     'REFRACTION_STATIC_REGISTERED_ARTIFACT_NAMES',
     'REFRACTION_STATIC_QC_JSON_NAME',
+    'REFRACTION_TIME_TERM_SPREADSHEET_CSV_NAME',
     'REFRACTION_STATIC_SOLUTION_NPZ_NAME',
     'REFRACTION_T1LSST_1LAYER_COMPONENTS_CSV_NAME',
     'REFRACTION_V1_ESTIMATES_CSV_NAME',
@@ -6997,6 +7339,8 @@ __all__ = [
     'write_refraction_static_qc_json',
     'write_refraction_static_solution_npz',
     'write_refraction_statics_csv',
+    'write_refraction_time_term_spreadsheet_csv',
+    'write_refraction_time_term_spreadsheet_csv_from_static_tables',
     'write_receiver_static_table_csv',
     'write_source_receiver_static_table_npz',
     'write_source_static_table_csv',

@@ -1,7 +1,8 @@
-"""M5 refraction export request validation and metadata-only job service."""
+"""M5 refraction export request validation and artifact-writing job service."""
 
 from __future__ import annotations
 
+import csv
 import json
 from dataclasses import dataclass
 from pathlib import Path
@@ -24,13 +25,29 @@ from app.services.refraction_static_artifacts import (
     REFRACTION_STATIC_ARTIFACTS_JSON_NAME,
     REFRACTION_STATIC_REQUEST_JSON_NAME,
     REFRACTION_STATIC_SOLUTION_NPZ_NAME,
+    REFRACTION_TIME_TERM_SPREADSHEET_CSV_NAME,
     SOURCE_RECEIVER_STATIC_TABLE_NPZ_NAME,
     SOURCE_STATIC_TABLE_CSV_NAME,
+    write_refraction_time_term_spreadsheet_csv_from_static_tables,
+)
+from app.services.refraction_static_export_units import (
+    REFRACTION_STATIC_REPO_SIGN_CONVENTION,
+)
+from app.services.refraction_static_export_types import (
+    RefractionStaticEndpointExportRow,
+    RefractionStaticEndpointKind,
+    RefractionStaticExportBundle,
+)
+from app.services.refraction_static_lsst_export import (
+    REFRACTION_LSST_CSV_NAME,
+    REFRACTION_LSST_PLUS_CSV_NAME,
+    write_refraction_lsst_csv,
+    write_refraction_lsst_plus_csv,
 )
 
 REFRACTION_STATIC_EXPORT_REQUEST_JSON_NAME = 'refraction_static_export_request.json'
 REFRACTION_STATIC_EXPORT_JOB_META_JSON_NAME = 'job_meta.json'
-REFRACTION_STATIC_EXPORT_DONE_MESSAGE = 'refraction_static_export_contract_recorded'
+REFRACTION_STATIC_EXPORT_DONE_MESSAGE = 'refraction_static_export_artifacts_written'
 
 _BASE_SOURCE_ARTIFACTS = (
     REFRACTION_STATIC_REQUEST_JSON_NAME,
@@ -181,11 +198,11 @@ def run_refraction_static_export_job(
     req: RefractionStaticExportJobRequest,
     state: AppState,
 ) -> None:
-    """Record a standalone M5 export contract job.
+    """Run a standalone M5 export job.
 
-    Formatter implementation is intentionally out of scope for issue #499; this
-    job validates the source refraction artifacts and persists the public export
-    request metadata, including resolved default formats.
+    The job validates the completed source refraction artifacts, writes the
+    requested export artifacts into its own job directory, and persists request
+    metadata including resolved default formats.
     """
 
     def worker() -> JobCompletion:
@@ -229,6 +246,13 @@ def _run_refraction_static_export_job_body(
     _set_job_progress_message(
         state,
         job_id,
+        progress=0.60,
+        message='writing_refraction_static_export_artifacts',
+    )
+    _write_requested_export_artifacts(job_dir=job_dir, req=req, source=source)
+    _set_job_progress_message(
+        state,
+        job_id,
         progress=0.80,
         message='writing_refraction_static_export_request',
     )
@@ -266,6 +290,7 @@ def _refraction_static_export_job_payload(
             'requested_formats': list(source.requested_formats),
             'units': req.export.units,
             'rounding_ms': req.export.rounding_ms,
+            'sign_convention': REFRACTION_STATIC_REPO_SIGN_CONVENTION,
             'include_inactive_endpoints': bool(req.export.include_inactive_endpoints),
             'include_legacy_alias_columns': bool(
                 req.export.include_legacy_alias_columns
@@ -275,8 +300,208 @@ def _refraction_static_export_job_payload(
             ),
         },
         'required_source_artifacts': list(source.required_source_artifacts),
+        'generated_artifacts': list(
+            _generated_refraction_static_export_artifacts(source.requested_formats)
+        ),
         'source_artifacts_dir': str(source.source_artifacts_dir),
     }
+
+
+def _generated_refraction_static_export_artifacts(
+    requested_formats: tuple[RefractionStaticExportFormat, ...],
+) -> tuple[str, ...]:
+    names: list[str] = []
+    if 'time_term_spreadsheet' in requested_formats:
+        names.append(REFRACTION_TIME_TERM_SPREADSHEET_CSV_NAME)
+    if 'lsst' in requested_formats:
+        names.append(REFRACTION_LSST_CSV_NAME)
+    if 'lsst_plus' in requested_formats:
+        names.append(REFRACTION_LSST_PLUS_CSV_NAME)
+    return tuple(names)
+
+
+def _write_requested_export_artifacts(
+    *,
+    job_dir: Path,
+    req: RefractionStaticExportJobRequest,
+    source: ResolvedRefractionStaticExportSourceJob,
+) -> None:
+    if 'time_term_spreadsheet' in source.requested_formats:
+        _write_time_term_spreadsheet_export(
+            source=source,
+            job_dir=job_dir,
+            include_inactive_endpoints=bool(req.export.include_inactive_endpoints),
+        )
+    if (
+        'lsst' not in source.requested_formats
+        and 'lsst_plus' not in source.requested_formats
+    ):
+        return
+    bundle = _load_lsst_export_bundle(source)
+    if 'lsst' in source.requested_formats:
+        write_refraction_lsst_csv(
+            bundle,
+            job_dir / REFRACTION_LSST_CSV_NAME,
+            fail_on_invalid_static_status=bool(
+                req.export.fail_on_invalid_static_status
+            ),
+            include_inactive_endpoints=bool(req.export.include_inactive_endpoints),
+        )
+    if 'lsst_plus' in source.requested_formats:
+        write_refraction_lsst_plus_csv(
+            bundle,
+            job_dir / REFRACTION_LSST_PLUS_CSV_NAME,
+            fail_on_invalid_static_status=bool(
+                req.export.fail_on_invalid_static_status
+            ),
+            include_inactive_endpoints=bool(req.export.include_inactive_endpoints),
+        )
+
+
+def _write_time_term_spreadsheet_export(
+    *,
+    source: ResolvedRefractionStaticExportSourceJob,
+    job_dir: Path,
+    include_inactive_endpoints: bool,
+) -> None:
+    write_refraction_time_term_spreadsheet_csv_from_static_tables(
+        source_rows=_load_static_table_rows(
+            source.source_artifacts_dir / SOURCE_STATIC_TABLE_CSV_NAME,
+        ),
+        receiver_rows=_load_static_table_rows(
+            source.source_artifacts_dir / RECEIVER_STATIC_TABLE_CSV_NAME,
+        ),
+        path=job_dir / REFRACTION_TIME_TERM_SPREADSHEET_CSV_NAME,
+        source_job_id=source.source_job_id,
+        include_inactive_endpoints=include_inactive_endpoints,
+    )
+
+
+def _load_lsst_export_bundle(
+    source: ResolvedRefractionStaticExportSourceJob,
+) -> RefractionStaticExportBundle:
+    return RefractionStaticExportBundle(
+        source_job_id=source.source_job_id,
+        source_rows=_load_lsst_endpoint_rows(
+            source.source_artifacts_dir / SOURCE_STATIC_TABLE_CSV_NAME,
+            endpoint_kind='source',
+        ),
+        receiver_rows=_load_lsst_endpoint_rows(
+            source.source_artifacts_dir / RECEIVER_STATIC_TABLE_CSV_NAME,
+            endpoint_kind='receiver',
+        ),
+    )
+
+
+def _load_lsst_endpoint_rows(
+    path: Path,
+    *,
+    endpoint_kind: RefractionStaticEndpointKind,
+) -> tuple[RefractionStaticEndpointExportRow, ...]:
+    rows = _load_static_table_rows(path)
+    return tuple(_lsst_endpoint_row(row, endpoint_kind=endpoint_kind) for row in rows)
+
+
+def _load_static_table_rows(path: Path) -> tuple[dict[str, str | None], ...]:
+    with Path(path).open('r', encoding='utf-8-sig', newline='') as handle:
+        return tuple(csv.DictReader(handle))
+
+
+def _lsst_endpoint_row(
+    row: dict[str, str | None],
+    *,
+    endpoint_kind: RefractionStaticEndpointKind,
+) -> RefractionStaticEndpointExportRow:
+    if row.get('sign_convention') != REFRACTION_STATIC_REPO_SIGN_CONVENTION:
+        raise RefractionStaticExportValidationError(
+            f'{endpoint_kind} static table sign_convention must be '
+            f'{REFRACTION_STATIC_REPO_SIGN_CONVENTION!r}'
+        )
+    if row.get('endpoint_kind') != endpoint_kind:
+        raise RefractionStaticExportValidationError(
+            f'{endpoint_kind} static table contains endpoint_kind '
+            f'{row.get("endpoint_kind")!r}'
+        )
+    prefix = 'source' if endpoint_kind == 'source' else 'receiver'
+    return RefractionStaticEndpointExportRow(
+        endpoint_kind=endpoint_kind,
+        endpoint_key=_required_row_text(row, f'{prefix}_endpoint_key'),
+        endpoint_id=_optional_row_text(row.get(f'{prefix}_id')),
+        station_id=_optional_row_text(row.get(f'{prefix}_id')),
+        node_id=_optional_int(row.get(f'{prefix}_node_id')),
+        x_m=_optional_float(row.get('x_m')),
+        y_m=_optional_float(row.get('y_m')),
+        elevation_m=_optional_float(row.get('surface_elevation_m')),
+        t1_s=_optional_ms_to_s(row.get('t1_ms')),
+        t2_s=_optional_ms_to_s(row.get('t2_ms')),
+        t3_s=_optional_ms_to_s(row.get('t3_ms')),
+        v1_m_s=_optional_float(row.get('v1_m_s')),
+        v2_m_s=_optional_float(row.get('v2_m_s')),
+        v3_m_s=_optional_float(row.get('v3_m_s')),
+        vsub_m_s=_optional_float(row.get('vsub_m_s')),
+        sh1_m=_optional_float(row.get('sh1_weathering_thickness_m')),
+        sh2_m=_optional_float(row.get('sh2_weathering_thickness_m')),
+        sh3_m=_optional_float(row.get('sh3_weathering_thickness_m')),
+        total_weathering_thickness_m=_optional_float(
+            row.get('total_weathering_thickness_m')
+        ),
+        weathering_correction_s=_optional_ms_to_s(
+            row.get('weathering_correction_ms')
+        ),
+        elevation_correction_s=_optional_ms_to_s(row.get('elevation_correction_ms')),
+        field_correction_s=_optional_ms_to_s(row.get(f'{prefix}_field_shift_ms')),
+        source_depth_m=_optional_float(row.get('source_depth_m')),
+        source_depth_shift_s=_optional_ms_to_s(row.get('source_depth_shift_ms')),
+        source_depth_status=_optional_row_text(row.get('source_depth_status')),
+        uphole_time_s=_optional_ms_to_s(row.get('uphole_time_ms')),
+        uphole_shift_s=_optional_ms_to_s(row.get('uphole_shift_ms')),
+        uphole_status=_optional_row_text(row.get('uphole_status')),
+        manual_static_shift_s=_optional_ms_to_s(row.get('manual_static_shift_ms')),
+        manual_static_status=_optional_row_text(row.get('manual_static_status')),
+        field_static_status=_optional_row_text(row.get(f'{prefix}_field_static_status')),
+        total_with_field_shift_s=_optional_ms_to_s(
+            row.get(f'{prefix}_total_with_field_shift_ms')
+        ),
+        total_applied_shift_s=_optional_ms_to_s(row.get('total_applied_shift_ms')),
+        static_status=_required_row_text(row, 'static_status'),
+    )
+
+
+def _required_row_text(row: dict[str, str | None], column: str) -> str:
+    text = _optional_row_text(row.get(column))
+    if text is None:
+        raise RefractionStaticExportValidationError(
+            f'static artifact is missing required value {column}'
+        )
+    return text
+
+
+def _optional_row_text(value: object) -> str | None:
+    if value is None:
+        return None
+    text = str(value).strip()
+    return text if text else None
+
+
+def _optional_float(value: object) -> float | None:
+    text = _optional_row_text(value)
+    if text is None:
+        return None
+    return float(text)
+
+
+def _optional_int(value: object) -> int | None:
+    text = _optional_row_text(value)
+    if text is None:
+        return None
+    return int(text)
+
+
+def _optional_ms_to_s(value: object) -> float | None:
+    parsed = _optional_float(value)
+    if parsed is None:
+        return None
+    return parsed / 1000.0
 
 
 def _job_int(job: dict[str, object], field: str) -> int:

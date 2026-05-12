@@ -93,6 +93,33 @@ def test_validate_static_table_rejects_unknown_sign_convention() -> None:
     assert any('sign_convention must be' in error for error in result.errors)
 
 
+def test_validate_static_table_rejects_missing_sign_convention() -> None:
+    row = _canonical_row()
+    row.pop('sign_convention')
+
+    result = validate_canonical_static_table_rows((row,))
+
+    assert result.is_valid is False
+    assert result.n_invalid_rows == 1
+    assert result.normalized_rows == ()
+    assert any('missing sign_convention' in error for error in result.errors)
+
+
+def test_validate_static_table_accepts_sign_convention_override() -> None:
+    row = _canonical_row()
+    row.pop('sign_convention')
+
+    result = validate_canonical_static_table_rows(
+        (row,),
+        sign_convention_override=REFRACTION_STATIC_EXPORT_SIGN_CONVENTION,
+    )
+
+    assert result.is_valid is True
+    assert result.normalized_rows[0].sign_convention == (
+        REFRACTION_STATIC_EXPORT_SIGN_CONVENTION
+    )
+
+
 def test_validate_static_table_normalizes_ms_to_seconds() -> None:
     result = validate_canonical_static_table_rows(
         (_canonical_row(applied_shift_ms='25.5'),)
@@ -100,3 +127,60 @@ def test_validate_static_table_normalizes_ms_to_seconds() -> None:
 
     assert result.is_valid is True
     assert result.normalized_rows[0].applied_shift_s == pytest.approx(0.0255)
+
+
+def test_validate_static_table_normalizes_seconds_column() -> None:
+    row = _canonical_row()
+    row.pop('applied_shift_ms')
+    row['applied_shift_s'] = '-0.00325'
+
+    result = validate_canonical_static_table_rows((row,))
+
+    assert result.is_valid is True
+    assert result.normalized_rows[0].applied_shift_s == pytest.approx(-0.00325)
+
+
+def test_validate_static_table_rejects_multiple_shift_columns() -> None:
+    row_ms = _canonical_row(
+        endpoint_key='source:1001',
+        endpoint_id='1001',
+        applied_shift_ms='12.5',
+    )
+    row_ms['applied_shift_s'] = ''
+    row_s = _canonical_row(
+        endpoint_kind='receiver',
+        endpoint_key='receiver:2001',
+        endpoint_id='2001',
+        applied_shift_ms='',
+    )
+    row_s['applied_shift_s'] = '-0.00325'
+
+    result = validate_canonical_static_table_rows((row_ms, row_s))
+
+    assert result.is_valid is False
+    assert result.normalized_rows == ()
+    assert result.n_invalid_rows == 2
+    assert any('exactly one applied-shift column' in error for error in result.errors)
+
+
+def test_validate_static_table_rejects_ambiguous_shift_units() -> None:
+    row = _canonical_row()
+    row.pop('applied_shift_ms')
+    row['applied_shift'] = '12.5'
+
+    result = validate_canonical_static_table_rows((row,))
+
+    assert result.is_valid is False
+    assert result.normalized_rows == ()
+    assert any('ambiguous units' in error for error in result.errors)
+
+
+def test_validate_static_table_accepts_unqualified_shift_with_units_metadata() -> None:
+    row = _canonical_row()
+    row.pop('applied_shift_ms')
+    row['applied_shift'] = '12.5'
+
+    result = validate_canonical_static_table_rows((row,), shift_units='milliseconds')
+
+    assert result.is_valid is True
+    assert result.normalized_rows[0].applied_shift_s == pytest.approx(0.0125)

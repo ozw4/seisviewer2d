@@ -1148,6 +1148,7 @@ def _run_public_multilayer_refraction_static_apply_job(
             first_layer=first_layer,
             req=req,
         ),
+        source_job_id=job_id,
     )
     return _finish_refraction_static_apply_job(
         job_id=job_id,
@@ -1324,6 +1325,7 @@ def _run_refraction_static_apply_job_body(
             first_layer=first_layer,
             req=active_req,
         ),
+        source_job_id=job_id,
     )
     return _finish_refraction_static_apply_job(
         job_id=job_id,

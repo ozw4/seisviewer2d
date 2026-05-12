@@ -118,6 +118,7 @@ def test_field_correction_endpoint_tables_include_component_totals(
 
     source_rows = _read_csv(paths.source_static_table_csv)
     receiver_rows = _read_csv(paths.receiver_static_table_csv)
+    spreadsheet_rows = _read_csv(paths.refraction_time_term_spreadsheet_csv)
 
     assert source_rows[0]['source_depth_m'] == '4.0'
     assert float(source_rows[0]['source_depth_shift_ms']) == pytest.approx(5.0)
@@ -136,6 +137,21 @@ def test_field_correction_endpoint_tables_include_component_totals(
         receiver_rows[0]['receiver_total_with_field_shift_ms']
     ) == pytest.approx(4.3)
 
+    assert float(spreadsheet_rows[0]['source_depth_correction_ms']) == pytest.approx(
+        5.0
+    )
+    assert float(spreadsheet_rows[0]['uphole_correction_ms']) == pytest.approx(-1.0)
+    assert float(spreadsheet_rows[0]['manual_static_ms']) == pytest.approx(0.5)
+    assert float(spreadsheet_rows[0]['field_correction_ms']) == pytest.approx(4.5)
+    assert spreadsheet_rows[0]['source_depth_status'] == 'ok'
+    assert spreadsheet_rows[0]['uphole_status'] == 'ok'
+    assert spreadsheet_rows[0]['manual_static_status'] == 'ok'
+    assert spreadsheet_rows[0]['field_static_status'] == 'ok'
+    assert spreadsheet_rows[2]['source_depth_correction_ms'] == ''
+    assert spreadsheet_rows[2]['source_depth_status'] == 'not_applicable'
+    assert float(spreadsheet_rows[2]['manual_static_ms']) == pytest.approx(2.0)
+    assert float(spreadsheet_rows[2]['field_correction_ms']) == pytest.approx(2.0)
+
     assert paths.source_receiver_static_table_npz.name == (
         SOURCE_RECEIVER_STATIC_TABLE_NPZ_NAME
     )
@@ -153,6 +169,34 @@ def test_field_correction_endpoint_tables_include_component_totals(
             data['receiver_total_with_field_shift_s'],
             [0.0043, 0.0011],
         )
+
+
+def test_time_term_spreadsheet_contains_m4_field_components(
+    tmp_path: Path,
+) -> None:
+    paths = write_refraction_static_artifacts(
+        result=_field_composed_result(),
+        req=_field_request(),
+        job_dir=tmp_path,
+    )
+
+    rows = _read_csv(paths.refraction_time_term_spreadsheet_csv)
+
+    assert float(rows[0]['source_depth_correction_ms']) == pytest.approx(5.0)
+    assert float(rows[0]['uphole_correction_ms']) == pytest.approx(-1.0)
+    assert float(rows[0]['manual_static_ms']) == pytest.approx(0.5)
+    assert float(rows[0]['field_correction_ms']) == pytest.approx(4.5)
+    assert rows[0]['source_depth_status'] == 'ok'
+    assert rows[0]['uphole_status'] == 'ok'
+    assert rows[0]['manual_static_status'] == 'ok'
+    assert rows[0]['field_static_status'] == 'ok'
+
+    assert rows[2]['source_depth_correction_ms'] == ''
+    assert rows[2]['uphole_correction_ms'] == ''
+    assert rows[2]['source_depth_status'] == 'not_applicable'
+    assert rows[2]['uphole_status'] == 'not_applicable'
+    assert float(rows[2]['manual_static_ms']) == pytest.approx(2.0)
+    assert float(rows[2]['field_correction_ms']) == pytest.approx(2.0)
 
 
 def test_trace_preview_includes_refraction_field_and_final_shift(
