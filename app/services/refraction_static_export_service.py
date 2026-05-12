@@ -396,12 +396,6 @@ def _copy_first_break_time_export(
             reader = csv.DictReader(handle)
             fieldnames = list(reader.fieldnames or [])
             rows = list(reader)
-        if 'source_job_id' not in fieldnames:
-            raise ValueError(
-                f'{REFRACTION_FIRST_BREAK_TIME_EXPORT_CSV_NAME} missing source_job_id'
-            )
-        for row in rows:
-            row['source_job_id'] = source.source_job_id
         with tmp_path.open('w', encoding='utf-8', newline='') as handle:
             writer = csv.DictWriter(handle, fieldnames=fieldnames)
             writer.writeheader()

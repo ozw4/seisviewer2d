@@ -521,9 +521,9 @@ def test_run_refraction_static_export_job_writes_first_break_time_artifact(
         )
     )
     assert rows[0]['source_endpoint_key'] == 'source:1001'
-    assert rows[0]['source_job_id'] == 'source-refraction-job'
-    assert rows[0]['observed_first_break_time_ms'] == '50.0'
-    assert rows[0]['modeled_first_break_time_ms'] == '48.5'
+    assert 'source_job_id' not in rows[0]
+    assert rows[0]['observed_pick_time_ms'] == '50.0'
+    assert rows[0]['modeled_pick_time_ms'] == '48.5'
     assert rows[0]['residual_ms'] == '1.5'
     meta = json.loads(
         (export_job_dir / REFRACTION_STATIC_EXPORT_JOB_META_JSON_NAME).read_text(
@@ -592,22 +592,28 @@ def _write_source_artifact_stub(path: Path, artifact_name: str) -> None:
         _write_csv(
             path,
             {
-                'format_name': 'first_break_time',
-                'format_version': '1',
-                'source_job_id': 'source-refraction-job',
-                'observation_index': '0',
-                'sorted_trace_index': '0',
+                'schema_version': '1',
+                'trace_index_sorted': '0',
                 'source_endpoint_key': 'source:1001',
                 'receiver_endpoint_key': 'receiver:2001',
-                'source_id': '1001',
-                'receiver_id': '2001',
+                'source_node_id': '10',
+                'receiver_node_id': '20',
                 'offset_m': '100.0',
+                'midpoint_x_m': '1005.0',
+                'midpoint_y_m': '2005.0',
+                'cell_ix': '',
+                'cell_iy': '',
                 'layer_kind': 'v2_t1',
-                'observed_first_break_time_ms': '50.0',
-                'modeled_first_break_time_ms': '48.5',
+                'used_for_layer': 'true',
+                'observed_pick_time_ms': '50.0',
+                'modeled_pick_time_ms': '48.5',
                 'residual_ms': '1.5',
-                'used_in_solve': 'true',
-                'reject_reason': 'ok',
+                'moveout_time_ms': '30.0',
+                'source_time_term_ms': '10.0',
+                'receiver_time_term_ms': '8.5',
+                'velocity_m_s': '2300.0',
+                'rejection_reason': 'ok',
+                'observation_status': 'used',
                 'sign_convention': FIRST_BREAK_TIME_EXPORT_SIGN_CONVENTION,
             },
         )

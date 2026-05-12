@@ -239,6 +239,7 @@ def test_first_break_time_export_uses_documented_public_schema_for_cell_solve(
     tmp_path: Path,
 ) -> None:
     result, req, input_model = _clean_result()
+    expected_cell_id = synthetic_cell_midpoint_cell_id_sorted(input_model)
 
     write_refraction_static_artifacts(
         result=result,
@@ -248,12 +249,16 @@ def test_first_break_time_export_uses_documented_public_schema_for_cell_solve(
 
     rows = _read_csv(tmp_path / REFRACTION_FIRST_BREAK_TIME_EXPORT_CSV_NAME)
     for row in rows:
-        assert row['format_name'] == 'first_break_time'
-        assert row['sorted_trace_index']
-        assert 'cell_ix' not in row
-        assert 'cell_iy' not in row
+        trace_index = int(row['trace_index_sorted'])
+        cell_id = int(expected_cell_id[trace_index])
+        assert row['schema_version'] == '1'
+        assert row['trace_index_sorted']
+        assert int(row['cell_ix']) == cell_id
+        assert int(row['cell_iy']) == 0
         assert row['layer_kind'] == 'v2_t1'
-        assert row['used_in_solve'] == 'true'
+        assert row['used_for_layer'] == 'true'
+        assert row['observation_status'] == 'used'
+        assert row['velocity_m_s']
 
 
 def test_cell_velocity_artifact_records_smoothing_metadata(

@@ -216,7 +216,7 @@ TIME_TERM_SPREADSHEET_FORMAT_VERSION = 1
 TIME_TERM_SPREADSHEET_SCHEMA_VERSION = 1
 FIRST_BREAK_TIME_EXPORT_SCHEMA_VERSION = 1
 FIRST_BREAK_TIME_EXPORT_SIGN_CONVENTION = (
-    'residual_ms = observed_first_break_time_ms - modeled_first_break_time_ms'
+    'residual_ms = observed_pick_time_ms - modeled_pick_time_ms'
 )
 
 _ARTIFACTS: tuple[dict[str, str | bool], ...] = (
@@ -537,22 +537,28 @@ _RESIDUAL_COLUMNS = (
 )
 
 _FIRST_BREAK_TIME_EXPORT_COLUMNS = (
-    'format_name',
-    'format_version',
-    'source_job_id',
-    'observation_index',
-    'sorted_trace_index',
+    'schema_version',
+    'trace_index_sorted',
     'source_endpoint_key',
     'receiver_endpoint_key',
-    'source_id',
-    'receiver_id',
+    'source_node_id',
+    'receiver_node_id',
     'offset_m',
+    'midpoint_x_m',
+    'midpoint_y_m',
+    'cell_ix',
+    'cell_iy',
     'layer_kind',
-    'observed_first_break_time_ms',
-    'modeled_first_break_time_ms',
+    'used_for_layer',
+    'observed_pick_time_ms',
+    'modeled_pick_time_ms',
     'residual_ms',
-    'used_in_solve',
-    'reject_reason',
+    'moveout_time_ms',
+    'source_time_term_ms',
+    'receiver_time_term_ms',
+    'velocity_m_s',
+    'rejection_reason',
+    'observation_status',
     'sign_convention',
 )
 
@@ -4141,6 +4147,11 @@ def _first_break_time_export_rows(
     source_job_id: str | None = None,
 ) -> list[dict[str, object]]:
     rows: list[dict[str, object]] = []
+    cell_id_by_row, cell_ix_by_row, cell_iy_by_row = _residual_row_cell_context(
+        result,
+        req=req,
+    )
+    _ = cell_id_by_row
     layer_kind_by_row, _layer_index_by_row = _first_break_export_layer_context(
         result,
     )
@@ -4156,19 +4167,45 @@ def _first_break_time_export_rows(
         result,
         'row_rejection_reason',
     )
-    source_id_by_row = _row_endpoint_id_context(
+    source_x_by_row = _row_endpoint_float_context(
         result,
         endpoint='source',
         row_endpoint_key=source_key_by_row,
-        value_field='source_id',
+        value_field='source_x_m',
     )
-    receiver_id_by_row = _row_endpoint_id_context(
+    source_y_by_row = _row_endpoint_float_context(
+        result,
+        endpoint='source',
+        row_endpoint_key=source_key_by_row,
+        value_field='source_y_m',
+    )
+    receiver_x_by_row = _row_endpoint_float_context(
         result,
         endpoint='receiver',
         row_endpoint_key=receiver_key_by_row,
-        value_field='receiver_id',
+        value_field='receiver_x_m',
     )
-    source_job_id_text = _source_job_id(source_job_id, req)
+    receiver_y_by_row = _row_endpoint_float_context(
+        result,
+        endpoint='receiver',
+        row_endpoint_key=receiver_key_by_row,
+        value_field='receiver_y_m',
+    )
+    midpoint_x_m = _midpoint_coordinate(source_x_by_row, receiver_x_by_row)
+    midpoint_y_m = _midpoint_coordinate(source_y_by_row, receiver_y_by_row)
+    source_time_term_s, receiver_time_term_s = _first_break_row_time_terms(
+        result,
+        layer_kind_by_row=layer_kind_by_row,
+        source_key_by_row=source_key_by_row,
+        receiver_key_by_row=receiver_key_by_row,
+    )
+    moveout_time_s = _first_break_moveout_time_s(
+        modeled_pick_time_s=result.modeled_pick_time_s,
+        source_time_term_s=source_time_term_s,
+        receiver_time_term_s=receiver_time_term_s,
+    )
+    row_velocity_m_s = _residual_row_velocity_context(result)
+    _ = _source_job_id(source_job_id, req)
 
     for row_index in range(int(result.row_trace_index_sorted.shape[0])):
         rejected_by_robust = bool(result.rejected_by_robust_mask[row_index])
@@ -4180,26 +4217,28 @@ def _first_break_time_export_rows(
         )
         rows.append(
             {
-                'format_name': 'first_break_time',
-                'format_version': FIRST_BREAK_TIME_EXPORT_SCHEMA_VERSION,
-                'source_job_id': source_job_id_text,
-                'observation_index': row_index,
-                'sorted_trace_index': int(result.row_trace_index_sorted[row_index]),
+                'schema_version': FIRST_BREAK_TIME_EXPORT_SCHEMA_VERSION,
+                'trace_index_sorted': int(result.row_trace_index_sorted[row_index]),
                 'source_endpoint_key': str(source_key_by_row[row_index]),
                 'receiver_endpoint_key': str(receiver_key_by_row[row_index]),
-                'source_id': _csv_int(source_id_by_row[row_index]),
-                'receiver_id': _csv_int(receiver_id_by_row[row_index]),
+                'source_node_id': int(result.row_source_node_id[row_index]),
+                'receiver_node_id': int(result.row_receiver_node_id[row_index]),
                 'offset_m': _csv_float(result.row_distance_m[row_index]),
+                'midpoint_x_m': _csv_float(midpoint_x_m[row_index]),
+                'midpoint_y_m': _csv_float(midpoint_y_m[row_index]),
+                'cell_ix': _csv_cell_id(cell_ix_by_row[row_index]),
+                'cell_iy': _csv_cell_id(cell_iy_by_row[row_index]),
                 'layer_kind': str(layer_kind_by_row[row_index]),
-                'observed_first_break_time_ms': _csv_ms(
-                    result.observed_pick_time_s[row_index]
-                ),
-                'modeled_first_break_time_ms': _csv_ms(
-                    result.modeled_pick_time_s[row_index]
-                ),
+                'used_for_layer': _csv_bool(used),
+                'observed_pick_time_ms': _csv_ms(result.observed_pick_time_s[row_index]),
+                'modeled_pick_time_ms': _csv_ms(result.modeled_pick_time_s[row_index]),
                 'residual_ms': _csv_ms(result.residual_time_s[row_index]),
-                'used_in_solve': _csv_bool(used),
-                'reject_reason': rejection_reason,
+                'moveout_time_ms': _csv_ms(moveout_time_s[row_index]),
+                'source_time_term_ms': _csv_ms(source_time_term_s[row_index]),
+                'receiver_time_term_ms': _csv_ms(receiver_time_term_s[row_index]),
+                'velocity_m_s': _csv_float(row_velocity_m_s[row_index]),
+                'rejection_reason': rejection_reason,
+                'observation_status': 'used' if used else 'rejected',
                 'sign_convention': FIRST_BREAK_TIME_EXPORT_SIGN_CONVENTION,
             }
         )
