@@ -10,11 +10,20 @@ import pytest
 from fastapi.testclient import TestClient
 
 import app.api.routers.statics as statics_router_module
-from app.api.schemas import RefractionStaticTableApplyRequest
+from app.api.schemas import (
+    RefractionStaticExportJobRequest,
+    RefractionStaticTableApplyRequest,
+)
 from app.core.state import AppState, create_app_state
 from app.main import app
+from app.services.refraction_static_export_service import (
+    run_refraction_static_export_job,
+)
 from app.services.refraction_static_export_units import (
     REFRACTION_STATIC_REPO_SIGN_CONVENTION,
+)
+from app.services.refraction_static_table_import import (
+    import_refraction_static_table_csv,
 )
 from app.services.refraction_static_table_apply_service import (
     STATIC_TABLE_APPLY_HISTORY_JSON_NAME,
@@ -27,8 +36,14 @@ from app.services.refraction_static_table_apply_service import (
 )
 from app.services.refraction_static_apply_trace_store import CORRECTED_FILE_JSON_NAME
 from app.services.refraction_static_artifacts import (
+    CANONICAL_RECEIVER_STATIC_TABLE_CSV_NAME,
+    CANONICAL_SOURCE_RECEIVER_STATIC_TABLE_CSV_NAME,
+    CANONICAL_SOURCE_STATIC_TABLE_CSV_NAME,
+    RECEIVER_STATIC_TABLE_CSV_NAME,
+    REFRACTION_STATIC_ARTIFACTS_JSON_NAME,
     REFRACTION_STATIC_REQUEST_JSON_NAME,
     SOURCE_RECEIVER_STATIC_TABLE_NPZ_NAME,
+    SOURCE_STATIC_TABLE_CSV_NAME,
 )
 from app.tests.test_refraction_static_apply_trace_store import (
     DT,
@@ -41,6 +56,10 @@ from app.tests.test_refraction_static_apply_trace_store import (
 TABLE_JOB_ID = 'static-table-import-job'
 APPLY_JOB_ID = 'static-table-apply-job'
 SECOND_APPLY_JOB_ID = 'static-table-apply-job-2'
+SOURCE_REFRACTION_JOB_ID = 'static-table-source-refraction-job'
+EXPORT_JOB_ID = 'static-table-export-job'
+EXPORT_APPLY_JOB_ID = 'static-table-export-apply-job'
+EXPORT_SECOND_APPLY_JOB_ID = 'static-table-export-apply-job-2'
 
 
 def _endpoint_key(
@@ -317,6 +336,209 @@ def _create_apply_job(
             statics_kind='refraction_static_table_apply',
             artifacts_dir=str(job_dir),
         )
+
+
+def _default_export_source_rows(
+    *,
+    include_source_101: bool = True,
+) -> list[dict[str, str]]:
+    rows = [
+        _documented_static_table_row(
+            endpoint_kind='source',
+            endpoint_key=SOURCE_KEYS[100],
+            endpoint_id=100,
+            total_applied_shift_ms=8.0,
+        ),
+    ]
+    if include_source_101:
+        rows.append(
+            _documented_static_table_row(
+                endpoint_kind='source',
+                endpoint_key=SOURCE_KEYS[101],
+                endpoint_id=101,
+                total_applied_shift_ms=4.0,
+            )
+        )
+    return rows
+
+
+def _default_export_receiver_rows() -> list[dict[str, str]]:
+    return [
+        _documented_static_table_row(
+            endpoint_kind='receiver',
+            endpoint_key=RECEIVER_KEYS[200],
+            endpoint_id=200,
+            total_applied_shift_ms=0.0,
+        ),
+        _documented_static_table_row(
+            endpoint_kind='receiver',
+            endpoint_key=RECEIVER_KEYS[201],
+            endpoint_id=201,
+            total_applied_shift_ms=-4.0,
+        ),
+    ]
+
+
+def _three_layer_static_table_row(
+    *,
+    endpoint_kind: str,
+    endpoint_key: str,
+    endpoint_id: int,
+    total_applied_shift_ms: float,
+) -> dict[str, str]:
+    row = _documented_static_table_row(
+        endpoint_kind=endpoint_kind,
+        endpoint_key=endpoint_key,
+        endpoint_id=endpoint_id,
+        total_applied_shift_ms=total_applied_shift_ms,
+    )
+    row.update(
+        {
+            't2_ms': '21.000000',
+            't3_ms': '33.000000',
+            'v3_m_s': '3600.000',
+            'vsub_m_s': '5200.000',
+            'sh2_weathering_thickness_m': '12.000',
+            'sh3_weathering_thickness_m': '18.000',
+        }
+    )
+    return row
+
+
+def _three_layer_export_source_rows() -> list[dict[str, str]]:
+    return [
+        _three_layer_static_table_row(
+            endpoint_kind='source',
+            endpoint_key=SOURCE_KEYS[100],
+            endpoint_id=100,
+            total_applied_shift_ms=8.0,
+        ),
+        _three_layer_static_table_row(
+            endpoint_kind='source',
+            endpoint_key=SOURCE_KEYS[101],
+            endpoint_id=101,
+            total_applied_shift_ms=4.0,
+        ),
+    ]
+
+
+def _three_layer_export_receiver_rows() -> list[dict[str, str]]:
+    return [
+        _three_layer_static_table_row(
+            endpoint_kind='receiver',
+            endpoint_key=RECEIVER_KEYS[200],
+            endpoint_id=200,
+            total_applied_shift_ms=0.0,
+        ),
+        _three_layer_static_table_row(
+            endpoint_kind='receiver',
+            endpoint_key=RECEIVER_KEYS[201],
+            endpoint_id=201,
+            total_applied_shift_ms=-4.0,
+        ),
+    ]
+
+
+def _create_completed_source_refraction_job(
+    state: AppState,
+    tmp_path: Path,
+    *,
+    source_rows: list[dict[str, str]],
+    receiver_rows: list[dict[str, str]],
+) -> Path:
+    job_dir = tmp_path / 'jobs' / SOURCE_REFRACTION_JOB_ID
+    _write_rows(job_dir / SOURCE_STATIC_TABLE_CSV_NAME, source_rows)
+    _write_rows(job_dir / RECEIVER_STATIC_TABLE_CSV_NAME, receiver_rows)
+    _write_refraction_static_request(job_dir)
+    (job_dir / REFRACTION_STATIC_ARTIFACTS_JSON_NAME).write_text(
+        json.dumps({'artifacts': []}),
+        encoding='utf-8',
+    )
+    with state.lock:
+        state.jobs.create_static_job(
+            SOURCE_REFRACTION_JOB_ID,
+            file_id=SOURCE_FILE_ID,
+            key1_byte=KEY1,
+            key2_byte=KEY2,
+            statics_kind='refraction',
+            artifacts_dir=str(job_dir),
+        )
+        state.jobs.mark_done(SOURCE_REFRACTION_JOB_ID, progress_1=True)
+    return job_dir
+
+
+def _run_canonical_static_table_export(state: AppState, tmp_path: Path) -> Path:
+    export_job_dir = tmp_path / 'jobs' / EXPORT_JOB_ID
+    with state.lock:
+        state.jobs.create_static_job(
+            EXPORT_JOB_ID,
+            file_id=SOURCE_FILE_ID,
+            key1_byte=KEY1,
+            key2_byte=KEY2,
+            statics_kind='refraction_export',
+            artifacts_dir=str(export_job_dir),
+        )
+    req = RefractionStaticExportJobRequest.model_validate(
+        {
+            'source_job_id': SOURCE_REFRACTION_JOB_ID,
+            'export': {'enabled': True, 'formats': ['canonical_static_table']},
+        }
+    )
+
+    run_refraction_static_export_job(EXPORT_JOB_ID, req, state)
+    return export_job_dir
+
+
+def _prepare_exported_static_table(
+    tmp_path: Path,
+    *,
+    source_rows: list[dict[str, str]] | None = None,
+    receiver_rows: list[dict[str, str]] | None = None,
+) -> tuple[AppState, Path, Path]:
+    state, store = _write_target_store(tmp_path)
+    _create_completed_source_refraction_job(
+        state,
+        tmp_path,
+        source_rows=source_rows or _default_export_source_rows(),
+        receiver_rows=receiver_rows or _default_export_receiver_rows(),
+    )
+    export_job_dir = _run_canonical_static_table_export(state, tmp_path)
+    return state, store, export_job_dir
+
+
+def _run_exported_static_table_apply(
+    state: AppState,
+    tmp_path: Path,
+    *,
+    job_id: str = EXPORT_APPLY_JOB_ID,
+    file_id: str = SOURCE_FILE_ID,
+    register_corrected_file: bool = False,
+    missing_static_policy: str = 'fail',
+    allow_missing_source_static: bool = False,
+    allow_missing_receiver_static: bool = False,
+    allow_reapply_same_static_table: bool = False,
+) -> Path:
+    job_dir = tmp_path / 'jobs' / job_id
+    _create_apply_job(state, job_dir, job_id=job_id, file_id=file_id)
+    req = RefractionStaticTableApplyRequest.model_validate(
+        {
+            'file_id': file_id,
+            'key1_byte': KEY1,
+            'key2_byte': KEY2,
+            'combined_table_artifact_id': (
+                f'{EXPORT_JOB_ID}:{CANONICAL_SOURCE_RECEIVER_STATIC_TABLE_CSV_NAME}'
+            ),
+            'register_corrected_file': register_corrected_file,
+            'missing_static_policy': missing_static_policy,
+            'allow_missing_source_static': allow_missing_source_static,
+            'allow_missing_receiver_static': allow_missing_receiver_static,
+            'allow_reapply_same_static_table': allow_reapply_same_static_table,
+            'max_abs_shift_ms': 250.0,
+        }
+    )
+
+    run_refraction_static_table_apply_job(job_id, req, state)
+    return job_dir
 
 
 def _run_apply(
@@ -1108,6 +1330,184 @@ def test_static_table_apply_trace_shift_matches_expected_synthetic(
             data['trace_shift_s_sorted'],
             [0.008, 0.004, 0.004, 0.0],
         )
+
+
+def test_static_table_export_import_apply_round_trip_synthetic(
+    tmp_path: Path,
+) -> None:
+    state, _store, export_job_dir = _prepare_exported_static_table(tmp_path)
+
+    with state.lock:
+        export_job = dict(state.jobs[EXPORT_JOB_ID])
+    assert export_job['status'] == 'done'
+    assert (export_job_dir / CANONICAL_SOURCE_STATIC_TABLE_CSV_NAME).is_file()
+    assert (export_job_dir / CANONICAL_RECEIVER_STATIC_TABLE_CSV_NAME).is_file()
+    assert (export_job_dir / CANONICAL_SOURCE_RECEIVER_STATIC_TABLE_CSV_NAME).is_file()
+
+    job_dir = _run_exported_static_table_apply(
+        state,
+        tmp_path,
+        register_corrected_file=True,
+    )
+
+    with state.lock:
+        job = dict(state.jobs[EXPORT_APPLY_JOB_ID])
+    assert job['status'] == 'done', job.get('message')
+    with np.load(job_dir / STATIC_TABLE_APPLY_SOLUTION_NPZ_NAME, allow_pickle=False) as data:
+        np.testing.assert_allclose(
+            data['source_static_shift_s_sorted'],
+            [0.008, 0.004, 0.008, 0.004],
+        )
+        np.testing.assert_allclose(
+            data['receiver_static_shift_s_sorted'],
+            [0.0, 0.0, -0.004, -0.004],
+        )
+        np.testing.assert_allclose(
+            data['trace_shift_s_sorted'],
+            [0.008, 0.004, 0.004, 0.0],
+        )
+
+    corrected = np.load(Path(str(job['corrected_store_path'])) / 'traces.npy')
+    assert [int(np.argmax(corrected[index])) for index in range(4)] == [10, 9, 9, 8]
+    history = _read_static_table_apply_history(job_dir)
+    assert history['created_from_refraction_job_id'] == SOURCE_REFRACTION_JOB_ID
+    assert history['created_from_export_job_id'] == EXPORT_JOB_ID
+    assert history['output_file_id'] == job['corrected_file_id']
+    assert history['cumulative_shift_field'] == 'trace_shift_s_sorted'
+
+
+def test_static_table_apply_three_layer_metadata_preserved(
+    tmp_path: Path,
+) -> None:
+    state, _store, export_job_dir = _prepare_exported_static_table(
+        tmp_path,
+        source_rows=_three_layer_export_source_rows(),
+        receiver_rows=_three_layer_export_receiver_rows(),
+    )
+    table_path = export_job_dir / CANONICAL_SOURCE_RECEIVER_STATIC_TABLE_CSV_NAME
+
+    imported = import_refraction_static_table_csv(table_path)
+
+    assert imported.is_valid is True
+    source_static = imported.source_static_by_endpoint_key[SOURCE_KEYS[100]]
+    receiver_static = imported.receiver_static_by_endpoint_key[RECEIVER_KEYS[201]]
+    assert source_static.applied_shift_s == pytest.approx(0.008)
+    assert receiver_static.applied_shift_s == pytest.approx(-0.004)
+    assert source_static.metadata['t2_ms'] == '21.000000'
+    assert source_static.metadata['t3_ms'] == '33.000000'
+    assert source_static.metadata['v3_m_s'] == '3600.000'
+    assert source_static.metadata['vsub_m_s'] == '5200.000'
+    assert source_static.metadata['sh2_weathering_thickness_m'] == '12.000'
+    assert source_static.metadata['sh3_weathering_thickness_m'] == '18.000'
+    assert receiver_static.metadata['t2_ms'] == '21.000000'
+    assert receiver_static.metadata['t3_ms'] == '33.000000'
+    assert receiver_static.metadata['vsub_m_s'] == '5200.000'
+
+    job_dir = _run_exported_static_table_apply(state, tmp_path)
+
+    with state.lock:
+        assert state.jobs[EXPORT_APPLY_JOB_ID]['status'] == 'done'
+    with np.load(job_dir / STATIC_TABLE_APPLY_SOLUTION_NPZ_NAME, allow_pickle=False) as data:
+        np.testing.assert_allclose(
+            data['trace_shift_s_sorted'],
+            [0.008, 0.004, 0.004, 0.0],
+        )
+
+
+def test_static_table_apply_missing_endpoint_policy_fail(tmp_path: Path) -> None:
+    state, _store, _export_job_dir = _prepare_exported_static_table(
+        tmp_path,
+        source_rows=_default_export_source_rows(include_source_101=False),
+    )
+
+    job_dir = _run_exported_static_table_apply(state, tmp_path)
+
+    with state.lock:
+        job = dict(state.jobs[EXPORT_APPLY_JOB_ID])
+    assert job['status'] == 'error'
+    assert 'missing_source_static' in str(job['message'])
+    assert not (job_dir / STATIC_TABLE_APPLY_SOLUTION_NPZ_NAME).exists()
+
+
+def test_static_table_apply_missing_endpoint_policy_zero(tmp_path: Path) -> None:
+    state, _store, _export_job_dir = _prepare_exported_static_table(
+        tmp_path,
+        source_rows=_default_export_source_rows(include_source_101=False),
+    )
+
+    job_dir = _run_exported_static_table_apply(
+        state,
+        tmp_path,
+        missing_static_policy='zero',
+        allow_missing_source_static=True,
+    )
+
+    with state.lock:
+        assert state.jobs[EXPORT_APPLY_JOB_ID]['status'] == 'done'
+    with np.load(job_dir / STATIC_TABLE_APPLY_SOLUTION_NPZ_NAME, allow_pickle=False) as data:
+        np.testing.assert_allclose(
+            data['trace_shift_s_sorted'],
+            [0.008, 0.0, 0.004, -0.004],
+        )
+        np.testing.assert_array_equal(
+            data['trace_static_status_sorted'],
+            [
+                'ok',
+                'missing_source_static_zeroed',
+                'ok',
+                'missing_source_static_zeroed',
+            ],
+        )
+    qc = json.loads((job_dir / STATIC_TABLE_APPLY_QC_JSON_NAME).read_text())
+    assert qc['n_missing_source_endpoints'] == 1
+    assert qc['trace_static_status_counts']['missing_source_static_zeroed'] == 2
+
+
+def test_static_table_apply_double_application_guard(tmp_path: Path) -> None:
+    state, _store, _export_job_dir = _prepare_exported_static_table(tmp_path)
+    first_job_dir = _run_exported_static_table_apply(
+        state,
+        tmp_path,
+        register_corrected_file=True,
+    )
+    with state.lock:
+        first_job = dict(state.jobs[EXPORT_APPLY_JOB_ID])
+    assert first_job['status'] == 'done', first_job.get('message')
+    assert (first_job_dir / STATIC_TABLE_APPLY_HISTORY_JSON_NAME).is_file()
+    corrected_file_id = str(first_job['corrected_file_id'])
+
+    second_job_dir = _run_exported_static_table_apply(
+        state,
+        tmp_path,
+        job_id=EXPORT_SECOND_APPLY_JOB_ID,
+        file_id=corrected_file_id,
+    )
+
+    with state.lock:
+        second_job = dict(state.jobs[EXPORT_SECOND_APPLY_JOB_ID])
+    assert second_job['status'] == 'error'
+    assert 'allow_reapply_same_static_table=False' in str(second_job['message'])
+    assert not (second_job_dir / STATIC_TABLE_APPLY_SOLUTION_NPZ_NAME).exists()
+
+    override_job_id = f'{EXPORT_SECOND_APPLY_JOB_ID}-override'
+    override_job_dir = _run_exported_static_table_apply(
+        state,
+        tmp_path,
+        job_id=override_job_id,
+        file_id=corrected_file_id,
+        allow_reapply_same_static_table=True,
+    )
+
+    with state.lock:
+        override_job = dict(state.jobs[override_job_id])
+    assert override_job['status'] == 'done', override_job.get('message')
+    history = _read_static_table_apply_history(override_job_dir)
+    assert history['allow_reapply_same_static_table'] is True
+    assert history['static_table_reapply_guard']['status'] == (
+        'duplicate_allowed_by_override'
+    )
+    assert history['double_application_policy']['status'] == 'duplicate_allowed'
+    assert history['created_from_export_job_id'] == EXPORT_JOB_ID
 
 
 def test_static_table_apply_endpoint_creates_job(
