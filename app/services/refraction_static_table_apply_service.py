@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import csv
+from collections.abc import Mapping
 from dataclasses import dataclass
+import hashlib
 import json
 from pathlib import Path
 import re
@@ -27,6 +29,7 @@ from app.services.job_artifact_refs import resolve_job_artifact_path
 from app.services.job_runner import JobCompletion, JobFailure, run_job_with_lifecycle
 from app.services.reader import get_reader
 from app.services.refraction_static_artifacts import (
+    REFRACTION_STATIC_HISTORY_JSON_NAME,
     REFRACTION_STATIC_REQUEST_JSON_NAME,
     SOURCE_RECEIVER_STATIC_TABLE_NPZ_NAME,
     static_history_double_application_qc,
@@ -53,7 +56,8 @@ STATIC_TABLE_APPLY_REQUEST_JSON_NAME = 'static_table_apply_request.json'
 STATIC_TABLE_APPLY_SOLUTION_NPZ_NAME = 'static_table_apply_solution.npz'
 STATIC_TABLE_APPLY_QC_JSON_NAME = 'static_table_apply_qc.json'
 STATIC_TABLE_APPLY_TRACE_SHIFTS_CSV_NAME = 'static_table_apply_trace_shifts.csv'
-STATIC_TABLE_APPLY_HISTORY_JSON_NAME = 'refraction_static_history.json'
+STATIC_TABLE_APPLY_HISTORY_JSON_NAME = 'static_table_apply_history.json'
+STATIC_TABLE_APPLY_REFRACTION_HISTORY_JSON_NAME = REFRACTION_STATIC_HISTORY_JSON_NAME
 
 _DONE_MESSAGE = 'static_table_apply_artifacts_written'
 _CORRECTED_DONE_MESSAGE = 'static_table_apply_corrected_trace_store_registered'
@@ -71,6 +75,7 @@ class _ResolvedTablePaths:
     combined_table_path: Path | None
     artifact_ids: dict[str, str]
     source_job_id: str | None
+    artifact_job_ids: tuple[str, ...]
 
 
 @dataclass(frozen=True)
@@ -102,6 +107,17 @@ class _StaticTableTraceShift:
     missing_receiver_identity: tuple[str, ...]
     source_identity_mode: EndpointIdentityMode
     receiver_identity_mode: EndpointIdentityMode
+
+
+@dataclass(frozen=True)
+class _StaticTableApplyLineage:
+    source_table_digest: str | None
+    receiver_table_digest: str | None
+    combined_table_digest: str
+    trace_shift_s_sorted_digest: str
+    applied_component_name: str
+    created_from_refraction_job_id: str | None
+    created_from_export_job_id: str | None
 
 
 def run_refraction_static_table_apply_job(
@@ -192,6 +208,19 @@ def _run_refraction_static_table_apply_job_body(
         max_abs_shift_ms=float(request.max_abs_shift_ms),
         require_all_traces_valid=True,
     )
+    table_lineage = _static_table_apply_lineage(
+        req=request,
+        state=state,
+        imported=imported,
+        table_paths=table_paths,
+        trace_shift=trace_shift,
+    )
+    table_reapply_qc = _static_table_reapply_qc(
+        req=request,
+        state=state,
+        table_lineage=table_lineage,
+    )
+    _enforce_static_table_reapply_guard(table_reapply_qc)
     double_application_qc = _double_application_qc(
         req=request,
         state=state,
@@ -211,6 +240,8 @@ def _run_refraction_static_table_apply_job_body(
         imported=imported,
         table_paths=table_paths,
         trace_shift=trace_shift,
+        table_lineage=table_lineage,
+        table_reapply_qc=table_reapply_qc,
         double_application_qc=double_application_qc,
         validation_status='ok',
         corrected_file_id=None,
@@ -229,8 +260,12 @@ def _run_refraction_static_table_apply_job_body(
             state=state,
             job_id=job_id,
             req=request,
+            imported=imported,
+            table_paths=table_paths,
             job_dir=job_dir,
             trace_shift=trace_shift,
+            table_lineage=table_lineage,
+            table_reapply_qc=table_reapply_qc,
             double_application_qc=double_application_qc,
             artifact_names=artifacts,
         )
@@ -241,19 +276,27 @@ def _run_refraction_static_table_apply_job_body(
             imported=imported,
             table_paths=table_paths,
             trace_shift=trace_shift,
+            table_lineage=table_lineage,
+            table_reapply_qc=table_reapply_qc,
             double_application_qc=double_application_qc,
             validation_status='ok',
             corrected_file_id=corrected_file_id,
         )
-        _write_static_table_apply_history(
+        history = _write_static_table_apply_history(
             path=job_dir / STATIC_TABLE_APPLY_HISTORY_JSON_NAME,
             job_id=job_id,
             req=request,
             imported=imported,
             table_paths=table_paths,
             trace_shift=trace_shift,
+            table_lineage=table_lineage,
+            table_reapply_qc=table_reapply_qc,
             double_application_qc=double_application_qc,
             corrected_file_id=corrected_file_id,
+        )
+        _write_json_atomic(
+            job_dir / STATIC_TABLE_APPLY_REFRACTION_HISTORY_JSON_NAME,
+            history,
         )
         with state.lock:
             state.jobs.set_static_corrected_file(
@@ -299,6 +342,7 @@ def _resolve_table_paths(
             combined_table_path=combined_path,
             artifact_ids=artifact_ids,
             source_job_id=source_job_id,
+            artifact_job_ids=(source_job_id,),
         )
 
     assert req.source_table_artifact_id is not None
@@ -321,6 +365,7 @@ def _resolve_table_paths(
         combined_table_path=None,
         artifact_ids=artifact_ids,
         source_job_id=source_job_id if source_job_id == receiver_job_id else None,
+        artifact_job_ids=tuple(dict.fromkeys((source_job_id, receiver_job_id))),
     )
 
 
@@ -938,8 +983,12 @@ def _register_corrected_trace_store(
     state: AppState,
     job_id: str,
     req: RefractionStaticTableApplyRequest,
+    imported: RefractionStaticTableImportResult,
+    table_paths: _ResolvedTablePaths,
     job_dir: Path,
     trace_shift: _StaticTableTraceShift,
+    table_lineage: _StaticTableApplyLineage,
+    table_reapply_qc: dict[str, Any],
     double_application_qc: dict[str, Any],
     artifact_names: tuple[str, ...],
 ) -> tuple[str, Path]:
@@ -951,6 +1000,17 @@ def _register_corrected_trace_store(
         job_id=job_id,
         output_name=req.output_name,
     )
+    history_metadata = _static_table_apply_history_payload(
+        job_id=job_id,
+        req=req,
+        imported=imported,
+        table_paths=table_paths,
+        trace_shift=trace_shift,
+        table_lineage=table_lineage,
+        table_reapply_qc=table_reapply_qc,
+        double_application_qc=double_application_qc,
+        corrected_file_id=corrected_file_id,
+    )
     corrected_file_json = job_dir / CORRECTED_FILE_JSON_NAME
     try:
         build_result = build_time_shifted_trace_store(
@@ -961,8 +1021,7 @@ def _register_corrected_trace_store(
             output_dtype='float32',
             derived_metadata=_derived_metadata(
                 job_id=job_id,
-                trace_shift=trace_shift,
-                double_application_qc=double_application_qc,
+                history_metadata=history_metadata,
             ),
             from_file_id=req.file_id,
             original_segy_path=_optional_string(source_meta.get('original_segy_path')),
@@ -995,6 +1054,7 @@ def _register_corrected_trace_store(
                 corrected_file_id=corrected_file_id,
                 build_result=build_result,
                 trace_shift=trace_shift,
+                table_lineage=table_lineage,
                 artifact_names=artifact_names,
             ),
         )
@@ -1019,6 +1079,8 @@ def _write_static_table_apply_qc(
     imported: RefractionStaticTableImportResult,
     table_paths: _ResolvedTablePaths,
     trace_shift: _StaticTableTraceShift,
+    table_lineage: _StaticTableApplyLineage,
+    table_reapply_qc: dict[str, Any],
     double_application_qc: dict[str, Any],
     validation_status: str,
     corrected_file_id: str | None,
@@ -1029,6 +1091,8 @@ def _write_static_table_apply_qc(
         imported=imported,
         table_paths=table_paths,
         trace_shift=trace_shift,
+        table_lineage=table_lineage,
+        table_reapply_qc=table_reapply_qc,
         double_application_qc=double_application_qc,
         validation_status=validation_status,
         corrected_file_id=corrected_file_id,
@@ -1045,6 +1109,8 @@ def _write_static_table_apply_artifacts(
     imported: RefractionStaticTableImportResult,
     table_paths: _ResolvedTablePaths,
     trace_shift: _StaticTableTraceShift,
+    table_lineage: _StaticTableApplyLineage,
+    table_reapply_qc: dict[str, Any],
     double_application_qc: dict[str, Any],
     validation_status: str,
     corrected_file_id: str | None,
@@ -1053,6 +1119,7 @@ def _write_static_table_apply_artifacts(
     qc_path = job_dir / STATIC_TABLE_APPLY_QC_JSON_NAME
     csv_path = job_dir / STATIC_TABLE_APPLY_TRACE_SHIFTS_CSV_NAME
     history_path = job_dir / STATIC_TABLE_APPLY_HISTORY_JSON_NAME
+    refraction_history_path = job_dir / STATIC_TABLE_APPLY_REFRACTION_HISTORY_JSON_NAME
     _write_npz_atomic(solution_path, _solution_arrays(trace_shift, imported=imported))
     _write_static_table_apply_qc(
         path=qc_path,
@@ -1061,27 +1128,146 @@ def _write_static_table_apply_artifacts(
         imported=imported,
         table_paths=table_paths,
         trace_shift=trace_shift,
+        table_lineage=table_lineage,
+        table_reapply_qc=table_reapply_qc,
         double_application_qc=double_application_qc,
         validation_status=validation_status,
         corrected_file_id=corrected_file_id,
     )
     _write_trace_shift_csv(csv_path, trace_shift)
-    _write_static_table_apply_history(
+    history = _write_static_table_apply_history(
         path=history_path,
         job_id=job_id,
         req=req,
         imported=imported,
         table_paths=table_paths,
         trace_shift=trace_shift,
+        table_lineage=table_lineage,
+        table_reapply_qc=table_reapply_qc,
         double_application_qc=double_application_qc,
         corrected_file_id=corrected_file_id,
     )
+    _write_json_atomic(refraction_history_path, history)
     return (
         STATIC_TABLE_APPLY_SOLUTION_NPZ_NAME,
         STATIC_TABLE_APPLY_QC_JSON_NAME,
         STATIC_TABLE_APPLY_TRACE_SHIFTS_CSV_NAME,
         STATIC_TABLE_APPLY_HISTORY_JSON_NAME,
+        STATIC_TABLE_APPLY_REFRACTION_HISTORY_JSON_NAME,
     )
+
+
+def _static_table_apply_lineage(
+    *,
+    req: RefractionStaticTableApplyRequest,
+    state: AppState,
+    imported: RefractionStaticTableImportResult,
+    table_paths: _ResolvedTablePaths,
+    trace_shift: _StaticTableTraceShift,
+) -> _StaticTableApplyLineage:
+    source_digest: str | None = None
+    receiver_digest: str | None = None
+    if table_paths.combined_table_path is not None:
+        combined_digest = _file_sha256(table_paths.combined_table_path)
+    else:
+        assert table_paths.source_table_path is not None
+        assert table_paths.receiver_table_path is not None
+        source_digest = _file_sha256(table_paths.source_table_path)
+        receiver_digest = _file_sha256(table_paths.receiver_table_path)
+        combined_digest = _digest_json(
+            {
+                'source_table_digest': source_digest,
+                'receiver_table_digest': receiver_digest,
+            }
+        )
+    return _StaticTableApplyLineage(
+        source_table_digest=source_digest,
+        receiver_table_digest=receiver_digest,
+        combined_table_digest=combined_digest,
+        trace_shift_s_sorted_digest=_array_sha256(trace_shift.trace_shift_s_sorted),
+        applied_component_name='refraction',
+        created_from_refraction_job_id=_first_source_job_id(imported),
+        created_from_export_job_id=_created_from_export_job_id(
+            state=state,
+            table_paths=table_paths,
+        ),
+    )
+
+
+def _static_table_reapply_qc(
+    *,
+    req: RefractionStaticTableApplyRequest,
+    state: AppState,
+    table_lineage: _StaticTableApplyLineage,
+) -> dict[str, Any]:
+    source_meta = _source_trace_store_meta(req=req, state=state)
+    histories = _static_table_history_records(source_meta)
+    current_digests = _lineage_table_digest_set(table_lineage)
+    existing_digests: set[str] = set()
+    duplicate_component_digests: set[str] = set()
+    existing_source_jobs: set[str] = set()
+    duplicate_source_jobs: set[str] = set()
+    component_name = _history_text(table_lineage.applied_component_name)
+
+    for history in histories:
+        existing_digests.update(_history_table_digests(history))
+        existing_source_jobs.update(_history_source_job_ids(history))
+        duplicate_component_digests.update(
+            _history_duplicate_component_digests(
+                history,
+                component_name=component_name,
+                current_digests=current_digests,
+            )
+        )
+
+    duplicate_table_digests = sorted(current_digests.intersection(existing_digests))
+    current_source_jobs = {
+        job_id
+        for job_id in (
+            table_lineage.created_from_refraction_job_id,
+            table_lineage.created_from_export_job_id,
+        )
+        if job_id
+    }
+    duplicate_source_jobs = current_source_jobs.intersection(existing_source_jobs)
+
+    duplicate_reasons: list[str] = []
+    if duplicate_table_digests:
+        duplicate_reasons.append('same_table_digest')
+    if duplicate_component_digests:
+        duplicate_reasons.append('same_component_name_and_digest')
+    if duplicate_source_jobs:
+        duplicate_reasons.append('table_source_job_already_applied')
+
+    allow_override = bool(req.allow_reapply_same_static_table)
+    status = 'checked'
+    message = ''
+    warnings: list[str] = []
+    if duplicate_reasons:
+        detail = ', '.join(duplicate_reasons)
+        message = (
+            f'static table apply history check for input file_id {req.file_id!r}: '
+            f'{detail}; allow_reapply_same_static_table={allow_override}'
+        )
+        if allow_override:
+            status = 'duplicate_allowed_by_override'
+            warnings.append(message)
+        else:
+            status = 'duplicate_rejected'
+
+    return {
+        'status': status,
+        'allow_reapply_same_static_table': allow_override,
+        'override_used': bool(duplicate_reasons and allow_override),
+        'duplicate_reasons': duplicate_reasons,
+        'duplicate_table_digests': duplicate_table_digests,
+        'duplicate_component_digests': sorted(duplicate_component_digests),
+        'duplicate_source_job_ids': sorted(duplicate_source_jobs),
+        'existing_table_digests': sorted(existing_digests),
+        'existing_source_job_ids': sorted(existing_source_jobs),
+        'message': message,
+        'warnings': warnings,
+    }
 
 
 def _double_application_qc(
@@ -1115,6 +1301,171 @@ def _enforce_double_application_policy(qc: dict[str, Any]) -> None:
         or 'static history double-application policy rejected the job'
     )
     raise ValueError(message)
+
+
+def _enforce_static_table_reapply_guard(qc: dict[str, Any]) -> None:
+    if qc.get('status') != 'duplicate_rejected':
+        return
+    message = str(
+        qc.get('message') or 'static table history rejected duplicate application'
+    )
+    raise ValueError(message)
+
+
+def _file_sha256(path: Path) -> str:
+    digest = hashlib.sha256()
+    with Path(path).open('rb') as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b''):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def _array_sha256(values: np.ndarray) -> str:
+    arr = np.ascontiguousarray(np.asarray(values, dtype=np.dtype('<f8')))
+    digest = hashlib.sha256()
+    digest.update(str(arr.dtype).encode('ascii'))
+    digest.update(json.dumps(arr.shape, separators=(',', ':')).encode('ascii'))
+    digest.update(arr.tobytes(order='C'))
+    return digest.hexdigest()
+
+
+def _digest_json(payload: Mapping[str, object]) -> str:
+    encoded = json.dumps(
+        payload,
+        allow_nan=False,
+        ensure_ascii=True,
+        separators=(',', ':'),
+        sort_keys=True,
+    ).encode('utf-8')
+    return hashlib.sha256(encoded).hexdigest()
+
+
+def _created_from_export_job_id(
+    *,
+    state: AppState,
+    table_paths: _ResolvedTablePaths,
+) -> str | None:
+    export_job_ids: list[str] = []
+    with state.lock:
+        for job_id in table_paths.artifact_job_ids:
+            job = state.jobs.get(job_id)
+            if not isinstance(job, Mapping):
+                continue
+            if job.get('statics_kind') == 'refraction_export':
+                export_job_ids.append(str(job_id))
+    unique = tuple(dict.fromkeys(export_job_ids))
+    return unique[0] if len(unique) == 1 else None
+
+
+def _static_table_history_records(
+    source_meta: Mapping[str, object],
+) -> tuple[Mapping[str, object], ...]:
+    records: list[Mapping[str, object]] = []
+
+    def visit(value: object) -> None:
+        if not isinstance(value, Mapping):
+            return
+        for key in ('static_table_apply_history', 'static_history'):
+            history = value.get(key)
+            if isinstance(history, Mapping):
+                records.append(history)
+        derived = value.get('derived')
+        if isinstance(derived, Mapping):
+            visit(derived)
+        components = value.get('components')
+        if isinstance(components, list):
+            for component in components:
+                if isinstance(component, Mapping):
+                    visit(component)
+
+    visit(source_meta)
+    return tuple(records)
+
+
+def _lineage_table_digest_set(lineage: _StaticTableApplyLineage) -> set[str]:
+    return {
+        digest
+        for digest in (
+            lineage.source_table_digest,
+            lineage.receiver_table_digest,
+            lineage.combined_table_digest,
+        )
+        if digest
+    }
+
+
+def _history_table_digests(history: Mapping[str, object]) -> set[str]:
+    digests = {
+        digest
+        for digest in (
+            _history_text(history.get('source_table_digest')),
+            _history_text(history.get('receiver_table_digest')),
+            _history_text(history.get('combined_table_digest')),
+        )
+        if digest
+    }
+    table_digests = history.get('table_digests')
+    if isinstance(table_digests, Mapping):
+        digests.update(
+            digest
+            for digest in (
+                _history_text(table_digests.get('source')),
+                _history_text(table_digests.get('receiver')),
+                _history_text(table_digests.get('combined')),
+            )
+            if digest
+        )
+    return digests
+
+
+def _history_source_job_ids(history: Mapping[str, object]) -> set[str]:
+    return {
+        job_id
+        for job_id in (
+            _history_text(history.get('created_from_refraction_job_id')),
+            _history_text(history.get('created_from_export_job_id')),
+            _history_text(history.get('source_job_id')),
+        )
+        if job_id
+    }
+
+
+def _history_duplicate_component_digests(
+    history: Mapping[str, object],
+    *,
+    component_name: str | None,
+    current_digests: set[str],
+) -> set[str]:
+    if not component_name:
+        return set()
+    components = history.get('components')
+    if not isinstance(components, list):
+        return set()
+    duplicates: set[str] = set()
+    for component in components:
+        if not isinstance(component, Mapping):
+            continue
+        if _history_text(component.get('name')) != component_name:
+            continue
+        component_digests = {
+            digest
+            for digest in (
+                _history_text(component.get('table_digest')),
+                _history_text(component.get('combined_table_digest')),
+                _history_text(component.get('source_table_digest')),
+                _history_text(component.get('receiver_table_digest')),
+            )
+            if digest
+        }
+        duplicates.update(component_digests.intersection(current_digests))
+    return duplicates
+
+
+def _history_text(value: object) -> str | None:
+    if not isinstance(value, str):
+        return None
+    text = value.strip()
+    return text or None
 
 
 def _solution_arrays(
@@ -1173,6 +1524,8 @@ def _qc_payload(
     imported: RefractionStaticTableImportResult,
     table_paths: _ResolvedTablePaths,
     trace_shift: _StaticTableTraceShift,
+    table_lineage: _StaticTableApplyLineage,
+    table_reapply_qc: dict[str, Any],
     double_application_qc: dict[str, Any],
     validation_status: str,
     corrected_file_id: str | None,
@@ -1183,6 +1536,7 @@ def _qc_payload(
         STATIC_TABLE_APPLY_QC_JSON_NAME,
         STATIC_TABLE_APPLY_TRACE_SHIFTS_CSV_NAME,
         STATIC_TABLE_APPLY_HISTORY_JSON_NAME,
+        STATIC_TABLE_APPLY_REFRACTION_HISTORY_JSON_NAME,
     ]
     if corrected_file_id is not None:
         artifact_names.append(CORRECTED_FILE_JSON_NAME)
@@ -1195,9 +1549,23 @@ def _qc_payload(
         'corrected_file_id': corrected_file_id,
         'validation_status': validation_status,
         'sign_convention': REFRACTION_STATIC_REPO_SIGN_CONVENTION,
+        'source_table_digest': table_lineage.source_table_digest,
+        'receiver_table_digest': table_lineage.receiver_table_digest,
+        'combined_table_digest': table_lineage.combined_table_digest,
+        'trace_shift_s_sorted_digest': (
+            table_lineage.trace_shift_s_sorted_digest
+        ),
+        'applied_component_name': table_lineage.applied_component_name,
+        'created_from_refraction_job_id': (
+            table_lineage.created_from_refraction_job_id
+        ),
+        'created_from_export_job_id': table_lineage.created_from_export_job_id,
         'missing_static_policy': req.missing_static_policy,
         'allow_missing_source_static': bool(req.allow_missing_source_static),
         'allow_missing_receiver_static': bool(req.allow_missing_receiver_static),
+        'allow_reapply_same_static_table': bool(
+            req.allow_reapply_same_static_table
+        ),
         'source_identity_mode': trace_shift.source_identity_mode,
         'receiver_identity_mode': trace_shift.receiver_identity_mode,
         'n_traces': int(trace_shift.trace_shift_s_sorted.shape[0]),
@@ -1221,6 +1589,7 @@ def _qc_payload(
         'register_corrected_file': bool(req.register_corrected_file),
         'table_artifact_ids': dict(table_paths.artifact_ids),
         'import_warnings': list(imported.warnings),
+        'static_table_reapply_guard': dict(table_reapply_qc),
         'double_application_policy': dict(double_application_qc),
         'artifact_names': artifact_names,
     }
@@ -1234,11 +1603,45 @@ def _write_static_table_apply_history(
     imported: RefractionStaticTableImportResult,
     table_paths: _ResolvedTablePaths,
     trace_shift: _StaticTableTraceShift,
+    table_lineage: _StaticTableApplyLineage,
+    table_reapply_qc: dict[str, Any],
+    double_application_qc: dict[str, Any],
+    corrected_file_id: str | None,
+) -> dict[str, Any]:
+    payload = _static_table_apply_history_payload(
+        job_id=job_id,
+        req=req,
+        imported=imported,
+        table_paths=table_paths,
+        trace_shift=trace_shift,
+        table_lineage=table_lineage,
+        table_reapply_qc=table_reapply_qc,
+        double_application_qc=double_application_qc,
+        corrected_file_id=corrected_file_id,
+    )
+    _write_json_atomic(path, payload)
+    return payload
+
+
+def _static_table_apply_history_payload(
+    *,
+    job_id: str,
+    req: RefractionStaticTableApplyRequest,
+    imported: RefractionStaticTableImportResult,
+    table_paths: _ResolvedTablePaths,
+    trace_shift: _StaticTableTraceShift,
+    table_lineage: _StaticTableApplyLineage,
+    table_reapply_qc: dict[str, Any],
     double_application_qc: dict[str, Any],
     corrected_file_id: str | None,
 ) -> dict[str, Any]:
     warnings = [
         *list(imported.warnings),
+        *[
+            str(item)
+            for item in table_reapply_qc.get('warnings', [])
+            if str(item)
+        ],
         *[
             str(item)
             for item in double_application_qc.get('warnings', [])
@@ -1250,13 +1653,24 @@ def _write_static_table_apply_history(
         'artifact_kind': 'refraction_static_history',
         'history_kind': 'static_table_apply',
         'sign_convention': REFRACTION_STATIC_REPO_SIGN_CONVENTION,
+        'source_table_digest': table_lineage.source_table_digest,
+        'receiver_table_digest': table_lineage.receiver_table_digest,
+        'combined_table_digest': table_lineage.combined_table_digest,
+        'trace_shift_s_sorted_digest': (
+            table_lineage.trace_shift_s_sorted_digest
+        ),
+        'applied_component_name': table_lineage.applied_component_name,
+        'created_from_refraction_job_id': (
+            table_lineage.created_from_refraction_job_id
+        ),
+        'created_from_export_job_id': table_lineage.created_from_export_job_id,
         'input_file_id': req.file_id,
         'output_file_id': corrected_file_id,
         'source_file_id': req.file_id,
         'corrected_file_id': corrected_file_id,
         'job_id': job_id,
         'source_export_format': 'canonical_static_table',
-        'source_job_id': _first_source_job_id(imported),
+        'source_job_id': table_lineage.created_from_refraction_job_id,
         'import_schema_name': 'canonical_static_table',
         'import_schema_version': int(imported.schema_version),
         'imported_table_artifacts': dict(table_paths.artifact_ids),
@@ -1268,17 +1682,24 @@ def _write_static_table_apply_history(
         'cumulative_shift_field': 'trace_shift_s_sorted',
         'components': [
             {
-                'name': 'refraction',
+                'name': table_lineage.applied_component_name,
                 'applied_to_trace_shift': True,
                 'artifact': STATIC_TABLE_APPLY_SOLUTION_NPZ_NAME,
+                'table_digest': table_lineage.combined_table_digest,
+                'trace_shift_s_sorted_digest': (
+                    table_lineage.trace_shift_s_sorted_digest
+                ),
             },
         ],
         'validation_status': 'ok',
         'warnings': warnings,
+        'allow_reapply_same_static_table': bool(
+            req.allow_reapply_same_static_table
+        ),
+        'static_table_reapply_guard': dict(table_reapply_qc),
         'double_application_policy': dict(double_application_qc),
         'double_application': dict(double_application_qc),
     }
-    _write_json_atomic(path, payload)
     return payload
 
 
@@ -1351,6 +1772,7 @@ def _corrected_file_payload(
     corrected_file_id: str,
     build_result: TimeShiftedTraceStoreResult,
     trace_shift: _StaticTableTraceShift,
+    table_lineage: _StaticTableApplyLineage,
     artifact_names: tuple[str, ...],
 ) -> dict[str, Any]:
     return {
@@ -1362,6 +1784,17 @@ def _corrected_file_payload(
         'corrected_file_id': corrected_file_id,
         'file_id': corrected_file_id,
         'sign_convention': REFRACTION_STATIC_REPO_SIGN_CONVENTION,
+        'source_table_digest': table_lineage.source_table_digest,
+        'receiver_table_digest': table_lineage.receiver_table_digest,
+        'combined_table_digest': table_lineage.combined_table_digest,
+        'trace_shift_s_sorted_digest': (
+            table_lineage.trace_shift_s_sorted_digest
+        ),
+        'applied_component_name': table_lineage.applied_component_name,
+        'created_from_refraction_job_id': (
+            table_lineage.created_from_refraction_job_id
+        ),
+        'created_from_export_job_id': table_lineage.created_from_export_job_id,
         'shift_field': 'trace_shift_s_sorted',
         'static_components_applied': ['refraction'],
         'interpolation': 'linear',
@@ -1384,6 +1817,10 @@ def _corrected_file_payload(
         ),
         'solution_artifact': STATIC_TABLE_APPLY_SOLUTION_NPZ_NAME,
         'apply_qc_artifact': STATIC_TABLE_APPLY_QC_JSON_NAME,
+        'static_table_apply_history_artifact': STATIC_TABLE_APPLY_HISTORY_JSON_NAME,
+        'refraction_static_history_artifact': (
+            STATIC_TABLE_APPLY_REFRACTION_HISTORY_JSON_NAME
+        ),
         'artifact_names': [*artifact_names, CORRECTED_FILE_JSON_NAME],
     }
 
@@ -1391,12 +1828,11 @@ def _corrected_file_payload(
 def _derived_metadata(
     *,
     job_id: str,
-    trace_shift: _StaticTableTraceShift,
-    double_application_qc: dict[str, Any],
+    history_metadata: Mapping[str, Any],
 ) -> dict[str, Any]:
     warnings = [
         str(item)
-        for item in double_application_qc.get('warnings', [])
+        for item in history_metadata.get('warnings', [])
         if str(item)
     ]
     metadata: dict[str, Any] = {
@@ -1405,6 +1841,19 @@ def _derived_metadata(
         'derivation': 'refraction_static_table_apply',
         'source_job_id': str(job_id),
         'applied_to': 'raw_trace_store',
+        'source_table_digest': history_metadata.get('source_table_digest'),
+        'receiver_table_digest': history_metadata.get('receiver_table_digest'),
+        'combined_table_digest': history_metadata.get('combined_table_digest'),
+        'trace_shift_s_sorted_digest': history_metadata.get(
+            'trace_shift_s_sorted_digest'
+        ),
+        'applied_component_name': history_metadata.get('applied_component_name'),
+        'created_from_refraction_job_id': history_metadata.get(
+            'created_from_refraction_job_id'
+        ),
+        'created_from_export_job_id': history_metadata.get(
+            'created_from_export_job_id'
+        ),
         'components': [
             {
                 'name': 'static_table_apply',
@@ -1414,24 +1863,29 @@ def _derived_metadata(
                 'value_kind': 'applied_event_time_shift_s',
                 'static_components_applied': ['refraction'],
                 'sign_convention': REFRACTION_STATIC_REPO_SIGN_CONVENTION,
+                'table_digest': history_metadata.get('combined_table_digest'),
+                'trace_shift_s_sorted_digest': history_metadata.get(
+                    'trace_shift_s_sorted_digest'
+                ),
             }
         ],
         'solution_artifact': STATIC_TABLE_APPLY_SOLUTION_NPZ_NAME,
         'shift_field': 'trace_shift_s_sorted',
         'value_kind': 'applied_event_time_shift_s',
         'static_components_applied': ['refraction'],
-        'source_identity_mode': trace_shift.source_identity_mode,
-        'receiver_identity_mode': trace_shift.receiver_identity_mode,
+        'source_identity_mode': (
+            history_metadata.get('endpoint_identity_mode', {}).get('source')
+            if isinstance(history_metadata.get('endpoint_identity_mode'), Mapping)
+            else None
+        ),
+        'receiver_identity_mode': (
+            history_metadata.get('endpoint_identity_mode', {}).get('receiver')
+            if isinstance(history_metadata.get('endpoint_identity_mode'), Mapping)
+            else None
+        ),
         'refraction_sign_convention': REFRACTION_STATIC_REPO_SIGN_CONVENTION,
-        'static_history': {
-            'components': [
-                {
-                    'name': 'refraction',
-                    'applied_to_trace_shift': True,
-                }
-            ],
-            'double_application_policy': dict(double_application_qc),
-        },
+        'static_table_apply_history': dict(history_metadata),
+        'static_history': dict(history_metadata),
     }
     if warnings:
         metadata['warnings'] = warnings
@@ -1586,7 +2040,8 @@ def _first_source_job_id(imported: RefractionStaticTableImportResult) -> str | N
     ]
     if not rows:
         return None
-    return str(rows[0].source_job_id)
+    source_job_id = str(rows[0].source_job_id).strip()
+    return source_job_id or None
 
 
 def _status_counts(statuses: np.ndarray) -> dict[str, int]:
@@ -1733,6 +2188,8 @@ def _cleanup_artifact(path: Path) -> None:
 
 __all__ = [
     'STATIC_TABLE_APPLY_QC_JSON_NAME',
+    'STATIC_TABLE_APPLY_HISTORY_JSON_NAME',
+    'STATIC_TABLE_APPLY_REFRACTION_HISTORY_JSON_NAME',
     'STATIC_TABLE_APPLY_REQUEST_JSON_NAME',
     'STATIC_TABLE_APPLY_SOLUTION_NPZ_NAME',
     'STATIC_TABLE_APPLY_TRACE_SHIFTS_CSV_NAME',

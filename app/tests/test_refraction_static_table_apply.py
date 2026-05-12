@@ -17,7 +17,9 @@ from app.services.refraction_static_export_units import (
     REFRACTION_STATIC_REPO_SIGN_CONVENTION,
 )
 from app.services.refraction_static_table_apply_service import (
+    STATIC_TABLE_APPLY_HISTORY_JSON_NAME,
     STATIC_TABLE_APPLY_QC_JSON_NAME,
+    STATIC_TABLE_APPLY_REFRACTION_HISTORY_JSON_NAME,
     STATIC_TABLE_APPLY_SOLUTION_NPZ_NAME,
     STATIC_TABLE_APPLY_TRACE_SHIFTS_CSV_NAME,
     run_refraction_static_table_apply_job,
@@ -37,6 +39,7 @@ from app.tests.test_refraction_static_apply_trace_store import (
 
 TABLE_JOB_ID = 'static-table-import-job'
 APPLY_JOB_ID = 'static-table-apply-job'
+SECOND_APPLY_JOB_ID = 'static-table-apply-job-2'
 
 
 def _endpoint_key(
@@ -244,11 +247,17 @@ def _create_table_job(
         )
 
 
-def _create_apply_job(state: AppState, job_dir: Path) -> None:
+def _create_apply_job(
+    state: AppState,
+    job_dir: Path,
+    *,
+    job_id: str = APPLY_JOB_ID,
+    file_id: str = SOURCE_FILE_ID,
+) -> None:
     with state.lock:
         state.jobs.create_static_job(
-            APPLY_JOB_ID,
-            file_id=SOURCE_FILE_ID,
+            job_id,
+            file_id=file_id,
             key1_byte=KEY1,
             key2_byte=KEY2,
             statics_kind='refraction_static_table_apply',
@@ -316,6 +325,39 @@ def _write_source_lineage(store: Path, components: list[str]) -> None:
     meta_path.write_text(json.dumps(meta), encoding='utf-8')
 
 
+def _read_static_table_apply_history(job_dir: Path) -> dict[str, Any]:
+    return json.loads(
+        (job_dir / STATIC_TABLE_APPLY_HISTORY_JSON_NAME).read_text(
+            encoding='utf-8',
+        )
+    )
+
+
+def _rerun_same_table_against_file(
+    *,
+    state: AppState,
+    tmp_path: Path,
+    file_id: str,
+    allow_reapply_same_static_table: bool = False,
+) -> Path:
+    job_dir = tmp_path / 'jobs' / SECOND_APPLY_JOB_ID
+    _create_apply_job(state, job_dir, job_id=SECOND_APPLY_JOB_ID, file_id=file_id)
+    req = RefractionStaticTableApplyRequest.model_validate(
+        {
+            'file_id': file_id,
+            'key1_byte': KEY1,
+            'key2_byte': KEY2,
+            'combined_table_artifact_id': (
+                f'{TABLE_JOB_ID}:canonical_static_table.csv'
+            ),
+            'register_corrected_file': False,
+            'allow_reapply_same_static_table': allow_reapply_same_static_table,
+        }
+    )
+    run_refraction_static_table_apply_job(SECOND_APPLY_JOB_ID, req, state)
+    return job_dir
+
+
 def test_static_table_apply_maps_source_receiver_to_trace_shift(tmp_path: Path) -> None:
     state, _store, job_dir = _run_apply(tmp_path)
 
@@ -341,6 +383,83 @@ def test_static_table_apply_maps_source_receiver_to_trace_shift(tmp_path: Path) 
         '4.000000',
         '0.000000',
     ]
+
+
+def test_static_table_apply_writes_history(tmp_path: Path) -> None:
+    _state, _store, job_dir = _run_apply(tmp_path)
+
+    history = _read_static_table_apply_history(job_dir)
+    legacy_history = json.loads(
+        (job_dir / STATIC_TABLE_APPLY_REFRACTION_HISTORY_JSON_NAME).read_text(
+            encoding='utf-8',
+        )
+    )
+    assert legacy_history == history
+    assert history['source_table_digest'] is None
+    assert history['receiver_table_digest'] is None
+    assert len(history['combined_table_digest']) == 64
+    assert history['input_file_id'] == SOURCE_FILE_ID
+    assert history['output_file_id'] is None
+    assert history['applied_component_name'] == 'refraction'
+    assert len(history['trace_shift_s_sorted_digest']) == 64
+
+
+def test_static_table_apply_rejects_duplicate_table_digest(
+    tmp_path: Path,
+) -> None:
+    state, _store, _job_dir = _run_apply(tmp_path, register_corrected_file=True)
+    with state.lock:
+        corrected_file_id = str(state.jobs[APPLY_JOB_ID]['corrected_file_id'])
+
+    second_job_dir = _rerun_same_table_against_file(
+        state=state,
+        tmp_path=tmp_path,
+        file_id=corrected_file_id,
+    )
+
+    with state.lock:
+        job = dict(state.jobs[SECOND_APPLY_JOB_ID])
+    assert job['status'] == 'error'
+    assert 'allow_reapply_same_static_table=False' in str(job['message'])
+    assert not (second_job_dir / STATIC_TABLE_APPLY_SOLUTION_NPZ_NAME).exists()
+
+
+def test_static_table_apply_override_allows_reapply(tmp_path: Path) -> None:
+    state, _store, _job_dir = _run_apply(tmp_path, register_corrected_file=True)
+    with state.lock:
+        corrected_file_id = str(state.jobs[APPLY_JOB_ID]['corrected_file_id'])
+
+    second_job_dir = _rerun_same_table_against_file(
+        state=state,
+        tmp_path=tmp_path,
+        file_id=corrected_file_id,
+        allow_reapply_same_static_table=True,
+    )
+
+    with state.lock:
+        job = dict(state.jobs[SECOND_APPLY_JOB_ID])
+    assert job['status'] == 'done', job.get('message')
+    history = _read_static_table_apply_history(second_job_dir)
+    guard = history['static_table_reapply_guard']
+    assert history['allow_reapply_same_static_table'] is True
+    assert guard['status'] == 'duplicate_allowed_by_override'
+    assert guard['override_used'] is True
+    assert 'same_table_digest' in guard['duplicate_reasons']
+
+
+def test_static_table_history_records_source_job_id(tmp_path: Path) -> None:
+    _state, _store, job_dir = _run_apply(tmp_path)
+
+    history = _read_static_table_apply_history(job_dir)
+    assert history['created_from_refraction_job_id'] == 'refraction-source-job'
+    assert history['created_from_export_job_id'] == TABLE_JOB_ID
+
+
+def test_static_table_history_records_sign_convention(tmp_path: Path) -> None:
+    _state, _store, job_dir = _run_apply(tmp_path)
+
+    history = _read_static_table_apply_history(job_dir)
+    assert history['sign_convention'] == REFRACTION_STATIC_REPO_SIGN_CONVENTION
 
 
 def test_static_table_apply_reorders_original_headers_to_sorted_trace_shift(
