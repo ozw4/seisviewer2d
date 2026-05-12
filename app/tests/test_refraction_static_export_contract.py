@@ -286,6 +286,10 @@ def test_run_refraction_static_export_job_writes_requested_format_metadata(
         REFRACTION_STATIC_DEFAULT_EXPORT_FORMATS
     )
     assert meta['export']['sign_convention'] == REFRACTION_STATIC_REPO_SIGN_CONVENTION
+    assert meta['generated_artifacts'] == [REFRACTION_TIME_TERM_SPREADSHEET_CSV_NAME]
+    assert (
+        export_job_dir / REFRACTION_TIME_TERM_SPREADSHEET_CSV_NAME
+    ).read_bytes() == b'data'
 
 
 def test_run_refraction_static_export_job_writes_lsst_artifacts(

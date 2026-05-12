@@ -1,9 +1,10 @@
-"""M5 refraction export request validation and metadata-only job service."""
+"""M5 refraction export request validation and artifact-writing job service."""
 
 from __future__ import annotations
 
 import csv
 import json
+import shutil
 from dataclasses import dataclass
 from pathlib import Path
 import time
@@ -46,7 +47,7 @@ from app.services.refraction_static_lsst_export import (
 
 REFRACTION_STATIC_EXPORT_REQUEST_JSON_NAME = 'refraction_static_export_request.json'
 REFRACTION_STATIC_EXPORT_JOB_META_JSON_NAME = 'job_meta.json'
-REFRACTION_STATIC_EXPORT_DONE_MESSAGE = 'refraction_static_export_contract_recorded'
+REFRACTION_STATIC_EXPORT_DONE_MESSAGE = 'refraction_static_export_artifacts_written'
 
 _BASE_SOURCE_ARTIFACTS = (
     REFRACTION_STATIC_REQUEST_JSON_NAME,
@@ -198,11 +199,11 @@ def run_refraction_static_export_job(
     req: RefractionStaticExportJobRequest,
     state: AppState,
 ) -> None:
-    """Record a standalone M5 export contract job.
+    """Run a standalone M5 export job.
 
-    Formatter implementation is intentionally out of scope for issue #499; this
-    job validates the source refraction artifacts and persists the public export
-    request metadata, including resolved default formats.
+    The job validates the completed source refraction artifacts, writes the
+    requested export artifacts into its own job directory, and persists request
+    metadata including resolved default formats.
     """
 
     def worker() -> JobCompletion:
@@ -311,6 +312,8 @@ def _generated_refraction_static_export_artifacts(
     requested_formats: tuple[RefractionStaticExportFormat, ...],
 ) -> tuple[str, ...]:
     names: list[str] = []
+    if 'time_term_spreadsheet' in requested_formats:
+        names.append(REFRACTION_TIME_TERM_SPREADSHEET_CSV_NAME)
     if 'lsst' in requested_formats:
         names.append(REFRACTION_LSST_CSV_NAME)
     if 'lsst_plus' in requested_formats:
@@ -324,6 +327,12 @@ def _write_requested_export_artifacts(
     req: RefractionStaticExportJobRequest,
     source: ResolvedRefractionStaticExportSourceJob,
 ) -> None:
+    if 'time_term_spreadsheet' in source.requested_formats:
+        _copy_source_artifact(
+            source=source,
+            job_dir=job_dir,
+            artifact_name=REFRACTION_TIME_TERM_SPREADSHEET_CSV_NAME,
+        )
     if (
         'lsst' not in source.requested_formats
         and 'lsst_plus' not in source.requested_formats
@@ -348,6 +357,18 @@ def _write_requested_export_artifacts(
             ),
             include_inactive_endpoints=bool(req.export.include_inactive_endpoints),
         )
+
+
+def _copy_source_artifact(
+    *,
+    source: ResolvedRefractionStaticExportSourceJob,
+    job_dir: Path,
+    artifact_name: str,
+) -> None:
+    shutil.copyfile(
+        source.source_artifacts_dir / artifact_name,
+        job_dir / artifact_name,
+    )
 
 
 def _load_lsst_export_bundle(
