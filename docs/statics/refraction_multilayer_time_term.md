@@ -628,6 +628,7 @@ Source-specific identifier columns:
 | `manual_static_shift_ms` | Manual source static component in milliseconds after sign-convention conversion; zero when disabled. |
 | `manual_static_status` | Manual source static status, including `not_enabled`, ok/missing/invalid states. |
 | `source_field_shift_ms` | Sum of enabled source field-correction components in milliseconds; zero when disabled. |
+| `source_field_status` | Legacy alias for `source_field_static_status`, retained for CSV compatibility. |
 | `source_field_static_status` | Source field-composition status, including `not_enabled` and ok/error states. |
 | `source_total_with_field_shift_ms` | `total_applied_shift_ms + source_field_shift_ms` when the base and field shifts are valid; equals `total_applied_shift_ms` when field corrections are disabled. |
 
@@ -642,6 +643,7 @@ Receiver-specific identifier columns:
 | `manual_static_shift_ms` | Manual receiver static component in milliseconds after sign-convention conversion; zero when disabled. |
 | `manual_static_status` | Manual receiver static status, including `not_enabled`, ok/missing/invalid states. |
 | `receiver_field_shift_ms` | Sum of enabled receiver field-correction components in milliseconds; zero when disabled. |
+| `receiver_field_status` | Legacy alias for `receiver_field_static_status`, retained for CSV compatibility. |
 | `receiver_field_static_status` | Receiver field-composition status, including `not_enabled` and ok/error states. |
 | `receiver_total_with_field_shift_ms` | `total_applied_shift_ms + receiver_field_shift_ms` when the base and field shifts are valid; equals `total_applied_shift_ms` when field corrections are disabled. |
 
@@ -781,7 +783,7 @@ Recommended coverage for future changes:
   `total_static_ms == total_applied_shift_ms`, and trace shift application
   uses `refraction_trace_shift_s_sorted`.
 
-## 11. Known Limitations
+## 12. Known Limitations
 
 - GRM is not implemented.
 - Plus-minus is not implemented.

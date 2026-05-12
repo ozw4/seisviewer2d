@@ -4317,6 +4317,7 @@ def _source_static_table_columns(
         'manual_static_status',
         (
             'source_field_shift_ms',
+            'source_field_status',
             'source_field_static_status',
             'source_total_with_field_shift_ms',
         ),
@@ -4351,6 +4352,7 @@ def _receiver_static_table_columns(
         'manual_static_status',
         (
             'receiver_field_shift_ms',
+            'receiver_field_status',
             'receiver_field_static_status',
             'receiver_total_with_field_shift_ms',
         ),
@@ -4943,6 +4945,7 @@ def _source_static_table_rows(
                 ),
                 'manual_static_status': str(source_manual_static_status[index]),
                 'source_field_shift_ms': _csv_ms(source_field_shift_s[index]),
+                'source_field_status': str(source_field_status[index]),
                 'source_field_static_status': str(source_field_status[index]),
                 'source_total_with_field_shift_ms': _csv_ms(
                     source_total_with_field_s[index]
@@ -5098,6 +5101,7 @@ def _receiver_static_table_rows(
                 ),
                 'manual_static_status': str(receiver_manual_static_status[index]),
                 'receiver_field_shift_ms': _csv_ms(receiver_field_shift_s[index]),
+                'receiver_field_status': str(receiver_field_status[index]),
                 'receiver_field_static_status': str(receiver_field_status[index]),
                 'receiver_total_with_field_shift_ms': _csv_ms(
                     receiver_total_with_field_s[index]

@@ -252,9 +252,9 @@ def compose_refraction_final_trace_shift(
     final_status = np.ascontiguousarray(base_status.copy(), dtype=_STATUS_DTYPE)
     final_valid = np.ascontiguousarray(base_valid.copy(), dtype=bool)
     applied_field = np.zeros(n_traces, dtype=np.float64)
+    add_mask = base_valid & np.isfinite(base) & field_valid
+    final[add_mask] = base[add_mask] + field_shift[add_mask]
     if apply_field:
-        add_mask = base_valid & np.isfinite(base) & field_valid
-        final[add_mask] = base[add_mask] + field_shift[add_mask]
         applied_field[add_mask] = field_shift[add_mask]
         invalid_final = add_mask & ~np.isfinite(final)
         if bool(np.any(invalid_final)):

@@ -141,9 +141,9 @@ def _field_result(
     valid_field = (status == 'ok') & np.isfinite(field_shift)
     applied_field = np.zeros(refraction.shape, dtype=np.float64)
     final = refraction.copy()
+    final[valid_field] = refraction[valid_field] + field_shift[valid_field]
     if apply_to_trace_shift:
         applied_field[valid_field] = field_shift[valid_field]
-        final[valid_field] = refraction[valid_field] + field_shift[valid_field]
     return replace(
         base,
         source_field_shift_s=np.asarray([field_shift[0], field_shift[1]], dtype=np.float64),
