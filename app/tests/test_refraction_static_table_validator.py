@@ -140,6 +140,29 @@ def test_validate_static_table_normalizes_seconds_column() -> None:
     assert result.normalized_rows[0].applied_shift_s == pytest.approx(-0.00325)
 
 
+def test_validate_static_table_rejects_multiple_shift_columns() -> None:
+    row_ms = _canonical_row(
+        endpoint_key='source:1001',
+        endpoint_id='1001',
+        applied_shift_ms='12.5',
+    )
+    row_ms['applied_shift_s'] = ''
+    row_s = _canonical_row(
+        endpoint_kind='receiver',
+        endpoint_key='receiver:2001',
+        endpoint_id='2001',
+        applied_shift_ms='',
+    )
+    row_s['applied_shift_s'] = '-0.00325'
+
+    result = validate_canonical_static_table_rows((row_ms, row_s))
+
+    assert result.is_valid is False
+    assert result.normalized_rows == ()
+    assert result.n_invalid_rows == 2
+    assert any('exactly one applied-shift column' in error for error in result.errors)
+
+
 def test_validate_static_table_rejects_ambiguous_shift_units() -> None:
     row = _canonical_row()
     row.pop('applied_shift_ms')

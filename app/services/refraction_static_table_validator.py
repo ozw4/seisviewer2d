@@ -161,7 +161,8 @@ def validate_canonical_static_table_rows(
     if sign_convention_override is None:
         required_columns.append('sign_convention')
     missing_columns = [column for column in required_columns if column not in supplied_columns]
-    if not _has_apply_shift_column(
+    shift_columns = _applied_shift_columns(supplied_columns)
+    if not _has_valid_apply_shift_column(
         supplied_columns,
         metadata_units=normalized_shift_units,
     ):
@@ -173,6 +174,12 @@ def validate_canonical_static_table_rows(
 
     if missing_columns:
         errors.append(f'missing required columns: {", ".join(missing_columns)}')
+        invalid_rows.update(range(1, len(row_tuple) + 1))
+    if len(shift_columns) > 1:
+        errors.append(
+            'canonical static table must provide exactly one applied-shift '
+            f'column; found {", ".join(shift_columns)}'
+        )
         invalid_rows.update(range(1, len(row_tuple) + 1))
 
     unknown_columns = sorted(set(supplied_columns) - _KNOWN_COLUMNS)
@@ -356,7 +363,15 @@ def _normalize_optional_units(
     return normalize_export_units(str(units))
 
 
-def _has_apply_shift_column(
+def _applied_shift_columns(columns: Sequence[str]) -> tuple[str, ...]:
+    return tuple(
+        column
+        for column in ('applied_shift_ms', 'applied_shift_s', 'applied_shift')
+        if column in columns
+    )
+
+
+def _has_valid_apply_shift_column(
     columns: Sequence[str],
     *,
     metadata_units: RefractionStaticExportUnits | None,
