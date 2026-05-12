@@ -16,6 +16,7 @@ from app.services.refraction_static_artifacts import (
     FIRST_BREAK_RESIDUALS_CSV_NAME,
     NEAR_SURFACE_MODEL_CSV_NAME,
     RECEIVER_STATIC_TABLE_CSV_NAME,
+    REFRACTION_FIRST_BREAK_TIME_EXPORT_CSV_NAME,
     REFRACTION_CELL_SOLVER_HISTORY_CSV_NAME,
     REFRACTION_REFRACTOR_VELOCITY_CELLS_CSV_NAME,
     REFRACTION_REFRACTOR_VELOCITY_GRID_NPZ_NAME,
@@ -58,6 +59,7 @@ _CORE_FINAL_ARTIFACT_NAMES = {
     REFRACTION_STATICS_CSV_NAME,
     NEAR_SURFACE_MODEL_CSV_NAME,
     FIRST_BREAK_RESIDUALS_CSV_NAME,
+    REFRACTION_FIRST_BREAK_TIME_EXPORT_CSV_NAME,
     REFRACTION_STATIC_COMPONENTS_CSV_NAME,
     SOURCE_STATIC_TABLE_CSV_NAME,
     RECEIVER_STATIC_TABLE_CSV_NAME,
@@ -304,6 +306,30 @@ def test_multilayer_residual_csv_contains_layer_kind_and_layer_index(
     assert vsub_rows
     assert {row['layer_index'] for row in vsub_rows} == {'3'}
     assert all(row['residual_time_s'] != '' for row in vsub_rows)
+
+
+def test_first_break_time_export_contains_layer_kind_for_multilayer(
+    tmp_path: Path,
+) -> None:
+    job_dir = tmp_path / 'job'
+    compute_three_layer_workflow(job_dir=job_dir)
+
+    rows = _read_csv(job_dir / REFRACTION_FIRST_BREAK_TIME_EXPORT_CSV_NAME)
+
+    assert rows
+    assert {'v2_t1', 'v3_t2', 'vsub_t3'} <= {
+        row['layer_kind'] for row in rows
+    }
+    for row in rows:
+        assert row['source_endpoint_key']
+        assert row['receiver_endpoint_key']
+        assert row['observed_pick_time_ms']
+        assert row['modeled_pick_time_ms']
+        assert row['used_for_layer']
+        assert row['moveout_time_ms']
+        assert row['source_time_term_ms']
+        assert row['receiver_time_term_ms']
+        assert row['velocity_m_s']
 
 
 def test_multilayer_residual_csv_reports_cell_ids_for_solve_cell_layer(

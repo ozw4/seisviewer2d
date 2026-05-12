@@ -14,6 +14,7 @@ from app.services.refraction_static_artifacts import (
     FIRST_BREAK_RESIDUALS_CSV_NAME,
     NEAR_SURFACE_MODEL_CSV_NAME,
     REFRACTION_CELL_SOLVER_HISTORY_CSV_NAME,
+    REFRACTION_FIRST_BREAK_TIME_EXPORT_CSV_NAME,
     REFRACTION_REFRACTOR_VELOCITY_CELLS_CSV_NAME,
     REFRACTION_REFRACTOR_VELOCITY_GRID_NPZ_NAME,
     REFRACTION_REFRACTOR_VELOCITY_QC_JSON_NAME,
@@ -129,6 +130,7 @@ EXPECTED_FILENAMES = {
     REFRACTION_STATICS_CSV_NAME,
     NEAR_SURFACE_MODEL_CSV_NAME,
     FIRST_BREAK_RESIDUALS_CSV_NAME,
+    REFRACTION_FIRST_BREAK_TIME_EXPORT_CSV_NAME,
     REFRACTION_STATIC_COMPONENTS_CSV_NAME,
     REFRACTION_STATIC_HISTORY_JSON_NAME,
     SOURCE_STATIC_TABLE_CSV_NAME,
@@ -180,6 +182,7 @@ def test_write_refraction_static_artifacts_npz_schema(tmp_path: Path) -> None:
         REFRACTION_STATICS_CSV_NAME,
         NEAR_SURFACE_MODEL_CSV_NAME,
         FIRST_BREAK_RESIDUALS_CSV_NAME,
+        REFRACTION_FIRST_BREAK_TIME_EXPORT_CSV_NAME,
         REFRACTION_STATIC_COMPONENTS_CSV_NAME,
         SOURCE_STATIC_TABLE_CSV_NAME,
         RECEIVER_STATIC_TABLE_CSV_NAME,
@@ -444,7 +447,7 @@ def test_write_refraction_static_artifacts_qc_json(tmp_path: Path) -> None:
     assert payload['status_counts']['trace_static_status']['ok'] == 3
     assert payload['status_counts']['node_datum_status']['ok'] == 2
     assert payload['first_break_fit']['residual_rms_ms'] == pytest.approx(1.0)
-    assert len(payload['artifacts']) == 11
+    assert len(payload['artifacts']) == 12
     artifact_names = {item['name'] for item in payload['artifacts']}
     assert REFRACTION_V1_QC_JSON_NAME not in artifact_names
     assert REFRACTION_V1_ESTIMATES_CSV_NAME not in artifact_names
@@ -665,11 +668,138 @@ def test_write_refraction_static_artifacts_csvs(tmp_path: Path) -> None:
     assert float(residual_rows[0]['observed_pick_time_ms']) == pytest.approx(50.0)
     assert float(residual_rows[1]['residual_ms']) == pytest.approx(-2.0)
 
+    first_break_rows = _read_csv(paths.refraction_first_break_time_export_csv)
+    assert len(first_break_rows) == 3
+    assert first_break_rows[0]['source_endpoint_key'] == 's0'
+    assert first_break_rows[0]['receiver_endpoint_key'] == 'r0'
+    assert float(first_break_rows[0]['observed_pick_time_ms']) == pytest.approx(50.0)
+    assert float(first_break_rows[0]['modeled_pick_time_ms']) == pytest.approx(49.0)
+    assert float(first_break_rows[0]['residual_ms']) == pytest.approx(1.0)
+
     component_rows = _read_csv(paths.refraction_static_components_csv)
     assert len(component_rows) == 4
     assert {row['kind'] for row in component_rows} == {'source', 'receiver'}
     assert float(component_rows[0]['half_intercept_time_ms']) == pytest.approx(10.0)
     assert 'refraction_shift_ms' in component_rows[0]
+
+
+def test_first_break_time_export_contains_observed_modeled_residual(
+    tmp_path: Path,
+) -> None:
+    paths = write_refraction_static_artifacts(
+        result=_result(),
+        req=_request(),
+        job_dir=tmp_path,
+    )
+
+    rows, fieldnames = _read_csv_with_fieldnames(
+        paths.refraction_first_break_time_export_csv
+    )
+
+    assert tuple(fieldnames) == (
+        'schema_version',
+        'trace_index_sorted',
+        'source_endpoint_key',
+        'receiver_endpoint_key',
+        'source_node_id',
+        'receiver_node_id',
+        'offset_m',
+        'midpoint_x_m',
+        'midpoint_y_m',
+        'cell_ix',
+        'cell_iy',
+        'layer_kind',
+        'used_for_layer',
+        'observed_pick_time_ms',
+        'modeled_pick_time_ms',
+        'residual_ms',
+        'moveout_time_ms',
+        'source_time_term_ms',
+        'receiver_time_term_ms',
+        'velocity_m_s',
+        'rejection_reason',
+        'observation_status',
+        'sign_convention',
+    )
+    assert rows[0]['schema_version'] == '1'
+    assert rows[0]['trace_index_sorted'] == '0'
+    assert rows[0]['source_node_id'] == '0'
+    assert rows[0]['receiver_node_id'] == '1'
+    assert rows[0]['layer_kind'] == 'v2_t1'
+    assert rows[0]['used_for_layer'] == 'true'
+    assert rows[0]['observation_status'] == 'used'
+    assert float(rows[0]['observed_pick_time_ms']) == pytest.approx(50.0)
+    assert float(rows[0]['modeled_pick_time_ms']) == pytest.approx(49.0)
+    assert float(rows[0]['residual_ms']) == pytest.approx(1.0)
+    assert float(rows[0]['moveout_time_ms']) == pytest.approx(27.0)
+    assert float(rows[0]['source_time_term_ms']) == pytest.approx(10.0)
+    assert float(rows[0]['receiver_time_term_ms']) == pytest.approx(12.0)
+    assert float(rows[0]['velocity_m_s']) == pytest.approx(2500.0)
+    assert rows[0]['sign_convention'] == (
+        artifact_module.FIRST_BREAK_TIME_EXPORT_SIGN_CONVENTION
+    )
+
+
+def test_first_break_time_export_marks_rejected_observations(
+    tmp_path: Path,
+) -> None:
+    paths = write_refraction_static_artifacts(
+        result=_result(),
+        req=_request(),
+        job_dir=tmp_path,
+    )
+
+    rows = _read_csv(paths.refraction_first_break_time_export_csv)
+
+    assert rows[1]['used_for_layer'] == 'false'
+    assert rows[1]['rejection_reason'] == 'robust_outlier'
+    assert rows[1]['observation_status'] == 'rejected'
+
+
+def test_first_break_time_export_preserves_unassigned_layer_context(
+    tmp_path: Path,
+) -> None:
+    result = replace(
+        _result(),
+        row_layer_kind=np.asarray(['v2_t1', '', 'v2_t1'], dtype='<U16'),
+        row_layer_index=np.asarray([1, 0, 1], dtype=np.int64),
+        rejected_by_robust_mask=np.asarray([False, False, False], dtype=bool),
+        row_rejection_reason=np.asarray(
+            ['ok', 'outside_layer_gate', 'ok'],
+            dtype='<U32',
+        ),
+        row_velocity_m_s=np.asarray([2500.0, np.nan, 2500.0], dtype=np.float64),
+    )
+    paths = write_refraction_static_artifacts(
+        result=result,
+        req=_request(),
+        job_dir=tmp_path,
+    )
+
+    rows = _read_csv(paths.refraction_first_break_time_export_csv)
+
+    assert rows[1]['layer_kind'] == ''
+    assert rows[1]['used_for_layer'] == 'false'
+    assert rows[1]['rejection_reason'] == 'outside_layer_gate'
+
+
+def test_first_break_time_export_residual_matches_solution_npz(
+    tmp_path: Path,
+) -> None:
+    paths = write_refraction_static_artifacts(
+        result=_result(),
+        req=_request(),
+        job_dir=tmp_path,
+    )
+
+    rows = _read_csv(paths.refraction_first_break_time_export_csv)
+    with np.load(paths.solution_npz, allow_pickle=False) as data:
+        residual_ms = data['residual_time_s'] * 1000.0
+
+    np.testing.assert_allclose(
+        np.asarray([float(row['residual_ms']) for row in rows]),
+        residual_ms,
+    )
 
 
 def test_refraction_static_artifacts_manifest_and_download_visibility(
@@ -1521,6 +1651,12 @@ def _multilayer_shaped_solve_cell_result():
         used_row_mask=np.asarray([True, False, True, False], dtype=bool),
         rejected_by_robust_mask=np.asarray([False, True, False, False], dtype=bool),
         row_midpoint_cell_id=np.asarray([0, 1, 0, 1], dtype=np.int64),
+        row_layer_kind=np.asarray(['v2_t1', 'v2_t1', 'v2_t1', 'v2_t1'], dtype='<U16'),
+        row_layer_index=np.ones(4, dtype=np.int64),
+        row_source_endpoint_key=np.asarray(['s0', 's1', 's0', 's1'], dtype='<U16'),
+        row_receiver_endpoint_key=np.asarray(['r0', 'r1', 'r1', 'r0'], dtype='<U16'),
+        row_rejection_reason=np.asarray(['ok', '', 'ok', 'not_used'], dtype='<U32'),
+        row_velocity_m_s=np.full(4, 2500.0, dtype=np.float64),
     )
 
 

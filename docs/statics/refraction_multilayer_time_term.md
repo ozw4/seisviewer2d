@@ -507,6 +507,7 @@ refraction_static_qc.json
 refraction_statics.csv
 near_surface_model.csv
 first_break_residuals.csv
+refraction_first_break_time_export.csv
 refraction_static_components.csv
 source_static_table.csv
 receiver_static_table.csv

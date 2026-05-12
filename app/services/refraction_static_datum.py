@@ -809,10 +809,26 @@ def build_refraction_datum_statics(
         receiver_sh3_weathering_thickness_m=(
             weathering_replacement_result.receiver_sh3_weathering_thickness_m
         ),
-        row_layer_kind=data.row_layer_kind,
-        row_layer_index=data.row_layer_index,
-        row_source_endpoint_key=data.row_source_endpoint_key,
-        row_receiver_endpoint_key=data.row_receiver_endpoint_key,
+        row_layer_kind=(
+            data.row_layer_kind
+            if data.row_layer_kind is not None
+            else np.full(data.row_trace_index_sorted.shape, 'v2_t1', dtype='<U32')
+        ),
+        row_layer_index=(
+            data.row_layer_index
+            if data.row_layer_index is not None
+            else np.ones(data.row_trace_index_sorted.shape, dtype=np.int64)
+        ),
+        row_source_endpoint_key=(
+            data.row_source_endpoint_key
+            if data.row_source_endpoint_key is not None
+            else data.source_endpoint_key_sorted[data.row_trace_index_sorted]
+        ),
+        row_receiver_endpoint_key=(
+            data.row_receiver_endpoint_key
+            if data.row_receiver_endpoint_key is not None
+            else data.receiver_endpoint_key_sorted[data.row_trace_index_sorted]
+        ),
         row_rejection_reason=data.row_rejection_reason,
         row_velocity_m_s=data.row_velocity_m_s,
     )

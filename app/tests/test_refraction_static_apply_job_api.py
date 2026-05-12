@@ -23,6 +23,7 @@ from app.services.refraction_static_apply_trace_store import (
 from app.services.refraction_static_artifacts import (
     FIRST_BREAK_RESIDUALS_CSV_NAME,
     NEAR_SURFACE_MODEL_CSV_NAME,
+    REFRACTION_FIRST_BREAK_TIME_EXPORT_CSV_NAME,
     REFRACTION_REFRACTOR_VELOCITY_CELLS_CSV_NAME,
     REFRACTION_REFRACTOR_VELOCITY_GRID_NPZ_NAME,
     REFRACTION_REFRACTOR_VELOCITY_QC_JSON_NAME,
@@ -97,6 +98,7 @@ FINAL_REFRACTION_ARTIFACTS = {
     REFRACTION_STATICS_CSV_NAME,
     NEAR_SURFACE_MODEL_CSV_NAME,
     FIRST_BREAK_RESIDUALS_CSV_NAME,
+    REFRACTION_FIRST_BREAK_TIME_EXPORT_CSV_NAME,
     REFRACTION_STATIC_COMPONENTS_CSV_NAME,
     REFRACTION_STATIC_HISTORY_JSON_NAME,
     SOURCE_STATIC_TABLE_CSV_NAME,
@@ -1142,6 +1144,7 @@ def test_run_refraction_static_apply_job_artifact_only_writes_real_final_artifac
     assert len(_read_csv(job_dir / REFRACTION_STATICS_CSV_NAME)) == 4
     assert len(_read_csv(job_dir / NEAR_SURFACE_MODEL_CSV_NAME)) == 3
     assert len(_read_csv(job_dir / FIRST_BREAK_RESIDUALS_CSV_NAME)) == 3
+    assert len(_read_csv(job_dir / REFRACTION_FIRST_BREAK_TIME_EXPORT_CSV_NAME)) == 3
     assert len(_read_csv(job_dir / REFRACTION_STATIC_COMPONENTS_CSV_NAME)) == 4
 
     files_response = client.get(f'/statics/job/{job_id}/files')
