@@ -19,6 +19,8 @@ from app.api.schemas import (
     RefractionStaticApplyResponse,
     RefractionStaticExportJobRequest,
     RefractionStaticExportJobResponse,
+    RefractionStaticTableApplyRequest,
+    RefractionStaticTableApplyResponse,
     ResidualStaticApplyRequest,
     ResidualStaticApplyResponse,
     StaticLinkageBuildRequest,
@@ -45,6 +47,9 @@ from app.services.refraction_static_export_service import (
     validate_refraction_static_export_source_job,
 )
 from app.services.refraction_static_service import run_refraction_static_apply_job
+from app.services.refraction_static_table_apply_service import (
+    run_refraction_static_table_apply_job,
+)
 from app.services.residual_static_service import run_residual_static_apply_job
 from app.services.time_term_static_service import run_time_term_static_apply_job
 
@@ -280,6 +285,39 @@ def refraction_static_apply(
     if req.export.enabled:
         response['requested_formats'] = list(requested_formats)
     return response
+
+
+@router.post(
+    '/statics/refraction/static-table/apply',
+    response_model=RefractionStaticTableApplyResponse,
+)
+def refraction_static_table_apply(
+    req: RefractionStaticTableApplyRequest,
+    request: Request,
+) -> RefractionStaticTableApplyResponse:
+    state = get_state(request.app)
+    cleanup_in_memory_state(state)
+    maybe_cleanup_expired_jobs()
+
+    job_id = str(uuid4())
+    with state.lock:
+        job_state = state.jobs.create_static_job(
+            job_id,
+            file_id=req.file_id,
+            key1_byte=req.key1_byte,
+            key2_byte=req.key2_byte,
+            statics_kind='refraction_static_table_apply',
+            artifacts_dir=str(get_job_dir(job_id)),
+        )
+        status = job_state['status']
+
+    start_job_thread(
+        thread_factory=threading.Thread,
+        target=run_refraction_static_table_apply_job,
+        args=(job_id, req, state),
+    )
+
+    return {'job_id': job_id, 'state': status}
 
 
 @router.post(

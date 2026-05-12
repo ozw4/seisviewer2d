@@ -3170,8 +3170,29 @@ def refraction_static_double_application_qc(
     source_meta: Mapping[str, object],
 ) -> dict[str, Any]:
     request = RefractionStaticApplyRequest.model_validate(req)
-    policy = request.field_corrections.composition.double_application_policy
-    requested = set(refraction_static_trace_shift_component_names(request))
+    return static_history_double_application_qc(
+        input_file_id=request.file_id,
+        policy=request.field_corrections.composition.double_application_policy,
+        requested_components=refraction_static_trace_shift_component_names(request),
+        source_meta=source_meta,
+    )
+
+
+def static_history_double_application_qc(
+    *,
+    input_file_id: str,
+    policy: str,
+    requested_components: Iterable[str],
+    source_meta: Mapping[str, object],
+) -> dict[str, Any]:
+    requested = {
+        canonical
+        for canonical in (
+            _canonical_static_history_component(component)
+            for component in requested_components
+        )
+        if canonical is not None
+    }
     existing, suspected = _lineage_component_names(source_meta)
     duplicate_components = sorted(requested.intersection(existing))
     suspected_components = sorted(
@@ -3185,7 +3206,7 @@ def refraction_static_double_application_qc(
             'duplicate_allowed' if policy == 'allow' else 'duplicate_warned'
         )
         message = _double_application_message(
-            input_file_id=request.file_id,
+            input_file_id=input_file_id,
             duplicate_components=duplicate_components,
             suspected_components=suspected_components,
             policy=policy,
@@ -3400,6 +3421,10 @@ def _canonical_static_history_component(value: object) -> str | None:
         'refraction_t1lsst',
         'refraction_static',
         'refraction_static_correction',
+        'refraction_static_table_apply',
+        'static_table_apply',
+        'source_static_table',
+        'receiver_static_table',
     }:
         return 'refraction'
     if name in {'source_depth', 'source_depth_shift_s'}:
@@ -7627,6 +7652,7 @@ __all__ = [
     'build_source_receiver_static_table_arrays',
     'refraction_static_double_application_qc',
     'refraction_static_trace_shift_component_names',
+    'static_history_double_application_qc',
     'write_first_break_residuals_csv',
     'write_near_surface_model_csv',
     'write_refraction_first_break_time_export_csv',
