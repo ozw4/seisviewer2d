@@ -120,11 +120,12 @@ def _canonical_row(
     endpoint_key: str,
     endpoint_id: int,
     applied_shift_ms: float,
+    source_job_id: str = 'refraction-source-job',
 ) -> dict[str, str]:
     return {
         'format_name': 'canonical_static_table',
         'format_version': '1',
-        'source_job_id': 'refraction-source-job',
+        'source_job_id': source_job_id,
         'endpoint_kind': endpoint_kind,
         'endpoint_key': endpoint_key,
         'endpoint_id': str(endpoint_id),
@@ -179,6 +180,14 @@ def _write_table(
             ),
         )
 
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open('w', encoding='utf-8', newline='') as handle:
+        writer = csv.DictWriter(handle, fieldnames=tuple(rows[0]), lineterminator='\n')
+        writer.writeheader()
+        writer.writerows(rows)
+
+
+def _write_rows(path: Path, rows: list[dict[str, str]]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open('w', encoding='utf-8', newline='') as handle:
         writer = csv.DictWriter(handle, fieldnames=tuple(rows[0]), lineterminator='\n')
@@ -275,7 +284,8 @@ def _run_apply(
     endpoint_id_matching: bool = False,
     write_producer_geometry: bool = True,
     lineage_components: list[str] | None = None,
-    double_application_policy: str = 'warn',
+    double_application_policy: str = 'fail',
+    allow_reapply_same_static_table: bool = False,
 ) -> tuple[AppState, Path, Path]:
     state, store = _write_target_store(tmp_path)
     if lineage_components is not None:
@@ -300,6 +310,7 @@ def _run_apply(
         'missing_static_policy': missing_static_policy,
         'allow_missing_source_static': allow_missing_source_static,
         'double_application_policy': double_application_policy,
+        'allow_reapply_same_static_table': allow_reapply_same_static_table,
         'max_abs_shift_ms': 250.0,
     }
     if endpoint_id_matching:
@@ -783,22 +794,39 @@ def test_static_table_apply_history_checks_trace_store_lineage(
     )
 
     with state.lock:
-        assert state.jobs[APPLY_JOB_ID]['status'] == 'done'
-    qc = json.loads((job_dir / STATIC_TABLE_APPLY_QC_JSON_NAME).read_text())
-    history = json.loads((job_dir / 'refraction_static_history.json').read_text())
-    assert qc['double_application_policy']['status'] == 'duplicate_warned'
-    assert qc['double_application_policy']['duplicate_components'] == ['refraction']
-    assert history['double_application_policy']['status'] == 'duplicate_warned'
-    assert 'double_application_policy=warn' in history['warnings'][0]
+        job = dict(state.jobs[APPLY_JOB_ID])
+    assert job['status'] == 'error'
+    assert 'double_application_policy=fail' in str(job['message'])
+    assert not (job_dir / STATIC_TABLE_APPLY_SOLUTION_NPZ_NAME).exists()
 
 
-def test_static_table_apply_double_application_policy_fail_rejects(
+def test_static_table_apply_lineage_override_allows_reapply(
     tmp_path: Path,
 ) -> None:
     state, _store, job_dir = _run_apply(
         tmp_path,
         lineage_components=['refraction'],
-        double_application_policy='fail',
+        allow_reapply_same_static_table=True,
+    )
+
+    with state.lock:
+        job = dict(state.jobs[APPLY_JOB_ID])
+    assert job['status'] == 'done', job.get('message')
+    qc = json.loads((job_dir / STATIC_TABLE_APPLY_QC_JSON_NAME).read_text())
+    history = json.loads((job_dir / 'refraction_static_history.json').read_text())
+    assert qc['double_application_policy']['status'] == 'duplicate_allowed'
+    assert qc['double_application_policy']['duplicate_components'] == ['refraction']
+    assert history['double_application_policy']['status'] == 'duplicate_allowed'
+    assert 'double_application_policy=allow' in history['warnings'][0]
+
+
+def test_static_table_apply_double_application_policy_allow_does_not_override(
+    tmp_path: Path,
+) -> None:
+    state, _store, job_dir = _run_apply(
+        tmp_path,
+        lineage_components=['refraction'],
+        double_application_policy='allow',
     )
 
     with state.lock:
@@ -806,6 +834,133 @@ def test_static_table_apply_double_application_policy_fail_rejects(
     assert job['status'] == 'error'
     assert 'double_application_policy=fail' in str(job['message'])
     assert not (job_dir / STATIC_TABLE_APPLY_SOLUTION_NPZ_NAME).exists()
+
+
+def test_static_table_apply_checks_all_imported_source_job_ids(
+    tmp_path: Path,
+) -> None:
+    state, store = _write_target_store(tmp_path)
+    table_dir = tmp_path / 'jobs' / TABLE_JOB_ID
+    source_table_path = table_dir / 'source_static_table.csv'
+    receiver_table_path = table_dir / 'receiver_static_table.csv'
+    _write_rows(
+        source_table_path,
+        [
+            _canonical_row(
+                endpoint_kind='source',
+                endpoint_key=SOURCE_KEYS[100],
+                endpoint_id=100,
+                applied_shift_ms=8.0,
+                source_job_id='source-producer-job',
+            ),
+            _canonical_row(
+                endpoint_kind='source',
+                endpoint_key=SOURCE_KEYS[101],
+                endpoint_id=101,
+                applied_shift_ms=4.0,
+                source_job_id='source-producer-job',
+            ),
+        ],
+    )
+    _write_rows(
+        receiver_table_path,
+        [
+            _canonical_row(
+                endpoint_kind='receiver',
+                endpoint_key=RECEIVER_KEYS[200],
+                endpoint_id=200,
+                applied_shift_ms=0.0,
+                source_job_id='receiver-producer-job',
+            ),
+            _canonical_row(
+                endpoint_kind='receiver',
+                endpoint_key=RECEIVER_KEYS[201],
+                endpoint_id=201,
+                applied_shift_ms=-4.0,
+                source_job_id='receiver-producer-job',
+            ),
+        ],
+    )
+    _write_refraction_static_request(table_dir)
+    _create_table_job(state, tmp_path, source_table_path)
+    job_dir = tmp_path / 'jobs' / APPLY_JOB_ID
+    _create_apply_job(state, job_dir)
+    req = RefractionStaticTableApplyRequest.model_validate(
+        {
+            'file_id': SOURCE_FILE_ID,
+            'key1_byte': KEY1,
+            'key2_byte': KEY2,
+            'source_table_artifact_id': f'{TABLE_JOB_ID}:{source_table_path.name}',
+            'receiver_table_artifact_id': f'{TABLE_JOB_ID}:{receiver_table_path.name}',
+            'register_corrected_file': False,
+        }
+    )
+    run_refraction_static_table_apply_job(APPLY_JOB_ID, req, state)
+    with state.lock:
+        assert state.jobs[APPLY_JOB_ID]['status'] == 'done'
+    history = _read_static_table_apply_history(job_dir)
+    assert history['created_from_refraction_job_ids'] == [
+        'source-producer-job',
+        'receiver-producer-job',
+    ]
+
+    meta_path = store / 'meta.json'
+    meta = json.loads(meta_path.read_text(encoding='utf-8'))
+    meta['derived'] = {'static_table_apply_history': history}
+    meta_path.write_text(json.dumps(meta), encoding='utf-8')
+
+    new_table_path = table_dir / 'receiver_lineage_static_table.csv'
+    _write_rows(
+        new_table_path,
+        [
+            _canonical_row(
+                endpoint_kind='source',
+                endpoint_key=SOURCE_KEYS[100],
+                endpoint_id=100,
+                applied_shift_ms=8.0,
+                source_job_id='receiver-producer-job',
+            ),
+            _canonical_row(
+                endpoint_kind='source',
+                endpoint_key=SOURCE_KEYS[101],
+                endpoint_id=101,
+                applied_shift_ms=4.0,
+                source_job_id='receiver-producer-job',
+            ),
+            _canonical_row(
+                endpoint_kind='receiver',
+                endpoint_key=RECEIVER_KEYS[200],
+                endpoint_id=200,
+                applied_shift_ms=0.0,
+                source_job_id='receiver-producer-job',
+            ),
+            _canonical_row(
+                endpoint_kind='receiver',
+                endpoint_key=RECEIVER_KEYS[201],
+                endpoint_id=201,
+                applied_shift_ms=-4.0,
+                source_job_id='receiver-producer-job',
+            ),
+        ],
+    )
+    second_job_dir = tmp_path / 'jobs' / SECOND_APPLY_JOB_ID
+    _create_apply_job(state, second_job_dir, job_id=SECOND_APPLY_JOB_ID)
+    second_req = RefractionStaticTableApplyRequest.model_validate(
+        {
+            'file_id': SOURCE_FILE_ID,
+            'key1_byte': KEY1,
+            'key2_byte': KEY2,
+            'combined_table_artifact_id': f'{TABLE_JOB_ID}:{new_table_path.name}',
+            'register_corrected_file': False,
+        }
+    )
+    run_refraction_static_table_apply_job(SECOND_APPLY_JOB_ID, second_req, state)
+
+    with state.lock:
+        second_job = dict(state.jobs[SECOND_APPLY_JOB_ID])
+    assert second_job['status'] == 'error'
+    assert 'table_source_job_already_applied' in str(second_job['message'])
+    assert not (second_job_dir / STATIC_TABLE_APPLY_SOLUTION_NPZ_NAME).exists()
 
 
 def test_static_table_apply_trace_shift_matches_expected_synthetic(

@@ -117,7 +117,9 @@ class _StaticTableApplyLineage:
     trace_shift_s_sorted_digest: str
     applied_component_name: str
     created_from_refraction_job_id: str | None
+    created_from_refraction_job_ids: tuple[str, ...]
     created_from_export_job_id: str | None
+    created_from_export_job_ids: tuple[str, ...]
 
 
 def run_refraction_static_table_apply_job(
@@ -1233,17 +1235,29 @@ def _static_table_apply_lineage(
                 'receiver_table_digest': receiver_digest,
             }
         )
+    created_from_refraction_job_ids = _imported_source_job_ids(imported)
+    created_from_export_job_ids = _created_from_export_job_ids(
+        state=state,
+        table_paths=table_paths,
+    )
     return _StaticTableApplyLineage(
         source_table_digest=source_digest,
         receiver_table_digest=receiver_digest,
         combined_table_digest=combined_digest,
         trace_shift_s_sorted_digest=_array_sha256(trace_shift.trace_shift_s_sorted),
         applied_component_name='refraction',
-        created_from_refraction_job_id=_first_source_job_id(imported),
-        created_from_export_job_id=_created_from_export_job_id(
-            state=state,
-            table_paths=table_paths,
+        created_from_refraction_job_id=(
+            created_from_refraction_job_ids[0]
+            if created_from_refraction_job_ids
+            else None
         ),
+        created_from_refraction_job_ids=created_from_refraction_job_ids,
+        created_from_export_job_id=(
+            created_from_export_job_ids[0]
+            if len(created_from_export_job_ids) == 1
+            else None
+        ),
+        created_from_export_job_ids=created_from_export_job_ids,
     )
 
 
@@ -1274,14 +1288,8 @@ def _static_table_reapply_qc(
         )
 
     duplicate_table_digests = sorted(current_digests.intersection(existing_digests))
-    current_source_jobs = {
-        job_id
-        for job_id in (
-            table_lineage.created_from_refraction_job_id,
-            table_lineage.created_from_export_job_id,
-        )
-        if job_id
-    }
+    current_source_jobs = set(table_lineage.created_from_refraction_job_ids)
+    current_source_jobs.update(table_lineage.created_from_export_job_ids)
     duplicate_source_jobs = current_source_jobs.intersection(existing_source_jobs)
 
     duplicate_reasons: list[str] = []
@@ -1329,9 +1337,10 @@ def _double_application_qc(
     state: AppState,
 ) -> dict[str, Any]:
     source_meta = _source_trace_store_meta(req=req, state=state)
+    policy = 'allow' if req.allow_reapply_same_static_table else 'fail'
     return static_history_double_application_qc(
         input_file_id=req.file_id,
-        policy=req.double_application_policy,
+        policy=policy,
         requested_components=('refraction',),
         source_meta=source_meta,
     )
@@ -1393,11 +1402,11 @@ def _digest_json(payload: Mapping[str, object]) -> str:
     return hashlib.sha256(encoded).hexdigest()
 
 
-def _created_from_export_job_id(
+def _created_from_export_job_ids(
     *,
     state: AppState,
     table_paths: _ResolvedTablePaths,
-) -> str | None:
+) -> tuple[str, ...]:
     export_job_ids: list[str] = []
     with state.lock:
         for job_id in table_paths.artifact_job_ids:
@@ -1406,8 +1415,7 @@ def _created_from_export_job_id(
                 continue
             if job.get('statics_kind') == 'refraction_export':
                 export_job_ids.append(str(job_id))
-    unique = tuple(dict.fromkeys(export_job_ids))
-    return unique[0] if len(unique) == 1 else None
+    return tuple(dict.fromkeys(export_job_ids))
 
 
 def _static_table_history_records(
@@ -1472,7 +1480,7 @@ def _history_table_digests(history: Mapping[str, object]) -> set[str]:
 
 
 def _history_source_job_ids(history: Mapping[str, object]) -> set[str]:
-    return {
+    ids = {
         job_id
         for job_id in (
             _history_text(history.get('created_from_refraction_job_id')),
@@ -1481,6 +1489,10 @@ def _history_source_job_ids(history: Mapping[str, object]) -> set[str]:
         )
         if job_id
     }
+    ids.update(_history_text_items(history.get('created_from_refraction_job_ids')))
+    ids.update(_history_text_items(history.get('created_from_export_job_ids')))
+    ids.update(_history_text_items(history.get('source_job_ids')))
+    return ids
 
 
 def _history_duplicate_component_digests(
@@ -1519,6 +1531,15 @@ def _history_text(value: object) -> str | None:
         return None
     text = value.strip()
     return text or None
+
+
+def _history_text_items(value: object) -> set[str]:
+    if isinstance(value, str):
+        item = _history_text(value)
+        return {item} if item else set()
+    if not isinstance(value, (list, tuple)):
+        return set()
+    return {text for item in value if (text := _history_text(item))}
 
 
 def _solution_arrays(
@@ -1612,7 +1633,11 @@ def _qc_payload(
         'created_from_refraction_job_id': (
             table_lineage.created_from_refraction_job_id
         ),
+        'created_from_refraction_job_ids': list(
+            table_lineage.created_from_refraction_job_ids
+        ),
         'created_from_export_job_id': table_lineage.created_from_export_job_id,
+        'created_from_export_job_ids': list(table_lineage.created_from_export_job_ids),
         'missing_static_policy': req.missing_static_policy,
         'allow_missing_source_static': bool(req.allow_missing_source_static),
         'allow_missing_receiver_static': bool(req.allow_missing_receiver_static),
@@ -1716,7 +1741,11 @@ def _static_table_apply_history_payload(
         'created_from_refraction_job_id': (
             table_lineage.created_from_refraction_job_id
         ),
+        'created_from_refraction_job_ids': list(
+            table_lineage.created_from_refraction_job_ids
+        ),
         'created_from_export_job_id': table_lineage.created_from_export_job_id,
+        'created_from_export_job_ids': list(table_lineage.created_from_export_job_ids),
         'input_file_id': req.file_id,
         'output_file_id': corrected_file_id,
         'source_file_id': req.file_id,
@@ -1847,7 +1876,11 @@ def _corrected_file_payload(
         'created_from_refraction_job_id': (
             table_lineage.created_from_refraction_job_id
         ),
+        'created_from_refraction_job_ids': list(
+            table_lineage.created_from_refraction_job_ids
+        ),
         'created_from_export_job_id': table_lineage.created_from_export_job_id,
+        'created_from_export_job_ids': list(table_lineage.created_from_export_job_ids),
         'shift_field': 'trace_shift_s_sorted',
         'static_components_applied': ['refraction'],
         'interpolation': 'linear',
@@ -1904,8 +1937,14 @@ def _derived_metadata(
         'created_from_refraction_job_id': history_metadata.get(
             'created_from_refraction_job_id'
         ),
+        'created_from_refraction_job_ids': history_metadata.get(
+            'created_from_refraction_job_ids'
+        ),
         'created_from_export_job_id': history_metadata.get(
             'created_from_export_job_id'
+        ),
+        'created_from_export_job_ids': history_metadata.get(
+            'created_from_export_job_ids'
         ),
         'components': [
             {
@@ -2084,17 +2123,6 @@ def _endpoint_key_array(
 def _unique_missing(values: np.ndarray, missing_mask: np.ndarray) -> tuple[str, ...]:
     missing = [str(value) for value in np.asarray(values, dtype=str)[missing_mask]]
     return tuple(dict.fromkeys(missing))
-
-
-def _first_source_job_id(imported: RefractionStaticTableImportResult) -> str | None:
-    rows = [
-        *imported.source_static_by_endpoint_key.values(),
-        *imported.receiver_static_by_endpoint_key.values(),
-    ]
-    if not rows:
-        return None
-    source_job_id = str(rows[0].source_job_id).strip()
-    return source_job_id or None
 
 
 def _status_counts(statuses: np.ndarray) -> dict[str, int]:

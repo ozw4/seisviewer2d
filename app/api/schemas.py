@@ -2926,7 +2926,7 @@ class RefractionStaticTableApplyRequest(BaseModel):
     allow_missing_source_static: bool = False
     allow_missing_receiver_static: bool = False
     missing_static_policy: Literal['fail', 'zero'] = 'fail'
-    double_application_policy: Literal['warn', 'fail', 'allow'] = 'warn'
+    double_application_policy: Literal['warn', 'fail', 'allow'] = 'fail'
     allow_reapply_same_static_table: bool = False
     fill_value: float = 0.0
     max_abs_shift_ms: float = 250.0
