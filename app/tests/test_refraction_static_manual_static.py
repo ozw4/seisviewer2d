@@ -82,11 +82,11 @@ def test_manual_static_table_loads_source_and_receiver_rows(tmp_path: Path) -> N
     assert len(rows) == 2
     np.testing.assert_allclose(
         result.source_manual_static_shift_s,
-        [0.0125, np.nan],
+        [0.0125, 0.0],
     )
     np.testing.assert_allclose(
         result.receiver_manual_static_shift_s,
-        [-0.004, np.nan],
+        [-0.004, 0.0],
     )
     assert result.qc['n_manual_source_rows'] == 1
     assert result.qc['n_manual_receiver_rows'] == 1
@@ -139,7 +139,7 @@ def test_manual_static_table_marks_unmatched_rows() -> None:
 
     assert result.qc['n_unmatched_rows'] == 1
     assert result.qc['row_status_counts']['unmatched_manual_static_row'] == 1
-    np.testing.assert_allclose(result.receiver_manual_static_shift_s, [np.nan, 0.002])
+    np.testing.assert_allclose(result.receiver_manual_static_shift_s, [0.0, 0.002])
 
 
 def test_manual_static_table_does_not_synthesize_endpoint_ids() -> None:
@@ -157,7 +157,24 @@ def test_manual_static_table_does_not_synthesize_endpoint_ids() -> None:
 
     assert result.qc['n_unmatched_rows'] == 1
     assert result.qc['row_status_counts']['unmatched_manual_static_row'] == 1
-    np.testing.assert_allclose(result.source_manual_static_shift_s, [np.nan, np.nan])
+    np.testing.assert_allclose(result.source_manual_static_shift_s, [0.0, 0.0])
+
+
+def test_manual_static_missing_allowed_becomes_noop_shift() -> None:
+    result = _resolve((_row(kind='source', key='source:a', value_s=0.001),))
+
+    np.testing.assert_allclose(result.source_manual_static_shift_s, [0.001, 0.0])
+    np.testing.assert_allclose(result.receiver_manual_static_shift_s, [0.0, 0.0])
+    np.testing.assert_array_equal(
+        result.source_manual_static_status,
+        ['ok', 'missing_manual_static'],
+    )
+    np.testing.assert_array_equal(
+        result.receiver_manual_static_status,
+        ['missing_manual_static', 'missing_manual_static'],
+    )
+    assert result.qc['n_missing_source_endpoints'] == 1
+    assert result.qc['n_missing_receiver_endpoints'] == 2
 
 
 def test_manual_static_table_rejects_duplicate_endpoint_rows() -> None:

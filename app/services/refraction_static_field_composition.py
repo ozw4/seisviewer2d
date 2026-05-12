@@ -252,9 +252,9 @@ def compose_refraction_final_trace_shift(
     final_status = np.ascontiguousarray(base_status.copy(), dtype=_STATUS_DTYPE)
     final_valid = np.ascontiguousarray(base_valid.copy(), dtype=bool)
     applied_field = np.zeros(n_traces, dtype=np.float64)
-    add_mask = base_valid & np.isfinite(base) & field_valid
-    final[add_mask] = base[add_mask] + field_shift[add_mask]
     if apply_field:
+        add_mask = base_valid & np.isfinite(base) & field_valid
+        final[add_mask] = base[add_mask] + field_shift[add_mask]
         applied_field[add_mask] = field_shift[add_mask]
         invalid_final = add_mask & ~np.isfinite(final)
         if bool(np.any(invalid_final)):
@@ -336,6 +336,13 @@ def _component_value_status(
     status: str,
 ) -> str:
     normalized = _normalize_status(status)
+    if (
+        component_name == 'manual_static_shift_s'
+        and normalized == 'missing_manual_static'
+        and np.isfinite(shift_s)
+        and shift_s == 0.0
+    ):
+        return _OK_STATUS
     if normalized not in _NOOP_STATUSES:
         return normalized
     if normalized == _OK_STATUS and not np.isfinite(shift_s):
@@ -499,9 +506,8 @@ def _final_trace_qc(
         'apply_to_trace_shift': bool(apply_to_trace_shift),
         'invalid_component_policy': invalid_component_policy,
         'sign_convention': SIGN_CONVENTION,
-        'final_trace_shift_formula': (
-            'final_trace_shift_s = refraction_trace_shift_s + '
-            'trace_field_shift_s'
+        'final_trace_shift_formula': _final_trace_shift_formula(
+            apply_to_trace_shift=apply_to_trace_shift
         ),
         'n_traces': int(final_trace_shift_s_sorted.shape[0]),
         'invalid_trace_field_shift_count': int(invalid_trace_field_shift_count),
@@ -515,6 +521,15 @@ def _final_trace_qc(
         'applied_field_shift_summary_s': _shift_summary(applied_field_shift_s_sorted),
         'final_trace_shift_summary_s': _shift_summary(final_trace_shift_s_sorted),
     }
+
+
+def _final_trace_shift_formula(*, apply_to_trace_shift: bool) -> str:
+    if apply_to_trace_shift:
+        return (
+            'final_trace_shift_s = refraction_trace_shift_s + '
+            'trace_field_shift_s'
+        )
+    return 'final_trace_shift_s = refraction_trace_shift_s'
 
 
 def _prioritized_status(statuses: list[str] | tuple[str, ...]) -> str:

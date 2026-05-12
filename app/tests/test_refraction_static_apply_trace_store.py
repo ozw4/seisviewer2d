@@ -141,8 +141,8 @@ def _field_result(
     valid_field = (status == 'ok') & np.isfinite(field_shift)
     applied_field = np.zeros(refraction.shape, dtype=np.float64)
     final = refraction.copy()
-    final[valid_field] = refraction[valid_field] + field_shift[valid_field]
     if apply_to_trace_shift:
+        final[valid_field] = refraction[valid_field] + field_shift[valid_field]
         applied_field[valid_field] = field_shift[valid_field]
     return replace(
         base,
@@ -408,10 +408,11 @@ def test_apply_tracestore_uses_refraction_shift_when_field_corrections_artifact_
     state, _source_store, _source_traces = _state_with_source_store(tmp_path)
     req = _field_request(apply_to_trace_shift=False)
     job_dir = tmp_path / 'jobs' / JOB_ID
+    field_result = _field_result(apply_to_trace_shift=False)
 
     result = apply_refraction_statics_to_trace_store(
         req=req,
-        result=_field_result(apply_to_trace_shift=False),
+        result=field_result,
         state=state,
         job_id=JOB_ID,
         job_dir=job_dir,
@@ -423,6 +424,10 @@ def test_apply_tracestore_uses_refraction_shift_when_field_corrections_artifact_
     np.testing.assert_allclose(
         result.applied_shift_s_sorted,
         [0.0, 0.008, -0.008, 0.0],
+    )
+    np.testing.assert_allclose(
+        field_result.final_trace_shift_s_sorted,
+        field_result.refraction_trace_shift_s_sorted,
     )
 
     corrected_manifest = json.loads(

@@ -16,6 +16,7 @@ from app.services.refraction_static_apply_trace_store import (
 )
 from app.services.refraction_static_artifacts import (
     RECEIVER_STATIC_TABLE_CSV_NAME,
+    REFRACTION_STATIC_QC_JSON_NAME,
     REFRACTION_STATIC_SOLUTION_NPZ_NAME,
     SOURCE_RECEIVER_STATIC_TABLE_NPZ_NAME,
     SOURCE_STATIC_TABLE_CSV_NAME,
@@ -73,7 +74,15 @@ def test_field_e2e_artifact_only_preserves_refraction_trace_shift(
         )
         np.testing.assert_allclose(
             data['final_trace_shift_s_sorted'],
-            fixture.dataset.expected_final_trace_shift_s,
+            fixture.dataset.expected_refraction_trace_shift_s,
+        )
+        np.testing.assert_array_equal(
+            data['final_trace_static_status_sorted'],
+            data['trace_static_status_sorted'],
+        )
+        np.testing.assert_array_equal(
+            data['final_trace_static_valid_mask_sorted'],
+            data['trace_static_valid_mask_sorted'],
         )
         np.testing.assert_allclose(
             data['applied_field_shift_s_sorted'],
@@ -295,6 +304,132 @@ def test_field_e2e_manual_static_delay_positive_ms_conversion(
 
     source_rows = _read_csv(job_dir / SOURCE_STATIC_TABLE_CSV_NAME)
     assert source_rows[0]['sign_convention'] == 'corrected(t) = raw(t - shift_s)'
+
+
+def test_field_e2e_source_only_manual_static_apply_to_trace_shift_true(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fixture = clean_field_e2e_fixture()
+    req = field_apply_request(
+        fixture.dataset,
+        apply_to_trace_shift=True,
+        manual_static_endpoint_kind='source',
+    )
+    state, job_dir = _run_field_job(
+        tmp_path,
+        monkeypatch,
+        fixture=fixture,
+        req=req,
+        job_id='field-source-only-manual',
+    )
+
+    with state.lock:
+        job = dict(state.jobs['field-source-only-manual'])
+    assert job['status'] == 'done', job.get('message')
+
+    with np.load(job_dir / REFRACTION_STATIC_SOLUTION_NPZ_NAME, allow_pickle=False) as data:
+        np.testing.assert_allclose(
+            data['source_manual_static_shift_s'],
+            fixture.dataset.expected_source_manual_static_shift_s,
+        )
+        np.testing.assert_allclose(
+            data['receiver_manual_static_shift_s'],
+            np.zeros_like(data['receiver_manual_static_shift_s']),
+        )
+        np.testing.assert_array_equal(
+            data['receiver_manual_static_status'],
+            np.full(
+                data['receiver_manual_static_status'].shape,
+                'missing_manual_static',
+            ),
+        )
+        np.testing.assert_array_equal(
+            data['trace_field_static_status_sorted'],
+            np.full(data['trace_field_static_status_sorted'].shape, 'ok'),
+        )
+        np.testing.assert_allclose(
+            data['final_trace_shift_s_sorted'],
+            data['refraction_trace_shift_s_sorted'] + data['trace_field_shift_s_sorted'],
+        )
+
+    qc = json.loads((job_dir / REFRACTION_STATIC_QC_JSON_NAME).read_text())
+    manual_qc = qc['field_corrections']['manual_static']
+    assert manual_qc['n_missing_source_endpoints'] == 0
+    assert manual_qc['n_missing_receiver_endpoints'] == int(
+        fixture.dataset.receiver_endpoint_table.endpoint_id.shape[0]
+    )
+
+    receiver_rows = _read_csv(job_dir / RECEIVER_STATIC_TABLE_CSV_NAME)
+    assert {row['manual_static_status'] for row in receiver_rows} == {
+        'missing_manual_static'
+    }
+    assert {row['receiver_field_static_status'] for row in receiver_rows} == {'ok'}
+    for row in receiver_rows:
+        assert float(row['manual_static_shift_ms']) == pytest.approx(0.0)
+
+
+def test_field_e2e_receiver_only_manual_static_apply_to_trace_shift_true(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fixture = clean_field_e2e_fixture()
+    req = field_apply_request(
+        fixture.dataset,
+        apply_to_trace_shift=True,
+        manual_static_endpoint_kind='receiver',
+    )
+    state, job_dir = _run_field_job(
+        tmp_path,
+        monkeypatch,
+        fixture=fixture,
+        req=req,
+        job_id='field-receiver-only-manual',
+    )
+
+    with state.lock:
+        job = dict(state.jobs['field-receiver-only-manual'])
+    assert job['status'] == 'done', job.get('message')
+
+    with np.load(job_dir / REFRACTION_STATIC_SOLUTION_NPZ_NAME, allow_pickle=False) as data:
+        np.testing.assert_allclose(
+            data['source_manual_static_shift_s'],
+            np.zeros_like(data['source_manual_static_shift_s']),
+        )
+        np.testing.assert_array_equal(
+            data['source_manual_static_status'],
+            np.full(
+                data['source_manual_static_status'].shape,
+                'missing_manual_static',
+            ),
+        )
+        np.testing.assert_allclose(
+            data['receiver_manual_static_shift_s'],
+            fixture.dataset.expected_receiver_manual_static_shift_s,
+        )
+        np.testing.assert_array_equal(
+            data['trace_field_static_status_sorted'],
+            np.full(data['trace_field_static_status_sorted'].shape, 'ok'),
+        )
+        np.testing.assert_allclose(
+            data['final_trace_shift_s_sorted'],
+            data['refraction_trace_shift_s_sorted'] + data['trace_field_shift_s_sorted'],
+        )
+
+    qc = json.loads((job_dir / REFRACTION_STATIC_QC_JSON_NAME).read_text())
+    manual_qc = qc['field_corrections']['manual_static']
+    assert manual_qc['n_missing_source_endpoints'] == int(
+        fixture.dataset.source_endpoint_table.endpoint_id.shape[0]
+    )
+    assert manual_qc['n_missing_receiver_endpoints'] == 0
+
+    source_rows = _read_csv(job_dir / SOURCE_STATIC_TABLE_CSV_NAME)
+    assert {row['manual_static_status'] for row in source_rows} == {
+        'missing_manual_static'
+    }
+    assert {row['source_field_static_status'] for row in source_rows} == {'ok'}
+    for row in source_rows:
+        assert float(row['manual_static_shift_ms']) == pytest.approx(0.0)
 
 
 def test_field_e2e_invalid_policy_fail(
