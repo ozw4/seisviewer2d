@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
@@ -10,29 +10,37 @@ import numpy as np
 
 from app.api.schemas import RefractionStaticApplyRequest
 from app.core.state import AppState
-from app.services.refraction_static_source_depth import (
-    resolve_refraction_source_depth,
-    write_refraction_source_depth_artifacts,
-)
+from app.services.refraction_static_source_depth import resolve_refraction_source_depth
 from app.services.refraction_static_types import (
     RefractionDatumStaticsResult,
     RefractionEndpointTable,
     RefractionStaticInputModel,
 )
-from app.services.refraction_static_uphole import (
-    resolve_refraction_uphole,
-    write_refraction_uphole_artifacts,
-)
+from app.services.refraction_static_uphole import resolve_refraction_uphole
 from app.tests._refraction_static_field_synthetic import (
     SyntheticRefractionFieldCorrectionDataset,
     make_clean_2d_field_corrections,
     make_messy_2d_field_corrections,
 )
+from app.utils.pick_cache_file1d_mem import ensure_root_dir, path_for_file
 
 FIELD_FILE_ID = 'field-correction-synthetic-file'
 FIELD_KEY1_BYTE = 189
 FIELD_KEY2_BYTE = 193
 FIELD_SAMPLE_INTERVAL_S = 0.004
+FIELD_ORIGINAL_NAME = 'field-correction.sgy'
+FIELD_SOURCE_ID_BYTE = 9
+FIELD_RECEIVER_ID_BYTE = 13
+FIELD_SOURCE_X_BYTE = 73
+FIELD_SOURCE_Y_BYTE = 77
+FIELD_RECEIVER_X_BYTE = 81
+FIELD_RECEIVER_Y_BYTE = 85
+FIELD_SOURCE_ELEVATION_BYTE = 45
+FIELD_RECEIVER_ELEVATION_BYTE = 41
+FIELD_COORDINATE_SCALAR_BYTE = 71
+FIELD_ELEVATION_SCALAR_BYTE = 69
+FIELD_SOURCE_DEPTH_BYTE = 115
+FIELD_UPHOLE_TIME_BYTE = 95
 
 
 @dataclass(frozen=True)
@@ -81,7 +89,7 @@ def field_apply_request(
                 ),
             }
             for endpoint_id, value_s in zip(
-                dataset.source_endpoint_table.endpoint_id.tolist(),
+                range(int(dataset.source_endpoint_table.endpoint_id.shape[0])),
                 dataset.source_manual_static_input_s.tolist(),
                 strict=True,
             )
@@ -95,7 +103,7 @@ def field_apply_request(
                 ),
             }
             for endpoint_id, value_s in zip(
-                dataset.receiver_endpoint_table.endpoint_id.tolist(),
+                range(int(dataset.receiver_endpoint_table.endpoint_id.shape[0])),
                 dataset.receiver_manual_static_input_s.tolist(),
                 strict=True,
             )
@@ -109,9 +117,8 @@ def field_apply_request(
             'key2_byte': FIELD_KEY2_BYTE,
             'pick_source': {'kind': 'manual_memmap'},
             'geometry': {
-                'source_id_byte': 9,
-                'receiver_id_byte': 13,
-                'source_depth_byte': 115,
+                'source_id_byte': FIELD_SOURCE_ID_BYTE,
+                'receiver_id_byte': FIELD_RECEIVER_ID_BYTE,
             },
             'linkage': {'mode': 'none'},
             'model': {
@@ -156,12 +163,13 @@ def field_apply_request(
             'field_corrections': {
                 'source_depth': {
                     'mode': 'weathering_velocity_time',
-                    'source_depth_byte': 115,
+                    'source_depth_byte': FIELD_SOURCE_DEPTH_BYTE,
+                    'source_depth_unit': 'm',
                 },
                 'uphole': {
                     'mode': 'header_time',
-                    'uphole_time_byte': 95,
-                    'uphole_time_unit': 's',
+                    'uphole_time_byte': FIELD_UPHOLE_TIME_BYTE,
+                    'uphole_time_unit': 'ms',
                     'positive_time_means_delay': True,
                 },
                 'manual_static': manual_static,
@@ -188,25 +196,19 @@ def install_field_job_stubs(
     service_module: Any,
     fixture: RefractionFieldE2EFixture,
 ) -> None:
-    def _build_input_model(**kwargs: Any) -> RefractionStaticInputModel:
-        job_dir = Path(kwargs['job_dir'])
-        source_depth_result = fixture.input_model.source_depth_result
-        uphole_result = fixture.input_model.uphole_result
-        if source_depth_result is not None:
-            write_refraction_source_depth_artifacts(job_dir, source_depth_result)
-        if uphole_result is not None:
-            write_refraction_uphole_artifacts(job_dir, uphole_result)
-        return fixture.input_model
+    def _compute_from_input_model(**kwargs: Any) -> SimpleNamespace:
+        input_model = kwargs['input_model']
+        return SimpleNamespace(
+            datum_result=_base_result_with_input_endpoint_keys(
+                fixture.base_result,
+                input_model,
+            )
+        )
 
     monkeypatch.setattr(
         service_module,
-        'build_refraction_static_input_model',
-        _build_input_model,
-    )
-    monkeypatch.setattr(
-        service_module,
         'compute_refraction_multilayer_datum_statics_from_input_model',
-        lambda **_kwargs: SimpleNamespace(datum_result=fixture.base_result),
+        _compute_from_input_model,
     )
 
 
@@ -236,7 +238,7 @@ def write_field_trace_store(
 ) -> np.ndarray:
     root.mkdir(parents=True, exist_ok=True)
     n_traces = int(dataset.sorted_trace_index.shape[0])
-    n_samples = 96
+    n_samples = 192
     traces = np.zeros((n_traces, n_samples), dtype=np.float32)
     traces[:, n_samples // 2] = 1.0
     np.save(root / 'traces.npy', traces)
@@ -272,7 +274,81 @@ def write_field_trace_store(
         ),
         encoding='utf-8',
     )
+    _write_field_trace_store_headers(root, dataset)
     return traces
+
+
+def write_field_manual_picks(
+    dataset: SyntheticRefractionFieldCorrectionDataset,
+) -> Path:
+    ensure_root_dir()
+    path = path_for_file(FIELD_ORIGINAL_NAME)
+    np.save(path, dataset.first_break_time_s.astype(np.float32, copy=False))
+    return path
+
+
+def _write_field_trace_store_headers(
+    root: Path,
+    dataset: SyntheticRefractionFieldCorrectionDataset,
+) -> None:
+    base = dataset.base_dataset
+    source_index = dataset.source_endpoint_index
+    _write_header(root, FIELD_KEY1_BYTE, np.full(dataset.sorted_trace_index.shape, 100))
+    _write_header(root, FIELD_KEY2_BYTE, np.arange(dataset.sorted_trace_index.shape[0]))
+    _write_header(root, FIELD_SOURCE_ID_BYTE, dataset.source_endpoint_id_sorted)
+    _write_header(root, FIELD_RECEIVER_ID_BYTE, dataset.receiver_endpoint_id_sorted)
+    _write_header(root, FIELD_SOURCE_X_BYTE, np.rint(base.source_x_m).astype(np.int32))
+    _write_header(root, FIELD_SOURCE_Y_BYTE, np.rint(base.source_y_m).astype(np.int32))
+    _write_header(
+        root,
+        FIELD_RECEIVER_X_BYTE,
+        np.rint(base.receiver_x_m).astype(np.int32),
+    )
+    _write_header(
+        root,
+        FIELD_RECEIVER_Y_BYTE,
+        np.rint(base.receiver_y_m).astype(np.int32),
+    )
+    _write_header(root, FIELD_SOURCE_ELEVATION_BYTE, _centimeters(base.source_elevation_m))
+    _write_header(
+        root,
+        FIELD_RECEIVER_ELEVATION_BYTE,
+        _centimeters(base.receiver_elevation_m),
+    )
+    _write_header(
+        root,
+        FIELD_COORDINATE_SCALAR_BYTE,
+        np.zeros(dataset.sorted_trace_index.shape, dtype=np.int32),
+    )
+    _write_header(
+        root,
+        FIELD_ELEVATION_SCALAR_BYTE,
+        np.full(dataset.sorted_trace_index.shape, -100, dtype=np.int32),
+    )
+    _write_header(root, FIELD_SOURCE_DEPTH_BYTE, _centimeters(dataset.source_depth_m[source_index]))
+    _write_header(
+        root,
+        FIELD_UPHOLE_TIME_BYTE,
+        _integer_milliseconds(dataset.uphole_time_s[source_index]),
+    )
+
+
+def _write_header(root: Path, byte: int, values: np.ndarray) -> None:
+    np.save(root / f'headers_byte_{byte}.npy', np.asarray(values))
+
+
+def _centimeters(values: np.ndarray) -> np.ndarray:
+    arr = np.asarray(values, dtype=np.float64)
+    if np.any(~np.isfinite(arr)):
+        return arr * 100.0
+    return np.rint(arr * 100.0).astype(np.int32)
+
+
+def _integer_milliseconds(values_s: np.ndarray) -> np.ndarray:
+    values_ms = np.asarray(values_s, dtype=np.float64) * 1000.0
+    if np.any(~np.isfinite(values_ms)):
+        return values_ms
+    return np.rint(values_ms).astype(np.int32)
 
 
 def _field_e2e_fixture(
@@ -360,6 +436,43 @@ def _field_input_model(
         source_endpoint_id_sorted=dataset.source_endpoint_id_sorted,
         receiver_endpoint_id_sorted=dataset.receiver_endpoint_id_sorted,
     )
+
+
+def _base_result_with_input_endpoint_keys(
+    result: RefractionDatumStaticsResult,
+    input_model: RefractionStaticInputModel,
+) -> RefractionDatumStaticsResult:
+    source_keys = _unique_nonempty_in_order(input_model.source_endpoint_key_sorted)
+    receiver_keys = _unique_nonempty_in_order(input_model.receiver_endpoint_key_sorted)
+    if source_keys.shape != result.source_endpoint_key.shape:
+        raise AssertionError('source endpoint count changed in field E2E fixture')
+    if receiver_keys.shape != result.receiver_endpoint_key.shape:
+        raise AssertionError('receiver endpoint count changed in field E2E fixture')
+    return replace(
+        result,
+        source_endpoint_key=source_keys,
+        receiver_endpoint_key=receiver_keys,
+        row_source_endpoint_key=np.asarray(
+            input_model.source_endpoint_key_sorted,
+            dtype=object,
+        ),
+        row_receiver_endpoint_key=np.asarray(
+            input_model.receiver_endpoint_key_sorted,
+            dtype=object,
+        ),
+    )
+
+
+def _unique_nonempty_in_order(values: np.ndarray) -> np.ndarray:
+    seen: set[str] = set()
+    out: list[str] = []
+    for raw_value in np.asarray(values).tolist():
+        value = str(raw_value)
+        if not value or value in seen:
+            continue
+        seen.add(value)
+        out.append(value)
+    return np.asarray(out, dtype=object)
 
 
 def _base_refraction_result(

@@ -164,7 +164,7 @@ def make_clean_2d_field_corrections(
         base.source_endpoint_id.shape[0],
         dtype=np.float64,
     )
-    uphole_time_s = 0.002 + 0.0015 * np.arange(
+    uphole_time_s = 0.002 + 0.002 * np.arange(
         base.source_endpoint_id.shape[0],
         dtype=np.float64,
     )
@@ -209,7 +209,7 @@ def make_messy_2d_field_corrections(
         base.source_endpoint_id.shape[0],
         dtype=np.float64,
     )
-    uphole_time_s = 0.002 + 0.0015 * np.arange(
+    uphole_time_s = 0.002 + 0.002 * np.arange(
         base.source_endpoint_id.shape[0],
         dtype=np.float64,
     )

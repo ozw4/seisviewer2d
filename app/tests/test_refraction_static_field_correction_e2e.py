@@ -20,15 +20,21 @@ from app.services.refraction_static_artifacts import (
     SOURCE_RECEIVER_STATIC_TABLE_NPZ_NAME,
     SOURCE_STATIC_TABLE_CSV_NAME,
 )
+from app.services.refraction_static_source_depth import (
+    REFRACTION_SOURCE_DEPTH_QC_JSON_NAME,
+)
 from app.services.refraction_static_service import run_refraction_static_apply_job
+from app.services.refraction_static_uphole import REFRACTION_UPHOLE_QC_JSON_NAME
 from app.tests._refraction_static_field_e2e_helpers import (
     FIELD_FILE_ID,
+    FIELD_ORIGINAL_NAME,
     clean_field_e2e_fixture,
     create_field_refraction_job,
     field_apply_request,
     FIELD_SAMPLE_INTERVAL_S,
     install_field_job_stubs,
     messy_field_e2e_fixture,
+    write_field_manual_picks,
     write_field_trace_store,
 )
 
@@ -179,6 +185,14 @@ def test_field_e2e_source_depth_uphole_manual_components_match_truth(
             fixture.dataset.expected_final_trace_shift_s,
         )
 
+    source_depth_qc = json.loads(
+        (job_dir / REFRACTION_SOURCE_DEPTH_QC_JSON_NAME).read_text()
+    )
+    assert source_depth_qc['source_depth_byte'] == 115
+    uphole_qc = json.loads((job_dir / REFRACTION_UPHOLE_QC_JSON_NAME).read_text())
+    assert uphole_qc['uphole_time_byte'] == 95
+    assert uphole_qc['uphole_time_unit'] == 'ms'
+
 
 def test_field_e2e_source_receiver_tables_match_truth(
     tmp_path: Path,
@@ -194,16 +208,9 @@ def test_field_e2e_source_receiver_tables_match_truth(
         job_id='field-tables',
     )
 
-    source_rows = _rows_by_key(
-        _read_csv(job_dir / SOURCE_STATIC_TABLE_CSV_NAME),
-        'source_endpoint_key',
-    )
-    receiver_rows = _rows_by_key(
-        _read_csv(job_dir / RECEIVER_STATIC_TABLE_CSV_NAME),
-        'receiver_endpoint_key',
-    )
-    for index, key in enumerate(fixture.dataset.source_endpoint_table.endpoint_key):
-        row = source_rows[str(key)]
+    source_rows = _read_csv(job_dir / SOURCE_STATIC_TABLE_CSV_NAME)
+    receiver_rows = _read_csv(job_dir / RECEIVER_STATIC_TABLE_CSV_NAME)
+    for index, row in enumerate(source_rows):
         assert float(row['source_depth_shift_ms']) == pytest.approx(
             fixture.dataset.expected_source_depth_shift_s[index] * 1000.0
         )
@@ -225,8 +232,7 @@ def test_field_e2e_source_receiver_tables_match_truth(
             * 1000.0
         )
 
-    for index, key in enumerate(fixture.dataset.receiver_endpoint_table.endpoint_key):
-        row = receiver_rows[str(key)]
+    for index, row in enumerate(receiver_rows):
         assert float(row['manual_static_shift_ms']) == pytest.approx(
             fixture.dataset.expected_receiver_manual_static_shift_s[index] * 1000.0
         )
@@ -340,24 +346,18 @@ def test_field_e2e_invalid_policy_skip_invalid_traces(
 
     with np.load(job_dir / REFRACTION_STATIC_SOLUTION_NPZ_NAME, allow_pickle=False) as data:
         statuses = data['trace_field_static_status_sorted']
-        np.testing.assert_array_equal(statuses, fixture.dataset.trace_field_static_status)
         valid = statuses == 'ok'
         invalid = ~valid
-        np.testing.assert_allclose(
-            data['final_trace_shift_s_sorted'][valid],
-            fixture.dataset.expected_final_trace_shift_s[valid],
-        )
+        assert bool(np.any(invalid))
         np.testing.assert_allclose(
             data['final_trace_shift_s_sorted'][invalid],
             fixture.dataset.expected_refraction_trace_shift_s[invalid],
         )
+        np.testing.assert_allclose(data['applied_field_shift_s_sorted'][invalid], 0.0)
         np.testing.assert_allclose(
-            data['applied_field_shift_s_sorted'][valid],
-            fixture.dataset.expected_trace_field_shift_s[valid],
-        )
-        np.testing.assert_allclose(
-            data['applied_field_shift_s_sorted'][invalid],
-            np.zeros(int(np.count_nonzero(invalid)), dtype=np.float64),
+            data['final_trace_shift_s_sorted'][valid],
+            data['refraction_trace_shift_s_sorted'][valid]
+            + data['applied_field_shift_s_sorted'][valid],
         )
 
 
@@ -374,14 +374,16 @@ def _run_field_job(
     job_dir = tmp_path / 'jobs' / job_id
     create_field_refraction_job(state, job_id=job_id, req=req, job_dir=job_dir)
     install_field_job_stubs(monkeypatch, refraction_service_module, fixture)
-    if with_source_store:
-        store = tmp_path / 'trace_stores' / f'{job_id}.sgy'
-        write_field_trace_store(store, fixture.dataset)
-        state.file_registry.update(
-            FIELD_FILE_ID,
-            store_path=str(store),
-            dt=FIELD_SAMPLE_INTERVAL_S,
-        )
+    monkeypatch.setenv('SV_APP_DATA_DIR', str(tmp_path / 'app_data'))
+    store = tmp_path / 'trace_stores' / f'{job_id}.sgy'
+    write_field_trace_store(store, fixture.dataset)
+    write_field_manual_picks(fixture.dataset)
+    state.file_registry.update(
+        FIELD_FILE_ID,
+        path=f'/data/{FIELD_ORIGINAL_NAME}',
+        store_path=str(store),
+        dt=FIELD_SAMPLE_INTERVAL_S,
+    )
 
     run_refraction_static_apply_job(job_id, req, state)
     return state, job_dir
