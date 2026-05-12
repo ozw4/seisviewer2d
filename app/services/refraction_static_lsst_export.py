@@ -1,4 +1,4 @@
-"""Dependency-light LSST CSV formatter for M5 refraction static exports."""
+"""Dependency-light LSST formatters for M5 refraction static exports."""
 
 from __future__ import annotations
 
@@ -20,6 +20,9 @@ from app.services.refraction_static_export_units import (
 REFRACTION_LSST_CSV_NAME: Final = 'refraction_lsst.csv'
 REFRACTION_LSST_FORMAT_NAME: Final = 'lsst'
 REFRACTION_LSST_FORMAT_VERSION: Final = 1
+REFRACTION_LSST_PLUS_CARDS_NAME: Final = 'refraction_lsst_plus_cards.txt'
+REFRACTION_LSST_PLUS_FORMAT_NAME: Final = 'lsst_plus'
+REFRACTION_LSST_PLUS_SCHEMA_VERSION: Final = 1
 
 REFRACTION_LSST_REQUIRED_COLUMNS: Final[tuple[str, ...]] = (
     'format_name',
@@ -91,6 +94,59 @@ def write_refraction_lsst_csv(
 ) -> None:
     """Write documented M5 LSST CSV text to ``path``."""
     text = format_refraction_lsst_csv(
+        bundle,
+        fail_on_invalid_static_status=fail_on_invalid_static_status,
+        include_inactive_endpoints=include_inactive_endpoints,
+    )
+    Path(path).write_text(text, encoding='utf-8')
+
+
+def format_refraction_lsst_plus_cards(
+    bundle: RefractionStaticExportBundle,
+    *,
+    fail_on_invalid_static_status: bool = False,
+    include_inactive_endpoints: bool = True,
+) -> str:
+    """Format endpoint rows as documented, deterministic M5 LSST+ cards.
+
+    LSST+ cards use pipe-delimited records. Missing or non-finite numeric values
+    are emitted as ``nan`` so invalid endpoint rows remain auditable.
+    """
+    source_job_id = _validate_bundle(bundle)
+    rows = _included_rows(
+        bundle,
+        fail_on_invalid_static_status=fail_on_invalid_static_status,
+        include_inactive_endpoints=include_inactive_endpoints,
+    )
+    lines = [
+        f'# format={REFRACTION_LSST_PLUS_FORMAT_NAME}',
+        f'# schema_version={REFRACTION_LSST_PLUS_SCHEMA_VERSION}',
+        f'# source_job_id={_format_card_text(source_job_id)}',
+        f'# sign_convention={REFRACTION_STATIC_REPO_SIGN_CONVENTION}',
+        '# units=ms',
+        '# distance_units=m',
+        '# velocity_units=m_s',
+        '# delimiter=|',
+        '# missing_numeric=nan',
+        '# missing_text=nan',
+        '# row_order=source_rows_then_receiver_rows',
+    ]
+    for row in rows:
+        lines.append(_lsst_plus_endpoint_card(row))
+        lines.append(_lsst_plus_static_card(row))
+        lines.append(_lsst_plus_layer_card(row))
+    return '\n'.join(lines) + '\n'
+
+
+def write_refraction_lsst_plus_cards(
+    bundle: RefractionStaticExportBundle,
+    path: Path,
+    *,
+    fail_on_invalid_static_status: bool = False,
+    include_inactive_endpoints: bool = True,
+) -> None:
+    """Write documented M5 LSST+ card text to ``path``."""
+    text = format_refraction_lsst_plus_cards(
         bundle,
         fail_on_invalid_static_status=fail_on_invalid_static_status,
         include_inactive_endpoints=include_inactive_endpoints,
@@ -327,6 +383,81 @@ def _row_has_value(row: RefractionStaticEndpointExportRow, column: str) -> bool:
     return numeric is not None
 
 
+def _lsst_plus_endpoint_card(row: RefractionStaticEndpointExportRow) -> str:
+    record = 'SRC' if row.endpoint_kind == 'source' else 'REC'
+    return '|'.join(
+        (
+            record,
+            _required_card_text(row.endpoint_key, row=row, field_name='endpoint_key'),
+            f'endpoint_id={_format_card_text(row.endpoint_id)}',
+            f'node_id={_format_card_int(row.node_id, row=row, field_name="node_id")}',
+            f'station={_format_card_text(row.station_id)}',
+            f'x={_format_card_m(row.x_m, row=row, field_name="x_m")}',
+            f'y={_format_card_m(row.y_m, row=row, field_name="y_m")}',
+            f'elev={_format_card_m(row.elevation_m, row=row, field_name="elev")}',
+            f'status={_required_static_status(row)}',
+        )
+    )
+
+
+def _lsst_plus_static_card(row: RefractionStaticEndpointExportRow) -> str:
+    endpoint_key = _required_card_text(
+        row.endpoint_key,
+        row=row,
+        field_name='endpoint_key',
+    )
+    field_prefix = row.endpoint_kind
+    field_shift_name = f'{field_prefix}_field_shift_ms'
+    field_status_name = f'{field_prefix}_field_static_status'
+    total_with_field_name = f'{field_prefix}_total_with_field_shift_ms'
+    return '|'.join(
+        (
+            'STC',
+            row.endpoint_kind,
+            endpoint_key,
+            f'total={_format_card_time_ms(row.total_applied_shift_s, row=row, field_name="total")}',
+            f'weathering={_format_card_time_ms(row.weathering_correction_s, row=row, field_name="weathering")}',
+            f'elevation={_format_card_time_ms(row.elevation_correction_s, row=row, field_name="elevation")}',
+            f'{field_shift_name}={_format_card_time_ms(row.field_correction_s, row=row, field_name=field_shift_name)}',
+            f'manual={_format_card_time_ms(row.manual_static_shift_s, row=row, field_name="manual")}',
+            f'{total_with_field_name}={_format_card_time_ms(row.total_with_field_shift_s, row=row, field_name=total_with_field_name)}',
+            f'source_depth_m={_format_card_m(row.source_depth_m, row=row, field_name="source_depth_m")}',
+            f'source_depth={_format_card_time_ms(row.source_depth_shift_s, row=row, field_name="source_depth")}',
+            f'uphole_time={_format_card_time_ms(row.uphole_time_s, row=row, field_name="uphole_time")}',
+            f'uphole={_format_card_time_ms(row.uphole_shift_s, row=row, field_name="uphole")}',
+            f'manual_status={_format_card_text(row.manual_static_status)}',
+            f'{field_status_name}={_format_card_text(row.field_static_status)}',
+            f'source_depth_status={_format_card_text(row.source_depth_status)}',
+            f'uphole_status={_format_card_text(row.uphole_status)}',
+        )
+    )
+
+
+def _lsst_plus_layer_card(row: RefractionStaticEndpointExportRow) -> str:
+    endpoint_key = _required_card_text(
+        row.endpoint_key,
+        row=row,
+        field_name='endpoint_key',
+    )
+    return '|'.join(
+        (
+            'LYR',
+            row.endpoint_kind,
+            endpoint_key,
+            f't1={_format_card_time_ms(row.t1_s, row=row, field_name="t1")}',
+            f't2={_format_card_time_ms(row.t2_s, row=row, field_name="t2")}',
+            f't3={_format_card_time_ms(row.t3_s, row=row, field_name="t3")}',
+            f'sh1={_format_card_m(row.sh1_m, row=row, field_name="sh1")}',
+            f'sh2={_format_card_m(row.sh2_m, row=row, field_name="sh2")}',
+            f'sh3={_format_card_m(row.sh3_m, row=row, field_name="sh3")}',
+            f'v1={_format_card_velocity(row.v1_m_s, row=row, field_name="v1")}',
+            f'v2={_format_card_velocity(row.v2_m_s, row=row, field_name="v2")}',
+            f'v3={_format_card_velocity(row.v3_m_s, row=row, field_name="v3")}',
+            f'vsub={_format_card_velocity(row.vsub_m_s, row=row, field_name="vsub")}',
+        )
+    )
+
+
 def _format_text(
     value: object,
     *,
@@ -422,6 +553,92 @@ def _format_velocity(
     )
 
 
+def _format_card_time_ms(
+    value_s: object,
+    *,
+    row: RefractionStaticEndpointExportRow,
+    field_name: str,
+) -> str:
+    value = _optional_float(value_s, row=row, field_name=field_name)
+    if value is None:
+        return 'nan'
+    return _format_fixed(value * 1000.0, decimals=6)
+
+
+def _format_card_m(
+    value: object,
+    *,
+    row: RefractionStaticEndpointExportRow,
+    field_name: str,
+) -> str:
+    return _format_card_numeric(value, decimals=3, row=row, field_name=field_name)
+
+
+def _format_card_velocity(
+    value: object,
+    *,
+    row: RefractionStaticEndpointExportRow,
+    field_name: str,
+) -> str:
+    return _format_card_numeric(value, decimals=3, row=row, field_name=field_name)
+
+
+def _format_card_int(
+    value: object,
+    *,
+    row: RefractionStaticEndpointExportRow,
+    field_name: str,
+) -> str:
+    if value is None:
+        return 'nan'
+    if isinstance(value, bool):
+        raise RefractionStaticLsstExportError(
+            f'{_row_label(row)} {field_name} must be an integer'
+        )
+    try:
+        return str(int(value))
+    except (TypeError, ValueError) as exc:
+        raise RefractionStaticLsstExportError(
+            f'{_row_label(row)} {field_name} must be an integer'
+        ) from exc
+
+
+def _format_card_numeric(
+    value: object,
+    *,
+    decimals: int,
+    row: RefractionStaticEndpointExportRow,
+    field_name: str,
+) -> str:
+    numeric = _optional_float(value, row=row, field_name=field_name)
+    if numeric is None:
+        return 'nan'
+    return _format_fixed(numeric, decimals=decimals)
+
+
+def _required_card_text(
+    value: object,
+    *,
+    row: RefractionStaticEndpointExportRow,
+    field_name: str,
+) -> str:
+    text = _optional_text(value)
+    if text is None:
+        _raise_missing(row, field_name)
+    return _format_card_text(text)
+
+
+def _format_card_text(value: object) -> str:
+    text = _optional_text(value)
+    if text is None:
+        return 'nan'
+    if '|' in text or '\n' in text or '\r' in text:
+        raise RefractionStaticLsstExportError(
+            f'LSST+ card text contains an unsupported delimiter: {text!r}'
+        )
+    return text
+
+
 def _format_numeric(
     value: object,
     *,
@@ -485,9 +702,14 @@ __all__ = [
     'REFRACTION_LSST_CSV_NAME',
     'REFRACTION_LSST_FORMAT_NAME',
     'REFRACTION_LSST_FORMAT_VERSION',
+    'REFRACTION_LSST_PLUS_CARDS_NAME',
+    'REFRACTION_LSST_PLUS_FORMAT_NAME',
+    'REFRACTION_LSST_PLUS_SCHEMA_VERSION',
     'REFRACTION_LSST_OPTIONAL_MULTILAYER_COLUMNS',
     'REFRACTION_LSST_REQUIRED_COLUMNS',
     'RefractionStaticLsstExportError',
     'format_refraction_lsst_csv',
+    'format_refraction_lsst_plus_cards',
     'write_refraction_lsst_csv',
+    'write_refraction_lsst_plus_cards',
 ]

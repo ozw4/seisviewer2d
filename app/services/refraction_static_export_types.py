@@ -53,6 +53,16 @@ class RefractionStaticEndpointExportRow:
     weathering_correction_s: float | None = None
     elevation_correction_s: float | None = None
     field_correction_s: float | None = None
+    source_depth_m: float | None = None
+    source_depth_shift_s: float | None = None
+    source_depth_status: str | None = None
+    uphole_time_s: float | None = None
+    uphole_shift_s: float | None = None
+    uphole_status: str | None = None
+    manual_static_shift_s: float | None = None
+    manual_static_status: str | None = None
+    field_static_status: str | None = None
+    total_with_field_shift_s: float | None = None
     total_applied_shift_s: float | None = None
     static_status: str = 'ok'
 
