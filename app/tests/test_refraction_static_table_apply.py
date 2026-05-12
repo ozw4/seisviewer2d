@@ -462,14 +462,22 @@ def test_static_table_history_records_sign_convention(tmp_path: Path) -> None:
     assert history['sign_convention'] == REFRACTION_STATIC_REPO_SIGN_CONVENTION
 
 
-def test_static_table_apply_reorders_original_headers_to_sorted_trace_shift(
+def test_static_table_apply_uses_materialized_sorted_headers_for_trace_shift(
     tmp_path: Path,
 ) -> None:
     sorted_to_original = np.asarray([2, 0, 3, 1], dtype=np.int64)
-    state, _store = _write_target_store(
+    state, store = _write_target_store(
         tmp_path,
         sorted_to_original=sorted_to_original,
     )
+    _write_header(store, 9, [100, 100, 101, 101])
+    _write_header(store, 13, [201, 200, 201, 200])
+    _write_header(store, 73, [1000, 1000, 1010, 1010])
+    _write_header(store, 77, [2000, 2000, 2000, 2000])
+    _write_header(store, 81, [1110, 1100, 1110, 1100])
+    _write_header(store, 85, [2000, 2000, 2000, 2000])
+    _write_header(store, 45, [10, 10, 12, 12])
+    _write_header(store, 41, [22, 20, 22, 20])
     table_path = tmp_path / 'jobs' / TABLE_JOB_ID / 'canonical_static_table.csv'
     _write_table(table_path)
     _write_refraction_static_request(table_path.parent)
@@ -504,6 +512,68 @@ def test_static_table_apply_reorders_original_headers_to_sorted_trace_shift(
             data['trace_shift_s_sorted'],
             [0.004, 0.008, 0.0, 0.004],
         )
+
+
+def test_static_table_apply_rejects_large_endpoint_shift_even_when_trace_sum_cancels(
+    tmp_path: Path,
+) -> None:
+    state, _store = _write_target_store(tmp_path)
+    table_path = tmp_path / 'jobs' / TABLE_JOB_ID / 'canonical_static_table.csv'
+    rows = [
+        _canonical_row(
+            endpoint_kind='source',
+            endpoint_key=SOURCE_KEYS[100],
+            endpoint_id=100,
+            applied_shift_ms=1000.0,
+        ),
+        _canonical_row(
+            endpoint_kind='source',
+            endpoint_key=SOURCE_KEYS[101],
+            endpoint_id=101,
+            applied_shift_ms=1000.0,
+        ),
+        _canonical_row(
+            endpoint_kind='receiver',
+            endpoint_key=RECEIVER_KEYS[200],
+            endpoint_id=200,
+            applied_shift_ms=-1000.0,
+        ),
+        _canonical_row(
+            endpoint_kind='receiver',
+            endpoint_key=RECEIVER_KEYS[201],
+            endpoint_id=201,
+            applied_shift_ms=-1000.0,
+        ),
+    ]
+    table_path.parent.mkdir(parents=True, exist_ok=True)
+    with table_path.open('w', encoding='utf-8', newline='') as handle:
+        writer = csv.DictWriter(handle, fieldnames=tuple(rows[0]), lineterminator='\n')
+        writer.writeheader()
+        writer.writerows(rows)
+    _write_refraction_static_request(table_path.parent)
+    _create_table_job(state, tmp_path, table_path)
+    job_dir = tmp_path / 'jobs' / APPLY_JOB_ID
+    _create_apply_job(state, job_dir)
+    req = RefractionStaticTableApplyRequest.model_validate(
+        {
+            'file_id': SOURCE_FILE_ID,
+            'key1_byte': KEY1,
+            'key2_byte': KEY2,
+            'combined_table_artifact_id': f'{TABLE_JOB_ID}:{table_path.name}',
+            'register_corrected_file': False,
+            'max_abs_shift_ms': 250.0,
+        }
+    )
+
+    run_refraction_static_table_apply_job(APPLY_JOB_ID, req, state)
+
+    with state.lock:
+        job = dict(state.jobs[APPLY_JOB_ID])
+    assert job['status'] == 'error'
+    assert 'imported endpoint static shift exceeds max_abs_shift_ms' in str(
+        job['message']
+    )
+    assert not (job_dir / STATIC_TABLE_APPLY_SOLUTION_NPZ_NAME).exists()
 
 
 def test_static_table_apply_imports_source_receiver_static_table_npz(

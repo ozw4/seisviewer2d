@@ -200,6 +200,10 @@ def _run_refraction_static_table_apply_job_body(
         imported=imported,
         endpoint_keys=endpoint_keys,
     )
+    _validate_imported_endpoint_static_shifts(
+        imported,
+        max_abs_shift_ms=float(request.max_abs_shift_ms),
+    )
     validate_refraction_trace_shifts_for_application(
         trace_shift_s_sorted=trace_shift.trace_shift_s_sorted,
         trace_static_valid_mask_sorted=trace_shift.trace_static_valid_mask_sorted,
@@ -601,7 +605,7 @@ def _load_trace_endpoint_keys(
         imported=imported,
     )
     headers = {
-        byte: _reader_header(reader, byte, n_traces=n_traces)[sorted_trace_index]
+        byte: _reader_header(reader, byte, n_traces=n_traces)
         for byte in (
             geometry.source_id_byte,
             geometry.receiver_id_byte,
@@ -778,6 +782,55 @@ def _imported_source_job_ids(
         if source_job_id:
             ids.append(source_job_id)
     return tuple(dict.fromkeys(ids))
+
+
+def _validate_imported_endpoint_static_shifts(
+    imported: RefractionStaticTableImportResult,
+    *,
+    max_abs_shift_ms: float,
+) -> None:
+    limit = float(max_abs_shift_ms)
+    if not np.isfinite(limit) or limit < 0.0:
+        raise RefractionStaticTraceStoreApplyError(
+            'max_abs_shift_ms must be finite and non-negative'
+        )
+
+    max_abs_endpoint_shift_ms = 0.0
+    source_exceeds_count = 0
+    receiver_exceeds_count = 0
+    for endpoint_kind, row in _iter_imported_endpoint_statics(imported):
+        if row.static_status != 'ok':
+            continue
+        shift_ms = float(row.applied_shift_s) * 1000.0
+        if not np.isfinite(shift_ms):
+            raise RefractionStaticTraceStoreApplyError(
+                f'{endpoint_kind} imported endpoint static contains non-finite shift'
+            )
+        abs_shift_ms = abs(shift_ms)
+        max_abs_endpoint_shift_ms = max(max_abs_endpoint_shift_ms, abs_shift_ms)
+        if abs_shift_ms > limit:
+            if endpoint_kind == 'source':
+                source_exceeds_count += 1
+            else:
+                receiver_exceeds_count += 1
+
+    exceeds_count = source_exceeds_count + receiver_exceeds_count
+    if exceeds_count:
+        raise RefractionStaticTraceStoreApplyError(
+            'imported endpoint static shift exceeds max_abs_shift_ms: '
+            f'{max_abs_endpoint_shift_ms:.6g} > {limit:.6g}; '
+            f'source_exceeds_count={source_exceeds_count}; '
+            f'receiver_exceeds_count={receiver_exceeds_count}'
+        )
+
+
+def _iter_imported_endpoint_statics(
+    imported: RefractionStaticTableImportResult,
+) -> tuple[tuple[str, RefractionImportedEndpointStatic], ...]:
+    return (
+        *(('source', row) for row in imported.source_static_by_endpoint_key.values()),
+        *(('receiver', row) for row in imported.receiver_static_by_endpoint_key.values()),
+    )
 
 
 def _optional_static_job_dir(state: AppState, job_id: str) -> Path | None:
