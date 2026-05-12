@@ -142,15 +142,18 @@ See:
 
 - `static_correction.md`
 - `refraction_static.md`
+- [statics/refraction_field_corrections.md](statics/refraction_field_corrections.md)
 - `statics/refraction_multilayer_time_term.md`
 - `time_term_static_correction.md`
 
 Refraction statics include the 1-layer V1/V2/T1 T1LSST workflow, cell-based
 local V2 support, and the public two- and three-layer
-`t1lsst_multilayer` workflow. Multi-layer source/receiver outputs use the
-existing static table artifacts with added `t2`, `v3`, `sh2`, and, for
-three-layer runs, `t3`, `vsub`, and `sh3` fields; the repo sign convention
-remains `corrected(t) = raw(t - shift_s)`.
+`t1lsst_multilayer` workflow. M4 field-correction documentation covers
+source-depth, uphole-time, and manual source/receiver static composition.
+Multi-layer source/receiver outputs use the existing static table artifacts
+with added `t2`, `v3`, `sh2`, and, for three-layer runs, `t3`, `vsub`, and
+`sh3` fields; the repo sign convention remains
+`corrected(t) = raw(t - shift_s)`.
 
 ## Viewer benchmark
 
