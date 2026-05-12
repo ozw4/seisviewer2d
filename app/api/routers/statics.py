@@ -17,6 +17,8 @@ from app.api.schemas import (
     FirstBreakQcRequest,
     RefractionStaticApplyRequest,
     RefractionStaticApplyResponse,
+    RefractionStaticExportJobRequest,
+    RefractionStaticExportJobResponse,
     ResidualStaticApplyRequest,
     ResidualStaticApplyResponse,
     StaticLinkageBuildRequest,
@@ -35,6 +37,13 @@ from app.services.job_artifact_refs import resolve_job_artifact_path
 from app.services.job_manager import JobManager
 from app.services.job_runner import request_job_cancel, start_job_thread
 from app.services.pipeline_artifacts import get_job_dir, maybe_cleanup_expired_jobs
+from app.services.refraction_static_export_service import (
+    RefractionStaticExportSourceJobNotFound,
+    RefractionStaticExportValidationError,
+    resolve_refraction_static_export_formats,
+    run_refraction_static_export_job,
+    validate_refraction_static_export_source_job,
+)
 from app.services.refraction_static_service import run_refraction_static_apply_job
 from app.services.residual_static_service import run_residual_static_apply_job
 from app.services.time_term_static_service import run_time_term_static_apply_job
@@ -236,6 +245,7 @@ def time_term_static_apply(
 @router.post(
     '/statics/refraction/apply',
     response_model=RefractionStaticApplyResponse,
+    response_model_exclude_none=True,
 )
 def refraction_static_apply(
     req: RefractionStaticApplyRequest,
@@ -246,6 +256,7 @@ def refraction_static_apply(
     maybe_cleanup_expired_jobs()
 
     job_id = str(uuid4())
+    requested_formats = resolve_refraction_static_export_formats(req.export)
     with state.lock:
         job_state = state.jobs.create_static_job(
             job_id,
@@ -255,6 +266,8 @@ def refraction_static_apply(
             statics_kind='refraction',
             artifacts_dir=str(get_job_dir(job_id)),
         )
+        if req.export.enabled:
+            job_state['export_formats'] = list(requested_formats)
         status = job_state['status']
 
     start_job_thread(
@@ -263,7 +276,57 @@ def refraction_static_apply(
         args=(job_id, req, state),
     )
 
-    return {'job_id': job_id, 'state': status}
+    response: RefractionStaticApplyResponse = {'job_id': job_id, 'state': status}
+    if req.export.enabled:
+        response['requested_formats'] = list(requested_formats)
+    return response
+
+
+@router.post(
+    '/statics/refraction/export',
+    response_model=RefractionStaticExportJobResponse,
+)
+def refraction_static_export(
+    req: RefractionStaticExportJobRequest,
+    request: Request,
+) -> RefractionStaticExportJobResponse:
+    state = get_state(request.app)
+    cleanup_in_memory_state(state)
+    maybe_cleanup_expired_jobs()
+
+    try:
+        source = validate_refraction_static_export_source_job(req=req, state=state)
+    except RefractionStaticExportSourceJobNotFound as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except RefractionStaticExportValidationError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+    job_id = str(uuid4())
+    with state.lock:
+        job_state = state.jobs.create_static_job(
+            job_id,
+            file_id=source.source_file_id,
+            key1_byte=source.key1_byte,
+            key2_byte=source.key2_byte,
+            statics_kind='refraction_export',
+            artifacts_dir=str(get_job_dir(job_id)),
+        )
+        job_state['source_job_id'] = source.source_job_id
+        job_state['export_formats'] = list(source.requested_formats)
+        status = job_state['status']
+
+    start_job_thread(
+        thread_factory=threading.Thread,
+        target=run_refraction_static_export_job,
+        args=(job_id, req, state),
+    )
+
+    return {
+        'job_id': job_id,
+        'state': status,
+        'source_job_id': source.source_job_id,
+        'requested_formats': list(source.requested_formats),
+    }
 
 
 @router.get(

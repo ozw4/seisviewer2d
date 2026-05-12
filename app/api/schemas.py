@@ -10,6 +10,20 @@ from app.utils.validation import require_non_negative_int, require_positive_int
 
 TransformName = Literal['bandpass', 'denoise']
 AnalyzerName = Literal['fbpick']
+RefractionStaticExportFormat = Literal[
+    'canonical_static_table',
+    'lsst',
+    'lsst_plus',
+    'time_term_spreadsheet',
+    'first_break_time',
+]
+
+REFRACTION_STATIC_DEFAULT_EXPORT_FORMATS: tuple[
+    RefractionStaticExportFormat, ...
+] = (
+    'canonical_static_table',
+    'time_term_spreadsheet',
+)
 
 
 class BandpassParams(BaseModel):
@@ -2776,6 +2790,30 @@ class RefractionStaticFieldCorrectionsRequest(BaseModel):
     )
 
 
+class RefractionStaticExportRequest(BaseModel):
+    """M5 export options accepted by public refraction statics endpoints."""
+
+    model_config = ConfigDict(extra='forbid')
+
+    enabled: bool = False
+    formats: list[RefractionStaticExportFormat] = Field(default_factory=list)
+    units: Literal['seconds', 'milliseconds'] = 'milliseconds'
+    rounding_ms: float | None = 0.001
+    include_inactive_endpoints: bool = True
+    include_legacy_alias_columns: bool = True
+    fail_on_invalid_static_status: bool = True
+
+    @field_validator('rounding_ms')
+    @classmethod
+    def _check_rounding_ms(cls, value: float | None) -> float | None:
+        if value is None:
+            return None
+        rounded = float(value)
+        if not math.isfinite(rounded) or rounded < 0.0:
+            raise ValueError('export.rounding_ms must be finite and >= 0')
+        return rounded
+
+
 class RefractionStaticApplyRequest(BaseModel):
     """Request model for ``/statics/refraction/apply`` jobs."""
 
@@ -2806,6 +2844,9 @@ class RefractionStaticApplyRequest(BaseModel):
     )
     field_corrections: RefractionStaticFieldCorrectionsRequest = Field(
         default_factory=RefractionStaticFieldCorrectionsRequest,
+    )
+    export: RefractionStaticExportRequest = Field(
+        default_factory=RefractionStaticExportRequest,
     )
     apply: RefractionStaticApplyOptions = Field(
         default_factory=RefractionStaticApplyOptions,
@@ -2861,3 +2902,31 @@ class RefractionStaticApplyResponse(BaseModel):
 
     job_id: str
     state: str
+    requested_formats: list[RefractionStaticExportFormat] | None = None
+
+
+class RefractionStaticExportJobRequest(BaseModel):
+    """Request model for ``/statics/refraction/export`` jobs."""
+
+    model_config = ConfigDict(extra='forbid')
+
+    source_job_id: str
+    export: RefractionStaticExportRequest
+
+    @field_validator('source_job_id')
+    @classmethod
+    def _check_source_job_id(cls, value: str) -> str:
+        if not isinstance(value, str) or not value:
+            raise ValueError('source_job_id must be a non-empty string')
+        return value
+
+
+class RefractionStaticExportJobResponse(BaseModel):
+    """Response model for creating a standalone refraction export job."""
+
+    model_config = ConfigDict(extra='forbid')
+
+    job_id: str
+    state: str
+    source_job_id: str
+    requested_formats: list[RefractionStaticExportFormat]

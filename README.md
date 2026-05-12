@@ -147,6 +147,7 @@ See:
 - `docs/static_correction.md`
 - `docs/refraction_static.md`
 - `docs/statics/refraction_multilayer_time_term.md`
+- `docs/statics/refraction_m5_exports_table_workflow.md`
 - `docs/time_term_static_correction.md`
 
 Refraction statics include the 1-layer V1/V2/T1 T1LSST workflow, cell-based
