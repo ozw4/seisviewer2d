@@ -340,10 +340,24 @@ source_job_id
 endpoint_kind
 endpoint_key
 endpoint_id
-applied_shift_ms
 static_status
-sign_convention
 ```
+
+Shift columns:
+
+- `applied_shift_ms` is the default canonical shift column.
+- `applied_shift_s` is also accepted and is converted to seconds internally
+  without millisecond scaling.
+- An unqualified `applied_shift` column is accepted only when import metadata
+  explicitly declares `shift_units` as `milliseconds` or `seconds`.
+- A table must provide exactly one applied-shift column.
+
+Sign convention:
+
+- `sign_convention` is required in the table unless the import request provides
+  an explicit sign-convention override.
+- The table value or override must be exactly
+  `corrected(t) = raw(t - shift_s)`.
 
 Optional metadata columns:
 
@@ -377,7 +391,7 @@ elevation_correction_ms
 comment
 ```
 
-`applied_shift_ms` is authoritative for import. Existing total/component
+The applied-shift column is authoritative for import. Existing total/component
 columns are preserved as audit metadata unless a future schema version defines
 another explicit apply field.
 
@@ -388,10 +402,13 @@ The import validator must be deterministic and fail closed. A valid
 
 - `format_name` is `canonical_static_table`.
 - `format_version` is a supported integer version.
-- `sign_convention` is exactly `corrected(t) = raw(t - shift_s)`.
+- `sign_convention` is exactly `corrected(t) = raw(t - shift_s)`, or the import
+  request supplies that exact value as an explicit override.
 - `endpoint_kind` is `source` or `receiver`.
 - Every required column is present.
-- `applied_shift_ms` is finite for every row with `static_status="ok"`.
+- Exactly one of `applied_shift_ms`, `applied_shift_s`, or metadata-qualified
+  `applied_shift` is present.
+- The applied shift is finite for every row with `static_status="ok"`.
 - Rows with non-`ok` `static_status` are rejected for apply.
 - Endpoint identity is unique for each `endpoint_kind`.
 - The import request declares whether matching uses `endpoint_key` or
