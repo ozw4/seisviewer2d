@@ -1330,6 +1330,23 @@ def write_refraction_time_term_spreadsheet_csv(
     _write_csv_atomic(Path(path), _TIME_TERM_SPREADSHEET_COLUMNS, rows)
 
 
+def write_refraction_time_term_spreadsheet_csv_from_static_tables(
+    *,
+    source_rows: Iterable[Mapping[str, object]],
+    receiver_rows: Iterable[Mapping[str, object]],
+    path: Path,
+    source_job_id: str | None = None,
+    include_inactive_endpoints: bool = True,
+) -> None:
+    rows = _time_term_spreadsheet_rows_from_static_tables(
+        source_rows=source_rows,
+        receiver_rows=receiver_rows,
+        source_job_id=source_job_id,
+        include_inactive_endpoints=include_inactive_endpoints,
+    )
+    _write_csv_atomic(Path(path), _TIME_TERM_SPREADSHEET_COLUMNS, rows)
+
+
 def write_refraction_refractor_velocity_cells_csv(
     *,
     result: RefractionDatumStaticsResult,
@@ -5266,6 +5283,71 @@ def _time_term_spreadsheet_rows(
     return rows
 
 
+def _time_term_spreadsheet_rows_from_static_tables(
+    *,
+    source_rows: Iterable[Mapping[str, object]],
+    receiver_rows: Iterable[Mapping[str, object]],
+    source_job_id: str | None,
+    include_inactive_endpoints: bool,
+) -> list[dict[str, object]]:
+    rows: list[dict[str, object]] = []
+    job_id = '' if source_job_id is None else str(source_job_id)
+    for row in source_rows:
+        _validate_time_term_static_table_row(row, endpoint_kind='source')
+        if not _include_time_term_static_table_row(
+            row,
+            include_inactive_endpoints=include_inactive_endpoints,
+        ):
+            continue
+        rows.append(
+            _time_term_spreadsheet_endpoint_row(
+                row,
+                endpoint_prefix='source',
+                source_job_id=job_id,
+            )
+        )
+    for row in receiver_rows:
+        _validate_time_term_static_table_row(row, endpoint_kind='receiver')
+        if not _include_time_term_static_table_row(
+            row,
+            include_inactive_endpoints=include_inactive_endpoints,
+        ):
+            continue
+        rows.append(
+            _time_term_spreadsheet_endpoint_row(
+                row,
+                endpoint_prefix='receiver',
+                source_job_id=job_id,
+            )
+        )
+    return rows
+
+
+def _validate_time_term_static_table_row(
+    row: Mapping[str, object],
+    *,
+    endpoint_kind: str,
+) -> None:
+    if row.get('sign_convention') != SIGN_CONVENTION:
+        raise RefractionStaticArtifactError(
+            f'{endpoint_kind} static table sign_convention must be {SIGN_CONVENTION!r}'
+        )
+    if row.get('endpoint_kind') != endpoint_kind:
+        raise RefractionStaticArtifactError(
+            f'{endpoint_kind} static table contains endpoint_kind '
+            f'{row.get("endpoint_kind")!r}'
+        )
+
+
+def _include_time_term_static_table_row(
+    row: Mapping[str, object],
+    *,
+    include_inactive_endpoints: bool,
+) -> bool:
+    status = str(row.get('static_status', '')).strip()
+    return status == 'ok' or bool(include_inactive_endpoints)
+
+
 def _time_term_spreadsheet_endpoint_row(
     row: Mapping[str, object],
     *,
@@ -7258,6 +7340,7 @@ __all__ = [
     'write_refraction_static_solution_npz',
     'write_refraction_statics_csv',
     'write_refraction_time_term_spreadsheet_csv',
+    'write_refraction_time_term_spreadsheet_csv_from_static_tables',
     'write_receiver_static_table_csv',
     'write_source_receiver_static_table_npz',
     'write_source_static_table_csv',

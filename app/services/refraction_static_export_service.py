@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import csv
 import json
-import shutil
 from dataclasses import dataclass
 from pathlib import Path
 import time
@@ -29,6 +28,7 @@ from app.services.refraction_static_artifacts import (
     REFRACTION_TIME_TERM_SPREADSHEET_CSV_NAME,
     SOURCE_RECEIVER_STATIC_TABLE_NPZ_NAME,
     SOURCE_STATIC_TABLE_CSV_NAME,
+    write_refraction_time_term_spreadsheet_csv_from_static_tables,
 )
 from app.services.refraction_static_export_units import (
     REFRACTION_STATIC_REPO_SIGN_CONVENTION,
@@ -71,7 +71,6 @@ _FORMAT_SOURCE_ARTIFACTS: dict[
         RECEIVER_STATIC_TABLE_CSV_NAME,
     ),
     'time_term_spreadsheet': (
-        REFRACTION_TIME_TERM_SPREADSHEET_CSV_NAME,
         SOURCE_STATIC_TABLE_CSV_NAME,
         RECEIVER_STATIC_TABLE_CSV_NAME,
         SOURCE_RECEIVER_STATIC_TABLE_NPZ_NAME,
@@ -328,10 +327,10 @@ def _write_requested_export_artifacts(
     source: ResolvedRefractionStaticExportSourceJob,
 ) -> None:
     if 'time_term_spreadsheet' in source.requested_formats:
-        _copy_source_artifact(
+        _write_time_term_spreadsheet_export(
             source=source,
             job_dir=job_dir,
-            artifact_name=REFRACTION_TIME_TERM_SPREADSHEET_CSV_NAME,
+            include_inactive_endpoints=bool(req.export.include_inactive_endpoints),
         )
     if (
         'lsst' not in source.requested_formats
@@ -359,15 +358,22 @@ def _write_requested_export_artifacts(
         )
 
 
-def _copy_source_artifact(
+def _write_time_term_spreadsheet_export(
     *,
     source: ResolvedRefractionStaticExportSourceJob,
     job_dir: Path,
-    artifact_name: str,
+    include_inactive_endpoints: bool,
 ) -> None:
-    shutil.copyfile(
-        source.source_artifacts_dir / artifact_name,
-        job_dir / artifact_name,
+    write_refraction_time_term_spreadsheet_csv_from_static_tables(
+        source_rows=_load_static_table_rows(
+            source.source_artifacts_dir / SOURCE_STATIC_TABLE_CSV_NAME,
+        ),
+        receiver_rows=_load_static_table_rows(
+            source.source_artifacts_dir / RECEIVER_STATIC_TABLE_CSV_NAME,
+        ),
+        path=job_dir / REFRACTION_TIME_TERM_SPREADSHEET_CSV_NAME,
+        source_job_id=source.source_job_id,
+        include_inactive_endpoints=include_inactive_endpoints,
     )
 
 
@@ -392,9 +398,13 @@ def _load_lsst_endpoint_rows(
     *,
     endpoint_kind: RefractionStaticEndpointKind,
 ) -> tuple[RefractionStaticEndpointExportRow, ...]:
-    with Path(path).open('r', encoding='utf-8-sig', newline='') as handle:
-        rows = tuple(csv.DictReader(handle))
+    rows = _load_static_table_rows(path)
     return tuple(_lsst_endpoint_row(row, endpoint_kind=endpoint_kind) for row in rows)
+
+
+def _load_static_table_rows(path: Path) -> tuple[dict[str, str | None], ...]:
+    with Path(path).open('r', encoding='utf-8-sig', newline='') as handle:
+        return tuple(csv.DictReader(handle))
 
 
 def _lsst_endpoint_row(
