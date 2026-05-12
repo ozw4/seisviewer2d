@@ -410,14 +410,29 @@ def _import_static_tables(
     else:
         assert table_paths.source_table_path is not None
         assert table_paths.receiver_table_path is not None
+        source_job_id = _artifact_job_id(
+            table_paths.artifact_ids.get('source_table_artifact_id')
+        )
+        receiver_job_id = _artifact_job_id(
+            table_paths.artifact_ids.get('receiver_table_artifact_id')
+        )
         imported = import_refraction_static_tables(
             source_table_path=table_paths.source_table_path,
             receiver_table_path=table_paths.receiver_table_path,
+            source_job_id=source_job_id,
+            receiver_source_job_id=receiver_job_id,
         )
     if imported.is_valid:
         return imported
     joined = '; '.join(imported.errors)
     raise ValueError(f'static table import failed: {joined}')
+
+
+def _artifact_job_id(artifact_id: str | None) -> str | None:
+    if artifact_id is None:
+        return None
+    job_id, _name = _parse_artifact_id(artifact_id)
+    return job_id
 
 
 def _is_source_receiver_static_table_npz(path: Path) -> bool:

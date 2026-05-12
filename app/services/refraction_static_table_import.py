@@ -61,6 +61,7 @@ class _LoadedStaticTable:
     columns: tuple[str, ...]
     source_name: str
     expected_endpoint_kind: RefractionStaticEndpointKind | None = None
+    default_source_job_id: str | None = None
 
 
 def import_refraction_static_table_csv(
@@ -81,6 +82,8 @@ def import_refraction_static_source_receiver_csvs(
     *,
     source_table_path: Path,
     receiver_table_path: Path,
+    source_job_id: str | None = None,
+    receiver_source_job_id: str | None = None,
     sign_convention_override: str | None = None,
     shift_units: RefractionStaticExportUnits | str | None = None,
 ) -> RefractionStaticTableImportResult:
@@ -88,6 +91,8 @@ def import_refraction_static_source_receiver_csvs(
     return import_refraction_static_tables(
         source_table_path=source_table_path,
         receiver_table_path=receiver_table_path,
+        source_job_id=source_job_id,
+        receiver_source_job_id=receiver_source_job_id,
         sign_convention_override=sign_convention_override,
         shift_units=shift_units,
     )
@@ -98,6 +103,8 @@ def import_refraction_static_tables(
     combined_table_path: Path | None = None,
     source_table_path: Path | None = None,
     receiver_table_path: Path | None = None,
+    source_job_id: str | None = None,
+    receiver_source_job_id: str | None = None,
     sign_convention_override: str | None = None,
     shift_units: RefractionStaticExportUnits | str | None = None,
 ) -> RefractionStaticTableImportResult:
@@ -114,6 +121,8 @@ def import_refraction_static_tables(
         combined_table_path=combined_table_path,
         source_table_path=source_table_path,
         receiver_table_path=receiver_table_path,
+        source_job_id=source_job_id,
+        receiver_source_job_id=receiver_source_job_id,
     )
     return import_refraction_static_table_rows(
         tables,
@@ -141,9 +150,10 @@ def import_refraction_static_table_rows(
     n_receiver_rows = 0
 
     for table in tables:
+        canonical_rows, canonical_columns = _canonicalized_table_rows(table)
         validation = validate_canonical_static_table_rows(
-            table.rows,
-            columns=table.columns,
+            canonical_rows,
+            columns=canonical_columns,
             sign_convention_override=sign_convention_override,
             shift_units=shift_units,
         )
@@ -172,8 +182,9 @@ def import_refraction_static_table_rows(
     source_map: dict[str, RefractionImportedEndpointStatic] = {}
     receiver_map: dict[str, RefractionImportedEndpointStatic] = {}
     for table, normalized_rows in valid_tables:
+        canonical_rows, _canonical_columns = _canonicalized_table_rows(table)
         for normalized in normalized_rows:
-            raw = table.rows[normalized.row_number - 1]
+            raw = canonical_rows[normalized.row_number - 1]
             endpoint_static = _imported_endpoint_static(
                 normalized,
                 raw=raw,
@@ -201,14 +212,24 @@ def _load_input_tables(
     combined_table_path: Path | None,
     source_table_path: Path | None,
     receiver_table_path: Path | None,
+    source_job_id: str | None,
+    receiver_source_job_id: str | None,
 ) -> tuple[_LoadedStaticTable, ...]:
     if combined_table_path is not None:
         return (_load_static_table(combined_table_path),)
     assert source_table_path is not None
     assert receiver_table_path is not None
     return (
-        _load_static_table(source_table_path, expected_endpoint_kind='source'),
-        _load_static_table(receiver_table_path, expected_endpoint_kind='receiver'),
+        _load_static_table(
+            source_table_path,
+            expected_endpoint_kind='source',
+            default_source_job_id=source_job_id,
+        ),
+        _load_static_table(
+            receiver_table_path,
+            expected_endpoint_kind='receiver',
+            default_source_job_id=receiver_source_job_id or source_job_id,
+        ),
     )
 
 
@@ -216,6 +237,7 @@ def _load_static_table(
     path: Path,
     *,
     expected_endpoint_kind: RefractionStaticEndpointKind | None = None,
+    default_source_job_id: str | None = None,
 ) -> _LoadedStaticTable:
     table_path = Path(path)
     with table_path.open('r', encoding='utf-8-sig', newline='') as handle:
@@ -225,7 +247,96 @@ def _load_static_table(
             columns=tuple(reader.fieldnames or ()),
             source_name=table_path.name,
             expected_endpoint_kind=expected_endpoint_kind,
+            default_source_job_id=default_source_job_id,
         )
+
+
+def _canonicalized_table_rows(
+    table: _LoadedStaticTable,
+) -> tuple[tuple[dict[str, str | None], ...], tuple[str, ...]]:
+    if not _is_documented_endpoint_static_table(table):
+        return table.rows, table.columns
+    endpoint_kind = _documented_endpoint_kind(table)
+    rows = tuple(
+        _canonicalized_endpoint_static_row(
+            row,
+            endpoint_kind=endpoint_kind,
+            default_source_job_id=table.default_source_job_id,
+        )
+        for row in table.rows
+    )
+    columns = _columns_from_rows(rows)
+    return rows, columns
+
+
+def _is_documented_endpoint_static_table(table: _LoadedStaticTable) -> bool:
+    column_set = set(table.columns)
+    if 'endpoint_key' in column_set or 'applied_shift_ms' in column_set:
+        return False
+    return bool(
+        {'source_endpoint_key', 'total_applied_shift_ms'} <= column_set
+        or {'receiver_endpoint_key', 'total_applied_shift_ms'} <= column_set
+    )
+
+
+def _documented_endpoint_kind(
+    table: _LoadedStaticTable,
+) -> RefractionStaticEndpointKind:
+    column_set = set(table.columns)
+    if 'source_endpoint_key' in column_set:
+        return 'source'
+    if 'receiver_endpoint_key' in column_set:
+        return 'receiver'
+    if table.expected_endpoint_kind is None:
+        raise ValueError(
+            f'{table.source_name}: documented static table must include '
+            'source_endpoint_key or receiver_endpoint_key'
+        )
+    return table.expected_endpoint_kind
+
+
+def _canonicalized_endpoint_static_row(
+    row: Mapping[str, Any],
+    *,
+    endpoint_kind: RefractionStaticEndpointKind,
+    default_source_job_id: str | None,
+) -> dict[str, str | None]:
+    prefix = 'source' if endpoint_kind == 'source' else 'receiver'
+    out: dict[str, str | None] = {
+        'format_name': _row_text(row, 'format_name') or 'canonical_static_table',
+        'format_version': _row_text(row, 'format_version') or '1',
+        'source_job_id': _row_text(row, 'source_job_id')
+        or _optional_text(default_source_job_id),
+        'endpoint_kind': _row_text(row, 'endpoint_kind') or endpoint_kind,
+        'endpoint_key': _row_text(row, 'endpoint_key')
+        or _row_text(row, f'{prefix}_endpoint_key'),
+        'endpoint_id': _row_text(row, 'endpoint_id') or _row_text(row, f'{prefix}_id'),
+        'applied_shift_ms': _row_text(row, 'applied_shift_ms')
+        or _row_text(row, 'total_applied_shift_ms'),
+        'static_status': _row_text(row, 'static_status'),
+        'sign_convention': _row_text(row, 'sign_convention'),
+    }
+    if f'{prefix}_node_id' in row:
+        out['node_id'] = _row_text(row, f'{prefix}_node_id')
+    for column in CANONICAL_STATIC_TABLE_OPTIONAL_COLUMNS:
+        if column in out:
+            continue
+        if column in row:
+            out[column] = _row_text(row, column)
+    return out
+
+
+def _columns_from_rows(rows: Sequence[Mapping[str, Any]]) -> tuple[str, ...]:
+    columns: list[str] = []
+    for row in rows:
+        for key in row:
+            if key not in columns:
+                columns.append(str(key))
+    return tuple(columns)
+
+
+def _row_text(row: Mapping[str, Any], column: str) -> str | None:
+    return _optional_text(row.get(column))
 
 
 def _validate_table_path_combination(

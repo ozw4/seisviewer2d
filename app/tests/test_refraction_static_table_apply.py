@@ -135,6 +135,50 @@ def _canonical_row(
     }
 
 
+def _documented_static_table_row(
+    *,
+    endpoint_kind: str,
+    endpoint_key: str,
+    endpoint_id: int,
+    total_applied_shift_ms: float,
+) -> dict[str, str]:
+    prefix = endpoint_kind
+    return {
+        'endpoint_kind': endpoint_kind,
+        f'{prefix}_endpoint_key': endpoint_key,
+        f'{prefix}_id': str(endpoint_id),
+        f'{prefix}_node_id': str(endpoint_id),
+        f'{prefix}_v2_cell_id': '',
+        'x_m': '0.000',
+        'y_m': '0.000',
+        'surface_elevation_m': '0.000',
+        'floating_datum_elevation_m': '0.000',
+        'flat_datum_elevation_m': '',
+        't1_ms': '0.000000',
+        'v1_m_s': '800.000',
+        'v2_m_s': '2400.000',
+        'v2_status': 'ok',
+        'sh1_weathering_thickness_m': '0.000',
+        'total_weathering_thickness_m': '0.000',
+        'refractor_elevation_m': '0.000',
+        'weathering_correction_ms': '0.000000',
+        'floating_datum_correction_ms': '0.000000',
+        'flat_datum_correction_ms': '0.000000',
+        'elevation_correction_ms': '0.000000',
+        'total_static_ms': f'{total_applied_shift_ms:.6f}',
+        'total_applied_shift_ms': f'{total_applied_shift_ms:.6f}',
+        'solution_status': 'ok',
+        'weathering_status': 'ok',
+        'datum_status': 'ok',
+        'static_status': 'ok',
+        'sign_convention': REFRACTION_STATIC_REPO_SIGN_CONVENTION,
+        'pick_count': '1',
+        'used_pick_count': '1',
+        'residual_rms_ms': '0.000000',
+        'residual_mad_ms': '0.000000',
+    }
+
+
 def _write_table(
     path: Path,
     *,
@@ -617,6 +661,76 @@ def test_static_table_apply_imports_source_receiver_static_table_npz(
             data['trace_shift_s_sorted'],
             [0.008, 0.004, 0.004, 0.0],
         )
+
+
+def test_static_table_apply_imports_documented_source_receiver_csvs(
+    tmp_path: Path,
+) -> None:
+    state, _store = _write_target_store(tmp_path)
+    table_dir = tmp_path / 'jobs' / TABLE_JOB_ID
+    source_table_path = table_dir / 'source_static_table.csv'
+    receiver_table_path = table_dir / 'receiver_static_table.csv'
+    _write_rows(
+        source_table_path,
+        [
+            _documented_static_table_row(
+                endpoint_kind='source',
+                endpoint_key=SOURCE_KEYS[100],
+                endpoint_id=100,
+                total_applied_shift_ms=8.0,
+            ),
+            _documented_static_table_row(
+                endpoint_kind='source',
+                endpoint_key=SOURCE_KEYS[101],
+                endpoint_id=101,
+                total_applied_shift_ms=4.0,
+            ),
+        ],
+    )
+    _write_rows(
+        receiver_table_path,
+        [
+            _documented_static_table_row(
+                endpoint_kind='receiver',
+                endpoint_key=RECEIVER_KEYS[200],
+                endpoint_id=200,
+                total_applied_shift_ms=0.0,
+            ),
+            _documented_static_table_row(
+                endpoint_kind='receiver',
+                endpoint_key=RECEIVER_KEYS[201],
+                endpoint_id=201,
+                total_applied_shift_ms=-4.0,
+            ),
+        ],
+    )
+    _write_refraction_static_request(table_dir)
+    _create_table_job(state, tmp_path, source_table_path, statics_kind='refraction')
+    job_dir = tmp_path / 'jobs' / APPLY_JOB_ID
+    _create_apply_job(state, job_dir)
+
+    req = RefractionStaticTableApplyRequest.model_validate(
+        {
+            'file_id': SOURCE_FILE_ID,
+            'key1_byte': KEY1,
+            'key2_byte': KEY2,
+            'source_table_artifact_id': f'{TABLE_JOB_ID}:{source_table_path.name}',
+            'receiver_table_artifact_id': f'{TABLE_JOB_ID}:{receiver_table_path.name}',
+            'register_corrected_file': False,
+        }
+    )
+
+    run_refraction_static_table_apply_job(APPLY_JOB_ID, req, state)
+
+    with state.lock:
+        assert state.jobs[APPLY_JOB_ID]['status'] == 'done'
+    with np.load(job_dir / STATIC_TABLE_APPLY_SOLUTION_NPZ_NAME, allow_pickle=False) as data:
+        np.testing.assert_allclose(
+            data['trace_shift_s_sorted'],
+            [0.008, 0.004, 0.004, 0.0],
+        )
+    history = _read_static_table_apply_history(job_dir)
+    assert history['created_from_refraction_job_id'] == TABLE_JOB_ID
 
 
 def test_static_table_apply_does_not_require_producer_geometry(

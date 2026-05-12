@@ -44,6 +44,32 @@ def _canonical_row(
     return row
 
 
+def _documented_static_row(
+    *,
+    endpoint_kind: str,
+    endpoint_key: str,
+    endpoint_id: str,
+    total_applied_shift_ms: str,
+) -> dict[str, str]:
+    prefix = endpoint_kind
+    return {
+        'endpoint_kind': endpoint_kind,
+        f'{prefix}_endpoint_key': endpoint_key,
+        f'{prefix}_id': endpoint_id,
+        f'{prefix}_node_id': endpoint_id,
+        'x_m': '1000.000',
+        'y_m': '2000.000',
+        'surface_elevation_m': '10.000',
+        't1_ms': '50.000000',
+        'v1_m_s': '800.000',
+        'v2_m_s': '2400.000',
+        'total_static_ms': total_applied_shift_ms,
+        'total_applied_shift_ms': total_applied_shift_ms,
+        'static_status': 'ok',
+        'sign_convention': REFRACTION_STATIC_EXPORT_SIGN_CONVENTION,
+    }
+
+
 def _write_csv(path: Path, rows: tuple[dict[str, str], ...]) -> None:
     fieldnames: list[str] = []
     for row in rows:
@@ -123,6 +149,52 @@ def test_import_separate_source_receiver_static_tables_success(tmp_path: Path) -
     assert result.receiver_static_by_endpoint_key[
         'receiver:2001'
     ].applied_shift_s == pytest.approx(-0.0025)
+
+
+def test_import_documented_source_receiver_static_tables_success(
+    tmp_path: Path,
+) -> None:
+    source_path = tmp_path / 'source_static_table.csv'
+    receiver_path = tmp_path / 'receiver_static_table.csv'
+    _write_csv(
+        source_path,
+        (
+            _documented_static_row(
+                endpoint_kind='source',
+                endpoint_key='source:1001',
+                endpoint_id='1001',
+                total_applied_shift_ms='12.5',
+            ),
+        ),
+    )
+    _write_csv(
+        receiver_path,
+        (
+            _documented_static_row(
+                endpoint_kind='receiver',
+                endpoint_key='receiver:2001',
+                endpoint_id='2001',
+                total_applied_shift_ms='-3.25',
+            ),
+        ),
+    )
+
+    result = import_refraction_static_source_receiver_csvs(
+        source_table_path=source_path,
+        receiver_table_path=receiver_path,
+        source_job_id='refraction-source-job',
+    )
+
+    assert result.is_valid is True
+    assert result.source_static_by_endpoint_key['source:1001'].applied_shift_s == (
+        pytest.approx(0.0125)
+    )
+    assert result.receiver_static_by_endpoint_key[
+        'receiver:2001'
+    ].applied_shift_s == pytest.approx(-0.00325)
+    assert result.source_static_by_endpoint_key['source:1001'].source_job_id == (
+        'refraction-source-job'
+    )
 
 
 def test_import_static_table_normalizes_to_seconds(tmp_path: Path) -> None:
