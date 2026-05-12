@@ -31,6 +31,9 @@ from app.services.refraction_static_datum import (
     build_refraction_datum_statics,
     write_refraction_datum_statics_artifacts,
 )
+from app.services.refraction_static_export_service import (
+    resolve_refraction_static_export_formats,
+)
 from app.services.refraction_static_field_composition import (
     compose_refraction_endpoint_field_corrections,
     compose_refraction_final_trace_shift,
@@ -422,6 +425,8 @@ def _refraction_static_request_payload(
     payload = req.model_dump(mode='json')
     if 'field_corrections' not in req.model_fields_set:
         payload.pop('field_corrections', None)
+    if 'export' not in req.model_fields_set:
+        payload.pop('export', None)
     return payload
 
 
@@ -1168,17 +1173,24 @@ def _run_refraction_static_apply_job_body(
     )
     job_dir = _resolve_job_dir(state, job_id)
     job_dir.mkdir(parents=True, exist_ok=True)
+    requested_export_formats = resolve_refraction_static_export_formats(req.export)
+    request_record = {
+        'job_id': job_id,
+        'job_type': 'statics',
+        'statics_kind': 'refraction',
+        'source_file_id': req.file_id,
+        'key1_byte': req.key1_byte,
+        'key2_byte': req.key2_byte,
+        'request': _refraction_static_request_payload(req),
+    }
+    if req.export.enabled:
+        request_record['export'] = {
+            'enabled': True,
+            'requested_formats': list(requested_export_formats),
+        }
     _write_json_atomic(
         job_dir / _REQUEST_JSON_NAME,
-        {
-            'job_id': job_id,
-            'job_type': 'statics',
-            'statics_kind': 'refraction',
-            'source_file_id': req.file_id,
-            'key1_byte': req.key1_byte,
-            'key2_byte': req.key2_byte,
-            'request': _refraction_static_request_payload(req),
-        },
+        request_record,
     )
     reject_unsupported_refraction_field_corrections(req)
     public_multilayer_apply = _is_public_multilayer_apply(req)
