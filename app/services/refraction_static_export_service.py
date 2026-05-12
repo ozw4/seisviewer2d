@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import csv
 import json
-import shutil
 from dataclasses import dataclass
 from pathlib import Path
 import time
@@ -393,7 +392,20 @@ def _copy_first_break_time_export(
     dest_path.parent.mkdir(parents=True, exist_ok=True)
     tmp_path = dest_path.with_name(f'{dest_path.name}.{uuid4().hex}.tmp')
     try:
-        shutil.copyfile(source_path, tmp_path)
+        with source_path.open('r', encoding='utf-8', newline='') as handle:
+            reader = csv.DictReader(handle)
+            fieldnames = list(reader.fieldnames or [])
+            rows = list(reader)
+        if 'source_job_id' not in fieldnames:
+            raise ValueError(
+                f'{REFRACTION_FIRST_BREAK_TIME_EXPORT_CSV_NAME} missing source_job_id'
+            )
+        for row in rows:
+            row['source_job_id'] = source.source_job_id
+        with tmp_path.open('w', encoding='utf-8', newline='') as handle:
+            writer = csv.DictWriter(handle, fieldnames=fieldnames)
+            writer.writeheader()
+            writer.writerows(rows)
         tmp_path.replace(dest_path)
     except Exception:
         tmp_path.unlink(missing_ok=True)

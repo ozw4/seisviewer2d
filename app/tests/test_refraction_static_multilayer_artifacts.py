@@ -323,9 +323,9 @@ def test_first_break_time_export_contains_layer_kind_for_multilayer(
     for row in rows:
         assert row['source_endpoint_key']
         assert row['receiver_endpoint_key']
-        assert row['source_time_term_ms']
-        assert row['receiver_time_term_ms']
-        assert row['moveout_time_ms']
+        assert row['observed_first_break_time_ms']
+        assert row['modeled_first_break_time_ms']
+        assert row['used_in_solve']
 
 
 def test_multilayer_residual_csv_reports_cell_ids_for_solve_cell_layer(

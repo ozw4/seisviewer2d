@@ -235,11 +235,10 @@ def test_observation_residual_artifact_includes_cell_ids_and_rejection_reason(
         assert row['rejection_reason'] == 'ok'
 
 
-def test_first_break_time_export_contains_cell_indices_for_cell_solve(
+def test_first_break_time_export_uses_documented_public_schema_for_cell_solve(
     tmp_path: Path,
 ) -> None:
     result, req, input_model = _clean_result()
-    expected_cell_id = synthetic_cell_midpoint_cell_id_sorted(input_model)
 
     write_refraction_static_artifacts(
         result=result,
@@ -249,12 +248,12 @@ def test_first_break_time_export_contains_cell_indices_for_cell_solve(
 
     rows = _read_csv(tmp_path / REFRACTION_FIRST_BREAK_TIME_EXPORT_CSV_NAME)
     for row in rows:
-        trace_index = int(row['trace_index_sorted'])
-        cell_id = int(expected_cell_id[trace_index])
-        assert int(row['cell_ix']) == cell_id
-        assert int(row['cell_iy']) == 0
+        assert row['format_name'] == 'first_break_time'
+        assert row['sorted_trace_index']
+        assert 'cell_ix' not in row
+        assert 'cell_iy' not in row
         assert row['layer_kind'] == 'v2_t1'
-        assert row['used_for_layer'] == 'true'
+        assert row['used_in_solve'] == 'true'
 
 
 def test_cell_velocity_artifact_records_smoothing_metadata(
