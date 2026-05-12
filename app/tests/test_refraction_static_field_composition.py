@@ -111,12 +111,12 @@ def test_field_composition_final_shift_adds_refraction_shift() -> None:
     )
 
 
-def test_field_composition_apply_to_trace_shift_false_keeps_final_composed_shift() -> None:
+def test_field_composition_apply_false_keeps_final_shift_at_base_refraction() -> None:
     trace = _trace_field()
     result = compose_refraction_final_trace_shift(
         refraction_trace_shift_s_sorted=_shifts([0.010, 0.020, -0.005]),
-        trace_static_status_sorted=_statuses(['ok', 'ok', 'ok']),
-        trace_static_valid_mask_sorted=np.asarray([True, True, True], dtype=bool),
+        trace_static_status_sorted=_statuses(['ok', 'muted_trace', 'ok']),
+        trace_static_valid_mask_sorted=np.asarray([True, False, True], dtype=bool),
         trace_field_correction=trace,
         apply_to_trace_shift=False,
         invalid_component_policy='fail',
@@ -124,10 +124,21 @@ def test_field_composition_apply_to_trace_shift_false_keeps_final_composed_shift
 
     np.testing.assert_allclose(
         result.final_trace_shift_s_sorted,
-        [0.0155, 0.024, -0.0055],
+        [0.010, 0.020, -0.005],
     )
     np.testing.assert_allclose(result.applied_field_shift_s_sorted, [0.0, 0.0, 0.0])
+    np.testing.assert_array_equal(
+        result.final_trace_static_status_sorted,
+        ['ok', 'muted_trace', 'ok'],
+    )
+    np.testing.assert_array_equal(
+        result.final_trace_static_valid_mask_sorted,
+        [True, False, True],
+    )
     assert result.qc['apply_to_trace_shift'] is False
+    assert result.qc['final_trace_shift_formula'] == (
+        'final_trace_shift_s = refraction_trace_shift_s'
+    )
 
 
 def test_field_composition_invalid_policy_fail() -> None:

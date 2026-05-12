@@ -153,26 +153,35 @@ receiver_field_shift_s =
 trace_field_shift_s =
   source_field_shift_s + receiver_field_shift_s
 
-final_trace_shift_s =
+final_trace_shift_s when apply_to_trace_shift=true =
   refraction_trace_shift_s + trace_field_shift_s
+
+final_trace_shift_s when apply_to_trace_shift=false =
+  refraction_trace_shift_s
 ```
 
-The QC field formulas use the exact single-line names:
+The QC field formulas use the exact single-line names. The
+`final_trace_shift_s` formula depends on `apply_to_trace_shift`:
 
 ```text
 total_field_shift_s = source_depth_shift_s + uphole_shift_s + manual_static_shift_s
 trace_field_shift_s = source_field_shift_s + receiver_field_shift_s
 final_trace_shift_s = refraction_trace_shift_s + trace_field_shift_s
+final_trace_shift_s = refraction_trace_shift_s
 ```
 
 `field_corrections.composition.enabled` controls component composition.
 `apply_to_trace_shift=true` makes the corrected TraceStore use
 `final_trace_shift_s_sorted`; `apply_to_trace_shift=false` keeps the
-cumulative applied shift at `refraction_trace_shift_s_sorted` while still
-writing componentized field artifacts. `invalid_component_policy="fail"`
-rejects invalid field components. `invalid_component_policy="skip_invalid_traces"`
-keeps invalid traces at the base refraction shift and applies valid field
-shifts to valid traces.
+cumulative applied shift and `final_trace_shift_s_sorted` at
+`refraction_trace_shift_s_sorted` while still writing componentized field
+artifacts. In artifact-only mode, `final_trace_static_status_sorted` and
+`final_trace_static_valid_mask_sorted` match the base refraction trace status
+arrays, and `applied_field_shift_s_sorted` is zero.
+`invalid_component_policy="fail"` rejects invalid field components only when
+field corrections are applied to trace shifts.
+`invalid_component_policy="skip_invalid_traces"` keeps invalid traces at the
+base refraction shift and applies valid field shifts to valid traces.
 
 ## 7. Artifact list
 
@@ -269,6 +278,11 @@ trace_field_static_status
 for source depth, uphole time, manual statics, source/receiver field shifts,
 and total-with-field shifts. Disabled components use zero shifts and
 `not_enabled` statuses.
+
+When `apply_to_trace_shift=false`, trace preview and solution artifacts still
+include `trace_field_shift_s_sorted` and component columns, but
+`final_trace_shift_s_sorted` remains the base
+`refraction_trace_shift_s_sorted`.
 
 ## 9. Static history and double-application guard
 
@@ -420,8 +434,10 @@ component can be checked independently before composition:
   source and receiver endpoints, duplicate rows, missing endpoints, and
   endpoint-key versus endpoint-id matching.
 - Composition: assert source endpoint totals, receiver endpoint totals,
-  `trace_field_shift_s`, and
-  `final_trace_shift_s = refraction_trace_shift_s + trace_field_shift_s`.
+  `trace_field_shift_s`; when `apply_to_trace_shift=true`, assert
+  `final_trace_shift_s = refraction_trace_shift_s + trace_field_shift_s`; when
+  false, assert `final_trace_shift_s = refraction_trace_shift_s` and
+  `applied_field_shift_s = 0`.
 - Artifact schema: assert M4 CSV columns, NPZ arrays, QC formulas, manifest
   entries, and disabled-component zero/`not_enabled` behavior.
 - Static history: assert cumulative shift field selection and

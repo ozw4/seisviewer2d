@@ -73,7 +73,15 @@ def test_field_e2e_artifact_only_preserves_refraction_trace_shift(
         )
         np.testing.assert_allclose(
             data['final_trace_shift_s_sorted'],
-            fixture.dataset.expected_final_trace_shift_s,
+            fixture.dataset.expected_refraction_trace_shift_s,
+        )
+        np.testing.assert_array_equal(
+            data['final_trace_static_status_sorted'],
+            data['trace_static_status_sorted'],
+        )
+        np.testing.assert_array_equal(
+            data['final_trace_static_valid_mask_sorted'],
+            data['trace_static_valid_mask_sorted'],
         )
         np.testing.assert_allclose(
             data['applied_field_shift_s_sorted'],
