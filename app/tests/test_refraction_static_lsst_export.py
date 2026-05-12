@@ -18,15 +18,16 @@ from app.services.refraction_static_lsst_export import (
     REFRACTION_LSST_CSV_NAME,
     REFRACTION_LSST_FORMAT_NAME,
     REFRACTION_LSST_FORMAT_VERSION,
-    REFRACTION_LSST_PLUS_CARDS_NAME,
+    REFRACTION_LSST_PLUS_COLUMNS,
+    REFRACTION_LSST_PLUS_CSV_NAME,
     REFRACTION_LSST_PLUS_FORMAT_NAME,
-    REFRACTION_LSST_PLUS_SCHEMA_VERSION,
+    REFRACTION_LSST_PLUS_FORMAT_VERSION,
     REFRACTION_LSST_REQUIRED_COLUMNS,
     RefractionStaticLsstExportError,
     format_refraction_lsst_csv,
-    format_refraction_lsst_plus_cards,
+    format_refraction_lsst_plus_csv,
     write_refraction_lsst_csv,
-    write_refraction_lsst_plus_cards,
+    write_refraction_lsst_plus_csv,
 )
 
 
@@ -55,7 +56,7 @@ for name in {sorted(_FORBIDDEN_IMPORTS)!r}:
 
 module = importlib.import_module('app.services.refraction_static_lsst_export')
 assert module.format_refraction_lsst_csv is not None
-assert module.format_refraction_lsst_plus_cards is not None
+assert module.format_refraction_lsst_plus_csv is not None
 
 forbidden = set({sorted(_FORBIDDEN_IMPORTS)!r})
 print(json.dumps(sorted(name for name in sys.modules if name in forbidden)))
@@ -307,82 +308,73 @@ def test_lsst_export_writes_expected_file_name(tmp_path: Path) -> None:
 
 
 def test_lsst_plus_export_contains_endpoint_metadata() -> None:
-    text = format_refraction_lsst_plus_cards(_lsst_plus_bundle())
-    lines = text.splitlines()
+    rows, fieldnames = _read_csv_text(format_refraction_lsst_plus_csv(_lsst_plus_bundle()))
 
-    assert f'# format={REFRACTION_LSST_PLUS_FORMAT_NAME}' in lines
-    assert f'# schema_version={REFRACTION_LSST_PLUS_SCHEMA_VERSION}' in lines
-    assert f'# sign_convention={REFRACTION_STATIC_EXPORT_SIGN_CONVENTION}' in lines
-    assert '# units=ms' in lines
-    assert '# delimiter=|' in lines
-    assert _card_fields(_card(lines, 'SRC|s100|')) == {
-        'endpoint_id': '100',
-        'node_id': '10',
-        'station': '1000',
-        'x': '1000.000',
-        'y': '2000.000',
-        'elev': '25.000',
-        'status': 'ok',
-    }
-    assert _card_fields(_card(lines, 'REC|r200|')) == {
-        'endpoint_id': '200',
-        'node_id': '20',
-        'station': '2000',
-        'x': '1010.000',
-        'y': '2010.000',
-        'elev': '30.000',
-        'status': 'ok',
-    }
+    assert tuple(fieldnames) == REFRACTION_LSST_PLUS_COLUMNS
+    assert rows[0]['format_name'] == REFRACTION_LSST_PLUS_FORMAT_NAME
+    assert rows[0]['format_version'] == str(REFRACTION_LSST_PLUS_FORMAT_VERSION)
+    assert rows[0]['source_job_id'] == 'refraction-job-504'
+    assert rows[0]['sign_convention'] == REFRACTION_STATIC_EXPORT_SIGN_CONVENTION
+    assert rows[0]['endpoint_kind'] == 'source'
+    assert rows[0]['endpoint_key'] == 's100'
+    assert rows[0]['endpoint_id'] == '100'
+    assert rows[0]['node_id'] == '10'
+    assert rows[0]['x_m'] == '1000.000'
+    assert rows[0]['y_m'] == '2000.000'
+    assert rows[0]['surface_elevation_m'] == '25.000'
+    assert rows[0]['static_status'] == 'ok'
+    assert rows[1]['endpoint_kind'] == 'receiver'
+    assert rows[1]['endpoint_key'] == 'r200'
+    assert rows[1]['endpoint_id'] == '200'
+    assert rows[1]['node_id'] == '20'
+    assert rows[1]['x_m'] == '1010.000'
+    assert rows[1]['y_m'] == '2010.000'
+    assert rows[1]['surface_elevation_m'] == '30.000'
+    assert rows[1]['static_status'] == 'ok'
 
 
 def test_lsst_plus_export_contains_component_static_values() -> None:
-    fields = _card_fields(
-        _card(format_refraction_lsst_plus_cards(_lsst_plus_bundle()).splitlines(), 'STC|source|s100|')
-    )
-    receiver_fields = _card_fields(
-        _card(format_refraction_lsst_plus_cards(_lsst_plus_bundle()).splitlines(), 'STC|receiver|r200|')
-    )
+    rows, _fieldnames = _read_csv_text(format_refraction_lsst_plus_csv(_lsst_plus_bundle()))
+    source_row = rows[0]
+    receiver_row = rows[1]
 
-    assert fields['total'] == '-3.250000'
-    assert fields['weathering'] == '-4.000000'
-    assert fields['elevation'] == '0.750000'
-    assert fields['source_field_shift_ms'] == '1.250000'
-    assert fields['manual'] == '0.500000'
-    assert fields['source_total_with_field_shift_ms'] == '-2.000000'
-    assert fields['source_depth_m'] == '10.000'
-    assert fields['source_depth'] == '12.500000'
-    assert fields['uphole_time'] == '4.000000'
-    assert fields['uphole'] == '-4.000000'
-    assert fields['manual_status'] == 'ok'
-    assert fields['source_field_static_status'] == 'ok'
-    assert fields['source_depth_status'] == 'ok'
-    assert fields['uphole_status'] == 'ok'
-    assert 'field' not in fields
-    assert 'field_status' not in fields
-    assert 'total_with_field' not in fields
-    assert receiver_fields['receiver_field_shift_ms'] == '-0.250000'
-    assert receiver_fields['receiver_total_with_field_shift_ms'] == '4.250000'
-    assert receiver_fields['receiver_field_static_status'] == 'ok'
-    assert 'field' not in receiver_fields
-    assert 'field_status' not in receiver_fields
-    assert 'total_with_field' not in receiver_fields
+    assert source_row['total_applied_shift_ms'] == '-3.250000'
+    assert source_row['weathering_correction_ms'] == '-4.000000'
+    assert source_row['elevation_correction_ms'] == '0.750000'
+    assert source_row['source_field_shift_ms'] == '1.250000'
+    assert source_row['manual_static_shift_ms'] == '0.500000'
+    assert source_row['source_total_with_field_shift_ms'] == '-2.000000'
+    assert source_row['source_depth_m'] == '10.000'
+    assert source_row['source_depth_shift_ms'] == '12.500000'
+    assert source_row['uphole_time_ms'] == '4.000000'
+    assert source_row['uphole_shift_ms'] == '-4.000000'
+    assert source_row['manual_static_status'] == 'ok'
+    assert source_row['source_field_static_status'] == 'ok'
+    assert source_row['source_depth_status'] == 'ok'
+    assert source_row['uphole_status'] == 'ok'
+    assert source_row['receiver_field_shift_ms'] == ''
+    assert receiver_row['receiver_field_shift_ms'] == '-0.250000'
+    assert receiver_row['receiver_total_with_field_shift_ms'] == '4.250000'
+    assert receiver_row['receiver_field_static_status'] == 'ok'
+    assert receiver_row['source_field_shift_ms'] == ''
+    assert receiver_row['source_depth_m'] == ''
+    assert receiver_row['uphole_time_ms'] == ''
 
 
 def test_lsst_plus_export_contains_three_layer_values() -> None:
-    fields = _card_fields(
-        _card(format_refraction_lsst_plus_cards(_lsst_plus_bundle()).splitlines(), 'LYR|source|s100|')
-    )
+    rows, _fieldnames = _read_csv_text(format_refraction_lsst_plus_csv(_lsst_plus_bundle()))
+    source_row = rows[0]
 
-    assert fields['t1'] == '12.345600'
-    assert fields['t2'] == '20.000000'
-    assert fields['t3'] == '30.000000'
-    assert fields['sh1'] == '8.250'
-    assert fields['sh2'] == '12.000'
-    assert fields['sh3'] == '16.000'
-    assert fields['v1'] == '800.000'
-    assert fields['v2'] == '2400.000'
-    assert fields['v3'] == '3600.000'
-    assert fields['vsub'] == '5000.000'
+    assert source_row['t1_ms'] == '12.345600'
+    assert source_row['t2_ms'] == '20.000000'
+    assert source_row['t3_ms'] == '30.000000'
+    assert source_row['sh1_weathering_thickness_m'] == '8.250'
+    assert source_row['sh2_weathering_thickness_m'] == '12.000'
+    assert source_row['sh3_weathering_thickness_m'] == '16.000'
+    assert source_row['v1_m_s'] == '800.000'
+    assert source_row['v2_m_s'] == '2400.000'
+    assert source_row['v3_m_s'] == '3600.000'
+    assert source_row['vsub_m_s'] == '5000.000'
 
 
 def test_lsst_plus_export_includes_status_for_invalid_rows() -> None:
@@ -400,55 +392,49 @@ def test_lsst_plus_export_includes_status_for_invalid_rows() -> None:
         ),
     )
 
-    lines = format_refraction_lsst_plus_cards(bundle).splitlines()
+    rows, _fieldnames = _read_csv_text(format_refraction_lsst_plus_csv(bundle))
 
-    assert _card_fields(_card(lines, 'SRC|s-bad|'))['status'] == (
-        'invalid_velocity_order'
-    )
-    assert _card_fields(_card(lines, 'STC|source|s-bad|'))['total'] == 'nan'
-    assert _card_fields(_card(lines, 'LYR|source|s-bad|'))['t1'] == 'nan'
+    assert rows[0]['static_status'] == 'invalid_velocity_order'
+    assert rows[0]['x_m'] == ''
+    assert rows[0]['total_applied_shift_ms'] == ''
+    assert rows[0]['t1_ms'] == ''
 
 
 def test_lsst_plus_export_is_deterministic() -> None:
     bundle = _lsst_plus_source_only_bundle()
     expected = (
-        '# format=lsst_plus\n'
-        '# schema_version=1\n'
-        '# source_job_id=refraction-job-504\n'
-        '# sign_convention=corrected(t) = raw(t - shift_s)\n'
-        '# units=ms\n'
-        '# distance_units=m\n'
-        '# velocity_units=m_s\n'
-        '# delimiter=|\n'
-        '# missing_numeric=nan\n'
-        '# missing_text=nan\n'
-        '# row_order=source_rows_then_receiver_rows\n'
-        'SRC|s100|endpoint_id=100|node_id=10|station=1000|'
-        'x=1000.000|y=2000.000|elev=25.000|status=ok\n'
-        'STC|source|s100|total=-3.250000|weathering=-4.000000|'
-        'elevation=0.750000|source_field_shift_ms=1.250000|'
-        'manual=0.500000|source_total_with_field_shift_ms=-2.000000|'
-        'source_depth_m=10.000|'
-        'source_depth=12.500000|uphole_time=4.000000|uphole=-4.000000|'
-        'manual_status=ok|source_field_static_status=ok|'
-        'source_depth_status=ok|uphole_status=ok\n'
-        'LYR|source|s100|t1=12.345600|t2=20.000000|t3=30.000000|'
-        'sh1=8.250|sh2=12.000|sh3=16.000|v1=800.000|'
-        'v2=2400.000|v3=3600.000|vsub=5000.000\n'
+        'format_name,format_version,source_job_id,endpoint_kind,endpoint_key,'
+        'endpoint_id,node_id,x_m,y_m,surface_elevation_m,t1_ms,v1_m_s,'
+        'v2_m_s,sh1_weathering_thickness_m,weathering_correction_ms,'
+        'elevation_correction_ms,total_static_ms,total_applied_shift_ms,'
+        'static_status,sign_convention,t2_ms,t3_ms,v3_m_s,vsub_m_s,'
+        'sh2_weathering_thickness_m,sh3_weathering_thickness_m,'
+        'total_weathering_thickness_m,source_depth_m,source_depth_shift_ms,'
+        'source_depth_status,uphole_time_ms,uphole_shift_ms,uphole_status,'
+        'manual_static_shift_ms,manual_static_status,source_field_shift_ms,'
+        'source_field_static_status,source_total_with_field_shift_ms,'
+        'receiver_field_shift_ms,receiver_field_static_status,'
+        'receiver_total_with_field_shift_ms\n'
+        'lsst_plus,1,refraction-job-504,source,s100,100,10,1000.000,'
+        '2000.000,25.000,12.345600,800.000,2400.000,8.250,-4.000000,'
+        '0.750000,-3.250000,-3.250000,ok,'
+        'corrected(t) = raw(t - shift_s),20.000000,30.000000,3600.000,'
+        '5000.000,12.000,16.000,,10.000,12.500000,ok,4.000000,'
+        '-4.000000,ok,0.500000,ok,1.250000,ok,-2.000000,,,\n'
     )
 
-    assert format_refraction_lsst_plus_cards(bundle) == expected
-    assert format_refraction_lsst_plus_cards(bundle) == (
-        format_refraction_lsst_plus_cards(bundle)
+    assert format_refraction_lsst_plus_csv(bundle) == expected
+    assert format_refraction_lsst_plus_csv(bundle) == format_refraction_lsst_plus_csv(
+        bundle
     )
 
 
 def test_lsst_plus_export_writes_expected_file_name(tmp_path: Path) -> None:
-    path = tmp_path / REFRACTION_LSST_PLUS_CARDS_NAME
+    path = tmp_path / REFRACTION_LSST_PLUS_CSV_NAME
 
-    write_refraction_lsst_plus_cards(_lsst_plus_source_only_bundle(), path)
+    write_refraction_lsst_plus_csv(_lsst_plus_source_only_bundle(), path)
 
-    assert path.read_text(encoding='utf-8') == format_refraction_lsst_plus_cards(
+    assert path.read_text(encoding='utf-8') == format_refraction_lsst_plus_csv(
         _lsst_plus_source_only_bundle()
     )
 
@@ -456,18 +442,6 @@ def test_lsst_plus_export_writes_expected_file_name(tmp_path: Path) -> None:
 def _read_csv_text(text: str) -> tuple[list[dict[str, str]], list[str]]:
     reader = csv.DictReader(io.StringIO(text))
     return list(reader), list(reader.fieldnames or ())
-
-
-def _card(lines: list[str], prefix: str) -> str:
-    matches = [line for line in lines if line.startswith(prefix)]
-    assert len(matches) == 1
-    return matches[0]
-
-
-def _card_fields(line: str) -> dict[str, str]:
-    return dict(
-        part.split('=', maxsplit=1) for part in line.split('|') if '=' in part
-    )
 
 
 def _basic_bundle(
