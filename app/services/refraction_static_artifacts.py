@@ -35,6 +35,10 @@ from app.services.refraction_static_status import (
     REFRACTION_STATIC_STATUSES,
     classify_refraction_endpoint_static_status,
 )
+from app.services.refraction_static_source_depth import (
+    REFRACTION_SOURCE_DEPTH_QC_JSON_NAME,
+    REFRACTION_SOURCE_DEPTH_SOURCES_CSV_NAME,
+)
 from app.services.refraction_static_t1lsst import (
     REFRACTION_T1LSST_1LAYER_COMPONENTS_CSV_NAME,
     write_refraction_t1lsst_1layer_components_csv,
@@ -49,6 +53,10 @@ from app.services.refraction_static_types import (
 from app.services.refraction_static_v1 import (
     REFRACTION_V1_ESTIMATES_CSV_NAME,
     REFRACTION_V1_QC_JSON_NAME,
+)
+from app.services.refraction_static_uphole import (
+    REFRACTION_UPHOLE_QC_JSON_NAME,
+    REFRACTION_UPHOLE_SOURCES_CSV_NAME,
 )
 
 REFRACTION_STATIC_SOLUTION_NPZ_NAME = 'refraction_static_solution.npz'
@@ -278,6 +286,53 @@ _V1_ARTIFACT_NAMES = frozenset(
     }
 )
 
+_SOURCE_DEPTH_FIELD_ARTIFACTS: tuple[dict[str, str | bool], ...] = (
+    {
+        'name': REFRACTION_SOURCE_DEPTH_QC_JSON_NAME,
+        'kind': 'json',
+        'required': True,
+        'origin': 'upstream',
+        'description': 'Source-depth field-correction QC summary',
+    },
+    {
+        'name': REFRACTION_SOURCE_DEPTH_SOURCES_CSV_NAME,
+        'kind': 'csv',
+        'required': True,
+        'origin': 'upstream',
+        'description': 'Resolved source-depth rows used by field corrections',
+    },
+)
+_SOURCE_DEPTH_FIELD_ARTIFACT_NAMES = frozenset(
+    str(item['name']) for item in _SOURCE_DEPTH_FIELD_ARTIFACTS
+)
+
+_UPHOLE_FIELD_ARTIFACTS: tuple[dict[str, str | bool], ...] = (
+    {
+        'name': REFRACTION_UPHOLE_QC_JSON_NAME,
+        'kind': 'json',
+        'required': True,
+        'origin': 'upstream',
+        'description': 'Uphole-time field-correction QC summary',
+    },
+    {
+        'name': REFRACTION_UPHOLE_SOURCES_CSV_NAME,
+        'kind': 'csv',
+        'required': True,
+        'origin': 'upstream',
+        'description': 'Resolved source uphole-time rows used by field corrections',
+    },
+)
+_UPHOLE_FIELD_ARTIFACT_NAMES = frozenset(
+    str(item['name']) for item in _UPHOLE_FIELD_ARTIFACTS
+)
+
+_UPSTREAM_ARTIFACTS: tuple[dict[str, str | bool], ...] = (
+    _V1_ARTIFACTS + _SOURCE_DEPTH_FIELD_ARTIFACTS + _UPHOLE_FIELD_ARTIFACTS
+)
+_UPSTREAM_ARTIFACT_NAMES = frozenset(
+    str(item['name']) for item in _UPSTREAM_ARTIFACTS
+)
+
 _T1LSST_1LAYER_ARTIFACTS: tuple[dict[str, str | bool], ...] = (
     {
         'name': REFRACTION_T1LSST_1LAYER_COMPONENTS_CSV_NAME,
@@ -300,7 +355,7 @@ REFRACTION_STATIC_REGISTERED_ARTIFACT_NAMES = frozenset(
     str(item['name'])
     for item in (
         _ARTIFACTS
-        + _V1_ARTIFACTS
+        + _UPSTREAM_ARTIFACTS
         + _T1LSST_1LAYER_ARTIFACTS
         + _ALL_REFRACTOR_CELL_VELOCITY_ARTIFACTS
     )
@@ -867,6 +922,7 @@ def write_refraction_static_artifacts(
     upstream_names = _validate_upstream_artifact_names(
         upstream_artifact_names,
         resolved_first_layer=first_layer,
+        req=request,
     )
     _validate_declared_upstream_artifacts(root, upstream_names)
     artifact_entries = _artifact_entries_for_request(
@@ -2464,6 +2520,7 @@ def build_refraction_static_qc_payload(
     upstream_names = _validate_upstream_artifact_names(
         upstream_artifact_names,
         resolved_first_layer=first_layer,
+        req=req,
     )
     artifact_entries = _artifact_entries_for_request(
         req,
@@ -5464,6 +5521,7 @@ def _artifact_entries_for_request(
             _validate_upstream_artifact_names(
                 upstream_artifact_names,
                 resolved_first_layer=resolved_first_layer,
+                req=req,
             )
         )
     )
@@ -5490,6 +5548,7 @@ def _validate_upstream_artifact_names(
     names: Iterable[str],
     *,
     resolved_first_layer: ResolvedRefractionFirstLayer | None,
+    req: RefractionStaticApplyRequest | None = None,
 ) -> tuple[str, ...]:
     seen: set[str] = set()
     values: list[str] = []
@@ -5500,35 +5559,81 @@ def _validate_upstream_artifact_names(
             )
         if name in seen:
             continue
-        if name not in _V1_ARTIFACT_NAMES:
+        if name not in _UPSTREAM_ARTIFACT_NAMES:
             raise RefractionStaticArtifactError(
                 f'unsupported upstream artifact: {name}'
             )
         seen.add(name)
         values.append(name)
 
-    if not values:
+    value_set = set(values)
+    if not value_set:
         return ()
 
-    mode = (
-        resolved_first_layer.mode
-        if resolved_first_layer is not None
-        else None
+    _validate_upstream_artifact_group(
+        value_set=value_set,
+        expected=_V1_ARTIFACT_NAMES,
+        group_label='upstream V1 artifacts',
     )
-    if mode != 'estimate_direct_arrival':
-        raise RefractionStaticArtifactError(
-            'upstream V1 artifacts are only valid when first-layer mode is '
-            'estimate_direct_arrival'
-        )
+    _validate_upstream_artifact_group(
+        value_set=value_set,
+        expected=_SOURCE_DEPTH_FIELD_ARTIFACT_NAMES,
+        group_label='upstream source-depth field-correction artifacts',
+    )
+    _validate_upstream_artifact_group(
+        value_set=value_set,
+        expected=_UPHOLE_FIELD_ARTIFACT_NAMES,
+        group_label='upstream uphole field-correction artifacts',
+    )
 
-    value_set = set(values)
-    if value_set != _V1_ARTIFACT_NAMES:
-        expected = ', '.join(sorted(_V1_ARTIFACT_NAMES))
-        raise RefractionStaticArtifactError(
-            f'upstream V1 artifacts must include both: {expected}'
+    if value_set & _V1_ARTIFACT_NAMES:
+        mode = (
+            resolved_first_layer.mode
+            if resolved_first_layer is not None
+            else None
         )
+        if mode != 'estimate_direct_arrival':
+            raise RefractionStaticArtifactError(
+                'upstream V1 artifacts are only valid when first-layer mode is '
+                'estimate_direct_arrival'
+            )
+
+    if req is not None:
+        if (
+            value_set & _SOURCE_DEPTH_FIELD_ARTIFACT_NAMES
+            and req.field_corrections.source_depth.mode != 'weathering_velocity_time'
+        ):
+            raise RefractionStaticArtifactError(
+                'source-depth field-correction artifacts are only valid when '
+                'field_corrections.source_depth.mode is weathering_velocity_time'
+            )
+        if value_set & _UPHOLE_FIELD_ARTIFACT_NAMES and (
+            req.field_corrections.uphole.mode != 'header_time'
+        ):
+            raise RefractionStaticArtifactError(
+                'uphole field-correction artifacts are only valid when '
+                'field_corrections.uphole.mode is header_time'
+            )
+
     return tuple(
-        str(item['name']) for item in _V1_ARTIFACTS if str(item['name']) in value_set
+        str(item['name'])
+        for item in _UPSTREAM_ARTIFACTS
+        if str(item['name']) in value_set
+    )
+
+
+def _validate_upstream_artifact_group(
+    *,
+    value_set: set[str],
+    expected: frozenset[str],
+    group_label: str,
+) -> None:
+    present = value_set & expected
+    if not present or present == expected:
+        return
+    expected_text = ', '.join(sorted(expected))
+    raise RefractionStaticArtifactError(
+        f'{group_label} must include all of: {expected_text}'
     )
 
 
@@ -5548,7 +5653,7 @@ def _upstream_artifact_entries(
     names: tuple[str, ...],
 ) -> tuple[dict[str, str | bool], ...]:
     name_set = set(names)
-    return tuple(item for item in _V1_ARTIFACTS if str(item['name']) in name_set)
+    return tuple(item for item in _UPSTREAM_ARTIFACTS if str(item['name']) in name_set)
 
 
 def _build_manifest_payload(

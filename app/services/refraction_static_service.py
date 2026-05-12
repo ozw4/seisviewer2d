@@ -53,6 +53,8 @@ from app.services.refraction_static_multilayer_service import (
     compute_refraction_multilayer_datum_statics_from_input_model,
 )
 from app.services.refraction_static_source_depth import (
+    REFRACTION_SOURCE_DEPTH_QC_JSON_NAME,
+    REFRACTION_SOURCE_DEPTH_SOURCES_CSV_NAME,
     compute_source_depth_weathering_time_correction_from_result,
 )
 from app.services.refraction_static_types import (
@@ -67,6 +69,8 @@ from app.services.refraction_static_v1 import (
     write_refraction_v1_artifacts,
 )
 from app.services.refraction_static_uphole import (
+    REFRACTION_UPHOLE_QC_JSON_NAME,
+    REFRACTION_UPHOLE_SOURCES_CSV_NAME,
     compute_uphole_time_correction_from_result,
 )
 from app.services.refraction_static_weathering_replacement import (
@@ -488,6 +492,38 @@ def _finish_refraction_static_apply_job(
         finished_ts=time.time(),
         message=_ARTIFACT_ONLY_DONE_MESSAGE,
     )
+
+
+def _upstream_artifact_names_for_final_refraction_job(
+    *,
+    first_layer: _ResolvedFirstLayerRequest,
+    req: RefractionStaticApplyRequest,
+) -> tuple[str, ...]:
+    return (
+        first_layer.upstream_artifact_names
+        + _field_correction_upstream_artifact_names(req)
+    )
+
+
+def _field_correction_upstream_artifact_names(
+    req: RefractionStaticApplyRequest,
+) -> tuple[str, ...]:
+    names: list[str] = []
+    if req.field_corrections.source_depth.mode == 'weathering_velocity_time':
+        names.extend(
+            (
+                REFRACTION_SOURCE_DEPTH_QC_JSON_NAME,
+                REFRACTION_SOURCE_DEPTH_SOURCES_CSV_NAME,
+            )
+        )
+    if req.field_corrections.uphole.mode == 'header_time':
+        names.extend(
+            (
+                REFRACTION_UPHOLE_QC_JSON_NAME,
+                REFRACTION_UPHOLE_SOURCES_CSV_NAME,
+            )
+        )
+    return tuple(names)
 
 
 def _with_source_depth_field_correction(
@@ -1040,7 +1076,10 @@ def _run_public_multilayer_refraction_static_apply_job(
         req=req,
         job_dir=job_dir,
         resolved_first_layer=first_layer.resolved,
-        upstream_artifact_names=first_layer.upstream_artifact_names,
+        upstream_artifact_names=_upstream_artifact_names_for_final_refraction_job(
+            first_layer=first_layer,
+            req=req,
+        ),
     )
     return _finish_refraction_static_apply_job(
         job_id=job_id,
@@ -1201,7 +1240,10 @@ def _run_refraction_static_apply_job_body(
         req=active_req,
         job_dir=job_dir,
         resolved_first_layer=first_layer.resolved,
-        upstream_artifact_names=first_layer.upstream_artifact_names,
+        upstream_artifact_names=_upstream_artifact_names_for_final_refraction_job(
+            first_layer=first_layer,
+            req=active_req,
+        ),
     )
     return _finish_refraction_static_apply_job(
         job_id=job_id,

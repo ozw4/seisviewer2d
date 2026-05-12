@@ -18,6 +18,14 @@ from app.services.refraction_static_artifacts import (
     SOURCE_STATIC_TABLE_CSV_NAME,
 )
 from app.services.job_artifact_refs import resolve_job_artifact_path
+from app.services.refraction_static_source_depth import (
+    REFRACTION_SOURCE_DEPTH_QC_JSON_NAME,
+    REFRACTION_SOURCE_DEPTH_SOURCES_CSV_NAME,
+)
+from app.services.refraction_static_uphole import (
+    REFRACTION_UPHOLE_QC_JSON_NAME,
+    REFRACTION_UPHOLE_SOURCES_CSV_NAME,
+)
 
 
 def test_resolve_job_artifact_path_returns_named_file(tmp_path: Path) -> None:
@@ -127,6 +135,10 @@ def test_resolve_job_artifact_path_rejects_wrong_statics_kind(
         REFRACTION_CELL_SOLVER_HISTORY_CSV_NAME,
         REFRACTION_V3_REFRACTOR_VELOCITY_QC_JSON_NAME,
         REFRACTION_VSUB_REFRACTOR_VELOCITY_QC_JSON_NAME,
+        REFRACTION_SOURCE_DEPTH_QC_JSON_NAME,
+        REFRACTION_SOURCE_DEPTH_SOURCES_CSV_NAME,
+        REFRACTION_UPHOLE_QC_JSON_NAME,
+        REFRACTION_UPHOLE_SOURCES_CSV_NAME,
         REFRACTION_STATIC_REQUEST_JSON_NAME,
         SOURCE_STATIC_TABLE_CSV_NAME,
         RECEIVER_STATIC_TABLE_CSV_NAME,

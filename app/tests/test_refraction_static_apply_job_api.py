@@ -43,6 +43,12 @@ from app.services.refraction_static_layer_observations import (
     refraction_layer_observation_qc,
 )
 from app.services.refraction_static_service import run_refraction_static_apply_job
+from app.services.refraction_static_source_depth import (
+    REFRACTION_SOURCE_DEPTH_QC_JSON_NAME,
+    REFRACTION_SOURCE_DEPTH_SOURCES_CSV_NAME,
+    resolve_refraction_source_depth,
+    write_refraction_source_depth_artifacts,
+)
 from app.services.refraction_static_v1 import RefractionV1EstimateResult
 from app.services.trace_store_registration import trace_store_cache_key
 from app.tests._refraction_static_synthetic import (
@@ -1219,6 +1225,69 @@ def test_refraction_static_download_new_v1_artifacts(
         )
         assert response.status_code == 200
         assert response.content
+
+
+def test_refraction_job_lists_field_correction_artifacts_when_enabled(
+    client: TestClient,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    job_id = 'refraction-field-correction-artifacts-e2e'
+    job_dir = tmp_path / 'jobs' / job_id
+    payload = _payload()
+    payload['field_corrections'] = {
+        'source_depth': {
+            'mode': 'weathering_velocity_time',
+            'source_depth_byte': 115,
+        },
+        'composition': {'enabled': False},
+    }
+    req = RefractionStaticApplyRequest.model_validate(payload)
+    _create_refraction_job(client, job_id=job_id, req=req, job_dir=job_dir)
+    _stub_upstream_refraction_result(monkeypatch, datum_result=_artifact_result())
+
+    def _build_input_model(**kwargs: Any) -> object:
+        source_depth = resolve_refraction_source_depth(
+            source_endpoint_key_sorted=np.asarray(['s0', 's1'], dtype='<U2'),
+            source_endpoint_id_sorted=np.asarray([10, 11], dtype=np.int64),
+            source_node_id_sorted=np.asarray([0, 1], dtype=np.int64),
+            source_depth_m_sorted=np.asarray([4.0, 8.0], dtype=np.float64),
+            mode='weathering_velocity_time',
+            source_depth_byte=115,
+        )
+        write_refraction_source_depth_artifacts(kwargs['job_dir'], source_depth)
+        return SimpleNamespace(source_depth_result=source_depth)
+
+    monkeypatch.setattr(
+        refraction_service_module,
+        'build_refraction_static_input_model',
+        _build_input_model,
+    )
+
+    run_refraction_static_apply_job(job_id, req, client.app.state.sv)
+
+    with client.app.state.sv.lock:
+        job = dict(client.app.state.sv.jobs[job_id])
+    assert job['status'] == 'done', job.get('message')
+    listed = _listed_job_files(client, job_id)
+    assert REFRACTION_SOURCE_DEPTH_QC_JSON_NAME in listed
+    assert REFRACTION_SOURCE_DEPTH_SOURCES_CSV_NAME in listed
+
+    manifest = json.loads(
+        (job_dir / REFRACTION_STATIC_ARTIFACTS_JSON_NAME).read_text(encoding='utf-8')
+    )
+    artifacts = {item['name']: item for item in manifest['artifacts']}
+    assert artifacts[REFRACTION_SOURCE_DEPTH_QC_JSON_NAME]['origin'] == 'upstream'
+    assert (
+        artifacts[REFRACTION_SOURCE_DEPTH_SOURCES_CSV_NAME]['origin'] == 'upstream'
+    )
+
+    download = client.get(
+        f'/statics/job/{job_id}/download',
+        params={'name': REFRACTION_SOURCE_DEPTH_QC_JSON_NAME},
+    )
+    assert download.status_code == 200
+    assert download.json()['sign_convention'] == 'corrected(t) = raw(t - shift_s)'
 
 
 def test_refraction_static_job_lists_t1lsst_artifact_when_conversion_enabled(
