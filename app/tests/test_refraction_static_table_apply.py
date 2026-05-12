@@ -22,6 +22,7 @@ from app.services.refraction_static_table_apply_service import (
     STATIC_TABLE_APPLY_REFRACTION_HISTORY_JSON_NAME,
     STATIC_TABLE_APPLY_SOLUTION_NPZ_NAME,
     STATIC_TABLE_APPLY_TRACE_SHIFTS_CSV_NAME,
+    STATIC_TABLE_IMPORT_QC_JSON_NAME,
     run_refraction_static_table_apply_job,
 )
 from app.services.refraction_static_apply_trace_store import CORRECTED_FILE_JSON_NAME
@@ -438,6 +439,14 @@ def test_static_table_apply_maps_source_receiver_to_trace_shift(tmp_path: Path) 
         '4.000000',
         '0.000000',
     ]
+    import_qc = json.loads((job_dir / STATIC_TABLE_IMPORT_QC_JSON_NAME).read_text())
+    assert import_qc['artifact_kind'] == 'static_table_import_qc'
+    assert import_qc['validation_status'] == 'ok'
+    assert import_qc['n_source_rows'] == 2
+    assert import_qc['n_receiver_rows'] == 2
+    apply_qc = json.loads((job_dir / STATIC_TABLE_APPLY_QC_JSON_NAME).read_text())
+    assert STATIC_TABLE_IMPORT_QC_JSON_NAME in apply_qc['artifact_names']
+    assert STATIC_TABLE_APPLY_HISTORY_JSON_NAME in apply_qc['artifact_names']
 
 
 def test_static_table_apply_writes_history(tmp_path: Path) -> None:

@@ -8,10 +8,31 @@ from app.core.state import AppState
 from app.services.refraction_static_artifacts import (
     REFRACTION_STATIC_REGISTERED_ARTIFACT_NAMES,
 )
+from app.services.refraction_static_export_service import (
+    REFRACTION_STATIC_EXPORT_REGISTERED_ARTIFACT_NAMES,
+)
+
+
+_REFRACTION_STATIC_TABLE_APPLY_REGISTERED_ARTIFACT_NAMES = frozenset(
+    {
+        'static_table_apply_request.json',
+        'static_table_import_qc.json',
+        'static_table_apply_solution.npz',
+        'static_table_apply_qc.json',
+        'static_table_apply_trace_shifts.csv',
+        'static_table_apply_history.json',
+        'refraction_static_history.json',
+        'corrected_file.json',
+    }
+)
 
 
 _REGISTERED_STATIC_ARTIFACT_NAMES_BY_KIND = {
     'refraction': REFRACTION_STATIC_REGISTERED_ARTIFACT_NAMES,
+    'refraction_export': REFRACTION_STATIC_EXPORT_REGISTERED_ARTIFACT_NAMES,
+    'refraction_static_table_apply': (
+        _REFRACTION_STATIC_TABLE_APPLY_REGISTERED_ARTIFACT_NAMES
+    ),
 }
 
 

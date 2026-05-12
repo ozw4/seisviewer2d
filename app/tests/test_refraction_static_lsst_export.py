@@ -15,9 +15,11 @@ from app.services.refraction_static_export_types import (
     RefractionStaticExportBundle,
 )
 from app.services.refraction_static_lsst_export import (
+    REFRACTION_LSST_CARDS_TXT_NAME,
     REFRACTION_LSST_CSV_NAME,
     REFRACTION_LSST_FORMAT_NAME,
     REFRACTION_LSST_FORMAT_VERSION,
+    REFRACTION_LSST_PLUS_CARDS_TXT_NAME,
     REFRACTION_LSST_PLUS_COLUMNS,
     REFRACTION_LSST_PLUS_CSV_NAME,
     REFRACTION_LSST_PLUS_FORMAT_NAME,
@@ -26,7 +28,9 @@ from app.services.refraction_static_lsst_export import (
     RefractionStaticLsstExportError,
     format_refraction_lsst_csv,
     format_refraction_lsst_plus_csv,
+    write_refraction_lsst_cards_txt,
     write_refraction_lsst_csv,
+    write_refraction_lsst_plus_cards_txt,
     write_refraction_lsst_plus_csv,
 )
 
@@ -307,6 +311,16 @@ def test_lsst_export_writes_expected_file_name(tmp_path: Path) -> None:
     )
 
 
+def test_lsst_export_writes_registered_card_artifact(tmp_path: Path) -> None:
+    path = tmp_path / REFRACTION_LSST_CARDS_TXT_NAME
+
+    write_refraction_lsst_cards_txt(_basic_bundle(), path)
+
+    assert path.read_text(encoding='utf-8') == format_refraction_lsst_csv(
+        _basic_bundle()
+    )
+
+
 def test_lsst_plus_export_contains_endpoint_metadata() -> None:
     rows, fieldnames = _read_csv_text(format_refraction_lsst_plus_csv(_lsst_plus_bundle()))
 
@@ -433,6 +447,16 @@ def test_lsst_plus_export_writes_expected_file_name(tmp_path: Path) -> None:
     path = tmp_path / REFRACTION_LSST_PLUS_CSV_NAME
 
     write_refraction_lsst_plus_csv(_lsst_plus_source_only_bundle(), path)
+
+    assert path.read_text(encoding='utf-8') == format_refraction_lsst_plus_csv(
+        _lsst_plus_source_only_bundle()
+    )
+
+
+def test_lsst_plus_export_writes_registered_card_artifact(tmp_path: Path) -> None:
+    path = tmp_path / REFRACTION_LSST_PLUS_CARDS_TXT_NAME
+
+    write_refraction_lsst_plus_cards_txt(_lsst_plus_source_only_bundle(), path)
 
     assert path.read_text(encoding='utf-8') == format_refraction_lsst_plus_csv(
         _lsst_plus_source_only_bundle()

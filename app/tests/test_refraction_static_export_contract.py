@@ -17,6 +17,9 @@ from app.api.schemas import (
 )
 from app.main import app
 from app.services.refraction_static_artifacts import (
+    CANONICAL_RECEIVER_STATIC_TABLE_CSV_NAME,
+    CANONICAL_SOURCE_RECEIVER_STATIC_TABLE_CSV_NAME,
+    CANONICAL_SOURCE_STATIC_TABLE_CSV_NAME,
     FIRST_BREAK_TIME_EXPORT_SIGN_CONVENTION,
     RECEIVER_STATIC_TABLE_CSV_NAME,
     REFRACTION_FIRST_BREAK_TIME_EXPORT_CSV_NAME,
@@ -31,12 +34,15 @@ from app.services.refraction_static_export_service import (
     REFRACTION_STATIC_EXPORT_JOB_META_JSON_NAME,
     REFRACTION_STATIC_EXPORT_REQUEST_JSON_NAME,
     run_refraction_static_export_job,
+    write_refraction_static_requested_export_artifacts,
 )
 from app.services.refraction_static_export_units import (
     REFRACTION_STATIC_REPO_SIGN_CONVENTION,
 )
 from app.services.refraction_static_lsst_export import (
+    REFRACTION_LSST_CARDS_TXT_NAME,
     REFRACTION_LSST_CSV_NAME,
+    REFRACTION_LSST_PLUS_CARDS_TXT_NAME,
     REFRACTION_LSST_PLUS_CSV_NAME,
 )
 from app.tests._refraction_static_synthetic import synthetic_refraction_apply_request
@@ -287,7 +293,24 @@ def test_run_refraction_static_export_job_writes_requested_format_metadata(
         REFRACTION_STATIC_DEFAULT_EXPORT_FORMATS
     )
     assert meta['export']['sign_convention'] == REFRACTION_STATIC_REPO_SIGN_CONVENTION
-    assert meta['generated_artifacts'] == [REFRACTION_TIME_TERM_SPREADSHEET_CSV_NAME]
+    assert meta['generated_artifacts'] == [
+        CANONICAL_SOURCE_STATIC_TABLE_CSV_NAME,
+        CANONICAL_RECEIVER_STATIC_TABLE_CSV_NAME,
+        CANONICAL_SOURCE_RECEIVER_STATIC_TABLE_CSV_NAME,
+        REFRACTION_TIME_TERM_SPREADSHEET_CSV_NAME,
+    ]
+    canonical_rows = _read_csv_text(
+        (export_job_dir / CANONICAL_SOURCE_RECEIVER_STATIC_TABLE_CSV_NAME).read_text(
+            encoding='utf-8',
+        )
+    )
+    assert [row['endpoint_kind'] for row in canonical_rows] == [
+        'source',
+        'receiver',
+    ]
+    assert canonical_rows[0]['format_name'] == 'canonical_static_table'
+    assert canonical_rows[0]['applied_shift_ms'] == '12.5'
+    assert canonical_rows[1]['applied_shift_ms'] == '-3.25'
     spreadsheet_rows = _read_csv_text(
         (export_job_dir / REFRACTION_TIME_TERM_SPREADSHEET_CSV_NAME).read_text(
             encoding='utf-8',
@@ -302,6 +325,52 @@ def test_run_refraction_static_export_job_writes_requested_format_metadata(
     assert spreadsheet_rows[0]['total_applied_shift_ms'] == '12.500000'
     assert spreadsheet_rows[1]['endpoint_key'] == 'receiver:2001'
     assert spreadsheet_rows[1]['total_applied_shift_ms'] == '-3.250000'
+
+
+def test_refraction_apply_lists_requested_lsst_export_artifacts(tmp_path: Path) -> None:
+    job_dir = tmp_path / 'apply-job'
+    job_dir.mkdir()
+    _write_source_artifact_stub(job_dir / SOURCE_STATIC_TABLE_CSV_NAME, SOURCE_STATIC_TABLE_CSV_NAME)
+    _write_source_artifact_stub(
+        job_dir / RECEIVER_STATIC_TABLE_CSV_NAME,
+        RECEIVER_STATIC_TABLE_CSV_NAME,
+    )
+    (job_dir / REFRACTION_STATIC_ARTIFACTS_JSON_NAME).write_text(
+        json.dumps(
+            {
+                'artifact_version': '1.0',
+                'job_kind': 'statics',
+                'statics_kind': 'refraction',
+                'artifacts': [],
+            }
+        ),
+        encoding='utf-8',
+    )
+    req = RefractionStaticExportJobRequest.model_validate(
+        {
+            'source_job_id': 'apply-job',
+            'export': {'enabled': True, 'formats': ['lsst']},
+        }
+    )
+
+    generated = write_refraction_static_requested_export_artifacts(
+        job_dir=job_dir,
+        source_artifacts_dir=job_dir,
+        source_job_id='apply-job',
+        source_file_id='raw-file-id',
+        key1_byte=189,
+        key2_byte=193,
+        requested_formats=('lsst',),
+        export=req.export,
+    )
+
+    assert generated == (REFRACTION_LSST_CARDS_TXT_NAME, REFRACTION_LSST_CSV_NAME)
+    assert (job_dir / REFRACTION_LSST_CARDS_TXT_NAME).is_file()
+    manifest = json.loads(
+        (job_dir / REFRACTION_STATIC_ARTIFACTS_JSON_NAME).read_text(encoding='utf-8')
+    )
+    assert {item['name'] for item in manifest['artifacts']} == set(generated)
+    assert {item['origin'] for item in manifest['artifacts']} == {'export'}
 
 
 def test_run_refraction_static_export_job_time_term_spreadsheet_filters_inactive(
@@ -471,13 +540,30 @@ def test_run_refraction_static_export_job_writes_lsst_artifacts(
     assert lsst_plus_rows[0]['format_name'] == 'lsst_plus'
     assert lsst_plus_rows[0]['source_field_shift_ms'] == '1.500000'
     assert lsst_plus_rows[1]['receiver_field_shift_ms'] == '-0.500000'
+    assert (export_job_dir / REFRACTION_LSST_CARDS_TXT_NAME).is_file()
+    assert (export_job_dir / REFRACTION_LSST_PLUS_CARDS_TXT_NAME).is_file()
+    files = client.get(f'/statics/job/{export_job_id}/files')
+    assert files.status_code == 200
+    listed_names = {item['name'] for item in files.json()['files']}
+    assert REFRACTION_LSST_CARDS_TXT_NAME in listed_names
+    assert REFRACTION_LSST_PLUS_CARDS_TXT_NAME in listed_names
+    download = client.get(
+        f'/statics/job/{export_job_id}/download',
+        params={'name': REFRACTION_LSST_CARDS_TXT_NAME},
+    )
+    assert download.status_code == 200
+    assert download.text == (
+        export_job_dir / REFRACTION_LSST_CARDS_TXT_NAME
+    ).read_text(encoding='utf-8')
     meta = json.loads(
         (export_job_dir / REFRACTION_STATIC_EXPORT_JOB_META_JSON_NAME).read_text(
             encoding='utf-8',
         )
     )
     assert meta['generated_artifacts'] == [
+        REFRACTION_LSST_CARDS_TXT_NAME,
         REFRACTION_LSST_CSV_NAME,
+        REFRACTION_LSST_PLUS_CARDS_TXT_NAME,
         REFRACTION_LSST_PLUS_CSV_NAME,
     ]
 

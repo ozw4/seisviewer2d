@@ -53,6 +53,7 @@ from app.services.trace_store_registration import register_trace_store, trace_st
 from app.utils.segy_scalars import apply_segy_scalar, normalize_elevation_unit
 
 STATIC_TABLE_APPLY_REQUEST_JSON_NAME = 'static_table_apply_request.json'
+STATIC_TABLE_IMPORT_QC_JSON_NAME = 'static_table_import_qc.json'
 STATIC_TABLE_APPLY_SOLUTION_NPZ_NAME = 'static_table_apply_solution.npz'
 STATIC_TABLE_APPLY_QC_JSON_NAME = 'static_table_apply_qc.json'
 STATIC_TABLE_APPLY_TRACE_SHIFTS_CSV_NAME = 'static_table_apply_trace_shifts.csv'
@@ -1171,6 +1172,39 @@ def _write_static_table_apply_qc(
     return qc
 
 
+def _write_static_table_import_qc(
+    *,
+    path: Path,
+    job_id: str,
+    req: RefractionStaticTableApplyRequest,
+    imported: RefractionStaticTableImportResult,
+    table_paths: _ResolvedTablePaths,
+    table_lineage: _StaticTableApplyLineage,
+    validation_status: str,
+) -> dict[str, Any]:
+    payload = {
+        'schema_version': 1,
+        'artifact_kind': 'static_table_import_qc',
+        'statics_kind': 'refraction_static_table_apply',
+        'job_id': job_id,
+        'source_file_id': req.file_id,
+        'validation_status': validation_status,
+        'sign_convention': imported.sign_convention,
+        'import_schema_name': 'canonical_static_table',
+        'import_schema_version': int(imported.schema_version),
+        'n_source_rows': int(imported.n_source_rows),
+        'n_receiver_rows': int(imported.n_receiver_rows),
+        'warnings': list(imported.warnings),
+        'errors': list(imported.errors),
+        'table_artifact_ids': dict(table_paths.artifact_ids),
+        'source_table_digest': table_lineage.source_table_digest,
+        'receiver_table_digest': table_lineage.receiver_table_digest,
+        'combined_table_digest': table_lineage.combined_table_digest,
+    }
+    _write_json_atomic(path, payload)
+    return payload
+
+
 def _write_static_table_apply_artifacts(
     *,
     job_dir: Path,
@@ -1185,11 +1219,21 @@ def _write_static_table_apply_artifacts(
     validation_status: str,
     corrected_file_id: str | None,
 ) -> tuple[str, ...]:
+    import_qc_path = job_dir / STATIC_TABLE_IMPORT_QC_JSON_NAME
     solution_path = job_dir / STATIC_TABLE_APPLY_SOLUTION_NPZ_NAME
     qc_path = job_dir / STATIC_TABLE_APPLY_QC_JSON_NAME
     csv_path = job_dir / STATIC_TABLE_APPLY_TRACE_SHIFTS_CSV_NAME
     history_path = job_dir / STATIC_TABLE_APPLY_HISTORY_JSON_NAME
     refraction_history_path = job_dir / STATIC_TABLE_APPLY_REFRACTION_HISTORY_JSON_NAME
+    _write_static_table_import_qc(
+        path=import_qc_path,
+        job_id=job_id,
+        req=req,
+        imported=imported,
+        table_paths=table_paths,
+        table_lineage=table_lineage,
+        validation_status=validation_status,
+    )
     _write_npz_atomic(solution_path, _solution_arrays(trace_shift, imported=imported))
     _write_static_table_apply_qc(
         path=qc_path,
@@ -1219,6 +1263,7 @@ def _write_static_table_apply_artifacts(
     )
     _write_json_atomic(refraction_history_path, history)
     return (
+        STATIC_TABLE_IMPORT_QC_JSON_NAME,
         STATIC_TABLE_APPLY_SOLUTION_NPZ_NAME,
         STATIC_TABLE_APPLY_QC_JSON_NAME,
         STATIC_TABLE_APPLY_TRACE_SHIFTS_CSV_NAME,
@@ -1621,6 +1666,7 @@ def _qc_payload(
 ) -> dict[str, Any]:
     shift_ms = trace_shift.trace_shift_s_sorted * 1000.0
     artifact_names = [
+        STATIC_TABLE_IMPORT_QC_JSON_NAME,
         STATIC_TABLE_APPLY_SOLUTION_NPZ_NAME,
         STATIC_TABLE_APPLY_QC_JSON_NAME,
         STATIC_TABLE_APPLY_TRACE_SHIFTS_CSV_NAME,
@@ -2289,5 +2335,6 @@ __all__ = [
     'STATIC_TABLE_APPLY_REQUEST_JSON_NAME',
     'STATIC_TABLE_APPLY_SOLUTION_NPZ_NAME',
     'STATIC_TABLE_APPLY_TRACE_SHIFTS_CSV_NAME',
+    'STATIC_TABLE_IMPORT_QC_JSON_NAME',
     'run_refraction_static_table_apply_job',
 ]

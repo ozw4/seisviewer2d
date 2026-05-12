@@ -19,9 +19,11 @@ from app.services.refraction_static_export_units import (
 )
 
 REFRACTION_LSST_CSV_NAME: Final = 'refraction_lsst.csv'
+REFRACTION_LSST_CARDS_TXT_NAME: Final = 'refraction_lsst_cards.txt'
 REFRACTION_LSST_FORMAT_NAME: Final = 'lsst'
 REFRACTION_LSST_FORMAT_VERSION: Final = 1
 REFRACTION_LSST_PLUS_CSV_NAME: Final = 'refraction_lsst_plus.csv'
+REFRACTION_LSST_PLUS_CARDS_TXT_NAME: Final = 'refraction_lsst_plus_cards.txt'
 REFRACTION_LSST_PLUS_FORMAT_NAME: Final = 'lsst_plus'
 REFRACTION_LSST_PLUS_FORMAT_VERSION: Final = 1
 
@@ -123,6 +125,22 @@ def write_refraction_lsst_csv(
     Path(path).write_text(text, encoding='utf-8')
 
 
+def write_refraction_lsst_cards_txt(
+    bundle: RefractionStaticExportBundle,
+    path: Path,
+    *,
+    fail_on_invalid_static_status: bool = True,
+    include_inactive_endpoints: bool = False,
+) -> None:
+    """Write the registered LSST card artifact with the current formatter."""
+    write_refraction_lsst_csv(
+        bundle,
+        path,
+        fail_on_invalid_static_status=fail_on_invalid_static_status,
+        include_inactive_endpoints=include_inactive_endpoints,
+    )
+
+
 def format_refraction_lsst_plus_csv(
     bundle: RefractionStaticExportBundle,
     *,
@@ -163,6 +181,22 @@ def write_refraction_lsst_plus_csv(
         include_inactive_endpoints=include_inactive_endpoints,
     )
     Path(path).write_text(text, encoding='utf-8')
+
+
+def write_refraction_lsst_plus_cards_txt(
+    bundle: RefractionStaticExportBundle,
+    path: Path,
+    *,
+    fail_on_invalid_static_status: bool = False,
+    include_inactive_endpoints: bool = True,
+) -> None:
+    """Write the registered LSST+ card artifact with the current formatter."""
+    write_refraction_lsst_plus_csv(
+        bundle,
+        path,
+        fail_on_invalid_static_status=fail_on_invalid_static_status,
+        include_inactive_endpoints=include_inactive_endpoints,
+    )
 
 
 def _validate_bundle(bundle: RefractionStaticExportBundle) -> str:
@@ -673,10 +707,12 @@ def _row_label(row: RefractionStaticEndpointExportRow) -> str:
 
 
 __all__ = [
+    'REFRACTION_LSST_CARDS_TXT_NAME',
     'REFRACTION_LSST_CSV_NAME',
     'REFRACTION_LSST_FORMAT_NAME',
     'REFRACTION_LSST_FORMAT_VERSION',
     'REFRACTION_LSST_PLUS_COLUMNS',
+    'REFRACTION_LSST_PLUS_CARDS_TXT_NAME',
     'REFRACTION_LSST_PLUS_CSV_NAME',
     'REFRACTION_LSST_PLUS_FIELD_COLUMNS',
     'REFRACTION_LSST_PLUS_FORMAT_NAME',
@@ -686,6 +722,8 @@ __all__ = [
     'RefractionStaticLsstExportError',
     'format_refraction_lsst_csv',
     'format_refraction_lsst_plus_csv',
+    'write_refraction_lsst_cards_txt',
     'write_refraction_lsst_csv',
+    'write_refraction_lsst_plus_cards_txt',
     'write_refraction_lsst_plus_csv',
 ]

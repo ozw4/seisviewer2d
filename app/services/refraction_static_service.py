@@ -33,6 +33,7 @@ from app.services.refraction_static_datum import (
 )
 from app.services.refraction_static_export_service import (
     resolve_refraction_static_export_formats,
+    write_refraction_static_requested_export_artifacts,
 )
 from app.services.refraction_static_field_composition import (
     compose_refraction_endpoint_field_corrections,
@@ -1150,6 +1151,11 @@ def _run_public_multilayer_refraction_static_apply_job(
         ),
         source_job_id=job_id,
     )
+    _write_requested_refraction_export_artifacts(
+        job_id=job_id,
+        req=req,
+        job_dir=job_dir,
+    )
     return _finish_refraction_static_apply_job(
         job_id=job_id,
         req=req,
@@ -1327,6 +1333,11 @@ def _run_refraction_static_apply_job_body(
         ),
         source_job_id=job_id,
     )
+    _write_requested_refraction_export_artifacts(
+        job_id=job_id,
+        req=active_req,
+        job_dir=job_dir,
+    )
     return _finish_refraction_static_apply_job(
         job_id=job_id,
         req=active_req,
@@ -1338,6 +1349,27 @@ def _run_refraction_static_apply_job_body(
 
 def _handle_refraction_static_job_error(_exc: Exception) -> JobFailure:
     return JobFailure(finished_ts=time.time())
+
+
+def _write_requested_refraction_export_artifacts(
+    *,
+    job_id: str,
+    req: RefractionStaticApplyRequest,
+    job_dir: Path,
+) -> None:
+    if not req.export.enabled:
+        return
+    requested_formats = resolve_refraction_static_export_formats(req.export)
+    write_refraction_static_requested_export_artifacts(
+        job_dir=job_dir,
+        source_artifacts_dir=job_dir,
+        source_job_id=job_id,
+        source_file_id=req.file_id,
+        key1_byte=req.key1_byte,
+        key2_byte=req.key2_byte,
+        requested_formats=requested_formats,
+        export=req.export,
+    )
 
 
 def run_refraction_static_apply_job(

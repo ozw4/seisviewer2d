@@ -35,6 +35,12 @@ from app.services.refraction_static_layer_config import (
 from app.services.refraction_static_layer_observations import (
     build_refraction_layer_observation_masks_from_arrays,
 )
+from app.services.refraction_static_lsst_export import (
+    REFRACTION_LSST_CARDS_TXT_NAME,
+    REFRACTION_LSST_CSV_NAME,
+    REFRACTION_LSST_PLUS_CARDS_TXT_NAME,
+    REFRACTION_LSST_PLUS_CSV_NAME,
+)
 from app.services.refraction_static_status import (
     REFRACTION_STATIC_STATUSES,
     classify_refraction_endpoint_static_status,
@@ -74,6 +80,11 @@ SOURCE_STATIC_TABLE_CSV_NAME = 'source_static_table.csv'
 RECEIVER_STATIC_TABLE_CSV_NAME = 'receiver_static_table.csv'
 SOURCE_RECEIVER_STATIC_TABLE_NPZ_NAME = 'source_receiver_static_table.npz'
 REFRACTION_TIME_TERM_SPREADSHEET_CSV_NAME = 'refraction_time_term_spreadsheet.csv'
+CANONICAL_SOURCE_STATIC_TABLE_CSV_NAME = 'canonical_source_static_table.csv'
+CANONICAL_RECEIVER_STATIC_TABLE_CSV_NAME = 'canonical_receiver_static_table.csv'
+CANONICAL_SOURCE_RECEIVER_STATIC_TABLE_CSV_NAME = (
+    'canonical_source_receiver_static_table.csv'
+)
 REFRACTION_STATIC_HISTORY_JSON_NAME = 'refraction_static_history.json'
 REFRACTION_REFRACTOR_VELOCITY_CELLS_CSV_NAME = (
     'refraction_refractor_velocity_cells.csv'
@@ -383,6 +394,51 @@ _ALL_REFRACTOR_CELL_VELOCITY_ARTIFACTS: tuple[dict[str, str | bool], ...] = (
     + _cell_velocity_artifact_entries_for_layer('vsub_t3')
 )
 
+_M5_EXPORT_ARTIFACTS: tuple[dict[str, str | bool], ...] = (
+    {
+        'name': REFRACTION_LSST_CARDS_TXT_NAME,
+        'kind': 'txt',
+        'required': True,
+        'description': 'Registered M5 LSST card export',
+    },
+    {
+        'name': REFRACTION_LSST_PLUS_CARDS_TXT_NAME,
+        'kind': 'txt',
+        'required': True,
+        'description': 'Registered M5 LSST+ card export',
+    },
+    {
+        'name': REFRACTION_LSST_CSV_NAME,
+        'kind': 'csv',
+        'required': True,
+        'description': 'M5 LSST endpoint export',
+    },
+    {
+        'name': REFRACTION_LSST_PLUS_CSV_NAME,
+        'kind': 'csv',
+        'required': True,
+        'description': 'M5 LSST+ endpoint export',
+    },
+    {
+        'name': CANONICAL_SOURCE_STATIC_TABLE_CSV_NAME,
+        'kind': 'csv',
+        'required': True,
+        'description': 'Canonical source static table export',
+    },
+    {
+        'name': CANONICAL_RECEIVER_STATIC_TABLE_CSV_NAME,
+        'kind': 'csv',
+        'required': True,
+        'description': 'Canonical receiver static table export',
+    },
+    {
+        'name': CANONICAL_SOURCE_RECEIVER_STATIC_TABLE_CSV_NAME,
+        'kind': 'csv',
+        'required': True,
+        'description': 'Canonical combined source/receiver static table export',
+    },
+)
+
 REFRACTION_STATIC_REGISTERED_ARTIFACT_NAMES = frozenset(
     str(item['name'])
     for item in (
@@ -390,6 +446,7 @@ REFRACTION_STATIC_REGISTERED_ARTIFACT_NAMES = frozenset(
         + _UPSTREAM_ARTIFACTS
         + _T1LSST_1LAYER_ARTIFACTS
         + _ALL_REFRACTOR_CELL_VELOCITY_ARTIFACTS
+        + _M5_EXPORT_ARTIFACTS
     )
 ) | {
     REFRACTION_STATIC_ARTIFACTS_JSON_NAME,
@@ -7657,6 +7714,9 @@ def _assert_strict_json(payload: dict[str, Any], *, artifact_name: str) -> None:
 
 
 __all__ = [
+    'CANONICAL_RECEIVER_STATIC_TABLE_CSV_NAME',
+    'CANONICAL_SOURCE_RECEIVER_STATIC_TABLE_CSV_NAME',
+    'CANONICAL_SOURCE_STATIC_TABLE_CSV_NAME',
     'FIRST_BREAK_RESIDUALS_CSV_NAME',
     'REFRACTION_FIRST_BREAK_TIME_EXPORT_CSV_NAME',
     'NEAR_SURFACE_MODEL_CSV_NAME',
