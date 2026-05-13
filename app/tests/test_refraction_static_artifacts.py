@@ -672,8 +672,12 @@ def test_write_refraction_static_artifacts_csvs(tmp_path: Path) -> None:
     assert len(first_break_rows) == 3
     assert first_break_rows[0]['source_endpoint_key'] == 's0'
     assert first_break_rows[0]['receiver_endpoint_key'] == 'r0'
-    assert float(first_break_rows[0]['observed_pick_time_ms']) == pytest.approx(50.0)
-    assert float(first_break_rows[0]['modeled_pick_time_ms']) == pytest.approx(49.0)
+    assert float(first_break_rows[0]['observed_first_break_time_ms']) == pytest.approx(
+        50.0
+    )
+    assert float(first_break_rows[0]['modeled_first_break_time_ms']) == pytest.approx(
+        49.0
+    )
     assert float(first_break_rows[0]['residual_ms']) == pytest.approx(1.0)
 
     component_rows = _read_csv(paths.refraction_static_components_csv)
@@ -697,44 +701,36 @@ def test_first_break_time_export_contains_observed_modeled_residual(
     )
 
     assert tuple(fieldnames) == (
-        'schema_version',
-        'trace_index_sorted',
+        'format_name',
+        'format_version',
+        'source_job_id',
+        'observation_index',
+        'sorted_trace_index',
         'source_endpoint_key',
         'receiver_endpoint_key',
-        'source_node_id',
-        'receiver_node_id',
+        'source_id',
+        'receiver_id',
         'offset_m',
-        'midpoint_x_m',
-        'midpoint_y_m',
-        'cell_ix',
-        'cell_iy',
         'layer_kind',
-        'used_for_layer',
-        'observed_pick_time_ms',
-        'modeled_pick_time_ms',
+        'observed_first_break_time_ms',
+        'modeled_first_break_time_ms',
         'residual_ms',
-        'moveout_time_ms',
-        'source_time_term_ms',
-        'receiver_time_term_ms',
-        'velocity_m_s',
-        'rejection_reason',
-        'observation_status',
+        'used_in_solve',
+        'reject_reason',
         'sign_convention',
     )
-    assert rows[0]['schema_version'] == '1'
-    assert rows[0]['trace_index_sorted'] == '0'
-    assert rows[0]['source_node_id'] == '0'
-    assert rows[0]['receiver_node_id'] == '1'
+    assert rows[0]['format_name'] == 'first_break_time'
+    assert rows[0]['format_version'] == '1'
+    assert rows[0]['source_job_id'] == ''
+    assert rows[0]['observation_index'] == '0'
+    assert rows[0]['sorted_trace_index'] == '0'
+    assert rows[0]['source_id'] == '100'
+    assert rows[0]['receiver_id'] == '200'
     assert rows[0]['layer_kind'] == 'v2_t1'
-    assert rows[0]['used_for_layer'] == 'true'
-    assert rows[0]['observation_status'] == 'used'
-    assert float(rows[0]['observed_pick_time_ms']) == pytest.approx(50.0)
-    assert float(rows[0]['modeled_pick_time_ms']) == pytest.approx(49.0)
+    assert rows[0]['used_in_solve'] == 'true'
+    assert float(rows[0]['observed_first_break_time_ms']) == pytest.approx(50.0)
+    assert float(rows[0]['modeled_first_break_time_ms']) == pytest.approx(49.0)
     assert float(rows[0]['residual_ms']) == pytest.approx(1.0)
-    assert float(rows[0]['moveout_time_ms']) == pytest.approx(27.0)
-    assert float(rows[0]['source_time_term_ms']) == pytest.approx(10.0)
-    assert float(rows[0]['receiver_time_term_ms']) == pytest.approx(12.0)
-    assert float(rows[0]['velocity_m_s']) == pytest.approx(2500.0)
     assert rows[0]['sign_convention'] == (
         artifact_module.FIRST_BREAK_TIME_EXPORT_SIGN_CONVENTION
     )
@@ -751,9 +747,8 @@ def test_first_break_time_export_marks_rejected_observations(
 
     rows = _read_csv(paths.refraction_first_break_time_export_csv)
 
-    assert rows[1]['used_for_layer'] == 'false'
-    assert rows[1]['rejection_reason'] == 'robust_outlier'
-    assert rows[1]['observation_status'] == 'rejected'
+    assert rows[1]['used_in_solve'] == 'false'
+    assert rows[1]['reject_reason'] == 'robust_outlier'
 
 
 def test_first_break_time_export_preserves_unassigned_layer_context(
@@ -779,8 +774,8 @@ def test_first_break_time_export_preserves_unassigned_layer_context(
     rows = _read_csv(paths.refraction_first_break_time_export_csv)
 
     assert rows[1]['layer_kind'] == ''
-    assert rows[1]['used_for_layer'] == 'false'
-    assert rows[1]['rejection_reason'] == 'outside_layer_gate'
+    assert rows[1]['used_in_solve'] == 'false'
+    assert rows[1]['reject_reason'] == 'outside_layer_gate'
 
 
 def test_first_break_time_export_residual_matches_solution_npz(
