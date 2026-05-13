@@ -177,9 +177,23 @@
       series: [
         { key: 'weathering_correction', columns: ['weathering_correction_ms'], label: 'Weathering correction' },
         { key: 'elevation_correction', columns: ['elevation_correction_ms'], label: 'Elevation / datum correction' },
-        { key: 'field_shift', columns: ['field_correction_ms'], label: 'Field correction' },
-        { key: 'manual_static_shift', columns: ['manual_static_ms'], label: 'Manual static' },
-        { key: 'total_applied_shift', columns: ['total_applied_shift_ms'], label: 'Final applied static' },
+        {
+          key: 'field_shift',
+          endpointColumns: {
+            source: ['source_field_shift_ms'],
+            receiver: ['receiver_field_shift_ms'],
+          },
+          label: 'Field correction',
+        },
+        { key: 'manual_static_shift', columns: ['manual_static_shift_ms'], label: 'Manual static' },
+        {
+          key: 'total_applied_shift',
+          endpointColumns: {
+            source: ['source_total_with_field_shift_ms'],
+            receiver: ['receiver_total_with_field_shift_ms'],
+          },
+          label: 'Final applied static',
+        },
       ],
     },
     qc_metrics: {
@@ -205,6 +219,12 @@
     'available',
     'success',
     'none',
+  ]);
+
+  const COMPONENT_STATUS_OK = new Set([
+    ...PROFILE_STATUS_OK,
+    'not_enabled',
+    'not_applicable',
   ]);
 
   const STATIC_ENDPOINT_VIEW_KEY = 'static_component_qc_endpoint';
@@ -238,20 +258,33 @@
     {
       key: 'manual',
       label: 'Manual static',
-      columns: ['manual_static_ms'],
+      columns: ['manual_static_shift_ms'],
       statusColumns: ['manual_static_status'],
     },
     {
       key: 'computed_field',
       label: 'Computed field correction',
-      columns: ['computed_field_correction_ms'],
-      statusColumns: ['field_static_status', 'field_status'],
+      endpointColumns: {
+        source: ['source_field_shift_ms'],
+        receiver: ['receiver_field_shift_ms'],
+      },
+      statusEndpointColumns: {
+        source: ['source_field_static_status', 'source_field_status'],
+        receiver: ['receiver_field_static_status', 'receiver_field_status'],
+      },
     },
     {
       key: 'applied_field',
       label: 'Applied field correction',
-      columns: ['applied_field_correction_ms'],
-      statusColumns: ['field_static_status', 'field_status'],
+      endpointColumns: {
+        source: ['source_field_shift_ms'],
+        receiver: ['receiver_field_shift_ms'],
+      },
+      statusEndpointColumns: {
+        source: ['source_field_static_status', 'source_field_status'],
+        receiver: ['receiver_field_static_status', 'receiver_field_status'],
+      },
+      applyToTraceShift: true,
     },
     {
       key: 'total',
@@ -262,7 +295,10 @@
     {
       key: 'total_with_field',
       label: 'Total with computed field shift',
-      columns: ['total_with_field_shift_ms'],
+      endpointColumns: {
+        source: ['source_total_with_field_shift_ms'],
+        receiver: ['receiver_total_with_field_shift_ms'],
+      },
       statusColumns: ['static_status'],
     },
   ];
@@ -271,7 +307,7 @@
     {
       key: 'refraction',
       label: 'Refraction shift',
-      columns: ['refraction_shift_ms'],
+      columns: ['refraction_trace_shift_ms'],
     },
     {
       key: 'weathering',
@@ -286,12 +322,15 @@
     {
       key: 'computed_field',
       label: 'Computed field shift',
-      columns: ['computed_field_shift_ms'],
+      columns: ['trace_field_shift_ms'],
+      statusColumns: ['trace_field_static_status'],
     },
     {
       key: 'applied_field',
       label: 'Applied field shift',
-      columns: ['applied_field_shift_ms'],
+      columns: ['trace_field_shift_ms'],
+      statusColumns: ['trace_field_static_status'],
+      applyToTraceShift: true,
     },
     {
       key: 'manual',
@@ -424,6 +463,15 @@
       return { text };
     }
     return { cell_ix: ix, cell_iy: iy };
+  }
+
+  function selectedCellLabel(cell) {
+    if (!cell) return '-';
+    if (cell.cell_ix !== undefined && cell.cell_iy !== undefined) {
+      const layer = cell.layer_kind ? ` ${layerLabel(cell.layer_kind)}` : '';
+      return `${cell.cell_ix},${cell.cell_iy}${layer}`;
+    }
+    return textOrDash(cell.text);
   }
 
   function textOrDash(value) {
@@ -629,7 +677,7 @@
   }
 
   function profileSeriesRawValue(record, series) {
-    const value = toFiniteNumber(firstDefined(record, series.columns || []));
+    const value = toFiniteNumber(firstDefined(record, columnsForRecord(record, series)));
     if (!Number.isFinite(value)) return NaN;
     return value * (series.scale || 1.0);
   }
@@ -897,13 +945,22 @@
     return 'missing';
   }
 
-  function componentColumns(record, definition) {
-    if (!definition.endpointColumns) return definition.columns || [];
+  function columnsForRecord(record, definition, key = 'columns', endpointKey = 'endpointColumns') {
+    if (!definition[endpointKey]) return definition[key] || [];
     const kind = staticEndpointKind(record);
-    return definition.endpointColumns[kind] || [];
+    return definition[endpointKey][kind] || [];
+  }
+
+  function componentColumns(record, definition) {
+    return columnsForRecord(record, definition);
+  }
+
+  function componentStatusColumns(record, definition) {
+    return columnsForRecord(record, definition, 'statusColumns', 'statusEndpointColumns');
   }
 
   function componentValueMs(record, definition) {
+    if (definition.applyToTraceShift && staticApplyToTraceShift(record) === 'false') return 0.0;
     const value = toFiniteNumber(firstDefined(record, componentColumns(record, definition)));
     if (!Number.isFinite(value)) return NaN;
     return value * (definition.scale || 1.0);
@@ -922,7 +979,7 @@
   }
 
   function statusIsOk(status) {
-    return PROFILE_STATUS_OK.has(normalizedText(status));
+    return COMPONENT_STATUS_OK.has(normalizedText(status));
   }
 
   function buildStaticComponentRows(record, statusRecord, defs, fallbackStatusColumns) {
@@ -938,7 +995,7 @@
         status: componentStatus(
           record,
           statusRecord,
-          definition.statusColumns || fallbackStatusColumns || [],
+          componentStatusColumns(record, definition) || fallbackStatusColumns || [],
           fallbackStatusColumns || ['static_status'],
         ),
       };
@@ -2015,7 +2072,7 @@
       ['Cells', `${layerRecords.length}`],
       ['Plotted values', `${plottedValues}`],
       ['Status counts', statusSummary],
-      ['Selected cell', state.selectedCell ? textOrDash(state.selectedCell) : '-'],
+      ['Selected cell', selectedCellLabel(state.selectedCell)],
     ]));
 
     const downsamplingNote = document.createElement('p');
@@ -2281,7 +2338,7 @@
     content.appendChild(createKv([
       ['Endpoint kind', state.selectedEndpointKind],
       ['Endpoint', state.selectedEndpoint],
-      ['Cell', state.selectedCell ? textOrDash(state.selectedCell) : '-'],
+      ['Cell', selectedCellLabel(state.selectedCell)],
       ['Layer', state.selectedLayerKind],
     ]));
   }

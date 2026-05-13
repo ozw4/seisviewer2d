@@ -769,9 +769,11 @@ _STATIC_COMPONENT_QC_TRACE_COLUMNS = (
     'trace_index_sorted',
     'source_endpoint_key',
     'receiver_endpoint_key',
+    'refraction_trace_shift_ms',
     'refraction_shift_ms',
     'weathering_shift_ms',
     'datum_shift_ms',
+    'trace_field_shift_ms',
     'field_shift_ms',
     'computed_field_shift_ms',
     'applied_field_shift_ms',
@@ -791,13 +793,23 @@ _STATIC_COMPONENT_QC_ENDPOINT_COLUMNS = (
     'weathering_correction_ms',
     'elevation_correction_ms',
     'source_depth_correction_ms',
+    'source_depth_status',
     'uphole_correction_ms',
+    'uphole_status',
+    'manual_static_shift_ms',
     'manual_static_ms',
+    'manual_static_status',
+    'source_field_shift_ms',
+    'source_field_static_status',
+    'receiver_field_shift_ms',
+    'receiver_field_static_status',
     'field_correction_ms',
     'computed_field_correction_ms',
     'applied_field_correction_ms',
     'total_static_ms',
     'total_applied_shift_ms',
+    'source_total_with_field_shift_ms',
+    'receiver_total_with_field_shift_ms',
     'total_with_field_shift_ms',
     'apply_to_trace_shift',
     'static_status',
@@ -1160,10 +1172,15 @@ _LINE_PROFILE_QC_COLUMNS = (
     'final_refractor_elevation_m',
     'weathering_correction_ms',
     'elevation_correction_ms',
+    'source_field_shift_ms',
+    'receiver_field_shift_ms',
     'field_correction_ms',
+    'manual_static_shift_ms',
     'manual_static_ms',
     'total_static_ms',
     'total_applied_shift_ms',
+    'source_total_with_field_shift_ms',
+    'receiver_total_with_field_shift_ms',
     'static_status',
     'solution_status',
 )
@@ -3219,6 +3236,10 @@ def build_refraction_static_component_qc_arrays(
     source_field_status = _source_field_static_status_array(r)
     receiver_field_shift_s = _receiver_field_shift_s_array(r)
     receiver_field_status = _receiver_field_static_status_array(r)
+    source_depth_status = _source_depth_status_array(r)
+    source_uphole_status = _source_uphole_status_array(r)
+    source_manual_status = _source_manual_static_status_array(r)
+    receiver_manual_status = _receiver_manual_static_status_array(r)
     source_total_with_field_s = _total_with_field_shift_s(
         refraction_shift_s=r.source_refraction_shift_s,
         field_shift_s=source_field_shift_s,
@@ -3285,10 +3306,34 @@ def build_refraction_static_component_qc_arrays(
             np.full(receiver_count, np.nan, dtype=np.float64),
         )
     )
+    endpoint_source_depth_status = _string_array(
+        np.concatenate(
+            (
+                source_depth_status,
+                np.full(
+                    receiver_count,
+                    _FIELD_NOT_APPLICABLE_STATUS,
+                    dtype='<U48',
+                ),
+            )
+        )
+    )
     endpoint_uphole_correction_s = np.concatenate(
         (
             _source_uphole_shift_s_array(r),
             np.full(receiver_count, np.nan, dtype=np.float64),
+        )
+    )
+    endpoint_uphole_status = _string_array(
+        np.concatenate(
+            (
+                source_uphole_status,
+                np.full(
+                    receiver_count,
+                    _FIELD_NOT_APPLICABLE_STATUS,
+                    dtype='<U48',
+                ),
+            )
         )
     )
     endpoint_manual_static_s = np.concatenate(
@@ -3297,8 +3342,47 @@ def build_refraction_static_component_qc_arrays(
             _receiver_manual_static_shift_s_array(r),
         )
     )
+    endpoint_manual_static_status = _string_array(
+        np.concatenate((source_manual_status, receiver_manual_status))
+    )
     endpoint_field_correction_s = np.concatenate(
         (source_field_shift_s, receiver_field_shift_s)
+    )
+    endpoint_source_field_shift_s = np.concatenate(
+        (
+            source_field_shift_s,
+            np.full(receiver_count, np.nan, dtype=np.float64),
+        )
+    )
+    endpoint_receiver_field_shift_s = np.concatenate(
+        (
+            np.full(source_count, np.nan, dtype=np.float64),
+            receiver_field_shift_s,
+        )
+    )
+    endpoint_source_field_static_status = _string_array(
+        np.concatenate(
+            (
+                source_field_status,
+                np.full(
+                    receiver_count,
+                    _FIELD_NOT_APPLICABLE_STATUS,
+                    dtype='<U48',
+                ),
+            )
+        )
+    )
+    endpoint_receiver_field_static_status = _string_array(
+        np.concatenate(
+            (
+                np.full(
+                    source_count,
+                    _FIELD_NOT_APPLICABLE_STATUS,
+                    dtype='<U48',
+                ),
+                receiver_field_status,
+            )
+        )
     )
     endpoint_applied_field_correction_s = np.concatenate(
         (source_applied_field_s, receiver_applied_field_s)
@@ -3311,6 +3395,18 @@ def build_refraction_static_component_qc_arrays(
     )
     endpoint_total_with_field_shift_s = np.concatenate(
         (source_total_with_field_s, receiver_total_with_field_s)
+    )
+    endpoint_source_total_with_field_shift_s = np.concatenate(
+        (
+            source_total_with_field_s,
+            np.full(receiver_count, np.nan, dtype=np.float64),
+        )
+    )
+    endpoint_receiver_total_with_field_shift_s = np.concatenate(
+        (
+            np.full(source_count, np.nan, dtype=np.float64),
+            receiver_total_with_field_s,
+        )
     )
     endpoint_static_status = _string_array(
         np.concatenate(
@@ -3334,6 +3430,7 @@ def build_refraction_static_component_qc_arrays(
         ),
         'datum_shift_s': datum_shift_s_sorted,
         'field_shift_s': trace_field_shift_s,
+        'trace_field_shift_s': trace_field_shift_s,
         'computed_field_shift_s': trace_field_shift_s,
         'applied_field_shift_s': applied_field_shift_s,
         'manual_static_shift_s': manual_static_shift_s_sorted,
@@ -3361,14 +3458,27 @@ def build_refraction_static_component_qc_arrays(
             endpoint_source_depth_correction_s,
             dtype=np.float64,
         ),
+        'endpoint_source_depth_status': endpoint_source_depth_status,
         'endpoint_uphole_correction_s': np.ascontiguousarray(
             endpoint_uphole_correction_s,
             dtype=np.float64,
         ),
+        'endpoint_uphole_status': endpoint_uphole_status,
         'endpoint_manual_static_s': np.ascontiguousarray(
             endpoint_manual_static_s,
             dtype=np.float64,
         ),
+        'endpoint_manual_static_status': endpoint_manual_static_status,
+        'endpoint_source_field_shift_s': np.ascontiguousarray(
+            endpoint_source_field_shift_s,
+            dtype=np.float64,
+        ),
+        'endpoint_source_field_static_status': endpoint_source_field_static_status,
+        'endpoint_receiver_field_shift_s': np.ascontiguousarray(
+            endpoint_receiver_field_shift_s,
+            dtype=np.float64,
+        ),
+        'endpoint_receiver_field_static_status': endpoint_receiver_field_static_status,
         'endpoint_field_correction_s': np.ascontiguousarray(
             endpoint_field_correction_s,
             dtype=np.float64,
@@ -3391,6 +3501,14 @@ def build_refraction_static_component_qc_arrays(
         ),
         'endpoint_total_with_field_shift_s': np.ascontiguousarray(
             endpoint_total_with_field_shift_s,
+            dtype=np.float64,
+        ),
+        'endpoint_source_total_with_field_shift_s': np.ascontiguousarray(
+            endpoint_source_total_with_field_shift_s,
+            dtype=np.float64,
+        ),
+        'endpoint_receiver_total_with_field_shift_s': np.ascontiguousarray(
+            endpoint_receiver_total_with_field_shift_s,
             dtype=np.float64,
         ),
         'endpoint_apply_to_trace_shift': np.full(
@@ -3421,9 +3539,11 @@ def build_refraction_static_component_qc_payload(
             'row_count': int(arrays['trace_index_sorted'].shape[0]),
             'component_summary_ms': _component_qc_stats_ms(
                 {
+                    'refraction_trace_shift_ms': arrays['refraction_shift_s'],
                     'refraction_shift_ms': arrays['refraction_shift_s'],
                     'weathering_shift_ms': arrays['weathering_shift_s'],
                     'datum_shift_ms': arrays['datum_shift_s'],
+                    'trace_field_shift_ms': arrays['trace_field_shift_s'],
                     'field_shift_ms': arrays['field_shift_s'],
                     'computed_field_shift_ms': arrays['computed_field_shift_s'],
                     'applied_field_shift_ms': arrays['applied_field_shift_s'],
@@ -3450,7 +3570,14 @@ def build_refraction_static_component_qc_payload(
                         'endpoint_source_depth_correction_s'
                     ],
                     'uphole_correction_ms': arrays['endpoint_uphole_correction_s'],
+                    'manual_static_shift_ms': arrays['endpoint_manual_static_s'],
                     'manual_static_ms': arrays['endpoint_manual_static_s'],
+                    'source_field_shift_ms': arrays[
+                        'endpoint_source_field_shift_s'
+                    ],
+                    'receiver_field_shift_ms': arrays[
+                        'endpoint_receiver_field_shift_s'
+                    ],
                     'field_correction_ms': arrays['endpoint_field_correction_s'],
                     'computed_field_correction_ms': arrays[
                         'endpoint_computed_field_correction_s'
@@ -3461,6 +3588,12 @@ def build_refraction_static_component_qc_payload(
                     'total_static_ms': arrays['endpoint_total_static_s'],
                     'total_applied_shift_ms': arrays[
                         'endpoint_total_applied_shift_s'
+                    ],
+                    'source_total_with_field_shift_ms': arrays[
+                        'endpoint_source_total_with_field_shift_s'
+                    ],
+                    'receiver_total_with_field_shift_ms': arrays[
+                        'endpoint_receiver_total_with_field_shift_s'
                     ],
                     'total_with_field_shift_ms': arrays[
                         'endpoint_total_with_field_shift_s'
@@ -5658,9 +5791,15 @@ def _static_component_qc_trace_rows(
                 'trace_index_sorted': int(arrays['trace_index_sorted'][index]),
                 'source_endpoint_key': str(arrays['source_endpoint_key'][index]),
                 'receiver_endpoint_key': str(arrays['receiver_endpoint_key'][index]),
+                'refraction_trace_shift_ms': _csv_ms(
+                    arrays['refraction_shift_s'][index]
+                ),
                 'refraction_shift_ms': _csv_ms(arrays['refraction_shift_s'][index]),
                 'weathering_shift_ms': _csv_ms(arrays['weathering_shift_s'][index]),
                 'datum_shift_ms': _csv_ms(arrays['datum_shift_s'][index]),
+                'trace_field_shift_ms': _csv_ms(
+                    arrays['trace_field_shift_s'][index]
+                ),
                 'field_shift_ms': _csv_ms(arrays['field_shift_s'][index]),
                 'computed_field_shift_ms': _csv_ms(
                     arrays['computed_field_shift_s'][index]
@@ -5710,11 +5849,33 @@ def _static_component_qc_endpoint_rows(
                 'source_depth_correction_ms': _csv_ms(
                     arrays['endpoint_source_depth_correction_s'][index]
                 ),
+                'source_depth_status': str(
+                    arrays['endpoint_source_depth_status'][index]
+                ),
                 'uphole_correction_ms': _csv_ms(
                     arrays['endpoint_uphole_correction_s'][index]
                 ),
+                'uphole_status': str(arrays['endpoint_uphole_status'][index]),
+                'manual_static_shift_ms': _csv_ms(
+                    arrays['endpoint_manual_static_s'][index]
+                ),
                 'manual_static_ms': _csv_ms(
                     arrays['endpoint_manual_static_s'][index]
+                ),
+                'manual_static_status': str(
+                    arrays['endpoint_manual_static_status'][index]
+                ),
+                'source_field_shift_ms': _csv_ms(
+                    arrays['endpoint_source_field_shift_s'][index]
+                ),
+                'source_field_static_status': str(
+                    arrays['endpoint_source_field_static_status'][index]
+                ),
+                'receiver_field_shift_ms': _csv_ms(
+                    arrays['endpoint_receiver_field_shift_s'][index]
+                ),
+                'receiver_field_static_status': str(
+                    arrays['endpoint_receiver_field_static_status'][index]
                 ),
                 'field_correction_ms': _csv_ms(
                     arrays['endpoint_field_correction_s'][index]
@@ -5728,6 +5889,12 @@ def _static_component_qc_endpoint_rows(
                 'total_static_ms': _csv_ms(arrays['endpoint_total_static_s'][index]),
                 'total_applied_shift_ms': _csv_ms(
                     arrays['endpoint_total_applied_shift_s'][index]
+                ),
+                'source_total_with_field_shift_ms': _csv_ms(
+                    arrays['endpoint_source_total_with_field_shift_s'][index]
+                ),
+                'receiver_total_with_field_shift_ms': _csv_ms(
+                    arrays['endpoint_receiver_total_with_field_shift_s'][index]
                 ),
                 'total_with_field_shift_ms': _csv_ms(
                     arrays['endpoint_total_with_field_shift_s'][index]
@@ -8032,6 +8199,17 @@ def _line_profile_endpoint_arrays(
         field_correction_s = _source_field_shift_s_array(result)
         manual_static_s = _source_manual_static_shift_s_array(result)
         total_static_s = _float_array(result.source_refraction_shift_s)
+        source_field_shift_s = field_correction_s
+        receiver_field_shift_s = np.full_like(field_correction_s, np.nan)
+        source_total_with_field_shift_s = _total_with_field_shift_s(
+            refraction_shift_s=result.source_refraction_shift_s,
+            field_shift_s=_source_field_shift_s_array(result),
+            field_status=_source_field_static_status_array(result),
+        )
+        receiver_total_with_field_shift_s = np.full_like(
+            source_total_with_field_shift_s,
+            np.nan,
+        )
         static_status = _source_static_status_array(result)
         kind = 'source'
     elif endpoint == 'receiver':
@@ -8081,6 +8259,14 @@ def _line_profile_endpoint_arrays(
         field_correction_s = _receiver_field_shift_s_array(result)
         manual_static_s = _receiver_manual_static_shift_s_array(result)
         total_static_s = _float_array(result.receiver_refraction_shift_s)
+        source_field_shift_s = np.full_like(field_correction_s, np.nan)
+        receiver_field_shift_s = field_correction_s
+        source_total_with_field_shift_s = np.full_like(field_correction_s, np.nan)
+        receiver_total_with_field_shift_s = _total_with_field_shift_s(
+            refraction_shift_s=result.receiver_refraction_shift_s,
+            field_shift_s=_receiver_field_shift_s_array(result),
+            field_status=_receiver_field_static_status_array(result),
+        )
         static_status = _receiver_static_status_array(result)
         kind = 'receiver'
     else:
@@ -8148,10 +8334,21 @@ def _line_profile_endpoint_arrays(
         'elevation_correction_ms': _line_profile_seconds_to_ms(
             elevation_correction_s
         ),
+        'source_field_shift_ms': _line_profile_seconds_to_ms(source_field_shift_s),
+        'receiver_field_shift_ms': _line_profile_seconds_to_ms(
+            receiver_field_shift_s
+        ),
         'field_correction_ms': _line_profile_seconds_to_ms(field_correction_s),
+        'manual_static_shift_ms': _line_profile_seconds_to_ms(manual_static_s),
         'manual_static_ms': _line_profile_seconds_to_ms(manual_static_s),
         'total_static_ms': _line_profile_seconds_to_ms(total_static_s),
         'total_applied_shift_ms': _line_profile_seconds_to_ms(total_static_s),
+        'source_total_with_field_shift_ms': _line_profile_seconds_to_ms(
+            source_total_with_field_shift_s
+        ),
+        'receiver_total_with_field_shift_ms': _line_profile_seconds_to_ms(
+            receiver_total_with_field_shift_s
+        ),
         'static_status': _string_array(static_status),
         'solution_status': _line_profile_node_string_values(
             node_id,
