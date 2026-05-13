@@ -13,7 +13,7 @@
     {
       id: 'first_break_residuals',
       include: 'first_break',
-      viewKeys: ['first_break_residual', 'first_break_fit'],
+      viewKeys: ['first_break_fit', 'first_break_residual'],
       unavailableKeys: ['first_break'],
     },
     {
@@ -54,7 +54,9 @@
     selectedJobId: '',
     qcBundle: null,
     selectedView: 'summary',
-    selectedLayerKind: 'v2_t1',
+    selectedLayerKind: 'all',
+    firstBreakXAxis: 'offset',
+    showRejectedFirstBreaks: true,
     selectedEndpointKind: 'source',
     selectedCell: null,
     selectedEndpoint: '',
@@ -65,6 +67,34 @@
 
   let dom = null;
   let requestSerial = 0;
+
+  const LAYER_LABELS = {
+    v2_t1: 'V2/T1',
+    v3_t2: 'V3/T2',
+    vsub_t3: 'Vsub/T3',
+  };
+
+  const LAYER_COLORS = {
+    v2_t1: '#2563eb',
+    v3_t2: '#059669',
+    vsub_t3: '#c2410c',
+    unknown: '#64748b',
+  };
+
+  const FIRST_BREAK_X_AXES = {
+    offset: {
+      label: 'Offset (m)',
+      columns: ['offset_m'],
+    },
+    inline: {
+      label: 'Inline distance (m)',
+      columns: ['inline_m', 'inline_distance_m'],
+    },
+    trace: {
+      label: 'Trace index',
+      columns: ['trace_index_sorted', 'sorted_trace_index', 'observation_index'],
+    },
+  };
 
   function readRecentJobs() {
     try {
@@ -112,6 +142,101 @@
     if (value === null || value === undefined || value === '') return '-';
     if (typeof value === 'object') return JSON.stringify(value);
     return String(value);
+  }
+
+  function firstDefined(record, columns) {
+    if (!record || typeof record !== 'object') return undefined;
+    for (const column of columns) {
+      const value = record[column];
+      if (value !== null && value !== undefined && value !== '') return value;
+    }
+    return undefined;
+  }
+
+  function toFiniteNumber(value) {
+    if (typeof value === 'number') return Number.isFinite(value) ? value : NaN;
+    if (typeof value !== 'string') return NaN;
+    const parsed = Number.parseFloat(value.trim());
+    return Number.isFinite(parsed) ? parsed : NaN;
+  }
+
+  function normalizedText(value) {
+    return String(value ?? '').trim().toLowerCase();
+  }
+
+  function formatNumber(value, digits = 3) {
+    if (!Number.isFinite(value)) return '-';
+    return value.toFixed(digits);
+  }
+
+  function layerLabel(layerKind) {
+    return LAYER_LABELS[layerKind] || (layerKind ? String(layerKind) : 'Unlayered');
+  }
+
+  function firstBreakLayerMatches(record) {
+    if (state.selectedLayerKind === 'all') return true;
+    const layerKind = String(firstDefined(record, ['layer_kind']) || '').trim();
+    return !layerKind || layerKind === state.selectedLayerKind;
+  }
+
+  function isRejectedFirstBreakRecord(record) {
+    const usedValue = firstDefined(record, ['used_in_solve', 'used_for_inversion']);
+    const usedText = normalizedText(usedValue);
+    if (usedText === 'false' || usedText === '0' || usedText === 'no') return true;
+    if (usedValue === false) return true;
+
+    const statusText = normalizedText(firstDefined(record, ['status']));
+    if (statusText === 'rejected' || statusText === 'unused') return true;
+
+    const rejectText = normalizedText(firstDefined(record, ['reject_reason', 'rejection_reason']));
+    return Boolean(rejectText && rejectText !== 'ok' && rejectText !== 'none' && rejectText !== 'nan');
+  }
+
+  function firstBreakXAxisDefinition() {
+    return FIRST_BREAK_X_AXES[state.firstBreakXAxis] || FIRST_BREAK_X_AXES.offset;
+  }
+
+  function normalizeFirstBreakRecord(record) {
+    const xAxis = firstBreakXAxisDefinition();
+    const x = toFiniteNumber(firstDefined(record, xAxis.columns));
+    const observedS = toFiniteNumber(firstDefined(record, [
+      'observed_first_break_time_s',
+      'observed_time_s',
+    ]));
+    const modeledS = toFiniteNumber(firstDefined(record, [
+      'modeled_first_break_time_s',
+      'modeled_time_s',
+    ]));
+    if (!Number.isFinite(x) || !Number.isFinite(observedS) || !Number.isFinite(modeledS)) {
+      return null;
+    }
+
+    const layerKind = String(firstDefined(record, ['layer_kind']) || '').trim() || 'unknown';
+    const rejected = isRejectedFirstBreakRecord(record);
+    return {
+      x,
+      observedMs: observedS * 1000.0,
+      modeledMs: modeledS * 1000.0,
+      residualMs: (observedS - modeledS) * 1000.0,
+      layerKind,
+      status: rejected ? 'rejected' : 'used',
+      opacity: rejected ? 0.42 : 0.9,
+      traceIndex: textOrDash(firstDefined(record, ['trace_index_sorted', 'sorted_trace_index'])),
+      source: textOrDash(firstDefined(record, ['source_endpoint_key', 'source_id'])),
+      receiver: textOrDash(firstDefined(record, ['receiver_endpoint_key', 'receiver_id'])),
+    };
+  }
+
+  function filteredFirstBreakPoints(view) {
+    const records = Array.isArray(view.records) ? view.records : [];
+    const points = [];
+    for (const record of records) {
+      if (!firstBreakLayerMatches(record)) continue;
+      if (!state.showRejectedFirstBreaks && isRejectedFirstBreakRecord(record)) continue;
+      const point = normalizeFirstBreakRecord(record);
+      if (point) points.push(point);
+    }
+    return points;
   }
 
   function clearNode(node) {
@@ -181,6 +306,23 @@
     return viewDef.unavailableKeys.some((key) => unavailable.includes(key));
   }
 
+  function findDownsampling(bundle, key, view) {
+    const downsampling = bundle && typeof bundle.downsampling === 'object' && bundle.downsampling
+      ? bundle.downsampling
+      : {};
+    const entry = downsampling[key];
+    if (entry && typeof entry === 'object') return entry;
+    if (view && typeof view === 'object') {
+      return {
+        total_points: view.total_points,
+        returned_points: view.returned_points,
+        downsampled: view.downsampled,
+        method: view.downsampling_method,
+      };
+    }
+    return null;
+  }
+
   function renderSummary(content, bundle) {
     const summary = bundle && typeof bundle.summary === 'object' && bundle.summary ? bundle.summary : {};
     content.appendChild(createKv([
@@ -216,6 +358,203 @@
       ['Downsampled', view.downsampled ? 'yes' : 'no'],
       ['Columns', Array.isArray(view.columns) ? view.columns.join(', ') : ''],
     ]));
+    if (Array.isArray(view.records) && view.records.length && Array.isArray(view.columns) && view.columns.length) {
+      content.appendChild(createTable(view));
+    }
+  }
+
+  function createFirstBreakPlot(testId) {
+    const plot = document.createElement('div');
+    plot.className = 'refraction-qc-plot';
+    plot.dataset.testid = testId;
+    return plot;
+  }
+
+  function plotHoverText(point) {
+    return [
+      `Layer: ${layerLabel(point.layerKind)}`,
+      `Status: ${point.status}`,
+      `Trace: ${point.traceIndex}`,
+      `Source: ${point.source}`,
+      `Receiver: ${point.receiver}`,
+      `Observed: ${formatNumber(point.observedMs, 2)} ms`,
+      `Modeled: ${formatNumber(point.modeledMs, 2)} ms`,
+      `Residual: ${formatNumber(point.residualMs, 2)} ms`,
+    ].join('<br>');
+  }
+
+  function renderFirstBreakPlots(content, bundle, viewDef) {
+    const found = findViewData(bundle, viewDef);
+    if (!found) {
+      const missing = document.createElement('p');
+      missing.className = 'refraction-qc-placeholder';
+      missing.textContent = isUnavailable(bundle, viewDef)
+        ? 'This view is unavailable from the loaded QC bundle artifacts.'
+        : 'No sampled first-break fit records are present for this view.';
+      content.appendChild(missing);
+      return;
+    }
+
+    const { key, view } = found;
+    const points = filteredFirstBreakPoints(view);
+    const downsampling = findDownsampling(bundle, key, view);
+    const downsamplingText = downsampling
+      ? `${downsampling.returned_points || 0} of ${downsampling.total_points || 0}; ${downsampling.downsampled ? 'downsampled' : 'not downsampled'}${downsampling.method ? ` (${downsampling.method})` : ''}`
+      : 'not reported';
+
+    content.appendChild(createKv([
+      ['Bundle view', key],
+      ['Artifact', view.artifact],
+      ['Rows', `${view.returned_points || 0} of ${view.total_points || 0}`],
+      ['Plotted points', `${points.length}`],
+      ['Layer filter', state.selectedLayerKind === 'all' ? 'all' : layerLabel(state.selectedLayerKind)],
+      ['Rejected picks', state.showRejectedFirstBreaks ? 'shown' : 'hidden'],
+    ]));
+
+    const residualNote = document.createElement('p');
+    residualNote.className = 'refraction-qc-note';
+    residualNote.textContent = 'Residual = observed - modeled, shown in ms.';
+    residualNote.dataset.testid = 'refraction-qc-first-break-residual-note';
+    content.appendChild(residualNote);
+
+    const downsamplingNote = document.createElement('p');
+    downsamplingNote.className = 'refraction-qc-note';
+    downsamplingNote.textContent = `Downsampling: ${downsamplingText}`;
+    downsamplingNote.dataset.testid = 'refraction-qc-first-break-downsampling';
+    content.appendChild(downsamplingNote);
+
+    if (!points.length) {
+      const missing = document.createElement('p');
+      missing.className = 'refraction-qc-placeholder';
+      missing.textContent = 'No plottable observed/modeled first-break records match the current filters.';
+      content.appendChild(missing);
+      if (Array.isArray(view.records) && view.records.length && Array.isArray(view.columns) && view.columns.length) {
+        content.appendChild(createTable(view));
+      }
+      return;
+    }
+
+    const plotGrid = document.createElement('div');
+    plotGrid.className = 'refraction-qc-plot-grid';
+    const timePlot = createFirstBreakPlot('refraction-qc-first-break-time-plot');
+    const residualPlot = createFirstBreakPlot('refraction-qc-first-break-residual-plot');
+    timePlot.dataset.pointCount = String(points.length);
+    residualPlot.dataset.pointCount = String(points.length);
+    plotGrid.append(timePlot, residualPlot);
+    content.appendChild(plotGrid);
+
+    if (window.Plotly) {
+      const xAxis = firstBreakXAxisDefinition();
+      const hoverText = points.map(plotHoverText);
+      const commonLayout = {
+        height: 260,
+        margin: { l: 58, r: 14, t: 34, b: 50 },
+        font: { size: 10, color: '#334155' },
+        paper_bgcolor: '#ffffff',
+        plot_bgcolor: '#ffffff',
+        xaxis: {
+          title: { text: xAxis.label },
+          zeroline: false,
+          gridcolor: '#e5e7eb',
+        },
+        legend: {
+          orientation: 'h',
+          x: 0,
+          y: 1.16,
+          xanchor: 'left',
+          yanchor: 'top',
+          font: { size: 10 },
+        },
+      };
+      const config = { displayModeBar: false, responsive: true };
+
+      window.Plotly.newPlot(timePlot, [
+        {
+          name: 'Observed',
+          type: 'scatter',
+          mode: 'markers',
+          x: points.map((point) => point.x),
+          y: points.map((point) => point.observedMs),
+          text: hoverText,
+          hovertemplate: '%{text}<extra>Observed</extra>',
+          marker: {
+            color: '#2563eb',
+            size: 7,
+            opacity: points.map((point) => point.opacity),
+          },
+        },
+        {
+          name: 'Modeled',
+          type: 'scatter',
+          mode: 'markers',
+          x: points.map((point) => point.x),
+          y: points.map((point) => point.modeledMs),
+          text: hoverText,
+          hovertemplate: '%{text}<extra>Modeled</extra>',
+          marker: {
+            color: '#f97316',
+            symbol: 'x',
+            size: 8,
+            opacity: points.map((point) => point.opacity),
+          },
+        },
+      ], {
+        ...commonLayout,
+        title: { text: 'Observed vs modeled first-break time', font: { size: 12 } },
+        yaxis: {
+          title: { text: 'First-break time (ms)' },
+          zeroline: false,
+          gridcolor: '#e5e7eb',
+        },
+      }, config);
+
+      const residualGroups = new Map();
+      for (const point of points) {
+        const groupKey = `${point.layerKind}|${point.status}`;
+        if (!residualGroups.has(groupKey)) {
+          residualGroups.set(groupKey, {
+            layerKind: point.layerKind,
+            status: point.status,
+            x: [],
+            y: [],
+            text: [],
+          });
+        }
+        const group = residualGroups.get(groupKey);
+        group.x.push(point.x);
+        group.y.push(point.residualMs);
+        group.text.push(plotHoverText(point));
+      }
+      const residualTraces = Array.from(residualGroups.values()).map((group) => ({
+        name: `${layerLabel(group.layerKind)} ${group.status}`,
+        type: 'scatter',
+        mode: 'markers',
+        x: group.x,
+        y: group.y,
+        text: group.text,
+        hovertemplate: '%{text}<extra></extra>',
+        marker: {
+          color: LAYER_COLORS[group.layerKind] || LAYER_COLORS.unknown,
+          symbol: group.status === 'rejected' ? 'x' : 'circle',
+          size: group.status === 'rejected' ? 8 : 7,
+          opacity: group.status === 'rejected' ? 0.55 : 0.9,
+        },
+      }));
+      window.Plotly.newPlot(residualPlot, residualTraces, {
+        ...commonLayout,
+        title: { text: 'First-break residuals', font: { size: 12 } },
+        yaxis: {
+          title: { text: 'Residual (ms)' },
+          zeroline: true,
+          zerolinecolor: '#94a3b8',
+          gridcolor: '#e5e7eb',
+        },
+      }, config);
+    } else {
+      timePlot.textContent = 'Plot library is unavailable.';
+      residualPlot.textContent = 'Plot library is unavailable.';
+    }
+
     if (Array.isArray(view.records) && view.records.length && Array.isArray(view.columns) && view.columns.length) {
       content.appendChild(createTable(view));
     }
@@ -257,6 +596,8 @@
     content.className = '';
     if (viewDef.id === 'summary') {
       renderSummary(content, state.qcBundle);
+    } else if (viewDef.id === 'first_break_residuals') {
+      renderFirstBreakPlots(content, state.qcBundle, viewDef);
     } else if (viewDef.id === 'gather_preview') {
       renderGatherPreview(content, state.qcBundle);
     } else {
@@ -280,6 +621,8 @@
     dom.loadButton.disabled = state.loading;
     dom.maxPoints.value = String(state.maxPoints);
     dom.layerKind.value = state.selectedLayerKind;
+    dom.xAxisMode.value = state.firstBreakXAxis;
+    dom.showRejected.checked = state.showRejectedFirstBreaks;
     dom.endpointKind.value = state.selectedEndpointKind;
     dom.endpoint.value = state.selectedEndpoint;
     dom.cell.value = state.selectedCell?.cell_ix !== undefined
@@ -315,9 +658,8 @@
     for (const panel of dom.viewPanels) {
       panel.hidden = panel.dataset.viewPanel !== state.selectedView;
     }
-    for (const viewDef of VIEW_DEFS) {
-      renderViewContent(viewDef);
-    }
+    const selectedViewDef = VIEW_DEFS.find((viewDef) => viewDef.id === state.selectedView);
+    if (selectedViewDef) renderViewContent(selectedViewDef);
   }
 
   function setSelectedView(viewId) {
@@ -423,6 +765,8 @@
       error: document.getElementById('refractionQcError'),
       sign: document.getElementById('refractionQcSign'),
       layerKind: document.getElementById('refractionQcLayerKind'),
+      xAxisMode: document.getElementById('refractionQcXAxisMode'),
+      showRejected: document.getElementById('refractionQcShowRejected'),
       endpointKind: document.getElementById('refractionQcEndpointKind'),
       endpoint: document.getElementById('refractionQcEndpoint'),
       cell: document.getElementById('refractionQcCell'),
@@ -434,7 +778,7 @@
     };
 
     if (!dom.jobId || !dom.maxPoints || !dom.loadButton || !dom.status || !dom.error || !dom.sign) return;
-    if (!dom.layerKind || !dom.endpointKind || !dom.endpoint || !dom.cell) return;
+    if (!dom.layerKind || !dom.xAxisMode || !dom.showRejected || !dom.endpointKind || !dom.endpoint || !dom.cell) return;
 
     pipelineTab.addEventListener('click', () => activateSidebarTab('pipeline'));
     qcTab.addEventListener('click', () => activateSidebarTab('refraction_qc'));
@@ -450,6 +794,14 @@
     });
     dom.layerKind.addEventListener('change', () => {
       state.selectedLayerKind = dom.layerKind.value;
+      render();
+    });
+    dom.xAxisMode.addEventListener('change', () => {
+      state.firstBreakXAxis = dom.xAxisMode.value;
+      render();
+    });
+    dom.showRejected.addEventListener('change', () => {
+      state.showRejectedFirstBreaks = dom.showRejected.checked;
       render();
     });
     dom.endpointKind.addEventListener('change', () => {
