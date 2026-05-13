@@ -906,8 +906,11 @@ def _corrected_window_ref_and_samples(
     selected_shifts: np.ndarray,
     dt_s: float,
 ) -> tuple[dict[str, Any], np.ndarray, str]:
-    corrected_file_id = job.get('corrected_file_id')
-    if not isinstance(corrected_file_id, str) or not corrected_file_id:
+    def shifted_fallback(
+        *,
+        status: str,
+        message: str,
+    ) -> tuple[dict[str, Any], np.ndarray, str]:
         shifted = _shifted_preview_samples(
             raw_reader,
             resolved=resolved,
@@ -915,10 +918,17 @@ def _corrected_window_ref_and_samples(
             dt_s=dt_s,
         )
         return {
-            'status': 'not_registered',
+            'status': status,
             'source': 'corrected_tracestore',
-            'message': 'corrected TraceStore was not registered for this refraction job',
+            'message': message,
         }, shifted, 'raw_tracestore_shifted_on_the_fly'
+
+    corrected_file_id = job.get('corrected_file_id')
+    if not isinstance(corrected_file_id, str) or not corrected_file_id:
+        return shifted_fallback(
+            status='not_registered',
+            message='corrected TraceStore was not registered for this refraction job',
+        )
 
     try:
         corrected_reader = get_reader(
@@ -928,19 +938,31 @@ def _corrected_window_ref_and_samples(
             state=state,
         )
         corrected_shape = _section_shape(corrected_reader, resolved.key1)
-    except Exception as exc:  # noqa: BLE001
-        raise RefractionStaticGatherPreviewError(
-            f'Registered corrected TraceStore {corrected_file_id} could not be read'
-        ) from exc
+    except Exception:  # noqa: BLE001
+        return shifted_fallback(
+            status='unavailable',
+            message=(
+                f'Registered corrected TraceStore {corrected_file_id} could not be '
+                f'read; returning on-the-fly shifted preview samples'
+            ),
+        )
     if corrected_shape != raw_section_shape:
-        raise RefractionStaticGatherPreviewError(
-            f'Registered corrected TraceStore {corrected_file_id} shape does not '
-            'match the raw TraceStore section'
+        return shifted_fallback(
+            status='shape_mismatch',
+            message=(
+                f'Registered corrected TraceStore {corrected_file_id} shape does not '
+                'match the raw TraceStore section; returning on-the-fly shifted '
+                'preview samples'
+            ),
         )
     corrected_samples = _sample_trace_window(corrected_reader, resolved=resolved)
     if corrected_samples.shape != raw_samples_trace_major.shape:
-        raise RefractionStaticGatherPreviewError(
-            'Registered corrected TraceStore preview sample shape does not match raw'
+        return shifted_fallback(
+            status='shape_mismatch',
+            message=(
+                'Registered corrected TraceStore preview sample shape does not match '
+                'raw; returning on-the-fly shifted preview samples'
+            ),
         )
     return _window_ref(
         status='ok',

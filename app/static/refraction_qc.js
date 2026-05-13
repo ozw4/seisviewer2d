@@ -681,14 +681,15 @@
 
   async function readError(response) {
     try {
-      const payload = await response.json();
-      if (payload && typeof payload.detail === 'string') return payload.detail;
-      if (payload && payload.detail) return JSON.stringify(payload.detail);
-    } catch (_) {
-    }
-    try {
       const text = await response.text();
-      if (text) return text;
+      if (!text) return `QC bundle request failed with status ${response.status}`;
+      try {
+        const payload = JSON.parse(text);
+        if (payload && typeof payload.detail === 'string') return payload.detail;
+        if (payload && payload.detail) return JSON.stringify(payload.detail);
+      } catch (_) {
+      }
+      return text;
     } catch (_) {
     }
     return `QC bundle request failed with status ${response.status}`;

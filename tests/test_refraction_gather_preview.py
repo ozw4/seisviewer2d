@@ -158,7 +158,7 @@ def test_refraction_gather_preview_uses_registered_corrected_store(
     assert body['corrected_observed_pick_time_s'][3] == 2.5
 
 
-def test_refraction_gather_preview_rejects_unreadable_corrected_store(
+def test_refraction_gather_preview_falls_back_for_unreadable_corrected_store(
     gather_preview_client,
 ):
     client, state, tmp_path, *_ = gather_preview_client
@@ -182,8 +182,14 @@ def test_refraction_gather_preview_rejects_unreadable_corrected_store(
         json=_preview_request(gather_axis='source', endpoint_key='source:1001'),
     )
 
-    assert response.status_code == 409
-    assert 'Registered corrected TraceStore' in response.json()['detail']
+    assert response.status_code == 200
+    body = response.json()
+    corrected_ref = body['corrected_window_ref']
+    assert corrected_ref['status'] == 'unavailable'
+    assert 'Registered corrected TraceStore' in corrected_ref['message']
+    assert 'on-the-fly shifted preview samples' in corrected_ref['message']
+    assert body['corrected_samples_source'] == 'raw_tracestore_shifted_on_the_fly'
+    assert body['corrected_samples'][4][0] == pytest.approx(1.0)
 
 
 def test_refraction_gather_preview_caps_trace_count(gather_preview_client):
