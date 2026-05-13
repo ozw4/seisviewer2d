@@ -18,6 +18,9 @@ from app.services.refraction_static_artifacts import (
     REFRACTION_FIRST_BREAK_FIT_QC_NPZ_NAME,
     REFRACTION_CELL_SOLVER_HISTORY_CSV_NAME,
     REFRACTION_FIRST_BREAK_TIME_EXPORT_CSV_NAME,
+    REFRACTION_GRID_MAP_QC_CSV_NAME,
+    REFRACTION_GRID_MAP_QC_JSON_NAME,
+    REFRACTION_GRID_MAP_QC_NPZ_NAME,
     REFRACTION_LINE_PROFILE_QC_COMBINED_CSV_NAME,
     REFRACTION_LINE_PROFILE_QC_JSON_NAME,
     REFRACTION_LINE_PROFILE_QC_NPZ_NAME,
@@ -183,6 +186,33 @@ VSUB_CELL_VELOCITY_FILENAMES = {
     REFRACTION_VSUB_REFRACTOR_VELOCITY_CELLS_CSV_NAME,
     REFRACTION_VSUB_REFRACTOR_VELOCITY_GRID_NPZ_NAME,
     REFRACTION_VSUB_REFRACTOR_VELOCITY_QC_JSON_NAME,
+}
+
+GRID_MAP_QC_FILENAMES = {
+    REFRACTION_GRID_MAP_QC_CSV_NAME,
+    REFRACTION_GRID_MAP_QC_NPZ_NAME,
+    REFRACTION_GRID_MAP_QC_JSON_NAME,
+}
+
+GRID_MAP_QC_REQUIRED_COLUMNS = {
+    'layer_kind',
+    'cell_ix',
+    'cell_iy',
+    'cell_center_x_m',
+    'cell_center_y_m',
+    'cell_center_inline_m',
+    'cell_center_crossline_m',
+    'velocity_m_s',
+    'initial_velocity_m_s',
+    'velocity_update_from_initial_m_s',
+    'slowness_s_per_m',
+    'n_observations',
+    'n_sources',
+    'n_receivers',
+    'residual_rms_ms',
+    'residual_mad_ms',
+    'status',
+    'status_reason',
 }
 
 UPSTREAM_V1_ARTIFACT_NAMES = (
@@ -1185,6 +1215,152 @@ def test_solve_cell_writes_low_fold_refractor_velocity_artifacts(
     assert receiver_rows[0]['static_status'] == 'low_fold_v2_cell'
 
 
+def test_grid_map_qc_generated_for_v2_solve_cell(tmp_path: Path) -> None:
+    paths = write_refraction_static_artifacts(
+        result=_solve_cell_result(),
+        req=_solve_cell_request(),
+        job_dir=tmp_path,
+    )
+
+    assert paths.refraction_grid_map_qc_csv is not None
+    assert paths.refraction_grid_map_qc_npz is not None
+    assert paths.refraction_grid_map_qc_json is not None
+    rows = _read_csv(paths.refraction_grid_map_qc_csv)
+    assert len(rows) == 3
+    assert GRID_MAP_QC_REQUIRED_COLUMNS <= set(rows[0])
+    assert {row['layer_kind'] for row in rows} == {'v2_t1'}
+    assert rows[0]['status'] == 'solved'
+    assert float(rows[0]['velocity_m_s']) == pytest.approx(2400.0)
+    assert float(rows[0]['initial_velocity_m_s']) == pytest.approx(2500.0)
+    assert float(rows[0]['velocity_update_from_initial_m_s']) == pytest.approx(
+        -100.0
+    )
+    assert int(rows[0]['n_sources']) == 1
+    assert int(rows[0]['n_receivers']) == 2
+
+    with np.load(paths.refraction_grid_map_qc_npz, allow_pickle=False) as data:
+        assert data['artifact_kind'].item() == 'refraction_grid_map_qc'
+        assert data['global_velocity_layer_behavior'].item() == (
+            'omitted_from_grid_map_qc_rows'
+        )
+        assert data['layer_kind'].tolist() == ['v2_t1', 'v2_t1', 'v2_t1']
+        np.testing.assert_array_equal(data['cell_ix'], [0, 1, 2])
+        np.testing.assert_allclose(
+            data['velocity_m_s'],
+            np.asarray([2400.0, 2600.0, np.nan], dtype=np.float64),
+            equal_nan=True,
+        )
+        assert data['status'].tolist() == ['solved', 'solved', 'inactive']
+
+    summary = json.loads(
+        paths.refraction_grid_map_qc_json.read_text(encoding='utf-8')
+    )
+    assert summary['grid']['coordinate_mode'] == 'grid_3d'
+    assert summary['grid']['number_of_cell_x'] == 3
+    assert summary['grid']['y_axis_unbounded'] is True
+    assert summary['global_velocity_layer_behavior'] == (
+        'omitted_from_grid_map_qc_rows'
+    )
+    assert summary['layers']['v2_t1']['active_cell_count'] == 2
+
+
+def test_grid_map_qc_layer_neutral_columns_for_v3_and_vsub(
+    tmp_path: Path,
+) -> None:
+    paths = write_refraction_static_artifacts(
+        result=_multilayer_result_with_v3_and_vsub_cell_layers(),
+        req=_v3_vsub_solve_cell_request(),
+        job_dir=tmp_path,
+    )
+
+    assert paths.refraction_grid_map_qc_csv is not None
+    rows = _read_csv(paths.refraction_grid_map_qc_csv)
+    assert len(rows) == 6
+    assert GRID_MAP_QC_REQUIRED_COLUMNS <= set(rows[0])
+    assert 'v2_m_s' not in rows[0]
+    assert 'cell_velocity_component' not in rows[0]
+    assert {row['layer_kind'] for row in rows} == {'v3_t2', 'vsub_t3'}
+    v3_rows = [row for row in rows if row['layer_kind'] == 'v3_t2']
+    vsub_rows = [row for row in rows if row['layer_kind'] == 'vsub_t3']
+    assert [row['velocity_m_s'] for row in v3_rows] == ['3300.0', '3700.0', '']
+    assert [row['velocity_m_s'] for row in vsub_rows] == ['', '4800.0', '5200.0']
+
+    summary = json.loads(
+        paths.refraction_grid_map_qc_json.read_text(encoding='utf-8')
+    )
+    assert summary['cell_velocity_layer_kinds'] == ['v3_t2', 'vsub_t3']
+    assert summary['omitted_global_velocity_layers'] == [
+        {
+            'layer_kind': 'v2_t1',
+            'velocity_mode': 'fixed_global',
+            'row_behavior': 'omitted',
+        }
+    ]
+
+
+def test_grid_map_qc_includes_empty_and_low_fold_statuses(
+    tmp_path: Path,
+) -> None:
+    paths = write_refraction_static_artifacts(
+        result=_solve_cell_low_fold_result(),
+        req=_solve_cell_request(),
+        job_dir=tmp_path,
+    )
+
+    assert paths.refraction_grid_map_qc_csv is not None
+    rows = {
+        int(row['cell_ix']): row
+        for row in _read_csv(paths.refraction_grid_map_qc_csv)
+    }
+    assert rows[0]['status'] == 'solved'
+    assert rows[1]['status'] == 'low_fold'
+    assert rows[1]['status_reason'] == 'below_min_observations_per_cell'
+    assert rows[1]['velocity_m_s'] == ''
+    assert rows[2]['status'] == 'inactive'
+    assert rows[2]['status_reason'] == 'no_observations'
+
+    summary = json.loads(
+        paths.refraction_grid_map_qc_json.read_text(encoding='utf-8')
+    )
+    assert summary['layers']['v2_t1']['empty_cell_count'] == 1
+    assert summary['layers']['v2_t1']['low_fold_cell_count'] == 1
+
+
+def test_grid_map_qc_json_summary_matches_csv_counts(tmp_path: Path) -> None:
+    paths = write_refraction_static_artifacts(
+        result=_solve_cell_low_fold_result(),
+        req=_solve_cell_request(),
+        job_dir=tmp_path,
+    )
+
+    assert paths.refraction_grid_map_qc_csv is not None
+    assert paths.refraction_grid_map_qc_json is not None
+    rows = _read_csv(paths.refraction_grid_map_qc_csv)
+    summary = json.loads(
+        paths.refraction_grid_map_qc_json.read_text(encoding='utf-8')
+    )
+    v2 = summary['layers']['v2_t1']
+    solved_velocity = [
+        float(row['velocity_m_s'])
+        for row in rows
+        if row['layer_kind'] == 'v2_t1' and row['status'] == 'solved'
+    ]
+    assert v2['active_cell_count'] == sum(
+        1 for row in rows if row['status'] == 'solved'
+    )
+    assert v2['empty_cell_count'] == sum(
+        1 for row in rows if row['status_reason'] == 'no_observations'
+    )
+    assert v2['low_fold_cell_count'] == sum(
+        1 for row in rows if row['status'] == 'low_fold'
+    )
+    assert v2['velocity_min_m_s'] == pytest.approx(min(solved_velocity))
+    assert v2['velocity_median_m_s'] == pytest.approx(
+        float(np.median(solved_velocity))
+    )
+    assert v2['velocity_max_m_s'] == pytest.approx(max(solved_velocity))
+
+
 def test_solve_cell_manifest_registers_cell_velocity_artifacts(
     tmp_path: Path,
 ) -> None:
@@ -1195,11 +1371,12 @@ def test_solve_cell_manifest_registers_cell_velocity_artifacts(
     )
 
     assert {path.name for path in tmp_path.iterdir()} == (
-        EXPECTED_FILENAMES | CELL_VELOCITY_FILENAMES
+        EXPECTED_FILENAMES | CELL_VELOCITY_FILENAMES | GRID_MAP_QC_FILENAMES
     )
     manifest = json.loads(paths.manifest_json.read_text(encoding='utf-8'))
     artifact_names = {item['name'] for item in manifest['artifacts']}
     assert CELL_VELOCITY_FILENAMES.issubset(artifact_names)
+    assert GRID_MAP_QC_FILENAMES.issubset(artifact_names)
 
     qc = json.loads(paths.qc_json.read_text(encoding='utf-8'))
     assert qc['velocity']['cell_velocity_qc_artifact'] == (
@@ -1210,6 +1387,9 @@ def test_solve_cell_manifest_registers_cell_velocity_artifacts(
     )
     assert qc['refractor_velocity_cells']['solver_history_csv_artifact'] == (
         REFRACTION_CELL_SOLVER_HISTORY_CSV_NAME
+    )
+    assert qc['refractor_grid_map_qc']['csv_artifact'] == (
+        REFRACTION_GRID_MAP_QC_CSV_NAME
     )
 
 
@@ -1223,7 +1403,7 @@ def test_v3_cell_artifacts_use_layer_specific_names(
     )
 
     assert {path.name for path in tmp_path.iterdir()} == (
-        EXPECTED_FILENAMES | V3_CELL_VELOCITY_FILENAMES
+        EXPECTED_FILENAMES | V3_CELL_VELOCITY_FILENAMES | GRID_MAP_QC_FILENAMES
     )
     assert paths.refraction_refractor_velocity_cells_csv is not None
     assert (
@@ -1237,6 +1417,7 @@ def test_v3_cell_artifacts_use_layer_specific_names(
     manifest = json.loads(paths.manifest_json.read_text(encoding='utf-8'))
     artifact_names = {item['name'] for item in manifest['artifacts']}
     assert V3_CELL_VELOCITY_FILENAMES <= artifact_names
+    assert GRID_MAP_QC_FILENAMES <= artifact_names
     assert not CELL_VELOCITY_FILENAMES.intersection(artifact_names)
 
     qc = json.loads(paths.qc_json.read_text(encoding='utf-8'))
@@ -1267,7 +1448,10 @@ def test_multiple_cell_velocity_layers_write_all_layer_artifacts(
 
     filenames = {path.name for path in tmp_path.iterdir()}
     assert filenames == (
-        EXPECTED_FILENAMES | V3_CELL_VELOCITY_FILENAMES | VSUB_CELL_VELOCITY_FILENAMES
+        EXPECTED_FILENAMES
+        | V3_CELL_VELOCITY_FILENAMES
+        | VSUB_CELL_VELOCITY_FILENAMES
+        | GRID_MAP_QC_FILENAMES
     )
     assert paths.refraction_refractor_velocity_cells_csv is not None
     assert (
@@ -1279,6 +1463,7 @@ def test_multiple_cell_velocity_layers_write_all_layer_artifacts(
     artifact_names = {item['name'] for item in manifest['artifacts']}
     assert V3_CELL_VELOCITY_FILENAMES <= artifact_names
     assert VSUB_CELL_VELOCITY_FILENAMES <= artifact_names
+    assert GRID_MAP_QC_FILENAMES <= artifact_names
 
     v3_rows = _read_csv(tmp_path / REFRACTION_V3_REFRACTOR_VELOCITY_CELLS_CSV_NAME)
     vsub_rows = _read_csv(
@@ -1357,12 +1542,17 @@ def test_solve_global_does_not_write_cell_velocity_artifacts(
     )
 
     assert paths.refraction_refractor_velocity_cells_csv is None
+    assert paths.refraction_grid_map_qc_csv is None
     assert not CELL_VELOCITY_FILENAMES.intersection(
+        {path.name for path in tmp_path.iterdir()}
+    )
+    assert not GRID_MAP_QC_FILENAMES.intersection(
         {path.name for path in tmp_path.iterdir()}
     )
     manifest = json.loads(paths.manifest_json.read_text(encoding='utf-8'))
     artifact_names = {item['name'] for item in manifest['artifacts']}
     assert not CELL_VELOCITY_FILENAMES.intersection(artifact_names)
+    assert not GRID_MAP_QC_FILENAMES.intersection(artifact_names)
 
 
 def test_source_receiver_tables_include_v2_status_in_cell_mode(
