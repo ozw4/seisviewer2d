@@ -2,7 +2,10 @@ from __future__ import annotations
 
 import csv
 import io
+from dataclasses import replace
 from pathlib import Path
+
+import numpy as np
 
 from app.services.refraction_static_artifacts import (
     REFRACTION_TIME_TERM_SPREADSHEET_CSV_NAME,
@@ -190,6 +193,28 @@ def test_first_break_time_export_golden_with_residuals(tmp_path: Path) -> None:
     assert tuple(fieldnames) == tuple(first_break_time_rows()[0])
     assert rows == list(first_break_time_rows())
     assert path.read_text(encoding='utf-8') == _csv_text(fieldnames, rows)
+
+
+def test_first_break_time_export_preserves_text_endpoint_ids(tmp_path: Path) -> None:
+    path = tmp_path / 'refraction_first_break_time_export.csv'
+    result = replace(
+        _result(),
+        source_id=np.asarray(['SRC-A', 'SRC-B'], dtype='<U8'),
+        receiver_id=np.asarray(['REC-A', 'REC-B'], dtype='<U8'),
+    )
+
+    write_refraction_first_break_time_export_csv(
+        result=result,
+        path=path,
+        req=_request(),
+        source_job_id=GOLDEN_SOURCE_JOB_ID,
+    )
+
+    rows, _fieldnames = _read_csv_with_fieldnames(path.read_text(encoding='utf-8'))
+    assert rows[0]['source_id'] == 'SRC-A'
+    assert rows[0]['receiver_id'] == 'REC-A'
+    assert rows[1]['source_id'] == 'SRC-B'
+    assert rows[1]['receiver_id'] == 'REC-B'
 
 
 def test_canonical_static_table_golden_schema_version(tmp_path: Path) -> None:

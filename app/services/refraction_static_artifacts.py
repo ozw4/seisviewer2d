@@ -4188,9 +4188,9 @@ def _first_break_time_export_rows(
                 'sorted_trace_index': int(result.row_trace_index_sorted[row_index]),
                 'source_endpoint_key': str(source_key_by_row[row_index]),
                 'receiver_endpoint_key': str(receiver_key_by_row[row_index]),
-                'source_id': _csv_int(source_id_by_row[row_index]),
-                'receiver_id': _csv_int(receiver_id_by_row[row_index]),
-                'offset_m': _csv_float(result.row_distance_m[row_index]),
+                'source_id': _csv_identifier(source_id_by_row[row_index]),
+                'receiver_id': _csv_identifier(receiver_id_by_row[row_index]),
+                'offset_m': _csv_meters(result.row_distance_m[row_index]),
                 'layer_kind': str(layer_kind_by_row[row_index]),
                 'observed_pick_time_ms': _csv_ms(
                     result.observed_pick_time_s[row_index]
@@ -7415,6 +7415,11 @@ def _csv_float(value: object) -> str | float:
     return out if np.isfinite(out) else ''
 
 
+def _csv_meters(value: object) -> str:
+    out = _csv_float(value)
+    return '' if out == '' else f'{float(out):.3f}'
+
+
 def _csv_grid_float(value: object) -> str | float:
     if value is None:
         return ''
@@ -7447,6 +7452,27 @@ def _csv_int(value: object) -> str | int:
         return int(value)
     except (TypeError, ValueError):
         return ''
+
+
+def _csv_identifier(value: object) -> str | int:
+    if value is None:
+        return ''
+    if isinstance(value, np.generic):
+        value = value.item()
+    if isinstance(value, bytes):
+        return value.decode('utf-8')
+    if isinstance(value, str):
+        return value
+    if isinstance(value, bool):
+        return str(value)
+    if isinstance(value, (int, np.integer)):
+        return int(value)
+    if isinstance(value, (float, np.floating)):
+        out = float(value)
+        if not np.isfinite(out):
+            return ''
+        return int(out) if out.is_integer() else str(out)
+    return str(value)
 
 
 def _csv_cell_id(value: object) -> str | int:

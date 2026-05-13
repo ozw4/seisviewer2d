@@ -478,6 +478,21 @@ def test_static_table_apply_exported_table_missing_endpoint_policy_fail(
     assert not (job_dir / STATIC_TABLE_APPLY_SOLUTION_NPZ_NAME).exists()
 
 
+def test_static_table_apply_exported_table_missing_receiver_policy_fail(
+    tmp_path: Path,
+) -> None:
+    state, _store = _write_target_store(tmp_path)
+    _write_source_refraction_job(state, tmp_path, receiver_ids=(200,))
+    _run_export(state, tmp_path)
+
+    job_dir = _run_apply(state, tmp_path)
+
+    job = _job(state, APPLY_JOB_ID)
+    assert job['status'] == 'error'
+    assert 'missing_receiver_static' in str(job['message'])
+    assert not (job_dir / STATIC_TABLE_APPLY_SOLUTION_NPZ_NAME).exists()
+
+
 def test_static_table_apply_exported_table_missing_endpoint_policy_zero(
     tmp_path: Path,
 ) -> None:
@@ -502,6 +517,32 @@ def test_static_table_apply_exported_table_missing_endpoint_policy_zero(
     qc = json.loads((job_dir / STATIC_TABLE_APPLY_QC_JSON_NAME).read_text())
     assert qc['n_missing_source_endpoints'] == 1
     assert qc['trace_static_status_counts']['missing_source_static_zeroed'] == 2
+
+
+def test_static_table_apply_exported_table_missing_receiver_policy_zero(
+    tmp_path: Path,
+) -> None:
+    state, _store = _write_target_store(tmp_path)
+    _write_source_refraction_job(state, tmp_path, receiver_ids=(200,))
+    _run_export(state, tmp_path)
+
+    job_dir = _run_apply(
+        state,
+        tmp_path,
+        missing_static_policy='zero',
+        allow_missing_receiver_static=True,
+    )
+
+    assert _job(state, APPLY_JOB_ID)['status'] == 'done'
+    with np.load(job_dir / STATIC_TABLE_APPLY_SOLUTION_NPZ_NAME, allow_pickle=False) as data:
+        np.testing.assert_allclose(
+            data['trace_shift_s_sorted'],
+            [0.008, 0.004, 0.008, 0.004],
+        )
+        assert data['trace_static_status_sorted'][2] == 'missing_receiver_static_zeroed'
+    qc = json.loads((job_dir / STATIC_TABLE_APPLY_QC_JSON_NAME).read_text())
+    assert qc['n_missing_receiver_endpoints'] == 1
+    assert qc['trace_static_status_counts']['missing_receiver_static_zeroed'] == 2
 
 
 def test_static_table_apply_exported_table_double_application_guard(

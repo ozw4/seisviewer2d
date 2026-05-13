@@ -855,7 +855,7 @@ def _write_source_artifact_stub(path: Path, artifact_name: str) -> None:
                 'receiver_endpoint_key': 'receiver:2001',
                 'source_id': '1001',
                 'receiver_id': '2001',
-                'offset_m': '100.0',
+                'offset_m': '100.000',
                 'layer_kind': 'v2_t1',
                 'observed_pick_time_ms': '50.0',
                 'modeled_pick_time_ms': '48.5',
