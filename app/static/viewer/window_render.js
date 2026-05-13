@@ -203,25 +203,9 @@
         ) {
           schedulePickOverlayUpdate();
         }
-        const refreshPendingOverlay = () => {
-          if (
-            shouldRefreshPendingOverlay &&
-            typeof schedulePickOverlayUpdate === 'function'
-          ) {
-            schedulePickOverlayUpdate();
-          }
-        };
         const result = handleRelayout(ev);
-        if (result && typeof result.then === 'function') {
-          result.then(
-            refreshPendingOverlay,
-            (err) => {
-              console.warn('handleRelayout failed', err);
-              refreshPendingOverlay();
-            }
-          );
-        } else {
-          refreshPendingOverlay();
+        if (result && typeof result.catch === 'function') {
+          result.catch((err) => console.warn('handleRelayout failed', err));
         }
         if (redrawPending) {
             redrawPending = false;

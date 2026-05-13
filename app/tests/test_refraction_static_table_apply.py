@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import csv
+from io import BytesIO
 import json
 from pathlib import Path
 from typing import Any
@@ -29,6 +30,7 @@ from app.services.refraction_static_table_apply_service import (
     STATIC_TABLE_APPLY_HISTORY_JSON_NAME,
     STATIC_TABLE_APPLY_QC_JSON_NAME,
     STATIC_TABLE_APPLY_REFRACTION_HISTORY_JSON_NAME,
+    STATIC_TABLE_APPLY_REQUEST_JSON_NAME,
     STATIC_TABLE_APPLY_SOLUTION_NPZ_NAME,
     STATIC_TABLE_APPLY_TRACE_SHIFTS_CSV_NAME,
     STATIC_TABLE_IMPORT_QC_JSON_NAME,
@@ -669,6 +671,51 @@ def test_static_table_apply_maps_source_receiver_to_trace_shift(tmp_path: Path) 
     apply_qc = json.loads((job_dir / STATIC_TABLE_APPLY_QC_JSON_NAME).read_text())
     assert STATIC_TABLE_IMPORT_QC_JSON_NAME in apply_qc['artifact_names']
     assert STATIC_TABLE_APPLY_HISTORY_JSON_NAME in apply_qc['artifact_names']
+
+
+def test_static_table_apply_downloads_solution_qc_and_history_artifacts(
+    tmp_path: Path,
+) -> None:
+    state, _store, _job_dir = _run_apply(tmp_path)
+    expected_artifacts = {
+        STATIC_TABLE_APPLY_REQUEST_JSON_NAME,
+        STATIC_TABLE_IMPORT_QC_JSON_NAME,
+        STATIC_TABLE_APPLY_SOLUTION_NPZ_NAME,
+        STATIC_TABLE_APPLY_QC_JSON_NAME,
+        STATIC_TABLE_APPLY_TRACE_SHIFTS_CSV_NAME,
+        STATIC_TABLE_APPLY_HISTORY_JSON_NAME,
+        STATIC_TABLE_APPLY_REFRACTION_HISTORY_JSON_NAME,
+    }
+
+    original_state = app.state.sv
+    app.state.sv = state
+    try:
+        with TestClient(app) as client:
+            files_response = client.get(f'/statics/job/{APPLY_JOB_ID}/files')
+            assert files_response.status_code == 200
+            listed = {item['name'] for item in files_response.json()['files']}
+            assert expected_artifacts.issubset(listed)
+
+            for artifact_name in expected_artifacts:
+                response = client.get(
+                    f'/statics/job/{APPLY_JOB_ID}/download',
+                    params={'name': artifact_name},
+                )
+                assert response.status_code == 200, artifact_name
+                assert response.content, artifact_name
+
+                if artifact_name == STATIC_TABLE_APPLY_SOLUTION_NPZ_NAME:
+                    with np.load(BytesIO(response.content), allow_pickle=False) as data:
+                        np.testing.assert_allclose(
+                            data['trace_shift_s_sorted'],
+                            [0.008, 0.004, 0.004, 0.0],
+                        )
+                elif artifact_name == STATIC_TABLE_IMPORT_QC_JSON_NAME:
+                    assert response.json()['artifact_kind'] == 'static_table_import_qc'
+                elif artifact_name == STATIC_TABLE_APPLY_HISTORY_JSON_NAME:
+                    assert response.json()['history_kind'] == 'static_table_apply'
+    finally:
+        app.state.sv = original_state
 
 
 def test_static_table_apply_writes_history(tmp_path: Path) -> None:

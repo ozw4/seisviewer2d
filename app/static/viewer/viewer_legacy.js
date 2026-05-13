@@ -1301,12 +1301,8 @@
       pickOverlayRaf = requestAnimationFrame(() => {
         pickOverlayRaf = 0;
         flushPickOverlayUpdate();
-        if (pickOverlayDirty) {
-          if (isRelayouting) {
-            setTimeout(schedulePickOverlayUpdate, 16);
-          } else {
-            schedulePickOverlayUpdate();
-          }
+        if (pickOverlayDirty && !isRelayouting) {
+          schedulePickOverlayUpdate();
         }
       });
     }
