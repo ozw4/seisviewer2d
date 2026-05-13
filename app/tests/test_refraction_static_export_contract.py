@@ -28,6 +28,9 @@ from app.services.refraction_static_artifacts import (
     SOURCE_STATIC_TABLE_CSV_NAME,
 )
 from app.services.refraction_static_export_service import (
+    CANONICAL_RECEIVER_STATIC_TABLE_CSV_NAME,
+    CANONICAL_SOURCE_RECEIVER_STATIC_TABLE_CSV_NAME,
+    CANONICAL_SOURCE_STATIC_TABLE_CSV_NAME,
     REFRACTION_STATIC_EXPORT_JOB_META_JSON_NAME,
     REFRACTION_STATIC_EXPORT_REQUEST_JSON_NAME,
     run_refraction_static_export_job,
@@ -36,8 +39,13 @@ from app.services.refraction_static_export_units import (
     REFRACTION_STATIC_REPO_SIGN_CONVENTION,
 )
 from app.services.refraction_static_lsst_export import (
+    REFRACTION_LSST_CARDS_TXT_NAME,
     REFRACTION_LSST_CSV_NAME,
+    REFRACTION_LSST_PLUS_CARDS_TXT_NAME,
     REFRACTION_LSST_PLUS_CSV_NAME,
+)
+from app.services.refraction_static_table_import import (
+    import_refraction_static_table_csv,
 )
 from app.tests._refraction_static_synthetic import synthetic_refraction_apply_request
 
@@ -174,6 +182,50 @@ def test_refraction_export_rejects_unknown_format(client: TestClient) -> None:
     assert response.status_code == 422
 
 
+def test_refraction_export_units_seconds_are_rejected(client: TestClient) -> None:
+    response = client.post(
+        '/statics/refraction/export',
+        json={
+            'source_job_id': 'source-refraction-job',
+            'export': {'enabled': True, 'units': 'seconds'},
+        },
+    )
+
+    assert response.status_code == 422
+    assert 'export.units must be "milliseconds"' in str(response.json())
+
+
+def test_refraction_export_rejects_custom_rounding_ms(client: TestClient) -> None:
+    response = client.post(
+        '/statics/refraction/export',
+        json={
+            'source_job_id': 'source-refraction-job',
+            'export': {'enabled': True, 'rounding_ms': 0.01},
+        },
+    )
+
+    assert response.status_code == 422
+    assert 'export.rounding_ms is reserved' in str(response.json())
+
+
+def test_refraction_export_rejects_legacy_alias_suppression(
+    client: TestClient,
+) -> None:
+    response = client.post(
+        '/statics/refraction/export',
+        json={
+            'source_job_id': 'source-refraction-job',
+            'export': {
+                'enabled': True,
+                'include_legacy_alias_columns': False,
+            },
+        },
+    )
+
+    assert response.status_code == 422
+    assert 'export.include_legacy_alias_columns must be true' in str(response.json())
+
+
 def test_refraction_export_rejects_incomplete_source_job(
     client: TestClient,
     tmp_path: Path,
@@ -286,8 +338,37 @@ def test_run_refraction_static_export_job_writes_requested_format_metadata(
     assert meta['export']['requested_formats'] == list(
         REFRACTION_STATIC_DEFAULT_EXPORT_FORMATS
     )
+    assert meta['export']['units'] == 'milliseconds'
+    assert meta['export']['unit_policy'] == 'milliseconds_only'
+    assert meta['export']['time_column_suffix'] == '_ms'
+    assert meta['export']['rounding_ms_policy'] == 'reserved_no_op'
+    assert meta['export']['numeric_csv_precision'] == 'format_schema_fixed'
+    assert meta['export']['include_legacy_alias_columns'] is True
+    assert meta['export']['legacy_alias_columns_policy'] == 'required_true'
     assert meta['export']['sign_convention'] == REFRACTION_STATIC_REPO_SIGN_CONVENTION
-    assert meta['generated_artifacts'] == [REFRACTION_TIME_TERM_SPREADSHEET_CSV_NAME]
+    assert meta['generated_artifacts'] == [
+        CANONICAL_SOURCE_STATIC_TABLE_CSV_NAME,
+        CANONICAL_RECEIVER_STATIC_TABLE_CSV_NAME,
+        CANONICAL_SOURCE_RECEIVER_STATIC_TABLE_CSV_NAME,
+        REFRACTION_TIME_TERM_SPREADSHEET_CSV_NAME,
+    ]
+    canonical_rows = _read_csv_text(
+        (export_job_dir / CANONICAL_SOURCE_RECEIVER_STATIC_TABLE_CSV_NAME).read_text(
+            encoding='utf-8',
+        )
+    )
+    assert [row['endpoint_kind'] for row in canonical_rows] == [
+        'source',
+        'receiver',
+    ]
+    assert canonical_rows[0]['format_name'] == 'canonical_static_table'
+    assert canonical_rows[0]['applied_shift_ms'] == '12.5'
+    assert canonical_rows[1]['applied_shift_ms'] == '-3.25'
+    import_result = import_refraction_static_table_csv(
+        export_job_dir / CANONICAL_SOURCE_RECEIVER_STATIC_TABLE_CSV_NAME
+    )
+    assert import_result.is_valid is True
+    assert import_result.errors == ()
     spreadsheet_rows = _read_csv_text(
         (export_job_dir / REFRACTION_TIME_TERM_SPREADSHEET_CSV_NAME).read_text(
             encoding='utf-8',
@@ -423,6 +504,162 @@ def test_run_refraction_static_export_job_time_term_spreadsheet_includes_inactiv
     assert rows[1]['static_status'] == 'inactive'
 
 
+def test_run_refraction_static_export_job_canonical_rejects_invalid_rows_by_default(
+    client: TestClient,
+    tmp_path: Path,
+) -> None:
+    source_dir = _create_source_refraction_job(
+        client,
+        tmp_path,
+        artifact_names=(
+            REFRACTION_STATIC_REQUEST_JSON_NAME,
+            REFRACTION_STATIC_ARTIFACTS_JSON_NAME,
+            SOURCE_STATIC_TABLE_CSV_NAME,
+            RECEIVER_STATIC_TABLE_CSV_NAME,
+        ),
+    )
+    _append_invalid_source_row(source_dir)
+    req = RefractionStaticExportJobRequest.model_validate(
+        {
+            'source_job_id': 'source-refraction-job',
+            'export': {'enabled': True, 'formats': ['canonical_static_table']},
+        }
+    )
+    export_job_id = 'export-job-invalid-canonical'
+    export_job_dir = tmp_path / 'jobs' / export_job_id
+    with client.app.state.sv.lock:
+        client.app.state.sv.jobs.create_static_job(
+            export_job_id,
+            file_id='raw-file-id',
+            key1_byte=189,
+            key2_byte=193,
+            statics_kind='refraction_export',
+            artifacts_dir=str(export_job_dir),
+        )
+
+    run_refraction_static_export_job(export_job_id, req, client.app.state.sv)
+
+    with client.app.state.sv.lock:
+        job = dict(client.app.state.sv.jobs[export_job_id])
+    assert job['status'] == 'error'
+    assert 'inactive_endpoint' in str(job['message'])
+    assert not (export_job_dir / CANONICAL_SOURCE_RECEIVER_STATIC_TABLE_CSV_NAME).exists()
+
+
+def test_run_refraction_static_export_job_canonical_skips_invalid_rows_when_not_included(
+    client: TestClient,
+    tmp_path: Path,
+) -> None:
+    source_dir = _create_source_refraction_job(
+        client,
+        tmp_path,
+        artifact_names=(
+            REFRACTION_STATIC_REQUEST_JSON_NAME,
+            REFRACTION_STATIC_ARTIFACTS_JSON_NAME,
+            SOURCE_STATIC_TABLE_CSV_NAME,
+            RECEIVER_STATIC_TABLE_CSV_NAME,
+        ),
+    )
+    _append_invalid_source_row(source_dir)
+    req = RefractionStaticExportJobRequest.model_validate(
+        {
+            'source_job_id': 'source-refraction-job',
+            'export': {
+                'enabled': True,
+                'formats': ['canonical_static_table'],
+                'fail_on_invalid_static_status': False,
+                'include_inactive_endpoints': False,
+            },
+        }
+    )
+    export_job_id = 'export-job-canonical-skip-invalid'
+    export_job_dir = tmp_path / 'jobs' / export_job_id
+    with client.app.state.sv.lock:
+        client.app.state.sv.jobs.create_static_job(
+            export_job_id,
+            file_id='raw-file-id',
+            key1_byte=189,
+            key2_byte=193,
+            statics_kind='refraction_export',
+            artifacts_dir=str(export_job_dir),
+        )
+
+    run_refraction_static_export_job(export_job_id, req, client.app.state.sv)
+
+    with client.app.state.sv.lock:
+        job = dict(client.app.state.sv.jobs[export_job_id])
+    assert job['status'] == 'done'
+    rows = _read_csv_text(
+        (export_job_dir / CANONICAL_SOURCE_RECEIVER_STATIC_TABLE_CSV_NAME).read_text(
+            encoding='utf-8',
+        )
+    )
+    assert [row['endpoint_key'] for row in rows] == ['source:1001', 'receiver:2001']
+    import_result = import_refraction_static_table_csv(
+        export_job_dir / CANONICAL_SOURCE_RECEIVER_STATIC_TABLE_CSV_NAME
+    )
+    assert import_result.is_valid is True
+
+
+def test_run_refraction_static_export_job_canonical_includes_invalid_rows_when_requested(
+    client: TestClient,
+    tmp_path: Path,
+) -> None:
+    source_dir = _create_source_refraction_job(
+        client,
+        tmp_path,
+        artifact_names=(
+            REFRACTION_STATIC_REQUEST_JSON_NAME,
+            REFRACTION_STATIC_ARTIFACTS_JSON_NAME,
+            SOURCE_STATIC_TABLE_CSV_NAME,
+            RECEIVER_STATIC_TABLE_CSV_NAME,
+        ),
+    )
+    _append_invalid_source_row(source_dir)
+    req = RefractionStaticExportJobRequest.model_validate(
+        {
+            'source_job_id': 'source-refraction-job',
+            'export': {
+                'enabled': True,
+                'formats': ['canonical_static_table'],
+                'fail_on_invalid_static_status': False,
+                'include_inactive_endpoints': True,
+            },
+        }
+    )
+    export_job_id = 'export-job-canonical-include-invalid'
+    export_job_dir = tmp_path / 'jobs' / export_job_id
+    with client.app.state.sv.lock:
+        client.app.state.sv.jobs.create_static_job(
+            export_job_id,
+            file_id='raw-file-id',
+            key1_byte=189,
+            key2_byte=193,
+            statics_kind='refraction_export',
+            artifacts_dir=str(export_job_dir),
+        )
+
+    run_refraction_static_export_job(export_job_id, req, client.app.state.sv)
+
+    rows = _read_csv_text(
+        (export_job_dir / CANONICAL_SOURCE_RECEIVER_STATIC_TABLE_CSV_NAME).read_text(
+            encoding='utf-8',
+        )
+    )
+    assert [row['endpoint_key'] for row in rows] == [
+        'source:1001',
+        'source:inactive',
+        'receiver:2001',
+    ]
+    assert rows[1]['static_status'] == 'inactive_endpoint'
+    assert rows[1]['applied_shift_ms'] == ''
+    import_result = import_refraction_static_table_csv(
+        export_job_dir / CANONICAL_SOURCE_RECEIVER_STATIC_TABLE_CSV_NAME
+    )
+    assert import_result.is_valid is False
+    assert any('inactive_endpoint' in error for error in import_result.errors)
+
+
 def test_run_refraction_static_export_job_writes_lsst_artifacts(
     client: TestClient,
     tmp_path: Path,
@@ -460,17 +697,31 @@ def test_run_refraction_static_export_job_writes_lsst_artifacts(
     lsst_rows = _read_csv_text(
         (export_job_dir / REFRACTION_LSST_CSV_NAME).read_text(encoding='utf-8')
     )
+    lsst_cards = (export_job_dir / REFRACTION_LSST_CARDS_TXT_NAME).read_text(
+        encoding='utf-8'
+    )
     lsst_plus_rows = _read_csv_text(
         (export_job_dir / REFRACTION_LSST_PLUS_CSV_NAME).read_text(encoding='utf-8')
     )
+    lsst_plus_cards = (
+        export_job_dir / REFRACTION_LSST_PLUS_CARDS_TXT_NAME
+    ).read_text(encoding='utf-8')
     assert [row['endpoint_kind'] for row in lsst_rows] == ['source', 'receiver']
     assert lsst_rows[0]['endpoint_key'] == 'source:1001'
     assert lsst_rows[0]['total_applied_shift_ms'] == '12.500000'
     assert lsst_rows[1]['endpoint_key'] == 'receiver:2001'
     assert lsst_rows[1]['total_applied_shift_ms'] == '-3.250000'
+    assert '# format=lsst\n' in lsst_cards
+    assert 'SSTAT source:1001 12.500000\n' in lsst_cards
+    assert 'RSTAT receiver:2001 -3.250000\n' in lsst_cards
     assert lsst_plus_rows[0]['format_name'] == 'lsst_plus'
     assert lsst_plus_rows[0]['source_field_shift_ms'] == '1.500000'
     assert lsst_plus_rows[1]['receiver_field_shift_ms'] == '-0.500000'
+    assert '# format=lsst_plus\n' in lsst_plus_cards
+    assert (
+        'STC source source:1001 total=12.500000 weathering=10.000000 '
+        'elevation=2.500000 field=1.500000\n'
+    ) in lsst_plus_cards
     meta = json.loads(
         (export_job_dir / REFRACTION_STATIC_EXPORT_JOB_META_JSON_NAME).read_text(
             encoding='utf-8',
@@ -478,7 +729,9 @@ def test_run_refraction_static_export_job_writes_lsst_artifacts(
     )
     assert meta['generated_artifacts'] == [
         REFRACTION_LSST_CSV_NAME,
+        REFRACTION_LSST_CARDS_TXT_NAME,
         REFRACTION_LSST_PLUS_CSV_NAME,
+        REFRACTION_LSST_PLUS_CARDS_TXT_NAME,
     ]
 
 
@@ -631,6 +884,26 @@ def _write_csv_rows(path: Path, rows: list[dict[str, str]]) -> None:
         writer = csv.DictWriter(handle, fieldnames=list(rows[0]))
         writer.writeheader()
         writer.writerows(rows)
+
+
+def _append_invalid_source_row(source_dir: Path) -> None:
+    with (source_dir / SOURCE_STATIC_TABLE_CSV_NAME).open(
+        encoding='utf-8',
+        newline='',
+    ) as handle:
+        source_rows = list(csv.DictReader(handle))
+    inactive_row = dict(source_rows[0])
+    inactive_row.update(
+        {
+            'source_endpoint_key': 'source:inactive',
+            'source_id': '1002',
+            'source_node_id': '11',
+            'total_static_ms': '',
+            'total_applied_shift_ms': '',
+            'static_status': 'inactive_endpoint',
+        }
+    )
+    _write_csv_rows(source_dir / SOURCE_STATIC_TABLE_CSV_NAME, source_rows + [inactive_row])
 
 
 def _read_csv_text(text: str) -> list[dict[str, str]]:

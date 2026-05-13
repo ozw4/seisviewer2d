@@ -33,6 +33,7 @@ from app.services.refraction_static_datum import (
 )
 from app.services.refraction_static_export_service import (
     resolve_refraction_static_export_formats,
+    write_inline_refraction_static_export_artifacts,
 )
 from app.services.refraction_static_field_composition import (
     compose_refraction_endpoint_field_corrections,
@@ -461,6 +462,18 @@ def _finish_refraction_static_apply_job(
     job_dir: Path,
     result: RefractionDatumStaticsResult,
 ) -> JobCompletion:
+    if req.export.enabled:
+        _set_job_progress_message(
+            state,
+            job_id,
+            progress=0.91,
+            message='writing_refraction_static_export_artifacts',
+        )
+        write_inline_refraction_static_export_artifacts(
+            job_id=job_id,
+            req=req,
+            job_dir=job_dir,
+        )
     if req.apply.register_corrected_file:
         _set_job_progress_message(
             state,

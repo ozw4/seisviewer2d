@@ -15,18 +15,24 @@ from app.services.refraction_static_export_types import (
     RefractionStaticExportBundle,
 )
 from app.services.refraction_static_lsst_export import (
+    REFRACTION_LSST_CARDS_TXT_NAME,
     REFRACTION_LSST_CSV_NAME,
     REFRACTION_LSST_FORMAT_NAME,
     REFRACTION_LSST_FORMAT_VERSION,
     REFRACTION_LSST_PLUS_COLUMNS,
+    REFRACTION_LSST_PLUS_CARDS_TXT_NAME,
     REFRACTION_LSST_PLUS_CSV_NAME,
     REFRACTION_LSST_PLUS_FORMAT_NAME,
     REFRACTION_LSST_PLUS_FORMAT_VERSION,
     REFRACTION_LSST_REQUIRED_COLUMNS,
     RefractionStaticLsstExportError,
+    format_refraction_lsst_cards_txt,
     format_refraction_lsst_csv,
+    format_refraction_lsst_plus_cards_txt,
     format_refraction_lsst_plus_csv,
+    write_refraction_lsst_cards_txt,
     write_refraction_lsst_csv,
+    write_refraction_lsst_plus_cards_txt,
     write_refraction_lsst_plus_csv,
 )
 
@@ -56,7 +62,9 @@ for name in {sorted(_FORBIDDEN_IMPORTS)!r}:
 
 module = importlib.import_module('app.services.refraction_static_lsst_export')
 assert module.format_refraction_lsst_csv is not None
+assert module.format_refraction_lsst_cards_txt is not None
 assert module.format_refraction_lsst_plus_csv is not None
+assert module.format_refraction_lsst_plus_cards_txt is not None
 
 forbidden = set({sorted(_FORBIDDEN_IMPORTS)!r})
 print(json.dumps(sorted(name for name in sys.modules if name in forbidden)))
@@ -103,59 +111,7 @@ def test_lsst_export_emits_source_and_receiver_t1_rows() -> None:
 
 
 def test_lsst_export_emits_multilayer_columns_when_available() -> None:
-    bundle = RefractionStaticExportBundle(
-        source_job_id='refraction-job-503',
-        source_rows=(
-            RefractionStaticEndpointExportRow(
-                endpoint_kind='source',
-                endpoint_key='s100',
-                endpoint_id=100,
-                node_id=10,
-                x_m=1000.0,
-                y_m=2000.0,
-                elevation_m=25.0,
-                t1_s=0.012,
-                t2_s=0.020,
-                t3_s=0.030,
-                v1_m_s=800.0,
-                v2_m_s=2400.0,
-                v3_m_s=3600.0,
-                vsub_m_s=5000.0,
-                sh1_m=8.0,
-                sh2_m=12.0,
-                sh3_m=16.0,
-                total_weathering_thickness_m=36.0,
-                weathering_correction_s=-0.003,
-                elevation_correction_s=0.001,
-                total_applied_shift_s=-0.004,
-            ),
-        ),
-        receiver_rows=(
-            RefractionStaticEndpointExportRow(
-                endpoint_kind='receiver',
-                endpoint_key='r200',
-                endpoint_id=200,
-                node_id=20,
-                x_m=1010.0,
-                y_m=2010.0,
-                elevation_m=30.0,
-                t1_s=0.011,
-                t2_s=0.021,
-                t3_s=0.031,
-                v1_m_s=800.0,
-                v2_m_s=2350.0,
-                v3_m_s=3650.0,
-                vsub_m_s=5100.0,
-                sh1_m=7.0,
-                sh2_m=11.0,
-                sh3_m=15.0,
-                total_weathering_thickness_m=33.0,
-                weathering_correction_s=-0.002,
-                elevation_correction_s=0.0015,
-                total_applied_shift_s=0.005,
-            ),
-        ),
-    )
+    bundle = _multilayer_bundle()
 
     rows, fieldnames = _read_csv_text(format_refraction_lsst_csv(bundle))
 
@@ -307,6 +263,62 @@ def test_lsst_export_writes_expected_file_name(tmp_path: Path) -> None:
     )
 
 
+def test_lsst_cards_txt_has_header_and_card_rows() -> None:
+    text = format_refraction_lsst_cards_txt(_basic_bundle())
+    lines = text.splitlines()
+
+    assert lines[:5] == [
+        '# format=lsst',
+        '# schema_version=1',
+        '# sign_convention=corrected(t) = raw(t - shift_s)',
+        '# units=ms',
+        '# missing_values=omit',
+    ]
+    assert 'SDT1 s100 12.345600' in lines
+    assert 'SVV2 s100 2400.000' in lines
+
+
+def test_lsst_cards_txt_is_not_csv_mirror() -> None:
+    bundle = _basic_bundle()
+    text = format_refraction_lsst_cards_txt(bundle)
+
+    assert text != format_refraction_lsst_csv(bundle)
+    assert not text.startswith('format_name,')
+    assert 'format_name,format_version' not in text
+
+
+def test_lsst_cards_txt_emits_source_and_receiver_stat_cards() -> None:
+    lines = format_refraction_lsst_cards_txt(_basic_bundle()).splitlines()
+
+    assert 'SSTAT s100 -3.250000' in lines
+    assert 'RSTAT r200 4.500000' in lines
+    assert 'SDT1 s100 12.345600' in lines
+    assert 'RDT1 r200 23.000000' in lines
+
+
+def test_lsst_cards_txt_emits_multilayer_cards_when_available() -> None:
+    lines = format_refraction_lsst_cards_txt(_multilayer_bundle()).splitlines()
+
+    assert 'SDT2 s100 20.000000' in lines
+    assert 'SDT3 s100 30.000000' in lines
+    assert 'SVV3 s100 3600.000' in lines
+    assert 'SVSB s100 5000.000' in lines
+    assert 'RDT2 r200 21.000000' in lines
+    assert 'RDT3 r200 31.000000' in lines
+    assert 'RVV3 r200 3650.000' in lines
+    assert 'RVSB r200 5100.000' in lines
+
+
+def test_lsst_cards_txt_writes_expected_file_name(tmp_path: Path) -> None:
+    path = tmp_path / REFRACTION_LSST_CARDS_TXT_NAME
+
+    write_refraction_lsst_cards_txt(_basic_bundle(), path)
+
+    assert path.read_text(encoding='utf-8') == format_refraction_lsst_cards_txt(
+        _basic_bundle()
+    )
+
+
 def test_lsst_plus_export_contains_endpoint_metadata() -> None:
     rows, fieldnames = _read_csv_text(format_refraction_lsst_plus_csv(_lsst_plus_bundle()))
 
@@ -439,6 +451,82 @@ def test_lsst_plus_export_writes_expected_file_name(tmp_path: Path) -> None:
     )
 
 
+def test_lsst_plus_cards_txt_has_endpoint_component_and_layer_rows() -> None:
+    text = format_refraction_lsst_plus_cards_txt(_lsst_plus_bundle())
+    lines = text.splitlines()
+
+    assert lines[:5] == [
+        '# format=lsst_plus',
+        '# schema_version=1',
+        '# sign_convention=corrected(t) = raw(t - shift_s)',
+        '# units=ms',
+        '# missing_values=omit',
+    ]
+    assert (
+        'SRC s100 station=1000 x=1000.000 y=2000.000 elev=25.000 status=ok'
+        in lines
+    )
+    assert (
+        'REC r200 station=2000 x=1010.000 y=2010.000 elev=30.000 status=ok'
+        in lines
+    )
+    assert (
+        'STC source s100 total=-3.250000 weathering=-4.000000 '
+        'elevation=0.750000 field=1.250000 manual=0.500000'
+    ) in lines
+    assert (
+        'STC receiver r200 total=4.500000 weathering=-2.500000 '
+        'elevation=1.000000 field=-0.250000 manual=-0.250000'
+    ) in lines
+    assert (
+        'LYR source s100 t1=12.345600 t2=20.000000 t3=30.000000 '
+        'sh1=8.250 sh2=12.000 sh3=16.000 v1=800.000 v2=2400.000 '
+        'v3=3600.000 vsub=5000.000'
+    ) in lines
+    assert 'LYR receiver r200 t1=23.000000 sh1=9.500 v1=800.000 v2=2300.000' in lines
+
+
+def test_lsst_plus_cards_txt_is_not_csv_mirror() -> None:
+    bundle = _lsst_plus_bundle()
+    text = format_refraction_lsst_plus_cards_txt(bundle)
+
+    assert text != format_refraction_lsst_plus_csv(bundle)
+    assert not text.startswith('format_name,')
+    assert 'format_name,format_version' not in text
+
+
+def test_lsst_plus_cards_txt_is_deterministic() -> None:
+    bundle = _lsst_plus_source_only_bundle()
+    expected = (
+        '# format=lsst_plus\n'
+        '# schema_version=1\n'
+        '# sign_convention=corrected(t) = raw(t - shift_s)\n'
+        '# units=ms\n'
+        '# missing_values=omit\n'
+        'SRC s100 station=1000 x=1000.000 y=2000.000 elev=25.000 status=ok\n'
+        'STC source s100 total=-3.250000 weathering=-4.000000 '
+        'elevation=0.750000 field=1.250000 manual=0.500000\n'
+        'LYR source s100 t1=12.345600 t2=20.000000 t3=30.000000 '
+        'sh1=8.250 sh2=12.000 sh3=16.000 v1=800.000 v2=2400.000 '
+        'v3=3600.000 vsub=5000.000\n'
+    )
+
+    assert format_refraction_lsst_plus_cards_txt(bundle) == expected
+    assert format_refraction_lsst_plus_cards_txt(bundle) == (
+        format_refraction_lsst_plus_cards_txt(bundle)
+    )
+
+
+def test_lsst_plus_cards_txt_writes_expected_file_name(tmp_path: Path) -> None:
+    path = tmp_path / REFRACTION_LSST_PLUS_CARDS_TXT_NAME
+
+    write_refraction_lsst_plus_cards_txt(_lsst_plus_source_only_bundle(), path)
+
+    assert path.read_text(encoding='utf-8') == format_refraction_lsst_plus_cards_txt(
+        _lsst_plus_source_only_bundle()
+    )
+
+
 def _read_csv_text(text: str) -> tuple[list[dict[str, str]], list[str]]:
     reader = csv.DictReader(io.StringIO(text))
     return list(reader), list(reader.fieldnames or ())
@@ -486,6 +574,62 @@ def _basic_bundle(
                 weathering_correction_s=-0.0025,
                 elevation_correction_s=0.001,
                 total_applied_shift_s=0.0045,
+            ),
+        ),
+    )
+
+
+def _multilayer_bundle() -> RefractionStaticExportBundle:
+    return RefractionStaticExportBundle(
+        source_job_id='refraction-job-503',
+        source_rows=(
+            RefractionStaticEndpointExportRow(
+                endpoint_kind='source',
+                endpoint_key='s100',
+                endpoint_id=100,
+                node_id=10,
+                x_m=1000.0,
+                y_m=2000.0,
+                elevation_m=25.0,
+                t1_s=0.012,
+                t2_s=0.020,
+                t3_s=0.030,
+                v1_m_s=800.0,
+                v2_m_s=2400.0,
+                v3_m_s=3600.0,
+                vsub_m_s=5000.0,
+                sh1_m=8.0,
+                sh2_m=12.0,
+                sh3_m=16.0,
+                total_weathering_thickness_m=36.0,
+                weathering_correction_s=-0.003,
+                elevation_correction_s=0.001,
+                total_applied_shift_s=-0.004,
+            ),
+        ),
+        receiver_rows=(
+            RefractionStaticEndpointExportRow(
+                endpoint_kind='receiver',
+                endpoint_key='r200',
+                endpoint_id=200,
+                node_id=20,
+                x_m=1010.0,
+                y_m=2010.0,
+                elevation_m=30.0,
+                t1_s=0.011,
+                t2_s=0.021,
+                t3_s=0.031,
+                v1_m_s=800.0,
+                v2_m_s=2350.0,
+                v3_m_s=3650.0,
+                vsub_m_s=5100.0,
+                sh1_m=7.0,
+                sh2_m=11.0,
+                sh3_m=15.0,
+                total_weathering_thickness_m=33.0,
+                weathering_correction_s=-0.002,
+                elevation_correction_s=0.0015,
+                total_applied_shift_s=0.005,
             ),
         ),
     )

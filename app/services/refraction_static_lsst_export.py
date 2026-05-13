@@ -19,9 +19,11 @@ from app.services.refraction_static_export_units import (
 )
 
 REFRACTION_LSST_CSV_NAME: Final = 'refraction_lsst.csv'
+REFRACTION_LSST_CARDS_TXT_NAME: Final = 'refraction_lsst_cards.txt'
 REFRACTION_LSST_FORMAT_NAME: Final = 'lsst'
 REFRACTION_LSST_FORMAT_VERSION: Final = 1
 REFRACTION_LSST_PLUS_CSV_NAME: Final = 'refraction_lsst_plus.csv'
+REFRACTION_LSST_PLUS_CARDS_TXT_NAME: Final = 'refraction_lsst_plus_cards.txt'
 REFRACTION_LSST_PLUS_FORMAT_NAME: Final = 'lsst_plus'
 REFRACTION_LSST_PLUS_FORMAT_VERSION: Final = 1
 
@@ -123,6 +125,41 @@ def write_refraction_lsst_csv(
     Path(path).write_text(text, encoding='utf-8')
 
 
+def format_refraction_lsst_cards_txt(
+    bundle: RefractionStaticExportBundle,
+    *,
+    fail_on_invalid_static_status: bool = True,
+    include_inactive_endpoints: bool = False,
+) -> str:
+    """Format endpoint rows as deterministic repo-owned LSST card text."""
+    _validate_bundle(bundle)
+    rows = _included_rows(
+        bundle,
+        fail_on_invalid_static_status=fail_on_invalid_static_status,
+        include_inactive_endpoints=include_inactive_endpoints,
+    )
+    lines = _card_header(format_name=REFRACTION_LSST_FORMAT_NAME)
+    for row in rows:
+        lines.extend(_lsst_card_lines(row))
+    return '\n'.join(lines) + '\n'
+
+
+def write_refraction_lsst_cards_txt(
+    bundle: RefractionStaticExportBundle,
+    path: Path,
+    *,
+    fail_on_invalid_static_status: bool = True,
+    include_inactive_endpoints: bool = False,
+) -> None:
+    """Write deterministic repo-owned LSST card text to ``path``."""
+    text = format_refraction_lsst_cards_txt(
+        bundle,
+        fail_on_invalid_static_status=fail_on_invalid_static_status,
+        include_inactive_endpoints=include_inactive_endpoints,
+    )
+    Path(path).write_text(text, encoding='utf-8')
+
+
 def format_refraction_lsst_plus_csv(
     bundle: RefractionStaticExportBundle,
     *,
@@ -158,6 +195,41 @@ def write_refraction_lsst_plus_csv(
 ) -> None:
     """Write documented M5 LSST+ CSV text to ``path``."""
     text = format_refraction_lsst_plus_csv(
+        bundle,
+        fail_on_invalid_static_status=fail_on_invalid_static_status,
+        include_inactive_endpoints=include_inactive_endpoints,
+    )
+    Path(path).write_text(text, encoding='utf-8')
+
+
+def format_refraction_lsst_plus_cards_txt(
+    bundle: RefractionStaticExportBundle,
+    *,
+    fail_on_invalid_static_status: bool = False,
+    include_inactive_endpoints: bool = True,
+) -> str:
+    """Format endpoint rows as deterministic repo-owned LSST+ card text."""
+    _validate_bundle(bundle)
+    rows = _included_rows(
+        bundle,
+        fail_on_invalid_static_status=fail_on_invalid_static_status,
+        include_inactive_endpoints=include_inactive_endpoints,
+    )
+    lines = _card_header(format_name=REFRACTION_LSST_PLUS_FORMAT_NAME)
+    for row in rows:
+        lines.extend(_lsst_plus_card_lines(row))
+    return '\n'.join(lines) + '\n'
+
+
+def write_refraction_lsst_plus_cards_txt(
+    bundle: RefractionStaticExportBundle,
+    path: Path,
+    *,
+    fail_on_invalid_static_status: bool = False,
+    include_inactive_endpoints: bool = True,
+) -> None:
+    """Write deterministic repo-owned LSST+ card text to ``path``."""
+    text = format_refraction_lsst_plus_cards_txt(
         bundle,
         fail_on_invalid_static_status=fail_on_invalid_static_status,
         include_inactive_endpoints=include_inactive_endpoints,
@@ -203,6 +275,298 @@ def _included_rows(
             )
         )
     return tuple(rows)
+
+
+def _card_header(*, format_name: str) -> list[str]:
+    return [
+        f'# format={format_name}',
+        '# schema_version=1',
+        f'# sign_convention={REFRACTION_STATIC_REPO_SIGN_CONVENTION}',
+        '# units=ms',
+        '# missing_values=omit',
+    ]
+
+
+def _lsst_card_lines(row: RefractionStaticEndpointExportRow) -> list[str]:
+    status = _required_static_status(row)
+    valid = status == 'ok'
+    if row.endpoint_kind == 'source':
+        cards = (
+            ('SDT1', 'time', row.t1_s, True),
+            ('SSTAT', 'time', row.total_applied_shift_s, True),
+            ('SVW', 'velocity', row.v1_m_s, True),
+            ('SVV2', 'velocity', row.v2_m_s, True),
+            ('SDT2', 'time', row.t2_s, False),
+            ('SDT3', 'time', row.t3_s, False),
+            ('SVV3', 'velocity', row.v3_m_s, False),
+            ('SVSB', 'velocity', row.vsub_m_s, False),
+        )
+    else:
+        cards = (
+            ('RDT1', 'time', row.t1_s, True),
+            ('RSTAT', 'time', row.total_applied_shift_s, True),
+            ('RVW', 'velocity', row.v1_m_s, True),
+            ('RVV2', 'velocity', row.v2_m_s, True),
+            ('RDT2', 'time', row.t2_s, False),
+            ('RDT3', 'time', row.t3_s, False),
+            ('RVV3', 'velocity', row.v3_m_s, False),
+            ('RVSB', 'velocity', row.vsub_m_s, False),
+        )
+    endpoint_key = _format_text(
+        row.endpoint_key,
+        required=True,
+        row=row,
+        field_name='endpoint_key',
+    )
+    lines: list[str] = []
+    for card_name, value_kind, value, required_for_ok in cards:
+        formatted = _format_card_value(
+            value,
+            value_kind=value_kind,
+            required=valid and required_for_ok,
+            row=row,
+            field_name=card_name,
+        )
+        if formatted:
+            lines.append(f'{card_name} {endpoint_key} {formatted}')
+    return lines
+
+
+def _lsst_plus_card_lines(row: RefractionStaticEndpointExportRow) -> list[str]:
+    status = _required_static_status(row)
+    valid = status == 'ok'
+    endpoint_key = _format_text(
+        row.endpoint_key,
+        required=True,
+        row=row,
+        field_name='endpoint_key',
+    )
+    endpoint_card = 'SRC' if row.endpoint_kind == 'source' else 'REC'
+    lines = [
+        _card_row(
+            endpoint_card,
+            endpoint_key,
+            _card_named_value(
+                'station',
+                row.station_id,
+                value_kind='text',
+                required=False,
+                row=row,
+                field_name='station_id',
+            ),
+            _card_named_value(
+                'x',
+                row.x_m,
+                value_kind='m',
+                required=valid,
+                row=row,
+                field_name='x_m',
+            ),
+            _card_named_value(
+                'y',
+                row.y_m,
+                value_kind='m',
+                required=valid,
+                row=row,
+                field_name='y_m',
+            ),
+            _card_named_value(
+                'elev',
+                row.elevation_m,
+                value_kind='m',
+                required=valid,
+                row=row,
+                field_name='elevation_m',
+            ),
+            f'status={status}',
+        )
+    ]
+    lines.append(
+        _card_row(
+            'STC',
+            row.endpoint_kind,
+            endpoint_key,
+            _card_named_value(
+                'total',
+                row.total_applied_shift_s,
+                value_kind='time',
+                required=valid,
+                row=row,
+                field_name='total_applied_shift_ms',
+            ),
+            _card_named_value(
+                'weathering',
+                row.weathering_correction_s,
+                value_kind='time',
+                required=valid,
+                row=row,
+                field_name='weathering_correction_ms',
+            ),
+            _card_named_value(
+                'elevation',
+                row.elevation_correction_s,
+                value_kind='time',
+                required=valid,
+                row=row,
+                field_name='elevation_correction_ms',
+            ),
+            _card_named_value(
+                'field',
+                row.field_correction_s,
+                value_kind='time',
+                required=False,
+                row=row,
+                field_name='field_correction_ms',
+            ),
+            _card_named_value(
+                'manual',
+                row.manual_static_shift_s,
+                value_kind='time',
+                required=False,
+                row=row,
+                field_name='manual_static_ms',
+            ),
+        )
+    )
+    lines.append(
+        _card_row(
+            'LYR',
+            row.endpoint_kind,
+            endpoint_key,
+            _card_named_value(
+                't1',
+                row.t1_s,
+                value_kind='time',
+                required=valid,
+                row=row,
+                field_name='t1_ms',
+            ),
+            _card_named_value(
+                't2',
+                row.t2_s,
+                value_kind='time',
+                required=False,
+                row=row,
+                field_name='t2_ms',
+            ),
+            _card_named_value(
+                't3',
+                row.t3_s,
+                value_kind='time',
+                required=False,
+                row=row,
+                field_name='t3_ms',
+            ),
+            _card_named_value(
+                'sh1',
+                row.sh1_m,
+                value_kind='m',
+                required=valid,
+                row=row,
+                field_name='sh1_m',
+            ),
+            _card_named_value(
+                'sh2',
+                row.sh2_m,
+                value_kind='m',
+                required=False,
+                row=row,
+                field_name='sh2_m',
+            ),
+            _card_named_value(
+                'sh3',
+                row.sh3_m,
+                value_kind='m',
+                required=False,
+                row=row,
+                field_name='sh3_m',
+            ),
+            _card_named_value(
+                'v1',
+                row.v1_m_s,
+                value_kind='velocity',
+                required=valid,
+                row=row,
+                field_name='v1_m_s',
+            ),
+            _card_named_value(
+                'v2',
+                row.v2_m_s,
+                value_kind='velocity',
+                required=valid,
+                row=row,
+                field_name='v2_m_s',
+            ),
+            _card_named_value(
+                'v3',
+                row.v3_m_s,
+                value_kind='velocity',
+                required=False,
+                row=row,
+                field_name='v3_m_s',
+            ),
+            _card_named_value(
+                'vsub',
+                row.vsub_m_s,
+                value_kind='velocity',
+                required=False,
+                row=row,
+                field_name='vsub_m_s',
+            ),
+        )
+    )
+    return lines
+
+
+def _card_row(*parts: str) -> str:
+    return ' '.join(part for part in parts if part)
+
+
+def _card_named_value(
+    name: str,
+    value: object,
+    *,
+    value_kind: str,
+    required: bool,
+    row: RefractionStaticEndpointExportRow,
+    field_name: str,
+) -> str:
+    formatted = _format_card_value(
+        value,
+        value_kind=value_kind,
+        required=required,
+        row=row,
+        field_name=field_name,
+    )
+    if not formatted:
+        return ''
+    return f'{name}={formatted}'
+
+
+def _format_card_value(
+    value: object,
+    *,
+    value_kind: str,
+    required: bool,
+    row: RefractionStaticEndpointExportRow,
+    field_name: str,
+) -> str:
+    if value_kind == 'time':
+        return _format_time_ms(value, required=required, row=row, field_name=field_name)
+    if value_kind == 'm':
+        return _format_m(value, required=required, row=row, field_name=field_name)
+    if value_kind == 'velocity':
+        return _format_velocity(
+            value,
+            required=required,
+            row=row,
+            field_name=field_name,
+        )
+    if value_kind == 'text':
+        return _format_text(value, required=required, row=row, field_name=field_name)
+    raise RefractionStaticLsstExportError(
+        f'{_row_label(row)} unknown LSST card value kind {value_kind!r}'
+    )
 
 
 def _include_row(
@@ -673,10 +1037,12 @@ def _row_label(row: RefractionStaticEndpointExportRow) -> str:
 
 
 __all__ = [
+    'REFRACTION_LSST_CARDS_TXT_NAME',
     'REFRACTION_LSST_CSV_NAME',
     'REFRACTION_LSST_FORMAT_NAME',
     'REFRACTION_LSST_FORMAT_VERSION',
     'REFRACTION_LSST_PLUS_COLUMNS',
+    'REFRACTION_LSST_PLUS_CARDS_TXT_NAME',
     'REFRACTION_LSST_PLUS_CSV_NAME',
     'REFRACTION_LSST_PLUS_FIELD_COLUMNS',
     'REFRACTION_LSST_PLUS_FORMAT_NAME',
@@ -684,8 +1050,12 @@ __all__ = [
     'REFRACTION_LSST_OPTIONAL_MULTILAYER_COLUMNS',
     'REFRACTION_LSST_REQUIRED_COLUMNS',
     'RefractionStaticLsstExportError',
+    'format_refraction_lsst_cards_txt',
     'format_refraction_lsst_csv',
+    'format_refraction_lsst_plus_cards_txt',
     'format_refraction_lsst_plus_csv',
+    'write_refraction_lsst_cards_txt',
     'write_refraction_lsst_csv',
+    'write_refraction_lsst_plus_cards_txt',
     'write_refraction_lsst_plus_csv',
 ]

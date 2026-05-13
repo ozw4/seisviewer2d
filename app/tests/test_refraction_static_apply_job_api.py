@@ -41,6 +41,9 @@ from app.services.refraction_static_artifacts import (
     SOURCE_RECEIVER_STATIC_TABLE_NPZ_NAME,
     SOURCE_STATIC_TABLE_CSV_NAME,
 )
+from app.services.refraction_static_export_service import (
+    CANONICAL_SOURCE_RECEIVER_STATIC_TABLE_CSV_NAME,
+)
 from app.services.refraction_static_layer_observations import (
     build_refraction_layer_observation_masks,
     refraction_layer_observation_qc,
@@ -1171,6 +1174,74 @@ def test_run_refraction_static_apply_job_artifact_only_writes_real_final_artifac
     assert request_download.json()['job_id'] == job_id
 
 
+def test_run_refraction_static_apply_job_inline_canonical_export_uses_invalid_policy(
+    client: TestClient,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    job_id = 'refraction-inline-canonical-export'
+    job_dir = tmp_path / 'jobs' / job_id
+    payload = _payload()
+    payload['export'] = {
+        'enabled': True,
+        'formats': ['canonical_static_table'],
+        'fail_on_invalid_static_status': False,
+        'include_inactive_endpoints': False,
+    }
+    req = RefractionStaticApplyRequest.model_validate(payload)
+    _create_refraction_job(client, job_id=job_id, req=req, job_dir=job_dir)
+    _stub_upstream_refraction_result(monkeypatch, datum_result=object())
+
+    def _write_static_table_artifacts(**kwargs: Any) -> object:
+        root = Path(kwargs['job_dir'])
+        root.mkdir(parents=True, exist_ok=True)
+        _write_csv_rows(
+            root / SOURCE_STATIC_TABLE_CSV_NAME,
+            [
+                _source_static_export_row(
+                    endpoint_key='source:1001',
+                    source_id='1001',
+                    total_applied_shift_ms='12.5',
+                    static_status='ok',
+                ),
+                _source_static_export_row(
+                    endpoint_key='source:inactive',
+                    source_id='1002',
+                    total_applied_shift_ms='',
+                    static_status='inactive_endpoint',
+                ),
+            ],
+        )
+        _write_csv_rows(
+            root / RECEIVER_STATIC_TABLE_CSV_NAME,
+            [
+                _receiver_static_export_row(
+                    endpoint_key='receiver:2001',
+                    receiver_id='2001',
+                    total_applied_shift_ms='-3.25',
+                    static_status='ok',
+                ),
+            ],
+        )
+        return object()
+
+    monkeypatch.setattr(
+        refraction_service_module,
+        'write_refraction_static_artifacts',
+        _write_static_table_artifacts,
+    )
+
+    run_refraction_static_apply_job(job_id, req, client.app.state.sv)
+
+    with client.app.state.sv.lock:
+        job = dict(client.app.state.sv.jobs[job_id])
+    assert job['status'] == 'done'
+    rows = _read_csv(job_dir / CANONICAL_SOURCE_RECEIVER_STATIC_TABLE_CSV_NAME)
+    assert [row['endpoint_key'] for row in rows] == ['source:1001', 'receiver:2001']
+    assert rows[0]['applied_shift_ms'] == '12.5'
+    assert rows[1]['applied_shift_ms'] == '-3.25'
+
+
 def test_refraction_static_job_lists_v1_artifacts_when_v1_estimated(
     client: TestClient,
     tmp_path: Path,
@@ -2149,6 +2220,55 @@ def _listed_job_files(client: TestClient, job_id: str) -> set[str]:
 def _read_csv(path: Path) -> list[dict[str, str]]:
     with path.open(encoding='utf-8', newline='') as handle:
         return list(csv.DictReader(handle))
+
+
+def _write_csv_rows(path: Path, rows: list[dict[str, str]]) -> None:
+    assert rows
+    fieldnames: list[str] = []
+    for row in rows:
+        for key in row:
+            if key not in fieldnames:
+                fieldnames.append(key)
+    with path.open('w', encoding='utf-8', newline='') as handle:
+        writer = csv.DictWriter(handle, fieldnames=fieldnames, lineterminator='\n')
+        writer.writeheader()
+        writer.writerows(rows)
+
+
+def _source_static_export_row(
+    *,
+    endpoint_key: str,
+    source_id: str,
+    total_applied_shift_ms: str,
+    static_status: str,
+) -> dict[str, str]:
+    return {
+        'endpoint_kind': 'source',
+        'source_endpoint_key': endpoint_key,
+        'source_id': source_id,
+        'source_node_id': source_id,
+        'total_applied_shift_ms': total_applied_shift_ms,
+        'static_status': static_status,
+        'sign_convention': 'corrected(t) = raw(t - shift_s)',
+    }
+
+
+def _receiver_static_export_row(
+    *,
+    endpoint_key: str,
+    receiver_id: str,
+    total_applied_shift_ms: str,
+    static_status: str,
+) -> dict[str, str]:
+    return {
+        'endpoint_kind': 'receiver',
+        'receiver_endpoint_key': endpoint_key,
+        'receiver_id': receiver_id,
+        'receiver_node_id': receiver_id,
+        'total_applied_shift_ms': total_applied_shift_ms,
+        'static_status': static_status,
+        'sign_convention': 'corrected(t) = raw(t - shift_s)',
+    }
 
 
 def _segy_output_files(root: Path) -> list[Path]:
