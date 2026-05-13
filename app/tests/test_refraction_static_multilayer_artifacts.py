@@ -321,15 +321,16 @@ def test_first_break_time_export_contains_layer_kind_for_multilayer(
         row['layer_kind'] for row in rows
     }
     for row in rows:
+        assert row['format_name'] == 'first_break_time'
+        assert row['format_version'] == '1'
+        assert row['sorted_trace_index']
         assert row['source_endpoint_key']
         assert row['receiver_endpoint_key']
+        assert row['source_id']
+        assert row['receiver_id']
         assert row['observed_pick_time_ms']
         assert row['modeled_pick_time_ms']
-        assert row['used_for_layer']
-        assert row['moveout_time_ms']
-        assert row['source_time_term_ms']
-        assert row['receiver_time_term_ms']
-        assert row['velocity_m_s']
+        assert row['used_in_solve']
 
 
 def test_multilayer_residual_csv_reports_cell_ids_for_solve_cell_layer(
