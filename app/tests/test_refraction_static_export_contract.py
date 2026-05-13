@@ -39,7 +39,9 @@ from app.services.refraction_static_export_units import (
     REFRACTION_STATIC_REPO_SIGN_CONVENTION,
 )
 from app.services.refraction_static_lsst_export import (
+    REFRACTION_LSST_CARDS_TXT_NAME,
     REFRACTION_LSST_CSV_NAME,
+    REFRACTION_LSST_PLUS_CARDS_TXT_NAME,
     REFRACTION_LSST_PLUS_CSV_NAME,
 )
 from app.services.refraction_static_table_import import (
@@ -695,17 +697,31 @@ def test_run_refraction_static_export_job_writes_lsst_artifacts(
     lsst_rows = _read_csv_text(
         (export_job_dir / REFRACTION_LSST_CSV_NAME).read_text(encoding='utf-8')
     )
+    lsst_cards = (export_job_dir / REFRACTION_LSST_CARDS_TXT_NAME).read_text(
+        encoding='utf-8'
+    )
     lsst_plus_rows = _read_csv_text(
         (export_job_dir / REFRACTION_LSST_PLUS_CSV_NAME).read_text(encoding='utf-8')
     )
+    lsst_plus_cards = (
+        export_job_dir / REFRACTION_LSST_PLUS_CARDS_TXT_NAME
+    ).read_text(encoding='utf-8')
     assert [row['endpoint_kind'] for row in lsst_rows] == ['source', 'receiver']
     assert lsst_rows[0]['endpoint_key'] == 'source:1001'
     assert lsst_rows[0]['total_applied_shift_ms'] == '12.500000'
     assert lsst_rows[1]['endpoint_key'] == 'receiver:2001'
     assert lsst_rows[1]['total_applied_shift_ms'] == '-3.250000'
+    assert '# format=lsst\n' in lsst_cards
+    assert 'SSTAT source:1001 12.500000\n' in lsst_cards
+    assert 'RSTAT receiver:2001 -3.250000\n' in lsst_cards
     assert lsst_plus_rows[0]['format_name'] == 'lsst_plus'
     assert lsst_plus_rows[0]['source_field_shift_ms'] == '1.500000'
     assert lsst_plus_rows[1]['receiver_field_shift_ms'] == '-0.500000'
+    assert '# format=lsst_plus\n' in lsst_plus_cards
+    assert (
+        'STC source source:1001 total=12.500000 weathering=10.000000 '
+        'elevation=2.500000 field=1.500000\n'
+    ) in lsst_plus_cards
     meta = json.loads(
         (export_job_dir / REFRACTION_STATIC_EXPORT_JOB_META_JSON_NAME).read_text(
             encoding='utf-8',
@@ -713,7 +729,9 @@ def test_run_refraction_static_export_job_writes_lsst_artifacts(
     )
     assert meta['generated_artifacts'] == [
         REFRACTION_LSST_CSV_NAME,
+        REFRACTION_LSST_CARDS_TXT_NAME,
         REFRACTION_LSST_PLUS_CSV_NAME,
+        REFRACTION_LSST_PLUS_CARDS_TXT_NAME,
     ]
 
 

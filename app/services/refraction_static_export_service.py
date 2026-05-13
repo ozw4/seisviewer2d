@@ -40,9 +40,13 @@ from app.services.refraction_static_export_types import (
     RefractionStaticExportBundle,
 )
 from app.services.refraction_static_lsst_export import (
+    REFRACTION_LSST_CARDS_TXT_NAME,
     REFRACTION_LSST_CSV_NAME,
+    REFRACTION_LSST_PLUS_CARDS_TXT_NAME,
     REFRACTION_LSST_PLUS_CSV_NAME,
+    write_refraction_lsst_cards_txt,
     write_refraction_lsst_csv,
+    write_refraction_lsst_plus_cards_txt,
     write_refraction_lsst_plus_csv,
 )
 from app.services.refraction_static_table_validator import (
@@ -342,8 +346,10 @@ def _generated_refraction_static_export_artifacts(
         names.append(REFRACTION_TIME_TERM_SPREADSHEET_CSV_NAME)
     if 'lsst' in requested_formats:
         names.append(REFRACTION_LSST_CSV_NAME)
+        names.append(REFRACTION_LSST_CARDS_TXT_NAME)
     if 'lsst_plus' in requested_formats:
         names.append(REFRACTION_LSST_PLUS_CSV_NAME)
+        names.append(REFRACTION_LSST_PLUS_CARDS_TXT_NAME)
     if 'first_break_time' in requested_formats:
         names.append(REFRACTION_FIRST_BREAK_TIME_EXPORT_CSV_NAME)
     return tuple(names)
@@ -387,10 +393,26 @@ def _write_requested_export_artifacts(
             ),
             include_inactive_endpoints=bool(req.export.include_inactive_endpoints),
         )
+        write_refraction_lsst_cards_txt(
+            bundle,
+            job_dir / REFRACTION_LSST_CARDS_TXT_NAME,
+            fail_on_invalid_static_status=bool(
+                req.export.fail_on_invalid_static_status
+            ),
+            include_inactive_endpoints=bool(req.export.include_inactive_endpoints),
+        )
     if 'lsst_plus' in source.requested_formats:
         write_refraction_lsst_plus_csv(
             bundle,
             job_dir / REFRACTION_LSST_PLUS_CSV_NAME,
+            fail_on_invalid_static_status=bool(
+                req.export.fail_on_invalid_static_status
+            ),
+            include_inactive_endpoints=bool(req.export.include_inactive_endpoints),
+        )
+        write_refraction_lsst_plus_cards_txt(
+            bundle,
+            job_dir / REFRACTION_LSST_PLUS_CARDS_TXT_NAME,
             fail_on_invalid_static_status=bool(
                 req.export.fail_on_invalid_static_status
             ),
