@@ -19,6 +19,8 @@ from app.api.schemas import (
     RefractionStaticApplyResponse,
     RefractionStaticExportJobRequest,
     RefractionStaticExportJobResponse,
+    RefractionStaticQcBundleRequest,
+    RefractionStaticQcBundleResponse,
     RefractionStaticTableApplyRequest,
     RefractionStaticTableApplyResponse,
     ResidualStaticApplyRequest,
@@ -45,6 +47,10 @@ from app.services.refraction_static_export_service import (
     resolve_refraction_static_export_formats,
     run_refraction_static_export_job,
     validate_refraction_static_export_source_job,
+)
+from app.services.refraction_static_qc_bundle import (
+    RefractionStaticQcBundleError,
+    build_refraction_static_qc_bundle,
 )
 from app.services.refraction_static_service import run_refraction_static_apply_job
 from app.services.refraction_static_table_apply_service import (
@@ -285,6 +291,28 @@ def refraction_static_apply(
     if req.export.enabled:
         response['requested_formats'] = list(requested_formats)
     return response
+
+
+@router.post(
+    '/statics/refraction/qc',
+    response_model=RefractionStaticQcBundleResponse,
+)
+def refraction_static_qc_bundle(
+    req: RefractionStaticQcBundleRequest,
+    request: Request,
+) -> RefractionStaticQcBundleResponse:
+    """Return a compact QC bundle assembled from refraction static artifacts."""
+    state = get_state(request.app)
+    cleanup_in_memory_state(state)
+    job = _get_static_job_or_404(state, req.job_id)
+    try:
+        return build_refraction_static_qc_bundle(
+            job_id=req.job_id,
+            job=job,
+            req=req,
+        )
+    except RefractionStaticQcBundleError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
 
 
 @router.post(

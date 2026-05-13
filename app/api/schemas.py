@@ -17,6 +17,20 @@ RefractionStaticExportFormat = Literal[
     'time_term_spreadsheet',
     'first_break_time',
 ]
+RefractionStaticQcBundleInclude = Literal[
+    'summary',
+    'first_break',
+    'reduced_time',
+    'profiles',
+    'cells',
+    'static_components',
+    'gather_preview',
+]
+RefractionStaticQcBundleCoordinateMode = Literal[
+    'auto',
+    'line_2d_projected',
+    'grid_3d',
+]
 
 REFRACTION_STATIC_DEFAULT_EXPORT_FORMATS: tuple[
     RefractionStaticExportFormat, ...
@@ -2915,6 +2929,103 @@ class RefractionStaticApplyResponse(BaseModel):
     job_id: str
     state: str
     requested_formats: list[RefractionStaticExportFormat] | None = None
+
+
+class RefractionStaticQcBundleRequest(BaseModel):
+    """Request model for compact refraction static QC bundles.
+
+    ``max_points`` is applied independently to each tabular view with
+    deterministic even-index sampling that keeps the first and last row when
+    downsampling is needed.
+    """
+
+    model_config = ConfigDict(extra='forbid')
+
+    job_id: str
+    include: list[RefractionStaticQcBundleInclude] = Field(
+        default_factory=lambda: [
+            'summary',
+            'first_break',
+            'profiles',
+            'cells',
+            'static_components',
+        ],
+    )
+    max_points: int = 20000
+    coordinate_mode: RefractionStaticQcBundleCoordinateMode = 'auto'
+
+    @field_validator('job_id')
+    @classmethod
+    def _check_job_id(cls, value: str) -> str:
+        if not isinstance(value, str) or not value:
+            raise ValueError('job_id must be a non-empty string')
+        return value
+
+    @field_validator('include')
+    @classmethod
+    def _check_include(
+        cls,
+        value: list[RefractionStaticQcBundleInclude],
+    ) -> list[RefractionStaticQcBundleInclude]:
+        if not value:
+            raise ValueError('include must contain at least one view')
+        seen: set[str] = set()
+        unique: list[RefractionStaticQcBundleInclude] = []
+        for item in value:
+            if item in seen:
+                continue
+            seen.add(item)
+            unique.append(item)
+        return unique
+
+    @field_validator('max_points', mode='before')
+    @classmethod
+    def _check_max_points(cls, value: object) -> int:
+        return require_positive_int(value, 'max_points')
+
+
+class RefractionStaticQcDownsamplingEntry(BaseModel):
+    """Downsampling metadata for one QC bundle tabular view."""
+
+    model_config = ConfigDict(extra='forbid')
+
+    total_points: int
+    returned_points: int
+    downsampled: bool
+    method: str
+
+
+class RefractionStaticQcTabularView(BaseModel):
+    """One sampled tabular artifact exposed as JSON records."""
+
+    model_config = ConfigDict(extra='forbid')
+
+    artifact: str
+    columns: list[str]
+    total_points: int
+    returned_points: int
+    downsampled: bool
+    downsampling_method: str
+    records: list[dict[str, Any]]
+
+
+class RefractionStaticQcBundleResponse(BaseModel):
+    """Compact QC bundle assembled from completed refraction static artifacts."""
+
+    model_config = ConfigDict(extra='forbid')
+
+    job_id: str
+    statics_kind: Literal['refraction']
+    sign_convention: str
+    coordinate_mode: RefractionStaticQcBundleCoordinateMode
+    summary: dict[str, Any]
+    artifacts: dict[str, str]
+    available_views: list[str]
+    unavailable_views: list[str] = Field(default_factory=list)
+    views: dict[str, RefractionStaticQcTabularView] = Field(default_factory=dict)
+    downsampling: dict[str, RefractionStaticQcDownsamplingEntry] = Field(
+        default_factory=dict,
+    )
 
 
 class RefractionStaticTableApplyRequest(BaseModel):
