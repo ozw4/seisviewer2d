@@ -776,8 +776,8 @@ def test_run_refraction_static_export_job_writes_first_break_time_artifact(
     assert rows[0]['format_name'] == 'first_break_time'
     assert rows[0]['source_job_id'] == 'source-refraction-job'
     assert rows[0]['source_endpoint_key'] == 'source:1001'
-    assert rows[0]['observed_first_break_time_ms'] == '50.0'
-    assert rows[0]['modeled_first_break_time_ms'] == '48.5'
+    assert rows[0]['observed_pick_time_ms'] == '50.0'
+    assert rows[0]['modeled_pick_time_ms'] == '48.5'
     assert rows[0]['residual_ms'] == '1.5'
     meta = json.loads(
         (export_job_dir / REFRACTION_STATIC_EXPORT_JOB_META_JSON_NAME).read_text(
@@ -857,8 +857,8 @@ def _write_source_artifact_stub(path: Path, artifact_name: str) -> None:
                 'receiver_id': '2001',
                 'offset_m': '100.0',
                 'layer_kind': 'v2_t1',
-                'observed_first_break_time_ms': '50.0',
-                'modeled_first_break_time_ms': '48.5',
+                'observed_pick_time_ms': '50.0',
+                'modeled_pick_time_ms': '48.5',
                 'residual_ms': '1.5',
                 'used_in_solve': 'true',
                 'reject_reason': 'ok',

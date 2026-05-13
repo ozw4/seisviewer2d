@@ -328,8 +328,8 @@ def test_first_break_time_export_contains_layer_kind_for_multilayer(
         assert row['receiver_endpoint_key']
         assert row['source_id']
         assert row['receiver_id']
-        assert row['observed_first_break_time_ms']
-        assert row['modeled_first_break_time_ms']
+        assert row['observed_pick_time_ms']
+        assert row['modeled_pick_time_ms']
         assert row['used_in_solve']
 
 

@@ -672,10 +672,10 @@ def test_write_refraction_static_artifacts_csvs(tmp_path: Path) -> None:
     assert len(first_break_rows) == 3
     assert first_break_rows[0]['source_endpoint_key'] == 's0'
     assert first_break_rows[0]['receiver_endpoint_key'] == 'r0'
-    assert float(first_break_rows[0]['observed_first_break_time_ms']) == pytest.approx(
+    assert float(first_break_rows[0]['observed_pick_time_ms']) == pytest.approx(
         50.0
     )
-    assert float(first_break_rows[0]['modeled_first_break_time_ms']) == pytest.approx(
+    assert float(first_break_rows[0]['modeled_pick_time_ms']) == pytest.approx(
         49.0
     )
     assert float(first_break_rows[0]['residual_ms']) == pytest.approx(1.0)
@@ -712,8 +712,8 @@ def test_first_break_time_export_contains_observed_modeled_residual(
         'receiver_id',
         'offset_m',
         'layer_kind',
-        'observed_first_break_time_ms',
-        'modeled_first_break_time_ms',
+        'observed_pick_time_ms',
+        'modeled_pick_time_ms',
         'residual_ms',
         'used_in_solve',
         'reject_reason',
@@ -728,8 +728,8 @@ def test_first_break_time_export_contains_observed_modeled_residual(
     assert rows[0]['receiver_id'] == '200'
     assert rows[0]['layer_kind'] == 'v2_t1'
     assert rows[0]['used_in_solve'] == 'true'
-    assert float(rows[0]['observed_first_break_time_ms']) == pytest.approx(50.0)
-    assert float(rows[0]['modeled_first_break_time_ms']) == pytest.approx(49.0)
+    assert float(rows[0]['observed_pick_time_ms']) == pytest.approx(50.0)
+    assert float(rows[0]['modeled_pick_time_ms']) == pytest.approx(49.0)
     assert float(rows[0]['residual_ms']) == pytest.approx(1.0)
     assert rows[0]['sign_convention'] == (
         artifact_module.FIRST_BREAK_TIME_EXPORT_SIGN_CONVENTION

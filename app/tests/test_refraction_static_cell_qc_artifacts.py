@@ -259,10 +259,10 @@ def test_first_break_time_export_uses_documented_public_schema_for_cell_solve(
         assert row['layer_kind'] == 'v2_t1'
         assert row['used_in_solve'] == 'true'
         assert row['reject_reason'] == 'ok'
-        assert float(row['observed_first_break_time_ms']) == pytest.approx(
+        assert float(row['observed_pick_time_ms']) == pytest.approx(
             float(input_model.pick_time_s_sorted[trace_index]) * 1000.0
         )
-        assert float(row['modeled_first_break_time_ms']) == pytest.approx(
+        assert float(row['modeled_pick_time_ms']) == pytest.approx(
             float(input_model.pick_time_s_sorted[trace_index]) * 1000.0,
             abs=1.0e-5,
         )

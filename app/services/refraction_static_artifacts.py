@@ -217,7 +217,7 @@ TIME_TERM_SPREADSHEET_SCHEMA_VERSION = 1
 FIRST_BREAK_TIME_EXPORT_FORMAT_NAME = 'first_break_time'
 FIRST_BREAK_TIME_EXPORT_FORMAT_VERSION = 1
 FIRST_BREAK_TIME_EXPORT_SIGN_CONVENTION = (
-    'residual_ms = observed_first_break_time_ms - modeled_first_break_time_ms'
+    'residual_ms = observed_pick_time_ms - modeled_pick_time_ms'
 )
 
 _ARTIFACTS: tuple[dict[str, str | bool], ...] = (
@@ -549,8 +549,8 @@ _FIRST_BREAK_TIME_EXPORT_COLUMNS = (
     'receiver_id',
     'offset_m',
     'layer_kind',
-    'observed_first_break_time_ms',
-    'modeled_first_break_time_ms',
+    'observed_pick_time_ms',
+    'modeled_pick_time_ms',
     'residual_ms',
     'used_in_solve',
     'reject_reason',
@@ -4192,10 +4192,10 @@ def _first_break_time_export_rows(
                 'receiver_id': _csv_int(receiver_id_by_row[row_index]),
                 'offset_m': _csv_float(result.row_distance_m[row_index]),
                 'layer_kind': str(layer_kind_by_row[row_index]),
-                'observed_first_break_time_ms': _csv_ms(
+                'observed_pick_time_ms': _csv_ms(
                     result.observed_pick_time_s[row_index]
                 ),
-                'modeled_first_break_time_ms': _csv_ms(
+                'modeled_pick_time_ms': _csv_ms(
                     result.modeled_pick_time_s[row_index]
                 ),
                 'residual_ms': _csv_ms(result.residual_time_s[row_index]),
