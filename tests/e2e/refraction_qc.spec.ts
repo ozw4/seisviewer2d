@@ -11,29 +11,28 @@ function lineProfileRecords() {
 			x_m: '1000',
 			y_m: '2000',
 			surface_elevation_m: '120',
-			pick_count: '8',
-			used_pick_count: '7',
-			residual_rms_ms: '3.1',
-			residual_mad_ms: '2.2',
+			pick_fold: '8',
+			used_pick_fold: '7',
+			residual_rms_s: '0.0031',
+			residual_mad_s: '0.0022',
 			v1_m_s: '800',
 			v2_m_s: '2400',
 			v3_m_s: '3600',
 			vsub_m_s: '',
-			t1_ms: '14',
-			t2_ms: '28',
-			t3_ms: '',
+			t1_s: '0.014',
+			t2_s: '0.028',
+			t3_s: '',
 			sh1_m: '9.5',
 			sh2_m: '16.2',
 			sh3_m: '',
 			layer1_base_elevation_m: '110.5',
 			layer2_base_elevation_m: '94.3',
 			final_refractor_elevation_m: '94.3',
-			weathering_correction_ms: '-8',
-			elevation_correction_ms: '2',
-			field_correction_ms: '1.5',
-			manual_static_ms: '0.5',
-			total_static_ms: '-4',
-			total_applied_shift_ms: '-4',
+			weathering_correction_s: '-0.008',
+			elevation_correction_s: '0.002',
+			field_shift_s: '0.0015',
+			manual_static_shift_s: '0.0005',
+			total_applied_shift_s: '-0.004',
 			static_status: 'ok',
 			solution_status: 'ok',
 		},
@@ -46,29 +45,28 @@ function lineProfileRecords() {
 			x_m: '1100',
 			y_m: '2100',
 			surface_elevation_m: '124',
-			pick_count: '5',
-			used_pick_count: '3',
-			residual_rms_ms: '6.2',
-			residual_mad_ms: '4',
+			pick_fold: '5',
+			used_pick_fold: '3',
+			residual_rms_s: '0.0062',
+			residual_mad_s: '0.004',
 			v1_m_s: '800',
 			v2_m_s: '2500',
 			v3_m_s: '3700',
 			vsub_m_s: '',
-			t1_ms: '18',
-			t2_ms: '35',
-			t3_ms: '',
+			t1_s: '0.018',
+			t2_s: '0.035',
+			t3_s: '',
 			sh1_m: '12.0',
 			sh2_m: '18.0',
 			sh3_m: '',
 			layer1_base_elevation_m: '112.0',
 			layer2_base_elevation_m: '94.0',
 			final_refractor_elevation_m: '94.0',
-			weathering_correction_ms: '-9',
-			elevation_correction_ms: '2.5',
-			field_correction_ms: '0',
-			manual_static_ms: '1',
-			total_static_ms: '-5.5',
-			total_applied_shift_ms: '-5.5',
+			weathering_correction_s: '-0.009',
+			elevation_correction_s: '0.0025',
+			field_shift_s: '0',
+			manual_static_shift_s: '0.001',
+			total_applied_shift_s: '-0.0055',
 			static_status: 'invalid_endpoint',
 			solution_status: 'missing_solution',
 		},
@@ -81,29 +79,28 @@ function lineProfileRecords() {
 			x_m: '1020',
 			y_m: '2020',
 			surface_elevation_m: '118',
-			pick_count: '9',
-			used_pick_count: '9',
-			residual_rms_ms: '2',
-			residual_mad_ms: '1.1',
+			pick_fold: '9',
+			used_pick_fold: '9',
+			residual_rms_s: '0.002',
+			residual_mad_s: '0.0011',
 			v1_m_s: '800',
 			v2_m_s: '2380',
 			v3_m_s: '3550',
 			vsub_m_s: '',
-			t1_ms: '12',
-			t2_ms: '24',
-			t3_ms: '',
+			t1_s: '0.012',
+			t2_s: '0.024',
+			t3_s: '',
 			sh1_m: '8.2',
 			sh2_m: '15.0',
 			sh3_m: '',
 			layer1_base_elevation_m: '109.8',
 			layer2_base_elevation_m: '94.8',
 			final_refractor_elevation_m: '94.8',
-			weathering_correction_ms: '-7',
-			elevation_correction_ms: '1',
-			field_correction_ms: '2',
-			manual_static_ms: '0',
-			total_static_ms: '-4',
-			total_applied_shift_ms: '-4',
+			weathering_correction_s: '-0.007',
+			elevation_correction_s: '0.001',
+			field_shift_s: '0.002',
+			manual_static_shift_s: '0',
+			total_applied_shift_s: '-0.004',
 			static_status: 'ok',
 			solution_status: 'ok',
 		},
@@ -116,29 +113,28 @@ function lineProfileRecords() {
 			x_m: '1120',
 			y_m: '2120',
 			surface_elevation_m: '121',
-			pick_count: '7',
-			used_pick_count: '6',
-			residual_rms_ms: '3.4',
-			residual_mad_ms: '2',
+			pick_fold: '7',
+			used_pick_fold: '6',
+			residual_rms_s: '0.0034',
+			residual_mad_s: '0.002',
 			v1_m_s: '800',
 			v2_m_s: '2450',
 			v3_m_s: '3650',
 			vsub_m_s: '',
-			t1_ms: '16',
-			t2_ms: '31',
-			t3_ms: '',
+			t1_s: '0.016',
+			t2_s: '0.031',
+			t3_s: '',
 			sh1_m: '10.1',
 			sh2_m: '17.3',
 			sh3_m: '',
 			layer1_base_elevation_m: '110.9',
 			layer2_base_elevation_m: '93.6',
 			final_refractor_elevation_m: '93.6',
-			weathering_correction_ms: '-8.5',
-			elevation_correction_ms: '1.5',
-			field_correction_ms: '2.5',
-			manual_static_ms: '0',
-			total_static_ms: '-4.5',
-			total_applied_shift_ms: '-4.5',
+			weathering_correction_s: '-0.0085',
+			elevation_correction_s: '0.0015',
+			field_shift_s: '0.0025',
+			manual_static_shift_s: '0',
+			total_applied_shift_s: '-0.0045',
 			static_status: 'ok',
 			solution_status: 'ok',
 		},
@@ -150,17 +146,13 @@ function staticComponentEndpointRecords() {
 		{
 			endpoint_kind: 'source',
 			endpoint_key: 'S001',
-			weathering_correction_ms: '-8',
-			elevation_correction_ms: '2',
-			source_depth_correction_ms: '5',
-			uphole_correction_ms: '-1',
-			manual_static_ms: '0.5',
-			field_correction_ms: '4.5',
-			computed_field_correction_ms: '4.5',
-			applied_field_correction_ms: '4.5',
-			total_static_ms: '-4',
-			total_applied_shift_ms: '-4',
-			total_with_field_shift_ms: '0.5',
+			source_weathering_correction_s: '-0.008',
+			source_elevation_correction_s: '0.002',
+			source_depth_shift_s: '0.005',
+			source_uphole_shift_s: '-0.001',
+			source_manual_static_shift_s: '0.0005',
+			source_field_shift_s: '0.0045',
+			source_total_applied_shift_s: '-0.004',
 			apply_to_trace_shift: 'true',
 			static_status: 'ok',
 			sign_convention: 'corrected(t) = raw(t - shift_s)',
@@ -168,17 +160,13 @@ function staticComponentEndpointRecords() {
 		{
 			endpoint_kind: 'source',
 			endpoint_key: 'S002',
-			weathering_correction_ms: '',
-			elevation_correction_ms: '2.5',
-			source_depth_correction_ms: '',
-			uphole_correction_ms: '',
-			manual_static_ms: '1',
-			field_correction_ms: '6.5',
-			computed_field_correction_ms: '6.5',
-			applied_field_correction_ms: '6.5',
-			total_static_ms: '-5.5',
-			total_applied_shift_ms: '-5.5',
-			total_with_field_shift_ms: '1.0',
+			source_weathering_correction_s: '',
+			source_elevation_correction_s: '0.0025',
+			source_depth_shift_s: '',
+			source_uphole_shift_s: '',
+			source_manual_static_shift_s: '0.001',
+			source_field_shift_s: '0.0065',
+			source_total_applied_shift_s: '-0.0055',
 			apply_to_trace_shift: 'true',
 			static_status: 'invalid_weathering',
 			sign_convention: 'corrected(t) = raw(t - shift_s)',
@@ -186,17 +174,11 @@ function staticComponentEndpointRecords() {
 		{
 			endpoint_kind: 'receiver',
 			endpoint_key: 'R001',
-			weathering_correction_ms: '-7',
-			elevation_correction_ms: '1',
-			source_depth_correction_ms: '',
-			uphole_correction_ms: '',
-			manual_static_ms: '0',
-			field_correction_ms: '2',
-			computed_field_correction_ms: '2',
-			applied_field_correction_ms: '2',
-			total_static_ms: '-4',
-			total_applied_shift_ms: '-4',
-			total_with_field_shift_ms: '-2',
+			receiver_weathering_correction_s: '-0.007',
+			receiver_elevation_correction_s: '0.001',
+			receiver_manual_static_shift_s: '0',
+			receiver_field_shift_s: '0.002',
+			receiver_total_applied_shift_s: '-0.004',
 			apply_to_trace_shift: 'true',
 			static_status: 'ok',
 			sign_convention: 'corrected(t) = raw(t - shift_s)',
@@ -210,17 +192,9 @@ function staticComponentTraceRecords() {
 			trace_index_sorted: '0',
 			source_endpoint_key: 'S001',
 			receiver_endpoint_key: 'R001',
-			refraction_shift_ms: '-8',
-			weathering_shift_ms: '-15',
-			datum_shift_ms: '3',
-			field_shift_ms: '6.5',
-			computed_field_shift_ms: '6.5',
-			applied_field_shift_ms: '6.5',
-			manual_static_shift_ms: '0.5',
-			source_depth_shift_ms: '5',
-			uphole_shift_ms: '-1',
-			final_trace_shift_ms: '-1.5',
-			applied_trace_shift_ms: '-1.5',
+			refraction_trace_shift_s_sorted: '-0.008',
+			trace_field_shift_s_sorted: '0.0065',
+			final_trace_shift_s_sorted: '-0.0015',
 			apply_to_trace_shift: 'true',
 			static_status: 'ok',
 			sign_convention: 'corrected(t) = raw(t - shift_s)',
@@ -229,17 +203,9 @@ function staticComponentTraceRecords() {
 			trace_index_sorted: '1',
 			source_endpoint_key: 'S002',
 			receiver_endpoint_key: 'R001',
-			refraction_shift_ms: '-5.5',
-			weathering_shift_ms: '',
-			datum_shift_ms: '2.5',
-			field_shift_ms: '6.5',
-			computed_field_shift_ms: '6.5',
-			applied_field_shift_ms: '6.5',
-			manual_static_shift_ms: '1',
-			source_depth_shift_ms: '',
-			uphole_shift_ms: '',
-			final_trace_shift_ms: '1.0',
-			applied_trace_shift_ms: '1.0',
+			refraction_trace_shift_s_sorted: '-0.0055',
+			trace_field_shift_s_sorted: '0.0065',
+			final_trace_shift_s_sorted: '0.0010',
 			apply_to_trace_shift: 'true',
 			static_status: 'invalid_weathering',
 			sign_convention: 'corrected(t) = raw(t - shift_s)',
@@ -250,8 +216,8 @@ function staticComponentTraceRecords() {
 function oneLayerLineProfileRecords() {
 	return lineProfileRecords().map((record) => ({
 		...record,
-		t2_ms: '',
-		t3_ms: '',
+		t2_s: '',
+		t3_s: '',
 		v3_m_s: '',
 		vsub_m_s: '',
 		sh2_m: '',
@@ -389,28 +355,28 @@ function qcBundlePayload(jobId: string) {
 			method: 'multilayer_time_term',
 			conversion_mode: 't1lsst_multilayer',
 			layer_count: 2,
-			observation_gates: {
-				v1_direct_arrival: {
-					enabled: true,
+			observation_gates: [
+				{
+					layer_kind: 'v1_direct_arrival',
 					min_direct_offset_m: 20,
 					max_direct_offset_m: 140,
 				},
-				v2_t1: {
-					enabled: true,
+				{
+					layer_kind: 'v2_t1',
 					min_offset_m: 0,
 					max_offset_m: 1800,
 				},
-				v3_t2: {
-					enabled: true,
+				{
+					layer_kind: 'v3_t2',
 					min_offset_m: 1800,
 					max_offset_m: 3200,
 				},
-				vsub_t3: {
-					enabled: true,
+				{
+					layer_kind: 'vsub_t3',
 					min_offset_m: 3200,
 					max_offset_m: null,
 				},
-			},
+			],
 		},
 		artifacts: {
 			first_break_residuals: 'first_break_residuals.csv',
@@ -1419,7 +1385,7 @@ test('static component view renders waterfall values', async ({ page }) => {
 	await expect(page.getByTestId('refraction-qc-view-statics')).toContainText('Endpoint static components');
 	await expect(page.getByTestId('refraction-qc-static-component-list')).toContainText('Weathering correction');
 	await expect(page.getByTestId('refraction-qc-static-component-list')).toContainText('-8.000 ms');
-	await expect(page.getByTestId('refraction-qc-static-trace-component-list')).toContainText('Applied trace shift');
+	await expect(page.getByTestId('refraction-qc-static-trace-component-list')).toContainText('Final applied trace shift');
 	await expect(page.getByTestId('refraction-qc-static-trace-component-list')).toContainText('-1.500 ms');
 
 	await expect.poll(async () => staticComponentPlotSummary(page)).toMatchObject({
@@ -1427,7 +1393,7 @@ test('static component view renders waterfall values', async ({ page }) => {
 		axisTitle: 'Shift (ms)',
 		components: expect.arrayContaining([
 			expect.objectContaining({ label: 'Weathering correction', value: -8 }),
-			expect.objectContaining({ label: 'Applied field shift', value: 4.5 }),
+			expect.objectContaining({ label: 'Field correction', value: 4.5 }),
 			expect.objectContaining({ label: 'Final endpoint shift', value: -4 }),
 		]),
 	});
@@ -1452,19 +1418,15 @@ test('static component view displays sign convention', async ({ page }) => {
 	await expect(page.getByTestId('refraction-qc-static-component-list')).toContainText('delays displayed events');
 });
 
-test('static component view shows computed versus applied field shift when apply is false', async ({ page }) => {
+test('static component view shows field and final shifts when apply is false', async ({ page }) => {
 	await page.route('**/statics/refraction/qc', async (route) => {
 		const payload = qcBundlePayload('refraction-job-17') as any;
 		for (const record of payload.views.static_component_qc_endpoint.records) {
 			record.apply_to_trace_shift = 'false';
-			record.applied_field_correction_ms = '0';
-			record.total_with_field_shift_ms = record.total_static_ms;
 		}
 		for (const record of payload.views.static_component_qc_trace.records) {
 			record.apply_to_trace_shift = 'false';
-			record.applied_field_shift_ms = '0';
-			record.final_trace_shift_ms = record.refraction_shift_ms;
-			record.applied_trace_shift_ms = record.refraction_shift_ms;
+			record.final_trace_shift_s_sorted = record.refraction_trace_shift_s_sorted;
 		}
 		await route.fulfill({
 			status: 200,
@@ -1478,10 +1440,10 @@ test('static component view shows computed versus applied field shift when apply
 
 	await expect(page.getByTestId('refraction-qc-view-statics')).toContainText('Apply field shift');
 	await expect(page.getByTestId('refraction-qc-view-statics')).toContainText('false');
-	await expect(page.getByTestId('refraction-qc-static-component-list')).toContainText('Computed field shift');
+	await expect(page.getByTestId('refraction-qc-static-component-list')).toContainText('Field correction');
 	await expect(page.getByTestId('refraction-qc-static-component-list')).toContainText('4.500 ms');
-	await expect(page.getByTestId('refraction-qc-static-component-list')).toContainText('Applied field shift');
-	await expect(page.getByTestId('refraction-qc-static-component-list')).toContainText('0.000 ms');
+	await expect(page.getByTestId('refraction-qc-static-trace-component-list')).toContainText('Final applied trace shift');
+	await expect(page.getByTestId('refraction-qc-static-trace-component-list')).toContainText('-8.000 ms');
 });
 
 test('static component view endpoint selection updates details and statuses', async ({ page }) => {
@@ -1503,7 +1465,7 @@ test('static component view endpoint selection updates details and statuses', as
 	await expect.poll(async () => staticComponentPlotSummary(page)).toMatchObject({
 		components: expect.arrayContaining([
 			expect.objectContaining({
-				label: 'Computed field shift',
+				label: 'Field correction',
 				value: 6.5,
 			}),
 		]),
@@ -1516,7 +1478,7 @@ test('static component view endpoint selection updates details and statuses', as
 	await expect.poll(async () => staticComponentPlotSummary(page)).toMatchObject({
 		components: expect.arrayContaining([
 			expect.objectContaining({ label: 'Weathering correction', value: -7 }),
-			expect.objectContaining({ label: 'Applied field shift', value: 2 }),
+			expect.objectContaining({ label: 'Field correction', value: 2 }),
 		]),
 	});
 });

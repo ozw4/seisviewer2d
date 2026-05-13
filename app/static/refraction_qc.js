@@ -111,9 +111,9 @@
   };
 
   const PROFILE_SERIES_COLORS = {
-    t1_ms: '#2563eb',
-    t2_ms: '#059669',
-    t3_ms: '#c2410c',
+    t1: '#2563eb',
+    t2: '#059669',
+    t3: '#c2410c',
     v1_m_s: '#7c3aed',
     v2_m_s: '#2563eb',
     v3_m_s: '#059669',
@@ -124,15 +124,15 @@
     layer1_base_elevation_m: '#475569',
     layer2_base_elevation_m: '#64748b',
     final_refractor_elevation_m: '#0f172a',
-    weathering_correction_ms: '#2563eb',
-    elevation_correction_ms: '#0891b2',
-    field_correction_ms: '#059669',
-    manual_static_ms: '#c2410c',
-    total_applied_shift_ms: '#be123c',
-    pick_count: '#2563eb',
-    used_pick_count: '#059669',
-    residual_rms_ms: '#c2410c',
-    residual_mad_ms: '#7c3aed',
+    weathering_correction: '#2563eb',
+    elevation_correction: '#0891b2',
+    field_shift: '#059669',
+    manual_static_shift: '#c2410c',
+    total_applied_shift: '#be123c',
+    pick_fold: '#2563eb',
+    used_pick_fold: '#059669',
+    residual_rms: '#c2410c',
+    residual_mad: '#7c3aed',
   };
 
   const PROFILE_GROUPS = {
@@ -141,9 +141,9 @@
       axisLabel: 'Time term',
       unit: 'ms',
       series: [
-        { column: 't1_ms', label: 'T1', layers: ['v2_t1'] },
-        { column: 't2_ms', label: 'T2', layers: ['v3_t2'] },
-        { column: 't3_ms', label: 'T3', layers: ['vsub_t3'] },
+        { key: 't1', columns: ['t1_s'], label: 'T1', layers: ['v2_t1'], scale: 1000.0 },
+        { key: 't2', columns: ['t2_s'], label: 'T2', layers: ['v3_t2'], scale: 1000.0 },
+        { key: 't3', columns: ['t3_s'], label: 'T3', layers: ['vsub_t3'], scale: 1000.0 },
       ],
     },
     velocities: {
@@ -151,10 +151,10 @@
       axisLabel: 'Velocity',
       unit: 'm/s',
       series: [
-        { column: 'v1_m_s', label: 'V1', layers: ['v1_direct_arrival'] },
-        { column: 'v2_m_s', label: 'V2', layers: ['v2_t1'] },
-        { column: 'v3_m_s', label: 'V3', layers: ['v3_t2'] },
-        { column: 'vsub_m_s', label: 'Vsub', layers: ['vsub_t3'] },
+        { key: 'v1_m_s', columns: ['v1_m_s'], label: 'V1', layers: ['v1_direct_arrival'] },
+        { key: 'v2_m_s', columns: ['v2_m_s'], label: 'V2', layers: ['v2_t1'] },
+        { key: 'v3_m_s', columns: ['v3_m_s'], label: 'V3', layers: ['v3_t2'] },
+        { key: 'vsub_m_s', columns: ['vsub_m_s'], label: 'Vsub', layers: ['vsub_t3'] },
       ],
     },
     thickness_elevation: {
@@ -162,12 +162,12 @@
       axisLabel: 'Thickness / elevation',
       unit: 'm',
       series: [
-        { column: 'sh1_m', label: 'SH1', layers: ['v2_t1'] },
-        { column: 'sh2_m', label: 'SH2', layers: ['v3_t2'] },
-        { column: 'sh3_m', label: 'SH3', layers: ['vsub_t3'] },
-        { column: 'layer1_base_elevation_m', label: 'Layer 1 base', layers: ['v2_t1'] },
-        { column: 'layer2_base_elevation_m', label: 'Layer 2 base', layers: ['v3_t2', 'vsub_t3'] },
-        { column: 'final_refractor_elevation_m', label: 'Final refractor', layers: ['v2_t1', 'v3_t2', 'vsub_t3'] },
+        { key: 'sh1_m', columns: ['sh1_m'], label: 'SH1', layers: ['v2_t1'] },
+        { key: 'sh2_m', columns: ['sh2_m'], label: 'SH2', layers: ['v3_t2'] },
+        { key: 'sh3_m', columns: ['sh3_m'], label: 'SH3', layers: ['vsub_t3'] },
+        { key: 'layer1_base_elevation_m', columns: ['layer1_base_elevation_m'], label: 'Layer 1 base', layers: ['v2_t1'] },
+        { key: 'layer2_base_elevation_m', columns: ['layer2_base_elevation_m'], label: 'Layer 2 base', layers: ['v3_t2', 'vsub_t3'] },
+        { key: 'final_refractor_elevation_m', columns: ['final_refractor_elevation_m'], label: 'Final refractor', layers: ['v2_t1', 'v3_t2', 'vsub_t3'] },
       ],
     },
     statics: {
@@ -175,11 +175,11 @@
       axisLabel: 'Static shift',
       unit: 'ms',
       series: [
-        { column: 'weathering_correction_ms', label: 'Weathering correction' },
-        { column: 'elevation_correction_ms', label: 'Elevation / datum correction' },
-        { column: 'field_correction_ms', label: 'Field correction' },
-        { column: 'manual_static_ms', label: 'Manual static' },
-        { column: 'total_applied_shift_ms', label: 'Final applied static' },
+        { key: 'weathering_correction', columns: ['weathering_correction_s'], label: 'Weathering correction', scale: 1000.0 },
+        { key: 'elevation_correction', columns: ['elevation_correction_s'], label: 'Elevation / datum correction', scale: 1000.0 },
+        { key: 'field_shift', columns: ['field_shift_s'], label: 'Field correction', scale: 1000.0 },
+        { key: 'manual_static_shift', columns: ['manual_static_shift_s'], label: 'Manual static', scale: 1000.0 },
+        { key: 'total_applied_shift', columns: ['total_applied_shift_s'], label: 'Final applied static', scale: 1000.0 },
       ],
     },
     qc_metrics: {
@@ -187,10 +187,10 @@
       axisLabel: 'QC metric',
       unit: 'mixed',
       series: [
-        { column: 'pick_count', label: 'Pick fold', unit: 'count' },
-        { column: 'used_pick_count', label: 'Used pick fold', unit: 'count' },
-        { column: 'residual_rms_ms', label: 'Residual RMS', unit: 'ms' },
-        { column: 'residual_mad_ms', label: 'Residual MAD', unit: 'ms' },
+        { key: 'pick_fold', columns: ['pick_fold'], label: 'Pick fold', unit: 'count' },
+        { key: 'used_pick_fold', columns: ['used_pick_fold'], label: 'Used pick fold', unit: 'count' },
+        { key: 'residual_rms', columns: ['residual_rms_s'], label: 'Residual RMS', unit: 'ms', scale: 1000.0 },
+        { key: 'residual_mad', columns: ['residual_mad_s'], label: 'Residual MAD', unit: 'ms', scale: 1000.0 },
       ],
     },
   };
@@ -214,104 +214,93 @@
     {
       key: 'weathering',
       label: 'Weathering correction',
-      columns: ['weathering_correction_ms', 'weathering_replacement_shift_ms'],
+      endpointColumns: {
+        source: ['source_weathering_correction_s'],
+        receiver: ['receiver_weathering_correction_s'],
+      },
       statusColumns: ['weathering_status', 'solution_status'],
+      scale: 1000.0,
     },
     {
       key: 'datum',
       label: 'Datum / elevation correction',
-      columns: ['elevation_correction_ms', 'floating_datum_elevation_shift_ms'],
+      endpointColumns: {
+        source: ['source_elevation_correction_s'],
+        receiver: ['receiver_elevation_correction_s'],
+      },
       statusColumns: ['datum_status'],
+      scale: 1000.0,
     },
     {
       key: 'source_depth',
       label: 'Source-depth correction',
-      columns: ['source_depth_correction_ms', 'source_depth_shift_ms'],
+      endpointColumns: {
+        source: ['source_depth_shift_s'],
+        receiver: [],
+      },
       statusColumns: ['source_depth_status'],
+      scale: 1000.0,
     },
     {
       key: 'uphole',
       label: 'Uphole correction',
-      columns: ['uphole_correction_ms', 'uphole_shift_ms'],
+      endpointColumns: {
+        source: ['source_uphole_shift_s'],
+        receiver: [],
+      },
       statusColumns: ['uphole_status'],
+      scale: 1000.0,
     },
     {
       key: 'manual',
       label: 'Manual static',
-      columns: ['manual_static_ms', 'manual_static_shift_ms'],
+      endpointColumns: {
+        source: ['source_manual_static_shift_s'],
+        receiver: ['receiver_manual_static_shift_s'],
+      },
       statusColumns: ['manual_static_status'],
+      scale: 1000.0,
     },
     {
-      key: 'computed_field',
-      label: 'Computed field shift',
-      columns: ['computed_field_correction_ms', 'field_correction_ms', 'field_shift_ms'],
+      key: 'field',
+      label: 'Field correction',
+      endpointColumns: {
+        source: ['source_field_shift_s'],
+        receiver: ['receiver_field_shift_s'],
+      },
       statusColumns: ['field_static_status', 'field_status'],
-    },
-    {
-      key: 'applied_field',
-      label: 'Applied field shift',
-      columns: ['applied_field_correction_ms'],
-      statusColumns: ['field_static_status', 'field_status'],
+      scale: 1000.0,
     },
     {
       key: 'total',
       label: 'Final endpoint shift',
-      columns: ['total_applied_shift_ms', 'total_static_ms'],
+      endpointColumns: {
+        source: ['source_total_applied_shift_s'],
+        receiver: ['receiver_total_applied_shift_s'],
+      },
       statusColumns: ['static_status'],
-    },
-    {
-      key: 'total_with_field',
-      label: 'Endpoint total with field',
-      columns: ['total_with_field_shift_ms'],
-      statusColumns: ['static_status'],
+      scale: 1000.0,
     },
   ];
 
   const STATIC_TRACE_COMPONENT_DEFS = [
     {
-      key: 'weathering',
-      label: 'Weathering correction',
-      columns: ['weathering_shift_ms'],
+      key: 'refraction',
+      label: 'Refraction shift',
+      columns: ['refraction_trace_shift_s_sorted'],
+      scale: 1000.0,
     },
     {
-      key: 'datum',
-      label: 'Datum / elevation correction',
-      columns: ['datum_shift_ms'],
-    },
-    {
-      key: 'source_depth',
-      label: 'Source-depth correction',
-      columns: ['source_depth_shift_ms'],
-    },
-    {
-      key: 'uphole',
-      label: 'Uphole correction',
-      columns: ['uphole_shift_ms'],
-    },
-    {
-      key: 'manual',
-      label: 'Manual static',
-      columns: ['manual_static_shift_ms'],
-    },
-    {
-      key: 'computed_field',
-      label: 'Computed field shift',
-      columns: ['computed_field_shift_ms', 'field_shift_ms'],
-    },
-    {
-      key: 'applied_field',
-      label: 'Applied field shift',
-      columns: ['applied_field_shift_ms'],
+      key: 'field',
+      label: 'Field correction',
+      columns: ['trace_field_shift_s_sorted'],
+      scale: 1000.0,
     },
     {
       key: 'final',
-      label: 'Final trace shift',
-      columns: ['final_trace_shift_ms'],
-    },
-    {
-      key: 'applied_trace',
-      label: 'Applied trace shift',
-      columns: ['applied_trace_shift_ms'],
+      label: 'Final applied trace shift',
+      columns: ['final_trace_shift_s_sorted'],
+      scale: 1000.0,
     },
   ];
 
@@ -628,6 +617,12 @@
     return value;
   }
 
+  function profileSeriesRawValue(record, series) {
+    const value = toFiniteNumber(firstDefined(record, series.columns || []));
+    if (!Number.isFinite(value)) return NaN;
+    return value * (series.scale || 1.0);
+  }
+
   function profileAxisTitle(group, seriesList) {
     if (group.unit === 'mixed') {
       const hasTime = seriesList.some((series) => profileSeriesUnit(series, group) === 'ms');
@@ -699,7 +694,7 @@
   }
 
   function profileSeriesAvailable(series, records) {
-    return records.some((record) => Number.isFinite(toFiniteNumber(record.raw[series.column])));
+    return records.some((record) => Number.isFinite(profileSeriesRawValue(record.raw, series)));
   }
 
   function selectedProfileSeries(records) {
@@ -891,8 +886,16 @@
     return 'missing';
   }
 
-  function componentValueMs(record, columns) {
-    return toFiniteNumber(firstDefined(record, columns || []));
+  function componentColumns(record, definition) {
+    if (!definition.endpointColumns) return definition.columns || [];
+    const kind = staticEndpointKind(record);
+    return definition.endpointColumns[kind] || [];
+  }
+
+  function componentValueMs(record, definition) {
+    const value = toFiniteNumber(firstDefined(record, componentColumns(record, definition)));
+    if (!Number.isFinite(value)) return NaN;
+    return value * (definition.scale || 1.0);
   }
 
   function shiftDirection(value) {
@@ -914,7 +917,7 @@
   function buildStaticComponentRows(record, statusRecord, defs, fallbackStatusColumns) {
     if (!record) return [];
     return defs.map((definition) => {
-      const value = componentValueMs(record, definition.columns);
+      const value = componentValueMs(record, definition);
       return {
         key: definition.key,
         label: definition.label,
@@ -1395,11 +1398,23 @@
     return byKind;
   }
 
+  function reducedTimeGateSourceFromObservationGates(observationGates) {
+    if (!Array.isArray(observationGates)) return observationGates;
+    const byKind = {};
+    for (const gate of observationGates) {
+      if (!gate || typeof gate !== 'object') continue;
+      const kind = normalizedText(gate.layer_kind);
+      if (!kind || byKind[kind]) continue;
+      byKind[kind] = gate;
+    }
+    return byKind;
+  }
+
   function collectReducedTimeGates(bundle) {
     const summary = bundle && typeof bundle.summary === 'object' && bundle.summary ? bundle.summary : {};
     const sources = [];
     if (summary.observation_gates && typeof summary.observation_gates === 'object') {
-      sources.push(summary.observation_gates);
+      sources.push(reducedTimeGateSourceFromObservationGates(summary.observation_gates));
     }
     const layerSource = reducedTimeGateSourceFromLayers(summary.layers);
     if (layerSource && typeof layerSource === 'object') {
@@ -1871,7 +1886,7 @@
       for (const series of available) {
         const grouped = new Map();
         for (const point of records) {
-          const rawValue = toFiniteNumber(point.raw[series.column]);
+          const rawValue = profileSeriesRawValue(point.raw, series);
           const y = profileDisplayValue(rawValue, series, group);
           if (!Number.isFinite(y)) continue;
           if (!grouped.has(point.endpointKind)) {
@@ -1899,12 +1914,12 @@
             text: entry.text,
             hovertemplate: '%{text}<extra></extra>',
             line: {
-              color: PROFILE_SERIES_COLORS[series.column] || '#64748b',
+              color: PROFILE_SERIES_COLORS[series.key] || '#64748b',
               width: 2,
               dash: entry.endpointKind === 'receiver' ? 'dot' : 'solid',
             },
             marker: {
-              color: PROFILE_SERIES_COLORS[series.column] || '#64748b',
+              color: PROFILE_SERIES_COLORS[series.key] || '#64748b',
               symbol: entry.invalid.map((invalid) => {
                 if (invalid) return 'x';
                 return entry.endpointKind === 'receiver' ? 'diamond' : 'circle';
