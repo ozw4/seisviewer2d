@@ -188,10 +188,7 @@
         { key: 'manual_static_shift', columns: ['manual_static_shift_ms'], label: 'Manual static' },
         {
           key: 'total_applied_shift',
-          endpointColumns: {
-            source: ['source_total_with_field_shift_ms'],
-            receiver: ['receiver_total_with_field_shift_ms'],
-          },
+          columns: ['total_applied_shift_ms'],
           label: 'Final applied static',
         },
       ],
@@ -264,10 +261,7 @@
     {
       key: 'computed_field',
       label: 'Computed field correction',
-      endpointColumns: {
-        source: ['source_field_shift_ms'],
-        receiver: ['receiver_field_shift_ms'],
-      },
+      columns: ['computed_field_correction_ms'],
       statusEndpointColumns: {
         source: ['source_field_static_status', 'source_field_status'],
         receiver: ['receiver_field_static_status', 'receiver_field_status'],
@@ -276,15 +270,11 @@
     {
       key: 'applied_field',
       label: 'Applied field correction',
-      endpointColumns: {
-        source: ['source_field_shift_ms'],
-        receiver: ['receiver_field_shift_ms'],
-      },
+      columns: ['applied_field_correction_ms'],
       statusEndpointColumns: {
         source: ['source_field_static_status', 'source_field_status'],
         receiver: ['receiver_field_static_status', 'receiver_field_status'],
       },
-      applyToTraceShift: true,
     },
     {
       key: 'total',
@@ -322,15 +312,14 @@
     {
       key: 'computed_field',
       label: 'Computed field shift',
-      columns: ['trace_field_shift_ms'],
+      columns: ['computed_field_shift_ms'],
       statusColumns: ['trace_field_static_status'],
     },
     {
       key: 'applied_field',
       label: 'Applied field shift',
-      columns: ['trace_field_shift_ms'],
+      columns: ['applied_field_shift_ms'],
       statusColumns: ['trace_field_static_status'],
-      applyToTraceShift: true,
     },
     {
       key: 'manual',

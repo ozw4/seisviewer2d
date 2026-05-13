@@ -663,6 +663,28 @@ Artifact reference keys use the filename stem except when a QC artifact family
 has multiple files with the same stem; in that case the keys include the file
 suffix, such as `refraction_first_break_fit_qc_csv`.
 
+Implemented sampled view keys are:
+
+| Include family | `views` key | Backing artifact |
+|---|---|---|
+| `first_break` | `first_break_fit` | `refraction_first_break_fit_qc.csv` |
+| `first_break` | `first_break_residual` | `first_break_residuals.csv` |
+| `reduced_time` | `reduced_time` | `refraction_reduced_time_qc.csv` |
+| `profiles` | `line_profiles` | `refraction_line_profile_qc_combined.csv` |
+| `cells` | `refraction_grid_map_qc` | `refraction_grid_map_qc.csv` |
+| `cells` | `refractor_cells` | `refraction_refractor_velocity_cells.csv` |
+| `static_components` | `static_component_qc_endpoint` | `refraction_static_component_qc_endpoint.csv` |
+| `static_components` | `static_component_qc_trace` | `refraction_static_component_qc_trace.csv` |
+| `static_components` | `static_components` | `refraction_static_components.csv` |
+
+The static component QC endpoint rows expose computed field columns such as
+`computed_field_correction_ms` separately from applied field columns such as
+`applied_field_correction_ms`. Trace rows expose the same distinction as
+`computed_field_shift_ms` and `applied_field_shift_ms`. Profile rows use
+`total_applied_shift_ms` for the final applied static; `*_total_with_field_shift_ms`
+columns are computed totals with field terms and are not the applied-static
+display contract.
+
 ```json
 {
   "job_id": "refraction-job-123",
