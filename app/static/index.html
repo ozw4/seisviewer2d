@@ -1720,6 +1720,29 @@
                 <option value="trace">Trace index</option>
               </select>
             </label>
+            <label class="refraction-qc-field" for="refractionQcProfileGroup">Profile group
+              <select id="refractionQcProfileGroup" data-testid="refraction-qc-profile-group">
+                <option value="time_terms">Time terms</option>
+                <option value="velocities">Velocities</option>
+                <option value="thickness_elevation">Thickness / elevations</option>
+                <option value="statics">Static components</option>
+                <option value="qc_metrics">QC metrics</option>
+              </select>
+            </label>
+            <label class="refraction-qc-field" for="refractionQcProfileUnits">Profile units
+              <select id="refractionQcProfileUnits" data-testid="refraction-qc-profile-units">
+                <option value="auto">Auto</option>
+                <option value="ms">Milliseconds</option>
+                <option value="s">Seconds</option>
+              </select>
+            </label>
+            <label class="refraction-qc-field" for="refractionQcStatusFilter">Status
+              <select id="refractionQcStatusFilter" data-testid="refraction-qc-status-filter">
+                <option value="all">All statuses</option>
+                <option value="valid">Valid only</option>
+                <option value="invalid">Invalid only</option>
+              </select>
+            </label>
             <label class="refraction-qc-field refraction-qc-check-field" for="refractionQcShowRejected">
               Show rejected / unused
               <input id="refractionQcShowRejected" type="checkbox" checked
@@ -1727,6 +1750,7 @@
             </label>
             <label class="refraction-qc-field" for="refractionQcEndpointKind">Endpoint kind
               <select id="refractionQcEndpointKind" data-testid="refraction-qc-endpoint-kind">
+                <option value="both">both</option>
                 <option value="source">source</option>
                 <option value="receiver">receiver</option>
               </select>

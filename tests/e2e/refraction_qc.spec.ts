@@ -1,6 +1,165 @@
 import { expect, test, type Page } from '@playwright/test';
 
+function lineProfileRecords() {
+	return [
+		{
+			endpoint_kind: 'source',
+			endpoint_key: 'S001',
+			node_id: '1',
+			inline_m: '0',
+			crossline_m: '0',
+			x_m: '1000',
+			y_m: '2000',
+			surface_elevation_m: '120',
+			pick_count: '8',
+			used_pick_count: '7',
+			residual_rms_ms: '3.1',
+			residual_mad_ms: '2.2',
+			v1_m_s: '800',
+			v2_m_s: '2400',
+			v3_m_s: '3600',
+			vsub_m_s: '',
+			t1_ms: '14',
+			t2_ms: '28',
+			t3_ms: '',
+			sh1_m: '9.5',
+			sh2_m: '16.2',
+			sh3_m: '',
+			layer1_base_elevation_m: '110.5',
+			layer2_base_elevation_m: '94.3',
+			final_refractor_elevation_m: '94.3',
+			weathering_correction_ms: '-8',
+			elevation_correction_ms: '2',
+			field_correction_ms: '1.5',
+			manual_static_ms: '0.5',
+			total_static_ms: '-4',
+			total_applied_shift_ms: '-4',
+			static_status: 'ok',
+			solution_status: 'ok',
+		},
+		{
+			endpoint_kind: 'source',
+			endpoint_key: 'S002',
+			node_id: '2',
+			inline_m: '100',
+			crossline_m: '0',
+			x_m: '1100',
+			y_m: '2100',
+			surface_elevation_m: '124',
+			pick_count: '5',
+			used_pick_count: '3',
+			residual_rms_ms: '6.2',
+			residual_mad_ms: '4',
+			v1_m_s: '800',
+			v2_m_s: '2500',
+			v3_m_s: '3700',
+			vsub_m_s: '',
+			t1_ms: '18',
+			t2_ms: '35',
+			t3_ms: '',
+			sh1_m: '12.0',
+			sh2_m: '18.0',
+			sh3_m: '',
+			layer1_base_elevation_m: '112.0',
+			layer2_base_elevation_m: '94.0',
+			final_refractor_elevation_m: '94.0',
+			weathering_correction_ms: '-9',
+			elevation_correction_ms: '2.5',
+			field_correction_ms: '0',
+			manual_static_ms: '1',
+			total_static_ms: '-5.5',
+			total_applied_shift_ms: '-5.5',
+			static_status: 'invalid_endpoint',
+			solution_status: 'missing_solution',
+		},
+		{
+			endpoint_kind: 'receiver',
+			endpoint_key: 'R001',
+			node_id: '10',
+			inline_m: '20',
+			crossline_m: '0',
+			x_m: '1020',
+			y_m: '2020',
+			surface_elevation_m: '118',
+			pick_count: '9',
+			used_pick_count: '9',
+			residual_rms_ms: '2',
+			residual_mad_ms: '1.1',
+			v1_m_s: '800',
+			v2_m_s: '2380',
+			v3_m_s: '3550',
+			vsub_m_s: '',
+			t1_ms: '12',
+			t2_ms: '24',
+			t3_ms: '',
+			sh1_m: '8.2',
+			sh2_m: '15.0',
+			sh3_m: '',
+			layer1_base_elevation_m: '109.8',
+			layer2_base_elevation_m: '94.8',
+			final_refractor_elevation_m: '94.8',
+			weathering_correction_ms: '-7',
+			elevation_correction_ms: '1',
+			field_correction_ms: '2',
+			manual_static_ms: '0',
+			total_static_ms: '-4',
+			total_applied_shift_ms: '-4',
+			static_status: 'ok',
+			solution_status: 'ok',
+		},
+		{
+			endpoint_kind: 'receiver',
+			endpoint_key: 'R002',
+			node_id: '11',
+			inline_m: '120',
+			crossline_m: '0',
+			x_m: '1120',
+			y_m: '2120',
+			surface_elevation_m: '121',
+			pick_count: '7',
+			used_pick_count: '6',
+			residual_rms_ms: '3.4',
+			residual_mad_ms: '2',
+			v1_m_s: '800',
+			v2_m_s: '2450',
+			v3_m_s: '3650',
+			vsub_m_s: '',
+			t1_ms: '16',
+			t2_ms: '31',
+			t3_ms: '',
+			sh1_m: '10.1',
+			sh2_m: '17.3',
+			sh3_m: '',
+			layer1_base_elevation_m: '110.9',
+			layer2_base_elevation_m: '93.6',
+			final_refractor_elevation_m: '93.6',
+			weathering_correction_ms: '-8.5',
+			elevation_correction_ms: '1.5',
+			field_correction_ms: '2.5',
+			manual_static_ms: '0',
+			total_static_ms: '-4.5',
+			total_applied_shift_ms: '-4.5',
+			static_status: 'ok',
+			solution_status: 'ok',
+		},
+	];
+}
+
+function oneLayerLineProfileRecords() {
+	return lineProfileRecords().map((record) => ({
+		...record,
+		t2_ms: '',
+		t3_ms: '',
+		v3_m_s: '',
+		vsub_m_s: '',
+		sh2_m: '',
+		sh3_m: '',
+		layer2_base_elevation_m: '',
+	}));
+}
+
 function qcBundlePayload(jobId: string) {
+	const profileRecords = lineProfileRecords();
 	return {
 		job_id: jobId,
 		statics_kind: 'refraction',
@@ -41,6 +200,7 @@ function qcBundlePayload(jobId: string) {
 			refraction_first_break_fit_qc_csv: 'refraction_first_break_fit_qc.csv',
 			refraction_reduced_time_qc: 'refraction_reduced_time_qc.csv',
 			near_surface_model: 'near_surface_model.csv',
+			refraction_line_profile_qc_combined: 'refraction_line_profile_qc_combined.csv',
 			refraction_refractor_velocity_cells: 'refraction_refractor_velocity_cells.csv',
 			refraction_static_components: 'refraction_static_components.csv',
 		},
@@ -228,13 +388,13 @@ function qcBundlePayload(jobId: string) {
 				],
 			},
 			line_profiles: {
-				artifact: 'near_surface_model.csv',
-				columns: ['endpoint_key', 'station_x_m'],
-				total_points: 1,
-				returned_points: 1,
+				artifact: 'refraction_line_profile_qc_combined.csv',
+				columns: Object.keys(profileRecords[0]),
+				total_points: profileRecords.length,
+				returned_points: profileRecords.length,
 				downsampled: false,
 				downsampling_method: 'even_index_floor_first_last',
-				records: [{ endpoint_key: 'S001', station_x_m: '1000.0' }],
+				records: profileRecords,
 			},
 			refractor_cells: {
 				artifact: 'refraction_refractor_velocity_cells.csv',
@@ -287,6 +447,31 @@ async function reducedTimePlotPointCount(page: Page) {
 	});
 }
 
+async function profilePlotSummary(page: Page) {
+	return page.getByTestId('refraction-qc-profile-plot').evaluate((node) => {
+		const plot = node as HTMLElement & {
+			data?: Array<{
+				name?: string;
+				x?: unknown[];
+				y?: number[];
+				line?: { dash?: string };
+				marker?: { symbol?: string[] };
+			}>;
+			layout?: { yaxis?: { title?: { text?: string } } };
+		};
+		return {
+			axisTitle: plot.layout?.yaxis?.title?.text ?? '',
+			traces: (plot.data ?? []).map((trace) => ({
+				name: trace.name ?? '',
+				pointCount: Array.isArray(trace.x) ? trace.x.length : 0,
+				values: Array.isArray(trace.y) ? trace.y.map((value) => Math.round(value * 1000) / 1000) : [],
+				dash: trace.line?.dash ?? '',
+				symbols: Array.isArray(trace.marker?.symbol) ? trace.marker?.symbol : [],
+			})),
+		};
+	});
+}
+
 async function openRefractionQcTab(page: Page) {
 	await page.goto('/');
 	await page.getByTestId('refraction-qc-tab').click();
@@ -300,7 +485,11 @@ test('refraction QC tab loads', async ({ page }) => {
 	await expect(page.getByTestId('refraction-qc-status')).toContainText('No QC bundle loaded.');
 	await expect(page.getByTestId('refraction-qc-layer-kind')).toHaveValue('all');
 	await expect(page.getByTestId('refraction-qc-x-axis')).toHaveValue('offset');
+	await expect(page.getByTestId('refraction-qc-profile-group')).toHaveValue('time_terms');
+	await expect(page.getByTestId('refraction-qc-profile-units')).toHaveValue('auto');
+	await expect(page.getByTestId('refraction-qc-status-filter')).toHaveValue('all');
 	await expect(page.getByTestId('refraction-qc-show-rejected')).toBeChecked();
+	await expect(page.getByTestId('refraction-qc-endpoint-kind')).toHaveValue('source');
 	await expect(page.getByTestId('refraction-qc-view-summary-button')).toBeVisible();
 	await expect(page.getByTestId('refraction-qc-view-first-break-button')).toBeVisible();
 	await expect(page.getByTestId('refraction-qc-view-reduced-time-button')).toBeVisible();
@@ -579,4 +768,125 @@ test('reduced-time plot handles missing velocity status', async ({ page }) => {
 	await expect(page.getByTestId('refraction-qc-view-reduced-time')).toContainText('Unavailable rows');
 	await expect(page.getByTestId('refraction-qc-view-reduced-time')).toContainText('missing_reduction_velocity: 1');
 	await expect.poll(async () => reducedTimePlotPointCount(page)).toBe(3);
+});
+
+test('2D profile plot renders time terms', async ({ page }) => {
+	await page.route('**/statics/refraction/qc', async (route) => {
+		await route.fulfill({
+			status: 200,
+			contentType: 'application/json',
+			body: JSON.stringify(qcBundlePayload('refraction-job-11')),
+		});
+	});
+
+	await loadRefractionQcBundle(page, 'refraction-job-11');
+	await page.getByTestId('refraction-qc-view-profiles-button').click();
+	await expect(page.getByTestId('refraction-qc-profile-plot')).toBeVisible();
+	await expect(page.getByTestId('refraction-qc-view-profiles')).toContainText('refraction_line_profile_qc_combined.csv');
+	await expect(page.getByTestId('refraction-qc-view-profiles')).toContainText('Unavailable fields');
+	await expect(page.getByTestId('refraction-qc-view-profiles')).toContainText('T3');
+
+	await expect.poll(async () => profilePlotSummary(page)).toMatchObject({
+		axisTitle: 'Time term (ms)',
+		traces: [
+			{ name: 'T1 (ms) source', pointCount: 2, values: [14, 18] },
+			{ name: 'T2 (ms) source', pointCount: 2, values: [28, 35] },
+		],
+	});
+});
+
+test('2D profile plot renders static components with units', async ({ page }) => {
+	await page.route('**/statics/refraction/qc', async (route) => {
+		await route.fulfill({
+			status: 200,
+			contentType: 'application/json',
+			body: JSON.stringify(qcBundlePayload('refraction-job-12')),
+		});
+	});
+
+	await loadRefractionQcBundle(page, 'refraction-job-12');
+	await page.getByTestId('refraction-qc-view-profiles-button').click();
+	await page.getByTestId('refraction-qc-profile-group').selectOption('statics');
+	await page.getByTestId('refraction-qc-profile-units').selectOption('s');
+	await expect(page.getByTestId('refraction-qc-profile-sign-note')).toContainText('corrected(t) = raw(t - shift_s)');
+	await expect(page.getByTestId('refraction-qc-view-profiles')).toContainText('positive shift_s delays displayed events');
+
+	await expect.poll(async () => profilePlotSummary(page)).toMatchObject({
+		axisTitle: 'Static shift (s)',
+		traces: expect.arrayContaining([
+			expect.objectContaining({
+				name: 'Weathering correction (s) source',
+				values: [-0.008, -0.009],
+			}),
+			expect.objectContaining({
+				name: 'Final applied static (s) source',
+				values: [-0.004, -0.005],
+			}),
+		]),
+	});
+});
+
+test('2D profile plot endpoint kind filter', async ({ page }) => {
+	await page.route('**/statics/refraction/qc', async (route) => {
+		await route.fulfill({
+			status: 200,
+			contentType: 'application/json',
+			body: JSON.stringify(qcBundlePayload('refraction-job-13')),
+		});
+	});
+
+	await loadRefractionQcBundle(page, 'refraction-job-13');
+	await page.getByTestId('refraction-qc-view-profiles-button').click();
+	await page.getByTestId('refraction-qc-endpoint-kind').selectOption('both');
+
+	await expect.poll(async () => profilePlotSummary(page)).toMatchObject({
+		traces: expect.arrayContaining([
+			expect.objectContaining({
+				name: 'T1 (ms) source',
+				dash: 'solid',
+				symbols: ['circle', 'x'],
+			}),
+			expect.objectContaining({
+				name: 'T1 (ms) receiver',
+				dash: 'dot',
+				symbols: ['diamond', 'diamond'],
+			}),
+		]),
+	});
+
+	await page.getByTestId('refraction-qc-status-filter').selectOption('invalid');
+	await expect.poll(async () => profilePlotSummary(page)).toMatchObject({
+		traces: [
+			{ name: 'T1 (ms) source', pointCount: 1, symbols: ['x'] },
+			{ name: 'T2 (ms) source', pointCount: 1, symbols: ['x'] },
+		],
+	});
+});
+
+test('2D profile plot handles one-layer missing T2 T3', async ({ page }) => {
+	await page.route('**/statics/refraction/qc', async (route) => {
+		const payload = qcBundlePayload('refraction-job-14');
+		const records = oneLayerLineProfileRecords();
+		payload.summary.conversion_mode = 't1lsst_1layer';
+		payload.summary.layer_count = 1;
+		payload.views.line_profiles.records = records;
+		payload.views.line_profiles.columns = Object.keys(records[0]);
+		payload.views.line_profiles.total_points = records.length;
+		payload.views.line_profiles.returned_points = records.length;
+		await route.fulfill({
+			status: 200,
+			contentType: 'application/json',
+			body: JSON.stringify(payload),
+		});
+	});
+
+	await loadRefractionQcBundle(page, 'refraction-job-14');
+	await page.getByTestId('refraction-qc-view-profiles-button').click();
+	await expect(page.getByTestId('refraction-qc-view-profiles')).toContainText('Unavailable fields');
+	await expect(page.getByTestId('refraction-qc-view-profiles')).toContainText('T2, T3');
+
+	await expect.poll(async () => profilePlotSummary(page)).toMatchObject({
+		axisTitle: 'Time term (ms)',
+		traces: [{ name: 'T1 (ms) source', pointCount: 2, values: [14, 18] }],
+	});
 });

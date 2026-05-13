@@ -60,6 +60,9 @@
     selectedEndpointKind: 'source',
     selectedCell: null,
     selectedEndpoint: '',
+    selectedProfileGroup: 'time_terms',
+    selectedProfileUnits: 'auto',
+    profileStatusFilter: 'all',
     maxPoints: DEFAULT_MAX_POINTS,
     error: null,
     loading: false,
@@ -104,6 +107,103 @@
       columns: ['trace_index_sorted', 'sorted_trace_index', 'observation_index'],
     },
   };
+
+  const PROFILE_SERIES_COLORS = {
+    t1_ms: '#2563eb',
+    t2_ms: '#059669',
+    t3_ms: '#c2410c',
+    v1_m_s: '#7c3aed',
+    v2_m_s: '#2563eb',
+    v3_m_s: '#059669',
+    vsub_m_s: '#c2410c',
+    sh1_m: '#0891b2',
+    sh2_m: '#65a30d',
+    sh3_m: '#b45309',
+    layer1_base_elevation_m: '#475569',
+    layer2_base_elevation_m: '#64748b',
+    final_refractor_elevation_m: '#0f172a',
+    weathering_correction_ms: '#2563eb',
+    elevation_correction_ms: '#0891b2',
+    field_correction_ms: '#059669',
+    manual_static_ms: '#c2410c',
+    total_applied_shift_ms: '#be123c',
+    pick_count: '#2563eb',
+    used_pick_count: '#059669',
+    residual_rms_ms: '#c2410c',
+    residual_mad_ms: '#7c3aed',
+  };
+
+  const PROFILE_GROUPS = {
+    time_terms: {
+      label: 'Time terms',
+      axisLabel: 'Time term',
+      unit: 'ms',
+      series: [
+        { column: 't1_ms', label: 'T1', layers: ['v2_t1'] },
+        { column: 't2_ms', label: 'T2', layers: ['v3_t2'] },
+        { column: 't3_ms', label: 'T3', layers: ['vsub_t3'] },
+      ],
+    },
+    velocities: {
+      label: 'Velocities',
+      axisLabel: 'Velocity',
+      unit: 'm/s',
+      series: [
+        { column: 'v1_m_s', label: 'V1', layers: ['v1_direct_arrival'] },
+        { column: 'v2_m_s', label: 'V2', layers: ['v2_t1'] },
+        { column: 'v3_m_s', label: 'V3', layers: ['v3_t2'] },
+        { column: 'vsub_m_s', label: 'Vsub', layers: ['vsub_t3'] },
+      ],
+    },
+    thickness_elevation: {
+      label: 'Thickness / elevations',
+      axisLabel: 'Thickness / elevation',
+      unit: 'm',
+      series: [
+        { column: 'sh1_m', label: 'SH1', layers: ['v2_t1'] },
+        { column: 'sh2_m', label: 'SH2', layers: ['v3_t2'] },
+        { column: 'sh3_m', label: 'SH3', layers: ['vsub_t3'] },
+        { column: 'layer1_base_elevation_m', label: 'Layer 1 base', layers: ['v2_t1'] },
+        { column: 'layer2_base_elevation_m', label: 'Layer 2 base', layers: ['v3_t2', 'vsub_t3'] },
+        { column: 'final_refractor_elevation_m', label: 'Final refractor', layers: ['v2_t1', 'v3_t2', 'vsub_t3'] },
+      ],
+    },
+    statics: {
+      label: 'Static components',
+      axisLabel: 'Static shift',
+      unit: 'ms',
+      series: [
+        { column: 'weathering_correction_ms', label: 'Weathering correction' },
+        { column: 'elevation_correction_ms', label: 'Elevation / datum correction' },
+        { column: 'field_correction_ms', label: 'Field correction' },
+        { column: 'manual_static_ms', label: 'Manual static' },
+        { column: 'total_applied_shift_ms', label: 'Final applied static' },
+      ],
+    },
+    qc_metrics: {
+      label: 'QC metrics',
+      axisLabel: 'QC metric',
+      unit: 'mixed',
+      series: [
+        { column: 'pick_count', label: 'Pick fold', unit: 'count' },
+        { column: 'used_pick_count', label: 'Used pick fold', unit: 'count' },
+        { column: 'residual_rms_ms', label: 'Residual RMS', unit: 'ms' },
+        { column: 'residual_mad_ms', label: 'Residual MAD', unit: 'ms' },
+      ],
+    },
+  };
+
+  const PROFILE_STATUS_OK = new Set([
+    '',
+    'ok',
+    'valid',
+    'used',
+    'solved',
+    'computed',
+    'available',
+    'success',
+    'none',
+  ]);
 
   function readRecentJobs() {
     try {
@@ -307,6 +407,136 @@
       if (point) points.push(point);
     }
     return points;
+  }
+
+  function profileGroupDefinition() {
+    return PROFILE_GROUPS[state.selectedProfileGroup] || PROFILE_GROUPS.time_terms;
+  }
+
+  function profileSeriesMatchesLayer(series) {
+    if (state.selectedLayerKind === 'all') return true;
+    if (!Array.isArray(series.layers) || !series.layers.length) return true;
+    return series.layers.includes(state.selectedLayerKind);
+  }
+
+  function profileSeriesUnit(series, group) {
+    return series.unit || group.unit || '';
+  }
+
+  function profileDisplayUnit(series, group) {
+    const unit = profileSeriesUnit(series, group);
+    if (unit === 'ms' && state.selectedProfileUnits === 's') return 's';
+    return unit;
+  }
+
+  function profileDisplayValue(value, series, group) {
+    const unit = profileSeriesUnit(series, group);
+    if (!Number.isFinite(value)) return NaN;
+    if (unit === 'ms' && state.selectedProfileUnits === 's') return value / 1000.0;
+    return value;
+  }
+
+  function profileAxisTitle(group, seriesList) {
+    if (group.unit === 'mixed') {
+      const hasTime = seriesList.some((series) => profileSeriesUnit(series, group) === 'ms');
+      const timeUnit = state.selectedProfileUnits === 's' ? 's' : 'ms';
+      return hasTime ? `${group.axisLabel} (count or ${timeUnit})` : `${group.axisLabel} (count)`;
+    }
+    if (group.unit === 'ms') {
+      return `${group.axisLabel} (${state.selectedProfileUnits === 's' ? 's' : 'ms'})`;
+    }
+    return group.unit ? `${group.axisLabel} (${group.unit})` : group.axisLabel;
+  }
+
+  function profileStatusText(record) {
+    const staticStatus = normalizedText(firstDefined(record, ['static_status']));
+    const solutionStatus = normalizedText(firstDefined(record, ['solution_status']));
+    return { staticStatus, solutionStatus };
+  }
+
+  function isInvalidProfileRecord(record) {
+    const { staticStatus, solutionStatus } = profileStatusText(record);
+    return !PROFILE_STATUS_OK.has(staticStatus) || !PROFILE_STATUS_OK.has(solutionStatus);
+  }
+
+  function profileStatusMatches(record) {
+    const invalid = isInvalidProfileRecord(record);
+    if (state.profileStatusFilter === 'valid') return !invalid;
+    if (state.profileStatusFilter === 'invalid') return invalid;
+    return true;
+  }
+
+  function profileEndpointMatches(record) {
+    const kind = normalizedText(firstDefined(record, ['endpoint_kind']));
+    if (state.selectedEndpointKind !== 'both' && kind !== state.selectedEndpointKind) return false;
+    const endpointFilter = normalizedText(state.selectedEndpoint);
+    if (!endpointFilter) return true;
+    const endpointKey = normalizedText(firstDefined(record, ['endpoint_key']));
+    return endpointKey.includes(endpointFilter);
+  }
+
+  function normalizeProfileRecord(record) {
+    const inline = toFiniteNumber(firstDefined(record, ['inline_m']));
+    if (!Number.isFinite(inline)) return null;
+    return {
+      raw: record,
+      inline,
+      endpointKind: normalizedText(firstDefined(record, ['endpoint_kind'])) || 'unknown',
+      endpointKey: textOrDash(firstDefined(record, ['endpoint_key'])),
+      nodeId: textOrDash(firstDefined(record, ['node_id'])),
+      staticStatus: textOrDash(firstDefined(record, ['static_status'])),
+      solutionStatus: textOrDash(firstDefined(record, ['solution_status'])),
+      invalid: isInvalidProfileRecord(record),
+    };
+  }
+
+  function filteredProfileRecords(view) {
+    const records = Array.isArray(view.records) ? view.records : [];
+    const points = [];
+    for (const record of records) {
+      if (!profileEndpointMatches(record)) continue;
+      if (!profileStatusMatches(record)) continue;
+      const normalized = normalizeProfileRecord(record);
+      if (normalized) points.push(normalized);
+    }
+    return points.sort((a, b) => (
+      a.endpointKind.localeCompare(b.endpointKind)
+      || a.inline - b.inline
+      || a.endpointKey.localeCompare(b.endpointKey)
+    ));
+  }
+
+  function profileSeriesAvailable(series, records) {
+    return records.some((record) => Number.isFinite(toFiniteNumber(record.raw[series.column])));
+  }
+
+  function selectedProfileSeries(records) {
+    const group = profileGroupDefinition();
+    const layerSeries = group.series.filter(profileSeriesMatchesLayer);
+    return {
+      group,
+      available: layerSeries.filter((series) => profileSeriesAvailable(series, records)),
+      unavailable: layerSeries.filter((series) => !profileSeriesAvailable(series, records)),
+    };
+  }
+
+  function profileTraceName(series, endpointKind, group) {
+    const unit = profileDisplayUnit(series, group);
+    const suffix = unit ? ` (${unit})` : '';
+    return `${series.label}${suffix} ${endpointKind}`;
+  }
+
+  function profileHoverText(point, series, value, group) {
+    const unit = profileDisplayUnit(series, group);
+    const formatted = formatNumber(value, unit === 'count' ? 0 : 3);
+    return [
+      `Endpoint: ${point.endpointKind} ${point.endpointKey}`,
+      `Node: ${point.nodeId}`,
+      `Inline: ${formatNumber(point.inline, 2)} m`,
+      `${series.label}: ${formatted}${unit ? ` ${unit}` : ''}`,
+      `Static status: ${point.staticStatus}`,
+      `Solution status: ${point.solutionStatus}`,
+    ].join('<br>');
   }
 
   function clearNode(node) {
@@ -929,6 +1159,166 @@
     }
   }
 
+  function renderProfilePlot(content, bundle, viewDef) {
+    const found = findViewData(bundle, viewDef);
+    if (!found) {
+      const missing = document.createElement('p');
+      missing.className = 'refraction-qc-placeholder';
+      missing.textContent = isUnavailable(bundle, viewDef)
+        ? 'This view is unavailable from refraction_line_profile_qc_* artifacts.'
+        : 'No sampled line-profile records are present for this view.';
+      content.appendChild(missing);
+      return;
+    }
+
+    const { key, view } = found;
+    const records = filteredProfileRecords(view);
+    const { group, available, unavailable } = selectedProfileSeries(records);
+    const invalidCount = records.filter((record) => record.invalid).length;
+    const downsampling = findDownsampling(bundle, key, view);
+    const downsamplingText = downsampling
+      ? `${downsampling.returned_points || 0} of ${downsampling.total_points || 0}; ${downsampling.downsampled ? 'downsampled' : 'not downsampled'}${downsampling.method ? ` (${downsampling.method})` : ''}`
+      : 'not reported';
+    const missingLabels = unavailable.map((series) => series.label).join(', ');
+
+    content.appendChild(createKv([
+      ['Bundle view', key],
+      ['Artifact', view.artifact],
+      ['Rows', `${view.returned_points || 0} of ${view.total_points || 0}`],
+      ['Plotted endpoints', `${records.length}`],
+      ['Profile group', group.label],
+      ['Endpoint kind', state.selectedEndpointKind],
+      ['Layer filter', state.selectedLayerKind === 'all' ? 'all' : layerLabel(state.selectedLayerKind)],
+      ['Status filter', state.profileStatusFilter],
+      ['Invalid endpoints', `${invalidCount}`],
+      ['Y units', profileAxisTitle(group, available)],
+      ['Unavailable fields', missingLabels || 'none'],
+    ]));
+
+    const signNote = document.createElement('p');
+    signNote.className = 'refraction-qc-note';
+    signNote.textContent = 'Static shifts follow corrected(t) = raw(t - shift_s); positive shift_s delays displayed events.';
+    signNote.dataset.testid = 'refraction-qc-profile-sign-note';
+    content.appendChild(signNote);
+
+    const downsamplingNote = document.createElement('p');
+    downsamplingNote.className = 'refraction-qc-note';
+    downsamplingNote.textContent = `Downsampling: ${downsamplingText}`;
+    downsamplingNote.dataset.testid = 'refraction-qc-profile-downsampling';
+    content.appendChild(downsamplingNote);
+
+    if (!records.length) {
+      const missing = document.createElement('p');
+      missing.className = 'refraction-qc-placeholder';
+      missing.textContent = 'No line-profile endpoints match the current endpoint and status filters.';
+      content.appendChild(missing);
+      if (Array.isArray(view.records) && view.records.length && Array.isArray(view.columns) && view.columns.length) {
+        content.appendChild(createTable(view));
+      }
+      return;
+    }
+
+    if (!available.length) {
+      const missing = document.createElement('p');
+      missing.className = 'refraction-qc-placeholder';
+      missing.textContent = 'No plottable profile fields match the current group and layer selection.';
+      content.appendChild(missing);
+      if (Array.isArray(view.records) && view.records.length && Array.isArray(view.columns) && view.columns.length) {
+        content.appendChild(createTable(view));
+      }
+      return;
+    }
+
+    const plot = createFirstBreakPlot('refraction-qc-profile-plot');
+    plot.dataset.pointCount = String(records.length);
+    content.appendChild(plot);
+
+    if (window.Plotly) {
+      const traces = [];
+      for (const series of available) {
+        const grouped = new Map();
+        for (const point of records) {
+          const rawValue = toFiniteNumber(point.raw[series.column]);
+          const y = profileDisplayValue(rawValue, series, group);
+          if (!Number.isFinite(y)) continue;
+          if (!grouped.has(point.endpointKind)) {
+            grouped.set(point.endpointKind, {
+              endpointKind: point.endpointKind,
+              x: [],
+              y: [],
+              text: [],
+              invalid: [],
+            });
+          }
+          const entry = grouped.get(point.endpointKind);
+          entry.x.push(point.inline);
+          entry.y.push(y);
+          entry.text.push(profileHoverText(point, series, y, group));
+          entry.invalid.push(point.invalid);
+        }
+        for (const entry of grouped.values()) {
+          traces.push({
+            name: profileTraceName(series, entry.endpointKind, group),
+            type: 'scatter',
+            mode: 'lines+markers',
+            x: entry.x,
+            y: entry.y,
+            text: entry.text,
+            hovertemplate: '%{text}<extra></extra>',
+            line: {
+              color: PROFILE_SERIES_COLORS[series.column] || '#64748b',
+              width: 2,
+              dash: entry.endpointKind === 'receiver' ? 'dot' : 'solid',
+            },
+            marker: {
+              color: PROFILE_SERIES_COLORS[series.column] || '#64748b',
+              symbol: entry.invalid.map((invalid) => {
+                if (invalid) return 'x';
+                return entry.endpointKind === 'receiver' ? 'diamond' : 'circle';
+              }),
+              size: entry.invalid.map((invalid) => invalid ? 9 : 7),
+              opacity: entry.invalid.map((invalid) => invalid ? 0.62 : 0.9),
+            },
+          });
+        }
+      }
+
+      window.Plotly.newPlot(plot, traces, {
+        height: 320,
+        margin: { l: 62, r: 14, t: 34, b: 50 },
+        font: { size: 10, color: '#334155' },
+        paper_bgcolor: '#ffffff',
+        plot_bgcolor: '#ffffff',
+        title: { text: `${group.label} profile`, font: { size: 12 } },
+        xaxis: {
+          title: { text: 'Inline distance (m)' },
+          zeroline: false,
+          gridcolor: '#e5e7eb',
+        },
+        yaxis: {
+          title: { text: profileAxisTitle(group, available) },
+          zeroline: group.unit === 'ms' || group.unit === 'mixed',
+          zerolinecolor: '#94a3b8',
+          gridcolor: '#e5e7eb',
+        },
+        legend: {
+          orientation: 'h',
+          x: 0,
+          y: 1.16,
+          xanchor: 'left',
+          yanchor: 'top',
+          font: { size: 10 },
+        },
+      }, { displayModeBar: false, responsive: true });
+    } else {
+      plot.textContent = 'Plot library is unavailable.';
+    }
+
+    if (Array.isArray(view.records) && view.records.length && Array.isArray(view.columns) && view.columns.length) {
+      content.appendChild(createTable(view));
+    }
+  }
+
   function renderGatherPreview(content, bundle) {
     const message = document.createElement('p');
     message.className = 'refraction-qc-placeholder';
@@ -969,6 +1359,8 @@
       renderFirstBreakPlots(content, state.qcBundle, viewDef);
     } else if (viewDef.id === 'reduced_time') {
       renderReducedTimePlot(content, state.qcBundle, viewDef);
+    } else if (viewDef.id === 'profiles_2d') {
+      renderProfilePlot(content, state.qcBundle, viewDef);
     } else if (viewDef.id === 'gather_preview') {
       renderGatherPreview(content, state.qcBundle);
     } else {
@@ -993,6 +1385,9 @@
     dom.maxPoints.value = String(state.maxPoints);
     dom.layerKind.value = state.selectedLayerKind;
     dom.xAxisMode.value = state.firstBreakXAxis;
+    dom.profileGroup.value = state.selectedProfileGroup;
+    dom.profileUnits.value = state.selectedProfileUnits;
+    dom.statusFilter.value = state.profileStatusFilter;
     dom.showRejected.checked = state.showRejectedFirstBreaks;
     dom.endpointKind.value = state.selectedEndpointKind;
     dom.endpoint.value = state.selectedEndpoint;
@@ -1138,6 +1533,9 @@
       sign: document.getElementById('refractionQcSign'),
       layerKind: document.getElementById('refractionQcLayerKind'),
       xAxisMode: document.getElementById('refractionQcXAxisMode'),
+      profileGroup: document.getElementById('refractionQcProfileGroup'),
+      profileUnits: document.getElementById('refractionQcProfileUnits'),
+      statusFilter: document.getElementById('refractionQcStatusFilter'),
       showRejected: document.getElementById('refractionQcShowRejected'),
       endpointKind: document.getElementById('refractionQcEndpointKind'),
       endpoint: document.getElementById('refractionQcEndpoint'),
@@ -1150,7 +1548,8 @@
     };
 
     if (!dom.jobId || !dom.maxPoints || !dom.loadButton || !dom.status || !dom.error || !dom.sign) return;
-    if (!dom.layerKind || !dom.xAxisMode || !dom.showRejected || !dom.endpointKind || !dom.endpoint || !dom.cell) return;
+    if (!dom.layerKind || !dom.xAxisMode || !dom.profileGroup || !dom.profileUnits || !dom.statusFilter) return;
+    if (!dom.showRejected || !dom.endpointKind || !dom.endpoint || !dom.cell) return;
 
     pipelineTab.addEventListener('click', () => activateSidebarTab('pipeline'));
     qcTab.addEventListener('click', () => activateSidebarTab('refraction_qc'));
@@ -1170,6 +1569,18 @@
     });
     dom.xAxisMode.addEventListener('change', () => {
       state.firstBreakXAxis = dom.xAxisMode.value;
+      render();
+    });
+    dom.profileGroup.addEventListener('change', () => {
+      state.selectedProfileGroup = dom.profileGroup.value;
+      render();
+    });
+    dom.profileUnits.addEventListener('change', () => {
+      state.selectedProfileUnits = dom.profileUnits.value;
+      render();
+    });
+    dom.statusFilter.addEventListener('change', () => {
+      state.profileStatusFilter = dom.statusFilter.value;
       render();
     });
     dom.showRejected.addEventListener('change', () => {

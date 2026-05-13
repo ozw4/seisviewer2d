@@ -14,6 +14,7 @@ from app.services.refraction_static_artifacts import (
     REFRACTION_FIRST_BREAK_FIT_QC_CSV_NAME,
     REFRACTION_FIRST_BREAK_FIT_QC_JSON_NAME,
     REFRACTION_FIRST_BREAK_FIT_QC_NPZ_NAME,
+    REFRACTION_LINE_PROFILE_QC_COMBINED_CSV_NAME,
     REFRACTION_STATIC_ARTIFACTS_JSON_NAME,
     REFRACTION_STATIC_QC_JSON_NAME,
     REFRACTION_STATIC_REQUEST_JSON_NAME,
@@ -200,6 +201,58 @@ def test_refraction_static_qc_bundle_downsamples_deterministically(
         'downsampled': True,
         'method': 'even_index_floor_first_last',
     }
+
+
+def test_refraction_static_qc_bundle_uses_line_profile_qc_artifact(
+    client: TestClient,
+    tmp_path: Path,
+) -> None:
+    job_dir = tmp_path / 'refraction-job'
+    _write_refraction_qc_artifacts(
+        job_dir,
+        rows=[{'trace': '0', 'first_break_residual_ms': '1.25'}],
+        extra_artifact_names=[REFRACTION_LINE_PROFILE_QC_COMBINED_CSV_NAME],
+    )
+    profile_rows = [
+        {
+            'endpoint_kind': 'source',
+            'endpoint_key': 'S001',
+            'inline_m': '10.0',
+            't1_ms': '12.5',
+            'static_status': 'ok',
+            'solution_status': 'ok',
+        },
+        {
+            'endpoint_kind': 'receiver',
+            'endpoint_key': 'R001',
+            'inline_m': '11.0',
+            't1_ms': '13.5',
+            'static_status': 'ok',
+            'solution_status': 'ok',
+        },
+    ]
+    with (job_dir / REFRACTION_LINE_PROFILE_QC_COMBINED_CSV_NAME).open(
+        'w',
+        encoding='utf-8',
+        newline='',
+    ) as handle:
+        writer = csv.DictWriter(handle, fieldnames=list(profile_rows[0]))
+        writer.writeheader()
+        writer.writerows(profile_rows)
+    _create_static_job(client, job_id='refraction-job', job_dir=job_dir)
+
+    response = client.post(
+        '/statics/refraction/qc',
+        json={'job_id': 'refraction-job', 'include': ['profiles']},
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert 'line_profiles' in payload['available_views']
+    assert payload['views']['line_profiles']['artifact'] == (
+        REFRACTION_LINE_PROFILE_QC_COMBINED_CSV_NAME
+    )
+    assert payload['views']['line_profiles']['records'] == profile_rows
 
 
 def _create_static_job(
