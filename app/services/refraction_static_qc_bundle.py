@@ -289,7 +289,7 @@ def _artifact_refs(
     manifest: dict[str, Any],
     artifacts_dir: Path,
 ) -> dict[str, str]:
-    refs: dict[str, str] = {}
+    artifact_names: list[str] = []
     raw_artifacts = manifest.get('artifacts')
     if isinstance(raw_artifacts, list):
         for raw_item in raw_artifacts:
@@ -298,21 +298,45 @@ def _artifact_refs(
             raw_name = raw_item.get('name')
             if not isinstance(raw_name, str) or Path(raw_name).name != raw_name:
                 continue
-            refs[_artifact_ref_key(raw_name)] = raw_name
+            if raw_name not in artifact_names:
+                artifact_names.append(raw_name)
     for artifact_name in (
         REFRACTION_STATIC_ARTIFACTS_JSON_NAME,
         REFRACTION_STATIC_REQUEST_JSON_NAME,
     ):
-        if (artifacts_dir / artifact_name).is_file():
-            refs[_artifact_ref_key(artifact_name)] = artifact_name
+        if (
+            (artifacts_dir / artifact_name).is_file()
+            and artifact_name not in artifact_names
+        ):
+            artifact_names.append(artifact_name)
+
+    key_counts: dict[str, int] = {}
+    for artifact_name in artifact_names:
+        key = _artifact_ref_base_key(artifact_name)
+        key_counts[key] = key_counts.get(key, 0) + 1
+
+    refs: dict[str, str] = {}
+    for artifact_name in artifact_names:
+        base_key = _artifact_ref_base_key(artifact_name)
+        if key_counts[base_key] > 1:
+            refs[_artifact_ref_suffix_key(artifact_name)] = artifact_name
+        else:
+            refs[base_key] = artifact_name
     return dict(sorted(refs.items()))
 
 
-def _artifact_ref_key(name: str) -> str:
+def _artifact_ref_base_key(name: str) -> str:
     path = Path(name)
     if path.suffix:
         return path.stem
     return path.name
+
+
+def _artifact_ref_suffix_key(name: str) -> str:
+    path = Path(name)
+    if not path.suffix:
+        return path.name
+    return f'{path.stem}_{path.suffix.removeprefix(".")}'
 
 
 def _summary_from_qc(

@@ -657,14 +657,17 @@ tabular views. Its top-level response shape is the
 `available_views`, `unavailable_views`, `views`, and `downsampling`.
 
 `sign_convention` is the repo convention string, not an object:
-`corrected(t)=raw(t-shift_s)`. The route does not currently return
+`corrected(t) = raw(t - shift_s)`. The route does not currently return
 `schema_version`, `kind`, `source_artifacts`, or `products` fields.
+Artifact reference keys use the filename stem except when a QC artifact family
+has multiple files with the same stem; in that case the keys include the file
+suffix, such as `refraction_first_break_fit_qc_csv`.
 
 ```json
 {
   "job_id": "refraction-job-123",
   "statics_kind": "refraction",
-  "sign_convention": "corrected(t)=raw(t-shift_s)",
+  "sign_convention": "corrected(t) = raw(t - shift_s)",
   "coordinate_mode": "line_2d_projected",
   "summary": {
     "status": "ok",
@@ -694,7 +697,9 @@ tabular views. Its top-level response shape is the
   },
   "artifacts": {
     "first_break_residuals": "first_break_residuals.csv",
-    "refraction_first_break_fit_qc": "refraction_first_break_fit_qc.csv",
+    "refraction_first_break_fit_qc_csv": "refraction_first_break_fit_qc.csv",
+    "refraction_first_break_fit_qc_json": "refraction_first_break_fit_qc.json",
+    "refraction_first_break_fit_qc_npz": "refraction_first_break_fit_qc.npz",
     "refraction_first_break_time_export": "refraction_first_break_time_export.csv",
     "refraction_refractor_velocity_cells": "refraction_refractor_velocity_cells.csv",
     "refraction_static_artifacts": "refraction_static_artifacts.json",

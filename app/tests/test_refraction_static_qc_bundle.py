@@ -11,6 +11,9 @@ from app.api.schemas import RefractionStaticQcBundleRequest
 from app.main import app
 from app.services.refraction_static_artifacts import (
     FIRST_BREAK_RESIDUALS_CSV_NAME,
+    REFRACTION_FIRST_BREAK_FIT_QC_CSV_NAME,
+    REFRACTION_FIRST_BREAK_FIT_QC_JSON_NAME,
+    REFRACTION_FIRST_BREAK_FIT_QC_NPZ_NAME,
     REFRACTION_STATIC_ARTIFACTS_JSON_NAME,
     REFRACTION_STATIC_QC_JSON_NAME,
     REFRACTION_STATIC_REQUEST_JSON_NAME,
@@ -129,6 +132,41 @@ def test_refraction_static_qc_bundle_returns_summary_and_artifact_refs(
     ]
 
 
+def test_refraction_static_qc_bundle_keeps_same_stem_artifact_refs(
+    client: TestClient,
+    tmp_path: Path,
+) -> None:
+    job_dir = tmp_path / 'refraction-job'
+    _write_refraction_qc_artifacts(
+        job_dir,
+        rows=[{'trace': '0', 'first_break_residual_ms': '1.25'}],
+        extra_artifact_names=[
+            REFRACTION_FIRST_BREAK_FIT_QC_CSV_NAME,
+            REFRACTION_FIRST_BREAK_FIT_QC_NPZ_NAME,
+            REFRACTION_FIRST_BREAK_FIT_QC_JSON_NAME,
+        ],
+    )
+    _create_static_job(client, job_id='refraction-job', job_dir=job_dir)
+
+    response = client.post(
+        '/statics/refraction/qc',
+        json={'job_id': 'refraction-job'},
+    )
+
+    assert response.status_code == 200
+    artifacts = response.json()['artifacts']
+    assert artifacts['refraction_first_break_fit_qc_csv'] == (
+        REFRACTION_FIRST_BREAK_FIT_QC_CSV_NAME
+    )
+    assert artifacts['refraction_first_break_fit_qc_npz'] == (
+        REFRACTION_FIRST_BREAK_FIT_QC_NPZ_NAME
+    )
+    assert artifacts['refraction_first_break_fit_qc_json'] == (
+        REFRACTION_FIRST_BREAK_FIT_QC_JSON_NAME
+    )
+    assert 'refraction_first_break_fit_qc' not in artifacts
+
+
 def test_refraction_static_qc_bundle_downsamples_deterministically(
     client: TestClient,
     tmp_path: Path,
@@ -188,6 +226,7 @@ def _write_refraction_qc_artifacts(
     *,
     rows: list[dict[str, str]],
     coordinate_mode: str | None = None,
+    extra_artifact_names: list[str] | None = None,
 ) -> None:
     job_dir.mkdir(parents=True, exist_ok=True)
     qc_payload: dict[str, object] = {
@@ -222,24 +261,35 @@ def _write_refraction_qc_artifacts(
         json.dumps({'file_id': 'file-1'}),
         encoding='utf-8',
     )
+    manifest_artifacts = [
+        {
+            'name': REFRACTION_STATIC_QC_JSON_NAME,
+            'kind': 'json',
+            'required': True,
+            'origin': 'final',
+        },
+        {
+            'name': FIRST_BREAK_RESIDUALS_CSV_NAME,
+            'kind': 'csv',
+            'required': True,
+            'origin': 'final',
+        },
+    ]
+    for artifact_name in extra_artifact_names or []:
+        (job_dir / artifact_name).write_text('', encoding='utf-8')
+        manifest_artifacts.append(
+            {
+                'name': artifact_name,
+                'kind': Path(artifact_name).suffix.removeprefix('.'),
+                'required': True,
+                'origin': 'final',
+            },
+        )
     manifest_payload = {
         'artifact_version': '1.0',
         'job_kind': 'statics',
         'statics_kind': 'refraction',
-        'artifacts': [
-            {
-                'name': REFRACTION_STATIC_QC_JSON_NAME,
-                'kind': 'json',
-                'required': True,
-                'origin': 'final',
-            },
-            {
-                'name': FIRST_BREAK_RESIDUALS_CSV_NAME,
-                'kind': 'csv',
-                'required': True,
-                'origin': 'final',
-            },
-        ],
+        'artifacts': manifest_artifacts,
     }
     (job_dir / REFRACTION_STATIC_ARTIFACTS_JSON_NAME).write_text(
         json.dumps(manifest_payload),
