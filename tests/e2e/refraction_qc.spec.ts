@@ -1303,6 +1303,51 @@ test('reduced-time plot handles missing velocity status', async ({ page }) => {
 	await expect.poll(async () => reducedTimePlotPointCount(page)).toBe(3);
 });
 
+test('reduced-time plot hides rows not used for inversion', async ({ page }) => {
+	await page.route('**/statics/refraction/qc', async (route) => {
+		await route.fulfill({
+			status: 200,
+			contentType: 'application/json',
+			body: JSON.stringify(qcBundlePayload('refraction-job-10b')),
+		});
+	});
+
+	await loadRefractionQcBundle(page, 'refraction-job-10b');
+	await page.getByTestId('refraction-qc-view-reduced-time-button').click();
+	await expect.poll(async () => reducedTimePlotPointCount(page)).toBe(3);
+
+	await page.getByTestId('refraction-qc-show-rejected').uncheck();
+	await expect.poll(async () => reducedTimePlotPointCount(page)).toBe(2);
+	await expect(page.getByTestId('refraction-qc-view-reduced-time')).toContainText('Unused picks');
+	await expect(page.getByTestId('refraction-qc-view-reduced-time')).toContainText('hidden');
+});
+
+test('reduced-time gate overlays read documented layer arrays', async ({ page }) => {
+	await page.route('**/statics/refraction/qc', async (route) => {
+		const payload = qcBundlePayload('refraction-job-10c') as any;
+		payload.summary.layers = [
+			{ kind: 'v2_t1', enabled: true, min_offset_m: 0, max_offset_m: 1800 },
+			{ kind: 'v3_t2', enabled: true, min_offset_m: 1800, max_offset_m: 3200 },
+			{ kind: 'vsub_t3', enabled: true, min_offset_m: 3200, max_offset_m: null },
+		];
+		delete payload.summary.observation_gates;
+		await route.fulfill({
+			status: 200,
+			contentType: 'application/json',
+			body: JSON.stringify(payload),
+		});
+	});
+
+	await loadRefractionQcBundle(page, 'refraction-job-10c');
+	await page.getByTestId('refraction-qc-view-reduced-time-button').click();
+
+	await expect(page.getByTestId('refraction-qc-reduced-time-gates')).toContainText('V2/T1');
+	await expect(page.getByTestId('refraction-qc-reduced-time-gates')).toContainText('V3/T2');
+	await expect(page.getByTestId('refraction-qc-reduced-time-gates')).toContainText('Vsub/T3');
+	await expect(page.getByTestId('refraction-qc-reduced-time-gates')).toContainText('0.0-1800.0 m');
+	await expect(page.getByTestId('refraction-qc-reduced-time-gates')).toContainText('>= 3200.0 m');
+});
+
 test('2D profile plot renders time terms', async ({ page }) => {
 	await page.route('**/statics/refraction/qc', async (route) => {
 		await route.fulfill({
@@ -1474,6 +1519,28 @@ test('static component view endpoint selection updates details and statuses', as
 			expect.objectContaining({ label: 'Applied field shift', value: 2 }),
 		]),
 	});
+});
+
+test('static component view shows no match for unknown endpoint filter', async ({ page }) => {
+	await page.route('**/statics/refraction/qc', async (route) => {
+		await route.fulfill({
+			status: 200,
+			contentType: 'application/json',
+			body: JSON.stringify(qcBundlePayload('refraction-job-18b')),
+		});
+	});
+
+	await loadRefractionQcBundle(page, 'refraction-job-18b');
+	await page.getByTestId('refraction-qc-view-statics-button').click();
+	await page.getByTestId('refraction-qc-endpoint').fill('S999');
+
+	await expect(page.getByTestId('refraction-qc-view-statics')).toContainText(
+		'No source/receiver endpoint component rows match the current endpoint selector.',
+	);
+	await expect(page.getByTestId('refraction-qc-view-statics')).toContainText(
+		'No trace component row matches the current trace or endpoint selector.',
+	);
+	await expect(page.getByTestId('refraction-qc-view-statics')).not.toContainText('Selected endpoint S001');
 });
 
 test('2D profile plot endpoint kind filter', async ({ page }) => {

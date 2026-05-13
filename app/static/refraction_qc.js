@@ -480,6 +480,19 @@
     return Boolean(rejectText && rejectText !== 'ok' && rejectText !== 'none' && rejectText !== 'nan');
   }
 
+  function isUnusedReducedTimeRecord(record) {
+    const usedValue = firstDefined(record, ['used_for_inversion']);
+    const usedText = normalizedText(usedValue);
+    if (usedText === 'false' || usedText === '0' || usedText === 'no') return true;
+    if (usedValue === false) return true;
+
+    const statusText = normalizedText(firstDefined(record, ['status']));
+    if (statusText === 'rejected' || statusText === 'unused') return true;
+
+    const rejectText = normalizedText(firstDefined(record, ['reject_reason', 'rejection_reason']));
+    return Boolean(rejectText && rejectText !== 'ok' && rejectText !== 'none' && rejectText !== 'nan');
+  }
+
   function firstBreakXAxisDefinition() {
     return FIRST_BREAK_X_AXES[state.firstBreakXAxis] || FIRST_BREAK_X_AXES.offset;
   }
@@ -511,7 +524,7 @@
     ]));
     const velocity = toFiniteNumber(firstDefined(record, ['reduction_velocity_m_s']));
     const statusText = normalizedText(firstDefined(record, ['status'])) || 'ok';
-    const used = !isRejectedFirstBreakRecord(record);
+    const used = !isUnusedReducedTimeRecord(record);
     const layerKind = reducedTimeLayerKind(record);
     const unavailableReason = Number.isFinite(reducedMs)
       ? ''
@@ -538,7 +551,7 @@
     const points = [];
     for (const record of records) {
       if (!reducedTimeLayerMatches(record)) continue;
-      if (!state.showRejectedFirstBreaks && isRejectedFirstBreakRecord(record)) continue;
+      if (!state.showRejectedFirstBreaks && isUnusedReducedTimeRecord(record)) continue;
       const point = normalizeReducedTimeRecord(record);
       if (point) points.push(point);
     }
@@ -814,13 +827,14 @@
     const byKind = selectedKind
       ? records.filter((record) => staticEndpointKind(record) === selectedKind)
       : records.slice();
-    const candidates = byKind.length ? byKind : records;
+    const candidates = byKind;
 
     if (endpointFilter) {
       const exact = candidates.find((record) => normalizedText(staticEndpointKey(record)) === endpointFilter);
       if (exact) return exact;
       const partial = candidates.find((record) => normalizedText(staticEndpointKey(record)).includes(endpointFilter));
       if (partial) return partial;
+      return null;
     }
     return candidates[0] || null;
   }
@@ -1369,14 +1383,27 @@
     return gateHasBounds(gate, kind);
   }
 
+  function reducedTimeGateSourceFromLayers(layers) {
+    if (!Array.isArray(layers)) return layers;
+    const byKind = {};
+    for (const layer of layers) {
+      if (!layer || typeof layer !== 'object') continue;
+      const kind = normalizedText(layer.kind || layer.layer_kind);
+      if (!kind || byKind[kind]) continue;
+      byKind[kind] = layer;
+    }
+    return byKind;
+  }
+
   function collectReducedTimeGates(bundle) {
     const summary = bundle && typeof bundle.summary === 'object' && bundle.summary ? bundle.summary : {};
     const sources = [];
     if (summary.observation_gates && typeof summary.observation_gates === 'object') {
       sources.push(summary.observation_gates);
     }
-    if (summary.layers && typeof summary.layers === 'object') {
-      sources.push(summary.layers);
+    const layerSource = reducedTimeGateSourceFromLayers(summary.layers);
+    if (layerSource && typeof layerSource === 'object') {
+      sources.push(layerSource);
     }
     const gates = [];
     const seen = new Set();
@@ -2142,7 +2169,8 @@
     const endpointRecords = staticEndpointRecords(endpointView);
     const traceRecords = staticTraceRecords(traceView);
     const endpointRecord = selectedStaticEndpointRecord(endpointRecords);
-    const traceRecord = selectedStaticTraceRecord(traceRecords, endpointRecord);
+    const endpointNoMatch = Boolean(normalizedText(state.selectedEndpoint) && !endpointRecord);
+    const traceRecord = endpointNoMatch ? null : selectedStaticTraceRecord(traceRecords, endpointRecord);
     const legacyRecord = matchingLegacyStaticRecord(bundle, endpointRecord);
     const endpointRows = buildStaticComponentRows(
       endpointRecord,
