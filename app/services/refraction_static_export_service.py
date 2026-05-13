@@ -302,13 +302,18 @@ def _refraction_static_export_job_payload(
         'export': {
             'enabled': bool(req.export.enabled),
             'requested_formats': list(source.requested_formats),
-            'units': req.export.units,
+            'units': 'milliseconds',
+            'unit_policy': 'milliseconds_only',
+            'time_column_suffix': '_ms',
             'rounding_ms': req.export.rounding_ms,
+            'rounding_ms_policy': 'reserved_no_op',
+            'numeric_csv_precision': 'format_schema_fixed',
             'sign_convention': REFRACTION_STATIC_REPO_SIGN_CONVENTION,
             'include_inactive_endpoints': bool(req.export.include_inactive_endpoints),
             'include_legacy_alias_columns': bool(
                 req.export.include_legacy_alias_columns
             ),
+            'legacy_alias_columns_policy': 'required_true',
             'fail_on_invalid_static_status': bool(
                 req.export.fail_on_invalid_static_status
             ),

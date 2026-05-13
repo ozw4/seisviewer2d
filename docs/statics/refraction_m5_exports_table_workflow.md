@@ -140,6 +140,15 @@ M5 CSV writers should use deterministic decimal output:
 - slowness in seconds per meter: at least 12 significant digits;
 - status, kind, ID, and key columns: exact text or integer values.
 
+Current public export requests are constrained to this millisecond CSV schema:
+
+- `export.units` must be `milliseconds`;
+- `export.rounding_ms` is reserved for future display/card outputs and does
+  not control machine-readable CSV precision; only the default `0.001` or
+  `null` is accepted;
+- `export.include_legacy_alias_columns` must be `true`; current M5 exports
+  always write the documented column sets and do not support alias suppression.
+
 `canonical_static_table` import converts millisecond columns to seconds before
 TraceStore application. Import validation must reject non-finite values in
 required apply fields.

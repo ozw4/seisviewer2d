@@ -2813,6 +2813,18 @@ class RefractionStaticExportRequest(BaseModel):
             raise ValueError('export.rounding_ms must be finite and >= 0')
         return rounded
 
+    @model_validator(mode='after')
+    def _check_supported_export_options(self) -> 'RefractionStaticExportRequest':
+        if self.units != 'milliseconds':
+            raise ValueError('export.units must be "milliseconds"')
+        if self.rounding_ms not in (None, 0.001):
+            raise ValueError(
+                'export.rounding_ms is reserved and must be null or 0.001'
+            )
+        if not self.include_legacy_alias_columns:
+            raise ValueError('export.include_legacy_alias_columns must be true')
+        return self
+
 
 class RefractionStaticApplyRequest(BaseModel):
     """Request model for ``/statics/refraction/apply`` jobs."""

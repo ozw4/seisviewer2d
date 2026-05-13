@@ -180,6 +180,50 @@ def test_refraction_export_rejects_unknown_format(client: TestClient) -> None:
     assert response.status_code == 422
 
 
+def test_refraction_export_units_seconds_are_rejected(client: TestClient) -> None:
+    response = client.post(
+        '/statics/refraction/export',
+        json={
+            'source_job_id': 'source-refraction-job',
+            'export': {'enabled': True, 'units': 'seconds'},
+        },
+    )
+
+    assert response.status_code == 422
+    assert 'export.units must be "milliseconds"' in str(response.json())
+
+
+def test_refraction_export_rejects_custom_rounding_ms(client: TestClient) -> None:
+    response = client.post(
+        '/statics/refraction/export',
+        json={
+            'source_job_id': 'source-refraction-job',
+            'export': {'enabled': True, 'rounding_ms': 0.01},
+        },
+    )
+
+    assert response.status_code == 422
+    assert 'export.rounding_ms is reserved' in str(response.json())
+
+
+def test_refraction_export_rejects_legacy_alias_suppression(
+    client: TestClient,
+) -> None:
+    response = client.post(
+        '/statics/refraction/export',
+        json={
+            'source_job_id': 'source-refraction-job',
+            'export': {
+                'enabled': True,
+                'include_legacy_alias_columns': False,
+            },
+        },
+    )
+
+    assert response.status_code == 422
+    assert 'export.include_legacy_alias_columns must be true' in str(response.json())
+
+
 def test_refraction_export_rejects_incomplete_source_job(
     client: TestClient,
     tmp_path: Path,
@@ -292,6 +336,13 @@ def test_run_refraction_static_export_job_writes_requested_format_metadata(
     assert meta['export']['requested_formats'] == list(
         REFRACTION_STATIC_DEFAULT_EXPORT_FORMATS
     )
+    assert meta['export']['units'] == 'milliseconds'
+    assert meta['export']['unit_policy'] == 'milliseconds_only'
+    assert meta['export']['time_column_suffix'] == '_ms'
+    assert meta['export']['rounding_ms_policy'] == 'reserved_no_op'
+    assert meta['export']['numeric_csv_precision'] == 'format_schema_fixed'
+    assert meta['export']['include_legacy_alias_columns'] is True
+    assert meta['export']['legacy_alias_columns_policy'] == 'required_true'
     assert meta['export']['sign_convention'] == REFRACTION_STATIC_REPO_SIGN_CONVENTION
     assert meta['generated_artifacts'] == [
         CANONICAL_SOURCE_STATIC_TABLE_CSV_NAME,
