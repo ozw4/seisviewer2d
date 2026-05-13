@@ -650,146 +650,137 @@ return only overlay and shift arrays plus a `corrected_window_ref` status of
 
 ## 11. QC bundle response example
 
-The bundle endpoint provides a compact manifest that lets a viewer discover
-available QC products before requesting large detail payloads.
+The implemented bundle endpoint provides a compact manifest plus sampled
+tabular views. Its top-level response shape is the
+`RefractionStaticQcBundleResponse` contract: `job_id`, `statics_kind`,
+`sign_convention`, `coordinate_mode`, `summary`, `artifacts`,
+`available_views`, `unavailable_views`, `views`, and `downsampling`.
+
+`sign_convention` is the repo convention string, not an object:
+`corrected(t)=raw(t-shift_s)`. The route does not currently return
+`schema_version`, `kind`, `source_artifacts`, or `products` fields.
 
 ```json
 {
-  "schema_version": 1,
-  "kind": "refraction_m6_qc_bundle",
   "job_id": "refraction-job-123",
-  "file_id": "input-file-id",
-  "corrected_file_id": "corrected-file-id",
-  "sign_convention": {
-    "trace_shift_s": "corrected(t) = raw(t - shift_s)",
-    "positive_shift": "event appears later in corrected data",
-    "negative_shift": "event appears earlier in corrected data"
-  },
-  "model": {
+  "statics_kind": "refraction",
+  "sign_convention": "corrected(t)=raw(t-shift_s)",
+  "coordinate_mode": "line_2d_projected",
+  "summary": {
+    "status": "ok",
+    "job_state": "ready",
     "method": "multilayer_time_term",
     "conversion_mode": "t1lsst_multilayer",
     "layer_count": 2,
-    "coordinate_mode": "line_2d_projected",
-    "layers": [
+    "enabled_layer_kinds": ["v2_t1", "v3_t2"],
+    "first_break_fit": {
+      "residual_sign": "observed - modeled",
+      "used_observations": 17290,
+      "residual_rms_s": 0.0124,
+      "residual_mad_s": 0.0071
+    },
+    "observation_gates": [
       {
         "layer_kind": "v2_t1",
-        "velocity_mode": "solve_cell",
         "min_offset_m": 300.0,
         "max_offset_m": 1800.0
       },
       {
         "layer_kind": "v3_t2",
-        "velocity_mode": "solve_global",
         "min_offset_m": 1800.0,
         "max_offset_m": null
       }
     ]
   },
-  "source_artifacts": {
-    "request": "refraction_static_request.json",
-    "solution": "refraction_static_solution.npz",
-    "qc": "refraction_static_qc.json",
+  "artifacts": {
     "first_break_residuals": "first_break_residuals.csv",
-    "first_break_time_export": "refraction_first_break_time_export.csv",
+    "refraction_first_break_fit_qc": "refraction_first_break_fit_qc.csv",
+    "refraction_first_break_time_export": "refraction_first_break_time_export.csv",
+    "refraction_refractor_velocity_cells": "refraction_refractor_velocity_cells.csv",
+    "refraction_static_artifacts": "refraction_static_artifacts.json",
+    "refraction_static_components": "refraction_static_components.csv",
+    "refraction_static_qc": "refraction_static_qc.json",
+    "refraction_static_request": "refraction_static_request.json",
     "source_static_table": "source_static_table.csv",
-    "receiver_static_table": "receiver_static_table.csv",
-    "source_receiver_static_table": "source_receiver_static_table.npz",
-    "cell_velocity_cells": "refraction_refractor_velocity_cells.csv",
-    "cell_velocity_grid": "refraction_refractor_velocity_grid.npz",
-    "cell_velocity_qc": "refraction_refractor_velocity_qc.json",
-    "static_history": "refraction_static_history.json"
+    "receiver_static_table": "receiver_static_table.csv"
   },
-  "products": {
+  "available_views": [
+    "summary",
+    "first_break_fit",
+    "static_components"
+  ],
+  "unavailable_views": ["profiles", "cells", "gather_preview"],
+  "views": {
     "first_break_fit": {
-      "available": true,
       "artifact": "refraction_first_break_fit_qc.csv",
-      "row_count": 18420,
-      "fields": [
-        "observed_time_s",
-        "modeled_time_s",
-        "residual_s",
-        "offset_m",
+      "columns": [
+        "trace_index_sorted",
         "source_endpoint_key",
         "receiver_endpoint_key",
+        "offset_m",
+        "observed_first_break_time_s",
+        "modeled_first_break_time_s",
+        "residual_time_s",
+        "residual_time_ms",
         "layer_kind"
       ],
-      "summary": {
-        "used_observations": 17290,
-        "residual_rms_s": 0.0124,
-        "residual_mad_s": 0.0071
-      }
-    },
-    "reduced_time": {
-      "available": true,
-      "artifact": "refraction_first_break_time_export.csv",
-      "default_reduction_velocity_m_s": 2400.0,
-      "offset_gates": [
+      "total_points": 18420,
+      "returned_points": 18420,
+      "downsampled": false,
+      "downsampling_method": "even_index_floor_first_last",
+      "records": [
         {
-          "layer_kind": "v2_t1",
-          "min_offset_m": 300.0,
-          "max_offset_m": 1800.0
-        },
-        {
-          "layer_kind": "v3_t2",
-          "min_offset_m": 1800.0,
-          "max_offset_m": null
+          "trace_index_sorted": "0",
+          "source_endpoint_key": "1001",
+          "receiver_endpoint_key": "2101",
+          "offset_m": "625.0",
+          "observed_first_break_time_s": "0.284",
+          "modeled_first_break_time_s": "0.279",
+          "residual_time_s": "0.005",
+          "residual_time_ms": "5.0",
+          "layer_kind": "v2_t1"
         }
       ]
     },
-    "profile_2d": {
-      "available": true,
-      "artifact": "near_surface_model.csv",
-      "x_axis": "inline_m",
-      "tracks": [
-        "t1_s",
-        "t2_s",
-        "v2_m_s",
-        "v3_m_s",
-        "sh1_m",
-        "sh2_m",
-        "weathering_correction_s",
-        "elevation_correction_s",
-        "manual_static_shift_s",
-        "final_trace_shift_s",
-        "residual_rms_s",
-        "pick_fold"
-      ]
-    },
-    "map_3d": {
-      "available": false,
-      "reason": "coordinate_mode is line_2d_projected; render cell QC as a 2D profile strip"
-    },
-    "static_composition": {
-      "available": true,
+    "static_components": {
       "artifact": "refraction_static_components.csv",
-      "components": [
-        "refraction_shift_s",
-        "weathering_correction_s",
-        "datum_correction_s",
-        "field_correction_s",
-        "manual_static_shift_s",
-        "final_applied_trace_shift_s"
-      ]
-    },
-    "gather_preview": {
-      "available": true,
-      "raw_file_id": "input-file-id",
-      "corrected_file_id": "corrected-file-id",
-      "overlays": [
-        "observed_first_break",
-        "modeled_first_break",
-        "reduced_time",
-        "final_trace_shift"
-      ]
+      "columns": [
+        "trace_index_sorted",
+        "refraction_trace_shift_s",
+        "trace_field_shift_s",
+        "final_trace_shift_s"
+      ],
+      "total_points": 18420,
+      "returned_points": 18420,
+      "downsampled": false,
+      "downsampling_method": "even_index_floor_first_last",
+      "records": []
     }
   },
-  "warnings": []
+  "downsampling": {
+    "first_break_fit": {
+      "total_points": 18420,
+      "returned_points": 18420,
+      "downsampled": false,
+      "method": "even_index_floor_first_last"
+    },
+    "static_components": {
+      "total_points": 18420,
+      "returned_points": 18420,
+      "downsampled": false,
+      "method": "even_index_floor_first_last"
+    }
+  }
 }
 ```
 
-For a `grid_3d` cell workflow, `map_3d.available` should be true and the map
-product should include grid dimensions, cell size, origin, and map fields from
-`refraction_refractor_velocity_qc.json`.
+Each key in `views` is a sampled tabular artifact. `records` are JSON-safe CSV
+rows and therefore currently contain string values from the source CSV. Large
+tables are sampled independently per view using the deterministic method named
+in both the view payload and the `downsampling` entry. If a requested family has
+no matching existing artifact, the family name appears in `unavailable_views`.
+`gather_preview` is currently reported unavailable by this compact bundle route;
+a future preview endpoint must reuse TraceStore window APIs for heavy trace I/O.
 
 ## 12. Viewer mapping summary
 

@@ -3248,9 +3248,6 @@
         checkModeFlipAndRefetch({ immediate: true });
         return;
       }
-      if (hasPendingPickOverlayState()) {
-        schedulePickOverlayUpdate();
-      }
       D('RELAYOUT@skip(shape-sync-removed)', viewerState());
     }
 
