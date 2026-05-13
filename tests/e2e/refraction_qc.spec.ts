@@ -13,6 +13,28 @@ function qcBundlePayload(jobId: string) {
 			method: 'multilayer_time_term',
 			conversion_mode: 't1lsst_multilayer',
 			layer_count: 2,
+			observation_gates: {
+				v1_direct_arrival: {
+					enabled: true,
+					min_direct_offset_m: 20,
+					max_direct_offset_m: 140,
+				},
+				v2_t1: {
+					enabled: true,
+					min_offset_m: 0,
+					max_offset_m: 1800,
+				},
+				v3_t2: {
+					enabled: true,
+					min_offset_m: 1800,
+					max_offset_m: 3200,
+				},
+				vsub_t3: {
+					enabled: true,
+					min_offset_m: 3200,
+					max_offset_m: null,
+				},
+			},
 		},
 		artifacts: {
 			first_break_residuals: 'first_break_residuals.csv',
@@ -108,12 +130,102 @@ function qcBundlePayload(jobId: string) {
 			},
 			reduced_time: {
 				artifact: 'refraction_reduced_time_qc.csv',
-				columns: ['trace', 'reduced_time_ms'],
-				total_points: 1,
-				returned_points: 1,
+				columns: [
+					'trace_index_sorted',
+					'source_endpoint_key',
+					'receiver_endpoint_key',
+					'offset_m',
+					'inline_m',
+					'layer_gate_kind',
+					'reduction_velocity_m_s',
+					'observed_first_break_time_s',
+					'reduced_time_s',
+					'reduced_time_ms',
+					'within_v1_gate',
+					'within_v2_t1_gate',
+					'within_v3_t2_gate',
+					'within_vsub_t3_gate',
+					'used_for_inversion',
+					'status',
+				],
+				total_points: 5,
+				returned_points: 4,
 				downsampled: false,
 				downsampling_method: 'even_index_floor_first_last',
-				records: [{ trace: '0', reduced_time_ms: '12.5' }],
+				records: [
+					{
+						trace_index_sorted: '0',
+						source_endpoint_key: 'S001',
+						receiver_endpoint_key: 'R001',
+						offset_m: '100',
+						inline_m: '10',
+						layer_gate_kind: 'v2_t1',
+						reduction_velocity_m_s: '2000',
+						observed_first_break_time_s: '0.150',
+						reduced_time_s: '0.100',
+						reduced_time_ms: '100',
+						within_v1_gate: 'false',
+						within_v2_t1_gate: 'false',
+						within_v3_t2_gate: 'false',
+						within_vsub_t3_gate: 'false',
+						used_for_inversion: 'true',
+						status: 'ok',
+					},
+					{
+						trace_index_sorted: '1',
+						source_endpoint_key: 'S002',
+						receiver_endpoint_key: 'R002',
+						offset_m: '2200',
+						inline_m: '220',
+						layer_gate_kind: 'v3_t2',
+						reduction_velocity_m_s: '4000',
+						observed_first_break_time_s: '0.800',
+						reduced_time_s: '0.250',
+						reduced_time_ms: '250',
+						within_v1_gate: 'false',
+						within_v2_t1_gate: 'false',
+						within_v3_t2_gate: 'false',
+						within_vsub_t3_gate: 'false',
+						used_for_inversion: 'true',
+						status: 'ok',
+					},
+					{
+						trace_index_sorted: '2',
+						source_endpoint_key: 'S003',
+						receiver_endpoint_key: 'R003',
+						offset_m: '300',
+						inline_m: '30',
+						layer_gate_kind: 'v2_t1',
+						reduction_velocity_m_s: '',
+						observed_first_break_time_s: '0.180',
+						reduced_time_s: '',
+						reduced_time_ms: '',
+						within_v1_gate: 'false',
+						within_v2_t1_gate: 'false',
+						within_v3_t2_gate: 'false',
+						within_vsub_t3_gate: 'false',
+						used_for_inversion: 'true',
+						status: 'missing_reduction_velocity',
+					},
+					{
+						trace_index_sorted: '3',
+						source_endpoint_key: 'S004',
+						receiver_endpoint_key: 'R004',
+						offset_m: '3600',
+						inline_m: '360',
+						layer_gate_kind: 'vsub_t3',
+						reduction_velocity_m_s: '5000',
+						observed_first_break_time_s: '1.100',
+						reduced_time_s: '0.380',
+						reduced_time_ms: '380',
+						within_v1_gate: 'false',
+						within_v2_t1_gate: 'false',
+						within_v3_t2_gate: 'false',
+						within_vsub_t3_gate: 'false',
+						used_for_inversion: 'false',
+						status: 'ok',
+					},
+				],
 			},
 			line_profiles: {
 				artifact: 'near_surface_model.csv',
@@ -163,6 +275,13 @@ async function loadRefractionQcBundle(page: Page, jobId: string) {
 
 async function residualPlotPointCount(page: Page) {
 	return page.getByTestId('refraction-qc-first-break-residual-plot').evaluate((node) => {
+		const plot = node as HTMLElement & { data?: Array<{ x?: unknown[] }> };
+		return plot.data?.reduce((total, trace) => total + (Array.isArray(trace.x) ? trace.x.length : 0), 0) ?? 0;
+	});
+}
+
+async function reducedTimePlotPointCount(page: Page) {
+	return page.getByTestId('refraction-qc-reduced-time-plot').evaluate((node) => {
 		const plot = node as HTMLElement & { data?: Array<{ x?: unknown[] }> };
 		return plot.data?.reduce((total, trace) => total + (Array.isArray(trace.x) ? trace.x.length : 0), 0) ?? 0;
 	});
@@ -362,4 +481,102 @@ test('first-break QC rejected picks can be hidden and shown', async ({ page }) =
 
 	await page.getByTestId('refraction-qc-show-rejected').check();
 	await expect.poll(async () => residualPlotPointCount(page)).toBe(3);
+});
+
+test('reduced-time plot renders values with ms axis and gate overlays', async ({ page }) => {
+	await page.route('**/statics/refraction/qc', async (route) => {
+		await route.fulfill({
+			status: 200,
+			contentType: 'application/json',
+			body: JSON.stringify(qcBundlePayload('refraction-job-7')),
+		});
+	});
+
+	await loadRefractionQcBundle(page, 'refraction-job-7');
+	await page.getByTestId('refraction-qc-view-reduced-time-button').click();
+	await expect(page.getByTestId('refraction-qc-reduced-time-formula-note')).toContainText(
+		'Reduced time = observed first-break time - offset / reduction velocity, shown in ms.',
+	);
+	await expect(page.getByTestId('refraction-qc-reduced-time-gates')).toContainText('V2/T1');
+	await expect(page.getByTestId('refraction-qc-reduced-time-gates')).toContainText('V1 direct');
+	await expect(page.getByTestId('refraction-qc-reduced-time-gates')).toContainText('20.0-140.0 m');
+	await expect(page.getByTestId('refraction-qc-reduced-time-gates')).toContainText('0.0-1800.0 m');
+	await expect(page.getByTestId('refraction-qc-reduced-time-gates')).toContainText('>= 3200.0 m');
+
+	await expect.poll(async () => page.getByTestId('refraction-qc-reduced-time-plot').evaluate((node) => {
+		const plot = node as HTMLElement & {
+			data?: Array<{ y?: number[] }>;
+			layout?: {
+				yaxis?: { title?: { text?: string } };
+				shapes?: unknown[];
+			};
+		};
+		const values = (plot.data ?? []).flatMap((trace) => Array.isArray(trace.y) ? trace.y : []);
+		return {
+			axisTitle: plot.layout?.yaxis?.title?.text ?? '',
+			values: values.map((value) => Math.round(value * 1000) / 1000).sort((a, b) => a - b),
+			shapeCount: plot.layout?.shapes?.length ?? 0,
+		};
+	})).toEqual({
+		axisTitle: 'Reduced time (ms)',
+		values: [100, 250, 380],
+		shapeCount: 4,
+	});
+});
+
+test('reduced-time plot displays reduction velocity', async ({ page }) => {
+	await page.route('**/statics/refraction/qc', async (route) => {
+		await route.fulfill({
+			status: 200,
+			contentType: 'application/json',
+			body: JSON.stringify(qcBundlePayload('refraction-job-8')),
+		});
+	});
+
+	await loadRefractionQcBundle(page, 'refraction-job-8');
+	await page.getByTestId('refraction-qc-view-reduced-time-button').click();
+	await expect(page.getByTestId('refraction-qc-view-reduced-time')).toContainText('Reduction velocity');
+	await expect(page.getByTestId('refraction-qc-view-reduced-time')).toContainText('2000.00-5000.00 m/s');
+
+	await expect.poll(async () => page.getByTestId('refraction-qc-reduced-time-plot').evaluate((node) => {
+		const plot = node as HTMLElement & { data?: Array<{ text?: string[] }> };
+		return (plot.data ?? [])
+			.flatMap((trace) => Array.isArray(trace.text) ? trace.text : [])
+			.some((text) => text.includes('Reduction velocity: 2000.00 m/s'));
+	})).toBe(true);
+});
+
+test('reduced-time plot layer gate filter limits plotted layer records', async ({ page }) => {
+	await page.route('**/statics/refraction/qc', async (route) => {
+		await route.fulfill({
+			status: 200,
+			contentType: 'application/json',
+			body: JSON.stringify(qcBundlePayload('refraction-job-9')),
+		});
+	});
+
+	await loadRefractionQcBundle(page, 'refraction-job-9');
+	await page.getByTestId('refraction-qc-view-reduced-time-button').click();
+	await page.getByTestId('refraction-qc-layer-kind').selectOption('v3_t2');
+
+	await expect.poll(async () => reducedTimePlotPointCount(page)).toBe(1);
+	await expect(page.getByTestId('refraction-qc-view-reduced-time')).toContainText('Layer filter');
+	await expect(page.getByTestId('refraction-qc-view-reduced-time')).toContainText('V3/T2');
+});
+
+test('reduced-time plot handles missing velocity status', async ({ page }) => {
+	await page.route('**/statics/refraction/qc', async (route) => {
+		await route.fulfill({
+			status: 200,
+			contentType: 'application/json',
+			body: JSON.stringify(qcBundlePayload('refraction-job-10')),
+		});
+	});
+
+	await loadRefractionQcBundle(page, 'refraction-job-10');
+	await page.getByTestId('refraction-qc-view-reduced-time-button').click();
+
+	await expect(page.getByTestId('refraction-qc-view-reduced-time')).toContainText('Unavailable rows');
+	await expect(page.getByTestId('refraction-qc-view-reduced-time')).toContainText('missing_reduction_velocity: 1');
+	await expect.poll(async () => reducedTimePlotPointCount(page)).toBe(3);
 });

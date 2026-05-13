@@ -999,11 +999,42 @@ def test_reduced_time_qc_fixed_velocity_formula() -> None:
     expected = np.asarray([0.050, 0.060, 0.070]) - (
         np.asarray([100.0, 200.0, 300.0]) / 2000.0
     )
-
     np.testing.assert_allclose(arrays['reduced_time_s'], expected)
     np.testing.assert_allclose(arrays['reduced_time_ms'], expected * 1000.0)
     np.testing.assert_allclose(arrays['reduction_velocity_m_s'], 2000.0)
+    np.testing.assert_allclose(
+        arrays['observed_first_break_time_s'],
+        [0.050, 0.060, 0.070],
+    )
+    assert arrays['trace_index_sorted'].tolist() == [0, 1, 2]
+    assert arrays['used_for_inversion'].tolist() == [True, False, True]
     assert arrays['status'].tolist() == ['ok', 'ok', 'ok']
+
+
+def test_reduced_time_qc_csv_preserves_legacy_row_contract(tmp_path: Path) -> None:
+    paths = write_refraction_static_artifacts(
+        result=_result(),
+        req=_request(),
+        job_dir=tmp_path,
+    )
+
+    rows = _read_csv(paths.refraction_reduced_time_qc_csv)
+    payload = json.loads(
+        paths.refraction_reduced_time_qc_json.read_text(encoding='utf-8')
+    )
+
+    assert rows[0]['trace_index_sorted'] == '0'
+    assert rows[0]['layer_gate_kind'] == 'v2_t1'
+    assert rows[0]['observed_first_break_time_s'] == '0.05'
+    assert rows[0]['reduced_time_s'] != ''
+    assert rows[0]['reduced_time_ms'] != ''
+    assert rows[1]['used_for_inversion'] == 'false'
+    assert 'layer_kind' not in rows[0]
+    assert 'observed_time_s' not in rows[0]
+    assert 'modeled_reduced_time_s' not in rows[0]
+    assert 'used_in_solve' not in rows[0]
+    assert payload['columns'] == list(rows[0].keys())
+    assert payload['layer_gate_kind_counts'] == {'v2_t1': 3}
 
 
 def test_reduced_time_qc_layer_velocity_formula_for_two_layer() -> None:

@@ -69,17 +69,26 @@
   let requestSerial = 0;
 
   const LAYER_LABELS = {
+    v1_direct_arrival: 'V1 direct',
     v2_t1: 'V2/T1',
     v3_t2: 'V3/T2',
     vsub_t3: 'Vsub/T3',
   };
 
   const LAYER_COLORS = {
+    v1_direct_arrival: '#7c3aed',
     v2_t1: '#2563eb',
     v3_t2: '#059669',
     vsub_t3: '#c2410c',
     unknown: '#64748b',
   };
+
+  const REDUCED_TIME_GATE_KINDS = [
+    'v1_direct_arrival',
+    'v2_t1',
+    'v3_t2',
+    'vsub_t3',
+  ];
 
   const FIRST_BREAK_X_AXES = {
     offset: {
@@ -194,6 +203,67 @@
 
   function firstBreakXAxisDefinition() {
     return FIRST_BREAK_X_AXES[state.firstBreakXAxis] || FIRST_BREAK_X_AXES.offset;
+  }
+
+  function reducedTimeLayerKind(record) {
+    return String(firstDefined(record, ['layer_kind', 'layer_gate_kind']) || '').trim() || 'unknown';
+  }
+
+  function reducedTimeLayerMatches(record) {
+    if (state.selectedLayerKind === 'all') return true;
+    return reducedTimeLayerKind(record) === state.selectedLayerKind;
+  }
+
+  function finiteReducedTimeMs(record) {
+    const reducedS = toFiniteNumber(firstDefined(record, ['reduced_time_s']));
+    if (Number.isFinite(reducedS)) return reducedS * 1000.0;
+    return toFiniteNumber(firstDefined(record, ['reduced_time_ms']));
+  }
+
+  function normalizeReducedTimeRecord(record) {
+    const xAxis = firstBreakXAxisDefinition();
+    const x = toFiniteNumber(firstDefined(record, xAxis.columns));
+    if (!Number.isFinite(x)) return null;
+
+    const reducedMs = finiteReducedTimeMs(record);
+    const observedS = toFiniteNumber(firstDefined(record, [
+      'observed_time_s',
+      'observed_first_break_time_s',
+    ]));
+    const velocity = toFiniteNumber(firstDefined(record, ['reduction_velocity_m_s']));
+    const statusText = normalizedText(firstDefined(record, ['status'])) || 'ok';
+    const used = !isRejectedFirstBreakRecord(record);
+    const layerKind = reducedTimeLayerKind(record);
+    const unavailableReason = Number.isFinite(reducedMs)
+      ? ''
+      : (statusText && statusText !== 'ok' ? statusText : 'missing_reduced_time');
+
+    return {
+      x,
+      reducedMs,
+      observedMs: Number.isFinite(observedS) ? observedS * 1000.0 : NaN,
+      reductionVelocity: velocity,
+      layerKind,
+      used,
+      status: unavailableReason ? 'unavailable' : (used ? 'used' : 'unused'),
+      rawStatus: statusText,
+      unavailableReason,
+      traceIndex: textOrDash(firstDefined(record, ['trace_index_sorted', 'sorted_trace_index'])),
+      source: textOrDash(firstDefined(record, ['source_endpoint_key', 'source_id'])),
+      receiver: textOrDash(firstDefined(record, ['receiver_endpoint_key', 'receiver_id'])),
+    };
+  }
+
+  function filteredReducedTimePoints(view) {
+    const records = Array.isArray(view.records) ? view.records : [];
+    const points = [];
+    for (const record of records) {
+      if (!reducedTimeLayerMatches(record)) continue;
+      if (!state.showRejectedFirstBreaks && isRejectedFirstBreakRecord(record)) continue;
+      const point = normalizeReducedTimeRecord(record);
+      if (point) points.push(point);
+    }
+    return points;
   }
 
   function normalizeFirstBreakRecord(record) {
@@ -383,6 +453,166 @@
     ].join('<br>');
   }
 
+  function reducedTimeHoverText(point) {
+    return [
+      `Layer gate: ${layerLabel(point.layerKind)}`,
+      `Status: ${point.status}`,
+      `Trace: ${point.traceIndex}`,
+      `Source: ${point.source}`,
+      `Receiver: ${point.receiver}`,
+      `Observed: ${formatNumber(point.observedMs, 2)} ms`,
+      `Reduction velocity: ${formatNumber(point.reductionVelocity, 2)} m/s`,
+      `Reduced time: ${formatNumber(point.reducedMs, 2)} ms`,
+    ].join('<br>');
+  }
+
+  function reducedTimeVelocitySummary(points) {
+    const velocities = points
+      .map((point) => point.reductionVelocity)
+      .filter((value) => Number.isFinite(value));
+    if (!velocities.length) return 'unavailable';
+    velocities.sort((a, b) => a - b);
+    const min = velocities[0];
+    const max = velocities[velocities.length - 1];
+    const median = velocities[Math.floor((velocities.length - 1) / 2)];
+    if (min === max) return `${formatNumber(min, 2)} m/s`;
+    return `${formatNumber(min, 2)}-${formatNumber(max, 2)} m/s; median ${formatNumber(median, 2)} m/s`;
+  }
+
+  function statusCounts(points, field) {
+    const counts = new Map();
+    for (const point of points) {
+      const key = point[field] || 'unknown';
+      counts.set(key, (counts.get(key) || 0) + 1);
+    }
+    return Array.from(counts.entries())
+      .sort((a, b) => a[0].localeCompare(b[0]))
+      .map(([key, count]) => `${key}: ${count}`)
+      .join(', ');
+  }
+
+  function gateBound(value) {
+    const parsed = toFiniteNumber(value);
+    return Number.isFinite(parsed) ? parsed : null;
+  }
+
+  function gateMinOffset(gate, kind) {
+    if (kind === 'v1_direct_arrival') {
+      const directBound = gateBound(gate.min_direct_offset_m);
+      if (directBound !== null) return directBound;
+    }
+    return gateBound(gate.min_offset_m);
+  }
+
+  function gateMaxOffset(gate, kind) {
+    if (kind === 'v1_direct_arrival') {
+      const directBound = gateBound(gate.max_direct_offset_m);
+      if (directBound !== null) return directBound;
+    }
+    return gateBound(gate.max_offset_m);
+  }
+
+  function gateHasBounds(gate, kind) {
+    if (kind === 'v1_direct_arrival') {
+      return (
+        gate.min_direct_offset_m !== undefined
+        || gate.max_direct_offset_m !== undefined
+        || gate.min_offset_m !== undefined
+        || gate.max_offset_m !== undefined
+      );
+    }
+    return gate.min_offset_m !== undefined || gate.max_offset_m !== undefined;
+  }
+
+  function gateEnabled(gate, kind) {
+    if (!gate || typeof gate !== 'object') return false;
+    const enabled = gate.enabled;
+    if (enabled === false) return false;
+    const enabledText = normalizedText(enabled);
+    if (enabledText === 'false' || enabledText === '0' || enabledText === 'no') return false;
+    return gateHasBounds(gate, kind);
+  }
+
+  function collectReducedTimeGates(bundle) {
+    const summary = bundle && typeof bundle.summary === 'object' && bundle.summary ? bundle.summary : {};
+    const sources = [];
+    if (summary.observation_gates && typeof summary.observation_gates === 'object') {
+      sources.push(summary.observation_gates);
+    }
+    if (summary.layers && typeof summary.layers === 'object') {
+      sources.push(summary.layers);
+    }
+    const gates = [];
+    const seen = new Set();
+    for (const source of sources) {
+      for (const kind of REDUCED_TIME_GATE_KINDS) {
+        if (seen.has(kind)) continue;
+        const gate = source[kind];
+        if (!gateEnabled(gate, kind)) continue;
+        gates.push({
+          kind,
+          minOffset: gateMinOffset(gate, kind),
+          maxOffset: gateMaxOffset(gate, kind),
+        });
+        seen.add(kind);
+      }
+    }
+    return gates;
+  }
+
+  function gateRangeLabel(gate) {
+    if (gate.minOffset !== null && gate.maxOffset !== null) {
+      return `${formatNumber(gate.minOffset, 1)}-${formatNumber(gate.maxOffset, 1)} m`;
+    }
+    if (gate.minOffset !== null) return `>= ${formatNumber(gate.minOffset, 1)} m`;
+    if (gate.maxOffset !== null) return `<= ${formatNumber(gate.maxOffset, 1)} m`;
+    return 'all offsets';
+  }
+
+  function reducedTimeGateOverlays(bundle) {
+    if (state.firstBreakXAxis !== 'offset') return { shapes: [], label: 'Offset gate overlays are shown when X axis is Offset.' };
+    const shapes = [];
+    const labels = [];
+    for (const gate of collectReducedTimeGates(bundle)) {
+      const color = LAYER_COLORS[gate.kind] || LAYER_COLORS.unknown;
+      if (gate.minOffset !== null && gate.maxOffset !== null) {
+        shapes.push({
+          type: 'rect',
+          xref: 'x',
+          yref: 'paper',
+          x0: gate.minOffset,
+          x1: gate.maxOffset,
+          y0: 0,
+          y1: 1,
+          fillcolor: color,
+          opacity: 0.08,
+          line: { color, width: 1, dash: 'dot' },
+          layer: 'below',
+        });
+      } else {
+        const x = gate.minOffset !== null ? gate.minOffset : gate.maxOffset;
+        if (x !== null) {
+          shapes.push({
+            type: 'line',
+            xref: 'x',
+            yref: 'paper',
+            x0: x,
+            x1: x,
+            y0: 0,
+            y1: 1,
+            line: { color, width: 1, dash: 'dot' },
+            layer: 'below',
+          });
+        }
+      }
+      labels.push(`${layerLabel(gate.kind)} ${gateRangeLabel(gate)}`);
+    }
+    return {
+      shapes,
+      label: labels.length ? labels.join('; ') : 'No offset gate metadata is available for this QC bundle.',
+    };
+  }
+
   function renderFirstBreakPlots(content, bundle, viewDef) {
     const found = findViewData(bundle, viewDef);
     if (!found) {
@@ -560,6 +790,145 @@
     }
   }
 
+  function renderReducedTimePlot(content, bundle, viewDef) {
+    const found = findViewData(bundle, viewDef);
+    if (!found) {
+      const missing = document.createElement('p');
+      missing.className = 'refraction-qc-placeholder';
+      missing.textContent = isUnavailable(bundle, viewDef)
+        ? 'This view is unavailable from the loaded QC bundle artifacts.'
+        : 'No sampled reduced-time records are present for this view.';
+      content.appendChild(missing);
+      return;
+    }
+
+    const { key, view } = found;
+    const points = filteredReducedTimePoints(view);
+    const plottedPoints = points.filter((point) => Number.isFinite(point.reducedMs));
+    const unavailablePoints = points.filter((point) => !Number.isFinite(point.reducedMs));
+    const downsampling = findDownsampling(bundle, key, view);
+    const downsamplingText = downsampling
+      ? `${downsampling.returned_points || 0} of ${downsampling.total_points || 0}; ${downsampling.downsampled ? 'downsampled' : 'not downsampled'}${downsampling.method ? ` (${downsampling.method})` : ''}`
+      : 'not reported';
+    const gateOverlay = reducedTimeGateOverlays(bundle);
+
+    content.appendChild(createKv([
+      ['Bundle view', key],
+      ['Artifact', view.artifact],
+      ['Rows', `${view.returned_points || 0} of ${view.total_points || 0}`],
+      ['Plotted points', `${plottedPoints.length}`],
+      ['Layer filter', state.selectedLayerKind === 'all' ? 'all' : layerLabel(state.selectedLayerKind)],
+      ['Unused picks', state.showRejectedFirstBreaks ? 'shown' : 'hidden'],
+      ['Reduction velocity', reducedTimeVelocitySummary(points)],
+      ['Unavailable rows', unavailablePoints.length ? `${unavailablePoints.length}; ${statusCounts(unavailablePoints, 'unavailableReason')}` : '0'],
+    ]));
+
+    const formulaNote = document.createElement('p');
+    formulaNote.className = 'refraction-qc-note';
+    formulaNote.textContent = 'Reduced time = observed first-break time - offset / reduction velocity, shown in ms.';
+    formulaNote.dataset.testid = 'refraction-qc-reduced-time-formula-note';
+    content.appendChild(formulaNote);
+
+    const gateNote = document.createElement('p');
+    gateNote.className = 'refraction-qc-note';
+    gateNote.textContent = `Gate overlays: ${gateOverlay.label}`;
+    gateNote.dataset.testid = 'refraction-qc-reduced-time-gates';
+    content.appendChild(gateNote);
+
+    const downsamplingNote = document.createElement('p');
+    downsamplingNote.className = 'refraction-qc-note';
+    downsamplingNote.textContent = `Downsampling: ${downsamplingText}`;
+    downsamplingNote.dataset.testid = 'refraction-qc-reduced-time-downsampling';
+    content.appendChild(downsamplingNote);
+
+    if (!plottedPoints.length) {
+      const missing = document.createElement('p');
+      missing.className = 'refraction-qc-placeholder';
+      missing.textContent = unavailablePoints.length
+        ? 'Reduced-time rows matched the filters, but none have an available reduced-time value.'
+        : 'No plottable reduced-time records match the current filters.';
+      content.appendChild(missing);
+      if (Array.isArray(view.records) && view.records.length && Array.isArray(view.columns) && view.columns.length) {
+        content.appendChild(createTable(view));
+      }
+      return;
+    }
+
+    const plot = createFirstBreakPlot('refraction-qc-reduced-time-plot');
+    plot.dataset.pointCount = String(plottedPoints.length);
+    content.appendChild(plot);
+
+    if (window.Plotly) {
+      const xAxis = firstBreakXAxisDefinition();
+      const groups = new Map();
+      for (const point of plottedPoints) {
+        const groupKey = `${point.layerKind}|${point.used ? 'used' : 'unused'}`;
+        if (!groups.has(groupKey)) {
+          groups.set(groupKey, {
+            layerKind: point.layerKind,
+            used: point.used,
+            x: [],
+            y: [],
+            text: [],
+          });
+        }
+        const group = groups.get(groupKey);
+        group.x.push(point.x);
+        group.y.push(point.reducedMs);
+        group.text.push(reducedTimeHoverText(point));
+      }
+      const traces = Array.from(groups.values()).map((group) => ({
+        name: `${layerLabel(group.layerKind)} ${group.used ? 'used' : 'unused'}`,
+        type: 'scatter',
+        mode: 'markers',
+        x: group.x,
+        y: group.y,
+        text: group.text,
+        hovertemplate: '%{text}<extra></extra>',
+        marker: {
+          color: LAYER_COLORS[group.layerKind] || LAYER_COLORS.unknown,
+          symbol: group.used ? 'circle' : 'x',
+          size: group.used ? 7 : 8,
+          opacity: group.used ? 0.9 : 0.55,
+        },
+      }));
+      window.Plotly.newPlot(plot, traces, {
+        height: 300,
+        margin: { l: 62, r: 14, t: 34, b: 50 },
+        font: { size: 10, color: '#334155' },
+        paper_bgcolor: '#ffffff',
+        plot_bgcolor: '#ffffff',
+        title: { text: 'Reduced-time first-break QC', font: { size: 12 } },
+        xaxis: {
+          title: { text: xAxis.label },
+          zeroline: false,
+          gridcolor: '#e5e7eb',
+        },
+        yaxis: {
+          title: { text: 'Reduced time (ms)' },
+          zeroline: true,
+          zerolinecolor: '#94a3b8',
+          gridcolor: '#e5e7eb',
+        },
+        legend: {
+          orientation: 'h',
+          x: 0,
+          y: 1.16,
+          xanchor: 'left',
+          yanchor: 'top',
+          font: { size: 10 },
+        },
+        shapes: gateOverlay.shapes,
+      }, { displayModeBar: false, responsive: true });
+    } else {
+      plot.textContent = 'Plot library is unavailable.';
+    }
+
+    if (Array.isArray(view.records) && view.records.length && Array.isArray(view.columns) && view.columns.length) {
+      content.appendChild(createTable(view));
+    }
+  }
+
   function renderGatherPreview(content, bundle) {
     const message = document.createElement('p');
     message.className = 'refraction-qc-placeholder';
@@ -598,6 +967,8 @@
       renderSummary(content, state.qcBundle);
     } else if (viewDef.id === 'first_break_residuals') {
       renderFirstBreakPlots(content, state.qcBundle, viewDef);
+    } else if (viewDef.id === 'reduced_time') {
+      renderReducedTimePlot(content, state.qcBundle, viewDef);
     } else if (viewDef.id === 'gather_preview') {
       renderGatherPreview(content, state.qcBundle);
     } else {
