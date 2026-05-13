@@ -76,6 +76,14 @@ REFRACTION_REDUCED_TIME_QC_CSV_NAME = 'refraction_reduced_time_qc.csv'
 REFRACTION_REDUCED_TIME_QC_NPZ_NAME = 'refraction_reduced_time_qc.npz'
 REFRACTION_REDUCED_TIME_QC_JSON_NAME = 'refraction_reduced_time_qc.json'
 REFRACTION_STATIC_COMPONENTS_CSV_NAME = 'refraction_static_components.csv'
+REFRACTION_STATIC_COMPONENT_QC_TRACE_CSV_NAME = (
+    'refraction_static_component_qc_trace.csv'
+)
+REFRACTION_STATIC_COMPONENT_QC_ENDPOINT_CSV_NAME = (
+    'refraction_static_component_qc_endpoint.csv'
+)
+REFRACTION_STATIC_COMPONENT_QC_NPZ_NAME = 'refraction_static_component_qc.npz'
+REFRACTION_STATIC_COMPONENT_QC_JSON_NAME = 'refraction_static_component_qc.json'
 SOURCE_STATIC_TABLE_CSV_NAME = 'source_static_table.csv'
 RECEIVER_STATIC_TABLE_CSV_NAME = 'receiver_static_table.csv'
 SOURCE_RECEIVER_STATIC_TABLE_NPZ_NAME = 'source_receiver_static_table.npz'
@@ -325,6 +333,30 @@ _ARTIFACTS: tuple[dict[str, str | bool], ...] = (
         'kind': 'csv',
         'required': True,
         'description': 'Source/receiver endpoint static component table',
+    },
+    {
+        'name': REFRACTION_STATIC_COMPONENT_QC_TRACE_CSV_NAME,
+        'kind': 'csv',
+        'required': True,
+        'description': 'Trace-level static component waterfall QC table',
+    },
+    {
+        'name': REFRACTION_STATIC_COMPONENT_QC_ENDPOINT_CSV_NAME,
+        'kind': 'csv',
+        'required': True,
+        'description': 'Endpoint-level static component waterfall QC table',
+    },
+    {
+        'name': REFRACTION_STATIC_COMPONENT_QC_NPZ_NAME,
+        'kind': 'npz',
+        'required': True,
+        'description': 'Machine-readable static component waterfall QC arrays',
+    },
+    {
+        'name': REFRACTION_STATIC_COMPONENT_QC_JSON_NAME,
+        'kind': 'json',
+        'required': True,
+        'description': 'Static component waterfall QC schema and summary',
     },
     {
         'name': SOURCE_STATIC_TABLE_CSV_NAME,
@@ -725,6 +757,45 @@ _REDUCED_TIME_QC_COLUMNS = (
     'within_vsub_t3_gate',
     'used_for_inversion',
     'status',
+)
+
+_STATIC_COMPONENT_QC_TRACE_COLUMNS = (
+    'trace_index_sorted',
+    'source_endpoint_key',
+    'receiver_endpoint_key',
+    'refraction_shift_ms',
+    'weathering_shift_ms',
+    'datum_shift_ms',
+    'field_shift_ms',
+    'computed_field_shift_ms',
+    'applied_field_shift_ms',
+    'manual_static_shift_ms',
+    'source_depth_shift_ms',
+    'uphole_shift_ms',
+    'final_trace_shift_ms',
+    'applied_trace_shift_ms',
+    'apply_to_trace_shift',
+    'static_status',
+    'sign_convention',
+)
+
+_STATIC_COMPONENT_QC_ENDPOINT_COLUMNS = (
+    'endpoint_kind',
+    'endpoint_key',
+    'weathering_correction_ms',
+    'elevation_correction_ms',
+    'source_depth_correction_ms',
+    'uphole_correction_ms',
+    'manual_static_ms',
+    'field_correction_ms',
+    'computed_field_correction_ms',
+    'applied_field_correction_ms',
+    'total_static_ms',
+    'total_applied_shift_ms',
+    'total_with_field_shift_ms',
+    'apply_to_trace_shift',
+    'static_status',
+    'sign_convention',
 )
 
 _COMPONENT_COLUMNS = (
@@ -1311,6 +1382,18 @@ def write_refraction_static_artifacts(
         refraction_reduced_time_qc_npz=root / REFRACTION_REDUCED_TIME_QC_NPZ_NAME,
         refraction_reduced_time_qc_json=root / REFRACTION_REDUCED_TIME_QC_JSON_NAME,
         refraction_static_components_csv=root / REFRACTION_STATIC_COMPONENTS_CSV_NAME,
+        refraction_static_component_qc_trace_csv=(
+            root / REFRACTION_STATIC_COMPONENT_QC_TRACE_CSV_NAME
+        ),
+        refraction_static_component_qc_endpoint_csv=(
+            root / REFRACTION_STATIC_COMPONENT_QC_ENDPOINT_CSV_NAME
+        ),
+        refraction_static_component_qc_npz=(
+            root / REFRACTION_STATIC_COMPONENT_QC_NPZ_NAME
+        ),
+        refraction_static_component_qc_json=(
+            root / REFRACTION_STATIC_COMPONENT_QC_JSON_NAME
+        ),
         source_static_table_csv=root / SOURCE_STATIC_TABLE_CSV_NAME,
         receiver_static_table_csv=root / RECEIVER_STATIC_TABLE_CSV_NAME,
         source_receiver_static_table_npz=root / SOURCE_RECEIVER_STATIC_TABLE_NPZ_NAME,
@@ -1432,6 +1515,14 @@ def write_refraction_static_artifacts(
         result=values.result,
         path=paths.refraction_static_components_csv,
     )
+    write_refraction_static_component_qc_artifacts(
+        result=values.result,
+        req=request,
+        trace_csv_path=paths.refraction_static_component_qc_trace_csv,
+        endpoint_csv_path=paths.refraction_static_component_qc_endpoint_csv,
+        npz_path=paths.refraction_static_component_qc_npz,
+        json_path=paths.refraction_static_component_qc_json,
+    )
     write_source_static_table_csv(
         result=values.result,
         path=paths.source_static_table_csv,
@@ -1529,6 +1620,10 @@ def write_refraction_static_artifacts(
         paths.refraction_reduced_time_qc_npz,
         paths.refraction_reduced_time_qc_json,
         paths.refraction_static_components_csv,
+        paths.refraction_static_component_qc_trace_csv,
+        paths.refraction_static_component_qc_endpoint_csv,
+        paths.refraction_static_component_qc_npz,
+        paths.refraction_static_component_qc_json,
         paths.source_static_table_csv,
         paths.receiver_static_table_csv,
         paths.source_receiver_static_table_npz,
@@ -1782,6 +1877,39 @@ def write_refraction_static_components_csv(
     values = _validate_result(result)
     rows = _component_rows(values.result)
     _write_csv_atomic(Path(path), _component_columns(values.result), rows)
+
+
+def write_refraction_static_component_qc_artifacts(
+    *,
+    result: RefractionDatumStaticsResult,
+    req: RefractionStaticApplyRequest,
+    trace_csv_path: Path,
+    endpoint_csv_path: Path,
+    npz_path: Path,
+    json_path: Path,
+) -> dict[str, Any]:
+    values = _validate_result(result)
+    request = RefractionStaticApplyRequest.model_validate(req)
+    arrays = build_refraction_static_component_qc_arrays(
+        result=values.result,
+        req=request,
+    )
+    _write_csv_atomic(
+        Path(trace_csv_path),
+        _STATIC_COMPONENT_QC_TRACE_COLUMNS,
+        _static_component_qc_trace_rows(arrays),
+    )
+    _write_csv_atomic(
+        Path(endpoint_csv_path),
+        _STATIC_COMPONENT_QC_ENDPOINT_COLUMNS,
+        _static_component_qc_endpoint_rows(arrays),
+    )
+    _write_npz_atomic(Path(npz_path), arrays)
+    payload = build_refraction_static_component_qc_payload(
+        arrays=arrays,
+    )
+    _write_json_atomic(Path(json_path), payload)
+    return payload
 
 
 def write_source_static_table_csv(
@@ -3025,6 +3153,336 @@ def build_refraction_line_profile_qc_payload(
     return payload
 
 
+def build_refraction_static_component_qc_arrays(
+    *,
+    result: RefractionDatumStaticsResult,
+    req: RefractionStaticApplyRequest,
+) -> dict[str, np.ndarray]:
+    """Build trace and endpoint static component waterfall QC arrays."""
+    values = _validate_result(result)
+    request = RefractionStaticApplyRequest.model_validate(req)
+    r = values.result
+    apply_to_trace_shift = bool(
+        request.field_corrections.composition.apply_to_trace_shift
+    )
+
+    source_endpoint_key_sorted = _trace_endpoint_key_sorted_array(
+        r,
+        endpoint='source',
+    )
+    receiver_endpoint_key_sorted = _trace_endpoint_key_sorted_array(
+        r,
+        endpoint='receiver',
+    )
+    source_depth_shift_s_sorted = _endpoint_shift_to_trace_order(
+        endpoint_key=r.source_endpoint_key,
+        endpoint_shift_s=_source_depth_shift_s_array(r),
+        endpoint_key_sorted=source_endpoint_key_sorted,
+        label='source_depth_shift_s',
+    )
+    uphole_shift_s_sorted = _endpoint_shift_to_trace_order(
+        endpoint_key=r.source_endpoint_key,
+        endpoint_shift_s=_source_uphole_shift_s_array(r),
+        endpoint_key_sorted=source_endpoint_key_sorted,
+        label='uphole_shift_s',
+    )
+    source_manual_static_shift_s_sorted = _endpoint_shift_to_trace_order(
+        endpoint_key=r.source_endpoint_key,
+        endpoint_shift_s=_source_manual_static_shift_s_array(r),
+        endpoint_key_sorted=source_endpoint_key_sorted,
+        label='source_manual_static_shift_s',
+    )
+    receiver_manual_static_shift_s_sorted = _endpoint_shift_to_trace_order(
+        endpoint_key=r.receiver_endpoint_key,
+        endpoint_shift_s=_receiver_manual_static_shift_s_array(r),
+        endpoint_key_sorted=receiver_endpoint_key_sorted,
+        label='receiver_manual_static_shift_s',
+    )
+    manual_static_shift_s_sorted = _sum_float_arrays(
+        source_manual_static_shift_s_sorted,
+        receiver_manual_static_shift_s_sorted,
+    )
+    datum_shift_s_sorted = _sum_float_arrays(
+        r.floating_datum_elevation_shift_s_sorted,
+        r.flat_datum_shift_s_sorted,
+    )
+    trace_field_shift_s = _trace_field_shift_s_sorted_array(r)
+    applied_field_shift_s = _applied_field_shift_s_sorted_array(r)
+    final_trace_shift_s = _final_trace_shift_s_sorted(r)
+    source_field_shift_s = _source_field_shift_s_array(r)
+    source_field_status = _source_field_static_status_array(r)
+    receiver_field_shift_s = _receiver_field_shift_s_array(r)
+    receiver_field_status = _receiver_field_static_status_array(r)
+    source_total_with_field_s = _total_with_field_shift_s(
+        refraction_shift_s=r.source_refraction_shift_s,
+        field_shift_s=source_field_shift_s,
+        field_status=source_field_status,
+    )
+    receiver_total_with_field_s = _total_with_field_shift_s(
+        refraction_shift_s=r.receiver_refraction_shift_s,
+        field_shift_s=receiver_field_shift_s,
+        field_status=receiver_field_status,
+    )
+    source_applied_field_s = _applied_endpoint_field_shift_s(
+        field_shift_s=source_field_shift_s,
+        field_status=source_field_status,
+        apply_to_trace_shift=apply_to_trace_shift,
+    )
+    receiver_applied_field_s = _applied_endpoint_field_shift_s(
+        field_shift_s=receiver_field_shift_s,
+        field_status=receiver_field_status,
+        apply_to_trace_shift=apply_to_trace_shift,
+    )
+
+    source_count = int(r.source_endpoint_key.shape[0])
+    receiver_count = int(r.receiver_endpoint_key.shape[0])
+    trace_count = int(r.sorted_trace_index.shape[0])
+    endpoint_count = source_count + receiver_count
+
+    endpoint_kind = _string_array(
+        np.concatenate(
+            (
+                np.full(source_count, 'source', dtype='<U8'),
+                np.full(receiver_count, 'receiver', dtype='<U8'),
+            )
+        )
+    )
+    endpoint_key = _string_array(
+        np.concatenate(
+            (
+                _string_array(r.source_endpoint_key),
+                _string_array(r.receiver_endpoint_key),
+            )
+        )
+    )
+    endpoint_weathering_correction_s = np.concatenate(
+        (
+            _float_array(r.source_weathering_replacement_shift_s),
+            _float_array(r.receiver_weathering_replacement_shift_s),
+        )
+    )
+    endpoint_elevation_correction_s = np.concatenate(
+        (
+            _sum_float_arrays(
+                r.source_floating_datum_elevation_shift_s,
+                r.source_flat_datum_shift_s,
+            ),
+            _sum_float_arrays(
+                r.receiver_floating_datum_elevation_shift_s,
+                r.receiver_flat_datum_shift_s,
+            ),
+        )
+    )
+    endpoint_source_depth_correction_s = np.concatenate(
+        (
+            _source_depth_shift_s_array(r),
+            np.full(receiver_count, np.nan, dtype=np.float64),
+        )
+    )
+    endpoint_uphole_correction_s = np.concatenate(
+        (
+            _source_uphole_shift_s_array(r),
+            np.full(receiver_count, np.nan, dtype=np.float64),
+        )
+    )
+    endpoint_manual_static_s = np.concatenate(
+        (
+            _source_manual_static_shift_s_array(r),
+            _receiver_manual_static_shift_s_array(r),
+        )
+    )
+    endpoint_field_correction_s = np.concatenate(
+        (source_field_shift_s, receiver_field_shift_s)
+    )
+    endpoint_applied_field_correction_s = np.concatenate(
+        (source_applied_field_s, receiver_applied_field_s)
+    )
+    endpoint_total_static_s = np.concatenate(
+        (
+            _float_array(r.source_refraction_shift_s),
+            _float_array(r.receiver_refraction_shift_s),
+        )
+    )
+    endpoint_total_with_field_shift_s = np.concatenate(
+        (source_total_with_field_s, receiver_total_with_field_s)
+    )
+    endpoint_static_status = _string_array(
+        np.concatenate(
+            (
+                _source_static_status_array(r),
+                _receiver_static_status_array(r),
+            )
+        )
+    )
+
+    return {
+        'artifact_version': _scalar_str(ARTIFACT_VERSION),
+        'sign_convention': _scalar_str(SIGN_CONVENTION),
+        'apply_to_trace_shift': np.asarray(apply_to_trace_shift, dtype=bool),
+        'trace_index_sorted': _int_array(r.sorted_trace_index),
+        'source_endpoint_key': source_endpoint_key_sorted,
+        'receiver_endpoint_key': receiver_endpoint_key_sorted,
+        'refraction_shift_s': _base_refraction_trace_shift_s_sorted_array(r),
+        'weathering_shift_s': _float_array(
+            r.weathering_replacement_trace_shift_s_sorted
+        ),
+        'datum_shift_s': datum_shift_s_sorted,
+        'field_shift_s': trace_field_shift_s,
+        'computed_field_shift_s': trace_field_shift_s,
+        'applied_field_shift_s': applied_field_shift_s,
+        'manual_static_shift_s': manual_static_shift_s_sorted,
+        'source_depth_shift_s': source_depth_shift_s_sorted,
+        'uphole_shift_s': uphole_shift_s_sorted,
+        'final_trace_shift_s': final_trace_shift_s,
+        'applied_trace_shift_s': final_trace_shift_s,
+        'trace_apply_to_trace_shift': np.full(
+            trace_count,
+            apply_to_trace_shift,
+            dtype=bool,
+        ),
+        'trace_static_status': _final_trace_static_status_sorted_array(r),
+        'endpoint_kind': endpoint_kind,
+        'endpoint_key': endpoint_key,
+        'endpoint_weathering_correction_s': np.ascontiguousarray(
+            endpoint_weathering_correction_s,
+            dtype=np.float64,
+        ),
+        'endpoint_elevation_correction_s': np.ascontiguousarray(
+            endpoint_elevation_correction_s,
+            dtype=np.float64,
+        ),
+        'endpoint_source_depth_correction_s': np.ascontiguousarray(
+            endpoint_source_depth_correction_s,
+            dtype=np.float64,
+        ),
+        'endpoint_uphole_correction_s': np.ascontiguousarray(
+            endpoint_uphole_correction_s,
+            dtype=np.float64,
+        ),
+        'endpoint_manual_static_s': np.ascontiguousarray(
+            endpoint_manual_static_s,
+            dtype=np.float64,
+        ),
+        'endpoint_field_correction_s': np.ascontiguousarray(
+            endpoint_field_correction_s,
+            dtype=np.float64,
+        ),
+        'endpoint_computed_field_correction_s': np.ascontiguousarray(
+            endpoint_field_correction_s,
+            dtype=np.float64,
+        ),
+        'endpoint_applied_field_correction_s': np.ascontiguousarray(
+            endpoint_applied_field_correction_s,
+            dtype=np.float64,
+        ),
+        'endpoint_total_static_s': np.ascontiguousarray(
+            endpoint_total_static_s,
+            dtype=np.float64,
+        ),
+        'endpoint_total_applied_shift_s': np.ascontiguousarray(
+            endpoint_total_static_s,
+            dtype=np.float64,
+        ),
+        'endpoint_total_with_field_shift_s': np.ascontiguousarray(
+            endpoint_total_with_field_shift_s,
+            dtype=np.float64,
+        ),
+        'endpoint_apply_to_trace_shift': np.full(
+            endpoint_count,
+            apply_to_trace_shift,
+            dtype=bool,
+        ),
+        'endpoint_static_status': endpoint_static_status,
+    }
+
+
+def build_refraction_static_component_qc_payload(
+    *,
+    arrays: dict[str, np.ndarray],
+) -> dict[str, Any]:
+    """Build strict-JSON static component waterfall QC summary."""
+    apply_to_trace_shift = bool(np.asarray(arrays['apply_to_trace_shift']).item())
+    payload = {
+        'artifact_version': ARTIFACT_VERSION,
+        'kind': 'refraction_static_component_qc',
+        'sign_convention': SIGN_CONVENTION,
+        'units': {
+            'csv_time_shift_columns': 'milliseconds',
+            'npz_time_shift_arrays': 'seconds',
+        },
+        'apply_to_trace_shift': apply_to_trace_shift,
+        'trace': {
+            'row_count': int(arrays['trace_index_sorted'].shape[0]),
+            'component_summary_ms': _component_qc_stats_ms(
+                {
+                    'refraction_shift_ms': arrays['refraction_shift_s'],
+                    'weathering_shift_ms': arrays['weathering_shift_s'],
+                    'datum_shift_ms': arrays['datum_shift_s'],
+                    'field_shift_ms': arrays['field_shift_s'],
+                    'computed_field_shift_ms': arrays['computed_field_shift_s'],
+                    'applied_field_shift_ms': arrays['applied_field_shift_s'],
+                    'manual_static_shift_ms': arrays['manual_static_shift_s'],
+                    'source_depth_shift_ms': arrays['source_depth_shift_s'],
+                    'uphole_shift_ms': arrays['uphole_shift_s'],
+                    'final_trace_shift_ms': arrays['final_trace_shift_s'],
+                    'applied_trace_shift_ms': arrays['applied_trace_shift_s'],
+                }
+            ),
+            'status_counts': _status_counts(arrays['trace_static_status']),
+        },
+        'endpoint': {
+            'row_count': int(arrays['endpoint_key'].shape[0]),
+            'component_summary_ms': _component_qc_stats_ms(
+                {
+                    'weathering_correction_ms': arrays[
+                        'endpoint_weathering_correction_s'
+                    ],
+                    'elevation_correction_ms': arrays[
+                        'endpoint_elevation_correction_s'
+                    ],
+                    'source_depth_correction_ms': arrays[
+                        'endpoint_source_depth_correction_s'
+                    ],
+                    'uphole_correction_ms': arrays['endpoint_uphole_correction_s'],
+                    'manual_static_ms': arrays['endpoint_manual_static_s'],
+                    'field_correction_ms': arrays['endpoint_field_correction_s'],
+                    'computed_field_correction_ms': arrays[
+                        'endpoint_computed_field_correction_s'
+                    ],
+                    'applied_field_correction_ms': arrays[
+                        'endpoint_applied_field_correction_s'
+                    ],
+                    'total_static_ms': arrays['endpoint_total_static_s'],
+                    'total_applied_shift_ms': arrays[
+                        'endpoint_total_applied_shift_s'
+                    ],
+                    'total_with_field_shift_ms': arrays[
+                        'endpoint_total_with_field_shift_s'
+                    ],
+                }
+            ),
+            'status_counts': _status_counts(arrays['endpoint_static_status']),
+        },
+        'artifacts': {
+            'trace_csv': REFRACTION_STATIC_COMPONENT_QC_TRACE_CSV_NAME,
+            'endpoint_csv': REFRACTION_STATIC_COMPONENT_QC_ENDPOINT_CSV_NAME,
+            'npz': REFRACTION_STATIC_COMPONENT_QC_NPZ_NAME,
+            'json': REFRACTION_STATIC_COMPONENT_QC_JSON_NAME,
+        },
+        'source_artifacts': {
+            'solution_npz': REFRACTION_STATIC_SOLUTION_NPZ_NAME,
+            'source_static_table_csv': SOURCE_STATIC_TABLE_CSV_NAME,
+            'receiver_static_table_csv': RECEIVER_STATIC_TABLE_CSV_NAME,
+            'source_receiver_static_table_npz': SOURCE_RECEIVER_STATIC_TABLE_NPZ_NAME,
+        },
+    }
+    _assert_strict_json(
+        payload,
+        artifact_name=REFRACTION_STATIC_COMPONENT_QC_JSON_NAME,
+    )
+    return payload
+
+
 def build_refraction_static_solution_arrays(
     *,
     result: RefractionDatumStaticsResult,
@@ -3071,6 +3529,14 @@ def build_refraction_static_solution_arrays(
         'flat_datum_elevation_m': _scalar_float(_nan_if_none(r.flat_datum_elevation_m)),
         'max_abs_shift_ms': _scalar_float(req.apply.max_abs_shift_ms),
         'sorted_trace_index': _int_array(r.sorted_trace_index),
+        'source_endpoint_key_sorted': _trace_endpoint_key_sorted_array(
+            r,
+            endpoint='source',
+        ),
+        'receiver_endpoint_key_sorted': _trace_endpoint_key_sorted_array(
+            r,
+            endpoint='receiver',
+        ),
         'valid_observation_mask_sorted': _bool_array(
             r.valid_observation_mask_sorted
         ),
@@ -4726,6 +5192,15 @@ def _validate_result(result: RefractionDatumStaticsResult) -> _ValidatedResult:
     _validate_optional_arrays(
         result=result,
         names=(
+            'source_endpoint_key_sorted',
+            'receiver_endpoint_key_sorted',
+        ),
+        expected_length=n_traces,
+        label='trace endpoint key',
+    )
+    _validate_optional_arrays(
+        result=result,
+        names=(
             'source_field_shift_s_sorted',
             'receiver_field_shift_s_sorted',
             'trace_field_shift_s_sorted',
@@ -5163,6 +5638,101 @@ def _trace_statics_rows(result: RefractionDatumStaticsResult) -> list[dict[str, 
             }
         )
         rows.append(row)
+    return rows
+
+
+def _static_component_qc_trace_rows(
+    arrays: dict[str, np.ndarray],
+) -> list[dict[str, object]]:
+    rows: list[dict[str, object]] = []
+    n_rows = int(arrays['trace_index_sorted'].shape[0])
+    for index in range(n_rows):
+        rows.append(
+            {
+                'trace_index_sorted': int(arrays['trace_index_sorted'][index]),
+                'source_endpoint_key': str(arrays['source_endpoint_key'][index]),
+                'receiver_endpoint_key': str(arrays['receiver_endpoint_key'][index]),
+                'refraction_shift_ms': _csv_ms(arrays['refraction_shift_s'][index]),
+                'weathering_shift_ms': _csv_ms(arrays['weathering_shift_s'][index]),
+                'datum_shift_ms': _csv_ms(arrays['datum_shift_s'][index]),
+                'field_shift_ms': _csv_ms(arrays['field_shift_s'][index]),
+                'computed_field_shift_ms': _csv_ms(
+                    arrays['computed_field_shift_s'][index]
+                ),
+                'applied_field_shift_ms': _csv_ms(
+                    arrays['applied_field_shift_s'][index]
+                ),
+                'manual_static_shift_ms': _csv_ms(
+                    arrays['manual_static_shift_s'][index]
+                ),
+                'source_depth_shift_ms': _csv_ms(
+                    arrays['source_depth_shift_s'][index]
+                ),
+                'uphole_shift_ms': _csv_ms(arrays['uphole_shift_s'][index]),
+                'final_trace_shift_ms': _csv_ms(
+                    arrays['final_trace_shift_s'][index]
+                ),
+                'applied_trace_shift_ms': _csv_ms(
+                    arrays['applied_trace_shift_s'][index]
+                ),
+                'apply_to_trace_shift': _csv_bool(
+                    arrays['trace_apply_to_trace_shift'][index]
+                ),
+                'static_status': str(arrays['trace_static_status'][index]),
+                'sign_convention': SIGN_CONVENTION,
+            }
+        )
+    return rows
+
+
+def _static_component_qc_endpoint_rows(
+    arrays: dict[str, np.ndarray],
+) -> list[dict[str, object]]:
+    rows: list[dict[str, object]] = []
+    n_rows = int(arrays['endpoint_key'].shape[0])
+    for index in range(n_rows):
+        rows.append(
+            {
+                'endpoint_kind': str(arrays['endpoint_kind'][index]),
+                'endpoint_key': str(arrays['endpoint_key'][index]),
+                'weathering_correction_ms': _csv_ms(
+                    arrays['endpoint_weathering_correction_s'][index]
+                ),
+                'elevation_correction_ms': _csv_ms(
+                    arrays['endpoint_elevation_correction_s'][index]
+                ),
+                'source_depth_correction_ms': _csv_ms(
+                    arrays['endpoint_source_depth_correction_s'][index]
+                ),
+                'uphole_correction_ms': _csv_ms(
+                    arrays['endpoint_uphole_correction_s'][index]
+                ),
+                'manual_static_ms': _csv_ms(
+                    arrays['endpoint_manual_static_s'][index]
+                ),
+                'field_correction_ms': _csv_ms(
+                    arrays['endpoint_field_correction_s'][index]
+                ),
+                'computed_field_correction_ms': _csv_ms(
+                    arrays['endpoint_computed_field_correction_s'][index]
+                ),
+                'applied_field_correction_ms': _csv_ms(
+                    arrays['endpoint_applied_field_correction_s'][index]
+                ),
+                'total_static_ms': _csv_ms(arrays['endpoint_total_static_s'][index]),
+                'total_applied_shift_ms': _csv_ms(
+                    arrays['endpoint_total_applied_shift_s'][index]
+                ),
+                'total_with_field_shift_ms': _csv_ms(
+                    arrays['endpoint_total_with_field_shift_s'][index]
+                ),
+                'apply_to_trace_shift': _csv_bool(
+                    arrays['endpoint_apply_to_trace_shift'][index]
+                ),
+                'static_status': str(arrays['endpoint_static_status'][index]),
+                'sign_convention': SIGN_CONVENTION,
+            }
+        )
     return rows
 
 
@@ -6656,6 +7226,91 @@ def _applied_field_shift_s_sorted_array(
     if result.applied_field_shift_s_sorted is not None:
         return _float_array(result.applied_field_shift_s_sorted)
     return np.zeros(int(result.sorted_trace_index.shape[0]), dtype=np.float64)
+
+
+def _trace_endpoint_key_sorted_array(
+    result: RefractionDatumStaticsResult,
+    *,
+    endpoint: str,
+) -> np.ndarray:
+    if endpoint == 'source':
+        raw = result.source_endpoint_key_sorted
+    elif endpoint == 'receiver':
+        raw = result.receiver_endpoint_key_sorted
+    else:
+        raise RefractionStaticArtifactError(f'unsupported endpoint kind: {endpoint}')
+
+    expected_shape = result.sorted_trace_index.shape
+    if raw is None:
+        raise RefractionStaticArtifactError(f'{endpoint}_endpoint_key_sorted is required')
+    out = _string_array(raw)
+    if out.shape != expected_shape:
+        raise RefractionStaticArtifactError(
+            f'{endpoint}_endpoint_key_sorted shape mismatch'
+        )
+    return out
+
+
+def _endpoint_shift_to_trace_order(
+    *,
+    endpoint_key: np.ndarray,
+    endpoint_shift_s: np.ndarray,
+    endpoint_key_sorted: np.ndarray,
+    label: str,
+) -> np.ndarray:
+    shift_by_key: dict[str, float] = {}
+    for key, shift in zip(endpoint_key.tolist(), endpoint_shift_s.tolist()):
+        text = str(key)
+        value = float(shift)
+        existing = shift_by_key.get(text)
+        if existing is not None and not (
+            existing == value or (np.isnan(existing) and np.isnan(value))
+        ):
+            raise RefractionStaticArtifactError(
+                f'{label} cannot be mapped to trace order; duplicate endpoint '
+                f'key {text!r} has conflicting shifts'
+            )
+        shift_by_key[text] = value
+
+    out = np.full(endpoint_key_sorted.shape, np.nan, dtype=np.float64)
+    for index, key in enumerate(endpoint_key_sorted.tolist()):
+        text = str(key)
+        if text not in shift_by_key:
+            raise RefractionStaticArtifactError(
+                f'{label} cannot be mapped to trace order; endpoint key '
+                f'{text!r} is missing'
+            )
+        out[index] = shift_by_key[text]
+    return np.ascontiguousarray(out, dtype=np.float64)
+
+
+def _applied_endpoint_field_shift_s(
+    *,
+    field_shift_s: np.ndarray,
+    field_status: np.ndarray,
+    apply_to_trace_shift: bool,
+) -> np.ndarray:
+    field = np.asarray(field_shift_s, dtype=np.float64)
+    if not apply_to_trace_shift:
+        return np.zeros(field.shape, dtype=np.float64)
+    status = np.asarray(field_status).astype(str)
+    out = np.full(field.shape, np.nan, dtype=np.float64)
+    valid = np.isin(status, tuple(_FIELD_TOTAL_VALID_STATUSES)) & np.isfinite(field)
+    out[valid] = field[valid]
+    return np.ascontiguousarray(out, dtype=np.float64)
+
+
+def _component_qc_stats_ms(
+    components_s: Mapping[str, np.ndarray],
+) -> dict[str, dict[str, float | None]]:
+    return {
+        name: {
+            'min': _stat(values * 1000.0, 'min'),
+            'median': _stat(values * 1000.0, 'median'),
+            'max': _stat(values * 1000.0, 'max'),
+        }
+        for name, values in components_s.items()
+    }
 
 
 def _has_node_3layer_static_fields(result: RefractionDatumStaticsResult) -> bool:
@@ -9637,6 +10292,10 @@ __all__ = [
     'REFRACTION_VSUB_REFRACTOR_VELOCITY_QC_JSON_NAME',
     'REFRACTION_STATICS_CSV_NAME',
     'REFRACTION_STATIC_ARTIFACTS_JSON_NAME',
+    'REFRACTION_STATIC_COMPONENT_QC_ENDPOINT_CSV_NAME',
+    'REFRACTION_STATIC_COMPONENT_QC_JSON_NAME',
+    'REFRACTION_STATIC_COMPONENT_QC_NPZ_NAME',
+    'REFRACTION_STATIC_COMPONENT_QC_TRACE_CSV_NAME',
     'REFRACTION_STATIC_COMPONENTS_CSV_NAME',
     'REFRACTION_STATIC_HISTORY_JSON_NAME',
     'REFRACTION_STATIC_REQUEST_JSON_NAME',
@@ -9662,6 +10321,8 @@ __all__ = [
     'build_refraction_line_profile_qc_payload',
     'build_refraction_reduced_time_qc_arrays',
     'build_refraction_reduced_time_qc_payload',
+    'build_refraction_static_component_qc_arrays',
+    'build_refraction_static_component_qc_payload',
     'build_refraction_refractor_velocity_grid_arrays',
     'build_refraction_refractor_velocity_qc_payload',
     'build_refraction_static_history_payload',
@@ -9689,6 +10350,7 @@ __all__ = [
     'write_refraction_refractor_velocity_grid_npz',
     'write_refraction_refractor_velocity_qc_json',
     'write_refraction_static_artifacts',
+    'write_refraction_static_component_qc_artifacts',
     'write_refraction_static_components_csv',
     'write_refraction_static_history_json',
     'write_refraction_static_qc_json',

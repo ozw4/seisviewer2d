@@ -731,6 +731,8 @@ def build_refraction_datum_statics(
         receiver_flat_datum_shift_s_sorted=receiver_flat_shift_sorted,
         source_refraction_shift_s_sorted=source_refraction_shift_sorted,
         receiver_refraction_shift_s_sorted=receiver_refraction_shift_sorted,
+        source_endpoint_key_sorted=data.source_endpoint_key_sorted,
+        receiver_endpoint_key_sorted=data.receiver_endpoint_key_sorted,
         weathering_replacement_trace_shift_s_sorted=(
             data.weathering_replacement_trace_shift_s_sorted
         ),

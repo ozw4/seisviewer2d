@@ -842,6 +842,8 @@ class RefractionDatumStaticsResult:
 
     qc: dict[str, Any]
 
+    source_endpoint_key_sorted: np.ndarray | None = None
+    receiver_endpoint_key_sorted: np.ndarray | None = None
     active_cell_id: np.ndarray | None = None
     inactive_cell_id: np.ndarray | None = None
     cell_bedrock_slowness_s_per_m: np.ndarray | None = None
@@ -933,6 +935,10 @@ class RefractionStaticArtifactSet:
     refraction_reduced_time_qc_npz: Path
     refraction_reduced_time_qc_json: Path
     refraction_static_components_csv: Path
+    refraction_static_component_qc_trace_csv: Path
+    refraction_static_component_qc_endpoint_csv: Path
+    refraction_static_component_qc_npz: Path
+    refraction_static_component_qc_json: Path
     source_static_table_csv: Path
     receiver_static_table_csv: Path
     source_receiver_static_table_npz: Path

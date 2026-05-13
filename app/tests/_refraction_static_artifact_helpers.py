@@ -193,6 +193,8 @@ def _result() -> RefractionDatumStaticsResult:
         receiver_flat_datum_shift_s_sorted=receiver_flat_sorted,
         source_refraction_shift_s_sorted=source_refraction_sorted,
         receiver_refraction_shift_s_sorted=receiver_refraction_sorted,
+        source_endpoint_key_sorted=np.asarray(['s0', 's1', 's0', 's1'], dtype='<U2'),
+        receiver_endpoint_key_sorted=np.asarray(['r0', 'r1', 'r1', 'r0'], dtype='<U2'),
         weathering_replacement_trace_shift_s_sorted=weathering_trace,
         floating_datum_elevation_shift_s_sorted=(
             source_floating_sorted + receiver_floating_sorted

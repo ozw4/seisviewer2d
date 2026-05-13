@@ -455,6 +455,14 @@ def _base_result_with_input_endpoint_keys(
         result,
         source_endpoint_key=source_keys,
         receiver_endpoint_key=receiver_keys,
+        source_endpoint_key_sorted=np.asarray(
+            input_model.source_endpoint_key_sorted,
+            dtype=object,
+        ),
+        receiver_endpoint_key_sorted=np.asarray(
+            input_model.receiver_endpoint_key_sorted,
+            dtype=object,
+        ),
         row_source_endpoint_key=np.asarray(
             input_model.source_endpoint_key_sorted,
             dtype=object,
@@ -606,6 +614,8 @@ def _base_refraction_result(
         receiver_flat_datum_shift_s_sorted=zero_trace.copy(),
         source_refraction_shift_s_sorted=source_shift_sorted,
         receiver_refraction_shift_s_sorted=receiver_shift_sorted,
+        source_endpoint_key_sorted=dataset.source_endpoint_key_sorted,
+        receiver_endpoint_key_sorted=dataset.receiver_endpoint_key_sorted,
         weathering_replacement_trace_shift_s_sorted=dataset.expected_refraction_trace_shift_s,
         floating_datum_elevation_shift_s_sorted=zero_trace.copy(),
         flat_datum_shift_s_sorted=zero_trace.copy(),
