@@ -79,12 +79,12 @@ M5 is in scope for:
 M5 does not implement:
 
 - SEG-Y header write-back;
-- viewer plots;
+- viewer plots in M5;
 - GRM;
 - plus-minus;
 - tomography;
 - new inversion math;
-- full IRAS compatibility;
+- full IRAS compatibility or exact legacy IRAS byte-for-byte compatibility;
 - original IRAS manuals or copied IRAS material in the repository.
 
 ## 3. Sign convention
@@ -153,11 +153,127 @@ Current public export requests are constrained to this millisecond CSV schema:
 TraceStore application. Import validation must reject non-finite values in
 required apply fields.
 
-## 5. Export formats
+## 5. API examples
 
-M5 defines these logical export formats. The exact API route and file packaging
-can be implemented later, but the column meanings and sign convention are fixed
-by this document.
+### Refraction apply with inline M5 export
+
+Use `POST /statics/refraction/apply` to run a normal refraction statics job and
+write M5 export artifacts from the same source job directory. The `export`
+block is top-level in the refraction apply request; the model below is a compact
+one-layer example, and the same export block also applies to valid two- and
+three-layer requests.
+
+```json
+{
+  "file_id": "input-file-id",
+  "pick_source": {
+    "kind": "batch_predicted_npz",
+    "job_id": "first-break-job-id"
+  },
+  "linkage": {
+    "mode": "required",
+    "job_id": "geometry-linkage-job-id"
+  },
+  "model": {
+    "method": "gli_variable_thickness",
+    "first_layer": {
+      "mode": "constant",
+      "weathering_velocity_m_s": 800.0
+    },
+    "bedrock_velocity_mode": "solve_global"
+  },
+  "conversion": {
+    "mode": "t1lsst_1layer"
+  },
+  "apply": {
+    "register_corrected_file": false
+  },
+  "export": {
+    "enabled": true,
+    "formats": [
+      "canonical_static_table",
+      "lsst",
+      "lsst_plus",
+      "time_term_spreadsheet",
+      "first_break_time"
+    ],
+    "units": "milliseconds",
+    "fail_on_invalid_static_status": true,
+    "include_inactive_endpoints": false
+  }
+}
+```
+
+### Standalone refraction export
+
+Use `POST /statics/refraction/export` when the refraction solve already
+completed and only the M5 export artifacts need to be generated.
+
+```json
+{
+  "source_job_id": "refraction-job-id",
+  "export": {
+    "enabled": true,
+    "formats": ["canonical_static_table", "lsst_plus"],
+    "units": "milliseconds"
+  }
+}
+```
+
+For that request, the expected generated artifacts are:
+
+```text
+canonical_source_static_table.csv
+canonical_receiver_static_table.csv
+canonical_source_receiver_static_table.csv
+refraction_lsst_plus.csv
+refraction_lsst_plus_cards.txt
+```
+
+### Static-table apply
+
+Use `POST /statics/refraction/static-table/apply` to apply a canonical
+source/receiver table to a TraceStore. The combined canonical table form uses
+one artifact ID:
+
+```json
+{
+  "file_id": "input-file-id",
+  "key1_byte": 189,
+  "key2_byte": 193,
+  "combined_table_artifact_id": "export-job-id:canonical_source_receiver_static_table.csv",
+  "register_corrected_file": true,
+  "missing_static_policy": "fail",
+  "allow_reapply_same_static_table": false
+}
+```
+
+The separate source/receiver form uses paired artifact IDs instead of
+`combined_table_artifact_id`:
+
+```json
+{
+  "file_id": "input-file-id",
+  "key1_byte": 189,
+  "key2_byte": 193,
+  "source_table_artifact_id": "export-job-id:canonical_source_static_table.csv",
+  "receiver_table_artifact_id": "export-job-id:canonical_receiver_static_table.csv",
+  "register_corrected_file": true,
+  "missing_static_policy": "fail",
+  "allow_reapply_same_static_table": false
+}
+```
+
+Both forms apply shifts with the repo convention:
+
+```text
+corrected(t) = raw(t - shift_s)
+```
+
+## 6. Export formats
+
+M5 defines these logical export formats. The public API routes are shown above,
+and the column meanings and sign convention are fixed by this document.
 
 ### `lsst`
 
@@ -322,23 +438,33 @@ source_id
 receiver_id
 offset_m
 layer_kind
-observed_first_break_time_ms
-modeled_first_break_time_ms
+observed_pick_time_ms
+modeled_pick_time_ms
 residual_ms
 used_in_solve
 reject_reason
 sign_convention
 ```
 
-`observed_first_break_time_ms` is the picked first-break time in the time basis
-used by the refraction solve. `modeled_first_break_time_ms` is the fitted model
-time for the same observation. `residual_ms` is observed minus modeled.
+`observed_pick_time_ms` is the picked first-break time in the time basis used by
+the refraction solve. `modeled_pick_time_ms` is the fitted model time for the
+same observation. `residual_ms` is observed minus modeled.
 
 ### `canonical_static_table`
 
 `canonical_static_table` is the only M5 table intended for import and TraceStore
 application. It is a single endpoint table with one row per source or receiver
 endpoint.
+
+Canonical export status behavior:
+
+- The default canonical export fails when any row has a non-`ok`
+  `static_status`.
+- `fail_on_invalid_static_status=false` with `include_inactive_endpoints=false`
+  filters invalid rows and produces an apply-ready canonical table.
+- `fail_on_invalid_static_status=false` with `include_inactive_endpoints=true`
+  produces an audit table that can include inactive or invalid endpoints and may
+  not be import/apply-ready until those rows are removed or corrected.
 
 Required columns:
 
@@ -404,7 +530,7 @@ The applied-shift column is authoritative for import. Existing total/component
 columns are preserved as audit metadata unless a future schema version defines
 another explicit apply field.
 
-## 6. Canonical import validation
+## 7. Canonical import validation
 
 The import validator must be deterministic and fail closed. A valid
 `canonical_static_table` must satisfy all of these checks:
@@ -433,7 +559,7 @@ Validation produces a machine-readable QC artifact with row counts, endpoint
 coverage, duplicate counts, missing endpoint counts, maximum absolute shift,
 sign-convention status, and the selected endpoint identity mode.
 
-## 7. Static table import/apply workflow
+## 8. Static table import/apply workflow
 
 The intended M5 workflow is:
 
@@ -472,7 +598,7 @@ Application must verify that the sorted trace index and source/receiver endpoint
 arrays match the target TraceStore and geometry linkage. Failed validation must
 not register a corrected TraceStore.
 
-## 8. Static history behavior
+## 9. Static history behavior
 
 An M5 import/apply job writes history that is compatible with the existing
 `refraction_static_history.json` contract. The history record must include:
@@ -492,7 +618,7 @@ For an imported static table, the cumulative shift field should be the generated
 sorted trace shift derived from `canonical_static_table.applied_shift_ms`.
 Existing Phase 1-M4 history fields are not renamed.
 
-## 9. Relationship to Phase 1-M4 artifacts
+## 10. Relationship to Phase 1-M4 artifacts
 
 M5 is an export/import layer over the existing Phase 1-M4 artifacts. It does
 not rename or replace:
