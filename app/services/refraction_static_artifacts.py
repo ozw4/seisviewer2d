@@ -69,6 +69,9 @@ REFRACTION_STATICS_CSV_NAME = 'refraction_statics.csv'
 NEAR_SURFACE_MODEL_CSV_NAME = 'near_surface_model.csv'
 FIRST_BREAK_RESIDUALS_CSV_NAME = 'first_break_residuals.csv'
 REFRACTION_FIRST_BREAK_TIME_EXPORT_CSV_NAME = 'refraction_first_break_time_export.csv'
+REFRACTION_FIRST_BREAK_FIT_QC_CSV_NAME = 'refraction_first_break_fit_qc.csv'
+REFRACTION_FIRST_BREAK_FIT_QC_NPZ_NAME = 'refraction_first_break_fit_qc.npz'
+REFRACTION_FIRST_BREAK_FIT_QC_JSON_NAME = 'refraction_first_break_fit_qc.json'
 REFRACTION_STATIC_COMPONENTS_CSV_NAME = 'refraction_static_components.csv'
 SOURCE_STATIC_TABLE_CSV_NAME = 'source_static_table.csv'
 RECEIVER_STATIC_TABLE_CSV_NAME = 'receiver_static_table.csv'
@@ -262,6 +265,24 @@ _ARTIFACTS: tuple[dict[str, str | bool], ...] = (
         'kind': 'csv',
         'required': True,
         'description': 'Observation-level first-break time QC export',
+    },
+    {
+        'name': REFRACTION_FIRST_BREAK_FIT_QC_CSV_NAME,
+        'kind': 'csv',
+        'required': True,
+        'description': 'Viewer-ready observed-modeled first-break fit QC table',
+    },
+    {
+        'name': REFRACTION_FIRST_BREAK_FIT_QC_NPZ_NAME,
+        'kind': 'npz',
+        'required': True,
+        'description': 'Machine-readable observed-modeled first-break fit QC arrays',
+    },
+    {
+        'name': REFRACTION_FIRST_BREAK_FIT_QC_JSON_NAME,
+        'kind': 'json',
+        'required': True,
+        'description': 'Observed-modeled first-break fit QC schema and summary',
     },
     {
         'name': REFRACTION_STATIC_COMPONENTS_CSV_NAME,
@@ -554,6 +575,44 @@ _FIRST_BREAK_TIME_EXPORT_COLUMNS = (
     'residual_ms',
     'used_in_solve',
     'reject_reason',
+    'sign_convention',
+)
+
+FIRST_BREAK_FIT_QC_RESIDUAL_SIGN = 'observed - modeled'
+
+_FIRST_BREAK_FIT_QC_COLUMNS = (
+    'observation_index',
+    'sorted_trace_index',
+    'trace_index_sorted',
+    'source_endpoint_key',
+    'receiver_endpoint_key',
+    'source_id',
+    'receiver_id',
+    'source_node_id',
+    'receiver_node_id',
+    'source_x_m',
+    'source_y_m',
+    'receiver_x_m',
+    'receiver_y_m',
+    'midpoint_x_m',
+    'midpoint_y_m',
+    'inline_m',
+    'crossline_m',
+    'offset_m',
+    'observed_first_break_time_s',
+    'modeled_first_break_time_s',
+    'residual_time_s',
+    'residual_s',
+    'residual_time_ms',
+    'layer_kind',
+    'cell_id',
+    'cell_ix',
+    'cell_iy',
+    'used_for_inversion',
+    'used_in_solve',
+    'rejection_reason',
+    'reject_reason',
+    'status',
     'sign_convention',
 )
 
@@ -1070,6 +1129,15 @@ def write_refraction_static_artifacts(
         refraction_first_break_time_export_csv=(
             root / REFRACTION_FIRST_BREAK_TIME_EXPORT_CSV_NAME
         ),
+        refraction_first_break_fit_qc_csv=(
+            root / REFRACTION_FIRST_BREAK_FIT_QC_CSV_NAME
+        ),
+        refraction_first_break_fit_qc_npz=(
+            root / REFRACTION_FIRST_BREAK_FIT_QC_NPZ_NAME
+        ),
+        refraction_first_break_fit_qc_json=(
+            root / REFRACTION_FIRST_BREAK_FIT_QC_JSON_NAME
+        ),
         refraction_static_components_csv=root / REFRACTION_STATIC_COMPONENTS_CSV_NAME,
         source_static_table_csv=root / SOURCE_STATIC_TABLE_CSV_NAME,
         receiver_static_table_csv=root / RECEIVER_STATIC_TABLE_CSV_NAME,
@@ -1131,6 +1199,21 @@ def write_refraction_static_artifacts(
         path=paths.refraction_first_break_time_export_csv,
         req=request,
         source_job_id=source_job_id,
+    )
+    write_refraction_first_break_fit_qc_csv(
+        result=values.result,
+        req=request,
+        path=paths.refraction_first_break_fit_qc_csv,
+    )
+    write_refraction_first_break_fit_qc_npz(
+        result=values.result,
+        req=request,
+        path=paths.refraction_first_break_fit_qc_npz,
+    )
+    write_refraction_first_break_fit_qc_json(
+        result=values.result,
+        req=request,
+        path=paths.refraction_first_break_fit_qc_json,
     )
     write_refraction_static_components_csv(
         result=values.result,
@@ -1197,6 +1280,9 @@ def write_refraction_static_artifacts(
         paths.near_surface_model_csv,
         paths.first_break_residuals_csv,
         paths.refraction_first_break_time_export_csv,
+        paths.refraction_first_break_fit_qc_csv,
+        paths.refraction_first_break_fit_qc_npz,
+        paths.refraction_first_break_fit_qc_json,
         paths.refraction_static_components_csv,
         paths.source_static_table_csv,
         paths.receiver_static_table_csv,
@@ -1332,6 +1418,53 @@ def write_refraction_first_break_time_export_csv(
         source_job_id=source_job_id,
     )
     _write_csv_atomic(Path(path), _FIRST_BREAK_TIME_EXPORT_COLUMNS, rows)
+
+
+def write_refraction_first_break_fit_qc_csv(
+    *,
+    result: RefractionDatumStaticsResult,
+    req: RefractionStaticApplyRequest | None = None,
+    path: Path,
+) -> None:
+    values = _validate_result(result)
+    request = RefractionStaticApplyRequest.model_validate(req) if req is not None else None
+    arrays = build_refraction_first_break_fit_qc_arrays(
+        result=values.result,
+        req=request,
+    )
+    rows = _first_break_fit_qc_rows(arrays)
+    _write_csv_atomic(Path(path), _FIRST_BREAK_FIT_QC_COLUMNS, rows)
+
+
+def write_refraction_first_break_fit_qc_npz(
+    *,
+    result: RefractionDatumStaticsResult,
+    req: RefractionStaticApplyRequest | None = None,
+    path: Path,
+) -> None:
+    values = _validate_result(result)
+    request = RefractionStaticApplyRequest.model_validate(req) if req is not None else None
+    arrays = build_refraction_first_break_fit_qc_arrays(
+        result=values.result,
+        req=request,
+    )
+    _write_npz_atomic(Path(path), arrays)
+
+
+def write_refraction_first_break_fit_qc_json(
+    *,
+    result: RefractionDatumStaticsResult,
+    req: RefractionStaticApplyRequest | None = None,
+    path: Path,
+) -> dict[str, Any]:
+    values = _validate_result(result)
+    request = RefractionStaticApplyRequest.model_validate(req) if req is not None else None
+    payload = build_refraction_first_break_fit_qc_payload(
+        result=values.result,
+        req=request,
+    )
+    _write_json_atomic(Path(path), payload)
+    return payload
 
 
 def write_refraction_static_components_csv(
@@ -2697,6 +2830,203 @@ def build_refraction_static_solution_arrays(
             )
     _validate_no_object_arrays(arrays, artifact_name=REFRACTION_STATIC_SOLUTION_NPZ_NAME)
     return arrays
+
+
+def build_refraction_first_break_fit_qc_arrays(
+    *,
+    result: RefractionDatumStaticsResult,
+    req: RefractionStaticApplyRequest | None = None,
+) -> dict[str, np.ndarray]:
+    """Build the viewer-ready observed-modeled first-break fit QC arrays."""
+    values = _validate_result(result)
+    r = values.result
+    request = RefractionStaticApplyRequest.model_validate(req) if req is not None else None
+    source_key_by_row = _residual_row_string_context(
+        r,
+        'row_source_endpoint_key',
+    )
+    receiver_key_by_row = _residual_row_string_context(
+        r,
+        'row_receiver_endpoint_key',
+    )
+    source_id_by_row = _row_endpoint_id_context(
+        r,
+        endpoint='source',
+        row_endpoint_key=source_key_by_row,
+        value_field='source_id',
+    )
+    receiver_id_by_row = _row_endpoint_id_context(
+        r,
+        endpoint='receiver',
+        row_endpoint_key=receiver_key_by_row,
+        value_field='receiver_id',
+    )
+    source_x_m = _row_endpoint_float_context(
+        r,
+        endpoint='source',
+        row_endpoint_key=source_key_by_row,
+        value_field='source_x_m',
+    )
+    source_y_m = _row_endpoint_float_context(
+        r,
+        endpoint='source',
+        row_endpoint_key=source_key_by_row,
+        value_field='source_y_m',
+    )
+    receiver_x_m = _row_endpoint_float_context(
+        r,
+        endpoint='receiver',
+        row_endpoint_key=receiver_key_by_row,
+        value_field='receiver_x_m',
+    )
+    receiver_y_m = _row_endpoint_float_context(
+        r,
+        endpoint='receiver',
+        row_endpoint_key=receiver_key_by_row,
+        value_field='receiver_y_m',
+    )
+    midpoint_x_m = _midpoint_coordinate(source_x_m, receiver_x_m)
+    midpoint_y_m = _midpoint_coordinate(source_y_m, receiver_y_m)
+    inline_m, crossline_m = _first_break_fit_inline_crossline(
+        midpoint_x_m=midpoint_x_m,
+        midpoint_y_m=midpoint_y_m,
+        req=request,
+    )
+    layer_kind_by_row, _layer_index_by_row = _residual_row_layer_context(r)
+    rejection_reason_by_row = _residual_row_string_context(
+        r,
+        'row_rejection_reason',
+    )
+    cell_id_by_row, cell_ix_by_row, cell_iy_by_row = _residual_row_cell_context(
+        r,
+        req=request,
+    )
+    used = np.asarray(r.used_row_mask, dtype=bool)
+    rejection_reason = np.asarray(
+        [
+            _residual_rejection_reason(
+                used=bool(used[row_index]),
+                rejected_by_robust=bool(r.rejected_by_robust_mask[row_index]),
+                explicit_reason=rejection_reason_by_row[row_index],
+            )
+            for row_index in range(values.n_rows)
+        ],
+        dtype='<U64',
+    )
+    status = np.where(used, 'ok', 'rejected')
+    arrays = {
+        'observation_index': np.arange(values.n_rows, dtype=np.int64),
+        'sorted_trace_index': _int_array(r.row_trace_index_sorted),
+        'trace_index_sorted': _int_array(r.row_trace_index_sorted),
+        'source_endpoint_key': _string_array(source_key_by_row),
+        'receiver_endpoint_key': _string_array(receiver_key_by_row),
+        'source_id': _string_array(source_id_by_row),
+        'receiver_id': _string_array(receiver_id_by_row),
+        'source_node_id': _int_array(r.row_source_node_id),
+        'receiver_node_id': _int_array(r.row_receiver_node_id),
+        'source_x_m': _float_array(source_x_m),
+        'source_y_m': _float_array(source_y_m),
+        'receiver_x_m': _float_array(receiver_x_m),
+        'receiver_y_m': _float_array(receiver_y_m),
+        'midpoint_x_m': _float_array(midpoint_x_m),
+        'midpoint_y_m': _float_array(midpoint_y_m),
+        'inline_m': _float_array(inline_m),
+        'crossline_m': _float_array(crossline_m),
+        'offset_m': _float_array(r.row_distance_m),
+        'observed_first_break_time_s': _float_array(r.observed_pick_time_s),
+        'modeled_first_break_time_s': _float_array(r.modeled_pick_time_s),
+        'residual_time_s': _float_array(r.residual_time_s),
+        'residual_s': _float_array(r.residual_time_s),
+        'residual_time_ms': _float_array(r.residual_time_s * 1000.0),
+        'layer_kind': _string_array(layer_kind_by_row),
+        'cell_id': _cell_id_float_array(cell_id_by_row),
+        'cell_ix': _cell_id_float_array(cell_ix_by_row),
+        'cell_iy': _cell_id_float_array(cell_iy_by_row),
+        'used_for_inversion': _bool_array(used),
+        'used_in_solve': _bool_array(used),
+        'rejection_reason': _string_array(rejection_reason),
+        'reject_reason': _string_array(rejection_reason),
+        'status': _string_array(status),
+        'sign_convention': _string_array(
+            np.full(values.n_rows, SIGN_CONVENTION, dtype=f'<U{len(SIGN_CONVENTION)}')
+        ),
+    }
+    _validate_no_object_arrays(
+        arrays,
+        artifact_name=REFRACTION_FIRST_BREAK_FIT_QC_NPZ_NAME,
+    )
+    return arrays
+
+
+def build_refraction_first_break_fit_qc_payload(
+    *,
+    result: RefractionDatumStaticsResult,
+    req: RefractionStaticApplyRequest | None = None,
+) -> dict[str, Any]:
+    """Build the strict-JSON schema and summary for first-break fit QC."""
+    arrays = build_refraction_first_break_fit_qc_arrays(result=result, req=req)
+    used = np.asarray(arrays['used_for_inversion'], dtype=bool)
+    residual_s = np.asarray(arrays['residual_time_s'], dtype=np.float64)
+    used_residual_s = residual_s[used]
+    residual_ms = residual_s * 1000.0
+    used_residual_ms = residual_ms[used]
+    payload: dict[str, Any] = {
+        'artifact_version': ARTIFACT_VERSION,
+        'schema_version': 1,
+        'kind': 'refraction_first_break_fit_qc',
+        'workflow': WORKFLOW,
+        'sign_convention': SIGN_CONVENTION,
+        'residual_sign': FIRST_BREAK_FIT_QC_RESIDUAL_SIGN,
+        'residual_definition': (
+            'residual_time_s = observed_first_break_time_s - '
+            'modeled_first_break_time_s'
+        ),
+        'modeled_time_definition': {
+            'general': (
+                'modeled_first_break_time_s = source_time_term_s + '
+                'receiver_time_term_s + moveout_or_cell_path_time_s'
+            ),
+            'midpoint_cell': (
+                'moveout_or_cell_path_time_s = offset_m * '
+                'cell_slowness_s_per_m'
+            ),
+            'global_velocity': (
+                'moveout_or_cell_path_time_s = offset_m / velocity_m_s'
+            ),
+        },
+        'columns': list(_FIRST_BREAK_FIT_QC_COLUMNS),
+        'row_count': int(arrays['observation_index'].shape[0]),
+        'used_count': int(np.count_nonzero(used)),
+        'rejected_count': int(np.count_nonzero(~used)),
+        'status_counts': _status_counts(arrays['status']),
+        'rejection_reason_counts': _status_counts(arrays['rejection_reason']),
+        'layer_kind_counts': _status_counts(arrays['layer_kind']),
+        'residual_summary': {
+            'all_rms_s': _residual_stat(residual_s, 'rms'),
+            'all_mad_s': _residual_stat(residual_s, 'mad'),
+            'all_mean_s': _residual_stat(residual_s, 'mean'),
+            'all_p95_abs_s': _residual_stat(residual_s, 'p95_abs'),
+            'all_rms_ms': _residual_stat(residual_ms, 'rms'),
+            'all_mad_ms': _residual_stat(residual_ms, 'mad'),
+            'all_mean_ms': _residual_stat(residual_ms, 'mean'),
+            'all_p95_abs_ms': _residual_stat(residual_ms, 'p95_abs'),
+            'used_rms_s': _residual_stat(used_residual_s, 'rms'),
+            'used_mad_s': _residual_stat(used_residual_s, 'mad'),
+            'used_mean_s': _residual_stat(used_residual_s, 'mean'),
+            'used_p95_abs_s': _residual_stat(used_residual_s, 'p95_abs'),
+            'used_rms_ms': _residual_stat(used_residual_ms, 'rms'),
+            'used_mad_ms': _residual_stat(used_residual_ms, 'mad'),
+            'used_mean_ms': _residual_stat(used_residual_ms, 'mean'),
+            'used_p95_abs_ms': _residual_stat(used_residual_ms, 'p95_abs'),
+        },
+        'artifacts': {
+            'csv': REFRACTION_FIRST_BREAK_FIT_QC_CSV_NAME,
+            'npz': REFRACTION_FIRST_BREAK_FIT_QC_NPZ_NAME,
+            'json': REFRACTION_FIRST_BREAK_FIT_QC_JSON_NAME,
+        },
+    }
+    _assert_strict_json(payload, artifact_name=REFRACTION_FIRST_BREAK_FIT_QC_JSON_NAME)
+    return payload
 
 
 def build_refraction_static_qc_payload(
@@ -4207,6 +4537,61 @@ def _first_break_time_export_rows(
     return rows
 
 
+def _first_break_fit_qc_rows(
+    arrays: Mapping[str, np.ndarray],
+) -> list[dict[str, object]]:
+    rows: list[dict[str, object]] = []
+    n_rows = int(np.asarray(arrays['observation_index']).shape[0])
+    for row_index in range(n_rows):
+        rejection_reason = str(arrays['rejection_reason'][row_index])
+        rows.append(
+            {
+                'observation_index': int(arrays['observation_index'][row_index]),
+                'sorted_trace_index': int(arrays['sorted_trace_index'][row_index]),
+                'trace_index_sorted': int(arrays['trace_index_sorted'][row_index]),
+                'source_endpoint_key': str(arrays['source_endpoint_key'][row_index]),
+                'receiver_endpoint_key': str(
+                    arrays['receiver_endpoint_key'][row_index]
+                ),
+                'source_id': _csv_identifier(arrays['source_id'][row_index]),
+                'receiver_id': _csv_identifier(arrays['receiver_id'][row_index]),
+                'source_node_id': int(arrays['source_node_id'][row_index]),
+                'receiver_node_id': int(arrays['receiver_node_id'][row_index]),
+                'source_x_m': _csv_float(arrays['source_x_m'][row_index]),
+                'source_y_m': _csv_float(arrays['source_y_m'][row_index]),
+                'receiver_x_m': _csv_float(arrays['receiver_x_m'][row_index]),
+                'receiver_y_m': _csv_float(arrays['receiver_y_m'][row_index]),
+                'midpoint_x_m': _csv_float(arrays['midpoint_x_m'][row_index]),
+                'midpoint_y_m': _csv_float(arrays['midpoint_y_m'][row_index]),
+                'inline_m': _csv_float(arrays['inline_m'][row_index]),
+                'crossline_m': _csv_float(arrays['crossline_m'][row_index]),
+                'offset_m': _csv_float(arrays['offset_m'][row_index]),
+                'observed_first_break_time_s': _csv_float(
+                    arrays['observed_first_break_time_s'][row_index]
+                ),
+                'modeled_first_break_time_s': _csv_float(
+                    arrays['modeled_first_break_time_s'][row_index]
+                ),
+                'residual_time_s': _csv_float(arrays['residual_time_s'][row_index]),
+                'residual_s': _csv_float(arrays['residual_s'][row_index]),
+                'residual_time_ms': _csv_float(arrays['residual_time_ms'][row_index]),
+                'layer_kind': str(arrays['layer_kind'][row_index]),
+                'cell_id': _csv_cell_id(arrays['cell_id'][row_index]),
+                'cell_ix': _csv_cell_id(arrays['cell_ix'][row_index]),
+                'cell_iy': _csv_cell_id(arrays['cell_iy'][row_index]),
+                'used_for_inversion': _csv_bool(
+                    arrays['used_for_inversion'][row_index]
+                ),
+                'used_in_solve': _csv_bool(arrays['used_in_solve'][row_index]),
+                'rejection_reason': rejection_reason,
+                'reject_reason': rejection_reason,
+                'status': str(arrays['status'][row_index]),
+                'sign_convention': str(arrays['sign_convention'][row_index]),
+            }
+        )
+    return rows
+
+
 def _source_job_id(
     source_job_id: str | None,
     req: RefractionStaticApplyRequest | None,
@@ -4383,6 +4768,39 @@ def _midpoint_coordinate(left: np.ndarray, right: np.ndarray) -> np.ndarray:
     out = 0.5 * (left_arr + right_arr)
     out[~np.isfinite(left_arr) | ~np.isfinite(right_arr)] = np.nan
     return np.ascontiguousarray(out, dtype=np.float64)
+
+
+def _first_break_fit_inline_crossline(
+    *,
+    midpoint_x_m: np.ndarray,
+    midpoint_y_m: np.ndarray,
+    req: RefractionStaticApplyRequest | None,
+) -> tuple[np.ndarray, np.ndarray]:
+    midpoint_x = np.asarray(midpoint_x_m, dtype=np.float64)
+    midpoint_y = np.asarray(midpoint_y_m, dtype=np.float64)
+    inline = np.full(midpoint_x.shape, np.nan, dtype=np.float64)
+    crossline = np.full(midpoint_x.shape, np.nan, dtype=np.float64)
+    if req is None or req.model.refractor_cell is None:
+        return inline, crossline
+    refractor_cell = req.model.refractor_cell
+    if refractor_cell.coordinate_mode != 'line_2d_projected':
+        return inline, crossline
+    projected = project_refraction_cell_points(
+        x_m=midpoint_x,
+        y_m=midpoint_y,
+        mode=refractor_cell.coordinate_mode,
+        line_origin_x_m=refractor_cell.line_origin_x_m,
+        line_origin_y_m=refractor_cell.line_origin_y_m,
+        line_azimuth_deg=refractor_cell.line_azimuth_deg,
+    )
+    if projected.projected_inline_m is not None:
+        inline = projected.projected_inline_m
+    if projected.projected_crossline_m is not None:
+        crossline = projected.projected_crossline_m
+    return (
+        np.ascontiguousarray(inline, dtype=np.float64),
+        np.ascontiguousarray(crossline, dtype=np.float64),
+    )
 
 
 def _residual_row_layer_context(
@@ -7331,6 +7749,12 @@ def _endpoint_cell_id_array(value: object, shape: int) -> np.ndarray:
     return np.ascontiguousarray(value, dtype=np.int64)
 
 
+def _cell_id_float_array(value: object) -> np.ndarray:
+    out = np.asarray(value, dtype=np.float64).copy()
+    out[out < 0] = np.nan
+    return np.ascontiguousarray(out, dtype=np.float64)
+
+
 def _endpoint_v2_status_array(value: object, shape: int) -> np.ndarray:
     if value is None:
         return _string_array(np.full(int(shape), 'ok', dtype='<U2'))
@@ -7646,6 +8070,10 @@ def _assert_strict_json(payload: dict[str, Any], *, artifact_name: str) -> None:
 
 __all__ = [
     'FIRST_BREAK_RESIDUALS_CSV_NAME',
+    'FIRST_BREAK_FIT_QC_RESIDUAL_SIGN',
+    'REFRACTION_FIRST_BREAK_FIT_QC_CSV_NAME',
+    'REFRACTION_FIRST_BREAK_FIT_QC_JSON_NAME',
+    'REFRACTION_FIRST_BREAK_FIT_QC_NPZ_NAME',
     'REFRACTION_FIRST_BREAK_TIME_EXPORT_CSV_NAME',
     'NEAR_SURFACE_MODEL_CSV_NAME',
     'REFRACTION_CELL_SOLVER_HISTORY_CSV_NAME',
@@ -7679,6 +8107,8 @@ __all__ = [
     'RefractionStaticArtifactError',
     'RefractionStaticArtifactSet',
     'build_refraction_cell_solver_history_rows',
+    'build_refraction_first_break_fit_qc_arrays',
+    'build_refraction_first_break_fit_qc_payload',
     'build_refraction_refractor_velocity_grid_arrays',
     'build_refraction_refractor_velocity_qc_payload',
     'build_refraction_static_history_payload',
@@ -7690,6 +8120,9 @@ __all__ = [
     'static_history_double_application_qc',
     'write_first_break_residuals_csv',
     'write_near_surface_model_csv',
+    'write_refraction_first_break_fit_qc_csv',
+    'write_refraction_first_break_fit_qc_json',
+    'write_refraction_first_break_fit_qc_npz',
     'write_refraction_first_break_time_export_csv',
     'write_refraction_cell_solver_history_csv',
     'write_refraction_refractor_velocity_cells_csv',

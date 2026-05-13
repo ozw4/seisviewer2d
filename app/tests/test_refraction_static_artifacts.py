@@ -13,8 +13,12 @@ import app.services.refraction_static_artifacts as artifact_module
 from app.services.refraction_static_artifacts import (
     FIRST_BREAK_RESIDUALS_CSV_NAME,
     NEAR_SURFACE_MODEL_CSV_NAME,
+    REFRACTION_FIRST_BREAK_FIT_QC_CSV_NAME,
+    REFRACTION_FIRST_BREAK_FIT_QC_JSON_NAME,
+    REFRACTION_FIRST_BREAK_FIT_QC_NPZ_NAME,
     REFRACTION_CELL_SOLVER_HISTORY_CSV_NAME,
     REFRACTION_FIRST_BREAK_TIME_EXPORT_CSV_NAME,
+    FIRST_BREAK_FIT_QC_RESIDUAL_SIGN,
     REFRACTION_REFRACTOR_VELOCITY_CELLS_CSV_NAME,
     REFRACTION_REFRACTOR_VELOCITY_GRID_NPZ_NAME,
     REFRACTION_REFRACTOR_VELOCITY_QC_JSON_NAME,
@@ -131,6 +135,9 @@ EXPECTED_FILENAMES = {
     NEAR_SURFACE_MODEL_CSV_NAME,
     FIRST_BREAK_RESIDUALS_CSV_NAME,
     REFRACTION_FIRST_BREAK_TIME_EXPORT_CSV_NAME,
+    REFRACTION_FIRST_BREAK_FIT_QC_CSV_NAME,
+    REFRACTION_FIRST_BREAK_FIT_QC_NPZ_NAME,
+    REFRACTION_FIRST_BREAK_FIT_QC_JSON_NAME,
     REFRACTION_STATIC_COMPONENTS_CSV_NAME,
     REFRACTION_STATIC_HISTORY_JSON_NAME,
     SOURCE_STATIC_TABLE_CSV_NAME,
@@ -183,6 +190,9 @@ def test_write_refraction_static_artifacts_npz_schema(tmp_path: Path) -> None:
         NEAR_SURFACE_MODEL_CSV_NAME,
         FIRST_BREAK_RESIDUALS_CSV_NAME,
         REFRACTION_FIRST_BREAK_TIME_EXPORT_CSV_NAME,
+        REFRACTION_FIRST_BREAK_FIT_QC_CSV_NAME,
+        REFRACTION_FIRST_BREAK_FIT_QC_NPZ_NAME,
+        REFRACTION_FIRST_BREAK_FIT_QC_JSON_NAME,
         REFRACTION_STATIC_COMPONENTS_CSV_NAME,
         SOURCE_STATIC_TABLE_CSV_NAME,
         RECEIVER_STATIC_TABLE_CSV_NAME,
@@ -447,7 +457,9 @@ def test_write_refraction_static_artifacts_qc_json(tmp_path: Path) -> None:
     assert payload['status_counts']['trace_static_status']['ok'] == 3
     assert payload['status_counts']['node_datum_status']['ok'] == 2
     assert payload['first_break_fit']['residual_rms_ms'] == pytest.approx(1.0)
-    assert len(payload['artifacts']) == 12
+    assert len(payload['artifacts']) == len(
+        EXPECTED_FILENAMES - {REFRACTION_STATIC_ARTIFACTS_JSON_NAME}
+    )
     artifact_names = {item['name'] for item in payload['artifacts']}
     assert REFRACTION_V1_QC_JSON_NAME not in artifact_names
     assert REFRACTION_V1_ESTIMATES_CSV_NAME not in artifact_names
@@ -795,6 +807,92 @@ def test_first_break_time_export_residual_matches_solution_npz(
         np.asarray([float(row['residual_ms']) for row in rows]),
         residual_ms,
     )
+
+
+def test_first_break_fit_qc_csv_npz_json_are_consistent(tmp_path: Path) -> None:
+    paths = write_refraction_static_artifacts(
+        result=_result(),
+        req=_request(),
+        job_dir=tmp_path,
+    )
+
+    rows = _read_csv(paths.refraction_first_break_fit_qc_csv)
+    payload = json.loads(
+        paths.refraction_first_break_fit_qc_json.read_text(encoding='utf-8')
+    )
+    with np.load(paths.refraction_first_break_fit_qc_npz, allow_pickle=False) as data:
+        observed = data['observed_first_break_time_s']
+        modeled = data['modeled_first_break_time_s']
+        residual = data['residual_time_s']
+        used = data['used_for_inversion']
+
+    assert payload['residual_sign'] == FIRST_BREAK_FIT_QC_RESIDUAL_SIGN
+    assert payload['residual_definition'] == (
+        'residual_time_s = observed_first_break_time_s - '
+        'modeled_first_break_time_s'
+    )
+    assert payload['row_count'] == len(rows) == 3
+    assert payload['used_count'] == 2
+    assert payload['rejected_count'] == 1
+    assert rows[0]['trace_index_sorted'] == '0'
+    assert rows[0]['source_endpoint_key'] == 's0'
+    assert rows[0]['receiver_endpoint_key'] == 'r0'
+    assert rows[0]['source_node_id'] == '0'
+    assert rows[0]['receiver_node_id'] == '1'
+    assert rows[0]['status'] == 'ok'
+    assert rows[1]['status'] == 'rejected'
+    assert rows[1]['rejection_reason'] == 'robust_outlier'
+    assert rows[1]['used_for_inversion'] == 'false'
+    assert rows[0]['sign_convention'] == 'corrected(t) = raw(t - shift_s)'
+
+    np.testing.assert_allclose(observed - modeled, residual)
+    np.testing.assert_allclose(
+        np.asarray([float(row['observed_first_break_time_s']) for row in rows]),
+        observed,
+    )
+    np.testing.assert_allclose(
+        np.asarray([float(row['modeled_first_break_time_s']) for row in rows]),
+        modeled,
+    )
+    np.testing.assert_allclose(
+        np.asarray([float(row['residual_time_s']) for row in rows]),
+        residual,
+    )
+    assert payload['residual_summary']['used_rms_s'] == pytest.approx(
+        float(np.sqrt(np.mean(residual[used] * residual[used])))
+    )
+
+
+def test_first_break_fit_qc_reports_cell_and_multilayer_context(
+    tmp_path: Path,
+) -> None:
+    result = replace(
+        _solve_cell_result(),
+        row_layer_kind=np.asarray(['v2_t1', 'v3_t2', 'vsub_t3'], dtype='<U16'),
+        row_rejection_reason=np.asarray(
+            ['ok', 'outside_layer_offset_gate', 'ok'],
+            dtype='<U32',
+        ),
+        used_row_mask=np.asarray([True, False, True], dtype=bool),
+        rejected_by_robust_mask=np.asarray([False, False, False], dtype=bool),
+    )
+
+    paths = write_refraction_static_artifacts(
+        result=result,
+        req=_solve_cell_request(),
+        job_dir=tmp_path,
+    )
+
+    rows = _read_csv(paths.refraction_first_break_fit_qc_csv)
+    with np.load(paths.refraction_first_break_fit_qc_npz, allow_pickle=False) as data:
+        assert data['layer_kind'].tolist() == ['v2_t1', 'v3_t2', 'vsub_t3']
+        np.testing.assert_allclose(data['cell_ix'], np.asarray([0.0, 1.0, 0.0]))
+        np.testing.assert_allclose(data['cell_iy'], np.asarray([0.0, 0.0, 0.0]))
+
+    assert [row['layer_kind'] for row in rows] == ['v2_t1', 'v3_t2', 'vsub_t3']
+    assert [row['cell_ix'] for row in rows] == ['0', '1', '0']
+    assert rows[1]['status'] == 'rejected'
+    assert rows[1]['rejection_reason'] == 'outside_layer_offset_gate'
 
 
 def test_refraction_static_artifacts_manifest_and_download_visibility(

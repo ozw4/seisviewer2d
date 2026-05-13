@@ -13,6 +13,7 @@ from app.services.job_manager import JobManager
 from app.services.refraction_static_artifacts import (
     FIRST_BREAK_RESIDUALS_CSV_NAME,
     NEAR_SURFACE_MODEL_CSV_NAME,
+    REFRACTION_FIRST_BREAK_FIT_QC_CSV_NAME,
     REFRACTION_FIRST_BREAK_TIME_EXPORT_CSV_NAME,
     REFRACTION_REFRACTOR_VELOCITY_CELLS_CSV_NAME,
     REFRACTION_STATIC_ARTIFACTS_JSON_NAME,
@@ -42,6 +43,11 @@ class _TabularViewSpec:
 
 
 _TABULAR_VIEW_SPECS: tuple[_TabularViewSpec, ...] = (
+    _TabularViewSpec(
+        include='first_break',
+        view_name='first_break_fit',
+        artifact_name=REFRACTION_FIRST_BREAK_FIT_QC_CSV_NAME,
+    ),
     _TabularViewSpec(
         include='first_break',
         view_name='first_break_residual',
