@@ -141,9 +141,9 @@
       axisLabel: 'Time term',
       unit: 'ms',
       series: [
-        { key: 't1', columns: ['t1_s'], label: 'T1', layers: ['v2_t1'], scale: 1000.0 },
-        { key: 't2', columns: ['t2_s'], label: 'T2', layers: ['v3_t2'], scale: 1000.0 },
-        { key: 't3', columns: ['t3_s'], label: 'T3', layers: ['vsub_t3'], scale: 1000.0 },
+        { key: 't1', columns: ['t1_ms'], label: 'T1', layers: ['v2_t1'] },
+        { key: 't2', columns: ['t2_ms'], label: 'T2', layers: ['v3_t2'] },
+        { key: 't3', columns: ['t3_ms'], label: 'T3', layers: ['vsub_t3'] },
       ],
     },
     velocities: {
@@ -162,9 +162,9 @@
       axisLabel: 'Thickness / elevation',
       unit: 'm',
       series: [
-        { key: 'sh1_m', columns: ['sh1_m'], label: 'SH1', layers: ['v2_t1'] },
-        { key: 'sh2_m', columns: ['sh2_m'], label: 'SH2', layers: ['v3_t2'] },
-        { key: 'sh3_m', columns: ['sh3_m'], label: 'SH3', layers: ['vsub_t3'] },
+        { key: 'sh1_m', columns: ['sh1_weathering_thickness_m', 'sh1_m'], label: 'SH1', layers: ['v2_t1'] },
+        { key: 'sh2_m', columns: ['sh2_weathering_thickness_m', 'sh2_m'], label: 'SH2', layers: ['v3_t2'] },
+        { key: 'sh3_m', columns: ['sh3_weathering_thickness_m', 'sh3_m'], label: 'SH3', layers: ['vsub_t3'] },
         { key: 'layer1_base_elevation_m', columns: ['layer1_base_elevation_m'], label: 'Layer 1 base', layers: ['v2_t1'] },
         { key: 'layer2_base_elevation_m', columns: ['layer2_base_elevation_m'], label: 'Layer 2 base', layers: ['v3_t2', 'vsub_t3'] },
         { key: 'final_refractor_elevation_m', columns: ['final_refractor_elevation_m'], label: 'Final refractor', layers: ['v2_t1', 'v3_t2', 'vsub_t3'] },
@@ -175,11 +175,11 @@
       axisLabel: 'Static shift',
       unit: 'ms',
       series: [
-        { key: 'weathering_correction', columns: ['weathering_correction_s'], label: 'Weathering correction', scale: 1000.0 },
-        { key: 'elevation_correction', columns: ['elevation_correction_s'], label: 'Elevation / datum correction', scale: 1000.0 },
-        { key: 'field_shift', columns: ['field_shift_s'], label: 'Field correction', scale: 1000.0 },
-        { key: 'manual_static_shift', columns: ['manual_static_shift_s'], label: 'Manual static', scale: 1000.0 },
-        { key: 'total_applied_shift', columns: ['total_applied_shift_s'], label: 'Final applied static', scale: 1000.0 },
+        { key: 'weathering_correction', columns: ['weathering_correction_ms'], label: 'Weathering correction' },
+        { key: 'elevation_correction', columns: ['elevation_correction_ms'], label: 'Elevation / datum correction' },
+        { key: 'field_shift', columns: ['field_correction_ms'], label: 'Field correction' },
+        { key: 'manual_static_shift', columns: ['manual_static_ms'], label: 'Manual static' },
+        { key: 'total_applied_shift', columns: ['total_applied_shift_ms'], label: 'Final applied static' },
       ],
     },
     qc_metrics: {
@@ -187,10 +187,10 @@
       axisLabel: 'QC metric',
       unit: 'mixed',
       series: [
-        { key: 'pick_fold', columns: ['pick_fold'], label: 'Pick fold', unit: 'count' },
-        { key: 'used_pick_fold', columns: ['used_pick_fold'], label: 'Used pick fold', unit: 'count' },
-        { key: 'residual_rms', columns: ['residual_rms_s'], label: 'Residual RMS', unit: 'ms', scale: 1000.0 },
-        { key: 'residual_mad', columns: ['residual_mad_s'], label: 'Residual MAD', unit: 'ms', scale: 1000.0 },
+        { key: 'pick_fold', columns: ['pick_count'], label: 'Pick fold', unit: 'count' },
+        { key: 'used_pick_fold', columns: ['used_pick_count'], label: 'Used pick fold', unit: 'count' },
+        { key: 'residual_rms', columns: ['residual_rms_ms'], label: 'Residual RMS', unit: 'ms' },
+        { key: 'residual_mad', columns: ['residual_mad_ms'], label: 'Residual MAD', unit: 'ms' },
       ],
     },
   };
@@ -214,72 +214,56 @@
     {
       key: 'weathering',
       label: 'Weathering correction',
-      endpointColumns: {
-        source: ['source_weathering_correction_s'],
-        receiver: ['receiver_weathering_correction_s'],
-      },
+      columns: ['weathering_correction_ms'],
       statusColumns: ['weathering_status', 'solution_status'],
-      scale: 1000.0,
     },
     {
       key: 'datum',
       label: 'Datum / elevation correction',
-      endpointColumns: {
-        source: ['source_elevation_correction_s'],
-        receiver: ['receiver_elevation_correction_s'],
-      },
+      columns: ['elevation_correction_ms'],
       statusColumns: ['datum_status'],
-      scale: 1000.0,
     },
     {
       key: 'source_depth',
       label: 'Source-depth correction',
-      endpointColumns: {
-        source: ['source_depth_shift_s'],
-        receiver: [],
-      },
+      columns: ['source_depth_correction_ms'],
       statusColumns: ['source_depth_status'],
-      scale: 1000.0,
     },
     {
       key: 'uphole',
       label: 'Uphole correction',
-      endpointColumns: {
-        source: ['source_uphole_shift_s'],
-        receiver: [],
-      },
+      columns: ['uphole_correction_ms'],
       statusColumns: ['uphole_status'],
-      scale: 1000.0,
     },
     {
       key: 'manual',
       label: 'Manual static',
-      endpointColumns: {
-        source: ['source_manual_static_shift_s'],
-        receiver: ['receiver_manual_static_shift_s'],
-      },
+      columns: ['manual_static_ms'],
       statusColumns: ['manual_static_status'],
-      scale: 1000.0,
     },
     {
-      key: 'field',
-      label: 'Field correction',
-      endpointColumns: {
-        source: ['source_field_shift_s'],
-        receiver: ['receiver_field_shift_s'],
-      },
+      key: 'computed_field',
+      label: 'Computed field correction',
+      columns: ['computed_field_correction_ms'],
       statusColumns: ['field_static_status', 'field_status'],
-      scale: 1000.0,
+    },
+    {
+      key: 'applied_field',
+      label: 'Applied field correction',
+      columns: ['applied_field_correction_ms'],
+      statusColumns: ['field_static_status', 'field_status'],
     },
     {
       key: 'total',
       label: 'Final endpoint shift',
-      endpointColumns: {
-        source: ['source_total_applied_shift_s'],
-        receiver: ['receiver_total_applied_shift_s'],
-      },
+      columns: ['total_applied_shift_ms'],
       statusColumns: ['static_status'],
-      scale: 1000.0,
+    },
+    {
+      key: 'total_with_field',
+      label: 'Total with computed field shift',
+      columns: ['total_with_field_shift_ms'],
+      statusColumns: ['static_status'],
     },
   ];
 
@@ -287,20 +271,47 @@
     {
       key: 'refraction',
       label: 'Refraction shift',
-      columns: ['refraction_trace_shift_s_sorted'],
-      scale: 1000.0,
+      columns: ['refraction_shift_ms'],
     },
     {
-      key: 'field',
-      label: 'Field correction',
-      columns: ['trace_field_shift_s_sorted'],
-      scale: 1000.0,
+      key: 'weathering',
+      label: 'Weathering shift',
+      columns: ['weathering_shift_ms'],
+    },
+    {
+      key: 'datum',
+      label: 'Datum shift',
+      columns: ['datum_shift_ms'],
+    },
+    {
+      key: 'computed_field',
+      label: 'Computed field shift',
+      columns: ['computed_field_shift_ms'],
+    },
+    {
+      key: 'applied_field',
+      label: 'Applied field shift',
+      columns: ['applied_field_shift_ms'],
+    },
+    {
+      key: 'manual',
+      label: 'Manual static shift',
+      columns: ['manual_static_shift_ms'],
+    },
+    {
+      key: 'source_depth',
+      label: 'Source-depth shift',
+      columns: ['source_depth_shift_ms'],
+    },
+    {
+      key: 'uphole',
+      label: 'Uphole shift',
+      columns: ['uphole_shift_ms'],
     },
     {
       key: 'final',
       label: 'Final applied trace shift',
-      columns: ['final_trace_shift_s_sorted'],
-      scale: 1000.0,
+      columns: ['final_trace_shift_ms'],
     },
   ];
 
