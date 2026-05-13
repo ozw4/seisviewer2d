@@ -936,6 +936,11 @@ class RefractionStaticArtifactSet:
     source_static_table_csv: Path
     receiver_static_table_csv: Path
     source_receiver_static_table_npz: Path
+    refraction_line_profile_qc_source_csv: Path
+    refraction_line_profile_qc_receiver_csv: Path
+    refraction_line_profile_qc_combined_csv: Path
+    refraction_line_profile_qc_npz: Path
+    refraction_line_profile_qc_json: Path
     refraction_time_term_spreadsheet_csv: Path
     static_history_json: Path
     manifest_json: Path | None
