@@ -2,7 +2,7 @@
 
 import math
 from pathlib import Path
-from typing import Any, Literal
+from typing import Annotated, Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
@@ -3070,6 +3070,107 @@ class RefractionStaticQcBundleResponse(BaseModel):
     downsampling: dict[str, RefractionStaticQcDownsamplingEntry] = Field(
         default_factory=dict,
     )
+
+
+class RefractionStaticQcDrilldownEndpointTarget(BaseModel):
+    """Endpoint target for detailed refraction QC drilldown."""
+
+    model_config = ConfigDict(extra='forbid')
+
+    kind: Literal['endpoint']
+    endpoint_kind: Literal['source', 'receiver']
+    endpoint_key: str
+
+    @field_validator('endpoint_key')
+    @classmethod
+    def _check_endpoint_key(cls, value: str) -> str:
+        if not isinstance(value, str) or not value:
+            raise ValueError('target.endpoint_key must be a non-empty string')
+        return value
+
+
+class RefractionStaticQcDrilldownCellTarget(BaseModel):
+    """Cell target for detailed refraction QC drilldown."""
+
+    model_config = ConfigDict(extra='forbid')
+
+    kind: Literal['cell']
+    layer_kind: RefractionStaticLayerKind = 'v2_t1'
+    cell_ix: int
+    cell_iy: int
+
+    @field_validator('cell_ix', 'cell_iy', mode='before')
+    @classmethod
+    def _check_cell_index(cls, value: object, info: Any) -> int:
+        return require_non_negative_int(value, f'target.{info.field_name}')
+
+
+RefractionStaticQcDrilldownTarget = Annotated[
+    RefractionStaticQcDrilldownEndpointTarget | RefractionStaticQcDrilldownCellTarget,
+    Field(discriminator='kind'),
+]
+
+
+class RefractionStaticQcDrilldownRequest(BaseModel):
+    """Request model for detailed refraction QC drilldown."""
+
+    model_config = ConfigDict(extra='forbid')
+
+    job_id: str
+    target: RefractionStaticQcDrilldownTarget
+    max_observations: int = 200
+
+    @field_validator('job_id')
+    @classmethod
+    def _check_job_id(cls, value: str) -> str:
+        if not isinstance(value, str) or not value:
+            raise ValueError('job_id must be a non-empty string')
+        return value
+
+    @field_validator('max_observations', mode='before')
+    @classmethod
+    def _check_max_observations(cls, value: object) -> int:
+        return require_positive_int(value, 'max_observations')
+
+
+class RefractionStaticQcDrilldownObservations(BaseModel):
+    """Capped contributing-observation records for a drilldown target."""
+
+    model_config = ConfigDict(extra='forbid')
+
+    total_count: int
+    returned_count: int
+    capped: bool
+    cap_method: str
+    records: list[dict[str, Any]]
+
+
+class RefractionStaticQcDrilldownResponse(BaseModel):
+    """Detailed refraction QC drilldown assembled from completed artifacts."""
+
+    model_config = ConfigDict(extra='forbid')
+
+    job_id: str
+    statics_kind: Literal['refraction']
+    sign_convention: str
+    drilldown_kind: Literal['endpoint', 'cell']
+    target: dict[str, Any]
+    max_observations: int
+    artifacts: dict[str, str]
+    observations: RefractionStaticQcDrilldownObservations
+    residual_summary: dict[str, Any]
+    endpoint: dict[str, Any] | None = None
+    cell: dict[str, Any] | None = None
+    static_components: dict[str, Any] | None = None
+    time_terms: dict[str, Any] | None = None
+    thicknesses: dict[str, Any] | None = None
+    velocities: dict[str, Any] | None = None
+    pick_counts: dict[str, Any] | None = None
+    statuses: dict[str, Any] | None = None
+    velocity: dict[str, Any] | None = None
+    fold: dict[str, Any] | None = None
+    endpoint_counts: dict[str, Any] | None = None
+    neighbor_velocity_summary: dict[str, Any] | None = None
 
 
 class RefractionStaticTableApplyRequest(BaseModel):

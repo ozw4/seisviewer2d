@@ -21,6 +21,8 @@ from app.api.schemas import (
     RefractionStaticExportJobResponse,
     RefractionStaticQcBundleRequest,
     RefractionStaticQcBundleResponse,
+    RefractionStaticQcDrilldownRequest,
+    RefractionStaticQcDrilldownResponse,
     RefractionStaticTableApplyRequest,
     RefractionStaticTableApplyResponse,
     ResidualStaticApplyRequest,
@@ -51,6 +53,11 @@ from app.services.refraction_static_export_service import (
 from app.services.refraction_static_qc_bundle import (
     RefractionStaticQcBundleError,
     build_refraction_static_qc_bundle,
+)
+from app.services.refraction_static_qc_drilldown import (
+    RefractionStaticQcDrilldownError,
+    RefractionStaticQcDrilldownNotFound,
+    build_refraction_static_qc_drilldown,
 )
 from app.services.refraction_static_service import run_refraction_static_apply_job
 from app.services.refraction_static_table_apply_service import (
@@ -312,6 +319,31 @@ def refraction_static_qc_bundle(
             req=req,
         )
     except RefractionStaticQcBundleError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+
+@router.post(
+    '/statics/refraction/qc/drilldown',
+    response_model=RefractionStaticQcDrilldownResponse,
+    response_model_exclude_none=True,
+)
+def refraction_static_qc_drilldown(
+    req: RefractionStaticQcDrilldownRequest,
+    request: Request,
+) -> RefractionStaticQcDrilldownResponse:
+    """Return detailed QC rows for a selected refraction endpoint or cell."""
+    state = get_state(request.app)
+    cleanup_in_memory_state(state)
+    job = _get_static_job_or_404(state, req.job_id)
+    try:
+        return build_refraction_static_qc_drilldown(
+            job_id=req.job_id,
+            job=job,
+            req=req,
+        )
+    except RefractionStaticQcDrilldownNotFound as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except RefractionStaticQcDrilldownError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
 
 
