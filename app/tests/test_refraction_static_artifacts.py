@@ -886,11 +886,14 @@ def test_first_break_fit_qc_reports_cell_and_multilayer_context(
     rows = _read_csv(paths.refraction_first_break_fit_qc_csv)
     with np.load(paths.refraction_first_break_fit_qc_npz, allow_pickle=False) as data:
         assert data['layer_kind'].tolist() == ['v2_t1', 'v3_t2', 'vsub_t3']
-        np.testing.assert_allclose(data['cell_ix'], np.asarray([0.0, 1.0, 0.0]))
-        np.testing.assert_allclose(data['cell_iy'], np.asarray([0.0, 0.0, 0.0]))
+        np.testing.assert_allclose(data['cell_id'], np.asarray([0.0, np.nan, np.nan]))
+        np.testing.assert_allclose(data['cell_ix'], np.asarray([0.0, np.nan, np.nan]))
+        np.testing.assert_allclose(data['cell_iy'], np.asarray([0.0, np.nan, np.nan]))
 
     assert [row['layer_kind'] for row in rows] == ['v2_t1', 'v3_t2', 'vsub_t3']
-    assert [row['cell_ix'] for row in rows] == ['0', '1', '0']
+    assert [row['cell_id'] for row in rows] == ['0', '', '']
+    assert [row['cell_ix'] for row in rows] == ['0', '', '']
+    assert [row['cell_iy'] for row in rows] == ['0', '', '']
     assert rows[1]['status'] == 'rejected'
     assert rows[1]['rejection_reason'] == 'outside_layer_offset_gate'
 

@@ -4890,12 +4890,11 @@ def _residual_row_cell_context(
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     n_rows = int(result.row_trace_index_sorted.shape[0])
     empty = np.full(n_rows, -1, dtype=np.int64)
-    request_has_cell_velocity = (
-        req is not None
-        and _request_has_cell_velocity_layer(
-            RefractionStaticApplyRequest.model_validate(req)
-        )
+    request = RefractionStaticApplyRequest.model_validate(req) if req is not None else None
+    request_cell_layer_kinds = (
+        _request_cell_velocity_layer_kinds(request) if request is not None else ()
     )
+    request_has_cell_velocity = bool(request_cell_layer_kinds)
     if (
         not request_has_cell_velocity
         and result.bedrock_velocity_mode != 'solve_cell'
@@ -4911,6 +4910,14 @@ def _residual_row_cell_context(
         raise RefractionStaticArtifactError(
             'row_midpoint_cell_id length must match residual rows'
         )
+    if request is not None and request_has_cell_velocity:
+        layer_kind_by_row, _layer_index_by_row = _residual_row_layer_context(result)
+        if np.any(layer_kind_by_row.astype(str, copy=False) != ''):
+            supported_layer = np.isin(
+                layer_kind_by_row.astype(str, copy=False),
+                np.asarray(request_cell_layer_kinds, dtype=str),
+            )
+            cell_id = np.where(supported_layer, cell_id, -1)
     number_of_cell_x = _residual_cell_x_count(result=result, req=req)
     cell_ix = np.full(n_rows, -1, dtype=np.int64)
     cell_iy = np.full(n_rows, -1, dtype=np.int64)

@@ -156,25 +156,26 @@ Future M6 APIs should be thin, typed views over existing artifacts.
   practical. A bundle endpoint should primarily return manifests, summaries,
   small samples, artifact references, and URLs for detailed products.
 
-The primary future bundle endpoint shape is:
+The implemented compact bundle endpoint is:
 
 ```text
-GET /statics/refraction/qc/bundle?job_id=<JOB_ID>
+POST /statics/refraction/qc
 ```
 
-Specialized detail endpoints may be added later for each product family:
+with a JSON body:
 
-```text
-GET /statics/refraction/qc/first-break-fit
-GET /statics/refraction/qc/reduced-time
-GET /statics/refraction/qc/profile
-GET /statics/refraction/qc/map
-GET /statics/refraction/qc/static-composition
-GET /statics/refraction/qc/gather-preview
+```json
+{
+  "job_id": "refraction-job-123",
+  "include": ["summary", "first_break", "profiles", "cells", "static_components"],
+  "max_points": 20000,
+  "coordinate_mode": "auto"
+}
 ```
 
-These names define the contract only. M6 does not implement them in this
-documentation issue.
+The current M6 API contract is the bundle route above. Specialized detail
+endpoints may be added later, but this document does not define callable route
+names for them.
 
 Logical M6 product family names are:
 
@@ -647,10 +648,10 @@ If a job did not register a corrected TraceStore, the preview endpoint may
 return only overlay and shift arrays plus a `corrected_window_ref` status of
 `not_registered`. It must not synthesize a hidden fallback TraceStore.
 
-## 11. Future QC bundle response example
+## 11. QC bundle response example
 
-The future bundle endpoint should provide a compact manifest that lets a viewer
-discover available QC products before requesting large detail payloads.
+The bundle endpoint provides a compact manifest that lets a viewer discover
+available QC products before requesting large detail payloads.
 
 ```json
 {
@@ -701,7 +702,7 @@ discover available QC products before requesting large detail payloads.
   "products": {
     "first_break_fit": {
       "available": true,
-      "detail_url": "/statics/refraction/qc/first-break-fit?job_id=refraction-job-123",
+      "artifact": "refraction_first_break_fit_qc.csv",
       "row_count": 18420,
       "fields": [
         "observed_time_s",
@@ -720,7 +721,7 @@ discover available QC products before requesting large detail payloads.
     },
     "reduced_time": {
       "available": true,
-      "detail_url": "/statics/refraction/qc/reduced-time?job_id=refraction-job-123",
+      "artifact": "refraction_first_break_time_export.csv",
       "default_reduction_velocity_m_s": 2400.0,
       "offset_gates": [
         {
@@ -737,7 +738,7 @@ discover available QC products before requesting large detail payloads.
     },
     "profile_2d": {
       "available": true,
-      "detail_url": "/statics/refraction/qc/profile?job_id=refraction-job-123",
+      "artifact": "near_surface_model.csv",
       "x_axis": "inline_m",
       "tracks": [
         "t1_s",
@@ -760,7 +761,7 @@ discover available QC products before requesting large detail payloads.
     },
     "static_composition": {
       "available": true,
-      "detail_url": "/statics/refraction/qc/static-composition?job_id=refraction-job-123",
+      "artifact": "refraction_static_components.csv",
       "components": [
         "refraction_shift_s",
         "weathering_correction_s",
@@ -772,7 +773,6 @@ discover available QC products before requesting large detail payloads.
     },
     "gather_preview": {
       "available": true,
-      "detail_url": "/statics/refraction/qc/gather-preview?job_id=refraction-job-123",
       "raw_file_id": "input-file-id",
       "corrected_file_id": "corrected-file-id",
       "overlays": [
