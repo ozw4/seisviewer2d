@@ -40,7 +40,7 @@ class RefractionStaticGatherPreviewNotFound(LookupError):
 
 @dataclass(frozen=True)
 class _ResolvedWindow:
-    key1: int
+    key1: int | None
     x0: int
     x1: int
     y0: int
@@ -49,6 +49,8 @@ class _ResolvedWindow:
     y_indices: np.ndarray
     sorted_trace_indices: np.ndarray
     trace_indices: np.ndarray
+    key1_values: np.ndarray
+    section_x_indices: np.ndarray
     step_x: int
     step_y: int
     requested_trace_count: int
@@ -93,7 +95,7 @@ def build_refraction_static_gather_preview(
         artifacts_dir / REFRACTION_FIRST_BREAK_FIT_QC_NPZ_NAME,
     )
     key1 = _resolve_key1(req, reader=reader, fit_arrays=fit_arrays)
-    section_shape = _section_shape(reader, key1)
+    section_shape = _section_shape(reader, key1) if key1 is not None else None
     resolved = _resolve_window(
         req,
         reader=reader,
@@ -131,7 +133,6 @@ def build_refraction_static_gather_preview(
             state=state,
             raw_reader=reader,
             raw_samples_trace_major=raw_samples,
-            raw_section_shape=section_shape,
             resolved=resolved,
             selected_shifts=selected_shifts,
             dt_s=dt_s,
@@ -379,7 +380,7 @@ def _resolve_key1(
     *,
     reader: TraceStoreSectionReader,
     fit_arrays: dict[str, np.ndarray] | None,
-) -> int:
+) -> int | None:
     if req.key1 is not None:
         return int(req.key1)
     if req.gather_axis == 'section':
@@ -406,74 +407,113 @@ def _resolve_key1(
             'first-break QC trace_index_sorted contains out-of-range trace indices'
         )
     key1_values = np.unique(key1_header[matching_traces].astype(np.int64, copy=False))
-    if key1_values.size == 0:
-        raise RefractionStaticGatherPreviewNotFound(
-            f'Refraction {req.gather_axis} gather was not found: {req.endpoint_key}'
-        )
-    if key1_values.size > 1:
-        raise RefractionStaticGatherPreviewError(
-            f'Refraction {req.gather_axis} gather {req.endpoint_key} spans multiple '
-            'key1 values; provide key1 to select one section'
-        )
-    return int(key1_values[0])
+    if key1_values.size == 1:
+        return int(key1_values[0])
+    return None
 
 
 def _resolve_window(
     req: RefractionStaticGatherPreviewRequest,
     *,
     reader: TraceStoreSectionReader,
-    key1: int,
+    key1: int | None,
     dt_s: float,
-    section_shape: tuple[int, int],
+    section_shape: tuple[int, int] | None,
     fit_arrays: dict[str, np.ndarray] | None,
 ) -> _ResolvedWindow:
-    n_section_traces, n_samples = section_shape
-    x0 = 0 if req.x0 is None else int(req.x0)
-    x1 = n_section_traces - 1 if req.x1 is None else int(req.x1)
-    if x0 < 0 or x1 < x0 or x1 >= n_section_traces:
-        raise RefractionStaticGatherPreviewError('Trace range out of bounds')
+    if key1 is not None:
+        if section_shape is None:
+            raise RefractionStaticGatherPreviewError('Section shape is required')
+        n_section_traces, n_samples = section_shape
+        x0 = 0 if req.x0 is None else int(req.x0)
+        x1 = n_section_traces - 1 if req.x1 is None else int(req.x1)
+        if x0 < 0 or x1 < x0 or x1 >= n_section_traces:
+            raise RefractionStaticGatherPreviewError('Trace range out of bounds')
+    else:
+        if req.gather_axis not in {'source', 'receiver'}:
+            raise RefractionStaticGatherPreviewError(
+                'key1 is required for section gather previews'
+            )
+        x0 = 0
+        x1 = 0
+        n_samples = int(reader.traces.shape[1])
     y0, y1 = _resolve_sample_range(req, dt_s=dt_s, n_samples=n_samples)
     if y1 >= n_samples:
         raise RefractionStaticGatherPreviewError('Sample range out of bounds')
 
     effective_max_traces = min(int(req.max_traces), _MAX_SERVICE_TRACES)
     effective_max_samples = min(int(req.max_samples), _MAX_SERVICE_SAMPLES)
-    section_sorted_trace_indices = reader.get_trace_seq_for_value(
-        key1,
-        align_to='display',
-    )
-    if section_sorted_trace_indices.shape[0] != n_section_traces:
+    key1_header = np.asarray(reader.get_header(req.key1_byte))
+    if key1_header.ndim != 1 or key1_header.shape[0] != int(reader.traces.shape[0]):
         raise RefractionStaticGatherPreviewError(
-            'TraceStore section index does not match section trace count'
+            'TraceStore key1 header does not match trace count'
         )
-    candidate_x_indices = np.arange(x0, x1 + 1, dtype=np.int64)
-    if req.gather_axis in {'source', 'receiver'}:
+
+    section_sorted_trace_indices: np.ndarray | None = None
+    if key1 is None:
         if fit_arrays is None:
             raise RefractionStaticGatherPreviewError(
                 f'{REFRACTION_FIRST_BREAK_FIT_QC_NPZ_NAME} is required to validate '
                 f'{req.gather_axis} gather targets'
             )
-        endpoint_traces = set(
-            int(value)
-            for value in _endpoint_trace_indices(
-                fit_arrays,
-                gather_axis=req.gather_axis,
-                endpoint_key=req.endpoint_key,
-            ).tolist()
+        endpoint_sorted_trace_indices = _endpoint_trace_indices(
+            fit_arrays,
+            gather_axis=req.gather_axis,
+            endpoint_key=req.endpoint_key,
         )
-        candidate_x_indices = np.asarray(
-            [
-                int(pos)
-                for pos in candidate_x_indices.tolist()
-                if int(section_sorted_trace_indices[int(pos)]) in endpoint_traces
-            ],
+        _validate_sorted_trace_indices(endpoint_sorted_trace_indices, reader=reader)
+        candidate_x_indices = np.arange(
+            endpoint_sorted_trace_indices.size,
             dtype=np.int64,
         )
-        if candidate_x_indices.size == 0:
-            raise RefractionStaticGatherPreviewNotFound(
-                f'Refraction {req.gather_axis} gather was not found in the '
-                f'selected section/window: {req.endpoint_key}'
+        x1 = int(max(candidate_x_indices.size - 1, 0))
+    else:
+        section_sorted_trace_indices = reader.get_trace_seq_for_value(
+            key1,
+            align_to='display',
+        )
+        if section_shape is None or section_sorted_trace_indices.shape[0] != section_shape[0]:
+            raise RefractionStaticGatherPreviewError(
+                'TraceStore section index does not match section trace count'
             )
+        candidate_x_indices = np.arange(x0, x1 + 1, dtype=np.int64)
+        if req.gather_axis in {'source', 'receiver'}:
+            if fit_arrays is None:
+                raise RefractionStaticGatherPreviewError(
+                    f'{REFRACTION_FIRST_BREAK_FIT_QC_NPZ_NAME} is required to validate '
+                    f'{req.gather_axis} gather targets'
+                )
+            endpoint_traces = set(
+                int(value)
+                for value in _endpoint_trace_indices(
+                    fit_arrays,
+                    gather_axis=req.gather_axis,
+                    endpoint_key=req.endpoint_key,
+                ).tolist()
+            )
+            candidate_x_indices = np.asarray(
+                [
+                    int(pos)
+                    for pos in candidate_x_indices.tolist()
+                    if int(section_sorted_trace_indices[int(pos)]) in endpoint_traces
+                ],
+                dtype=np.int64,
+            )
+            if candidate_x_indices.size == 0:
+                raise RefractionStaticGatherPreviewNotFound(
+                    f'Refraction {req.gather_axis} gather was not found in the '
+                    f'selected section/window: {req.endpoint_key}'
+                )
+
+    if key1 is None:
+        section_x_by_sorted = _section_x_index_by_sorted_trace(reader)
+        candidate_sorted_trace_indices = endpoint_sorted_trace_indices
+        candidate_x_indices = np.asarray(
+            candidate_x_indices,
+            dtype=np.int64,
+        )
+    else:
+        candidate_sorted_trace_indices = section_sorted_trace_indices
 
     x_indices, step_x, requested_trace_count, trace_capped = _bounded_positions(
         candidate_x_indices,
@@ -489,10 +529,7 @@ def _resolve_window(
     y_indices = np.arange(y0, y1 + 1, step_y, dtype=np.int64)
     if x_indices.size == 0 or y_indices.size == 0:
         raise RefractionStaticGatherPreviewError('Requested preview window is empty')
-    sorted_trace_indices = np.asarray(
-        section_sorted_trace_indices[x_indices],
-        dtype=np.int64,
-    )
+    sorted_trace_indices = np.asarray(candidate_sorted_trace_indices[x_indices], dtype=np.int64)
     sorted_to_original = _reader_sorted_to_original(reader)
     if np.any(
         (sorted_trace_indices < 0)
@@ -502,8 +539,13 @@ def _resolve_window(
             'TraceStore section contains out-of-range sorted trace indices'
         )
     trace_indices = sorted_to_original[sorted_trace_indices]
+    selected_key1_values = key1_header[sorted_trace_indices].astype(np.int64, copy=False)
+    if key1 is None:
+        section_x_indices = section_x_by_sorted[sorted_trace_indices]
+    else:
+        section_x_indices = x_indices
     return _ResolvedWindow(
-        key1=int(key1),
+        key1=None if key1 is None else int(key1),
         x0=int(x0),
         x1=int(x1),
         y0=int(y0),
@@ -515,6 +557,8 @@ def _resolve_window(
             dtype=np.int64,
         ),
         trace_indices=np.ascontiguousarray(trace_indices, dtype=np.int64),
+        key1_values=np.ascontiguousarray(selected_key1_values, dtype=np.int64),
+        section_x_indices=np.ascontiguousarray(section_x_indices, dtype=np.int64),
         step_x=step_x,
         step_y=step_y,
         requested_trace_count=requested_trace_count,
@@ -657,6 +701,42 @@ def _select_sorted_trace_shifts(
     return np.ascontiguousarray(shifts[indices], dtype=np.float64)
 
 
+def _validate_sorted_trace_indices(
+    indices: np.ndarray,
+    *,
+    reader: TraceStoreSectionReader,
+) -> None:
+    arr = np.asarray(indices, dtype=np.int64)
+    if arr.ndim != 1:
+        raise RefractionStaticGatherPreviewError(
+            'first-break QC trace_index_sorted must be a 1D array'
+        )
+    if np.any((arr < 0) | (arr >= int(reader.traces.shape[0]))):
+        raise RefractionStaticGatherPreviewError(
+            'first-break QC trace_index_sorted contains out-of-range trace indices'
+        )
+
+
+def _section_x_index_by_sorted_trace(reader: TraceStoreSectionReader) -> np.ndarray:
+    n_traces = int(reader.traces.shape[0])
+    out = np.full(n_traces, -1, dtype=np.int64)
+    for key1_value in reader.get_key1_values().tolist():
+        section_indices = np.asarray(
+            reader.get_trace_seq_for_value(int(key1_value), align_to='display'),
+            dtype=np.int64,
+        )
+        if np.any((section_indices < 0) | (section_indices >= n_traces)):
+            raise RefractionStaticGatherPreviewError(
+                'TraceStore section contains out-of-range sorted trace indices'
+            )
+        out[section_indices] = np.arange(section_indices.size, dtype=np.int64)
+    if np.any(out < 0):
+        raise RefractionStaticGatherPreviewError(
+            'TraceStore section index does not cover all traces'
+        )
+    return np.ascontiguousarray(out, dtype=np.int64)
+
+
 def _select_overlay_rows(
     arrays: dict[str, np.ndarray] | None,
     *,
@@ -765,12 +845,11 @@ def _sample_trace_window(
     *,
     resolved: _ResolvedWindow,
 ) -> np.ndarray:
-    view = reader.get_section(int(resolved.key1))
-    base = view.arr
+    base = reader.traces
     if base.ndim != 2:
-        raise RefractionStaticGatherPreviewError('TraceStore section data must be 2D')
-    sub = base[np.ix_(resolved.x_indices, resolved.y_indices)]
-    samples = coerce_section_f32(sub, view.scale)
+        raise RefractionStaticGatherPreviewError('TraceStore data must be 2D')
+    sub = base[np.ix_(resolved.sorted_trace_indices, resolved.y_indices)]
+    samples = coerce_section_f32(sub, reader.scale)
     if not np.all(np.isfinite(samples)):
         raise RefractionStaticGatherPreviewError(
             'TraceStore preview samples contain non-finite values'
@@ -798,10 +877,9 @@ def _shifted_preview_samples(
     if not math.isfinite(dt) or dt <= 0.0:
         raise RefractionStaticGatherPreviewError('TraceStore sample interval is invalid')
 
-    view = reader.get_section(int(resolved.key1))
-    base = view.arr
+    base = reader.traces
     if base.ndim != 2:
-        raise RefractionStaticGatherPreviewError('TraceStore section data must be 2D')
+        raise RefractionStaticGatherPreviewError('TraceStore data must be 2D')
     n_samples = int(base.shape[1])
     display_samples = resolved.y_indices.astype(np.float64, copy=False)
     shift_samples = shifts / dt
@@ -810,8 +888,8 @@ def _shifted_preview_samples(
     raw_y0 = max(0, int(math.floor(source_min)) - 1)
     raw_y1 = min(n_samples - 1, int(math.ceil(source_max)) + 1)
     raw_y_indices = np.arange(raw_y0, raw_y1 + 1, dtype=np.int64)
-    expanded = base[np.ix_(resolved.x_indices, raw_y_indices)]
-    expanded = coerce_section_f32(expanded, view.scale)
+    expanded = base[np.ix_(resolved.sorted_trace_indices, raw_y_indices)]
+    expanded = coerce_section_f32(expanded, reader.scale)
     if not np.all(np.isfinite(expanded)):
         raise RefractionStaticGatherPreviewError(
             'TraceStore preview samples contain non-finite values'
@@ -857,6 +935,18 @@ def _window_ref(
     resolved: _ResolvedWindow,
     message: str | None = None,
 ) -> dict[str, Any]:
+    if resolved.key1 is None:
+        ref = {
+            'status': 'not_available',
+            'source': source,
+            'message': (
+                'selected gather traces span multiple key1 sections and are not '
+                'representable as one section-window request'
+            ),
+        }
+        if message is not None:
+            ref['message'] = message
+        return ref
     if resolved.regular_section_step_x is None:
         ref = {
             'status': 'not_available',
@@ -901,7 +991,6 @@ def _corrected_window_ref_and_samples(
     state: AppState,
     raw_reader: TraceStoreSectionReader,
     raw_samples_trace_major: np.ndarray,
-    raw_section_shape: tuple[int, int],
     resolved: _ResolvedWindow,
     selected_shifts: np.ndarray,
     dt_s: float,
@@ -937,7 +1026,7 @@ def _corrected_window_ref_and_samples(
             req.key2_byte,
             state=state,
         )
-        corrected_shape = _section_shape(corrected_reader, resolved.key1)
+        corrected_shape = corrected_reader.traces.shape
     except Exception:  # noqa: BLE001
         return shifted_fallback(
             status='unavailable',
@@ -946,12 +1035,12 @@ def _corrected_window_ref_and_samples(
                 f'read; returning on-the-fly shifted preview samples'
             ),
         )
-    if corrected_shape != raw_section_shape:
+    if corrected_shape != raw_reader.traces.shape:
         return shifted_fallback(
             status='shape_mismatch',
             message=(
                 f'Registered corrected TraceStore {corrected_file_id} shape does not '
-                'match the raw TraceStore section; returning on-the-fly shifted '
+                'match the raw TraceStore; returning on-the-fly shifted '
                 'preview samples'
             ),
         )
@@ -982,7 +1071,11 @@ def _window_metadata(
     sample_start = int(resolved.y_indices[0])
     sample_stop = int(resolved.y_indices[-1])
     return {
-        'key1': int(resolved.key1),
+        'key1': None if resolved.key1 is None else int(resolved.key1),
+        'key1_values': [int(value) for value in resolved.key1_values.tolist()],
+        'section_x_indices': [
+            int(value) for value in resolved.section_x_indices.tolist()
+        ],
         'key1_byte': int(req.key1_byte),
         'key2_byte': int(req.key2_byte),
         'x0': int(resolved.x0),

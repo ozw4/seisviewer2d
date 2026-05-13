@@ -232,6 +232,53 @@ def test_refraction_gather_preview_selects_receiver_endpoint_without_x_window(
     assert len(body['raw_samples'][0]) == 1
 
 
+def test_refraction_gather_preview_receiver_endpoint_can_span_key1_values(
+    gather_preview_client,
+):
+    client, state, tmp_path, traces, shifts = gather_preview_client
+    raw_store = tmp_path / 'stores' / 'raw'
+    artifacts_dir = tmp_path / 'refraction-job'
+    _write_trace_store(
+        raw_store,
+        traces,
+        sorted_to_original=SORTED_TO_ORIGINAL,
+        key1_by_sorted_trace=np.asarray(
+            [SECTION_KEY1, SECTION_KEY1, SECTION_KEY1 + 1, SECTION_KEY1 + 1],
+            dtype=np.int32,
+        ),
+    )
+    _write_refraction_artifacts(
+        artifacts_dir,
+        shifts=shifts,
+        receiver_keys=np.asarray(
+            ['receiver:2001', 'receiver:shared', 'receiver:shared', 'receiver:2004']
+        ),
+    )
+    with state.lock:
+        state.cached_readers.clear()
+
+    request = _preview_request(gather_axis='receiver', endpoint_key='receiver:shared')
+    del request['key1']
+    del request['x0']
+    del request['x1']
+    response = client.post('/statics/refraction/qc/gather-preview', json=request)
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body['window']['key1'] is None
+    assert body['window']['key1_values'] == [SECTION_KEY1, SECTION_KEY1 + 1]
+    assert body['window']['section_x_indices'] == [1, 0]
+    assert body['raw_window_ref']['status'] == 'not_available'
+    assert 'multiple key1 sections' in body['raw_window_ref']['message']
+    assert body['corrected_window_ref']['status'] == 'not_registered'
+    assert body['shape'] == [8, 2]
+    assert body['trace_indices'] == [0, 3]
+    assert body['x_indices'] == [0, 1]
+    assert body['receiver_endpoint_key'] == ['receiver:shared', 'receiver:shared']
+    assert body['raw_samples'][3] == [1.0, 1.0]
+    assert body['final_trace_shift_s'] == [-1.0, 0.0]
+
+
 def test_refraction_gather_preview_accepts_time_range(gather_preview_client):
     client, *_ = gather_preview_client
 
@@ -331,21 +378,31 @@ def _write_trace_store(
     traces: np.ndarray,
     *,
     sorted_to_original: np.ndarray = SORTED_TO_ORIGINAL,
+    key1_by_sorted_trace: np.ndarray | None = None,
 ) -> None:
     store.mkdir(parents=True, exist_ok=True)
     traces = np.asarray(traces, dtype=np.float32)
     n_traces, n_samples = traces.shape
     np.save(store / 'traces.npy', traces)
+    if key1_by_sorted_trace is None:
+        key1_by_sorted_trace = np.full(n_traces, SECTION_KEY1, dtype=np.int32)
+    key1_by_sorted_trace = np.asarray(key1_by_sorted_trace, dtype=np.int32)
+    unique_key1, key1_offsets, key1_counts = np.unique(
+        key1_by_sorted_trace,
+        return_index=True,
+        return_counts=True,
+    )
+    order = np.argsort(key1_offsets, kind='stable')
     np.savez(
         store / 'index.npz',
-        key1_values=np.asarray([SECTION_KEY1], dtype=np.int64),
-        key1_offsets=np.asarray([0], dtype=np.int64),
-        key1_counts=np.asarray([n_traces], dtype=np.int64),
+        key1_values=np.asarray(unique_key1[order], dtype=np.int64),
+        key1_offsets=np.asarray(key1_offsets[order], dtype=np.int64),
+        key1_counts=np.asarray(key1_counts[order], dtype=np.int64),
         sorted_to_original=np.asarray(sorted_to_original, dtype=np.int64),
     )
     np.save(
         store / f'headers_byte_{KEY1}.npy',
-        np.full(n_traces, SECTION_KEY1, dtype=np.int32),
+        key1_by_sorted_trace,
     )
     np.save(store / f'headers_byte_{KEY2}.npy', np.arange(n_traces, dtype=np.int32))
     meta = {
@@ -363,7 +420,13 @@ def _write_trace_store(
     (store / 'meta.json').write_text(json.dumps(meta), encoding='utf-8')
 
 
-def _write_refraction_artifacts(artifacts_dir: Path, *, shifts: np.ndarray) -> None:
+def _write_refraction_artifacts(
+    artifacts_dir: Path,
+    *,
+    shifts: np.ndarray,
+    source_keys: np.ndarray | None = None,
+    receiver_keys: np.ndarray | None = None,
+) -> None:
     (artifacts_dir / REFRACTION_STATIC_QC_JSON_NAME).write_text(
         json.dumps(
             {'sign_convention': {'trace_shift_s': REFRACTION_STATIC_REPO_SIGN_CONVENTION}}
@@ -371,8 +434,10 @@ def _write_refraction_artifacts(artifacts_dir: Path, *, shifts: np.ndarray) -> N
         encoding='utf-8',
     )
     trace_index = np.arange(4, dtype=np.int64)
-    source_keys = np.asarray(['source:1001'] * 4)
-    receiver_keys = np.asarray([f'receiver:{2001 + idx}' for idx in range(4)])
+    if source_keys is None:
+        source_keys = np.asarray(['source:1001'] * 4)
+    if receiver_keys is None:
+        receiver_keys = np.asarray([f'receiver:{2001 + idx}' for idx in range(4)])
     observed = np.asarray([0.2, 0.3, 0.4, 0.5], dtype=np.float64)
     modeled = np.asarray([0.19, 0.29, 0.39, 0.49], dtype=np.float64)
     np.savez(
