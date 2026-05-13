@@ -14,7 +14,7 @@ from app.services.refraction_static_artifacts import (
     FIRST_BREAK_RESIDUALS_CSV_NAME,
     NEAR_SURFACE_MODEL_CSV_NAME,
     REFRACTION_FIRST_BREAK_FIT_QC_CSV_NAME,
-    REFRACTION_FIRST_BREAK_TIME_EXPORT_CSV_NAME,
+    REFRACTION_REDUCED_TIME_QC_CSV_NAME,
     REFRACTION_REFRACTOR_VELOCITY_CELLS_CSV_NAME,
     REFRACTION_STATIC_ARTIFACTS_JSON_NAME,
     REFRACTION_STATIC_COMPONENTS_CSV_NAME,
@@ -56,7 +56,7 @@ _TABULAR_VIEW_SPECS: tuple[_TabularViewSpec, ...] = (
     _TabularViewSpec(
         include='reduced_time',
         view_name='reduced_time',
-        artifact_name=REFRACTION_FIRST_BREAK_TIME_EXPORT_CSV_NAME,
+        artifact_name=REFRACTION_REDUCED_TIME_QC_CSV_NAME,
     ),
     _TabularViewSpec(
         include='profiles',

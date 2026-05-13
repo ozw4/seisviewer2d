@@ -929,6 +929,9 @@ class RefractionStaticArtifactSet:
     refraction_first_break_fit_qc_csv: Path
     refraction_first_break_fit_qc_npz: Path
     refraction_first_break_fit_qc_json: Path
+    refraction_reduced_time_qc_csv: Path
+    refraction_reduced_time_qc_npz: Path
+    refraction_reduced_time_qc_json: Path
     refraction_static_components_csv: Path
     source_static_table_csv: Path
     receiver_static_table_csv: Path

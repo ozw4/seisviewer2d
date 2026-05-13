@@ -2569,6 +2569,47 @@ class RefractionStaticConversionRequest(BaseModel):
         return self
 
 
+class RefractionStaticReducedTimeQcRequest(BaseModel):
+    """Reduced-time QC velocity selection for refraction first-break artifacts."""
+
+    model_config = ConfigDict(extra='forbid')
+
+    reduction_velocity_mode: Literal[
+        'layer_velocity',
+        'fixed',
+        'initial_velocity',
+    ] = 'layer_velocity'
+    fixed_velocity_m_s: float | None = None
+
+    @field_validator('fixed_velocity_m_s', mode='before')
+    @classmethod
+    def _check_fixed_velocity(cls, value: object) -> float | None:
+        if value is None:
+            return None
+        return _require_positive_finite_float(
+            value,
+            'reduced_time_qc.fixed_velocity_m_s',
+        )
+
+    @model_validator(mode='after')
+    def _check_reduction_velocity_values(
+        self,
+    ) -> 'RefractionStaticReducedTimeQcRequest':
+        if self.reduction_velocity_mode == 'fixed':
+            if self.fixed_velocity_m_s is None:
+                raise ValueError(
+                    'reduced_time_qc.fixed_velocity_m_s is required when '
+                    'reduced_time_qc.reduction_velocity_mode is fixed'
+                )
+            return self
+        if self.fixed_velocity_m_s is not None:
+            raise ValueError(
+                'reduced_time_qc.fixed_velocity_m_s is only allowed when '
+                'reduced_time_qc.reduction_velocity_mode is fixed'
+            )
+        return self
+
+
 class RefractionStaticFieldCorrectionArtifactRequest(BaseModel):
     """Artifact-table reference used by M4 field-correction request blocks."""
 
@@ -2867,6 +2908,9 @@ class RefractionStaticApplyRequest(BaseModel):
     )
     conversion: RefractionStaticConversionRequest = Field(
         default_factory=RefractionStaticConversionRequest,
+    )
+    reduced_time_qc: RefractionStaticReducedTimeQcRequest = Field(
+        default_factory=RefractionStaticReducedTimeQcRequest,
     )
     field_corrections: RefractionStaticFieldCorrectionsRequest = Field(
         default_factory=RefractionStaticFieldCorrectionsRequest,

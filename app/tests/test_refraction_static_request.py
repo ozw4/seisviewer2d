@@ -16,6 +16,7 @@ from app.api.schemas import (
     RefractionStaticModelRequest,
     RefractionStaticMoveoutRequest,
     RefractionStaticPickSourceRequest,
+    RefractionStaticReducedTimeQcRequest,
     RefractionStaticRobustRequest,
     RefractionStaticSolverRequest,
 )
@@ -137,6 +138,7 @@ def test_refraction_static_schema_models_forbid_extra_fields() -> None:
         RefractionStaticRobustRequest,
         RefractionStaticSolverRequest,
         RefractionStaticDatumRequest,
+        RefractionStaticReducedTimeQcRequest,
         RefractionStaticApplyOptions,
         RefractionStaticApplyRequest,
         RefractionStaticApplyResponse,
@@ -205,6 +207,8 @@ def test_refraction_static_request_accepts_minimal_valid_request_and_defaults() 
     assert req.datum.smoothing_window_nodes == 11
     assert req.datum.allow_flat_datum_above_topography is True
     assert req.datum.allow_flat_datum_below_refractor is False
+    assert req.reduced_time_qc.reduction_velocity_mode == 'layer_velocity'
+    assert req.reduced_time_qc.fixed_velocity_m_s is None
     assert req.apply.mode == 'refraction_from_raw'
     assert req.apply.interpolation == 'linear'
     assert req.apply.fill_value == 0.0

@@ -18,6 +18,9 @@ from app.services.refraction_static_artifacts import (
     REFRACTION_FIRST_BREAK_FIT_QC_NPZ_NAME,
     REFRACTION_CELL_SOLVER_HISTORY_CSV_NAME,
     REFRACTION_FIRST_BREAK_TIME_EXPORT_CSV_NAME,
+    REFRACTION_REDUCED_TIME_QC_CSV_NAME,
+    REFRACTION_REDUCED_TIME_QC_JSON_NAME,
+    REFRACTION_REDUCED_TIME_QC_NPZ_NAME,
     FIRST_BREAK_FIT_QC_RESIDUAL_SIGN,
     REFRACTION_REFRACTOR_VELOCITY_CELLS_CSV_NAME,
     REFRACTION_REFRACTOR_VELOCITY_GRID_NPZ_NAME,
@@ -46,6 +49,7 @@ from app.services.refraction_static_artifacts import (
     TIME_TERM_SPREADSHEET_FORMAT_NAME,
     TIME_TERM_SPREADSHEET_FORMAT_VERSION,
     TIME_TERM_SPREADSHEET_SCHEMA_VERSION,
+    build_refraction_reduced_time_qc_arrays,
     write_refraction_static_solution_npz,
     write_refraction_static_artifacts,
 )
@@ -138,6 +142,9 @@ EXPECTED_FILENAMES = {
     REFRACTION_FIRST_BREAK_FIT_QC_CSV_NAME,
     REFRACTION_FIRST_BREAK_FIT_QC_NPZ_NAME,
     REFRACTION_FIRST_BREAK_FIT_QC_JSON_NAME,
+    REFRACTION_REDUCED_TIME_QC_CSV_NAME,
+    REFRACTION_REDUCED_TIME_QC_NPZ_NAME,
+    REFRACTION_REDUCED_TIME_QC_JSON_NAME,
     REFRACTION_STATIC_COMPONENTS_CSV_NAME,
     REFRACTION_STATIC_HISTORY_JSON_NAME,
     SOURCE_STATIC_TABLE_CSV_NAME,
@@ -193,6 +200,9 @@ def test_write_refraction_static_artifacts_npz_schema(tmp_path: Path) -> None:
         REFRACTION_FIRST_BREAK_FIT_QC_CSV_NAME,
         REFRACTION_FIRST_BREAK_FIT_QC_NPZ_NAME,
         REFRACTION_FIRST_BREAK_FIT_QC_JSON_NAME,
+        REFRACTION_REDUCED_TIME_QC_CSV_NAME,
+        REFRACTION_REDUCED_TIME_QC_NPZ_NAME,
+        REFRACTION_REDUCED_TIME_QC_JSON_NAME,
         REFRACTION_STATIC_COMPONENTS_CSV_NAME,
         SOURCE_STATIC_TABLE_CSV_NAME,
         RECEIVER_STATIC_TABLE_CSV_NAME,
@@ -861,6 +871,113 @@ def test_first_break_fit_qc_csv_npz_json_are_consistent(tmp_path: Path) -> None:
     assert payload['residual_summary']['used_rms_s'] == pytest.approx(
         float(np.sqrt(np.mean(residual[used] * residual[used])))
     )
+
+
+def test_reduced_time_qc_fixed_velocity_formula() -> None:
+    payload = _request().model_dump(mode='json')
+    payload['reduced_time_qc'] = {
+        'reduction_velocity_mode': 'fixed',
+        'fixed_velocity_m_s': 2000.0,
+    }
+    arrays = build_refraction_reduced_time_qc_arrays(
+        result=_result(),
+        req=RefractionStaticApplyRequest.model_validate(payload),
+    )
+
+    expected = np.asarray([0.050, 0.060, 0.070]) - (
+        np.asarray([100.0, 200.0, 300.0]) / 2000.0
+    )
+
+    np.testing.assert_allclose(arrays['reduced_time_s'], expected)
+    np.testing.assert_allclose(arrays['reduced_time_ms'], expected * 1000.0)
+    np.testing.assert_allclose(arrays['reduction_velocity_m_s'], 2000.0)
+    assert arrays['status'].tolist() == ['ok', 'ok', 'ok']
+
+
+def test_reduced_time_qc_layer_velocity_formula_for_two_layer() -> None:
+    payload = _request().model_dump(mode='json')
+    payload['model'] = {
+        'method': 'multilayer_time_term',
+        'first_layer': {
+            'mode': 'constant',
+            'weathering_velocity_m_s': 800.0,
+        },
+        'layers': [
+            {
+                'kind': 'v2_t1',
+                'min_offset_m': 0.0,
+                'max_offset_m': 150.0,
+                'velocity_mode': 'solve_global',
+                'initial_velocity_m_s': 2400.0,
+                'min_velocity_m_s': 1200.0,
+                'max_velocity_m_s': 3500.0,
+            },
+            {
+                'kind': 'v3_t2',
+                'min_offset_m': 150.0,
+                'max_offset_m': None,
+                'velocity_mode': 'solve_global',
+                'initial_velocity_m_s': 3600.0,
+                'min_velocity_m_s': 2600.0,
+                'max_velocity_m_s': 6500.0,
+            },
+        ],
+    }
+    payload['conversion'] = {
+        'mode': 't1lsst_multilayer',
+        'layer_count': 2,
+    }
+    result = replace(
+        _result(),
+        row_layer_kind=np.asarray(['v2_t1', 'v3_t2', 'v3_t2'], dtype='<U16'),
+        row_velocity_m_s=np.asarray([2400.0, 3600.0, 3600.0], dtype=np.float64),
+    )
+
+    arrays = build_refraction_reduced_time_qc_arrays(
+        result=result,
+        req=RefractionStaticApplyRequest.model_validate(payload),
+    )
+
+    expected = np.asarray(
+        [
+            0.050 - 100.0 / 2400.0,
+            0.060 - 200.0 / 3600.0,
+            0.070 - 300.0 / 3600.0,
+        ]
+    )
+    np.testing.assert_allclose(arrays['reduced_time_s'], expected)
+    assert arrays['layer_gate_kind'].tolist() == ['v2_t1', 'v3_t2', 'v3_t2']
+
+
+def test_reduced_time_qc_marks_missing_velocity_status() -> None:
+    result = replace(
+        _result(),
+        row_velocity_m_s=np.asarray([2500.0, np.nan, 2500.0], dtype=np.float64),
+    )
+
+    arrays = build_refraction_reduced_time_qc_arrays(
+        result=result,
+        req=_request(),
+    )
+
+    assert arrays['status'].tolist() == [
+        'ok',
+        'missing_reduction_velocity',
+        'ok',
+    ]
+    assert np.isnan(arrays['reduced_time_s'][1])
+
+
+def test_reduced_time_qc_includes_layer_gate_flags() -> None:
+    arrays = build_refraction_reduced_time_qc_arrays(
+        result=_result_with_weathering_velocity(812.5),
+        req=_estimated_v1_request(),
+    )
+
+    assert arrays['within_v1_gate'].tolist() == [True, False, False]
+    assert arrays['within_v2_t1_gate'].tolist() == [True, True, True]
+    assert arrays['within_v3_t2_gate'].tolist() == [False, False, False]
+    assert arrays['within_vsub_t3_gate'].tolist() == [False, False, False]
 
 
 def test_first_break_fit_qc_reports_cell_and_multilayer_context(
