@@ -31,7 +31,7 @@
     {
       id: 'cell_maps_3d',
       include: 'cells',
-      viewKeys: ['refractor_cells', 'v3_refractor_cells', 'vsub_refractor_cells'],
+      viewKeys: ['refraction_grid_map_qc'],
       unavailableKeys: ['cells'],
     },
     {
@@ -59,6 +59,7 @@
     showRejectedFirstBreaks: true,
     selectedEndpointKind: 'source',
     selectedCell: null,
+    selectedCellMapQuantity: 'velocity',
     selectedEndpoint: '',
     selectedProfileGroup: 'time_terms',
     selectedProfileUnits: 'auto',
@@ -204,6 +205,69 @@
     'success',
     'none',
   ]);
+
+  const CELL_MAP_LAYER_ORDER = ['v2_t1', 'v3_t2', 'vsub_t3'];
+
+  const CELL_MAP_QUANTITIES = {
+    velocity: {
+      label: 'Velocity',
+      axisLabel: 'Velocity (m/s)',
+      unit: 'm/s',
+      columns: ['velocity_m_s', 'v2_m_s'],
+      colorscale: 'Viridis',
+    },
+    velocity_update: {
+      label: 'Velocity update from initial',
+      axisLabel: 'Velocity update (m/s)',
+      unit: 'm/s',
+      columns: ['velocity_update_from_initial_m_s', 'v2_update_from_initial_m_s'],
+      colorscale: 'RdBu',
+      reversescale: true,
+    },
+    fold: {
+      label: 'Fold / observation count',
+      axisLabel: 'Observation count',
+      unit: 'count',
+      columns: ['n_observations', 'fold', 'observation_count'],
+      colorscale: 'YlGnBu',
+    },
+    residual_rms: {
+      label: 'Residual RMS',
+      axisLabel: 'Residual RMS (ms)',
+      unit: 'ms',
+      columns: ['residual_rms_ms'],
+      secondColumns: ['residual_rms_s'],
+      scale: 1000.0,
+      colorscale: 'YlOrRd',
+    },
+    residual_mad: {
+      label: 'Residual MAD',
+      axisLabel: 'Residual MAD (ms)',
+      unit: 'ms',
+      columns: ['residual_mad_ms'],
+      secondColumns: ['residual_mad_s'],
+      scale: 1000.0,
+      colorscale: 'YlOrRd',
+    },
+    status: {
+      label: 'Status',
+      axisLabel: 'Status',
+      unit: '',
+      status: true,
+    },
+  };
+
+  const CELL_STATUS_COLORS = {
+    solved: '#2563eb',
+    ok: '#2563eb',
+    active: '#2563eb',
+    low_fold: '#f59e0b',
+    inactive: '#cbd5e1',
+    no_observations: '#cbd5e1',
+    empty: '#cbd5e1',
+    rejected: '#dc2626',
+    unknown: '#64748b',
+  };
 
   function readRecentJobs() {
     try {
@@ -518,6 +582,203 @@
       available: layerSeries.filter((series) => profileSeriesAvailable(series, records)),
       unavailable: layerSeries.filter((series) => !profileSeriesAvailable(series, records)),
     };
+  }
+
+  function cellMapQuantityDefinition() {
+    return CELL_MAP_QUANTITIES[state.selectedCellMapQuantity] || CELL_MAP_QUANTITIES.velocity;
+  }
+
+  function cellMapLayerKind(record) {
+    return String(firstDefined(record, ['layer_kind', 'cell_velocity_layer_kind']) || '').trim() || 'unknown';
+  }
+
+  function finiteMetric(record, columns, secondColumns, scale = 1.0) {
+    const direct = toFiniteNumber(firstDefined(record, columns || []));
+    if (Number.isFinite(direct)) return direct;
+    const seconds = toFiniteNumber(firstDefined(record, secondColumns || []));
+    return Number.isFinite(seconds) ? seconds * scale : NaN;
+  }
+
+  function normalizeCellMapRecord(record) {
+    const cellIx = Number.parseInt(String(firstDefined(record, ['cell_ix', 'ix']) ?? ''), 10);
+    const cellIy = Number.parseInt(String(firstDefined(record, ['cell_iy', 'iy']) ?? ''), 10);
+    if (!Number.isInteger(cellIx) || !Number.isInteger(cellIy)) return null;
+
+    const centerX = finiteMetric(record, [
+      'cell_center_x_m',
+      'x_center_m',
+      'center_x_m',
+      'cell_center_inline_m',
+    ]);
+    const centerY = finiteMetric(record, [
+      'cell_center_y_m',
+      'y_center_m',
+      'center_y_m',
+      'cell_center_crossline_m',
+    ]);
+    const velocity = finiteMetric(record, ['velocity_m_s', 'v2_m_s']);
+    const initialVelocity = finiteMetric(record, ['initial_velocity_m_s', 'initial_v2_m_s']);
+    const velocityUpdate = finiteMetric(record, [
+      'velocity_update_from_initial_m_s',
+      'v2_update_from_initial_m_s',
+    ]);
+    const fold = finiteMetric(record, ['n_observations', 'fold', 'observation_count']);
+    const usedFold = finiteMetric(record, ['n_used_observations', 'used_fold']);
+    const rejectedFold = finiteMetric(record, ['n_rejected_observations', 'rejected_fold']);
+    const residualRmsMs = finiteMetric(record, ['residual_rms_ms'], ['residual_rms_s'], 1000.0);
+    const residualMadMs = finiteMetric(record, ['residual_mad_ms'], ['residual_mad_s'], 1000.0);
+    const rawStatus = normalizedText(firstDefined(record, ['status', 'velocity_status'])) || (
+      Number.isFinite(fold) && fold <= 0 ? 'no_observations' : 'unknown'
+    );
+
+    return {
+      raw: record,
+      layerKind: cellMapLayerKind(record),
+      cellIx,
+      cellIy,
+      centerX: Number.isFinite(centerX) ? centerX : cellIx,
+      centerY: Number.isFinite(centerY) ? centerY : cellIy,
+      velocity,
+      initialVelocity,
+      velocityUpdate,
+      fold,
+      usedFold,
+      rejectedFold,
+      residualRmsMs,
+      residualMadMs,
+      status: rawStatus,
+      statusReason: textOrDash(firstDefined(record, ['status_reason', 'velocity_status_reason'])),
+      component: textOrDash(firstDefined(record, ['cell_velocity_component'])),
+    };
+  }
+
+  function filteredCellMapRecords(view) {
+    const records = Array.isArray(view.records) ? view.records : [];
+    const normalized = [];
+    for (const record of records) {
+      const point = normalizeCellMapRecord(record);
+      if (point) normalized.push(point);
+    }
+    return normalized;
+  }
+
+  function availableCellMapLayers(records) {
+    const layers = Array.from(new Set(records.map((record) => record.layerKind).filter(Boolean)));
+    return layers.sort((a, b) => {
+      const orderA = CELL_MAP_LAYER_ORDER.indexOf(a);
+      const orderB = CELL_MAP_LAYER_ORDER.indexOf(b);
+      const rankA = orderA === -1 ? CELL_MAP_LAYER_ORDER.length : orderA;
+      const rankB = orderB === -1 ? CELL_MAP_LAYER_ORDER.length : orderB;
+      return rankA - rankB || a.localeCompare(b);
+    });
+  }
+
+  function selectedCellMapLayer(records) {
+    const layers = availableCellMapLayers(records);
+    if (!layers.length) return '';
+    if (state.selectedLayerKind !== 'all' && layers.includes(state.selectedLayerKind)) {
+      return state.selectedLayerKind;
+    }
+    return layers[0];
+  }
+
+  function cellStatusCode(status) {
+    const clean = normalizedText(status);
+    if (clean === 'solved' || clean === 'ok' || clean === 'active' || clean === 'valid') return 3;
+    if (clean === 'low_fold') return 2;
+    if (clean === 'inactive' || clean === 'no_observations' || clean === 'empty') return 1;
+    return 0;
+  }
+
+  function cellStatusColor(status) {
+    return CELL_STATUS_COLORS[normalizedText(status)] || CELL_STATUS_COLORS.unknown;
+  }
+
+  function cellMapQuantityValue(point, quantity) {
+    if (quantity.status) return cellStatusCode(point.status);
+    const raw = finiteMetric(
+      point.raw,
+      quantity.columns,
+      quantity.secondColumns,
+      quantity.scale || 1.0,
+    );
+    return Number.isFinite(raw) ? raw : NaN;
+  }
+
+  function cellMapHoverText(point, quantity, value) {
+    const quantityValue = quantity.status
+      ? point.status
+      : `${formatNumber(value, quantity.unit === 'count' ? 0 : 3)}${quantity.unit ? ` ${quantity.unit}` : ''}`;
+    return [
+      `Cell: ix ${point.cellIx}, iy ${point.cellIy}`,
+      `Layer: ${layerLabel(point.layerKind)}`,
+      `Center X: ${formatNumber(point.centerX, 2)} m`,
+      `Center Y: ${formatNumber(point.centerY, 2)} m`,
+      `${quantity.label}: ${quantityValue}`,
+      `Velocity: ${formatNumber(point.velocity, 2)} m/s`,
+      `Initial velocity: ${formatNumber(point.initialVelocity, 2)} m/s`,
+      `Velocity update: ${formatNumber(point.velocityUpdate, 2)} m/s`,
+      `Fold: ${formatNumber(point.fold, 0)}`,
+      `Used fold: ${formatNumber(point.usedFold, 0)}`,
+      `Rejected fold: ${formatNumber(point.rejectedFold, 0)}`,
+      `Residual RMS: ${formatNumber(point.residualRmsMs, 3)} ms`,
+      `Residual MAD: ${formatNumber(point.residualMadMs, 3)} ms`,
+      `Status: ${point.status}`,
+      `Status reason: ${point.statusReason}`,
+    ].join('<br>');
+  }
+
+  function buildCellMapMatrix(records, quantity) {
+    const xKeys = Array.from(new Set(records.map((point) => point.cellIx))).sort((a, b) => a - b);
+    const yKeys = Array.from(new Set(records.map((point) => point.cellIy))).sort((a, b) => a - b);
+    const byCell = new Map(records.map((point) => [`${point.cellIy}|${point.cellIx}`, point]));
+    const x = xKeys.map((cellIx) => {
+      const point = records.find((candidate) => candidate.cellIx === cellIx);
+      return point ? point.centerX : cellIx;
+    });
+    const y = yKeys.map((cellIy) => {
+      const point = records.find((candidate) => candidate.cellIy === cellIy);
+      return point ? point.centerY : cellIy;
+    });
+    const z = [];
+    const text = [];
+    const customdata = [];
+    for (const cellIy of yKeys) {
+      const zRow = [];
+      const textRow = [];
+      const customRow = [];
+      for (const cellIx of xKeys) {
+        const point = byCell.get(`${cellIy}|${cellIx}`);
+        if (!point) {
+          zRow.push(null);
+          textRow.push(`Cell: ix ${cellIx}, iy ${cellIy}<br>Status: missing_from_qc_rows`);
+          customRow.push(null);
+          continue;
+        }
+        const value = cellMapQuantityValue(point, quantity);
+        zRow.push(Number.isFinite(value) ? value : null);
+        textRow.push(cellMapHoverText(point, quantity, value));
+        customRow.push({
+          cell_ix: point.cellIx,
+          cell_iy: point.cellIy,
+          layer_kind: point.layerKind,
+        });
+      }
+      z.push(zRow);
+      text.push(textRow);
+      customdata.push(customRow);
+    }
+    return { x, y, z, text, customdata };
+  }
+
+  function selectedCellMapPoint(records, layerKind) {
+    if (!state.selectedCell || state.selectedCell.cell_ix === undefined) return null;
+    const selectedLayer = state.selectedCell.layer_kind || layerKind;
+    if (selectedLayer !== layerKind) return null;
+    return records.find((point) => (
+      point.cellIx === state.selectedCell.cell_ix
+      && point.cellIy === state.selectedCell.cell_iy
+    )) || null;
   }
 
   function profileTraceName(series, endpointKind, group) {
@@ -1319,6 +1580,207 @@
     }
   }
 
+  function renderCellMapPlot(content, bundle, viewDef) {
+    const found = findViewData(bundle, viewDef);
+    if (!found) {
+      const missing = document.createElement('p');
+      missing.className = 'refraction-qc-placeholder';
+      missing.textContent = isUnavailable(bundle, viewDef)
+        ? '3D cell maps are unavailable for global-velocity jobs or QC bundles without refraction_grid_map_qc.csv.'
+        : 'No refraction_grid_map_qc rows are present for this QC bundle.';
+      content.appendChild(missing);
+      return;
+    }
+
+    const { key, view } = found;
+    const records = filteredCellMapRecords(view);
+    const layerKind = selectedCellMapLayer(records);
+    const layerRecords = records.filter((record) => record.layerKind === layerKind);
+    const quantity = cellMapQuantityDefinition();
+    const downsampling = findDownsampling(bundle, key, view);
+    const downsamplingText = downsampling
+      ? `${downsampling.returned_points || 0} of ${downsampling.total_points || 0}; ${downsampling.downsampled ? 'downsampled' : 'not downsampled'}${downsampling.method ? ` (${downsampling.method})` : ''}`
+      : 'not reported';
+    const statusSummary = statusCounts(layerRecords, 'status') || 'none';
+    const plottedValues = layerRecords
+      .map((point) => cellMapQuantityValue(point, quantity))
+      .filter((value) => Number.isFinite(value)).length;
+
+    content.appendChild(createKv([
+      ['Bundle view', key],
+      ['Artifact', view.artifact],
+      ['Rows', `${view.returned_points || 0} of ${view.total_points || 0}`],
+      ['Coordinate mode', bundle.coordinate_mode],
+      ['Layer filter', state.selectedLayerKind === 'all' ? 'all' : layerLabel(state.selectedLayerKind)],
+      ['Plotted layer', layerKind ? layerLabel(layerKind) : '-'],
+      ['Quantity', quantity.label],
+      ['Cells', `${layerRecords.length}`],
+      ['Plotted values', `${plottedValues}`],
+      ['Status counts', statusSummary],
+      ['Selected cell', state.selectedCell ? textOrDash(state.selectedCell) : '-'],
+    ]));
+
+    const downsamplingNote = document.createElement('p');
+    downsamplingNote.className = 'refraction-qc-note';
+    downsamplingNote.textContent = `Downsampling: ${downsamplingText}`;
+    downsamplingNote.dataset.testid = 'refraction-qc-cell-map-downsampling';
+    content.appendChild(downsamplingNote);
+
+    if (!records.length || !layerRecords.length) {
+      const missing = document.createElement('p');
+      missing.className = 'refraction-qc-placeholder';
+      missing.textContent = 'No grid-map cells match the current layer selection.';
+      content.appendChild(missing);
+      if (Array.isArray(view.records) && view.records.length && Array.isArray(view.columns) && view.columns.length) {
+        content.appendChild(createTable(view));
+      }
+      return;
+    }
+
+    const plot = createFirstBreakPlot('refraction-qc-cell-map-plot');
+    plot.classList.add('refraction-qc-cell-map-plot');
+    plot.dataset.pointCount = String(layerRecords.length);
+    content.appendChild(plot);
+
+    if (window.Plotly) {
+      const matrix = buildCellMapMatrix(layerRecords, quantity);
+      const traces = [
+        {
+          name: quantity.label,
+          type: 'heatmap',
+          x: matrix.x,
+          y: matrix.y,
+          z: matrix.z,
+          text: matrix.text,
+          customdata: matrix.customdata,
+          hovertemplate: '%{text}<extra></extra>',
+          colorscale: quantity.status
+            ? [
+              [0, '#dc2626'],
+              [0.249, '#dc2626'],
+              [0.25, '#cbd5e1'],
+              [0.499, '#cbd5e1'],
+              [0.5, '#f59e0b'],
+              [0.749, '#f59e0b'],
+              [0.75, '#2563eb'],
+              [1, '#2563eb'],
+            ]
+            : quantity.colorscale,
+          reversescale: Boolean(quantity.reversescale),
+          zmin: quantity.status ? 0 : undefined,
+          zmax: quantity.status ? 3 : undefined,
+          colorbar: quantity.status
+            ? {
+              title: { text: 'Status' },
+              tickmode: 'array',
+              tickvals: [0, 1, 2, 3],
+              ticktext: ['other', 'inactive', 'low_fold', 'solved'],
+            }
+            : { title: { text: quantity.axisLabel } },
+        },
+      ];
+
+      const flagged = layerRecords.filter((point) => cellStatusCode(point.status) < 3);
+      if (flagged.length) {
+        traces.push({
+          name: 'Flagged cells',
+          type: 'scatter',
+          mode: 'markers',
+          x: flagged.map((point) => point.centerX),
+          y: flagged.map((point) => point.centerY),
+          text: flagged.map((point) => cellMapHoverText(
+            point,
+            quantity,
+            cellMapQuantityValue(point, quantity),
+          )),
+          customdata: flagged.map((point) => ({
+            cell_ix: point.cellIx,
+            cell_iy: point.cellIy,
+            layer_kind: point.layerKind,
+          })),
+          hovertemplate: '%{text}<extra>Flagged</extra>',
+          marker: {
+            color: flagged.map((point) => cellStatusColor(point.status)),
+            symbol: flagged.map((point) => point.status === 'low_fold' ? 'diamond-open' : 'x'),
+            size: flagged.map((point) => point.status === 'low_fold' ? 12 : 10),
+            line: { color: '#0f172a', width: 1 },
+          },
+        });
+      }
+
+      const selected = selectedCellMapPoint(layerRecords, layerKind);
+      if (selected) {
+        traces.push({
+          name: 'Selected cell',
+          type: 'scatter',
+          mode: 'markers',
+          x: [selected.centerX],
+          y: [selected.centerY],
+          text: [cellMapHoverText(selected, quantity, cellMapQuantityValue(selected, quantity))],
+          customdata: [{
+            cell_ix: selected.cellIx,
+            cell_iy: selected.cellIy,
+            layer_kind: selected.layerKind,
+          }],
+          hovertemplate: '%{text}<extra>Selected</extra>',
+          marker: {
+            color: '#0f172a',
+            symbol: 'square-open',
+            size: 16,
+            line: { color: '#0f172a', width: 2 },
+          },
+        });
+      }
+
+      window.Plotly.newPlot(plot, traces, {
+        height: 340,
+        margin: { l: 62, r: 14, t: 42, b: 56 },
+        font: { size: 10, color: '#334155' },
+        paper_bgcolor: '#ffffff',
+        plot_bgcolor: '#ffffff',
+        title: { text: `${layerLabel(layerKind)} ${quantity.label} map`, font: { size: 12 } },
+        xaxis: {
+          title: { text: 'Cell center X (m)' },
+          zeroline: false,
+          gridcolor: '#e5e7eb',
+        },
+        yaxis: {
+          title: { text: 'Cell center Y (m)' },
+          zeroline: false,
+          gridcolor: '#e5e7eb',
+          scaleanchor: matrix.x.length > 1 && matrix.y.length > 1 ? 'x' : undefined,
+        },
+        legend: {
+          orientation: 'h',
+          x: 0,
+          y: 1.14,
+          xanchor: 'left',
+          yanchor: 'top',
+          font: { size: 10 },
+        },
+      }, { displayModeBar: false, responsive: true }).then(() => {
+        plot.on('plotly_click', (event) => {
+          const point = event?.points?.[0];
+          const cell = point?.customdata;
+          if (!cell || cell.cell_ix === undefined || cell.cell_iy === undefined) return;
+          state.selectedCell = {
+            cell_ix: Number(cell.cell_ix),
+            cell_iy: Number(cell.cell_iy),
+            layer_kind: String(cell.layer_kind || layerKind),
+          };
+          if (dom?.cell) dom.cell.value = `${state.selectedCell.cell_ix},${state.selectedCell.cell_iy}`;
+          render();
+        });
+      });
+    } else {
+      plot.textContent = 'Plot library is unavailable.';
+    }
+
+    if (Array.isArray(view.records) && view.records.length && Array.isArray(view.columns) && view.columns.length) {
+      content.appendChild(createTable(view));
+    }
+  }
+
   function renderGatherPreview(content, bundle) {
     const message = document.createElement('p');
     message.className = 'refraction-qc-placeholder';
@@ -1361,6 +1823,8 @@
       renderReducedTimePlot(content, state.qcBundle, viewDef);
     } else if (viewDef.id === 'profiles_2d') {
       renderProfilePlot(content, state.qcBundle, viewDef);
+    } else if (viewDef.id === 'cell_maps_3d') {
+      renderCellMapPlot(content, state.qcBundle, viewDef);
     } else if (viewDef.id === 'gather_preview') {
       renderGatherPreview(content, state.qcBundle);
     } else {
@@ -1388,6 +1852,7 @@
     dom.profileGroup.value = state.selectedProfileGroup;
     dom.profileUnits.value = state.selectedProfileUnits;
     dom.statusFilter.value = state.profileStatusFilter;
+    dom.mapQuantity.value = state.selectedCellMapQuantity;
     dom.showRejected.checked = state.showRejectedFirstBreaks;
     dom.endpointKind.value = state.selectedEndpointKind;
     dom.endpoint.value = state.selectedEndpoint;
@@ -1536,6 +2001,7 @@
       profileGroup: document.getElementById('refractionQcProfileGroup'),
       profileUnits: document.getElementById('refractionQcProfileUnits'),
       statusFilter: document.getElementById('refractionQcStatusFilter'),
+      mapQuantity: document.getElementById('refractionQcMapQuantity'),
       showRejected: document.getElementById('refractionQcShowRejected'),
       endpointKind: document.getElementById('refractionQcEndpointKind'),
       endpoint: document.getElementById('refractionQcEndpoint'),
@@ -1549,6 +2015,7 @@
 
     if (!dom.jobId || !dom.maxPoints || !dom.loadButton || !dom.status || !dom.error || !dom.sign) return;
     if (!dom.layerKind || !dom.xAxisMode || !dom.profileGroup || !dom.profileUnits || !dom.statusFilter) return;
+    if (!dom.mapQuantity) return;
     if (!dom.showRejected || !dom.endpointKind || !dom.endpoint || !dom.cell) return;
 
     pipelineTab.addEventListener('click', () => activateSidebarTab('pipeline'));
@@ -1581,6 +2048,10 @@
     });
     dom.statusFilter.addEventListener('change', () => {
       state.profileStatusFilter = dom.statusFilter.value;
+      render();
+    });
+    dom.mapQuantity.addEventListener('change', () => {
+      state.selectedCellMapQuantity = dom.mapQuantity.value;
       render();
     });
     dom.showRejected.addEventListener('change', () => {

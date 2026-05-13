@@ -13,6 +13,7 @@ from app.services.job_manager import JobManager
 from app.services.refraction_static_artifacts import (
     FIRST_BREAK_RESIDUALS_CSV_NAME,
     REFRACTION_FIRST_BREAK_FIT_QC_CSV_NAME,
+    REFRACTION_GRID_MAP_QC_CSV_NAME,
     REFRACTION_LINE_PROFILE_QC_COMBINED_CSV_NAME,
     REFRACTION_REDUCED_TIME_QC_CSV_NAME,
     REFRACTION_REFRACTOR_VELOCITY_CELLS_CSV_NAME,
@@ -67,6 +68,11 @@ _TABULAR_VIEW_SPECS: tuple[_TabularViewSpec, ...] = (
         include='static_components',
         view_name='static_components',
         artifact_name=REFRACTION_STATIC_COMPONENTS_CSV_NAME,
+    ),
+    _TabularViewSpec(
+        include='cells',
+        view_name='refraction_grid_map_qc',
+        artifact_name=REFRACTION_GRID_MAP_QC_CSV_NAME,
     ),
     _TabularViewSpec(
         include='cells',

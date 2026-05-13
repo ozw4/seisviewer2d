@@ -158,6 +158,119 @@ function oneLayerLineProfileRecords() {
 	}));
 }
 
+function gridMapRecords() {
+	return [
+		{
+			layer_kind: 'v2_t1',
+			cell_ix: '0',
+			cell_iy: '0',
+			cell_center_x_m: '25',
+			cell_center_y_m: '25',
+			velocity_m_s: '2400',
+			initial_velocity_m_s: '2300',
+			velocity_update_from_initial_m_s: '100',
+			slowness_s_per_m: '0.0004167',
+			n_observations: '8',
+			n_sources: '3',
+			n_receivers: '4',
+			residual_rms_ms: '4.5',
+			residual_mad_ms: '3.0',
+			status: 'solved',
+			status_reason: 'ok',
+		},
+		{
+			layer_kind: 'v2_t1',
+			cell_ix: '1',
+			cell_iy: '0',
+			cell_center_x_m: '75',
+			cell_center_y_m: '25',
+			velocity_m_s: '2500',
+			initial_velocity_m_s: '2300',
+			velocity_update_from_initial_m_s: '200',
+			slowness_s_per_m: '0.0004',
+			n_observations: '2',
+			n_sources: '1',
+			n_receivers: '2',
+			residual_rms_ms: '9.0',
+			residual_mad_ms: '6.0',
+			status: 'low_fold',
+			status_reason: 'below_min_observations_per_cell',
+		},
+		{
+			layer_kind: 'v2_t1',
+			cell_ix: '0',
+			cell_iy: '1',
+			cell_center_x_m: '25',
+			cell_center_y_m: '75',
+			velocity_m_s: '',
+			initial_velocity_m_s: '2300',
+			velocity_update_from_initial_m_s: '',
+			slowness_s_per_m: '',
+			n_observations: '0',
+			n_sources: '0',
+			n_receivers: '0',
+			residual_rms_ms: '',
+			residual_mad_ms: '',
+			status: 'inactive',
+			status_reason: 'no_observations',
+		},
+		{
+			layer_kind: 'v2_t1',
+			cell_ix: '1',
+			cell_iy: '1',
+			cell_center_x_m: '75',
+			cell_center_y_m: '75',
+			velocity_m_s: '2600',
+			initial_velocity_m_s: '2300',
+			velocity_update_from_initial_m_s: '300',
+			slowness_s_per_m: '0.0003846',
+			n_observations: '11',
+			n_sources: '5',
+			n_receivers: '5',
+			residual_rms_ms: '2.5',
+			residual_mad_ms: '1.5',
+			status: 'solved',
+			status_reason: 'ok',
+		},
+		{
+			layer_kind: 'v3_t2',
+			cell_ix: '0',
+			cell_iy: '0',
+			cell_center_x_m: '25',
+			cell_center_y_m: '25',
+			velocity_m_s: '3600',
+			initial_velocity_m_s: '3500',
+			velocity_update_from_initial_m_s: '100',
+			slowness_s_per_m: '0.0002778',
+			n_observations: '7',
+			n_sources: '3',
+			n_receivers: '4',
+			residual_rms_ms: '5.5',
+			residual_mad_ms: '4.0',
+			status: 'solved',
+			status_reason: 'ok',
+		},
+		{
+			layer_kind: 'v3_t2',
+			cell_ix: '1',
+			cell_iy: '0',
+			cell_center_x_m: '75',
+			cell_center_y_m: '25',
+			velocity_m_s: '3700',
+			initial_velocity_m_s: '3500',
+			velocity_update_from_initial_m_s: '200',
+			slowness_s_per_m: '0.0002703',
+			n_observations: '9',
+			n_sources: '4',
+			n_receivers: '4',
+			residual_rms_ms: '4.0',
+			residual_mad_ms: '2.5',
+			status: 'solved',
+			status_reason: 'ok',
+		},
+	];
+}
+
 function qcBundlePayload(jobId: string) {
 	const profileRecords = lineProfileRecords();
 	return {
@@ -426,6 +539,53 @@ function qcBundlePayload(jobId: string) {
 	};
 }
 
+function grid3dQcBundlePayload(jobId: string) {
+	const payload = qcBundlePayload(jobId) as any;
+	const records = gridMapRecords();
+	payload.coordinate_mode = 'grid_3d';
+	payload.artifacts.refraction_grid_map_qc = 'refraction_grid_map_qc.csv';
+	payload.available_views = [
+		...payload.available_views.filter((view: string) => view !== 'refraction_grid_map_qc'),
+		'refraction_grid_map_qc',
+	];
+	payload.unavailable_views = payload.unavailable_views.filter((view: string) => view !== 'cells');
+	payload.views.refraction_grid_map_qc = {
+		artifact: 'refraction_grid_map_qc.csv',
+		columns: Object.keys(records[0]),
+		total_points: records.length,
+		returned_points: records.length,
+		downsampled: false,
+		downsampling_method: 'even_index_floor_first_last',
+		records,
+	};
+	payload.downsampling.refraction_grid_map_qc = {
+		total_points: records.length,
+		returned_points: records.length,
+		downsampled: false,
+		method: 'even_index_floor_first_last',
+	};
+	return payload;
+}
+
+function globalVelocityQcBundlePayload(jobId: string) {
+	const payload = qcBundlePayload(jobId) as any;
+	payload.coordinate_mode = 'auto';
+	payload.available_views = payload.available_views.filter((view: string) => (
+		view !== 'refraction_grid_map_qc'
+		&& view !== 'refractor_cells'
+		&& view !== 'v3_refractor_cells'
+		&& view !== 'vsub_refractor_cells'
+	));
+	payload.unavailable_views = Array.from(new Set([...payload.unavailable_views, 'cells']));
+	delete payload.views.refraction_grid_map_qc;
+	delete payload.views.refractor_cells;
+	delete payload.views.v3_refractor_cells;
+	delete payload.views.vsub_refractor_cells;
+	delete payload.artifacts.refraction_grid_map_qc;
+	delete payload.artifacts.refraction_refractor_velocity_cells;
+	return payload;
+}
+
 async function loadRefractionQcBundle(page: Page, jobId: string) {
 	await openRefractionQcTab(page);
 	await page.getByTestId('refraction-qc-job-id').fill(jobId);
@@ -472,6 +632,60 @@ async function profilePlotSummary(page: Page) {
 	});
 }
 
+async function cellMapPlotSummary(page: Page) {
+	return page.getByTestId('refraction-qc-cell-map-plot').evaluate((node) => {
+		const plot = node as HTMLElement & {
+			data?: Array<{
+				name?: string;
+				z?: Array<Array<number | null>>;
+				text?: string[][];
+				customdata?: Array<Array<{ cell_ix?: number; cell_iy?: number; layer_kind?: string } | null>>;
+				colorbar?: { title?: { text?: string } };
+			}>;
+			layout?: {
+				title?: { text?: string };
+				xaxis?: { title?: { text?: string } };
+				yaxis?: { title?: { text?: string } };
+			};
+		};
+		const heatmap = plot.data?.[0];
+		return {
+			title: plot.layout?.title?.text ?? '',
+			xAxisTitle: plot.layout?.xaxis?.title?.text ?? '',
+			yAxisTitle: plot.layout?.yaxis?.title?.text ?? '',
+			colorbarTitle: heatmap?.colorbar?.title?.text ?? '',
+			z: heatmap?.z ?? [],
+			text: heatmap?.text ?? [],
+			customdata: heatmap?.customdata ?? [],
+			traceNames: (plot.data ?? []).map((trace) => trace.name ?? ''),
+		};
+	});
+}
+
+async function emitCellMapClick(page: Page, cellIx: number, cellIy: number) {
+	await page.getByTestId('refraction-qc-cell-map-plot').evaluate(
+		(node, target) => {
+			const plot = node as HTMLElement & {
+				data?: Array<{
+					customdata?: Array<Array<{ cell_ix?: number; cell_iy?: number; layer_kind?: string } | null>>;
+				}>;
+				emit?: (name: string, event: unknown) => void;
+			};
+			const heatmap = plot.data?.[0];
+			const cells = heatmap?.customdata?.flat() ?? [];
+			const cell = cells.find((item) => (
+				item?.cell_ix === target.cellIx
+				&& item?.cell_iy === target.cellIy
+			));
+			if (!cell || typeof plot.emit !== 'function') {
+				throw new Error('Cell map plot click target is unavailable');
+			}
+			plot.emit('plotly_click', { points: [{ customdata: cell }] });
+		},
+		{ cellIx, cellIy },
+	);
+}
+
 async function openRefractionQcTab(page: Page) {
 	await page.goto('/');
 	await page.getByTestId('refraction-qc-tab').click();
@@ -488,6 +702,7 @@ test('refraction QC tab loads', async ({ page }) => {
 	await expect(page.getByTestId('refraction-qc-profile-group')).toHaveValue('time_terms');
 	await expect(page.getByTestId('refraction-qc-profile-units')).toHaveValue('auto');
 	await expect(page.getByTestId('refraction-qc-status-filter')).toHaveValue('all');
+	await expect(page.getByTestId('refraction-qc-map-quantity')).toHaveValue('velocity');
 	await expect(page.getByTestId('refraction-qc-show-rejected')).toBeChecked();
 	await expect(page.getByTestId('refraction-qc-endpoint-kind')).toHaveValue('source');
 	await expect(page.getByTestId('refraction-qc-view-summary-button')).toBeVisible();
@@ -582,6 +797,130 @@ test('refraction QC tab view switching', async ({ page }) => {
 	await expect(page.getByTestId('refraction-qc-view-gather')).toBeVisible();
 	await expect(page.getByTestId('refraction-qc-view-gather')).toContainText('Gather preview is not included');
 	expect(await page.evaluate(() => (window as any).refractionQcState.selectedView)).toBe('gather_preview');
+});
+
+test('3D cell map renders velocity quantity', async ({ page }) => {
+	await page.route('**/statics/refraction/qc', async (route) => {
+		await route.fulfill({
+			status: 200,
+			contentType: 'application/json',
+			body: JSON.stringify(grid3dQcBundlePayload('refraction-job-cell-1')),
+		});
+	});
+
+	await loadRefractionQcBundle(page, 'refraction-job-cell-1');
+	await page.getByTestId('refraction-qc-view-cells-button').click();
+	await expect(page.getByTestId('refraction-qc-cell-map-plot')).toBeVisible();
+	await expect(page.getByTestId('refraction-qc-view-cells')).toContainText('refraction_grid_map_qc.csv');
+	await expect(page.getByTestId('refraction-qc-view-cells')).toContainText('low_fold: 1');
+	await expect(page.getByTestId('refraction-qc-view-cells')).toContainText('inactive: 1');
+
+	await expect.poll(async () => cellMapPlotSummary(page)).toMatchObject({
+		title: 'V2/T1 Velocity map',
+		xAxisTitle: 'Cell center X (m)',
+		yAxisTitle: 'Cell center Y (m)',
+		colorbarTitle: 'Velocity (m/s)',
+		z: [
+			[2400, 2500],
+			[null, 2600],
+		],
+		traceNames: ['Velocity', 'Flagged cells'],
+	});
+	const summary = await cellMapPlotSummary(page);
+	expect(summary.text.flat().some((text) => text.includes('Status: low_fold'))).toBe(true);
+	expect(summary.text.flat().some((text) => text.includes('Status reason: no_observations'))).toBe(true);
+});
+
+test('3D cell map quantity selector', async ({ page }) => {
+	await page.route('**/statics/refraction/qc', async (route) => {
+		await route.fulfill({
+			status: 200,
+			contentType: 'application/json',
+			body: JSON.stringify(grid3dQcBundlePayload('refraction-job-cell-2')),
+		});
+	});
+
+	await loadRefractionQcBundle(page, 'refraction-job-cell-2');
+	await page.getByTestId('refraction-qc-view-cells-button').click();
+	await page.getByTestId('refraction-qc-map-quantity').selectOption('residual_rms');
+
+	await expect(page.getByTestId('refraction-qc-view-cells')).toContainText('Residual RMS');
+	await expect.poll(async () => cellMapPlotSummary(page)).toMatchObject({
+		title: 'V2/T1 Residual RMS map',
+		colorbarTitle: 'Residual RMS (ms)',
+		z: [
+			[4.5, 9],
+			[null, 2.5],
+		],
+	});
+});
+
+test('3D cell map layer selector', async ({ page }) => {
+	await page.route('**/statics/refraction/qc', async (route) => {
+		await route.fulfill({
+			status: 200,
+			contentType: 'application/json',
+			body: JSON.stringify(grid3dQcBundlePayload('refraction-job-cell-3')),
+		});
+	});
+
+	await loadRefractionQcBundle(page, 'refraction-job-cell-3');
+	await page.getByTestId('refraction-qc-view-cells-button').click();
+	await page.getByTestId('refraction-qc-layer-kind').selectOption('v3_t2');
+
+	await expect(page.getByTestId('refraction-qc-view-cells')).toContainText('Plotted layer');
+	await expect(page.getByTestId('refraction-qc-view-cells')).toContainText('V3/T2');
+	await expect.poll(async () => cellMapPlotSummary(page)).toMatchObject({
+		title: 'V3/T2 Velocity map',
+		z: [[3600, 3700]],
+		traceNames: ['Velocity'],
+	});
+});
+
+test('3D cell map click selects cell', async ({ page }) => {
+	await page.route('**/statics/refraction/qc', async (route) => {
+		await route.fulfill({
+			status: 200,
+			contentType: 'application/json',
+			body: JSON.stringify(grid3dQcBundlePayload('refraction-job-cell-4')),
+		});
+	});
+
+	await loadRefractionQcBundle(page, 'refraction-job-cell-4');
+	await page.getByTestId('refraction-qc-view-cells-button').click();
+	await expect.poll(async () => cellMapPlotSummary(page)).toMatchObject({
+		z: [
+			[2400, 2500],
+			[null, 2600],
+		],
+	});
+
+	await emitCellMapClick(page, 1, 0);
+
+	await expect(page.getByTestId('refraction-qc-cell')).toHaveValue('1,0');
+	await expect.poll(async () => page.evaluate(() => (window as any).refractionQcState.selectedCell)).toEqual({
+		cell_ix: 1,
+		cell_iy: 0,
+		layer_kind: 'v2_t1',
+	});
+});
+
+test('3D cell map unavailable for global velocity', async ({ page }) => {
+	await page.route('**/statics/refraction/qc', async (route) => {
+		await route.fulfill({
+			status: 200,
+			contentType: 'application/json',
+			body: JSON.stringify(globalVelocityQcBundlePayload('refraction-job-global')),
+		});
+	});
+
+	await loadRefractionQcBundle(page, 'refraction-job-global');
+	await page.getByTestId('refraction-qc-view-cells-button').click();
+
+	await expect(page.getByTestId('refraction-qc-view-cells')).toContainText(
+		'3D cell maps are unavailable for global-velocity jobs',
+	);
+	await expect(page.getByTestId('refraction-qc-cell-map-plot')).toHaveCount(0);
 });
 
 test('first-break QC plot renders observed and modeled series', async ({ page }) => {

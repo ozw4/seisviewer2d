@@ -1338,6 +1338,10 @@
       background: #fff;
     }
 
+    .refraction-qc-cell-map-plot {
+      height: 340px;
+    }
+
     .refraction-qc-note {
       margin: 0;
       color: #334155;
@@ -1741,6 +1745,16 @@
                 <option value="all">All statuses</option>
                 <option value="valid">Valid only</option>
                 <option value="invalid">Invalid only</option>
+              </select>
+            </label>
+            <label class="refraction-qc-field" for="refractionQcMapQuantity">Map quantity
+              <select id="refractionQcMapQuantity" data-testid="refraction-qc-map-quantity">
+                <option value="velocity">Velocity</option>
+                <option value="velocity_update">Velocity update</option>
+                <option value="fold">Fold / observation count</option>
+                <option value="residual_rms">Residual RMS</option>
+                <option value="residual_mad">Residual MAD</option>
+                <option value="status">Status</option>
               </select>
             </label>
             <label class="refraction-qc-field refraction-qc-check-field" for="refractionQcShowRejected">

@@ -14,6 +14,7 @@ from app.services.refraction_static_artifacts import (
     REFRACTION_FIRST_BREAK_FIT_QC_CSV_NAME,
     REFRACTION_FIRST_BREAK_FIT_QC_JSON_NAME,
     REFRACTION_FIRST_BREAK_FIT_QC_NPZ_NAME,
+    REFRACTION_GRID_MAP_QC_CSV_NAME,
     REFRACTION_LINE_PROFILE_QC_COMBINED_CSV_NAME,
     REFRACTION_STATIC_ARTIFACTS_JSON_NAME,
     REFRACTION_STATIC_QC_JSON_NAME,
@@ -253,6 +254,58 @@ def test_refraction_static_qc_bundle_uses_line_profile_qc_artifact(
         REFRACTION_LINE_PROFILE_QC_COMBINED_CSV_NAME
     )
     assert payload['views']['line_profiles']['records'] == profile_rows
+
+
+def test_refraction_static_qc_bundle_uses_grid_map_qc_artifact(
+    client: TestClient,
+    tmp_path: Path,
+) -> None:
+    job_dir = tmp_path / 'refraction-job'
+    _write_refraction_qc_artifacts(
+        job_dir,
+        rows=[{'trace': '0', 'first_break_residual_ms': '1.25'}],
+        coordinate_mode='grid_3d',
+        extra_artifact_names=[REFRACTION_GRID_MAP_QC_CSV_NAME],
+    )
+    grid_rows = [
+        {
+            'layer_kind': 'v2_t1',
+            'cell_ix': '0',
+            'cell_iy': '0',
+            'cell_center_x_m': '25.0',
+            'cell_center_y_m': '75.0',
+            'velocity_m_s': '2400.0',
+            'initial_velocity_m_s': '2300.0',
+            'velocity_update_from_initial_m_s': '100.0',
+            'n_observations': '8',
+            'residual_rms_ms': '4.5',
+            'residual_mad_ms': '3.0',
+            'status': 'solved',
+            'status_reason': 'ok',
+        },
+    ]
+    with (job_dir / REFRACTION_GRID_MAP_QC_CSV_NAME).open(
+        'w',
+        encoding='utf-8',
+        newline='',
+    ) as handle:
+        writer = csv.DictWriter(handle, fieldnames=list(grid_rows[0]))
+        writer.writeheader()
+        writer.writerows(grid_rows)
+    _create_static_job(client, job_id='refraction-job', job_dir=job_dir)
+
+    response = client.post(
+        '/statics/refraction/qc',
+        json={'job_id': 'refraction-job', 'include': ['cells']},
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert 'refraction_grid_map_qc' in payload['available_views']
+    assert payload['views']['refraction_grid_map_qc']['artifact'] == (
+        REFRACTION_GRID_MAP_QC_CSV_NAME
+    )
+    assert payload['views']['refraction_grid_map_qc']['records'] == grid_rows
 
 
 def _create_static_job(
