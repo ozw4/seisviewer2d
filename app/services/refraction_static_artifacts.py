@@ -523,6 +523,12 @@ _GRID_MAP_QC_ARTIFACTS: tuple[dict[str, str | bool], ...] = (
     },
 )
 
+_ARTIFACT_CONTENT_TYPE_BY_KIND = {
+    'csv': 'text/csv',
+    'json': 'application/json',
+    'npz': 'application/octet-stream',
+}
+
 REFRACTION_STATIC_REGISTERED_ARTIFACT_NAMES = frozenset(
     str(item['name'])
     for item in (
@@ -9232,8 +9238,10 @@ def _build_manifest_payload(
             {
                 'name': str(item['name']),
                 'kind': str(item['kind']),
+                'content_type': _artifact_content_type(str(item['kind'])),
                 'required': bool(item['required']),
                 'origin': str(item.get('origin', 'final')),
+                'description': str(item['description']),
             }
             for item in artifact_entries
         ],
@@ -9251,6 +9259,15 @@ def _artifact_list_for_qc(
         }
         for item in artifact_entries
     ]
+
+
+def _artifact_content_type(kind: str) -> str:
+    try:
+        return _ARTIFACT_CONTENT_TYPE_BY_KIND[kind]
+    except KeyError as exc:
+        raise RefractionStaticArtifactError(
+            f'unsupported artifact kind for content type: {kind}'
+        ) from exc
 
 
 def _grid_map_qc_rows(arrays: dict[str, np.ndarray]) -> list[dict[str, object]]:

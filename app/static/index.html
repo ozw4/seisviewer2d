@@ -813,6 +813,53 @@
       min-height: 0;
     }
 
+    .sidebar-tabs {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      border-bottom: 1px solid #d1d5db;
+      background: #f3f4f6;
+    }
+
+    .sidebar-tab {
+      margin: 0;
+      padding: 0.65em 0.5em;
+      border: 0;
+      border-right: 1px solid #d1d5db;
+      border-radius: 0;
+      background: transparent;
+      color: #475569;
+      cursor: pointer;
+      font: inherit;
+      font-size: 0.88em;
+      font-weight: 700;
+    }
+
+    .sidebar-tab:last-child {
+      border-right: 0;
+    }
+
+    .sidebar-tab.is-active {
+      background: #fff;
+      color: #111827;
+      box-shadow: inset 0 -2px 0 #2563eb;
+    }
+
+    .sidebar-tab:focus-visible {
+      outline: 2px solid #2563eb;
+      outline-offset: -2px;
+    }
+
+    .sidebar-tab-panel {
+      flex: 1;
+      min-height: 0;
+      display: flex;
+      flex-direction: column;
+    }
+
+    .sidebar-tab-panel[hidden] {
+      display: none !important;
+    }
+
     .pipeline-header {
       display: flex;
       justify-content: space-between;
@@ -1091,6 +1138,211 @@
       justify-content: flex-end;
       gap: .5em;
       margin-top: .4em;
+    }
+
+    .refraction-qc-panel {
+      flex: 1;
+      min-height: 0;
+      overflow-y: auto;
+      padding: 1em;
+      background: #fafafa;
+      display: flex;
+      flex-direction: column;
+      gap: 0.85em;
+    }
+
+    .refraction-qc-title {
+      margin: 0;
+      font-size: 1em;
+    }
+
+    .refraction-qc-form,
+    .refraction-qc-selectors,
+    .refraction-qc-view-buttons {
+      display: flex;
+      flex-direction: column;
+      gap: 0.65em;
+    }
+
+    .refraction-qc-field {
+      display: flex;
+      flex-direction: column;
+      gap: 0.3em;
+      font-size: 0.86em;
+      color: #334155;
+    }
+
+    .refraction-qc-field input,
+    .refraction-qc-field select {
+      padding: 0.4em 0.5em;
+      border: 1px solid #cbd5e1;
+      border-radius: 4px;
+      background: #fff;
+      color: #111827;
+      font: inherit;
+    }
+
+    .refraction-qc-actions {
+      display: flex;
+      gap: 0.5em;
+      align-items: center;
+    }
+
+    .refraction-qc-actions button,
+    .refraction-qc-view-button {
+      margin: 0;
+      padding: 0.45em 0.65em;
+      border: 1px solid #cbd5e1;
+      border-radius: 4px;
+      background: #fff;
+      color: #111827;
+      cursor: pointer;
+      font: inherit;
+      font-size: 0.86em;
+    }
+
+    .refraction-qc-actions button:disabled {
+      cursor: wait;
+      opacity: 0.7;
+    }
+
+    .refraction-qc-view-button {
+      text-align: left;
+    }
+
+    .refraction-qc-view-button.is-active {
+      border-color: #2563eb;
+      background: #eff6ff;
+      color: #1d4ed8;
+      font-weight: 700;
+    }
+
+    .refraction-qc-status,
+    .refraction-qc-error,
+    .refraction-qc-sign {
+      font-size: 0.84em;
+      line-height: 1.4;
+    }
+
+    .refraction-qc-status {
+      color: #475569;
+    }
+
+    .refraction-qc-error {
+      padding: 0.55em 0.65em;
+      border: 1px solid #fca5a5;
+      border-radius: 4px;
+      background: #fef2f2;
+      color: #991b1b;
+    }
+
+    .refraction-qc-sign {
+      color: #334155;
+    }
+
+    .refraction-qc-view {
+      border: 1px solid #d8dee8;
+      border-radius: 8px;
+      background: #fff;
+      padding: 0.8em;
+      display: flex;
+      flex-direction: column;
+      gap: 0.55em;
+    }
+
+    .refraction-qc-view[hidden] {
+      display: none !important;
+    }
+
+    .refraction-qc-view h3 {
+      margin: 0;
+      font-size: 0.95em;
+      color: #0f172a;
+    }
+
+    .refraction-qc-placeholder {
+      margin: 0;
+      color: #64748b;
+      font-size: 0.86em;
+      line-height: 1.45;
+    }
+
+    .refraction-qc-kv {
+      display: grid;
+      grid-template-columns: minmax(0, 7.5em) minmax(0, 1fr);
+      gap: 0.35em 0.6em;
+      margin: 0;
+      font-size: 0.82em;
+    }
+
+    .refraction-qc-kv dt {
+      color: #64748b;
+      font-weight: 700;
+    }
+
+    .refraction-qc-kv dd {
+      margin: 0;
+      color: #0f172a;
+      overflow-wrap: anywhere;
+    }
+
+    .refraction-qc-table-wrap {
+      overflow-x: auto;
+      border: 1px solid #e5e7eb;
+      border-radius: 4px;
+    }
+
+    .refraction-qc-table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 0.78em;
+    }
+
+    .refraction-qc-table th,
+    .refraction-qc-table td {
+      padding: 0.35em 0.45em;
+      border-bottom: 1px solid #e5e7eb;
+      text-align: left;
+      white-space: nowrap;
+    }
+
+    .refraction-qc-table th {
+      background: #f8fafc;
+      color: #334155;
+      font-weight: 700;
+    }
+
+    .refraction-qc-check-field {
+      flex-direction: row;
+      align-items: center;
+      justify-content: space-between;
+      gap: 0.6em;
+    }
+
+    .refraction-qc-check-field input {
+      margin: 0;
+    }
+
+    .refraction-qc-plot-grid {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr);
+      gap: 0.75em;
+    }
+
+    .refraction-qc-plot {
+      min-width: 0;
+      width: 100%;
+      height: 260px;
+      border: 1px solid #e5e7eb;
+      border-radius: 4px;
+      background: #fff;
+    }
+
+    .refraction-qc-note {
+      margin: 0;
+      color: #334155;
+      font-size: 0.82em;
+      line-height: 1.45;
     }
 
     /* Pipeline progress overlay */
@@ -1387,38 +1639,160 @@
       </div>
     </div>
     <aside id="pipelinePanel">
-      <div class="pipeline-header">
-        <span>Pipeline</span>
-        <div class="pipeline-actions">
-          <button type="button" id="pipelineRunButton">▶ Run</button>
-          <div class="pipeline-add">
-            <button type="button" id="pipelineAddButton">+ Add Step ▾</button>
-            <div class="pipeline-add-menu" id="pipelineAddMenu">
-              <button type="button" data-step="bandpass">Bandpass</button>
-              <button type="button" data-step="denoise">Denoise</button>
+      <div class="sidebar-tabs" role="tablist" aria-label="Viewer side panel">
+        <button type="button" id="pipelineSidebarTab" class="sidebar-tab is-active" role="tab"
+          aria-selected="true" aria-controls="pipelineTabPanel" data-testid="pipeline-sidebar-tab">Pipeline</button>
+        <button type="button" id="refractionQcSidebarTab" class="sidebar-tab" role="tab"
+          aria-selected="false" aria-controls="refractionQcTabPanel" data-testid="refraction-qc-tab">Refraction QC</button>
+      </div>
+      <div id="pipelineTabPanel" class="sidebar-tab-panel" role="tabpanel" aria-labelledby="pipelineSidebarTab">
+        <div class="pipeline-header">
+          <span>Pipeline</span>
+          <div class="pipeline-actions">
+            <button type="button" id="pipelineRunButton">▶ Run</button>
+            <div class="pipeline-add">
+              <button type="button" id="pipelineAddButton">+ Add Step ▾</button>
+              <div class="pipeline-add-menu" id="pipelineAddMenu">
+                <button type="button" data-step="bandpass">Bandpass</button>
+                <button type="button" data-step="denoise">Denoise</button>
+              </div>
             </div>
           </div>
         </div>
-      </div>
-      <div id="pipelineRunStatus" class="pipeline-run-status is-idle" role="status" aria-live="polite" aria-atomic="true">
-        <div class="pipeline-run-status-row">
-          <span id="pipelineRunBadge" class="pipeline-run-badge">idle</span>
-          <button type="button" id="pipelineCancelButton" hidden>Cancel Request</button>
-        </div>
-        <div id="pipelineRunSummary" class="pipeline-run-summary">Ready to run the current section.</div>
-        <div id="pipelineRunDetail" class="pipeline-run-detail">No pipeline request is active.</div>
-        <div id="pipelineRunNote" class="pipeline-run-note"></div>
-      </div>
-      <div id="pipelineCards"></div>
-      <div id="pipelineInspector" class="pipeline-inspector hidden">
-        <h3 id="pipelineInspectorTitle">Inspector</h3>
-        <form id="pipelineInspectorForm">
-          <div id="pipelineInspectorFields"></div>
-          <div class="pipeline-inspector-actions">
-            <button type="button" id="pipelineInspectorClose">Close</button>
-            <button type="submit" id="pipelineInspectorSave">Save</button>
+        <div id="pipelineRunStatus" class="pipeline-run-status is-idle" role="status" aria-live="polite" aria-atomic="true">
+          <div class="pipeline-run-status-row">
+            <span id="pipelineRunBadge" class="pipeline-run-badge">idle</span>
+            <button type="button" id="pipelineCancelButton" hidden>Cancel Request</button>
           </div>
-        </form>
+          <div id="pipelineRunSummary" class="pipeline-run-summary">Ready to run the current section.</div>
+          <div id="pipelineRunDetail" class="pipeline-run-detail">No pipeline request is active.</div>
+          <div id="pipelineRunNote" class="pipeline-run-note"></div>
+        </div>
+        <div id="pipelineCards"></div>
+        <div id="pipelineInspector" class="pipeline-inspector hidden">
+          <h3 id="pipelineInspectorTitle">Inspector</h3>
+          <form id="pipelineInspectorForm">
+            <div id="pipelineInspectorFields"></div>
+            <div class="pipeline-inspector-actions">
+              <button type="button" id="pipelineInspectorClose">Close</button>
+              <button type="submit" id="pipelineInspectorSave">Save</button>
+            </div>
+          </form>
+        </div>
+      </div>
+      <div id="refractionQcTabPanel" class="sidebar-tab-panel" role="tabpanel"
+        aria-labelledby="refractionQcSidebarTab" hidden>
+        <div class="refraction-qc-panel" data-testid="refraction-qc-panel">
+          <h2 class="refraction-qc-title">Refraction QC</h2>
+          <form id="refractionQcForm" class="refraction-qc-form" data-testid="refraction-qc-form">
+            <label class="refraction-qc-field" for="refractionQcJobId">Job ID
+              <input id="refractionQcJobId" name="job_id" type="text" list="refractionQcJobList"
+                autocomplete="off" data-testid="refraction-qc-job-id" />
+            </label>
+            <datalist id="refractionQcJobList"></datalist>
+            <label class="refraction-qc-field" for="refractionQcMaxPoints">Max points
+              <input id="refractionQcMaxPoints" name="max_points" type="number" min="1" step="1"
+                value="20000" data-testid="refraction-qc-max-points" />
+            </label>
+            <div class="refraction-qc-actions">
+              <button id="refractionQcLoadButton" type="submit" data-testid="refraction-qc-load">Load QC Bundle</button>
+            </div>
+          </form>
+          <div id="refractionQcStatus" class="refraction-qc-status" role="status" aria-live="polite"
+            data-testid="refraction-qc-status">No QC bundle loaded.</div>
+          <div id="refractionQcError" class="refraction-qc-error" role="alert" hidden
+            data-testid="refraction-qc-error"></div>
+          <div id="refractionQcSign" class="refraction-qc-sign" data-testid="refraction-qc-sign" hidden></div>
+          <div class="refraction-qc-selectors" aria-label="Refraction QC selectors">
+            <label class="refraction-qc-field" for="refractionQcLayerKind">Layer
+              <select id="refractionQcLayerKind" data-testid="refraction-qc-layer-kind">
+                <option value="all">All</option>
+                <option value="v2_t1">V2/T1</option>
+                <option value="v3_t2">V3/T2</option>
+                <option value="vsub_t3">Vsub/T3</option>
+              </select>
+            </label>
+            <label class="refraction-qc-field" for="refractionQcXAxisMode">X axis
+              <select id="refractionQcXAxisMode" data-testid="refraction-qc-x-axis">
+                <option value="offset">Offset</option>
+                <option value="inline">Inline</option>
+                <option value="trace">Trace index</option>
+              </select>
+            </label>
+            <label class="refraction-qc-field refraction-qc-check-field" for="refractionQcShowRejected">
+              Show rejected / unused
+              <input id="refractionQcShowRejected" type="checkbox" checked
+                data-testid="refraction-qc-show-rejected" />
+            </label>
+            <label class="refraction-qc-field" for="refractionQcEndpointKind">Endpoint kind
+              <select id="refractionQcEndpointKind" data-testid="refraction-qc-endpoint-kind">
+                <option value="source">source</option>
+                <option value="receiver">receiver</option>
+              </select>
+            </label>
+            <label class="refraction-qc-field" for="refractionQcEndpoint">Endpoint
+              <input id="refractionQcEndpoint" type="text" autocomplete="off"
+                data-testid="refraction-qc-endpoint" />
+            </label>
+            <label class="refraction-qc-field" for="refractionQcCell">Cell
+              <input id="refractionQcCell" type="text" autocomplete="off"
+                data-testid="refraction-qc-cell" />
+            </label>
+          </div>
+          <div id="refractionQcViewButtons" class="refraction-qc-view-buttons" role="tablist"
+            aria-label="Refraction QC views">
+            <button type="button" class="refraction-qc-view-button is-active" role="tab" aria-selected="true"
+              data-view="summary" data-testid="refraction-qc-view-summary-button">Summary</button>
+            <button type="button" class="refraction-qc-view-button" role="tab" aria-selected="false"
+              data-view="first_break_residuals" data-testid="refraction-qc-view-first-break-button">First-break fit</button>
+            <button type="button" class="refraction-qc-view-button" role="tab" aria-selected="false"
+              data-view="reduced_time" data-testid="refraction-qc-view-reduced-time-button">Reduced-time / LMO</button>
+            <button type="button" class="refraction-qc-view-button" role="tab" aria-selected="false"
+              data-view="profiles_2d" data-testid="refraction-qc-view-profiles-button">2D profiles</button>
+            <button type="button" class="refraction-qc-view-button" role="tab" aria-selected="false"
+              data-view="cell_maps_3d" data-testid="refraction-qc-view-cells-button">3D cell maps</button>
+            <button type="button" class="refraction-qc-view-button" role="tab" aria-selected="false"
+              data-view="static_components" data-testid="refraction-qc-view-statics-button">Static components</button>
+            <button type="button" class="refraction-qc-view-button" role="tab" aria-selected="false"
+              data-view="gather_preview" data-testid="refraction-qc-view-gather-button">Gather preview</button>
+          </div>
+          <div id="refractionQcViews" data-testid="refraction-qc-views">
+            <section class="refraction-qc-view" data-view-panel="summary" data-testid="refraction-qc-view-summary">
+              <h3>Summary</h3>
+              <div class="refraction-qc-placeholder" data-view-content="summary">No QC bundle loaded.</div>
+            </section>
+            <section class="refraction-qc-view" data-view-panel="first_break_residuals"
+              data-testid="refraction-qc-view-first-break" hidden>
+              <h3>First-break fit</h3>
+              <div class="refraction-qc-placeholder" data-view-content="first_break_residuals">No QC bundle loaded.</div>
+            </section>
+            <section class="refraction-qc-view" data-view-panel="reduced_time"
+              data-testid="refraction-qc-view-reduced-time" hidden>
+              <h3>Reduced-time / LMO</h3>
+              <div class="refraction-qc-placeholder" data-view-content="reduced_time">No QC bundle loaded.</div>
+            </section>
+            <section class="refraction-qc-view" data-view-panel="profiles_2d"
+              data-testid="refraction-qc-view-profiles" hidden>
+              <h3>2D profiles</h3>
+              <div class="refraction-qc-placeholder" data-view-content="profiles_2d">No QC bundle loaded.</div>
+            </section>
+            <section class="refraction-qc-view" data-view-panel="cell_maps_3d"
+              data-testid="refraction-qc-view-cells" hidden>
+              <h3>3D cell maps</h3>
+              <div class="refraction-qc-placeholder" data-view-content="cell_maps_3d">No QC bundle loaded.</div>
+            </section>
+            <section class="refraction-qc-view" data-view-panel="static_components"
+              data-testid="refraction-qc-view-statics" hidden>
+              <h3>Static components</h3>
+              <div class="refraction-qc-placeholder" data-view-content="static_components">No QC bundle loaded.</div>
+            </section>
+            <section class="refraction-qc-view" data-view-panel="gather_preview"
+              data-testid="refraction-qc-view-gather" hidden>
+              <h3>Gather preview</h3>
+              <div class="refraction-qc-placeholder" data-view-content="gather_preview">No QC bundle loaded.</div>
+            </section>
+          </div>
+        </div>
       </div>
     </aside>
   </div>
@@ -1543,6 +1917,7 @@
   <script src="/static/pipeline/run.js"></script>
   <script src="/static/pipeline/index.js"></script>
   <script src="/static/pipeline_ui.js"></script>
+  <script src="/static/refraction_qc.js"></script>
   <script type="module" src="/static/viewer/bootstrap.js"></script>
   <script type="module" src="/static/viewer/seis_heatmap_globals.js"></script>
   <script src="/static/viewer/restyle_only.js"></script>
