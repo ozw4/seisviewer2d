@@ -223,6 +223,61 @@ GRID_MAP_QC_REQUIRED_COLUMNS = {
     'status_reason',
 }
 
+M6_QC_ARTIFACT_DESCRIPTIONS = {
+    REFRACTION_FIRST_BREAK_FIT_QC_CSV_NAME: (
+        'Viewer-ready observed-modeled first-break fit QC table'
+    ),
+    REFRACTION_FIRST_BREAK_FIT_QC_NPZ_NAME: (
+        'Machine-readable observed-modeled first-break fit QC arrays'
+    ),
+    REFRACTION_FIRST_BREAK_FIT_QC_JSON_NAME: (
+        'Observed-modeled first-break fit QC schema and summary'
+    ),
+    REFRACTION_REDUCED_TIME_QC_CSV_NAME: (
+        'Reduced-time first-break QC table for LMO displays'
+    ),
+    REFRACTION_REDUCED_TIME_QC_NPZ_NAME: (
+        'Machine-readable reduced-time first-break QC arrays'
+    ),
+    REFRACTION_REDUCED_TIME_QC_JSON_NAME: (
+        'Reduced-time first-break QC schema and summary'
+    ),
+    REFRACTION_LINE_PROFILE_QC_SOURCE_CSV_NAME: (
+        'Source endpoint line-profile QC rows sorted by inline distance'
+    ),
+    REFRACTION_LINE_PROFILE_QC_RECEIVER_CSV_NAME: (
+        'Receiver endpoint line-profile QC rows sorted by inline distance'
+    ),
+    REFRACTION_LINE_PROFILE_QC_COMBINED_CSV_NAME: (
+        'Combined source/receiver line-profile QC rows'
+    ),
+    REFRACTION_LINE_PROFILE_QC_NPZ_NAME: (
+        'Machine-readable source/receiver line-profile QC arrays'
+    ),
+    REFRACTION_LINE_PROFILE_QC_JSON_NAME: (
+        'Line-profile QC schema, availability, and summary'
+    ),
+    REFRACTION_GRID_MAP_QC_CSV_NAME: (
+        'Viewer-ready refraction cell velocity grid map QC rows'
+    ),
+    REFRACTION_GRID_MAP_QC_NPZ_NAME: (
+        'Machine-readable refraction cell velocity grid map QC arrays'
+    ),
+    REFRACTION_GRID_MAP_QC_JSON_NAME: 'Refraction cell velocity grid map QC summary',
+    REFRACTION_STATIC_COMPONENT_QC_TRACE_CSV_NAME: (
+        'Trace-level static component waterfall QC table'
+    ),
+    REFRACTION_STATIC_COMPONENT_QC_ENDPOINT_CSV_NAME: (
+        'Endpoint-level static component waterfall QC table'
+    ),
+    REFRACTION_STATIC_COMPONENT_QC_NPZ_NAME: (
+        'Machine-readable static component waterfall QC arrays'
+    ),
+    REFRACTION_STATIC_COMPONENT_QC_JSON_NAME: (
+        'Static component waterfall QC schema and summary'
+    ),
+}
+
 UPSTREAM_V1_ARTIFACT_NAMES = (
     REFRACTION_V1_QC_JSON_NAME,
     REFRACTION_V1_ESTIMATES_CSV_NAME,
@@ -1087,10 +1142,17 @@ def test_refraction_static_artifacts_manifest_and_download_visibility(
     manifest = json.loads(
         (tmp_path / REFRACTION_STATIC_ARTIFACTS_JSON_NAME).read_text(encoding='utf-8')
     )
-    assert {item['name'] for item in manifest['artifacts']} == (
-        EXPECTED_FILENAMES - {REFRACTION_STATIC_ARTIFACTS_JSON_NAME}
-    )
+    artifacts = {item['name']: item for item in manifest['artifacts']}
+    assert set(artifacts) == EXPECTED_FILENAMES - {REFRACTION_STATIC_ARTIFACTS_JSON_NAME}
     assert {item['origin'] for item in manifest['artifacts']} == {'final'}
+    assert GRID_MAP_QC_FILENAMES.isdisjoint(artifacts)
+    for artifact_name, description in M6_QC_ARTIFACT_DESCRIPTIONS.items():
+        if artifact_name in GRID_MAP_QC_FILENAMES:
+            continue
+        assert artifacts[artifact_name]['description'] == description
+        assert artifacts[artifact_name]['content_type'] == _content_type_for_name(
+            artifact_name
+        )
 
     state = app.state.sv
     with state.lock:
@@ -1115,6 +1177,16 @@ def test_refraction_static_artifacts_manifest_and_download_visibility(
             )
             assert download.status_code == 200
             assert download.json()['artifact_version'] == '1.0'
+
+            for artifact_name in M6_QC_ARTIFACT_DESCRIPTIONS:
+                if artifact_name in GRID_MAP_QC_FILENAMES:
+                    continue
+                response = client.get(
+                    '/statics/job/refraction-artifacts-job/download',
+                    params={'name': artifact_name},
+                )
+                assert response.status_code == 200, artifact_name
+                assert response.content, artifact_name
     finally:
         with state.lock:
             state.jobs.clear()
@@ -1386,9 +1458,17 @@ def test_solve_cell_manifest_registers_cell_velocity_artifacts(
         EXPECTED_FILENAMES | CELL_VELOCITY_FILENAMES | GRID_MAP_QC_FILENAMES
     )
     manifest = json.loads(paths.manifest_json.read_text(encoding='utf-8'))
-    artifact_names = {item['name'] for item in manifest['artifacts']}
+    artifacts = {item['name']: item for item in manifest['artifacts']}
+    artifact_names = set(artifacts)
     assert CELL_VELOCITY_FILENAMES.issubset(artifact_names)
     assert GRID_MAP_QC_FILENAMES.issubset(artifact_names)
+    for artifact_name in GRID_MAP_QC_FILENAMES:
+        assert artifacts[artifact_name]['description'] == (
+            M6_QC_ARTIFACT_DESCRIPTIONS[artifact_name]
+        )
+        assert artifacts[artifact_name]['content_type'] == _content_type_for_name(
+            artifact_name
+        )
 
     qc = json.loads(paths.qc_json.read_text(encoding='utf-8'))
     assert qc['velocity']['cell_velocity_qc_artifact'] == (
@@ -1761,8 +1841,10 @@ def test_refraction_static_manifest_strict_json(tmp_path: Path) -> None:
     assert {
         'name',
         'kind',
+        'content_type',
         'required',
         'origin',
+        'description',
     }.issubset(payload['artifacts'][0])
 
 
@@ -2285,6 +2367,16 @@ def _contains_absolute_path(value: object) -> bool:
     if isinstance(value, list):
         return any(_contains_absolute_path(item) for item in value)
     return False
+
+
+def _content_type_for_name(name: str) -> str:
+    if name.endswith('.csv'):
+        return 'text/csv'
+    if name.endswith('.json'):
+        return 'application/json'
+    if name.endswith('.npz'):
+        return 'application/octet-stream'
+    raise AssertionError(f'unhandled artifact extension: {name}')
 
 
 def _write_upstream_v1_artifacts(root: Path) -> None:
