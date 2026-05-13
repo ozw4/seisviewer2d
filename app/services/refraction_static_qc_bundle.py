@@ -18,6 +18,8 @@ from app.services.refraction_static_artifacts import (
     REFRACTION_REDUCED_TIME_QC_CSV_NAME,
     REFRACTION_REFRACTOR_VELOCITY_CELLS_CSV_NAME,
     REFRACTION_STATIC_ARTIFACTS_JSON_NAME,
+    REFRACTION_STATIC_COMPONENT_QC_ENDPOINT_CSV_NAME,
+    REFRACTION_STATIC_COMPONENT_QC_TRACE_CSV_NAME,
     REFRACTION_STATIC_COMPONENTS_CSV_NAME,
     REFRACTION_STATIC_QC_JSON_NAME,
     REFRACTION_STATIC_REQUEST_JSON_NAME,
@@ -63,6 +65,16 @@ _TABULAR_VIEW_SPECS: tuple[_TabularViewSpec, ...] = (
         include='profiles',
         view_name='line_profiles',
         artifact_name=REFRACTION_LINE_PROFILE_QC_COMBINED_CSV_NAME,
+    ),
+    _TabularViewSpec(
+        include='static_components',
+        view_name='static_component_qc_endpoint',
+        artifact_name=REFRACTION_STATIC_COMPONENT_QC_ENDPOINT_CSV_NAME,
+    ),
+    _TabularViewSpec(
+        include='static_components',
+        view_name='static_component_qc_trace',
+        artifact_name=REFRACTION_STATIC_COMPONENT_QC_TRACE_CSV_NAME,
     ),
     _TabularViewSpec(
         include='static_components',

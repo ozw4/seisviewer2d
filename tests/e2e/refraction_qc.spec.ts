@@ -145,6 +145,108 @@ function lineProfileRecords() {
 	];
 }
 
+function staticComponentEndpointRecords() {
+	return [
+		{
+			endpoint_kind: 'source',
+			endpoint_key: 'S001',
+			weathering_correction_ms: '-8',
+			elevation_correction_ms: '2',
+			source_depth_correction_ms: '5',
+			uphole_correction_ms: '-1',
+			manual_static_ms: '0.5',
+			field_correction_ms: '4.5',
+			computed_field_correction_ms: '4.5',
+			applied_field_correction_ms: '4.5',
+			total_static_ms: '-4',
+			total_applied_shift_ms: '-4',
+			total_with_field_shift_ms: '0.5',
+			apply_to_trace_shift: 'true',
+			static_status: 'ok',
+			sign_convention: 'corrected(t) = raw(t - shift_s)',
+		},
+		{
+			endpoint_kind: 'source',
+			endpoint_key: 'S002',
+			weathering_correction_ms: '',
+			elevation_correction_ms: '2.5',
+			source_depth_correction_ms: '',
+			uphole_correction_ms: '',
+			manual_static_ms: '1',
+			field_correction_ms: '6.5',
+			computed_field_correction_ms: '6.5',
+			applied_field_correction_ms: '6.5',
+			total_static_ms: '-5.5',
+			total_applied_shift_ms: '-5.5',
+			total_with_field_shift_ms: '1.0',
+			apply_to_trace_shift: 'true',
+			static_status: 'invalid_weathering',
+			sign_convention: 'corrected(t) = raw(t - shift_s)',
+		},
+		{
+			endpoint_kind: 'receiver',
+			endpoint_key: 'R001',
+			weathering_correction_ms: '-7',
+			elevation_correction_ms: '1',
+			source_depth_correction_ms: '',
+			uphole_correction_ms: '',
+			manual_static_ms: '0',
+			field_correction_ms: '2',
+			computed_field_correction_ms: '2',
+			applied_field_correction_ms: '2',
+			total_static_ms: '-4',
+			total_applied_shift_ms: '-4',
+			total_with_field_shift_ms: '-2',
+			apply_to_trace_shift: 'true',
+			static_status: 'ok',
+			sign_convention: 'corrected(t) = raw(t - shift_s)',
+		},
+	];
+}
+
+function staticComponentTraceRecords() {
+	return [
+		{
+			trace_index_sorted: '0',
+			source_endpoint_key: 'S001',
+			receiver_endpoint_key: 'R001',
+			refraction_shift_ms: '-8',
+			weathering_shift_ms: '-15',
+			datum_shift_ms: '3',
+			field_shift_ms: '6.5',
+			computed_field_shift_ms: '6.5',
+			applied_field_shift_ms: '6.5',
+			manual_static_shift_ms: '0.5',
+			source_depth_shift_ms: '5',
+			uphole_shift_ms: '-1',
+			final_trace_shift_ms: '-1.5',
+			applied_trace_shift_ms: '-1.5',
+			apply_to_trace_shift: 'true',
+			static_status: 'ok',
+			sign_convention: 'corrected(t) = raw(t - shift_s)',
+		},
+		{
+			trace_index_sorted: '1',
+			source_endpoint_key: 'S002',
+			receiver_endpoint_key: 'R001',
+			refraction_shift_ms: '-5.5',
+			weathering_shift_ms: '',
+			datum_shift_ms: '2.5',
+			field_shift_ms: '6.5',
+			computed_field_shift_ms: '6.5',
+			applied_field_shift_ms: '6.5',
+			manual_static_shift_ms: '1',
+			source_depth_shift_ms: '',
+			uphole_shift_ms: '',
+			final_trace_shift_ms: '1.0',
+			applied_trace_shift_ms: '1.0',
+			apply_to_trace_shift: 'true',
+			static_status: 'invalid_weathering',
+			sign_convention: 'corrected(t) = raw(t - shift_s)',
+		},
+	];
+}
+
 function oneLayerLineProfileRecords() {
 	return lineProfileRecords().map((record) => ({
 		...record,
@@ -273,6 +375,8 @@ function gridMapRecords() {
 
 function qcBundlePayload(jobId: string) {
 	const profileRecords = lineProfileRecords();
+	const staticEndpointRecords = staticComponentEndpointRecords();
+	const staticTraceRecords = staticComponentTraceRecords();
 	return {
 		job_id: jobId,
 		statics_kind: 'refraction',
@@ -316,6 +420,8 @@ function qcBundlePayload(jobId: string) {
 			refraction_line_profile_qc_combined: 'refraction_line_profile_qc_combined.csv',
 			refraction_refractor_velocity_cells: 'refraction_refractor_velocity_cells.csv',
 			refraction_static_components: 'refraction_static_components.csv',
+			refraction_static_component_qc_endpoint: 'refraction_static_component_qc_endpoint.csv',
+			refraction_static_component_qc_trace: 'refraction_static_component_qc_trace.csv',
 		},
 		available_views: [
 			'summary',
@@ -324,6 +430,8 @@ function qcBundlePayload(jobId: string) {
 			'reduced_time',
 			'line_profiles',
 			'refractor_cells',
+			'static_component_qc_endpoint',
+			'static_component_qc_trace',
 			'static_components',
 		],
 		unavailable_views: ['gather_preview'],
@@ -520,12 +628,74 @@ function qcBundlePayload(jobId: string) {
 			},
 			static_components: {
 				artifact: 'refraction_static_components.csv',
-				columns: ['endpoint_key', 'total_applied_shift_ms'],
-				total_points: 1,
-				returned_points: 1,
+				columns: [
+					'kind',
+					'endpoint_key',
+					'weathering_status',
+					'datum_status',
+					'source_depth_status',
+					'uphole_status',
+					'manual_static_status',
+					'field_status',
+					'static_status',
+				],
+				total_points: 3,
+				returned_points: 3,
 				downsampled: false,
 				downsampling_method: 'even_index_floor_first_last',
-				records: [{ endpoint_key: 'S001', total_applied_shift_ms: '-8.0' }],
+				records: [
+					{
+						kind: 'source',
+						endpoint_key: 'S001',
+						weathering_status: 'ok',
+						datum_status: 'ok',
+						source_depth_status: 'ok',
+						uphole_status: 'ok',
+						manual_static_status: 'ok',
+						field_status: 'ok',
+						static_status: 'ok',
+					},
+					{
+						kind: 'source',
+						endpoint_key: 'S002',
+						weathering_status: 'invalid_weathering',
+						datum_status: 'ok',
+						source_depth_status: 'missing',
+						uphole_status: 'not_enabled',
+						manual_static_status: 'ok',
+						field_status: 'ok',
+						static_status: 'invalid_weathering',
+					},
+					{
+						kind: 'receiver',
+						endpoint_key: 'R001',
+						weathering_status: 'ok',
+						datum_status: 'ok',
+						source_depth_status: 'not_applicable',
+						uphole_status: 'not_applicable',
+						manual_static_status: 'ok',
+						field_status: 'ok',
+						static_status: 'ok',
+					},
+				],
+			},
+			static_component_qc_endpoint: {
+				artifact: 'refraction_static_component_qc_endpoint.csv',
+				columns: Object.keys(staticEndpointRecords[0]),
+				total_points: staticEndpointRecords.length,
+				returned_points: staticEndpointRecords.length,
+				downsampled: false,
+				downsampling_method: 'even_index_floor_first_last',
+				records: staticEndpointRecords,
+			},
+			static_component_qc_trace: {
+				artifact: 'refraction_static_component_qc_trace.csv',
+				columns: Object.keys(staticTraceRecords[0]),
+				total_points: staticTraceRecords.length,
+				returned_points: staticTraceRecords.length,
+				downsampled: false,
+				downsampling_method: 'even_index_floor_first_last',
+				records: staticTraceRecords,
 			},
 		},
 		downsampling: {
@@ -627,6 +797,30 @@ async function profilePlotSummary(page: Page) {
 				values: Array.isArray(trace.y) ? trace.y.map((value) => Math.round(value * 1000) / 1000) : [],
 				dash: trace.line?.dash ?? '',
 				symbols: Array.isArray(trace.marker?.symbol) ? trace.marker?.symbol : [],
+			})),
+		};
+	});
+}
+
+async function staticComponentPlotSummary(page: Page, testId = 'refraction-qc-static-waterfall') {
+	return page.getByTestId(testId).evaluate((node) => {
+		const plot = node as HTMLElement & {
+			data?: Array<{
+				name?: string;
+				x?: number[];
+				y?: string[];
+				text?: string[];
+			}>;
+			layout?: { xaxis?: { title?: { text?: string } } };
+		};
+		const trace = plot.data?.[0];
+		return {
+			name: trace?.name ?? '',
+			axisTitle: plot.layout?.xaxis?.title?.text ?? '',
+			components: (trace?.y ?? []).map((label, index) => ({
+				label,
+				value: Math.round(((trace?.x ?? [])[index] ?? 0) * 1000) / 1000,
+				text: (trace?.text ?? [])[index] ?? '',
 			})),
 		};
 	});
@@ -1161,6 +1355,123 @@ test('2D profile plot renders static components with units', async ({ page }) =>
 				name: 'Final applied static (s) source',
 				values: [-0.004, -0.005],
 			}),
+		]),
+	});
+});
+
+test('static component view renders waterfall values', async ({ page }) => {
+	await page.route('**/statics/refraction/qc', async (route) => {
+		await route.fulfill({
+			status: 200,
+			contentType: 'application/json',
+			body: JSON.stringify(qcBundlePayload('refraction-job-15')),
+		});
+	});
+
+	await loadRefractionQcBundle(page, 'refraction-job-15');
+	await page.getByTestId('refraction-qc-view-statics-button').click();
+
+	await expect(page.getByTestId('refraction-qc-view-statics')).toContainText('Endpoint static components');
+	await expect(page.getByTestId('refraction-qc-static-component-list')).toContainText('Weathering correction');
+	await expect(page.getByTestId('refraction-qc-static-component-list')).toContainText('-8.000 ms');
+	await expect(page.getByTestId('refraction-qc-static-trace-component-list')).toContainText('Applied trace shift');
+	await expect(page.getByTestId('refraction-qc-static-trace-component-list')).toContainText('-1.500 ms');
+
+	await expect.poll(async () => staticComponentPlotSummary(page)).toMatchObject({
+		name: 'Endpoint static components',
+		axisTitle: 'Shift (ms)',
+		components: expect.arrayContaining([
+			expect.objectContaining({ label: 'Weathering correction', value: -8 }),
+			expect.objectContaining({ label: 'Applied field shift', value: 4.5 }),
+			expect.objectContaining({ label: 'Final endpoint shift', value: -4 }),
+		]),
+	});
+});
+
+test('static component view displays sign convention', async ({ page }) => {
+	await page.route('**/statics/refraction/qc', async (route) => {
+		await route.fulfill({
+			status: 200,
+			contentType: 'application/json',
+			body: JSON.stringify(qcBundlePayload('refraction-job-16')),
+		});
+	});
+
+	await loadRefractionQcBundle(page, 'refraction-job-16');
+	await page.getByTestId('refraction-qc-view-statics-button').click();
+
+	await expect(page.getByTestId('refraction-qc-static-sign-note')).toContainText('corrected(t) = raw(t - shift_s)');
+	await expect(page.getByTestId('refraction-qc-static-sign-note')).toContainText('positive shift_s delays displayed events');
+	await expect(page.getByTestId('refraction-qc-static-sign-note')).toContainText('negative shift_s advances displayed events');
+	await expect(page.getByTestId('refraction-qc-static-component-list')).toContainText('advances displayed events');
+	await expect(page.getByTestId('refraction-qc-static-component-list')).toContainText('delays displayed events');
+});
+
+test('static component view shows computed versus applied field shift when apply is false', async ({ page }) => {
+	await page.route('**/statics/refraction/qc', async (route) => {
+		const payload = qcBundlePayload('refraction-job-17') as any;
+		for (const record of payload.views.static_component_qc_endpoint.records) {
+			record.apply_to_trace_shift = 'false';
+			record.applied_field_correction_ms = '0';
+			record.total_with_field_shift_ms = record.total_static_ms;
+		}
+		for (const record of payload.views.static_component_qc_trace.records) {
+			record.apply_to_trace_shift = 'false';
+			record.applied_field_shift_ms = '0';
+			record.final_trace_shift_ms = record.refraction_shift_ms;
+			record.applied_trace_shift_ms = record.refraction_shift_ms;
+		}
+		await route.fulfill({
+			status: 200,
+			contentType: 'application/json',
+			body: JSON.stringify(payload),
+		});
+	});
+
+	await loadRefractionQcBundle(page, 'refraction-job-17');
+	await page.getByTestId('refraction-qc-view-statics-button').click();
+
+	await expect(page.getByTestId('refraction-qc-view-statics')).toContainText('Apply field shift');
+	await expect(page.getByTestId('refraction-qc-view-statics')).toContainText('false');
+	await expect(page.getByTestId('refraction-qc-static-component-list')).toContainText('Computed field shift');
+	await expect(page.getByTestId('refraction-qc-static-component-list')).toContainText('4.500 ms');
+	await expect(page.getByTestId('refraction-qc-static-component-list')).toContainText('Applied field shift');
+	await expect(page.getByTestId('refraction-qc-static-component-list')).toContainText('0.000 ms');
+});
+
+test('static component view endpoint selection updates details and statuses', async ({ page }) => {
+	await page.route('**/statics/refraction/qc', async (route) => {
+		await route.fulfill({
+			status: 200,
+			contentType: 'application/json',
+			body: JSON.stringify(qcBundlePayload('refraction-job-18')),
+		});
+	});
+
+	await loadRefractionQcBundle(page, 'refraction-job-18');
+	await page.getByTestId('refraction-qc-view-statics-button').click();
+	await page.getByTestId('refraction-qc-endpoint').fill('S002');
+
+	await expect(page.getByTestId('refraction-qc-view-statics')).toContainText('S002');
+	await expect(page.getByTestId('refraction-qc-static-component-list')).toContainText('invalid_weathering');
+	await expect(page.getByTestId('refraction-qc-static-component-list')).toContainText('missing');
+	await expect.poll(async () => staticComponentPlotSummary(page)).toMatchObject({
+		components: expect.arrayContaining([
+			expect.objectContaining({
+				label: 'Computed field shift',
+				value: 6.5,
+			}),
+		]),
+	});
+
+	await page.getByTestId('refraction-qc-endpoint-kind').selectOption('receiver');
+	await page.getByTestId('refraction-qc-endpoint').fill('R001');
+	await expect(page.getByTestId('refraction-qc-view-statics')).toContainText('R001');
+	await expect(page.getByTestId('refraction-qc-static-component-list')).toContainText('not_applicable');
+	await expect.poll(async () => staticComponentPlotSummary(page)).toMatchObject({
+		components: expect.arrayContaining([
+			expect.objectContaining({ label: 'Weathering correction', value: -7 }),
+			expect.objectContaining({ label: 'Applied field shift', value: 2 }),
 		]),
 	});
 });

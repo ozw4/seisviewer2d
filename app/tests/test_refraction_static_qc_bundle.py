@@ -17,6 +17,8 @@ from app.services.refraction_static_artifacts import (
     REFRACTION_GRID_MAP_QC_CSV_NAME,
     REFRACTION_LINE_PROFILE_QC_COMBINED_CSV_NAME,
     REFRACTION_STATIC_ARTIFACTS_JSON_NAME,
+    REFRACTION_STATIC_COMPONENT_QC_ENDPOINT_CSV_NAME,
+    REFRACTION_STATIC_COMPONENT_QC_TRACE_CSV_NAME,
     REFRACTION_STATIC_QC_JSON_NAME,
     REFRACTION_STATIC_REQUEST_JSON_NAME,
 )
@@ -308,6 +310,61 @@ def test_refraction_static_qc_bundle_uses_grid_map_qc_artifact(
     assert payload['views']['refraction_grid_map_qc']['records'] == grid_rows
 
 
+def test_refraction_static_qc_bundle_uses_static_component_qc_artifacts(
+    client: TestClient,
+    tmp_path: Path,
+) -> None:
+    job_dir = tmp_path / 'refraction-job'
+    _write_refraction_qc_artifacts(
+        job_dir,
+        rows=[{'trace': '0', 'first_break_residual_ms': '1.25'}],
+        extra_artifact_names=[
+            REFRACTION_STATIC_COMPONENT_QC_ENDPOINT_CSV_NAME,
+            REFRACTION_STATIC_COMPONENT_QC_TRACE_CSV_NAME,
+        ],
+    )
+    endpoint_rows = [
+        {
+            'endpoint_kind': 'source',
+            'endpoint_key': 'S001',
+            'computed_field_correction_ms': '4.5',
+            'applied_field_correction_ms': '0.0',
+            'total_applied_shift_ms': '-8.0',
+        }
+    ]
+    trace_rows = [
+        {
+            'trace_index_sorted': '0',
+            'source_endpoint_key': 'S001',
+            'receiver_endpoint_key': 'R001',
+            'computed_field_shift_ms': '6.5',
+            'applied_field_shift_ms': '0.0',
+            'final_trace_shift_ms': '-4.0',
+        }
+    ]
+    _write_csv(job_dir / REFRACTION_STATIC_COMPONENT_QC_ENDPOINT_CSV_NAME, endpoint_rows)
+    _write_csv(job_dir / REFRACTION_STATIC_COMPONENT_QC_TRACE_CSV_NAME, trace_rows)
+    _create_static_job(client, job_id='refraction-job', job_dir=job_dir)
+
+    response = client.post(
+        '/statics/refraction/qc',
+        json={'job_id': 'refraction-job', 'include': ['static_components']},
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert 'static_component_qc_endpoint' in payload['available_views']
+    assert 'static_component_qc_trace' in payload['available_views']
+    assert payload['views']['static_component_qc_endpoint']['artifact'] == (
+        REFRACTION_STATIC_COMPONENT_QC_ENDPOINT_CSV_NAME
+    )
+    assert payload['views']['static_component_qc_endpoint']['records'] == endpoint_rows
+    assert payload['views']['static_component_qc_trace']['artifact'] == (
+        REFRACTION_STATIC_COMPONENT_QC_TRACE_CSV_NAME
+    )
+    assert payload['views']['static_component_qc_trace']['records'] == trace_rows
+
+
 def _create_static_job(
     client: TestClient,
     *,
@@ -406,6 +463,14 @@ def _write_refraction_qc_artifacts(
         encoding='utf-8',
         newline='',
     ) as handle:
+        writer = csv.DictWriter(handle, fieldnames=list(rows[0]))
+        writer.writeheader()
+        writer.writerows(rows)
+
+
+def _write_csv(path: Path, rows: list[dict[str, str]]) -> None:
+    assert rows
+    with path.open('w', encoding='utf-8', newline='') as handle:
         writer = csv.DictWriter(handle, fieldnames=list(rows[0]))
         writer.writeheader()
         writer.writerows(rows)

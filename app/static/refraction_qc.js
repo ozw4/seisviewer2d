@@ -61,6 +61,7 @@
     selectedCell: null,
     selectedCellMapQuantity: 'velocity',
     selectedEndpoint: '',
+    selectedTraceIndex: '',
     selectedProfileGroup: 'time_terms',
     selectedProfileUnits: 'auto',
     profileStatusFilter: 'all',
@@ -205,6 +206,120 @@
     'success',
     'none',
   ]);
+
+  const STATIC_ENDPOINT_VIEW_KEY = 'static_component_qc_endpoint';
+  const STATIC_TRACE_VIEW_KEY = 'static_component_qc_trace';
+
+  const STATIC_COMPONENT_DEFS = [
+    {
+      key: 'weathering',
+      label: 'Weathering correction',
+      columns: ['weathering_correction_ms', 'weathering_replacement_shift_ms'],
+      statusColumns: ['weathering_status', 'solution_status'],
+    },
+    {
+      key: 'datum',
+      label: 'Datum / elevation correction',
+      columns: ['elevation_correction_ms', 'floating_datum_elevation_shift_ms'],
+      statusColumns: ['datum_status'],
+    },
+    {
+      key: 'source_depth',
+      label: 'Source-depth correction',
+      columns: ['source_depth_correction_ms', 'source_depth_shift_ms'],
+      statusColumns: ['source_depth_status'],
+    },
+    {
+      key: 'uphole',
+      label: 'Uphole correction',
+      columns: ['uphole_correction_ms', 'uphole_shift_ms'],
+      statusColumns: ['uphole_status'],
+    },
+    {
+      key: 'manual',
+      label: 'Manual static',
+      columns: ['manual_static_ms', 'manual_static_shift_ms'],
+      statusColumns: ['manual_static_status'],
+    },
+    {
+      key: 'computed_field',
+      label: 'Computed field shift',
+      columns: ['computed_field_correction_ms', 'field_correction_ms', 'field_shift_ms'],
+      statusColumns: ['field_static_status', 'field_status'],
+    },
+    {
+      key: 'applied_field',
+      label: 'Applied field shift',
+      columns: ['applied_field_correction_ms'],
+      statusColumns: ['field_static_status', 'field_status'],
+    },
+    {
+      key: 'total',
+      label: 'Final endpoint shift',
+      columns: ['total_applied_shift_ms', 'total_static_ms'],
+      statusColumns: ['static_status'],
+    },
+    {
+      key: 'total_with_field',
+      label: 'Endpoint total with field',
+      columns: ['total_with_field_shift_ms'],
+      statusColumns: ['static_status'],
+    },
+  ];
+
+  const STATIC_TRACE_COMPONENT_DEFS = [
+    {
+      key: 'weathering',
+      label: 'Weathering correction',
+      columns: ['weathering_shift_ms'],
+    },
+    {
+      key: 'datum',
+      label: 'Datum / elevation correction',
+      columns: ['datum_shift_ms'],
+    },
+    {
+      key: 'source_depth',
+      label: 'Source-depth correction',
+      columns: ['source_depth_shift_ms'],
+    },
+    {
+      key: 'uphole',
+      label: 'Uphole correction',
+      columns: ['uphole_shift_ms'],
+    },
+    {
+      key: 'manual',
+      label: 'Manual static',
+      columns: ['manual_static_shift_ms'],
+    },
+    {
+      key: 'computed_field',
+      label: 'Computed field shift',
+      columns: ['computed_field_shift_ms', 'field_shift_ms'],
+    },
+    {
+      key: 'applied_field',
+      label: 'Applied field shift',
+      columns: ['applied_field_shift_ms'],
+    },
+    {
+      key: 'final',
+      label: 'Final trace shift',
+      columns: ['final_trace_shift_ms'],
+    },
+    {
+      key: 'applied_trace',
+      label: 'Applied trace shift',
+      columns: ['applied_trace_shift_ms'],
+    },
+  ];
+
+  const STATIC_COMPONENT_COLORS = {
+    positive: '#2563eb',
+    negative: '#be123c',
+    zero: '#64748b',
+  };
 
   const CELL_MAP_LAYER_ORDER = ['v2_t1', 'v3_t2', 'vsub_t3'];
 
@@ -660,6 +775,236 @@
       if (point) normalized.push(point);
     }
     return normalized;
+  }
+
+  function viewByKey(bundle, key) {
+    const views = bundle && typeof bundle.views === 'object' && bundle.views ? bundle.views : {};
+    const view = views[key];
+    return view && typeof view === 'object' ? view : null;
+  }
+
+  function staticEndpointKind(record) {
+    return normalizedText(firstDefined(record, ['endpoint_kind', 'kind']));
+  }
+
+  function staticEndpointKey(record) {
+    return String(firstDefined(record, ['endpoint_key']) ?? '').trim();
+  }
+
+  function staticTraceIndex(record) {
+    return String(firstDefined(record, ['trace_index_sorted', 'sorted_trace_index', 'trace']) ?? '').trim();
+  }
+
+  function staticEndpointRecords(view) {
+    const records = Array.isArray(view?.records) ? view.records : [];
+    return records.filter((record) => staticEndpointKind(record) && staticEndpointKey(record));
+  }
+
+  function staticTraceRecords(view) {
+    const records = Array.isArray(view?.records) ? view.records : [];
+    return records.filter((record) => staticTraceIndex(record));
+  }
+
+  function selectedStaticEndpointRecord(records) {
+    if (!records.length) return null;
+    const selectedKind = state.selectedEndpointKind === 'both'
+      ? ''
+      : normalizedText(state.selectedEndpointKind);
+    const endpointFilter = normalizedText(state.selectedEndpoint);
+    const byKind = selectedKind
+      ? records.filter((record) => staticEndpointKind(record) === selectedKind)
+      : records.slice();
+    const candidates = byKind.length ? byKind : records;
+
+    if (endpointFilter) {
+      const exact = candidates.find((record) => normalizedText(staticEndpointKey(record)) === endpointFilter);
+      if (exact) return exact;
+      const partial = candidates.find((record) => normalizedText(staticEndpointKey(record)).includes(endpointFilter));
+      if (partial) return partial;
+    }
+    return candidates[0] || null;
+  }
+
+  function matchingLegacyStaticRecord(bundle, endpointRecord) {
+    const view = viewByKey(bundle, 'static_components');
+    const records = Array.isArray(view?.records) ? view.records : [];
+    const kind = staticEndpointKind(endpointRecord);
+    const key = normalizedText(staticEndpointKey(endpointRecord));
+    if (!kind || !key) return null;
+    return records.find((record) => (
+      staticEndpointKind(record) === kind
+      && normalizedText(staticEndpointKey(record)) === key
+    )) || null;
+  }
+
+  function traceMatchesEndpoint(record, endpointRecord) {
+    if (!endpointRecord) return true;
+    const kind = staticEndpointKind(endpointRecord);
+    const key = staticEndpointKey(endpointRecord);
+    if (!kind || !key) return true;
+    const column = kind === 'receiver' ? 'receiver_endpoint_key' : 'source_endpoint_key';
+    return String(firstDefined(record, [column]) ?? '').trim() === key;
+  }
+
+  function selectedStaticTraceRecord(records, endpointRecord) {
+    if (!records.length) return null;
+    const traceFilter = String(state.selectedTraceIndex || '').trim();
+    if (traceFilter) {
+      const exact = records.find((record) => staticTraceIndex(record) === traceFilter);
+      if (exact) return exact;
+    }
+    const endpointMatch = records.find((record) => traceMatchesEndpoint(record, endpointRecord));
+    return endpointMatch || records[0] || null;
+  }
+
+  function staticApplyToTraceShift(record) {
+    const raw = firstDefined(record, ['apply_to_trace_shift', 'trace_apply_to_trace_shift']);
+    const text = normalizedText(raw);
+    if (raw === true || text === 'true' || text === '1' || text === 'yes') return 'true';
+    if (raw === false || text === 'false' || text === '0' || text === 'no') return 'false';
+    return '-';
+  }
+
+  function componentStatus(record, statusRecord, columns, fallbackColumns = ['static_status']) {
+    const fromPrimary = firstDefined(record, columns || []);
+    if (fromPrimary !== undefined) return textOrDash(fromPrimary);
+    const fromStatus = firstDefined(statusRecord, columns || []);
+    if (fromStatus !== undefined) return textOrDash(fromStatus);
+    const fallback = firstDefined(record, fallbackColumns);
+    if (fallback !== undefined) return textOrDash(fallback);
+    const statusFallback = firstDefined(statusRecord, fallbackColumns);
+    if (statusFallback !== undefined) return textOrDash(statusFallback);
+    return 'missing';
+  }
+
+  function componentValueMs(record, columns) {
+    return toFiniteNumber(firstDefined(record, columns || []));
+  }
+
+  function shiftDirection(value) {
+    if (!Number.isFinite(value)) return 'missing';
+    if (value > 0) return 'delays displayed events';
+    if (value < 0) return 'advances displayed events';
+    return 'no shift';
+  }
+
+  function componentColor(value) {
+    if (!Number.isFinite(value) || value === 0) return STATIC_COMPONENT_COLORS.zero;
+    return value > 0 ? STATIC_COMPONENT_COLORS.positive : STATIC_COMPONENT_COLORS.negative;
+  }
+
+  function statusIsOk(status) {
+    return PROFILE_STATUS_OK.has(normalizedText(status));
+  }
+
+  function buildStaticComponentRows(record, statusRecord, defs, fallbackStatusColumns) {
+    if (!record) return [];
+    return defs.map((definition) => {
+      const value = componentValueMs(record, definition.columns);
+      return {
+        key: definition.key,
+        label: definition.label,
+        value,
+        valueText: Number.isFinite(value) ? `${formatNumber(value, 3)} ms` : '-',
+        direction: shiftDirection(value),
+        status: componentStatus(
+          record,
+          statusRecord,
+          definition.statusColumns || fallbackStatusColumns || [],
+          fallbackStatusColumns || ['static_status'],
+        ),
+      };
+    });
+  }
+
+  function createStaticComponentTable(rows, testId) {
+    const wrap = document.createElement('div');
+    wrap.className = 'refraction-qc-table-wrap';
+    wrap.dataset.testid = testId;
+    const table = document.createElement('table');
+    table.className = 'refraction-qc-table refraction-qc-component-table';
+
+    const head = document.createElement('thead');
+    const headRow = document.createElement('tr');
+    for (const label of ['Component', 'Shift', 'Effect', 'Status']) {
+      const th = document.createElement('th');
+      th.textContent = label;
+      headRow.appendChild(th);
+    }
+    head.appendChild(headRow);
+    table.appendChild(head);
+
+    const body = document.createElement('tbody');
+    for (const row of rows) {
+      const tr = document.createElement('tr');
+      const cells = [row.label, row.valueText, row.direction, row.status];
+      for (let index = 0; index < cells.length; index += 1) {
+        const td = document.createElement('td');
+        td.textContent = cells[index];
+        if (index === 3) {
+          td.className = statusIsOk(row.status)
+            ? 'refraction-qc-component-status is-ok'
+            : 'refraction-qc-component-status is-alert';
+        }
+        tr.appendChild(td);
+      }
+      body.appendChild(tr);
+    }
+    table.appendChild(body);
+    wrap.appendChild(table);
+    return wrap;
+  }
+
+  function renderStaticComponentBars(content, rows, testId, title) {
+    const finiteRows = rows.filter((row) => Number.isFinite(row.value));
+    if (!finiteRows.length) {
+      const missing = document.createElement('p');
+      missing.className = 'refraction-qc-placeholder';
+      missing.textContent = `No finite ${title.toLowerCase()} values are available to plot.`;
+      content.appendChild(missing);
+      return;
+    }
+
+    const plot = createFirstBreakPlot(testId);
+    plot.classList.add('refraction-qc-static-waterfall');
+    plot.dataset.pointCount = String(finiteRows.length);
+    content.appendChild(plot);
+
+    if (window.Plotly) {
+      window.Plotly.newPlot(plot, [
+        {
+          name: title,
+          type: 'bar',
+          orientation: 'h',
+          y: finiteRows.map((row) => row.label),
+          x: finiteRows.map((row) => row.value),
+          text: finiteRows.map((row) => `${row.valueText}; ${row.direction}; ${row.status}`),
+          hovertemplate: '%{y}<br>%{text}<extra></extra>',
+          marker: {
+            color: finiteRows.map((row) => componentColor(row.value)),
+          },
+        },
+      ], {
+        height: Math.max(260, finiteRows.length * 30 + 90),
+        margin: { l: 150, r: 18, t: 32, b: 44 },
+        font: { size: 10, color: '#334155' },
+        paper_bgcolor: '#ffffff',
+        plot_bgcolor: '#ffffff',
+        title: { text: title, font: { size: 12 } },
+        xaxis: {
+          title: { text: 'Shift (ms)' },
+          zeroline: true,
+          zerolinecolor: '#0f172a',
+          gridcolor: '#e5e7eb',
+        },
+        yaxis: {
+          automargin: true,
+        },
+        showlegend: false,
+      }, { displayModeBar: false, responsive: true });
+    } else {
+      plot.textContent = 'Plot library is unavailable.';
+    }
   }
 
   function availableCellMapLayers(records) {
@@ -1781,6 +2126,95 @@
     }
   }
 
+  function renderStaticComponents(content, bundle, viewDef) {
+    const endpointView = viewByKey(bundle, STATIC_ENDPOINT_VIEW_KEY);
+    const traceView = viewByKey(bundle, STATIC_TRACE_VIEW_KEY);
+    if (!endpointView || !traceView) {
+      const missing = document.createElement('p');
+      missing.className = 'refraction-qc-placeholder';
+      missing.textContent = isUnavailable(bundle, viewDef)
+        ? 'Static component QC is unavailable from the loaded refraction_static_component_qc_* artifacts.'
+        : 'Static component QC endpoint and trace records are required for this view.';
+      content.appendChild(missing);
+      return;
+    }
+
+    const endpointRecords = staticEndpointRecords(endpointView);
+    const traceRecords = staticTraceRecords(traceView);
+    const endpointRecord = selectedStaticEndpointRecord(endpointRecords);
+    const traceRecord = selectedStaticTraceRecord(traceRecords, endpointRecord);
+    const legacyRecord = matchingLegacyStaticRecord(bundle, endpointRecord);
+    const endpointRows = buildStaticComponentRows(
+      endpointRecord,
+      legacyRecord,
+      STATIC_COMPONENT_DEFS,
+      ['static_status'],
+    );
+    const traceRows = buildStaticComponentRows(
+      traceRecord,
+      null,
+      STATIC_TRACE_COMPONENT_DEFS,
+      ['static_status'],
+    );
+    const signConvention = bundle.sign_convention || firstDefined(endpointRecord, ['sign_convention'])
+      || firstDefined(traceRecord, ['sign_convention']);
+
+    content.appendChild(createKv([
+      ['Endpoint artifact', endpointView.artifact],
+      ['Trace artifact', traceView.artifact],
+      ['Endpoint rows', `${endpointView.returned_points || 0} of ${endpointView.total_points || 0}`],
+      ['Trace rows', `${traceView.returned_points || 0} of ${traceView.total_points || 0}`],
+      ['Selected endpoint kind', endpointRecord ? staticEndpointKind(endpointRecord) : state.selectedEndpointKind],
+      ['Selected endpoint', endpointRecord ? staticEndpointKey(endpointRecord) : '-'],
+      ['Selected trace', traceRecord ? staticTraceIndex(traceRecord) : '-'],
+      ['Apply field shift', staticApplyToTraceShift(traceRecord || endpointRecord)],
+      ['Endpoint status', textOrDash(firstDefined(endpointRecord, ['static_status']))],
+      ['Trace status', textOrDash(firstDefined(traceRecord, ['static_status']))],
+    ]));
+
+    const signNote = document.createElement('p');
+    signNote.className = 'refraction-qc-note';
+    signNote.textContent = `${signConvention || 'corrected(t) = raw(t - shift_s)'}; positive shift_s delays displayed events and negative shift_s advances displayed events.`;
+    signNote.dataset.testid = 'refraction-qc-static-sign-note';
+    content.appendChild(signNote);
+
+    if (!endpointRecord) {
+      const missing = document.createElement('p');
+      missing.className = 'refraction-qc-placeholder';
+      missing.textContent = 'No source/receiver endpoint component rows match the current endpoint selector.';
+      content.appendChild(missing);
+    } else {
+      renderStaticComponentBars(
+        content,
+        endpointRows,
+        'refraction-qc-static-waterfall',
+        'Endpoint static components',
+      );
+      content.appendChild(createStaticComponentTable(
+        endpointRows,
+        'refraction-qc-static-component-list',
+      ));
+    }
+
+    if (!traceRecord) {
+      const missing = document.createElement('p');
+      missing.className = 'refraction-qc-placeholder';
+      missing.textContent = 'No trace component row matches the current trace or endpoint selector.';
+      content.appendChild(missing);
+    } else {
+      renderStaticComponentBars(
+        content,
+        traceRows,
+        'refraction-qc-static-trace-waterfall',
+        'Trace static components',
+      );
+      content.appendChild(createStaticComponentTable(
+        traceRows,
+        'refraction-qc-static-trace-component-list',
+      ));
+    }
+  }
+
   function renderGatherPreview(content, bundle) {
     const message = document.createElement('p');
     message.className = 'refraction-qc-placeholder';
@@ -1825,6 +2259,8 @@
       renderProfilePlot(content, state.qcBundle, viewDef);
     } else if (viewDef.id === 'cell_maps_3d') {
       renderCellMapPlot(content, state.qcBundle, viewDef);
+    } else if (viewDef.id === 'static_components') {
+      renderStaticComponents(content, state.qcBundle, viewDef);
     } else if (viewDef.id === 'gather_preview') {
       renderGatherPreview(content, state.qcBundle);
     } else {
@@ -1856,6 +2292,7 @@
     dom.showRejected.checked = state.showRejectedFirstBreaks;
     dom.endpointKind.value = state.selectedEndpointKind;
     dom.endpoint.value = state.selectedEndpoint;
+    dom.trace.value = state.selectedTraceIndex;
     dom.cell.value = state.selectedCell?.cell_ix !== undefined
       ? `${state.selectedCell.cell_ix},${state.selectedCell.cell_iy}`
       : (state.selectedCell?.text || '');
@@ -2005,6 +2442,7 @@
       showRejected: document.getElementById('refractionQcShowRejected'),
       endpointKind: document.getElementById('refractionQcEndpointKind'),
       endpoint: document.getElementById('refractionQcEndpoint'),
+      trace: document.getElementById('refractionQcTrace'),
       cell: document.getElementById('refractionQcCell'),
       viewButtons: Array.from(document.querySelectorAll('.refraction-qc-view-button')),
       viewPanels: Array.from(document.querySelectorAll('.refraction-qc-view')),
@@ -2016,7 +2454,7 @@
     if (!dom.jobId || !dom.maxPoints || !dom.loadButton || !dom.status || !dom.error || !dom.sign) return;
     if (!dom.layerKind || !dom.xAxisMode || !dom.profileGroup || !dom.profileUnits || !dom.statusFilter) return;
     if (!dom.mapQuantity) return;
-    if (!dom.showRejected || !dom.endpointKind || !dom.endpoint || !dom.cell) return;
+    if (!dom.showRejected || !dom.endpointKind || !dom.endpoint || !dom.trace || !dom.cell) return;
 
     pipelineTab.addEventListener('click', () => activateSidebarTab('pipeline'));
     qcTab.addEventListener('click', () => activateSidebarTab('refraction_qc'));
@@ -2064,6 +2502,10 @@
     });
     dom.endpoint.addEventListener('input', () => {
       state.selectedEndpoint = dom.endpoint.value.trim();
+      render();
+    });
+    dom.trace.addEventListener('input', () => {
+      state.selectedTraceIndex = dom.trace.value.trim();
       render();
     });
     dom.cell.addEventListener('input', () => {

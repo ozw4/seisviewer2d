@@ -1342,6 +1342,27 @@
       height: 340px;
     }
 
+    .refraction-qc-static-waterfall {
+      height: 320px;
+    }
+
+    .refraction-qc-component-table td:nth-child(2),
+    .refraction-qc-component-table td:nth-child(3) {
+      white-space: normal;
+    }
+
+    .refraction-qc-component-status {
+      font-weight: 700;
+    }
+
+    .refraction-qc-component-status.is-ok {
+      color: #166534;
+    }
+
+    .refraction-qc-component-status.is-alert {
+      color: #991b1b;
+    }
+
     .refraction-qc-note {
       margin: 0;
       color: #334155;
@@ -1772,6 +1793,10 @@
             <label class="refraction-qc-field" for="refractionQcEndpoint">Endpoint
               <input id="refractionQcEndpoint" type="text" autocomplete="off"
                 data-testid="refraction-qc-endpoint" />
+            </label>
+            <label class="refraction-qc-field" for="refractionQcTrace">Trace
+              <input id="refractionQcTrace" type="text" autocomplete="off"
+                data-testid="refraction-qc-trace" />
             </label>
             <label class="refraction-qc-field" for="refractionQcCell">Cell
               <input id="refractionQcCell" type="text" autocomplete="off"
