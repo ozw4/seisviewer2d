@@ -12,6 +12,7 @@ from uuid import uuid4
 
 from app.api.schemas import (
     REFRACTION_STATIC_DEFAULT_EXPORT_FORMATS,
+    RefractionStaticApplyRequest,
     RefractionStaticExportFormat,
     RefractionStaticExportJobRequest,
     RefractionStaticExportRequest,
@@ -44,10 +45,24 @@ from app.services.refraction_static_lsst_export import (
     write_refraction_lsst_csv,
     write_refraction_lsst_plus_csv,
 )
+from app.services.refraction_static_table_validator import (
+    CANONICAL_STATIC_TABLE_FORMAT_NAME,
+    CANONICAL_STATIC_TABLE_FORMAT_VERSION,
+    CANONICAL_STATIC_TABLE_OPTIONAL_COLUMNS,
+    CANONICAL_STATIC_TABLE_REQUIRED_COLUMNS,
+)
 
 REFRACTION_STATIC_EXPORT_REQUEST_JSON_NAME = 'refraction_static_export_request.json'
 REFRACTION_STATIC_EXPORT_JOB_META_JSON_NAME = 'job_meta.json'
 REFRACTION_STATIC_EXPORT_DONE_MESSAGE = 'refraction_static_export_artifacts_written'
+CANONICAL_SOURCE_STATIC_TABLE_CSV_NAME = 'canonical_source_static_table.csv'
+CANONICAL_RECEIVER_STATIC_TABLE_CSV_NAME = 'canonical_receiver_static_table.csv'
+CANONICAL_SOURCE_RECEIVER_STATIC_TABLE_CSV_NAME = (
+    'canonical_source_receiver_static_table.csv'
+)
+_CANONICAL_STATIC_TABLE_COLUMNS = (
+    CANONICAL_STATIC_TABLE_REQUIRED_COLUMNS + CANONICAL_STATIC_TABLE_OPTIONAL_COLUMNS
+)
 
 _BASE_SOURCE_ARTIFACTS = (
     REFRACTION_STATIC_REQUEST_JSON_NAME,
@@ -310,6 +325,14 @@ def _generated_refraction_static_export_artifacts(
     requested_formats: tuple[RefractionStaticExportFormat, ...],
 ) -> tuple[str, ...]:
     names: list[str] = []
+    if 'canonical_static_table' in requested_formats:
+        names.extend(
+            (
+                CANONICAL_SOURCE_STATIC_TABLE_CSV_NAME,
+                CANONICAL_RECEIVER_STATIC_TABLE_CSV_NAME,
+                CANONICAL_SOURCE_RECEIVER_STATIC_TABLE_CSV_NAME,
+            )
+        )
     if 'time_term_spreadsheet' in requested_formats:
         names.append(REFRACTION_TIME_TERM_SPREADSHEET_CSV_NAME)
     if 'lsst' in requested_formats:
@@ -327,6 +350,15 @@ def _write_requested_export_artifacts(
     req: RefractionStaticExportJobRequest,
     source: ResolvedRefractionStaticExportSourceJob,
 ) -> None:
+    if 'canonical_static_table' in source.requested_formats:
+        _write_canonical_static_table_exports(
+            source=source,
+            job_dir=job_dir,
+            fail_on_invalid_static_status=bool(
+                req.export.fail_on_invalid_static_status
+            ),
+            include_inactive_endpoints=bool(req.export.include_inactive_endpoints),
+        )
     if 'time_term_spreadsheet' in source.requested_formats:
         _write_time_term_spreadsheet_export(
             source=source,
@@ -359,6 +391,192 @@ def _write_requested_export_artifacts(
             ),
             include_inactive_endpoints=bool(req.export.include_inactive_endpoints),
         )
+
+
+def write_inline_refraction_static_export_artifacts(
+    *,
+    job_id: str,
+    req: RefractionStaticApplyRequest,
+    job_dir: Path,
+) -> None:
+    """Write requested M5 export artifacts from the current apply job outputs."""
+    requested_formats = resolve_refraction_static_export_formats(req.export)
+    if not requested_formats:
+        return
+    source = ResolvedRefractionStaticExportSourceJob(
+        source_job_id=job_id,
+        source_file_id=req.file_id,
+        key1_byte=req.key1_byte,
+        key2_byte=req.key2_byte,
+        source_artifacts_dir=Path(job_dir),
+        requested_formats=requested_formats,
+        required_source_artifacts=required_refraction_static_export_source_artifacts(
+            requested_formats,
+        ),
+    )
+    _write_requested_export_artifacts(
+        job_dir=Path(job_dir),
+        req=RefractionStaticExportJobRequest(
+            source_job_id=job_id,
+            export=req.export,
+        ),
+        source=source,
+    )
+
+
+def _write_canonical_static_table_exports(
+    *,
+    source: ResolvedRefractionStaticExportSourceJob,
+    job_dir: Path,
+    fail_on_invalid_static_status: bool,
+    include_inactive_endpoints: bool,
+) -> None:
+    source_rows = _canonical_static_table_rows(
+        _load_static_table_rows(source.source_artifacts_dir / SOURCE_STATIC_TABLE_CSV_NAME),
+        endpoint_kind='source',
+        source_job_id=source.source_job_id,
+        fail_on_invalid_static_status=fail_on_invalid_static_status,
+        include_inactive_endpoints=include_inactive_endpoints,
+    )
+    receiver_rows = _canonical_static_table_rows(
+        _load_static_table_rows(
+            source.source_artifacts_dir / RECEIVER_STATIC_TABLE_CSV_NAME,
+        ),
+        endpoint_kind='receiver',
+        source_job_id=source.source_job_id,
+        fail_on_invalid_static_status=fail_on_invalid_static_status,
+        include_inactive_endpoints=include_inactive_endpoints,
+    )
+    root = Path(job_dir)
+    _write_canonical_static_table_csv(
+        root / CANONICAL_SOURCE_STATIC_TABLE_CSV_NAME,
+        source_rows,
+    )
+    _write_canonical_static_table_csv(
+        root / CANONICAL_RECEIVER_STATIC_TABLE_CSV_NAME,
+        receiver_rows,
+    )
+    _write_canonical_static_table_csv(
+        root / CANONICAL_SOURCE_RECEIVER_STATIC_TABLE_CSV_NAME,
+        source_rows + receiver_rows,
+    )
+
+
+def _canonical_static_table_rows(
+    rows: tuple[dict[str, str | None], ...],
+    *,
+    endpoint_kind: RefractionStaticEndpointKind,
+    source_job_id: str,
+    fail_on_invalid_static_status: bool,
+    include_inactive_endpoints: bool,
+) -> tuple[dict[str, str], ...]:
+    out: list[dict[str, str]] = []
+    for row in rows:
+        if row.get('sign_convention') != REFRACTION_STATIC_REPO_SIGN_CONVENTION:
+            raise RefractionStaticExportValidationError(
+                f'{endpoint_kind} static table sign_convention must be '
+                f'{REFRACTION_STATIC_REPO_SIGN_CONVENTION!r}'
+            )
+        if row.get('endpoint_kind') != endpoint_kind:
+            raise RefractionStaticExportValidationError(
+                f'{endpoint_kind} static table contains endpoint_kind '
+                f'{row.get("endpoint_kind")!r}'
+            )
+        prefix = 'source' if endpoint_kind == 'source' else 'receiver'
+        endpoint_key = _required_row_text(row, f'{prefix}_endpoint_key')
+        status = _required_row_text(row, 'static_status')
+        if not _include_static_table_row_for_canonical_export(
+            endpoint_kind=endpoint_kind,
+            endpoint_key=endpoint_key,
+            static_status=status,
+            fail_on_invalid_static_status=fail_on_invalid_static_status,
+            include_inactive_endpoints=include_inactive_endpoints,
+        ):
+            continue
+        out.append(
+            _canonical_static_table_row(
+                row,
+                endpoint_kind=endpoint_kind,
+                source_job_id=source_job_id,
+                endpoint_key=endpoint_key,
+                static_status=status,
+            )
+        )
+    return tuple(out)
+
+
+def _include_static_table_row_for_canonical_export(
+    *,
+    endpoint_kind: RefractionStaticEndpointKind,
+    endpoint_key: str,
+    static_status: str,
+    fail_on_invalid_static_status: bool,
+    include_inactive_endpoints: bool,
+) -> bool:
+    if static_status == 'ok':
+        return True
+    if fail_on_invalid_static_status:
+        raise RefractionStaticExportValidationError(
+            f'{endpoint_kind} endpoint {endpoint_key!r} has invalid '
+            f'static_status {static_status!r}'
+        )
+    return include_inactive_endpoints
+
+
+def _canonical_static_table_row(
+    row: dict[str, str | None],
+    *,
+    endpoint_kind: RefractionStaticEndpointKind,
+    source_job_id: str,
+    endpoint_key: str,
+    static_status: str,
+) -> dict[str, str]:
+    prefix = 'source' if endpoint_kind == 'source' else 'receiver'
+    out = {column: '' for column in _CANONICAL_STATIC_TABLE_COLUMNS}
+    out.update(
+        {
+            'format_name': CANONICAL_STATIC_TABLE_FORMAT_NAME,
+            'format_version': str(CANONICAL_STATIC_TABLE_FORMAT_VERSION),
+            'source_job_id': source_job_id,
+            'endpoint_kind': endpoint_kind,
+            'endpoint_key': endpoint_key,
+            'endpoint_id': _optional_row_text(row.get(f'{prefix}_id')) or '',
+            'applied_shift_ms': _optional_row_text(
+                row.get('total_applied_shift_ms')
+            )
+            or '',
+            'static_status': static_status,
+            'sign_convention': REFRACTION_STATIC_REPO_SIGN_CONVENTION,
+            'node_id': _optional_row_text(row.get(f'{prefix}_node_id')) or '',
+        }
+    )
+    for column in CANONICAL_STATIC_TABLE_OPTIONAL_COLUMNS:
+        value = _optional_row_text(row.get(column))
+        if value is not None:
+            out[column] = value
+    return out
+
+
+def _write_canonical_static_table_csv(
+    path: Path,
+    rows: tuple[dict[str, str], ...],
+) -> None:
+    target = Path(path)
+    target.parent.mkdir(parents=True, exist_ok=True)
+    tmp_path = target.with_name(f'{target.name}.{uuid4().hex}.tmp')
+    try:
+        with tmp_path.open('w', encoding='utf-8', newline='') as handle:
+            writer = csv.DictWriter(
+                handle,
+                fieldnames=list(_CANONICAL_STATIC_TABLE_COLUMNS),
+                lineterminator='\n',
+            )
+            writer.writeheader()
+            writer.writerows(rows)
+        tmp_path.replace(target)
+    except Exception:
+        tmp_path.unlink(missing_ok=True)
+        raise
 
 
 def _write_time_term_spreadsheet_export(
@@ -584,6 +802,9 @@ def _handle_refraction_static_export_job_error(_exc: Exception) -> JobFailure:
 
 
 __all__ = [
+    'CANONICAL_RECEIVER_STATIC_TABLE_CSV_NAME',
+    'CANONICAL_SOURCE_RECEIVER_STATIC_TABLE_CSV_NAME',
+    'CANONICAL_SOURCE_STATIC_TABLE_CSV_NAME',
     'REFRACTION_STATIC_EXPORT_DONE_MESSAGE',
     'REFRACTION_STATIC_EXPORT_JOB_META_JSON_NAME',
     'REFRACTION_STATIC_EXPORT_REQUEST_JSON_NAME',
@@ -594,4 +815,5 @@ __all__ = [
     'resolve_refraction_static_export_formats',
     'run_refraction_static_export_job',
     'validate_refraction_static_export_source_job',
+    'write_inline_refraction_static_export_artifacts',
 ]
