@@ -48,6 +48,9 @@ from app.services.refraction_static_table_import import (
     import_refraction_static_table_csv,
     import_refraction_static_tables,
 )
+from app.services.refraction_static_table_validator import (
+    CANONICAL_STATIC_TABLE_OPTIONAL_COLUMNS,
+)
 from app.services.trace_store_index_validation import validate_sorted_to_original
 from app.services.trace_store_registration import register_trace_store, trace_store_cache_key
 from app.utils.segy_scalars import apply_segy_scalar, normalize_elevation_unit
@@ -1562,7 +1565,7 @@ def _solution_arrays(
     *,
     imported: RefractionStaticTableImportResult,
 ) -> dict[str, np.ndarray]:
-    return {
+    arrays = {
         'schema_version': np.asarray(1, dtype=np.int64),
         'artifact_kind': np.asarray('static_table_apply_solution'),
         'sign_convention': np.asarray(REFRACTION_STATIC_REPO_SIGN_CONVENTION),
@@ -1604,6 +1607,48 @@ def _solution_arrays(
             dtype=bool,
         ),
     }
+    arrays.update(_imported_endpoint_static_arrays(imported))
+    return arrays
+
+
+def _imported_endpoint_static_arrays(
+    imported: RefractionStaticTableImportResult,
+) -> dict[str, np.ndarray]:
+    arrays: dict[str, np.ndarray] = {}
+    for endpoint_kind, rows_by_key in (
+        ('source', imported.source_static_by_endpoint_key),
+        ('receiver', imported.receiver_static_by_endpoint_key),
+    ):
+        rows = tuple(rows_by_key.values())
+        prefix = f'{endpoint_kind}_imported'
+        arrays[f'{prefix}_endpoint_key'] = _string_array(
+            [row.endpoint_key for row in rows]
+        )
+        arrays[f'{prefix}_endpoint_id'] = _string_array(
+            [row.endpoint_id or '' for row in rows]
+        )
+        arrays[f'{prefix}_applied_shift_s'] = np.asarray(
+            [row.applied_shift_s for row in rows],
+            dtype=np.float64,
+        )
+        arrays[f'{prefix}_static_status'] = _string_array(
+            [row.static_status for row in rows]
+        )
+        arrays[f'{prefix}_source_job_id'] = _string_array(
+            [row.source_job_id for row in rows]
+        )
+        arrays[f'{prefix}_source_name'] = _string_array(
+            [row.source_name for row in rows]
+        )
+        arrays[f'{prefix}_row_number'] = np.asarray(
+            [row.row_number for row in rows],
+            dtype=np.int64,
+        )
+        for column in CANONICAL_STATIC_TABLE_OPTIONAL_COLUMNS:
+            arrays[f'{prefix}_metadata_{column}'] = _string_array(
+                [row.metadata.get(column, '') for row in rows]
+            )
+    return arrays
 
 
 def _qc_payload(
