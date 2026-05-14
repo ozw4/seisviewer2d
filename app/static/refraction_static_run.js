@@ -199,6 +199,14 @@
     );
   }
 
+  function pickArtifactRank(name) {
+    const normalized = trimValue(name);
+    if (normalized === DEFAULTS.pickArtifactName) {
+      return 0;
+    }
+    return isLikelyPickArtifact(normalized) ? 1 : 2;
+  }
+
   function collectInputs(targetDom = dom) {
     if (!targetDom) return null;
     return {
@@ -1696,9 +1704,16 @@
     return [...files].sort((left, right) => {
       const leftName = trimValue(left && left.name ? left.name : left);
       const rightName = trimValue(right && right.name ? right.name : right);
-      const likelihood = Number(isLikelyPickArtifact(rightName)) - Number(isLikelyPickArtifact(leftName));
-      return likelihood || leftName.localeCompare(rightName);
+      const rank = pickArtifactRank(leftName) - pickArtifactRank(rightName);
+      return rank || leftName.localeCompare(rightName);
     });
+  }
+
+  function pickArtifactListUrl(kind, jobId) {
+    if (kind === 'batch_predicted_npz') {
+      return `/batch/job/${encodeURIComponent(jobId)}/files`;
+    }
+    return '';
   }
 
   function normalizeStaticJobState(value) {
@@ -1961,10 +1976,19 @@
 
   async function loadPickArtifacts() {
     if (!dom) return;
+    const pickKind = trimValue(dom.pickKind.value);
     const jobId = trimValue(dom.pickJobId.value);
     if (!jobId) {
       state.error = 'pick_source.job_id is required before loading pick artifacts.';
       state.message = 'Enter the batch job ID that produced the first-break pick artifact.';
+      state.pickArtifacts = [];
+      render();
+      return;
+    }
+    const listUrl = pickArtifactListUrl(pickKind, jobId);
+    if (!listUrl) {
+      state.error = `Artifact listing is not available for pick_source.kind ${pickKind || '(blank)'}.`;
+      state.message = 'Type the pick artifact name manually.';
       state.pickArtifacts = [];
       render();
       return;
@@ -1977,7 +2001,7 @@
     render();
 
     try {
-      const response = await fetch(`/batch/job/${encodeURIComponent(jobId)}/files`);
+      const response = await fetch(listUrl);
       if (!response.ok) {
         throw new Error(await readResponseError(response, 'batch job files'));
       }
