@@ -232,6 +232,7 @@ function staticComponentTraceRecords() {
 			field_shift_ms: '6.5',
 			computed_field_shift_ms: '6.5',
 			applied_field_shift_ms: '6.5',
+			trace_field_static_status: 'ok',
 			manual_static_shift_ms: '0.5',
 			source_depth_shift_ms: '5',
 			uphole_shift_ms: '-1',
@@ -251,6 +252,7 @@ function staticComponentTraceRecords() {
 			field_shift_ms: '6.5',
 			computed_field_shift_ms: '6.5',
 			applied_field_shift_ms: '6.5',
+			trace_field_static_status: 'ok',
 			manual_static_shift_ms: '1',
 			source_depth_shift_ms: '',
 			uphole_shift_ms: '',
@@ -1898,6 +1900,15 @@ test('static component view endpoint selection updates details and statuses', as
 			expect.objectContaining({
 				label: 'Computed field correction',
 				value: 6.5,
+			}),
+		]),
+	});
+	await expect.poll(async () => staticComponentPlotSummary(page, 'refraction-qc-static-trace-waterfall')).toMatchObject({
+		components: expect.arrayContaining([
+			expect.objectContaining({
+				label: 'Computed field shift',
+				value: 6.5,
+				text: expect.stringContaining('ok'),
 			}),
 		]),
 	});

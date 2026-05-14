@@ -42,6 +42,7 @@ def test_static_component_qc_trace_values_match_solution_npz(
     assert float(rows[0]['refraction_shift_ms']) == pytest.approx(4.8)
     assert float(rows[0]['computed_field_shift_ms']) == pytest.approx(6.5)
     assert float(rows[0]['applied_field_shift_ms']) == pytest.approx(6.5)
+    assert rows[0]['trace_field_static_status'] == 'ok'
     assert float(rows[0]['final_trace_shift_ms']) == pytest.approx(11.3)
 
     with (
@@ -75,6 +76,10 @@ def test_static_component_qc_trace_values_match_solution_npz(
             qc['applied_field_shift_s'],
             solution['applied_field_shift_s_sorted'],
             equal_nan=True,
+        )
+        np.testing.assert_array_equal(
+            qc['trace_field_static_status'],
+            solution['trace_field_static_status_sorted'],
         )
 
 
@@ -153,6 +158,7 @@ def test_static_component_qc_apply_false_distinguishes_computed_and_applied_fiel
     assert float(rows[0]['computed_field_shift_ms']) == pytest.approx(6.5)
     assert float(rows[0]['field_shift_ms']) == pytest.approx(6.5)
     assert float(rows[0]['applied_field_shift_ms']) == pytest.approx(0.0)
+    assert rows[0]['trace_field_static_status'] == 'ok'
     assert float(rows[0]['final_trace_shift_ms']) == pytest.approx(
         float(rows[0]['refraction_shift_ms'])
     )
@@ -169,6 +175,10 @@ def test_static_component_qc_apply_false_distinguishes_computed_and_applied_fiel
     with np.load(paths.refraction_static_component_qc_npz, allow_pickle=False) as qc:
         np.testing.assert_allclose(qc['computed_field_shift_s'][0], 0.0065)
         np.testing.assert_allclose(qc['applied_field_shift_s'], np.zeros(4))
+        np.testing.assert_array_equal(
+            qc['trace_field_static_status'],
+            np.asarray(['ok', 'ok', 'ok', 'ok'], dtype='<U48'),
+        )
         np.testing.assert_allclose(
             qc['final_trace_shift_s'],
             qc['refraction_shift_s'],
