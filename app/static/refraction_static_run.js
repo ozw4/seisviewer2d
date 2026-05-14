@@ -6,6 +6,13 @@
     pickArtifactName: 'predicted_picks_time_s.npz',
     linkageMode: 'auto_threshold',
     linkageThresholdM: '25',
+    weatheringVelocityMS: '800',
+    bedrockVelocityMode: 'solve_global',
+    initialBedrockVelocityMS: '2400',
+    fixedBedrockVelocityMS: '2400',
+    minOffsetM: '300',
+    maxOffsetM: '4000',
+    conversionMode: 't1lsst_1layer',
   };
   const GEOMETRY_PRESET_SEG_Y_DEFAULT = 'segy_default';
   const GEOMETRY_PRESET_CUSTOM = 'custom';
@@ -68,17 +75,16 @@
 
   const state = {
     ready: false,
-    message: [
-      'Enter a SEG-Y/TraceStore file_id and a first-break pick artifact usable by refraction statics.',
-      'Static correction job submission is not enabled in this milestone.',
-    ].join(' '),
+    message: 'Enter a SEG-Y/TraceStore file_id and a first-break pick artifact usable by refraction statics.',
     error: '',
     loadingPickArtifacts: false,
     pickArtifacts: [],
     lastRequest: null,
+    lastResponse: null,
     lastLinkageBuildRequest: null,
     lastLinkageJobId: '',
     lastStaticCorrectionJobId: '',
+    lastStaticCorrectionState: '',
     phase: 'idle',
     pollIntervalMs: 1000,
   };
@@ -151,16 +157,16 @@
     );
   }
 
-  function collectInputs() {
-    if (!dom) return null;
+  function collectInputs(targetDom = dom) {
+    if (!targetDom) return null;
     return {
-      file_id: trimValue(dom.fileId.value),
-      key1_byte: trimValue(dom.key1Byte.value),
-      key2_byte: trimValue(dom.key2Byte.value),
+      file_id: trimValue(targetDom.fileId.value),
+      key1_byte: trimValue(targetDom.key1Byte.value),
+      key2_byte: trimValue(targetDom.key2Byte.value),
       pick_source: {
-        kind: trimValue(dom.pickKind.value),
-        job_id: trimValue(dom.pickJobId.value),
-        artifact_name: trimValue(dom.pickArtifactName.value),
+        kind: trimValue(targetDom.pickKind.value),
+        job_id: trimValue(targetDom.pickJobId.value),
+        artifact_name: trimValue(targetDom.pickArtifactName.value),
       },
     };
   }
@@ -201,6 +207,44 @@
     };
   }
 
+  function collectModelInputs(targetDom = dom) {
+    if (!targetDom) return null;
+    return {
+      weathering_velocity_m_s: trimValue(
+        targetDom.weatheringVelocityMS && targetDom.weatheringVelocityMS.value
+      ),
+      bedrock_velocity_mode: trimValue(
+        targetDom.bedrockVelocityMode && targetDom.bedrockVelocityMode.value
+      ),
+      initial_bedrock_velocity_m_s: trimValue(
+        targetDom.initialBedrockVelocityMS && targetDom.initialBedrockVelocityMS.value
+      ),
+      bedrock_velocity_m_s: trimValue(
+        targetDom.fixedBedrockVelocityMS && targetDom.fixedBedrockVelocityMS.value
+      ),
+      min_offset_m: trimValue(targetDom.minOffsetM && targetDom.minOffsetM.value),
+      max_offset_m: trimValue(targetDom.maxOffsetM && targetDom.maxOffsetM.value),
+      conversion_mode: trimValue(targetDom.conversionMode && targetDom.conversionMode.value),
+    };
+  }
+
+  function collectOutputInputs(targetDom = dom) {
+    if (!targetDom) return null;
+    const formats = [];
+    for (const checkbox of targetDom.exportFormatInputs || []) {
+      if (checkbox.checked) {
+        formats.push(checkbox.value);
+      }
+    }
+    return {
+      register_corrected_file: Boolean(
+        targetDom.registerCorrectedFile && targetDom.registerCorrectedFile.checked
+      ),
+      export_enabled: Boolean(targetDom.exportEnabled && targetDom.exportEnabled.checked),
+      export_formats: formats,
+    };
+  }
+
   function parsePositiveInteger(value, label, errors) {
     const parsed = Number(value);
     if (!Number.isInteger(parsed) || parsed <= 0) {
@@ -218,6 +262,19 @@
     const parsed = Number(trimmed);
     if (!trimmed || !Number.isFinite(parsed) || parsed <= 0) {
       errors.push(`${label} must be a finite number greater than 0.`);
+      return null;
+    }
+    return parsed;
+  }
+
+  function parseNonNegativeFloat(value, label, errors, { optional = false } = {}) {
+    const trimmed = trimValue(value);
+    if (optional && trimmed === '') {
+      return null;
+    }
+    const parsed = Number(trimmed);
+    if (!trimmed || !Number.isFinite(parsed) || parsed < 0) {
+      errors.push(`${label} must be a finite number greater than or equal to 0.`);
       return null;
     }
     return parsed;
@@ -253,6 +310,34 @@
     const error = new Error(errors.join(' '));
     error.errors = errors;
     return error;
+  }
+
+  function buildStaticCorrectionPickSource(targetDom = dom) {
+    const values = collectInputs(targetDom);
+    const errors = [];
+    if (!values) {
+      throw validationError(['Static correction form is not available.']);
+    }
+    const pickSource = { ...values.pick_source };
+    const pickKind = pickSource.kind;
+    if (!pickKind) {
+      errors.push('pick_source.kind is required.');
+    }
+    if (ARTIFACT_PICK_KINDS.has(pickKind)) {
+      if (!pickSource.job_id) {
+        errors.push('pick_source.job_id is required for artifact-backed pick sources.');
+      }
+      if (!pickSource.artifact_name) {
+        errors.push('pick_source.artifact_name is required for artifact-backed pick sources.');
+      }
+    }
+    if (pickSource.artifact_name && !pickSource.artifact_name.toLowerCase().endsWith('.npz')) {
+      errors.push('pick_source.artifact_name must be an .npz artifact.');
+    }
+    if (errors.length) {
+      throw validationError(errors);
+    }
+    return pickSource;
   }
 
   function validateStaticCorrectionGeometryRequest(targetDom = dom) {
@@ -312,6 +397,10 @@
     return result.payload;
   }
 
+  function buildStaticCorrectionGeometry(targetDom = dom) {
+    return buildStaticCorrectionGeometryRequest(targetDom).geometry;
+  }
+
   function linkageValueElements(targetDom) {
     if (!targetDom) return [];
     return [
@@ -332,6 +421,17 @@
     }
     if (targetDom.linkageThresholdM) {
       targetDom.linkageThresholdM.disabled = !enabled || !LINKAGE_THRESHOLD_MODES.has(mode);
+    }
+  }
+
+  function updateBedrockVelocityControls(targetDom = dom) {
+    if (!targetDom || !targetDom.bedrockVelocityMode) return;
+    const fixedMode = targetDom.bedrockVelocityMode.value === 'fixed_global';
+    if (targetDom.initialBedrockVelocityMS) {
+      targetDom.initialBedrockVelocityMS.disabled = fixedMode;
+    }
+    if (targetDom.fixedBedrockVelocityMS) {
+      targetDom.fixedBedrockVelocityMS.disabled = !fixedMode;
     }
   }
 
@@ -392,8 +492,191 @@
     return result.payload;
   }
 
+  function buildStaticCorrectionLinkage(targetDom = dom, linkageJobId = '') {
+    const jobId = trimValue(linkageJobId);
+    if (jobId) {
+      return {
+        mode: 'required',
+        job_id: jobId,
+        artifact_name: LINKAGE_ARTIFACT_NAME,
+      };
+    }
+    return { mode: 'none' };
+  }
+
+  function validateOneLayerRefractionModel(targetDom = dom) {
+    const values = collectModelInputs(targetDom);
+    const errors = [];
+    if (!values) {
+      return { payload: null, moveout: null, conversion: null, errors: ['Static correction model form is not available.'] };
+    }
+
+    const weatheringVelocity = parsePositiveFloat(
+      values.weathering_velocity_m_s,
+      'model.first_layer.weathering_velocity_m_s',
+      errors
+    );
+    const bedrockVelocityMode = values.bedrock_velocity_mode;
+    if (!['solve_global', 'fixed_global'].includes(bedrockVelocityMode)) {
+      errors.push('model.bedrock_velocity_mode must be solve_global or fixed_global.');
+    }
+
+    const initialBedrockVelocity = parsePositiveFloat(
+      values.initial_bedrock_velocity_m_s,
+      'model.initial_bedrock_velocity_m_s',
+      errors,
+      { optional: bedrockVelocityMode !== 'solve_global' }
+    );
+    const fixedBedrockVelocity = parsePositiveFloat(
+      values.bedrock_velocity_m_s,
+      'model.bedrock_velocity_m_s',
+      errors,
+      { optional: bedrockVelocityMode !== 'fixed_global' }
+    );
+    const minOffsetM = parseNonNegativeFloat(values.min_offset_m, 'moveout.min_offset_m', errors);
+    const maxOffsetM = parsePositiveFloat(values.max_offset_m, 'moveout.max_offset_m', errors);
+    if (minOffsetM !== null && maxOffsetM !== null && minOffsetM >= maxOffsetM) {
+      errors.push('moveout.min_offset_m must be less than moveout.max_offset_m.');
+    }
+    if (values.conversion_mode !== 't1lsst_1layer') {
+      errors.push('conversion.mode must be t1lsst_1layer for the one-layer preset.');
+    }
+    if (
+      weatheringVelocity !== null
+      && bedrockVelocityMode === 'solve_global'
+      && initialBedrockVelocity !== null
+      && initialBedrockVelocity <= weatheringVelocity
+    ) {
+      errors.push('model.initial_bedrock_velocity_m_s must be greater than model.first_layer.weathering_velocity_m_s.');
+    }
+    if (
+      weatheringVelocity !== null
+      && bedrockVelocityMode === 'fixed_global'
+      && fixedBedrockVelocity !== null
+      && fixedBedrockVelocity <= weatheringVelocity
+    ) {
+      errors.push('model.bedrock_velocity_m_s must be greater than model.first_layer.weathering_velocity_m_s.');
+    }
+
+    if (errors.length) {
+      return { payload: null, moveout: null, conversion: null, errors };
+    }
+
+    const model = {
+      method: 'gli_variable_thickness',
+      first_layer: {
+        mode: 'constant',
+        weathering_velocity_m_s: weatheringVelocity,
+      },
+      bedrock_velocity_mode: bedrockVelocityMode,
+      min_bedrock_velocity_m_s: 1200,
+      max_bedrock_velocity_m_s: 6000,
+    };
+    if (bedrockVelocityMode === 'solve_global') {
+      model.initial_bedrock_velocity_m_s = initialBedrockVelocity;
+    } else {
+      model.bedrock_velocity_m_s = fixedBedrockVelocity;
+    }
+
+    return {
+      payload: model,
+      moveout: {
+        min_offset_m: minOffsetM,
+        max_offset_m: maxOffsetM,
+      },
+      conversion: {
+        mode: 't1lsst_1layer',
+      },
+      errors,
+    };
+  }
+
+  function buildOneLayerRefractionModel(targetDom = dom) {
+    const result = validateOneLayerRefractionModel(targetDom);
+    if (result.errors.length) {
+      throw validationError(result.errors);
+    }
+    return result.payload;
+  }
+
+  function validateStaticCorrectionOutput(targetDom = dom) {
+    const values = collectOutputInputs(targetDom);
+    const errors = [];
+    if (!values) {
+      return { payload: null, errors: ['Static correction output form is not available.'] };
+    }
+    if (values.export_enabled && values.export_formats.length === 0) {
+      errors.push('export.formats must include at least one format when export.enabled is true.');
+    }
+    if (errors.length) {
+      return { payload: null, errors };
+    }
+    return {
+      payload: {
+        export: {
+          enabled: values.export_enabled,
+          formats: values.export_formats,
+        },
+        apply: {
+          register_corrected_file: values.register_corrected_file,
+        },
+      },
+      errors,
+    };
+  }
+
+  function buildRefractionStaticApplyRequest(targetDom = dom, options = {}) {
+    const values = collectInputs(targetDom);
+    const errors = [];
+    if (!values) {
+      throw validationError(['Static correction form is not available.']);
+    }
+    if (!values.file_id) {
+      errors.push('file_id is required.');
+    }
+    const key1Byte = parsePositiveInteger(values.key1_byte, 'key1_byte', errors);
+    const key2Byte = parsePositiveInteger(values.key2_byte, 'key2_byte', errors);
+
+    let pickSource = null;
+    try {
+      pickSource = buildStaticCorrectionPickSource(targetDom);
+    } catch (error) {
+      errors.push(...(error.errors || [error.message || String(error)]));
+    }
+
+    const geometryResult = validateStaticCorrectionGeometryRequest(targetDom);
+    errors.push(...geometryResult.errors);
+    const modelResult = validateOneLayerRefractionModel(targetDom);
+    errors.push(...modelResult.errors);
+    const outputResult = validateStaticCorrectionOutput(targetDom);
+    errors.push(...outputResult.errors);
+    const linkage = buildStaticCorrectionLinkage(targetDom, options.linkageJobId || '');
+
+    if (errors.length) {
+      throw validationError(errors);
+    }
+
+    return {
+      file_id: values.file_id,
+      key1_byte: key1Byte,
+      key2_byte: key2Byte,
+      pick_source: pickSource,
+      geometry: geometryResult.payload.geometry,
+      linkage,
+      model: modelResult.payload,
+      moveout: {
+        ...geometryResult.payload.moveout,
+        ...modelResult.moveout,
+        model: 'head_wave_linear_offset',
+        distance_source: 'geometry',
+      },
+      conversion: modelResult.conversion,
+      ...outputResult.payload,
+    };
+  }
+
   function buildStaticCorrectionRequest() {
-    const values = collectInputs();
+    const values = collectInputs(dom);
     const errors = [];
     if (!values) {
       return { payload: null, errors: ['Static correction form is not available.'] };
@@ -404,28 +687,20 @@
     }
     const key1Byte = parsePositiveInteger(values.key1_byte, 'key1_byte', errors);
     const key2Byte = parsePositiveInteger(values.key2_byte, 'key2_byte', errors);
-    const pickKind = values.pick_source.kind;
-    if (!pickKind) {
-      errors.push('pick_source.kind is required.');
-    }
-    if (ARTIFACT_PICK_KINDS.has(pickKind)) {
-      if (!values.pick_source.job_id) {
-        errors.push('pick_source.job_id is required for artifact-backed pick sources.');
-      }
-      if (!values.pick_source.artifact_name) {
-        errors.push('pick_source.artifact_name is required for artifact-backed pick sources.');
-      }
-    }
-    if (
-      values.pick_source.artifact_name
-      && !values.pick_source.artifact_name.toLowerCase().endsWith('.npz')
-    ) {
-      errors.push('pick_source.artifact_name must be an .npz artifact.');
+    let pickSource = null;
+    try {
+      pickSource = buildStaticCorrectionPickSource(dom);
+    } catch (error) {
+      errors.push(...(error.errors || [error.message || String(error)]));
     }
     const geometryResult = validateStaticCorrectionGeometryRequest(dom);
     errors.push(...geometryResult.errors);
     const linkageResult = validateStaticCorrectionLinkageRequest(dom);
     errors.push(...linkageResult.errors);
+    const modelResult = validateOneLayerRefractionModel(dom);
+    errors.push(...modelResult.errors);
+    const outputResult = validateStaticCorrectionOutput(dom);
+    errors.push(...outputResult.errors);
 
     if (errors.length) {
       return { payload: null, errors };
@@ -435,9 +710,18 @@
         file_id: values.file_id,
         key1_byte: key1Byte,
         key2_byte: key2Byte,
-        pick_source: values.pick_source,
-        ...geometryResult.payload,
+        pick_source: pickSource,
+        geometry: geometryResult.payload.geometry,
         ...linkageResult.payload,
+        model: modelResult.payload,
+        moveout: {
+          ...geometryResult.payload.moveout,
+          ...modelResult.moveout,
+          model: 'head_wave_linear_offset',
+          distance_source: 'geometry',
+        },
+        conversion: modelResult.conversion,
+        ...outputResult.payload,
       },
       errors,
     };
@@ -550,6 +834,12 @@
     if (dom.loadPickArtifactsButton) {
       dom.loadPickArtifactsButton.disabled = state.loadingPickArtifacts;
     }
+    if (dom.requestPreview) {
+      dom.requestPreview.hidden = !state.lastRequest;
+      dom.requestPreview.textContent = state.lastRequest
+        ? JSON.stringify(state.lastRequest, null, 2)
+        : '';
+    }
     renderPickArtifactList();
   }
 
@@ -644,20 +934,31 @@
       'refraction static apply'
     );
     state.lastStaticCorrectionJobId = trimValue(responsePayload && responsePayload.job_id);
+    state.lastStaticCorrectionState = trimValue(responsePayload && responsePayload.state);
+    state.lastResponse = responsePayload;
     state.phase = 'idle';
+    const initialState = state.lastStaticCorrectionState
+      ? ` Initial state: ${state.lastStaticCorrectionState}.`
+      : '';
     state.message = state.lastStaticCorrectionJobId
-      ? `Static correction job ${state.lastStaticCorrectionJobId} submitted.`
+      ? `Static correction job ${state.lastStaticCorrectionJobId} submitted.${initialState}`
       : 'Static correction job submitted.';
     render();
     return responsePayload;
   }
 
+  function submitRefractionStaticApply(request) {
+    return postJson('/statics/refraction/apply', request, 'refraction static apply');
+  }
+
   async function runStaticCorrection() {
     const { payload, errors } = buildStaticCorrectionRequest();
     state.lastRequest = payload;
+    state.lastResponse = null;
     state.lastLinkageBuildRequest = null;
     state.lastLinkageJobId = '';
     state.lastStaticCorrectionJobId = '';
+    state.lastStaticCorrectionState = '';
     if (errors.length) {
       state.ready = false;
       state.error = errors.join(' ');
@@ -698,11 +999,7 @@
         state.phase = 'linkage_ready';
         applyPayload = {
           ...payload,
-          linkage: {
-            mode: 'required',
-            job_id: linkageJobId,
-            artifact_name: LINKAGE_ARTIFACT_NAME,
-          },
+          linkage: buildStaticCorrectionLinkage(dom, linkageJobId),
         };
         state.lastRequest = applyPayload;
       }
@@ -762,6 +1059,17 @@
       'staticCorrectionReceiverLocationIntervalM'
     );
     const preferReceiverAnchor = document.getElementById('staticCorrectionPreferReceiverAnchor');
+    const weatheringVelocityMS = document.getElementById('staticCorrectionWeatheringVelocityMS');
+    const bedrockVelocityMode = document.getElementById('staticCorrectionBedrockVelocityMode');
+    const initialBedrockVelocityMS = document.getElementById('staticCorrectionInitialBedrockVelocityMS');
+    const fixedBedrockVelocityMS = document.getElementById('staticCorrectionFixedBedrockVelocityMS');
+    const minOffsetM = document.getElementById('staticCorrectionMinOffsetM');
+    const maxOffsetM = document.getElementById('staticCorrectionMaxOffsetM');
+    const conversionMode = document.getElementById('staticCorrectionConversionMode');
+    const registerCorrectedFile = document.getElementById('staticCorrectionRegisterCorrectedFile');
+    const exportEnabled = document.getElementById('staticCorrectionExportEnabled');
+    const exportFormatInputs = Array.from(document.querySelectorAll('[data-static-correction-export-format]'));
+    const requestPreview = document.getElementById('staticCorrectionRequestPreview');
     if (
       !form || !status || !error || !runButton || !fileId || !key1Byte || !key2Byte
       || !pickKind || !pickJobId || !pickArtifactName || !loadPickArtifactsButton
@@ -771,6 +1079,10 @@
       || !elevationScalarByte || !sourceDepthByte || !coordinateUnit || !elevationUnit
       || !offsetByte || !enableLinkage || !linkageOptions || !linkageMode
       || !linkageThresholdM || !receiverLocationIntervalM || !preferReceiverAnchor
+      || !weatheringVelocityMS || !bedrockVelocityMode || !initialBedrockVelocityMS
+      || !fixedBedrockVelocityMS || !minOffsetM || !maxOffsetM || !conversionMode
+      || !registerCorrectedFile || !exportEnabled || !requestPreview
+      || exportFormatInputs.length === 0
     ) {
       return;
     }
@@ -781,6 +1093,13 @@
     setDefaultValue(pickArtifactName, DEFAULTS.pickArtifactName);
     setDefaultValue(linkageMode, DEFAULTS.linkageMode);
     setDefaultValue(linkageThresholdM, DEFAULTS.linkageThresholdM);
+    setDefaultValue(weatheringVelocityMS, DEFAULTS.weatheringVelocityMS);
+    setDefaultValue(bedrockVelocityMode, DEFAULTS.bedrockVelocityMode);
+    setDefaultValue(initialBedrockVelocityMS, DEFAULTS.initialBedrockVelocityMS);
+    setDefaultValue(fixedBedrockVelocityMS, DEFAULTS.fixedBedrockVelocityMS);
+    setDefaultValue(minOffsetM, DEFAULTS.minOffsetM);
+    setDefaultValue(maxOffsetM, DEFAULTS.maxOffsetM);
+    setDefaultValue(conversionMode, DEFAULTS.conversionMode);
 
     dom = {
       form,
@@ -816,6 +1135,17 @@
       linkageThresholdM,
       receiverLocationIntervalM,
       preferReceiverAnchor,
+      weatheringVelocityMS,
+      bedrockVelocityMode,
+      initialBedrockVelocityMS,
+      fixedBedrockVelocityMS,
+      minOffsetM,
+      maxOffsetM,
+      conversionMode,
+      registerCorrectedFile,
+      exportEnabled,
+      exportFormatInputs,
+      requestPreview,
     };
     applyStaticCorrectionGeometryPreset(dom, trimValue(geometryPreset.value) || GEOMETRY_DEFAULTS.preset);
     updateStaticCorrectionLinkageOptions(dom);
@@ -848,6 +1178,15 @@
       state.message = 'Endpoint linkage mode updated.';
       render();
     });
+    updateBedrockVelocityControls(dom);
+    bedrockVelocityMode.addEventListener('change', () => {
+      updateBedrockVelocityControls(dom);
+      state.error = '';
+      state.message = bedrockVelocityMode.value === 'fixed_global'
+        ? 'Fixed global V2 will be submitted for the one-layer model.'
+        : 'Global V2 will be solved from the submitted picks.';
+      render();
+    });
 
     render();
   }
@@ -855,19 +1194,29 @@
   window.refractionStaticRunState = state;
   window.refractionStaticRunUI = {
     applyStaticCorrectionGeometryPreset,
+    buildOneLayerRefractionModel,
+    buildRefractionStaticApplyRequest,
+    buildStaticCorrectionGeometry,
     buildStaticCorrectionGeometryRequest,
+    buildStaticCorrectionLinkage,
     buildStaticCorrectionLinkageRequest,
+    buildStaticCorrectionPickSource,
     buildStaticCorrectionRequest,
     buildStaticLinkageBuildRequest,
     collectGeometryInputs,
     collectInputs,
     collectLinkageInputs,
+    collectModelInputs,
+    collectOutputInputs,
     isLikelyPickArtifact,
     loadPickArtifacts,
     pollStaticJobUntilReady,
     render,
     runStaticCorrection,
+    submitRefractionStaticApply,
+    updateBedrockVelocityControls,
     updateStaticCorrectionLinkageOptions,
+    validateOneLayerRefractionModel,
     validateStaticCorrectionGeometryRequest,
     validateStaticCorrectionLinkageRequest,
   };

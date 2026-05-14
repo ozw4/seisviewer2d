@@ -1327,6 +1327,24 @@
       color: #991b1b;
     }
 
+    .static-correction-request-preview {
+      max-height: 18em;
+      margin: 0;
+      overflow: auto;
+      padding: 0.65em;
+      border: 1px solid #d8dee8;
+      border-radius: 4px;
+      background: #f8fafc;
+      color: #0f172a;
+      font-size: 0.78em;
+      line-height: 1.45;
+      white-space: pre;
+    }
+
+    .static-correction-request-preview[hidden] {
+      display: none;
+    }
+
     .refraction-qc-panel {
       flex: 1;
       min-height: 0;
@@ -2124,16 +2142,79 @@
             <section class="static-correction-section" aria-labelledby="staticCorrectionModelHeading">
               <h3 id="staticCorrectionModelHeading">Model</h3>
               <label class="static-correction-field" for="staticCorrectionModelKind">Refraction model
-                <select id="staticCorrectionModelKind" name="model_kind" disabled>
-                  <option value="">Not configured</option>
+                <select id="staticCorrectionModelKind" name="model_kind" disabled
+                  data-testid="static-correction-model-kind">
+                  <option value="one_layer_t1lsst" selected>one-layer T1LSST</option>
+                </select>
+              </label>
+              <label class="static-correction-field" for="staticCorrectionWeatheringVelocityMS">
+                model.first_layer.weathering_velocity_m_s
+                <input id="staticCorrectionWeatheringVelocityMS" name="model.first_layer.weathering_velocity_m_s"
+                  type="number" min="0" step="any" value="800"
+                  data-testid="static-correction-weathering-velocity" />
+              </label>
+              <label class="static-correction-field" for="staticCorrectionBedrockVelocityMode">
+                model.bedrock_velocity_mode
+                <select id="staticCorrectionBedrockVelocityMode" name="model.bedrock_velocity_mode"
+                  data-testid="static-correction-bedrock-velocity-mode">
+                  <option value="solve_global" selected>solve_global</option>
+                  <option value="fixed_global">fixed_global</option>
+                </select>
+              </label>
+              <div class="static-correction-field-row">
+                <label class="static-correction-field" for="staticCorrectionInitialBedrockVelocityMS">
+                  initial V2 m/s
+                  <input id="staticCorrectionInitialBedrockVelocityMS" name="model.initial_bedrock_velocity_m_s"
+                    type="number" min="0" step="any" value="2400"
+                    data-testid="static-correction-initial-bedrock-velocity" />
+                </label>
+                <label class="static-correction-field" for="staticCorrectionFixedBedrockVelocityMS">
+                  fixed V2 m/s
+                  <input id="staticCorrectionFixedBedrockVelocityMS" name="model.bedrock_velocity_m_s"
+                    type="number" min="0" step="any" value="2400"
+                    data-testid="static-correction-fixed-bedrock-velocity" />
+                </label>
+              </div>
+              <div class="static-correction-field-row">
+                <label class="static-correction-field" for="staticCorrectionMinOffsetM">moveout.min_offset_m
+                  <input id="staticCorrectionMinOffsetM" name="moveout.min_offset_m" type="number" min="0"
+                    step="any" value="300" data-testid="static-correction-min-offset" />
+                </label>
+                <label class="static-correction-field" for="staticCorrectionMaxOffsetM">moveout.max_offset_m
+                  <input id="staticCorrectionMaxOffsetM" name="moveout.max_offset_m" type="number" min="0"
+                    step="any" value="4000" data-testid="static-correction-max-offset" />
+                </label>
+              </div>
+              <label class="static-correction-field" for="staticCorrectionConversionMode">conversion.mode
+                <select id="staticCorrectionConversionMode" name="conversion.mode"
+                  data-testid="static-correction-conversion-mode">
+                  <option value="t1lsst_1layer" selected>t1lsst_1layer</option>
                 </select>
               </label>
             </section>
             <section class="static-correction-section" aria-labelledby="staticCorrectionOutputHeading">
               <h3 id="staticCorrectionOutputHeading">Output</h3>
-              <label class="static-correction-field" for="staticCorrectionOutputName">Output name
-                <input id="staticCorrectionOutputName" name="output_name" type="text" autocomplete="off"
-                  placeholder="Refraction static job name" disabled />
+              <label class="static-correction-check-field" for="staticCorrectionRegisterCorrectedFile">
+                <input id="staticCorrectionRegisterCorrectedFile" name="apply.register_corrected_file"
+                  type="checkbox" data-testid="static-correction-register-corrected-file" />
+                <span>apply.register_corrected_file</span>
+              </label>
+              <label class="static-correction-check-field" for="staticCorrectionExportEnabled">
+                <input id="staticCorrectionExportEnabled" name="export.enabled" type="checkbox" checked
+                  data-testid="static-correction-export-enabled" />
+                <span>export.enabled</span>
+              </label>
+              <label class="static-correction-check-field" for="staticCorrectionExportCanonicalTable">
+                <input id="staticCorrectionExportCanonicalTable" name="export.formats" type="checkbox"
+                  value="canonical_static_table" checked data-static-correction-export-format
+                  data-testid="static-correction-export-canonical-table" />
+                <span>canonical_static_table</span>
+              </label>
+              <label class="static-correction-check-field" for="staticCorrectionExportTimeTermSpreadsheet">
+                <input id="staticCorrectionExportTimeTermSpreadsheet" name="export.formats" type="checkbox"
+                  value="time_term_spreadsheet" checked data-static-correction-export-format
+                  data-testid="static-correction-export-time-term-spreadsheet" />
+                <span>time_term_spreadsheet</span>
               </label>
             </section>
             <section class="static-correction-section" aria-labelledby="staticCorrectionRunHeading">
@@ -2141,6 +2222,8 @@
               <div class="static-correction-actions">
                 <button id="staticCorrectionRunButton" type="button" data-testid="static-correction-run">Run</button>
               </div>
+              <pre id="staticCorrectionRequestPreview" class="static-correction-request-preview" hidden
+                data-testid="static-correction-request-preview"></pre>
             </section>
           </form>
           <div id="staticCorrectionStatus" class="static-correction-status" role="status" aria-live="polite"
