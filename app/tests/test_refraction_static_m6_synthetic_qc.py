@@ -288,6 +288,10 @@ def test_synthetic_static_component_qc_known_truth_field_manual(
             qc['applied_field_shift_s'],
             dataset.expected_trace_field_shift_s,
         )
+        np.testing.assert_array_equal(
+            qc['trace_field_static_status'],
+            np.full(dataset.expected_trace_field_shift_s.shape, 'ok'),
+        )
         np.testing.assert_allclose(
             qc['final_trace_shift_s'],
             dataset.expected_final_trace_shift_s,
@@ -303,6 +307,7 @@ def test_synthetic_static_component_qc_known_truth_field_manual(
 
     trace_rows = _read_csv(case.job_dir / 'refraction_static_component_qc_trace.csv')
     assert trace_rows[0]['apply_to_trace_shift'] == 'true'
+    assert trace_rows[0]['trace_field_static_status'] == 'ok'
     assert float(trace_rows[0]['final_trace_shift_ms']) == pytest.approx(
         dataset.expected_final_trace_shift_s[0] * 1000.0
     )

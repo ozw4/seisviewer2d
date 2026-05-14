@@ -3078,6 +3078,7 @@ class RefractionStaticQcBundleResponse(BaseModel):
     artifacts: dict[str, str]
     available_views: list[str]
     unavailable_views: list[str] = Field(default_factory=list)
+    unavailable_view_reasons: dict[str, str] = Field(default_factory=dict)
     views: dict[str, RefractionStaticQcTabularView] = Field(default_factory=dict)
     downsampling: dict[str, RefractionStaticQcDownsamplingEntry] = Field(
         default_factory=dict,

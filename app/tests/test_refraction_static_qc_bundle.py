@@ -16,6 +16,10 @@ from app.services.refraction_static_artifacts import (
     REFRACTION_FIRST_BREAK_FIT_QC_NPZ_NAME,
     REFRACTION_GRID_MAP_QC_CSV_NAME,
     REFRACTION_LINE_PROFILE_QC_COMBINED_CSV_NAME,
+    REFRACTION_LINE_PROFILE_QC_JSON_NAME,
+    REFRACTION_LINE_PROFILE_QC_NPZ_NAME,
+    REFRACTION_LINE_PROFILE_QC_RECEIVER_CSV_NAME,
+    REFRACTION_LINE_PROFILE_QC_SOURCE_CSV_NAME,
     REFRACTION_STATIC_ARTIFACTS_JSON_NAME,
     REFRACTION_STATIC_COMPONENT_QC_ENDPOINT_CSV_NAME,
     REFRACTION_STATIC_COMPONENT_QC_TRACE_CSV_NAME,
@@ -214,7 +218,10 @@ def test_refraction_static_qc_bundle_uses_line_profile_qc_artifact(
     _write_refraction_qc_artifacts(
         job_dir,
         rows=[{'trace': '0', 'first_break_residual_ms': '1.25'}],
-        extra_artifact_names=[REFRACTION_LINE_PROFILE_QC_COMBINED_CSV_NAME],
+        extra_artifact_names=[
+            REFRACTION_LINE_PROFILE_QC_COMBINED_CSV_NAME,
+            REFRACTION_LINE_PROFILE_QC_JSON_NAME,
+        ],
     )
     profile_rows = [
         {
@@ -242,6 +249,11 @@ def test_refraction_static_qc_bundle_uses_line_profile_qc_artifact(
         writer = csv.DictWriter(handle, fieldnames=list(profile_rows[0]))
         writer.writeheader()
         writer.writerows(profile_rows)
+    _write_line_profile_qc_metadata(
+        job_dir / REFRACTION_LINE_PROFILE_QC_JSON_NAME,
+        status='available',
+        availability_reason='line_2d_projected',
+    )
     _create_static_job(client, job_id='refraction-job', job_dir=job_dir)
 
     response = client.post(
@@ -256,6 +268,94 @@ def test_refraction_static_qc_bundle_uses_line_profile_qc_artifact(
         REFRACTION_LINE_PROFILE_QC_COMBINED_CSV_NAME
     )
     assert payload['views']['line_profiles']['records'] == profile_rows
+    assert payload['unavailable_view_reasons'] == {}
+
+
+def test_refraction_static_qc_bundle_marks_unavailable_line_profile_from_json_status(
+    client: TestClient,
+    tmp_path: Path,
+) -> None:
+    job_dir = tmp_path / 'refraction-job'
+    _write_refraction_qc_artifacts(
+        job_dir,
+        rows=[{'trace': '0', 'first_break_residual_ms': '1.25'}],
+        extra_artifact_names=[
+            REFRACTION_LINE_PROFILE_QC_COMBINED_CSV_NAME,
+            REFRACTION_LINE_PROFILE_QC_JSON_NAME,
+        ],
+    )
+    _write_empty_csv(
+        job_dir / REFRACTION_LINE_PROFILE_QC_COMBINED_CSV_NAME,
+        ['endpoint_kind', 'endpoint_key', 'inline_m'],
+    )
+    _write_line_profile_qc_metadata(
+        job_dir / REFRACTION_LINE_PROFILE_QC_JSON_NAME,
+        status='unavailable',
+        availability_reason='no_projected_inline_coordinate_model',
+    )
+    _create_static_job(client, job_id='refraction-job', job_dir=job_dir)
+
+    response = client.post(
+        '/statics/refraction/qc',
+        json={'job_id': 'refraction-job', 'include': ['profiles']},
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert 'line_profiles' not in payload['available_views']
+    assert 'profiles' in payload['unavailable_views']
+    assert 'line_profiles' not in payload['views']
+    assert 'line_profiles' not in payload['downsampling']
+    assert payload['unavailable_view_reasons'] == {
+        'profiles': 'no_projected_inline_coordinate_model',
+    }
+
+
+def test_refraction_static_qc_bundle_preserves_unavailable_profile_artifact_refs(
+    client: TestClient,
+    tmp_path: Path,
+) -> None:
+    job_dir = tmp_path / 'refraction-job'
+    _write_refraction_qc_artifacts(
+        job_dir,
+        rows=[{'trace': '0', 'first_break_residual_ms': '1.25'}],
+        extra_artifact_names=[
+            REFRACTION_LINE_PROFILE_QC_SOURCE_CSV_NAME,
+            REFRACTION_LINE_PROFILE_QC_RECEIVER_CSV_NAME,
+            REFRACTION_LINE_PROFILE_QC_COMBINED_CSV_NAME,
+            REFRACTION_LINE_PROFILE_QC_NPZ_NAME,
+            REFRACTION_LINE_PROFILE_QC_JSON_NAME,
+        ],
+    )
+    _write_line_profile_qc_metadata(
+        job_dir / REFRACTION_LINE_PROFILE_QC_JSON_NAME,
+        status='unavailable',
+        availability_reason='projected_inline_coordinates_unavailable_for_grid_3d',
+    )
+    _create_static_job(client, job_id='refraction-job', job_dir=job_dir)
+
+    response = client.post(
+        '/statics/refraction/qc',
+        json={'job_id': 'refraction-job', 'include': ['profiles']},
+    )
+
+    assert response.status_code == 200
+    artifacts = response.json()['artifacts']
+    assert artifacts['refraction_line_profile_qc_source'] == (
+        REFRACTION_LINE_PROFILE_QC_SOURCE_CSV_NAME
+    )
+    assert artifacts['refraction_line_profile_qc_receiver'] == (
+        REFRACTION_LINE_PROFILE_QC_RECEIVER_CSV_NAME
+    )
+    assert artifacts['refraction_line_profile_qc_combined'] == (
+        REFRACTION_LINE_PROFILE_QC_COMBINED_CSV_NAME
+    )
+    assert artifacts['refraction_line_profile_qc_npz'] == (
+        REFRACTION_LINE_PROFILE_QC_NPZ_NAME
+    )
+    assert artifacts['refraction_line_profile_qc_json'] == (
+        REFRACTION_LINE_PROFILE_QC_JSON_NAME
+    )
 
 
 def test_refraction_static_qc_bundle_uses_grid_map_qc_artifact(
@@ -474,3 +574,27 @@ def _write_csv(path: Path, rows: list[dict[str, str]]) -> None:
         writer = csv.DictWriter(handle, fieldnames=list(rows[0]))
         writer.writeheader()
         writer.writerows(rows)
+
+
+def _write_empty_csv(path: Path, columns: list[str]) -> None:
+    with path.open('w', encoding='utf-8', newline='') as handle:
+        writer = csv.DictWriter(handle, fieldnames=columns)
+        writer.writeheader()
+
+
+def _write_line_profile_qc_metadata(
+    path: Path,
+    *,
+    status: str,
+    availability_reason: str,
+) -> None:
+    path.write_text(
+        json.dumps(
+            {
+                'kind': 'refraction_line_profile_qc',
+                'status': status,
+                'availability_reason': availability_reason,
+            }
+        ),
+        encoding='utf-8',
+    )

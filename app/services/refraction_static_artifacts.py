@@ -777,6 +777,7 @@ _STATIC_COMPONENT_QC_TRACE_COLUMNS = (
     'field_shift_ms',
     'computed_field_shift_ms',
     'applied_field_shift_ms',
+    'trace_field_static_status',
     'manual_static_shift_ms',
     'source_depth_shift_ms',
     'uphole_shift_ms',
@@ -3230,6 +3231,7 @@ def build_refraction_static_component_qc_arrays(
         r.flat_datum_shift_s_sorted,
     )
     trace_field_shift_s = _trace_field_shift_s_sorted_array(r)
+    trace_field_status = _trace_field_static_status_sorted_array(r)
     applied_field_shift_s = _applied_field_shift_s_sorted_array(r)
     final_trace_shift_s = _final_trace_shift_s_sorted(r)
     source_field_shift_s = _source_field_shift_s_array(r)
@@ -3433,6 +3435,7 @@ def build_refraction_static_component_qc_arrays(
         'trace_field_shift_s': trace_field_shift_s,
         'computed_field_shift_s': trace_field_shift_s,
         'applied_field_shift_s': applied_field_shift_s,
+        'trace_field_static_status': trace_field_status,
         'manual_static_shift_s': manual_static_shift_s_sorted,
         'source_depth_shift_s': source_depth_shift_s_sorted,
         'uphole_shift_s': uphole_shift_s_sorted,
@@ -5806,6 +5809,9 @@ def _static_component_qc_trace_rows(
                 ),
                 'applied_field_shift_ms': _csv_ms(
                     arrays['applied_field_shift_s'][index]
+                ),
+                'trace_field_static_status': str(
+                    arrays['trace_field_static_status'][index]
                 ),
                 'manual_static_shift_ms': _csv_ms(
                     arrays['manual_static_shift_s'][index]

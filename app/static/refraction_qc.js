@@ -1315,6 +1315,17 @@
     return viewDef.unavailableKeys.some((key) => unavailable.includes(key));
   }
 
+  function unavailableReason(bundle, viewDef) {
+    const reasons = bundle && typeof bundle.unavailable_view_reasons === 'object' && bundle.unavailable_view_reasons
+      ? bundle.unavailable_view_reasons
+      : {};
+    for (const key of viewDef.unavailableKeys) {
+      const reason = reasons[key];
+      if (typeof reason === 'string' && reason.trim()) return reason.trim();
+    }
+    return '';
+  }
+
   function findDownsampling(bundle, key, view) {
     const downsampling = bundle && typeof bundle.downsampling === 'object' && bundle.downsampling
       ? bundle.downsampling
@@ -1352,9 +1363,14 @@
     if (!found) {
       const missing = document.createElement('p');
       missing.className = 'refraction-qc-placeholder';
-      missing.textContent = isUnavailable(bundle, viewDef)
-        ? 'This view is unavailable from the loaded QC bundle artifacts.'
-        : 'No sampled records are present for this view.';
+      if (isUnavailable(bundle, viewDef)) {
+        const reason = unavailableReason(bundle, viewDef);
+        missing.textContent = reason
+          ? `This view is unavailable from the loaded QC bundle artifacts: ${reason}.`
+          : 'This view is unavailable from the loaded QC bundle artifacts.';
+      } else {
+        missing.textContent = 'No sampled records are present for this view.';
+      }
       content.appendChild(missing);
       return;
     }
@@ -1898,9 +1914,14 @@
     if (!found) {
       const missing = document.createElement('p');
       missing.className = 'refraction-qc-placeholder';
-      missing.textContent = isUnavailable(bundle, viewDef)
-        ? 'This view is unavailable from refraction_line_profile_qc_* artifacts.'
-        : 'No sampled line-profile records are present for this view.';
+      if (isUnavailable(bundle, viewDef)) {
+        const reason = unavailableReason(bundle, viewDef);
+        missing.textContent = reason
+          ? `This view is unavailable from refraction_line_profile_qc_* artifacts: ${reason}.`
+          : 'This view is unavailable from refraction_line_profile_qc_* artifacts.';
+      } else {
+        missing.textContent = 'No sampled line-profile records are present for this view.';
+      }
       content.appendChild(missing);
       return;
     }

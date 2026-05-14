@@ -15,6 +15,7 @@ from app.services.refraction_static_artifacts import (
     REFRACTION_FIRST_BREAK_FIT_QC_CSV_NAME,
     REFRACTION_GRID_MAP_QC_CSV_NAME,
     REFRACTION_LINE_PROFILE_QC_COMBINED_CSV_NAME,
+    REFRACTION_LINE_PROFILE_QC_JSON_NAME,
     REFRACTION_REDUCED_TIME_QC_CSV_NAME,
     REFRACTION_REFRACTOR_VELOCITY_CELLS_CSV_NAME,
     REFRACTION_STATIC_ARTIFACTS_JSON_NAME,
@@ -43,6 +44,7 @@ class _TabularViewSpec:
     include: str
     view_name: str
     artifact_name: str
+    metadata_artifact_name: str | None = None
 
 
 _TABULAR_VIEW_SPECS: tuple[_TabularViewSpec, ...] = (
@@ -65,6 +67,7 @@ _TABULAR_VIEW_SPECS: tuple[_TabularViewSpec, ...] = (
         include='profiles',
         view_name='line_profiles',
         artifact_name=REFRACTION_LINE_PROFILE_QC_COMBINED_CSV_NAME,
+        metadata_artifact_name=REFRACTION_LINE_PROFILE_QC_JSON_NAME,
     ),
     _TabularViewSpec(
         include='static_components',
@@ -137,6 +140,7 @@ def build_refraction_static_qc_bundle(
 
     available_views: list[str] = []
     unavailable_views: list[str] = []
+    unavailable_view_reasons: dict[str, str] = {}
     views: dict[str, dict[str, Any]] = {}
     downsampling: dict[str, dict[str, Any]] = {}
 
@@ -149,6 +153,15 @@ def build_refraction_static_qc_bundle(
             continue
         artifact_path = artifacts_dir / spec.artifact_name
         if not artifact_path.is_file():
+            continue
+        unavailable_reason = _metadata_unavailable_reason(spec, artifacts_dir)
+        if unavailable_reason is not None:
+            _mark_unavailable_view(
+                spec.include,
+                unavailable_views,
+                unavailable_view_reasons,
+                reason=unavailable_reason,
+            )
             continue
         view_payload = _read_tabular_view(
             artifact_path,
@@ -169,11 +182,15 @@ def build_refraction_static_qc_bundle(
             continue
         if any(spec.include == include and spec.view_name in views for spec in _TABULAR_VIEW_SPECS):
             continue
-        unavailable_views.append(include)
+        _mark_unavailable_view(include, unavailable_views, unavailable_view_reasons)
     if 'gather_preview' in includes:
-        unavailable_views.append('gather_preview')
+        _mark_unavailable_view(
+            'gather_preview',
+            unavailable_views,
+            unavailable_view_reasons,
+        )
 
-    if not available_views:
+    if not available_views and not unavailable_view_reasons:
         requested = ', '.join(req.include)
         raise RefractionStaticQcBundleError(
             f'Requested QC bundle views are not available from existing '
@@ -189,6 +206,7 @@ def build_refraction_static_qc_bundle(
         'artifacts': artifact_refs,
         'available_views': available_views,
         'unavailable_views': unavailable_views,
+        'unavailable_view_reasons': unavailable_view_reasons,
         'views': views,
         'downsampling': downsampling,
     }
@@ -224,6 +242,40 @@ def _read_json_artifact(path: Path, artifact_name: str) -> dict[str, Any]:
             f'Refraction artifact {artifact_name} must contain a JSON object'
         )
     return payload
+
+
+def _metadata_unavailable_reason(
+    spec: _TabularViewSpec,
+    artifacts_dir: Path,
+) -> str | None:
+    if spec.metadata_artifact_name is None:
+        return None
+    metadata = _read_json_artifact(
+        artifacts_dir / spec.metadata_artifact_name,
+        spec.metadata_artifact_name,
+    )
+    if metadata.get('status') == 'available':
+        return None
+    raw_reason = metadata.get('availability_reason')
+    if isinstance(raw_reason, str) and raw_reason:
+        return raw_reason
+    raw_status = metadata.get('status')
+    if isinstance(raw_status, str) and raw_status:
+        return raw_status
+    return 'status_not_available'
+
+
+def _mark_unavailable_view(
+    include: str,
+    unavailable_views: list[str],
+    unavailable_view_reasons: dict[str, str],
+    *,
+    reason: str | None = None,
+) -> None:
+    if include not in unavailable_views:
+        unavailable_views.append(include)
+    if reason:
+        unavailable_view_reasons[include] = reason
 
 
 def _validate_manifest(manifest: dict[str, Any], artifacts_dir: Path) -> None:
