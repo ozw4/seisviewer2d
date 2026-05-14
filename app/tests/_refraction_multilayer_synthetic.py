@@ -224,6 +224,29 @@ def make_2d_straight_three_layer_refraction_dataset(
     )
 
 
+def make_2d_rotated_three_layer_refraction_dataset(
+    *,
+    seed: int = 0,
+    noise_std_s: float = 0.0,
+    outlier_fraction: float = 0.0,
+    line_origin_x_m: float = 1000.0,
+    line_origin_y_m: float = 2000.0,
+    line_azimuth_deg: float = 37.0,
+) -> SyntheticMultiLayerRefractionDataset:
+    """Build a rotated 2D V2/T1 + V3/T2 + Vsub/T3 branch fixture."""
+    return _make_dataset(
+        name='2d_rotated_three_layer',
+        layer_count=3,
+        coordinate_mode='line_2d_projected',
+        seed=seed,
+        noise_std_s=noise_std_s,
+        outlier_fraction=outlier_fraction,
+        line_origin_x_m=line_origin_x_m,
+        line_origin_y_m=line_origin_y_m,
+        line_azimuth_deg=line_azimuth_deg,
+    )
+
+
 def make_3d_small_grid_two_layer_refraction_dataset(
     *,
     seed: int = 0,
@@ -814,6 +837,7 @@ __all__ = [
     'V3_T2',
     'VSUB_T3',
     'make_2d_rotated_two_layer_refraction_dataset',
+    'make_2d_rotated_three_layer_refraction_dataset',
     'make_2d_straight_three_layer_refraction_dataset',
     'make_2d_straight_two_layer_refraction_dataset',
     'make_3d_small_grid_three_layer_refraction_dataset',
