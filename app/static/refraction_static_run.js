@@ -5,6 +5,59 @@
     pickKind: 'batch_predicted_npz',
     pickArtifactName: 'predicted_picks_time_s.npz',
   };
+  const GEOMETRY_PRESET_SEG_Y_DEFAULT = 'segy_default';
+  const GEOMETRY_PRESET_CUSTOM = 'custom';
+  const GEOMETRY_DEFAULTS = {
+    preset: GEOMETRY_PRESET_SEG_Y_DEFAULT,
+    sourceIdByte: '9',
+    receiverIdByte: '13',
+    sourceXByte: '73',
+    sourceYByte: '77',
+    receiverXByte: '81',
+    receiverYByte: '85',
+    sourceElevationByte: '45',
+    receiverElevationByte: '41',
+    coordinateScalarByte: '71',
+    elevationScalarByte: '69',
+    sourceDepthByte: '',
+    coordinateUnit: 'm',
+    elevationUnit: 'm',
+    offsetByte: '37',
+  };
+  const GEOMETRY_HEADER_FIELDS = [
+    { domKey: 'sourceIdByte', requestKey: 'source_id_byte', label: 'geometry.source_id_byte' },
+    { domKey: 'receiverIdByte', requestKey: 'receiver_id_byte', label: 'geometry.receiver_id_byte' },
+    { domKey: 'sourceXByte', requestKey: 'source_x_byte', label: 'geometry.source_x_byte' },
+    { domKey: 'sourceYByte', requestKey: 'source_y_byte', label: 'geometry.source_y_byte' },
+    { domKey: 'receiverXByte', requestKey: 'receiver_x_byte', label: 'geometry.receiver_x_byte' },
+    { domKey: 'receiverYByte', requestKey: 'receiver_y_byte', label: 'geometry.receiver_y_byte' },
+    {
+      domKey: 'sourceElevationByte',
+      requestKey: 'source_elevation_byte',
+      label: 'geometry.source_elevation_byte',
+    },
+    {
+      domKey: 'receiverElevationByte',
+      requestKey: 'receiver_elevation_byte',
+      label: 'geometry.receiver_elevation_byte',
+    },
+    {
+      domKey: 'coordinateScalarByte',
+      requestKey: 'coordinate_scalar_byte',
+      label: 'geometry.coordinate_scalar_byte',
+    },
+    {
+      domKey: 'elevationScalarByte',
+      requestKey: 'elevation_scalar_byte',
+      label: 'geometry.elevation_scalar_byte',
+    },
+    {
+      domKey: 'sourceDepthByte',
+      requestKey: 'source_depth_byte',
+      label: 'geometry.source_depth_byte',
+      optional: true,
+    },
+  ];
   const ARTIFACT_PICK_KINDS = new Set(['batch_predicted_npz', 'manual_npz_artifact']);
 
   const state = {
@@ -31,6 +84,54 @@
     }
   }
 
+  function geometryValueElements(targetDom) {
+    if (!targetDom) return [];
+    return [
+      targetDom.sourceIdByte,
+      targetDom.receiverIdByte,
+      targetDom.sourceXByte,
+      targetDom.sourceYByte,
+      targetDom.receiverXByte,
+      targetDom.receiverYByte,
+      targetDom.sourceElevationByte,
+      targetDom.receiverElevationByte,
+      targetDom.coordinateScalarByte,
+      targetDom.elevationScalarByte,
+      targetDom.sourceDepthByte,
+      targetDom.coordinateUnit,
+      targetDom.elevationUnit,
+      targetDom.offsetByte,
+    ].filter(Boolean);
+  }
+
+  function setGeometryDefaults(targetDom) {
+    if (!targetDom) return;
+    for (const [key, value] of Object.entries(GEOMETRY_DEFAULTS)) {
+      if (key === 'preset') continue;
+      if (targetDom[key]) {
+        targetDom[key].value = value;
+      }
+    }
+  }
+
+  function applyStaticCorrectionGeometryPreset(targetDom = dom, presetName = null) {
+    if (!targetDom || !targetDom.geometryPreset) return;
+    const preset = presetName || trimValue(targetDom.geometryPreset.value) || GEOMETRY_DEFAULTS.preset;
+    const normalized = preset === GEOMETRY_PRESET_CUSTOM
+      ? GEOMETRY_PRESET_CUSTOM
+      : GEOMETRY_PRESET_SEG_Y_DEFAULT;
+
+    targetDom.geometryPreset.value = normalized;
+    if (normalized === GEOMETRY_PRESET_SEG_Y_DEFAULT) {
+      setGeometryDefaults(targetDom);
+    }
+
+    const disabled = normalized !== GEOMETRY_PRESET_CUSTOM;
+    for (const element of geometryValueElements(targetDom)) {
+      element.disabled = disabled;
+    }
+  }
+
   function isLikelyPickArtifact(name) {
     const normalized = trimValue(name);
     return (
@@ -53,6 +154,27 @@
     };
   }
 
+  function collectGeometryInputs(targetDom = dom) {
+    if (!targetDom) return null;
+    return {
+      preset: trimValue(targetDom.geometryPreset.value),
+      source_id_byte: trimValue(targetDom.sourceIdByte.value),
+      receiver_id_byte: trimValue(targetDom.receiverIdByte.value),
+      source_x_byte: trimValue(targetDom.sourceXByte.value),
+      source_y_byte: trimValue(targetDom.sourceYByte.value),
+      receiver_x_byte: trimValue(targetDom.receiverXByte.value),
+      receiver_y_byte: trimValue(targetDom.receiverYByte.value),
+      source_elevation_byte: trimValue(targetDom.sourceElevationByte.value),
+      receiver_elevation_byte: trimValue(targetDom.receiverElevationByte.value),
+      coordinate_scalar_byte: trimValue(targetDom.coordinateScalarByte.value),
+      elevation_scalar_byte: trimValue(targetDom.elevationScalarByte.value),
+      source_depth_byte: trimValue(targetDom.sourceDepthByte.value),
+      coordinate_unit: trimValue(targetDom.coordinateUnit.value),
+      elevation_unit: trimValue(targetDom.elevationUnit.value),
+      offset_byte: trimValue(targetDom.offsetByte.value),
+    };
+  }
+
   function parsePositiveInteger(value, label, errors) {
     const parsed = Number(value);
     if (!Number.isInteger(parsed) || parsed <= 0) {
@@ -60,6 +182,95 @@
       return null;
     }
     return parsed;
+  }
+
+  function parseHeaderByte(value, label, errors, { optional = false } = {}) {
+    const trimmed = trimValue(value);
+    if (optional && trimmed === '') {
+      return null;
+    }
+    if (!/^\d+$/.test(trimmed)) {
+      errors.push(`${label} must be an integer SEG-Y trace header byte from 1 to 240.`);
+      return null;
+    }
+    const parsed = Number(trimmed);
+    if (parsed < 1 || parsed > 240) {
+      errors.push(`${label} must be an integer SEG-Y trace header byte from 1 to 240.`);
+      return null;
+    }
+    return parsed;
+  }
+
+  function parseUnit(value, label, errors) {
+    const unit = trimValue(value);
+    if (!['m', 'ft'].includes(unit)) {
+      errors.push(`${label} must be m or ft.`);
+      return null;
+    }
+    return unit;
+  }
+
+  function validationError(errors) {
+    const error = new Error(errors.join(' '));
+    error.errors = errors;
+    return error;
+  }
+
+  function validateStaticCorrectionGeometryRequest(targetDom = dom) {
+    const values = collectGeometryInputs(targetDom);
+    const errors = [];
+    if (!values) {
+      return { payload: null, errors: ['Static correction geometry form is not available.'] };
+    }
+
+    const geometry = {};
+    for (const field of GEOMETRY_HEADER_FIELDS) {
+      const parsed = parseHeaderByte(
+        values[field.requestKey],
+        field.label,
+        errors,
+        { optional: Boolean(field.optional) }
+      );
+      geometry[field.requestKey] = parsed;
+    }
+
+    const coordinateUnit = parseUnit(values.coordinate_unit, 'geometry.coordinate_unit', errors);
+    const elevationUnit = parseUnit(values.elevation_unit, 'geometry.elevation_unit', errors);
+    const offsetByte = parseHeaderByte(values.offset_byte, 'moveout.offset_byte', errors);
+    geometry.coordinate_unit = coordinateUnit;
+    geometry.elevation_unit = elevationUnit;
+    if (
+      geometry.source_id_byte !== null
+      && geometry.receiver_id_byte !== null
+      && geometry.source_id_byte === geometry.receiver_id_byte
+    ) {
+      errors.push('geometry.source_id_byte and receiver_id_byte must differ.');
+    }
+
+    if (errors.length) {
+      return { payload: null, errors };
+    }
+
+    return {
+      payload: {
+        // UI names follow the backend schema here. The issue's coordinate_units
+        // term maps to geometry.coordinate_unit, and offset_byte belongs to
+        // moveout.offset_byte rather than the geometry object.
+        geometry,
+        moveout: {
+          offset_byte: offsetByte,
+        },
+      },
+      errors,
+    };
+  }
+
+  function buildStaticCorrectionGeometryRequest(targetDom = dom) {
+    const result = validateStaticCorrectionGeometryRequest(targetDom);
+    if (result.errors.length) {
+      throw validationError(result.errors);
+    }
+    return result.payload;
   }
 
   function buildStaticCorrectionRequest() {
@@ -92,6 +303,8 @@
     ) {
       errors.push('pick_source.artifact_name must be an .npz artifact.');
     }
+    const geometryResult = validateStaticCorrectionGeometryRequest(dom);
+    errors.push(...geometryResult.errors);
 
     if (errors.length) {
       return { payload: null, errors };
@@ -102,6 +315,7 @@
         key1_byte: key1Byte,
         key2_byte: key2Byte,
         pick_source: values.pick_source,
+        ...geometryResult.payload,
       },
       errors,
     };
@@ -268,10 +482,29 @@
     const pickArtifactName = document.getElementById('staticCorrectionPickArtifactName');
     const loadPickArtifactsButton = document.getElementById('staticCorrectionLoadPickArtifactsButton');
     const pickArtifactList = document.getElementById('staticCorrectionPickArtifactList');
+    const geometryPreset = document.getElementById('staticCorrectionGeometryPreset');
+    const sourceIdByte = document.getElementById('staticCorrectionSourceIdByte');
+    const receiverIdByte = document.getElementById('staticCorrectionReceiverIdByte');
+    const sourceXByte = document.getElementById('staticCorrectionSourceXByte');
+    const sourceYByte = document.getElementById('staticCorrectionSourceYByte');
+    const receiverXByte = document.getElementById('staticCorrectionReceiverXByte');
+    const receiverYByte = document.getElementById('staticCorrectionReceiverYByte');
+    const sourceElevationByte = document.getElementById('staticCorrectionSourceElevationByte');
+    const receiverElevationByte = document.getElementById('staticCorrectionReceiverElevationByte');
+    const coordinateScalarByte = document.getElementById('staticCorrectionCoordinateScalarByte');
+    const elevationScalarByte = document.getElementById('staticCorrectionElevationScalarByte');
+    const sourceDepthByte = document.getElementById('staticCorrectionSourceDepthByte');
+    const coordinateUnit = document.getElementById('staticCorrectionCoordinateUnit');
+    const elevationUnit = document.getElementById('staticCorrectionElevationUnit');
+    const offsetByte = document.getElementById('staticCorrectionOffsetByte');
     if (
       !form || !status || !error || !runButton || !fileId || !key1Byte || !key2Byte
       || !pickKind || !pickJobId || !pickArtifactName || !loadPickArtifactsButton
-      || !pickArtifactList
+      || !pickArtifactList || !geometryPreset || !sourceIdByte || !receiverIdByte
+      || !sourceXByte || !sourceYByte || !receiverXByte || !receiverYByte
+      || !sourceElevationByte || !receiverElevationByte || !coordinateScalarByte
+      || !elevationScalarByte || !sourceDepthByte || !coordinateUnit || !elevationUnit
+      || !offsetByte
     ) {
       return;
     }
@@ -294,7 +527,23 @@
       pickArtifactName,
       loadPickArtifactsButton,
       pickArtifactList,
+      geometryPreset,
+      sourceIdByte,
+      receiverIdByte,
+      sourceXByte,
+      sourceYByte,
+      receiverXByte,
+      receiverYByte,
+      sourceElevationByte,
+      receiverElevationByte,
+      coordinateScalarByte,
+      elevationScalarByte,
+      sourceDepthByte,
+      coordinateUnit,
+      elevationUnit,
+      offsetByte,
     };
+    applyStaticCorrectionGeometryPreset(dom, trimValue(geometryPreset.value) || GEOMETRY_DEFAULTS.preset);
 
     form.addEventListener('submit', handleRun);
     runButton.addEventListener('click', handleRun);
@@ -302,17 +551,29 @@
       event.preventDefault();
       loadPickArtifacts();
     });
+    geometryPreset.addEventListener('change', () => {
+      applyStaticCorrectionGeometryPreset(dom, geometryPreset.value);
+      state.error = '';
+      state.message = geometryPreset.value === GEOMETRY_PRESET_CUSTOM
+        ? 'Custom geometry header bytes can be edited.'
+        : 'SEG-Y default geometry header bytes restored.';
+      render();
+    });
 
     render();
   }
 
   window.refractionStaticRunState = state;
   window.refractionStaticRunUI = {
+    applyStaticCorrectionGeometryPreset,
+    buildStaticCorrectionGeometryRequest,
     buildStaticCorrectionRequest,
+    collectGeometryInputs,
     collectInputs,
     isLikelyPickArtifact,
     loadPickArtifacts,
     render,
+    validateStaticCorrectionGeometryRequest,
   };
 
   if (document.readyState === 'loading') {

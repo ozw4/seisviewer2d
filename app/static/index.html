@@ -1967,11 +1967,99 @@
             </section>
             <section class="static-correction-section" aria-labelledby="staticCorrectionGeometryHeading">
               <h3 id="staticCorrectionGeometryHeading">Geometry</h3>
-              <label class="static-correction-field" for="staticCorrectionGeometrySource">Geometry source
-                <select id="staticCorrectionGeometrySource" name="geometry_source" disabled>
-                  <option value="">Not configured</option>
+              <label class="static-correction-field" for="staticCorrectionGeometryPreset">Preset
+                <select id="staticCorrectionGeometryPreset" name="geometry_preset"
+                  data-testid="static-correction-geometry-preset">
+                  <option value="segy_default" selected>SEG-Y default</option>
+                  <option value="custom">custom</option>
                 </select>
               </label>
+              <div class="static-correction-field-row">
+                <label class="static-correction-field" for="staticCorrectionSourceIdByte">source_id_byte
+                  <input id="staticCorrectionSourceIdByte" name="geometry.source_id_byte" type="number" min="1"
+                    max="240" step="1" value="9" data-testid="static-correction-source-id-byte" />
+                </label>
+                <label class="static-correction-field" for="staticCorrectionReceiverIdByte">receiver_id_byte
+                  <input id="staticCorrectionReceiverIdByte" name="geometry.receiver_id_byte" type="number" min="1"
+                    max="240" step="1" value="13" data-testid="static-correction-receiver-id-byte" />
+                </label>
+              </div>
+              <div class="static-correction-field-row">
+                <label class="static-correction-field" for="staticCorrectionSourceXByte">source_x_byte
+                  <input id="staticCorrectionSourceXByte" name="geometry.source_x_byte" type="number" min="1"
+                    max="240" step="1" value="73" data-testid="static-correction-source-x-byte" />
+                </label>
+                <label class="static-correction-field" for="staticCorrectionSourceYByte">source_y_byte
+                  <input id="staticCorrectionSourceYByte" name="geometry.source_y_byte" type="number" min="1"
+                    max="240" step="1" value="77" data-testid="static-correction-source-y-byte" />
+                </label>
+              </div>
+              <div class="static-correction-field-row">
+                <label class="static-correction-field" for="staticCorrectionReceiverXByte">receiver_x_byte
+                  <input id="staticCorrectionReceiverXByte" name="geometry.receiver_x_byte" type="number" min="1"
+                    max="240" step="1" value="81" data-testid="static-correction-receiver-x-byte" />
+                </label>
+                <label class="static-correction-field" for="staticCorrectionReceiverYByte">receiver_y_byte
+                  <input id="staticCorrectionReceiverYByte" name="geometry.receiver_y_byte" type="number" min="1"
+                    max="240" step="1" value="85" data-testid="static-correction-receiver-y-byte" />
+                </label>
+              </div>
+              <div class="static-correction-field-row">
+                <label class="static-correction-field" for="staticCorrectionSourceElevationByte">
+                  source_elevation_byte
+                  <input id="staticCorrectionSourceElevationByte" name="geometry.source_elevation_byte" type="number"
+                    min="1" max="240" step="1" value="45"
+                    data-testid="static-correction-source-elevation-byte" />
+                </label>
+                <label class="static-correction-field" for="staticCorrectionReceiverElevationByte">
+                  receiver_elevation_byte
+                  <input id="staticCorrectionReceiverElevationByte" name="geometry.receiver_elevation_byte"
+                    type="number" min="1" max="240" step="1" value="41"
+                    data-testid="static-correction-receiver-elevation-byte" />
+                </label>
+              </div>
+              <div class="static-correction-field-row">
+                <label class="static-correction-field" for="staticCorrectionCoordinateScalarByte">
+                  coordinate_scalar_byte
+                  <input id="staticCorrectionCoordinateScalarByte" name="geometry.coordinate_scalar_byte"
+                    type="number" min="1" max="240" step="1" value="71"
+                    data-testid="static-correction-coordinate-scalar-byte" />
+                </label>
+                <label class="static-correction-field" for="staticCorrectionElevationScalarByte">
+                  elevation_scalar_byte
+                  <input id="staticCorrectionElevationScalarByte" name="geometry.elevation_scalar_byte"
+                    type="number" min="1" max="240" step="1" value="69"
+                    data-testid="static-correction-elevation-scalar-byte" />
+                </label>
+              </div>
+              <div class="static-correction-field-row">
+                <label class="static-correction-field" for="staticCorrectionCoordinateUnit">coordinate_unit
+                  <select id="staticCorrectionCoordinateUnit" name="geometry.coordinate_unit"
+                    data-testid="static-correction-coordinate-unit">
+                    <option value="m" selected>m</option>
+                    <option value="ft">ft</option>
+                  </select>
+                </label>
+                <label class="static-correction-field" for="staticCorrectionElevationUnit">elevation_unit
+                  <select id="staticCorrectionElevationUnit" name="geometry.elevation_unit"
+                    data-testid="static-correction-elevation-unit">
+                    <option value="m" selected>m</option>
+                    <option value="ft">ft</option>
+                  </select>
+                </label>
+              </div>
+              <div class="static-correction-field-row">
+                <label class="static-correction-field" for="staticCorrectionSourceDepthByte">
+                  source_depth_byte
+                  <input id="staticCorrectionSourceDepthByte" name="geometry.source_depth_byte" type="number"
+                    min="1" max="240" step="1" placeholder="optional"
+                    data-testid="static-correction-source-depth-byte" />
+                </label>
+                <label class="static-correction-field" for="staticCorrectionOffsetByte">moveout.offset_byte
+                  <input id="staticCorrectionOffsetByte" name="moveout.offset_byte" type="number" min="1" max="240"
+                    step="1" value="37" data-testid="static-correction-offset-byte" />
+                </label>
+              </div>
             </section>
             <section class="static-correction-section" aria-labelledby="staticCorrectionLinkageHeading">
               <h3 id="staticCorrectionLinkageHeading">Linkage</h3>
