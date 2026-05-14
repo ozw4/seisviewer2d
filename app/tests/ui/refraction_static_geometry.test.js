@@ -55,12 +55,17 @@ function renderStaticCorrectionForm() {
         <input id="staticCorrectionPreferReceiverAnchor" type="checkbox" checked />
       </div>
       <select id="staticCorrectionModelKind">
-        <option value="one_layer_t1lsst" selected>one-layer T1LSST</option>
+        <option value="one_layer_global" selected>One-layer global V2/T1</option>
+        <option value="two_layer_global">Two-layer global V3/T2</option>
+        <option value="three_layer_global">Three-layer global Vsub/T3</option>
+        <option value="cell_v2_t1_line_2d">Cell V2/T1 - 2D projected line</option>
+        <option value="cell_v2_t1_grid_3d">Cell V2/T1 - 3D grid</option>
       </select>
       <input id="staticCorrectionWeatheringVelocityMS" value="800" />
       <select id="staticCorrectionBedrockVelocityMode">
         <option value="solve_global" selected>solve_global</option>
         <option value="fixed_global">fixed_global</option>
+        <option value="solve_cell" disabled>solve_cell</option>
       </select>
       <input id="staticCorrectionInitialBedrockVelocityMS" value="2400" />
       <input id="staticCorrectionFixedBedrockVelocityMS" value="2400" />
@@ -68,7 +73,32 @@ function renderStaticCorrectionForm() {
       <input id="staticCorrectionMaxOffsetM" value="4000" />
       <select id="staticCorrectionConversionMode">
         <option value="t1lsst_1layer" selected>t1lsst_1layer</option>
+        <option value="t1lsst_multilayer">t1lsst_multilayer</option>
       </select>
+      <div id="staticCorrectionV3LayerFields" hidden>
+        <input id="staticCorrectionV3MinOffsetM" value="4000" />
+        <input id="staticCorrectionV3MaxOffsetM" value="6000" />
+        <input id="staticCorrectionInitialV3VelocityMS" value="3600" />
+      </div>
+      <div id="staticCorrectionVsubLayerFields" hidden>
+        <input id="staticCorrectionVsubMinOffsetM" value="6000" />
+        <input id="staticCorrectionInitialVsubVelocityMS" value="5000" />
+      </div>
+      <div id="staticCorrectionCellFields" hidden>
+        <input id="staticCorrectionCellXOriginM" value="0" />
+        <input id="staticCorrectionCellYOriginM" value="0" />
+        <input id="staticCorrectionCellCountX" value="20" />
+        <input id="staticCorrectionCellCountY" value="1" />
+        <input id="staticCorrectionCellSizeXM" value="500" />
+        <input id="staticCorrectionCellSizeYM" value="500" />
+        <input id="staticCorrectionCellMinObservations" value="5" />
+        <input id="staticCorrectionCellSmoothingWeight" value="0" />
+      </div>
+      <div id="staticCorrectionLine2DFields" hidden>
+        <input id="staticCorrectionLineOriginXM" value="0" />
+        <input id="staticCorrectionLineOriginYM" value="0" />
+        <input id="staticCorrectionLineAzimuthDeg" value="0" />
+      </div>
       <input id="staticCorrectionRegisterCorrectedFile" type="checkbox" />
       <input id="staticCorrectionExportEnabled" type="checkbox" checked />
       <input
@@ -148,6 +178,12 @@ function enableLinkage() {
   const checkbox = document.getElementById('staticCorrectionEnableLinkage');
   checkbox.checked = true;
   checkbox.dispatchEvent(new Event('change'));
+}
+
+function selectModelPreset(value) {
+  const select = document.getElementById('staticCorrectionModelKind');
+  select.value = value;
+  select.dispatchEvent(new Event('change'));
 }
 
 async function flushAsyncWork(times = 4) {
@@ -362,6 +398,170 @@ test('one-layer validation ignores inactive bedrock velocity inputs', () => {
   fixedVelocity.value = '2400';
 
   expect(ui.buildStaticCorrectionRequest().errors).toEqual([]);
+});
+
+test('one-layer model preset is the default request shape', () => {
+  const ui = loadStaticCorrectionScript();
+
+  const result = ui.buildStaticCorrectionRequest();
+
+  expect(document.getElementById('staticCorrectionModelKind').value).toBe('one_layer_global');
+  expect(result.errors).toEqual([]);
+  expect(result.payload.model).toMatchObject({
+    method: 'gli_variable_thickness',
+    first_layer: {
+      mode: 'constant',
+      weathering_velocity_m_s: 800,
+    },
+    bedrock_velocity_mode: 'solve_global',
+    initial_bedrock_velocity_m_s: 2400,
+  });
+  expect(result.payload.conversion).toEqual({ mode: 't1lsst_1layer' });
+});
+
+test('two-layer preset builds public global V3/T2 request', () => {
+  const ui = loadStaticCorrectionScript();
+  document.getElementById('staticCorrectionFileId').value = 'line-preserved';
+  document.getElementById('staticCorrectionPickJobId').value = 'pick-preserved';
+
+  selectModelPreset('two_layer_global');
+  document.getElementById('staticCorrectionV3MaxOffsetM').value = '';
+  const result = ui.buildStaticCorrectionRequest();
+
+  expect(result.errors).toEqual([]);
+  expect(document.getElementById('staticCorrectionV3LayerFields').hidden).toBe(false);
+  expect(document.getElementById('staticCorrectionVsubLayerFields').hidden).toBe(true);
+  expect(result.payload.file_id).toBe('line-preserved');
+  expect(result.payload.pick_source.job_id).toBe('pick-preserved');
+  expect(result.payload.model).toMatchObject({
+    method: 'multilayer_time_term',
+    layers: [
+      {
+        kind: 'v2_t1',
+        enabled: true,
+        min_offset_m: 300,
+        max_offset_m: 4000,
+        velocity_mode: 'solve_global',
+        initial_velocity_m_s: 2400,
+      },
+      {
+        kind: 'v3_t2',
+        enabled: true,
+        min_offset_m: 4000,
+        max_offset_m: null,
+        velocity_mode: 'solve_global',
+        initial_velocity_m_s: 3600,
+      },
+    ],
+  });
+  expect(result.payload.conversion).toEqual({
+    mode: 't1lsst_multilayer',
+    layer_count: 2,
+  });
+});
+
+test('three-layer preset builds public global Vsub/T3 request', () => {
+  const ui = loadStaticCorrectionScript();
+
+  selectModelPreset('three_layer_global');
+  const result = ui.buildStaticCorrectionRequest();
+
+  expect(result.errors).toEqual([]);
+  expect(document.getElementById('staticCorrectionV3LayerFields').hidden).toBe(false);
+  expect(document.getElementById('staticCorrectionVsubLayerFields').hidden).toBe(false);
+  expect(result.payload.model.layers.map((layer) => layer.kind)).toEqual([
+    'v2_t1',
+    'v3_t2',
+    'vsub_t3',
+  ]);
+  expect(result.payload.model.layers[1]).toMatchObject({
+    kind: 'v3_t2',
+    velocity_mode: 'solve_global',
+    min_offset_m: 4000,
+    max_offset_m: 6000,
+  });
+  expect(result.payload.model.layers[2]).toMatchObject({
+    kind: 'vsub_t3',
+    velocity_mode: 'solve_global',
+    min_offset_m: 6000,
+    max_offset_m: null,
+    initial_velocity_m_s: 5000,
+  });
+  expect(result.payload.conversion).toEqual({
+    mode: 't1lsst_multilayer',
+    layer_count: 3,
+  });
+});
+
+test('cell 2D preset builds line-projected solve-cell V2 request', () => {
+  const ui = loadStaticCorrectionScript();
+
+  selectModelPreset('cell_v2_t1_line_2d');
+  document.getElementById('staticCorrectionCellCountY').value = '9';
+  document.getElementById('staticCorrectionLineOriginXM').value = '1000';
+  document.getElementById('staticCorrectionLineOriginYM').value = '2000';
+  document.getElementById('staticCorrectionLineAzimuthDeg').value = '45';
+  const result = ui.buildStaticCorrectionRequest();
+
+  expect(result.errors).toEqual([]);
+  expect(document.getElementById('staticCorrectionCellFields').hidden).toBe(false);
+  expect(document.getElementById('staticCorrectionLine2DFields').hidden).toBe(false);
+  expect(document.getElementById('staticCorrectionBedrockVelocityMode').value).toBe('solve_cell');
+  expect(document.getElementById('staticCorrectionBedrockVelocityMode').disabled).toBe(true);
+  expect(result.payload.model).toMatchObject({
+    method: 'gli_variable_thickness',
+    bedrock_velocity_mode: 'solve_cell',
+    refractor_cell: {
+      coordinate_mode: 'line_2d_projected',
+      number_of_cell_y: 1,
+      size_of_cell_y_m: null,
+      line_origin_x_m: 1000,
+      line_origin_y_m: 2000,
+      line_azimuth_deg: 45,
+      min_observations_per_cell: 5,
+      velocity_smoothing_weight: 0,
+    },
+  });
+  expect(result.payload.conversion).toEqual({ mode: 't1lsst_1layer' });
+});
+
+test('cell 3D preset builds grid solve-cell V2 request', () => {
+  const ui = loadStaticCorrectionScript();
+
+  selectModelPreset('cell_v2_t1_grid_3d');
+  document.getElementById('staticCorrectionCellCountY').value = '4';
+  document.getElementById('staticCorrectionCellSizeYM').value = '750';
+  const result = ui.buildStaticCorrectionRequest();
+
+  expect(result.errors).toEqual([]);
+  expect(document.getElementById('staticCorrectionCellFields').hidden).toBe(false);
+  expect(document.getElementById('staticCorrectionLine2DFields').hidden).toBe(true);
+  expect(document.getElementById('staticCorrectionBedrockVelocityMode').value).toBe('solve_cell');
+  expect(result.payload.model.refractor_cell).toMatchObject({
+    coordinate_mode: 'grid_3d',
+    number_of_cell_x: 20,
+    number_of_cell_y: 4,
+    size_of_cell_x_m: 500,
+    size_of_cell_y_m: 750,
+  });
+  expect(result.payload.model.refractor_cell).not.toHaveProperty('line_origin_x_m');
+  expect(result.payload.model.refractor_cell).not.toHaveProperty('line_origin_y_m');
+  expect(result.payload.model.refractor_cell).not.toHaveProperty('line_azimuth_deg');
+});
+
+test('unsupported V3 and Vsub cell velocity modes are not exposed', () => {
+  loadStaticCorrectionScript();
+
+  selectModelPreset('three_layer_global');
+
+  expect(document.querySelector('[name="model.layers.v3_t2.velocity_mode"]')).toBeNull();
+  expect(document.querySelector('[name="model.layers.vsub_t3.velocity_mode"]')).toBeNull();
+  expect(document.getElementById('staticCorrectionV3LayerFields').textContent).not.toContain(
+    'solve_cell'
+  );
+  expect(document.getElementById('staticCorrectionVsubLayerFields').textContent).not.toContain(
+    'solve_cell'
+  );
 });
 
 test('unchecked linkage skips linkage build when running static correction', async () => {

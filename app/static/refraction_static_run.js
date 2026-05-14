@@ -2,6 +2,7 @@
   const DEFAULTS = {
     key1Byte: '189',
     key2Byte: '193',
+    modelPreset: 'one_layer_global',
     pickKind: 'batch_predicted_npz',
     pickArtifactName: 'predicted_picks_time_s.npz',
     linkageMode: 'auto_threshold',
@@ -13,7 +14,32 @@
     minOffsetM: '300',
     maxOffsetM: '4000',
     conversionMode: 't1lsst_1layer',
+    initialV3VelocityMS: '3600',
+    v3MinOffsetM: '4000',
+    v3MaxOffsetM: '6000',
+    initialVsubVelocityMS: '5000',
+    vsubMinOffsetM: '6000',
+    cellXOriginM: '0',
+    cellYOriginM: '0',
+    cellCountX: '20',
+    cellCountY: '1',
+    cellSizeXM: '500',
+    cellSizeYM: '500',
+    cellMinObservations: '5',
+    cellSmoothingWeight: '0',
+    lineOriginXM: '0',
+    lineOriginYM: '0',
+    lineAzimuthDeg: '0',
   };
+  const MODEL_PRESETS = new Set([
+    'one_layer_global',
+    'two_layer_global',
+    'three_layer_global',
+    'cell_v2_t1_line_2d',
+    'cell_v2_t1_grid_3d',
+  ]);
+  const CELL_MODEL_PRESETS = new Set(['cell_v2_t1_line_2d', 'cell_v2_t1_grid_3d']);
+  const MULTILAYER_MODEL_PRESETS = new Set(['two_layer_global', 'three_layer_global']);
   const GEOMETRY_PRESET_SEG_Y_DEFAULT = 'segy_default';
   const GEOMETRY_PRESET_CUSTOM = 'custom';
   const GEOMETRY_DEFAULTS = {
@@ -218,6 +244,7 @@
   function collectModelInputs(targetDom = dom) {
     if (!targetDom) return null;
     return {
+      model_preset: trimValue(targetDom.modelKind && targetDom.modelKind.value),
       weathering_velocity_m_s: trimValue(
         targetDom.weatheringVelocityMS && targetDom.weatheringVelocityMS.value
       ),
@@ -233,6 +260,32 @@
       min_offset_m: trimValue(targetDom.minOffsetM && targetDom.minOffsetM.value),
       max_offset_m: trimValue(targetDom.maxOffsetM && targetDom.maxOffsetM.value),
       conversion_mode: trimValue(targetDom.conversionMode && targetDom.conversionMode.value),
+      v3_min_offset_m: trimValue(targetDom.v3MinOffsetM && targetDom.v3MinOffsetM.value),
+      v3_max_offset_m: trimValue(targetDom.v3MaxOffsetM && targetDom.v3MaxOffsetM.value),
+      initial_v3_velocity_m_s: trimValue(
+        targetDom.initialV3VelocityMS && targetDom.initialV3VelocityMS.value
+      ),
+      vsub_min_offset_m: trimValue(
+        targetDom.vsubMinOffsetM && targetDom.vsubMinOffsetM.value
+      ),
+      initial_vsub_velocity_m_s: trimValue(
+        targetDom.initialVsubVelocityMS && targetDom.initialVsubVelocityMS.value
+      ),
+      cell_x_origin_m: trimValue(targetDom.cellXOriginM && targetDom.cellXOriginM.value),
+      cell_y_origin_m: trimValue(targetDom.cellYOriginM && targetDom.cellYOriginM.value),
+      cell_count_x: trimValue(targetDom.cellCountX && targetDom.cellCountX.value),
+      cell_count_y: trimValue(targetDom.cellCountY && targetDom.cellCountY.value),
+      cell_size_x_m: trimValue(targetDom.cellSizeXM && targetDom.cellSizeXM.value),
+      cell_size_y_m: trimValue(targetDom.cellSizeYM && targetDom.cellSizeYM.value),
+      cell_min_observations: trimValue(
+        targetDom.cellMinObservations && targetDom.cellMinObservations.value
+      ),
+      cell_smoothing_weight: trimValue(
+        targetDom.cellSmoothingWeight && targetDom.cellSmoothingWeight.value
+      ),
+      line_origin_x_m: trimValue(targetDom.lineOriginXM && targetDom.lineOriginXM.value),
+      line_origin_y_m: trimValue(targetDom.lineOriginYM && targetDom.lineOriginYM.value),
+      line_azimuth_deg: trimValue(targetDom.lineAzimuthDeg && targetDom.lineAzimuthDeg.value),
     };
   }
 
@@ -270,6 +323,19 @@
     const parsed = Number(trimmed);
     if (!trimmed || !Number.isFinite(parsed) || parsed <= 0) {
       errors.push(`${label} must be a finite number greater than 0.`);
+      return null;
+    }
+    return parsed;
+  }
+
+  function parseFiniteFloat(value, label, errors, { optional = false } = {}) {
+    const trimmed = trimValue(value);
+    if (optional && trimmed === '') {
+      return null;
+    }
+    const parsed = Number(trimmed);
+    if (!trimmed || !Number.isFinite(parsed)) {
+      errors.push(`${label} must be a finite number.`);
       return null;
     }
     return parsed;
@@ -434,13 +500,91 @@
 
   function updateBedrockVelocityControls(targetDom = dom) {
     if (!targetDom || !targetDom.bedrockVelocityMode) return;
+    const preset = trimValue(targetDom.modelKind && targetDom.modelKind.value);
     const fixedMode = targetDom.bedrockVelocityMode.value === 'fixed_global';
+    const cellMode = CELL_MODEL_PRESETS.has(preset);
     if (targetDom.initialBedrockVelocityMS) {
       targetDom.initialBedrockVelocityMS.disabled = fixedMode;
     }
     if (targetDom.fixedBedrockVelocityMS) {
-      targetDom.fixedBedrockVelocityMS.disabled = !fixedMode;
+      targetDom.fixedBedrockVelocityMS.disabled = !fixedMode || cellMode;
     }
+    if (targetDom.bedrockVelocityMode) {
+      targetDom.bedrockVelocityMode.disabled = cellMode;
+    }
+  }
+
+  function setHidden(element, hidden) {
+    if (element) {
+      element.hidden = hidden;
+    }
+  }
+
+  function setDisabled(elements, disabled) {
+    for (const element of elements) {
+      if (element) {
+        element.disabled = disabled;
+      }
+    }
+  }
+
+  function updateModelPresetControls(targetDom = dom) {
+    if (!targetDom || !targetDom.modelKind) return;
+    const preset = MODEL_PRESETS.has(targetDom.modelKind.value)
+      ? targetDom.modelKind.value
+      : DEFAULTS.modelPreset;
+    targetDom.modelKind.value = preset;
+    const isMultilayer = MULTILAYER_MODEL_PRESETS.has(preset);
+    const isThreeLayer = preset === 'three_layer_global';
+    const isCell = CELL_MODEL_PRESETS.has(preset);
+    const isLine2D = preset === 'cell_v2_t1_line_2d';
+
+    setHidden(targetDom.v3LayerFields, !isMultilayer);
+    setHidden(targetDom.vsubLayerFields, !isThreeLayer);
+    setHidden(targetDom.cellFields, !isCell);
+    setHidden(targetDom.line2DFields, !isLine2D);
+
+    setDisabled(
+      [targetDom.v3MinOffsetM, targetDom.v3MaxOffsetM, targetDom.initialV3VelocityMS],
+      !isMultilayer
+    );
+    setDisabled(
+      [targetDom.vsubMinOffsetM, targetDom.initialVsubVelocityMS],
+      !isThreeLayer
+    );
+    setDisabled(
+      [
+        targetDom.cellXOriginM,
+        targetDom.cellYOriginM,
+        targetDom.cellCountX,
+        targetDom.cellCountY,
+        targetDom.cellSizeXM,
+        targetDom.cellSizeYM,
+        targetDom.cellMinObservations,
+        targetDom.cellSmoothingWeight,
+      ],
+      !isCell
+    );
+    setDisabled(
+      [targetDom.lineOriginXM, targetDom.lineOriginYM, targetDom.lineAzimuthDeg],
+      !isLine2D
+    );
+
+    if (targetDom.conversionMode) {
+      targetDom.conversionMode.value = isMultilayer ? 't1lsst_multilayer' : 't1lsst_1layer';
+      targetDom.conversionMode.disabled = true;
+    }
+    if (targetDom.bedrockVelocityMode) {
+      if (isCell) {
+        targetDom.bedrockVelocityMode.value = 'solve_cell';
+      } else if (targetDom.bedrockVelocityMode.value === 'solve_cell') {
+        targetDom.bedrockVelocityMode.value = DEFAULTS.bedrockVelocityMode;
+      }
+    }
+    if (isLine2D && targetDom.cellCountY) {
+      targetDom.cellCountY.value = '1';
+    }
+    updateBedrockVelocityControls(targetDom);
   }
 
   function validateStaticCorrectionLinkageRequest(targetDom = dom) {
@@ -610,6 +754,315 @@
     return result.payload;
   }
 
+  function validateCellRefractionModel(targetDom = dom, preset) {
+    const values = collectModelInputs(targetDom);
+    const errors = [];
+    if (!values) {
+      return { payload: null, moveout: null, conversion: null, errors: ['Static correction model form is not available.'] };
+    }
+
+    const weatheringVelocity = parsePositiveFloat(
+      values.weathering_velocity_m_s,
+      'model.first_layer.weathering_velocity_m_s',
+      errors
+    );
+    const initialBedrockVelocity = parsePositiveFloat(
+      values.initial_bedrock_velocity_m_s,
+      'model.initial_bedrock_velocity_m_s',
+      errors
+    );
+    const minOffsetM = parseNonNegativeFloat(values.min_offset_m, 'moveout.min_offset_m', errors);
+    const maxOffsetM = parsePositiveFloat(values.max_offset_m, 'moveout.max_offset_m', errors);
+    if (minOffsetM !== null && maxOffsetM !== null && minOffsetM >= maxOffsetM) {
+      errors.push('moveout.min_offset_m must be less than moveout.max_offset_m.');
+    }
+    if (values.conversion_mode !== 't1lsst_1layer') {
+      errors.push('conversion.mode must be t1lsst_1layer for the cell V2/T1 presets.');
+    }
+    if (
+      weatheringVelocity !== null
+      && initialBedrockVelocity !== null
+      && initialBedrockVelocity <= weatheringVelocity
+    ) {
+      errors.push('model.initial_bedrock_velocity_m_s must be greater than model.first_layer.weathering_velocity_m_s.');
+    }
+
+    const cellCountX = parsePositiveInteger(
+      values.cell_count_x,
+      'model.refractor_cell.number_of_cell_x',
+      errors
+    );
+    const cellSizeXM = parsePositiveFloat(
+      values.cell_size_x_m,
+      'model.refractor_cell.size_of_cell_x_m',
+      errors
+    );
+    const cellXOriginM = parseFiniteFloat(
+      values.cell_x_origin_m,
+      'model.refractor_cell.x_coordinate_origin_m',
+      errors
+    );
+    const cellYOriginM = parseFiniteFloat(
+      values.cell_y_origin_m,
+      'model.refractor_cell.y_coordinate_origin_m',
+      errors
+    );
+    const cellMinObservations = parsePositiveInteger(
+      values.cell_min_observations,
+      'model.refractor_cell.min_observations_per_cell',
+      errors
+    );
+    const cellSmoothingWeight = parseNonNegativeFloat(
+      values.cell_smoothing_weight,
+      'model.refractor_cell.velocity_smoothing_weight',
+      errors
+    );
+    const isLine2D = preset === 'cell_v2_t1_line_2d';
+    const cellCountY = isLine2D
+      ? 1
+      : parsePositiveInteger(values.cell_count_y, 'model.refractor_cell.number_of_cell_y', errors);
+    const cellSizeYM = isLine2D
+      ? null
+      : parsePositiveFloat(values.cell_size_y_m, 'model.refractor_cell.size_of_cell_y_m', errors);
+    const lineOriginXM = isLine2D
+      ? parseFiniteFloat(values.line_origin_x_m, 'model.refractor_cell.line_origin_x_m', errors)
+      : null;
+    const lineOriginYM = isLine2D
+      ? parseFiniteFloat(values.line_origin_y_m, 'model.refractor_cell.line_origin_y_m', errors)
+      : null;
+    const lineAzimuthDeg = isLine2D
+      ? parseFiniteFloat(values.line_azimuth_deg, 'model.refractor_cell.line_azimuth_deg', errors)
+      : null;
+
+    if (errors.length) {
+      return { payload: null, moveout: null, conversion: null, errors };
+    }
+
+    const refractorCell = {
+      number_of_cell_x: cellCountX,
+      size_of_cell_x_m: cellSizeXM,
+      x_coordinate_origin_m: cellXOriginM,
+      number_of_cell_y: cellCountY,
+      size_of_cell_y_m: cellSizeYM,
+      y_coordinate_origin_m: cellYOriginM,
+      assignment_mode: 'midpoint',
+      outside_grid_policy: 'reject',
+      coordinate_mode: isLine2D ? 'line_2d_projected' : 'grid_3d',
+      min_observations_per_cell: cellMinObservations,
+      velocity_smoothing_weight: cellSmoothingWeight,
+    };
+    if (isLine2D) {
+      refractorCell.line_origin_x_m = lineOriginXM;
+      refractorCell.line_origin_y_m = lineOriginYM;
+      refractorCell.line_azimuth_deg = lineAzimuthDeg;
+    }
+
+    return {
+      payload: {
+        method: 'gli_variable_thickness',
+        first_layer: {
+          mode: 'constant',
+          weathering_velocity_m_s: weatheringVelocity,
+        },
+        bedrock_velocity_mode: 'solve_cell',
+        initial_bedrock_velocity_m_s: initialBedrockVelocity,
+        min_bedrock_velocity_m_s: 1200,
+        max_bedrock_velocity_m_s: 6000,
+        refractor_cell: refractorCell,
+      },
+      moveout: {
+        min_offset_m: minOffsetM,
+        max_offset_m: maxOffsetM,
+      },
+      conversion: {
+        mode: 't1lsst_1layer',
+      },
+      errors,
+    };
+  }
+
+  function validateMultilayerRefractionModel(targetDom = dom, preset) {
+    const values = collectModelInputs(targetDom);
+    const errors = [];
+    if (!values) {
+      return { payload: null, moveout: null, conversion: null, errors: ['Static correction model form is not available.'] };
+    }
+
+    const weatheringVelocity = parsePositiveFloat(
+      values.weathering_velocity_m_s,
+      'model.first_layer.weathering_velocity_m_s',
+      errors
+    );
+    const bedrockVelocityMode = values.bedrock_velocity_mode;
+    if (!['solve_global', 'fixed_global'].includes(bedrockVelocityMode)) {
+      errors.push('model.layers v2_t1 velocity_mode must be solve_global or fixed_global.');
+    }
+    const v2MinOffsetM = parseNonNegativeFloat(
+      values.min_offset_m,
+      'model.layers v2_t1 min_offset_m',
+      errors
+    );
+    const v2MaxOffsetM = parsePositiveFloat(
+      values.max_offset_m,
+      'model.layers v2_t1 max_offset_m',
+      errors
+    );
+    let initialV2Velocity = null;
+    let fixedV2Velocity = null;
+    if (bedrockVelocityMode === 'solve_global') {
+      initialV2Velocity = parsePositiveFloat(
+        values.initial_bedrock_velocity_m_s,
+        'model.layers v2_t1 initial_velocity_m_s',
+        errors
+      );
+    } else if (bedrockVelocityMode === 'fixed_global') {
+      fixedV2Velocity = parsePositiveFloat(
+        values.bedrock_velocity_m_s,
+        'model.layers v2_t1 fixed_velocity_m_s',
+        errors
+      );
+    }
+
+    const v3MinOffsetM = parseNonNegativeFloat(
+      values.v3_min_offset_m,
+      'model.layers v3_t2 min_offset_m',
+      errors
+    );
+    const v3MaxOffsetM = preset === 'three_layer_global'
+      ? parsePositiveFloat(values.v3_max_offset_m, 'model.layers v3_t2 max_offset_m', errors)
+      : parsePositiveFloat(values.v3_max_offset_m, 'model.layers v3_t2 max_offset_m', errors, { optional: true });
+    const initialV3Velocity = parsePositiveFloat(
+      values.initial_v3_velocity_m_s,
+      'model.layers v3_t2 initial_velocity_m_s',
+      errors
+    );
+    const isThreeLayer = preset === 'three_layer_global';
+    const vsubMinOffsetM = isThreeLayer
+      ? parseNonNegativeFloat(values.vsub_min_offset_m, 'model.layers vsub_t3 min_offset_m', errors)
+      : null;
+    const initialVsubVelocity = isThreeLayer
+      ? parsePositiveFloat(
+        values.initial_vsub_velocity_m_s,
+        'model.layers vsub_t3 initial_velocity_m_s',
+        errors
+      )
+      : null;
+
+    if (values.conversion_mode !== 't1lsst_multilayer') {
+      errors.push('conversion.mode must be t1lsst_multilayer for multi-layer presets.');
+    }
+    if (v2MinOffsetM !== null && v2MaxOffsetM !== null && v2MinOffsetM >= v2MaxOffsetM) {
+      errors.push('model.layers v2_t1 min_offset_m must be less than max_offset_m.');
+    }
+    if (v2MaxOffsetM !== null && v3MinOffsetM !== null && v2MaxOffsetM > v3MinOffsetM) {
+      errors.push('model.layers v2_t1 and v3_t2 offset gates must not overlap.');
+    }
+    if (v3MinOffsetM !== null && v3MaxOffsetM !== null && v3MinOffsetM >= v3MaxOffsetM) {
+      errors.push('model.layers v3_t2 min_offset_m must be less than max_offset_m.');
+    }
+    if (isThreeLayer && v3MaxOffsetM !== null && vsubMinOffsetM !== null && v3MaxOffsetM > vsubMinOffsetM) {
+      errors.push('model.layers v3_t2 and vsub_t3 offset gates must not overlap.');
+    }
+    for (const [label, velocity] of [
+      ['model.layers v2_t1 velocity', initialV2Velocity || fixedV2Velocity],
+      ['model.layers v3_t2 initial_velocity_m_s', initialV3Velocity],
+      ['model.layers vsub_t3 initial_velocity_m_s', initialVsubVelocity],
+    ]) {
+      if (weatheringVelocity !== null && velocity !== null && velocity <= weatheringVelocity) {
+        errors.push(`${label} must be greater than model.first_layer.weathering_velocity_m_s.`);
+      }
+    }
+
+    if (errors.length) {
+      return { payload: null, moveout: null, conversion: null, errors };
+    }
+
+    const v2Layer = {
+      kind: 'v2_t1',
+      enabled: true,
+      min_offset_m: v2MinOffsetM,
+      max_offset_m: v2MaxOffsetM,
+      velocity_mode: bedrockVelocityMode,
+      min_velocity_m_s: 1200,
+      max_velocity_m_s: 5000,
+    };
+    if (bedrockVelocityMode === 'solve_global') {
+      v2Layer.initial_velocity_m_s = initialV2Velocity;
+    } else {
+      v2Layer.fixed_velocity_m_s = fixedV2Velocity;
+    }
+
+    const layers = [
+      v2Layer,
+      {
+        kind: 'v3_t2',
+        enabled: true,
+        min_offset_m: v3MinOffsetM,
+        max_offset_m: v3MaxOffsetM,
+        velocity_mode: 'solve_global',
+        initial_velocity_m_s: initialV3Velocity,
+        min_velocity_m_s: 2600,
+        max_velocity_m_s: 7000,
+      },
+    ];
+    if (isThreeLayer) {
+      layers.push({
+        kind: 'vsub_t3',
+        enabled: true,
+        min_offset_m: vsubMinOffsetM,
+        max_offset_m: null,
+        velocity_mode: 'solve_global',
+        initial_velocity_m_s: initialVsubVelocity,
+        min_velocity_m_s: 3800,
+        max_velocity_m_s: 9000,
+      });
+    }
+
+    const model = {
+      method: 'multilayer_time_term',
+      first_layer: {
+        mode: 'constant',
+        weathering_velocity_m_s: weatheringVelocity,
+      },
+      layers,
+    };
+    if (bedrockVelocityMode === 'solve_global') {
+      model.initial_bedrock_velocity_m_s = initialV2Velocity;
+    } else {
+      model.bedrock_velocity_m_s = fixedV2Velocity;
+    }
+
+    return {
+      payload: model,
+      moveout: {},
+      conversion: {
+        mode: 't1lsst_multilayer',
+        layer_count: isThreeLayer ? 3 : 2,
+      },
+      errors,
+    };
+  }
+
+  function validateRefractionStaticModel(targetDom = dom) {
+    const values = collectModelInputs(targetDom);
+    const preset = values && values.model_preset ? values.model_preset : DEFAULTS.modelPreset;
+    if (!MODEL_PRESETS.has(preset)) {
+      return {
+        payload: null,
+        moveout: null,
+        conversion: null,
+        errors: ['model preset must be a supported refraction static preset.'],
+      };
+    }
+    if (preset === 'one_layer_global') {
+      return validateOneLayerRefractionModel(targetDom);
+    }
+    if (CELL_MODEL_PRESETS.has(preset)) {
+      return validateCellRefractionModel(targetDom, preset);
+    }
+    return validateMultilayerRefractionModel(targetDom, preset);
+  }
+
   function validateStaticCorrectionOutput(targetDom = dom) {
     const values = collectOutputInputs(targetDom);
     const errors = [];
@@ -657,7 +1110,7 @@
 
     const geometryResult = validateStaticCorrectionGeometryRequest(targetDom);
     errors.push(...geometryResult.errors);
-    const modelResult = validateOneLayerRefractionModel(targetDom);
+    const modelResult = validateRefractionStaticModel(targetDom);
     errors.push(...modelResult.errors);
     const outputResult = validateStaticCorrectionOutput(targetDom);
     errors.push(...outputResult.errors);
@@ -708,7 +1161,7 @@
     errors.push(...geometryResult.errors);
     const linkageResult = validateStaticCorrectionLinkageRequest(dom);
     errors.push(...linkageResult.errors);
-    const modelResult = validateOneLayerRefractionModel(dom);
+    const modelResult = validateRefractionStaticModel(dom);
     errors.push(...modelResult.errors);
     const outputResult = validateStaticCorrectionOutput(dom);
     errors.push(...outputResult.errors);
@@ -1357,6 +1810,7 @@
       'staticCorrectionReceiverLocationIntervalM'
     );
     const preferReceiverAnchor = document.getElementById('staticCorrectionPreferReceiverAnchor');
+    const modelKind = document.getElementById('staticCorrectionModelKind');
     const weatheringVelocityMS = document.getElementById('staticCorrectionWeatheringVelocityMS');
     const bedrockVelocityMode = document.getElementById('staticCorrectionBedrockVelocityMode');
     const initialBedrockVelocityMS = document.getElementById('staticCorrectionInitialBedrockVelocityMS');
@@ -1364,6 +1818,26 @@
     const minOffsetM = document.getElementById('staticCorrectionMinOffsetM');
     const maxOffsetM = document.getElementById('staticCorrectionMaxOffsetM');
     const conversionMode = document.getElementById('staticCorrectionConversionMode');
+    const v3LayerFields = document.getElementById('staticCorrectionV3LayerFields');
+    const v3MinOffsetM = document.getElementById('staticCorrectionV3MinOffsetM');
+    const v3MaxOffsetM = document.getElementById('staticCorrectionV3MaxOffsetM');
+    const initialV3VelocityMS = document.getElementById('staticCorrectionInitialV3VelocityMS');
+    const vsubLayerFields = document.getElementById('staticCorrectionVsubLayerFields');
+    const vsubMinOffsetM = document.getElementById('staticCorrectionVsubMinOffsetM');
+    const initialVsubVelocityMS = document.getElementById('staticCorrectionInitialVsubVelocityMS');
+    const cellFields = document.getElementById('staticCorrectionCellFields');
+    const cellXOriginM = document.getElementById('staticCorrectionCellXOriginM');
+    const cellYOriginM = document.getElementById('staticCorrectionCellYOriginM');
+    const cellCountX = document.getElementById('staticCorrectionCellCountX');
+    const cellCountY = document.getElementById('staticCorrectionCellCountY');
+    const cellSizeXM = document.getElementById('staticCorrectionCellSizeXM');
+    const cellSizeYM = document.getElementById('staticCorrectionCellSizeYM');
+    const cellMinObservations = document.getElementById('staticCorrectionCellMinObservations');
+    const cellSmoothingWeight = document.getElementById('staticCorrectionCellSmoothingWeight');
+    const line2DFields = document.getElementById('staticCorrectionLine2DFields');
+    const lineOriginXM = document.getElementById('staticCorrectionLineOriginXM');
+    const lineOriginYM = document.getElementById('staticCorrectionLineOriginYM');
+    const lineAzimuthDeg = document.getElementById('staticCorrectionLineAzimuthDeg');
     const registerCorrectedFile = document.getElementById('staticCorrectionRegisterCorrectedFile');
     const exportEnabled = document.getElementById('staticCorrectionExportEnabled');
     const exportFormatInputs = Array.from(document.querySelectorAll('[data-static-correction-export-format]'));
@@ -1387,8 +1861,13 @@
       || !elevationScalarByte || !sourceDepthByte || !coordinateUnit || !elevationUnit
       || !offsetByte || !enableLinkage || !linkageOptions || !linkageMode
       || !linkageThresholdM || !receiverLocationIntervalM || !preferReceiverAnchor
-      || !weatheringVelocityMS || !bedrockVelocityMode || !initialBedrockVelocityMS
+      || !modelKind || !weatheringVelocityMS || !bedrockVelocityMode || !initialBedrockVelocityMS
       || !fixedBedrockVelocityMS || !minOffsetM || !maxOffsetM || !conversionMode
+      || !v3LayerFields || !v3MinOffsetM || !v3MaxOffsetM || !initialV3VelocityMS
+      || !vsubLayerFields || !vsubMinOffsetM || !initialVsubVelocityMS
+      || !cellFields || !cellXOriginM || !cellYOriginM || !cellCountX || !cellCountY
+      || !cellSizeXM || !cellSizeYM || !cellMinObservations || !cellSmoothingWeight
+      || !line2DFields || !lineOriginXM || !lineOriginYM || !lineAzimuthDeg
       || !registerCorrectedFile || !exportEnabled || !requestPreview
       || !cancelButton || !staticJobPanel || !staticJobIdValue || !staticJobStateValue
       || !staticJobMessageValue || !staticJobProgress || !staticJobProgressValue
@@ -1404,6 +1883,7 @@
     setDefaultValue(pickArtifactName, DEFAULTS.pickArtifactName);
     setDefaultValue(linkageMode, DEFAULTS.linkageMode);
     setDefaultValue(linkageThresholdM, DEFAULTS.linkageThresholdM);
+    setDefaultValue(modelKind, DEFAULTS.modelPreset);
     setDefaultValue(weatheringVelocityMS, DEFAULTS.weatheringVelocityMS);
     setDefaultValue(bedrockVelocityMode, DEFAULTS.bedrockVelocityMode);
     setDefaultValue(initialBedrockVelocityMS, DEFAULTS.initialBedrockVelocityMS);
@@ -1411,6 +1891,22 @@
     setDefaultValue(minOffsetM, DEFAULTS.minOffsetM);
     setDefaultValue(maxOffsetM, DEFAULTS.maxOffsetM);
     setDefaultValue(conversionMode, DEFAULTS.conversionMode);
+    setDefaultValue(v3MinOffsetM, DEFAULTS.v3MinOffsetM);
+    setDefaultValue(v3MaxOffsetM, DEFAULTS.v3MaxOffsetM);
+    setDefaultValue(initialV3VelocityMS, DEFAULTS.initialV3VelocityMS);
+    setDefaultValue(vsubMinOffsetM, DEFAULTS.vsubMinOffsetM);
+    setDefaultValue(initialVsubVelocityMS, DEFAULTS.initialVsubVelocityMS);
+    setDefaultValue(cellXOriginM, DEFAULTS.cellXOriginM);
+    setDefaultValue(cellYOriginM, DEFAULTS.cellYOriginM);
+    setDefaultValue(cellCountX, DEFAULTS.cellCountX);
+    setDefaultValue(cellCountY, DEFAULTS.cellCountY);
+    setDefaultValue(cellSizeXM, DEFAULTS.cellSizeXM);
+    setDefaultValue(cellSizeYM, DEFAULTS.cellSizeYM);
+    setDefaultValue(cellMinObservations, DEFAULTS.cellMinObservations);
+    setDefaultValue(cellSmoothingWeight, DEFAULTS.cellSmoothingWeight);
+    setDefaultValue(lineOriginXM, DEFAULTS.lineOriginXM);
+    setDefaultValue(lineOriginYM, DEFAULTS.lineOriginYM);
+    setDefaultValue(lineAzimuthDeg, DEFAULTS.lineAzimuthDeg);
 
     dom = {
       form,
@@ -1446,6 +1942,7 @@
       linkageThresholdM,
       receiverLocationIntervalM,
       preferReceiverAnchor,
+      modelKind,
       weatheringVelocityMS,
       bedrockVelocityMode,
       initialBedrockVelocityMS,
@@ -1453,6 +1950,26 @@
       minOffsetM,
       maxOffsetM,
       conversionMode,
+      v3LayerFields,
+      v3MinOffsetM,
+      v3MaxOffsetM,
+      initialV3VelocityMS,
+      vsubLayerFields,
+      vsubMinOffsetM,
+      initialVsubVelocityMS,
+      cellFields,
+      cellXOriginM,
+      cellYOriginM,
+      cellCountX,
+      cellCountY,
+      cellSizeXM,
+      cellSizeYM,
+      cellMinObservations,
+      cellSmoothingWeight,
+      line2DFields,
+      lineOriginXM,
+      lineOriginYM,
+      lineAzimuthDeg,
       registerCorrectedFile,
       exportEnabled,
       exportFormatInputs,
@@ -1469,6 +1986,7 @@
       staticArtifactEmpty,
     };
     applyStaticCorrectionGeometryPreset(dom, trimValue(geometryPreset.value) || GEOMETRY_DEFAULTS.preset);
+    updateModelPresetControls(dom);
     updateStaticCorrectionLinkageOptions(dom);
 
     form.addEventListener('submit', handleRun);
@@ -1503,11 +2021,19 @@
       state.message = 'Endpoint linkage mode updated.';
       render();
     });
+    modelKind.addEventListener('change', () => {
+      updateModelPresetControls(dom);
+      state.error = '';
+      state.message = 'Refraction static model preset updated.';
+      render();
+    });
     updateBedrockVelocityControls(dom);
     bedrockVelocityMode.addEventListener('change', () => {
       updateBedrockVelocityControls(dom);
       state.error = '';
-      state.message = bedrockVelocityMode.value === 'fixed_global'
+      state.message = bedrockVelocityMode.disabled
+        ? 'Cell V2/T1 presets solve V2 by refractor cell.'
+        : bedrockVelocityMode.value === 'fixed_global'
         ? 'Fixed global V2 will be submitted for the one-layer model.'
         : 'Global V2 will be solved from the submitted picks.';
       render();
@@ -1545,9 +2071,13 @@
     runStaticCorrection,
     stopStaticCorrectionPolling,
     submitRefractionStaticApply,
+    updateModelPresetControls,
     updateBedrockVelocityControls,
     updateStaticCorrectionLinkageOptions,
+    validateCellRefractionModel,
+    validateMultilayerRefractionModel,
     validateOneLayerRefractionModel,
+    validateRefractionStaticModel,
     validateStaticCorrectionGeometryRequest,
     validateStaticCorrectionLinkageRequest,
   };
