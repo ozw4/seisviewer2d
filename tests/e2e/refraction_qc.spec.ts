@@ -1028,6 +1028,83 @@ async function openRefractionQcTab(page: Page) {
 	await expect(page.getByTestId('refraction-qc-panel')).toBeVisible();
 }
 
+async function openStaticCorrectionTab(page: Page) {
+	await page.goto('/');
+	await page.getByTestId('static-correction-tab').click();
+	await expect(page.getByTestId('static-correction-panel')).toBeVisible();
+}
+
+async function fillStaticCorrectionRunInputs(
+	page: Page,
+	{ fileId = 'fixture-line-a-store', pickJobId = 'fixture-first-break-job' } = {},
+) {
+	await page.getByTestId('static-correction-file-id').fill(fileId);
+	await page.getByTestId('static-correction-pick-job-id').fill(pickJobId);
+	await page.getByTestId('static-correction-pick-artifact-name').fill('predicted_picks_time_s.npz');
+	await page.getByTestId('static-correction-model-kind').selectOption('one_layer_global');
+	await expect(page.getByTestId('static-correction-enable-linkage')).not.toBeChecked();
+}
+
+type StaticCorrectionRouteCall = {
+	endpoint: string;
+	body: Record<string, unknown>;
+};
+
+async function routeCompletedStaticCorrectionFlow(
+	page: Page,
+	{
+		jobId = 'refraction-job-565',
+		statusMessage = 'finished',
+	}: { jobId?: string; statusMessage?: string } = {},
+) {
+	const calls: StaticCorrectionRouteCall[] = [];
+	await page.route('**/statics/refraction/apply', async (route) => {
+		calls.push({
+			endpoint: 'apply',
+			body: JSON.parse(route.request().postData() || '{}'),
+		});
+		await route.fulfill({
+			status: 200,
+			contentType: 'application/json',
+			body: JSON.stringify({ job_id: jobId, state: 'queued', progress: 0 }),
+		});
+	});
+	await page.route(`**/statics/job/${jobId}/status`, async (route) => {
+		calls.push({ endpoint: 'status', body: {} });
+		await route.fulfill({
+			status: 200,
+			contentType: 'application/json',
+			body: JSON.stringify({ job_id: jobId, state: 'ready', progress: 1, message: statusMessage }),
+		});
+	});
+	await page.route(`**/statics/job/${jobId}/files`, async (route) => {
+		calls.push({ endpoint: 'files', body: {} });
+		await route.fulfill({
+			status: 200,
+			contentType: 'application/json',
+			body: JSON.stringify({
+				files: [
+					{ name: 'refraction_static_artifacts.json', size_bytes: 128 },
+					{ name: 'refraction_static_qc.json', size_bytes: 512 },
+					{ name: 'source_static_table.csv', size_bytes: 64 },
+				],
+			}),
+		});
+	});
+	await page.route('**/statics/refraction/qc', async (route) => {
+		calls.push({
+			endpoint: 'qc',
+			body: JSON.parse(route.request().postData() || '{}'),
+		});
+		await route.fulfill({
+			status: 200,
+			contentType: 'application/json',
+			body: JSON.stringify(qcBundlePayload(jobId)),
+		});
+	});
+	return calls;
+}
+
 test('refraction QC tab loads', async ({ page }) => {
 	await openRefractionQcTab(page);
 
@@ -1103,6 +1180,145 @@ test('static correction tab scaffold switches side panels', async ({ page }) => 
 	await expect(page.getByTestId('static-correction-tab')).toHaveAttribute('aria-selected', 'false');
 
 	expect(staticsRequests).toEqual([]);
+});
+
+test('static_correction_ui_runs_one_layer_without_linkage', async ({ page }) => {
+	const calls = await routeCompletedStaticCorrectionFlow(page);
+
+	await openStaticCorrectionTab(page);
+	await fillStaticCorrectionRunInputs(page);
+	await page.getByTestId('static-correction-run').click();
+
+	await expect(page.getByTestId('static-correction-job-id')).toHaveText('refraction-job-565');
+	await expect(page.getByTestId('static-correction-job-state')).toHaveText('ready');
+	await expect(page.getByTestId('static-correction-artifact-table')).toContainText('source_static_table.csv');
+	await expect(page.getByTestId('refraction-qc-panel')).toBeVisible();
+	await expect(page.getByTestId('refraction-qc-job-id')).toHaveValue('refraction-job-565');
+	await expect(page.getByTestId('refraction-qc-status')).toContainText('Loaded refraction-job-565');
+
+	const applyCall = calls.find((call) => call.endpoint === 'apply');
+	expect(applyCall?.body).toMatchObject({
+		file_id: 'fixture-line-a-store',
+		pick_source: {
+			kind: 'batch_predicted_npz',
+			job_id: 'fixture-first-break-job',
+			artifact_name: 'predicted_picks_time_s.npz',
+		},
+		linkage: { mode: 'none' },
+		model: {
+			first_layer: { mode: 'constant', weathering_velocity_m_s: 800 },
+			bedrock_velocity_mode: 'solve_global',
+		},
+		conversion: { mode: 't1lsst_1layer' },
+	});
+	expect(calls.map((call) => call.endpoint)).toEqual(['apply', 'status', 'files', 'qc']);
+});
+
+test('static_correction_ui_builds_linkage_when_checkbox_enabled', async ({ page }) => {
+	const calls = await routeCompletedStaticCorrectionFlow(page, { jobId: 'refraction-job-565-linked' });
+	await page.route('**/statics/linkage/build', async (route) => {
+		calls.push({
+			endpoint: 'linkage',
+			body: JSON.parse(route.request().postData() || '{}'),
+		});
+		await route.fulfill({
+			status: 200,
+			contentType: 'application/json',
+			body: JSON.stringify({ job_id: 'linkage-job-565', state: 'queued' }),
+		});
+	});
+	await page.route('**/statics/job/linkage-job-565/status', async (route) => {
+		calls.push({ endpoint: 'linkage-status', body: {} });
+		await route.fulfill({
+			status: 200,
+			contentType: 'application/json',
+			body: JSON.stringify({ job_id: 'linkage-job-565', state: 'done', progress: 1, message: 'linked' }),
+		});
+	});
+
+	await openStaticCorrectionTab(page);
+	await fillStaticCorrectionRunInputs(page);
+	await page.getByTestId('static-correction-enable-linkage').check();
+	await expect(page.getByTestId('static-correction-linkage-options')).toBeVisible();
+	await page.getByTestId('static-correction-linkage-threshold-m').fill('12.5');
+	await page.getByTestId('static-correction-run').click();
+
+	await expect(page.getByTestId('refraction-qc-job-id')).toHaveValue('refraction-job-565-linked');
+
+	expect(calls.map((call) => call.endpoint)).toEqual([
+		'linkage',
+		'linkage-status',
+		'apply',
+		'status',
+		'files',
+		'qc',
+	]);
+	expect(calls.find((call) => call.endpoint === 'linkage')?.body).toMatchObject({
+		file_id: 'fixture-line-a-store',
+		linkage: { mode: 'auto_threshold', threshold_m: 12.5 },
+	});
+	expect(calls.find((call) => call.endpoint === 'apply')?.body.linkage).toEqual({
+		mode: 'required',
+		job_id: 'linkage-job-565',
+		artifact_name: 'geometry_linkage.npz',
+	});
+});
+
+test('static_correction_ui_auto_loads_qc_after_ready_job', async ({ page }) => {
+	const calls = await routeCompletedStaticCorrectionFlow(page, { jobId: 'refraction-job-565-qc' });
+
+	await openStaticCorrectionTab(page);
+	await fillStaticCorrectionRunInputs(page);
+	await page.getByTestId('static-correction-run').click();
+
+	await expect(page.getByTestId('static-correction-job-state')).toHaveText('ready');
+	await expect(page.getByTestId('static-correction-artifact-table')).toContainText('refraction_static_qc.json');
+	await expect(page.getByTestId('refraction-qc-tab')).toHaveAttribute('aria-selected', 'true');
+	await expect(page.getByTestId('refraction-qc-job-id')).toHaveValue('refraction-job-565-qc');
+	await expect(page.getByTestId('refraction-qc-status')).toContainText('Loaded refraction-job-565-qc');
+
+	expect(calls.find((call) => call.endpoint === 'qc')?.body).toMatchObject({
+		job_id: 'refraction-job-565-qc',
+		max_points: 20000,
+	});
+});
+
+test('static_correction_ui_shows_error_when_apply_fails', async ({ page }) => {
+	const calls: StaticCorrectionRouteCall[] = [];
+	await page.route('**/statics/refraction/apply', async (route) => {
+		calls.push({
+			endpoint: 'apply',
+			body: JSON.parse(route.request().postData() || '{}'),
+		});
+		await route.fulfill({
+			status: 422,
+			contentType: 'application/json',
+			body: JSON.stringify({ detail: 'first-break artifact is missing required arrays' }),
+		});
+	});
+	await page.route('**/statics/job/**', async (route) => {
+		calls.push({ endpoint: 'unexpected-job-route', body: {} });
+		await route.abort();
+	});
+	await page.route('**/statics/refraction/qc', async (route) => {
+		calls.push({ endpoint: 'unexpected-qc-route', body: {} });
+		await route.abort();
+	});
+
+	await openStaticCorrectionTab(page);
+	await fillStaticCorrectionRunInputs(page);
+	await page.getByTestId('static-correction-run').click();
+
+	await expect(page.getByTestId('static-correction-error')).toBeVisible();
+	await expect(page.getByTestId('static-correction-error')).toContainText(
+		'first-break artifact is missing required arrays',
+	);
+	await expect(page.getByTestId('static-correction-status')).toContainText(
+		'Static correction submission failed.',
+	);
+	await expect(page.getByTestId('static-correction-job-panel')).toBeHidden();
+	await expect(page.getByTestId('refraction-qc-panel')).toBeHidden();
+	expect(calls.map((call) => call.endpoint)).toEqual(['apply']);
 });
 
 test('static correction tab validates required file and pick inputs without submitting', async ({ page }) => {
