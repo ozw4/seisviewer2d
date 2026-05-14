@@ -115,9 +115,6 @@ def _minimal_payload() -> dict[str, Any]:
             'kind': 'batch_predicted_npz',
             'job_id': 'first-break-job-id',
         },
-        'linkage': {
-            'job_id': 'linkage-job-id',
-        },
         'model': {
             'weathering_velocity_m_s': 800.0,
         },
@@ -176,8 +173,8 @@ def test_refraction_static_request_accepts_minimal_valid_request_and_defaults() 
     assert req.geometry.source_depth_byte is None
     assert req.geometry.coordinate_unit == 'm'
     assert req.geometry.elevation_unit == 'm'
-    assert req.linkage.mode == 'required'
-    assert req.linkage.job_id == 'linkage-job-id'
+    assert req.linkage.mode == 'none'
+    assert req.linkage.job_id is None
     assert req.linkage.artifact_name == 'geometry_linkage.npz'
     assert req.model.method == 'gli_variable_thickness'
     assert req.model.bedrock_velocity_mode == 'solve_global'
@@ -406,6 +403,17 @@ def test_refraction_linkage_requires_job_id_for_required_mode() -> None:
 
     with pytest.raises(ValidationError, match='linkage.job_id'):
         _validate(payload)
+
+
+def test_refraction_linkage_accepts_none_mode_without_job_id() -> None:
+    payload = _payload()
+    payload['linkage'] = {'mode': 'none'}
+
+    req = _validate(payload)
+
+    assert req.linkage.mode == 'none'
+    assert req.linkage.job_id is None
+    assert req.linkage.artifact_name == 'geometry_linkage.npz'
 
 
 def test_refraction_linkage_rejects_job_id_for_none_mode() -> None:

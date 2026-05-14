@@ -675,6 +675,71 @@ def test_build_refraction_static_input_model_loads_npz_original_order(
     assert model.metadata['pick_source_metadata']['accepted_pick_key'] == 'picks_time_s'
 
 
+def test_build_refraction_static_input_model_omitted_linkage_skips_artifact_resolution(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    sorted_to_original = np.asarray([0, 1, 2, 3], dtype=np.int64)
+    reader = _FakeReader(
+        headers=_headers(4),
+        sorted_to_original=sorted_to_original,
+    )
+    monkeypatch.setattr(inputs_module, 'get_reader', lambda *args, **kwargs: reader)
+
+    real_resolve_job_artifact_path = inputs_module.resolve_job_artifact_path
+
+    def _resolve_non_linkage_artifact(*args: Any, **kwargs: Any) -> object:
+        if kwargs.get('reference_label') == 'linkage':
+            pytest.fail('linkage artifact resolution should not run for mode=none')
+        return real_resolve_job_artifact_path(*args, **kwargs)
+
+    def _fail_linkage_resolution(*_args: Any, **_kwargs: Any) -> object:
+        pytest.fail('linkage artifact resolution should not run for mode=none')
+
+    monkeypatch.setattr(
+        inputs_module,
+        'resolve_job_artifact_path',
+        _resolve_non_linkage_artifact,
+    )
+    monkeypatch.setattr(
+        inputs_module,
+        'load_geometry_linkage_artifact',
+        _fail_linkage_resolution,
+    )
+
+    state = AppState()
+    job_dir = tmp_path / 'pick-job'
+    job_dir.mkdir()
+    state.jobs.create_batch_apply_job(
+        'pick-job',
+        file_id='line-a',
+        key1_byte=189,
+        key2_byte=193,
+        artifacts_dir=str(job_dir),
+    )
+    np.savez(
+        job_dir / 'predicted_picks_time_s.npz',
+        pick_time_s=np.asarray([0.010, 0.020, 0.030, 0.040], dtype=np.float32),
+    )
+    req = RefractionStaticApplyRequest(
+        file_id='line-a',
+        pick_source={
+            'kind': 'batch_predicted_npz',
+            'job_id': 'pick-job',
+        },
+        geometry=_geometry(),
+        model=RefractionStaticModelRequest(weathering_velocity_m_s=800.0),
+        datum={'mode': 'none'},
+    )
+
+    model = build_refraction_static_input_model(req=req, state=state)
+
+    assert req.linkage.mode == 'none'
+    assert model.qc['linkage_requested'] == 'none'
+    assert model.qc['linkage_used'] is False
+    assert model.qc['n_nodes'] == 8
+
+
 def test_build_refraction_static_input_model_rejects_missing_pick_artifact(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -786,7 +851,7 @@ def test_build_refraction_static_input_model_rejects_cross_file_linkage_artifact
             'job_id': 'pick-job',
         },
         geometry=_geometry(),
-        linkage={'job_id': 'linkage-job'},
+        linkage={'mode': 'required', 'job_id': 'linkage-job'},
         model=RefractionStaticModelRequest(weathering_velocity_m_s=800.0),
         datum={'mode': 'none'},
     )

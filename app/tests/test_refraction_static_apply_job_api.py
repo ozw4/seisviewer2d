@@ -278,6 +278,29 @@ def test_refraction_static_apply_endpoint_starts_job(
     assert job['key2_byte'] == 193
 
 
+def test_refraction_static_apply_endpoint_accepts_omitted_linkage(
+    client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    started: list[dict[str, Any]] = []
+    monkeypatch.setattr(
+        statics_router_module,
+        'start_job_thread',
+        lambda **kwargs: started.append(kwargs),
+    )
+    payload = _payload()
+    del payload['linkage']
+
+    response = client.post('/statics/refraction/apply', json=payload)
+
+    assert response.status_code == 200
+    assert len(started) == 1
+    req = started[0]['args'][1]
+    assert isinstance(req, RefractionStaticApplyRequest)
+    assert req.linkage.mode == 'none'
+    assert req.linkage.job_id is None
+
+
 def test_refraction_static_apply_endpoint_rejects_invalid_schema_without_job(
     client: TestClient,
     monkeypatch: pytest.MonkeyPatch,
