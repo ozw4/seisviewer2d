@@ -101,6 +101,10 @@
   const STATIC_READY_STATES = new Set(['done', 'ready']);
   const STATIC_ACTIVE_STATES = new Set(['queued', 'running', 'cancel_requested']);
   const STATIC_TERMINAL_STATES = new Set(['done', 'ready', 'error', 'cancelled', 'expired']);
+  const FIELD_SOURCE_DEPTH_MODES = new Set(['none', 'weathering_velocity_time']);
+  const FIELD_UPHOLE_MODES = new Set(['none', 'header_time']);
+  const FIELD_MANUAL_STATIC_MODES = new Set(['none', 'artifact_table']);
+  const FIELD_MANUAL_SIGN_CONVENTIONS = new Set(['applied_shift_s', 'delay_positive_ms']);
 
   const state = {
     ready: false,
@@ -289,6 +293,47 @@
     };
   }
 
+  function collectFieldCorrectionInputs(targetDom = dom) {
+    if (!targetDom) return null;
+    return {
+      enabled: Boolean(targetDom.fieldCorrectionsEnabled && targetDom.fieldCorrectionsEnabled.checked),
+      source_depth_mode: trimValue(
+        targetDom.fieldSourceDepthMode && targetDom.fieldSourceDepthMode.value
+      ),
+      source_depth_byte: trimValue(
+        targetDom.fieldSourceDepthByte && targetDom.fieldSourceDepthByte.value
+      ),
+      uphole_mode: trimValue(targetDom.fieldUpholeMode && targetDom.fieldUpholeMode.value),
+      uphole_time_byte: trimValue(
+        targetDom.fieldUpholeTimeByte && targetDom.fieldUpholeTimeByte.value
+      ),
+      manual_static_mode: trimValue(
+        targetDom.fieldManualStaticMode && targetDom.fieldManualStaticMode.value
+      ),
+      manual_static_sign_convention: trimValue(
+        targetDom.fieldManualStaticSignConvention
+        && targetDom.fieldManualStaticSignConvention.value
+      ),
+      manual_source_job_id: trimValue(
+        targetDom.fieldManualSourceJobId && targetDom.fieldManualSourceJobId.value
+      ),
+      manual_source_artifact_name: trimValue(
+        targetDom.fieldManualSourceArtifactName
+        && targetDom.fieldManualSourceArtifactName.value
+      ),
+      manual_receiver_job_id: trimValue(
+        targetDom.fieldManualReceiverJobId && targetDom.fieldManualReceiverJobId.value
+      ),
+      manual_receiver_artifact_name: trimValue(
+        targetDom.fieldManualReceiverArtifactName
+        && targetDom.fieldManualReceiverArtifactName.value
+      ),
+      apply_to_trace_shift: Boolean(
+        targetDom.fieldApplyToTraceShift && targetDom.fieldApplyToTraceShift.checked
+      ),
+    };
+  }
+
   function collectOutputInputs(targetDom = dom) {
     if (!targetDom) return null;
     const formats = [];
@@ -313,6 +358,31 @@
       return null;
     }
     return parsed;
+  }
+
+  function parseOptionalArtifactRef(jobId, artifactName, label, errors) {
+    if (!jobId && !artifactName) {
+      return null;
+    }
+    if (!jobId) {
+      errors.push(`${label}.job_id is required when ${label}.artifact_name is set.`);
+    }
+    if (!artifactName) {
+      errors.push(`${label}.artifact_name is required when ${label}.job_id is set.`);
+    }
+    if (artifactName && /[\\/]/.test(artifactName)) {
+      errors.push(`${label}.artifact_name must be a plain file name.`);
+    }
+    if (artifactName && !artifactName.toLowerCase().endsWith('.csv')) {
+      errors.push(`${label}.artifact_name must be a .csv artifact.`);
+    }
+    if (!jobId || !artifactName || /[\\/]/.test(artifactName) || !artifactName.toLowerCase().endsWith('.csv')) {
+      return null;
+    }
+    return {
+      job_id: jobId,
+      artifact_name: artifactName,
+    };
   }
 
   function parsePositiveFloat(value, label, errors, { optional = false } = {}) {
@@ -496,6 +566,64 @@
     if (targetDom.linkageThresholdM) {
       targetDom.linkageThresholdM.disabled = !enabled || !LINKAGE_THRESHOLD_MODES.has(mode);
     }
+  }
+
+  function fieldCorrectionValueElements(targetDom) {
+    if (!targetDom) return [];
+    return [
+      targetDom.fieldSourceDepthMode,
+      targetDom.fieldSourceDepthByte,
+      targetDom.fieldUpholeMode,
+      targetDom.fieldUpholeTimeByte,
+      targetDom.fieldManualStaticMode,
+      targetDom.fieldManualStaticSignConvention,
+      targetDom.fieldManualSourceJobId,
+      targetDom.fieldManualSourceArtifactName,
+      targetDom.fieldManualReceiverJobId,
+      targetDom.fieldManualReceiverArtifactName,
+      targetDom.fieldApplyToTraceShift,
+    ].filter(Boolean);
+  }
+
+  function updateStaticCorrectionFieldCorrectionOptions(targetDom = dom) {
+    if (!targetDom || !targetDom.fieldCorrectionsEnabled) return;
+    const enabled = Boolean(targetDom.fieldCorrectionsEnabled.checked);
+    const sourceDepthMode = trimValue(targetDom.fieldSourceDepthMode && targetDom.fieldSourceDepthMode.value);
+    const upholeMode = trimValue(targetDom.fieldUpholeMode && targetDom.fieldUpholeMode.value);
+    const manualMode = trimValue(targetDom.fieldManualStaticMode && targetDom.fieldManualStaticMode.value);
+
+    if (targetDom.fieldCorrectionOptions) {
+      targetDom.fieldCorrectionOptions.hidden = !enabled;
+    }
+    if (targetDom.fieldSourceDepthByte) {
+      targetDom.fieldSourceDepthByte.disabled = !enabled || sourceDepthMode !== 'weathering_velocity_time';
+    }
+    if (targetDom.fieldUpholeTimeByte) {
+      targetDom.fieldUpholeTimeByte.disabled = !enabled || upholeMode !== 'header_time';
+    }
+    const manualEnabled = enabled && manualMode === 'artifact_table';
+    if (targetDom.fieldManualArtifactFields) {
+      targetDom.fieldManualArtifactFields.hidden = !manualEnabled;
+    }
+    for (const element of fieldCorrectionValueElements(targetDom)) {
+      if (
+        element === targetDom.fieldSourceDepthByte
+        || element === targetDom.fieldUpholeTimeByte
+      ) {
+        continue;
+      }
+      element.disabled = !enabled;
+    }
+    setDisabled(
+      [
+        targetDom.fieldManualStaticSignConvention,
+        targetDom.fieldManualSourceJobId,
+        targetDom.fieldManualSourceArtifactName,
+        targetDom.fieldManualReceiverJobId,
+        targetDom.fieldManualReceiverArtifactName,
+      ],
+      !manualEnabled
+    );
   }
 
   function updateBedrockVelocityControls(targetDom = dom) {
@@ -1063,6 +1191,105 @@
     return validateMultilayerRefractionModel(targetDom, preset);
   }
 
+  function validateStaticCorrectionFieldCorrections(targetDom = dom) {
+    const values = collectFieldCorrectionInputs(targetDom);
+    const geometryValues = collectGeometryInputs(targetDom);
+    const errors = [];
+    if (!values) {
+      return { payload: null, errors: ['Static correction field-correction form is not available.'] };
+    }
+    if (!values.enabled) {
+      return { payload: null, errors };
+    }
+
+    const sourceDepthMode = values.source_depth_mode || 'none';
+    const upholeMode = values.uphole_mode || 'none';
+    const manualMode = values.manual_static_mode || 'none';
+    if (!FIELD_SOURCE_DEPTH_MODES.has(sourceDepthMode)) {
+      errors.push('field_corrections.source_depth.mode must be none or weathering_velocity_time.');
+    }
+    if (!FIELD_UPHOLE_MODES.has(upholeMode)) {
+      errors.push('field_corrections.uphole.mode must be none or header_time.');
+    }
+    if (!FIELD_MANUAL_STATIC_MODES.has(manualMode)) {
+      errors.push('field_corrections.manual_static.mode must be none or artifact_table.');
+    }
+
+    const fieldCorrections = {
+      source_depth: { mode: sourceDepthMode },
+      uphole: { mode: upholeMode },
+      manual_static: { mode: manualMode },
+      composition: {
+        enabled: true,
+        apply_to_trace_shift: values.apply_to_trace_shift,
+      },
+    };
+
+    if (sourceDepthMode === 'weathering_velocity_time') {
+      const sourceDepthByte = parseHeaderByte(
+        values.source_depth_byte,
+        'field_corrections.source_depth.source_depth_byte',
+        errors,
+        { optional: true }
+      );
+      if (sourceDepthByte !== null) {
+        fieldCorrections.source_depth.source_depth_byte = sourceDepthByte;
+      } else if (!geometryValues || !trimValue(geometryValues.source_depth_byte)) {
+        errors.push(
+          'field_corrections.source_depth.source_depth_byte or geometry.source_depth_byte is required when source-depth correction is enabled.'
+        );
+      }
+    }
+
+    if (upholeMode === 'header_time') {
+      const upholeTimeByte = parseHeaderByte(
+        values.uphole_time_byte,
+        'field_corrections.uphole.uphole_time_byte',
+        errors
+      );
+      if (upholeTimeByte !== null) {
+        fieldCorrections.uphole.uphole_time_byte = upholeTimeByte;
+      }
+    }
+
+    if (manualMode === 'artifact_table') {
+      const signConvention = values.manual_static_sign_convention;
+      if (!FIELD_MANUAL_SIGN_CONVENTIONS.has(signConvention)) {
+        errors.push('field_corrections.manual_static.sign_convention must be applied_shift_s or delay_positive_ms.');
+      } else {
+        fieldCorrections.manual_static.sign_convention = signConvention;
+      }
+      const sourceRef = parseOptionalArtifactRef(
+        values.manual_source_job_id,
+        values.manual_source_artifact_name,
+        'field_corrections.manual_static.source_table_artifact',
+        errors
+      );
+      const receiverRef = parseOptionalArtifactRef(
+        values.manual_receiver_job_id,
+        values.manual_receiver_artifact_name,
+        'field_corrections.manual_static.receiver_table_artifact',
+        errors
+      );
+      if (sourceRef) {
+        fieldCorrections.manual_static.source_table_artifact = sourceRef;
+      }
+      if (receiverRef) {
+        fieldCorrections.manual_static.receiver_table_artifact = receiverRef;
+      }
+      if (!sourceRef && !receiverRef) {
+        errors.push(
+          'field_corrections.manual_static.source_table_artifact or receiver_table_artifact is required when manual static mode is artifact_table.'
+        );
+      }
+    }
+
+    if (errors.length) {
+      return { payload: null, errors };
+    }
+    return { payload: { field_corrections: fieldCorrections }, errors };
+  }
+
   function validateStaticCorrectionOutput(targetDom = dom) {
     const values = collectOutputInputs(targetDom);
     const errors = [];
@@ -1112,6 +1339,8 @@
     errors.push(...geometryResult.errors);
     const modelResult = validateRefractionStaticModel(targetDom);
     errors.push(...modelResult.errors);
+    const fieldCorrectionResult = validateStaticCorrectionFieldCorrections(targetDom);
+    errors.push(...fieldCorrectionResult.errors);
     const outputResult = validateStaticCorrectionOutput(targetDom);
     errors.push(...outputResult.errors);
     const linkage = buildStaticCorrectionLinkage(targetDom, options.linkageJobId || '');
@@ -1135,6 +1364,7 @@
         distance_source: 'geometry',
       },
       conversion: modelResult.conversion,
+      ...(fieldCorrectionResult.payload || {}),
       ...outputResult.payload,
     };
   }
@@ -1163,6 +1393,8 @@
     errors.push(...linkageResult.errors);
     const modelResult = validateRefractionStaticModel(dom);
     errors.push(...modelResult.errors);
+    const fieldCorrectionResult = validateStaticCorrectionFieldCorrections(dom);
+    errors.push(...fieldCorrectionResult.errors);
     const outputResult = validateStaticCorrectionOutput(dom);
     errors.push(...outputResult.errors);
 
@@ -1185,6 +1417,7 @@
           distance_source: 'geometry',
         },
         conversion: modelResult.conversion,
+        ...(fieldCorrectionResult.payload || {}),
         ...outputResult.payload,
       },
       errors,
@@ -1838,6 +2071,26 @@
     const lineOriginXM = document.getElementById('staticCorrectionLineOriginXM');
     const lineOriginYM = document.getElementById('staticCorrectionLineOriginYM');
     const lineAzimuthDeg = document.getElementById('staticCorrectionLineAzimuthDeg');
+    const fieldCorrectionsEnabled = document.getElementById('staticCorrectionFieldCorrectionsEnabled');
+    const fieldCorrectionOptions = document.getElementById('staticCorrectionFieldCorrectionOptions');
+    const fieldSourceDepthMode = document.getElementById('staticCorrectionFieldSourceDepthMode');
+    const fieldSourceDepthByte = document.getElementById('staticCorrectionFieldSourceDepthByte');
+    const fieldUpholeMode = document.getElementById('staticCorrectionFieldUpholeMode');
+    const fieldUpholeTimeByte = document.getElementById('staticCorrectionFieldUpholeTimeByte');
+    const fieldManualStaticMode = document.getElementById('staticCorrectionFieldManualStaticMode');
+    const fieldManualArtifactFields = document.getElementById('staticCorrectionFieldManualArtifactFields');
+    const fieldManualStaticSignConvention = document.getElementById(
+      'staticCorrectionFieldManualStaticSignConvention'
+    );
+    const fieldManualSourceJobId = document.getElementById('staticCorrectionFieldManualSourceJobId');
+    const fieldManualSourceArtifactName = document.getElementById(
+      'staticCorrectionFieldManualSourceArtifactName'
+    );
+    const fieldManualReceiverJobId = document.getElementById('staticCorrectionFieldManualReceiverJobId');
+    const fieldManualReceiverArtifactName = document.getElementById(
+      'staticCorrectionFieldManualReceiverArtifactName'
+    );
+    const fieldApplyToTraceShift = document.getElementById('staticCorrectionFieldApplyToTraceShift');
     const registerCorrectedFile = document.getElementById('staticCorrectionRegisterCorrectedFile');
     const exportEnabled = document.getElementById('staticCorrectionExportEnabled');
     const exportFormatInputs = Array.from(document.querySelectorAll('[data-static-correction-export-format]'));
@@ -1868,6 +2121,12 @@
       || !cellFields || !cellXOriginM || !cellYOriginM || !cellCountX || !cellCountY
       || !cellSizeXM || !cellSizeYM || !cellMinObservations || !cellSmoothingWeight
       || !line2DFields || !lineOriginXM || !lineOriginYM || !lineAzimuthDeg
+      || !fieldCorrectionsEnabled || !fieldCorrectionOptions || !fieldSourceDepthMode
+      || !fieldSourceDepthByte || !fieldUpholeMode || !fieldUpholeTimeByte
+      || !fieldManualStaticMode || !fieldManualArtifactFields
+      || !fieldManualStaticSignConvention || !fieldManualSourceJobId
+      || !fieldManualSourceArtifactName || !fieldManualReceiverJobId
+      || !fieldManualReceiverArtifactName || !fieldApplyToTraceShift
       || !registerCorrectedFile || !exportEnabled || !requestPreview
       || !cancelButton || !staticJobPanel || !staticJobIdValue || !staticJobStateValue
       || !staticJobMessageValue || !staticJobProgress || !staticJobProgressValue
@@ -1970,6 +2229,20 @@
       lineOriginXM,
       lineOriginYM,
       lineAzimuthDeg,
+      fieldCorrectionsEnabled,
+      fieldCorrectionOptions,
+      fieldSourceDepthMode,
+      fieldSourceDepthByte,
+      fieldUpholeMode,
+      fieldUpholeTimeByte,
+      fieldManualStaticMode,
+      fieldManualArtifactFields,
+      fieldManualStaticSignConvention,
+      fieldManualSourceJobId,
+      fieldManualSourceArtifactName,
+      fieldManualReceiverJobId,
+      fieldManualReceiverArtifactName,
+      fieldApplyToTraceShift,
       registerCorrectedFile,
       exportEnabled,
       exportFormatInputs,
@@ -1988,6 +2261,7 @@
     applyStaticCorrectionGeometryPreset(dom, trimValue(geometryPreset.value) || GEOMETRY_DEFAULTS.preset);
     updateModelPresetControls(dom);
     updateStaticCorrectionLinkageOptions(dom);
+    updateStaticCorrectionFieldCorrectionOptions(dom);
 
     form.addEventListener('submit', handleRun);
     runButton.addEventListener('click', handleRun);
@@ -2038,6 +2312,32 @@
         : 'Global V2 will be solved from the submitted picks.';
       render();
     });
+    fieldCorrectionsEnabled.addEventListener('change', () => {
+      updateStaticCorrectionFieldCorrectionOptions(dom);
+      state.error = '';
+      state.message = fieldCorrectionsEnabled.checked
+        ? 'Field correction options are enabled.'
+        : 'Field corrections are disabled for this run.';
+      render();
+    });
+    fieldSourceDepthMode.addEventListener('change', () => {
+      updateStaticCorrectionFieldCorrectionOptions(dom);
+      state.error = '';
+      state.message = 'Source-depth correction mode updated.';
+      render();
+    });
+    fieldUpholeMode.addEventListener('change', () => {
+      updateStaticCorrectionFieldCorrectionOptions(dom);
+      state.error = '';
+      state.message = 'Uphole correction mode updated.';
+      render();
+    });
+    fieldManualStaticMode.addEventListener('change', () => {
+      updateStaticCorrectionFieldCorrectionOptions(dom);
+      state.error = '';
+      state.message = 'Manual static mode updated.';
+      render();
+    });
 
     render();
   }
@@ -2056,6 +2356,7 @@
     buildStaticLinkageBuildRequest,
     cancelStaticCorrectionJob,
     collectGeometryInputs,
+    collectFieldCorrectionInputs,
     collectInputs,
     collectLinkageInputs,
     collectModelInputs,
@@ -2073,7 +2374,9 @@
     submitRefractionStaticApply,
     updateModelPresetControls,
     updateBedrockVelocityControls,
+    updateStaticCorrectionFieldCorrectionOptions,
     updateStaticCorrectionLinkageOptions,
+    validateStaticCorrectionFieldCorrections,
     validateCellRefractionModel,
     validateMultilayerRefractionModel,
     validateOneLayerRefractionModel,

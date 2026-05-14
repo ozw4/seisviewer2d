@@ -7,6 +7,7 @@ const SCRIPT = readFileSync(
   resolve(process.cwd(), 'static/refraction_static_run.js'),
   'utf8'
 );
+const INDEX_HTML = readFileSync(resolve(process.cwd(), 'static/index.html'), 'utf8');
 
 function renderStaticCorrectionForm() {
   document.body.innerHTML = `
@@ -99,6 +100,34 @@ function renderStaticCorrectionForm() {
         <input id="staticCorrectionLineOriginYM" value="0" />
         <input id="staticCorrectionLineAzimuthDeg" value="0" />
       </div>
+      <input id="staticCorrectionFieldCorrectionsEnabled" type="checkbox" />
+      <div id="staticCorrectionFieldCorrectionOptions" hidden>
+        <select id="staticCorrectionFieldSourceDepthMode">
+          <option value="none" selected>none</option>
+          <option value="weathering_velocity_time">weathering_velocity_time</option>
+        </select>
+        <input id="staticCorrectionFieldSourceDepthByte" value="" />
+        <select id="staticCorrectionFieldUpholeMode">
+          <option value="none" selected>none</option>
+          <option value="header_time">header_time</option>
+        </select>
+        <input id="staticCorrectionFieldUpholeTimeByte" value="" />
+        <select id="staticCorrectionFieldManualStaticMode">
+          <option value="none" selected>none</option>
+          <option value="artifact_table">artifact_table</option>
+        </select>
+        <div id="staticCorrectionFieldManualArtifactFields" hidden>
+          <select id="staticCorrectionFieldManualStaticSignConvention">
+            <option value="applied_shift_s" selected>applied_shift_s</option>
+            <option value="delay_positive_ms">delay_positive_ms</option>
+          </select>
+          <input id="staticCorrectionFieldManualSourceJobId" value="" />
+          <input id="staticCorrectionFieldManualSourceArtifactName" value="" />
+          <input id="staticCorrectionFieldManualReceiverJobId" value="" />
+          <input id="staticCorrectionFieldManualReceiverArtifactName" value="" />
+        </div>
+        <input id="staticCorrectionFieldApplyToTraceShift" type="checkbox" checked />
+      </div>
       <input id="staticCorrectionRegisterCorrectedFile" type="checkbox" />
       <input id="staticCorrectionExportEnabled" type="checkbox" checked />
       <input
@@ -109,10 +138,28 @@ function renderStaticCorrectionForm() {
         data-static-correction-export-format
       />
       <input
+        id="staticCorrectionExportLsst"
+        type="checkbox"
+        value="lsst"
+        data-static-correction-export-format
+      />
+      <input
+        id="staticCorrectionExportLsstPlus"
+        type="checkbox"
+        value="lsst_plus"
+        checked
+        data-static-correction-export-format
+      />
+      <input
         id="staticCorrectionExportTimeTermSpreadsheet"
         type="checkbox"
         value="time_term_spreadsheet"
-        checked
+        data-static-correction-export-format
+      />
+      <input
+        id="staticCorrectionExportFirstBreakTime"
+        type="checkbox"
+        value="first_break_time"
         data-static-correction-export-format
       />
       <button id="staticCorrectionRunButton" type="button"></button>
@@ -176,6 +223,12 @@ function jsonResponse(payload, status = 200) {
 
 function enableLinkage() {
   const checkbox = document.getElementById('staticCorrectionEnableLinkage');
+  checkbox.checked = true;
+  checkbox.dispatchEvent(new Event('change'));
+}
+
+function enableFieldCorrections() {
+  const checkbox = document.getElementById('staticCorrectionFieldCorrectionsEnabled');
   checkbox.checked = true;
   checkbox.dispatchEvent(new Event('change'));
 }
@@ -381,6 +434,119 @@ test('checked auto-threshold linkage validates threshold only when enabled', () 
     'linkage.threshold_m'
   );
   expect(window.refractionStaticRunState.lastRequest).toBe(null);
+});
+
+test('field correction and export sections are collapsed details controls', () => {
+  expect(INDEX_HTML).toContain('<details id="staticCorrectionFieldCorrectionsSection"');
+  expect(INDEX_HTML).toContain('<summary id="staticCorrectionFieldCorrectionsHeading">Field corrections</summary>');
+  expect(INDEX_HTML).toContain('<details id="staticCorrectionExportSection"');
+  expect(INDEX_HTML).toContain('<summary id="staticCorrectionExportHeading">Exports</summary>');
+});
+
+test('field corrections disabled omits optional field_corrections request block', () => {
+  const ui = loadStaticCorrectionScript();
+
+  const result = ui.buildStaticCorrectionRequest();
+
+  expect(result.errors).toEqual([]);
+  expect(result.payload).not.toHaveProperty('field_corrections');
+});
+
+test('source-depth weathering_velocity_time request fragment includes source_depth_byte', () => {
+  const ui = loadStaticCorrectionScript();
+  enableFieldCorrections();
+  const mode = document.getElementById('staticCorrectionFieldSourceDepthMode');
+  mode.value = 'weathering_velocity_time';
+  mode.dispatchEvent(new Event('change'));
+  document.getElementById('staticCorrectionFieldSourceDepthByte').value = '115';
+
+  const result = ui.buildStaticCorrectionRequest();
+
+  expect(result.errors).toEqual([]);
+  expect(result.payload.field_corrections.source_depth).toEqual({
+    mode: 'weathering_velocity_time',
+    source_depth_byte: 115,
+  });
+  expect(result.payload.field_corrections.composition.apply_to_trace_shift).toBe(true);
+});
+
+test('uphole header_time request fragment includes uphole_time_byte', () => {
+  const ui = loadStaticCorrectionScript();
+  enableFieldCorrections();
+  const mode = document.getElementById('staticCorrectionFieldUpholeMode');
+  mode.value = 'header_time';
+  mode.dispatchEvent(new Event('change'));
+  document.getElementById('staticCorrectionFieldUpholeTimeByte').value = '95';
+
+  const result = ui.buildStaticCorrectionRequest();
+
+  expect(result.errors).toEqual([]);
+  expect(result.payload.field_corrections.uphole).toEqual({
+    mode: 'header_time',
+    uphole_time_byte: 95,
+  });
+});
+
+test('apply_to_trace_shift checkbox changes the field correction request', () => {
+  const ui = loadStaticCorrectionScript();
+  enableFieldCorrections();
+  document.getElementById('staticCorrectionFieldApplyToTraceShift').checked = false;
+
+  const result = ui.buildStaticCorrectionRequest();
+
+  expect(result.errors).toEqual([]);
+  expect(result.payload.field_corrections.composition).toEqual({
+    enabled: true,
+    apply_to_trace_shift: false,
+  });
+});
+
+test('manual static artifact mode validates and builds artifact refs', () => {
+  const ui = loadStaticCorrectionScript();
+  enableFieldCorrections();
+  const mode = document.getElementById('staticCorrectionFieldManualStaticMode');
+  mode.value = 'artifact_table';
+  mode.dispatchEvent(new Event('change'));
+  document.getElementById('staticCorrectionFieldManualSourceJobId').value = 'static-job-a';
+  document.getElementById('staticCorrectionFieldManualSourceArtifactName').value = 'source_static_table.csv';
+
+  const result = ui.buildStaticCorrectionRequest();
+
+  expect(result.errors).toEqual([]);
+  expect(result.payload.field_corrections.manual_static).toEqual({
+    mode: 'artifact_table',
+    sign_convention: 'applied_shift_s',
+    source_table_artifact: {
+      job_id: 'static-job-a',
+      artifact_name: 'source_static_table.csv',
+    },
+  });
+});
+
+test('export format checkboxes build export formats list', () => {
+  const ui = loadStaticCorrectionScript();
+  document.getElementById('staticCorrectionExportLsst').checked = true;
+  document.getElementById('staticCorrectionExportFirstBreakTime').checked = true;
+
+  const result = ui.buildStaticCorrectionRequest();
+
+  expect(result.errors).toEqual([]);
+  expect(result.payload.export).toEqual({
+    enabled: true,
+    formats: [
+      'canonical_static_table',
+      'lsst',
+      'lsst_plus',
+      'first_break_time',
+    ],
+  });
+});
+
+test('unsupported seconds export option is not present in the UI', () => {
+  loadStaticCorrectionScript();
+
+  expect(document.querySelector('[name="export.units"]')).toBeNull();
+  expect(INDEX_HTML).not.toContain('value="seconds"');
 });
 
 test('one-layer validation ignores inactive bedrock velocity inputs', () => {

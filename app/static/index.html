@@ -1172,10 +1172,16 @@
       background: #fff;
     }
 
-    .static-correction-section h3 {
+    .static-correction-section h3,
+    .static-correction-section summary {
       margin: 0;
       font-size: 0.95em;
       color: #0f172a;
+    }
+
+    .static-correction-section summary {
+      cursor: pointer;
+      font-weight: 700;
     }
 
     .static-correction-help {
@@ -2371,6 +2377,99 @@
                   type="checkbox" data-testid="static-correction-register-corrected-file" />
                 <span>apply.register_corrected_file</span>
               </label>
+            </section>
+            <details id="staticCorrectionFieldCorrectionsSection" class="static-correction-section">
+              <summary id="staticCorrectionFieldCorrectionsHeading">Field corrections</summary>
+              <label class="static-correction-check-field" for="staticCorrectionFieldCorrectionsEnabled">
+                <input id="staticCorrectionFieldCorrectionsEnabled" name="field_corrections.enabled"
+                  type="checkbox" data-testid="static-correction-field-corrections-enabled" />
+                <span>field_corrections.enabled</span>
+              </label>
+              <div id="staticCorrectionFieldCorrectionOptions" class="static-correction-linkage-options" hidden>
+                <label class="static-correction-field" for="staticCorrectionFieldSourceDepthMode">
+                  source_depth.mode
+                  <select id="staticCorrectionFieldSourceDepthMode" name="field_corrections.source_depth.mode"
+                    data-testid="static-correction-field-source-depth-mode">
+                    <option value="none" selected>none</option>
+                    <option value="weathering_velocity_time">weathering_velocity_time</option>
+                  </select>
+                </label>
+                <label class="static-correction-field" for="staticCorrectionFieldSourceDepthByte">
+                  source_depth.source_depth_byte
+                  <input id="staticCorrectionFieldSourceDepthByte"
+                    name="field_corrections.source_depth.source_depth_byte" type="number" min="1" max="240"
+                    step="1" data-testid="static-correction-field-source-depth-byte" />
+                </label>
+                <label class="static-correction-field" for="staticCorrectionFieldUpholeMode">uphole.mode
+                  <select id="staticCorrectionFieldUpholeMode" name="field_corrections.uphole.mode"
+                    data-testid="static-correction-field-uphole-mode">
+                    <option value="none" selected>none</option>
+                    <option value="header_time">header_time</option>
+                  </select>
+                </label>
+                <label class="static-correction-field" for="staticCorrectionFieldUpholeTimeByte">
+                  uphole.uphole_time_byte
+                  <input id="staticCorrectionFieldUpholeTimeByte"
+                    name="field_corrections.uphole.uphole_time_byte" type="number" min="1" max="240" step="1"
+                    data-testid="static-correction-field-uphole-time-byte" />
+                </label>
+                <label class="static-correction-field" for="staticCorrectionFieldManualStaticMode">
+                  manual_static.mode
+                  <select id="staticCorrectionFieldManualStaticMode" name="field_corrections.manual_static.mode"
+                    data-testid="static-correction-field-manual-static-mode">
+                    <option value="none" selected>none</option>
+                    <option value="artifact_table">artifact_table</option>
+                  </select>
+                </label>
+                <div id="staticCorrectionFieldManualArtifactFields" class="static-correction-linkage-options" hidden>
+                  <label class="static-correction-field" for="staticCorrectionFieldManualStaticSignConvention">
+                    manual_static.sign_convention
+                    <select id="staticCorrectionFieldManualStaticSignConvention"
+                      name="field_corrections.manual_static.sign_convention"
+                      data-testid="static-correction-field-manual-static-sign-convention">
+                      <option value="applied_shift_s" selected>applied_shift_s</option>
+                      <option value="delay_positive_ms">delay_positive_ms</option>
+                    </select>
+                  </label>
+                  <div class="static-correction-field-row">
+                    <label class="static-correction-field" for="staticCorrectionFieldManualSourceJobId">
+                      source_table_artifact.job_id
+                      <input id="staticCorrectionFieldManualSourceJobId"
+                        name="field_corrections.manual_static.source_table_artifact.job_id" type="text"
+                        autocomplete="off" data-testid="static-correction-field-manual-source-job-id" />
+                    </label>
+                    <label class="static-correction-field" for="staticCorrectionFieldManualSourceArtifactName">
+                      source_table_artifact.artifact_name
+                      <input id="staticCorrectionFieldManualSourceArtifactName"
+                        name="field_corrections.manual_static.source_table_artifact.artifact_name" type="text"
+                        autocomplete="off" data-testid="static-correction-field-manual-source-artifact-name" />
+                    </label>
+                  </div>
+                  <div class="static-correction-field-row">
+                    <label class="static-correction-field" for="staticCorrectionFieldManualReceiverJobId">
+                      receiver_table_artifact.job_id
+                      <input id="staticCorrectionFieldManualReceiverJobId"
+                        name="field_corrections.manual_static.receiver_table_artifact.job_id" type="text"
+                        autocomplete="off" data-testid="static-correction-field-manual-receiver-job-id" />
+                    </label>
+                    <label class="static-correction-field" for="staticCorrectionFieldManualReceiverArtifactName">
+                      receiver_table_artifact.artifact_name
+                      <input id="staticCorrectionFieldManualReceiverArtifactName"
+                        name="field_corrections.manual_static.receiver_table_artifact.artifact_name" type="text"
+                        autocomplete="off" data-testid="static-correction-field-manual-receiver-artifact-name" />
+                    </label>
+                  </div>
+                </div>
+                <label class="static-correction-check-field" for="staticCorrectionFieldApplyToTraceShift">
+                  <input id="staticCorrectionFieldApplyToTraceShift"
+                    name="field_corrections.composition.apply_to_trace_shift" type="checkbox" checked
+                    data-testid="static-correction-field-apply-to-trace-shift" />
+                  <span>composition.apply_to_trace_shift</span>
+                </label>
+              </div>
+            </details>
+            <details id="staticCorrectionExportSection" class="static-correction-section">
+              <summary id="staticCorrectionExportHeading">Exports</summary>
               <label class="static-correction-check-field" for="staticCorrectionExportEnabled">
                 <input id="staticCorrectionExportEnabled" name="export.enabled" type="checkbox" checked
                   data-testid="static-correction-export-enabled" />
@@ -2382,13 +2481,30 @@
                   data-testid="static-correction-export-canonical-table" />
                 <span>canonical_static_table</span>
               </label>
+              <label class="static-correction-check-field" for="staticCorrectionExportLsst">
+                <input id="staticCorrectionExportLsst" name="export.formats" type="checkbox" value="lsst"
+                  data-static-correction-export-format data-testid="static-correction-export-lsst" />
+                <span>lsst</span>
+              </label>
+              <label class="static-correction-check-field" for="staticCorrectionExportLsstPlus">
+                <input id="staticCorrectionExportLsstPlus" name="export.formats" type="checkbox"
+                  value="lsst_plus" checked data-static-correction-export-format
+                  data-testid="static-correction-export-lsst-plus" />
+                <span>lsst_plus</span>
+              </label>
               <label class="static-correction-check-field" for="staticCorrectionExportTimeTermSpreadsheet">
                 <input id="staticCorrectionExportTimeTermSpreadsheet" name="export.formats" type="checkbox"
-                  value="time_term_spreadsheet" checked data-static-correction-export-format
+                  value="time_term_spreadsheet" data-static-correction-export-format
                   data-testid="static-correction-export-time-term-spreadsheet" />
                 <span>time_term_spreadsheet</span>
               </label>
-            </section>
+              <label class="static-correction-check-field" for="staticCorrectionExportFirstBreakTime">
+                <input id="staticCorrectionExportFirstBreakTime" name="export.formats" type="checkbox"
+                  value="first_break_time" data-static-correction-export-format
+                  data-testid="static-correction-export-first-break-time" />
+                <span>first_break_time</span>
+              </label>
+            </details>
             <section class="static-correction-section" aria-labelledby="staticCorrectionRunHeading">
               <h3 id="staticCorrectionRunHeading">Run</h3>
               <div class="static-correction-actions">
