@@ -451,6 +451,7 @@ function qcBundlePayload(jobId: string) {
 			'static_components',
 		],
 		unavailable_views: ['gather_preview'],
+		unavailable_view_reasons: {},
 		views: {
 			first_break_fit: {
 				artifact: 'refraction_first_break_fit_qc.csv',
@@ -1728,6 +1729,39 @@ test('2D profile plot renders time terms', async ({ page }) => {
 			{ name: 'T2 (ms) source', pointCount: 2, values: [28, 35] },
 		],
 	});
+});
+
+test('2D profiles tab shows unavailable line-profile reason', async ({ page }) => {
+	await page.route('**/statics/refraction/qc', async (route) => {
+		const payload = qcBundlePayload('refraction-job-unavailable-profiles') as any;
+		payload.available_views = payload.available_views.filter((view: string) => view !== 'line_profiles');
+		payload.unavailable_views = Array.from(new Set([...payload.unavailable_views, 'profiles']));
+		payload.unavailable_view_reasons = {
+			profiles: 'no_projected_inline_coordinate_model',
+		};
+		payload.artifacts.refraction_line_profile_qc_json = 'refraction_line_profile_qc.json';
+		delete payload.views.line_profiles;
+		delete payload.downsampling.line_profiles;
+		await route.fulfill({
+			status: 200,
+			contentType: 'application/json',
+			body: JSON.stringify(payload),
+		});
+	});
+
+	await loadRefractionQcBundle(page, 'refraction-job-unavailable-profiles');
+	await page.getByTestId('refraction-qc-view-profiles-button').click();
+
+	await expect(page.getByTestId('refraction-qc-view-profiles')).toContainText(
+		'This view is unavailable from refraction_line_profile_qc_* artifacts',
+	);
+	await expect(page.getByTestId('refraction-qc-view-profiles')).toContainText(
+		'no_projected_inline_coordinate_model',
+	);
+	await expect(page.getByTestId('refraction-qc-view-profiles')).not.toContainText(
+		'No sampled line-profile records are present',
+	);
+	await expect(page.getByTestId('refraction-qc-profile-plot')).toHaveCount(0);
 });
 
 test('2D profile plot renders static components with units', async ({ page }) => {
