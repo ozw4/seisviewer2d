@@ -1093,6 +1093,15 @@
     }
   }
 
+  async function autoLoadRefractionQc(jobId) {
+    const safeJobId = trimValue(jobId);
+    const refractionQc = window.RefractionQc;
+    if (!safeJobId || !refractionQc || typeof refractionQc.loadJob !== 'function') {
+      return null;
+    }
+    return refractionQc.loadJob(safeJobId, { activateTab: true });
+  }
+
   async function pollStaticCorrectionStatus(jobId) {
     const response = await fetch(`/statics/job/${encodeURIComponent(jobId)}/status`);
     if (!response.ok) {
@@ -1125,6 +1134,10 @@
         const snapshot = await pollStaticCorrectionStatus(jobId);
         if (STATIC_READY_STATES.has(snapshot.state)) {
           await loadStaticArtifacts(jobId);
+          if (token !== staticPollToken) {
+            return null;
+          }
+          await autoLoadRefractionQc(jobId);
           return snapshot;
         }
         if (isStaticJobTerminal(snapshot.state)) {

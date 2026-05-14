@@ -120,6 +120,7 @@ function setCustomPreset() {
 beforeEach(() => {
   delete window.refractionStaticRunUI;
   delete window.refractionStaticRunState;
+  delete window.RefractionQc;
   renderStaticCorrectionForm();
 });
 
@@ -127,6 +128,7 @@ afterEach(() => {
   if (window.refractionStaticRunUI && window.refractionStaticRunUI.stopStaticCorrectionPolling) {
     window.refractionStaticRunUI.stopStaticCorrectionPolling();
   }
+  delete window.RefractionQc;
   vi.unstubAllGlobals();
 });
 
@@ -529,6 +531,22 @@ test('static correction submit polls job status and loads ready artifacts', asyn
     'source_static_table.csv'
   );
   expect(document.querySelector('a[href="/statics/job/static-job-a/download?name=source_static_table.csv"]')).not.toBeNull();
+});
+
+test('ready static correction job auto-loads refraction QC with the completed job id', async () => {
+  const ui = loadStaticCorrectionScript();
+  window.refractionStaticRunState.pollIntervalMs = 0;
+  const loadJob = vi.fn(async () => ({ job_id: 'static-job-a' }));
+  window.RefractionQc = { loadJob };
+  createStaticCorrectionFetchMock(
+    [{ state: 'done', message: '', progress: 1 }],
+    [{ state: 'ready', message: 'finished', progress: 1 }]
+  );
+
+  await ui.runStaticCorrection();
+  await flushAsyncWork();
+
+  expect(loadJob).toHaveBeenCalledWith('static-job-a', { activateTab: true });
 });
 
 test('static correction polling stops on failed state and shows an error', async () => {
