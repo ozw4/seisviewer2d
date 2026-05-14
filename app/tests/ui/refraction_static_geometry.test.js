@@ -1,6 +1,6 @@
 import { readFileSync } from 'node:fs';
 
-import { beforeEach, expect, test } from 'vitest';
+import { afterEach, beforeEach, expect, test, vi } from 'vitest';
 
 const SCRIPT = readFileSync(
   new URL('../../static/refraction_static_run.js', import.meta.url),
@@ -77,6 +77,50 @@ beforeEach(() => {
   delete window.refractionStaticRunState;
   renderStaticCorrectionForm();
 });
+
+afterEach(() => {
+  vi.unstubAllGlobals();
+});
+
+function jsonResponse(payload, status = 200) {
+  return {
+    ok: status >= 200 && status < 300,
+    status,
+    headers: {
+      get: () => 'application/json',
+    },
+    json: async () => payload,
+    text: async () => JSON.stringify(payload),
+  };
+}
+
+function enableLinkage() {
+  const checkbox = document.getElementById('staticCorrectionEnableLinkage');
+  checkbox.checked = true;
+  checkbox.dispatchEvent(new Event('change'));
+}
+
+function createStaticCorrectionFetchMock(statuses = [{ state: 'done', message: '', progress: 1 }]) {
+  const calls = [];
+  const statusQueue = [...statuses];
+  const fetchMock = vi.fn(async (url, options = {}) => {
+    const body = options.body ? JSON.parse(options.body) : null;
+    calls.push({ url: String(url), options, body });
+
+    if (url === '/statics/linkage/build') {
+      return jsonResponse({ job_id: 'linkage-job-a', state: 'queued' });
+    }
+    if (url === '/statics/job/linkage-job-a/status') {
+      return jsonResponse(statusQueue.shift() || statuses[statuses.length - 1]);
+    }
+    if (url === '/statics/refraction/apply') {
+      return jsonResponse({ job_id: 'static-job-a', state: 'queued' });
+    }
+    throw new Error(`unexpected fetch ${url}`);
+  });
+  vi.stubGlobal('fetch', fetchMock);
+  return { calls, fetchMock };
+}
 
 test('geometry defaults render from the SEG-Y preset', () => {
   loadStaticCorrectionScript();
@@ -218,4 +262,101 @@ test('checked auto-threshold linkage validates threshold only when enabled', () 
     'linkage.threshold_m'
   );
   expect(window.refractionStaticRunState.lastRequest).toBe(null);
+});
+
+test('unchecked linkage skips linkage build when running static correction', async () => {
+  const ui = loadStaticCorrectionScript();
+  const { calls } = createStaticCorrectionFetchMock();
+
+  await ui.runStaticCorrection();
+
+  expect(calls.map((call) => call.url)).toEqual(['/statics/refraction/apply']);
+  expect(calls[0].body.linkage).toEqual({ mode: 'none' });
+});
+
+test('checked linkage posts linkage build payload before static correction apply', async () => {
+  const ui = loadStaticCorrectionScript();
+  enableLinkage();
+  document.getElementById('staticCorrectionLinkageThresholdM').value = '12.5';
+  document.getElementById('staticCorrectionReceiverLocationIntervalM').value = '25';
+  document.getElementById('staticCorrectionPreferReceiverAnchor').checked = false;
+  const { calls } = createStaticCorrectionFetchMock();
+
+  await ui.runStaticCorrection();
+
+  expect(calls.map((call) => call.url)).toEqual([
+    '/statics/linkage/build',
+    '/statics/job/linkage-job-a/status',
+    '/statics/refraction/apply',
+  ]);
+  expect(calls[0].body).toEqual({
+    file_id: 'file-a',
+    key1_byte: 189,
+    key2_byte: 193,
+    geometry: {
+      source_x_byte: 73,
+      source_y_byte: 77,
+      receiver_x_byte: 81,
+      receiver_y_byte: 85,
+      coordinate_scalar_byte: 71,
+    },
+    linkage: {
+      mode: 'auto_threshold',
+      threshold_m: 12.5,
+      receiver_location_interval_m: 25,
+      prefer_receiver_anchor: false,
+    },
+  });
+});
+
+test('checked linkage polls linkage status until ready', async () => {
+  const ui = loadStaticCorrectionScript();
+  enableLinkage();
+  window.refractionStaticRunState.pollIntervalMs = 0;
+  const { calls } = createStaticCorrectionFetchMock([
+    { state: 'queued', message: '', progress: 0 },
+    { state: 'running', message: 'building', progress: 0.5 },
+    { state: 'done', message: '', progress: 1 },
+  ]);
+
+  await ui.runStaticCorrection();
+
+  expect(calls.filter((call) => call.url === '/statics/job/linkage-job-a/status')).toHaveLength(3);
+  expect(calls[calls.length - 1].url).toBe('/statics/refraction/apply');
+});
+
+test('failed linkage prevents refraction apply submit', async () => {
+  const ui = loadStaticCorrectionScript();
+  enableLinkage();
+  const { calls } = createStaticCorrectionFetchMock([
+    { state: 'error', message: 'linkage build failed', progress: 1 },
+  ]);
+
+  await ui.runStaticCorrection();
+
+  expect(calls.map((call) => call.url)).not.toContain('/statics/refraction/apply');
+  expect(document.getElementById('staticCorrectionError').hidden).toBe(false);
+  expect(document.getElementById('staticCorrectionError').textContent).toContain(
+    'linkage build failed'
+  );
+  expect(document.getElementById('staticCorrectionStatus').textContent).toContain(
+    'Static correction was not submitted'
+  );
+});
+
+test('successful linkage injects linkage job reference into refraction request', async () => {
+  const ui = loadStaticCorrectionScript();
+  enableLinkage();
+  const { calls } = createStaticCorrectionFetchMock();
+
+  await ui.runStaticCorrection();
+
+  const applyCall = calls.find((call) => call.url === '/statics/refraction/apply');
+  expect(applyCall.body.linkage).toEqual({
+    mode: 'required',
+    job_id: 'linkage-job-a',
+    artifact_name: 'geometry_linkage.npz',
+  });
+  expect(window.refractionStaticRunState.lastLinkageJobId).toBe('linkage-job-a');
+  expect(document.getElementById('staticCorrectionStatus').textContent).toContain('static-job-a');
 });

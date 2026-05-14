@@ -62,6 +62,9 @@
   ];
   const ARTIFACT_PICK_KINDS = new Set(['batch_predicted_npz', 'manual_npz_artifact']);
   const LINKAGE_THRESHOLD_MODES = new Set(['auto_threshold']);
+  const LINKAGE_ARTIFACT_NAME = 'geometry_linkage.npz';
+  const LINKAGE_READY_STATES = new Set(['done', 'ready']);
+  const LINKAGE_FAILED_STATES = new Set(['error', 'failed', 'cancelled', 'canceled', 'expired']);
 
   const state = {
     ready: false,
@@ -73,6 +76,11 @@
     loadingPickArtifacts: false,
     pickArtifacts: [],
     lastRequest: null,
+    lastLinkageBuildRequest: null,
+    lastLinkageJobId: '',
+    lastStaticCorrectionJobId: '',
+    phase: 'idle',
+    pollIntervalMs: 1000,
   };
 
   let dom = null;
@@ -435,6 +443,25 @@
     };
   }
 
+  function buildStaticLinkageBuildRequest(staticCorrectionPayload) {
+    if (!staticCorrectionPayload) {
+      throw validationError(['Static correction payload is required before building linkage.']);
+    }
+    return {
+      file_id: staticCorrectionPayload.file_id,
+      key1_byte: staticCorrectionPayload.key1_byte,
+      key2_byte: staticCorrectionPayload.key2_byte,
+      geometry: {
+        source_x_byte: staticCorrectionPayload.geometry.source_x_byte,
+        source_y_byte: staticCorrectionPayload.geometry.source_y_byte,
+        receiver_x_byte: staticCorrectionPayload.geometry.receiver_x_byte,
+        receiver_y_byte: staticCorrectionPayload.geometry.receiver_y_byte,
+        coordinate_scalar_byte: staticCorrectionPayload.geometry.coordinate_scalar_byte,
+      },
+      linkage: { ...staticCorrectionPayload.linkage },
+    };
+  }
+
   function sortedArtifactFiles(files) {
     return [...files].sort((left, right) => {
       const leftName = trimValue(left && left.name ? left.name : left);
@@ -444,7 +471,7 @@
     });
   }
 
-  async function readResponseError(response) {
+  async function readResponseError(response, operation = 'request') {
     let detail = '';
     try {
       const contentType = response.headers && response.headers.get
@@ -461,7 +488,7 @@
     } catch {
       detail = '';
     }
-    return `batch job files ${response.status}${detail ? `: ${detail}` : ''}`;
+    return `${operation} ${response.status}${detail ? `: ${detail}` : ''}`;
   }
 
   function renderPickArtifactList() {
@@ -546,7 +573,7 @@
     try {
       const response = await fetch(`/batch/job/${encodeURIComponent(jobId)}/files`);
       if (!response.ok) {
-        throw new Error(await readResponseError(response));
+        throw new Error(await readResponseError(response, 'batch job files'));
       }
       const payload = await response.json();
       const files = Array.isArray(payload.files) ? payload.files : [];
@@ -564,24 +591,139 @@
     }
   }
 
-  function handleRun(event) {
-    if (event) {
-      event.preventDefault();
+  async function postJson(url, payload, operation) {
+    const response = await fetch(url, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(payload),
+    });
+    if (!response.ok) {
+      throw new Error(await readResponseError(response, operation));
     }
+    return response.json();
+  }
+
+  function delay(ms) {
+    return new Promise((resolve) => window.setTimeout(resolve, ms));
+  }
+
+  async function pollStaticJobUntilReady(jobId) {
+    const encodedJobId = encodeURIComponent(jobId);
+    while (true) {
+      const response = await fetch(`/statics/job/${encodedJobId}/status`);
+      if (!response.ok) {
+        throw new Error(await readResponseError(response, 'static job status'));
+      }
+      const payload = await response.json();
+      const stateValue = trimValue(payload && payload.state);
+      const message = trimValue(payload && payload.message);
+      if (LINKAGE_READY_STATES.has(stateValue)) {
+        return payload;
+      }
+      if (LINKAGE_FAILED_STATES.has(stateValue)) {
+        const detail = message ? `: ${message}` : '';
+        throw new Error(`Linkage job ${jobId} ${stateValue}${detail}`);
+      }
+      state.message = `Linkage job ${jobId} is ${stateValue || 'pending'}; waiting for geometry linkage.`;
+      render();
+      await delay(Math.max(0, Number(state.pollIntervalMs) || 0));
+    }
+  }
+
+  async function submitStaticCorrection(payload) {
+    state.phase = 'submitting_static_correction';
+    state.message = state.lastLinkageJobId
+      ? `Linkage job ${state.lastLinkageJobId} is ready. Submitting static correction...`
+      : 'Submitting static correction...';
+    render();
+    const responsePayload = await postJson(
+      '/statics/refraction/apply',
+      payload,
+      'refraction static apply'
+    );
+    state.lastStaticCorrectionJobId = trimValue(responsePayload && responsePayload.job_id);
+    state.phase = 'idle';
+    state.message = state.lastStaticCorrectionJobId
+      ? `Static correction job ${state.lastStaticCorrectionJobId} submitted.`
+      : 'Static correction job submitted.';
+    render();
+    return responsePayload;
+  }
+
+  async function runStaticCorrection() {
     const { payload, errors } = buildStaticCorrectionRequest();
     state.lastRequest = payload;
+    state.lastLinkageBuildRequest = null;
+    state.lastLinkageJobId = '';
+    state.lastStaticCorrectionJobId = '';
     if (errors.length) {
       state.ready = false;
       state.error = errors.join(' ');
       state.message = 'Fix input errors before running refraction statics.';
+      state.phase = 'idle';
       render();
       return;
     }
 
     state.ready = true;
     state.error = '';
-    state.message = 'Inputs are valid. Static correction job submission is not enabled in this milestone.';
+    state.phase = 'submitting_static_correction';
     render();
+
+    try {
+      let applyPayload = payload;
+      if (dom.enableLinkage.checked) {
+        const linkageBuildPayload = buildStaticLinkageBuildRequest(payload);
+        state.lastLinkageBuildRequest = linkageBuildPayload;
+        state.phase = 'building_linkage';
+        state.message = 'Building endpoint geometry linkage...';
+        render();
+
+        const linkageResponse = await postJson(
+          '/statics/linkage/build',
+          linkageBuildPayload,
+          'geometry linkage build'
+        );
+        const linkageJobId = trimValue(linkageResponse && linkageResponse.job_id);
+        if (!linkageJobId) {
+          throw new Error('Geometry linkage build did not return a job_id.');
+        }
+        state.lastLinkageJobId = linkageJobId;
+        state.message = `Linkage job ${linkageJobId} created. Waiting for geometry linkage...`;
+        render();
+
+        await pollStaticJobUntilReady(linkageJobId);
+        state.phase = 'linkage_ready';
+        applyPayload = {
+          ...payload,
+          linkage: {
+            mode: 'required',
+            job_id: linkageJobId,
+            artifact_name: LINKAGE_ARTIFACT_NAME,
+          },
+        };
+        state.lastRequest = applyPayload;
+      }
+
+      await submitStaticCorrection(applyPayload);
+    } catch (error) {
+      state.ready = false;
+      state.phase = state.phase === 'building_linkage' ? 'linkage_failed' : state.phase;
+      state.error = error instanceof Error ? error.message : String(error);
+      state.message = state.phase === 'linkage_failed'
+        ? 'Geometry linkage failed. Static correction was not submitted.'
+        : 'Static correction submission failed.';
+      render();
+    }
+  }
+
+  function handleRun(event) {
+    if (event) {
+      event.preventDefault();
+    }
+    runStaticCorrection();
   }
 
   function init() {
@@ -716,12 +858,15 @@
     buildStaticCorrectionGeometryRequest,
     buildStaticCorrectionLinkageRequest,
     buildStaticCorrectionRequest,
+    buildStaticLinkageBuildRequest,
     collectGeometryInputs,
     collectInputs,
     collectLinkageInputs,
     isLikelyPickArtifact,
     loadPickArtifacts,
+    pollStaticJobUntilReady,
     render,
+    runStaticCorrection,
     updateStaticCorrectionLinkageOptions,
     validateStaticCorrectionGeometryRequest,
     validateStaticCorrectionLinkageRequest,
