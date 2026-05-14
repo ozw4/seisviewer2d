@@ -1,9 +1,10 @@
 import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 
 import { afterEach, beforeEach, expect, test, vi } from 'vitest';
 
 const SCRIPT = readFileSync(
-  new URL('../../static/refraction_static_run.js', import.meta.url),
+  resolve(process.cwd(), 'static/refraction_static_run.js'),
   'utf8'
 );
 
@@ -53,8 +54,40 @@ function renderStaticCorrectionForm() {
         <input id="staticCorrectionReceiverLocationIntervalM" value="" />
         <input id="staticCorrectionPreferReceiverAnchor" type="checkbox" checked />
       </div>
+      <select id="staticCorrectionModelKind">
+        <option value="one_layer_t1lsst" selected>one-layer T1LSST</option>
+      </select>
+      <input id="staticCorrectionWeatheringVelocityMS" value="800" />
+      <select id="staticCorrectionBedrockVelocityMode">
+        <option value="solve_global" selected>solve_global</option>
+        <option value="fixed_global">fixed_global</option>
+      </select>
+      <input id="staticCorrectionInitialBedrockVelocityMS" value="2400" />
+      <input id="staticCorrectionFixedBedrockVelocityMS" value="2400" />
+      <input id="staticCorrectionMinOffsetM" value="300" />
+      <input id="staticCorrectionMaxOffsetM" value="4000" />
+      <select id="staticCorrectionConversionMode">
+        <option value="t1lsst_1layer" selected>t1lsst_1layer</option>
+      </select>
+      <input id="staticCorrectionRegisterCorrectedFile" type="checkbox" />
+      <input id="staticCorrectionExportEnabled" type="checkbox" checked />
+      <input
+        id="staticCorrectionExportCanonicalTable"
+        type="checkbox"
+        value="canonical_static_table"
+        checked
+        data-static-correction-export-format
+      />
+      <input
+        id="staticCorrectionExportTimeTermSpreadsheet"
+        type="checkbox"
+        value="time_term_spreadsheet"
+        checked
+        data-static-correction-export-format
+      />
       <button id="staticCorrectionRunButton" type="button"></button>
       <button id="staticCorrectionCancelButton" type="button" hidden></button>
+      <pre id="staticCorrectionRequestPreview" hidden></pre>
     </form>
     <div id="staticCorrectionStatus"></div>
     <div id="staticCorrectionJobPanel" hidden>
@@ -348,11 +381,19 @@ test('checked linkage posts linkage build payload before static correction apply
     key1_byte: 189,
     key2_byte: 193,
     geometry: {
+      source_id_byte: 9,
+      receiver_id_byte: 13,
       source_x_byte: 73,
       source_y_byte: 77,
       receiver_x_byte: 81,
       receiver_y_byte: 85,
+      source_elevation_byte: 45,
+      receiver_elevation_byte: 41,
       coordinate_scalar_byte: 71,
+      elevation_scalar_byte: 69,
+      source_depth_byte: null,
+      coordinate_unit: 'm',
+      elevation_unit: 'm',
     },
     linkage: {
       mode: 'auto_threshold',
@@ -403,7 +444,10 @@ test('failed linkage prevents refraction apply submit', async () => {
 test('successful linkage injects linkage job reference into refraction request', async () => {
   const ui = loadStaticCorrectionScript();
   enableLinkage();
-  const { calls } = createStaticCorrectionFetchMock();
+  window.refractionStaticRunState.pollIntervalMs = 0;
+  const { calls } = createStaticCorrectionFetchMock([
+    { state: 'completed', message: '', progress: 1 },
+  ]);
 
   await ui.runStaticCorrection();
   await flushAsyncWork();

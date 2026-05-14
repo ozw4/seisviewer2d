@@ -743,13 +743,7 @@
       file_id: staticCorrectionPayload.file_id,
       key1_byte: staticCorrectionPayload.key1_byte,
       key2_byte: staticCorrectionPayload.key2_byte,
-      geometry: {
-        source_x_byte: staticCorrectionPayload.geometry.source_x_byte,
-        source_y_byte: staticCorrectionPayload.geometry.source_y_byte,
-        receiver_x_byte: staticCorrectionPayload.geometry.receiver_x_byte,
-        receiver_y_byte: staticCorrectionPayload.geometry.receiver_y_byte,
-        coordinate_scalar_byte: staticCorrectionPayload.geometry.coordinate_scalar_byte,
-      },
+      geometry: { ...staticCorrectionPayload.geometry },
       linkage: { ...staticCorrectionPayload.linkage },
     };
   }
@@ -1155,7 +1149,7 @@
         throw new Error(await readResponseError(response, 'static job status'));
       }
       const payload = await response.json();
-      const stateValue = trimValue(payload && payload.state);
+      const stateValue = normalizeStaticJobState(payload && payload.state);
       const message = trimValue(payload && payload.message);
       if (LINKAGE_READY_STATES.has(stateValue)) {
         return payload;

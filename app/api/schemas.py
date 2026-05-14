@@ -467,23 +467,43 @@ class StaticLinkageGeometryRequest(BaseModel):
 
     model_config = ConfigDict(extra='forbid')
 
+    source_id_byte: int = 9
+    receiver_id_byte: int = 13
     source_x_byte: int = 73
     source_y_byte: int = 77
     receiver_x_byte: int = 81
     receiver_y_byte: int = 85
+    source_elevation_byte: int = 45
+    receiver_elevation_byte: int = 41
+    source_depth_byte: int | None = None
     coordinate_scalar_byte: int = 71
+    elevation_scalar_byte: int = 69
+    coordinate_unit: Literal['m', 'ft'] = 'm'
+    elevation_unit: Literal['m', 'ft'] = 'm'
 
     @field_validator(
+        'source_id_byte',
+        'receiver_id_byte',
         'source_x_byte',
         'source_y_byte',
         'receiver_x_byte',
         'receiver_y_byte',
+        'source_elevation_byte',
+        'receiver_elevation_byte',
         'coordinate_scalar_byte',
+        'elevation_scalar_byte',
         mode='before',
     )
     @classmethod
     def _check_header_byte(cls, value: object, info: Any) -> int:
         return require_trace_header_byte(value, info.field_name)
+
+    @field_validator('source_depth_byte', mode='before')
+    @classmethod
+    def _check_optional_header_byte(cls, value: object) -> int | None:
+        if value is None:
+            return None
+        return require_trace_header_byte(value, 'source_depth_byte')
 
     @model_validator(mode='after')
     def _check_unique_headers(self) -> 'StaticLinkageGeometryRequest':
@@ -496,6 +516,8 @@ class StaticLinkageGeometryRequest(BaseModel):
         )
         if len(set(header_bytes)) != len(header_bytes):
             raise ValueError('geometry header bytes must be unique')
+        if self.source_id_byte == self.receiver_id_byte:
+            raise ValueError('source_id_byte and receiver_id_byte must differ')
         return self
 
 

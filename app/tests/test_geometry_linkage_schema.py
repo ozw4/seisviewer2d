@@ -42,6 +42,36 @@ def test_static_linkage_request_accepts_auto_threshold_defaults() -> None:
     assert req.linkage.prefer_receiver_anchor is True
 
 
+def test_static_linkage_request_accepts_static_geometry_header_fields() -> None:
+    payload = _payload()
+    payload['geometry'] = {
+        'source_id_byte': 9,
+        'receiver_id_byte': 13,
+        'source_x_byte': 73,
+        'source_y_byte': 77,
+        'receiver_x_byte': 81,
+        'receiver_y_byte': 85,
+        'source_elevation_byte': 45,
+        'receiver_elevation_byte': 41,
+        'coordinate_scalar_byte': 71,
+        'elevation_scalar_byte': 69,
+        'source_depth_byte': None,
+        'coordinate_unit': 'm',
+        'elevation_unit': 'm',
+    }
+
+    req = _validate(payload)
+
+    assert req.geometry.source_id_byte == 9
+    assert req.geometry.receiver_id_byte == 13
+    assert req.geometry.source_elevation_byte == 45
+    assert req.geometry.receiver_elevation_byte == 41
+    assert req.geometry.elevation_scalar_byte == 69
+    assert req.geometry.source_depth_byte is None
+    assert req.geometry.coordinate_unit == 'm'
+    assert req.geometry.elevation_unit == 'm'
+
+
 def test_static_linkage_request_accepts_none_mode() -> None:
     payload = _payload()
     payload['linkage'] = {
