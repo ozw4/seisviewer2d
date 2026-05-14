@@ -529,18 +529,21 @@
       errors.push('model.bedrock_velocity_mode must be solve_global or fixed_global.');
     }
 
-    const initialBedrockVelocity = parsePositiveFloat(
-      values.initial_bedrock_velocity_m_s,
-      'model.initial_bedrock_velocity_m_s',
-      errors,
-      { optional: bedrockVelocityMode !== 'solve_global' }
-    );
-    const fixedBedrockVelocity = parsePositiveFloat(
-      values.bedrock_velocity_m_s,
-      'model.bedrock_velocity_m_s',
-      errors,
-      { optional: bedrockVelocityMode !== 'fixed_global' }
-    );
+    let initialBedrockVelocity = null;
+    let fixedBedrockVelocity = null;
+    if (bedrockVelocityMode === 'solve_global') {
+      initialBedrockVelocity = parsePositiveFloat(
+        values.initial_bedrock_velocity_m_s,
+        'model.initial_bedrock_velocity_m_s',
+        errors
+      );
+    } else if (bedrockVelocityMode === 'fixed_global') {
+      fixedBedrockVelocity = parsePositiveFloat(
+        values.bedrock_velocity_m_s,
+        'model.bedrock_velocity_m_s',
+        errors
+      );
+    }
     const minOffsetM = parseNonNegativeFloat(values.min_offset_m, 'moveout.min_offset_m', errors);
     const maxOffsetM = parsePositiveFloat(values.max_offset_m, 'moveout.max_offset_m', errors);
     if (minOffsetM !== null && maxOffsetM !== null && minOffsetM >= maxOffsetM) {
@@ -1255,12 +1258,13 @@
 
       await submitStaticCorrection(applyPayload);
     } catch (error) {
+      const failedDuringLinkage = state.phase === 'building_linkage';
       state.ready = false;
-      state.phase = state.phase === 'building_linkage' ? 'linkage_failed' : state.phase;
       state.error = error instanceof Error ? error.message : String(error);
-      state.message = state.phase === 'linkage_failed'
+      state.message = failedDuringLinkage
         ? 'Geometry linkage failed. Static correction was not submitted.'
         : 'Static correction submission failed.';
+      state.phase = 'idle';
       render();
     }
   }

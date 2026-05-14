@@ -345,6 +345,23 @@ test('checked auto-threshold linkage validates threshold only when enabled', () 
   expect(window.refractionStaticRunState.lastRequest).toBe(null);
 });
 
+test('one-layer validation ignores inactive bedrock velocity inputs', () => {
+  const ui = loadStaticCorrectionScript();
+  const mode = document.getElementById('staticCorrectionBedrockVelocityMode');
+  const initialVelocity = document.getElementById('staticCorrectionInitialBedrockVelocityMS');
+  const fixedVelocity = document.getElementById('staticCorrectionFixedBedrockVelocityMS');
+
+  fixedVelocity.value = 'not-a-number';
+  expect(ui.buildStaticCorrectionRequest().errors).toEqual([]);
+
+  mode.value = 'fixed_global';
+  mode.dispatchEvent(new Event('change'));
+  initialVelocity.value = 'not-a-number';
+  fixedVelocity.value = '2400';
+
+  expect(ui.buildStaticCorrectionRequest().errors).toEqual([]);
+});
+
 test('unchecked linkage skips linkage build when running static correction', async () => {
   const ui = loadStaticCorrectionScript();
   const { calls } = createStaticCorrectionFetchMock();
@@ -358,6 +375,29 @@ test('unchecked linkage skips linkage build when running static correction', asy
     '/statics/job/static-job-a/files',
   ]);
   expect(calls[0].body.linkage).toEqual({ mode: 'none' });
+});
+
+test('static correction submit failure returns to a retryable idle state', async () => {
+  const ui = loadStaticCorrectionScript();
+  const calls = [];
+  vi.stubGlobal('fetch', vi.fn(async (url, options = {}) => {
+    calls.push({ url: String(url), options });
+    if (url === '/statics/refraction/apply') {
+      return jsonResponse({ detail: 'apply failed' }, 400);
+    }
+    throw new Error(`unexpected fetch ${url}`);
+  }));
+
+  await ui.runStaticCorrection();
+  await flushAsyncWork();
+
+  expect(calls.map((call) => call.url)).toEqual(['/statics/refraction/apply']);
+  expect(window.refractionStaticRunState.phase).toBe('idle');
+  expect(document.getElementById('staticCorrectionRunButton').disabled).toBe(false);
+  expect(document.getElementById('staticCorrectionError').textContent).toContain('apply failed');
+  expect(document.getElementById('staticCorrectionStatus').textContent).toContain(
+    'Static correction submission failed'
+  );
 });
 
 test('checked linkage posts linkage build payload before static correction apply', async () => {
@@ -439,6 +479,8 @@ test('failed linkage prevents refraction apply submit', async () => {
   expect(document.getElementById('staticCorrectionStatus').textContent).toContain(
     'Static correction was not submitted'
   );
+  expect(window.refractionStaticRunState.phase).toBe('idle');
+  expect(document.getElementById('staticCorrectionRunButton').disabled).toBe(false);
 });
 
 test('successful linkage injects linkage job reference into refraction request', async () => {
