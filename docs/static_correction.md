@@ -3,6 +3,8 @@
 `seisviewer2d` exposes backend-only static-correction workflows through the
 `/statics/...` API family. The viewer can open corrected TraceStores that these
 jobs register, but the static-correction APIs are primarily developer-facing.
+The browser workflow for the `Static Correction` tab is documented in
+[statics/static_correction_ui_workflow.md](statics/static_correction_ui_workflow.md).
 
 ## Workflows
 
@@ -27,6 +29,9 @@ jobs register, but the static-correction APIs are primarily developer-facing.
     documented in [refraction_static.md](refraction_static.md).
   - The refraction QC artifact and viewer workflow is documented in
     [statics/refraction_qc_viewer_workflow.md](statics/refraction_qc_viewer_workflow.md).
+  - The UI workflow for running refraction statics from an existing `file_id`
+    and first-break pick artifact is documented in
+    [statics/static_correction_ui_workflow.md](statics/static_correction_ui_workflow.md).
 
 The detailed time-term inversion API, sign convention, apply modes, and artifact
 contract are documented in [time_term_static_correction.md](time_term_static_correction.md).

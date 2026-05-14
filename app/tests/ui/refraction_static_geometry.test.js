@@ -24,6 +24,7 @@ function renderStaticCorrectionForm() {
       <button id="staticCorrectionDeletePresetButton" type="button"></button>
       <select id="staticCorrectionPickKind">
         <option value="batch_predicted_npz" selected>batch_predicted_npz</option>
+        <option value="manual_npz_artifact">manual_npz_artifact</option>
       </select>
       <input id="staticCorrectionPickJobId" value="pick-job-a" />
       <input id="staticCorrectionPickArtifactName" value="predicted_picks_time_s.npz" />
@@ -303,6 +304,94 @@ function createStaticCorrectionFetchMock(
   vi.stubGlobal('fetch', fetchMock);
   return { calls, fetchMock };
 }
+
+test('load pick artifacts calls the batch files endpoint and sorts known pick artifacts first', async () => {
+  const ui = loadStaticCorrectionScript();
+  const calls = [];
+  vi.stubGlobal('fetch', vi.fn(async (url) => {
+    calls.push(String(url));
+    return jsonResponse({
+      files: [
+        { name: 'z_notes.txt', size_bytes: 10 },
+        { name: 'manual_picks_time_qc.npz', size_bytes: 20 },
+        { name: 'predicted_picks_time_s.npz', size_bytes: 30 },
+      ],
+    });
+  }));
+
+  await ui.loadPickArtifacts();
+  await flushAsyncWork();
+
+  expect(calls).toEqual(['/batch/job/pick-job-a/files']);
+  const buttons = [...document.querySelectorAll('#staticCorrectionPickArtifactList button')];
+  expect(buttons.map((button) => button.textContent)).toEqual([
+    'predicted_picks_time_s.npz',
+    'manual_picks_time_qc.npz',
+    'z_notes.txt',
+  ]);
+  expect(buttons[0].classList.contains('is-likely')).toBe(true);
+  expect(document.getElementById('staticCorrectionPickArtifactList').textContent).toContain(
+    'first-break candidate'
+  );
+});
+
+test('selecting a loaded pick artifact fills the artifact name input', async () => {
+  const ui = loadStaticCorrectionScript();
+  vi.stubGlobal('fetch', vi.fn(async () => jsonResponse({
+    files: [{ name: 'manual_picks_time_review.npz', size_bytes: 12 }],
+  })));
+
+  await ui.loadPickArtifacts();
+  await flushAsyncWork();
+  document.querySelector('#staticCorrectionPickArtifactList button').click();
+
+  expect(document.getElementById('staticCorrectionPickArtifactName').value).toBe(
+    'manual_picks_time_review.npz'
+  );
+  expect(document.getElementById('staticCorrectionStatus').textContent).toContain(
+    'Selected pick artifact manual_picks_time_review.npz'
+  );
+});
+
+test('pick artifact listing 404 shows a warning and leaves manual input usable', async () => {
+  const ui = loadStaticCorrectionScript();
+  const artifactInput = document.getElementById('staticCorrectionPickArtifactName');
+  artifactInput.value = 'typed_picks.npz';
+  vi.stubGlobal('fetch', vi.fn(async () => jsonResponse({ detail: 'Job ID not found' }, 404)));
+
+  await ui.loadPickArtifacts();
+  await flushAsyncWork();
+
+  expect(document.getElementById('staticCorrectionError').hidden).toBe(false);
+  expect(document.getElementById('staticCorrectionError').textContent).toContain(
+    'Job ID not found'
+  );
+  expect(document.getElementById('staticCorrectionStatus').textContent).toBe(
+    'Unable to load pick artifacts.'
+  );
+  expect(artifactInput.value).toBe('typed_picks.npz');
+});
+
+test('unsupported pick artifact listing warns without fetching', async () => {
+  const ui = loadStaticCorrectionScript();
+  document.getElementById('staticCorrectionPickKind').value = 'manual_npz_artifact';
+  const artifactInput = document.getElementById('staticCorrectionPickArtifactName');
+  artifactInput.value = 'manual_entry.npz';
+  const fetchMock = vi.fn();
+  vi.stubGlobal('fetch', fetchMock);
+
+  await ui.loadPickArtifacts();
+  await flushAsyncWork();
+
+  expect(fetchMock).not.toHaveBeenCalled();
+  expect(document.getElementById('staticCorrectionError').textContent).toContain(
+    'Artifact listing is not available for pick_source.kind manual_npz_artifact'
+  );
+  expect(document.getElementById('staticCorrectionStatus').textContent).toBe(
+    'Type the pick artifact name manually.'
+  );
+  expect(artifactInput.value).toBe('manual_entry.npz');
+});
 
 test('geometry defaults render from the SEG-Y preset', () => {
   loadStaticCorrectionScript();

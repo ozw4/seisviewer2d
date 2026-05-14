@@ -141,6 +141,7 @@ residual statics, geometry linkage, and time-term statics.
 See:
 
 - `static_correction.md`
+- `statics/static_correction_ui_workflow.md`
 - `refraction_static.md`
 - [statics/refraction_field_corrections.md](statics/refraction_field_corrections.md)
 - `statics/refraction_multilayer_time_term.md`
