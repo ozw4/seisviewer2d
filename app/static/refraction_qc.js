@@ -87,7 +87,6 @@
 
   let dom = null;
   let requestSerial = 0;
-  let gatherRequestSerial = 0;
 
   const LAYER_LABELS = {
     v1_direct_arrival: 'V1 direct',
@@ -2688,7 +2687,9 @@
   }
 
   function gatherOverlayTrace(preview, xValues, options) {
-    const times = Array.isArray(preview[options.field]) ? preview[options.field] : [];
+    const times = Array.isArray(options.times)
+      ? options.times
+      : (Array.isArray(preview[options.field]) ? preview[options.field] : []);
     const points = finitePairPoints(xValues, times);
     if (!points.x.length) return null;
     const residuals = Array.isArray(preview.residual_s) ? preview.residual_s : [];
@@ -2718,15 +2719,34 @@
     };
   }
 
+  function shiftedGatherTimes(preview, field) {
+    const times = Array.isArray(preview?.[field]) ? preview[field] : [];
+    const shifts = Array.isArray(preview?.final_trace_shift_s) ? preview.final_trace_shift_s : [];
+    const out = [];
+    for (let index = 0; index < times.length; index += 1) {
+      const time = Number(times[index]);
+      const shift = Number(shifts[index]);
+      out.push(Number.isFinite(time) && Number.isFinite(shift) ? time + shift : null);
+    }
+    return out;
+  }
+
+  function correctedPreviewAvailable(preview) {
+    const ref = preview?.corrected_window_ref || {};
+    return String(ref.status || '').trim() === 'ok'
+      && Array.isArray(preview?.corrected_samples)
+      && preview.corrected_samples.length > 0;
+  }
+
   function correctedStatusMessage(preview) {
     const ref = preview?.corrected_window_ref || {};
     const status = String(ref.status || '').trim();
     if (!status) return '';
-    if (status === 'ok') {
-      return `Corrected data source: ${textOrDash(preview.corrected_samples_source)}.`;
+    if (status === 'ok' && correctedPreviewAvailable(preview)) {
+      return `Corrected data source: ${textOrDash(ref.source || preview.corrected_samples_source)}.`;
     }
     const message = String(ref.message || '').trim();
-    return `Missing corrected data: status ${status}. ${message || `Preview samples source: ${textOrDash(preview.corrected_samples_source)}.`}`;
+    return `Missing corrected data: status ${status}. ${message || 'Corrected window samples are not available.'}`;
   }
 
   function renderGatherHeatmap(content, preview, options) {
@@ -2755,14 +2775,11 @@
         hovertemplate: `${options.title}<br>${xAxis.label}: %{x}<br>Time: %{y:.4f} s<br>Amplitude: %{z:.4g}<extra></extra>`,
       },
     ];
-    const observedField = options.corrected
-      ? 'corrected_observed_pick_time_s'
-      : 'observed_pick_time_s';
-    const modeledField = options.corrected
-      ? 'corrected_modeled_pick_time_s'
-      : 'modeled_pick_time_s';
+    const observedField = 'observed_pick_time_s';
+    const modeledField = 'modeled_pick_time_s';
     const observedTrace = gatherOverlayTrace(preview, xAxis.x, {
       field: observedField,
+      times: options.corrected ? shiftedGatherTimes(preview, observedField) : undefined,
       name: options.corrected ? 'Corrected observed first break' : 'Observed first break',
       color: '#2563eb',
       symbol: 'circle',
@@ -2770,6 +2787,7 @@
     });
     const modeledTrace = gatherOverlayTrace(preview, xAxis.x, {
       field: modeledField,
+      times: options.corrected ? shiftedGatherTimes(preview, modeledField) : undefined,
       name: options.corrected ? 'Corrected modeled first break' : 'Modeled first break',
       color: '#f97316',
       symbol: 'x',
@@ -2872,6 +2890,7 @@
 
   function renderGatherPreviewPayload(content, preview) {
     const statusMessage = correctedStatusMessage(preview);
+    const correctedAvailable = correctedPreviewAvailable(preview);
     content.appendChild(createKv([
       ['Job ID', preview.job_id],
       ['Gather', GATHER_AXIS_LABELS[preview.gather?.axis] || preview.gather?.axis],
@@ -2880,7 +2899,7 @@
       ['Samples', `${preview.window?.returned_sample_count || 0} of ${preview.window?.requested_sample_count || 0}`],
       ['dt', `${formatNumber(Number(preview.dt_s), 6)} s`],
       ['Display', GATHER_DISPLAY_LABELS[state.gatherDisplayMode] || state.gatherDisplayMode],
-      ['Corrected source', preview.corrected_samples_source],
+      ['Corrected source', preview.corrected_window_ref?.source || ''],
     ]));
 
     const signNote = document.createElement('p');
@@ -2922,17 +2941,42 @@
         corrected: false,
       });
     }
-    if (state.gatherDisplayMode === 'corrected' || state.gatherDisplayMode === 'side_by_side') {
+    if (
+      correctedAvailable
+      && (state.gatherDisplayMode === 'corrected' || state.gatherDisplayMode === 'side_by_side')
+    ) {
       renderGatherHeatmap(plotGrid, preview, {
         testId: 'refraction-qc-gather-corrected-plot',
         title: 'Corrected gather',
         samples: preview.corrected_samples,
         corrected: true,
       });
+    } else if (state.gatherDisplayMode === 'corrected' || state.gatherDisplayMode === 'side_by_side') {
+      const missing = document.createElement('p');
+      missing.className = 'refraction-qc-placeholder';
+      missing.textContent = statusMessage || 'Corrected gather data is unavailable for this preview.';
+      plotGrid.appendChild(missing);
     }
   }
 
   function renderGatherPreview(content, bundle) {
+    const viewDef = VIEW_DEFS.find((view) => view.id === 'gather_preview');
+    if (!bundle || (viewDef && isUnavailable(bundle, viewDef))) {
+      const message = document.createElement('p');
+      message.className = 'refraction-qc-placeholder';
+      message.textContent = bundle
+        ? 'Gather preview is unavailable from the current compact QC bundle. The documented API contract is POST /statics/refraction/qc; specialized gather-preview routes are not part of this workflow.'
+        : 'Load a QC bundle before requesting a gather preview.';
+      content.appendChild(message);
+      content.appendChild(createKv([
+        ['Selected endpoint kind', state.selectedEndpointKind],
+        ['Endpoint', state.selectedEndpoint],
+        ['Cell', selectedCellLabel(state.selectedCell)],
+        ['Layer', state.selectedLayerKind],
+      ]));
+      return;
+    }
+
     content.appendChild(createGatherPreviewControls());
     if (state.gatherLoading) {
       const message = document.createElement('p');
@@ -3105,35 +3149,11 @@
       render();
       return;
     }
-
-    const serial = ++gatherRequestSerial;
-    state.gatherLoading = true;
-    state.gatherError = null;
+    void payload;
+    state.gatherPreview = null;
+    state.gatherLoading = false;
+    state.gatherError = 'Gather preview is unavailable from the current compact QC bundle.';
     render();
-
-    try {
-      const response = await fetch('/statics/refraction/qc/gather-preview', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload),
-      });
-      if (!response.ok) {
-        throw new Error(await readError(response, 'Gather preview request'));
-      }
-      const preview = await response.json();
-      if (serial !== gatherRequestSerial) return;
-      state.gatherPreview = preview;
-      state.gatherError = null;
-    } catch (error) {
-      if (serial !== gatherRequestSerial) return;
-      state.gatherPreview = null;
-      state.gatherError = error instanceof Error ? error.message : String(error);
-    } finally {
-      if (serial === gatherRequestSerial) {
-        state.gatherLoading = false;
-        render();
-      }
-    }
   }
 
   async function loadBundle() {
