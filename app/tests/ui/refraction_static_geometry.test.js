@@ -15,6 +15,13 @@ function renderStaticCorrectionForm() {
       <input id="staticCorrectionFileId" value="file-a" />
       <input id="staticCorrectionKey1Byte" value="189" />
       <input id="staticCorrectionKey2Byte" value="193" />
+      <select id="staticCorrectionPresetSelect">
+        <option value="">No saved presets</option>
+      </select>
+      <input id="staticCorrectionPresetName" value="" />
+      <button id="staticCorrectionSavePresetButton" type="button"></button>
+      <button id="staticCorrectionLoadPresetButton" type="button"></button>
+      <button id="staticCorrectionDeletePresetButton" type="button"></button>
       <select id="staticCorrectionPickKind">
         <option value="batch_predicted_npz" selected>batch_predicted_npz</option>
       </select>
@@ -164,6 +171,7 @@ function renderStaticCorrectionForm() {
       />
       <button id="staticCorrectionRunButton" type="button"></button>
       <button id="staticCorrectionCancelButton" type="button" hidden></button>
+      <div id="staticCorrectionValidationSummary" hidden></div>
       <pre id="staticCorrectionRequestPreview" hidden></pre>
     </form>
     <div id="staticCorrectionStatus"></div>
@@ -198,6 +206,7 @@ beforeEach(() => {
   delete window.refractionStaticRunUI;
   delete window.refractionStaticRunState;
   delete window.RefractionQc;
+  window.localStorage.clear();
   renderStaticCorrectionForm();
 });
 
@@ -207,6 +216,7 @@ afterEach(() => {
   }
   delete window.RefractionQc;
   vi.unstubAllGlobals();
+  window.localStorage.clear();
 });
 
 function jsonResponse(payload, status = 200) {
@@ -359,6 +369,94 @@ test('invalid byte values block submit and show an error', () => {
     'geometry.source_id_byte'
   );
   expect(window.refractionStaticRunState.lastRequest).toBe(null);
+});
+
+test('request preview renders valid JSON and updates when fields change', () => {
+  loadStaticCorrectionScript();
+
+  let preview = JSON.parse(document.getElementById('staticCorrectionRequestPreview').textContent);
+  expect(preview.file_id).toBe('file-a');
+  expect(preview.model.first_layer.weathering_velocity_m_s).toBe(800);
+
+  const velocity = document.getElementById('staticCorrectionWeatheringVelocityMS');
+  velocity.value = '925';
+  velocity.dispatchEvent(new Event('input', { bubbles: true }));
+
+  preview = JSON.parse(document.getElementById('staticCorrectionRequestPreview').textContent);
+  expect(preview.model.first_layer.weathering_velocity_m_s).toBe(925);
+});
+
+test('validation summary lists invalid fields before submit', () => {
+  loadStaticCorrectionScript();
+  document.getElementById('staticCorrectionFileId').value = '';
+  document.getElementById('staticCorrectionPickJobId').value = '';
+
+  document.getElementById('staticCorrectionRunButton').click();
+
+  const summary = document.getElementById('staticCorrectionValidationSummary');
+  expect(summary.hidden).toBe(false);
+  expect(summary.textContent).toContain('file_id is required');
+  expect(summary.textContent).toContain('pick_source.job_id is required');
+});
+
+test('save preset writes localStorage without transient job state', () => {
+  loadStaticCorrectionScript();
+  document.getElementById('staticCorrectionPresetName').value = 'field layout';
+  document.getElementById('staticCorrectionSavePresetButton').click();
+
+  const presets = JSON.parse(window.localStorage.getItem('sv.static_correction.presets'));
+  expect(presets).toHaveLength(1);
+  expect(presets[0].name).toBe('field layout');
+  expect(presets[0].values).not.toHaveProperty('file_id');
+  expect(presets[0].values.pick_source).not.toHaveProperty('job_id');
+  expect(presets[0].values).not.toHaveProperty('staticArtifacts');
+});
+
+test('load preset restores model and header fields while keeping current ids', () => {
+  loadStaticCorrectionScript();
+  setCustomPreset();
+  document.getElementById('staticCorrectionSourceIdByte').value = '101';
+  selectModelPreset('two_layer_global');
+  document.getElementById('staticCorrectionWeatheringVelocityMS').value = '900';
+  document.getElementById('staticCorrectionPresetName').value = 'two-layer custom';
+  document.getElementById('staticCorrectionSavePresetButton').click();
+
+  document.getElementById('staticCorrectionFileId').value = 'current-file';
+  document.getElementById('staticCorrectionPickJobId').value = 'current-picks';
+  document.getElementById('staticCorrectionSourceIdByte').value = '9';
+  selectModelPreset('one_layer_global');
+  document.getElementById('staticCorrectionWeatheringVelocityMS').value = '700';
+  document.getElementById('staticCorrectionLoadPresetButton').click();
+
+  expect(document.getElementById('staticCorrectionFileId').value).toBe('current-file');
+  expect(document.getElementById('staticCorrectionPickJobId').value).toBe('current-picks');
+  expect(document.getElementById('staticCorrectionGeometryPreset').value).toBe('custom');
+  expect(document.getElementById('staticCorrectionSourceIdByte').value).toBe('101');
+  expect(document.getElementById('staticCorrectionModelKind').value).toBe('two_layer_global');
+  expect(document.getElementById('staticCorrectionWeatheringVelocityMS').value).toBe('900');
+});
+
+test('delete preset removes it from localStorage', () => {
+  loadStaticCorrectionScript();
+  document.getElementById('staticCorrectionPresetName').value = 'delete me';
+  document.getElementById('staticCorrectionSavePresetButton').click();
+
+  document.getElementById('staticCorrectionDeletePresetButton').click();
+
+  expect(JSON.parse(window.localStorage.getItem('sv.static_correction.presets'))).toEqual([]);
+  expect(document.getElementById('staticCorrectionPresetSelect').textContent).toContain('No saved presets');
+});
+
+test('loading preset does not submit a job', () => {
+  loadStaticCorrectionScript();
+  const fetchMock = vi.fn();
+  vi.stubGlobal('fetch', fetchMock);
+  document.getElementById('staticCorrectionPresetName').value = 'quiet load';
+  document.getElementById('staticCorrectionSavePresetButton').click();
+
+  document.getElementById('staticCorrectionLoadPresetButton').click();
+
+  expect(fetchMock).not.toHaveBeenCalled();
 });
 
 test('preset switching restores defaults and toggles editability', () => {

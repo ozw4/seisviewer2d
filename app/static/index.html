@@ -1238,6 +1238,13 @@
       display: none;
     }
 
+    .static-correction-preset-grid {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto;
+      gap: 0.5em;
+      align-items: end;
+    }
+
     .static-correction-field input:disabled,
     .static-correction-field select:disabled,
     .static-correction-check-field input:disabled,
@@ -1412,6 +1419,25 @@
       border-radius: 4px;
       background: #fef2f2;
       color: #991b1b;
+    }
+
+    .static-correction-validation {
+      padding: 0.55em 0.65em;
+      border: 1px solid #facc15;
+      border-radius: 4px;
+      background: #fefce8;
+      color: #854d0e;
+      font-size: 0.84em;
+      line-height: 1.4;
+    }
+
+    .static-correction-validation[hidden] {
+      display: none;
+    }
+
+    .static-correction-validation ul {
+      margin: 0.25em 0 0 1.2em;
+      padding: 0;
     }
 
     .static-correction-request-preview {
@@ -2064,6 +2090,33 @@
                 </label>
               </div>
             </section>
+            <section class="static-correction-section" aria-labelledby="staticCorrectionPresetHeading">
+              <h3 id="staticCorrectionPresetHeading">Presets</h3>
+              <p class="static-correction-help">
+                Presets store parameter fields only. Loading a preset keeps the current file_id and pick_source.job_id.
+              </p>
+              <div class="static-correction-preset-grid">
+                <label class="static-correction-field" for="staticCorrectionPresetSelect">Saved preset
+                  <select id="staticCorrectionPresetSelect" data-testid="static-correction-preset-select">
+                    <option value="">No saved presets</option>
+                  </select>
+                </label>
+                <button id="staticCorrectionLoadPresetButton" type="button"
+                  data-testid="static-correction-load-preset">Load</button>
+              </div>
+              <div class="static-correction-preset-grid">
+                <label class="static-correction-field" for="staticCorrectionPresetName">Preset name
+                  <input id="staticCorrectionPresetName" type="text" autocomplete="off"
+                    data-testid="static-correction-preset-name" />
+                </label>
+                <button id="staticCorrectionSavePresetButton" type="button"
+                  data-testid="static-correction-save-preset">Save</button>
+              </div>
+              <div class="static-correction-actions">
+                <button id="staticCorrectionDeletePresetButton" type="button"
+                  data-testid="static-correction-delete-preset">Delete</button>
+              </div>
+            </section>
             <section class="static-correction-section" aria-labelledby="staticCorrectionPicksHeading">
               <h3 id="staticCorrectionPicksHeading">First-break picks</h3>
               <p class="static-correction-help">
@@ -2512,8 +2565,13 @@
                 <button id="staticCorrectionCancelButton" type="button" hidden
                   data-testid="static-correction-cancel">Cancel</button>
               </div>
-              <pre id="staticCorrectionRequestPreview" class="static-correction-request-preview" hidden
-                data-testid="static-correction-request-preview"></pre>
+              <div id="staticCorrectionValidationSummary" class="static-correction-validation" role="alert" hidden
+                data-testid="static-correction-validation-summary"></div>
+              <details id="staticCorrectionRequestPreviewDetails">
+                <summary>JSON request preview</summary>
+                <pre id="staticCorrectionRequestPreview" class="static-correction-request-preview"
+                  data-testid="static-correction-request-preview"></pre>
+              </details>
             </section>
           </form>
           <div id="staticCorrectionStatus" class="static-correction-status" role="status" aria-live="polite"

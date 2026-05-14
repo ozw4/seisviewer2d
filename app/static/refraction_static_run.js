@@ -105,6 +105,7 @@
   const FIELD_UPHOLE_MODES = new Set(['none', 'header_time']);
   const FIELD_MANUAL_STATIC_MODES = new Set(['none', 'artifact_table']);
   const FIELD_MANUAL_SIGN_CONVENTIONS = new Set(['applied_shift_s', 'delay_positive_ms']);
+  const PRESET_STORAGE_KEY = 'sv.static_correction.presets';
 
   const state = {
     ready: false,
@@ -122,6 +123,9 @@
     lastStaticCorrectionProgress: 0,
     staticArtifacts: [],
     loadingStaticArtifacts: false,
+    presets: [],
+    validationErrors: [],
+    showValidationSummary: false,
     phase: 'idle',
     pollIntervalMs: 1000,
   };
@@ -349,6 +353,61 @@
       export_enabled: Boolean(targetDom.exportEnabled && targetDom.exportEnabled.checked),
       export_formats: formats,
     };
+  }
+
+  function collectPresetInputs(targetDom = dom) {
+    const inputValues = collectInputs(targetDom);
+    return {
+      key1_byte: inputValues ? inputValues.key1_byte : '',
+      key2_byte: inputValues ? inputValues.key2_byte : '',
+      pick_source: {
+        kind: inputValues && inputValues.pick_source ? inputValues.pick_source.kind : '',
+        artifact_name: inputValues && inputValues.pick_source
+          ? inputValues.pick_source.artifact_name
+          : '',
+      },
+      geometry: collectGeometryInputs(targetDom),
+      linkage: collectLinkageInputs(targetDom),
+      model: collectModelInputs(targetDom),
+      field_corrections: collectFieldCorrectionInputs(targetDom),
+      output: collectOutputInputs(targetDom),
+    };
+  }
+
+  function readStoredPresets() {
+    let parsed = null;
+    try {
+      parsed = JSON.parse(window.localStorage.getItem(PRESET_STORAGE_KEY) || '[]');
+    } catch {
+      return [];
+    }
+    if (!Array.isArray(parsed)) {
+      return [];
+    }
+    return parsed
+      .filter((entry) => entry && typeof entry.name === 'string' && entry.values)
+      .map((entry) => ({
+        name: trimValue(entry.name),
+        values: entry.values,
+      }))
+      .filter((entry) => entry.name)
+      .sort((left, right) => left.name.localeCompare(right.name));
+  }
+
+  function writeStoredPresets(presets) {
+    window.localStorage.setItem(PRESET_STORAGE_KEY, JSON.stringify(presets));
+  }
+
+  function setElementValue(element, value) {
+    if (element && value !== undefined && value !== null) {
+      element.value = String(value);
+    }
+  }
+
+  function setElementChecked(element, value) {
+    if (element && value !== undefined && value !== null) {
+      element.checked = Boolean(value);
+    }
   }
 
   function parsePositiveInteger(value, label, errors) {
@@ -1424,6 +1483,202 @@
     };
   }
 
+  function buildStaticCorrectionPreviewRequest(targetDom = dom) {
+    const preview = buildRefractionStaticApplyRequest(targetDom, {
+      linkageJobId: state.lastLinkageJobId,
+    });
+    if (targetDom && targetDom.enableLinkage && targetDom.enableLinkage.checked && !state.lastLinkageJobId) {
+      preview.linkage = {
+        mode: 'required',
+        artifact_name: LINKAGE_ARTIFACT_NAME,
+      };
+    }
+    return preview;
+  }
+
+  function getStaticCorrectionValidationSnapshot(targetDom = dom) {
+    try {
+      return {
+        payload: buildStaticCorrectionPreviewRequest(targetDom),
+        errors: [],
+      };
+    } catch (error) {
+      return {
+        payload: null,
+        errors: error && Array.isArray(error.errors)
+          ? error.errors
+          : [error && error.message ? error.message : String(error)],
+      };
+    }
+  }
+
+  function applyPresetValues(values, targetDom = dom) {
+    if (!targetDom || !values) return;
+
+    setElementValue(targetDom.key1Byte, values.key1_byte);
+    setElementValue(targetDom.key2Byte, values.key2_byte);
+    if (values.pick_source) {
+      setElementValue(targetDom.pickKind, values.pick_source.kind);
+      setElementValue(targetDom.pickArtifactName, values.pick_source.artifact_name);
+    }
+
+    const geometry = values.geometry || {};
+    setElementValue(targetDom.geometryPreset, geometry.preset);
+    setElementValue(targetDom.sourceIdByte, geometry.source_id_byte);
+    setElementValue(targetDom.receiverIdByte, geometry.receiver_id_byte);
+    setElementValue(targetDom.sourceXByte, geometry.source_x_byte);
+    setElementValue(targetDom.sourceYByte, geometry.source_y_byte);
+    setElementValue(targetDom.receiverXByte, geometry.receiver_x_byte);
+    setElementValue(targetDom.receiverYByte, geometry.receiver_y_byte);
+    setElementValue(targetDom.sourceElevationByte, geometry.source_elevation_byte);
+    setElementValue(targetDom.receiverElevationByte, geometry.receiver_elevation_byte);
+    setElementValue(targetDom.coordinateScalarByte, geometry.coordinate_scalar_byte);
+    setElementValue(targetDom.elevationScalarByte, geometry.elevation_scalar_byte);
+    setElementValue(targetDom.sourceDepthByte, geometry.source_depth_byte);
+    setElementValue(targetDom.coordinateUnit, geometry.coordinate_unit);
+    setElementValue(targetDom.elevationUnit, geometry.elevation_unit);
+    setElementValue(targetDom.offsetByte, geometry.offset_byte);
+
+    const linkage = values.linkage || {};
+    setElementChecked(targetDom.enableLinkage, linkage.enabled);
+    setElementValue(targetDom.linkageMode, linkage.mode);
+    setElementValue(targetDom.linkageThresholdM, linkage.threshold_m);
+    setElementValue(targetDom.receiverLocationIntervalM, linkage.receiver_location_interval_m);
+    setElementChecked(targetDom.preferReceiverAnchor, linkage.prefer_receiver_anchor);
+
+    const model = values.model || {};
+    setElementValue(targetDom.modelKind, model.model_preset);
+    setElementValue(targetDom.weatheringVelocityMS, model.weathering_velocity_m_s);
+    setElementValue(targetDom.bedrockVelocityMode, model.bedrock_velocity_mode);
+    setElementValue(targetDom.initialBedrockVelocityMS, model.initial_bedrock_velocity_m_s);
+    setElementValue(targetDom.fixedBedrockVelocityMS, model.bedrock_velocity_m_s);
+    setElementValue(targetDom.minOffsetM, model.min_offset_m);
+    setElementValue(targetDom.maxOffsetM, model.max_offset_m);
+    setElementValue(targetDom.conversionMode, model.conversion_mode);
+    setElementValue(targetDom.v3MinOffsetM, model.v3_min_offset_m);
+    setElementValue(targetDom.v3MaxOffsetM, model.v3_max_offset_m);
+    setElementValue(targetDom.initialV3VelocityMS, model.initial_v3_velocity_m_s);
+    setElementValue(targetDom.vsubMinOffsetM, model.vsub_min_offset_m);
+    setElementValue(targetDom.initialVsubVelocityMS, model.initial_vsub_velocity_m_s);
+    setElementValue(targetDom.cellXOriginM, model.cell_x_origin_m);
+    setElementValue(targetDom.cellYOriginM, model.cell_y_origin_m);
+    setElementValue(targetDom.cellCountX, model.cell_count_x);
+    setElementValue(targetDom.cellCountY, model.cell_count_y);
+    setElementValue(targetDom.cellSizeXM, model.cell_size_x_m);
+    setElementValue(targetDom.cellSizeYM, model.cell_size_y_m);
+    setElementValue(targetDom.cellMinObservations, model.cell_min_observations);
+    setElementValue(targetDom.cellSmoothingWeight, model.cell_smoothing_weight);
+    setElementValue(targetDom.lineOriginXM, model.line_origin_x_m);
+    setElementValue(targetDom.lineOriginYM, model.line_origin_y_m);
+    setElementValue(targetDom.lineAzimuthDeg, model.line_azimuth_deg);
+
+    const fieldCorrections = values.field_corrections || {};
+    setElementChecked(targetDom.fieldCorrectionsEnabled, fieldCorrections.enabled);
+    setElementValue(targetDom.fieldSourceDepthMode, fieldCorrections.source_depth_mode);
+    setElementValue(targetDom.fieldSourceDepthByte, fieldCorrections.source_depth_byte);
+    setElementValue(targetDom.fieldUpholeMode, fieldCorrections.uphole_mode);
+    setElementValue(targetDom.fieldUpholeTimeByte, fieldCorrections.uphole_time_byte);
+    setElementValue(targetDom.fieldManualStaticMode, fieldCorrections.manual_static_mode);
+    setElementValue(
+      targetDom.fieldManualStaticSignConvention,
+      fieldCorrections.manual_static_sign_convention
+    );
+    setElementValue(targetDom.fieldManualSourceJobId, fieldCorrections.manual_source_job_id);
+    setElementValue(
+      targetDom.fieldManualSourceArtifactName,
+      fieldCorrections.manual_source_artifact_name
+    );
+    setElementValue(targetDom.fieldManualReceiverJobId, fieldCorrections.manual_receiver_job_id);
+    setElementValue(
+      targetDom.fieldManualReceiverArtifactName,
+      fieldCorrections.manual_receiver_artifact_name
+    );
+    setElementChecked(targetDom.fieldApplyToTraceShift, fieldCorrections.apply_to_trace_shift);
+
+    const output = values.output || {};
+    setElementChecked(targetDom.registerCorrectedFile, output.register_corrected_file);
+    setElementChecked(targetDom.exportEnabled, output.export_enabled);
+    if (Array.isArray(output.export_formats)) {
+      for (const checkbox of targetDom.exportFormatInputs || []) {
+        checkbox.checked = output.export_formats.includes(checkbox.value);
+      }
+    }
+
+    applyStaticCorrectionGeometryPreset(
+      targetDom,
+      trimValue(targetDom.geometryPreset && targetDom.geometryPreset.value) || GEOMETRY_DEFAULTS.preset
+    );
+    updateModelPresetControls(targetDom);
+    updateStaticCorrectionLinkageOptions(targetDom);
+    updateStaticCorrectionFieldCorrectionOptions(targetDom);
+  }
+
+  function saveCurrentPreset() {
+    if (!dom) return;
+    const name = trimValue(dom.presetName && dom.presetName.value);
+    if (!name) {
+      state.error = 'Preset name is required.';
+      state.message = 'Enter a preset name before saving.';
+      render();
+      return;
+    }
+    const presets = readStoredPresets().filter((entry) => entry.name !== name);
+    presets.push({
+      name,
+      values: collectPresetInputs(dom),
+    });
+    presets.sort((left, right) => left.name.localeCompare(right.name));
+    writeStoredPresets(presets);
+    state.presets = presets;
+    if (dom.presetSelect) {
+      dom.presetSelect.value = name;
+    }
+    state.error = '';
+    state.message = `Saved preset ${name}.`;
+    render();
+  }
+
+  function loadSelectedPreset() {
+    if (!dom || !dom.presetSelect) return;
+    const name = trimValue(dom.presetSelect.value);
+    const preset = state.presets.find((entry) => entry.name === name);
+    if (!preset) {
+      state.error = 'Choose a saved preset to load.';
+      state.message = 'No preset was loaded.';
+      render();
+      return;
+    }
+    applyPresetValues(preset.values, dom);
+    if (dom.presetName) {
+      dom.presetName.value = preset.name;
+    }
+    state.error = '';
+    state.showValidationSummary = false;
+    state.validationErrors = [];
+    state.message = `Loaded preset ${preset.name}. Current file_id and pick_source.job_id were kept.`;
+    render();
+  }
+
+  function deleteSelectedPreset() {
+    if (!dom || !dom.presetSelect) return;
+    const name = trimValue(dom.presetSelect.value);
+    if (!name) {
+      state.error = 'Choose a saved preset to delete.';
+      state.message = 'No preset was deleted.';
+      render();
+      return;
+    }
+    const presets = readStoredPresets().filter((entry) => entry.name !== name);
+    writeStoredPresets(presets);
+    state.presets = presets;
+    if (dom.presetName && dom.presetName.value === name) {
+      dom.presetName.value = '';
+    }
+    state.error = '';
+    state.message = `Deleted preset ${name}.`;
+    render();
+  }
+
   function buildStaticLinkageBuildRequest(staticCorrectionPayload) {
     if (!staticCorrectionPayload) {
       throw validationError(['Static correction payload is required before building linkage.']);
@@ -1628,8 +1883,62 @@
     }
   }
 
+  function renderValidationSummary() {
+    if (!dom || !dom.validationSummary) return;
+    const errors = state.validationErrors || [];
+    dom.validationSummary.innerHTML = '';
+    dom.validationSummary.hidden = !state.showValidationSummary || errors.length === 0;
+    if (dom.validationSummary.hidden) {
+      return;
+    }
+    const heading = document.createElement('div');
+    heading.textContent = 'Fix these fields before submitting:';
+    const list = document.createElement('ul');
+    for (const error of errors) {
+      const item = document.createElement('li');
+      item.textContent = error;
+      list.appendChild(item);
+    }
+    dom.validationSummary.appendChild(heading);
+    dom.validationSummary.appendChild(list);
+  }
+
+  function renderPresetSelect() {
+    if (!dom || !dom.presetSelect) return;
+    const currentValue = trimValue(dom.presetSelect.value);
+    dom.presetSelect.innerHTML = '';
+
+    if (!state.presets.length) {
+      const option = document.createElement('option');
+      option.value = '';
+      option.textContent = 'No saved presets';
+      dom.presetSelect.appendChild(option);
+    } else {
+      for (const preset of state.presets) {
+        const option = document.createElement('option');
+        option.value = preset.name;
+        option.textContent = preset.name;
+        dom.presetSelect.appendChild(option);
+      }
+      if (state.presets.some((entry) => entry.name === currentValue)) {
+        dom.presetSelect.value = currentValue;
+      }
+    }
+
+    if (dom.loadPresetButton) {
+      dom.loadPresetButton.disabled = state.presets.length === 0;
+    }
+    if (dom.deletePresetButton) {
+      dom.deletePresetButton.disabled = state.presets.length === 0;
+    }
+  }
+
   function render() {
     if (!dom) return;
+    const preview = getStaticCorrectionValidationSnapshot(dom);
+    if (state.showValidationSummary) {
+      state.validationErrors = preview.errors;
+    }
     updateStaticCorrectionLinkageOptions(dom);
     dom.status.textContent = state.message;
     dom.error.hidden = !state.error;
@@ -1639,11 +1948,12 @@
       dom.loadPickArtifactsButton.disabled = state.loadingPickArtifacts;
     }
     if (dom.requestPreview) {
-      dom.requestPreview.hidden = !state.lastRequest;
-      dom.requestPreview.textContent = state.lastRequest
-        ? JSON.stringify(state.lastRequest, null, 2)
-        : '';
+      dom.requestPreview.textContent = preview.payload
+        ? JSON.stringify(preview.payload, null, 2)
+        : JSON.stringify({ validation_errors: preview.errors }, null, 2);
     }
+    renderValidationSummary();
+    renderPresetSelect();
     renderPickArtifactList();
     renderStaticJobPanel();
     renderStaticArtifacts();
@@ -1913,6 +2223,8 @@
     if (errors.length) {
       state.ready = false;
       state.error = errors.join(' ');
+      state.validationErrors = errors;
+      state.showValidationSummary = true;
       state.message = 'Fix input errors before running refraction statics.';
       state.phase = 'idle';
       render();
@@ -1921,6 +2233,8 @@
 
     state.ready = true;
     state.error = '';
+    state.validationErrors = [];
+    state.showValidationSummary = false;
     state.phase = 'submitting_static_correction';
     render();
 
@@ -2015,6 +2329,11 @@
     const fileId = document.getElementById('staticCorrectionFileId');
     const key1Byte = document.getElementById('staticCorrectionKey1Byte');
     const key2Byte = document.getElementById('staticCorrectionKey2Byte');
+    const presetSelect = document.getElementById('staticCorrectionPresetSelect');
+    const presetName = document.getElementById('staticCorrectionPresetName');
+    const savePresetButton = document.getElementById('staticCorrectionSavePresetButton');
+    const loadPresetButton = document.getElementById('staticCorrectionLoadPresetButton');
+    const deletePresetButton = document.getElementById('staticCorrectionDeletePresetButton');
     const pickKind = document.getElementById('staticCorrectionPickKind');
     const pickJobId = document.getElementById('staticCorrectionPickJobId');
     const pickArtifactName = document.getElementById('staticCorrectionPickArtifactName');
@@ -2094,6 +2413,7 @@
     const registerCorrectedFile = document.getElementById('staticCorrectionRegisterCorrectedFile');
     const exportEnabled = document.getElementById('staticCorrectionExportEnabled');
     const exportFormatInputs = Array.from(document.querySelectorAll('[data-static-correction-export-format]'));
+    const validationSummary = document.getElementById('staticCorrectionValidationSummary');
     const requestPreview = document.getElementById('staticCorrectionRequestPreview');
     const cancelButton = document.getElementById('staticCorrectionCancelButton');
     const staticJobPanel = document.getElementById('staticCorrectionJobPanel');
@@ -2107,6 +2427,8 @@
     const staticArtifactEmpty = document.getElementById('staticCorrectionArtifactEmpty');
     if (
       !form || !status || !error || !runButton || !fileId || !key1Byte || !key2Byte
+      || !presetSelect || !presetName || !savePresetButton || !loadPresetButton
+      || !deletePresetButton
       || !pickKind || !pickJobId || !pickArtifactName || !loadPickArtifactsButton
       || !pickArtifactList || !geometryPreset || !sourceIdByte || !receiverIdByte
       || !sourceXByte || !sourceYByte || !receiverXByte || !receiverYByte
@@ -2127,7 +2449,7 @@
       || !fieldManualStaticSignConvention || !fieldManualSourceJobId
       || !fieldManualSourceArtifactName || !fieldManualReceiverJobId
       || !fieldManualReceiverArtifactName || !fieldApplyToTraceShift
-      || !registerCorrectedFile || !exportEnabled || !requestPreview
+      || !registerCorrectedFile || !exportEnabled || !validationSummary || !requestPreview
       || !cancelButton || !staticJobPanel || !staticJobIdValue || !staticJobStateValue
       || !staticJobMessageValue || !staticJobProgress || !staticJobProgressValue
       || !staticArtifactTable || !staticArtifactBody || !staticArtifactEmpty
@@ -2175,6 +2497,11 @@
       fileId,
       key1Byte,
       key2Byte,
+      presetSelect,
+      presetName,
+      savePresetButton,
+      loadPresetButton,
+      deletePresetButton,
       pickKind,
       pickJobId,
       pickArtifactName,
@@ -2246,6 +2573,7 @@
       registerCorrectedFile,
       exportEnabled,
       exportFormatInputs,
+      validationSummary,
       requestPreview,
       cancelButton,
       staticJobPanel,
@@ -2258,13 +2586,38 @@
       staticArtifactBody,
       staticArtifactEmpty,
     };
+    state.presets = readStoredPresets();
     applyStaticCorrectionGeometryPreset(dom, trimValue(geometryPreset.value) || GEOMETRY_DEFAULTS.preset);
     updateModelPresetControls(dom);
     updateStaticCorrectionLinkageOptions(dom);
     updateStaticCorrectionFieldCorrectionOptions(dom);
 
     form.addEventListener('submit', handleRun);
+    form.addEventListener('input', () => {
+      if (state.showValidationSummary) {
+        state.validationErrors = getStaticCorrectionValidationSnapshot(dom).errors;
+      }
+      render();
+    });
+    form.addEventListener('change', () => {
+      if (state.showValidationSummary) {
+        state.validationErrors = getStaticCorrectionValidationSnapshot(dom).errors;
+      }
+      render();
+    });
     runButton.addEventListener('click', handleRun);
+    savePresetButton.addEventListener('click', (event) => {
+      event.preventDefault();
+      saveCurrentPreset();
+    });
+    loadPresetButton.addEventListener('click', (event) => {
+      event.preventDefault();
+      loadSelectedPreset();
+    });
+    deletePresetButton.addEventListener('click', (event) => {
+      event.preventDefault();
+      deleteSelectedPreset();
+    });
     cancelButton.addEventListener('click', (event) => {
       event.preventDefault();
       cancelStaticCorrectionJob();
@@ -2361,15 +2714,21 @@
     collectLinkageInputs,
     collectModelInputs,
     collectOutputInputs,
+    collectPresetInputs,
+    applyPresetValues,
     isLikelyPickArtifact,
+    deleteSelectedPreset,
+    getStaticCorrectionValidationSnapshot,
     loadStaticArtifacts,
     loadPickArtifacts,
+    loadSelectedPreset,
     normalizeStaticJobState,
     pollStaticCorrectionJobUntilTerminal,
     pollStaticCorrectionStatus,
     pollStaticJobUntilReady,
     render,
     runStaticCorrection,
+    saveCurrentPreset,
     stopStaticCorrectionPolling,
     submitRefractionStaticApply,
     updateModelPresetControls,
