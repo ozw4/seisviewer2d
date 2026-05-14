@@ -25,6 +25,8 @@ jobs register, but the static-correction APIs are primarily developer-facing.
     part of this workflow.
   - The IRAS-compatible 1-layer V1/T1LSST/source-receiver table workflow is
     documented in [refraction_static.md](refraction_static.md).
+  - The refraction QC artifact and viewer workflow is documented in
+    [statics/refraction_qc_viewer_workflow.md](statics/refraction_qc_viewer_workflow.md).
 
 The detailed time-term inversion API, sign convention, apply modes, and artifact
 contract are documented in [time_term_static_correction.md](time_term_static_correction.md).

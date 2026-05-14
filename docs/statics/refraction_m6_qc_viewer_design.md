@@ -5,6 +5,8 @@
 This document defines the M6 refraction QC and viewer integration contract.
 It is a design target for future backend and frontend issues; it does not
 change the numerical solver, existing artifacts, or viewer code by itself.
+For the user-facing review workflow, see
+`docs/statics/refraction_qc_viewer_workflow.md`.
 
 Read this document with the existing implementation references:
 
