@@ -3093,13 +3093,18 @@
 
   function activateSidebarTab(tabName) {
     if (!dom) return;
-    const showQc = tabName === 'refraction_qc';
-    dom.pipelineTab.classList.toggle('is-active', !showQc);
-    dom.qcTab.classList.toggle('is-active', showQc);
-    dom.pipelineTab.setAttribute('aria-selected', showQc ? 'false' : 'true');
-    dom.qcTab.setAttribute('aria-selected', showQc ? 'true' : 'false');
-    dom.pipelinePanel.hidden = showQc;
-    dom.qcPanel.hidden = !showQc;
+    const tabs = [
+      { name: 'pipeline', tab: dom.pipelineTab, panel: dom.pipelinePanel },
+      { name: 'static_correction', tab: dom.staticCorrectionTab, panel: dom.staticCorrectionPanel },
+      { name: 'refraction_qc', tab: dom.qcTab, panel: dom.qcPanel },
+    ];
+    const selectedTabName = tabs.some((tab) => tab.name === tabName) ? tabName : 'pipeline';
+    for (const item of tabs) {
+      const active = item.name === selectedTabName;
+      item.tab.classList.toggle('is-active', active);
+      item.tab.setAttribute('aria-selected', active ? 'true' : 'false');
+      item.panel.hidden = !active;
+    }
   }
 
   async function readError(response, label = 'QC bundle request') {
@@ -3212,16 +3217,21 @@
 
   function init() {
     const pipelineTab = document.getElementById('pipelineSidebarTab');
+    const staticCorrectionTab = document.getElementById('staticCorrectionSidebarTab');
     const qcTab = document.getElementById('refractionQcSidebarTab');
     const pipelinePanel = document.getElementById('pipelineTabPanel');
+    const staticCorrectionPanel = document.getElementById('staticCorrectionTabPanel');
     const qcPanel = document.getElementById('refractionQcTabPanel');
     const form = document.getElementById('refractionQcForm');
-    if (!pipelineTab || !qcTab || !pipelinePanel || !qcPanel || !form) return;
+    if (!pipelineTab || !staticCorrectionTab || !qcTab) return;
+    if (!pipelinePanel || !staticCorrectionPanel || !qcPanel || !form) return;
 
     dom = {
       pipelineTab,
+      staticCorrectionTab,
       qcTab,
       pipelinePanel,
+      staticCorrectionPanel,
       qcPanel,
       form,
       jobId: document.getElementById('refractionQcJobId'),
@@ -3255,6 +3265,7 @@
     if (!dom.showRejected || !dom.endpointKind || !dom.endpoint || !dom.trace || !dom.cell) return;
 
     pipelineTab.addEventListener('click', () => activateSidebarTab('pipeline'));
+    staticCorrectionTab.addEventListener('click', () => activateSidebarTab('static_correction'));
     qcTab.addEventListener('click', () => activateSidebarTab('refraction_qc'));
     form.addEventListener('submit', (event) => {
       event.preventDefault();

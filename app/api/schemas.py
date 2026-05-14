@@ -1370,7 +1370,7 @@ class RefractionStaticLinkageRequest(BaseModel):
 
     model_config = ConfigDict(extra='forbid')
 
-    mode: Literal['required', 'optional', 'none'] = 'required'
+    mode: Literal['required', 'optional', 'none'] = 'none'
     job_id: str | None = None
     artifact_name: str = 'geometry_linkage.npz'
 

@@ -109,6 +109,7 @@ def _apply_payload(
             'job_id': 'first-break-job-id',
         },
         'linkage': {
+            'mode': 'required',
             'job_id': 'linkage-job-id',
         },
         'model': model,
