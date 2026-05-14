@@ -2,6 +2,7 @@
   const DEFAULTS = {
     key1Byte: '189',
     key2Byte: '193',
+    modelPreset: 'one_layer_global',
     pickKind: 'batch_predicted_npz',
     pickArtifactName: 'predicted_picks_time_s.npz',
     linkageMode: 'auto_threshold',
@@ -13,7 +14,32 @@
     minOffsetM: '300',
     maxOffsetM: '4000',
     conversionMode: 't1lsst_1layer',
+    initialV3VelocityMS: '3600',
+    v3MinOffsetM: '4000',
+    v3MaxOffsetM: '6000',
+    initialVsubVelocityMS: '5000',
+    vsubMinOffsetM: '6000',
+    cellXOriginM: '0',
+    cellYOriginM: '0',
+    cellCountX: '20',
+    cellCountY: '1',
+    cellSizeXM: '500',
+    cellSizeYM: '500',
+    cellMinObservations: '5',
+    cellSmoothingWeight: '0',
+    lineOriginXM: '0',
+    lineOriginYM: '0',
+    lineAzimuthDeg: '0',
   };
+  const MODEL_PRESETS = new Set([
+    'one_layer_global',
+    'two_layer_global',
+    'three_layer_global',
+    'cell_v2_t1_line_2d',
+    'cell_v2_t1_grid_3d',
+  ]);
+  const CELL_MODEL_PRESETS = new Set(['cell_v2_t1_line_2d', 'cell_v2_t1_grid_3d']);
+  const MULTILAYER_MODEL_PRESETS = new Set(['two_layer_global', 'three_layer_global']);
   const GEOMETRY_PRESET_SEG_Y_DEFAULT = 'segy_default';
   const GEOMETRY_PRESET_CUSTOM = 'custom';
   const GEOMETRY_DEFAULTS = {
@@ -75,6 +101,11 @@
   const STATIC_READY_STATES = new Set(['done', 'ready']);
   const STATIC_ACTIVE_STATES = new Set(['queued', 'running', 'cancel_requested']);
   const STATIC_TERMINAL_STATES = new Set(['done', 'ready', 'error', 'cancelled', 'expired']);
+  const FIELD_SOURCE_DEPTH_MODES = new Set(['none', 'weathering_velocity_time']);
+  const FIELD_UPHOLE_MODES = new Set(['none', 'header_time']);
+  const FIELD_MANUAL_STATIC_MODES = new Set(['none', 'artifact_table']);
+  const FIELD_MANUAL_SIGN_CONVENTIONS = new Set(['applied_shift_s', 'delay_positive_ms']);
+  const PRESET_STORAGE_KEY = 'sv.static_correction.presets';
 
   const state = {
     ready: false,
@@ -92,6 +123,9 @@
     lastStaticCorrectionProgress: 0,
     staticArtifacts: [],
     loadingStaticArtifacts: false,
+    presets: [],
+    validationErrors: [],
+    showValidationSummary: false,
     phase: 'idle',
     pollIntervalMs: 1000,
   };
@@ -218,6 +252,7 @@
   function collectModelInputs(targetDom = dom) {
     if (!targetDom) return null;
     return {
+      model_preset: trimValue(targetDom.modelKind && targetDom.modelKind.value),
       weathering_velocity_m_s: trimValue(
         targetDom.weatheringVelocityMS && targetDom.weatheringVelocityMS.value
       ),
@@ -233,6 +268,73 @@
       min_offset_m: trimValue(targetDom.minOffsetM && targetDom.minOffsetM.value),
       max_offset_m: trimValue(targetDom.maxOffsetM && targetDom.maxOffsetM.value),
       conversion_mode: trimValue(targetDom.conversionMode && targetDom.conversionMode.value),
+      v3_min_offset_m: trimValue(targetDom.v3MinOffsetM && targetDom.v3MinOffsetM.value),
+      v3_max_offset_m: trimValue(targetDom.v3MaxOffsetM && targetDom.v3MaxOffsetM.value),
+      initial_v3_velocity_m_s: trimValue(
+        targetDom.initialV3VelocityMS && targetDom.initialV3VelocityMS.value
+      ),
+      vsub_min_offset_m: trimValue(
+        targetDom.vsubMinOffsetM && targetDom.vsubMinOffsetM.value
+      ),
+      initial_vsub_velocity_m_s: trimValue(
+        targetDom.initialVsubVelocityMS && targetDom.initialVsubVelocityMS.value
+      ),
+      cell_x_origin_m: trimValue(targetDom.cellXOriginM && targetDom.cellXOriginM.value),
+      cell_y_origin_m: trimValue(targetDom.cellYOriginM && targetDom.cellYOriginM.value),
+      cell_count_x: trimValue(targetDom.cellCountX && targetDom.cellCountX.value),
+      cell_count_y: trimValue(targetDom.cellCountY && targetDom.cellCountY.value),
+      cell_size_x_m: trimValue(targetDom.cellSizeXM && targetDom.cellSizeXM.value),
+      cell_size_y_m: trimValue(targetDom.cellSizeYM && targetDom.cellSizeYM.value),
+      cell_min_observations: trimValue(
+        targetDom.cellMinObservations && targetDom.cellMinObservations.value
+      ),
+      cell_smoothing_weight: trimValue(
+        targetDom.cellSmoothingWeight && targetDom.cellSmoothingWeight.value
+      ),
+      line_origin_x_m: trimValue(targetDom.lineOriginXM && targetDom.lineOriginXM.value),
+      line_origin_y_m: trimValue(targetDom.lineOriginYM && targetDom.lineOriginYM.value),
+      line_azimuth_deg: trimValue(targetDom.lineAzimuthDeg && targetDom.lineAzimuthDeg.value),
+    };
+  }
+
+  function collectFieldCorrectionInputs(targetDom = dom) {
+    if (!targetDom) return null;
+    return {
+      enabled: Boolean(targetDom.fieldCorrectionsEnabled && targetDom.fieldCorrectionsEnabled.checked),
+      source_depth_mode: trimValue(
+        targetDom.fieldSourceDepthMode && targetDom.fieldSourceDepthMode.value
+      ),
+      source_depth_byte: trimValue(
+        targetDom.fieldSourceDepthByte && targetDom.fieldSourceDepthByte.value
+      ),
+      uphole_mode: trimValue(targetDom.fieldUpholeMode && targetDom.fieldUpholeMode.value),
+      uphole_time_byte: trimValue(
+        targetDom.fieldUpholeTimeByte && targetDom.fieldUpholeTimeByte.value
+      ),
+      manual_static_mode: trimValue(
+        targetDom.fieldManualStaticMode && targetDom.fieldManualStaticMode.value
+      ),
+      manual_static_sign_convention: trimValue(
+        targetDom.fieldManualStaticSignConvention
+        && targetDom.fieldManualStaticSignConvention.value
+      ),
+      manual_source_job_id: trimValue(
+        targetDom.fieldManualSourceJobId && targetDom.fieldManualSourceJobId.value
+      ),
+      manual_source_artifact_name: trimValue(
+        targetDom.fieldManualSourceArtifactName
+        && targetDom.fieldManualSourceArtifactName.value
+      ),
+      manual_receiver_job_id: trimValue(
+        targetDom.fieldManualReceiverJobId && targetDom.fieldManualReceiverJobId.value
+      ),
+      manual_receiver_artifact_name: trimValue(
+        targetDom.fieldManualReceiverArtifactName
+        && targetDom.fieldManualReceiverArtifactName.value
+      ),
+      apply_to_trace_shift: Boolean(
+        targetDom.fieldApplyToTraceShift && targetDom.fieldApplyToTraceShift.checked
+      ),
     };
   }
 
@@ -253,6 +355,61 @@
     };
   }
 
+  function collectPresetInputs(targetDom = dom) {
+    const inputValues = collectInputs(targetDom);
+    return {
+      key1_byte: inputValues ? inputValues.key1_byte : '',
+      key2_byte: inputValues ? inputValues.key2_byte : '',
+      pick_source: {
+        kind: inputValues && inputValues.pick_source ? inputValues.pick_source.kind : '',
+        artifact_name: inputValues && inputValues.pick_source
+          ? inputValues.pick_source.artifact_name
+          : '',
+      },
+      geometry: collectGeometryInputs(targetDom),
+      linkage: collectLinkageInputs(targetDom),
+      model: collectModelInputs(targetDom),
+      field_corrections: collectFieldCorrectionInputs(targetDom),
+      output: collectOutputInputs(targetDom),
+    };
+  }
+
+  function readStoredPresets() {
+    let parsed = null;
+    try {
+      parsed = JSON.parse(window.localStorage.getItem(PRESET_STORAGE_KEY) || '[]');
+    } catch {
+      return [];
+    }
+    if (!Array.isArray(parsed)) {
+      return [];
+    }
+    return parsed
+      .filter((entry) => entry && typeof entry.name === 'string' && entry.values)
+      .map((entry) => ({
+        name: trimValue(entry.name),
+        values: entry.values,
+      }))
+      .filter((entry) => entry.name)
+      .sort((left, right) => left.name.localeCompare(right.name));
+  }
+
+  function writeStoredPresets(presets) {
+    window.localStorage.setItem(PRESET_STORAGE_KEY, JSON.stringify(presets));
+  }
+
+  function setElementValue(element, value) {
+    if (element && value !== undefined && value !== null) {
+      element.value = String(value);
+    }
+  }
+
+  function setElementChecked(element, value) {
+    if (element && value !== undefined && value !== null) {
+      element.checked = Boolean(value);
+    }
+  }
+
   function parsePositiveInteger(value, label, errors) {
     const parsed = Number(value);
     if (!Number.isInteger(parsed) || parsed <= 0) {
@@ -260,6 +417,31 @@
       return null;
     }
     return parsed;
+  }
+
+  function parseOptionalArtifactRef(jobId, artifactName, label, errors) {
+    if (!jobId && !artifactName) {
+      return null;
+    }
+    if (!jobId) {
+      errors.push(`${label}.job_id is required when ${label}.artifact_name is set.`);
+    }
+    if (!artifactName) {
+      errors.push(`${label}.artifact_name is required when ${label}.job_id is set.`);
+    }
+    if (artifactName && /[\\/]/.test(artifactName)) {
+      errors.push(`${label}.artifact_name must be a plain file name.`);
+    }
+    if (artifactName && !artifactName.toLowerCase().endsWith('.csv')) {
+      errors.push(`${label}.artifact_name must be a .csv artifact.`);
+    }
+    if (!jobId || !artifactName || /[\\/]/.test(artifactName) || !artifactName.toLowerCase().endsWith('.csv')) {
+      return null;
+    }
+    return {
+      job_id: jobId,
+      artifact_name: artifactName,
+    };
   }
 
   function parsePositiveFloat(value, label, errors, { optional = false } = {}) {
@@ -270,6 +452,19 @@
     const parsed = Number(trimmed);
     if (!trimmed || !Number.isFinite(parsed) || parsed <= 0) {
       errors.push(`${label} must be a finite number greater than 0.`);
+      return null;
+    }
+    return parsed;
+  }
+
+  function parseFiniteFloat(value, label, errors, { optional = false } = {}) {
+    const trimmed = trimValue(value);
+    if (optional && trimmed === '') {
+      return null;
+    }
+    const parsed = Number(trimmed);
+    if (!trimmed || !Number.isFinite(parsed)) {
+      errors.push(`${label} must be a finite number.`);
       return null;
     }
     return parsed;
@@ -432,15 +627,151 @@
     }
   }
 
+  function fieldCorrectionValueElements(targetDom) {
+    if (!targetDom) return [];
+    return [
+      targetDom.fieldSourceDepthMode,
+      targetDom.fieldSourceDepthByte,
+      targetDom.fieldUpholeMode,
+      targetDom.fieldUpholeTimeByte,
+      targetDom.fieldManualStaticMode,
+      targetDom.fieldManualStaticSignConvention,
+      targetDom.fieldManualSourceJobId,
+      targetDom.fieldManualSourceArtifactName,
+      targetDom.fieldManualReceiverJobId,
+      targetDom.fieldManualReceiverArtifactName,
+      targetDom.fieldApplyToTraceShift,
+    ].filter(Boolean);
+  }
+
+  function updateStaticCorrectionFieldCorrectionOptions(targetDom = dom) {
+    if (!targetDom || !targetDom.fieldCorrectionsEnabled) return;
+    const enabled = Boolean(targetDom.fieldCorrectionsEnabled.checked);
+    const sourceDepthMode = trimValue(targetDom.fieldSourceDepthMode && targetDom.fieldSourceDepthMode.value);
+    const upholeMode = trimValue(targetDom.fieldUpholeMode && targetDom.fieldUpholeMode.value);
+    const manualMode = trimValue(targetDom.fieldManualStaticMode && targetDom.fieldManualStaticMode.value);
+
+    if (targetDom.fieldCorrectionOptions) {
+      targetDom.fieldCorrectionOptions.hidden = !enabled;
+    }
+    if (targetDom.fieldSourceDepthByte) {
+      targetDom.fieldSourceDepthByte.disabled = !enabled || sourceDepthMode !== 'weathering_velocity_time';
+    }
+    if (targetDom.fieldUpholeTimeByte) {
+      targetDom.fieldUpholeTimeByte.disabled = !enabled || upholeMode !== 'header_time';
+    }
+    const manualEnabled = enabled && manualMode === 'artifact_table';
+    if (targetDom.fieldManualArtifactFields) {
+      targetDom.fieldManualArtifactFields.hidden = !manualEnabled;
+    }
+    for (const element of fieldCorrectionValueElements(targetDom)) {
+      if (
+        element === targetDom.fieldSourceDepthByte
+        || element === targetDom.fieldUpholeTimeByte
+      ) {
+        continue;
+      }
+      element.disabled = !enabled;
+    }
+    setDisabled(
+      [
+        targetDom.fieldManualStaticSignConvention,
+        targetDom.fieldManualSourceJobId,
+        targetDom.fieldManualSourceArtifactName,
+        targetDom.fieldManualReceiverJobId,
+        targetDom.fieldManualReceiverArtifactName,
+      ],
+      !manualEnabled
+    );
+  }
+
   function updateBedrockVelocityControls(targetDom = dom) {
     if (!targetDom || !targetDom.bedrockVelocityMode) return;
+    const preset = trimValue(targetDom.modelKind && targetDom.modelKind.value);
     const fixedMode = targetDom.bedrockVelocityMode.value === 'fixed_global';
+    const cellMode = CELL_MODEL_PRESETS.has(preset);
     if (targetDom.initialBedrockVelocityMS) {
       targetDom.initialBedrockVelocityMS.disabled = fixedMode;
     }
     if (targetDom.fixedBedrockVelocityMS) {
-      targetDom.fixedBedrockVelocityMS.disabled = !fixedMode;
+      targetDom.fixedBedrockVelocityMS.disabled = !fixedMode || cellMode;
     }
+    if (targetDom.bedrockVelocityMode) {
+      targetDom.bedrockVelocityMode.disabled = cellMode;
+    }
+  }
+
+  function setHidden(element, hidden) {
+    if (element) {
+      element.hidden = hidden;
+    }
+  }
+
+  function setDisabled(elements, disabled) {
+    for (const element of elements) {
+      if (element) {
+        element.disabled = disabled;
+      }
+    }
+  }
+
+  function updateModelPresetControls(targetDom = dom) {
+    if (!targetDom || !targetDom.modelKind) return;
+    const preset = MODEL_PRESETS.has(targetDom.modelKind.value)
+      ? targetDom.modelKind.value
+      : DEFAULTS.modelPreset;
+    targetDom.modelKind.value = preset;
+    const isMultilayer = MULTILAYER_MODEL_PRESETS.has(preset);
+    const isThreeLayer = preset === 'three_layer_global';
+    const isCell = CELL_MODEL_PRESETS.has(preset);
+    const isLine2D = preset === 'cell_v2_t1_line_2d';
+
+    setHidden(targetDom.v3LayerFields, !isMultilayer);
+    setHidden(targetDom.vsubLayerFields, !isThreeLayer);
+    setHidden(targetDom.cellFields, !isCell);
+    setHidden(targetDom.line2DFields, !isLine2D);
+
+    setDisabled(
+      [targetDom.v3MinOffsetM, targetDom.v3MaxOffsetM, targetDom.initialV3VelocityMS],
+      !isMultilayer
+    );
+    setDisabled(
+      [targetDom.vsubMinOffsetM, targetDom.initialVsubVelocityMS],
+      !isThreeLayer
+    );
+    setDisabled(
+      [
+        targetDom.cellXOriginM,
+        targetDom.cellYOriginM,
+        targetDom.cellCountX,
+        targetDom.cellCountY,
+        targetDom.cellSizeXM,
+        targetDom.cellSizeYM,
+        targetDom.cellMinObservations,
+        targetDom.cellSmoothingWeight,
+      ],
+      !isCell
+    );
+    setDisabled(
+      [targetDom.lineOriginXM, targetDom.lineOriginYM, targetDom.lineAzimuthDeg],
+      !isLine2D
+    );
+
+    if (targetDom.conversionMode) {
+      targetDom.conversionMode.value = isMultilayer ? 't1lsst_multilayer' : 't1lsst_1layer';
+      targetDom.conversionMode.disabled = true;
+    }
+    if (targetDom.bedrockVelocityMode) {
+      if (isCell) {
+        targetDom.bedrockVelocityMode.value = 'solve_cell';
+      } else if (targetDom.bedrockVelocityMode.value === 'solve_cell') {
+        targetDom.bedrockVelocityMode.value = DEFAULTS.bedrockVelocityMode;
+      }
+    }
+    if (isLine2D && targetDom.cellCountY) {
+      targetDom.cellCountY.value = '1';
+    }
+    updateBedrockVelocityControls(targetDom);
   }
 
   function validateStaticCorrectionLinkageRequest(targetDom = dom) {
@@ -610,6 +941,414 @@
     return result.payload;
   }
 
+  function validateCellRefractionModel(targetDom = dom, preset) {
+    const values = collectModelInputs(targetDom);
+    const errors = [];
+    if (!values) {
+      return { payload: null, moveout: null, conversion: null, errors: ['Static correction model form is not available.'] };
+    }
+
+    const weatheringVelocity = parsePositiveFloat(
+      values.weathering_velocity_m_s,
+      'model.first_layer.weathering_velocity_m_s',
+      errors
+    );
+    const initialBedrockVelocity = parsePositiveFloat(
+      values.initial_bedrock_velocity_m_s,
+      'model.initial_bedrock_velocity_m_s',
+      errors
+    );
+    const minOffsetM = parseNonNegativeFloat(values.min_offset_m, 'moveout.min_offset_m', errors);
+    const maxOffsetM = parsePositiveFloat(values.max_offset_m, 'moveout.max_offset_m', errors);
+    if (minOffsetM !== null && maxOffsetM !== null && minOffsetM >= maxOffsetM) {
+      errors.push('moveout.min_offset_m must be less than moveout.max_offset_m.');
+    }
+    if (values.conversion_mode !== 't1lsst_1layer') {
+      errors.push('conversion.mode must be t1lsst_1layer for the cell V2/T1 presets.');
+    }
+    if (
+      weatheringVelocity !== null
+      && initialBedrockVelocity !== null
+      && initialBedrockVelocity <= weatheringVelocity
+    ) {
+      errors.push('model.initial_bedrock_velocity_m_s must be greater than model.first_layer.weathering_velocity_m_s.');
+    }
+
+    const cellCountX = parsePositiveInteger(
+      values.cell_count_x,
+      'model.refractor_cell.number_of_cell_x',
+      errors
+    );
+    const cellSizeXM = parsePositiveFloat(
+      values.cell_size_x_m,
+      'model.refractor_cell.size_of_cell_x_m',
+      errors
+    );
+    const cellXOriginM = parseFiniteFloat(
+      values.cell_x_origin_m,
+      'model.refractor_cell.x_coordinate_origin_m',
+      errors
+    );
+    const cellYOriginM = parseFiniteFloat(
+      values.cell_y_origin_m,
+      'model.refractor_cell.y_coordinate_origin_m',
+      errors
+    );
+    const cellMinObservations = parsePositiveInteger(
+      values.cell_min_observations,
+      'model.refractor_cell.min_observations_per_cell',
+      errors
+    );
+    const cellSmoothingWeight = parseNonNegativeFloat(
+      values.cell_smoothing_weight,
+      'model.refractor_cell.velocity_smoothing_weight',
+      errors
+    );
+    const isLine2D = preset === 'cell_v2_t1_line_2d';
+    const cellCountY = isLine2D
+      ? 1
+      : parsePositiveInteger(values.cell_count_y, 'model.refractor_cell.number_of_cell_y', errors);
+    const cellSizeYM = isLine2D
+      ? null
+      : parsePositiveFloat(values.cell_size_y_m, 'model.refractor_cell.size_of_cell_y_m', errors);
+    const lineOriginXM = isLine2D
+      ? parseFiniteFloat(values.line_origin_x_m, 'model.refractor_cell.line_origin_x_m', errors)
+      : null;
+    const lineOriginYM = isLine2D
+      ? parseFiniteFloat(values.line_origin_y_m, 'model.refractor_cell.line_origin_y_m', errors)
+      : null;
+    const lineAzimuthDeg = isLine2D
+      ? parseFiniteFloat(values.line_azimuth_deg, 'model.refractor_cell.line_azimuth_deg', errors)
+      : null;
+
+    if (errors.length) {
+      return { payload: null, moveout: null, conversion: null, errors };
+    }
+
+    const refractorCell = {
+      number_of_cell_x: cellCountX,
+      size_of_cell_x_m: cellSizeXM,
+      x_coordinate_origin_m: cellXOriginM,
+      number_of_cell_y: cellCountY,
+      size_of_cell_y_m: cellSizeYM,
+      y_coordinate_origin_m: cellYOriginM,
+      assignment_mode: 'midpoint',
+      outside_grid_policy: 'reject',
+      coordinate_mode: isLine2D ? 'line_2d_projected' : 'grid_3d',
+      min_observations_per_cell: cellMinObservations,
+      velocity_smoothing_weight: cellSmoothingWeight,
+    };
+    if (isLine2D) {
+      refractorCell.line_origin_x_m = lineOriginXM;
+      refractorCell.line_origin_y_m = lineOriginYM;
+      refractorCell.line_azimuth_deg = lineAzimuthDeg;
+    }
+
+    return {
+      payload: {
+        method: 'gli_variable_thickness',
+        first_layer: {
+          mode: 'constant',
+          weathering_velocity_m_s: weatheringVelocity,
+        },
+        bedrock_velocity_mode: 'solve_cell',
+        initial_bedrock_velocity_m_s: initialBedrockVelocity,
+        min_bedrock_velocity_m_s: 1200,
+        max_bedrock_velocity_m_s: 6000,
+        refractor_cell: refractorCell,
+      },
+      moveout: {
+        min_offset_m: minOffsetM,
+        max_offset_m: maxOffsetM,
+      },
+      conversion: {
+        mode: 't1lsst_1layer',
+      },
+      errors,
+    };
+  }
+
+  function validateMultilayerRefractionModel(targetDom = dom, preset) {
+    const values = collectModelInputs(targetDom);
+    const errors = [];
+    if (!values) {
+      return { payload: null, moveout: null, conversion: null, errors: ['Static correction model form is not available.'] };
+    }
+
+    const weatheringVelocity = parsePositiveFloat(
+      values.weathering_velocity_m_s,
+      'model.first_layer.weathering_velocity_m_s',
+      errors
+    );
+    const bedrockVelocityMode = values.bedrock_velocity_mode;
+    if (!['solve_global', 'fixed_global'].includes(bedrockVelocityMode)) {
+      errors.push('model.layers v2_t1 velocity_mode must be solve_global or fixed_global.');
+    }
+    const v2MinOffsetM = parseNonNegativeFloat(
+      values.min_offset_m,
+      'model.layers v2_t1 min_offset_m',
+      errors
+    );
+    const v2MaxOffsetM = parsePositiveFloat(
+      values.max_offset_m,
+      'model.layers v2_t1 max_offset_m',
+      errors
+    );
+    let initialV2Velocity = null;
+    let fixedV2Velocity = null;
+    if (bedrockVelocityMode === 'solve_global') {
+      initialV2Velocity = parsePositiveFloat(
+        values.initial_bedrock_velocity_m_s,
+        'model.layers v2_t1 initial_velocity_m_s',
+        errors
+      );
+    } else if (bedrockVelocityMode === 'fixed_global') {
+      fixedV2Velocity = parsePositiveFloat(
+        values.bedrock_velocity_m_s,
+        'model.layers v2_t1 fixed_velocity_m_s',
+        errors
+      );
+    }
+
+    const v3MinOffsetM = parseNonNegativeFloat(
+      values.v3_min_offset_m,
+      'model.layers v3_t2 min_offset_m',
+      errors
+    );
+    const v3MaxOffsetM = preset === 'three_layer_global'
+      ? parsePositiveFloat(values.v3_max_offset_m, 'model.layers v3_t2 max_offset_m', errors)
+      : parsePositiveFloat(values.v3_max_offset_m, 'model.layers v3_t2 max_offset_m', errors, { optional: true });
+    const initialV3Velocity = parsePositiveFloat(
+      values.initial_v3_velocity_m_s,
+      'model.layers v3_t2 initial_velocity_m_s',
+      errors
+    );
+    const isThreeLayer = preset === 'three_layer_global';
+    const vsubMinOffsetM = isThreeLayer
+      ? parseNonNegativeFloat(values.vsub_min_offset_m, 'model.layers vsub_t3 min_offset_m', errors)
+      : null;
+    const initialVsubVelocity = isThreeLayer
+      ? parsePositiveFloat(
+        values.initial_vsub_velocity_m_s,
+        'model.layers vsub_t3 initial_velocity_m_s',
+        errors
+      )
+      : null;
+
+    if (values.conversion_mode !== 't1lsst_multilayer') {
+      errors.push('conversion.mode must be t1lsst_multilayer for multi-layer presets.');
+    }
+    if (v2MinOffsetM !== null && v2MaxOffsetM !== null && v2MinOffsetM >= v2MaxOffsetM) {
+      errors.push('model.layers v2_t1 min_offset_m must be less than max_offset_m.');
+    }
+    if (v2MaxOffsetM !== null && v3MinOffsetM !== null && v2MaxOffsetM > v3MinOffsetM) {
+      errors.push('model.layers v2_t1 and v3_t2 offset gates must not overlap.');
+    }
+    if (v3MinOffsetM !== null && v3MaxOffsetM !== null && v3MinOffsetM >= v3MaxOffsetM) {
+      errors.push('model.layers v3_t2 min_offset_m must be less than max_offset_m.');
+    }
+    if (isThreeLayer && v3MaxOffsetM !== null && vsubMinOffsetM !== null && v3MaxOffsetM > vsubMinOffsetM) {
+      errors.push('model.layers v3_t2 and vsub_t3 offset gates must not overlap.');
+    }
+    for (const [label, velocity] of [
+      ['model.layers v2_t1 velocity', initialV2Velocity || fixedV2Velocity],
+      ['model.layers v3_t2 initial_velocity_m_s', initialV3Velocity],
+      ['model.layers vsub_t3 initial_velocity_m_s', initialVsubVelocity],
+    ]) {
+      if (weatheringVelocity !== null && velocity !== null && velocity <= weatheringVelocity) {
+        errors.push(`${label} must be greater than model.first_layer.weathering_velocity_m_s.`);
+      }
+    }
+
+    if (errors.length) {
+      return { payload: null, moveout: null, conversion: null, errors };
+    }
+
+    const v2Layer = {
+      kind: 'v2_t1',
+      enabled: true,
+      min_offset_m: v2MinOffsetM,
+      max_offset_m: v2MaxOffsetM,
+      velocity_mode: bedrockVelocityMode,
+      min_velocity_m_s: 1200,
+      max_velocity_m_s: 5000,
+    };
+    if (bedrockVelocityMode === 'solve_global') {
+      v2Layer.initial_velocity_m_s = initialV2Velocity;
+    } else {
+      v2Layer.fixed_velocity_m_s = fixedV2Velocity;
+    }
+
+    const layers = [
+      v2Layer,
+      {
+        kind: 'v3_t2',
+        enabled: true,
+        min_offset_m: v3MinOffsetM,
+        max_offset_m: v3MaxOffsetM,
+        velocity_mode: 'solve_global',
+        initial_velocity_m_s: initialV3Velocity,
+        min_velocity_m_s: 2600,
+        max_velocity_m_s: 7000,
+      },
+    ];
+    if (isThreeLayer) {
+      layers.push({
+        kind: 'vsub_t3',
+        enabled: true,
+        min_offset_m: vsubMinOffsetM,
+        max_offset_m: null,
+        velocity_mode: 'solve_global',
+        initial_velocity_m_s: initialVsubVelocity,
+        min_velocity_m_s: 3800,
+        max_velocity_m_s: 9000,
+      });
+    }
+
+    const model = {
+      method: 'multilayer_time_term',
+      first_layer: {
+        mode: 'constant',
+        weathering_velocity_m_s: weatheringVelocity,
+      },
+      layers,
+    };
+    if (bedrockVelocityMode === 'solve_global') {
+      model.initial_bedrock_velocity_m_s = initialV2Velocity;
+    } else {
+      model.bedrock_velocity_m_s = fixedV2Velocity;
+    }
+
+    return {
+      payload: model,
+      moveout: {},
+      conversion: {
+        mode: 't1lsst_multilayer',
+        layer_count: isThreeLayer ? 3 : 2,
+      },
+      errors,
+    };
+  }
+
+  function validateRefractionStaticModel(targetDom = dom) {
+    const values = collectModelInputs(targetDom);
+    const preset = values && values.model_preset ? values.model_preset : DEFAULTS.modelPreset;
+    if (!MODEL_PRESETS.has(preset)) {
+      return {
+        payload: null,
+        moveout: null,
+        conversion: null,
+        errors: ['model preset must be a supported refraction static preset.'],
+      };
+    }
+    if (preset === 'one_layer_global') {
+      return validateOneLayerRefractionModel(targetDom);
+    }
+    if (CELL_MODEL_PRESETS.has(preset)) {
+      return validateCellRefractionModel(targetDom, preset);
+    }
+    return validateMultilayerRefractionModel(targetDom, preset);
+  }
+
+  function validateStaticCorrectionFieldCorrections(targetDom = dom) {
+    const values = collectFieldCorrectionInputs(targetDom);
+    const geometryValues = collectGeometryInputs(targetDom);
+    const errors = [];
+    if (!values) {
+      return { payload: null, errors: ['Static correction field-correction form is not available.'] };
+    }
+    if (!values.enabled) {
+      return { payload: null, errors };
+    }
+
+    const sourceDepthMode = values.source_depth_mode || 'none';
+    const upholeMode = values.uphole_mode || 'none';
+    const manualMode = values.manual_static_mode || 'none';
+    if (!FIELD_SOURCE_DEPTH_MODES.has(sourceDepthMode)) {
+      errors.push('field_corrections.source_depth.mode must be none or weathering_velocity_time.');
+    }
+    if (!FIELD_UPHOLE_MODES.has(upholeMode)) {
+      errors.push('field_corrections.uphole.mode must be none or header_time.');
+    }
+    if (!FIELD_MANUAL_STATIC_MODES.has(manualMode)) {
+      errors.push('field_corrections.manual_static.mode must be none or artifact_table.');
+    }
+
+    const fieldCorrections = {
+      source_depth: { mode: sourceDepthMode },
+      uphole: { mode: upholeMode },
+      manual_static: { mode: manualMode },
+      composition: {
+        enabled: true,
+        apply_to_trace_shift: values.apply_to_trace_shift,
+      },
+    };
+
+    if (sourceDepthMode === 'weathering_velocity_time') {
+      const sourceDepthByte = parseHeaderByte(
+        values.source_depth_byte,
+        'field_corrections.source_depth.source_depth_byte',
+        errors,
+        { optional: true }
+      );
+      if (sourceDepthByte !== null) {
+        fieldCorrections.source_depth.source_depth_byte = sourceDepthByte;
+      } else if (!geometryValues || !trimValue(geometryValues.source_depth_byte)) {
+        errors.push(
+          'field_corrections.source_depth.source_depth_byte or geometry.source_depth_byte is required when source-depth correction is enabled.'
+        );
+      }
+    }
+
+    if (upholeMode === 'header_time') {
+      const upholeTimeByte = parseHeaderByte(
+        values.uphole_time_byte,
+        'field_corrections.uphole.uphole_time_byte',
+        errors
+      );
+      if (upholeTimeByte !== null) {
+        fieldCorrections.uphole.uphole_time_byte = upholeTimeByte;
+      }
+    }
+
+    if (manualMode === 'artifact_table') {
+      const signConvention = values.manual_static_sign_convention;
+      if (!FIELD_MANUAL_SIGN_CONVENTIONS.has(signConvention)) {
+        errors.push('field_corrections.manual_static.sign_convention must be applied_shift_s or delay_positive_ms.');
+      } else {
+        fieldCorrections.manual_static.sign_convention = signConvention;
+      }
+      const sourceRef = parseOptionalArtifactRef(
+        values.manual_source_job_id,
+        values.manual_source_artifact_name,
+        'field_corrections.manual_static.source_table_artifact',
+        errors
+      );
+      const receiverRef = parseOptionalArtifactRef(
+        values.manual_receiver_job_id,
+        values.manual_receiver_artifact_name,
+        'field_corrections.manual_static.receiver_table_artifact',
+        errors
+      );
+      if (sourceRef) {
+        fieldCorrections.manual_static.source_table_artifact = sourceRef;
+      }
+      if (receiverRef) {
+        fieldCorrections.manual_static.receiver_table_artifact = receiverRef;
+      }
+      if (!sourceRef && !receiverRef) {
+        errors.push(
+          'field_corrections.manual_static.source_table_artifact or receiver_table_artifact is required when manual static mode is artifact_table.'
+        );
+      }
+    }
+
+    if (errors.length) {
+      return { payload: null, errors };
+    }
+    return { payload: { field_corrections: fieldCorrections }, errors };
+  }
+
   function validateStaticCorrectionOutput(targetDom = dom) {
     const values = collectOutputInputs(targetDom);
     const errors = [];
@@ -657,8 +1396,10 @@
 
     const geometryResult = validateStaticCorrectionGeometryRequest(targetDom);
     errors.push(...geometryResult.errors);
-    const modelResult = validateOneLayerRefractionModel(targetDom);
+    const modelResult = validateRefractionStaticModel(targetDom);
     errors.push(...modelResult.errors);
+    const fieldCorrectionResult = validateStaticCorrectionFieldCorrections(targetDom);
+    errors.push(...fieldCorrectionResult.errors);
     const outputResult = validateStaticCorrectionOutput(targetDom);
     errors.push(...outputResult.errors);
     const linkage = buildStaticCorrectionLinkage(targetDom, options.linkageJobId || '');
@@ -682,6 +1423,7 @@
         distance_source: 'geometry',
       },
       conversion: modelResult.conversion,
+      ...(fieldCorrectionResult.payload || {}),
       ...outputResult.payload,
     };
   }
@@ -708,8 +1450,10 @@
     errors.push(...geometryResult.errors);
     const linkageResult = validateStaticCorrectionLinkageRequest(dom);
     errors.push(...linkageResult.errors);
-    const modelResult = validateOneLayerRefractionModel(dom);
+    const modelResult = validateRefractionStaticModel(dom);
     errors.push(...modelResult.errors);
+    const fieldCorrectionResult = validateStaticCorrectionFieldCorrections(dom);
+    errors.push(...fieldCorrectionResult.errors);
     const outputResult = validateStaticCorrectionOutput(dom);
     errors.push(...outputResult.errors);
 
@@ -732,10 +1476,207 @@
           distance_source: 'geometry',
         },
         conversion: modelResult.conversion,
+        ...(fieldCorrectionResult.payload || {}),
         ...outputResult.payload,
       },
       errors,
     };
+  }
+
+  function buildStaticCorrectionPreviewRequest(targetDom = dom) {
+    const preview = buildRefractionStaticApplyRequest(targetDom, {
+      linkageJobId: state.lastLinkageJobId,
+    });
+    if (targetDom && targetDom.enableLinkage && targetDom.enableLinkage.checked && !state.lastLinkageJobId) {
+      preview.linkage = {
+        mode: 'required',
+        artifact_name: LINKAGE_ARTIFACT_NAME,
+      };
+    }
+    return preview;
+  }
+
+  function getStaticCorrectionValidationSnapshot(targetDom = dom) {
+    try {
+      return {
+        payload: buildStaticCorrectionPreviewRequest(targetDom),
+        errors: [],
+      };
+    } catch (error) {
+      return {
+        payload: null,
+        errors: error && Array.isArray(error.errors)
+          ? error.errors
+          : [error && error.message ? error.message : String(error)],
+      };
+    }
+  }
+
+  function applyPresetValues(values, targetDom = dom) {
+    if (!targetDom || !values) return;
+
+    setElementValue(targetDom.key1Byte, values.key1_byte);
+    setElementValue(targetDom.key2Byte, values.key2_byte);
+    if (values.pick_source) {
+      setElementValue(targetDom.pickKind, values.pick_source.kind);
+      setElementValue(targetDom.pickArtifactName, values.pick_source.artifact_name);
+    }
+
+    const geometry = values.geometry || {};
+    setElementValue(targetDom.geometryPreset, geometry.preset);
+    setElementValue(targetDom.sourceIdByte, geometry.source_id_byte);
+    setElementValue(targetDom.receiverIdByte, geometry.receiver_id_byte);
+    setElementValue(targetDom.sourceXByte, geometry.source_x_byte);
+    setElementValue(targetDom.sourceYByte, geometry.source_y_byte);
+    setElementValue(targetDom.receiverXByte, geometry.receiver_x_byte);
+    setElementValue(targetDom.receiverYByte, geometry.receiver_y_byte);
+    setElementValue(targetDom.sourceElevationByte, geometry.source_elevation_byte);
+    setElementValue(targetDom.receiverElevationByte, geometry.receiver_elevation_byte);
+    setElementValue(targetDom.coordinateScalarByte, geometry.coordinate_scalar_byte);
+    setElementValue(targetDom.elevationScalarByte, geometry.elevation_scalar_byte);
+    setElementValue(targetDom.sourceDepthByte, geometry.source_depth_byte);
+    setElementValue(targetDom.coordinateUnit, geometry.coordinate_unit);
+    setElementValue(targetDom.elevationUnit, geometry.elevation_unit);
+    setElementValue(targetDom.offsetByte, geometry.offset_byte);
+
+    const linkage = values.linkage || {};
+    setElementChecked(targetDom.enableLinkage, linkage.enabled);
+    setElementValue(targetDom.linkageMode, linkage.mode);
+    setElementValue(targetDom.linkageThresholdM, linkage.threshold_m);
+    setElementValue(targetDom.receiverLocationIntervalM, linkage.receiver_location_interval_m);
+    setElementChecked(targetDom.preferReceiverAnchor, linkage.prefer_receiver_anchor);
+
+    const model = values.model || {};
+    setElementValue(targetDom.modelKind, model.model_preset);
+    setElementValue(targetDom.weatheringVelocityMS, model.weathering_velocity_m_s);
+    setElementValue(targetDom.bedrockVelocityMode, model.bedrock_velocity_mode);
+    setElementValue(targetDom.initialBedrockVelocityMS, model.initial_bedrock_velocity_m_s);
+    setElementValue(targetDom.fixedBedrockVelocityMS, model.bedrock_velocity_m_s);
+    setElementValue(targetDom.minOffsetM, model.min_offset_m);
+    setElementValue(targetDom.maxOffsetM, model.max_offset_m);
+    setElementValue(targetDom.conversionMode, model.conversion_mode);
+    setElementValue(targetDom.v3MinOffsetM, model.v3_min_offset_m);
+    setElementValue(targetDom.v3MaxOffsetM, model.v3_max_offset_m);
+    setElementValue(targetDom.initialV3VelocityMS, model.initial_v3_velocity_m_s);
+    setElementValue(targetDom.vsubMinOffsetM, model.vsub_min_offset_m);
+    setElementValue(targetDom.initialVsubVelocityMS, model.initial_vsub_velocity_m_s);
+    setElementValue(targetDom.cellXOriginM, model.cell_x_origin_m);
+    setElementValue(targetDom.cellYOriginM, model.cell_y_origin_m);
+    setElementValue(targetDom.cellCountX, model.cell_count_x);
+    setElementValue(targetDom.cellCountY, model.cell_count_y);
+    setElementValue(targetDom.cellSizeXM, model.cell_size_x_m);
+    setElementValue(targetDom.cellSizeYM, model.cell_size_y_m);
+    setElementValue(targetDom.cellMinObservations, model.cell_min_observations);
+    setElementValue(targetDom.cellSmoothingWeight, model.cell_smoothing_weight);
+    setElementValue(targetDom.lineOriginXM, model.line_origin_x_m);
+    setElementValue(targetDom.lineOriginYM, model.line_origin_y_m);
+    setElementValue(targetDom.lineAzimuthDeg, model.line_azimuth_deg);
+
+    const fieldCorrections = values.field_corrections || {};
+    setElementChecked(targetDom.fieldCorrectionsEnabled, fieldCorrections.enabled);
+    setElementValue(targetDom.fieldSourceDepthMode, fieldCorrections.source_depth_mode);
+    setElementValue(targetDom.fieldSourceDepthByte, fieldCorrections.source_depth_byte);
+    setElementValue(targetDom.fieldUpholeMode, fieldCorrections.uphole_mode);
+    setElementValue(targetDom.fieldUpholeTimeByte, fieldCorrections.uphole_time_byte);
+    setElementValue(targetDom.fieldManualStaticMode, fieldCorrections.manual_static_mode);
+    setElementValue(
+      targetDom.fieldManualStaticSignConvention,
+      fieldCorrections.manual_static_sign_convention
+    );
+    setElementValue(targetDom.fieldManualSourceJobId, fieldCorrections.manual_source_job_id);
+    setElementValue(
+      targetDom.fieldManualSourceArtifactName,
+      fieldCorrections.manual_source_artifact_name
+    );
+    setElementValue(targetDom.fieldManualReceiverJobId, fieldCorrections.manual_receiver_job_id);
+    setElementValue(
+      targetDom.fieldManualReceiverArtifactName,
+      fieldCorrections.manual_receiver_artifact_name
+    );
+    setElementChecked(targetDom.fieldApplyToTraceShift, fieldCorrections.apply_to_trace_shift);
+
+    const output = values.output || {};
+    setElementChecked(targetDom.registerCorrectedFile, output.register_corrected_file);
+    setElementChecked(targetDom.exportEnabled, output.export_enabled);
+    if (Array.isArray(output.export_formats)) {
+      for (const checkbox of targetDom.exportFormatInputs || []) {
+        checkbox.checked = output.export_formats.includes(checkbox.value);
+      }
+    }
+
+    applyStaticCorrectionGeometryPreset(
+      targetDom,
+      trimValue(targetDom.geometryPreset && targetDom.geometryPreset.value) || GEOMETRY_DEFAULTS.preset
+    );
+    updateModelPresetControls(targetDom);
+    updateStaticCorrectionLinkageOptions(targetDom);
+    updateStaticCorrectionFieldCorrectionOptions(targetDom);
+  }
+
+  function saveCurrentPreset() {
+    if (!dom) return;
+    const name = trimValue(dom.presetName && dom.presetName.value);
+    if (!name) {
+      state.error = 'Preset name is required.';
+      state.message = 'Enter a preset name before saving.';
+      render();
+      return;
+    }
+    const presets = readStoredPresets().filter((entry) => entry.name !== name);
+    presets.push({
+      name,
+      values: collectPresetInputs(dom),
+    });
+    presets.sort((left, right) => left.name.localeCompare(right.name));
+    writeStoredPresets(presets);
+    state.presets = presets;
+    if (dom.presetSelect) {
+      dom.presetSelect.value = name;
+    }
+    state.error = '';
+    state.message = `Saved preset ${name}.`;
+    render();
+  }
+
+  function loadSelectedPreset() {
+    if (!dom || !dom.presetSelect) return;
+    const name = trimValue(dom.presetSelect.value);
+    const preset = state.presets.find((entry) => entry.name === name);
+    if (!preset) {
+      state.error = 'Choose a saved preset to load.';
+      state.message = 'No preset was loaded.';
+      render();
+      return;
+    }
+    applyPresetValues(preset.values, dom);
+    if (dom.presetName) {
+      dom.presetName.value = preset.name;
+    }
+    state.error = '';
+    state.showValidationSummary = false;
+    state.validationErrors = [];
+    state.message = `Loaded preset ${preset.name}. Current file_id and pick_source.job_id were kept.`;
+    render();
+  }
+
+  function deleteSelectedPreset() {
+    if (!dom || !dom.presetSelect) return;
+    const name = trimValue(dom.presetSelect.value);
+    if (!name) {
+      state.error = 'Choose a saved preset to delete.';
+      state.message = 'No preset was deleted.';
+      render();
+      return;
+    }
+    const presets = readStoredPresets().filter((entry) => entry.name !== name);
+    writeStoredPresets(presets);
+    state.presets = presets;
+    if (dom.presetName && dom.presetName.value === name) {
+      dom.presetName.value = '';
+    }
+    state.error = '';
+    state.message = `Deleted preset ${name}.`;
+    render();
   }
 
   function buildStaticLinkageBuildRequest(staticCorrectionPayload) {
@@ -942,8 +1883,62 @@
     }
   }
 
+  function renderValidationSummary() {
+    if (!dom || !dom.validationSummary) return;
+    const errors = state.validationErrors || [];
+    dom.validationSummary.innerHTML = '';
+    dom.validationSummary.hidden = !state.showValidationSummary || errors.length === 0;
+    if (dom.validationSummary.hidden) {
+      return;
+    }
+    const heading = document.createElement('div');
+    heading.textContent = 'Fix these fields before submitting:';
+    const list = document.createElement('ul');
+    for (const error of errors) {
+      const item = document.createElement('li');
+      item.textContent = error;
+      list.appendChild(item);
+    }
+    dom.validationSummary.appendChild(heading);
+    dom.validationSummary.appendChild(list);
+  }
+
+  function renderPresetSelect() {
+    if (!dom || !dom.presetSelect) return;
+    const currentValue = trimValue(dom.presetSelect.value);
+    dom.presetSelect.innerHTML = '';
+
+    if (!state.presets.length) {
+      const option = document.createElement('option');
+      option.value = '';
+      option.textContent = 'No saved presets';
+      dom.presetSelect.appendChild(option);
+    } else {
+      for (const preset of state.presets) {
+        const option = document.createElement('option');
+        option.value = preset.name;
+        option.textContent = preset.name;
+        dom.presetSelect.appendChild(option);
+      }
+      if (state.presets.some((entry) => entry.name === currentValue)) {
+        dom.presetSelect.value = currentValue;
+      }
+    }
+
+    if (dom.loadPresetButton) {
+      dom.loadPresetButton.disabled = state.presets.length === 0;
+    }
+    if (dom.deletePresetButton) {
+      dom.deletePresetButton.disabled = state.presets.length === 0;
+    }
+  }
+
   function render() {
     if (!dom) return;
+    const preview = getStaticCorrectionValidationSnapshot(dom);
+    if (state.showValidationSummary) {
+      state.validationErrors = preview.errors;
+    }
     updateStaticCorrectionLinkageOptions(dom);
     dom.status.textContent = state.message;
     dom.error.hidden = !state.error;
@@ -953,11 +1948,12 @@
       dom.loadPickArtifactsButton.disabled = state.loadingPickArtifacts;
     }
     if (dom.requestPreview) {
-      dom.requestPreview.hidden = !state.lastRequest;
-      dom.requestPreview.textContent = state.lastRequest
-        ? JSON.stringify(state.lastRequest, null, 2)
-        : '';
+      dom.requestPreview.textContent = preview.payload
+        ? JSON.stringify(preview.payload, null, 2)
+        : JSON.stringify({ validation_errors: preview.errors }, null, 2);
     }
+    renderValidationSummary();
+    renderPresetSelect();
     renderPickArtifactList();
     renderStaticJobPanel();
     renderStaticArtifacts();
@@ -1093,6 +2089,15 @@
     }
   }
 
+  async function autoLoadRefractionQc(jobId) {
+    const safeJobId = trimValue(jobId);
+    const refractionQc = window.RefractionQc;
+    if (!safeJobId || !refractionQc || typeof refractionQc.loadJob !== 'function') {
+      return null;
+    }
+    return refractionQc.loadJob(safeJobId, { activateTab: true });
+  }
+
   async function pollStaticCorrectionStatus(jobId) {
     const response = await fetch(`/statics/job/${encodeURIComponent(jobId)}/status`);
     if (!response.ok) {
@@ -1125,6 +2130,10 @@
         const snapshot = await pollStaticCorrectionStatus(jobId);
         if (STATIC_READY_STATES.has(snapshot.state)) {
           await loadStaticArtifacts(jobId);
+          if (token !== staticPollToken) {
+            return null;
+          }
+          await autoLoadRefractionQc(jobId);
           return snapshot;
         }
         if (isStaticJobTerminal(snapshot.state)) {
@@ -1214,6 +2223,8 @@
     if (errors.length) {
       state.ready = false;
       state.error = errors.join(' ');
+      state.validationErrors = errors;
+      state.showValidationSummary = true;
       state.message = 'Fix input errors before running refraction statics.';
       state.phase = 'idle';
       render();
@@ -1222,6 +2233,8 @@
 
     state.ready = true;
     state.error = '';
+    state.validationErrors = [];
+    state.showValidationSummary = false;
     state.phase = 'submitting_static_correction';
     render();
 
@@ -1316,6 +2329,11 @@
     const fileId = document.getElementById('staticCorrectionFileId');
     const key1Byte = document.getElementById('staticCorrectionKey1Byte');
     const key2Byte = document.getElementById('staticCorrectionKey2Byte');
+    const presetSelect = document.getElementById('staticCorrectionPresetSelect');
+    const presetName = document.getElementById('staticCorrectionPresetName');
+    const savePresetButton = document.getElementById('staticCorrectionSavePresetButton');
+    const loadPresetButton = document.getElementById('staticCorrectionLoadPresetButton');
+    const deletePresetButton = document.getElementById('staticCorrectionDeletePresetButton');
     const pickKind = document.getElementById('staticCorrectionPickKind');
     const pickJobId = document.getElementById('staticCorrectionPickJobId');
     const pickArtifactName = document.getElementById('staticCorrectionPickArtifactName');
@@ -1344,6 +2362,7 @@
       'staticCorrectionReceiverLocationIntervalM'
     );
     const preferReceiverAnchor = document.getElementById('staticCorrectionPreferReceiverAnchor');
+    const modelKind = document.getElementById('staticCorrectionModelKind');
     const weatheringVelocityMS = document.getElementById('staticCorrectionWeatheringVelocityMS');
     const bedrockVelocityMode = document.getElementById('staticCorrectionBedrockVelocityMode');
     const initialBedrockVelocityMS = document.getElementById('staticCorrectionInitialBedrockVelocityMS');
@@ -1351,9 +2370,50 @@
     const minOffsetM = document.getElementById('staticCorrectionMinOffsetM');
     const maxOffsetM = document.getElementById('staticCorrectionMaxOffsetM');
     const conversionMode = document.getElementById('staticCorrectionConversionMode');
+    const v3LayerFields = document.getElementById('staticCorrectionV3LayerFields');
+    const v3MinOffsetM = document.getElementById('staticCorrectionV3MinOffsetM');
+    const v3MaxOffsetM = document.getElementById('staticCorrectionV3MaxOffsetM');
+    const initialV3VelocityMS = document.getElementById('staticCorrectionInitialV3VelocityMS');
+    const vsubLayerFields = document.getElementById('staticCorrectionVsubLayerFields');
+    const vsubMinOffsetM = document.getElementById('staticCorrectionVsubMinOffsetM');
+    const initialVsubVelocityMS = document.getElementById('staticCorrectionInitialVsubVelocityMS');
+    const cellFields = document.getElementById('staticCorrectionCellFields');
+    const cellXOriginM = document.getElementById('staticCorrectionCellXOriginM');
+    const cellYOriginM = document.getElementById('staticCorrectionCellYOriginM');
+    const cellCountX = document.getElementById('staticCorrectionCellCountX');
+    const cellCountY = document.getElementById('staticCorrectionCellCountY');
+    const cellSizeXM = document.getElementById('staticCorrectionCellSizeXM');
+    const cellSizeYM = document.getElementById('staticCorrectionCellSizeYM');
+    const cellMinObservations = document.getElementById('staticCorrectionCellMinObservations');
+    const cellSmoothingWeight = document.getElementById('staticCorrectionCellSmoothingWeight');
+    const line2DFields = document.getElementById('staticCorrectionLine2DFields');
+    const lineOriginXM = document.getElementById('staticCorrectionLineOriginXM');
+    const lineOriginYM = document.getElementById('staticCorrectionLineOriginYM');
+    const lineAzimuthDeg = document.getElementById('staticCorrectionLineAzimuthDeg');
+    const fieldCorrectionsEnabled = document.getElementById('staticCorrectionFieldCorrectionsEnabled');
+    const fieldCorrectionOptions = document.getElementById('staticCorrectionFieldCorrectionOptions');
+    const fieldSourceDepthMode = document.getElementById('staticCorrectionFieldSourceDepthMode');
+    const fieldSourceDepthByte = document.getElementById('staticCorrectionFieldSourceDepthByte');
+    const fieldUpholeMode = document.getElementById('staticCorrectionFieldUpholeMode');
+    const fieldUpholeTimeByte = document.getElementById('staticCorrectionFieldUpholeTimeByte');
+    const fieldManualStaticMode = document.getElementById('staticCorrectionFieldManualStaticMode');
+    const fieldManualArtifactFields = document.getElementById('staticCorrectionFieldManualArtifactFields');
+    const fieldManualStaticSignConvention = document.getElementById(
+      'staticCorrectionFieldManualStaticSignConvention'
+    );
+    const fieldManualSourceJobId = document.getElementById('staticCorrectionFieldManualSourceJobId');
+    const fieldManualSourceArtifactName = document.getElementById(
+      'staticCorrectionFieldManualSourceArtifactName'
+    );
+    const fieldManualReceiverJobId = document.getElementById('staticCorrectionFieldManualReceiverJobId');
+    const fieldManualReceiverArtifactName = document.getElementById(
+      'staticCorrectionFieldManualReceiverArtifactName'
+    );
+    const fieldApplyToTraceShift = document.getElementById('staticCorrectionFieldApplyToTraceShift');
     const registerCorrectedFile = document.getElementById('staticCorrectionRegisterCorrectedFile');
     const exportEnabled = document.getElementById('staticCorrectionExportEnabled');
     const exportFormatInputs = Array.from(document.querySelectorAll('[data-static-correction-export-format]'));
+    const validationSummary = document.getElementById('staticCorrectionValidationSummary');
     const requestPreview = document.getElementById('staticCorrectionRequestPreview');
     const cancelButton = document.getElementById('staticCorrectionCancelButton');
     const staticJobPanel = document.getElementById('staticCorrectionJobPanel');
@@ -1367,6 +2427,8 @@
     const staticArtifactEmpty = document.getElementById('staticCorrectionArtifactEmpty');
     if (
       !form || !status || !error || !runButton || !fileId || !key1Byte || !key2Byte
+      || !presetSelect || !presetName || !savePresetButton || !loadPresetButton
+      || !deletePresetButton
       || !pickKind || !pickJobId || !pickArtifactName || !loadPickArtifactsButton
       || !pickArtifactList || !geometryPreset || !sourceIdByte || !receiverIdByte
       || !sourceXByte || !sourceYByte || !receiverXByte || !receiverYByte
@@ -1374,9 +2436,20 @@
       || !elevationScalarByte || !sourceDepthByte || !coordinateUnit || !elevationUnit
       || !offsetByte || !enableLinkage || !linkageOptions || !linkageMode
       || !linkageThresholdM || !receiverLocationIntervalM || !preferReceiverAnchor
-      || !weatheringVelocityMS || !bedrockVelocityMode || !initialBedrockVelocityMS
+      || !modelKind || !weatheringVelocityMS || !bedrockVelocityMode || !initialBedrockVelocityMS
       || !fixedBedrockVelocityMS || !minOffsetM || !maxOffsetM || !conversionMode
-      || !registerCorrectedFile || !exportEnabled || !requestPreview
+      || !v3LayerFields || !v3MinOffsetM || !v3MaxOffsetM || !initialV3VelocityMS
+      || !vsubLayerFields || !vsubMinOffsetM || !initialVsubVelocityMS
+      || !cellFields || !cellXOriginM || !cellYOriginM || !cellCountX || !cellCountY
+      || !cellSizeXM || !cellSizeYM || !cellMinObservations || !cellSmoothingWeight
+      || !line2DFields || !lineOriginXM || !lineOriginYM || !lineAzimuthDeg
+      || !fieldCorrectionsEnabled || !fieldCorrectionOptions || !fieldSourceDepthMode
+      || !fieldSourceDepthByte || !fieldUpholeMode || !fieldUpholeTimeByte
+      || !fieldManualStaticMode || !fieldManualArtifactFields
+      || !fieldManualStaticSignConvention || !fieldManualSourceJobId
+      || !fieldManualSourceArtifactName || !fieldManualReceiverJobId
+      || !fieldManualReceiverArtifactName || !fieldApplyToTraceShift
+      || !registerCorrectedFile || !exportEnabled || !validationSummary || !requestPreview
       || !cancelButton || !staticJobPanel || !staticJobIdValue || !staticJobStateValue
       || !staticJobMessageValue || !staticJobProgress || !staticJobProgressValue
       || !staticArtifactTable || !staticArtifactBody || !staticArtifactEmpty
@@ -1391,6 +2464,7 @@
     setDefaultValue(pickArtifactName, DEFAULTS.pickArtifactName);
     setDefaultValue(linkageMode, DEFAULTS.linkageMode);
     setDefaultValue(linkageThresholdM, DEFAULTS.linkageThresholdM);
+    setDefaultValue(modelKind, DEFAULTS.modelPreset);
     setDefaultValue(weatheringVelocityMS, DEFAULTS.weatheringVelocityMS);
     setDefaultValue(bedrockVelocityMode, DEFAULTS.bedrockVelocityMode);
     setDefaultValue(initialBedrockVelocityMS, DEFAULTS.initialBedrockVelocityMS);
@@ -1398,6 +2472,22 @@
     setDefaultValue(minOffsetM, DEFAULTS.minOffsetM);
     setDefaultValue(maxOffsetM, DEFAULTS.maxOffsetM);
     setDefaultValue(conversionMode, DEFAULTS.conversionMode);
+    setDefaultValue(v3MinOffsetM, DEFAULTS.v3MinOffsetM);
+    setDefaultValue(v3MaxOffsetM, DEFAULTS.v3MaxOffsetM);
+    setDefaultValue(initialV3VelocityMS, DEFAULTS.initialV3VelocityMS);
+    setDefaultValue(vsubMinOffsetM, DEFAULTS.vsubMinOffsetM);
+    setDefaultValue(initialVsubVelocityMS, DEFAULTS.initialVsubVelocityMS);
+    setDefaultValue(cellXOriginM, DEFAULTS.cellXOriginM);
+    setDefaultValue(cellYOriginM, DEFAULTS.cellYOriginM);
+    setDefaultValue(cellCountX, DEFAULTS.cellCountX);
+    setDefaultValue(cellCountY, DEFAULTS.cellCountY);
+    setDefaultValue(cellSizeXM, DEFAULTS.cellSizeXM);
+    setDefaultValue(cellSizeYM, DEFAULTS.cellSizeYM);
+    setDefaultValue(cellMinObservations, DEFAULTS.cellMinObservations);
+    setDefaultValue(cellSmoothingWeight, DEFAULTS.cellSmoothingWeight);
+    setDefaultValue(lineOriginXM, DEFAULTS.lineOriginXM);
+    setDefaultValue(lineOriginYM, DEFAULTS.lineOriginYM);
+    setDefaultValue(lineAzimuthDeg, DEFAULTS.lineAzimuthDeg);
 
     dom = {
       form,
@@ -1407,6 +2497,11 @@
       fileId,
       key1Byte,
       key2Byte,
+      presetSelect,
+      presetName,
+      savePresetButton,
+      loadPresetButton,
+      deletePresetButton,
       pickKind,
       pickJobId,
       pickArtifactName,
@@ -1433,6 +2528,7 @@
       linkageThresholdM,
       receiverLocationIntervalM,
       preferReceiverAnchor,
+      modelKind,
       weatheringVelocityMS,
       bedrockVelocityMode,
       initialBedrockVelocityMS,
@@ -1440,9 +2536,44 @@
       minOffsetM,
       maxOffsetM,
       conversionMode,
+      v3LayerFields,
+      v3MinOffsetM,
+      v3MaxOffsetM,
+      initialV3VelocityMS,
+      vsubLayerFields,
+      vsubMinOffsetM,
+      initialVsubVelocityMS,
+      cellFields,
+      cellXOriginM,
+      cellYOriginM,
+      cellCountX,
+      cellCountY,
+      cellSizeXM,
+      cellSizeYM,
+      cellMinObservations,
+      cellSmoothingWeight,
+      line2DFields,
+      lineOriginXM,
+      lineOriginYM,
+      lineAzimuthDeg,
+      fieldCorrectionsEnabled,
+      fieldCorrectionOptions,
+      fieldSourceDepthMode,
+      fieldSourceDepthByte,
+      fieldUpholeMode,
+      fieldUpholeTimeByte,
+      fieldManualStaticMode,
+      fieldManualArtifactFields,
+      fieldManualStaticSignConvention,
+      fieldManualSourceJobId,
+      fieldManualSourceArtifactName,
+      fieldManualReceiverJobId,
+      fieldManualReceiverArtifactName,
+      fieldApplyToTraceShift,
       registerCorrectedFile,
       exportEnabled,
       exportFormatInputs,
+      validationSummary,
       requestPreview,
       cancelButton,
       staticJobPanel,
@@ -1455,11 +2586,38 @@
       staticArtifactBody,
       staticArtifactEmpty,
     };
+    state.presets = readStoredPresets();
     applyStaticCorrectionGeometryPreset(dom, trimValue(geometryPreset.value) || GEOMETRY_DEFAULTS.preset);
+    updateModelPresetControls(dom);
     updateStaticCorrectionLinkageOptions(dom);
+    updateStaticCorrectionFieldCorrectionOptions(dom);
 
     form.addEventListener('submit', handleRun);
+    form.addEventListener('input', () => {
+      if (state.showValidationSummary) {
+        state.validationErrors = getStaticCorrectionValidationSnapshot(dom).errors;
+      }
+      render();
+    });
+    form.addEventListener('change', () => {
+      if (state.showValidationSummary) {
+        state.validationErrors = getStaticCorrectionValidationSnapshot(dom).errors;
+      }
+      render();
+    });
     runButton.addEventListener('click', handleRun);
+    savePresetButton.addEventListener('click', (event) => {
+      event.preventDefault();
+      saveCurrentPreset();
+    });
+    loadPresetButton.addEventListener('click', (event) => {
+      event.preventDefault();
+      loadSelectedPreset();
+    });
+    deletePresetButton.addEventListener('click', (event) => {
+      event.preventDefault();
+      deleteSelectedPreset();
+    });
     cancelButton.addEventListener('click', (event) => {
       event.preventDefault();
       cancelStaticCorrectionJob();
@@ -1490,13 +2648,47 @@
       state.message = 'Endpoint linkage mode updated.';
       render();
     });
+    modelKind.addEventListener('change', () => {
+      updateModelPresetControls(dom);
+      state.error = '';
+      state.message = 'Refraction static model preset updated.';
+      render();
+    });
     updateBedrockVelocityControls(dom);
     bedrockVelocityMode.addEventListener('change', () => {
       updateBedrockVelocityControls(dom);
       state.error = '';
-      state.message = bedrockVelocityMode.value === 'fixed_global'
+      state.message = bedrockVelocityMode.disabled
+        ? 'Cell V2/T1 presets solve V2 by refractor cell.'
+        : bedrockVelocityMode.value === 'fixed_global'
         ? 'Fixed global V2 will be submitted for the one-layer model.'
         : 'Global V2 will be solved from the submitted picks.';
+      render();
+    });
+    fieldCorrectionsEnabled.addEventListener('change', () => {
+      updateStaticCorrectionFieldCorrectionOptions(dom);
+      state.error = '';
+      state.message = fieldCorrectionsEnabled.checked
+        ? 'Field correction options are enabled.'
+        : 'Field corrections are disabled for this run.';
+      render();
+    });
+    fieldSourceDepthMode.addEventListener('change', () => {
+      updateStaticCorrectionFieldCorrectionOptions(dom);
+      state.error = '';
+      state.message = 'Source-depth correction mode updated.';
+      render();
+    });
+    fieldUpholeMode.addEventListener('change', () => {
+      updateStaticCorrectionFieldCorrectionOptions(dom);
+      state.error = '';
+      state.message = 'Uphole correction mode updated.';
+      render();
+    });
+    fieldManualStaticMode.addEventListener('change', () => {
+      updateStaticCorrectionFieldCorrectionOptions(dom);
+      state.error = '';
+      state.message = 'Manual static mode updated.';
       render();
     });
 
@@ -1517,24 +2709,37 @@
     buildStaticLinkageBuildRequest,
     cancelStaticCorrectionJob,
     collectGeometryInputs,
+    collectFieldCorrectionInputs,
     collectInputs,
     collectLinkageInputs,
     collectModelInputs,
     collectOutputInputs,
+    collectPresetInputs,
+    applyPresetValues,
     isLikelyPickArtifact,
+    deleteSelectedPreset,
+    getStaticCorrectionValidationSnapshot,
     loadStaticArtifacts,
     loadPickArtifacts,
+    loadSelectedPreset,
     normalizeStaticJobState,
     pollStaticCorrectionJobUntilTerminal,
     pollStaticCorrectionStatus,
     pollStaticJobUntilReady,
     render,
     runStaticCorrection,
+    saveCurrentPreset,
     stopStaticCorrectionPolling,
     submitRefractionStaticApply,
+    updateModelPresetControls,
     updateBedrockVelocityControls,
+    updateStaticCorrectionFieldCorrectionOptions,
     updateStaticCorrectionLinkageOptions,
+    validateStaticCorrectionFieldCorrections,
+    validateCellRefractionModel,
+    validateMultilayerRefractionModel,
     validateOneLayerRefractionModel,
+    validateRefractionStaticModel,
     validateStaticCorrectionGeometryRequest,
     validateStaticCorrectionLinkageRequest,
   };

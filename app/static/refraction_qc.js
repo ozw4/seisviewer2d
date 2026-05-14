@@ -3162,6 +3162,17 @@
     }
   }
 
+  function writeJobIdUrlParam(jobId) {
+    if (!window.history || !window.location) return;
+    try {
+      const url = new URL(window.location.href);
+      url.searchParams.set('refraction_job_id', jobId);
+      url.searchParams.delete('refraction_qc_job_id');
+      window.history.replaceState(window.history.state, '', url);
+    } catch (_) {
+    }
+  }
+
   async function loadBundle() {
     if (!dom) return;
     const jobId = String(dom.jobId.value || '').trim();
@@ -3172,7 +3183,7 @@
       state.error = 'Job ID is required.';
       state.qcBundle = null;
       render();
-      return;
+      return null;
     }
 
     const serial = ++requestSerial;
@@ -3203,16 +3214,37 @@
       state.gatherError = null;
       state.error = null;
       writeRecentJob(jobId);
+      writeJobIdUrlParam(jobId);
+      return bundle;
     } catch (error) {
       if (serial !== requestSerial) return;
       state.qcBundle = null;
       state.error = error instanceof Error ? error.message : String(error);
+      return null;
     } finally {
       if (serial === requestSerial) {
         state.loading = false;
         render();
       }
     }
+  }
+
+  async function loadJob(jobId, options = {}) {
+    if (!dom) return null;
+    const safeJobId = String(jobId || '').trim();
+    if (safeJobId) {
+      dom.jobId.value = safeJobId;
+      state.selectedJobId = safeJobId;
+    }
+    if (options.maxPoints !== undefined && dom.maxPoints) {
+      const maxPoints = parsePositiveInteger(options.maxPoints, DEFAULT_MAX_POINTS);
+      dom.maxPoints.value = String(maxPoints);
+      state.maxPoints = maxPoints;
+    }
+    if (options.activateTab !== false) {
+      activateSidebarTab('refraction_qc');
+    }
+    return loadBundle();
   }
 
   function init() {
@@ -3337,8 +3369,12 @@
   }
 
   window.refractionQcState = state;
+  window.RefractionQc = {
+    loadJob,
+  };
   window.refractionQcUI = {
     loadBundle,
+    loadJob,
     loadGatherPreview,
     setSelectedView,
     activateSidebarTab,
