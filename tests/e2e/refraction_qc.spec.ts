@@ -1101,6 +1101,35 @@ test('refraction QC tab shows error for missing job', async ({ page }) => {
 	await expect(page.getByTestId('refraction-qc-status')).toContainText('No QC bundle loaded.');
 });
 
+test('refraction QC error state for missing artifact', async ({ page }) => {
+	await page.route('**/statics/refraction/qc', async (route) => {
+		const payload = qcBundlePayload('refraction-missing-artifact') as any;
+		delete payload.views.first_break_fit;
+		delete payload.views.first_break_residual;
+		payload.available_views = payload.available_views.filter((view: string) => (
+			view !== 'first_break_fit' && view !== 'first_break_residual'
+		));
+		payload.unavailable_views = Array.from(new Set([
+			...payload.unavailable_views,
+			'first_break',
+		]));
+		await route.fulfill({
+			status: 200,
+			contentType: 'application/json',
+			body: JSON.stringify(payload),
+		});
+	});
+
+	await loadRefractionQcBundle(page, 'refraction-missing-artifact');
+	await page.getByTestId('refraction-qc-view-first-break-button').click();
+
+	await expect(page.getByTestId('refraction-qc-view-first-break')).toContainText(
+		'This view is unavailable from the loaded QC bundle artifacts.',
+	);
+	await expect(page.getByTestId('refraction-qc-first-break-time-plot')).toHaveCount(0);
+	await expect(page.getByTestId('refraction-qc-first-break-residual-plot')).toHaveCount(0);
+});
+
 test('refraction QC tab view switching', async ({ page }) => {
 	await page.route('**/statics/refraction/qc', async (route) => {
 		await route.fulfill({
