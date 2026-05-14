@@ -1050,6 +1050,53 @@ test('refraction QC tab loads', async ({ page }) => {
 	await expect(page.getByTestId('refraction-qc-view-gather-button')).toBeVisible();
 });
 
+test('static correction tab scaffold switches side panels', async ({ page }) => {
+	const staticsRequests: string[] = [];
+	await page.route('**/statics/refraction/**', async (route) => {
+		staticsRequests.push(route.request().url());
+		await route.abort();
+	});
+
+	await page.goto('/');
+
+	await expect(page.getByTestId('static-correction-tab')).toBeVisible();
+	await expect(page.getByTestId('static-correction-tab')).toHaveAttribute('aria-selected', 'false');
+	await expect(page.locator('#staticCorrectionTabPanel')).toHaveAttribute('role', 'tabpanel');
+	await expect(page.locator('#staticCorrectionTabPanel')).toHaveAttribute(
+		'aria-labelledby',
+		'staticCorrectionSidebarTab',
+	);
+
+	await page.getByTestId('static-correction-tab').click();
+
+	const panel = page.getByTestId('static-correction-panel');
+	await expect(panel).toBeVisible();
+	await expect(panel.getByRole('heading', { name: 'Static Correction' })).toBeVisible();
+	for (const heading of ['Input', 'First-break picks', 'Geometry', 'Linkage', 'Model', 'Output', 'Run']) {
+		await expect(panel.getByRole('heading', { name: heading })).toBeVisible();
+	}
+	await expect(page.getByTestId('static-correction-form')).toBeVisible();
+	await expect(page.getByTestId('static-correction-status')).toContainText(
+		'Static correction setup is not available yet.',
+	);
+	await expect(page.getByTestId('static-correction-error')).toBeHidden();
+	await expect(page.getByTestId('static-correction-run')).toBeVisible();
+	await expect(page.getByTestId('static-correction-run')).toBeDisabled();
+	await expect(page.getByTestId('pipeline-sidebar-tab')).toHaveAttribute('aria-selected', 'false');
+	await expect(page.getByTestId('refraction-qc-tab')).toHaveAttribute('aria-selected', 'false');
+	await expect(page.getByTestId('static-correction-tab')).toHaveAttribute('aria-selected', 'true');
+	await expect(page.locator('#pipelineTabPanel')).toBeHidden();
+	await expect(page.getByTestId('refraction-qc-panel')).toBeHidden();
+
+	await page.getByTestId('refraction-qc-tab').click();
+	await expect(page.getByTestId('refraction-qc-panel')).toBeVisible();
+	await expect(panel).toBeHidden();
+	await expect(page.getByTestId('refraction-qc-tab')).toHaveAttribute('aria-selected', 'true');
+	await expect(page.getByTestId('static-correction-tab')).toHaveAttribute('aria-selected', 'false');
+
+	expect(staticsRequests).toEqual([]);
+});
+
 test('refraction QC tab fetches bundle for job', async ({ page }) => {
 	let requestPayload: Record<string, unknown> | null = null;
 	await page.route('**/statics/refraction/qc', async (route) => {

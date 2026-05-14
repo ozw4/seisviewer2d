@@ -815,7 +815,7 @@
 
     .sidebar-tabs {
       display: grid;
-      grid-template-columns: 1fr 1fr;
+      grid-template-columns: repeat(3, 1fr);
       border-bottom: 1px solid #d1d5db;
       background: #f3f4f6;
     }
@@ -1138,6 +1138,105 @@
       justify-content: flex-end;
       gap: .5em;
       margin-top: .4em;
+    }
+
+    .static-correction-panel {
+      flex: 1;
+      min-height: 0;
+      overflow-y: auto;
+      padding: 1em;
+      background: #fafafa;
+      display: flex;
+      flex-direction: column;
+      gap: 0.85em;
+    }
+
+    .static-correction-title {
+      margin: 0;
+      font-size: 1em;
+    }
+
+    .static-correction-form {
+      display: flex;
+      flex-direction: column;
+      gap: 0.75em;
+    }
+
+    .static-correction-section {
+      display: flex;
+      flex-direction: column;
+      gap: 0.55em;
+      padding: 0.75em;
+      border: 1px solid #d8dee8;
+      border-radius: 8px;
+      background: #fff;
+    }
+
+    .static-correction-section h3 {
+      margin: 0;
+      font-size: 0.95em;
+      color: #0f172a;
+    }
+
+    .static-correction-field {
+      display: flex;
+      flex-direction: column;
+      gap: 0.3em;
+      font-size: 0.86em;
+      color: #334155;
+    }
+
+    .static-correction-field input,
+    .static-correction-field select {
+      padding: 0.4em 0.5em;
+      border: 1px solid #cbd5e1;
+      border-radius: 4px;
+      background: #fff;
+      color: #111827;
+      font: inherit;
+    }
+
+    .static-correction-field input:disabled,
+    .static-correction-field select:disabled,
+    .static-correction-actions button:disabled {
+      color: #64748b;
+      cursor: not-allowed;
+      opacity: 0.75;
+    }
+
+    .static-correction-actions {
+      display: flex;
+      gap: 0.5em;
+      align-items: center;
+    }
+
+    .static-correction-actions button {
+      margin: 0;
+      padding: 0.45em 0.65em;
+      border: 1px solid #cbd5e1;
+      border-radius: 4px;
+      background: #fff;
+      color: #111827;
+      font: inherit;
+      font-size: 0.86em;
+    }
+
+    .static-correction-status,
+    .static-correction-error {
+      font-size: 0.84em;
+      line-height: 1.4;
+    }
+
+    .static-correction-status {
+      color: #475569;
+    }
+
+    .static-correction-error {
+      padding: 0.55em 0.65em;
+      border: 1px solid #fca5a5;
+      border-radius: 4px;
+      background: #fef2f2;
+      color: #991b1b;
     }
 
     .refraction-qc-panel {
@@ -1709,6 +1808,9 @@
       <div class="sidebar-tabs" role="tablist" aria-label="Viewer side panel">
         <button type="button" id="pipelineSidebarTab" class="sidebar-tab is-active" role="tab"
           aria-selected="true" aria-controls="pipelineTabPanel" data-testid="pipeline-sidebar-tab">Pipeline</button>
+        <button type="button" id="staticCorrectionSidebarTab" class="sidebar-tab" role="tab"
+          aria-selected="false" aria-controls="staticCorrectionTabPanel"
+          data-testid="static-correction-tab">Static Correction</button>
         <button type="button" id="refractionQcSidebarTab" class="sidebar-tab" role="tab"
           aria-selected="false" aria-controls="refractionQcTabPanel" data-testid="refraction-qc-tab">Refraction QC</button>
       </div>
@@ -1745,6 +1847,71 @@
               <button type="submit" id="pipelineInspectorSave">Save</button>
             </div>
           </form>
+        </div>
+      </div>
+      <div id="staticCorrectionTabPanel" class="sidebar-tab-panel" role="tabpanel"
+        aria-labelledby="staticCorrectionSidebarTab" hidden>
+        <div class="static-correction-panel" data-testid="static-correction-panel">
+          <h2 class="static-correction-title">Static Correction</h2>
+          <form id="staticCorrectionForm" class="static-correction-form" data-testid="static-correction-form">
+            <section class="static-correction-section" aria-labelledby="staticCorrectionInputHeading">
+              <h3 id="staticCorrectionInputHeading">Input</h3>
+              <label class="static-correction-field" for="staticCorrectionFileId">File ID
+                <input id="staticCorrectionFileId" name="file_id" type="text" autocomplete="off"
+                  placeholder="SEG-Y or TraceStore file_id" disabled />
+              </label>
+            </section>
+            <section class="static-correction-section" aria-labelledby="staticCorrectionPicksHeading">
+              <h3 id="staticCorrectionPicksHeading">First-break picks</h3>
+              <label class="static-correction-field" for="staticCorrectionPicksSource">Pick source
+                <select id="staticCorrectionPicksSource" name="pick_source" disabled>
+                  <option value="">Not configured</option>
+                </select>
+              </label>
+            </section>
+            <section class="static-correction-section" aria-labelledby="staticCorrectionGeometryHeading">
+              <h3 id="staticCorrectionGeometryHeading">Geometry</h3>
+              <label class="static-correction-field" for="staticCorrectionGeometrySource">Geometry source
+                <select id="staticCorrectionGeometrySource" name="geometry_source" disabled>
+                  <option value="">Not configured</option>
+                </select>
+              </label>
+            </section>
+            <section class="static-correction-section" aria-labelledby="staticCorrectionLinkageHeading">
+              <h3 id="staticCorrectionLinkageHeading">Linkage</h3>
+              <label class="static-correction-field" for="staticCorrectionLinkageMode">Linkage mode
+                <select id="staticCorrectionLinkageMode" name="linkage_mode" disabled>
+                  <option value="">Not configured</option>
+                </select>
+              </label>
+            </section>
+            <section class="static-correction-section" aria-labelledby="staticCorrectionModelHeading">
+              <h3 id="staticCorrectionModelHeading">Model</h3>
+              <label class="static-correction-field" for="staticCorrectionModelKind">Refraction model
+                <select id="staticCorrectionModelKind" name="model_kind" disabled>
+                  <option value="">Not configured</option>
+                </select>
+              </label>
+            </section>
+            <section class="static-correction-section" aria-labelledby="staticCorrectionOutputHeading">
+              <h3 id="staticCorrectionOutputHeading">Output</h3>
+              <label class="static-correction-field" for="staticCorrectionOutputName">Output name
+                <input id="staticCorrectionOutputName" name="output_name" type="text" autocomplete="off"
+                  placeholder="Refraction static job name" disabled />
+              </label>
+            </section>
+            <section class="static-correction-section" aria-labelledby="staticCorrectionRunHeading">
+              <h3 id="staticCorrectionRunHeading">Run</h3>
+              <div class="static-correction-actions">
+                <button id="staticCorrectionRunButton" type="button" disabled
+                  data-testid="static-correction-run">Run</button>
+              </div>
+            </section>
+          </form>
+          <div id="staticCorrectionStatus" class="static-correction-status" role="status" aria-live="polite"
+            data-testid="static-correction-status"></div>
+          <div id="staticCorrectionError" class="static-correction-error" role="alert" hidden
+            data-testid="static-correction-error"></div>
         </div>
       </div>
       <div id="refractionQcTabPanel" class="sidebar-tab-panel" role="tabpanel"
@@ -2024,6 +2191,7 @@
   <script src="/static/pipeline/index.js"></script>
   <script src="/static/pipeline_ui.js"></script>
   <script src="/static/refraction_qc.js"></script>
+  <script src="/static/refraction_static_run.js"></script>
   <script type="module" src="/static/viewer/bootstrap.js"></script>
   <script type="module" src="/static/viewer/seis_heatmap_globals.js"></script>
   <script src="/static/viewer/restyle_only.js"></script>
