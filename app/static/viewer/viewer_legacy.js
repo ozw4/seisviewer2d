@@ -1284,14 +1284,25 @@
         const result = Plotly.relayout(gd, props);
         if (result && typeof result.finally === 'function') {
           return result.finally(() => {
-            suppressRelayout = false;
+            finishSuppressedRelayout();
           });
         }
-        suppressRelayout = false;
+        finishSuppressedRelayout();
         return result;
       } catch (err) {
-        suppressRelayout = false;
+        finishSuppressedRelayout();
         throw err;
+      }
+    }
+
+    function finishSuppressedRelayout() {
+      suppressRelayout = false;
+      if (
+        typeof hasPendingPickOverlayState === 'function' &&
+        hasPendingPickOverlayState() &&
+        typeof schedulePickOverlayUpdate === 'function'
+      ) {
+        schedulePickOverlayUpdate();
       }
     }
 

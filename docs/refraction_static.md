@@ -10,6 +10,8 @@ The completed M3 multi-layer workflow is documented in
 The M5 repo-owned IRAS-style export/import and static-table apply workflow is
 documented in
 [statics/refraction_m5_exports_table_workflow.md](statics/refraction_m5_exports_table_workflow.md).
+The user-facing M6 QC and viewer workflow is documented in
+[statics/refraction_qc_viewer_workflow.md](statics/refraction_qc_viewer_workflow.md).
 
 The public apply workflow supports a practical 1-layer model:
 
@@ -490,6 +492,7 @@ public 3-layer T1LSST conversion
 source static table
 receiver static table
 station table export
+M6 refraction QC artifact and viewer workflow documentation
 ```
 
 Out of scope:

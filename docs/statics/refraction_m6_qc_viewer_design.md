@@ -5,6 +5,8 @@
 This document defines the M6 refraction QC and viewer integration contract.
 It is a design target for future backend and frontend issues; it does not
 change the numerical solver, existing artifacts, or viewer code by itself.
+For the user-facing review workflow, see
+`docs/statics/refraction_qc_viewer_workflow.md`.
 
 Read this document with the existing implementation references:
 
@@ -173,9 +175,12 @@ with a JSON body:
 }
 ```
 
-The current M6 API contract is the bundle route above. Specialized detail
-endpoints may be added later, but this document does not define callable route
-names for them.
+The compact bundle route above is the tabular QC contract. Gather preview is
+served separately by the bounded seismic-window route:
+
+```text
+POST /statics/refraction/qc/gather-preview
+```
 
 Logical M6 product family names are:
 
@@ -736,7 +741,7 @@ display contract.
     "first_break_fit",
     "static_components"
   ],
-  "unavailable_views": ["profiles", "cells", "gather_preview"],
+  "unavailable_views": ["profiles", "cells"],
   "views": {
     "first_break_fit": {
       "artifact": "refraction_first_break_fit_qc.csv",
@@ -804,10 +809,11 @@ display contract.
 Each key in `views` is a sampled tabular artifact. `records` are JSON-safe CSV
 rows and therefore currently contain string values from the source CSV. Large
 tables are sampled independently per view using the deterministic method named
-in both the view payload and the `downsampling` entry. If a requested family has
-no matching existing artifact, the family name appears in `unavailable_views`.
-`gather_preview` is currently reported unavailable by this compact bundle route;
-a future preview endpoint must reuse TraceStore window APIs for heavy trace I/O.
+in both the view payload and the `downsampling` entry. If a requested tabular
+family has no matching existing artifact, the family name appears in
+`unavailable_views`. `gather_preview` is not embedded in this compact bundle;
+call `POST /statics/refraction/qc/gather-preview` for bounded raw/corrected
+trace windows and first-break overlays.
 
 ## 12. Viewer mapping summary
 

@@ -66,12 +66,28 @@
     selectedProfileUnits: 'auto',
     profileStatusFilter: 'all',
     maxPoints: DEFAULT_MAX_POINTS,
+    gatherAxis: 'source',
+    gatherDisplayMode: 'side_by_side',
+    gatherFileId: '',
+    gatherKey1Byte: '',
+    gatherKey2Byte: '',
+    gatherSectionKey1: '',
+    gatherX0: '',
+    gatherX1: '',
+    gatherTimeStartS: '0',
+    gatherTimeEndS: '1',
+    gatherMaxTraces: 120,
+    gatherReductionVelocity: '1500',
+    gatherPreview: null,
+    gatherLoading: false,
+    gatherError: null,
     error: null,
     loading: false,
   };
 
   let dom = null;
   let requestSerial = 0;
+  let gatherRequestSerial = 0;
 
   const LAYER_LABELS = {
     v1_direct_arrival: 'V1 direct',
@@ -410,6 +426,19 @@
     empty: '#cbd5e1',
     rejected: '#dc2626',
     unknown: '#64748b',
+  };
+
+  const GATHER_DISPLAY_LABELS = {
+    raw: 'Raw only',
+    corrected: 'Corrected only',
+    side_by_side: 'Raw and corrected',
+    reduced_time: 'Reduced-time / LMO',
+  };
+
+  const GATHER_AXIS_LABELS = {
+    source: 'Source',
+    receiver: 'Receiver',
+    section: 'Midpoint/CMP window',
   };
 
   function readRecentJobs() {
@@ -2315,17 +2344,622 @@
     }
   }
 
-  function renderGatherPreview(content, bundle) {
-    const message = document.createElement('p');
-    message.className = 'refraction-qc-placeholder';
-    if (isUnavailable(bundle, VIEW_DEFS[6])) {
-      message.textContent = 'Gather preview is not included in the compact QC bundle.';
-    } else {
-      message.textContent = 'No gather preview payload loaded.';
+  function currentGatherContext() {
+    const slider = document.getElementById('key1_slider');
+    const sliderIndex = Number.parseInt(slider?.value || '0', 10) || 0;
+    const key1FromViewer = Array.isArray(window.key1Values)
+      ? window.key1Values[sliderIndex]
+      : undefined;
+    const windowData = window.latestWindowRender || {};
+    const xRange = Array.isArray(window.savedXRange) && window.savedXRange.length === 2
+      ? window.savedXRange
+      : null;
+    const x0FromRange = xRange
+      ? Math.max(0, Math.floor(Math.min(Number(xRange[0]), Number(xRange[1]))))
+      : NaN;
+    const x1FromRange = xRange
+      ? Math.max(0, Math.ceil(Math.max(Number(xRange[0]), Number(xRange[1]))))
+      : NaN;
+    const fileIdInput = document.getElementById('file_id');
+
+    return {
+      fileId: state.gatherFileId
+        || String(fileIdInput?.value || '')
+        || String(window.currentFileId || '')
+        || localStorage.getItem('file_id')
+        || '',
+      key1Byte: state.gatherKey1Byte
+        || String(window.currentKey1Byte || '')
+        || localStorage.getItem('key1_byte')
+        || '189',
+      key2Byte: state.gatherKey2Byte
+        || String(window.currentKey2Byte || '')
+        || localStorage.getItem('key2_byte')
+        || '193',
+      key1: state.gatherSectionKey1
+        || (key1FromViewer !== undefined && key1FromViewer !== null ? String(key1FromViewer) : ''),
+      x0: state.gatherX0
+        || (Number.isFinite(x0FromRange) ? String(x0FromRange) : '')
+        || (Number.isFinite(Number(windowData.x0)) ? String(windowData.x0) : '0'),
+      x1: state.gatherX1
+        || (Number.isFinite(x1FromRange) ? String(x1FromRange) : '')
+        || (Number.isFinite(Number(windowData.x1)) ? String(windowData.x1) : ''),
+    };
+  }
+
+  function parseFiniteNumberField(value, label, errors) {
+    const parsed = Number.parseFloat(String(value ?? '').trim());
+    if (!Number.isFinite(parsed)) {
+      errors.push(`${label} must be a finite number.`);
+      return NaN;
     }
-    content.appendChild(message);
+    return parsed;
+  }
+
+  function parsePositiveIntegerField(value, label, errors) {
+    const text = String(value ?? '').trim();
+    const parsed = Number(text);
+    if (!text || !Number.isInteger(parsed) || parsed < 1) {
+      errors.push(`${label} must be a positive integer.`);
+      return NaN;
+    }
+    return parsed;
+  }
+
+  function parseIntegerField(value, label, errors) {
+    const text = String(value ?? '').trim();
+    const parsed = Number(text);
+    if (!text || !Number.isInteger(parsed)) {
+      errors.push(`${label} must be an integer.`);
+      return NaN;
+    }
+    return parsed;
+  }
+
+  function buildGatherPreviewRequest() {
+    const errors = [];
+    const context = currentGatherContext();
+    const jobId = String(state.selectedJobId || dom?.jobId?.value || '').trim();
+    const fileId = String(context.fileId || '').trim();
+    if (!jobId) errors.push('Job ID is required.');
+    if (!fileId) errors.push('File ID is required.');
+
+    const key1Byte = parsePositiveIntegerField(context.key1Byte, 'key1 byte', errors);
+    const key2Byte = parsePositiveIntegerField(context.key2Byte, 'key2 byte', errors);
+    const timeStart = parseFiniteNumberField(state.gatherTimeStartS, 'Time start', errors);
+    const timeEnd = parseFiniteNumberField(state.gatherTimeEndS, 'Time end', errors);
+    const maxTraces = parsePositiveIntegerField(state.gatherMaxTraces, 'Max traces', errors);
+    if (Number.isFinite(timeStart) && timeStart < 0) {
+      errors.push('Time start must be greater than or equal to 0.');
+    }
+    if (Number.isFinite(timeEnd) && Number.isFinite(timeStart) && timeEnd <= timeStart) {
+      errors.push('Time end must be greater than time start.');
+    }
+
+    const payload = {
+      job_id: jobId,
+      file_id: fileId,
+      key1_byte: key1Byte,
+      key2_byte: key2Byte,
+      gather_axis: state.gatherAxis,
+      time_start_s: timeStart,
+      time_end_s: timeEnd,
+      max_traces: maxTraces,
+      scaling: 'amax',
+    };
+
+    if (state.gatherAxis === 'section') {
+      const key1 = parseIntegerField(context.key1, 'Section key1', errors);
+      const x0 = parseIntegerField(context.x0, 'Trace start', errors);
+      const x1 = parseIntegerField(context.x1, 'Trace end', errors);
+      if (Number.isInteger(x0) && Number.isInteger(x1) && x1 < x0) {
+        errors.push('Trace end must be greater than or equal to trace start.');
+      }
+      payload.key1 = key1;
+      payload.x0 = x0;
+      payload.x1 = x1;
+    } else {
+      const endpointKey = String(state.selectedEndpoint || '').trim();
+      if (!endpointKey) {
+        errors.push('Endpoint is required for source and receiver gathers.');
+      }
+      payload.endpoint_key = endpointKey;
+    }
+
+    if (state.gatherDisplayMode === 'reduced_time') {
+      const velocity = parseFiniteNumberField(
+        state.gatherReductionVelocity,
+        'Reduction velocity',
+        errors,
+      );
+      if (Number.isFinite(velocity) && velocity <= 0) {
+        errors.push('Reduction velocity must be greater than 0.');
+      }
+      payload.reduction_velocity_m_s = velocity;
+    }
+
+    return { payload, errors };
+  }
+
+  function makeGatherField(label, input) {
+    const field = document.createElement('label');
+    field.className = 'refraction-qc-field';
+    field.append(document.createTextNode(label), input);
+    return field;
+  }
+
+  function makeGatherInput(type, value, testId, onInput, options = {}) {
+    const input = document.createElement('input');
+    input.type = type;
+    input.value = value ?? '';
+    input.autocomplete = 'off';
+    input.dataset.testid = testId;
+    if (options.min !== undefined) input.min = String(options.min);
+    if (options.step !== undefined) input.step = String(options.step);
+    input.addEventListener('input', () => {
+      onInput(input.value);
+    });
+    return input;
+  }
+
+  function makeGatherSelect(value, testId, options, onChange) {
+    const select = document.createElement('select');
+    select.dataset.testid = testId;
+    for (const [optionValue, label] of options) {
+      const option = document.createElement('option');
+      option.value = optionValue;
+      option.textContent = label;
+      select.appendChild(option);
+    }
+    select.value = value;
+    select.addEventListener('change', () => {
+      onChange(select.value);
+    });
+    return select;
+  }
+
+  function createGatherPreviewControls() {
+    const context = currentGatherContext();
+    const form = document.createElement('form');
+    form.className = 'refraction-qc-gather-controls';
+    form.dataset.testid = 'refraction-qc-gather-controls';
+    form.noValidate = true;
+    form.addEventListener('submit', (event) => {
+      event.preventDefault();
+      loadGatherPreview();
+    });
+
+    const axis = makeGatherSelect(
+      state.gatherAxis,
+      'refraction-qc-gather-axis',
+      Object.entries(GATHER_AXIS_LABELS),
+      (value) => {
+        state.gatherAxis = value;
+        render();
+      },
+    );
+    const mode = makeGatherSelect(
+      state.gatherDisplayMode,
+      'refraction-qc-gather-display',
+      Object.entries(GATHER_DISPLAY_LABELS),
+      (value) => {
+        state.gatherDisplayMode = value;
+        render();
+      },
+    );
+    form.append(
+      makeGatherField('Gather', axis),
+      makeGatherField('Display', mode),
+      makeGatherField('File ID', makeGatherInput(
+        'text',
+        context.fileId,
+        'refraction-qc-gather-file-id',
+        (value) => { state.gatherFileId = value.trim(); },
+      )),
+      makeGatherField('key1 byte', makeGatherInput(
+        'number',
+        context.key1Byte,
+        'refraction-qc-gather-key1-byte',
+        (value) => { state.gatherKey1Byte = value.trim(); },
+        { min: 1, step: 1 },
+      )),
+      makeGatherField('key2 byte', makeGatherInput(
+        'number',
+        context.key2Byte,
+        'refraction-qc-gather-key2-byte',
+        (value) => { state.gatherKey2Byte = value.trim(); },
+        { min: 1, step: 1 },
+      )),
+    );
+
+    if (state.gatherAxis === 'section') {
+      form.append(
+        makeGatherField('key1', makeGatherInput(
+          'number',
+          context.key1,
+          'refraction-qc-gather-key1',
+          (value) => { state.gatherSectionKey1 = value.trim(); },
+          { step: 1 },
+        )),
+        makeGatherField('Trace start', makeGatherInput(
+          'number',
+          context.x0,
+          'refraction-qc-gather-x0',
+          (value) => { state.gatherX0 = value.trim(); },
+          { min: 0, step: 1 },
+        )),
+        makeGatherField('Trace end', makeGatherInput(
+          'number',
+          context.x1,
+          'refraction-qc-gather-x1',
+          (value) => { state.gatherX1 = value.trim(); },
+          { min: 0, step: 1 },
+        )),
+      );
+    }
+
+    form.append(
+      makeGatherField('Time start (s)', makeGatherInput(
+        'number',
+        state.gatherTimeStartS,
+        'refraction-qc-gather-time-start',
+        (value) => { state.gatherTimeStartS = value.trim(); },
+        { min: 0, step: '0.001' },
+      )),
+      makeGatherField('Time end (s)', makeGatherInput(
+        'number',
+        state.gatherTimeEndS,
+        'refraction-qc-gather-time-end',
+        (value) => { state.gatherTimeEndS = value.trim(); },
+        { min: 0, step: '0.001' },
+      )),
+      makeGatherField('Max traces', makeGatherInput(
+        'number',
+        String(state.gatherMaxTraces),
+        'refraction-qc-gather-max-traces',
+        (value) => { state.gatherMaxTraces = value.trim(); },
+        { min: 1, step: 1 },
+      )),
+    );
+
+    if (state.gatherDisplayMode === 'reduced_time') {
+      form.appendChild(makeGatherField('Reduction velocity (m/s)', makeGatherInput(
+        'number',
+        state.gatherReductionVelocity,
+        'refraction-qc-gather-reduction-velocity',
+        (value) => { state.gatherReductionVelocity = value.trim(); },
+        { min: 1, step: '0.1' },
+      )));
+    }
+
+    const actions = document.createElement('div');
+    actions.className = 'refraction-qc-actions';
+    const loadButton = document.createElement('button');
+    loadButton.type = 'submit';
+    loadButton.disabled = state.gatherLoading;
+    loadButton.textContent = state.gatherLoading ? 'Loading preview...' : 'Load Preview';
+    loadButton.dataset.testid = 'refraction-qc-gather-load';
+    actions.appendChild(loadButton);
+    form.appendChild(actions);
+    return form;
+  }
+
+  function gatherAxisValues(preview) {
+    const offsets = Array.isArray(preview.offset_m) ? preview.offset_m : [];
+    const hasOffsets = offsets.length && offsets.every((value) => Number.isFinite(Number(value)));
+    if (hasOffsets) {
+      return {
+        x: offsets.map((value) => Number(value)),
+        label: 'Offset (m)',
+      };
+    }
+    return {
+      x: (Array.isArray(preview.x_indices) ? preview.x_indices : []).map((value) => Number(value)),
+      label: 'Trace position',
+    };
+  }
+
+  function gatherTimeValues(preview) {
+    const rowCount = Array.isArray(preview.raw_samples) ? preview.raw_samples.length : 0;
+    const dt = Number(preview.dt_s);
+    const windowMeta = preview.window || {};
+    const startSample = Number(windowMeta.sample_start ?? windowMeta.y0 ?? 0);
+    const stepY = Number(windowMeta.effective_step_y ?? windowMeta.step_y ?? 1);
+    const out = [];
+    for (let index = 0; index < rowCount; index += 1) {
+      out.push((startSample + index * stepY) * dt);
+    }
+    return out;
+  }
+
+  function finitePairPoints(xValues, yValues) {
+    const x = [];
+    const y = [];
+    const indices = [];
+    for (let index = 0; index < xValues.length && index < yValues.length; index += 1) {
+      const xValue = Number(xValues[index]);
+      const yValue = Number(yValues[index]);
+      if (!Number.isFinite(xValue) || !Number.isFinite(yValue)) continue;
+      x.push(xValue);
+      y.push(yValue);
+      indices.push(index);
+    }
+    return { x, y, indices };
+  }
+
+  function gatherOverlayTrace(preview, xValues, options) {
+    const times = Array.isArray(preview[options.field]) ? preview[options.field] : [];
+    const points = finitePairPoints(xValues, times);
+    if (!points.x.length) return null;
+    const residuals = Array.isArray(preview.residual_s) ? preview.residual_s : [];
+    const residualMs = points.indices.map((index) => {
+      const value = Number(residuals[index]);
+      return Number.isFinite(value) ? value * 1000.0 : NaN;
+    });
+    const hasResidual = options.residual && residualMs.some((value) => Number.isFinite(value));
+    return {
+      name: options.name,
+      type: 'scatter',
+      mode: 'markers',
+      x: points.x,
+      y: points.y,
+      hovertemplate: `${options.name}<br>x=%{x}<br>time=%{y:.4f} s<extra></extra>`,
+      marker: {
+        color: hasResidual ? residualMs : options.color,
+        colorscale: hasResidual ? 'RdBu' : undefined,
+        reversescale: hasResidual ? true : undefined,
+        cmid: hasResidual ? 0 : undefined,
+        showscale: hasResidual,
+        colorbar: hasResidual ? { title: { text: 'Residual (ms)' } } : undefined,
+        symbol: options.symbol,
+        size: options.size || 8,
+        line: { color: '#0f172a', width: 0.5 },
+      },
+    };
+  }
+
+  function correctedStatusMessage(preview) {
+    const ref = preview?.corrected_window_ref || {};
+    const status = String(ref.status || '').trim();
+    if (!status) return '';
+    if (status === 'ok') {
+      return `Corrected data source: ${textOrDash(preview.corrected_samples_source)}.`;
+    }
+    const message = String(ref.message || '').trim();
+    return `Missing corrected data: status ${status}. ${message || `Preview samples source: ${textOrDash(preview.corrected_samples_source)}.`}`;
+  }
+
+  function renderGatherHeatmap(content, preview, options) {
+    const plot = createFirstBreakPlot(options.testId);
+    plot.classList.add('refraction-qc-gather-plot');
+    plot.dataset.pointCount = String(preview?.shape?.[1] || 0);
+    content.appendChild(plot);
+
+    if (!window.Plotly) {
+      plot.textContent = 'Plot library is unavailable.';
+      return;
+    }
+
+    const xAxis = gatherAxisValues(preview);
+    const y = gatherTimeValues(preview);
+    const traces = [
+      {
+        name: options.title,
+        type: 'heatmap',
+        x: xAxis.x,
+        y,
+        z: options.samples,
+        colorscale: 'Greys',
+        zsmooth: false,
+        colorbar: { title: { text: 'Amplitude' } },
+        hovertemplate: `${options.title}<br>${xAxis.label}: %{x}<br>Time: %{y:.4f} s<br>Amplitude: %{z:.4g}<extra></extra>`,
+      },
+    ];
+    const observedField = options.corrected
+      ? 'corrected_observed_pick_time_s'
+      : 'observed_pick_time_s';
+    const modeledField = options.corrected
+      ? 'corrected_modeled_pick_time_s'
+      : 'modeled_pick_time_s';
+    const observedTrace = gatherOverlayTrace(preview, xAxis.x, {
+      field: observedField,
+      name: options.corrected ? 'Corrected observed first break' : 'Observed first break',
+      color: '#2563eb',
+      symbol: 'circle',
+      residual: true,
+    });
+    const modeledTrace = gatherOverlayTrace(preview, xAxis.x, {
+      field: modeledField,
+      name: options.corrected ? 'Corrected modeled first break' : 'Modeled first break',
+      color: '#f97316',
+      symbol: 'x',
+      size: 9,
+    });
+    if (observedTrace) traces.push(observedTrace);
+    if (modeledTrace) traces.push(modeledTrace);
+
+    window.Plotly.newPlot(plot, traces, {
+      height: 320,
+      margin: { l: 62, r: 18, t: 38, b: 52 },
+      font: { size: 10, color: '#334155' },
+      paper_bgcolor: '#ffffff',
+      plot_bgcolor: '#ffffff',
+      title: { text: options.title, font: { size: 12 } },
+      xaxis: {
+        title: { text: xAxis.label },
+        zeroline: false,
+        gridcolor: '#e5e7eb',
+      },
+      yaxis: {
+        title: { text: 'Time (s)' },
+        autorange: 'reversed',
+        zeroline: false,
+        gridcolor: '#e5e7eb',
+      },
+      legend: {
+        orientation: 'h',
+        x: 0,
+        y: 1.16,
+        xanchor: 'left',
+        yanchor: 'top',
+        font: { size: 10 },
+      },
+    }, { displayModeBar: false, responsive: true });
+  }
+
+  function renderGatherReducedTime(content, preview) {
+    const plot = createFirstBreakPlot('refraction-qc-gather-reduced-plot');
+    plot.classList.add('refraction-qc-gather-plot');
+    content.appendChild(plot);
+
+    if (!window.Plotly) {
+      plot.textContent = 'Plot library is unavailable.';
+      return;
+    }
+
+    const xAxis = gatherAxisValues(preview);
+    const traces = [];
+    const observed = gatherOverlayTrace(preview, xAxis.x, {
+      field: 'reduced_observed_time_s',
+      name: 'Reduced observed first break',
+      color: '#2563eb',
+      symbol: 'circle',
+      residual: true,
+    });
+    const modeled = gatherOverlayTrace(preview, xAxis.x, {
+      field: 'reduced_modeled_time_s',
+      name: 'Reduced modeled first break',
+      color: '#f97316',
+      symbol: 'x',
+      size: 9,
+    });
+    if (observed) traces.push(observed);
+    if (modeled) traces.push(modeled);
+
+    if (!traces.length) {
+      plot.textContent = 'Reduced-time values are unavailable for this preview.';
+      return;
+    }
+
+    window.Plotly.newPlot(plot, traces, {
+      height: 320,
+      margin: { l: 62, r: 18, t: 38, b: 52 },
+      font: { size: 10, color: '#334155' },
+      paper_bgcolor: '#ffffff',
+      plot_bgcolor: '#ffffff',
+      title: { text: 'Reduced-time first-break preview', font: { size: 12 } },
+      xaxis: {
+        title: { text: xAxis.label },
+        zeroline: false,
+        gridcolor: '#e5e7eb',
+      },
+      yaxis: {
+        title: { text: 'Reduced time (s)' },
+        zeroline: true,
+        zerolinecolor: '#94a3b8',
+        gridcolor: '#e5e7eb',
+      },
+      legend: {
+        orientation: 'h',
+        x: 0,
+        y: 1.16,
+        xanchor: 'left',
+        yanchor: 'top',
+        font: { size: 10 },
+      },
+    }, { displayModeBar: false, responsive: true });
+  }
+
+  function renderGatherPreviewPayload(content, preview) {
+    const statusMessage = correctedStatusMessage(preview);
     content.appendChild(createKv([
-      ['Endpoint kind', state.selectedEndpointKind],
+      ['Job ID', preview.job_id],
+      ['Gather', GATHER_AXIS_LABELS[preview.gather?.axis] || preview.gather?.axis],
+      ['Endpoint', preview.gather?.endpoint_key],
+      ['Trace count', `${preview.window?.returned_trace_count || 0} of ${preview.window?.requested_trace_count || 0}`],
+      ['Samples', `${preview.window?.returned_sample_count || 0} of ${preview.window?.requested_sample_count || 0}`],
+      ['dt', `${formatNumber(Number(preview.dt_s), 6)} s`],
+      ['Display', GATHER_DISPLAY_LABELS[state.gatherDisplayMode] || state.gatherDisplayMode],
+      ['Corrected source', preview.corrected_samples_source],
+    ]));
+
+    const signNote = document.createElement('p');
+    signNote.className = 'refraction-qc-note';
+    signNote.textContent = `${preview.sign_convention}; positive shift_s delays displayed events and negative shift_s advances displayed events.`;
+    signNote.dataset.testid = 'refraction-qc-gather-sign-note';
+    content.appendChild(signNote);
+
+    if (statusMessage) {
+      const status = document.createElement('p');
+      status.className = 'refraction-qc-note';
+      status.textContent = statusMessage;
+      status.dataset.testid = 'refraction-qc-gather-corrected-status';
+      content.appendChild(status);
+    }
+
+    const overlayNote = document.createElement('p');
+    overlayNote.className = 'refraction-qc-note';
+    overlayNote.textContent = `First-break overlays: ${textOrDash(preview.overlay_status?.first_break_fit)}; residual colors use observed - modeled.`;
+    overlayNote.dataset.testid = 'refraction-qc-gather-overlay-status';
+    content.appendChild(overlayNote);
+
+    if (state.gatherDisplayMode === 'reduced_time') {
+      renderGatherReducedTime(content, preview);
+      return;
+    }
+
+    const plotGrid = document.createElement('div');
+    plotGrid.className = state.gatherDisplayMode === 'side_by_side'
+      ? 'refraction-qc-gather-grid'
+      : 'refraction-qc-plot-grid';
+    content.appendChild(plotGrid);
+
+    if (state.gatherDisplayMode === 'raw' || state.gatherDisplayMode === 'side_by_side') {
+      renderGatherHeatmap(plotGrid, preview, {
+        testId: 'refraction-qc-gather-raw-plot',
+        title: 'Raw gather',
+        samples: preview.raw_samples,
+        corrected: false,
+      });
+    }
+    if (state.gatherDisplayMode === 'corrected' || state.gatherDisplayMode === 'side_by_side') {
+      renderGatherHeatmap(plotGrid, preview, {
+        testId: 'refraction-qc-gather-corrected-plot',
+        title: 'Corrected gather',
+        samples: preview.corrected_samples,
+        corrected: true,
+      });
+    }
+  }
+
+  function renderGatherPreview(content, bundle) {
+    content.appendChild(createGatherPreviewControls());
+    if (state.gatherLoading) {
+      const message = document.createElement('p');
+      message.className = 'refraction-qc-placeholder';
+      message.textContent = 'Loading bounded gather preview from the M6 API...';
+      content.appendChild(message);
+    }
+    if (state.gatherError) {
+      const error = document.createElement('p');
+      error.className = 'refraction-qc-error';
+      error.dataset.testid = 'refraction-qc-gather-error';
+      error.textContent = state.gatherError;
+      content.appendChild(error);
+    }
+    if (!state.gatherPreview && !state.gatherLoading && !state.gatherError) {
+      const message = document.createElement('p');
+      message.className = 'refraction-qc-placeholder';
+      message.textContent = bundle
+        ? 'Load a bounded gather preview from the M6 API.'
+        : 'Load a QC bundle before requesting a gather preview.';
+      content.appendChild(message);
+    }
+    if (state.gatherPreview) {
+      renderGatherPreviewPayload(content, state.gatherPreview);
+    }
+    content.appendChild(createKv([
+      ['Selected endpoint kind', state.selectedEndpointKind],
       ['Endpoint', state.selectedEndpoint],
       ['Cell', selectedCellLabel(state.selectedCell)],
       ['Layer', state.selectedLayerKind],
@@ -2447,10 +3081,10 @@
     dom.qcPanel.hidden = !showQc;
   }
 
-  async function readError(response) {
+  async function readError(response, label = 'QC bundle request') {
     try {
       const text = await response.text();
-      if (!text) return `QC bundle request failed with status ${response.status}`;
+      if (!text) return `${label} failed with status ${response.status}`;
       try {
         const payload = JSON.parse(text);
         if (payload && typeof payload.detail === 'string') return payload.detail;
@@ -2460,7 +3094,46 @@
       return text;
     } catch (_) {
     }
-    return `QC bundle request failed with status ${response.status}`;
+    return `${label} failed with status ${response.status}`;
+  }
+
+  async function loadGatherPreview() {
+    const { payload, errors } = buildGatherPreviewRequest();
+    if (errors.length) {
+      state.gatherError = errors.join(' ');
+      state.gatherPreview = null;
+      render();
+      return;
+    }
+
+    const serial = ++gatherRequestSerial;
+    state.gatherLoading = true;
+    state.gatherError = null;
+    render();
+
+    try {
+      const response = await fetch('/statics/refraction/qc/gather-preview', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
+      if (!response.ok) {
+        throw new Error(await readError(response, 'Gather preview request'));
+      }
+      const preview = await response.json();
+      if (serial !== gatherRequestSerial) return;
+      state.gatherPreview = preview;
+      state.gatherError = null;
+    } catch (error) {
+      if (serial !== gatherRequestSerial) return;
+      state.gatherPreview = null;
+      state.gatherError = error instanceof Error ? error.message : String(error);
+    } finally {
+      if (serial === gatherRequestSerial) {
+        state.gatherLoading = false;
+        render();
+      }
+    }
   }
 
   async function loadBundle() {
@@ -2498,6 +3171,10 @@
       const bundle = await response.json();
       if (serial !== requestSerial) return;
       state.qcBundle = bundle;
+      if (state.gatherPreview && state.gatherPreview.job_id !== bundle.job_id) {
+        state.gatherPreview = null;
+      }
+      state.gatherError = null;
       state.error = null;
       writeRecentJob(jobId);
     } catch (error) {
@@ -2630,6 +3307,7 @@
   window.refractionQcState = state;
   window.refractionQcUI = {
     loadBundle,
+    loadGatherPreview,
     setSelectedView,
     activateSidebarTab,
   };

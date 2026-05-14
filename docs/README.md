@@ -145,12 +145,15 @@ See:
 - [statics/refraction_field_corrections.md](statics/refraction_field_corrections.md)
 - `statics/refraction_multilayer_time_term.md`
 - `statics/refraction_m5_exports_table_workflow.md`
+- `statics/refraction_qc_viewer_workflow.md`
 - `time_term_static_correction.md`
 
 Refraction statics include the 1-layer V1/V2/T1 T1LSST workflow, cell-based
 local V2 support, and the public two- and three-layer
 `t1lsst_multilayer` workflow. M4 field-correction documentation covers
 source-depth, uphole-time, and manual source/receiver static composition.
+The M6 QC viewer workflow documents first-break residuals, reduced-time/LMO,
+profiles, maps, static component waterfalls, and gather preview.
 Multi-layer source/receiver outputs use the existing static table artifacts
 with added `t2`, `v3`, `sh2`, and, for three-layer runs, `t3`, `vsub`, and
 `sh3` fields; the repo sign convention remains
