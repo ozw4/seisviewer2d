@@ -29,8 +29,22 @@ def count_zero_segy_scalars(scalars: np.ndarray) -> int:
     return int(np.count_nonzero(scalar_arr == 0))
 
 
+def normalize_linear_unit(values: np.ndarray, unit: str) -> np.ndarray:
+    """Normalize linear values to meters."""
+    return _normalize_unit_to_meters(values, unit, finite_label='values')
+
+
 def normalize_elevation_unit(values: np.ndarray, unit: str) -> np.ndarray:
     """Normalize elevation values to meters."""
+    return _normalize_unit_to_meters(values, unit, finite_label='elevations')
+
+
+def _normalize_unit_to_meters(
+    values: np.ndarray,
+    unit: str,
+    *,
+    finite_label: str,
+) -> np.ndarray:
     arr = _coerce_numeric_float64(values, name='values')
     if unit == 'm':
         result = arr
@@ -40,7 +54,7 @@ def normalize_elevation_unit(values: np.ndarray, unit: str) -> np.ndarray:
         raise ValueError('unit must be "m" or "ft"')
 
     if not np.all(np.isfinite(result)):
-        raise ValueError('normalized elevations contain NaN or Inf')
+        raise ValueError(f'normalized {finite_label} contain NaN or Inf')
     return np.asarray(result, dtype=np.float64)
 
 
@@ -64,4 +78,5 @@ __all__ = [
     'apply_segy_scalar',
     'count_zero_segy_scalars',
     'normalize_elevation_unit',
+    'normalize_linear_unit',
 ]

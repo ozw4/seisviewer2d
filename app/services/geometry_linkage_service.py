@@ -190,7 +190,10 @@ def _run_geometry_linkage_build_job_body(
         progress=0.30,
         message='building_endpoint_geometry_tables',
     )
-    tables = build_endpoint_geometry_tables(headers)
+    tables = build_endpoint_geometry_tables(
+        headers,
+        coordinate_unit=req.geometry.coordinate_unit,
+    )
     ensure_job_not_cancelled(state, job_id)
 
     _set_job_progress_message(

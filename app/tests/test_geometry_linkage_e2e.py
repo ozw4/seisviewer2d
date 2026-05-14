@@ -224,6 +224,55 @@ def test_auto_threshold_receiver_anchor_e2e(
     assert qc['receiver_anchor_distance_m']['max'] == pytest.approx(10.0)
 
 
+def test_auto_threshold_converts_ft_coordinates_before_linking(
+    client: TestClient,
+    sync_linkage_jobs: None,
+    tmp_path: Path,
+) -> None:
+    _write_synthetic_trace_store(
+        client,
+        tmp_path,
+        source_xy=[(0.0, 0.0), (80.0, 0.0)],
+        receiver_xy=[(0.0, 0.0), (0.0, 0.0)],
+    )
+
+    loaded, csv_rows, qc = _run_done_linkage_job(
+        client,
+        linkage={
+            'mode': 'auto_threshold',
+            'threshold_m': 25.0,
+            'receiver_location_interval_m': 25.0,
+            'prefer_receiver_anchor': True,
+        },
+        geometry={'coordinate_unit': 'ft'},
+        expected_n_traces=2,
+    )
+
+    r0 = _endpoint_id(loaded, 'receiver', 0.0, 0.0)
+    s0 = _endpoint_id(loaded, 'source', 0.0, 0.0)
+    s1 = _endpoint_id(loaded, 'source', 24.384, 0.0)
+
+    assert loaded.n_receiver_anchor_links == 2
+    assert (
+        loaded.source_node_id_by_endpoint[s0]
+        == loaded.receiver_node_id_by_endpoint[r0]
+    )
+    assert (
+        loaded.source_node_id_by_endpoint[s1]
+        == loaded.receiver_node_id_by_endpoint[r0]
+    )
+    _assert_source_record(
+        loaded,
+        source_endpoint_id=s1,
+        method='receiver_anchor',
+        linked_to_kind='receiver',
+        linked_to_id=r0,
+        distance_m=24.384,
+    )
+    _assert_csv_matches_loaded(csv_rows, loaded)
+    assert qc['receiver_anchor_distance_m']['max'] == pytest.approx(24.384)
+
+
 def test_auto_threshold_source_fallback_e2e(
     client: TestClient,
     sync_linkage_jobs: None,
@@ -532,18 +581,26 @@ def _run_job_sync(**kwargs: Any) -> object:
     return object()
 
 
-def _request_payload(*, linkage: dict[str, Any], file_id: str = FILE_ID) -> dict[str, Any]:
+def _request_payload(
+    *,
+    linkage: dict[str, Any],
+    file_id: str = FILE_ID,
+    geometry: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    geometry_payload = {
+        'source_x_byte': SOURCE_X_BYTE,
+        'source_y_byte': SOURCE_Y_BYTE,
+        'receiver_x_byte': RECEIVER_X_BYTE,
+        'receiver_y_byte': RECEIVER_Y_BYTE,
+        'coordinate_scalar_byte': COORDINATE_SCALAR_BYTE,
+    }
+    if geometry is not None:
+        geometry_payload.update(deepcopy(geometry))
     return {
         'file_id': file_id,
         'key1_byte': KEY1_BYTE,
         'key2_byte': KEY2_BYTE,
-        'geometry': {
-            'source_x_byte': SOURCE_X_BYTE,
-            'source_y_byte': SOURCE_Y_BYTE,
-            'receiver_x_byte': RECEIVER_X_BYTE,
-            'receiver_y_byte': RECEIVER_Y_BYTE,
-            'coordinate_scalar_byte': COORDINATE_SCALAR_BYTE,
-        },
+        'geometry': geometry_payload,
         'linkage': deepcopy(linkage),
     }
 
@@ -632,11 +689,12 @@ def _run_done_linkage_job(
     client: TestClient,
     *,
     linkage: dict[str, Any],
+    geometry: dict[str, Any] | None = None,
     expected_n_traces: int,
 ) -> tuple[LoadedGeometryLinkageArtifact, list[dict[str, str]], dict[str, Any]]:
     response = client.post(
         '/statics/linkage/build',
-        json=_request_payload(linkage=linkage),
+        json=_request_payload(linkage=linkage, geometry=geometry),
     )
     assert response.status_code == 200
     job_id = response.json()['job_id']
