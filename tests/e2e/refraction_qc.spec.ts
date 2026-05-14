@@ -1188,6 +1188,29 @@ test('static correction run submits one-layer refraction apply request', async (
 			}),
 		});
 	});
+	await page.route('**/statics/job/refraction-job-559/status', async (route) => {
+		await route.fulfill({
+			status: 200,
+			contentType: 'application/json',
+			body: JSON.stringify({
+				state: 'ready',
+				progress: 1,
+				message: 'finished',
+			}),
+		});
+	});
+	await page.route('**/statics/job/refraction-job-559/files', async (route) => {
+		await route.fulfill({
+			status: 200,
+			contentType: 'application/json',
+			body: JSON.stringify({
+				files: [
+					{ name: 'refraction_static_artifacts.json', size_bytes: 128 },
+					{ name: 'source_static_table.csv', size_bytes: 64 },
+				],
+			}),
+		});
+	});
 
 	await page.goto('/');
 	await page.getByTestId('static-correction-tab').click();
@@ -1195,9 +1218,13 @@ test('static correction run submits one-layer refraction apply request', async (
 	await page.getByTestId('static-correction-pick-job-id').fill('pick-job');
 	await page.getByTestId('static-correction-run').click();
 
-	await expect(page.getByTestId('static-correction-status')).toContainText(
-		'Static correction job refraction-job-559 submitted. Initial state: queued.',
-	);
+	await expect(page.getByTestId('static-correction-job-id')).toHaveText('refraction-job-559');
+	await expect(page.getByTestId('static-correction-job-state')).toHaveText('ready');
+	await expect(page.getByTestId('static-correction-job-message')).toHaveText('finished');
+	await expect(page.getByTestId('static-correction-artifact-table')).toContainText('source_static_table.csv');
+	await expect(
+		page.locator('a[href="/statics/job/refraction-job-559/download?name=source_static_table.csv"]'),
+	).toBeVisible();
 	await expect(page.getByTestId('static-correction-request-preview')).toBeVisible();
 	expect(applyRequest).toMatchObject({
 		file_id: 'line-a-store',

@@ -1309,6 +1309,87 @@
       font-size: 0.9em;
     }
 
+    .static-correction-job-panel {
+      display: grid;
+      gap: 0.45em;
+      padding: 0.75em;
+      border: 1px solid #d8dee8;
+      border-radius: 8px;
+      background: #fff;
+      font-size: 0.84em;
+      color: #334155;
+    }
+
+    .static-correction-job-panel[hidden] {
+      display: none;
+    }
+
+    .static-correction-job-row {
+      display: grid;
+      grid-template-columns: 6.5em minmax(0, 1fr);
+      gap: 0.5em;
+      align-items: center;
+      min-width: 0;
+    }
+
+    .static-correction-job-label {
+      color: #64748b;
+    }
+
+    .static-correction-job-value {
+      min-width: 0;
+      overflow-wrap: anywhere;
+      color: #0f172a;
+    }
+
+    .static-correction-job-progress {
+      display: flex;
+      gap: 0.5em;
+      align-items: center;
+      min-width: 0;
+    }
+
+    .static-correction-job-progress progress {
+      flex: 1 1 auto;
+      min-width: 0;
+      height: 0.7em;
+    }
+
+    .static-correction-artifact-table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 0.82em;
+      background: #fff;
+    }
+
+    .static-correction-artifact-table[hidden] {
+      display: none;
+    }
+
+    .static-correction-artifact-table th,
+    .static-correction-artifact-table td {
+      padding: 0.45em 0.5em;
+      border-bottom: 1px solid #e2e8f0;
+      text-align: left;
+      vertical-align: top;
+      overflow-wrap: anywhere;
+    }
+
+    .static-correction-artifact-table th {
+      color: #475569;
+      font-weight: 600;
+      background: #f8fafc;
+    }
+
+    .static-correction-artifact-empty {
+      font-size: 0.82em;
+      color: #64748b;
+    }
+
+    .static-correction-artifact-empty[hidden] {
+      display: none;
+    }
+
     .static-correction-status,
     .static-correction-error {
       font-size: 0.84em;
@@ -2221,6 +2302,8 @@
               <h3 id="staticCorrectionRunHeading">Run</h3>
               <div class="static-correction-actions">
                 <button id="staticCorrectionRunButton" type="button" data-testid="static-correction-run">Run</button>
+                <button id="staticCorrectionCancelButton" type="button" hidden
+                  data-testid="static-correction-cancel">Cancel</button>
               </div>
               <pre id="staticCorrectionRequestPreview" class="static-correction-request-preview" hidden
                 data-testid="static-correction-request-preview"></pre>
@@ -2228,6 +2311,48 @@
           </form>
           <div id="staticCorrectionStatus" class="static-correction-status" role="status" aria-live="polite"
             data-testid="static-correction-status"></div>
+          <div id="staticCorrectionJobPanel" class="static-correction-job-panel" hidden
+            data-testid="static-correction-job-panel">
+            <div class="static-correction-job-row">
+              <span class="static-correction-job-label">Job ID</span>
+              <span id="staticCorrectionJobIdValue" class="static-correction-job-value"
+                data-testid="static-correction-job-id">-</span>
+            </div>
+            <div class="static-correction-job-row">
+              <span class="static-correction-job-label">State</span>
+              <span id="staticCorrectionJobStateValue" class="static-correction-job-value"
+                data-testid="static-correction-job-state">-</span>
+            </div>
+            <div class="static-correction-job-row">
+              <span class="static-correction-job-label">Message</span>
+              <span id="staticCorrectionJobMessageValue" class="static-correction-job-value"
+                data-testid="static-correction-job-message">-</span>
+            </div>
+            <div class="static-correction-job-row">
+              <span class="static-correction-job-label">Progress</span>
+              <span class="static-correction-job-progress">
+                <progress id="staticCorrectionJobProgress" max="1" value="0"
+                  data-testid="static-correction-job-progress"></progress>
+                <span id="staticCorrectionJobProgressValue" data-testid="static-correction-job-progress-value">0%</span>
+              </span>
+            </div>
+          </div>
+          <section class="static-correction-section" aria-labelledby="staticCorrectionArtifactsHeading">
+            <h3 id="staticCorrectionArtifactsHeading">Artifacts</h3>
+            <div id="staticCorrectionArtifactEmpty" class="static-correction-artifact-empty"
+              data-testid="static-correction-artifact-empty">Run a static correction job to list generated artifacts.</div>
+            <table id="staticCorrectionArtifactTable" class="static-correction-artifact-table" hidden
+              data-testid="static-correction-artifact-table">
+              <thead>
+                <tr>
+                  <th scope="col">File</th>
+                  <th scope="col">Size</th>
+                  <th scope="col">Download</th>
+                </tr>
+              </thead>
+              <tbody id="staticCorrectionArtifactBody" data-testid="static-correction-artifact-body"></tbody>
+            </table>
+          </section>
           <div id="staticCorrectionError" class="static-correction-error" role="alert" hidden
             data-testid="static-correction-error"></div>
         </div>

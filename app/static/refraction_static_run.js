@@ -72,6 +72,9 @@
   const LINKAGE_ARTIFACT_NAME = 'geometry_linkage.npz';
   const LINKAGE_READY_STATES = new Set(['done', 'ready']);
   const LINKAGE_FAILED_STATES = new Set(['error', 'failed', 'cancelled', 'canceled', 'expired']);
+  const STATIC_READY_STATES = new Set(['done', 'ready']);
+  const STATIC_ACTIVE_STATES = new Set(['queued', 'running', 'cancel_requested']);
+  const STATIC_TERMINAL_STATES = new Set(['done', 'ready', 'error', 'cancelled', 'expired']);
 
   const state = {
     ready: false,
@@ -85,11 +88,16 @@
     lastLinkageJobId: '',
     lastStaticCorrectionJobId: '',
     lastStaticCorrectionState: '',
+    lastStaticCorrectionMessage: '',
+    lastStaticCorrectionProgress: 0,
+    staticArtifacts: [],
+    loadingStaticArtifacts: false,
     phase: 'idle',
     pollIntervalMs: 1000,
   };
 
   let dom = null;
+  let staticPollToken = 0;
 
   function trimValue(value) {
     return String(value || '').trim();
@@ -755,6 +763,37 @@
     });
   }
 
+  function normalizeStaticJobState(value) {
+    const normalized = trimValue(value).toLowerCase();
+    if (normalized === 'completed') return 'done';
+    if (normalized === 'failed') return 'error';
+    if (normalized === 'canceled') return 'cancelled';
+    return normalized || 'unknown';
+  }
+
+  function isStaticJobActive(value = state.lastStaticCorrectionState) {
+    return STATIC_ACTIVE_STATES.has(normalizeStaticJobState(value));
+  }
+
+  function isStaticJobTerminal(value = state.lastStaticCorrectionState) {
+    return STATIC_TERMINAL_STATES.has(normalizeStaticJobState(value));
+  }
+
+  function formatBytes(bytes) {
+    const value = Number(bytes);
+    if (!Number.isFinite(value) || value < 0) {
+      return '-';
+    }
+    const units = ['B', 'KB', 'MB', 'GB'];
+    let amount = value;
+    let idx = 0;
+    while (amount >= 1024 && idx < units.length - 1) {
+      amount /= 1024;
+      idx += 1;
+    }
+    return `${amount.toFixed(idx === 0 ? 0 : 1)} ${units[idx]}`;
+  }
+
   async function readResponseError(response, operation = 'request') {
     let detail = '';
     try {
@@ -824,13 +863,95 @@
     }
   }
 
+  function renderStaticArtifacts() {
+    if (!dom || !dom.staticArtifactTable || !dom.staticArtifactBody || !dom.staticArtifactEmpty) {
+      return;
+    }
+    const files = Array.isArray(state.staticArtifacts) ? state.staticArtifacts : [];
+    dom.staticArtifactBody.innerHTML = '';
+
+    if (state.loadingStaticArtifacts) {
+      dom.staticArtifactTable.hidden = true;
+      dom.staticArtifactEmpty.hidden = false;
+      dom.staticArtifactEmpty.textContent = 'Loading static correction artifacts...';
+      return;
+    }
+
+    if (!files.length) {
+      dom.staticArtifactTable.hidden = true;
+      dom.staticArtifactEmpty.hidden = false;
+      dom.staticArtifactEmpty.textContent = state.lastStaticCorrectionJobId
+        ? 'No static correction artifacts loaded.'
+        : 'Run a static correction job to list generated artifacts.';
+      return;
+    }
+
+    const safeJobId = encodeURIComponent(state.lastStaticCorrectionJobId);
+    for (const file of files) {
+      const name = trimValue(file && file.name ? file.name : file);
+      if (!name) continue;
+      const row = document.createElement('tr');
+      const nameCell = document.createElement('td');
+      const sizeCell = document.createElement('td');
+      const downloadCell = document.createElement('td');
+      const link = document.createElement('a');
+
+      nameCell.textContent = name;
+      sizeCell.textContent = formatBytes(file && file.size_bytes);
+      link.href = `/statics/job/${safeJobId}/download?name=${encodeURIComponent(name)}`;
+      link.textContent = 'Download';
+      link.target = '_blank';
+      link.rel = 'noopener';
+      link.dataset.testid = `static-correction-artifact-download-${name}`;
+      downloadCell.appendChild(link);
+
+      row.appendChild(nameCell);
+      row.appendChild(sizeCell);
+      row.appendChild(downloadCell);
+      dom.staticArtifactBody.appendChild(row);
+    }
+
+    dom.staticArtifactEmpty.hidden = true;
+    dom.staticArtifactTable.hidden = false;
+  }
+
+  function renderStaticJobPanel() {
+    if (!dom || !dom.staticJobPanel) return;
+    const jobId = state.lastStaticCorrectionJobId;
+    const jobState = normalizeStaticJobState(state.lastStaticCorrectionState);
+    const hasJob = Boolean(jobId || state.lastStaticCorrectionState || state.lastStaticCorrectionMessage);
+    const progress = Number(state.lastStaticCorrectionProgress);
+    const progressValue = Number.isFinite(progress) ? Math.max(0, Math.min(1, progress)) : 0;
+
+    dom.staticJobPanel.hidden = !hasJob;
+    if (dom.staticJobIdValue) {
+      dom.staticJobIdValue.textContent = jobId || '-';
+    }
+    if (dom.staticJobStateValue) {
+      dom.staticJobStateValue.textContent = jobState || '-';
+    }
+    if (dom.staticJobMessageValue) {
+      dom.staticJobMessageValue.textContent = state.lastStaticCorrectionMessage || '-';
+    }
+    if (dom.staticJobProgressValue) {
+      dom.staticJobProgressValue.textContent = hasJob ? `${Math.round(progressValue * 100)}%` : '-';
+    }
+    if (dom.staticJobProgress) {
+      dom.staticJobProgress.value = progressValue;
+    }
+    if (dom.cancelButton) {
+      dom.cancelButton.hidden = !jobId || !isStaticJobActive(jobState);
+      dom.cancelButton.disabled = !jobId || jobState === 'cancel_requested';
+    }
+  }
+
   function render() {
     if (!dom) return;
     updateStaticCorrectionLinkageOptions(dom);
     dom.status.textContent = state.message;
     dom.error.hidden = !state.error;
     dom.error.textContent = state.error;
-    dom.runButton.disabled = false;
+    dom.runButton.disabled = state.phase !== 'idle' || isStaticJobActive();
     if (dom.loadPickArtifactsButton) {
       dom.loadPickArtifactsButton.disabled = state.loadingPickArtifacts;
     }
@@ -841,6 +962,8 @@
         : '';
     }
     renderPickArtifactList();
+    renderStaticJobPanel();
+    renderStaticArtifacts();
   }
 
   async function loadPickArtifacts() {
@@ -899,6 +1022,131 @@
     return new Promise((resolve) => window.setTimeout(resolve, ms));
   }
 
+  function setStaticJobSnapshot(payload, fallbackJobId = '') {
+    const jobId = trimValue((payload && payload.job_id) || fallbackJobId || state.lastStaticCorrectionJobId);
+    const jobState = normalizeStaticJobState(payload && payload.state);
+    const progress = Number(payload && payload.progress);
+    const message = trimValue(payload && payload.message);
+    state.lastStaticCorrectionJobId = jobId;
+    state.lastStaticCorrectionState = jobState;
+    state.lastStaticCorrectionProgress = Number.isFinite(progress) ? progress : state.lastStaticCorrectionProgress;
+    state.lastStaticCorrectionMessage = message;
+    return {
+      jobId,
+      state: jobState,
+      progress: state.lastStaticCorrectionProgress,
+      message,
+    };
+  }
+
+  function formatStaticJobStatus(snapshot) {
+    const jobId = snapshot.jobId || state.lastStaticCorrectionJobId;
+    const jobState = normalizeStaticJobState(snapshot.state);
+    const message = trimValue(snapshot.message);
+    if (jobState === 'done') {
+      return `Static correction job ${jobId} is done. Loading artifacts...`;
+    }
+    if (jobState === 'error') {
+      return `Static correction job ${jobId} failed${message ? `: ${message}` : '.'}`;
+    }
+    if (jobState === 'expired') {
+      return `Static correction job ${jobId} expired${message ? `: ${message}` : '.'}`;
+    }
+    if (jobState === 'cancelled') {
+      return `Static correction job ${jobId} was cancelled${message ? `: ${message}` : '.'}`;
+    }
+    if (jobState === 'cancel_requested') {
+      return `Cancel requested for static correction job ${jobId}.`;
+    }
+    return `Static correction job ${jobId} is ${jobState || 'unknown'}${message ? `: ${message}` : '.'}`;
+  }
+
+  async function loadStaticArtifacts(jobId = state.lastStaticCorrectionJobId) {
+    const safeJobId = trimValue(jobId);
+    if (!safeJobId) {
+      state.staticArtifacts = [];
+      render();
+      return [];
+    }
+
+    state.loadingStaticArtifacts = true;
+    state.staticArtifacts = [];
+    render();
+    try {
+      const response = await fetch(`/statics/job/${encodeURIComponent(safeJobId)}/files`);
+      if (!response.ok) {
+        throw new Error(await readResponseError(response, 'static job files'));
+      }
+      const payload = await response.json();
+      const files = Array.isArray(payload.files) ? payload.files : [];
+      state.staticArtifacts = sortedArtifactFiles(files);
+      state.message = files.length
+        ? `Loaded ${files.length} static correction artifact${files.length === 1 ? '' : 's'} for ${safeJobId}.`
+        : `Static correction job ${safeJobId} finished without generated artifact files.`;
+      state.error = '';
+      return state.staticArtifacts;
+    } catch (error) {
+      state.staticArtifacts = [];
+      state.error = error instanceof Error ? error.message : String(error);
+      state.message = `Static correction job ${safeJobId} finished, but artifacts could not be loaded.`;
+      return [];
+    } finally {
+      state.loadingStaticArtifacts = false;
+      render();
+    }
+  }
+
+  async function pollStaticCorrectionStatus(jobId) {
+    const response = await fetch(`/statics/job/${encodeURIComponent(jobId)}/status`);
+    if (!response.ok) {
+      throw new Error(await readResponseError(response, 'static job status'));
+    }
+    const payload = await response.json();
+    const snapshot = setStaticJobSnapshot(payload, jobId);
+    state.message = formatStaticJobStatus(snapshot);
+    if (snapshot.state === 'error' || snapshot.state === 'expired') {
+      state.error = state.message;
+    } else if (snapshot.state === 'cancelled') {
+      state.error = '';
+    }
+    render();
+    return snapshot;
+  }
+
+  function stopStaticCorrectionPolling() {
+    staticPollToken += 1;
+  }
+
+  async function pollStaticCorrectionJobUntilTerminal(jobId) {
+    const token = staticPollToken + 1;
+    staticPollToken = token;
+    state.staticArtifacts = [];
+    render();
+
+    while (token === staticPollToken) {
+      try {
+        const snapshot = await pollStaticCorrectionStatus(jobId);
+        if (STATIC_READY_STATES.has(snapshot.state)) {
+          await loadStaticArtifacts(jobId);
+          return snapshot;
+        }
+        if (isStaticJobTerminal(snapshot.state)) {
+          return snapshot;
+        }
+      } catch (error) {
+        if (token !== staticPollToken) {
+          return null;
+        }
+        state.error = error instanceof Error ? error.message : String(error);
+        state.message = `Static correction status polling failed: ${state.error}`;
+        render();
+        return null;
+      }
+      await delay(Math.max(0, Number(state.pollIntervalMs) || 0));
+    }
+    return null;
+  }
+
   async function pollStaticJobUntilReady(jobId) {
     const encodedJobId = encodeURIComponent(jobId);
     while (true) {
@@ -934,7 +1182,7 @@
       'refraction static apply'
     );
     state.lastStaticCorrectionJobId = trimValue(responsePayload && responsePayload.job_id);
-    state.lastStaticCorrectionState = trimValue(responsePayload && responsePayload.state);
+    setStaticJobSnapshot(responsePayload);
     state.lastResponse = responsePayload;
     state.phase = 'idle';
     const initialState = state.lastStaticCorrectionState
@@ -944,6 +1192,9 @@
       ? `Static correction job ${state.lastStaticCorrectionJobId} submitted.${initialState}`
       : 'Static correction job submitted.';
     render();
+    if (state.lastStaticCorrectionJobId) {
+      pollStaticCorrectionJobUntilTerminal(state.lastStaticCorrectionJobId);
+    }
     return responsePayload;
   }
 
@@ -959,6 +1210,10 @@
     state.lastLinkageJobId = '';
     state.lastStaticCorrectionJobId = '';
     state.lastStaticCorrectionState = '';
+    state.lastStaticCorrectionMessage = '';
+    state.lastStaticCorrectionProgress = 0;
+    state.staticArtifacts = [];
+    stopStaticCorrectionPolling();
     if (errors.length) {
       state.ready = false;
       state.error = errors.join(' ');
@@ -1023,6 +1278,38 @@
     runStaticCorrection();
   }
 
+  async function cancelStaticCorrectionJob() {
+    const jobId = trimValue(state.lastStaticCorrectionJobId);
+    if (!jobId || !isStaticJobActive()) {
+      return null;
+    }
+
+    try {
+      state.message = `Cancelling static correction job ${jobId}...`;
+      state.error = '';
+      render();
+      const response = await fetch(`/statics/job/${encodeURIComponent(jobId)}/cancel`, {
+        method: 'POST',
+      });
+      if (!response.ok) {
+        throw new Error(await readResponseError(response, 'static job cancel'));
+      }
+      const payload = await response.json();
+      const snapshot = setStaticJobSnapshot(payload, jobId);
+      state.message = formatStaticJobStatus(snapshot);
+      if (isStaticJobTerminal(snapshot.state)) {
+        stopStaticCorrectionPolling();
+      }
+      render();
+      return snapshot;
+    } catch (error) {
+      state.error = error instanceof Error ? error.message : String(error);
+      state.message = `Failed to cancel static correction job ${jobId}.`;
+      render();
+      return null;
+    }
+  }
+
   function init() {
     const form = document.getElementById('staticCorrectionForm');
     const status = document.getElementById('staticCorrectionStatus');
@@ -1070,6 +1357,16 @@
     const exportEnabled = document.getElementById('staticCorrectionExportEnabled');
     const exportFormatInputs = Array.from(document.querySelectorAll('[data-static-correction-export-format]'));
     const requestPreview = document.getElementById('staticCorrectionRequestPreview');
+    const cancelButton = document.getElementById('staticCorrectionCancelButton');
+    const staticJobPanel = document.getElementById('staticCorrectionJobPanel');
+    const staticJobIdValue = document.getElementById('staticCorrectionJobIdValue');
+    const staticJobStateValue = document.getElementById('staticCorrectionJobStateValue');
+    const staticJobMessageValue = document.getElementById('staticCorrectionJobMessageValue');
+    const staticJobProgress = document.getElementById('staticCorrectionJobProgress');
+    const staticJobProgressValue = document.getElementById('staticCorrectionJobProgressValue');
+    const staticArtifactTable = document.getElementById('staticCorrectionArtifactTable');
+    const staticArtifactBody = document.getElementById('staticCorrectionArtifactBody');
+    const staticArtifactEmpty = document.getElementById('staticCorrectionArtifactEmpty');
     if (
       !form || !status || !error || !runButton || !fileId || !key1Byte || !key2Byte
       || !pickKind || !pickJobId || !pickArtifactName || !loadPickArtifactsButton
@@ -1082,6 +1379,9 @@
       || !weatheringVelocityMS || !bedrockVelocityMode || !initialBedrockVelocityMS
       || !fixedBedrockVelocityMS || !minOffsetM || !maxOffsetM || !conversionMode
       || !registerCorrectedFile || !exportEnabled || !requestPreview
+      || !cancelButton || !staticJobPanel || !staticJobIdValue || !staticJobStateValue
+      || !staticJobMessageValue || !staticJobProgress || !staticJobProgressValue
+      || !staticArtifactTable || !staticArtifactBody || !staticArtifactEmpty
       || exportFormatInputs.length === 0
     ) {
       return;
@@ -1146,12 +1446,26 @@
       exportEnabled,
       exportFormatInputs,
       requestPreview,
+      cancelButton,
+      staticJobPanel,
+      staticJobIdValue,
+      staticJobStateValue,
+      staticJobMessageValue,
+      staticJobProgress,
+      staticJobProgressValue,
+      staticArtifactTable,
+      staticArtifactBody,
+      staticArtifactEmpty,
     };
     applyStaticCorrectionGeometryPreset(dom, trimValue(geometryPreset.value) || GEOMETRY_DEFAULTS.preset);
     updateStaticCorrectionLinkageOptions(dom);
 
     form.addEventListener('submit', handleRun);
     runButton.addEventListener('click', handleRun);
+    cancelButton.addEventListener('click', (event) => {
+      event.preventDefault();
+      cancelStaticCorrectionJob();
+    });
     loadPickArtifactsButton.addEventListener('click', (event) => {
       event.preventDefault();
       loadPickArtifacts();
@@ -1203,16 +1517,22 @@
     buildStaticCorrectionPickSource,
     buildStaticCorrectionRequest,
     buildStaticLinkageBuildRequest,
+    cancelStaticCorrectionJob,
     collectGeometryInputs,
     collectInputs,
     collectLinkageInputs,
     collectModelInputs,
     collectOutputInputs,
     isLikelyPickArtifact,
+    loadStaticArtifacts,
     loadPickArtifacts,
+    normalizeStaticJobState,
+    pollStaticCorrectionJobUntilTerminal,
+    pollStaticCorrectionStatus,
     pollStaticJobUntilReady,
     render,
     runStaticCorrection,
+    stopStaticCorrectionPolling,
     submitRefractionStaticApply,
     updateBedrockVelocityControls,
     updateStaticCorrectionLinkageOptions,

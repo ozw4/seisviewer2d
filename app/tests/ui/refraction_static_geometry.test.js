@@ -54,8 +54,20 @@ function renderStaticCorrectionForm() {
         <input id="staticCorrectionPreferReceiverAnchor" type="checkbox" checked />
       </div>
       <button id="staticCorrectionRunButton" type="button"></button>
+      <button id="staticCorrectionCancelButton" type="button" hidden></button>
     </form>
     <div id="staticCorrectionStatus"></div>
+    <div id="staticCorrectionJobPanel" hidden>
+      <span id="staticCorrectionJobIdValue"></span>
+      <span id="staticCorrectionJobStateValue"></span>
+      <span id="staticCorrectionJobMessageValue"></span>
+      <progress id="staticCorrectionJobProgress" max="1" value="0"></progress>
+      <span id="staticCorrectionJobProgressValue"></span>
+    </div>
+    <table id="staticCorrectionArtifactTable" hidden>
+      <tbody id="staticCorrectionArtifactBody"></tbody>
+    </table>
+    <div id="staticCorrectionArtifactEmpty"></div>
     <div id="staticCorrectionError" hidden></div>
   `;
 }
@@ -79,6 +91,9 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  if (window.refractionStaticRunUI && window.refractionStaticRunUI.stopStaticCorrectionPolling) {
+    window.refractionStaticRunUI.stopStaticCorrectionPolling();
+  }
   vi.unstubAllGlobals();
 });
 
@@ -100,9 +115,20 @@ function enableLinkage() {
   checkbox.dispatchEvent(new Event('change'));
 }
 
-function createStaticCorrectionFetchMock(statuses = [{ state: 'done', message: '', progress: 1 }]) {
+async function flushAsyncWork(times = 4) {
+  for (let index = 0; index < times; index += 1) {
+    await Promise.resolve();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+  }
+}
+
+function createStaticCorrectionFetchMock(
+  linkageStatuses = [{ state: 'done', message: '', progress: 1 }],
+  staticStatuses = [{ state: 'done', message: 'finished', progress: 1 }]
+) {
   const calls = [];
-  const statusQueue = [...statuses];
+  const linkageStatusQueue = [...linkageStatuses];
+  const staticStatusQueue = [...staticStatuses];
   const fetchMock = vi.fn(async (url, options = {}) => {
     const body = options.body ? JSON.parse(options.body) : null;
     calls.push({ url: String(url), options, body });
@@ -111,10 +137,32 @@ function createStaticCorrectionFetchMock(statuses = [{ state: 'done', message: '
       return jsonResponse({ job_id: 'linkage-job-a', state: 'queued' });
     }
     if (url === '/statics/job/linkage-job-a/status') {
-      return jsonResponse(statusQueue.shift() || statuses[statuses.length - 1]);
+      return jsonResponse(
+        linkageStatusQueue.shift() || linkageStatuses[linkageStatuses.length - 1]
+      );
     }
     if (url === '/statics/refraction/apply') {
       return jsonResponse({ job_id: 'static-job-a', state: 'queued' });
+    }
+    if (url === '/statics/job/static-job-a/status') {
+      return jsonResponse(
+        staticStatusQueue.shift() || staticStatuses[staticStatuses.length - 1]
+      );
+    }
+    if (url === '/statics/job/static-job-a/files') {
+      return jsonResponse({
+        files: [
+          { name: 'refraction_static_artifacts.json', size_bytes: 123 },
+          { name: 'source_static_table.csv', size_bytes: 2048 },
+        ],
+      });
+    }
+    if (url === '/statics/job/static-job-a/cancel') {
+      return jsonResponse({
+        state: 'cancel_requested',
+        progress: 0.25,
+        message: 'Cancel requested. The job will stop at the next safe point.',
+      });
     }
     throw new Error(`unexpected fetch ${url}`);
   });
@@ -269,8 +317,13 @@ test('unchecked linkage skips linkage build when running static correction', asy
   const { calls } = createStaticCorrectionFetchMock();
 
   await ui.runStaticCorrection();
+  await flushAsyncWork();
 
-  expect(calls.map((call) => call.url)).toEqual(['/statics/refraction/apply']);
+  expect(calls.map((call) => call.url)).toEqual([
+    '/statics/refraction/apply',
+    '/statics/job/static-job-a/status',
+    '/statics/job/static-job-a/files',
+  ]);
   expect(calls[0].body.linkage).toEqual({ mode: 'none' });
 });
 
@@ -283,8 +336,9 @@ test('checked linkage posts linkage build payload before static correction apply
   const { calls } = createStaticCorrectionFetchMock();
 
   await ui.runStaticCorrection();
+  await flushAsyncWork();
 
-  expect(calls.map((call) => call.url)).toEqual([
+  expect(calls.map((call) => call.url).slice(0, 3)).toEqual([
     '/statics/linkage/build',
     '/statics/job/linkage-job-a/status',
     '/statics/refraction/apply',
@@ -320,9 +374,10 @@ test('checked linkage polls linkage status until ready', async () => {
   ]);
 
   await ui.runStaticCorrection();
+  await flushAsyncWork();
 
   expect(calls.filter((call) => call.url === '/statics/job/linkage-job-a/status')).toHaveLength(3);
-  expect(calls[calls.length - 1].url).toBe('/statics/refraction/apply');
+  expect(calls.map((call) => call.url)).toContain('/statics/refraction/apply');
 });
 
 test('failed linkage prevents refraction apply submit', async () => {
@@ -333,6 +388,7 @@ test('failed linkage prevents refraction apply submit', async () => {
   ]);
 
   await ui.runStaticCorrection();
+  await flushAsyncWork();
 
   expect(calls.map((call) => call.url)).not.toContain('/statics/refraction/apply');
   expect(document.getElementById('staticCorrectionError').hidden).toBe(false);
@@ -350,6 +406,7 @@ test('successful linkage injects linkage job reference into refraction request',
   const { calls } = createStaticCorrectionFetchMock();
 
   await ui.runStaticCorrection();
+  await flushAsyncWork();
 
   const applyCall = calls.find((call) => call.url === '/statics/refraction/apply');
   expect(applyCall.body.linkage).toEqual({
@@ -359,4 +416,71 @@ test('successful linkage injects linkage job reference into refraction request',
   });
   expect(window.refractionStaticRunState.lastLinkageJobId).toBe('linkage-job-a');
   expect(document.getElementById('staticCorrectionStatus').textContent).toContain('static-job-a');
+});
+
+test('static correction submit polls job status and loads ready artifacts', async () => {
+  const ui = loadStaticCorrectionScript();
+  window.refractionStaticRunState.pollIntervalMs = 0;
+  const { calls } = createStaticCorrectionFetchMock(
+    [{ state: 'done', message: '', progress: 1 }],
+    [
+      { state: 'queued', message: 'waiting', progress: 0 },
+      { state: 'running', message: 'solving statics', progress: 0.5 },
+      { state: 'ready', message: 'finished', progress: 1 },
+    ]
+  );
+
+  await ui.runStaticCorrection();
+  await flushAsyncWork(8);
+
+  expect(calls.filter((call) => call.url === '/statics/job/static-job-a/status')).toHaveLength(3);
+  expect(calls.map((call) => call.url)).toContain('/statics/job/static-job-a/files');
+  expect(document.getElementById('staticCorrectionJobIdValue').textContent).toBe('static-job-a');
+  expect(document.getElementById('staticCorrectionJobStateValue').textContent).toBe('ready');
+  expect(document.getElementById('staticCorrectionJobMessageValue').textContent).toBe('finished');
+  expect(document.getElementById('staticCorrectionCancelButton').hidden).toBe(true);
+  expect(document.getElementById('staticCorrectionArtifactBody').textContent).toContain(
+    'source_static_table.csv'
+  );
+  expect(document.querySelector('a[href="/statics/job/static-job-a/download?name=source_static_table.csv"]')).not.toBeNull();
+});
+
+test('static correction polling stops on failed state and shows an error', async () => {
+  const ui = loadStaticCorrectionScript();
+  window.refractionStaticRunState.pollIntervalMs = 0;
+  const { calls } = createStaticCorrectionFetchMock(
+    [{ state: 'done', message: '', progress: 1 }],
+    [{ state: 'error', message: 'solver failed', progress: 1 }]
+  );
+
+  await ui.runStaticCorrection();
+  await flushAsyncWork();
+
+  expect(calls.filter((call) => call.url === '/statics/job/static-job-a/status')).toHaveLength(1);
+  expect(calls.map((call) => call.url)).not.toContain('/statics/job/static-job-a/files');
+  expect(document.getElementById('staticCorrectionError').hidden).toBe(false);
+  expect(document.getElementById('staticCorrectionError').textContent).toContain('solver failed');
+  expect(document.getElementById('staticCorrectionJobStateValue').textContent).toBe('error');
+});
+
+test('static correction cancel posts to the static cancel endpoint', async () => {
+  const ui = loadStaticCorrectionScript();
+  const { calls } = createStaticCorrectionFetchMock(
+    [{ state: 'done', message: '', progress: 1 }],
+    [{ state: 'running', message: 'working', progress: 0.25 }]
+  );
+
+  await ui.runStaticCorrection();
+  await flushAsyncWork();
+  expect(document.getElementById('staticCorrectionCancelButton').hidden).toBe(false);
+
+  await ui.cancelStaticCorrectionJob();
+
+  const cancelCall = calls.find((call) => call.url === '/statics/job/static-job-a/cancel');
+  expect(cancelCall).toBeTruthy();
+  expect(cancelCall.options.method).toBe('POST');
+  expect(document.getElementById('staticCorrectionJobStateValue').textContent).toBe(
+    'cancel_requested'
+  );
+  expect(document.getElementById('staticCorrectionCancelButton').disabled).toBe(true);
 });
