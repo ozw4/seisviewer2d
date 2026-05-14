@@ -44,6 +44,15 @@ function renderStaticCorrectionForm() {
         <option value="ft">ft</option>
       </select>
       <input id="staticCorrectionOffsetByte" value="37" />
+      <input id="staticCorrectionEnableLinkage" type="checkbox" />
+      <div id="staticCorrectionLinkageOptions" hidden>
+        <select id="staticCorrectionLinkageMode">
+          <option value="auto_threshold" selected>auto_threshold</option>
+        </select>
+        <input id="staticCorrectionLinkageThresholdM" value="25" />
+        <input id="staticCorrectionReceiverLocationIntervalM" value="" />
+        <input id="staticCorrectionPreferReceiverAnchor" type="checkbox" checked />
+      </div>
       <button id="staticCorrectionRunButton" type="button"></button>
     </form>
     <div id="staticCorrectionStatus"></div>
@@ -154,4 +163,59 @@ test('preset switching restores defaults and toggles editability', () => {
   preset.dispatchEvent(new Event('change'));
   expect(sourceId.value).toBe('9');
   expect(sourceId.disabled).toBe(false);
+});
+
+test('linkage checkbox is unchecked by default and builds none mode', () => {
+  const ui = loadStaticCorrectionScript();
+
+  expect(document.getElementById('staticCorrectionEnableLinkage').checked).toBe(false);
+  expect(document.getElementById('staticCorrectionLinkageOptions').hidden).toBe(true);
+  expect(document.getElementById('staticCorrectionLinkageMode').disabled).toBe(true);
+
+  const result = ui.buildStaticCorrectionRequest();
+
+  expect(result.errors).toEqual([]);
+  expect(result.payload.linkage).toEqual({ mode: 'none' });
+});
+
+test('checked linkage reveals options and includes linkage builder fields', () => {
+  const ui = loadStaticCorrectionScript();
+  const checkbox = document.getElementById('staticCorrectionEnableLinkage');
+  checkbox.checked = true;
+  checkbox.dispatchEvent(new Event('change'));
+
+  expect(document.getElementById('staticCorrectionLinkageOptions').hidden).toBe(false);
+  expect(document.getElementById('staticCorrectionLinkageMode').disabled).toBe(false);
+  expect(document.getElementById('staticCorrectionLinkageThresholdM').disabled).toBe(false);
+
+  document.getElementById('staticCorrectionLinkageThresholdM').value = '12.5';
+  document.getElementById('staticCorrectionReceiverLocationIntervalM').value = '25';
+  document.getElementById('staticCorrectionPreferReceiverAnchor').checked = false;
+
+  expect(ui.buildStaticCorrectionLinkageRequest()).toEqual({
+    linkage: {
+      mode: 'auto_threshold',
+      threshold_m: 12.5,
+      receiver_location_interval_m: 25,
+      prefer_receiver_anchor: false,
+    },
+  });
+});
+
+test('checked auto-threshold linkage validates threshold only when enabled', () => {
+  const ui = loadStaticCorrectionScript();
+  document.getElementById('staticCorrectionLinkageThresholdM').value = '';
+
+  expect(ui.buildStaticCorrectionRequest().errors).toEqual([]);
+
+  const checkbox = document.getElementById('staticCorrectionEnableLinkage');
+  checkbox.checked = true;
+  checkbox.dispatchEvent(new Event('change'));
+  document.getElementById('staticCorrectionRunButton').click();
+
+  expect(document.getElementById('staticCorrectionError').hidden).toBe(false);
+  expect(document.getElementById('staticCorrectionError').textContent).toContain(
+    'linkage.threshold_m'
+  );
+  expect(window.refractionStaticRunState.lastRequest).toBe(null);
 });

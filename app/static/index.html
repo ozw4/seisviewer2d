@@ -1209,8 +1209,32 @@
       gap: 0.5em;
     }
 
+    .static-correction-check-field {
+      display: flex;
+      align-items: flex-start;
+      gap: 0.5em;
+      font-size: 0.86em;
+      color: #334155;
+    }
+
+    .static-correction-check-field input {
+      flex: 0 0 auto;
+      margin: 0.2em 0 0;
+    }
+
+    .static-correction-linkage-options {
+      display: flex;
+      flex-direction: column;
+      gap: 0.55em;
+    }
+
+    .static-correction-linkage-options[hidden] {
+      display: none;
+    }
+
     .static-correction-field input:disabled,
     .static-correction-field select:disabled,
+    .static-correction-check-field input:disabled,
     .static-correction-actions button:disabled {
       color: #64748b;
       cursor: not-allowed;
@@ -2063,11 +2087,39 @@
             </section>
             <section class="static-correction-section" aria-labelledby="staticCorrectionLinkageHeading">
               <h3 id="staticCorrectionLinkageHeading">Linkage</h3>
-              <label class="static-correction-field" for="staticCorrectionLinkageMode">Linkage mode
-                <select id="staticCorrectionLinkageMode" name="linkage_mode" disabled>
-                  <option value="">Not configured</option>
-                </select>
+              <label class="static-correction-check-field" for="staticCorrectionEnableLinkage">
+                <input id="staticCorrectionEnableLinkage" name="linkage.enabled" type="checkbox"
+                  data-testid="static-correction-enable-linkage" />
+                <span>Link matching source/receiver endpoints</span>
               </label>
+              <p class="static-correction-help">
+                Optional endpoint matching uses station and coordinate criteria. It does not merge all sources and
+                receivers into one node.
+              </p>
+              <div id="staticCorrectionLinkageOptions" class="static-correction-linkage-options" hidden
+                data-testid="static-correction-linkage-options">
+                <label class="static-correction-field" for="staticCorrectionLinkageMode">linkage.mode
+                  <select id="staticCorrectionLinkageMode" name="linkage.mode"
+                    data-testid="static-correction-linkage-mode">
+                    <option value="auto_threshold" selected>auto_threshold</option>
+                  </select>
+                </label>
+                <label class="static-correction-field" for="staticCorrectionLinkageThresholdM">threshold_m
+                  <input id="staticCorrectionLinkageThresholdM" name="linkage.threshold_m" type="number" min="0"
+                    step="any" value="25" data-testid="static-correction-linkage-threshold-m" />
+                </label>
+                <label class="static-correction-field" for="staticCorrectionReceiverLocationIntervalM">
+                  receiver_location_interval_m
+                  <input id="staticCorrectionReceiverLocationIntervalM"
+                    name="linkage.receiver_location_interval_m" type="number" min="0" step="any"
+                    placeholder="optional" data-testid="static-correction-receiver-location-interval-m" />
+                </label>
+                <label class="static-correction-check-field" for="staticCorrectionPreferReceiverAnchor">
+                  <input id="staticCorrectionPreferReceiverAnchor" name="linkage.prefer_receiver_anchor"
+                    type="checkbox" checked data-testid="static-correction-prefer-receiver-anchor" />
+                  <span>prefer_receiver_anchor</span>
+                </label>
+              </div>
             </section>
             <section class="static-correction-section" aria-labelledby="staticCorrectionModelHeading">
               <h3 id="staticCorrectionModelHeading">Model</h3>

@@ -4,6 +4,8 @@
     key2Byte: '193',
     pickKind: 'batch_predicted_npz',
     pickArtifactName: 'predicted_picks_time_s.npz',
+    linkageMode: 'auto_threshold',
+    linkageThresholdM: '25',
   };
   const GEOMETRY_PRESET_SEG_Y_DEFAULT = 'segy_default';
   const GEOMETRY_PRESET_CUSTOM = 'custom';
@@ -59,6 +61,7 @@
     },
   ];
   const ARTIFACT_PICK_KINDS = new Set(['batch_predicted_npz', 'manual_npz_artifact']);
+  const LINKAGE_THRESHOLD_MODES = new Set(['auto_threshold']);
 
   const state = {
     ready: false,
@@ -154,6 +157,21 @@
     };
   }
 
+  function collectLinkageInputs(targetDom = dom) {
+    if (!targetDom) return null;
+    return {
+      enabled: Boolean(targetDom.enableLinkage && targetDom.enableLinkage.checked),
+      mode: trimValue(targetDom.linkageMode && targetDom.linkageMode.value),
+      threshold_m: trimValue(targetDom.linkageThresholdM && targetDom.linkageThresholdM.value),
+      receiver_location_interval_m: trimValue(
+        targetDom.receiverLocationIntervalM && targetDom.receiverLocationIntervalM.value
+      ),
+      prefer_receiver_anchor: Boolean(
+        targetDom.preferReceiverAnchor && targetDom.preferReceiverAnchor.checked
+      ),
+    };
+  }
+
   function collectGeometryInputs(targetDom = dom) {
     if (!targetDom) return null;
     return {
@@ -179,6 +197,19 @@
     const parsed = Number(value);
     if (!Number.isInteger(parsed) || parsed <= 0) {
       errors.push(`${label} must be a positive integer.`);
+      return null;
+    }
+    return parsed;
+  }
+
+  function parsePositiveFloat(value, label, errors, { optional = false } = {}) {
+    const trimmed = trimValue(value);
+    if (optional && trimmed === '') {
+      return null;
+    }
+    const parsed = Number(trimmed);
+    if (!trimmed || !Number.isFinite(parsed) || parsed <= 0) {
+      errors.push(`${label} must be a finite number greater than 0.`);
       return null;
     }
     return parsed;
@@ -273,6 +304,86 @@
     return result.payload;
   }
 
+  function linkageValueElements(targetDom) {
+    if (!targetDom) return [];
+    return [
+      targetDom.linkageMode,
+      targetDom.linkageThresholdM,
+      targetDom.receiverLocationIntervalM,
+      targetDom.preferReceiverAnchor,
+    ].filter(Boolean);
+  }
+
+  function updateStaticCorrectionLinkageOptions(targetDom = dom) {
+    if (!targetDom || !targetDom.enableLinkage || !targetDom.linkageOptions) return;
+    const enabled = Boolean(targetDom.enableLinkage.checked);
+    const mode = trimValue(targetDom.linkageMode && targetDom.linkageMode.value);
+    targetDom.linkageOptions.hidden = !enabled;
+    for (const element of linkageValueElements(targetDom)) {
+      element.disabled = !enabled;
+    }
+    if (targetDom.linkageThresholdM) {
+      targetDom.linkageThresholdM.disabled = !enabled || !LINKAGE_THRESHOLD_MODES.has(mode);
+    }
+  }
+
+  function validateStaticCorrectionLinkageRequest(targetDom = dom) {
+    const values = collectLinkageInputs(targetDom);
+    const errors = [];
+    if (!values) {
+      return { payload: null, errors: ['Static correction linkage form is not available.'] };
+    }
+
+    if (!values.enabled) {
+      return {
+        payload: {
+          linkage: {
+            mode: 'none',
+          },
+        },
+        errors,
+      };
+    }
+
+    const linkage = {
+      mode: values.mode,
+      prefer_receiver_anchor: values.prefer_receiver_anchor,
+    };
+    if (!values.mode) {
+      errors.push('linkage.mode is required when endpoint linkage is enabled.');
+    }
+
+    if (LINKAGE_THRESHOLD_MODES.has(values.mode)) {
+      const thresholdM = parsePositiveFloat(values.threshold_m, 'linkage.threshold_m', errors);
+      if (thresholdM !== null) {
+        linkage.threshold_m = thresholdM;
+      }
+    }
+
+    const receiverLocationIntervalM = parsePositiveFloat(
+      values.receiver_location_interval_m,
+      'linkage.receiver_location_interval_m',
+      errors,
+      { optional: true }
+    );
+    if (receiverLocationIntervalM !== null) {
+      linkage.receiver_location_interval_m = receiverLocationIntervalM;
+    }
+
+    if (errors.length) {
+      return { payload: null, errors };
+    }
+    return { payload: { linkage }, errors };
+  }
+
+  function buildStaticCorrectionLinkageRequest(targetDom = dom) {
+    const result = validateStaticCorrectionLinkageRequest(targetDom);
+    if (result.errors.length) {
+      throw validationError(result.errors);
+    }
+    return result.payload;
+  }
+
   function buildStaticCorrectionRequest() {
     const values = collectInputs();
     const errors = [];
@@ -305,6 +416,8 @@
     }
     const geometryResult = validateStaticCorrectionGeometryRequest(dom);
     errors.push(...geometryResult.errors);
+    const linkageResult = validateStaticCorrectionLinkageRequest(dom);
+    errors.push(...linkageResult.errors);
 
     if (errors.length) {
       return { payload: null, errors };
@@ -316,6 +429,7 @@
         key2_byte: key2Byte,
         pick_source: values.pick_source,
         ...geometryResult.payload,
+        ...linkageResult.payload,
       },
       errors,
     };
@@ -401,6 +515,7 @@
 
   function render() {
     if (!dom) return;
+    updateStaticCorrectionLinkageOptions(dom);
     dom.status.textContent = state.message;
     dom.error.hidden = !state.error;
     dom.error.textContent = state.error;
@@ -497,6 +612,14 @@
     const coordinateUnit = document.getElementById('staticCorrectionCoordinateUnit');
     const elevationUnit = document.getElementById('staticCorrectionElevationUnit');
     const offsetByte = document.getElementById('staticCorrectionOffsetByte');
+    const enableLinkage = document.getElementById('staticCorrectionEnableLinkage');
+    const linkageOptions = document.getElementById('staticCorrectionLinkageOptions');
+    const linkageMode = document.getElementById('staticCorrectionLinkageMode');
+    const linkageThresholdM = document.getElementById('staticCorrectionLinkageThresholdM');
+    const receiverLocationIntervalM = document.getElementById(
+      'staticCorrectionReceiverLocationIntervalM'
+    );
+    const preferReceiverAnchor = document.getElementById('staticCorrectionPreferReceiverAnchor');
     if (
       !form || !status || !error || !runButton || !fileId || !key1Byte || !key2Byte
       || !pickKind || !pickJobId || !pickArtifactName || !loadPickArtifactsButton
@@ -504,7 +627,8 @@
       || !sourceXByte || !sourceYByte || !receiverXByte || !receiverYByte
       || !sourceElevationByte || !receiverElevationByte || !coordinateScalarByte
       || !elevationScalarByte || !sourceDepthByte || !coordinateUnit || !elevationUnit
-      || !offsetByte
+      || !offsetByte || !enableLinkage || !linkageOptions || !linkageMode
+      || !linkageThresholdM || !receiverLocationIntervalM || !preferReceiverAnchor
     ) {
       return;
     }
@@ -513,6 +637,8 @@
     setDefaultValue(key2Byte, DEFAULTS.key2Byte);
     setDefaultValue(pickKind, DEFAULTS.pickKind);
     setDefaultValue(pickArtifactName, DEFAULTS.pickArtifactName);
+    setDefaultValue(linkageMode, DEFAULTS.linkageMode);
+    setDefaultValue(linkageThresholdM, DEFAULTS.linkageThresholdM);
 
     dom = {
       form,
@@ -542,8 +668,15 @@
       coordinateUnit,
       elevationUnit,
       offsetByte,
+      enableLinkage,
+      linkageOptions,
+      linkageMode,
+      linkageThresholdM,
+      receiverLocationIntervalM,
+      preferReceiverAnchor,
     };
     applyStaticCorrectionGeometryPreset(dom, trimValue(geometryPreset.value) || GEOMETRY_DEFAULTS.preset);
+    updateStaticCorrectionLinkageOptions(dom);
 
     form.addEventListener('submit', handleRun);
     runButton.addEventListener('click', handleRun);
@@ -559,6 +692,20 @@
         : 'SEG-Y default geometry header bytes restored.';
       render();
     });
+    enableLinkage.addEventListener('change', () => {
+      updateStaticCorrectionLinkageOptions(dom);
+      state.error = '';
+      state.message = enableLinkage.checked
+        ? 'Endpoint linkage options are enabled.'
+        : 'Endpoint linkage is disabled for static correction.';
+      render();
+    });
+    linkageMode.addEventListener('change', () => {
+      updateStaticCorrectionLinkageOptions(dom);
+      state.error = '';
+      state.message = 'Endpoint linkage mode updated.';
+      render();
+    });
 
     render();
   }
@@ -567,13 +714,17 @@
   window.refractionStaticRunUI = {
     applyStaticCorrectionGeometryPreset,
     buildStaticCorrectionGeometryRequest,
+    buildStaticCorrectionLinkageRequest,
     buildStaticCorrectionRequest,
     collectGeometryInputs,
     collectInputs,
+    collectLinkageInputs,
     isLikelyPickArtifact,
     loadPickArtifacts,
     render,
+    updateStaticCorrectionLinkageOptions,
     validateStaticCorrectionGeometryRequest,
+    validateStaticCorrectionLinkageRequest,
   };
 
   if (document.readyState === 'loading') {
