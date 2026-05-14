@@ -19,6 +19,8 @@ from app.api.schemas import (
     RefractionStaticApplyResponse,
     RefractionStaticExportJobRequest,
     RefractionStaticExportJobResponse,
+    RefractionStaticGatherPreviewRequest,
+    RefractionStaticGatherPreviewResponse,
     RefractionStaticQcBundleRequest,
     RefractionStaticQcBundleResponse,
     RefractionStaticQcDrilldownRequest,
@@ -49,6 +51,11 @@ from app.services.refraction_static_export_service import (
     resolve_refraction_static_export_formats,
     run_refraction_static_export_job,
     validate_refraction_static_export_source_job,
+)
+from app.services.refraction_static_gather_preview import (
+    RefractionStaticGatherPreviewError,
+    RefractionStaticGatherPreviewNotFound,
+    build_refraction_static_gather_preview,
 )
 from app.services.refraction_static_qc_bundle import (
     RefractionStaticQcBundleError,
@@ -344,6 +351,32 @@ def refraction_static_qc_drilldown(
     except RefractionStaticQcDrilldownNotFound as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except RefractionStaticQcDrilldownError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+
+@router.post(
+    '/statics/refraction/qc/gather-preview',
+    response_model=RefractionStaticGatherPreviewResponse,
+    response_model_exclude_none=True,
+)
+def refraction_static_gather_preview(
+    req: RefractionStaticGatherPreviewRequest,
+    request: Request,
+) -> RefractionStaticGatherPreviewResponse:
+    """Return bounded before/after gather samples and overlays for refraction QC."""
+    state = get_state(request.app)
+    cleanup_in_memory_state(state)
+    job = _get_static_job_or_404(state, req.job_id)
+    try:
+        return build_refraction_static_gather_preview(
+            job_id=req.job_id,
+            job=job,
+            req=req,
+            state=state,
+        )
+    except RefractionStaticGatherPreviewNotFound as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except RefractionStaticGatherPreviewError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
 
 

@@ -772,11 +772,134 @@ function globalVelocityQcBundlePayload(jobId: string) {
 	return payload;
 }
 
+function gatherPreviewPayload(jobId: string, options: {
+	correctedStatus?: 'ok' | 'not_registered' | 'unavailable';
+	correctedSource?: string;
+} = {}) {
+	const correctedStatus = options.correctedStatus ?? 'ok';
+	return {
+		job_id: jobId,
+		statics_kind: 'refraction',
+		sign_convention: 'corrected(t) = raw(t - shift_s)',
+		raw_window_ref: {
+			status: 'ok',
+			endpoint: '/get_section_window_bin',
+			query: { file_id: 'raw-preview-file', key1: 100 },
+		},
+		corrected_window_ref: {
+			status: correctedStatus,
+			source: 'corrected_tracestore',
+			endpoint: correctedStatus === 'ok' ? '/get_section_window_bin' : undefined,
+			query: correctedStatus === 'ok' ? { file_id: 'corrected-preview-file', key1: 100 } : undefined,
+			message: correctedStatus === 'ok'
+				? undefined
+				: 'Registered corrected TraceStore is not available for this job.',
+		},
+		raw_samples: [
+			[0, 0],
+			[1, 0.25],
+			[0.2, 1],
+			[0, 0.1],
+		],
+		corrected_samples: [
+			[0, 0.1],
+			[0.4, 0],
+			[1, 0.2],
+			[0.2, 1],
+		],
+		corrected_samples_source: options.correctedSource ?? (
+			correctedStatus === 'ok'
+				? 'corrected_tracestore'
+				: 'raw_tracestore_shifted_on_the_fly'
+		),
+		dt_s: 0.1,
+		shape: [4, 2],
+		window: {
+			key1: 100,
+			y0: 0,
+			y1: 3,
+			sample_start: 0,
+			sample_stop: 3,
+			requested_trace_count: 2,
+			returned_trace_count: 2,
+			requested_sample_count: 4,
+			returned_sample_count: 4,
+			effective_step_y: 1,
+			trace_capped: false,
+			sample_capped: false,
+		},
+		gather: {
+			axis: 'source',
+			endpoint_key: 'S001',
+			overlay_status: 'available',
+		},
+		x_indices: [0, 1],
+		trace_indices: [10, 11],
+		offset_m: [100, 200],
+		source_endpoint_key: ['S001', 'S001'],
+		receiver_endpoint_key: ['R001', 'R002'],
+		observed_pick_time_s: [0.1, 0.2],
+		modeled_pick_time_s: [0.11, 0.19],
+		residual_s: [-0.01, 0.01],
+		final_trace_shift_s: [0.02, -0.01],
+		corrected_observed_pick_time_s: [0.12, 0.19],
+		corrected_modeled_pick_time_s: [0.13, 0.18],
+		reduced_observed_time_s: [0.05, 0.1],
+		reduced_modeled_time_s: [0.06, 0.09],
+		overlay_status: {
+			first_break_fit: 'available',
+			shift_field: 'final_trace_shift_s',
+			reduction_velocity_m_s: null,
+		},
+		artifacts: {
+			qc: 'refraction_static_qc.json',
+			first_break_fit_qc_npz: 'refraction_first_break_fit_qc.npz',
+			refraction_static_solution_npz: 'refraction_static_solution.npz',
+		},
+	};
+}
+
 async function loadRefractionQcBundle(page: Page, jobId: string) {
 	await openRefractionQcTab(page);
 	await page.getByTestId('refraction-qc-job-id').fill(jobId);
 	await page.getByTestId('refraction-qc-load').click();
 	await expect(page.getByTestId('refraction-qc-status')).toContainText(`Loaded ${jobId}`);
+}
+
+async function openGatherPreview(page: Page, jobId: string) {
+	await loadRefractionQcBundle(page, jobId);
+	await page.getByTestId('refraction-qc-view-gather-button').click();
+	await page.getByTestId('refraction-qc-gather-file-id').fill('raw-preview-file');
+	await page.getByTestId('refraction-qc-endpoint').fill('S001');
+}
+
+async function gatherPlotSummary(page: Page, testId: string) {
+	return page.getByTestId(testId).evaluate((node) => {
+		const plot = node as HTMLElement & {
+			data?: Array<{
+				name?: string;
+				type?: string;
+				x?: number[];
+				y?: number[];
+				z?: number[][];
+			}>;
+			layout?: {
+				xaxis?: { title?: { text?: string } };
+				yaxis?: { title?: { text?: string } };
+			};
+		};
+		return {
+			xAxisTitle: plot.layout?.xaxis?.title?.text ?? '',
+			yAxisTitle: plot.layout?.yaxis?.title?.text ?? '',
+			traces: (plot.data ?? []).map((trace) => ({
+				name: trace.name ?? '',
+				type: trace.type ?? '',
+				x: Array.isArray(trace.x) ? trace.x : [],
+				y: Array.isArray(trace.y) ? trace.y : [],
+				z: Array.isArray(trace.z) ? trace.z : [],
+			})),
+		};
+	});
 }
 
 async function residualPlotPointCount(page: Page) {
@@ -1034,14 +1157,197 @@ test('refraction QC tab view switching', async ({ page }) => {
 
 	await page.getByTestId('refraction-qc-view-gather-button').click();
 	await expect(page.getByTestId('refraction-qc-view-gather')).toBeVisible();
-	await expect(page.getByTestId('refraction-qc-gather-controls')).toHaveCount(0);
-	await expect(page.getByTestId('refraction-qc-view-gather')).toContainText(
-		'Gather preview is unavailable from the current compact QC bundle',
-	);
-	await expect(page.getByTestId('refraction-qc-view-gather')).toContainText(
-		'POST /statics/refraction/qc',
-	);
+	await expect(page.getByTestId('refraction-qc-gather-controls')).toBeVisible();
+	await expect(page.getByTestId('refraction-qc-view-gather')).toContainText('Load a bounded gather preview from the M6 API');
 	expect(await page.evaluate(() => (window as any).refractionQcState.selectedView)).toBe('gather_preview');
+});
+
+test('refraction gather preview UI raw only fetches bounded API data', async ({ page }) => {
+	let requestPayload: Record<string, unknown> | null = null;
+	await page.route('**/statics/refraction/qc/gather-preview', async (route) => {
+		requestPayload = JSON.parse(route.request().postData() || '{}');
+		await route.fulfill({
+			status: 200,
+			contentType: 'application/json',
+			body: JSON.stringify(gatherPreviewPayload('refraction-gather-raw')),
+		});
+	});
+	await page.route('**/statics/refraction/qc', async (route) => {
+		await route.fulfill({
+			status: 200,
+			contentType: 'application/json',
+			body: JSON.stringify(qcBundlePayload('refraction-gather-raw')),
+		});
+	});
+
+	await openGatherPreview(page, 'refraction-gather-raw');
+	await page.getByTestId('refraction-qc-gather-display').selectOption('raw');
+	await page.getByTestId('refraction-qc-gather-time-start').fill('0');
+	await page.getByTestId('refraction-qc-gather-time-end').fill('0.3');
+	await page.getByTestId('refraction-qc-gather-max-traces').fill('2');
+	await page.getByTestId('refraction-qc-gather-load').click();
+
+	await expect(page.getByTestId('refraction-qc-gather-raw-plot')).toBeVisible();
+	await expect(page.getByTestId('refraction-qc-gather-corrected-plot')).toHaveCount(0);
+	expect(requestPayload).toMatchObject({
+		job_id: 'refraction-gather-raw',
+		file_id: 'raw-preview-file',
+		gather_axis: 'source',
+		endpoint_key: 'S001',
+		time_start_s: 0,
+		time_end_s: 0.3,
+		max_traces: 2,
+	});
+});
+
+test('refraction gather preview UI requests midpoint CMP window through bounded API data', async ({ page }) => {
+	let requestPayload: Record<string, unknown> | null = null;
+	await page.route('**/statics/refraction/qc/gather-preview', async (route) => {
+		requestPayload = JSON.parse(route.request().postData() || '{}');
+		await route.fulfill({
+			status: 200,
+			contentType: 'application/json',
+			body: JSON.stringify(gatherPreviewPayload('refraction-gather-cmp-window')),
+		});
+	});
+	await page.route('**/statics/refraction/qc', async (route) => {
+		await route.fulfill({
+			status: 200,
+			contentType: 'application/json',
+			body: JSON.stringify(qcBundlePayload('refraction-gather-cmp-window')),
+		});
+	});
+
+	await openGatherPreview(page, 'refraction-gather-cmp-window');
+	await page.getByTestId('refraction-qc-gather-axis').selectOption({ label: 'Midpoint/CMP window' });
+	await page.getByTestId('refraction-qc-gather-key1').fill('100');
+	await page.getByTestId('refraction-qc-gather-x0').fill('4');
+	await page.getByTestId('refraction-qc-gather-x1').fill('12');
+	await page.getByTestId('refraction-qc-gather-time-start').fill('0');
+	await page.getByTestId('refraction-qc-gather-time-end').fill('0.3');
+	await page.getByTestId('refraction-qc-gather-load').click();
+
+	expect(requestPayload).toMatchObject({
+		job_id: 'refraction-gather-cmp-window',
+		file_id: 'raw-preview-file',
+		gather_axis: 'section',
+		key1: 100,
+		x0: 4,
+		x1: 12,
+		time_start_s: 0,
+		time_end_s: 0.3,
+	});
+});
+
+test('refraction gather preview UI raw corrected side by side renders overlays', async ({ page }) => {
+	await page.route('**/statics/refraction/qc/gather-preview', async (route) => {
+		await route.fulfill({
+			status: 200,
+			contentType: 'application/json',
+			body: JSON.stringify(gatherPreviewPayload('refraction-gather-side-by-side')),
+		});
+	});
+	await page.route('**/statics/refraction/qc', async (route) => {
+		await route.fulfill({
+			status: 200,
+			contentType: 'application/json',
+			body: JSON.stringify(qcBundlePayload('refraction-gather-side-by-side')),
+		});
+	});
+
+	await openGatherPreview(page, 'refraction-gather-side-by-side');
+	await page.getByTestId('refraction-qc-gather-display').selectOption('side_by_side');
+	await page.getByTestId('refraction-qc-gather-load').click();
+
+	await expect(page.getByTestId('refraction-qc-gather-raw-plot')).toBeVisible();
+	await expect(page.getByTestId('refraction-qc-gather-corrected-plot')).toBeVisible();
+	await expect(page.getByTestId('refraction-qc-gather-corrected-status')).toContainText('corrected_tracestore');
+	await expect.poll(async () => gatherPlotSummary(page, 'refraction-qc-gather-raw-plot')).toMatchObject({
+		xAxisTitle: 'Offset (m)',
+		yAxisTitle: 'Time (s)',
+		traces: [
+			expect.objectContaining({ name: 'Raw gather', type: 'heatmap' }),
+			expect.objectContaining({ name: 'Observed first break', x: [100, 200], y: [0.1, 0.2] }),
+			expect.objectContaining({ name: 'Modeled first break', x: [100, 200], y: [0.11, 0.19] }),
+		],
+	});
+	await expect.poll(async () => gatherPlotSummary(page, 'refraction-qc-gather-corrected-plot')).toMatchObject({
+		traces: [
+			expect.objectContaining({ name: 'Corrected gather', type: 'heatmap' }),
+			expect.objectContaining({ name: 'Corrected observed first break', x: [100, 200], y: [0.12, 0.19] }),
+			expect.objectContaining({ name: 'Corrected modeled first break', x: [100, 200], y: [0.13, 0.18] }),
+		],
+	});
+});
+
+test('refraction gather preview UI missing corrected status is clear', async ({ page }) => {
+	await page.route('**/statics/refraction/qc/gather-preview', async (route) => {
+		await route.fulfill({
+			status: 200,
+			contentType: 'application/json',
+			body: JSON.stringify(gatherPreviewPayload('refraction-gather-missing-corrected', {
+				correctedStatus: 'not_registered',
+			})),
+		});
+	});
+	await page.route('**/statics/refraction/qc', async (route) => {
+		await route.fulfill({
+			status: 200,
+			contentType: 'application/json',
+			body: JSON.stringify(qcBundlePayload('refraction-gather-missing-corrected')),
+		});
+	});
+
+	await openGatherPreview(page, 'refraction-gather-missing-corrected');
+	await page.getByTestId('refraction-qc-gather-load').click();
+
+	await expect(page.getByTestId('refraction-qc-gather-corrected-status')).toContainText('Missing corrected data');
+	await expect(page.getByTestId('refraction-qc-gather-corrected-status')).toContainText('not_registered');
+	await expect(page.getByTestId('refraction-qc-gather-corrected-status')).toContainText('Registered corrected TraceStore is not available');
+});
+
+test('refraction gather preview UI validates time range and max traces', async ({ page }) => {
+	let gatherRequests = 0;
+	await page.route('**/statics/refraction/qc/gather-preview', async (route) => {
+		gatherRequests += 1;
+		await route.fulfill({
+			status: 200,
+			contentType: 'application/json',
+			body: JSON.stringify(gatherPreviewPayload('refraction-gather-validation')),
+		});
+	});
+	await page.route('**/statics/refraction/qc', async (route) => {
+		await route.fulfill({
+			status: 200,
+			contentType: 'application/json',
+			body: JSON.stringify(qcBundlePayload('refraction-gather-validation')),
+		});
+	});
+
+	await openGatherPreview(page, 'refraction-gather-validation');
+	await page.getByTestId('refraction-qc-gather-time-start').fill('0.4');
+	await page.getByTestId('refraction-qc-gather-time-end').fill('0.2');
+	await page.getByTestId('refraction-qc-gather-max-traces').fill('0');
+	await page.getByTestId('refraction-qc-gather-load').click();
+
+	await expect(page.getByTestId('refraction-qc-gather-error')).toContainText('Time end must be greater than time start');
+	await expect(page.getByTestId('refraction-qc-gather-error')).toContainText('Max traces must be a positive integer');
+	expect(gatherRequests).toBe(0);
+
+	await page.getByTestId('refraction-qc-gather-axis').selectOption({ label: 'Midpoint/CMP window' });
+	await page.getByTestId('refraction-qc-gather-key1-byte').fill('189.5');
+	await page.getByTestId('refraction-qc-gather-key1').fill('100');
+	await page.getByTestId('refraction-qc-gather-x0').fill('0.5');
+	await page.getByTestId('refraction-qc-gather-x1').fill('4');
+	await page.getByTestId('refraction-qc-gather-time-start').fill('0');
+	await page.getByTestId('refraction-qc-gather-time-end').fill('0.2');
+	await page.getByTestId('refraction-qc-gather-max-traces').fill('1.5');
+	await page.getByTestId('refraction-qc-gather-load').click();
+
+	await expect(page.getByTestId('refraction-qc-gather-error')).toContainText('key1 byte must be a positive integer');
+	await expect(page.getByTestId('refraction-qc-gather-error')).toContainText('Trace start must be an integer');
+	await expect(page.getByTestId('refraction-qc-gather-error')).toContainText('Max traces must be a positive integer');
+	expect(gatherRequests).toBe(0);
 });
 
 test('3D cell map renders velocity quantity', async ({ page }) => {

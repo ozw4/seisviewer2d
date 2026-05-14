@@ -134,12 +134,13 @@ viewer surfaces are:
 | 2D profiles | `refraction_line_profile_qc_combined.csv` |
 | 3D cell maps | `refraction_grid_map_qc.csv`, `refraction_refractor_velocity_cells.csv` |
 | Static components | `refraction_static_component_qc_endpoint.csv`, `refraction_static_component_qc_trace.csv` |
-| Gather preview | Logical M6 family; currently reported in `unavailable_views` by the compact bundle |
+| Gather preview | Bounded raw/corrected trace windows and overlays from `POST /statics/refraction/qc/gather-preview` |
 
-The current user-facing QC API contract is the compact bundle route above.
-Specialized endpoint or cell detail routes are not part of the current
-contract. When a plotted endpoint or cell needs details, use the sampled bundle
-rows and the referenced artifacts to inspect time terms, velocities,
+The compact bundle route provides sampled tabular QC records and manifest
+metadata. The gather-preview route is the dedicated M6 endpoint for bounded
+seismic samples because preview windows can be larger than the compact bundle.
+When a plotted endpoint or cell needs non-seismic details, use the sampled
+bundle rows and the referenced artifacts to inspect time terms, velocities,
 thicknesses, static components, pick counts, statuses, fold, residuals, and
 contributing observations.
 
@@ -377,12 +378,14 @@ samples for the same section, source gather, or receiver gather. The preview
 should align overlays for observed picks, modeled picks, residuals,
 reduced-time picks, and the final trace-shift curve with the trace window.
 
-The compact QC bundle does not currently serve gather-preview windows. It
-reports `gather_preview` as unavailable when no implemented compact-bundle view
-exists. Do not infer a callable specialized preview route from this guide.
+The compact QC bundle does not embed gather-preview windows. The viewer uses
+the dedicated bounded route:
 
-A future or viewer-specific preview request should carry the same information
-as this minimal source-gather example:
+```text
+POST /statics/refraction/qc/gather-preview
+```
+
+A minimal source-gather request carries:
 
 ```json
 {
@@ -399,12 +402,10 @@ as this minimal source-gather example:
 }
 ```
 
-In the current workflow, use before/after inspection only when the refraction
-job registered a corrected TraceStore. Open the original and corrected data in
-the viewer and compare the same key1/trace/time window. If no corrected store
-was registered, the compact QC bundle can still explain the expected shifts and
-overlays through sampled rows and artifacts, but it does not provide corrected
-seismic samples.
+Use raw/corrected side-by-side inspection when the refraction job registered a
+corrected TraceStore. If no corrected store was registered, the preview still
+returns bounded raw samples and overlay metadata with a corrected-data status
+that explains why corrected samples are unavailable.
 
 Check that:
 
@@ -494,9 +495,8 @@ The M6 QC viewer workflow does not implement:
 
 - M6 QC does not change the solver or recompute statics from viewer edits.
 - The compact QC bundle samples large tables independently by view.
-- The compact QC bundle currently reports `gather_preview` as unavailable; a
-  future preview implementation should reuse existing TraceStore window
-  endpoints for heavy seismic windows.
+- Gather preview intentionally uses a dedicated bounded API instead of embedding
+  heavy seismic windows in the compact QC bundle.
 - Public T1LSST apply supports cell V2/T1, but public cell V3/T2 and cell
   Vsub/T3 apply remain out of scope.
 - Cell velocity assignment is midpoint-cell based, not path-integrated
