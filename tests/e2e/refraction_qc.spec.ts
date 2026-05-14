@@ -1077,11 +1077,19 @@ test('static correction tab scaffold switches side panels', async ({ page }) => 
 	}
 	await expect(page.getByTestId('static-correction-form')).toBeVisible();
 	await expect(page.getByTestId('static-correction-status')).toContainText(
-		'Static correction setup is not available yet.',
+		'Enter a SEG-Y/TraceStore file_id and a first-break pick artifact usable by refraction statics.',
 	);
+	await expect(page.getByTestId('static-correction-file-id')).toBeVisible();
+	await expect(page.getByTestId('static-correction-key1-byte')).toHaveValue('189');
+	await expect(page.getByTestId('static-correction-key2-byte')).toHaveValue('193');
+	await expect(page.getByTestId('static-correction-pick-kind')).toHaveValue('batch_predicted_npz');
+	await expect(page.getByTestId('static-correction-pick-job-id')).toBeVisible();
+	await expect(page.getByTestId('static-correction-pick-artifact-name')).toHaveValue('predicted_picks_time_s.npz');
+	await expect(panel).toContainText('/statics/refraction/apply');
+	await expect(panel).toContainText('viewer first-break probability cache is not a valid statics pick artifact');
 	await expect(page.getByTestId('static-correction-error')).toBeHidden();
 	await expect(page.getByTestId('static-correction-run')).toBeVisible();
-	await expect(page.getByTestId('static-correction-run')).toBeDisabled();
+	await expect(page.getByTestId('static-correction-run')).toBeEnabled();
 	await expect(page.getByTestId('pipeline-sidebar-tab')).toHaveAttribute('aria-selected', 'false');
 	await expect(page.getByTestId('refraction-qc-tab')).toHaveAttribute('aria-selected', 'false');
 	await expect(page.getByTestId('static-correction-tab')).toHaveAttribute('aria-selected', 'true');
@@ -1095,6 +1103,78 @@ test('static correction tab scaffold switches side panels', async ({ page }) => 
 	await expect(page.getByTestId('static-correction-tab')).toHaveAttribute('aria-selected', 'false');
 
 	expect(staticsRequests).toEqual([]);
+});
+
+test('static correction tab validates required file and pick inputs without submitting', async ({ page }) => {
+	const staticsRequests: string[] = [];
+	await page.route('**/statics/refraction/**', async (route) => {
+		staticsRequests.push(route.request().url());
+		await route.abort();
+	});
+
+	await page.goto('/');
+	await page.getByTestId('static-correction-tab').click();
+	await page.getByTestId('static-correction-run').click();
+
+	await expect(page.getByTestId('static-correction-error')).toBeVisible();
+	await expect(page.getByTestId('static-correction-error')).toContainText('file_id is required');
+	await expect(page.getByTestId('static-correction-error')).toContainText('pick_source.job_id is required');
+	await expect(page.getByTestId('static-correction-status')).toContainText(
+		'Fix input errors before running refraction statics.',
+	);
+	expect(staticsRequests).toEqual([]);
+});
+
+test('static correction tab loads likely first-break pick artifacts', async ({ page }) => {
+	await page.route('**/batch/job/pick-job/files', async (route) => {
+		await route.fulfill({
+			status: 200,
+			contentType: 'application/json',
+			body: JSON.stringify({
+				files: [
+					{ name: 'job_meta.json', size_bytes: 12 },
+					{ name: 'predicted_picks_time_s.npz', size_bytes: 128 },
+					{ name: 'manual_picks_time_lineA.npz', size_bytes: 96 },
+				],
+			}),
+		});
+	});
+
+	await page.goto('/');
+	await page.getByTestId('static-correction-tab').click();
+	await page.getByTestId('static-correction-pick-job-id').fill('pick-job');
+	await page.getByTestId('static-correction-load-pick-artifacts').click();
+
+	const list = page.getByTestId('static-correction-pick-artifact-list');
+	await expect(list).toBeVisible();
+	await expect(list).toContainText('predicted_picks_time_s.npz');
+	await expect(list).toContainText('manual_picks_time_lineA.npz');
+	await expect(list).toContainText('first-break candidate');
+
+	await list.getByRole('button', { name: 'manual_picks_time_lineA.npz' }).click();
+	await expect(page.getByTestId('static-correction-pick-artifact-name')).toHaveValue(
+		'manual_picks_time_lineA.npz',
+	);
+});
+
+test('static correction tab displays pick artifact load errors', async ({ page }) => {
+	await page.route('**/batch/job/missing-pick-job/files', async (route) => {
+		await route.fulfill({
+			status: 404,
+			contentType: 'application/json',
+			body: JSON.stringify({ detail: 'Job ID not found' }),
+		});
+	});
+
+	await page.goto('/');
+	await page.getByTestId('static-correction-tab').click();
+	await page.getByTestId('static-correction-pick-job-id').fill('missing-pick-job');
+	await page.getByTestId('static-correction-load-pick-artifacts').click();
+
+	await expect(page.getByTestId('static-correction-error')).toBeVisible();
+	await expect(page.getByTestId('static-correction-error')).toContainText('batch job files 404: Job ID not found');
+	await expect(page.getByTestId('static-correction-status')).toContainText('Unable to load pick artifacts.');
+	await expect(page.getByTestId('static-correction-pick-artifact-list')).toBeHidden();
 });
 
 test('refraction QC tab fetches bundle for job', async ({ page }) => {
