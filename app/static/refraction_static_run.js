@@ -4,6 +4,15 @@
     key2Byte: '193',
     pickKind: 'batch_predicted_npz',
     pickArtifactName: 'predicted_picks_time_s.npz',
+    linkageMode: 'auto_threshold',
+    linkageThresholdM: '25',
+    weatheringVelocityMS: '800',
+    bedrockVelocityMode: 'solve_global',
+    initialBedrockVelocityMS: '2400',
+    fixedBedrockVelocityMS: '2400',
+    minOffsetM: '300',
+    maxOffsetM: '4000',
+    conversionMode: 't1lsst_1layer',
   };
   const GEOMETRY_PRESET_SEG_Y_DEFAULT = 'segy_default';
   const GEOMETRY_PRESET_CUSTOM = 'custom';
@@ -59,20 +68,36 @@
     },
   ];
   const ARTIFACT_PICK_KINDS = new Set(['batch_predicted_npz', 'manual_npz_artifact']);
+  const LINKAGE_THRESHOLD_MODES = new Set(['auto_threshold']);
+  const LINKAGE_ARTIFACT_NAME = 'geometry_linkage.npz';
+  const LINKAGE_READY_STATES = new Set(['done', 'ready']);
+  const LINKAGE_FAILED_STATES = new Set(['error', 'failed', 'cancelled', 'canceled', 'expired']);
+  const STATIC_READY_STATES = new Set(['done', 'ready']);
+  const STATIC_ACTIVE_STATES = new Set(['queued', 'running', 'cancel_requested']);
+  const STATIC_TERMINAL_STATES = new Set(['done', 'ready', 'error', 'cancelled', 'expired']);
 
   const state = {
     ready: false,
-    message: [
-      'Enter a SEG-Y/TraceStore file_id and a first-break pick artifact usable by refraction statics.',
-      'Static correction job submission is not enabled in this milestone.',
-    ].join(' '),
+    message: 'Enter a SEG-Y/TraceStore file_id and a first-break pick artifact usable by refraction statics.',
     error: '',
     loadingPickArtifacts: false,
     pickArtifacts: [],
     lastRequest: null,
+    lastResponse: null,
+    lastLinkageBuildRequest: null,
+    lastLinkageJobId: '',
+    lastStaticCorrectionJobId: '',
+    lastStaticCorrectionState: '',
+    lastStaticCorrectionMessage: '',
+    lastStaticCorrectionProgress: 0,
+    staticArtifacts: [],
+    loadingStaticArtifacts: false,
+    phase: 'idle',
+    pollIntervalMs: 1000,
   };
 
   let dom = null;
+  let staticPollToken = 0;
 
   function trimValue(value) {
     return String(value || '').trim();
@@ -140,17 +165,32 @@
     );
   }
 
-  function collectInputs() {
-    if (!dom) return null;
+  function collectInputs(targetDom = dom) {
+    if (!targetDom) return null;
     return {
-      file_id: trimValue(dom.fileId.value),
-      key1_byte: trimValue(dom.key1Byte.value),
-      key2_byte: trimValue(dom.key2Byte.value),
+      file_id: trimValue(targetDom.fileId.value),
+      key1_byte: trimValue(targetDom.key1Byte.value),
+      key2_byte: trimValue(targetDom.key2Byte.value),
       pick_source: {
-        kind: trimValue(dom.pickKind.value),
-        job_id: trimValue(dom.pickJobId.value),
-        artifact_name: trimValue(dom.pickArtifactName.value),
+        kind: trimValue(targetDom.pickKind.value),
+        job_id: trimValue(targetDom.pickJobId.value),
+        artifact_name: trimValue(targetDom.pickArtifactName.value),
       },
+    };
+  }
+
+  function collectLinkageInputs(targetDom = dom) {
+    if (!targetDom) return null;
+    return {
+      enabled: Boolean(targetDom.enableLinkage && targetDom.enableLinkage.checked),
+      mode: trimValue(targetDom.linkageMode && targetDom.linkageMode.value),
+      threshold_m: trimValue(targetDom.linkageThresholdM && targetDom.linkageThresholdM.value),
+      receiver_location_interval_m: trimValue(
+        targetDom.receiverLocationIntervalM && targetDom.receiverLocationIntervalM.value
+      ),
+      prefer_receiver_anchor: Boolean(
+        targetDom.preferReceiverAnchor && targetDom.preferReceiverAnchor.checked
+      ),
     };
   }
 
@@ -175,10 +215,74 @@
     };
   }
 
+  function collectModelInputs(targetDom = dom) {
+    if (!targetDom) return null;
+    return {
+      weathering_velocity_m_s: trimValue(
+        targetDom.weatheringVelocityMS && targetDom.weatheringVelocityMS.value
+      ),
+      bedrock_velocity_mode: trimValue(
+        targetDom.bedrockVelocityMode && targetDom.bedrockVelocityMode.value
+      ),
+      initial_bedrock_velocity_m_s: trimValue(
+        targetDom.initialBedrockVelocityMS && targetDom.initialBedrockVelocityMS.value
+      ),
+      bedrock_velocity_m_s: trimValue(
+        targetDom.fixedBedrockVelocityMS && targetDom.fixedBedrockVelocityMS.value
+      ),
+      min_offset_m: trimValue(targetDom.minOffsetM && targetDom.minOffsetM.value),
+      max_offset_m: trimValue(targetDom.maxOffsetM && targetDom.maxOffsetM.value),
+      conversion_mode: trimValue(targetDom.conversionMode && targetDom.conversionMode.value),
+    };
+  }
+
+  function collectOutputInputs(targetDom = dom) {
+    if (!targetDom) return null;
+    const formats = [];
+    for (const checkbox of targetDom.exportFormatInputs || []) {
+      if (checkbox.checked) {
+        formats.push(checkbox.value);
+      }
+    }
+    return {
+      register_corrected_file: Boolean(
+        targetDom.registerCorrectedFile && targetDom.registerCorrectedFile.checked
+      ),
+      export_enabled: Boolean(targetDom.exportEnabled && targetDom.exportEnabled.checked),
+      export_formats: formats,
+    };
+  }
+
   function parsePositiveInteger(value, label, errors) {
     const parsed = Number(value);
     if (!Number.isInteger(parsed) || parsed <= 0) {
       errors.push(`${label} must be a positive integer.`);
+      return null;
+    }
+    return parsed;
+  }
+
+  function parsePositiveFloat(value, label, errors, { optional = false } = {}) {
+    const trimmed = trimValue(value);
+    if (optional && trimmed === '') {
+      return null;
+    }
+    const parsed = Number(trimmed);
+    if (!trimmed || !Number.isFinite(parsed) || parsed <= 0) {
+      errors.push(`${label} must be a finite number greater than 0.`);
+      return null;
+    }
+    return parsed;
+  }
+
+  function parseNonNegativeFloat(value, label, errors, { optional = false } = {}) {
+    const trimmed = trimValue(value);
+    if (optional && trimmed === '') {
+      return null;
+    }
+    const parsed = Number(trimmed);
+    if (!trimmed || !Number.isFinite(parsed) || parsed < 0) {
+      errors.push(`${label} must be a finite number greater than or equal to 0.`);
       return null;
     }
     return parsed;
@@ -214,6 +318,34 @@
     const error = new Error(errors.join(' '));
     error.errors = errors;
     return error;
+  }
+
+  function buildStaticCorrectionPickSource(targetDom = dom) {
+    const values = collectInputs(targetDom);
+    const errors = [];
+    if (!values) {
+      throw validationError(['Static correction form is not available.']);
+    }
+    const pickSource = { ...values.pick_source };
+    const pickKind = pickSource.kind;
+    if (!pickKind) {
+      errors.push('pick_source.kind is required.');
+    }
+    if (ARTIFACT_PICK_KINDS.has(pickKind)) {
+      if (!pickSource.job_id) {
+        errors.push('pick_source.job_id is required for artifact-backed pick sources.');
+      }
+      if (!pickSource.artifact_name) {
+        errors.push('pick_source.artifact_name is required for artifact-backed pick sources.');
+      }
+    }
+    if (pickSource.artifact_name && !pickSource.artifact_name.toLowerCase().endsWith('.npz')) {
+      errors.push('pick_source.artifact_name must be an .npz artifact.');
+    }
+    if (errors.length) {
+      throw validationError(errors);
+    }
+    return pickSource;
   }
 
   function validateStaticCorrectionGeometryRequest(targetDom = dom) {
@@ -273,8 +405,289 @@
     return result.payload;
   }
 
+  function buildStaticCorrectionGeometry(targetDom = dom) {
+    return buildStaticCorrectionGeometryRequest(targetDom).geometry;
+  }
+
+  function linkageValueElements(targetDom) {
+    if (!targetDom) return [];
+    return [
+      targetDom.linkageMode,
+      targetDom.linkageThresholdM,
+      targetDom.receiverLocationIntervalM,
+      targetDom.preferReceiverAnchor,
+    ].filter(Boolean);
+  }
+
+  function updateStaticCorrectionLinkageOptions(targetDom = dom) {
+    if (!targetDom || !targetDom.enableLinkage || !targetDom.linkageOptions) return;
+    const enabled = Boolean(targetDom.enableLinkage.checked);
+    const mode = trimValue(targetDom.linkageMode && targetDom.linkageMode.value);
+    targetDom.linkageOptions.hidden = !enabled;
+    for (const element of linkageValueElements(targetDom)) {
+      element.disabled = !enabled;
+    }
+    if (targetDom.linkageThresholdM) {
+      targetDom.linkageThresholdM.disabled = !enabled || !LINKAGE_THRESHOLD_MODES.has(mode);
+    }
+  }
+
+  function updateBedrockVelocityControls(targetDom = dom) {
+    if (!targetDom || !targetDom.bedrockVelocityMode) return;
+    const fixedMode = targetDom.bedrockVelocityMode.value === 'fixed_global';
+    if (targetDom.initialBedrockVelocityMS) {
+      targetDom.initialBedrockVelocityMS.disabled = fixedMode;
+    }
+    if (targetDom.fixedBedrockVelocityMS) {
+      targetDom.fixedBedrockVelocityMS.disabled = !fixedMode;
+    }
+  }
+
+  function validateStaticCorrectionLinkageRequest(targetDom = dom) {
+    const values = collectLinkageInputs(targetDom);
+    const errors = [];
+    if (!values) {
+      return { payload: null, errors: ['Static correction linkage form is not available.'] };
+    }
+
+    if (!values.enabled) {
+      return {
+        payload: {
+          linkage: {
+            mode: 'none',
+          },
+        },
+        errors,
+      };
+    }
+
+    const linkage = {
+      mode: values.mode,
+      prefer_receiver_anchor: values.prefer_receiver_anchor,
+    };
+    if (!values.mode) {
+      errors.push('linkage.mode is required when endpoint linkage is enabled.');
+    }
+
+    if (LINKAGE_THRESHOLD_MODES.has(values.mode)) {
+      const thresholdM = parsePositiveFloat(values.threshold_m, 'linkage.threshold_m', errors);
+      if (thresholdM !== null) {
+        linkage.threshold_m = thresholdM;
+      }
+    }
+
+    const receiverLocationIntervalM = parsePositiveFloat(
+      values.receiver_location_interval_m,
+      'linkage.receiver_location_interval_m',
+      errors,
+      { optional: true }
+    );
+    if (receiverLocationIntervalM !== null) {
+      linkage.receiver_location_interval_m = receiverLocationIntervalM;
+    }
+
+    if (errors.length) {
+      return { payload: null, errors };
+    }
+    return { payload: { linkage }, errors };
+  }
+
+  function buildStaticCorrectionLinkageRequest(targetDom = dom) {
+    const result = validateStaticCorrectionLinkageRequest(targetDom);
+    if (result.errors.length) {
+      throw validationError(result.errors);
+    }
+    return result.payload;
+  }
+
+  function buildStaticCorrectionLinkage(targetDom = dom, linkageJobId = '') {
+    const jobId = trimValue(linkageJobId);
+    if (jobId) {
+      return {
+        mode: 'required',
+        job_id: jobId,
+        artifact_name: LINKAGE_ARTIFACT_NAME,
+      };
+    }
+    return { mode: 'none' };
+  }
+
+  function validateOneLayerRefractionModel(targetDom = dom) {
+    const values = collectModelInputs(targetDom);
+    const errors = [];
+    if (!values) {
+      return { payload: null, moveout: null, conversion: null, errors: ['Static correction model form is not available.'] };
+    }
+
+    const weatheringVelocity = parsePositiveFloat(
+      values.weathering_velocity_m_s,
+      'model.first_layer.weathering_velocity_m_s',
+      errors
+    );
+    const bedrockVelocityMode = values.bedrock_velocity_mode;
+    if (!['solve_global', 'fixed_global'].includes(bedrockVelocityMode)) {
+      errors.push('model.bedrock_velocity_mode must be solve_global or fixed_global.');
+    }
+
+    let initialBedrockVelocity = null;
+    let fixedBedrockVelocity = null;
+    if (bedrockVelocityMode === 'solve_global') {
+      initialBedrockVelocity = parsePositiveFloat(
+        values.initial_bedrock_velocity_m_s,
+        'model.initial_bedrock_velocity_m_s',
+        errors
+      );
+    } else if (bedrockVelocityMode === 'fixed_global') {
+      fixedBedrockVelocity = parsePositiveFloat(
+        values.bedrock_velocity_m_s,
+        'model.bedrock_velocity_m_s',
+        errors
+      );
+    }
+    const minOffsetM = parseNonNegativeFloat(values.min_offset_m, 'moveout.min_offset_m', errors);
+    const maxOffsetM = parsePositiveFloat(values.max_offset_m, 'moveout.max_offset_m', errors);
+    if (minOffsetM !== null && maxOffsetM !== null && minOffsetM >= maxOffsetM) {
+      errors.push('moveout.min_offset_m must be less than moveout.max_offset_m.');
+    }
+    if (values.conversion_mode !== 't1lsst_1layer') {
+      errors.push('conversion.mode must be t1lsst_1layer for the one-layer preset.');
+    }
+    if (
+      weatheringVelocity !== null
+      && bedrockVelocityMode === 'solve_global'
+      && initialBedrockVelocity !== null
+      && initialBedrockVelocity <= weatheringVelocity
+    ) {
+      errors.push('model.initial_bedrock_velocity_m_s must be greater than model.first_layer.weathering_velocity_m_s.');
+    }
+    if (
+      weatheringVelocity !== null
+      && bedrockVelocityMode === 'fixed_global'
+      && fixedBedrockVelocity !== null
+      && fixedBedrockVelocity <= weatheringVelocity
+    ) {
+      errors.push('model.bedrock_velocity_m_s must be greater than model.first_layer.weathering_velocity_m_s.');
+    }
+
+    if (errors.length) {
+      return { payload: null, moveout: null, conversion: null, errors };
+    }
+
+    const model = {
+      method: 'gli_variable_thickness',
+      first_layer: {
+        mode: 'constant',
+        weathering_velocity_m_s: weatheringVelocity,
+      },
+      bedrock_velocity_mode: bedrockVelocityMode,
+      min_bedrock_velocity_m_s: 1200,
+      max_bedrock_velocity_m_s: 6000,
+    };
+    if (bedrockVelocityMode === 'solve_global') {
+      model.initial_bedrock_velocity_m_s = initialBedrockVelocity;
+    } else {
+      model.bedrock_velocity_m_s = fixedBedrockVelocity;
+    }
+
+    return {
+      payload: model,
+      moveout: {
+        min_offset_m: minOffsetM,
+        max_offset_m: maxOffsetM,
+      },
+      conversion: {
+        mode: 't1lsst_1layer',
+      },
+      errors,
+    };
+  }
+
+  function buildOneLayerRefractionModel(targetDom = dom) {
+    const result = validateOneLayerRefractionModel(targetDom);
+    if (result.errors.length) {
+      throw validationError(result.errors);
+    }
+    return result.payload;
+  }
+
+  function validateStaticCorrectionOutput(targetDom = dom) {
+    const values = collectOutputInputs(targetDom);
+    const errors = [];
+    if (!values) {
+      return { payload: null, errors: ['Static correction output form is not available.'] };
+    }
+    if (values.export_enabled && values.export_formats.length === 0) {
+      errors.push('export.formats must include at least one format when export.enabled is true.');
+    }
+    if (errors.length) {
+      return { payload: null, errors };
+    }
+    return {
+      payload: {
+        export: {
+          enabled: values.export_enabled,
+          formats: values.export_formats,
+        },
+        apply: {
+          register_corrected_file: values.register_corrected_file,
+        },
+      },
+      errors,
+    };
+  }
+
+  function buildRefractionStaticApplyRequest(targetDom = dom, options = {}) {
+    const values = collectInputs(targetDom);
+    const errors = [];
+    if (!values) {
+      throw validationError(['Static correction form is not available.']);
+    }
+    if (!values.file_id) {
+      errors.push('file_id is required.');
+    }
+    const key1Byte = parsePositiveInteger(values.key1_byte, 'key1_byte', errors);
+    const key2Byte = parsePositiveInteger(values.key2_byte, 'key2_byte', errors);
+
+    let pickSource = null;
+    try {
+      pickSource = buildStaticCorrectionPickSource(targetDom);
+    } catch (error) {
+      errors.push(...(error.errors || [error.message || String(error)]));
+    }
+
+    const geometryResult = validateStaticCorrectionGeometryRequest(targetDom);
+    errors.push(...geometryResult.errors);
+    const modelResult = validateOneLayerRefractionModel(targetDom);
+    errors.push(...modelResult.errors);
+    const outputResult = validateStaticCorrectionOutput(targetDom);
+    errors.push(...outputResult.errors);
+    const linkage = buildStaticCorrectionLinkage(targetDom, options.linkageJobId || '');
+
+    if (errors.length) {
+      throw validationError(errors);
+    }
+
+    return {
+      file_id: values.file_id,
+      key1_byte: key1Byte,
+      key2_byte: key2Byte,
+      pick_source: pickSource,
+      geometry: geometryResult.payload.geometry,
+      linkage,
+      model: modelResult.payload,
+      moveout: {
+        ...geometryResult.payload.moveout,
+        ...modelResult.moveout,
+        model: 'head_wave_linear_offset',
+        distance_source: 'geometry',
+      },
+      conversion: modelResult.conversion,
+      ...outputResult.payload,
+    };
+  }
+
   function buildStaticCorrectionRequest() {
-    const values = collectInputs();
+    const values = collectInputs(dom);
     const errors = [];
     if (!values) {
       return { payload: null, errors: ['Static correction form is not available.'] };
@@ -285,26 +698,20 @@
     }
     const key1Byte = parsePositiveInteger(values.key1_byte, 'key1_byte', errors);
     const key2Byte = parsePositiveInteger(values.key2_byte, 'key2_byte', errors);
-    const pickKind = values.pick_source.kind;
-    if (!pickKind) {
-      errors.push('pick_source.kind is required.');
-    }
-    if (ARTIFACT_PICK_KINDS.has(pickKind)) {
-      if (!values.pick_source.job_id) {
-        errors.push('pick_source.job_id is required for artifact-backed pick sources.');
-      }
-      if (!values.pick_source.artifact_name) {
-        errors.push('pick_source.artifact_name is required for artifact-backed pick sources.');
-      }
-    }
-    if (
-      values.pick_source.artifact_name
-      && !values.pick_source.artifact_name.toLowerCase().endsWith('.npz')
-    ) {
-      errors.push('pick_source.artifact_name must be an .npz artifact.');
+    let pickSource = null;
+    try {
+      pickSource = buildStaticCorrectionPickSource(dom);
+    } catch (error) {
+      errors.push(...(error.errors || [error.message || String(error)]));
     }
     const geometryResult = validateStaticCorrectionGeometryRequest(dom);
     errors.push(...geometryResult.errors);
+    const linkageResult = validateStaticCorrectionLinkageRequest(dom);
+    errors.push(...linkageResult.errors);
+    const modelResult = validateOneLayerRefractionModel(dom);
+    errors.push(...modelResult.errors);
+    const outputResult = validateStaticCorrectionOutput(dom);
+    errors.push(...outputResult.errors);
 
     if (errors.length) {
       return { payload: null, errors };
@@ -314,10 +721,33 @@
         file_id: values.file_id,
         key1_byte: key1Byte,
         key2_byte: key2Byte,
-        pick_source: values.pick_source,
-        ...geometryResult.payload,
+        pick_source: pickSource,
+        geometry: geometryResult.payload.geometry,
+        ...linkageResult.payload,
+        model: modelResult.payload,
+        moveout: {
+          ...geometryResult.payload.moveout,
+          ...modelResult.moveout,
+          model: 'head_wave_linear_offset',
+          distance_source: 'geometry',
+        },
+        conversion: modelResult.conversion,
+        ...outputResult.payload,
       },
       errors,
+    };
+  }
+
+  function buildStaticLinkageBuildRequest(staticCorrectionPayload) {
+    if (!staticCorrectionPayload) {
+      throw validationError(['Static correction payload is required before building linkage.']);
+    }
+    return {
+      file_id: staticCorrectionPayload.file_id,
+      key1_byte: staticCorrectionPayload.key1_byte,
+      key2_byte: staticCorrectionPayload.key2_byte,
+      geometry: { ...staticCorrectionPayload.geometry },
+      linkage: { ...staticCorrectionPayload.linkage },
     };
   }
 
@@ -330,7 +760,38 @@
     });
   }
 
-  async function readResponseError(response) {
+  function normalizeStaticJobState(value) {
+    const normalized = trimValue(value).toLowerCase();
+    if (normalized === 'completed') return 'done';
+    if (normalized === 'failed') return 'error';
+    if (normalized === 'canceled') return 'cancelled';
+    return normalized || 'unknown';
+  }
+
+  function isStaticJobActive(value = state.lastStaticCorrectionState) {
+    return STATIC_ACTIVE_STATES.has(normalizeStaticJobState(value));
+  }
+
+  function isStaticJobTerminal(value = state.lastStaticCorrectionState) {
+    return STATIC_TERMINAL_STATES.has(normalizeStaticJobState(value));
+  }
+
+  function formatBytes(bytes) {
+    const value = Number(bytes);
+    if (!Number.isFinite(value) || value < 0) {
+      return '-';
+    }
+    const units = ['B', 'KB', 'MB', 'GB'];
+    let amount = value;
+    let idx = 0;
+    while (amount >= 1024 && idx < units.length - 1) {
+      amount /= 1024;
+      idx += 1;
+    }
+    return `${amount.toFixed(idx === 0 ? 0 : 1)} ${units[idx]}`;
+  }
+
+  async function readResponseError(response, operation = 'request') {
     let detail = '';
     try {
       const contentType = response.headers && response.headers.get
@@ -347,7 +808,7 @@
     } catch {
       detail = '';
     }
-    return `batch job files ${response.status}${detail ? `: ${detail}` : ''}`;
+    return `${operation} ${response.status}${detail ? `: ${detail}` : ''}`;
   }
 
   function renderPickArtifactList() {
@@ -399,16 +860,107 @@
     }
   }
 
+  function renderStaticArtifacts() {
+    if (!dom || !dom.staticArtifactTable || !dom.staticArtifactBody || !dom.staticArtifactEmpty) {
+      return;
+    }
+    const files = Array.isArray(state.staticArtifacts) ? state.staticArtifacts : [];
+    dom.staticArtifactBody.innerHTML = '';
+
+    if (state.loadingStaticArtifacts) {
+      dom.staticArtifactTable.hidden = true;
+      dom.staticArtifactEmpty.hidden = false;
+      dom.staticArtifactEmpty.textContent = 'Loading static correction artifacts...';
+      return;
+    }
+
+    if (!files.length) {
+      dom.staticArtifactTable.hidden = true;
+      dom.staticArtifactEmpty.hidden = false;
+      dom.staticArtifactEmpty.textContent = state.lastStaticCorrectionJobId
+        ? 'No static correction artifacts loaded.'
+        : 'Run a static correction job to list generated artifacts.';
+      return;
+    }
+
+    const safeJobId = encodeURIComponent(state.lastStaticCorrectionJobId);
+    for (const file of files) {
+      const name = trimValue(file && file.name ? file.name : file);
+      if (!name) continue;
+      const row = document.createElement('tr');
+      const nameCell = document.createElement('td');
+      const sizeCell = document.createElement('td');
+      const downloadCell = document.createElement('td');
+      const link = document.createElement('a');
+
+      nameCell.textContent = name;
+      sizeCell.textContent = formatBytes(file && file.size_bytes);
+      link.href = `/statics/job/${safeJobId}/download?name=${encodeURIComponent(name)}`;
+      link.textContent = 'Download';
+      link.target = '_blank';
+      link.rel = 'noopener';
+      link.dataset.testid = `static-correction-artifact-download-${name}`;
+      downloadCell.appendChild(link);
+
+      row.appendChild(nameCell);
+      row.appendChild(sizeCell);
+      row.appendChild(downloadCell);
+      dom.staticArtifactBody.appendChild(row);
+    }
+
+    dom.staticArtifactEmpty.hidden = true;
+    dom.staticArtifactTable.hidden = false;
+  }
+
+  function renderStaticJobPanel() {
+    if (!dom || !dom.staticJobPanel) return;
+    const jobId = state.lastStaticCorrectionJobId;
+    const jobState = normalizeStaticJobState(state.lastStaticCorrectionState);
+    const hasJob = Boolean(jobId || state.lastStaticCorrectionState || state.lastStaticCorrectionMessage);
+    const progress = Number(state.lastStaticCorrectionProgress);
+    const progressValue = Number.isFinite(progress) ? Math.max(0, Math.min(1, progress)) : 0;
+
+    dom.staticJobPanel.hidden = !hasJob;
+    if (dom.staticJobIdValue) {
+      dom.staticJobIdValue.textContent = jobId || '-';
+    }
+    if (dom.staticJobStateValue) {
+      dom.staticJobStateValue.textContent = jobState || '-';
+    }
+    if (dom.staticJobMessageValue) {
+      dom.staticJobMessageValue.textContent = state.lastStaticCorrectionMessage || '-';
+    }
+    if (dom.staticJobProgressValue) {
+      dom.staticJobProgressValue.textContent = hasJob ? `${Math.round(progressValue * 100)}%` : '-';
+    }
+    if (dom.staticJobProgress) {
+      dom.staticJobProgress.value = progressValue;
+    }
+    if (dom.cancelButton) {
+      dom.cancelButton.hidden = !jobId || !isStaticJobActive(jobState);
+      dom.cancelButton.disabled = !jobId || jobState === 'cancel_requested';
+    }
+  }
+
   function render() {
     if (!dom) return;
+    updateStaticCorrectionLinkageOptions(dom);
     dom.status.textContent = state.message;
     dom.error.hidden = !state.error;
     dom.error.textContent = state.error;
-    dom.runButton.disabled = false;
+    dom.runButton.disabled = state.phase !== 'idle' || isStaticJobActive();
     if (dom.loadPickArtifactsButton) {
       dom.loadPickArtifactsButton.disabled = state.loadingPickArtifacts;
     }
+    if (dom.requestPreview) {
+      dom.requestPreview.hidden = !state.lastRequest;
+      dom.requestPreview.textContent = state.lastRequest
+        ? JSON.stringify(state.lastRequest, null, 2)
+        : '';
+    }
     renderPickArtifactList();
+    renderStaticJobPanel();
+    renderStaticArtifacts();
   }
 
   async function loadPickArtifacts() {
@@ -431,7 +983,7 @@
     try {
       const response = await fetch(`/batch/job/${encodeURIComponent(jobId)}/files`);
       if (!response.ok) {
-        throw new Error(await readResponseError(response));
+        throw new Error(await readResponseError(response, 'batch job files'));
       }
       const payload = await response.json();
       const files = Array.isArray(payload.files) ? payload.files : [];
@@ -449,24 +1001,311 @@
     }
   }
 
-  function handleRun(event) {
-    if (event) {
-      event.preventDefault();
+  async function postJson(url, payload, operation) {
+    const response = await fetch(url, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(payload),
+    });
+    if (!response.ok) {
+      throw new Error(await readResponseError(response, operation));
     }
+    return response.json();
+  }
+
+  function delay(ms) {
+    return new Promise((resolve) => window.setTimeout(resolve, ms));
+  }
+
+  function setStaticJobSnapshot(payload, fallbackJobId = '') {
+    const jobId = trimValue((payload && payload.job_id) || fallbackJobId || state.lastStaticCorrectionJobId);
+    const jobState = normalizeStaticJobState(payload && payload.state);
+    const progress = Number(payload && payload.progress);
+    const message = trimValue(payload && payload.message);
+    state.lastStaticCorrectionJobId = jobId;
+    state.lastStaticCorrectionState = jobState;
+    state.lastStaticCorrectionProgress = Number.isFinite(progress) ? progress : state.lastStaticCorrectionProgress;
+    state.lastStaticCorrectionMessage = message;
+    return {
+      jobId,
+      state: jobState,
+      progress: state.lastStaticCorrectionProgress,
+      message,
+    };
+  }
+
+  function formatStaticJobStatus(snapshot) {
+    const jobId = snapshot.jobId || state.lastStaticCorrectionJobId;
+    const jobState = normalizeStaticJobState(snapshot.state);
+    const message = trimValue(snapshot.message);
+    if (jobState === 'done') {
+      return `Static correction job ${jobId} is done. Loading artifacts...`;
+    }
+    if (jobState === 'error') {
+      return `Static correction job ${jobId} failed${message ? `: ${message}` : '.'}`;
+    }
+    if (jobState === 'expired') {
+      return `Static correction job ${jobId} expired${message ? `: ${message}` : '.'}`;
+    }
+    if (jobState === 'cancelled') {
+      return `Static correction job ${jobId} was cancelled${message ? `: ${message}` : '.'}`;
+    }
+    if (jobState === 'cancel_requested') {
+      return `Cancel requested for static correction job ${jobId}.`;
+    }
+    return `Static correction job ${jobId} is ${jobState || 'unknown'}${message ? `: ${message}` : '.'}`;
+  }
+
+  async function loadStaticArtifacts(jobId = state.lastStaticCorrectionJobId) {
+    const safeJobId = trimValue(jobId);
+    if (!safeJobId) {
+      state.staticArtifacts = [];
+      render();
+      return [];
+    }
+
+    state.loadingStaticArtifacts = true;
+    state.staticArtifacts = [];
+    render();
+    try {
+      const response = await fetch(`/statics/job/${encodeURIComponent(safeJobId)}/files`);
+      if (!response.ok) {
+        throw new Error(await readResponseError(response, 'static job files'));
+      }
+      const payload = await response.json();
+      const files = Array.isArray(payload.files) ? payload.files : [];
+      state.staticArtifacts = sortedArtifactFiles(files);
+      state.message = files.length
+        ? `Loaded ${files.length} static correction artifact${files.length === 1 ? '' : 's'} for ${safeJobId}.`
+        : `Static correction job ${safeJobId} finished without generated artifact files.`;
+      state.error = '';
+      return state.staticArtifacts;
+    } catch (error) {
+      state.staticArtifacts = [];
+      state.error = error instanceof Error ? error.message : String(error);
+      state.message = `Static correction job ${safeJobId} finished, but artifacts could not be loaded.`;
+      return [];
+    } finally {
+      state.loadingStaticArtifacts = false;
+      render();
+    }
+  }
+
+  async function pollStaticCorrectionStatus(jobId) {
+    const response = await fetch(`/statics/job/${encodeURIComponent(jobId)}/status`);
+    if (!response.ok) {
+      throw new Error(await readResponseError(response, 'static job status'));
+    }
+    const payload = await response.json();
+    const snapshot = setStaticJobSnapshot(payload, jobId);
+    state.message = formatStaticJobStatus(snapshot);
+    if (snapshot.state === 'error' || snapshot.state === 'expired') {
+      state.error = state.message;
+    } else if (snapshot.state === 'cancelled') {
+      state.error = '';
+    }
+    render();
+    return snapshot;
+  }
+
+  function stopStaticCorrectionPolling() {
+    staticPollToken += 1;
+  }
+
+  async function pollStaticCorrectionJobUntilTerminal(jobId) {
+    const token = staticPollToken + 1;
+    staticPollToken = token;
+    state.staticArtifacts = [];
+    render();
+
+    while (token === staticPollToken) {
+      try {
+        const snapshot = await pollStaticCorrectionStatus(jobId);
+        if (STATIC_READY_STATES.has(snapshot.state)) {
+          await loadStaticArtifacts(jobId);
+          return snapshot;
+        }
+        if (isStaticJobTerminal(snapshot.state)) {
+          return snapshot;
+        }
+      } catch (error) {
+        if (token !== staticPollToken) {
+          return null;
+        }
+        state.error = error instanceof Error ? error.message : String(error);
+        state.message = `Static correction status polling failed: ${state.error}`;
+        render();
+        return null;
+      }
+      await delay(Math.max(0, Number(state.pollIntervalMs) || 0));
+    }
+    return null;
+  }
+
+  async function pollStaticJobUntilReady(jobId) {
+    const encodedJobId = encodeURIComponent(jobId);
+    while (true) {
+      const response = await fetch(`/statics/job/${encodedJobId}/status`);
+      if (!response.ok) {
+        throw new Error(await readResponseError(response, 'static job status'));
+      }
+      const payload = await response.json();
+      const stateValue = normalizeStaticJobState(payload && payload.state);
+      const message = trimValue(payload && payload.message);
+      if (LINKAGE_READY_STATES.has(stateValue)) {
+        return payload;
+      }
+      if (LINKAGE_FAILED_STATES.has(stateValue)) {
+        const detail = message ? `: ${message}` : '';
+        throw new Error(`Linkage job ${jobId} ${stateValue}${detail}`);
+      }
+      state.message = `Linkage job ${jobId} is ${stateValue || 'pending'}; waiting for geometry linkage.`;
+      render();
+      await delay(Math.max(0, Number(state.pollIntervalMs) || 0));
+    }
+  }
+
+  async function submitStaticCorrection(payload) {
+    state.phase = 'submitting_static_correction';
+    state.message = state.lastLinkageJobId
+      ? `Linkage job ${state.lastLinkageJobId} is ready. Submitting static correction...`
+      : 'Submitting static correction...';
+    render();
+    const responsePayload = await postJson(
+      '/statics/refraction/apply',
+      payload,
+      'refraction static apply'
+    );
+    state.lastStaticCorrectionJobId = trimValue(responsePayload && responsePayload.job_id);
+    setStaticJobSnapshot(responsePayload);
+    state.lastResponse = responsePayload;
+    state.phase = 'idle';
+    const initialState = state.lastStaticCorrectionState
+      ? ` Initial state: ${state.lastStaticCorrectionState}.`
+      : '';
+    state.message = state.lastStaticCorrectionJobId
+      ? `Static correction job ${state.lastStaticCorrectionJobId} submitted.${initialState}`
+      : 'Static correction job submitted.';
+    render();
+    if (state.lastStaticCorrectionJobId) {
+      pollStaticCorrectionJobUntilTerminal(state.lastStaticCorrectionJobId);
+    }
+    return responsePayload;
+  }
+
+  function submitRefractionStaticApply(request) {
+    return postJson('/statics/refraction/apply', request, 'refraction static apply');
+  }
+
+  async function runStaticCorrection() {
     const { payload, errors } = buildStaticCorrectionRequest();
     state.lastRequest = payload;
+    state.lastResponse = null;
+    state.lastLinkageBuildRequest = null;
+    state.lastLinkageJobId = '';
+    state.lastStaticCorrectionJobId = '';
+    state.lastStaticCorrectionState = '';
+    state.lastStaticCorrectionMessage = '';
+    state.lastStaticCorrectionProgress = 0;
+    state.staticArtifacts = [];
+    stopStaticCorrectionPolling();
     if (errors.length) {
       state.ready = false;
       state.error = errors.join(' ');
       state.message = 'Fix input errors before running refraction statics.';
+      state.phase = 'idle';
       render();
       return;
     }
 
     state.ready = true;
     state.error = '';
-    state.message = 'Inputs are valid. Static correction job submission is not enabled in this milestone.';
+    state.phase = 'submitting_static_correction';
     render();
+
+    try {
+      let applyPayload = payload;
+      if (dom.enableLinkage.checked) {
+        const linkageBuildPayload = buildStaticLinkageBuildRequest(payload);
+        state.lastLinkageBuildRequest = linkageBuildPayload;
+        state.phase = 'building_linkage';
+        state.message = 'Building endpoint geometry linkage...';
+        render();
+
+        const linkageResponse = await postJson(
+          '/statics/linkage/build',
+          linkageBuildPayload,
+          'geometry linkage build'
+        );
+        const linkageJobId = trimValue(linkageResponse && linkageResponse.job_id);
+        if (!linkageJobId) {
+          throw new Error('Geometry linkage build did not return a job_id.');
+        }
+        state.lastLinkageJobId = linkageJobId;
+        state.message = `Linkage job ${linkageJobId} created. Waiting for geometry linkage...`;
+        render();
+
+        await pollStaticJobUntilReady(linkageJobId);
+        state.phase = 'linkage_ready';
+        applyPayload = {
+          ...payload,
+          linkage: buildStaticCorrectionLinkage(dom, linkageJobId),
+        };
+        state.lastRequest = applyPayload;
+      }
+
+      await submitStaticCorrection(applyPayload);
+    } catch (error) {
+      const failedDuringLinkage = state.phase === 'building_linkage';
+      state.ready = false;
+      state.error = error instanceof Error ? error.message : String(error);
+      state.message = failedDuringLinkage
+        ? 'Geometry linkage failed. Static correction was not submitted.'
+        : 'Static correction submission failed.';
+      state.phase = 'idle';
+      render();
+    }
+  }
+
+  function handleRun(event) {
+    if (event) {
+      event.preventDefault();
+    }
+    runStaticCorrection();
+  }
+
+  async function cancelStaticCorrectionJob() {
+    const jobId = trimValue(state.lastStaticCorrectionJobId);
+    if (!jobId || !isStaticJobActive()) {
+      return null;
+    }
+
+    try {
+      state.message = `Cancelling static correction job ${jobId}...`;
+      state.error = '';
+      render();
+      const response = await fetch(`/statics/job/${encodeURIComponent(jobId)}/cancel`, {
+        method: 'POST',
+      });
+      if (!response.ok) {
+        throw new Error(await readResponseError(response, 'static job cancel'));
+      }
+      const payload = await response.json();
+      const snapshot = setStaticJobSnapshot(payload, jobId);
+      state.message = formatStaticJobStatus(snapshot);
+      if (isStaticJobTerminal(snapshot.state)) {
+        stopStaticCorrectionPolling();
+      }
+      render();
+      return snapshot;
+    } catch (error) {
+      state.error = error instanceof Error ? error.message : String(error);
+      state.message = `Failed to cancel static correction job ${jobId}.`;
+      render();
+      return null;
+    }
   }
 
   function init() {
@@ -497,6 +1336,35 @@
     const coordinateUnit = document.getElementById('staticCorrectionCoordinateUnit');
     const elevationUnit = document.getElementById('staticCorrectionElevationUnit');
     const offsetByte = document.getElementById('staticCorrectionOffsetByte');
+    const enableLinkage = document.getElementById('staticCorrectionEnableLinkage');
+    const linkageOptions = document.getElementById('staticCorrectionLinkageOptions');
+    const linkageMode = document.getElementById('staticCorrectionLinkageMode');
+    const linkageThresholdM = document.getElementById('staticCorrectionLinkageThresholdM');
+    const receiverLocationIntervalM = document.getElementById(
+      'staticCorrectionReceiverLocationIntervalM'
+    );
+    const preferReceiverAnchor = document.getElementById('staticCorrectionPreferReceiverAnchor');
+    const weatheringVelocityMS = document.getElementById('staticCorrectionWeatheringVelocityMS');
+    const bedrockVelocityMode = document.getElementById('staticCorrectionBedrockVelocityMode');
+    const initialBedrockVelocityMS = document.getElementById('staticCorrectionInitialBedrockVelocityMS');
+    const fixedBedrockVelocityMS = document.getElementById('staticCorrectionFixedBedrockVelocityMS');
+    const minOffsetM = document.getElementById('staticCorrectionMinOffsetM');
+    const maxOffsetM = document.getElementById('staticCorrectionMaxOffsetM');
+    const conversionMode = document.getElementById('staticCorrectionConversionMode');
+    const registerCorrectedFile = document.getElementById('staticCorrectionRegisterCorrectedFile');
+    const exportEnabled = document.getElementById('staticCorrectionExportEnabled');
+    const exportFormatInputs = Array.from(document.querySelectorAll('[data-static-correction-export-format]'));
+    const requestPreview = document.getElementById('staticCorrectionRequestPreview');
+    const cancelButton = document.getElementById('staticCorrectionCancelButton');
+    const staticJobPanel = document.getElementById('staticCorrectionJobPanel');
+    const staticJobIdValue = document.getElementById('staticCorrectionJobIdValue');
+    const staticJobStateValue = document.getElementById('staticCorrectionJobStateValue');
+    const staticJobMessageValue = document.getElementById('staticCorrectionJobMessageValue');
+    const staticJobProgress = document.getElementById('staticCorrectionJobProgress');
+    const staticJobProgressValue = document.getElementById('staticCorrectionJobProgressValue');
+    const staticArtifactTable = document.getElementById('staticCorrectionArtifactTable');
+    const staticArtifactBody = document.getElementById('staticCorrectionArtifactBody');
+    const staticArtifactEmpty = document.getElementById('staticCorrectionArtifactEmpty');
     if (
       !form || !status || !error || !runButton || !fileId || !key1Byte || !key2Byte
       || !pickKind || !pickJobId || !pickArtifactName || !loadPickArtifactsButton
@@ -504,7 +1372,15 @@
       || !sourceXByte || !sourceYByte || !receiverXByte || !receiverYByte
       || !sourceElevationByte || !receiverElevationByte || !coordinateScalarByte
       || !elevationScalarByte || !sourceDepthByte || !coordinateUnit || !elevationUnit
-      || !offsetByte
+      || !offsetByte || !enableLinkage || !linkageOptions || !linkageMode
+      || !linkageThresholdM || !receiverLocationIntervalM || !preferReceiverAnchor
+      || !weatheringVelocityMS || !bedrockVelocityMode || !initialBedrockVelocityMS
+      || !fixedBedrockVelocityMS || !minOffsetM || !maxOffsetM || !conversionMode
+      || !registerCorrectedFile || !exportEnabled || !requestPreview
+      || !cancelButton || !staticJobPanel || !staticJobIdValue || !staticJobStateValue
+      || !staticJobMessageValue || !staticJobProgress || !staticJobProgressValue
+      || !staticArtifactTable || !staticArtifactBody || !staticArtifactEmpty
+      || exportFormatInputs.length === 0
     ) {
       return;
     }
@@ -513,6 +1389,15 @@
     setDefaultValue(key2Byte, DEFAULTS.key2Byte);
     setDefaultValue(pickKind, DEFAULTS.pickKind);
     setDefaultValue(pickArtifactName, DEFAULTS.pickArtifactName);
+    setDefaultValue(linkageMode, DEFAULTS.linkageMode);
+    setDefaultValue(linkageThresholdM, DEFAULTS.linkageThresholdM);
+    setDefaultValue(weatheringVelocityMS, DEFAULTS.weatheringVelocityMS);
+    setDefaultValue(bedrockVelocityMode, DEFAULTS.bedrockVelocityMode);
+    setDefaultValue(initialBedrockVelocityMS, DEFAULTS.initialBedrockVelocityMS);
+    setDefaultValue(fixedBedrockVelocityMS, DEFAULTS.fixedBedrockVelocityMS);
+    setDefaultValue(minOffsetM, DEFAULTS.minOffsetM);
+    setDefaultValue(maxOffsetM, DEFAULTS.maxOffsetM);
+    setDefaultValue(conversionMode, DEFAULTS.conversionMode);
 
     dom = {
       form,
@@ -542,11 +1427,43 @@
       coordinateUnit,
       elevationUnit,
       offsetByte,
+      enableLinkage,
+      linkageOptions,
+      linkageMode,
+      linkageThresholdM,
+      receiverLocationIntervalM,
+      preferReceiverAnchor,
+      weatheringVelocityMS,
+      bedrockVelocityMode,
+      initialBedrockVelocityMS,
+      fixedBedrockVelocityMS,
+      minOffsetM,
+      maxOffsetM,
+      conversionMode,
+      registerCorrectedFile,
+      exportEnabled,
+      exportFormatInputs,
+      requestPreview,
+      cancelButton,
+      staticJobPanel,
+      staticJobIdValue,
+      staticJobStateValue,
+      staticJobMessageValue,
+      staticJobProgress,
+      staticJobProgressValue,
+      staticArtifactTable,
+      staticArtifactBody,
+      staticArtifactEmpty,
     };
     applyStaticCorrectionGeometryPreset(dom, trimValue(geometryPreset.value) || GEOMETRY_DEFAULTS.preset);
+    updateStaticCorrectionLinkageOptions(dom);
 
     form.addEventListener('submit', handleRun);
     runButton.addEventListener('click', handleRun);
+    cancelButton.addEventListener('click', (event) => {
+      event.preventDefault();
+      cancelStaticCorrectionJob();
+    });
     loadPickArtifactsButton.addEventListener('click', (event) => {
       event.preventDefault();
       loadPickArtifacts();
@@ -559,6 +1476,29 @@
         : 'SEG-Y default geometry header bytes restored.';
       render();
     });
+    enableLinkage.addEventListener('change', () => {
+      updateStaticCorrectionLinkageOptions(dom);
+      state.error = '';
+      state.message = enableLinkage.checked
+        ? 'Endpoint linkage options are enabled.'
+        : 'Endpoint linkage is disabled for static correction.';
+      render();
+    });
+    linkageMode.addEventListener('change', () => {
+      updateStaticCorrectionLinkageOptions(dom);
+      state.error = '';
+      state.message = 'Endpoint linkage mode updated.';
+      render();
+    });
+    updateBedrockVelocityControls(dom);
+    bedrockVelocityMode.addEventListener('change', () => {
+      updateBedrockVelocityControls(dom);
+      state.error = '';
+      state.message = bedrockVelocityMode.value === 'fixed_global'
+        ? 'Fixed global V2 will be submitted for the one-layer model.'
+        : 'Global V2 will be solved from the submitted picks.';
+      render();
+    });
 
     render();
   }
@@ -566,14 +1506,37 @@
   window.refractionStaticRunState = state;
   window.refractionStaticRunUI = {
     applyStaticCorrectionGeometryPreset,
+    buildOneLayerRefractionModel,
+    buildRefractionStaticApplyRequest,
+    buildStaticCorrectionGeometry,
     buildStaticCorrectionGeometryRequest,
+    buildStaticCorrectionLinkage,
+    buildStaticCorrectionLinkageRequest,
+    buildStaticCorrectionPickSource,
     buildStaticCorrectionRequest,
+    buildStaticLinkageBuildRequest,
+    cancelStaticCorrectionJob,
     collectGeometryInputs,
     collectInputs,
+    collectLinkageInputs,
+    collectModelInputs,
+    collectOutputInputs,
     isLikelyPickArtifact,
+    loadStaticArtifacts,
     loadPickArtifacts,
+    normalizeStaticJobState,
+    pollStaticCorrectionJobUntilTerminal,
+    pollStaticCorrectionStatus,
+    pollStaticJobUntilReady,
     render,
+    runStaticCorrection,
+    stopStaticCorrectionPolling,
+    submitRefractionStaticApply,
+    updateBedrockVelocityControls,
+    updateStaticCorrectionLinkageOptions,
+    validateOneLayerRefractionModel,
     validateStaticCorrectionGeometryRequest,
+    validateStaticCorrectionLinkageRequest,
   };
 
   if (document.readyState === 'loading') {

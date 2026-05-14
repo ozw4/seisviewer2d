@@ -1125,6 +1125,152 @@ test('static correction tab validates required file and pick inputs without subm
 	expect(staticsRequests).toEqual([]);
 });
 
+test('static correction one-layer builder defaults to no linkage and solved global V2', async ({ page }) => {
+	await page.goto('/');
+	await page.getByTestId('static-correction-tab').click();
+	await page.getByTestId('static-correction-file-id').fill('line-a-store');
+	await page.getByTestId('static-correction-pick-job-id').fill('pick-job');
+
+	const request = await page.evaluate(() => (
+		(window as any).refractionStaticRunUI.buildRefractionStaticApplyRequest()
+	));
+
+	expect(request).toMatchObject({
+		file_id: 'line-a-store',
+		pick_source: {
+			kind: 'batch_predicted_npz',
+			job_id: 'pick-job',
+			artifact_name: 'predicted_picks_time_s.npz',
+		},
+		linkage: {
+			mode: 'none',
+		},
+		model: {
+			method: 'gli_variable_thickness',
+			first_layer: {
+				mode: 'constant',
+				weathering_velocity_m_s: 800,
+			},
+			bedrock_velocity_mode: 'solve_global',
+			initial_bedrock_velocity_m_s: 2400,
+		},
+		moveout: {
+			model: 'head_wave_linear_offset',
+			distance_source: 'geometry',
+			offset_byte: 37,
+			min_offset_m: 300,
+			max_offset_m: 4000,
+		},
+		conversion: {
+			mode: 't1lsst_1layer',
+		},
+		export: {
+			enabled: true,
+			formats: ['canonical_static_table', 'time_term_spreadsheet'],
+		},
+		apply: {
+			register_corrected_file: false,
+		},
+	});
+});
+
+test('static correction run submits one-layer refraction apply request', async ({ page }) => {
+	let applyRequest: Record<string, unknown> | null = null;
+	await page.route('**/statics/refraction/apply', async (route) => {
+		applyRequest = JSON.parse(route.request().postData() || '{}');
+		await route.fulfill({
+			status: 200,
+			contentType: 'application/json',
+			body: JSON.stringify({
+				job_id: 'refraction-job-559',
+				state: 'queued',
+				requested_formats: ['canonical_static_table', 'time_term_spreadsheet'],
+			}),
+		});
+	});
+	await page.route('**/statics/job/refraction-job-559/status', async (route) => {
+		await route.fulfill({
+			status: 200,
+			contentType: 'application/json',
+			body: JSON.stringify({
+				state: 'ready',
+				progress: 1,
+				message: 'finished',
+			}),
+		});
+	});
+	await page.route('**/statics/job/refraction-job-559/files', async (route) => {
+		await route.fulfill({
+			status: 200,
+			contentType: 'application/json',
+			body: JSON.stringify({
+				files: [
+					{ name: 'refraction_static_artifacts.json', size_bytes: 128 },
+					{ name: 'source_static_table.csv', size_bytes: 64 },
+				],
+			}),
+		});
+	});
+
+	await page.goto('/');
+	await page.getByTestId('static-correction-tab').click();
+	await page.getByTestId('static-correction-file-id').fill('line-a-store');
+	await page.getByTestId('static-correction-pick-job-id').fill('pick-job');
+	await page.getByTestId('static-correction-run').click();
+
+	await expect(page.getByTestId('static-correction-job-id')).toHaveText('refraction-job-559');
+	await expect(page.getByTestId('static-correction-job-state')).toHaveText('ready');
+	await expect(page.getByTestId('static-correction-job-message')).toHaveText('finished');
+	await expect(page.getByTestId('static-correction-artifact-table')).toContainText('source_static_table.csv');
+	await expect(
+		page.locator('a[href="/statics/job/refraction-job-559/download?name=source_static_table.csv"]'),
+	).toBeVisible();
+	await expect(page.getByTestId('static-correction-request-preview')).toBeVisible();
+	expect(applyRequest).toMatchObject({
+		file_id: 'line-a-store',
+		linkage: { mode: 'none' },
+		model: {
+			first_layer: {
+				mode: 'constant',
+				weathering_velocity_m_s: 800,
+			},
+			bedrock_velocity_mode: 'solve_global',
+		},
+		conversion: { mode: 't1lsst_1layer' },
+		export: {
+			enabled: true,
+			formats: ['canonical_static_table', 'time_term_spreadsheet'],
+		},
+		apply: { register_corrected_file: false },
+	});
+});
+
+test('static correction submit errors keep user input visible', async ({ page }) => {
+	await page.route('**/statics/refraction/apply', async (route) => {
+		await route.fulfill({
+			status: 422,
+			contentType: 'application/json',
+			body: JSON.stringify({ detail: 'model.initial_bedrock_velocity_m_s is outside available picks' }),
+		});
+	});
+
+	await page.goto('/');
+	await page.getByTestId('static-correction-tab').click();
+	await page.getByTestId('static-correction-file-id').fill('line-a-store');
+	await page.getByTestId('static-correction-pick-job-id').fill('pick-job');
+	await page.getByTestId('static-correction-run').click();
+
+	await expect(page.getByTestId('static-correction-error')).toBeVisible();
+	await expect(page.getByTestId('static-correction-error')).toContainText(
+		'model.initial_bedrock_velocity_m_s is outside available picks',
+	);
+	await expect(page.getByTestId('static-correction-status')).toContainText(
+		'Static correction submission failed.',
+	);
+	await expect(page.getByTestId('static-correction-file-id')).toHaveValue('line-a-store');
+	await expect(page.getByTestId('static-correction-pick-job-id')).toHaveValue('pick-job');
+});
+
 test('static correction tab loads likely first-break pick artifacts', async ({ page }) => {
 	await page.route('**/batch/job/pick-job/files', async (route) => {
 		await route.fulfill({

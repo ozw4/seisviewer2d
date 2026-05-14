@@ -69,6 +69,24 @@ def test_build_endpoint_geometry_tables_applies_negative_scalar() -> None:
     np.testing.assert_allclose(tables.receiver_y_m_sorted, np.array([35.0, 20.0]))
 
 
+def test_build_endpoint_geometry_tables_converts_feet_after_scalar() -> None:
+    tables = build_endpoint_geometry_tables(
+        _headers(
+            source_x=np.array([100.0, 200.0], dtype=np.float64),
+            source_y=np.array([30.0, 40.0], dtype=np.float64),
+            receiver_x=np.array([50.0, 60.0], dtype=np.float64),
+            receiver_y=np.array([70.0, 80.0], dtype=np.float64),
+            coordinate_scalar=np.array([2, -4], dtype=np.int16),
+        ),
+        coordinate_unit='ft',
+    )
+
+    np.testing.assert_allclose(tables.source_x_m_sorted, np.array([60.96, 15.24]))
+    np.testing.assert_allclose(tables.source_y_m_sorted, np.array([18.288, 3.048]))
+    np.testing.assert_allclose(tables.receiver_x_m_sorted, np.array([30.48, 4.572]))
+    np.testing.assert_allclose(tables.receiver_y_m_sorted, np.array([42.672, 6.096]))
+
+
 def test_build_endpoint_geometry_tables_treats_zero_scalar_as_one() -> None:
     tables = build_endpoint_geometry_tables(
         _headers(

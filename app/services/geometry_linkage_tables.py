@@ -8,7 +8,11 @@ from typing import Literal
 import numpy as np
 
 from app.services.geometry_linkage_validation import GeometryLinkageHeaders
-from app.utils.segy_scalars import apply_segy_scalar, count_zero_segy_scalars
+from app.utils.segy_scalars import (
+    apply_segy_scalar,
+    count_zero_segy_scalars,
+    normalize_linear_unit,
+)
 
 EndpointKind = Literal['source', 'receiver']
 
@@ -40,8 +44,10 @@ class EndpointGeometryTables:
 
 def build_endpoint_geometry_tables(
     headers: GeometryLinkageHeaders,
+    *,
+    coordinate_unit: Literal['m', 'ft'] = 'm',
 ) -> EndpointGeometryTables:
-    """Build exact-coordinate source and receiver endpoint tables."""
+    """Build exact-coordinate source and receiver endpoint tables in meters."""
     source_x_raw = _coerce_1d_numeric(headers.source_x, name='source_x')
     source_y_raw = _coerce_1d_numeric(headers.source_y, name='source_y')
     receiver_x_raw = _coerce_1d_numeric(headers.receiver_x, name='receiver_x')
@@ -74,10 +80,22 @@ def build_endpoint_geometry_tables(
         msg = 'geometry linkage headers must contain at least one trace'
         raise ValueError(msg)
 
-    source_x_m = apply_segy_scalar(source_x_raw, scalars)
-    source_y_m = apply_segy_scalar(source_y_raw, scalars)
-    receiver_x_m = apply_segy_scalar(receiver_x_raw, scalars)
-    receiver_y_m = apply_segy_scalar(receiver_y_raw, scalars)
+    source_x_m = normalize_linear_unit(
+        apply_segy_scalar(source_x_raw, scalars),
+        coordinate_unit,
+    )
+    source_y_m = normalize_linear_unit(
+        apply_segy_scalar(source_y_raw, scalars),
+        coordinate_unit,
+    )
+    receiver_x_m = normalize_linear_unit(
+        apply_segy_scalar(receiver_x_raw, scalars),
+        coordinate_unit,
+    )
+    receiver_y_m = normalize_linear_unit(
+        apply_segy_scalar(receiver_y_raw, scalars),
+        coordinate_unit,
+    )
 
     source_table, source_inverse = _build_unique_endpoint_table(
         'source',
