@@ -141,6 +141,8 @@ def resolve_refraction_first_layer_request(
     req: RefractionStaticApplyRequest,
     state: AppState,
     job_dir: Path,
+    uploaded_pick_npz_path: Path | None = None,
+    uploaded_pick_metadata: dict[str, object] | None = None,
 ) -> _ResolvedFirstLayerRequest:
     """Resolve V1 for a full refraction statics request."""
     mode = req.model.first_layer_mode
@@ -170,6 +172,8 @@ def resolve_refraction_first_layer_request(
         req=v1_req,
         state=state,
         job_dir=job_dir,
+        uploaded_pick_npz_path=uploaded_pick_npz_path,
+        uploaded_pick_metadata=uploaded_pick_metadata,
     )
     estimate = estimate_global_v1_from_direct_arrivals(
         input_model=input_model,
@@ -422,8 +426,16 @@ def _write_json_atomic(path: Path, payload: dict[str, Any]) -> None:
 
 def _refraction_static_request_payload(
     req: RefractionStaticApplyRequest,
+    *,
+    uploaded_pick_metadata: dict[str, object] | None = None,
 ) -> dict[str, Any]:
     payload = req.model_dump(mode='json')
+    if uploaded_pick_metadata is not None:
+        pick_source = payload.get('pick_source')
+        if isinstance(pick_source, dict):
+            pick_source.update(uploaded_pick_metadata)
+            pick_source.pop('job_id', None)
+            pick_source.pop('artifact_name', None)
     if 'field_corrections' not in req.model_fields_set:
         payload.pop('field_corrections', None)
     if 'export' not in req.model_fields_set:
@@ -1088,6 +1100,8 @@ def _run_public_multilayer_refraction_static_apply_job(
     state: AppState,
     job_dir: Path,
     first_layer: _ResolvedFirstLayerRequest,
+    uploaded_pick_npz_path: Path | None = None,
+    uploaded_pick_metadata: dict[str, object] | None = None,
 ) -> JobCompletion:
     _set_job_progress_message(
         state,
@@ -1099,6 +1113,8 @@ def _run_public_multilayer_refraction_static_apply_job(
         req=req,
         state=state,
         job_dir=job_dir,
+        uploaded_pick_npz_path=uploaded_pick_npz_path,
+        uploaded_pick_metadata=uploaded_pick_metadata,
     )
     _set_job_progress_message(
         state,
@@ -1177,6 +1193,8 @@ def _run_refraction_static_apply_job_body(
     job_id: str,
     req: RefractionStaticApplyRequest,
     state: AppState,
+    uploaded_pick_npz_path: Path | None = None,
+    uploaded_pick_metadata: dict[str, object] | None = None,
 ) -> JobCompletion | None:
     req = RefractionStaticApplyRequest.model_validate(req)
     _set_job_progress_message(
@@ -1195,7 +1213,10 @@ def _run_refraction_static_apply_job_body(
         'source_file_id': req.file_id,
         'key1_byte': req.key1_byte,
         'key2_byte': req.key2_byte,
-        'request': _refraction_static_request_payload(req),
+        'request': _refraction_static_request_payload(
+            req,
+            uploaded_pick_metadata=uploaded_pick_metadata,
+        ),
     }
     if req.export.enabled:
         request_record['export'] = {
@@ -1220,6 +1241,8 @@ def _run_refraction_static_apply_job_body(
         req=req,
         state=state,
         job_dir=job_dir,
+        uploaded_pick_npz_path=uploaded_pick_npz_path,
+        uploaded_pick_metadata=uploaded_pick_metadata,
     )
     input_req = first_layer.req
     if public_multilayer_apply:
@@ -1229,6 +1252,8 @@ def _run_refraction_static_apply_job_body(
             state=state,
             job_dir=job_dir,
             first_layer=first_layer,
+            uploaded_pick_npz_path=uploaded_pick_npz_path,
+            uploaded_pick_metadata=uploaded_pick_metadata,
         )
 
     active_req = _solver_request_for_refraction_static_apply(input_req)
@@ -1241,6 +1266,7 @@ def _run_refraction_static_apply_job_body(
     weathering_input_model = first_layer.input_model
     if (
         first_layer.resolved.mode == 'estimate_direct_arrival'
+        or input_req.pick_source.kind == 'uploaded_npz'
         or input_req.model.method == 'multilayer_time_term'
         or input_req.field_corrections.source_depth.mode != 'none'
         or input_req.field_corrections.uphole.mode != 'none'
@@ -1250,6 +1276,8 @@ def _run_refraction_static_apply_job_body(
             req=input_req,
             state=state,
             job_dir=job_dir,
+            uploaded_pick_npz_path=uploaded_pick_npz_path,
+            uploaded_pick_metadata=uploaded_pick_metadata,
         )
     weathering_input_model = _solver_input_model_for_refraction_static_apply(
         req=input_req,
@@ -1357,6 +1385,8 @@ def run_refraction_static_apply_job(
     job_id: str,
     req: RefractionStaticApplyRequest,
     state: AppState,
+    uploaded_pick_npz_path: Path | None = None,
+    uploaded_pick_metadata: dict[str, object] | None = None,
 ) -> None:
     """Start the refraction statics job lifecycle."""
 
@@ -1365,6 +1395,8 @@ def run_refraction_static_apply_job(
             job_id=job_id,
             req=req,
             state=state,
+            uploaded_pick_npz_path=uploaded_pick_npz_path,
+            uploaded_pick_metadata=uploaded_pick_metadata,
         )
 
     run_job_with_lifecycle(

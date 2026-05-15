@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import csv
 from dataclasses import replace
+import io
 import json
 from pathlib import Path
 from types import SimpleNamespace
@@ -238,6 +239,24 @@ def _payload() -> dict[str, Any]:
     }
 
 
+def _uploaded_pick_payload() -> dict[str, Any]:
+    payload = _payload()
+    payload['pick_source'] = {'kind': 'uploaded_npz'}
+    return payload
+
+
+def _pick_npz_bytes() -> bytes:
+    buffer = io.BytesIO()
+    np.savez(
+        buffer,
+        picks_time_s=np.asarray([0.010, 0.020], dtype=np.float32),
+        n_traces=np.asarray(2, dtype=np.int64),
+        n_samples=np.asarray(100, dtype=np.int64),
+        dt=np.asarray(0.001, dtype=np.float64),
+    )
+    return buffer.getvalue()
+
+
 def test_refraction_static_apply_endpoint_starts_job(
     client: TestClient,
     monkeypatch: pytest.MonkeyPatch,
@@ -276,6 +295,240 @@ def test_refraction_static_apply_endpoint_starts_job(
     assert job['file_id'] == 'raw-file-id'
     assert job['key1_byte'] == 189
     assert job['key2_byte'] == 193
+
+
+def test_refraction_apply_with_uploaded_picks_accepts_multipart_npz(
+    client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    started: list[dict[str, Any]] = []
+    monkeypatch.setattr(
+        statics_router_module,
+        'start_job_thread',
+        lambda **kwargs: started.append(kwargs),
+    )
+    upload_bytes = _pick_npz_bytes()
+
+    response = client.post(
+        '/statics/refraction/apply-with-picks',
+        data={'request_json': json.dumps(_uploaded_pick_payload())},
+        files={
+            'pick_npz': (
+                '../predicted_picks_time_s.npz',
+                upload_bytes,
+                'application/octet-stream',
+            )
+        },
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload['state'] == 'queued'
+    assert len(started) == 1
+    assert started[0]['target'] is statics_router_module.run_refraction_static_apply_job
+    assert started[0]['args'][0] == payload['job_id']
+    assert isinstance(started[0]['args'][1], RefractionStaticApplyRequest)
+    assert started[0]['args'][1].pick_source.kind == 'uploaded_npz'
+    assert started[0]['args'][3].name == 'uploaded_picks_time_s.npz'
+    assert started[0]['args'][4] == {
+        'original_filename': '../predicted_picks_time_s.npz',
+        'stored_name': 'uploaded_picks_time_s.npz',
+    }
+
+    state = client.app.state.sv
+    with state.lock:
+        job = dict(state.jobs[payload['job_id']])
+    job_dir = Path(str(job['artifacts_dir']))
+    assert (job_dir / 'uploaded_picks_time_s.npz').read_bytes() == upload_bytes
+    assert job['pick_source'] == {
+        'kind': 'uploaded_npz',
+        'original_filename': '../predicted_picks_time_s.npz',
+        'stored_name': 'uploaded_picks_time_s.npz',
+    }
+
+
+def test_refraction_apply_with_uploaded_picks_rejects_missing_file(
+    client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    started: list[dict[str, Any]] = []
+    monkeypatch.setattr(
+        statics_router_module,
+        'start_job_thread',
+        lambda **kwargs: started.append(kwargs),
+    )
+
+    response = client.post(
+        '/statics/refraction/apply-with-picks',
+        data={'request_json': json.dumps(_uploaded_pick_payload())},
+    )
+
+    assert response.status_code == 422
+    assert started == []
+    with client.app.state.sv.lock:
+        assert len(client.app.state.sv.jobs) == 0
+
+
+def test_refraction_apply_with_uploaded_picks_rejects_non_uploaded_npz_kind(
+    client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    started: list[dict[str, Any]] = []
+    monkeypatch.setattr(
+        statics_router_module,
+        'start_job_thread',
+        lambda **kwargs: started.append(kwargs),
+    )
+
+    response = client.post(
+        '/statics/refraction/apply-with-picks',
+        data={'request_json': json.dumps(_payload())},
+        files={
+            'pick_npz': (
+                'predicted_picks_time_s.npz',
+                _pick_npz_bytes(),
+                'application/octet-stream',
+            )
+        },
+    )
+
+    assert response.status_code == 422
+    assert 'uploaded_npz' in response.text
+    assert started == []
+    with client.app.state.sv.lock:
+        assert len(client.app.state.sv.jobs) == 0
+
+
+def test_refraction_apply_with_uploaded_picks_rejects_empty_upload(
+    client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    started: list[dict[str, Any]] = []
+    monkeypatch.setattr(
+        statics_router_module,
+        'start_job_thread',
+        lambda **kwargs: started.append(kwargs),
+    )
+
+    response = client.post(
+        '/statics/refraction/apply-with-picks',
+        data={'request_json': json.dumps(_uploaded_pick_payload())},
+        files={
+            'pick_npz': (
+                'predicted_picks_time_s.npz',
+                b'',
+                'application/octet-stream',
+            )
+        },
+    )
+
+    assert response.status_code == 422
+    assert 'empty' in response.text
+    assert started == []
+    with client.app.state.sv.lock:
+        assert len(client.app.state.sv.jobs) == 0
+
+
+def test_refraction_apply_with_uploaded_picks_stores_input_artifact_metadata(
+    client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    started: list[dict[str, Any]] = []
+    monkeypatch.setattr(
+        statics_router_module,
+        'start_job_thread',
+        lambda **kwargs: started.append(kwargs),
+    )
+    response = client.post(
+        '/statics/refraction/apply-with-picks',
+        data={'request_json': json.dumps(_uploaded_pick_payload())},
+        files={
+            'pick_npz': (
+                'predicted_picks_time_s.npz',
+                _pick_npz_bytes(),
+                'application/octet-stream',
+            )
+        },
+    )
+    assert response.status_code == 200
+    job_id = response.json()['job_id']
+
+    build_calls: list[dict[str, Any]] = []
+    monkeypatch.setattr(
+        refraction_service_module,
+        'build_refraction_static_input_model',
+        lambda **kwargs: build_calls.append(kwargs) or object(),
+    )
+    monkeypatch.setattr(
+        refraction_service_module,
+        'compute_weathering_replacement_statics_from_first_breaks',
+        lambda **_kwargs: object(),
+    )
+    monkeypatch.setattr(
+        refraction_service_module,
+        'build_refraction_datum_statics',
+        lambda **_kwargs: object(),
+    )
+    monkeypatch.setattr(
+        refraction_service_module,
+        'write_refraction_static_artifacts',
+        lambda **_kwargs: object(),
+    )
+
+    started[0]['target'](*started[0]['args'])
+
+    with client.app.state.sv.lock:
+        job = dict(client.app.state.sv.jobs[job_id])
+    job_dir = Path(str(job['artifacts_dir']))
+    request_payload = json.loads(
+        (job_dir / REQUEST_JSON_NAME).read_text(encoding='utf-8')
+    )
+    assert request_payload['request']['pick_source'] == {
+        'kind': 'uploaded_npz',
+        'original_filename': 'predicted_picks_time_s.npz',
+        'stored_name': 'uploaded_picks_time_s.npz',
+    }
+    assert len(build_calls) == 1
+    assert build_calls[0]['uploaded_pick_npz_path'] == (
+        job_dir / 'uploaded_picks_time_s.npz'
+    )
+    assert build_calls[0]['uploaded_pick_metadata'] == {
+        'original_filename': 'predicted_picks_time_s.npz',
+        'stored_name': 'uploaded_picks_time_s.npz',
+    }
+
+
+def test_refraction_apply_with_uploaded_picks_job_status_and_files(
+    client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        statics_router_module,
+        'start_job_thread',
+        lambda **_kwargs: object(),
+    )
+    response = client.post(
+        '/statics/refraction/apply-with-picks',
+        data={'request_json': json.dumps(_uploaded_pick_payload())},
+        files={
+            'pick_npz': (
+                'predicted_picks_time_s.npz',
+                _pick_npz_bytes(),
+                'application/octet-stream',
+            )
+        },
+    )
+    assert response.status_code == 200
+    job_id = response.json()['job_id']
+
+    status_response = client.get(f'/statics/job/{job_id}/status')
+    assert status_response.status_code == 200
+    assert status_response.json()['state'] == 'queued'
+
+    files_response = client.get(f'/statics/job/{job_id}/files')
+    assert files_response.status_code == 200
+    file_names = {item['name'] for item in files_response.json()['files']}
+    assert 'uploaded_picks_time_s.npz' in file_names
 
 
 def test_refraction_static_apply_endpoint_accepts_omitted_linkage(

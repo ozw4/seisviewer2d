@@ -172,6 +172,8 @@ def build_refraction_static_input_model(
     req: RefractionStaticApplyRequest,
     state: AppState,
     job_dir: Path | None = None,
+    uploaded_pick_npz_path: Path | None = None,
+    uploaded_pick_metadata: Mapping[str, object] | None = None,
 ) -> RefractionStaticInputModel:
     """Build a sorted-order refraction statics input model for a request."""
     file_id = _non_empty_str(req.file_id, name='file_id')
@@ -194,6 +196,8 @@ def build_refraction_static_input_model(
         n_samples=n_samples,
         dt=dt,
         sorted_trace_index=sorted_trace_index,
+        uploaded_pick_npz_path=uploaded_pick_npz_path,
+        uploaded_pick_metadata=uploaded_pick_metadata,
     )
     headers = _load_refraction_trace_headers(
         reader=reader,
@@ -570,11 +574,31 @@ def _load_refraction_pick_source(
     n_samples: int,
     dt: float,
     sorted_trace_index: np.ndarray,
+    uploaded_pick_npz_path: Path | None = None,
+    uploaded_pick_metadata: Mapping[str, object] | None = None,
 ) -> _LoadedRefractionPickSource:
     pick_source = req.pick_source
     if pick_source.kind == 'uploaded_npz':
-        raise ValueError(
-            'pick_source.kind=uploaded_npz requires the multipart upload endpoint'
+        if uploaded_pick_npz_path is None:
+            raise ValueError(
+                'pick_source.kind=uploaded_npz requires the multipart upload endpoint'
+            )
+        loaded = _load_npz_refraction_pick_source(
+            uploaded_pick_npz_path,
+            reader=reader,
+            n_traces=n_traces,
+            n_samples=n_samples,
+            dt=dt,
+            sorted_trace_index=sorted_trace_index,
+        )
+        metadata = dict(loaded.metadata)
+        if uploaded_pick_metadata is not None:
+            metadata.update(dict(uploaded_pick_metadata))
+        return _LoadedRefractionPickSource(
+            picks_time_s_sorted=loaded.picks_time_s_sorted,
+            sorted_trace_index=loaded.sorted_trace_index,
+            source_kind='uploaded_npz',
+            metadata=metadata,
         )
     if pick_source.kind == 'manual_memmap':
         return _load_manual_memmap_pick_source(
