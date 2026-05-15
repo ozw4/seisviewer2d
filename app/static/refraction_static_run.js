@@ -102,6 +102,9 @@
   const FIELD_MANUAL_STATIC_MODES = new Set(['none', 'artifact_table']);
   const FIELD_MANUAL_SIGN_CONVENTIONS = new Set(['applied_shift_s', 'delay_positive_ms']);
   const PRESET_STORAGE_KEY = 'sv.static_correction.presets';
+  const NO_ACTIVE_TARGET_ERROR = (
+    'No active viewer file. Open an SGY/TraceStore in the viewer before running Static Correction.'
+  );
 
   const state = {
     ready: false,
@@ -138,28 +141,66 @@
     }
   }
 
-  function getStaticCorrectionTarget() {
+  function parseTargetPositiveInteger(value, label, errors) {
+    if (value === null || value === undefined) {
+      errors.push(`Active viewer target is missing ${label}.`);
+      return null;
+    }
+    if (typeof value === 'string' && value.trim() === '') {
+      errors.push(`Active viewer target is missing ${label}.`);
+      return null;
+    }
+    const parsed = Number(value);
+    if (!Number.isInteger(parsed) || parsed <= 0) {
+      errors.push(`Active viewer target ${label} must be a positive integer.`);
+      return null;
+    }
+    return parsed;
+  }
+
+  function getStaticCorrectionTargetState() {
     const viewerState = window.SeisViewerState;
     if (!viewerState || typeof viewerState.getActiveFileTarget !== 'function') {
       return null;
     }
-    const target = viewerState.getActiveFileTarget();
+    if (typeof viewerState.getActiveFileTargetState === 'function') {
+      return viewerState.getActiveFileTargetState();
+    }
+    return viewerState.getActiveFileTarget();
+  }
+
+  function validateStaticCorrectionTarget() {
+    const target = getStaticCorrectionTargetState();
+    const errors = [];
     if (!target || typeof target !== 'object') {
-      return null;
+      return { target: null, errors: [NO_ACTIVE_TARGET_ERROR] };
+    }
+    if (target.isFileLoaded === false) {
+      return { target: null, errors: [NO_ACTIVE_TARGET_ERROR] };
     }
     const fileId = trimValue(target.fileId);
-    const key1Byte = Number(target.key1Byte);
-    const key2Byte = Number(target.key2Byte);
-    if (!fileId || !Number.isInteger(key1Byte) || !Number.isInteger(key2Byte)) {
-      return null;
+    if (!fileId) {
+      errors.push('Active viewer target is missing fileId.');
+    }
+    const key1Byte = parseTargetPositiveInteger(target.key1Byte, 'key1Byte', errors);
+    const key2Byte = parseTargetPositiveInteger(target.key2Byte, 'key2Byte', errors);
+    if (errors.length) {
+      return { target: null, errors };
     }
     const displayName = trimValue(target.displayName) || fileId;
     return {
-      file_id: fileId,
-      display_name: displayName,
-      key1_byte: key1Byte,
-      key2_byte: key2Byte,
+      target: {
+        file_id: fileId,
+        display_name: displayName,
+        key1_byte: key1Byte,
+        key2_byte: key2Byte,
+      },
+      errors,
     };
+  }
+
+  function getStaticCorrectionTarget() {
+    return validateStaticCorrectionTarget().target;
   }
 
   function geometryValueElements(targetDom) {
@@ -1415,15 +1456,11 @@
     if (!values) {
       throw validationError(['Static correction form is not available.']);
     }
-    if (!values.file_id) {
-      errors.push('No active viewer file. Open an SGY/TraceStore in the viewer before running Static Correction.');
-    }
-    const key1Byte = values.file_id
-      ? parsePositiveInteger(values.key1_byte, 'key1_byte', errors)
-      : null;
-    const key2Byte = values.file_id
-      ? parsePositiveInteger(values.key2_byte, 'key2_byte', errors)
-      : null;
+    const targetResult = validateStaticCorrectionTarget();
+    errors.push(...targetResult.errors);
+    const target = targetResult.target;
+    const key1Byte = target ? target.key1_byte : null;
+    const key2Byte = target ? target.key2_byte : null;
 
     let pickSource = null;
     try {
@@ -1447,7 +1484,7 @@
     }
 
     return {
-      file_id: values.file_id,
+      file_id: target.file_id,
       key1_byte: key1Byte,
       key2_byte: key2Byte,
       pick_source: pickSource,
@@ -1473,15 +1510,11 @@
       return { payload: null, errors: ['Static correction form is not available.'] };
     }
 
-    if (!values.file_id) {
-      errors.push('No active viewer file. Open an SGY/TraceStore in the viewer before running Static Correction.');
-    }
-    const key1Byte = values.file_id
-      ? parsePositiveInteger(values.key1_byte, 'key1_byte', errors)
-      : null;
-    const key2Byte = values.file_id
-      ? parsePositiveInteger(values.key2_byte, 'key2_byte', errors)
-      : null;
+    const targetResult = validateStaticCorrectionTarget();
+    errors.push(...targetResult.errors);
+    const target = targetResult.target;
+    const key1Byte = target ? target.key1_byte : null;
+    const key2Byte = target ? target.key2_byte : null;
     let pickSource = null;
     try {
       pickSource = buildStaticCorrectionPickSource(dom);
@@ -1504,7 +1537,7 @@
     }
     return {
       payload: {
-        file_id: values.file_id,
+        file_id: target.file_id,
         key1_byte: key1Byte,
         key2_byte: key2Byte,
         pick_source: pickSource,
@@ -1720,15 +1753,11 @@
     if (!values) {
       throw validationError(['Static correction form is not available.']);
     }
-    if (!values.file_id) {
-      errors.push('No active viewer file. Open an SGY/TraceStore in the viewer before running Static Correction.');
-    }
-    const key1Byte = values.file_id
-      ? parsePositiveInteger(values.key1_byte, 'key1_byte', errors)
-      : null;
-    const key2Byte = values.file_id
-      ? parsePositiveInteger(values.key2_byte, 'key2_byte', errors)
-      : null;
+    const targetResult = validateStaticCorrectionTarget();
+    errors.push(...targetResult.errors);
+    const target = targetResult.target;
+    const key1Byte = target ? target.key1_byte : null;
+    const key2Byte = target ? target.key2_byte : null;
     const geometryResult = validateStaticCorrectionGeometryRequest(targetDom);
     errors.push(...geometryResult.errors);
     const linkageResult = validateStaticCorrectionLinkageRequest(targetDom);
@@ -1737,7 +1766,7 @@
       throw validationError(errors);
     }
     return {
-      file_id: values.file_id,
+      file_id: target.file_id,
       key1_byte: key1Byte,
       key2_byte: key2Byte,
       geometry: { ...geometryResult.payload.geometry },
@@ -1942,7 +1971,8 @@
     dom.targetEmpty.hidden = Boolean(target);
     dom.targetDetails.hidden = !target;
     if (!target) {
-      dom.targetEmpty.textContent = 'No active viewer file. Open an SGY/TraceStore in the viewer before running Static Correction.';
+      const targetErrors = validateStaticCorrectionTarget().errors;
+      dom.targetEmpty.textContent = targetErrors[0] || NO_ACTIVE_TARGET_ERROR;
       return;
     }
     if (dom.targetFile) {

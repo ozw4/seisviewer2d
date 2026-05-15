@@ -1503,6 +1503,9 @@ test('static_correction_request_preview_uses_uploaded_npz', async ({ page }) => 
 	await page.getByText('JSON request preview').click();
 
 	const requestPreview = page.getByTestId('static-correction-request-preview');
+	await expect(page.getByTestId('static-correction-request-preview-note')).toHaveText(
+		'Pick NPZ is sent as multipart file field: pick_npz',
+	);
 	await expect(requestPreview).toContainText('"pick_source"');
 	await expect(requestPreview).toContainText('"kind": "uploaded_npz"');
 	await expect(requestPreview).not.toContainText('"job_id"');
