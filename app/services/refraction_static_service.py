@@ -1410,6 +1410,15 @@ def _failed_refraction_static_stage(exc: Exception, job_dir: Path) -> str:
     message = str(exc).lower()
     if isinstance(exc, RefractionStaticPreflightError) or 'preflight' in message:
         return 'preflight'
+    if (
+        'solver' in message
+        or 'least' in message
+        or 'bounded ls' in message
+        or 'bounded-ls' in message
+    ):
+        return 'solver'
+    if 'artifact' in message or 'writing_refraction_static_artifacts' in message:
+        return 'artifact_writer'
     if 'design matrix' in message:
         return 'design_matrix'
     if (
@@ -1417,10 +1426,6 @@ def _failed_refraction_static_stage(exc: Exception, job_dir: Path) -> str:
         or (job_dir / REFRACTION_DESIGN_MATRIX_NODE_DIAGNOSTICS_CSV_NAME).is_file()
     ):
         return 'design_matrix'
-    if 'solver' in message or 'least' in message or 'bounded ls' in message:
-        return 'solver'
-    if 'artifact' in message or 'writing_refraction_static_artifacts' in message:
-        return 'artifact_writer'
     return 'unknown'
 
 
