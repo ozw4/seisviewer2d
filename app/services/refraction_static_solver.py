@@ -1012,7 +1012,14 @@ def _solve_with_optional_robust_rejection(
             break
 
         used_indices = np.flatnonzero(used_mask)
-        newly_rejected = used_indices[outlier_local]
+        newly_rejected = _safe_robust_rejection_indices(
+            problem,
+            used_mask=used_mask,
+            candidate_indices=used_indices[outlier_local],
+        )
+        if newly_rejected.size == 0:
+            final_solve = solve_result
+            break
         proposed_used_mask = used_mask.copy()
         proposed_used_mask[newly_rejected] = False
         _validate_used_observation_count(
@@ -1044,6 +1051,44 @@ def _solve_with_optional_robust_rejection(
         np.ascontiguousarray(rejected_mask, dtype=bool),
         robust_iteration_count,
     )
+
+
+def _safe_robust_rejection_indices(
+    problem: _ValidatedProblem,
+    *,
+    used_mask: np.ndarray,
+    candidate_indices: np.ndarray,
+) -> np.ndarray:
+    accepted: list[int] = []
+    proposed = np.asarray(used_mask, dtype=bool).copy()
+    for raw_index in np.asarray(candidate_indices, dtype=np.int64):
+        index = int(raw_index)
+        if index < 0 or index >= proposed.shape[0] or not proposed[index]:
+            continue
+        trial = proposed.copy()
+        trial[index] = False
+        if _used_matrix_structure_is_valid(problem, trial):
+            proposed = trial
+            accepted.append(index)
+    return np.asarray(accepted, dtype=np.int64)
+
+
+def _used_matrix_structure_is_valid(
+    problem: _ValidatedProblem,
+    used_mask: np.ndarray,
+) -> bool:
+    try:
+        _validate_matrix_structure(
+            problem.matrix[used_mask, :],
+            n_active_nodes=problem.n_active_nodes,
+            bedrock_slowness_col=problem.bedrock_slowness_col,
+            cell_slowness_cols=(
+                problem.cell_slowness_cols if problem.mode == 'solve_cell' else None
+            ),
+        )
+    except RefractionStaticSolverError:
+        return False
+    return True
 
 
 def _solve_once(

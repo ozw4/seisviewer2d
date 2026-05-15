@@ -1425,6 +1425,43 @@
       padding: 0;
     }
 
+    .static-correction-diagnostics {
+      display: grid;
+      gap: 0.55em;
+      padding: 0.65em;
+      border: 1px solid #bfdbfe;
+      border-radius: 4px;
+      background: #eff6ff;
+      color: #1e3a8a;
+      font-size: 0.82em;
+      line-height: 1.4;
+    }
+
+    .static-correction-diagnostics[hidden] {
+      display: none;
+    }
+
+    .static-correction-diagnostics table {
+      width: 100%;
+      border-collapse: collapse;
+      background: #fff;
+    }
+
+    .static-correction-diagnostics th,
+    .static-correction-diagnostics td {
+      padding: 0.35em 0.45em;
+      border-bottom: 1px solid #dbeafe;
+      text-align: left;
+      vertical-align: top;
+      overflow-wrap: anywhere;
+    }
+
+    .static-correction-diagnostics th {
+      width: 45%;
+      color: #475569;
+      font-weight: 600;
+    }
+
     .static-correction-request-preview {
       max-height: 18em;
       margin: 0;
@@ -2540,12 +2577,16 @@
             <section class="static-correction-section" aria-labelledby="staticCorrectionRunHeading">
               <h3 id="staticCorrectionRunHeading">Run</h3>
               <div class="static-correction-actions">
+                <button id="staticCorrectionValidateButton" type="button"
+                  data-testid="static-correction-validate">Validate Inputs</button>
                 <button id="staticCorrectionRunButton" type="button" data-testid="static-correction-run">Run</button>
                 <button id="staticCorrectionCancelButton" type="button" hidden
                   data-testid="static-correction-cancel">Cancel</button>
               </div>
               <div id="staticCorrectionValidationSummary" class="static-correction-validation" role="alert" hidden
                 data-testid="static-correction-validation-summary"></div>
+              <div id="staticCorrectionValidationDiagnostics" class="static-correction-diagnostics" role="status"
+                aria-live="polite" hidden data-testid="static-correction-validation-diagnostics"></div>
               <details id="staticCorrectionRequestPreviewDetails">
                 <summary>JSON request preview</summary>
                 <p class="static-correction-help" data-testid="static-correction-request-preview-note">
