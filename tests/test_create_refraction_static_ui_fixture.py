@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import importlib
 import json
+import math
 from pathlib import Path
 import subprocess
 import sys
@@ -342,6 +343,27 @@ def test_synthetic_ui_fixture_generation_is_deterministic(tmp_path: Path) -> Non
     np.testing.assert_array_equal(first.pick_time_s, second.pick_time_s)
 
 
+def test_ui_fixture_generation_is_deterministic_for_fixed_seed(
+    tmp_path: Path,
+) -> None:
+    module = _module()
+    config = _config(tmp_path)
+
+    first_fixture = module.build_synthetic_fixture(config)
+    second_fixture = module.build_synthetic_fixture(config)
+    first_arrays = module.build_pick_arrays(config, first_fixture)
+    second_arrays = module.build_pick_arrays(config, second_fixture)
+
+    assert module.build_fixture_metadata(config) == module.build_fixture_metadata(config)
+    assert module.build_expected_static_summary(
+        config,
+        first_fixture,
+    ) == module.build_expected_static_summary(config, second_fixture)
+
+    for key, first_value in first_arrays.items():
+        np.testing.assert_array_equal(first_value, second_arrays[key])
+
+
 def test_synthetic_ui_fixture_pick_npz_has_accepted_pick_key(tmp_path: Path) -> None:
     module = _module()
     config = _config(tmp_path)
@@ -397,6 +419,42 @@ def test_synthetic_ui_fixture_pick_aliases_match(tmp_path: Path) -> None:
     )
 
 
+def test_ui_fixture_pick_npz_is_refraction_loader_compatible(
+    tmp_path: Path,
+) -> None:
+    module = _module()
+    config = _config(tmp_path)
+    fixture = module.build_synthetic_fixture(config)
+    metadata = module.build_fixture_metadata(config)
+    path = tmp_path / 'predicted_picks_time_s.npz'
+
+    np.savez(path, **module.build_pick_arrays(config, fixture))
+
+    accepted_pick_keys = (
+        'pick_time_s',
+        'picks_time_s',
+        'predicted_picks_time_s',
+        'first_break_time_s',
+    )
+    with np.load(path, allow_pickle=False) as data:
+        present_keys = [key for key in accepted_pick_keys if key in data.files]
+        assert present_keys
+
+        picks = np.asarray(data[present_keys[0]])
+        assert picks.shape == (config.n_shots * config.n_receivers,)
+        assert np.all(np.isfinite(picks))
+        assert np.all(picks >= 0.0)
+        assert np.max(picks) < config.n_samples * config.dt_s
+        assert int(data['n_traces'].item()) == config.n_shots * config.n_receivers
+        assert int(data['n_samples'].item()) == metadata['synthetic_model']['n_samples']
+        assert float(data['dt'].item()) == pytest.approx(
+            metadata['synthetic_model']['dt_s'],
+        )
+
+        for alias in present_keys[1:]:
+            np.testing.assert_array_equal(data[alias], picks)
+
+
 def test_synthetic_ui_fixture_metadata_contains_static_correction_ui_fields(
     tmp_path: Path,
 ) -> None:
@@ -448,6 +506,45 @@ def test_synthetic_ui_fixture_expected_summary_contains_truth_ranges(
     assert truth['weathering_thickness_min_m'] > 0.0
     assert truth['weathering_thickness_max_m'] > truth['weathering_thickness_min_m']
     assert truth['weathering_correction_min_ms'] < truth['weathering_correction_max_ms']
+    assert truth['weathering_correction_max_ms'] < 0.0
+
+
+def test_ui_fixture_expected_summary_is_physically_consistent(
+    tmp_path: Path,
+) -> None:
+    module = _module()
+    config = _config(tmp_path)
+    fixture = module.build_synthetic_fixture(config)
+
+    summary = module.build_expected_static_summary(config, fixture)
+    truth = summary['truth']
+    denominator = math.sqrt(config.v2_m_s**2 - config.v1_m_s**2)
+    t1_factor = denominator / (config.v2_m_s * config.v1_m_s)
+
+    expected_source_t1_s = fixture.source_thickness_m * t1_factor
+    expected_receiver_t1_s = fixture.receiver_thickness_m * t1_factor
+    source_sh1_m = fixture.source_t1_s * config.v1_m_s * config.v2_m_s / denominator
+    receiver_sh1_m = (
+        fixture.receiver_t1_s * config.v1_m_s * config.v2_m_s / denominator
+    )
+    source_wcor_s = source_sh1_m * (1.0 / config.v2_m_s - 1.0 / config.v1_m_s)
+    receiver_wcor_s = receiver_sh1_m * (1.0 / config.v2_m_s - 1.0 / config.v1_m_s)
+    all_sh1_m = np.concatenate([source_sh1_m, receiver_sh1_m])
+    all_wcor_ms = np.concatenate([source_wcor_s, receiver_wcor_s]) * 1000.0
+
+    np.testing.assert_allclose(fixture.source_t1_s, expected_source_t1_s)
+    np.testing.assert_allclose(fixture.receiver_t1_s, expected_receiver_t1_s)
+    np.testing.assert_allclose(source_sh1_m, fixture.source_thickness_m)
+    np.testing.assert_allclose(receiver_sh1_m, fixture.receiver_thickness_m)
+    assert truth['weathering_thickness_min_m'] == pytest.approx(float(np.min(all_sh1_m)))
+    assert truth['weathering_thickness_max_m'] == pytest.approx(float(np.max(all_sh1_m)))
+    assert truth['weathering_correction_min_ms'] == pytest.approx(
+        float(np.min(all_wcor_ms)),
+    )
+    assert truth['weathering_correction_max_ms'] == pytest.approx(
+        float(np.max(all_wcor_ms)),
+    )
+    assert truth['weathering_thickness_min_m'] > 0.0
     assert truth['weathering_correction_max_ms'] < 0.0
 
 
