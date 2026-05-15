@@ -29,8 +29,8 @@ The browser workflow for the `Static Correction` tab is documented in
     documented in [refraction_static.md](refraction_static.md).
   - The refraction QC artifact and viewer workflow is documented in
     [statics/refraction_qc_viewer_workflow.md](statics/refraction_qc_viewer_workflow.md).
-  - The UI workflow for running refraction statics from an existing `file_id`
-    and first-break pick artifact is documented in
+  - The UI workflow for running refraction statics from the current viewer file
+    and a directly selected first-break pick NPZ is documented in
     [statics/static_correction_ui_workflow.md](statics/static_correction_ui_workflow.md).
 
 The detailed time-term inversion API, sign convention, apply modes, and artifact

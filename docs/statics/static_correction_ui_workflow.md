@@ -1,37 +1,35 @@
 # Static Correction UI Workflow
 
-This page describes the browser workflow for running refraction statics from an
-existing SEG-Y or TraceStore input and an existing first-break pick artifact:
+This page describes the browser workflow for running refraction statics from the
+current viewer file and a directly selected first-break pick NPZ:
 
 ```text
-SGY load -> first-break pick artifact -> Static Correction tab -> refraction apply job -> Refraction QC
+SGY load -> direct first-break pick NPZ selection -> Static Correction tab -> refraction apply job -> Refraction QC
 ```
 
 Synthetic data creation is not part of the Static Correction UI. If synthetic
 SEG-Y files or synthetic first-break picks are used, prepare them outside the UI
-and load them the same way as normal SEG-Y and pick artifacts.
-For the repo's synthetic smoke-test fixture, see
+and load them the same way as normal SEG-Y and pick NPZ files. For the repo's
+synthetic smoke-test fixture, see
 [refraction_static_ui_fixture.md](refraction_static_ui_fixture.md).
 
 ## Prerequisites
 
-- A SEG-Y or TraceStore `file_id` already exists in the application.
-- A first-break pick artifact already exists and is usable by
-  `POST /statics/refraction/apply`.
-- The pick artifact is an NPZ artifact from a job, such as
-  `predicted_picks_time_s.npz` for `batch_predicted_npz`, or a compatible
-  manual NPZ artifact for `manual_npz_artifact`.
+- A SEG-Y or TraceStore file is already open in the viewer.
+- The viewer was loaded with the intended section and trace sort keys.
+- A first-break pick NPZ is available locally and matches the loaded viewer
+  file's sorted trace order.
 - The TraceStore header bytes describe the source, receiver, coordinate,
   elevation, scalar, and offset fields needed by the selected model.
 
-The viewer first-break probability cache is not a statics pick artifact.
+The viewer first-break probability cache is not a statics pick NPZ.
 
 ## Static Correction vs Refraction QC
 
 Use the `Static Correction` tab to create a refraction static job. It collects
-the input `file_id`, pick artifact reference, geometry headers, optional
+the current viewer target, selected pick NPZ, geometry headers, optional
 endpoint linkage, model preset, output options, and export options, then submits
-`POST /statics/refraction/apply`.
+the request and NPZ to `/statics/refraction/apply-with-picks`.
 
 Use the `Refraction QC` tab after a refraction job completes. It loads the
 completed job's QC bundle and displays first-break residuals, reduced-time/LMO,
@@ -40,23 +38,21 @@ artifacts are available. It does not create the static solution.
 
 ## Input and First-Break Picks
 
-Open `/` in the browser and select `Static Correction`.
+Open `/` in the browser, load an SGY/TraceStore in the viewer, then select
+`Static Correction`.
 
-In `Input`, enter:
+In `Target`, confirm that the tab shows:
 
-- `File ID`: the existing SEG-Y or TraceStore `file_id`.
-- `key1_byte` and `key2_byte`: the TraceStore section and trace sort keys.
-  Defaults are `189` and `193`.
+- `Current viewer file`: the active viewer file;
+- `Sort keys`: the active viewer `key1_byte` and `key2_byte`;
+- `Status`: the loaded target state.
 
-In `First-break picks`, enter:
+The Static Correction tab does not ask users to type `file_id`, `key1_byte`, or
+`key2_byte`. Those values come from the active viewer target.
 
-- `pick_source.kind`: `batch_predicted_npz` or `manual_npz_artifact`.
-- `pick_source.job_id`: the job that owns the pick artifact.
-- `pick_source.artifact_name`: the NPZ artifact name. The default is
-  `predicted_picks_time_s.npz`.
-
-Use `Load pick artifacts` to list files from the pick job when you need to
-confirm the artifact name.
+In `First-break picks`, choose a `.npz` file with `First-break pick NPZ`. The
+selected file is sent directly as multipart field `pick_npz`; users do not need
+a pick `job_id`, `artifact_name`, or manual batch job registration.
 
 ## Geometry Header Preset
 
@@ -155,6 +151,26 @@ and select `Load QC Bundle`.
 Use Refraction QC to review first-break fit residuals, reduced-time/LMO,
 profiles, cell maps, static components, and raw/corrected gather preview when a
 corrected TraceStore was registered and preview artifacts are available.
+
+## Troubleshooting
+
+No active viewer file:
+Open an SGY/TraceStore in the viewer before running Static Correction. The
+Target section must show the current viewer file and sort keys.
+
+No pick NPZ selected:
+Select a `.npz` file in `First-break pick NPZ`. The viewer first-break
+probability cache is not a valid statics pick file.
+
+Sorted order mismatch:
+Reload the viewer file with the same `key1_byte` and `key2_byte` ordering used
+when the pick NPZ was created. Pick arrays are interpreted in the active
+TraceStore sorted trace order.
+
+Geometry byte mismatch:
+Switch the Geometry preset to `custom` and enter the source, receiver,
+coordinate, scalar, elevation, and offset header bytes for the loaded SEG-Y.
+Wrong geometry bytes can produce invalid endpoint tables or poor residuals.
 
 ## Known Limitations and Non-Goals
 

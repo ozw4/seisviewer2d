@@ -36,6 +36,13 @@ test('test_active_viewer_target_contains_file_id_and_sort_keys_after_load', () =
   });
   const viewerState = createSeisViewerState(store);
 
+  expect(viewerState.getActiveFileTargetState()).toEqual({
+    fileId: 'file-a',
+    displayName: 'LineA.sgy',
+    key1Byte: '9',
+    key2Byte: '13',
+    isFileLoaded: true,
+  });
   expect(viewerState.getActiveFileTarget()).toEqual({
     fileId: 'file-a',
     displayName: 'LineA.sgy',

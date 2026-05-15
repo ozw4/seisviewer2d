@@ -480,9 +480,92 @@ test('request preview supports uploaded pick source without artifact fields', ()
 
   const preview = JSON.parse(document.getElementById('staticCorrectionRequestPreview').textContent);
   expect(preview.pick_source).toEqual({ kind: 'uploaded_npz' });
+  expect(INDEX_HTML).toContain('Pick NPZ is sent as multipart file field: pick_npz');
   expect(INDEX_HTML).not.toContain('staticCorrectionPickJobId');
   expect(INDEX_HTML).not.toContain('staticCorrectionPickArtifactName');
   expect(INDEX_HTML).not.toContain('staticCorrectionLoadPickArtifactsButton');
+});
+
+test('static correction does not render manual target id or sort key inputs', () => {
+  loadStaticCorrectionScript();
+
+  expect(document.querySelector('#staticCorrectionFileId')).toBeNull();
+  expect(document.querySelector('#staticCorrectionKey1Byte')).toBeNull();
+  expect(document.querySelector('#staticCorrectionKey2Byte')).toBeNull();
+  expect(INDEX_HTML).not.toContain('name="file_id"');
+  expect(INDEX_HTML).not.toContain('name="key1_byte"');
+  expect(INDEX_HTML).not.toContain('name="key2_byte"');
+  expect(document.getElementById('staticCorrectionTargetFile').textContent).toContain('file-a');
+  expect(document.getElementById('staticCorrectionTargetKeys').textContent).toContain(
+    'key1=189, key2=193'
+  );
+});
+
+test('request preview uses current viewer target', () => {
+  setViewerTarget('current-line', 9, 13);
+  loadStaticCorrectionScript();
+
+  const preview = JSON.parse(document.getElementById('staticCorrectionRequestPreview').textContent);
+  expect(preview.file_id).toBe('current-line');
+  expect(preview.key1_byte).toBe(9);
+  expect(preview.key2_byte).toBe(13);
+});
+
+test('validation error no active viewer file', () => {
+  setViewerTarget(null);
+  const ui = loadStaticCorrectionScript();
+
+  const result = ui.buildStaticCorrectionRequest();
+
+  expect(result.payload).toBe(null);
+  expect(result.errors).toContain(
+    'No active viewer file. Open an SGY/TraceStore in the viewer before running Static Correction.'
+  );
+});
+
+test('validation error no pick npz', () => {
+  clearSelectedPickFile();
+  const ui = loadStaticCorrectionScript();
+
+  const result = ui.buildStaticCorrectionRequest();
+
+  expect(result.payload).toBe(null);
+  expect(result.errors).toContain('First-break pick NPZ is required.');
+});
+
+test('validation error missing viewer target fields', () => {
+  activeViewerTarget = {
+    fileId: '',
+    key1Byte: '',
+    key2Byte: null,
+    displayName: 'Line A',
+  };
+  const ui = loadStaticCorrectionScript();
+
+  const result = ui.buildStaticCorrectionRequest();
+
+  expect(result.payload).toBe(null);
+  expect(result.errors).toEqual(expect.arrayContaining([
+    'Active viewer target is missing fileId.',
+    'Active viewer target is missing key1Byte.',
+    'Active viewer target is missing key2Byte.',
+  ]));
+  expect(document.getElementById('staticCorrectionTargetEmpty').textContent).toContain(
+    'Active viewer target is missing fileId.'
+  );
+});
+
+test('validation error missing required geometry byte', () => {
+  const ui = loadStaticCorrectionScript();
+  setCustomPreset();
+  document.getElementById('staticCorrectionSourceIdByte').value = '';
+
+  const result = ui.buildStaticCorrectionRequest();
+
+  expect(result.payload).toBe(null);
+  expect(result.errors).toContain(
+    'geometry.source_id_byte must be an integer SEG-Y trace header byte from 1 to 240.'
+  );
 });
 
 test('validation summary lists invalid fields before submit', () => {

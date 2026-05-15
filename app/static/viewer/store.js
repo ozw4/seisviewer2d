@@ -40,6 +40,16 @@ export function getActiveFileTargetFromState(state) {
 
 export function createSeisViewerState(store) {
   return {
+    getActiveFileTargetState() {
+      const state = store.get();
+      return {
+        fileId: state.fileId,
+        displayName: state.displayName,
+        key1Byte: state.key1Byte,
+        key2Byte: state.key2Byte,
+        isFileLoaded: state.isFileLoaded === true,
+      };
+    },
     getActiveFileTarget() {
       return getActiveFileTargetFromState(store.get());
     },

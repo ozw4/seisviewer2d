@@ -24,14 +24,14 @@ SEGYIO_REQUIRED_MESSAGE = (
 )
 
 GEOMETRY_HEADERS = {
-    'source_id_byte': 17,
+    'source_id_byte': 9,
     'receiver_id_byte': 13,
     'source_x_byte': 73,
     'source_y_byte': 77,
     'receiver_x_byte': 81,
     'receiver_y_byte': 85,
-    'source_elevation_byte': 41,
-    'receiver_elevation_byte': 45,
+    'source_elevation_byte': 45,
+    'receiver_elevation_byte': 41,
     'offset_byte': 37,
     'coordinate_scalar_byte': 71,
     'elevation_scalar_byte': 69,
@@ -415,12 +415,9 @@ def build_fixture_metadata(config: FixtureConfig) -> dict[str, object]:
             'linkage_default': 'none',
         },
         'pick_source': {
-            'kind': 'batch_predicted_npz',
-            'artifact_name': PICK_ARTIFACT_NAME,
-            'job_id_note': (
-                'Copy/register this NPZ as a job artifact, then enter that job_id '
-                'in the Static Correction tab.'
-            ),
+            'kind': 'uploaded_npz',
+            'file_field': 'pick_npz',
+            'file_name': PICK_ARTIFACT_NAME,
         },
         'recommended_static_correction': {
             'model_preset': 'one_layer_global',
@@ -534,10 +531,10 @@ def build_readme(config: FixtureConfig) -> str:
         '# Refraction Static UI Fixture\n\n'
         'This directory is a development fixture for manually exercising the '
         'Static Correction UI refraction workflow from an uploaded SGY file and '
-        'a first-break pick artifact.\n\n'
+        'a directly selected first-break pick NPZ.\n\n'
         f'- Scenario: `{config.scenario}`\n'
         f'- SGY file: `{SGY_NAME}`\n'
-        f'- Pick artifact: `{PICK_ARTIFACT_NAME}`\n'
+        f'- Pick NPZ: `{PICK_ARTIFACT_NAME}`\n'
         '- Recommended Static Correction preset: `one_layer_global`\n'
         '- Linkage default: `none`\n'
         '- Recommended exports: `canonical_static_table`, `lsst_plus`\n\n'
@@ -545,26 +542,25 @@ def build_readme(config: FixtureConfig) -> str:
         'clear first-break pulses and geometry headers listed in '
         f'`{METADATA_NAME}`.\n\n'
         '## UI workflow\n\n'
-        f'1. Import `{SGY_NAME}` through the normal UI and note the `file_id`.\n'
-        f'2. Make `{PICK_ARTIFACT_NAME}` available through a `batch_apply` '
-        'job artifact.\n'
-        '3. Open the `Static Correction` tab.\n'
-        '4. Enter the `file_id`, pick `job_id`, and artifact name '
-        f'`{PICK_ARTIFACT_NAME}`.\n'
-        f'5. Use the geometry byte locations from `{METADATA_NAME}`.\n'
-        '6. Use `one_layer_global`, leave linkage off, and select the '
-        'recommended exports.\n'
-        '7. Run the job and inspect the completed result in `Refraction QC`.\n'
-        '\n'
-        'For the precise developer-only manual registration workflow, including '
-        '`get_job_dir(job_id)`, `create_batch_apply_job`, the required '
-        '`file_id`/`key1_byte`/`key2_byte` metadata, and '
-        '`/batch/job/<job_id>/files` verification, see '
-        '`docs/statics/refraction_static_ui_fixture.md'
-        '#workflow-b-manual-registration-for-ui-smoke-tests`.\n\n'
+        f'1. Open `{SGY_NAME}` in the viewer Loader with `key1=9`, `key2=13`.\n'
+        f'2. Open the `Static Correction` tab and confirm the Target shows the '
+        'current viewer file and sort keys.\n'
+        f'3. Select `{PICK_ARTIFACT_NAME}` directly in `First-break pick NPZ`.\n'
+        '4. Configure geometry, model, output, and export settings.\n'
+        '5. Run Static Correction.\n'
+        '6. Confirm the completed result auto-loads in `Refraction QC`.\n\n'
+        'You do not need a `file_id` input, pick `job_id`, `artifact_name`, or '
+        'manual batch job registration for the primary UI workflow.\n\n'
+        '## Settings\n\n'
+        f'- Target: current viewer file loaded with `key1=9`, `key2=13`\n'
+        f'- First-break pick NPZ: `{PICK_ARTIFACT_NAME}`\n'
+        f'- Geometry byte locations: see `{METADATA_NAME}`\n'
+        '- Model preset: `one_layer_global`\n'
+        '- Linkage: unchecked / `none`\n'
+        '- Recommended exports: `canonical_static_table`, `lsst_plus`\n\n'
         '## Trace sorting for Static Correction UI\n\n'
         'Use:\n'
-        '  key1_byte = 17  # source_id\n'
+        '  key1_byte = 9  # source_id\n'
         '  key2_byte = 13  # receiver_id\n\n'
         'The generated pick artifact is written in the same sorted trace order. '
         'Changing these sort headers may cause the pick artifact to no longer '

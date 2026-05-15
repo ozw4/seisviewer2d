@@ -554,6 +554,83 @@ def test_refraction_apply_with_uploaded_picks_job_status_and_files(
     assert 'uploaded_picks_time_s.npz' in file_names
 
 
+def test_apply_with_uploaded_picks_synthetic_one_layer_job_completes(
+    client: TestClient,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    job_id = 'refraction-uploaded-picks-synthetic-one-layer'
+    job_dir = tmp_path / 'jobs' / job_id
+    input_model = synthetic_refracted_arrival_input_model()
+    uploaded_npz_path = job_dir / 'uploaded_picks_time_s.npz'
+    job_dir.mkdir(parents=True)
+    np.savez(
+        uploaded_npz_path,
+        pick_time_s=input_model.pick_time_s_sorted,
+        valid_pick_mask=input_model.valid_pick_mask_sorted,
+        n_traces=np.asarray(input_model.n_traces, dtype=np.int64),
+        n_samples=np.asarray(4000, dtype=np.int64),
+        dt=np.asarray(0.001, dtype=np.float64),
+    )
+    req_payload = synthetic_refraction_apply_request(
+        conversion_mode='t1lsst_1layer',
+    ).model_dump(mode='json')
+    req_payload['pick_source'] = {'kind': 'uploaded_npz'}
+    req = RefractionStaticApplyRequest.model_validate(req_payload)
+    _create_refraction_job(client, job_id=job_id, req=req, job_dir=job_dir)
+    build_calls: list[dict[str, Any]] = []
+
+    def _build_uploaded_input_model(**kwargs: Any) -> object:
+        build_calls.append(kwargs)
+        return input_model
+
+    monkeypatch.setattr(
+        refraction_service_module,
+        'build_refraction_static_input_model',
+        _build_uploaded_input_model,
+    )
+
+    run_refraction_static_apply_job(
+        job_id,
+        req,
+        client.app.state.sv,
+        uploaded_npz_path,
+        {
+            'original_filename': 'field-picks.npz',
+            'stored_name': 'uploaded_picks_time_s.npz',
+        },
+    )
+
+    with client.app.state.sv.lock:
+        job = dict(client.app.state.sv.jobs[job_id])
+    assert job['status'] == 'done'
+    assert len(build_calls) == 1
+    assert build_calls[0]['uploaded_pick_npz_path'] == uploaded_npz_path
+    assert build_calls[0]['uploaded_pick_metadata'] == {
+        'original_filename': 'field-picks.npz',
+        'stored_name': 'uploaded_picks_time_s.npz',
+    }
+    assert build_calls[0]['req'].pick_source.kind == 'uploaded_npz'
+    assert build_calls[0]['req'].pick_source.job_id is None
+    assert build_calls[0]['req'].pick_source.artifact_name is None
+    file_names = _job_file_names(job_dir)
+    assert {
+        REFRACTION_STATIC_SOLUTION_NPZ_NAME,
+        REFRACTION_STATIC_QC_JSON_NAME,
+        REFRACTION_FIRST_BREAK_FIT_QC_JSON_NAME,
+        REFRACTION_STATIC_ARTIFACTS_JSON_NAME,
+        'uploaded_picks_time_s.npz',
+    }.issubset(file_names)
+    qc_response = client.post(
+        '/statics/refraction/qc',
+        json={'job_id': job_id, 'max_points': 2000},
+    )
+    assert qc_response.status_code == 200
+    qc_payload = qc_response.json()
+    assert qc_payload['job_id'] == job_id
+    assert qc_payload['summary']['workflow'] == 'refraction_statics'
+
+
 def test_refraction_static_apply_endpoint_accepts_omitted_linkage(
     client: TestClient,
     monkeypatch: pytest.MonkeyPatch,
