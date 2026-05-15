@@ -114,9 +114,18 @@ Use the fixture geometry header byte mapping:
 | `coordinate_scalar_byte` | 71 |
 | `elevation_scalar_byte` | 69 |
 
+Use these TraceStore sort keys for the Static Correction UI:
+
+| Sort setting | Byte | Header |
+|---|---:|---|
+| `key1_byte` | 17 | `source_id_byte` |
+| `key2_byte` | 13 | `receiver_id_byte` |
+
 The fixture metadata also records:
 
 ```text
+recommended_static_correction.key1_byte = 17
+recommended_static_correction.key2_byte = 13
 recommended_static_correction.min_offset_m = 300.0
 recommended_static_correction.max_offset_m = 1800.0
 recommended_static_correction.field_corrections.mode = none
@@ -163,6 +172,10 @@ Wrong geometry header byte values:
 Re-enter the byte mapping from `fixture_metadata.json`. Incorrect source,
 receiver, coordinate, scalar, elevation, or offset bytes can produce invalid
 geometry or poor residuals.
+
+Pick/trace order mismatch:
+If Static Correction reports pick/trace order mismatch, confirm that the SGY was
+read with `key1_byte=17` and `key2_byte=13` for this fixture.
 
 Linkage checkbox accidentally enabled:
 Leave linkage unchecked for this fixture. Enabling linkage creates an extra
