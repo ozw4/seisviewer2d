@@ -365,6 +365,12 @@ This request uses direct-arrival V1 estimation, solves global V2, writes the
 T1LSST 1-layer component artifact, and exports source/receiver static tables
 without registering a corrected TraceStore:
 
+The `batch_predicted_npz` pick source shown here is an API-only legacy
+job-artifact path retained for developer and compatibility tests. The browser
+`Static Correction` tab uses `/statics/refraction/apply-with-picks` with a
+directly selected multipart `pick_npz` file and does not ask users for a pick
+`job_id` or `artifact_name`.
+
 ```json
 {
   "file_id": "example",

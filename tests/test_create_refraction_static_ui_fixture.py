@@ -51,10 +51,6 @@ def _skip_without_segyio() -> None:
     pytest.importorskip('segyio')
 
 
-def _single_spaced(text: str) -> str:
-    return ' '.join(text.split())
-
-
 def test_refraction_static_ui_fixture_cli_help() -> None:
     result = subprocess.run(
         [sys.executable, str(_SCRIPT), '--help'],
@@ -276,8 +272,8 @@ def test_refraction_static_ui_fixture_readme_is_created(tmp_path: Path) -> None:
         'Select `predicted_picks_time_s.npz` directly in `First-break pick NPZ`'
     ) in readme
     assert 'You do not need a `file_id` input' in readme
-    assert 'create_batch_apply_job' in readme
-    assert '/batch/job/<job_id>/files' in readme
+    assert 'create_batch_apply_job' not in readme
+    assert '/batch/job/<job_id>/files' not in readme
     assert 'Open the `Static Correction` tab' in readme
     assert 'Trace sorting for Static Correction UI' in readme
     assert 'key1_byte = 9  # source_id' in readme
@@ -285,19 +281,14 @@ def test_refraction_static_ui_fixture_readme_is_created(tmp_path: Path) -> None:
     assert 'Refraction QC' in readme
 
 
-def test_generated_fixture_readme_mentions_manual_registration_workflow() -> None:
+def test_generated_fixture_readme_does_not_recommend_manual_pick_job_registration() -> None:
     module = _module()
     readme = module.build_readme(_config(Path('/tmp')))
 
-    assert 'legacy developer-only manual registration workflow' in readme
-    assert 'get_job_dir(job_id)' in readme
-    assert 'create_batch_apply_job' in readme
-    assert '`file_id`/`key1_byte`/`key2_byte` metadata' in readme
-    assert '/batch/job/<job_id>/files' in readme
-    assert (
-        'refraction_static_ui_fixture.md'
-        '#legacy-developer-appendix-job-artifact-registration'
-    ) in readme
+    assert 'ui-fixture-picks-001' not in readme
+    assert 'get_job_dir(job_id)' not in readme
+    assert 'create_batch_apply_job' not in readme
+    assert '/batch/job/<job_id>/files' not in readme
 
 
 def test_refraction_static_ui_fixture_docs_list_sort_headers() -> None:
@@ -313,48 +304,16 @@ def test_refraction_static_ui_fixture_docs_list_sort_headers() -> None:
     assert '`key1=9` and `key2=13`' in docs
 
 
-def test_fixture_docs_mention_batch_job_files_verification() -> None:
+def test_static_correction_fixture_docs_do_not_recommend_manual_pick_job_registration() -> None:
     docs = (
         _REPO_ROOT / 'docs' / 'statics' / 'refraction_static_ui_fixture.md'
     ).read_text(encoding='utf-8')
 
-    assert 'Legacy Developer Appendix: Job Artifact Registration' in docs
-    assert 'curl http://localhost:8000/batch/job/ui-fixture-picks-001/files' in docs
-    assert '"name": "predicted_picks_time_s.npz"' in docs
-    assert '"size_bytes": 12345' in docs
-    assert 'no longer the recommended UI workflow' in docs
-
-
-def test_fixture_docs_mention_existing_job_artifact_mechanism() -> None:
-    docs = (
-        _REPO_ROOT / 'docs' / 'statics' / 'refraction_static_ui_fixture.md'
-    ).read_text(encoding='utf-8')
-    normalized = _single_spaced(docs)
-
-    assert 'legacy job-artifact plumbing' in normalized
-    assert 'from app.services.pipeline_artifacts import get_job_dir' in docs
-    assert 'state.jobs.create_batch_apply_job' in docs
-    assert 'job_type = batch_apply' in docs
-    assert 'file_id = <file_id returned by import>' in docs
-    assert 'key1_byte = 9' in docs
-    assert 'key2_byte = 13' in docs
-    assert 'artifacts_dir = <path returned by get_job_dir(job_id)>' in docs
-
-
-def test_fixture_docs_mention_in_memory_ttl_limitation() -> None:
-    docs = (
-        _REPO_ROOT / 'docs' / 'statics' / 'refraction_static_ui_fixture.md'
-    ).read_text(encoding='utf-8')
-    normalized = _single_spaced(docs)
-
-    assert 'not a persistent artifact registration API' in normalized
-    assert (
-        'state` is not automatically available in a normal Python shell'
-    ) in normalized
-    assert 'live `AppState` object' in docs
-    assert 'registration disappears after app restart' in docs
-    assert 'TTL-managed' in docs
-    assert 'PIPELINE_JOBS_TTL_HOURS' in docs
+    assert 'ui-fixture-picks-001' not in docs
+    assert 'Legacy Developer Appendix: Job Artifact Registration' not in docs
+    assert 'from app.services.pipeline_artifacts import get_job_dir' not in docs
+    assert 'state.jobs.create_batch_apply_job' not in docs
+    assert 'curl http://localhost:8000/batch/job/' not in docs
 
 
 def test_refraction_static_ui_fixture_import_has_no_side_effects(

@@ -1486,14 +1486,20 @@ test('static_correction_pick_npz_input_visible', async ({ page }) => {
 	await expect(page.getByTestId('static-correction-pick-npz-summary')).toContainText('4 B');
 });
 
-test('static_correction_pick_job_fields_removed', async ({ page }) => {
+test('static_correction_pick_job_controls_not_rendered', async ({ page }) => {
 	await openStaticCorrectionTab(page);
 
+	const panel = page.getByTestId('static-correction-panel');
+	const picksSection = panel.locator('section[aria-labelledby="staticCorrectionPicksHeading"]');
+	await expect(picksSection.locator('input, select, button')).toHaveCount(1);
+	await expect(picksSection.getByTestId('static-correction-pick-npz')).toBeVisible();
 	await expect(page.getByTestId('static-correction-pick-kind')).toHaveCount(0);
 	await expect(page.getByTestId('static-correction-pick-job-id')).toHaveCount(0);
 	await expect(page.getByTestId('static-correction-pick-artifact-name')).toHaveCount(0);
 	await expect(page.getByTestId('static-correction-load-pick-artifacts')).toHaveCount(0);
 	await expect(page.getByTestId('static-correction-pick-artifact-list')).toHaveCount(0);
+	await expect(picksSection.getByRole('button', { name: 'Load pick artifacts' })).toHaveCount(0);
+	await expect(picksSection.getByRole('combobox')).toHaveCount(0);
 });
 
 test('static_correction_request_preview_uses_uploaded_npz', async ({ page }) => {
@@ -1508,6 +1514,7 @@ test('static_correction_request_preview_uses_uploaded_npz', async ({ page }) => 
 	);
 	await expect(requestPreview).toContainText('"pick_source"');
 	await expect(requestPreview).toContainText('"kind": "uploaded_npz"');
+	await expect(requestPreview).not.toContainText('batch_predicted_npz');
 	await expect(requestPreview).not.toContainText('"job_id"');
 	await expect(requestPreview).not.toContainText('"artifact_name"');
 });

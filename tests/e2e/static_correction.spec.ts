@@ -107,6 +107,7 @@ test('direct NPZ Static Correction posts multipart request and auto-loads Refrac
 	expect(multipartBody).toContain('"key1_byte":9');
 	expect(multipartBody).toContain('"key2_byte":13');
 	expect(multipartBody).toContain('"pick_source":{"kind":"uploaded_npz"}');
+	expect(multipartBody).not.toContain('batch_predicted_npz');
 	expect(multipartBody).toContain('"linkage":{"mode":"none"}');
 	expect(multipartBody).toContain('name="pick_npz"; filename="uploaded-picks.npz"');
 	expect(qcRequestBody).toContain('"job_id":"static-job-e2e"');
@@ -220,6 +221,7 @@ test('direct NPZ Static Correction builds checked linkage before multipart apply
 	expect(multipartBody).toContain('"key1_byte":17');
 	expect(multipartBody).toContain('"key2_byte":21');
 	expect(multipartBody).toContain('"pick_source":{"kind":"uploaded_npz"}');
+	expect(multipartBody).not.toContain('batch_predicted_npz');
 	expect(multipartBody).toContain(
 		'"linkage":{"mode":"required","job_id":"linkage-job-e2e","artifact_name":"geometry_linkage.npz"}',
 	);
