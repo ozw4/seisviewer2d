@@ -675,6 +675,38 @@ def test_build_refraction_static_input_model_loads_npz_original_order(
     assert model.metadata['pick_source_metadata']['accepted_pick_key'] == 'picks_time_s'
 
 
+def test_uploaded_npz_pick_source_does_not_resolve_job_artifact(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def _fail_artifact_resolution(*_args: Any, **_kwargs: Any) -> object:
+        pytest.fail('uploaded_npz should not resolve a job artifact')
+
+    monkeypatch.setattr(
+        inputs_module,
+        'resolve_job_artifact_path',
+        _fail_artifact_resolution,
+    )
+    req = RefractionStaticApplyRequest(
+        file_id='line-a',
+        pick_source={'kind': 'uploaded_npz'},
+        geometry=_geometry(),
+        linkage={'mode': 'none'},
+        model=RefractionStaticModelRequest(weathering_velocity_m_s=800.0),
+        datum={'mode': 'none'},
+    )
+
+    with pytest.raises(ValueError, match='multipart upload'):
+        inputs_module._load_refraction_pick_source(
+            req=req,
+            state=AppState(),
+            reader=object(),
+            n_traces=0,
+            n_samples=0,
+            dt=0.001,
+            sorted_trace_index=np.asarray([], dtype=np.int64),
+        )
+
+
 def test_build_refraction_static_input_model_omitted_linkage_skips_artifact_resolution(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

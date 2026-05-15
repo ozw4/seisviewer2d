@@ -1305,12 +1305,33 @@ class RefractionStaticPickSourceRequest(BaseModel):
 
     model_config = ConfigDict(extra='forbid')
 
-    kind: Literal['batch_predicted_npz', 'manual_npz_artifact', 'manual_memmap']
+    kind: Literal[
+        'uploaded_npz',
+        'batch_predicted_npz',
+        'manual_npz_artifact',
+        'manual_memmap',
+    ] = Field(
+        description=(
+            'Use uploaded_npz for Static Correction UI direct .npz uploads; '
+            'artifact-backed kinds are retained for legacy job-artifact flows.'
+        )
+    )
     job_id: str | None = None
     artifact_name: str | None = None
 
     @model_validator(mode='after')
     def _check_ref(self) -> 'RefractionStaticPickSourceRequest':
+        if self.kind == 'uploaded_npz':
+            if self.job_id is not None:
+                raise ValueError(
+                    'pick_source.job_id must be omitted for uploaded_npz'
+                )
+            if self.artifact_name is not None:
+                raise ValueError(
+                    'pick_source.artifact_name must be omitted for uploaded_npz'
+                )
+            return self
+
         if self.kind == 'manual_memmap':
             if self.job_id is not None or self.artifact_name is not None:
                 raise ValueError(

@@ -23,6 +23,7 @@ function renderStaticCorrectionForm() {
       <button id="staticCorrectionLoadPresetButton" type="button"></button>
       <button id="staticCorrectionDeletePresetButton" type="button"></button>
       <select id="staticCorrectionPickKind">
+        <option value="uploaded_npz">uploaded_npz</option>
         <option value="batch_predicted_npz" selected>batch_predicted_npz</option>
         <option value="manual_npz_artifact">manual_npz_artifact</option>
       </select>
@@ -475,6 +476,20 @@ test('request preview renders valid JSON and updates when fields change', () => 
   expect(preview.model.first_layer.weathering_velocity_m_s).toBe(925);
 });
 
+test('request preview supports uploaded pick source without artifact fields', () => {
+  loadStaticCorrectionScript();
+  const kind = document.getElementById('staticCorrectionPickKind');
+
+  kind.value = 'uploaded_npz';
+  kind.dispatchEvent(new Event('change', { bubbles: true }));
+
+  const preview = JSON.parse(document.getElementById('staticCorrectionRequestPreview').textContent);
+  expect(preview.pick_source).toEqual({ kind: 'uploaded_npz' });
+  expect(document.getElementById('staticCorrectionPickJobId').disabled).toBe(true);
+  expect(document.getElementById('staticCorrectionPickArtifactName').disabled).toBe(true);
+  expect(document.getElementById('staticCorrectionLoadPickArtifactsButton').disabled).toBe(true);
+});
+
 test('validation summary lists invalid fields before submit', () => {
   loadStaticCorrectionScript();
   document.getElementById('staticCorrectionFileId').value = '';
@@ -624,6 +639,7 @@ test('checked auto-threshold linkage validates threshold only when enabled', () 
 });
 
 test('field correction and export sections are collapsed details controls', () => {
+  expect(INDEX_HTML).toContain('<option value="uploaded_npz">uploaded_npz</option>');
   expect(INDEX_HTML).toContain('<details id="staticCorrectionFieldCorrectionsSection"');
   expect(INDEX_HTML).toContain('<summary id="staticCorrectionFieldCorrectionsHeading">Field corrections</summary>');
   expect(INDEX_HTML).toContain('<details id="staticCorrectionExportSection"');

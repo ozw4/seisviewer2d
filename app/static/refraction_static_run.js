@@ -93,6 +93,7 @@
       optional: true,
     },
   ];
+  const UPLOADED_PICK_KIND = 'uploaded_npz';
   const ARTIFACT_PICK_KINDS = new Set(['batch_predicted_npz', 'manual_npz_artifact']);
   const LINKAGE_THRESHOLD_MODES = new Set(['auto_threshold']);
   const LINKAGE_ARTIFACT_NAME = 'geometry_linkage.npz';
@@ -534,6 +535,12 @@
     if (!pickKind) {
       errors.push('pick_source.kind is required.');
     }
+    if (pickKind === UPLOADED_PICK_KIND) {
+      if (errors.length) {
+        throw validationError(errors);
+      }
+      return { kind: UPLOADED_PICK_KIND };
+    }
     if (ARTIFACT_PICK_KINDS.has(pickKind)) {
       if (!pickSource.job_id) {
         errors.push('pick_source.job_id is required for artifact-backed pick sources.');
@@ -549,6 +556,17 @@
       throw validationError(errors);
     }
     return pickSource;
+  }
+
+  function updateStaticCorrectionPickSourceControls(targetDom = dom) {
+    if (!targetDom) return;
+    const uploaded = trimValue(targetDom.pickKind && targetDom.pickKind.value) === UPLOADED_PICK_KIND;
+    if (targetDom.pickJobId) {
+      targetDom.pickJobId.disabled = uploaded;
+    }
+    if (targetDom.pickArtifactName) {
+      targetDom.pickArtifactName.disabled = uploaded;
+    }
   }
 
   function validateStaticCorrectionGeometryRequest(targetDom = dom) {
@@ -1777,6 +1795,11 @@
       return;
     }
 
+    if (trimValue(dom.pickKind.value) === UPLOADED_PICK_KIND) {
+      dom.pickArtifactList.hidden = true;
+      return;
+    }
+
     if (!state.pickArtifacts.length) {
       dom.pickArtifactList.hidden = true;
       return;
@@ -1954,13 +1977,17 @@
     if (state.showValidationSummary) {
       state.validationErrors = preview.errors;
     }
+    updateStaticCorrectionPickSourceControls(dom);
     updateStaticCorrectionLinkageOptions(dom);
     dom.status.textContent = state.message;
     dom.error.hidden = !state.error;
     dom.error.textContent = state.error;
     dom.runButton.disabled = state.phase !== 'idle' || isStaticJobActive();
     if (dom.loadPickArtifactsButton) {
-      dom.loadPickArtifactsButton.disabled = state.loadingPickArtifacts;
+      dom.loadPickArtifactsButton.disabled = (
+        state.loadingPickArtifacts
+        || trimValue(dom.pickKind.value) === UPLOADED_PICK_KIND
+      );
     }
     if (dom.requestPreview) {
       dom.requestPreview.textContent = preview.payload
@@ -1978,6 +2005,13 @@
     if (!dom) return;
     const pickKind = trimValue(dom.pickKind.value);
     const jobId = trimValue(dom.pickJobId.value);
+    if (pickKind === UPLOADED_PICK_KIND) {
+      state.error = 'Artifact listing is not available for pick_source.kind uploaded_npz.';
+      state.message = 'Use the direct pick upload flow for uploaded_npz.';
+      state.pickArtifacts = [];
+      render();
+      return;
+    }
     if (!jobId) {
       state.error = 'pick_source.job_id is required before loading pick artifacts.';
       state.message = 'Enter the batch job ID that produced the first-break pick artifact.';

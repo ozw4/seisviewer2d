@@ -572,6 +572,10 @@ def _load_refraction_pick_source(
     sorted_trace_index: np.ndarray,
 ) -> _LoadedRefractionPickSource:
     pick_source = req.pick_source
+    if pick_source.kind == 'uploaded_npz':
+        raise ValueError(
+            'pick_source.kind=uploaded_npz requires the multipart upload endpoint'
+        )
     if pick_source.kind == 'manual_memmap':
         return _load_manual_memmap_pick_source(
             file_id=req.file_id,
