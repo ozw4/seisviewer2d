@@ -486,6 +486,21 @@ test('request preview supports uploaded pick source without artifact fields', ()
   expect(INDEX_HTML).not.toContain('staticCorrectionLoadPickArtifactsButton');
 });
 
+test('static correction does not render manual target id or sort key inputs', () => {
+  loadStaticCorrectionScript();
+
+  expect(document.querySelector('#staticCorrectionFileId')).toBeNull();
+  expect(document.querySelector('#staticCorrectionKey1Byte')).toBeNull();
+  expect(document.querySelector('#staticCorrectionKey2Byte')).toBeNull();
+  expect(INDEX_HTML).not.toContain('name="file_id"');
+  expect(INDEX_HTML).not.toContain('name="key1_byte"');
+  expect(INDEX_HTML).not.toContain('name="key2_byte"');
+  expect(document.getElementById('staticCorrectionTargetFile').textContent).toContain('file-a');
+  expect(document.getElementById('staticCorrectionTargetKeys').textContent).toContain(
+    'key1=189, key2=193'
+  );
+});
+
 test('request preview uses current viewer target', () => {
   setViewerTarget('current-line', 9, 13);
   loadStaticCorrectionScript();
