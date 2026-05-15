@@ -51,6 +51,10 @@ def _skip_without_segyio() -> None:
     pytest.importorskip('segyio')
 
 
+def _single_spaced(text: str) -> str:
+    return ' '.join(text.split())
+
+
 def test_refraction_static_ui_fixture_cli_help() -> None:
     result = subprocess.run(
         [sys.executable, str(_SCRIPT), '--help'],
@@ -190,6 +194,8 @@ def test_refraction_static_ui_fixture_metadata_is_valid_json(tmp_path: Path) -> 
     assert metadata['recommended_static_correction']['v2_initial_m_s'] == 2400.0
     assert metadata['recommended_static_correction']['min_offset_m'] == 300.0
     assert metadata['recommended_static_correction']['max_offset_m'] == 1800.0
+    assert metadata['recommended_static_correction']['key1_byte'] == 17
+    assert metadata['recommended_static_correction']['key2_byte'] == 13
     assert metadata['recommended_static_correction']['exports'] == [
         'canonical_static_table',
         'lsst_plus',
@@ -207,6 +213,13 @@ def test_refraction_static_ui_fixture_metadata_is_valid_json(tmp_path: Path) -> 
         'offset_byte': 37,
         'coordinate_scalar_byte': 71,
         'elevation_scalar_byte': 69,
+    }
+    assert metadata['trace_store_sort_headers'] == {
+        'key1_byte': 17,
+        'key1_label': 'source_id',
+        'key2_byte': 13,
+        'key2_label': 'receiver_id',
+        'ordering': 'source_major_receiver_minor',
     }
     assert metadata['synthetic_model'] == {
         'v1_m_s': 800.0,
@@ -259,9 +272,87 @@ def test_refraction_static_ui_fixture_readme_is_created(tmp_path: Path) -> None:
     assert 'Static Correction UI refraction workflow' in readme
     assert 'one_layer_2d_clean' in readme
     assert 'Import `synthetic_static_2d_one_layer.sgy` through the normal UI' in readme
-    assert 'Register or copy `predicted_picks_time_s.npz` as a pick artifact' in readme
+    assert (
+        'Make `predicted_picks_time_s.npz` available through a `batch_apply` '
+        'job artifact'
+    ) in readme
+    assert 'create_batch_apply_job' in readme
+    assert '/batch/job/<job_id>/files' in readme
     assert 'Open the `Static Correction` tab' in readme
+    assert 'Trace sorting for Static Correction UI' in readme
+    assert 'key1_byte = 17  # source_id' in readme
+    assert 'key2_byte = 13  # receiver_id' in readme
     assert 'Refraction QC' in readme
+
+
+def test_generated_fixture_readme_mentions_manual_registration_workflow() -> None:
+    module = _module()
+    readme = module.build_readme(_config(Path('/tmp')))
+
+    assert 'developer-only manual registration workflow' in readme
+    assert 'get_job_dir(job_id)' in readme
+    assert 'create_batch_apply_job' in readme
+    assert '`file_id`/`key1_byte`/`key2_byte` metadata' in readme
+    assert '/batch/job/<job_id>/files' in readme
+    assert 'refraction_static_ui_fixture.md#workflow-b-manual-registration' in readme
+
+
+def test_refraction_static_ui_fixture_docs_list_sort_headers() -> None:
+    docs = (
+        _REPO_ROOT / 'docs' / 'statics' / 'refraction_static_ui_fixture.md'
+    ).read_text(encoding='utf-8')
+
+    assert '`key1_byte` | 17 | `source_id_byte`' in docs
+    assert '`key2_byte` | 13 | `receiver_id_byte`' in docs
+    assert 'recommended_static_correction.key1_byte = 17' in docs
+    assert 'recommended_static_correction.key2_byte = 13' in docs
+    assert 'pick/trace order mismatch' in docs
+    assert '`key1_byte=17` and `key2_byte=13`' in docs
+
+
+def test_fixture_docs_mention_batch_job_files_verification() -> None:
+    docs = (
+        _REPO_ROOT / 'docs' / 'statics' / 'refraction_static_ui_fixture.md'
+    ).read_text(encoding='utf-8')
+
+    assert 'Workflow A: Production-Like Batch Picks' in docs
+    assert 'Workflow B: Manual Registration For UI Smoke Tests' in docs
+    assert 'curl http://localhost:8000/batch/job/ui-fixture-picks-001/files' in docs
+    assert '"name": "predicted_picks_time_s.npz"' in docs
+    assert '"size_bytes": 12345' in docs
+    assert 'Load pick artifacts' in docs
+
+
+def test_fixture_docs_mention_existing_job_artifact_mechanism() -> None:
+    docs = (
+        _REPO_ROOT / 'docs' / 'statics' / 'refraction_static_ui_fixture.md'
+    ).read_text(encoding='utf-8')
+    normalized = _single_spaced(docs)
+
+    assert 'existing job artifact mechanism' in normalized
+    assert 'from app.services.pipeline_artifacts import get_job_dir' in docs
+    assert 'state.jobs.create_batch_apply_job' in docs
+    assert 'job_type = batch_apply' in docs
+    assert 'file_id = <file_id returned by import>' in docs
+    assert 'key1_byte = 17' in docs
+    assert 'key2_byte = 13' in docs
+    assert 'artifacts_dir = <path returned by get_job_dir(job_id)>' in docs
+
+
+def test_fixture_docs_mention_in_memory_ttl_limitation() -> None:
+    docs = (
+        _REPO_ROOT / 'docs' / 'statics' / 'refraction_static_ui_fixture.md'
+    ).read_text(encoding='utf-8')
+    normalized = _single_spaced(docs)
+
+    assert 'not a persistent artifact registration API' in normalized
+    assert (
+        'state` is not automatically available in a normal Python shell'
+    ) in normalized
+    assert 'live `AppState` object' in docs
+    assert 'registration disappears after app restart' in docs
+    assert 'TTL-managed' in docs
+    assert 'PIPELINE_JOBS_TTL_HOURS' in docs
 
 
 def test_refraction_static_ui_fixture_import_has_no_side_effects(
@@ -469,11 +560,26 @@ def test_synthetic_ui_fixture_metadata_contains_static_correction_ui_fields(
     assert metadata['pick_source']['artifact_name'] == 'predicted_picks_time_s.npz'
     assert metadata['geometry_headers']['source_id_byte'] == 17
     assert metadata['geometry_headers']['receiver_id_byte'] == 13
+    assert metadata['trace_store_sort_headers']['key1_byte'] == 17
+    assert metadata['trace_store_sort_headers']['key2_byte'] == 13
+    assert metadata['trace_store_sort_headers']['key1_label'] == 'source_id'
+    assert metadata['trace_store_sort_headers']['key2_label'] == 'receiver_id'
+    assert (
+        metadata['trace_store_sort_headers']['ordering']
+        == 'source_major_receiver_minor'
+    )
     assert metadata['recommended_static_correction']['model_preset'] == 'one_layer_global'
     assert metadata['recommended_static_correction']['linkage'] == {'mode': 'none'}
     assert metadata['recommended_static_correction']['v1_m_s'] == 800.0
     assert metadata['recommended_static_correction']['v2_initial_m_s'] == 2400.0
+    assert metadata['recommended_static_correction']['key1_byte'] == 17
+    assert metadata['recommended_static_correction']['key2_byte'] == 13
     assert metadata['recommended_static_correction']['register_corrected_file'] is True
+
+    readme = module.build_readme(config)
+    assert 'Trace sorting for Static Correction UI' in readme
+    assert 'key1_byte = 17  # source_id' in readme
+    assert 'key2_byte = 13  # receiver_id' in readme
 
 
 def test_synthetic_ui_fixture_expected_summary_contains_truth_ranges(

@@ -37,6 +37,14 @@ GEOMETRY_HEADERS = {
     'elevation_scalar_byte': 69,
 }
 
+TRACE_STORE_SORT_HEADERS = {
+    'key1_byte': GEOMETRY_HEADERS['source_id_byte'],
+    'key1_label': 'source_id',
+    'key2_byte': GEOMETRY_HEADERS['receiver_id_byte'],
+    'key2_label': 'receiver_id',
+    'ordering': 'source_major_receiver_minor',
+}
+
 
 @dataclass(frozen=True)
 class FixtureConfig:
@@ -418,6 +426,8 @@ def build_fixture_metadata(config: FixtureConfig) -> dict[str, object]:
             'model_preset': 'one_layer_global',
             'linkage': {'mode': 'none'},
             'field_corrections': {'mode': 'none'},
+            'key1_byte': TRACE_STORE_SORT_HEADERS['key1_byte'],
+            'key2_byte': TRACE_STORE_SORT_HEADERS['key2_byte'],
             'v1_m_s': config.v1_m_s,
             'v2_initial_m_s': config.v2_m_s,
             'min_offset_m': 300.0,
@@ -432,6 +442,7 @@ def build_fixture_metadata(config: FixtureConfig) -> dict[str, object]:
             'model': 'one_layer_t1lsst_compatible',
         },
         'geometry_headers': GEOMETRY_HEADERS,
+        'trace_store_sort_headers': TRACE_STORE_SORT_HEADERS,
         'synthetic_model': {
             'v1_m_s': config.v1_m_s,
             'v2_m_s': config.v2_m_s,
@@ -535,7 +546,8 @@ def build_readme(config: FixtureConfig) -> str:
         f'`{METADATA_NAME}`.\n\n'
         '## UI workflow\n\n'
         f'1. Import `{SGY_NAME}` through the normal UI and note the `file_id`.\n'
-        f'2. Register or copy `{PICK_ARTIFACT_NAME}` as a pick artifact for a job.\n'
+        f'2. Make `{PICK_ARTIFACT_NAME}` available through a `batch_apply` '
+        'job artifact.\n'
         '3. Open the `Static Correction` tab.\n'
         '4. Enter the `file_id`, pick `job_id`, and artifact name '
         f'`{PICK_ARTIFACT_NAME}`.\n'
@@ -543,6 +555,20 @@ def build_readme(config: FixtureConfig) -> str:
         '6. Use `one_layer_global`, leave linkage off, and select the '
         'recommended exports.\n'
         '7. Run the job and inspect the completed result in `Refraction QC`.\n'
+        '\n'
+        'For the precise developer-only manual registration workflow, including '
+        '`get_job_dir(job_id)`, `create_batch_apply_job`, the required '
+        '`file_id`/`key1_byte`/`key2_byte` metadata, and '
+        '`/batch/job/<job_id>/files` verification, see '
+        '`docs/statics/refraction_static_ui_fixture.md'
+        '#workflow-b-manual-registration-for-ui-smoke-tests`.\n\n'
+        '## Trace sorting for Static Correction UI\n\n'
+        'Use:\n'
+        '  key1_byte = 17  # source_id\n'
+        '  key2_byte = 13  # receiver_id\n\n'
+        'The generated pick artifact is written in the same sorted trace order. '
+        'Changing these sort headers may cause the pick artifact to no longer '
+        'align with the imported TraceStore order.\n'
     )
 
 
