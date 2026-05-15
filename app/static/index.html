@@ -1191,6 +1191,35 @@
       color: #475569;
     }
 
+    .static-correction-target-summary {
+      display: grid;
+      gap: 0.35em;
+      font-size: 0.86em;
+      color: #334155;
+    }
+
+    .static-correction-target-summary[hidden] {
+      display: none;
+    }
+
+    .static-correction-target-row {
+      display: grid;
+      grid-template-columns: minmax(7.5em, max-content) minmax(0, 1fr);
+      gap: 0.5em;
+      align-items: baseline;
+    }
+
+    .static-correction-target-label {
+      color: #64748b;
+      font-weight: 600;
+    }
+
+    .static-correction-target-value {
+      min-width: 0;
+      overflow-wrap: anywhere;
+      color: #111827;
+    }
+
     .static-correction-field {
       display: flex;
       flex-direction: column;
@@ -1207,6 +1236,13 @@
       background: #fff;
       color: #111827;
       font: inherit;
+    }
+
+    .static-correction-file-summary {
+      min-height: 1.4em;
+      color: #64748b;
+      font-size: 0.82em;
+      overflow-wrap: anywhere;
     }
 
     .static-correction-field-row {
@@ -1269,57 +1305,6 @@
       color: #111827;
       font: inherit;
       font-size: 0.86em;
-    }
-
-    .static-correction-artifact-list {
-      display: flex;
-      flex-direction: column;
-      gap: 0.35em;
-      font-size: 0.82em;
-      color: #334155;
-    }
-
-    .static-correction-artifact-list[hidden] {
-      display: none;
-    }
-
-    .static-correction-artifact-list ul {
-      display: flex;
-      flex-direction: column;
-      gap: 0.3em;
-      margin: 0;
-      padding: 0;
-      list-style: none;
-    }
-
-    .static-correction-artifact-list li {
-      display: flex;
-      align-items: center;
-      gap: 0.4em;
-      min-width: 0;
-    }
-
-    .static-correction-artifact-list button {
-      min-width: 0;
-      overflow-wrap: anywhere;
-      padding: 0.3em 0.45em;
-      border: 1px solid #cbd5e1;
-      border-radius: 4px;
-      background: #fff;
-      color: #111827;
-      font: inherit;
-      text-align: left;
-    }
-
-    .static-correction-artifact-list button.is-likely {
-      border-color: #60a5fa;
-      background: #eff6ff;
-    }
-
-    .static-correction-artifact-tag {
-      flex: 0 0 auto;
-      color: #0369a1;
-      font-size: 0.9em;
     }
 
     .static-correction-job-panel {
@@ -2073,27 +2058,38 @@
         <div class="static-correction-panel" data-testid="static-correction-panel">
           <h2 class="static-correction-title">Static Correction</h2>
           <form id="staticCorrectionForm" class="static-correction-form" data-testid="static-correction-form">
-            <section class="static-correction-section" aria-labelledby="staticCorrectionInputHeading">
-              <h3 id="staticCorrectionInputHeading">Input</h3>
-              <label class="static-correction-field" for="staticCorrectionFileId">File ID
-                <input id="staticCorrectionFileId" name="file_id" type="text" autocomplete="off"
-                  placeholder="SEG-Y or TraceStore file_id" data-testid="static-correction-file-id" />
-              </label>
-              <div class="static-correction-field-row">
-                <label class="static-correction-field" for="staticCorrectionKey1Byte">key1_byte
-                  <input id="staticCorrectionKey1Byte" name="key1_byte" type="number" min="1" step="1"
-                    value="189" data-testid="static-correction-key1-byte" />
-                </label>
-                <label class="static-correction-field" for="staticCorrectionKey2Byte">key2_byte
-                  <input id="staticCorrectionKey2Byte" name="key2_byte" type="number" min="1" step="1"
-                    value="193" data-testid="static-correction-key2-byte" />
-                </label>
+            <section class="static-correction-section" aria-labelledby="staticCorrectionTargetHeading">
+              <h3 id="staticCorrectionTargetHeading">Target</h3>
+              <div id="staticCorrectionTargetSummary" class="static-correction-target-summary"
+                data-testid="static-correction-target-summary">
+                <div id="staticCorrectionTargetEmpty" class="static-correction-help"
+                  data-testid="static-correction-target-empty">
+                  No active viewer file. Open an SGY/TraceStore in the viewer before running Static Correction.
+                </div>
+                <div id="staticCorrectionTargetDetails" class="static-correction-target-summary" hidden
+                  data-testid="static-correction-target-details">
+                  <div class="static-correction-target-row">
+                    <span class="static-correction-target-label">Current viewer file</span>
+                    <span id="staticCorrectionTargetFile" class="static-correction-target-value"
+                      data-testid="static-correction-target-file">-</span>
+                  </div>
+                  <div class="static-correction-target-row">
+                    <span class="static-correction-target-label">Sort keys</span>
+                    <span id="staticCorrectionTargetKeys" class="static-correction-target-value"
+                      data-testid="static-correction-target-keys">-</span>
+                  </div>
+                  <div class="static-correction-target-row">
+                    <span class="static-correction-target-label">Status</span>
+                    <span id="staticCorrectionTargetStatus" class="static-correction-target-value"
+                      data-testid="static-correction-target-status">-</span>
+                  </div>
+                </div>
               </div>
             </section>
             <section class="static-correction-section" aria-labelledby="staticCorrectionPresetHeading">
               <h3 id="staticCorrectionPresetHeading">Presets</h3>
               <p class="static-correction-help">
-                Presets store parameter fields only. Loading a preset keeps the current file_id and pick_source.job_id.
+                Presets store parameter fields only. Loading a preset keeps the current viewer target and selected pick file.
               </p>
               <div class="static-correction-preset-grid">
                 <label class="static-correction-field" for="staticCorrectionPresetSelect">Saved preset
@@ -2120,33 +2116,15 @@
             <section class="static-correction-section" aria-labelledby="staticCorrectionPicksHeading">
               <h3 id="staticCorrectionPicksHeading">First-break picks</h3>
               <p class="static-correction-help">
-                Use a first-break pick artifact accepted by /statics/refraction/apply. The viewer first-break
-                probability cache is not a valid statics pick artifact.
+                Select a first-break pick NPZ for this static correction run. The viewer first-break probability
+                cache is not a valid statics pick file.
               </p>
-              <label class="static-correction-field" for="staticCorrectionPickKind">pick_source.kind
-                <select id="staticCorrectionPickKind" name="pick_source.kind"
-                  data-testid="static-correction-pick-kind">
-                  <option value="uploaded_npz">uploaded_npz</option>
-                  <option value="batch_predicted_npz" selected>batch_predicted_npz</option>
-                  <option value="manual_npz_artifact">manual_npz_artifact</option>
-                </select>
+              <label class="static-correction-field" for="staticCorrectionPickNpz">First-break pick NPZ
+                <input id="staticCorrectionPickNpz" name="pick_npz" type="file" accept=".npz"
+                  data-testid="static-correction-pick-npz" />
               </label>
-              <label class="static-correction-field" for="staticCorrectionPickJobId">pick_source.job_id
-                <input id="staticCorrectionPickJobId" name="pick_source.job_id" type="text" autocomplete="off"
-                  placeholder="Batch job ID containing pick artifact"
-                  data-testid="static-correction-pick-job-id" />
-              </label>
-              <label class="static-correction-field" for="staticCorrectionPickArtifactName">pick_source.artifact_name
-                <input id="staticCorrectionPickArtifactName" name="pick_source.artifact_name" type="text"
-                  autocomplete="off" value="predicted_picks_time_s.npz"
-                  data-testid="static-correction-pick-artifact-name" />
-              </label>
-              <div class="static-correction-actions">
-                <button id="staticCorrectionLoadPickArtifactsButton" type="button"
-                  data-testid="static-correction-load-pick-artifacts">Load pick artifacts</button>
-              </div>
-              <div id="staticCorrectionPickArtifactList" class="static-correction-artifact-list" hidden
-                data-testid="static-correction-pick-artifact-list"></div>
+              <div id="staticCorrectionPickNpzSummary" class="static-correction-file-summary"
+                data-testid="static-correction-pick-npz-summary">No NPZ file selected.</div>
             </section>
             <section class="static-correction-section" aria-labelledby="staticCorrectionGeometryHeading">
               <h3 id="staticCorrectionGeometryHeading">Geometry</h3>

@@ -1,10 +1,6 @@
 (function () {
   const DEFAULTS = {
-    key1Byte: '189',
-    key2Byte: '193',
     modelPreset: 'one_layer_global',
-    pickKind: 'batch_predicted_npz',
-    pickArtifactName: 'predicted_picks_time_s.npz',
     linkageMode: 'auto_threshold',
     linkageThresholdM: '25',
     weatheringVelocityMS: '800',
@@ -94,7 +90,6 @@
     },
   ];
   const UPLOADED_PICK_KIND = 'uploaded_npz';
-  const ARTIFACT_PICK_KINDS = new Set(['batch_predicted_npz', 'manual_npz_artifact']);
   const LINKAGE_THRESHOLD_MODES = new Set(['auto_threshold']);
   const LINKAGE_ARTIFACT_NAME = 'geometry_linkage.npz';
   const LINKAGE_READY_STATES = new Set(['done', 'ready']);
@@ -110,10 +105,8 @@
 
   const state = {
     ready: false,
-    message: 'Enter a SEG-Y/TraceStore file_id and a first-break pick artifact usable by refraction statics.',
+    message: 'Open a viewer file and choose a first-break pick NPZ for refraction statics.',
     error: '',
-    loadingPickArtifacts: false,
-    pickArtifacts: [],
     lastRequest: null,
     lastResponse: null,
     lastLinkageBuildRequest: null,
@@ -133,6 +126,7 @@
 
   let dom = null;
   let staticPollToken = 0;
+  let viewerTargetUnsubscribe = null;
 
   function trimValue(value) {
     return String(value || '').trim();
@@ -142,6 +136,30 @@
     if (element && trimValue(element.value) === '') {
       element.value = value;
     }
+  }
+
+  function getStaticCorrectionTarget() {
+    const viewerState = window.SeisViewerState;
+    if (!viewerState || typeof viewerState.getActiveFileTarget !== 'function') {
+      return null;
+    }
+    const target = viewerState.getActiveFileTarget();
+    if (!target || typeof target !== 'object') {
+      return null;
+    }
+    const fileId = trimValue(target.fileId);
+    const key1Byte = Number(target.key1Byte);
+    const key2Byte = Number(target.key2Byte);
+    if (!fileId || !Number.isInteger(key1Byte) || !Number.isInteger(key2Byte)) {
+      return null;
+    }
+    const displayName = trimValue(target.displayName) || fileId;
+    return {
+      file_id: fileId,
+      display_name: displayName,
+      key1_byte: key1Byte,
+      key2_byte: key2Byte,
+    };
   }
 
   function geometryValueElements(targetDom) {
@@ -192,32 +210,45 @@
     }
   }
 
-  function isLikelyPickArtifact(name) {
-    const normalized = trimValue(name);
-    return (
-      normalized === DEFAULTS.pickArtifactName
-      || /^manual_picks_time.*\.npz$/i.test(normalized)
-    );
+  function hasNpzExtension(name) {
+    return trimValue(name).toLowerCase().endsWith('.npz');
   }
 
-  function pickArtifactRank(name) {
-    const normalized = trimValue(name);
-    if (normalized === DEFAULTS.pickArtifactName) {
-      return 0;
+  function selectedPickNpzFile(targetDom = dom) {
+    if (!targetDom || !targetDom.pickNpzFile || !targetDom.pickNpzFile.files) {
+      return null;
     }
-    return isLikelyPickArtifact(normalized) ? 1 : 2;
+    return targetDom.pickNpzFile.files[0] || null;
+  }
+
+  function formatFileSize(bytes) {
+    const size = Number(bytes);
+    if (!Number.isFinite(size) || size < 0) {
+      return '';
+    }
+    if (size < 1024) {
+      return `${size} B`;
+    }
+    if (size < 1024 * 1024) {
+      return `${(size / 1024).toFixed(1)} KiB`;
+    }
+    return `${(size / (1024 * 1024)).toFixed(1)} MiB`;
   }
 
   function collectInputs(targetDom = dom) {
     if (!targetDom) return null;
+    const target = getStaticCorrectionTarget();
+    const pickFile = selectedPickNpzFile(targetDom);
     return {
-      file_id: trimValue(targetDom.fileId.value),
-      key1_byte: trimValue(targetDom.key1Byte.value),
-      key2_byte: trimValue(targetDom.key2Byte.value),
+      file_id: target ? target.file_id : '',
+      key1_byte: target ? String(target.key1_byte) : '',
+      key2_byte: target ? String(target.key2_byte) : '',
       pick_source: {
-        kind: trimValue(targetDom.pickKind.value),
-        job_id: trimValue(targetDom.pickJobId.value),
-        artifact_name: trimValue(targetDom.pickArtifactName.value),
+        kind: UPLOADED_PICK_KIND,
+      },
+      pick_npz: {
+        name: pickFile ? trimValue(pickFile.name) : '',
+        size: pickFile ? pickFile.size : null,
       },
     };
   }
@@ -365,16 +396,7 @@
   }
 
   function collectPresetInputs(targetDom = dom) {
-    const inputValues = collectInputs(targetDom);
     return {
-      key1_byte: inputValues ? inputValues.key1_byte : '',
-      key2_byte: inputValues ? inputValues.key2_byte : '',
-      pick_source: {
-        kind: inputValues && inputValues.pick_source ? inputValues.pick_source.kind : '',
-        artifact_name: inputValues && inputValues.pick_source
-          ? inputValues.pick_source.artifact_name
-          : '',
-      },
       geometry: collectGeometryInputs(targetDom),
       linkage: collectLinkageInputs(targetDom),
       model: collectModelInputs(targetDom),
@@ -530,43 +552,29 @@
     if (!values) {
       throw validationError(['Static correction form is not available.']);
     }
-    const pickSource = { ...values.pick_source };
-    const pickKind = pickSource.kind;
-    if (!pickKind) {
-      errors.push('pick_source.kind is required.');
-    }
-    if (pickKind === UPLOADED_PICK_KIND) {
-      if (errors.length) {
-        throw validationError(errors);
-      }
-      return { kind: UPLOADED_PICK_KIND };
-    }
-    if (ARTIFACT_PICK_KINDS.has(pickKind)) {
-      if (!pickSource.job_id) {
-        errors.push('pick_source.job_id is required for artifact-backed pick sources.');
-      }
-      if (!pickSource.artifact_name) {
-        errors.push('pick_source.artifact_name is required for artifact-backed pick sources.');
-      }
-    }
-    if (pickSource.artifact_name && !pickSource.artifact_name.toLowerCase().endsWith('.npz')) {
-      errors.push('pick_source.artifact_name must be an .npz artifact.');
+    const pickFile = selectedPickNpzFile(targetDom);
+    if (!pickFile) {
+      errors.push('First-break pick NPZ is required.');
+    } else if (!hasNpzExtension(pickFile.name)) {
+      errors.push('First-break pick file must use the .npz extension.');
     }
     if (errors.length) {
       throw validationError(errors);
     }
-    return pickSource;
+    return { kind: UPLOADED_PICK_KIND };
   }
 
-  function updateStaticCorrectionPickSourceControls(targetDom = dom) {
-    if (!targetDom) return;
-    const uploaded = trimValue(targetDom.pickKind && targetDom.pickKind.value) === UPLOADED_PICK_KIND;
-    if (targetDom.pickJobId) {
-      targetDom.pickJobId.disabled = uploaded;
+  function renderPickNpzSummary(targetDom = dom) {
+    if (!targetDom || !targetDom.pickNpzSummary) return;
+    const pickFile = selectedPickNpzFile(targetDom);
+    if (!pickFile) {
+      targetDom.pickNpzSummary.textContent = 'No NPZ file selected.';
+      return;
     }
-    if (targetDom.pickArtifactName) {
-      targetDom.pickArtifactName.disabled = uploaded;
-    }
+    const size = formatFileSize(pickFile.size);
+    targetDom.pickNpzSummary.textContent = size
+      ? `${pickFile.name} (${size})`
+      : pickFile.name;
   }
 
   function validateStaticCorrectionGeometryRequest(targetDom = dom) {
@@ -1408,10 +1416,14 @@
       throw validationError(['Static correction form is not available.']);
     }
     if (!values.file_id) {
-      errors.push('file_id is required.');
+      errors.push('No active viewer file. Open an SGY/TraceStore in the viewer before running Static Correction.');
     }
-    const key1Byte = parsePositiveInteger(values.key1_byte, 'key1_byte', errors);
-    const key2Byte = parsePositiveInteger(values.key2_byte, 'key2_byte', errors);
+    const key1Byte = values.file_id
+      ? parsePositiveInteger(values.key1_byte, 'key1_byte', errors)
+      : null;
+    const key2Byte = values.file_id
+      ? parsePositiveInteger(values.key2_byte, 'key2_byte', errors)
+      : null;
 
     let pickSource = null;
     try {
@@ -1462,10 +1474,14 @@
     }
 
     if (!values.file_id) {
-      errors.push('file_id is required.');
+      errors.push('No active viewer file. Open an SGY/TraceStore in the viewer before running Static Correction.');
     }
-    const key1Byte = parsePositiveInteger(values.key1_byte, 'key1_byte', errors);
-    const key2Byte = parsePositiveInteger(values.key2_byte, 'key2_byte', errors);
+    const key1Byte = values.file_id
+      ? parsePositiveInteger(values.key1_byte, 'key1_byte', errors)
+      : null;
+    const key2Byte = values.file_id
+      ? parsePositiveInteger(values.key2_byte, 'key2_byte', errors)
+      : null;
     let pickSource = null;
     try {
       pickSource = buildStaticCorrectionPickSource(dom);
@@ -1540,13 +1556,6 @@
 
   function applyPresetValues(values, targetDom = dom) {
     if (!targetDom || !values) return;
-
-    setElementValue(targetDom.key1Byte, values.key1_byte);
-    setElementValue(targetDom.key2Byte, values.key2_byte);
-    if (values.pick_source) {
-      setElementValue(targetDom.pickKind, values.pick_source.kind);
-      setElementValue(targetDom.pickArtifactName, values.pick_source.artifact_name);
-    }
 
     const geometry = values.geometry || {};
     setElementValue(targetDom.geometryPreset, geometry.preset);
@@ -1681,7 +1690,7 @@
     state.error = '';
     state.showValidationSummary = false;
     state.validationErrors = [];
-    state.message = `Loaded preset ${preset.name}. Current file_id and pick_source.job_id were kept.`;
+    state.message = `Loaded preset ${preset.name}. Current viewer target and selected pick file were kept.`;
     render();
   }
 
@@ -1705,16 +1714,34 @@
     render();
   }
 
-  function buildStaticLinkageBuildRequest(staticCorrectionPayload) {
-    if (!staticCorrectionPayload) {
-      throw validationError(['Static correction payload is required before building linkage.']);
+  function buildStaticLinkageBuildRequest(targetDom = dom) {
+    const values = collectInputs(targetDom);
+    const errors = [];
+    if (!values) {
+      throw validationError(['Static correction form is not available.']);
+    }
+    if (!values.file_id) {
+      errors.push('No active viewer file. Open an SGY/TraceStore in the viewer before running Static Correction.');
+    }
+    const key1Byte = values.file_id
+      ? parsePositiveInteger(values.key1_byte, 'key1_byte', errors)
+      : null;
+    const key2Byte = values.file_id
+      ? parsePositiveInteger(values.key2_byte, 'key2_byte', errors)
+      : null;
+    const geometryResult = validateStaticCorrectionGeometryRequest(targetDom);
+    errors.push(...geometryResult.errors);
+    const linkageResult = validateStaticCorrectionLinkageRequest(targetDom);
+    errors.push(...linkageResult.errors);
+    if (errors.length) {
+      throw validationError(errors);
     }
     return {
-      file_id: staticCorrectionPayload.file_id,
-      key1_byte: staticCorrectionPayload.key1_byte,
-      key2_byte: staticCorrectionPayload.key2_byte,
-      geometry: { ...staticCorrectionPayload.geometry },
-      linkage: { ...staticCorrectionPayload.linkage },
+      file_id: values.file_id,
+      key1_byte: key1Byte,
+      key2_byte: key2Byte,
+      geometry: { ...geometryResult.payload.geometry },
+      linkage: { ...linkageResult.payload.linkage },
     };
   }
 
@@ -1722,16 +1749,8 @@
     return [...files].sort((left, right) => {
       const leftName = trimValue(left && left.name ? left.name : left);
       const rightName = trimValue(right && right.name ? right.name : right);
-      const rank = pickArtifactRank(leftName) - pickArtifactRank(rightName);
-      return rank || leftName.localeCompare(rightName);
+      return leftName.localeCompare(rightName);
     });
-  }
-
-  function pickArtifactListUrl(kind, jobId) {
-    if (kind === 'batch_predicted_npz') {
-      return `/batch/job/${encodeURIComponent(jobId)}/files`;
-    }
-    return '';
   }
 
   function normalizeStaticJobState(value) {
@@ -1783,60 +1802,6 @@
       detail = '';
     }
     return `${operation} ${response.status}${detail ? `: ${detail}` : ''}`;
-  }
-
-  function renderPickArtifactList() {
-    if (!dom || !dom.pickArtifactList) return;
-    dom.pickArtifactList.innerHTML = '';
-
-    if (state.loadingPickArtifacts) {
-      dom.pickArtifactList.hidden = false;
-      dom.pickArtifactList.textContent = 'Loading pick artifacts...';
-      return;
-    }
-
-    if (trimValue(dom.pickKind.value) === UPLOADED_PICK_KIND) {
-      dom.pickArtifactList.hidden = true;
-      return;
-    }
-
-    if (!state.pickArtifacts.length) {
-      dom.pickArtifactList.hidden = true;
-      return;
-    }
-
-    const list = document.createElement('ul');
-    for (const file of state.pickArtifacts) {
-      const name = trimValue(file && file.name ? file.name : file);
-      if (!name) continue;
-      const item = document.createElement('li');
-      const button = document.createElement('button');
-      button.type = 'button';
-      button.textContent = name;
-      button.dataset.artifactName = name;
-      button.dataset.testid = `static-correction-pick-artifact-${name}`;
-      if (isLikelyPickArtifact(name)) {
-        button.classList.add('is-likely');
-      }
-      button.addEventListener('click', () => {
-        dom.pickArtifactName.value = name;
-        state.error = '';
-        state.message = `Selected pick artifact ${name}.`;
-        render();
-      });
-      item.appendChild(button);
-      if (isLikelyPickArtifact(name)) {
-        const tag = document.createElement('span');
-        tag.className = 'static-correction-artifact-tag';
-        tag.textContent = 'first-break candidate';
-        item.appendChild(tag);
-      }
-      list.appendChild(item);
-    }
-    dom.pickArtifactList.hidden = list.childNodes.length === 0;
-    if (!dom.pickArtifactList.hidden) {
-      dom.pickArtifactList.appendChild(list);
-    }
   }
 
   function renderStaticArtifacts() {
@@ -1971,24 +1936,46 @@
     }
   }
 
+  function renderTargetSummary() {
+    if (!dom || !dom.targetEmpty || !dom.targetDetails) return;
+    const target = getStaticCorrectionTarget();
+    dom.targetEmpty.hidden = Boolean(target);
+    dom.targetDetails.hidden = !target;
+    if (!target) {
+      dom.targetEmpty.textContent = 'No active viewer file. Open an SGY/TraceStore in the viewer before running Static Correction.';
+      return;
+    }
+    if (dom.targetFile) {
+      dom.targetFile.textContent = target.display_name;
+      dom.targetFile.title = target.file_id;
+    }
+    if (dom.targetKeys) {
+      dom.targetKeys.textContent = `key1=${target.key1_byte}, key2=${target.key2_byte}`;
+    }
+    if (dom.targetStatus) {
+      dom.targetStatus.textContent = 'Ready';
+    }
+  }
+
   function render() {
     if (!dom) return;
     const preview = getStaticCorrectionValidationSnapshot(dom);
+    const hasTarget = Boolean(getStaticCorrectionTarget());
     if (state.showValidationSummary) {
       state.validationErrors = preview.errors;
     }
-    updateStaticCorrectionPickSourceControls(dom);
     updateStaticCorrectionLinkageOptions(dom);
+    renderTargetSummary();
+    renderPickNpzSummary(dom);
     dom.status.textContent = state.message;
     dom.error.hidden = !state.error;
     dom.error.textContent = state.error;
-    dom.runButton.disabled = state.phase !== 'idle' || isStaticJobActive();
-    if (dom.loadPickArtifactsButton) {
-      dom.loadPickArtifactsButton.disabled = (
-        state.loadingPickArtifacts
-        || trimValue(dom.pickKind.value) === UPLOADED_PICK_KIND
-      );
-    }
+    dom.runButton.disabled = (
+      !hasTarget
+      || preview.errors.length > 0
+      || state.phase !== 'idle'
+      || isStaticJobActive()
+    );
     if (dom.requestPreview) {
       dom.requestPreview.textContent = preview.payload
         ? JSON.stringify(preview.payload, null, 2)
@@ -1996,63 +1983,8 @@
     }
     renderValidationSummary();
     renderPresetSelect();
-    renderPickArtifactList();
     renderStaticJobPanel();
     renderStaticArtifacts();
-  }
-
-  async function loadPickArtifacts() {
-    if (!dom) return;
-    const pickKind = trimValue(dom.pickKind.value);
-    const jobId = trimValue(dom.pickJobId.value);
-    if (pickKind === UPLOADED_PICK_KIND) {
-      state.error = 'Artifact listing is not available for pick_source.kind uploaded_npz.';
-      state.message = 'Use the direct pick upload flow for uploaded_npz.';
-      state.pickArtifacts = [];
-      render();
-      return;
-    }
-    if (!jobId) {
-      state.error = 'pick_source.job_id is required before loading pick artifacts.';
-      state.message = 'Enter the batch job ID that produced the first-break pick artifact.';
-      state.pickArtifacts = [];
-      render();
-      return;
-    }
-    const listUrl = pickArtifactListUrl(pickKind, jobId);
-    if (!listUrl) {
-      state.error = `Artifact listing is not available for pick_source.kind ${pickKind || '(blank)'}.`;
-      state.message = 'Type the pick artifact name manually.';
-      state.pickArtifacts = [];
-      render();
-      return;
-    }
-
-    state.loadingPickArtifacts = true;
-    state.error = '';
-    state.message = 'Loading pick artifacts...';
-    state.pickArtifacts = [];
-    render();
-
-    try {
-      const response = await fetch(listUrl);
-      if (!response.ok) {
-        throw new Error(await readResponseError(response, 'batch job files'));
-      }
-      const payload = await response.json();
-      const files = Array.isArray(payload.files) ? payload.files : [];
-      state.pickArtifacts = sortedArtifactFiles(files);
-      state.message = files.length
-        ? `Loaded ${files.length} artifact file${files.length === 1 ? '' : 's'} for ${jobId}.`
-        : `No artifact files returned for ${jobId}.`;
-    } catch (error) {
-      state.pickArtifacts = [];
-      state.error = error instanceof Error ? error.message : String(error);
-      state.message = 'Unable to load pick artifacts.';
-    } finally {
-      state.loadingPickArtifacts = false;
-      render();
-    }
   }
 
   async function postJson(url, payload, operation) {
@@ -2062,6 +1994,28 @@
         'Content-Type': 'application/json',
       },
       body: JSON.stringify(payload),
+    });
+    if (!response.ok) {
+      throw new Error(await readResponseError(response, operation));
+    }
+    return response.json();
+  }
+
+  function buildStaticCorrectionFormData(request, targetDom = dom) {
+    const pickFile = selectedPickNpzFile(targetDom);
+    if (!pickFile) {
+      throw validationError(['First-break pick NPZ is required.']);
+    }
+    const formData = new FormData();
+    formData.append('request_json', JSON.stringify(request));
+    formData.append('pick_npz', pickFile);
+    return formData;
+  }
+
+  async function postMultipart(url, formData, operation) {
+    const response = await fetch(url, {
+      method: 'POST',
+      body: formData,
     });
     if (!response.ok) {
       throw new Error(await readResponseError(response, operation));
@@ -2240,10 +2194,11 @@
       ? `Linkage job ${state.lastLinkageJobId} is ready. Submitting static correction...`
       : 'Submitting static correction...';
     render();
-    const responsePayload = await postJson(
-      '/statics/refraction/apply',
-      payload,
-      'refraction static apply'
+    const formData = buildStaticCorrectionFormData(payload);
+    const responsePayload = await postMultipart(
+      '/statics/refraction/apply-with-picks',
+      formData,
+      'refraction static apply with picks'
     );
     state.lastStaticCorrectionJobId = trimValue(responsePayload && responsePayload.job_id);
     setStaticJobSnapshot(responsePayload);
@@ -2260,10 +2215,6 @@
       pollStaticCorrectionJobUntilTerminal(state.lastStaticCorrectionJobId);
     }
     return responsePayload;
-  }
-
-  function submitRefractionStaticApply(request) {
-    return postJson('/statics/refraction/apply', request, 'refraction static apply');
   }
 
   async function runStaticCorrection() {
@@ -2299,11 +2250,11 @@
     try {
       let applyPayload = payload;
       if (dom.enableLinkage.checked) {
-        const linkageBuildPayload = buildStaticLinkageBuildRequest(payload);
-        state.lastLinkageBuildRequest = linkageBuildPayload;
         state.phase = 'building_linkage';
         state.message = 'Building endpoint geometry linkage...';
         render();
+        const linkageBuildPayload = buildStaticLinkageBuildRequest(dom);
+        state.lastLinkageBuildRequest = linkageBuildPayload;
 
         const linkageResponse = await postJson(
           '/statics/linkage/build',
@@ -2347,6 +2298,15 @@
     runStaticCorrection();
   }
 
+  function subscribeToViewerTargetUpdates() {
+    if (viewerTargetUnsubscribe || !window.store || typeof window.store.subscribe !== 'function') {
+      return;
+    }
+    viewerTargetUnsubscribe = window.store.subscribe(() => {
+      render();
+    });
+  }
+
   async function cancelStaticCorrectionJob() {
     const jobId = trimValue(state.lastStaticCorrectionJobId);
     if (!jobId || !isStaticJobActive()) {
@@ -2384,19 +2344,18 @@
     const status = document.getElementById('staticCorrectionStatus');
     const error = document.getElementById('staticCorrectionError');
     const runButton = document.getElementById('staticCorrectionRunButton');
-    const fileId = document.getElementById('staticCorrectionFileId');
-    const key1Byte = document.getElementById('staticCorrectionKey1Byte');
-    const key2Byte = document.getElementById('staticCorrectionKey2Byte');
+    const targetEmpty = document.getElementById('staticCorrectionTargetEmpty');
+    const targetDetails = document.getElementById('staticCorrectionTargetDetails');
+    const targetFile = document.getElementById('staticCorrectionTargetFile');
+    const targetKeys = document.getElementById('staticCorrectionTargetKeys');
+    const targetStatus = document.getElementById('staticCorrectionTargetStatus');
     const presetSelect = document.getElementById('staticCorrectionPresetSelect');
     const presetName = document.getElementById('staticCorrectionPresetName');
     const savePresetButton = document.getElementById('staticCorrectionSavePresetButton');
     const loadPresetButton = document.getElementById('staticCorrectionLoadPresetButton');
     const deletePresetButton = document.getElementById('staticCorrectionDeletePresetButton');
-    const pickKind = document.getElementById('staticCorrectionPickKind');
-    const pickJobId = document.getElementById('staticCorrectionPickJobId');
-    const pickArtifactName = document.getElementById('staticCorrectionPickArtifactName');
-    const loadPickArtifactsButton = document.getElementById('staticCorrectionLoadPickArtifactsButton');
-    const pickArtifactList = document.getElementById('staticCorrectionPickArtifactList');
+    const pickNpzFile = document.getElementById('staticCorrectionPickNpz');
+    const pickNpzSummary = document.getElementById('staticCorrectionPickNpzSummary');
     const geometryPreset = document.getElementById('staticCorrectionGeometryPreset');
     const sourceIdByte = document.getElementById('staticCorrectionSourceIdByte');
     const receiverIdByte = document.getElementById('staticCorrectionReceiverIdByte');
@@ -2484,11 +2443,11 @@
     const staticArtifactBody = document.getElementById('staticCorrectionArtifactBody');
     const staticArtifactEmpty = document.getElementById('staticCorrectionArtifactEmpty');
     if (
-      !form || !status || !error || !runButton || !fileId || !key1Byte || !key2Byte
+      !form || !status || !error || !runButton || !targetEmpty || !targetDetails
+      || !targetFile || !targetKeys || !targetStatus
       || !presetSelect || !presetName || !savePresetButton || !loadPresetButton
       || !deletePresetButton
-      || !pickKind || !pickJobId || !pickArtifactName || !loadPickArtifactsButton
-      || !pickArtifactList || !geometryPreset || !sourceIdByte || !receiverIdByte
+      || !pickNpzFile || !pickNpzSummary || !geometryPreset || !sourceIdByte || !receiverIdByte
       || !sourceXByte || !sourceYByte || !receiverXByte || !receiverYByte
       || !sourceElevationByte || !receiverElevationByte || !coordinateScalarByte
       || !elevationScalarByte || !sourceDepthByte || !coordinateUnit || !elevationUnit
@@ -2516,10 +2475,6 @@
       return;
     }
 
-    setDefaultValue(key1Byte, DEFAULTS.key1Byte);
-    setDefaultValue(key2Byte, DEFAULTS.key2Byte);
-    setDefaultValue(pickKind, DEFAULTS.pickKind);
-    setDefaultValue(pickArtifactName, DEFAULTS.pickArtifactName);
     setDefaultValue(linkageMode, DEFAULTS.linkageMode);
     setDefaultValue(linkageThresholdM, DEFAULTS.linkageThresholdM);
     setDefaultValue(modelKind, DEFAULTS.modelPreset);
@@ -2552,19 +2507,18 @@
       status,
       error,
       runButton,
-      fileId,
-      key1Byte,
-      key2Byte,
+      targetEmpty,
+      targetDetails,
+      targetFile,
+      targetKeys,
+      targetStatus,
       presetSelect,
       presetName,
       savePresetButton,
       loadPresetButton,
       deletePresetButton,
-      pickKind,
-      pickJobId,
-      pickArtifactName,
-      loadPickArtifactsButton,
-      pickArtifactList,
+      pickNpzFile,
+      pickNpzSummary,
       geometryPreset,
       sourceIdByte,
       receiverIdByte,
@@ -2645,6 +2599,13 @@
       staticArtifactEmpty,
     };
     state.presets = readStoredPresets();
+    subscribeToViewerTargetUpdates();
+    if (window.viewerBootstrapReady && typeof window.viewerBootstrapReady.then === 'function') {
+      window.viewerBootstrapReady.then(() => {
+        subscribeToViewerTargetUpdates();
+        render();
+      });
+    }
     applyStaticCorrectionGeometryPreset(dom, trimValue(geometryPreset.value) || GEOMETRY_DEFAULTS.preset);
     updateModelPresetControls(dom);
     updateStaticCorrectionLinkageOptions(dom);
@@ -2680,9 +2641,15 @@
       event.preventDefault();
       cancelStaticCorrectionJob();
     });
-    loadPickArtifactsButton.addEventListener('click', (event) => {
-      event.preventDefault();
-      loadPickArtifacts();
+    pickNpzFile.addEventListener('change', () => {
+      const pickFile = selectedPickNpzFile(dom);
+      state.error = '';
+      state.showValidationSummary = false;
+      state.validationErrors = [];
+      state.message = pickFile
+        ? `Selected first-break pick NPZ ${pickFile.name}.`
+        : 'Choose a first-break pick NPZ before running refraction statics.';
+      render();
     });
     geometryPreset.addEventListener('change', () => {
       applyStaticCorrectionGeometryPreset(dom, geometryPreset.value);
@@ -2760,6 +2727,7 @@
     buildRefractionStaticApplyRequest,
     buildStaticCorrectionGeometry,
     buildStaticCorrectionGeometryRequest,
+    buildStaticCorrectionFormData,
     buildStaticCorrectionLinkage,
     buildStaticCorrectionLinkageRequest,
     buildStaticCorrectionPickSource,
@@ -2774,11 +2742,10 @@
     collectOutputInputs,
     collectPresetInputs,
     applyPresetValues,
-    isLikelyPickArtifact,
+    hasNpzExtension,
     deleteSelectedPreset,
     getStaticCorrectionValidationSnapshot,
     loadStaticArtifacts,
-    loadPickArtifacts,
     loadSelectedPreset,
     normalizeStaticJobState,
     pollStaticCorrectionJobUntilTerminal,
@@ -2788,7 +2755,6 @@
     runStaticCorrection,
     saveCurrentPreset,
     stopStaticCorrectionPolling,
-    submitRefractionStaticApply,
     updateModelPresetControls,
     updateBedrockVelocityControls,
     updateStaticCorrectionFieldCorrectionOptions,
