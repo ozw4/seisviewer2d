@@ -89,6 +89,7 @@ _CELL_THRESHOLD_QC_KEYS = (
     'n_observations_outside_grid',
     'n_observations_rejected_by_low_fold_cell',
 )
+_DESIGN_MATRIX_ARTIFACT_DIR_PREFIX = 'refraction_design_matrix'
 
 
 class RefractionMultiLayerSolveError(ValueError):
@@ -108,6 +109,7 @@ class RefractionLayerSolverContext:
     model: RefractionStaticModelRequest
     solver: RefractionStaticSolverRequest
     grid: RefractionCellGrid | None = None
+    job_dir: Path | None = None
 
 
 @dataclass(frozen=True)
@@ -134,6 +136,7 @@ def solve_refraction_multilayer_time_terms(
     layer_masks: RefractionLayerObservationMasks,
     model: RefractionStaticModelRequest,
     solver: RefractionStaticSolverRequest,
+    job_dir: Path | None = None,
     grid: RefractionCellGrid | None = None,
     solver_dispatch: Mapping[
         tuple[RefractionLayerKind, RefractionLayerVelocityMode],
@@ -168,6 +171,7 @@ def solve_refraction_multilayer_time_terms(
             model=layer_model,
             solver=solver,
             grid=grid,
+            job_dir=_layer_design_matrix_artifact_dir(job_dir, config),
         )
         result = layer_solver(context)
         _validate_layer_result(result=result, config=config)
@@ -218,6 +222,7 @@ def compute_refraction_multilayer_datum_statics_from_input_model(
     apply_options: RefractionStaticApplyOptions | None,
     resolved_first_layer: ResolvedRefractionFirstLayer,
     job_dir: Path | None = None,
+    design_matrix_job_dir: Path | None = None,
     state: AppState | None = None,
     file_id: str | None = None,
     key1_byte: int | None = None,
@@ -239,6 +244,7 @@ def compute_refraction_multilayer_datum_statics_from_input_model(
         layer_masks=layer_masks,
         model=model,
         solver=solver,
+        job_dir=design_matrix_job_dir if design_matrix_job_dir is not None else job_dir,
     )
     weathering_replacement = build_refraction_multilayer_weathering_replacement_statics(
         input_model=input_model,
@@ -2282,6 +2288,7 @@ def _solve_existing_time_term_layer(
         result = estimate_refraction_half_intercept_times_from_first_breaks(
             req=_LayerSolveRequest(context.model, context.solver),
             state=_LayerSolveState(),
+            job_dir=context.job_dir,
             input_model=context.input_model,
             resolved_first_layer=context.resolved_first_layer,
         )
@@ -2296,6 +2303,15 @@ def _solve_existing_time_term_layer(
         candidate_observation_mask_sorted=context.input_model.valid_observation_mask_sorted,
         rejection_reason_sorted=_layer_rejection_reason_from_context(context),
     )
+
+
+def _layer_design_matrix_artifact_dir(
+    root: Path | None,
+    config: RefractionStaticLayerConfig,
+) -> Path | None:
+    if root is None:
+        return None
+    return Path(root) / f'{_DESIGN_MATRIX_ARTIFACT_DIR_PREFIX}_{config.kind}'
 
 
 def _layer_result_from_half_intercept(

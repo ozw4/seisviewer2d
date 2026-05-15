@@ -18,6 +18,7 @@ from app.api.schemas import (
 from app.core.state import AppState
 from app.services.refraction_static_design_matrix import (
     build_refraction_static_design_matrix,
+    write_refraction_design_matrix_diagnostics_artifacts,
 )
 from app.services.refraction_static_first_layer import resolve_weathering_velocity_m_s
 from app.services.refraction_static_solver import (
@@ -103,6 +104,11 @@ def estimate_global_bedrock_slowness_from_input_model(
     except ValueError as exc:
         raise RefractionBedrockSlownessError(str(exc)) from exc
     _validate_design_matrix(design_matrix)
+    if job_dir is not None:
+        write_refraction_design_matrix_diagnostics_artifacts(
+            Path(job_dir),
+            design_matrix,
+        )
 
     try:
         solver_result = solve_refraction_static_bounded_ls(

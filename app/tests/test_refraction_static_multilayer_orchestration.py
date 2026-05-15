@@ -1,9 +1,15 @@
 from __future__ import annotations
 
+from pathlib import Path
+
 import numpy as np
 import pytest
 
 from app.api.schemas import RefractionStaticModelRequest, RefractionStaticSolverRequest
+from app.services.refraction_static_design_matrix import (
+    REFRACTION_DESIGN_MATRIX_NODE_DIAGNOSTICS_CSV_NAME,
+    REFRACTION_DESIGN_MATRIX_QC_JSON_NAME,
+)
 from app.services.refraction_static_layer_config import (
     normalize_refraction_static_layers,
 )
@@ -32,7 +38,9 @@ from app.tests._refraction_multilayer_synthetic import (
 )
 
 
-def test_multilayer_orchestrator_runs_normalized_one_layer_v2_solve() -> None:
+def test_multilayer_orchestrator_runs_normalized_one_layer_v2_solve(
+    tmp_path: Path,
+) -> None:
     dataset = make_2d_straight_two_layer_refraction_dataset()
     model = _model(
         [
@@ -60,6 +68,7 @@ def test_multilayer_orchestrator_runs_normalized_one_layer_v2_solve() -> None:
         layer_masks=masks,
         model=model,
         solver=RefractionStaticSolverRequest(robust={'enabled': False}),
+        job_dir=tmp_path,
     )
 
     assert result.enabled_layer_kinds == ('v2_t1',)
@@ -81,6 +90,11 @@ def test_multilayer_orchestrator_runs_normalized_one_layer_v2_solve() -> None:
     assert result.qc['observation_gates']['v2_t1']['n_used_observations'] == (
         int(np.count_nonzero(masks.layer_used_mask_sorted['v2_t1']))
     )
+    layer_artifact_dir = tmp_path / 'refraction_design_matrix_v2_t1'
+    assert (layer_artifact_dir / REFRACTION_DESIGN_MATRIX_QC_JSON_NAME).is_file()
+    assert (
+        layer_artifact_dir / REFRACTION_DESIGN_MATRIX_NODE_DIAGNOSTICS_CSV_NAME
+    ).is_file()
 
 
 def test_multilayer_orchestrator_dispatches_enabled_layers_in_order() -> None:

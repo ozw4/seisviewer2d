@@ -1129,6 +1129,7 @@ def _run_public_multilayer_refraction_static_apply_job(
         datum=req.datum,
         apply_options=req.apply,
         resolved_first_layer=first_layer.resolved,
+        design_matrix_job_dir=job_dir,
         state=state,
         file_id=req.file_id,
         key1_byte=req.key1_byte,

@@ -16,6 +16,7 @@ from app.services.refraction_static_cell_regularization import (
 )
 from app.services.refraction_static_first_layer import resolve_weathering_velocity_m_s
 from app.services.refraction_static_types import (
+    RefractionDesignMatrixNodeDiagnostics,
     RefractionStaticDesignMatrix,
     RefractionStaticSolverResult,
     ResolvedRefractionFirstLayer,
@@ -173,6 +174,7 @@ def solve_refraction_static_bounded_ls(
         number_of_cell_y=design_matrix.number_of_cell_y,
         row_midpoint_cell_id=design_matrix.row_midpoint_cell_id,
         row_midpoint_cell_col=design_matrix.row_midpoint_cell_col,
+        node_diagnostics=design_matrix.node_diagnostics,
         model=model,
         solver=solver,
         resolved_first_layer=resolved_first_layer,
@@ -215,6 +217,7 @@ def solve_refraction_static_bounded_ls_from_matrix(
     number_of_cell_y: int | None = None,
     row_midpoint_cell_id: np.ndarray | None = None,
     row_midpoint_cell_col: np.ndarray | None = None,
+    node_diagnostics: tuple[RefractionDesignMatrixNodeDiagnostics, ...] = (),
     resolved_first_layer: ResolvedRefractionFirstLayer | None = None,
 ) -> RefractionStaticSolverResult:
     """Solve a bounded GLI system from already-built sparse arrays."""
@@ -240,6 +243,7 @@ def solve_refraction_static_bounded_ls_from_matrix(
         number_of_cell_y=number_of_cell_y,
         row_midpoint_cell_id=row_midpoint_cell_id,
         row_midpoint_cell_col=row_midpoint_cell_col,
+        node_diagnostics=node_diagnostics,
         model=model,
         solver=solver,
         resolved_first_layer=resolved_first_layer,
@@ -286,6 +290,7 @@ def _validate_problem(
     number_of_cell_y: int | None,
     row_midpoint_cell_id: np.ndarray | None,
     row_midpoint_cell_col: np.ndarray | None,
+    node_diagnostics: tuple[RefractionDesignMatrixNodeDiagnostics, ...],
     model: RefractionStaticModelRequest,
     solver: RefractionStaticSolverRequest,
     resolved_first_layer: ResolvedRefractionFirstLayer | None,
@@ -413,6 +418,8 @@ def _validate_problem(
             if cell_col_start is not None
             else None
         ),
+        active_node_id=active_nodes,
+        node_diagnostics=node_diagnostics,
     )
 
     trace_index = (
@@ -835,6 +842,8 @@ def _validate_matrix_structure(
     n_active_nodes: int,
     bedrock_slowness_col: int | None,
     cell_slowness_cols: np.ndarray | None = None,
+    active_node_id: np.ndarray | None = None,
+    node_diagnostics: tuple[RefractionDesignMatrixNodeDiagnostics, ...] = (),
 ) -> None:
     row_abs_sum = np.asarray(np.abs(matrix).sum(axis=1)).ravel()
     if np.any(row_abs_sum == 0.0):
@@ -844,8 +853,16 @@ def _validate_matrix_structure(
     col_abs_sum = np.asarray(np.abs(matrix).sum(axis=0)).ravel()
     zero_active_cols = np.flatnonzero(col_abs_sum[:n_active_nodes] == 0.0)
     if zero_active_cols.size:
+        detail = _all_zero_active_node_column_detail(
+            zero_active_cols=zero_active_cols,
+            active_node_id=active_node_id,
+            node_diagnostics=node_diagnostics,
+        )
         raise RefractionStaticSolverError(
-            'refraction design matrix contains an all-zero active-node column'
+            'refraction design matrix contains '
+            f'{int(zero_active_cols.size)} all-zero active-node columns; '
+            f'first node: {detail}. '
+            'See refraction_design_matrix_node_diagnostics.csv.'
         )
     if (
         bedrock_slowness_col is not None
@@ -860,6 +877,38 @@ def _validate_matrix_structure(
             raise RefractionStaticSolverError(
                 'refraction design matrix contains an all-zero cell slowness column'
             )
+
+
+def _all_zero_active_node_column_detail(
+    *,
+    zero_active_cols: np.ndarray,
+    active_node_id: np.ndarray | None,
+    node_diagnostics: tuple[RefractionDesignMatrixNodeDiagnostics, ...],
+) -> str:
+    first_col = int(zero_active_cols[0])
+    diagnostic_by_col = {
+        int(item.matrix_column): item
+        for item in node_diagnostics
+        if item.active and int(item.matrix_column) >= 0
+    }
+    item = diagnostic_by_col.get(first_col)
+    if item is not None:
+        return (
+            f'kind={item.endpoint_kind} node_id={item.node_id} '
+            f'endpoint_key={item.endpoint_key} column={item.matrix_column} '
+            f'n_rows_pre_filter={item.n_rows_pre_filter} '
+            f'n_rows_post_filter={item.n_rows_post_filter} '
+            f'reason={item.reason}'
+        )
+    if active_node_id is not None and first_col < int(active_node_id.shape[0]):
+        node_id = int(active_node_id[first_col])
+    else:
+        node_id = first_col
+    return (
+        f'kind=unknown node_id={node_id} endpoint_key=node:{node_id} '
+        f'column={first_col} n_rows_pre_filter=unknown '
+        'n_rows_post_filter=unknown reason=unknown'
+    )
 
 
 def _validate_fixed_velocity(

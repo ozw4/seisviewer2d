@@ -174,6 +174,23 @@ class RefractionStaticInputModel:
 
 
 @dataclass(frozen=True)
+class RefractionDesignMatrixNodeDiagnostics:
+    node_id: int
+    matrix_column: int
+    endpoint_kind: Literal['source', 'receiver', 'linked', 'unknown']
+    endpoint_key: str
+    source_endpoint_key: str | None
+    receiver_endpoint_key: str | None
+    n_rows_pre_filter: int
+    n_rows_post_filter: int
+    n_nonzero_entries: int
+    active: bool
+    status: str
+    reason: str
+    first_trace_indices_pre_filter: tuple[int, ...] = ()
+
+
+@dataclass(frozen=True)
 class RefractionStaticDesignMatrix:
     matrix: Any
     rhs_s: np.ndarray
@@ -201,6 +218,8 @@ class RefractionStaticDesignMatrix:
     n_parameters: int
 
     qc: dict[str, Any]
+    node_diagnostics: tuple[RefractionDesignMatrixNodeDiagnostics, ...] = ()
+    design_matrix_qc: dict[str, Any] | None = None
 
     bedrock_slowness_cell_col_start: int | None = None
     active_cell_id: np.ndarray | None = None
@@ -1017,6 +1036,7 @@ __all__ = [
     'RefractionFirstLayerMode',
     'RefractionBedrockSlownessResult',
     'RefractionDatumStaticsResult',
+    'RefractionDesignMatrixNodeDiagnostics',
     'RefractionEndpointTable',
     'RefractionEndpointFieldCorrectionResult',
     'RefractionFieldCorrectionComponentName',
