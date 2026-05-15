@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import tempfile
 import threading
 from pathlib import Path
 from typing import Annotated
@@ -72,6 +73,9 @@ from app.services.refraction_static_qc_drilldown import (
 from app.services.refraction_static_service import run_refraction_static_apply_job
 from app.services.refraction_static_table_apply_service import (
     run_refraction_static_table_apply_job,
+)
+from app.services.refraction_static_validation_service import (
+    validate_refraction_static_inputs_with_picks,
 )
 from app.services.residual_static_service import run_residual_static_apply_job
 from app.services.time_term_static_service import run_time_term_static_apply_job
@@ -445,6 +449,44 @@ def refraction_static_apply_with_picks(
     if req.export.enabled:
         response['requested_formats'] = list(requested_formats)
     return response
+
+
+@router.post(
+    '/statics/refraction/validate-with-picks',
+    response_model_exclude_none=True,
+)
+def refraction_static_validate_with_picks(
+    request: Request,
+    request_json: Annotated[str, Form(...)],
+    pick_npz: Annotated[UploadFile, File(...)],
+) -> dict[str, object]:
+    req = _parse_refraction_apply_request_json(request_json)
+    if req.pick_source.kind != 'uploaded_npz':
+        raise HTTPException(
+            status_code=422,
+            detail='pick_source.kind must be uploaded_npz',
+        )
+    _validate_refraction_pick_upload(pick_npz)
+
+    state = get_state(request.app)
+    cleanup_in_memory_state(state)
+
+    with tempfile.TemporaryDirectory(prefix='refraction-validate-') as tmp:
+        temp_dir = Path(tmp)
+        stored_path, _size_bytes = _store_refraction_pick_upload(
+            pick_npz=pick_npz,
+            job_dir=temp_dir,
+        )
+        upload_metadata = {
+            'original_filename': pick_npz.filename or '',
+            'stored_name': UPLOADED_REFRACTION_PICKS_NPZ_NAME,
+        }
+        return validate_refraction_static_inputs_with_picks(
+            req=req,
+            state=state,
+            pick_npz_path=stored_path,
+            uploaded_pick_metadata=upload_metadata,
+        )
 
 
 @router.post(
