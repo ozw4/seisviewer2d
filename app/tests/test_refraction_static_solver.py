@@ -349,7 +349,7 @@ def test_robust_rejection_raises_when_minimum_fraction_would_be_violated() -> No
         )
 
 
-def test_robust_rejection_rejects_mask_that_orphans_active_node_column() -> None:
+def test_robust_rejection_keeps_row_that_orphans_active_node_column() -> None:
     matrix = sparse.csr_matrix(
         np.asarray(
             [
@@ -367,27 +367,29 @@ def test_robust_rejection_rejects_mask_that_orphans_active_node_column() -> None
     fixed_velocity = TRUE_BEDROCK_VELOCITY_M_S
     observed = rhs + distance / fixed_velocity
 
-    with pytest.raises(RefractionStaticSolverError, match='active-node column'):
-        solve_refraction_static_bounded_ls_from_matrix(
-            matrix=matrix,
-            rhs_s=rhs,
-            active_node_id=np.asarray([10, 20, 30], dtype=np.int64),
-            bedrock_slowness_col=None,
-            row_distance_m=distance,
-            observed_pick_time_s=observed,
-            model=_model(
-                bedrock_velocity_mode='fixed_global',
-                bedrock_velocity_m_s=fixed_velocity,
-            ),
-            solver=_solver(
-                max_abs_half_intercept_time_ms=50.0,
-                robust={
-                    'enabled': True,
-                    'method': 'sigma',
-                    'threshold': 1.5,
-                },
-            ),
+    result = solve_refraction_static_bounded_ls_from_matrix(
+        matrix=matrix,
+        rhs_s=rhs,
+        active_node_id=np.asarray([10, 20, 30], dtype=np.int64),
+        bedrock_slowness_col=None,
+        row_distance_m=distance,
+        observed_pick_time_s=observed,
+        model=_model(
+            bedrock_velocity_mode='fixed_global',
+            bedrock_velocity_m_s=fixed_velocity,
+        ),
+        solver=_solver(
+            max_abs_half_intercept_time_ms=50.0,
+            robust={
+                'enabled': True,
+                'method': 'sigma',
+                'threshold': 1.5,
+            },
         )
+    )
+
+    assert result.used_row_mask[0]
+    assert not result.rejected_by_robust_mask[0]
 
 
 def test_damping_rows_apply_only_to_half_intercept_columns() -> None:
