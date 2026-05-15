@@ -796,7 +796,7 @@ def test_uploaded_npz_pick_loader_validates_trace_count(tmp_path: Path) -> None:
 
 
 @pytest.mark.parametrize('bad_value', [np.nan, np.inf])
-def test_uploaded_npz_pick_loader_rejects_nonfinite_picks(
+def test_uploaded_npz_pick_loader_allows_nonfinite_picks(
     tmp_path: Path,
     bad_value: float,
 ) -> None:
@@ -804,15 +804,16 @@ def test_uploaded_npz_pick_loader_rejects_nonfinite_picks(
     picks = np.asarray([0.010, bad_value, 0.030], dtype=np.float64)
     np.savez(npz_path, pick_time_s=picks)
 
-    with pytest.raises(ValueError, match='uploaded_picks_time_s.npz.*finite'):
-        load_refraction_pick_source_from_npz_path(
-            npz_path=npz_path,
-            request=_uploaded_npz_request(),
-            n_traces=3,
-            n_samples=100,
-            dt_s=0.001,
-            sorted_trace_index=np.arange(3, dtype=np.int64),
-        )
+    loaded = load_refraction_pick_source_from_npz_path(
+        npz_path=npz_path,
+        request=_uploaded_npz_request(),
+        n_traces=3,
+        n_samples=100,
+        dt_s=0.001,
+        sorted_trace_index=np.arange(3, dtype=np.int64),
+    )
+
+    np.testing.assert_equal(loaded.picks_time_s_sorted, picks)
 
 
 def test_uploaded_npz_pick_loader_rejects_pickle_or_invalid_npz(
