@@ -13,6 +13,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 import app.api.routers.statics as statics_router_module
+import app.services.refraction_static_bedrock as refraction_bedrock_module
 import app.services.refraction_static_inputs as refraction_inputs_module
 import app.services.refraction_static_service as refraction_service_module
 from app.api.schemas import RefractionStaticApplyRequest
@@ -786,21 +787,59 @@ def test_failed_static_job_lists_design_matrix_diagnostics(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    req = RefractionStaticApplyRequest.model_validate(_payload())
+    req = synthetic_refraction_apply_request()
+    input_model = synthetic_refracted_arrival_input_model()
     job_id = 'refraction-design-matrix-failure-job-id'
     job_dir = tmp_path / 'jobs' / job_id
     _create_refraction_job(client, job_id=job_id, req=req, job_dir=job_dir)
 
-    def _raise_design_matrix(**kwargs: Any) -> object:
-        _write_minimal_design_matrix_diagnostics(kwargs['job_dir'])
-        raise ValueError(
-            'refraction design matrix contains an all-zero active-node column'
+    monkeypatch.setattr(
+        refraction_service_module,
+        'resolve_refraction_first_layer_request',
+        lambda **_kwargs: SimpleNamespace(
+            req=req,
+            resolved=refraction_service_module.ResolvedRefractionFirstLayer(
+                mode='constant',
+                weathering_velocity_m_s=SYNTHETIC_V1_M_S,
+                status='configured',
+                qc={'weathering_velocity_m_s': SYNTHETIC_V1_M_S},
+            ),
+            input_model=input_model,
+            upstream_artifact_names=(),
+        ),
+    )
+    original_build_design = (
+        refraction_bedrock_module.build_refraction_static_design_matrix
+    )
+
+    def _build_design_with_zero_active_column(**kwargs: Any) -> object:
+        design = original_build_design(**kwargs)
+        matrix = design.matrix.tolil()
+        matrix[:, 0] = 0.0
+        matrix = matrix.tocsr()
+        matrix.eliminate_zeros()
+        diagnostics = tuple(
+            replace(
+                item,
+                n_nonzero_entries=0,
+                status='all_zero_active_column',
+                reason='no_observations_for_node',
+            )
+            if int(item.matrix_column) == 0
+            else item
+            for item in design.node_diagnostics
+        )
+        return replace(
+            design,
+            matrix=matrix,
+            node_diagnostics=diagnostics,
+            design_matrix_qc=None,
         )
 
     monkeypatch.setattr(
-        refraction_service_module,
-        'compute_weathering_replacement_statics_from_first_breaks',
-        _raise_design_matrix,
+        refraction_bedrock_module,
+        'build_refraction_static_design_matrix',
+        _build_design_with_zero_active_column,
     )
 
     run_refraction_static_apply_job(job_id, req, client.app.state.sv)
@@ -819,10 +858,14 @@ def test_failed_static_job_lists_design_matrix_diagnostics(
         )
     )
     assert failure['failed_stage'] == 'design_matrix'
-    assert 'all-zero active-node column' in failure['error_message']
+    assert 'all-zero active-node columns' in failure['error_message']
     assert REFRACTION_DESIGN_MATRIX_NODE_DIAGNOSTICS_CSV_NAME in (
         failure['available_diagnostic_artifacts']
     )
+    qc = json.loads(
+        (job_dir / REFRACTION_DESIGN_MATRIX_QC_JSON_NAME).read_text(encoding='utf-8')
+    )
+    assert qc['n_all_zero_active_node_columns'] == 1
 
 
 def test_refraction_static_apply_endpoint_accepts_omitted_linkage(

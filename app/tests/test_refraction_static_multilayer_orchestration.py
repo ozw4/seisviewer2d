@@ -95,6 +95,61 @@ def test_multilayer_orchestrator_runs_normalized_one_layer_v2_solve(
     assert (
         layer_artifact_dir / REFRACTION_DESIGN_MATRIX_NODE_DIAGNOSTICS_CSV_NAME
     ).is_file()
+    assert (tmp_path / REFRACTION_DESIGN_MATRIX_QC_JSON_NAME).is_file()
+    assert (tmp_path / REFRACTION_DESIGN_MATRIX_NODE_DIAGNOSTICS_CSV_NAME).is_file()
+
+
+def test_multilayer_orchestrator_exposes_failed_layer_design_matrix_artifacts(
+    tmp_path: Path,
+) -> None:
+    dataset = make_2d_straight_two_layer_refraction_dataset()
+    model = _model(
+        [
+            _layer(
+                'v2_t1',
+                min_offset_m=300.0,
+                max_offset_m=800.0,
+                velocity_mode='solve_global',
+                initial_velocity_m_s=SYNTHETIC_MULTILAYER_V2_M_S,
+                min_velocity_m_s=1600.0,
+                max_velocity_m_s=3200.0,
+            ),
+        ]
+    )
+    input_model = _input_model(dataset)
+    masks = build_refraction_layer_observation_masks(
+        input_model=input_model,
+        model=model,
+    )
+
+    def _failing_solver(context: RefractionLayerSolverContext) -> RefractionLayerSolveResult:
+        assert context.job_dir is not None
+        context.job_dir.mkdir(parents=True, exist_ok=True)
+        (context.job_dir / REFRACTION_DESIGN_MATRIX_QC_JSON_NAME).write_text(
+            '{"n_all_zero_active_node_columns": 1}',
+            encoding='utf-8',
+        )
+        (
+            context.job_dir / REFRACTION_DESIGN_MATRIX_NODE_DIAGNOSTICS_CSV_NAME
+        ).write_text('node_id,status\n1,all_zero_active_column\n', encoding='utf-8')
+        raise ValueError(
+            'refraction design matrix contains an all-zero active-node column'
+        )
+
+    with pytest.raises(ValueError, match='all-zero active-node column'):
+        solve_refraction_multilayer_time_terms(
+            input_model=input_model,
+            resolved_first_layer=_resolved_first_layer(),
+            normalized_layers=normalize_refraction_static_layers(model),
+            layer_masks=masks,
+            model=model,
+            solver=RefractionStaticSolverRequest(robust={'enabled': False}),
+            job_dir=tmp_path,
+            solver_dispatch={('v2_t1', 'solve_global'): _failing_solver},
+        )
+
+    assert (tmp_path / REFRACTION_DESIGN_MATRIX_QC_JSON_NAME).is_file()
+    assert (tmp_path / REFRACTION_DESIGN_MATRIX_NODE_DIAGNOSTICS_CSV_NAME).is_file()
 
 
 def test_multilayer_orchestrator_dispatches_enabled_layers_in_order() -> None:

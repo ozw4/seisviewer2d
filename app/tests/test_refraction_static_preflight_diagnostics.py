@@ -248,7 +248,7 @@ def test_refraction_static_preflight_counts_offset_gate_rejections(
     assert qc['summary']['input_rejection_counts']['offset_gate'] == 2
 
 
-def test_refraction_static_preflight_counts_nonfinite_picks_without_rejecting_npz(
+def test_refraction_static_preflight_rejects_nonfinite_uploaded_npz_picks(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -260,23 +260,21 @@ def test_refraction_static_preflight_counts_nonfinite_picks_without_rejecting_np
         sorted_to_original=sorted_to_original,
     )
 
-    build_refraction_static_input_model(
-        req=_request(),
-        state=AppState(),
-        job_dir=tmp_path / 'job',
-        uploaded_pick_npz_path=npz_path,
-    )
+    with pytest.raises(ValueError, match='preflight.*non-finite values'):
+        build_refraction_static_input_model(
+            req=_request(),
+            state=AppState(),
+            job_dir=tmp_path / 'job',
+            uploaded_pick_npz_path=npz_path,
+        )
 
     qc = _read_qc(tmp_path / 'job')
-    assert qc['status'] == 'ok'
+    assert qc['status'] == 'error'
     assert qc['summary']['pick_npz']['n_pick_values'] == 4
     assert qc['summary']['pick_npz']['n_finite_pick_values'] == 2
     assert qc['summary']['pick_npz']['n_nan_pick_values'] == 1
     assert qc['summary']['observation_filters']['n_finite_picks'] == 2
-    assert qc['observation_reason_counts']['non_finite_pick'] == 2
-    assert qc['summary']['input_rejection_counts']['missing_pick'] == 1
-    assert qc['summary']['input_rejection_counts']['nonfinite_pick'] == 1
-    assert qc['summary']['observation_filters']['n_used_for_inversion'] == 2
+    assert 'non-finite values' in qc['errors'][0]
 
 
 def test_refraction_static_preflight_writes_observation_csv_for_synthetic_fixture(

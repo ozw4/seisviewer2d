@@ -109,6 +109,11 @@ def scan_refraction_static_pick_npz(
                 n_finite = int(np.count_nonzero(np.isfinite(picks_f64)))
                 summary['n_finite_pick_values'] = n_finite
                 summary['n_nan_pick_values'] = int(np.count_nonzero(np.isnan(picks_f64)))
+                if n_finite != int(picks.size):
+                    errors.append(
+                        'pick array contains non-finite values: '
+                        f'n_finite={n_finite}, n_values={int(picks.size)}'
+                    )
             else:
                 summary['n_finite_pick_values'] = 0
                 summary['n_nan_pick_values'] = 0
