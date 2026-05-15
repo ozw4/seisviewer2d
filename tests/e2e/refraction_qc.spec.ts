@@ -1060,13 +1060,24 @@ async function setStaticCorrectionViewerTarget(
 
 async function fillStaticCorrectionRunInputs(
 	page: Page,
-	{ fileId = 'fixture-line-a-store', pickJobId = 'fixture-first-break-job' } = {},
+	{ fileId = 'fixture-line-a-store', pickFileName = 'predicted_picks_time_s.npz' } = {},
 ) {
 	await setStaticCorrectionViewerTarget(page, { fileId });
-	await page.getByTestId('static-correction-pick-job-id').fill(pickJobId);
-	await page.getByTestId('static-correction-pick-artifact-name').fill('predicted_picks_time_s.npz');
+	await selectStaticCorrectionPickNpz(page, pickFileName);
 	await page.getByTestId('static-correction-model-kind').selectOption('one_layer_global');
 	await expect(page.getByTestId('static-correction-enable-linkage')).not.toBeChecked();
+}
+
+async function selectStaticCorrectionPickNpz(
+	page: Page,
+	name = 'predicted_picks_time_s.npz',
+	buffer = Buffer.from('npz'),
+) {
+	await page.getByTestId('static-correction-pick-npz').setInputFiles({
+		name,
+		mimeType: 'application/octet-stream',
+		buffer,
+	});
 }
 
 type StaticCorrectionRouteCall = {
@@ -1178,7 +1189,7 @@ test('static correction tab scaffold switches side panels', async ({ page }) => 
 	}
 	await expect(page.getByTestId('static-correction-form')).toBeVisible();
 	await expect(page.getByTestId('static-correction-status')).toContainText(
-		'Open a viewer file and choose a first-break pick artifact usable by refraction statics.',
+		'Open a viewer file and choose a first-break pick NPZ for refraction statics.',
 	);
 	await expect(page.getByTestId('static-correction-file-id')).toHaveCount(0);
 	await expect(page.getByTestId('static-correction-key1-byte')).toHaveCount(0);
@@ -1186,11 +1197,16 @@ test('static correction tab scaffold switches side panels', async ({ page }) => 
 	await expect(page.getByTestId('static-correction-target-empty')).toContainText(
 		'No active viewer file. Open an SGY/TraceStore in the viewer before running Static Correction.',
 	);
-	await expect(page.getByTestId('static-correction-pick-kind')).toHaveValue('batch_predicted_npz');
-	await expect(page.getByTestId('static-correction-pick-job-id')).toBeVisible();
-	await expect(page.getByTestId('static-correction-pick-artifact-name')).toHaveValue('predicted_picks_time_s.npz');
-	await expect(panel).toContainText('/statics/refraction/apply');
-	await expect(panel).toContainText('viewer first-break probability cache is not a valid statics pick artifact');
+	await expect(page.getByTestId('static-correction-pick-npz')).toBeVisible();
+	await expect(page.getByTestId('static-correction-pick-npz')).toHaveAttribute('accept', '.npz');
+	await expect(page.getByTestId('static-correction-pick-npz-summary')).toContainText('No NPZ file selected.');
+	await expect(page.getByTestId('static-correction-pick-kind')).toHaveCount(0);
+	await expect(page.getByTestId('static-correction-pick-job-id')).toHaveCount(0);
+	await expect(page.getByTestId('static-correction-pick-artifact-name')).toHaveCount(0);
+	await expect(page.getByTestId('static-correction-load-pick-artifacts')).toHaveCount(0);
+	await expect(page.getByTestId('static-correction-pick-artifact-list')).toHaveCount(0);
+	await expect(panel).toContainText('Select a first-break pick NPZ');
+	await expect(panel).toContainText('viewer first-break probability cache is not a valid statics pick file');
 	await expect(page.getByTestId('static-correction-error')).toBeHidden();
 	await expect(page.getByTestId('static-correction-run')).toBeVisible();
 	await expect(page.getByTestId('static-correction-run')).toBeDisabled();
@@ -1227,9 +1243,7 @@ test('static_correction_ui_runs_one_layer_without_linkage', async ({ page }) => 
 	expect(applyCall?.body).toMatchObject({
 		file_id: 'fixture-line-a-store',
 		pick_source: {
-			kind: 'batch_predicted_npz',
-			job_id: 'fixture-first-break-job',
-			artifact_name: 'predicted_picks_time_s.npz',
+			kind: 'uploaded_npz',
 		},
 		linkage: { mode: 'none' },
 		model: {
@@ -1382,14 +1396,83 @@ test('static_correction_target_summary_loaded_state', async ({ page }) => {
 	);
 	await expect(page.getByTestId('static-correction-target-keys')).toHaveText('key1=9, key2=13');
 	await expect(page.getByTestId('static-correction-target-status')).toHaveText('Ready');
+	await expect(page.getByTestId('static-correction-run')).toBeDisabled();
+	await selectStaticCorrectionPickNpz(page);
 	await expect(page.getByTestId('static-correction-run')).toBeEnabled();
+});
+
+test('static_correction_pick_npz_input_visible', async ({ page }) => {
+	await openStaticCorrectionTab(page);
+
+	await expect(page.getByTestId('static-correction-pick-npz')).toBeVisible();
+	await expect(page.getByTestId('static-correction-pick-npz')).toHaveAttribute('accept', '.npz');
+	await selectStaticCorrectionPickNpz(page, 'predicted_picks_time_s.npz', Buffer.from('abcd'));
+	await expect(page.getByTestId('static-correction-pick-npz-summary')).toContainText(
+		'predicted_picks_time_s.npz',
+	);
+	await expect(page.getByTestId('static-correction-pick-npz-summary')).toContainText('4 B');
+});
+
+test('static_correction_pick_job_fields_removed', async ({ page }) => {
+	await openStaticCorrectionTab(page);
+
+	await expect(page.getByTestId('static-correction-pick-kind')).toHaveCount(0);
+	await expect(page.getByTestId('static-correction-pick-job-id')).toHaveCount(0);
+	await expect(page.getByTestId('static-correction-pick-artifact-name')).toHaveCount(0);
+	await expect(page.getByTestId('static-correction-load-pick-artifacts')).toHaveCount(0);
+	await expect(page.getByTestId('static-correction-pick-artifact-list')).toHaveCount(0);
+});
+
+test('static_correction_request_preview_uses_uploaded_npz', async ({ page }) => {
+	await openStaticCorrectionTab(page);
+	await setStaticCorrectionViewerTarget(page, { fileId: 'line-a-store' });
+	await selectStaticCorrectionPickNpz(page);
+	await page.getByText('JSON request preview').click();
+
+	const requestPreview = page.getByTestId('static-correction-request-preview');
+	await expect(requestPreview).toContainText('"pick_source"');
+	await expect(requestPreview).toContainText('"kind": "uploaded_npz"');
+	await expect(requestPreview).not.toContainText('"job_id"');
+	await expect(requestPreview).not.toContainText('"artifact_name"');
+});
+
+test('static_correction_requires_pick_npz_before_run', async ({ page }) => {
+	const staticsRequests: string[] = [];
+	await page.route('**/statics/refraction/apply', async (route) => {
+		staticsRequests.push(route.request().url());
+		await route.abort();
+	});
+
+	await openStaticCorrectionTab(page);
+	await setStaticCorrectionViewerTarget(page, { fileId: 'line-a-store' });
+	await expect(page.getByTestId('static-correction-run')).toBeDisabled();
+	await page.getByText('JSON request preview').click();
+	await expect(page.getByTestId('static-correction-request-preview')).toContainText(
+		'First-break pick NPZ is required.',
+	);
+	expect(staticsRequests).toEqual([]);
+});
+
+test('static_correction_rejects_non_npz_pick_file', async ({ page }) => {
+	await openStaticCorrectionTab(page);
+	await setStaticCorrectionViewerTarget(page, { fileId: 'line-a-store' });
+	await selectStaticCorrectionPickNpz(page, 'predicted_picks_time_s.txt');
+
+	await expect(page.getByTestId('static-correction-pick-npz-summary')).toContainText(
+		'predicted_picks_time_s.txt',
+	);
+	await expect(page.getByTestId('static-correction-run')).toBeDisabled();
+	await page.getByText('JSON request preview').click();
+	await expect(page.getByTestId('static-correction-request-preview')).toContainText(
+		'First-break pick file must use the .npz extension.',
+	);
 });
 
 test('static correction one-layer builder defaults to no linkage and solved global V2', async ({ page }) => {
 	await page.goto('/');
 	await page.getByTestId('static-correction-tab').click();
 	await setStaticCorrectionViewerTarget(page, { fileId: 'line-a-store' });
-	await page.getByTestId('static-correction-pick-job-id').fill('pick-job');
+	await selectStaticCorrectionPickNpz(page);
 
 	const request = await page.evaluate(() => (
 		(window as any).refractionStaticRunUI.buildRefractionStaticApplyRequest()
@@ -1398,9 +1481,7 @@ test('static correction one-layer builder defaults to no linkage and solved glob
 	expect(request).toMatchObject({
 		file_id: 'line-a-store',
 		pick_source: {
-			kind: 'batch_predicted_npz',
-			job_id: 'pick-job',
-			artifact_name: 'predicted_picks_time_s.npz',
+			kind: 'uploaded_npz',
 		},
 		linkage: {
 			mode: 'none',
@@ -1475,7 +1556,7 @@ test('static correction run submits one-layer refraction apply request', async (
 	await page.goto('/');
 	await page.getByTestId('static-correction-tab').click();
 	await setStaticCorrectionViewerTarget(page, { fileId: 'line-a-store' });
-	await page.getByTestId('static-correction-pick-job-id').fill('pick-job');
+	await selectStaticCorrectionPickNpz(page);
 	await page.getByTestId('static-correction-run').click();
 
 	await expect(page.getByTestId('static-correction-job-id')).toHaveText('refraction-job-559');
@@ -1496,6 +1577,7 @@ test('static correction run submits one-layer refraction apply request', async (
 	await expect(requestPreview).not.toContainText('"time_term_spreadsheet"');
 	expect(applyRequest).toMatchObject({
 		file_id: 'line-a-store',
+		pick_source: { kind: 'uploaded_npz' },
 		linkage: { mode: 'none' },
 		model: {
 			first_layer: {
@@ -1525,7 +1607,7 @@ test('static correction submit errors keep user input visible', async ({ page })
 	await page.goto('/');
 	await page.getByTestId('static-correction-tab').click();
 	await setStaticCorrectionViewerTarget(page, { fileId: 'line-a-store' });
-	await page.getByTestId('static-correction-pick-job-id').fill('pick-job');
+	await selectStaticCorrectionPickNpz(page);
 	await page.getByTestId('static-correction-run').click();
 
 	await expect(page.getByTestId('static-correction-error')).toBeVisible();
@@ -1537,59 +1619,9 @@ test('static correction submit errors keep user input visible', async ({ page })
 	);
 	await expect(page.getByTestId('static-correction-target-file')).toContainText('fixture-line-a.sgy');
 	await expect(page.getByTestId('static-correction-target-keys')).toContainText('key1=9, key2=13');
-	await expect(page.getByTestId('static-correction-pick-job-id')).toHaveValue('pick-job');
-});
-
-test('static correction tab loads likely first-break pick artifacts', async ({ page }) => {
-	await page.route('**/batch/job/pick-job/files', async (route) => {
-		await route.fulfill({
-			status: 200,
-			contentType: 'application/json',
-			body: JSON.stringify({
-				files: [
-					{ name: 'job_meta.json', size_bytes: 12 },
-					{ name: 'predicted_picks_time_s.npz', size_bytes: 128 },
-					{ name: 'manual_picks_time_lineA.npz', size_bytes: 96 },
-				],
-			}),
-		});
-	});
-
-	await page.goto('/');
-	await page.getByTestId('static-correction-tab').click();
-	await page.getByTestId('static-correction-pick-job-id').fill('pick-job');
-	await page.getByTestId('static-correction-load-pick-artifacts').click();
-
-	const list = page.getByTestId('static-correction-pick-artifact-list');
-	await expect(list).toBeVisible();
-	await expect(list).toContainText('predicted_picks_time_s.npz');
-	await expect(list).toContainText('manual_picks_time_lineA.npz');
-	await expect(list).toContainText('first-break candidate');
-
-	await list.getByRole('button', { name: 'manual_picks_time_lineA.npz' }).click();
-	await expect(page.getByTestId('static-correction-pick-artifact-name')).toHaveValue(
-		'manual_picks_time_lineA.npz',
+	await expect(page.getByTestId('static-correction-pick-npz-summary')).toContainText(
+		'predicted_picks_time_s.npz',
 	);
-});
-
-test('static correction tab displays pick artifact load errors', async ({ page }) => {
-	await page.route('**/batch/job/missing-pick-job/files', async (route) => {
-		await route.fulfill({
-			status: 404,
-			contentType: 'application/json',
-			body: JSON.stringify({ detail: 'Job ID not found' }),
-		});
-	});
-
-	await page.goto('/');
-	await page.getByTestId('static-correction-tab').click();
-	await page.getByTestId('static-correction-pick-job-id').fill('missing-pick-job');
-	await page.getByTestId('static-correction-load-pick-artifacts').click();
-
-	await expect(page.getByTestId('static-correction-error')).toBeVisible();
-	await expect(page.getByTestId('static-correction-error')).toContainText('batch job files 404: Job ID not found');
-	await expect(page.getByTestId('static-correction-status')).toContainText('Unable to load pick artifacts.');
-	await expect(page.getByTestId('static-correction-pick-artifact-list')).toBeHidden();
 });
 
 test('refraction QC tab fetches bundle for job', async ({ page }) => {

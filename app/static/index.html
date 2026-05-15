@@ -1238,6 +1238,13 @@
       font: inherit;
     }
 
+    .static-correction-file-summary {
+      min-height: 1.4em;
+      color: #64748b;
+      font-size: 0.82em;
+      overflow-wrap: anywhere;
+    }
+
     .static-correction-field-row {
       display: grid;
       grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -1298,57 +1305,6 @@
       color: #111827;
       font: inherit;
       font-size: 0.86em;
-    }
-
-    .static-correction-artifact-list {
-      display: flex;
-      flex-direction: column;
-      gap: 0.35em;
-      font-size: 0.82em;
-      color: #334155;
-    }
-
-    .static-correction-artifact-list[hidden] {
-      display: none;
-    }
-
-    .static-correction-artifact-list ul {
-      display: flex;
-      flex-direction: column;
-      gap: 0.3em;
-      margin: 0;
-      padding: 0;
-      list-style: none;
-    }
-
-    .static-correction-artifact-list li {
-      display: flex;
-      align-items: center;
-      gap: 0.4em;
-      min-width: 0;
-    }
-
-    .static-correction-artifact-list button {
-      min-width: 0;
-      overflow-wrap: anywhere;
-      padding: 0.3em 0.45em;
-      border: 1px solid #cbd5e1;
-      border-radius: 4px;
-      background: #fff;
-      color: #111827;
-      font: inherit;
-      text-align: left;
-    }
-
-    .static-correction-artifact-list button.is-likely {
-      border-color: #60a5fa;
-      background: #eff6ff;
-    }
-
-    .static-correction-artifact-tag {
-      flex: 0 0 auto;
-      color: #0369a1;
-      font-size: 0.9em;
     }
 
     .static-correction-job-panel {
@@ -2133,7 +2089,7 @@
             <section class="static-correction-section" aria-labelledby="staticCorrectionPresetHeading">
               <h3 id="staticCorrectionPresetHeading">Presets</h3>
               <p class="static-correction-help">
-                Presets store parameter fields only. Loading a preset keeps the current viewer target and pick_source.job_id.
+                Presets store parameter fields only. Loading a preset keeps the current viewer target and selected pick file.
               </p>
               <div class="static-correction-preset-grid">
                 <label class="static-correction-field" for="staticCorrectionPresetSelect">Saved preset
@@ -2160,33 +2116,15 @@
             <section class="static-correction-section" aria-labelledby="staticCorrectionPicksHeading">
               <h3 id="staticCorrectionPicksHeading">First-break picks</h3>
               <p class="static-correction-help">
-                Use a first-break pick artifact accepted by /statics/refraction/apply. The viewer first-break
-                probability cache is not a valid statics pick artifact.
+                Select a first-break pick NPZ for this static correction run. The viewer first-break probability
+                cache is not a valid statics pick file.
               </p>
-              <label class="static-correction-field" for="staticCorrectionPickKind">pick_source.kind
-                <select id="staticCorrectionPickKind" name="pick_source.kind"
-                  data-testid="static-correction-pick-kind">
-                  <option value="uploaded_npz">uploaded_npz</option>
-                  <option value="batch_predicted_npz" selected>batch_predicted_npz</option>
-                  <option value="manual_npz_artifact">manual_npz_artifact</option>
-                </select>
+              <label class="static-correction-field" for="staticCorrectionPickNpz">First-break pick NPZ
+                <input id="staticCorrectionPickNpz" name="pick_npz" type="file" accept=".npz"
+                  data-testid="static-correction-pick-npz" />
               </label>
-              <label class="static-correction-field" for="staticCorrectionPickJobId">pick_source.job_id
-                <input id="staticCorrectionPickJobId" name="pick_source.job_id" type="text" autocomplete="off"
-                  placeholder="Batch job ID containing pick artifact"
-                  data-testid="static-correction-pick-job-id" />
-              </label>
-              <label class="static-correction-field" for="staticCorrectionPickArtifactName">pick_source.artifact_name
-                <input id="staticCorrectionPickArtifactName" name="pick_source.artifact_name" type="text"
-                  autocomplete="off" value="predicted_picks_time_s.npz"
-                  data-testid="static-correction-pick-artifact-name" />
-              </label>
-              <div class="static-correction-actions">
-                <button id="staticCorrectionLoadPickArtifactsButton" type="button"
-                  data-testid="static-correction-load-pick-artifacts">Load pick artifacts</button>
-              </div>
-              <div id="staticCorrectionPickArtifactList" class="static-correction-artifact-list" hidden
-                data-testid="static-correction-pick-artifact-list"></div>
+              <div id="staticCorrectionPickNpzSummary" class="static-correction-file-summary"
+                data-testid="static-correction-pick-npz-summary">No NPZ file selected.</div>
             </section>
             <section class="static-correction-section" aria-labelledby="staticCorrectionGeometryHeading">
               <h3 id="staticCorrectionGeometryHeading">Geometry</h3>
