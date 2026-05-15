@@ -1,4 +1,4 @@
-import { expect, test, type Page } from '@playwright/test';
+import { expect, test, type Page, type Route } from '@playwright/test';
 
 function lineProfileRecords() {
 	return [
@@ -1085,6 +1085,22 @@ type StaticCorrectionRouteCall = {
 	body: Record<string, unknown>;
 };
 
+function multipartRequestJson(route: Route): Record<string, unknown> {
+	const contentType = route.request().headers()['content-type'] || '';
+	const boundaryMatch = /boundary=(?:"([^"]+)"|([^;]+))/i.exec(contentType);
+	const boundary = boundaryMatch?.[1] || boundaryMatch?.[2];
+	if (!boundary) {
+		throw new Error(`Expected multipart form data, got ${contentType || 'no content type'}`);
+	}
+	const postData = route.request().postData() || '';
+	for (const part of postData.split(`--${boundary}`)) {
+		if (!part.includes('name="request_json"')) continue;
+		const body = part.split(/\r?\n\r?\n/).slice(1).join('\n\n').trim();
+		return JSON.parse(body);
+	}
+	throw new Error('Multipart request_json field was not submitted');
+}
+
 async function routeCompletedStaticCorrectionFlow(
 	page: Page,
 	{
@@ -1093,10 +1109,10 @@ async function routeCompletedStaticCorrectionFlow(
 	}: { jobId?: string; statusMessage?: string } = {},
 ) {
 	const calls: StaticCorrectionRouteCall[] = [];
-	await page.route('**/statics/refraction/apply', async (route) => {
+	await page.route('**/statics/refraction/apply-with-picks', async (route) => {
 		calls.push({
 			endpoint: 'apply',
-			body: JSON.parse(route.request().postData() || '{}'),
+			body: multipartRequestJson(route),
 		});
 		await route.fulfill({
 			status: 200,
@@ -1279,6 +1295,12 @@ test('static_correction_ui_builds_linkage_when_checkbox_enabled', async ({ page 
 
 	await openStaticCorrectionTab(page);
 	await fillStaticCorrectionRunInputs(page);
+	await setStaticCorrectionViewerTarget(page, {
+		fileId: 'current-viewer-store',
+		displayName: 'current-viewer.sgy',
+		key1Byte: 17,
+		key2Byte: 21,
+	});
 	await page.getByTestId('static-correction-enable-linkage').check();
 	await expect(page.getByTestId('static-correction-linkage-options')).toBeVisible();
 	await page.getByTestId('static-correction-linkage-threshold-m').fill('12.5');
@@ -1295,14 +1317,65 @@ test('static_correction_ui_builds_linkage_when_checkbox_enabled', async ({ page 
 		'qc',
 	]);
 	expect(calls.find((call) => call.endpoint === 'linkage')?.body).toMatchObject({
-		file_id: 'fixture-line-a-store',
+		file_id: 'current-viewer-store',
+		key1_byte: 17,
+		key2_byte: 21,
 		linkage: { mode: 'auto_threshold', threshold_m: 12.5 },
+	});
+	expect(calls.find((call) => call.endpoint === 'apply')?.body).toMatchObject({
+		file_id: 'current-viewer-store',
+		key1_byte: 17,
+		key2_byte: 21,
 	});
 	expect(calls.find((call) => call.endpoint === 'apply')?.body.linkage).toEqual({
 		mode: 'required',
 		job_id: 'linkage-job-565',
 		artifact_name: 'geometry_linkage.npz',
 	});
+});
+
+test('static_correction_linkage_failure_blocks_static_submit', async ({ page }) => {
+	const calls: StaticCorrectionRouteCall[] = [];
+	await page.route('**/statics/linkage/build', async (route) => {
+		calls.push({
+			endpoint: 'linkage',
+			body: JSON.parse(route.request().postData() || '{}'),
+		});
+		await route.fulfill({
+			status: 200,
+			contentType: 'application/json',
+			body: JSON.stringify({ job_id: 'linkage-job-failed', state: 'queued' }),
+		});
+	});
+	await page.route('**/statics/job/linkage-job-failed/status', async (route) => {
+		calls.push({ endpoint: 'linkage-status', body: {} });
+		await route.fulfill({
+			status: 200,
+			contentType: 'application/json',
+			body: JSON.stringify({
+				job_id: 'linkage-job-failed',
+				state: 'error',
+				progress: 1,
+				message: 'no endpoint pairs matched',
+			}),
+		});
+	});
+	await page.route('**/statics/refraction/apply-with-picks', async (route) => {
+		calls.push({ endpoint: 'unexpected-apply', body: multipartRequestJson(route) });
+		await route.abort();
+	});
+
+	await openStaticCorrectionTab(page);
+	await fillStaticCorrectionRunInputs(page);
+	await page.getByTestId('static-correction-enable-linkage').check();
+	await page.getByTestId('static-correction-run').click();
+
+	await expect(page.getByTestId('static-correction-error')).toBeVisible();
+	await expect(page.getByTestId('static-correction-error')).toContainText('no endpoint pairs matched');
+	await expect(page.getByTestId('static-correction-status')).toContainText(
+		'Geometry linkage failed. Static correction was not submitted.',
+	);
+	expect(calls.map((call) => call.endpoint)).toEqual(['linkage', 'linkage-status']);
 });
 
 test('static_correction_ui_auto_loads_qc_after_ready_job', async ({ page }) => {
@@ -1326,10 +1399,10 @@ test('static_correction_ui_auto_loads_qc_after_ready_job', async ({ page }) => {
 
 test('static_correction_ui_shows_error_when_apply_fails', async ({ page }) => {
 	const calls: StaticCorrectionRouteCall[] = [];
-	await page.route('**/statics/refraction/apply', async (route) => {
+	await page.route('**/statics/refraction/apply-with-picks', async (route) => {
 		calls.push({
 			endpoint: 'apply',
-			body: JSON.parse(route.request().postData() || '{}'),
+			body: multipartRequestJson(route),
 		});
 		await route.fulfill({
 			status: 422,
@@ -1438,7 +1511,7 @@ test('static_correction_request_preview_uses_uploaded_npz', async ({ page }) => 
 
 test('static_correction_requires_pick_npz_before_run', async ({ page }) => {
 	const staticsRequests: string[] = [];
-	await page.route('**/statics/refraction/apply', async (route) => {
+	await page.route('**/statics/refraction/apply-with-picks', async (route) => {
 		staticsRequests.push(route.request().url());
 		await route.abort();
 	});
@@ -1517,8 +1590,8 @@ test('static correction one-layer builder defaults to no linkage and solved glob
 
 test('static correction run submits one-layer refraction apply request', async ({ page }) => {
 	let applyRequest: Record<string, unknown> | null = null;
-	await page.route('**/statics/refraction/apply', async (route) => {
-		applyRequest = JSON.parse(route.request().postData() || '{}');
+	await page.route('**/statics/refraction/apply-with-picks', async (route) => {
+		applyRequest = multipartRequestJson(route);
 		await route.fulfill({
 			status: 200,
 			contentType: 'application/json',
@@ -1596,7 +1669,7 @@ test('static correction run submits one-layer refraction apply request', async (
 });
 
 test('static correction submit errors keep user input visible', async ({ page }) => {
-	await page.route('**/statics/refraction/apply', async (route) => {
+	await page.route('**/statics/refraction/apply-with-picks', async (route) => {
 		await route.fulfill({
 			status: 422,
 			contentType: 'application/json',

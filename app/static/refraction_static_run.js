@@ -1714,16 +1714,34 @@
     render();
   }
 
-  function buildStaticLinkageBuildRequest(staticCorrectionPayload) {
-    if (!staticCorrectionPayload) {
-      throw validationError(['Static correction payload is required before building linkage.']);
+  function buildStaticLinkageBuildRequest(targetDom = dom) {
+    const values = collectInputs(targetDom);
+    const errors = [];
+    if (!values) {
+      throw validationError(['Static correction form is not available.']);
+    }
+    if (!values.file_id) {
+      errors.push('No active viewer file. Open an SGY/TraceStore in the viewer before running Static Correction.');
+    }
+    const key1Byte = values.file_id
+      ? parsePositiveInteger(values.key1_byte, 'key1_byte', errors)
+      : null;
+    const key2Byte = values.file_id
+      ? parsePositiveInteger(values.key2_byte, 'key2_byte', errors)
+      : null;
+    const geometryResult = validateStaticCorrectionGeometryRequest(targetDom);
+    errors.push(...geometryResult.errors);
+    const linkageResult = validateStaticCorrectionLinkageRequest(targetDom);
+    errors.push(...linkageResult.errors);
+    if (errors.length) {
+      throw validationError(errors);
     }
     return {
-      file_id: staticCorrectionPayload.file_id,
-      key1_byte: staticCorrectionPayload.key1_byte,
-      key2_byte: staticCorrectionPayload.key2_byte,
-      geometry: { ...staticCorrectionPayload.geometry },
-      linkage: { ...staticCorrectionPayload.linkage },
+      file_id: values.file_id,
+      key1_byte: key1Byte,
+      key2_byte: key2Byte,
+      geometry: { ...geometryResult.payload.geometry },
+      linkage: { ...linkageResult.payload.linkage },
     };
   }
 
@@ -2232,11 +2250,11 @@
     try {
       let applyPayload = payload;
       if (dom.enableLinkage.checked) {
-        const linkageBuildPayload = buildStaticLinkageBuildRequest(payload);
-        state.lastLinkageBuildRequest = linkageBuildPayload;
         state.phase = 'building_linkage';
         state.message = 'Building endpoint geometry linkage...';
         render();
+        const linkageBuildPayload = buildStaticLinkageBuildRequest(dom);
+        state.lastLinkageBuildRequest = linkageBuildPayload;
 
         const linkageResponse = await postJson(
           '/statics/linkage/build',
