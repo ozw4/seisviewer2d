@@ -182,19 +182,16 @@ def test_refraction_static_ui_fixture_metadata_is_valid_json(tmp_path: Path) -> 
     assert metadata['ui_workflow']['static_correction_tab'] == 'Static Correction'
     assert metadata['ui_workflow']['linkage_default'] == 'none'
     assert metadata['pick_source'] == {
-        'kind': 'batch_predicted_npz',
-        'artifact_name': 'predicted_picks_time_s.npz',
-        'job_id_note': (
-            'Copy/register this NPZ as a job artifact, then enter that job_id '
-            'in the Static Correction tab.'
-        ),
+        'kind': 'uploaded_npz',
+        'file_field': 'pick_npz',
+        'file_name': 'predicted_picks_time_s.npz',
     }
     assert metadata['recommended_static_correction']['linkage'] == {'mode': 'none'}
     assert metadata['recommended_static_correction']['v1_m_s'] == 800.0
     assert metadata['recommended_static_correction']['v2_initial_m_s'] == 2400.0
     assert metadata['recommended_static_correction']['min_offset_m'] == 300.0
     assert metadata['recommended_static_correction']['max_offset_m'] == 1800.0
-    assert metadata['recommended_static_correction']['key1_byte'] == 17
+    assert metadata['recommended_static_correction']['key1_byte'] == 9
     assert metadata['recommended_static_correction']['key2_byte'] == 13
     assert metadata['recommended_static_correction']['exports'] == [
         'canonical_static_table',
@@ -202,7 +199,7 @@ def test_refraction_static_ui_fixture_metadata_is_valid_json(tmp_path: Path) -> 
     ]
     assert metadata['recommended_static_correction']['register_corrected_file'] is True
     assert metadata['geometry_headers'] == {
-        'source_id_byte': 17,
+        'source_id_byte': 9,
         'receiver_id_byte': 13,
         'source_x_byte': 73,
         'source_y_byte': 77,
@@ -215,7 +212,7 @@ def test_refraction_static_ui_fixture_metadata_is_valid_json(tmp_path: Path) -> 
         'elevation_scalar_byte': 69,
     }
     assert metadata['trace_store_sort_headers'] == {
-        'key1_byte': 17,
+        'key1_byte': 9,
         'key1_label': 'source_id',
         'key2_byte': 13,
         'key2_label': 'receiver_id',
@@ -271,16 +268,19 @@ def test_refraction_static_ui_fixture_readme_is_created(tmp_path: Path) -> None:
     readme = (output_dir / 'README.md').read_text(encoding='utf-8')
     assert 'Static Correction UI refraction workflow' in readme
     assert 'one_layer_2d_clean' in readme
-    assert 'Import `synthetic_static_2d_one_layer.sgy` through the normal UI' in readme
     assert (
-        'Make `predicted_picks_time_s.npz` available through a `batch_apply` '
-        'job artifact'
+        'Open `synthetic_static_2d_one_layer.sgy` in the viewer Loader with '
+        '`key1=9`, `key2=13`'
     ) in readme
+    assert (
+        'Select `predicted_picks_time_s.npz` directly in `First-break pick NPZ`'
+    ) in readme
+    assert 'You do not need a `file_id` input' in readme
     assert 'create_batch_apply_job' in readme
     assert '/batch/job/<job_id>/files' in readme
     assert 'Open the `Static Correction` tab' in readme
     assert 'Trace sorting for Static Correction UI' in readme
-    assert 'key1_byte = 17  # source_id' in readme
+    assert 'key1_byte = 9  # source_id' in readme
     assert 'key2_byte = 13  # receiver_id' in readme
     assert 'Refraction QC' in readme
 
@@ -289,12 +289,15 @@ def test_generated_fixture_readme_mentions_manual_registration_workflow() -> Non
     module = _module()
     readme = module.build_readme(_config(Path('/tmp')))
 
-    assert 'developer-only manual registration workflow' in readme
+    assert 'legacy developer-only manual registration workflow' in readme
     assert 'get_job_dir(job_id)' in readme
     assert 'create_batch_apply_job' in readme
     assert '`file_id`/`key1_byte`/`key2_byte` metadata' in readme
     assert '/batch/job/<job_id>/files' in readme
-    assert 'refraction_static_ui_fixture.md#workflow-b-manual-registration' in readme
+    assert (
+        'refraction_static_ui_fixture.md'
+        '#legacy-developer-appendix-job-artifact-registration'
+    ) in readme
 
 
 def test_refraction_static_ui_fixture_docs_list_sort_headers() -> None:
@@ -302,12 +305,12 @@ def test_refraction_static_ui_fixture_docs_list_sort_headers() -> None:
         _REPO_ROOT / 'docs' / 'statics' / 'refraction_static_ui_fixture.md'
     ).read_text(encoding='utf-8')
 
-    assert '`key1_byte` | 17 | `source_id_byte`' in docs
+    assert '`key1_byte` | 9 | `source_id_byte`' in docs
     assert '`key2_byte` | 13 | `receiver_id_byte`' in docs
-    assert 'recommended_static_correction.key1_byte = 17' in docs
+    assert 'recommended_static_correction.key1_byte = 9' in docs
     assert 'recommended_static_correction.key2_byte = 13' in docs
-    assert 'pick/trace order mismatch' in docs
-    assert '`key1_byte=17` and `key2_byte=13`' in docs
+    assert 'Sorted order mismatch' in docs
+    assert '`key1=9` and `key2=13`' in docs
 
 
 def test_fixture_docs_mention_batch_job_files_verification() -> None:
@@ -315,12 +318,11 @@ def test_fixture_docs_mention_batch_job_files_verification() -> None:
         _REPO_ROOT / 'docs' / 'statics' / 'refraction_static_ui_fixture.md'
     ).read_text(encoding='utf-8')
 
-    assert 'Workflow A: Production-Like Batch Picks' in docs
-    assert 'Workflow B: Manual Registration For UI Smoke Tests' in docs
+    assert 'Legacy Developer Appendix: Job Artifact Registration' in docs
     assert 'curl http://localhost:8000/batch/job/ui-fixture-picks-001/files' in docs
     assert '"name": "predicted_picks_time_s.npz"' in docs
     assert '"size_bytes": 12345' in docs
-    assert 'Load pick artifacts' in docs
+    assert 'no longer the recommended UI workflow' in docs
 
 
 def test_fixture_docs_mention_existing_job_artifact_mechanism() -> None:
@@ -329,12 +331,12 @@ def test_fixture_docs_mention_existing_job_artifact_mechanism() -> None:
     ).read_text(encoding='utf-8')
     normalized = _single_spaced(docs)
 
-    assert 'existing job artifact mechanism' in normalized
+    assert 'legacy job-artifact plumbing' in normalized
     assert 'from app.services.pipeline_artifacts import get_job_dir' in docs
     assert 'state.jobs.create_batch_apply_job' in docs
     assert 'job_type = batch_apply' in docs
     assert 'file_id = <file_id returned by import>' in docs
-    assert 'key1_byte = 17' in docs
+    assert 'key1_byte = 9' in docs
     assert 'key2_byte = 13' in docs
     assert 'artifacts_dir = <path returned by get_job_dir(job_id)>' in docs
 
@@ -556,11 +558,12 @@ def test_synthetic_ui_fixture_metadata_contains_static_correction_ui_fields(
 
     assert metadata['files']['sgy'] == 'synthetic_static_2d_one_layer.sgy'
     assert metadata['files']['pick_artifact'] == 'predicted_picks_time_s.npz'
-    assert metadata['pick_source']['kind'] == 'batch_predicted_npz'
-    assert metadata['pick_source']['artifact_name'] == 'predicted_picks_time_s.npz'
-    assert metadata['geometry_headers']['source_id_byte'] == 17
+    assert metadata['pick_source']['kind'] == 'uploaded_npz'
+    assert metadata['pick_source']['file_field'] == 'pick_npz'
+    assert metadata['pick_source']['file_name'] == 'predicted_picks_time_s.npz'
+    assert metadata['geometry_headers']['source_id_byte'] == 9
     assert metadata['geometry_headers']['receiver_id_byte'] == 13
-    assert metadata['trace_store_sort_headers']['key1_byte'] == 17
+    assert metadata['trace_store_sort_headers']['key1_byte'] == 9
     assert metadata['trace_store_sort_headers']['key2_byte'] == 13
     assert metadata['trace_store_sort_headers']['key1_label'] == 'source_id'
     assert metadata['trace_store_sort_headers']['key2_label'] == 'receiver_id'
@@ -572,13 +575,13 @@ def test_synthetic_ui_fixture_metadata_contains_static_correction_ui_fields(
     assert metadata['recommended_static_correction']['linkage'] == {'mode': 'none'}
     assert metadata['recommended_static_correction']['v1_m_s'] == 800.0
     assert metadata['recommended_static_correction']['v2_initial_m_s'] == 2400.0
-    assert metadata['recommended_static_correction']['key1_byte'] == 17
+    assert metadata['recommended_static_correction']['key1_byte'] == 9
     assert metadata['recommended_static_correction']['key2_byte'] == 13
     assert metadata['recommended_static_correction']['register_corrected_file'] is True
 
     readme = module.build_readme(config)
     assert 'Trace sorting for Static Correction UI' in readme
-    assert 'key1_byte = 17  # source_id' in readme
+    assert 'key1_byte = 9  # source_id' in readme
     assert 'key2_byte = 13  # receiver_id' in readme
 
 
