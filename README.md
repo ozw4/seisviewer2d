@@ -410,6 +410,6 @@ Frontend unit tests (optional):
 
 ```bash
 cd app
-npm install
-npx vitest run
+npm ci
+npm run test:ui
 ```

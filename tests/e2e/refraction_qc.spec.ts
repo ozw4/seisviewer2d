@@ -1382,7 +1382,7 @@ test('static correction one-layer builder defaults to no linkage and solved glob
 		},
 		export: {
 			enabled: true,
-			formats: ['canonical_static_table', 'time_term_spreadsheet'],
+			formats: ['canonical_static_table', 'lsst_plus'],
 		},
 		apply: {
 			register_corrected_file: false,
@@ -1400,7 +1400,7 @@ test('static correction run submits one-layer refraction apply request', async (
 			body: JSON.stringify({
 				job_id: 'refraction-job-559',
 				state: 'queued',
-				requested_formats: ['canonical_static_table', 'time_term_spreadsheet'],
+				requested_formats: ['canonical_static_table', 'lsst_plus'],
 			}),
 		});
 	});
@@ -1437,11 +1437,16 @@ test('static correction run submits one-layer refraction apply request', async (
 	await expect(page.getByTestId('static-correction-job-id')).toHaveText('refraction-job-559');
 	await expect(page.getByTestId('static-correction-job-state')).toHaveText('ready');
 	await expect(page.getByTestId('static-correction-job-message')).toHaveText('finished');
+	await page.getByTestId('static-correction-tab').click();
 	await expect(page.getByTestId('static-correction-artifact-table')).toContainText('source_static_table.csv');
 	await expect(
 		page.locator('a[href="/statics/job/refraction-job-559/download?name=source_static_table.csv"]'),
 	).toBeVisible();
-	await expect(page.getByTestId('static-correction-request-preview')).toBeVisible();
+	await page.getByText('JSON request preview').click();
+	const requestPreview = page.getByTestId('static-correction-request-preview');
+	await expect(requestPreview).toBeVisible();
+	await expect(requestPreview).toContainText('"lsst_plus"');
+	await expect(requestPreview).not.toContainText('"time_term_spreadsheet"');
 	expect(applyRequest).toMatchObject({
 		file_id: 'line-a-store',
 		linkage: { mode: 'none' },
@@ -1455,7 +1460,7 @@ test('static correction run submits one-layer refraction apply request', async (
 		conversion: { mode: 't1lsst_1layer' },
 		export: {
 			enabled: true,
-			formats: ['canonical_static_table', 'time_term_spreadsheet'],
+			formats: ['canonical_static_table', 'lsst_plus'],
 		},
 		apply: { register_corrected_file: false },
 	});
