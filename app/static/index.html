@@ -1191,6 +1191,35 @@
       color: #475569;
     }
 
+    .static-correction-target-summary {
+      display: grid;
+      gap: 0.35em;
+      font-size: 0.86em;
+      color: #334155;
+    }
+
+    .static-correction-target-summary[hidden] {
+      display: none;
+    }
+
+    .static-correction-target-row {
+      display: grid;
+      grid-template-columns: minmax(7.5em, max-content) minmax(0, 1fr);
+      gap: 0.5em;
+      align-items: baseline;
+    }
+
+    .static-correction-target-label {
+      color: #64748b;
+      font-weight: 600;
+    }
+
+    .static-correction-target-value {
+      min-width: 0;
+      overflow-wrap: anywhere;
+      color: #111827;
+    }
+
     .static-correction-field {
       display: flex;
       flex-direction: column;
@@ -2073,27 +2102,38 @@
         <div class="static-correction-panel" data-testid="static-correction-panel">
           <h2 class="static-correction-title">Static Correction</h2>
           <form id="staticCorrectionForm" class="static-correction-form" data-testid="static-correction-form">
-            <section class="static-correction-section" aria-labelledby="staticCorrectionInputHeading">
-              <h3 id="staticCorrectionInputHeading">Input</h3>
-              <label class="static-correction-field" for="staticCorrectionFileId">File ID
-                <input id="staticCorrectionFileId" name="file_id" type="text" autocomplete="off"
-                  placeholder="SEG-Y or TraceStore file_id" data-testid="static-correction-file-id" />
-              </label>
-              <div class="static-correction-field-row">
-                <label class="static-correction-field" for="staticCorrectionKey1Byte">key1_byte
-                  <input id="staticCorrectionKey1Byte" name="key1_byte" type="number" min="1" step="1"
-                    value="189" data-testid="static-correction-key1-byte" />
-                </label>
-                <label class="static-correction-field" for="staticCorrectionKey2Byte">key2_byte
-                  <input id="staticCorrectionKey2Byte" name="key2_byte" type="number" min="1" step="1"
-                    value="193" data-testid="static-correction-key2-byte" />
-                </label>
+            <section class="static-correction-section" aria-labelledby="staticCorrectionTargetHeading">
+              <h3 id="staticCorrectionTargetHeading">Target</h3>
+              <div id="staticCorrectionTargetSummary" class="static-correction-target-summary"
+                data-testid="static-correction-target-summary">
+                <div id="staticCorrectionTargetEmpty" class="static-correction-help"
+                  data-testid="static-correction-target-empty">
+                  No active viewer file. Open an SGY/TraceStore in the viewer before running Static Correction.
+                </div>
+                <div id="staticCorrectionTargetDetails" class="static-correction-target-summary" hidden
+                  data-testid="static-correction-target-details">
+                  <div class="static-correction-target-row">
+                    <span class="static-correction-target-label">Current viewer file</span>
+                    <span id="staticCorrectionTargetFile" class="static-correction-target-value"
+                      data-testid="static-correction-target-file">-</span>
+                  </div>
+                  <div class="static-correction-target-row">
+                    <span class="static-correction-target-label">Sort keys</span>
+                    <span id="staticCorrectionTargetKeys" class="static-correction-target-value"
+                      data-testid="static-correction-target-keys">-</span>
+                  </div>
+                  <div class="static-correction-target-row">
+                    <span class="static-correction-target-label">Status</span>
+                    <span id="staticCorrectionTargetStatus" class="static-correction-target-value"
+                      data-testid="static-correction-target-status">-</span>
+                  </div>
+                </div>
               </div>
             </section>
             <section class="static-correction-section" aria-labelledby="staticCorrectionPresetHeading">
               <h3 id="staticCorrectionPresetHeading">Presets</h3>
               <p class="static-correction-help">
-                Presets store parameter fields only. Loading a preset keeps the current file_id and pick_source.job_id.
+                Presets store parameter fields only. Loading a preset keeps the current viewer target and pick_source.job_id.
               </p>
               <div class="static-correction-preset-grid">
                 <label class="static-correction-field" for="staticCorrectionPresetSelect">Saved preset

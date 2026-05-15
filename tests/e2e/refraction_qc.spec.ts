@@ -1034,11 +1034,35 @@ async function openStaticCorrectionTab(page: Page) {
 	await expect(page.getByTestId('static-correction-panel')).toBeVisible();
 }
 
+async function setStaticCorrectionViewerTarget(
+	page: Page,
+	{
+		fileId = 'fixture-line-a-store',
+		displayName = 'fixture-line-a.sgy',
+		key1Byte = 9,
+		key2Byte = 13,
+	} = {},
+) {
+	await page.evaluate((target) => {
+		(window as any).SeisViewerState.syncActiveFileTarget({
+			fileId: target.fileId,
+			displayName: target.displayName,
+			key1Byte: target.key1Byte,
+			key2Byte: target.key2Byte,
+			isFileLoaded: true,
+		});
+	}, { fileId, displayName, key1Byte, key2Byte });
+	await expect(page.getByTestId('static-correction-target-file')).toHaveText(displayName);
+	await expect(page.getByTestId('static-correction-target-keys')).toHaveText(
+		`key1=${key1Byte}, key2=${key2Byte}`,
+	);
+}
+
 async function fillStaticCorrectionRunInputs(
 	page: Page,
 	{ fileId = 'fixture-line-a-store', pickJobId = 'fixture-first-break-job' } = {},
 ) {
-	await page.getByTestId('static-correction-file-id').fill(fileId);
+	await setStaticCorrectionViewerTarget(page, { fileId });
 	await page.getByTestId('static-correction-pick-job-id').fill(pickJobId);
 	await page.getByTestId('static-correction-pick-artifact-name').fill('predicted_picks_time_s.npz');
 	await page.getByTestId('static-correction-model-kind').selectOption('one_layer_global');
@@ -1149,16 +1173,19 @@ test('static correction tab scaffold switches side panels', async ({ page }) => 
 	const panel = page.getByTestId('static-correction-panel');
 	await expect(panel).toBeVisible();
 	await expect(panel.getByRole('heading', { name: 'Static Correction' })).toBeVisible();
-	for (const heading of ['Input', 'First-break picks', 'Geometry', 'Linkage', 'Model', 'Output', 'Run']) {
+	for (const heading of ['Target', 'First-break picks', 'Geometry', 'Linkage', 'Model', 'Output', 'Run']) {
 		await expect(panel.getByRole('heading', { name: heading })).toBeVisible();
 	}
 	await expect(page.getByTestId('static-correction-form')).toBeVisible();
 	await expect(page.getByTestId('static-correction-status')).toContainText(
-		'Enter a SEG-Y/TraceStore file_id and a first-break pick artifact usable by refraction statics.',
+		'Open a viewer file and choose a first-break pick artifact usable by refraction statics.',
 	);
-	await expect(page.getByTestId('static-correction-file-id')).toBeVisible();
-	await expect(page.getByTestId('static-correction-key1-byte')).toHaveValue('189');
-	await expect(page.getByTestId('static-correction-key2-byte')).toHaveValue('193');
+	await expect(page.getByTestId('static-correction-file-id')).toHaveCount(0);
+	await expect(page.getByTestId('static-correction-key1-byte')).toHaveCount(0);
+	await expect(page.getByTestId('static-correction-key2-byte')).toHaveCount(0);
+	await expect(page.getByTestId('static-correction-target-empty')).toContainText(
+		'No active viewer file. Open an SGY/TraceStore in the viewer before running Static Correction.',
+	);
 	await expect(page.getByTestId('static-correction-pick-kind')).toHaveValue('batch_predicted_npz');
 	await expect(page.getByTestId('static-correction-pick-job-id')).toBeVisible();
 	await expect(page.getByTestId('static-correction-pick-artifact-name')).toHaveValue('predicted_picks_time_s.npz');
@@ -1166,7 +1193,7 @@ test('static correction tab scaffold switches side panels', async ({ page }) => 
 	await expect(panel).toContainText('viewer first-break probability cache is not a valid statics pick artifact');
 	await expect(page.getByTestId('static-correction-error')).toBeHidden();
 	await expect(page.getByTestId('static-correction-run')).toBeVisible();
-	await expect(page.getByTestId('static-correction-run')).toBeEnabled();
+	await expect(page.getByTestId('static-correction-run')).toBeDisabled();
 	await expect(page.getByTestId('pipeline-sidebar-tab')).toHaveAttribute('aria-selected', 'false');
 	await expect(page.getByTestId('refraction-qc-tab')).toHaveAttribute('aria-selected', 'false');
 	await expect(page.getByTestId('static-correction-tab')).toHaveAttribute('aria-selected', 'true');
@@ -1321,7 +1348,7 @@ test('static_correction_ui_shows_error_when_apply_fails', async ({ page }) => {
 	expect(calls.map((call) => call.endpoint)).toEqual(['apply']);
 });
 
-test('static correction tab validates required file and pick inputs without submitting', async ({ page }) => {
+test('static_correction_run_disabled_without_active_viewer_file', async ({ page }) => {
 	const staticsRequests: string[] = [];
 	await page.route('**/statics/refraction/**', async (route) => {
 		staticsRequests.push(route.request().url());
@@ -1330,21 +1357,38 @@ test('static correction tab validates required file and pick inputs without subm
 
 	await page.goto('/');
 	await page.getByTestId('static-correction-tab').click();
-	await page.getByTestId('static-correction-run').click();
 
-	await expect(page.getByTestId('static-correction-error')).toBeVisible();
-	await expect(page.getByTestId('static-correction-error')).toContainText('file_id is required');
-	await expect(page.getByTestId('static-correction-error')).toContainText('pick_source.job_id is required');
-	await expect(page.getByTestId('static-correction-status')).toContainText(
-		'Fix input errors before running refraction statics.',
+	await expect(page.getByTestId('static-correction-run')).toBeDisabled();
+	await expect(page.getByTestId('static-correction-target-empty')).toContainText(
+		'No active viewer file. Open an SGY/TraceStore in the viewer before running Static Correction.',
 	);
+	await expect(page.getByTestId('static-correction-target-details')).toBeHidden();
 	expect(staticsRequests).toEqual([]);
+});
+
+test('static_correction_target_summary_loaded_state', async ({ page }) => {
+	await openStaticCorrectionTab(page);
+	await setStaticCorrectionViewerTarget(page, {
+		fileId: 'target-file-id',
+		displayName: 'synthetic_static_2d_one_layer.sgy',
+		key1Byte: 9,
+		key2Byte: 13,
+	});
+
+	await expect(page.getByTestId('static-correction-target-empty')).toBeHidden();
+	await expect(page.getByTestId('static-correction-target-details')).toBeVisible();
+	await expect(page.getByTestId('static-correction-target-file')).toHaveText(
+		'synthetic_static_2d_one_layer.sgy',
+	);
+	await expect(page.getByTestId('static-correction-target-keys')).toHaveText('key1=9, key2=13');
+	await expect(page.getByTestId('static-correction-target-status')).toHaveText('Ready');
+	await expect(page.getByTestId('static-correction-run')).toBeEnabled();
 });
 
 test('static correction one-layer builder defaults to no linkage and solved global V2', async ({ page }) => {
 	await page.goto('/');
 	await page.getByTestId('static-correction-tab').click();
-	await page.getByTestId('static-correction-file-id').fill('line-a-store');
+	await setStaticCorrectionViewerTarget(page, { fileId: 'line-a-store' });
 	await page.getByTestId('static-correction-pick-job-id').fill('pick-job');
 
 	const request = await page.evaluate(() => (
@@ -1430,7 +1474,7 @@ test('static correction run submits one-layer refraction apply request', async (
 
 	await page.goto('/');
 	await page.getByTestId('static-correction-tab').click();
-	await page.getByTestId('static-correction-file-id').fill('line-a-store');
+	await setStaticCorrectionViewerTarget(page, { fileId: 'line-a-store' });
 	await page.getByTestId('static-correction-pick-job-id').fill('pick-job');
 	await page.getByTestId('static-correction-run').click();
 
@@ -1445,6 +1489,9 @@ test('static correction run submits one-layer refraction apply request', async (
 	await page.getByText('JSON request preview').click();
 	const requestPreview = page.getByTestId('static-correction-request-preview');
 	await expect(requestPreview).toBeVisible();
+	await expect(requestPreview).toContainText('"file_id": "line-a-store"');
+	await expect(requestPreview).toContainText('"key1_byte": 9');
+	await expect(requestPreview).toContainText('"key2_byte": 13');
 	await expect(requestPreview).toContainText('"lsst_plus"');
 	await expect(requestPreview).not.toContainText('"time_term_spreadsheet"');
 	expect(applyRequest).toMatchObject({
@@ -1477,7 +1524,7 @@ test('static correction submit errors keep user input visible', async ({ page })
 
 	await page.goto('/');
 	await page.getByTestId('static-correction-tab').click();
-	await page.getByTestId('static-correction-file-id').fill('line-a-store');
+	await setStaticCorrectionViewerTarget(page, { fileId: 'line-a-store' });
 	await page.getByTestId('static-correction-pick-job-id').fill('pick-job');
 	await page.getByTestId('static-correction-run').click();
 
@@ -1488,7 +1535,8 @@ test('static correction submit errors keep user input visible', async ({ page })
 	await expect(page.getByTestId('static-correction-status')).toContainText(
 		'Static correction submission failed.',
 	);
-	await expect(page.getByTestId('static-correction-file-id')).toHaveValue('line-a-store');
+	await expect(page.getByTestId('static-correction-target-file')).toContainText('fixture-line-a.sgy');
+	await expect(page.getByTestId('static-correction-target-keys')).toContainText('key1=9, key2=13');
 	await expect(page.getByTestId('static-correction-pick-job-id')).toHaveValue('pick-job');
 });
 

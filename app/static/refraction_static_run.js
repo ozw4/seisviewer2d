@@ -1,7 +1,5 @@
 (function () {
   const DEFAULTS = {
-    key1Byte: '189',
-    key2Byte: '193',
     modelPreset: 'one_layer_global',
     pickKind: 'batch_predicted_npz',
     pickArtifactName: 'predicted_picks_time_s.npz',
@@ -110,7 +108,7 @@
 
   const state = {
     ready: false,
-    message: 'Enter a SEG-Y/TraceStore file_id and a first-break pick artifact usable by refraction statics.',
+    message: 'Open a viewer file and choose a first-break pick artifact usable by refraction statics.',
     error: '',
     loadingPickArtifacts: false,
     pickArtifacts: [],
@@ -133,6 +131,7 @@
 
   let dom = null;
   let staticPollToken = 0;
+  let viewerTargetUnsubscribe = null;
 
   function trimValue(value) {
     return String(value || '').trim();
@@ -142,6 +141,30 @@
     if (element && trimValue(element.value) === '') {
       element.value = value;
     }
+  }
+
+  function getStaticCorrectionTarget() {
+    const viewerState = window.SeisViewerState;
+    if (!viewerState || typeof viewerState.getActiveFileTarget !== 'function') {
+      return null;
+    }
+    const target = viewerState.getActiveFileTarget();
+    if (!target || typeof target !== 'object') {
+      return null;
+    }
+    const fileId = trimValue(target.fileId);
+    const key1Byte = Number(target.key1Byte);
+    const key2Byte = Number(target.key2Byte);
+    if (!fileId || !Number.isInteger(key1Byte) || !Number.isInteger(key2Byte)) {
+      return null;
+    }
+    const displayName = trimValue(target.displayName) || fileId;
+    return {
+      file_id: fileId,
+      display_name: displayName,
+      key1_byte: key1Byte,
+      key2_byte: key2Byte,
+    };
   }
 
   function geometryValueElements(targetDom) {
@@ -210,10 +233,11 @@
 
   function collectInputs(targetDom = dom) {
     if (!targetDom) return null;
+    const target = getStaticCorrectionTarget();
     return {
-      file_id: trimValue(targetDom.fileId.value),
-      key1_byte: trimValue(targetDom.key1Byte.value),
-      key2_byte: trimValue(targetDom.key2Byte.value),
+      file_id: target ? target.file_id : '',
+      key1_byte: target ? String(target.key1_byte) : '',
+      key2_byte: target ? String(target.key2_byte) : '',
       pick_source: {
         kind: trimValue(targetDom.pickKind.value),
         job_id: trimValue(targetDom.pickJobId.value),
@@ -367,8 +391,6 @@
   function collectPresetInputs(targetDom = dom) {
     const inputValues = collectInputs(targetDom);
     return {
-      key1_byte: inputValues ? inputValues.key1_byte : '',
-      key2_byte: inputValues ? inputValues.key2_byte : '',
       pick_source: {
         kind: inputValues && inputValues.pick_source ? inputValues.pick_source.kind : '',
         artifact_name: inputValues && inputValues.pick_source
@@ -1408,10 +1430,14 @@
       throw validationError(['Static correction form is not available.']);
     }
     if (!values.file_id) {
-      errors.push('file_id is required.');
+      errors.push('No active viewer file. Open an SGY/TraceStore in the viewer before running Static Correction.');
     }
-    const key1Byte = parsePositiveInteger(values.key1_byte, 'key1_byte', errors);
-    const key2Byte = parsePositiveInteger(values.key2_byte, 'key2_byte', errors);
+    const key1Byte = values.file_id
+      ? parsePositiveInteger(values.key1_byte, 'key1_byte', errors)
+      : null;
+    const key2Byte = values.file_id
+      ? parsePositiveInteger(values.key2_byte, 'key2_byte', errors)
+      : null;
 
     let pickSource = null;
     try {
@@ -1462,10 +1488,14 @@
     }
 
     if (!values.file_id) {
-      errors.push('file_id is required.');
+      errors.push('No active viewer file. Open an SGY/TraceStore in the viewer before running Static Correction.');
     }
-    const key1Byte = parsePositiveInteger(values.key1_byte, 'key1_byte', errors);
-    const key2Byte = parsePositiveInteger(values.key2_byte, 'key2_byte', errors);
+    const key1Byte = values.file_id
+      ? parsePositiveInteger(values.key1_byte, 'key1_byte', errors)
+      : null;
+    const key2Byte = values.file_id
+      ? parsePositiveInteger(values.key2_byte, 'key2_byte', errors)
+      : null;
     let pickSource = null;
     try {
       pickSource = buildStaticCorrectionPickSource(dom);
@@ -1541,8 +1571,6 @@
   function applyPresetValues(values, targetDom = dom) {
     if (!targetDom || !values) return;
 
-    setElementValue(targetDom.key1Byte, values.key1_byte);
-    setElementValue(targetDom.key2Byte, values.key2_byte);
     if (values.pick_source) {
       setElementValue(targetDom.pickKind, values.pick_source.kind);
       setElementValue(targetDom.pickArtifactName, values.pick_source.artifact_name);
@@ -1681,7 +1709,7 @@
     state.error = '';
     state.showValidationSummary = false;
     state.validationErrors = [];
-    state.message = `Loaded preset ${preset.name}. Current file_id and pick_source.job_id were kept.`;
+    state.message = `Loaded preset ${preset.name}. Current viewer target and pick_source.job_id were kept.`;
     render();
   }
 
@@ -1971,18 +1999,41 @@
     }
   }
 
+  function renderTargetSummary() {
+    if (!dom || !dom.targetEmpty || !dom.targetDetails) return;
+    const target = getStaticCorrectionTarget();
+    dom.targetEmpty.hidden = Boolean(target);
+    dom.targetDetails.hidden = !target;
+    if (!target) {
+      dom.targetEmpty.textContent = 'No active viewer file. Open an SGY/TraceStore in the viewer before running Static Correction.';
+      return;
+    }
+    if (dom.targetFile) {
+      dom.targetFile.textContent = target.display_name;
+      dom.targetFile.title = target.file_id;
+    }
+    if (dom.targetKeys) {
+      dom.targetKeys.textContent = `key1=${target.key1_byte}, key2=${target.key2_byte}`;
+    }
+    if (dom.targetStatus) {
+      dom.targetStatus.textContent = 'Ready';
+    }
+  }
+
   function render() {
     if (!dom) return;
     const preview = getStaticCorrectionValidationSnapshot(dom);
+    const hasTarget = Boolean(getStaticCorrectionTarget());
     if (state.showValidationSummary) {
       state.validationErrors = preview.errors;
     }
     updateStaticCorrectionPickSourceControls(dom);
     updateStaticCorrectionLinkageOptions(dom);
+    renderTargetSummary();
     dom.status.textContent = state.message;
     dom.error.hidden = !state.error;
     dom.error.textContent = state.error;
-    dom.runButton.disabled = state.phase !== 'idle' || isStaticJobActive();
+    dom.runButton.disabled = !hasTarget || state.phase !== 'idle' || isStaticJobActive();
     if (dom.loadPickArtifactsButton) {
       dom.loadPickArtifactsButton.disabled = (
         state.loadingPickArtifacts
@@ -2347,6 +2398,15 @@
     runStaticCorrection();
   }
 
+  function subscribeToViewerTargetUpdates() {
+    if (viewerTargetUnsubscribe || !window.store || typeof window.store.subscribe !== 'function') {
+      return;
+    }
+    viewerTargetUnsubscribe = window.store.subscribe(() => {
+      render();
+    });
+  }
+
   async function cancelStaticCorrectionJob() {
     const jobId = trimValue(state.lastStaticCorrectionJobId);
     if (!jobId || !isStaticJobActive()) {
@@ -2384,9 +2444,11 @@
     const status = document.getElementById('staticCorrectionStatus');
     const error = document.getElementById('staticCorrectionError');
     const runButton = document.getElementById('staticCorrectionRunButton');
-    const fileId = document.getElementById('staticCorrectionFileId');
-    const key1Byte = document.getElementById('staticCorrectionKey1Byte');
-    const key2Byte = document.getElementById('staticCorrectionKey2Byte');
+    const targetEmpty = document.getElementById('staticCorrectionTargetEmpty');
+    const targetDetails = document.getElementById('staticCorrectionTargetDetails');
+    const targetFile = document.getElementById('staticCorrectionTargetFile');
+    const targetKeys = document.getElementById('staticCorrectionTargetKeys');
+    const targetStatus = document.getElementById('staticCorrectionTargetStatus');
     const presetSelect = document.getElementById('staticCorrectionPresetSelect');
     const presetName = document.getElementById('staticCorrectionPresetName');
     const savePresetButton = document.getElementById('staticCorrectionSavePresetButton');
@@ -2484,7 +2546,8 @@
     const staticArtifactBody = document.getElementById('staticCorrectionArtifactBody');
     const staticArtifactEmpty = document.getElementById('staticCorrectionArtifactEmpty');
     if (
-      !form || !status || !error || !runButton || !fileId || !key1Byte || !key2Byte
+      !form || !status || !error || !runButton || !targetEmpty || !targetDetails
+      || !targetFile || !targetKeys || !targetStatus
       || !presetSelect || !presetName || !savePresetButton || !loadPresetButton
       || !deletePresetButton
       || !pickKind || !pickJobId || !pickArtifactName || !loadPickArtifactsButton
@@ -2516,8 +2579,6 @@
       return;
     }
 
-    setDefaultValue(key1Byte, DEFAULTS.key1Byte);
-    setDefaultValue(key2Byte, DEFAULTS.key2Byte);
     setDefaultValue(pickKind, DEFAULTS.pickKind);
     setDefaultValue(pickArtifactName, DEFAULTS.pickArtifactName);
     setDefaultValue(linkageMode, DEFAULTS.linkageMode);
@@ -2552,9 +2613,11 @@
       status,
       error,
       runButton,
-      fileId,
-      key1Byte,
-      key2Byte,
+      targetEmpty,
+      targetDetails,
+      targetFile,
+      targetKeys,
+      targetStatus,
       presetSelect,
       presetName,
       savePresetButton,
@@ -2645,6 +2708,13 @@
       staticArtifactEmpty,
     };
     state.presets = readStoredPresets();
+    subscribeToViewerTargetUpdates();
+    if (window.viewerBootstrapReady && typeof window.viewerBootstrapReady.then === 'function') {
+      window.viewerBootstrapReady.then(() => {
+        subscribeToViewerTargetUpdates();
+        render();
+      });
+    }
     applyStaticCorrectionGeometryPreset(dom, trimValue(geometryPreset.value) || GEOMETRY_DEFAULTS.preset);
     updateModelPresetControls(dom);
     updateStaticCorrectionLinkageOptions(dom);
