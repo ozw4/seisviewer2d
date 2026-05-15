@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 from dataclasses import dataclass
 import json
+import math
 from pathlib import Path
 import shutil
 
@@ -17,6 +18,24 @@ PICK_ARTIFACT_NAME = 'predicted_picks_time_s.npz'
 METADATA_NAME = 'fixture_metadata.json'
 EXPECTED_SUMMARY_NAME = 'expected_static_summary.json'
 README_NAME = 'README.md'
+SEGYIO_REQUIRED_MESSAGE = (
+    'This script requires segyio to write synthetic_static_2d_one_layer.sgy. '
+    "Install segyio or run in the repository's SEG-Y-enabled environment."
+)
+
+GEOMETRY_HEADERS = {
+    'source_id_byte': 17,
+    'receiver_id_byte': 13,
+    'source_x_byte': 73,
+    'source_y_byte': 77,
+    'receiver_x_byte': 81,
+    'receiver_y_byte': 85,
+    'source_elevation_byte': 41,
+    'receiver_elevation_byte': 45,
+    'offset_byte': 37,
+    'coordinate_scalar_byte': 71,
+    'elevation_scalar_byte': 69,
+}
 
 
 @dataclass(frozen=True)
@@ -34,6 +53,27 @@ class FixtureConfig:
     v2_m_s: float
     noise_std: float
     overwrite: bool
+
+
+@dataclass(frozen=True)
+class SyntheticFixture:
+    traces: np.ndarray
+    shot_index: np.ndarray
+    receiver_index: np.ndarray
+    source_id: np.ndarray
+    receiver_id: np.ndarray
+    source_x_m: np.ndarray
+    source_y_m: np.ndarray
+    receiver_x_m: np.ndarray
+    receiver_y_m: np.ndarray
+    source_elevation_m: np.ndarray
+    receiver_elevation_m: np.ndarray
+    offset_m: np.ndarray
+    pick_time_s: np.ndarray
+    source_t1_s: np.ndarray
+    receiver_t1_s: np.ndarray
+    source_thickness_m: np.ndarray
+    receiver_thickness_m: np.ndarray
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -131,7 +171,51 @@ def ensure_output_dir(config: FixtureConfig) -> None:
                 child.unlink()
 
 
-def build_placeholder_pick_arrays(config: FixtureConfig) -> dict[str, np.ndarray]:
+def _line_length_m(config: FixtureConfig) -> float:
+    shot_extent = (config.n_shots - 1) * config.shot_interval_m
+    receiver_extent = (config.n_receivers - 1) * config.receiver_interval_m
+    return max(float(shot_extent), float(receiver_extent), 1.0)
+
+
+def _weathering_thickness_m(x_m: np.ndarray, line_length_m: float) -> np.ndarray:
+    phase = 2.0 * np.pi * np.asarray(x_m, dtype=np.float64) / line_length_m
+    thickness = 12.0 + 4.0 * np.sin(phase) + 1.5 * np.cos(2.0 * phase)
+    return np.maximum(thickness, 0.5).astype(np.float64, copy=False)
+
+
+def _half_intercept_time_s(
+    thickness_m: np.ndarray,
+    *,
+    v1_m_s: float,
+    v2_m_s: float,
+) -> np.ndarray:
+    factor = math.sqrt(v2_m_s * v2_m_s - v1_m_s * v1_m_s) / (v2_m_s * v1_m_s)
+    return np.asarray(thickness_m, dtype=np.float64) * factor
+
+
+def _add_pulse(
+    trace: np.ndarray,
+    *,
+    center_time_s: float,
+    dt_s: float,
+    amplitude: float,
+    frequency_hz: float,
+) -> None:
+    center_sample = int(round(center_time_s / dt_s))
+    radius = max(2, int(round(0.016 / dt_s)))
+    start = max(0, center_sample - radius)
+    stop = min(trace.shape[0], center_sample + radius + 1)
+    if start >= stop:
+        return
+
+    sample_indices = np.arange(start, stop, dtype=np.float64)
+    time_shift_s = (sample_indices - center_sample) * dt_s
+    arg = np.pi * frequency_hz * time_shift_s
+    wavelet = (1.0 - 2.0 * arg * arg) * np.exp(-(arg * arg))
+    trace[start:stop] += amplitude * wavelet.astype(np.float32, copy=False)
+
+
+def build_synthetic_fixture(config: FixtureConfig) -> SyntheticFixture:
     rng = np.random.default_rng(config.seed)
     shot_x_m = (
         np.arange(config.n_shots, dtype=np.float64) * config.shot_interval_m
@@ -139,35 +223,164 @@ def build_placeholder_pick_arrays(config: FixtureConfig) -> dict[str, np.ndarray
     receiver_x_m = (
         np.arange(config.n_receivers, dtype=np.float64) * config.receiver_interval_m
     )
+    line_length_m = _line_length_m(config)
+    shot_thickness_m = _weathering_thickness_m(shot_x_m, line_length_m)
+    receiver_thickness_m = _weathering_thickness_m(receiver_x_m, line_length_m)
+    shot_t1_s = _half_intercept_time_s(
+        shot_thickness_m,
+        v1_m_s=config.v1_m_s,
+        v2_m_s=config.v2_m_s,
+    )
+    receiver_t1_s = _half_intercept_time_s(
+        receiver_thickness_m,
+        v1_m_s=config.v1_m_s,
+        v2_m_s=config.v2_m_s,
+    )
+
     shot_index, receiver_index = np.meshgrid(
         np.arange(config.n_shots, dtype=np.int32),
         np.arange(config.n_receivers, dtype=np.int32),
         indexing='ij',
     )
     offset_m = np.abs(shot_x_m[shot_index] - receiver_x_m[receiver_index])
-    base_time_s = offset_m / config.v2_m_s
-    noise_s = rng.normal(
-        loc=0.0,
-        scale=config.noise_std,
-        size=(config.n_shots, config.n_receivers),
+    pick_time_s = (
+        shot_t1_s[shot_index]
+        + receiver_t1_s[receiver_index]
+        + offset_m / config.v2_m_s
     )
 
+    n_traces = config.n_shots * config.n_receivers
+    traces = rng.normal(
+        loc=0.0,
+        scale=config.noise_std,
+        size=(n_traces, config.n_samples),
+    ).astype(np.float32)
+
+    flat_pick_time_s = pick_time_s.reshape(-1)
+    flat_source_x_m = shot_x_m[shot_index].reshape(-1)
+    flat_receiver_x_m = receiver_x_m[receiver_index].reshape(-1)
+    midpoint_x_m = 0.5 * (flat_source_x_m + flat_receiver_x_m)
+    later_variation_s = 0.04 * np.sin(2.0 * np.pi * midpoint_x_m / line_length_m)
+    later_time_s = flat_pick_time_s + 0.35 + later_variation_s
+
+    for trace, pick_time, reflection_time in zip(
+        traces,
+        flat_pick_time_s,
+        later_time_s,
+        strict=True,
+    ):
+        _add_pulse(
+            trace,
+            center_time_s=float(pick_time),
+            dt_s=config.dt_s,
+            amplitude=1.0,
+            frequency_hz=55.0,
+        )
+        _add_pulse(
+            trace,
+            center_time_s=float(reflection_time),
+            dt_s=config.dt_s,
+            amplitude=0.35,
+            frequency_hz=35.0,
+        )
+
+    source_id = (shot_index + 1).astype(np.int32, copy=False)
+    receiver_id = (receiver_index + 1).astype(np.int32, copy=False)
+    source_elevation_m = 100.0 + 0.01 * shot_x_m[shot_index]
+    receiver_elevation_m = 100.0 + 0.01 * receiver_x_m[receiver_index]
+
+    return SyntheticFixture(
+        traces=np.ascontiguousarray(traces, dtype=np.float32),
+        shot_index=shot_index,
+        receiver_index=receiver_index,
+        source_id=source_id.reshape(-1),
+        receiver_id=receiver_id.reshape(-1),
+        source_x_m=flat_source_x_m,
+        source_y_m=np.zeros(n_traces, dtype=np.float64),
+        receiver_x_m=flat_receiver_x_m,
+        receiver_y_m=np.zeros(n_traces, dtype=np.float64),
+        source_elevation_m=source_elevation_m.reshape(-1),
+        receiver_elevation_m=receiver_elevation_m.reshape(-1),
+        offset_m=offset_m.reshape(-1),
+        pick_time_s=flat_pick_time_s,
+        source_t1_s=shot_t1_s[shot_index].reshape(-1),
+        receiver_t1_s=receiver_t1_s[receiver_index].reshape(-1),
+        source_thickness_m=shot_thickness_m[shot_index].reshape(-1),
+        receiver_thickness_m=receiver_thickness_m[receiver_index].reshape(-1),
+    )
+
+
+def build_pick_arrays(config: FixtureConfig, fixture: SyntheticFixture) -> dict[str, np.ndarray]:
     return {
-        'artifact_kind': np.asarray('placeholder_first_break_picks'),
+        'artifact_kind': np.asarray('synthetic_first_break_picks'),
         'schema_version': np.asarray(1, dtype=np.int32),
         'scenario': np.asarray(config.scenario),
         'seed': np.asarray(config.seed, dtype=np.int64),
-        'shot_index': shot_index,
-        'receiver_index': receiver_index,
-        'shot_x_m': shot_x_m,
-        'receiver_x_m': receiver_x_m,
-        'offset_m': offset_m,
-        'pick_time_s': np.maximum(base_time_s + noise_s, 0.0).astype(
-            np.float64,
-            copy=False,
+        'shot_index': fixture.shot_index,
+        'receiver_index': fixture.receiver_index,
+        'source_id': fixture.source_id.reshape(config.n_shots, config.n_receivers),
+        'receiver_id': fixture.receiver_id.reshape(config.n_shots, config.n_receivers),
+        'shot_x_m': (
+            np.arange(config.n_shots, dtype=np.float64) * config.shot_interval_m
         ),
-        'placeholder': np.asarray(True),
+        'receiver_x_m': (
+            np.arange(config.n_receivers, dtype=np.float64) * config.receiver_interval_m
+        ),
+        'offset_m': fixture.offset_m.reshape(config.n_shots, config.n_receivers),
+        'pick_time_s': fixture.pick_time_s.reshape(config.n_shots, config.n_receivers),
+        'source_t1_s': fixture.source_t1_s.reshape(config.n_shots, config.n_receivers),
+        'receiver_t1_s': fixture.receiver_t1_s.reshape(config.n_shots, config.n_receivers),
+        'source_weathering_thickness_m': fixture.source_thickness_m.reshape(
+            config.n_shots,
+            config.n_receivers,
+        ),
+        'receiver_weathering_thickness_m': fixture.receiver_thickness_m.reshape(
+            config.n_shots,
+            config.n_receivers,
+        ),
     }
+
+
+def write_synthetic_segy(
+    path: Path,
+    *,
+    config: FixtureConfig,
+    fixture: SyntheticFixture,
+) -> None:
+    try:
+        import segyio
+    except ImportError as exc:
+        raise RuntimeError(SEGYIO_REQUIRED_MESSAGE) from exc
+
+    spec = segyio.spec()
+    spec.format = 5
+    spec.samples = list(range(config.n_samples))
+    spec.tracecount = int(fixture.traces.shape[0])
+
+    sample_interval_us = int(round(config.dt_s * 1_000_000.0))
+    with segyio.create(str(path), spec) as segy_file:
+        segy_file.bin[segyio.BinField.Interval] = sample_interval_us
+        segy_file.bin[segyio.BinField.Samples] = int(config.n_samples)
+
+        for trace_index in range(fixture.traces.shape[0]):
+            segy_file.header[trace_index] = {
+                segyio.TraceField.TRACE_SEQUENCE_LINE: trace_index + 1,
+                segyio.TraceField.TRACE_SEQUENCE_FILE: trace_index + 1,
+                segyio.TraceField.TRACE_SAMPLE_COUNT: int(config.n_samples),
+                segyio.TraceField.TRACE_SAMPLE_INTERVAL: sample_interval_us,
+                GEOMETRY_HEADERS['source_id_byte']: int(fixture.source_id[trace_index]),
+                GEOMETRY_HEADERS['receiver_id_byte']: int(fixture.receiver_id[trace_index]),
+                GEOMETRY_HEADERS['offset_byte']: int(round(fixture.offset_m[trace_index])),
+                GEOMETRY_HEADERS['source_elevation_byte']: int(round(fixture.source_elevation_m[trace_index])),
+                GEOMETRY_HEADERS['receiver_elevation_byte']: int(round(fixture.receiver_elevation_m[trace_index])),
+                GEOMETRY_HEADERS['elevation_scalar_byte']: 1,
+                GEOMETRY_HEADERS['coordinate_scalar_byte']: 1,
+                GEOMETRY_HEADERS['source_x_byte']: int(round(fixture.source_x_m[trace_index])),
+                GEOMETRY_HEADERS['source_y_byte']: int(round(fixture.source_y_m[trace_index])),
+                GEOMETRY_HEADERS['receiver_x_byte']: int(round(fixture.receiver_x_m[trace_index])),
+                GEOMETRY_HEADERS['receiver_y_byte']: int(round(fixture.receiver_y_m[trace_index])),
+            }
+            segy_file.trace[trace_index] = fixture.traces[trace_index]
 
 
 def build_fixture_metadata(config: FixtureConfig) -> dict[str, object]:
@@ -194,6 +407,13 @@ def build_fixture_metadata(config: FixtureConfig) -> dict[str, object]:
             'weathering_velocity': 'constant_v1',
             'bedrock_velocity': 'global_v2',
             'model': 'one_layer_t1lsst_compatible',
+        },
+        'geometry_headers': GEOMETRY_HEADERS,
+        'synthetic_model': {
+            'v1_m_s': config.v1_m_s,
+            'v2_m_s': config.v2_m_s,
+            'dt_s': config.dt_s,
+            'n_samples': config.n_samples,
         },
         'generation': {
             'seed': config.seed,
@@ -236,21 +456,24 @@ def build_readme(config: FixtureConfig) -> str:
         '- Recommended Static Correction preset: `one_layer_global`\n'
         '- Linkage default: `none`\n'
         '- Recommended exports: `canonical_static_table`, `lsst_plus`\n\n'
-        'The SGY and pick artifact are placeholders in this initial skeleton. '
-        'Later issues will replace them with full SEG-Y samples and final '
-        'first-break artifact contents while preserving this directory layout.\n'
+        'The SGY file contains deterministic one-layer synthetic traces with '
+        'clear first-break pulses and geometry headers listed in '
+        f'`{METADATA_NAME}`.\n'
     )
 
 
 def write_fixture(config: FixtureConfig) -> None:
     output_dir = config.output_dir
+    fixture = build_synthetic_fixture(config)
 
-    (output_dir / SGY_NAME).write_bytes(
-        b'SEISVIEWER2D_PLACEHOLDER_REFRACTION_STATIC_UI_FIXTURE\n'
+    write_synthetic_segy(
+        output_dir / SGY_NAME,
+        config=config,
+        fixture=fixture,
     )
     np.savez(
         output_dir / PICK_ARTIFACT_NAME,
-        **build_placeholder_pick_arrays(config),
+        **build_pick_arrays(config, fixture),
     )
     (output_dir / METADATA_NAME).write_text(
         json.dumps(build_fixture_metadata(config), indent=2) + '\n',
@@ -272,7 +495,7 @@ def run(argv: list[str] | None = None) -> int:
         validate_config(config)
         ensure_output_dir(config)
         write_fixture(config)
-    except ValueError as exc:
+    except (RuntimeError, ValueError) as exc:
         parser.error(str(exc))
 
     print(f'Wrote refraction static UI fixture to {config.output_dir}')
