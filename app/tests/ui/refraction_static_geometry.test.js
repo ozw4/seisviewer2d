@@ -167,9 +167,11 @@ function renderStaticCorrectionForm() {
         value="first_break_time"
         data-static-correction-export-format
       />
+      <button id="staticCorrectionValidateButton" type="button"></button>
       <button id="staticCorrectionRunButton" type="button"></button>
       <button id="staticCorrectionCancelButton" type="button" hidden></button>
       <div id="staticCorrectionValidationSummary" hidden></div>
+      <div id="staticCorrectionValidationDiagnostics" hidden></div>
       <pre id="staticCorrectionRequestPreview" hidden></pre>
     </form>
     <div id="staticCorrectionStatus"></div>
@@ -319,6 +321,24 @@ function createStaticCorrectionFetchMock(
     }
     if (url === '/statics/refraction/apply-with-picks') {
       return jsonResponse({ job_id: 'static-job-a', state: 'queued' });
+    }
+    if (url === '/statics/refraction/validate-with-picks') {
+      return jsonResponse({
+        status: 'ok',
+        target: { file_id: 'file-a', key1_byte: 189, key2_byte: 193 },
+        pick_npz: { selected_key: 'pick_time_s', shape: [4], keys: ['pick_time_s'] },
+        diagnostics: {
+          n_total_traces: 4,
+          n_finite_picks: 4,
+          n_used_for_inversion: 4,
+          n_unique_source_endpoints: 2,
+          n_unique_receiver_endpoints: 4,
+          offset_m: { min: 100, median: 250, max: 400 },
+          filter_reason_counts: {},
+        },
+        warnings: [],
+        errors: [],
+      });
     }
     if (url === '/statics/job/static-job-a/status') {
       return jsonResponse(
@@ -1136,6 +1156,37 @@ test('checked linkage posts linkage build payload before static correction apply
       prefer_receiver_anchor: false,
     },
   });
+});
+
+test('static correction validation builds linkage before validation preflight', async () => {
+  const ui = loadStaticCorrectionScript();
+  enableLinkage();
+  document.getElementById('staticCorrectionLinkageThresholdM').value = '12.5';
+  document.getElementById('staticCorrectionReceiverLocationIntervalM').value = '25';
+  document.getElementById('staticCorrectionPreferReceiverAnchor').checked = false;
+  const { calls } = createStaticCorrectionFetchMock();
+
+  await ui.validateStaticCorrectionInputs();
+  await flushAsyncWork();
+
+  expect(calls.map((call) => call.url)).toEqual([
+    '/statics/linkage/build',
+    '/statics/job/linkage-job-a/status',
+    '/statics/refraction/validate-with-picks',
+  ]);
+  expect(calls[0].body.linkage).toEqual({
+    mode: 'auto_threshold',
+    threshold_m: 12.5,
+    receiver_location_interval_m: 25,
+    prefer_receiver_anchor: false,
+  });
+  const validateCall = calls.find((call) => call.url === '/statics/refraction/validate-with-picks');
+  expect(validateCall.body.linkage).toEqual({
+    mode: 'required',
+    job_id: 'linkage-job-a',
+    artifact_name: 'geometry_linkage.npz',
+  });
+  expect(calls.map((call) => call.url)).not.toContain('/statics/refraction/apply-with-picks');
 });
 
 test('checked linkage polls linkage status until ready', async () => {

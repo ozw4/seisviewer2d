@@ -507,6 +507,32 @@ def test_validate_with_picks_rejects_missing_npz(
         assert len(client.app.state.sv.jobs) == 0
 
 
+def test_validate_with_picks_reports_corrupt_npz_without_job(
+    client: TestClient,
+) -> None:
+    response = client.post(
+        '/statics/refraction/validate-with-picks',
+        data={'request_json': json.dumps(_validation_uploaded_pick_payload())},
+        files={
+            'pick_npz': (
+                'corrupt-picks.npz',
+                b'not an npz archive',
+                'application/octet-stream',
+            )
+        },
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload['status'] == 'error'
+    assert payload['pick_npz']['selected_key'] is None
+    assert payload['pick_npz']['shape'] is None
+    assert payload['pick_npz']['keys'] == []
+    assert any('Unable to read pick NPZ' in error for error in payload['errors'])
+    with client.app.state.sv.lock:
+        assert len(client.app.state.sv.jobs) == 0
+
+
 def test_validate_with_picks_reports_pick_count_mismatch_without_job(
     client: TestClient,
     monkeypatch: pytest.MonkeyPatch,

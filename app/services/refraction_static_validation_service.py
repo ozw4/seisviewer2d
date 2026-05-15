@@ -28,22 +28,28 @@ def validate_refraction_static_inputs_with_picks(
         'key1_byte': int(req.key1_byte),
         'key2_byte': int(req.key2_byte),
     }
-    pick_summary = _inspect_pick_npz(pick_npz_path)
     errors: list[str] = []
     warnings: list[str] = []
+    pick_summary = _empty_pick_npz_summary(pick_npz_path)
+
+    try:
+        pick_summary = _inspect_pick_npz(pick_npz_path)
+    except Exception as exc:  # noqa: BLE001
+        errors.append(f'Unable to read pick NPZ: {exc}')
 
     input_model: RefractionStaticInputModel | None = None
-    try:
-        input_model = build_refraction_static_input_model(
-            req=req,
-            state=state,
-            job_dir=None,
-            uploaded_pick_npz_path=pick_npz_path,
-            uploaded_pick_metadata=uploaded_pick_metadata,
-            require_valid_observations=False,
-        )
-    except Exception as exc:  # noqa: BLE001
-        errors.append(str(exc))
+    if not errors:
+        try:
+            input_model = build_refraction_static_input_model(
+                req=req,
+                state=state,
+                job_dir=None,
+                uploaded_pick_npz_path=pick_npz_path,
+                uploaded_pick_metadata=uploaded_pick_metadata,
+                require_valid_observations=False,
+            )
+        except Exception as exc:  # noqa: BLE001
+            errors.append(str(exc))
 
     diagnostics = (
         _diagnostics_from_input_model(input_model)
@@ -66,14 +72,18 @@ def validate_refraction_static_inputs_with_picks(
     }
 
 
-def _inspect_pick_npz(path: Path) -> dict[str, Any]:
-    summary: dict[str, Any] = {
+def _empty_pick_npz_summary(path: Path) -> dict[str, Any]:
+    return {
         'filename': Path(path).name,
         'selected_key': None,
         'shape': None,
         'keys': [],
         'order': None,
     }
+
+
+def _inspect_pick_npz(path: Path) -> dict[str, Any]:
+    summary = _empty_pick_npz_summary(path)
     with np.load(path, allow_pickle=False) as npz:
         keys = list(npz.files)
         selected = next((key for key in PICK_TIME_KEYS if key in keys), None)

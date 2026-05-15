@@ -2336,18 +2336,14 @@
 
   async function validateStaticCorrectionInputs() {
     state.lastResponse = null;
+    state.lastLinkageBuildRequest = null;
+    state.lastLinkageJobId = '';
     state.validationDiagnostics = null;
     state.showValidationSummary = false;
     state.validationErrors = [];
-    let payload = null;
-    try {
-      payload = buildRefractionStaticApplyRequest(dom, {
-        linkageJobId: state.lastLinkageJobId,
-      });
-    } catch (error) {
-      const errors = error && Array.isArray(error.errors)
-        ? error.errors
-        : [error && error.message ? error.message : String(error)];
+    const { payload, errors } = buildStaticCorrectionRequest();
+    state.lastRequest = payload;
+    if (errors.length) {
       state.error = errors.join(' ');
       state.validationErrors = errors;
       state.showValidationSummary = true;
@@ -2361,7 +2357,35 @@
       state.phase = 'validating_static_correction';
       state.message = 'Validating refraction static inputs...';
       render();
-      const formData = buildStaticCorrectionFormData(payload);
+      let validationPayload = payload;
+      if (dom.enableLinkage.checked) {
+        state.phase = 'building_linkage';
+        state.message = 'Building endpoint geometry linkage for validation...';
+        render();
+        const linkageBuildPayload = buildStaticLinkageBuildRequest(dom);
+        state.lastLinkageBuildRequest = linkageBuildPayload;
+
+        const linkageResponse = await postJson(
+          '/statics/linkage/build',
+          linkageBuildPayload,
+          'geometry linkage build'
+        );
+        const linkageJobId = trimValue(linkageResponse && linkageResponse.job_id);
+        if (!linkageJobId) {
+          throw new Error('Geometry linkage build did not return a job_id.');
+        }
+        state.lastLinkageJobId = linkageJobId;
+        state.message = `Linkage job ${linkageJobId} created. Waiting for geometry linkage...`;
+        render();
+
+        await pollStaticJobUntilReady(linkageJobId);
+        validationPayload = {
+          ...payload,
+          linkage: buildStaticCorrectionLinkage(dom, linkageJobId),
+        };
+        state.lastRequest = validationPayload;
+      }
+      const formData = buildStaticCorrectionFormData(validationPayload);
       const responsePayload = await postMultipart(
         '/statics/refraction/validate-with-picks',
         formData,
