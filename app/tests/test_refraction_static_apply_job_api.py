@@ -46,6 +46,7 @@ from app.services.refraction_static_artifacts import (
     REFRACTION_STATIC_COMPONENT_QC_NPZ_NAME,
     REFRACTION_STATIC_COMPONENT_QC_TRACE_CSV_NAME,
     REFRACTION_STATIC_COMPONENTS_CSV_NAME,
+    REFRACTION_STATIC_FAILURE_DIAGNOSTICS_JSON_NAME,
     REFRACTION_STATIC_HISTORY_JSON_NAME,
     REFRACTION_STATIC_QC_JSON_NAME,
     REFRACTION_STATIC_SOLUTION_NPZ_NAME,
@@ -56,6 +57,13 @@ from app.services.refraction_static_artifacts import (
     RECEIVER_STATIC_TABLE_CSV_NAME,
     SOURCE_RECEIVER_STATIC_TABLE_NPZ_NAME,
     SOURCE_STATIC_TABLE_CSV_NAME,
+    UPLOADED_REFRACTION_PICKS_NPZ_NAME,
+)
+from app.services.refraction_static_design_matrix import (
+    REFRACTION_DESIGN_MATRIX_NODE_DIAGNOSTICS_CSV_NAME,
+    REFRACTION_DESIGN_MATRIX_QC_JSON_NAME,
+    build_refraction_static_design_matrix_from_arrays,
+    write_refraction_design_matrix_diagnostics_artifacts,
 )
 from app.services.refraction_static_export_service import (
     CANONICAL_SOURCE_RECEIVER_STATIC_TABLE_CSV_NAME,
@@ -63,6 +71,13 @@ from app.services.refraction_static_export_service import (
 from app.services.refraction_static_layer_observations import (
     build_refraction_layer_observation_masks,
     refraction_layer_observation_qc,
+)
+from app.services.refraction_static_preflight_diagnostics import (
+    REFRACTION_STATIC_PREFLIGHT_OBSERVATIONS_CSV_NAME,
+    REFRACTION_STATIC_PREFLIGHT_QC_JSON_NAME,
+    RefractionStaticPreflightDiagnostics,
+    RefractionStaticPreflightError,
+    write_refraction_static_preflight_artifacts,
 )
 from app.services.refraction_static_service import run_refraction_static_apply_job
 from app.services.refraction_static_source_depth import (
@@ -255,6 +270,41 @@ def _pick_npz_bytes() -> bytes:
         dt=np.asarray(0.001, dtype=np.float64),
     )
     return buffer.getvalue()
+
+
+def _write_minimal_preflight_diagnostics(job_dir: Path) -> None:
+    diagnostics = RefractionStaticPreflightDiagnostics(
+        status='error',
+        warnings=[],
+        errors=['No valid refraction observations remain after preflight filtering.'],
+        summary={
+            'observation_filters': {
+                'n_total_traces': 2,
+                'n_used_for_inversion': 0,
+            }
+        },
+        observation_reason_counts={'offset_gate': 2},
+        endpoint_summary={},
+    )
+    write_refraction_static_preflight_artifacts(job_dir, diagnostics)
+
+
+def _write_minimal_design_matrix_diagnostics(job_dir: Path) -> None:
+    design = build_refraction_static_design_matrix_from_arrays(
+        pick_time_s_sorted=np.asarray([0.20]),
+        valid_observation_mask_sorted=np.asarray([True]),
+        source_node_id_sorted=np.asarray([17]),
+        receiver_node_id_sorted=np.asarray([21]),
+        source_endpoint_key_sorted=np.asarray(['source:1007']),
+        receiver_endpoint_key_sorted=np.asarray(['receiver:2001']),
+        distance_m_sorted=np.asarray([500.0]),
+        node_id=np.asarray([17, 21]),
+        node_kind=np.asarray(['source', 'receiver']),
+        bedrock_velocity_mode='fixed_global',
+        fixed_bedrock_velocity_m_s=2500.0,
+        rejection_reason_sorted=np.asarray(['ok']),
+    )
+    write_refraction_design_matrix_diagnostics_artifacts(job_dir, design)
 
 
 def test_refraction_static_apply_endpoint_starts_job(
@@ -554,6 +604,54 @@ def test_refraction_apply_with_uploaded_picks_job_status_and_files(
     assert 'uploaded_picks_time_s.npz' in file_names
 
 
+def test_uploaded_npz_preserved_for_failed_apply_with_picks_job(
+    client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def _raise_synthetic_failure(**_kwargs: Any) -> object:
+        raise RuntimeError('synthetic failure')
+
+    monkeypatch.setattr(
+        statics_router_module,
+        'start_job_thread',
+        lambda **kwargs: kwargs['target'](*kwargs['args']),
+    )
+    monkeypatch.setattr(
+        refraction_service_module,
+        'build_refraction_static_input_model',
+        lambda **_kwargs: object(),
+    )
+    monkeypatch.setattr(
+        refraction_service_module,
+        'compute_weathering_replacement_statics_from_first_breaks',
+        _raise_synthetic_failure,
+    )
+    upload_bytes = _pick_npz_bytes()
+
+    response = client.post(
+        '/statics/refraction/apply-with-picks',
+        data={'request_json': json.dumps(_uploaded_pick_payload())},
+        files={
+            'pick_npz': (
+                'predicted_picks_time_s.npz',
+                upload_bytes,
+                'application/octet-stream',
+            )
+        },
+    )
+
+    assert response.status_code == 200
+    job_id = response.json()['job_id']
+    with client.app.state.sv.lock:
+        job = dict(client.app.state.sv.jobs[job_id])
+    job_dir = Path(str(job['artifacts_dir']))
+    assert job['status'] == 'error'
+    assert (job_dir / UPLOADED_REFRACTION_PICKS_NPZ_NAME).read_bytes() == upload_bytes
+    listed = _listed_job_files(client, job_id)
+    assert UPLOADED_REFRACTION_PICKS_NPZ_NAME in listed
+    assert REFRACTION_STATIC_FAILURE_DIAGNOSTICS_JSON_NAME in listed
+
+
 def test_apply_with_uploaded_picks_synthetic_one_layer_job_completes(
     client: TestClient,
     tmp_path: Path,
@@ -629,6 +727,102 @@ def test_apply_with_uploaded_picks_synthetic_one_layer_job_completes(
     qc_payload = qc_response.json()
     assert qc_payload['job_id'] == job_id
     assert qc_payload['summary']['workflow'] == 'refraction_statics'
+
+
+def test_failed_static_job_lists_preflight_diagnostics(
+    client: TestClient,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    req = RefractionStaticApplyRequest.model_validate(_payload())
+    job_id = 'refraction-preflight-failure-job-id'
+    job_dir = tmp_path / 'jobs' / job_id
+    _create_refraction_job(client, job_id=job_id, req=req, job_dir=job_dir)
+
+    def _raise_preflight(**kwargs: Any) -> object:
+        _write_minimal_preflight_diagnostics(kwargs['job_dir'])
+        raise RefractionStaticPreflightError(
+            'Refraction static preflight failed: no observations'
+        )
+
+    monkeypatch.setattr(
+        refraction_service_module,
+        'compute_weathering_replacement_statics_from_first_breaks',
+        _raise_preflight,
+    )
+
+    run_refraction_static_apply_job(job_id, req, client.app.state.sv)
+
+    with client.app.state.sv.lock:
+        job = dict(client.app.state.sv.jobs[job_id])
+    assert job['status'] == 'error'
+    listed = _listed_job_files(client, job_id)
+    assert REFRACTION_STATIC_PREFLIGHT_QC_JSON_NAME in listed
+    assert REFRACTION_STATIC_PREFLIGHT_OBSERVATIONS_CSV_NAME in listed
+    assert REFRACTION_STATIC_FAILURE_DIAGNOSTICS_JSON_NAME in listed
+
+    failure = json.loads(
+        (job_dir / REFRACTION_STATIC_FAILURE_DIAGNOSTICS_JSON_NAME).read_text(
+            encoding='utf-8'
+        )
+    )
+    assert failure['state'] == 'error'
+    assert failure['failed_stage'] == 'preflight'
+    assert failure['error_type'] == 'RefractionStaticPreflightError'
+    assert REFRACTION_STATIC_PREFLIGHT_QC_JSON_NAME in (
+        failure['available_diagnostic_artifacts']
+    )
+
+    download = client.get(
+        f'/statics/job/{job_id}/download',
+        params={'name': REFRACTION_STATIC_PREFLIGHT_QC_JSON_NAME},
+    )
+    assert download.status_code == 200
+    assert download.json()['status'] == 'error'
+
+
+def test_failed_static_job_lists_design_matrix_diagnostics(
+    client: TestClient,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    req = RefractionStaticApplyRequest.model_validate(_payload())
+    job_id = 'refraction-design-matrix-failure-job-id'
+    job_dir = tmp_path / 'jobs' / job_id
+    _create_refraction_job(client, job_id=job_id, req=req, job_dir=job_dir)
+
+    def _raise_design_matrix(**kwargs: Any) -> object:
+        _write_minimal_design_matrix_diagnostics(kwargs['job_dir'])
+        raise ValueError(
+            'refraction design matrix contains an all-zero active-node column'
+        )
+
+    monkeypatch.setattr(
+        refraction_service_module,
+        'compute_weathering_replacement_statics_from_first_breaks',
+        _raise_design_matrix,
+    )
+
+    run_refraction_static_apply_job(job_id, req, client.app.state.sv)
+
+    with client.app.state.sv.lock:
+        job = dict(client.app.state.sv.jobs[job_id])
+    assert job['status'] == 'error'
+    listed = _listed_job_files(client, job_id)
+    assert REFRACTION_DESIGN_MATRIX_QC_JSON_NAME in listed
+    assert REFRACTION_DESIGN_MATRIX_NODE_DIAGNOSTICS_CSV_NAME in listed
+    assert REFRACTION_STATIC_FAILURE_DIAGNOSTICS_JSON_NAME in listed
+
+    failure = json.loads(
+        (job_dir / REFRACTION_STATIC_FAILURE_DIAGNOSTICS_JSON_NAME).read_text(
+            encoding='utf-8'
+        )
+    )
+    assert failure['failed_stage'] == 'design_matrix'
+    assert 'all-zero active-node column' in failure['error_message']
+    assert REFRACTION_DESIGN_MATRIX_NODE_DIAGNOSTICS_CSV_NAME in (
+        failure['available_diagnostic_artifacts']
+    )
 
 
 def test_refraction_static_apply_endpoint_accepts_omitted_linkage(

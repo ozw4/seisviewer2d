@@ -24,6 +24,8 @@ from app.services.refraction_static_cell_grid import assign_observation_midpoint
 from app.services.refraction_static_design_matrix import (
     LOW_FOLD_CELL_REJECTION_REASON,
     LOW_FOLD_CELL_VELOCITY_STATUS,
+    REFRACTION_DESIGN_MATRIX_NODE_DIAGNOSTICS_CSV_NAME,
+    REFRACTION_DESIGN_MATRIX_QC_JSON_NAME,
 )
 from app.services.refraction_static_export_units import (
     REFRACTION_STATIC_REPO_SIGN_CONVENTION,
@@ -34,6 +36,10 @@ from app.services.refraction_static_layer_config import (
 )
 from app.services.refraction_static_layer_observations import (
     build_refraction_layer_observation_masks_from_arrays,
+)
+from app.services.refraction_static_preflight_diagnostics import (
+    REFRACTION_STATIC_PREFLIGHT_OBSERVATIONS_CSV_NAME,
+    REFRACTION_STATIC_PREFLIGHT_QC_JSON_NAME,
 )
 from app.services.refraction_static_status import (
     REFRACTION_STATIC_STATUSES,
@@ -135,6 +141,8 @@ REFRACTION_GRID_MAP_QC_NPZ_NAME = 'refraction_grid_map_qc.npz'
 REFRACTION_GRID_MAP_QC_JSON_NAME = 'refraction_grid_map_qc.json'
 REFRACTION_STATIC_ARTIFACTS_JSON_NAME = 'refraction_static_artifacts.json'
 REFRACTION_STATIC_REQUEST_JSON_NAME = 'refraction_static_request.json'
+REFRACTION_STATIC_FAILURE_DIAGNOSTICS_JSON_NAME = 'failure_diagnostics.json'
+UPLOADED_REFRACTION_PICKS_NPZ_NAME = 'uploaded_picks_time_s.npz'
 
 
 @dataclass(frozen=True)
@@ -541,6 +549,12 @@ REFRACTION_STATIC_REGISTERED_ARTIFACT_NAMES = frozenset(
 ) | {
     REFRACTION_STATIC_ARTIFACTS_JSON_NAME,
     REFRACTION_STATIC_REQUEST_JSON_NAME,
+    REFRACTION_STATIC_FAILURE_DIAGNOSTICS_JSON_NAME,
+    REFRACTION_STATIC_PREFLIGHT_QC_JSON_NAME,
+    REFRACTION_STATIC_PREFLIGHT_OBSERVATIONS_CSV_NAME,
+    REFRACTION_DESIGN_MATRIX_QC_JSON_NAME,
+    REFRACTION_DESIGN_MATRIX_NODE_DIAGNOSTICS_CSV_NAME,
+    UPLOADED_REFRACTION_PICKS_NPZ_NAME,
 }
 
 _TRACE_STATICS_COLUMNS = (
@@ -10517,6 +10531,7 @@ __all__ = [
     'REFRACTION_STATIC_COMPONENT_QC_NPZ_NAME',
     'REFRACTION_STATIC_COMPONENT_QC_TRACE_CSV_NAME',
     'REFRACTION_STATIC_COMPONENTS_CSV_NAME',
+    'REFRACTION_STATIC_FAILURE_DIAGNOSTICS_JSON_NAME',
     'REFRACTION_STATIC_HISTORY_JSON_NAME',
     'REFRACTION_STATIC_REQUEST_JSON_NAME',
     'REFRACTION_STATIC_REGISTERED_ARTIFACT_NAMES',
@@ -10529,6 +10544,7 @@ __all__ = [
     'RECEIVER_STATIC_TABLE_CSV_NAME',
     'SOURCE_RECEIVER_STATIC_TABLE_NPZ_NAME',
     'SOURCE_STATIC_TABLE_CSV_NAME',
+    'UPLOADED_REFRACTION_PICKS_NPZ_NAME',
     'RefractionCellSolverHistoryRow',
     'RefractionStaticArtifactError',
     'RefractionStaticArtifactSet',

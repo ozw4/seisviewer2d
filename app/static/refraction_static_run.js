@@ -2096,7 +2096,7 @@
     return `Static correction job ${jobId} is ${jobState || 'unknown'}${message ? `: ${message}` : '.'}`;
   }
 
-  async function loadStaticArtifacts(jobId = state.lastStaticCorrectionJobId) {
+  async function loadStaticArtifacts(jobId = state.lastStaticCorrectionJobId, options = {}) {
     const safeJobId = trimValue(jobId);
     if (!safeJobId) {
       state.staticArtifacts = [];
@@ -2104,6 +2104,10 @@
       return [];
     }
 
+    const preserveMessage = Boolean(options && options.preserveMessage);
+    const preserveError = Boolean(options && options.preserveError);
+    const previousMessage = state.message;
+    const previousError = state.error;
     state.loadingStaticArtifacts = true;
     state.staticArtifacts = [];
     render();
@@ -2115,15 +2119,25 @@
       const payload = await response.json();
       const files = Array.isArray(payload.files) ? payload.files : [];
       state.staticArtifacts = sortedArtifactFiles(files);
-      state.message = files.length
-        ? `Loaded ${files.length} static correction artifact${files.length === 1 ? '' : 's'} for ${safeJobId}.`
-        : `Static correction job ${safeJobId} finished without generated artifact files.`;
-      state.error = '';
+      if (!preserveMessage) {
+        state.message = files.length
+          ? `Loaded ${files.length} static correction artifact${files.length === 1 ? '' : 's'} for ${safeJobId}.`
+          : `Static correction job ${safeJobId} finished without generated artifact files.`;
+      } else {
+        state.message = previousMessage;
+      }
+      state.error = preserveError ? previousError : '';
       return state.staticArtifacts;
     } catch (error) {
       state.staticArtifacts = [];
-      state.error = error instanceof Error ? error.message : String(error);
-      state.message = `Static correction job ${safeJobId} finished, but artifacts could not be loaded.`;
+      if (preserveError) {
+        state.error = previousError;
+      } else {
+        state.error = error instanceof Error ? error.message : String(error);
+      }
+      state.message = preserveMessage
+        ? previousMessage
+        : `Static correction job ${safeJobId} finished, but artifacts could not be loaded.`;
       return [];
     } finally {
       state.loadingStaticArtifacts = false;
@@ -2179,6 +2193,12 @@
           return snapshot;
         }
         if (isStaticJobTerminal(snapshot.state)) {
+          if (snapshot.state === 'error') {
+            await loadStaticArtifacts(jobId, {
+              preserveMessage: true,
+              preserveError: true,
+            });
+          }
           return snapshot;
         }
       } catch (error) {

@@ -48,6 +48,7 @@ from app.services.job_artifact_refs import resolve_job_artifact_path
 from app.services.job_manager import JobManager
 from app.services.job_runner import request_job_cancel, start_job_thread
 from app.services.pipeline_artifacts import get_job_dir, maybe_cleanup_expired_jobs
+from app.services.refraction_static_artifacts import UPLOADED_REFRACTION_PICKS_NPZ_NAME
 from app.services.refraction_static_export_service import (
     RefractionStaticExportSourceJobNotFound,
     RefractionStaticExportValidationError,
@@ -78,7 +79,6 @@ from app.services.time_term_static_service import run_time_term_static_apply_job
 
 router = APIRouter()
 
-UPLOADED_REFRACTION_PICKS_NPZ_NAME = 'uploaded_picks_time_s.npz'
 _UPLOAD_CHUNK_SIZE = 1024 * 1024
 _MAX_UPLOADED_PICK_NPZ_BYTES = 256 * 1024 * 1024
 _ACCEPTED_NPZ_CONTENT_TYPES = {
