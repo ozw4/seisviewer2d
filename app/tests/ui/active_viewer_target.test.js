@@ -44,6 +44,24 @@ test('test_active_viewer_target_contains_file_id_and_sort_keys_after_load', () =
   });
 });
 
+test('test_active_viewer_target_rejects_null_sort_key_bytes', () => {
+  expect(getActiveFileTargetFromState({
+    fileId: 'file-a',
+    displayName: 'LineA.sgy',
+    key1Byte: null,
+    key2Byte: 13,
+    isFileLoaded: true,
+  })).toBeNull();
+
+  expect(getActiveFileTargetFromState({
+    fileId: 'file-a',
+    displayName: 'LineA.sgy',
+    key1Byte: 9,
+    key2Byte: null,
+    isFileLoaded: true,
+  })).toBeNull();
+});
+
 test('test_active_viewer_target_updates_when_new_file_loaded', () => {
   const store = createStore({
     fileId: 'file-a',

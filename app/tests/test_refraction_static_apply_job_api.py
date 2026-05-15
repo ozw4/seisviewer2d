@@ -297,6 +297,29 @@ def test_refraction_static_apply_endpoint_starts_job(
     assert job['key2_byte'] == 193
 
 
+def test_refraction_static_apply_endpoint_rejects_uploaded_npz_json(
+    client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    started: list[dict[str, Any]] = []
+    monkeypatch.setattr(
+        statics_router_module,
+        'start_job_thread',
+        lambda **kwargs: started.append(kwargs),
+    )
+
+    response = client.post(
+        '/statics/refraction/apply',
+        json=_uploaded_pick_payload(),
+    )
+
+    assert response.status_code == 422
+    assert '/statics/refraction/apply-with-picks' in response.text
+    assert started == []
+    with client.app.state.sv.lock:
+        assert len(client.app.state.sv.jobs) == 0
+
+
 def test_refraction_apply_with_uploaded_picks_accepts_multipart_npz(
     client: TestClient,
     monkeypatch: pytest.MonkeyPatch,

@@ -344,6 +344,15 @@ def refraction_static_apply(
     req: RefractionStaticApplyRequest,
     request: Request,
 ) -> RefractionStaticApplyResponse:
+    if req.pick_source.kind == 'uploaded_npz':
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                'pick_source.kind uploaded_npz requires multipart '
+                '/statics/refraction/apply-with-picks'
+            ),
+        )
+
     state = get_state(request.app)
     cleanup_in_memory_state(state)
     maybe_cleanup_expired_jobs()
