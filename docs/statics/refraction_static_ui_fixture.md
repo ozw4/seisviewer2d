@@ -69,11 +69,151 @@ pick_source.job_id = <job containing predicted_picks_time_s.npz>
 pick_source.artifact_name = predicted_picks_time_s.npz
 ```
 
-There is no generic browser workflow for importing an arbitrary local NPZ as a
-job artifact. Before using the tab, register or copy
-`predicted_picks_time_s.npz` into a job artifact location that the app can
-resolve, then enter that job's `job_id`. If an artifact registration helper is
-added later, use it for this step.
+There is no browser upload path for an arbitrary local pick NPZ. Use one of the
+two workflows below.
+
+### Workflow A: Production-Like Batch Picks
+
+The most realistic path is to regenerate picks through the existing first-break
+batch workflow after importing the synthetic SGY. This does not use the
+generated `predicted_picks_time_s.npz` directly, but it exercises the full
+SGY -> pick -> static-correction path.
+
+1. Import `synthetic_static_2d_one_layer.sgy` and note the returned `file_id`.
+2. Run the existing first-break pick or batch workflow against that imported
+   file with `save_picks` enabled.
+3. Wait for the batch job to finish.
+4. Confirm that `/batch/job/<job_id>/files` lists
+   `predicted_picks_time_s.npz`.
+5. Use that batch `job_id` in the Static Correction tab.
+
+The accepted pick source is:
+
+```text
+pick_source.kind = batch_predicted_npz
+pick_source.job_id = <finished batch job_id>
+pick_source.artifact_name = predicted_picks_time_s.npz
+```
+
+### Workflow B: Manual Registration For UI Smoke Tests
+
+This is a developer-only smoke-test workflow. It uses the existing job artifact
+mechanism and the running app's in-memory job table; it is not a persistent
+artifact registration API.
+
+1. Import `synthetic_static_2d_one_layer.sgy` and note the returned `file_id`.
+2. Choose a synthetic pick job ID, for example `ui-fixture-picks-001`.
+3. Locate the artifact directory with
+   `app.services.pipeline_artifacts.get_job_dir(job_id)`. Job artifact
+   directories live below `PIPELINE_JOBS_DIR` when set, otherwise below the
+   app data directory's `pipeline_jobs` directory.
+4. Create that job artifact directory.
+5. Copy the generated NPZ into that directory using exactly this file name:
+   `predicted_picks_time_s.npz`.
+6. Register an in-memory `job_type=batch_apply` job entry with matching
+   `file_id`, `key1_byte`, `key2_byte`, and `artifacts_dir`.
+7. Optionally write `job_meta.json` with `predicted_picks_time_s.npz` in
+   `outputs` for easier inspection.
+8. Verify that `/batch/job/<job_id>/files` lists
+   `predicted_picks_time_s.npz`.
+9. Enter that `job_id` and artifact name in the Static Correction tab.
+
+For this fixture, the registered job metadata must match the imported
+TraceStore/SGY:
+
+```text
+job_type = batch_apply
+file_id = <file_id returned by import>
+key1_byte = 17
+key2_byte = 13
+artifacts_dir = <path returned by get_job_dir(job_id)>
+```
+
+Example server-side snippet:
+
+```python
+from pathlib import Path
+import json
+import time
+import shutil
+
+from app.services.pipeline_artifacts import get_job_dir
+
+job_id = "ui-fixture-picks-001"
+file_id = "<file id returned by SGY import>"
+key1_byte = 17
+key2_byte = 13
+source_npz = Path("/tmp/refraction_static_ui_fixture/predicted_picks_time_s.npz")
+
+job_dir = get_job_dir(job_id)
+job_dir.mkdir(parents=True, exist_ok=True)
+shutil.copy2(source_npz, job_dir / "predicted_picks_time_s.npz")
+
+# `state` must be the live AppState used by the running app.
+with state.lock:
+    state.jobs.create_batch_apply_job(
+        job_id,
+        file_id=file_id,
+        key1_byte=key1_byte,
+        key2_byte=key2_byte,
+        artifacts_dir=str(job_dir),
+        created_ts=time.time(),
+    )
+    state.jobs.mark_done(job_id, progress_1=True)
+
+(job_dir / "job_meta.json").write_text(
+    json.dumps(
+        {
+            "job_id": job_id,
+            "job_type": "batch_apply",
+            "file_id": file_id,
+            "key1_byte": key1_byte,
+            "key2_byte": key2_byte,
+            "outputs": ["predicted_picks_time_s.npz"],
+            "source": "manual_refraction_static_ui_fixture_registration",
+        },
+        indent=2,
+        sort_keys=True,
+    ),
+    encoding="utf-8",
+)
+```
+
+`state` is not automatically available in a normal Python shell. Run this only
+from a server-side development console, test harness, or local script that has
+access to the live `AppState` object used by the running app process.
+
+Manual registration is temporary. The job table is in memory, so the
+registration disappears after app restart. Both the in-memory job table and the
+disk artifact directories are also TTL-managed; by default pipeline artifacts
+expire after `PIPELINE_JOBS_TTL_HOURS`, currently 48 hours.
+
+Verify through the existing API:
+
+```bash
+curl http://localhost:8000/batch/job/ui-fixture-picks-001/files
+```
+
+Expected response includes:
+
+```json
+{
+  "files": [
+    {
+      "name": "predicted_picks_time_s.npz",
+      "size_bytes": 12345
+    }
+  ]
+}
+```
+
+Then use these Static Correction fields:
+
+```text
+pick_source.kind = batch_predicted_npz
+pick_source.job_id = ui-fixture-picks-001
+pick_source.artifact_name = predicted_picks_time_s.npz
+```
 
 Use `Load pick artifacts` in the Static Correction tab to confirm that the pick
 job lists `predicted_picks_time_s.npz`.
@@ -163,6 +303,22 @@ resulting `file_id`, not a filesystem path.
 Pick artifact `job_id` not found:
 Confirm that `pick_source.job_id` is the job containing
 `predicted_picks_time_s.npz`. It is not the SEG-Y `file_id`.
+
+`/batch/job/<job_id>/files` returns 404:
+Confirm that the job is registered in the running `AppState` and that the
+directory returned by `get_job_dir(job_id)` exists.
+
+Static Correction says `job_id` not found:
+Confirm that the app process was not restarted and that the job still exists in
+the in-memory job table.
+
+Static Correction says artifact not found:
+Use `predicted_picks_time_s.npz` exactly and make sure it is directly under the
+job artifact directory returned by `get_job_dir(job_id)`.
+
+Static Correction says file_id/key mismatch:
+Register the batch job metadata with the same `file_id`, `key1_byte`, and
+`key2_byte` used by the imported synthetic SGY.
 
 Artifact name typo:
 Use `predicted_picks_time_s.npz` exactly. The fixture and Static Correction
