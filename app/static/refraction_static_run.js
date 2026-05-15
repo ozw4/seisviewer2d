@@ -1983,6 +1983,28 @@
     return response.json();
   }
 
+  function buildStaticCorrectionFormData(request, targetDom = dom) {
+    const pickFile = selectedPickNpzFile(targetDom);
+    if (!pickFile) {
+      throw validationError(['First-break pick NPZ is required.']);
+    }
+    const formData = new FormData();
+    formData.append('request_json', JSON.stringify(request));
+    formData.append('pick_npz', pickFile);
+    return formData;
+  }
+
+  async function postMultipart(url, formData, operation) {
+    const response = await fetch(url, {
+      method: 'POST',
+      body: formData,
+    });
+    if (!response.ok) {
+      throw new Error(await readResponseError(response, operation));
+    }
+    return response.json();
+  }
+
   function delay(ms) {
     return new Promise((resolve) => window.setTimeout(resolve, ms));
   }
@@ -2154,10 +2176,11 @@
       ? `Linkage job ${state.lastLinkageJobId} is ready. Submitting static correction...`
       : 'Submitting static correction...';
     render();
-    const responsePayload = await postJson(
-      '/statics/refraction/apply',
-      payload,
-      'refraction static apply'
+    const formData = buildStaticCorrectionFormData(payload);
+    const responsePayload = await postMultipart(
+      '/statics/refraction/apply-with-picks',
+      formData,
+      'refraction static apply with picks'
     );
     state.lastStaticCorrectionJobId = trimValue(responsePayload && responsePayload.job_id);
     setStaticJobSnapshot(responsePayload);
@@ -2174,10 +2197,6 @@
       pollStaticCorrectionJobUntilTerminal(state.lastStaticCorrectionJobId);
     }
     return responsePayload;
-  }
-
-  function submitRefractionStaticApply(request) {
-    return postJson('/statics/refraction/apply', request, 'refraction static apply');
   }
 
   async function runStaticCorrection() {
@@ -2690,6 +2709,7 @@
     buildRefractionStaticApplyRequest,
     buildStaticCorrectionGeometry,
     buildStaticCorrectionGeometryRequest,
+    buildStaticCorrectionFormData,
     buildStaticCorrectionLinkage,
     buildStaticCorrectionLinkageRequest,
     buildStaticCorrectionPickSource,
@@ -2717,7 +2737,6 @@
     runStaticCorrection,
     saveCurrentPreset,
     stopStaticCorrectionPolling,
-    submitRefractionStaticApply,
     updateModelPresetControls,
     updateBedrockVelocityControls,
     updateStaticCorrectionFieldCorrectionOptions,

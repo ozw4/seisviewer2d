@@ -12,9 +12,12 @@ const INDEX_HTML = readFileSync(resolve(process.cwd(), 'static/index.html'), 'ut
 function renderStaticCorrectionForm() {
   document.body.innerHTML = `
     <form id="staticCorrectionForm">
-      <input id="staticCorrectionFileId" value="file-a" />
-      <input id="staticCorrectionKey1Byte" value="189" />
-      <input id="staticCorrectionKey2Byte" value="193" />
+      <div id="staticCorrectionTargetEmpty"></div>
+      <div id="staticCorrectionTargetDetails" hidden>
+        <span id="staticCorrectionTargetFile"></span>
+        <span id="staticCorrectionTargetKeys"></span>
+        <span id="staticCorrectionTargetStatus"></span>
+      </div>
       <select id="staticCorrectionPresetSelect">
         <option value="">No saved presets</option>
       </select>
@@ -22,15 +25,8 @@ function renderStaticCorrectionForm() {
       <button id="staticCorrectionSavePresetButton" type="button"></button>
       <button id="staticCorrectionLoadPresetButton" type="button"></button>
       <button id="staticCorrectionDeletePresetButton" type="button"></button>
-      <select id="staticCorrectionPickKind">
-        <option value="uploaded_npz">uploaded_npz</option>
-        <option value="batch_predicted_npz" selected>batch_predicted_npz</option>
-        <option value="manual_npz_artifact">manual_npz_artifact</option>
-      </select>
-      <input id="staticCorrectionPickJobId" value="pick-job-a" />
-      <input id="staticCorrectionPickArtifactName" value="predicted_picks_time_s.npz" />
-      <button id="staticCorrectionLoadPickArtifactsButton" type="button"></button>
-      <div id="staticCorrectionPickArtifactList"></div>
+      <input id="staticCorrectionPickNpz" type="file" accept=".npz" />
+      <div id="staticCorrectionPickNpzSummary"></div>
       <select id="staticCorrectionGeometryPreset">
         <option value="segy_default" selected>SEG-Y default</option>
         <option value="custom">custom</option>
@@ -192,6 +188,36 @@ function renderStaticCorrectionForm() {
   `;
 }
 
+let activeViewerTarget;
+
+function setViewerTarget(fileId = 'file-a', key1Byte = 189, key2Byte = 193) {
+  activeViewerTarget = fileId
+    ? {
+        fileId,
+        key1Byte,
+        key2Byte,
+        displayName: fileId,
+      }
+    : null;
+}
+
+function selectedPickFile(name = 'first-break-picks.npz', bytes = 'npz-bytes') {
+  const input = document.getElementById('staticCorrectionPickNpz');
+  const file = new File([bytes], name, { type: 'application/octet-stream' });
+  Object.defineProperty(input, 'files', {
+    value: [file],
+    configurable: true,
+  });
+  return file;
+}
+
+function clearSelectedPickFile() {
+  Object.defineProperty(document.getElementById('staticCorrectionPickNpz'), 'files', {
+    value: [],
+    configurable: true,
+  });
+}
+
 function loadStaticCorrectionScript() {
   window.eval(SCRIPT);
   document.dispatchEvent(new Event('DOMContentLoaded'));
@@ -208,8 +234,13 @@ beforeEach(() => {
   delete window.refractionStaticRunUI;
   delete window.refractionStaticRunState;
   delete window.RefractionQc;
+  setViewerTarget();
+  window.SeisViewerState = {
+    getActiveFileTarget: () => activeViewerTarget,
+  };
   window.localStorage.clear();
   renderStaticCorrectionForm();
+  selectedPickFile();
 });
 
 afterEach(() => {
@@ -217,6 +248,7 @@ afterEach(() => {
     window.refractionStaticRunUI.stopStaticCorrectionPolling();
   }
   delete window.RefractionQc;
+  delete window.SeisViewerState;
   vi.unstubAllGlobals();
   window.localStorage.clear();
 });
@@ -266,8 +298,16 @@ function createStaticCorrectionFetchMock(
   const linkageStatusQueue = [...linkageStatuses];
   const staticStatusQueue = [...staticStatuses];
   const fetchMock = vi.fn(async (url, options = {}) => {
-    const body = options.body ? JSON.parse(options.body) : null;
-    calls.push({ url: String(url), options, body });
+    let body = null;
+    let formData = null;
+    if (options.body instanceof FormData) {
+      formData = options.body;
+      const requestJson = formData.get('request_json');
+      body = requestJson ? JSON.parse(requestJson) : null;
+    } else if (options.body) {
+      body = JSON.parse(options.body);
+    }
+    calls.push({ url: String(url), options, body, formData });
 
     if (url === '/statics/linkage/build') {
       return jsonResponse({ job_id: 'linkage-job-a', state: 'queued' });
@@ -277,7 +317,7 @@ function createStaticCorrectionFetchMock(
         linkageStatusQueue.shift() || linkageStatuses[linkageStatuses.length - 1]
       );
     }
-    if (url === '/statics/refraction/apply') {
+    if (url === '/statics/refraction/apply-with-picks') {
       return jsonResponse({ job_id: 'static-job-a', state: 'queued' });
     }
     if (url === '/statics/job/static-job-a/status') {
@@ -306,92 +346,51 @@ function createStaticCorrectionFetchMock(
   return { calls, fetchMock };
 }
 
-test('load pick artifacts calls the batch files endpoint and sorts known pick artifacts first', async () => {
-  const ui = loadStaticCorrectionScript();
-  const calls = [];
-  vi.stubGlobal('fetch', vi.fn(async (url) => {
-    calls.push(String(url));
-    return jsonResponse({
-      files: [
-        { name: 'z_notes.txt', size_bytes: 10 },
-        { name: 'manual_picks_time_qc.npz', size_bytes: 20 },
-        { name: 'predicted_picks_time_s.npz', size_bytes: 30 },
-      ],
-    });
-  }));
+test('selected pick NPZ renders in the file summary', () => {
+  selectedPickFile('manual_picks_time_review.npz', 'abc');
+  loadStaticCorrectionScript();
 
-  await ui.loadPickArtifacts();
-  await flushAsyncWork();
-
-  expect(calls).toEqual(['/batch/job/pick-job-a/files']);
-  const buttons = [...document.querySelectorAll('#staticCorrectionPickArtifactList button')];
-  expect(buttons.map((button) => button.textContent)).toEqual([
-    'predicted_picks_time_s.npz',
-    'manual_picks_time_qc.npz',
-    'z_notes.txt',
-  ]);
-  expect(buttons[0].classList.contains('is-likely')).toBe(true);
-  expect(document.getElementById('staticCorrectionPickArtifactList').textContent).toContain(
-    'first-break candidate'
-  );
-});
-
-test('selecting a loaded pick artifact fills the artifact name input', async () => {
-  const ui = loadStaticCorrectionScript();
-  vi.stubGlobal('fetch', vi.fn(async () => jsonResponse({
-    files: [{ name: 'manual_picks_time_review.npz', size_bytes: 12 }],
-  })));
-
-  await ui.loadPickArtifacts();
-  await flushAsyncWork();
-  document.querySelector('#staticCorrectionPickArtifactList button').click();
-
-  expect(document.getElementById('staticCorrectionPickArtifactName').value).toBe(
+  expect(document.getElementById('staticCorrectionPickNpzSummary').textContent).toContain(
     'manual_picks_time_review.npz'
   );
-  expect(document.getElementById('staticCorrectionStatus').textContent).toContain(
-    'Selected pick artifact manual_picks_time_review.npz'
-  );
 });
 
-test('pick artifact listing 404 shows a warning and leaves manual input usable', async () => {
+test('missing pick NPZ blocks submit and shows validation', async () => {
   const ui = loadStaticCorrectionScript();
-  const artifactInput = document.getElementById('staticCorrectionPickArtifactName');
-  artifactInput.value = 'typed_picks.npz';
-  vi.stubGlobal('fetch', vi.fn(async () => jsonResponse({ detail: 'Job ID not found' }, 404)));
+  clearSelectedPickFile();
+  document.getElementById('staticCorrectionPickNpz').dispatchEvent(new Event('change'));
 
-  await ui.loadPickArtifacts();
+  await ui.runStaticCorrection();
   await flushAsyncWork();
 
   expect(document.getElementById('staticCorrectionError').hidden).toBe(false);
   expect(document.getElementById('staticCorrectionError').textContent).toContain(
-    'Job ID not found'
+    'First-break pick NPZ is required'
   );
-  expect(document.getElementById('staticCorrectionStatus').textContent).toBe(
-    'Unable to load pick artifacts.'
-  );
-  expect(artifactInput.value).toBe('typed_picks.npz');
+  expect(window.refractionStaticRunState.lastRequest).toBe(null);
 });
 
-test('unsupported pick artifact listing warns without fetching', async () => {
+test('non-NPZ pick upload blocks submit', async () => {
+  selectedPickFile('picks.txt', 'abc');
   const ui = loadStaticCorrectionScript();
-  document.getElementById('staticCorrectionPickKind').value = 'manual_npz_artifact';
-  const artifactInput = document.getElementById('staticCorrectionPickArtifactName');
-  artifactInput.value = 'manual_entry.npz';
-  const fetchMock = vi.fn();
-  vi.stubGlobal('fetch', fetchMock);
 
-  await ui.loadPickArtifacts();
+  await ui.runStaticCorrection();
   await flushAsyncWork();
 
-  expect(fetchMock).not.toHaveBeenCalled();
+  expect(document.getElementById('staticCorrectionError').hidden).toBe(false);
   expect(document.getElementById('staticCorrectionError').textContent).toContain(
-    'Artifact listing is not available for pick_source.kind manual_npz_artifact'
+    'First-break pick file must use the .npz extension'
   );
-  expect(document.getElementById('staticCorrectionStatus').textContent).toBe(
-    'Type the pick artifact name manually.'
-  );
-  expect(artifactInput.value).toBe('manual_entry.npz');
+  expect(window.refractionStaticRunState.lastRequest).toBe(null);
+});
+
+test('static correction request always uses uploaded NPZ pick source', () => {
+  const ui = loadStaticCorrectionScript();
+
+  const result = ui.buildStaticCorrectionRequest();
+
+  expect(result.errors).toEqual([]);
+  expect(result.payload.pick_source).toEqual({ kind: 'uploaded_npz' });
 });
 
 test('geometry defaults render from the SEG-Y preset', () => {
@@ -478,29 +477,25 @@ test('request preview renders valid JSON and updates when fields change', () => 
 
 test('request preview supports uploaded pick source without artifact fields', () => {
   loadStaticCorrectionScript();
-  const kind = document.getElementById('staticCorrectionPickKind');
-
-  kind.value = 'uploaded_npz';
-  kind.dispatchEvent(new Event('change', { bubbles: true }));
 
   const preview = JSON.parse(document.getElementById('staticCorrectionRequestPreview').textContent);
   expect(preview.pick_source).toEqual({ kind: 'uploaded_npz' });
-  expect(document.getElementById('staticCorrectionPickJobId').disabled).toBe(true);
-  expect(document.getElementById('staticCorrectionPickArtifactName').disabled).toBe(true);
-  expect(document.getElementById('staticCorrectionLoadPickArtifactsButton').disabled).toBe(true);
+  expect(INDEX_HTML).not.toContain('staticCorrectionPickJobId');
+  expect(INDEX_HTML).not.toContain('staticCorrectionPickArtifactName');
+  expect(INDEX_HTML).not.toContain('staticCorrectionLoadPickArtifactsButton');
 });
 
 test('validation summary lists invalid fields before submit', () => {
   loadStaticCorrectionScript();
-  document.getElementById('staticCorrectionFileId').value = '';
-  document.getElementById('staticCorrectionPickJobId').value = '';
+  setViewerTarget(null);
+  clearSelectedPickFile();
 
   document.getElementById('staticCorrectionRunButton').click();
 
   const summary = document.getElementById('staticCorrectionValidationSummary');
   expect(summary.hidden).toBe(false);
-  expect(summary.textContent).toContain('file_id is required');
-  expect(summary.textContent).toContain('pick_source.job_id is required');
+  expect(summary.textContent).toContain('No active viewer file');
+  expect(summary.textContent).toContain('First-break pick NPZ is required');
 });
 
 test('save preset writes localStorage without transient job state', () => {
@@ -512,7 +507,7 @@ test('save preset writes localStorage without transient job state', () => {
   expect(presets).toHaveLength(1);
   expect(presets[0].name).toBe('field layout');
   expect(presets[0].values).not.toHaveProperty('file_id');
-  expect(presets[0].values.pick_source).not.toHaveProperty('job_id');
+  expect(presets[0].values).not.toHaveProperty('pick_source');
   expect(presets[0].values).not.toHaveProperty('staticArtifacts');
 });
 
@@ -525,15 +520,15 @@ test('load preset restores model and header fields while keeping current ids', (
   document.getElementById('staticCorrectionPresetName').value = 'two-layer custom';
   document.getElementById('staticCorrectionSavePresetButton').click();
 
-  document.getElementById('staticCorrectionFileId').value = 'current-file';
-  document.getElementById('staticCorrectionPickJobId').value = 'current-picks';
+  setViewerTarget('current-file', 17, 21);
+  selectedPickFile('current-picks.npz');
   document.getElementById('staticCorrectionSourceIdByte').value = '9';
   selectModelPreset('one_layer_global');
   document.getElementById('staticCorrectionWeatheringVelocityMS').value = '700';
   document.getElementById('staticCorrectionLoadPresetButton').click();
 
-  expect(document.getElementById('staticCorrectionFileId').value).toBe('current-file');
-  expect(document.getElementById('staticCorrectionPickJobId').value).toBe('current-picks');
+  expect(window.SeisViewerState.getActiveFileTarget().fileId).toBe('current-file');
+  expect(document.getElementById('staticCorrectionPickNpz').files[0].name).toBe('current-picks.npz');
   expect(document.getElementById('staticCorrectionGeometryPreset').value).toBe('custom');
   expect(document.getElementById('staticCorrectionSourceIdByte').value).toBe('101');
   expect(document.getElementById('staticCorrectionModelKind').value).toBe('two_layer_global');
@@ -639,7 +634,8 @@ test('checked auto-threshold linkage validates threshold only when enabled', () 
 });
 
 test('field correction and export sections are collapsed details controls', () => {
-  expect(INDEX_HTML).toContain('<option value="uploaded_npz">uploaded_npz</option>');
+  expect(INDEX_HTML).toContain('id="staticCorrectionPickNpz"');
+  expect(INDEX_HTML).not.toContain('id="staticCorrectionPickKind"');
   expect(INDEX_HTML).toContain('<details id="staticCorrectionFieldCorrectionsSection"');
   expect(INDEX_HTML).toContain('<summary id="staticCorrectionFieldCorrectionsHeading">Field corrections</summary>');
   expect(INDEX_HTML).toContain('<details id="staticCorrectionExportSection"');
@@ -790,8 +786,8 @@ test('one-layer model preset is the default request shape', () => {
 
 test('two-layer preset builds public global V3/T2 request', () => {
   const ui = loadStaticCorrectionScript();
-  document.getElementById('staticCorrectionFileId').value = 'line-preserved';
-  document.getElementById('staticCorrectionPickJobId').value = 'pick-preserved';
+  setViewerTarget('line-preserved', 17, 21);
+  selectedPickFile('pick-preserved.npz');
 
   selectModelPreset('two_layer_global');
   document.getElementById('staticCorrectionV3MaxOffsetM').value = '';
@@ -801,7 +797,9 @@ test('two-layer preset builds public global V3/T2 request', () => {
   expect(document.getElementById('staticCorrectionV3LayerFields').hidden).toBe(false);
   expect(document.getElementById('staticCorrectionVsubLayerFields').hidden).toBe(true);
   expect(result.payload.file_id).toBe('line-preserved');
-  expect(result.payload.pick_source.job_id).toBe('pick-preserved');
+  expect(result.payload.key1_byte).toBe(17);
+  expect(result.payload.key2_byte).toBe(21);
+  expect(result.payload.pick_source).toEqual({ kind: 'uploaded_npz' });
   expect(result.payload.model).toMatchObject({
     method: 'multilayer_time_term',
     layers: [
@@ -941,11 +939,35 @@ test('unchecked linkage skips linkage build when running static correction', asy
   await flushAsyncWork();
 
   expect(calls.map((call) => call.url)).toEqual([
-    '/statics/refraction/apply',
+    '/statics/refraction/apply-with-picks',
     '/statics/job/static-job-a/status',
     '/statics/job/static-job-a/files',
   ]);
   expect(calls[0].body.linkage).toEqual({ mode: 'none' });
+  expect(calls.map((call) => call.url)).not.toContain('/statics/refraction/apply');
+  expect(calls[0].formData).toBeInstanceOf(FormData);
+  expect(calls[0].options.headers).toBeUndefined();
+});
+
+test('static correction multipart form data contains request JSON and pick NPZ', async () => {
+  const ui = loadStaticCorrectionScript();
+  const pickFile = selectedPickFile('uploaded-picks.npz', 'pick-data');
+  setViewerTarget('active-line', 9, 13);
+  const { calls } = createStaticCorrectionFetchMock();
+
+  await ui.runStaticCorrection();
+  await flushAsyncWork();
+
+  const applyCall = calls.find((call) => call.url === '/statics/refraction/apply-with-picks');
+  const request = JSON.parse(applyCall.formData.get('request_json'));
+  expect(request).toMatchObject({
+    file_id: 'active-line',
+    key1_byte: 9,
+    key2_byte: 13,
+    pick_source: { kind: 'uploaded_npz' },
+    linkage: { mode: 'none' },
+  });
+  expect(applyCall.formData.get('pick_npz')).toBe(pickFile);
 });
 
 test('static correction submit failure returns to a retryable idle state', async () => {
@@ -953,7 +975,7 @@ test('static correction submit failure returns to a retryable idle state', async
   const calls = [];
   vi.stubGlobal('fetch', vi.fn(async (url, options = {}) => {
     calls.push({ url: String(url), options });
-    if (url === '/statics/refraction/apply') {
+    if (url === '/statics/refraction/apply-with-picks') {
       return jsonResponse({ detail: 'apply failed' }, 400);
     }
     throw new Error(`unexpected fetch ${url}`);
@@ -962,12 +984,30 @@ test('static correction submit failure returns to a retryable idle state', async
   await ui.runStaticCorrection();
   await flushAsyncWork();
 
-  expect(calls.map((call) => call.url)).toEqual(['/statics/refraction/apply']);
+  expect(calls.map((call) => call.url)).toEqual(['/statics/refraction/apply-with-picks']);
   expect(window.refractionStaticRunState.phase).toBe('idle');
   expect(document.getElementById('staticCorrectionRunButton').disabled).toBe(false);
   expect(document.getElementById('staticCorrectionError').textContent).toContain('apply failed');
   expect(document.getElementById('staticCorrectionStatus').textContent).toContain(
     'Static correction submission failed'
+  );
+});
+
+test('static correction submit displays backend validation error', async () => {
+  const ui = loadStaticCorrectionScript();
+  vi.stubGlobal('fetch', vi.fn(async (url) => {
+    if (url === '/statics/refraction/apply-with-picks') {
+      return jsonResponse({ detail: 'request_json.file_id is invalid' }, 422);
+    }
+    throw new Error(`unexpected fetch ${url}`);
+  }));
+
+  await ui.runStaticCorrection();
+  await flushAsyncWork();
+
+  expect(document.getElementById('staticCorrectionError').hidden).toBe(false);
+  expect(document.getElementById('staticCorrectionError').textContent).toContain(
+    'request_json.file_id is invalid'
   );
 });
 
@@ -985,7 +1025,7 @@ test('checked linkage posts linkage build payload before static correction apply
   expect(calls.map((call) => call.url).slice(0, 3)).toEqual([
     '/statics/linkage/build',
     '/statics/job/linkage-job-a/status',
-    '/statics/refraction/apply',
+    '/statics/refraction/apply-with-picks',
   ]);
   expect(calls[0].body).toEqual({
     file_id: 'file-a',
@@ -1029,7 +1069,7 @@ test('checked linkage polls linkage status until ready', async () => {
   await flushAsyncWork();
 
   expect(calls.filter((call) => call.url === '/statics/job/linkage-job-a/status')).toHaveLength(3);
-  expect(calls.map((call) => call.url)).toContain('/statics/refraction/apply');
+  expect(calls.map((call) => call.url)).toContain('/statics/refraction/apply-with-picks');
 });
 
 test('failed linkage prevents refraction apply submit', async () => {
@@ -1042,7 +1082,7 @@ test('failed linkage prevents refraction apply submit', async () => {
   await ui.runStaticCorrection();
   await flushAsyncWork();
 
-  expect(calls.map((call) => call.url)).not.toContain('/statics/refraction/apply');
+  expect(calls.map((call) => call.url)).not.toContain('/statics/refraction/apply-with-picks');
   expect(document.getElementById('staticCorrectionError').hidden).toBe(false);
   expect(document.getElementById('staticCorrectionError').textContent).toContain(
     'linkage build failed'
@@ -1065,7 +1105,7 @@ test('successful linkage injects linkage job reference into refraction request',
   await ui.runStaticCorrection();
   await flushAsyncWork();
 
-  const applyCall = calls.find((call) => call.url === '/statics/refraction/apply');
+  const applyCall = calls.find((call) => call.url === '/statics/refraction/apply-with-picks');
   expect(applyCall.body.linkage).toEqual({
     mode: 'required',
     job_id: 'linkage-job-a',
