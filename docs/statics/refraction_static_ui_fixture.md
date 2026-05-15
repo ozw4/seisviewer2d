@@ -93,11 +93,15 @@ Use the fixture geometry header byte mapping:
 | `source_y_byte` | 77 |
 | `receiver_x_byte` | 81 |
 | `receiver_y_byte` | 85 |
-| `source_elevation_byte` | 41 |
-| `receiver_elevation_byte` | 45 |
+| `source_elevation_byte` | 45 |
+| `receiver_elevation_byte` | 41 |
 | `offset_byte` | 37 |
 | `coordinate_scalar_byte` | 71 |
 | `elevation_scalar_byte` | 69 |
+
+For the generated fixture, the Static Correction UI `SEG-Y default` geometry
+preset should match this fixture geometry. Users should not need to switch to
+`custom` unless they intentionally edit the fixture headers.
 
 Use these TraceStore sort keys when loading the SGY in the viewer:
 

@@ -201,8 +201,8 @@ def test_refraction_static_ui_fixture_metadata_is_valid_json(tmp_path: Path) -> 
         'source_y_byte': 77,
         'receiver_x_byte': 81,
         'receiver_y_byte': 85,
-        'source_elevation_byte': 41,
-        'receiver_elevation_byte': 45,
+        'source_elevation_byte': 45,
+        'receiver_elevation_byte': 41,
         'offset_byte': 37,
         'coordinate_scalar_byte': 71,
         'elevation_scalar_byte': 69,
@@ -298,6 +298,10 @@ def test_refraction_static_ui_fixture_docs_list_sort_headers() -> None:
 
     assert '`key1_byte` | 9 | `source_id_byte`' in docs
     assert '`key2_byte` | 13 | `receiver_id_byte`' in docs
+    assert '`source_elevation_byte` | 45 |' in docs
+    assert '`receiver_elevation_byte` | 41 |' in docs
+    assert 'the Static Correction UI `SEG-Y default` geometry' in docs
+    assert '`custom` unless they intentionally edit the fixture headers' in docs
     assert 'recommended_static_correction.key1_byte = 9' in docs
     assert 'recommended_static_correction.key2_byte = 13' in docs
     assert 'Sorted order mismatch' in docs
@@ -651,6 +655,9 @@ def test_synthetic_ui_fixture_sgy_headers_round_trip_when_segyio_available(
     fixture = module.build_synthetic_fixture(config)
     path = tmp_path / 'synthetic_static_2d_one_layer.sgy'
 
+    assert module.GEOMETRY_HEADERS['source_elevation_byte'] == 45
+    assert module.GEOMETRY_HEADERS['receiver_elevation_byte'] == 41
+
     module.write_synthetic_segy(path, config=config, fixture=fixture)
 
     with segyio.open(str(path), 'r', ignore_geometry=True) as segy_file:
@@ -679,9 +686,11 @@ def test_synthetic_ui_fixture_sgy_headers_round_trip_when_segyio_available(
             assert header[module.GEOMETRY_HEADERS['source_elevation_byte']] == int(
                 round(fixture.source_elevation_m[index])
             )
+            assert header[45] == int(round(fixture.source_elevation_m[index]))
             assert header[module.GEOMETRY_HEADERS['receiver_elevation_byte']] == int(
                 round(fixture.receiver_elevation_m[index])
             )
+            assert header[41] == int(round(fixture.receiver_elevation_m[index]))
             assert header[module.GEOMETRY_HEADERS['offset_byte']] == int(
                 round(fixture.offset_m[index])
             )
