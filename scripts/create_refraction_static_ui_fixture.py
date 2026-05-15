@@ -311,11 +311,18 @@ def build_synthetic_fixture(config: FixtureConfig) -> SyntheticFixture:
 
 
 def build_pick_arrays(config: FixtureConfig, fixture: SyntheticFixture) -> dict[str, np.ndarray]:
+    n_traces = fixture.pick_time_s.size
+    pick_time_s = np.ascontiguousarray(fixture.pick_time_s, dtype=np.float32)
     return {
         'artifact_kind': np.asarray('synthetic_first_break_picks'),
         'schema_version': np.asarray(1, dtype=np.int32),
         'scenario': np.asarray(config.scenario),
         'seed': np.asarray(config.seed, dtype=np.int64),
+        'n_traces': np.asarray(n_traces, dtype=np.int64),
+        'n_samples': np.asarray(config.n_samples, dtype=np.int64),
+        'dt': np.asarray(config.dt_s, dtype=np.float64),
+        'order': np.asarray('original_trace_order'),
+        'sorted_to_original': np.arange(n_traces, dtype=np.int64),
         'shot_index': fixture.shot_index,
         'receiver_index': fixture.receiver_index,
         'source_id': fixture.source_id.reshape(config.n_shots, config.n_receivers),
@@ -327,7 +334,10 @@ def build_pick_arrays(config: FixtureConfig, fixture: SyntheticFixture) -> dict[
             np.arange(config.n_receivers, dtype=np.float64) * config.receiver_interval_m
         ),
         'offset_m': fixture.offset_m.reshape(config.n_shots, config.n_receivers),
-        'pick_time_s': fixture.pick_time_s.reshape(config.n_shots, config.n_receivers),
+        'pick_time_s': pick_time_s,
+        'picks_time_s': pick_time_s,
+        'predicted_picks_time_s': pick_time_s,
+        'first_break_time_s': pick_time_s,
         'source_t1_s': fixture.source_t1_s.reshape(config.n_shots, config.n_receivers),
         'receiver_t1_s': fixture.receiver_t1_s.reshape(config.n_shots, config.n_receivers),
         'source_weathering_thickness_m': fixture.source_thickness_m.reshape(
@@ -396,11 +406,24 @@ def build_fixture_metadata(config: FixtureConfig) -> dict[str, object]:
             'static_correction_tab': 'Static Correction',
             'linkage_default': 'none',
         },
+        'pick_source': {
+            'kind': 'batch_predicted_npz',
+            'artifact_name': PICK_ARTIFACT_NAME,
+            'job_id_note': (
+                'Copy/register this NPZ as a job artifact, then enter that job_id '
+                'in the Static Correction tab.'
+            ),
+        },
         'recommended_static_correction': {
             'model_preset': 'one_layer_global',
             'linkage': {'mode': 'none'},
             'field_corrections': {'mode': 'none'},
+            'v1_m_s': config.v1_m_s,
+            'v2_initial_m_s': config.v2_m_s,
+            'min_offset_m': 300.0,
+            'max_offset_m': 1800.0,
             'exports': ['canonical_static_table', 'lsst_plus'],
+            'register_corrected_file': True,
         },
         'scenario_definition': {
             'geometry': '2d_straight_line',
@@ -430,16 +453,67 @@ def build_fixture_metadata(config: FixtureConfig) -> dict[str, object]:
     }
 
 
-def build_expected_static_summary(config: FixtureConfig) -> dict[str, object]:
+def _finite_range(values: np.ndarray, *, scale: float = 1.0) -> tuple[float, float]:
+    scaled = np.asarray(values, dtype=np.float64) * scale
+    return float(np.min(scaled)), float(np.max(scaled))
+
+
+def _weathering_correction_s(
+    thickness_m: np.ndarray,
+    *,
+    v1_m_s: float,
+    v2_m_s: float,
+) -> np.ndarray:
+    return np.asarray(thickness_m, dtype=np.float64) * (1.0 / v2_m_s - 1.0 / v1_m_s)
+
+
+def build_expected_static_summary(
+    config: FixtureConfig,
+    fixture: SyntheticFixture,
+) -> dict[str, object]:
+    source_wcor_s = _weathering_correction_s(
+        fixture.source_thickness_m,
+        v1_m_s=config.v1_m_s,
+        v2_m_s=config.v2_m_s,
+    )
+    receiver_wcor_s = _weathering_correction_s(
+        fixture.receiver_thickness_m,
+        v1_m_s=config.v1_m_s,
+        v2_m_s=config.v2_m_s,
+    )
+    weathering_thickness_m = np.concatenate(
+        [
+            np.asarray(fixture.source_thickness_m, dtype=np.float64),
+            np.asarray(fixture.receiver_thickness_m, dtype=np.float64),
+        ]
+    )
+    weathering_correction_s = np.concatenate([source_wcor_s, receiver_wcor_s])
+    pick_min_s, pick_max_s = _finite_range(fixture.pick_time_s)
+    source_t1_min_ms, source_t1_max_ms = _finite_range(fixture.source_t1_s, scale=1000.0)
+    receiver_t1_min_ms, receiver_t1_max_ms = _finite_range(
+        fixture.receiver_t1_s,
+        scale=1000.0,
+    )
+    thickness_min_m, thickness_max_m = _finite_range(weathering_thickness_m)
+    wcor_min_ms, wcor_max_ms = _finite_range(weathering_correction_s, scale=1000.0)
     return {
         'schema_version': 1,
         'scenario': config.scenario,
-        'status': 'placeholder',
-        'truth_available': False,
-        'notes': [
-            'Known-truth static summaries will be populated by a later issue.',
-            'The CLI contract and fixture file names are fixed by this skeleton.',
-        ],
+        'truth': {
+            'v1_m_s': config.v1_m_s,
+            'v2_m_s': config.v2_m_s,
+            'n_traces': int(fixture.pick_time_s.size),
+            'pick_time_min_s': pick_min_s,
+            'pick_time_max_s': pick_max_s,
+            'source_t1_min_ms': source_t1_min_ms,
+            'source_t1_max_ms': source_t1_max_ms,
+            'receiver_t1_min_ms': receiver_t1_min_ms,
+            'receiver_t1_max_ms': receiver_t1_max_ms,
+            'weathering_thickness_min_m': thickness_min_m,
+            'weathering_thickness_max_m': thickness_max_m,
+            'weathering_correction_min_ms': wcor_min_ms,
+            'weathering_correction_max_ms': wcor_max_ms,
+        },
         'recommended_exports': ['canonical_static_table', 'lsst_plus'],
     }
 
@@ -458,7 +532,17 @@ def build_readme(config: FixtureConfig) -> str:
         '- Recommended exports: `canonical_static_table`, `lsst_plus`\n\n'
         'The SGY file contains deterministic one-layer synthetic traces with '
         'clear first-break pulses and geometry headers listed in '
-        f'`{METADATA_NAME}`.\n'
+        f'`{METADATA_NAME}`.\n\n'
+        '## UI workflow\n\n'
+        f'1. Import `{SGY_NAME}` through the normal UI and note the `file_id`.\n'
+        f'2. Register or copy `{PICK_ARTIFACT_NAME}` as a pick artifact for a job.\n'
+        '3. Open the `Static Correction` tab.\n'
+        '4. Enter the `file_id`, pick `job_id`, and artifact name '
+        f'`{PICK_ARTIFACT_NAME}`.\n'
+        f'5. Use the geometry byte locations from `{METADATA_NAME}`.\n'
+        '6. Use `one_layer_global`, leave linkage off, and select the '
+        'recommended exports.\n'
+        '7. Run the job and inspect the completed result in `Refraction QC`.\n'
     )
 
 
@@ -480,7 +564,7 @@ def write_fixture(config: FixtureConfig) -> None:
         encoding='utf-8',
     )
     (output_dir / EXPECTED_SUMMARY_NAME).write_text(
-        json.dumps(build_expected_static_summary(config), indent=2) + '\n',
+        json.dumps(build_expected_static_summary(config, fixture), indent=2) + '\n',
         encoding='utf-8',
     )
     (output_dir / README_NAME).write_text(build_readme(config), encoding='utf-8')

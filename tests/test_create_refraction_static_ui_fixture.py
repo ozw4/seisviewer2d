@@ -93,7 +93,15 @@ def test_refraction_static_ui_fixture_writes_output_layout(tmp_path: Path) -> No
     with np.load(output_dir / 'predicted_picks_time_s.npz', allow_pickle=False) as data:
         assert data['artifact_kind'].item() == 'synthetic_first_break_picks'
         assert data['scenario'].item() == 'one_layer_2d_clean'
-        assert data['pick_time_s'].shape == (24, 96)
+        assert data['pick_time_s'].shape == (24 * 96,)
+        assert data['pick_time_s'].dtype == np.float32
+        assert data['n_traces'].item() == 24 * 96
+        assert data['n_samples'].item() == 1000
+        assert data['dt'].item() == pytest.approx(0.002)
+        np.testing.assert_array_equal(
+            data['sorted_to_original'],
+            np.arange(24 * 96, dtype=np.int64),
+        )
 
 
 def test_refraction_static_ui_fixture_refuses_overwrite_without_flag(
@@ -168,11 +176,24 @@ def test_refraction_static_ui_fixture_metadata_is_valid_json(tmp_path: Path) -> 
     assert metadata['ui_workflow']['upload_sgy_via_normal_ui'] is True
     assert metadata['ui_workflow']['static_correction_tab'] == 'Static Correction'
     assert metadata['ui_workflow']['linkage_default'] == 'none'
+    assert metadata['pick_source'] == {
+        'kind': 'batch_predicted_npz',
+        'artifact_name': 'predicted_picks_time_s.npz',
+        'job_id_note': (
+            'Copy/register this NPZ as a job artifact, then enter that job_id '
+            'in the Static Correction tab.'
+        ),
+    }
     assert metadata['recommended_static_correction']['linkage'] == {'mode': 'none'}
+    assert metadata['recommended_static_correction']['v1_m_s'] == 800.0
+    assert metadata['recommended_static_correction']['v2_initial_m_s'] == 2400.0
+    assert metadata['recommended_static_correction']['min_offset_m'] == 300.0
+    assert metadata['recommended_static_correction']['max_offset_m'] == 1800.0
     assert metadata['recommended_static_correction']['exports'] == [
         'canonical_static_table',
         'lsst_plus',
     ]
+    assert metadata['recommended_static_correction']['register_corrected_file'] is True
     assert metadata['geometry_headers'] == {
         'source_id_byte': 17,
         'receiver_id_byte': 13,
@@ -198,7 +219,26 @@ def test_refraction_static_ui_fixture_metadata_is_valid_json(tmp_path: Path) -> 
     )
     assert summary['schema_version'] == 1
     assert summary['scenario'] == 'one_layer_2d_clean'
-    assert summary['status'] == 'placeholder'
+    assert summary['truth']['v1_m_s'] == 800.0
+    assert summary['truth']['v2_m_s'] == 2400.0
+    assert summary['truth']['n_traces'] == 24 * 96
+    assert summary['truth']['pick_time_min_s'] >= 0.0
+    assert summary['truth']['pick_time_max_s'] > summary['truth']['pick_time_min_s']
+    assert summary['truth']['source_t1_min_ms'] > 0.0
+    assert summary['truth']['source_t1_max_ms'] > summary['truth']['source_t1_min_ms']
+    assert summary['truth']['receiver_t1_min_ms'] > 0.0
+    assert summary['truth']['receiver_t1_max_ms'] > summary['truth']['receiver_t1_min_ms']
+    assert summary['truth']['weathering_thickness_min_m'] > 0.0
+    assert (
+        summary['truth']['weathering_thickness_max_m']
+        > summary['truth']['weathering_thickness_min_m']
+    )
+    assert summary['truth']['weathering_correction_min_ms'] < 0.0
+    assert summary['truth']['weathering_correction_max_ms'] < 0.0
+    assert (
+        summary['truth']['weathering_correction_min_ms']
+        < summary['truth']['weathering_correction_max_ms']
+    )
 
 
 def test_refraction_static_ui_fixture_readme_is_created(tmp_path: Path) -> None:
@@ -217,6 +257,10 @@ def test_refraction_static_ui_fixture_readme_is_created(tmp_path: Path) -> None:
     readme = (output_dir / 'README.md').read_text(encoding='utf-8')
     assert 'Static Correction UI refraction workflow' in readme
     assert 'one_layer_2d_clean' in readme
+    assert 'Import `synthetic_static_2d_one_layer.sgy` through the normal UI' in readme
+    assert 'Register or copy `predicted_picks_time_s.npz` as a pick artifact' in readme
+    assert 'Open the `Static Correction` tab' in readme
+    assert 'Refraction QC' in readme
 
 
 def test_refraction_static_ui_fixture_import_has_no_side_effects(
@@ -296,6 +340,115 @@ def test_synthetic_ui_fixture_generation_is_deterministic(tmp_path: Path) -> Non
 
     np.testing.assert_array_equal(first.traces, second.traces)
     np.testing.assert_array_equal(first.pick_time_s, second.pick_time_s)
+
+
+def test_synthetic_ui_fixture_pick_npz_has_accepted_pick_key(tmp_path: Path) -> None:
+    module = _module()
+    config = _config(tmp_path)
+    fixture = module.build_synthetic_fixture(config)
+
+    arrays = module.build_pick_arrays(config, fixture)
+
+    assert 'pick_time_s' in arrays
+    assert arrays['pick_time_s'].shape == (24 * 96,)
+    assert arrays['pick_time_s'].dtype == np.float32
+    assert arrays['n_traces'].shape == ()
+    assert arrays['n_traces'].item() == 24 * 96
+    assert arrays['n_samples'].shape == ()
+    assert arrays['n_samples'].item() == 1000
+    assert arrays['dt'].shape == ()
+    assert arrays['dt'].item() == pytest.approx(0.002)
+    np.testing.assert_array_equal(
+        arrays['sorted_to_original'],
+        np.arange(24 * 96, dtype=np.int64),
+    )
+
+
+def test_synthetic_ui_fixture_pick_npz_values_within_record_window(
+    tmp_path: Path,
+) -> None:
+    module = _module()
+    config = _config(tmp_path)
+    fixture = module.build_synthetic_fixture(config)
+
+    arrays = module.build_pick_arrays(config, fixture)
+    picks = arrays['pick_time_s']
+
+    assert np.all(np.isfinite(picks))
+    assert np.all(picks >= 0.0)
+    assert np.max(picks) < config.dt_s * config.n_samples
+
+
+def test_synthetic_ui_fixture_pick_aliases_match(tmp_path: Path) -> None:
+    module = _module()
+    config = _config(tmp_path)
+    fixture = module.build_synthetic_fixture(config)
+
+    arrays = module.build_pick_arrays(config, fixture)
+
+    np.testing.assert_array_equal(arrays['picks_time_s'], arrays['pick_time_s'])
+    np.testing.assert_array_equal(
+        arrays['predicted_picks_time_s'],
+        arrays['pick_time_s'],
+    )
+    np.testing.assert_array_equal(
+        arrays['first_break_time_s'],
+        arrays['pick_time_s'],
+    )
+
+
+def test_synthetic_ui_fixture_metadata_contains_static_correction_ui_fields(
+    tmp_path: Path,
+) -> None:
+    module = _module()
+    config = _config(tmp_path)
+
+    metadata = module.build_fixture_metadata(config)
+
+    assert metadata['files']['sgy'] == 'synthetic_static_2d_one_layer.sgy'
+    assert metadata['files']['pick_artifact'] == 'predicted_picks_time_s.npz'
+    assert metadata['pick_source']['kind'] == 'batch_predicted_npz'
+    assert metadata['pick_source']['artifact_name'] == 'predicted_picks_time_s.npz'
+    assert metadata['geometry_headers']['source_id_byte'] == 17
+    assert metadata['geometry_headers']['receiver_id_byte'] == 13
+    assert metadata['recommended_static_correction']['model_preset'] == 'one_layer_global'
+    assert metadata['recommended_static_correction']['linkage'] == {'mode': 'none'}
+    assert metadata['recommended_static_correction']['v1_m_s'] == 800.0
+    assert metadata['recommended_static_correction']['v2_initial_m_s'] == 2400.0
+    assert metadata['recommended_static_correction']['register_corrected_file'] is True
+
+
+def test_synthetic_ui_fixture_expected_summary_contains_truth_ranges(
+    tmp_path: Path,
+) -> None:
+    module = _module()
+    config = _config(tmp_path)
+    fixture = module.build_synthetic_fixture(config)
+
+    summary = module.build_expected_static_summary(config, fixture)
+    truth = summary['truth']
+
+    assert truth['v1_m_s'] == 800.0
+    assert truth['v2_m_s'] == 2400.0
+    assert truth['n_traces'] == 24 * 96
+    assert truth['pick_time_min_s'] == pytest.approx(float(np.min(fixture.pick_time_s)))
+    assert truth['pick_time_max_s'] == pytest.approx(float(np.max(fixture.pick_time_s)))
+    assert truth['source_t1_min_ms'] == pytest.approx(
+        float(np.min(fixture.source_t1_s) * 1000.0)
+    )
+    assert truth['source_t1_max_ms'] == pytest.approx(
+        float(np.max(fixture.source_t1_s) * 1000.0)
+    )
+    assert truth['receiver_t1_min_ms'] == pytest.approx(
+        float(np.min(fixture.receiver_t1_s) * 1000.0)
+    )
+    assert truth['receiver_t1_max_ms'] == pytest.approx(
+        float(np.max(fixture.receiver_t1_s) * 1000.0)
+    )
+    assert truth['weathering_thickness_min_m'] > 0.0
+    assert truth['weathering_thickness_max_m'] > truth['weathering_thickness_min_m']
+    assert truth['weathering_correction_min_ms'] < truth['weathering_correction_max_ms']
+    assert truth['weathering_correction_max_ms'] < 0.0
 
 
 def test_synthetic_ui_fixture_sgy_writer_skips_without_segyio(
