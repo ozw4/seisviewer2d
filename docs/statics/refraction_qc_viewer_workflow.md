@@ -13,6 +13,9 @@ The numerical model and limits remain the ones documented in:
 - [refraction_field_corrections.md](refraction_field_corrections.md)
 - [refraction_m5_exports_table_workflow.md](refraction_m5_exports_table_workflow.md)
 
+For a synthetic manual smoke-test workflow that ends in this QC view, see
+[refraction_static_ui_fixture.md](refraction_static_ui_fixture.md).
+
 ## Sign Convention And Units
 
 All refraction statics QC views use the repo static-shift convention:

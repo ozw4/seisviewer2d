@@ -146,6 +146,7 @@ See:
 
 - `docs/static_correction.md`
 - `docs/refraction_static.md`
+- `docs/statics/refraction_static_ui_fixture.md`
 - `docs/statics/refraction_qc_viewer_workflow.md`
 - `docs/statics/refraction_multilayer_time_term.md`
 - `docs/statics/refraction_m5_exports_table_workflow.md`

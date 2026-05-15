@@ -14,6 +14,9 @@ The user-facing M6 QC and viewer workflow is documented in
 [statics/refraction_qc_viewer_workflow.md](statics/refraction_qc_viewer_workflow.md).
 The browser `Static Correction` tab workflow is documented in
 [statics/static_correction_ui_workflow.md](statics/static_correction_ui_workflow.md).
+The synthetic fixture workflow for manual Static Correction UI smoke testing is
+documented in
+[statics/refraction_static_ui_fixture.md](statics/refraction_static_ui_fixture.md).
 
 The public apply workflow supports a practical 1-layer model:
 

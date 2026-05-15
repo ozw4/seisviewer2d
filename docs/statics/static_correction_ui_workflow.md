@@ -10,6 +10,8 @@ SGY load -> first-break pick artifact -> Static Correction tab -> refraction app
 Synthetic data creation is not part of the Static Correction UI. If synthetic
 SEG-Y files or synthetic first-break picks are used, prepare them outside the UI
 and load them the same way as normal SEG-Y and pick artifacts.
+For the repo's synthetic smoke-test fixture, see
+[refraction_static_ui_fixture.md](refraction_static_ui_fixture.md).
 
 ## Prerequisites
 

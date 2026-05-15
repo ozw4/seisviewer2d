@@ -142,6 +142,7 @@ See:
 
 - `static_correction.md`
 - `statics/static_correction_ui_workflow.md`
+- `statics/refraction_static_ui_fixture.md`
 - `refraction_static.md`
 - [statics/refraction_field_corrections.md](statics/refraction_field_corrections.md)
 - `statics/refraction_multilayer_time_term.md`
