@@ -1,5 +1,5 @@
 // /viewer/bootstrap.js
-import { createStore } from './store.js';
+import { createSeisViewerState, createStore } from './store.js';
 import * as GridCore from './core/grid.js';
 import { buildLayout, buildPickShapes, buildPickMarkerTraces, buildPendingPickMarkerTrace } from './core/layout.js';
 import { initPrefs, getPref } from './settings/prefs.js';
@@ -56,6 +56,11 @@ const toNum = (v, d) => {
 };
 const toStr = (v, d) => (v == null ? d : String(v));
 const toBool = (v) => (typeof v === 'string' ? v === 'true' : !!v);
+const toIntOrNull = (v) => {
+  if (typeof v === 'string' && v.trim() === '') return null;
+  const x = Number(v);
+  return Number.isInteger(x) ? x : null;
+};
 const readAxisRange = (ev, axisName) => {
   if (!ev || typeof ev !== 'object') return null;
   const packed = ev[`${axisName}.range`];
@@ -106,9 +111,22 @@ if (!(typeof window.defaultDt === 'number' && Number.isFinite(window.defaultDt) 
 
 // Read initial values from existing DOM / globals
 const slider = document.getElementById('key1_slider');
+const readActiveViewerTargetState = (state = {}) => {
+  const fileId = state.fileId ?? document.getElementById('file_id')?.value ?? window.currentFileId ?? '';
+  const displayName = state.displayName ?? window.currentFileName ?? '';
+  return {
+    fileId,
+    displayName,
+    key1Byte: toIntOrNull(state.key1Byte ?? window.currentKey1Byte),
+    key2Byte: toIntOrNull(state.key2Byte ?? window.currentKey2Byte),
+    isFileLoaded: state.isFileLoaded === undefined
+      ? Boolean(fileId && displayName)
+      : Boolean(state.isFileLoaded),
+  };
+};
 
 const initial = {
-  fileId: document.getElementById('file_id')?.value || (window.currentFileId || ''),
+  ...readActiveViewerTargetState(),
   pickMode: !!window.isPickMode,
   wiggleDensity: toNum(getPref('wiggle_density'), 0.20),
   gain: toNum(getPref('gain'), toNum(document.getElementById('gain')?.value, 1)),
@@ -126,6 +144,11 @@ const store = createStore(initial);
 
 // Expose for debugging
 window.store = store;
+window.SeisViewerState = createSeisViewerState(store);
+window.SeisViewerState.syncActiveFileTarget = function syncActiveFileTarget(state) {
+  store.patch(readActiveViewerTargetState(state));
+  return window.SeisViewerState.getActiveFileTarget();
+};
 
 // ---- Sync global wiggle-threshold at boot
   window.WIGGLE_DENSITY_THRESHOLD = store.get().wiggleDensity;
@@ -235,8 +258,7 @@ if (typeof window.loadSettings === 'function') {
   const _load = window.loadSettings;
   window.loadSettings = async function () {
     await _load();
-    window.store.patch({
-      fileId: document.getElementById('file_id')?.value || (window.currentFileId || ''),
+    store.patch({
       key1Values: Array.isArray(window.key1Values) ? window.key1Values : [],
       sectionShape: window.sectionShape || null,
       pipelineKey: window.latestPipelineKey || null,
@@ -244,4 +266,11 @@ if (typeof window.loadSettings === 'function') {
     // dt が変わる可能性があるので、閾値更新は不要だが、必要ならここで再フェッチ可能
   };
 }
+document.getElementById('file_id')?.addEventListener('change', () => {
+  store.patch({
+    ...readActiveViewerTargetState(),
+    displayName: '',
+    isFileLoaded: false,
+  });
+});
 store.subscribe(() => { });

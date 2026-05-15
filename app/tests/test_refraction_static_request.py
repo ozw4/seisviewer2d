@@ -273,6 +273,47 @@ def test_refraction_pick_source_defaults_batch_artifact_name() -> None:
     assert req.pick_source.artifact_name == 'predicted_picks_time_s.npz'
 
 
+def test_refraction_static_pick_source_uploaded_npz_valid_without_job_id() -> None:
+    payload = _payload()
+    payload['pick_source'] = {'kind': 'uploaded_npz'}
+
+    req = _validate(payload)
+
+    assert req.pick_source.kind == 'uploaded_npz'
+    assert req.pick_source.job_id is None
+    assert req.pick_source.artifact_name is None
+
+
+def test_refraction_static_pick_source_uploaded_npz_rejects_job_id() -> None:
+    payload = _payload()
+    payload['pick_source'] = {
+        'kind': 'uploaded_npz',
+        'job_id': 'first-break-job-id',
+    }
+
+    with pytest.raises(ValidationError, match='uploaded_npz'):
+        _validate(payload)
+
+
+def test_refraction_static_pick_source_uploaded_npz_rejects_artifact_name() -> None:
+    payload = _payload()
+    payload['pick_source'] = {
+        'kind': 'uploaded_npz',
+        'artifact_name': 'predicted_picks_time_s.npz',
+    }
+
+    with pytest.raises(ValidationError, match='uploaded_npz'):
+        _validate(payload)
+
+
+def test_refraction_static_legacy_pick_source_still_valid() -> None:
+    req = _validate(_payload())
+
+    assert req.pick_source.kind == 'batch_predicted_npz'
+    assert req.pick_source.job_id == 'first-break-job-id'
+    assert req.pick_source.artifact_name == 'predicted_picks_time_s.npz'
+
+
 def test_refraction_pick_source_rejects_artifact_source_without_job_id() -> None:
     payload = _payload()
     payload['pick_source'] = {

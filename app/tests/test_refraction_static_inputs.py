@@ -22,6 +22,9 @@ from app.services.refraction_static_inputs import (
     build_refraction_static_input_model,
     build_refraction_static_input_model_from_arrays,
 )
+from app.services.refraction_static_pick_source_loader import (
+    load_refraction_pick_source_from_npz_path,
+)
 
 
 def _geometry(**overrides: Any) -> RefractionStaticGeometryRequest:
@@ -58,6 +61,17 @@ def _linkage(mode: str = 'none') -> RefractionStaticLinkageRequest:
     if mode != 'none':
         payload['job_id'] = 'linkage-job'
     return RefractionStaticLinkageRequest.model_validate(payload)
+
+
+def _uploaded_npz_request() -> RefractionStaticApplyRequest:
+    return RefractionStaticApplyRequest(
+        file_id='line-a',
+        pick_source={'kind': 'uploaded_npz'},
+        geometry=_geometry(),
+        linkage={'mode': 'none'},
+        model=RefractionStaticModelRequest(weathering_velocity_m_s=800.0),
+        datum={'mode': 'none'},
+    )
 
 
 def _headers(
@@ -673,6 +687,173 @@ def test_build_refraction_static_input_model_loads_npz_original_order(
     np.testing.assert_allclose(model.pick_time_s_sorted, [0.010, 0.020, 0.030, 0.040])
     np.testing.assert_array_equal(model.sorted_trace_index, sorted_to_original)
     assert model.metadata['pick_source_metadata']['accepted_pick_key'] == 'picks_time_s'
+
+
+def test_uploaded_npz_pick_source_does_not_resolve_job_artifact(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def _fail_artifact_resolution(*_args: Any, **_kwargs: Any) -> object:
+        pytest.fail('uploaded_npz should not resolve a job artifact')
+
+    monkeypatch.setattr(
+        inputs_module,
+        'resolve_job_artifact_path',
+        _fail_artifact_resolution,
+    )
+    req = RefractionStaticApplyRequest(
+        file_id='line-a',
+        pick_source={'kind': 'uploaded_npz'},
+        geometry=_geometry(),
+        linkage={'mode': 'none'},
+        model=RefractionStaticModelRequest(weathering_velocity_m_s=800.0),
+        datum={'mode': 'none'},
+    )
+
+    with pytest.raises(ValueError, match='multipart upload'):
+        inputs_module._load_refraction_pick_source(
+            req=req,
+            state=AppState(),
+            reader=object(),
+            n_traces=0,
+            n_samples=0,
+            dt=0.001,
+            sorted_trace_index=np.asarray([], dtype=np.int64),
+        )
+
+
+def test_uploaded_npz_pick_loader_reads_pick_time_s(tmp_path: Path) -> None:
+    sorted_to_original = np.asarray([2, 0, 3, 1], dtype=np.int64)
+    npz_path = tmp_path / 'uploaded_picks_time_s.npz'
+    np.savez(
+        npz_path,
+        pick_time_s=np.asarray([0.020, 0.040, 0.010, 0.030], dtype=np.float32),
+        sorted_to_original=sorted_to_original,
+        valid_pick_mask=np.asarray([True, True, True, False], dtype=bool),
+        confidence=np.asarray([0.9, 0.8, 0.7, 0.6], dtype=np.float32),
+        n_traces=np.asarray(4, dtype=np.int64),
+        n_samples=np.asarray(100, dtype=np.int64),
+        dt=np.asarray(0.001, dtype=np.float64),
+    )
+
+    loaded = load_refraction_pick_source_from_npz_path(
+        npz_path=npz_path,
+        request=_uploaded_npz_request(),
+        n_traces=4,
+        n_samples=100,
+        dt_s=0.001,
+        sorted_trace_index=sorted_to_original,
+    )
+
+    np.testing.assert_allclose(loaded.picks_time_s_sorted, [0.010, 0.020, 0.030, 0.040])
+    np.testing.assert_array_equal(loaded.sorted_trace_index, sorted_to_original)
+    assert loaded.source_kind == 'uploaded_npz'
+    assert loaded.metadata['loaded_from'] == 'uploaded_npz'
+    assert loaded.metadata['accepted_pick_key'] == 'pick_time_s'
+    assert loaded.metadata['has_valid_pick_mask'] is True
+    assert loaded.metadata['has_confidence'] is True
+    assert loaded.metadata['npz_path'].endswith('uploaded_picks_time_s.npz')
+
+
+def test_uploaded_npz_pick_loader_reads_predicted_picks_alias(tmp_path: Path) -> None:
+    sorted_to_original = np.asarray([0, 1, 2], dtype=np.int64)
+    npz_path = tmp_path / 'uploaded_picks_time_s.npz'
+    np.savez(
+        npz_path,
+        predicted_picks_time_s=np.asarray([0.010, 0.020, 0.030], dtype=np.float32),
+        sorted_to_original=sorted_to_original,
+    )
+
+    loaded = load_refraction_pick_source_from_npz_path(
+        npz_path=npz_path,
+        request=_uploaded_npz_request(),
+        n_traces=3,
+        n_samples=100,
+        dt_s=0.001,
+        sorted_trace_index=sorted_to_original,
+    )
+
+    np.testing.assert_allclose(loaded.picks_time_s_sorted, [0.010, 0.020, 0.030])
+    assert loaded.metadata['accepted_pick_key'] == 'predicted_picks_time_s'
+
+
+def test_uploaded_npz_pick_loader_validates_trace_count(tmp_path: Path) -> None:
+    npz_path = tmp_path / 'uploaded_picks_time_s.npz'
+    np.savez(
+        npz_path,
+        pick_time_s=np.asarray([0.010, 0.020, 0.030], dtype=np.float32),
+        n_traces=np.asarray(3, dtype=np.int64),
+    )
+
+    with pytest.raises(ValueError, match='uploaded_picks_time_s.npz'):
+        load_refraction_pick_source_from_npz_path(
+            npz_path=npz_path,
+            request=_uploaded_npz_request(),
+            n_traces=4,
+            n_samples=100,
+            dt_s=0.001,
+            sorted_trace_index=np.arange(4, dtype=np.int64),
+        )
+
+
+@pytest.mark.parametrize('bad_value', [np.nan, np.inf])
+def test_uploaded_npz_pick_loader_rejects_nonfinite_picks(
+    tmp_path: Path,
+    bad_value: float,
+) -> None:
+    npz_path = tmp_path / 'uploaded_picks_time_s.npz'
+    picks = np.asarray([0.010, bad_value, 0.030], dtype=np.float64)
+    np.savez(npz_path, pick_time_s=picks)
+
+    with pytest.raises(ValueError, match='uploaded_picks_time_s.npz.*finite'):
+        load_refraction_pick_source_from_npz_path(
+            npz_path=npz_path,
+            request=_uploaded_npz_request(),
+            n_traces=3,
+            n_samples=100,
+            dt_s=0.001,
+            sorted_trace_index=np.arange(3, dtype=np.int64),
+        )
+
+
+def test_uploaded_npz_pick_loader_rejects_pickle_or_invalid_npz(
+    tmp_path: Path,
+) -> None:
+    npz_path = tmp_path / 'uploaded_picks_time_s.npz'
+    np.savez(npz_path, pick_time_s=np.asarray([{'time': 0.010}], dtype=object))
+
+    with pytest.raises(ValueError, match='uploaded_picks_time_s.npz'):
+        load_refraction_pick_source_from_npz_path(
+            npz_path=npz_path,
+            request=_uploaded_npz_request(),
+            n_traces=1,
+            n_samples=100,
+            dt_s=0.001,
+            sorted_trace_index=np.arange(1, dtype=np.int64),
+        )
+
+
+def test_uploaded_npz_pick_loader_preserves_sorted_to_original(tmp_path: Path) -> None:
+    sorted_to_original = np.asarray([2, 0, 3, 1], dtype=np.int64)
+    npz_path = tmp_path / 'uploaded_picks_time_s.npz'
+    np.savez(
+        npz_path,
+        picks_time_s=np.asarray([0.030, 0.010, 0.040, 0.020], dtype=np.float32),
+        sorted_to_original=sorted_to_original,
+        order=np.asarray('trace_store_sorted'),
+    )
+
+    loaded = load_refraction_pick_source_from_npz_path(
+        npz_path=npz_path,
+        request=_uploaded_npz_request(),
+        n_traces=4,
+        n_samples=100,
+        dt_s=0.001,
+        sorted_trace_index=sorted_to_original,
+    )
+
+    np.testing.assert_allclose(loaded.picks_time_s_sorted, [0.030, 0.010, 0.040, 0.020])
+    np.testing.assert_array_equal(loaded.sorted_trace_index, sorted_to_original)
+    assert loaded.metadata['has_sorted_to_original'] is True
 
 
 def test_build_refraction_static_input_model_omitted_linkage_skips_artifact_resolution(

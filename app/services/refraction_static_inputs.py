@@ -25,6 +25,13 @@ from app.services.geometry_linkage_loader import (
     load_geometry_linkage_artifact,
 )
 from app.services.job_artifact_refs import resolve_job_artifact_path
+from app.services.refraction_static_pick_source_loader import (
+    PICK_TIME_KEYS,
+    REFRACTION_PICK_ORDER_TRACE_STORE_SORTED as _ORDER_TRACE_STORE_SORTED,
+    LoadedRefractionPickSource,
+    load_npz_refraction_pick_source_from_path,
+    load_refraction_pick_source_from_npz_path,
+)
 from app.services.reader import get_reader
 from app.services.refraction_static_layer_observations import (
     build_refraction_layer_observation_masks,
@@ -45,18 +52,9 @@ from app.trace_store.reader import TraceStoreSectionReader
 from app.utils.pick_cache_file1d_mem import path_for_file
 from app.utils.segy_scalars import apply_segy_scalar, normalize_elevation_unit
 
-PICK_TIME_KEYS: tuple[str, ...] = (
-    'pick_time_s',
-    'picks_time_s',
-    'predicted_picks_time_s',
-    'first_break_time_s',
-)
-
 REFRACTION_INPUT_QC_JSON_NAME = 'refraction_input_model_qc.json'
 REFRACTION_INPUT_PREVIEW_CSV_NAME = 'refraction_input_model_preview.csv'
 
-_ORDER_TRACE_STORE_SORTED = 'trace_store_sorted'
-_ORDER_ORIGINAL_TRACE = 'original_trace_order'
 _FEET_TO_METERS = 0.3048
 _COORD_ATOL_M = 1.0e-6
 _ENDPOINT_KEY_DTYPE = '<U192'
@@ -97,12 +95,7 @@ _PREVIEW_COLUMNS = (
 )
 
 
-@dataclass(frozen=True)
-class _LoadedRefractionPickSource:
-    picks_time_s_sorted: np.ndarray
-    sorted_trace_index: np.ndarray
-    source_kind: str
-    metadata: dict[str, Any]
+_LoadedRefractionPickSource = LoadedRefractionPickSource
 
 
 @dataclass(frozen=True)
@@ -172,6 +165,8 @@ def build_refraction_static_input_model(
     req: RefractionStaticApplyRequest,
     state: AppState,
     job_dir: Path | None = None,
+    uploaded_pick_npz_path: Path | None = None,
+    uploaded_pick_metadata: Mapping[str, object] | None = None,
 ) -> RefractionStaticInputModel:
     """Build a sorted-order refraction statics input model for a request."""
     file_id = _non_empty_str(req.file_id, name='file_id')
@@ -194,6 +189,8 @@ def build_refraction_static_input_model(
         n_samples=n_samples,
         dt=dt,
         sorted_trace_index=sorted_trace_index,
+        uploaded_pick_npz_path=uploaded_pick_npz_path,
+        uploaded_pick_metadata=uploaded_pick_metadata,
     )
     headers = _load_refraction_trace_headers(
         reader=reader,
@@ -570,8 +567,32 @@ def _load_refraction_pick_source(
     n_samples: int,
     dt: float,
     sorted_trace_index: np.ndarray,
+    uploaded_pick_npz_path: Path | None = None,
+    uploaded_pick_metadata: Mapping[str, object] | None = None,
 ) -> _LoadedRefractionPickSource:
     pick_source = req.pick_source
+    if pick_source.kind == 'uploaded_npz':
+        if uploaded_pick_npz_path is None:
+            raise ValueError(
+                'pick_source.kind=uploaded_npz requires the multipart upload endpoint'
+            )
+        loaded = load_refraction_pick_source_from_npz_path(
+            npz_path=uploaded_pick_npz_path,
+            request=req,
+            n_traces=n_traces,
+            n_samples=n_samples,
+            dt_s=dt,
+            sorted_trace_index=sorted_trace_index,
+        )
+        metadata = dict(loaded.metadata)
+        if uploaded_pick_metadata is not None:
+            metadata.update(dict(uploaded_pick_metadata))
+        return _LoadedRefractionPickSource(
+            picks_time_s_sorted=loaded.picks_time_s_sorted,
+            sorted_trace_index=loaded.sorted_trace_index,
+            source_kind='uploaded_npz',
+            metadata=metadata,
+        )
     if pick_source.kind == 'manual_memmap':
         return _load_manual_memmap_pick_source(
             file_id=req.file_id,
@@ -681,60 +702,19 @@ def _load_npz_refraction_pick_source(
     dt: float,
     sorted_trace_index: np.ndarray,
 ) -> _LoadedRefractionPickSource:
-    path = Path(npz_path)
-    try:
-        npz_file = np.load(path, allow_pickle=False)
-    except Exception as exc:  # noqa: BLE001
-        msg = f'Could not read npz pick source: {path}'
-        raise ValueError(msg) from exc
-
-    with npz_file as npz:
-        key = _select_pick_key(npz.files)
-        metadata = _validate_pick_npz_metadata(
-            npz,
-            n_traces=n_traces,
-            n_samples=n_samples,
-            dt=dt,
-            path=path,
-            key=key,
-        )
-        picks = _coerce_pick_array(np.asarray(npz[key]))
-        if picks.shape != (n_traces,):
-            msg = (
-                'pick array length mismatch: '
-                f'expected {(n_traces,)}, got {picks.shape}'
-            )
-            raise ValueError(msg)
-
-        artifact_order = _read_npz_order(npz)
-        reader_sorted_to_original = _reader_sorted_to_original(
-            reader,
-            n_traces=n_traces,
-        )
-        if 'sorted_to_original' in npz.files:
-            npz_sorted_to_original = validate_sorted_to_original(
-                np.asarray(npz['sorted_to_original']),
-                expected_n_traces=n_traces,
-                role='npz',
-            )
-            if not np.array_equal(npz_sorted_to_original, reader_sorted_to_original):
-                raise ValueError('sorted_to_original mismatch')
-            metadata['has_sorted_to_original'] = True
-        else:
-            metadata['has_sorted_to_original'] = False
-
-    if artifact_order == _ORDER_TRACE_STORE_SORTED:
-        picks_sorted = picks
-    elif artifact_order == _ORDER_ORIGINAL_TRACE:
-        picks_sorted = np.ascontiguousarray(picks[reader_sorted_to_original])
-    else:
-        raise ValueError(f'unsupported pick artifact order: {artifact_order}')
-
-    return _LoadedRefractionPickSource(
-        picks_time_s_sorted=picks_sorted,
-        sorted_trace_index=sorted_trace_index,
+    reader_sorted_to_original = _reader_sorted_to_original(
+        reader,
+        n_traces=n_traces,
+    )
+    if not np.array_equal(reader_sorted_to_original, sorted_trace_index):
+        raise ValueError('sorted_trace_index mismatch')
+    return load_npz_refraction_pick_source_from_path(
+        npz_path,
+        n_traces=n_traces,
+        n_samples=n_samples,
+        dt_s=dt,
+        sorted_trace_index=reader_sorted_to_original,
         source_kind='npz',
-        metadata=metadata,
     )
 
 
@@ -1564,60 +1544,6 @@ def _validate_pick_mask(
     return reasons == 'ok', reasons
 
 
-def _select_pick_key(keys: list[str]) -> str:
-    for key in PICK_TIME_KEYS:
-        if key in keys:
-            return key
-    accepted = ', '.join(PICK_TIME_KEYS)
-    raise ValueError(f'unsupported pick artifact key; accepted keys: {accepted}')
-
-
-def _validate_pick_npz_metadata(
-    npz: np.lib.npyio.NpzFile,
-    *,
-    n_traces: int,
-    n_samples: int,
-    dt: float,
-    path: Path,
-    key: str,
-) -> dict[str, Any]:
-    metadata: dict[str, Any] = {
-        'npz_path': str(path),
-        'npz_keys': tuple(npz.files),
-        'accepted_pick_key': key,
-        'accepted_key_priority': PICK_TIME_KEYS,
-    }
-    if 'n_traces' in npz.files:
-        value = _read_int_scalar_from_npz(npz, 'n_traces')
-        metadata['n_traces'] = value
-        if value != n_traces:
-            raise ValueError(f'n_traces mismatch: expected {n_traces}, got {value}')
-    if 'n_samples' in npz.files:
-        value = _read_int_scalar_from_npz(npz, 'n_samples')
-        metadata['n_samples'] = value
-        if value != n_samples:
-            raise ValueError(f'n_samples mismatch: expected {n_samples}, got {value}')
-    if 'dt' in npz.files:
-        value = _read_float_scalar_from_npz(npz, 'dt')
-        metadata['dt'] = value
-        if not np.isfinite(value) or abs(value - dt) > 1.0e-9:
-            raise ValueError(f'dt mismatch: expected {dt}, got {value}')
-    return metadata
-
-
-def _read_npz_order(npz: np.lib.npyio.NpzFile) -> str:
-    for key in ('order', 'trace_order'):
-        if key not in npz.files:
-            continue
-        value = _read_string_scalar_from_npz(npz, key)
-        if value in {_ORDER_TRACE_STORE_SORTED, 'sorted'}:
-            return _ORDER_TRACE_STORE_SORTED
-        if value in {_ORDER_ORIGINAL_TRACE, 'original'}:
-            return _ORDER_ORIGINAL_TRACE
-        raise ValueError(f'unsupported pick artifact {key}: {value}')
-    return _ORDER_ORIGINAL_TRACE
-
-
 def _unique_endpoints(
     endpoint_kind: str,
     endpoint_id_values: np.ndarray,
@@ -1898,34 +1824,6 @@ def _reader_dt(reader: TraceStoreSectionReader, *, state: AppState, file_id: str
     return _coerce_positive_float(state.file_registry.get_dt(file_id), name='dt')
 
 
-def _read_int_scalar_from_npz(npz: np.lib.npyio.NpzFile, key: str) -> int:
-    arr = np.asarray(npz[key])
-    if arr.size != 1 or np.issubdtype(arr.dtype, np.bool_):
-        raise ValueError(f'{key} must be an integer scalar')
-    if not np.issubdtype(arr.dtype, np.integer):
-        raise ValueError(f'{key} must be an integer scalar')
-    return int(arr.reshape(-1)[0])
-
-
-def _read_float_scalar_from_npz(npz: np.lib.npyio.NpzFile, key: str) -> float:
-    arr = np.asarray(npz[key])
-    if arr.size != 1:
-        raise ValueError(f'{key} must be a numeric scalar')
-    if np.issubdtype(arr.dtype, np.bool_) or not _is_real_numeric_dtype(arr.dtype):
-        raise ValueError(f'{key} must be a numeric scalar')
-    return float(arr.reshape(-1)[0])
-
-
-def _read_string_scalar_from_npz(npz: np.lib.npyio.NpzFile, key: str) -> str:
-    arr = np.asarray(npz[key])
-    if arr.size != 1:
-        raise ValueError(f'{key} must be a string scalar')
-    value = arr.reshape(-1)[0]
-    if isinstance(value, bytes):
-        return value.decode('utf-8')
-    return str(value)
-
-
 def _preview_rows(input_model: RefractionStaticInputModel) -> list[dict[str, Any]]:
     rows: list[dict[str, Any]] = []
     for i in range(input_model.n_traces):
@@ -2096,9 +1994,11 @@ __all__ = [
     'PICK_TIME_KEYS',
     'REFRACTION_INPUT_PREVIEW_CSV_NAME',
     'REFRACTION_INPUT_QC_JSON_NAME',
+    'LoadedRefractionPickSource',
     'RefractionEndpointTable',
     'RefractionStaticInputModel',
     'build_refraction_static_input_model',
     'build_refraction_static_input_model_from_arrays',
+    'load_refraction_pick_source_from_npz_path',
     'write_refraction_static_input_artifacts',
 ]
