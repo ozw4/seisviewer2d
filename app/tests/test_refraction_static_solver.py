@@ -330,26 +330,30 @@ def test_robust_sigma_rejects_large_bad_pick() -> None:
     assert result.qc['robust_method'] == 'sigma'
 
 
-def test_robust_rejection_raises_when_minimum_fraction_would_be_violated() -> None:
+def test_robust_rejection_stops_when_minimum_fraction_would_be_violated() -> None:
     pick_time = _pick_times()
     pick_time[0] += 0.100
     design = _design_matrix_solve_global(pick_time_s=pick_time)
 
-    with pytest.raises(RefractionStaticSolverError, match='too few refraction'):
-        solve_refraction_static_bounded_ls(
-            design_matrix=design,
-            model=_model(),
-            solver=_solver(
-                robust={
-                    'enabled': True,
-                    'method': 'mad',
-                    'min_used_fraction': 1.0,
-                },
-            ),
-        )
+    result = solve_refraction_static_bounded_ls(
+        design_matrix=design,
+        model=_model(),
+        solver=_solver(
+            robust={
+                'enabled': True,
+                'method': 'mad',
+                'min_used_fraction': 1.0,
+            },
+        ),
+    )
+
+    assert result.used_row_mask.all()
+    assert not result.rejected_by_robust_mask.any()
+    assert result.robust_iteration_count == 0
+    assert result.qc['robust_stop_reason'] == 'min_used_guard'
 
 
-def test_robust_rejection_keeps_row_that_orphans_active_node_column() -> None:
+def test_robust_rejection_preserves_mask_that_would_orphan_active_node_column() -> None:
     matrix = sparse.csr_matrix(
         np.asarray(
             [
@@ -390,6 +394,10 @@ def test_robust_rejection_keeps_row_that_orphans_active_node_column() -> None:
 
     assert result.used_row_mask[0]
     assert not result.rejected_by_robust_mask[0]
+    assert result.used_row_mask.all()
+    assert not result.rejected_by_robust_mask.any()
+    assert result.qc['robust_stop_reason'] == 'coverage_guard_no_safe_rejections'
+    assert result.qc['n_rejections_blocked_by_robust_coverage_guard'] == 1
 
 
 def test_damping_rows_apply_only_to_half_intercept_columns() -> None:

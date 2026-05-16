@@ -2372,6 +2372,7 @@ class RefractionStaticRobustRequest(BaseModel):
     enabled: bool = True
     method: Literal['mad', 'sigma'] = 'mad'
     threshold: float = 3.5
+    scale_floor_ms: float = 0.05
     max_iterations: int = 5
     min_used_fraction: float = 0.5
     min_used_observations: int = 1
@@ -2387,6 +2388,14 @@ class RefractionStaticRobustRequest(BaseModel):
         return _require_positive_finite_float(
             value,
             'solver.robust.threshold',
+        )
+
+    @field_validator('scale_floor_ms', mode='before')
+    @classmethod
+    def _check_scale_floor_ms(cls, value: object) -> float:
+        return _require_nonnegative_finite_float(
+            value,
+            'solver.robust.scale_floor_ms',
         )
 
     @field_validator('max_iterations', mode='before')

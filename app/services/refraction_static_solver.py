@@ -25,7 +25,7 @@ BedrockVelocityMode = Literal['solve_global', 'fixed_global', 'solve_cell']
 RobustMethod = Literal['mad', 'sigma']
 
 _BOUND_TOL = 1.0e-10
-_ROBUST_SCALE_FLOOR_S = 1.0e-12
+_ROBUST_NUMERIC_SCALE_FLOOR_S = 1.0e-12
 _CELL_THRESHOLD_QC_KEYS = (
     'min_observations_per_cell',
     'n_low_fold_cells',
@@ -74,6 +74,7 @@ class _ValidatedProblem:
     robust_enabled: bool
     robust_method: RobustMethod
     robust_threshold: float
+    robust_scale_floor_s: float
     robust_max_iterations: int
     robust_min_used_fraction: float
     robust_min_used_observations: int
@@ -245,7 +246,7 @@ def solve_refraction_static_bounded_ls_from_matrix(
         resolved_first_layer=resolved_first_layer,
     )
     lower_bounds, upper_bounds = _build_bounds(problem)
-    solve_result, used_mask, rejected_mask, robust_iteration_count = (
+    solve_result, used_mask, rejected_mask, robust_iteration_count, robust_guard_qc = (
         _solve_with_optional_robust_rejection(
             problem,
             lower_bounds=lower_bounds,
@@ -258,6 +259,7 @@ def solve_refraction_static_bounded_ls_from_matrix(
         used_mask=used_mask,
         rejected_mask=rejected_mask,
         robust_iteration_count=robust_iteration_count,
+        robust_guard_qc=robust_guard_qc,
         lower_bounds=lower_bounds,
         upper_bounds=upper_bounds,
     )
@@ -531,6 +533,13 @@ def _validate_problem(
         getattr(robust, 'threshold', None),
         name='solver.robust.threshold',
     )
+    robust_scale_floor_s = (
+        _coerce_nonnegative_finite_float(
+            getattr(robust, 'scale_floor_ms', None),
+            name='solver.robust.scale_floor_ms',
+        )
+        / 1000.0
+    )
     robust_max_iterations = _coerce_positive_int(
         getattr(robust, 'max_iterations', None),
         name='solver.robust.max_iterations',
@@ -577,6 +586,7 @@ def _validate_problem(
         robust_enabled=robust_enabled,
         robust_method=robust_method,
         robust_threshold=robust_threshold,
+        robust_scale_floor_s=robust_scale_floor_s,
         robust_max_iterations=robust_max_iterations,
         robust_min_used_fraction=robust_min_used_fraction,
         robust_min_used_observations=robust_min_used_observations,
@@ -971,7 +981,7 @@ def _solve_with_optional_robust_rejection(
     *,
     lower_bounds: np.ndarray,
     upper_bounds: np.ndarray,
-) -> tuple[_InternalSolveResult, np.ndarray, np.ndarray, int]:
+) -> tuple[_InternalSolveResult, np.ndarray, np.ndarray, int, dict[str, Any]]:
     used_mask = np.ones(problem.n_observations, dtype=bool)
     _validate_used_observation_count(
         problem,
@@ -988,11 +998,17 @@ def _solve_with_optional_robust_rejection(
             upper_bounds=upper_bounds,
         )
         rejected_mask = np.zeros(problem.n_observations, dtype=bool)
-        return solve_result, used_mask, rejected_mask, 0
+        return solve_result, used_mask, rejected_mask, 0, {
+            'robust_stop_reason': 'disabled',
+            'n_rows_protected_by_robust_coverage_guard': 0,
+            'n_rejections_blocked_by_robust_coverage_guard': 0,
+        }
 
     rejected_mask = np.zeros(problem.n_observations, dtype=bool)
     robust_iteration_count = 0
     final_solve: _InternalSolveResult | None = None
+    robust_stop_reason = 'max_iterations'
+    n_rejections_blocked_total = 0
 
     for _iteration_index in range(problem.robust_max_iterations):
         solve_result = _solve_once(
@@ -1006,31 +1022,41 @@ def _solve_with_optional_robust_rejection(
             residual[used_mask],
             method=problem.robust_method,
             threshold=problem.robust_threshold,
+            scale_floor_s=problem.robust_scale_floor_s,
         )
         if not np.any(outlier_local):
             final_solve = solve_result
+            robust_stop_reason = 'no_outliers'
             break
 
         used_indices = np.flatnonzero(used_mask)
+        candidate_indices = used_indices[outlier_local]
         newly_rejected = _safe_robust_rejection_indices(
             problem,
             used_mask=used_mask,
-            candidate_indices=used_indices[outlier_local],
+            candidate_indices=candidate_indices,
         )
+        n_rejections_blocked_total += int(candidate_indices.size - newly_rejected.size)
         if newly_rejected.size == 0:
             final_solve = solve_result
+            robust_stop_reason = 'coverage_guard_no_safe_rejections'
             break
         proposed_used_mask = used_mask.copy()
         proposed_used_mask[newly_rejected] = False
-        _validate_used_observation_count(
-            problem,
-            used_mask=proposed_used_mask,
-            require_fraction=True,
-            message=(
-                'Robust rejection would leave too few refraction observations '
-                'for a stable GLI solve.'
-            ),
-        )
+        try:
+            _validate_used_observation_count(
+                problem,
+                used_mask=proposed_used_mask,
+                require_fraction=True,
+                message=(
+                    'Robust rejection would leave too few refraction observations '
+                    'for a stable GLI solve.'
+                ),
+            )
+        except RefractionStaticSolverError:
+            final_solve = solve_result
+            robust_stop_reason = 'min_used_guard'
+            break
 
         used_mask = proposed_used_mask
         rejected_mask[newly_rejected] = True
@@ -1050,6 +1076,15 @@ def _solve_with_optional_robust_rejection(
         np.ascontiguousarray(used_mask, dtype=bool),
         np.ascontiguousarray(rejected_mask, dtype=bool),
         robust_iteration_count,
+        {
+            'robust_stop_reason': robust_stop_reason,
+            'n_rows_protected_by_robust_coverage_guard': int(
+                n_rejections_blocked_total
+            ),
+            'n_rejections_blocked_by_robust_coverage_guard': int(
+                n_rejections_blocked_total
+            ),
+        },
     )
 
 
@@ -1350,6 +1385,7 @@ def _build_result(
     used_mask: np.ndarray,
     rejected_mask: np.ndarray,
     robust_iteration_count: int,
+    robust_guard_qc: dict[str, Any],
     lower_bounds: np.ndarray,
     upper_bounds: np.ndarray,
 ) -> RefractionStaticSolverResult:
@@ -1403,6 +1439,7 @@ def _build_result(
         used_mask=used_mask,
         rejected_mask=rejected_mask,
         robust_iteration_count=robust_iteration_count,
+        robust_guard_qc=robust_guard_qc,
         bedrock_slowness=bedrock_slowness,
         bedrock_velocity=bedrock_velocity,
         cell_solution=cell_solution,
@@ -1673,6 +1710,7 @@ def _build_qc(
     used_mask: np.ndarray,
     rejected_mask: np.ndarray,
     robust_iteration_count: int,
+    robust_guard_qc: dict[str, Any],
     bedrock_slowness: float,
     bedrock_velocity: float,
     cell_solution: _CellBedrockSolution,
@@ -1739,6 +1777,7 @@ def _build_qc(
         'robust_method': problem.robust_method,
         'robust_threshold': float(problem.robust_threshold),
         'robust_iteration_count': int(robust_iteration_count),
+        'robust_scale_floor_ms': float(problem.robust_scale_floor_s * 1000.0),
         'damping': float(problem.damping),
         'min_picks_per_node': int(problem.min_picks_per_node),
         'max_abs_half_intercept_time_ms': float(
@@ -1757,6 +1796,7 @@ def _build_qc(
         'n_damping_rows': int(solve_result.n_damping_rows),
         'n_augmented_rows': int(solve_result.n_augmented_rows),
     }
+    qc.update(robust_guard_qc)
     if problem.mode == 'fixed_global':
         qc.update(
             {
@@ -1841,6 +1881,7 @@ def _build_robust_outlier_mask(
     *,
     method: RobustMethod,
     threshold: float,
+    scale_floor_s: float,
 ) -> np.ndarray:
     if residual_s.size == 0:
         return np.zeros(0, dtype=bool)
@@ -1852,8 +1893,7 @@ def _build_robust_outlier_mask(
         scale = float(np.std(residual_s, ddof=0))
     else:
         raise RefractionStaticSolverError('robust method must be mad or sigma')
-    if scale <= _ROBUST_SCALE_FLOOR_S:
-        return np.zeros(residual_s.shape, dtype=bool)
+    scale = max(scale, float(scale_floor_s), _ROBUST_NUMERIC_SCALE_FLOOR_S)
     outlier = np.abs(residual_s - center) > float(threshold) * scale
     return np.ascontiguousarray(outlier, dtype=bool)
 
