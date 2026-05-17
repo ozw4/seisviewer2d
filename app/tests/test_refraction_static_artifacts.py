@@ -12,6 +12,11 @@ import pytest
 from app.api.schemas import RefractionStaticApplyRequest
 import app.services.refraction_static_artifacts as artifact_module
 import app.services.refraction_static_artifacts._legacy as artifact_legacy_module
+from app.services.refraction_static_artifacts.io import (
+    _write_csv_atomic,
+    _write_json_atomic,
+    _write_npz_atomic,
+)
 from app.services.refraction_static_artifacts import (
     FIRST_BREAK_RESIDUALS_CSV_NAME,
     NEAR_SURFACE_MODEL_CSV_NAME,
@@ -784,6 +789,51 @@ def test_refraction_static_json_outputs_are_strict_and_deterministic(
             )
             + '\n'
         )
+
+
+def test_refraction_static_atomic_json_writer_contract(tmp_path: Path) -> None:
+    path = tmp_path / 'contract.json'
+
+    _write_json_atomic(path, {'z': '雪', 'a': [1.0, None]})
+
+    assert path.read_text(encoding='utf-8') == (
+        '{\n'
+        '  "a": [\n'
+        '    1.0,\n'
+        '    null\n'
+        '  ],\n'
+        '  "z": "\\u96ea"\n'
+        '}\n'
+    )
+
+
+def test_refraction_static_atomic_csv_writer_rejects_extra_fields(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / 'contract.csv'
+
+    with pytest.raises(
+        RefractionStaticArtifactError,
+        match='failed to write CSV artifact',
+    ):
+        _write_csv_atomic(path, ('a',), [{'a': 1, 'extra': 2}])
+
+    assert not path.exists()
+
+
+def test_refraction_static_atomic_npz_writer_rejects_object_arrays(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / 'contract.npz'
+
+    with pytest.raises(
+        RefractionStaticArtifactError,
+        match='object array is not allowed for bad',
+    ):
+        _write_npz_atomic(path, {'bad': np.asarray([object()], dtype=object)})
+
+    assert not path.exists()
+    assert not list(tmp_path.glob('contract.npz.*.tmp'))
 
 
 def test_refraction_static_representative_csv_header_contract(

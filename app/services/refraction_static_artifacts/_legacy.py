@@ -2,14 +2,11 @@
 
 from __future__ import annotations
 
-import csv
 from collections.abc import Iterable, Mapping
 from dataclasses import replace
-import json
 import os
 from pathlib import Path
 from typing import Any
-from uuid import uuid4
 
 import numpy as np
 
@@ -25,7 +22,6 @@ from app.services.refraction_static_design_matrix import (
     LOW_FOLD_CELL_REJECTION_REASON,
     LOW_FOLD_CELL_VELOCITY_STATUS,
 )
-from app.services.refraction_static_export_units import seconds_to_export_units
 from app.services.refraction_static_layer_config import (
     normalize_refraction_static_layers,
 )
@@ -155,6 +151,40 @@ from app.services.refraction_static_artifacts.contract import (
     WORKFLOW,
     RefractionCellSolverHistoryRow,
     RefractionStaticArtifactError,
+)
+from app.services.refraction_static_artifacts.formatters import (
+    _csv_bool,
+    _csv_cell_id,
+    _csv_float,
+    _csv_grid_float,
+    _csv_identifier,
+    _csv_int,
+    _csv_json_object,
+    _csv_layer_index,
+    _csv_meters,
+    _csv_ms,
+    _float_or_nan,
+    _json_float,
+    _nan_if_none,
+    _required_finite_float,
+    _spreadsheet_int,
+    _spreadsheet_m,
+    _spreadsheet_ms,
+    _spreadsheet_text,
+    _spreadsheet_velocity,
+)
+from app.services.refraction_static_artifacts.io import (
+    _assert_strict_json,
+    _validate_no_object_arrays,
+    _write_csv_atomic,
+    _write_json_atomic,
+    _write_npz_atomic,
+)
+from app.services.refraction_static_artifacts.stats import (
+    _fraction,
+    _residual_stat,
+    _stat,
+    _status_counts,
 )
 
 def write_refraction_static_artifacts(
@@ -9026,292 +9056,12 @@ def _string_array(value: object) -> np.ndarray:
     return np.ascontiguousarray(raw, dtype=f'<U{max_len}')
 
 
-def _validate_no_object_arrays(
-    arrays: dict[str, np.ndarray],
-    *,
-    artifact_name: str,
-) -> None:
-    for key, value in arrays.items():
-        if np.asarray(value).dtype == object:
-            raise RefractionStaticArtifactError(
-                f'{artifact_name}: object array is not allowed for {key}'
-            )
-
-
-def _nan_if_none(value: float | None) -> float:
-    return float('nan') if value is None else float(value)
-
-
-def _float_or_nan(value: object) -> float:
-    try:
-        out = float(value)
-    except (TypeError, ValueError):
-        return float('nan')
-    return out if np.isfinite(out) else float('nan')
-
-
-def _required_finite_float(value: object, *, name: str) -> float:
-    try:
-        out = float(value)
-    except (TypeError, ValueError) as exc:
-        raise RefractionStaticArtifactError(f'{name} must be finite') from exc
-    if not np.isfinite(out):
-        raise RefractionStaticArtifactError(f'{name} must be finite')
-    return out
-
-
 def _sum_correction_s(left: object, right: object) -> float:
     left_value = _float_or_nan(left)
     right_value = _float_or_nan(right)
     if not np.isfinite(left_value) or not np.isfinite(right_value):
         return float('nan')
     return float(left_value + right_value)
-
-
-def _json_float(value: object) -> float | None:
-    if value is None:
-        return None
-    out = float(value)
-    return out if np.isfinite(out) else None
-
-
-def _csv_float(value: object) -> str | float:
-    if value is None:
-        return ''
-    try:
-        out = float(value)
-    except (TypeError, ValueError):
-        return ''
-    return out if np.isfinite(out) else ''
-
-
-def _csv_meters(value: object) -> str:
-    out = _csv_float(value)
-    return '' if out == '' else f'{float(out):.3f}'
-
-
-def _csv_grid_float(value: object) -> str | float:
-    if value is None:
-        return ''
-    try:
-        out = float(value)
-    except (TypeError, ValueError):
-        return ''
-    if np.isnan(out):
-        return ''
-    if np.isposinf(out):
-        return 'inf'
-    if np.isneginf(out):
-        return '-inf'
-    return out
-
-
-def _csv_ms(value_s: object) -> str | float:
-    out = _csv_float(value_s)
-    return '' if out == '' else seconds_to_export_units(out, 'milliseconds')
-
-
-def _csv_bool(value: object) -> str:
-    return 'true' if bool(value) else 'false'
-
-
-def _csv_int(value: object) -> str | int:
-    if value is None:
-        return ''
-    try:
-        return int(value)
-    except (TypeError, ValueError):
-        return ''
-
-
-def _csv_identifier(value: object) -> str | int:
-    if value is None:
-        return ''
-    if isinstance(value, np.generic):
-        value = value.item()
-    if isinstance(value, bytes):
-        return value.decode('utf-8')
-    if isinstance(value, str):
-        return value
-    if isinstance(value, bool):
-        return str(value)
-    if isinstance(value, (int, np.integer)):
-        return int(value)
-    if isinstance(value, (float, np.floating)):
-        out = float(value)
-        if not np.isfinite(out):
-            return ''
-        return int(out) if out.is_integer() else str(out)
-    return str(value)
-
-
-def _csv_cell_id(value: object) -> str | int:
-    out = _csv_int(value)
-    if out == '' or int(out) < 0:
-        return ''
-    return out
-
-
-def _csv_layer_index(value: object) -> str | int:
-    out = _csv_int(value)
-    if out == '' or int(out) <= 0:
-        return ''
-    return out
-
-
-def _spreadsheet_text(value: object) -> str:
-    if value is None:
-        return ''
-    return str(value)
-
-
-def _spreadsheet_int(value: object) -> str:
-    out = _csv_int(value)
-    return '' if out == '' else str(out)
-
-
-def _spreadsheet_ms(value: object) -> str:
-    return _spreadsheet_fixed(value, decimals=6)
-
-
-def _spreadsheet_m(value: object) -> str:
-    return _spreadsheet_fixed(value, decimals=3)
-
-
-def _spreadsheet_velocity(value: object) -> str:
-    return _spreadsheet_fixed(value, decimals=3)
-
-
-def _spreadsheet_fixed(value: object, *, decimals: int) -> str:
-    if value is None or value == '':
-        return ''
-    try:
-        numeric = float(value)
-    except (TypeError, ValueError):
-        return ''
-    if not np.isfinite(numeric):
-        return ''
-    return f'{numeric:.{decimals}f}'
-
-
-def _csv_json_object(value: Mapping[str, object] | None) -> str:
-    payload = {} if value is None else dict(value)
-    return json.dumps(payload, sort_keys=True, separators=(',', ':'))
-
-
-def _stat(values: object, stat: str) -> float | None:
-    arr = np.asarray(values, dtype=np.float64)
-    arr = arr[np.isfinite(arr)]
-    if arr.size == 0:
-        return None
-    if stat == 'min':
-        return float(np.min(arr))
-    if stat == 'max':
-        return float(np.max(arr))
-    if stat == 'median':
-        return float(np.median(arr))
-    if stat == 'p95':
-        return float(np.percentile(arr, 95.0))
-    raise RefractionStaticArtifactError(f'unsupported statistic: {stat}')
-
-
-def _residual_stat(values_ms: np.ndarray, stat: str) -> float | None:
-    arr = np.asarray(values_ms, dtype=np.float64)
-    arr = arr[np.isfinite(arr)]
-    if arr.size == 0:
-        return None
-    if stat == 'rms':
-        return float(np.sqrt(np.mean(arr * arr)))
-    if stat == 'mad':
-        median = float(np.median(arr))
-        return float(np.median(np.abs(arr - median)))
-    if stat == 'mean':
-        return float(np.mean(arr))
-    if stat == 'median':
-        return float(np.median(arr))
-    if stat == 'p95_abs':
-        return float(np.percentile(np.abs(arr), 95.0))
-    if stat == 'max_abs':
-        return float(np.max(np.abs(arr)))
-    raise RefractionStaticArtifactError(f'unsupported residual statistic: {stat}')
-
-
-def _fraction(numerator: int | np.integer, denominator: int) -> float:
-    if denominator <= 0:
-        return 0.0
-    return float(numerator) / float(denominator)
-
-
-def _status_counts(values: object) -> dict[str, int]:
-    counts: dict[str, int] = {}
-    for item in np.asarray(values).tolist():
-        key = str(item)
-        counts[key] = counts.get(key, 0) + 1
-    return dict(sorted(counts.items()))
-
-
-def _write_npz_atomic(path: Path, payload: dict[str, np.ndarray]) -> None:
-    _validate_no_object_arrays(payload, artifact_name=path.name)
-    tmp_path = path.with_name(f'{path.name}.{uuid4().hex}.tmp')
-    try:
-        with tmp_path.open('wb') as handle:
-            np.savez_compressed(handle, **payload)
-        tmp_path.replace(path)
-    except Exception as exc:
-        tmp_path.unlink(missing_ok=True)
-        raise RefractionStaticArtifactError(
-            f'{path.name}: failed to write NPZ artifact'
-        ) from exc
-
-
-def _write_json_atomic(path: Path, payload: dict[str, Any]) -> None:
-    _assert_strict_json(payload, artifact_name=path.name)
-    tmp_path = path.with_name(f'{path.name}.{uuid4().hex}.tmp')
-    try:
-        with tmp_path.open('w', encoding='utf-8') as handle:
-            json.dump(
-                payload,
-                handle,
-                allow_nan=False,
-                ensure_ascii=True,
-                indent=2,
-                sort_keys=True,
-            )
-            handle.write('\n')
-        tmp_path.replace(path)
-    except Exception as exc:
-        tmp_path.unlink(missing_ok=True)
-        raise RefractionStaticArtifactError(
-            f'{path.name}: failed to write JSON artifact'
-        ) from exc
-
-
-def _write_csv_atomic(
-    path: Path,
-    columns: tuple[str, ...],
-    rows: list[dict[str, object]],
-) -> None:
-    tmp_path = path.with_name(f'{path.name}.{uuid4().hex}.tmp')
-    try:
-        with tmp_path.open('w', encoding='utf-8', newline='') as handle:
-            writer = csv.DictWriter(handle, fieldnames=columns, extrasaction='raise')
-            writer.writeheader()
-            writer.writerows(rows)
-        tmp_path.replace(path)
-    except Exception as exc:
-        tmp_path.unlink(missing_ok=True)
-        raise RefractionStaticArtifactError(
-            f'{path.name}: failed to write CSV artifact'
-        ) from exc
-
-
-def _assert_strict_json(payload: dict[str, Any], *, artifact_name: str) -> None:
-    try:
-        json.dumps(payload, allow_nan=False)
-    except (TypeError, ValueError) as exc:
-        raise RefractionStaticArtifactError(
-            f'{artifact_name}: payload is not strict JSON serializable'
-        ) from exc
 
 
 __all__ = [
