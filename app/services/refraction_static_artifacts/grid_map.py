@@ -26,6 +26,8 @@ from app.services.refraction_static_artifacts._legacy import (
     _scalar_int,
     _scalar_str,
     _string_array,
+)
+from app.services.refraction_static_artifacts.cell_velocity import (
     build_refraction_refractor_velocity_grid_arrays,
 )
 from app.services.refraction_static_artifacts.contract import (
