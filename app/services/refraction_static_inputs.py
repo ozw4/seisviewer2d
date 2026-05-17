@@ -177,6 +177,7 @@ def build_refraction_static_input_model(
     job_dir: Path | None = None,
     uploaded_pick_npz_path: Path | None = None,
     uploaded_pick_metadata: Mapping[str, object] | None = None,
+    require_valid_observations: bool = True,
 ) -> RefractionStaticInputModel:
     """Build a sorted-order refraction statics input model for a request."""
     file_id = _non_empty_str(req.file_id, name='file_id')
@@ -251,7 +252,7 @@ def build_refraction_static_input_model(
         uphole_time_unit=uphole_config.uphole_time_unit,
         uphole_positive_time_means_delay=uphole_config.positive_time_means_delay,
         max_abs_uphole_time_s=uphole_config.max_abs_uphole_time_s,
-        preflight_request=req,
+        require_valid_observations=require_valid_observations,
     )
 
 
@@ -343,6 +344,7 @@ def build_refraction_static_input_model_from_arrays(
     uphole_positive_time_means_delay: bool = True,
     max_abs_uphole_time_s: float = 1.0,
     preflight_request: RefractionStaticApplyRequest | None = None,
+    require_valid_observations: bool = True,
 ) -> RefractionStaticInputModel:
     """Build a refraction input bundle from already sorted arrays."""
     picks = _coerce_pick_array(pick_time_s_sorted)
@@ -443,6 +445,12 @@ def build_refraction_static_input_model_from_arrays(
         missing_linkage_mask=node_mapping.missing_linkage_mask,
         rejection_reason=rejection_reason,
     )
+
+    if require_valid_observations and int(qc['n_valid_observations']) <= 0:
+        raise ValueError(
+            'No valid refraction observations remain after pick, geometry, '
+            'offset, and linkage filtering.'
+        )
 
     endpoint_table = _endpoint_table_with_pick_counts(
         node_mapping.endpoint_table,

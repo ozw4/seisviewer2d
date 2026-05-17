@@ -94,6 +94,7 @@ def load_npz_refraction_pick_source_from_path(
                 key=key,
             )
             picks = _coerce_pick_array(np.asarray(npz[key]))
+            metadata['pick_shape'] = tuple(int(dim) for dim in picks.shape)
             if picks.shape != (n_traces,):
                 msg = (
                     'pick array length mismatch: '

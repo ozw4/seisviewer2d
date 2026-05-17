@@ -283,8 +283,9 @@ def test_cell_smoothing_does_not_enter_robust_rejection_mask(
         *,
         method: str,
         threshold: float,
+        scale_floor_s: float,
     ) -> np.ndarray:
-        del method, threshold
+        del method, threshold, scale_floor_s
         captured_row_counts.append(int(residual_s.shape[0]))
         return np.zeros(residual_s.shape, dtype=bool)
 

@@ -122,6 +122,7 @@
     loadingStaticArtifacts: false,
     presets: [],
     validationErrors: [],
+    validationDiagnostics: null,
     showValidationSummary: false,
     phase: 'idle',
     pollIntervalMs: 1000,
@@ -1935,6 +1936,83 @@
     dom.validationSummary.appendChild(list);
   }
 
+  function formatDiagnosticsValue(value) {
+    if (value === null || value === undefined || value === '') {
+      return '-';
+    }
+    if (Array.isArray(value)) {
+      return value.length ? value.join(', ') : '-';
+    }
+    if (typeof value === 'number') {
+      return Number.isFinite(value) ? String(value) : '-';
+    }
+    if (typeof value === 'object') {
+      return JSON.stringify(value);
+    }
+    return String(value);
+  }
+
+  function appendDiagnosticsRow(tableBody, label, value) {
+    const row = document.createElement('tr');
+    const labelCell = document.createElement('th');
+    const valueCell = document.createElement('td');
+    labelCell.scope = 'row';
+    labelCell.textContent = label;
+    valueCell.textContent = formatDiagnosticsValue(value);
+    row.appendChild(labelCell);
+    row.appendChild(valueCell);
+    tableBody.appendChild(row);
+  }
+
+  function renderValidationDiagnostics() {
+    if (!dom || !dom.validationDiagnostics) return;
+    const payload = state.validationDiagnostics;
+    dom.validationDiagnostics.innerHTML = '';
+    dom.validationDiagnostics.hidden = !payload;
+    if (!payload) return;
+
+    const target = payload.target || {};
+    const pick = payload.pick_npz || {};
+    const diagnostics = payload.diagnostics || {};
+    const offset = diagnostics.offset_m || {};
+    const filterCounts = diagnostics.filter_reason_counts || {};
+    const errors = Array.isArray(payload.errors) ? payload.errors : [];
+    const warnings = Array.isArray(payload.warnings) ? payload.warnings : [];
+    const targetState = getStaticCorrectionTarget();
+
+    const heading = document.createElement('div');
+    heading.textContent = payload.status === 'ok'
+      ? 'Validation passed.'
+      : 'Validation found input issues.';
+    dom.validationDiagnostics.appendChild(heading);
+
+    const table = document.createElement('table');
+    const body = document.createElement('tbody');
+    appendDiagnosticsRow(
+      body,
+      'Target file',
+      targetState && targetState.display_name ? targetState.display_name : target.file_id
+    );
+    appendDiagnosticsRow(body, 'key1/key2', `${target.key1_byte}/${target.key2_byte}`);
+    appendDiagnosticsRow(body, 'Pick NPZ key', pick.selected_key);
+    appendDiagnosticsRow(body, 'Pick NPZ shape', pick.shape);
+    appendDiagnosticsRow(body, 'n_total_traces', diagnostics.n_total_traces);
+    appendDiagnosticsRow(body, 'n_finite_picks', diagnostics.n_finite_picks);
+    appendDiagnosticsRow(body, 'n_used_for_inversion', diagnostics.n_used_for_inversion);
+    appendDiagnosticsRow(body, 'n_unique_source_endpoints', diagnostics.n_unique_source_endpoints);
+    appendDiagnosticsRow(body, 'n_unique_receiver_endpoints', diagnostics.n_unique_receiver_endpoints);
+    appendDiagnosticsRow(
+      body,
+      'offset min/median/max',
+      `${formatDiagnosticsValue(offset.min)} / ${formatDiagnosticsValue(offset.median)} / ${formatDiagnosticsValue(offset.max)}`
+    );
+    appendDiagnosticsRow(body, 'filter reason counts', filterCounts);
+    appendDiagnosticsRow(body, 'warnings', warnings);
+    appendDiagnosticsRow(body, 'errors', errors);
+    table.appendChild(body);
+    dom.validationDiagnostics.appendChild(table);
+  }
+
   function renderPresetSelect() {
     if (!dom || !dom.presetSelect) return;
     const currentValue = trimValue(dom.presetSelect.value);
@@ -2006,12 +2084,21 @@
       || state.phase !== 'idle'
       || isStaticJobActive()
     );
+    if (dom.validateButton) {
+      dom.validateButton.disabled = (
+        !hasTarget
+        || preview.errors.length > 0
+        || state.phase !== 'idle'
+        || isStaticJobActive()
+      );
+    }
     if (dom.requestPreview) {
       dom.requestPreview.textContent = preview.payload
         ? JSON.stringify(preview.payload, null, 2)
         : JSON.stringify({ validation_errors: preview.errors }, null, 2);
     }
     renderValidationSummary();
+    renderValidationDiagnostics();
     renderPresetSelect();
     renderStaticJobPanel();
     renderStaticArtifacts();
@@ -2267,6 +2354,81 @@
     return responsePayload;
   }
 
+  async function validateStaticCorrectionInputs() {
+    state.lastResponse = null;
+    state.lastLinkageBuildRequest = null;
+    state.lastLinkageJobId = '';
+    state.validationDiagnostics = null;
+    state.showValidationSummary = false;
+    state.validationErrors = [];
+    const { payload, errors } = buildStaticCorrectionRequest();
+    state.lastRequest = payload;
+    if (errors.length) {
+      state.error = errors.join(' ');
+      state.validationErrors = errors;
+      state.showValidationSummary = true;
+      state.message = 'Fix input errors before validating refraction statics.';
+      render();
+      return null;
+    }
+
+    try {
+      state.error = '';
+      state.phase = 'validating_static_correction';
+      state.message = 'Validating refraction static inputs...';
+      render();
+      let validationPayload = payload;
+      if (dom.enableLinkage.checked) {
+        state.phase = 'building_linkage';
+        state.message = 'Building endpoint geometry linkage for validation...';
+        render();
+        const linkageBuildPayload = buildStaticLinkageBuildRequest(dom);
+        state.lastLinkageBuildRequest = linkageBuildPayload;
+
+        const linkageResponse = await postJson(
+          '/statics/linkage/build',
+          linkageBuildPayload,
+          'geometry linkage build'
+        );
+        const linkageJobId = trimValue(linkageResponse && linkageResponse.job_id);
+        if (!linkageJobId) {
+          throw new Error('Geometry linkage build did not return a job_id.');
+        }
+        state.lastLinkageJobId = linkageJobId;
+        state.message = `Linkage job ${linkageJobId} created. Waiting for geometry linkage...`;
+        render();
+
+        await pollStaticJobUntilReady(linkageJobId);
+        validationPayload = {
+          ...payload,
+          linkage: buildStaticCorrectionLinkage(dom, linkageJobId),
+        };
+        state.lastRequest = validationPayload;
+      }
+      const formData = buildStaticCorrectionFormData(validationPayload);
+      const responsePayload = await postMultipart(
+        '/statics/refraction/validate-with-picks',
+        formData,
+        'refraction static validation with picks'
+      );
+      state.validationDiagnostics = responsePayload;
+      state.error = Array.isArray(responsePayload.errors) && responsePayload.errors.length
+        ? responsePayload.errors.join(' ')
+        : '';
+      state.message = state.error
+        ? 'Validation found input issues. Static correction was not submitted.'
+        : 'Validation completed. Inputs are ready for static correction.';
+      return responsePayload;
+    } catch (error) {
+      state.error = error instanceof Error ? error.message : String(error);
+      state.message = 'Validation failed. Static correction was not submitted.';
+      return null;
+    } finally {
+      state.phase = 'idle';
+      render();
+    }
+  }
+
   async function runStaticCorrection() {
     const { payload, errors } = buildStaticCorrectionRequest();
     state.lastRequest = payload;
@@ -2348,6 +2510,13 @@
     runStaticCorrection();
   }
 
+  function handleValidate(event) {
+    if (event) {
+      event.preventDefault();
+    }
+    validateStaticCorrectionInputs();
+  }
+
   function subscribeToViewerTargetUpdates() {
     if (viewerTargetUnsubscribe || !window.store || typeof window.store.subscribe !== 'function') {
       return;
@@ -2393,6 +2562,7 @@
     const form = document.getElementById('staticCorrectionForm');
     const status = document.getElementById('staticCorrectionStatus');
     const error = document.getElementById('staticCorrectionError');
+    const validateButton = document.getElementById('staticCorrectionValidateButton');
     const runButton = document.getElementById('staticCorrectionRunButton');
     const targetEmpty = document.getElementById('staticCorrectionTargetEmpty');
     const targetDetails = document.getElementById('staticCorrectionTargetDetails');
@@ -2481,6 +2651,7 @@
     const exportEnabled = document.getElementById('staticCorrectionExportEnabled');
     const exportFormatInputs = Array.from(document.querySelectorAll('[data-static-correction-export-format]'));
     const validationSummary = document.getElementById('staticCorrectionValidationSummary');
+    const validationDiagnostics = document.getElementById('staticCorrectionValidationDiagnostics');
     const requestPreview = document.getElementById('staticCorrectionRequestPreview');
     const cancelButton = document.getElementById('staticCorrectionCancelButton');
     const staticJobPanel = document.getElementById('staticCorrectionJobPanel');
@@ -2493,7 +2664,7 @@
     const staticArtifactBody = document.getElementById('staticCorrectionArtifactBody');
     const staticArtifactEmpty = document.getElementById('staticCorrectionArtifactEmpty');
     if (
-      !form || !status || !error || !runButton || !targetEmpty || !targetDetails
+      !form || !status || !error || !validateButton || !runButton || !targetEmpty || !targetDetails
       || !targetFile || !targetKeys || !targetStatus
       || !presetSelect || !presetName || !savePresetButton || !loadPresetButton
       || !deletePresetButton
@@ -2516,7 +2687,8 @@
       || !fieldManualStaticSignConvention || !fieldManualSourceJobId
       || !fieldManualSourceArtifactName || !fieldManualReceiverJobId
       || !fieldManualReceiverArtifactName || !fieldApplyToTraceShift
-      || !registerCorrectedFile || !exportEnabled || !validationSummary || !requestPreview
+      || !registerCorrectedFile || !exportEnabled || !validationSummary
+      || !validationDiagnostics || !requestPreview
       || !cancelButton || !staticJobPanel || !staticJobIdValue || !staticJobStateValue
       || !staticJobMessageValue || !staticJobProgress || !staticJobProgressValue
       || !staticArtifactTable || !staticArtifactBody || !staticArtifactEmpty
@@ -2556,6 +2728,7 @@
       form,
       status,
       error,
+      validateButton,
       runButton,
       targetEmpty,
       targetDetails,
@@ -2636,6 +2809,7 @@
       exportEnabled,
       exportFormatInputs,
       validationSummary,
+      validationDiagnostics,
       requestPreview,
       cancelButton,
       staticJobPanel,
@@ -2663,17 +2837,20 @@
 
     form.addEventListener('submit', handleRun);
     form.addEventListener('input', () => {
+      state.validationDiagnostics = null;
       if (state.showValidationSummary) {
         state.validationErrors = getStaticCorrectionValidationSnapshot(dom).errors;
       }
       render();
     });
     form.addEventListener('change', () => {
+      state.validationDiagnostics = null;
       if (state.showValidationSummary) {
         state.validationErrors = getStaticCorrectionValidationSnapshot(dom).errors;
       }
       render();
     });
+    validateButton.addEventListener('click', handleValidate);
     runButton.addEventListener('click', handleRun);
     savePresetButton.addEventListener('click', (event) => {
       event.preventDefault();
@@ -2694,6 +2871,7 @@
     pickNpzFile.addEventListener('change', () => {
       const pickFile = selectedPickNpzFile(dom);
       state.error = '';
+      state.validationDiagnostics = null;
       state.showValidationSummary = false;
       state.validationErrors = [];
       state.message = pickFile
@@ -2816,6 +2994,7 @@
     validateRefractionStaticModel,
     validateStaticCorrectionGeometryRequest,
     validateStaticCorrectionLinkageRequest,
+    validateStaticCorrectionInputs,
   };
 
   if (document.readyState === 'loading') {

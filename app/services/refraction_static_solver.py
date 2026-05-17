@@ -26,7 +26,8 @@ BedrockVelocityMode = Literal['solve_global', 'fixed_global', 'solve_cell']
 RobustMethod = Literal['mad', 'sigma']
 
 _BOUND_TOL = 1.0e-10
-_ROBUST_SCALE_FLOOR_S = 1.0e-12
+_ROBUST_NUMERIC_SCALE_FLOOR_S = 1.0e-12
+_SOURCE_RECEIVER_GAUGE_ROW_SCALE = 10.0
 _CELL_THRESHOLD_QC_KEYS = (
     'min_observations_per_cell',
     'n_low_fold_cells',
@@ -75,6 +76,7 @@ class _ValidatedProblem:
     robust_enabled: bool
     robust_method: RobustMethod
     robust_threshold: float
+    robust_scale_floor_s: float
     robust_max_iterations: int
     robust_min_used_fraction: float
     robust_min_used_observations: int
@@ -121,6 +123,8 @@ class _InternalSolveResult:
     optimality: float | None
     nit: int | None
     n_damping_rows: int
+    n_source_receiver_gauge_rows: int
+    source_receiver_gauge_row_scale: float
     n_cell_smoothing_edges: int
     n_cell_smoothing_rows: int
     smoothing_row_scale: float
@@ -249,7 +253,7 @@ def solve_refraction_static_bounded_ls_from_matrix(
         resolved_first_layer=resolved_first_layer,
     )
     lower_bounds, upper_bounds = _build_bounds(problem)
-    solve_result, used_mask, rejected_mask, robust_iteration_count = (
+    solve_result, used_mask, rejected_mask, robust_iteration_count, robust_guard_qc = (
         _solve_with_optional_robust_rejection(
             problem,
             lower_bounds=lower_bounds,
@@ -262,6 +266,7 @@ def solve_refraction_static_bounded_ls_from_matrix(
         used_mask=used_mask,
         rejected_mask=rejected_mask,
         robust_iteration_count=robust_iteration_count,
+        robust_guard_qc=robust_guard_qc,
         lower_bounds=lower_bounds,
         upper_bounds=upper_bounds,
     )
@@ -538,6 +543,13 @@ def _validate_problem(
         getattr(robust, 'threshold', None),
         name='solver.robust.threshold',
     )
+    robust_scale_floor_s = (
+        _coerce_nonnegative_finite_float(
+            getattr(robust, 'scale_floor_ms', None),
+            name='solver.robust.scale_floor_ms',
+        )
+        / 1000.0
+    )
     robust_max_iterations = _coerce_positive_int(
         getattr(robust, 'max_iterations', None),
         name='solver.robust.max_iterations',
@@ -584,6 +596,7 @@ def _validate_problem(
         robust_enabled=robust_enabled,
         robust_method=robust_method,
         robust_threshold=robust_threshold,
+        robust_scale_floor_s=robust_scale_floor_s,
         robust_max_iterations=robust_max_iterations,
         robust_min_used_fraction=robust_min_used_fraction,
         robust_min_used_observations=robust_min_used_observations,
@@ -1020,7 +1033,7 @@ def _solve_with_optional_robust_rejection(
     *,
     lower_bounds: np.ndarray,
     upper_bounds: np.ndarray,
-) -> tuple[_InternalSolveResult, np.ndarray, np.ndarray, int]:
+) -> tuple[_InternalSolveResult, np.ndarray, np.ndarray, int, dict[str, Any]]:
     used_mask = np.ones(problem.n_observations, dtype=bool)
     _validate_used_observation_count(
         problem,
@@ -1037,11 +1050,17 @@ def _solve_with_optional_robust_rejection(
             upper_bounds=upper_bounds,
         )
         rejected_mask = np.zeros(problem.n_observations, dtype=bool)
-        return solve_result, used_mask, rejected_mask, 0
+        return solve_result, used_mask, rejected_mask, 0, {
+            'robust_stop_reason': 'disabled',
+            'n_rows_protected_by_robust_coverage_guard': 0,
+            'n_rejections_blocked_by_robust_coverage_guard': 0,
+        }
 
     rejected_mask = np.zeros(problem.n_observations, dtype=bool)
     robust_iteration_count = 0
     final_solve: _InternalSolveResult | None = None
+    robust_stop_reason = 'max_iterations'
+    n_rejections_blocked_total = 0
 
     for _iteration_index in range(problem.robust_max_iterations):
         solve_result = _solve_once(
@@ -1055,24 +1074,41 @@ def _solve_with_optional_robust_rejection(
             residual[used_mask],
             method=problem.robust_method,
             threshold=problem.robust_threshold,
+            scale_floor_s=problem.robust_scale_floor_s,
         )
         if not np.any(outlier_local):
             final_solve = solve_result
+            robust_stop_reason = 'no_outliers'
             break
 
         used_indices = np.flatnonzero(used_mask)
-        newly_rejected = used_indices[outlier_local]
+        candidate_indices = used_indices[outlier_local]
+        newly_rejected = _safe_robust_rejection_indices(
+            problem,
+            used_mask=used_mask,
+            candidate_indices=candidate_indices,
+        )
+        n_rejections_blocked_total += int(candidate_indices.size - newly_rejected.size)
+        if newly_rejected.size == 0:
+            final_solve = solve_result
+            robust_stop_reason = 'coverage_guard_no_safe_rejections'
+            break
         proposed_used_mask = used_mask.copy()
         proposed_used_mask[newly_rejected] = False
-        _validate_used_observation_count(
-            problem,
-            used_mask=proposed_used_mask,
-            require_fraction=True,
-            message=(
-                'Robust rejection would leave too few refraction observations '
-                'for a stable GLI solve.'
-            ),
-        )
+        try:
+            _validate_used_observation_count(
+                problem,
+                used_mask=proposed_used_mask,
+                require_fraction=True,
+                message=(
+                    'Robust rejection would leave too few refraction observations '
+                    'for a stable GLI solve.'
+                ),
+            )
+        except RefractionStaticSolverError:
+            final_solve = solve_result
+            robust_stop_reason = 'min_used_guard'
+            break
 
         used_mask = proposed_used_mask
         rejected_mask[newly_rejected] = True
@@ -1092,7 +1128,54 @@ def _solve_with_optional_robust_rejection(
         np.ascontiguousarray(used_mask, dtype=bool),
         np.ascontiguousarray(rejected_mask, dtype=bool),
         robust_iteration_count,
+        {
+            'robust_stop_reason': robust_stop_reason,
+            'n_rows_protected_by_robust_coverage_guard': int(
+                n_rejections_blocked_total
+            ),
+            'n_rejections_blocked_by_robust_coverage_guard': int(
+                n_rejections_blocked_total
+            ),
+        },
     )
+
+
+def _safe_robust_rejection_indices(
+    problem: _ValidatedProblem,
+    *,
+    used_mask: np.ndarray,
+    candidate_indices: np.ndarray,
+) -> np.ndarray:
+    accepted: list[int] = []
+    proposed = np.asarray(used_mask, dtype=bool).copy()
+    for raw_index in np.asarray(candidate_indices, dtype=np.int64):
+        index = int(raw_index)
+        if index < 0 or index >= proposed.shape[0] or not proposed[index]:
+            continue
+        trial = proposed.copy()
+        trial[index] = False
+        if _used_matrix_structure_is_valid(problem, trial):
+            proposed = trial
+            accepted.append(index)
+    return np.asarray(accepted, dtype=np.int64)
+
+
+def _used_matrix_structure_is_valid(
+    problem: _ValidatedProblem,
+    used_mask: np.ndarray,
+) -> bool:
+    try:
+        _validate_matrix_structure(
+            problem.matrix[used_mask, :],
+            n_active_nodes=problem.n_active_nodes,
+            bedrock_slowness_col=problem.bedrock_slowness_col,
+            cell_slowness_cols=(
+                problem.cell_slowness_cols if problem.mode == 'solve_cell' else None
+            ),
+        )
+    except RefractionStaticSolverError:
+        return False
+    return True
 
 
 def _solve_once(
@@ -1135,6 +1218,17 @@ def _solve_once(
         n_active_nodes=problem.n_active_nodes,
         damping=problem.damping,
     )
+    (
+        matrix_aug,
+        rhs_aug,
+        n_source_receiver_gauge_rows,
+        source_receiver_gauge_row_scale,
+    ) = _augment_with_source_receiver_gauge(
+        matrix_aug,
+        rhs_aug,
+        problem=problem,
+        used_mask=used_mask,
+    )
 
     if problem.mode == 'solve_cell':
         return _solve_once_with_initial_value(
@@ -1144,6 +1238,8 @@ def _solve_once(
             lower_bounds=lower_bounds,
             upper_bounds=upper_bounds,
             n_damping_rows=n_damping_rows,
+            n_source_receiver_gauge_rows=n_source_receiver_gauge_rows,
+            source_receiver_gauge_row_scale=source_receiver_gauge_row_scale,
             smoothing_rows=smoothing_rows,
         )
 
@@ -1163,6 +1259,8 @@ def _solve_once(
         raw,
         problem=problem,
         n_damping_rows=n_damping_rows,
+        n_source_receiver_gauge_rows=n_source_receiver_gauge_rows,
+        source_receiver_gauge_row_scale=source_receiver_gauge_row_scale,
         smoothing_rows=smoothing_rows,
         n_augmented_rows=int(matrix_aug.shape[0]),
     )
@@ -1176,6 +1274,8 @@ def _solve_once_with_initial_value(
     lower_bounds: np.ndarray,
     upper_bounds: np.ndarray,
     n_damping_rows: int,
+    n_source_receiver_gauge_rows: int,
+    source_receiver_gauge_row_scale: float,
     smoothing_rows: CellSlownessSmoothingRows,
 ) -> _InternalSolveResult:
     x0 = _build_initial_parameter_vector(
@@ -1206,6 +1306,8 @@ def _solve_once_with_initial_value(
         raw,
         problem=problem,
         n_damping_rows=n_damping_rows,
+        n_source_receiver_gauge_rows=n_source_receiver_gauge_rows,
+        source_receiver_gauge_row_scale=source_receiver_gauge_row_scale,
         smoothing_rows=smoothing_rows,
         n_augmented_rows=int(matrix_aug.shape[0]),
     )
@@ -1281,6 +1383,8 @@ def _internal_result_from_raw_solver(
     *,
     problem: _ValidatedProblem,
     n_damping_rows: int,
+    n_source_receiver_gauge_rows: int,
+    source_receiver_gauge_row_scale: float,
     smoothing_rows: CellSlownessSmoothingRows,
     n_augmented_rows: int,
 ) -> _InternalSolveResult:
@@ -1304,6 +1408,8 @@ def _internal_result_from_raw_solver(
         optimality=_optional_finite_float(getattr(raw, 'optimality', None)),
         nit=_optional_int(nit),
         n_damping_rows=n_damping_rows,
+        n_source_receiver_gauge_rows=n_source_receiver_gauge_rows,
+        source_receiver_gauge_row_scale=source_receiver_gauge_row_scale,
         n_cell_smoothing_edges=int(smoothing_qc['n_cell_smoothing_edges']),
         n_cell_smoothing_rows=int(smoothing_qc['n_cell_smoothing_rows']),
         smoothing_row_scale=float(smoothing_qc['smoothing_row_scale']),
@@ -1321,6 +1427,109 @@ def _internal_result_from_raw_solver(
         ],
         n_augmented_rows=n_augmented_rows,
     )
+
+
+def _augment_with_source_receiver_gauge(
+    matrix: sparse.csr_matrix,
+    rhs_s: np.ndarray,
+    *,
+    problem: _ValidatedProblem,
+    used_mask: np.ndarray,
+) -> tuple[sparse.csr_matrix, np.ndarray, int, float]:
+    """Add gauge rows for unlinked source/receiver time-term splits."""
+    mask = np.asarray(used_mask, dtype=bool)
+    if mask.shape != (problem.n_observations,):
+        raise RefractionStaticSolverError('used_mask shape mismatch')
+    source_by_row = problem.row_source_node_id[mask].astype(np.int64, copy=False)
+    receiver_by_row = problem.row_receiver_node_id[mask].astype(np.int64, copy=False)
+    if source_by_row.size == 0 or receiver_by_row.size == 0:
+        return matrix, rhs_s, 0, 0.0
+
+    parent: dict[int, int] = {}
+
+    def _find(node: int) -> int:
+        root = parent.setdefault(node, node)
+        while root != parent[root]:
+            root = parent[root]
+        while node != root:
+            next_node = parent[node]
+            parent[node] = root
+            node = next_node
+        return root
+
+    def _union(a: int, b: int) -> None:
+        root_a = _find(a)
+        root_b = _find(b)
+        if root_a != root_b:
+            parent[root_b] = root_a
+
+    for source_node, receiver_node in zip(
+        source_by_row.tolist(),
+        receiver_by_row.tolist(),
+    ):
+        _union(int(source_node), int(receiver_node))
+
+    source_by_component: dict[int, set[int]] = {}
+    receiver_by_component: dict[int, set[int]] = {}
+    for source_node in source_by_row.tolist():
+        source_by_component.setdefault(_find(int(source_node)), set()).add(
+            int(source_node)
+        )
+    for receiver_node in receiver_by_row.tolist():
+        receiver_by_component.setdefault(_find(int(receiver_node)), set()).add(
+            int(receiver_node)
+        )
+
+    node_to_col = {
+        int(node): index for index, node in enumerate(problem.active_node_id.tolist())
+    }
+    row_indices: list[int] = []
+    columns: list[int] = []
+    data: list[float] = []
+    row_index = 0
+    scale = float(_SOURCE_RECEIVER_GAUGE_ROW_SCALE)
+    component_roots = sorted({_find(int(node)) for node in parent})
+    for root in component_roots:
+        source_set = source_by_component.get(root, set())
+        receiver_set = receiver_by_component.get(root, set())
+        if not source_set or not receiver_set:
+            continue
+        if source_set & receiver_set:
+            continue
+        source_cols = [
+            node_to_col[node] for node in sorted(source_set) if node in node_to_col
+        ]
+        receiver_cols = [
+            node_to_col[node] for node in sorted(receiver_set) if node in node_to_col
+        ]
+        if not source_cols or not receiver_cols:
+            continue
+        source_value = scale / len(source_cols)
+        receiver_value = -scale / len(receiver_cols)
+        row_indices.extend([row_index] * (len(source_cols) + len(receiver_cols)))
+        columns.extend(source_cols)
+        columns.extend(receiver_cols)
+        data.extend([source_value] * len(source_cols))
+        data.extend([receiver_value] * len(receiver_cols))
+        row_index += 1
+
+    if row_index == 0:
+        return matrix, rhs_s, 0, 0.0
+
+    gauge_rows = sparse.csr_matrix(
+        (
+            np.asarray(data, dtype=np.float64),
+            (
+                np.asarray(row_indices, dtype=np.int64),
+                np.asarray(columns, dtype=np.int64),
+            ),
+        ),
+        shape=(row_index, matrix.shape[1]),
+        dtype=np.float64,
+    )
+    matrix_aug = sparse.vstack((matrix, gauge_rows), format='csr')
+    rhs_aug = np.concatenate((rhs_s, np.zeros(row_index, dtype=np.float64)))
+    return matrix_aug, np.ascontiguousarray(rhs_aug, dtype=np.float64), row_index, scale
 
 
 def _augment_with_damping(
@@ -1354,6 +1563,7 @@ def _build_result(
     used_mask: np.ndarray,
     rejected_mask: np.ndarray,
     robust_iteration_count: int,
+    robust_guard_qc: dict[str, Any],
     lower_bounds: np.ndarray,
     upper_bounds: np.ndarray,
 ) -> RefractionStaticSolverResult:
@@ -1407,6 +1617,7 @@ def _build_result(
         used_mask=used_mask,
         rejected_mask=rejected_mask,
         robust_iteration_count=robust_iteration_count,
+        robust_guard_qc=robust_guard_qc,
         bedrock_slowness=bedrock_slowness,
         bedrock_velocity=bedrock_velocity,
         cell_solution=cell_solution,
@@ -1677,6 +1888,7 @@ def _build_qc(
     used_mask: np.ndarray,
     rejected_mask: np.ndarray,
     robust_iteration_count: int,
+    robust_guard_qc: dict[str, Any],
     bedrock_slowness: float,
     bedrock_velocity: float,
     cell_solution: _CellBedrockSolution,
@@ -1743,6 +1955,7 @@ def _build_qc(
         'robust_method': problem.robust_method,
         'robust_threshold': float(problem.robust_threshold),
         'robust_iteration_count': int(robust_iteration_count),
+        'robust_scale_floor_ms': float(problem.robust_scale_floor_s * 1000.0),
         'damping': float(problem.damping),
         'min_picks_per_node': int(problem.min_picks_per_node),
         'max_abs_half_intercept_time_ms': float(
@@ -1757,10 +1970,25 @@ def _build_qc(
             'data': int(problem.n_observations),
             'cell_smoothing': int(solve_result.n_cell_smoothing_rows),
             'node_damping': int(solve_result.n_damping_rows),
+            'source_receiver_gauge': int(
+                solve_result.n_source_receiver_gauge_rows
+            ),
         },
         'n_damping_rows': int(solve_result.n_damping_rows),
+        'n_source_receiver_gauge_rows': int(
+            solve_result.n_source_receiver_gauge_rows
+        ),
+        'source_receiver_gauge': (
+            'mean_source_equals_mean_receiver'
+            if solve_result.n_source_receiver_gauge_rows
+            else 'none'
+        ),
+        'source_receiver_gauge_row_scale': float(
+            solve_result.source_receiver_gauge_row_scale
+        ),
         'n_augmented_rows': int(solve_result.n_augmented_rows),
     }
+    qc.update(robust_guard_qc)
     if problem.mode == 'fixed_global':
         qc.update(
             {
@@ -1845,6 +2073,7 @@ def _build_robust_outlier_mask(
     *,
     method: RobustMethod,
     threshold: float,
+    scale_floor_s: float,
 ) -> np.ndarray:
     if residual_s.size == 0:
         return np.zeros(0, dtype=bool)
@@ -1856,8 +2085,7 @@ def _build_robust_outlier_mask(
         scale = float(np.std(residual_s, ddof=0))
     else:
         raise RefractionStaticSolverError('robust method must be mad or sigma')
-    if scale <= _ROBUST_SCALE_FLOOR_S:
-        return np.zeros(residual_s.shape, dtype=bool)
+    scale = max(scale, float(scale_floor_s), _ROBUST_NUMERIC_SCALE_FLOOR_S)
     outlier = np.abs(residual_s - center) > float(threshold) * scale
     return np.ascontiguousarray(outlier, dtype=bool)
 

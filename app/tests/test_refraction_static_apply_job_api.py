@@ -261,6 +261,12 @@ def _uploaded_pick_payload() -> dict[str, Any]:
     return payload
 
 
+def _validation_uploaded_pick_payload() -> dict[str, Any]:
+    payload = _uploaded_pick_payload()
+    payload['linkage'] = {'mode': 'none'}
+    return payload
+
+
 def _pick_npz_bytes() -> bytes:
     buffer = io.BytesIO()
     np.savez(
@@ -439,6 +445,173 @@ def test_refraction_apply_with_uploaded_picks_rejects_missing_file(
 
     assert response.status_code == 422
     assert started == []
+    with client.app.state.sv.lock:
+        assert len(client.app.state.sv.jobs) == 0
+
+
+def _validation_pick_npz_bytes(picks: np.ndarray | None = None) -> bytes:
+    buffer = io.BytesIO()
+    values = (
+        np.asarray([0.010, 0.020, 0.030, 0.040], dtype=np.float64)
+        if picks is None
+        else np.asarray(picks, dtype=np.float64)
+    )
+    np.savez(
+        buffer,
+        pick_time_s=values,
+        n_traces=np.asarray(values.shape[0], dtype=np.int64),
+        n_samples=np.asarray(100, dtype=np.int64),
+        dt=np.asarray(0.001, dtype=np.float64),
+        order=np.asarray('trace_store_sorted'),
+    )
+    return buffer.getvalue()
+
+
+class _ValidationReader:
+    key1_byte = 189
+    key2_byte = 193
+
+    def __init__(self) -> None:
+        n_traces = 4
+        self.traces = np.zeros((n_traces, 100), dtype=np.float32)
+        self.meta = {'dt': 0.001, 'n_traces': n_traces}
+        self._sorted_to_original = np.arange(n_traces, dtype=np.int64)
+        zeros = np.zeros(n_traces, dtype=np.float64)
+        ones = np.ones(n_traces, dtype=np.int32)
+        self._headers = {
+            9: np.asarray([1, 1, 2, 2], dtype=np.int32),
+            13: np.asarray([10, 11, 12, 13], dtype=np.int32),
+            73: zeros,
+            77: zeros,
+            81: np.asarray([100.0, 200.0, 300.0, 400.0], dtype=np.float64),
+            85: zeros,
+            45: zeros,
+            41: zeros,
+            71: ones,
+            69: ones,
+        }
+
+    def get_n_samples(self) -> int:
+        return 100
+
+    def get_sorted_to_original(self) -> np.ndarray:
+        return self._sorted_to_original
+
+    def ensure_header(self, byte: int) -> np.ndarray:
+        return self._headers[byte]
+
+
+def test_validate_with_picks_returns_preflight_summary(
+    client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        refraction_inputs_module,
+        'get_reader',
+        lambda *args, **kwargs: _ValidationReader(),
+    )
+
+    response = client.post(
+        '/statics/refraction/validate-with-picks',
+        data={'request_json': json.dumps(_validation_uploaded_pick_payload())},
+        files={
+            'pick_npz': (
+                'uploaded-picks.npz',
+                _validation_pick_npz_bytes(),
+                'application/octet-stream',
+            )
+        },
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload['status'] == 'ok'
+    assert payload['target'] == {
+        'file_id': 'raw-file-id',
+        'key1_byte': 189,
+        'key2_byte': 193,
+    }
+    assert payload['pick_npz']['selected_key'] == 'pick_time_s'
+    assert payload['pick_npz']['shape'] == [4]
+    diagnostics = payload['diagnostics']
+    assert diagnostics['n_total_traces'] == 4
+    assert diagnostics['n_finite_picks'] == 4
+    assert diagnostics['n_used_for_inversion'] == 4
+    assert diagnostics['n_unique_source_endpoints'] == 2
+    assert diagnostics['n_unique_receiver_endpoints'] == 4
+    assert diagnostics['offset_m'] == {'min': 100.0, 'median': 250.0, 'max': 400.0}
+    assert diagnostics['filter_reason_counts']['offset_gate'] == 0
+    with client.app.state.sv.lock:
+        assert len(client.app.state.sv.jobs) == 0
+
+
+def test_validate_with_picks_rejects_missing_npz(
+    client: TestClient,
+) -> None:
+    response = client.post(
+        '/statics/refraction/validate-with-picks',
+        data={'request_json': json.dumps(_validation_uploaded_pick_payload())},
+    )
+
+    assert response.status_code == 422
+    with client.app.state.sv.lock:
+        assert len(client.app.state.sv.jobs) == 0
+
+
+def test_validate_with_picks_reports_corrupt_npz_without_job(
+    client: TestClient,
+) -> None:
+    response = client.post(
+        '/statics/refraction/validate-with-picks',
+        data={'request_json': json.dumps(_validation_uploaded_pick_payload())},
+        files={
+            'pick_npz': (
+                'corrupt-picks.npz',
+                b'not an npz archive',
+                'application/octet-stream',
+            )
+        },
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload['status'] == 'error'
+    assert payload['pick_npz']['selected_key'] is None
+    assert payload['pick_npz']['shape'] is None
+    assert payload['pick_npz']['keys'] == []
+    assert any('Unable to read pick NPZ' in error for error in payload['errors'])
+    with client.app.state.sv.lock:
+        assert len(client.app.state.sv.jobs) == 0
+
+
+def test_validate_with_picks_reports_pick_count_mismatch_without_job(
+    client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        refraction_inputs_module,
+        'get_reader',
+        lambda *args, **kwargs: _ValidationReader(),
+    )
+
+    response = client.post(
+        '/statics/refraction/validate-with-picks',
+        data={'request_json': json.dumps(_validation_uploaded_pick_payload())},
+        files={
+            'pick_npz': (
+                'short-picks.npz',
+                _validation_pick_npz_bytes(np.asarray([0.010, 0.020, 0.030])),
+                'application/octet-stream',
+            )
+        },
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload['status'] == 'error'
+    assert payload['pick_npz']['selected_key'] == 'pick_time_s'
+    assert payload['pick_npz']['shape'] == [3]
+    assert any('n_traces mismatch' in error for error in payload['errors'])
     with client.app.state.sv.lock:
         assert len(client.app.state.sv.jobs) == 0
 
