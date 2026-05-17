@@ -14,6 +14,10 @@ from app.services.refraction_static_artifacts import (
     SOURCE_STATIC_TABLE_CSV_NAME,
     write_refraction_static_artifacts,
 )
+from app.services.refraction_static_artifacts.static_tables import (
+    _receiver_static_table_columns,
+    _source_static_table_columns,
+)
 from app.services.refraction_static_t1lsst import (
     compute_t1lsst_1layer_thickness,
     compute_t1lsst_1layer_weathering_correction,
@@ -116,6 +120,34 @@ RECEIVER_COLUMNS = [
     'residual_rms_ms',
     'residual_mad_ms',
 ]
+
+
+def test_static_table_optional_column_order_contract() -> None:
+    result = _result()
+
+    source_columns = _source_static_table_columns(result)
+    receiver_columns = _receiver_static_table_columns(result)
+
+    assert list(source_columns) == SOURCE_COLUMNS
+    assert list(receiver_columns) == RECEIVER_COLUMNS
+    assert source_columns.index('source_depth_m') == (
+        source_columns.index('weathering_correction_ms') + 1
+    )
+    assert source_columns.index('uphole_time_ms') == (
+        source_columns.index('source_depth_status') + 1
+    )
+    assert source_columns.index('manual_static_shift_ms') == (
+        source_columns.index('uphole_status') + 1
+    )
+    assert source_columns.index('source_field_shift_ms') == (
+        source_columns.index('manual_static_status') + 1
+    )
+    assert receiver_columns.index('manual_static_shift_ms') == (
+        receiver_columns.index('weathering_correction_ms') + 1
+    )
+    assert receiver_columns.index('receiver_field_shift_ms') == (
+        receiver_columns.index('manual_static_status') + 1
+    )
 
 
 def test_source_static_table_has_one_row_per_source_endpoint(

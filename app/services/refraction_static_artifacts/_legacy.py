@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from collections.abc import Iterable, Mapping
-from dataclasses import replace
 import os
 from pathlib import Path
 from typing import Any
@@ -16,21 +15,11 @@ from app.services.refraction_static_cell_coordinates import (
     project_refraction_cell_points,
     refraction_cell_coordinate_metadata_from_config,
 )
-from app.services.refraction_static_cell_grid import build_refraction_cell_grid
-from app.services.refraction_static_cell_grid import assign_observation_midpoint_cells
-from app.services.refraction_static_design_matrix import (
-    LOW_FOLD_CELL_REJECTION_REASON,
-    LOW_FOLD_CELL_VELOCITY_STATUS,
-)
 from app.services.refraction_static_layer_config import (
     normalize_refraction_static_layers,
 )
-from app.services.refraction_static_layer_observations import (
-    build_refraction_layer_observation_masks_from_arrays,
-)
 from app.services.refraction_static_status import (
     REFRACTION_STATIC_STATUSES,
-    classify_refraction_endpoint_static_status,
 )
 from app.services.refraction_static_source_depth import (
     REFRACTION_SOURCE_DEPTH_SOURCES_CSV_NAME,
@@ -40,9 +29,7 @@ from app.services.refraction_static_t1lsst import (
     write_refraction_t1lsst_1layer_components_csv,
 )
 from app.services.refraction_static_types import (
-    RefractionLayerKind,
     RefractionDatumStaticsResult,
-    RefractionLayerSolveResult,
     RefractionStaticArtifactSet,
     ResolvedRefractionFirstLayer,
 )
@@ -55,27 +42,16 @@ from app.services.refraction_static_v1 import (
 )
 
 from app.services.refraction_static_artifacts.contract import (
-    _CELL_SOLVER_HISTORY_COLUMNS,
     _COMPONENT_COLUMNS,
     _FIRST_BREAK_FIT_QC_COLUMNS,
     _FIRST_BREAK_TIME_EXPORT_COLUMNS,
-    _GRID_MAP_QC_COLUMNS,
-    _LINE_PROFILE_QC_COLUMNS,
     _NEAR_SURFACE_2LAYER_COLUMNS,
     _NEAR_SURFACE_3LAYER_COLUMNS,
     _NEAR_SURFACE_COLUMNS,
-    _RECEIVER_STATIC_TABLE_2LAYER_COLUMNS,
-    _RECEIVER_STATIC_TABLE_3LAYER_COLUMNS,
-    _RECEIVER_STATIC_TABLE_COLUMNS,
     _REDUCED_TIME_QC_COLUMNS,
-    _REFRACTOR_VELOCITY_CELL_COLUMNS,
     _RESIDUAL_COLUMNS,
-    _SOURCE_STATIC_TABLE_2LAYER_COLUMNS,
-    _SOURCE_STATIC_TABLE_3LAYER_COLUMNS,
-    _SOURCE_STATIC_TABLE_COLUMNS,
     _STATIC_COMPONENT_QC_ENDPOINT_COLUMNS,
     _STATIC_COMPONENT_QC_TRACE_COLUMNS,
-    _TIME_TERM_SPREADSHEET_COLUMNS,
     _TRACE_STATICS_COLUMNS,
     _ValidatedResult,
     ARTIFACT_VERSION,
@@ -84,7 +60,6 @@ from app.services.refraction_static_artifacts.contract import (
     FIRST_BREAK_TIME_EXPORT_FORMAT_NAME,
     FIRST_BREAK_TIME_EXPORT_FORMAT_VERSION,
     FIRST_BREAK_TIME_EXPORT_SIGN_CONVENTION,
-    LINE_PROFILE_QC_SCHEMA_VERSION,
     METHOD,
     NEAR_SURFACE_MODEL_CSV_NAME,
     NEGATIVE_SHIFT_DESCRIPTION,
@@ -135,9 +110,6 @@ from app.services.refraction_static_artifacts.contract import (
     SOURCE_RECEIVER_STATIC_TABLE_NPZ_NAME,
     SOURCE_STATIC_TABLE_CSV_NAME,
     STATIC_COMPONENT,
-    TIME_TERM_SPREADSHEET_FORMAT_NAME,
-    TIME_TERM_SPREADSHEET_FORMAT_VERSION,
-    TIME_TERM_SPREADSHEET_SCHEMA_VERSION,
     UPLOADED_REFRACTION_PICKS_NPZ_NAME,
     WORKFLOW,
     RefractionCellSolverHistoryRow,
@@ -147,22 +119,14 @@ from app.services.refraction_static_artifacts.formatters import (
     _csv_bool,
     _csv_cell_id,
     _csv_float,
-    _csv_grid_float,
     _csv_identifier,
     _csv_int,
-    _csv_json_object,
     _csv_layer_index,
     _csv_meters,
     _csv_ms,
     _float_or_nan,
     _json_float,
     _nan_if_none,
-    _required_finite_float,
-    _spreadsheet_int,
-    _spreadsheet_m,
-    _spreadsheet_ms,
-    _spreadsheet_text,
-    _spreadsheet_velocity,
 )
 from app.services.refraction_static_artifacts.io import (
     _assert_strict_json,
@@ -178,14 +142,12 @@ from app.services.refraction_static_artifacts.stats import (
     _status_counts,
 )
 from app.services.refraction_static_artifacts.registry import (
-    _CELL_VELOCITY_COMPONENT_BY_LAYER,
     _artifact_entries_for_request,
     _artifact_list_for_qc,
     _build_manifest_payload,
     _cell_velocity_artifact_names,
     _cell_velocity_artifact_names_for_request as _cell_velocity_artifact_names_for_request,
     _cell_velocity_artifact_paths_for_request,
-    _cell_velocity_layer_kind,
     _request_cell_velocity_layer_kinds,
     _validate_declared_upstream_artifacts,
     _validate_upstream_artifact_names,
@@ -200,7 +162,6 @@ _refractor_cell_velocity_artifact_entries = (
 )
 _t1lsst_artifact_entries = _artifact_registry._t1lsst_artifact_entries
 _upstream_artifact_entries = _artifact_registry._upstream_artifact_entries
-
 
 def write_refraction_static_artifacts(
     *,
@@ -458,26 +419,30 @@ def write_refraction_static_artifacts(
         req=request,
         path=paths.static_history_json,
     )
+    from app.services.refraction_static_artifacts import (
+        cell_velocity as _cell_velocity_artifacts,
+    )
+
     for cell_artifacts in cell_velocity_artifact_paths:
-        write_refraction_refractor_velocity_cells_csv(
+        _cell_velocity_artifacts.write_refraction_refractor_velocity_cells_csv(
             result=values.result,
             req=request,
             path=cell_artifacts.cells_csv,
             layer_kind=cell_artifacts.layer_kind,
         )
-        write_refraction_refractor_velocity_grid_npz(
+        _cell_velocity_artifacts.write_refraction_refractor_velocity_grid_npz(
             result=values.result,
             req=request,
             path=cell_artifacts.grid_npz,
             layer_kind=cell_artifacts.layer_kind,
         )
-        write_refraction_refractor_velocity_qc_json(
+        _cell_velocity_artifacts.write_refraction_refractor_velocity_qc_json(
             result=values.result,
             req=request,
             path=cell_artifacts.qc_json,
             layer_kind=cell_artifacts.layer_kind,
         )
-        write_refraction_cell_solver_history_csv(
+        _cell_velocity_artifacts.write_refraction_cell_solver_history_csv(
             result=values.result,
             req=request,
             path=cell_artifacts.solver_history_csv,
@@ -569,7 +534,6 @@ def write_refraction_static_artifacts(
     _validate_declared_upstream_artifacts(root, upstream_names)
     return paths
 
-
 def write_refraction_static_solution_npz(
     *,
     result: RefractionDatumStaticsResult,
@@ -586,7 +550,6 @@ def write_refraction_static_solution_npz(
         resolved_first_layer=resolved_first_layer,
     )
     _write_npz_atomic(Path(path), payload)
-
 
 def write_refraction_static_qc_json(
     *,
@@ -612,7 +575,6 @@ def write_refraction_static_qc_json(
     _write_json_atomic(Path(path), payload)
     return payload
 
-
 def write_refraction_static_history_json(
     *,
     result: RefractionDatumStaticsResult,
@@ -631,7 +593,6 @@ def write_refraction_static_history_json(
     _write_json_atomic(Path(path), payload)
     return payload
 
-
 def write_refraction_statics_csv(
     *,
     result: RefractionDatumStaticsResult,
@@ -640,7 +601,6 @@ def write_refraction_statics_csv(
     values = _validate_result(result)
     rows = _trace_statics_rows(values.result)
     _write_csv_atomic(Path(path), _trace_statics_columns(values.result), rows)
-
 
 def write_near_surface_model_csv(
     *,
@@ -651,7 +611,6 @@ def write_near_surface_model_csv(
     rows = _near_surface_model_rows(values.result)
     _write_csv_atomic(Path(path), _near_surface_columns(values.result), rows)
 
-
 def write_first_break_residuals_csv(
     *,
     result: RefractionDatumStaticsResult,
@@ -661,7 +620,6 @@ def write_first_break_residuals_csv(
     values = _validate_result(result)
     rows = _first_break_residual_rows(values.result, req=req)
     _write_csv_atomic(Path(path), _RESIDUAL_COLUMNS, rows)
-
 
 def write_refraction_first_break_time_export_csv(
     *,
@@ -678,7 +636,6 @@ def write_refraction_first_break_time_export_csv(
     )
     _write_csv_atomic(Path(path), _FIRST_BREAK_TIME_EXPORT_COLUMNS, rows)
 
-
 def write_refraction_first_break_fit_qc_csv(
     *,
     result: RefractionDatumStaticsResult,
@@ -694,7 +651,6 @@ def write_refraction_first_break_fit_qc_csv(
     rows = _first_break_fit_qc_rows(arrays)
     _write_csv_atomic(Path(path), _FIRST_BREAK_FIT_QC_COLUMNS, rows)
 
-
 def write_refraction_first_break_fit_qc_npz(
     *,
     result: RefractionDatumStaticsResult,
@@ -708,7 +664,6 @@ def write_refraction_first_break_fit_qc_npz(
         req=request,
     )
     _write_npz_atomic(Path(path), arrays)
-
 
 def write_refraction_first_break_fit_qc_json(
     *,
@@ -725,7 +680,6 @@ def write_refraction_first_break_fit_qc_json(
     _write_json_atomic(Path(path), payload)
     return payload
 
-
 def write_refraction_reduced_time_qc_csv(
     *,
     result: RefractionDatumStaticsResult,
@@ -741,7 +695,6 @@ def write_refraction_reduced_time_qc_csv(
     rows = _reduced_time_qc_rows(arrays)
     _write_csv_atomic(Path(path), _REDUCED_TIME_QC_COLUMNS, rows)
 
-
 def write_refraction_reduced_time_qc_npz(
     *,
     result: RefractionDatumStaticsResult,
@@ -755,7 +708,6 @@ def write_refraction_reduced_time_qc_npz(
         req=request,
     )
     _write_npz_atomic(Path(path), arrays)
-
 
 def write_refraction_reduced_time_qc_json(
     *,
@@ -772,7 +724,6 @@ def write_refraction_reduced_time_qc_json(
     _write_json_atomic(Path(path), payload)
     return payload
 
-
 def write_refraction_static_components_csv(
     *,
     result: RefractionDatumStaticsResult,
@@ -781,7 +732,6 @@ def write_refraction_static_components_csv(
     values = _validate_result(result)
     rows = _component_rows(values.result)
     _write_csv_atomic(Path(path), _component_columns(values.result), rows)
-
 
 def write_refraction_static_component_qc_artifacts(
     *,
@@ -815,175 +765,22 @@ def write_refraction_static_component_qc_artifacts(
     _write_json_atomic(Path(json_path), payload)
     return payload
 
+def _cell_velocity_artifacts() -> Any:
+    from app.services.refraction_static_artifacts import cell_velocity
 
-def write_source_static_table_csv(
-    *,
-    result: RefractionDatumStaticsResult,
-    path: Path,
-) -> None:
-    values = _validate_result(result)
-    rows = _source_static_table_rows(values.result)
-    _write_csv_atomic(Path(path), _source_static_table_columns(values.result), rows)
+    return cell_velocity
 
+def write_refraction_refractor_velocity_cells_csv(*args: Any, **kwargs: Any) -> Any:
+    return getattr(_cell_velocity_artifacts(), 'write_refraction_refractor_velocity_cells_csv')(*args, **kwargs)
 
-def write_receiver_static_table_csv(
-    *,
-    result: RefractionDatumStaticsResult,
-    path: Path,
-) -> None:
-    values = _validate_result(result)
-    rows = _receiver_static_table_rows(values.result)
-    _write_csv_atomic(Path(path), _receiver_static_table_columns(values.result), rows)
+def write_refraction_refractor_velocity_grid_npz(*args: Any, **kwargs: Any) -> Any:
+    return getattr(_cell_velocity_artifacts(), 'write_refraction_refractor_velocity_grid_npz')(*args, **kwargs)
 
+def write_refraction_refractor_velocity_qc_json(*args: Any, **kwargs: Any) -> Any:
+    return getattr(_cell_velocity_artifacts(), 'write_refraction_refractor_velocity_qc_json')(*args, **kwargs)
 
-def write_source_receiver_static_table_npz(
-    *,
-    result: RefractionDatumStaticsResult,
-    path: Path,
-) -> None:
-    values = _validate_result(result)
-    payload = build_source_receiver_static_table_arrays(result=values.result)
-    _write_npz_atomic(Path(path), payload)
-
-
-def write_refraction_line_profile_qc_artifacts(
-    *,
-    result: RefractionDatumStaticsResult,
-    req: RefractionStaticApplyRequest,
-    source_csv_path: Path,
-    receiver_csv_path: Path,
-    combined_csv_path: Path,
-    npz_path: Path,
-    json_path: Path,
-) -> dict[str, Any]:
-    values = _validate_result(result)
-    request = RefractionStaticApplyRequest.model_validate(req)
-    arrays = build_refraction_line_profile_qc_arrays(
-        result=values.result,
-        req=request,
-    )
-    _write_csv_atomic(
-        Path(source_csv_path),
-        _LINE_PROFILE_QC_COLUMNS,
-        _line_profile_qc_rows(arrays, endpoint_kind='source'),
-    )
-    _write_csv_atomic(
-        Path(receiver_csv_path),
-        _LINE_PROFILE_QC_COLUMNS,
-        _line_profile_qc_rows(arrays, endpoint_kind='receiver'),
-    )
-    _write_csv_atomic(
-        Path(combined_csv_path),
-        _LINE_PROFILE_QC_COLUMNS,
-        _line_profile_qc_rows(arrays),
-    )
-    _write_npz_atomic(Path(npz_path), arrays)
-    payload = build_refraction_line_profile_qc_payload(
-        result=values.result,
-        req=request,
-        arrays=arrays,
-    )
-    _write_json_atomic(Path(json_path), payload)
-    return payload
-
-
-def write_refraction_time_term_spreadsheet_csv(
-    *,
-    result: RefractionDatumStaticsResult,
-    path: Path,
-    source_job_id: str | None = None,
-) -> None:
-    values = _validate_result(result)
-    rows = _time_term_spreadsheet_rows(
-        values.result,
-        source_job_id=source_job_id,
-    )
-    _write_csv_atomic(Path(path), _TIME_TERM_SPREADSHEET_COLUMNS, rows)
-
-
-def write_refraction_time_term_spreadsheet_csv_from_static_tables(
-    *,
-    source_rows: Iterable[Mapping[str, object]],
-    receiver_rows: Iterable[Mapping[str, object]],
-    path: Path,
-    source_job_id: str | None = None,
-    include_inactive_endpoints: bool = True,
-) -> None:
-    rows = _time_term_spreadsheet_rows_from_static_tables(
-        source_rows=source_rows,
-        receiver_rows=receiver_rows,
-        source_job_id=source_job_id,
-        include_inactive_endpoints=include_inactive_endpoints,
-    )
-    _write_csv_atomic(Path(path), _TIME_TERM_SPREADSHEET_COLUMNS, rows)
-
-
-def write_refraction_refractor_velocity_cells_csv(
-    *,
-    result: RefractionDatumStaticsResult,
-    req: RefractionStaticApplyRequest,
-    path: Path,
-    layer_kind: RefractionLayerKind | None = None,
-) -> None:
-    arrays = build_refraction_refractor_velocity_grid_arrays(
-        result=result,
-        req=req,
-        layer_kind=layer_kind,
-    )
-    rows = _refractor_velocity_cell_rows(arrays)
-    _write_csv_atomic(Path(path), _REFRACTOR_VELOCITY_CELL_COLUMNS, rows)
-
-
-def write_refraction_refractor_velocity_grid_npz(
-    *,
-    result: RefractionDatumStaticsResult,
-    req: RefractionStaticApplyRequest,
-    path: Path,
-    layer_kind: RefractionLayerKind | None = None,
-) -> None:
-    arrays = build_refraction_refractor_velocity_grid_arrays(
-        result=result,
-        req=req,
-        layer_kind=layer_kind,
-    )
-    _validate_no_object_arrays(
-        arrays,
-        artifact_name=REFRACTION_REFRACTOR_VELOCITY_GRID_NPZ_NAME,
-    )
-    _write_npz_atomic(Path(path), arrays)
-
-
-def write_refraction_refractor_velocity_qc_json(
-    *,
-    result: RefractionDatumStaticsResult,
-    req: RefractionStaticApplyRequest,
-    path: Path,
-    layer_kind: RefractionLayerKind | None = None,
-) -> dict[str, Any]:
-    payload = build_refraction_refractor_velocity_qc_payload(
-        result=result,
-        req=req,
-        layer_kind=layer_kind,
-    )
-    _write_json_atomic(Path(path), payload)
-    return payload
-
-
-def write_refraction_cell_solver_history_csv(
-    *,
-    result: RefractionDatumStaticsResult,
-    req: RefractionStaticApplyRequest,
-    path: Path,
-    layer_kind: RefractionLayerKind | None = None,
-) -> None:
-    rows = build_refraction_cell_solver_history_rows(
-        result=result,
-        req=req,
-        layer_kind=layer_kind,
-    )
-    csv_rows = [_cell_solver_history_csv_row(row) for row in rows]
-    _write_csv_atomic(Path(path), _CELL_SOLVER_HISTORY_COLUMNS, csv_rows)
-
+def write_refraction_cell_solver_history_csv(*args: Any, **kwargs: Any) -> Any:
+    return getattr(_cell_velocity_artifacts(), 'write_refraction_cell_solver_history_csv')(*args, **kwargs)
 
 def write_refraction_grid_map_qc_csv(
     *,
@@ -991,10 +788,11 @@ def write_refraction_grid_map_qc_csv(
     req: RefractionStaticApplyRequest,
     path: Path,
 ) -> None:
-    arrays = build_refraction_grid_map_qc_arrays(result=result, req=req)
-    rows = _grid_map_qc_rows(arrays)
-    _write_csv_atomic(Path(path), _GRID_MAP_QC_COLUMNS, rows)
+    from app.services.refraction_static_artifacts.grid_map import (
+        write_refraction_grid_map_qc_csv as _write_refraction_grid_map_qc_csv,
+    )
 
+    _write_refraction_grid_map_qc_csv(result=result, req=req, path=path)
 
 def write_refraction_grid_map_qc_npz(
     *,
@@ -1002,13 +800,11 @@ def write_refraction_grid_map_qc_npz(
     req: RefractionStaticApplyRequest,
     path: Path,
 ) -> None:
-    arrays = build_refraction_grid_map_qc_arrays(result=result, req=req)
-    _validate_no_object_arrays(
-        arrays,
-        artifact_name=REFRACTION_GRID_MAP_QC_NPZ_NAME,
+    from app.services.refraction_static_artifacts.grid_map import (
+        write_refraction_grid_map_qc_npz as _write_refraction_grid_map_qc_npz,
     )
-    _write_npz_atomic(Path(path), arrays)
 
+    _write_refraction_grid_map_qc_npz(result=result, req=req, path=path)
 
 def write_refraction_grid_map_qc_json(
     *,
@@ -1016,1046 +812,42 @@ def write_refraction_grid_map_qc_json(
     req: RefractionStaticApplyRequest,
     path: Path,
 ) -> dict[str, Any]:
-    payload = build_refraction_grid_map_qc_payload(result=result, req=req)
-    _write_json_atomic(Path(path), payload)
-    return payload
+    from app.services.refraction_static_artifacts.grid_map import (
+        write_refraction_grid_map_qc_json as _write_refraction_grid_map_qc_json,
+    )
 
+    return _write_refraction_grid_map_qc_json(result=result, req=req, path=path)
 
 def build_refraction_grid_map_qc_arrays(
     *,
     result: RefractionDatumStaticsResult,
     req: RefractionStaticApplyRequest,
 ) -> dict[str, np.ndarray]:
-    request = RefractionStaticApplyRequest.model_validate(req)
-    layer_kinds = _request_cell_velocity_layer_kinds(request)
-    if not layer_kinds:
-        raise RefractionStaticArtifactError(
-            'grid map QC artifacts require a solve_cell velocity layer'
-        )
-
-    pieces: dict[str, list[np.ndarray]] = {
-        'layer_kind': [],
-        'cell_id': [],
-        'cell_ix': [],
-        'cell_iy': [],
-        'cell_center_x_m': [],
-        'cell_center_y_m': [],
-        'cell_center_inline_m': [],
-        'cell_center_crossline_m': [],
-        'x_min_m': [],
-        'x_max_m': [],
-        'y_min_m': [],
-        'y_max_m': [],
-        'velocity_m_s': [],
-        'initial_velocity_m_s': [],
-        'velocity_update_from_initial_m_s': [],
-        'slowness_s_per_m': [],
-        'n_observations': [],
-        'n_used_observations': [],
-        'n_rejected_observations': [],
-        'n_sources': [],
-        'n_receivers': [],
-        'residual_rms_ms': [],
-        'residual_mad_ms': [],
-        'status': [],
-        'status_reason': [],
-        'active_cell_mask': [],
-        'coordinate_mode': [],
-        'cell_velocity_component': [],
-    }
-
-    for layer_kind in layer_kinds:
-        layer_arrays = build_refraction_refractor_velocity_grid_arrays(
-            result=result,
-            req=request,
-            layer_kind=layer_kind,
-        )
-        mapped = {
-            'layer_kind': layer_arrays['cell_velocity_layer_kind'],
-            'cell_id': layer_arrays['cell_id'],
-            'cell_ix': layer_arrays['cell_ix'],
-            'cell_iy': layer_arrays['cell_iy'],
-            'cell_center_x_m': layer_arrays['cell_center_x_m'],
-            'cell_center_y_m': layer_arrays['cell_center_y_m'],
-            'cell_center_inline_m': layer_arrays['cell_center_inline_m'],
-            'cell_center_crossline_m': layer_arrays['cell_center_crossline_m'],
-            'x_min_m': layer_arrays['x_min_m'],
-            'x_max_m': layer_arrays['x_max_m'],
-            'y_min_m': layer_arrays['y_min_m'],
-            'y_max_m': layer_arrays['y_max_m'],
-            'velocity_m_s': layer_arrays['velocity_m_s'],
-            'initial_velocity_m_s': layer_arrays['initial_velocity_m_s'],
-            'velocity_update_from_initial_m_s': (
-                layer_arrays['velocity_update_from_initial_m_s']
-            ),
-            'slowness_s_per_m': layer_arrays['slowness_s_per_m'],
-            'n_observations': layer_arrays['n_observations_per_cell'],
-            'n_used_observations': layer_arrays['n_used_observations_per_cell'],
-            'n_rejected_observations': (
-                layer_arrays['n_rejected_observations_per_cell']
-            ),
-            'n_sources': layer_arrays['n_sources_per_cell'],
-            'n_receivers': layer_arrays['n_receivers_per_cell'],
-            'residual_rms_ms': layer_arrays['residual_rms_ms'],
-            'residual_mad_ms': layer_arrays['residual_mad_ms'],
-            'status': layer_arrays['velocity_status'],
-            'status_reason': layer_arrays['status_reason'],
-            'active_cell_mask': layer_arrays['active_cell_mask'],
-            'coordinate_mode': layer_arrays['coordinate_mode'],
-            'cell_velocity_component': layer_arrays['cell_velocity_component'],
-        }
-        for key, value in mapped.items():
-            pieces[key].append(np.asarray(value))
-
-    arrays: dict[str, np.ndarray] = {}
-    for key, values in pieces.items():
-        merged = np.concatenate(values)
-        if merged.dtype.kind in {'U', 'S'}:
-            arrays[key] = _string_array(merged)
-        elif merged.dtype == bool:
-            arrays[key] = np.ascontiguousarray(merged, dtype=bool)
-        elif np.issubdtype(merged.dtype, np.integer):
-            arrays[key] = np.ascontiguousarray(merged, dtype=np.int64)
-        else:
-            arrays[key] = np.ascontiguousarray(merged, dtype=np.float64)
-
-    refractor_cell = request.model.refractor_cell
-    if refractor_cell is None:
-        raise RefractionStaticArtifactError(
-            'model.refractor_cell is required for grid map QC artifacts'
-        )
-    grid_config = effective_refraction_cell_grid_config(refractor_cell)
-    arrays.update(
-        {
-            'artifact_version': _scalar_str(ARTIFACT_VERSION),
-            'artifact_kind': _scalar_str('refraction_grid_map_qc'),
-            'global_velocity_layer_behavior': _scalar_str(
-                'omitted_from_grid_map_qc_rows'
-            ),
-            'coordinate_mode': _string_array(arrays['coordinate_mode']),
-            'number_of_cell_x': _scalar_int(grid_config.number_of_cell_x),
-            'number_of_cell_y': _scalar_int(grid_config.number_of_cell_y),
-            'size_of_cell_x_m': _scalar_float(grid_config.size_of_cell_x_m),
-            'size_of_cell_y_m': _scalar_float(
-                _nan_if_none(grid_config.size_of_cell_y_m)
-            ),
-            'x_coordinate_origin_m': _scalar_float(
-                grid_config.x_coordinate_origin_m
-            ),
-            'y_coordinate_origin_m': _scalar_float(
-                grid_config.y_coordinate_origin_m
-            ),
-        }
+    from app.services.refraction_static_artifacts.grid_map import (
+        build_refraction_grid_map_qc_arrays as _build_refraction_grid_map_qc_arrays,
     )
-    _validate_no_object_arrays(
-        arrays,
-        artifact_name=REFRACTION_GRID_MAP_QC_NPZ_NAME,
-    )
-    return arrays
 
+    return _build_refraction_grid_map_qc_arrays(result=result, req=req)
 
 def build_refraction_grid_map_qc_payload(
     *,
     result: RefractionDatumStaticsResult,
     req: RefractionStaticApplyRequest,
 ) -> dict[str, Any]:
-    request = RefractionStaticApplyRequest.model_validate(req)
-    layer_kinds = _request_cell_velocity_layer_kinds(request)
-    if not layer_kinds:
-        raise RefractionStaticArtifactError(
-            'grid map QC artifacts require a solve_cell velocity layer'
-        )
-    arrays = build_refraction_grid_map_qc_arrays(result=result, req=request)
-    refractor_cell = request.model.refractor_cell
-    if refractor_cell is None:
-        raise RefractionStaticArtifactError(
-            'model.refractor_cell is required for grid map QC artifacts'
-        )
-    grid_config = effective_refraction_cell_grid_config(refractor_cell)
-
-    layers = {}
-    raw_layer_kind = np.asarray(arrays['layer_kind']).astype(str, copy=False)
-    for layer_kind in layer_kinds:
-        mask = raw_layer_kind == layer_kind
-        layers[layer_kind] = _grid_map_qc_layer_summary(arrays, mask=mask)
-
-    payload: dict[str, Any] = {
-        'artifact_version': ARTIFACT_VERSION,
-        'artifact_kind': 'refraction_grid_map_qc',
-        'row_count': int(raw_layer_kind.size),
-        'cell_layer_count': len(layer_kinds),
-        'cell_velocity_layer_kinds': list(layer_kinds),
-        'global_velocity_layer_behavior': 'omitted_from_grid_map_qc_rows',
-        'omitted_global_velocity_layers': _grid_map_qc_global_velocity_layers(
-            request
-        ),
-        'artifacts': {
-            'csv': REFRACTION_GRID_MAP_QC_CSV_NAME,
-            'npz': REFRACTION_GRID_MAP_QC_NPZ_NAME,
-            'json': REFRACTION_GRID_MAP_QC_JSON_NAME,
-        },
-        'grid': {
-            'cell_assignment_mode': refractor_cell.assignment_mode,
-            **refraction_cell_coordinate_metadata_from_config(refractor_cell),
-            'outside_grid_policy': refractor_cell.outside_grid_policy,
-            'number_of_cell_x': int(grid_config.number_of_cell_x),
-            'number_of_cell_y': int(grid_config.number_of_cell_y),
-            'size_of_cell_x_m': float(grid_config.size_of_cell_x_m),
-            'size_of_cell_y_m': _json_float(grid_config.size_of_cell_y_m),
-            'x_coordinate_origin_m': float(grid_config.x_coordinate_origin_m),
-            'y_coordinate_origin_m': float(grid_config.y_coordinate_origin_m),
-            'y_axis_unbounded': grid_config.size_of_cell_y_m is None,
-        },
-        'layers': layers,
-    }
-    _assert_strict_json(payload, artifact_name=REFRACTION_GRID_MAP_QC_JSON_NAME)
-    return payload
-
-
-def build_refraction_refractor_velocity_grid_arrays(
-    *,
-    result: RefractionDatumStaticsResult,
-    req: RefractionStaticApplyRequest,
-    layer_kind: RefractionLayerKind | None = None,
-) -> dict[str, np.ndarray]:
-    request = RefractionStaticApplyRequest.model_validate(req)
-    resolved_layer_kind = _cell_velocity_layer_kind(request, layer_kind=layer_kind)
-    result = _cell_velocity_artifact_result_for_layer(
-        result=result,
-        req=request,
-        layer_kind=resolved_layer_kind,
-    )
-    values = _validate_result(result)
-    if not _request_has_cell_velocity_layer(request):
-        raise RefractionStaticArtifactError(
-            'refractor cell velocity artifacts require solve_cell request mode'
-        )
-    if not _result_has_cell_velocity_arrays(values.result):
-        raise RefractionStaticArtifactError(
-            'refractor cell velocity artifacts require cell velocity result arrays'
-        )
-    refractor_cell = request.model.refractor_cell
-    if refractor_cell is None:
-        raise RefractionStaticArtifactError(
-            'model.refractor_cell is required for cell velocity artifacts'
-        )
-    component = _cell_velocity_component(resolved_layer_kind)
-
-    grid_config = effective_refraction_cell_grid_config(refractor_cell)
-    grid = build_refraction_cell_grid(grid_config)
-    n_total_cells = int(grid.cell_id.shape[0])
-    active_cell_id = _required_cell_int_array(
-        values.result.active_cell_id,
-        name='active_cell_id',
-    )
-    inactive_cell_id = _required_cell_int_array(
-        values.result.inactive_cell_id,
-        name='inactive_cell_id',
-    )
-    cell_slowness = _required_cell_float_array(
-        values.result.cell_bedrock_slowness_s_per_m,
-        name='cell_bedrock_slowness_s_per_m',
-    )
-    cell_velocity = _required_cell_float_array(
-        values.result.cell_bedrock_velocity_m_s,
-        name='cell_bedrock_velocity_m_s',
-    )
-    cell_status = _required_cell_status_array(
-        values.result.cell_velocity_status,
-        name='cell_velocity_status',
-    )
-    row_midpoint_cell_id = _required_cell_int_array(
-        values.result.row_midpoint_cell_id,
-        name='row_midpoint_cell_id',
-    )
-    if row_midpoint_cell_id.shape != (values.n_rows,):
-        raise RefractionStaticArtifactError(
-            'row_midpoint_cell_id length must match residual rows'
-        )
-    cell_slowness = _layer_cell_values_for_active_cells(
-        cell_slowness,
-        active_cell_id=active_cell_id,
-        n_total_cells=n_total_cells,
-        name='cell_bedrock_slowness_s_per_m',
-    )
-    cell_velocity = _layer_cell_values_for_active_cells(
-        cell_velocity,
-        active_cell_id=active_cell_id,
-        n_total_cells=n_total_cells,
-        name='cell_bedrock_velocity_m_s',
-    )
-    cell_status = _layer_cell_status_for_active_cells(
-        cell_status,
-        active_cell_id=active_cell_id,
-        n_total_cells=n_total_cells,
-        name='cell_velocity_status',
-    )
-    active_shape = active_cell_id.shape
-    for name, array in (
-        ('cell_bedrock_slowness_s_per_m', cell_slowness),
-        ('cell_bedrock_velocity_m_s', cell_velocity),
-        ('cell_velocity_status', cell_status),
-    ):
-        if array.shape != active_shape:
-            raise RefractionStaticArtifactError(
-                f'{name} length must match active_cell_id'
-            )
-    _validate_refractor_velocity_cell_ids(
-        grid_cell_id=grid.cell_id,
-        active_cell_id=active_cell_id,
-        inactive_cell_id=inactive_cell_id,
+    from app.services.refraction_static_artifacts.grid_map import (
+        build_refraction_grid_map_qc_payload as _build_refraction_grid_map_qc_payload,
     )
 
-    active_cell_mask = np.zeros(n_total_cells, dtype=bool)
-    v2_m_s = np.full(n_total_cells, np.nan, dtype=np.float64)
-    slowness_s_per_m = np.full(n_total_cells, np.nan, dtype=np.float64)
-    velocity_status = np.full(n_total_cells, 'inactive', dtype='<U32')
-    smoothing_neighbor_count = _active_neighbor_count_by_cell(
-        active_cell_id=active_cell_id,
-        n_total_cells=n_total_cells,
-        number_of_cell_x=grid.number_of_cell_x,
-        number_of_cell_y=grid.number_of_cell_y,
-    )
-    for index, raw_cell_id in enumerate(active_cell_id.tolist()):
-        cell_id = int(raw_cell_id)
-        active_cell_mask[cell_id] = True
-        v2_m_s[cell_id] = float(cell_velocity[index])
-        slowness_s_per_m[cell_id] = float(cell_slowness[index])
-        velocity_status[cell_id] = str(cell_status[index])
-    low_fold_cell_id = _qc_cell_id_array(
-        values.result.qc,
-        'low_fold_cell_id',
-        n_total_cells=n_total_cells,
-    )
-    if low_fold_cell_id.size:
-        velocity_status[low_fold_cell_id] = LOW_FOLD_CELL_VELOCITY_STATUS
+    return _build_refraction_grid_map_qc_payload(result=result, req=req)
 
-    coordinate_mode = str(refractor_cell.coordinate_mode)
-    center_aliases = _refractor_cell_center_alias_arrays(
-        x_center_m=grid.x_center_m,
-        y_center_m=grid.y_center_m,
-        coordinate_mode=coordinate_mode,
-        line_origin_x_m=refractor_cell.line_origin_x_m,
-        line_origin_y_m=refractor_cell.line_origin_y_m,
-        line_azimuth_deg=refractor_cell.line_azimuth_deg,
-    )
-    initial_v2 = np.full(
-        n_total_cells,
-        _initial_cell_v2_m_s(request, layer_kind=resolved_layer_kind),
-        dtype=np.float64,
-    )
-    v2_update = np.full(n_total_cells, np.nan, dtype=np.float64)
-    finite_update = np.isfinite(v2_m_s) & np.isfinite(initial_v2)
-    v2_update[finite_update] = v2_m_s[finite_update] - initial_v2[finite_update]
-    smoothing_weight = _history_smoothing_weight(
-        request,
-        layer_kind=resolved_layer_kind,
-    )
-    smoothing_enabled = bool(smoothing_weight > 0.0)
+def build_refraction_refractor_velocity_grid_arrays(*args: Any, **kwargs: Any) -> Any:
+    return getattr(_cell_velocity_artifacts(), 'build_refraction_refractor_velocity_grid_arrays')(*args, **kwargs)
 
-    n_observations = np.zeros(n_total_cells, dtype=np.int64)
-    n_used_observations = np.zeros(n_total_cells, dtype=np.int64)
-    cell_candidate_row = _cell_velocity_candidate_row_mask(
-        values.result,
-        request,
-        layer_kind=resolved_layer_kind,
-    )
-    cell_row_midpoint_cell_id = np.where(
-        cell_candidate_row,
-        row_midpoint_cell_id,
-        -1,
-    )
-    valid_row_cell = (
-        (cell_row_midpoint_cell_id >= 0)
-        & (cell_row_midpoint_cell_id < n_total_cells)
-    )
-    np.add.at(n_observations, cell_row_midpoint_cell_id[valid_row_cell], 1)
-    qc_observation_count = _qc_cell_count_array(
-        values.result.qc,
-        'cell_observation_count',
-        n_total_cells=n_total_cells,
-    )
-    if qc_observation_count is not None:
-        n_observations = qc_observation_count
-    used_row = valid_row_cell & np.asarray(values.result.used_row_mask, dtype=bool)
-    np.add.at(n_used_observations, cell_row_midpoint_cell_id[used_row], 1)
-    if np.any(n_used_observations > n_observations):
-        raise RefractionStaticArtifactError(
-            'used observations per cell cannot exceed total observations per cell'
-        )
-    n_sources = _unique_observation_endpoint_count_by_cell(
-        row_midpoint_cell_id=cell_row_midpoint_cell_id,
-        endpoint_id=values.result.row_source_node_id,
-        n_total_cells=n_total_cells,
-    )
-    n_receivers = _unique_observation_endpoint_count_by_cell(
-        row_midpoint_cell_id=cell_row_midpoint_cell_id,
-        endpoint_id=values.result.row_receiver_node_id,
-        n_total_cells=n_total_cells,
-    )
-    residual_stats = _per_cell_residual_stats_ms(
-        row_midpoint_cell_id=cell_row_midpoint_cell_id,
-        residual_time_s=values.result.residual_time_s,
-        used_row_mask=used_row,
-        n_total_cells=n_total_cells,
-    )
-    status_reason = _refractor_cell_status_reasons(
-        velocity_status=velocity_status,
-        n_observations=n_observations,
-    )
+def build_refraction_refractor_velocity_qc_payload(*args: Any, **kwargs: Any) -> Any:
+    return getattr(_cell_velocity_artifacts(), 'build_refraction_refractor_velocity_qc_payload')(*args, **kwargs)
 
-    arrays = {
-        'cell_id': np.ascontiguousarray(grid.cell_id, dtype=np.int64),
-        'ix': np.ascontiguousarray(grid.ix, dtype=np.int64),
-        'iy': np.ascontiguousarray(grid.iy, dtype=np.int64),
-        'cell_ix': np.ascontiguousarray(grid.ix, dtype=np.int64),
-        'cell_iy': np.ascontiguousarray(grid.iy, dtype=np.int64),
-        'coordinate_mode': _string_array(
-            np.full(n_total_cells, coordinate_mode, dtype=f'<U{len(coordinate_mode)}')
-        ),
-        'x_min_m': np.ascontiguousarray(grid.x_min_m, dtype=np.float64),
-        'x_max_m': np.ascontiguousarray(grid.x_max_m, dtype=np.float64),
-        'y_min_m': np.ascontiguousarray(grid.y_min_m, dtype=np.float64),
-        'y_max_m': np.ascontiguousarray(grid.y_max_m, dtype=np.float64),
-        'x_center_m': np.ascontiguousarray(grid.x_center_m, dtype=np.float64),
-        'y_center_m': np.ascontiguousarray(grid.y_center_m, dtype=np.float64),
-        'cell_center_x_m': center_aliases['x_m'],
-        'cell_center_y_m': center_aliases['y_m'],
-        'cell_center_inline_m': center_aliases['inline_m'],
-        'cell_center_crossline_m': center_aliases['crossline_m'],
-        'active_cell_mask': np.ascontiguousarray(active_cell_mask, dtype=bool),
-        'n_observations_per_cell': np.ascontiguousarray(
-            n_observations,
-            dtype=np.int64,
-        ),
-        'n_used_observations_per_cell': np.ascontiguousarray(
-            n_used_observations,
-            dtype=np.int64,
-        ),
-        'n_rejected_observations_per_cell': np.ascontiguousarray(
-            n_observations - n_used_observations,
-            dtype=np.int64,
-        ),
-        'n_sources_per_cell': np.ascontiguousarray(n_sources, dtype=np.int64),
-        'n_receivers_per_cell': np.ascontiguousarray(n_receivers, dtype=np.int64),
-        'cell_velocity_layer_kind': _string_array(
-            np.full(
-                n_total_cells,
-                resolved_layer_kind,
-                dtype=f'<U{len(resolved_layer_kind)}',
-            )
-        ),
-        'cell_velocity_component': _string_array(
-            np.full(n_total_cells, component, dtype=f'<U{len(component)}')
-        ),
-        'velocity_m_s': np.ascontiguousarray(v2_m_s, dtype=np.float64),
-        'v2_m_s': np.ascontiguousarray(v2_m_s, dtype=np.float64),
-        'slowness_s_per_m': np.ascontiguousarray(slowness_s_per_m, dtype=np.float64),
-        'initial_velocity_m_s': np.ascontiguousarray(initial_v2, dtype=np.float64),
-        'initial_v2_m_s': np.ascontiguousarray(initial_v2, dtype=np.float64),
-        'velocity_update_from_initial_m_s': np.ascontiguousarray(
-            v2_update,
-            dtype=np.float64,
-        ),
-        'v2_update_from_initial_m_s': np.ascontiguousarray(
-            v2_update,
-            dtype=np.float64,
-        ),
-        'velocity_status': _string_array(velocity_status),
-        'status_reason': _string_array(status_reason),
-        'residual_rms_ms': residual_stats['rms'],
-        'residual_mad_ms': residual_stats['mad'],
-        'residual_mean_ms': residual_stats['mean'],
-        'residual_p95_abs_ms': residual_stats['p95_abs'],
-        'smoothing_enabled': np.full(n_total_cells, smoothing_enabled, dtype=bool),
-        'smoothing_weight': np.full(
-            n_total_cells,
-            smoothing_weight,
-            dtype=np.float64,
-        ),
-        'smoothing_neighbor_count': np.ascontiguousarray(
-            smoothing_neighbor_count,
-            dtype=np.int64,
-        ),
-    }
-    _validate_no_object_arrays(
-        arrays,
-        artifact_name=REFRACTION_REFRACTOR_VELOCITY_GRID_NPZ_NAME,
-    )
-    return arrays
-
-
-def build_refraction_refractor_velocity_qc_payload(
-    *,
-    result: RefractionDatumStaticsResult,
-    req: RefractionStaticApplyRequest,
-    layer_kind: RefractionLayerKind | None = None,
-) -> dict[str, Any]:
-    request = RefractionStaticApplyRequest.model_validate(req)
-    resolved_layer_kind = _cell_velocity_layer_kind(request, layer_kind=layer_kind)
-    result = _cell_velocity_artifact_result_for_layer(
-        result=result,
-        req=request,
-        layer_kind=resolved_layer_kind,
-    )
-    arrays = build_refraction_refractor_velocity_grid_arrays(
-        result=result,
-        req=request,
-        layer_kind=resolved_layer_kind,
-    )
-    refractor_cell = request.model.refractor_cell
-    if refractor_cell is None:
-        raise RefractionStaticArtifactError(
-            'model.refractor_cell is required for cell velocity QC'
-        )
-    grid_config = effective_refraction_cell_grid_config(refractor_cell)
-    active_mask = np.asarray(arrays['active_cell_mask'], dtype=bool)
-    velocity = np.asarray(arrays['velocity_m_s'], dtype=np.float64)
-    active_velocity = velocity[active_mask & np.isfinite(velocity)]
-    n_total = int(arrays['cell_id'].shape[0])
-    n_active = int(np.count_nonzero(active_mask))
-    n_observations_in_grid = int(np.sum(arrays['n_observations_per_cell']))
-    if request.model.method == 'multilayer_time_term':
-        n_valid_observations = int(
-            np.count_nonzero(
-                _cell_velocity_candidate_row_mask(
-                    result,
-                    request,
-                    layer_kind=resolved_layer_kind,
-                )
-            )
-        )
-    else:
-        n_valid_observations = int(
-            np.count_nonzero(result.valid_observation_mask_sorted)
-        )
-    default_outside_observations = max(0, n_valid_observations - n_observations_in_grid)
-    n_used = int(np.sum(arrays['n_used_observations_per_cell']))
-    n_low_fold = int(
-        np.count_nonzero(
-            np.asarray(arrays['velocity_status']).astype(str, copy=False)
-            == LOW_FOLD_CELL_VELOCITY_STATUS
-        )
-    )
-    n_low_fold_rejected = int(
-        np.sum(
-            np.asarray(arrays['n_rejected_observations_per_cell'], dtype=np.int64)[
-                np.asarray(arrays['velocity_status']).astype(str, copy=False)
-                == LOW_FOLD_CELL_VELOCITY_STATUS
-            ]
-        )
-    )
-    n_smoothing_rows = _qc_int(
-        result.qc,
-        'n_cell_smoothing_rows',
-        default=_estimated_cell_smoothing_rows(
-            active_cell_mask=active_mask,
-            number_of_cell_x=int(grid_config.number_of_cell_x),
-            number_of_cell_y=int(grid_config.number_of_cell_y),
-            velocity_smoothing_weight=float(
-                _history_smoothing_weight(
-                    request,
-                    layer_kind=resolved_layer_kind,
-                )
-            ),
-        ),
-    )
-    payload: dict[str, Any] = {
-        'artifact_version': ARTIFACT_VERSION,
-        'bedrock_velocity_mode': 'solve_cell',
-        'cell_velocity_layer_kind': resolved_layer_kind,
-        'cell_velocity_component': _cell_velocity_component(resolved_layer_kind),
-        'cell_assignment_mode': refractor_cell.assignment_mode,
-        **refraction_cell_coordinate_metadata_from_config(refractor_cell),
-        'outside_grid_policy': refractor_cell.outside_grid_policy,
-        'number_of_cell_x': int(grid_config.number_of_cell_x),
-        'number_of_cell_y': int(grid_config.number_of_cell_y),
-        'size_of_cell_x_m': float(grid_config.size_of_cell_x_m),
-        'size_of_cell_y_m': _json_float(grid_config.size_of_cell_y_m),
-        'n_total_cells': n_total,
-        'n_active_cells': n_active,
-        'n_inactive_cells': int(n_total - n_active),
-        'min_observations_per_cell': _qc_int(
-            result.qc,
-            'min_observations_per_cell',
-            default=_cell_velocity_min_observations_per_cell(
-                request,
-                layer_kind=resolved_layer_kind,
-            ),
-        ),
-        'n_low_fold_cells': _qc_int(
-            result.qc,
-            'n_low_fold_cells',
-            default=n_low_fold,
-        ),
-        'n_observations_outside_grid': _qc_int(
-            result.qc,
-            'n_observations_outside_grid',
-            default=default_outside_observations,
-        ),
-        'n_observations_rejected_by_low_fold_cell': _qc_int(
-            result.qc,
-            'n_observations_rejected_by_low_fold_cell',
-            default=n_low_fold_rejected,
-        ),
-        'low_fold_cell_rejection_reason': str(
-            result.qc.get(
-                'low_fold_cell_rejection_reason',
-                LOW_FOLD_CELL_REJECTION_REASON,
-            )
-        ),
-        'n_used_observations': n_used,
-        'velocity_min_m_s': _stat(active_velocity, 'min'),
-        'velocity_median_m_s': _stat(active_velocity, 'median'),
-        'velocity_max_m_s': _stat(active_velocity, 'max'),
-        'velocity_smoothing_weight': _history_smoothing_weight(
-            request,
-            layer_kind=resolved_layer_kind,
-        ),
-        'smoothing_reference_distance_m': _qc_optional_float(
-            result.qc,
-            'smoothing_reference_distance_m',
-            default=refractor_cell.smoothing_reference_distance_m,
-        ),
-        'n_cell_smoothing_rows': n_smoothing_rows,
-    }
-    _assert_strict_json(
-        payload,
-        artifact_name=_cell_velocity_artifact_names(resolved_layer_kind).qc_json,
-    )
-    return payload
-
-
-def build_refraction_cell_solver_history_rows(
-    *,
-    result: RefractionDatumStaticsResult,
-    req: RefractionStaticApplyRequest,
-    layer_kind: RefractionLayerKind | None = None,
-) -> list[RefractionCellSolverHistoryRow]:
-    request = RefractionStaticApplyRequest.model_validate(req)
-    resolved_layer_kind = _cell_velocity_layer_kind(request, layer_kind=layer_kind)
-    result = _cell_velocity_artifact_result_for_layer(
-        result=result,
-        req=request,
-        layer_kind=resolved_layer_kind,
-    )
-    values = _validate_result(result)
-    if not _request_has_cell_velocity_layer(request):
-        raise RefractionStaticArtifactError(
-            'cell solver history artifact requires solve_cell request mode'
-        )
-    if not _result_has_cell_velocity_arrays(values.result):
-        raise RefractionStaticArtifactError(
-            'cell solver history artifact requires cell velocity result arrays'
-        )
-
-    arrays = build_refraction_refractor_velocity_grid_arrays(
-        result=values.result,
-        req=request,
-        layer_kind=resolved_layer_kind,
-    )
-    cell_counts = _cell_solver_history_cell_counts(arrays)
-    initial_v2 = _initial_cell_v2_m_s(request, layer_kind=resolved_layer_kind)
-    final_velocity = np.asarray(arrays['velocity_m_s'], dtype=np.float64)
-    active_mask = np.asarray(arrays['active_cell_mask'], dtype=bool)
-    active_final_v2 = final_velocity[active_mask & np.isfinite(final_velocity)]
-    update = np.asarray(
-        arrays['velocity_update_from_initial_m_s'],
-        dtype=np.float64,
-    )
-    active_update = update[active_mask & np.isfinite(update)]
-
-    cell_candidate_row = _cell_velocity_candidate_row_mask(
-        values.result,
-        request,
-        layer_kind=resolved_layer_kind,
-    )
-    cell_used_row = cell_candidate_row & np.asarray(
-        values.result.used_row_mask,
-        dtype=bool,
-    )
-    n_candidate = int(np.count_nonzero(cell_candidate_row))
-    n_used = int(np.count_nonzero(cell_used_row))
-    n_robust_rejected = int(
-        np.count_nonzero(
-            cell_candidate_row
-            & np.asarray(values.result.rejected_by_robust_mask, dtype=bool)
-        )
-    )
-    smoothing_weight = _history_smoothing_weight(
-        request,
-        layer_kind=resolved_layer_kind,
-    )
-    damping_weight = float(request.solver.damping)
-    robust_threshold = float(request.solver.robust.threshold)
-    robust_iteration_count = _history_robust_iteration_count(
-        values.result,
-        request,
-    )
-    residual_stats = _history_residual_stats_ms(
-        values.result,
-        used_row_mask=cell_used_row,
-    )
-
-    return [
-        RefractionCellSolverHistoryRow(
-            iteration=0,
-            stage='initial',
-            n_candidate_observations=n_candidate,
-            n_used_observations=n_candidate,
-            n_rejected_observations=0,
-            n_active_cells=cell_counts['active'],
-            n_low_fold_cells=cell_counts['low_fold'],
-            n_empty_cells=cell_counts['empty'],
-            residual_rms_ms=None,
-            residual_mad_ms=None,
-            max_abs_residual_ms=None,
-            median_velocity_m_s=initial_v2,
-            median_v2_m_s=initial_v2,
-            min_velocity_m_s=initial_v2,
-            min_v2_m_s=initial_v2,
-            max_velocity_m_s=initial_v2,
-            max_v2_m_s=initial_v2,
-            max_abs_velocity_update_m_s=0.0,
-            max_abs_v2_update_m_s=0.0,
-            smoothing_weight=smoothing_weight,
-            damping_weight=damping_weight,
-            robust_threshold=robust_threshold,
-            converged=False,
-            convergence_reason='initial_state',
-        ),
-        RefractionCellSolverHistoryRow(
-            iteration=max(1, robust_iteration_count),
-            stage='final',
-            n_candidate_observations=n_candidate,
-            n_used_observations=n_used,
-            n_rejected_observations=n_robust_rejected,
-            n_active_cells=cell_counts['active'],
-            n_low_fold_cells=cell_counts['low_fold'],
-            n_empty_cells=cell_counts['empty'],
-            residual_rms_ms=residual_stats['rms'],
-            residual_mad_ms=residual_stats['mad'],
-            max_abs_residual_ms=residual_stats['max_abs'],
-            median_velocity_m_s=_stat(active_final_v2, 'median'),
-            median_v2_m_s=_stat(active_final_v2, 'median'),
-            min_velocity_m_s=_stat(active_final_v2, 'min'),
-            min_v2_m_s=_stat(active_final_v2, 'min'),
-            max_velocity_m_s=_stat(active_final_v2, 'max'),
-            max_v2_m_s=_stat(active_final_v2, 'max'),
-            max_abs_velocity_update_m_s=_history_max_abs(active_update),
-            max_abs_v2_update_m_s=_history_max_abs(active_update),
-            smoothing_weight=smoothing_weight,
-            damping_weight=damping_weight,
-            robust_threshold=robust_threshold,
-            converged=True,
-            convergence_reason=_history_convergence_reason(
-                robust_iteration_count=robust_iteration_count,
-                n_robust_rejected_observations=n_robust_rejected,
-                smoothing_weight=smoothing_weight,
-            ),
-        ),
-    ]
-
-
-def build_source_receiver_static_table_arrays(
-    *,
-    result: RefractionDatumStaticsResult,
-) -> dict[str, np.ndarray]:
-    values = _validate_result(result)
-    r = values.result
-    source_t1_s = _float_array(r.source_half_intercept_time_s)
-    source_sh1_m = _source_sh1_weathering_thickness_m(r)
-    source_weathering_correction_s = _float_array(
-        r.source_weathering_replacement_shift_s
-    )
-    receiver_t1_s = _float_array(r.receiver_half_intercept_time_s)
-    receiver_sh1_m = _receiver_sh1_weathering_thickness_m(r)
-    receiver_weathering_correction_s = _float_array(
-        r.receiver_weathering_replacement_shift_s
-    )
-    source_static_status = _source_static_status_array(r)
-    receiver_static_status = _receiver_static_status_array(r)
-    source_v2 = _endpoint_v2_m_s(
-        r.source_v2_m_s,
-        shape=values.n_source_endpoints,
-        scalar_v2_m_s=r.bedrock_velocity_m_s,
-    )
-    receiver_v2 = _endpoint_v2_m_s(
-        r.receiver_v2_m_s,
-        shape=values.n_receiver_endpoints,
-        scalar_v2_m_s=r.bedrock_velocity_m_s,
-    )
-    arrays: dict[str, np.ndarray] = {
-        'sign_convention': _scalar_str(SIGN_CONVENTION),
-        'source_endpoint_key': _string_array(r.source_endpoint_key),
-        'source_id': _int_array(r.source_id),
-        'source_node_id': _int_array(r.source_node_id),
-        'source_v2_cell_id': _endpoint_cell_id_array(
-            r.source_v2_cell_id,
-            values.n_source_endpoints,
-        ),
-        'source_v2_status': _endpoint_v2_status_array(
-            r.source_v2_status,
-            values.n_source_endpoints,
-        ),
-        'source_x_m': _float_array(r.source_x_m),
-        'source_y_m': _float_array(r.source_y_m),
-        'source_surface_elevation_m': _float_array(r.source_surface_elevation_m),
-        'source_t1_s': source_t1_s,
-        'source_v1_m_s': _filled_float_array(
-            r.weathering_velocity_m_s,
-            values.n_source_endpoints,
-        ),
-        'source_v2_m_s': source_v2,
-        'source_sh1_m': source_sh1_m,
-        'source_total_weathering_thickness_m': _float_array(
-            r.source_weathering_thickness_m
-        ),
-        'source_weathering_correction_s': source_weathering_correction_s,
-        'source_elevation_correction_s': _sum_float_arrays(
-            r.source_floating_datum_elevation_shift_s,
-            r.source_flat_datum_shift_s,
-        ),
-        'source_total_static_s': _float_array(r.source_refraction_shift_s),
-        'source_total_applied_shift_s': _float_array(r.source_refraction_shift_s),
-        'source_static_status': source_static_status,
-        'receiver_endpoint_key': _string_array(r.receiver_endpoint_key),
-        'receiver_id': _int_array(r.receiver_id),
-        'receiver_node_id': _int_array(r.receiver_node_id),
-        'receiver_v2_cell_id': _endpoint_cell_id_array(
-            r.receiver_v2_cell_id,
-            values.n_receiver_endpoints,
-        ),
-        'receiver_v2_status': _endpoint_v2_status_array(
-            r.receiver_v2_status,
-            values.n_receiver_endpoints,
-        ),
-        'receiver_x_m': _float_array(r.receiver_x_m),
-        'receiver_y_m': _float_array(r.receiver_y_m),
-        'receiver_surface_elevation_m': _float_array(
-            r.receiver_surface_elevation_m
-        ),
-        'receiver_t1_s': receiver_t1_s,
-        'receiver_v1_m_s': _filled_float_array(
-            r.weathering_velocity_m_s,
-            values.n_receiver_endpoints,
-        ),
-        'receiver_v2_m_s': receiver_v2,
-        'receiver_sh1_m': receiver_sh1_m,
-        'receiver_total_weathering_thickness_m': _float_array(
-            r.receiver_weathering_thickness_m
-        ),
-        'receiver_weathering_correction_s': receiver_weathering_correction_s,
-        'receiver_elevation_correction_s': _sum_float_arrays(
-            r.receiver_floating_datum_elevation_shift_s,
-            r.receiver_flat_datum_shift_s,
-        ),
-        'receiver_total_static_s': _float_array(r.receiver_refraction_shift_s),
-        'receiver_total_applied_shift_s': _float_array(r.receiver_refraction_shift_s),
-        'receiver_static_status': receiver_static_status,
-    }
-    source_field_shift = _source_field_shift_s_array(r)
-    source_field_status = _source_field_static_status_array(r)
-    receiver_field_shift = _receiver_field_shift_s_array(r)
-    receiver_field_status = _receiver_field_static_status_array(r)
-    arrays.update(
-        {
-            'source_depth_m': _source_depth_m_array(r),
-            'source_depth_shift_s': _source_depth_shift_s_array(r),
-            'source_depth_status': _source_depth_status_array(r),
-            'source_uphole_time_s': _source_uphole_time_s_array(r),
-            'source_uphole_shift_s': _source_uphole_shift_s_array(r),
-            'source_uphole_status': _source_uphole_status_array(r),
-            'source_manual_static_shift_s': _source_manual_static_shift_s_array(r),
-            'source_manual_static_status': _source_manual_static_status_array(r),
-            'receiver_manual_static_shift_s': _receiver_manual_static_shift_s_array(r),
-            'receiver_manual_static_status': _receiver_manual_static_status_array(r),
-            'source_field_shift_s': source_field_shift,
-            'source_field_static_status': source_field_status,
-            'source_total_with_field_shift_s': _total_with_field_shift_s(
-                refraction_shift_s=r.source_refraction_shift_s,
-                field_shift_s=source_field_shift,
-                field_status=source_field_status,
-            ),
-            'receiver_field_shift_s': receiver_field_shift,
-            'receiver_field_static_status': receiver_field_status,
-            'receiver_total_with_field_shift_s': _total_with_field_shift_s(
-                refraction_shift_s=r.receiver_refraction_shift_s,
-                field_shift_s=receiver_field_shift,
-                field_status=receiver_field_status,
-            ),
-        }
-    )
-    if _has_source_2layer_static_fields(r):
-        assert r.source_t2_time_s is not None
-        assert r.source_v3_m_s is not None
-        assert r.source_sh2_weathering_thickness_m is not None
-        source_layer1_base = r.source_surface_elevation_m - source_sh1_m
-        arrays.update(
-            {
-                'source_t2_s': _float_array(r.source_t2_time_s),
-                'source_v3_m_s': _float_array(r.source_v3_m_s),
-                'source_sh2_m': _float_array(
-                    r.source_sh2_weathering_thickness_m
-                ),
-                'source_layer1_base_elevation_m': _float_array(
-                    source_layer1_base
-                ),
-                'source_final_refractor_elevation_m': _float_array(
-                    r.source_refractor_elevation_m
-                ),
-            }
-        )
-        if _has_source_3layer_static_fields(r):
-            assert r.source_t3_time_s is not None
-            assert r.source_vsub_m_s is not None
-            assert r.source_sh3_weathering_thickness_m is not None
-            arrays.update(
-                {
-                    'source_t3_s': _float_array(r.source_t3_time_s),
-                    'source_vsub_m_s': _float_array(r.source_vsub_m_s),
-                    'source_sh3_m': _float_array(
-                        r.source_sh3_weathering_thickness_m
-                    ),
-                    'source_layer2_base_elevation_m': _float_array(
-                        source_layer1_base - r.source_sh2_weathering_thickness_m
-                    ),
-                }
-            )
-    if _has_receiver_2layer_static_fields(r):
-        assert r.receiver_t2_time_s is not None
-        assert r.receiver_v3_m_s is not None
-        assert r.receiver_sh2_weathering_thickness_m is not None
-        receiver_layer1_base = r.receiver_surface_elevation_m - receiver_sh1_m
-        arrays.update(
-            {
-                'receiver_t2_s': _float_array(r.receiver_t2_time_s),
-                'receiver_v3_m_s': _float_array(r.receiver_v3_m_s),
-                'receiver_sh2_m': _float_array(
-                    r.receiver_sh2_weathering_thickness_m
-                ),
-                'receiver_layer1_base_elevation_m': _float_array(
-                    receiver_layer1_base
-                ),
-                'receiver_final_refractor_elevation_m': _float_array(
-                    r.receiver_refractor_elevation_m
-                ),
-            }
-        )
-        if _has_receiver_3layer_static_fields(r):
-            assert r.receiver_t3_time_s is not None
-            assert r.receiver_vsub_m_s is not None
-            assert r.receiver_sh3_weathering_thickness_m is not None
-            arrays.update(
-                {
-                    'receiver_t3_s': _float_array(r.receiver_t3_time_s),
-                    'receiver_vsub_m_s': _float_array(r.receiver_vsub_m_s),
-                    'receiver_sh3_m': _float_array(
-                        r.receiver_sh3_weathering_thickness_m
-                    ),
-                    'receiver_layer2_base_elevation_m': _float_array(
-                        receiver_layer1_base - r.receiver_sh2_weathering_thickness_m
-                    ),
-                }
-            )
-    _validate_no_object_arrays(
-        arrays,
-        artifact_name=SOURCE_RECEIVER_STATIC_TABLE_NPZ_NAME,
-    )
-    return arrays
-
-
-def build_refraction_line_profile_qc_arrays(
-    *,
-    result: RefractionDatumStaticsResult,
-    req: RefractionStaticApplyRequest,
-) -> dict[str, np.ndarray]:
-    """Build combined source/receiver endpoint arrays for line-profile QC."""
-    values = _validate_result(result)
-    request = RefractionStaticApplyRequest.model_validate(req)
-    if not _line_profile_qc_available(request):
-        return _empty_line_profile_qc_arrays()
-
-    source = _line_profile_endpoint_arrays(
-        values.result,
-        request,
-        endpoint='source',
-    )
-    receiver = _line_profile_endpoint_arrays(
-        values.result,
-        request,
-        endpoint='receiver',
-    )
-    arrays = {
-        column: np.concatenate((source[column], receiver[column]))
-        for column in _LINE_PROFILE_QC_COLUMNS
-    }
-    order = np.lexsort(
-        (
-            np.asarray(arrays['endpoint_key']).astype(str, copy=False),
-            np.asarray(arrays['inline_m'], dtype=np.float64),
-            np.asarray(arrays['endpoint_kind']).astype(str, copy=False),
-        )
-    )
-    out = {
-        column: np.ascontiguousarray(np.asarray(values)[order])
-        for column, values in arrays.items()
-    }
-    _validate_no_object_arrays(out, artifact_name=REFRACTION_LINE_PROFILE_QC_NPZ_NAME)
-    return out
-
-
-def build_refraction_line_profile_qc_payload(
-    *,
-    result: RefractionDatumStaticsResult,
-    req: RefractionStaticApplyRequest,
-    arrays: dict[str, np.ndarray] | None = None,
-) -> dict[str, Any]:
-    values = _validate_result(result)
-    request = RefractionStaticApplyRequest.model_validate(req)
-    profile_arrays = (
-        build_refraction_line_profile_qc_arrays(result=values.result, req=request)
-        if arrays is None
-        else arrays
-    )
-    endpoint_kind = np.asarray(profile_arrays['endpoint_kind']).astype(str, copy=False)
-    inline_m = np.asarray(profile_arrays['inline_m'], dtype=np.float64)
-    crossline_m = np.asarray(profile_arrays['crossline_m'], dtype=np.float64)
-    status = (
-        'available' if _line_profile_qc_available(request) else 'unavailable'
-    )
-    payload: dict[str, Any] = {
-        'artifact_version': ARTIFACT_VERSION,
-        'schema_version': LINE_PROFILE_QC_SCHEMA_VERSION,
-        'kind': 'refraction_line_profile_qc',
-        'workflow': WORKFLOW,
-        'status': status,
-        'availability_reason': _line_profile_qc_availability_reason(request),
-        'sign_convention': SIGN_CONVENTION,
-        **_line_profile_coordinate_metadata(request),
-        'sort_order': ['endpoint_kind', 'inline_m', 'endpoint_key'],
-        'columns': list(_LINE_PROFILE_QC_COLUMNS),
-        'row_count': int(endpoint_kind.shape[0]),
-        'source_row_count': int(np.count_nonzero(endpoint_kind == 'source')),
-        'receiver_row_count': int(np.count_nonzero(endpoint_kind == 'receiver')),
-        'endpoint_kind_counts': _status_counts(endpoint_kind),
-        'static_status_counts': _status_counts(profile_arrays['static_status']),
-        'solution_status_counts': _status_counts(profile_arrays['solution_status']),
-        'inline_m_min': _stat(inline_m, 'min'),
-        'inline_m_max': _stat(inline_m, 'max'),
-        'crossline_m_min': _stat(crossline_m, 'min'),
-        'crossline_m_max': _stat(crossline_m, 'max'),
-        'artifacts': {
-            'source_csv': REFRACTION_LINE_PROFILE_QC_SOURCE_CSV_NAME,
-            'receiver_csv': REFRACTION_LINE_PROFILE_QC_RECEIVER_CSV_NAME,
-            'combined_csv': REFRACTION_LINE_PROFILE_QC_COMBINED_CSV_NAME,
-            'npz': REFRACTION_LINE_PROFILE_QC_NPZ_NAME,
-            'json': REFRACTION_LINE_PROFILE_QC_JSON_NAME,
-        },
-    }
-    _assert_strict_json(payload, artifact_name=REFRACTION_LINE_PROFILE_QC_JSON_NAME)
-    return payload
-
+def build_refraction_cell_solver_history_rows(*args: Any, **kwargs: Any) -> Any:
+    return getattr(_cell_velocity_artifacts(), 'build_refraction_cell_solver_history_rows')(*args, **kwargs)
 
 def build_refraction_static_component_qc_arrays(
     *,
@@ -2402,7 +1194,6 @@ def build_refraction_static_component_qc_arrays(
         'endpoint_static_status': endpoint_static_status,
     }
 
-
 def build_refraction_static_component_qc_payload(
     *,
     arrays: dict[str, np.ndarray],
@@ -2503,7 +1294,6 @@ def build_refraction_static_component_qc_payload(
         artifact_name=REFRACTION_STATIC_COMPONENT_QC_JSON_NAME,
     )
     return payload
-
 
 def build_refraction_static_solution_arrays(
     *,
@@ -2986,7 +1776,6 @@ def build_refraction_static_solution_arrays(
     _validate_no_object_arrays(arrays, artifact_name=REFRACTION_STATIC_SOLUTION_NPZ_NAME)
     return arrays
 
-
 def build_refraction_first_break_fit_qc_arrays(
     *,
     result: RefractionDatumStaticsResult,
@@ -3112,7 +1901,6 @@ def build_refraction_first_break_fit_qc_arrays(
     )
     return arrays
 
-
 def build_refraction_first_break_fit_qc_payload(
     *,
     result: RefractionDatumStaticsResult,
@@ -3182,7 +1970,6 @@ def build_refraction_first_break_fit_qc_payload(
     }
     _assert_strict_json(payload, artifact_name=REFRACTION_FIRST_BREAK_FIT_QC_JSON_NAME)
     return payload
-
 
 def build_refraction_reduced_time_qc_arrays(
     *,
@@ -3282,7 +2069,6 @@ def build_refraction_reduced_time_qc_arrays(
     )
     return arrays
 
-
 def build_refraction_reduced_time_qc_payload(
     *,
     result: RefractionDatumStaticsResult,
@@ -3328,7 +2114,6 @@ def build_refraction_reduced_time_qc_payload(
     }
     _assert_strict_json(payload, artifact_name=REFRACTION_REDUCED_TIME_QC_JSON_NAME)
     return payload
-
 
 def build_refraction_static_qc_payload(
     *,
@@ -3623,7 +2408,6 @@ def build_refraction_static_qc_payload(
     _assert_strict_json(payload, artifact_name=REFRACTION_STATIC_QC_JSON_NAME)
     return payload
 
-
 def _final_layer_qc_payload(raw_layers: object) -> dict[str, Any]:
     if not isinstance(raw_layers, dict):
         return {}
@@ -3631,7 +2415,6 @@ def _final_layer_qc_payload(raw_layers: object) -> dict[str, Any]:
     if isinstance(nested_layers, dict):
         return dict(nested_layers)
     return dict(raw_layers)
-
 
 def _sign_convention_qc_payload(
     req: RefractionStaticApplyRequest,
@@ -3643,7 +2426,6 @@ def _sign_convention_qc_payload(
         'positive_shift': POSITIVE_SHIFT_DESCRIPTION,
         'negative_shift': NEGATIVE_SHIFT_DESCRIPTION,
     }
-
 
 def _source_depth_field_correction_qc(
     result: RefractionDatumStaticsResult,
@@ -3669,7 +2451,6 @@ def _source_depth_field_correction_qc(
     payload.setdefault('warnings', [])
     return payload
 
-
 def _uphole_field_correction_qc(
     result: RefractionDatumStaticsResult,
     req: RefractionStaticApplyRequest,
@@ -3690,7 +2471,6 @@ def _uphole_field_correction_qc(
     payload.setdefault('uphole_mode', req.field_corrections.uphole.mode)
     payload.setdefault('component_name', 'uphole_shift_s')
     return payload
-
 
 def _manual_static_field_correction_qc(
     result: RefractionDatumStaticsResult,
@@ -3716,7 +2496,6 @@ def _manual_static_field_correction_qc(
     )
     payload.setdefault('component_name', 'manual_static_shift_s')
     return payload
-
 
 def _field_correction_composition_qc(
     result: RefractionDatumStaticsResult,
@@ -3757,7 +2536,6 @@ def _field_correction_composition_qc(
     payload.setdefault('sign_convention', SIGN_CONVENTION)
     return payload
 
-
 def _field_correction_component_requested(
     req: RefractionStaticApplyRequest,
 ) -> bool:
@@ -3766,7 +2544,6 @@ def _field_correction_component_requested(
         or req.field_corrections.uphole.mode != 'none'
         or req.field_corrections.manual_static.mode != 'none'
     )
-
 
 def build_refraction_static_history_payload(
     *,
@@ -3796,7 +2573,6 @@ def build_refraction_static_history_payload(
     _assert_strict_json(payload, artifact_name=REFRACTION_STATIC_HISTORY_JSON_NAME)
     return payload
 
-
 def refraction_static_trace_shift_component_names(
     req: RefractionStaticApplyRequest,
 ) -> tuple[str, ...]:
@@ -3805,7 +2581,6 @@ def refraction_static_trace_shift_component_names(
     if _field_components_applied_to_trace_shift(request):
         components.extend(_requested_field_component_names(request))
     return tuple(components)
-
 
 def refraction_static_double_application_qc(
     *,
@@ -3819,7 +2594,6 @@ def refraction_static_double_application_qc(
         requested_components=refraction_static_trace_shift_component_names(request),
         source_meta=source_meta,
     )
-
 
 def static_history_double_application_qc(
     *,
@@ -3869,7 +2643,6 @@ def static_history_double_application_qc(
         'warnings': warnings,
     }
 
-
 def _static_history_components(
     req: RefractionStaticApplyRequest,
 ) -> list[dict[str, object]]:
@@ -3907,18 +2680,15 @@ def _static_history_components(
         )
     return components
 
-
 def _refraction_history_component_name(req: RefractionStaticApplyRequest) -> str:
     if req.conversion.mode in {'t1lsst_1layer', 't1lsst_multilayer'}:
         return 'refraction_t1lsst'
     return 'refraction'
 
-
 def _static_history_cumulative_shift_field(req: RefractionStaticApplyRequest) -> str:
     if _field_components_applied_to_trace_shift(req):
         return 'final_trace_shift_s_sorted'
     return 'refraction_trace_shift_s_sorted'
-
 
 def _field_components_applied_to_trace_shift(
     req: RefractionStaticApplyRequest,
@@ -3928,7 +2698,6 @@ def _field_components_applied_to_trace_shift(
         and req.field_corrections.composition.enabled
         and req.field_corrections.composition.apply_to_trace_shift
     )
-
 
 def _requested_field_component_names(
     req: RefractionStaticApplyRequest,
@@ -3941,7 +2710,6 @@ def _requested_field_component_names(
     if req.field_corrections.manual_static.mode != 'none':
         components.append('manual_static')
     return tuple(components)
-
 
 def _static_history_qc_from_result(
     result: RefractionDatumStaticsResult,
@@ -3968,7 +2736,6 @@ def _static_history_qc_from_result(
         'warnings': [],
     }
 
-
 def _lineage_component_names(
     source_meta: Mapping[str, object],
 ) -> tuple[set[str], set[str]]:
@@ -3994,7 +2761,6 @@ def _lineage_component_names(
     if isinstance(history, Mapping):
         _collect_history_components(history, existing=existing)
     return existing, suspected
-
 
 def _collect_lineage_components(
     values: Mapping[str, object],
@@ -4028,7 +2794,6 @@ def _collect_lineage_components(
         else:
             suspected.update({'source_depth', 'uphole', 'manual_static'})
 
-
 def _collect_history_components(
     history: Mapping[str, object],
     *,
@@ -4046,14 +2811,12 @@ def _collect_history_components(
         if canonical:
             existing.add(canonical)
 
-
 def _string_items(value: object) -> tuple[str, ...]:
     if isinstance(value, str):
         return (value,)
     if not isinstance(value, (list, tuple)):
         return ()
     return tuple(item for item in value if isinstance(item, str))
-
 
 def _canonical_static_history_component(value: object) -> str | None:
     if not isinstance(value, str) or not value:
@@ -4077,7 +2840,6 @@ def _canonical_static_history_component(value: object) -> str | None:
     if name in {'manual_static', 'manual_static_shift_s'}:
         return 'manual_static'
     return None
-
 
 def _double_application_message(
     *,
@@ -4103,7 +2865,6 @@ def _double_application_message(
         f'double_application_policy={policy}'
     )
 
-
 def _validate_job_dir(job_dir: Path) -> Path:
     try:
         root = Path(job_dir)
@@ -4116,7 +2877,6 @@ def _validate_job_dir(job_dir: Path) -> Path:
     if not os.access(root, os.W_OK):
         raise RefractionStaticArtifactError('job directory is not writable')
     return root
-
 
 def _validate_result(result: RefractionDatumStaticsResult) -> _ValidatedResult:
     if not isinstance(result, RefractionDatumStaticsResult):
@@ -4276,7 +3036,6 @@ def _validate_result(result: RefractionDatumStaticsResult) -> _ValidatedResult:
         n_rows=n_rows,
     )
 
-
 def _validate_optional_arrays(
     *,
     result: RefractionDatumStaticsResult,
@@ -4297,7 +3056,6 @@ def _validate_optional_arrays(
             raise RefractionStaticArtifactError(
                 f'{label} array length mismatch for {name}'
             )
-
 
 def _validate_solve_cell_local_v2_arrays(
     *,
@@ -4372,7 +3130,6 @@ def _validate_solve_cell_local_v2_arrays(
             'solve_cell row_midpoint_cell_id length mismatch'
         )
 
-
 def _validate_resolved_first_layer(
     *,
     result: RefractionDatumStaticsResult,
@@ -4420,7 +3177,6 @@ def _validate_resolved_first_layer(
         )
     return resolved_first_layer
 
-
 def _velocities_close(left: float, right: float) -> bool:
     return bool(
         np.isclose(
@@ -4430,7 +3186,6 @@ def _velocities_close(left: float, right: float) -> bool:
             atol=1.0e-6,
         )
     )
-
 
 _TRACE_ARRAY_NAMES = (
     'valid_observation_mask_sorted',
@@ -4590,7 +3345,6 @@ _FIELD_TOTAL_VALID_STATUSES = frozenset(
     {'ok', _FIELD_DISABLED_STATUS, _FIELD_NOT_APPLICABLE_STATUS}
 )
 
-
 def _trace_statics_columns(
     result: RefractionDatumStaticsResult,
 ) -> tuple[str, ...]:
@@ -4608,7 +3362,6 @@ def _trace_statics_columns(
         'refraction_trace_shift_ms',
         ('final_trace_shift_ms', 'trace_field_static_status'),
     )
-
 
 def _trace_statics_rows(result: RefractionDatumStaticsResult) -> list[dict[str, object]]:
     rows: list[dict[str, object]] = []
@@ -4662,7 +3415,6 @@ def _trace_statics_rows(result: RefractionDatumStaticsResult) -> list[dict[str, 
         rows.append(row)
     return rows
 
-
 def _static_component_qc_trace_rows(
     arrays: dict[str, np.ndarray],
 ) -> list[dict[str, object]]:
@@ -4714,7 +3466,6 @@ def _static_component_qc_trace_rows(
             }
         )
     return rows
-
 
 def _static_component_qc_endpoint_rows(
     arrays: dict[str, np.ndarray],
@@ -4794,7 +3545,6 @@ def _static_component_qc_endpoint_rows(
         )
     return rows
 
-
 def _near_surface_model_rows(result: RefractionDatumStaticsResult) -> list[dict[str, object]]:
     rows: list[dict[str, object]] = []
     node_sh1_m = _node_sh1_weathering_thickness_m(result)
@@ -4849,7 +3599,6 @@ def _near_surface_model_rows(result: RefractionDatumStaticsResult) -> list[dict[
                 )
         rows.append(row)
     return rows
-
 
 def _first_break_residual_rows(
     result: RefractionDatumStaticsResult,
@@ -4916,7 +3665,6 @@ def _first_break_residual_rows(
             }
         )
     return rows
-
 
 def _first_break_time_export_rows(
     result: RefractionDatumStaticsResult,
@@ -4989,7 +3737,6 @@ def _first_break_time_export_rows(
         )
     return rows
 
-
 def _first_break_fit_qc_rows(
     arrays: Mapping[str, np.ndarray],
 ) -> list[dict[str, object]]:
@@ -5044,7 +3791,6 @@ def _first_break_fit_qc_rows(
         )
     return rows
 
-
 def _reduced_time_qc_rows(
     arrays: Mapping[str, np.ndarray],
 ) -> list[dict[str, object]]:
@@ -5088,7 +3834,6 @@ def _reduced_time_qc_rows(
         )
     return rows
 
-
 def _reduced_time_layer_gate_flags(
     req: RefractionStaticApplyRequest,
     offset_m: np.ndarray,
@@ -5119,7 +3864,6 @@ def _reduced_time_layer_gate_flags(
         )
     return {key: np.ascontiguousarray(value, dtype=bool) for key, value in flags.items()}
 
-
 def _offset_gate_mask(
     offset_m: np.ndarray,
     *,
@@ -5138,7 +3882,6 @@ def _offset_gate_mask(
         mask &= offset <= float(max_offset_m)
     return np.ascontiguousarray(mask, dtype=bool)
 
-
 def _reduced_time_layer_gate_kind(
     *,
     layer_kind_by_row: np.ndarray,
@@ -5151,7 +3894,6 @@ def _reduced_time_layer_gate_kind(
         out[mask] = kind
         empty &= ~mask
     return np.ascontiguousarray(out, dtype='<U32')
-
 
 def _reduced_time_reduction_velocity_by_row(
     *,
@@ -5181,7 +3923,6 @@ def _reduced_time_reduction_velocity_by_row(
         )
     return np.ascontiguousarray(velocity, dtype=np.float64)
 
-
 def _configured_reduction_velocity_by_row(
     *,
     req: RefractionStaticApplyRequest,
@@ -5193,7 +3934,6 @@ def _configured_reduction_velocity_by_row(
     for layer_kind, velocity in velocity_by_kind.items():
         out[kind == layer_kind] = velocity
     return np.ascontiguousarray(out, dtype=np.float64)
-
 
 def _configured_initial_velocity_by_layer(
     req: RefractionStaticApplyRequest,
@@ -5213,7 +3953,6 @@ def _configured_initial_velocity_by_layer(
             values[config.kind] = velocity_f
     return values
 
-
 def _configured_v1_velocity(req: RefractionStaticApplyRequest) -> float | None:
     first_layer = req.model.first_layer
     if first_layer is not None and first_layer.weathering_velocity_m_s is not None:
@@ -5221,7 +3960,6 @@ def _configured_v1_velocity(req: RefractionStaticApplyRequest) -> float | None:
     if req.model.weathering_velocity_m_s is not None:
         return float(req.model.weathering_velocity_m_s)
     return None
-
 
 def _reduced_time_status(
     *,
@@ -5244,7 +3982,6 @@ def _reduced_time_status(
     status[missing_offset] = 'missing_offset'
     status[missing_velocity] = 'missing_reduction_velocity'
     return np.ascontiguousarray(status, dtype='<U32')
-
 
 def _reduced_time_gate_qc(req: RefractionStaticApplyRequest) -> dict[str, Any]:
     payload: dict[str, Any] = {
@@ -5272,7 +4009,6 @@ def _reduced_time_gate_qc(req: RefractionStaticApplyRequest) -> dict[str, Any]:
         }
     return payload
 
-
 def _source_job_id(
     source_job_id: str | None,
     req: RefractionStaticApplyRequest | None,
@@ -5282,12 +4018,10 @@ def _source_job_id(
         raw = getattr(req, 'source_job_id', None)
     return '' if raw is None else str(raw)
 
-
 def _first_break_export_layer_context(
     result: RefractionDatumStaticsResult,
 ) -> tuple[np.ndarray, np.ndarray]:
     return _residual_row_layer_context(result)
-
 
 def _row_endpoint_id_context(
     result: RefractionDatumStaticsResult,
@@ -5318,7 +4052,6 @@ def _row_endpoint_id_context(
             out[index] = value
     return np.ascontiguousarray(out, dtype=object)
 
-
 def _row_endpoint_float_context(
     result: RefractionDatumStaticsResult,
     *,
@@ -5347,7 +4080,6 @@ def _row_endpoint_float_context(
         if value is not None:
             out[index] = value
     return np.ascontiguousarray(out, dtype=np.float64)
-
 
 def _first_break_row_time_terms(
     result: RefractionDatumStaticsResult,
@@ -5411,7 +4143,6 @@ def _first_break_row_time_terms(
         np.ascontiguousarray(receiver, dtype=np.float64),
     )
 
-
 def _endpoint_time_lookup(
     endpoint_key: np.ndarray,
     values: np.ndarray | None,
@@ -5427,7 +4158,6 @@ def _endpoint_time_lookup(
         )
     }
 
-
 def _first_break_moveout_time_s(
     *,
     modeled_pick_time_s: np.ndarray,
@@ -5442,14 +4172,12 @@ def _first_break_moveout_time_s(
     out[invalid] = np.nan
     return np.ascontiguousarray(out, dtype=np.float64)
 
-
 def _midpoint_coordinate(left: np.ndarray, right: np.ndarray) -> np.ndarray:
     left_arr = np.asarray(left, dtype=np.float64)
     right_arr = np.asarray(right, dtype=np.float64)
     out = 0.5 * (left_arr + right_arr)
     out[~np.isfinite(left_arr) | ~np.isfinite(right_arr)] = np.nan
     return np.ascontiguousarray(out, dtype=np.float64)
-
 
 def _first_break_fit_inline_crossline(
     *,
@@ -5483,7 +4211,6 @@ def _first_break_fit_inline_crossline(
         np.ascontiguousarray(crossline, dtype=np.float64),
     )
 
-
 def _residual_row_layer_context(
     result: RefractionDatumStaticsResult,
 ) -> tuple[np.ndarray, np.ndarray]:
@@ -5506,7 +4233,6 @@ def _residual_row_layer_context(
             )
     return np.ascontiguousarray(kind), np.ascontiguousarray(index)
 
-
 def _residual_row_string_context(
     result: RefractionDatumStaticsResult,
     field: str,
@@ -5522,7 +4248,6 @@ def _residual_row_string_context(
         )
     return np.ascontiguousarray(out, dtype=object)
 
-
 def _residual_row_velocity_context(
     result: RefractionDatumStaticsResult,
 ) -> np.ndarray:
@@ -5536,7 +4261,6 @@ def _residual_row_velocity_context(
             )
         return np.ascontiguousarray(out, dtype=np.float64)
     return _row_velocity_from_cell_or_scalar(result, n_rows)
-
 
 def _row_velocity_from_cell_or_scalar(
     result: RefractionDatumStaticsResult,
@@ -5562,7 +4286,6 @@ def _row_velocity_from_cell_or_scalar(
         valid = (cell_id >= 0) & (cell_id < int(velocity.size))
         out[valid] = velocity[cell_id[valid]]
     return np.ascontiguousarray(out, dtype=np.float64)
-
 
 def _residual_row_cell_context(
     result: RefractionDatumStaticsResult,
@@ -5612,7 +4335,6 @@ def _residual_row_cell_context(
         np.ascontiguousarray(cell_iy, dtype=np.int64),
     )
 
-
 def _residual_cell_x_count(
     *,
     result: RefractionDatumStaticsResult,
@@ -5632,7 +4354,6 @@ def _residual_cell_x_count(
         return None
     return _required_positive_qc_int(result.qc, 'number_of_cell_x')
 
-
 def _residual_rejection_reason(
     *,
     used: bool,
@@ -5647,7 +4368,6 @@ def _residual_rejection_reason(
     if not used:
         return 'not_used'
     return 'ok'
-
 
 def _component_rows(result: RefractionDatumStaticsResult) -> list[dict[str, object]]:
     node_pick_count = _node_lookup(result.node_id, result.node_pick_count)
@@ -5789,7 +4509,6 @@ def _component_rows(result: RefractionDatumStaticsResult) -> list[dict[str, obje
         rows.append(row)
     return rows
 
-
 def _component_columns(result: RefractionDatumStaticsResult) -> tuple[str, ...]:
     columns = _COMPONENT_COLUMNS
     if _has_source_depth_field_correction(result):
@@ -5834,92 +4553,12 @@ def _component_columns(result: RefractionDatumStaticsResult) -> tuple[str, ...]:
         columns = _insert_after(columns, anchor, ('field_shift_ms', 'field_status'))
     return columns
 
-
-def _source_static_table_columns(
-    result: RefractionDatumStaticsResult,
-) -> tuple[str, ...]:
-    if _has_source_3layer_static_fields(result):
-        columns = _SOURCE_STATIC_TABLE_3LAYER_COLUMNS
-    elif _has_source_2layer_static_fields(result):
-        columns = _SOURCE_STATIC_TABLE_2LAYER_COLUMNS
-    else:
-        columns = _SOURCE_STATIC_TABLE_COLUMNS
-    columns = _insert_after(
-        columns,
-        'weathering_correction_ms',
-        ('source_depth_m', 'source_depth_shift_ms', 'source_depth_status'),
-    )
-    columns = _insert_after(
-        columns,
-        'source_depth_status',
-        ('uphole_time_ms', 'uphole_shift_ms', 'uphole_status'),
-    )
-    columns = _insert_after(
-        columns,
-        'uphole_status',
-        ('manual_static_shift_ms', 'manual_static_status'),
-    )
-    columns = _insert_after(
-        columns,
-        'manual_static_status',
-        (
-            'source_field_shift_ms',
-            'source_field_status',
-            'source_field_static_status',
-            'source_total_with_field_shift_ms',
-        ),
-    )
-    return columns
-
-
 def _near_surface_columns(result: RefractionDatumStaticsResult) -> tuple[str, ...]:
     if _has_node_3layer_static_fields(result):
         return _NEAR_SURFACE_3LAYER_COLUMNS
     if _has_node_2layer_static_fields(result):
         return _NEAR_SURFACE_2LAYER_COLUMNS
     return _NEAR_SURFACE_COLUMNS
-
-
-def _receiver_static_table_columns(
-    result: RefractionDatumStaticsResult,
-) -> tuple[str, ...]:
-    if _has_receiver_3layer_static_fields(result):
-        columns = _RECEIVER_STATIC_TABLE_3LAYER_COLUMNS
-    elif _has_receiver_2layer_static_fields(result):
-        columns = _RECEIVER_STATIC_TABLE_2LAYER_COLUMNS
-    else:
-        columns = _RECEIVER_STATIC_TABLE_COLUMNS
-    columns = _insert_after(
-        columns,
-        'weathering_correction_ms',
-        ('manual_static_shift_ms', 'manual_static_status'),
-    )
-    columns = _insert_after(
-        columns,
-        'manual_static_status',
-        (
-            'receiver_field_shift_ms',
-            'receiver_field_status',
-            'receiver_field_static_status',
-            'receiver_total_with_field_shift_ms',
-        ),
-    )
-    return columns
-
-
-def _insert_after(
-    columns: tuple[str, ...],
-    anchor: str,
-    additions: tuple[str, ...],
-) -> tuple[str, ...]:
-    try:
-        index = columns.index(anchor)
-    except ValueError as exc:
-        raise RefractionStaticArtifactError(
-            f'column anchor not found: {anchor}'
-        ) from exc
-    return columns[: index + 1] + additions + columns[index + 1 :]
-
 
 def _has_source_depth_field_correction(
     result: RefractionDatumStaticsResult,
@@ -5937,7 +4576,6 @@ def _has_source_depth_field_correction(
         )
     return True
 
-
 def _has_uphole_field_correction(
     result: RefractionDatumStaticsResult,
 ) -> bool:
@@ -5953,7 +4591,6 @@ def _has_uphole_field_correction(
             'uphole field correction arrays must be provided together'
         )
     return True
-
 
 def _has_manual_static_field_correction(
     result: RefractionDatumStaticsResult,
@@ -5971,7 +4608,6 @@ def _has_manual_static_field_correction(
             'manual static field correction arrays must be provided together'
         )
     return True
-
 
 def _has_field_correction_composition(
     result: RefractionDatumStaticsResult,
@@ -5997,7 +4633,6 @@ def _has_field_correction_composition(
         )
     return True
 
-
 def _source_depth_m_array(result: RefractionDatumStaticsResult) -> np.ndarray:
     if not _has_source_depth_field_correction(result):
         return _disabled_field_float_array(int(result.source_endpoint_key.shape[0]))
@@ -6005,7 +4640,6 @@ def _source_depth_m_array(result: RefractionDatumStaticsResult) -> np.ndarray:
         result.source_depth_m,
         int(result.source_endpoint_key.shape[0]),
     )
-
 
 def _source_depth_shift_s_array(result: RefractionDatumStaticsResult) -> np.ndarray:
     if not _has_source_depth_field_correction(result):
@@ -6015,7 +4649,6 @@ def _source_depth_shift_s_array(result: RefractionDatumStaticsResult) -> np.ndar
         int(result.source_endpoint_key.shape[0]),
     )
 
-
 def _source_depth_status_array(result: RefractionDatumStaticsResult) -> np.ndarray:
     if not _has_source_depth_field_correction(result):
         return _disabled_field_status_array(int(result.source_endpoint_key.shape[0]))
@@ -6023,7 +4656,6 @@ def _source_depth_status_array(result: RefractionDatumStaticsResult) -> np.ndarr
         result.source_depth_status,
         int(result.source_endpoint_key.shape[0]),
     )
-
 
 def _source_uphole_time_s_array(result: RefractionDatumStaticsResult) -> np.ndarray:
     if not _has_uphole_field_correction(result):
@@ -6033,7 +4665,6 @@ def _source_uphole_time_s_array(result: RefractionDatumStaticsResult) -> np.ndar
         int(result.source_endpoint_key.shape[0]),
     )
 
-
 def _source_uphole_shift_s_array(result: RefractionDatumStaticsResult) -> np.ndarray:
     if not _has_uphole_field_correction(result):
         return _disabled_field_float_array(int(result.source_endpoint_key.shape[0]))
@@ -6042,7 +4673,6 @@ def _source_uphole_shift_s_array(result: RefractionDatumStaticsResult) -> np.nda
         int(result.source_endpoint_key.shape[0]),
     )
 
-
 def _source_uphole_status_array(result: RefractionDatumStaticsResult) -> np.ndarray:
     if not _has_uphole_field_correction(result):
         return _disabled_field_status_array(int(result.source_endpoint_key.shape[0]))
@@ -6050,7 +4680,6 @@ def _source_uphole_status_array(result: RefractionDatumStaticsResult) -> np.ndar
         result.source_uphole_status,
         int(result.source_endpoint_key.shape[0]),
     )
-
 
 def _source_manual_static_shift_s_array(
     result: RefractionDatumStaticsResult,
@@ -6062,7 +4691,6 @@ def _source_manual_static_shift_s_array(
         int(result.source_endpoint_key.shape[0]),
     )
 
-
 def _source_manual_static_status_array(
     result: RefractionDatumStaticsResult,
 ) -> np.ndarray:
@@ -6072,7 +4700,6 @@ def _source_manual_static_status_array(
         result.source_manual_static_status,
         int(result.source_endpoint_key.shape[0]),
     )
-
 
 def _receiver_manual_static_shift_s_array(
     result: RefractionDatumStaticsResult,
@@ -6084,7 +4711,6 @@ def _receiver_manual_static_shift_s_array(
         int(result.receiver_endpoint_key.shape[0]),
     )
 
-
 def _receiver_manual_static_status_array(
     result: RefractionDatumStaticsResult,
 ) -> np.ndarray:
@@ -6095,7 +4721,6 @@ def _receiver_manual_static_status_array(
         int(result.receiver_endpoint_key.shape[0]),
     )
 
-
 def _source_field_shift_s_array(result: RefractionDatumStaticsResult) -> np.ndarray:
     if not _has_field_correction_composition(result):
         return _disabled_field_float_array(int(result.source_endpoint_key.shape[0]))
@@ -6103,7 +4728,6 @@ def _source_field_shift_s_array(result: RefractionDatumStaticsResult) -> np.ndar
         result.source_field_shift_s,
         int(result.source_endpoint_key.shape[0]),
     )
-
 
 def _source_field_static_status_array(
     result: RefractionDatumStaticsResult,
@@ -6115,7 +4739,6 @@ def _source_field_static_status_array(
         int(result.source_endpoint_key.shape[0]),
     )
 
-
 def _receiver_field_shift_s_array(result: RefractionDatumStaticsResult) -> np.ndarray:
     if not _has_field_correction_composition(result):
         return _disabled_field_float_array(int(result.receiver_endpoint_key.shape[0]))
@@ -6123,7 +4746,6 @@ def _receiver_field_shift_s_array(result: RefractionDatumStaticsResult) -> np.nd
         result.receiver_field_shift_s,
         int(result.receiver_endpoint_key.shape[0]),
     )
-
 
 def _receiver_field_static_status_array(
     result: RefractionDatumStaticsResult,
@@ -6135,7 +4757,6 @@ def _receiver_field_static_status_array(
         int(result.receiver_endpoint_key.shape[0]),
     )
 
-
 def _source_field_shift_s_sorted_array(
     result: RefractionDatumStaticsResult,
 ) -> np.ndarray:
@@ -6145,7 +4766,6 @@ def _source_field_shift_s_sorted_array(
         result.source_field_shift_s_sorted,
         int(result.sorted_trace_index.shape[0]),
     )
-
 
 def _receiver_field_shift_s_sorted_array(
     result: RefractionDatumStaticsResult,
@@ -6157,7 +4777,6 @@ def _receiver_field_shift_s_sorted_array(
         int(result.sorted_trace_index.shape[0]),
     )
 
-
 def _trace_field_shift_s_sorted_array(
     result: RefractionDatumStaticsResult,
 ) -> np.ndarray:
@@ -6167,7 +4786,6 @@ def _trace_field_shift_s_sorted_array(
         result.trace_field_shift_s_sorted,
         int(result.sorted_trace_index.shape[0]),
     )
-
 
 def _trace_field_static_status_sorted_array(
     result: RefractionDatumStaticsResult,
@@ -6179,14 +4797,12 @@ def _trace_field_static_status_sorted_array(
         int(result.sorted_trace_index.shape[0]),
     )
 
-
 def _base_refraction_trace_shift_s_sorted_array(
     result: RefractionDatumStaticsResult,
 ) -> np.ndarray:
     if result.base_refraction_trace_shift_s_sorted is None:
         return _float_array(result.refraction_trace_shift_s_sorted)
     return _float_array(result.base_refraction_trace_shift_s_sorted)
-
 
 def _optional_field_float_array(value: object, shape: int) -> np.ndarray:
     if value is None:
@@ -6198,7 +4814,6 @@ def _optional_field_float_array(value: object, shape: int) -> np.ndarray:
         )
     return arr
 
-
 def _optional_field_status_array(value: object, shape: int) -> np.ndarray:
     if value is None:
         raise RefractionStaticArtifactError('field correction status array is missing')
@@ -6209,14 +4824,11 @@ def _optional_field_status_array(value: object, shape: int) -> np.ndarray:
         )
     return arr
 
-
 def _disabled_field_float_array(shape: int) -> np.ndarray:
     return np.zeros(int(shape), dtype=np.float64)
 
-
 def _disabled_field_status_array(shape: int) -> np.ndarray:
     return np.full(int(shape), _FIELD_DISABLED_STATUS, dtype='<U16')
-
 
 def _field_static_valid_mask(
     *,
@@ -6226,7 +4838,6 @@ def _field_static_valid_mask(
     status_text = np.asarray(status).astype(str)
     valid_status = np.isin(status_text, tuple(_FIELD_TOTAL_VALID_STATUSES))
     return np.ascontiguousarray(valid_status & np.isfinite(shift_s), dtype=bool)
-
 
 def _total_with_field_shift_s(
     *,
@@ -6250,7 +4861,6 @@ def _total_with_field_shift_s(
     out[valid] = refraction[valid] + field[valid]
     return np.ascontiguousarray(out, dtype=np.float64)
 
-
 def _final_trace_shift_s_sorted(
     result: RefractionDatumStaticsResult,
 ) -> np.ndarray:
@@ -6262,14 +4872,12 @@ def _final_trace_shift_s_sorted(
         field_status=_trace_field_static_status_sorted_array(result),
     )
 
-
 def _final_trace_static_status_sorted_array(
     result: RefractionDatumStaticsResult,
 ) -> np.ndarray:
     if result.final_trace_static_status_sorted is not None:
         return _string_array(result.final_trace_static_status_sorted)
     return _string_array(result.trace_static_status_sorted)
-
 
 def _final_trace_static_valid_mask_sorted_array(
     result: RefractionDatumStaticsResult,
@@ -6278,14 +4886,12 @@ def _final_trace_static_valid_mask_sorted_array(
         return _bool_array(result.final_trace_static_valid_mask_sorted)
     return _bool_array(result.trace_static_valid_mask_sorted)
 
-
 def _applied_field_shift_s_sorted_array(
     result: RefractionDatumStaticsResult,
 ) -> np.ndarray:
     if result.applied_field_shift_s_sorted is not None:
         return _float_array(result.applied_field_shift_s_sorted)
     return np.zeros(int(result.sorted_trace_index.shape[0]), dtype=np.float64)
-
 
 def _trace_endpoint_key_sorted_array(
     result: RefractionDatumStaticsResult,
@@ -6308,7 +4914,6 @@ def _trace_endpoint_key_sorted_array(
             f'{endpoint}_endpoint_key_sorted shape mismatch'
         )
     return out
-
 
 def _endpoint_shift_to_trace_order(
     *,
@@ -6342,7 +4947,6 @@ def _endpoint_shift_to_trace_order(
         out[index] = shift_by_key[text]
     return np.ascontiguousarray(out, dtype=np.float64)
 
-
 def _applied_endpoint_field_shift_s(
     *,
     field_shift_s: np.ndarray,
@@ -6358,7 +4962,6 @@ def _applied_endpoint_field_shift_s(
     out[valid] = field[valid]
     return np.ascontiguousarray(out, dtype=np.float64)
 
-
 def _component_qc_stats_ms(
     components_s: Mapping[str, np.ndarray],
 ) -> dict[str, dict[str, float | None]]:
@@ -6371,1463 +4974,71 @@ def _component_qc_stats_ms(
         for name, values in components_s.items()
     }
 
-
-def _has_node_3layer_static_fields(result: RefractionDatumStaticsResult) -> bool:
-    return all(
-        getattr(result, name) is not None for name in _NODE_3LAYER_STATIC_ARRAY_NAMES
-    )
-
-
-def _has_node_2layer_static_fields(result: RefractionDatumStaticsResult) -> bool:
-    return all(
-        getattr(result, name) is not None for name in _NODE_2LAYER_STATIC_ARRAY_NAMES
-    )
-
-
-def _has_source_3layer_static_fields(result: RefractionDatumStaticsResult) -> bool:
-    return all(
-        getattr(result, name) is not None for name in _SOURCE_3LAYER_STATIC_ARRAY_NAMES
-    )
-
-
-def _has_source_2layer_static_fields(result: RefractionDatumStaticsResult) -> bool:
-    return all(
-        getattr(result, name) is not None for name in _SOURCE_2LAYER_STATIC_ARRAY_NAMES
-    )
-
-
-def _has_receiver_3layer_static_fields(result: RefractionDatumStaticsResult) -> bool:
-    return all(
-        getattr(result, name) is not None
-        for name in _RECEIVER_3LAYER_STATIC_ARRAY_NAMES
-    )
-
-
-def _has_receiver_2layer_static_fields(result: RefractionDatumStaticsResult) -> bool:
-    return all(
-        getattr(result, name) is not None
-        for name in _RECEIVER_2LAYER_STATIC_ARRAY_NAMES
-    )
-
-
-def _node_sh1_weathering_thickness_m(
-    result: RefractionDatumStaticsResult,
-) -> np.ndarray:
-    node_sh1 = result.node_sh1_weathering_thickness_m
-    if node_sh1 is not None:
-        return _float_array(node_sh1)
-    node_sh2 = result.node_sh2_weathering_thickness_m
-    if node_sh2 is None:
-        return _float_array(result.node_weathering_thickness_m)
-    raise RefractionStaticArtifactError(
-        'node_sh1_weathering_thickness_m is required with '
-        'node_sh2_weathering_thickness_m'
-    )
-
-
-def _source_sh1_weathering_thickness_m(
-    result: RefractionDatumStaticsResult,
-) -> np.ndarray:
-    source_sh1 = result.source_sh1_weathering_thickness_m
-    if source_sh1 is not None:
-        return _float_array(source_sh1)
-    source_sh2 = result.source_sh2_weathering_thickness_m
-    if source_sh2 is None:
-        return _float_array(result.source_weathering_thickness_m)
-    raise RefractionStaticArtifactError(
-        'source_sh1_weathering_thickness_m is required with '
-        'source_sh2_weathering_thickness_m'
-    )
-
-
-def _receiver_sh1_weathering_thickness_m(
-    result: RefractionDatumStaticsResult,
-) -> np.ndarray:
-    receiver_sh1 = result.receiver_sh1_weathering_thickness_m
-    if receiver_sh1 is not None:
-        return _float_array(receiver_sh1)
-    receiver_sh2 = result.receiver_sh2_weathering_thickness_m
-    if receiver_sh2 is None:
-        return _float_array(result.receiver_weathering_thickness_m)
-    raise RefractionStaticArtifactError(
-        'receiver_sh1_weathering_thickness_m is required with '
-        'receiver_sh2_weathering_thickness_m'
-    )
-
-
-def _source_static_table_rows(
-    result: RefractionDatumStaticsResult,
-) -> list[dict[str, object]]:
-    node_context = _node_context(result)
-    layer_context = _endpoint_layer_qc_context(result, endpoint='source')
-    static_status = _source_static_status_array(result)
-    flat_datum = _nan_if_none(result.flat_datum_elevation_m)
-    source_v2 = _endpoint_v2_m_s(
-        result.source_v2_m_s,
-        shape=int(result.source_endpoint_key.shape[0]),
-        scalar_v2_m_s=result.bedrock_velocity_m_s,
-    )
-    source_v2_cell_id = _endpoint_cell_id_array(
-        result.source_v2_cell_id,
-        int(result.source_endpoint_key.shape[0]),
-    )
-    source_v2_status = _endpoint_v2_status_array(
-        result.source_v2_status,
-        int(result.source_endpoint_key.shape[0]),
-    )
-    has_2layer_fields = _has_source_2layer_static_fields(result)
-    has_3layer_fields = _has_source_3layer_static_fields(result)
-    source_t2_time_s = result.source_t2_time_s
-    source_t3_time_s = result.source_t3_time_s
-    source_v3_m_s = result.source_v3_m_s
-    source_vsub_m_s = result.source_vsub_m_s
-    source_sh2_m = result.source_sh2_weathering_thickness_m
-    source_sh3_m = result.source_sh3_weathering_thickness_m
-    source_sh1_m = _source_sh1_weathering_thickness_m(result)
-    source_depth_m = _source_depth_m_array(result)
-    source_depth_shift_s = _source_depth_shift_s_array(result)
-    source_depth_status = _source_depth_status_array(result)
-    source_uphole_time_s = _source_uphole_time_s_array(result)
-    source_uphole_shift_s = _source_uphole_shift_s_array(result)
-    source_uphole_status = _source_uphole_status_array(result)
-    source_manual_static_shift_s = _source_manual_static_shift_s_array(result)
-    source_manual_static_status = _source_manual_static_status_array(result)
-    source_field_shift_s = _source_field_shift_s_array(result)
-    source_field_status = _source_field_static_status_array(result)
-    source_total_with_field_s = _total_with_field_shift_s(
-        refraction_shift_s=result.source_refraction_shift_s,
-        field_shift_s=source_field_shift_s,
-        field_status=source_field_status,
-    )
-    rows: list[dict[str, object]] = []
-    for index in range(int(result.source_endpoint_key.shape[0])):
-        node_id = int(result.source_node_id[index])
-        t1_s = result.source_half_intercept_time_s[index]
-        weathering_correction_s = result.source_weathering_replacement_shift_s[index]
-        elevation_correction_s = _sum_correction_s(
-            result.source_floating_datum_elevation_shift_s[index],
-            result.source_flat_datum_shift_s[index],
-        )
-        rows.append(
-            {
-                'endpoint_kind': 'source',
-                'source_endpoint_key': str(result.source_endpoint_key[index]),
-                'source_id': int(result.source_id[index]),
-                'source_node_id': node_id,
-                'source_v2_cell_id': _csv_cell_id(source_v2_cell_id[index]),
-                'x_m': _csv_float(result.source_x_m[index]),
-                'y_m': _csv_float(result.source_y_m[index]),
-                'surface_elevation_m': _csv_float(
-                    result.source_surface_elevation_m[index]
-                ),
-                'floating_datum_elevation_m': _csv_float(
-                    result.source_floating_datum_elevation_m[index]
-                ),
-                'flat_datum_elevation_m': _csv_float(flat_datum),
-                't1_ms': _csv_ms(t1_s),
-                'v1_m_s': _csv_float(result.weathering_velocity_m_s),
-                'v2_m_s': _csv_float(source_v2[index]),
-                'v2_status': str(source_v2_status[index]),
-                'sh1_weathering_thickness_m': _csv_float(source_sh1_m[index]),
-                'total_weathering_thickness_m': _csv_float(
-                    result.source_weathering_thickness_m[index]
-                ),
-                'refractor_elevation_m': _csv_float(
-                    result.source_refractor_elevation_m[index]
-                ),
-                'weathering_correction_ms': _csv_ms(weathering_correction_s),
-                'floating_datum_correction_ms': _csv_ms(
-                    result.source_floating_datum_elevation_shift_s[index]
-                ),
-                'flat_datum_correction_ms': _csv_ms(
-                    result.source_flat_datum_shift_s[index]
-                ),
-                'elevation_correction_ms': _csv_ms(elevation_correction_s),
-                'total_static_ms': _csv_ms(result.source_refraction_shift_s[index]),
-                'total_applied_shift_ms': _csv_ms(
-                    result.source_refraction_shift_s[index]
-                ),
-                'solution_status': str(
-                    node_context['solution_status'].get(node_id, 'missing_solution')
-                ),
-                'weathering_status': str(
-                    node_context['weathering_status'].get(node_id, 'missing_node')
-                ),
-                'datum_status': str(result.source_datum_status[index]),
-                'static_status': str(static_status[index]),
-                'sign_convention': SIGN_CONVENTION,
-                'pick_count': _csv_int(node_context['pick_count'].get(node_id)),
-                'used_pick_count': _csv_int(
-                    node_context['used_pick_count'].get(node_id)
-                ),
-                'residual_rms_ms': _csv_ms(node_context['residual_rms'].get(node_id)),
-                'residual_mad_ms': _csv_ms(node_context['residual_mad'].get(node_id)),
-            }
-        )
-        rows[-1].update(
-            {
-                'source_depth_m': _csv_float(source_depth_m[index]),
-                'source_depth_shift_ms': _csv_ms(source_depth_shift_s[index]),
-                'source_depth_status': str(source_depth_status[index]),
-                'uphole_time_ms': _csv_ms(source_uphole_time_s[index]),
-                'uphole_shift_ms': _csv_ms(source_uphole_shift_s[index]),
-                'uphole_status': str(source_uphole_status[index]),
-                'manual_static_shift_ms': _csv_ms(
-                    source_manual_static_shift_s[index]
-                ),
-                'manual_static_status': str(source_manual_static_status[index]),
-                'source_field_shift_ms': _csv_ms(source_field_shift_s[index]),
-                'source_field_status': str(source_field_status[index]),
-                'source_field_static_status': str(source_field_status[index]),
-                'source_total_with_field_shift_ms': _csv_ms(
-                    source_total_with_field_s[index]
-                ),
-            }
-        )
-        if has_2layer_fields:
-            assert source_t2_time_s is not None
-            assert source_v3_m_s is not None
-            assert source_sh2_m is not None
-            layer1_base = result.source_surface_elevation_m[index] - source_sh1_m[index]
-            rows[-1].update(
-                {
-                    **_endpoint_layer_qc_row_fields(
-                        layer_context,
-                        str(result.source_endpoint_key[index]),
-                    ),
-                    't2_ms': _csv_ms(source_t2_time_s[index]),
-                    'v3_m_s': _csv_float(source_v3_m_s[index]),
-                    'sh2_weathering_thickness_m': _csv_float(source_sh2_m[index]),
-                    'layer1_base_elevation_m': _csv_float(layer1_base),
-                    'final_refractor_elevation_m': _csv_float(
-                        result.source_refractor_elevation_m[index]
-                    ),
-                }
-            )
-            if has_3layer_fields:
-                assert source_t3_time_s is not None
-                assert source_vsub_m_s is not None
-                assert source_sh3_m is not None
-                rows[-1].update(
-                    {
-                        't3_ms': _csv_ms(source_t3_time_s[index]),
-                        'vsub_m_s': _csv_float(source_vsub_m_s[index]),
-                        'sh3_weathering_thickness_m': _csv_float(
-                            source_sh3_m[index]
-                        ),
-                        'layer2_base_elevation_m': _csv_float(
-                            layer1_base - source_sh2_m[index]
-                        ),
-                    }
-                )
-    return rows
-
-
-def _receiver_static_table_rows(
-    result: RefractionDatumStaticsResult,
-) -> list[dict[str, object]]:
-    node_context = _node_context(result)
-    layer_context = _endpoint_layer_qc_context(result, endpoint='receiver')
-    static_status = _receiver_static_status_array(result)
-    flat_datum = _nan_if_none(result.flat_datum_elevation_m)
-    receiver_v2 = _endpoint_v2_m_s(
-        result.receiver_v2_m_s,
-        shape=int(result.receiver_endpoint_key.shape[0]),
-        scalar_v2_m_s=result.bedrock_velocity_m_s,
-    )
-    receiver_v2_cell_id = _endpoint_cell_id_array(
-        result.receiver_v2_cell_id,
-        int(result.receiver_endpoint_key.shape[0]),
-    )
-    receiver_v2_status = _endpoint_v2_status_array(
-        result.receiver_v2_status,
-        int(result.receiver_endpoint_key.shape[0]),
-    )
-    has_2layer_fields = _has_receiver_2layer_static_fields(result)
-    has_3layer_fields = _has_receiver_3layer_static_fields(result)
-    receiver_t2_time_s = result.receiver_t2_time_s
-    receiver_t3_time_s = result.receiver_t3_time_s
-    receiver_v3_m_s = result.receiver_v3_m_s
-    receiver_vsub_m_s = result.receiver_vsub_m_s
-    receiver_sh2_m = result.receiver_sh2_weathering_thickness_m
-    receiver_sh3_m = result.receiver_sh3_weathering_thickness_m
-    receiver_sh1_m = _receiver_sh1_weathering_thickness_m(result)
-    receiver_manual_static_shift_s = _receiver_manual_static_shift_s_array(result)
-    receiver_manual_static_status = _receiver_manual_static_status_array(result)
-    receiver_field_shift_s = _receiver_field_shift_s_array(result)
-    receiver_field_status = _receiver_field_static_status_array(result)
-    receiver_total_with_field_s = _total_with_field_shift_s(
-        refraction_shift_s=result.receiver_refraction_shift_s,
-        field_shift_s=receiver_field_shift_s,
-        field_status=receiver_field_status,
-    )
-    rows: list[dict[str, object]] = []
-    for index in range(int(result.receiver_endpoint_key.shape[0])):
-        node_id = int(result.receiver_node_id[index])
-        t1_s = result.receiver_half_intercept_time_s[index]
-        weathering_correction_s = result.receiver_weathering_replacement_shift_s[index]
-        elevation_correction_s = _sum_correction_s(
-            result.receiver_floating_datum_elevation_shift_s[index],
-            result.receiver_flat_datum_shift_s[index],
-        )
-        rows.append(
-            {
-                'endpoint_kind': 'receiver',
-                'receiver_endpoint_key': str(result.receiver_endpoint_key[index]),
-                'receiver_id': int(result.receiver_id[index]),
-                'receiver_node_id': node_id,
-                'receiver_v2_cell_id': _csv_cell_id(receiver_v2_cell_id[index]),
-                'x_m': _csv_float(result.receiver_x_m[index]),
-                'y_m': _csv_float(result.receiver_y_m[index]),
-                'surface_elevation_m': _csv_float(
-                    result.receiver_surface_elevation_m[index]
-                ),
-                'floating_datum_elevation_m': _csv_float(
-                    result.receiver_floating_datum_elevation_m[index]
-                ),
-                'flat_datum_elevation_m': _csv_float(flat_datum),
-                't1_ms': _csv_ms(t1_s),
-                'v1_m_s': _csv_float(result.weathering_velocity_m_s),
-                'v2_m_s': _csv_float(receiver_v2[index]),
-                'v2_status': str(receiver_v2_status[index]),
-                'sh1_weathering_thickness_m': _csv_float(receiver_sh1_m[index]),
-                'total_weathering_thickness_m': _csv_float(
-                    result.receiver_weathering_thickness_m[index]
-                ),
-                'refractor_elevation_m': _csv_float(
-                    result.receiver_refractor_elevation_m[index]
-                ),
-                'weathering_correction_ms': _csv_ms(weathering_correction_s),
-                'floating_datum_correction_ms': _csv_ms(
-                    result.receiver_floating_datum_elevation_shift_s[index]
-                ),
-                'flat_datum_correction_ms': _csv_ms(
-                    result.receiver_flat_datum_shift_s[index]
-                ),
-                'elevation_correction_ms': _csv_ms(elevation_correction_s),
-                'total_static_ms': _csv_ms(result.receiver_refraction_shift_s[index]),
-                'total_applied_shift_ms': _csv_ms(
-                    result.receiver_refraction_shift_s[index]
-                ),
-                'solution_status': str(
-                    node_context['solution_status'].get(node_id, 'missing_solution')
-                ),
-                'weathering_status': str(
-                    node_context['weathering_status'].get(node_id, 'missing_node')
-                ),
-                'datum_status': str(result.receiver_datum_status[index]),
-                'static_status': str(static_status[index]),
-                'sign_convention': SIGN_CONVENTION,
-                'pick_count': _csv_int(node_context['pick_count'].get(node_id)),
-                'used_pick_count': _csv_int(
-                    node_context['used_pick_count'].get(node_id)
-                ),
-                'residual_rms_ms': _csv_ms(node_context['residual_rms'].get(node_id)),
-                'residual_mad_ms': _csv_ms(node_context['residual_mad'].get(node_id)),
-            }
-        )
-        rows[-1].update(
-            {
-                'manual_static_shift_ms': _csv_ms(
-                    receiver_manual_static_shift_s[index]
-                ),
-                'manual_static_status': str(receiver_manual_static_status[index]),
-                'receiver_field_shift_ms': _csv_ms(receiver_field_shift_s[index]),
-                'receiver_field_status': str(receiver_field_status[index]),
-                'receiver_field_static_status': str(receiver_field_status[index]),
-                'receiver_total_with_field_shift_ms': _csv_ms(
-                    receiver_total_with_field_s[index]
-                ),
-            }
-        )
-        if has_2layer_fields:
-            assert receiver_t2_time_s is not None
-            assert receiver_v3_m_s is not None
-            assert receiver_sh2_m is not None
-            layer1_base = (
-                result.receiver_surface_elevation_m[index] - receiver_sh1_m[index]
-            )
-            rows[-1].update(
-                {
-                    **_endpoint_layer_qc_row_fields(
-                        layer_context,
-                        str(result.receiver_endpoint_key[index]),
-                    ),
-                    't2_ms': _csv_ms(receiver_t2_time_s[index]),
-                    'v3_m_s': _csv_float(receiver_v3_m_s[index]),
-                    'sh2_weathering_thickness_m': _csv_float(receiver_sh2_m[index]),
-                    'layer1_base_elevation_m': _csv_float(layer1_base),
-                    'final_refractor_elevation_m': _csv_float(
-                        result.receiver_refractor_elevation_m[index]
-                    ),
-                }
-            )
-            if has_3layer_fields:
-                assert receiver_t3_time_s is not None
-                assert receiver_vsub_m_s is not None
-                assert receiver_sh3_m is not None
-                rows[-1].update(
-                    {
-                        't3_ms': _csv_ms(receiver_t3_time_s[index]),
-                        'vsub_m_s': _csv_float(receiver_vsub_m_s[index]),
-                        'sh3_weathering_thickness_m': _csv_float(
-                            receiver_sh3_m[index]
-                        ),
-                        'layer2_base_elevation_m': _csv_float(
-                            layer1_base - receiver_sh2_m[index]
-                        ),
-                    }
-                )
-    return rows
-
-
-def _time_term_spreadsheet_rows(
-    result: RefractionDatumStaticsResult,
-    *,
-    source_job_id: str | None,
-) -> list[dict[str, object]]:
-    rows: list[dict[str, object]] = []
-    job_id = '' if source_job_id is None else str(source_job_id)
-    for row in _source_static_table_rows(result):
-        rows.append(
-            _time_term_spreadsheet_endpoint_row(
-                row,
-                endpoint_prefix='source',
-                source_job_id=job_id,
-            )
-        )
-    for row in _receiver_static_table_rows(result):
-        rows.append(
-            _time_term_spreadsheet_endpoint_row(
-                row,
-                endpoint_prefix='receiver',
-                source_job_id=job_id,
-            )
-        )
-    return rows
-
-
-def _time_term_spreadsheet_rows_from_static_tables(
-    *,
-    source_rows: Iterable[Mapping[str, object]],
-    receiver_rows: Iterable[Mapping[str, object]],
-    source_job_id: str | None,
-    include_inactive_endpoints: bool,
-) -> list[dict[str, object]]:
-    rows: list[dict[str, object]] = []
-    job_id = '' if source_job_id is None else str(source_job_id)
-    for row in source_rows:
-        _validate_time_term_static_table_row(row, endpoint_kind='source')
-        if not _include_time_term_static_table_row(
-            row,
-            include_inactive_endpoints=include_inactive_endpoints,
-        ):
-            continue
-        rows.append(
-            _time_term_spreadsheet_endpoint_row(
-                row,
-                endpoint_prefix='source',
-                source_job_id=job_id,
-            )
-        )
-    for row in receiver_rows:
-        _validate_time_term_static_table_row(row, endpoint_kind='receiver')
-        if not _include_time_term_static_table_row(
-            row,
-            include_inactive_endpoints=include_inactive_endpoints,
-        ):
-            continue
-        rows.append(
-            _time_term_spreadsheet_endpoint_row(
-                row,
-                endpoint_prefix='receiver',
-                source_job_id=job_id,
-            )
-        )
-    return rows
-
-
-def _validate_time_term_static_table_row(
-    row: Mapping[str, object],
-    *,
-    endpoint_kind: str,
-) -> None:
-    if row.get('sign_convention') != SIGN_CONVENTION:
-        raise RefractionStaticArtifactError(
-            f'{endpoint_kind} static table sign_convention must be {SIGN_CONVENTION!r}'
-        )
-    if row.get('endpoint_kind') != endpoint_kind:
-        raise RefractionStaticArtifactError(
-            f'{endpoint_kind} static table contains endpoint_kind '
-            f'{row.get("endpoint_kind")!r}'
-        )
-
-
-def _include_time_term_static_table_row(
-    row: Mapping[str, object],
-    *,
-    include_inactive_endpoints: bool,
-) -> bool:
-    status = str(row.get('static_status', '')).strip()
-    return status == 'ok' or bool(include_inactive_endpoints)
-
-
-def _time_term_spreadsheet_endpoint_row(
-    row: Mapping[str, object],
-    *,
-    endpoint_prefix: str,
-    source_job_id: str,
-) -> dict[str, object]:
-    if endpoint_prefix not in {'source', 'receiver'}:
-        raise RefractionStaticArtifactError(
-            f'unsupported spreadsheet endpoint prefix: {endpoint_prefix}'
-        )
-    endpoint_kind = str(row.get('endpoint_kind', ''))
-    endpoint_key = row.get(f'{endpoint_prefix}_endpoint_key')
-    endpoint_id = row.get(f'{endpoint_prefix}_id')
-    node_id = row.get(f'{endpoint_prefix}_node_id')
-    layer1_base = row.get('layer1_base_elevation_m')
-    if layer1_base in (None, ''):
-        layer1_base = row.get('refractor_elevation_m')
-    final_refractor = row.get('final_refractor_elevation_m')
-    if final_refractor in (None, ''):
-        final_refractor = row.get('refractor_elevation_m')
-    field_shift_column = f'{endpoint_prefix}_field_shift_ms'
-    field_status_column = f'{endpoint_prefix}_field_static_status'
-
-    source_depth_correction = ''
-    source_depth_status = _FIELD_NOT_APPLICABLE_STATUS
-    uphole_correction = ''
-    uphole_status = _FIELD_NOT_APPLICABLE_STATUS
-    if endpoint_prefix == 'source':
-        source_depth_correction = row.get('source_depth_shift_ms', '')
-        source_depth_status = str(row.get('source_depth_status', ''))
-        uphole_correction = row.get('uphole_shift_ms', '')
-        uphole_status = str(row.get('uphole_status', ''))
-
-    out = {
-        'schema_version': str(TIME_TERM_SPREADSHEET_SCHEMA_VERSION),
-        'format_name': TIME_TERM_SPREADSHEET_FORMAT_NAME,
-        'format_version': str(TIME_TERM_SPREADSHEET_FORMAT_VERSION),
-        'source_job_id': source_job_id,
-        'endpoint_kind': endpoint_kind,
-        'endpoint_key': _spreadsheet_text(endpoint_key),
-        'endpoint_id': _spreadsheet_text(endpoint_id),
-        'station_id': _spreadsheet_text(endpoint_id),
-        'node_id': _spreadsheet_int(node_id),
-        'x_m': _spreadsheet_m(row.get('x_m')),
-        'y_m': _spreadsheet_m(row.get('y_m')),
-        'elevation_m': _spreadsheet_m(row.get('surface_elevation_m')),
-        'surface_elevation_m': _spreadsheet_m(row.get('surface_elevation_m')),
-        't1_ms': _spreadsheet_ms(row.get('t1_ms')),
-        't2_ms': _spreadsheet_ms(row.get('t2_ms')),
-        't3_ms': _spreadsheet_ms(row.get('t3_ms')),
-        'v1_m_s': _spreadsheet_velocity(row.get('v1_m_s')),
-        'v2_m_s': _spreadsheet_velocity(row.get('v2_m_s')),
-        'v3_m_s': _spreadsheet_velocity(row.get('v3_m_s')),
-        'vsub_m_s': _spreadsheet_velocity(row.get('vsub_m_s')),
-        'sh1_m': _spreadsheet_m(row.get('sh1_weathering_thickness_m')),
-        'sh2_m': _spreadsheet_m(row.get('sh2_weathering_thickness_m')),
-        'sh3_m': _spreadsheet_m(row.get('sh3_weathering_thickness_m')),
-        'layer1_base_elevation_m': _spreadsheet_m(layer1_base),
-        'layer2_base_elevation_m': _spreadsheet_m(
-            row.get('layer2_base_elevation_m')
-        ),
-        'final_refractor_elevation_m': _spreadsheet_m(final_refractor),
-        'weathering_correction_ms': _spreadsheet_ms(
-            row.get('weathering_correction_ms')
-        ),
-        'elevation_correction_ms': _spreadsheet_ms(
-            row.get('elevation_correction_ms')
-        ),
-        'source_depth_correction_ms': _spreadsheet_ms(source_depth_correction),
-        'uphole_correction_ms': _spreadsheet_ms(uphole_correction),
-        'manual_static_ms': _spreadsheet_ms(row.get('manual_static_shift_ms')),
-        'field_correction_ms': _spreadsheet_ms(row.get(field_shift_column)),
-        'total_applied_shift_ms': _spreadsheet_ms(
-            row.get('total_applied_shift_ms')
-        ),
-        'pick_count': _spreadsheet_int(row.get('pick_count')),
-        'used_pick_count': _spreadsheet_int(row.get('used_pick_count')),
-        'pick_count_by_layer': _spreadsheet_text(row.get('pick_count_by_layer')),
-        'used_pick_count_by_layer': _spreadsheet_text(
-            row.get('used_pick_count_by_layer')
-        ),
-        'residual_rms_ms': _spreadsheet_ms(row.get('residual_rms_ms')),
-        'residual_mad_ms': _spreadsheet_ms(row.get('residual_mad_ms')),
-        'residual_rms_by_layer_ms': _spreadsheet_text(
-            row.get('residual_rms_by_layer_ms')
-        ),
-        'residual_mad_by_layer_ms': _spreadsheet_text(
-            row.get('residual_mad_by_layer_ms')
-        ),
-        'solution_status': _spreadsheet_text(row.get('solution_status')),
-        'weathering_status': _spreadsheet_text(row.get('weathering_status')),
-        'datum_status': _spreadsheet_text(row.get('datum_status')),
-        'source_depth_status': source_depth_status,
-        'uphole_status': uphole_status,
-        'manual_static_status': _spreadsheet_text(row.get('manual_static_status')),
-        'field_static_status': _spreadsheet_text(row.get(field_status_column)),
-        'static_status': _spreadsheet_text(row.get('static_status')),
-        'sign_convention': SIGN_CONVENTION,
-    }
-    missing = set(_TIME_TERM_SPREADSHEET_COLUMNS) - set(out)
-    if missing:
-        raise RefractionStaticArtifactError(
-            'time-term spreadsheet row missing columns: ' + ', '.join(sorted(missing))
-        )
-    return out
-
-
-_LINE_PROFILE_STRING_COLUMNS = frozenset(
-    {'endpoint_kind', 'endpoint_key', 'static_status', 'solution_status'}
-)
-_LINE_PROFILE_INT_COLUMNS = frozenset(
-    {'node_id', 'pick_count', 'used_pick_count'}
+from app.services.refraction_static_artifacts.field_corrections import (  # noqa: E402
+    _applied_endpoint_field_shift_s,
+    _applied_field_shift_s_sorted_array,
+    _base_refraction_trace_shift_s_sorted_array,
+    _disabled_field_float_array,
+    _disabled_field_status_array,
+    _endpoint_shift_to_trace_order,
+    _field_static_valid_mask,
+    _final_trace_shift_s_sorted,
+    _final_trace_static_status_sorted_array,
+    _final_trace_static_valid_mask_sorted_array,
+    _has_field_correction_composition,
+    _has_manual_static_field_correction,
+    _has_source_depth_field_correction,
+    _has_uphole_field_correction,
+    _optional_field_float_array,
+    _optional_field_status_array,
+    _receiver_field_shift_s_array,
+    _receiver_field_shift_s_sorted_array,
+    _receiver_field_static_status_array,
+    _receiver_manual_static_shift_s_array,
+    _receiver_manual_static_status_array,
+    _source_depth_m_array,
+    _source_depth_shift_s_array,
+    _source_depth_status_array,
+    _source_field_shift_s_array,
+    _source_field_shift_s_sorted_array,
+    _source_field_static_status_array,
+    _source_manual_static_shift_s_array,
+    _source_manual_static_status_array,
+    _source_uphole_shift_s_array,
+    _source_uphole_status_array,
+    _source_uphole_time_s_array,
+    _total_with_field_shift_s,
+    _trace_endpoint_key_sorted_array,
+    _trace_field_shift_s_sorted_array,
+    _trace_field_static_status_sorted_array,
 )
 
+def _request_summary(*args: Any, **kwargs: Any) -> Any:
+    return getattr(_cell_velocity_artifacts(), '_request_summary')(*args, **kwargs)
 
-def _line_profile_qc_available(req: RefractionStaticApplyRequest) -> bool:
-    refractor_cell = req.model.refractor_cell
-    return (
-        refractor_cell is not None
-        and refractor_cell.coordinate_mode == 'line_2d_projected'
-    )
+def _layer_velocity_modes_for_request(*args: Any, **kwargs: Any) -> Any:
+    return getattr(_cell_velocity_artifacts(), '_layer_velocity_modes_for_request')(*args, **kwargs)
 
+def _request_has_cell_velocity_layer(*args: Any, **kwargs: Any) -> Any:
+    return getattr(_cell_velocity_artifacts(), '_request_has_cell_velocity_layer')(*args, **kwargs)
 
-def _line_profile_qc_availability_reason(
-    req: RefractionStaticApplyRequest,
-) -> str:
-    refractor_cell = req.model.refractor_cell
-    if refractor_cell is None:
-        return 'no_projected_inline_coordinate_model'
-    if refractor_cell.coordinate_mode != 'line_2d_projected':
-        return 'projected_inline_coordinates_unavailable_for_grid_3d'
-    return 'line_2d_projected'
+def _request_cell_velocity_layer(*args: Any, **kwargs: Any) -> Any:
+    return getattr(_cell_velocity_artifacts(), '_request_cell_velocity_layer')(*args, **kwargs)
 
+def _result_has_cell_velocity_arrays(*args: Any, **kwargs: Any) -> Any:
+    return getattr(_cell_velocity_artifacts(), '_result_has_cell_velocity_arrays')(*args, **kwargs)
 
-def _line_profile_coordinate_metadata(
-    req: RefractionStaticApplyRequest,
-) -> dict[str, Any]:
-    refractor_cell = req.model.refractor_cell
-    if refractor_cell is None:
-        return {
-            'coordinate_mode': 'grid_3d',
-            'line_origin_x_m': None,
-            'line_origin_y_m': None,
-            'line_azimuth_deg': None,
-        }
-    return refraction_cell_coordinate_metadata_from_config(refractor_cell)
+def _cell_velocity_artifact_result_for_layer(*args: Any, **kwargs: Any) -> Any:
+    return getattr(_cell_velocity_artifacts(), '_cell_velocity_artifact_result_for_layer')(*args, **kwargs)
 
+def _cell_velocity_layer_result(*args: Any, **kwargs: Any) -> Any:
+    return getattr(_cell_velocity_artifacts(), '_cell_velocity_layer_result')(*args, **kwargs)
 
-def _empty_line_profile_qc_arrays() -> dict[str, np.ndarray]:
-    arrays: dict[str, np.ndarray] = {}
-    for column in _LINE_PROFILE_QC_COLUMNS:
-        if column in _LINE_PROFILE_STRING_COLUMNS:
-            arrays[column] = np.asarray([], dtype='<U1')
-        elif column in _LINE_PROFILE_INT_COLUMNS:
-            arrays[column] = np.asarray([], dtype=np.int64)
-        else:
-            arrays[column] = np.asarray([], dtype=np.float64)
-    return arrays
+def _cell_velocity_artifact_result_from_layer(*args: Any, **kwargs: Any) -> Any:
+    return getattr(_cell_velocity_artifacts(), '_cell_velocity_artifact_result_from_layer')(*args, **kwargs)
 
-
-def _line_profile_endpoint_arrays(
-    result: RefractionDatumStaticsResult,
-    req: RefractionStaticApplyRequest,
-    *,
-    endpoint: str,
-) -> dict[str, np.ndarray]:
-    if endpoint == 'source':
-        endpoint_key = _string_array(result.source_endpoint_key)
-        node_id = _int_array(result.source_node_id)
-        x_m = _float_array(result.source_x_m)
-        y_m = _float_array(result.source_y_m)
-        surface_elevation_m = _float_array(result.source_surface_elevation_m)
-        t1_s = _float_array(result.source_half_intercept_time_s)
-        t2_s = _optional_line_profile_float_array(
-            result.source_t2_time_s,
-            shape=endpoint_key.shape[0],
-        )
-        t3_s = _optional_line_profile_float_array(
-            result.source_t3_time_s,
-            shape=endpoint_key.shape[0],
-        )
-        v2_m_s = _endpoint_v2_m_s(
-            result.source_v2_m_s,
-            shape=endpoint_key.shape[0],
-            scalar_v2_m_s=result.bedrock_velocity_m_s,
-        )
-        v3_m_s = _optional_line_profile_float_array(
-            result.source_v3_m_s,
-            shape=endpoint_key.shape[0],
-        )
-        vsub_m_s = _optional_line_profile_float_array(
-            result.source_vsub_m_s,
-            shape=endpoint_key.shape[0],
-        )
-        sh1_m = _source_sh1_weathering_thickness_m(result)
-        sh2_m = _optional_line_profile_float_array(
-            result.source_sh2_weathering_thickness_m,
-            shape=endpoint_key.shape[0],
-        )
-        sh3_m = _optional_line_profile_float_array(
-            result.source_sh3_weathering_thickness_m,
-            shape=endpoint_key.shape[0],
-        )
-        weathering_correction_s = _float_array(
-            result.source_weathering_replacement_shift_s
-        )
-        elevation_correction_s = _sum_float_arrays(
-            result.source_floating_datum_elevation_shift_s,
-            result.source_flat_datum_shift_s,
-        )
-        field_correction_s = _source_field_shift_s_array(result)
-        manual_static_s = _source_manual_static_shift_s_array(result)
-        total_static_s = _float_array(result.source_refraction_shift_s)
-        source_field_shift_s = field_correction_s
-        receiver_field_shift_s = np.full_like(field_correction_s, np.nan)
-        source_total_with_field_shift_s = _total_with_field_shift_s(
-            refraction_shift_s=result.source_refraction_shift_s,
-            field_shift_s=_source_field_shift_s_array(result),
-            field_status=_source_field_static_status_array(result),
-        )
-        receiver_total_with_field_shift_s = np.full_like(
-            source_total_with_field_shift_s,
-            np.nan,
-        )
-        static_status = _source_static_status_array(result)
-        kind = 'source'
-    elif endpoint == 'receiver':
-        endpoint_key = _string_array(result.receiver_endpoint_key)
-        node_id = _int_array(result.receiver_node_id)
-        x_m = _float_array(result.receiver_x_m)
-        y_m = _float_array(result.receiver_y_m)
-        surface_elevation_m = _float_array(result.receiver_surface_elevation_m)
-        t1_s = _float_array(result.receiver_half_intercept_time_s)
-        t2_s = _optional_line_profile_float_array(
-            result.receiver_t2_time_s,
-            shape=endpoint_key.shape[0],
-        )
-        t3_s = _optional_line_profile_float_array(
-            result.receiver_t3_time_s,
-            shape=endpoint_key.shape[0],
-        )
-        v2_m_s = _endpoint_v2_m_s(
-            result.receiver_v2_m_s,
-            shape=endpoint_key.shape[0],
-            scalar_v2_m_s=result.bedrock_velocity_m_s,
-        )
-        v3_m_s = _optional_line_profile_float_array(
-            result.receiver_v3_m_s,
-            shape=endpoint_key.shape[0],
-        )
-        vsub_m_s = _optional_line_profile_float_array(
-            result.receiver_vsub_m_s,
-            shape=endpoint_key.shape[0],
-        )
-        sh1_m = _receiver_sh1_weathering_thickness_m(result)
-        sh2_m = _optional_line_profile_float_array(
-            result.receiver_sh2_weathering_thickness_m,
-            shape=endpoint_key.shape[0],
-        )
-        sh3_m = _optional_line_profile_float_array(
-            result.receiver_sh3_weathering_thickness_m,
-            shape=endpoint_key.shape[0],
-        )
-        weathering_correction_s = _float_array(
-            result.receiver_weathering_replacement_shift_s
-        )
-        elevation_correction_s = _sum_float_arrays(
-            result.receiver_floating_datum_elevation_shift_s,
-            result.receiver_flat_datum_shift_s,
-        )
-        field_correction_s = _receiver_field_shift_s_array(result)
-        manual_static_s = _receiver_manual_static_shift_s_array(result)
-        total_static_s = _float_array(result.receiver_refraction_shift_s)
-        source_field_shift_s = np.full_like(field_correction_s, np.nan)
-        receiver_field_shift_s = field_correction_s
-        source_total_with_field_shift_s = np.full_like(field_correction_s, np.nan)
-        receiver_total_with_field_shift_s = _total_with_field_shift_s(
-            refraction_shift_s=result.receiver_refraction_shift_s,
-            field_shift_s=_receiver_field_shift_s_array(result),
-            field_status=_receiver_field_static_status_array(result),
-        )
-        static_status = _receiver_static_status_array(result)
-        kind = 'receiver'
-    else:
-        raise RefractionStaticArtifactError(f'unsupported endpoint kind: {endpoint}')
-
-    projected = _line_profile_projected_coordinates(
-        req=req,
-        x_m=x_m,
-        y_m=y_m,
-    )
-    node_context = _node_context(result)
-    layer1_base = _line_profile_layer1_base_elevation(
-        surface_elevation_m=surface_elevation_m,
-        sh1_m=sh1_m,
-    )
-    layer2_base = _line_profile_layer2_base_elevation(
-        layer1_base_elevation_m=layer1_base,
-        sh2_m=sh2_m,
-        has_3layer=bool(np.any(np.isfinite(sh3_m))),
-    )
-    n_endpoints = int(endpoint_key.shape[0])
-    return {
-        'endpoint_kind': _string_array(np.full(n_endpoints, kind, dtype=f'<U{len(kind)}')),
-        'endpoint_key': endpoint_key,
-        'node_id': node_id,
-        'inline_m': projected['inline_m'],
-        'crossline_m': projected['crossline_m'],
-        'x_m': x_m,
-        'y_m': y_m,
-        'surface_elevation_m': surface_elevation_m,
-        'pick_count': _line_profile_node_int_values(
-            node_id,
-            node_context['pick_count'],
-        ),
-        'used_pick_count': _line_profile_node_int_values(
-            node_id,
-            node_context['used_pick_count'],
-        ),
-        'residual_rms_ms': _line_profile_seconds_to_ms(
-            _line_profile_node_float_values(node_id, node_context['residual_rms'])
-        ),
-        'residual_mad_ms': _line_profile_seconds_to_ms(
-            _line_profile_node_float_values(node_id, node_context['residual_mad'])
-        ),
-        'v1_m_s': _filled_float_array(result.weathering_velocity_m_s, n_endpoints),
-        'v2_m_s': v2_m_s,
-        'v3_m_s': v3_m_s,
-        'vsub_m_s': vsub_m_s,
-        't1_ms': _line_profile_seconds_to_ms(t1_s),
-        't2_ms': _line_profile_seconds_to_ms(t2_s),
-        't3_ms': _line_profile_seconds_to_ms(t3_s),
-        'sh1_m': sh1_m,
-        'sh2_m': sh2_m,
-        'sh3_m': sh3_m,
-        'layer1_base_elevation_m': layer1_base,
-        'layer2_base_elevation_m': layer2_base,
-        'final_refractor_elevation_m': _float_array(
-            result.source_refractor_elevation_m
-            if endpoint == 'source'
-            else result.receiver_refractor_elevation_m
-        ),
-        'weathering_correction_ms': _line_profile_seconds_to_ms(
-            weathering_correction_s
-        ),
-        'elevation_correction_ms': _line_profile_seconds_to_ms(
-            elevation_correction_s
-        ),
-        'source_field_shift_ms': _line_profile_seconds_to_ms(source_field_shift_s),
-        'receiver_field_shift_ms': _line_profile_seconds_to_ms(
-            receiver_field_shift_s
-        ),
-        'field_correction_ms': _line_profile_seconds_to_ms(field_correction_s),
-        'manual_static_shift_ms': _line_profile_seconds_to_ms(manual_static_s),
-        'manual_static_ms': _line_profile_seconds_to_ms(manual_static_s),
-        'total_static_ms': _line_profile_seconds_to_ms(total_static_s),
-        'total_applied_shift_ms': _line_profile_seconds_to_ms(total_static_s),
-        'source_total_with_field_shift_ms': _line_profile_seconds_to_ms(
-            source_total_with_field_shift_s
-        ),
-        'receiver_total_with_field_shift_ms': _line_profile_seconds_to_ms(
-            receiver_total_with_field_shift_s
-        ),
-        'static_status': _string_array(static_status),
-        'solution_status': _line_profile_node_string_values(
-            node_id,
-            node_context['solution_status'],
-            default='missing_solution',
-        ),
-    }
-
-
-def _line_profile_projected_coordinates(
-    *,
-    req: RefractionStaticApplyRequest,
-    x_m: np.ndarray,
-    y_m: np.ndarray,
-) -> dict[str, np.ndarray]:
-    refractor_cell = req.model.refractor_cell
-    if refractor_cell is None:
-        raise RefractionStaticArtifactError(
-            'line-profile QC requires model.refractor_cell'
-        )
-    projected = project_refraction_cell_points(
-        x_m=x_m,
-        y_m=y_m,
-        mode=refractor_cell.coordinate_mode,
-        line_origin_x_m=refractor_cell.line_origin_x_m,
-        line_origin_y_m=refractor_cell.line_origin_y_m,
-        line_azimuth_deg=refractor_cell.line_azimuth_deg,
-    )
-    if (
-        projected.projected_inline_m is None
-        or projected.projected_crossline_m is None
-    ):
-        raise RefractionStaticArtifactError(
-            'line-profile QC requires projected inline/crossline coordinates'
-        )
-    return {
-        'inline_m': np.ascontiguousarray(
-            projected.projected_inline_m,
-            dtype=np.float64,
-        ),
-        'crossline_m': np.ascontiguousarray(
-            projected.projected_crossline_m,
-            dtype=np.float64,
-        ),
-    }
-
-
-def _optional_line_profile_float_array(
-    value: object,
-    *,
-    shape: int,
-) -> np.ndarray:
-    if value is None:
-        return np.full(int(shape), np.nan, dtype=np.float64)
-    array = _float_array(value)
-    if array.shape != (int(shape),):
-        raise RefractionStaticArtifactError(
-            'line-profile optional endpoint array length mismatch'
-        )
-    return array
-
-
-def _line_profile_seconds_to_ms(values: np.ndarray) -> np.ndarray:
-    return np.ascontiguousarray(np.asarray(values, dtype=np.float64) * 1000.0)
-
-
-def _line_profile_layer1_base_elevation(
-    *,
-    surface_elevation_m: np.ndarray,
-    sh1_m: np.ndarray,
-) -> np.ndarray:
-    surface = np.asarray(surface_elevation_m, dtype=np.float64)
-    sh1 = np.asarray(sh1_m, dtype=np.float64)
-    out = np.full(surface.shape, np.nan, dtype=np.float64)
-    finite = np.isfinite(surface) & np.isfinite(sh1)
-    out[finite] = surface[finite] - sh1[finite]
-    return np.ascontiguousarray(out, dtype=np.float64)
-
-
-def _line_profile_layer2_base_elevation(
-    *,
-    layer1_base_elevation_m: np.ndarray,
-    sh2_m: np.ndarray,
-    has_3layer: bool,
-) -> np.ndarray:
-    out = np.full(np.asarray(layer1_base_elevation_m).shape, np.nan, dtype=np.float64)
-    if not has_3layer:
-        return out
-    layer1 = np.asarray(layer1_base_elevation_m, dtype=np.float64)
-    sh2 = np.asarray(sh2_m, dtype=np.float64)
-    finite = np.isfinite(layer1) & np.isfinite(sh2)
-    out[finite] = layer1[finite] - sh2[finite]
-    return np.ascontiguousarray(out, dtype=np.float64)
-
-
-def _line_profile_node_int_values(
-    node_id: np.ndarray,
-    lookup: Mapping[int, Any],
-) -> np.ndarray:
-    out = np.full(np.asarray(node_id).shape, -1, dtype=np.int64)
-    for index, raw_node_id in enumerate(np.asarray(node_id).tolist()):
-        value = lookup.get(int(raw_node_id))
-        if value is not None:
-            out[index] = int(value)
-    return np.ascontiguousarray(out, dtype=np.int64)
-
-
-def _line_profile_node_float_values(
-    node_id: np.ndarray,
-    lookup: Mapping[int, Any],
-) -> np.ndarray:
-    out = np.full(np.asarray(node_id).shape, np.nan, dtype=np.float64)
-    for index, raw_node_id in enumerate(np.asarray(node_id).tolist()):
-        value = lookup.get(int(raw_node_id))
-        if value is not None:
-            out[index] = _float_or_nan(value)
-    return np.ascontiguousarray(out, dtype=np.float64)
-
-
-def _line_profile_node_string_values(
-    node_id: np.ndarray,
-    lookup: Mapping[int, Any],
-    *,
-    default: str,
-) -> np.ndarray:
-    values = [
-        str(lookup.get(int(raw_node_id), default))
-        for raw_node_id in np.asarray(node_id).tolist()
-    ]
-    return _string_array(values)
-
-
-def _line_profile_qc_rows(
-    arrays: Mapping[str, np.ndarray],
-    *,
-    endpoint_kind: str | None = None,
-) -> list[dict[str, object]]:
-    kind = np.asarray(arrays['endpoint_kind']).astype(str, copy=False)
-    selected = np.arange(kind.shape[0], dtype=np.int64)
-    if endpoint_kind is not None:
-        selected = selected[kind == endpoint_kind]
-    rows: list[dict[str, object]] = []
-    for index in selected.tolist():
-        rows.append(
-            {
-                column: _line_profile_csv_value(column, arrays[column][index])
-                for column in _LINE_PROFILE_QC_COLUMNS
-            }
-        )
-    return rows
-
-
-def _line_profile_csv_value(column: str, value: object) -> object:
-    if column in _LINE_PROFILE_STRING_COLUMNS:
-        return str(value)
-    if column in _LINE_PROFILE_INT_COLUMNS:
-        out = _csv_int(value)
-        return '' if out != '' and int(out) < 0 else out
-    return _csv_float(value)
-
-
-def _node_lookup(node_id: np.ndarray, values: np.ndarray) -> dict[int, Any]:
-    return {
-        int(raw_node): values[index]
-        for index, raw_node in enumerate(np.asarray(node_id).tolist())
-    }
-
-
-def _endpoint_node_values(
-    endpoint_node_id: np.ndarray,
-    node_id: np.ndarray,
-    node_values: np.ndarray,
-) -> np.ndarray:
-    lookup = _node_lookup(node_id, node_values)
-    out = np.full(np.asarray(endpoint_node_id).shape, np.nan, dtype=np.float64)
-    for index, raw_node in enumerate(np.asarray(endpoint_node_id).tolist()):
-        value = lookup.get(int(raw_node))
-        if value is not None:
-            out[index] = _float_or_nan(value)
-    return np.ascontiguousarray(out, dtype=np.float64)
-
-
-def _node_context(result: RefractionDatumStaticsResult) -> dict[str, dict[int, Any]]:
-    return {
-        'solution_status': _node_lookup(result.node_id, result.node_solution_status),
-        'weathering_status': _node_lookup(result.node_id, result.node_weathering_status),
-        't1_s': _node_lookup(result.node_id, result.node_half_intercept_time_s),
-        'weathering_thickness': _node_lookup(
-            result.node_id,
-            result.node_weathering_thickness_m,
-        ),
-        'weathering_correction': _node_lookup(
-            result.node_id,
-            result.node_weathering_replacement_shift_s,
-        ),
-        'pick_count': _node_lookup(result.node_id, result.node_pick_count),
-        'used_pick_count': _node_lookup(result.node_id, result.node_used_pick_count),
-        'residual_rms': _node_lookup(result.node_id, result.node_residual_rms_s),
-        'residual_mad': _node_lookup(result.node_id, result.node_residual_mad_s),
-    }
-
-
-def _endpoint_layer_qc_context(
-    result: RefractionDatumStaticsResult,
-    *,
-    endpoint: str,
-) -> dict[str, dict[str, dict[str, int | float]]]:
-    n_rows = int(result.row_trace_index_sorted.shape[0])
-    layer_kind, _layer_index = _residual_row_layer_context(result)
-    endpoint_field = (
-        'row_source_endpoint_key'
-        if endpoint == 'source'
-        else 'row_receiver_endpoint_key'
-    )
-    endpoint_key = _residual_row_string_context(result, endpoint_field)
-    used = np.asarray(result.used_row_mask, dtype=bool)
-    residual_s = np.asarray(result.residual_time_s, dtype=np.float64)
-    context: dict[str, dict[str, dict[str, Any]]] = {
-        'pick_count': {},
-        'used_pick_count': {},
-        'residual_values_ms': {},
-    }
-    for row_index in range(n_rows):
-        kind = str(layer_kind[row_index])
-        key = str(endpoint_key[row_index])
-        if not kind or not key:
-            continue
-        _increment_layer_count(context['pick_count'], key, kind)
-        if bool(used[row_index]):
-            _increment_layer_count(context['used_pick_count'], key, kind)
-            residual = residual_s[row_index]
-            if np.isfinite(residual):
-                values = context['residual_values_ms'].setdefault(key, {}).setdefault(
-                    kind,
-                    [],
-                )
-                values.append(float(residual) * 1000.0)
-    return {
-        'pick_count': context['pick_count'],
-        'used_pick_count': context['used_pick_count'],
-        'residual_rms_ms': _endpoint_layer_residual_stat(
-            context['residual_values_ms'],
-            stat='rms',
-        ),
-        'residual_mad_ms': _endpoint_layer_residual_stat(
-            context['residual_values_ms'],
-            stat='mad',
-        ),
-    }
-
-
-def _endpoint_layer_qc_row_fields(
-    layer_context: dict[str, dict[str, dict[str, int | float]]],
-    endpoint_key: str,
-) -> dict[str, str]:
-    return {
-        'pick_count_by_layer': _csv_json_object(
-            layer_context['pick_count'].get(endpoint_key, {})
-        ),
-        'used_pick_count_by_layer': _csv_json_object(
-            layer_context['used_pick_count'].get(endpoint_key, {})
-        ),
-        'residual_rms_by_layer_ms': _csv_json_object(
-            layer_context['residual_rms_ms'].get(endpoint_key, {})
-        ),
-        'residual_mad_by_layer_ms': _csv_json_object(
-            layer_context['residual_mad_ms'].get(endpoint_key, {})
-        ),
-    }
-
-
-def _increment_layer_count(
-    target: dict[str, dict[str, int]],
-    endpoint_key: str,
-    layer_kind: str,
-) -> None:
-    by_layer = target.setdefault(endpoint_key, {})
-    by_layer[layer_kind] = int(by_layer.get(layer_kind, 0)) + 1
-
-
-def _endpoint_layer_residual_stat(
-    values_by_endpoint: dict[str, dict[str, list[float]]],
-    *,
-    stat: str,
-) -> dict[str, dict[str, float]]:
-    out: dict[str, dict[str, float]] = {}
-    for endpoint_key, values_by_layer in values_by_endpoint.items():
-        by_layer: dict[str, float] = {}
-        for layer_kind, values in values_by_layer.items():
-            arr = np.asarray(values, dtype=np.float64)
-            if arr.size == 0:
-                continue
-            if stat == 'rms':
-                by_layer[layer_kind] = float(np.sqrt(np.mean(arr * arr)))
-            elif stat == 'mad':
-                by_layer[layer_kind] = float(np.median(np.abs(arr - np.median(arr))))
-            else:
-                raise RefractionStaticArtifactError(
-                    f'unsupported endpoint layer residual stat: {stat}'
-                )
-        out[endpoint_key] = by_layer
-    return out
-
-
-def _source_static_status_array(result: RefractionDatumStaticsResult) -> np.ndarray:
-    node_context = _node_context(result)
-    return _endpoint_static_status_array(
-        node_id=result.source_node_id,
-        x_m=result.source_x_m,
-        y_m=result.source_y_m,
-        surface_elevation_m=result.source_surface_elevation_m,
-        t1_s=result.source_half_intercept_time_s,
-        weathering_thickness_m=result.source_weathering_thickness_m,
-        total_shift_s=result.source_refraction_shift_s,
-        datum_status=result.source_datum_status,
-        node_solution_status=node_context['solution_status'],
-        node_weathering_status=node_context['weathering_status'],
-    )
-
-
-def _receiver_static_status_array(result: RefractionDatumStaticsResult) -> np.ndarray:
-    node_context = _node_context(result)
-    return _endpoint_static_status_array(
-        node_id=result.receiver_node_id,
-        x_m=result.receiver_x_m,
-        y_m=result.receiver_y_m,
-        surface_elevation_m=result.receiver_surface_elevation_m,
-        t1_s=result.receiver_half_intercept_time_s,
-        weathering_thickness_m=result.receiver_weathering_thickness_m,
-        total_shift_s=result.receiver_refraction_shift_s,
-        datum_status=result.receiver_datum_status,
-        node_solution_status=node_context['solution_status'],
-        node_weathering_status=node_context['weathering_status'],
-    )
-
-
-def _endpoint_static_status_array(
-    *,
-    node_id: np.ndarray,
-    x_m: np.ndarray,
-    y_m: np.ndarray,
-    surface_elevation_m: np.ndarray,
-    t1_s: np.ndarray,
-    weathering_thickness_m: np.ndarray,
-    total_shift_s: np.ndarray,
-    datum_status: np.ndarray,
-    node_solution_status: dict[int, Any],
-    node_weathering_status: dict[int, Any],
-) -> np.ndarray:
-    statuses: list[str] = []
-    for index, raw_node_id in enumerate(np.asarray(node_id).tolist()):
-        endpoint_node_id = int(raw_node_id)
-        solution_status = str(
-            node_solution_status.get(endpoint_node_id, 'missing_solution')
-        )
-        weathering_status = str(
-            node_weathering_status.get(endpoint_node_id, 'missing_node')
-        )
-        statuses.append(
-            _endpoint_static_status(
-                node_missing=endpoint_node_id not in node_solution_status,
-                x_m=x_m[index],
-                y_m=y_m[index],
-                surface_elevation_m=surface_elevation_m[index],
-                t1_s=t1_s[index],
-                weathering_thickness_m=weathering_thickness_m[index],
-                total_shift_s=total_shift_s[index],
-                solution_status=solution_status,
-                weathering_status=weathering_status,
-                datum_status=datum_status[index],
-            )
-        )
-    return _string_array(statuses)
-
-
-def _endpoint_static_status(
-    *,
-    node_missing: bool,
-    x_m: object,
-    y_m: object,
-    surface_elevation_m: object,
-    t1_s: object,
-    weathering_thickness_m: object,
-    total_shift_s: object,
-    solution_status: object,
-    weathering_status: object,
-    datum_status: object,
-) -> str:
-    return classify_refraction_endpoint_static_status(
-        node_missing=node_missing,
-        x_m=x_m,
-        y_m=y_m,
-        surface_elevation_m=surface_elevation_m,
-        t1_s=t1_s,
-        weathering_thickness_m=weathering_thickness_m,
-        total_shift_s=total_shift_s,
-        solution_status=solution_status,
-        weathering_status=weathering_status,
-        datum_status=datum_status,
-    )
-
-
-def _request_summary(req: RefractionStaticApplyRequest) -> dict[str, Any]:
-    return {
-        'file_id': req.file_id,
-        'key1_byte': int(req.key1_byte),
-        'key2_byte': int(req.key2_byte),
-        'pick_source_kind': req.pick_source.kind,
-        'model_method': req.model.method,
-        'apply_mode': req.apply.mode,
-        'register_corrected_file': bool(req.apply.register_corrected_file),
-    }
-
-
-def _layer_velocity_modes_for_request(
-    req: RefractionStaticApplyRequest,
-) -> dict[str, str]:
-    if req.model.method != 'multilayer_time_term':
-        return {}
-    return {
-        str(config.kind): str(config.velocity_mode)
-        for config in normalize_refraction_static_layers(req.model)
-    }
-
-
-def _request_has_cell_velocity_layer(req: RefractionStaticApplyRequest) -> bool:
-    return bool(_request_cell_velocity_layer_kinds(req))
-
-
-def _request_cell_velocity_layer(
-    req: RefractionStaticApplyRequest,
-    *,
-    layer_kind: RefractionLayerKind | None = None,
-) -> Any | None:
-    if req.model.method != 'multilayer_time_term':
-        return None
-    for layer in normalize_refraction_static_layers(req.model):
-        if layer.velocity_mode != 'solve_cell':
-            continue
-        if layer_kind is None or layer.kind == layer_kind:
-            return layer
-    return None
-
-
-def _result_has_cell_velocity_arrays(result: RefractionDatumStaticsResult) -> bool:
-    return (
-        result.active_cell_id is not None
-        and result.inactive_cell_id is not None
-        and result.cell_bedrock_velocity_m_s is not None
-        and result.cell_bedrock_slowness_s_per_m is not None
-        and result.cell_velocity_status is not None
-    )
-
-
-def _cell_velocity_artifact_result_for_layer(
-    *,
-    result: RefractionDatumStaticsResult,
-    req: RefractionStaticApplyRequest,
-    layer_kind: RefractionLayerKind,
-) -> RefractionDatumStaticsResult:
-    if req.model.method != 'multilayer_time_term':
-        return result
-
-    layer = _cell_velocity_layer_result(result, layer_kind)
-    if layer is None:
-        if (
-            len(_request_cell_velocity_layer_kinds(req)) == 1
-            and _result_has_cell_velocity_arrays(result)
-        ):
-            return result
-        raise RefractionStaticArtifactError(
-            f'{layer_kind} cell velocity artifacts require layer solve result arrays'
-        )
-
-    return _cell_velocity_artifact_result_from_layer(
-        result=result,
-        req=req,
-        layer=layer,
-    )
-
-
-def _cell_velocity_layer_result(
-    result: RefractionDatumStaticsResult,
-    layer_kind: RefractionLayerKind,
-) -> RefractionLayerSolveResult | None:
-    for layer in result.layer_results or ():
-        if layer.layer_kind == layer_kind:
-            return layer
-    return None
-
-
-def _cell_velocity_artifact_result_from_layer(
-    *,
-    result: RefractionDatumStaticsResult,
-    req: RefractionStaticApplyRequest,
-    layer: RefractionLayerSolveResult,
-) -> RefractionDatumStaticsResult:
-    n_rows = int(result.row_trace_index_sorted.shape[0])
-    active_cell_id = _required_layer_cell_id_array(
-        layer.active_cell_id,
-        name=f'{layer.layer_kind}.active_cell_id',
-    )
-    inactive_cell_id = _required_layer_cell_id_array(
-        layer.inactive_cell_id,
-        name=f'{layer.layer_kind}.inactive_cell_id',
-    )
-    n_total_cells = _cell_velocity_n_total_cells(req)
-    cell_velocity = _layer_cell_values_for_active_cells(
-        layer.cell_velocity_m_s,
-        active_cell_id=active_cell_id,
-        n_total_cells=n_total_cells,
-        name=f'{layer.layer_kind}.cell_velocity_m_s',
-    )
-    cell_slowness = _layer_cell_values_for_active_cells(
-        layer.cell_slowness_s_per_m,
-        active_cell_id=active_cell_id,
-        n_total_cells=n_total_cells,
-        name=f'{layer.layer_kind}.cell_slowness_s_per_m',
-    )
-    cell_status = _layer_cell_status_for_active_cells(
-        layer.cell_velocity_status,
-        active_cell_id=active_cell_id,
-        n_total_cells=n_total_cells,
-        name=f'{layer.layer_kind}.cell_velocity_status',
-    )
-    velocity_summary = _stat(cell_velocity, 'median')
-    slowness_summary = _stat(cell_slowness, 'median')
-    qc = {**result.qc, **layer.qc}
-    if 'layers' in result.qc:
-        qc['layers'] = result.qc['layers']
-    return replace(
-        result,
-        bedrock_velocity_mode='solve_cell',
-        bedrock_velocity_m_s=(
-            result.bedrock_velocity_m_s
-            if velocity_summary is None
-            else velocity_summary
-        ),
-        bedrock_slowness_s_per_m=(
-            result.bedrock_slowness_s_per_m
-            if slowness_summary is None
-            else slowness_summary
-        ),
-        active_cell_id=active_cell_id,
-        inactive_cell_id=inactive_cell_id,
-        cell_bedrock_velocity_m_s=cell_velocity,
-        cell_bedrock_slowness_s_per_m=cell_slowness,
-        cell_velocity_status=cell_status,
-        row_midpoint_cell_id=_row_midpoint_cell_id_for_cell_velocity_layer(
-            result=result,
-            req=req,
-            layer=layer,
-            n_rows=n_rows,
-        ),
-        modeled_pick_time_s=_layer_trace_float_array(
-            layer.trace_predicted_time_s_sorted,
-            n_rows=n_rows,
-            name=f'{layer.layer_kind}.trace_predicted_time_s_sorted',
-        ),
-        residual_time_s=_layer_trace_float_array(
-            layer.trace_residual_s_sorted,
-            n_rows=n_rows,
-            name=f'{layer.layer_kind}.trace_residual_s_sorted',
-        ),
-        used_row_mask=_layer_trace_bool_array(
-            layer.used_observation_mask_sorted,
-            n_rows=n_rows,
-            name=f'{layer.layer_kind}.used_observation_mask_sorted',
-        ),
-        rejected_by_robust_mask=_layer_trace_bool_array(
-            (
-                np.zeros(n_rows, dtype=bool)
-                if layer.rejected_by_robust_mask_sorted is None
-                else layer.rejected_by_robust_mask_sorted
-            ),
-            n_rows=n_rows,
-            name=f'{layer.layer_kind}.rejected_by_robust_mask_sorted',
-        ),
-        qc=qc,
-    )
-
-
-def _cell_velocity_n_total_cells(req: RefractionStaticApplyRequest) -> int:
-    refractor_cell = req.model.refractor_cell
-    if refractor_cell is None:
-        raise RefractionStaticArtifactError(
-            'model.refractor_cell is required for cell velocity artifacts'
-        )
-    grid = build_refraction_cell_grid(
-        effective_refraction_cell_grid_config(refractor_cell)
-    )
-    return int(grid.cell_id.shape[0])
-
+def _cell_velocity_n_total_cells(*args: Any, **kwargs: Any) -> Any:
+    return getattr(_cell_velocity_artifacts(), '_cell_velocity_n_total_cells')(*args, **kwargs)
 
 def _required_layer_cell_id_array(value: object, *, name: str) -> np.ndarray:
     if value is None:
@@ -7837,673 +5048,84 @@ def _required_layer_cell_id_array(value: object, *, name: str) -> np.ndarray:
         raise RefractionStaticArtifactError(f'{name} must be one-dimensional')
     return np.ascontiguousarray(array, dtype=np.int64)
 
+def _layer_cell_values_for_active_cells(*args: Any, **kwargs: Any) -> Any:
+    return getattr(_cell_velocity_artifacts(), '_layer_cell_values_for_active_cells')(*args, **kwargs)
 
-def _layer_cell_values_for_active_cells(
-    value: object,
-    *,
-    active_cell_id: np.ndarray,
-    n_total_cells: int,
-    name: str,
-) -> np.ndarray:
-    if value is None:
-        raise RefractionStaticArtifactError(f'{name} is required')
-    array = np.asarray(value, dtype=np.float64)
-    if array.ndim != 1:
-        raise RefractionStaticArtifactError(f'{name} must be one-dimensional')
-    if array.shape == active_cell_id.shape:
-        return np.ascontiguousarray(array, dtype=np.float64)
-    if array.shape == (int(n_total_cells),):
-        return np.ascontiguousarray(array[active_cell_id], dtype=np.float64)
-    raise RefractionStaticArtifactError(
-        f'{name} must match active_cell_id length or total cell count'
-    )
+def _layer_cell_status_for_active_cells(*args: Any, **kwargs: Any) -> Any:
+    return getattr(_cell_velocity_artifacts(), '_layer_cell_status_for_active_cells')(*args, **kwargs)
 
+def _layer_trace_float_array(*args: Any, **kwargs: Any) -> Any:
+    return getattr(_cell_velocity_artifacts(), '_layer_trace_float_array')(*args, **kwargs)
 
-def _layer_cell_status_for_active_cells(
-    value: object,
-    *,
-    active_cell_id: np.ndarray,
-    n_total_cells: int,
-    name: str,
-) -> np.ndarray:
-    if value is None:
-        return _string_array(np.full(active_cell_id.shape, 'solved', dtype='<U6'))
-    status = _string_array(value)
-    if status.shape == active_cell_id.shape:
-        _validate_status_array(status, name=name)
-        return status
-    if status.shape == (int(n_total_cells),):
-        out = _string_array(status[active_cell_id])
-        _validate_status_array(out, name=name)
-        return out
-    raise RefractionStaticArtifactError(
-        f'{name} must match active_cell_id length or total cell count'
-    )
+def _layer_trace_bool_array(*args: Any, **kwargs: Any) -> Any:
+    return getattr(_cell_velocity_artifacts(), '_layer_trace_bool_array')(*args, **kwargs)
 
+def _row_midpoint_cell_id_for_cell_velocity_layer(*args: Any, **kwargs: Any) -> Any:
+    return getattr(_cell_velocity_artifacts(), '_row_midpoint_cell_id_for_cell_velocity_layer')(*args, **kwargs)
 
-def _layer_trace_float_array(value: object, *, n_rows: int, name: str) -> np.ndarray:
-    array = np.asarray(value, dtype=np.float64)
-    if array.shape != (int(n_rows),):
-        raise RefractionStaticArtifactError(
-            f'{name} length must match residual rows'
-        )
-    return np.ascontiguousarray(array, dtype=np.float64)
+def _compute_row_midpoint_cell_id(*args: Any, **kwargs: Any) -> Any:
+    return getattr(_cell_velocity_artifacts(), '_compute_row_midpoint_cell_id')(*args, **kwargs)
 
+def _row_endpoint_xy(*args: Any, **kwargs: Any) -> Any:
+    return getattr(_cell_velocity_artifacts(), '_row_endpoint_xy')(*args, **kwargs)
 
-def _layer_trace_bool_array(value: object, *, n_rows: int, name: str) -> np.ndarray:
-    array = np.asarray(value, dtype=bool)
-    if array.shape != (int(n_rows),):
-        raise RefractionStaticArtifactError(
-            f'{name} length must match residual rows'
-        )
-    return np.ascontiguousarray(array, dtype=bool)
+def _cell_velocity_candidate_row_mask(*args: Any, **kwargs: Any) -> Any:
+    return getattr(_cell_velocity_artifacts(), '_cell_velocity_candidate_row_mask')(*args, **kwargs)
 
+def _cell_velocity_component(*args: Any, **kwargs: Any) -> Any:
+    return getattr(_cell_velocity_artifacts(), '_cell_velocity_component')(*args, **kwargs)
 
-def _row_midpoint_cell_id_for_cell_velocity_layer(
-    *,
-    result: RefractionDatumStaticsResult,
-    req: RefractionStaticApplyRequest,
-    layer: RefractionLayerSolveResult,
-    n_rows: int,
-) -> np.ndarray:
-    if layer.row_midpoint_cell_id is not None:
-        array = np.asarray(layer.row_midpoint_cell_id, dtype=np.int64)
-        if array.shape == (int(n_rows),):
-            return np.ascontiguousarray(array, dtype=np.int64)
-    if result.row_midpoint_cell_id is not None:
-        array = np.asarray(result.row_midpoint_cell_id, dtype=np.int64)
-        if array.shape == (int(n_rows),):
-            return np.ascontiguousarray(array, dtype=np.int64)
-    return _compute_row_midpoint_cell_id(result=result, req=req, n_rows=n_rows)
+def _cell_velocity_layer_bounds(*args: Any, **kwargs: Any) -> Any:
+    return getattr(_cell_velocity_artifacts(), '_cell_velocity_layer_bounds')(*args, **kwargs)
 
+def _cell_velocity_min_observations_per_cell(*args: Any, **kwargs: Any) -> Any:
+    return getattr(_cell_velocity_artifacts(), '_cell_velocity_min_observations_per_cell')(*args, **kwargs)
 
-def _compute_row_midpoint_cell_id(
-    *,
-    result: RefractionDatumStaticsResult,
-    req: RefractionStaticApplyRequest,
-    n_rows: int,
-) -> np.ndarray:
-    refractor_cell = req.model.refractor_cell
-    if refractor_cell is None:
-        raise RefractionStaticArtifactError(
-            'model.refractor_cell is required for cell velocity artifacts'
-        )
-    source_x, source_y = _row_endpoint_xy(result, endpoint='source', n_rows=n_rows)
-    receiver_x, receiver_y = _row_endpoint_xy(
-        result,
-        endpoint='receiver',
-        n_rows=n_rows,
-    )
-    source_projected = project_refraction_cell_points(
-        x_m=source_x,
-        y_m=source_y,
-        mode=refractor_cell.coordinate_mode,
-        line_origin_x_m=refractor_cell.line_origin_x_m,
-        line_origin_y_m=refractor_cell.line_origin_y_m,
-        line_azimuth_deg=refractor_cell.line_azimuth_deg,
-    )
-    receiver_projected = project_refraction_cell_points(
-        x_m=receiver_x,
-        y_m=receiver_y,
-        mode=refractor_cell.coordinate_mode,
-        line_origin_x_m=refractor_cell.line_origin_x_m,
-        line_origin_y_m=refractor_cell.line_origin_y_m,
-        line_azimuth_deg=refractor_cell.line_azimuth_deg,
-    )
-    grid = build_refraction_cell_grid(
-        effective_refraction_cell_grid_config(refractor_cell)
-    )
-    assignment = assign_observation_midpoint_cells(
-        grid,
-        source_x_m=source_projected.x_m,
-        source_y_m=source_projected.y_m,
-        receiver_x_m=receiver_projected.x_m,
-        receiver_y_m=receiver_projected.y_m,
-    )
-    return np.ascontiguousarray(assignment.cell_id, dtype=np.int64)
+def _refractor_velocity_cell_rows(*args: Any, **kwargs: Any) -> Any:
+    return getattr(_cell_velocity_artifacts(), '_refractor_velocity_cell_rows')(*args, **kwargs)
 
+def _cell_solver_history_csv_row(*args: Any, **kwargs: Any) -> Any:
+    return getattr(_cell_velocity_artifacts(), '_cell_solver_history_csv_row')(*args, **kwargs)
 
-def _row_endpoint_xy(
-    result: RefractionDatumStaticsResult,
-    *,
-    endpoint: str,
-    n_rows: int,
-) -> tuple[np.ndarray, np.ndarray]:
-    if endpoint == 'source':
-        row_key = result.row_source_endpoint_key
-        endpoint_key = result.source_endpoint_key
-        x_m = result.source_x_m
-        y_m = result.source_y_m
-    elif endpoint == 'receiver':
-        row_key = result.row_receiver_endpoint_key
-        endpoint_key = result.receiver_endpoint_key
-        x_m = result.receiver_x_m
-        y_m = result.receiver_y_m
-    else:
-        raise RefractionStaticArtifactError(f'unsupported endpoint: {endpoint}')
-    if row_key is None:
-        raise RefractionStaticArtifactError(
-            f'row_{endpoint}_endpoint_key is required for layer cell artifacts'
-        )
-    row_key_array = np.asarray(row_key, dtype=object)
-    if row_key_array.shape != (int(n_rows),):
-        raise RefractionStaticArtifactError(
-            f'row_{endpoint}_endpoint_key length must match residual rows'
-        )
-    endpoint_key_array = np.asarray(endpoint_key, dtype=object)
-    x_array = np.asarray(x_m, dtype=np.float64)
-    y_array = np.asarray(y_m, dtype=np.float64)
-    if endpoint_key_array.shape != x_array.shape or x_array.shape != y_array.shape:
-        raise RefractionStaticArtifactError(
-            f'{endpoint} endpoint key and coordinate arrays must match'
-        )
-    index_by_key = {
-        str(key): index for index, key in enumerate(endpoint_key_array.tolist())
-    }
-    indices: list[int] = []
-    for key in row_key_array.tolist():
-        try:
-            indices.append(index_by_key[str(key)])
-        except KeyError as exc:
-            raise RefractionStaticArtifactError(
-                f'row {endpoint} endpoint key {key!r} is missing from endpoint table'
-            ) from exc
-    index_array = np.asarray(indices, dtype=np.int64)
-    return (
-        np.ascontiguousarray(x_array[index_array], dtype=np.float64),
-        np.ascontiguousarray(y_array[index_array], dtype=np.float64),
-    )
+def _cell_solver_history_cell_counts(*args: Any, **kwargs: Any) -> Any:
+    return getattr(_cell_velocity_artifacts(), '_cell_solver_history_cell_counts')(*args, **kwargs)
 
+def _history_residual_stats_ms(*args: Any, **kwargs: Any) -> Any:
+    return getattr(_cell_velocity_artifacts(), '_history_residual_stats_ms')(*args, **kwargs)
 
-def _cell_velocity_candidate_row_mask(
-    result: RefractionDatumStaticsResult,
-    req: RefractionStaticApplyRequest,
-    *,
-    layer_kind: RefractionLayerKind | None = None,
-) -> np.ndarray:
-    n_rows = int(result.row_trace_index_sorted.shape[0])
-    layer = _request_cell_velocity_layer(req, layer_kind=layer_kind)
-    if layer is None:
-        return np.ones(n_rows, dtype=bool)
-    distance = np.asarray(result.row_distance_m, dtype=np.float64)
-    if distance.shape != (n_rows,):
-        raise RefractionStaticArtifactError(
-            'row_distance_m length must match residual rows'
-        )
-    valid_observation = np.asarray(result.valid_observation_mask_sorted, dtype=bool)
-    if valid_observation.shape != (n_rows,):
-        raise RefractionStaticArtifactError(
-            'valid_observation_mask_sorted length must match residual rows'
-        )
-    try:
-        masks = build_refraction_layer_observation_masks_from_arrays(
-            base_valid_mask_sorted=valid_observation,
-            offset_m_sorted=distance,
-            rejection_reason_sorted=np.full(n_rows, 'ok', dtype='<U32'),
-            model=req.model,
-        )
-        mask = masks.layer_used_mask_sorted[layer.kind]
-    except (KeyError, ValueError) as exc:
-        raise RefractionStaticArtifactError(
-            f'could not build cell velocity layer observation mask for {layer.kind}'
-        ) from exc
-    return np.ascontiguousarray(mask, dtype=bool)
+def _history_max_abs(*args: Any, **kwargs: Any) -> Any:
+    return getattr(_cell_velocity_artifacts(), '_history_max_abs')(*args, **kwargs)
 
+def _initial_cell_v2_m_s(*args: Any, **kwargs: Any) -> Any:
+    return getattr(_cell_velocity_artifacts(), '_initial_cell_v2_m_s')(*args, **kwargs)
 
-def _cell_velocity_component(layer_kind: RefractionLayerKind) -> str:
-    try:
-        return _CELL_VELOCITY_COMPONENT_BY_LAYER[layer_kind]
-    except KeyError as exc:
-        raise RefractionStaticArtifactError(
-            f'unsupported cell velocity layer kind: {layer_kind}'
-        ) from exc
+def _history_smoothing_weight(*args: Any, **kwargs: Any) -> Any:
+    return getattr(_cell_velocity_artifacts(), '_history_smoothing_weight')(*args, **kwargs)
 
+def _history_robust_iteration_count(*args: Any, **kwargs: Any) -> Any:
+    return getattr(_cell_velocity_artifacts(), '_history_robust_iteration_count')(*args, **kwargs)
 
-def _cell_velocity_layer_bounds(
-    req: RefractionStaticApplyRequest,
-    layer: Any,
-) -> tuple[float | None, float | None]:
-    min_velocity = getattr(layer, 'min_velocity_m_s', None)
-    max_velocity = getattr(layer, 'max_velocity_m_s', None)
-    if layer.kind == 'v2_t1':
-        if min_velocity is None:
-            min_velocity = req.model.min_bedrock_velocity_m_s
-        if max_velocity is None:
-            max_velocity = req.model.max_bedrock_velocity_m_s
-    return min_velocity, max_velocity
+def _history_convergence_reason(*args: Any, **kwargs: Any) -> Any:
+    return getattr(_cell_velocity_artifacts(), '_history_convergence_reason')(*args, **kwargs)
 
+def _refractor_cell_center_alias_arrays(*args: Any, **kwargs: Any) -> Any:
+    return getattr(_cell_velocity_artifacts(), '_refractor_cell_center_alias_arrays')(*args, **kwargs)
 
-def _cell_velocity_min_observations_per_cell(
-    req: RefractionStaticApplyRequest,
-    *,
-    layer_kind: RefractionLayerKind | None = None,
-) -> int:
-    layer = _request_cell_velocity_layer(req, layer_kind=layer_kind)
-    if layer is not None and layer.min_observations_per_cell is not None:
-        return int(layer.min_observations_per_cell)
-    refractor_cell = req.model.refractor_cell
-    if refractor_cell is None:
-        raise RefractionStaticArtifactError(
-            'model.refractor_cell is required for cell velocity artifacts'
-        )
-    return int(refractor_cell.min_observations_per_cell)
+def _unique_observation_endpoint_count_by_cell(*args: Any, **kwargs: Any) -> Any:
+    return getattr(_cell_velocity_artifacts(), '_unique_observation_endpoint_count_by_cell')(*args, **kwargs)
 
-
-def _grid_map_qc_rows(arrays: dict[str, np.ndarray]) -> list[dict[str, object]]:
-    rows: list[dict[str, object]] = []
-    n_rows = int(arrays['layer_kind'].shape[0])
-    for index in range(n_rows):
-        rows.append(
-            {
-                'layer_kind': str(arrays['layer_kind'][index]),
-                'cell_ix': int(arrays['cell_ix'][index]),
-                'cell_iy': int(arrays['cell_iy'][index]),
-                'cell_center_x_m': _csv_grid_float(
-                    arrays['cell_center_x_m'][index]
-                ),
-                'cell_center_y_m': _csv_grid_float(
-                    arrays['cell_center_y_m'][index]
-                ),
-                'cell_center_inline_m': _csv_grid_float(
-                    arrays['cell_center_inline_m'][index]
-                ),
-                'cell_center_crossline_m': _csv_grid_float(
-                    arrays['cell_center_crossline_m'][index]
-                ),
-                'velocity_m_s': _csv_float(arrays['velocity_m_s'][index]),
-                'initial_velocity_m_s': _csv_float(
-                    arrays['initial_velocity_m_s'][index]
-                ),
-                'velocity_update_from_initial_m_s': _csv_float(
-                    arrays['velocity_update_from_initial_m_s'][index]
-                ),
-                'slowness_s_per_m': _csv_float(arrays['slowness_s_per_m'][index]),
-                'n_observations': int(arrays['n_observations'][index]),
-                'n_sources': int(arrays['n_sources'][index]),
-                'n_receivers': int(arrays['n_receivers'][index]),
-                'residual_rms_ms': _csv_float(arrays['residual_rms_ms'][index]),
-                'residual_mad_ms': _csv_float(arrays['residual_mad_ms'][index]),
-                'status': str(arrays['status'][index]),
-                'status_reason': str(arrays['status_reason'][index]),
-            }
-        )
-    return rows
-
-
-def _grid_map_qc_layer_summary(
-    arrays: dict[str, np.ndarray],
-    *,
-    mask: np.ndarray,
-) -> dict[str, Any]:
-    status = np.asarray(arrays['status']).astype(str, copy=False)[mask]
-    status_reason = np.asarray(arrays['status_reason']).astype(str, copy=False)[mask]
-    active_mask = np.asarray(arrays['active_cell_mask'], dtype=bool)[mask]
-    velocity = np.asarray(arrays['velocity_m_s'], dtype=np.float64)[mask]
-    active_velocity = velocity[active_mask & np.isfinite(velocity)]
-    return {
-        'active_cell_count': int(np.count_nonzero(active_mask)),
-        'empty_cell_count': int(np.count_nonzero(status_reason == 'no_observations')),
-        'low_fold_cell_count': int(
-            np.count_nonzero(status == LOW_FOLD_CELL_VELOCITY_STATUS)
-        ),
-        'velocity_min_m_s': _stat(active_velocity, 'min'),
-        'velocity_median_m_s': _stat(active_velocity, 'median'),
-        'velocity_max_m_s': _stat(active_velocity, 'max'),
-        'status_counts': _status_counts(status),
-    }
-
-
-def _grid_map_qc_global_velocity_layers(
-    req: RefractionStaticApplyRequest,
-) -> list[dict[str, str]]:
-    rows: list[dict[str, str]] = []
-    for layer in normalize_refraction_static_layers(req.model):
-        if layer.velocity_mode == 'solve_cell':
-            continue
-        rows.append(
-            {
-                'layer_kind': layer.kind,
-                'velocity_mode': layer.velocity_mode,
-                'row_behavior': 'omitted',
-            }
-        )
-    return rows
-
-
-def _refractor_velocity_cell_rows(
-    arrays: dict[str, np.ndarray],
-) -> list[dict[str, object]]:
-    rows: list[dict[str, object]] = []
-    n_cells = int(arrays['cell_id'].shape[0])
-    for index in range(n_cells):
-        rows.append(
-            {
-                'cell_id': int(arrays['cell_id'][index]),
-                'ix': int(arrays['ix'][index]),
-                'iy': int(arrays['iy'][index]),
-                'cell_ix': int(arrays['cell_ix'][index]),
-                'cell_iy': int(arrays['cell_iy'][index]),
-                'coordinate_mode': str(arrays['coordinate_mode'][index]),
-                'x_min_m': _csv_grid_float(arrays['x_min_m'][index]),
-                'x_max_m': _csv_grid_float(arrays['x_max_m'][index]),
-                'y_min_m': _csv_grid_float(arrays['y_min_m'][index]),
-                'y_max_m': _csv_grid_float(arrays['y_max_m'][index]),
-                'x_center_m': _csv_grid_float(arrays['x_center_m'][index]),
-                'y_center_m': _csv_grid_float(arrays['y_center_m'][index]),
-                'cell_center_x_m': _csv_grid_float(
-                    arrays['cell_center_x_m'][index]
-                ),
-                'cell_center_y_m': _csv_grid_float(
-                    arrays['cell_center_y_m'][index]
-                ),
-                'cell_center_inline_m': _csv_grid_float(
-                    arrays['cell_center_inline_m'][index]
-                ),
-                'cell_center_crossline_m': _csv_grid_float(
-                    arrays['cell_center_crossline_m'][index]
-                ),
-                'active': _csv_bool(arrays['active_cell_mask'][index]),
-                'n_observations': int(
-                    arrays['n_observations_per_cell'][index]
-                ),
-                'n_used_observations': int(
-                    arrays['n_used_observations_per_cell'][index]
-                ),
-                'n_rejected_observations': int(
-                    arrays['n_rejected_observations_per_cell'][index]
-                ),
-                'n_sources': int(arrays['n_sources_per_cell'][index]),
-                'n_receivers': int(arrays['n_receivers_per_cell'][index]),
-                'cell_velocity_layer_kind': str(
-                    arrays['cell_velocity_layer_kind'][index]
-                ),
-                'cell_velocity_component': str(
-                    arrays['cell_velocity_component'][index]
-                ),
-                'velocity_m_s': _csv_float(arrays['velocity_m_s'][index]),
-                'v2_m_s': _csv_float(arrays['v2_m_s'][index]),
-                'slowness_s_per_m': _csv_float(
-                    arrays['slowness_s_per_m'][index]
-                ),
-                'initial_velocity_m_s': _csv_float(
-                    arrays['initial_velocity_m_s'][index]
-                ),
-                'initial_v2_m_s': _csv_float(arrays['initial_v2_m_s'][index]),
-                'velocity_update_from_initial_m_s': _csv_float(
-                    arrays['velocity_update_from_initial_m_s'][index]
-                ),
-                'v2_update_from_initial_m_s': _csv_float(
-                    arrays['v2_update_from_initial_m_s'][index]
-                ),
-                'velocity_status': str(arrays['velocity_status'][index]),
-                'status_reason': str(arrays['status_reason'][index]),
-                'residual_rms_ms': _csv_float(arrays['residual_rms_ms'][index]),
-                'residual_mad_ms': _csv_float(arrays['residual_mad_ms'][index]),
-                'residual_mean_ms': _csv_float(arrays['residual_mean_ms'][index]),
-                'residual_p95_abs_ms': _csv_float(
-                    arrays['residual_p95_abs_ms'][index]
-                ),
-                'smoothing_enabled': _csv_bool(arrays['smoothing_enabled'][index]),
-                'smoothing_weight': _csv_float(arrays['smoothing_weight'][index]),
-                'smoothing_neighbor_count': int(
-                    arrays['smoothing_neighbor_count'][index]
-                ),
-            }
-        )
-    return rows
-
-
-def _cell_solver_history_csv_row(
-    row: RefractionCellSolverHistoryRow,
-) -> dict[str, object]:
-    return {
-        'iteration': int(row.iteration),
-        'stage': row.stage,
-        'n_candidate_observations': int(row.n_candidate_observations),
-        'n_used_observations': int(row.n_used_observations),
-        'n_rejected_observations': int(row.n_rejected_observations),
-        'n_active_cells': int(row.n_active_cells),
-        'n_low_fold_cells': int(row.n_low_fold_cells),
-        'n_empty_cells': int(row.n_empty_cells),
-        'residual_rms_ms': _csv_float(row.residual_rms_ms),
-        'residual_mad_ms': _csv_float(row.residual_mad_ms),
-        'max_abs_residual_ms': _csv_float(row.max_abs_residual_ms),
-        'median_velocity_m_s': _csv_float(row.median_velocity_m_s),
-        'median_v2_m_s': _csv_float(row.median_v2_m_s),
-        'min_velocity_m_s': _csv_float(row.min_velocity_m_s),
-        'min_v2_m_s': _csv_float(row.min_v2_m_s),
-        'max_velocity_m_s': _csv_float(row.max_velocity_m_s),
-        'max_v2_m_s': _csv_float(row.max_v2_m_s),
-        'max_abs_velocity_update_m_s': _csv_float(
-            row.max_abs_velocity_update_m_s
-        ),
-        'max_abs_v2_update_m_s': _csv_float(row.max_abs_v2_update_m_s),
-        'smoothing_weight': _csv_float(row.smoothing_weight),
-        'damping_weight': _csv_float(row.damping_weight),
-        'robust_threshold': _csv_float(row.robust_threshold),
-        'converged': _csv_bool(row.converged),
-        'convergence_reason': row.convergence_reason,
-    }
-
-
-def _cell_solver_history_cell_counts(
-    arrays: dict[str, np.ndarray],
-) -> dict[str, int]:
-    active_mask = np.asarray(arrays['active_cell_mask'], dtype=bool)
-    velocity_status = np.asarray(arrays['velocity_status']).astype(str, copy=False)
-    n_observations = np.asarray(arrays['n_observations_per_cell'], dtype=np.int64)
-    return {
-        'active': int(np.count_nonzero(active_mask)),
-        'low_fold': int(
-            np.count_nonzero(velocity_status == LOW_FOLD_CELL_VELOCITY_STATUS)
-        ),
-        'empty': int(np.count_nonzero(n_observations == 0)),
-    }
-
-
-def _history_residual_stats_ms(
-    result: RefractionDatumStaticsResult,
-    *,
-    used_row_mask: np.ndarray,
-) -> dict[str, float | None]:
-    residual_ms = (
-        np.asarray(result.residual_time_s, dtype=np.float64)[
-            np.asarray(used_row_mask, dtype=bool)
-        ]
-        * 1000.0
-    )
-    return {
-        'rms': _residual_stat(residual_ms, 'rms'),
-        'mad': _residual_stat(residual_ms, 'mad'),
-        'max_abs': _residual_stat(residual_ms, 'max_abs'),
-    }
-
-
-def _history_max_abs(values: np.ndarray) -> float | None:
-    finite = np.asarray(values, dtype=np.float64)
-    finite = finite[np.isfinite(finite)]
-    if finite.size == 0:
-        return None
-    return float(np.max(np.abs(finite)))
-
-
-def _initial_cell_v2_m_s(
-    req: RefractionStaticApplyRequest,
-    *,
-    layer_kind: RefractionLayerKind | None = None,
-) -> float:
-    layer = _request_cell_velocity_layer(req, layer_kind=layer_kind)
-    if layer is not None:
-        value = getattr(layer, 'initial_velocity_m_s', None)
-        if value is not None:
-            return float(value)
-        if layer.kind == 'v2_t1' and req.model.initial_bedrock_velocity_m_s is not None:
-            return float(req.model.initial_bedrock_velocity_m_s)
-        min_velocity, max_velocity = _cell_velocity_layer_bounds(req, layer)
-        if min_velocity is not None and max_velocity is not None:
-            return 0.5 * (float(min_velocity) + float(max_velocity))
-        raise RefractionStaticArtifactError(
-            'cell velocity layer initial_velocity_m_s is required'
-        )
-
-    value = req.model.initial_bedrock_velocity_m_s
-    if value is not None:
-        return float(value)
-    return 0.5 * (
-        float(req.model.min_bedrock_velocity_m_s)
-        + float(req.model.max_bedrock_velocity_m_s)
-    )
-
-
-def _history_smoothing_weight(
-    req: RefractionStaticApplyRequest,
-    *,
-    layer_kind: RefractionLayerKind | None = None,
-) -> float:
-    layer = _request_cell_velocity_layer(req, layer_kind=layer_kind)
-    if layer is not None and layer.smoothing_weight is not None:
-        return float(layer.smoothing_weight)
-    refractor_cell = req.model.refractor_cell
-    if refractor_cell is None:
-        raise RefractionStaticArtifactError(
-            'model.refractor_cell is required for cell solver history'
-        )
-    return float(refractor_cell.velocity_smoothing_weight)
-
-
-def _history_robust_iteration_count(
-    result: RefractionDatumStaticsResult,
-    req: RefractionStaticApplyRequest,
-) -> int:
-    raw = result.qc.get('robust_iteration_count')
-    if raw is not None:
-        return int(raw)
-    if req.solver.robust.enabled and np.count_nonzero(result.rejected_by_robust_mask):
-        return 1
-    return 0
-
-
-def _history_convergence_reason(
-    *,
-    robust_iteration_count: int,
-    n_robust_rejected_observations: int,
-    smoothing_weight: float,
-) -> str:
-    if robust_iteration_count > 0 or n_robust_rejected_observations > 0:
-        return 'robust_reweight_converged'
-    if smoothing_weight > 0.0:
-        return 'smoothed_least_squares_converged'
-    return 'least_squares_converged'
-
-
-def _refractor_cell_center_alias_arrays(
-    *,
-    x_center_m: np.ndarray,
-    y_center_m: np.ndarray,
-    coordinate_mode: str,
-    line_origin_x_m: float | None,
-    line_origin_y_m: float | None,
-    line_azimuth_deg: float | None,
-) -> dict[str, np.ndarray]:
-    x_center = np.asarray(x_center_m, dtype=np.float64)
-    y_center = np.asarray(y_center_m, dtype=np.float64)
-    if x_center.shape != y_center.shape:
-        raise RefractionStaticArtifactError(
-            'refractor cell center coordinate shape mismatch'
-        )
-
-    inline = np.full(x_center.shape, np.nan, dtype=np.float64)
-    crossline = np.full(x_center.shape, np.nan, dtype=np.float64)
-    center_x = np.ascontiguousarray(x_center, dtype=np.float64)
-    center_y = np.ascontiguousarray(y_center, dtype=np.float64)
-    if coordinate_mode == 'line_2d_projected':
-        origin_x = _required_finite_float(
-            line_origin_x_m,
-            name='model.refractor_cell.line_origin_x_m',
-        )
-        origin_y = _required_finite_float(
-            line_origin_y_m,
-            name='model.refractor_cell.line_origin_y_m',
-        )
-        azimuth_deg = _required_finite_float(
-            line_azimuth_deg,
-            name='model.refractor_cell.line_azimuth_deg',
-        )
-        inline = np.ascontiguousarray(x_center, dtype=np.float64)
-        crossline = np.ascontiguousarray(y_center, dtype=np.float64)
-        azimuth_rad = np.deg2rad(azimuth_deg)
-        inline_unit_x = float(np.sin(azimuth_rad))
-        inline_unit_y = float(np.cos(azimuth_rad))
-        center_x = np.ascontiguousarray(
-            origin_x + inline * inline_unit_x + crossline * inline_unit_y,
-            dtype=np.float64,
-        )
-        center_y = np.ascontiguousarray(
-            origin_y + inline * inline_unit_y - crossline * inline_unit_x,
-            dtype=np.float64,
-        )
-
-    return {
-        'x_m': center_x,
-        'y_m': center_y,
-        'inline_m': np.ascontiguousarray(inline, dtype=np.float64),
-        'crossline_m': np.ascontiguousarray(crossline, dtype=np.float64),
-    }
-
-
-def _unique_observation_endpoint_count_by_cell(
-    *,
-    row_midpoint_cell_id: np.ndarray,
-    endpoint_id: np.ndarray,
-    n_total_cells: int,
-) -> np.ndarray:
-    row_cell = np.asarray(row_midpoint_cell_id, dtype=np.int64)
-    endpoint = np.asarray(endpoint_id, dtype=np.int64)
-    if row_cell.shape != endpoint.shape:
-        raise RefractionStaticArtifactError(
-            'row endpoint arrays must match row_midpoint_cell_id shape'
-        )
-    counts = np.zeros(int(n_total_cells), dtype=np.int64)
-    for cell_id in range(int(n_total_cells)):
-        in_cell = row_cell == cell_id
-        if np.any(in_cell):
-            counts[cell_id] = int(np.unique(endpoint[in_cell]).shape[0])
-    return np.ascontiguousarray(counts, dtype=np.int64)
-
-
-def _refractor_cell_status_reasons(
-    *,
-    velocity_status: np.ndarray,
-    n_observations: np.ndarray,
-) -> np.ndarray:
-    status = np.asarray(velocity_status).astype(str, copy=False)
-    counts = np.asarray(n_observations, dtype=np.int64)
-    if status.shape != counts.shape:
-        raise RefractionStaticArtifactError(
-            'velocity_status and n_observations shape mismatch'
-        )
-    reasons: list[str] = []
-    for value, count in zip(status.tolist(), counts.tolist(), strict=True):
-        if value == LOW_FOLD_CELL_VELOCITY_STATUS:
-            reasons.append(LOW_FOLD_CELL_REJECTION_REASON)
-        elif value == 'inactive':
-            reasons.append('no_observations' if int(count) == 0 else 'inactive_cell')
-        else:
-            reasons.append(str(value))
-    return _string_array(reasons)
-
+def _refractor_cell_status_reasons(*args: Any, **kwargs: Any) -> Any:
+    return getattr(_cell_velocity_artifacts(), '_refractor_cell_status_reasons')(*args, **kwargs)
 
 def _required_cell_int_array(value: object, *, name: str) -> np.ndarray:
     if value is None:
         raise RefractionStaticArtifactError(f'solve_cell result requires {name}')
     return _int_array(value)
 
-
 def _required_cell_float_array(value: object, *, name: str) -> np.ndarray:
     if value is None:
         raise RefractionStaticArtifactError(f'solve_cell result requires {name}')
     return _float_array(value)
-
 
 def _required_cell_status_array(value: object, *, name: str) -> np.ndarray:
     if value is None:
@@ -8511,7 +5133,6 @@ def _required_cell_status_array(value: object, *, name: str) -> np.ndarray:
     status = _string_array(value)
     _validate_status_array(status, name=name)
     return status
-
 
 def _validate_refractor_velocity_cell_ids(
     *,
@@ -8536,91 +5157,14 @@ def _validate_refractor_velocity_cell_ids(
             f'missing={missing}, extra={extra}'
         )
 
+def _active_neighbor_count_by_cell(*args: Any, **kwargs: Any) -> Any:
+    return getattr(_cell_velocity_artifacts(), '_active_neighbor_count_by_cell')(*args, **kwargs)
 
-def _active_neighbor_count_by_cell(
-    *,
-    active_cell_id: np.ndarray,
-    n_total_cells: int,
-    number_of_cell_x: int,
-    number_of_cell_y: int,
-) -> np.ndarray:
-    active = {int(value) for value in np.asarray(active_cell_id).tolist()}
-    counts = np.zeros(int(n_total_cells), dtype=np.int64)
-    for cell_id in active:
-        ix = cell_id % int(number_of_cell_x)
-        iy = cell_id // int(number_of_cell_x)
-        neighbors = []
-        if ix > 0:
-            neighbors.append(cell_id - 1)
-        if ix + 1 < int(number_of_cell_x):
-            neighbors.append(cell_id + 1)
-        if iy > 0:
-            neighbors.append(cell_id - int(number_of_cell_x))
-        if iy + 1 < int(number_of_cell_y):
-            neighbors.append(cell_id + int(number_of_cell_x))
-        counts[cell_id] = sum(1 for neighbor in neighbors if neighbor in active)
-    return np.ascontiguousarray(counts, dtype=np.int64)
+def _estimated_cell_smoothing_rows(*args: Any, **kwargs: Any) -> Any:
+    return getattr(_cell_velocity_artifacts(), '_estimated_cell_smoothing_rows')(*args, **kwargs)
 
-
-def _estimated_cell_smoothing_rows(
-    *,
-    active_cell_mask: np.ndarray,
-    number_of_cell_x: int,
-    number_of_cell_y: int,
-    velocity_smoothing_weight: float,
-) -> int:
-    if float(velocity_smoothing_weight) == 0.0:
-        return 0
-    active = {
-        index
-        for index, enabled in enumerate(np.asarray(active_cell_mask, dtype=bool))
-        if bool(enabled)
-    }
-    n_edges = 0
-    for cell_id in active:
-        ix = cell_id % int(number_of_cell_x)
-        iy = cell_id // int(number_of_cell_x)
-        right = cell_id + 1
-        down = cell_id + int(number_of_cell_x)
-        if ix + 1 < int(number_of_cell_x) and right in active:
-            n_edges += 1
-        if iy + 1 < int(number_of_cell_y) and down in active:
-            n_edges += 1
-    return n_edges
-
-
-def _per_cell_residual_stats_ms(
-    *,
-    row_midpoint_cell_id: np.ndarray,
-    residual_time_s: np.ndarray,
-    used_row_mask: np.ndarray,
-    n_total_cells: int,
-) -> dict[str, np.ndarray]:
-    row_cell = np.asarray(row_midpoint_cell_id, dtype=np.int64)
-    residual_ms = np.asarray(residual_time_s, dtype=np.float64) * 1000.0
-    used = np.asarray(used_row_mask, dtype=bool)
-    out = {
-        'rms': np.full(int(n_total_cells), np.nan, dtype=np.float64),
-        'mad': np.full(int(n_total_cells), np.nan, dtype=np.float64),
-        'mean': np.full(int(n_total_cells), np.nan, dtype=np.float64),
-        'p95_abs': np.full(int(n_total_cells), np.nan, dtype=np.float64),
-    }
-    for cell_id in range(int(n_total_cells)):
-        values = residual_ms[(row_cell == cell_id) & used]
-        for stat, key in (
-            ('rms', 'rms'),
-            ('mad', 'mad'),
-            ('mean', 'mean'),
-            ('p95_abs', 'p95_abs'),
-        ):
-            stat_value = _residual_stat(values, stat)
-            if stat_value is not None:
-                out[key][cell_id] = float(stat_value)
-    return {
-        key: np.ascontiguousarray(value, dtype=np.float64)
-        for key, value in out.items()
-    }
-
+def _per_cell_residual_stats_ms(*args: Any, **kwargs: Any) -> Any:
+    return getattr(_cell_velocity_artifacts(), '_per_cell_residual_stats_ms')(*args, **kwargs)
 
 def _qc_int(qc: dict[str, Any], key: str, *, default: int) -> int:
     raw = qc.get(key)
@@ -8632,7 +5176,6 @@ def _qc_int(qc: dict[str, Any], key: str, *, default: int) -> int:
         raise RefractionStaticArtifactError(
             f'QC field {key} must be an integer'
         ) from exc
-
 
 def _required_positive_qc_int(qc: dict[str, Any], key: str) -> int:
     raw = qc.get(key)
@@ -8649,7 +5192,6 @@ def _required_positive_qc_int(qc: dict[str, Any], key: str) -> int:
             f'QC field {key} must be a positive integer'
         )
     return value
-
 
 def _qc_cell_id_array(
     qc: dict[str, Any],
@@ -8674,7 +5216,6 @@ def _qc_cell_id_array(
             f'QC field {key} contains out-of-range cell IDs'
         )
     return out
-
 
 def _qc_cell_count_array(
     qc: dict[str, Any],
@@ -8702,7 +5243,6 @@ def _qc_cell_count_array(
         )
     return out
 
-
 def _qc_optional_float(
     qc: dict[str, Any],
     key: str,
@@ -8712,13 +5252,11 @@ def _qc_optional_float(
     raw = qc.get(key, default)
     return _json_float(raw)
 
-
 def _length(value: object, *, name: str) -> int:
     arr = np.asarray(value)
     if arr.ndim != 1:
         raise RefractionStaticArtifactError(f'{name} must be one-dimensional')
     return int(arr.shape[0])
-
 
 def _validate_status_array(value: object, *, name: str) -> None:
     unknown = sorted(
@@ -8733,31 +5271,24 @@ def _validate_status_array(value: object, *, name: str) -> None:
             f'unknown status array values in {name}: {unknown}'
         )
 
-
 def _scalar_str(value: object) -> np.ndarray:
     text = '' if value is None else str(value)
     return np.asarray(text, dtype=f'<U{max(1, len(text))}')
 
-
 def _scalar_int(value: object) -> np.ndarray:
     return np.asarray(int(value), dtype=np.int64)
-
 
 def _scalar_float(value: object) -> np.ndarray:
     return np.asarray(float(value), dtype=np.float64)
 
-
 def _int_array(value: object) -> np.ndarray:
     return np.ascontiguousarray(value, dtype=np.int64)
-
 
 def _float_array(value: object) -> np.ndarray:
     return np.ascontiguousarray(value, dtype=np.float64)
 
-
 def _filled_float_array(value: object, shape: int) -> np.ndarray:
     return np.full(int(shape), float(value), dtype=np.float64)
-
 
 def _endpoint_v2_m_s(
     value: object,
@@ -8769,24 +5300,20 @@ def _endpoint_v2_m_s(
         return _filled_float_array(scalar_v2_m_s, shape)
     return np.ascontiguousarray(value, dtype=np.float64)
 
-
 def _endpoint_cell_id_array(value: object, shape: int) -> np.ndarray:
     if value is None:
         return np.full(int(shape), -1, dtype=np.int64)
     return np.ascontiguousarray(value, dtype=np.int64)
-
 
 def _cell_id_float_array(value: object) -> np.ndarray:
     out = np.asarray(value, dtype=np.float64).copy()
     out[out < 0] = np.nan
     return np.ascontiguousarray(out, dtype=np.float64)
 
-
 def _endpoint_v2_status_array(value: object, shape: int) -> np.ndarray:
     if value is None:
         return _string_array(np.full(int(shape), 'ok', dtype='<U2'))
     return _string_array(value)
-
 
 def _sum_float_arrays(left: object, right: object) -> np.ndarray:
     left_arr = np.asarray(left, dtype=np.float64)
@@ -8796,16 +5323,13 @@ def _sum_float_arrays(left: object, right: object) -> np.ndarray:
     out[finite] = left_arr[finite] + right_arr[finite]
     return np.ascontiguousarray(out, dtype=np.float64)
 
-
 def _bool_array(value: object) -> np.ndarray:
     return np.ascontiguousarray(value, dtype=bool)
-
 
 def _string_array(value: object) -> np.ndarray:
     raw = [str(item) for item in np.asarray(value).tolist()]
     max_len = max([1, *(len(item) for item in raw)])
     return np.ascontiguousarray(raw, dtype=f'<U{max_len}')
-
 
 def _sum_correction_s(left: object, right: object) -> float:
     left_value = _float_or_nan(left)
@@ -8814,6 +5338,110 @@ def _sum_correction_s(left: object, right: object) -> float:
         return float('nan')
     return float(left_value + right_value)
 
+def _component_artifacts() -> Any:
+    from app.services.refraction_static_artifacts import components
+
+    return components
+
+
+def write_refraction_static_components_csv(  # noqa: F811
+    *args: Any,
+    **kwargs: Any,
+) -> Any:
+    return getattr(
+        _component_artifacts(),
+        'write_refraction_static_components_csv',
+    )(*args, **kwargs)
+
+
+def write_refraction_static_component_qc_artifacts(  # noqa: F811
+    *args: Any,
+    **kwargs: Any,
+) -> Any:
+    return getattr(
+        _component_artifacts(),
+        'write_refraction_static_component_qc_artifacts',
+    )(*args, **kwargs)
+
+
+def build_refraction_static_component_qc_arrays(  # noqa: F811
+    *args: Any,
+    **kwargs: Any,
+) -> Any:
+    return getattr(
+        _component_artifacts(),
+        'build_refraction_static_component_qc_arrays',
+    )(*args, **kwargs)
+
+
+def build_refraction_static_component_qc_payload(  # noqa: F811
+    *args: Any,
+    **kwargs: Any,
+) -> Any:
+    return getattr(
+        _component_artifacts(),
+        'build_refraction_static_component_qc_payload',
+    )(*args, **kwargs)
+
+
+def _static_component_qc_trace_rows(*args: Any, **kwargs: Any) -> Any:
+    return getattr(
+        _component_artifacts(),
+        '_static_component_qc_trace_rows',
+    )(*args, **kwargs)
+
+
+def _static_component_qc_endpoint_rows(*args: Any, **kwargs: Any) -> Any:
+    return getattr(
+        _component_artifacts(),
+        '_static_component_qc_endpoint_rows',
+    )(*args, **kwargs)
+
+
+def _component_rows(*args: Any, **kwargs: Any) -> Any:
+    return getattr(_component_artifacts(), '_component_rows')(*args, **kwargs)
+
+
+def _component_columns(*args: Any, **kwargs: Any) -> Any:
+    return getattr(_component_artifacts(), '_component_columns')(*args, **kwargs)
+
+
+def _component_qc_stats_ms(*args: Any, **kwargs: Any) -> Any:
+    return getattr(_component_artifacts(), '_component_qc_stats_ms')(
+        *args,
+        **kwargs,
+    )
+
+
+from app.services.refraction_static_artifacts.static_tables import (  # noqa: E402
+    _has_node_2layer_static_fields,  # noqa: F811
+    _has_node_3layer_static_fields,  # noqa: F811
+    _has_receiver_2layer_static_fields,  # noqa: F811
+    _has_receiver_3layer_static_fields,  # noqa: F811
+    _has_source_2layer_static_fields,  # noqa: F811
+    _has_source_3layer_static_fields,  # noqa: F811
+    _insert_after,  # noqa: F811
+    _node_sh1_weathering_thickness_m,  # noqa: F811
+    _receiver_sh1_weathering_thickness_m,  # noqa: F811
+    _source_sh1_weathering_thickness_m,  # noqa: F811
+    build_source_receiver_static_table_arrays,  # noqa: F811
+    write_receiver_static_table_csv,  # noqa: F811
+    write_refraction_time_term_spreadsheet_csv,  # noqa: F811
+    write_refraction_time_term_spreadsheet_csv_from_static_tables,  # noqa: F811
+    write_source_receiver_static_table_npz,  # noqa: F811
+    write_source_static_table_csv,  # noqa: F811
+)
+from app.services.refraction_static_artifacts.line_profile import (  # noqa: E402
+    _endpoint_layer_qc_context as _endpoint_layer_qc_context,
+    _endpoint_layer_qc_row_fields as _endpoint_layer_qc_row_fields,
+    _node_context as _node_context,
+    _node_lookup as _node_lookup,
+    _receiver_static_status_array as _receiver_static_status_array,
+    _source_static_status_array as _source_static_status_array,
+    build_refraction_line_profile_qc_arrays as build_refraction_line_profile_qc_arrays,
+    build_refraction_line_profile_qc_payload as build_refraction_line_profile_qc_payload,
+    write_refraction_line_profile_qc_artifacts as write_refraction_line_profile_qc_artifacts,
+)
 
 __all__ = [
     'FIRST_BREAK_RESIDUALS_CSV_NAME',

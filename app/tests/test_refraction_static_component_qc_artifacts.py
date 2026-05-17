@@ -14,9 +14,37 @@ from app.services.refraction_static_artifacts import (
     REFRACTION_STATIC_COMPONENT_QC_JSON_NAME,
     REFRACTION_STATIC_COMPONENT_QC_NPZ_NAME,
     REFRACTION_STATIC_COMPONENT_QC_TRACE_CSV_NAME,
+    RefractionStaticArtifactError,
     write_refraction_static_artifacts,
 )
+from app.services.refraction_static_artifacts.field_corrections import (
+    _endpoint_shift_to_trace_order,
+)
 from app.tests._refraction_static_artifact_helpers import _request, _result
+
+
+def test_endpoint_shift_to_trace_order_repeats_endpoint_values() -> None:
+    out = _endpoint_shift_to_trace_order(
+        endpoint_key=np.asarray(['s0', 's1'], dtype='<U2'),
+        endpoint_shift_s=np.asarray([0.005, -0.002], dtype=np.float64),
+        endpoint_key_sorted=np.asarray(['s1', 's0', 's1', 's0'], dtype='<U2'),
+        label='source_depth_shift_s',
+    )
+
+    np.testing.assert_allclose(out, [-0.002, 0.005, -0.002, 0.005])
+
+
+def test_endpoint_shift_to_trace_order_rejects_conflicting_duplicate_keys() -> None:
+    with pytest.raises(
+        RefractionStaticArtifactError,
+        match='duplicate endpoint key',
+    ):
+        _endpoint_shift_to_trace_order(
+            endpoint_key=np.asarray(['s0', 's0'], dtype='<U2'),
+            endpoint_shift_s=np.asarray([0.005, 0.006], dtype=np.float64),
+            endpoint_key_sorted=np.asarray(['s0'], dtype='<U2'),
+            label='source_depth_shift_s',
+        )
 
 
 def test_static_component_qc_trace_values_match_solution_npz(
