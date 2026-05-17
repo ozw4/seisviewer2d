@@ -18,8 +18,10 @@ from app.services.refraction_static_types import (
     ResolvedRefractionFirstLayer,
 )
 from app.services.refraction_static_artifacts import _legacy
+from app.services.refraction_static_artifacts import first_break_qc
 from app.services.refraction_static_artifacts import history
 from app.services.refraction_static_artifacts import qc as main_qc
+from app.services.refraction_static_artifacts import reduced_time_qc
 from app.services.refraction_static_artifacts import solution
 from app.services.refraction_static_artifacts.contract import (
     FIRST_BREAK_RESIDUALS_CSV_NAME,
@@ -459,7 +461,7 @@ def _required_write_steps(
             name=paths.first_break_residuals_csv.name,
             path=paths.first_break_residuals_csv,
             required=True,
-            write_callable=lambda: _legacy.write_first_break_residuals_csv(
+            write_callable=lambda: first_break_qc.write_first_break_residuals_csv(
                 result=result,
                 path=paths.first_break_residuals_csv,
                 req=request,
@@ -469,7 +471,7 @@ def _required_write_steps(
             name=paths.refraction_first_break_time_export_csv.name,
             path=paths.refraction_first_break_time_export_csv,
             required=True,
-            write_callable=lambda: _legacy.write_refraction_first_break_time_export_csv(
+            write_callable=lambda: first_break_qc.write_refraction_first_break_time_export_csv(
                 result=result,
                 path=paths.refraction_first_break_time_export_csv,
                 req=request,
@@ -480,7 +482,7 @@ def _required_write_steps(
             name=paths.refraction_first_break_fit_qc_csv.name,
             path=paths.refraction_first_break_fit_qc_csv,
             required=True,
-            write_callable=lambda: _legacy.write_refraction_first_break_fit_qc_csv(
+            write_callable=lambda: first_break_qc.write_refraction_first_break_fit_qc_csv(
                 result=result,
                 req=request,
                 path=paths.refraction_first_break_fit_qc_csv,
@@ -490,7 +492,7 @@ def _required_write_steps(
             name=paths.refraction_first_break_fit_qc_npz.name,
             path=paths.refraction_first_break_fit_qc_npz,
             required=True,
-            write_callable=lambda: _legacy.write_refraction_first_break_fit_qc_npz(
+            write_callable=lambda: first_break_qc.write_refraction_first_break_fit_qc_npz(
                 result=result,
                 req=request,
                 path=paths.refraction_first_break_fit_qc_npz,
@@ -500,7 +502,7 @@ def _required_write_steps(
             name=paths.refraction_first_break_fit_qc_json.name,
             path=paths.refraction_first_break_fit_qc_json,
             required=True,
-            write_callable=lambda: _legacy.write_refraction_first_break_fit_qc_json(
+            write_callable=lambda: first_break_qc.write_refraction_first_break_fit_qc_json(
                 result=result,
                 req=request,
                 path=paths.refraction_first_break_fit_qc_json,
@@ -510,7 +512,7 @@ def _required_write_steps(
             name=paths.refraction_reduced_time_qc_csv.name,
             path=paths.refraction_reduced_time_qc_csv,
             required=True,
-            write_callable=lambda: _legacy.write_refraction_reduced_time_qc_csv(
+            write_callable=lambda: reduced_time_qc.write_refraction_reduced_time_qc_csv(
                 result=result,
                 req=request,
                 path=paths.refraction_reduced_time_qc_csv,
@@ -520,7 +522,7 @@ def _required_write_steps(
             name=paths.refraction_reduced_time_qc_npz.name,
             path=paths.refraction_reduced_time_qc_npz,
             required=True,
-            write_callable=lambda: _legacy.write_refraction_reduced_time_qc_npz(
+            write_callable=lambda: reduced_time_qc.write_refraction_reduced_time_qc_npz(
                 result=result,
                 req=request,
                 path=paths.refraction_reduced_time_qc_npz,
@@ -530,7 +532,7 @@ def _required_write_steps(
             name=paths.refraction_reduced_time_qc_json.name,
             path=paths.refraction_reduced_time_qc_json,
             required=True,
-            write_callable=lambda: _legacy.write_refraction_reduced_time_qc_json(
+            write_callable=lambda: reduced_time_qc.write_refraction_reduced_time_qc_json(
                 result=result,
                 req=request,
                 path=paths.refraction_reduced_time_qc_json,
