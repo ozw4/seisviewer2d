@@ -12,6 +12,7 @@ import pytest
 from app.api.schemas import RefractionStaticApplyRequest
 import app.services.refraction_static_artifacts as artifact_module
 import app.services.refraction_static_artifacts._legacy as artifact_legacy_module
+from app.services.refraction_static_artifacts import registry as artifact_registry
 from app.services.refraction_static_artifacts.io import (
     _write_csv_atomic,
     _write_json_atomic,
@@ -51,6 +52,7 @@ from app.services.refraction_static_artifacts import (
     REFRACTION_STATIC_QC_JSON_NAME,
     REFRACTION_STATIC_SOLUTION_NPZ_NAME,
     REFRACTION_TIME_TERM_SPREADSHEET_CSV_NAME,
+    REFRACTION_T1LSST_1LAYER_COMPONENTS_CSV_NAME,
     REFRACTION_V3_CELL_SOLVER_HISTORY_CSV_NAME,
     REFRACTION_V3_REFRACTOR_VELOCITY_CELLS_CSV_NAME,
     REFRACTION_V3_REFRACTOR_VELOCITY_GRID_NPZ_NAME,
@@ -291,6 +293,12 @@ UPSTREAM_V1_ARTIFACT_NAMES = (
 )
 
 
+def _t1lsst_request() -> RefractionStaticApplyRequest:
+    payload = _request().model_dump(mode='json')
+    payload['conversion'] = {'mode': 't1lsst_1layer'}
+    return RefractionStaticApplyRequest.model_validate(payload)
+
+
 def test_refraction_static_artifacts_public_all_snapshot() -> None:
     assert tuple(artifact_module.__all__) == (
         'FIRST_BREAK_RESIDUALS_CSV_NAME',
@@ -398,6 +406,87 @@ def test_refraction_static_artifacts_public_all_snapshot() -> None:
         'write_source_static_table_csv',
     )
     assert all(hasattr(artifact_module, name) for name in artifact_module.__all__)
+
+
+def test_refraction_static_registry_manifest_entry_contract() -> None:
+    assert artifact_registry.registered_artifact_names() == (
+        artifact_module.REFRACTION_STATIC_REGISTERED_ARTIFACT_NAMES
+    )
+
+    base_manifest = artifact_registry.build_manifest_payload(
+        artifact_registry.artifact_entries_for_request(_request())
+    )
+    solve_cell_manifest = artifact_registry.build_manifest_payload(
+        artifact_registry.artifact_entries_for_request(_solve_cell_request())
+    )
+    t1lsst_manifest = artifact_registry.build_manifest_payload(
+        artifact_registry.artifact_entries_for_request(_t1lsst_request())
+    )
+    upstream_manifest = artifact_registry.build_manifest_payload(
+        artifact_registry.artifact_entries_for_request(
+            _estimated_v1_request(),
+            _resolved_estimated_v1(),
+            upstream_artifact_names=UPSTREAM_V1_ARTIFACT_NAMES,
+        )
+    )
+    artifacts = {
+        item['name']: item
+        for manifest in (
+            base_manifest,
+            solve_cell_manifest,
+            t1lsst_manifest,
+            upstream_manifest,
+        )
+        for item in manifest['artifacts']
+    }
+
+    expected = {
+        REFRACTION_STATIC_SOLUTION_NPZ_NAME: (
+            'npz',
+            True,
+            'Machine-readable final refraction statics solution',
+        ),
+        REFRACTION_REFRACTOR_VELOCITY_CELLS_CSV_NAME: (
+            'csv',
+            True,
+            'Per-cell V2/T1 refractor velocity grid and QC metrics',
+        ),
+        REFRACTION_GRID_MAP_QC_CSV_NAME: (
+            'csv',
+            True,
+            'Viewer-ready refraction cell velocity grid map QC rows',
+        ),
+        REFRACTION_T1LSST_1LAYER_COMPONENTS_CSV_NAME: (
+            'csv',
+            True,
+            'T1LSST-compatible one-layer source/receiver components',
+        ),
+        REFRACTION_V1_QC_JSON_NAME: (
+            'json',
+            True,
+            'Direct-arrival V1 estimation QC summary',
+        ),
+    }
+    for artifact_name, (kind, required, description) in expected.items():
+        item = artifacts[artifact_name]
+        assert item['kind'] == kind
+        assert item['required'] is required
+        assert item['description'] == description
+
+
+def test_refraction_static_legacy_registry_private_aliases() -> None:
+    alias_names = (
+        '_artifact_content_type',
+        '_grid_map_qc_artifact_entries',
+        '_refractor_cell_velocity_artifact_entries',
+        '_t1lsst_artifact_entries',
+        '_upstream_artifact_entries',
+    )
+    for alias_name in alias_names:
+        assert getattr(artifact_legacy_module, alias_name) is getattr(
+            artifact_registry,
+            alias_name,
+        )
 
 
 @pytest.mark.parametrize(
