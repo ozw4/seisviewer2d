@@ -18,6 +18,8 @@ from app.services.refraction_static_types import (
     ResolvedRefractionFirstLayer,
 )
 from app.services.refraction_static_artifacts import _legacy
+from app.services.refraction_static_artifacts import history
+from app.services.refraction_static_artifacts import qc as main_qc
 from app.services.refraction_static_artifacts import solution
 from app.services.refraction_static_artifacts.contract import (
     FIRST_BREAK_RESIDUALS_CSV_NAME,
@@ -167,11 +169,12 @@ def _build_artifact_write_plan(
         first_layer,
         upstream_artifact_names=upstream_names,
     )
-    qc = _legacy.build_refraction_static_qc_payload(
+    qc = main_qc.build_refraction_static_qc_payload(
         result=values.result,
         req=request,
         resolved_first_layer=first_layer,
         upstream_artifact_names=upstream_names,
+        artifact_entries=artifact_entries,
     )
     manifest = _build_manifest_payload(artifact_entries)
     _assert_strict_json(manifest, artifact_name=REFRACTION_STATIC_ARTIFACTS_JSON_NAME)
@@ -426,7 +429,7 @@ def _required_write_steps(
             name=paths.qc_json.name,
             path=paths.qc_json,
             required=True,
-            write_callable=lambda: _legacy.write_refraction_static_qc_json(
+            write_callable=lambda: main_qc.write_refraction_static_qc_json(
                 result=result,
                 req=request,
                 path=paths.qc_json,
@@ -610,7 +613,7 @@ def _required_write_steps(
             name=paths.static_history_json.name,
             path=paths.static_history_json,
             required=True,
-            write_callable=lambda: _legacy.write_refraction_static_history_json(
+            write_callable=lambda: history.write_refraction_static_history_json(
                 result=result,
                 req=request,
                 path=paths.static_history_json,
