@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from app.services.refraction_static_artifacts import contract
 from app.services.refraction_static_artifacts import _legacy
+from app.services.refraction_static_artifacts import solution
 from app.services.refraction_static_artifacts._legacy import *  # noqa: F403
 
 for _name in contract.__all__:
@@ -18,3 +19,7 @@ TIME_TERM_SPREADSHEET_FORMAT_VERSION = contract.TIME_TERM_SPREADSHEET_FORMAT_VER
 TIME_TERM_SPREADSHEET_SCHEMA_VERSION = contract.TIME_TERM_SPREADSHEET_SCHEMA_VERSION
 
 __all__ = list(_legacy.__all__)
+for _name in solution.__all__:
+    globals()[_name] = getattr(solution, _name)
+    if _name not in __all__:
+        __all__.append(_name)

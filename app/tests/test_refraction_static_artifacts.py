@@ -13,6 +13,7 @@ from app.api.schemas import RefractionStaticApplyRequest
 import app.services.refraction_static_artifacts as artifact_module
 import app.services.refraction_static_artifacts._legacy as artifact_legacy_module
 from app.services.refraction_static_artifacts import registry as artifact_registry
+from app.services.refraction_static_artifacts import solution as artifact_solution_module
 from app.services.refraction_static_artifacts import validation as artifact_validation
 from app.services.refraction_static_artifacts.io import (
     _write_csv_atomic,
@@ -3126,7 +3127,7 @@ def test_write_refraction_static_solution_rejects_object_arrays(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setattr(
-        artifact_legacy_module,
+        artifact_solution_module,
         'build_refraction_static_solution_arrays',
         lambda **_kwargs: {'bad_object': np.asarray([object()], dtype=object)},
     )

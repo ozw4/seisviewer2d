@@ -18,6 +18,7 @@ from app.services.refraction_static_types import (
     ResolvedRefractionFirstLayer,
 )
 from app.services.refraction_static_artifacts import _legacy
+from app.services.refraction_static_artifacts import solution
 from app.services.refraction_static_artifacts.contract import (
     FIRST_BREAK_RESIDUALS_CSV_NAME,
     NEAR_SURFACE_MODEL_CSV_NAME,
@@ -414,7 +415,7 @@ def _required_write_steps(
             name=paths.solution_npz.name,
             path=paths.solution_npz,
             required=True,
-            write_callable=lambda: _legacy.write_refraction_static_solution_npz(
+            write_callable=lambda: solution.write_refraction_static_solution_npz(
                 result=result,
                 req=request,
                 path=paths.solution_npz,
@@ -437,7 +438,7 @@ def _required_write_steps(
             name=paths.refraction_statics_csv.name,
             path=paths.refraction_statics_csv,
             required=True,
-            write_callable=lambda: _legacy.write_refraction_statics_csv(
+            write_callable=lambda: solution.write_refraction_statics_csv(
                 result=result,
                 path=paths.refraction_statics_csv,
             ),
@@ -446,7 +447,7 @@ def _required_write_steps(
             name=paths.near_surface_model_csv.name,
             path=paths.near_surface_model_csv,
             required=True,
-            write_callable=lambda: _legacy.write_near_surface_model_csv(
+            write_callable=lambda: solution.write_near_surface_model_csv(
                 result=result,
                 path=paths.near_surface_model_csv,
             ),
