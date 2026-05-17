@@ -11,6 +11,7 @@ import pytest
 
 from app.api.schemas import RefractionStaticApplyRequest
 import app.services.refraction_static_artifacts as artifact_module
+import app.services.refraction_static_artifacts._legacy as artifact_legacy_module
 from app.services.refraction_static_artifacts import (
     FIRST_BREAK_RESIDUALS_CSV_NAME,
     NEAR_SURFACE_MODEL_CSV_NAME,
@@ -2841,7 +2842,11 @@ def test_write_refraction_static_artifacts_rejects_non_writable_job_dir(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setattr(artifact_module.os, 'access', lambda _path, _mode: False)
+    monkeypatch.setattr(
+        artifact_legacy_module.os,
+        'access',
+        lambda _path, _mode: False,
+    )
 
     with pytest.raises(RefractionStaticArtifactError, match='not writable'):
         write_refraction_static_artifacts(
@@ -2931,7 +2936,7 @@ def test_write_refraction_static_artifacts_detects_missing_artifact_after_write(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setattr(
-        artifact_module,
+        artifact_legacy_module,
         'write_refraction_static_components_csv',
         lambda **_kwargs: None,
     )
@@ -2952,7 +2957,7 @@ def test_write_refraction_static_solution_rejects_object_arrays(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setattr(
-        artifact_module,
+        artifact_legacy_module,
         'build_refraction_static_solution_arrays',
         lambda **_kwargs: {'bad_object': np.asarray([object()], dtype=object)},
     )
