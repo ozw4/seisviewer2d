@@ -115,13 +115,17 @@ def _install_reader(
     monkeypatch: pytest.MonkeyPatch,
     *,
     sorted_to_original: np.ndarray | None = None,
+    headers: dict[int, np.ndarray] | None = None,
 ) -> np.ndarray:
     order = (
         np.asarray([2, 0, 3, 1], dtype=np.int64)
         if sorted_to_original is None
         else np.asarray(sorted_to_original, dtype=np.int64)
     )
-    reader = _FakeReader(headers=_headers(int(order.shape[0])), sorted_to_original=order)
+    reader = _FakeReader(
+        headers=headers or _headers(int(order.shape[0])),
+        sorted_to_original=order,
+    )
     monkeypatch.setattr(inputs_module, 'get_reader', lambda *args, **kwargs: reader)
     return order
 
@@ -277,7 +281,7 @@ def test_refraction_static_preflight_rejects_nonfinite_uploaded_npz_picks(
     assert 'non-finite values' in qc['errors'][0]
 
 
-def test_refraction_static_preflight_writes_observation_csv_for_synthetic_fixture(
+def test_refraction_static_preflight_skips_observation_csv_for_success(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -296,14 +300,91 @@ def test_refraction_static_preflight_writes_observation_csv_for_synthetic_fixtur
         uploaded_pick_npz_path=npz_path,
     )
 
+    qc = _read_qc(tmp_path / 'job')
+    observations_path = (
+        tmp_path / 'job' / REFRACTION_STATIC_PREFLIGHT_OBSERVATIONS_CSV_NAME
+    )
+    assert not observations_path.exists()
+    assert qc['observations_csv_written'] is False
+    assert qc['observations_csv_total_rows'] == 4
+    assert qc['observations_csv_written_rows'] == 0
+    assert qc['observations_csv_omitted_rows'] == 4
+    assert qc['observations_csv_policy']['mode'] == 'success_summary_only'
+
+
+def test_refraction_static_preflight_writes_bounded_rejected_rows_for_failure(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv(
+        'SV_REFRACTION_STATIC_PREFLIGHT_OBSERVATIONS_CSV_MAX_ROWS',
+        '2',
+    )
+    headers = _headers()
+    headers[_geometry().source_x_byte] = np.asarray([np.nan, 0.0, np.nan, 0.0])
+    sorted_to_original = _install_reader(monkeypatch, headers=headers)
+    npz_path = tmp_path / 'uploaded_picks_time_s.npz'
+    np.savez(
+        npz_path,
+        pick_time_s=np.asarray([0.020, 0.040, 0.010, 0.030], dtype=np.float64),
+        sorted_to_original=sorted_to_original,
+    )
+
+    with pytest.raises(ValueError, match='No valid refraction observations remain'):
+        build_refraction_static_input_model(
+            req=_request(moveout=_moveout(max_offset_m=15.0)),
+            state=AppState(),
+            job_dir=tmp_path / 'job',
+            uploaded_pick_npz_path=npz_path,
+        )
+
     with (tmp_path / 'job' / REFRACTION_STATIC_PREFLIGHT_OBSERVATIONS_CSV_NAME).open(
         encoding='utf-8',
         newline='',
     ) as handle:
         rows = list(csv.DictReader(handle))
-    assert len(rows) == 4
-    assert rows[0]['trace_sorted_index'] == '0'
-    assert rows[0]['trace_original_index'] == '2'
-    assert rows[0]['source_endpoint_key'].startswith('source:')
-    assert rows[0]['receiver_endpoint_key'].startswith('receiver:')
-    assert rows[0]['used_for_inversion'] == 'True'
+    qc = _read_qc(tmp_path / 'job')
+    assert len(rows) == 2
+    assert {row['rejection_reason'] for row in rows} == {
+        'invalid_source_geometry',
+        'offset_gate',
+    }
+    assert qc['observations_csv_written'] is True
+    assert qc['observations_csv_total_rows'] == 4
+    assert qc['observations_csv_written_rows'] == 2
+    assert qc['observations_csv_omitted_rows'] == 2
+    assert qc['observations_csv_policy']['max_rows'] == 2
+
+
+def test_refraction_static_preflight_does_not_materialize_large_success_csv(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    n_traces = 10_050
+    sorted_to_original = _install_reader(
+        monkeypatch,
+        sorted_to_original=np.arange(n_traces, dtype=np.int64),
+    )
+    npz_path = tmp_path / 'uploaded_picks_time_s.npz'
+    np.savez(
+        npz_path,
+        pick_time_s=np.linspace(0.020, 0.040, n_traces, dtype=np.float64),
+        sorted_to_original=sorted_to_original,
+    )
+
+    build_refraction_static_input_model(
+        req=_request(),
+        state=AppState(),
+        job_dir=tmp_path / 'job',
+        uploaded_pick_npz_path=npz_path,
+    )
+
+    qc = _read_qc(tmp_path / 'job')
+    observations_path = (
+        tmp_path / 'job' / REFRACTION_STATIC_PREFLIGHT_OBSERVATIONS_CSV_NAME
+    )
+    assert not observations_path.exists()
+    assert qc['observations_csv_written'] is False
+    assert qc['observations_csv_total_rows'] == n_traces
+    assert qc['observations_csv_written_rows'] == 0
+    assert qc['observations_csv_omitted_rows'] == n_traces

@@ -76,6 +76,7 @@ from app.services.refraction_static_artifacts.final_tables import (
     write_near_surface_model_csv,
     write_refraction_statics_csv,
 )
+# Active writer path for first-break fit QC and reduced-time QC artifacts.
 from app.services.refraction_static_artifacts.first_break import (
     build_refraction_first_break_fit_qc_arrays,
     build_refraction_first_break_fit_qc_payload,
@@ -106,6 +107,7 @@ from app.services.refraction_static_artifacts.line_profile import (
     build_refraction_line_profile_qc_payload,
     write_refraction_line_profile_qc_artifacts,
 )
+# Active writer path for static history and double-application QC artifacts.
 from app.services.refraction_static_artifacts.qc import (
     build_refraction_static_history_payload,
     build_refraction_static_qc_payload,

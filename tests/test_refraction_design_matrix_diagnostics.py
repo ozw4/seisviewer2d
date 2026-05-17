@@ -8,6 +8,7 @@ import numpy as np
 import pytest
 
 from app.api.schemas import RefractionStaticModelRequest, RefractionStaticSolverRequest
+from app.services import refraction_static_design_matrix as design_matrix_module
 from app.services.refraction_static_design_matrix import (
     REFRACTION_DESIGN_MATRIX_NODE_DIAGNOSTICS_CSV_NAME,
     REFRACTION_DESIGN_MATRIX_QC_JSON_NAME,
@@ -44,6 +45,7 @@ def test_design_matrix_node_diagnostics_success_counts_match_matrix_nonzeros() -
         bedrock_velocity_mode='fixed_global',
         fixed_bedrock_velocity_m_s=2500.0,
         rejection_reason_sorted=np.asarray(['ok', 'ok', 'offset_gate']),
+        include_diagnostics=True,
     )
 
     diagnostics = {item.node_id: item for item in design.node_diagnostics}
@@ -72,6 +74,7 @@ def test_all_zero_error_message_includes_endpoint_key_and_column() -> None:
         bedrock_velocity_mode='fixed_global',
         fixed_bedrock_velocity_m_s=2500.0,
         rejection_reason_sorted=np.asarray(['ok']),
+        include_diagnostics=True,
     )
     source_col = design.node_id_to_col[17]
     matrix = design.matrix.tolil()
@@ -120,6 +123,7 @@ def test_design_matrix_qc_artifacts_written_on_failure(tmp_path) -> None:
         fixed_bedrock_velocity_m_s=2500.0,
         rejection_reason_sorted=np.asarray(['ok']),
     )
+    assert design.node_diagnostics == ()
 
     write_refraction_design_matrix_diagnostics_artifacts(tmp_path, design)
 
@@ -132,3 +136,31 @@ def test_design_matrix_qc_artifacts_written_on_failure(tmp_path) -> None:
         rows = list(csv.DictReader(handle))
     assert rows[0]['endpoint_key'] == 'source:1007'
     assert rows[0]['n_rows_pre_filter'] == '1'
+
+
+def test_design_matrix_node_diagnostics_are_lazy_by_default(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def _fail_if_called(**_: object) -> tuple[object, ...]:
+        raise AssertionError('node diagnostics should be lazy by default')
+
+    monkeypatch.setattr(
+        design_matrix_module,
+        '_build_node_diagnostics',
+        _fail_if_called,
+    )
+
+    design = build_refraction_static_design_matrix_from_arrays(
+        pick_time_s_sorted=np.asarray([0.20]),
+        valid_observation_mask_sorted=np.asarray([True]),
+        source_node_id_sorted=np.asarray([17]),
+        receiver_node_id_sorted=np.asarray([21]),
+        distance_m_sorted=np.asarray([500.0]),
+        node_id=np.asarray([17, 21]),
+        bedrock_velocity_mode='fixed_global',
+        fixed_bedrock_velocity_m_s=2500.0,
+    )
+
+    assert design.node_diagnostics == ()
+    assert design.design_matrix_qc is not None
+    assert design.design_matrix_qc['node_status_counts'] == {}

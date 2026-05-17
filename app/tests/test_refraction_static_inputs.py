@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import csv
 import json
 from pathlib import Path
 from typing import Any
@@ -24,6 +25,11 @@ from app.services.refraction_static_inputs import (
 )
 from app.services.refraction_static_pick_source_loader import (
     load_refraction_pick_source_from_npz_path,
+)
+from app.services.refraction_static_preflight_diagnostics import (
+    REFRACTION_STATIC_PREFLIGHT_OBSERVATIONS_CSV_NAME,
+    REFRACTION_STATIC_PREFLIGHT_QC_JSON_NAME,
+    RefractionStaticPreflightError,
 )
 
 
@@ -160,6 +166,7 @@ def _build(
     job_dir: Path | None = None,
     source_depth_mode: str = 'none',
     source_depth_invalidates_source_geometry: bool = True,
+    require_valid_observations: bool = True,
 ):
     geom = geometry or _geometry()
     data = headers if headers is not None else _headers(geometry=geom)
@@ -184,6 +191,7 @@ def _build(
         source_depth_invalidates_source_geometry=(
             source_depth_invalidates_source_geometry
         ),
+        require_valid_observations=require_valid_observations,
     )
 
 
@@ -641,6 +649,91 @@ def test_artifacts_are_written_when_job_dir_is_provided(tmp_path: Path) -> None:
 def test_no_valid_observations_raises() -> None:
     with pytest.raises(ValueError, match='No valid refraction observations remain'):
         _build(np.full(4, np.nan, dtype=np.float64))
+
+
+@pytest.mark.parametrize(
+    ('case_name', 'picks', 'moveout', 'linkage', 'linkage_artifact', 'reason_key'),
+    [
+        (
+            'offset_gate',
+            np.asarray([0.005, 0.006, 0.007, 0.008], dtype=np.float64),
+            _moveout(min_offset_m=100.0),
+            _linkage('none'),
+            None,
+            'offset_gate',
+        ),
+        (
+            'invalid_picks',
+            np.full(4, np.nan, dtype=np.float64),
+            _moveout(),
+            _linkage('none'),
+            None,
+            'missing_pick',
+        ),
+        (
+            'missing_linkage',
+            np.asarray([0.005, 0.006, 0.007, 0.008], dtype=np.float64),
+            _moveout(),
+            _linkage('required'),
+            {
+                'source_node_id_sorted': np.full(4, -1, dtype=np.int64),
+                'receiver_node_id_sorted': np.full(4, -1, dtype=np.int64),
+                'n_nodes': 1,
+            },
+            'missing_linkage',
+        ),
+    ],
+)
+def test_preflight_artifacts_written_when_no_valid_observations(
+    tmp_path: Path,
+    case_name: str,
+    picks: np.ndarray,
+    moveout: RefractionStaticMoveoutRequest,
+    linkage: RefractionStaticLinkageRequest,
+    linkage_artifact: dict[str, object] | None,
+    reason_key: str,
+) -> None:
+    job_dir = tmp_path / case_name
+
+    with pytest.raises(
+        RefractionStaticPreflightError,
+        match='No valid refraction observations remain',
+    ) as excinfo:
+        _build(
+            picks,
+            moveout=moveout,
+            linkage=linkage,
+            linkage_artifact=linkage_artifact,
+            job_dir=job_dir,
+        )
+
+    assert reason_key in str(excinfo.value)
+    qc_path = job_dir / REFRACTION_STATIC_PREFLIGHT_QC_JSON_NAME
+    observations_path = job_dir / REFRACTION_STATIC_PREFLIGHT_OBSERVATIONS_CSV_NAME
+    assert qc_path.is_file()
+    assert observations_path.is_file()
+    payload = json.loads(qc_path.read_text(encoding='utf-8'))
+    assert payload['status'] == 'error'
+    assert payload['summary']['observation_filters']['n_used_for_inversion'] == 0
+    assert payload['summary']['input_rejection_counts'][reason_key] == 4
+    assert payload['observations_csv_written'] is True
+    assert payload['observations_csv_total_rows'] == 4
+    assert payload['observations_csv_written_rows'] == 4
+    assert payload['observations_csv_omitted_rows'] == 0
+    with observations_path.open(encoding='utf-8', newline='') as handle:
+        rows = list(csv.DictReader(handle))
+    assert len(rows) == 4
+    assert {row['rejection_reason'] for row in rows} == {reason_key}
+
+
+def test_no_valid_observations_can_return_validation_model() -> None:
+    model = _build(
+        np.full(4, np.nan, dtype=np.float64),
+        require_valid_observations=False,
+    )
+
+    assert model.qc['n_valid_observations'] == 0
+    assert model.rejection_reason_sorted.tolist() == ['missing_pick'] * 4
 
 
 def test_build_refraction_static_input_model_loads_npz_original_order(

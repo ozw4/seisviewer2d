@@ -446,12 +446,6 @@ def build_refraction_static_input_model_from_arrays(
         rejection_reason=rejection_reason,
     )
 
-    if require_valid_observations and int(qc['n_valid_observations']) <= 0:
-        raise ValueError(
-            'No valid refraction observations remain after pick, geometry, '
-            'offset, and linkage filtering.'
-        )
-
     endpoint_table = _endpoint_table_with_pick_counts(
         node_mapping.endpoint_table,
         source_node_id=node_mapping.source_node_id_sorted,
@@ -497,39 +491,36 @@ def build_refraction_static_input_model_from_arrays(
         receiver_endpoint_id_sorted=endpoint_mapping.receiver_endpoint_id_sorted,
     )
     if int(qc['n_valid_observations']) <= 0:
+        preflight_req = _preflight_request_from_inputs(
+            request=preflight_request,
+            file_id=file_id,
+            geometry=geometry,
+            linkage=linkage,
+            moveout=moveout,
+            metadata=input_model.metadata,
+        )
+        diagnostics = build_preflight_diagnostics_from_input_model(
+            req=preflight_req,
+            input_model=input_model,
+            n_samples=sample_count,
+            dt_s=sample_interval,
+            pick_npz_summary=_preflight_pick_npz_summary(input_model.metadata),
+        )
+        diagnostics = _replace_preflight_errors(
+            diagnostics,
+            [no_observations_preflight_error(diagnostics.summary)],
+        )
         if job_dir is not None:
-            preflight_req = _preflight_request_from_inputs(
-                request=preflight_request,
-                file_id=file_id,
-                geometry=geometry,
-                linkage=linkage,
-                moveout=moveout,
-                metadata=input_model.metadata,
-            )
-            diagnostics = build_preflight_diagnostics_from_input_model(
-                req=preflight_req,
-                input_model=input_model,
-                n_samples=sample_count,
-                dt_s=sample_interval,
-                pick_npz_summary=_preflight_pick_npz_summary(input_model.metadata),
-            )
-            diagnostics = _replace_preflight_errors(
-                diagnostics,
-                [no_observations_preflight_error(diagnostics.summary)],
-            )
             write_refraction_static_preflight_artifacts(
                 Path(job_dir),
                 diagnostics,
                 input_model=input_model,
                 req=preflight_req,
             )
+        if require_valid_observations:
             raise RefractionStaticPreflightError(
                 preflight_error_message(diagnostics)
             )
-        raise ValueError(
-            'No valid refraction observations remain after pick, geometry, '
-            'offset, and linkage filtering.'
-        )
     if source_depth_mode != 'none':
         source_depth_result = resolve_refraction_source_depth_for_input_model(
             input_model=input_model,
@@ -620,15 +611,17 @@ def build_refraction_static_input_model_from_arrays(
                 input_model=input_model,
                 req=preflight_req,
             )
-            raise RefractionStaticPreflightError(
-                preflight_error_message(diagnostics)
+            if require_valid_observations:
+                raise RefractionStaticPreflightError(
+                    preflight_error_message(diagnostics)
+                )
+        else:
+            write_refraction_static_preflight_artifacts(
+                Path(job_dir),
+                diagnostics,
+                input_model=input_model,
+                req=preflight_req,
             )
-        write_refraction_static_preflight_artifacts(
-            Path(job_dir),
-            diagnostics,
-            input_model=input_model,
-            req=preflight_req,
-        )
     if job_dir is not None:
         write_refraction_static_input_artifacts(Path(job_dir), input_model)
     return input_model

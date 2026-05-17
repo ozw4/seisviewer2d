@@ -1,8 +1,22 @@
 from app.services.refraction_static_design_matrix import (
     REFRACTION_DESIGN_MATRIX_QC_JSON_NAME,
 )
+from app.services.refraction_static_preflight_diagnostics import (
+    RefractionStaticPreflightError,
+)
 from app.services.refraction_static_service import _failed_refraction_static_stage
 from app.services.refraction_static_solver import RefractionStaticSolverError
+
+
+def test_failed_refraction_static_stage_classifies_preflight_error(tmp_path) -> None:
+    stage = _failed_refraction_static_stage(
+        RefractionStaticPreflightError(
+            'No valid refraction observations remain after preflight filtering.'
+        ),
+        tmp_path,
+    )
+
+    assert stage == 'preflight'
 
 
 def test_failed_refraction_static_stage_prefers_solver_message_over_design_artifacts(
