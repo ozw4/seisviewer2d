@@ -5,6 +5,13 @@ from __future__ import annotations
 from app.services.refraction_static_artifacts import contract
 from app.services.refraction_static_artifacts import _legacy
 from app.services.refraction_static_artifacts._legacy import *  # noqa: F403
+from app.services.refraction_static_artifacts.grid_map import (
+    build_refraction_grid_map_qc_arrays as build_refraction_grid_map_qc_arrays,
+    build_refraction_grid_map_qc_payload as build_refraction_grid_map_qc_payload,
+    write_refraction_grid_map_qc_csv as write_refraction_grid_map_qc_csv,
+    write_refraction_grid_map_qc_json as write_refraction_grid_map_qc_json,
+    write_refraction_grid_map_qc_npz as write_refraction_grid_map_qc_npz,
+)
 from app.services.refraction_static_artifacts.line_profile import (
     build_refraction_line_profile_qc_arrays as build_refraction_line_profile_qc_arrays,
     build_refraction_line_profile_qc_payload as build_refraction_line_profile_qc_payload,
