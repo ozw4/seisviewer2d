@@ -188,6 +188,7 @@ from app.services.refraction_static_artifacts.qc import (
     build_refraction_static_qc_payload as build_refraction_static_qc_payload,
     write_refraction_static_qc_json as write_refraction_static_qc_json,
 )
+from app.services.refraction_static_artifacts import solution as _solution_artifacts
 import app.services.refraction_static_artifacts.registry as _artifact_registry
 
 _artifact_content_type = _artifact_registry._artifact_content_type
@@ -197,44 +198,6 @@ _refractor_cell_velocity_artifact_entries = (
 )
 _t1lsst_artifact_entries = _artifact_registry._t1lsst_artifact_entries
 _upstream_artifact_entries = _artifact_registry._upstream_artifact_entries
-
-
-def write_refraction_static_solution_npz(
-    *,
-    result: RefractionDatumStaticsResult,
-    req: RefractionStaticApplyRequest,
-    path: Path,
-    resolved_first_layer: ResolvedRefractionFirstLayer | None = None,
-) -> None:
-    """Write the compressed, pickle-free machine-readable solution artifact."""
-    values = _validate_result(result)
-    request = RefractionStaticApplyRequest.model_validate(req)
-    payload = build_refraction_static_solution_arrays(
-        result=values.result,
-        req=request,
-        resolved_first_layer=resolved_first_layer,
-    )
-    _write_npz_atomic(Path(path), payload)
-
-
-def write_refraction_statics_csv(
-    *,
-    result: RefractionDatumStaticsResult,
-    path: Path,
-) -> None:
-    values = _validate_result(result)
-    rows = _trace_statics_rows(values.result)
-    _write_csv_atomic(Path(path), _trace_statics_columns(values.result), rows)
-
-
-def write_near_surface_model_csv(
-    *,
-    result: RefractionDatumStaticsResult,
-    path: Path,
-) -> None:
-    values = _validate_result(result)
-    rows = _near_surface_model_rows(values.result)
-    _write_csv_atomic(Path(path), _near_surface_columns(values.result), rows)
 
 
 def write_refraction_static_components_csv(
@@ -1969,7 +1932,7 @@ def build_refraction_static_component_qc_payload(
     return payload
 
 
-def build_refraction_static_solution_arrays(
+def _legacy_build_refraction_static_solution_arrays(
     *,
     result: RefractionDatumStaticsResult,
     req: RefractionStaticApplyRequest,
@@ -5919,9 +5882,14 @@ def _sum_correction_s(left: object, right: object) -> float:
     return float(left_value + right_value)
 
 
-from app.services.refraction_static_artifacts.writer import (  # noqa: E402
-    write_refraction_static_artifacts,
+build_refraction_static_solution_arrays = (
+    _solution_artifacts.build_refraction_static_solution_arrays
 )
+write_near_surface_model_csv = _solution_artifacts.write_near_surface_model_csv
+write_refraction_static_solution_npz = (
+    _solution_artifacts.write_refraction_static_solution_npz
+)
+write_refraction_statics_csv = _solution_artifacts.write_refraction_statics_csv
 from app.services.refraction_static_artifacts.first_break_qc import (  # noqa: E402
     build_refraction_first_break_fit_qc_arrays,
     build_refraction_first_break_fit_qc_payload,
@@ -6032,7 +6000,6 @@ __all__ = [
     'write_refraction_refractor_velocity_cells_csv',
     'write_refraction_refractor_velocity_grid_npz',
     'write_refraction_refractor_velocity_qc_json',
-    'write_refraction_static_artifacts',
     'write_refraction_static_component_qc_artifacts',
     'write_refraction_static_components_csv',
     'write_refraction_static_history_json',
