@@ -9,7 +9,7 @@ from typing import Any
 import numpy as np
 
 from app.api.schemas import RefractionStaticApplyRequest
-from app.services.refraction_static_artifacts._legacy import (
+from app.services.refraction_static_artifacts.arrays import (
     _qc_cell_count_array,
     _qc_cell_id_array,
     _qc_int,
@@ -20,9 +20,9 @@ from app.services.refraction_static_artifacts._legacy import (
     _required_layer_cell_id_array,
     _string_array,
     _validate_refractor_velocity_cell_ids,
-    _validate_result,
     _validate_status_array,
 )
+from app.services.refraction_static_artifacts.validation import _validate_result
 from app.services.refraction_static_artifacts.contract import (
     _CELL_SOLVER_HISTORY_COLUMNS,
     _REFRACTOR_VELOCITY_CELL_COLUMNS,

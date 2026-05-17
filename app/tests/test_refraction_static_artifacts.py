@@ -11,9 +11,11 @@ import pytest
 
 from app.api.schemas import RefractionStaticApplyRequest
 import app.services.refraction_static_artifacts as artifact_module
-import app.services.refraction_static_artifacts._legacy as artifact_legacy_module
+import app.services.refraction_static_artifacts.writer as artifact_writer_module
 import app.services.refraction_static_artifacts.cell_velocity as cell_velocity_module
 import app.services.refraction_static_artifacts.components as components_module
+import app.services.refraction_static_artifacts.solution as solution_module
+import app.services.refraction_static_artifacts.validation as validation_module
 from app.services.refraction_static_artifacts import registry as artifact_registry
 from app.services.refraction_static_artifacts.io import (
     _write_csv_atomic,
@@ -531,21 +533,6 @@ def test_refraction_static_registry_manifest_entry_contract() -> None:
         assert item['kind'] == kind
         assert item['required'] is required
         assert item['description'] == description
-
-
-def test_refraction_static_legacy_registry_private_aliases() -> None:
-    alias_names = (
-        '_artifact_content_type',
-        '_grid_map_qc_artifact_entries',
-        '_refractor_cell_velocity_artifact_entries',
-        '_t1lsst_artifact_entries',
-        '_upstream_artifact_entries',
-    )
-    for alias_name in alias_names:
-        assert getattr(artifact_legacy_module, alias_name) is getattr(
-            artifact_registry,
-            alias_name,
-        )
 
 
 @pytest.mark.parametrize(
@@ -2157,7 +2144,7 @@ def test_reduced_time_qc_fixed_velocity_formula() -> None:
     assert arrays['status'].tolist() == ['ok', 'ok', 'ok']
 
 
-def test_reduced_time_qc_csv_preserves_legacy_row_contract(tmp_path: Path) -> None:
+def test_reduced_time_qc_csv_preserves_existing_row_contract(tmp_path: Path) -> None:
     paths = write_refraction_static_artifacts(
         result=_result(),
         req=_request(),
@@ -3041,7 +3028,7 @@ def test_write_refraction_static_artifacts_rejects_non_writable_job_dir(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setattr(
-        artifact_legacy_module.os,
+        validation_module.os,
         'access',
         lambda _path, _mode: False,
     )
@@ -3134,7 +3121,7 @@ def test_write_refraction_static_artifacts_detects_missing_artifact_after_write(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setattr(
-        artifact_legacy_module,
+        artifact_writer_module,
         'write_refraction_static_components_csv',
         lambda **_kwargs: None,
     )
@@ -3155,7 +3142,7 @@ def test_write_refraction_static_solution_rejects_object_arrays(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setattr(
-        artifact_legacy_module,
+        solution_module,
         'build_refraction_static_solution_arrays',
         lambda **_kwargs: {'bad_object': np.asarray([object()], dtype=object)},
     )

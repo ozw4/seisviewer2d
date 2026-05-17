@@ -7,6 +7,26 @@ from pathlib import Path
 
 import numpy as np
 
+from app.services.refraction_static_artifacts.arrays import (
+    _endpoint_cell_id_array,
+    _endpoint_v2_m_s,
+    _endpoint_v2_status_array,
+    _filled_float_array,
+    _float_array,
+    _int_array,
+    _scalar_str,
+    _string_array,
+    _sum_correction_s,
+    _sum_float_arrays,
+)
+from app.services.refraction_static_artifacts.line_profile import (
+    _endpoint_layer_qc_context,
+    _endpoint_layer_qc_row_fields,
+    _node_context,
+    _receiver_static_status_array,
+    _source_static_status_array,
+)
+from app.services.refraction_static_artifacts.validation import _validate_result
 from app.services.refraction_static_artifacts.contract import (
     _RECEIVER_STATIC_TABLE_2LAYER_COLUMNS,
     _RECEIVER_STATIC_TABLE_3LAYER_COLUMNS,
@@ -113,9 +133,7 @@ def write_source_static_table_csv(
     result: RefractionDatumStaticsResult,
     path: Path,
 ) -> None:
-    from app.services.refraction_static_artifacts import _legacy
-
-    values = _legacy._validate_result(result)
+    values = _validate_result(result)
     rows = _source_static_table_rows(values.result)
     _write_csv_atomic(Path(path), _source_static_table_columns(values.result), rows)
 
@@ -125,9 +143,7 @@ def write_receiver_static_table_csv(
     result: RefractionDatumStaticsResult,
     path: Path,
 ) -> None:
-    from app.services.refraction_static_artifacts import _legacy
-
-    values = _legacy._validate_result(result)
+    values = _validate_result(result)
     rows = _receiver_static_table_rows(values.result)
     _write_csv_atomic(Path(path), _receiver_static_table_columns(values.result), rows)
 
@@ -137,9 +153,7 @@ def write_source_receiver_static_table_npz(
     result: RefractionDatumStaticsResult,
     path: Path,
 ) -> None:
-    from app.services.refraction_static_artifacts import _legacy
-
-    values = _legacy._validate_result(result)
+    values = _validate_result(result)
     payload = build_source_receiver_static_table_arrays(result=values.result)
     _write_npz_atomic(Path(path), payload)
 
@@ -150,9 +164,7 @@ def write_refraction_time_term_spreadsheet_csv(
     path: Path,
     source_job_id: str | None = None,
 ) -> None:
-    from app.services.refraction_static_artifacts import _legacy
-
-    values = _legacy._validate_result(result)
+    values = _validate_result(result)
     rows = _time_term_spreadsheet_rows(
         values.result,
         source_job_id=source_job_id,
@@ -181,105 +193,103 @@ def build_source_receiver_static_table_arrays(
     *,
     result: RefractionDatumStaticsResult,
 ) -> dict[str, np.ndarray]:
-    from app.services.refraction_static_artifacts import _legacy
-
-    values = _legacy._validate_result(result)
+    values = _validate_result(result)
     r = values.result
-    source_t1_s = _legacy._float_array(r.source_half_intercept_time_s)
+    source_t1_s = _float_array(r.source_half_intercept_time_s)
     source_sh1_m = _source_sh1_weathering_thickness_m(r)
-    source_weathering_correction_s = _legacy._float_array(
+    source_weathering_correction_s = _float_array(
         r.source_weathering_replacement_shift_s
     )
-    receiver_t1_s = _legacy._float_array(r.receiver_half_intercept_time_s)
+    receiver_t1_s = _float_array(r.receiver_half_intercept_time_s)
     receiver_sh1_m = _receiver_sh1_weathering_thickness_m(r)
-    receiver_weathering_correction_s = _legacy._float_array(
+    receiver_weathering_correction_s = _float_array(
         r.receiver_weathering_replacement_shift_s
     )
-    source_static_status = _legacy._source_static_status_array(r)
-    receiver_static_status = _legacy._receiver_static_status_array(r)
-    source_v2 = _legacy._endpoint_v2_m_s(
+    source_static_status = _source_static_status_array(r)
+    receiver_static_status = _receiver_static_status_array(r)
+    source_v2 = _endpoint_v2_m_s(
         r.source_v2_m_s,
         shape=values.n_source_endpoints,
         scalar_v2_m_s=r.bedrock_velocity_m_s,
     )
-    receiver_v2 = _legacy._endpoint_v2_m_s(
+    receiver_v2 = _endpoint_v2_m_s(
         r.receiver_v2_m_s,
         shape=values.n_receiver_endpoints,
         scalar_v2_m_s=r.bedrock_velocity_m_s,
     )
     arrays: dict[str, np.ndarray] = {
-        'sign_convention': _legacy._scalar_str(SIGN_CONVENTION),
-        'source_endpoint_key': _legacy._string_array(r.source_endpoint_key),
-        'source_id': _legacy._int_array(r.source_id),
-        'source_node_id': _legacy._int_array(r.source_node_id),
-        'source_v2_cell_id': _legacy._endpoint_cell_id_array(
+        'sign_convention': _scalar_str(SIGN_CONVENTION),
+        'source_endpoint_key': _string_array(r.source_endpoint_key),
+        'source_id': _int_array(r.source_id),
+        'source_node_id': _int_array(r.source_node_id),
+        'source_v2_cell_id': _endpoint_cell_id_array(
             r.source_v2_cell_id,
             values.n_source_endpoints,
         ),
-        'source_v2_status': _legacy._endpoint_v2_status_array(
+        'source_v2_status': _endpoint_v2_status_array(
             r.source_v2_status,
             values.n_source_endpoints,
         ),
-        'source_x_m': _legacy._float_array(r.source_x_m),
-        'source_y_m': _legacy._float_array(r.source_y_m),
-        'source_surface_elevation_m': _legacy._float_array(
+        'source_x_m': _float_array(r.source_x_m),
+        'source_y_m': _float_array(r.source_y_m),
+        'source_surface_elevation_m': _float_array(
             r.source_surface_elevation_m
         ),
         'source_t1_s': source_t1_s,
-        'source_v1_m_s': _legacy._filled_float_array(
+        'source_v1_m_s': _filled_float_array(
             r.weathering_velocity_m_s,
             values.n_source_endpoints,
         ),
         'source_v2_m_s': source_v2,
         'source_sh1_m': source_sh1_m,
-        'source_total_weathering_thickness_m': _legacy._float_array(
+        'source_total_weathering_thickness_m': _float_array(
             r.source_weathering_thickness_m
         ),
         'source_weathering_correction_s': source_weathering_correction_s,
-        'source_elevation_correction_s': _legacy._sum_float_arrays(
+        'source_elevation_correction_s': _sum_float_arrays(
             r.source_floating_datum_elevation_shift_s,
             r.source_flat_datum_shift_s,
         ),
-        'source_total_static_s': _legacy._float_array(r.source_refraction_shift_s),
-        'source_total_applied_shift_s': _legacy._float_array(
+        'source_total_static_s': _float_array(r.source_refraction_shift_s),
+        'source_total_applied_shift_s': _float_array(
             r.source_refraction_shift_s
         ),
         'source_static_status': source_static_status,
-        'receiver_endpoint_key': _legacy._string_array(r.receiver_endpoint_key),
-        'receiver_id': _legacy._int_array(r.receiver_id),
-        'receiver_node_id': _legacy._int_array(r.receiver_node_id),
-        'receiver_v2_cell_id': _legacy._endpoint_cell_id_array(
+        'receiver_endpoint_key': _string_array(r.receiver_endpoint_key),
+        'receiver_id': _int_array(r.receiver_id),
+        'receiver_node_id': _int_array(r.receiver_node_id),
+        'receiver_v2_cell_id': _endpoint_cell_id_array(
             r.receiver_v2_cell_id,
             values.n_receiver_endpoints,
         ),
-        'receiver_v2_status': _legacy._endpoint_v2_status_array(
+        'receiver_v2_status': _endpoint_v2_status_array(
             r.receiver_v2_status,
             values.n_receiver_endpoints,
         ),
-        'receiver_x_m': _legacy._float_array(r.receiver_x_m),
-        'receiver_y_m': _legacy._float_array(r.receiver_y_m),
-        'receiver_surface_elevation_m': _legacy._float_array(
+        'receiver_x_m': _float_array(r.receiver_x_m),
+        'receiver_y_m': _float_array(r.receiver_y_m),
+        'receiver_surface_elevation_m': _float_array(
             r.receiver_surface_elevation_m
         ),
         'receiver_t1_s': receiver_t1_s,
-        'receiver_v1_m_s': _legacy._filled_float_array(
+        'receiver_v1_m_s': _filled_float_array(
             r.weathering_velocity_m_s,
             values.n_receiver_endpoints,
         ),
         'receiver_v2_m_s': receiver_v2,
         'receiver_sh1_m': receiver_sh1_m,
-        'receiver_total_weathering_thickness_m': _legacy._float_array(
+        'receiver_total_weathering_thickness_m': _float_array(
             r.receiver_weathering_thickness_m
         ),
         'receiver_weathering_correction_s': receiver_weathering_correction_s,
-        'receiver_elevation_correction_s': _legacy._sum_float_arrays(
+        'receiver_elevation_correction_s': _sum_float_arrays(
             r.receiver_floating_datum_elevation_shift_s,
             r.receiver_flat_datum_shift_s,
         ),
-        'receiver_total_static_s': _legacy._float_array(
+        'receiver_total_static_s': _float_array(
             r.receiver_refraction_shift_s
         ),
-        'receiver_total_applied_shift_s': _legacy._float_array(
+        'receiver_total_applied_shift_s': _float_array(
             r.receiver_refraction_shift_s
         ),
         'receiver_static_status': receiver_static_status,
@@ -323,15 +333,15 @@ def build_source_receiver_static_table_arrays(
         source_layer1_base = r.source_surface_elevation_m - source_sh1_m
         arrays.update(
             {
-                'source_t2_s': _legacy._float_array(r.source_t2_time_s),
-                'source_v3_m_s': _legacy._float_array(r.source_v3_m_s),
-                'source_sh2_m': _legacy._float_array(
+                'source_t2_s': _float_array(r.source_t2_time_s),
+                'source_v3_m_s': _float_array(r.source_v3_m_s),
+                'source_sh2_m': _float_array(
                     r.source_sh2_weathering_thickness_m
                 ),
-                'source_layer1_base_elevation_m': _legacy._float_array(
+                'source_layer1_base_elevation_m': _float_array(
                     source_layer1_base
                 ),
-                'source_final_refractor_elevation_m': _legacy._float_array(
+                'source_final_refractor_elevation_m': _float_array(
                     r.source_refractor_elevation_m
                 ),
             }
@@ -342,12 +352,12 @@ def build_source_receiver_static_table_arrays(
             assert r.source_sh3_weathering_thickness_m is not None
             arrays.update(
                 {
-                    'source_t3_s': _legacy._float_array(r.source_t3_time_s),
-                    'source_vsub_m_s': _legacy._float_array(r.source_vsub_m_s),
-                    'source_sh3_m': _legacy._float_array(
+                    'source_t3_s': _float_array(r.source_t3_time_s),
+                    'source_vsub_m_s': _float_array(r.source_vsub_m_s),
+                    'source_sh3_m': _float_array(
                         r.source_sh3_weathering_thickness_m
                     ),
-                    'source_layer2_base_elevation_m': _legacy._float_array(
+                    'source_layer2_base_elevation_m': _float_array(
                         source_layer1_base - r.source_sh2_weathering_thickness_m
                     ),
                 }
@@ -359,15 +369,15 @@ def build_source_receiver_static_table_arrays(
         receiver_layer1_base = r.receiver_surface_elevation_m - receiver_sh1_m
         arrays.update(
             {
-                'receiver_t2_s': _legacy._float_array(r.receiver_t2_time_s),
-                'receiver_v3_m_s': _legacy._float_array(r.receiver_v3_m_s),
-                'receiver_sh2_m': _legacy._float_array(
+                'receiver_t2_s': _float_array(r.receiver_t2_time_s),
+                'receiver_v3_m_s': _float_array(r.receiver_v3_m_s),
+                'receiver_sh2_m': _float_array(
                     r.receiver_sh2_weathering_thickness_m
                 ),
-                'receiver_layer1_base_elevation_m': _legacy._float_array(
+                'receiver_layer1_base_elevation_m': _float_array(
                     receiver_layer1_base
                 ),
-                'receiver_final_refractor_elevation_m': _legacy._float_array(
+                'receiver_final_refractor_elevation_m': _float_array(
                     r.receiver_refractor_elevation_m
                 ),
             }
@@ -378,12 +388,12 @@ def build_source_receiver_static_table_arrays(
             assert r.receiver_sh3_weathering_thickness_m is not None
             arrays.update(
                 {
-                    'receiver_t3_s': _legacy._float_array(r.receiver_t3_time_s),
-                    'receiver_vsub_m_s': _legacy._float_array(r.receiver_vsub_m_s),
-                    'receiver_sh3_m': _legacy._float_array(
+                    'receiver_t3_s': _float_array(r.receiver_t3_time_s),
+                    'receiver_vsub_m_s': _float_array(r.receiver_vsub_m_s),
+                    'receiver_sh3_m': _float_array(
                         r.receiver_sh3_weathering_thickness_m
                     ),
-                    'receiver_layer2_base_elevation_m': _legacy._float_array(
+                    'receiver_layer2_base_elevation_m': _float_array(
                         receiver_layer1_base
                         - r.receiver_sh2_weathering_thickness_m
                     ),
@@ -515,14 +525,12 @@ def _has_receiver_2layer_static_fields(result: RefractionDatumStaticsResult) -> 
 def _node_sh1_weathering_thickness_m(
     result: RefractionDatumStaticsResult,
 ) -> np.ndarray:
-    from app.services.refraction_static_artifacts import _legacy
-
     node_sh1 = result.node_sh1_weathering_thickness_m
     if node_sh1 is not None:
-        return _legacy._float_array(node_sh1)
+        return _float_array(node_sh1)
     node_sh2 = result.node_sh2_weathering_thickness_m
     if node_sh2 is None:
-        return _legacy._float_array(result.node_weathering_thickness_m)
+        return _float_array(result.node_weathering_thickness_m)
     raise RefractionStaticArtifactError(
         'node_sh1_weathering_thickness_m is required with '
         'node_sh2_weathering_thickness_m'
@@ -532,14 +540,12 @@ def _node_sh1_weathering_thickness_m(
 def _source_sh1_weathering_thickness_m(
     result: RefractionDatumStaticsResult,
 ) -> np.ndarray:
-    from app.services.refraction_static_artifacts import _legacy
-
     source_sh1 = result.source_sh1_weathering_thickness_m
     if source_sh1 is not None:
-        return _legacy._float_array(source_sh1)
+        return _float_array(source_sh1)
     source_sh2 = result.source_sh2_weathering_thickness_m
     if source_sh2 is None:
-        return _legacy._float_array(result.source_weathering_thickness_m)
+        return _float_array(result.source_weathering_thickness_m)
     raise RefractionStaticArtifactError(
         'source_sh1_weathering_thickness_m is required with '
         'source_sh2_weathering_thickness_m'
@@ -549,14 +555,12 @@ def _source_sh1_weathering_thickness_m(
 def _receiver_sh1_weathering_thickness_m(
     result: RefractionDatumStaticsResult,
 ) -> np.ndarray:
-    from app.services.refraction_static_artifacts import _legacy
-
     receiver_sh1 = result.receiver_sh1_weathering_thickness_m
     if receiver_sh1 is not None:
-        return _legacy._float_array(receiver_sh1)
+        return _float_array(receiver_sh1)
     receiver_sh2 = result.receiver_sh2_weathering_thickness_m
     if receiver_sh2 is None:
-        return _legacy._float_array(result.receiver_weathering_thickness_m)
+        return _float_array(result.receiver_weathering_thickness_m)
     raise RefractionStaticArtifactError(
         'receiver_sh1_weathering_thickness_m is required with '
         'receiver_sh2_weathering_thickness_m'
@@ -566,22 +570,20 @@ def _receiver_sh1_weathering_thickness_m(
 def _source_static_table_rows(
     result: RefractionDatumStaticsResult,
 ) -> list[dict[str, object]]:
-    from app.services.refraction_static_artifacts import _legacy
-
-    node_context = _legacy._node_context(result)
-    layer_context = _legacy._endpoint_layer_qc_context(result, endpoint='source')
-    static_status = _legacy._source_static_status_array(result)
+    node_context = _node_context(result)
+    layer_context = _endpoint_layer_qc_context(result, endpoint='source')
+    static_status = _source_static_status_array(result)
     flat_datum = _nan_if_none(result.flat_datum_elevation_m)
-    source_v2 = _legacy._endpoint_v2_m_s(
+    source_v2 = _endpoint_v2_m_s(
         result.source_v2_m_s,
         shape=int(result.source_endpoint_key.shape[0]),
         scalar_v2_m_s=result.bedrock_velocity_m_s,
     )
-    source_v2_cell_id = _legacy._endpoint_cell_id_array(
+    source_v2_cell_id = _endpoint_cell_id_array(
         result.source_v2_cell_id,
         int(result.source_endpoint_key.shape[0]),
     )
-    source_v2_status = _legacy._endpoint_v2_status_array(
+    source_v2_status = _endpoint_v2_status_array(
         result.source_v2_status,
         int(result.source_endpoint_key.shape[0]),
     )
@@ -614,7 +616,7 @@ def _source_static_table_rows(
         node_id = int(result.source_node_id[index])
         t1_s = result.source_half_intercept_time_s[index]
         weathering_correction_s = result.source_weathering_replacement_shift_s[index]
-        elevation_correction_s = _legacy._sum_correction_s(
+        elevation_correction_s = _sum_correction_s(
             result.source_floating_datum_elevation_shift_s[index],
             result.source_flat_datum_shift_s[index],
         )
@@ -701,7 +703,7 @@ def _source_static_table_rows(
             layer1_base = result.source_surface_elevation_m[index] - source_sh1_m[index]
             rows[-1].update(
                 {
-                    **_legacy._endpoint_layer_qc_row_fields(
+                    **_endpoint_layer_qc_row_fields(
                         layer_context,
                         str(result.source_endpoint_key[index]),
                     ),
@@ -736,22 +738,20 @@ def _source_static_table_rows(
 def _receiver_static_table_rows(
     result: RefractionDatumStaticsResult,
 ) -> list[dict[str, object]]:
-    from app.services.refraction_static_artifacts import _legacy
-
-    node_context = _legacy._node_context(result)
-    layer_context = _legacy._endpoint_layer_qc_context(result, endpoint='receiver')
-    static_status = _legacy._receiver_static_status_array(result)
+    node_context = _node_context(result)
+    layer_context = _endpoint_layer_qc_context(result, endpoint='receiver')
+    static_status = _receiver_static_status_array(result)
     flat_datum = _nan_if_none(result.flat_datum_elevation_m)
-    receiver_v2 = _legacy._endpoint_v2_m_s(
+    receiver_v2 = _endpoint_v2_m_s(
         result.receiver_v2_m_s,
         shape=int(result.receiver_endpoint_key.shape[0]),
         scalar_v2_m_s=result.bedrock_velocity_m_s,
     )
-    receiver_v2_cell_id = _legacy._endpoint_cell_id_array(
+    receiver_v2_cell_id = _endpoint_cell_id_array(
         result.receiver_v2_cell_id,
         int(result.receiver_endpoint_key.shape[0]),
     )
-    receiver_v2_status = _legacy._endpoint_v2_status_array(
+    receiver_v2_status = _endpoint_v2_status_array(
         result.receiver_v2_status,
         int(result.receiver_endpoint_key.shape[0]),
     )
@@ -778,7 +778,7 @@ def _receiver_static_table_rows(
         node_id = int(result.receiver_node_id[index])
         t1_s = result.receiver_half_intercept_time_s[index]
         weathering_correction_s = result.receiver_weathering_replacement_shift_s[index]
-        elevation_correction_s = _legacy._sum_correction_s(
+        elevation_correction_s = _sum_correction_s(
             result.receiver_floating_datum_elevation_shift_s[index],
             result.receiver_flat_datum_shift_s[index],
         )
@@ -861,7 +861,7 @@ def _receiver_static_table_rows(
             )
             rows[-1].update(
                 {
-                    **_legacy._endpoint_layer_qc_row_fields(
+                    **_endpoint_layer_qc_row_fields(
                         layer_context,
                         str(result.receiver_endpoint_key[index]),
                     ),
