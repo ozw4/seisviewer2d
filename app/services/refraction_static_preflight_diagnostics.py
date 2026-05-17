@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import csv
+import os
+from collections.abc import Iterable
 from dataclasses import asdict, dataclass
 import json
 from pathlib import Path
@@ -19,6 +21,10 @@ REFRACTION_STATIC_PREFLIGHT_QC_JSON_NAME = 'refraction_static_preflight_qc.json'
 REFRACTION_STATIC_PREFLIGHT_OBSERVATIONS_CSV_NAME = (
     'refraction_static_preflight_observations.csv'
 )
+REFRACTION_STATIC_PREFLIGHT_OBSERVATIONS_CSV_MAX_ROWS_ENV = (
+    'SV_REFRACTION_STATIC_PREFLIGHT_OBSERVATIONS_CSV_MAX_ROWS'
+)
+REFRACTION_STATIC_PREFLIGHT_OBSERVATIONS_CSV_DEFAULT_MAX_ROWS = 10_000
 
 _OBSERVATION_COLUMNS = (
     'trace_sorted_index',
@@ -321,19 +327,41 @@ def write_refraction_static_preflight_artifacts(
     *,
     input_model: Any | None = None,
     req: RefractionStaticApplyRequest | None = None,
+    max_observation_csv_rows: int | None = None,
+    force_observations_csv: bool = False,
 ) -> dict[str, Path]:
     """Write preflight QC JSON and compact observation CSV artifacts."""
     root = Path(job_dir)
     root.mkdir(parents=True, exist_ok=True)
     qc_path = root / REFRACTION_STATIC_PREFLIGHT_QC_JSON_NAME
     observations_path = root / REFRACTION_STATIC_PREFLIGHT_OBSERVATIONS_CSV_NAME
-    _write_json_atomic(qc_path, asdict(diagnostics))
-    rows: list[dict[str, Any]]
-    if input_model is None or req is None:
-        rows = []
+    max_rows = (
+        _resolve_observation_csv_max_rows()
+        if max_observation_csv_rows is None
+        else _validate_observation_csv_max_rows(max_observation_csv_rows)
+    )
+    csv_plan = _observation_csv_plan(
+        diagnostics=diagnostics,
+        input_model=input_model,
+        req=req,
+        max_rows=max_rows,
+        force=force_observations_csv,
+    )
+    payload = asdict(diagnostics)
+    _attach_observation_csv_plan(payload, csv_plan)
+    _write_json_atomic(qc_path, payload)
+    if (
+        csv_plan['observations_csv_written']
+        and input_model is not None
+        and req is not None
+    ):
+        indices = np.asarray(csv_plan['_row_indices'], dtype=np.int64)
+        _write_csv_atomic(
+            observations_path,
+            _observation_rows(input_model=input_model, req=req, indices=indices),
+        )
     else:
-        rows = _observation_rows(input_model=input_model, req=req)
-    _write_csv_atomic(observations_path, rows)
+        observations_path.unlink(missing_ok=True)
     return {'qc_json': qc_path, 'observations_csv': observations_path}
 
 
@@ -351,6 +379,108 @@ def preflight_error_message(
             + suffix
         )
     return fallback + suffix
+
+
+def _resolve_observation_csv_max_rows() -> int:
+    raw = os.environ.get(REFRACTION_STATIC_PREFLIGHT_OBSERVATIONS_CSV_MAX_ROWS_ENV)
+    if raw is None:
+        return REFRACTION_STATIC_PREFLIGHT_OBSERVATIONS_CSV_DEFAULT_MAX_ROWS
+    return _validate_observation_csv_max_rows(int(raw))
+
+
+def _validate_observation_csv_max_rows(value: int) -> int:
+    max_rows = int(value)
+    if max_rows <= 0:
+        raise ValueError(
+            f'{REFRACTION_STATIC_PREFLIGHT_OBSERVATIONS_CSV_MAX_ROWS_ENV} must be > 0'
+        )
+    return max_rows
+
+
+def _observation_csv_plan(
+    *,
+    diagnostics: RefractionStaticPreflightDiagnostics,
+    input_model: Any | None,
+    req: RefractionStaticApplyRequest | None,
+    max_rows: int,
+    force: bool,
+) -> dict[str, Any]:
+    total_rows = _observation_csv_total_rows(
+        diagnostics=diagnostics,
+        input_model=input_model,
+    )
+    policy = {
+        'mode': 'bounded_diagnostic_sample',
+        'max_rows': int(max_rows),
+        'write_on_statuses': ['warning', 'error'],
+        'forced': bool(force),
+        'priority': [
+            'first_row_per_rejection_reason',
+            'remaining_rejected_rows',
+            'remaining_unused_rows',
+            'remaining_rows',
+        ],
+    }
+    indices = np.asarray([], dtype=np.int64)
+    if input_model is None or req is None:
+        policy['mode'] = 'no_input_model'
+    elif diagnostics.status == 'ok' and not force:
+        policy['mode'] = 'success_summary_only'
+    else:
+        indices = _select_observation_csv_indices(
+            input_model=input_model,
+            max_rows=max_rows,
+        )
+    written_rows = int(indices.shape[0])
+    written = bool(written_rows > 0)
+    if (
+        input_model is not None
+        and req is not None
+        and not written
+        and diagnostics.status != 'ok'
+    ):
+        policy['mode'] = 'no_observation_rows'
+    return {
+        'observations_csv_written': written,
+        'observations_csv_total_rows': int(total_rows),
+        'observations_csv_written_rows': written_rows,
+        'observations_csv_omitted_rows': max(int(total_rows) - written_rows, 0),
+        'observations_csv_policy': policy,
+        '_row_indices': indices.tolist(),
+    }
+
+
+def _observation_csv_total_rows(
+    *,
+    diagnostics: RefractionStaticPreflightDiagnostics,
+    input_model: Any | None,
+) -> int:
+    if input_model is not None:
+        return int(input_model.n_traces)
+    summary = diagnostics.summary
+    if isinstance(summary, dict):
+        n_traces = summary.get('n_traces')
+        if isinstance(n_traces, int):
+            return int(n_traces)
+        filters = summary.get('observation_filters')
+        if isinstance(filters, dict):
+            n_total = filters.get('n_total_traces')
+            if isinstance(n_total, int):
+                return int(n_total)
+    return 0
+
+
+def _attach_observation_csv_plan(
+    payload: dict[str, Any],
+    csv_plan: dict[str, Any],
+) -> None:
+    public_plan = {
+        key: value for key, value in csv_plan.items() if not key.startswith('_')
+    }
+    payload.update(public_plan)
+    summary = payload.get('summary')
+    if isinstance(summary, dict):
+        summary.update(public_plan)
 
 
 def _preflight_error_count_parts(
@@ -594,6 +724,7 @@ def _observation_rows(
     *,
     input_model: Any,
     req: RefractionStaticApplyRequest,
+    indices: np.ndarray,
 ) -> list[dict[str, Any]]:
     distance = np.asarray(input_model.distance_m_sorted, dtype=np.float64)
     inside_gate = _inside_offset_gate(distance, req=req)
@@ -601,7 +732,8 @@ def _observation_rows(
     sorted_index = np.asarray(input_model.sorted_trace_index, dtype=np.int64)
     picks = np.asarray(input_model.pick_time_s_sorted, dtype=np.float64)
     rows: list[dict[str, Any]] = []
-    for index in range(int(input_model.n_traces)):
+    for raw_index in indices:
+        index = int(raw_index)
         rows.append(
             {
                 'trace_sorted_index': index,
@@ -612,7 +744,9 @@ def _observation_rows(
                 'pick_time_s': _json_scalar(picks[index]),
                 'finite_pick': bool(np.isfinite(picks[index])),
                 'inside_offset_gate': bool(inside_gate[index]),
-                'source_endpoint_key': str(input_model.source_endpoint_key_sorted[index]),
+                'source_endpoint_key': str(
+                    input_model.source_endpoint_key_sorted[index]
+                ),
                 'receiver_endpoint_key': str(
                     input_model.receiver_endpoint_key_sorted[index]
                 ),
@@ -621,6 +755,45 @@ def _observation_rows(
             }
         )
     return rows
+
+
+def _select_observation_csv_indices(
+    *,
+    input_model: Any,
+    max_rows: int,
+) -> np.ndarray:
+    n_traces = int(input_model.n_traces)
+    if n_traces <= 0 or max_rows <= 0:
+        return np.asarray([], dtype=np.int64)
+    limit = min(int(max_rows), n_traces)
+    rejection = np.asarray(input_model.rejection_reason_sorted).astype(str)
+    used_mask = _used_for_inversion_mask(input_model)
+    selected: list[int] = []
+    selected_mask = np.zeros(n_traces, dtype=bool)
+
+    def add_candidates(candidates: np.ndarray) -> None:
+        remaining = limit - len(selected)
+        if remaining <= 0:
+            return
+        for raw_index in candidates[:remaining]:
+            index = int(raw_index)
+            if selected_mask[index]:
+                continue
+            selected.append(index)
+            selected_mask[index] = True
+            if len(selected) >= limit:
+                break
+
+    for reason in sorted(
+        str(item) for item in np.unique(rejection) if str(item) != 'ok'
+    ):
+        candidates = np.flatnonzero(rejection == reason)
+        add_candidates(candidates[:1])
+
+    add_candidates(np.flatnonzero((rejection != 'ok') & ~selected_mask))
+    add_candidates(np.flatnonzero((~used_mask) & ~selected_mask))
+    add_candidates(np.flatnonzero(~selected_mask))
+    return np.asarray(selected, dtype=np.int64)
 
 
 def _used_for_inversion_mask(input_model: Any) -> np.ndarray:
@@ -699,7 +872,7 @@ def _write_json_atomic(path: Path, payload: dict[str, Any]) -> None:
         raise
 
 
-def _write_csv_atomic(path: Path, rows: list[dict[str, Any]]) -> None:
+def _write_csv_atomic(path: Path, rows: Iterable[dict[str, Any]]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp_path = path.with_name(f'{path.name}.{uuid4().hex}.tmp')
     try:

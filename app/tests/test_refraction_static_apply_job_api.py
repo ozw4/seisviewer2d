@@ -932,7 +932,7 @@ def test_failed_static_job_lists_preflight_diagnostics(
     assert job['status'] == 'error'
     listed = _listed_job_files(client, job_id)
     assert REFRACTION_STATIC_PREFLIGHT_QC_JSON_NAME in listed
-    assert REFRACTION_STATIC_PREFLIGHT_OBSERVATIONS_CSV_NAME in listed
+    assert REFRACTION_STATIC_PREFLIGHT_OBSERVATIONS_CSV_NAME not in listed
     assert REFRACTION_STATIC_FAILURE_DIAGNOSTICS_JSON_NAME in listed
 
     failure = json.loads(

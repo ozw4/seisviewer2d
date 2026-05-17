@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import csv
 import json
 from pathlib import Path
 from typing import Any
@@ -715,6 +716,14 @@ def test_preflight_artifacts_written_when_no_valid_observations(
     assert payload['status'] == 'error'
     assert payload['summary']['observation_filters']['n_used_for_inversion'] == 0
     assert payload['summary']['input_rejection_counts'][reason_key] == 4
+    assert payload['observations_csv_written'] is True
+    assert payload['observations_csv_total_rows'] == 4
+    assert payload['observations_csv_written_rows'] == 4
+    assert payload['observations_csv_omitted_rows'] == 0
+    with observations_path.open(encoding='utf-8', newline='') as handle:
+        rows = list(csv.DictReader(handle))
+    assert len(rows) == 4
+    assert {row['rejection_reason'] for row in rows} == {reason_key}
 
 
 def test_no_valid_observations_can_return_validation_model() -> None:
