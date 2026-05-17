@@ -342,9 +342,53 @@ def preflight_error_message(
     *,
     fallback: str = 'Refraction static preflight failed',
 ) -> str:
+    count_parts = _preflight_error_count_parts(diagnostics)
+    suffix = '' if not count_parts else ' (' + '; '.join(count_parts) + ')'
     if diagnostics.errors:
-        return 'Refraction static preflight failed: ' + '; '.join(diagnostics.errors)
-    return fallback
+        return (
+            'Refraction static preflight failed: '
+            + '; '.join(diagnostics.errors)
+            + suffix
+        )
+    return fallback + suffix
+
+
+def _preflight_error_count_parts(
+    diagnostics: RefractionStaticPreflightDiagnostics,
+) -> list[str]:
+    parts: list[str] = []
+    observation_counts = _format_nonzero_counts(
+        diagnostics.observation_reason_counts,
+        skip={'used_for_inversion'},
+    )
+    if observation_counts:
+        parts.append(f'observation reason counts: {observation_counts}')
+    summary = diagnostics.summary
+    if isinstance(summary, dict):
+        rejection_counts = summary.get('input_rejection_counts')
+        if isinstance(rejection_counts, dict):
+            formatted = _format_nonzero_counts(rejection_counts, skip={'ok'})
+            if formatted:
+                parts.append(f'input rejection counts: {formatted}')
+    return parts
+
+
+def _format_nonzero_counts(
+    counts: dict[str, Any],
+    *,
+    skip: set[str],
+) -> str:
+    items: list[str] = []
+    for key in sorted(counts):
+        if key in skip:
+            continue
+        value = counts[key]
+        if not isinstance(value, int):
+            continue
+        if value <= 0:
+            continue
+        items.append(f'{key}={value}')
+    return ', '.join(items)
 
 
 def no_observations_preflight_error(summary: dict[str, Any]) -> str:
