@@ -483,6 +483,25 @@ Trace-level final shifts are in `refraction_statics.csv`. Source and receiver
 endpoint shifts are in `source_static_table.csv`, `receiver_static_table.csv`,
 and `source_receiver_static_table.npz`.
 
+Artifact writers are organized as the
+`app.services.refraction_static_artifacts` package. Import public names from the
+package facade, not from private helpers. The artifact-family modules are:
+
+- `writer.py` for final artifact orchestration and public re-exports.
+- `solution.py`, `qc.py`, `final_tables.py`, and `first_break.py` for solution
+  NPZ, static QC/history JSON, trace/near-surface CSV, and first-break QC/export
+  writers.
+- `components.py`, `static_tables.py`, `cell_velocity.py`, `grid_map.py`, and
+  `line_profile.py` for family-specific builders and writers.
+- `contract.py`, `registry.py`, `arrays.py`, `validation.py`, `formatters.py`,
+  `io.py`, and `stats.py` for shared artifact names, registry metadata, array
+  coercion, validation, formatting, atomic I/O, and summary statistics.
+
+Keep new artifact code in those family modules. As a review guideline, artifact
+modules should normally stay under about 1,500 lines, public writer functions
+under about 120 lines, and builders above about 200 lines should be considered
+for extraction.
+
 ## Current Scope and Non-Goals
 
 Current supported scope:

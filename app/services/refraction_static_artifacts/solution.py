@@ -1,4 +1,4 @@
-"""Core solution artifacts for final refraction statics outputs."""
+"""Machine-readable solution artifact builder."""
 
 from __future__ import annotations
 
@@ -11,69 +11,73 @@ from app.services.refraction_static_types import (
     RefractionDatumStaticsResult,
     ResolvedRefractionFirstLayer,
 )
+
+from app.services.refraction_static_artifacts.arrays import (
+    _bool_array,
+    _endpoint_cell_id_array,
+    _endpoint_v2_m_s,
+    _endpoint_v2_status_array,
+    _float_array,
+    _int_array,
+    _scalar_float,
+    _scalar_int,
+    _scalar_str,
+    _string_array,
+)
 from app.services.refraction_static_artifacts.contract import (
-    _NEAR_SURFACE_2LAYER_COLUMNS,
-    _NEAR_SURFACE_3LAYER_COLUMNS,
-    _NEAR_SURFACE_COLUMNS,
-    _TRACE_STATICS_COLUMNS,
     ARTIFACT_VERSION,
     METHOD,
     REFRACTION_STATIC_SOLUTION_NPZ_NAME,
     SIGN_CONVENTION,
-    RefractionStaticArtifactError,
 )
-from app.services.refraction_static_artifacts.formatters import (
-    _csv_bool,
-    _csv_float,
-    _csv_ms,
-    _float_or_nan,
-    _nan_if_none,
+from app.services.refraction_static_artifacts.field_corrections import (
+    _applied_field_shift_s_sorted_array,
+    _base_refraction_trace_shift_s_sorted_array,
+    _field_static_valid_mask,
+    _final_trace_shift_s_sorted,
+    _final_trace_static_status_sorted_array,
+    _final_trace_static_valid_mask_sorted_array,
+    _receiver_field_shift_s_array,
+    _receiver_field_shift_s_sorted_array,
+    _receiver_field_static_status_array,
+    _receiver_manual_static_shift_s_array,
+    _receiver_manual_static_status_array,
+    _source_depth_m_array,
+    _source_depth_shift_s_array,
+    _source_depth_status_array,
+    _source_field_shift_s_array,
+    _source_field_shift_s_sorted_array,
+    _source_field_static_status_array,
+    _source_manual_static_shift_s_array,
+    _source_manual_static_status_array,
+    _source_uphole_shift_s_array,
+    _source_uphole_status_array,
+    _source_uphole_time_s_array,
+    _total_with_field_shift_s,
+    _trace_endpoint_key_sorted_array,
+    _trace_field_shift_s_sorted_array,
+    _trace_field_static_status_sorted_array,
 )
+from app.services.refraction_static_artifacts.formatters import _nan_if_none
 from app.services.refraction_static_artifacts.io import (
     _validate_no_object_arrays,
-    _write_csv_atomic,
     _write_npz_atomic,
 )
+from app.services.refraction_static_artifacts.static_tables import (
+    _has_node_2layer_static_fields,
+    _has_node_3layer_static_fields,
+    _has_receiver_2layer_static_fields,
+    _has_receiver_3layer_static_fields,
+    _has_source_2layer_static_fields,
+    _has_source_3layer_static_fields,
+    _node_sh1_weathering_thickness_m,
+    _receiver_sh1_weathering_thickness_m,
+    _source_sh1_weathering_thickness_m,
+)
 from app.services.refraction_static_artifacts.validation import (
-    _NODE_2LAYER_STATIC_ARRAY_NAMES,
-    _RECEIVER_2LAYER_STATIC_ARRAY_NAMES,
-    _SOURCE_2LAYER_STATIC_ARRAY_NAMES,
     _validate_resolved_first_layer,
     _validate_result,
 )
-
-_NODE_3LAYER_STATIC_ARRAY_NAMES = (
-    'node_sh1_weathering_thickness_m',
-    'node_sh2_weathering_thickness_m',
-    'node_sh3_weathering_thickness_m',
-)
-
-_SOURCE_3LAYER_STATIC_ARRAY_NAMES = (
-    'source_t2_time_s',
-    'source_t3_time_s',
-    'source_v3_m_s',
-    'source_vsub_m_s',
-    'source_sh1_weathering_thickness_m',
-    'source_sh2_weathering_thickness_m',
-    'source_sh3_weathering_thickness_m',
-)
-
-_RECEIVER_3LAYER_STATIC_ARRAY_NAMES = (
-    'receiver_t2_time_s',
-    'receiver_t3_time_s',
-    'receiver_v3_m_s',
-    'receiver_vsub_m_s',
-    'receiver_sh1_weathering_thickness_m',
-    'receiver_sh2_weathering_thickness_m',
-    'receiver_sh3_weathering_thickness_m',
-)
-
-_FIELD_DISABLED_STATUS = 'not_enabled'
-_FIELD_NOT_APPLICABLE_STATUS = 'not_applicable'
-_FIELD_TOTAL_VALID_STATUSES = frozenset(
-    {'ok', _FIELD_DISABLED_STATUS, _FIELD_NOT_APPLICABLE_STATUS}
-)
-
 
 def write_refraction_static_solution_npz(
     *,
@@ -91,26 +95,6 @@ def write_refraction_static_solution_npz(
         resolved_first_layer=resolved_first_layer,
     )
     _write_npz_atomic(Path(path), payload)
-
-
-def write_refraction_statics_csv(
-    *,
-    result: RefractionDatumStaticsResult,
-    path: Path,
-) -> None:
-    values = _validate_result(result)
-    rows = _trace_statics_rows(values.result)
-    _write_csv_atomic(Path(path), _trace_statics_columns(values.result), rows)
-
-
-def write_near_surface_model_csv(
-    *,
-    result: RefractionDatumStaticsResult,
-    path: Path,
-) -> None:
-    values = _validate_result(result)
-    rows = _near_surface_model_rows(values.result)
-    _write_csv_atomic(Path(path), _near_surface_columns(values.result), rows)
 
 
 def build_refraction_static_solution_arrays(
@@ -595,710 +579,8 @@ def build_refraction_static_solution_arrays(
     return arrays
 
 
-def _trace_statics_columns(
-    result: RefractionDatumStaticsResult,
-) -> tuple[str, ...]:
-    columns = _insert_after(
-        _TRACE_STATICS_COLUMNS,
-        'flat_datum_shift_ms',
-        (
-            'source_field_shift_ms',
-            'receiver_field_shift_ms',
-            'trace_field_shift_ms',
-        ),
-    )
-    return _insert_after(
-        columns,
-        'refraction_trace_shift_ms',
-        ('final_trace_shift_ms', 'trace_field_static_status'),
-    )
-
-
-def _trace_statics_rows(result: RefractionDatumStaticsResult) -> list[dict[str, object]]:
-    rows: list[dict[str, object]] = []
-    source_field_shift_s = _source_field_shift_s_sorted_array(result)
-    receiver_field_shift_s = _receiver_field_shift_s_sorted_array(result)
-    trace_field_shift_s = _trace_field_shift_s_sorted_array(result)
-    trace_field_status = _trace_field_static_status_sorted_array(result)
-    base_refraction_trace_shift_s = _base_refraction_trace_shift_s_sorted_array(result)
-    final_trace_shift_s = _final_trace_shift_s_sorted(result)
-    for index in range(int(result.sorted_trace_index.shape[0])):
-        row = {
-            'sorted_trace_index': int(result.sorted_trace_index[index]),
-            'valid_observation': _csv_bool(result.valid_observation_mask_sorted[index]),
-            'used_observation': _csv_bool(result.used_observation_mask_sorted[index]),
-            'trace_static_valid': _csv_bool(result.trace_static_valid_mask_sorted[index]),
-            'trace_static_status': str(result.trace_static_status_sorted[index]),
-            'source_node_id': int(result.source_node_id_sorted[index]),
-            'receiver_node_id': int(result.receiver_node_id_sorted[index]),
-            'source_surface_elevation_m': _csv_float(result.source_surface_elevation_m_sorted[index]),
-            'receiver_surface_elevation_m': _csv_float(result.receiver_surface_elevation_m_sorted[index]),
-            'source_floating_datum_elevation_m': _csv_float(result.source_floating_datum_elevation_m_sorted[index]),
-            'receiver_floating_datum_elevation_m': _csv_float(result.receiver_floating_datum_elevation_m_sorted[index]),
-            'source_weathering_thickness_m': _csv_float(result.source_weathering_thickness_m_sorted[index]),
-            'receiver_weathering_thickness_m': _csv_float(result.receiver_weathering_thickness_m_sorted[index]),
-            'source_refractor_elevation_m': _csv_float(result.source_refractor_elevation_m_sorted[index]),
-            'receiver_refractor_elevation_m': _csv_float(result.receiver_refractor_elevation_m_sorted[index]),
-            'source_half_intercept_time_ms': _csv_ms(result.source_half_intercept_time_s_sorted[index]),
-            'receiver_half_intercept_time_ms': _csv_ms(result.receiver_half_intercept_time_s_sorted[index]),
-            'weathering_replacement_trace_shift_ms': _csv_ms(result.weathering_replacement_trace_shift_s_sorted[index]),
-            'floating_datum_elevation_shift_ms': _csv_ms(result.floating_datum_elevation_shift_s_sorted[index]),
-            'flat_datum_shift_ms': _csv_ms(result.flat_datum_shift_s_sorted[index]),
-            'source_field_shift_ms': _csv_ms(source_field_shift_s[index]),
-            'receiver_field_shift_ms': _csv_ms(receiver_field_shift_s[index]),
-            'trace_field_shift_ms': _csv_ms(trace_field_shift_s[index]),
-            'refraction_trace_shift_ms': _csv_ms(base_refraction_trace_shift_s[index]),
-            'final_trace_shift_ms': _csv_ms(final_trace_shift_s[index]),
-            'trace_field_static_status': str(trace_field_status[index]),
-            'estimated_first_break_time_ms': _csv_ms(result.estimated_first_break_time_s_sorted[index]),
-            'first_break_residual_ms': _csv_ms(result.first_break_residual_s_sorted[index]),
-            'source_weathering_replacement_shift_ms': _csv_ms(result.source_weathering_replacement_shift_s_sorted[index]),
-            'receiver_weathering_replacement_shift_ms': _csv_ms(result.receiver_weathering_replacement_shift_s_sorted[index]),
-            'source_floating_datum_elevation_shift_ms': _csv_ms(result.source_floating_datum_elevation_shift_s_sorted[index]),
-            'receiver_floating_datum_elevation_shift_ms': _csv_ms(result.receiver_floating_datum_elevation_shift_s_sorted[index]),
-            'source_flat_datum_shift_ms': _csv_ms(result.source_flat_datum_shift_s_sorted[index]),
-            'receiver_flat_datum_shift_ms': _csv_ms(result.receiver_flat_datum_shift_s_sorted[index]),
-            'source_refraction_shift_ms': _csv_ms(result.source_refraction_shift_s_sorted[index]),
-            'receiver_refraction_shift_ms': _csv_ms(result.receiver_refraction_shift_s_sorted[index]),
-        }
-        rows.append(row)
-    return rows
-
-
-def _near_surface_model_rows(result: RefractionDatumStaticsResult) -> list[dict[str, object]]:
-    rows: list[dict[str, object]] = []
-    node_sh1_m = _node_sh1_weathering_thickness_m(result)
-    node_sh2_m = result.node_sh2_weathering_thickness_m
-    node_sh3_m = result.node_sh3_weathering_thickness_m
-    has_3layer_fields = _has_node_3layer_static_fields(result)
-    has_2layer_fields = _has_node_2layer_static_fields(result)
-    for index in range(int(result.node_id.shape[0])):
-        row = {
-            'node_id': int(result.node_id[index]),
-            'node_kind': str(result.node_kind[index]),
-            'x_m': _csv_float(result.node_x_m[index]),
-            'y_m': _csv_float(result.node_y_m[index]),
-            'surface_elevation_m': _csv_float(result.node_surface_elevation_m[index]),
-            'floating_datum_elevation_m': _csv_float(result.node_floating_datum_elevation_m[index]),
-            'refractor_elevation_m': _csv_float(result.node_refractor_elevation_m[index]),
-            'weathering_thickness_m': _csv_float(result.node_weathering_thickness_m[index]),
-            'half_intercept_time_ms': _csv_ms(result.node_half_intercept_time_s[index]),
-            'weathering_replacement_shift_ms': _csv_ms(result.node_weathering_replacement_shift_s[index]),
-            'solution_status': str(result.node_solution_status[index]),
-            'weathering_status': str(result.node_weathering_status[index]),
-            'datum_status': str(result.node_datum_status[index]),
-            'pick_count': int(result.node_pick_count[index]),
-            'used_pick_count': int(result.node_used_pick_count[index]),
-            'rejected_pick_count': int(result.node_rejected_pick_count[index]),
-            'residual_rms_ms': _csv_ms(result.node_residual_rms_s[index]),
-            'residual_mad_ms': _csv_ms(result.node_residual_mad_s[index]),
-        }
-        if has_2layer_fields:
-            assert node_sh2_m is not None
-            layer1_base = result.node_surface_elevation_m[index] - node_sh1_m[index]
-            row.update(
-                {
-                    'sh1_weathering_thickness_m': _csv_float(node_sh1_m[index]),
-                    'sh2_weathering_thickness_m': _csv_float(node_sh2_m[index]),
-                    'layer1_base_elevation_m': _csv_float(layer1_base),
-                    'final_refractor_elevation_m': _csv_float(
-                        result.node_refractor_elevation_m[index]
-                    ),
-                }
-            )
-            if has_3layer_fields:
-                assert node_sh3_m is not None
-                layer2_base = layer1_base - node_sh2_m[index]
-                row.update(
-                    {
-                        'sh3_weathering_thickness_m': _csv_float(
-                            node_sh3_m[index]
-                        ),
-                        'layer2_base_elevation_m': _csv_float(layer2_base),
-                    }
-                )
-        rows.append(row)
-    return rows
-
-
-def _near_surface_columns(result: RefractionDatumStaticsResult) -> tuple[str, ...]:
-    if _has_node_3layer_static_fields(result):
-        return _NEAR_SURFACE_3LAYER_COLUMNS
-    if _has_node_2layer_static_fields(result):
-        return _NEAR_SURFACE_2LAYER_COLUMNS
-    return _NEAR_SURFACE_COLUMNS
-
-
-def _insert_after(
-    columns: tuple[str, ...],
-    anchor: str,
-    additions: tuple[str, ...],
-) -> tuple[str, ...]:
-    try:
-        index = columns.index(anchor)
-    except ValueError as exc:
-        raise RefractionStaticArtifactError(
-            f'column anchor not found: {anchor}'
-        ) from exc
-    return columns[: index + 1] + additions + columns[index + 1 :]
-
-
-def _has_source_depth_field_correction(
-    result: RefractionDatumStaticsResult,
-) -> bool:
-    present = (
-        result.source_depth_m is not None,
-        result.source_depth_shift_s is not None,
-        result.source_depth_status is not None,
-    )
-    if not any(present):
-        return False
-    if not all(present):
-        raise RefractionStaticArtifactError(
-            'source-depth field correction arrays must be provided together'
-        )
-    return True
-
-
-def _has_uphole_field_correction(
-    result: RefractionDatumStaticsResult,
-) -> bool:
-    present = (
-        result.source_uphole_time_s is not None,
-        result.source_uphole_shift_s is not None,
-        result.source_uphole_status is not None,
-    )
-    if not any(present):
-        return False
-    if not all(present):
-        raise RefractionStaticArtifactError(
-            'uphole field correction arrays must be provided together'
-        )
-    return True
-
-
-def _has_manual_static_field_correction(
-    result: RefractionDatumStaticsResult,
-) -> bool:
-    present = (
-        result.source_manual_static_shift_s is not None,
-        result.source_manual_static_status is not None,
-        result.receiver_manual_static_shift_s is not None,
-        result.receiver_manual_static_status is not None,
-    )
-    if not any(present):
-        return False
-    if not all(present):
-        raise RefractionStaticArtifactError(
-            'manual static field correction arrays must be provided together'
-        )
-    return True
-
-
-def _has_field_correction_composition(
-    result: RefractionDatumStaticsResult,
-) -> bool:
-    present = (
-        result.source_field_shift_s is not None,
-        result.source_field_static_status is not None,
-        result.receiver_field_shift_s is not None,
-        result.receiver_field_static_status is not None,
-        result.source_field_shift_s_sorted is not None,
-        result.receiver_field_shift_s_sorted is not None,
-        result.trace_field_shift_s_sorted is not None,
-        result.trace_field_static_status_sorted is not None,
-        result.trace_field_static_valid_mask_sorted is not None,
-        result.base_refraction_trace_shift_s_sorted is not None,
-        result.field_composition_qc is not None,
-    )
-    if not any(present):
-        return False
-    if not all(present):
-        raise RefractionStaticArtifactError(
-            'field-correction composition arrays must be provided together'
-        )
-    return True
-
-
-def _source_depth_m_array(result: RefractionDatumStaticsResult) -> np.ndarray:
-    if not _has_source_depth_field_correction(result):
-        return _disabled_field_float_array(int(result.source_endpoint_key.shape[0]))
-    return _optional_field_float_array(
-        result.source_depth_m,
-        int(result.source_endpoint_key.shape[0]),
-    )
-
-
-def _source_depth_shift_s_array(result: RefractionDatumStaticsResult) -> np.ndarray:
-    if not _has_source_depth_field_correction(result):
-        return _disabled_field_float_array(int(result.source_endpoint_key.shape[0]))
-    return _optional_field_float_array(
-        result.source_depth_shift_s,
-        int(result.source_endpoint_key.shape[0]),
-    )
-
-
-def _source_depth_status_array(result: RefractionDatumStaticsResult) -> np.ndarray:
-    if not _has_source_depth_field_correction(result):
-        return _disabled_field_status_array(int(result.source_endpoint_key.shape[0]))
-    return _optional_field_status_array(
-        result.source_depth_status,
-        int(result.source_endpoint_key.shape[0]),
-    )
-
-
-def _source_uphole_time_s_array(result: RefractionDatumStaticsResult) -> np.ndarray:
-    if not _has_uphole_field_correction(result):
-        return _disabled_field_float_array(int(result.source_endpoint_key.shape[0]))
-    return _optional_field_float_array(
-        result.source_uphole_time_s,
-        int(result.source_endpoint_key.shape[0]),
-    )
-
-
-def _source_uphole_shift_s_array(result: RefractionDatumStaticsResult) -> np.ndarray:
-    if not _has_uphole_field_correction(result):
-        return _disabled_field_float_array(int(result.source_endpoint_key.shape[0]))
-    return _optional_field_float_array(
-        result.source_uphole_shift_s,
-        int(result.source_endpoint_key.shape[0]),
-    )
-
-
-def _source_uphole_status_array(result: RefractionDatumStaticsResult) -> np.ndarray:
-    if not _has_uphole_field_correction(result):
-        return _disabled_field_status_array(int(result.source_endpoint_key.shape[0]))
-    return _optional_field_status_array(
-        result.source_uphole_status,
-        int(result.source_endpoint_key.shape[0]),
-    )
-
-
-def _source_manual_static_shift_s_array(
-    result: RefractionDatumStaticsResult,
-) -> np.ndarray:
-    if not _has_manual_static_field_correction(result):
-        return _disabled_field_float_array(int(result.source_endpoint_key.shape[0]))
-    return _optional_field_float_array(
-        result.source_manual_static_shift_s,
-        int(result.source_endpoint_key.shape[0]),
-    )
-
-
-def _source_manual_static_status_array(
-    result: RefractionDatumStaticsResult,
-) -> np.ndarray:
-    if not _has_manual_static_field_correction(result):
-        return _disabled_field_status_array(int(result.source_endpoint_key.shape[0]))
-    return _optional_field_status_array(
-        result.source_manual_static_status,
-        int(result.source_endpoint_key.shape[0]),
-    )
-
-
-def _receiver_manual_static_shift_s_array(
-    result: RefractionDatumStaticsResult,
-) -> np.ndarray:
-    if not _has_manual_static_field_correction(result):
-        return _disabled_field_float_array(int(result.receiver_endpoint_key.shape[0]))
-    return _optional_field_float_array(
-        result.receiver_manual_static_shift_s,
-        int(result.receiver_endpoint_key.shape[0]),
-    )
-
-
-def _receiver_manual_static_status_array(
-    result: RefractionDatumStaticsResult,
-) -> np.ndarray:
-    if not _has_manual_static_field_correction(result):
-        return _disabled_field_status_array(int(result.receiver_endpoint_key.shape[0]))
-    return _optional_field_status_array(
-        result.receiver_manual_static_status,
-        int(result.receiver_endpoint_key.shape[0]),
-    )
-
-
-def _source_field_shift_s_array(result: RefractionDatumStaticsResult) -> np.ndarray:
-    if not _has_field_correction_composition(result):
-        return _disabled_field_float_array(int(result.source_endpoint_key.shape[0]))
-    return _optional_field_float_array(
-        result.source_field_shift_s,
-        int(result.source_endpoint_key.shape[0]),
-    )
-
-
-def _source_field_static_status_array(
-    result: RefractionDatumStaticsResult,
-) -> np.ndarray:
-    if not _has_field_correction_composition(result):
-        return _disabled_field_status_array(int(result.source_endpoint_key.shape[0]))
-    return _optional_field_status_array(
-        result.source_field_static_status,
-        int(result.source_endpoint_key.shape[0]),
-    )
-
-
-def _receiver_field_shift_s_array(result: RefractionDatumStaticsResult) -> np.ndarray:
-    if not _has_field_correction_composition(result):
-        return _disabled_field_float_array(int(result.receiver_endpoint_key.shape[0]))
-    return _optional_field_float_array(
-        result.receiver_field_shift_s,
-        int(result.receiver_endpoint_key.shape[0]),
-    )
-
-
-def _receiver_field_static_status_array(
-    result: RefractionDatumStaticsResult,
-) -> np.ndarray:
-    if not _has_field_correction_composition(result):
-        return _disabled_field_status_array(int(result.receiver_endpoint_key.shape[0]))
-    return _optional_field_status_array(
-        result.receiver_field_static_status,
-        int(result.receiver_endpoint_key.shape[0]),
-    )
-
-
-def _source_field_shift_s_sorted_array(
-    result: RefractionDatumStaticsResult,
-) -> np.ndarray:
-    if not _has_field_correction_composition(result):
-        return _disabled_field_float_array(int(result.sorted_trace_index.shape[0]))
-    return _optional_field_float_array(
-        result.source_field_shift_s_sorted,
-        int(result.sorted_trace_index.shape[0]),
-    )
-
-
-def _receiver_field_shift_s_sorted_array(
-    result: RefractionDatumStaticsResult,
-) -> np.ndarray:
-    if not _has_field_correction_composition(result):
-        return _disabled_field_float_array(int(result.sorted_trace_index.shape[0]))
-    return _optional_field_float_array(
-        result.receiver_field_shift_s_sorted,
-        int(result.sorted_trace_index.shape[0]),
-    )
-
-
-def _trace_field_shift_s_sorted_array(
-    result: RefractionDatumStaticsResult,
-) -> np.ndarray:
-    if not _has_field_correction_composition(result):
-        return _disabled_field_float_array(int(result.sorted_trace_index.shape[0]))
-    return _optional_field_float_array(
-        result.trace_field_shift_s_sorted,
-        int(result.sorted_trace_index.shape[0]),
-    )
-
-
-def _trace_field_static_status_sorted_array(
-    result: RefractionDatumStaticsResult,
-) -> np.ndarray:
-    if not _has_field_correction_composition(result):
-        return _disabled_field_status_array(int(result.sorted_trace_index.shape[0]))
-    return _optional_field_status_array(
-        result.trace_field_static_status_sorted,
-        int(result.sorted_trace_index.shape[0]),
-    )
-
-
-def _base_refraction_trace_shift_s_sorted_array(
-    result: RefractionDatumStaticsResult,
-) -> np.ndarray:
-    if result.base_refraction_trace_shift_s_sorted is None:
-        return _float_array(result.refraction_trace_shift_s_sorted)
-    return _float_array(result.base_refraction_trace_shift_s_sorted)
-
-
-def _optional_field_float_array(value: object, shape: int) -> np.ndarray:
-    if value is None:
-        raise RefractionStaticArtifactError('field correction array is missing')
-    arr = _float_array(value)
-    if arr.shape != (int(shape),):
-        raise RefractionStaticArtifactError(
-            'field correction array has unexpected shape'
-        )
-    return arr
-
-
-def _optional_field_status_array(value: object, shape: int) -> np.ndarray:
-    if value is None:
-        raise RefractionStaticArtifactError('field correction status array is missing')
-    arr = _string_array(value)
-    if arr.shape != (int(shape),):
-        raise RefractionStaticArtifactError(
-            'field correction status array has unexpected shape'
-        )
-    return arr
-
-
-def _disabled_field_float_array(shape: int) -> np.ndarray:
-    return np.zeros(int(shape), dtype=np.float64)
-
-
-def _disabled_field_status_array(shape: int) -> np.ndarray:
-    return np.full(int(shape), _FIELD_DISABLED_STATUS, dtype='<U16')
-
-
-def _field_static_valid_mask(
-    *,
-    shift_s: np.ndarray,
-    status: np.ndarray,
-) -> np.ndarray:
-    status_text = np.asarray(status).astype(str)
-    valid_status = np.isin(status_text, tuple(_FIELD_TOTAL_VALID_STATUSES))
-    return np.ascontiguousarray(valid_status & np.isfinite(shift_s), dtype=bool)
-
-
-def _total_with_field_shift_s(
-    *,
-    refraction_shift_s: np.ndarray,
-    field_shift_s: np.ndarray,
-    field_status: np.ndarray,
-) -> np.ndarray:
-    refraction = np.asarray(refraction_shift_s, dtype=np.float64)
-    field = np.asarray(field_shift_s, dtype=np.float64)
-    status = np.asarray(field_status).astype(str)
-    if refraction.shape != field.shape or refraction.shape != status.shape:
-        raise RefractionStaticArtifactError(
-            'field total shift arrays must have matching shapes'
-        )
-    out = np.full(refraction.shape, np.nan, dtype=np.float64)
-    valid = (
-        np.isin(status, tuple(_FIELD_TOTAL_VALID_STATUSES))
-        & np.isfinite(refraction)
-        & np.isfinite(field)
-    )
-    out[valid] = refraction[valid] + field[valid]
-    return np.ascontiguousarray(out, dtype=np.float64)
-
-
-def _final_trace_shift_s_sorted(
-    result: RefractionDatumStaticsResult,
-) -> np.ndarray:
-    if result.final_trace_shift_s_sorted is not None:
-        return _float_array(result.final_trace_shift_s_sorted)
-    return _total_with_field_shift_s(
-        refraction_shift_s=_base_refraction_trace_shift_s_sorted_array(result),
-        field_shift_s=_trace_field_shift_s_sorted_array(result),
-        field_status=_trace_field_static_status_sorted_array(result),
-    )
-
-
-def _final_trace_static_status_sorted_array(
-    result: RefractionDatumStaticsResult,
-) -> np.ndarray:
-    if result.final_trace_static_status_sorted is not None:
-        return _string_array(result.final_trace_static_status_sorted)
-    return _string_array(result.trace_static_status_sorted)
-
-
-def _final_trace_static_valid_mask_sorted_array(
-    result: RefractionDatumStaticsResult,
-) -> np.ndarray:
-    if result.final_trace_static_valid_mask_sorted is not None:
-        return _bool_array(result.final_trace_static_valid_mask_sorted)
-    return _bool_array(result.trace_static_valid_mask_sorted)
-
-
-def _applied_field_shift_s_sorted_array(
-    result: RefractionDatumStaticsResult,
-) -> np.ndarray:
-    if result.applied_field_shift_s_sorted is not None:
-        return _float_array(result.applied_field_shift_s_sorted)
-    return np.zeros(int(result.sorted_trace_index.shape[0]), dtype=np.float64)
-
-
-def _trace_endpoint_key_sorted_array(
-    result: RefractionDatumStaticsResult,
-    *,
-    endpoint: str,
-) -> np.ndarray:
-    if endpoint == 'source':
-        raw = result.source_endpoint_key_sorted
-    elif endpoint == 'receiver':
-        raw = result.receiver_endpoint_key_sorted
-    else:
-        raise RefractionStaticArtifactError(f'unsupported endpoint kind: {endpoint}')
-
-    expected_shape = result.sorted_trace_index.shape
-    if raw is None:
-        raise RefractionStaticArtifactError(f'{endpoint}_endpoint_key_sorted is required')
-    out = _string_array(raw)
-    if out.shape != expected_shape:
-        raise RefractionStaticArtifactError(
-            f'{endpoint}_endpoint_key_sorted shape mismatch'
-        )
-    return out
-
-
-def _has_node_3layer_static_fields(result: RefractionDatumStaticsResult) -> bool:
-    return all(
-        getattr(result, name) is not None for name in _NODE_3LAYER_STATIC_ARRAY_NAMES
-    )
-
-
-def _has_node_2layer_static_fields(result: RefractionDatumStaticsResult) -> bool:
-    return all(
-        getattr(result, name) is not None for name in _NODE_2LAYER_STATIC_ARRAY_NAMES
-    )
-
-
-def _has_source_3layer_static_fields(result: RefractionDatumStaticsResult) -> bool:
-    return all(
-        getattr(result, name) is not None for name in _SOURCE_3LAYER_STATIC_ARRAY_NAMES
-    )
-
-
-def _has_source_2layer_static_fields(result: RefractionDatumStaticsResult) -> bool:
-    return all(
-        getattr(result, name) is not None for name in _SOURCE_2LAYER_STATIC_ARRAY_NAMES
-    )
-
-
-def _has_receiver_3layer_static_fields(result: RefractionDatumStaticsResult) -> bool:
-    return all(
-        getattr(result, name) is not None
-        for name in _RECEIVER_3LAYER_STATIC_ARRAY_NAMES
-    )
-
-
-def _has_receiver_2layer_static_fields(result: RefractionDatumStaticsResult) -> bool:
-    return all(
-        getattr(result, name) is not None
-        for name in _RECEIVER_2LAYER_STATIC_ARRAY_NAMES
-    )
-
-
-def _node_sh1_weathering_thickness_m(
-    result: RefractionDatumStaticsResult,
-) -> np.ndarray:
-    node_sh1 = result.node_sh1_weathering_thickness_m
-    if node_sh1 is not None:
-        return _float_array(node_sh1)
-    node_sh2 = result.node_sh2_weathering_thickness_m
-    if node_sh2 is None:
-        return _float_array(result.node_weathering_thickness_m)
-    raise RefractionStaticArtifactError(
-        'node_sh1_weathering_thickness_m is required with '
-        'node_sh2_weathering_thickness_m'
-    )
-
-
-def _source_sh1_weathering_thickness_m(
-    result: RefractionDatumStaticsResult,
-) -> np.ndarray:
-    source_sh1 = result.source_sh1_weathering_thickness_m
-    if source_sh1 is not None:
-        return _float_array(source_sh1)
-    source_sh2 = result.source_sh2_weathering_thickness_m
-    if source_sh2 is None:
-        return _float_array(result.source_weathering_thickness_m)
-    raise RefractionStaticArtifactError(
-        'source_sh1_weathering_thickness_m is required with '
-        'source_sh2_weathering_thickness_m'
-    )
-
-
-def _receiver_sh1_weathering_thickness_m(
-    result: RefractionDatumStaticsResult,
-) -> np.ndarray:
-    receiver_sh1 = result.receiver_sh1_weathering_thickness_m
-    if receiver_sh1 is not None:
-        return _float_array(receiver_sh1)
-    receiver_sh2 = result.receiver_sh2_weathering_thickness_m
-    if receiver_sh2 is None:
-        return _float_array(result.receiver_weathering_thickness_m)
-    raise RefractionStaticArtifactError(
-        'receiver_sh1_weathering_thickness_m is required with '
-        'receiver_sh2_weathering_thickness_m'
-    )
-
-
-def _scalar_str(value: object) -> np.ndarray:
-    text = '' if value is None else str(value)
-    return np.asarray(text, dtype=f'<U{max(1, len(text))}')
-
-
-def _scalar_int(value: object) -> np.ndarray:
-    return np.asarray(int(value), dtype=np.int64)
-
-
-def _scalar_float(value: object) -> np.ndarray:
-    return np.asarray(float(value), dtype=np.float64)
-
-
-def _int_array(value: object) -> np.ndarray:
-    return np.ascontiguousarray(value, dtype=np.int64)
-
-
-def _float_array(value: object) -> np.ndarray:
-    return np.ascontiguousarray(value, dtype=np.float64)
-
-
-def _filled_float_array(value: object, shape: int) -> np.ndarray:
-    return np.full(int(shape), float(value), dtype=np.float64)
-
-
-def _endpoint_v2_m_s(
-    value: object,
-    *,
-    shape: int,
-    scalar_v2_m_s: float,
-) -> np.ndarray:
-    if value is None:
-        return _filled_float_array(scalar_v2_m_s, shape)
-    return np.ascontiguousarray(value, dtype=np.float64)
-
-
-def _endpoint_cell_id_array(value: object, shape: int) -> np.ndarray:
-    if value is None:
-        return np.full(int(shape), -1, dtype=np.int64)
-    return np.ascontiguousarray(value, dtype=np.int64)
-
-
-def _cell_id_float_array(value: object) -> np.ndarray:
-    out = np.asarray(value, dtype=np.float64).copy()
-    out[out < 0] = np.nan
-    return np.ascontiguousarray(out, dtype=np.float64)
-
-
-def _endpoint_v2_status_array(value: object, shape: int) -> np.ndarray:
-    if value is None:
-        return _string_array(np.full(int(shape), 'ok', dtype='<U2'))
-    return _string_array(value)
-
-
-def _sum_float_arrays(left: object, right: object) -> np.ndarray:
-    left_arr = np.asarray(left, dtype=np.float64)
-    right_arr = np.asarray(right, dtype=np.float64)
-    out = np.full(left_arr.shape, np.nan, dtype=np.float64)
-    finite = np.isfinite(left_arr) & np.isfinite(right_arr)
-    out[finite] = left_arr[finite] + right_arr[finite]
-    return np.ascontiguousarray(out, dtype=np.float64)
-
-
-def _bool_array(value: object) -> np.ndarray:
-    return np.ascontiguousarray(value, dtype=bool)
-
-
-def _string_array(value: object) -> np.ndarray:
-    raw = [str(item) for item in np.asarray(value).tolist()]
-    max_len = max([1, *(len(item) for item in raw)])
-    return np.ascontiguousarray(raw, dtype=f'<U{max_len}')
-
-
-def _sum_correction_s(left: object, right: object) -> float:
-    left_value = _float_or_nan(left)
-    right_value = _float_or_nan(right)
-    if not np.isfinite(left_value) or not np.isfinite(right_value):
-        return float('nan')
-    return float(left_value + right_value)
-
 
 __all__ = [
     'build_refraction_static_solution_arrays',
-    'write_near_surface_model_csv',
     'write_refraction_static_solution_npz',
-    'write_refraction_statics_csv',
 ]

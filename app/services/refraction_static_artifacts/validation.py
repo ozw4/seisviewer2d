@@ -1,24 +1,26 @@
-"""Input validation helpers for refraction static artifact builders."""
+"""Validation helpers for refraction static artifact writers."""
 
 from __future__ import annotations
 
 import os
 from pathlib import Path
-from typing import Any
 
 import numpy as np
 
 from app.api.schemas import RefractionStaticApplyRequest
-from app.services.refraction_static_status import REFRACTION_STATIC_STATUSES
+from app.services.refraction_static_artifacts.arrays import (
+    _length,
+    _required_cell_int_array,
+    _validate_status_array,
+)
+from app.services.refraction_static_artifacts.contract import (
+    _ValidatedResult,
+    RefractionStaticArtifactError,
+)
 from app.services.refraction_static_types import (
     RefractionDatumStaticsResult,
     ResolvedRefractionFirstLayer,
 )
-from app.services.refraction_static_artifacts.contract import (
-    RefractionStaticArtifactError,
-    _ValidatedResult,
-)
-
 
 def _validate_job_dir(job_dir: Path) -> Path:
     try:
@@ -32,7 +34,6 @@ def _validate_job_dir(job_dir: Path) -> Path:
     if not os.access(root, os.W_OK):
         raise RefractionStaticArtifactError('job directory is not writable')
     return root
-
 
 def _validate_result(result: RefractionDatumStaticsResult) -> _ValidatedResult:
     if not isinstance(result, RefractionDatumStaticsResult):
@@ -192,7 +193,6 @@ def _validate_result(result: RefractionDatumStaticsResult) -> _ValidatedResult:
         n_rows=n_rows,
     )
 
-
 def _validate_optional_arrays(
     *,
     result: RefractionDatumStaticsResult,
@@ -213,7 +213,6 @@ def _validate_optional_arrays(
             raise RefractionStaticArtifactError(
                 f'{label} array length mismatch for {name}'
             )
-
 
 def _validate_solve_cell_local_v2_arrays(
     *,
@@ -288,7 +287,6 @@ def _validate_solve_cell_local_v2_arrays(
             'solve_cell row_midpoint_cell_id length mismatch'
         )
 
-
 def _validate_resolved_first_layer(
     *,
     result: RefractionDatumStaticsResult,
@@ -336,7 +334,6 @@ def _validate_resolved_first_layer(
         )
     return resolved_first_layer
 
-
 def _velocities_close(left: float, right: float) -> bool:
     return bool(
         np.isclose(
@@ -346,184 +343,6 @@ def _velocities_close(left: float, right: float) -> bool:
             atol=1.0e-6,
         )
     )
-
-
-def _required_cell_int_array(value: object, *, name: str) -> np.ndarray:
-    if value is None:
-        raise RefractionStaticArtifactError(f'solve_cell result requires {name}')
-    return _int_array(value)
-
-
-def _required_cell_float_array(value: object, *, name: str) -> np.ndarray:
-    if value is None:
-        raise RefractionStaticArtifactError(f'solve_cell result requires {name}')
-    return _float_array(value)
-
-
-def _required_cell_status_array(value: object, *, name: str) -> np.ndarray:
-    if value is None:
-        raise RefractionStaticArtifactError(f'solve_cell result requires {name}')
-    status = _string_array(value)
-    _validate_status_array(status, name=name)
-    return status
-
-
-def _validate_refractor_velocity_cell_ids(
-    *,
-    grid_cell_id: np.ndarray,
-    active_cell_id: np.ndarray,
-    inactive_cell_id: np.ndarray,
-) -> None:
-    grid_ids = {int(value) for value in np.asarray(grid_cell_id).tolist()}
-    active_ids = [int(value) for value in np.asarray(active_cell_id).tolist()]
-    inactive_ids = [int(value) for value in np.asarray(inactive_cell_id).tolist()]
-    combined = active_ids + inactive_ids
-    if len(combined) != len(set(combined)):
-        raise RefractionStaticArtifactError(
-            'active and inactive refractor cell IDs must be unique'
-        )
-    combined_ids = set(combined)
-    if combined_ids != grid_ids:
-        missing = sorted(grid_ids - combined_ids)
-        extra = sorted(combined_ids - grid_ids)
-        raise RefractionStaticArtifactError(
-            'solve_cell refractor cell IDs do not cover the configured grid: '
-            f'missing={missing}, extra={extra}'
-        )
-
-
-def _qc_int(qc: dict[str, Any], key: str, *, default: int) -> int:
-    raw = qc.get(key)
-    if raw is None:
-        return int(default)
-    try:
-        return int(raw)
-    except (TypeError, ValueError) as exc:
-        raise RefractionStaticArtifactError(
-            f'QC field {key} must be an integer'
-        ) from exc
-
-
-def _required_positive_qc_int(qc: dict[str, Any], key: str) -> int:
-    raw = qc.get(key)
-    if raw is None:
-        raise RefractionStaticArtifactError(f'QC field {key} is required')
-    try:
-        value = int(raw)
-    except (TypeError, ValueError) as exc:
-        raise RefractionStaticArtifactError(
-            f'QC field {key} must be an integer'
-        ) from exc
-    if value <= 0:
-        raise RefractionStaticArtifactError(
-            f'QC field {key} must be a positive integer'
-        )
-    return value
-
-
-def _qc_cell_id_array(
-    qc: dict[str, Any],
-    key: str,
-    *,
-    n_total_cells: int,
-) -> np.ndarray:
-    raw = qc.get(key, [])
-    arr = np.asarray(raw)
-    if arr.ndim != 1:
-        raise RefractionStaticArtifactError(f'QC field {key} must be one-dimensional')
-    if arr.size == 0:
-        return np.empty(0, dtype=np.int64)
-    try:
-        out = np.ascontiguousarray(arr, dtype=np.int64)
-    except (TypeError, ValueError) as exc:
-        raise RefractionStaticArtifactError(
-            f'QC field {key} must contain integer cell IDs'
-        ) from exc
-    if np.any(out < 0) or np.any(out >= n_total_cells):
-        raise RefractionStaticArtifactError(
-            f'QC field {key} contains out-of-range cell IDs'
-        )
-    return out
-
-
-def _qc_cell_count_array(
-    qc: dict[str, Any],
-    key: str,
-    *,
-    n_total_cells: int,
-) -> np.ndarray | None:
-    raw = qc.get(key)
-    if raw is None:
-        return None
-    arr = np.asarray(raw)
-    if arr.shape != (n_total_cells,):
-        raise RefractionStaticArtifactError(
-            f'QC field {key} must have one count per refractor cell'
-        )
-    try:
-        out = np.ascontiguousarray(arr, dtype=np.int64)
-    except (TypeError, ValueError) as exc:
-        raise RefractionStaticArtifactError(
-            f'QC field {key} must contain integer counts'
-        ) from exc
-    if np.any(out < 0):
-        raise RefractionStaticArtifactError(
-            f'QC field {key} must not contain negative counts'
-        )
-    return out
-
-
-def _qc_optional_float(
-    qc: dict[str, Any],
-    key: str,
-    *,
-    default: float | None,
-) -> float | None:
-    raw = qc.get(key, default)
-    return _json_float(raw)
-
-
-def _length(value: object, *, name: str) -> int:
-    arr = np.asarray(value)
-    if arr.ndim != 1:
-        raise RefractionStaticArtifactError(f'{name} must be one-dimensional')
-    return int(arr.shape[0])
-
-
-def _validate_status_array(value: object, *, name: str) -> None:
-    unknown = sorted(
-        {
-            str(item)
-            for item in np.asarray(value).tolist()
-            if str(item) not in REFRACTION_STATIC_STATUSES
-        }
-    )
-    if unknown:
-        raise RefractionStaticArtifactError(
-            f'unknown status array values in {name}: {unknown}'
-        )
-
-
-def _int_array(value: object) -> np.ndarray:
-    return np.ascontiguousarray(value, dtype=np.int64)
-
-
-def _float_array(value: object) -> np.ndarray:
-    return np.ascontiguousarray(value, dtype=np.float64)
-
-
-def _string_array(value: object) -> np.ndarray:
-    raw = [str(item) for item in np.asarray(value).tolist()]
-    max_len = max([1, *(len(item) for item in raw)])
-    return np.ascontiguousarray(raw, dtype=f'<U{max_len}')
-
-
-def _json_float(value: object) -> float | None:
-    if value is None:
-        return None
-    out = float(value)
-    return out if np.isfinite(out) else None
-
 
 _TRACE_ARRAY_NAMES = (
     'valid_observation_mask_sorted',
@@ -583,6 +402,12 @@ _NODE_2LAYER_STATIC_ARRAY_NAMES = (
     'node_sh2_weathering_thickness_m',
 )
 
+_NODE_3LAYER_STATIC_ARRAY_NAMES = (
+    'node_sh1_weathering_thickness_m',
+    'node_sh2_weathering_thickness_m',
+    'node_sh3_weathering_thickness_m',
+)
+
 _SOURCE_ARRAY_NAMES = (
     'source_id',
     'source_node_id',
@@ -605,6 +430,16 @@ _SOURCE_2LAYER_STATIC_ARRAY_NAMES = (
     'source_v3_m_s',
     'source_sh1_weathering_thickness_m',
     'source_sh2_weathering_thickness_m',
+)
+
+_SOURCE_3LAYER_STATIC_ARRAY_NAMES = (
+    'source_t2_time_s',
+    'source_t3_time_s',
+    'source_v3_m_s',
+    'source_vsub_m_s',
+    'source_sh1_weathering_thickness_m',
+    'source_sh2_weathering_thickness_m',
+    'source_sh3_weathering_thickness_m',
 )
 
 _RECEIVER_ARRAY_NAMES = (
@@ -631,6 +466,16 @@ _RECEIVER_2LAYER_STATIC_ARRAY_NAMES = (
     'receiver_sh2_weathering_thickness_m',
 )
 
+_RECEIVER_3LAYER_STATIC_ARRAY_NAMES = (
+    'receiver_t2_time_s',
+    'receiver_t3_time_s',
+    'receiver_v3_m_s',
+    'receiver_vsub_m_s',
+    'receiver_sh1_weathering_thickness_m',
+    'receiver_sh2_weathering_thickness_m',
+    'receiver_sh3_weathering_thickness_m',
+)
+
 _ROW_ARRAY_NAMES = (
     'row_source_node_id',
     'row_receiver_node_id',
@@ -650,3 +495,17 @@ _STATUS_ARRAY_NAMES = (
     'source_datum_status',
     'receiver_datum_status',
 )
+
+_FIELD_DISABLED_STATUS = 'not_enabled'
+_FIELD_NOT_APPLICABLE_STATUS = 'not_applicable'
+_FIELD_TOTAL_VALID_STATUSES = frozenset(
+    {'ok', _FIELD_DISABLED_STATUS, _FIELD_NOT_APPLICABLE_STATUS}
+)
+
+
+
+__all__ = [
+    '_validate_job_dir',
+    '_validate_result',
+    '_validate_resolved_first_layer',
+]
