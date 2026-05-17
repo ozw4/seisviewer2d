@@ -32,7 +32,11 @@ from app.services.refraction_static_status import (
     REFRACTION_STATIC_STATUSES,
     classify_refraction_endpoint_static_status,
 )
+from app.services.refraction_static_source_depth import (
+    REFRACTION_SOURCE_DEPTH_SOURCES_CSV_NAME,
+)
 from app.services.refraction_static_t1lsst import (
+    REFRACTION_T1LSST_1LAYER_COMPONENTS_CSV_NAME,
     write_refraction_t1lsst_1layer_components_csv,
 )
 from app.services.refraction_static_types import (
@@ -42,10 +46,16 @@ from app.services.refraction_static_types import (
     RefractionStaticArtifactSet,
     ResolvedRefractionFirstLayer,
 )
+from app.services.refraction_static_uphole import (
+    REFRACTION_UPHOLE_SOURCES_CSV_NAME,
+)
+from app.services.refraction_static_v1 import (
+    REFRACTION_V1_ESTIMATES_CSV_NAME,
+    REFRACTION_V1_QC_JSON_NAME,
+)
 
 from app.services.refraction_static_artifacts.contract import (
     _CELL_SOLVER_HISTORY_COLUMNS,
-    _CELL_VELOCITY_COMPONENT_BY_LAYER,
     _COMPONENT_COLUMNS,
     _FIRST_BREAK_FIT_QC_COLUMNS,
     _FIRST_BREAK_TIME_EXPORT_COLUMNS,
@@ -100,7 +110,6 @@ from app.services.refraction_static_artifacts.contract import (
     REFRACTION_REFRACTOR_VELOCITY_CELLS_CSV_NAME,
     REFRACTION_REFRACTOR_VELOCITY_GRID_NPZ_NAME,
     REFRACTION_REFRACTOR_VELOCITY_QC_JSON_NAME,
-    REFRACTION_SOURCE_DEPTH_SOURCES_CSV_NAME,
     REFRACTION_STATIC_ARTIFACTS_JSON_NAME,
     REFRACTION_STATIC_COMPONENTS_CSV_NAME,
     REFRACTION_STATIC_COMPONENT_QC_ENDPOINT_CSV_NAME,
@@ -110,15 +119,10 @@ from app.services.refraction_static_artifacts.contract import (
     REFRACTION_STATIC_FAILURE_DIAGNOSTICS_JSON_NAME,
     REFRACTION_STATIC_HISTORY_JSON_NAME,
     REFRACTION_STATIC_QC_JSON_NAME,
-    REFRACTION_STATIC_REGISTERED_ARTIFACT_NAMES,
     REFRACTION_STATIC_REQUEST_JSON_NAME,
     REFRACTION_STATIC_SOLUTION_NPZ_NAME,
     REFRACTION_STATICS_CSV_NAME,
-    REFRACTION_T1LSST_1LAYER_COMPONENTS_CSV_NAME,
     REFRACTION_TIME_TERM_SPREADSHEET_CSV_NAME,
-    REFRACTION_UPHOLE_SOURCES_CSV_NAME,
-    REFRACTION_V1_ESTIMATES_CSV_NAME,
-    REFRACTION_V1_QC_JSON_NAME,
     REFRACTION_V3_CELL_SOLVER_HISTORY_CSV_NAME,
     REFRACTION_V3_REFRACTOR_VELOCITY_CELLS_CSV_NAME,
     REFRACTION_V3_REFRACTOR_VELOCITY_GRID_NPZ_NAME,
@@ -174,6 +178,7 @@ from app.services.refraction_static_artifacts.stats import (
     _status_counts,
 )
 from app.services.refraction_static_artifacts.registry import (
+    _CELL_VELOCITY_COMPONENT_BY_LAYER,
     _artifact_entries_for_request,
     _artifact_list_for_qc,
     _build_manifest_payload,
@@ -184,6 +189,7 @@ from app.services.refraction_static_artifacts.registry import (
     _request_cell_velocity_layer_kinds,
     _validate_declared_upstream_artifacts,
     _validate_upstream_artifact_names,
+    REFRACTION_STATIC_REGISTERED_ARTIFACT_NAMES,
 )
 import app.services.refraction_static_artifacts.registry as _artifact_registry
 

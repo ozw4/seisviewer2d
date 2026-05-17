@@ -6,6 +6,9 @@ from app.services.refraction_static_artifacts import contract
 from app.services.refraction_static_artifacts import _legacy
 from app.services.refraction_static_artifacts._legacy import *  # noqa: F403
 
+for _name in contract.__all__:
+    globals()[_name] = getattr(contract, _name)
+
 FIRST_BREAK_TIME_EXPORT_SIGN_CONVENTION = (
     contract.FIRST_BREAK_TIME_EXPORT_SIGN_CONVENTION
 )

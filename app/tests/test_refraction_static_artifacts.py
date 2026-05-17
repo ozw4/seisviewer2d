@@ -408,6 +408,35 @@ def test_refraction_static_artifacts_public_all_snapshot() -> None:
     assert all(hasattr(artifact_module, name) for name in artifact_module.__all__)
 
 
+def test_refraction_static_artifacts_contract_constants_are_direct_importable() -> None:
+    from app.services.refraction_static_artifacts import (
+        ARTIFACT_VERSION,
+        FIRST_BREAK_TIME_EXPORT_FORMAT_NAME,
+        FIRST_BREAK_TIME_EXPORT_FORMAT_VERSION,
+        LINE_PROFILE_QC_SCHEMA_VERSION,
+        METHOD,
+        NEGATIVE_SHIFT_DESCRIPTION,
+        POSITIVE_SHIFT_DESCRIPTION,
+        REDUCED_TIME_QC_FORMULA,
+        STATIC_COMPONENT,
+        WORKFLOW,
+    )
+
+    assert ARTIFACT_VERSION == '1.0'
+    assert METHOD == 'gli_variable_thickness'
+    assert WORKFLOW == 'refraction_statics'
+    assert STATIC_COMPONENT == 'final_refraction'
+    assert POSITIVE_SHIFT_DESCRIPTION == 'event appears later in corrected data'
+    assert NEGATIVE_SHIFT_DESCRIPTION == 'event appears earlier in corrected data'
+    assert LINE_PROFILE_QC_SCHEMA_VERSION == 1
+    assert FIRST_BREAK_TIME_EXPORT_FORMAT_NAME == 'first_break_time'
+    assert FIRST_BREAK_TIME_EXPORT_FORMAT_VERSION == 1
+    assert REDUCED_TIME_QC_FORMULA == (
+        'reduced_time_s = observed_first_break_time_s - '
+        'offset_m / reduction_velocity_m_s'
+    )
+
+
 def test_refraction_static_registry_manifest_entry_contract() -> None:
     assert artifact_registry.registered_artifact_names() == (
         artifact_module.REFRACTION_STATIC_REGISTERED_ARTIFACT_NAMES
