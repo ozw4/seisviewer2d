@@ -13,6 +13,7 @@ from app.api.schemas import RefractionStaticApplyRequest
 import app.services.refraction_static_artifacts as artifact_module
 import app.services.refraction_static_artifacts._legacy as artifact_legacy_module
 import app.services.refraction_static_artifacts.cell_velocity as cell_velocity_module
+import app.services.refraction_static_artifacts.components as components_module
 from app.services.refraction_static_artifacts import registry as artifact_registry
 from app.services.refraction_static_artifacts.io import (
     _write_csv_atomic,
@@ -421,6 +422,20 @@ def test_cell_velocity_artifact_entry_points_are_in_cell_velocity_module() -> No
     )
     assert all(hasattr(cell_velocity_module, name) for name in expected)
     assert all(getattr(artifact_module, name).__module__.endswith('.cell_velocity') for name in expected)
+
+
+def test_static_component_entry_points_are_in_components_module() -> None:
+    expected = (
+        'build_refraction_static_component_qc_arrays',
+        'build_refraction_static_component_qc_payload',
+        'write_refraction_static_component_qc_artifacts',
+        'write_refraction_static_components_csv',
+    )
+    assert all(hasattr(components_module, name) for name in expected)
+    assert all(
+        getattr(artifact_module, name).__module__.endswith('.components')
+        for name in expected
+    )
 
 
 def test_refraction_static_artifacts_contract_constants_are_direct_importable() -> None:

@@ -5,6 +5,12 @@ from __future__ import annotations
 from app.services.refraction_static_artifacts import contract
 from app.services.refraction_static_artifacts import _legacy
 from app.services.refraction_static_artifacts._legacy import *  # noqa: F403
+from app.services.refraction_static_artifacts.components import (
+    build_refraction_static_component_qc_arrays as build_refraction_static_component_qc_arrays,
+    build_refraction_static_component_qc_payload as build_refraction_static_component_qc_payload,
+    write_refraction_static_component_qc_artifacts as write_refraction_static_component_qc_artifacts,
+    write_refraction_static_components_csv as write_refraction_static_components_csv,
+)
 from app.services.refraction_static_artifacts.cell_velocity import (
     build_refraction_cell_solver_history_rows as build_refraction_cell_solver_history_rows,
     build_refraction_refractor_velocity_grid_arrays as build_refraction_refractor_velocity_grid_arrays,

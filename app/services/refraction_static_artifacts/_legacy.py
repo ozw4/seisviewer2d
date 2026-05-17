@@ -5338,10 +5338,81 @@ def _sum_correction_s(left: object, right: object) -> float:
         return float('nan')
     return float(left_value + right_value)
 
-from app.services.refraction_static_artifacts.components import (  # noqa: E402
-    write_refraction_static_component_qc_artifacts,  # noqa: F811
-    write_refraction_static_components_csv,  # noqa: F811
-)
+def _component_artifacts() -> Any:
+    from app.services.refraction_static_artifacts import components
+
+    return components
+
+
+def write_refraction_static_components_csv(  # noqa: F811
+    *args: Any,
+    **kwargs: Any,
+) -> Any:
+    return getattr(
+        _component_artifacts(),
+        'write_refraction_static_components_csv',
+    )(*args, **kwargs)
+
+
+def write_refraction_static_component_qc_artifacts(  # noqa: F811
+    *args: Any,
+    **kwargs: Any,
+) -> Any:
+    return getattr(
+        _component_artifacts(),
+        'write_refraction_static_component_qc_artifacts',
+    )(*args, **kwargs)
+
+
+def build_refraction_static_component_qc_arrays(  # noqa: F811
+    *args: Any,
+    **kwargs: Any,
+) -> Any:
+    return getattr(
+        _component_artifacts(),
+        'build_refraction_static_component_qc_arrays',
+    )(*args, **kwargs)
+
+
+def build_refraction_static_component_qc_payload(  # noqa: F811
+    *args: Any,
+    **kwargs: Any,
+) -> Any:
+    return getattr(
+        _component_artifacts(),
+        'build_refraction_static_component_qc_payload',
+    )(*args, **kwargs)
+
+
+def _static_component_qc_trace_rows(*args: Any, **kwargs: Any) -> Any:
+    return getattr(
+        _component_artifacts(),
+        '_static_component_qc_trace_rows',
+    )(*args, **kwargs)
+
+
+def _static_component_qc_endpoint_rows(*args: Any, **kwargs: Any) -> Any:
+    return getattr(
+        _component_artifacts(),
+        '_static_component_qc_endpoint_rows',
+    )(*args, **kwargs)
+
+
+def _component_rows(*args: Any, **kwargs: Any) -> Any:
+    return getattr(_component_artifacts(), '_component_rows')(*args, **kwargs)
+
+
+def _component_columns(*args: Any, **kwargs: Any) -> Any:
+    return getattr(_component_artifacts(), '_component_columns')(*args, **kwargs)
+
+
+def _component_qc_stats_ms(*args: Any, **kwargs: Any) -> Any:
+    return getattr(_component_artifacts(), '_component_qc_stats_ms')(
+        *args,
+        **kwargs,
+    )
+
+
 from app.services.refraction_static_artifacts.static_tables import (  # noqa: E402
     _has_node_2layer_static_fields,  # noqa: F811
     _has_node_3layer_static_fields,  # noqa: F811
