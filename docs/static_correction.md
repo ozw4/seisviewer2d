@@ -88,6 +88,30 @@ CSV time-shift, half-intercept, and residual columns are in milliseconds.
 Geometry, elevation, and thickness columns are in meters. Velocities are in
 meters per second, and slowness values are in seconds per meter.
 
+The implementation lives under `app/services/refraction_static_artifacts` with
+`__init__.py` kept as the public re-export facade. The package responsibilities
+are split by artifact family:
+
+- `writer.py`: final artifact orchestration and public re-exports.
+- `solution.py`, `qc.py`, `final_tables.py`, and `first_break.py`: solution
+  NPZ, static QC/history JSON, trace/near-surface CSV, and first-break QC/export
+  writers.
+- `components.py`: source/receiver component CSV and component QC artifacts.
+- `static_tables.py`: source, receiver, combined NPZ, and time-term spreadsheet
+  static-table writers.
+- `cell_velocity.py`: per-cell velocity grids, QC summaries, and solver
+  history artifacts.
+- `grid_map.py` and `line_profile.py`: viewer-oriented cell map and line-profile
+  QC artifacts.
+- `contract.py`, `registry.py`, `arrays.py`, `validation.py`, `formatters.py`,
+  `io.py`, and `stats.py`: shared names, manifest metadata, array coercion,
+  validation, formatting, atomic writes, and statistics.
+
+Review new artifact code with the same split in mind: an artifact module should
+normally stay below about 1,500 lines, a public writer should normally stay
+below about 120 lines, and builders over about 200 lines are candidates for
+extracting smaller helpers.
+
 Per-trace arrays in `refraction_static_solution.npz` and rows in
 `refraction_statics.csv` use TraceStore sorted trace order. The shift sign
 convention is:

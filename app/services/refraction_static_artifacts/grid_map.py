@@ -21,7 +21,7 @@ from app.services.refraction_static_layer_config import (
 from app.services.refraction_static_types import (
     RefractionDatumStaticsResult,
 )
-from app.services.refraction_static_artifacts._legacy import (
+from app.services.refraction_static_artifacts.arrays import (
     _scalar_float,
     _scalar_int,
     _scalar_str,

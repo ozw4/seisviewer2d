@@ -22,6 +22,11 @@ from app.services.refraction_static_artifacts.contract import (
     WORKFLOW,
     RefractionStaticArtifactError,
 )
+from app.services.refraction_static_artifacts.first_break import (
+    _residual_row_layer_context,
+    _residual_row_string_context,
+)
+from app.services.refraction_static_artifacts.validation import _validate_result
 from app.services.refraction_static_artifacts.field_corrections import (
     _receiver_field_shift_s_array,
     _receiver_field_static_status_array,
@@ -72,9 +77,7 @@ def write_refraction_line_profile_qc_artifacts(
     npz_path: Path,
     json_path: Path,
 ) -> dict[str, Any]:
-    from app.services.refraction_static_artifacts import _legacy
-
-    values = _legacy._validate_result(result)
+    values = _validate_result(result)
     request = RefractionStaticApplyRequest.model_validate(req)
     arrays = build_refraction_line_profile_qc_arrays(
         result=values.result,
@@ -111,9 +114,7 @@ def build_refraction_line_profile_qc_arrays(
     req: RefractionStaticApplyRequest,
 ) -> dict[str, np.ndarray]:
     """Build combined source/receiver endpoint arrays for line-profile QC."""
-    from app.services.refraction_static_artifacts import _legacy
-
-    values = _legacy._validate_result(result)
+    values = _validate_result(result)
     request = RefractionStaticApplyRequest.model_validate(req)
     if not _line_profile_qc_available(request):
         return _empty_line_profile_qc_arrays()
@@ -153,9 +154,7 @@ def build_refraction_line_profile_qc_payload(
     req: RefractionStaticApplyRequest,
     arrays: dict[str, np.ndarray] | None = None,
 ) -> dict[str, Any]:
-    from app.services.refraction_static_artifacts import _legacy
-
-    values = _legacy._validate_result(result)
+    values = _validate_result(result)
     request = RefractionStaticApplyRequest.model_validate(req)
     profile_arrays = (
         build_refraction_line_profile_qc_arrays(result=values.result, req=request)
@@ -654,16 +653,14 @@ def _endpoint_layer_qc_context(
     *,
     endpoint: str,
 ) -> dict[str, dict[str, dict[str, int | float]]]:
-    from app.services.refraction_static_artifacts import _legacy
-
     n_rows = int(result.row_trace_index_sorted.shape[0])
-    layer_kind, _layer_index = _legacy._residual_row_layer_context(result)
+    layer_kind, _layer_index = _residual_row_layer_context(result)
     endpoint_field = (
         'row_source_endpoint_key'
         if endpoint == 'source'
         else 'row_receiver_endpoint_key'
     )
-    endpoint_key = _legacy._residual_row_string_context(result, endpoint_field)
+    endpoint_key = _residual_row_string_context(result, endpoint_field)
     used = np.asarray(result.used_row_mask, dtype=bool)
     residual_s = np.asarray(result.residual_time_s, dtype=np.float64)
     context: dict[str, dict[str, dict[str, Any]]] = {
