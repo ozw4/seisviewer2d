@@ -13,6 +13,7 @@ from app.api.schemas import RefractionStaticApplyRequest
 import app.services.refraction_static_artifacts as artifact_module
 import app.services.refraction_static_artifacts._legacy as artifact_legacy_module
 from app.services.refraction_static_artifacts import registry as artifact_registry
+from app.services.refraction_static_artifacts import validation as artifact_validation
 from app.services.refraction_static_artifacts.io import (
     _write_csv_atomic,
     _write_json_atomic,
@@ -3011,7 +3012,7 @@ def test_write_refraction_static_artifacts_rejects_non_writable_job_dir(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setattr(
-        artifact_legacy_module.os,
+        artifact_validation.os,
         'access',
         lambda _path, _mode: False,
     )
