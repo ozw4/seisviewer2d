@@ -35,7 +35,6 @@ from app.services.refraction_static_source_depth import (
 )
 from app.services.refraction_static_t1lsst import (
     REFRACTION_T1LSST_1LAYER_COMPONENTS_CSV_NAME,
-    write_refraction_t1lsst_1layer_components_csv,
 )
 from app.services.refraction_static_types import (
     RefractionLayerKind,
@@ -186,7 +185,6 @@ from app.services.refraction_static_artifacts.validation import (
     _required_cell_int_array,
     _required_cell_status_array,
     _required_positive_qc_int,
-    _validate_job_dir,
     _validate_refractor_velocity_cell_ids,
     _validate_resolved_first_layer,
     _validate_result,
@@ -196,13 +194,10 @@ from app.services.refraction_static_artifacts.registry import (
     _CELL_VELOCITY_COMPONENT_BY_LAYER,
     _artifact_entries_for_request,
     _artifact_list_for_qc,
-    _build_manifest_payload,
     _cell_velocity_artifact_names,
     _cell_velocity_artifact_names_for_request as _cell_velocity_artifact_names_for_request,
-    _cell_velocity_artifact_paths_for_request,
     _cell_velocity_layer_kind,
     _request_cell_velocity_layer_kinds,
-    _validate_declared_upstream_artifacts,
     _validate_upstream_artifact_names,
     REFRACTION_STATIC_REGISTERED_ARTIFACT_NAMES,
 )
@@ -215,374 +210,6 @@ _refractor_cell_velocity_artifact_entries = (
 )
 _t1lsst_artifact_entries = _artifact_registry._t1lsst_artifact_entries
 _upstream_artifact_entries = _artifact_registry._upstream_artifact_entries
-
-
-def write_refraction_static_artifacts(
-    *,
-    result: RefractionDatumStaticsResult,
-    req: RefractionStaticApplyRequest,
-    job_dir: Path,
-    resolved_first_layer: ResolvedRefractionFirstLayer | None = None,
-    upstream_artifact_names: Iterable[str] = (),
-    source_job_id: str | None = None,
-) -> RefractionStaticArtifactSet:
-    """Write final refraction statics artifacts and an artifact manifest.
-
-    This writer owns only the final refraction statics artifacts it writes in
-    this function.  Upstream artifacts, currently the direct-arrival V1 QC and
-    estimates files, are included in the manifest only when their plain file
-    names are passed via ``upstream_artifact_names``.  Declared upstream
-    artifacts must already exist in ``job_dir`` and are validated with a
-    dedicated upstream-artifact error.
-    """
-    root = _validate_job_dir(job_dir)
-    values = _validate_result(result)
-    request = RefractionStaticApplyRequest.model_validate(req)
-    first_layer = _validate_resolved_first_layer(
-        result=values.result,
-        req=request,
-        resolved_first_layer=resolved_first_layer,
-    )
-    upstream_names = _validate_upstream_artifact_names(
-        upstream_artifact_names,
-        resolved_first_layer=first_layer,
-        req=request,
-    )
-    _validate_declared_upstream_artifacts(root, upstream_names)
-    artifact_entries = _artifact_entries_for_request(
-        request,
-        first_layer,
-        upstream_artifact_names=upstream_names,
-    )
-    qc = build_refraction_static_qc_payload(
-        result=values.result,
-        req=request,
-        resolved_first_layer=first_layer,
-        upstream_artifact_names=upstream_names,
-    )
-    manifest = _build_manifest_payload(artifact_entries)
-    _assert_strict_json(manifest, artifact_name=REFRACTION_STATIC_ARTIFACTS_JSON_NAME)
-    t1lsst_components_path = (
-        root / REFRACTION_T1LSST_1LAYER_COMPONENTS_CSV_NAME
-        if request.conversion.mode == 't1lsst_1layer'
-        else None
-    )
-    cell_velocity_artifact_paths = _cell_velocity_artifact_paths_for_request(
-        root,
-        request,
-    )
-    first_cell_velocity_artifacts = (
-        cell_velocity_artifact_paths[0]
-        if cell_velocity_artifact_paths
-        else None
-    )
-    has_grid_map_qc_artifacts = bool(cell_velocity_artifact_paths)
-
-    paths = RefractionStaticArtifactSet(
-        job_dir=root,
-        solution_npz=root / REFRACTION_STATIC_SOLUTION_NPZ_NAME,
-        qc_json=root / REFRACTION_STATIC_QC_JSON_NAME,
-        refraction_statics_csv=root / REFRACTION_STATICS_CSV_NAME,
-        near_surface_model_csv=root / NEAR_SURFACE_MODEL_CSV_NAME,
-        first_break_residuals_csv=root / FIRST_BREAK_RESIDUALS_CSV_NAME,
-        refraction_first_break_time_export_csv=(
-            root / REFRACTION_FIRST_BREAK_TIME_EXPORT_CSV_NAME
-        ),
-        refraction_first_break_fit_qc_csv=(
-            root / REFRACTION_FIRST_BREAK_FIT_QC_CSV_NAME
-        ),
-        refraction_first_break_fit_qc_npz=(
-            root / REFRACTION_FIRST_BREAK_FIT_QC_NPZ_NAME
-        ),
-        refraction_first_break_fit_qc_json=(
-            root / REFRACTION_FIRST_BREAK_FIT_QC_JSON_NAME
-        ),
-        refraction_reduced_time_qc_csv=root / REFRACTION_REDUCED_TIME_QC_CSV_NAME,
-        refraction_reduced_time_qc_npz=root / REFRACTION_REDUCED_TIME_QC_NPZ_NAME,
-        refraction_reduced_time_qc_json=root / REFRACTION_REDUCED_TIME_QC_JSON_NAME,
-        refraction_static_components_csv=root / REFRACTION_STATIC_COMPONENTS_CSV_NAME,
-        refraction_static_component_qc_trace_csv=(
-            root / REFRACTION_STATIC_COMPONENT_QC_TRACE_CSV_NAME
-        ),
-        refraction_static_component_qc_endpoint_csv=(
-            root / REFRACTION_STATIC_COMPONENT_QC_ENDPOINT_CSV_NAME
-        ),
-        refraction_static_component_qc_npz=(
-            root / REFRACTION_STATIC_COMPONENT_QC_NPZ_NAME
-        ),
-        refraction_static_component_qc_json=(
-            root / REFRACTION_STATIC_COMPONENT_QC_JSON_NAME
-        ),
-        source_static_table_csv=root / SOURCE_STATIC_TABLE_CSV_NAME,
-        receiver_static_table_csv=root / RECEIVER_STATIC_TABLE_CSV_NAME,
-        source_receiver_static_table_npz=root / SOURCE_RECEIVER_STATIC_TABLE_NPZ_NAME,
-        refraction_line_profile_qc_source_csv=(
-            root / REFRACTION_LINE_PROFILE_QC_SOURCE_CSV_NAME
-        ),
-        refraction_line_profile_qc_receiver_csv=(
-            root / REFRACTION_LINE_PROFILE_QC_RECEIVER_CSV_NAME
-        ),
-        refraction_line_profile_qc_combined_csv=(
-            root / REFRACTION_LINE_PROFILE_QC_COMBINED_CSV_NAME
-        ),
-        refraction_line_profile_qc_npz=root / REFRACTION_LINE_PROFILE_QC_NPZ_NAME,
-        refraction_line_profile_qc_json=root / REFRACTION_LINE_PROFILE_QC_JSON_NAME,
-        refraction_time_term_spreadsheet_csv=(
-            root / REFRACTION_TIME_TERM_SPREADSHEET_CSV_NAME
-        ),
-        static_history_json=root / REFRACTION_STATIC_HISTORY_JSON_NAME,
-        manifest_json=root / REFRACTION_STATIC_ARTIFACTS_JSON_NAME,
-        artifact_names=tuple(
-            str(item['name']) for item in artifact_entries if bool(item['required'])
-        ),
-        qc=qc,
-        refraction_t1lsst_1layer_components_csv=t1lsst_components_path,
-        refraction_refractor_velocity_cells_csv=(
-            first_cell_velocity_artifacts.cells_csv
-            if first_cell_velocity_artifacts is not None
-            else None
-        ),
-        refraction_refractor_velocity_grid_npz=(
-            first_cell_velocity_artifacts.grid_npz
-            if first_cell_velocity_artifacts is not None
-            else None
-        ),
-        refraction_refractor_velocity_qc_json=(
-            first_cell_velocity_artifacts.qc_json
-            if first_cell_velocity_artifacts is not None
-            else None
-        ),
-        refraction_cell_solver_history_csv=(
-            first_cell_velocity_artifacts.solver_history_csv
-            if first_cell_velocity_artifacts is not None
-            else None
-        ),
-        refraction_grid_map_qc_csv=(
-            root / REFRACTION_GRID_MAP_QC_CSV_NAME
-            if has_grid_map_qc_artifacts
-            else None
-        ),
-        refraction_grid_map_qc_npz=(
-            root / REFRACTION_GRID_MAP_QC_NPZ_NAME
-            if has_grid_map_qc_artifacts
-            else None
-        ),
-        refraction_grid_map_qc_json=(
-            root / REFRACTION_GRID_MAP_QC_JSON_NAME
-            if has_grid_map_qc_artifacts
-            else None
-        ),
-    )
-
-    write_refraction_static_solution_npz(
-        result=values.result,
-        req=request,
-        path=paths.solution_npz,
-        resolved_first_layer=first_layer,
-    )
-    write_refraction_static_qc_json(
-        result=values.result,
-        req=request,
-        path=paths.qc_json,
-        qc=qc,
-        resolved_first_layer=first_layer,
-    )
-    write_refraction_statics_csv(result=values.result, path=paths.refraction_statics_csv)
-    write_near_surface_model_csv(result=values.result, path=paths.near_surface_model_csv)
-    write_first_break_residuals_csv(
-        result=values.result,
-        path=paths.first_break_residuals_csv,
-        req=request,
-    )
-    write_refraction_first_break_time_export_csv(
-        result=values.result,
-        path=paths.refraction_first_break_time_export_csv,
-        req=request,
-        source_job_id=source_job_id,
-    )
-    write_refraction_first_break_fit_qc_csv(
-        result=values.result,
-        req=request,
-        path=paths.refraction_first_break_fit_qc_csv,
-    )
-    write_refraction_first_break_fit_qc_npz(
-        result=values.result,
-        req=request,
-        path=paths.refraction_first_break_fit_qc_npz,
-    )
-    write_refraction_first_break_fit_qc_json(
-        result=values.result,
-        req=request,
-        path=paths.refraction_first_break_fit_qc_json,
-    )
-    write_refraction_reduced_time_qc_csv(
-        result=values.result,
-        req=request,
-        path=paths.refraction_reduced_time_qc_csv,
-    )
-    write_refraction_reduced_time_qc_npz(
-        result=values.result,
-        req=request,
-        path=paths.refraction_reduced_time_qc_npz,
-    )
-    write_refraction_reduced_time_qc_json(
-        result=values.result,
-        req=request,
-        path=paths.refraction_reduced_time_qc_json,
-    )
-    write_refraction_static_components_csv(
-        result=values.result,
-        path=paths.refraction_static_components_csv,
-    )
-    write_refraction_static_component_qc_artifacts(
-        result=values.result,
-        req=request,
-        trace_csv_path=paths.refraction_static_component_qc_trace_csv,
-        endpoint_csv_path=paths.refraction_static_component_qc_endpoint_csv,
-        npz_path=paths.refraction_static_component_qc_npz,
-        json_path=paths.refraction_static_component_qc_json,
-    )
-    write_source_static_table_csv(
-        result=values.result,
-        path=paths.source_static_table_csv,
-    )
-    write_receiver_static_table_csv(
-        result=values.result,
-        path=paths.receiver_static_table_csv,
-    )
-    write_source_receiver_static_table_npz(
-        result=values.result,
-        path=paths.source_receiver_static_table_npz,
-    )
-    write_refraction_line_profile_qc_artifacts(
-        result=values.result,
-        req=request,
-        source_csv_path=paths.refraction_line_profile_qc_source_csv,
-        receiver_csv_path=paths.refraction_line_profile_qc_receiver_csv,
-        combined_csv_path=paths.refraction_line_profile_qc_combined_csv,
-        npz_path=paths.refraction_line_profile_qc_npz,
-        json_path=paths.refraction_line_profile_qc_json,
-    )
-    write_refraction_time_term_spreadsheet_csv(
-        result=values.result,
-        path=paths.refraction_time_term_spreadsheet_csv,
-        source_job_id=source_job_id,
-    )
-    write_refraction_static_history_json(
-        result=values.result,
-        req=request,
-        path=paths.static_history_json,
-    )
-    for cell_artifacts in cell_velocity_artifact_paths:
-        write_refraction_refractor_velocity_cells_csv(
-            result=values.result,
-            req=request,
-            path=cell_artifacts.cells_csv,
-            layer_kind=cell_artifacts.layer_kind,
-        )
-        write_refraction_refractor_velocity_grid_npz(
-            result=values.result,
-            req=request,
-            path=cell_artifacts.grid_npz,
-            layer_kind=cell_artifacts.layer_kind,
-        )
-        write_refraction_refractor_velocity_qc_json(
-            result=values.result,
-            req=request,
-            path=cell_artifacts.qc_json,
-            layer_kind=cell_artifacts.layer_kind,
-        )
-        write_refraction_cell_solver_history_csv(
-            result=values.result,
-            req=request,
-            path=cell_artifacts.solver_history_csv,
-            layer_kind=cell_artifacts.layer_kind,
-        )
-    if (
-        paths.refraction_grid_map_qc_csv is not None
-        and paths.refraction_grid_map_qc_npz is not None
-        and paths.refraction_grid_map_qc_json is not None
-    ):
-        write_refraction_grid_map_qc_csv(
-            result=values.result,
-            req=request,
-            path=paths.refraction_grid_map_qc_csv,
-        )
-        write_refraction_grid_map_qc_npz(
-            result=values.result,
-            req=request,
-            path=paths.refraction_grid_map_qc_npz,
-        )
-        write_refraction_grid_map_qc_json(
-            result=values.result,
-            req=request,
-            path=paths.refraction_grid_map_qc_json,
-        )
-    if paths.refraction_t1lsst_1layer_components_csv is not None:
-        write_refraction_t1lsst_1layer_components_csv(
-            result=values.result,
-            path=paths.refraction_t1lsst_1layer_components_csv,
-        )
-    _write_json_atomic(paths.manifest_json, manifest)
-
-    artifact_paths = (
-        paths.solution_npz,
-        paths.qc_json,
-        paths.refraction_statics_csv,
-        paths.near_surface_model_csv,
-        paths.first_break_residuals_csv,
-        paths.refraction_first_break_time_export_csv,
-        paths.refraction_first_break_fit_qc_csv,
-        paths.refraction_first_break_fit_qc_npz,
-        paths.refraction_first_break_fit_qc_json,
-        paths.refraction_reduced_time_qc_csv,
-        paths.refraction_reduced_time_qc_npz,
-        paths.refraction_reduced_time_qc_json,
-        paths.refraction_static_components_csv,
-        paths.refraction_static_component_qc_trace_csv,
-        paths.refraction_static_component_qc_endpoint_csv,
-        paths.refraction_static_component_qc_npz,
-        paths.refraction_static_component_qc_json,
-        paths.source_static_table_csv,
-        paths.receiver_static_table_csv,
-        paths.source_receiver_static_table_npz,
-        paths.refraction_line_profile_qc_source_csv,
-        paths.refraction_line_profile_qc_receiver_csv,
-        paths.refraction_line_profile_qc_combined_csv,
-        paths.refraction_line_profile_qc_npz,
-        paths.refraction_line_profile_qc_json,
-        paths.refraction_time_term_spreadsheet_csv,
-        paths.static_history_json,
-        paths.manifest_json,
-    )
-    if paths.refraction_t1lsst_1layer_components_csv is not None:
-        artifact_paths = artifact_paths + (
-            paths.refraction_t1lsst_1layer_components_csv,
-        )
-    for cell_artifacts in cell_velocity_artifact_paths:
-        artifact_paths = artifact_paths + (
-            cell_artifacts.cells_csv,
-            cell_artifacts.grid_npz,
-            cell_artifacts.qc_json,
-            cell_artifacts.solver_history_csv,
-        )
-    if (
-        paths.refraction_grid_map_qc_csv is not None
-        and paths.refraction_grid_map_qc_npz is not None
-        and paths.refraction_grid_map_qc_json is not None
-    ):
-        artifact_paths = artifact_paths + (
-            paths.refraction_grid_map_qc_csv,
-            paths.refraction_grid_map_qc_npz,
-            paths.refraction_grid_map_qc_json,
-        )
-    for artifact_path in artifact_paths:
-        if not artifact_path.is_file():
-            raise RefractionStaticArtifactError(
-                f'artifact file missing after write: {artifact_path.name}'
-            )
-    _validate_declared_upstream_artifacts(root, upstream_names)
-    return paths
 
 
 def write_refraction_static_solution_npz(
@@ -8218,6 +7845,11 @@ def _sum_correction_s(left: object, right: object) -> float:
     if not np.isfinite(left_value) or not np.isfinite(right_value):
         return float('nan')
     return float(left_value + right_value)
+
+
+from app.services.refraction_static_artifacts.writer import (  # noqa: E402
+    write_refraction_static_artifacts,
+)
 
 
 __all__ = [
