@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import csv
 from dataclasses import replace
+import importlib
 import json
 from pathlib import Path
 
@@ -10,6 +11,13 @@ import pytest
 
 from app.api.schemas import RefractionStaticApplyRequest
 import app.services.refraction_static_artifacts as artifact_module
+import app.services.refraction_static_artifacts._legacy as artifact_legacy_module
+from app.services.refraction_static_artifacts import registry as artifact_registry
+from app.services.refraction_static_artifacts.io import (
+    _write_csv_atomic,
+    _write_json_atomic,
+    _write_npz_atomic,
+)
 from app.services.refraction_static_artifacts import (
     FIRST_BREAK_RESIDUALS_CSV_NAME,
     NEAR_SURFACE_MODEL_CSV_NAME,
@@ -44,6 +52,7 @@ from app.services.refraction_static_artifacts import (
     REFRACTION_STATIC_QC_JSON_NAME,
     REFRACTION_STATIC_SOLUTION_NPZ_NAME,
     REFRACTION_TIME_TERM_SPREADSHEET_CSV_NAME,
+    REFRACTION_T1LSST_1LAYER_COMPONENTS_CSV_NAME,
     REFRACTION_V3_CELL_SOLVER_HISTORY_CSV_NAME,
     REFRACTION_V3_REFRACTOR_VELOCITY_CELLS_CSV_NAME,
     REFRACTION_V3_REFRACTOR_VELOCITY_GRID_NPZ_NAME,
@@ -284,6 +293,356 @@ UPSTREAM_V1_ARTIFACT_NAMES = (
 )
 
 
+def _t1lsst_request() -> RefractionStaticApplyRequest:
+    payload = _request().model_dump(mode='json')
+    payload['conversion'] = {'mode': 't1lsst_1layer'}
+    return RefractionStaticApplyRequest.model_validate(payload)
+
+
+def test_refraction_static_artifacts_public_all_snapshot() -> None:
+    assert tuple(artifact_module.__all__) == (
+        'FIRST_BREAK_RESIDUALS_CSV_NAME',
+        'FIRST_BREAK_FIT_QC_RESIDUAL_SIGN',
+        'REFRACTION_FIRST_BREAK_FIT_QC_CSV_NAME',
+        'REFRACTION_FIRST_BREAK_FIT_QC_JSON_NAME',
+        'REFRACTION_FIRST_BREAK_FIT_QC_NPZ_NAME',
+        'REFRACTION_FIRST_BREAK_TIME_EXPORT_CSV_NAME',
+        'REFRACTION_GRID_MAP_QC_CSV_NAME',
+        'REFRACTION_GRID_MAP_QC_JSON_NAME',
+        'REFRACTION_GRID_MAP_QC_NPZ_NAME',
+        'REFRACTION_LINE_PROFILE_QC_COMBINED_CSV_NAME',
+        'REFRACTION_LINE_PROFILE_QC_JSON_NAME',
+        'REFRACTION_LINE_PROFILE_QC_NPZ_NAME',
+        'REFRACTION_LINE_PROFILE_QC_RECEIVER_CSV_NAME',
+        'REFRACTION_LINE_PROFILE_QC_SOURCE_CSV_NAME',
+        'REFRACTION_REDUCED_TIME_QC_CSV_NAME',
+        'REFRACTION_REDUCED_TIME_QC_JSON_NAME',
+        'REFRACTION_REDUCED_TIME_QC_NPZ_NAME',
+        'NEAR_SURFACE_MODEL_CSV_NAME',
+        'REFRACTION_CELL_SOLVER_HISTORY_CSV_NAME',
+        'REFRACTION_REFRACTOR_VELOCITY_CELLS_CSV_NAME',
+        'REFRACTION_REFRACTOR_VELOCITY_GRID_NPZ_NAME',
+        'REFRACTION_REFRACTOR_VELOCITY_QC_JSON_NAME',
+        'REFRACTION_V3_CELL_SOLVER_HISTORY_CSV_NAME',
+        'REFRACTION_V3_REFRACTOR_VELOCITY_CELLS_CSV_NAME',
+        'REFRACTION_V3_REFRACTOR_VELOCITY_GRID_NPZ_NAME',
+        'REFRACTION_V3_REFRACTOR_VELOCITY_QC_JSON_NAME',
+        'REFRACTION_VSUB_CELL_SOLVER_HISTORY_CSV_NAME',
+        'REFRACTION_VSUB_REFRACTOR_VELOCITY_CELLS_CSV_NAME',
+        'REFRACTION_VSUB_REFRACTOR_VELOCITY_GRID_NPZ_NAME',
+        'REFRACTION_VSUB_REFRACTOR_VELOCITY_QC_JSON_NAME',
+        'REFRACTION_STATICS_CSV_NAME',
+        'REFRACTION_STATIC_ARTIFACTS_JSON_NAME',
+        'REFRACTION_STATIC_COMPONENT_QC_ENDPOINT_CSV_NAME',
+        'REFRACTION_STATIC_COMPONENT_QC_JSON_NAME',
+        'REFRACTION_STATIC_COMPONENT_QC_NPZ_NAME',
+        'REFRACTION_STATIC_COMPONENT_QC_TRACE_CSV_NAME',
+        'REFRACTION_STATIC_COMPONENTS_CSV_NAME',
+        'REFRACTION_STATIC_FAILURE_DIAGNOSTICS_JSON_NAME',
+        'REFRACTION_STATIC_HISTORY_JSON_NAME',
+        'REFRACTION_STATIC_REQUEST_JSON_NAME',
+        'REFRACTION_STATIC_REGISTERED_ARTIFACT_NAMES',
+        'REFRACTION_STATIC_QC_JSON_NAME',
+        'REFRACTION_TIME_TERM_SPREADSHEET_CSV_NAME',
+        'REFRACTION_STATIC_SOLUTION_NPZ_NAME',
+        'REFRACTION_T1LSST_1LAYER_COMPONENTS_CSV_NAME',
+        'REFRACTION_V1_ESTIMATES_CSV_NAME',
+        'REFRACTION_V1_QC_JSON_NAME',
+        'RECEIVER_STATIC_TABLE_CSV_NAME',
+        'SOURCE_RECEIVER_STATIC_TABLE_NPZ_NAME',
+        'SOURCE_STATIC_TABLE_CSV_NAME',
+        'UPLOADED_REFRACTION_PICKS_NPZ_NAME',
+        'RefractionCellSolverHistoryRow',
+        'RefractionStaticArtifactError',
+        'RefractionStaticArtifactSet',
+        'build_refraction_cell_solver_history_rows',
+        'build_refraction_first_break_fit_qc_arrays',
+        'build_refraction_first_break_fit_qc_payload',
+        'build_refraction_grid_map_qc_arrays',
+        'build_refraction_grid_map_qc_payload',
+        'build_refraction_line_profile_qc_arrays',
+        'build_refraction_line_profile_qc_payload',
+        'build_refraction_reduced_time_qc_arrays',
+        'build_refraction_reduced_time_qc_payload',
+        'build_refraction_static_component_qc_arrays',
+        'build_refraction_static_component_qc_payload',
+        'build_refraction_refractor_velocity_grid_arrays',
+        'build_refraction_refractor_velocity_qc_payload',
+        'build_refraction_static_history_payload',
+        'build_refraction_static_qc_payload',
+        'build_refraction_static_solution_arrays',
+        'build_source_receiver_static_table_arrays',
+        'refraction_static_double_application_qc',
+        'refraction_static_trace_shift_component_names',
+        'static_history_double_application_qc',
+        'write_first_break_residuals_csv',
+        'write_near_surface_model_csv',
+        'write_refraction_first_break_fit_qc_csv',
+        'write_refraction_first_break_fit_qc_json',
+        'write_refraction_first_break_fit_qc_npz',
+        'write_refraction_first_break_time_export_csv',
+        'write_refraction_grid_map_qc_csv',
+        'write_refraction_grid_map_qc_json',
+        'write_refraction_grid_map_qc_npz',
+        'write_refraction_line_profile_qc_artifacts',
+        'write_refraction_reduced_time_qc_csv',
+        'write_refraction_reduced_time_qc_json',
+        'write_refraction_reduced_time_qc_npz',
+        'write_refraction_cell_solver_history_csv',
+        'write_refraction_refractor_velocity_cells_csv',
+        'write_refraction_refractor_velocity_grid_npz',
+        'write_refraction_refractor_velocity_qc_json',
+        'write_refraction_static_artifacts',
+        'write_refraction_static_component_qc_artifacts',
+        'write_refraction_static_components_csv',
+        'write_refraction_static_history_json',
+        'write_refraction_static_qc_json',
+        'write_refraction_static_solution_npz',
+        'write_refraction_statics_csv',
+        'write_refraction_time_term_spreadsheet_csv',
+        'write_refraction_time_term_spreadsheet_csv_from_static_tables',
+        'write_receiver_static_table_csv',
+        'write_source_receiver_static_table_npz',
+        'write_source_static_table_csv',
+    )
+    assert all(hasattr(artifact_module, name) for name in artifact_module.__all__)
+
+
+def test_refraction_static_artifacts_contract_constants_are_direct_importable() -> None:
+    from app.services.refraction_static_artifacts import (
+        ARTIFACT_VERSION,
+        FIRST_BREAK_TIME_EXPORT_FORMAT_NAME,
+        FIRST_BREAK_TIME_EXPORT_FORMAT_VERSION,
+        LINE_PROFILE_QC_SCHEMA_VERSION,
+        METHOD,
+        NEGATIVE_SHIFT_DESCRIPTION,
+        POSITIVE_SHIFT_DESCRIPTION,
+        REDUCED_TIME_QC_FORMULA,
+        STATIC_COMPONENT,
+        WORKFLOW,
+    )
+
+    assert ARTIFACT_VERSION == '1.0'
+    assert METHOD == 'gli_variable_thickness'
+    assert WORKFLOW == 'refraction_statics'
+    assert STATIC_COMPONENT == 'final_refraction'
+    assert POSITIVE_SHIFT_DESCRIPTION == 'event appears later in corrected data'
+    assert NEGATIVE_SHIFT_DESCRIPTION == 'event appears earlier in corrected data'
+    assert LINE_PROFILE_QC_SCHEMA_VERSION == 1
+    assert FIRST_BREAK_TIME_EXPORT_FORMAT_NAME == 'first_break_time'
+    assert FIRST_BREAK_TIME_EXPORT_FORMAT_VERSION == 1
+    assert REDUCED_TIME_QC_FORMULA == (
+        'reduced_time_s = observed_first_break_time_s - '
+        'offset_m / reduction_velocity_m_s'
+    )
+
+
+def test_refraction_static_registry_manifest_entry_contract() -> None:
+    assert artifact_registry.registered_artifact_names() == (
+        artifact_module.REFRACTION_STATIC_REGISTERED_ARTIFACT_NAMES
+    )
+
+    base_manifest = artifact_registry.build_manifest_payload(
+        artifact_registry.artifact_entries_for_request(_request())
+    )
+    solve_cell_manifest = artifact_registry.build_manifest_payload(
+        artifact_registry.artifact_entries_for_request(_solve_cell_request())
+    )
+    t1lsst_manifest = artifact_registry.build_manifest_payload(
+        artifact_registry.artifact_entries_for_request(_t1lsst_request())
+    )
+    upstream_manifest = artifact_registry.build_manifest_payload(
+        artifact_registry.artifact_entries_for_request(
+            _estimated_v1_request(),
+            _resolved_estimated_v1(),
+            upstream_artifact_names=UPSTREAM_V1_ARTIFACT_NAMES,
+        )
+    )
+    artifacts = {
+        item['name']: item
+        for manifest in (
+            base_manifest,
+            solve_cell_manifest,
+            t1lsst_manifest,
+            upstream_manifest,
+        )
+        for item in manifest['artifacts']
+    }
+
+    expected = {
+        REFRACTION_STATIC_SOLUTION_NPZ_NAME: (
+            'npz',
+            True,
+            'Machine-readable final refraction statics solution',
+        ),
+        REFRACTION_REFRACTOR_VELOCITY_CELLS_CSV_NAME: (
+            'csv',
+            True,
+            'Per-cell V2/T1 refractor velocity grid and QC metrics',
+        ),
+        REFRACTION_GRID_MAP_QC_CSV_NAME: (
+            'csv',
+            True,
+            'Viewer-ready refraction cell velocity grid map QC rows',
+        ),
+        REFRACTION_T1LSST_1LAYER_COMPONENTS_CSV_NAME: (
+            'csv',
+            True,
+            'T1LSST-compatible one-layer source/receiver components',
+        ),
+        REFRACTION_V1_QC_JSON_NAME: (
+            'json',
+            True,
+            'Direct-arrival V1 estimation QC summary',
+        ),
+    }
+    for artifact_name, (kind, required, description) in expected.items():
+        item = artifacts[artifact_name]
+        assert item['kind'] == kind
+        assert item['required'] is required
+        assert item['description'] == description
+
+
+def test_refraction_static_legacy_registry_private_aliases() -> None:
+    alias_names = (
+        '_artifact_content_type',
+        '_grid_map_qc_artifact_entries',
+        '_refractor_cell_velocity_artifact_entries',
+        '_t1lsst_artifact_entries',
+        '_upstream_artifact_entries',
+    )
+    for alias_name in alias_names:
+        assert getattr(artifact_legacy_module, alias_name) is getattr(
+            artifact_registry,
+            alias_name,
+        )
+
+
+@pytest.mark.parametrize(
+    'module_name',
+    [
+        'app.services.job_artifact_refs',
+        'app.services.refraction_static_apply_trace_store',
+        'app.services.refraction_static_export_service',
+        'app.services.refraction_static_gather_preview',
+        'app.services.refraction_static_multilayer_service',
+        'app.services.refraction_static_qc_bundle',
+        'app.services.refraction_static_qc_drilldown',
+        'app.services.refraction_static_service',
+        'app.services.refraction_static_table_apply_service',
+        'app.api.routers.statics',
+    ],
+)
+def test_refraction_static_artifact_consumer_import_smoke(module_name: str) -> None:
+    assert importlib.import_module(module_name) is not None
+
+
+def test_refraction_static_artifact_name_snapshot() -> None:
+    names = {
+        'solution_npz': artifact_module.REFRACTION_STATIC_SOLUTION_NPZ_NAME,
+        'qc_json': artifact_module.REFRACTION_STATIC_QC_JSON_NAME,
+        'manifest_json': artifact_module.REFRACTION_STATIC_ARTIFACTS_JSON_NAME,
+        'request_json': artifact_module.REFRACTION_STATIC_REQUEST_JSON_NAME,
+        'failure_diagnostics_json': (
+            artifact_module.REFRACTION_STATIC_FAILURE_DIAGNOSTICS_JSON_NAME
+        ),
+        'trace_statics_csv': artifact_module.REFRACTION_STATICS_CSV_NAME,
+        'near_surface_model_csv': artifact_module.NEAR_SURFACE_MODEL_CSV_NAME,
+        'first_break_residuals_csv': artifact_module.FIRST_BREAK_RESIDUALS_CSV_NAME,
+        'first_break_time_export_csv': (
+            artifact_module.REFRACTION_FIRST_BREAK_TIME_EXPORT_CSV_NAME
+        ),
+        'source_static_table_csv': artifact_module.SOURCE_STATIC_TABLE_CSV_NAME,
+        'receiver_static_table_csv': artifact_module.RECEIVER_STATIC_TABLE_CSV_NAME,
+        'source_receiver_static_table_npz': (
+            artifact_module.SOURCE_RECEIVER_STATIC_TABLE_NPZ_NAME
+        ),
+        'first_break_fit_qc_csv': (
+            artifact_module.REFRACTION_FIRST_BREAK_FIT_QC_CSV_NAME
+        ),
+        'first_break_fit_qc_npz': (
+            artifact_module.REFRACTION_FIRST_BREAK_FIT_QC_NPZ_NAME
+        ),
+        'first_break_fit_qc_json': (
+            artifact_module.REFRACTION_FIRST_BREAK_FIT_QC_JSON_NAME
+        ),
+        'reduced_time_qc_csv': artifact_module.REFRACTION_REDUCED_TIME_QC_CSV_NAME,
+        'reduced_time_qc_npz': artifact_module.REFRACTION_REDUCED_TIME_QC_NPZ_NAME,
+        'reduced_time_qc_json': artifact_module.REFRACTION_REDUCED_TIME_QC_JSON_NAME,
+        'line_profile_qc_source_csv': (
+            artifact_module.REFRACTION_LINE_PROFILE_QC_SOURCE_CSV_NAME
+        ),
+        'line_profile_qc_receiver_csv': (
+            artifact_module.REFRACTION_LINE_PROFILE_QC_RECEIVER_CSV_NAME
+        ),
+        'line_profile_qc_combined_csv': (
+            artifact_module.REFRACTION_LINE_PROFILE_QC_COMBINED_CSV_NAME
+        ),
+        'line_profile_qc_npz': artifact_module.REFRACTION_LINE_PROFILE_QC_NPZ_NAME,
+        'line_profile_qc_json': artifact_module.REFRACTION_LINE_PROFILE_QC_JSON_NAME,
+        'grid_map_qc_csv': artifact_module.REFRACTION_GRID_MAP_QC_CSV_NAME,
+        'grid_map_qc_npz': artifact_module.REFRACTION_GRID_MAP_QC_NPZ_NAME,
+        'grid_map_qc_json': artifact_module.REFRACTION_GRID_MAP_QC_JSON_NAME,
+        'v2_cells_csv': artifact_module.REFRACTION_REFRACTOR_VELOCITY_CELLS_CSV_NAME,
+        'v2_grid_npz': artifact_module.REFRACTION_REFRACTOR_VELOCITY_GRID_NPZ_NAME,
+        'v2_qc_json': artifact_module.REFRACTION_REFRACTOR_VELOCITY_QC_JSON_NAME,
+        'v2_solver_history_csv': artifact_module.REFRACTION_CELL_SOLVER_HISTORY_CSV_NAME,
+        'v3_cells_csv': artifact_module.REFRACTION_V3_REFRACTOR_VELOCITY_CELLS_CSV_NAME,
+        'v3_grid_npz': artifact_module.REFRACTION_V3_REFRACTOR_VELOCITY_GRID_NPZ_NAME,
+        'v3_qc_json': artifact_module.REFRACTION_V3_REFRACTOR_VELOCITY_QC_JSON_NAME,
+        'v3_solver_history_csv': artifact_module.REFRACTION_V3_CELL_SOLVER_HISTORY_CSV_NAME,
+        'vsub_cells_csv': (
+            artifact_module.REFRACTION_VSUB_REFRACTOR_VELOCITY_CELLS_CSV_NAME
+        ),
+        'vsub_grid_npz': artifact_module.REFRACTION_VSUB_REFRACTOR_VELOCITY_GRID_NPZ_NAME,
+        'vsub_qc_json': artifact_module.REFRACTION_VSUB_REFRACTOR_VELOCITY_QC_JSON_NAME,
+        'vsub_solver_history_csv': (
+            artifact_module.REFRACTION_VSUB_CELL_SOLVER_HISTORY_CSV_NAME
+        ),
+    }
+
+    assert names == {
+        'solution_npz': 'refraction_static_solution.npz',
+        'qc_json': 'refraction_static_qc.json',
+        'manifest_json': 'refraction_static_artifacts.json',
+        'request_json': 'refraction_static_request.json',
+        'failure_diagnostics_json': 'failure_diagnostics.json',
+        'trace_statics_csv': 'refraction_statics.csv',
+        'near_surface_model_csv': 'near_surface_model.csv',
+        'first_break_residuals_csv': 'first_break_residuals.csv',
+        'first_break_time_export_csv': 'refraction_first_break_time_export.csv',
+        'source_static_table_csv': 'source_static_table.csv',
+        'receiver_static_table_csv': 'receiver_static_table.csv',
+        'source_receiver_static_table_npz': 'source_receiver_static_table.npz',
+        'first_break_fit_qc_csv': 'refraction_first_break_fit_qc.csv',
+        'first_break_fit_qc_npz': 'refraction_first_break_fit_qc.npz',
+        'first_break_fit_qc_json': 'refraction_first_break_fit_qc.json',
+        'reduced_time_qc_csv': 'refraction_reduced_time_qc.csv',
+        'reduced_time_qc_npz': 'refraction_reduced_time_qc.npz',
+        'reduced_time_qc_json': 'refraction_reduced_time_qc.json',
+        'line_profile_qc_source_csv': 'refraction_line_profile_qc_source.csv',
+        'line_profile_qc_receiver_csv': 'refraction_line_profile_qc_receiver.csv',
+        'line_profile_qc_combined_csv': 'refraction_line_profile_qc_combined.csv',
+        'line_profile_qc_npz': 'refraction_line_profile_qc.npz',
+        'line_profile_qc_json': 'refraction_line_profile_qc.json',
+        'grid_map_qc_csv': 'refraction_grid_map_qc.csv',
+        'grid_map_qc_npz': 'refraction_grid_map_qc.npz',
+        'grid_map_qc_json': 'refraction_grid_map_qc.json',
+        'v2_cells_csv': 'refraction_refractor_velocity_cells.csv',
+        'v2_grid_npz': 'refraction_refractor_velocity_grid.npz',
+        'v2_qc_json': 'refraction_refractor_velocity_qc.json',
+        'v2_solver_history_csv': 'refraction_cell_solver_history.csv',
+        'v3_cells_csv': 'refraction_v3_refractor_velocity_cells.csv',
+        'v3_grid_npz': 'refraction_v3_refractor_velocity_grid.npz',
+        'v3_qc_json': 'refraction_v3_refractor_velocity_qc.json',
+        'v3_solver_history_csv': 'refraction_v3_cell_solver_history.csv',
+        'vsub_cells_csv': 'refraction_vsub_refractor_velocity_cells.csv',
+        'vsub_grid_npz': 'refraction_vsub_refractor_velocity_grid.npz',
+        'vsub_qc_json': 'refraction_vsub_refractor_velocity_qc.json',
+        'vsub_solver_history_csv': 'refraction_vsub_cell_solver_history.csv',
+    }
+
+
 def test_write_refraction_static_artifacts_npz_schema(tmp_path: Path) -> None:
     paths = write_refraction_static_artifacts(
         result=_result(),
@@ -362,6 +721,763 @@ def test_write_refraction_static_artifacts_npz_schema(tmp_path: Path) -> None:
         assert data['node_datum_status'].tolist() == ['ok', 'ok', 'inactive']
         for key in data.files:
             assert data[key].dtype != object
+
+
+def test_refraction_static_base_manifest_contract(tmp_path: Path) -> None:
+    paths = write_refraction_static_artifacts(
+        result=_result(),
+        req=_request(),
+        job_dir=tmp_path,
+    )
+
+    manifest = json.loads(paths.manifest_json.read_text(encoding='utf-8'))
+    assert tuple(
+        (
+            item['name'],
+            item['kind'],
+            item['required'],
+            item['description'],
+        )
+        for item in manifest['artifacts']
+    ) == (
+        (
+            'refraction_static_solution.npz',
+            'npz',
+            True,
+            'Machine-readable final refraction statics solution',
+        ),
+        (
+            'refraction_static_qc.json',
+            'json',
+            True,
+            'Human-readable final refraction statics QC summary',
+        ),
+        (
+            'refraction_static_history.json',
+            'json',
+            True,
+            'Static-component lineage and double-application audit history',
+        ),
+        ('refraction_statics.csv', 'csv', True, 'Trace-level final refraction statics table'),
+        ('near_surface_model.csv', 'csv', True, 'Node-level near-surface model table'),
+        ('first_break_residuals.csv', 'csv', True, 'GLI first-break residual table'),
+        (
+            'refraction_first_break_time_export.csv',
+            'csv',
+            True,
+            'Observation-level first-break time QC export',
+        ),
+        (
+            'refraction_first_break_fit_qc.csv',
+            'csv',
+            True,
+            'Viewer-ready observed-modeled first-break fit QC table',
+        ),
+        (
+            'refraction_first_break_fit_qc.npz',
+            'npz',
+            True,
+            'Machine-readable observed-modeled first-break fit QC arrays',
+        ),
+        (
+            'refraction_first_break_fit_qc.json',
+            'json',
+            True,
+            'Observed-modeled first-break fit QC schema and summary',
+        ),
+        (
+            'refraction_reduced_time_qc.csv',
+            'csv',
+            True,
+            'Reduced-time first-break QC table for LMO displays',
+        ),
+        (
+            'refraction_reduced_time_qc.npz',
+            'npz',
+            True,
+            'Machine-readable reduced-time first-break QC arrays',
+        ),
+        (
+            'refraction_reduced_time_qc.json',
+            'json',
+            True,
+            'Reduced-time first-break QC schema and summary',
+        ),
+        (
+            'refraction_static_components.csv',
+            'csv',
+            True,
+            'Source/receiver endpoint static component table',
+        ),
+        (
+            'refraction_static_component_qc_trace.csv',
+            'csv',
+            True,
+            'Trace-level static component waterfall QC table',
+        ),
+        (
+            'refraction_static_component_qc_endpoint.csv',
+            'csv',
+            True,
+            'Endpoint-level static component waterfall QC table',
+        ),
+        (
+            'refraction_static_component_qc.npz',
+            'npz',
+            True,
+            'Machine-readable static component waterfall QC arrays',
+        ),
+        (
+            'refraction_static_component_qc.json',
+            'json',
+            True,
+            'Static component waterfall QC schema and summary',
+        ),
+        ('source_static_table.csv', 'csv', True, 'IRAS-style source endpoint final static table'),
+        (
+            'receiver_static_table.csv',
+            'csv',
+            True,
+            'IRAS-style receiver endpoint final static table',
+        ),
+        (
+            'source_receiver_static_table.npz',
+            'npz',
+            True,
+            'Machine-readable source/receiver endpoint static tables',
+        ),
+        (
+            'refraction_line_profile_qc_source.csv',
+            'csv',
+            True,
+            'Source endpoint line-profile QC rows sorted by inline distance',
+        ),
+        (
+            'refraction_line_profile_qc_receiver.csv',
+            'csv',
+            True,
+            'Receiver endpoint line-profile QC rows sorted by inline distance',
+        ),
+        (
+            'refraction_line_profile_qc_combined.csv',
+            'csv',
+            True,
+            'Combined source/receiver line-profile QC rows',
+        ),
+        (
+            'refraction_line_profile_qc.npz',
+            'npz',
+            True,
+            'Machine-readable source/receiver line-profile QC arrays',
+        ),
+        (
+            'refraction_line_profile_qc.json',
+            'json',
+            True,
+            'Line-profile QC schema, availability, and summary',
+        ),
+        (
+            'refraction_time_term_spreadsheet.csv',
+            'csv',
+            True,
+            'Spreadsheet endpoint time terms, layers, statics, and statuses',
+        ),
+    )
+
+
+def test_refraction_static_json_outputs_are_strict_and_deterministic(
+    tmp_path: Path,
+) -> None:
+    write_refraction_static_artifacts(
+        result=_solve_cell_result(),
+        req=_solve_cell_request(),
+        job_dir=tmp_path,
+    )
+
+    for path in sorted(tmp_path.glob('*.json')):
+        payload = json.loads(path.read_text(encoding='utf-8'))
+        json.dumps(payload, allow_nan=False)
+        assert path.read_text(encoding='utf-8') == (
+            json.dumps(
+                payload,
+                allow_nan=False,
+                ensure_ascii=True,
+                indent=2,
+                sort_keys=True,
+            )
+            + '\n'
+        )
+
+
+def test_refraction_static_atomic_json_writer_contract(tmp_path: Path) -> None:
+    path = tmp_path / 'contract.json'
+
+    _write_json_atomic(path, {'z': '雪', 'a': [1.0, None]})
+
+    assert path.read_text(encoding='utf-8') == (
+        '{\n'
+        '  "a": [\n'
+        '    1.0,\n'
+        '    null\n'
+        '  ],\n'
+        '  "z": "\\u96ea"\n'
+        '}\n'
+    )
+
+
+def test_refraction_static_atomic_csv_writer_rejects_extra_fields(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / 'contract.csv'
+
+    with pytest.raises(
+        RefractionStaticArtifactError,
+        match='failed to write CSV artifact',
+    ):
+        _write_csv_atomic(path, ('a',), [{'a': 1, 'extra': 2}])
+
+    assert not path.exists()
+
+
+def test_refraction_static_atomic_npz_writer_rejects_object_arrays(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / 'contract.npz'
+
+    with pytest.raises(
+        RefractionStaticArtifactError,
+        match='object array is not allowed for bad',
+    ):
+        _write_npz_atomic(path, {'bad': np.asarray([object()], dtype=object)})
+
+    assert not path.exists()
+    assert not list(tmp_path.glob('contract.npz.*.tmp'))
+
+
+def test_refraction_static_representative_csv_header_contract(
+    tmp_path: Path,
+) -> None:
+    paths = write_refraction_static_artifacts(
+        result=_solve_cell_result(),
+        req=_solve_cell_request(),
+        job_dir=tmp_path,
+    )
+    first_break_fit_header = (
+        'observation_index',
+        'sorted_trace_index',
+        'trace_index_sorted',
+        'source_endpoint_key',
+        'receiver_endpoint_key',
+        'source_id',
+        'receiver_id',
+        'source_node_id',
+        'receiver_node_id',
+        'source_x_m',
+        'source_y_m',
+        'receiver_x_m',
+        'receiver_y_m',
+        'midpoint_x_m',
+        'midpoint_y_m',
+        'inline_m',
+        'crossline_m',
+        'offset_m',
+        'observed_first_break_time_s',
+        'modeled_first_break_time_s',
+        'residual_time_s',
+        'residual_s',
+        'residual_time_ms',
+        'layer_kind',
+        'cell_id',
+        'cell_ix',
+        'cell_iy',
+        'used_for_inversion',
+        'used_in_solve',
+        'rejection_reason',
+        'reject_reason',
+        'status',
+        'sign_convention',
+    )
+    line_profile_header = (
+        'endpoint_kind',
+        'endpoint_key',
+        'node_id',
+        'inline_m',
+        'crossline_m',
+        'x_m',
+        'y_m',
+        'surface_elevation_m',
+        'pick_count',
+        'used_pick_count',
+        'residual_rms_ms',
+        'residual_mad_ms',
+        'v1_m_s',
+        'v2_m_s',
+        'v3_m_s',
+        'vsub_m_s',
+        't1_ms',
+        't2_ms',
+        't3_ms',
+        'sh1_m',
+        'sh2_m',
+        'sh3_m',
+        'layer1_base_elevation_m',
+        'layer2_base_elevation_m',
+        'final_refractor_elevation_m',
+        'weathering_correction_ms',
+        'elevation_correction_ms',
+        'source_field_shift_ms',
+        'receiver_field_shift_ms',
+        'field_correction_ms',
+        'manual_static_shift_ms',
+        'manual_static_ms',
+        'total_static_ms',
+        'total_applied_shift_ms',
+        'source_total_with_field_shift_ms',
+        'receiver_total_with_field_shift_ms',
+        'static_status',
+        'solution_status',
+    )
+    static_table_tail = (
+        'floating_datum_correction_ms',
+        'flat_datum_correction_ms',
+        'elevation_correction_ms',
+        'total_static_ms',
+        'total_applied_shift_ms',
+        'solution_status',
+        'weathering_status',
+        'datum_status',
+        'static_status',
+        'sign_convention',
+        'pick_count',
+        'used_pick_count',
+        'residual_rms_ms',
+        'residual_mad_ms',
+    )
+
+    expected_headers = {
+        paths.refraction_first_break_fit_qc_csv.name: first_break_fit_header,
+        paths.refraction_reduced_time_qc_csv.name: (
+            'trace_index_sorted',
+            'source_endpoint_key',
+            'receiver_endpoint_key',
+            'offset_m',
+            'inline_m',
+            'crossline_m',
+            'observed_first_break_time_s',
+            'reduction_velocity_m_s',
+            'reduced_time_s',
+            'reduced_time_ms',
+            'layer_gate_kind',
+            'within_v1_gate',
+            'within_v2_t1_gate',
+            'within_v3_t2_gate',
+            'within_vsub_t3_gate',
+            'used_for_inversion',
+            'status',
+        ),
+        paths.refraction_line_profile_qc_combined_csv.name: line_profile_header,
+        paths.source_static_table_csv.name: (
+            'endpoint_kind',
+            'source_endpoint_key',
+            'source_id',
+            'source_node_id',
+            'source_v2_cell_id',
+            'x_m',
+            'y_m',
+            'surface_elevation_m',
+            'floating_datum_elevation_m',
+            'flat_datum_elevation_m',
+            't1_ms',
+            'v1_m_s',
+            'v2_m_s',
+            'v2_status',
+            'sh1_weathering_thickness_m',
+            'total_weathering_thickness_m',
+            'refractor_elevation_m',
+            'weathering_correction_ms',
+            'source_depth_m',
+            'source_depth_shift_ms',
+            'source_depth_status',
+            'uphole_time_ms',
+            'uphole_shift_ms',
+            'uphole_status',
+            'manual_static_shift_ms',
+            'manual_static_status',
+            'source_field_shift_ms',
+            'source_field_status',
+            'source_field_static_status',
+            'source_total_with_field_shift_ms',
+        )
+        + static_table_tail,
+        paths.receiver_static_table_csv.name: (
+            'endpoint_kind',
+            'receiver_endpoint_key',
+            'receiver_id',
+            'receiver_node_id',
+            'receiver_v2_cell_id',
+            'x_m',
+            'y_m',
+            'surface_elevation_m',
+            'floating_datum_elevation_m',
+            'flat_datum_elevation_m',
+            't1_ms',
+            'v1_m_s',
+            'v2_m_s',
+            'v2_status',
+            'sh1_weathering_thickness_m',
+            'total_weathering_thickness_m',
+            'refractor_elevation_m',
+            'weathering_correction_ms',
+            'manual_static_shift_ms',
+            'manual_static_status',
+            'receiver_field_shift_ms',
+            'receiver_field_status',
+            'receiver_field_static_status',
+            'receiver_total_with_field_shift_ms',
+        )
+        + static_table_tail,
+        REFRACTION_REFRACTOR_VELOCITY_CELLS_CSV_NAME: (
+            'cell_id',
+            'ix',
+            'iy',
+            'cell_ix',
+            'cell_iy',
+            'coordinate_mode',
+            'x_min_m',
+            'x_max_m',
+            'y_min_m',
+            'y_max_m',
+            'x_center_m',
+            'y_center_m',
+            'cell_center_x_m',
+            'cell_center_y_m',
+            'cell_center_inline_m',
+            'cell_center_crossline_m',
+            'active',
+            'n_observations',
+            'n_used_observations',
+            'n_rejected_observations',
+            'n_sources',
+            'n_receivers',
+            'cell_velocity_layer_kind',
+            'cell_velocity_component',
+            'velocity_m_s',
+            'v2_m_s',
+            'slowness_s_per_m',
+            'initial_velocity_m_s',
+            'initial_v2_m_s',
+            'velocity_update_from_initial_m_s',
+            'v2_update_from_initial_m_s',
+            'velocity_status',
+            'status_reason',
+            'residual_rms_ms',
+            'residual_mad_ms',
+            'residual_mean_ms',
+            'residual_p95_abs_ms',
+            'smoothing_enabled',
+            'smoothing_weight',
+            'smoothing_neighbor_count',
+        ),
+        REFRACTION_GRID_MAP_QC_CSV_NAME: (
+            'layer_kind',
+            'cell_ix',
+            'cell_iy',
+            'cell_center_x_m',
+            'cell_center_y_m',
+            'cell_center_inline_m',
+            'cell_center_crossline_m',
+            'velocity_m_s',
+            'initial_velocity_m_s',
+            'velocity_update_from_initial_m_s',
+            'slowness_s_per_m',
+            'n_observations',
+            'n_sources',
+            'n_receivers',
+            'residual_rms_ms',
+            'residual_mad_ms',
+            'status',
+            'status_reason',
+        ),
+    }
+    for artifact_name, expected_header in expected_headers.items():
+        _rows, fieldnames = _read_csv_with_fieldnames(tmp_path / artifact_name)
+        assert tuple(fieldnames) == expected_header
+
+
+def test_refraction_static_representative_npz_key_contract(tmp_path: Path) -> None:
+    paths = write_refraction_static_artifacts(
+        result=_solve_cell_result(),
+        req=_solve_cell_request(),
+        job_dir=tmp_path,
+    )
+    first_break_fit_keys = (
+        'observation_index',
+        'sorted_trace_index',
+        'trace_index_sorted',
+        'source_endpoint_key',
+        'receiver_endpoint_key',
+        'source_id',
+        'receiver_id',
+        'source_node_id',
+        'receiver_node_id',
+        'source_x_m',
+        'source_y_m',
+        'receiver_x_m',
+        'receiver_y_m',
+        'midpoint_x_m',
+        'midpoint_y_m',
+        'inline_m',
+        'crossline_m',
+        'offset_m',
+        'observed_first_break_time_s',
+        'modeled_first_break_time_s',
+        'residual_time_s',
+        'residual_s',
+        'residual_time_ms',
+        'layer_kind',
+        'cell_id',
+        'cell_ix',
+        'cell_iy',
+        'used_for_inversion',
+        'used_in_solve',
+        'rejection_reason',
+        'reject_reason',
+        'status',
+        'sign_convention',
+    )
+    line_profile_keys = (
+        'endpoint_kind',
+        'endpoint_key',
+        'node_id',
+        'inline_m',
+        'crossline_m',
+        'x_m',
+        'y_m',
+        'surface_elevation_m',
+        'pick_count',
+        'used_pick_count',
+        'residual_rms_ms',
+        'residual_mad_ms',
+        'v1_m_s',
+        'v2_m_s',
+        'v3_m_s',
+        'vsub_m_s',
+        't1_ms',
+        't2_ms',
+        't3_ms',
+        'sh1_m',
+        'sh2_m',
+        'sh3_m',
+        'layer1_base_elevation_m',
+        'layer2_base_elevation_m',
+        'final_refractor_elevation_m',
+        'weathering_correction_ms',
+        'elevation_correction_ms',
+        'source_field_shift_ms',
+        'receiver_field_shift_ms',
+        'field_correction_ms',
+        'manual_static_shift_ms',
+        'manual_static_ms',
+        'total_static_ms',
+        'total_applied_shift_ms',
+        'source_total_with_field_shift_ms',
+        'receiver_total_with_field_shift_ms',
+        'static_status',
+        'solution_status',
+    )
+    expected_npz_keys = {
+        paths.refraction_first_break_fit_qc_npz.name: first_break_fit_keys,
+        paths.refraction_reduced_time_qc_npz.name: (
+            'trace_index_sorted',
+            'source_endpoint_key',
+            'receiver_endpoint_key',
+            'offset_m',
+            'inline_m',
+            'crossline_m',
+            'observed_first_break_time_s',
+            'reduction_velocity_m_s',
+            'reduced_time_s',
+            'reduced_time_ms',
+            'layer_gate_kind',
+            'within_v1_gate',
+            'within_v2_t1_gate',
+            'within_v3_t2_gate',
+            'within_vsub_t3_gate',
+            'used_for_inversion',
+            'status',
+            'reduction_velocity_mode',
+        ),
+        paths.refraction_line_profile_qc_npz.name: line_profile_keys,
+        paths.source_receiver_static_table_npz.name: (
+            'sign_convention',
+            'source_endpoint_key',
+            'source_id',
+            'source_node_id',
+            'source_v2_cell_id',
+            'source_v2_status',
+            'source_x_m',
+            'source_y_m',
+            'source_surface_elevation_m',
+            'source_t1_s',
+            'source_v1_m_s',
+            'source_v2_m_s',
+            'source_sh1_m',
+            'source_total_weathering_thickness_m',
+            'source_weathering_correction_s',
+            'source_elevation_correction_s',
+            'source_total_static_s',
+            'source_total_applied_shift_s',
+            'source_static_status',
+            'receiver_endpoint_key',
+            'receiver_id',
+            'receiver_node_id',
+            'receiver_v2_cell_id',
+            'receiver_v2_status',
+            'receiver_x_m',
+            'receiver_y_m',
+            'receiver_surface_elevation_m',
+            'receiver_t1_s',
+            'receiver_v1_m_s',
+            'receiver_v2_m_s',
+            'receiver_sh1_m',
+            'receiver_total_weathering_thickness_m',
+            'receiver_weathering_correction_s',
+            'receiver_elevation_correction_s',
+            'receiver_total_static_s',
+            'receiver_total_applied_shift_s',
+            'receiver_static_status',
+            'source_depth_m',
+            'source_depth_shift_s',
+            'source_depth_status',
+            'source_uphole_time_s',
+            'source_uphole_shift_s',
+            'source_uphole_status',
+            'source_manual_static_shift_s',
+            'source_manual_static_status',
+            'receiver_manual_static_shift_s',
+            'receiver_manual_static_status',
+            'source_field_shift_s',
+            'source_field_static_status',
+            'source_total_with_field_shift_s',
+            'receiver_field_shift_s',
+            'receiver_field_static_status',
+            'receiver_total_with_field_shift_s',
+        ),
+        REFRACTION_REFRACTOR_VELOCITY_GRID_NPZ_NAME: (
+            'cell_id',
+            'ix',
+            'iy',
+            'cell_ix',
+            'cell_iy',
+            'coordinate_mode',
+            'x_min_m',
+            'x_max_m',
+            'y_min_m',
+            'y_max_m',
+            'x_center_m',
+            'y_center_m',
+            'cell_center_x_m',
+            'cell_center_y_m',
+            'cell_center_inline_m',
+            'cell_center_crossline_m',
+            'active_cell_mask',
+            'n_observations_per_cell',
+            'n_used_observations_per_cell',
+            'n_rejected_observations_per_cell',
+            'n_sources_per_cell',
+            'n_receivers_per_cell',
+            'cell_velocity_layer_kind',
+            'cell_velocity_component',
+            'velocity_m_s',
+            'v2_m_s',
+            'slowness_s_per_m',
+            'initial_velocity_m_s',
+            'initial_v2_m_s',
+            'velocity_update_from_initial_m_s',
+            'v2_update_from_initial_m_s',
+            'velocity_status',
+            'status_reason',
+            'residual_rms_ms',
+            'residual_mad_ms',
+            'residual_mean_ms',
+            'residual_p95_abs_ms',
+            'smoothing_enabled',
+            'smoothing_weight',
+            'smoothing_neighbor_count',
+        ),
+        REFRACTION_GRID_MAP_QC_NPZ_NAME: (
+            'layer_kind',
+            'cell_id',
+            'cell_ix',
+            'cell_iy',
+            'cell_center_x_m',
+            'cell_center_y_m',
+            'cell_center_inline_m',
+            'cell_center_crossline_m',
+            'x_min_m',
+            'x_max_m',
+            'y_min_m',
+            'y_max_m',
+            'velocity_m_s',
+            'initial_velocity_m_s',
+            'velocity_update_from_initial_m_s',
+            'slowness_s_per_m',
+            'n_observations',
+            'n_used_observations',
+            'n_rejected_observations',
+            'n_sources',
+            'n_receivers',
+            'residual_rms_ms',
+            'residual_mad_ms',
+            'status',
+            'status_reason',
+            'active_cell_mask',
+            'coordinate_mode',
+            'cell_velocity_component',
+            'artifact_version',
+            'artifact_kind',
+            'global_velocity_layer_behavior',
+            'number_of_cell_x',
+            'number_of_cell_y',
+            'size_of_cell_x_m',
+            'size_of_cell_y_m',
+            'x_coordinate_origin_m',
+            'y_coordinate_origin_m',
+        ),
+    }
+    for artifact_name, expected_keys in expected_npz_keys.items():
+        with np.load(tmp_path / artifact_name, allow_pickle=False) as data:
+            assert tuple(data.files) == expected_keys
+            assert all(data[key].dtype != object for key in data.files)
+
+    with np.load(paths.solution_npz, allow_pickle=False) as data:
+        assert all(data[key].dtype != object for key in data.files)
+        assert data.files[:24] == [
+            'artifact_version',
+            'method',
+            'bedrock_velocity_mode',
+            'datum_mode',
+            'floating_datum_mode',
+            'sign_convention',
+            'n_traces',
+            'n_nodes',
+            'n_source_endpoints',
+            'n_receiver_endpoints',
+            'n_valid_observations',
+            'n_used_observations',
+            'n_rejected_by_robust',
+            'v1_mode',
+            'v1_weathering_velocity_m_s',
+            'weathering_velocity_m_s',
+            'resolved_weathering_velocity_m_s',
+            'bedrock_velocity_m_s',
+            'v2_refractor_velocity_m_s',
+            'bedrock_slowness_s_per_m',
+            'replacement_slowness_delta_s_per_m',
+            'flat_datum_elevation_m',
+            'max_abs_shift_ms',
+            'sorted_trace_index',
+        ]
 
 
 def test_time_term_spreadsheet_columns_are_stable(tmp_path: Path) -> None:
@@ -1894,7 +3010,11 @@ def test_write_refraction_static_artifacts_rejects_non_writable_job_dir(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setattr(artifact_module.os, 'access', lambda _path, _mode: False)
+    monkeypatch.setattr(
+        artifact_legacy_module.os,
+        'access',
+        lambda _path, _mode: False,
+    )
 
     with pytest.raises(RefractionStaticArtifactError, match='not writable'):
         write_refraction_static_artifacts(
@@ -1984,7 +3104,7 @@ def test_write_refraction_static_artifacts_detects_missing_artifact_after_write(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setattr(
-        artifact_module,
+        artifact_legacy_module,
         'write_refraction_static_components_csv',
         lambda **_kwargs: None,
     )
@@ -2005,7 +3125,7 @@ def test_write_refraction_static_solution_rejects_object_arrays(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setattr(
-        artifact_module,
+        artifact_legacy_module,
         'build_refraction_static_solution_arrays',
         lambda **_kwargs: {'bad_object': np.asarray([object()], dtype=object)},
     )
