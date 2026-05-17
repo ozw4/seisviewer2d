@@ -22,10 +22,16 @@ from app.services.refraction_static_apply_trace_store import (
     apply_refraction_statics_to_trace_store,
 )
 from app.services.refraction_static_artifacts import (
+    REFRACTION_STATIC_FAILURE_DIAGNOSTICS_JSON_NAME,
     REFRACTION_STATIC_HISTORY_JSON_NAME,
+    UPLOADED_REFRACTION_PICKS_NPZ_NAME,
     refraction_static_double_application_qc,
     write_refraction_static_artifacts,
     write_refraction_static_history_json,
+)
+from app.services.refraction_static_design_matrix import (
+    REFRACTION_DESIGN_MATRIX_NODE_DIAGNOSTICS_CSV_NAME,
+    REFRACTION_DESIGN_MATRIX_QC_JSON_NAME,
 )
 from app.services.refraction_static_datum import (
     build_refraction_datum_statics,
@@ -61,6 +67,11 @@ from app.services.refraction_static_manual_static import (
 from app.services.refraction_static_multilayer_service import (
     compute_refraction_multilayer_datum_statics_from_input_model,
 )
+from app.services.refraction_static_preflight_diagnostics import (
+    REFRACTION_STATIC_PREFLIGHT_OBSERVATIONS_CSV_NAME,
+    REFRACTION_STATIC_PREFLIGHT_QC_JSON_NAME,
+    RefractionStaticPreflightError,
+)
 from app.services.refraction_static_source_depth import (
     REFRACTION_SOURCE_DEPTH_QC_JSON_NAME,
     REFRACTION_SOURCE_DEPTH_SOURCES_CSV_NAME,
@@ -88,6 +99,15 @@ from app.services.refraction_static_weathering_replacement import (
 
 _REQUEST_JSON_NAME = 'refraction_static_request.json'
 _ARTIFACT_ONLY_DONE_MESSAGE = 'refraction_static_artifacts_written_artifact_only'
+_FAILURE_DIAGNOSTIC_ARTIFACT_NAMES = (
+    _REQUEST_JSON_NAME,
+    UPLOADED_REFRACTION_PICKS_NPZ_NAME,
+    REFRACTION_STATIC_PREFLIGHT_QC_JSON_NAME,
+    REFRACTION_STATIC_PREFLIGHT_OBSERVATIONS_CSV_NAME,
+    REFRACTION_DESIGN_MATRIX_QC_JSON_NAME,
+    REFRACTION_DESIGN_MATRIX_NODE_DIAGNOSTICS_CSV_NAME,
+    REFRACTION_STATIC_FAILURE_DIAGNOSTICS_JSON_NAME,
+)
 _PUBLIC_MULTILAYER_APPLY_CONTRACT = (
     'public multi-layer refraction apply requires '
     'model.method=multilayer_time_term, '
@@ -1129,6 +1149,7 @@ def _run_public_multilayer_refraction_static_apply_job(
         datum=req.datum,
         apply_options=req.apply,
         resolved_first_layer=first_layer.resolved,
+        design_matrix_job_dir=job_dir,
         state=state,
         file_id=req.file_id,
         key1_byte=req.key1_byte,
@@ -1377,7 +1398,79 @@ def _run_refraction_static_apply_job_body(
     )
 
 
-def _handle_refraction_static_job_error(_exc: Exception) -> JobFailure:
+def _available_failure_diagnostic_artifacts(job_dir: Path) -> list[str]:
+    return [
+        name
+        for name in _FAILURE_DIAGNOSTIC_ARTIFACT_NAMES
+        if (job_dir / name).is_file()
+    ]
+
+
+def _failed_refraction_static_stage(exc: Exception, job_dir: Path) -> str:
+    message = str(exc).lower()
+    if isinstance(exc, RefractionStaticPreflightError) or 'preflight' in message:
+        return 'preflight'
+    if (
+        'solver' in message
+        or 'least' in message
+        or 'bounded ls' in message
+        or 'bounded-ls' in message
+    ):
+        return 'solver'
+    if 'artifact' in message or 'writing_refraction_static_artifacts' in message:
+        return 'artifact_writer'
+    if 'design matrix' in message:
+        return 'design_matrix'
+    if (
+        (job_dir / REFRACTION_DESIGN_MATRIX_QC_JSON_NAME).is_file()
+        or (job_dir / REFRACTION_DESIGN_MATRIX_NODE_DIAGNOSTICS_CSV_NAME).is_file()
+    ):
+        return 'design_matrix'
+    return 'unknown'
+
+
+def _write_refraction_static_failure_diagnostics(
+    *,
+    job_id: str,
+    exc: Exception,
+    state: AppState,
+) -> None:
+    try:
+        job_dir = _resolve_job_dir(state, job_id)
+    except Exception:  # noqa: BLE001
+        return
+    if not job_dir.exists():
+        return
+    payload = {
+        'job_id': job_id,
+        'state': 'error',
+        'error_message': str(exc),
+        'error_type': type(exc).__name__,
+        'failed_stage': _failed_refraction_static_stage(exc, job_dir),
+        'available_diagnostic_artifacts': [],
+    }
+    path = job_dir / REFRACTION_STATIC_FAILURE_DIAGNOSTICS_JSON_NAME
+    _write_json_atomic(path, payload)
+    payload['available_diagnostic_artifacts'] = _available_failure_diagnostic_artifacts(
+        job_dir
+    )
+    _write_json_atomic(path, payload)
+
+
+def _handle_refraction_static_job_error(
+    exc: Exception,
+    *,
+    job_id: str,
+    state: AppState,
+) -> JobFailure:
+    try:
+        _write_refraction_static_failure_diagnostics(
+            job_id=job_id,
+            exc=exc,
+            state=state,
+        )
+    except Exception:  # noqa: BLE001
+        pass
     return JobFailure(finished_ts=time.time())
 
 
@@ -1406,7 +1499,11 @@ def run_refraction_static_apply_job(
         progress_1_on_done=False,
         start_progress=0.0,
         clear_message_on_start=True,
-        on_error=_handle_refraction_static_job_error,
+        on_error=lambda exc: _handle_refraction_static_job_error(
+            exc,
+            job_id=job_id,
+            state=state,
+        ),
     )
 
 

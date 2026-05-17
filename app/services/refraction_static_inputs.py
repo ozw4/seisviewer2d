@@ -7,6 +7,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass, replace
 import json
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 from uuid import uuid4
 
@@ -31,6 +32,15 @@ from app.services.refraction_static_pick_source_loader import (
     LoadedRefractionPickSource,
     load_npz_refraction_pick_source_from_path,
     load_refraction_pick_source_from_npz_path,
+)
+from app.services.refraction_static_preflight_diagnostics import (
+    RefractionStaticPreflightError,
+    build_preflight_diagnostics_for_npz_error,
+    build_preflight_diagnostics_from_input_model,
+    no_observations_preflight_error,
+    preflight_error_message,
+    scan_refraction_static_pick_npz,
+    write_refraction_static_preflight_artifacts,
 )
 from app.services.reader import get_reader
 from app.services.refraction_static_layer_observations import (
@@ -192,6 +202,7 @@ def build_refraction_static_input_model(
         sorted_trace_index=sorted_trace_index,
         uploaded_pick_npz_path=uploaded_pick_npz_path,
         uploaded_pick_metadata=uploaded_pick_metadata,
+        job_dir=job_dir,
     )
     headers = _load_refraction_trace_headers(
         reader=reader,
@@ -224,6 +235,9 @@ def build_refraction_static_input_model(
             'pick_source_metadata': pick_source.metadata,
             'key1_byte': key1_byte,
             'key2_byte': key2_byte,
+            'preflight_pick_npz_summary': pick_source.metadata.get(
+                'preflight_pick_npz_summary'
+            ),
         },
         source_depth_mode=source_depth_config.mode,
         source_depth_byte=source_depth_config.source_depth_byte,
@@ -329,6 +343,7 @@ def build_refraction_static_input_model_from_arrays(
     uphole_time_unit: str = 's',
     uphole_positive_time_means_delay: bool = True,
     max_abs_uphole_time_s: float = 1.0,
+    preflight_request: RefractionStaticApplyRequest | None = None,
     require_valid_observations: bool = True,
 ) -> RefractionStaticInputModel:
     """Build a refraction input bundle from already sorted arrays."""
@@ -481,6 +496,40 @@ def build_refraction_static_input_model_from_arrays(
         source_endpoint_id_sorted=endpoint_mapping.source_endpoint_id_sorted,
         receiver_endpoint_id_sorted=endpoint_mapping.receiver_endpoint_id_sorted,
     )
+    if int(qc['n_valid_observations']) <= 0:
+        if job_dir is not None:
+            preflight_req = _preflight_request_from_inputs(
+                request=preflight_request,
+                file_id=file_id,
+                geometry=geometry,
+                linkage=linkage,
+                moveout=moveout,
+                metadata=input_model.metadata,
+            )
+            diagnostics = build_preflight_diagnostics_from_input_model(
+                req=preflight_req,
+                input_model=input_model,
+                n_samples=sample_count,
+                dt_s=sample_interval,
+                pick_npz_summary=_preflight_pick_npz_summary(input_model.metadata),
+            )
+            diagnostics = _replace_preflight_errors(
+                diagnostics,
+                [no_observations_preflight_error(diagnostics.summary)],
+            )
+            write_refraction_static_preflight_artifacts(
+                Path(job_dir),
+                diagnostics,
+                input_model=input_model,
+                req=preflight_req,
+            )
+            raise RefractionStaticPreflightError(
+                preflight_error_message(diagnostics)
+            )
+        raise ValueError(
+            'No valid refraction observations remain after pick, geometry, '
+            'offset, and linkage filtering.'
+        )
     if source_depth_mode != 'none':
         source_depth_result = resolve_refraction_source_depth_for_input_model(
             input_model=input_model,
@@ -540,6 +589,47 @@ def build_refraction_static_input_model_from_arrays(
             layer_observation_masks=layer_masks,
         )
     if job_dir is not None:
+        preflight_req = _preflight_request_from_inputs(
+            request=preflight_request,
+            file_id=file_id,
+            geometry=geometry,
+            linkage=linkage,
+            moveout=moveout,
+            metadata=input_model.metadata,
+        )
+        diagnostics = build_preflight_diagnostics_from_input_model(
+            req=preflight_req,
+            input_model=input_model,
+            n_samples=sample_count,
+            dt_s=sample_interval,
+            pick_npz_summary=_preflight_pick_npz_summary(input_model.metadata),
+        )
+        if (
+            int(
+                diagnostics.summary['observation_filters']['n_used_for_inversion']
+            )
+            <= 0
+        ):
+            diagnostics = _replace_preflight_errors(
+                diagnostics,
+                [no_observations_preflight_error(diagnostics.summary)],
+            )
+            write_refraction_static_preflight_artifacts(
+                Path(job_dir),
+                diagnostics,
+                input_model=input_model,
+                req=preflight_req,
+            )
+            raise RefractionStaticPreflightError(
+                preflight_error_message(diagnostics)
+            )
+        write_refraction_static_preflight_artifacts(
+            Path(job_dir),
+            diagnostics,
+            input_model=input_model,
+            req=preflight_req,
+        )
+    if job_dir is not None:
         write_refraction_static_input_artifacts(Path(job_dir), input_model)
     return input_model
 
@@ -561,6 +651,44 @@ def write_refraction_static_input_artifacts(
     }
 
 
+def _replace_preflight_errors(
+    diagnostics: Any,
+    errors: list[str],
+) -> Any:
+    return replace(diagnostics, status='error', errors=errors)
+
+
+def _preflight_pick_npz_summary(metadata: Mapping[str, Any]) -> dict[str, Any] | None:
+    value = metadata.get('preflight_pick_npz_summary')
+    return dict(value) if isinstance(value, Mapping) else None
+
+
+def _preflight_request_from_inputs(
+    *,
+    request: RefractionStaticApplyRequest | None,
+    file_id: str,
+    geometry: RefractionStaticGeometryRequest,
+    linkage: RefractionStaticLinkageRequest | None,
+    moveout: RefractionStaticMoveoutRequest,
+    metadata: Mapping[str, Any],
+) -> Any:
+    if request is not None:
+        return request
+    key1 = metadata.get('key1_byte', 0)
+    key2 = metadata.get('key2_byte', 0)
+    pick_kind = metadata.get('pick_source_kind', 'array')
+    linkage_value = linkage if linkage is not None else RefractionStaticLinkageRequest()
+    return SimpleNamespace(
+        file_id=str(file_id),
+        key1_byte=int(key1),
+        key2_byte=int(key2),
+        pick_source=SimpleNamespace(kind=str(pick_kind)),
+        geometry=geometry,
+        linkage=linkage_value,
+        moveout=moveout,
+    )
+
+
 def _load_refraction_pick_source(
     *,
     req: RefractionStaticApplyRequest,
@@ -572,6 +700,7 @@ def _load_refraction_pick_source(
     sorted_trace_index: np.ndarray,
     uploaded_pick_npz_path: Path | None = None,
     uploaded_pick_metadata: Mapping[str, object] | None = None,
+    job_dir: Path | None = None,
 ) -> _LoadedRefractionPickSource:
     pick_source = req.pick_source
     if pick_source.kind == 'uploaded_npz':
@@ -579,6 +708,16 @@ def _load_refraction_pick_source(
             raise ValueError(
                 'pick_source.kind=uploaded_npz requires the multipart upload endpoint'
             )
+        pick_preflight = _scan_pick_npz_for_preflight(
+            req=req,
+            npz_path=uploaded_pick_npz_path,
+            n_traces=n_traces,
+            n_samples=n_samples,
+            dt=dt,
+            sorted_trace_index=sorted_trace_index,
+            uploaded_pick_metadata=uploaded_pick_metadata,
+            job_dir=job_dir,
+        )
         loaded = load_refraction_pick_source_from_npz_path(
             npz_path=uploaded_pick_npz_path,
             request=req,
@@ -590,6 +729,7 @@ def _load_refraction_pick_source(
         metadata = dict(loaded.metadata)
         if uploaded_pick_metadata is not None:
             metadata.update(dict(uploaded_pick_metadata))
+        metadata['preflight_pick_npz_summary'] = pick_preflight
         return _LoadedRefractionPickSource(
             picks_time_s_sorted=loaded.picks_time_s_sorted,
             sorted_trace_index=loaded.sorted_trace_index,
@@ -633,6 +773,16 @@ def _load_refraction_pick_source(
     else:
         raise ValueError(f'unsupported pick_source.kind: {pick_source.kind}')
 
+    pick_preflight = _scan_pick_npz_for_preflight(
+        req=req,
+        npz_path=path,
+        n_traces=n_traces,
+        n_samples=n_samples,
+        dt=dt,
+        sorted_trace_index=sorted_trace_index,
+        uploaded_pick_metadata=None,
+        job_dir=job_dir,
+    )
     loaded = _load_npz_refraction_pick_source(
         path,
         reader=reader,
@@ -641,12 +791,64 @@ def _load_refraction_pick_source(
         dt=dt,
         sorted_trace_index=sorted_trace_index,
     )
+    metadata = dict(loaded.metadata)
+    metadata['preflight_pick_npz_summary'] = pick_preflight
     return _LoadedRefractionPickSource(
         picks_time_s_sorted=loaded.picks_time_s_sorted,
         sorted_trace_index=loaded.sorted_trace_index,
         source_kind=source_kind,
-        metadata=loaded.metadata,
+        metadata=metadata,
     )
+
+
+def _scan_pick_npz_for_preflight(
+    *,
+    req: RefractionStaticApplyRequest,
+    npz_path: Path,
+    n_traces: int,
+    n_samples: int,
+    dt: float,
+    sorted_trace_index: np.ndarray,
+    uploaded_pick_metadata: Mapping[str, object] | None,
+    job_dir: Path | None,
+) -> dict[str, Any]:
+    metadata = (
+        dict(uploaded_pick_metadata)
+        if uploaded_pick_metadata is not None
+        else None
+    )
+    pick_preflight = scan_refraction_static_pick_npz(
+        npz_path=npz_path,
+        n_traces=n_traces,
+        n_samples=n_samples,
+        dt_s=dt,
+        sorted_trace_index=sorted_trace_index,
+        uploaded_pick_metadata=metadata,
+    )
+    errors = [
+        str(item)
+        for item in pick_preflight.get('errors', [])
+        if str(item)
+    ]
+    if errors:
+        diagnostics = build_preflight_diagnostics_for_npz_error(
+            req=req,
+            n_traces=n_traces,
+            n_samples=n_samples,
+            dt_s=dt,
+            sorted_trace_index=sorted_trace_index,
+            pick_npz_summary=pick_preflight,
+            errors=errors,
+        )
+        if job_dir is not None:
+            write_refraction_static_preflight_artifacts(
+                Path(job_dir),
+                diagnostics,
+            )
+        raise RefractionStaticPreflightError(
+            preflight_error_message(diagnostics)
+        )
+    return pick_preflight
 
 
 def _load_manual_memmap_pick_source(

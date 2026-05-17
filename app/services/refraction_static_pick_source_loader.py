@@ -234,7 +234,7 @@ def _coerce_pick_array(values: np.ndarray) -> np.ndarray:
         raise ValueError('pick_time_s_sorted must have a real numeric dtype')
     out = np.ascontiguousarray(arr, dtype=np.float64)
     if not np.all(np.isfinite(out)):
-        raise ValueError('pick_time_s_sorted must contain finite values')
+        raise ValueError('pick_time_s_sorted must contain only finite values')
     return out
 
 

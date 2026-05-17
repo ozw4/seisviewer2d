@@ -39,6 +39,8 @@ from app.services.refraction_static_datum import (
 from app.services.refraction_static_design_matrix import (
     LOW_FOLD_CELL_REJECTION_REASON,
     OUTSIDE_REFRACTOR_CELL_GRID_REASON,
+    REFRACTION_DESIGN_MATRIX_NODE_DIAGNOSTICS_CSV_NAME,
+    REFRACTION_DESIGN_MATRIX_QC_JSON_NAME,
 )
 from app.services.refraction_static_half_intercept import (
     estimate_refraction_half_intercept_times_from_first_breaks,
@@ -89,6 +91,7 @@ _CELL_THRESHOLD_QC_KEYS = (
     'n_observations_outside_grid',
     'n_observations_rejected_by_low_fold_cell',
 )
+_DESIGN_MATRIX_ARTIFACT_DIR_PREFIX = 'refraction_design_matrix'
 
 
 class RefractionMultiLayerSolveError(ValueError):
@@ -108,6 +111,7 @@ class RefractionLayerSolverContext:
     model: RefractionStaticModelRequest
     solver: RefractionStaticSolverRequest
     grid: RefractionCellGrid | None = None
+    job_dir: Path | None = None
 
 
 @dataclass(frozen=True)
@@ -134,6 +138,7 @@ def solve_refraction_multilayer_time_terms(
     layer_masks: RefractionLayerObservationMasks,
     model: RefractionStaticModelRequest,
     solver: RefractionStaticSolverRequest,
+    job_dir: Path | None = None,
     grid: RefractionCellGrid | None = None,
     solver_dispatch: Mapping[
         tuple[RefractionLayerKind, RefractionLayerVelocityMode],
@@ -158,6 +163,7 @@ def solve_refraction_multilayer_time_terms(
             layer_kind=config.kind,
         )
         layer_model = _model_for_layer(model=model, config=config)
+        layer_job_dir = _layer_design_matrix_artifact_dir(job_dir, config)
         context = RefractionLayerSolverContext(
             base_input_model=input_model,
             input_model=layer_input,
@@ -168,8 +174,20 @@ def solve_refraction_multilayer_time_terms(
             model=layer_model,
             solver=solver,
             grid=grid,
+            job_dir=layer_job_dir,
         )
-        result = layer_solver(context)
+        try:
+            result = layer_solver(context)
+        except Exception:  # noqa: BLE001
+            _copy_layer_design_matrix_diagnostics_to_root(
+                root=job_dir,
+                layer_dir=layer_job_dir,
+            )
+            raise
+        _copy_layer_design_matrix_diagnostics_to_root(
+            root=job_dir,
+            layer_dir=layer_job_dir,
+        )
         _validate_layer_result(result=result, config=config)
         result = _validate_layer_velocity_sequence(
             result=result,
@@ -218,6 +236,7 @@ def compute_refraction_multilayer_datum_statics_from_input_model(
     apply_options: RefractionStaticApplyOptions | None,
     resolved_first_layer: ResolvedRefractionFirstLayer,
     job_dir: Path | None = None,
+    design_matrix_job_dir: Path | None = None,
     state: AppState | None = None,
     file_id: str | None = None,
     key1_byte: int | None = None,
@@ -239,6 +258,7 @@ def compute_refraction_multilayer_datum_statics_from_input_model(
         layer_masks=layer_masks,
         model=model,
         solver=solver,
+        job_dir=design_matrix_job_dir if design_matrix_job_dir is not None else job_dir,
     )
     weathering_replacement = build_refraction_multilayer_weathering_replacement_statics(
         input_model=input_model,
@@ -2282,6 +2302,7 @@ def _solve_existing_time_term_layer(
         result = estimate_refraction_half_intercept_times_from_first_breaks(
             req=_LayerSolveRequest(context.model, context.solver),
             state=_LayerSolveState(),
+            job_dir=context.job_dir,
             input_model=context.input_model,
             resolved_first_layer=context.resolved_first_layer,
         )
@@ -2296,6 +2317,36 @@ def _solve_existing_time_term_layer(
         candidate_observation_mask_sorted=context.input_model.valid_observation_mask_sorted,
         rejection_reason_sorted=_layer_rejection_reason_from_context(context),
     )
+
+
+def _layer_design_matrix_artifact_dir(
+    root: Path | None,
+    config: RefractionStaticLayerConfig,
+) -> Path | None:
+    if root is None:
+        return None
+    return Path(root) / f'{_DESIGN_MATRIX_ARTIFACT_DIR_PREFIX}_{config.kind}'
+
+
+def _copy_layer_design_matrix_diagnostics_to_root(
+    *,
+    root: Path | None,
+    layer_dir: Path | None,
+) -> None:
+    """Expose the latest layer diagnostics through root-level job artifacts."""
+    if root is None or layer_dir is None:
+        return
+    root_path = Path(root)
+    layer_path = Path(layer_dir)
+    for name in (
+        REFRACTION_DESIGN_MATRIX_QC_JSON_NAME,
+        REFRACTION_DESIGN_MATRIX_NODE_DIAGNOSTICS_CSV_NAME,
+    ):
+        source = layer_path / name
+        if not source.is_file():
+            continue
+        root_path.mkdir(parents=True, exist_ok=True)
+        (root_path / name).write_bytes(source.read_bytes())
 
 
 def _layer_result_from_half_intercept(

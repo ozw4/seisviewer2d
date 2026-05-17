@@ -2,7 +2,12 @@
 
 from __future__ import annotations
 
+import csv
+import json
+from dataclasses import asdict
+from pathlib import Path
 from typing import Any, Literal
+from uuid import uuid4
 
 import numpy as np
 from scipy import sparse
@@ -18,6 +23,7 @@ from app.services.refraction_static_cell_grid import (
 )
 from app.services.refraction_static_first_layer import resolve_weathering_velocity_m_s
 from app.services.refraction_static_types import (
+    RefractionDesignMatrixNodeDiagnostics,
     RefractionStaticDesignMatrix,
     RefractionStaticInputModel,
     ResolvedRefractionFirstLayer,
@@ -28,6 +34,25 @@ CellAssignmentMode = Literal['midpoint']
 OUTSIDE_REFRACTOR_CELL_GRID_REASON = 'outside_refractor_cell_grid'
 LOW_FOLD_CELL_REJECTION_REASON = 'below_min_observations_per_cell'
 LOW_FOLD_CELL_VELOCITY_STATUS = 'low_fold'
+REFRACTION_DESIGN_MATRIX_QC_JSON_NAME = 'refraction_design_matrix_qc.json'
+REFRACTION_DESIGN_MATRIX_NODE_DIAGNOSTICS_CSV_NAME = (
+    'refraction_design_matrix_node_diagnostics.csv'
+)
+_NODE_DIAGNOSTIC_COLUMNS = (
+    'node_id',
+    'matrix_column',
+    'endpoint_kind',
+    'endpoint_key',
+    'source_endpoint_key',
+    'receiver_endpoint_key',
+    'active',
+    'n_rows_pre_filter',
+    'n_rows_post_filter',
+    'n_nonzero_entries',
+    'status',
+    'reason',
+    'first_trace_indices_pre_filter',
+)
 
 
 class RefractionStaticDesignMatrixError(ValueError):
@@ -87,6 +112,10 @@ def build_refraction_static_design_matrix(
         receiver_node_id_sorted=input_model.receiver_node_id_sorted,
         distance_m_sorted=input_model.distance_m_sorted,
         node_id=input_model.endpoint_table.node_id,
+        node_kind=input_model.endpoint_table.kind,
+        sorted_trace_index=input_model.sorted_trace_index,
+        source_endpoint_key_sorted=input_model.source_endpoint_key_sorted,
+        receiver_endpoint_key_sorted=input_model.receiver_endpoint_key_sorted,
         bedrock_velocity_mode=mode,
         fixed_bedrock_velocity_m_s=fixed_velocity,
         n_traces=input_model.n_traces,
@@ -158,6 +187,10 @@ def build_refraction_static_cell_design_matrix(
         receiver_node_id_sorted=input_model.receiver_node_id_sorted,
         distance_m_sorted=input_model.distance_m_sorted,
         node_id=input_model.endpoint_table.node_id,
+        node_kind=input_model.endpoint_table.kind,
+        sorted_trace_index=input_model.sorted_trace_index,
+        source_endpoint_key_sorted=input_model.source_endpoint_key_sorted,
+        receiver_endpoint_key_sorted=input_model.receiver_endpoint_key_sorted,
         bedrock_velocity_mode='solve_cell',
         n_traces=input_model.n_traces,
         midpoint_cell_id_sorted=assignment.cell_id,
@@ -180,6 +213,10 @@ def build_refraction_static_design_matrix_from_arrays(
     distance_m_sorted: np.ndarray,
     node_id: np.ndarray,
     bedrock_velocity_mode: BedrockVelocityMode,
+    node_kind: np.ndarray | None = None,
+    sorted_trace_index: np.ndarray | None = None,
+    source_endpoint_key_sorted: np.ndarray | None = None,
+    receiver_endpoint_key_sorted: np.ndarray | None = None,
     fixed_bedrock_velocity_m_s: float | None = None,
     n_traces: int | None = None,
     midpoint_cell_id_sorted: np.ndarray | None = None,
@@ -238,6 +275,29 @@ def build_refraction_static_design_matrix_from_arrays(
         expected_shape=expected_shape,
     )
     total_node_id = _coerce_unique_node_id(node_id)
+    total_node_kind = _coerce_optional_node_kind(
+        node_kind,
+        expected_shape=total_node_id.shape,
+    )
+    source_endpoint_key = _coerce_optional_endpoint_key(
+        source_endpoint_key_sorted,
+        name='source_endpoint_key_sorted',
+        expected_shape=expected_shape,
+    )
+    receiver_endpoint_key = _coerce_optional_endpoint_key(
+        receiver_endpoint_key_sorted,
+        name='receiver_endpoint_key_sorted',
+        expected_shape=expected_shape,
+    )
+    trace_index_sorted = (
+        np.arange(trace_count, dtype=np.int64)
+        if sorted_trace_index is None
+        else _coerce_1d_integer_int64(
+            sorted_trace_index,
+            name='sorted_trace_index',
+            expected_shape=expected_shape,
+        )
+    )
 
     selected_mask = valid_mask
     midpoint_cell_id: np.ndarray | None = None
@@ -457,6 +517,25 @@ def build_refraction_static_design_matrix_from_arrays(
         n_observations=n_observations,
         n_parameters=n_parameters,
     )
+    node_diagnostics = _build_node_diagnostics(
+        node_id=total_node_id,
+        node_kind=total_node_kind,
+        active_node_id=active_node_id,
+        node_id_to_col=node_id_to_col,
+        source_node_id_sorted=source_node_id,
+        receiver_node_id_sorted=receiver_node_id,
+        source_endpoint_key_sorted=source_endpoint_key,
+        receiver_endpoint_key_sorted=receiver_endpoint_key,
+        sorted_trace_index=trace_index_sorted,
+        selected_mask=selected_mask,
+        rejection_reason_sorted=design_rejection_reason,
+        matrix=matrix,
+    )
+    design_matrix_qc = _build_design_matrix_diagnostics_qc(
+        matrix=matrix,
+        n_active_nodes=int(active_node_id.shape[0]),
+        node_diagnostics=node_diagnostics,
+    )
     qc = _build_qc(
         method='gli_variable_thickness',
         mode=mode,
@@ -478,6 +557,7 @@ def build_refraction_static_design_matrix_from_arrays(
             bedrock_slowness_col is not None or row_midpoint_cell_col is not None
         ),
     )
+    qc['design_matrix_diagnostics'] = design_matrix_qc
     if mode == 'solve_cell':
         if (
             assignment_mode is None
@@ -535,6 +615,8 @@ def build_refraction_static_design_matrix_from_arrays(
         n_observations=n_observations,
         n_parameters=n_parameters,
         qc=qc,
+        node_diagnostics=node_diagnostics,
+        design_matrix_qc=design_matrix_qc,
         bedrock_slowness_cell_col_start=bedrock_slowness_cell_col_start,
         active_cell_id=active_cell_id,
         inactive_cell_id=inactive_cell_id,
@@ -598,6 +680,309 @@ def _build_sparse_matrix(
     matrix.sum_duplicates()
     matrix.sort_indices()
     return matrix
+
+
+def _build_node_diagnostics(
+    *,
+    node_id: np.ndarray,
+    node_kind: np.ndarray | None,
+    active_node_id: np.ndarray,
+    node_id_to_col: dict[int, int],
+    source_node_id_sorted: np.ndarray,
+    receiver_node_id_sorted: np.ndarray,
+    source_endpoint_key_sorted: np.ndarray | None,
+    receiver_endpoint_key_sorted: np.ndarray | None,
+    sorted_trace_index: np.ndarray,
+    selected_mask: np.ndarray,
+    rejection_reason_sorted: np.ndarray | None,
+    matrix: sparse.csr_matrix,
+) -> tuple[RefractionDesignMatrixNodeDiagnostics, ...]:
+    active_set = {int(value) for value in active_node_id.tolist()}
+    col_nnz = np.asarray(matrix.getnnz(axis=0)).ravel()
+    diagnostics: list[RefractionDesignMatrixNodeDiagnostics] = []
+    for node_position, raw_node_id in enumerate(node_id.tolist()):
+        node = int(raw_node_id)
+        source_mask = source_node_id_sorted == node
+        receiver_mask = receiver_node_id_sorted == node
+        pre_mask = source_mask | receiver_mask
+        post_mask = pre_mask & selected_mask
+        active = node in active_set
+        matrix_column = int(node_id_to_col[node]) if active else -1
+        endpoint_kind = _diagnostic_endpoint_kind(
+            node_kind=None if node_kind is None else str(node_kind[node_position]),
+            source_seen=bool(np.any(source_mask)),
+            receiver_seen=bool(np.any(receiver_mask)),
+        )
+        source_key = _first_endpoint_key(
+            source_endpoint_key_sorted,
+            source_mask,
+            prefix='source',
+            node_id=node,
+        )
+        receiver_key = _first_endpoint_key(
+            receiver_endpoint_key_sorted,
+            receiver_mask,
+            prefix='receiver',
+            node_id=node,
+        )
+        endpoint_key = _diagnostic_endpoint_key_value(
+            endpoint_kind=endpoint_kind,
+            source_endpoint_key=source_key,
+            receiver_endpoint_key=receiver_key,
+            node_id=node,
+        )
+        n_nonzero = int(col_nnz[matrix_column]) if active and matrix_column >= 0 else 0
+        status = _node_diagnostic_status(
+            active=active,
+            n_rows_pre_filter=int(np.count_nonzero(pre_mask)),
+            n_rows_post_filter=int(np.count_nonzero(post_mask)),
+            n_nonzero_entries=n_nonzero,
+        )
+        reason = _node_diagnostic_reason(
+            status=status,
+            pre_mask=pre_mask,
+            post_mask=post_mask,
+            selected_mask=selected_mask,
+            rejection_reason_sorted=rejection_reason_sorted,
+        )
+        first_indices = tuple(
+            int(sorted_trace_index[index])
+            for index in np.flatnonzero(pre_mask)[:5].tolist()
+        )
+        diagnostics.append(
+            RefractionDesignMatrixNodeDiagnostics(
+                node_id=node,
+                matrix_column=matrix_column,
+                endpoint_kind=endpoint_kind,
+                endpoint_key=endpoint_key,
+                source_endpoint_key=source_key,
+                receiver_endpoint_key=receiver_key,
+                n_rows_pre_filter=int(np.count_nonzero(pre_mask)),
+                n_rows_post_filter=int(np.count_nonzero(post_mask)),
+                n_nonzero_entries=n_nonzero,
+                active=active,
+                status=status,
+                reason=reason,
+                first_trace_indices_pre_filter=first_indices,
+            )
+        )
+    return tuple(diagnostics)
+
+
+def _build_design_matrix_diagnostics_qc(
+    *,
+    matrix: sparse.csr_matrix,
+    n_active_nodes: int,
+    node_diagnostics: tuple[RefractionDesignMatrixNodeDiagnostics, ...],
+) -> dict[str, Any]:
+    all_zero = [
+        item
+        for item in node_diagnostics
+        if item.active and item.n_nonzero_entries == 0
+    ]
+    status_counts: dict[str, int] = {}
+    for item in node_diagnostics:
+        status_counts[item.status] = status_counts.get(item.status, 0) + 1
+    return {
+        'n_rows': int(matrix.shape[0]),
+        'n_columns': int(matrix.shape[1]),
+        'n_active_nodes': int(n_active_nodes),
+        'n_all_zero_active_node_columns': int(len(all_zero)),
+        'first_all_zero_active_node': (
+            _node_diagnostic_json(all_zero[0]) if all_zero else None
+        ),
+        'node_status_counts': status_counts,
+    }
+
+
+def write_refraction_design_matrix_diagnostics_artifacts(
+    job_dir: Path,
+    design_matrix: RefractionStaticDesignMatrix,
+) -> dict[str, Path]:
+    """Write design-matrix QC JSON and node diagnostics CSV artifacts."""
+    root = Path(job_dir)
+    root.mkdir(parents=True, exist_ok=True)
+    qc_path = root / REFRACTION_DESIGN_MATRIX_QC_JSON_NAME
+    csv_path = root / REFRACTION_DESIGN_MATRIX_NODE_DIAGNOSTICS_CSV_NAME
+    qc = design_matrix.design_matrix_qc
+    if qc is None:
+        qc = _build_design_matrix_diagnostics_qc(
+            matrix=design_matrix.matrix,
+            n_active_nodes=int(design_matrix.active_node_id.shape[0]),
+            node_diagnostics=design_matrix.node_diagnostics,
+        )
+    _write_json_atomic(qc_path, qc)
+    _write_csv_atomic(
+        csv_path,
+        _NODE_DIAGNOSTIC_COLUMNS,
+        [_node_diagnostic_csv_row(item) for item in design_matrix.node_diagnostics],
+    )
+    return {'qc_json': qc_path, 'node_diagnostics_csv': csv_path}
+
+
+def _node_diagnostic_status(
+    *,
+    active: bool,
+    n_rows_pre_filter: int,
+    n_rows_post_filter: int,
+    n_nonzero_entries: int,
+) -> str:
+    if not active:
+        return 'inactive'
+    if n_nonzero_entries == 0:
+        return 'all_zero_active_column'
+    if n_rows_post_filter == 0:
+        return 'active_without_post_filter_rows'
+    if n_rows_pre_filter == 0:
+        return 'active_without_endpoint_rows'
+    return 'ok'
+
+
+def _node_diagnostic_reason(
+    *,
+    status: str,
+    pre_mask: np.ndarray,
+    post_mask: np.ndarray,
+    selected_mask: np.ndarray,
+    rejection_reason_sorted: np.ndarray | None,
+) -> str:
+    n_pre = int(np.count_nonzero(pre_mask))
+    n_post = int(np.count_nonzero(post_mask))
+    if n_pre == 0:
+        return 'no_observations_for_node'
+    if status == 'inactive' and n_post > 0:
+        return 'inactive'
+    if n_post > 0 and status != 'all_zero_active_column':
+        return 'ok'
+    if rejection_reason_sorted is None:
+        return 'unknown'
+    filtered = pre_mask & ~selected_mask
+    if not np.any(filtered):
+        return 'active_node_without_endpoint_rows'
+    reasons = {str(value) for value in rejection_reason_sorted[filtered].tolist()}
+    if reasons and reasons <= {'offset_gate', 'outside_layer_offset_gate'}:
+        return 'all_observations_filtered_by_offset_gate'
+    if reasons and reasons <= {'invalid_pick', 'outside_trace_time_range'}:
+        return 'all_observations_filtered_by_invalid_pick'
+    geometry_reasons = {
+        'invalid_source_geometry',
+        'invalid_receiver_geometry',
+        'invalid_distance',
+        'offset_mismatch',
+        'missing_linkage',
+        OUTSIDE_REFRACTOR_CELL_GRID_REASON,
+        LOW_FOLD_CELL_REJECTION_REASON,
+    }
+    if reasons and reasons <= geometry_reasons:
+        return 'all_observations_filtered_by_geometry'
+    return 'unknown'
+
+
+def _diagnostic_endpoint_kind(
+    *,
+    node_kind: str | None,
+    source_seen: bool,
+    receiver_seen: bool,
+) -> Literal['source', 'receiver', 'linked', 'unknown']:
+    if node_kind in {'source', 'receiver', 'linked'}:
+        return node_kind  # type: ignore[return-value]
+    if source_seen and receiver_seen:
+        return 'linked'
+    if source_seen:
+        return 'source'
+    if receiver_seen:
+        return 'receiver'
+    return 'unknown'
+
+
+def _first_endpoint_key(
+    values: np.ndarray | None,
+    mask: np.ndarray,
+    *,
+    prefix: str,
+    node_id: int,
+) -> str | None:
+    if values is not None and np.any(mask):
+        return str(values[np.flatnonzero(mask)[0]])
+    return f'{prefix}:{node_id}' if np.any(mask) else None
+
+
+def _diagnostic_endpoint_key_value(
+    *,
+    endpoint_kind: Literal['source', 'receiver', 'linked', 'unknown'],
+    source_endpoint_key: str | None,
+    receiver_endpoint_key: str | None,
+    node_id: int,
+) -> str:
+    if endpoint_kind == 'source' and source_endpoint_key:
+        return source_endpoint_key
+    if endpoint_kind == 'receiver' and receiver_endpoint_key:
+        return receiver_endpoint_key
+    if endpoint_kind == 'linked':
+        if source_endpoint_key and receiver_endpoint_key:
+            return f'{source_endpoint_key}|{receiver_endpoint_key}'
+        if source_endpoint_key:
+            return source_endpoint_key
+        if receiver_endpoint_key:
+            return receiver_endpoint_key
+    return source_endpoint_key or receiver_endpoint_key or f'node:{node_id}'
+
+
+def _node_diagnostic_json(
+    item: RefractionDesignMatrixNodeDiagnostics,
+) -> dict[str, Any]:
+    return asdict(item)
+
+
+def _node_diagnostic_csv_row(
+    item: RefractionDesignMatrixNodeDiagnostics,
+) -> dict[str, object]:
+    payload = asdict(item)
+    payload['active'] = 'true' if item.active else 'false'
+    payload['source_endpoint_key'] = item.source_endpoint_key or ''
+    payload['receiver_endpoint_key'] = item.receiver_endpoint_key or ''
+    payload['first_trace_indices_pre_filter'] = json.dumps(
+        list(item.first_trace_indices_pre_filter),
+        separators=(',', ':'),
+    )
+    return payload
+
+
+def _write_json_atomic(path: Path, payload: dict[str, Any]) -> None:
+    json.dumps(payload, allow_nan=False)
+    tmp_path = path.with_name(f'{path.name}.{uuid4().hex}.tmp')
+    try:
+        with tmp_path.open('w', encoding='utf-8') as handle:
+            json.dump(
+                payload,
+                handle,
+                allow_nan=False,
+                ensure_ascii=True,
+                indent=2,
+                sort_keys=True,
+            )
+            handle.write('\n')
+        tmp_path.replace(path)
+    except Exception:
+        tmp_path.unlink(missing_ok=True)
+        raise
+
+
+def _write_csv_atomic(
+    path: Path,
+    columns: tuple[str, ...],
+    rows: list[dict[str, object]],
+) -> None:
+    tmp_path = path.with_name(f'{path.name}.{uuid4().hex}.tmp')
+    try:
+        with tmp_path.open('w', encoding='utf-8', newline='') as handle:
+            writer = csv.DictWriter(handle, fieldnames=columns, extrasaction='raise')
+            writer.writeheader()
+            writer.writerows(rows)
+        tmp_path.replace(path)
+    except Exception:
+        tmp_path.unlink(missing_ok=True)
+        raise
 
 
 def _build_qc(
@@ -1022,6 +1407,44 @@ def _coerce_unique_node_id(values: np.ndarray) -> np.ndarray:
     return node_id
 
 
+def _coerce_optional_node_kind(
+    values: np.ndarray | None,
+    *,
+    expected_shape: tuple[int, ...],
+) -> np.ndarray | None:
+    if values is None:
+        return None
+    arr = np.asarray(values)
+    if arr.ndim != 1:
+        raise RefractionStaticDesignMatrixError(
+            'input_model.endpoint_table.kind must be a 1D array'
+        )
+    if arr.shape != expected_shape:
+        raise RefractionStaticDesignMatrixError(
+            'input_model.endpoint_table.kind shape mismatch: '
+            f'expected {expected_shape}, got {arr.shape}'
+        )
+    return np.ascontiguousarray(arr.astype('<U16'), dtype='<U16')
+
+
+def _coerce_optional_endpoint_key(
+    values: np.ndarray | None,
+    *,
+    name: str,
+    expected_shape: tuple[int, ...],
+) -> np.ndarray | None:
+    if values is None:
+        return None
+    arr = np.asarray(values)
+    if arr.ndim != 1:
+        raise RefractionStaticDesignMatrixError(f'{name} must be a 1D array')
+    if arr.shape != expected_shape:
+        raise RefractionStaticDesignMatrixError(
+            f'{name} shape mismatch: expected {expected_shape}, got {arr.shape}'
+        )
+    return np.ascontiguousarray(arr.astype('<U128'), dtype='<U128')
+
+
 def _coerce_1d_real_numeric_float64(
     values: np.ndarray,
     *,
@@ -1133,7 +1556,10 @@ def _is_real_numeric_dtype(dtype: np.dtype) -> bool:
 __all__ = [
     'RefractionStaticDesignMatrix',
     'RefractionStaticDesignMatrixError',
+    'REFRACTION_DESIGN_MATRIX_NODE_DIAGNOSTICS_CSV_NAME',
+    'REFRACTION_DESIGN_MATRIX_QC_JSON_NAME',
     'build_refraction_static_cell_design_matrix',
     'build_refraction_static_design_matrix',
     'build_refraction_static_design_matrix_from_arrays',
+    'write_refraction_design_matrix_diagnostics_artifacts',
 ]
