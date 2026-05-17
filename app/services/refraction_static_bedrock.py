@@ -100,6 +100,7 @@ def estimate_global_bedrock_slowness_from_input_model(
             input_model=input_model,
             model=model,
             resolved_first_layer=resolved_first_layer,
+            include_diagnostics=job_dir is not None,
         )
     except ValueError as exc:
         raise RefractionBedrockSlownessError(str(exc)) from exc

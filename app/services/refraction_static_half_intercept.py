@@ -210,6 +210,7 @@ def estimate_refraction_half_intercept_times_from_first_breaks(
             input_model=input_model,
             model=req.model,
             resolved_first_layer=resolved_first_layer,
+            include_diagnostics=job_dir is not None,
         )
         if job_dir is not None:
             write_refraction_design_matrix_diagnostics_artifacts(

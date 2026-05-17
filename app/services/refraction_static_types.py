@@ -220,6 +220,7 @@ class RefractionStaticDesignMatrix:
     qc: dict[str, Any]
     node_diagnostics: tuple[RefractionDesignMatrixNodeDiagnostics, ...] = ()
     design_matrix_qc: dict[str, Any] | None = None
+    diagnostics_context: Any = None
 
     bedrock_slowness_cell_col_start: int | None = None
     active_cell_id: np.ndarray | None = None
