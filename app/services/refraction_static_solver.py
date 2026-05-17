@@ -26,6 +26,7 @@ RobustMethod = Literal['mad', 'sigma']
 
 _BOUND_TOL = 1.0e-10
 _ROBUST_NUMERIC_SCALE_FLOOR_S = 1.0e-12
+_SOURCE_RECEIVER_GAUGE_ROW_SCALE = 10.0
 _CELL_THRESHOLD_QC_KEYS = (
     'min_observations_per_cell',
     'n_low_fold_cells',
@@ -121,6 +122,8 @@ class _InternalSolveResult:
     optimality: float | None
     nit: int | None
     n_damping_rows: int
+    n_source_receiver_gauge_rows: int
+    source_receiver_gauge_row_scale: float
     n_cell_smoothing_edges: int
     n_cell_smoothing_rows: int
     smoothing_row_scale: float
@@ -1166,6 +1169,17 @@ def _solve_once(
         n_active_nodes=problem.n_active_nodes,
         damping=problem.damping,
     )
+    (
+        matrix_aug,
+        rhs_aug,
+        n_source_receiver_gauge_rows,
+        source_receiver_gauge_row_scale,
+    ) = _augment_with_source_receiver_gauge(
+        matrix_aug,
+        rhs_aug,
+        problem=problem,
+        used_mask=used_mask,
+    )
 
     if problem.mode == 'solve_cell':
         return _solve_once_with_initial_value(
@@ -1175,6 +1189,8 @@ def _solve_once(
             lower_bounds=lower_bounds,
             upper_bounds=upper_bounds,
             n_damping_rows=n_damping_rows,
+            n_source_receiver_gauge_rows=n_source_receiver_gauge_rows,
+            source_receiver_gauge_row_scale=source_receiver_gauge_row_scale,
             smoothing_rows=smoothing_rows,
         )
 
@@ -1194,6 +1210,8 @@ def _solve_once(
         raw,
         problem=problem,
         n_damping_rows=n_damping_rows,
+        n_source_receiver_gauge_rows=n_source_receiver_gauge_rows,
+        source_receiver_gauge_row_scale=source_receiver_gauge_row_scale,
         smoothing_rows=smoothing_rows,
         n_augmented_rows=int(matrix_aug.shape[0]),
     )
@@ -1207,6 +1225,8 @@ def _solve_once_with_initial_value(
     lower_bounds: np.ndarray,
     upper_bounds: np.ndarray,
     n_damping_rows: int,
+    n_source_receiver_gauge_rows: int,
+    source_receiver_gauge_row_scale: float,
     smoothing_rows: CellSlownessSmoothingRows,
 ) -> _InternalSolveResult:
     x0 = _build_initial_parameter_vector(
@@ -1237,6 +1257,8 @@ def _solve_once_with_initial_value(
         raw,
         problem=problem,
         n_damping_rows=n_damping_rows,
+        n_source_receiver_gauge_rows=n_source_receiver_gauge_rows,
+        source_receiver_gauge_row_scale=source_receiver_gauge_row_scale,
         smoothing_rows=smoothing_rows,
         n_augmented_rows=int(matrix_aug.shape[0]),
     )
@@ -1312,6 +1334,8 @@ def _internal_result_from_raw_solver(
     *,
     problem: _ValidatedProblem,
     n_damping_rows: int,
+    n_source_receiver_gauge_rows: int,
+    source_receiver_gauge_row_scale: float,
     smoothing_rows: CellSlownessSmoothingRows,
     n_augmented_rows: int,
 ) -> _InternalSolveResult:
@@ -1335,6 +1359,8 @@ def _internal_result_from_raw_solver(
         optimality=_optional_finite_float(getattr(raw, 'optimality', None)),
         nit=_optional_int(nit),
         n_damping_rows=n_damping_rows,
+        n_source_receiver_gauge_rows=n_source_receiver_gauge_rows,
+        source_receiver_gauge_row_scale=source_receiver_gauge_row_scale,
         n_cell_smoothing_edges=int(smoothing_qc['n_cell_smoothing_edges']),
         n_cell_smoothing_rows=int(smoothing_qc['n_cell_smoothing_rows']),
         smoothing_row_scale=float(smoothing_qc['smoothing_row_scale']),
@@ -1352,6 +1378,109 @@ def _internal_result_from_raw_solver(
         ],
         n_augmented_rows=n_augmented_rows,
     )
+
+
+def _augment_with_source_receiver_gauge(
+    matrix: sparse.csr_matrix,
+    rhs_s: np.ndarray,
+    *,
+    problem: _ValidatedProblem,
+    used_mask: np.ndarray,
+) -> tuple[sparse.csr_matrix, np.ndarray, int, float]:
+    """Add gauge rows for unlinked source/receiver time-term splits."""
+    mask = np.asarray(used_mask, dtype=bool)
+    if mask.shape != (problem.n_observations,):
+        raise RefractionStaticSolverError('used_mask shape mismatch')
+    source_by_row = problem.row_source_node_id[mask].astype(np.int64, copy=False)
+    receiver_by_row = problem.row_receiver_node_id[mask].astype(np.int64, copy=False)
+    if source_by_row.size == 0 or receiver_by_row.size == 0:
+        return matrix, rhs_s, 0, 0.0
+
+    parent: dict[int, int] = {}
+
+    def _find(node: int) -> int:
+        root = parent.setdefault(node, node)
+        while root != parent[root]:
+            root = parent[root]
+        while node != root:
+            next_node = parent[node]
+            parent[node] = root
+            node = next_node
+        return root
+
+    def _union(a: int, b: int) -> None:
+        root_a = _find(a)
+        root_b = _find(b)
+        if root_a != root_b:
+            parent[root_b] = root_a
+
+    for source_node, receiver_node in zip(
+        source_by_row.tolist(),
+        receiver_by_row.tolist(),
+    ):
+        _union(int(source_node), int(receiver_node))
+
+    source_by_component: dict[int, set[int]] = {}
+    receiver_by_component: dict[int, set[int]] = {}
+    for source_node in source_by_row.tolist():
+        source_by_component.setdefault(_find(int(source_node)), set()).add(
+            int(source_node)
+        )
+    for receiver_node in receiver_by_row.tolist():
+        receiver_by_component.setdefault(_find(int(receiver_node)), set()).add(
+            int(receiver_node)
+        )
+
+    node_to_col = {
+        int(node): index for index, node in enumerate(problem.active_node_id.tolist())
+    }
+    row_indices: list[int] = []
+    columns: list[int] = []
+    data: list[float] = []
+    row_index = 0
+    scale = float(_SOURCE_RECEIVER_GAUGE_ROW_SCALE)
+    component_roots = sorted({_find(int(node)) for node in parent})
+    for root in component_roots:
+        source_set = source_by_component.get(root, set())
+        receiver_set = receiver_by_component.get(root, set())
+        if not source_set or not receiver_set:
+            continue
+        if source_set & receiver_set:
+            continue
+        source_cols = [
+            node_to_col[node] for node in sorted(source_set) if node in node_to_col
+        ]
+        receiver_cols = [
+            node_to_col[node] for node in sorted(receiver_set) if node in node_to_col
+        ]
+        if not source_cols or not receiver_cols:
+            continue
+        source_value = scale / len(source_cols)
+        receiver_value = -scale / len(receiver_cols)
+        row_indices.extend([row_index] * (len(source_cols) + len(receiver_cols)))
+        columns.extend(source_cols)
+        columns.extend(receiver_cols)
+        data.extend([source_value] * len(source_cols))
+        data.extend([receiver_value] * len(receiver_cols))
+        row_index += 1
+
+    if row_index == 0:
+        return matrix, rhs_s, 0, 0.0
+
+    gauge_rows = sparse.csr_matrix(
+        (
+            np.asarray(data, dtype=np.float64),
+            (
+                np.asarray(row_indices, dtype=np.int64),
+                np.asarray(columns, dtype=np.int64),
+            ),
+        ),
+        shape=(row_index, matrix.shape[1]),
+        dtype=np.float64,
+    )
+    matrix_aug = sparse.vstack((matrix, gauge_rows), format='csr')
+    rhs_aug = np.concatenate((rhs_s, np.zeros(row_index, dtype=np.float64)))
+    return matrix_aug, np.ascontiguousarray(rhs_aug, dtype=np.float64), row_index, scale
 
 
 def _augment_with_damping(
@@ -1792,8 +1921,22 @@ def _build_qc(
             'data': int(problem.n_observations),
             'cell_smoothing': int(solve_result.n_cell_smoothing_rows),
             'node_damping': int(solve_result.n_damping_rows),
+            'source_receiver_gauge': int(
+                solve_result.n_source_receiver_gauge_rows
+            ),
         },
         'n_damping_rows': int(solve_result.n_damping_rows),
+        'n_source_receiver_gauge_rows': int(
+            solve_result.n_source_receiver_gauge_rows
+        ),
+        'source_receiver_gauge': (
+            'mean_source_equals_mean_receiver'
+            if solve_result.n_source_receiver_gauge_rows
+            else 'none'
+        ),
+        'source_receiver_gauge_row_scale': float(
+            solve_result.source_receiver_gauge_row_scale
+        ),
         'n_augmented_rows': int(solve_result.n_augmented_rows),
     }
     qc.update(robust_guard_qc)

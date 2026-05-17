@@ -400,6 +400,63 @@ def test_robust_rejection_preserves_mask_that_would_orphan_active_node_column() 
     assert result.qc['n_rejections_blocked_by_robust_coverage_guard'] == 1
 
 
+def test_source_receiver_gauge_stabilizes_unlinked_endpoint_families() -> None:
+    source_nodes = np.asarray([100, 200], dtype=np.int64)
+    receiver_nodes = np.arange(1000, 1008, dtype=np.int64)
+    row_source_node_id = []
+    row_receiver_node_id = []
+    row_distance_m = []
+    pick_time_s = []
+    true_source_time_s = np.asarray([0.012, 0.018], dtype=np.float64)
+    true_receiver_time_s = np.linspace(0.006, 0.014, receiver_nodes.shape[0])
+    fixed_velocity = 2400.0
+
+    for source_index, source_node in enumerate(source_nodes):
+        for receiver_index, receiver_node in enumerate(receiver_nodes):
+            distance = 300.0 + 100.0 * source_index + 25.0 * receiver_index
+            row_source_node_id.append(int(source_node))
+            row_receiver_node_id.append(int(receiver_node))
+            row_distance_m.append(distance)
+            pick_time_s.append(
+                true_source_time_s[source_index]
+                + true_receiver_time_s[receiver_index]
+                + distance / fixed_velocity
+            )
+
+    design = build_refraction_static_design_matrix_from_arrays(
+        pick_time_s_sorted=np.asarray(pick_time_s, dtype=np.float64),
+        valid_observation_mask_sorted=np.ones(len(pick_time_s), dtype=bool),
+        source_node_id_sorted=np.asarray(row_source_node_id, dtype=np.int64),
+        receiver_node_id_sorted=np.asarray(row_receiver_node_id, dtype=np.int64),
+        distance_m_sorted=np.asarray(row_distance_m, dtype=np.float64),
+        node_id=np.concatenate((source_nodes, receiver_nodes)),
+        bedrock_velocity_mode='fixed_global',
+        fixed_bedrock_velocity_m_s=fixed_velocity,
+        n_traces=len(pick_time_s),
+    )
+
+    result = solve_refraction_static_bounded_ls(
+        design_matrix=design,
+        model=_model(
+            bedrock_velocity_mode='fixed_global',
+            bedrock_velocity_m_s=fixed_velocity,
+        ),
+        solver=_solver(damping=0.01),
+    )
+
+    source_mask = np.isin(result.active_node_id, source_nodes)
+    receiver_mask = np.isin(result.active_node_id, receiver_nodes)
+    assert result.qc['n_source_receiver_gauge_rows'] == 1
+    assert result.qc['row_type_counts']['source_receiver_gauge'] == 1
+    assert result.qc['source_receiver_gauge'] == 'mean_source_equals_mean_receiver'
+    assert result.qc['half_intercept_time_clipped_lower_count'] == 0
+    np.testing.assert_allclose(
+        result.active_node_half_intercept_time_s[source_mask].mean(),
+        result.active_node_half_intercept_time_s[receiver_mask].mean(),
+        atol=1.0e-5,
+    )
+
+
 def test_damping_rows_apply_only_to_half_intercept_columns() -> None:
     design = _design_matrix_solve_global()
 
