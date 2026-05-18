@@ -10,7 +10,7 @@
     <span>Refraction QC</span>
     <div class="headerLinks">
       <a href="/" data-tool-link>Viewer</a>
-      <a href="/static-correction" target="_blank" rel="noopener" data-tool-link onclick="openToolPage('/static-correction', event)">Static Correction</a>
+      <a href="/static-correction" data-tool-link>Static Correction</a>
       <a href="/upload">Open SEG-Y</a>
     </div>
   </header>
@@ -168,13 +168,6 @@
         target.searchParams.set('refraction_job_id', refractionJobId);
       }
       return target.toString();
-    }
-
-    function openToolPage(path, event) {
-      if (event) event.preventDefault();
-      const target = toolUrl(path);
-      const opened = window.open(target, '_blank', 'noopener,noreferrer');
-      if (opened) opened.opener = null;
     }
 
     window.addEventListener('DOMContentLoaded', () => {

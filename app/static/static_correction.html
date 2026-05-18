@@ -10,7 +10,7 @@
     <span>Static Correction</span>
     <div class="headerLinks">
       <a href="/" data-tool-link>Viewer</a>
-      <a href="/refraction-qc" target="_blank" rel="noopener" data-tool-link onclick="openToolPage('/refraction-qc', event)">Refraction QC</a>
+      <a href="/refraction-qc" data-tool-link>Refraction QC</a>
       <a href="/upload">Open SEG-Y</a>
     </div>
   </header>
@@ -442,7 +442,7 @@
 </div>
 </div><div class="static-correction-qc-link-row" data-testid="static-correction-qc-link-row" hidden="" id="staticCorrectionQcLinkRow">
 <span>Static Correction job is ready for visual QC.</span>
-<a data-testid="static-correction-open-qc-link" href="/refraction-qc" id="staticCorrectionQcLink" rel="noopener" target="_blank">Open Refraction QC</a>
+<a data-testid="static-correction-open-qc-link" href="/refraction-qc" id="staticCorrectionQcLink">Open Refraction QC</a>
 </div>
 <section aria-labelledby="staticCorrectionArtifactsHeading" class="static-correction-section">
 <h3 id="staticCorrectionArtifactsHeading">Artifacts</h3>
@@ -478,13 +478,6 @@
         target.searchParams.set('refraction_job_id', refractionJobId);
       }
       return target.toString();
-    }
-
-    function openToolPage(path, event) {
-      if (event) event.preventDefault();
-      const target = toolUrl(path);
-      const opened = window.open(target, '_blank', 'noopener,noreferrer');
-      if (opened) opened.opener = null;
     }
 
     window.addEventListener('DOMContentLoaded', () => {
