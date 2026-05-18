@@ -37,8 +37,12 @@ function renderRefractionQcPanel() {
       <input id="refractionQcTrace" />
       <input id="refractionQcCell" />
       <button type="button" class="refraction-qc-view-button" data-view="summary"></button>
+      <button type="button" class="refraction-qc-view-button" data-view="pick_map"></button>
       <section class="refraction-qc-view" data-view-panel="summary">
         <div data-view-content="summary"></div>
+      </section>
+      <section class="refraction-qc-view" data-view-panel="pick_map" hidden>
+        <div data-view-content="pick_map"></div>
       </section>
     </section>
   `;
@@ -64,6 +68,56 @@ async function flushAsyncWork(times = 2) {
     await Promise.resolve();
     await new Promise((resolve) => setTimeout(resolve, 0));
   }
+}
+
+function completedPickMap(jobId, statusMessage = `Completed Pick Map for ${jobId}`) {
+  return {
+    mode: 'completed_job',
+    job_id: jobId,
+    has_after_statics: true,
+    receiver_number_mode: 'global_sequential',
+    gather_range: { min: 100, max: 100 },
+    status_message: statusMessage,
+    pick_map: {
+      gather_id: [100],
+      receiver_number: [2000],
+      pick_before_ms: [84],
+      pick_after_ms: [74],
+      used_in_statics: [true],
+      offset_m: [120],
+      offset_used: [120],
+      applied_shift_ms: [-10],
+    },
+  };
+}
+
+function preStaticsPickMap() {
+  return {
+    mode: 'pre_statics',
+    job_id: null,
+    has_after_statics: false,
+    receiver_number_mode: 'global_sequential',
+    gather_range: { min: 100, max: 100 },
+    status_message: 'Pre-statics Pick Map',
+    pick_map: {
+      gather_id: [100],
+      receiver_number: [2000],
+      pick_before_ms: [84],
+      pick_after_ms: [null],
+      used_in_statics: [null],
+      offset_m: [120],
+    },
+  };
+}
+
+function qcBundle(jobId) {
+  return {
+    job_id: jobId,
+    summary: { status: 'ready', workflow: 'refraction' },
+    available_views: ['summary'],
+    unavailable_views: [],
+    coordinate_mode: 'auto',
+  };
 }
 
 beforeEach(() => {
@@ -152,4 +206,120 @@ test('loadJob displays QC loading errors with the requested job id still visible
   expect(document.getElementById('refractionQcJobId').value).toBe('missing-static-job');
   expect(document.getElementById('refractionQcError').hidden).toBe(false);
   expect(document.getElementById('refractionQcError').textContent).toContain('QC bundle missing');
+});
+
+test('completed QC bundle clears active pre-statics Pick Map and loads completed job map', async () => {
+  const pickMapCalls = [];
+  vi.stubGlobal('fetch', vi.fn(async (url, options = {}) => {
+    if (String(url) === '/statics/refraction/qc') {
+      return jsonResponse(qcBundle('completed-job-a'));
+    }
+    if (String(url) === '/statics/refraction/qc/pick-map') {
+      pickMapCalls.push(JSON.parse(options.body || '{}'));
+      return jsonResponse(completedPickMap('completed-job-a'));
+    }
+    throw new Error(`Unexpected fetch ${url}`);
+  }));
+  loadRefractionQcScript();
+  window.refractionQcState.pickMap = preStaticsPickMap();
+  window.refractionQcUI.setSelectedView('pick_map');
+
+  document.getElementById('refractionQcJobId').value = 'completed-job-a';
+  await window.refractionQcUI.loadBundle();
+  await flushAsyncWork();
+
+  expect(pickMapCalls).toEqual([{ job_id: 'completed-job-a' }]);
+  expect(window.refractionQcState.pickMap).toMatchObject({
+    mode: 'completed_job',
+    job_id: 'completed-job-a',
+    has_after_statics: true,
+  });
+  expect(document.querySelector('[data-testid="refraction-qc-pick-map-after"]').disabled).toBe(false);
+});
+
+test('completed QC bundle defers completed Pick Map load until Pick Map view opens', async () => {
+  const pickMapCalls = [];
+  vi.stubGlobal('fetch', vi.fn(async (url, options = {}) => {
+    if (String(url) === '/statics/refraction/qc') {
+      return jsonResponse(qcBundle('completed-job-b'));
+    }
+    if (String(url) === '/statics/refraction/qc/pick-map') {
+      pickMapCalls.push(JSON.parse(options.body || '{}'));
+      return jsonResponse(completedPickMap('completed-job-b'));
+    }
+    throw new Error(`Unexpected fetch ${url}`);
+  }));
+  loadRefractionQcScript();
+  window.refractionQcState.pickMap = preStaticsPickMap();
+
+  document.getElementById('refractionQcJobId').value = 'completed-job-b';
+  await window.refractionQcUI.loadBundle();
+  await flushAsyncWork();
+
+  expect(window.refractionQcState.pickMap).toBeNull();
+  expect(pickMapCalls).toHaveLength(0);
+
+  window.refractionQcUI.setSelectedView('pick_map');
+  await flushAsyncWork();
+
+  expect(pickMapCalls).toEqual([{ job_id: 'completed-job-b' }]);
+  expect(window.refractionQcState.pickMap).toMatchObject({
+    mode: 'completed_job',
+    job_id: 'completed-job-b',
+  });
+});
+
+test('completed QC bundle keeps same-job completed Pick Map without reloading', async () => {
+  const existingPickMap = completedPickMap('completed-job-c', 'Existing same-job Pick Map');
+  const pickMapCalls = [];
+  vi.stubGlobal('fetch', vi.fn(async (url, options = {}) => {
+    if (String(url) === '/statics/refraction/qc') {
+      return jsonResponse(qcBundle('completed-job-c'));
+    }
+    if (String(url) === '/statics/refraction/qc/pick-map') {
+      pickMapCalls.push(JSON.parse(options.body || '{}'));
+      return jsonResponse(completedPickMap('completed-job-c', 'Reloaded Pick Map'));
+    }
+    throw new Error(`Unexpected fetch ${url}`);
+  }));
+  loadRefractionQcScript();
+  window.refractionQcState.pickMap = existingPickMap;
+  window.refractionQcUI.setSelectedView('pick_map');
+
+  document.getElementById('refractionQcJobId').value = 'completed-job-c';
+  await window.refractionQcUI.loadBundle();
+  await flushAsyncWork();
+
+  expect(pickMapCalls).toHaveLength(0);
+  expect(window.refractionQcState.pickMap).toBe(existingPickMap);
+  expect(document.querySelector('[data-testid="refraction-qc-pick-map-status"]').textContent).toBe(
+    'Existing same-job Pick Map'
+  );
+});
+
+test('completed QC bundle reloads active completed Pick Map when job changes', async () => {
+  const pickMapCalls = [];
+  vi.stubGlobal('fetch', vi.fn(async (url, options = {}) => {
+    if (String(url) === '/statics/refraction/qc') {
+      return jsonResponse(qcBundle('completed-job-new'));
+    }
+    if (String(url) === '/statics/refraction/qc/pick-map') {
+      pickMapCalls.push(JSON.parse(options.body || '{}'));
+      return jsonResponse(completedPickMap('completed-job-new'));
+    }
+    throw new Error(`Unexpected fetch ${url}`);
+  }));
+  loadRefractionQcScript();
+  window.refractionQcState.pickMap = completedPickMap('completed-job-old');
+  window.refractionQcUI.setSelectedView('pick_map');
+
+  document.getElementById('refractionQcJobId').value = 'completed-job-new';
+  await window.refractionQcUI.loadBundle();
+  await flushAsyncWork();
+
+  expect(pickMapCalls).toEqual([{ job_id: 'completed-job-new' }]);
+  expect(window.refractionQcState.pickMap).toMatchObject({
+    mode: 'completed_job',
+    job_id: 'completed-job-new',
+  });
 });
