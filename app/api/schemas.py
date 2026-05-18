@@ -3137,6 +3137,86 @@ class RefractionStaticQcBundleResponse(BaseModel):
     )
 
 
+class RefractionStaticPickMapGeometryRequest(RefractionStaticGeometryRequest):
+    """Geometry configuration for all-gather refraction pick-map QC."""
+
+    receiver_number_mode: Literal['global_sequential'] = 'global_sequential'
+
+
+class RefractionStaticPickMapRequest(BaseModel):
+    """Request model for all-gather refraction pick-map QC."""
+
+    model_config = ConfigDict(extra='forbid')
+
+    job_id: str | None = None
+    file_id: str | None = None
+    key1_byte: int = 189
+    key2_byte: int = 193
+    pick_source: RefractionStaticPickSourceRequest | None = None
+    geometry: RefractionStaticPickMapGeometryRequest = Field(
+        default_factory=RefractionStaticPickMapGeometryRequest,
+    )
+
+    @field_validator('job_id', 'file_id')
+    @classmethod
+    def _check_optional_text(cls, value: str | None, info: Any) -> str | None:
+        if value is None:
+            return None
+        if not isinstance(value, str) or not value:
+            raise ValueError(f'{info.field_name} must be a non-empty string')
+        return value
+
+    @field_validator('key1_byte', 'key2_byte', mode='before')
+    @classmethod
+    def _check_key_header_byte(cls, value: object, info: Any) -> int:
+        return require_trace_header_byte(value, info.field_name)
+
+    @model_validator(mode='after')
+    def _check_source(self) -> 'RefractionStaticPickMapRequest':
+        if self.job_id is not None and self.pick_source is not None:
+            raise ValueError('pick_source must be omitted when job_id is provided')
+        if self.job_id is None:
+            if self.file_id is None:
+                raise ValueError('file_id is required when job_id is omitted')
+            if self.pick_source is None:
+                raise ValueError('pick_source is required when job_id is omitted')
+        return self
+
+
+class RefractionStaticPickMapData(BaseModel):
+    """Columnar arrays for all-gather pick-map plotting."""
+
+    model_config = ConfigDict(extra='forbid')
+
+    gather_id: list[int | str | None]
+    receiver_number: list[int | float | None]
+    pick_before_ms: list[float]
+    trace_index: list[int | None] = Field(default_factory=list)
+    shot_id: list[int | str | None] = Field(default_factory=list)
+    source_id: list[int | str | None] = Field(default_factory=list)
+    receiver_id: list[int | str | None] = Field(default_factory=list)
+    offset_m: list[float | None] = Field(default_factory=list)
+    used_in_statics: list[bool | None] = Field(default_factory=list)
+    pick_after_ms: list[float | None] = Field(default_factory=list)
+    applied_shift_ms: list[float | None] = Field(default_factory=list)
+    offset_used: list[float | None] = Field(default_factory=list)
+
+
+class RefractionStaticPickMapResponse(BaseModel):
+    """All-gather refraction pick-map QC response."""
+
+    model_config = ConfigDict(extra='forbid')
+
+    job_id: str | None = None
+    statics_kind: Literal['refraction']
+    mode: Literal['pre_statics', 'completed_job']
+    status_message: str
+    has_after_statics: bool
+    receiver_number_mode: Literal['global_sequential']
+    gather_range: dict[str, int | float | str | None]
+    pick_map: RefractionStaticPickMapData
+
+
 class RefractionStaticQcDrilldownEndpointTarget(BaseModel):
     """Endpoint target for detailed refraction QC drilldown."""
 
