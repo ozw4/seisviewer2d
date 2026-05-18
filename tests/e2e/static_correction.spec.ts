@@ -1,4 +1,4 @@
-import { expect, test, type Route } from '@playwright/test';
+import { expect, test, type Page, type Route } from '@playwright/test';
 
 declare global {
 	interface Window {
@@ -21,6 +21,179 @@ async function fulfillJson(route: Route, payload: unknown, status = 200) {
 		body: JSON.stringify(payload),
 	});
 }
+
+async function openStandaloneStaticCorrection(
+	page: Page,
+	{ fileId = 'restore-line', key1Byte = 9, key2Byte = 13 } = {},
+) {
+	await page.goto(`/static-correction?file_id=${fileId}&key1_byte=${key1Byte}&key2_byte=${key2Byte}`);
+	await expect(page.getByTestId('static-correction-panel')).toBeVisible();
+	await expect(page.getByTestId('static-correction-target-status')).toHaveText('Ready');
+}
+
+async function selectStandalonePickNpz(
+	page: Page,
+	name = 'restored-picks.npz',
+	buffer = Buffer.from('npz-restore-bytes'),
+) {
+	await page.getByTestId('static-correction-pick-npz').setInputFiles({
+		name,
+		mimeType: 'application/octet-stream',
+		buffer,
+	});
+	await expect(page.getByTestId('static-correction-pick-npz-summary')).toContainText(name);
+	await expect.poll(async () => page.evaluate(() => (
+		JSON.parse(window.localStorage.getItem('sv.static_correction.form_draft.v1') || '{}').pickNpz?.filename || ''
+	))).toBe(name);
+}
+
+async function staticCorrectionPickInputSnapshot(page: Page) {
+	return page.getByTestId('static-correction-pick-npz').evaluate((input) => {
+		const files = (input as HTMLInputElement).files;
+		return {
+			length: files?.length ?? 0,
+			name: files?.[0]?.name ?? '',
+			size: files?.[0]?.size ?? 0,
+		};
+	});
+}
+
+function multipartRequestBody(route: Route): string {
+	return route.request().postData() || '';
+}
+
+test('Static Correction restores form draft and NPZ file input from IndexedDB', async ({ page }) => {
+	await openStandaloneStaticCorrection(page, { fileId: 'restore-line', key1Byte: 9, key2Byte: 13 });
+	await selectStandalonePickNpz(page, 'restored-picks.npz', Buffer.from('restored-npz'));
+	await page.getByTestId('static-correction-min-offset').fill('475');
+	await page.getByTestId('static-correction-register-corrected-file').check();
+
+	await page.goto('/refraction-qc');
+	await openStandaloneStaticCorrection(page, { fileId: 'restore-line', key1Byte: 9, key2Byte: 13 });
+
+	await expect(page.getByTestId('static-correction-pick-npz-summary')).toContainText(
+		'Restored NPZ: restored-picks.npz',
+	);
+	await expect(page.getByTestId('static-correction-pick-npz-summary')).toContainText(
+		'This restored NPZ is loaded into the file input and will be submitted.',
+	);
+	await expect(page.getByTestId('static-correction-min-offset')).toHaveValue('475');
+	await expect(page.getByTestId('static-correction-register-corrected-file')).toBeChecked();
+	await expect.poll(async () => staticCorrectionPickInputSnapshot(page)).toMatchObject({
+		length: 1,
+		name: 'restored-picks.npz',
+		size: Buffer.byteLength('restored-npz'),
+	});
+});
+
+test('Static Correction Run submits restored file input NPZ', async ({ page }) => {
+	let multipartBody = '';
+	await openStandaloneStaticCorrection(page, { fileId: 'submit-restored-line', key1Byte: 9, key2Byte: 13 });
+	await selectStandalonePickNpz(page, 'submit-restored-picks.npz', Buffer.from('submit-restored-npz'));
+	await page.goto('/refraction-qc');
+	await openStandaloneStaticCorrection(page, { fileId: 'submit-restored-line', key1Byte: 9, key2Byte: 13 });
+	await expect.poll(async () => staticCorrectionPickInputSnapshot(page)).toMatchObject({
+		length: 1,
+		name: 'submit-restored-picks.npz',
+	});
+
+	await page.route('**/statics/refraction/apply-with-picks', async (route) => {
+		multipartBody = multipartRequestBody(route);
+		await fulfillJson(route, { state: 'ready' });
+	});
+	await page.getByTestId('static-correction-run').click();
+	await expect.poll(() => multipartBody).toContain('name="pick_npz"; filename="submit-restored-picks.npz"');
+	expect(multipartBody).toContain('"file_id":"submit-restored-line"');
+	expect(multipartBody).toContain('"pick_source":{"kind":"uploaded_npz"}');
+});
+
+test('Static Correction selected NPZ replaces restored NPZ and clear removes cache', async ({ page }) => {
+	await openStandaloneStaticCorrection(page, { fileId: 'replace-restored-line', key1Byte: 9, key2Byte: 13 });
+	await selectStandalonePickNpz(page, 'old-picks.npz', Buffer.from('old-npz'));
+	await page.goto('/refraction-qc');
+	await openStandaloneStaticCorrection(page, { fileId: 'replace-restored-line', key1Byte: 9, key2Byte: 13 });
+	await expect(page.getByTestId('static-correction-pick-npz-summary')).toContainText('Restored NPZ: old-picks.npz');
+
+	await selectStandalonePickNpz(page, 'new-picks.npz', Buffer.from('new-npz'));
+	await expect(page.getByTestId('static-correction-pick-npz-summary')).toContainText('new-picks.npz');
+	await expect(page.getByTestId('static-correction-pick-npz-summary')).not.toContainText('Restored NPZ');
+
+	await page.getByTestId('static-correction-clear-pick-npz').click();
+	await expect(page.getByTestId('static-correction-pick-npz-summary')).toContainText('No NPZ file selected.');
+	await expect.poll(async () => staticCorrectionPickInputSnapshot(page)).toMatchObject({ length: 0 });
+	await expect.poll(async () => page.evaluate(() => (
+		JSON.parse(window.localStorage.getItem('sv.static_correction.form_draft.v1') || '{}').pickNpz
+	))).toBeNull();
+});
+
+test('Static Correction clear draft removes draft and cached NPZ record', async ({ page }) => {
+	await openStandaloneStaticCorrection(page, { fileId: 'clear-draft-line', key1Byte: 9, key2Byte: 13 });
+	await selectStandalonePickNpz(page, 'clear-draft-picks.npz', Buffer.from('clear-draft'));
+	const recordId = await page.evaluate(() => (
+		JSON.parse(window.localStorage.getItem('sv.static_correction.form_draft.v1') || '{}')
+			.pickNpz?.indexedDbRecordId
+	));
+
+	await page.getByTestId('static-correction-clear-draft').click();
+
+	await expect(page.getByTestId('static-correction-pick-npz-summary')).toContainText('No NPZ file selected.');
+	await expect.poll(async () => staticCorrectionPickInputSnapshot(page)).toMatchObject({ length: 0 });
+	await expect.poll(async () => page.evaluate(() => (
+		window.localStorage.getItem('sv.static_correction.form_draft.v1')
+	))).toBeNull();
+	await expect.poll(async () => page.evaluate(async (recordIdArg) => {
+		const record = await (window as any).refractionStaticRunUI.loadPickNpzFromIndexedDb(recordIdArg);
+		return record || null;
+	}, recordId)).toBeNull();
+	await page.goto('/refraction-qc');
+	await expect.poll(async () => page.evaluate(() => (
+		window.localStorage.getItem('sv.static_correction.form_draft.v1')
+	))).toBeNull();
+});
+
+test('Static Correction does not restore cached NPZ for a different target', async ({ page }) => {
+	await openStandaloneStaticCorrection(page, { fileId: 'target-a', key1Byte: 9, key2Byte: 13 });
+	await selectStandalonePickNpz(page, 'target-a-picks.npz', Buffer.from('target-a'));
+
+	await openStandaloneStaticCorrection(page, { fileId: 'target-b', key1Byte: 9, key2Byte: 13 });
+	await expect(page.getByTestId('static-correction-pick-npz-summary')).toContainText(
+		'Saved NPZ belongs to a different viewer target',
+	);
+	await expect.poll(async () => staticCorrectionPickInputSnapshot(page)).toMatchObject({ length: 0 });
+});
+
+test('Static Correction reports missing IndexedDB NPZ blob', async ({ page }) => {
+	await openStandaloneStaticCorrection(page, { fileId: 'missing-blob-line', key1Byte: 9, key2Byte: 13 });
+	await selectStandalonePickNpz(page, 'missing-blob-picks.npz', Buffer.from('missing-blob'));
+	await page.evaluate(async () => {
+		const draft = JSON.parse(window.localStorage.getItem('sv.static_correction.form_draft.v1') || '{}');
+		const recordId = draft.pickNpz?.indexedDbRecordId;
+		await new Promise<void>((resolve, reject) => {
+			const request = window.indexedDB.open('seisviewer2d-static-correction', 1);
+			request.onerror = () => reject(request.error);
+			request.onsuccess = () => {
+				const db = request.result;
+				const tx = db.transaction('pick_npz_blobs', 'readwrite');
+				tx.objectStore('pick_npz_blobs').delete(recordId);
+				tx.oncomplete = () => {
+					db.close();
+					resolve();
+				};
+				tx.onerror = () => {
+					db.close();
+					reject(tx.error);
+				};
+			};
+		});
+	});
+
+	await page.goto('/refraction-qc');
+	await openStandaloneStaticCorrection(page, { fileId: 'missing-blob-line', key1Byte: 9, key2Byte: 13 });
+	await expect(page.getByTestId('static-correction-pick-npz-summary')).toContainText(
+		'Saved NPZ is no longer available',
+	);
+	await expect.poll(async () => staticCorrectionPickInputSnapshot(page)).toMatchObject({ length: 0 });
+});
 
 test('direct NPZ Static Correction posts multipart request and auto-loads Refraction QC', async ({
 	page,
@@ -71,19 +244,7 @@ test('direct NPZ Static Correction posts multipart request and auto-loads Refrac
 		throw new Error(`Unexpected Static Correction request: ${request.method()} ${url.pathname}`);
 	});
 
-	await page.goto('/');
-	await page.waitForFunction(() => Boolean(window.SeisViewerState?.syncActiveFileTarget));
-	await page.evaluate(() => {
-		window.SeisViewerState?.syncActiveFileTarget?.({
-			fileId: 'viewer-line',
-			displayName: 'viewer-line.sgy',
-			key1Byte: 9,
-			key2Byte: 13,
-			isFileLoaded: true,
-		});
-	});
-
-	await page.getByTestId('static-correction-tab').click();
+	await openStandaloneStaticCorrection(page, { fileId: 'viewer-line', key1Byte: 9, key2Byte: 13 });
 	await expect(page.locator('#staticCorrectionTargetFile')).toContainText('viewer-line');
 	await page.locator('#staticCorrectionPickNpz').setInputFiles({
 		name: 'uploaded-picks.npz',
@@ -92,7 +253,7 @@ test('direct NPZ Static Correction posts multipart request and auto-loads Refrac
 	});
 	await page.locator('#staticCorrectionRunButton').click();
 
-	await expect(page.getByTestId('refraction-qc-tab')).toHaveAttribute('aria-selected', 'true');
+	await expect(page).toHaveURL(/\/refraction-qc\?/);
 	await expect(page.locator('#refractionQcJobId')).toHaveValue('static-job-e2e');
 	await expect(page.locator('#refractionQcStatus')).toContainText('Loaded static-job-e2e');
 
@@ -149,19 +310,7 @@ test('Static Correction Validate Inputs uses current viewer target and displays 
 		throw new Error(`Unexpected Static Correction request: ${request.method()} ${url.pathname}`);
 	});
 
-	await page.goto('/');
-	await page.waitForFunction(() => Boolean(window.SeisViewerState?.syncActiveFileTarget));
-	await page.evaluate(() => {
-		window.SeisViewerState?.syncActiveFileTarget?.({
-			fileId: 'viewer-validate-line',
-			displayName: 'viewer-validate-line.sgy',
-			key1Byte: 9,
-			key2Byte: 13,
-			isFileLoaded: true,
-		});
-	});
-
-	await page.getByTestId('static-correction-tab').click();
+	await openStandaloneStaticCorrection(page, { fileId: 'viewer-validate-line', key1Byte: 9, key2Byte: 13 });
 	await page.locator('#staticCorrectionPickNpz').setInputFiles({
 		name: 'validate-picks.npz',
 		mimeType: 'application/octet-stream',
@@ -171,7 +320,7 @@ test('Static Correction Validate Inputs uses current viewer target and displays 
 
 	const diagnostics = page.getByTestId('static-correction-validation-diagnostics');
 	await expect(diagnostics).toContainText('Validation passed.');
-	await expect(diagnostics).toContainText('viewer-validate-line.sgy');
+	await expect(diagnostics).toContainText('viewer-validate-line');
 	await expect(diagnostics).toContainText('9/13');
 	await expect(diagnostics).toContainText('pick_time_s');
 	await expect(diagnostics).toContainText('n_total_traces');
@@ -219,19 +368,7 @@ test('Static Correction Validate Inputs does not call apply endpoint on validati
 		throw new Error(`Unexpected Static Correction request: ${request.method()} ${url.pathname}`);
 	});
 
-	await page.goto('/');
-	await page.waitForFunction(() => Boolean(window.SeisViewerState?.syncActiveFileTarget));
-	await page.evaluate(() => {
-		window.SeisViewerState?.syncActiveFileTarget?.({
-			fileId: 'viewer-bad-picks',
-			displayName: 'viewer-bad-picks.sgy',
-			key1Byte: 9,
-			key2Byte: 13,
-			isFileLoaded: true,
-		});
-	});
-
-	await page.getByTestId('static-correction-tab').click();
+	await openStandaloneStaticCorrection(page, { fileId: 'viewer-bad-picks', key1Byte: 9, key2Byte: 13 });
 	await page.locator('#staticCorrectionPickNpz').setInputFiles({
 		name: 'bad-picks.npz',
 		mimeType: 'application/octet-stream',
@@ -312,19 +449,7 @@ test('direct NPZ Static Correction builds checked linkage before multipart apply
 		throw new Error(`Unexpected Static Correction request: ${request.method()} ${url.pathname}`);
 	});
 
-	await page.goto('/');
-	await page.waitForFunction(() => Boolean(window.SeisViewerState?.syncActiveFileTarget));
-	await page.evaluate(() => {
-		window.SeisViewerState?.syncActiveFileTarget?.({
-			fileId: 'viewer-linked-line',
-			displayName: 'viewer-linked-line.sgy',
-			key1Byte: 17,
-			key2Byte: 21,
-			isFileLoaded: true,
-		});
-	});
-
-	await page.getByTestId('static-correction-tab').click();
+	await openStandaloneStaticCorrection(page, { fileId: 'viewer-linked-line', key1Byte: 17, key2Byte: 21 });
 	await page.locator('#staticCorrectionPickNpz').setInputFiles({
 		name: 'uploaded-linked-picks.npz',
 		mimeType: 'application/octet-stream',
@@ -334,7 +459,7 @@ test('direct NPZ Static Correction builds checked linkage before multipart apply
 	await page.getByTestId('static-correction-linkage-threshold-m').fill('12.5');
 	await page.locator('#staticCorrectionRunButton').click();
 
-	await expect(page.getByTestId('refraction-qc-tab')).toHaveAttribute('aria-selected', 'true');
+	await expect(page).toHaveURL(/\/refraction-qc\?/);
 	await expect(page.locator('#refractionQcJobId')).toHaveValue('static-job-linked-e2e');
 	await expect(page.locator('#refractionQcStatus')).toContainText('Loaded static-job-linked-e2e');
 
