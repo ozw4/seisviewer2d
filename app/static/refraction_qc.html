@@ -1,0 +1,189 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>Refraction QC - SeisViewer2D</title>
+  <link rel="stylesheet" href="/static/tool_pages.css" />
+</head>
+<body class="tool-page refraction-qc-page">
+  <header>
+    <span>Refraction QC</span>
+    <div class="headerLinks">
+      <a href="/" data-tool-link>Viewer</a>
+      <a href="/static-correction" target="_blank" rel="noopener" data-tool-link onclick="openToolPage('/static-correction', event)">Static Correction</a>
+      <a href="/upload">Open SEG-Y</a>
+    </div>
+  </header>
+  <main class="tool-main">
+    <section class="tool-hero" aria-labelledby="refractionQcPageTitle">
+      <div>
+        <h1 id="refractionQcPageTitle">Refraction QC</h1>
+        <p>Review first-break fits, reduced-time displays, profiles, cell maps, static components, and gather previews with a larger full-page plot area.</p>
+      </div>
+    </section>
+    <div class="tool-card refraction-qc-workspace">
+<div class="refraction-qc-panel" data-testid="refraction-qc-panel">
+<h2 class="refraction-qc-title">Refraction QC</h2>
+<form class="refraction-qc-form" data-testid="refraction-qc-form" id="refractionQcForm">
+<label class="refraction-qc-field" for="refractionQcJobId">Job ID
+              <input autocomplete="off" data-testid="refraction-qc-job-id" id="refractionQcJobId" list="refractionQcJobList" name="job_id" type="text"/>
+</label>
+<datalist id="refractionQcJobList"></datalist>
+<label class="refraction-qc-field" for="refractionQcMaxPoints">Max points
+              <input data-testid="refraction-qc-max-points" id="refractionQcMaxPoints" min="1" name="max_points" step="1" type="number" value="20000"/>
+</label>
+<div class="refraction-qc-actions">
+<button data-testid="refraction-qc-load" id="refractionQcLoadButton" type="submit">Load QC Bundle</button>
+</div>
+</form>
+<div aria-live="polite" class="refraction-qc-status" data-testid="refraction-qc-status" id="refractionQcStatus" role="status">No QC bundle loaded.</div>
+<div class="refraction-qc-error" data-testid="refraction-qc-error" hidden="" id="refractionQcError" role="alert"></div>
+<div class="refraction-qc-sign" data-testid="refraction-qc-sign" hidden="" id="refractionQcSign"></div>
+<div aria-label="Refraction QC selectors" class="refraction-qc-selectors">
+<label class="refraction-qc-field" for="refractionQcLayerKind">Layer
+              <select data-testid="refraction-qc-layer-kind" id="refractionQcLayerKind">
+<option value="all">All</option>
+<option value="v1_direct_arrival">V1 direct</option>
+<option value="v2_t1">V2/T1</option>
+<option value="v3_t2">V3/T2</option>
+<option value="vsub_t3">Vsub/T3</option>
+</select>
+</label>
+<label class="refraction-qc-field" for="refractionQcXAxisMode">X axis
+              <select data-testid="refraction-qc-x-axis" id="refractionQcXAxisMode">
+<option value="offset">Offset</option>
+<option value="inline">Inline</option>
+<option value="trace">Trace index</option>
+</select>
+</label>
+<label class="refraction-qc-field" for="refractionQcProfileGroup">Profile group
+              <select data-testid="refraction-qc-profile-group" id="refractionQcProfileGroup">
+<option value="time_terms">Time terms</option>
+<option value="velocities">Velocities</option>
+<option value="thickness_elevation">Thickness / elevations</option>
+<option value="statics">Static components</option>
+<option value="qc_metrics">QC metrics</option>
+</select>
+</label>
+<label class="refraction-qc-field" for="refractionQcProfileUnits">Profile units
+              <select data-testid="refraction-qc-profile-units" id="refractionQcProfileUnits">
+<option value="auto">Auto</option>
+<option value="ms">Milliseconds</option>
+<option value="s">Seconds</option>
+</select>
+</label>
+<label class="refraction-qc-field" for="refractionQcStatusFilter">Status
+              <select data-testid="refraction-qc-status-filter" id="refractionQcStatusFilter">
+<option value="all">All statuses</option>
+<option value="valid">Valid only</option>
+<option value="invalid">Invalid only</option>
+</select>
+</label>
+<label class="refraction-qc-field" for="refractionQcMapQuantity">Map quantity
+              <select data-testid="refraction-qc-map-quantity" id="refractionQcMapQuantity">
+<option value="velocity">Velocity</option>
+<option value="velocity_update">Velocity update</option>
+<option value="fold">Fold / observation count</option>
+<option value="residual_rms">Residual RMS</option>
+<option value="residual_mad">Residual MAD</option>
+<option value="status">Status</option>
+</select>
+</label>
+<label class="refraction-qc-field refraction-qc-check-field" for="refractionQcShowRejected">
+              Show rejected / unused
+              <input checked="" data-testid="refraction-qc-show-rejected" id="refractionQcShowRejected" type="checkbox"/>
+</label>
+<label class="refraction-qc-field" for="refractionQcEndpointKind">Endpoint kind
+              <select data-testid="refraction-qc-endpoint-kind" id="refractionQcEndpointKind">
+<option value="both">both</option>
+<option value="source">source</option>
+<option value="receiver">receiver</option>
+</select>
+</label>
+<label class="refraction-qc-field" for="refractionQcEndpoint">Endpoint
+              <input autocomplete="off" data-testid="refraction-qc-endpoint" id="refractionQcEndpoint" type="text"/>
+</label>
+<label class="refraction-qc-field" for="refractionQcTrace">Trace
+              <input autocomplete="off" data-testid="refraction-qc-trace" id="refractionQcTrace" type="text"/>
+</label>
+<label class="refraction-qc-field" for="refractionQcCell">Cell
+              <input autocomplete="off" data-testid="refraction-qc-cell" id="refractionQcCell" type="text"/>
+</label>
+</div>
+<div aria-label="Refraction QC views" class="refraction-qc-view-buttons" id="refractionQcViewButtons" role="tablist">
+<button aria-selected="true" class="refraction-qc-view-button is-active" data-testid="refraction-qc-view-summary-button" data-view="summary" role="tab" type="button">Summary</button>
+<button aria-selected="false" class="refraction-qc-view-button" data-testid="refraction-qc-view-first-break-button" data-view="first_break_residuals" role="tab" type="button">First-break fit</button>
+<button aria-selected="false" class="refraction-qc-view-button" data-testid="refraction-qc-view-reduced-time-button" data-view="reduced_time" role="tab" type="button">Reduced-time / LMO</button>
+<button aria-selected="false" class="refraction-qc-view-button" data-testid="refraction-qc-view-profiles-button" data-view="profiles_2d" role="tab" type="button">2D profiles</button>
+<button aria-selected="false" class="refraction-qc-view-button" data-testid="refraction-qc-view-cells-button" data-view="cell_maps_3d" role="tab" type="button">3D cell maps</button>
+<button aria-selected="false" class="refraction-qc-view-button" data-testid="refraction-qc-view-statics-button" data-view="static_components" role="tab" type="button">Static components</button>
+<button aria-selected="false" class="refraction-qc-view-button" data-testid="refraction-qc-view-gather-button" data-view="gather_preview" role="tab" type="button">Gather preview</button>
+</div>
+<div data-testid="refraction-qc-views" id="refractionQcViews">
+<section class="refraction-qc-view" data-testid="refraction-qc-view-summary" data-view-panel="summary">
+<h3>Summary</h3>
+<div class="refraction-qc-placeholder" data-view-content="summary">No QC bundle loaded.</div>
+</section>
+<section class="refraction-qc-view" data-testid="refraction-qc-view-first-break" data-view-panel="first_break_residuals" hidden="">
+<h3>First-break fit</h3>
+<div class="refraction-qc-placeholder" data-view-content="first_break_residuals">No QC bundle loaded.</div>
+</section>
+<section class="refraction-qc-view" data-testid="refraction-qc-view-reduced-time" data-view-panel="reduced_time" hidden="">
+<h3>Reduced-time / LMO</h3>
+<div class="refraction-qc-placeholder" data-view-content="reduced_time">No QC bundle loaded.</div>
+</section>
+<section class="refraction-qc-view" data-testid="refraction-qc-view-profiles" data-view-panel="profiles_2d" hidden="">
+<h3>2D profiles</h3>
+<div class="refraction-qc-placeholder" data-view-content="profiles_2d">No QC bundle loaded.</div>
+</section>
+<section class="refraction-qc-view" data-testid="refraction-qc-view-cells" data-view-panel="cell_maps_3d" hidden="">
+<h3>3D cell maps</h3>
+<div class="refraction-qc-placeholder" data-view-content="cell_maps_3d">No QC bundle loaded.</div>
+</section>
+<section class="refraction-qc-view" data-testid="refraction-qc-view-statics" data-view-panel="static_components" hidden="">
+<h3>Static components</h3>
+<div class="refraction-qc-placeholder" data-view-content="static_components">No QC bundle loaded.</div>
+</section>
+<section class="refraction-qc-view" data-testid="refraction-qc-view-gather" data-view-panel="gather_preview" hidden="">
+<h3>Gather preview</h3>
+<div class="refraction-qc-placeholder" data-view-content="gather_preview">No QC bundle loaded.</div>
+</section>
+</div>
+</div>
+    </div>
+  </main>
+
+  <script>
+    function toolUrl(path) {
+      const params = new URLSearchParams(window.location.search || '');
+      const fileId = params.get('file_id') || localStorage.getItem('file_id') || '';
+      const key1Byte = params.get('key1_byte') || localStorage.getItem('key1_byte') || '';
+      const key2Byte = params.get('key2_byte') || localStorage.getItem('key2_byte') || '';
+      const target = new URL(path, window.location.origin);
+      if (fileId) target.searchParams.set('file_id', fileId);
+      if (key1Byte) target.searchParams.set('key1_byte', key1Byte);
+      if (key2Byte) target.searchParams.set('key2_byte', key2Byte);
+      const refractionJobId = params.get('refraction_job_id') || params.get('refraction_qc_job_id') || '';
+      if (refractionJobId && path.includes('refraction-qc')) {
+        target.searchParams.set('refraction_job_id', refractionJobId);
+      }
+      return target.toString();
+    }
+
+    function openToolPage(path, event) {
+      if (event) event.preventDefault();
+      const target = toolUrl(path);
+      const opened = window.open(target, '_blank', 'noopener,noreferrer');
+      if (opened) opened.opener = null;
+    }
+
+    window.addEventListener('DOMContentLoaded', () => {
+      for (const link of document.querySelectorAll('[data-tool-link]')) {
+        link.href = toolUrl(link.getAttribute('href'));
+      }
+    });
+  </script>
+  <script src="/static/plotly-2.29.1.min.js"></script>
+  <script src="/static/refraction_qc.js"></script>
+</body>
+</html>

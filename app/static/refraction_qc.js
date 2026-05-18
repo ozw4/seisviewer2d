@@ -89,6 +89,35 @@
   let requestSerial = 0;
   let gatherRequestSerial = 0;
 
+  function safeLocalStorageValue(key) {
+    try {
+      return localStorage.getItem(key) || '';
+    } catch (_) {
+      return '';
+    }
+  }
+
+  function searchParamValue(key) {
+    try {
+      const params = new URLSearchParams(window.location.search || '');
+      return params.get(key) || '';
+    } catch (_) {
+      return '';
+    }
+  }
+
+  function searchOrStorageValue(searchKey, storageKey, fallback = '') {
+    return searchParamValue(searchKey) || safeLocalStorageValue(storageKey || searchKey) || fallback;
+  }
+
+  function isStandaloneRefractionQcPage() {
+    return Boolean(document.body && document.body.classList.contains('refraction-qc-page'));
+  }
+
+  function plotHeight(compactHeight, standaloneHeight) {
+    return isStandaloneRefractionQcPage() ? standaloneHeight : compactHeight;
+  }
+
   const LAYER_LABELS = {
     v1_direct_arrival: 'V1 direct',
     v2_t1: 'V2/T1',
@@ -1088,7 +1117,7 @@
           },
         },
       ], {
-        height: Math.max(260, finiteRows.length * 30 + 90),
+        height: Math.max(plotHeight(260, 460), finiteRows.length * 30 + 90),
         margin: { l: 150, r: 18, t: 32, b: 44 },
         font: { size: 10, color: '#334155' },
         paper_bgcolor: '#ffffff',
@@ -1657,7 +1686,7 @@
       const xAxis = firstBreakXAxisDefinition();
       const hoverText = points.map(plotHoverText);
       const commonLayout = {
-        height: 260,
+        height: plotHeight(260, 440),
         margin: { l: 58, r: 14, t: 34, b: 50 },
         font: { size: 10, color: '#334155' },
         paper_bgcolor: '#ffffff',
@@ -1873,7 +1902,7 @@
         },
       }));
       window.Plotly.newPlot(plot, traces, {
-        height: 300,
+        height: plotHeight(300, 480),
         margin: { l: 62, r: 14, t: 34, b: 50 },
         font: { size: 10, color: '#334155' },
         paper_bgcolor: '#ffffff',
@@ -2039,7 +2068,7 @@
       }
 
       window.Plotly.newPlot(plot, traces, {
-        height: 320,
+        height: plotHeight(320, 520),
         margin: { l: 62, r: 14, t: 34, b: 50 },
         font: { size: 10, color: '#334155' },
         paper_bgcolor: '#ffffff',
@@ -2227,7 +2256,7 @@
       }
 
       window.Plotly.newPlot(plot, traces, {
-        height: 340,
+        height: plotHeight(340, 560),
         margin: { l: 62, r: 14, t: 42, b: 56 },
         font: { size: 10, color: '#334155' },
         paper_bgcolor: '#ffffff',
@@ -2387,22 +2416,23 @@
       fileId: state.gatherFileId
         || String(fileIdInput?.value || '')
         || String(window.currentFileId || '')
-        || localStorage.getItem('file_id')
+        || searchOrStorageValue('file_id', 'file_id')
         || '',
       key1Byte: state.gatherKey1Byte
         || String(window.currentKey1Byte || '')
-        || localStorage.getItem('key1_byte')
-        || '189',
+        || searchOrStorageValue('key1_byte', 'key1_byte', '189'),
       key2Byte: state.gatherKey2Byte
         || String(window.currentKey2Byte || '')
-        || localStorage.getItem('key2_byte')
-        || '193',
+        || searchOrStorageValue('key2_byte', 'key2_byte', '193'),
       key1: state.gatherSectionKey1
+        || searchParamValue('key1')
         || (key1FromViewer !== undefined && key1FromViewer !== null ? String(key1FromViewer) : ''),
       x0: state.gatherX0
+        || searchParamValue('x0')
         || (Number.isFinite(x0FromRange) ? String(x0FromRange) : '')
         || (Number.isFinite(Number(windowData.x0)) ? String(windowData.x0) : '0'),
       x1: state.gatherX1
+        || searchParamValue('x1')
         || (Number.isFinite(x1FromRange) ? String(x1FromRange) : '')
         || (Number.isFinite(Number(windowData.x1)) ? String(windowData.x1) : ''),
     };
@@ -2800,7 +2830,7 @@
     if (modeledTrace) traces.push(modeledTrace);
 
     window.Plotly.newPlot(plot, traces, {
-      height: 320,
+      height: plotHeight(320, 520),
       margin: { l: 62, r: 18, t: 38, b: 52 },
       font: { size: 10, color: '#334155' },
       paper_bgcolor: '#ffffff',
@@ -2863,7 +2893,7 @@
     }
 
     window.Plotly.newPlot(plot, traces, {
-      height: 320,
+      height: plotHeight(320, 520),
       margin: { l: 62, r: 18, t: 38, b: 52 },
       font: { size: 10, color: '#334155' },
       paper_bgcolor: '#ffffff',
@@ -3097,7 +3127,8 @@
       { name: 'pipeline', tab: dom.pipelineTab, panel: dom.pipelinePanel },
       { name: 'static_correction', tab: dom.staticCorrectionTab, panel: dom.staticCorrectionPanel },
       { name: 'refraction_qc', tab: dom.qcTab, panel: dom.qcPanel },
-    ];
+    ].filter((item) => item.tab && item.panel);
+    if (!tabs.length) return;
     const selectedTabName = tabs.some((tab) => tab.name === tabName) ? tabName : 'pipeline';
     for (const item of tabs) {
       const active = item.name === selectedTabName;
@@ -3255,8 +3286,7 @@
     const staticCorrectionPanel = document.getElementById('staticCorrectionTabPanel');
     const qcPanel = document.getElementById('refractionQcTabPanel');
     const form = document.getElementById('refractionQcForm');
-    if (!pipelineTab || !staticCorrectionTab || !qcTab) return;
-    if (!pipelinePanel || !staticCorrectionPanel || !qcPanel || !form) return;
+    if (!form) return;
 
     dom = {
       pipelineTab,
@@ -3296,9 +3326,9 @@
     if (!dom.mapQuantity) return;
     if (!dom.showRejected || !dom.endpointKind || !dom.endpoint || !dom.trace || !dom.cell) return;
 
-    pipelineTab.addEventListener('click', () => activateSidebarTab('pipeline'));
-    staticCorrectionTab.addEventListener('click', () => activateSidebarTab('static_correction'));
-    qcTab.addEventListener('click', () => activateSidebarTab('refraction_qc'));
+    if (pipelineTab) pipelineTab.addEventListener('click', () => activateSidebarTab('pipeline'));
+    if (staticCorrectionTab) staticCorrectionTab.addEventListener('click', () => activateSidebarTab('static_correction'));
+    if (qcTab) qcTab.addEventListener('click', () => activateSidebarTab('refraction_qc'));
     form.addEventListener('submit', (event) => {
       event.preventDefault();
       loadBundle();
@@ -3363,9 +3393,18 @@
       state.selectedJobId = jobId;
       dom.jobId.value = jobId;
     }
+    state.gatherFileId = searchOrStorageValue('file_id', 'file_id', state.gatherFileId);
+    state.gatherKey1Byte = searchOrStorageValue('key1_byte', 'key1_byte', state.gatherKey1Byte);
+    state.gatherKey2Byte = searchOrStorageValue('key2_byte', 'key2_byte', state.gatherKey2Byte);
+    state.gatherSectionKey1 = searchParamValue('key1') || state.gatherSectionKey1;
+    state.gatherX0 = searchParamValue('x0') || state.gatherX0;
+    state.gatherX1 = searchParamValue('x1') || state.gatherX1;
 
     renderRecentJobs();
     render();
+    if (jobId && isStandaloneRefractionQcPage()) {
+      loadBundle();
+    }
   }
 
   window.refractionQcState = state;

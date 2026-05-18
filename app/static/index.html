@@ -1821,6 +1821,10 @@
     <span>Seismic Wiggle Viewer</span>
     <div class="headerLinks">
       <button type="button" id="viewerShortcutsButton" data-testid="viewer-shortcuts-button">Shortcuts</button>
+      <a id="staticCorrectionLink" href="/static-correction" target="_blank" rel="noopener"
+        onclick="openToolPage('/static-correction', event)" data-testid="static-correction-open-link">Static Correction</a>
+      <a id="refractionQcLink" href="/refraction-qc" target="_blank" rel="noopener"
+        onclick="openToolPage('/refraction-qc', event)" data-testid="refraction-qc-open-link">Refraction QC</a>
       <a id="batchApplyLink" href="/batch" target="_blank" rel="noopener" onclick="openBatchApplyPage(event)">Batch Apply</a>
       <a href="/upload">Open SEG-Y</a>
     </div>
@@ -2045,17 +2049,8 @@
         </div>
       </div>
     </div>
-    <aside id="pipelinePanel">
-      <div class="sidebar-tabs" role="tablist" aria-label="Viewer side panel">
-        <button type="button" id="pipelineSidebarTab" class="sidebar-tab is-active" role="tab"
-          aria-selected="true" aria-controls="pipelineTabPanel" data-testid="pipeline-sidebar-tab">Pipeline</button>
-        <button type="button" id="staticCorrectionSidebarTab" class="sidebar-tab" role="tab"
-          aria-selected="false" aria-controls="staticCorrectionTabPanel"
-          data-testid="static-correction-tab">Static Correction</button>
-        <button type="button" id="refractionQcSidebarTab" class="sidebar-tab" role="tab"
-          aria-selected="false" aria-controls="refractionQcTabPanel" data-testid="refraction-qc-tab">Refraction QC</button>
-      </div>
-      <div id="pipelineTabPanel" class="sidebar-tab-panel" role="tabpanel" aria-labelledby="pipelineSidebarTab">
+    <aside id="pipelinePanel" aria-label="Pipeline panel">
+      <div id="pipelineTabPanel" class="sidebar-tab-panel" role="region" aria-label="Pipeline">
         <div class="pipeline-header">
           <span>Pipeline</span>
           <div class="pipeline-actions">
@@ -2088,714 +2083,6 @@
               <button type="submit" id="pipelineInspectorSave">Save</button>
             </div>
           </form>
-        </div>
-      </div>
-      <div id="staticCorrectionTabPanel" class="sidebar-tab-panel" role="tabpanel"
-        aria-labelledby="staticCorrectionSidebarTab" hidden>
-        <div class="static-correction-panel" data-testid="static-correction-panel">
-          <h2 class="static-correction-title">Static Correction</h2>
-          <form id="staticCorrectionForm" class="static-correction-form" data-testid="static-correction-form">
-            <section class="static-correction-section" aria-labelledby="staticCorrectionTargetHeading">
-              <h3 id="staticCorrectionTargetHeading">Target</h3>
-              <div id="staticCorrectionTargetSummary" class="static-correction-target-summary"
-                data-testid="static-correction-target-summary">
-                <div id="staticCorrectionTargetEmpty" class="static-correction-help"
-                  data-testid="static-correction-target-empty">
-                  No active viewer file. Open an SGY/TraceStore in the viewer before running Static Correction.
-                </div>
-                <div id="staticCorrectionTargetDetails" class="static-correction-target-summary" hidden
-                  data-testid="static-correction-target-details">
-                  <div class="static-correction-target-row">
-                    <span class="static-correction-target-label">Current viewer file</span>
-                    <span id="staticCorrectionTargetFile" class="static-correction-target-value"
-                      data-testid="static-correction-target-file">-</span>
-                  </div>
-                  <div class="static-correction-target-row">
-                    <span class="static-correction-target-label">Sort keys</span>
-                    <span id="staticCorrectionTargetKeys" class="static-correction-target-value"
-                      data-testid="static-correction-target-keys">-</span>
-                  </div>
-                  <div class="static-correction-target-row">
-                    <span class="static-correction-target-label">Status</span>
-                    <span id="staticCorrectionTargetStatus" class="static-correction-target-value"
-                      data-testid="static-correction-target-status">-</span>
-                  </div>
-                </div>
-              </div>
-            </section>
-            <section class="static-correction-section" aria-labelledby="staticCorrectionPresetHeading">
-              <h3 id="staticCorrectionPresetHeading">Presets</h3>
-              <p class="static-correction-help">
-                Presets store parameter fields only. Loading a preset keeps the current viewer target and selected pick file.
-              </p>
-              <div class="static-correction-preset-grid">
-                <label class="static-correction-field" for="staticCorrectionPresetSelect">Saved preset
-                  <select id="staticCorrectionPresetSelect" data-testid="static-correction-preset-select">
-                    <option value="">No saved presets</option>
-                  </select>
-                </label>
-                <button id="staticCorrectionLoadPresetButton" type="button"
-                  data-testid="static-correction-load-preset">Load</button>
-              </div>
-              <div class="static-correction-preset-grid">
-                <label class="static-correction-field" for="staticCorrectionPresetName">Preset name
-                  <input id="staticCorrectionPresetName" type="text" autocomplete="off"
-                    data-testid="static-correction-preset-name" />
-                </label>
-                <button id="staticCorrectionSavePresetButton" type="button"
-                  data-testid="static-correction-save-preset">Save</button>
-              </div>
-              <div class="static-correction-actions">
-                <button id="staticCorrectionDeletePresetButton" type="button"
-                  data-testid="static-correction-delete-preset">Delete</button>
-              </div>
-            </section>
-            <section class="static-correction-section" aria-labelledby="staticCorrectionPicksHeading">
-              <h3 id="staticCorrectionPicksHeading">First-break picks</h3>
-              <p class="static-correction-help">
-                Select a first-break pick NPZ for this static correction run. The viewer first-break probability
-                cache is not a valid statics pick file.
-              </p>
-              <label class="static-correction-field" for="staticCorrectionPickNpz">First-break pick NPZ
-                <input id="staticCorrectionPickNpz" name="pick_npz" type="file" accept=".npz"
-                  data-testid="static-correction-pick-npz" />
-              </label>
-              <div id="staticCorrectionPickNpzSummary" class="static-correction-file-summary"
-                data-testid="static-correction-pick-npz-summary">No NPZ file selected.</div>
-            </section>
-            <section class="static-correction-section" aria-labelledby="staticCorrectionGeometryHeading">
-              <h3 id="staticCorrectionGeometryHeading">Geometry</h3>
-              <label class="static-correction-field" for="staticCorrectionGeometryPreset">Preset
-                <select id="staticCorrectionGeometryPreset" name="geometry_preset"
-                  data-testid="static-correction-geometry-preset">
-                  <option value="segy_default" selected>SEG-Y default</option>
-                  <option value="custom">custom</option>
-                </select>
-              </label>
-              <div class="static-correction-field-row">
-                <label class="static-correction-field" for="staticCorrectionSourceIdByte">source_id_byte
-                  <input id="staticCorrectionSourceIdByte" name="geometry.source_id_byte" type="number" min="1"
-                    max="240" step="1" value="9" data-testid="static-correction-source-id-byte" />
-                </label>
-                <label class="static-correction-field" for="staticCorrectionReceiverIdByte">receiver_id_byte
-                  <input id="staticCorrectionReceiverIdByte" name="geometry.receiver_id_byte" type="number" min="1"
-                    max="240" step="1" value="13" data-testid="static-correction-receiver-id-byte" />
-                </label>
-              </div>
-              <div class="static-correction-field-row">
-                <label class="static-correction-field" for="staticCorrectionSourceXByte">source_x_byte
-                  <input id="staticCorrectionSourceXByte" name="geometry.source_x_byte" type="number" min="1"
-                    max="240" step="1" value="73" data-testid="static-correction-source-x-byte" />
-                </label>
-                <label class="static-correction-field" for="staticCorrectionSourceYByte">source_y_byte
-                  <input id="staticCorrectionSourceYByte" name="geometry.source_y_byte" type="number" min="1"
-                    max="240" step="1" value="77" data-testid="static-correction-source-y-byte" />
-                </label>
-              </div>
-              <div class="static-correction-field-row">
-                <label class="static-correction-field" for="staticCorrectionReceiverXByte">receiver_x_byte
-                  <input id="staticCorrectionReceiverXByte" name="geometry.receiver_x_byte" type="number" min="1"
-                    max="240" step="1" value="81" data-testid="static-correction-receiver-x-byte" />
-                </label>
-                <label class="static-correction-field" for="staticCorrectionReceiverYByte">receiver_y_byte
-                  <input id="staticCorrectionReceiverYByte" name="geometry.receiver_y_byte" type="number" min="1"
-                    max="240" step="1" value="85" data-testid="static-correction-receiver-y-byte" />
-                </label>
-              </div>
-              <div class="static-correction-field-row">
-                <label class="static-correction-field" for="staticCorrectionSourceElevationByte">
-                  source_elevation_byte
-                  <input id="staticCorrectionSourceElevationByte" name="geometry.source_elevation_byte" type="number"
-                    min="1" max="240" step="1" value="45"
-                    data-testid="static-correction-source-elevation-byte" />
-                </label>
-                <label class="static-correction-field" for="staticCorrectionReceiverElevationByte">
-                  receiver_elevation_byte
-                  <input id="staticCorrectionReceiverElevationByte" name="geometry.receiver_elevation_byte"
-                    type="number" min="1" max="240" step="1" value="41"
-                    data-testid="static-correction-receiver-elevation-byte" />
-                </label>
-              </div>
-              <div class="static-correction-field-row">
-                <label class="static-correction-field" for="staticCorrectionCoordinateScalarByte">
-                  coordinate_scalar_byte
-                  <input id="staticCorrectionCoordinateScalarByte" name="geometry.coordinate_scalar_byte"
-                    type="number" min="1" max="240" step="1" value="71"
-                    data-testid="static-correction-coordinate-scalar-byte" />
-                </label>
-                <label class="static-correction-field" for="staticCorrectionElevationScalarByte">
-                  elevation_scalar_byte
-                  <input id="staticCorrectionElevationScalarByte" name="geometry.elevation_scalar_byte"
-                    type="number" min="1" max="240" step="1" value="69"
-                    data-testid="static-correction-elevation-scalar-byte" />
-                </label>
-              </div>
-              <div class="static-correction-field-row">
-                <label class="static-correction-field" for="staticCorrectionCoordinateUnit">coordinate_unit
-                  <select id="staticCorrectionCoordinateUnit" name="geometry.coordinate_unit"
-                    data-testid="static-correction-coordinate-unit">
-                    <option value="m" selected>m</option>
-                    <option value="ft">ft</option>
-                  </select>
-                </label>
-                <label class="static-correction-field" for="staticCorrectionElevationUnit">elevation_unit
-                  <select id="staticCorrectionElevationUnit" name="geometry.elevation_unit"
-                    data-testid="static-correction-elevation-unit">
-                    <option value="m" selected>m</option>
-                    <option value="ft">ft</option>
-                  </select>
-                </label>
-              </div>
-              <div class="static-correction-field-row">
-                <label class="static-correction-field" for="staticCorrectionSourceDepthByte">
-                  source_depth_byte
-                  <input id="staticCorrectionSourceDepthByte" name="geometry.source_depth_byte" type="number"
-                    min="1" max="240" step="1" placeholder="optional"
-                    data-testid="static-correction-source-depth-byte" />
-                </label>
-                <label class="static-correction-field" for="staticCorrectionOffsetByte">moveout.offset_byte
-                  <input id="staticCorrectionOffsetByte" name="moveout.offset_byte" type="number" min="1" max="240"
-                    step="1" value="37" data-testid="static-correction-offset-byte" />
-                </label>
-              </div>
-            </section>
-            <section class="static-correction-section" aria-labelledby="staticCorrectionLinkageHeading">
-              <h3 id="staticCorrectionLinkageHeading">Linkage</h3>
-              <label class="static-correction-check-field" for="staticCorrectionEnableLinkage">
-                <input id="staticCorrectionEnableLinkage" name="linkage.enabled" type="checkbox"
-                  data-testid="static-correction-enable-linkage" />
-                <span>Link matching source/receiver endpoints</span>
-              </label>
-              <p class="static-correction-help">
-                Optional endpoint matching uses station and coordinate criteria. It does not merge all sources and
-                receivers into one node.
-              </p>
-              <div id="staticCorrectionLinkageOptions" class="static-correction-linkage-options" hidden
-                data-testid="static-correction-linkage-options">
-                <label class="static-correction-field" for="staticCorrectionLinkageMode">linkage.mode
-                  <select id="staticCorrectionLinkageMode" name="linkage.mode"
-                    data-testid="static-correction-linkage-mode">
-                    <option value="auto_threshold" selected>auto_threshold</option>
-                  </select>
-                </label>
-                <label class="static-correction-field" for="staticCorrectionLinkageThresholdM">threshold_m
-                  <input id="staticCorrectionLinkageThresholdM" name="linkage.threshold_m" type="number" min="0"
-                    step="any" value="25" data-testid="static-correction-linkage-threshold-m" />
-                </label>
-                <label class="static-correction-field" for="staticCorrectionReceiverLocationIntervalM">
-                  receiver_location_interval_m
-                  <input id="staticCorrectionReceiverLocationIntervalM"
-                    name="linkage.receiver_location_interval_m" type="number" min="0" step="any"
-                    placeholder="optional" data-testid="static-correction-receiver-location-interval-m" />
-                </label>
-                <label class="static-correction-check-field" for="staticCorrectionPreferReceiverAnchor">
-                  <input id="staticCorrectionPreferReceiverAnchor" name="linkage.prefer_receiver_anchor"
-                    type="checkbox" checked data-testid="static-correction-prefer-receiver-anchor" />
-                  <span>prefer_receiver_anchor</span>
-                </label>
-              </div>
-            </section>
-            <section class="static-correction-section" aria-labelledby="staticCorrectionModelHeading">
-              <h3 id="staticCorrectionModelHeading">Model</h3>
-              <label class="static-correction-field" for="staticCorrectionModelKind">Model preset
-                <select id="staticCorrectionModelKind" name="model_kind"
-                  data-testid="static-correction-model-kind">
-                  <option value="one_layer_global" selected>One-layer global V2/T1</option>
-                  <option value="two_layer_global">Two-layer global V3/T2</option>
-                  <option value="three_layer_global">Three-layer global Vsub/T3</option>
-                  <option value="cell_v2_t1_line_2d">Cell V2/T1 - 2D projected line</option>
-                  <option value="cell_v2_t1_grid_3d">Cell V2/T1 - 3D grid</option>
-                </select>
-              </label>
-              <label class="static-correction-field" for="staticCorrectionWeatheringVelocityMS">
-                model.first_layer.weathering_velocity_m_s
-                <input id="staticCorrectionWeatheringVelocityMS" name="model.first_layer.weathering_velocity_m_s"
-                  type="number" min="0" step="any" value="800"
-                  data-testid="static-correction-weathering-velocity" />
-              </label>
-              <label class="static-correction-field" for="staticCorrectionBedrockVelocityMode">
-                model.bedrock_velocity_mode
-                <select id="staticCorrectionBedrockVelocityMode" name="model.bedrock_velocity_mode"
-                  data-testid="static-correction-bedrock-velocity-mode">
-                  <option value="solve_global" selected>solve_global</option>
-                  <option value="fixed_global">fixed_global</option>
-                  <option value="solve_cell" disabled>solve_cell</option>
-                </select>
-              </label>
-              <div class="static-correction-field-row">
-                <label class="static-correction-field" for="staticCorrectionInitialBedrockVelocityMS">
-                  initial V2 m/s
-                  <input id="staticCorrectionInitialBedrockVelocityMS" name="model.initial_bedrock_velocity_m_s"
-                    type="number" min="0" step="any" value="2400"
-                    data-testid="static-correction-initial-bedrock-velocity" />
-                </label>
-                <label class="static-correction-field" for="staticCorrectionFixedBedrockVelocityMS">
-                  fixed V2 m/s
-                  <input id="staticCorrectionFixedBedrockVelocityMS" name="model.bedrock_velocity_m_s"
-                    type="number" min="0" step="any" value="2400"
-                    data-testid="static-correction-fixed-bedrock-velocity" />
-                </label>
-              </div>
-              <div class="static-correction-field-row">
-                <label class="static-correction-field" for="staticCorrectionMinOffsetM">moveout.min_offset_m
-                  <input id="staticCorrectionMinOffsetM" name="moveout.min_offset_m" type="number" min="0"
-                    step="any" value="300" data-testid="static-correction-min-offset" />
-                </label>
-                <label class="static-correction-field" for="staticCorrectionMaxOffsetM">moveout.max_offset_m
-                  <input id="staticCorrectionMaxOffsetM" name="moveout.max_offset_m" type="number" min="0"
-                    step="any" value="4000" data-testid="static-correction-max-offset" />
-                </label>
-              </div>
-              <label class="static-correction-field" for="staticCorrectionConversionMode">conversion.mode
-                <select id="staticCorrectionConversionMode" name="conversion.mode"
-                  data-testid="static-correction-conversion-mode">
-                  <option value="t1lsst_1layer" selected>t1lsst_1layer</option>
-                  <option value="t1lsst_multilayer">t1lsst_multilayer</option>
-                </select>
-              </label>
-              <div id="staticCorrectionV3LayerFields" class="static-correction-field-row" hidden>
-                <label class="static-correction-field" for="staticCorrectionV3MinOffsetM">V3 min offset m
-                  <input id="staticCorrectionV3MinOffsetM" name="model.layers.v3_t2.min_offset_m"
-                    type="number" min="0" step="any" value="4000"
-                    data-testid="static-correction-v3-min-offset" />
-                </label>
-                <label class="static-correction-field" for="staticCorrectionV3MaxOffsetM">V3 max offset m
-                  <input id="staticCorrectionV3MaxOffsetM" name="model.layers.v3_t2.max_offset_m"
-                    type="number" min="0" step="any" value="6000"
-                    data-testid="static-correction-v3-max-offset" />
-                </label>
-                <label class="static-correction-field" for="staticCorrectionInitialV3VelocityMS">initial V3 m/s
-                  <input id="staticCorrectionInitialV3VelocityMS" name="model.layers.v3_t2.initial_velocity_m_s"
-                    type="number" min="0" step="any" value="3600"
-                    data-testid="static-correction-initial-v3-velocity" />
-                </label>
-              </div>
-              <div id="staticCorrectionVsubLayerFields" class="static-correction-field-row" hidden>
-                <label class="static-correction-field" for="staticCorrectionVsubMinOffsetM">Vsub min offset m
-                  <input id="staticCorrectionVsubMinOffsetM" name="model.layers.vsub_t3.min_offset_m"
-                    type="number" min="0" step="any" value="6000"
-                    data-testid="static-correction-vsub-min-offset" />
-                </label>
-                <label class="static-correction-field" for="staticCorrectionInitialVsubVelocityMS">initial Vsub m/s
-                  <input id="staticCorrectionInitialVsubVelocityMS"
-                    name="model.layers.vsub_t3.initial_velocity_m_s" type="number" min="0"
-                    step="any" value="5000" data-testid="static-correction-initial-vsub-velocity" />
-                </label>
-              </div>
-              <div id="staticCorrectionCellFields" class="static-correction-field-row" hidden>
-                <label class="static-correction-field" for="staticCorrectionCellXOriginM">cell x origin m
-                  <input id="staticCorrectionCellXOriginM" name="model.refractor_cell.x_coordinate_origin_m"
-                    type="number" step="any" value="0" data-testid="static-correction-cell-x-origin" />
-                </label>
-                <label class="static-correction-field" for="staticCorrectionCellYOriginM">cell y origin m
-                  <input id="staticCorrectionCellYOriginM" name="model.refractor_cell.y_coordinate_origin_m"
-                    type="number" step="any" value="0" data-testid="static-correction-cell-y-origin" />
-                </label>
-                <label class="static-correction-field" for="staticCorrectionCellCountX">cell count x
-                  <input id="staticCorrectionCellCountX" name="model.refractor_cell.number_of_cell_x"
-                    type="number" min="1" step="1" value="20"
-                    data-testid="static-correction-cell-count-x" />
-                </label>
-                <label class="static-correction-field" for="staticCorrectionCellCountY">cell count y
-                  <input id="staticCorrectionCellCountY" name="model.refractor_cell.number_of_cell_y"
-                    type="number" min="1" step="1" value="1"
-                    data-testid="static-correction-cell-count-y" />
-                </label>
-                <label class="static-correction-field" for="staticCorrectionCellSizeXM">cell size x m
-                  <input id="staticCorrectionCellSizeXM" name="model.refractor_cell.size_of_cell_x_m"
-                    type="number" min="0" step="any" value="500"
-                    data-testid="static-correction-cell-size-x" />
-                </label>
-                <label class="static-correction-field" for="staticCorrectionCellSizeYM">cell size y m
-                  <input id="staticCorrectionCellSizeYM" name="model.refractor_cell.size_of_cell_y_m"
-                    type="number" min="0" step="any" value="500"
-                    data-testid="static-correction-cell-size-y" />
-                </label>
-                <label class="static-correction-field" for="staticCorrectionCellMinObservations">
-                  min observations/cell
-                  <input id="staticCorrectionCellMinObservations"
-                    name="model.refractor_cell.min_observations_per_cell" type="number" min="1"
-                    step="1" value="5" data-testid="static-correction-cell-min-observations" />
-                </label>
-                <label class="static-correction-field" for="staticCorrectionCellSmoothingWeight">
-                  velocity smoothing
-                  <input id="staticCorrectionCellSmoothingWeight"
-                    name="model.refractor_cell.velocity_smoothing_weight" type="number" min="0"
-                    step="any" value="0" data-testid="static-correction-cell-smoothing-weight" />
-                </label>
-              </div>
-              <div id="staticCorrectionLine2DFields" class="static-correction-field-row" hidden>
-                <label class="static-correction-field" for="staticCorrectionLineOriginXM">line origin x m
-                  <input id="staticCorrectionLineOriginXM" name="model.refractor_cell.line_origin_x_m"
-                    type="number" step="any" value="0" data-testid="static-correction-line-origin-x" />
-                </label>
-                <label class="static-correction-field" for="staticCorrectionLineOriginYM">line origin y m
-                  <input id="staticCorrectionLineOriginYM" name="model.refractor_cell.line_origin_y_m"
-                    type="number" step="any" value="0" data-testid="static-correction-line-origin-y" />
-                </label>
-                <label class="static-correction-field" for="staticCorrectionLineAzimuthDeg">line azimuth deg
-                  <input id="staticCorrectionLineAzimuthDeg" name="model.refractor_cell.line_azimuth_deg"
-                    type="number" step="any" value="0" data-testid="static-correction-line-azimuth" />
-                </label>
-              </div>
-            </section>
-            <section class="static-correction-section" aria-labelledby="staticCorrectionOutputHeading">
-              <h3 id="staticCorrectionOutputHeading">Output</h3>
-              <label class="static-correction-check-field" for="staticCorrectionRegisterCorrectedFile">
-                <input id="staticCorrectionRegisterCorrectedFile" name="apply.register_corrected_file"
-                  type="checkbox" data-testid="static-correction-register-corrected-file" />
-                <span>apply.register_corrected_file</span>
-              </label>
-            </section>
-            <details id="staticCorrectionFieldCorrectionsSection" class="static-correction-section">
-              <summary id="staticCorrectionFieldCorrectionsHeading">Field corrections</summary>
-              <label class="static-correction-check-field" for="staticCorrectionFieldCorrectionsEnabled">
-                <input id="staticCorrectionFieldCorrectionsEnabled" name="field_corrections.enabled"
-                  type="checkbox" data-testid="static-correction-field-corrections-enabled" />
-                <span>field_corrections.enabled</span>
-              </label>
-              <div id="staticCorrectionFieldCorrectionOptions" class="static-correction-linkage-options" hidden>
-                <label class="static-correction-field" for="staticCorrectionFieldSourceDepthMode">
-                  source_depth.mode
-                  <select id="staticCorrectionFieldSourceDepthMode" name="field_corrections.source_depth.mode"
-                    data-testid="static-correction-field-source-depth-mode">
-                    <option value="none" selected>none</option>
-                    <option value="weathering_velocity_time">weathering_velocity_time</option>
-                  </select>
-                </label>
-                <label class="static-correction-field" for="staticCorrectionFieldSourceDepthByte">
-                  source_depth.source_depth_byte
-                  <input id="staticCorrectionFieldSourceDepthByte"
-                    name="field_corrections.source_depth.source_depth_byte" type="number" min="1" max="240"
-                    step="1" data-testid="static-correction-field-source-depth-byte" />
-                </label>
-                <label class="static-correction-field" for="staticCorrectionFieldUpholeMode">uphole.mode
-                  <select id="staticCorrectionFieldUpholeMode" name="field_corrections.uphole.mode"
-                    data-testid="static-correction-field-uphole-mode">
-                    <option value="none" selected>none</option>
-                    <option value="header_time">header_time</option>
-                  </select>
-                </label>
-                <label class="static-correction-field" for="staticCorrectionFieldUpholeTimeByte">
-                  uphole.uphole_time_byte
-                  <input id="staticCorrectionFieldUpholeTimeByte"
-                    name="field_corrections.uphole.uphole_time_byte" type="number" min="1" max="240" step="1"
-                    data-testid="static-correction-field-uphole-time-byte" />
-                </label>
-                <label class="static-correction-field" for="staticCorrectionFieldManualStaticMode">
-                  manual_static.mode
-                  <select id="staticCorrectionFieldManualStaticMode" name="field_corrections.manual_static.mode"
-                    data-testid="static-correction-field-manual-static-mode">
-                    <option value="none" selected>none</option>
-                    <option value="artifact_table">artifact_table</option>
-                  </select>
-                </label>
-                <div id="staticCorrectionFieldManualArtifactFields" class="static-correction-linkage-options" hidden>
-                  <label class="static-correction-field" for="staticCorrectionFieldManualStaticSignConvention">
-                    manual_static.sign_convention
-                    <select id="staticCorrectionFieldManualStaticSignConvention"
-                      name="field_corrections.manual_static.sign_convention"
-                      data-testid="static-correction-field-manual-static-sign-convention">
-                      <option value="applied_shift_s" selected>applied_shift_s</option>
-                      <option value="delay_positive_ms">delay_positive_ms</option>
-                    </select>
-                  </label>
-                  <div class="static-correction-field-row">
-                    <label class="static-correction-field" for="staticCorrectionFieldManualSourceJobId">
-                      source_table_artifact.job_id
-                      <input id="staticCorrectionFieldManualSourceJobId"
-                        name="field_corrections.manual_static.source_table_artifact.job_id" type="text"
-                        autocomplete="off" data-testid="static-correction-field-manual-source-job-id" />
-                    </label>
-                    <label class="static-correction-field" for="staticCorrectionFieldManualSourceArtifactName">
-                      source_table_artifact.artifact_name
-                      <input id="staticCorrectionFieldManualSourceArtifactName"
-                        name="field_corrections.manual_static.source_table_artifact.artifact_name" type="text"
-                        autocomplete="off" data-testid="static-correction-field-manual-source-artifact-name" />
-                    </label>
-                  </div>
-                  <div class="static-correction-field-row">
-                    <label class="static-correction-field" for="staticCorrectionFieldManualReceiverJobId">
-                      receiver_table_artifact.job_id
-                      <input id="staticCorrectionFieldManualReceiverJobId"
-                        name="field_corrections.manual_static.receiver_table_artifact.job_id" type="text"
-                        autocomplete="off" data-testid="static-correction-field-manual-receiver-job-id" />
-                    </label>
-                    <label class="static-correction-field" for="staticCorrectionFieldManualReceiverArtifactName">
-                      receiver_table_artifact.artifact_name
-                      <input id="staticCorrectionFieldManualReceiverArtifactName"
-                        name="field_corrections.manual_static.receiver_table_artifact.artifact_name" type="text"
-                        autocomplete="off" data-testid="static-correction-field-manual-receiver-artifact-name" />
-                    </label>
-                  </div>
-                </div>
-                <label class="static-correction-check-field" for="staticCorrectionFieldApplyToTraceShift">
-                  <input id="staticCorrectionFieldApplyToTraceShift"
-                    name="field_corrections.composition.apply_to_trace_shift" type="checkbox" checked
-                    data-testid="static-correction-field-apply-to-trace-shift" />
-                  <span>composition.apply_to_trace_shift</span>
-                </label>
-              </div>
-            </details>
-            <details id="staticCorrectionExportSection" class="static-correction-section">
-              <summary id="staticCorrectionExportHeading">Exports</summary>
-              <label class="static-correction-check-field" for="staticCorrectionExportEnabled">
-                <input id="staticCorrectionExportEnabled" name="export.enabled" type="checkbox" checked
-                  data-testid="static-correction-export-enabled" />
-                <span>export.enabled</span>
-              </label>
-              <label class="static-correction-check-field" for="staticCorrectionExportCanonicalTable">
-                <input id="staticCorrectionExportCanonicalTable" name="export.formats" type="checkbox"
-                  value="canonical_static_table" checked data-static-correction-export-format
-                  data-testid="static-correction-export-canonical-table" />
-                <span>canonical_static_table</span>
-              </label>
-              <label class="static-correction-check-field" for="staticCorrectionExportLsst">
-                <input id="staticCorrectionExportLsst" name="export.formats" type="checkbox" value="lsst"
-                  data-static-correction-export-format data-testid="static-correction-export-lsst" />
-                <span>lsst</span>
-              </label>
-              <label class="static-correction-check-field" for="staticCorrectionExportLsstPlus">
-                <input id="staticCorrectionExportLsstPlus" name="export.formats" type="checkbox"
-                  value="lsst_plus" checked data-static-correction-export-format
-                  data-testid="static-correction-export-lsst-plus" />
-                <span>lsst_plus</span>
-              </label>
-              <label class="static-correction-check-field" for="staticCorrectionExportTimeTermSpreadsheet">
-                <input id="staticCorrectionExportTimeTermSpreadsheet" name="export.formats" type="checkbox"
-                  value="time_term_spreadsheet" data-static-correction-export-format
-                  data-testid="static-correction-export-time-term-spreadsheet" />
-                <span>time_term_spreadsheet</span>
-              </label>
-              <label class="static-correction-check-field" for="staticCorrectionExportFirstBreakTime">
-                <input id="staticCorrectionExportFirstBreakTime" name="export.formats" type="checkbox"
-                  value="first_break_time" data-static-correction-export-format
-                  data-testid="static-correction-export-first-break-time" />
-                <span>first_break_time</span>
-              </label>
-            </details>
-            <section class="static-correction-section" aria-labelledby="staticCorrectionRunHeading">
-              <h3 id="staticCorrectionRunHeading">Run</h3>
-              <div class="static-correction-actions">
-                <button id="staticCorrectionValidateButton" type="button"
-                  data-testid="static-correction-validate">Validate Inputs</button>
-                <button id="staticCorrectionRunButton" type="button" data-testid="static-correction-run">Run</button>
-                <button id="staticCorrectionCancelButton" type="button" hidden
-                  data-testid="static-correction-cancel">Cancel</button>
-              </div>
-              <div id="staticCorrectionValidationSummary" class="static-correction-validation" role="alert" hidden
-                data-testid="static-correction-validation-summary"></div>
-              <div id="staticCorrectionValidationDiagnostics" class="static-correction-diagnostics" role="status"
-                aria-live="polite" hidden data-testid="static-correction-validation-diagnostics"></div>
-              <details id="staticCorrectionRequestPreviewDetails">
-                <summary>JSON request preview</summary>
-                <p class="static-correction-help" data-testid="static-correction-request-preview-note">
-                  Pick NPZ is sent as multipart file field: pick_npz
-                </p>
-                <pre id="staticCorrectionRequestPreview" class="static-correction-request-preview"
-                  data-testid="static-correction-request-preview"></pre>
-              </details>
-            </section>
-          </form>
-          <div id="staticCorrectionStatus" class="static-correction-status" role="status" aria-live="polite"
-            data-testid="static-correction-status"></div>
-          <div id="staticCorrectionJobPanel" class="static-correction-job-panel" hidden
-            data-testid="static-correction-job-panel">
-            <div class="static-correction-job-row">
-              <span class="static-correction-job-label">Job ID</span>
-              <span id="staticCorrectionJobIdValue" class="static-correction-job-value"
-                data-testid="static-correction-job-id">-</span>
-            </div>
-            <div class="static-correction-job-row">
-              <span class="static-correction-job-label">State</span>
-              <span id="staticCorrectionJobStateValue" class="static-correction-job-value"
-                data-testid="static-correction-job-state">-</span>
-            </div>
-            <div class="static-correction-job-row">
-              <span class="static-correction-job-label">Message</span>
-              <span id="staticCorrectionJobMessageValue" class="static-correction-job-value"
-                data-testid="static-correction-job-message">-</span>
-            </div>
-            <div class="static-correction-job-row">
-              <span class="static-correction-job-label">Progress</span>
-              <span class="static-correction-job-progress">
-                <progress id="staticCorrectionJobProgress" max="1" value="0"
-                  data-testid="static-correction-job-progress"></progress>
-                <span id="staticCorrectionJobProgressValue" data-testid="static-correction-job-progress-value">0%</span>
-              </span>
-            </div>
-          </div>
-          <section class="static-correction-section" aria-labelledby="staticCorrectionArtifactsHeading">
-            <h3 id="staticCorrectionArtifactsHeading">Artifacts</h3>
-            <div id="staticCorrectionArtifactEmpty" class="static-correction-artifact-empty"
-              data-testid="static-correction-artifact-empty">Run a static correction job to list generated artifacts.</div>
-            <table id="staticCorrectionArtifactTable" class="static-correction-artifact-table" hidden
-              data-testid="static-correction-artifact-table">
-              <thead>
-                <tr>
-                  <th scope="col">File</th>
-                  <th scope="col">Size</th>
-                  <th scope="col">Download</th>
-                </tr>
-              </thead>
-              <tbody id="staticCorrectionArtifactBody" data-testid="static-correction-artifact-body"></tbody>
-            </table>
-          </section>
-          <div id="staticCorrectionError" class="static-correction-error" role="alert" hidden
-            data-testid="static-correction-error"></div>
-        </div>
-      </div>
-      <div id="refractionQcTabPanel" class="sidebar-tab-panel" role="tabpanel"
-        aria-labelledby="refractionQcSidebarTab" hidden>
-        <div class="refraction-qc-panel" data-testid="refraction-qc-panel">
-          <h2 class="refraction-qc-title">Refraction QC</h2>
-          <form id="refractionQcForm" class="refraction-qc-form" data-testid="refraction-qc-form">
-            <label class="refraction-qc-field" for="refractionQcJobId">Job ID
-              <input id="refractionQcJobId" name="job_id" type="text" list="refractionQcJobList"
-                autocomplete="off" data-testid="refraction-qc-job-id" />
-            </label>
-            <datalist id="refractionQcJobList"></datalist>
-            <label class="refraction-qc-field" for="refractionQcMaxPoints">Max points
-              <input id="refractionQcMaxPoints" name="max_points" type="number" min="1" step="1"
-                value="20000" data-testid="refraction-qc-max-points" />
-            </label>
-            <div class="refraction-qc-actions">
-              <button id="refractionQcLoadButton" type="submit" data-testid="refraction-qc-load">Load QC Bundle</button>
-            </div>
-          </form>
-          <div id="refractionQcStatus" class="refraction-qc-status" role="status" aria-live="polite"
-            data-testid="refraction-qc-status">No QC bundle loaded.</div>
-          <div id="refractionQcError" class="refraction-qc-error" role="alert" hidden
-            data-testid="refraction-qc-error"></div>
-          <div id="refractionQcSign" class="refraction-qc-sign" data-testid="refraction-qc-sign" hidden></div>
-          <div class="refraction-qc-selectors" aria-label="Refraction QC selectors">
-            <label class="refraction-qc-field" for="refractionQcLayerKind">Layer
-              <select id="refractionQcLayerKind" data-testid="refraction-qc-layer-kind">
-                <option value="all">All</option>
-                <option value="v1_direct_arrival">V1 direct</option>
-                <option value="v2_t1">V2/T1</option>
-                <option value="v3_t2">V3/T2</option>
-                <option value="vsub_t3">Vsub/T3</option>
-              </select>
-            </label>
-            <label class="refraction-qc-field" for="refractionQcXAxisMode">X axis
-              <select id="refractionQcXAxisMode" data-testid="refraction-qc-x-axis">
-                <option value="offset">Offset</option>
-                <option value="inline">Inline</option>
-                <option value="trace">Trace index</option>
-              </select>
-            </label>
-            <label class="refraction-qc-field" for="refractionQcProfileGroup">Profile group
-              <select id="refractionQcProfileGroup" data-testid="refraction-qc-profile-group">
-                <option value="time_terms">Time terms</option>
-                <option value="velocities">Velocities</option>
-                <option value="thickness_elevation">Thickness / elevations</option>
-                <option value="statics">Static components</option>
-                <option value="qc_metrics">QC metrics</option>
-              </select>
-            </label>
-            <label class="refraction-qc-field" for="refractionQcProfileUnits">Profile units
-              <select id="refractionQcProfileUnits" data-testid="refraction-qc-profile-units">
-                <option value="auto">Auto</option>
-                <option value="ms">Milliseconds</option>
-                <option value="s">Seconds</option>
-              </select>
-            </label>
-            <label class="refraction-qc-field" for="refractionQcStatusFilter">Status
-              <select id="refractionQcStatusFilter" data-testid="refraction-qc-status-filter">
-                <option value="all">All statuses</option>
-                <option value="valid">Valid only</option>
-                <option value="invalid">Invalid only</option>
-              </select>
-            </label>
-            <label class="refraction-qc-field" for="refractionQcMapQuantity">Map quantity
-              <select id="refractionQcMapQuantity" data-testid="refraction-qc-map-quantity">
-                <option value="velocity">Velocity</option>
-                <option value="velocity_update">Velocity update</option>
-                <option value="fold">Fold / observation count</option>
-                <option value="residual_rms">Residual RMS</option>
-                <option value="residual_mad">Residual MAD</option>
-                <option value="status">Status</option>
-              </select>
-            </label>
-            <label class="refraction-qc-field refraction-qc-check-field" for="refractionQcShowRejected">
-              Show rejected / unused
-              <input id="refractionQcShowRejected" type="checkbox" checked
-                data-testid="refraction-qc-show-rejected" />
-            </label>
-            <label class="refraction-qc-field" for="refractionQcEndpointKind">Endpoint kind
-              <select id="refractionQcEndpointKind" data-testid="refraction-qc-endpoint-kind">
-                <option value="both">both</option>
-                <option value="source">source</option>
-                <option value="receiver">receiver</option>
-              </select>
-            </label>
-            <label class="refraction-qc-field" for="refractionQcEndpoint">Endpoint
-              <input id="refractionQcEndpoint" type="text" autocomplete="off"
-                data-testid="refraction-qc-endpoint" />
-            </label>
-            <label class="refraction-qc-field" for="refractionQcTrace">Trace
-              <input id="refractionQcTrace" type="text" autocomplete="off"
-                data-testid="refraction-qc-trace" />
-            </label>
-            <label class="refraction-qc-field" for="refractionQcCell">Cell
-              <input id="refractionQcCell" type="text" autocomplete="off"
-                data-testid="refraction-qc-cell" />
-            </label>
-          </div>
-          <div id="refractionQcViewButtons" class="refraction-qc-view-buttons" role="tablist"
-            aria-label="Refraction QC views">
-            <button type="button" class="refraction-qc-view-button is-active" role="tab" aria-selected="true"
-              data-view="summary" data-testid="refraction-qc-view-summary-button">Summary</button>
-            <button type="button" class="refraction-qc-view-button" role="tab" aria-selected="false"
-              data-view="first_break_residuals" data-testid="refraction-qc-view-first-break-button">First-break fit</button>
-            <button type="button" class="refraction-qc-view-button" role="tab" aria-selected="false"
-              data-view="reduced_time" data-testid="refraction-qc-view-reduced-time-button">Reduced-time / LMO</button>
-            <button type="button" class="refraction-qc-view-button" role="tab" aria-selected="false"
-              data-view="profiles_2d" data-testid="refraction-qc-view-profiles-button">2D profiles</button>
-            <button type="button" class="refraction-qc-view-button" role="tab" aria-selected="false"
-              data-view="cell_maps_3d" data-testid="refraction-qc-view-cells-button">3D cell maps</button>
-            <button type="button" class="refraction-qc-view-button" role="tab" aria-selected="false"
-              data-view="static_components" data-testid="refraction-qc-view-statics-button">Static components</button>
-            <button type="button" class="refraction-qc-view-button" role="tab" aria-selected="false"
-              data-view="gather_preview" data-testid="refraction-qc-view-gather-button">Gather preview</button>
-          </div>
-          <div id="refractionQcViews" data-testid="refraction-qc-views">
-            <section class="refraction-qc-view" data-view-panel="summary" data-testid="refraction-qc-view-summary">
-              <h3>Summary</h3>
-              <div class="refraction-qc-placeholder" data-view-content="summary">No QC bundle loaded.</div>
-            </section>
-            <section class="refraction-qc-view" data-view-panel="first_break_residuals"
-              data-testid="refraction-qc-view-first-break" hidden>
-              <h3>First-break fit</h3>
-              <div class="refraction-qc-placeholder" data-view-content="first_break_residuals">No QC bundle loaded.</div>
-            </section>
-            <section class="refraction-qc-view" data-view-panel="reduced_time"
-              data-testid="refraction-qc-view-reduced-time" hidden>
-              <h3>Reduced-time / LMO</h3>
-              <div class="refraction-qc-placeholder" data-view-content="reduced_time">No QC bundle loaded.</div>
-            </section>
-            <section class="refraction-qc-view" data-view-panel="profiles_2d"
-              data-testid="refraction-qc-view-profiles" hidden>
-              <h3>2D profiles</h3>
-              <div class="refraction-qc-placeholder" data-view-content="profiles_2d">No QC bundle loaded.</div>
-            </section>
-            <section class="refraction-qc-view" data-view-panel="cell_maps_3d"
-              data-testid="refraction-qc-view-cells" hidden>
-              <h3>3D cell maps</h3>
-              <div class="refraction-qc-placeholder" data-view-content="cell_maps_3d">No QC bundle loaded.</div>
-            </section>
-            <section class="refraction-qc-view" data-view-panel="static_components"
-              data-testid="refraction-qc-view-statics" hidden>
-              <h3>Static components</h3>
-              <div class="refraction-qc-placeholder" data-view-content="static_components">No QC bundle loaded.</div>
-            </section>
-            <section class="refraction-qc-view" data-view-panel="gather_preview"
-              data-testid="refraction-qc-view-gather" hidden>
-              <h3>Gather preview</h3>
-              <div class="refraction-qc-placeholder" data-view-content="gather_preview">No QC bundle loaded.</div>
-            </section>
-          </div>
         </div>
       </div>
     </aside>
@@ -2894,19 +2181,168 @@
   </div>
   <div id="opToastHost" aria-live="polite" aria-atomic="false"></div>
   <script>
-    function openBatchApplyPage(event) {
-      if (event) event.preventDefault();
+    const ACTIVE_VIEWER_TARGET_STORAGE_KEY = 'sv.active_viewer_target';
+
+    function safeLocalStorageGet(key) {
+      try {
+        return localStorage.getItem(key) || '';
+      } catch (_) {
+        return '';
+      }
+    }
+
+    function safeLocalStorageSet(key, value) {
+      try {
+        localStorage.setItem(key, value);
+      } catch (_) {
+      }
+    }
+
+    function safeLocalStorageRemove(key) {
+      try {
+        localStorage.removeItem(key);
+      } catch (_) {
+      }
+    }
+
+    function toViewerToolInteger(value) {
+      if (value === null || value === undefined) return null;
+      if (typeof value === 'string' && value.trim() === '') return null;
+      const parsed = Number(value);
+      return Number.isInteger(parsed) && parsed > 0 ? parsed : null;
+    }
+
+    function normalizeViewerToolTarget(candidate, options = {}) {
+      if (!candidate || typeof candidate !== 'object') return null;
+      if (options.requireLoaded && candidate.isFileLoaded === false) return null;
+      const fileId = String(candidate.fileId ?? candidate.file_id ?? '').trim();
+      const key1Byte = toViewerToolInteger(candidate.key1Byte ?? candidate.key1_byte);
+      const key2Byte = toViewerToolInteger(candidate.key2Byte ?? candidate.key2_byte);
+      if (!fileId || key1Byte === null || key2Byte === null) return null;
+      const displayName = String(
+        candidate.displayName ?? candidate.display_name ?? candidate.fileName ?? candidate.file_name ?? fileId
+      ).trim() || fileId;
+      return {
+        fileId,
+        displayName,
+        key1Byte,
+        key2Byte,
+        isFileLoaded: candidate.isFileLoaded !== false,
+      };
+    }
+
+    function readViewerToolTargetFromUrl() {
       const params = new URLSearchParams(window.location.search || '');
-      const fileId = params.get('file_id') || localStorage.getItem('file_id') || '';
-      const key1Byte = params.get('key1_byte') || localStorage.getItem('key1_byte') || '';
-      const key2Byte = params.get('key2_byte') || localStorage.getItem('key2_byte') || '';
-      const target = new URL('/batch', window.location.origin);
-      if (fileId) target.searchParams.set('file_id', fileId);
-      if (key1Byte) target.searchParams.set('key1_byte', key1Byte);
-      if (key2Byte) target.searchParams.set('key2_byte', key2Byte);
-      const opened = window.open(target.toString(), '_blank', 'noopener,noreferrer');
+      return normalizeViewerToolTarget({
+        fileId: params.get('file_id'),
+        displayName: params.get('display_name'),
+        key1Byte: params.get('key1_byte'),
+        key2Byte: params.get('key2_byte'),
+        isFileLoaded: true,
+      });
+    }
+
+    function readViewerToolTargetFromStorage() {
+      try {
+        const parsed = JSON.parse(safeLocalStorageGet(ACTIVE_VIEWER_TARGET_STORAGE_KEY) || '{}');
+        return normalizeViewerToolTarget(parsed, { requireLoaded: true });
+      } catch (_) {
+        return null;
+      }
+    }
+
+    function readViewerToolTargetFromLegacyStorage() {
+      return normalizeViewerToolTarget({
+        fileId: safeLocalStorageGet('file_id'),
+        displayName: safeLocalStorageGet('last_original_name'),
+        key1Byte: safeLocalStorageGet('key1_byte') || safeLocalStorageGet('last_key1_byte'),
+        key2Byte: safeLocalStorageGet('key2_byte') || safeLocalStorageGet('last_key2_byte'),
+        isFileLoaded: true,
+      });
+    }
+
+    function getActiveViewerToolTarget() {
+      if (window.SeisViewerState && typeof window.SeisViewerState.getActiveFileTarget === 'function') {
+        const active = normalizeViewerToolTarget(window.SeisViewerState.getActiveFileTarget(), { requireLoaded: true });
+        if (active) return active;
+      }
+      if (window.SeisViewerState && typeof window.SeisViewerState.getActiveFileTargetState === 'function') {
+        const stateTarget = normalizeViewerToolTarget(window.SeisViewerState.getActiveFileTargetState());
+        if (stateTarget) return stateTarget;
+      }
+      const globalTarget = normalizeViewerToolTarget({
+        fileId: window.currentFileId,
+        displayName: window.currentFileName,
+        key1Byte: window.currentKey1Byte,
+        key2Byte: window.currentKey2Byte,
+        isFileLoaded: Boolean(window.currentFileId),
+      });
+      return globalTarget
+        || readViewerToolTargetFromUrl()
+        || readViewerToolTargetFromStorage()
+        || readViewerToolTargetFromLegacyStorage();
+    }
+
+    window.persistActiveViewerToolTarget = function persistActiveViewerToolTarget(candidate) {
+      const target = normalizeViewerToolTarget(candidate, { requireLoaded: true });
+      if (!target) {
+        safeLocalStorageRemove(ACTIVE_VIEWER_TARGET_STORAGE_KEY);
+        return null;
+      }
+      safeLocalStorageSet('file_id', target.fileId);
+      safeLocalStorageSet('key1_byte', String(target.key1Byte));
+      safeLocalStorageSet('key2_byte', String(target.key2Byte));
+      safeLocalStorageSet('last_original_name', target.displayName);
+      safeLocalStorageSet('last_key1_byte', String(target.key1Byte));
+      safeLocalStorageSet('last_key2_byte', String(target.key2Byte));
+      safeLocalStorageSet(ACTIVE_VIEWER_TARGET_STORAGE_KEY, JSON.stringify({
+        ...target,
+        updatedAt: new Date().toISOString(),
+      }));
+      return target;
+    };
+
+    function buildViewerToolUrl(path) {
+      const target = new URL(path, window.location.origin);
+      const activeTarget = getActiveViewerToolTarget();
+      if (activeTarget) {
+        target.searchParams.set('file_id', activeTarget.fileId);
+        target.searchParams.set('key1_byte', String(activeTarget.key1Byte));
+        target.searchParams.set('key2_byte', String(activeTarget.key2Byte));
+        if (activeTarget.displayName && activeTarget.displayName !== activeTarget.fileId) {
+          target.searchParams.set('display_name', activeTarget.displayName);
+        }
+      }
+      return target;
+    }
+
+    window.refreshViewerToolLinks = function refreshViewerToolLinks() {
+      const links = [
+        ['staticCorrectionLink', '/static-correction'],
+        ['refractionQcLink', '/refraction-qc'],
+        ['batchApplyLink', '/batch'],
+      ];
+      for (const [id, path] of links) {
+        const link = document.getElementById(id);
+        if (link) link.href = buildViewerToolUrl(path).toString();
+      }
+    };
+
+    function openToolPage(path, event) {
+      if (event) event.preventDefault();
+      const opened = window.open(buildViewerToolUrl(path).toString(), '_blank', 'noopener,noreferrer');
       if (opened) opened.opener = null;
     }
+
+    function openBatchApplyPage(event) {
+      if (event) event.preventDefault();
+      const opened = window.open(buildViewerToolUrl('/batch').toString(), '_blank', 'noopener,noreferrer');
+      if (opened) opened.opener = null;
+    }
+
+    window.addEventListener('DOMContentLoaded', () => {
+      window.refreshViewerToolLinks();
+    });
   </script>
   <script src="/static/plotly-2.29.1.min.js"></script>
   <script src="/static/pako.min.js"></script>
@@ -2921,8 +2357,6 @@
   <script src="/static/pipeline/run.js"></script>
   <script src="/static/pipeline/index.js"></script>
   <script src="/static/pipeline_ui.js"></script>
-  <script src="/static/refraction_qc.js"></script>
-  <script src="/static/refraction_static_run.js"></script>
   <script type="module" src="/static/viewer/bootstrap.js"></script>
   <script type="module" src="/static/viewer/seis_heatmap_globals.js"></script>
   <script src="/static/viewer/restyle_only.js"></script>

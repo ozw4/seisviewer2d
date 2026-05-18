@@ -102,6 +102,7 @@
   const FIELD_MANUAL_STATIC_MODES = new Set(['none', 'artifact_table']);
   const FIELD_MANUAL_SIGN_CONVENTIONS = new Set(['applied_shift_s', 'delay_positive_ms']);
   const PRESET_STORAGE_KEY = 'sv.static_correction.presets';
+  const ACTIVE_VIEWER_TARGET_STORAGE_KEY = 'sv.active_viewer_target';
   const NO_ACTIVE_TARGET_ERROR = (
     'No active viewer file. Open an SGY/TraceStore in the viewer before running Static Correction.'
   );
@@ -136,6 +137,73 @@
     return String(value || '').trim();
   }
 
+  function safeLocalStorageValue(key) {
+    try {
+      return window.localStorage.getItem(key) || '';
+    } catch (_) {
+      return '';
+    }
+  }
+
+  function safeLocalStorageJson(key) {
+    try {
+      const value = window.localStorage.getItem(key);
+      if (!value) return null;
+      return JSON.parse(value);
+    } catch (_) {
+      return null;
+    }
+  }
+
+  function searchParamValue(key) {
+    try {
+      const params = new URLSearchParams(window.location.search || '');
+      return params.get(key) || '';
+    } catch (_) {
+      return '';
+    }
+  }
+
+  function searchOrStorageValue(searchKey, storageKey, fallback = '') {
+    return searchParamValue(searchKey) || safeLocalStorageValue(storageKey || searchKey) || fallback;
+  }
+
+  function normalizeStandaloneTargetCandidate(candidate, options = {}) {
+    if (!candidate || typeof candidate !== 'object') return null;
+    if (options.requireLoaded && candidate.isFileLoaded === false) return null;
+    const fileId = trimValue(candidate.fileId ?? candidate.file_id);
+    if (!fileId) return null;
+    const key1Byte = candidate.key1Byte ?? candidate.key1_byte;
+    const key2Byte = candidate.key2Byte ?? candidate.key2_byte;
+    const displayName = trimValue(
+      candidate.displayName ?? candidate.display_name ?? candidate.fileName ?? candidate.file_name
+    ) || fileId;
+    return {
+      fileId,
+      displayName,
+      key1Byte,
+      key2Byte,
+      isFileLoaded: candidate.isFileLoaded !== false,
+    };
+  }
+
+  function getStoredActiveViewerTargetState() {
+    return normalizeStandaloneTargetCandidate(
+      safeLocalStorageJson(ACTIVE_VIEWER_TARGET_STORAGE_KEY),
+      { requireLoaded: true }
+    );
+  }
+
+  function standaloneToolBaseUrl() {
+    try {
+      if (window.location && window.location.origin && window.location.origin !== 'null') {
+        return window.location.origin;
+      }
+    } catch (_) {
+    }
+    return 'http://localhost';
+  }
+
   function setDefaultValue(element, value) {
     if (element && trimValue(element.value) === '') {
       element.value = value;
@@ -159,15 +227,36 @@
     return parsed;
   }
 
+  function getStandaloneStaticCorrectionTargetState() {
+    const storedTarget = getStoredActiveViewerTargetState();
+    const urlTarget = normalizeStandaloneTargetCandidate({
+      fileId: searchParamValue('file_id'),
+      displayName: searchParamValue('display_name') || (storedTarget && storedTarget.displayName),
+      key1Byte: searchParamValue('key1_byte') || (storedTarget && storedTarget.key1Byte),
+      key2Byte: searchParamValue('key2_byte') || (storedTarget && storedTarget.key2Byte),
+      isFileLoaded: true,
+    });
+    if (urlTarget) return urlTarget;
+    if (storedTarget) return storedTarget;
+
+    return normalizeStandaloneTargetCandidate({
+      fileId: safeLocalStorageValue('file_id'),
+      displayName: safeLocalStorageValue('last_original_name'),
+      key1Byte: safeLocalStorageValue('key1_byte') || safeLocalStorageValue('last_key1_byte'),
+      key2Byte: safeLocalStorageValue('key2_byte') || safeLocalStorageValue('last_key2_byte'),
+      isFileLoaded: true,
+    });
+  }
+
   function getStaticCorrectionTargetState() {
     const viewerState = window.SeisViewerState;
     if (!viewerState || typeof viewerState.getActiveFileTarget !== 'function') {
-      return null;
+      return getStandaloneStaticCorrectionTargetState();
     }
-    if (typeof viewerState.getActiveFileTargetState === 'function') {
-      return viewerState.getActiveFileTargetState();
-    }
-    return viewerState.getActiveFileTarget();
+    const targetState = typeof viewerState.getActiveFileTargetState === 'function'
+      ? viewerState.getActiveFileTargetState()
+      : viewerState.getActiveFileTarget();
+    return targetState || getStandaloneStaticCorrectionTargetState();
   }
 
   function validateStaticCorrectionTarget() {
@@ -202,6 +291,19 @@
 
   function getStaticCorrectionTarget() {
     return validateStaticCorrectionTarget().target;
+  }
+
+  function buildRefractionQcUrl(jobId) {
+    const url = new URL('/refraction-qc', standaloneToolBaseUrl());
+    const safeJobId = trimValue(jobId);
+    if (safeJobId) url.searchParams.set('refraction_job_id', safeJobId);
+    const target = getStaticCorrectionTarget();
+    if (target) {
+      url.searchParams.set('file_id', target.file_id);
+      url.searchParams.set('key1_byte', String(target.key1_byte));
+      url.searchParams.set('key2_byte', String(target.key2_byte));
+    }
+    return url.toString();
   }
 
   function geometryValueElements(targetDom) {
@@ -1914,6 +2016,13 @@
       dom.cancelButton.hidden = !jobId || !isStaticJobActive(jobState);
       dom.cancelButton.disabled = !jobId || jobState === 'cancel_requested';
     }
+    if (dom.qcLinkRow && dom.qcLink) {
+      const showQcLink = Boolean(jobId && STATIC_READY_STATES.has(jobState));
+      dom.qcLinkRow.hidden = !showQcLink;
+      if (showQcLink) {
+        dom.qcLink.href = buildRefractionQcUrl(jobId);
+      }
+    }
   }
 
   function renderValidationSummary() {
@@ -2234,11 +2343,20 @@
 
   async function autoLoadRefractionQc(jobId) {
     const safeJobId = trimValue(jobId);
-    const refractionQc = window.RefractionQc;
-    if (!safeJobId || !refractionQc || typeof refractionQc.loadJob !== 'function') {
+    if (!safeJobId) {
       return null;
     }
-    return refractionQc.loadJob(safeJobId, { activateTab: true });
+    const refractionQc = window.RefractionQc;
+    if (refractionQc && typeof refractionQc.loadJob === 'function') {
+      return refractionQc.loadJob(safeJobId, { activateTab: true });
+    }
+    const qcUrl = buildRefractionQcUrl(safeJobId);
+    if (dom && dom.qcLink) {
+      dom.qcLink.href = qcUrl;
+    }
+    state.message = `Static correction job ${safeJobId} is ready. Open Refraction QC from the job panel to review the result.`;
+    render();
+    return null;
   }
 
   async function pollStaticCorrectionStatus(jobId) {
@@ -2663,6 +2781,8 @@
     const staticArtifactTable = document.getElementById('staticCorrectionArtifactTable');
     const staticArtifactBody = document.getElementById('staticCorrectionArtifactBody');
     const staticArtifactEmpty = document.getElementById('staticCorrectionArtifactEmpty');
+    const qcLinkRow = document.getElementById('staticCorrectionQcLinkRow');
+    const qcLink = document.getElementById('staticCorrectionQcLink');
     if (
       !form || !status || !error || !validateButton || !runButton || !targetEmpty || !targetDetails
       || !targetFile || !targetKeys || !targetStatus
@@ -2821,6 +2941,8 @@
       staticArtifactTable,
       staticArtifactBody,
       staticArtifactEmpty,
+      qcLinkRow,
+      qcLink,
     };
     state.presets = readStoredPresets();
     subscribeToViewerTargetUpdates();
@@ -2960,6 +3082,7 @@
     buildStaticCorrectionLinkageRequest,
     buildStaticCorrectionPickSource,
     buildStaticCorrectionRequest,
+    buildRefractionQcUrl,
     buildStaticLinkageBuildRequest,
     cancelStaticCorrectionJob,
     collectGeometryInputs,
