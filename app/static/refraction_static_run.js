@@ -127,6 +127,7 @@
     showValidationSummary: false,
     phase: 'idle',
     pollIntervalMs: 1000,
+    autoOpenQcOnCompletion: false,
   };
 
   let dom = null;
@@ -2354,8 +2355,7 @@
     if (dom && dom.qcLink) {
       dom.qcLink.href = qcUrl;
     }
-    state.message = `Static correction job ${safeJobId} is ready. Open Refraction QC from the job panel to review the result.`;
-    render();
+    window.location.assign(qcUrl);
     return null;
   }
 
@@ -2394,10 +2394,14 @@
           if (token !== staticPollToken) {
             return null;
           }
-          await autoLoadRefractionQc(jobId);
+          if (state.autoOpenQcOnCompletion) {
+            state.autoOpenQcOnCompletion = false;
+            await autoLoadRefractionQc(jobId);
+          }
           return snapshot;
         }
         if (isStaticJobTerminal(snapshot.state)) {
+          state.autoOpenQcOnCompletion = false;
           if (snapshot.state === 'error') {
             await loadStaticArtifacts(jobId, {
               preserveMessage: true,
@@ -2458,6 +2462,7 @@
     state.lastStaticCorrectionJobId = trimValue(responsePayload && responsePayload.job_id);
     setStaticJobSnapshot(responsePayload);
     state.lastResponse = responsePayload;
+    state.autoOpenQcOnCompletion = Boolean(state.lastStaticCorrectionJobId);
     state.phase = 'idle';
     const initialState = state.lastStaticCorrectionState
       ? ` Initial state: ${state.lastStaticCorrectionState}.`
@@ -2557,6 +2562,7 @@
     state.lastStaticCorrectionState = '';
     state.lastStaticCorrectionMessage = '';
     state.lastStaticCorrectionProgress = 0;
+    state.autoOpenQcOnCompletion = false;
     state.staticArtifacts = [];
     stopStaticCorrectionPolling();
     if (errors.length) {
@@ -2651,6 +2657,7 @@
     }
 
     try {
+      state.autoOpenQcOnCompletion = false;
       state.message = `Cancelling static correction job ${jobId}...`;
       state.error = '';
       render();
