@@ -7,6 +7,18 @@
   const STATIC_PICK_STORE = 'pick_npz_blobs';
   const MAX_RECENT_JOBS = 8;
   const DEFAULT_MAX_POINTS = 20000;
+  const PICK_MAP_DRAFT_GEOMETRY_HEADER_FIELDS = [
+    'source_id_byte',
+    'receiver_id_byte',
+    'source_x_byte',
+    'source_y_byte',
+    'receiver_x_byte',
+    'receiver_y_byte',
+    'source_elevation_byte',
+    'receiver_elevation_byte',
+    'coordinate_scalar_byte',
+    'elevation_scalar_byte',
+  ];
 
   const VIEW_DEFS = [
     {
@@ -198,6 +210,44 @@
     return String(left.file_id || '') === String(right.file_id || '')
       && Number(left.key1_byte) === Number(right.key1_byte)
       && Number(left.key2_byte) === Number(right.key2_byte);
+  }
+
+  function pickMapDraftHeaderByte(value, { optional = false } = {}) {
+    const text = String(value ?? '').trim();
+    if (optional && !text) return null;
+    if (!/^\d+$/.test(text)) return undefined;
+    const parsed = Number(text);
+    return parsed >= 1 && parsed <= 240 ? parsed : undefined;
+  }
+
+  function staticCorrectionDraftPickMapGeometry(target) {
+    const draft = safeLocalStorageJson(STATIC_DRAFT_STORAGE_KEY);
+    if (!draft || draft.version !== 1 || !samePickMapTarget(draft.target, target)) return null;
+    const values = draft.form?.geometry;
+    if (!values || typeof values !== 'object') return null;
+
+    const geometry = { receiver_number_mode: 'global_sequential' };
+    for (const key of PICK_MAP_DRAFT_GEOMETRY_HEADER_FIELDS) {
+      const parsed = pickMapDraftHeaderByte(values[key]);
+      if (parsed === undefined) return null;
+      geometry[key] = parsed;
+    }
+    const sourceDepthByte = pickMapDraftHeaderByte(values.source_depth_byte, { optional: true });
+    if (sourceDepthByte === undefined) return null;
+    geometry.source_depth_byte = sourceDepthByte;
+
+    const coordinateUnit = String(values.coordinate_unit ?? '').trim();
+    const elevationUnit = String(values.elevation_unit ?? '').trim();
+    if (!['m', 'ft'].includes(coordinateUnit) || !['m', 'ft'].includes(elevationUnit)) {
+      return null;
+    }
+    geometry.coordinate_unit = coordinateUnit;
+    geometry.elevation_unit = elevationUnit;
+    return geometry;
+  }
+
+  function pickMapGeometryRequest(target) {
+    return staticCorrectionDraftPickMapGeometry(target) || { receiver_number_mode: 'global_sequential' };
   }
 
   function openStaticPickDb() {
@@ -706,6 +756,17 @@
     if (typeof value !== 'string') return NaN;
     const parsed = Number.parseFloat(value.trim());
     return Number.isFinite(parsed) ? parsed : NaN;
+  }
+
+  function pickMapGatherNumber(value) {
+    if (value === null || value === undefined) return NaN;
+    const text = String(value).trim();
+    const direct = Number(text);
+    if (Number.isFinite(direct)) return direct;
+    const tail = text
+      .split(':')
+      .find((part, index) => index > 0 && Number.isFinite(Number(part)));
+    return tail === undefined ? NaN : Number(tail);
   }
 
   function normalizedText(value) {
@@ -3331,7 +3392,7 @@
     const points = [];
     for (let index = 0; index < count; index += 1) {
       const gather = data.gather_id?.[index];
-      const gatherNumber = toFiniteNumber(gather);
+      const gatherNumber = pickMapGatherNumber(gather);
       if (hasStart && Number.isFinite(gatherNumber) && gatherNumber < start) continue;
       if (hasEnd && Number.isFinite(gatherNumber) && gatherNumber > end) continue;
       const beforeMs = toFiniteNumber(data.pick_before_ms?.[index]);
@@ -3415,7 +3476,7 @@
       paper_bgcolor: '#ffffff',
       plot_bgcolor: '#ffffff',
       xaxis: { title: { text: 'Global receiver number' }, gridcolor: '#e5e7eb', zeroline: false },
-      yaxis: { title: { text: 'First-break pick time (ms)' }, gridcolor: '#e5e7eb', zeroline: false },
+      yaxis: { title: { text: 'First-break pick time (ms)' }, autorange: 'reversed', gridcolor: '#e5e7eb', zeroline: false },
       legend: { orientation: 'h', x: 0, y: 1.14, xanchor: 'left', yanchor: 'top', font: { size: 10 } },
     }, { displayModeBar: false, responsive: true });
   }
@@ -3596,7 +3657,7 @@
         key1_byte: target.key1_byte,
         key2_byte: target.key2_byte,
         pick_source: { kind: 'uploaded_npz' },
-        geometry: { receiver_number_mode: 'global_sequential' },
+        geometry: pickMapGeometryRequest(target),
       },
       error: '',
     };
@@ -3934,6 +3995,7 @@
     loadGatherPreview,
     setSelectedView,
     activateSidebarTab,
+    pickMapGatherNumber,
   };
 
   if (document.readyState === 'loading') {

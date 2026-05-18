@@ -68,6 +68,7 @@ def load_npz_refraction_pick_source_from_path(
     dt_s: float,
     sorted_trace_index: np.ndarray,
     source_kind: str,
+    allow_invalid_pick_values: bool = False,
 ) -> LoadedRefractionPickSource:
     """Load a refraction pick NPZ and normalize pick times to sorted order."""
     path = Path(npz_path)
@@ -93,7 +94,10 @@ def load_npz_refraction_pick_source_from_path(
                 path=path,
                 key=key,
             )
-            picks = _coerce_pick_array(np.asarray(npz[key]))
+            picks = _coerce_pick_array(
+                np.asarray(npz[key]),
+                allow_invalid_pick_values=allow_invalid_pick_values,
+            )
             metadata['pick_shape'] = tuple(int(dim) for dim in picks.shape)
             if picks.shape != (n_traces,):
                 msg = (
@@ -226,14 +230,18 @@ def _read_npz_order(npz: np.lib.npyio.NpzFile) -> str:
     return REFRACTION_PICK_ORDER_ORIGINAL_TRACE
 
 
-def _coerce_pick_array(values: np.ndarray) -> np.ndarray:
+def _coerce_pick_array(
+    values: np.ndarray,
+    *,
+    allow_invalid_pick_values: bool = False,
+) -> np.ndarray:
     arr = np.asarray(values)
     if arr.ndim != 1:
         raise ValueError('pick_time_s_sorted must be 1D')
     if np.issubdtype(arr.dtype, np.bool_) or not _is_real_numeric_dtype(arr.dtype):
         raise ValueError('pick_time_s_sorted must have a real numeric dtype')
     out = np.ascontiguousarray(arr, dtype=np.float64)
-    if not np.all(np.isfinite(out)):
+    if not allow_invalid_pick_values and not np.all(np.isfinite(out)):
         raise ValueError('pick_time_s_sorted must contain only finite values')
     return out
 
