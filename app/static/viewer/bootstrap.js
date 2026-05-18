@@ -146,8 +146,16 @@ const store = createStore(initial);
 window.store = store;
 window.SeisViewerState = createSeisViewerState(store);
 window.SeisViewerState.syncActiveFileTarget = function syncActiveFileTarget(state) {
-  store.patch(readActiveViewerTargetState(state));
-  return window.SeisViewerState.getActiveFileTarget();
+  const nextTargetState = readActiveViewerTargetState(state);
+  store.patch(nextTargetState);
+  const activeTarget = window.SeisViewerState.getActiveFileTarget();
+  if (typeof window.persistActiveViewerToolTarget === 'function') {
+    window.persistActiveViewerToolTarget(activeTarget || nextTargetState);
+  }
+  if (typeof window.refreshViewerToolLinks === 'function') {
+    window.refreshViewerToolLinks();
+  }
+  return activeTarget;
 };
 
 // ---- Sync global wiggle-threshold at boot

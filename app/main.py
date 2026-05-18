@@ -75,6 +75,20 @@ async def upload() -> str:
     return upload_path.read_text(encoding='utf-8')
 
 
+@app.get('/static-correction', response_class=HTMLResponse)
+async def static_correction() -> str:
+    """Return the dedicated static correction page."""
+    static_correction_path = STATIC_DIR / 'static_correction.html'
+    return static_correction_path.read_text(encoding='utf-8')
+
+
+@app.get('/refraction-qc', response_class=HTMLResponse)
+async def refraction_qc() -> str:
+    """Return the dedicated refraction QC page."""
+    refraction_qc_path = STATIC_DIR / 'refraction_qc.html'
+    return refraction_qc_path.read_text(encoding='utf-8')
+
+
 @app.get('/batch', response_class=HTMLResponse)
 async def batch() -> str:
     """Return the batch apply page."""

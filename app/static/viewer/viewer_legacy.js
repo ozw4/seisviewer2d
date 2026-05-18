@@ -2730,14 +2730,21 @@
     }
 
     function syncActiveViewerTargetState(isFileLoaded) {
+      const targetState = {
+        fileId: currentFileId,
+        displayName: currentFileName,
+        key1Byte: currentKey1Byte,
+        key2Byte: currentKey2Byte,
+        isFileLoaded: Boolean(isFileLoaded),
+      };
       if (window.SeisViewerState && typeof window.SeisViewerState.syncActiveFileTarget === 'function') {
-        window.SeisViewerState.syncActiveFileTarget({
-          fileId: currentFileId,
-          displayName: currentFileName,
-          key1Byte: currentKey1Byte,
-          key2Byte: currentKey2Byte,
-          isFileLoaded: Boolean(isFileLoaded),
-        });
+        window.SeisViewerState.syncActiveFileTarget(targetState);
+      }
+      if (typeof window.persistActiveViewerToolTarget === 'function') {
+        window.persistActiveViewerToolTarget(targetState);
+      }
+      if (typeof window.refreshViewerToolLinks === 'function') {
+        window.refreshViewerToolLinks();
       }
     }
 

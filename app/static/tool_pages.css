@@ -1,0 +1,904 @@
+:root {
+  color-scheme: light;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  min-height: 100vh;
+  font-family: sans-serif;
+  background: #f8fafc;
+  color: #0f172a;
+}
+
+header {
+  background: #f0f0f0;
+  padding: 0.8em 1.2em;
+  font-size: 1.2em;
+  border-bottom: 1px solid #ccc;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 1rem;
+}
+
+.headerLinks {
+  display: inline-flex;
+  gap: 0.5em;
+  align-items: center;
+  flex-wrap: wrap;
+  font-size: 0.8em;
+}
+
+.headerLinks a,
+.headerLinks button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0.45em 0.8em;
+  border: 1px solid #d1d5db;
+  border-radius: 999px;
+  background: #fff;
+  color: #111827;
+  text-decoration: none;
+  font: inherit;
+  cursor: pointer;
+}
+
+.headerLinks a:hover,
+.headerLinks a:focus-visible,
+.headerLinks button:hover,
+.headerLinks button:focus-visible {
+  border-color: #94a3b8;
+  background: #f8fafc;
+  outline: none;
+}
+
+button,
+input,
+select {
+  font: inherit;
+}
+
+.tool-main {
+  width: min(100%, 1680px);
+  margin: 0 auto;
+  padding: 1rem;
+}
+
+.tool-hero {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 1rem;
+  margin-bottom: 1rem;
+  padding: 1rem 1.1rem;
+  border: 1px solid #dbe3ef;
+  border-radius: 14px;
+  background: linear-gradient(180deg, #fff 0%, #f8fbff 100%);
+  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04);
+}
+
+.tool-hero h1 {
+  margin: 0;
+  font-size: 1.35rem;
+}
+
+.tool-hero p {
+  margin: 0.45rem 0 0;
+  color: #475569;
+  line-height: 1.5;
+}
+
+.tool-card {
+  border: 1px solid #dbe3ef;
+  border-radius: 14px;
+  background: #fff;
+  box-shadow: 0 10px 30px rgba(15, 23, 42, 0.06);
+  overflow: clip;
+}
+
+.tool-card > .static-correction-panel,
+.tool-card > .refraction-qc-panel {
+  min-height: auto;
+}
+
+@media (max-width: 720px) {
+  header,
+  .tool-hero {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .tool-main {
+    padding: 0.75rem;
+  }
+}
+
+    .static-correction-panel {
+      flex: 1;
+      min-height: 0;
+      overflow-y: auto;
+      padding: 1em;
+      background: #fafafa;
+      display: flex;
+      flex-direction: column;
+      gap: 0.85em;
+    }
+
+    .static-correction-title {
+      margin: 0;
+      font-size: 1em;
+    }
+
+    .static-correction-form {
+      display: flex;
+      flex-direction: column;
+      gap: 0.75em;
+    }
+
+    .static-correction-section {
+      display: flex;
+      flex-direction: column;
+      gap: 0.55em;
+      padding: 0.75em;
+      border: 1px solid #d8dee8;
+      border-radius: 8px;
+      background: #fff;
+    }
+
+    .static-correction-section h3,
+    .static-correction-section summary {
+      margin: 0;
+      font-size: 0.95em;
+      color: #0f172a;
+    }
+
+    .static-correction-section summary {
+      cursor: pointer;
+      font-weight: 700;
+    }
+
+    .static-correction-help {
+      margin: 0;
+      font-size: 0.82em;
+      line-height: 1.4;
+      color: #475569;
+    }
+
+    .static-correction-target-summary {
+      display: grid;
+      gap: 0.35em;
+      font-size: 0.86em;
+      color: #334155;
+    }
+
+    .static-correction-target-summary[hidden] {
+      display: none;
+    }
+
+    .static-correction-target-row {
+      display: grid;
+      grid-template-columns: minmax(7.5em, max-content) minmax(0, 1fr);
+      gap: 0.5em;
+      align-items: baseline;
+    }
+
+    .static-correction-target-label {
+      color: #64748b;
+      font-weight: 600;
+    }
+
+    .static-correction-target-value {
+      min-width: 0;
+      overflow-wrap: anywhere;
+      color: #111827;
+    }
+
+    .static-correction-field {
+      display: flex;
+      flex-direction: column;
+      gap: 0.3em;
+      font-size: 0.86em;
+      color: #334155;
+    }
+
+    .static-correction-field input,
+    .static-correction-field select {
+      padding: 0.4em 0.5em;
+      border: 1px solid #cbd5e1;
+      border-radius: 4px;
+      background: #fff;
+      color: #111827;
+      font: inherit;
+    }
+
+    .static-correction-file-summary {
+      min-height: 1.4em;
+      color: #64748b;
+      font-size: 0.82em;
+      overflow-wrap: anywhere;
+    }
+
+    .static-correction-field-row {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 0.5em;
+    }
+
+    .static-correction-check-field {
+      display: flex;
+      align-items: flex-start;
+      gap: 0.5em;
+      font-size: 0.86em;
+      color: #334155;
+    }
+
+    .static-correction-check-field input {
+      flex: 0 0 auto;
+      margin: 0.2em 0 0;
+    }
+
+    .static-correction-linkage-options {
+      display: flex;
+      flex-direction: column;
+      gap: 0.55em;
+    }
+
+    .static-correction-linkage-options[hidden] {
+      display: none;
+    }
+
+    .static-correction-preset-grid {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto;
+      gap: 0.5em;
+      align-items: end;
+    }
+
+    .static-correction-field input:disabled,
+    .static-correction-field select:disabled,
+    .static-correction-check-field input:disabled,
+    .static-correction-actions button:disabled {
+      color: #64748b;
+      cursor: not-allowed;
+      opacity: 0.75;
+    }
+
+    .static-correction-actions {
+      display: flex;
+      gap: 0.5em;
+      align-items: center;
+    }
+
+    .static-correction-actions button {
+      margin: 0;
+      padding: 0.45em 0.65em;
+      border: 1px solid #cbd5e1;
+      border-radius: 4px;
+      background: #fff;
+      color: #111827;
+      font: inherit;
+      font-size: 0.86em;
+    }
+
+    .static-correction-job-panel {
+      display: grid;
+      gap: 0.45em;
+      padding: 0.75em;
+      border: 1px solid #d8dee8;
+      border-radius: 8px;
+      background: #fff;
+      font-size: 0.84em;
+      color: #334155;
+    }
+
+    .static-correction-job-panel[hidden] {
+      display: none;
+    }
+
+    .static-correction-job-row {
+      display: grid;
+      grid-template-columns: 6.5em minmax(0, 1fr);
+      gap: 0.5em;
+      align-items: center;
+      min-width: 0;
+    }
+
+    .static-correction-job-label {
+      color: #64748b;
+    }
+
+    .static-correction-job-value {
+      min-width: 0;
+      overflow-wrap: anywhere;
+      color: #0f172a;
+    }
+
+    .static-correction-job-progress {
+      display: flex;
+      gap: 0.5em;
+      align-items: center;
+      min-width: 0;
+    }
+
+    .static-correction-job-progress progress {
+      flex: 1 1 auto;
+      min-width: 0;
+      height: 0.7em;
+    }
+
+    .static-correction-artifact-table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 0.82em;
+      background: #fff;
+    }
+
+    .static-correction-artifact-table[hidden] {
+      display: none;
+    }
+
+    .static-correction-artifact-table th,
+    .static-correction-artifact-table td {
+      padding: 0.45em 0.5em;
+      border-bottom: 1px solid #e2e8f0;
+      text-align: left;
+      vertical-align: top;
+      overflow-wrap: anywhere;
+    }
+
+    .static-correction-artifact-table th {
+      color: #475569;
+      font-weight: 600;
+      background: #f8fafc;
+    }
+
+    .static-correction-artifact-empty {
+      font-size: 0.82em;
+      color: #64748b;
+    }
+
+    .static-correction-artifact-empty[hidden] {
+      display: none;
+    }
+
+    .static-correction-status,
+    .static-correction-error {
+      font-size: 0.84em;
+      line-height: 1.4;
+    }
+
+    .static-correction-status {
+      color: #475569;
+    }
+
+    .static-correction-error {
+      padding: 0.55em 0.65em;
+      border: 1px solid #fca5a5;
+      border-radius: 4px;
+      background: #fef2f2;
+      color: #991b1b;
+    }
+
+    .static-correction-validation {
+      padding: 0.55em 0.65em;
+      border: 1px solid #facc15;
+      border-radius: 4px;
+      background: #fefce8;
+      color: #854d0e;
+      font-size: 0.84em;
+      line-height: 1.4;
+    }
+
+    .static-correction-validation[hidden] {
+      display: none;
+    }
+
+    .static-correction-validation ul {
+      margin: 0.25em 0 0 1.2em;
+      padding: 0;
+    }
+
+    .static-correction-diagnostics {
+      display: grid;
+      gap: 0.55em;
+      padding: 0.65em;
+      border: 1px solid #bfdbfe;
+      border-radius: 4px;
+      background: #eff6ff;
+      color: #1e3a8a;
+      font-size: 0.82em;
+      line-height: 1.4;
+    }
+
+    .static-correction-diagnostics[hidden] {
+      display: none;
+    }
+
+    .static-correction-diagnostics table {
+      width: 100%;
+      border-collapse: collapse;
+      background: #fff;
+    }
+
+    .static-correction-diagnostics th,
+    .static-correction-diagnostics td {
+      padding: 0.35em 0.45em;
+      border-bottom: 1px solid #dbeafe;
+      text-align: left;
+      vertical-align: top;
+      overflow-wrap: anywhere;
+    }
+
+    .static-correction-diagnostics th {
+      width: 45%;
+      color: #475569;
+      font-weight: 600;
+    }
+
+    .static-correction-request-preview {
+      max-height: 18em;
+      margin: 0;
+      overflow: auto;
+      padding: 0.65em;
+      border: 1px solid #d8dee8;
+      border-radius: 4px;
+      background: #f8fafc;
+      color: #0f172a;
+      font-size: 0.78em;
+      line-height: 1.45;
+      white-space: pre;
+    }
+
+    .static-correction-request-preview[hidden] {
+      display: none;
+    }
+
+    .refraction-qc-panel {
+      flex: 1;
+      min-height: 0;
+      overflow-y: auto;
+      padding: 1em;
+      background: #fafafa;
+      display: flex;
+      flex-direction: column;
+      gap: 0.85em;
+    }
+
+    .refraction-qc-title {
+      margin: 0;
+      font-size: 1em;
+    }
+
+    .refraction-qc-form,
+    .refraction-qc-selectors,
+    .refraction-qc-view-buttons {
+      display: flex;
+      flex-direction: column;
+      gap: 0.65em;
+    }
+
+    .refraction-qc-field {
+      display: flex;
+      flex-direction: column;
+      gap: 0.3em;
+      font-size: 0.86em;
+      color: #334155;
+    }
+
+    .refraction-qc-field input,
+    .refraction-qc-field select {
+      padding: 0.4em 0.5em;
+      border: 1px solid #cbd5e1;
+      border-radius: 4px;
+      background: #fff;
+      color: #111827;
+      font: inherit;
+    }
+
+    .refraction-qc-actions {
+      display: flex;
+      gap: 0.5em;
+      align-items: center;
+    }
+
+    .refraction-qc-actions button,
+    .refraction-qc-view-button {
+      margin: 0;
+      padding: 0.45em 0.65em;
+      border: 1px solid #cbd5e1;
+      border-radius: 4px;
+      background: #fff;
+      color: #111827;
+      cursor: pointer;
+      font: inherit;
+      font-size: 0.86em;
+    }
+
+    .refraction-qc-actions button:disabled {
+      cursor: wait;
+      opacity: 0.7;
+    }
+
+    .refraction-qc-view-button {
+      text-align: left;
+    }
+
+    .refraction-qc-view-button.is-active {
+      border-color: #2563eb;
+      background: #eff6ff;
+      color: #1d4ed8;
+      font-weight: 700;
+    }
+
+    .refraction-qc-status,
+    .refraction-qc-error,
+    .refraction-qc-sign {
+      font-size: 0.84em;
+      line-height: 1.4;
+    }
+
+    .refraction-qc-status {
+      color: #475569;
+    }
+
+    .refraction-qc-error {
+      padding: 0.55em 0.65em;
+      border: 1px solid #fca5a5;
+      border-radius: 4px;
+      background: #fef2f2;
+      color: #991b1b;
+    }
+
+    .refraction-qc-sign {
+      color: #334155;
+    }
+
+    .refraction-qc-view {
+      border: 1px solid #d8dee8;
+      border-radius: 8px;
+      background: #fff;
+      padding: 0.8em;
+      display: flex;
+      flex-direction: column;
+      gap: 0.55em;
+    }
+
+    .refraction-qc-view[hidden] {
+      display: none !important;
+    }
+
+    .refraction-qc-view h3 {
+      margin: 0;
+      font-size: 0.95em;
+      color: #0f172a;
+    }
+
+    .refraction-qc-placeholder {
+      margin: 0;
+      color: #64748b;
+      font-size: 0.86em;
+      line-height: 1.45;
+    }
+
+    .refraction-qc-kv {
+      display: grid;
+      grid-template-columns: minmax(0, 7.5em) minmax(0, 1fr);
+      gap: 0.35em 0.6em;
+      margin: 0;
+      font-size: 0.82em;
+    }
+
+    .refraction-qc-kv dt {
+      color: #64748b;
+      font-weight: 700;
+    }
+
+    .refraction-qc-kv dd {
+      margin: 0;
+      color: #0f172a;
+      overflow-wrap: anywhere;
+    }
+
+    .refraction-qc-table-wrap {
+      overflow-x: auto;
+      border: 1px solid #e5e7eb;
+      border-radius: 4px;
+    }
+
+    .refraction-qc-table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 0.78em;
+    }
+
+    .refraction-qc-table th,
+    .refraction-qc-table td {
+      padding: 0.35em 0.45em;
+      border-bottom: 1px solid #e5e7eb;
+      text-align: left;
+      white-space: nowrap;
+    }
+
+    .refraction-qc-table th {
+      background: #f8fafc;
+      color: #334155;
+      font-weight: 700;
+    }
+
+    .refraction-qc-check-field {
+      flex-direction: row;
+      align-items: center;
+      justify-content: space-between;
+      gap: 0.6em;
+    }
+
+    .refraction-qc-check-field input {
+      margin: 0;
+    }
+
+    .refraction-qc-plot-grid {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr);
+      gap: 0.75em;
+    }
+
+    .refraction-qc-plot {
+      min-width: 0;
+      width: 100%;
+      height: 260px;
+      border: 1px solid #e5e7eb;
+      border-radius: 4px;
+      background: #fff;
+    }
+
+    .refraction-qc-cell-map-plot {
+      height: 340px;
+    }
+
+    .refraction-qc-static-waterfall {
+      height: 320px;
+    }
+
+    .refraction-qc-gather-controls {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: end;
+      gap: 0.55em 0.65em;
+      padding: 0.65em;
+      border: 1px solid #e2e8f0;
+      border-radius: 4px;
+      background: #f8fafc;
+    }
+
+    .refraction-qc-gather-controls .refraction-qc-field {
+      min-width: 7.5em;
+    }
+
+    .refraction-qc-gather-controls .refraction-qc-field input,
+    .refraction-qc-gather-controls .refraction-qc-field select {
+      width: 100%;
+      box-sizing: border-box;
+    }
+
+    .refraction-qc-gather-controls .refraction-qc-actions {
+      margin-top: 0;
+      align-self: end;
+    }
+
+    .refraction-qc-gather-grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 0.75em;
+    }
+
+    .refraction-qc-gather-plot {
+      height: 320px;
+    }
+
+    @media (max-width: 900px) {
+      .refraction-qc-gather-grid {
+        grid-template-columns: minmax(0, 1fr);
+      }
+    }
+
+    .refraction-qc-component-table td:nth-child(2),
+    .refraction-qc-component-table td:nth-child(3) {
+      white-space: normal;
+    }
+
+    .refraction-qc-component-status {
+      font-weight: 700;
+    }
+
+    .refraction-qc-component-status.is-ok {
+      color: #166534;
+    }
+
+    .refraction-qc-component-status.is-alert {
+      color: #991b1b;
+    }
+
+    .refraction-qc-note {
+      margin: 0;
+      color: #334155;
+      font-size: 0.82em;
+      line-height: 1.45;
+    }
+
+
+.static-correction-page .static-correction-panel {
+  overflow: visible;
+  max-height: none;
+}
+
+.static-correction-page .static-correction-form {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+  align-items: start;
+}
+
+.static-correction-page .static-correction-section,
+.static-correction-page .static-correction-job-panel,
+.static-correction-page .static-correction-validation,
+.static-correction-page .static-correction-diagnostics,
+.static-correction-page .static-correction-request-preview,
+.static-correction-page .static-correction-error {
+  min-width: 0;
+}
+
+.static-correction-page .static-correction-request-preview,
+.static-correction-page .static-correction-diagnostics,
+.static-correction-page .static-correction-job-panel,
+.static-correction-page .static-correction-validation {
+  grid-column: 1 / -1;
+}
+
+.static-correction-page .static-correction-actions {
+  grid-column: 1 / -1;
+}
+
+.static-correction-qc-link-row[hidden] {
+  display: none;
+}
+
+.static-correction-qc-link-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  padding: 0.55rem 0.65rem;
+  border: 1px solid #bfdbfe;
+  border-radius: 8px;
+  background: #eff6ff;
+  color: #1e3a8a;
+  font-size: 0.88em;
+}
+
+.static-correction-qc-link-row a {
+  color: #1d4ed8;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.refraction-qc-page .tool-main {
+  width: min(100%, 1920px);
+}
+
+.refraction-qc-page .refraction-qc-panel {
+  overflow: visible;
+  gap: 1rem;
+}
+
+.refraction-qc-page .refraction-qc-title {
+  font-size: 1.1rem;
+}
+
+.refraction-qc-page .refraction-qc-form {
+  flex-direction: row;
+  flex-wrap: wrap;
+  align-items: end;
+  padding: 0.8rem;
+  border: 1px solid #dbe3ef;
+  border-radius: 10px;
+  background: #f8fafc;
+}
+
+.refraction-qc-page .refraction-qc-form .refraction-qc-field {
+  min-width: min(100%, 18rem);
+}
+
+.refraction-qc-page .refraction-qc-selectors {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
+  gap: 0.7rem;
+  padding: 0.8rem;
+  border: 1px solid #dbe3ef;
+  border-radius: 10px;
+  background: #f8fafc;
+}
+
+.refraction-qc-page .refraction-qc-view-buttons {
+  position: sticky;
+  top: 0;
+  z-index: 5;
+  display: flex;
+  flex-direction: row;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  padding: 0.65rem;
+  border: 1px solid #dbe3ef;
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.95);
+  box-shadow: 0 4px 16px rgba(15, 23, 42, 0.08);
+}
+
+.refraction-qc-page .refraction-qc-view-button {
+  text-align: center;
+  border-radius: 999px;
+  padding: 0.5rem 0.8rem;
+}
+
+.refraction-qc-page #refractionQcViews,
+.refraction-qc-page .refraction-qc-view,
+.refraction-qc-page [data-view-content] {
+  min-width: 0;
+}
+
+.refraction-qc-page .refraction-qc-view {
+  padding: 1rem;
+  gap: 0.8rem;
+}
+
+.refraction-qc-page .refraction-qc-plot-grid {
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 560px), 1fr));
+  gap: 1rem;
+}
+
+.refraction-qc-page .refraction-qc-plot {
+  height: 440px;
+}
+
+.refraction-qc-page .refraction-qc-cell-map-plot {
+  height: 560px;
+}
+
+.refraction-qc-page .refraction-qc-static-waterfall {
+  height: 460px;
+}
+
+.refraction-qc-page .refraction-qc-gather-grid {
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 640px), 1fr));
+  gap: 1rem;
+}
+
+.refraction-qc-page .refraction-qc-gather-plot {
+  height: 520px;
+}
+
+.refraction-qc-page .refraction-qc-gather-controls {
+  gap: 0.75rem;
+}
+
+.refraction-qc-page .refraction-qc-table {
+  font-size: 0.86em;
+}
+
+@media (max-width: 720px) {
+  .static-correction-page .static-correction-form {
+    grid-template-columns: 1fr;
+  }
+
+  .refraction-qc-page .refraction-qc-form {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .refraction-qc-page .refraction-qc-form .refraction-qc-field {
+    min-width: 0;
+  }
+}
