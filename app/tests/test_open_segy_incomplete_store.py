@@ -90,7 +90,28 @@ def _open_env(tmp_path: Path, monkeypatch):
     monkeypatch.setattr(upload_mod, 'TRACE_DIR', trace_dir, raising=True)
 
     # open_segy で segyio を触らないようにする（Thread/preload/ensure_header を止める）
-    monkeypatch.setattr(upload_mod, '_register_trace_store', lambda *a, **k: None)
+    def _fake_register(
+        *,
+        state,
+        file_id,
+        store_dir,
+        dt=None,
+        update_registry=True,
+        touch_meta=True,
+        **_kwargs,
+    ):
+        if touch_meta:
+            meta_path = Path(store_dir) / 'meta.json'
+            if meta_path.exists():
+                meta_path.touch()
+        if update_registry:
+            state.file_registry.update(
+                file_id,
+                store_path=str(store_dir),
+                dt=dt,
+            )
+
+    monkeypatch.setattr(upload_mod, 'register_trace_store', _fake_register)
 
     calls: dict[str, object] = {'ingest': 0, 'args': None, 'source_sha256': None}
 

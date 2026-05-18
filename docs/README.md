@@ -133,6 +133,34 @@ Compare mode:
 - If either source is probability-domain data, Compare mode uses heatmap rendering for all visible panels.
 - A-B is available only when A and B have the same domain, shape, sample interval, and grid. Mixed-domain A/B comparison is allowed with `Show A-B` off, but A-B is disabled.
 
+## Static correction
+
+This viewer supports backend workflows for datum statics, first-break QC,
+residual statics, geometry linkage, and time-term statics.
+
+See:
+
+- `static_correction.md`
+- `statics/static_correction_ui_workflow.md`
+- `statics/refraction_static_ui_fixture.md`
+- `refraction_static.md`
+- [statics/refraction_field_corrections.md](statics/refraction_field_corrections.md)
+- `statics/refraction_multilayer_time_term.md`
+- `statics/refraction_m5_exports_table_workflow.md`
+- `statics/refraction_qc_viewer_workflow.md`
+- `time_term_static_correction.md`
+
+Refraction statics include the 1-layer V1/V2/T1 T1LSST workflow, cell-based
+local V2 support, and the public two- and three-layer
+`t1lsst_multilayer` workflow. M4 field-correction documentation covers
+source-depth, uphole-time, and manual source/receiver static composition.
+The M6 QC viewer workflow documents first-break residuals, reduced-time/LMO,
+profiles, maps, static component waterfalls, and gather preview.
+Multi-layer source/receiver outputs use the existing static table artifacts
+with added `t2`, `v3`, `sh2`, and, for three-layer runs, `t3`, `vsub`, and
+`sh3` fields; the repo sign convention remains
+`corrected(t) = raw(t - shift_s)`.
+
 ## Viewer benchmark
 
 The dedicated GitHub Actions workflow is `viewer-benchmark`.
@@ -383,6 +411,6 @@ Frontend unit tests (optional):
 
 ```bash
 cd app
-npm install
-npx vitest run
+npm ci
+npm run test:ui
 ```

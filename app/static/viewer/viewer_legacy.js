@@ -1284,14 +1284,25 @@
         const result = Plotly.relayout(gd, props);
         if (result && typeof result.finally === 'function') {
           return result.finally(() => {
-            suppressRelayout = false;
+            finishSuppressedRelayout();
           });
         }
-        suppressRelayout = false;
+        finishSuppressedRelayout();
         return result;
       } catch (err) {
-        suppressRelayout = false;
+        finishSuppressedRelayout();
         throw err;
+      }
+    }
+
+    function finishSuppressedRelayout() {
+      suppressRelayout = false;
+      if (
+        typeof hasPendingPickOverlayState === 'function' &&
+        hasPendingPickOverlayState() &&
+        typeof schedulePickOverlayUpdate === 'function'
+      ) {
+        schedulePickOverlayUpdate();
       }
     }
 
@@ -2718,6 +2729,18 @@
       }
     }
 
+    function syncActiveViewerTargetState(isFileLoaded) {
+      if (window.SeisViewerState && typeof window.SeisViewerState.syncActiveFileTarget === 'function') {
+        window.SeisViewerState.syncActiveFileTarget({
+          fileId: currentFileId,
+          displayName: currentFileName,
+          key1Byte: currentKey1Byte,
+          key2Byte: currentKey2Byte,
+          isFileLoaded: Boolean(isFileLoaded),
+        });
+      }
+    }
+
     async function loadSettings() {
       const params = new URLSearchParams(window.location.search);
       currentFileId = params.get('file_id') || localStorage.getItem('file_id') || '';
@@ -2735,6 +2758,7 @@
         sectionShape = null;
         updateSectionNavigation({ syncDisplay: true, syncJumpInput: true });
         showViewerEmptyState('no-dataset');
+        syncActiveViewerTargetState(false);
         return;
       }
       localStorage.setItem('file_id', currentFileId);
@@ -2746,6 +2770,7 @@
         sectionShape = null;
         updateSectionNavigation({ syncDisplay: true, syncJumpInput: true });
         showViewerEmptyState('unavailable');
+        syncActiveViewerTargetState(false);
         return;
       }
       await fetchKey1Values();
@@ -2753,15 +2778,18 @@
         sectionShape = null;
         updateSectionNavigation({ syncDisplay: true, syncJumpInput: true });
         showViewerEmptyState('unavailable');
+        syncActiveViewerTargetState(false);
         return;
       }
       await fetchSectionMeta();
       if (!Array.isArray(sectionShape) || sectionShape.length < 2) {
         updateSectionNavigation({ syncDisplay: true, syncJumpInput: true });
         showViewerEmptyState('unavailable');
+        syncActiveViewerTargetState(false);
         return;
       }
       hideViewerEmptyState();
+      syncActiveViewerTargetState(true);
       await fetchAndPlot();
     }
 
@@ -3370,27 +3398,32 @@
           if (!currentFileId) {
             currentFileName = '';
             showViewerEmptyState('no-dataset');
+            syncActiveViewerTargetState(false);
             return;
           }
           await fetchCurrentFileName();
           if (!currentFileName) {
             updateSectionNavigation({ syncDisplay: true, syncJumpInput: true });
             showViewerEmptyState('unavailable');
+            syncActiveViewerTargetState(false);
             return;
           }
           await fetchKey1Values();
           if (!Array.isArray(key1Values) || key1Values.length === 0) {
             updateSectionNavigation({ syncDisplay: true, syncJumpInput: true });
             showViewerEmptyState('unavailable');
+            syncActiveViewerTargetState(false);
             return;
           }
           await fetchSectionMeta();
           if (!Array.isArray(sectionShape) || sectionShape.length < 2) {
             updateSectionNavigation({ syncDisplay: true, syncJumpInput: true });
             showViewerEmptyState('unavailable');
+            syncActiveViewerTargetState(false);
             return;
           }
           hideViewerEmptyState();
+          syncActiveViewerTargetState(true);
           (typeof fetchAndPlotDebounced?.flush === 'function')
             ? fetchAndPlotDebounced.flush()
             : fetchAndPlot();

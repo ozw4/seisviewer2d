@@ -15,6 +15,7 @@ from app.api.routers import (
     picks_router,
     pipeline_router,
     section_router,
+    statics_router,
     upload_router,
 )
 from app.api.routers.upload import cleanup_staged_uploads
@@ -48,6 +49,7 @@ app.include_router(fbpick_predict_router)
 app.include_router(pipeline_router)
 app.include_router(batch_apply_router)
 app.include_router(picks_router)
+app.include_router(statics_router)
 
 
 @app.exception_handler(DomainError)

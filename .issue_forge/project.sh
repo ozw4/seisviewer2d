@@ -1,4 +1,14 @@
 # seisviewer issue_forge consumer config.
 # Defaults are supplied by vendor/issue_forge.
-CODEX_FLOW_BASE_BRANCH='main'
-CODEX_FLOW_BASE_REF='origin/main'
+CODEX_FLOW_BASE_BRANCH='feature/static_correction'
+CODEX_FLOW_BASE_REF='origin/feature/static_correction'
+
+CODEX_FLOW_PROFILE_WRITE_SANDBOX='danger-full-access'
+CODEX_FLOW_PROFILE_WRITE_REASONING='high'
+CODEX_FLOW_PROFILE_READ_SANDBOX='danger-full-access'
+CODEX_FLOW_PROFILE_READ_REASONING='medium'
+
+CODEX_FLOW_IMPLEMENTATION_REASONING='high'
+CODEX_FLOW_CHECK_FIX_REASONING='high'
+CODEX_FLOW_REVIEW_REASONING='medium'
+CODEX_FLOW_REVIEW_FIX_REASONING='high'

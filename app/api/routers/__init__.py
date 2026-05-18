@@ -6,6 +6,7 @@ from app.api.routers.fbpick_predict import router as fbpick_predict_router
 from app.api.routers.picks import router as picks_router
 from app.api.routers.pipeline import router as pipeline_router
 from app.api.routers.section import router as section_router
+from app.api.routers.statics import router as statics_router
 from app.api.routers.upload import router as upload_router
 
 __all__ = [
@@ -15,5 +16,6 @@ __all__ = [
     'picks_router',
     'pipeline_router',
     'section_router',
+    'statics_router',
     'upload_router',
 ]

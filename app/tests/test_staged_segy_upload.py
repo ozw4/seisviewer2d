@@ -63,7 +63,28 @@ def _staged_env(tmp_path: Path, monkeypatch):
     monkeypatch.setattr(upload_mod, 'UPLOAD_DIR', upload_root, raising=True)
     monkeypatch.setattr(upload_mod, 'PROCESSED_DIR', processed, raising=True)
     monkeypatch.setattr(upload_mod, 'TRACE_DIR', trace_dir, raising=True)
-    monkeypatch.setattr(upload_mod, '_register_trace_store', lambda *a, **k: None)
+    def _fake_register(
+        *,
+        state,
+        file_id,
+        store_dir,
+        dt=None,
+        update_registry=True,
+        touch_meta=True,
+        **_kwargs,
+    ):
+        if touch_meta:
+            meta_path = Path(store_dir) / 'meta.json'
+            if meta_path.exists():
+                meta_path.touch()
+        if update_registry:
+            state.file_registry.update(
+                file_id,
+                store_path=str(store_dir),
+                dt=dt,
+            )
+
+    monkeypatch.setattr(upload_mod, 'register_trace_store', _fake_register)
 
     calls = {'qc': 0, 'ingest': 0}
 

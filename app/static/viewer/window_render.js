@@ -93,9 +93,13 @@
     function withSuppressedRelayout(promiseLike) {
         suppressRelayout = true;
         if (promiseLike && typeof promiseLike.finally === 'function') {
-            return promiseLike.finally(() => { suppressRelayout = false; });
+            return promiseLike.finally(() => {
+              if (typeof finishSuppressedRelayout === 'function') finishSuppressedRelayout();
+              else suppressRelayout = false;
+            });
           }
-        suppressRelayout = false;
+        if (typeof finishSuppressedRelayout === 'function') finishSuppressedRelayout();
+        else suppressRelayout = false;
         return promiseLike;
       }
     function maybeResizePlot(plotDiv, force) {

@@ -1,10 +1,12 @@
 timm
 numpy<2
 pandas
+scipy
 tqdm
 segyio
 numba
 fastapi
+pydantic>=2,<3
 httpx
 uvicorn[standard]
 python-multipart
