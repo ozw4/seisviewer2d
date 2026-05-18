@@ -117,6 +117,131 @@ def test_refraction_qc_pick_map_before_statics_does_not_require_job_id(
     assert response.json()['mode'] == 'pre_statics'
 
 
+def test_pick_map_pre_statics_accepts_nan_missing_picks_and_plots_valid_only(
+    pick_map_client,
+):
+    client, _state, tmp_path = pick_map_client
+    pick_path = tmp_path / 'picks-nan.npz'
+    np.savez(
+        pick_path,
+        first_break_time_s=np.asarray([0.084, np.nan, np.inf, 0.102]),
+        trace_order=np.asarray('trace_store_sorted'),
+    )
+
+    response = client.post(
+        '/statics/refraction/qc/pick-map',
+        data={
+            'request_json': json.dumps(
+                {
+                    'file_id': FILE_ID,
+                    'pick_source': {'kind': 'uploaded_npz'},
+                }
+            ),
+        },
+        files={'pick_npz': ('picks.npz', pick_path.read_bytes(), 'application/x-npz')},
+    )
+
+    assert response.status_code == 200
+    pick_map = response.json()['pick_map']
+    assert pick_map['trace_index'] == [0, 3]
+    assert pick_map['pick_before_ms'] == pytest.approx([84.0, 102.0])
+
+
+def test_pick_map_pre_statics_accepts_negative_sentinel_and_plots_valid_only(
+    pick_map_client,
+):
+    client, _state, tmp_path = pick_map_client
+    pick_path = tmp_path / 'picks-sentinel.npz'
+    np.savez(
+        pick_path,
+        first_break_time_s=np.asarray([0.084, -1.0, 0.091, -999.25]),
+        trace_order=np.asarray('trace_store_sorted'),
+    )
+
+    response = client.post(
+        '/statics/refraction/qc/pick-map',
+        data={
+            'request_json': json.dumps(
+                {
+                    'file_id': FILE_ID,
+                    'pick_source': {'kind': 'uploaded_npz'},
+                }
+            ),
+        },
+        files={'pick_npz': ('picks.npz', pick_path.read_bytes(), 'application/x-npz')},
+    )
+
+    assert response.status_code == 200
+    pick_map = response.json()['pick_map']
+    assert pick_map['trace_index'] == [0, 2]
+    assert pick_map['pick_before_ms'] == pytest.approx([84.0, 91.0])
+
+
+def test_pick_map_pre_statics_applies_negative_coordinate_scalar(
+    pick_map_client,
+):
+    client, _state, tmp_path = pick_map_client
+    np.save(tmp_path / 'store' / 'headers_byte_71.npy', np.full(4, -10, dtype=np.int32))
+    pick_path = tmp_path / 'picks-scaled.npz'
+    np.savez(
+        pick_path,
+        first_break_time_s=np.asarray([0.084, 0.086, 0.091, 0.102]),
+        trace_order=np.asarray('trace_store_sorted'),
+    )
+
+    response = client.post(
+        '/statics/refraction/qc/pick-map',
+        data={
+            'request_json': json.dumps(
+                {
+                    'file_id': FILE_ID,
+                    'pick_source': {'kind': 'uploaded_npz'},
+                    'geometry': {
+                        'receiver_number_mode': 'global_sequential',
+                        'coordinate_scalar_byte': 71,
+                    },
+                }
+            ),
+        },
+        files={'pick_npz': ('picks.npz', pick_path.read_bytes(), 'application/x-npz')},
+    )
+
+    assert response.status_code == 200
+    assert response.json()['pick_map']['offset_m'] == pytest.approx([10.0] * 4)
+
+
+def test_pick_map_pre_statics_converts_coordinate_feet_to_meters(
+    pick_map_client,
+):
+    client, _state, tmp_path = pick_map_client
+    pick_path = tmp_path / 'picks-feet.npz'
+    np.savez(
+        pick_path,
+        first_break_time_s=np.asarray([0.084, 0.086, 0.091, 0.102]),
+        trace_order=np.asarray('trace_store_sorted'),
+    )
+
+    response = client.post(
+        '/statics/refraction/qc/pick-map',
+        data={
+            'request_json': json.dumps(
+                {
+                    'file_id': FILE_ID,
+                    'pick_source': {'kind': 'uploaded_npz'},
+                    'geometry': {
+                        'receiver_number_mode': 'global_sequential',
+                        'coordinate_unit': 'ft',
+                    },
+                }
+            ),
+        },
+        files={'pick_npz': ('picks.npz', pick_path.read_bytes(), 'application/x-npz')},
+    )
+
+    assert response.status_code == 200
+    assert response.json()['pick_map']['offset_m'] == pytest.approx([30.48] * 4)
+
+
 def test_refraction_qc_pick_map_completed_job_includes_before_and_after_picks(
     pick_map_client,
 ):
@@ -152,6 +277,64 @@ def test_refraction_qc_pick_map_completed_job_includes_before_and_after_picks(
     assert pick_map['pick_after_ms'] == pytest.approx([74.0, 96.0, 102.0])
     assert pick_map['used_in_statics'] == [True, False, True]
     assert pick_map['offset_used'] == [120.0, None, 300.0]
+
+
+def test_pick_map_completed_job_gather_range_reports_endpoint_key_numeric_suffix(
+    pick_map_client,
+):
+    client, state, tmp_path = pick_map_client
+    artifacts_dir = tmp_path / 'endpoint-artifacts'
+    artifacts_dir.mkdir()
+    (artifacts_dir / REFRACTION_STATIC_QC_JSON_NAME).write_text(
+        json.dumps({'sign_convention': REFRACTION_STATIC_REPO_SIGN_CONVENTION}),
+        encoding='utf-8',
+    )
+    _write_csv(
+        artifacts_dir / REFRACTION_FIRST_BREAK_FIT_QC_CSV_NAME,
+        [
+            {
+                'trace_index_sorted': '0',
+                'source_endpoint_key': 'source:100',
+                'receiver_endpoint_key': 'receiver:2000',
+                'offset_m': '120.0',
+                'observed_first_break_time_s': '0.084',
+                'used_in_solve': 'true',
+            },
+            {
+                'trace_index_sorted': '1',
+                'source_endpoint_key': 'source:101:10:20',
+                'receiver_endpoint_key': 'receiver:2001',
+                'offset_m': '220.0',
+                'observed_first_break_time_s': '0.091',
+                'used_in_solve': 'true',
+            },
+        ],
+    )
+    _write_csv(
+        artifacts_dir / REFRACTION_STATIC_COMPONENT_QC_TRACE_CSV_NAME,
+        [
+            {'trace_index_sorted': '0', 'applied_trace_shift_ms': '0.0'},
+            {'trace_index_sorted': '1', 'applied_trace_shift_ms': '0.0'},
+        ],
+    )
+    job_id = 'pick-map-endpoint-job'
+    with state.lock:
+        state.jobs.create_static_job(
+            job_id,
+            file_id=FILE_ID,
+            key1_byte=KEY1,
+            key2_byte=KEY2,
+            statics_kind='refraction',
+            artifacts_dir=str(artifacts_dir),
+        )
+        state.jobs.mark_done(job_id, progress_1=True)
+
+    response = client.post('/statics/refraction/qc/pick-map', json={'job_id': job_id})
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body['gather_range'] == {'min': 100, 'max': 101}
+    assert body['pick_map']['gather_id'] == ['source:100', 'source:101:10:20']
 
 
 def _write_trace_store(store: Path) -> None:

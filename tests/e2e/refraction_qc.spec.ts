@@ -1122,10 +1122,11 @@ async function seedStaticCorrectionPickCache(
 		key2Byte = 13,
 		filename = 'active-viewer-picks.npz',
 		recordId = 'target:active-viewer-store:9:13:latest',
+		form = {},
 	} = {},
 ) {
 	await page.evaluate(
-		async ({ fileId, key1Byte, key2Byte, filename, recordId }) => {
+		async ({ fileId, key1Byte, key2Byte, filename, recordId, form }) => {
 			window.localStorage.removeItem('file_id');
 			window.localStorage.removeItem('key1_byte');
 			window.localStorage.removeItem('key2_byte');
@@ -1191,11 +1192,11 @@ async function seedStaticCorrectionPickCache(
 						key1Byte,
 						key2Byte,
 					},
-					form: {},
+					form,
 				}),
 			);
 		},
-		{ fileId, key1Byte, key2Byte, filename, recordId },
+		{ fileId, key1Byte, key2Byte, filename, recordId, form },
 	);
 }
 
@@ -1244,7 +1245,7 @@ test('Refraction QC Pick Map loads cached NPZ from active viewer target state', 
 	});
 	await page.goto('/refraction-qc');
 	await page.addScriptTag({
-		content: 'window.Plotly = { newPlot: (element, traces) => { element.dataset.traceCount = String(traces.length); } };',
+		content: 'window.Plotly = { newPlot: (element, traces, layout) => { element.dataset.traceCount = String(traces.length); element.dataset.yAxisAutorange = String(layout?.yaxis?.autorange || ""); } };',
 	});
 	await seedStaticCorrectionPickCache(page);
 
@@ -1255,6 +1256,7 @@ test('Refraction QC Pick Map loads cached NPZ from active viewer target state', 
 	await page.getByTestId('refraction-qc-pick-map-load-cached').click();
 
 	await expect(page.getByTestId('refraction-qc-pick-map-status')).toContainText('Pre-statics pick map loaded');
+	await expect(page.getByTestId('refraction-qc-pick-map-plot')).toHaveAttribute('data-y-axis-autorange', 'reversed');
 	expect(pickMapRequest).toMatchObject({
 		file_id: 'active-viewer-store',
 		key1_byte: 9,
@@ -1262,6 +1264,150 @@ test('Refraction QC Pick Map loads cached NPZ from active viewer target state', 
 		pick_source: { kind: 'uploaded_npz' },
 		geometry: { receiver_number_mode: 'global_sequential' },
 	});
+});
+
+test('Refraction QC Pick Map filters numeric and endpoint-key gather IDs', async ({ page }) => {
+	await page.addInitScript(() => {
+		(window as any).SeisViewerState = {
+			getActiveFileTarget: () => ({
+				fileId: 'active-viewer-store',
+				displayName: 'active-viewer-store.sgy',
+				key1Byte: 9,
+				key2Byte: 13,
+				isFileLoaded: true,
+			}),
+			getActiveFileTargetState: () => ({
+				fileId: 'active-viewer-store',
+				displayName: 'active-viewer-store.sgy',
+				key1Byte: 9,
+				key2Byte: 13,
+				isFileLoaded: true,
+			}),
+		};
+	});
+	await page.route('**/statics/refraction/qc/pick-map', async (route) => {
+		await route.fulfill({
+			status: 200,
+			contentType: 'application/json',
+			body: JSON.stringify({
+				mode: 'pre_statics',
+				job_id: null,
+				has_after_statics: false,
+				receiver_number_mode: 'global_sequential',
+				gather_range: { min: 99, max: 103 },
+				status_message: 'Pre-statics pick map loaded.',
+				pick_map: {
+					gather_id: [99, 100, 'source:101', 'source:102:10:20', 103],
+					receiver_number: [2000, 2001, 2002, 2003, 2004],
+					pick_before_ms: [80, 84, 91, 102, 110],
+					pick_after_ms: [null, null, null, null, null],
+					used_in_statics: [null, null, null, null, null],
+					offset_m: [100, 120, 140, 160, 180],
+				},
+			}),
+		});
+	});
+	await page.goto('/refraction-qc');
+	await page.addScriptTag({
+		content: 'window.Plotly = { newPlot: () => {} };',
+	});
+	await seedStaticCorrectionPickCache(page);
+
+	await page.getByTestId('refraction-qc-view-pick-map-button').click();
+	await page.getByTestId('refraction-qc-pick-map-load-cached').click();
+	await expect(page.getByTestId('refraction-qc-pick-map-plot')).toHaveAttribute('data-point-count', '5');
+
+	await page.getByTestId('refraction-qc-pick-map-gather-start').fill('100');
+	await page.getByTestId('refraction-qc-pick-map-gather-end').fill('101');
+	await expect(page.getByTestId('refraction-qc-pick-map-plot')).toHaveAttribute('data-point-count', '2');
+});
+
+test('Refraction QC pre-statics Pick Map uses Static Correction draft geometry', async ({ page }) => {
+	let pickMapRequest: Record<string, unknown> | null = null;
+	await page.addInitScript(() => {
+		(window as any).SeisViewerState = {
+			getActiveFileTarget: () => ({
+				fileId: 'active-viewer-store',
+				displayName: 'active-viewer-store.sgy',
+				key1Byte: 9,
+				key2Byte: 13,
+				isFileLoaded: true,
+			}),
+			getActiveFileTargetState: () => ({
+				fileId: 'active-viewer-store',
+				displayName: 'active-viewer-store.sgy',
+				key1Byte: 9,
+				key2Byte: 13,
+				isFileLoaded: true,
+			}),
+		};
+	});
+	await page.route('**/statics/refraction/qc/pick-map', async (route) => {
+		pickMapRequest = multipartRequestJson(route);
+		await route.fulfill({
+			status: 200,
+			contentType: 'application/json',
+			body: JSON.stringify({
+				mode: 'pre_statics',
+				job_id: null,
+				has_after_statics: false,
+				receiver_number_mode: 'global_sequential',
+				gather_range: { min: 100, max: 100 },
+				status_message: 'Pre-statics pick map loaded.',
+				pick_map: {
+					gather_id: [100],
+					receiver_number: [2000],
+					pick_before_ms: [84],
+					pick_after_ms: [null],
+					used_in_statics: [null],
+					offset_m: [120],
+				},
+			}),
+		});
+	});
+	await page.goto('/refraction-qc');
+	await page.addScriptTag({ content: 'window.Plotly = { newPlot: () => {} };' });
+	await seedStaticCorrectionPickCache(page, {
+		form: {
+			geometry: {
+				source_id_byte: '21',
+				receiver_id_byte: '25',
+				source_x_byte: '101',
+				source_y_byte: '105',
+				receiver_x_byte: '109',
+				receiver_y_byte: '113',
+				source_elevation_byte: '117',
+				receiver_elevation_byte: '121',
+				coordinate_scalar_byte: '125',
+				elevation_scalar_byte: '129',
+				source_depth_byte: '',
+				coordinate_unit: 'ft',
+				elevation_unit: 'm',
+				offset_byte: '133',
+			},
+		},
+	});
+
+	await page.getByTestId('refraction-qc-view-pick-map-button').click();
+	await page.getByTestId('refraction-qc-pick-map-load-cached').click();
+	await expect(page.getByTestId('refraction-qc-pick-map-status')).toContainText('Pre-statics pick map loaded');
+
+	expect(pickMapRequest).toMatchObject({
+		geometry: {
+			receiver_number_mode: 'global_sequential',
+			source_id_byte: 21,
+			receiver_id_byte: 25,
+			source_x_byte: 101,
+			source_y_byte: 105,
+			receiver_x_byte: 109,
+			receiver_y_byte: 113,
+			coordinate_scalar_byte: 125,
+			coordinate_unit: 'ft',
+			elevation_unit: 'm',
+			source_depth_byte: null,
+		},
+	});
+	expect((pickMapRequest?.geometry as Record<string, unknown>).offset_byte).toBeUndefined();
 });
 
 async function routeCompletedStaticCorrectionFlow(

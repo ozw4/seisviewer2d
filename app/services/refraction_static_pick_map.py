@@ -23,6 +23,7 @@ from app.services.refraction_static_pick_source_loader import (
     load_npz_refraction_pick_source_from_path,
 )
 from app.services.trace_store_index_validation import validate_sorted_to_original
+from app.utils.segy_scalars import apply_segy_scalar, normalize_linear_unit
 
 
 class RefractionStaticPickMapError(ValueError):
@@ -78,6 +79,7 @@ def _build_pre_statics_pick_map(
         dt_s=dt_s,
         sorted_trace_index=sorted_to_original,
         source_kind=req.pick_source.kind,
+        allow_invalid_pick_values=True,
     )
 
     geometry = req.geometry
@@ -316,6 +318,29 @@ def _geometry_offset_m(
         source_y = _float_header(reader.ensure_header(geometry.source_y_byte), n_traces)
         receiver_x = _float_header(reader.ensure_header(geometry.receiver_x_byte), n_traces)
         receiver_y = _float_header(reader.ensure_header(geometry.receiver_y_byte), n_traces)
+        coordinate_scalar = _int_header(
+            reader.ensure_header(geometry.coordinate_scalar_byte),
+            n_traces,
+        )
+    except Exception:
+        return np.full(n_traces, np.nan, dtype=np.float64)
+    try:
+        source_x = normalize_linear_unit(
+            apply_segy_scalar(source_x, coordinate_scalar),
+            geometry.coordinate_unit,
+        )
+        source_y = normalize_linear_unit(
+            apply_segy_scalar(source_y, coordinate_scalar),
+            geometry.coordinate_unit,
+        )
+        receiver_x = normalize_linear_unit(
+            apply_segy_scalar(receiver_x, coordinate_scalar),
+            geometry.coordinate_unit,
+        )
+        receiver_y = normalize_linear_unit(
+            apply_segy_scalar(receiver_y, coordinate_scalar),
+            geometry.coordinate_unit,
+        )
     except Exception:
         return np.full(n_traces, np.nan, dtype=np.float64)
     return np.ascontiguousarray(
@@ -441,6 +466,17 @@ def _float_header(values: object, n_traces: int) -> np.ndarray:
     return np.ascontiguousarray(arr, dtype=np.float64)
 
 
+def _int_header(values: object, n_traces: int) -> np.ndarray:
+    arr = np.asarray(values)
+    if arr.shape != (n_traces,):
+        raise RefractionStaticPickMapError(
+            f'header shape mismatch: expected {(n_traces,)}, got {arr.shape}'
+        )
+    if not np.issubdtype(arr.dtype, np.integer):
+        raise RefractionStaticPickMapError('header must have an integer dtype')
+    return np.ascontiguousarray(arr, dtype=np.int64)
+
+
 def _required_float(value: object) -> float:
     out = _optional_float(value)
     if out is None:
@@ -480,11 +516,12 @@ def _optional_int(value: object) -> int | None:
 
 
 def _numeric_or_none(value: object) -> int | float | None:
-    if isinstance(value, str):
-        raw = value.rsplit(':', 1)[-1]
-    else:
-        raw = value
-    out = _optional_float(raw)
+    out = _optional_float(value)
+    if out is None and isinstance(value, str):
+        for part in value.split(':')[1:]:
+            out = _optional_float(part)
+            if out is not None:
+                break
     if out is None:
         return None
     return int(out) if out.is_integer() else out
