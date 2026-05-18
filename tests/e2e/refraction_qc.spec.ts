@@ -1617,8 +1617,11 @@ test('static_correction_pick_job_controls_not_rendered', async ({ page }) => {
 
 	const panel = page.getByTestId('static-correction-panel');
 	const picksSection = panel.locator('section[aria-labelledby="staticCorrectionPicksHeading"]');
-	await expect(picksSection.locator('input, select, button')).toHaveCount(1);
+	await expect(picksSection.locator('input, select, button')).toHaveCount(4);
 	await expect(picksSection.getByTestId('static-correction-pick-npz')).toBeVisible();
+	await expect(picksSection.getByTestId('static-correction-replace-pick-npz')).toBeVisible();
+	await expect(picksSection.getByTestId('static-correction-clear-pick-npz')).toBeVisible();
+	await expect(picksSection.getByTestId('static-correction-clear-draft')).toBeVisible();
 	await expect(page.getByTestId('static-correction-pick-kind')).toHaveCount(0);
 	await expect(page.getByTestId('static-correction-pick-job-id')).toHaveCount(0);
 	await expect(page.getByTestId('static-correction-pick-artifact-name')).toHaveCount(0);

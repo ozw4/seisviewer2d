@@ -103,6 +103,12 @@
   const FIELD_MANUAL_SIGN_CONVENTIONS = new Set(['applied_shift_s', 'delay_positive_ms']);
   const PRESET_STORAGE_KEY = 'sv.static_correction.presets';
   const ACTIVE_VIEWER_TARGET_STORAGE_KEY = 'sv.active_viewer_target';
+  const STATIC_DRAFT_STORAGE_KEY = 'sv.static_correction.form_draft.v1';
+  const STATIC_PICK_DB_NAME = 'seisviewer2d-static-correction';
+  const STATIC_PICK_DB_VERSION = 1;
+  const STATIC_PICK_STORE = 'pick_npz_blobs';
+  const STATIC_PICK_MAX_RECORDS = 10;
+  const STATIC_PICK_MAX_AGE_MS = 30 * 24 * 60 * 60 * 1000;
   const NO_ACTIVE_TARGET_ERROR = (
     'No active viewer file. Open an SGY/TraceStore in the viewer before running Static Correction.'
   );
@@ -128,6 +134,14 @@
     phase: 'idle',
     pollIntervalMs: 1000,
     autoOpenQcOnCompletion: false,
+    pickNpzDraftMeta: null,
+    pickNpzRestoreStatus: '',
+    pickNpzRestoreMessage: '',
+    pickNpzRestoredSavedAt: '',
+    restoringPickInput: false,
+    suppressPickChangeHandler: false,
+    draftCleared: false,
+    draftRestoreAttemptedForTarget: '',
   };
 
   let dom = null;
@@ -292,6 +306,357 @@
 
   function getStaticCorrectionTarget() {
     return validateStaticCorrectionTarget().target;
+  }
+
+  function staticCorrectionTargetKey(target) {
+    if (!target) return '';
+    return `${trimValue(target.file_id)}:${target.key1_byte}:${target.key2_byte}`;
+  }
+
+  function sameStaticCorrectionTarget(left, right) {
+    if (!left || !right) return false;
+    return (
+      trimValue(left.file_id) === trimValue(right.file_id)
+      && Number(left.key1_byte) === Number(right.key1_byte)
+      && Number(left.key2_byte) === Number(right.key2_byte)
+    );
+  }
+
+  function staticPickRecordId(target) {
+    if (!target) return '';
+    return `target:${target.file_id}:${target.key1_byte}:${target.key2_byte}:latest`;
+  }
+
+  function openStaticPickDb() {
+    return new Promise((resolve, reject) => {
+      if (!window.indexedDB) {
+        reject(new Error('IndexedDB is not available in this browser.'));
+        return;
+      }
+      const request = window.indexedDB.open(STATIC_PICK_DB_NAME, STATIC_PICK_DB_VERSION);
+      request.onupgradeneeded = () => {
+        const db = request.result;
+        if (!db.objectStoreNames.contains(STATIC_PICK_STORE)) {
+          db.createObjectStore(STATIC_PICK_STORE, { keyPath: 'id' });
+        }
+      };
+      request.onerror = () => reject(request.error || new Error('Failed to open IndexedDB.'));
+      request.onsuccess = () => resolve(request.result);
+    });
+  }
+
+  function withStaticPickStore(mode, callback) {
+    return openStaticPickDb().then((db) => new Promise((resolve, reject) => {
+      const tx = db.transaction(STATIC_PICK_STORE, mode);
+      const store = tx.objectStore(STATIC_PICK_STORE);
+      let callbackResult;
+      tx.oncomplete = () => {
+        db.close();
+        resolve(callbackResult);
+      };
+      tx.onerror = () => {
+        db.close();
+        reject(tx.error || new Error('IndexedDB transaction failed.'));
+      };
+      try {
+        callbackResult = callback(store);
+      } catch (error) {
+        db.close();
+        reject(error);
+      }
+    }));
+  }
+
+  function requestToPromise(request) {
+    return new Promise((resolve, reject) => {
+      request.onerror = () => reject(request.error || new Error('IndexedDB request failed.'));
+      request.onsuccess = () => resolve(request.result);
+    });
+  }
+
+  async function putIndexedDbRecord(record) {
+    await withStaticPickStore('readwrite', (store) => {
+      store.put(record);
+    });
+  }
+
+  async function loadPickNpzFromIndexedDb(recordId) {
+    if (!recordId) return null;
+    return withStaticPickStore('readonly', (store) => requestToPromise(store.get(recordId)));
+  }
+
+  async function deletePickNpzFromIndexedDb(recordId) {
+    if (!recordId) return;
+    await withStaticPickStore('readwrite', (store) => {
+      store.delete(recordId);
+    });
+  }
+
+  async function cleanupStaticPickIndexedDb() {
+    try {
+      await withStaticPickStore('readwrite', (store) => {
+        const request = store.getAll();
+        request.onsuccess = () => {
+          const records = Array.isArray(request.result) ? request.result : [];
+          const now = Date.now();
+          const sorted = records
+            .filter((record) => record && record.id)
+            .sort((left, right) => Date.parse(right.savedAt || '') - Date.parse(left.savedAt || ''));
+          sorted.forEach((record, index) => {
+            const savedAtMs = Date.parse(record.savedAt || '');
+            const isExpired = Number.isFinite(savedAtMs) && now - savedAtMs > STATIC_PICK_MAX_AGE_MS;
+            if (isExpired || index >= STATIC_PICK_MAX_RECORDS) {
+              store.delete(record.id);
+            }
+          });
+        };
+      });
+    } catch (_) {
+      // Cleanup should not block normal Static Correction use.
+    }
+  }
+
+  async function savePickNpzToIndexedDb(recordId, file, target) {
+    const savedAt = new Date().toISOString();
+    const record = {
+      id: recordId,
+      filename: file.name,
+      sizeBytes: file.size,
+      type: file.type || 'application/octet-stream',
+      lastModified: file.lastModified || Date.now(),
+      savedAt,
+      fileId: target.file_id,
+      key1Byte: target.key1_byte,
+      key2Byte: target.key2_byte,
+      blob: file,
+    };
+    await putIndexedDbRecord(record);
+    cleanupStaticPickIndexedDb();
+    return record;
+  }
+
+  function pickRecordMetadata(record, recordId = '') {
+    if (!record) return null;
+    return {
+      indexedDbRecordId: record.id || recordId,
+      filename: record.filename || 'first_breaks.npz',
+      sizeBytes: Number(record.sizeBytes) || 0,
+      type: record.type || 'application/octet-stream',
+      lastModified: record.lastModified || Date.now(),
+      savedAt: record.savedAt || new Date().toISOString(),
+      fileId: record.fileId,
+      key1Byte: record.key1Byte,
+      key2Byte: record.key2Byte,
+    };
+  }
+
+  function readStaticCorrectionDraft() {
+    const draft = safeLocalStorageJson(STATIC_DRAFT_STORAGE_KEY);
+    if (!draft || draft.version !== 1 || !draft.form) return null;
+    return draft;
+  }
+
+  function activeTargetMatchesPickMeta(meta, target) {
+    if (!meta || !target) return false;
+    return sameStaticCorrectionTarget(
+      { file_id: meta.fileId, key1_byte: meta.key1Byte, key2_byte: meta.key2Byte },
+      target
+    );
+  }
+
+  function saveStaticCorrectionDraft(options = {}) {
+    if (!dom) return null;
+    if (state.draftCleared) return null;
+    const target = getStaticCorrectionTarget();
+    if (!target) return null;
+    const pickMeta = options.pickNpz !== undefined ? options.pickNpz : state.pickNpzDraftMeta;
+    const draft = {
+      version: 1,
+      target: {
+        file_id: target.file_id,
+        key1_byte: target.key1_byte,
+        key2_byte: target.key2_byte,
+      },
+      pickNpz: activeTargetMatchesPickMeta(pickMeta, target) ? pickMeta : null,
+      form: collectPresetInputs(dom),
+    };
+    try {
+      window.localStorage.setItem(STATIC_DRAFT_STORAGE_KEY, JSON.stringify(draft));
+    } catch (_) {
+      return null;
+    }
+    return draft;
+  }
+
+  function clearStoredDraftPickNpz() {
+    const draft = readStaticCorrectionDraft();
+    if (!draft) return;
+    draft.pickNpz = null;
+    try {
+      window.localStorage.setItem(STATIC_DRAFT_STORAGE_KEY, JSON.stringify(draft));
+    } catch (_) {
+    }
+  }
+
+  function clearPickInput(targetDom = dom) {
+    if (!targetDom || !targetDom.pickNpzFile) return;
+    targetDom.pickNpzFile.value = '';
+    try {
+      const dt = new DataTransfer();
+      targetDom.pickNpzFile.files = dt.files;
+    } catch (_) {
+      // Browsers that do not allow assigning an empty FileList still clear value.
+    }
+  }
+
+  function setPickInputFile(targetDom, file) {
+    if (!targetDom || !targetDom.pickNpzFile || !file) return false;
+    try {
+      const dt = new DataTransfer();
+      dt.items.add(file);
+      targetDom.pickNpzFile.files = dt.files;
+      return targetDom.pickNpzFile.files && targetDom.pickNpzFile.files.length === 1;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  function formatSavedAt(value) {
+    const date = new Date(value || '');
+    if (Number.isNaN(date.getTime())) return '';
+    return date.toLocaleString([], {
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+      hour: '2-digit',
+      minute: '2-digit',
+    });
+  }
+
+  function showRestoredPickNpz(file, record) {
+    state.pickNpzRestoreStatus = 'restored';
+    state.pickNpzRestoreMessage = file && file.name ? file.name : record.filename;
+    state.pickNpzRestoredSavedAt = record.savedAt || '';
+  }
+
+  function showPickRestoreWarning(message) {
+    state.pickNpzRestoreStatus = 'warning';
+    state.pickNpzRestoreMessage = message;
+    state.pickNpzRestoredSavedAt = '';
+  }
+
+  async function restorePickNpzFileInput(targetDom, draft, activeTarget) {
+    const meta = draft && draft.pickNpz;
+    if (!meta || !meta.indexedDbRecordId || !targetDom || !targetDom.pickNpzFile) return null;
+    if (!sameStaticCorrectionTarget(draft.target, activeTarget)) {
+      showPickRestoreWarning('Saved NPZ belongs to a different viewer target. Replace or clear the saved NPZ.');
+      return null;
+    }
+    const record = await loadPickNpzFromIndexedDb(meta.indexedDbRecordId);
+    if (!record || !record.blob) {
+      showPickRestoreWarning('Saved NPZ is no longer available. Please select the NPZ again.');
+      return null;
+    }
+    const file = record.blob instanceof File
+      ? record.blob
+      : new File([record.blob], record.filename || meta.filename || 'first_breaks.npz', {
+        type: record.type || meta.type || 'application/octet-stream',
+        lastModified: record.lastModified || meta.lastModified || Date.now(),
+      });
+    const restored = setPickInputFile(targetDom, file);
+    if (!restored) {
+      showPickRestoreWarning('Saved NPZ could not be restored into the file input. Please select it again.');
+      return null;
+    }
+    state.restoringPickInput = true;
+    targetDom.pickNpzFile.dispatchEvent(new Event('change', { bubbles: true }));
+    state.restoringPickInput = false;
+    state.pickNpzDraftMeta = pickRecordMetadata(record, meta.indexedDbRecordId);
+    showRestoredPickNpz(file, record);
+    return file;
+  }
+
+  async function restoreStaticCorrectionDraftIfAvailable() {
+    if (!dom) return null;
+    const activeTarget = getStaticCorrectionTarget();
+    if (!activeTarget) return null;
+    const targetKey = staticCorrectionTargetKey(activeTarget);
+    if (state.draftRestoreAttemptedForTarget === targetKey) return null;
+    state.draftRestoreAttemptedForTarget = targetKey;
+    const draft = readStaticCorrectionDraft();
+    if (!draft) return null;
+    if (!sameStaticCorrectionTarget(draft.target, activeTarget)) {
+      state.pickNpzDraftMeta = draft.pickNpz || null;
+      showPickRestoreWarning('Saved NPZ belongs to a different viewer target. Replace or clear the saved NPZ.');
+      render();
+      return null;
+    }
+    state.suppressPickChangeHandler = true;
+    applyPresetValues(draft.form, dom);
+    state.suppressPickChangeHandler = false;
+    state.pickNpzDraftMeta = draft.pickNpz || null;
+    try {
+      await restorePickNpzFileInput(dom, draft, activeTarget);
+    } catch (error) {
+      showPickRestoreWarning(error instanceof Error ? error.message : String(error));
+    }
+    state.message = selectedPickNpzFile(dom)
+      ? 'Restored Static Correction draft and pick NPZ.'
+      : 'Restored Static Correction form draft.';
+    render();
+    return draft;
+  }
+
+  async function clearRestoredPickNpz() {
+    if (!dom) return;
+    const meta = state.pickNpzDraftMeta || (readStaticCorrectionDraft() || {}).pickNpz;
+    state.suppressPickChangeHandler = true;
+    clearPickInput(dom);
+    dom.pickNpzFile.dispatchEvent(new Event('change', { bubbles: true }));
+    state.suppressPickChangeHandler = false;
+    state.pickNpzDraftMeta = null;
+    state.pickNpzRestoreStatus = '';
+    state.pickNpzRestoreMessage = '';
+    state.draftCleared = true;
+    if (meta && meta.indexedDbRecordId) {
+      try {
+        await deletePickNpzFromIndexedDb(meta.indexedDbRecordId);
+      } catch (_) {
+      }
+    }
+    saveStaticCorrectionDraft({ pickNpz: null });
+    clearStoredDraftPickNpz();
+    state.error = '';
+    state.message = 'Cleared restored NPZ.';
+    render();
+  }
+
+  async function clearStaticCorrectionDraft() {
+    const draft = readStaticCorrectionDraft();
+    const recordId = draft && draft.pickNpz && draft.pickNpz.indexedDbRecordId;
+    state.draftCleared = true;
+    state.suppressPickChangeHandler = true;
+    clearPickInput(dom);
+    if (dom && dom.pickNpzFile) {
+      dom.pickNpzFile.dispatchEvent(new Event('change', { bubbles: true }));
+    }
+    state.suppressPickChangeHandler = false;
+    state.pickNpzDraftMeta = null;
+    state.pickNpzRestoreStatus = '';
+    state.pickNpzRestoreMessage = '';
+    try {
+      window.localStorage.removeItem(STATIC_DRAFT_STORAGE_KEY);
+    } catch (_) {
+    }
+    if (recordId) {
+      try {
+        await deletePickNpzFromIndexedDb(recordId);
+      } catch (_) {
+      }
+    }
+    state.error = '';
+    state.message = 'Cleared Static Correction draft.';
+    render();
   }
 
   function buildRefractionQcUrl(jobId) {
@@ -713,13 +1078,24 @@
     if (!targetDom || !targetDom.pickNpzSummary) return;
     const pickFile = selectedPickNpzFile(targetDom);
     if (!pickFile) {
+      if (state.pickNpzRestoreStatus === 'warning' && state.pickNpzRestoreMessage) {
+        targetDom.pickNpzSummary.textContent = state.pickNpzRestoreMessage;
+        return;
+      }
       targetDom.pickNpzSummary.textContent = 'No NPZ file selected.';
       return;
     }
     const size = formatFileSize(pickFile.size);
-    targetDom.pickNpzSummary.textContent = size
-      ? `${pickFile.name} (${size})`
-      : pickFile.name;
+    if (state.pickNpzRestoreStatus === 'restored') {
+      const savedAt = formatSavedAt(state.pickNpzRestoredSavedAt);
+      const savedText = savedAt ? `, saved ${savedAt}` : '';
+      targetDom.pickNpzSummary.textContent = (
+        `Restored NPZ: ${pickFile.name}${size ? ` (${size})` : ''}${savedText}. `
+        + 'This restored NPZ is loaded into the file input and will be submitted.'
+      );
+      return;
+    }
+    targetDom.pickNpzSummary.textContent = size ? `${pickFile.name} (${size})` : pickFile.name;
   }
 
   function validateStaticCorrectionGeometryRequest(targetDom = dom) {
@@ -2235,7 +2611,7 @@
     }
     const formData = new FormData();
     formData.append('request_json', JSON.stringify(request));
-    formData.append('pick_npz', pickFile);
+    formData.append('pick_npz', pickFile, pickFile.name || 'first_breaks.npz');
     return formData;
   }
 
@@ -2478,6 +2854,7 @@
   }
 
   async function validateStaticCorrectionInputs() {
+    saveStaticCorrectionDraft();
     state.lastResponse = null;
     state.lastLinkageBuildRequest = null;
     state.lastLinkageJobId = '';
@@ -2553,6 +2930,7 @@
   }
 
   async function runStaticCorrection() {
+    saveStaticCorrectionDraft();
     const { payload, errors } = buildStaticCorrectionRequest();
     state.lastRequest = payload;
     state.lastResponse = null;
@@ -2646,6 +3024,7 @@
       return;
     }
     viewerTargetUnsubscribe = window.store.subscribe(() => {
+      restoreStaticCorrectionDraftIfAvailable();
       render();
     });
   }
@@ -2701,6 +3080,9 @@
     const deletePresetButton = document.getElementById('staticCorrectionDeletePresetButton');
     const pickNpzFile = document.getElementById('staticCorrectionPickNpz');
     const pickNpzSummary = document.getElementById('staticCorrectionPickNpzSummary');
+    const replacePickNpzButton = document.getElementById('staticCorrectionReplacePickNpzButton');
+    const clearPickNpzButton = document.getElementById('staticCorrectionClearPickNpzButton');
+    const clearDraftButton = document.getElementById('staticCorrectionClearDraftButton');
     const geometryPreset = document.getElementById('staticCorrectionGeometryPreset');
     const sourceIdByte = document.getElementById('staticCorrectionSourceIdByte');
     const receiverIdByte = document.getElementById('staticCorrectionReceiverIdByte');
@@ -2795,7 +3177,8 @@
       || !targetFile || !targetKeys || !targetStatus
       || !presetSelect || !presetName || !savePresetButton || !loadPresetButton
       || !deletePresetButton
-      || !pickNpzFile || !pickNpzSummary || !geometryPreset || !sourceIdByte || !receiverIdByte
+      || !pickNpzFile || !pickNpzSummary || !replacePickNpzButton || !clearPickNpzButton
+      || !clearDraftButton || !geometryPreset || !sourceIdByte || !receiverIdByte
       || !sourceXByte || !sourceYByte || !receiverXByte || !receiverYByte
       || !sourceElevationByte || !receiverElevationByte || !coordinateScalarByte
       || !elevationScalarByte || !sourceDepthByte || !coordinateUnit || !elevationUnit
@@ -2869,6 +3252,9 @@
       deletePresetButton,
       pickNpzFile,
       pickNpzSummary,
+      replacePickNpzButton,
+      clearPickNpzButton,
+      clearDraftButton,
       geometryPreset,
       sourceIdByte,
       receiverIdByte,
@@ -2956,6 +3342,7 @@
     if (window.viewerBootstrapReady && typeof window.viewerBootstrapReady.then === 'function') {
       window.viewerBootstrapReady.then(() => {
         subscribeToViewerTargetUpdates();
+        restoreStaticCorrectionDraftIfAvailable();
         render();
       });
     }
@@ -2966,6 +3353,10 @@
 
     form.addEventListener('submit', handleRun);
     form.addEventListener('input', () => {
+      if (!state.suppressPickChangeHandler) {
+        state.draftCleared = false;
+        saveStaticCorrectionDraft();
+      }
       state.validationDiagnostics = null;
       if (state.showValidationSummary) {
         state.validationErrors = getStaticCorrectionValidationSnapshot(dom).errors;
@@ -2973,6 +3364,10 @@
       render();
     });
     form.addEventListener('change', () => {
+      if (!state.suppressPickChangeHandler) {
+        state.draftCleared = false;
+        saveStaticCorrectionDraft();
+      }
       state.validationDiagnostics = null;
       if (state.showValidationSummary) {
         state.validationErrors = getStaticCorrectionValidationSnapshot(dom).errors;
@@ -2997,15 +3392,58 @@
       event.preventDefault();
       cancelStaticCorrectionJob();
     });
-    pickNpzFile.addEventListener('change', () => {
+    replacePickNpzButton.addEventListener('click', (event) => {
+      event.preventDefault();
+      pickNpzFile.click();
+    });
+    clearPickNpzButton.addEventListener('click', (event) => {
+      event.preventDefault();
+      clearRestoredPickNpz();
+    });
+    clearDraftButton.addEventListener('click', (event) => {
+      event.preventDefault();
+      clearStaticCorrectionDraft();
+    });
+    pickNpzFile.addEventListener('change', async () => {
       const pickFile = selectedPickNpzFile(dom);
+      if (state.suppressPickChangeHandler) {
+        render();
+        return;
+      }
+      if (state.restoringPickInput) {
+        render();
+        return;
+      }
+      state.draftCleared = false;
       state.error = '';
       state.validationDiagnostics = null;
       state.showValidationSummary = false;
       state.validationErrors = [];
-      state.message = pickFile
-        ? `Selected first-break pick NPZ ${pickFile.name}.`
-        : 'Choose a first-break pick NPZ before running refraction statics.';
+      state.pickNpzRestoreStatus = '';
+      state.pickNpzRestoreMessage = '';
+      if (pickFile) {
+        const target = getStaticCorrectionTarget();
+        if (target) {
+          try {
+            const record = await savePickNpzToIndexedDb(staticPickRecordId(target), pickFile, target);
+            state.pickNpzDraftMeta = pickRecordMetadata(record);
+            saveStaticCorrectionDraft();
+            state.message = `Selected first-break pick NPZ ${pickFile.name}.`;
+          } catch (error) {
+            state.pickNpzDraftMeta = null;
+            saveStaticCorrectionDraft({ pickNpz: null });
+            state.error = error instanceof Error ? error.message : String(error);
+            state.message = 'Selected NPZ could not be saved for restore.';
+          }
+        } else {
+          state.pickNpzDraftMeta = null;
+          state.message = `Selected first-break pick NPZ ${pickFile.name}.`;
+        }
+      } else {
+        state.pickNpzDraftMeta = null;
+        saveStaticCorrectionDraft({ pickNpz: null });
+        state.message = 'Choose a first-break pick NPZ before running refraction statics.';
+      }
       render();
     });
     geometryPreset.addEventListener('change', () => {
@@ -3074,7 +3512,11 @@
       render();
     });
 
+    window.addEventListener('pagehide', () => saveStaticCorrectionDraft());
+    window.addEventListener('beforeunload', () => saveStaticCorrectionDraft());
+
     render();
+    restoreStaticCorrectionDraftIfAvailable();
   }
 
   window.refractionStaticRunState = state;
@@ -3091,6 +3533,8 @@
     buildStaticCorrectionRequest,
     buildRefractionQcUrl,
     buildStaticLinkageBuildRequest,
+    clearRestoredPickNpz,
+    clearStaticCorrectionDraft,
     cancelStaticCorrectionJob,
     collectGeometryInputs,
     collectFieldCorrectionInputs,
@@ -3105,6 +3549,7 @@
     getStaticCorrectionValidationSnapshot,
     loadStaticArtifacts,
     loadSelectedPreset,
+    loadPickNpzFromIndexedDb,
     normalizeStaticJobState,
     pollStaticCorrectionJobUntilTerminal,
     pollStaticCorrectionStatus,
@@ -3112,6 +3557,7 @@
     render,
     runStaticCorrection,
     saveCurrentPreset,
+    saveStaticCorrectionDraft,
     stopStaticCorrectionPolling,
     updateModelPresetControls,
     updateBedrockVelocityControls,
