@@ -43,6 +43,10 @@ from app.services.refraction_static_artifacts import (
     write_refraction_static_artifacts,
 )
 from app.services.refraction_static_datum import build_refraction_datum_statics
+from app.services.refraction_static_design_matrix import (
+    refraction_design_matrix_layer_node_diagnostics_csv_name,
+    refraction_design_matrix_layer_qc_json_name,
+)
 from app.services.refraction_static_multilayer_service import (
     _artifact_request_for_multilayer_workflow,
     build_refraction_multilayer_weathering_replacement_statics,
@@ -97,6 +101,18 @@ _CELL_VELOCITY_ARTIFACT_NAMES = {
 }
 
 
+def _design_matrix_diagnostic_artifact_names(
+    layer_kinds: tuple[str, ...],
+) -> set[str]:
+    names: set[str] = set()
+    for layer_kind in layer_kinds:
+        names.add(refraction_design_matrix_layer_qc_json_name(layer_kind))
+        names.add(
+            refraction_design_matrix_layer_node_diagnostics_csv_name(layer_kind)
+        )
+    return names
+
+
 def test_three_layer_job_manifest_lists_multilayer_artifacts(
     tmp_path: Path,
 ) -> None:
@@ -111,6 +127,9 @@ def test_three_layer_job_manifest_lists_multilayer_artifacts(
     manifest_names = {item['name'] for item in manifest['artifacts']}
 
     assert _CORE_FINAL_ARTIFACT_NAMES <= manifest_names
+    assert _design_matrix_diagnostic_artifact_names(
+        ('v2_t1', 'v3_t2', 'vsub_t3')
+    ) <= manifest_names
     assert _CELL_VELOCITY_ARTIFACT_NAMES.isdisjoint(manifest_names)
     for artifact_name in manifest_names:
         assert (job_dir / artifact_name).is_file()
@@ -253,6 +272,9 @@ def test_two_layer_artifact_manifest_regression_still_passes(
     )
     manifest_names = {item['name'] for item in manifest['artifacts']}
     assert _CORE_FINAL_ARTIFACT_NAMES <= manifest_names
+    assert _design_matrix_diagnostic_artifact_names(('v2_t1', 'v3_t2')) <= (
+        manifest_names
+    )
     assert _CELL_VELOCITY_ARTIFACT_NAMES.isdisjoint(manifest_names)
 
     qc = json.loads(

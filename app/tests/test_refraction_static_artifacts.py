@@ -22,6 +22,10 @@ from app.services.refraction_static_artifacts.io import (
     _write_json_atomic,
     _write_npz_atomic,
 )
+from app.services.refraction_static_design_matrix import (
+    refraction_design_matrix_layer_node_diagnostics_csv_name,
+    refraction_design_matrix_layer_qc_json_name,
+)
 from app.services.refraction_static_artifacts import (
     FIRST_BREAK_RESIDUALS_CSV_NAME,
     NEAR_SURFACE_MODEL_CSV_NAME,
@@ -483,6 +487,9 @@ def test_refraction_static_registry_manifest_entry_contract() -> None:
     t1lsst_manifest = artifact_registry.build_manifest_payload(
         artifact_registry.artifact_entries_for_request(_t1lsst_request())
     )
+    multilayer_manifest = artifact_registry.build_manifest_payload(
+        artifact_registry.artifact_entries_for_request(_v3_solve_cell_request())
+    )
     upstream_manifest = artifact_registry.build_manifest_payload(
         artifact_registry.artifact_entries_for_request(
             _estimated_v1_request(),
@@ -496,6 +503,7 @@ def test_refraction_static_registry_manifest_entry_contract() -> None:
             base_manifest,
             solve_cell_manifest,
             t1lsst_manifest,
+            multilayer_manifest,
             upstream_manifest,
         )
         for item in manifest['artifacts']
@@ -526,6 +534,16 @@ def test_refraction_static_registry_manifest_entry_contract() -> None:
             'json',
             True,
             'Direct-arrival V1 estimation QC summary',
+        ),
+        refraction_design_matrix_layer_qc_json_name('v3_t2'): (
+            'json',
+            True,
+            'V3/T2 design-matrix QC summary',
+        ),
+        refraction_design_matrix_layer_node_diagnostics_csv_name('v3_t2'): (
+            'csv',
+            True,
+            'V3/T2 design-matrix node diagnostics',
         ),
     }
     for artifact_name, (kind, required, description) in expected.items():

@@ -40,6 +40,8 @@ from app.services.refraction_static_artifacts import (
 from app.services.refraction_static_design_matrix import (
     REFRACTION_DESIGN_MATRIX_NODE_DIAGNOSTICS_CSV_NAME,
     REFRACTION_DESIGN_MATRIX_QC_JSON_NAME,
+    refraction_design_matrix_layer_node_diagnostics_csv_name,
+    refraction_design_matrix_layer_qc_json_name,
 )
 from app.services.refraction_static_preflight_diagnostics import (
     REFRACTION_STATIC_PREFLIGHT_OBSERVATIONS_CSV_NAME,
@@ -191,6 +193,12 @@ def test_resolve_job_artifact_path_rejects_wrong_statics_kind(
         REFRACTION_STATIC_PREFLIGHT_OBSERVATIONS_CSV_NAME,
         REFRACTION_DESIGN_MATRIX_QC_JSON_NAME,
         REFRACTION_DESIGN_MATRIX_NODE_DIAGNOSTICS_CSV_NAME,
+        refraction_design_matrix_layer_qc_json_name('v2_t1'),
+        refraction_design_matrix_layer_node_diagnostics_csv_name('v2_t1'),
+        refraction_design_matrix_layer_qc_json_name('v3_t2'),
+        refraction_design_matrix_layer_node_diagnostics_csv_name('v3_t2'),
+        refraction_design_matrix_layer_qc_json_name('vsub_t3'),
+        refraction_design_matrix_layer_node_diagnostics_csv_name('vsub_t3'),
         UPLOADED_REFRACTION_PICKS_NPZ_NAME,
         SOURCE_STATIC_TABLE_CSV_NAME,
         RECEIVER_STATIC_TABLE_CSV_NAME,
