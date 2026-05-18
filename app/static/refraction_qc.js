@@ -1,5 +1,10 @@
 (function () {
   const RECENT_JOBS_KEY = 'sv.refraction_qc.recent_jobs';
+  const ACTIVE_VIEWER_TARGET_STORAGE_KEY = 'sv.active_viewer_target';
+  const STATIC_DRAFT_STORAGE_KEY = 'sv.static_correction.form_draft.v1';
+  const STATIC_PICK_DB_NAME = 'seisviewer2d-static-correction';
+  const STATIC_PICK_DB_VERSION = 1;
+  const STATIC_PICK_STORE = 'pick_npz_blobs';
   const MAX_RECENT_JOBS = 8;
   const DEFAULT_MAX_POINTS = 20000;
 
@@ -39,6 +44,12 @@
       include: 'static_components',
       viewKeys: ['static_components'],
       unavailableKeys: ['static_components'],
+    },
+    {
+      id: 'pick_map',
+      include: 'summary',
+      viewKeys: [],
+      unavailableKeys: [],
     },
     {
       id: 'gather_preview',
@@ -81,6 +92,15 @@
     gatherPreview: null,
     gatherLoading: false,
     gatherError: null,
+    pickMap: null,
+    pickMapLoading: false,
+    pickMapError: null,
+    pickMapDisplayMode: 'before',
+    pickMapGatherStart: '',
+    pickMapGatherEnd: '',
+    pickMapCachedFile: null,
+    pickMapCachedMeta: null,
+    pickMapCacheStatus: '',
     error: null,
     loading: false,
   };
@@ -88,12 +108,22 @@
   let dom = null;
   let requestSerial = 0;
   let gatherRequestSerial = 0;
+  let pickMapRequestSerial = 0;
 
   function safeLocalStorageValue(key) {
     try {
       return localStorage.getItem(key) || '';
     } catch (_) {
       return '';
+    }
+  }
+
+  function safeLocalStorageJson(key) {
+    try {
+      const raw = localStorage.getItem(key);
+      return raw ? JSON.parse(raw) : null;
+    } catch (_) {
+      return null;
     }
   }
 
@@ -108,6 +138,141 @@
 
   function searchOrStorageValue(searchKey, storageKey, fallback = '') {
     return searchParamValue(searchKey) || safeLocalStorageValue(storageKey || searchKey) || fallback;
+  }
+
+  function normalizePickMapTargetCandidate(candidate, options = {}) {
+    if (!candidate || typeof candidate !== 'object') return null;
+    if (options.requireLoaded && candidate.isFileLoaded === false) return null;
+    const fileId = String(candidate.fileId ?? candidate.file_id ?? '').trim();
+    if (!fileId) return null;
+    const key1Byte = Number(candidate.key1Byte ?? candidate.key1_byte);
+    const key2Byte = Number(candidate.key2Byte ?? candidate.key2_byte);
+    if (!Number.isInteger(key1Byte) || key1Byte <= 0 || !Number.isInteger(key2Byte) || key2Byte <= 0) {
+      return null;
+    }
+    return { file_id: fileId, key1_byte: key1Byte, key2_byte: key2Byte };
+  }
+
+  function storedActivePickMapTarget() {
+    return normalizePickMapTargetCandidate(
+      safeLocalStorageJson(ACTIVE_VIEWER_TARGET_STORAGE_KEY),
+      { requireLoaded: true }
+    );
+  }
+
+  function standalonePickMapTarget() {
+    const storedTarget = storedActivePickMapTarget();
+    return normalizePickMapTargetCandidate({
+      fileId: searchParamValue('file_id'),
+      key1Byte: searchParamValue('key1_byte') || (storedTarget && storedTarget.key1_byte),
+      key2Byte: searchParamValue('key2_byte') || (storedTarget && storedTarget.key2_byte),
+      isFileLoaded: true,
+    })
+      || storedTarget
+      || normalizePickMapTargetCandidate({
+        fileId: searchOrStorageValue('file_id', 'file_id', ''),
+        key1Byte: searchOrStorageValue('key1_byte', 'key1_byte', safeLocalStorageValue('last_key1_byte') || '189'),
+        key2Byte: searchOrStorageValue('key2_byte', 'key2_byte', safeLocalStorageValue('last_key2_byte') || '193'),
+        isFileLoaded: true,
+      });
+  }
+
+  function activePickMapTarget() {
+    const viewerState = window.SeisViewerState;
+    if (viewerState && typeof viewerState.getActiveFileTarget === 'function') {
+      const active = normalizePickMapTargetCandidate(
+        viewerState.getActiveFileTarget(),
+        { requireLoaded: true }
+      );
+      if (active) return active;
+    }
+    if (viewerState && typeof viewerState.getActiveFileTargetState === 'function') {
+      const targetState = normalizePickMapTargetCandidate(viewerState.getActiveFileTargetState());
+      if (targetState) return targetState;
+    }
+    return standalonePickMapTarget();
+  }
+
+  function samePickMapTarget(left, right) {
+    if (!left || !right) return false;
+    return String(left.file_id || '') === String(right.file_id || '')
+      && Number(left.key1_byte) === Number(right.key1_byte)
+      && Number(left.key2_byte) === Number(right.key2_byte);
+  }
+
+  function openStaticPickDb() {
+    return new Promise((resolve, reject) => {
+      if (!window.indexedDB) {
+        reject(new Error('IndexedDB is not available in this browser.'));
+        return;
+      }
+      const request = window.indexedDB.open(STATIC_PICK_DB_NAME, STATIC_PICK_DB_VERSION);
+      request.onupgradeneeded = () => {
+        const db = request.result;
+        if (!db.objectStoreNames.contains(STATIC_PICK_STORE)) {
+          db.createObjectStore(STATIC_PICK_STORE, { keyPath: 'id' });
+        }
+      };
+      request.onerror = () => reject(request.error || new Error('Failed to open IndexedDB.'));
+      request.onsuccess = () => resolve(request.result);
+    });
+  }
+
+  function requestToPromise(request) {
+    return new Promise((resolve, reject) => {
+      request.onerror = () => reject(request.error || new Error('IndexedDB request failed.'));
+      request.onsuccess = () => resolve(request.result);
+    });
+  }
+
+  async function loadStaticPickRecord(recordId) {
+    if (!recordId) return null;
+    const db = await openStaticPickDb();
+    try {
+      const tx = db.transaction(STATIC_PICK_STORE, 'readonly');
+      const store = tx.objectStore(STATIC_PICK_STORE);
+      return await requestToPromise(store.get(recordId));
+    } finally {
+      db.close();
+    }
+  }
+
+  async function restoreCachedPickMapSource() {
+    const target = activePickMapTarget();
+    const draft = safeLocalStorageJson(STATIC_DRAFT_STORAGE_KEY);
+    const meta = draft?.pickNpz || null;
+    state.pickMapCachedFile = null;
+    state.pickMapCachedMeta = null;
+    state.pickMapCacheStatus = '';
+    if (!target || !draft || !meta) return;
+    if (!samePickMapTarget(draft.target, target) || !samePickMapTarget({
+      file_id: meta.fileId,
+      key1_byte: meta.key1Byte,
+      key2_byte: meta.key2Byte,
+    }, target)) {
+      state.pickMapCacheStatus = 'Saved Static Correction NPZ belongs to a different viewer target.';
+      render();
+      return;
+    }
+    try {
+      const record = await loadStaticPickRecord(meta.indexedDbRecordId);
+      if (!record || !record.blob) {
+        state.pickMapCacheStatus = 'Saved Static Correction NPZ is no longer available.';
+        render();
+        return;
+      }
+      state.pickMapCachedFile = record.blob instanceof File
+        ? record.blob
+        : new File([record.blob], record.filename || meta.filename || 'first_breaks.npz', {
+          type: record.type || meta.type || 'application/octet-stream',
+          lastModified: record.lastModified || meta.lastModified || Date.now(),
+        });
+      state.pickMapCachedMeta = meta;
+      state.pickMapCacheStatus = `Cached NPZ available: ${state.pickMapCachedFile.name}`;
+    } catch (error) {
+      state.pickMapCacheStatus = error instanceof Error ? error.message : String(error);
+    }
+    render();
   }
 
   function isStandaloneRefractionQcPage() {
@@ -3017,6 +3182,263 @@
     ]));
   }
 
+  function renderPickMap(content) {
+    const controls = document.createElement('div');
+    controls.className = 'refraction-qc-controls';
+
+    const beforeButton = document.createElement('button');
+    beforeButton.type = 'button';
+    beforeButton.textContent = 'Before Statics';
+    beforeButton.dataset.testid = 'refraction-qc-pick-map-before';
+    beforeButton.className = state.pickMapDisplayMode === 'before' ? 'is-active' : '';
+    beforeButton.addEventListener('click', () => {
+      state.pickMapDisplayMode = 'before';
+      render();
+    });
+
+    const afterButton = document.createElement('button');
+    afterButton.type = 'button';
+    afterButton.textContent = 'After Statics';
+    afterButton.dataset.testid = 'refraction-qc-pick-map-after';
+    afterButton.disabled = !state.pickMap?.has_after_statics;
+    afterButton.className = state.pickMapDisplayMode === 'after' ? 'is-active' : '';
+    afterButton.addEventListener('click', () => {
+      if (!state.pickMap?.has_after_statics) return;
+      state.pickMapDisplayMode = 'after';
+      render();
+    });
+
+    const gatherStart = document.createElement('input');
+    gatherStart.type = 'number';
+    gatherStart.placeholder = 'Gather start';
+    gatherStart.value = state.pickMapGatherStart;
+    gatherStart.dataset.testid = 'refraction-qc-pick-map-gather-start';
+    gatherStart.addEventListener('input', () => {
+      state.pickMapGatherStart = gatherStart.value;
+      render();
+    });
+
+    const gatherEnd = document.createElement('input');
+    gatherEnd.type = 'number';
+    gatherEnd.placeholder = 'Gather end';
+    gatherEnd.value = state.pickMapGatherEnd;
+    gatherEnd.dataset.testid = 'refraction-qc-pick-map-gather-end';
+    gatherEnd.addEventListener('input', () => {
+      state.pickMapGatherEnd = gatherEnd.value;
+      render();
+    });
+
+    const fileInput = document.createElement('input');
+    fileInput.type = 'file';
+    fileInput.accept = '.npz,application/x-npz,application/zip';
+    fileInput.dataset.testid = 'refraction-qc-pick-map-npz';
+
+    const uploadButton = document.createElement('button');
+    uploadButton.type = 'button';
+    uploadButton.textContent = 'Load pre-statics Pick Map';
+    uploadButton.dataset.testid = 'refraction-qc-pick-map-load-upload';
+    uploadButton.addEventListener('click', () => {
+      loadPreStaticsPickMap(fileInput.files && fileInput.files[0]);
+    });
+
+    const cachedButton = document.createElement('button');
+    cachedButton.type = 'button';
+    cachedButton.textContent = 'Load pre-statics Pick Map from cached NPZ';
+    cachedButton.dataset.testid = 'refraction-qc-pick-map-load-cached';
+    cachedButton.disabled = !state.pickMapCachedFile;
+    cachedButton.addEventListener('click', () => {
+      loadPreStaticsPickMap(state.pickMapCachedFile);
+    });
+
+    const completedButton = document.createElement('button');
+    completedButton.type = 'button';
+    completedButton.textContent = 'Load completed-job Pick Map';
+    completedButton.dataset.testid = 'refraction-qc-pick-map-load-job';
+    completedButton.disabled = !(state.qcBundle?.job_id || state.selectedJobId);
+    completedButton.addEventListener('click', () => {
+      loadCompletedPickMap();
+    });
+
+    controls.append(beforeButton, afterButton, gatherStart, gatherEnd, fileInput, uploadButton, cachedButton, completedButton);
+    content.appendChild(controls);
+
+    if (state.pickMapCacheStatus) {
+      const cacheStatus = document.createElement('p');
+      cacheStatus.className = 'refraction-qc-note';
+      cacheStatus.dataset.testid = 'refraction-qc-pick-map-cache-status';
+      cacheStatus.textContent = state.pickMapCacheStatus;
+      content.appendChild(cacheStatus);
+    }
+    if (state.pickMapLoading) {
+      const loading = document.createElement('p');
+      loading.className = 'refraction-qc-placeholder';
+      loading.textContent = 'Loading Pick Map...';
+      content.appendChild(loading);
+      return;
+    }
+    if (state.pickMapError) {
+      const error = document.createElement('div');
+      error.className = 'refraction-qc-error';
+      error.dataset.testid = 'refraction-qc-pick-map-error';
+      error.textContent = state.pickMapError;
+      content.appendChild(error);
+    }
+    if (!state.pickMap) {
+      const empty = document.createElement('p');
+      empty.className = 'refraction-qc-placeholder';
+      empty.textContent = state.qcBundle
+        ? 'No Pick Map loaded for this static job.'
+        : 'Load a completed job or a pre-statics pick NPZ.';
+      content.appendChild(empty);
+      return;
+    }
+
+    const status = document.createElement('p');
+    status.className = 'refraction-qc-note';
+    status.dataset.testid = 'refraction-qc-pick-map-status';
+    status.textContent = state.pickMap.status_message || '';
+    content.appendChild(status);
+
+    const points = filteredPickMapPoints(state.pickMap);
+    content.appendChild(createKv([
+      ['Mode', state.pickMap.mode],
+      ['Receiver numbering', state.pickMap.receiver_number_mode],
+      ['Gather min', state.pickMap.gather_range?.min],
+      ['Gather max', state.pickMap.gather_range?.max],
+      ['Displayed points', points.length],
+    ]));
+
+    const plot = document.createElement('div');
+    plot.className = 'refraction-qc-plot';
+    plot.dataset.testid = 'refraction-qc-pick-map-plot';
+    plot.dataset.pointCount = String(points.length);
+    content.appendChild(plot);
+
+    if (!points.length) {
+      plot.textContent = 'No Pick Map records match the current gather range.';
+      return;
+    }
+    renderPickMapPlot(plot, points, state.pickMap);
+  }
+
+  function filteredPickMapPoints(payload) {
+    const data = payload?.pick_map || {};
+    const count = Array.isArray(data.pick_before_ms) ? data.pick_before_ms.length : 0;
+    const start = toFiniteNumber(state.pickMapGatherStart);
+    const end = toFiniteNumber(state.pickMapGatherEnd);
+    const hasStart = Number.isFinite(start);
+    const hasEnd = Number.isFinite(end);
+    const points = [];
+    for (let index = 0; index < count; index += 1) {
+      const gather = data.gather_id?.[index];
+      const gatherNumber = toFiniteNumber(gather);
+      if (hasStart && Number.isFinite(gatherNumber) && gatherNumber < start) continue;
+      if (hasEnd && Number.isFinite(gatherNumber) && gatherNumber > end) continue;
+      const beforeMs = toFiniteNumber(data.pick_before_ms?.[index]);
+      const afterMs = toFiniteNumber(data.pick_after_ms?.[index]);
+      const y = state.pickMapDisplayMode === 'after' && payload.has_after_statics ? afterMs : beforeMs;
+      const receiverNumber = toFiniteNumber(data.receiver_number?.[index]);
+      if (!Number.isFinite(receiverNumber) || !Number.isFinite(y)) continue;
+      const used = data.used_in_statics?.[index] === true;
+      points.push({
+        x: receiverNumber,
+        y,
+        gather,
+        sourceId: data.source_id?.[index],
+        receiverId: data.receiver_id?.[index],
+        beforeMs,
+        afterMs,
+        offsetM: toFiniteNumber(data.offset_m?.[index]),
+        offsetUsed: toFiniteNumber(data.offset_used?.[index]),
+        used,
+        appliedShiftMs: toFiniteNumber(data.applied_shift_ms?.[index]),
+      });
+    }
+    return points;
+  }
+
+  function renderPickMapPlot(plot, points, payload) {
+    if (!window.Plotly) {
+      plot.textContent = 'Plot library is unavailable.';
+      return;
+    }
+    const common = {
+      type: 'scattergl',
+      mode: 'markers',
+      hovertemplate: '%{text}<extra></extra>',
+    };
+    const traces = [];
+    if (payload.mode === 'completed_job') {
+      const used = points.filter((point) => point.used);
+      const unused = points.filter((point) => !point.used);
+      if (used.length) {
+        traces.push({
+          ...common,
+          name: 'Used in statics',
+          x: used.map((point) => point.x),
+          y: used.map((point) => point.y),
+          text: used.map((point) => pickMapHoverText(point, payload)),
+          marker: {
+            color: used.map((point) => Number.isFinite(point.offsetUsed) ? point.offsetUsed : point.offsetM),
+            colorscale: 'Viridis',
+            colorbar: { title: 'Offset used (m)' },
+            size: 6,
+            opacity: 0.9,
+          },
+        });
+      }
+      if (unused.length) {
+        traces.push({
+          ...common,
+          name: 'Unused',
+          x: unused.map((point) => point.x),
+          y: unused.map((point) => point.y),
+          text: unused.map((point) => pickMapHoverText(point, payload)),
+          marker: { color: '#94a3b8', size: 5, opacity: 0.35 },
+        });
+      }
+    } else {
+      traces.push({
+        ...common,
+        name: 'Before statics',
+        x: points.map((point) => point.x),
+        y: points.map((point) => point.y),
+        text: points.map((point) => pickMapHoverText(point, payload)),
+        marker: { color: '#2563eb', size: 5, opacity: 0.8 },
+      });
+    }
+    window.Plotly.newPlot(plot, traces, {
+      height: plotHeight(340, 560),
+      margin: { l: 64, r: 22, t: 34, b: 58 },
+      title: { text: state.pickMapDisplayMode === 'after' ? 'After Statics Pick Map' : 'Before Statics Pick Map', font: { size: 12 } },
+      font: { size: 10, color: '#334155' },
+      paper_bgcolor: '#ffffff',
+      plot_bgcolor: '#ffffff',
+      xaxis: { title: { text: 'Global receiver number' }, gridcolor: '#e5e7eb', zeroline: false },
+      yaxis: { title: { text: 'First-break pick time (ms)' }, gridcolor: '#e5e7eb', zeroline: false },
+      legend: { orientation: 'h', x: 0, y: 1.14, xanchor: 'left', yanchor: 'top', font: { size: 10 } },
+    }, { displayModeBar: false, responsive: true });
+  }
+
+  function pickMapHoverText(point, payload) {
+    const lines = [
+      `Gather / shot: ${textOrDash(point.gather)}`,
+      `Receiver number: ${formatNumber(point.x, 0)}`,
+      `Pick before statics: ${formatNumber(point.beforeMs, 2)} ms`,
+    ];
+    if (payload.has_after_statics) {
+      lines.push(`Pick after statics: ${formatNumber(point.afterMs, 2)} ms`);
+      lines.push(`Offset used: ${formatNumber(point.offsetUsed, 2)} m`);
+      lines.push(`Used in statics: ${point.used ? 'yes' : 'no'}`);
+      lines.push(`Applied shift: ${formatNumber(point.appliedShiftMs, 2)} ms`);
+    } else if (Number.isFinite(point.offsetM)) {
+      lines.push(`Offset: ${formatNumber(point.offsetM, 2)} m`);
+    }
+    lines.push(`Source: ${textOrDash(point.sourceId)}`);
+    lines.push(`Receiver: ${textOrDash(point.receiverId)}`);
+    return lines.join('<br>');
+  }
+
   function renderViewContent(viewDef) {
     if (!dom) return;
     const content = dom.viewContents.get(viewDef.id);
@@ -3026,6 +3448,11 @@
 
     if (state.loading) {
       appendText(content, 'Loading QC bundle...');
+      return;
+    }
+    if (viewDef.id === 'pick_map') {
+      content.className = '';
+      renderPickMap(content);
       return;
     }
     if (!state.qcBundle) {
@@ -3119,6 +3546,12 @@
     if (!VIEW_DEFS.some((view) => view.id === viewId)) return;
     state.selectedView = viewId;
     render();
+    if (viewId === 'pick_map') {
+      restoreCachedPickMapSource();
+      if (state.qcBundle?.job_id && !state.pickMap && !state.pickMapLoading) {
+        loadCompletedPickMap(state.qcBundle.job_id);
+      }
+    }
   }
 
   function activateSidebarTab(tabName) {
@@ -3152,6 +3585,83 @@
     } catch (_) {
     }
     return `${label} failed with status ${response.status}`;
+  }
+
+  function buildPickMapUploadRequest() {
+    const target = activePickMapTarget();
+    if (!target) return { payload: null, error: 'Open a viewer target before loading a pre-statics Pick Map.' };
+    return {
+      payload: {
+        file_id: target.file_id,
+        key1_byte: target.key1_byte,
+        key2_byte: target.key2_byte,
+        pick_source: { kind: 'uploaded_npz' },
+        geometry: { receiver_number_mode: 'global_sequential' },
+      },
+      error: '',
+    };
+  }
+
+  async function loadPreStaticsPickMap(file) {
+    if (!file) {
+      state.pickMapError = 'Select a first-break pick NPZ.';
+      render();
+      return;
+    }
+    const { payload, error } = buildPickMapUploadRequest();
+    if (error) {
+      state.pickMapError = error;
+      render();
+      return;
+    }
+    const formData = new FormData();
+    formData.append('request_json', JSON.stringify(payload));
+    formData.append('pick_npz', file, file.name || 'first_breaks.npz');
+    await loadPickMapRequest(() => fetch('/statics/refraction/qc/pick-map', {
+      method: 'POST',
+      body: formData,
+    }));
+  }
+
+  async function loadCompletedPickMap(jobId) {
+    const cleanJobId = String(jobId || state.qcBundle?.job_id || state.selectedJobId || '').trim();
+    if (!cleanJobId) {
+      state.pickMapError = 'Job ID is required for completed-job Pick Map.';
+      render();
+      return;
+    }
+    await loadPickMapRequest(() => fetch('/statics/refraction/qc/pick-map', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ job_id: cleanJobId }),
+    }));
+  }
+
+  async function loadPickMapRequest(requestFactory) {
+    const serial = ++pickMapRequestSerial;
+    state.pickMapLoading = true;
+    state.pickMapError = null;
+    render();
+    try {
+      const response = await requestFactory();
+      if (!response.ok) {
+        throw new Error(await readError(response, 'Pick Map request'));
+      }
+      const pickMap = await response.json();
+      if (serial !== pickMapRequestSerial) return;
+      state.pickMap = pickMap;
+      state.pickMapError = null;
+      if (!pickMap.has_after_statics) state.pickMapDisplayMode = 'before';
+    } catch (error) {
+      if (serial !== pickMapRequestSerial) return;
+      state.pickMap = null;
+      state.pickMapError = error instanceof Error ? error.message : String(error);
+    } finally {
+      if (serial === pickMapRequestSerial) {
+        state.pickMapLoading = false;
+        render();
+      }
+    }
   }
 
   async function loadGatherPreview() {
@@ -3238,6 +3748,9 @@
       }
       const bundle = await response.json();
       if (serial !== requestSerial) return;
+      if (state.pickMap?.job_id && state.pickMap.job_id !== bundle.job_id) {
+        state.pickMap = null;
+      }
       state.qcBundle = bundle;
       if (state.gatherPreview && state.gatherPreview.job_id !== bundle.job_id) {
         state.gatherPreview = null;
@@ -3246,6 +3759,9 @@
       state.error = null;
       writeRecentJob(jobId);
       writeJobIdUrlParam(jobId);
+      if (state.selectedView === 'pick_map') {
+        loadCompletedPickMap(jobId);
+      }
       return bundle;
     } catch (error) {
       if (serial !== requestSerial) return;
@@ -3402,6 +3918,7 @@
 
     renderRecentJobs();
     render();
+    restoreCachedPickMapSource();
     if (jobId && isStandaloneRefractionQcPage()) {
       loadBundle();
     }

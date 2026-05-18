@@ -1114,6 +1114,156 @@ function multipartRequestJson(route: Route): Record<string, unknown> {
 	throw new Error('Multipart request_json field was not submitted');
 }
 
+async function seedStaticCorrectionPickCache(
+	page: Page,
+	{
+		fileId = 'active-viewer-store',
+		key1Byte = 9,
+		key2Byte = 13,
+		filename = 'active-viewer-picks.npz',
+		recordId = 'target:active-viewer-store:9:13:latest',
+	} = {},
+) {
+	await page.evaluate(
+		async ({ fileId, key1Byte, key2Byte, filename, recordId }) => {
+			window.localStorage.removeItem('file_id');
+			window.localStorage.removeItem('key1_byte');
+			window.localStorage.removeItem('key2_byte');
+			window.localStorage.removeItem('last_key1_byte');
+			window.localStorage.removeItem('last_key2_byte');
+			window.localStorage.removeItem('sv.active_viewer_target');
+			if ((window as any).store?.patch) {
+				(window as any).store.patch({
+					fileId,
+					displayName: `${fileId}.sgy`,
+					key1Byte,
+					key2Byte,
+					isFileLoaded: true,
+				});
+			}
+			await new Promise<void>((resolve, reject) => {
+				const request = window.indexedDB.open('seisviewer2d-static-correction', 1);
+				request.onupgradeneeded = () => {
+					const db = request.result;
+					if (!db.objectStoreNames.contains('pick_npz_blobs')) {
+						db.createObjectStore('pick_npz_blobs', { keyPath: 'id' });
+					}
+				};
+				request.onerror = () => reject(request.error);
+				request.onsuccess = () => {
+					const db = request.result;
+					const tx = db.transaction('pick_npz_blobs', 'readwrite');
+					tx.objectStore('pick_npz_blobs').put({
+						id: recordId,
+						filename,
+						sizeBytes: 9,
+						type: 'application/octet-stream',
+						lastModified: 1700000000000,
+						savedAt: new Date(1700000000000).toISOString(),
+						fileId,
+						key1Byte,
+						key2Byte,
+						blob: new Blob(['npz-bytes'], { type: 'application/octet-stream' }),
+					});
+					tx.oncomplete = () => {
+						db.close();
+						resolve();
+					};
+					tx.onerror = () => {
+						db.close();
+						reject(tx.error);
+					};
+				};
+			});
+			window.localStorage.setItem(
+				'sv.static_correction.form_draft.v1',
+				JSON.stringify({
+					version: 1,
+					target: { file_id: fileId, key1_byte: key1Byte, key2_byte: key2Byte },
+					pickNpz: {
+						indexedDbRecordId: recordId,
+						filename,
+						sizeBytes: 9,
+						type: 'application/octet-stream',
+						lastModified: 1700000000000,
+						savedAt: new Date(1700000000000).toISOString(),
+						fileId,
+						key1Byte,
+						key2Byte,
+					},
+					form: {},
+				}),
+			);
+		},
+		{ fileId, key1Byte, key2Byte, filename, recordId },
+	);
+}
+
+test('Refraction QC Pick Map loads cached NPZ from active viewer target state', async ({ page }) => {
+	let pickMapRequest: Record<string, unknown> | null = null;
+	await page.addInitScript(() => {
+		(window as any).SeisViewerState = {
+			getActiveFileTarget: () => ({
+				fileId: 'active-viewer-store',
+				displayName: 'active-viewer-store.sgy',
+				key1Byte: 9,
+				key2Byte: 13,
+				isFileLoaded: true,
+			}),
+			getActiveFileTargetState: () => ({
+				fileId: 'active-viewer-store',
+				displayName: 'active-viewer-store.sgy',
+				key1Byte: 9,
+				key2Byte: 13,
+				isFileLoaded: true,
+			}),
+		};
+	});
+	await page.route('**/statics/refraction/qc/pick-map', async (route) => {
+		pickMapRequest = multipartRequestJson(route);
+		await route.fulfill({
+			status: 200,
+			contentType: 'application/json',
+			body: JSON.stringify({
+				mode: 'pre_statics',
+				job_id: null,
+				has_after_statics: false,
+				receiver_number_mode: 'global_sequential',
+				gather_range: { min: 100, max: 100 },
+				status_message: 'Pre-statics pick map loaded. Static Correction has not been run, so After Statics is unavailable.',
+				pick_map: {
+					gather_id: [100],
+					receiver_number: [2000],
+					pick_before_ms: [84],
+					pick_after_ms: [null],
+					used_in_statics: [null],
+					offset_m: [120],
+				},
+			}),
+		});
+	});
+	await page.goto('/refraction-qc');
+	await page.addScriptTag({
+		content: 'window.Plotly = { newPlot: (element, traces) => { element.dataset.traceCount = String(traces.length); } };',
+	});
+	await seedStaticCorrectionPickCache(page);
+
+	await page.getByTestId('refraction-qc-view-pick-map-button').click();
+	await expect(page.getByTestId('refraction-qc-pick-map-cache-status')).toContainText(
+		'Cached NPZ available: active-viewer-picks.npz',
+	);
+	await page.getByTestId('refraction-qc-pick-map-load-cached').click();
+
+	await expect(page.getByTestId('refraction-qc-pick-map-status')).toContainText('Pre-statics pick map loaded');
+	expect(pickMapRequest).toMatchObject({
+		file_id: 'active-viewer-store',
+		key1_byte: 9,
+		key2_byte: 13,
+		pick_source: { kind: 'uploaded_npz' },
+		geometry: { receiver_number_mode: 'global_sequential' },
+	});
+});
+
 async function routeCompletedStaticCorrectionFlow(
 	page: Page,
 	{

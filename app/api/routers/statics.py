@@ -29,6 +29,8 @@ from app.api.schemas import (
     RefractionStaticQcBundleResponse,
     RefractionStaticQcDrilldownRequest,
     RefractionStaticQcDrilldownResponse,
+    RefractionStaticPickMapRequest,
+    RefractionStaticPickMapResponse,
     RefractionStaticTableApplyRequest,
     RefractionStaticTableApplyResponse,
     ResidualStaticApplyRequest,
@@ -70,6 +72,10 @@ from app.services.refraction_static_qc_drilldown import (
     RefractionStaticQcDrilldownError,
     RefractionStaticQcDrilldownNotFound,
     build_refraction_static_qc_drilldown,
+)
+from app.services.refraction_static_pick_map import (
+    RefractionStaticPickMapError,
+    build_refraction_static_pick_map,
 )
 from app.services.refraction_static_service import run_refraction_static_apply_job
 from app.services.refraction_static_table_apply_service import (
@@ -129,6 +135,18 @@ def _parse_refraction_apply_request_json(
 ) -> RefractionStaticApplyRequest:
     try:
         return RefractionStaticApplyRequest.model_validate_json(request_json)
+    except ValidationError as exc:
+        raise HTTPException(
+            status_code=422,
+            detail=json.loads(exc.json()),
+        ) from exc
+
+
+def _parse_refraction_pick_map_request_json(
+    request_json: str,
+) -> RefractionStaticPickMapRequest:
+    try:
+        return RefractionStaticPickMapRequest.model_validate_json(request_json)
     except ValidationError as exc:
         raise HTTPException(
             status_code=422,
@@ -509,6 +527,69 @@ def refraction_static_qc_bundle(
         )
     except RefractionStaticQcBundleError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+
+@router.post(
+    '/statics/refraction/qc/pick-map',
+    response_model=RefractionStaticPickMapResponse,
+    response_model_exclude_none=True,
+)
+async def refraction_static_qc_pick_map(
+    request: Request,
+) -> RefractionStaticPickMapResponse:
+    """Return all-gather before/after refraction pick-map arrays."""
+    content_type = request.headers.get('content-type', '').lower()
+    uploaded_pick_path: Path | None = None
+    temp_dir_handle: tempfile.TemporaryDirectory[str] | None = None
+    try:
+        if content_type.startswith('multipart/form-data'):
+            form = await request.form()
+            request_json = form.get('request_json')
+            pick_npz = form.get('pick_npz')
+            if not isinstance(request_json, str):
+                raise HTTPException(
+                    status_code=422,
+                    detail='request_json form field is required',
+                )
+            if not hasattr(pick_npz, 'filename') or not hasattr(pick_npz, 'file'):
+                raise HTTPException(
+                    status_code=422,
+                    detail='pick_npz form file is required',
+                )
+            req = _parse_refraction_pick_map_request_json(request_json)
+            _validate_refraction_pick_upload(pick_npz)
+            temp_dir_handle = tempfile.TemporaryDirectory(prefix='refraction-pick-map-')
+            temp_dir = Path(temp_dir_handle.name)
+            uploaded_pick_path, _size_bytes = _store_refraction_pick_upload(
+                pick_npz=pick_npz,
+                job_dir=temp_dir,
+            )
+        else:
+            try:
+                req = RefractionStaticPickMapRequest.model_validate(
+                    await request.json()
+                )
+            except ValidationError as exc:
+                raise HTTPException(
+                    status_code=422,
+                    detail=json.loads(exc.json()),
+                ) from exc
+
+        state = get_state(request.app)
+        cleanup_in_memory_state(state)
+        job = _get_static_job_or_404(state, req.job_id) if req.job_id else None
+        try:
+            return build_refraction_static_pick_map(
+                req=req,
+                state=state,
+                job=job,
+                uploaded_pick_npz_path=uploaded_pick_path,
+            )
+        except RefractionStaticPickMapError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+    finally:
+        if temp_dir_handle is not None:
+            temp_dir_handle.cleanup()
 
 
 @router.post(
