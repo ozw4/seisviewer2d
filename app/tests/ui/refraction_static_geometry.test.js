@@ -7,7 +7,10 @@ const SCRIPT = readFileSync(
   resolve(process.cwd(), 'static/refraction_static_run.js'),
   'utf8'
 );
-const INDEX_HTML = readFileSync(resolve(process.cwd(), 'static/index.html'), 'utf8');
+const STATIC_CORRECTION_HTML = readFileSync(
+  resolve(process.cwd(), 'static/static_correction.html'),
+  'utf8'
+);
 
 function renderStaticCorrectionForm() {
   document.body.innerHTML = `
@@ -27,6 +30,9 @@ function renderStaticCorrectionForm() {
       <button id="staticCorrectionDeletePresetButton" type="button"></button>
       <input id="staticCorrectionPickNpz" type="file" accept=".npz" />
       <div id="staticCorrectionPickNpzSummary"></div>
+      <button id="staticCorrectionReplacePickNpzButton" type="button"></button>
+      <button id="staticCorrectionClearPickNpzButton" type="button"></button>
+      <button id="staticCorrectionClearDraftButton" type="button"></button>
       <select id="staticCorrectionGeometryPreset">
         <option value="segy_default" selected>SEG-Y default</option>
         <option value="custom">custom</option>
@@ -182,6 +188,9 @@ function renderStaticCorrectionForm() {
       <progress id="staticCorrectionJobProgress" max="1" value="0"></progress>
       <span id="staticCorrectionJobProgressValue"></span>
     </div>
+    <div id="staticCorrectionQcLinkRow" hidden>
+      <a id="staticCorrectionQcLink" href="/refraction-qc"></a>
+    </div>
     <table id="staticCorrectionArtifactTable" hidden>
       <tbody id="staticCorrectionArtifactBody"></tbody>
     </table>
@@ -294,8 +303,14 @@ async function flushAsyncWork(times = 4) {
 
 function createStaticCorrectionFetchMock(
   linkageStatuses = [{ state: 'done', message: '', progress: 1 }],
-  staticStatuses = [{ state: 'done', message: 'finished', progress: 1 }]
+  staticStatuses = [{ state: 'done', message: 'finished', progress: 1 }],
+  { stubEmbeddedRefractionQc = true } = {}
 ) {
+  if (stubEmbeddedRefractionQc && !window.RefractionQc) {
+    window.RefractionQc = {
+      loadJob: vi.fn(async () => null),
+    };
+  }
   const calls = [];
   const linkageStatusQueue = [...linkageStatuses];
   const staticStatusQueue = [...staticStatuses];
@@ -365,6 +380,14 @@ function createStaticCorrectionFetchMock(
   vi.stubGlobal('fetch', fetchMock);
   return { calls, fetchMock };
 }
+
+test('fixture includes NPZ draft action buttons and QC link', () => {
+  expect(document.getElementById('staticCorrectionReplacePickNpzButton')).not.toBeNull();
+  expect(document.getElementById('staticCorrectionClearPickNpzButton')).not.toBeNull();
+  expect(document.getElementById('staticCorrectionClearDraftButton')).not.toBeNull();
+  expect(document.getElementById('staticCorrectionQcLinkRow')).not.toBeNull();
+  expect(document.getElementById('staticCorrectionQcLink')).not.toBeNull();
+});
 
 test('selected pick NPZ renders in the file summary', () => {
   selectedPickFile('manual_picks_time_review.npz', 'abc');
@@ -500,10 +523,10 @@ test('request preview supports uploaded pick source without artifact fields', ()
 
   const preview = JSON.parse(document.getElementById('staticCorrectionRequestPreview').textContent);
   expect(preview.pick_source).toEqual({ kind: 'uploaded_npz' });
-  expect(INDEX_HTML).toContain('Pick NPZ is sent as multipart file field: pick_npz');
-  expect(INDEX_HTML).not.toContain('staticCorrectionPickJobId');
-  expect(INDEX_HTML).not.toContain('staticCorrectionPickArtifactName');
-  expect(INDEX_HTML).not.toContain('staticCorrectionLoadPickArtifactsButton');
+  expect(STATIC_CORRECTION_HTML).toContain('Pick NPZ is sent as multipart file field: pick_npz');
+  expect(STATIC_CORRECTION_HTML).not.toContain('staticCorrectionPickJobId');
+  expect(STATIC_CORRECTION_HTML).not.toContain('staticCorrectionPickArtifactName');
+  expect(STATIC_CORRECTION_HTML).not.toContain('staticCorrectionLoadPickArtifactsButton');
 });
 
 test('static correction does not render manual target id or sort key inputs', () => {
@@ -512,9 +535,9 @@ test('static correction does not render manual target id or sort key inputs', ()
   expect(document.querySelector('#staticCorrectionFileId')).toBeNull();
   expect(document.querySelector('#staticCorrectionKey1Byte')).toBeNull();
   expect(document.querySelector('#staticCorrectionKey2Byte')).toBeNull();
-  expect(INDEX_HTML).not.toContain('name="file_id"');
-  expect(INDEX_HTML).not.toContain('name="key1_byte"');
-  expect(INDEX_HTML).not.toContain('name="key2_byte"');
+  expect(STATIC_CORRECTION_HTML).not.toContain('name="file_id"');
+  expect(STATIC_CORRECTION_HTML).not.toContain('name="key1_byte"');
+  expect(STATIC_CORRECTION_HTML).not.toContain('name="key2_byte"');
   expect(document.getElementById('staticCorrectionTargetFile').textContent).toContain('file-a');
   expect(document.getElementById('staticCorrectionTargetKeys').textContent).toContain(
     'key1=189, key2=193'
@@ -737,12 +760,15 @@ test('checked auto-threshold linkage validates threshold only when enabled', () 
 });
 
 test('field correction and export sections are collapsed details controls', () => {
-  expect(INDEX_HTML).toContain('id="staticCorrectionPickNpz"');
-  expect(INDEX_HTML).not.toContain('id="staticCorrectionPickKind"');
-  expect(INDEX_HTML).toContain('<details id="staticCorrectionFieldCorrectionsSection"');
-  expect(INDEX_HTML).toContain('<summary id="staticCorrectionFieldCorrectionsHeading">Field corrections</summary>');
-  expect(INDEX_HTML).toContain('<details id="staticCorrectionExportSection"');
-  expect(INDEX_HTML).toContain('<summary id="staticCorrectionExportHeading">Exports</summary>');
+  expect(STATIC_CORRECTION_HTML).toContain('id="staticCorrectionPickNpz"');
+  expect(STATIC_CORRECTION_HTML).toContain('id="staticCorrectionReplacePickNpzButton"');
+  expect(STATIC_CORRECTION_HTML).toContain('id="staticCorrectionClearPickNpzButton"');
+  expect(STATIC_CORRECTION_HTML).toContain('id="staticCorrectionClearDraftButton"');
+  expect(STATIC_CORRECTION_HTML).not.toContain('id="staticCorrectionPickKind"');
+  expect(STATIC_CORRECTION_HTML).toContain('id="staticCorrectionFieldCorrectionsSection"');
+  expect(STATIC_CORRECTION_HTML).toContain('<summary id="staticCorrectionFieldCorrectionsHeading">Field corrections</summary>');
+  expect(STATIC_CORRECTION_HTML).toContain('id="staticCorrectionExportSection"');
+  expect(STATIC_CORRECTION_HTML).toContain('<summary id="staticCorrectionExportHeading">Exports</summary>');
 });
 
 test('field corrections disabled omits optional field_corrections request block', () => {
@@ -848,7 +874,7 @@ test('unsupported seconds export option is not present in the UI', () => {
   loadStaticCorrectionScript();
 
   expect(document.querySelector('[name="export.units"]')).toBeNull();
-  expect(INDEX_HTML).not.toContain('value="seconds"');
+  expect(STATIC_CORRECTION_HTML).not.toContain('value="seconds"');
 });
 
 test('one-layer validation ignores inactive bedrock velocity inputs', () => {
@@ -1070,7 +1096,10 @@ test('static correction multipart form data contains request JSON and pick NPZ',
     pick_source: { kind: 'uploaded_npz' },
     linkage: { mode: 'none' },
   });
-  expect(applyCall.formData.get('pick_npz')).toBe(pickFile);
+  const submittedPick = applyCall.formData.get('pick_npz');
+  expect(submittedPick).toBeInstanceOf(File);
+  expect(submittedPick.name).toBe(pickFile.name);
+  expect(submittedPick.size).toBe(pickFile.size);
 });
 
 test('static correction submit failure returns to a retryable idle state', async () => {
@@ -1276,23 +1305,41 @@ test('static correction submit polls job status and loads ready artifacts', asyn
   expect(document.querySelector('a[href="/statics/job/static-job-a/download?name=source_static_table.csv"]')).not.toBeNull();
 });
 
-test('ready static correction job auto-loads refraction QC with the completed job id', async () => {
+test('ready static correction job exposes the standalone Refraction QC link with the completed job id', async () => {
   const ui = loadStaticCorrectionScript();
   window.refractionStaticRunState.pollIntervalMs = 0;
-  const loadJob = vi.fn(async () => ({ job_id: 'static-job-a' }));
-  window.RefractionQc = { loadJob };
+  const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
   createStaticCorrectionFetchMock(
     [{ state: 'done', message: '', progress: 1 }],
-    [{ state: 'ready', message: 'finished', progress: 1 }]
+    [{ state: 'ready', message: 'finished', progress: 1 }],
+    { stubEmbeddedRefractionQc: false }
   );
 
-  await ui.runStaticCorrection();
-  await flushAsyncWork();
+  let navigationAttempted = false;
+  try {
+    await ui.runStaticCorrection();
+    await flushAsyncWork();
+    navigationAttempted = consoleError.mock.calls.some(([error]) => {
+      const message = error && error.message ? error.message : String(error);
+      return message.includes('Not implemented: navigation');
+    });
+  } finally {
+    consoleError.mockRestore();
+  }
 
-  expect(loadJob).toHaveBeenCalledWith('static-job-a', { activateTab: true });
+  const qcLink = document.getElementById('staticCorrectionQcLink');
+  const qcUrl = new URL(qcLink.href);
+  expect(window.RefractionQc).toBeUndefined();
+  expect(navigationAttempted).toBe(true);
+  expect(document.getElementById('staticCorrectionQcLinkRow').hidden).toBe(false);
+  expect(qcUrl.pathname).toBe('/refraction-qc');
+  expect(qcUrl.searchParams.get('refraction_job_id')).toBe('static-job-a');
+  expect(qcUrl.searchParams.get('file_id')).toBe('file-a');
+  expect(qcUrl.searchParams.get('key1_byte')).toBe('189');
+  expect(qcUrl.searchParams.get('key2_byte')).toBe('193');
 });
 
-test('static correction polling stops on failed state and shows an error', async () => {
+test('static correction polling stops on failed state, loads artifacts, and shows an error', async () => {
   const ui = loadStaticCorrectionScript();
   window.refractionStaticRunState.pollIntervalMs = 0;
   const { calls } = createStaticCorrectionFetchMock(
@@ -1304,10 +1351,13 @@ test('static correction polling stops on failed state and shows an error', async
   await flushAsyncWork();
 
   expect(calls.filter((call) => call.url === '/statics/job/static-job-a/status')).toHaveLength(1);
-  expect(calls.map((call) => call.url)).not.toContain('/statics/job/static-job-a/files');
+  expect(calls.map((call) => call.url)).toContain('/statics/job/static-job-a/files');
   expect(document.getElementById('staticCorrectionError').hidden).toBe(false);
   expect(document.getElementById('staticCorrectionError').textContent).toContain('solver failed');
   expect(document.getElementById('staticCorrectionJobStateValue').textContent).toBe('error');
+  expect(
+    document.querySelector('a[href="/statics/job/static-job-a/download?name=source_static_table.csv"]')
+  ).not.toBeNull();
 });
 
 test('static correction cancel posts to the static cancel endpoint', async () => {
