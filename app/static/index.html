@@ -1821,11 +1821,9 @@
     <span>Seismic Wiggle Viewer</span>
     <div class="headerLinks">
       <button type="button" id="viewerShortcutsButton" data-testid="viewer-shortcuts-button">Shortcuts</button>
-      <a id="staticCorrectionLink" href="/static-correction" target="_blank" rel="noopener"
-        onclick="openToolPage('/static-correction', event)" data-testid="static-correction-open-link">Static Correction</a>
-      <a id="refractionQcLink" href="/refraction-qc" target="_blank" rel="noopener"
-        onclick="openToolPage('/refraction-qc', event)" data-testid="refraction-qc-open-link">Refraction QC</a>
-      <a id="batchApplyLink" href="/batch" target="_blank" rel="noopener" onclick="openBatchApplyPage(event)">Batch Apply</a>
+      <a id="staticCorrectionLink" href="/static-correction" data-testid="static-correction-open-link">Static Correction</a>
+      <a id="refractionQcLink" href="/refraction-qc" data-testid="refraction-qc-open-link">Refraction QC</a>
+      <a id="batchApplyLink" href="/batch">Batch Apply</a>
       <a href="/upload">Open SEG-Y</a>
     </div>
   </header>
@@ -2327,18 +2325,6 @@
         if (link) link.href = buildViewerToolUrl(path).toString();
       }
     };
-
-    function openToolPage(path, event) {
-      if (event) event.preventDefault();
-      const opened = window.open(buildViewerToolUrl(path).toString(), '_blank', 'noopener,noreferrer');
-      if (opened) opened.opener = null;
-    }
-
-    function openBatchApplyPage(event) {
-      if (event) event.preventDefault();
-      const opened = window.open(buildViewerToolUrl('/batch').toString(), '_blank', 'noopener,noreferrer');
-      if (opened) opened.opener = null;
-    }
 
     window.addEventListener('DOMContentLoaded', () => {
       window.refreshViewerToolLinks();
