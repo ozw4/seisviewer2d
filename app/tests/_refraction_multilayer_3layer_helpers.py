@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import replace
+import json
 from pathlib import Path
 
 import numpy as np
@@ -19,6 +20,12 @@ from app.services.refraction_static_artifacts import write_refraction_static_art
 from app.services.refraction_static_datum import (
     build_refraction_datum_statics,
     write_refraction_datum_statics_artifacts,
+)
+from app.services.refraction_static_design_matrix import (
+    REFRACTION_DESIGN_MATRIX_NODE_DIAGNOSTICS_CSV_NAME,
+    REFRACTION_DESIGN_MATRIX_QC_JSON_NAME,
+    refraction_design_matrix_layer_node_diagnostics_csv_name,
+    refraction_design_matrix_layer_qc_json_name,
 )
 from app.services.refraction_static_multilayer_service import (
     RefractionMultiLayerStaticsWorkflowResult,
@@ -270,7 +277,9 @@ def compute_three_layer_workflow(
         datum_result=datum_result,
     )
     if job_dir is not None:
-        write_refraction_datum_statics_artifacts(Path(job_dir), datum_result)
+        root = Path(job_dir)
+        write_refraction_datum_statics_artifacts(root, datum_result)
+        _write_fixture_design_matrix_diagnostics(root, solve_result)
         write_refraction_static_artifacts(
             result=datum_result,
             req=_artifact_request(
@@ -280,10 +289,49 @@ def compute_three_layer_workflow(
                 datum=active_datum,
                 apply_options=apply_options,
             ),
-            job_dir=Path(job_dir),
+            job_dir=root,
             resolved_first_layer=resolved_first_layer(),
         )
     return dataset, input_model, model, workflow
+
+
+def _write_fixture_design_matrix_diagnostics(
+    root: Path,
+    solve_result: RefractionMultiLayerSolveResult,
+) -> None:
+    for layer in solve_result.layer_results:
+        layer_dir = root / f'refraction_design_matrix_{layer.layer_kind}'
+        layer_dir.mkdir(parents=True, exist_ok=True)
+        layer_qc = {
+            'n_active_nodes': int(layer.node_time_term_s.shape[0]),
+            'n_rows': int(np.count_nonzero(layer.used_observation_mask_sorted)),
+        }
+        (layer_dir / REFRACTION_DESIGN_MATRIX_QC_JSON_NAME).write_text(
+            json.dumps(layer_qc, sort_keys=True) + '\n',
+            encoding='utf-8',
+        )
+        (
+            layer_dir / REFRACTION_DESIGN_MATRIX_NODE_DIAGNOSTICS_CSV_NAME
+        ).write_text('node_id,status\n1,ok\n', encoding='utf-8')
+        root_qc = {
+            **layer_qc,
+            'layer_kind': layer.layer_kind,
+            'layer_index': int(layer.layer_index),
+            'source_artifact_dir': layer_dir.name,
+        }
+        root_qc_path = root / refraction_design_matrix_layer_qc_json_name(
+            layer.layer_kind
+        )
+        root_qc_path.write_text(
+            json.dumps(root_qc, sort_keys=True) + '\n',
+            encoding='utf-8',
+        )
+        (
+            root
+            / refraction_design_matrix_layer_node_diagnostics_csv_name(
+                layer.layer_kind
+            )
+        ).write_text('node_id,status\n1,ok\n', encoding='utf-8')
 
 
 def make_three_layer_solve_result(

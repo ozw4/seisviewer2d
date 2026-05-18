@@ -6,6 +6,9 @@ from collections.abc import Iterable
 from pathlib import Path
 
 from app.api.schemas import RefractionStaticApplyRequest
+from app.services.refraction_static_design_matrix import (
+    all_refraction_design_matrix_layer_artifact_names,
+)
 from app.services.refraction_static_artifacts.cell_velocity import (
     build_refraction_cell_solver_history_rows,
     build_refraction_refractor_velocity_grid_arrays,
@@ -120,6 +123,7 @@ from app.services.refraction_static_artifacts.qc import (
 from app.services.refraction_static_artifacts.registry import (
     REFRACTION_STATIC_REGISTERED_ARTIFACT_NAMES,
     _artifact_entries_for_request,
+    _artifact_list_for_qc,
     _build_manifest_payload,
     _cell_velocity_artifact_paths_for_request,
     _validate_declared_upstream_artifacts,
@@ -193,12 +197,17 @@ def write_refraction_static_artifacts(
         first_layer,
         upstream_artifact_names=upstream_names,
     )
+    artifact_entries = _filter_present_design_matrix_diagnostics(
+        root,
+        artifact_entries,
+    )
     qc = build_refraction_static_qc_payload(
         result=values.result,
         req=request,
         resolved_first_layer=first_layer,
         upstream_artifact_names=upstream_names,
     )
+    qc['artifacts'] = _artifact_list_for_qc(artifact_entries)
     manifest = _build_manifest_payload(artifact_entries)
     _assert_strict_json(manifest, artifact_name=REFRACTION_STATIC_ARTIFACTS_JSON_NAME)
     t1lsst_components_path = (
@@ -526,6 +535,21 @@ def write_refraction_static_artifacts(
             )
     _validate_declared_upstream_artifacts(root, upstream_names)
     return paths
+
+
+def _filter_present_design_matrix_diagnostics(
+    root: Path,
+    artifact_entries: tuple[dict[str, str | bool], ...],
+) -> tuple[dict[str, str | bool], ...]:
+    design_matrix_names = set(all_refraction_design_matrix_layer_artifact_names())
+    if not design_matrix_names:
+        return artifact_entries
+    return tuple(
+        entry
+        for entry in artifact_entries
+        if str(entry['name']) not in design_matrix_names
+        or (root / str(entry['name'])).is_file()
+    )
 
 
 __all__ = [

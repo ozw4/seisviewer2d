@@ -13,6 +13,9 @@ from app.services.refraction_static_layer_config import (
 from app.services.refraction_static_design_matrix import (
     REFRACTION_DESIGN_MATRIX_NODE_DIAGNOSTICS_CSV_NAME,
     REFRACTION_DESIGN_MATRIX_QC_JSON_NAME,
+    all_refraction_design_matrix_layer_artifact_names,
+    refraction_design_matrix_layer_node_diagnostics_csv_name,
+    refraction_design_matrix_layer_qc_json_name,
 )
 from app.services.refraction_static_preflight_diagnostics import (
     REFRACTION_STATIC_PREFLIGHT_OBSERVATIONS_CSV_NAME,
@@ -468,7 +471,7 @@ REFRACTION_STATIC_REGISTERED_ARTIFACT_NAMES = frozenset(
     REFRACTION_DESIGN_MATRIX_QC_JSON_NAME,
     REFRACTION_DESIGN_MATRIX_NODE_DIAGNOSTICS_CSV_NAME,
     UPLOADED_REFRACTION_PICKS_NPZ_NAME,
-}
+} | frozenset(all_refraction_design_matrix_layer_artifact_names())
 
 
 def registered_artifact_names() -> frozenset[str]:
@@ -549,6 +552,7 @@ def artifact_entries_for_request(
         _ARTIFACTS
         + _grid_map_qc_artifact_entries(req)
         + _refractor_cell_velocity_artifact_entries(req)
+        + _design_matrix_diagnostics_artifact_entries(req)
         + _t1lsst_artifact_entries(req)
         + _upstream_artifact_entries(
             _validate_upstream_artifact_names(
@@ -574,6 +578,37 @@ def _refractor_cell_velocity_artifact_entries(
     entries: list[dict[str, str | bool]] = []
     for layer_kind in _request_cell_velocity_layer_kinds(req):
         entries.extend(_cell_velocity_artifact_entries_for_layer(layer_kind))
+    return tuple(entries)
+
+
+def _design_matrix_diagnostics_artifact_entries(
+    req: RefractionStaticApplyRequest,
+) -> tuple[dict[str, str | bool], ...]:
+    if req.model.method != 'multilayer_time_term':
+        return ()
+    entries: list[dict[str, str | bool]] = []
+    for config in normalize_refraction_static_layers(req.model):
+        label = _CELL_VELOCITY_LABEL_BY_LAYER[config.kind]
+        entries.extend(
+            (
+                {
+                    'name': refraction_design_matrix_layer_qc_json_name(config.kind),
+                    'kind': 'json',
+                    'required': True,
+                    'description': f'{label} design-matrix QC summary',
+                },
+                {
+                    'name': (
+                        refraction_design_matrix_layer_node_diagnostics_csv_name(
+                            config.kind
+                        )
+                    ),
+                    'kind': 'csv',
+                    'required': True,
+                    'description': f'{label} design-matrix node diagnostics',
+                },
+            )
+        )
     return tuple(entries)
 
 
@@ -759,6 +794,7 @@ __all__ = [
     '_cell_velocity_artifact_names_for_request',
     '_cell_velocity_artifact_paths_for_request',
     '_cell_velocity_layer_kind',
+    '_design_matrix_diagnostics_artifact_entries',
     '_grid_map_qc_artifact_entries',
     '_refractor_cell_velocity_artifact_entries',
     '_request_cell_velocity_layer_kinds',

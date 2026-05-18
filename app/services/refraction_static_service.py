@@ -32,6 +32,7 @@ from app.services.refraction_static_artifacts import (
 from app.services.refraction_static_design_matrix import (
     REFRACTION_DESIGN_MATRIX_NODE_DIAGNOSTICS_CSV_NAME,
     REFRACTION_DESIGN_MATRIX_QC_JSON_NAME,
+    all_refraction_design_matrix_layer_artifact_names,
 )
 from app.services.refraction_static_datum import (
     build_refraction_datum_statics,
@@ -107,7 +108,7 @@ _FAILURE_DIAGNOSTIC_ARTIFACT_NAMES = (
     REFRACTION_DESIGN_MATRIX_QC_JSON_NAME,
     REFRACTION_DESIGN_MATRIX_NODE_DIAGNOSTICS_CSV_NAME,
     REFRACTION_STATIC_FAILURE_DIAGNOSTICS_JSON_NAME,
-)
+) + all_refraction_design_matrix_layer_artifact_names()
 _PUBLIC_MULTILAYER_APPLY_CONTRACT = (
     'public multi-layer refraction apply requires '
     'model.method=multilayer_time_term, '
@@ -1424,6 +1425,10 @@ def _failed_refraction_static_stage(exc: Exception, job_dir: Path) -> str:
     if (
         (job_dir / REFRACTION_DESIGN_MATRIX_QC_JSON_NAME).is_file()
         or (job_dir / REFRACTION_DESIGN_MATRIX_NODE_DIAGNOSTICS_CSV_NAME).is_file()
+        or any(
+            (job_dir / name).is_file()
+            for name in all_refraction_design_matrix_layer_artifact_names()
+        )
     ):
         return 'design_matrix'
     return 'unknown'

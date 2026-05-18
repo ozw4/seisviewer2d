@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import numpy as np
@@ -9,6 +10,8 @@ from app.api.schemas import RefractionStaticModelRequest, RefractionStaticSolver
 from app.services.refraction_static_design_matrix import (
     REFRACTION_DESIGN_MATRIX_NODE_DIAGNOSTICS_CSV_NAME,
     REFRACTION_DESIGN_MATRIX_QC_JSON_NAME,
+    refraction_design_matrix_layer_node_diagnostics_csv_name,
+    refraction_design_matrix_layer_qc_json_name,
 )
 from app.services.refraction_static_layer_config import (
     normalize_refraction_static_layers,
@@ -95,8 +98,20 @@ def test_multilayer_orchestrator_runs_normalized_one_layer_v2_solve(
     assert (
         layer_artifact_dir / REFRACTION_DESIGN_MATRIX_NODE_DIAGNOSTICS_CSV_NAME
     ).is_file()
-    assert (tmp_path / REFRACTION_DESIGN_MATRIX_QC_JSON_NAME).is_file()
-    assert (tmp_path / REFRACTION_DESIGN_MATRIX_NODE_DIAGNOSTICS_CSV_NAME).is_file()
+    assert not (tmp_path / REFRACTION_DESIGN_MATRIX_QC_JSON_NAME).exists()
+    assert not (
+        tmp_path / REFRACTION_DESIGN_MATRIX_NODE_DIAGNOSTICS_CSV_NAME
+    ).exists()
+    root_qc_path = tmp_path / refraction_design_matrix_layer_qc_json_name('v2_t1')
+    root_csv_path = (
+        tmp_path / refraction_design_matrix_layer_node_diagnostics_csv_name('v2_t1')
+    )
+    assert root_qc_path.is_file()
+    assert root_csv_path.is_file()
+    root_qc = json.loads(root_qc_path.read_text(encoding='utf-8'))
+    assert root_qc['layer_kind'] == 'v2_t1'
+    assert root_qc['layer_index'] == 1
+    assert root_qc['source_artifact_dir'] == 'refraction_design_matrix_v2_t1'
 
 
 def test_multilayer_orchestrator_exposes_failed_layer_design_matrix_artifacts(
@@ -148,8 +163,19 @@ def test_multilayer_orchestrator_exposes_failed_layer_design_matrix_artifacts(
             solver_dispatch={('v2_t1', 'solve_global'): _failing_solver},
         )
 
-    assert (tmp_path / REFRACTION_DESIGN_MATRIX_QC_JSON_NAME).is_file()
-    assert (tmp_path / REFRACTION_DESIGN_MATRIX_NODE_DIAGNOSTICS_CSV_NAME).is_file()
+    assert not (tmp_path / REFRACTION_DESIGN_MATRIX_QC_JSON_NAME).exists()
+    assert not (
+        tmp_path / REFRACTION_DESIGN_MATRIX_NODE_DIAGNOSTICS_CSV_NAME
+    ).exists()
+    root_qc_path = tmp_path / refraction_design_matrix_layer_qc_json_name('v2_t1')
+    assert root_qc_path.is_file()
+    root_qc = json.loads(root_qc_path.read_text(encoding='utf-8'))
+    assert root_qc['layer_kind'] == 'v2_t1'
+    assert root_qc['layer_index'] == 1
+    assert root_qc['source_artifact_dir'] == 'refraction_design_matrix_v2_t1'
+    assert (
+        tmp_path / refraction_design_matrix_layer_node_diagnostics_csv_name('v2_t1')
+    ).is_file()
 
 
 def test_multilayer_orchestrator_dispatches_enabled_layers_in_order() -> None:
@@ -219,6 +245,95 @@ def test_multilayer_orchestrator_dispatches_enabled_layers_in_order() -> None:
     assert [layer.layer_index for layer in result.layer_results] == [1, 2, 3]
     assert result.qc['layers']['v3_t2']['layer_kind'] == 'v3_t2'
     assert result.qc['observation_gates']['vsub_t3']['max_offset_m'] is None
+
+
+def test_multilayer_design_matrix_diagnostics_are_layer_disambiguated(
+    tmp_path: Path,
+) -> None:
+    dataset = make_2d_straight_three_layer_refraction_dataset()
+    model = _model(
+        [
+            _layer(
+                'v2_t1',
+                min_offset_m=300.0,
+                max_offset_m=800.0,
+                velocity_mode='fixed_global',
+                fixed_velocity_m_s=SYNTHETIC_MULTILAYER_V2_M_S,
+                min_velocity_m_s=1600.0,
+                max_velocity_m_s=3200.0,
+            ),
+            _layer(
+                'v3_t2',
+                min_offset_m=1000.0,
+                max_offset_m=1900.0,
+                velocity_mode='fixed_global',
+                fixed_velocity_m_s=SYNTHETIC_MULTILAYER_V3_M_S,
+                min_velocity_m_s=2600.0,
+                max_velocity_m_s=4800.0,
+            ),
+            _layer(
+                'vsub_t3',
+                min_offset_m=2200.0,
+                max_offset_m=None,
+                velocity_mode='fixed_global',
+                fixed_velocity_m_s=SYNTHETIC_MULTILAYER_VSUB_M_S,
+                min_velocity_m_s=3800.0,
+                max_velocity_m_s=6200.0,
+            ),
+        ]
+    )
+    input_model = _input_model(dataset)
+    masks = build_refraction_layer_observation_masks(
+        input_model=input_model,
+        model=model,
+    )
+
+    def fake_solver(context: RefractionLayerSolverContext) -> RefractionLayerSolveResult:
+        assert context.job_dir is not None
+        context.job_dir.mkdir(parents=True, exist_ok=True)
+        (context.job_dir / REFRACTION_DESIGN_MATRIX_QC_JSON_NAME).write_text(
+            '{"n_active_nodes": 2}',
+            encoding='utf-8',
+        )
+        (
+            context.job_dir / REFRACTION_DESIGN_MATRIX_NODE_DIAGNOSTICS_CSV_NAME
+        ).write_text('node_id,status\n1,ok\n', encoding='utf-8')
+        return _fake_layer_result(context)
+
+    solve_refraction_multilayer_time_terms(
+        input_model=input_model,
+        resolved_first_layer=_resolved_first_layer(),
+        normalized_layers=normalize_refraction_static_layers(model),
+        layer_masks=masks,
+        model=model,
+        solver=RefractionStaticSolverRequest(),
+        job_dir=tmp_path,
+        solver_dispatch={
+            ('v2_t1', 'fixed_global'): fake_solver,
+            ('v3_t2', 'fixed_global'): fake_solver,
+            ('vsub_t3', 'fixed_global'): fake_solver,
+        },
+    )
+
+    assert not (tmp_path / REFRACTION_DESIGN_MATRIX_QC_JSON_NAME).exists()
+    assert not (
+        tmp_path / REFRACTION_DESIGN_MATRIX_NODE_DIAGNOSTICS_CSV_NAME
+    ).exists()
+    for layer_kind, layer_index in (
+        ('v2_t1', 1),
+        ('v3_t2', 2),
+        ('vsub_t3', 3),
+    ):
+        qc_path = tmp_path / refraction_design_matrix_layer_qc_json_name(layer_kind)
+        csv_path = (
+            tmp_path
+            / refraction_design_matrix_layer_node_diagnostics_csv_name(layer_kind)
+        )
+        qc = json.loads(qc_path.read_text(encoding='utf-8'))
+        assert qc['layer_kind'] == layer_kind
+        assert qc['layer_index'] == layer_index
+        assert qc['source_artifact_dir'] == f'refraction_design_matrix_{layer_kind}'
+        assert csv_path.is_file()
 
 
 def test_multilayer_orchestrator_applies_layer_cell_settings_to_layer_model() -> None:

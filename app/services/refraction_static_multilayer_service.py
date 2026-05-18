@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, replace
+import json
 from pathlib import Path
 from typing import Any
 
@@ -41,6 +42,8 @@ from app.services.refraction_static_design_matrix import (
     OUTSIDE_REFRACTOR_CELL_GRID_REASON,
     REFRACTION_DESIGN_MATRIX_NODE_DIAGNOSTICS_CSV_NAME,
     REFRACTION_DESIGN_MATRIX_QC_JSON_NAME,
+    refraction_design_matrix_layer_node_diagnostics_csv_name,
+    refraction_design_matrix_layer_qc_json_name,
 )
 from app.services.refraction_static_half_intercept import (
     estimate_refraction_half_intercept_times_from_first_breaks,
@@ -179,14 +182,18 @@ def solve_refraction_multilayer_time_terms(
         try:
             result = layer_solver(context)
         except Exception:  # noqa: BLE001
-            _copy_layer_design_matrix_diagnostics_to_root(
+            _copy_layer_design_matrix_diagnostics_to_root_artifacts(
                 root=job_dir,
                 layer_dir=layer_job_dir,
+                layer_kind=config.kind,
+                layer_index=_layer_index(config.kind),
             )
             raise
-        _copy_layer_design_matrix_diagnostics_to_root(
+        _copy_layer_design_matrix_diagnostics_to_root_artifacts(
             root=job_dir,
             layer_dir=layer_job_dir,
+            layer_kind=config.kind,
+            layer_index=_layer_index(config.kind),
         )
         _validate_layer_result(result=result, config=config)
         result = _validate_layer_velocity_sequence(
@@ -2328,25 +2335,46 @@ def _layer_design_matrix_artifact_dir(
     return Path(root) / f'{_DESIGN_MATRIX_ARTIFACT_DIR_PREFIX}_{config.kind}'
 
 
-def _copy_layer_design_matrix_diagnostics_to_root(
+def _copy_layer_design_matrix_diagnostics_to_root_artifacts(
     *,
     root: Path | None,
     layer_dir: Path | None,
+    layer_kind: RefractionLayerKind,
+    layer_index: int,
 ) -> None:
-    """Expose the latest layer diagnostics through root-level job artifacts."""
+    """Expose layer diagnostics through disambiguated root-level artifacts."""
     if root is None or layer_dir is None:
         return
     root_path = Path(root)
     layer_path = Path(layer_dir)
-    for name in (
-        REFRACTION_DESIGN_MATRIX_QC_JSON_NAME,
-        REFRACTION_DESIGN_MATRIX_NODE_DIAGNOSTICS_CSV_NAME,
-    ):
-        source = layer_path / name
-        if not source.is_file():
-            continue
+    qc_source = layer_path / REFRACTION_DESIGN_MATRIX_QC_JSON_NAME
+    if qc_source.is_file():
         root_path.mkdir(parents=True, exist_ok=True)
-        (root_path / name).write_bytes(source.read_bytes())
+        qc_payload = json.loads(qc_source.read_text(encoding='utf-8'))
+        if not isinstance(qc_payload, dict):
+            raise RefractionMultiLayerSolveError(
+                'design matrix diagnostics QC artifact must contain a JSON object'
+            )
+        qc_payload = {
+            **qc_payload,
+            'layer_kind': layer_kind,
+            'layer_index': int(layer_index),
+            'source_artifact_dir': layer_path.name,
+        }
+        (
+            root_path / refraction_design_matrix_layer_qc_json_name(layer_kind)
+        ).write_text(
+            json.dumps(qc_payload, indent=2, sort_keys=True) + '\n',
+            encoding='utf-8',
+        )
+
+    csv_source = layer_path / REFRACTION_DESIGN_MATRIX_NODE_DIAGNOSTICS_CSV_NAME
+    if csv_source.is_file():
+        root_path.mkdir(parents=True, exist_ok=True)
+        (
+            root_path
+            / refraction_design_matrix_layer_node_diagnostics_csv_name(layer_kind)
+        ).write_bytes(csv_source.read_bytes())
 
 
 def _layer_result_from_half_intercept(
