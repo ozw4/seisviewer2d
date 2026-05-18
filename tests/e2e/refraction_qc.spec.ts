@@ -1034,6 +1034,19 @@ async function openStaticCorrectionTab(page: Page) {
 	await expect(page.getByTestId('static-correction-panel')).toBeVisible();
 }
 
+async function openStandaloneStaticCorrectionPage(
+	page: Page,
+	{
+		fileId = 'fixture-line-a-store',
+		key1Byte = 9,
+		key2Byte = 13,
+	} = {},
+) {
+	await page.goto(`/static-correction?file_id=${fileId}&key1_byte=${key1Byte}&key2_byte=${key2Byte}`);
+	await expect(page.getByTestId('static-correction-panel')).toBeVisible();
+	await expect(page.getByTestId('static-correction-target-status')).toHaveText('Ready');
+}
+
 async function setStaticCorrectionViewerTarget(
 	page: Page,
 	{
@@ -1395,6 +1408,119 @@ test('static_correction_ui_auto_loads_qc_after_ready_job', async ({ page }) => {
 		job_id: 'refraction-job-565-qc',
 		max_points: 20000,
 	});
+});
+
+test('static_correction_standalone_auto_navigates_to_refraction_qc_after_ready_job', async ({ page }) => {
+	const calls = await routeCompletedStaticCorrectionFlow(page, { jobId: 'refraction-job-634' });
+
+	await openStandaloneStaticCorrectionPage(page, {
+		fileId: 'fixture-line-a-store',
+		key1Byte: 9,
+		key2Byte: 13,
+	});
+	await selectStaticCorrectionPickNpz(page);
+	await page.getByTestId('static-correction-model-kind').selectOption('one_layer_global');
+	await page.getByTestId('static-correction-run').click();
+
+	await expect(page).toHaveURL(/\/refraction-qc\?/);
+	const url = new URL(page.url());
+	expect(url.searchParams.get('refraction_job_id')).toBe('refraction-job-634');
+	expect(url.searchParams.get('file_id')).toBe('fixture-line-a-store');
+	expect(url.searchParams.get('key1_byte')).toBe('9');
+	expect(url.searchParams.get('key2_byte')).toBe('13');
+	await expect(page.getByTestId('refraction-qc-job-id')).toHaveValue('refraction-job-634');
+	await expect(page.getByTestId('refraction-qc-status')).toContainText('Loaded refraction-job-634');
+	expect(calls.map((call) => call.endpoint)).toEqual(['apply', 'status', 'files', 'qc']);
+});
+
+test('static_correction_standalone_does_not_auto_navigate_for_restored_job_poll', async ({ page }) => {
+	const calls: StaticCorrectionRouteCall[] = [];
+	await page.route('**/statics/job/restored-refraction-job/status', async (route) => {
+		calls.push({ endpoint: 'status', body: {} });
+		await route.fulfill({
+			status: 200,
+			contentType: 'application/json',
+			body: JSON.stringify({
+				job_id: 'restored-refraction-job',
+				state: 'ready',
+				progress: 1,
+				message: 'finished',
+			}),
+		});
+	});
+	await page.route('**/statics/job/restored-refraction-job/files', async (route) => {
+		calls.push({ endpoint: 'files', body: {} });
+		await route.fulfill({
+			status: 200,
+			contentType: 'application/json',
+			body: JSON.stringify({ files: [{ name: 'refraction_static_qc.json', size_bytes: 512 }] }),
+		});
+	});
+	await page.route('**/statics/refraction/qc', async (route) => {
+		calls.push({ endpoint: 'unexpected-qc', body: JSON.parse(route.request().postData() || '{}') });
+		await route.abort();
+	});
+
+	await openStandaloneStaticCorrectionPage(page);
+	await page.evaluate(() => (
+		(window as any).refractionStaticRunUI.pollStaticCorrectionJobUntilTerminal('restored-refraction-job')
+	));
+
+	await expect(page).toHaveURL(/\/static-correction\?/);
+	await expect(page.getByTestId('static-correction-open-qc-link')).toBeVisible();
+	const href = await page.getByTestId('static-correction-open-qc-link').getAttribute('href');
+	expect(new URL(href || '').searchParams.get('refraction_job_id')).toBe('restored-refraction-job');
+	expect(calls.map((call) => call.endpoint)).toEqual(['status', 'files']);
+});
+
+test('static_correction_standalone_does_not_auto_navigate_on_failed_job', async ({ page }) => {
+	const calls: StaticCorrectionRouteCall[] = [];
+	await page.route('**/statics/refraction/apply-with-picks', async (route) => {
+		calls.push({
+			endpoint: 'apply',
+			body: multipartRequestJson(route),
+		});
+		await route.fulfill({
+			status: 200,
+			contentType: 'application/json',
+			body: JSON.stringify({ job_id: 'refraction-job-634-failed', state: 'queued', progress: 0 }),
+		});
+	});
+	await page.route('**/statics/job/refraction-job-634-failed/status', async (route) => {
+		calls.push({ endpoint: 'status', body: {} });
+		await route.fulfill({
+			status: 200,
+			contentType: 'application/json',
+			body: JSON.stringify({
+				job_id: 'refraction-job-634-failed',
+				state: 'error',
+				progress: 1,
+				message: 'static correction failed',
+			}),
+		});
+	});
+	await page.route('**/statics/job/refraction-job-634-failed/files', async (route) => {
+		calls.push({ endpoint: 'files', body: {} });
+		await route.fulfill({
+			status: 200,
+			contentType: 'application/json',
+			body: JSON.stringify({ files: [] }),
+		});
+	});
+	await page.route('**/statics/refraction/qc', async (route) => {
+		calls.push({ endpoint: 'unexpected-qc', body: JSON.parse(route.request().postData() || '{}') });
+		await route.abort();
+	});
+
+	await openStandaloneStaticCorrectionPage(page);
+	await selectStaticCorrectionPickNpz(page);
+	await page.getByTestId('static-correction-model-kind').selectOption('one_layer_global');
+	await page.getByTestId('static-correction-run').click();
+
+	await expect(page).toHaveURL(/\/static-correction\?/);
+	await expect(page.getByTestId('static-correction-error')).toContainText('static correction failed');
+	await expect(page.getByTestId('static-correction-qc-link-row')).toBeHidden();
+	expect(calls.map((call) => call.endpoint)).toEqual(['apply', 'status', 'files']);
 });
 
 test('static_correction_ui_shows_error_when_apply_fails', async ({ page }) => {
