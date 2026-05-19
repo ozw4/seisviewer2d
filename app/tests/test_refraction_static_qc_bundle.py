@@ -25,6 +25,8 @@ from app.services.refraction_static_artifacts import (
     REFRACTION_STATIC_COMPONENT_QC_TRACE_CSV_NAME,
     REFRACTION_STATIC_QC_JSON_NAME,
     REFRACTION_STATIC_REQUEST_JSON_NAME,
+    SOURCE_STATIC_TABLE_CSV_NAME,
+    RECEIVER_STATIC_TABLE_CSV_NAME,
 )
 
 
@@ -463,6 +465,411 @@ def test_refraction_static_qc_bundle_uses_static_component_qc_artifacts(
         REFRACTION_STATIC_COMPONENT_QC_TRACE_CSV_NAME
     )
     assert payload['views']['static_component_qc_trace']['records'] == trace_rows
+
+
+def test_refraction_static_station_structure_uses_endpoint_side_fields(
+    client: TestClient,
+    tmp_path: Path,
+) -> None:
+    job_dir = tmp_path / 'refraction-job'
+    _write_refraction_qc_artifacts(
+        job_dir,
+        rows=[{'trace': '0', 'first_break_residual_ms': '1.25'}],
+        extra_artifact_names=[
+            REFRACTION_LINE_PROFILE_QC_COMBINED_CSV_NAME,
+            REFRACTION_FIRST_BREAK_FIT_QC_CSV_NAME,
+        ],
+    )
+    endpoint_rows = [
+        {
+            'endpoint_kind': 'source',
+            'endpoint_key': 'source:100',
+            'source_id': '100',
+            'receiver_id': '',
+            'global_receiver_number': '100',
+            't1_ms': '8.0',
+            'v2_m_s': '2400',
+            'sh1_m': '12.5',
+            'static_status': 'ok',
+        },
+        {
+            'endpoint_kind': 'source',
+            'endpoint_key': 'source:101',
+            'source_id': '101',
+            'receiver_id': '',
+            'global_receiver_number': '101',
+            't1_ms': '8.5',
+            'v2_m_s': '2450',
+            'sh1_m': '13.5',
+            'static_status': 'ok',
+        },
+        {
+            'endpoint_kind': 'receiver',
+            'endpoint_key': 'receiver:200',
+            'source_id': '',
+            'receiver_id': '200',
+            'global_receiver_number': '200',
+            't1_ms': '18.0',
+            'v2_m_s': '2600',
+            'sh1_m': '22.5',
+            'static_status': 'ok',
+        },
+        {
+            'endpoint_kind': 'receiver',
+            'endpoint_key': 'receiver:201',
+            'source_id': '',
+            'receiver_id': '201',
+            'global_receiver_number': '201',
+            't1_ms': '19.0',
+            'v2_m_s': '2650',
+            'sh1_m': '23.5',
+            'static_status': 'ok',
+        },
+    ]
+    _write_csv(job_dir / REFRACTION_LINE_PROFILE_QC_COMBINED_CSV_NAME, endpoint_rows)
+    _write_csv(
+        job_dir / REFRACTION_FIRST_BREAK_FIT_QC_CSV_NAME,
+        [
+            {'source_id': '100', 'receiver_id': '200'},
+            {'source_id': '101', 'receiver_id': '201'},
+        ],
+    )
+    _create_static_job(client, job_id='refraction-job', job_dir=job_dir)
+
+    response = client.post(
+        '/statics/refraction/qc/station-structure',
+        json={
+            'job_id': 'refraction-job',
+            'gather_start': 101,
+            'gather_end': 101,
+            'velocity_field': 'v2',
+            'depth_field': 'sh1',
+        },
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload['view_kind'] == 'station_structure'
+    assert payload['x_axis'] == 'global_receiver_number'
+    assert payload['x_axis_label'] == 'Global receiver number'
+    assert payload['filter_status'] == 'ok'
+    assert payload['colors'] == {'source': 'cyan', 'receiver': 'red'}
+    assert payload['time_term']['source']['endpoint_key'] == ['source:101']
+    assert payload['time_term']['source']['y'] == [8.5]
+    assert payload['velocity']['field'] == 'v2'
+    assert payload['velocity']['receiver']['endpoint_key'] == ['receiver:201']
+    assert payload['velocity']['receiver']['y'] == [2650.0]
+    assert payload['depth']['field'] == 'sh1'
+    assert payload['depth']['receiver']['y'] == [23.5]
+
+
+def test_refraction_static_station_structure_warns_on_linked_velocity_fallback(
+    client: TestClient,
+    tmp_path: Path,
+) -> None:
+    job_dir = tmp_path / 'refraction-job'
+    _write_refraction_qc_artifacts(
+        job_dir,
+        rows=[{'trace': '0', 'first_break_residual_ms': '1.25'}],
+        extra_artifact_names=[REFRACTION_LINE_PROFILE_QC_COMBINED_CSV_NAME],
+    )
+    _write_csv(
+        job_dir / REFRACTION_LINE_PROFILE_QC_COMBINED_CSV_NAME,
+        [
+            {
+                'endpoint_kind': 'source',
+                'endpoint_key': 'source:100',
+                'source_id': '100',
+                'receiver_id': '',
+                'global_receiver_number': '100',
+                't1_ms': '8.0',
+                'linked_node_velocity_m_s': '2400',
+                'sh1_m': '12.5',
+            },
+            {
+                'endpoint_kind': 'receiver',
+                'endpoint_key': 'receiver:100',
+                'source_id': '',
+                'receiver_id': '100',
+                'global_receiver_number': '100',
+                't1_ms': '18.0',
+                'linked_node_velocity_m_s': '2400',
+                'sh1_m': '22.5',
+            },
+        ],
+    )
+    _create_static_job(client, job_id='refraction-job', job_dir=job_dir)
+
+    response = client.post(
+        '/statics/refraction/qc/station-structure',
+        json={'job_id': 'refraction-job', 'velocity_field': 'v2'},
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload['velocity']['source']['endpoint_key'] == ['source:100']
+    assert payload['velocity']['receiver']['endpoint_key'] == ['receiver:100']
+    assert payload['velocity']['source']['y'] == [2400.0]
+    assert payload['velocity']['receiver']['y'] == [2400.0]
+    assert any('linked_node_velocity_m_s' in warning for warning in payload['warnings'])
+
+
+def test_refraction_static_station_structure_filters_receivers_by_station_fields(
+    client: TestClient,
+    tmp_path: Path,
+) -> None:
+    job_dir = tmp_path / 'refraction-job'
+    _write_refraction_qc_artifacts(
+        job_dir,
+        rows=[{'trace': '0', 'first_break_residual_ms': '1.25'}],
+        extra_artifact_names=[
+            REFRACTION_LINE_PROFILE_QC_COMBINED_CSV_NAME,
+            REFRACTION_FIRST_BREAK_FIT_QC_CSV_NAME,
+        ],
+    )
+    _write_csv(
+        job_dir / REFRACTION_LINE_PROFILE_QC_COMBINED_CSV_NAME,
+        [
+            {
+                'endpoint_kind': 'source',
+                'endpoint_key': 'source:10',
+                'source_id': '10',
+                'receiver_id': '',
+                'global_receiver_number': '10',
+                'station_number': '10',
+                'receiver_number': '10',
+                't1_ms': '7.5',
+                'v2_m_s': '2300',
+                'sh1_m': '10.0',
+            },
+            {
+                'endpoint_kind': 'receiver',
+                'endpoint_key': 'receiver:A',
+                'receiver_id': '',
+                'global_receiver_number': '500',
+                'station_number': '1500',
+                'receiver_number': '2500',
+                't1_ms': '17.0',
+                'v2_m_s': '2550',
+                'sh1_m': '20.0',
+            },
+            {
+                'endpoint_kind': 'receiver',
+                'endpoint_key': 'receiver:B',
+                'receiver_id': '',
+                'global_receiver_number': '501',
+                'station_number': '1501',
+                'receiver_number': '2501',
+                't1_ms': '18.0',
+                'v2_m_s': '2650',
+                'sh1_m': '21.0',
+            },
+        ],
+    )
+    _write_csv(
+        job_dir / REFRACTION_FIRST_BREAK_FIT_QC_CSV_NAME,
+        [
+            {
+                'source_id': '10',
+                'global_receiver_number': '501',
+            }
+        ],
+    )
+    _create_static_job(client, job_id='refraction-job', job_dir=job_dir)
+
+    response = client.post(
+        '/statics/refraction/qc/station-structure',
+        json={'job_id': 'refraction-job', 'gather_start': 10, 'gather_end': 10},
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload['filter_status'] == 'ok'
+    assert payload['time_term']['receiver']['endpoint_key'] == ['receiver:B']
+    assert payload['velocity']['receiver']['x'] == [501]
+
+
+def test_refraction_static_station_structure_reports_unavailable_receiver_filter(
+    client: TestClient,
+    tmp_path: Path,
+) -> None:
+    job_dir = tmp_path / 'refraction-job'
+    _write_refraction_qc_artifacts(
+        job_dir,
+        rows=[{'trace': '0', 'first_break_residual_ms': '1.25'}],
+        extra_artifact_names=[
+            SOURCE_STATIC_TABLE_CSV_NAME,
+            RECEIVER_STATIC_TABLE_CSV_NAME,
+        ],
+    )
+    _write_csv(
+        job_dir / SOURCE_STATIC_TABLE_CSV_NAME,
+        [
+            {
+                'endpoint_kind': 'source',
+                'source_endpoint_key': 'source:100',
+                'source_id': '100',
+                't1_ms': '8.0',
+                'v2_m_s': '2400',
+                'sh1_weathering_thickness_m': '12.5',
+                'static_status': 'ok',
+            }
+        ],
+    )
+    _write_csv(
+        job_dir / RECEIVER_STATIC_TABLE_CSV_NAME,
+        [
+            {
+                'endpoint_kind': 'receiver',
+                'receiver_endpoint_key': 'receiver:200',
+                'receiver_id': '200',
+                't1_ms': '18.0',
+                'v2_m_s': '2600',
+                'sh1_weathering_thickness_m': '22.5',
+                'static_status': 'ok',
+            }
+        ],
+    )
+    _create_static_job(client, job_id='refraction-job', job_dir=job_dir)
+
+    response = client.post(
+        '/statics/refraction/qc/station-structure',
+        json={'job_id': 'refraction-job', 'gather_start': 100, 'gather_end': 100},
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload['filter_status'] == 'receiver_participation_unavailable'
+    assert 'receiver series is unfiltered' in payload['warnings'][0]
+    assert payload['velocity']['source']['x'] == [100]
+    assert payload['velocity']['receiver']['x'] == [200]
+
+
+def test_refraction_static_station_structure_reports_unfilterable_observations(
+    client: TestClient,
+    tmp_path: Path,
+) -> None:
+    job_dir = tmp_path / 'refraction-job'
+    _write_refraction_qc_artifacts(
+        job_dir,
+        rows=[{'trace': '0', 'first_break_residual_ms': '1.25'}],
+        extra_artifact_names=[
+            REFRACTION_LINE_PROFILE_QC_COMBINED_CSV_NAME,
+            REFRACTION_FIRST_BREAK_FIT_QC_CSV_NAME,
+        ],
+    )
+    _write_csv(
+        job_dir / REFRACTION_LINE_PROFILE_QC_COMBINED_CSV_NAME,
+        [
+            {
+                'endpoint_kind': 'source',
+                'endpoint_key': 'source:100',
+                'source_id': '100',
+                'receiver_id': '',
+                'global_receiver_number': '100',
+                't1_ms': '8.0',
+                'v2_m_s': '2400',
+                'sh1_m': '12.5',
+            },
+            {
+                'endpoint_kind': 'receiver',
+                'endpoint_key': 'receiver:200',
+                'source_id': '',
+                'receiver_id': '200',
+                'global_receiver_number': '200',
+                't1_ms': '18.0',
+                'v2_m_s': '2600',
+                'sh1_m': '22.5',
+            },
+        ],
+    )
+    _write_csv(
+        job_dir / REFRACTION_FIRST_BREAK_FIT_QC_CSV_NAME,
+        [
+            {
+                'endpoint_key': 'receiver:200',
+                'receiver_id': '200',
+            }
+        ],
+    )
+    _create_static_job(client, job_id='refraction-job', job_dir=job_dir)
+
+    response = client.post(
+        '/statics/refraction/qc/station-structure',
+        json={'job_id': 'refraction-job', 'gather_start': 100, 'gather_end': 100},
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload['filter_status'] == 'receiver_participation_unavailable'
+    assert 'do not include usable source gather identifiers' in payload['warnings'][0]
+    assert payload['time_term']['receiver']['endpoint_key'] == ['receiver:200']
+
+
+def test_refraction_static_station_structure_falls_back_from_empty_line_profile(
+    client: TestClient,
+    tmp_path: Path,
+) -> None:
+    job_dir = tmp_path / 'refraction-job'
+    _write_refraction_qc_artifacts(
+        job_dir,
+        rows=[{'trace': '0', 'first_break_residual_ms': '1.25'}],
+        extra_artifact_names=[
+            REFRACTION_LINE_PROFILE_QC_COMBINED_CSV_NAME,
+            SOURCE_STATIC_TABLE_CSV_NAME,
+            RECEIVER_STATIC_TABLE_CSV_NAME,
+        ],
+    )
+    _write_empty_csv(
+        job_dir / REFRACTION_LINE_PROFILE_QC_COMBINED_CSV_NAME,
+        [
+            'endpoint_kind',
+            'endpoint_key',
+            'global_receiver_number',
+            't1_ms',
+            'v2_m_s',
+            'sh1_m',
+        ],
+    )
+    _write_csv(
+        job_dir / SOURCE_STATIC_TABLE_CSV_NAME,
+        [
+            {
+                'source_endpoint_key': 'source:100',
+                'source_id': '100',
+                't1_ms': '8.0',
+                'v2_m_s': '2400',
+                'sh1_weathering_thickness_m': '12.5',
+                'static_status': 'ok',
+            }
+        ],
+    )
+    _write_csv(
+        job_dir / RECEIVER_STATIC_TABLE_CSV_NAME,
+        [
+            {
+                'receiver_endpoint_key': 'receiver:200',
+                'receiver_id': '200',
+                't1_ms': '18.0',
+                'v2_m_s': '2600',
+                'sh1_weathering_thickness_m': '22.5',
+                'static_status': 'ok',
+            }
+        ],
+    )
+    _create_static_job(client, job_id='refraction-job', job_dir=job_dir)
+
+    response = client.post(
+        '/statics/refraction/qc/station-structure',
+        json={'job_id': 'refraction-job'},
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload['time_term']['source']['endpoint_key'] == ['source:100']
+    assert payload['time_term']['receiver']['endpoint_key'] == ['receiver:200']
+    assert payload['velocity']['source']['y'] == [2400.0]
+    assert payload['depth']['receiver']['y'] == [22.5]
 
 
 def _create_static_job(

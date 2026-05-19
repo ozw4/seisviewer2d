@@ -41,6 +41,7 @@ function renderRefractionQcPanel() {
       <button type="button" class="refraction-qc-view-button" data-view="summary"></button>
       <button type="button" class="refraction-qc-view-button" data-view="pick_map"></button>
       <button type="button" class="refraction-qc-view-button" data-view="offset_time"></button>
+      <button type="button" class="refraction-qc-view-button" data-view="station_structure"></button>
       <section class="refraction-qc-view" data-view-panel="summary">
         <div data-view-content="summary"></div>
       </section>
@@ -49,6 +50,9 @@ function renderRefractionQcPanel() {
       </section>
       <section class="refraction-qc-view" data-testid="refraction-qc-view-offset-time" data-view-panel="offset_time" hidden>
         <div data-view-content="offset_time"></div>
+      </section>
+      <section class="refraction-qc-view" data-testid="refraction-qc-view-station-structure" data-view-panel="station_structure" hidden>
+        <div data-view-content="station_structure"></div>
       </section>
     </section>
   `;
@@ -204,6 +208,53 @@ function qcBundle(jobId) {
     available_views: ['summary'],
     unavailable_views: [],
     coordinate_mode: 'auto',
+  };
+}
+
+function stationStructurePayload(jobId = 'completed-job-structure') {
+  const source = {
+    x: [100, 101],
+    y: [8, 9],
+    endpoint_key: ['source:100', 'source:101'],
+    status: ['ok', 'ok'],
+  };
+  const receiver = {
+    x: [200, 201],
+    y: [18, 19],
+    endpoint_key: ['receiver:200', 'receiver:201'],
+    status: ['ok', 'low_fold'],
+  };
+  return {
+    job_id: jobId,
+    statics_kind: 'refraction',
+    view_kind: 'station_structure',
+    x_axis: 'global_receiver_number',
+    x_axis_label: 'Global receiver number',
+    filter_status: 'ok',
+    gather_range: { start: 100, end: 101 },
+    colors: { source: 'cyan', receiver: 'red' },
+    time_term: {
+      field: 't1',
+      label: 'Time-term distribution',
+      unit: 'ms',
+      source,
+      receiver,
+    },
+    velocity: {
+      field: 'v2',
+      label: 'Velocity structure: V2',
+      unit: 'm/s',
+      source: { ...source, y: [2400, 2450] },
+      receiver: { ...receiver, y: [2600, 2650] },
+    },
+    depth: {
+      field: 'sh1',
+      label: 'Weathering thickness SH1',
+      unit: 'm',
+      source: { ...source, y: [12, 13] },
+      receiver: { ...receiver, y: [22, 23] },
+    },
+    warnings: [],
   };
 }
 
@@ -568,6 +619,72 @@ test('Offset-time shows a clear message when selected records have no finite off
   expect(plot.textContent).toBe(
     'No Offset-time records are available because offset_m is missing or non-finite for the selected gather range.'
   );
+});
+
+test('Structure QC uses canvas renderer without Plotly', () => {
+  const plotly = {
+    newPlot: vi.fn(() => {
+      throw new Error('Structure QC must not call Plotly.newPlot');
+    }),
+    react: vi.fn(() => {
+      throw new Error('Structure QC must not call Plotly.react');
+    }),
+  };
+  window.Plotly = plotly;
+  loadRefractionQcScript();
+
+  window.refractionQcState.qcBundle = qcBundle('completed-job-structure');
+  window.refractionQcState.stationStructure = stationStructurePayload();
+  window.refractionQcUI.setSelectedView('station_structure');
+
+  const timePlot = document.querySelector('[data-testid="refraction-qc-station-structure-time-term-plot"]');
+  expect(document.querySelector('[data-testid="refraction-qc-station-structure-time-term-canvas"]')).not.toBeNull();
+  expect(document.querySelector('[data-testid="refraction-qc-station-structure-velocity-canvas"]')).not.toBeNull();
+  expect(document.querySelector('[data-testid="refraction-qc-station-structure-depth-canvas"]')).not.toBeNull();
+  expect(timePlot.parentElement.classList.contains('refraction-qc-station-structure-grid')).toBe(true);
+  expect(timePlot.dataset.renderer).toBe('canvas');
+  expect(timePlot.dataset.xAxisTitle).toBe('Global receiver number');
+  expect(timePlot.dataset.pointCount).toBe('4');
+  expect(plotly.newPlot).not.toHaveBeenCalled();
+  expect(plotly.react).not.toHaveBeenCalled();
+});
+
+test('Structure QC sends gather range and selectors to station endpoint', async () => {
+  const fetch = vi.fn(async () => jsonResponse(stationStructurePayload('completed-job-structure')));
+  vi.stubGlobal('fetch', fetch);
+  loadRefractionQcScript();
+
+  window.refractionQcState.qcBundle = qcBundle('completed-job-structure');
+  window.refractionQcUI.setSelectedView('station_structure');
+  document.querySelector('[data-testid="refraction-qc-station-structure-gather-start"]').value = '101';
+  document.querySelector('[data-testid="refraction-qc-station-structure-gather-start"]')
+    .dispatchEvent(new Event('input', { bubbles: true }));
+  document.querySelector('[data-testid="refraction-qc-station-structure-gather-end"]').value = '120';
+  document.querySelector('[data-testid="refraction-qc-station-structure-gather-end"]')
+    .dispatchEvent(new Event('input', { bubbles: true }));
+  document.querySelector('[data-testid="refraction-qc-station-structure-velocity-field"]').value = 'v2';
+  document.querySelector('[data-testid="refraction-qc-station-structure-velocity-field"]')
+    .dispatchEvent(new Event('change', { bubbles: true }));
+  document.querySelector('[data-testid="refraction-qc-station-structure-depth-field"]').value = 'refractor_elevation';
+  document.querySelector('[data-testid="refraction-qc-station-structure-depth-field"]')
+    .dispatchEvent(new Event('change', { bubbles: true }));
+
+  await window.refractionQcUI.loadStationStructureQc();
+
+  expect(fetch).toHaveBeenCalledWith('/statics/refraction/qc/station-structure', expect.objectContaining({
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+  }));
+  const body = JSON.parse(fetch.mock.calls.at(-1)[1].body);
+  expect(body).toMatchObject({
+    job_id: 'completed-job-structure',
+    gather_start: 101,
+    gather_end: 120,
+    x_axis: 'auto',
+    velocity_field: 'v2',
+    depth_field: 'refractor_elevation',
+  });
+  expect(document.querySelector('[data-testid="refraction-qc-station-structure-time-term-canvas"]')).not.toBeNull();
 });
 
 test('Pick Map does not render manual NPZ file input or upload button', () => {

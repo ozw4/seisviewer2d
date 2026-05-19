@@ -31,6 +31,29 @@ RefractionStaticQcBundleCoordinateMode = Literal[
     'line_2d_projected',
     'grid_3d',
 ]
+RefractionStaticStationStructureXAxis = Literal[
+    'auto',
+    'global_receiver_number',
+    'station_number',
+    'inline_m',
+]
+RefractionStaticStationStructureVelocityField = Literal[
+    'auto',
+    'v1',
+    'v2',
+    'v3',
+    'vsub',
+]
+RefractionStaticStationStructureDepthField = Literal[
+    'auto',
+    'sh1',
+    'sh2',
+    'sh3',
+    'refractor_depth',
+    'refractor_elevation',
+    'layer1_base_elevation',
+    'layer2_base_elevation',
+]
 RefractionStaticGatherPreviewAxis = Literal['section', 'source', 'receiver']
 RefractionStaticGatherPreviewOverlayLayer = Literal[
     'observed_first_break',
@@ -3224,6 +3247,75 @@ class RefractionStaticPickMapResponse(BaseModel):
     receiver_number_mode: Literal['global_sequential']
     gather_range: dict[str, int | float | str | None]
     pick_map: RefractionStaticPickMapData
+
+
+class RefractionStaticStationStructureRequest(BaseModel):
+    """Request model for station-structure refraction QC."""
+
+    model_config = ConfigDict(extra='forbid')
+
+    job_id: str
+    gather_start: float | None = None
+    gather_end: float | None = None
+    x_axis: RefractionStaticStationStructureXAxis = 'auto'
+    velocity_field: RefractionStaticStationStructureVelocityField = 'auto'
+    depth_field: RefractionStaticStationStructureDepthField = 'auto'
+
+    @field_validator('job_id')
+    @classmethod
+    def _check_job_id(cls, value: str) -> str:
+        if not isinstance(value, str) or not value:
+            raise ValueError('job_id must be a non-empty string')
+        return value
+
+    @field_validator('gather_start', 'gather_end', mode='before')
+    @classmethod
+    def _check_optional_gather_bound(cls, value: object, info: Any) -> float | None:
+        if value is None or value == '':
+            return None
+        return _require_finite_float(value, info.field_name)
+
+
+class RefractionStaticStationStructureSeries(BaseModel):
+    """Columnar series for one endpoint side in station-structure QC."""
+
+    model_config = ConfigDict(extra='forbid')
+
+    x: list[float | int]
+    y: list[float]
+    endpoint_key: list[str]
+    status: list[str]
+
+
+class RefractionStaticStationStructurePanel(BaseModel):
+    """One station-structure QC plot payload."""
+
+    model_config = ConfigDict(extra='forbid')
+
+    field: str
+    label: str
+    unit: str
+    source: RefractionStaticStationStructureSeries
+    receiver: RefractionStaticStationStructureSeries
+
+
+class RefractionStaticStationStructureResponse(BaseModel):
+    """Station-structure QC payload for completed refraction static jobs."""
+
+    model_config = ConfigDict(extra='forbid')
+
+    job_id: str
+    statics_kind: Literal['refraction']
+    view_kind: Literal['station_structure']
+    x_axis: str
+    x_axis_label: str
+    filter_status: str
+    gather_range: dict[str, int | float | str | None]
+    colors: dict[Literal['source', 'receiver'], str]
+    time_term: RefractionStaticStationStructurePanel
+    velocity: RefractionStaticStationStructurePanel
+    depth: RefractionStaticStationStructurePanel
+    warnings: list[str] = Field(default_factory=list)
 
 
 class RefractionStaticQcDrilldownEndpointTarget(BaseModel):
