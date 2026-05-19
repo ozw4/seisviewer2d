@@ -297,12 +297,12 @@
     state.pickMapCacheStatus = '';
     if (!target) {
       state.pickMapCacheStatus = 'Open a viewer target before loading a pre-statics Pick Map.';
-      if (!state.pickMap) render();
+      render();
       return;
     }
     if (!draft || !meta) {
       state.pickMapCacheStatus = 'No Static Correction NPZ is cached for the active viewer target. Open Static Correction, select a pick NPZ, then return to Refraction QC.';
-      if (!state.pickMap) render();
+      render();
       return;
     }
     if (!samePickMapTarget(draft.target, target) || !samePickMapTarget({
@@ -311,14 +311,14 @@
       key2_byte: meta.key2Byte,
     }, target)) {
       state.pickMapCacheStatus = 'Saved Static Correction NPZ belongs to a different viewer target.';
-      if (!state.pickMap) render();
+      render();
       return;
     }
     try {
       const record = await loadStaticPickRecord(meta.indexedDbRecordId);
       if (!record || !record.blob) {
         state.pickMapCacheStatus = 'Saved Static Correction NPZ is no longer available.';
-        if (!state.pickMap) render();
+        render();
         return;
       }
       state.pickMapCachedFile = record.blob instanceof File
@@ -3482,7 +3482,11 @@
 
   function pickMapPointStats(points, payload) {
     if (payload.mode !== 'completed_job') {
-      return { used: points.length, unused: 0, offsetColored: points.filter((point) => Number.isFinite(point.offsetM)).length };
+      let offsetColored = 0;
+      for (const point of points) {
+        if (Number.isFinite(point.offsetM)) offsetColored += 1;
+      }
+      return { used: points.length, unused: 0, offsetColored };
     }
     let used = 0;
     let unused = 0;
@@ -3529,10 +3533,11 @@
     const margin = { left: 66, right: 22, top: 34, bottom: 56 };
     const plotWidth = Math.max(1, cssWidth - margin.left - margin.right);
     const plotHeightCss = Math.max(1, cssHeight - margin.top - margin.bottom);
-    const xRange = paddedRange(points.map((point) => point.x));
-    const yRange = paddedRange(points.map((point) => point.y));
-    const colorPoints = payload.mode === 'completed_job' ? points.filter((point) => point.used) : points;
-    const colorRange = paddedRange(colorPoints.map((point) => pickMapColorValue(point)).filter(Number.isFinite));
+    const xRange = paddedRange(points, (point) => point.x);
+    const yRange = paddedRange(points, (point) => point.y);
+    const colorRange = paddedRange(points, (point) => (
+      payload.mode === 'completed_job' && !point.used ? NaN : pickMapColorValue(point)
+    ));
     const xScale = (value) => margin.left + ((value - xRange.min) / (xRange.max - xRange.min)) * plotWidth;
     const yScale = (value) => margin.top + ((value - yRange.min) / (yRange.max - yRange.min)) * plotHeightCss;
 
@@ -3546,18 +3551,25 @@
     context.fillText(title, margin.left, 10);
 
     if (payload.mode === 'completed_job') {
-      drawPickMapPoints(context, points.filter((point) => !point.used), xScale, yScale, colorRange, payload);
-      drawPickMapPoints(context, points.filter((point) => point.used), xScale, yScale, colorRange, payload);
+      drawPickMapPoints(context, points, xScale, yScale, colorRange, payload, (point) => !point.used);
+      drawPickMapPoints(context, points, xScale, yScale, colorRange, payload, (point) => point.used);
     } else {
       drawPickMapPoints(context, points, xScale, yScale, colorRange, payload);
     }
   }
 
-  function paddedRange(values) {
-    const finite = values.filter(Number.isFinite);
-    if (!finite.length) return { min: 0, max: 1 };
-    let min = Math.min(...finite);
-    let max = Math.max(...finite);
+  function paddedRange(values, valueForItem = (value) => value) {
+    let min = Infinity;
+    let max = -Infinity;
+    let hasFinite = false;
+    for (const item of values) {
+      const value = valueForItem(item);
+      if (!Number.isFinite(value)) continue;
+      if (value < min) min = value;
+      if (value > max) max = value;
+      hasFinite = true;
+    }
+    if (!hasFinite) return { min: 0, max: 1 };
     if (min === max) {
       const pad = Math.max(1, Math.abs(min) * 0.05);
       min -= pad;
@@ -3620,8 +3632,9 @@
     context.restore();
   }
 
-  function drawPickMapPoints(context, points, xScale, yScale, colorRange, payload) {
+  function drawPickMapPoints(context, points, xScale, yScale, colorRange, payload, includePoint = null) {
     for (const point of points) {
+      if (includePoint && !includePoint(point)) continue;
       const x = xScale(point.x);
       const y = yScale(point.y);
       context.beginPath();
