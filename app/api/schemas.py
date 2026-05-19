@@ -3152,6 +3152,8 @@ class RefractionStaticPickMapRequest(BaseModel):
     file_id: str | None = None
     key1_byte: int = 189
     key2_byte: int = 193
+    gather_start: float | None = None
+    gather_end: float | None = None
     pick_source: RefractionStaticPickSourceRequest | None = None
     geometry: RefractionStaticPickMapGeometryRequest = Field(
         default_factory=RefractionStaticPickMapGeometryRequest,
@@ -3170,6 +3172,13 @@ class RefractionStaticPickMapRequest(BaseModel):
     @classmethod
     def _check_key_header_byte(cls, value: object, info: Any) -> int:
         return require_trace_header_byte(value, info.field_name)
+
+    @field_validator('gather_start', 'gather_end', mode='before')
+    @classmethod
+    def _check_optional_gather_bound(cls, value: object, info: Any) -> float | None:
+        if value is None or value == '':
+            return None
+        return _require_finite_float(value, info.field_name)
 
     @model_validator(mode='after')
     def _check_source(self) -> 'RefractionStaticPickMapRequest':

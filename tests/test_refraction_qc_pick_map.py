@@ -11,6 +11,7 @@ from fastapi.testclient import TestClient
 from app.main import app
 from app.services.refraction_static_artifacts import (
     REFRACTION_FIRST_BREAK_FIT_QC_CSV_NAME,
+    REFRACTION_PICK_MAP_QC_COMPLETED_CACHE_DIR_NAME,
     REFRACTION_STATIC_COMPONENT_QC_TRACE_CSV_NAME,
     REFRACTION_STATIC_QC_JSON_NAME,
 )
@@ -279,6 +280,118 @@ def test_refraction_qc_pick_map_completed_job_includes_before_and_after_picks(
     assert pick_map['offset_used'] == [120.0, None, 300.0]
 
 
+def test_completed_pick_map_writes_cache_on_first_request(pick_map_client):
+    client, state, tmp_path = pick_map_client
+    artifacts_dir = tmp_path / 'cache-artifacts'
+    artifacts_dir.mkdir()
+    _write_completed_pick_map_artifacts(artifacts_dir)
+    job_id = 'pick-map-cache-write-job'
+    _register_completed_refraction_job(state, job_id, artifacts_dir)
+
+    response = client.post('/statics/refraction/qc/pick-map', json={'job_id': job_id})
+
+    assert response.status_code == 200
+    cache_files = _completed_pick_map_cache_files(artifacts_dir)
+    assert len(cache_files) == 1
+    cached = json.loads(cache_files[0].read_text(encoding='utf-8'))
+    assert cached == response.json()
+
+
+def test_completed_pick_map_uses_cache_on_second_request(pick_map_client):
+    client, state, tmp_path = pick_map_client
+    artifacts_dir = tmp_path / 'cache-hit-artifacts'
+    artifacts_dir.mkdir()
+    _write_completed_pick_map_artifacts(artifacts_dir)
+    job_id = 'pick-map-cache-hit-job'
+    _register_completed_refraction_job(state, job_id, artifacts_dir)
+
+    first = client.post('/statics/refraction/qc/pick-map', json={'job_id': job_id})
+    assert first.status_code == 200
+    (artifacts_dir / REFRACTION_FIRST_BREAK_FIT_QC_CSV_NAME).rename(
+        artifacts_dir / f'{REFRACTION_FIRST_BREAK_FIT_QC_CSV_NAME}.bak'
+    )
+    (artifacts_dir / REFRACTION_STATIC_COMPONENT_QC_TRACE_CSV_NAME).rename(
+        artifacts_dir / f'{REFRACTION_STATIC_COMPONENT_QC_TRACE_CSV_NAME}.bak'
+    )
+
+    second = client.post('/statics/refraction/qc/pick-map', json={'job_id': job_id})
+
+    assert second.status_code == 200
+    assert second.json() == first.json()
+
+
+def test_completed_pick_map_cache_key_includes_gather_range(pick_map_client):
+    client, state, tmp_path = pick_map_client
+    artifacts_dir = tmp_path / 'cache-range-artifacts'
+    artifacts_dir.mkdir()
+    _write_completed_pick_map_artifacts(artifacts_dir)
+    job_id = 'pick-map-cache-range-job'
+    _register_completed_refraction_job(state, job_id, artifacts_dir)
+
+    first = client.post(
+        '/statics/refraction/qc/pick-map',
+        json={'job_id': job_id, 'gather_start': 100, 'gather_end': 100},
+    )
+    second = client.post(
+        '/statics/refraction/qc/pick-map',
+        json={'job_id': job_id, 'gather_start': 101, 'gather_end': 101},
+    )
+
+    assert first.status_code == 200
+    assert second.status_code == 200
+    assert first.json()['gather_range'] == {'min': 100, 'max': 100}
+    assert second.json()['gather_range'] == {'min': 101, 'max': 101}
+    assert first.json()['pick_map']['trace_index'] == [0, 1]
+    assert second.json()['pick_map']['trace_index'] == [2]
+    assert len(_completed_pick_map_cache_files(artifacts_dir)) == 2
+
+
+def test_completed_pick_map_corrupted_cache_is_regenerated(pick_map_client):
+    client, state, tmp_path = pick_map_client
+    artifacts_dir = tmp_path / 'cache-corrupt-artifacts'
+    artifacts_dir.mkdir()
+    _write_completed_pick_map_artifacts(artifacts_dir)
+    job_id = 'pick-map-cache-corrupt-job'
+    _register_completed_refraction_job(state, job_id, artifacts_dir)
+
+    first = client.post('/statics/refraction/qc/pick-map', json={'job_id': job_id})
+    assert first.status_code == 200
+    cache_file = _completed_pick_map_cache_files(artifacts_dir)[0]
+    cache_file.write_text('{bad json', encoding='utf-8')
+
+    second = client.post('/statics/refraction/qc/pick-map', json={'job_id': job_id})
+
+    assert second.status_code == 200
+    assert second.json() == first.json()
+    assert json.loads(cache_file.read_text(encoding='utf-8')) == first.json()
+
+
+def test_pick_map_pre_statics_does_not_write_completed_job_cache(pick_map_client):
+    client, _state, tmp_path = pick_map_client
+    pick_path = tmp_path / 'picks-no-cache.npz'
+    np.savez(
+        pick_path,
+        first_break_time_s=np.asarray([0.084, 0.086, 0.091, 0.102]),
+        trace_order=np.asarray('trace_store_sorted'),
+    )
+
+    response = client.post(
+        '/statics/refraction/qc/pick-map',
+        data={
+            'request_json': json.dumps(
+                {
+                    'file_id': FILE_ID,
+                    'pick_source': {'kind': 'uploaded_npz'},
+                }
+            ),
+        },
+        files={'pick_npz': ('picks.npz', pick_path.read_bytes(), 'application/x-npz')},
+    )
+
+    assert response.status_code == 200
+    assert list(tmp_path.rglob(REFRACTION_PICK_MAP_QC_COMPLETED_CACHE_DIR_NAME)) == []
+
+
 def test_pick_map_completed_job_gather_range_reports_endpoint_key_numeric_suffix(
     pick_map_client,
 ):
@@ -335,6 +448,28 @@ def test_pick_map_completed_job_gather_range_reports_endpoint_key_numeric_suffix
     body = response.json()
     assert body['gather_range'] == {'min': 100, 'max': 101}
     assert body['pick_map']['gather_id'] == ['source:100', 'source:101:10:20']
+
+
+def _register_completed_refraction_job(
+    state,
+    job_id: str,
+    artifacts_dir: Path,
+) -> None:
+    with state.lock:
+        state.jobs.create_static_job(
+            job_id,
+            file_id=FILE_ID,
+            key1_byte=KEY1,
+            key2_byte=KEY2,
+            statics_kind='refraction',
+            artifacts_dir=str(artifacts_dir),
+        )
+        state.jobs.mark_done(job_id, progress_1=True)
+
+
+def _completed_pick_map_cache_files(artifacts_dir: Path) -> list[Path]:
+    cache_dir = artifacts_dir / REFRACTION_PICK_MAP_QC_COMPLETED_CACHE_DIR_NAME
+    return sorted(cache_dir.glob('*.json'))
 
 
 def _write_trace_store(store: Path) -> None:
