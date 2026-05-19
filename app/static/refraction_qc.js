@@ -295,21 +295,30 @@
     state.pickMapCachedFile = null;
     state.pickMapCachedMeta = null;
     state.pickMapCacheStatus = '';
-    if (!target || !draft || !meta) return;
+    if (!target) {
+      state.pickMapCacheStatus = 'Open a viewer target before loading a pre-statics Pick Map.';
+      if (!state.pickMap) render();
+      return;
+    }
+    if (!draft || !meta) {
+      state.pickMapCacheStatus = 'No Static Correction NPZ is cached for the active viewer target. Open Static Correction, select a pick NPZ, then return to Refraction QC.';
+      if (!state.pickMap) render();
+      return;
+    }
     if (!samePickMapTarget(draft.target, target) || !samePickMapTarget({
       file_id: meta.fileId,
       key1_byte: meta.key1Byte,
       key2_byte: meta.key2Byte,
     }, target)) {
       state.pickMapCacheStatus = 'Saved Static Correction NPZ belongs to a different viewer target.';
-      render();
+      if (!state.pickMap) render();
       return;
     }
     try {
       const record = await loadStaticPickRecord(meta.indexedDbRecordId);
       if (!record || !record.blob) {
         state.pickMapCacheStatus = 'Saved Static Correction NPZ is no longer available.';
-        render();
+        if (!state.pickMap) render();
         return;
       }
       state.pickMapCachedFile = record.blob instanceof File
@@ -324,6 +333,16 @@
       state.pickMapCacheStatus = error instanceof Error ? error.message : String(error);
     }
     render();
+  }
+
+  function staticCorrectionLinkForTarget(target) {
+    const url = new URL('/static-correction', window.location.origin);
+    if (target) {
+      url.searchParams.set('file_id', target.file_id);
+      url.searchParams.set('key1_byte', String(target.key1_byte));
+      url.searchParams.set('key2_byte', String(target.key2_byte));
+    }
+    return `${url.pathname}${url.search}`;
   }
 
   function isStandaloneRefractionQcPage() {
@@ -3295,22 +3314,9 @@
       render();
     });
 
-    const fileInput = document.createElement('input');
-    fileInput.type = 'file';
-    fileInput.accept = '.npz,application/x-npz,application/zip';
-    fileInput.dataset.testid = 'refraction-qc-pick-map-npz';
-
-    const uploadButton = document.createElement('button');
-    uploadButton.type = 'button';
-    uploadButton.textContent = 'Load pre-statics Pick Map';
-    uploadButton.dataset.testid = 'refraction-qc-pick-map-load-upload';
-    uploadButton.addEventListener('click', () => {
-      loadPreStaticsPickMap(fileInput.files && fileInput.files[0]);
-    });
-
     const cachedButton = document.createElement('button');
     cachedButton.type = 'button';
-    cachedButton.textContent = 'Load pre-statics Pick Map from cached NPZ';
+    cachedButton.textContent = 'Load from Static Correction NPZ';
     cachedButton.dataset.testid = 'refraction-qc-pick-map-load-cached';
     cachedButton.disabled = !state.pickMapCachedFile;
     cachedButton.addEventListener('click', () => {
@@ -3326,7 +3332,7 @@
       loadCompletedPickMap();
     });
 
-    controls.append(beforeButton, afterButton, gatherStart, gatherEnd, fileInput, uploadButton, cachedButton, completedButton);
+    controls.append(beforeButton, afterButton, gatherStart, gatherEnd, cachedButton, completedButton);
     content.appendChild(controls);
 
     if (state.pickMapCacheStatus) {
@@ -3334,6 +3340,13 @@
       cacheStatus.className = 'refraction-qc-note';
       cacheStatus.dataset.testid = 'refraction-qc-pick-map-cache-status';
       cacheStatus.textContent = state.pickMapCacheStatus;
+      if (!state.pickMapCachedFile && activePickMapTarget()) {
+        cacheStatus.appendChild(document.createTextNode(' '));
+        const link = document.createElement('a');
+        link.href = staticCorrectionLinkForTarget(activePickMapTarget());
+        link.textContent = 'Open Static Correction';
+        cacheStatus.appendChild(link);
+      }
       content.appendChild(cacheStatus);
     }
     if (state.pickMapLoading) {
@@ -3355,7 +3368,7 @@
       empty.className = 'refraction-qc-placeholder';
       empty.textContent = state.qcBundle
         ? 'No Pick Map loaded for this static job.'
-        : 'Load a completed job or a pre-statics pick NPZ.';
+        : 'Load a completed job or a cached Static Correction NPZ.';
       content.appendChild(empty);
       return;
     }

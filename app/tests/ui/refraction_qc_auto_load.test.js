@@ -182,6 +182,88 @@ function qcBundle(jobId) {
   };
 }
 
+function activeViewerTarget({
+  fileId = 'pick-map-file',
+  key1Byte = 189,
+  key2Byte = 193,
+} = {}) {
+  return {
+    getActiveFileTarget: () => ({
+      file_id: fileId,
+      key1_byte: key1Byte,
+      key2_byte: key2Byte,
+      isFileLoaded: true,
+    }),
+  };
+}
+
+function seedStaticCorrectionPickDraft({
+  fileId = 'pick-map-file',
+  key1Byte = 189,
+  key2Byte = 193,
+  filename = 'first-breaks.npz',
+  recordId = 'pick-map-file:189:193',
+} = {}) {
+  localStorage.setItem('sv.static_correction.form_draft.v1', JSON.stringify({
+    version: 1,
+    target: { file_id: fileId, key1_byte: key1Byte, key2_byte: key2Byte },
+    pickNpz: {
+      indexedDbRecordId: recordId,
+      filename,
+      type: 'application/octet-stream',
+      lastModified: 1700000000000,
+      fileId,
+      key1Byte,
+      key2Byte,
+    },
+  }));
+}
+
+function stubStaticCorrectionPickDb({
+  filename = 'first-breaks.npz',
+  blob = new Blob(['npz-bytes'], { type: 'application/octet-stream' }),
+} = {}) {
+  const open = vi.fn(() => {
+    const openRequest = {};
+    const db = {
+      transaction: () => ({
+        objectStore: () => ({
+          get: () => {
+            const getRequest = {};
+            setTimeout(() => {
+              getRequest.result = {
+                filename,
+                type: 'application/octet-stream',
+                lastModified: 1700000000000,
+                blob,
+              };
+              getRequest.onsuccess?.();
+            }, 0);
+            return getRequest;
+          },
+        }),
+      }),
+      close: vi.fn(),
+    };
+    setTimeout(() => {
+      openRequest.result = db;
+      openRequest.onsuccess?.();
+    }, 0);
+    return openRequest;
+  });
+  vi.stubGlobal('indexedDB', { open });
+  return open;
+}
+
+async function openPickMapWithCachedNpz() {
+  window.SeisViewerState = activeViewerTarget();
+  seedStaticCorrectionPickDraft();
+  stubStaticCorrectionPickDb();
+  loadRefractionQcScript();
+  window.refractionQcUI.setSelectedView('pick_map');
+  await flushAsyncWork(4);
+}
+
 beforeEach(() => {
   localStorage.clear();
   window.history.replaceState(null, '', '/');
@@ -364,6 +446,99 @@ test('Pick Map canvas applies gather range filter', () => {
   expect(pointArcs()).toHaveLength(2);
 });
 
+test('Pick Map does not render manual NPZ file input or upload button', () => {
+  loadRefractionQcScript();
+  window.refractionQcUI.setSelectedView('pick_map');
+
+  expect(document.querySelector('[data-testid="refraction-qc-pick-map-npz"]')).toBeNull();
+  expect(document.querySelector('[data-testid="refraction-qc-pick-map-load-upload"]')).toBeNull();
+  expect(document.querySelector('[data-testid="refraction-qc-pick-map-load-cached"]')).not.toBeNull();
+});
+
+test('Pick Map loads pre-statics map from Static Correction cached NPZ', async () => {
+  const pickMapCalls = [];
+  vi.stubGlobal('fetch', vi.fn(async (url, options = {}) => {
+    if (String(url) === '/statics/refraction/qc/pick-map') {
+      pickMapCalls.push({
+        request: JSON.parse(options.body.get('request_json')),
+        pickName: options.body.get('pick_npz').name,
+      });
+      return jsonResponse(preStaticsPickMap());
+    }
+    throw new Error(`Unexpected fetch ${url}`);
+  }));
+
+  await openPickMapWithCachedNpz();
+  document.querySelector('[data-testid="refraction-qc-pick-map-load-cached"]').click();
+  await flushAsyncWork();
+
+  expect(pickMapCalls).toEqual([{
+    request: {
+      file_id: 'pick-map-file',
+      key1_byte: 189,
+      key2_byte: 193,
+      pick_source: { kind: 'uploaded_npz' },
+      geometry: { receiver_number_mode: 'global_sequential' },
+    },
+    pickName: 'first-breaks.npz',
+  }]);
+  expect(document.querySelector('[data-testid="refraction-qc-pick-map-status"]').textContent).toBe(
+    'Pre-statics Pick Map'
+  );
+});
+
+test('Pick Map shows Static Correction guidance without cached NPZ', async () => {
+  window.SeisViewerState = activeViewerTarget();
+  loadRefractionQcScript();
+  window.refractionQcUI.setSelectedView('pick_map');
+  await flushAsyncWork();
+
+  expect(document.querySelector('[data-testid="refraction-qc-pick-map-cache-status"]').textContent).toContain(
+    'No Static Correction NPZ is cached for the active viewer target.'
+  );
+  expect(document.querySelector('[data-testid="refraction-qc-pick-map-cache-status"] a').getAttribute('href')).toBe(
+    '/static-correction?file_id=pick-map-file&key1_byte=189&key2_byte=193'
+  );
+  expect(document.querySelector('[data-testid="refraction-qc-pick-map-load-cached"]').disabled).toBe(true);
+});
+
+test('Pick Map rejects cached NPZ for a different viewer target', async () => {
+  window.SeisViewerState = activeViewerTarget();
+  seedStaticCorrectionPickDraft({ fileId: 'other-file', key1Byte: 189, key2Byte: 193 });
+  loadRefractionQcScript();
+  window.refractionQcUI.setSelectedView('pick_map');
+  await flushAsyncWork();
+
+  expect(document.querySelector('[data-testid="refraction-qc-pick-map-cache-status"]').textContent).toContain(
+    'Saved Static Correction NPZ belongs to a different viewer target.'
+  );
+  expect(document.querySelector('[data-testid="refraction-qc-pick-map-load-cached"]').disabled).toBe(true);
+});
+
+test('Pick Map completed job button still loads completed-job map', async () => {
+  const pickMapCalls = [];
+  vi.stubGlobal('fetch', vi.fn(async (url, options = {}) => {
+    if (String(url) === '/statics/refraction/qc/pick-map') {
+      pickMapCalls.push(JSON.parse(options.body || '{}'));
+      return jsonResponse(completedPickMap('completed-job-map'));
+    }
+    throw new Error(`Unexpected fetch ${url}`);
+  }));
+  loadRefractionQcScript();
+  document.getElementById('refractionQcJobId').value = 'completed-job-map';
+  window.refractionQcState.selectedJobId = 'completed-job-map';
+  window.refractionQcUI.setSelectedView('pick_map');
+
+  document.querySelector('[data-testid="refraction-qc-pick-map-load-job"]').click();
+  await flushAsyncWork();
+
+  expect(pickMapCalls).toEqual([{ job_id: 'completed-job-map' }]);
+  expect(window.refractionQcState.pickMap).toMatchObject({
+    mode: 'completed_job',
+    job_id: 'completed-job-map',
+  });
+});
+
 test('completed QC bundle clears active pre-statics Pick Map and loads completed job map', async () => {
   const pickMapCalls = [];
   vi.stubGlobal('fetch', vi.fn(async (url, options = {}) => {
@@ -471,24 +646,15 @@ test('completed QC bundle cancels in-flight Pick Map without clearing same-job c
     }
     throw new Error(`Unexpected fetch ${url}`);
   }));
-  window.SeisViewerState = {
-    getActiveFileTarget: () => ({
-      file_id: 'pick-map-file',
-      key1_byte: 189,
-      key2_byte: 193,
-      isFileLoaded: true,
-    }),
-  };
+  window.SeisViewerState = activeViewerTarget();
+  seedStaticCorrectionPickDraft();
+  stubStaticCorrectionPickDb();
   loadRefractionQcScript();
   window.refractionQcState.pickMap = existingPickMap;
   window.refractionQcUI.setSelectedView('pick_map');
+  await flushAsyncWork(4);
 
-  const fileInput = document.querySelector('[data-testid="refraction-qc-pick-map-npz"]');
-  Object.defineProperty(fileInput, 'files', {
-    value: [new File(['npz-bytes'], 'first-breaks.npz', { type: 'application/octet-stream' })],
-    configurable: true,
-  });
-  document.querySelector('[data-testid="refraction-qc-pick-map-load-upload"]').click();
+  document.querySelector('[data-testid="refraction-qc-pick-map-load-cached"]').click();
 
   expect(window.refractionQcState.pickMapLoading).toBe(true);
   expect(window.refractionQcState.pickMap).toBe(existingPickMap);
@@ -553,23 +719,14 @@ test('completed QC bundle invalidates in-flight pre-statics Pick Map', async () 
     }
     throw new Error(`Unexpected fetch ${url}`);
   }));
-  window.SeisViewerState = {
-    getActiveFileTarget: () => ({
-      file_id: 'pick-map-file',
-      key1_byte: 189,
-      key2_byte: 193,
-      isFileLoaded: true,
-    }),
-  };
+  window.SeisViewerState = activeViewerTarget();
+  seedStaticCorrectionPickDraft();
+  stubStaticCorrectionPickDb();
   loadRefractionQcScript();
   window.refractionQcUI.setSelectedView('pick_map');
+  await flushAsyncWork(4);
 
-  const fileInput = document.querySelector('[data-testid="refraction-qc-pick-map-npz"]');
-  Object.defineProperty(fileInput, 'files', {
-    value: [new File(['npz-bytes'], 'first-breaks.npz', { type: 'application/octet-stream' })],
-    configurable: true,
-  });
-  document.querySelector('[data-testid="refraction-qc-pick-map-load-upload"]').click();
+  document.querySelector('[data-testid="refraction-qc-pick-map-load-cached"]').click();
 
   expect(window.refractionQcState.pickMapLoading).toBe(true);
   document.getElementById('refractionQcJobId').value = 'completed-job-d';
