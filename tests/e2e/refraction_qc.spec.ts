@@ -1202,6 +1202,7 @@ async function seedStaticCorrectionPickCache(
 
 test('Refraction QC Pick Map loads cached NPZ from active viewer target state', async ({ page }) => {
 	let pickMapRequest: Record<string, unknown> | null = null;
+	let pickMapRequestCount = 0;
 	await page.addInitScript(() => {
 		(window as any).SeisViewerState = {
 			getActiveFileTarget: () => ({
@@ -1221,6 +1222,7 @@ test('Refraction QC Pick Map loads cached NPZ from active viewer target state', 
 		};
 	});
 	await page.route('**/statics/refraction/qc/pick-map', async (route) => {
+		pickMapRequestCount += 1;
 		pickMapRequest = multipartRequestJson(route);
 		await route.fulfill({
 			status: 200,
@@ -1260,6 +1262,12 @@ test('Refraction QC Pick Map loads cached NPZ from active viewer target state', 
 	await expect(page.getByTestId('refraction-qc-pick-map-plot')).toHaveAttribute('data-y-axis-autorange', 'reversed');
 	await expect(page.getByTestId('refraction-qc-pick-map-plot')).toHaveAttribute('data-renderer', 'canvas');
 	await expect.poll(() => page.evaluate(() => (window as any).__pickMapPlotlyCalls)).toBe(0);
+	await page.getByTestId('refraction-qc-view-offset-time-button').click();
+	await expect(page.getByTestId('refraction-qc-offset-time-canvas')).toBeVisible();
+	await expect(page.getByTestId('refraction-qc-offset-time-plot')).toHaveAttribute('data-x-axis-title', 'Offset (m)');
+	await expect(page.getByTestId('refraction-qc-offset-time-plot')).toHaveAttribute('data-renderer', 'canvas');
+	await expect.poll(() => page.evaluate(() => (window as any).__pickMapPlotlyCalls)).toBe(0);
+	expect(pickMapRequestCount).toBe(1);
 	expect(pickMapRequest).toMatchObject({
 		file_id: 'active-viewer-store',
 		key1_byte: 9,
@@ -1323,6 +1331,11 @@ test('Refraction QC Pick Map filters numeric and endpoint-key gather IDs', async
 	await page.getByTestId('refraction-qc-pick-map-gather-start').fill('100');
 	await page.getByTestId('refraction-qc-pick-map-gather-end').fill('101');
 	await expect(page.getByTestId('refraction-qc-pick-map-plot')).toHaveAttribute('data-point-count', '2');
+
+	await page.getByTestId('refraction-qc-view-offset-time-button').click();
+	await expect(page.getByTestId('refraction-qc-offset-time-gather-start')).toHaveValue('100');
+	await expect(page.getByTestId('refraction-qc-offset-time-gather-end')).toHaveValue('101');
+	await expect(page.getByTestId('refraction-qc-offset-time-plot')).toHaveAttribute('data-point-count', '2');
 });
 
 test('Refraction QC pre-statics Pick Map uses Static Correction draft geometry', async ({ page }) => {

@@ -40,11 +40,15 @@ function renderRefractionQcPanel() {
       <input id="refractionQcCell" />
       <button type="button" class="refraction-qc-view-button" data-view="summary"></button>
       <button type="button" class="refraction-qc-view-button" data-view="pick_map"></button>
+      <button type="button" class="refraction-qc-view-button" data-view="offset_time"></button>
       <section class="refraction-qc-view" data-view-panel="summary">
         <div data-view-content="summary"></div>
       </section>
       <section class="refraction-qc-view" data-view-panel="pick_map" hidden>
         <div data-view-content="pick_map"></div>
+      </section>
+      <section class="refraction-qc-view" data-testid="refraction-qc-view-offset-time" data-view-panel="offset_time" hidden>
+        <div data-view-content="offset_time"></div>
       </section>
     </section>
   `;
@@ -484,6 +488,86 @@ test('Pick Map canvas applies gather range filter', () => {
   const plot = document.querySelector('[data-testid="refraction-qc-pick-map-plot"]');
   expect(plot.dataset.pointCount).toBe('2');
   expect(pointArcs().slice(-2)).toHaveLength(2);
+});
+
+test('Offset-time uses canvas renderer without Plotly', () => {
+  const plotly = {
+    newPlot: vi.fn(() => {
+      throw new Error('Offset-time must not call Plotly.newPlot');
+    }),
+    react: vi.fn(() => {
+      throw new Error('Offset-time must not call Plotly.react');
+    }),
+  };
+  window.Plotly = plotly;
+  loadRefractionQcScript();
+
+  window.refractionQcState.pickMap = preStaticsPickMap();
+  window.refractionQcUI.setSelectedView('offset_time');
+
+  const plot = document.querySelector('[data-testid="refraction-qc-offset-time-plot"]');
+  expect(document.querySelector('[data-testid="refraction-qc-offset-time-canvas"]')).not.toBeNull();
+  expect(plot.dataset.renderer).toBe('canvas');
+  expect(plot.dataset.xAxisTitle).toBe('Offset (m)');
+  expect(plot.dataset.pointCount).toBe('1');
+  expect(plotly.newPlot).not.toHaveBeenCalled();
+  expect(plotly.react).not.toHaveBeenCalled();
+});
+
+test('Offset-time reuses Pick Map payload and shared gather range controls', () => {
+  const fetch = vi.fn();
+  vi.stubGlobal('fetch', fetch);
+  loadRefractionQcScript();
+
+  window.refractionQcState.pickMap = multiPointCompletedPickMap();
+  window.refractionQcUI.setSelectedView('pick_map');
+  const gatherStart = document.querySelector('[data-testid="refraction-qc-pick-map-gather-start"]');
+  const gatherEnd = document.querySelector('[data-testid="refraction-qc-pick-map-gather-end"]');
+  gatherStart.value = '101';
+  gatherStart.dispatchEvent(new Event('input', { bubbles: true }));
+  gatherEnd.value = '102';
+  gatherEnd.dispatchEvent(new Event('input', { bubbles: true }));
+
+  window.refractionQcUI.setSelectedView('offset_time');
+
+  expect(fetch).not.toHaveBeenCalled();
+  expect(document.querySelector('[data-testid="refraction-qc-offset-time-gather-start"]').value).toBe('101');
+  expect(document.querySelector('[data-testid="refraction-qc-offset-time-gather-end"]').value).toBe('102');
+  expect(document.querySelector('[data-testid="refraction-qc-offset-time-plot"]').dataset.pointCount).toBe('2');
+});
+
+test('Offset-time skips records with missing offsets and reports displayed count', () => {
+  loadRefractionQcScript();
+  const pickMap = multiPointCompletedPickMap();
+  pickMap.pick_map.offset_m = [100, NaN, 'bad', 250];
+
+  window.refractionQcState.pickMap = pickMap;
+  window.refractionQcUI.setSelectedView('offset_time');
+
+  const plot = document.querySelector('[data-testid="refraction-qc-offset-time-plot"]');
+  expect(plot.dataset.pointCount).toBe('2');
+  expect(document.querySelector('[data-testid="refraction-qc-offset-time-canvas"]')).not.toBeNull();
+  expect(document.querySelector('[data-testid="refraction-qc-view-offset-time"]').textContent).toContain(
+    'Displayed points'
+  );
+  expect(document.querySelector('[data-testid="refraction-qc-view-offset-time"]').textContent).toContain('2');
+});
+
+test('Offset-time shows a clear message when selected records have no finite offsets', () => {
+  loadRefractionQcScript();
+  const pickMap = multiPointCompletedPickMap();
+  pickMap.pick_map.offset_m = [100, NaN, 'bad', 250];
+
+  window.refractionQcState.pickMap = pickMap;
+  window.refractionQcState.pickMapGatherStart = '101';
+  window.refractionQcState.pickMapGatherEnd = '102';
+  window.refractionQcUI.setSelectedView('offset_time');
+
+  const plot = document.querySelector('[data-testid="refraction-qc-offset-time-plot"]');
+  expect(plot.dataset.pointCount).toBe('0');
+  expect(plot.textContent).toBe(
+    'No Offset-time records are available because offset_m is missing or non-finite for the selected gather range.'
+  );
 });
 
 test('Pick Map does not render manual NPZ file input or upload button', () => {
