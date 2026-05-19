@@ -3809,8 +3809,10 @@
       }
       const bundle = await response.json();
       if (serial !== requestSerial) return;
-      if (state.pickMap?.job_id && state.pickMap.job_id !== bundle.job_id) {
+      if (state.pickMap && state.pickMap.job_id !== bundle.job_id) {
         state.pickMap = null;
+        state.pickMapError = null;
+        state.pickMapDisplayMode = 'before';
       }
       state.qcBundle = bundle;
       if (state.gatherPreview && state.gatherPreview.job_id !== bundle.job_id) {
@@ -3820,8 +3822,8 @@
       state.error = null;
       writeRecentJob(jobId);
       writeJobIdUrlParam(jobId);
-      if (state.selectedView === 'pick_map') {
-        loadCompletedPickMap(jobId);
+      if (state.selectedView === 'pick_map' && !state.pickMap && !state.pickMapLoading) {
+        loadCompletedPickMap(bundle.job_id);
       }
       return bundle;
     } catch (error) {
