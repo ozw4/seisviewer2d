@@ -25,6 +25,8 @@ from app.api.schemas import (
     RefractionStaticExportJobResponse,
     RefractionStaticGatherPreviewRequest,
     RefractionStaticGatherPreviewResponse,
+    RefractionStaticStationStructureRequest,
+    RefractionStaticStationStructureResponse,
     RefractionStaticQcBundleRequest,
     RefractionStaticQcBundleResponse,
     RefractionStaticQcDrilldownRequest,
@@ -72,6 +74,10 @@ from app.services.refraction_static_qc_drilldown import (
     RefractionStaticQcDrilldownError,
     RefractionStaticQcDrilldownNotFound,
     build_refraction_static_qc_drilldown,
+)
+from app.services.refraction_static_station_structure import (
+    RefractionStaticStationStructureError,
+    build_refraction_static_station_structure,
 )
 from app.services.refraction_static_pick_map import (
     RefractionStaticPickMapError,
@@ -614,6 +620,28 @@ def refraction_static_qc_drilldown(
     except RefractionStaticQcDrilldownNotFound as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except RefractionStaticQcDrilldownError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+
+@router.post(
+    '/statics/refraction/qc/station-structure',
+    response_model=RefractionStaticStationStructureResponse,
+)
+def refraction_static_qc_station_structure(
+    req: RefractionStaticStationStructureRequest,
+    request: Request,
+) -> RefractionStaticStationStructureResponse:
+    """Return source/receiver station-structure QC series."""
+    state = get_state(request.app)
+    cleanup_in_memory_state(state)
+    job = _get_static_job_or_404(state, req.job_id)
+    try:
+        return build_refraction_static_station_structure(
+            job_id=req.job_id,
+            job=job,
+            req=req,
+        )
+    except RefractionStaticStationStructureError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
 
 
