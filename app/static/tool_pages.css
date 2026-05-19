@@ -656,6 +656,17 @@ select {
       background: #fff;
     }
 
+    .refraction-qc-pick-map-plot {
+      height: 340px;
+      overflow: hidden;
+    }
+
+    .refraction-qc-pick-map-canvas {
+      display: block;
+      width: 100%;
+      height: 100%;
+    }
+
     .refraction-qc-cell-map-plot {
       height: 340px;
     }
@@ -861,6 +872,10 @@ select {
 
 .refraction-qc-page .refraction-qc-plot {
   height: 440px;
+}
+
+.refraction-qc-page .refraction-qc-pick-map-plot {
+  height: 560px;
 }
 
 .refraction-qc-page .refraction-qc-cell-map-plot {

@@ -1245,7 +1245,7 @@ test('Refraction QC Pick Map loads cached NPZ from active viewer target state', 
 	});
 	await page.goto('/refraction-qc');
 	await page.addScriptTag({
-		content: 'window.Plotly = { newPlot: (element, traces, layout) => { element.dataset.traceCount = String(traces.length); element.dataset.yAxisAutorange = String(layout?.yaxis?.autorange || ""); } };',
+		content: 'window.__pickMapPlotlyCalls = 0; window.Plotly = { newPlot: () => { window.__pickMapPlotlyCalls += 1; }, react: () => { window.__pickMapPlotlyCalls += 1; } };',
 	});
 	await seedStaticCorrectionPickCache(page);
 
@@ -1256,7 +1256,10 @@ test('Refraction QC Pick Map loads cached NPZ from active viewer target state', 
 	await page.getByTestId('refraction-qc-pick-map-load-cached').click();
 
 	await expect(page.getByTestId('refraction-qc-pick-map-status')).toContainText('Pre-statics pick map loaded');
+	await expect(page.getByTestId('refraction-qc-pick-map-canvas')).toBeVisible();
 	await expect(page.getByTestId('refraction-qc-pick-map-plot')).toHaveAttribute('data-y-axis-autorange', 'reversed');
+	await expect(page.getByTestId('refraction-qc-pick-map-plot')).toHaveAttribute('data-renderer', 'canvas');
+	await expect.poll(() => page.evaluate(() => (window as any).__pickMapPlotlyCalls)).toBe(0);
 	expect(pickMapRequest).toMatchObject({
 		file_id: 'active-viewer-store',
 		key1_byte: 9,

@@ -3,12 +3,18 @@
 from __future__ import annotations
 
 import csv
+import hashlib
+import json
 from pathlib import Path
 from typing import Any
+from uuid import uuid4
 
 import numpy as np
 
-from app.api.schemas import RefractionStaticPickMapRequest
+from app.api.schemas import (
+    RefractionStaticPickMapRequest,
+    RefractionStaticPickMapResponse,
+)
 from app.core.state import AppState
 from app.services.job_artifact_refs import resolve_job_artifact_path
 from app.services.job_manager import JobManager
@@ -16,6 +22,7 @@ from app.services.reader import get_reader
 from app.services.refraction_static_artifacts import (
     REFRACTION_FIRST_BREAK_FIT_QC_CSV_NAME,
     REFRACTION_FIRST_BREAK_FIT_QC_NPZ_NAME,
+    REFRACTION_PICK_MAP_QC_COMPLETED_CACHE_DIR_NAME,
     REFRACTION_STATIC_COMPONENT_QC_TRACE_CSV_NAME,
     REFRACTION_STATIC_SOLUTION_NPZ_NAME,
 )
@@ -28,6 +35,9 @@ from app.utils.segy_scalars import apply_segy_scalar, normalize_linear_unit
 
 class RefractionStaticPickMapError(ValueError):
     """Raised when a pick-map bundle cannot be assembled."""
+
+
+_COMPLETED_PICK_MAP_CACHE_SCHEMA_VERSION = 1
 
 
 def build_refraction_static_pick_map(
@@ -178,6 +188,29 @@ def _build_completed_job_pick_map(
             f'{JobManager.normalize_status_value(job.get("status"))}'
         )
     artifacts_dir = _job_artifacts_dir(job, job_id)
+    cached = _load_completed_pick_map_cache(artifacts_dir=artifacts_dir, req=req)
+    if cached is not None:
+        return cached
+
+    payload = _build_completed_job_pick_map_uncached(
+        req=req,
+        job_id=job_id,
+        artifacts_dir=artifacts_dir,
+    )
+    _write_completed_pick_map_cache(
+        artifacts_dir=artifacts_dir,
+        req=req,
+        payload=payload,
+    )
+    return payload
+
+
+def _build_completed_job_pick_map_uncached(
+    *,
+    req: RefractionStaticPickMapRequest,
+    job_id: str,
+    artifacts_dir: Path,
+) -> dict[str, Any]:
     pick_rows = _read_completed_pick_rows(artifacts_dir)
     shifts_ms = _read_completed_trace_shifts_ms(artifacts_dir)
 
@@ -192,6 +225,8 @@ def _build_completed_job_pick_map(
         after_ms = before_ms + shift_ms if shift_ms is not None else None
         offset = _optional_float(row.get('offset_m'))
         source_id = _first_present(row, 'source_id', 'source_endpoint_key')
+        if not _include_gather_id_in_request_range(source_id, req):
+            continue
         receiver_id = _first_present(row, 'receiver_id', 'receiver_endpoint_key')
         receiver_number = _global_sequential_receiver_number(receiver_id)
 
@@ -216,6 +251,104 @@ def _build_completed_job_pick_map(
         receiver_number_mode=req.geometry.receiver_number_mode,
         pick_map=records,
     )
+
+
+def _load_completed_pick_map_cache(
+    *,
+    artifacts_dir: Path,
+    req: RefractionStaticPickMapRequest,
+) -> dict[str, Any] | None:
+    path = _completed_pick_map_cache_path(artifacts_dir=artifacts_dir, req=req)
+    if not path.is_file():
+        return None
+    try:
+        with path.open(encoding='utf-8') as handle:
+            payload = json.load(handle)
+        return RefractionStaticPickMapResponse.model_validate(payload).model_dump(
+            mode='json'
+        )
+    except Exception:  # noqa: BLE001
+        path.unlink(missing_ok=True)
+        return None
+
+
+def _write_completed_pick_map_cache(
+    *,
+    artifacts_dir: Path,
+    req: RefractionStaticPickMapRequest,
+    payload: dict[str, Any],
+) -> None:
+    model = RefractionStaticPickMapResponse.model_validate(payload)
+    path = _completed_pick_map_cache_path(artifacts_dir=artifacts_dir, req=req)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp_path = path.with_name(f'{path.name}.{uuid4().hex}.tmp')
+    try:
+        with tmp_path.open('w', encoding='utf-8') as handle:
+            json.dump(
+                model.model_dump(mode='json'),
+                handle,
+                allow_nan=False,
+                ensure_ascii=True,
+                sort_keys=True,
+                separators=(',', ':'),
+            )
+            handle.write('\n')
+        tmp_path.replace(path)
+    except Exception:
+        tmp_path.unlink(missing_ok=True)
+        raise
+
+
+def _completed_pick_map_cache_path(
+    *,
+    artifacts_dir: Path,
+    req: RefractionStaticPickMapRequest,
+) -> Path:
+    digest = hashlib.sha256(
+        json.dumps(
+            _completed_pick_map_cache_key(req),
+            ensure_ascii=True,
+            sort_keys=True,
+            separators=(',', ':'),
+        ).encode('utf-8')
+    ).hexdigest()
+    return (
+        artifacts_dir
+        / REFRACTION_PICK_MAP_QC_COMPLETED_CACHE_DIR_NAME
+        / f'{digest}.json'
+    )
+
+
+def _completed_pick_map_cache_key(
+    req: RefractionStaticPickMapRequest,
+) -> dict[str, Any]:
+    return {
+        'job_id': req.job_id,
+        'gather_start': req.gather_start,
+        'gather_end': req.gather_end,
+        'response_schema_version': _COMPLETED_PICK_MAP_CACHE_SCHEMA_VERSION,
+        'receiver_number_mode': req.geometry.receiver_number_mode,
+        'source_artifact_names': [
+            REFRACTION_FIRST_BREAK_FIT_QC_NPZ_NAME,
+            REFRACTION_FIRST_BREAK_FIT_QC_CSV_NAME,
+            REFRACTION_STATIC_SOLUTION_NPZ_NAME,
+            REFRACTION_STATIC_COMPONENT_QC_TRACE_CSV_NAME,
+        ],
+    }
+
+
+def _include_gather_id_in_request_range(
+    gather_id: object,
+    req: RefractionStaticPickMapRequest,
+) -> bool:
+    gather_number = _numeric_or_none(gather_id)
+    if gather_number is None:
+        return True
+    if req.gather_start is not None and gather_number < req.gather_start:
+        return False
+    if req.gather_end is not None and gather_number > req.gather_end:
+        return False
+    return True
 
 
 def _read_completed_pick_rows(artifacts_dir: Path) -> list[dict[str, Any]]:
