@@ -3809,10 +3809,19 @@
       }
       const bundle = await response.json();
       if (serial !== requestSerial) return;
-      if (state.pickMap && state.pickMap.job_id !== bundle.job_id) {
-        state.pickMap = null;
+      const bundleJobId = String(bundle.job_id || '').trim();
+      const currentPickMapJobId = String(state.pickMap?.job_id || '').trim();
+      const sameJobCompletedPickMap = state.pickMap?.mode === 'completed_job' && currentPickMapJobId === bundleJobId;
+      const stalePickMap = state.pickMap && !sameJobCompletedPickMap;
+      const staleInFlightPickMap = state.pickMapLoading;
+      if (stalePickMap || staleInFlightPickMap) {
+        pickMapRequestSerial += 1;
+        if (stalePickMap || !state.pickMap) {
+          state.pickMap = null;
+          state.pickMapDisplayMode = 'before';
+        }
+        state.pickMapLoading = false;
         state.pickMapError = null;
-        state.pickMapDisplayMode = 'before';
       }
       state.qcBundle = bundle;
       if (state.gatherPreview && state.gatherPreview.job_id !== bundle.job_id) {
@@ -3822,8 +3831,8 @@
       state.error = null;
       writeRecentJob(jobId);
       writeJobIdUrlParam(jobId);
-      if (state.selectedView === 'pick_map' && !state.pickMap && !state.pickMapLoading) {
-        loadCompletedPickMap(bundle.job_id);
+      if (state.selectedView === 'pick_map' && !state.pickMap) {
+        loadCompletedPickMap(bundleJobId);
       }
       return bundle;
     } catch (error) {
