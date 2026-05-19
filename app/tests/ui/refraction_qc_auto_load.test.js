@@ -8,6 +8,8 @@ const SCRIPT = readFileSync(
   'utf8'
 );
 
+let canvasOps = [];
+
 function renderRefractionQcPanel() {
   document.body.innerHTML = `
     <button id="pipelineSidebarTab" class="sidebar-tab is-active" aria-selected="true"></button>
@@ -46,6 +48,35 @@ function renderRefractionQcPanel() {
       </section>
     </section>
   `;
+}
+
+function installCanvasContextStub() {
+  canvasOps = [];
+  vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockImplementation((type) => {
+    if (type !== '2d') return null;
+    return {
+      setTransform: (...args) => canvasOps.push(['setTransform', ...args]),
+      clearRect: (...args) => canvasOps.push(['clearRect', ...args]),
+      fillRect: (...args) => canvasOps.push(['fillRect', ...args]),
+      beginPath: (...args) => canvasOps.push(['beginPath', ...args]),
+      moveTo: (...args) => canvasOps.push(['moveTo', ...args]),
+      lineTo: (...args) => canvasOps.push(['lineTo', ...args]),
+      stroke: (...args) => canvasOps.push(['stroke', ...args]),
+      strokeRect: (...args) => canvasOps.push(['strokeRect', ...args]),
+      fillText: (...args) => canvasOps.push(['fillText', ...args]),
+      save: (...args) => canvasOps.push(['save', ...args]),
+      restore: (...args) => canvasOps.push(['restore', ...args]),
+      translate: (...args) => canvasOps.push(['translate', ...args]),
+      rotate: (...args) => canvasOps.push(['rotate', ...args]),
+      arc: (...args) => canvasOps.push(['arc', ...args]),
+      fill: (...args) => canvasOps.push(['fill', ...args]),
+    };
+  });
+  return canvasOps;
+}
+
+function pointArcs() {
+  return canvasOps.filter((op) => op[0] === 'arc');
 }
 
 function jsonResponse(payload, status = 200) {
@@ -120,6 +151,27 @@ function preStaticsPickMap() {
   };
 }
 
+function multiPointCompletedPickMap() {
+  return {
+    mode: 'completed_job',
+    job_id: 'completed-job-map',
+    has_after_statics: true,
+    receiver_number_mode: 'global_sequential',
+    gather_range: { min: 100, max: 103 },
+    status_message: 'Completed Pick Map',
+    pick_map: {
+      gather_id: [100, 101, 102, 103],
+      receiver_number: [2000, 2001, 2002, 2003],
+      pick_before_ms: [80, 100, 120, 140],
+      pick_after_ms: [70, 85, 115, 138],
+      used_in_statics: [true, false, true, false],
+      offset_m: [100, 150, 200, 250],
+      offset_used: [90, null, 210, null],
+      applied_shift_ms: [-10, -10, -10, -10],
+    },
+  };
+}
+
 function qcBundle(jobId) {
   return {
     job_id: jobId,
@@ -138,6 +190,7 @@ beforeEach(() => {
   delete window.refractionQcState;
   delete window.SeisViewerState;
   renderRefractionQcPanel();
+  installCanvasContextStub();
 });
 
 afterEach(() => {
@@ -147,6 +200,7 @@ afterEach(() => {
   delete window.refractionQcState;
   delete window.SeisViewerState;
   vi.unstubAllGlobals();
+  vi.restoreAllMocks();
 });
 
 test('loadJob populates the QC job input, loads the bundle, and activates Refraction QC', async () => {
@@ -218,6 +272,96 @@ test('loadJob displays QC loading errors with the requested job id still visible
   expect(document.getElementById('refractionQcJobId').value).toBe('missing-static-job');
   expect(document.getElementById('refractionQcError').hidden).toBe(false);
   expect(document.getElementById('refractionQcError').textContent).toContain('QC bundle missing');
+});
+
+test('Pick Map uses canvas renderer without Plotly', () => {
+  const plotly = {
+    newPlot: vi.fn(() => {
+      throw new Error('Pick Map must not call Plotly.newPlot');
+    }),
+    react: vi.fn(() => {
+      throw new Error('Pick Map must not call Plotly.react');
+    }),
+  };
+  window.Plotly = plotly;
+  loadRefractionQcScript();
+
+  window.refractionQcState.pickMap = preStaticsPickMap();
+  window.refractionQcUI.setSelectedView('pick_map');
+
+  expect(document.querySelector('[data-testid="refraction-qc-pick-map-canvas"]')).not.toBeNull();
+  expect(document.querySelector('[data-testid="refraction-qc-pick-map-plot"]').dataset.renderer).toBe('canvas');
+  expect(plotly.newPlot).not.toHaveBeenCalled();
+  expect(plotly.react).not.toHaveBeenCalled();
+});
+
+test('Pick Map canvas draws pick time increasing downward', () => {
+  const pickMap = preStaticsPickMap();
+  pickMap.pick_map.receiver_number = [2000, 2001];
+  pickMap.pick_map.pick_before_ms = [80, 120];
+  pickMap.pick_map.gather_id = [100, 101];
+  pickMap.pick_map.offset_m = [100, 200];
+  loadRefractionQcScript();
+
+  window.refractionQcState.pickMap = pickMap;
+  window.refractionQcUI.setSelectedView('pick_map');
+
+  const arcs = pointArcs();
+  expect(arcs).toHaveLength(2);
+  expect(arcs[1][2]).toBeGreaterThan(arcs[0][2]);
+  expect(document.querySelector('[data-testid="refraction-qc-pick-map-plot"]').dataset.yAxisDirection).toBe('down');
+});
+
+test('Pick Map canvas renders before and after modes', () => {
+  loadRefractionQcScript();
+
+  window.refractionQcState.pickMap = multiPointCompletedPickMap();
+  window.refractionQcUI.setSelectedView('pick_map');
+  const beforeArcs = pointArcs().map((op) => op[2]);
+
+  canvasOps = [];
+  document.querySelector('[data-testid="refraction-qc-pick-map-after"]').click();
+
+  expect(window.refractionQcState.pickMapDisplayMode).toBe('after');
+  expect(document.querySelector('[data-testid="refraction-qc-pick-map-after"]').className).toBe('is-active');
+  expect(pointArcs().map((op) => op[2])).not.toEqual(beforeArcs);
+});
+
+test('completed Pick Map canvas distinguishes used, unused, and offset-colored points', () => {
+  loadRefractionQcScript();
+
+  window.refractionQcState.pickMap = multiPointCompletedPickMap();
+  window.refractionQcUI.setSelectedView('pick_map');
+
+  const plot = document.querySelector('[data-testid="refraction-qc-pick-map-plot"]');
+  expect(plot.dataset.usedPointCount).toBe('2');
+  expect(plot.dataset.unusedPointCount).toBe('2');
+  expect(plot.dataset.offsetColorCount).toBe('2');
+});
+
+test('pre-statics Pick Map canvas disables After Statics', () => {
+  loadRefractionQcScript();
+
+  window.refractionQcState.pickMap = preStaticsPickMap();
+  window.refractionQcState.pickMapDisplayMode = 'after';
+  window.refractionQcUI.setSelectedView('pick_map');
+
+  expect(document.querySelector('[data-testid="refraction-qc-pick-map-canvas"]')).not.toBeNull();
+  expect(document.querySelector('[data-testid="refraction-qc-pick-map-after"]').disabled).toBe(true);
+  expect(document.querySelector('[data-testid="refraction-qc-pick-map-before"]').className).toBe('is-active');
+});
+
+test('Pick Map canvas applies gather range filter', () => {
+  loadRefractionQcScript();
+
+  window.refractionQcState.pickMap = multiPointCompletedPickMap();
+  window.refractionQcState.pickMapGatherStart = '101';
+  window.refractionQcState.pickMapGatherEnd = '102';
+  window.refractionQcUI.setSelectedView('pick_map');
+
+  const plot = document.querySelector('[data-testid="refraction-qc-pick-map-plot"]');
+  expect(plot.dataset.pointCount).toBe('2');
+  expect(pointArcs()).toHaveLength(2);
 });
 
 test('completed QC bundle clears active pre-statics Pick Map and loads completed job map', async () => {

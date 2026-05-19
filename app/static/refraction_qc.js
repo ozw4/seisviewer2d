@@ -121,6 +121,7 @@
   let requestSerial = 0;
   let gatherRequestSerial = 0;
   let pickMapRequestSerial = 0;
+  let pickMapCanvasCleanup = null;
 
   function safeLocalStorageValue(key) {
     try {
@@ -3244,6 +3245,11 @@
   }
 
   function renderPickMap(content) {
+    cleanupPickMapCanvasRenderer();
+    if (state.pickMap && !state.pickMap.has_after_statics && state.pickMapDisplayMode !== 'before') {
+      state.pickMapDisplayMode = 'before';
+    }
+
     const controls = document.createElement('div');
     controls.className = 'refraction-qc-controls';
 
@@ -3370,16 +3376,21 @@
     ]));
 
     const plot = document.createElement('div');
-    plot.className = 'refraction-qc-plot';
+    plot.className = 'refraction-qc-plot refraction-qc-pick-map-plot';
     plot.dataset.testid = 'refraction-qc-pick-map-plot';
     plot.dataset.pointCount = String(points.length);
+    plot.dataset.renderer = 'canvas';
+    plot.dataset.xAxisTitle = 'Global receiver number';
+    plot.dataset.yAxisTitle = 'First-break pick time (ms)';
+    plot.dataset.yAxisDirection = 'down';
+    plot.dataset.yAxisAutorange = 'reversed';
     content.appendChild(plot);
 
     if (!points.length) {
       plot.textContent = 'No Pick Map records match the current gather range.';
       return;
     }
-    renderPickMapPlot(plot, points, state.pickMap);
+    renderPickMapCanvas(plot, points, state.pickMap);
   }
 
   function filteredPickMapPoints(payload) {
@@ -3418,86 +3429,222 @@
     return points;
   }
 
-  function renderPickMapPlot(plot, points, payload) {
-    if (!window.Plotly) {
-      plot.textContent = 'Plot library is unavailable.';
-      return;
-    }
-    const common = {
-      type: 'scattergl',
-      mode: 'markers',
-      hovertemplate: '%{text}<extra></extra>',
-    };
-    const traces = [];
-    if (payload.mode === 'completed_job') {
-      const used = points.filter((point) => point.used);
-      const unused = points.filter((point) => !point.used);
-      if (used.length) {
-        traces.push({
-          ...common,
-          name: 'Used in statics',
-          x: used.map((point) => point.x),
-          y: used.map((point) => point.y),
-          text: used.map((point) => pickMapHoverText(point, payload)),
-          marker: {
-            color: used.map((point) => Number.isFinite(point.offsetUsed) ? point.offsetUsed : point.offsetM),
-            colorscale: 'Viridis',
-            colorbar: { title: 'Offset used (m)' },
-            size: 6,
-            opacity: 0.9,
-          },
-        });
-      }
-      if (unused.length) {
-        traces.push({
-          ...common,
-          name: 'Unused',
-          x: unused.map((point) => point.x),
-          y: unused.map((point) => point.y),
-          text: unused.map((point) => pickMapHoverText(point, payload)),
-          marker: { color: '#94a3b8', size: 5, opacity: 0.35 },
-        });
-      }
-    } else {
-      traces.push({
-        ...common,
-        name: 'Before statics',
-        x: points.map((point) => point.x),
-        y: points.map((point) => point.y),
-        text: points.map((point) => pickMapHoverText(point, payload)),
-        marker: { color: '#2563eb', size: 5, opacity: 0.8 },
-      });
-    }
-    window.Plotly.newPlot(plot, traces, {
-      height: plotHeight(340, 560),
-      margin: { l: 64, r: 22, t: 34, b: 58 },
-      title: { text: state.pickMapDisplayMode === 'after' ? 'After Statics Pick Map' : 'Before Statics Pick Map', font: { size: 12 } },
-      font: { size: 10, color: '#334155' },
-      paper_bgcolor: '#ffffff',
-      plot_bgcolor: '#ffffff',
-      xaxis: { title: { text: 'Global receiver number' }, gridcolor: '#e5e7eb', zeroline: false },
-      yaxis: { title: { text: 'First-break pick time (ms)' }, autorange: 'reversed', gridcolor: '#e5e7eb', zeroline: false },
-      legend: { orientation: 'h', x: 0, y: 1.14, xanchor: 'left', yanchor: 'top', font: { size: 10 } },
-    }, { displayModeBar: false, responsive: true });
+  function cleanupPickMapCanvasRenderer() {
+    if (!pickMapCanvasCleanup) return;
+    pickMapCanvasCleanup();
+    pickMapCanvasCleanup = null;
   }
 
-  function pickMapHoverText(point, payload) {
-    const lines = [
-      `Gather / shot: ${textOrDash(point.gather)}`,
-      `Receiver number: ${formatNumber(point.x, 0)}`,
-      `Pick before statics: ${formatNumber(point.beforeMs, 2)} ms`,
-    ];
-    if (payload.has_after_statics) {
-      lines.push(`Pick after statics: ${formatNumber(point.afterMs, 2)} ms`);
-      lines.push(`Offset used: ${formatNumber(point.offsetUsed, 2)} m`);
-      lines.push(`Used in statics: ${point.used ? 'yes' : 'no'}`);
-      lines.push(`Applied shift: ${formatNumber(point.appliedShiftMs, 2)} ms`);
-    } else if (Number.isFinite(point.offsetM)) {
-      lines.push(`Offset: ${formatNumber(point.offsetM, 2)} m`);
+  function renderPickMapCanvas(plot, points, payload) {
+    cleanupPickMapCanvasRenderer();
+    clearNode(plot);
+
+    const canvas = document.createElement('canvas');
+    canvas.className = 'refraction-qc-pick-map-canvas';
+    canvas.dataset.testid = 'refraction-qc-pick-map-canvas';
+    canvas.setAttribute('role', 'img');
+    canvas.setAttribute(
+      'aria-label',
+      'Pick Map scatter plot with global receiver number on x and first-break pick time in milliseconds increasing downward.'
+    );
+    plot.appendChild(canvas);
+
+    const pointStats = pickMapPointStats(points, payload);
+    plot.dataset.usedPointCount = String(pointStats.used);
+    plot.dataset.unusedPointCount = String(pointStats.unused);
+    plot.dataset.offsetColorCount = String(pointStats.offsetColored);
+
+    const draw = () => drawPickMapCanvas(plot, canvas, points, payload);
+    draw();
+
+    if (typeof ResizeObserver !== 'undefined') {
+      const observer = new ResizeObserver(draw);
+      observer.observe(plot);
+      pickMapCanvasCleanup = () => observer.disconnect();
+    } else {
+      window.addEventListener('resize', draw);
+      pickMapCanvasCleanup = () => window.removeEventListener('resize', draw);
     }
-    lines.push(`Source: ${textOrDash(point.sourceId)}`);
-    lines.push(`Receiver: ${textOrDash(point.receiverId)}`);
-    return lines.join('<br>');
+  }
+
+  function pickMapPointStats(points, payload) {
+    if (payload.mode !== 'completed_job') {
+      return { used: points.length, unused: 0, offsetColored: points.filter((point) => Number.isFinite(point.offsetM)).length };
+    }
+    let used = 0;
+    let unused = 0;
+    let offsetColored = 0;
+    for (const point of points) {
+      if (point.used) {
+        used += 1;
+        if (Number.isFinite(pickMapColorValue(point))) offsetColored += 1;
+      } else {
+        unused += 1;
+      }
+    }
+    return { used, unused, offsetColored };
+  }
+
+  function drawPickMapCanvas(plot, canvas, points, payload) {
+    let context = null;
+    try {
+      context = canvas.getContext('2d');
+    } catch (_) {
+      context = null;
+    }
+    if (!context) {
+      plot.textContent = 'Canvas rendering is unavailable.';
+      return;
+    }
+
+    const rect = plot.getBoundingClientRect();
+    const cssWidth = Math.max(1, Math.floor(rect.width || plot.clientWidth || plot.offsetWidth || 640));
+    const cssHeight = Math.max(plotHeight(340, 560), Math.floor(rect.height || plot.clientHeight || plot.offsetHeight || 0));
+    const pixelRatio = Math.max(1, window.devicePixelRatio || 1);
+    const pixelWidth = Math.max(1, Math.floor(cssWidth * pixelRatio));
+    const pixelHeight = Math.max(1, Math.floor(cssHeight * pixelRatio));
+    if (canvas.width !== pixelWidth) canvas.width = pixelWidth;
+    if (canvas.height !== pixelHeight) canvas.height = pixelHeight;
+    canvas.style.width = `${cssWidth}px`;
+    canvas.style.height = `${cssHeight}px`;
+
+    context.setTransform(pixelRatio, 0, 0, pixelRatio, 0, 0);
+    context.clearRect(0, 0, cssWidth, cssHeight);
+    context.fillStyle = '#ffffff';
+    context.fillRect(0, 0, cssWidth, cssHeight);
+
+    const margin = { left: 66, right: 22, top: 34, bottom: 56 };
+    const plotWidth = Math.max(1, cssWidth - margin.left - margin.right);
+    const plotHeightCss = Math.max(1, cssHeight - margin.top - margin.bottom);
+    const xRange = paddedRange(points.map((point) => point.x));
+    const yRange = paddedRange(points.map((point) => point.y));
+    const colorPoints = payload.mode === 'completed_job' ? points.filter((point) => point.used) : points;
+    const colorRange = paddedRange(colorPoints.map((point) => pickMapColorValue(point)).filter(Number.isFinite));
+    const xScale = (value) => margin.left + ((value - xRange.min) / (xRange.max - xRange.min)) * plotWidth;
+    const yScale = (value) => margin.top + ((value - yRange.min) / (yRange.max - yRange.min)) * plotHeightCss;
+
+    drawPickMapGrid(context, margin, plotWidth, plotHeightCss, xRange, yRange, xScale, yScale);
+
+    const title = state.pickMapDisplayMode === 'after' ? 'After Statics Pick Map' : 'Before Statics Pick Map';
+    context.fillStyle = '#334155';
+    context.font = '12px sans-serif';
+    context.textAlign = 'left';
+    context.textBaseline = 'top';
+    context.fillText(title, margin.left, 10);
+
+    if (payload.mode === 'completed_job') {
+      drawPickMapPoints(context, points.filter((point) => !point.used), xScale, yScale, colorRange, payload);
+      drawPickMapPoints(context, points.filter((point) => point.used), xScale, yScale, colorRange, payload);
+    } else {
+      drawPickMapPoints(context, points, xScale, yScale, colorRange, payload);
+    }
+  }
+
+  function paddedRange(values) {
+    const finite = values.filter(Number.isFinite);
+    if (!finite.length) return { min: 0, max: 1 };
+    let min = Math.min(...finite);
+    let max = Math.max(...finite);
+    if (min === max) {
+      const pad = Math.max(1, Math.abs(min) * 0.05);
+      min -= pad;
+      max += pad;
+    }
+    return { min, max };
+  }
+
+  function pickMapTicks(range, count = 5) {
+    if (!Number.isFinite(range.min) || !Number.isFinite(range.max) || range.max <= range.min) return [];
+    const ticks = [];
+    const steps = Math.max(1, count - 1);
+    for (let index = 0; index <= steps; index += 1) {
+      ticks.push(range.min + ((range.max - range.min) * index) / steps);
+    }
+    return ticks;
+  }
+
+  function drawPickMapGrid(context, margin, plotWidth, plotHeightCss, xRange, yRange, xScale, yScale) {
+    const right = margin.left + plotWidth;
+    const bottom = margin.top + plotHeightCss;
+    context.save();
+    context.strokeStyle = '#e5e7eb';
+    context.lineWidth = 1;
+    context.font = '10px sans-serif';
+    context.fillStyle = '#334155';
+    context.textBaseline = 'middle';
+
+    for (const tick of pickMapTicks(xRange)) {
+      const x = xScale(tick);
+      context.beginPath();
+      context.moveTo(x, margin.top);
+      context.lineTo(x, bottom);
+      context.stroke();
+      context.textAlign = 'center';
+      context.fillText(formatNumber(tick, 0), x, bottom + 16);
+    }
+    for (const tick of pickMapTicks(yRange)) {
+      const y = yScale(tick);
+      context.beginPath();
+      context.moveTo(margin.left, y);
+      context.lineTo(right, y);
+      context.stroke();
+      context.textAlign = 'right';
+      context.fillText(formatNumber(tick, 1), margin.left - 8, y);
+    }
+
+    context.strokeStyle = '#94a3b8';
+    context.strokeRect(margin.left, margin.top, plotWidth, plotHeightCss);
+    context.textAlign = 'center';
+    context.textBaseline = 'bottom';
+    context.fillText('Global receiver number', margin.left + plotWidth / 2, margin.top + plotHeightCss + 44);
+
+    context.save();
+    context.translate(14, margin.top + plotHeightCss / 2);
+    context.rotate(-Math.PI / 2);
+    context.textBaseline = 'top';
+    context.fillText('First-break pick time (ms)', 0, 0);
+    context.restore();
+    context.restore();
+  }
+
+  function drawPickMapPoints(context, points, xScale, yScale, colorRange, payload) {
+    for (const point of points) {
+      const x = xScale(point.x);
+      const y = yScale(point.y);
+      context.beginPath();
+      context.arc(x, y, point.used || payload.mode !== 'completed_job' ? 3 : 2.5, 0, Math.PI * 2);
+      context.fillStyle = pickMapPointColor(point, colorRange, payload);
+      context.globalAlpha = payload.mode === 'completed_job' && !point.used ? 0.35 : 0.85;
+      context.fill();
+    }
+    context.globalAlpha = 1;
+  }
+
+  function pickMapColorValue(point) {
+    return Number.isFinite(point.offsetUsed) ? point.offsetUsed : point.offsetM;
+  }
+
+  function pickMapPointColor(point, colorRange, payload) {
+    if (payload.mode === 'completed_job' && !point.used) return '#94a3b8';
+    const value = pickMapColorValue(point);
+    if (!Number.isFinite(value) || !Number.isFinite(colorRange.min) || colorRange.max <= colorRange.min) {
+      return '#2563eb';
+    }
+    const ratio = Math.max(0, Math.min(1, (value - colorRange.min) / (colorRange.max - colorRange.min)));
+    const stops = [
+      [68, 1, 84],
+      [59, 82, 139],
+      [33, 145, 140],
+      [94, 201, 98],
+      [253, 231, 37],
+    ];
+    const scaled = ratio * (stops.length - 1);
+    const index = Math.min(stops.length - 2, Math.floor(scaled));
+    const local = scaled - index;
+    const start = stops[index];
+    const end = stops[index + 1];
+    const channel = (offset) => Math.round(start[offset] + (end[offset] - start[offset]) * local);
+    return `rgb(${channel(0)}, ${channel(1)}, ${channel(2)})`;
   }
 
   function renderViewContent(viewDef) {
@@ -3553,6 +3700,7 @@
 
   function render() {
     if (!dom) return;
+    if (state.selectedView !== 'pick_map') cleanupPickMapCanvasRenderer();
 
     dom.loadButton.disabled = state.loading;
     dom.maxPoints.value = String(state.maxPoints);
