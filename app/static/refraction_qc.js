@@ -64,6 +64,12 @@
       unavailableKeys: [],
     },
     {
+      id: 'offset_time',
+      include: 'summary',
+      viewKeys: [],
+      unavailableKeys: [],
+    },
+    {
       id: 'gather_preview',
       include: 'gather_preview',
       viewKeys: [],
@@ -122,6 +128,25 @@
   let gatherRequestSerial = 0;
   let pickMapRequestSerial = 0;
   let pickMapCanvasCleanup = null;
+
+  const PICK_MAP_VIEWS = {
+    pick_map: {
+      label: 'RecNo-time',
+      xField: 'receiver_number',
+      xAxisTitle: 'Global receiver number',
+      testIdPrefix: 'refraction-qc-pick-map',
+      emptyMessage: 'No Pick Map records match the current gather range.',
+      colorByOffset: true,
+    },
+    offset_time: {
+      label: 'Offset-time',
+      xField: 'offset_m',
+      xAxisTitle: 'Offset (m)',
+      testIdPrefix: 'refraction-qc-offset-time',
+      emptyMessage: 'No Offset-time records are available because offset_m is missing or non-finite for the selected gather range.',
+      colorByOffset: false,
+    },
+  };
 
   function safeLocalStorageValue(key) {
     try {
@@ -3263,11 +3288,12 @@
     ]));
   }
 
-  function renderPickMap(content) {
+  function renderPickMap(content, viewConfig = PICK_MAP_VIEWS.pick_map) {
     cleanupPickMapCanvasRenderer();
     if (state.pickMap && !state.pickMap.has_after_statics && state.pickMapDisplayMode !== 'before') {
       state.pickMapDisplayMode = 'before';
     }
+    const testIdPrefix = viewConfig.testIdPrefix;
 
     const controls = document.createElement('div');
     controls.className = 'refraction-qc-controls';
@@ -3275,7 +3301,7 @@
     const beforeButton = document.createElement('button');
     beforeButton.type = 'button';
     beforeButton.textContent = 'Before Statics';
-    beforeButton.dataset.testid = 'refraction-qc-pick-map-before';
+    beforeButton.dataset.testid = `${testIdPrefix}-before`;
     beforeButton.className = state.pickMapDisplayMode === 'before' ? 'is-active' : '';
     beforeButton.addEventListener('click', () => {
       state.pickMapDisplayMode = 'before';
@@ -3285,7 +3311,7 @@
     const afterButton = document.createElement('button');
     afterButton.type = 'button';
     afterButton.textContent = 'After Statics';
-    afterButton.dataset.testid = 'refraction-qc-pick-map-after';
+    afterButton.dataset.testid = `${testIdPrefix}-after`;
     afterButton.disabled = !state.pickMap?.has_after_statics;
     afterButton.className = state.pickMapDisplayMode === 'after' ? 'is-active' : '';
     afterButton.addEventListener('click', () => {
@@ -3298,7 +3324,7 @@
     gatherStart.type = 'number';
     gatherStart.placeholder = 'Gather start';
     gatherStart.value = state.pickMapGatherStart;
-    gatherStart.dataset.testid = 'refraction-qc-pick-map-gather-start';
+    gatherStart.dataset.testid = `${testIdPrefix}-gather-start`;
     gatherStart.addEventListener('input', () => {
       state.pickMapGatherStart = gatherStart.value;
       render();
@@ -3308,7 +3334,7 @@
     gatherEnd.type = 'number';
     gatherEnd.placeholder = 'Gather end';
     gatherEnd.value = state.pickMapGatherEnd;
-    gatherEnd.dataset.testid = 'refraction-qc-pick-map-gather-end';
+    gatherEnd.dataset.testid = `${testIdPrefix}-gather-end`;
     gatherEnd.addEventListener('input', () => {
       state.pickMapGatherEnd = gatherEnd.value;
       render();
@@ -3317,7 +3343,7 @@
     const cachedButton = document.createElement('button');
     cachedButton.type = 'button';
     cachedButton.textContent = 'Load from Static Correction NPZ';
-    cachedButton.dataset.testid = 'refraction-qc-pick-map-load-cached';
+    cachedButton.dataset.testid = `${testIdPrefix}-load-cached`;
     cachedButton.disabled = !state.pickMapCachedFile;
     cachedButton.addEventListener('click', () => {
       loadPreStaticsPickMap(state.pickMapCachedFile);
@@ -3325,8 +3351,8 @@
 
     const completedButton = document.createElement('button');
     completedButton.type = 'button';
-    completedButton.textContent = 'Load completed-job Pick Map';
-    completedButton.dataset.testid = 'refraction-qc-pick-map-load-job';
+    completedButton.textContent = `Load completed-job ${viewConfig.label}`;
+    completedButton.dataset.testid = `${testIdPrefix}-load-job`;
     completedButton.disabled = !(state.qcBundle?.job_id || state.selectedJobId);
     completedButton.addEventListener('click', () => {
       loadCompletedPickMap();
@@ -3338,7 +3364,7 @@
     if (state.pickMapCacheStatus) {
       const cacheStatus = document.createElement('p');
       cacheStatus.className = 'refraction-qc-note';
-      cacheStatus.dataset.testid = 'refraction-qc-pick-map-cache-status';
+      cacheStatus.dataset.testid = `${testIdPrefix}-cache-status`;
       cacheStatus.textContent = state.pickMapCacheStatus;
       if (!state.pickMapCachedFile && activePickMapTarget()) {
         cacheStatus.appendChild(document.createTextNode(' '));
@@ -3359,7 +3385,7 @@
     if (state.pickMapError) {
       const error = document.createElement('div');
       error.className = 'refraction-qc-error';
-      error.dataset.testid = 'refraction-qc-pick-map-error';
+      error.dataset.testid = `${testIdPrefix}-error`;
       error.textContent = state.pickMapError;
       content.appendChild(error);
     }
@@ -3375,11 +3401,12 @@
 
     const status = document.createElement('p');
     status.className = 'refraction-qc-note';
-    status.dataset.testid = 'refraction-qc-pick-map-status';
+    status.dataset.testid = `${testIdPrefix}-status`;
     status.textContent = state.pickMap.status_message || '';
     content.appendChild(status);
 
-    const points = filteredPickMapPoints(state.pickMap);
+    const pointResult = filteredPickMapPoints(state.pickMap, viewConfig);
+    const points = pointResult.points;
     content.appendChild(createKv([
       ['Mode', state.pickMap.mode],
       ['Receiver numbering', state.pickMap.receiver_number_mode],
@@ -3390,23 +3417,23 @@
 
     const plot = document.createElement('div');
     plot.className = 'refraction-qc-plot refraction-qc-pick-map-plot';
-    plot.dataset.testid = 'refraction-qc-pick-map-plot';
+    plot.dataset.testid = `${testIdPrefix}-plot`;
     plot.dataset.pointCount = String(points.length);
     plot.dataset.renderer = 'canvas';
-    plot.dataset.xAxisTitle = 'Global receiver number';
+    plot.dataset.xAxisTitle = viewConfig.xAxisTitle;
     plot.dataset.yAxisTitle = 'First-break pick time (ms)';
     plot.dataset.yAxisDirection = 'down';
     plot.dataset.yAxisAutorange = 'reversed';
     content.appendChild(plot);
 
     if (!points.length) {
-      plot.textContent = 'No Pick Map records match the current gather range.';
+      plot.textContent = pointResult.missingXCount > 0 ? viewConfig.emptyMessage : 'No Pick Map records match the current gather range.';
       return;
     }
-    renderPickMapCanvas(plot, points, state.pickMap);
+    renderPickMapCanvas(plot, points, state.pickMap, viewConfig);
   }
 
-  function filteredPickMapPoints(payload) {
+  function filteredPickMapPoints(payload, viewConfig = PICK_MAP_VIEWS.pick_map) {
     const data = payload?.pick_map || {};
     const count = Array.isArray(data.pick_before_ms) ? data.pick_before_ms.length : 0;
     const start = toFiniteNumber(state.pickMapGatherStart);
@@ -3414,6 +3441,7 @@
     const hasStart = Number.isFinite(start);
     const hasEnd = Number.isFinite(end);
     const points = [];
+    let missingXCount = 0;
     for (let index = 0; index < count; index += 1) {
       const gather = data.gather_id?.[index];
       const gatherNumber = pickMapGatherNumber(gather);
@@ -3422,11 +3450,15 @@
       const beforeMs = toFiniteNumber(data.pick_before_ms?.[index]);
       const afterMs = toFiniteNumber(data.pick_after_ms?.[index]);
       const y = state.pickMapDisplayMode === 'after' && payload.has_after_statics ? afterMs : beforeMs;
-      const receiverNumber = toFiniteNumber(data.receiver_number?.[index]);
-      if (!Number.isFinite(receiverNumber) || !Number.isFinite(y)) continue;
+      const x = toFiniteNumber(data[viewConfig.xField]?.[index]);
+      if (!Number.isFinite(y)) continue;
+      if (!Number.isFinite(x)) {
+        missingXCount += 1;
+        continue;
+      }
       const used = data.used_in_statics?.[index] === true;
       points.push({
-        x: receiverNumber,
+        x,
         y,
         gather,
         sourceId: data.source_id?.[index],
@@ -3439,7 +3471,7 @@
         appliedShiftMs: toFiniteNumber(data.applied_shift_ms?.[index]),
       });
     }
-    return points;
+    return { points, missingXCount };
   }
 
   function cleanupPickMapCanvasRenderer() {
@@ -3448,26 +3480,26 @@
     pickMapCanvasCleanup = null;
   }
 
-  function renderPickMapCanvas(plot, points, payload) {
+  function renderPickMapCanvas(plot, points, payload, viewConfig = PICK_MAP_VIEWS.pick_map) {
     cleanupPickMapCanvasRenderer();
     clearNode(plot);
 
     const canvas = document.createElement('canvas');
     canvas.className = 'refraction-qc-pick-map-canvas';
-    canvas.dataset.testid = 'refraction-qc-pick-map-canvas';
+    canvas.dataset.testid = `${viewConfig.testIdPrefix}-canvas`;
     canvas.setAttribute('role', 'img');
     canvas.setAttribute(
       'aria-label',
-      'Pick Map scatter plot with global receiver number on x and first-break pick time in milliseconds increasing downward.'
+      `${viewConfig.label} scatter plot with ${viewConfig.xAxisTitle} on x and first-break pick time in milliseconds increasing downward.`
     );
     plot.appendChild(canvas);
 
-    const pointStats = pickMapPointStats(points, payload);
+    const pointStats = pickMapPointStats(points, payload, viewConfig);
     plot.dataset.usedPointCount = String(pointStats.used);
     plot.dataset.unusedPointCount = String(pointStats.unused);
     plot.dataset.offsetColorCount = String(pointStats.offsetColored);
 
-    const draw = () => drawPickMapCanvas(plot, canvas, points, payload);
+    const draw = () => drawPickMapCanvas(plot, canvas, points, payload, viewConfig);
     draw();
 
     if (typeof ResizeObserver !== 'undefined') {
@@ -3480,11 +3512,11 @@
     }
   }
 
-  function pickMapPointStats(points, payload) {
+  function pickMapPointStats(points, payload, viewConfig = PICK_MAP_VIEWS.pick_map) {
     if (payload.mode !== 'completed_job') {
       let offsetColored = 0;
       for (const point of points) {
-        if (Number.isFinite(point.offsetM)) offsetColored += 1;
+        if (viewConfig.colorByOffset && Number.isFinite(point.offsetM)) offsetColored += 1;
       }
       return { used: points.length, unused: 0, offsetColored };
     }
@@ -3494,7 +3526,7 @@
     for (const point of points) {
       if (point.used) {
         used += 1;
-        if (Number.isFinite(pickMapColorValue(point))) offsetColored += 1;
+        if (viewConfig.colorByOffset && Number.isFinite(pickMapColorValue(point))) offsetColored += 1;
       } else {
         unused += 1;
       }
@@ -3502,7 +3534,7 @@
     return { used, unused, offsetColored };
   }
 
-  function drawPickMapCanvas(plot, canvas, points, payload) {
+  function drawPickMapCanvas(plot, canvas, points, payload, viewConfig = PICK_MAP_VIEWS.pick_map) {
     let context = null;
     try {
       context = canvas.getContext('2d');
@@ -3536,14 +3568,16 @@
     const xRange = paddedRange(points, (point) => point.x);
     const yRange = paddedRange(points, (point) => point.y);
     const colorRange = paddedRange(points, (point) => (
-      payload.mode === 'completed_job' && !point.used ? NaN : pickMapColorValue(point)
+      viewConfig.colorByOffset && !(payload.mode === 'completed_job' && !point.used)
+        ? pickMapColorValue(point)
+        : NaN
     ));
     const xScale = (value) => margin.left + ((value - xRange.min) / (xRange.max - xRange.min)) * plotWidth;
     const yScale = (value) => margin.top + ((value - yRange.min) / (yRange.max - yRange.min)) * plotHeightCss;
 
-    drawPickMapGrid(context, margin, plotWidth, plotHeightCss, xRange, yRange, xScale, yScale);
+    drawPickMapGrid(context, margin, plotWidth, plotHeightCss, xRange, yRange, xScale, yScale, viewConfig);
 
-    const title = state.pickMapDisplayMode === 'after' ? 'After Statics Pick Map' : 'Before Statics Pick Map';
+    const title = `${state.pickMapDisplayMode === 'after' ? 'After Statics' : 'Before Statics'} ${viewConfig.label}`;
     context.fillStyle = '#334155';
     context.font = '12px sans-serif';
     context.textAlign = 'left';
@@ -3551,10 +3585,10 @@
     context.fillText(title, margin.left, 10);
 
     if (payload.mode === 'completed_job') {
-      drawPickMapPoints(context, points, xScale, yScale, colorRange, payload, (point) => !point.used);
-      drawPickMapPoints(context, points, xScale, yScale, colorRange, payload, (point) => point.used);
+      drawPickMapPoints(context, points, xScale, yScale, colorRange, payload, viewConfig, (point) => !point.used);
+      drawPickMapPoints(context, points, xScale, yScale, colorRange, payload, viewConfig, (point) => point.used);
     } else {
-      drawPickMapPoints(context, points, xScale, yScale, colorRange, payload);
+      drawPickMapPoints(context, points, xScale, yScale, colorRange, payload, viewConfig);
     }
   }
 
@@ -3588,7 +3622,7 @@
     return ticks;
   }
 
-  function drawPickMapGrid(context, margin, plotWidth, plotHeightCss, xRange, yRange, xScale, yScale) {
+  function drawPickMapGrid(context, margin, plotWidth, plotHeightCss, xRange, yRange, xScale, yScale, viewConfig) {
     const right = margin.left + plotWidth;
     const bottom = margin.top + plotHeightCss;
     context.save();
@@ -3621,7 +3655,7 @@
     context.strokeRect(margin.left, margin.top, plotWidth, plotHeightCss);
     context.textAlign = 'center';
     context.textBaseline = 'bottom';
-    context.fillText('Global receiver number', margin.left + plotWidth / 2, margin.top + plotHeightCss + 44);
+    context.fillText(viewConfig.xAxisTitle, margin.left + plotWidth / 2, margin.top + plotHeightCss + 44);
 
     context.save();
     context.translate(14, margin.top + plotHeightCss / 2);
@@ -3632,14 +3666,14 @@
     context.restore();
   }
 
-  function drawPickMapPoints(context, points, xScale, yScale, colorRange, payload, includePoint = null) {
+  function drawPickMapPoints(context, points, xScale, yScale, colorRange, payload, viewConfig, includePoint = null) {
     for (const point of points) {
       if (includePoint && !includePoint(point)) continue;
       const x = xScale(point.x);
       const y = yScale(point.y);
       context.beginPath();
       context.arc(x, y, point.used || payload.mode !== 'completed_job' ? 3 : 2.5, 0, Math.PI * 2);
-      context.fillStyle = pickMapPointColor(point, colorRange, payload);
+      context.fillStyle = pickMapPointColor(point, colorRange, payload, viewConfig);
       context.globalAlpha = payload.mode === 'completed_job' && !point.used ? 0.35 : 0.85;
       context.fill();
     }
@@ -3650,8 +3684,9 @@
     return Number.isFinite(point.offsetUsed) ? point.offsetUsed : point.offsetM;
   }
 
-  function pickMapPointColor(point, colorRange, payload) {
+  function pickMapPointColor(point, colorRange, payload, viewConfig = PICK_MAP_VIEWS.pick_map) {
     if (payload.mode === 'completed_job' && !point.used) return '#94a3b8';
+    if (!viewConfig.colorByOffset) return '#2563eb';
     const value = pickMapColorValue(point);
     if (!Number.isFinite(value) || !Number.isFinite(colorRange.min) || colorRange.max <= colorRange.min) {
       return '#2563eb';
@@ -3684,9 +3719,9 @@
       appendText(content, 'Loading QC bundle...');
       return;
     }
-    if (viewDef.id === 'pick_map') {
+    if (PICK_MAP_VIEWS[viewDef.id]) {
       content.className = '';
-      renderPickMap(content);
+      renderPickMap(content, PICK_MAP_VIEWS[viewDef.id]);
       return;
     }
     if (!state.qcBundle) {
@@ -3726,7 +3761,7 @@
 
   function render() {
     if (!dom) return;
-    if (state.selectedView !== 'pick_map') cleanupPickMapCanvasRenderer();
+    if (!PICK_MAP_VIEWS[state.selectedView]) cleanupPickMapCanvasRenderer();
 
     dom.loadButton.disabled = state.loading;
     dom.maxPoints.value = String(state.maxPoints);
@@ -3781,7 +3816,7 @@
     if (!VIEW_DEFS.some((view) => view.id === viewId)) return;
     state.selectedView = viewId;
     render();
-    if (viewId === 'pick_map') {
+    if (PICK_MAP_VIEWS[viewId]) {
       restoreCachedPickMapSource();
       if (state.qcBundle?.job_id && !state.pickMap && !state.pickMapLoading) {
         loadCompletedPickMap(state.qcBundle.job_id);
@@ -4005,7 +4040,7 @@
       state.error = null;
       writeRecentJob(jobId);
       writeJobIdUrlParam(jobId);
-      if (state.selectedView === 'pick_map' && !state.pickMap) {
+      if (PICK_MAP_VIEWS[state.selectedView] && !state.pickMap) {
         loadCompletedPickMap(bundleJobId);
       }
       return bundle;
