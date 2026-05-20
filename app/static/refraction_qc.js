@@ -124,19 +124,66 @@
     artifacts: ['artifacts'],
   };
 
-  const VIEW_CONTROL_GROUPS = {
-    summary: [],
-    first_break_residuals: ['layer', 'first_break', 'show_rejected'],
-    reduced_time: ['layer', 'show_rejected'],
-    pick_map: [],
-    offset_time: [],
-    profiles_2d: ['layer', 'profile', 'endpoint'],
-    static_components: ['endpoint', 'trace'],
-    station_structure: [],
-    cell_maps_3d: ['layer', 'cell'],
-    gather_preview: [],
-    artifacts: [],
-  };
+  const LAYER_CONTROL_OPTIONS = [
+    ['all', 'All'],
+    ['v1_direct_arrival', 'V1 direct'],
+    ['v2_t1', 'V2/T1'],
+    ['v3_t2', 'V3/T2'],
+    ['vsub_t3', 'Vsub/T3'],
+  ];
+
+  const X_AXIS_CONTROL_OPTIONS = [
+    ['offset', 'Offset'],
+    ['inline', 'Inline'],
+    ['trace', 'Trace index'],
+  ];
+
+  const FIRST_BREAK_SORT_CONTROL_OPTIONS = [
+    ['largest_residual', 'Largest residual'],
+    ['trace', 'Trace'],
+    ['offset', 'Offset'],
+  ];
+
+  const PROFILE_GROUP_CONTROL_OPTIONS = [
+    ['time_terms', 'Time terms'],
+    ['velocities', 'Velocities'],
+    ['thickness_elevation', 'Thickness / elevations'],
+    ['statics', 'Static components'],
+    ['qc_metrics', 'QC metrics'],
+  ];
+
+  const PROFILE_UNITS_CONTROL_OPTIONS = [
+    ['auto', 'Auto'],
+    ['ms', 'Milliseconds'],
+    ['s', 'Seconds'],
+  ];
+
+  const STATUS_FILTER_CONTROL_OPTIONS = [
+    ['all', 'All statuses'],
+    ['valid', 'Valid only'],
+    ['invalid', 'Invalid only'],
+  ];
+
+  const CELL_MAP_QUANTITY_CONTROL_OPTIONS = [
+    ['velocity', 'Velocity'],
+    ['velocity_update', 'Velocity update'],
+    ['fold', 'Fold / observation count'],
+    ['residual_rms', 'Residual RMS'],
+    ['residual_mad', 'Residual MAD'],
+    ['status', 'Status'],
+  ];
+
+  const ARTIFACT_TYPE_CONTROL_OPTIONS = [
+    ['all', 'All artifacts'],
+    ['manifest', 'Manifest entries'],
+    ['view', 'View artifacts'],
+  ];
+
+  const ENDPOINT_KIND_CONTROL_OPTIONS = [
+    ['both', 'both'],
+    ['source', 'source'],
+    ['receiver', 'receiver'],
+  ];
 
   const state = {
     selectedJobId: '',
@@ -151,6 +198,8 @@
     selectedLayerKind: 'all',
     firstBreakXAxis: 'offset',
     showRejectedFirstBreaks: true,
+    firstBreakResidualThresholdMs: '',
+    firstBreakSortBy: 'largest_residual',
     selectedEndpointKind: 'source',
     selectedCell: null,
     selectedCellMapQuantity: 'velocity',
@@ -181,6 +230,8 @@
     gatherPreview: null,
     gatherLoading: false,
     gatherError: null,
+    artifactTypeFilter: 'all',
+    artifactSearch: '',
     pickMap: null,
     pickMapLoading: false,
     pickMapError: null,
@@ -1025,6 +1076,11 @@
     return FIRST_BREAK_X_AXES[state.firstBreakXAxis] || FIRST_BREAK_X_AXES.offset;
   }
 
+  function firstBreakResidualThresholdMs() {
+    const value = toFiniteNumber(state.firstBreakResidualThresholdMs);
+    return Number.isFinite(value) && value > 0 ? value : null;
+  }
+
   function reducedTimeLayerKind(record) {
     return String(firstDefined(record, ['layer_kind', 'layer_gate_kind']) || '').trim() || 'unknown';
   }
@@ -1106,8 +1162,11 @@
     const sourceEndpointKey = String(firstDefined(record, ['source_endpoint_key']) || '').trim();
     const receiverEndpointKey = String(firstDefined(record, ['receiver_endpoint_key']) || '').trim();
     const traceIndex = textOrDash(firstDefined(record, ['trace_index_sorted', 'sorted_trace_index']));
+    const traceSortIndex = toFiniteNumber(firstDefined(record, FIRST_BREAK_X_AXES.trace.columns));
+    const offsetM = toFiniteNumber(firstDefined(record, FIRST_BREAK_X_AXES.offset.columns));
     return {
       x,
+      offsetM,
       observedMs: observedS * 1000.0,
       modeledMs: modeledS * 1000.0,
       residualMs: (observedS - modeledS) * 1000.0,
@@ -1115,6 +1174,7 @@
       status: rejected ? 'rejected' : 'used',
       opacity: rejected ? 0.42 : 0.9,
       traceIndex,
+      traceSortIndex,
       sourceEndpointKey,
       receiverEndpointKey,
       source: textOrDash(sourceEndpointKey || firstDefined(record, ['source_id'])),
@@ -1122,16 +1182,41 @@
     };
   }
 
+  function compareFiniteAscending(a, b) {
+    const aFinite = Number.isFinite(a);
+    const bFinite = Number.isFinite(b);
+    if (aFinite && bFinite) return a - b;
+    if (aFinite) return -1;
+    if (bFinite) return 1;
+    return 0;
+  }
+
+  function compareFirstBreakPoints(a, b) {
+    const residualOrder = Math.abs(b.residualMs) - Math.abs(a.residualMs);
+    const traceOrder = compareFiniteAscending(a.traceSortIndex, b.traceSortIndex);
+    const offsetOrder = compareFiniteAscending(a.offsetM, b.offsetM);
+    const endpointOrder = a.source.localeCompare(b.source) || a.receiver.localeCompare(b.receiver);
+    if (state.firstBreakSortBy === 'trace') {
+      return traceOrder || residualOrder || offsetOrder || endpointOrder;
+    }
+    if (state.firstBreakSortBy === 'offset') {
+      return offsetOrder || residualOrder || traceOrder || endpointOrder;
+    }
+    return residualOrder || traceOrder || offsetOrder || endpointOrder;
+  }
+
   function filteredFirstBreakPoints(view) {
     const records = Array.isArray(view.records) ? view.records : [];
     const points = [];
+    const residualThreshold = firstBreakResidualThresholdMs();
     for (const record of records) {
       if (!firstBreakLayerMatches(record)) continue;
       if (!state.showRejectedFirstBreaks && isRejectedFirstBreakRecord(record)) continue;
       const point = normalizeFirstBreakRecord(record);
+      if (point && residualThreshold !== null && Math.abs(point.residualMs) < residualThreshold) continue;
       if (point) points.push(point);
     }
-    return points;
+    return points.sort(compareFirstBreakPoints);
   }
 
   function profileGroupDefinition() {
@@ -1330,6 +1415,8 @@
     const normalized = [];
     for (const record of records) {
       const point = normalizeCellMapRecord(record);
+      if (point && state.profileStatusFilter === 'valid' && cellStatusCode(point.status) < 3) continue;
+      if (point && state.profileStatusFilter === 'invalid' && cellStatusCode(point.status) >= 3) continue;
       if (point) normalized.push(point);
     }
     return normalized;
@@ -1887,6 +1974,77 @@
     return list;
   }
 
+  function optionLabel(options, value) {
+    const match = options.find(([optionValue]) => optionValue === value);
+    return match ? match[1] : textOrDash(value);
+  }
+
+  function createControlField(label, input) {
+    const field = document.createElement('label');
+    field.className = 'refraction-qc-field';
+    field.append(document.createTextNode(label), input);
+    return field;
+  }
+
+  function createSelectControl(label, testId, value, options, onChange) {
+    const select = document.createElement('select');
+    select.dataset.testid = testId;
+    for (const [optionValue, optionLabelText] of options) {
+      const option = document.createElement('option');
+      option.value = optionValue;
+      option.textContent = optionLabelText;
+      select.appendChild(option);
+    }
+    select.value = value;
+    select.addEventListener('change', () => {
+      onChange(select.value);
+      renderControlUpdate();
+    });
+    return createControlField(label, select);
+  }
+
+  function createTextControl(label, testId, value, onInput) {
+    const input = document.createElement('input');
+    input.type = 'text';
+    input.autocomplete = 'off';
+    input.value = value || '';
+    input.dataset.testid = testId;
+    input.addEventListener('input', () => {
+      onInput(input.value.trim());
+      renderControlUpdate();
+    });
+    return createControlField(label, input);
+  }
+
+  function createNumberControl(label, testId, value, onInput, options = {}) {
+    const input = document.createElement('input');
+    input.type = 'number';
+    input.autocomplete = 'off';
+    input.value = value || '';
+    input.dataset.testid = testId;
+    if (options.min !== undefined) input.min = String(options.min);
+    if (options.step !== undefined) input.step = String(options.step);
+    input.addEventListener('input', () => {
+      onInput(input.value.trim());
+      renderControlUpdate();
+    });
+    return createControlField(label, input);
+  }
+
+  function createCheckboxControl(label, testId, checked, onChange) {
+    const input = document.createElement('input');
+    input.type = 'checkbox';
+    input.checked = checked;
+    input.dataset.testid = testId;
+    input.addEventListener('change', () => {
+      onChange(input.checked);
+      renderControlUpdate();
+    });
+    const field = createControlField(label, input);
+    field.classList.add('refraction-qc-check-field');
+    return field;
+  }
+
   function createTable(view) {
     const wrap = document.createElement('div');
     wrap.className = 'refraction-qc-table-wrap';
@@ -1987,27 +2145,36 @@
   function renderArtifacts(content, bundle) {
     const artifacts = bundle && typeof bundle.artifacts === 'object' && bundle.artifacts ? bundle.artifacts : {};
     const views = bundle && typeof bundle.views === 'object' && bundle.views ? bundle.views : {};
-    const rows = Object.entries(artifacts).map(([name, path]) => ({ name, path }));
+    const rows = Object.entries(artifacts).map(([name, path]) => ({ type: 'manifest', name, path }));
     for (const [name, view] of Object.entries(views)) {
       if (view?.artifact && !rows.some((row) => row.path === view.artifact)) {
-        rows.push({ name, path: view.artifact });
+        rows.push({ type: 'view', name, path: view.artifact });
       }
     }
+    const search = normalizedText(state.artifactSearch);
+    const filteredRows = rows.filter((row) => {
+      if (state.artifactTypeFilter !== 'all' && row.type !== state.artifactTypeFilter) return false;
+      if (!search) return true;
+      return [row.type, row.name, row.path].some((value) => normalizedText(value).includes(search));
+    });
     content.appendChild(createKv([
       ['Artifact count', rows.length],
+      ['Visible artifacts', filteredRows.length],
       ['Available views', Array.isArray(bundle.available_views) ? bundle.available_views.join(', ') : ''],
       ['Unavailable views', Array.isArray(bundle.unavailable_views) ? bundle.unavailable_views.join(', ') : ''],
     ]));
-    if (!rows.length) {
+    if (!filteredRows.length) {
       const missing = document.createElement('p');
       missing.className = 'refraction-qc-placeholder';
-      missing.textContent = 'No artifact manifest entries are present in this QC bundle.';
+      missing.textContent = rows.length
+        ? 'No artifact rows match the current artifact filters.'
+        : 'No artifact manifest entries are present in this QC bundle.';
       content.appendChild(missing);
       return;
     }
     content.appendChild(createTable({
-      columns: ['name', 'path'],
-      records: rows,
+      columns: ['type', 'name', 'path'],
+      records: filteredRows,
     }));
   }
 
@@ -2858,6 +3025,7 @@
     const downsamplingText = downsampling
       ? `${downsampling.returned_points || 0} of ${downsampling.total_points || 0}; ${downsampling.downsampled ? 'downsampled' : 'not downsampled'}${downsampling.method ? ` (${downsampling.method})` : ''}`
       : 'not reported';
+    const residualThreshold = firstBreakResidualThresholdMs();
 
     content.appendChild(createKv([
       ['Bundle view', key],
@@ -2866,6 +3034,8 @@
       ['Plotted points', `${points.length}`],
       ['Layer filter', state.selectedLayerKind === 'all' ? 'all' : layerLabel(state.selectedLayerKind)],
       ['Rejected picks', state.showRejectedFirstBreaks ? 'shown' : 'hidden'],
+      ['Residual threshold', residualThreshold === null ? 'none' : `${formatNumber(residualThreshold, 1)} ms`],
+      ['Sort by', optionLabel(FIRST_BREAK_SORT_CONTROL_OPTIONS, state.firstBreakSortBy)],
     ]));
 
     const residualNote = document.createElement('p');
@@ -4336,7 +4506,6 @@
   }
 
   function renderGatherPreview(content, bundle) {
-    content.appendChild(createGatherPreviewControls());
     if (state.gatherLoading) {
       const message = document.createElement('p');
       message.className = 'refraction-qc-placeholder';
@@ -5307,6 +5476,253 @@
     }
   }
 
+  function clearSelectedCellFilter() {
+    state.selectedCell = null;
+    state.qcDrilldown = null;
+    state.qcDrilldownError = null;
+    state.qcDrilldownLoading = false;
+    state.qcDrilldownTarget = null;
+    qcDrilldownRequestSerial += 1;
+  }
+
+  function resetJobScopedFilters() {
+    state.selectedEndpoint = '';
+    state.selectedTraceIndex = '';
+    state.selectedProfileEndpoint = null;
+    state.gatherEndpointKey = '';
+    state.gatherEndpointSearch = '';
+    clearSelectedCellFilter();
+  }
+
+  function renderActiveFilterChips() {
+    if (!dom?.activeFilters) return;
+    clearNode(dom.activeFilters);
+
+    const label = document.createElement('span');
+    label.className = 'refraction-qc-active-filters-label';
+    label.textContent = 'Filters:';
+    dom.activeFilters.appendChild(label);
+
+    const chips = [];
+    const addChip = (key, text, reset) => chips.push({ key, text, reset });
+    if (state.selectedLayerKind !== 'all') {
+      addChip('layer', `Layer ${layerLabel(state.selectedLayerKind)}`, () => {
+        state.selectedLayerKind = 'all';
+      });
+    }
+    if (state.firstBreakXAxis !== 'offset') {
+      addChip('x-axis', `X axis ${optionLabel(X_AXIS_CONTROL_OPTIONS, state.firstBreakXAxis)}`, () => {
+        state.firstBreakXAxis = 'offset';
+      });
+    }
+    if (!state.showRejectedFirstBreaks) {
+      addChip('used-only', 'Used only', () => {
+        state.showRejectedFirstBreaks = true;
+      });
+    }
+    const residualThreshold = firstBreakResidualThresholdMs();
+    if (residualThreshold !== null) {
+      addChip('residual-threshold', `Residual >= ${formatNumber(residualThreshold, 1)} ms`, () => {
+        state.firstBreakResidualThresholdMs = '';
+      });
+    }
+    if (state.selectedProfileGroup !== 'time_terms') {
+      addChip('profile-group', `Profile group ${optionLabel(PROFILE_GROUP_CONTROL_OPTIONS, state.selectedProfileGroup)}`, () => {
+        state.selectedProfileGroup = 'time_terms';
+      });
+    }
+    if (state.selectedProfileUnits !== 'auto') {
+      addChip('profile-units', `Profile units ${optionLabel(PROFILE_UNITS_CONTROL_OPTIONS, state.selectedProfileUnits)}`, () => {
+        state.selectedProfileUnits = 'auto';
+      });
+    }
+    if (state.profileStatusFilter !== 'all') {
+      addChip('status', `Status ${optionLabel(STATUS_FILTER_CONTROL_OPTIONS, state.profileStatusFilter)}`, () => {
+        state.profileStatusFilter = 'all';
+      });
+    }
+    if (state.selectedCellMapQuantity !== 'velocity') {
+      addChip('map-quantity', `Map quantity ${optionLabel(CELL_MAP_QUANTITY_CONTROL_OPTIONS, state.selectedCellMapQuantity)}`, () => {
+        state.selectedCellMapQuantity = 'velocity';
+      });
+    }
+    if (state.selectedEndpoint) {
+      addChip('endpoint', `${state.selectedEndpointKind} ${state.selectedEndpoint}`, () => {
+        state.selectedEndpoint = '';
+        state.selectedProfileEndpoint = null;
+      });
+    }
+    if (state.selectedTraceIndex) {
+      addChip('trace', `Trace ${state.selectedTraceIndex}`, () => {
+        state.selectedTraceIndex = '';
+      });
+    }
+    if (state.selectedCell) {
+      addChip('cell', `Cell ${selectedCellLabel(state.selectedCell)}`, () => {
+        clearSelectedCellFilter();
+      });
+    }
+    if (state.gatherEndpointKey) {
+      addChip('gather-endpoint', `Gather ${state.gatherEndpointKey}`, () => {
+        state.gatherEndpointKey = '';
+        state.gatherEndpointSearch = '';
+      });
+    }
+    if (state.artifactTypeFilter !== 'all') {
+      addChip('artifact-type', `Artifact ${optionLabel(ARTIFACT_TYPE_CONTROL_OPTIONS, state.artifactTypeFilter)}`, () => {
+        state.artifactTypeFilter = 'all';
+      });
+    }
+    if (state.artifactSearch) {
+      addChip('artifact-search', `Artifact search ${state.artifactSearch}`, () => {
+        state.artifactSearch = '';
+      });
+    }
+
+    if (!chips.length) {
+      const empty = document.createElement('span');
+      empty.className = 'refraction-qc-active-filters-empty';
+      empty.textContent = 'none';
+      dom.activeFilters.appendChild(empty);
+      return;
+    }
+
+    for (const chipData of chips) {
+      const chip = document.createElement('button');
+      chip.type = 'button';
+      chip.className = 'refraction-qc-filter-chip';
+      chip.dataset.testid = 'refraction-qc-filter-chip';
+      chip.dataset.filter = chipData.key;
+      chip.setAttribute('aria-label', `Clear ${chipData.text}`);
+      chip.textContent = `${chipData.text} x`;
+      chip.addEventListener('click', () => {
+        chipData.reset();
+        render();
+      });
+      dom.activeFilters.appendChild(chip);
+    }
+  }
+
+  function renderFindProblemsControls(container) {
+    container.append(
+      createSelectControl('Layer', 'refraction-qc-layer-kind', state.selectedLayerKind, LAYER_CONTROL_OPTIONS, (value) => {
+        state.selectedLayerKind = value;
+      }),
+      createSelectControl('X axis', 'refraction-qc-x-axis', state.firstBreakXAxis, X_AXIS_CONTROL_OPTIONS, (value) => {
+        state.firstBreakXAxis = value;
+      }),
+      createCheckboxControl('Show rejected / unused', 'refraction-qc-show-rejected', state.showRejectedFirstBreaks, (checked) => {
+        state.showRejectedFirstBreaks = checked;
+      }),
+      createNumberControl('Residual threshold (ms)', 'refraction-qc-residual-threshold', state.firstBreakResidualThresholdMs, (value) => {
+        state.firstBreakResidualThresholdMs = value;
+      }, { min: 0, step: '0.1' }),
+      createSelectControl('Sort by', 'refraction-qc-residual-sort', state.firstBreakSortBy, FIRST_BREAK_SORT_CONTROL_OPTIONS, (value) => {
+        state.firstBreakSortBy = value;
+      }),
+    );
+  }
+
+  function renderStationControls(container) {
+    if (state.selectedView === 'profiles_2d') {
+      container.append(
+        createSelectControl('Layer', 'refraction-qc-layer-kind', state.selectedLayerKind, LAYER_CONTROL_OPTIONS, (value) => {
+          state.selectedLayerKind = value;
+        }),
+        createSelectControl('Station kind', 'refraction-qc-endpoint-kind', state.selectedEndpointKind, ENDPOINT_KIND_CONTROL_OPTIONS, (value) => {
+          state.selectedEndpointKind = value;
+        }),
+        createTextControl('Station search', 'refraction-qc-endpoint', state.selectedEndpoint, (value) => {
+          state.selectedEndpoint = value;
+        }),
+        createSelectControl('Profile group', 'refraction-qc-profile-group', state.selectedProfileGroup, PROFILE_GROUP_CONTROL_OPTIONS, (value) => {
+          state.selectedProfileGroup = value;
+        }),
+        createSelectControl('Profile units', 'refraction-qc-profile-units', state.selectedProfileUnits, PROFILE_UNITS_CONTROL_OPTIONS, (value) => {
+          state.selectedProfileUnits = value;
+        }),
+        createSelectControl('Status', 'refraction-qc-status-filter', state.profileStatusFilter, STATUS_FILTER_CONTROL_OPTIONS, (value) => {
+          state.profileStatusFilter = value;
+        }),
+      );
+      return;
+    }
+    if (state.selectedView === 'static_components') {
+      container.append(
+        createSelectControl('Station kind', 'refraction-qc-endpoint-kind', state.selectedEndpointKind, ENDPOINT_KIND_CONTROL_OPTIONS, (value) => {
+          state.selectedEndpointKind = value;
+        }),
+        createTextControl('Station search', 'refraction-qc-endpoint', state.selectedEndpoint, (value) => {
+          state.selectedEndpoint = value;
+        }),
+        createTextControl('Trace', 'refraction-qc-trace', state.selectedTraceIndex, (value) => {
+          state.selectedTraceIndex = value;
+        }),
+      );
+    }
+  }
+
+  function renderCellControls(container) {
+    container.append(
+      createSelectControl('Layer', 'refraction-qc-layer-kind', state.selectedLayerKind, LAYER_CONTROL_OPTIONS, (value) => {
+        state.selectedLayerKind = value;
+      }),
+      createSelectControl('Map quantity', 'refraction-qc-map-quantity', state.selectedCellMapQuantity, CELL_MAP_QUANTITY_CONTROL_OPTIONS, (value) => {
+        state.selectedCellMapQuantity = value;
+      }),
+      createSelectControl('Status', 'refraction-qc-status-filter', state.profileStatusFilter, STATUS_FILTER_CONTROL_OPTIONS, (value) => {
+        state.profileStatusFilter = value;
+      }),
+      createTextControl('Cell search', 'refraction-qc-cell', state.selectedCell?.cell_ix !== undefined
+        ? `${state.selectedCell.cell_ix},${state.selectedCell.cell_iy}`
+        : (state.selectedCell?.text || ''), (value) => {
+        clearSelectedCellFilter();
+        state.selectedCell = parseCell(value);
+      }),
+    );
+  }
+
+  function renderGatherControls(container) {
+    container.appendChild(createGatherPreviewControls());
+  }
+
+  function renderArtifactsControls(container) {
+    container.append(
+      createSelectControl('Artifact type', 'refraction-qc-artifact-type', state.artifactTypeFilter, ARTIFACT_TYPE_CONTROL_OPTIONS, (value) => {
+        state.artifactTypeFilter = value;
+      }),
+      createTextControl('Search table columns', 'refraction-qc-artifact-search', state.artifactSearch, (value) => {
+        state.artifactSearch = value;
+      }),
+    );
+  }
+
+  function renderViewControls() {
+    if (!dom?.viewControls) return;
+    clearNode(dom.viewControls);
+    dom.viewControls.hidden = false;
+    if (state.activeTask === 'find_problems' && ['first_break_residuals', 'reduced_time'].includes(state.selectedView)) {
+      renderFindProblemsControls(dom.viewControls);
+    } else if (state.activeTask === 'inspect_station') {
+      renderStationControls(dom.viewControls);
+    } else if (state.activeTask === 'inspect_cell' && state.selectedView === 'cell_maps_3d') {
+      renderCellControls(dom.viewControls);
+    } else if (state.activeTask === 'preview_gather' && state.selectedView === 'gather_preview') {
+      renderGatherControls(dom.viewControls);
+    } else if (state.activeTask === 'artifacts' && state.selectedView === 'artifacts') {
+      renderArtifactsControls(dom.viewControls);
+    }
+    dom.viewControls.hidden = !dom.viewControls.childElementCount;
+  }
+
+  function renderControlUpdate() {
+    if (!dom) return;
+    renderActiveFilterChips();
+    const selectedViewDef = VIEW_DEFS.find((viewDef) => viewDef.id === state.selectedView);
+    if (selectedViewDef) renderViewContent(selectedViewDef);
+    renderInspector();
+  }
+
   function render() {
     if (!dom) return;
     if (!PICK_MAP_VIEWS[state.selectedView]) cleanupPickMapCanvasRenderer();
@@ -5316,19 +5732,8 @@
 
     dom.loadButton.disabled = state.loading;
     dom.maxPoints.value = String(state.maxPoints);
-    dom.layerKind.value = state.selectedLayerKind;
-    dom.xAxisMode.value = state.firstBreakXAxis;
-    dom.profileGroup.value = state.selectedProfileGroup;
-    dom.profileUnits.value = state.selectedProfileUnits;
-    dom.statusFilter.value = state.profileStatusFilter;
-    dom.mapQuantity.value = state.selectedCellMapQuantity;
-    dom.showRejected.checked = state.showRejectedFirstBreaks;
-    dom.endpointKind.value = state.selectedEndpointKind;
-    dom.endpoint.value = state.selectedEndpoint;
-    dom.trace.value = state.selectedTraceIndex;
-    dom.cell.value = state.selectedCell?.cell_ix !== undefined
-      ? `${state.selectedCell.cell_ix},${state.selectedCell.cell_iy}`
-      : (state.selectedCell?.text || '');
+    renderActiveFilterChips();
+    renderViewControls();
 
     if (state.loading) {
       dom.status.textContent = 'Loading QC bundle...';
@@ -5355,12 +5760,6 @@
       const active = button.dataset.task === state.activeTask;
       button.classList.toggle('is-active', active);
       button.setAttribute('aria-selected', active ? 'true' : 'false');
-    }
-
-    const visibleControlGroups = new Set(VIEW_CONTROL_GROUPS[state.selectedView] || []);
-    for (const field of dom.controlFields) {
-      const groups = String(field.dataset.controlGroup || '').split(/\s+/).filter(Boolean);
-      field.hidden = !groups.some((group) => visibleControlGroups.has(group));
     }
 
     const taskViewIds = new Set(viewIdsForTask(state.activeTask));
@@ -5632,6 +6031,8 @@
     if (!dom) return;
     const jobId = String(dom.jobId.value || '').trim();
     const maxPoints = parsePositiveInteger(dom.maxPoints.value, DEFAULT_MAX_POINTS);
+    const previousBundleJobId = String(state.qcBundle?.job_id || '').trim();
+    const jobChanged = Boolean(previousBundleJobId && jobId && previousBundleJobId !== jobId);
     state.selectedJobId = jobId;
     state.maxPoints = maxPoints;
     state.selectedFirstBreakPick = null;
@@ -5643,6 +6044,7 @@
     state.qcDrilldownLoading = false;
     state.qcDrilldownTarget = null;
     qcDrilldownRequestSerial += 1;
+    if (jobChanged) resetJobScopedFilters();
     if (!jobId) {
       state.error = 'Job ID is required.';
       state.qcBundle = null;
@@ -5686,6 +6088,9 @@
         state.pickMapError = null;
       }
       state.qcBundle = bundle;
+      if (previousBundleJobId && bundleJobId && previousBundleJobId !== bundleJobId) {
+        resetJobScopedFilters();
+      }
       if (state.gatherPreview && state.gatherPreview.job_id !== bundle.job_id) {
         state.gatherPreview = null;
       }
@@ -5763,19 +6168,9 @@
       status: document.getElementById('refractionQcStatus'),
       error: document.getElementById('refractionQcError'),
       sign: document.getElementById('refractionQcSign'),
-      layerKind: document.getElementById('refractionQcLayerKind'),
-      xAxisMode: document.getElementById('refractionQcXAxisMode'),
-      profileGroup: document.getElementById('refractionQcProfileGroup'),
-      profileUnits: document.getElementById('refractionQcProfileUnits'),
-      statusFilter: document.getElementById('refractionQcStatusFilter'),
-      mapQuantity: document.getElementById('refractionQcMapQuantity'),
-      showRejected: document.getElementById('refractionQcShowRejected'),
-      endpointKind: document.getElementById('refractionQcEndpointKind'),
-      endpoint: document.getElementById('refractionQcEndpoint'),
-      trace: document.getElementById('refractionQcTrace'),
-      cell: document.getElementById('refractionQcCell'),
+      activeFilters: document.getElementById('refractionQcActiveFilters'),
+      viewControls: document.getElementById('refractionQcViewControls'),
       taskButtons: Array.from(document.querySelectorAll('.refraction-qc-task-button')),
-      controlFields: Array.from(document.querySelectorAll('[data-control-group]')),
       inspector: document.getElementById('refractionQcInspector'),
       viewButtonsContainer: document.getElementById('refractionQcViewButtons'),
       viewButtons: Array.from(document.querySelectorAll('.refraction-qc-view-button')),
@@ -5787,9 +6182,7 @@
 
     if (!dom.jobId || !dom.maxPoints || !dom.loadButton || !dom.status || !dom.error || !dom.sign) return;
     if (!dom.jobSummary || !dom.inspector) return;
-    if (!dom.layerKind || !dom.xAxisMode || !dom.profileGroup || !dom.profileUnits || !dom.statusFilter) return;
-    if (!dom.mapQuantity) return;
-    if (!dom.showRejected || !dom.endpointKind || !dom.endpoint || !dom.trace || !dom.cell) return;
+    if (!dom.activeFilters || !dom.viewControls) return;
 
     if (pipelineTab) pipelineTab.addEventListener('click', () => activateSidebarTab('pipeline'));
     if (staticCorrectionTab) staticCorrectionTab.addEventListener('click', () => activateSidebarTab('static_correction'));
@@ -5803,55 +6196,6 @@
     });
     dom.maxPoints.addEventListener('input', () => {
       state.maxPoints = parsePositiveInteger(dom.maxPoints.value, DEFAULT_MAX_POINTS);
-    });
-    dom.layerKind.addEventListener('change', () => {
-      state.selectedLayerKind = dom.layerKind.value;
-      render();
-    });
-    dom.xAxisMode.addEventListener('change', () => {
-      state.firstBreakXAxis = dom.xAxisMode.value;
-      render();
-    });
-    dom.profileGroup.addEventListener('change', () => {
-      state.selectedProfileGroup = dom.profileGroup.value;
-      render();
-    });
-    dom.profileUnits.addEventListener('change', () => {
-      state.selectedProfileUnits = dom.profileUnits.value;
-      render();
-    });
-    dom.statusFilter.addEventListener('change', () => {
-      state.profileStatusFilter = dom.statusFilter.value;
-      render();
-    });
-    dom.mapQuantity.addEventListener('change', () => {
-      state.selectedCellMapQuantity = dom.mapQuantity.value;
-      render();
-    });
-    dom.showRejected.addEventListener('change', () => {
-      state.showRejectedFirstBreaks = dom.showRejected.checked;
-      render();
-    });
-    dom.endpointKind.addEventListener('change', () => {
-      state.selectedEndpointKind = dom.endpointKind.value;
-      render();
-    });
-    dom.endpoint.addEventListener('input', () => {
-      state.selectedEndpoint = dom.endpoint.value.trim();
-      render();
-    });
-    dom.trace.addEventListener('input', () => {
-      state.selectedTraceIndex = dom.trace.value.trim();
-      render();
-    });
-    dom.cell.addEventListener('input', () => {
-      state.selectedCell = parseCell(dom.cell.value);
-      state.qcDrilldown = null;
-      state.qcDrilldownError = null;
-      state.qcDrilldownLoading = false;
-      state.qcDrilldownTarget = null;
-      qcDrilldownRequestSerial += 1;
-      render();
     });
     for (const button of dom.taskButtons) {
       button.addEventListener('click', () => setActiveTask(button.dataset.task));

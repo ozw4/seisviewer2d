@@ -27,23 +27,45 @@ function renderRefractionQcPanel() {
       <div id="refractionQcStatus"></div>
       <div id="refractionQcError" hidden></div>
       <div id="refractionQcSign" hidden></div>
-      <select id="refractionQcLayerKind"><option value="all">All</option></select>
-      <select id="refractionQcXAxisMode"><option value="offset">Offset</option></select>
-      <select id="refractionQcProfileGroup"><option value="time_terms">Time terms</option></select>
-      <select id="refractionQcProfileUnits"><option value="auto">Auto</option></select>
-      <select id="refractionQcStatusFilter"><option value="all">All</option></select>
-      <select id="refractionQcMapQuantity"><option value="velocity">Velocity</option></select>
-      <input id="refractionQcShowRejected" type="checkbox" checked />
-      <select id="refractionQcEndpointKind"><option value="source">source</option></select>
-      <input id="refractionQcEndpoint" />
-      <input id="refractionQcTrace" />
-      <input id="refractionQcCell" />
+      <div id="refractionQcJobSummary"></div>
+      <div id="refractionQcActiveFilters" data-testid="refraction-qc-active-filters"></div>
+      <div id="refractionQcViewControls" data-testid="refraction-qc-view-controls"></div>
+      <button type="button" class="refraction-qc-task-button" data-task="overview"></button>
+      <button type="button" class="refraction-qc-task-button" data-task="find_problems"></button>
+      <button type="button" class="refraction-qc-task-button" data-task="inspect_station"></button>
+      <button type="button" class="refraction-qc-task-button" data-task="inspect_cell"></button>
+      <button type="button" class="refraction-qc-task-button" data-task="preview_gather"></button>
+      <button type="button" class="refraction-qc-task-button" data-task="artifacts"></button>
+      <div id="refractionQcViewButtons">
       <button type="button" class="refraction-qc-view-button" data-view="summary"></button>
+      <button type="button" class="refraction-qc-view-button" data-view="first_break_residuals"></button>
+      <button type="button" class="refraction-qc-view-button" data-view="reduced_time"></button>
+      <button type="button" class="refraction-qc-view-button" data-view="profiles_2d"></button>
+      <button type="button" class="refraction-qc-view-button" data-view="cell_maps_3d"></button>
+      <button type="button" class="refraction-qc-view-button" data-view="static_components"></button>
       <button type="button" class="refraction-qc-view-button" data-view="pick_map"></button>
       <button type="button" class="refraction-qc-view-button" data-view="offset_time"></button>
       <button type="button" class="refraction-qc-view-button" data-view="station_structure"></button>
+      <button type="button" class="refraction-qc-view-button" data-view="gather_preview"></button>
+      <button type="button" class="refraction-qc-view-button" data-view="artifacts"></button>
+      </div>
       <section class="refraction-qc-view" data-view-panel="summary">
         <div data-view-content="summary"></div>
+      </section>
+      <section class="refraction-qc-view" data-view-panel="first_break_residuals" hidden>
+        <div data-view-content="first_break_residuals"></div>
+      </section>
+      <section class="refraction-qc-view" data-view-panel="reduced_time" hidden>
+        <div data-view-content="reduced_time"></div>
+      </section>
+      <section class="refraction-qc-view" data-view-panel="profiles_2d" hidden>
+        <div data-view-content="profiles_2d"></div>
+      </section>
+      <section class="refraction-qc-view" data-view-panel="cell_maps_3d" hidden>
+        <div data-view-content="cell_maps_3d"></div>
+      </section>
+      <section class="refraction-qc-view" data-view-panel="static_components" hidden>
+        <div data-view-content="static_components"></div>
       </section>
       <section class="refraction-qc-view" data-view-panel="pick_map" hidden>
         <div data-view-content="pick_map"></div>
@@ -54,6 +76,13 @@ function renderRefractionQcPanel() {
       <section class="refraction-qc-view" data-testid="refraction-qc-view-station-structure" data-view-panel="station_structure" hidden>
         <div data-view-content="station_structure"></div>
       </section>
+      <section class="refraction-qc-view" data-view-panel="gather_preview" hidden>
+        <div data-view-content="gather_preview"></div>
+      </section>
+      <section class="refraction-qc-view" data-view-panel="artifacts" hidden>
+        <div data-view-content="artifacts"></div>
+      </section>
+      <aside id="refractionQcInspector"></aside>
     </section>
   `;
 }
@@ -426,6 +455,160 @@ test('manual Refraction QC load still uses the shared bundle loader', async () =
   expect(document.getElementById('refractionQcStatus').textContent).toContain(
     'Loaded manual-job-a'
   );
+});
+
+test('Overview does not show global selector flood', () => {
+  loadRefractionQcScript();
+
+  const controls = document.querySelector('[data-testid="refraction-qc-view-controls"]');
+  expect(controls.hidden).toBe(true);
+  expect(document.querySelector('[data-testid="refraction-qc-profile-group"]')).toBeNull();
+  expect(document.querySelector('[data-testid="refraction-qc-profile-units"]')).toBeNull();
+  expect(document.querySelector('[data-testid="refraction-qc-map-quantity"]')).toBeNull();
+  expect(document.querySelector('[data-testid="refraction-qc-endpoint"]')).toBeNull();
+  expect(document.querySelector('[data-testid="refraction-qc-trace"]')).toBeNull();
+  expect(document.querySelector('[data-testid="refraction-qc-cell"]')).toBeNull();
+});
+
+test('Refraction QC renders controls only for the selected view', () => {
+  loadRefractionQcScript();
+
+  window.refractionQcUI.setSelectedView('cell_maps_3d');
+  expect(document.querySelector('[data-testid="refraction-qc-map-quantity"]')).not.toBeNull();
+  expect(document.querySelector('[data-testid="refraction-qc-status-filter"]')).not.toBeNull();
+  expect(document.querySelector('[data-testid="refraction-qc-cell"]')).not.toBeNull();
+  expect(document.querySelector('[data-testid="refraction-qc-profile-group"]')).toBeNull();
+
+  window.refractionQcUI.setSelectedView('profiles_2d');
+  expect(document.querySelector('[data-testid="refraction-qc-profile-group"]')).not.toBeNull();
+  expect(document.querySelector('[data-testid="refraction-qc-profile-units"]')).not.toBeNull();
+  expect(document.querySelector('[data-testid="refraction-qc-map-quantity"]')).toBeNull();
+
+  window.refractionQcUI.setSelectedView('first_break_residuals');
+  expect(document.querySelector('[data-testid="refraction-qc-x-axis"]')).not.toBeNull();
+  expect(document.querySelector('[data-testid="refraction-qc-show-rejected"]')).not.toBeNull();
+  expect(document.querySelector('[data-testid="refraction-qc-residual-threshold"]')).not.toBeNull();
+  expect(document.querySelector('[data-testid="refraction-qc-residual-sort"]')).not.toBeNull();
+  expect(document.querySelector('[data-testid="refraction-qc-endpoint"]')).toBeNull();
+
+  window.refractionQcUI.setSelectedView('gather_preview');
+  expect(document.querySelector('[data-testid="refraction-qc-gather-axis"]')).not.toBeNull();
+  expect(document.querySelector('[data-testid="refraction-qc-gather-display"]')).not.toBeNull();
+  expect(document.querySelector('[data-testid="refraction-qc-gather-time-start"]')).not.toBeNull();
+  expect(document.querySelector('[data-testid="refraction-qc-gather-max-traces"]')).not.toBeNull();
+  expect(document.querySelector('[data-view-content="gather_preview"] [data-testid="refraction-qc-gather-controls"]')).toBeNull();
+
+  window.refractionQcUI.setSelectedView('artifacts');
+  expect(document.querySelector('[data-testid="refraction-qc-artifact-type"]')).not.toBeNull();
+  expect(document.querySelector('[data-testid="refraction-qc-artifact-search"]')).not.toBeNull();
+  expect(document.querySelector('[data-testid="refraction-qc-gather-axis"]')).toBeNull();
+});
+
+test('typing in view-specific text controls keeps the focused input mounted', () => {
+  loadRefractionQcScript();
+  window.refractionQcUI.setSelectedView('profiles_2d');
+
+  const station = document.querySelector('[data-testid="refraction-qc-endpoint"]');
+  station.focus();
+  station.value = 'S1001';
+  station.dispatchEvent(new Event('input', { bubbles: true }));
+
+  expect(window.refractionQcState.selectedEndpoint).toBe('S1001');
+  expect(station.isConnected).toBe(true);
+  expect(document.activeElement).toBe(station);
+  expect(document.querySelector('[data-testid="refraction-qc-endpoint"]')).toBe(station);
+  expect(document.querySelector('[data-testid="refraction-qc-filter-chip"][data-filter="endpoint"]').textContent)
+    .toContain('S1001');
+});
+
+test('active filter chips clear filters and update view controls', () => {
+  loadRefractionQcScript();
+  window.refractionQcUI.setSelectedView('cell_maps_3d');
+
+  const layer = document.querySelector('[data-testid="refraction-qc-layer-kind"]');
+  layer.value = 'v2_t1';
+  layer.dispatchEvent(new Event('change', { bubbles: true }));
+
+  let chip = document.querySelector('[data-testid="refraction-qc-filter-chip"][data-filter="layer"]');
+  expect(chip.textContent).toContain('Layer V2/T1');
+  chip.click();
+
+  expect(window.refractionQcState.selectedLayerKind).toBe('all');
+  expect(document.querySelector('[data-testid="refraction-qc-layer-kind"]').value).toBe('all');
+  expect(document.querySelector('[data-testid="refraction-qc-filter-chip"][data-filter="layer"]')).toBeNull();
+});
+
+test('first-break residual threshold filters points and can be cleared from a chip', () => {
+  loadRefractionQcScript();
+  window.refractionQcState.qcBundle = {
+    job_id: 'job-a',
+    views: {
+      first_break_fit: {
+        artifact: 'first-break-fit.json',
+        columns: [
+          'trace_index_sorted',
+          'offset_m',
+          'observed_first_break_time_s',
+          'modeled_first_break_time_s',
+        ],
+        records: [
+          {
+            trace_index_sorted: 1,
+            offset_m: 100,
+            observed_first_break_time_s: 0.105,
+            modeled_first_break_time_s: 0.1,
+            layer_kind: 'v2_t1',
+          },
+          {
+            trace_index_sorted: 2,
+            offset_m: 150,
+            observed_first_break_time_s: 0.13,
+            modeled_first_break_time_s: 0.1,
+            layer_kind: 'v2_t1',
+          },
+        ],
+      },
+    },
+  };
+  window.refractionQcUI.setSelectedView('first_break_residuals');
+
+  expect(document.querySelector('[data-testid="refraction-qc-first-break-residual-plot"]').dataset.pointCount)
+    .toBe('2');
+
+  const threshold = document.querySelector('[data-testid="refraction-qc-residual-threshold"]');
+  threshold.value = '10';
+  threshold.dispatchEvent(new Event('input', { bubbles: true }));
+
+  expect(window.refractionQcState.firstBreakResidualThresholdMs).toBe('10');
+  expect(document.querySelector('[data-testid="refraction-qc-first-break-residual-plot"]').dataset.pointCount)
+    .toBe('1');
+  const chip = document.querySelector('[data-testid="refraction-qc-filter-chip"][data-filter="residual-threshold"]');
+  expect(chip.textContent).toContain('Residual >= 10');
+
+  chip.click();
+
+  expect(window.refractionQcState.firstBreakResidualThresholdMs).toBe('');
+  expect(document.querySelector('[data-testid="refraction-qc-first-break-residual-plot"]').dataset.pointCount)
+    .toBe('2');
+});
+
+test('loading a different job resets endpoint trace and cell filters', async () => {
+  vi.stubGlobal('fetch', vi.fn(async () => jsonResponse(qcBundle('job-b'))));
+  loadRefractionQcScript();
+  window.refractionQcState.qcBundle = qcBundle('job-a');
+  window.refractionQcState.selectedEndpoint = 'S1001';
+  window.refractionQcState.selectedTraceIndex = '42';
+  window.refractionQcState.selectedCell = { cell_ix: 2, cell_iy: 3, layer_kind: 'v2_t1' };
+
+  document.getElementById('refractionQcJobId').value = 'job-b';
+  await window.refractionQcUI.loadBundle();
+
+  expect(window.refractionQcState.selectedEndpoint).toBe('');
+  expect(window.refractionQcState.selectedTraceIndex).toBe('');
+  expect(window.refractionQcState.selectedCell).toBeNull();
+  expect(document.querySelector('[data-testid="refraction-qc-filter-chip"][data-filter="endpoint"]')).toBeNull();
+  expect(document.querySelector('[data-testid="refraction-qc-filter-chip"][data-filter="trace"]')).toBeNull();
+  expect(document.querySelector('[data-testid="refraction-qc-filter-chip"][data-filter="cell"]')).toBeNull();
 });
 
 test('loadJob displays QC loading errors with the requested job id still visible', async () => {

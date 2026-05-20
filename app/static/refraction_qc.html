@@ -60,77 +60,8 @@
 <button aria-selected="false" class="refraction-qc-task-button" data-task="artifacts" data-testid="refraction-qc-task-artifacts-button" type="button">Artifacts</button>
 </nav>
 <section class="refraction-qc-main-workspace" aria-label="Refraction QC workspace">
-<div aria-label="Refraction QC selectors" class="refraction-qc-selectors">
-<label class="refraction-qc-field" data-control-group="layer" for="refractionQcLayerKind">Layer
-              <select data-testid="refraction-qc-layer-kind" id="refractionQcLayerKind">
-<option value="all">All</option>
-<option value="v1_direct_arrival">V1 direct</option>
-<option value="v2_t1">V2/T1</option>
-<option value="v3_t2">V3/T2</option>
-<option value="vsub_t3">Vsub/T3</option>
-</select>
-</label>
-<label class="refraction-qc-field" data-control-group="first_break" for="refractionQcXAxisMode">X axis
-              <select data-testid="refraction-qc-x-axis" id="refractionQcXAxisMode">
-<option value="offset">Offset</option>
-<option value="inline">Inline</option>
-<option value="trace">Trace index</option>
-</select>
-</label>
-<label class="refraction-qc-field" data-control-group="profile" for="refractionQcProfileGroup">Profile group
-              <select data-testid="refraction-qc-profile-group" id="refractionQcProfileGroup">
-<option value="time_terms">Time terms</option>
-<option value="velocities">Velocities</option>
-<option value="thickness_elevation">Thickness / elevations</option>
-<option value="statics">Static components</option>
-<option value="qc_metrics">QC metrics</option>
-</select>
-</label>
-<label class="refraction-qc-field" data-control-group="profile" for="refractionQcProfileUnits">Profile units
-              <select data-testid="refraction-qc-profile-units" id="refractionQcProfileUnits">
-<option value="auto">Auto</option>
-<option value="ms">Milliseconds</option>
-<option value="s">Seconds</option>
-</select>
-</label>
-<label class="refraction-qc-field" data-control-group="profile" for="refractionQcStatusFilter">Status
-              <select data-testid="refraction-qc-status-filter" id="refractionQcStatusFilter">
-<option value="all">All statuses</option>
-<option value="valid">Valid only</option>
-<option value="invalid">Invalid only</option>
-</select>
-</label>
-<label class="refraction-qc-field" data-control-group="cell" for="refractionQcMapQuantity">Map quantity
-              <select data-testid="refraction-qc-map-quantity" id="refractionQcMapQuantity">
-<option value="velocity">Velocity</option>
-<option value="velocity_update">Velocity update</option>
-<option value="fold">Fold / observation count</option>
-<option value="residual_rms">Residual RMS</option>
-<option value="residual_mad">Residual MAD</option>
-<option value="status">Status</option>
-</select>
-</label>
-<label class="refraction-qc-field refraction-qc-check-field" data-control-group="show_rejected" for="refractionQcShowRejected">
-              Show rejected / unused
-              <input checked="" data-testid="refraction-qc-show-rejected" id="refractionQcShowRejected" type="checkbox"/>
-</label>
-<label class="refraction-qc-field" data-control-group="endpoint" for="refractionQcEndpointKind">Endpoint kind
-              <select data-testid="refraction-qc-endpoint-kind" id="refractionQcEndpointKind">
-<option value="both">both</option>
-<option value="source">source</option>
-<option value="receiver">receiver</option>
-</select>
-</label>
-<label class="refraction-qc-field" data-control-group="endpoint" for="refractionQcEndpoint">Endpoint
-              <input autocomplete="off" data-testid="refraction-qc-endpoint" id="refractionQcEndpoint" type="text"/>
-</label>
-<label class="refraction-qc-field" data-control-group="trace" for="refractionQcTrace">Trace
-              <input autocomplete="off" data-testid="refraction-qc-trace" id="refractionQcTrace" type="text"/>
-</label>
-<label class="refraction-qc-field" data-control-group="cell" for="refractionQcCell">Cell
-              <input autocomplete="off" data-testid="refraction-qc-cell" id="refractionQcCell" type="text"/>
-</label>
-</div>
+<div aria-label="Active Refraction QC filters" class="refraction-qc-active-filters" data-testid="refraction-qc-active-filters" id="refractionQcActiveFilters"></div>
+<div aria-label="Refraction QC view controls" class="refraction-qc-view-controls" data-testid="refraction-qc-view-controls" id="refractionQcViewControls"></div>
 <div aria-label="Refraction QC views" class="refraction-qc-view-buttons" id="refractionQcViewButtons" role="tablist">
 <button aria-selected="true" class="refraction-qc-view-button is-active" data-testid="refraction-qc-view-summary-button" data-view="summary" role="tab" type="button">Summary</button>
 <button aria-selected="false" class="refraction-qc-view-button" data-testid="refraction-qc-view-first-break-button" data-view="first_break_residuals" role="tab" type="button">First-break fit</button>
