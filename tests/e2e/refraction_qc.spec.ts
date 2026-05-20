@@ -1114,6 +1114,29 @@ async function emitFirstBreakPlotClick(page: Page, testId: string, traceIndex: s
 	);
 }
 
+async function emitProfilePlotClick(page: Page, endpointKind: string, endpointKey: string) {
+	await page.getByTestId('refraction-qc-profile-plot').evaluate(
+		(node, target) => {
+			const plot = node as HTMLElement & {
+				data?: Array<{
+					customdata?: Array<{ endpoint_kind?: string; endpoint_key?: string }>;
+				}>;
+				emit?: (name: string, event: unknown) => void;
+			};
+			const points = (plot.data ?? []).flatMap((trace) => trace.customdata ?? []);
+			const endpoint = points.find((item) => (
+				String(item?.endpoint_kind ?? '') === target.endpointKind
+				&& String(item?.endpoint_key ?? '') === target.endpointKey
+			));
+			if (!endpoint || typeof plot.emit !== 'function') {
+				throw new Error('Profile endpoint click target is unavailable');
+			}
+			plot.emit('plotly_click', { points: [{ customdata: endpoint }] });
+		},
+		{ endpointKind, endpointKey },
+	);
+}
+
 async function openRefractionQcTab(page: Page) {
 	await page.goto('/');
 	const tab = page.getByTestId('refraction-qc-tab');
@@ -3152,6 +3175,88 @@ test('2D profile plot renders static components with units', async ({ page }) =>
 	});
 });
 
+test('2D profile endpoint action previews source gather and applies endpoint filter', async ({ page }) => {
+	let gatherRequest: Record<string, unknown> | null = null;
+	await page.route('**/statics/refraction/qc/gather-preview', async (route) => {
+		gatherRequest = JSON.parse(route.request().postData() || '{}');
+		await route.fulfill({
+			status: 200,
+			contentType: 'application/json',
+			body: JSON.stringify(gatherPreviewPayload('refraction-profile-source-action')),
+		});
+	});
+	await page.route('**/statics/refraction/qc', async (route) => {
+		await route.fulfill({
+			status: 200,
+			contentType: 'application/json',
+			body: JSON.stringify(qcBundlePayload('refraction-profile-source-action')),
+		});
+	});
+
+	await loadRefractionQcBundle(page, 'refraction-profile-source-action');
+	await page.getByTestId('refraction-qc-view-gather-button').click();
+	await page.getByTestId('refraction-qc-gather-file-id').fill('raw-preview-file');
+	await page.getByTestId('refraction-qc-gather-axis').selectOption({ label: 'Midpoint/CMP window' });
+	await page.getByTestId('refraction-qc-view-profiles-button').click();
+	await emitProfilePlotClick(page, 'source', 'S001');
+
+	await expect(page.getByTestId('refraction-qc-profile-endpoint-actions')).toContainText('Selected endpoint');
+	await expect(page.getByTestId('refraction-qc-profile-endpoint-actions')).toContainText('Static status');
+	await page.getByTestId('refraction-qc-profile-use-endpoint-filter').click();
+	await expect(page.getByTestId('refraction-qc-endpoint-kind')).toHaveValue('source');
+	await expect(page.getByTestId('refraction-qc-endpoint')).toHaveValue('S001');
+	expect(await page.evaluate(() => (window as any).refractionQcState.gatherAxis)).toBe('section');
+
+	await page.getByTestId('refraction-qc-profile-preview-gather').click();
+	await expect(page.getByTestId('refraction-qc-view-gather')).toBeVisible();
+	await expect(page.getByTestId('refraction-qc-gather-axis')).toHaveValue('source');
+	await expect(page.getByTestId('refraction-qc-gather-endpoint')).toHaveValue('S001');
+	await expect.poll(() => gatherRequest).toMatchObject({
+		job_id: 'refraction-profile-source-action',
+		file_id: 'raw-preview-file',
+		gather_axis: 'source',
+		endpoint_key: 'S001',
+	});
+});
+
+test('2D profile endpoint action previews receiver gather', async ({ page }) => {
+	let gatherRequest: Record<string, unknown> | null = null;
+	await page.route('**/statics/refraction/qc/gather-preview', async (route) => {
+		gatherRequest = JSON.parse(route.request().postData() || '{}');
+		await route.fulfill({
+			status: 200,
+			contentType: 'application/json',
+			body: JSON.stringify(gatherPreviewPayload('refraction-profile-receiver-action')),
+		});
+	});
+	await page.route('**/statics/refraction/qc', async (route) => {
+		await route.fulfill({
+			status: 200,
+			contentType: 'application/json',
+			body: JSON.stringify(qcBundlePayload('refraction-profile-receiver-action')),
+		});
+	});
+
+	await loadRefractionQcBundle(page, 'refraction-profile-receiver-action');
+	await page.getByTestId('refraction-qc-view-gather-button').click();
+	await page.getByTestId('refraction-qc-gather-file-id').fill('raw-preview-file');
+	await page.getByTestId('refraction-qc-view-profiles-button').click();
+	await page.getByTestId('refraction-qc-endpoint-kind').selectOption('both');
+	await emitProfilePlotClick(page, 'receiver', 'R001');
+
+	await expect(page.getByTestId('refraction-qc-profile-preview-gather')).toHaveText('Preview receiver gather');
+	await page.getByTestId('refraction-qc-profile-preview-gather').click();
+	await expect(page.getByTestId('refraction-qc-view-gather')).toBeVisible();
+	await expect(page.getByTestId('refraction-qc-gather-axis')).toHaveValue('receiver');
+	await expect(page.getByTestId('refraction-qc-gather-endpoint')).toHaveValue('R001');
+	await expect.poll(() => gatherRequest).toMatchObject({
+		job_id: 'refraction-profile-receiver-action',
+		file_id: 'raw-preview-file',
+		gather_axis: 'receiver',
+		endpoint_key: 'R001',
+	});
+});
+
 test('static component view renders waterfall values', async ({ page }) => {
 	await page.route('**/statics/refraction/qc', async (route) => {
 		await route.fulfill({
@@ -3164,6 +3269,9 @@ test('static component view renders waterfall values', async ({ page }) => {
 	await loadRefractionQcBundle(page, 'refraction-job-15');
 	await page.getByTestId('refraction-qc-view-statics-button').click();
 
+	await expect(page.getByTestId('refraction-qc-static-preview-gather')).toHaveText('Preview selected source gather');
+	await expect(page.getByTestId('refraction-qc-static-copy-endpoint')).toBeVisible();
+	await expect(page.getByTestId('refraction-qc-static-action-endpoint-key')).toContainText('S001');
 	await expect(page.getByTestId('refraction-qc-view-statics')).toContainText('Endpoint static components');
 	await expect(page.getByTestId('refraction-qc-static-component-list')).toContainText('Weathering correction');
 	await expect(page.getByTestId('refraction-qc-static-component-list')).toContainText('-8.000 ms');
@@ -3280,6 +3388,46 @@ test('static component view endpoint selection updates details and statuses', as
 	});
 });
 
+test('static component selected endpoint action previews selected receiver gather', async ({ page }) => {
+	let gatherRequest: Record<string, unknown> | null = null;
+	await page.route('**/statics/refraction/qc/gather-preview', async (route) => {
+		gatherRequest = JSON.parse(route.request().postData() || '{}');
+		await route.fulfill({
+			status: 200,
+			contentType: 'application/json',
+			body: JSON.stringify(gatherPreviewPayload('refraction-static-receiver-action')),
+		});
+	});
+	await page.route('**/statics/refraction/qc', async (route) => {
+		await route.fulfill({
+			status: 200,
+			contentType: 'application/json',
+			body: JSON.stringify(qcBundlePayload('refraction-static-receiver-action')),
+		});
+	});
+
+	await loadRefractionQcBundle(page, 'refraction-static-receiver-action');
+	await page.getByTestId('refraction-qc-view-gather-button').click();
+	await page.getByTestId('refraction-qc-gather-file-id').fill('raw-preview-file');
+	await page.getByTestId('refraction-qc-view-statics-button').click();
+	await page.getByTestId('refraction-qc-endpoint-kind').selectOption('receiver');
+	await page.getByTestId('refraction-qc-endpoint').fill('R001');
+
+	await expect(page.getByTestId('refraction-qc-static-preview-gather')).toHaveText(
+		'Preview selected receiver gather',
+	);
+	await page.getByTestId('refraction-qc-static-preview-gather').click();
+	await expect(page.getByTestId('refraction-qc-view-gather')).toBeVisible();
+	await expect(page.getByTestId('refraction-qc-gather-axis')).toHaveValue('receiver');
+	await expect(page.getByTestId('refraction-qc-gather-endpoint')).toHaveValue('R001');
+	await expect.poll(() => gatherRequest).toMatchObject({
+		job_id: 'refraction-static-receiver-action',
+		file_id: 'raw-preview-file',
+		gather_axis: 'receiver',
+		endpoint_key: 'R001',
+	});
+});
+
 test('static component view shows no match for unknown endpoint filter', async ({ page }) => {
 	await page.route('**/statics/refraction/qc', async (route) => {
 		await route.fulfill({
@@ -3293,6 +3441,10 @@ test('static component view shows no match for unknown endpoint filter', async (
 	await page.getByTestId('refraction-qc-view-statics-button').click();
 	await page.getByTestId('refraction-qc-endpoint').fill('S999');
 
+	await expect(page.getByTestId('refraction-qc-static-preview-gather')).toBeDisabled();
+	await expect(page.getByTestId('refraction-qc-static-action-reason')).toContainText(
+		'no endpoint matches the current endpoint selector',
+	);
 	await expect(page.getByTestId('refraction-qc-view-statics')).toContainText(
 		'No source/receiver endpoint component rows match the current endpoint selector.',
 	);

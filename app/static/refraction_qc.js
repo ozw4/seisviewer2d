@@ -90,6 +90,7 @@
     qcBundle: null,
     selectedView: 'summary',
     selectedFirstBreakPick: null,
+    selectedProfileEndpoint: null,
     firstBreakDrilldown: null,
     firstBreakDrilldownLoading: false,
     firstBreakDrilldownError: null,
@@ -1073,6 +1074,12 @@
       inline,
       endpointKind: normalizedText(firstDefined(record, ['endpoint_kind'])) || 'unknown',
       endpointKey: textOrDash(firstDefined(record, ['endpoint_key'])),
+      stationId: textOrDash(firstDefined(record, [
+        'station_id',
+        'endpoint_id',
+        'source_id',
+        'receiver_id',
+      ])),
       nodeId: textOrDash(firstDefined(record, ['node_id'])),
       staticStatus: textOrDash(firstDefined(record, ['static_status'])),
       solutionStatus: textOrDash(firstDefined(record, ['solution_status'])),
@@ -1664,6 +1671,61 @@
     ].join('<br>');
   }
 
+  function profileEndpointCustomData(point) {
+    return {
+      endpoint_kind: point.endpointKind,
+      endpoint_key: point.endpointKey,
+      station_id: point.stationId,
+      node_id: point.nodeId,
+      inline_m: point.inline,
+      static_status: point.staticStatus,
+      solution_status: point.solutionStatus,
+    };
+  }
+
+  function profileEndpointFromCustomData(customdata) {
+    if (!customdata || typeof customdata !== 'object') return null;
+    const endpointKind = normalizedText(customdata.endpoint_kind);
+    const endpointKey = String(customdata.endpoint_key || '').trim();
+    if (!endpointKind || !endpointKey || endpointKey === '-') return null;
+    return {
+      endpointKind,
+      endpointKey,
+      stationId: textOrDash(customdata.station_id),
+      nodeId: textOrDash(customdata.node_id),
+      inlineM: toFiniteNumber(customdata.inline_m),
+      staticStatus: textOrDash(customdata.static_status),
+      solutionStatus: textOrDash(customdata.solution_status),
+    };
+  }
+
+  function profileEndpointKey(endpoint) {
+    return `${endpoint?.endpointKind || ''}|${endpoint?.endpointKey || ''}`;
+  }
+
+  function attachProfileEndpointClickActions(plot) {
+    if (!plot || typeof plot.on !== 'function' || plot.dataset.profileEndpointClickAttached === 'true') return;
+    plot.dataset.profileEndpointClickAttached = 'true';
+    plot.on('plotly_click', (event) => {
+      const endpoint = profileEndpointFromCustomData(event?.points?.[0]?.customdata);
+      if (!endpoint) return;
+      state.selectedProfileEndpoint = endpoint;
+      render();
+    });
+  }
+
+  function setEndpointFilter(endpointKind, endpointKey) {
+    const cleanKey = String(endpointKey || '').trim();
+    if (!endpointKind || !cleanKey) return;
+    state.selectedEndpointKind = endpointKind === 'receiver' ? 'receiver' : 'source';
+    state.selectedEndpoint = cleanKey;
+  }
+
+  function openEndpointStaticDrilldown(endpointKind, endpointKey) {
+    setEndpointFilter(endpointKind, endpointKey);
+    setSelectedView('static_components');
+  }
+
   function clearNode(node) {
     while (node && node.firstChild) node.removeChild(node.firstChild);
   }
@@ -1896,7 +1958,7 @@
     return !errors.length;
   }
 
-  function previewGatherForEndpoint(endpointKind, endpointKey) {
+  function previewGatherForEndpoint(endpointKind, endpointKey, options = {}) {
     const cleanKey = String(endpointKey || '').trim();
     if (!cleanKey) return;
     state.gatherAxis = endpointKind === 'receiver' ? 'receiver' : 'source';
@@ -1905,7 +1967,7 @@
     state.gatherPreview = null;
     state.gatherError = null;
     setSelectedView('gather_preview');
-    if (gatherPreviewInputsReady()) loadGatherPreview();
+    if (options.autoLoad !== false && gatherPreviewInputsReady()) loadGatherPreview();
   }
 
   async function openEndpointDrilldownForPick(pick) {
@@ -1951,6 +2013,125 @@
       button.addEventListener('click', onClick);
     }
     return button;
+  }
+
+  function createEndpointActionButton(label, disabledReason, onClick, testId) {
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.textContent = label;
+    if (testId) button.dataset.testid = testId;
+    if (disabledReason) {
+      button.disabled = true;
+      button.title = disabledReason;
+    } else {
+      button.addEventListener('click', onClick);
+    }
+    return button;
+  }
+
+  function endpointSummaryItems(endpoint) {
+    const station = endpoint.stationId && endpoint.stationId !== '-'
+      ? `${endpoint.endpointKind === 'receiver' ? 'Receiver' : 'Source'} ${endpoint.stationId}`
+      : `${endpoint.endpointKind === 'receiver' ? 'Receiver' : 'Source'} ${endpoint.endpointKey}`;
+    const inline = Number.isFinite(endpoint.inlineM) ? `${formatNumber(endpoint.inlineM, 2)} m` : '-';
+    return [
+      ['Endpoint', `${station} · key ${endpoint.endpointKey}`],
+      ['Node', endpoint.nodeId],
+      ['Inline', inline],
+      ['Static status', endpoint.staticStatus],
+      ['Solution status', endpoint.solutionStatus],
+    ];
+  }
+
+  function createProfileEndpointActions(endpoint) {
+    const panel = document.createElement('section');
+    panel.className = 'refraction-qc-endpoint-actions';
+    panel.dataset.testid = 'refraction-qc-profile-endpoint-actions';
+
+    const title = document.createElement('h3');
+    title.textContent = 'Selected endpoint';
+    panel.appendChild(title);
+    panel.appendChild(createKv(endpointSummaryItems(endpoint)));
+
+    const actions = document.createElement('div');
+    actions.className = 'refraction-qc-actions';
+    const gatherKind = endpoint.endpointKind === 'receiver' ? 'receiver' : 'source';
+    actions.append(
+      createEndpointActionButton(
+        `Preview ${gatherKind} gather`,
+        '',
+        () => previewGatherForEndpoint(gatherKind, endpoint.endpointKey),
+        'refraction-qc-profile-preview-gather',
+      ),
+      createEndpointActionButton(
+        'Open endpoint drilldown',
+        '',
+        () => openEndpointStaticDrilldown(gatherKind, endpoint.endpointKey),
+        'refraction-qc-profile-open-drilldown',
+      ),
+      createEndpointActionButton(
+        'Use as endpoint filter',
+        '',
+        () => {
+          setEndpointFilter(gatherKind, endpoint.endpointKey);
+          render();
+        },
+        'refraction-qc-profile-use-endpoint-filter',
+      ),
+    );
+    panel.appendChild(actions);
+    return panel;
+  }
+
+  function createStaticEndpointActions(endpointRecord, disabledReason) {
+    const panel = document.createElement('section');
+    panel.className = 'refraction-qc-endpoint-actions';
+    panel.dataset.testid = 'refraction-qc-static-endpoint-actions';
+
+    const endpointKind = endpointRecord ? staticEndpointKind(endpointRecord) : '';
+    const endpointKey = endpointRecord ? staticEndpointKey(endpointRecord) : '';
+    const gatherKind = endpointKind === 'receiver' ? 'receiver' : 'source';
+    const actions = document.createElement('div');
+    actions.className = 'refraction-qc-actions';
+    actions.append(
+      createEndpointActionButton(
+        `Preview selected ${gatherKind} gather`,
+        disabledReason,
+        () => previewGatherForEndpoint(gatherKind, endpointKey),
+        'refraction-qc-static-preview-gather',
+      ),
+      createEndpointActionButton(
+        'Open endpoint drilldown',
+        disabledReason,
+        () => openEndpointStaticDrilldown(gatherKind, endpointKey),
+        'refraction-qc-static-open-drilldown',
+      ),
+      createEndpointActionButton(
+        'Copy endpoint key',
+        disabledReason,
+        async () => {
+          if (!endpointKey || !navigator.clipboard?.writeText) return;
+          await navigator.clipboard.writeText(endpointKey);
+        },
+        'refraction-qc-static-copy-endpoint',
+      ),
+    );
+    panel.appendChild(actions);
+
+    const value = document.createElement('p');
+    value.className = 'refraction-qc-note';
+    value.dataset.testid = 'refraction-qc-static-action-endpoint-key';
+    value.textContent = endpointKey ? `endpoint_key: ${endpointKey}` : 'endpoint_key: not selected';
+    panel.appendChild(value);
+
+    if (disabledReason) {
+      const reason = document.createElement('p');
+      reason.className = 'refraction-qc-note';
+      reason.dataset.testid = 'refraction-qc-static-action-reason';
+      reason.textContent = disabledReason;
+      panel.appendChild(reason);
+    }
+    return panel;
   }
 
   function createFirstBreakPickActions(pick) {
@@ -2607,6 +2788,17 @@
 
     const plot = createFirstBreakPlot('refraction-qc-profile-plot');
     plot.dataset.pointCount = String(records.length);
+    const selectedProfileEndpoint = state.selectedProfileEndpoint;
+    if (selectedProfileEndpoint) {
+      const selectedKey = profileEndpointKey(selectedProfileEndpoint);
+      const selectedRecord = records.find((record) => (
+        profileEndpointKey({
+          endpointKind: record.endpointKind,
+          endpointKey: record.endpointKey,
+        }) === selectedKey
+      ));
+      if (selectedRecord) content.appendChild(createProfileEndpointActions(selectedProfileEndpoint));
+    }
     content.appendChild(plot);
 
     if (window.Plotly) {
@@ -2623,6 +2815,7 @@
               x: [],
               y: [],
               text: [],
+              customdata: [],
               invalid: [],
             });
           }
@@ -2630,6 +2823,7 @@
           entry.x.push(point.inline);
           entry.y.push(y);
           entry.text.push(profileHoverText(point, series, y, group));
+          entry.customdata.push(profileEndpointCustomData(point));
           entry.invalid.push(point.invalid);
         }
         for (const entry of grouped.values()) {
@@ -2640,6 +2834,7 @@
             x: entry.x,
             y: entry.y,
             text: entry.text,
+            customdata: entry.customdata,
             hovertemplate: '%{text}<extra></extra>',
             line: {
               color: PROFILE_SERIES_COLORS[series.key] || '#64748b',
@@ -2659,7 +2854,7 @@
         }
       }
 
-      window.Plotly.newPlot(plot, traces, {
+      Promise.resolve(window.Plotly.newPlot(plot, traces, {
         height: plotHeight(320, 520),
         margin: { l: 62, r: 14, t: 34, b: 50 },
         font: { size: 10, color: '#334155' },
@@ -2685,7 +2880,7 @@
           yanchor: 'top',
           font: { size: 10 },
         },
-      }, { displayModeBar: false, responsive: true });
+      }, { displayModeBar: false, responsive: true })).then(() => attachProfileEndpointClickActions(plot));
     } else {
       plot.textContent = 'Plot library is unavailable.';
     }
@@ -2915,6 +3110,14 @@
     const endpointNoMatch = Boolean(normalizedText(state.selectedEndpoint) && !endpointRecord);
     const traceRecord = endpointNoMatch ? null : selectedStaticTraceRecord(traceRecords, endpointRecord);
     const legacyRecord = matchingLegacyStaticRecord(bundle, endpointRecord);
+    let staticActionDisabledReason = '';
+    if (!endpointRecords.length) {
+      staticActionDisabledReason = 'Gather preview is disabled because no endpoint component rows are available.';
+    } else if (endpointNoMatch) {
+      staticActionDisabledReason = 'Gather preview is disabled because no endpoint matches the current endpoint selector.';
+    } else if (!endpointRecord) {
+      staticActionDisabledReason = 'Gather preview is disabled because no endpoint is selected.';
+    }
     const endpointRows = buildStaticComponentRows(
       endpointRecord,
       legacyRecord,
@@ -2942,6 +3145,7 @@
       ['Endpoint status', textOrDash(firstDefined(endpointRecord, ['static_status']))],
       ['Trace status', textOrDash(firstDefined(traceRecord, ['static_status']))],
     ]));
+    content.appendChild(createStaticEndpointActions(endpointRecord, staticActionDisabledReason));
 
     const signNote = document.createElement('p');
     signNote.className = 'refraction-qc-note';
