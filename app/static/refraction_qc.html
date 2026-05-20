@@ -23,7 +23,14 @@
     </section>
     <div class="tool-card refraction-qc-workspace">
 <div class="refraction-qc-panel" data-testid="refraction-qc-panel">
-<h2 class="refraction-qc-title">Refraction QC</h2>
+<section class="refraction-qc-job-context" aria-labelledby="refractionQcContextTitle">
+<div class="refraction-qc-context-head">
+<div>
+<h2 class="refraction-qc-title" id="refractionQcContextTitle">Run summary</h2>
+<p class="refraction-qc-flow" data-testid="refraction-qc-flow">Start at Overview, use Find problems to isolate residuals or bad picks, then send the selected station, cell, or pick to Preview gather.</p>
+</div>
+<details class="refraction-qc-advanced" open="">
+<summary>Load job</summary>
 <form class="refraction-qc-form" data-testid="refraction-qc-form" id="refractionQcForm">
 <label class="refraction-qc-field" for="refractionQcJobId">Job ID
               <input autocomplete="off" data-testid="refraction-qc-job-id" id="refractionQcJobId" list="refractionQcJobList" name="job_id" type="text"/>
@@ -36,11 +43,25 @@
 <button data-testid="refraction-qc-load" id="refractionQcLoadButton" type="submit">Load QC Bundle</button>
 </div>
 </form>
+</details>
+</div>
+<div class="refraction-qc-summary-grid" data-testid="refraction-qc-job-summary" id="refractionQcJobSummary"></div>
 <div aria-live="polite" class="refraction-qc-status" data-testid="refraction-qc-status" id="refractionQcStatus" role="status">No QC bundle loaded.</div>
 <div class="refraction-qc-error" data-testid="refraction-qc-error" hidden="" id="refractionQcError" role="alert"></div>
 <div class="refraction-qc-sign" data-testid="refraction-qc-sign" hidden="" id="refractionQcSign"></div>
+</section>
+<div class="refraction-qc-task-layout">
+<nav aria-label="Refraction QC tasks" class="refraction-qc-task-nav" id="refractionQcTaskNav">
+<button aria-selected="true" class="refraction-qc-task-button is-active" data-task="overview" data-testid="refraction-qc-task-overview-button" type="button">Overview</button>
+<button aria-selected="false" class="refraction-qc-task-button" data-task="find_problems" data-testid="refraction-qc-task-find-problems-button" type="button">Find problems</button>
+<button aria-selected="false" class="refraction-qc-task-button" data-task="inspect_station" data-testid="refraction-qc-task-inspect-station-button" type="button">Inspect station</button>
+<button aria-selected="false" class="refraction-qc-task-button" data-task="inspect_cell" data-testid="refraction-qc-task-inspect-cell-button" type="button">Inspect cell</button>
+<button aria-selected="false" class="refraction-qc-task-button" data-task="preview_gather" data-testid="refraction-qc-task-preview-gather-button" type="button">Preview gather</button>
+<button aria-selected="false" class="refraction-qc-task-button" data-task="artifacts" data-testid="refraction-qc-task-artifacts-button" type="button">Artifacts</button>
+</nav>
+<section class="refraction-qc-main-workspace" aria-label="Refraction QC workspace">
 <div aria-label="Refraction QC selectors" class="refraction-qc-selectors">
-<label class="refraction-qc-field" for="refractionQcLayerKind">Layer
+<label class="refraction-qc-field" data-control-group="layer" for="refractionQcLayerKind">Layer
               <select data-testid="refraction-qc-layer-kind" id="refractionQcLayerKind">
 <option value="all">All</option>
 <option value="v1_direct_arrival">V1 direct</option>
@@ -49,14 +70,14 @@
 <option value="vsub_t3">Vsub/T3</option>
 </select>
 </label>
-<label class="refraction-qc-field" for="refractionQcXAxisMode">X axis
+<label class="refraction-qc-field" data-control-group="first_break" for="refractionQcXAxisMode">X axis
               <select data-testid="refraction-qc-x-axis" id="refractionQcXAxisMode">
 <option value="offset">Offset</option>
 <option value="inline">Inline</option>
 <option value="trace">Trace index</option>
 </select>
 </label>
-<label class="refraction-qc-field" for="refractionQcProfileGroup">Profile group
+<label class="refraction-qc-field" data-control-group="profile" for="refractionQcProfileGroup">Profile group
               <select data-testid="refraction-qc-profile-group" id="refractionQcProfileGroup">
 <option value="time_terms">Time terms</option>
 <option value="velocities">Velocities</option>
@@ -65,21 +86,21 @@
 <option value="qc_metrics">QC metrics</option>
 </select>
 </label>
-<label class="refraction-qc-field" for="refractionQcProfileUnits">Profile units
+<label class="refraction-qc-field" data-control-group="profile" for="refractionQcProfileUnits">Profile units
               <select data-testid="refraction-qc-profile-units" id="refractionQcProfileUnits">
 <option value="auto">Auto</option>
 <option value="ms">Milliseconds</option>
 <option value="s">Seconds</option>
 </select>
 </label>
-<label class="refraction-qc-field" for="refractionQcStatusFilter">Status
+<label class="refraction-qc-field" data-control-group="profile" for="refractionQcStatusFilter">Status
               <select data-testid="refraction-qc-status-filter" id="refractionQcStatusFilter">
 <option value="all">All statuses</option>
 <option value="valid">Valid only</option>
 <option value="invalid">Invalid only</option>
 </select>
 </label>
-<label class="refraction-qc-field" for="refractionQcMapQuantity">Map quantity
+<label class="refraction-qc-field" data-control-group="cell" for="refractionQcMapQuantity">Map quantity
               <select data-testid="refraction-qc-map-quantity" id="refractionQcMapQuantity">
 <option value="velocity">Velocity</option>
 <option value="velocity_update">Velocity update</option>
@@ -89,24 +110,24 @@
 <option value="status">Status</option>
 </select>
 </label>
-<label class="refraction-qc-field refraction-qc-check-field" for="refractionQcShowRejected">
+<label class="refraction-qc-field refraction-qc-check-field" data-control-group="show_rejected" for="refractionQcShowRejected">
               Show rejected / unused
               <input checked="" data-testid="refraction-qc-show-rejected" id="refractionQcShowRejected" type="checkbox"/>
 </label>
-<label class="refraction-qc-field" for="refractionQcEndpointKind">Endpoint kind
+<label class="refraction-qc-field" data-control-group="endpoint" for="refractionQcEndpointKind">Endpoint kind
               <select data-testid="refraction-qc-endpoint-kind" id="refractionQcEndpointKind">
 <option value="both">both</option>
 <option value="source">source</option>
 <option value="receiver">receiver</option>
 </select>
 </label>
-<label class="refraction-qc-field" for="refractionQcEndpoint">Endpoint
+<label class="refraction-qc-field" data-control-group="endpoint" for="refractionQcEndpoint">Endpoint
               <input autocomplete="off" data-testid="refraction-qc-endpoint" id="refractionQcEndpoint" type="text"/>
 </label>
-<label class="refraction-qc-field" for="refractionQcTrace">Trace
+<label class="refraction-qc-field" data-control-group="trace" for="refractionQcTrace">Trace
               <input autocomplete="off" data-testid="refraction-qc-trace" id="refractionQcTrace" type="text"/>
 </label>
-<label class="refraction-qc-field" for="refractionQcCell">Cell
+<label class="refraction-qc-field" data-control-group="cell" for="refractionQcCell">Cell
               <input autocomplete="off" data-testid="refraction-qc-cell" id="refractionQcCell" type="text"/>
 </label>
 </div>
@@ -163,6 +184,16 @@
 <h3>Gather preview</h3>
 <div class="refraction-qc-placeholder" data-view-content="gather_preview">No QC bundle loaded.</div>
 </section>
+<section class="refraction-qc-view" data-testid="refraction-qc-view-artifacts" data-view-panel="artifacts" hidden="">
+<h3>Artifacts</h3>
+<div class="refraction-qc-placeholder" data-view-content="artifacts">No QC bundle loaded.</div>
+</section>
+</div>
+</section>
+<aside class="refraction-qc-inspector" data-testid="refraction-qc-inspector" id="refractionQcInspector">
+<h3>Inspector</h3>
+<p class="refraction-qc-placeholder">Click a pick, endpoint, or cell to see actions here.</p>
+</aside>
 </div>
 </div>
     </div>

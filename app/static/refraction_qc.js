@@ -82,13 +82,66 @@
       viewKeys: [],
       unavailableKeys: ['gather_preview'],
     },
+    {
+      id: 'artifacts',
+      include: 'summary',
+      viewKeys: [],
+      unavailableKeys: [],
+    },
   ];
 
   const INCLUDE_ALL = Array.from(new Set(VIEW_DEFS.map((view) => view.include)));
 
+  const TASK_DEFS = [
+    { id: 'overview', defaultView: 'summary' },
+    { id: 'find_problems', defaultView: 'first_break_residuals' },
+    { id: 'inspect_station', defaultView: 'profiles_2d' },
+    { id: 'inspect_cell', defaultView: 'cell_maps_3d' },
+    { id: 'preview_gather', defaultView: 'gather_preview' },
+    { id: 'artifacts', defaultView: 'artifacts' },
+  ];
+
+  const VIEW_TASKS = {
+    summary: 'overview',
+    first_break_residuals: 'find_problems',
+    reduced_time: 'find_problems',
+    pick_map: 'find_problems',
+    offset_time: 'find_problems',
+    profiles_2d: 'inspect_station',
+    static_components: 'inspect_station',
+    station_structure: 'inspect_station',
+    cell_maps_3d: 'inspect_cell',
+    gather_preview: 'preview_gather',
+    artifacts: 'artifacts',
+  };
+
+  const TASK_VIEW_IDS = {
+    overview: ['summary'],
+    find_problems: ['first_break_residuals', 'reduced_time', 'pick_map', 'offset_time'],
+    inspect_station: ['profiles_2d', 'static_components', 'station_structure'],
+    inspect_cell: ['cell_maps_3d'],
+    preview_gather: ['gather_preview'],
+    artifacts: ['artifacts'],
+  };
+
+  const VIEW_CONTROL_GROUPS = {
+    summary: [],
+    first_break_residuals: ['layer', 'first_break', 'show_rejected'],
+    reduced_time: ['layer', 'show_rejected'],
+    pick_map: [],
+    offset_time: [],
+    profiles_2d: ['layer', 'profile', 'endpoint'],
+    static_components: ['endpoint', 'trace'],
+    station_structure: [],
+    cell_maps_3d: ['layer', 'cell'],
+    gather_preview: [],
+    artifacts: [],
+  };
+
   const state = {
     selectedJobId: '',
     qcBundle: null,
+    activeTask: 'overview',
     selectedView: 'summary',
     selectedFirstBreakPick: null,
     selectedProfileEndpoint: null,
@@ -813,6 +866,87 @@
     if (value === null || value === undefined || value === '') return '-';
     if (typeof value === 'object') return JSON.stringify(value);
     return String(value);
+  }
+
+  function taskForView(viewId) {
+    return VIEW_TASKS[viewId] || 'overview';
+  }
+
+  function defaultViewForTask(taskId) {
+    const task = TASK_DEFS.find((item) => item.id === taskId);
+    return task ? task.defaultView : 'summary';
+  }
+
+  function viewIdsForTask(taskId) {
+    return TASK_VIEW_IDS[taskId] || ['summary'];
+  }
+
+  function createMetricCard(label, value, options = {}) {
+    const card = document.createElement('div');
+    card.className = options.prominent ? 'refraction-qc-metric is-prominent' : 'refraction-qc-metric';
+    const key = document.createElement('span');
+    key.className = 'refraction-qc-metric-label';
+    key.textContent = label;
+    const val = document.createElement('strong');
+    val.className = 'refraction-qc-metric-value';
+    val.textContent = textOrDash(value);
+    card.append(key, val);
+    return card;
+  }
+
+  function summaryValue(summary, columns) {
+    return firstDefined(summary, columns);
+  }
+
+  function warningsCount(bundle, summary) {
+    const warnings = summaryValue(summary, ['warnings_count', 'warning_count', 'n_warnings']);
+    if (warnings !== undefined) return warnings;
+    if (Array.isArray(summary?.warnings)) return summary.warnings.length;
+    if (Array.isArray(bundle?.warnings)) return bundle.warnings.length;
+    if (Array.isArray(bundle?.unavailable_views)) return bundle.unavailable_views.length;
+    return 0;
+  }
+
+  function renderJobSummary() {
+    if (!dom?.jobSummary) return;
+    clearNode(dom.jobSummary);
+    const bundle = state.qcBundle;
+    const summary = bundle && typeof bundle.summary === 'object' && bundle.summary ? bundle.summary : {};
+    const jobId = bundle?.job_id || state.selectedJobId || 'Not loaded';
+    const fileId = summaryValue(summary, ['file_id', 'input_file_id', 'corrected_file_id']) || bundle?.file_id;
+    const status = summaryValue(summary, ['job_state', 'status', 'state']);
+    const method = summaryValue(summary, ['method', 'workflow']);
+    const convention = bundle?.sign_convention || summaryValue(summary, ['sign_convention']);
+    const totalPicks = summaryValue(summary, ['total_picks', 'total_pick_count', 'pick_count', 'observation_count']);
+    const usedPicks = summaryValue(summary, ['used_picks', 'used_pick_count', 'used_observation_count']);
+    const rejectedPicks = summaryValue(summary, ['rejected_picks', 'rejected_pick_count', 'rejected_observation_count']);
+    const rms = summaryValue(summary, ['rms_ms', 'residual_rms_ms', 'used_rms_ms', 'all_rms_ms']);
+    const mad = summaryValue(summary, ['mad_ms', 'residual_mad_ms', 'used_mad_ms']);
+    const correctedStatus = summaryValue(summary, [
+      'corrected_tracestore_status',
+      'corrected_trace_store_status',
+      'corrected_file_status',
+      'apply_status',
+    ]);
+
+    dom.jobSummary.append(
+      createMetricCard('Job ID', jobId, { prominent: true }),
+      createMetricCard('File ID', fileId),
+      createMetricCard('Method / workflow', method),
+      createMetricCard('Status', status),
+      createMetricCard('Sign convention', convention),
+      createMetricCard('Picks total / used / rejected', [
+        textOrDash(totalPicks),
+        textOrDash(usedPicks),
+        textOrDash(rejectedPicks),
+      ].join(' / ')),
+      createMetricCard('RMS / MAD', [
+        textOrDash(rms),
+        textOrDash(mad),
+      ].join(' / ')),
+      createMetricCard('Corrected TraceStore', correctedStatus),
+      createMetricCard('Warnings', warningsCount(bundle, summary)),
+    );
   }
 
   function firstDefined(record, columns) {
@@ -1831,15 +1965,50 @@
     const summary = bundle && typeof bundle.summary === 'object' && bundle.summary ? bundle.summary : {};
     content.appendChild(createKv([
       ['Job ID', bundle.job_id],
+      ['File ID', summaryValue(summary, ['file_id', 'input_file_id', 'corrected_file_id']) || bundle.file_id],
       ['State', summary.job_state || summary.status],
       ['Workflow', summary.workflow],
       ['Method', summary.method],
       ['Conversion', summary.conversion_mode],
       ['Layer count', summary.layer_count],
+      ['Picks total', summaryValue(summary, ['total_picks', 'total_pick_count', 'pick_count', 'observation_count'])],
+      ['Picks used', summaryValue(summary, ['used_picks', 'used_pick_count', 'used_observation_count'])],
+      ['Picks rejected', summaryValue(summary, ['rejected_picks', 'rejected_pick_count', 'rejected_observation_count'])],
+      ['RMS', summaryValue(summary, ['rms_ms', 'residual_rms_ms', 'used_rms_ms', 'all_rms_ms'])],
+      ['MAD', summaryValue(summary, ['mad_ms', 'residual_mad_ms', 'used_mad_ms'])],
+      ['Corrected TraceStore', summaryValue(summary, ['corrected_tracestore_status', 'corrected_trace_store_status', 'corrected_file_status', 'apply_status'])],
+      ['Warnings', warningsCount(bundle, summary)],
       ['Coordinate mode', bundle.coordinate_mode],
       ['Available views', Array.isArray(bundle.available_views) ? bundle.available_views.join(', ') : ''],
       ['Unavailable views', Array.isArray(bundle.unavailable_views) ? bundle.unavailable_views.join(', ') : ''],
     ]));
+  }
+
+  function renderArtifacts(content, bundle) {
+    const artifacts = bundle && typeof bundle.artifacts === 'object' && bundle.artifacts ? bundle.artifacts : {};
+    const views = bundle && typeof bundle.views === 'object' && bundle.views ? bundle.views : {};
+    const rows = Object.entries(artifacts).map(([name, path]) => ({ name, path }));
+    for (const [name, view] of Object.entries(views)) {
+      if (view?.artifact && !rows.some((row) => row.path === view.artifact)) {
+        rows.push({ name, path: view.artifact });
+      }
+    }
+    content.appendChild(createKv([
+      ['Artifact count', rows.length],
+      ['Available views', Array.isArray(bundle.available_views) ? bundle.available_views.join(', ') : ''],
+      ['Unavailable views', Array.isArray(bundle.unavailable_views) ? bundle.unavailable_views.join(', ') : ''],
+    ]));
+    if (!rows.length) {
+      const missing = document.createElement('p');
+      missing.className = 'refraction-qc-placeholder';
+      missing.textContent = 'No artifact manifest entries are present in this QC bundle.';
+      content.appendChild(missing);
+      return;
+    }
+    content.appendChild(createTable({
+      columns: ['name', 'path'],
+      records: rows,
+    }));
   }
 
   function renderTabular(content, bundle, viewDef) {
@@ -5005,9 +5174,127 @@
       renderStationStructure(content);
     } else if (viewDef.id === 'gather_preview') {
       renderGatherPreview(content, state.qcBundle);
+    } else if (viewDef.id === 'artifacts') {
+      renderArtifacts(content, state.qcBundle);
     } else {
       renderTabular(content, state.qcBundle, viewDef);
     }
+  }
+
+  function appendInspectorAction(parent, label, disabledReason, callback) {
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.textContent = label;
+    if (disabledReason) {
+      button.disabled = true;
+      button.title = disabledReason;
+    } else {
+      button.addEventListener('click', callback);
+    }
+    parent.appendChild(button);
+  }
+
+  function renderInspector() {
+    if (!dom?.inspector) return;
+    clearNode(dom.inspector);
+    const title = document.createElement('h3');
+    title.textContent = 'Inspector';
+    dom.inspector.appendChild(title);
+
+    if (state.selectedFirstBreakPick) {
+      const pick = state.selectedFirstBreakPick;
+      const section = document.createElement('section');
+      section.className = 'refraction-qc-inspector-section';
+      const heading = document.createElement('h4');
+      heading.textContent = 'Selected pick';
+      section.appendChild(heading);
+      section.appendChild(createKv([
+        ['Trace', pick.traceIndex],
+        ['Source', pick.source],
+        ['Receiver', pick.receiver],
+        ['Residual', `${formatNumber(pick.residualMs, 1)} ms`],
+      ]));
+      const actions = document.createElement('div');
+      actions.className = 'refraction-qc-actions';
+      appendInspectorAction(actions, 'Preview source gather', pick.sourceEndpointKey ? '' : 'Missing source endpoint key.', () => {
+        previewGatherForEndpoint('source', pick.sourceEndpointKey);
+      });
+      appendInspectorAction(actions, 'Preview receiver gather', pick.receiverEndpointKey ? '' : 'Missing receiver endpoint key.', () => {
+        previewGatherForEndpoint('receiver', pick.receiverEndpointKey);
+      });
+      appendInspectorAction(actions, 'Open source station', pick.sourceEndpointKey ? '' : 'Missing source endpoint key.', () => {
+        openEndpointStaticDrilldown('source', pick.sourceEndpointKey);
+      });
+      appendInspectorAction(actions, 'Open receiver station', pick.receiverEndpointKey ? '' : 'Missing receiver endpoint key.', () => {
+        openEndpointStaticDrilldown('receiver', pick.receiverEndpointKey);
+      });
+      section.appendChild(actions);
+      dom.inspector.appendChild(section);
+      return;
+    }
+
+    if (state.selectedProfileEndpoint) {
+      const endpoint = state.selectedProfileEndpoint;
+      const kind = endpoint.endpointKind === 'receiver' ? 'receiver' : 'source';
+      const section = document.createElement('section');
+      section.className = 'refraction-qc-inspector-section';
+      const heading = document.createElement('h4');
+      heading.textContent = 'Selected station';
+      section.appendChild(heading);
+      section.appendChild(createKv(endpointSummaryItems(endpoint)));
+      const actions = document.createElement('div');
+      actions.className = 'refraction-qc-actions';
+      appendInspectorAction(actions, `Preview ${kind} gather`, '', () => previewGatherForEndpoint(kind, endpoint.endpointKey));
+      appendInspectorAction(actions, 'Open station', '', () => openEndpointStaticDrilldown(kind, endpoint.endpointKey));
+      section.appendChild(actions);
+      dom.inspector.appendChild(section);
+      return;
+    }
+
+    if (state.selectedCell) {
+      const section = document.createElement('section');
+      section.className = 'refraction-qc-inspector-section';
+      const heading = document.createElement('h4');
+      heading.textContent = 'Selected cell';
+      section.appendChild(heading);
+      section.appendChild(createKv([
+        ['Cell', selectedCellLabel(state.selectedCell)],
+        ['Drilldown', state.qcDrilldownLoading ? 'loading' : (state.qcDrilldownError || (state.qcDrilldown ? 'loaded' : '-'))],
+      ]));
+      if (state.qcDrilldown?.cell) {
+        const velocity = toFiniteNumber(firstDefined(state.qcDrilldown.cell, ['velocity_m_s']));
+        section.appendChild(createKv([
+          ['Velocity', Number.isFinite(velocity) ? `${formatNumber(velocity, 2)} m/s` : '-'],
+          ['Fold', firstDefined(state.qcDrilldown.cell, ['fold', 'observation_count', 'n_observations'])],
+        ]));
+      }
+      dom.inspector.appendChild(section);
+      return;
+    }
+
+    if (state.selectedEndpoint) {
+      const kind = state.selectedEndpointKind === 'receiver' ? 'receiver' : 'source';
+      const section = document.createElement('section');
+      section.className = 'refraction-qc-inspector-section';
+      const heading = document.createElement('h4');
+      heading.textContent = 'Selected endpoint filter';
+      section.appendChild(heading);
+      section.appendChild(createKv([
+        ['Kind', state.selectedEndpointKind],
+        ['Endpoint', state.selectedEndpoint],
+      ]));
+      const actions = document.createElement('div');
+      actions.className = 'refraction-qc-actions';
+      appendInspectorAction(actions, `Preview ${kind} gather`, '', () => previewGatherForEndpoint(kind, state.selectedEndpoint));
+      section.appendChild(actions);
+      dom.inspector.appendChild(section);
+      return;
+    }
+
+    const empty = document.createElement('p');
+    empty.className = 'refraction-qc-placeholder';
+    empty.textContent = 'Click a pick, station, cell, or trace to see its details and gather actions.';
+    dom.inspector.appendChild(empty);
   }
 
   function renderRecentJobs() {
@@ -5024,6 +5311,8 @@
     if (!dom) return;
     if (!PICK_MAP_VIEWS[state.selectedView]) cleanupPickMapCanvasRenderer();
     if (state.selectedView !== 'station_structure') cleanupStationStructureCanvasRenderer();
+
+    renderJobSummary();
 
     dom.loadButton.disabled = state.loading;
     dom.maxPoints.value = String(state.maxPoints);
@@ -5062,7 +5351,25 @@
     dom.sign.hidden = !signConvention;
     dom.sign.textContent = signConvention ? `Sign: ${signConvention}` : '';
 
+    for (const button of dom.taskButtons) {
+      const active = button.dataset.task === state.activeTask;
+      button.classList.toggle('is-active', active);
+      button.setAttribute('aria-selected', active ? 'true' : 'false');
+    }
+
+    const visibleControlGroups = new Set(VIEW_CONTROL_GROUPS[state.selectedView] || []);
+    for (const field of dom.controlFields) {
+      const groups = String(field.dataset.controlGroup || '').split(/\s+/).filter(Boolean);
+      field.hidden = !groups.some((group) => visibleControlGroups.has(group));
+    }
+
+    const taskViewIds = new Set(viewIdsForTask(state.activeTask));
+    const hasTaskViewChoices = taskViewIds.size > 1;
+    if (dom.viewButtonsContainer) {
+      dom.viewButtonsContainer.hidden = !hasTaskViewChoices;
+    }
     for (const button of dom.viewButtons) {
+      button.hidden = !hasTaskViewChoices || !taskViewIds.has(button.dataset.view);
       const active = button.dataset.view === state.selectedView;
       button.classList.toggle('is-active', active);
       button.setAttribute('aria-selected', active ? 'true' : 'false');
@@ -5072,11 +5379,13 @@
     }
     const selectedViewDef = VIEW_DEFS.find((viewDef) => viewDef.id === state.selectedView);
     if (selectedViewDef) renderViewContent(selectedViewDef);
+    renderInspector();
   }
 
   function setSelectedView(viewId) {
     if (!VIEW_DEFS.some((view) => view.id === viewId)) return;
     state.selectedView = viewId;
+    state.activeTask = taskForView(viewId);
     render();
     if (PICK_MAP_VIEWS[viewId]) {
       restoreCachedPickMapSource();
@@ -5084,6 +5393,23 @@
         loadCompletedPickMap(state.qcBundle.job_id);
       }
     } else if (viewId === 'station_structure') {
+      if (state.qcBundle?.job_id && !state.stationStructure && !state.stationStructureLoading) {
+        loadStationStructureQc(state.qcBundle.job_id);
+      }
+    }
+  }
+
+  function setActiveTask(taskId) {
+    if (!TASK_DEFS.some((task) => task.id === taskId)) return;
+    state.activeTask = taskId;
+    state.selectedView = defaultViewForTask(taskId);
+    render();
+    if (PICK_MAP_VIEWS[state.selectedView]) {
+      restoreCachedPickMapSource();
+      if (state.qcBundle?.job_id && !state.pickMap && !state.pickMapLoading) {
+        loadCompletedPickMap(state.qcBundle.job_id);
+      }
+    } else if (state.selectedView === 'station_structure') {
       if (state.qcBundle?.job_id && !state.stationStructure && !state.stationStructureLoading) {
         loadStationStructureQc(state.qcBundle.job_id);
       }
@@ -5433,6 +5759,7 @@
       jobList: document.getElementById('refractionQcJobList'),
       maxPoints: document.getElementById('refractionQcMaxPoints'),
       loadButton: document.getElementById('refractionQcLoadButton'),
+      jobSummary: document.getElementById('refractionQcJobSummary'),
       status: document.getElementById('refractionQcStatus'),
       error: document.getElementById('refractionQcError'),
       sign: document.getElementById('refractionQcSign'),
@@ -5447,6 +5774,10 @@
       endpoint: document.getElementById('refractionQcEndpoint'),
       trace: document.getElementById('refractionQcTrace'),
       cell: document.getElementById('refractionQcCell'),
+      taskButtons: Array.from(document.querySelectorAll('.refraction-qc-task-button')),
+      controlFields: Array.from(document.querySelectorAll('[data-control-group]')),
+      inspector: document.getElementById('refractionQcInspector'),
+      viewButtonsContainer: document.getElementById('refractionQcViewButtons'),
       viewButtons: Array.from(document.querySelectorAll('.refraction-qc-view-button')),
       viewPanels: Array.from(document.querySelectorAll('.refraction-qc-view')),
       viewContents: new Map(Array.from(document.querySelectorAll('[data-view-content]')).map(
@@ -5455,6 +5786,7 @@
     };
 
     if (!dom.jobId || !dom.maxPoints || !dom.loadButton || !dom.status || !dom.error || !dom.sign) return;
+    if (!dom.jobSummary || !dom.inspector) return;
     if (!dom.layerKind || !dom.xAxisMode || !dom.profileGroup || !dom.profileUnits || !dom.statusFilter) return;
     if (!dom.mapQuantity) return;
     if (!dom.showRejected || !dom.endpointKind || !dom.endpoint || !dom.trace || !dom.cell) return;
@@ -5521,6 +5853,9 @@
       qcDrilldownRequestSerial += 1;
       render();
     });
+    for (const button of dom.taskButtons) {
+      button.addEventListener('click', () => setActiveTask(button.dataset.task));
+    }
     for (const button of dom.viewButtons) {
       button.addEventListener('click', () => setSelectedView(button.dataset.view));
     }
