@@ -1002,7 +1002,6 @@
     if (warnings !== undefined) return warnings;
     if (Array.isArray(summary?.warnings)) return summary.warnings.length;
     if (Array.isArray(bundle?.warnings)) return bundle.warnings.length;
-    if (Array.isArray(bundle?.unavailable_views)) return bundle.unavailable_views.length;
     return 0;
   }
 
@@ -2218,6 +2217,10 @@
   }
 
   function renderArtifacts(content, bundle) {
+    if (!bundle) {
+      appendText(content, 'No QC bundle loaded.');
+      return;
+    }
     const artifacts = bundle && typeof bundle.artifacts === 'object' && bundle.artifacts ? bundle.artifacts : {};
     const views = bundle && typeof bundle.views === 'object' && bundle.views ? bundle.views : {};
     const rows = Object.entries(artifacts).map(([name, path]) => ({ type: 'manifest', name, path }));

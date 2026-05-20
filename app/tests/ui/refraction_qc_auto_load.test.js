@@ -641,6 +641,31 @@ test('Overview does not show global selector flood', () => {
   expect(document.querySelector('[data-testid="refraction-qc-cell"]')).toBeNull();
 });
 
+test('Artifacts task shows the empty bundle state before a QC bundle is loaded', () => {
+  loadRefractionQcScript();
+
+  expect(() => window.refractionQcUI.setSelectedView('artifacts')).not.toThrow();
+  expect(document.querySelector('[data-view-content="artifacts"]').textContent)
+    .toContain('No QC bundle loaded.');
+});
+
+test('Run summary warning count ignores unavailable view metadata', () => {
+  loadRefractionQcScript();
+  window.refractionQcState.qcBundle = {
+    ...qcBundle('job-unavailable-views'),
+    unavailable_views: ['profiles', 'cells'],
+  };
+
+  window.refractionQcUI.setSelectedView('summary');
+
+  const warningsMetric = Array.from(
+    document.querySelectorAll('#refractionQcJobSummary .refraction-qc-metric')
+  ).find((card) => (
+    card.querySelector('.refraction-qc-metric-label')?.textContent === 'Warnings'
+  ));
+  expect(warningsMetric.querySelector('.refraction-qc-metric-value').textContent).toBe('0');
+});
+
 test('Refraction QC renders controls only for the selected view', () => {
   loadRefractionQcScript();
 
