@@ -460,6 +460,8 @@ function qcBundlePayload(jobId: string) {
 				columns: [
 					'observation_index',
 					'trace_index_sorted',
+					'source_endpoint_key',
+					'receiver_endpoint_key',
 					'offset_m',
 					'inline_m',
 					'observed_first_break_time_s',
@@ -478,6 +480,8 @@ function qcBundlePayload(jobId: string) {
 					{
 						observation_index: '0',
 						trace_index_sorted: '0',
+						source_endpoint_key: 'S001',
+						receiver_endpoint_key: 'R001',
 						offset_m: '100',
 						inline_m: '10',
 						observed_first_break_time_s: '0.100',
@@ -491,6 +495,8 @@ function qcBundlePayload(jobId: string) {
 					{
 						observation_index: '1',
 						trace_index_sorted: '1',
+						source_endpoint_key: 'S002',
+						receiver_endpoint_key: 'R002',
 						offset_m: '200',
 						inline_m: '20',
 						observed_first_break_time_s: '0.140',
@@ -504,6 +510,8 @@ function qcBundlePayload(jobId: string) {
 					{
 						observation_index: '2',
 						trace_index_sorted: '2',
+						source_endpoint_key: 'S001',
+						receiver_endpoint_key: '',
 						offset_m: '300',
 						inline_m: '30',
 						observed_first_break_time_s: '0.180',
@@ -1083,6 +1091,26 @@ async function emitCellMapClick(page: Page, cellIx: number, cellIy: number) {
 			plot.emit('plotly_click', { points: [{ customdata: cell }] });
 		},
 		{ cellIx, cellIy },
+	);
+}
+
+async function emitFirstBreakPlotClick(page: Page, testId: string, traceIndex: string) {
+	await page.getByTestId(testId).evaluate(
+		(node, targetTraceIndex) => {
+			const plot = node as HTMLElement & {
+				data?: Array<{
+					customdata?: Array<{ trace_index?: string }>;
+				}>;
+				emit?: (name: string, event: unknown) => void;
+			};
+			const points = (plot.data ?? []).flatMap((trace) => trace.customdata ?? []);
+			const pick = points.find((item) => String(item?.trace_index ?? '') === targetTraceIndex);
+			if (!pick || typeof plot.emit !== 'function') {
+				throw new Error('First-break plot click target is unavailable');
+			}
+			plot.emit('plotly_click', { points: [{ customdata: pick }] });
+		},
+		traceIndex,
 	);
 }
 
@@ -2770,6 +2798,86 @@ test('first-break QC residual plot labels ms and uses observed minus modeled', a
 		axisTitle: 'Residual (ms)',
 		values: [-2, 5, 10],
 	});
+});
+
+test('first-break QC plot pick actions preview source and receiver gathers', async ({ page }) => {
+	const gatherRequests: Array<Record<string, unknown>> = [];
+	await page.route('**/statics/refraction/qc/gather-preview', async (route) => {
+		gatherRequests.push(JSON.parse(route.request().postData() || '{}'));
+		await route.fulfill({
+			status: 200,
+			contentType: 'application/json',
+			body: JSON.stringify(gatherPreviewPayload('refraction-first-break-actions')),
+		});
+	});
+	await page.route('**/statics/refraction/qc', async (route) => {
+		await route.fulfill({
+			status: 200,
+			contentType: 'application/json',
+			body: JSON.stringify(qcBundlePayload('refraction-first-break-actions')),
+		});
+	});
+
+	await page.goto('/refraction-qc?file_id=raw-preview-file&key1_byte=9&key2_byte=13');
+	await expect(page.getByTestId('refraction-qc-panel')).toBeVisible();
+	await page.getByTestId('refraction-qc-job-id').fill('refraction-first-break-actions');
+	await page.getByTestId('refraction-qc-load').click();
+	await expect(page.getByTestId('refraction-qc-status')).toContainText('Loaded refraction-first-break-actions');
+	await page.getByTestId('refraction-qc-view-first-break-button').click();
+	await emitFirstBreakPlotClick(page, 'refraction-qc-first-break-residual-plot', '1');
+
+	await expect(page.getByTestId('refraction-qc-first-break-pick-actions')).toContainText('Trace');
+	await expect(page.getByTestId('refraction-qc-first-break-pick-actions')).toContainText('S002');
+	await expect(page.getByTestId('refraction-qc-first-break-pick-actions')).toContainText('R002');
+	await page.getByRole('button', { name: 'Preview source gather' }).click();
+
+	await expect(page.getByTestId('refraction-qc-view-gather')).toBeVisible();
+	await expect(page.getByTestId('refraction-qc-gather-axis')).toHaveValue('source');
+	await expect(page.getByTestId('refraction-qc-gather-endpoint-key')).toHaveText('S002');
+	await expect.poll(() => gatherRequests.length).toBe(1);
+	expect(gatherRequests[0]).toMatchObject({
+		job_id: 'refraction-first-break-actions',
+		file_id: 'raw-preview-file',
+		key1_byte: 9,
+		key2_byte: 13,
+		gather_axis: 'source',
+		endpoint_key: 'S002',
+	});
+
+	await page.getByTestId('refraction-qc-view-first-break-button').click();
+	await emitFirstBreakPlotClick(page, 'refraction-qc-first-break-time-plot', '1');
+	await page.getByRole('button', { name: 'Preview receiver gather' }).click();
+
+	await expect(page.getByTestId('refraction-qc-view-gather')).toBeVisible();
+	await expect(page.getByTestId('refraction-qc-gather-axis')).toHaveValue('receiver');
+	await expect(page.getByTestId('refraction-qc-gather-endpoint-key')).toHaveText('R002');
+	await expect.poll(() => gatherRequests.length).toBe(2);
+	expect(gatherRequests[1]).toMatchObject({
+		job_id: 'refraction-first-break-actions',
+		file_id: 'raw-preview-file',
+		gather_axis: 'receiver',
+		endpoint_key: 'R002',
+	});
+});
+
+test('first-break QC plot pick actions disable missing endpoint previews', async ({ page }) => {
+	await page.route('**/statics/refraction/qc', async (route) => {
+		await route.fulfill({
+			status: 200,
+			contentType: 'application/json',
+			body: JSON.stringify(qcBundlePayload('refraction-first-break-missing-endpoint')),
+		});
+	});
+
+	await loadRefractionQcBundle(page, 'refraction-first-break-missing-endpoint');
+	await page.getByTestId('refraction-qc-view-first-break-button').click();
+	await emitFirstBreakPlotClick(page, 'refraction-qc-first-break-time-plot', '2');
+
+	await expect(page.getByRole('button', { name: 'Preview source gather' })).toBeEnabled();
+	await expect(page.getByRole('button', { name: 'Preview receiver gather' })).toBeDisabled();
+	await expect(page.getByTestId('refraction-qc-first-break-pick-action-reason')).toContainText(
+		'receiver_endpoint_key is missing',
+	);
 });
 
 test('first-break QC layer filter limits plotted layer_kind records', async ({ page }) => {

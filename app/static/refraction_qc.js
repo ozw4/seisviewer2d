@@ -89,6 +89,10 @@
     selectedJobId: '',
     qcBundle: null,
     selectedView: 'summary',
+    selectedFirstBreakPick: null,
+    firstBreakDrilldown: null,
+    firstBreakDrilldownLoading: false,
+    firstBreakDrilldownError: null,
     selectedLayerKind: 'all',
     firstBreakXAxis: 'offset',
     showRejectedFirstBreaks: true,
@@ -958,6 +962,9 @@
 
     const layerKind = String(firstDefined(record, ['layer_kind']) || '').trim() || 'unknown';
     const rejected = isRejectedFirstBreakRecord(record);
+    const sourceEndpointKey = String(firstDefined(record, ['source_endpoint_key']) || '').trim();
+    const receiverEndpointKey = String(firstDefined(record, ['receiver_endpoint_key']) || '').trim();
+    const traceIndex = textOrDash(firstDefined(record, ['trace_index_sorted', 'sorted_trace_index']));
     return {
       x,
       observedMs: observedS * 1000.0,
@@ -966,9 +973,11 @@
       layerKind,
       status: rejected ? 'rejected' : 'used',
       opacity: rejected ? 0.42 : 0.9,
-      traceIndex: textOrDash(firstDefined(record, ['trace_index_sorted', 'sorted_trace_index'])),
-      source: textOrDash(firstDefined(record, ['source_endpoint_key', 'source_id'])),
-      receiver: textOrDash(firstDefined(record, ['receiver_endpoint_key', 'receiver_id'])),
+      traceIndex,
+      sourceEndpointKey,
+      receiverEndpointKey,
+      source: textOrDash(sourceEndpointKey || firstDefined(record, ['source_id'])),
+      receiver: textOrDash(receiverEndpointKey || firstDefined(record, ['receiver_id'])),
     };
   }
 
@@ -1815,6 +1824,202 @@
     ].join('<br>');
   }
 
+  function firstBreakPickCustomData(point) {
+    return {
+      x: point.x,
+      observed_ms: point.observedMs,
+      modeled_ms: point.modeledMs,
+      residual_ms: point.residualMs,
+      source_endpoint_key: point.sourceEndpointKey,
+      receiver_endpoint_key: point.receiverEndpointKey,
+      trace_index: point.traceIndex,
+      layer_kind: point.layerKind,
+      status: point.status,
+      source: point.source,
+      receiver: point.receiver,
+    };
+  }
+
+  function firstBreakPickFromCustomData(customdata) {
+    if (!customdata || typeof customdata !== 'object') return null;
+    const residualMs = toFiniteNumber(customdata.residual_ms);
+    return {
+      x: toFiniteNumber(customdata.x),
+      observedMs: toFiniteNumber(customdata.observed_ms),
+      modeledMs: toFiniteNumber(customdata.modeled_ms),
+      residualMs,
+      sourceEndpointKey: String(customdata.source_endpoint_key || '').trim(),
+      receiverEndpointKey: String(customdata.receiver_endpoint_key || '').trim(),
+      traceIndex: textOrDash(customdata.trace_index),
+      layerKind: String(customdata.layer_kind || '').trim() || 'unknown',
+      status: String(customdata.status || '').trim() || 'used',
+      source: textOrDash(customdata.source || customdata.source_endpoint_key),
+      receiver: textOrDash(customdata.receiver || customdata.receiver_endpoint_key),
+    };
+  }
+
+  function firstBreakPickKey(point) {
+    if (!point) return '';
+    return [
+      point.traceIndex,
+      point.layerKind,
+      point.sourceEndpointKey,
+      point.receiverEndpointKey,
+      Number.isFinite(point.x) ? formatNumber(point.x, 6) : '',
+      Number.isFinite(point.residualMs) ? formatNumber(point.residualMs, 6) : '',
+    ].join('|');
+  }
+
+  function selectedFirstBreakPick(points) {
+    const selected = state.selectedFirstBreakPick;
+    if (!selected) return null;
+    const selectedKey = firstBreakPickKey(selected);
+    return points.find((point) => firstBreakPickKey(point) === selectedKey) || null;
+  }
+
+  function attachFirstBreakPickClickActions(plot) {
+    if (!plot || typeof plot.on !== 'function' || plot.dataset.firstBreakPickClickAttached === 'true') return;
+    plot.dataset.firstBreakPickClickAttached = 'true';
+    plot.on('plotly_click', (event) => {
+      const point = event?.points?.[0];
+      const pick = firstBreakPickFromCustomData(point?.customdata);
+      if (!pick) return;
+      state.selectedFirstBreakPick = pick;
+      state.firstBreakDrilldown = null;
+      state.firstBreakDrilldownError = null;
+      render();
+    });
+  }
+
+  function gatherPreviewInputsReady() {
+    const { errors } = buildGatherPreviewRequest();
+    return !errors.length;
+  }
+
+  function previewGatherForEndpoint(endpointKind, endpointKey) {
+    const cleanKey = String(endpointKey || '').trim();
+    if (!cleanKey) return;
+    state.gatherAxis = endpointKind === 'receiver' ? 'receiver' : 'source';
+    state.gatherEndpointKey = cleanKey;
+    state.gatherEndpointSearch = '';
+    state.gatherPreview = null;
+    state.gatherError = null;
+    setSelectedView('gather_preview');
+    if (gatherPreviewInputsReady()) loadGatherPreview();
+  }
+
+  async function openEndpointDrilldownForPick(pick) {
+    const sourceKey = String(pick?.sourceEndpointKey || '').trim();
+    const receiverKey = String(pick?.receiverEndpointKey || '').trim();
+    const endpointKind = sourceKey ? 'source' : (receiverKey ? 'receiver' : '');
+    const endpointKey = endpointKind === 'source' ? sourceKey : receiverKey;
+    if (!endpointKind || !endpointKey) return;
+
+    state.selectedEndpointKind = endpointKind;
+    state.selectedEndpoint = endpointKey;
+    state.firstBreakDrilldown = null;
+    state.firstBreakDrilldownError = null;
+    state.firstBreakDrilldownLoading = true;
+    render();
+    try {
+      const response = await fetch('/statics/refraction/qc/drilldown', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          job_id: String(state.selectedJobId || dom?.jobId?.value || '').trim(),
+          target: { kind: 'endpoint', endpoint_kind: endpointKind, endpoint_key: endpointKey },
+        }),
+      });
+      if (!response.ok) throw new Error(await readError(response, 'Endpoint drilldown request'));
+      state.firstBreakDrilldown = await response.json();
+    } catch (error) {
+      state.firstBreakDrilldownError = error instanceof Error ? error.message : String(error);
+    } finally {
+      state.firstBreakDrilldownLoading = false;
+      render();
+    }
+  }
+
+  function createFirstBreakPickActionButton(label, disabledReason, onClick) {
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.textContent = label;
+    if (disabledReason) {
+      button.disabled = true;
+      button.title = disabledReason;
+    } else {
+      button.addEventListener('click', onClick);
+    }
+    return button;
+  }
+
+  function createFirstBreakPickActions(pick) {
+    const panel = document.createElement('section');
+    panel.className = 'refraction-qc-pick-actions';
+    panel.dataset.testid = 'refraction-qc-first-break-pick-actions';
+
+    const title = document.createElement('h3');
+    title.textContent = 'Selected pick';
+    panel.appendChild(title);
+    panel.appendChild(createKv([
+      ['Trace', pick.traceIndex],
+      ['Layer', layerLabel(pick.layerKind)],
+      ['Residual', `${formatNumber(pick.residualMs, 1)} ms`],
+      ['Source', pick.source],
+      ['Receiver', pick.receiver],
+    ]));
+
+    const actions = document.createElement('div');
+    actions.className = 'refraction-qc-actions';
+    actions.append(
+      createFirstBreakPickActionButton(
+        'Preview source gather',
+        pick.sourceEndpointKey ? '' : 'Source endpoint key is missing for this pick.',
+        () => previewGatherForEndpoint('source', pick.sourceEndpointKey),
+      ),
+      createFirstBreakPickActionButton(
+        'Preview receiver gather',
+        pick.receiverEndpointKey ? '' : 'Receiver endpoint key is missing for this pick.',
+        () => previewGatherForEndpoint('receiver', pick.receiverEndpointKey),
+      ),
+      createFirstBreakPickActionButton(
+        state.firstBreakDrilldownLoading ? 'Opening drilldown...' : 'Open endpoint drilldown',
+        pick.sourceEndpointKey || pick.receiverEndpointKey ? '' : 'Endpoint key is missing for this pick.',
+        () => openEndpointDrilldownForPick(pick),
+      ),
+    );
+    panel.appendChild(actions);
+
+    const missingReasons = [];
+    if (!pick.sourceEndpointKey) missingReasons.push('Source gather preview is disabled because source_endpoint_key is missing.');
+    if (!pick.receiverEndpointKey) missingReasons.push('Receiver gather preview is disabled because receiver_endpoint_key is missing.');
+    if (missingReasons.length) {
+      const reason = document.createElement('p');
+      reason.className = 'refraction-qc-note';
+      reason.dataset.testid = 'refraction-qc-first-break-pick-action-reason';
+      reason.textContent = missingReasons.join(' ');
+      panel.appendChild(reason);
+    }
+
+    if (state.firstBreakDrilldownError) {
+      const error = document.createElement('p');
+      error.className = 'refraction-qc-error';
+      error.dataset.testid = 'refraction-qc-first-break-drilldown-error';
+      error.textContent = state.firstBreakDrilldownError;
+      panel.appendChild(error);
+    } else if (state.firstBreakDrilldown) {
+      const endpoint = state.firstBreakDrilldown.endpoint || {};
+      const details = createKv([
+        ['Drilldown endpoint', textOrDash(endpoint.endpoint_key)],
+        ['Observations', textOrDash(state.firstBreakDrilldown.observations?.total_count)],
+      ]);
+      details.dataset.testid = 'refraction-qc-first-break-drilldown-summary';
+      panel.appendChild(details);
+    }
+
+    return panel;
+  }
+
   function reducedTimeHoverText(point) {
     return [
       `Layer gate: ${layerLabel(point.layerKind)}`,
@@ -2051,6 +2256,9 @@
       return;
     }
 
+    const selectedPick = selectedFirstBreakPick(points);
+    if (selectedPick) content.appendChild(createFirstBreakPickActions(selectedPick));
+
     const plotGrid = document.createElement('div');
     plotGrid.className = 'refraction-qc-plot-grid';
     const timePlot = createFirstBreakPlot('refraction-qc-first-break-time-plot');
@@ -2063,6 +2271,7 @@
     if (window.Plotly) {
       const xAxis = firstBreakXAxisDefinition();
       const hoverText = points.map(plotHoverText);
+      const customdata = points.map(firstBreakPickCustomData);
       const commonLayout = {
         height: plotHeight(260, 440),
         margin: { l: 58, r: 14, t: 34, b: 50 },
@@ -2085,7 +2294,7 @@
       };
       const config = { displayModeBar: false, responsive: true };
 
-      window.Plotly.newPlot(timePlot, [
+      Promise.resolve(window.Plotly.newPlot(timePlot, [
         {
           name: 'Observed',
           type: 'scatter',
@@ -2093,6 +2302,7 @@
           x: points.map((point) => point.x),
           y: points.map((point) => point.observedMs),
           text: hoverText,
+          customdata,
           hovertemplate: '%{text}<extra>Observed</extra>',
           marker: {
             color: '#2563eb',
@@ -2107,6 +2317,7 @@
           x: points.map((point) => point.x),
           y: points.map((point) => point.modeledMs),
           text: hoverText,
+          customdata,
           hovertemplate: '%{text}<extra>Modeled</extra>',
           marker: {
             color: '#f97316',
@@ -2123,7 +2334,7 @@
           zeroline: false,
           gridcolor: '#e5e7eb',
         },
-      }, config);
+      }, config)).then(() => attachFirstBreakPickClickActions(timePlot));
 
       const residualGroups = new Map();
       for (const point of points) {
@@ -2135,12 +2346,14 @@
             x: [],
             y: [],
             text: [],
+            customdata: [],
           });
         }
         const group = residualGroups.get(groupKey);
         group.x.push(point.x);
         group.y.push(point.residualMs);
         group.text.push(plotHoverText(point));
+        group.customdata.push(firstBreakPickCustomData(point));
       }
       const residualTraces = Array.from(residualGroups.values()).map((group) => ({
         name: `${layerLabel(group.layerKind)} ${group.status}`,
@@ -2149,6 +2362,7 @@
         x: group.x,
         y: group.y,
         text: group.text,
+        customdata: group.customdata,
         hovertemplate: '%{text}<extra></extra>',
         marker: {
           color: LAYER_COLORS[group.layerKind] || LAYER_COLORS.unknown,
@@ -2157,7 +2371,7 @@
           opacity: group.status === 'rejected' ? 0.55 : 0.9,
         },
       }));
-      window.Plotly.newPlot(residualPlot, residualTraces, {
+      Promise.resolve(window.Plotly.newPlot(residualPlot, residualTraces, {
         ...commonLayout,
         title: { text: 'First-break residuals', font: { size: 12 } },
         yaxis: {
@@ -2166,7 +2380,7 @@
           zerolinecolor: '#94a3b8',
           gridcolor: '#e5e7eb',
         },
-      }, config);
+      }, config)).then(() => attachFirstBreakPickClickActions(residualPlot));
     } else {
       timePlot.textContent = 'Plot library is unavailable.';
       residualPlot.textContent = 'Plot library is unavailable.';
@@ -2953,7 +3167,13 @@
     const label = endpointKind === 'receiver' ? 'Receiver station' : 'Source station';
     const options = buildGatherEndpointOptions(state.qcBundle, endpointKind);
     const hasSelectedOption = options.some((option) => option.value === state.gatherEndpointKey);
-    if (state.gatherEndpointKey && !hasSelectedOption) state.gatherEndpointKey = '';
+    if (state.gatherEndpointKey && !hasSelectedOption) {
+      options.push({
+        value: state.gatherEndpointKey,
+        label: `${state.gatherEndpointKey} · selected from first-break pick`,
+        stationId: state.gatherEndpointKey,
+      });
+    }
     const searchText = normalizedText(state.gatherEndpointSearch);
     const filteredOptions = searchText
       ? options.filter((option) => (
@@ -4596,6 +4816,10 @@
     const maxPoints = parsePositiveInteger(dom.maxPoints.value, DEFAULT_MAX_POINTS);
     state.selectedJobId = jobId;
     state.maxPoints = maxPoints;
+    state.selectedFirstBreakPick = null;
+    state.firstBreakDrilldown = null;
+    state.firstBreakDrilldownError = null;
+    state.firstBreakDrilldownLoading = false;
     if (!jobId) {
       state.error = 'Job ID is required.';
       state.qcBundle = null;

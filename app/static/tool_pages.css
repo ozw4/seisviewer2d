@@ -656,6 +656,30 @@ select {
       background: #fff;
     }
 
+    .refraction-qc-pick-actions {
+      display: grid;
+      gap: 0.6em;
+      padding: 0.75em;
+      border: 1px solid #cbd5e1;
+      border-radius: 4px;
+      background: #f8fafc;
+    }
+
+    .refraction-qc-pick-actions h3 {
+      margin: 0;
+      font-size: 0.95em;
+      color: #0f172a;
+    }
+
+    .refraction-qc-pick-actions .refraction-qc-actions {
+      flex-wrap: wrap;
+    }
+
+    .refraction-qc-pick-actions button:disabled {
+      cursor: default;
+      opacity: 0.55;
+    }
+
     .refraction-qc-pick-map-plot {
       height: 340px;
       overflow: hidden;
