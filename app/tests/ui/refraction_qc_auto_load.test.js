@@ -240,6 +240,135 @@ function qcBundle(jobId) {
   };
 }
 
+function firstBreakQcBundle(jobId = 'job-first-break') {
+  return {
+    ...qcBundle(jobId),
+    available_views: ['first_break_fit'],
+    views: {
+      first_break_fit: {
+        artifact: 'first-break-fit.json',
+        columns: [
+          'trace_index_sorted',
+          'offset_m',
+          'observed_first_break_time_s',
+          'modeled_first_break_time_s',
+          'source_endpoint_key',
+          'receiver_endpoint_key',
+        ],
+        records: [{
+          trace_index_sorted: 12345,
+          offset_m: 850,
+          observed_first_break_time_s: 0.4125,
+          modeled_first_break_time_s: 0.395,
+          layer_kind: 'v2_t1',
+          source_endpoint_key: '1001',
+          receiver_endpoint_key: '2034',
+        }],
+      },
+    },
+  };
+}
+
+function profileQcBundle(jobId = 'job-profile') {
+  return {
+    ...qcBundle(jobId),
+    available_views: ['line_profiles'],
+    views: {
+      line_profiles: {
+        artifact: 'line-profiles.json',
+        columns: ['endpoint_kind', 'endpoint_key', 'inline_m', 't1_ms'],
+        records: [{
+          endpoint_kind: 'source',
+          endpoint_key: '1001',
+          station_id: '1001',
+          node_id: 45,
+          inline_m: 1500,
+          t1_ms: 8.3,
+          pick_count: 96,
+          residual_rms_ms: 12.4,
+          total_static_ms: 8.3,
+          static_status: 'ok',
+          solution_status: 'ok',
+        }],
+      },
+    },
+  };
+}
+
+function staticEndpointQcBundle(jobId = 'job-static-endpoint') {
+  return {
+    ...qcBundle(jobId),
+    available_views: ['static_component_qc_endpoint', 'static_component_qc_trace'],
+    views: {
+      static_component_qc_endpoint: {
+        artifact: 'static-endpoint.csv',
+        columns: ['endpoint_kind', 'endpoint_key', 'node_id', 'pick_count', 'residual_rms_ms'],
+        records: [{
+          endpoint_kind: 'source',
+          endpoint_key: '1001',
+          station_id: '1001',
+          node_id: 45,
+          pick_count: 96,
+          residual_rms_ms: 12.4,
+          total_static_ms: 8.3,
+          static_status: 'ok',
+          solution_status: 'ok',
+        }],
+      },
+      static_component_qc_trace: {
+        artifact: 'static-trace.csv',
+        columns: ['trace_index_sorted', 'source_endpoint_key', 'receiver_endpoint_key'],
+        records: [{
+          trace_index_sorted: 12345,
+          source_endpoint_key: '1001',
+          receiver_endpoint_key: '2034',
+          static_status: 'ok',
+        }],
+      },
+    },
+  };
+}
+
+function cellQcBundle(jobId = 'job-cell') {
+  return {
+    ...qcBundle(jobId),
+    available_views: ['refraction_grid_map_qc'],
+    views: {
+      refraction_grid_map_qc: {
+        artifact: 'grid-map.csv',
+        columns: ['cell_ix', 'cell_iy', 'cell_velocity_layer_kind', 'velocity_m_s'],
+        records: [{
+          cell_ix: 4,
+          cell_iy: 2,
+          cell_velocity_layer_kind: 'v2_t1',
+          velocity_m_s: 1820,
+          fold: 24,
+          residual_rms_ms: 16.1,
+          velocity_status: 'ok',
+          cell_center_x_m: 40,
+          cell_center_y_m: 20,
+        }],
+      },
+    },
+  };
+}
+
+function installPlotlyClickStub() {
+  const plots = [];
+  const handlers = new Map();
+  const plotly = {
+    newPlot: vi.fn((plot, traces) => {
+      plots.push({ plot, traces });
+      plot.on = (event, callback) => {
+        handlers.set(`${plot.dataset.testid}:${event}`, callback);
+      };
+      return Promise.resolve();
+    }),
+  };
+  window.Plotly = plotly;
+  return { handlers, plots, plotly };
+}
+
 function stationStructurePayload(jobId = 'completed-job-structure') {
   const source = {
     x: [100, 101],
@@ -599,6 +728,11 @@ test('loading a different job resets endpoint trace and cell filters', async () 
   window.refractionQcState.selectedEndpoint = 'S1001';
   window.refractionQcState.selectedTraceIndex = '42';
   window.refractionQcState.selectedCell = { cell_ix: 2, cell_iy: 3, layer_kind: 'v2_t1' };
+  window.refractionQcState.selectedObject = {
+    kind: 'cell',
+    key: '2,3 V2/T1',
+    payload: { cell_ix: 2, cell_iy: 3, layer_kind: 'v2_t1' },
+  };
 
   document.getElementById('refractionQcJobId').value = 'job-b';
   await window.refractionQcUI.loadBundle();
@@ -606,9 +740,132 @@ test('loading a different job resets endpoint trace and cell filters', async () 
   expect(window.refractionQcState.selectedEndpoint).toBe('');
   expect(window.refractionQcState.selectedTraceIndex).toBe('');
   expect(window.refractionQcState.selectedCell).toBeNull();
+  expect(window.refractionQcState.selectedObject.kind).toBeNull();
   expect(document.querySelector('[data-testid="refraction-qc-filter-chip"][data-filter="endpoint"]')).toBeNull();
   expect(document.querySelector('[data-testid="refraction-qc-filter-chip"][data-filter="trace"]')).toBeNull();
   expect(document.querySelector('[data-testid="refraction-qc-filter-chip"][data-filter="cell"]')).toBeNull();
+});
+
+test('Inspector starts empty and updates after first-break pick click', async () => {
+  const { handlers, plots } = installPlotlyClickStub();
+  loadRefractionQcScript();
+  expect(document.getElementById('refractionQcInspector').textContent).toContain('No selection');
+
+  window.refractionQcState.qcBundle = firstBreakQcBundle();
+  window.refractionQcUI.setSelectedView('first_break_residuals');
+  await flushAsyncWork();
+
+  const residualPlot = plots.find((entry) => entry.plot.dataset.testid === 'refraction-qc-first-break-residual-plot');
+  handlers.get('refraction-qc-first-break-residual-plot:plotly_click')({
+    points: [{ customdata: residualPlot.traces[0].customdata[0] }],
+  });
+
+  const inspector = document.getElementById('refractionQcInspector');
+  expect(inspector.textContent).toContain('Selected pick');
+  expect(inspector.textContent).toContain('V2/T1');
+  expect(inspector.textContent).toContain('850.0 m');
+  expect(inspector.textContent).toContain('+17.5 ms');
+
+  inspector.querySelector('button').click();
+  expect(window.refractionQcState.selectedView).toBe('gather_preview');
+  expect(window.refractionQcState.gatherAxis).toBe('source');
+  expect(window.refractionQcState.gatherEndpointKey).toBe('1001');
+});
+
+test('Inspector updates after profile endpoint click', async () => {
+  const { handlers, plots } = installPlotlyClickStub();
+  loadRefractionQcScript();
+  window.refractionQcState.qcBundle = profileQcBundle();
+  window.refractionQcUI.setSelectedView('profiles_2d');
+  await flushAsyncWork();
+
+  const profilePlot = plots.find((entry) => entry.plot.dataset.testid === 'refraction-qc-profile-plot');
+  handlers.get('refraction-qc-profile-plot:plotly_click')({
+    points: [{ customdata: profilePlot.traces[0].customdata[0] }],
+  });
+
+  const inspector = document.getElementById('refractionQcInspector');
+  expect(inspector.textContent).toContain('Selected source station');
+  expect(inspector.textContent).toContain('S 1001');
+  expect(inspector.textContent).toContain('96');
+  expect(inspector.textContent).toContain('12.4 ms');
+
+  Array.from(inspector.querySelectorAll('button'))
+    .find((button) => button.textContent === 'Preview gather')
+    .click();
+  expect(window.refractionQcState.selectedView).toBe('gather_preview');
+  expect(window.refractionQcState.gatherAxis).toBe('source');
+  expect(window.refractionQcState.gatherEndpointKey).toBe('1001');
+});
+
+test('Inspector renders endpoint filter selections from static components', () => {
+  loadRefractionQcScript();
+  window.refractionQcState.qcBundle = staticEndpointQcBundle();
+  window.refractionQcState.selectedEndpointKind = 'source';
+  window.refractionQcState.selectedEndpoint = '1001';
+
+  window.refractionQcUI.setSelectedView('static_components');
+
+  const inspector = document.getElementById('refractionQcInspector');
+  expect(inspector.textContent).toContain('Selected source station');
+  expect(inspector.textContent).toContain('S 1001');
+  expect(inspector.textContent).toContain('96');
+  expect(inspector.textContent).toContain('12.4 ms');
+
+  Array.from(inspector.querySelectorAll('button'))
+    .find((button) => button.textContent === 'Preview gather')
+    .click();
+  expect(window.refractionQcState.selectedView).toBe('gather_preview');
+  expect(window.refractionQcState.gatherAxis).toBe('source');
+  expect(window.refractionQcState.gatherEndpointKey).toBe('1001');
+});
+
+test('Inspector updates after cell click and opens cell drilldown', async () => {
+  const { handlers, plots } = installPlotlyClickStub();
+  const calls = [];
+  vi.stubGlobal('fetch', vi.fn(async (url, options = {}) => {
+    calls.push({ url: String(url), body: JSON.parse(options.body || '{}') });
+    return jsonResponse({
+      target: { kind: 'cell', layer_kind: 'v2_t1', cell_ix: 4, cell_iy: 2 },
+      cell: {
+        cell_ix: 4,
+        cell_iy: 2,
+        layer_kind: 'v2_t1',
+        velocity_m_s: 1820,
+        fold: 24,
+        residual_summary: { cell_residual_rms_ms: 16.1 },
+      },
+      observations: { returned_count: 0, total_count: 0, records: [] },
+    });
+  }));
+  loadRefractionQcScript();
+  window.refractionQcState.selectedJobId = 'job-cell';
+  window.refractionQcState.qcBundle = cellQcBundle();
+  window.refractionQcUI.setSelectedView('cell_maps_3d');
+  await flushAsyncWork();
+
+  const cellPlot = plots.find((entry) => entry.plot.dataset.testid === 'refraction-qc-cell-map-plot');
+  handlers.get('refraction-qc-cell-map-plot:plotly_click')({
+    points: [{ customdata: cellPlot.traces[0].customdata[0][0] }],
+  });
+  await flushAsyncWork();
+
+  const inspector = document.getElementById('refractionQcInspector');
+  expect(inspector.textContent).toContain('Selected cell');
+  expect(inspector.textContent).toContain('4,2 V2/T1');
+  expect(inspector.textContent).toContain('1820.00 m/s');
+  expect(inspector.textContent).toContain('16.1 ms');
+
+  Array.from(inspector.querySelectorAll('button'))
+    .find((button) => button.textContent === 'Open cell drilldown')
+    .click();
+  expect(window.refractionQcState.selectedView).toBe('cell_maps_3d');
+  expect(calls.at(-1).body.target).toMatchObject({
+    kind: 'cell',
+    layer_kind: 'v2_t1',
+    cell_ix: 4,
+    cell_iy: 2,
+  });
 });
 
 test('loadJob displays QC loading errors with the requested job id still visible', async () => {
