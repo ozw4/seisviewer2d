@@ -66,6 +66,18 @@ RefractionStaticGatherPreviewSampleSource = Literal[
     'corrected_tracestore',
     'raw_tracestore_shifted_on_the_fly',
 ]
+RefractionStaticQcEndpointKind = Literal['source', 'receiver', 'both']
+RefractionStaticQcEndpointRecordKind = Literal['source', 'receiver']
+RefractionStaticQcEndpointSort = Literal[
+    'station_id_asc',
+    'station_id_desc',
+    'residual_rms_desc',
+    'residual_rms_asc',
+    'pick_count_desc',
+    'pick_count_asc',
+    'endpoint_key_asc',
+]
+RefractionStaticQcEndpointStatusFilter = Literal['all', 'ok', 'problem']
 
 REFRACTION_STATIC_DEFAULT_EXPORT_FORMATS: tuple[
     RefractionStaticExportFormat, ...
@@ -3158,6 +3170,81 @@ class RefractionStaticQcBundleResponse(BaseModel):
     downsampling: dict[str, RefractionStaticQcDownsamplingEntry] = Field(
         default_factory=dict,
     )
+
+
+class RefractionStaticQcEndpointSearchRequest(BaseModel):
+    """Request model for server-side refraction endpoint selector search."""
+
+    model_config = ConfigDict(extra='forbid')
+
+    job_id: str
+    endpoint_kind: RefractionStaticQcEndpointKind = 'both'
+    query: str = ''
+    status_filter: RefractionStaticQcEndpointStatusFilter = 'all'
+    sort: RefractionStaticQcEndpointSort = 'endpoint_key_asc'
+    limit: int = 50
+    offset: int = 0
+
+    @field_validator('job_id')
+    @classmethod
+    def _check_job_id(cls, value: str) -> str:
+        if not isinstance(value, str) or not value:
+            raise ValueError('job_id must be a non-empty string')
+        return value
+
+    @field_validator('query')
+    @classmethod
+    def _check_query(cls, value: str) -> str:
+        if not isinstance(value, str):
+            raise ValueError('query must be a string')
+        return value.strip()
+
+    @field_validator('limit', mode='before')
+    @classmethod
+    def _check_limit(cls, value: object) -> int:
+        limit = require_positive_int(value, 'limit')
+        if limit > 200:
+            raise ValueError('limit must be <= 200')
+        return limit
+
+    @field_validator('offset', mode='before')
+    @classmethod
+    def _check_offset(cls, value: object) -> int:
+        return require_non_negative_int(value, 'offset')
+
+
+class RefractionStaticQcEndpointSearchRecord(BaseModel):
+    """One source or receiver endpoint selector record."""
+
+    model_config = ConfigDict(extra='forbid')
+
+    endpoint_kind: RefractionStaticQcEndpointRecordKind
+    endpoint_key: str
+    label: str
+    station_id: int | None = None
+    node_id: int | None = None
+    x_m: float | None = None
+    y_m: float | None = None
+    surface_elevation_m: float | None = None
+    pick_count: int | None = None
+    residual_rms_ms: float | None = None
+    datum_status: str | None = None
+    static_status: str | None = None
+
+
+class RefractionStaticQcEndpointSearchResponse(BaseModel):
+    """Server-side endpoint selector search response."""
+
+    model_config = ConfigDict(extra='forbid')
+
+    job_id: str
+    statics_kind: Literal['refraction']
+    endpoint_kind: RefractionStaticQcEndpointKind
+    query: str
+    total: int
+    limit: int
+    offset: int
+    records: list[RefractionStaticQcEndpointSearchRecord]
 
 
 class RefractionStaticPickMapGeometryRequest(RefractionStaticGeometryRequest):
