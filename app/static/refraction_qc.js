@@ -4313,7 +4313,7 @@
     const timeLabel = Number.isFinite(timeStart) && Number.isFinite(timeEnd)
       ? `${formatNumber(timeStart, 3)}-${formatNumber(timeEnd, 3)} s`
       : `${textOrDash(state.gatherTimeStartS)}-${textOrDash(state.gatherTimeEndS)} s`;
-    const traceCount = windowMeta.returned_trace_count || state.gatherMaxTraces;
+    const traceCount = windowMeta.returned_trace_count ?? state.gatherMaxTraces;
     parts.push(`${GATHER_DISPLAY_LABELS[state.gatherDisplayMode] || state.gatherDisplayMode} · ${timeLabel} · ${textOrDash(traceCount)} traces`);
     return parts;
   }
@@ -5702,13 +5702,21 @@
     qcDrilldownRequestSerial += 1;
   }
 
+  function clearGatherPreviewFilter() {
+    state.gatherEndpointKey = '';
+    state.gatherEndpointSearch = '';
+    state.gatherPreview = null;
+    state.gatherError = null;
+    state.gatherLoading = false;
+    gatherRequestSerial += 1;
+  }
+
   function resetJobScopedFilters() {
     state.selectedEndpoint = '';
     state.selectedTraceIndex = '';
     state.selectedProfileEndpoint = null;
     clearSelectedObject();
-    state.gatherEndpointKey = '';
-    state.gatherEndpointSearch = '';
+    clearGatherPreviewFilter();
     clearSelectedCellFilter();
   }
 
@@ -5783,8 +5791,7 @@
     }
     if (state.gatherEndpointKey) {
       addChip('gather-endpoint', `Gather ${state.gatherEndpointKey}`, () => {
-        state.gatherEndpointKey = '';
-        state.gatherEndpointSearch = '';
+        clearGatherPreviewFilter();
       });
     }
     if (state.artifactTypeFilter !== 'all') {

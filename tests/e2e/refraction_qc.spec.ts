@@ -2685,6 +2685,7 @@ test('refraction gather preview UI raw only fetches bounded API data', async ({ 
 
 	await expect(page.getByTestId('refraction-qc-gather-raw-plot')).toBeVisible();
 	await expect(page.getByTestId('refraction-qc-gather-corrected-plot')).toHaveCount(0);
+	await expect(page.getByTestId('refraction-qc-gather-context')).toContainText('2 traces');
 	expect(requestPayload).toMatchObject({
 		job_id: 'refraction-gather-raw',
 		file_id: 'raw-preview-file',
@@ -2694,6 +2695,13 @@ test('refraction gather preview UI raw only fetches bounded API data', async ({ 
 		time_end_s: 0.3,
 		max_traces: 2,
 	});
+
+	const gatherChip = page.getByTestId('refraction-qc-filter-chip').filter({ hasText: 'Gather S001' });
+	await expect(gatherChip).toBeVisible();
+	await gatherChip.click();
+	await expect(page.getByTestId('refraction-qc-gather-raw-plot')).toHaveCount(0);
+	await expect(page.getByTestId('refraction-qc-gather-context')).toHaveCount(0);
+	await expect(page.getByTestId('refraction-qc-view-gather')).toContainText('Choose a station and preview the gather.');
 });
 
 test('refraction gather preview requires source or receiver station selection', async ({ page }) => {
@@ -3238,7 +3246,9 @@ test('first-break QC plot pick actions preview source and receiver gathers', asy
 	await expect(page.getByTestId('refraction-qc-first-break-pick-actions')).toContainText('Trace');
 	await expect(page.getByTestId('refraction-qc-first-break-pick-actions')).toContainText('S002');
 	await expect(page.getByTestId('refraction-qc-first-break-pick-actions')).toContainText('R002');
-	await page.getByRole('button', { name: 'Preview source gather' }).click();
+	await page.getByTestId('refraction-qc-first-break-pick-actions')
+		.getByRole('button', { name: 'Preview source gather' })
+		.click();
 
 	await expect(page.getByTestId('refraction-qc-view-gather')).toBeVisible();
 	await expect(page.getByTestId('refraction-qc-gather-axis')).toHaveValue('source');
@@ -3255,7 +3265,9 @@ test('first-break QC plot pick actions preview source and receiver gathers', asy
 
 	await openRefractionQcView(page, 'first_break_residuals');
 	await emitFirstBreakPlotClick(page, 'refraction-qc-first-break-time-plot', '1');
-	await page.getByRole('button', { name: 'Preview receiver gather' }).click();
+	await page.getByTestId('refraction-qc-first-break-pick-actions')
+		.getByRole('button', { name: 'Preview receiver gather' })
+		.click();
 
 	await expect(page.getByTestId('refraction-qc-view-gather')).toBeVisible();
 	await expect(page.getByTestId('refraction-qc-gather-axis')).toHaveValue('receiver');
@@ -3282,8 +3294,9 @@ test('first-break QC plot pick actions disable missing endpoint previews', async
 	await openRefractionQcView(page, 'first_break_residuals');
 	await emitFirstBreakPlotClick(page, 'refraction-qc-first-break-time-plot', '2');
 
-	await expect(page.getByRole('button', { name: 'Preview source gather' })).toBeEnabled();
-	await expect(page.getByRole('button', { name: 'Preview receiver gather' })).toBeDisabled();
+	const pickActions = page.getByTestId('refraction-qc-first-break-pick-actions');
+	await expect(pickActions.getByRole('button', { name: 'Preview source gather' })).toBeEnabled();
+	await expect(pickActions.getByRole('button', { name: 'Preview receiver gather' })).toBeDisabled();
 	await expect(page.getByTestId('refraction-qc-first-break-pick-action-reason')).toContainText(
 		'receiver_endpoint_key is missing',
 	);
