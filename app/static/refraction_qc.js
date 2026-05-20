@@ -4045,6 +4045,25 @@
     return select;
   }
 
+  function findGatherEndpointOption(options, value) {
+    const query = normalizedText(value);
+    return options.find((option) => (
+      normalizedText(option.label) === query
+      || normalizedText(option.value) === query
+      || normalizedText(option.stationId) === query
+    ));
+  }
+
+  function renderGatherEndpointSelectionState() {
+    renderActiveFilterChips();
+    const endpointKey = document.querySelector('[data-testid="refraction-qc-gather-endpoint-key"]');
+    if (endpointKey) {
+      endpointKey.textContent = state.gatherAxis === 'section'
+        ? 'not used'
+        : textOrDash(state.gatherEndpointKey);
+    }
+  }
+
   function createGatherEndpointControls() {
     const endpointKind = state.gatherAxis === 'receiver' ? 'receiver' : 'source';
     const label = endpointKind === 'receiver' ? 'Receiver station' : 'Source station';
@@ -4075,30 +4094,27 @@
       'refraction-qc-gather-endpoint',
       (value) => {
         state.gatherEndpointSearch = value;
-        const query = normalizedText(value);
-        const match = options.find((option) => (
-          normalizedText(option.label) === query
-          || normalizedText(option.value) === query
-          || normalizedText(option.stationId) === query
-        ));
-        state.gatherEndpointKey = match ? match.value : '';
+        const match = findGatherEndpointOption(options, value);
+        const nextEndpointKey = match ? match.value : '';
+        if (state.gatherEndpointKey !== nextEndpointKey) {
+          state.gatherEndpointKey = nextEndpointKey;
+          renderGatherEndpointSelectionState();
+        }
       },
     );
     input.setAttribute('list', listId);
     input.disabled = !options.length;
     input.placeholder = options.length ? `Search ${label.toLowerCase()}...` : `No ${label.toLowerCase()} candidates`;
     input.addEventListener('change', () => {
-      const query = normalizedText(input.value);
-      const match = options.find((option) => (
-        normalizedText(option.label) === query
-        || normalizedText(option.value) === query
-        || normalizedText(option.stationId) === query
-      ));
+      const match = findGatherEndpointOption(options, input.value);
       if (match) {
         state.gatherEndpointKey = match.value;
         state.gatherEndpointSearch = match.label;
-        render();
+      } else {
+        state.gatherEndpointKey = '';
+        state.gatherEndpointSearch = input.value;
       }
+      render();
     });
 
     const fragment = document.createDocumentFragment();
@@ -5829,7 +5845,7 @@
     }
   }
 
-  function renderFindProblemsControls(container) {
+  function renderFindProblemsControls(container, options = {}) {
     container.append(
       createSelectControl('Layer', 'refraction-qc-layer-kind', state.selectedLayerKind, LAYER_CONTROL_OPTIONS, (value) => {
         state.selectedLayerKind = value;
@@ -5840,6 +5856,9 @@
       createCheckboxControl('Show rejected / unused', 'refraction-qc-show-rejected', state.showRejectedFirstBreaks, (checked) => {
         state.showRejectedFirstBreaks = checked;
       }),
+    );
+    if (!options.includeResidualControls) return;
+    container.append(
       createNumberControl('Residual threshold (ms)', 'refraction-qc-residual-threshold', state.firstBreakResidualThresholdMs, (value) => {
         state.firstBreakResidualThresholdMs = value;
       }, { min: 0, step: '0.1' }),
@@ -5928,7 +5947,9 @@
     clearNode(dom.viewControls);
     dom.viewControls.hidden = false;
     if (state.activeTask === 'find_problems' && ['first_break_residuals', 'reduced_time'].includes(state.selectedView)) {
-      renderFindProblemsControls(dom.viewControls);
+      renderFindProblemsControls(dom.viewControls, {
+        includeResidualControls: state.selectedView === 'first_break_residuals',
+      });
     } else if (state.activeTask === 'inspect_station') {
       renderStationControls(dom.viewControls);
     } else if (state.activeTask === 'inspect_cell' && state.selectedView === 'cell_maps_3d') {

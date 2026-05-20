@@ -650,6 +650,13 @@ test('Refraction QC renders controls only for the selected view', () => {
   expect(document.querySelector('[data-testid="refraction-qc-residual-sort"]')).not.toBeNull();
   expect(document.querySelector('[data-testid="refraction-qc-endpoint"]')).toBeNull();
 
+  window.refractionQcUI.setSelectedView('reduced_time');
+  expect(document.querySelector('[data-testid="refraction-qc-x-axis"]')).not.toBeNull();
+  expect(document.querySelector('[data-testid="refraction-qc-show-rejected"]')).not.toBeNull();
+  expect(document.querySelector('[data-testid="refraction-qc-residual-threshold"]')).toBeNull();
+  expect(document.querySelector('[data-testid="refraction-qc-residual-sort"]')).toBeNull();
+  expect(document.querySelector('[data-testid="refraction-qc-map-quantity"]')).toBeNull();
+
   window.refractionQcUI.setSelectedView('gather_preview');
   expect(document.querySelector('[data-testid="refraction-qc-gather-axis"]')).not.toBeNull();
   expect(document.querySelector('[data-testid="refraction-qc-gather-display"]')).not.toBeNull();
@@ -690,6 +697,22 @@ test('Gather Preview keeps internal context in the advanced drawer', () => {
     .toBe('193');
   expect(details.querySelector('[data-testid="refraction-qc-gather-endpoint-key"]').textContent)
     .toBe('-');
+
+  const station = document.querySelector('[data-testid="refraction-qc-gather-endpoint"]');
+  station.value = 'S 1001 · picks 96 · RMS 12.4 ms · ok';
+  station.dispatchEvent(new Event('input', { bubbles: true }));
+  expect(window.refractionQcState.gatherEndpointKey).toBe('1001');
+  expect(details.querySelector('[data-testid="refraction-qc-gather-endpoint-key"]').textContent)
+    .toBe('1001');
+  expect(document.querySelector('[data-testid="refraction-qc-filter-chip"][data-filter="gather-endpoint"]').textContent)
+    .toContain('Gather 1001');
+
+  station.value = 'S 9999';
+  station.dispatchEvent(new Event('input', { bubbles: true }));
+  expect(window.refractionQcState.gatherEndpointKey).toBe('');
+  expect(details.querySelector('[data-testid="refraction-qc-gather-endpoint-key"]').textContent)
+    .toBe('-');
+  expect(document.querySelector('[data-testid="refraction-qc-filter-chip"][data-filter="gather-endpoint"]')).toBeNull();
 
   const axis = document.querySelector('[data-testid="refraction-qc-gather-axis"]');
   axis.value = 'section';
