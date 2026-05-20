@@ -650,6 +650,13 @@ function qcBundlePayload(jobId: string) {
 				columns: [
 					'kind',
 					'endpoint_key',
+					'station_id',
+					'node_id',
+					'x_m',
+					'y_m',
+					'surface_elevation_m',
+					'pick_count',
+					'residual_rms_ms',
 					'weathering_status',
 					'datum_status',
 					'source_depth_status',
@@ -658,14 +665,21 @@ function qcBundlePayload(jobId: string) {
 					'field_status',
 					'static_status',
 				],
-				total_points: 3,
-				returned_points: 3,
+				total_points: 5,
+				returned_points: 5,
 				downsampled: false,
 				downsampling_method: 'even_index_floor_first_last',
 				records: [
 					{
 						kind: 'source',
 						endpoint_key: 'S001',
+						station_id: '1001',
+						node_id: '1',
+						x_m: '1000',
+						y_m: '2000',
+						surface_elevation_m: '120',
+						pick_count: '8',
+						residual_rms_ms: '3.1',
 						weathering_status: 'ok',
 						datum_status: 'ok',
 						source_depth_status: 'ok',
@@ -677,6 +691,13 @@ function qcBundlePayload(jobId: string) {
 					{
 						kind: 'source',
 						endpoint_key: 'S002',
+						station_id: '1002',
+						node_id: '2',
+						x_m: '1100',
+						y_m: '2100',
+						surface_elevation_m: '124',
+						pick_count: '5',
+						residual_rms_ms: '6.2',
 						weathering_status: 'invalid_weathering',
 						datum_status: 'ok',
 						source_depth_status: 'missing',
@@ -688,6 +709,13 @@ function qcBundlePayload(jobId: string) {
 					{
 						kind: 'receiver',
 						endpoint_key: 'R001',
+						station_id: '2001',
+						node_id: '10',
+						x_m: '1020',
+						y_m: '2020',
+						surface_elevation_m: '118',
+						pick_count: '9',
+						residual_rms_ms: '2',
 						weathering_status: 'ok',
 						datum_status: 'ok',
 						source_depth_status: 'not_applicable',
@@ -695,6 +723,42 @@ function qcBundlePayload(jobId: string) {
 						manual_static_status: 'ok',
 						field_status: 'ok',
 						static_status: 'ok',
+					},
+					{
+						kind: 'receiver',
+						endpoint_key: 'R002',
+						station_id: '2002',
+						node_id: '11',
+						x_m: '1120',
+						y_m: '2120',
+						surface_elevation_m: '121',
+						pick_count: '7',
+						residual_rms_ms: '3.4',
+						weathering_status: 'ok',
+						datum_status: 'ok',
+						source_depth_status: 'not_applicable',
+						uphole_status: 'not_applicable',
+						manual_static_status: 'ok',
+						field_status: 'ok',
+						static_status: 'ok',
+					},
+					{
+						kind: 'source',
+						endpoint_key: 'S001_DUP',
+						station_id: '1001',
+						node_id: '45',
+						x_m: '1001',
+						y_m: '2001',
+						surface_elevation_m: '121',
+						pick_count: '4',
+						residual_rms_ms: '12.4',
+						weathering_status: 'ok',
+						datum_status: 'duplicate?',
+						source_depth_status: 'ok',
+						uphole_status: 'ok',
+						manual_static_status: 'ok',
+						field_status: 'ok',
+						static_status: 'duplicate?',
 					},
 				],
 			},
@@ -873,7 +937,7 @@ async function openGatherPreview(page: Page, jobId: string) {
 	await loadRefractionQcBundle(page, jobId);
 	await page.getByTestId('refraction-qc-view-gather-button').click();
 	await page.getByTestId('refraction-qc-gather-file-id').fill('raw-preview-file');
-	await page.getByTestId('refraction-qc-endpoint').fill('S001');
+	await page.getByTestId('refraction-qc-gather-endpoint').selectOption('S001');
 }
 
 async function gatherPlotSummary(page: Page, testId: string) {
@@ -1024,13 +1088,25 @@ async function emitCellMapClick(page: Page, cellIx: number, cellIy: number) {
 
 async function openRefractionQcTab(page: Page) {
 	await page.goto('/');
-	await page.getByTestId('refraction-qc-tab').click();
+	const tab = page.getByTestId('refraction-qc-tab');
+	if (await tab.count()) {
+		await tab.click();
+	} else {
+		await page.getByRole('link', { name: 'Refraction QC' }).click();
+		await page.waitForURL('**/refraction-qc');
+	}
 	await expect(page.getByTestId('refraction-qc-panel')).toBeVisible();
 }
 
 async function openStaticCorrectionTab(page: Page) {
 	await page.goto('/');
-	await page.getByTestId('static-correction-tab').click();
+	const tab = page.getByTestId('static-correction-tab');
+	if (await tab.count()) {
+		await tab.click();
+	} else {
+		await page.getByRole('link', { name: 'Static Correction' }).click();
+		await page.waitForURL('**/static-correction');
+	}
 	await expect(page.getByTestId('static-correction-panel')).toBeVisible();
 }
 
@@ -2263,6 +2339,45 @@ test('refraction QC tab view switching', async ({ page }) => {
 	expect(await page.evaluate(() => (window as any).refractionQcState.selectedView)).toBe('gather_preview');
 });
 
+test('refraction gather preview endpoint selector follows gather axis', async ({ page }) => {
+	await page.route('**/statics/refraction/qc', async (route) => {
+		await route.fulfill({
+			status: 200,
+			contentType: 'application/json',
+			body: JSON.stringify(qcBundlePayload('refraction-gather-selector')),
+		});
+	});
+
+	await loadRefractionQcBundle(page, 'refraction-gather-selector');
+	await page.getByTestId('refraction-qc-view-gather-button').click();
+
+	const sourceLabels = (await page.getByTestId('refraction-qc-gather-endpoint')
+		.locator('option')
+		.allTextContents()).join('\n');
+	expect(sourceLabels).toContain('S 1001 · node 1 · picks 8 · RMS 3.1 ms · ok');
+	expect(sourceLabels).toContain('S 1001 · node 45 · picks 4 · RMS 12.4 ms · duplicate?');
+	expect(sourceLabels).toContain('S 1002 · node 2 · picks 5 · RMS 6.2 ms · invalid_weathering');
+	expect(sourceLabels).not.toContain('R 2001');
+
+	await page.getByTestId('refraction-qc-gather-endpoint-search').fill('node 45');
+	const filteredSourceLabels = (await page.getByTestId('refraction-qc-gather-endpoint')
+		.locator('option')
+		.allTextContents()).join('\n');
+	expect(filteredSourceLabels).toContain('S 1001 · node 45');
+	expect(filteredSourceLabels).not.toContain('S 1002');
+
+	await page.getByTestId('refraction-qc-gather-axis').selectOption('receiver');
+	const receiverLabels = (await page.getByTestId('refraction-qc-gather-endpoint')
+		.locator('option')
+		.allTextContents()).join('\n');
+	expect(receiverLabels).toContain('R 2001 · node 10 · picks 9 · RMS 2.0 ms · ok');
+	expect(receiverLabels).toContain('R 2002 · node 11 · picks 7 · RMS 3.4 ms · ok');
+	expect(receiverLabels).not.toContain('S 1001');
+
+	await page.getByTestId('refraction-qc-gather-endpoint').selectOption('R001');
+	await expect(page.getByTestId('refraction-qc-gather-endpoint-key')).toHaveText('R001');
+});
+
 test('refraction gather preview UI raw only fetches bounded API data', async ({ page }) => {
 	let requestPayload: Record<string, unknown> | null = null;
 	await page.route('**/statics/refraction/qc/gather-preview', async (route) => {
@@ -2301,6 +2416,38 @@ test('refraction gather preview UI raw only fetches bounded API data', async ({ 
 	});
 });
 
+test('refraction gather preview requires source or receiver station selection', async ({ page }) => {
+	let gatherRequests = 0;
+	await page.route('**/statics/refraction/qc/gather-preview', async (route) => {
+		gatherRequests += 1;
+		await route.fulfill({
+			status: 200,
+			contentType: 'application/json',
+			body: JSON.stringify(gatherPreviewPayload('refraction-gather-missing-endpoint')),
+		});
+	});
+	await page.route('**/statics/refraction/qc', async (route) => {
+		await route.fulfill({
+			status: 200,
+			contentType: 'application/json',
+			body: JSON.stringify(qcBundlePayload('refraction-gather-missing-endpoint')),
+		});
+	});
+
+	await loadRefractionQcBundle(page, 'refraction-gather-missing-endpoint');
+	await page.getByTestId('refraction-qc-view-gather-button').click();
+	await page.getByTestId('refraction-qc-gather-file-id').fill('raw-preview-file');
+	await page.getByTestId('refraction-qc-gather-load').click();
+
+	await expect(page.getByTestId('refraction-qc-gather-error')).toContainText('Source stationを選択してください');
+	expect(gatherRequests).toBe(0);
+
+	await page.getByTestId('refraction-qc-gather-axis').selectOption('receiver');
+	await page.getByTestId('refraction-qc-gather-load').click();
+	await expect(page.getByTestId('refraction-qc-gather-error')).toContainText('Receiver stationを選択してください');
+	expect(gatherRequests).toBe(0);
+});
+
 test('refraction gather preview UI requests midpoint CMP window through bounded API data', async ({ page }) => {
 	let requestPayload: Record<string, unknown> | null = null;
 	await page.route('**/statics/refraction/qc/gather-preview', async (route) => {
@@ -2321,6 +2468,8 @@ test('refraction gather preview UI requests midpoint CMP window through bounded 
 
 	await openGatherPreview(page, 'refraction-gather-cmp-window');
 	await page.getByTestId('refraction-qc-gather-axis').selectOption({ label: 'Midpoint/CMP window' });
+	await expect(page.getByTestId('refraction-qc-gather-endpoint')).toHaveCount(0);
+	await expect(page.getByTestId('refraction-qc-gather-key1')).toBeVisible();
 	await page.getByTestId('refraction-qc-gather-key1').fill('100');
 	await page.getByTestId('refraction-qc-gather-x0').fill('4');
 	await page.getByTestId('refraction-qc-gather-x1').fill('12');

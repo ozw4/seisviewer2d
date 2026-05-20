@@ -103,6 +103,8 @@
     maxPoints: DEFAULT_MAX_POINTS,
     gatherAxis: 'source',
     gatherDisplayMode: 'side_by_side',
+    gatherEndpointKey: '',
+    gatherEndpointSearch: '',
     gatherFileId: '',
     gatherKey1Byte: '',
     gatherKey2Byte: '',
@@ -1198,6 +1200,96 @@
   function staticEndpointRecords(view) {
     const records = Array.isArray(view?.records) ? view.records : [];
     return records.filter((record) => staticEndpointKind(record) && staticEndpointKey(record));
+  }
+
+  function gatherEndpointStationId(record, endpointKind) {
+    const stationValue = firstDefined(record, [
+      'station_id',
+      `${endpointKind}_station_id`,
+      endpointKind === 'source' ? 'shot_point' : 'receiver_point',
+      endpointKind === 'source' ? 'source_point' : 'receiver_station',
+      'station',
+      'point_id',
+    ]);
+    return String(stationValue ?? '').trim();
+  }
+
+  function gatherEndpointStatus(record) {
+    return textOrDash(firstDefined(record, [
+      'static_status',
+      'component_status',
+      'solution_status',
+      'datum_status',
+      'weathering_status',
+      'status',
+    ]));
+  }
+
+  function gatherEndpointCoordinateParts(record) {
+    const parts = [];
+    const x = toFiniteNumber(firstDefined(record, ['x_m', 'inline_m']));
+    const y = toFiniteNumber(firstDefined(record, ['y_m', 'crossline_m']));
+    const z = toFiniteNumber(firstDefined(record, ['surface_elevation_m', 'elevation_m', 'z_m']));
+    if (Number.isFinite(x)) parts.push(`x=${formatNumber(x, 1)}`);
+    if (Number.isFinite(y)) parts.push(`y=${formatNumber(y, 1)}`);
+    if (Number.isFinite(z)) parts.push(`z=${formatNumber(z, 1)}`);
+    return parts;
+  }
+
+  function gatherEndpointLabel(record, endpointKind, duplicateStations) {
+    const endpointKey = staticEndpointKey(record);
+    const stationId = gatherEndpointStationId(record, endpointKind);
+    const prefix = endpointKind === 'receiver' ? 'R' : 'S';
+    const title = `${prefix} ${stationId || endpointKey}`;
+    const parts = [title];
+    const nodeId = String(firstDefined(record, ['node_id']) ?? '').trim();
+    if (nodeId) {
+      parts.push(`node ${nodeId}`);
+    } else if (stationId && duplicateStations.has(stationId)) {
+      parts.push(...gatherEndpointCoordinateParts(record));
+    }
+    const pickCount = toFiniteNumber(firstDefined(record, ['pick_count', 'used_pick_count']));
+    if (Number.isFinite(pickCount)) parts.push(`picks ${formatNumber(pickCount, 0)}`);
+    const residualRms = toFiniteNumber(firstDefined(record, ['residual_rms_ms']));
+    if (Number.isFinite(residualRms)) parts.push(`RMS ${formatNumber(residualRms, 1)} ms`);
+    parts.push(gatherEndpointStatus(record));
+    return parts.filter(Boolean).join(' · ');
+  }
+
+  function buildGatherEndpointOptions(bundle, endpointKind) {
+    const componentView = viewByKey(bundle, 'static_components');
+    const qcView = viewByKey(bundle, STATIC_ENDPOINT_VIEW_KEY);
+    const componentRecords = staticEndpointRecords(componentView)
+      .filter((record) => staticEndpointKind(record) === endpointKind);
+    const qcByEndpointKey = new Map();
+    for (const record of staticEndpointRecords(qcView)) {
+      const key = staticEndpointKey(record);
+      if (key && !qcByEndpointKey.has(key)) qcByEndpointKey.set(key, record);
+    }
+    const mergedRecords = componentRecords.map((record) => ({
+      ...qcByEndpointKey.get(staticEndpointKey(record)),
+      ...record,
+    }));
+    const stationCounts = new Map();
+    for (const record of mergedRecords) {
+      const stationId = gatherEndpointStationId(record, endpointKind);
+      if (stationId) stationCounts.set(stationId, (stationCounts.get(stationId) || 0) + 1);
+    }
+    const duplicateStations = new Set(
+      Array.from(stationCounts.entries())
+        .filter(([, count]) => count > 1)
+        .map(([stationId]) => stationId),
+    );
+    return mergedRecords
+      .map((record) => ({
+        value: staticEndpointKey(record),
+        label: gatherEndpointLabel(record, endpointKind, duplicateStations),
+        stationId: gatherEndpointStationId(record, endpointKind),
+      }))
+      .sort((a, b) => (
+        String(a.stationId || '').localeCompare(String(b.stationId || ''), undefined, { numeric: true })
+        || a.value.localeCompare(b.value, undefined, { numeric: true })
+      ));
   }
 
   function staticTraceRecords(view) {
@@ -2796,9 +2888,10 @@
       payload.x0 = x0;
       payload.x1 = x1;
     } else {
-      const endpointKey = String(state.selectedEndpoint || '').trim();
+      const endpointKey = String(state.gatherEndpointKey || '').trim();
       if (!endpointKey) {
-        errors.push('Endpoint is required for source and receiver gathers.');
+        const label = state.gatherAxis === 'receiver' ? 'Receiver station' : 'Source station';
+        errors.push(`${label}を選択してください.`);
       }
       payload.endpoint_key = endpointKey;
     }
@@ -2855,6 +2948,91 @@
     return select;
   }
 
+  function createGatherEndpointControls() {
+    const endpointKind = state.gatherAxis === 'receiver' ? 'receiver' : 'source';
+    const label = endpointKind === 'receiver' ? 'Receiver station' : 'Source station';
+    const options = buildGatherEndpointOptions(state.qcBundle, endpointKind);
+    const hasSelectedOption = options.some((option) => option.value === state.gatherEndpointKey);
+    if (state.gatherEndpointKey && !hasSelectedOption) state.gatherEndpointKey = '';
+    const searchText = normalizedText(state.gatherEndpointSearch);
+    const filteredOptions = searchText
+      ? options.filter((option) => (
+        normalizedText(option.label).includes(searchText)
+        || normalizedText(option.value).includes(searchText)
+      ))
+      : options;
+
+    const search = makeGatherInput(
+      'search',
+      state.gatherEndpointSearch,
+      'refraction-qc-gather-endpoint-search',
+      (value) => { state.gatherEndpointSearch = value.trim(); render(); },
+    );
+    search.placeholder = `Search ${label.toLowerCase()}`;
+
+    const select = document.createElement('select');
+    select.dataset.testid = 'refraction-qc-gather-endpoint';
+    select.disabled = !options.length;
+    const placeholder = document.createElement('option');
+    placeholder.value = '';
+    placeholder.textContent = options.length ? `Select ${label.toLowerCase()}` : `No ${label.toLowerCase()} candidates`;
+    select.appendChild(placeholder);
+    for (const optionData of filteredOptions) {
+      const option = document.createElement('option');
+      option.value = optionData.value;
+      option.textContent = optionData.label;
+      select.appendChild(option);
+    }
+    select.value = state.gatherEndpointKey;
+    select.addEventListener('change', () => {
+      state.gatherEndpointKey = select.value;
+      render();
+    });
+
+    const fragment = document.createDocumentFragment();
+    fragment.append(
+      makeGatherField(`${label} search`, search),
+      makeGatherField(label, select),
+    );
+    if (!options.length || (options.length && !filteredOptions.length)) {
+      const empty = document.createElement('p');
+      empty.className = 'refraction-qc-placeholder refraction-qc-gather-endpoint-empty';
+      empty.dataset.testid = 'refraction-qc-gather-endpoint-empty';
+      empty.textContent = !options.length
+        ? `No ${label.toLowerCase()} candidates are present in static components.`
+        : `No ${label.toLowerCase()} candidates match the search.`;
+      fragment.appendChild(empty);
+    }
+    return fragment;
+  }
+
+  function createGatherEndpointDetails() {
+    const details = document.createElement('details');
+    details.className = 'refraction-qc-gather-details';
+    details.dataset.testid = 'refraction-qc-gather-endpoint-details';
+    const summary = document.createElement('summary');
+    summary.textContent = 'Advanced details';
+    const row = document.createElement('div');
+    row.className = 'refraction-qc-gather-detail-row';
+    const label = document.createElement('span');
+    label.textContent = 'endpoint_key';
+    const value = document.createElement('code');
+    value.dataset.testid = 'refraction-qc-gather-endpoint-key';
+    value.textContent = state.gatherEndpointKey || 'not selected';
+    const copy = document.createElement('button');
+    copy.type = 'button';
+    copy.textContent = 'Copy';
+    copy.disabled = !state.gatherEndpointKey;
+    copy.dataset.testid = 'refraction-qc-gather-endpoint-copy';
+    copy.addEventListener('click', async () => {
+      if (!state.gatherEndpointKey || !navigator.clipboard?.writeText) return;
+      await navigator.clipboard.writeText(state.gatherEndpointKey);
+    });
+    row.append(label, value, copy);
+    details.append(summary, row);
+    return details;
+  }
+
   function createGatherPreviewControls() {
     const context = currentGatherContext();
     const form = document.createElement('form');
@@ -2872,6 +3050,8 @@
       Object.entries(GATHER_AXIS_LABELS),
       (value) => {
         state.gatherAxis = value;
+        state.gatherEndpointKey = '';
+        state.gatherEndpointSearch = '';
         render();
       },
     );
@@ -2933,6 +3113,8 @@
           { min: 0, step: 1 },
         )),
       );
+    } else {
+      form.appendChild(createGatherEndpointControls());
     }
 
     form.append(
@@ -2978,6 +3160,9 @@
     loadButton.dataset.testid = 'refraction-qc-gather-load';
     actions.appendChild(loadButton);
     form.appendChild(actions);
+    if (state.gatherAxis !== 'section') {
+      form.appendChild(createGatherEndpointDetails());
+    }
     return form;
   }
 
@@ -3298,6 +3483,7 @@
     content.appendChild(createKv([
       ['Selected endpoint kind', state.selectedEndpointKind],
       ['Endpoint', state.selectedEndpoint],
+      ['Gather endpoint', state.gatherEndpointKey],
       ['Cell', selectedCellLabel(state.selectedCell)],
       ['Layer', state.selectedLayerKind],
     ]));
