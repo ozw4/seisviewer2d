@@ -417,6 +417,10 @@ def _summary_from_qc(
         'status': 'ok',
         'job_state': JobManager.normalize_status_value(job.get('status')),
     }
+    for key in ('file_id', 'key1_byte', 'key2_byte'):
+        value = job.get(key)
+        if value not in (None, ''):
+            summary[key] = value
     for key in (
         'artifact_version',
         'method',

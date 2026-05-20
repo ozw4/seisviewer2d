@@ -330,8 +330,17 @@ function staticEndpointQcBundle(jobId = 'job-static-endpoint') {
 }
 
 function gatherPreviewQcBundle(jobId = 'job-gather') {
+  const base = qcBundle(jobId);
   return {
-    ...qcBundle(jobId),
+    ...base,
+    summary: {
+      ...base.summary,
+      request: {
+        file_id: 'line-a.sgy',
+        key1_byte: 189,
+        key2_byte: 193,
+      },
+    },
     available_views: ['static_components', 'static_component_qc_endpoint'],
     views: {
       static_components: {
@@ -552,6 +561,9 @@ afterEach(() => {
   delete window.refractionQcUI;
   delete window.refractionQcState;
   delete window.SeisViewerState;
+  try {
+    delete window.navigator.clipboard;
+  } catch (_) {}
   vi.unstubAllGlobals();
   vi.restoreAllMocks();
 });
@@ -670,11 +682,16 @@ test('Refraction QC renders controls only for the selected view', () => {
   expect(document.querySelector('[data-testid="refraction-qc-gather-axis"]')).toBeNull();
 });
 
-test('Gather Preview keeps internal context in the advanced drawer', () => {
+test('Gather Preview keeps internal context in the advanced drawer', async () => {
+  const writeText = vi.fn(async () => {});
+  Object.defineProperty(window.navigator, 'clipboard', {
+    value: { writeText },
+    configurable: true,
+  });
   loadRefractionQcScript();
-  window.currentFileId = 'line-a.sgy';
-  window.currentKey1Byte = 189;
-  window.currentKey2Byte = 193;
+  window.currentFileId = 'stale-line.sgy';
+  window.currentKey1Byte = 17;
+  window.currentKey2Byte = 21;
   window.refractionQcState.qcBundle = gatherPreviewQcBundle();
 
   window.refractionQcUI.setSelectedView('gather_preview');
@@ -695,23 +712,31 @@ test('Gather Preview keeps internal context in the advanced drawer', () => {
     .toBe('189');
   expect(details.querySelector('[data-testid="refraction-qc-gather-key2-byte-value"]').textContent)
     .toBe('193');
-  expect(details.querySelector('[data-testid="refraction-qc-gather-endpoint-key"]').textContent)
+  const endpointValue = details.querySelector('[data-testid="refraction-qc-gather-endpoint-key"]');
+  const endpointCopy = endpointValue.closest('.refraction-qc-gather-detail-row').querySelector('button');
+  expect(endpointValue.textContent)
     .toBe('-');
+  expect(endpointCopy.disabled).toBe(true);
 
   const station = document.querySelector('[data-testid="refraction-qc-gather-endpoint"]');
   station.value = 'S 1001 · picks 96 · RMS 12.4 ms · ok';
   station.dispatchEvent(new Event('input', { bubbles: true }));
   expect(window.refractionQcState.gatherEndpointKey).toBe('1001');
-  expect(details.querySelector('[data-testid="refraction-qc-gather-endpoint-key"]').textContent)
+  expect(endpointValue.textContent)
     .toBe('1001');
+  expect(endpointCopy.disabled).toBe(false);
+  endpointCopy.click();
+  await flushAsyncWork();
+  expect(writeText).toHaveBeenCalledWith('1001');
   expect(document.querySelector('[data-testid="refraction-qc-filter-chip"][data-filter="gather-endpoint"]').textContent)
     .toContain('Gather 1001');
 
   station.value = 'S 9999';
   station.dispatchEvent(new Event('input', { bubbles: true }));
   expect(window.refractionQcState.gatherEndpointKey).toBe('');
-  expect(details.querySelector('[data-testid="refraction-qc-gather-endpoint-key"]').textContent)
+  expect(endpointValue.textContent)
     .toBe('-');
+  expect(endpointCopy.disabled).toBe(true);
   expect(document.querySelector('[data-testid="refraction-qc-filter-chip"][data-filter="gather-endpoint"]')).toBeNull();
 
   const axis = document.querySelector('[data-testid="refraction-qc-gather-axis"]');
@@ -722,6 +747,46 @@ test('Gather Preview keeps internal context in the advanced drawer', () => {
   expect(document.querySelector('[data-testid="refraction-qc-gather-x0"]')).not.toBeNull();
   expect(document.querySelector('[data-testid="refraction-qc-gather-x1"]')).not.toBeNull();
   expect(document.querySelector('[data-testid="refraction-qc-gather-endpoint"]')).toBeNull();
+});
+
+test('Gather Preview clears stale preview output when the selected station changes', () => {
+  installPlotlyClickStub();
+  loadRefractionQcScript();
+  window.refractionQcState.qcBundle = gatherPreviewQcBundle();
+  window.refractionQcState.gatherEndpointKey = '1001';
+  window.refractionQcState.gatherPreview = {
+    job_id: 'job-gather',
+    gather: { axis: 'source', endpoint_key: '1001' },
+    window: {
+      requested_trace_count: 2,
+      returned_trace_count: 2,
+      requested_sample_count: 2,
+      returned_sample_count: 2,
+    },
+    dt_s: 0.001,
+    shape: [2, 2],
+    x_indices: [0, 1],
+    offset_m: [100, 200],
+    raw_samples: [[1, 2], [3, 4]],
+    corrected_samples: [[1, 1], [2, 2]],
+    corrected_samples_source: 'corrected-tracestore',
+    corrected_window_ref: { status: 'ok' },
+    sign_convention: 'positive static shifts delay traces',
+    overlay_status: { first_break_fit: 'ok' },
+  };
+
+  window.refractionQcUI.setSelectedView('gather_preview');
+  expect(document.querySelector('[data-testid="refraction-qc-gather-raw-plot"]')).not.toBeNull();
+
+  const station = document.querySelector('[data-testid="refraction-qc-gather-endpoint"]');
+  station.value = 'S 9999';
+  station.dispatchEvent(new Event('input', { bubbles: true }));
+
+  expect(window.refractionQcState.gatherEndpointKey).toBe('');
+  expect(window.refractionQcState.gatherPreview).toBeNull();
+  expect(document.querySelector('[data-testid="refraction-qc-gather-raw-plot"]')).toBeNull();
+  expect(document.querySelector('[data-view-content="gather_preview"]').textContent)
+    .toContain('Choose a station and preview the gather.');
 });
 
 test('Gather Preview selects a source station from one searchable control and previews it', async () => {

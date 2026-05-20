@@ -311,6 +311,53 @@
     return searchParamValue(searchKey) || safeLocalStorageValue(storageKey || searchKey) || fallback;
   }
 
+  function positiveIntegerText(value) {
+    const text = String(value ?? '').trim();
+    const parsed = Number(text);
+    if (!text || !Number.isInteger(parsed) || parsed < 1) return '';
+    return text;
+  }
+
+  function gatherContextFromQcBundle(bundle) {
+    if (!bundle || typeof bundle !== 'object') return { fileId: '', key1Byte: '', key2Byte: '' };
+    const summary = bundle.summary && typeof bundle.summary === 'object' ? bundle.summary : {};
+    const request = summary.request && typeof summary.request === 'object' ? summary.request : {};
+    return {
+      fileId: String(firstDefined(request, ['file_id', 'input_file_id', 'source_file_id', 'raw_file_id'])
+        ?? firstDefined(summary, ['file_id', 'input_file_id', 'source_file_id', 'raw_file_id'])
+        ?? firstDefined(bundle, ['file_id', 'input_file_id', 'source_file_id', 'raw_file_id'])
+        ?? '').trim(),
+      key1Byte: positiveIntegerText(firstDefined(request, ['key1_byte'])
+        ?? firstDefined(summary, ['key1_byte'])
+        ?? firstDefined(bundle, ['key1_byte'])),
+      key2Byte: positiveIntegerText(firstDefined(request, ['key2_byte'])
+        ?? firstDefined(summary, ['key2_byte'])
+        ?? firstDefined(bundle, ['key2_byte'])),
+    };
+  }
+
+  function syncGatherContextFromBundle(bundle) {
+    const context = gatherContextFromQcBundle(bundle);
+    let changed = false;
+    if (context.fileId && state.gatherFileId !== context.fileId) {
+      state.gatherFileId = context.fileId;
+      changed = true;
+    }
+    if (context.key1Byte && state.gatherKey1Byte !== context.key1Byte) {
+      state.gatherKey1Byte = context.key1Byte;
+      changed = true;
+    }
+    if (context.key2Byte && state.gatherKey2Byte !== context.key2Byte) {
+      state.gatherKey2Byte = context.key2Byte;
+      changed = true;
+    }
+    if (changed && state.gatherPreview) {
+      state.gatherPreview = null;
+      state.gatherError = null;
+      gatherRequestSerial += 1;
+    }
+  }
+
   function normalizePickMapTargetCandidate(candidate, options = {}) {
     if (!candidate || typeof candidate !== 'object') return null;
     if (options.requireLoaded && candidate.isFileLoaded === false) return null;
@@ -2339,10 +2386,7 @@
     const cleanKey = String(endpointKey || '').trim();
     if (!cleanKey) return;
     state.gatherAxis = endpointKind === 'receiver' ? 'receiver' : 'source';
-    state.gatherEndpointKey = cleanKey;
-    state.gatherEndpointSearch = '';
-    state.gatherPreview = null;
-    state.gatherError = null;
+    updateGatherEndpointSelection(cleanKey, '');
     setSelectedView('gather_preview');
     if (options.autoLoad !== false && gatherPreviewInputsReady()) loadGatherPreview();
   }
@@ -3886,19 +3930,33 @@
       ? Math.max(0, Math.ceil(Math.max(Number(xRange[0]), Number(xRange[1]))))
       : NaN;
     const fileIdInput = document.getElementById('file_id');
+    const bundleContext = gatherContextFromQcBundle(state.qcBundle);
+    const hasBundle = Boolean(state.qcBundle);
 
     return {
-      fileId: state.gatherFileId
-        || String(fileIdInput?.value || '')
-        || String(window.currentFileId || '')
-        || searchOrStorageValue('file_id', 'file_id')
-        || '',
-      key1Byte: state.gatherKey1Byte
-        || String(window.currentKey1Byte || '')
-        || searchOrStorageValue('key1_byte', 'key1_byte', '189'),
-      key2Byte: state.gatherKey2Byte
-        || String(window.currentKey2Byte || '')
-        || searchOrStorageValue('key2_byte', 'key2_byte', '193'),
+      fileId: hasBundle
+        ? bundleContext.fileId
+        : (
+          state.gatherFileId
+          || String(fileIdInput?.value || '')
+          || String(window.currentFileId || '')
+          || searchOrStorageValue('file_id', 'file_id')
+          || ''
+        ),
+      key1Byte: hasBundle
+        ? bundleContext.key1Byte
+        : (
+          state.gatherKey1Byte
+          || String(window.currentKey1Byte || '')
+          || searchOrStorageValue('key1_byte', 'key1_byte', '189')
+        ),
+      key2Byte: hasBundle
+        ? bundleContext.key2Byte
+        : (
+          state.gatherKey2Byte
+          || String(window.currentKey2Byte || '')
+          || searchOrStorageValue('key2_byte', 'key2_byte', '193')
+        ),
       key1: state.gatherSectionKey1
         || searchParamValue('key1')
         || (key1FromViewer !== undefined && key1FromViewer !== null ? String(key1FromViewer) : ''),
@@ -4061,7 +4119,30 @@
       endpointKey.textContent = state.gatherAxis === 'section'
         ? 'not used'
         : textOrDash(state.gatherEndpointKey);
+      syncGatherDetailCopyButton(endpointKey);
     }
+    if (state.selectedView === 'gather_preview') {
+      const viewDef = VIEW_DEFS.find((view) => view.id === 'gather_preview');
+      if (viewDef) renderViewContent(viewDef);
+    }
+  }
+
+  function clearGatherPreviewPayload() {
+    if (state.gatherPreview || state.gatherError || state.gatherLoading) {
+      state.gatherPreview = null;
+      state.gatherError = null;
+      state.gatherLoading = false;
+      gatherRequestSerial += 1;
+    }
+  }
+
+  function updateGatherEndpointSelection(endpointKey, searchText) {
+    const cleanKey = String(endpointKey || '').trim();
+    const changed = state.gatherEndpointKey !== cleanKey;
+    state.gatherEndpointKey = cleanKey;
+    if (searchText !== undefined) state.gatherEndpointSearch = searchText;
+    if (changed) clearGatherPreviewPayload();
+    return changed;
   }
 
   function createGatherEndpointControls() {
@@ -4096,8 +4177,7 @@
         state.gatherEndpointSearch = value;
         const match = findGatherEndpointOption(options, value);
         const nextEndpointKey = match ? match.value : '';
-        if (state.gatherEndpointKey !== nextEndpointKey) {
-          state.gatherEndpointKey = nextEndpointKey;
+        if (updateGatherEndpointSelection(nextEndpointKey)) {
           renderGatherEndpointSelectionState();
         }
       },
@@ -4108,11 +4188,9 @@
     input.addEventListener('change', () => {
       const match = findGatherEndpointOption(options, input.value);
       if (match) {
-        state.gatherEndpointKey = match.value;
-        state.gatherEndpointSearch = match.label;
+        updateGatherEndpointSelection(match.value, match.label);
       } else {
-        state.gatherEndpointKey = '';
-        state.gatherEndpointSearch = input.value;
+        updateGatherEndpointSelection('', input.value);
       }
       render();
     });
@@ -4129,6 +4207,19 @@
     return fragment;
   }
 
+  function gatherDetailCopyText(valueElement) {
+    const text = String(valueElement?.textContent || '').trim();
+    return text && text !== '-' ? text : '';
+  }
+
+  function syncGatherDetailCopyButton(valueElement) {
+    const row = valueElement?.closest?.('.refraction-qc-gather-detail-row');
+    const copy = row?.querySelector?.('button');
+    if (!copy) return;
+    const canCopy = typeof navigator !== 'undefined' && navigator.clipboard?.writeText;
+    copy.disabled = !canCopy || !gatherDetailCopyText(valueElement);
+  }
+
   function createGatherDetailRow(labelText, valueText, testId) {
     const row = document.createElement('div');
     row.className = 'refraction-qc-gather-detail-row';
@@ -4141,10 +4232,11 @@
     copy.type = 'button';
     copy.textContent = 'Copy';
     const canCopy = typeof navigator !== 'undefined' && navigator.clipboard?.writeText;
-    copy.disabled = !valueText || !canCopy;
+    copy.disabled = !canCopy || !gatherDetailCopyText(value);
     copy.addEventListener('click', async () => {
-      if (!valueText || !canCopy) return;
-      await navigator.clipboard.writeText(String(valueText));
+      const currentValue = gatherDetailCopyText(value);
+      if (!currentValue || !canCopy) return;
+      await navigator.clipboard.writeText(currentValue);
     });
     row.append(label, value, copy);
     return row;
@@ -4198,8 +4290,7 @@
       Object.entries(GATHER_AXIS_LABELS),
       (value) => {
         state.gatherAxis = value;
-        state.gatherEndpointKey = '';
-        state.gatherEndpointSearch = '';
+        clearGatherPreviewFilter();
         render();
       },
     );
@@ -6336,8 +6427,10 @@
         state.pickMapError = null;
       }
       state.qcBundle = bundle;
+      syncGatherContextFromBundle(bundle);
       if (previousBundleJobId && bundleJobId && previousBundleJobId !== bundleJobId) {
         resetJobScopedFilters();
+        syncGatherContextFromBundle(bundle);
       }
       if (state.gatherPreview && state.gatherPreview.job_id !== bundle.job_id) {
         state.gatherPreview = null;

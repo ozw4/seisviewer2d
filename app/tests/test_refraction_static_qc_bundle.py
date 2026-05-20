@@ -132,6 +132,9 @@ def test_refraction_static_qc_bundle_returns_summary_and_artifact_refs(
     assert payload['sign_convention'] == 'corrected(t) = raw(t - shift_s)'
     assert payload['coordinate_mode'] == 'line_2d_projected'
     assert payload['summary']['status'] == 'ok'
+    assert payload['summary']['file_id'] == 'file-1'
+    assert payload['summary']['key1_byte'] == 189
+    assert payload['summary']['key2_byte'] == 193
     assert payload['summary']['workflow'] == 'refraction_statics'
     assert payload['artifacts']['first_break_residuals'] == FIRST_BREAK_RESIDUALS_CSV_NAME
     assert 'summary' in payload['available_views']
