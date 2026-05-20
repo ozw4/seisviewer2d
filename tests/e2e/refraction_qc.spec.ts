@@ -934,6 +934,98 @@ function gatherPreviewPayload(jobId: string, options: {
 	};
 }
 
+function cellDrilldownPayload(jobId: string, options: {
+	cellIx?: number;
+	cellIy?: number;
+	velocity?: number;
+	status?: string;
+	capped?: boolean;
+} = {}) {
+	const cellIx = options.cellIx ?? 1;
+	const cellIy = options.cellIy ?? 0;
+	const velocity = options.velocity ?? 2500;
+	const capped = options.capped ?? true;
+	return {
+		job_id: jobId,
+		statics_kind: 'refraction',
+		sign_convention: 'corrected(t) = raw(t - shift_s)',
+		drilldown_kind: 'cell',
+		target: {
+			kind: 'cell',
+			layer_kind: 'v2_t1',
+			cell_ix: cellIx,
+			cell_iy: cellIy,
+		},
+		max_observations: 200,
+		cell: {
+			layer_kind: 'v2_t1',
+			cell_ix: cellIx,
+			cell_iy: cellIy,
+			cell_id: cellIy * 2 + cellIx,
+			cell_artifact: 'refraction_refractor_velocity_cells.csv',
+			row: {
+				velocity_status: options.status ?? 'ok',
+			},
+		},
+		velocity: {
+			velocity_m_s: velocity,
+			velocity_status: options.status ?? 'ok',
+		},
+		fold: {
+			n_observations: 4,
+			n_used_observations: 3,
+			n_rejected_observations: 1,
+		},
+		endpoint_counts: {
+			source_count: 2,
+			receiver_count: 1,
+		},
+		residual_summary: {
+			total_count: 4,
+			used_count: 3,
+			rejected_count: 1,
+			cell_residual_rms_ms: 16.2,
+			used_rms_ms: 15.8,
+			all_rms_ms: 16.2,
+		},
+		observations: {
+			total_count: capped ? 4 : 3,
+			returned_count: 3,
+			capped,
+			cap_method: 'first_n_sorted_by_observation_index',
+			records: [
+				{
+					observation_index: 10,
+					trace_index_sorted: 12345,
+					source_endpoint_key: 'S002',
+					receiver_endpoint_key: 'R002',
+					residual_time_ms: 20.0,
+					used_in_solve: true,
+					status: 'ok',
+				},
+				{
+					observation_index: 11,
+					trace_index_sorted: 12346,
+					source_endpoint_key: 'S002',
+					receiver_endpoint_key: 'R002',
+					residual_time_ms: 10.0,
+					used_in_solve: true,
+					status: 'ok',
+				},
+				{
+					observation_index: 12,
+					trace_index_sorted: 12347,
+					source_endpoint_key: 'S003',
+					receiver_endpoint_key: 'R002',
+					residual_time_ms: -18.0,
+					used_in_solve: false,
+					status: 'rejected',
+				},
+			],
+		},
+	};
+}
+
 async function loadRefractionQcBundle(page: Page, jobId: string) {
 	await openRefractionQcTab(page);
 	await page.getByTestId('refraction-qc-job-id').fill(jobId);
@@ -2755,6 +2847,162 @@ test('3D cell map click selects cell', async ({ page }) => {
 		cell_iy: 0,
 		layer_kind: 'v2_t1',
 	});
+});
+
+test('3D cell map click loads drilldown panel and previews contributing endpoint gather', async ({ page }) => {
+	const drilldownRequests: Array<Record<string, any>> = [];
+	const gatherRequests: Array<Record<string, any>> = [];
+	await page.route('**/statics/refraction/qc/drilldown', async (route) => {
+		const request = JSON.parse(route.request().postData() || '{}');
+		drilldownRequests.push(request);
+		await route.fulfill({
+			status: 200,
+			contentType: 'application/json',
+			body: JSON.stringify(cellDrilldownPayload('refraction-job-cell-drilldown')),
+		});
+	});
+	await page.route('**/statics/refraction/qc/gather-preview', async (route) => {
+		gatherRequests.push(JSON.parse(route.request().postData() || '{}'));
+		await route.fulfill({
+			status: 200,
+			contentType: 'application/json',
+			body: JSON.stringify(gatherPreviewPayload('refraction-job-cell-drilldown')),
+		});
+	});
+	await page.route('**/statics/refraction/qc', async (route) => {
+		await route.fulfill({
+			status: 200,
+			contentType: 'application/json',
+			body: JSON.stringify(grid3dQcBundlePayload('refraction-job-cell-drilldown')),
+		});
+	});
+
+	await page.goto('/refraction-qc?file_id=raw-preview-file&key1_byte=9&key2_byte=13');
+	await expect(page.getByTestId('refraction-qc-panel')).toBeVisible();
+	await page.getByTestId('refraction-qc-job-id').fill('refraction-job-cell-drilldown');
+	await page.getByTestId('refraction-qc-load').click();
+	await expect(page.getByTestId('refraction-qc-status')).toContainText('Loaded refraction-job-cell-drilldown');
+	await page.getByTestId('refraction-qc-view-cells-button').click();
+	await expect.poll(async () => cellMapPlotSummary(page)).toMatchObject({
+		z: [
+			[2400, 2500],
+			[null, 2600],
+		],
+	});
+
+	await emitCellMapClick(page, 1, 0);
+
+	await expect.poll(() => drilldownRequests.length).toBe(1);
+	expect(drilldownRequests[0]).toMatchObject({
+		job_id: 'refraction-job-cell-drilldown',
+		target: {
+			kind: 'cell',
+			layer_kind: 'v2_t1',
+			cell_ix: 1,
+			cell_iy: 0,
+		},
+		max_observations: 200,
+	});
+	await expect(page.getByTestId('refraction-qc-cell-drilldown')).toContainText('Cell drilldown');
+	await expect(page.getByTestId('refraction-qc-cell-drilldown')).toContainText('ix 1, iy 0');
+	await expect(page.getByTestId('refraction-qc-cell-drilldown')).toContainText('2500.00 m/s');
+	await expect(page.getByTestId('refraction-qc-cell-drilldown')).toContainText('3 of 4');
+	await expect(page.getByTestId('refraction-qc-cell-drilldown-capped')).toContainText('max_observations');
+	await expect(page.getByTestId('refraction-qc-cell-drilldown-endpoints')).toContainText('S002');
+	await expect(page.getByTestId('refraction-qc-cell-drilldown-endpoints')).toContainText('R002');
+	await expect(page.getByTestId('refraction-qc-cell-drilldown-picks')).toContainText('trace 12345');
+
+	await page.getByRole('button', { name: 'Preview source gather' }).first().click();
+
+	await expect(page.getByTestId('refraction-qc-view-gather')).toBeVisible();
+	await expect(page.getByTestId('refraction-qc-gather-axis')).toHaveValue('source');
+	await expect(page.getByTestId('refraction-qc-gather-endpoint-key')).toHaveText('S002');
+	await expect.poll(() => gatherRequests.length).toBe(1);
+	expect(gatherRequests[0]).toMatchObject({
+		job_id: 'refraction-job-cell-drilldown',
+		file_id: 'raw-preview-file',
+		key1_byte: 9,
+		key2_byte: 13,
+		gather_axis: 'source',
+		endpoint_key: 'S002',
+	});
+});
+
+test('3D cell map drilldown failure keeps map selected and shows reason', async ({ page }) => {
+	await page.route('**/statics/refraction/qc/drilldown', async (route) => {
+		await route.fulfill({
+			status: 409,
+			contentType: 'application/json',
+			body: JSON.stringify({ detail: 'Refraction QC drilldown requires artifact refraction_first_break_fit_qc.csv' }),
+		});
+	});
+	await page.route('**/statics/refraction/qc', async (route) => {
+		await route.fulfill({
+			status: 200,
+			contentType: 'application/json',
+			body: JSON.stringify(grid3dQcBundlePayload('refraction-job-cell-drilldown-error')),
+		});
+	});
+
+	await loadRefractionQcBundle(page, 'refraction-job-cell-drilldown-error');
+	await page.getByTestId('refraction-qc-view-cells-button').click();
+	await expect(page.getByTestId('refraction-qc-cell-map-plot')).toBeVisible();
+	await emitCellMapClick(page, 1, 0);
+
+	await expect(page.getByTestId('refraction-qc-cell')).toHaveValue('1,0');
+	await expect(page.getByTestId('refraction-qc-cell-map-plot')).toBeVisible();
+	await expect(page.getByTestId('refraction-qc-cell-drilldown-error')).toContainText('requires artifact');
+});
+
+test('3D cell map drilldown ignores stale rapid-click response', async ({ page }) => {
+	const drilldownRequests: Array<Record<string, any>> = [];
+	await page.route('**/statics/refraction/qc/drilldown', async (route) => {
+		const request = JSON.parse(route.request().postData() || '{}');
+		drilldownRequests.push(request);
+		if (request.target?.cell_ix === 1) {
+			await new Promise((resolve) => setTimeout(resolve, 350));
+		}
+		await route.fulfill({
+			status: 200,
+			contentType: 'application/json',
+			body: JSON.stringify(cellDrilldownPayload('refraction-job-cell-stale', {
+				cellIx: request.target?.cell_ix,
+				cellIy: request.target?.cell_iy,
+				velocity: request.target?.cell_ix === 1 ? 2500 : 2400,
+				status: request.target?.cell_ix === 1 ? 'stale_response' : 'ok',
+				capped: false,
+			})),
+		});
+	});
+	await page.route('**/statics/refraction/qc', async (route) => {
+		await route.fulfill({
+			status: 200,
+			contentType: 'application/json',
+			body: JSON.stringify(grid3dQcBundlePayload('refraction-job-cell-stale')),
+		});
+	});
+
+	await loadRefractionQcBundle(page, 'refraction-job-cell-stale');
+	await page.getByTestId('refraction-qc-view-cells-button').click();
+	await expect.poll(async () => cellMapPlotSummary(page)).toMatchObject({
+		z: [
+			[2400, 2500],
+			[null, 2600],
+		],
+	});
+
+	await emitCellMapClick(page, 1, 0);
+	await expect(page.getByTestId('refraction-qc-cell')).toHaveValue('1,0');
+	await expect.poll(async () => cellMapPlotSummary(page)).toMatchObject({
+		traceNames: ['Velocity', 'Flagged cells', 'Selected cell'],
+	});
+	await emitCellMapClick(page, 0, 0);
+
+	await expect.poll(() => drilldownRequests.length).toBe(2);
+	await page.waitForTimeout(450);
+	await expect(page.getByTestId('refraction-qc-cell-drilldown')).toContainText('ix 0, iy 0');
+	await expect(page.getByTestId('refraction-qc-cell-drilldown')).toContainText('2400.00 m/s');
+	await expect(page.getByTestId('refraction-qc-cell-drilldown')).not.toContainText('stale_response');
 });
 
 test('3D cell map unavailable for global velocity', async ({ page }) => {

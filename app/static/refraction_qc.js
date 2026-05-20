@@ -7,6 +7,7 @@
   const STATIC_PICK_STORE = 'pick_npz_blobs';
   const MAX_RECENT_JOBS = 8;
   const DEFAULT_MAX_POINTS = 20000;
+  const QC_DRILLDOWN_MAX_OBSERVATIONS = 200;
   const PICK_MAP_DRAFT_GEOMETRY_HEADER_FIELDS = [
     'source_id_byte',
     'receiver_id_byte',
@@ -100,6 +101,10 @@
     selectedEndpointKind: 'source',
     selectedCell: null,
     selectedCellMapQuantity: 'velocity',
+    qcDrilldown: null,
+    qcDrilldownLoading: false,
+    qcDrilldownError: null,
+    qcDrilldownTarget: null,
     selectedEndpoint: '',
     selectedTraceIndex: '',
     selectedProfileGroup: 'time_terms',
@@ -146,6 +151,7 @@
   let dom = null;
   let requestSerial = 0;
   let gatherRequestSerial = 0;
+  let qcDrilldownRequestSerial = 0;
   let pickMapRequestSerial = 0;
   let stationStructureRequestSerial = 0;
   let pickMapCanvasCleanup = null;
@@ -2002,6 +2008,51 @@
     }
   }
 
+  async function loadQcDrilldown(target) {
+    const jobId = String(state.selectedJobId || dom?.jobId?.value || '').trim();
+    const requestTarget = target && typeof target === 'object' ? { ...target } : null;
+    const serial = ++qcDrilldownRequestSerial;
+    state.qcDrilldownTarget = requestTarget;
+    state.qcDrilldown = null;
+    state.qcDrilldownError = null;
+    state.qcDrilldownLoading = true;
+    render();
+
+    if (!jobId || !requestTarget) {
+      if (serial !== qcDrilldownRequestSerial) return;
+      state.qcDrilldownLoading = false;
+      state.qcDrilldownError = !jobId ? 'Job ID is required.' : 'Cell drilldown target is required.';
+      render();
+      return;
+    }
+
+    try {
+      const response = await fetch('/statics/refraction/qc/drilldown', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          job_id: jobId,
+          target: requestTarget,
+          max_observations: QC_DRILLDOWN_MAX_OBSERVATIONS,
+        }),
+      });
+      if (!response.ok) throw new Error(await readError(response, 'Cell drilldown request'));
+      const payload = await response.json();
+      if (serial !== qcDrilldownRequestSerial) return;
+      state.qcDrilldown = payload;
+      state.qcDrilldownError = null;
+    } catch (error) {
+      if (serial !== qcDrilldownRequestSerial) return;
+      state.qcDrilldown = null;
+      state.qcDrilldownError = error instanceof Error ? error.message : String(error);
+    } finally {
+      if (serial === qcDrilldownRequestSerial) {
+        state.qcDrilldownLoading = false;
+        render();
+      }
+    }
+  }
+
   function createFirstBreakPickActionButton(label, disabledReason, onClick) {
     const button = document.createElement('button');
     button.type = 'button';
@@ -2027,6 +2078,240 @@
       button.addEventListener('click', onClick);
     }
     return button;
+  }
+
+  function drilldownNumber(value) {
+    const number = toFiniteNumber(value);
+    return Number.isFinite(number) ? number : NaN;
+  }
+
+  function drilldownMetric(value, digits, unit = '') {
+    const number = drilldownNumber(value);
+    if (!Number.isFinite(number)) return '-';
+    const formatted = formatNumber(number, digits);
+    return unit ? `${formatted} ${unit}` : formatted;
+  }
+
+  function drilldownResidualMs(record) {
+    return finiteMetric(
+      record,
+      ['residual_time_ms', 'residual_ms'],
+      ['residual_time_s', 'residual_s'],
+      1000.0,
+    );
+  }
+
+  function endpointCandidatesFromCellDrilldown(payload) {
+    const records = Array.isArray(payload?.observations?.records)
+      ? payload.observations.records
+      : [];
+    const byEndpoint = new Map();
+    for (const record of records) {
+      for (const endpointKind of ['source', 'receiver']) {
+        const endpointKey = String(firstDefined(record, [`${endpointKind}_endpoint_key`, `${endpointKind}_id`]) || '').trim();
+        if (!endpointKey) continue;
+        const key = `${endpointKind}|${endpointKey}`;
+        if (!byEndpoint.has(key)) {
+          byEndpoint.set(key, {
+            endpointKind,
+            endpointKey,
+            pickCount: 0,
+            residualSquares: [],
+          });
+        }
+        const candidate = byEndpoint.get(key);
+        candidate.pickCount += 1;
+        const residualMs = drilldownResidualMs(record);
+        if (Number.isFinite(residualMs)) candidate.residualSquares.push(residualMs * residualMs);
+      }
+    }
+    return Array.from(byEndpoint.values())
+      .map((candidate) => ({
+        endpointKind: candidate.endpointKind,
+        endpointKey: candidate.endpointKey,
+        pickCount: candidate.pickCount,
+        residualRmsMs: candidate.residualSquares.length
+          ? Math.sqrt(candidate.residualSquares.reduce((total, value) => total + value, 0) / candidate.residualSquares.length)
+          : NaN,
+      }))
+      .sort((a, b) => (
+        a.endpointKind.localeCompare(b.endpointKind)
+        || b.pickCount - a.pickCount
+        || a.endpointKey.localeCompare(b.endpointKey)
+      ));
+  }
+
+  function cellDrilldownTargetFromSelectedCell(cell) {
+    if (!cell || cell.cell_ix === undefined || cell.cell_iy === undefined) return null;
+    return {
+      kind: 'cell',
+      layer_kind: cell.layer_kind || 'v2_t1',
+      cell_ix: Number(cell.cell_ix),
+      cell_iy: Number(cell.cell_iy),
+    };
+  }
+
+  function cellEndpointDisplayName(endpointKind, endpointKey) {
+    const cleanKey = String(endpointKey || '').trim();
+    const prefix = endpointKind === 'receiver' ? 'R' : 'S';
+    const lowered = cleanKey.toLowerCase();
+    if (
+      cleanKey.toUpperCase().startsWith(prefix)
+      || lowered.startsWith(endpointKind)
+    ) {
+      return cleanKey;
+    }
+    return `${prefix} ${cleanKey}`;
+  }
+
+  function createCellEndpointCandidateRow(candidate) {
+    const item = document.createElement('li');
+    const summary = document.createElement('span');
+    const rms = Number.isFinite(candidate.residualRmsMs)
+      ? ` · RMS ${formatNumber(candidate.residualRmsMs, 1)} ms`
+      : '';
+    summary.textContent = `${cellEndpointDisplayName(
+      candidate.endpointKind,
+      candidate.endpointKey,
+    )} · picks ${candidate.pickCount}${rms}`;
+    item.appendChild(summary);
+
+    const action = createEndpointActionButton(
+      candidate.endpointKind === 'receiver' ? 'Preview receiver gather' : 'Preview source gather',
+      '',
+      () => previewGatherForEndpoint(candidate.endpointKind, candidate.endpointKey),
+      candidate.endpointKind === 'receiver'
+        ? 'refraction-qc-cell-preview-receiver'
+        : 'refraction-qc-cell-preview-source',
+    );
+    item.appendChild(action);
+    return item;
+  }
+
+  function appendCellDrilldownObservations(panel, observations) {
+    const records = Array.isArray(observations?.records) ? observations.records.slice(0, 8) : [];
+    const title = document.createElement('h4');
+    title.textContent = 'Contributing picks';
+    panel.appendChild(title);
+
+    if (!records.length) {
+      const empty = document.createElement('p');
+      empty.className = 'refraction-qc-placeholder';
+      empty.textContent = 'No contributing pick records were returned for this cell.';
+      panel.appendChild(empty);
+      return;
+    }
+
+    const list = document.createElement('ul');
+    list.className = 'refraction-qc-cell-drilldown-picks';
+    list.dataset.testid = 'refraction-qc-cell-drilldown-picks';
+    for (const record of records) {
+      const item = document.createElement('li');
+      const trace = textOrDash(firstDefined(record, ['trace_index_sorted', 'sorted_trace_index', 'trace_index', 'trace']));
+      const source = textOrDash(firstDefined(record, ['source_endpoint_key', 'source_id']));
+      const receiver = textOrDash(firstDefined(record, ['receiver_endpoint_key', 'receiver_id']));
+      const residual = drilldownResidualMs(record);
+      const residualText = Number.isFinite(residual)
+        ? ` · residual ${residual >= 0 ? '+' : ''}${formatNumber(residual, 1)} ms`
+        : '';
+      item.textContent = `trace ${trace} · source ${source} · receiver ${receiver}${residualText}`;
+      list.appendChild(item);
+    }
+    panel.appendChild(list);
+  }
+
+  function renderCellDrilldownPanel(content, payload) {
+    const panel = document.createElement('section');
+    panel.className = 'refraction-qc-cell-drilldown';
+    panel.dataset.testid = 'refraction-qc-cell-drilldown';
+
+    const title = document.createElement('h3');
+    title.textContent = 'Cell drilldown';
+    panel.appendChild(title);
+
+    if (!state.selectedCell || state.selectedCell.cell_ix === undefined) {
+      const empty = document.createElement('p');
+      empty.className = 'refraction-qc-placeholder';
+      empty.textContent = 'Click a cell to load contributing endpoints and picks.';
+      panel.appendChild(empty);
+      content.appendChild(panel);
+      return;
+    }
+
+    if (state.qcDrilldownLoading) {
+      const loading = document.createElement('p');
+      loading.className = 'refraction-qc-note';
+      loading.textContent = 'Loading cell drilldown...';
+      panel.appendChild(loading);
+    }
+
+    if (state.qcDrilldownError) {
+      const error = document.createElement('p');
+      error.className = 'refraction-qc-error';
+      error.dataset.testid = 'refraction-qc-cell-drilldown-error';
+      error.textContent = state.qcDrilldownError;
+      panel.appendChild(error);
+    }
+
+    if (!payload) {
+      content.appendChild(panel);
+      return;
+    }
+
+    const cell = payload.cell || {};
+    const velocity = payload.velocity || cell.velocity || {};
+    const fold = payload.fold || cell.fold || {};
+    const residual = payload.residual_summary || cell.residual_summary || {};
+    const endpointCounts = payload.endpoint_counts || cell.endpoint_counts || {};
+    const observations = payload.observations || {};
+    const row = cell.row || {};
+    const layerKind = cell.layer_kind || payload.target?.layer_kind || state.qcDrilldownTarget?.layer_kind;
+    const cellIx = firstDefined(cell, ['cell_ix']) ?? payload.target?.cell_ix ?? state.qcDrilldownTarget?.cell_ix;
+    const cellIy = firstDefined(cell, ['cell_iy']) ?? payload.target?.cell_iy ?? state.qcDrilldownTarget?.cell_iy;
+    const residualRms = firstDefined(residual, ['cell_residual_rms_ms', 'used_rms_ms', 'all_rms_ms']);
+
+    panel.appendChild(createKv([
+      ['Layer', layerLabel(layerKind)],
+      ['Cell', `ix ${textOrDash(cellIx)}, iy ${textOrDash(cellIy)}`],
+      ['Velocity', drilldownMetric(firstDefined(velocity, ['velocity_m_s', 'v2_m_s']), 2, 'm/s')],
+      ['Fold', firstDefined(fold, ['n_observations', 'fold', 'observation_count'])],
+      ['Used fold', firstDefined(fold, ['n_used_observations', 'used_fold'])],
+      ['Residual RMS', drilldownMetric(residualRms, 1, 'ms')],
+      ['Status', firstDefined(velocity, ['velocity_status', 'status']) || firstDefined(row, ['velocity_status', 'status'])],
+      ['Contributing observations', `${observations.returned_count ?? 0} of ${observations.total_count ?? 0}`],
+      ['Source endpoints', endpointCounts.source_count],
+      ['Receiver endpoints', endpointCounts.receiver_count],
+    ]));
+
+    if (observations.capped) {
+      const capped = document.createElement('p');
+      capped.className = 'refraction-qc-note';
+      capped.dataset.testid = 'refraction-qc-cell-drilldown-capped';
+      capped.textContent = `Observation records are capped at ${observations.returned_count} of ${observations.total_count} by max_observations.`;
+      panel.appendChild(capped);
+    }
+
+    const endpointTitle = document.createElement('h4');
+    endpointTitle.textContent = 'Contributing endpoints';
+    panel.appendChild(endpointTitle);
+    const candidates = endpointCandidatesFromCellDrilldown(payload);
+    if (candidates.length) {
+      const list = document.createElement('ul');
+      list.className = 'refraction-qc-cell-drilldown-endpoints';
+      list.dataset.testid = 'refraction-qc-cell-drilldown-endpoints';
+      for (const candidate of candidates) {
+        list.appendChild(createCellEndpointCandidateRow(candidate));
+      }
+      panel.appendChild(list);
+    } else {
+      const empty = document.createElement('p');
+      empty.className = 'refraction-qc-placeholder';
+      empty.textContent = 'No source or receiver endpoint keys were returned for this cell.';
+      panel.appendChild(empty);
+    }
+
+    appendCellDrilldownObservations(panel, observations);
+    content.appendChild(panel);
   }
 
   function endpointSummaryItems(endpoint) {
@@ -2935,6 +3220,7 @@
     downsamplingNote.textContent = `Downsampling: ${downsamplingText}`;
     downsamplingNote.dataset.testid = 'refraction-qc-cell-map-downsampling';
     content.appendChild(downsamplingNote);
+    renderCellDrilldownPanel(content, state.qcDrilldown);
 
     if (!records.length || !layerRecords.length) {
       const missing = document.createElement('p');
@@ -3079,7 +3365,9 @@
             layer_kind: String(cell.layer_kind || layerKind),
           };
           if (dom?.cell) dom.cell.value = `${state.selectedCell.cell_ix},${state.selectedCell.cell_iy}`;
+          const drilldownTarget = cellDrilldownTargetFromSelectedCell(state.selectedCell);
           render();
+          loadQcDrilldown(drilldownTarget);
         });
       });
     } else {
@@ -5024,6 +5312,11 @@
     state.firstBreakDrilldown = null;
     state.firstBreakDrilldownError = null;
     state.firstBreakDrilldownLoading = false;
+    state.qcDrilldown = null;
+    state.qcDrilldownError = null;
+    state.qcDrilldownLoading = false;
+    state.qcDrilldownTarget = null;
+    qcDrilldownRequestSerial += 1;
     if (!jobId) {
       state.error = 'Job ID is required.';
       state.qcBundle = null;
@@ -5221,6 +5514,11 @@
     });
     dom.cell.addEventListener('input', () => {
       state.selectedCell = parseCell(dom.cell.value);
+      state.qcDrilldown = null;
+      state.qcDrilldownError = null;
+      state.qcDrilldownLoading = false;
+      state.qcDrilldownTarget = null;
+      qcDrilldownRequestSerial += 1;
       render();
     });
     for (const button of dom.viewButtons) {

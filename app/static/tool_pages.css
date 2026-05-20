@@ -704,6 +704,51 @@ select {
       opacity: 0.55;
     }
 
+    .refraction-qc-cell-drilldown {
+      display: grid;
+      gap: 0.6em;
+      padding: 0.75em;
+      border: 1px solid #cbd5e1;
+      border-radius: 4px;
+      background: #f8fafc;
+    }
+
+    .refraction-qc-cell-drilldown h3,
+    .refraction-qc-cell-drilldown h4 {
+      margin: 0;
+      color: #0f172a;
+    }
+
+    .refraction-qc-cell-drilldown h3 {
+      font-size: 0.95em;
+    }
+
+    .refraction-qc-cell-drilldown h4 {
+      font-size: 0.88em;
+    }
+
+    .refraction-qc-cell-drilldown-endpoints,
+    .refraction-qc-cell-drilldown-picks {
+      display: grid;
+      gap: 0.45em;
+      margin: 0;
+      padding: 0;
+      list-style: none;
+    }
+
+    .refraction-qc-cell-drilldown-endpoints li {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      justify-content: space-between;
+      gap: 0.5em;
+    }
+
+    .refraction-qc-cell-drilldown-picks {
+      color: #334155;
+      font-size: 0.86em;
+    }
+
     .refraction-qc-pick-map-plot {
       height: 340px;
       overflow: hidden;
