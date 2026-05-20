@@ -3309,6 +3309,8 @@ class RefractionStaticStationStructureResponse(BaseModel):
     view_kind: Literal['station_structure']
     x_axis: str
     x_axis_label: str
+    x_axis_status: str = 'ok'
+    station_mapping: dict[str, Any] = Field(default_factory=dict)
     filter_status: str
     gather_range: dict[str, int | float | str | None]
     colors: dict[Literal['source', 'receiver'], str]

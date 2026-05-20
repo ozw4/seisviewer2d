@@ -228,8 +228,15 @@ function stationStructurePayload(jobId = 'completed-job-structure') {
     job_id: jobId,
     statics_kind: 'refraction',
     view_kind: 'station_structure',
-    x_axis: 'global_receiver_number',
-    x_axis_label: 'Global receiver number',
+    x_axis: 'global_station_number',
+    x_axis_label: 'Global station number',
+    x_axis_status: 'ok',
+    station_mapping: {
+      source_method: 'coordinate_interpolation',
+      receiver_method: 'coordinate_order',
+      coordinate_field: 'inline_m',
+      warnings: [],
+    },
     filter_status: 'ok',
     gather_range: { start: 100, end: 101 },
     colors: { source: 'cyan', receiver: 'red' },
@@ -643,10 +650,37 @@ test('Structure QC uses canvas renderer without Plotly', () => {
   expect(document.querySelector('[data-testid="refraction-qc-station-structure-depth-canvas"]')).not.toBeNull();
   expect(timePlot.parentElement.classList.contains('refraction-qc-station-structure-grid')).toBe(true);
   expect(timePlot.dataset.renderer).toBe('canvas');
-  expect(timePlot.dataset.xAxisTitle).toBe('Global receiver number');
+  expect(timePlot.dataset.xAxisTitle).toBe('Global station number');
   expect(timePlot.dataset.pointCount).toBe('4');
   expect(plotly.newPlot).not.toHaveBeenCalled();
   expect(plotly.react).not.toHaveBeenCalled();
+});
+
+test('Structure QC displays fallback axis warning and backend x arrays', () => {
+  loadRefractionQcScript();
+
+  const payload = stationStructurePayload();
+  payload.x_axis = 'endpoint_id_fallback';
+  payload.x_axis_label = 'source/receiver endpoint id fallback';
+  payload.x_axis_status = 'fallback';
+  payload.station_mapping = {
+    source_method: 'source_id_fallback',
+    receiver_method: 'receiver_id',
+    coordinate_field: null,
+    warnings: ['Source x-axis fell back to source_id because receiver station reference could not be inferred.'],
+  };
+  payload.warnings = payload.station_mapping.warnings;
+  payload.time_term.source.x = [1, 5, 9, 73];
+  payload.velocity.source.x = [1, 5, 9, 73];
+  payload.depth.source.x = [1, 5, 9, 73];
+  window.refractionQcState.qcBundle = qcBundle('completed-job-structure');
+  window.refractionQcState.stationStructure = payload;
+  window.refractionQcUI.setSelectedView('station_structure');
+
+  const timePlot = document.querySelector('[data-testid="refraction-qc-station-structure-time-term-plot"]');
+  expect(timePlot.dataset.xAxisTitle).toBe('source/receiver endpoint id fallback');
+  expect(document.body.textContent).toContain('fell back to source_id');
+  expect(payload.time_term.source.x[3]).toBe(73);
 });
 
 test('Structure QC sends gather range and selectors to station endpoint', async () => {
