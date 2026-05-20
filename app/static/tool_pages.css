@@ -1003,6 +1003,14 @@ select {
       cursor: pointer;
     }
 
+    .refraction-qc-gather-details .refraction-qc-field {
+      display: inline-flex;
+      flex-direction: column;
+      margin-top: 0.45em;
+      margin-right: 0.6em;
+      min-width: 9em;
+    }
+
     .refraction-qc-gather-detail-row {
       display: flex;
       flex-wrap: wrap;
@@ -1044,6 +1052,19 @@ select {
     .refraction-qc-gather-controls .refraction-qc-actions {
       margin-top: 0;
       align-self: end;
+    }
+
+    .refraction-qc-gather-context {
+      display: flex;
+      flex-direction: column;
+      gap: 0.15em;
+      padding: 0.65em 0.75em;
+      border: 1px solid #cbd5e1;
+      border-radius: 4px;
+      background: #f8fafc;
+      color: #0f172a;
+      font-size: 0.9em;
+      font-weight: 700;
     }
 
     .refraction-qc-gather-grid {

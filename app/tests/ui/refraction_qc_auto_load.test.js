@@ -329,6 +329,36 @@ function staticEndpointQcBundle(jobId = 'job-static-endpoint') {
   };
 }
 
+function gatherPreviewQcBundle(jobId = 'job-gather') {
+  return {
+    ...qcBundle(jobId),
+    available_views: ['static_components', 'static_component_qc_endpoint'],
+    views: {
+      static_components: {
+        artifact: 'static-components.csv',
+        columns: ['endpoint_kind', 'endpoint_key', 'station_id', 'static_status'],
+        records: [{
+          endpoint_kind: 'source',
+          endpoint_key: '1001',
+          station_id: '1001',
+          static_status: 'ok',
+        }],
+      },
+      static_component_qc_endpoint: {
+        artifact: 'static-endpoint.csv',
+        columns: ['endpoint_kind', 'endpoint_key', 'pick_count', 'residual_rms_ms'],
+        records: [{
+          endpoint_kind: 'source',
+          endpoint_key: '1001',
+          pick_count: 96,
+          residual_rms_ms: 12.4,
+          static_status: 'ok',
+        }],
+      },
+    },
+  };
+}
+
 function cellQcBundle(jobId = 'job-cell') {
   return {
     ...qcBundle(jobId),
@@ -631,6 +661,120 @@ test('Refraction QC renders controls only for the selected view', () => {
   expect(document.querySelector('[data-testid="refraction-qc-artifact-type"]')).not.toBeNull();
   expect(document.querySelector('[data-testid="refraction-qc-artifact-search"]')).not.toBeNull();
   expect(document.querySelector('[data-testid="refraction-qc-gather-axis"]')).toBeNull();
+});
+
+test('Gather Preview keeps internal context in the advanced drawer', () => {
+  loadRefractionQcScript();
+  window.currentFileId = 'line-a.sgy';
+  window.currentKey1Byte = 189;
+  window.currentKey2Byte = 193;
+  window.refractionQcState.qcBundle = gatherPreviewQcBundle();
+
+  window.refractionQcUI.setSelectedView('gather_preview');
+
+  expect(document.querySelector('[data-testid="refraction-qc-gather-file-id"]')).toBeNull();
+  expect(document.querySelector('[data-testid="refraction-qc-gather-key1-byte"]')).toBeNull();
+  expect(document.querySelector('[data-testid="refraction-qc-gather-key2-byte"]')).toBeNull();
+  expect(document.querySelector('[data-testid="refraction-qc-gather-endpoint-search"]')).toBeNull();
+  expect(document.querySelector('[data-testid="refraction-qc-gather-endpoint"]')).not.toBeNull();
+  expect(document.querySelector('[data-testid="refraction-qc-gather-load"]').textContent)
+    .toBe('Preview gather');
+
+  const details = document.querySelector('[data-testid="refraction-qc-gather-endpoint-details"]');
+  expect(details.open).toBe(false);
+  expect(details.querySelector('[data-testid="refraction-qc-gather-file-id-value"]').textContent)
+    .toBe('line-a.sgy');
+  expect(details.querySelector('[data-testid="refraction-qc-gather-key1-byte-value"]').textContent)
+    .toBe('189');
+  expect(details.querySelector('[data-testid="refraction-qc-gather-key2-byte-value"]').textContent)
+    .toBe('193');
+  expect(details.querySelector('[data-testid="refraction-qc-gather-endpoint-key"]').textContent)
+    .toBe('-');
+
+  const axis = document.querySelector('[data-testid="refraction-qc-gather-axis"]');
+  axis.value = 'section';
+  axis.dispatchEvent(new Event('change', { bubbles: true }));
+
+  expect(document.querySelector('[data-testid="refraction-qc-gather-key1"]')).not.toBeNull();
+  expect(document.querySelector('[data-testid="refraction-qc-gather-x0"]')).not.toBeNull();
+  expect(document.querySelector('[data-testid="refraction-qc-gather-x1"]')).not.toBeNull();
+  expect(document.querySelector('[data-testid="refraction-qc-gather-endpoint"]')).toBeNull();
+});
+
+test('Gather Preview selects a source station from one searchable control and previews it', async () => {
+  installPlotlyClickStub();
+  const calls = [];
+  vi.stubGlobal('fetch', vi.fn(async (url, options = {}) => {
+    calls.push({ url: String(url), body: JSON.parse(options.body || '{}') });
+    return jsonResponse({
+      job_id: 'job-gather',
+      gather: { axis: 'source', endpoint_key: '1001' },
+      window: {
+        requested_trace_count: 2,
+        returned_trace_count: 2,
+        requested_sample_count: 2,
+        returned_sample_count: 2,
+      },
+      dt_s: 0.001,
+      shape: [2, 2],
+      x_indices: [0, 1],
+      offset_m: [100, 200],
+      raw_samples: [[1, 2], [3, 4]],
+      corrected_samples: [[1, 1], [2, 2]],
+      corrected_samples_source: 'corrected-tracestore',
+      corrected_window_ref: { status: 'ok' },
+      sign_convention: 'positive static shifts delay traces',
+      overlay_status: { first_break_fit: 'ok' },
+    });
+  }));
+  loadRefractionQcScript();
+  window.currentFileId = 'line-a.sgy';
+  window.currentKey1Byte = 189;
+  window.currentKey2Byte = 193;
+  document.getElementById('refractionQcJobId').value = 'job-gather';
+  window.refractionQcState.qcBundle = gatherPreviewQcBundle();
+
+  window.refractionQcUI.setSelectedView('gather_preview');
+  const station = document.querySelector('[data-testid="refraction-qc-gather-endpoint"]');
+  station.value = 'S 1001 · picks 96 · RMS 12.4 ms · ok';
+  station.dispatchEvent(new Event('input', { bubbles: true }));
+
+  expect(window.refractionQcState.gatherEndpointKey).toBe('1001');
+
+  document.querySelector('[data-testid="refraction-qc-gather-load"]').click();
+  await flushAsyncWork();
+
+  expect(calls).toHaveLength(1);
+  expect(calls[0]).toMatchObject({
+    url: '/statics/refraction/qc/gather-preview',
+    body: {
+      job_id: 'job-gather',
+      file_id: 'line-a.sgy',
+      key1_byte: 189,
+      key2_byte: 193,
+      gather_axis: 'source',
+      endpoint_key: '1001',
+    },
+  });
+  expect(document.querySelector('[data-testid="refraction-qc-gather-context"]').textContent)
+    .toContain('Source gather: S 1001 · picks 96 · RMS 12.4 ms · ok');
+  expect(document.querySelector('[data-testid="refraction-qc-gather-raw-plot"]')).not.toBeNull();
+});
+
+test('Gather Preview explains missing station selection without endpoint wording', () => {
+  loadRefractionQcScript();
+  window.currentFileId = 'line-a.sgy';
+  window.currentKey1Byte = 189;
+  window.currentKey2Byte = 193;
+  document.getElementById('refractionQcJobId').value = 'job-gather';
+  window.refractionQcState.qcBundle = gatherPreviewQcBundle();
+
+  window.refractionQcUI.setSelectedView('gather_preview');
+  document.querySelector('[data-testid="refraction-qc-gather-load"]').click();
+
+  const error = document.querySelector('[data-testid="refraction-qc-gather-error"]');
+  expect(error.textContent).toContain('Source station を選択してください');
+  expect(error.textContent).not.toContain('endpoint');
 });
 
 test('typing in view-specific text controls keeps the focused input mounted', () => {

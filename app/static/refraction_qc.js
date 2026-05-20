@@ -853,14 +853,14 @@
   const GATHER_DISPLAY_LABELS = {
     raw: 'Raw only',
     corrected: 'Corrected only',
-    side_by_side: 'Raw and corrected',
+    side_by_side: 'Raw + corrected',
     reduced_time: 'Reduced-time / LMO',
   };
 
   const GATHER_AXIS_LABELS = {
-    source: 'Source',
-    receiver: 'Receiver',
-    section: 'Midpoint/CMP window',
+    source: 'Source station',
+    receiver: 'Receiver station',
+    section: 'Section window',
   };
 
   function readRecentJobs() {
@@ -1534,6 +1534,22 @@
         String(a.stationId || '').localeCompare(String(b.stationId || ''), undefined, { numeric: true })
         || a.value.localeCompare(b.value, undefined, { numeric: true })
       ));
+  }
+
+  function gatherEndpointOption(endpointKind, endpointKey) {
+    const cleanKey = String(endpointKey || '').trim();
+    if (!cleanKey) return null;
+    return buildGatherEndpointOptions(state.qcBundle, endpointKind)
+      .find((option) => option.value === cleanKey) || null;
+  }
+
+  function gatherEndpointSummary(endpointKind, endpointKey) {
+    const cleanKey = String(endpointKey || '').trim();
+    if (!cleanKey) return '';
+    const option = gatherEndpointOption(endpointKind, cleanKey);
+    if (option?.label) return option.label;
+    const prefix = endpointKind === 'receiver' ? 'R' : 'S';
+    return `${prefix} ${cleanKey}`;
   }
 
   function staticTraceRecords(view) {
@@ -3972,7 +3988,7 @@
       const endpointKey = String(state.gatherEndpointKey || '').trim();
       if (!endpointKey) {
         const label = state.gatherAxis === 'receiver' ? 'Receiver station' : 'Source station';
-        errors.push(`${label}を選択してください.`);
+        errors.push(`${label} を選択してください。`);
       }
       payload.endpoint_key = endpointKey;
     }
@@ -4041,82 +4057,111 @@
         stationId: state.gatherEndpointKey,
       });
     }
-    const searchText = normalizedText(state.gatherEndpointSearch);
-    const filteredOptions = searchText
-      ? options.filter((option) => (
-        normalizedText(option.label).includes(searchText)
-        || normalizedText(option.value).includes(searchText)
-      ))
-      : options;
-
-    const search = makeGatherInput(
-      'search',
-      state.gatherEndpointSearch,
-      'refraction-qc-gather-endpoint-search',
-      (value) => { state.gatherEndpointSearch = value.trim(); render(); },
-    );
-    search.placeholder = `Search ${label.toLowerCase()}`;
-
-    const select = document.createElement('select');
-    select.dataset.testid = 'refraction-qc-gather-endpoint';
-    select.disabled = !options.length;
-    const placeholder = document.createElement('option');
-    placeholder.value = '';
-    placeholder.textContent = options.length ? `Select ${label.toLowerCase()}` : `No ${label.toLowerCase()} candidates`;
-    select.appendChild(placeholder);
-    for (const optionData of filteredOptions) {
+    const selectedOption = options.find((option) => option.value === state.gatherEndpointKey);
+    const inputValue = state.gatherEndpointSearch || selectedOption?.label || '';
+    const listId = `refraction-qc-gather-${endpointKind}-stations`;
+    const list = document.createElement('datalist');
+    list.id = listId;
+    for (const optionData of options) {
       const option = document.createElement('option');
-      option.value = optionData.value;
-      option.textContent = optionData.label;
-      select.appendChild(option);
+      option.value = optionData.label;
+      option.dataset.endpointKey = optionData.value;
+      list.appendChild(option);
     }
-    select.value = state.gatherEndpointKey;
-    select.addEventListener('change', () => {
-      state.gatherEndpointKey = select.value;
-      render();
+
+    const input = makeGatherInput(
+      'search',
+      inputValue,
+      'refraction-qc-gather-endpoint',
+      (value) => {
+        state.gatherEndpointSearch = value;
+        const query = normalizedText(value);
+        const match = options.find((option) => (
+          normalizedText(option.label) === query
+          || normalizedText(option.value) === query
+          || normalizedText(option.stationId) === query
+        ));
+        state.gatherEndpointKey = match ? match.value : '';
+      },
+    );
+    input.setAttribute('list', listId);
+    input.disabled = !options.length;
+    input.placeholder = options.length ? `Search ${label.toLowerCase()}...` : `No ${label.toLowerCase()} candidates`;
+    input.addEventListener('change', () => {
+      const query = normalizedText(input.value);
+      const match = options.find((option) => (
+        normalizedText(option.label) === query
+        || normalizedText(option.value) === query
+        || normalizedText(option.stationId) === query
+      ));
+      if (match) {
+        state.gatherEndpointKey = match.value;
+        state.gatherEndpointSearch = match.label;
+        render();
+      }
     });
 
     const fragment = document.createDocumentFragment();
-    fragment.append(
-      makeGatherField(`${label} search`, search),
-      makeGatherField(label, select),
-    );
-    if (!options.length || (options.length && !filteredOptions.length)) {
+    fragment.append(makeGatherField(label, input), list);
+    if (!options.length) {
       const empty = document.createElement('p');
       empty.className = 'refraction-qc-placeholder refraction-qc-gather-endpoint-empty';
       empty.dataset.testid = 'refraction-qc-gather-endpoint-empty';
-      empty.textContent = !options.length
-        ? `No ${label.toLowerCase()} candidates are present in static components.`
-        : `No ${label.toLowerCase()} candidates match the search.`;
+      empty.textContent = `No ${label.toLowerCase()} candidates are present in static components.`;
       fragment.appendChild(empty);
     }
     return fragment;
   }
 
-  function createGatherEndpointDetails() {
+  function createGatherDetailRow(labelText, valueText, testId) {
+    const row = document.createElement('div');
+    row.className = 'refraction-qc-gather-detail-row';
+    const label = document.createElement('span');
+    label.textContent = labelText;
+    const value = document.createElement('code');
+    if (testId) value.dataset.testid = testId;
+    value.textContent = textOrDash(valueText);
+    const copy = document.createElement('button');
+    copy.type = 'button';
+    copy.textContent = 'Copy';
+    const canCopy = typeof navigator !== 'undefined' && navigator.clipboard?.writeText;
+    copy.disabled = !valueText || !canCopy;
+    copy.addEventListener('click', async () => {
+      if (!valueText || !canCopy) return;
+      await navigator.clipboard.writeText(String(valueText));
+    });
+    row.append(label, value, copy);
+    return row;
+  }
+
+  function createGatherAdvancedDetails(context) {
     const details = document.createElement('details');
     details.className = 'refraction-qc-gather-details';
     details.dataset.testid = 'refraction-qc-gather-endpoint-details';
     const summary = document.createElement('summary');
-    summary.textContent = 'Advanced details';
-    const row = document.createElement('div');
-    row.className = 'refraction-qc-gather-detail-row';
-    const label = document.createElement('span');
-    label.textContent = 'endpoint_key';
-    const value = document.createElement('code');
-    value.dataset.testid = 'refraction-qc-gather-endpoint-key';
-    value.textContent = state.gatherEndpointKey || 'not selected';
-    const copy = document.createElement('button');
-    copy.type = 'button';
-    copy.textContent = 'Copy';
-    copy.disabled = !state.gatherEndpointKey;
-    copy.dataset.testid = 'refraction-qc-gather-endpoint-copy';
-    copy.addEventListener('click', async () => {
-      if (!state.gatherEndpointKey || !navigator.clipboard?.writeText) return;
-      await navigator.clipboard.writeText(state.gatherEndpointKey);
-    });
-    row.append(label, value, copy);
-    details.append(summary, row);
+    summary.textContent = 'Advanced';
+    details.append(
+      summary,
+      createGatherDetailRow('File ID', context.fileId, 'refraction-qc-gather-file-id-value'),
+      createGatherDetailRow('key1 byte', context.key1Byte, 'refraction-qc-gather-key1-byte-value'),
+      createGatherDetailRow('key2 byte', context.key2Byte, 'refraction-qc-gather-key2-byte-value'),
+      createGatherDetailRow('endpoint_key', state.gatherAxis === 'section' ? 'not used' : state.gatherEndpointKey, 'refraction-qc-gather-endpoint-key'),
+      makeGatherField('Max traces', makeGatherInput(
+        'number',
+        String(state.gatherMaxTraces),
+        'refraction-qc-gather-max-traces',
+        (value) => { state.gatherMaxTraces = value.trim(); },
+        { min: 1, step: 1 },
+      )),
+      makeGatherField('Reduction velocity (m/s)', makeGatherInput(
+        'number',
+        state.gatherReductionVelocity,
+        'refraction-qc-gather-reduction-velocity',
+        (value) => { state.gatherReductionVelocity = value.trim(); },
+        { min: 1, step: '0.1' },
+      )),
+      createGatherDetailRow('Scaling', 'amax', 'refraction-qc-gather-scaling'),
+    );
     return details;
   }
 
@@ -4152,28 +4197,8 @@
       },
     );
     form.append(
-      makeGatherField('Gather', axis),
+      makeGatherField('Gather type', axis),
       makeGatherField('Display', mode),
-      makeGatherField('File ID', makeGatherInput(
-        'text',
-        context.fileId,
-        'refraction-qc-gather-file-id',
-        (value) => { state.gatherFileId = value.trim(); },
-      )),
-      makeGatherField('key1 byte', makeGatherInput(
-        'number',
-        context.key1Byte,
-        'refraction-qc-gather-key1-byte',
-        (value) => { state.gatherKey1Byte = value.trim(); },
-        { min: 1, step: 1 },
-      )),
-      makeGatherField('key2 byte', makeGatherInput(
-        'number',
-        context.key2Byte,
-        'refraction-qc-gather-key2-byte',
-        (value) => { state.gatherKey2Byte = value.trim(); },
-        { min: 1, step: 1 },
-      )),
     );
 
     if (state.gatherAxis === 'section') {
@@ -4219,37 +4244,18 @@
         (value) => { state.gatherTimeEndS = value.trim(); },
         { min: 0, step: '0.001' },
       )),
-      makeGatherField('Max traces', makeGatherInput(
-        'number',
-        String(state.gatherMaxTraces),
-        'refraction-qc-gather-max-traces',
-        (value) => { state.gatherMaxTraces = value.trim(); },
-        { min: 1, step: 1 },
-      )),
     );
-
-    if (state.gatherDisplayMode === 'reduced_time') {
-      form.appendChild(makeGatherField('Reduction velocity (m/s)', makeGatherInput(
-        'number',
-        state.gatherReductionVelocity,
-        'refraction-qc-gather-reduction-velocity',
-        (value) => { state.gatherReductionVelocity = value.trim(); },
-        { min: 1, step: '0.1' },
-      )));
-    }
 
     const actions = document.createElement('div');
     actions.className = 'refraction-qc-actions';
     const loadButton = document.createElement('button');
     loadButton.type = 'submit';
     loadButton.disabled = state.gatherLoading;
-    loadButton.textContent = state.gatherLoading ? 'Loading preview...' : 'Load Preview';
+    loadButton.textContent = state.gatherLoading ? 'Loading preview...' : 'Preview gather';
     loadButton.dataset.testid = 'refraction-qc-gather-load';
     actions.appendChild(loadButton);
     form.appendChild(actions);
-    if (state.gatherAxis !== 'section') {
-      form.appendChild(createGatherEndpointDetails());
-    }
+    form.appendChild(createGatherAdvancedDetails(context));
     return form;
   }
 
@@ -4279,6 +4285,49 @@
       out.push((startSample + index * stepY) * dt);
     }
     return out;
+  }
+
+  function gatherContextLines(preview = null) {
+    const axis = preview?.gather?.axis || state.gatherAxis;
+    const axisLabel = axis === 'receiver'
+      ? 'Receiver gather'
+      : (axis === 'section' ? 'Section window' : 'Source gather');
+    const parts = [];
+    if (axis === 'section') {
+      const context = currentGatherContext();
+      parts.push(`${axisLabel}: key1 ${textOrDash(preview?.gather?.key1 ?? context.key1)}`);
+      parts.push(`traces ${textOrDash(preview?.window?.x0 ?? context.x0)}-${textOrDash(preview?.window?.x1 ?? context.x1)}`);
+    } else {
+      const endpointKind = axis === 'receiver' ? 'receiver' : 'source';
+      const endpointKey = preview?.gather?.endpoint_key || state.gatherEndpointKey;
+      parts.push(`${axisLabel}: ${gatherEndpointSummary(endpointKind, endpointKey) || 'station not selected'}`);
+    }
+
+    const windowMeta = preview?.window || {};
+    const timeStart = Number.isFinite(Number(preview?.time_start_s))
+      ? Number(preview.time_start_s)
+      : Number(state.gatherTimeStartS);
+    const timeEnd = Number.isFinite(Number(preview?.time_end_s))
+      ? Number(preview.time_end_s)
+      : Number(state.gatherTimeEndS);
+    const timeLabel = Number.isFinite(timeStart) && Number.isFinite(timeEnd)
+      ? `${formatNumber(timeStart, 3)}-${formatNumber(timeEnd, 3)} s`
+      : `${textOrDash(state.gatherTimeStartS)}-${textOrDash(state.gatherTimeEndS)} s`;
+    const traceCount = windowMeta.returned_trace_count || state.gatherMaxTraces;
+    parts.push(`${GATHER_DISPLAY_LABELS[state.gatherDisplayMode] || state.gatherDisplayMode} · ${timeLabel} · ${textOrDash(traceCount)} traces`);
+    return parts;
+  }
+
+  function createGatherContextBanner(preview = null) {
+    const banner = document.createElement('div');
+    banner.className = 'refraction-qc-gather-context';
+    banner.dataset.testid = 'refraction-qc-gather-context';
+    for (const lineText of gatherContextLines(preview)) {
+      const line = document.createElement('div');
+      line.textContent = lineText;
+      banner.appendChild(line);
+    }
+    return banner;
   }
 
   function finitePairPoints(xValues, yValues) {
@@ -4481,10 +4530,13 @@
 
   function renderGatherPreviewPayload(content, preview) {
     const statusMessage = correctedStatusMessage(preview);
+    content.appendChild(createGatherContextBanner(preview));
     content.appendChild(createKv([
       ['Job ID', preview.job_id],
       ['Gather', GATHER_AXIS_LABELS[preview.gather?.axis] || preview.gather?.axis],
-      ['Endpoint', preview.gather?.endpoint_key],
+      ['Station', preview.gather?.axis === 'section'
+        ? 'Section window'
+        : gatherEndpointSummary(preview.gather?.axis === 'receiver' ? 'receiver' : 'source', preview.gather?.endpoint_key)],
       ['Trace count', `${preview.window?.returned_trace_count || 0} of ${preview.window?.requested_trace_count || 0}`],
       ['Samples', `${preview.window?.returned_sample_count || 0} of ${preview.window?.requested_sample_count || 0}`],
       ['dt', `${formatNumber(Number(preview.dt_s), 6)} s`],
@@ -4555,24 +4607,20 @@
       error.textContent = state.gatherError;
       content.appendChild(error);
     }
+    if (!state.gatherPreview && !state.gatherLoading && state.gatherEndpointKey) {
+      content.appendChild(createGatherContextBanner());
+    }
     if (!state.gatherPreview && !state.gatherLoading && !state.gatherError) {
       const message = document.createElement('p');
       message.className = 'refraction-qc-placeholder';
       message.textContent = bundle
-        ? 'Load a bounded gather preview from the M6 API.'
+        ? 'Choose a station and preview the gather.'
         : 'Load a QC bundle before requesting a gather preview.';
       content.appendChild(message);
     }
     if (state.gatherPreview) {
       renderGatherPreviewPayload(content, state.gatherPreview);
     }
-    content.appendChild(createKv([
-      ['Selected endpoint kind', state.selectedEndpointKind],
-      ['Endpoint', state.selectedEndpoint],
-      ['Gather endpoint', state.gatherEndpointKey],
-      ['Cell', selectedCellLabel(state.selectedCell)],
-      ['Layer', state.selectedLayerKind],
-    ]));
   }
 
   function renderPickMap(content, viewConfig = PICK_MAP_VIEWS.pick_map) {
