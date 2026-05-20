@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import csv
+from dataclasses import dataclass, field as dataclass_field
 import re
 from pathlib import Path
 from typing import Any
@@ -47,6 +48,23 @@ _DEPTH_LABELS = {
     'layer2_base_elevation': 'Layer 2 base elevation',
 }
 
+_SOURCE_ID_FALLBACK_WARNING = (
+    'Source x-axis fell back to source_id because receiver station reference '
+    'could not be inferred.'
+)
+
+
+@dataclass
+class _StationAxisMapping:
+    x_axis: str
+    x_axis_label: str
+    x_axis_status: str
+    x_values: dict[int, float]
+    source_methods: set[str] = dataclass_field(default_factory=set)
+    receiver_methods: set[str] = dataclass_field(default_factory=set)
+    coordinate_field: str | None = None
+    warnings: list[str] = dataclass_field(default_factory=list)
+
 
 def build_refraction_static_station_structure(
     *,
@@ -79,13 +97,18 @@ def build_refraction_static_station_structure(
         req=req,
         warnings=warnings,
     )
-    x_axis, x_axis_label = _resolve_x_axis(source_rows + receiver_rows, req.x_axis)
+    station_axis = _build_station_axis_mapping(
+        source_rows,
+        receiver_rows,
+        requested=req.x_axis,
+    )
+    warnings.extend(station_axis.warnings)
     velocity_field = _resolve_velocity_field(source_rows, receiver_rows, req.velocity_field)
     depth_field = _resolve_depth_field(source_rows, receiver_rows, req.depth_field)
     _append_linked_node_velocity_warning(
         source_rows,
         receiver_rows,
-        x_axis,
+        station_axis.x_values,
         velocity_field,
         warnings,
     )
@@ -94,8 +117,15 @@ def build_refraction_static_station_structure(
         'job_id': job_id,
         'statics_kind': 'refraction',
         'view_kind': 'station_structure',
-        'x_axis': x_axis,
-        'x_axis_label': x_axis_label,
+        'x_axis': station_axis.x_axis,
+        'x_axis_label': station_axis.x_axis_label,
+        'x_axis_status': station_axis.x_axis_status,
+        'station_mapping': {
+            'source_method': _mapping_method_label(station_axis.source_methods),
+            'receiver_method': _mapping_method_label(station_axis.receiver_methods),
+            'coordinate_field': station_axis.coordinate_field,
+            'warnings': list(station_axis.warnings),
+        },
         'filter_status': filter_status,
         'gather_range': {
             'start': req.gather_start,
@@ -112,13 +142,13 @@ def build_refraction_static_station_structure(
             'source': _series(
                 source_rows,
                 'source',
-                x_axis,
+                station_axis.x_values,
                 lambda kind, row: _time_term_candidates(kind, row, velocity_field),
             ),
             'receiver': _series(
                 receiver_rows,
                 'receiver',
-                x_axis,
+                station_axis.x_values,
                 lambda kind, row: _time_term_candidates(kind, row, velocity_field),
             ),
         },
@@ -129,13 +159,13 @@ def build_refraction_static_station_structure(
             'source': _series(
                 source_rows,
                 'source',
-                x_axis,
+                station_axis.x_values,
                 lambda kind, row: _velocity_candidates(kind, row, velocity_field),
             ),
             'receiver': _series(
                 receiver_rows,
                 'receiver',
-                x_axis,
+                station_axis.x_values,
                 lambda kind, row: _velocity_candidates(kind, row, velocity_field),
             ),
         },
@@ -146,13 +176,13 @@ def build_refraction_static_station_structure(
             'source': _series(
                 source_rows,
                 'source',
-                x_axis,
+                station_axis.x_values,
                 lambda kind, row: _depth_candidates(kind, row, depth_field),
             ),
             'receiver': _series(
                 receiver_rows,
                 'receiver',
-                x_axis,
+                station_axis.x_values,
                 lambda kind, row: _depth_candidates(kind, row, depth_field),
             ),
         },
@@ -342,6 +372,508 @@ def _resolve_x_axis(
     )
 
 
+def _build_station_axis_mapping(
+    source_rows: list[dict[str, Any]],
+    receiver_rows: list[dict[str, Any]],
+    *,
+    requested: str,
+) -> _StationAxisMapping:
+    if requested != 'auto':
+        x_axis, x_axis_label = _resolve_x_axis(source_rows + receiver_rows, requested)
+        x_values: dict[int, float] = {}
+        source_methods: set[str] = set()
+        receiver_methods: set[str] = set()
+        for endpoint_kind, rows, methods in (
+            ('source', source_rows, source_methods),
+            ('receiver', receiver_rows, receiver_methods),
+        ):
+            for row in rows:
+                value = _legacy_x_value(row, endpoint_kind, x_axis)
+                if value is None:
+                    continue
+                x_values[id(row)] = value
+                methods.add(f'requested_{x_axis}')
+        return _StationAxisMapping(
+            x_axis=x_axis,
+            x_axis_label=x_axis_label,
+            x_axis_status='requested',
+            x_values=x_values,
+            source_methods=source_methods,
+            receiver_methods=receiver_methods,
+        )
+
+    receiver_stations: dict[int, float] = {}
+    receiver_methods: set[str] = set()
+    for row in receiver_rows:
+        station, method = _explicit_receiver_station(row)
+        if station is None:
+            continue
+        receiver_stations[id(row)] = station
+        receiver_methods.add(method)
+
+    reference = _receiver_coordinate_reference(receiver_rows, receiver_stations)
+    if reference is not None:
+        coordinate_field, coordinate_values, station_values, inferred = reference
+        if inferred:
+            receiver_stations.update(inferred)
+            receiver_methods.add('coordinate_order')
+    else:
+        coordinate_field = None
+        coordinate_values = None
+        station_values = None
+        for row in receiver_rows:
+            if id(row) in receiver_stations:
+                continue
+            station, method = _receiver_id_station_fallback(row)
+            if station is None:
+                continue
+            receiver_stations[id(row)] = station
+            receiver_methods.add(method)
+
+    coordinate_references: list[tuple[str, np.ndarray, np.ndarray]] = []
+    if (
+        coordinate_field is not None
+        and coordinate_values is not None
+        and station_values is not None
+    ):
+        coordinate_references.append((coordinate_field, coordinate_values, station_values))
+    for field in ('inline_m', 'x_m'):
+        if any(reference_field == field for reference_field, _coords, _stations in coordinate_references):
+            continue
+        field_reference = _receiver_coordinate_reference_for_field(
+            receiver_rows,
+            receiver_stations,
+            field,
+        )
+        if field_reference is not None:
+            coordinate_references.append((field, field_reference[0], field_reference[1]))
+
+    receiver_node_station = _receiver_node_station_map(receiver_rows, receiver_stations)
+    x_values = dict(receiver_stations)
+    source_methods: set[str] = set()
+    coordinate_fields_used: set[str] = {field for field, _coords, _stations in coordinate_references[:1]}
+    warnings: list[str] = []
+    source_id_fallback_allowed = not _has_physical_station_reference(receiver_methods)
+    source_id_fallback_used = False
+    missing_coordinate_count = 0
+    out_of_range_count = 0
+    unmapped_source_count = 0
+
+    for row in source_rows:
+        coordinate_out_of_range = False
+        station, method = _explicit_source_station(row)
+        if station is None:
+            node_id = _node_id(row, 'source')
+            if node_id is not None and node_id in receiver_node_station:
+                station = receiver_node_station[node_id]
+                method = 'linked_receiver_station_number'
+        if station is None and coordinate_references:
+            station, used_coordinate_field, coordinate_status = _source_station_from_coordinates(
+                row,
+                coordinate_references,
+            )
+            if station is not None:
+                method = 'coordinate_interpolation'
+                if used_coordinate_field is not None:
+                    coordinate_fields_used.add(used_coordinate_field)
+            elif coordinate_status == 'missing':
+                missing_coordinate_count += 1
+            elif coordinate_status == 'out_of_range':
+                out_of_range_count += 1
+                coordinate_out_of_range = True
+        if (
+            station is None
+            and source_id_fallback_allowed
+            and not coordinate_out_of_range
+        ):
+            station = _source_id_fallback(row)
+            if station is not None:
+                method = 'source_id_fallback'
+                source_id_fallback_used = True
+        if (
+            station is None
+            and not source_id_fallback_allowed
+            and not coordinate_out_of_range
+            and coordinate_field is None
+        ):
+            unmapped_source_count += 1
+        if station is None:
+            continue
+        x_values[id(row)] = station
+        source_methods.add(method or 'unknown')
+
+    if source_id_fallback_used:
+        warnings.append(_SOURCE_ID_FALLBACK_WARNING)
+    if missing_coordinate_count:
+        coordinate_field_label = _coordinate_field_label(coordinate_fields_used)
+        warnings.append(
+            f'Source x-axis could not use {coordinate_field_label} for '
+            f'{missing_coordinate_count} source endpoint(s) because the coordinate '
+            'was missing or non-finite.'
+        )
+    if out_of_range_count:
+        warnings.append(
+            f'Source x-axis omitted {out_of_range_count} source endpoint(s) because '
+            'the source coordinate lies outside the receiver station reference range.'
+        )
+    if unmapped_source_count:
+        warnings.append(
+            f'Source x-axis omitted {unmapped_source_count} source endpoint(s) because '
+            'no source station mapping was available on the receiver station axis.'
+        )
+
+    if not x_values:
+        raise RefractionStaticStationStructureError(
+            'Station-structure QC requires a station-like x-axis field'
+        )
+
+    return _StationAxisMapping(
+        x_axis='endpoint_id_fallback' if source_id_fallback_used else 'global_station_number',
+        x_axis_label=(
+            'source/receiver endpoint id fallback'
+            if source_id_fallback_used
+            else 'Global station number'
+        ),
+        x_axis_status='fallback' if source_id_fallback_used else 'ok',
+        x_values=x_values,
+        source_methods=source_methods,
+        receiver_methods=receiver_methods,
+        coordinate_field=_coordinate_field_label(coordinate_fields_used),
+        warnings=warnings,
+    )
+
+
+def _mapping_method_label(methods: set[str]) -> str:
+    if not methods:
+        return 'unavailable'
+    if len(methods) == 1:
+        return next(iter(methods))
+    priority = (
+        'explicit_global_station_number',
+        'explicit_global_receiver_number',
+        'linked_receiver_station_number',
+        'coordinate_interpolation',
+        'explicit_station_number',
+        'explicit_receiver_number',
+        'receiver_id',
+        'endpoint_key_numeric_suffix',
+        'coordinate_order',
+        'source_id_fallback',
+    )
+    ordered = [method for method in priority if method in methods]
+    ordered.extend(sorted(method for method in methods if method not in ordered))
+    return 'mixed:' + ','.join(ordered)
+
+
+def _has_physical_station_reference(methods: set[str]) -> bool:
+    return any(
+        method
+        in {
+            'explicit_global_station_number',
+            'explicit_global_receiver_number',
+            'explicit_station_number',
+            'explicit_receiver_number',
+            'coordinate_order',
+        }
+        for method in methods
+    )
+
+
+def _explicit_receiver_station(row: dict[str, Any]) -> tuple[float | None, str]:
+    for field, method in (
+        ('global_station_number', 'explicit_global_station_number'),
+        ('global_receiver_number', 'explicit_global_receiver_number'),
+        ('station_number', 'explicit_station_number'),
+        ('receiver_number', 'explicit_receiver_number'),
+    ):
+        value = _numeric_or_none(row.get(field))
+        if value is not None:
+            return value, method
+    return None, 'unavailable'
+
+
+def _receiver_id_station_fallback(row: dict[str, Any]) -> tuple[float | None, str]:
+    for field, method in (
+        ('receiver_id', 'receiver_id'),
+        ('endpoint_id', 'endpoint_id'),
+    ):
+        value = _numeric_or_none(row.get(field))
+        if value is not None:
+            return value, method
+    suffix = _numeric_suffix(_endpoint_key(row))
+    if suffix is not None:
+        return suffix, 'endpoint_key_numeric_suffix'
+    return None, 'unavailable'
+
+
+def _explicit_source_station(row: dict[str, Any]) -> tuple[float | None, str]:
+    for field, method in (
+        ('global_station_number', 'explicit_global_station_number'),
+        ('global_receiver_number', 'explicit_global_receiver_number'),
+    ):
+        value = _numeric_or_none(row.get(field))
+        if value is not None:
+            return value, method
+    return None, 'unavailable'
+
+
+def _source_id_fallback(row: dict[str, Any]) -> float | None:
+    value = _numeric_or_none(
+        _first_present(
+            row,
+            'source_id',
+            'source_number',
+            'shot_id',
+            'endpoint_id',
+        )
+    )
+    if value is not None:
+        return value
+    return _numeric_suffix(_endpoint_key(row))
+
+
+def _receiver_coordinate_reference(
+    receiver_rows: list[dict[str, Any]],
+    receiver_stations: dict[int, float],
+) -> tuple[str, np.ndarray, np.ndarray, dict[int, float]] | None:
+    for field in ('inline_m', 'x_m'):
+        known_pairs: list[tuple[float, float]] = []
+        sortable_rows: list[tuple[float, dict[str, Any]]] = []
+        for row in receiver_rows:
+            coordinate = _coordinate_value(row, field, 'receiver')
+            if coordinate is None:
+                continue
+            sortable_rows.append((coordinate, row))
+            station = receiver_stations.get(id(row))
+            if station is not None:
+                known_pairs.append((coordinate, station))
+
+        if len(sortable_rows) < 2:
+            continue
+
+        if len(known_pairs) >= 2:
+            coordinate_values, station_values = _unique_station_reference(known_pairs)
+            if coordinate_values is not None:
+                inferred: dict[int, float] = {}
+                for coordinate, row in sortable_rows:
+                    if id(row) in receiver_stations:
+                        continue
+                    station = _interpolated_station_number(
+                        coordinate,
+                        coordinate_values,
+                        station_values,
+                    )
+                    if station is not None:
+                        inferred[id(row)] = station
+                inferred.update(
+                    _receiver_coordinate_order_stations(
+                        sortable_rows,
+                        {**receiver_stations, **inferred},
+                    )
+                )
+                combined_stations = {**receiver_stations, **inferred}
+                pairs = [
+                    (coordinate, combined_stations[id(row)])
+                    for coordinate, row in sortable_rows
+                    if id(row) in combined_stations
+                ]
+                coordinate_values, station_values = _unique_station_reference(pairs)
+                if coordinate_values is not None:
+                    return field, coordinate_values, station_values, inferred
+
+        order_inferred = _receiver_coordinate_order_stations(
+            sortable_rows,
+            receiver_stations,
+        )
+        if order_inferred:
+            combined_stations = {**receiver_stations, **order_inferred}
+            pairs = [
+                (coordinate, combined_stations[id(row)])
+                for coordinate, row in sortable_rows
+                if id(row) in combined_stations
+            ]
+            coordinate_values, station_values = _unique_station_reference(pairs)
+            if coordinate_values is not None:
+                return field, coordinate_values, station_values, order_inferred
+    return None
+
+
+def _receiver_coordinate_order_stations(
+    sortable_rows: list[tuple[float, dict[str, Any]]],
+    receiver_stations: dict[int, float],
+) -> dict[int, float]:
+    ordered_rows = sorted(sortable_rows, key=lambda item: (item[0], _endpoint_key(item[1])))
+    if len(ordered_rows) < 2:
+        return {}
+
+    known: list[tuple[int, float]] = []
+    for index, (_coordinate, row) in enumerate(ordered_rows):
+        station = receiver_stations.get(id(row))
+        if station is not None:
+            known.append((index, station))
+
+    inferred: dict[int, float] = {}
+    if not known:
+        for index, (_coordinate, row) in enumerate(ordered_rows, start=1):
+            inferred[id(row)] = float(index)
+        return inferred
+
+    if len(known) == 1:
+        anchor_index, anchor_station = known[0]
+        for index, (_coordinate, row) in enumerate(ordered_rows):
+            if id(row) in receiver_stations:
+                continue
+            inferred[id(row)] = anchor_station + float(index - anchor_index)
+        return inferred
+
+    known_indices = np.asarray([index for index, _station in known], dtype=np.float64)
+    known_stations = np.asarray([station for _index, station in known], dtype=np.float64)
+    for index, (_coordinate, row) in enumerate(ordered_rows):
+        if id(row) in receiver_stations:
+            continue
+        if index < known_indices[0]:
+            station = _extrapolated_order_station(index, known_indices[:2], known_stations[:2])
+        elif index > known_indices[-1]:
+            station = _extrapolated_order_station(index, known_indices[-2:], known_stations[-2:])
+        else:
+            station = float(np.interp(index, known_indices, known_stations))
+        inferred[id(row)] = station
+    return inferred
+
+
+def _extrapolated_order_station(
+    index: int,
+    known_indices: np.ndarray,
+    known_stations: np.ndarray,
+) -> float:
+    index_delta = float(known_indices[1] - known_indices[0])
+    if index_delta == 0.0:
+        return float(known_stations[0])
+    station_delta = float(known_stations[1] - known_stations[0])
+    return float(known_stations[0] + (float(index) - known_indices[0]) * station_delta / index_delta)
+
+
+def _receiver_coordinate_reference_for_field(
+    receiver_rows: list[dict[str, Any]],
+    receiver_stations: dict[int, float],
+    field: str,
+) -> tuple[np.ndarray, np.ndarray] | None:
+    pairs: list[tuple[float, float]] = []
+    for row in receiver_rows:
+        station = receiver_stations.get(id(row))
+        if station is None:
+            continue
+        coordinate = _coordinate_value(row, field, 'receiver')
+        if coordinate is None:
+            continue
+        pairs.append((coordinate, station))
+    coordinate_values, station_values = _unique_station_reference(pairs)
+    if coordinate_values is None:
+        return None
+    return coordinate_values, station_values
+
+
+def _source_station_from_coordinates(
+    row: dict[str, Any],
+    coordinate_references: list[tuple[str, np.ndarray, np.ndarray]],
+) -> tuple[float | None, str | None, str]:
+    saw_coordinate = False
+    for field, coordinate_values, station_values in coordinate_references:
+        coordinate = _coordinate_value(row, field, 'source')
+        if coordinate is None:
+            continue
+        saw_coordinate = True
+        station = _interpolated_station_number(
+            coordinate,
+            coordinate_values,
+            station_values,
+        )
+        if station is not None:
+            return station, field, 'ok'
+    if saw_coordinate:
+        return None, None, 'out_of_range'
+    return None, None, 'missing'
+
+
+def _coordinate_field_label(fields: set[str]) -> str | None:
+    if not fields:
+        return None
+    ordered = [field for field in ('inline_m', 'x_m') if field in fields]
+    ordered.extend(sorted(field for field in fields if field not in ordered))
+    if len(ordered) == 1:
+        return ordered[0]
+    return 'mixed:' + ','.join(ordered)
+
+
+def _unique_station_reference(
+    pairs: list[tuple[float, float]],
+) -> tuple[np.ndarray, np.ndarray] | tuple[None, None]:
+    by_coordinate: dict[float, float] = {}
+    for coordinate, station in sorted(pairs):
+        by_coordinate.setdefault(coordinate, station)
+    if len(by_coordinate) < 2:
+        return None, None
+    return (
+        np.asarray(list(by_coordinate.keys()), dtype=np.float64),
+        np.asarray(list(by_coordinate.values()), dtype=np.float64),
+    )
+
+
+def _interpolated_station_number(
+    coordinate: float,
+    reference_coordinate: np.ndarray,
+    reference_station: np.ndarray,
+) -> float | None:
+    min_coordinate = float(reference_coordinate[0])
+    max_coordinate = float(reference_coordinate[-1])
+    if coordinate < min_coordinate or coordinate > max_coordinate:
+        return None
+    return float(np.interp(coordinate, reference_coordinate, reference_station))
+
+
+def _coordinate_value(
+    row: dict[str, Any],
+    field: str,
+    endpoint_kind: str,
+) -> float | None:
+    value = _numeric_or_none(row.get(field))
+    if value is not None:
+        return value
+    return _numeric_or_none(row.get(f'{endpoint_kind}_{field}'))
+
+
+def _receiver_node_station_map(
+    receiver_rows: list[dict[str, Any]],
+    receiver_stations: dict[int, float],
+) -> dict[float, float]:
+    node_station: dict[float, float] = {}
+    conflicts: set[float] = set()
+    for row in receiver_rows:
+        node_id = _node_id(row, 'receiver')
+        station = receiver_stations.get(id(row))
+        if node_id is None or station is None:
+            continue
+        existing = node_station.get(node_id)
+        if existing is not None and existing != station:
+            conflicts.add(node_id)
+            continue
+        node_station[node_id] = station
+    for node_id in conflicts:
+        node_station.pop(node_id, None)
+    return node_station
+
+
+def _node_id(row: dict[str, Any], endpoint_kind: str) -> float | None:
+    return _numeric_or_none(
+        _first_present(
+            row,
+            f'{endpoint_kind}_node_id',
+            'node_id',
+            'linked_node_id',
+        )
+    )
+
+
 def _x_axis_label(field: str) -> str:
     if field == 'global_receiver_number':
         return 'Global receiver number'
@@ -393,13 +925,13 @@ def _has_series_values(
 def _append_linked_node_velocity_warning(
     source_rows: list[dict[str, Any]],
     receiver_rows: list[dict[str, Any]],
-    x_axis: str,
+    x_values: dict[int, float],
     velocity_field: str,
     warnings: list[str],
 ) -> None:
     for kind, rows in (('source', source_rows), ('receiver', receiver_rows)):
         for row in rows:
-            if _x_value(row, kind, x_axis) is None:
+            if id(row) not in x_values:
                 continue
             field, value = _candidate_value_with_field(
                 row,
@@ -418,12 +950,12 @@ def _append_linked_node_velocity_warning(
 def _series(
     rows: list[dict[str, Any]],
     endpoint_kind: str,
-    x_axis: str,
+    x_values: dict[int, float],
     candidates_for: Any,
 ) -> dict[str, list[Any]]:
     points: list[tuple[float, float, str, str]] = []
     for row in rows:
-        x_value = _x_value(row, endpoint_kind, x_axis)
+        x_value = x_values.get(id(row))
         y_value = _candidate_value(row, candidates_for(endpoint_kind, row))
         if x_value is None or y_value is None:
             continue
@@ -437,7 +969,11 @@ def _series(
     }
 
 
-def _x_value(row: dict[str, Any], endpoint_kind: str, x_axis: str) -> float | None:
+def _legacy_x_value(
+    row: dict[str, Any],
+    endpoint_kind: str,
+    x_axis: str,
+) -> float | None:
     if x_axis == 'endpoint_key_numeric_suffix':
         return _numeric_suffix(_endpoint_key(row))
     if x_axis == 'source_id' and endpoint_kind != 'source':
