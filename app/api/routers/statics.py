@@ -31,6 +31,8 @@ from app.api.schemas import (
     RefractionStaticQcBundleResponse,
     RefractionStaticQcDrilldownRequest,
     RefractionStaticQcDrilldownResponse,
+    RefractionStaticQcEndpointSearchRequest,
+    RefractionStaticQcEndpointSearchResponse,
     RefractionStaticPickMapRequest,
     RefractionStaticPickMapResponse,
     RefractionStaticTableApplyRequest,
@@ -74,6 +76,10 @@ from app.services.refraction_static_qc_drilldown import (
     RefractionStaticQcDrilldownError,
     RefractionStaticQcDrilldownNotFound,
     build_refraction_static_qc_drilldown,
+)
+from app.services.refraction_static_qc_endpoint_search import (
+    RefractionStaticQcEndpointSearchError,
+    build_refraction_static_qc_endpoint_search,
 )
 from app.services.refraction_static_station_structure import (
     RefractionStaticStationStructureError,
@@ -532,6 +538,29 @@ def refraction_static_qc_bundle(
             req=req,
         )
     except RefractionStaticQcBundleError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+
+@router.post(
+    '/statics/refraction/qc/endpoints',
+    response_model=RefractionStaticQcEndpointSearchResponse,
+    response_model_exclude_none=True,
+)
+def refraction_static_qc_endpoint_search(
+    req: RefractionStaticQcEndpointSearchRequest,
+    request: Request,
+) -> RefractionStaticQcEndpointSearchResponse:
+    """Return searchable source/receiver endpoint selector records."""
+    state = get_state(request.app)
+    cleanup_in_memory_state(state)
+    job = _get_static_job_or_404(state, req.job_id)
+    try:
+        return build_refraction_static_qc_endpoint_search(
+            job_id=req.job_id,
+            job=job,
+            req=req,
+        )
+    except RefractionStaticQcEndpointSearchError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
 
 

@@ -7,6 +7,7 @@
   const STATIC_PICK_STORE = 'pick_npz_blobs';
   const MAX_RECENT_JOBS = 8;
   const DEFAULT_MAX_POINTS = 20000;
+  const QC_DRILLDOWN_MAX_OBSERVATIONS = 200;
   const PICK_MAP_DRAFT_GEOMETRY_HEADER_FIELDS = [
     'source_id_byte',
     'receiver_id_byte',
@@ -89,12 +90,21 @@
     selectedJobId: '',
     qcBundle: null,
     selectedView: 'summary',
+    selectedFirstBreakPick: null,
+    selectedProfileEndpoint: null,
+    firstBreakDrilldown: null,
+    firstBreakDrilldownLoading: false,
+    firstBreakDrilldownError: null,
     selectedLayerKind: 'all',
     firstBreakXAxis: 'offset',
     showRejectedFirstBreaks: true,
     selectedEndpointKind: 'source',
     selectedCell: null,
     selectedCellMapQuantity: 'velocity',
+    qcDrilldown: null,
+    qcDrilldownLoading: false,
+    qcDrilldownError: null,
+    qcDrilldownTarget: null,
     selectedEndpoint: '',
     selectedTraceIndex: '',
     selectedProfileGroup: 'time_terms',
@@ -103,6 +113,8 @@
     maxPoints: DEFAULT_MAX_POINTS,
     gatherAxis: 'source',
     gatherDisplayMode: 'side_by_side',
+    gatherEndpointKey: '',
+    gatherEndpointSearch: '',
     gatherFileId: '',
     gatherKey1Byte: '',
     gatherKey2Byte: '',
@@ -139,6 +151,7 @@
   let dom = null;
   let requestSerial = 0;
   let gatherRequestSerial = 0;
+  let qcDrilldownRequestSerial = 0;
   let pickMapRequestSerial = 0;
   let stationStructureRequestSerial = 0;
   let pickMapCanvasCleanup = null;
@@ -956,6 +969,9 @@
 
     const layerKind = String(firstDefined(record, ['layer_kind']) || '').trim() || 'unknown';
     const rejected = isRejectedFirstBreakRecord(record);
+    const sourceEndpointKey = String(firstDefined(record, ['source_endpoint_key']) || '').trim();
+    const receiverEndpointKey = String(firstDefined(record, ['receiver_endpoint_key']) || '').trim();
+    const traceIndex = textOrDash(firstDefined(record, ['trace_index_sorted', 'sorted_trace_index']));
     return {
       x,
       observedMs: observedS * 1000.0,
@@ -964,9 +980,11 @@
       layerKind,
       status: rejected ? 'rejected' : 'used',
       opacity: rejected ? 0.42 : 0.9,
-      traceIndex: textOrDash(firstDefined(record, ['trace_index_sorted', 'sorted_trace_index'])),
-      source: textOrDash(firstDefined(record, ['source_endpoint_key', 'source_id'])),
-      receiver: textOrDash(firstDefined(record, ['receiver_endpoint_key', 'receiver_id'])),
+      traceIndex,
+      sourceEndpointKey,
+      receiverEndpointKey,
+      source: textOrDash(sourceEndpointKey || firstDefined(record, ['source_id'])),
+      receiver: textOrDash(receiverEndpointKey || firstDefined(record, ['receiver_id'])),
     };
   }
 
@@ -1062,6 +1080,12 @@
       inline,
       endpointKind: normalizedText(firstDefined(record, ['endpoint_kind'])) || 'unknown',
       endpointKey: textOrDash(firstDefined(record, ['endpoint_key'])),
+      stationId: textOrDash(firstDefined(record, [
+        'station_id',
+        'endpoint_id',
+        'source_id',
+        'receiver_id',
+      ])),
       nodeId: textOrDash(firstDefined(record, ['node_id'])),
       staticStatus: textOrDash(firstDefined(record, ['static_status'])),
       solutionStatus: textOrDash(firstDefined(record, ['solution_status'])),
@@ -1198,6 +1222,96 @@
   function staticEndpointRecords(view) {
     const records = Array.isArray(view?.records) ? view.records : [];
     return records.filter((record) => staticEndpointKind(record) && staticEndpointKey(record));
+  }
+
+  function gatherEndpointStationId(record, endpointKind) {
+    const stationValue = firstDefined(record, [
+      'station_id',
+      `${endpointKind}_station_id`,
+      endpointKind === 'source' ? 'shot_point' : 'receiver_point',
+      endpointKind === 'source' ? 'source_point' : 'receiver_station',
+      'station',
+      'point_id',
+    ]);
+    return String(stationValue ?? '').trim();
+  }
+
+  function gatherEndpointStatus(record) {
+    return textOrDash(firstDefined(record, [
+      'static_status',
+      'component_status',
+      'solution_status',
+      'datum_status',
+      'weathering_status',
+      'status',
+    ]));
+  }
+
+  function gatherEndpointCoordinateParts(record) {
+    const parts = [];
+    const x = toFiniteNumber(firstDefined(record, ['x_m', 'inline_m']));
+    const y = toFiniteNumber(firstDefined(record, ['y_m', 'crossline_m']));
+    const z = toFiniteNumber(firstDefined(record, ['surface_elevation_m', 'elevation_m', 'z_m']));
+    if (Number.isFinite(x)) parts.push(`x=${formatNumber(x, 1)}`);
+    if (Number.isFinite(y)) parts.push(`y=${formatNumber(y, 1)}`);
+    if (Number.isFinite(z)) parts.push(`z=${formatNumber(z, 1)}`);
+    return parts;
+  }
+
+  function gatherEndpointLabel(record, endpointKind, duplicateStations) {
+    const endpointKey = staticEndpointKey(record);
+    const stationId = gatherEndpointStationId(record, endpointKind);
+    const prefix = endpointKind === 'receiver' ? 'R' : 'S';
+    const title = `${prefix} ${stationId || endpointKey}`;
+    const parts = [title];
+    const nodeId = String(firstDefined(record, ['node_id']) ?? '').trim();
+    if (nodeId) {
+      parts.push(`node ${nodeId}`);
+    } else if (stationId && duplicateStations.has(stationId)) {
+      parts.push(...gatherEndpointCoordinateParts(record));
+    }
+    const pickCount = toFiniteNumber(firstDefined(record, ['pick_count', 'used_pick_count']));
+    if (Number.isFinite(pickCount)) parts.push(`picks ${formatNumber(pickCount, 0)}`);
+    const residualRms = toFiniteNumber(firstDefined(record, ['residual_rms_ms']));
+    if (Number.isFinite(residualRms)) parts.push(`RMS ${formatNumber(residualRms, 1)} ms`);
+    parts.push(gatherEndpointStatus(record));
+    return parts.filter(Boolean).join(' · ');
+  }
+
+  function buildGatherEndpointOptions(bundle, endpointKind) {
+    const componentView = viewByKey(bundle, 'static_components');
+    const qcView = viewByKey(bundle, STATIC_ENDPOINT_VIEW_KEY);
+    const componentRecords = staticEndpointRecords(componentView)
+      .filter((record) => staticEndpointKind(record) === endpointKind);
+    const qcByEndpointKey = new Map();
+    for (const record of staticEndpointRecords(qcView)) {
+      const key = staticEndpointKey(record);
+      if (key && !qcByEndpointKey.has(key)) qcByEndpointKey.set(key, record);
+    }
+    const mergedRecords = componentRecords.map((record) => ({
+      ...qcByEndpointKey.get(staticEndpointKey(record)),
+      ...record,
+    }));
+    const stationCounts = new Map();
+    for (const record of mergedRecords) {
+      const stationId = gatherEndpointStationId(record, endpointKind);
+      if (stationId) stationCounts.set(stationId, (stationCounts.get(stationId) || 0) + 1);
+    }
+    const duplicateStations = new Set(
+      Array.from(stationCounts.entries())
+        .filter(([, count]) => count > 1)
+        .map(([stationId]) => stationId),
+    );
+    return mergedRecords
+      .map((record) => ({
+        value: staticEndpointKey(record),
+        label: gatherEndpointLabel(record, endpointKind, duplicateStations),
+        stationId: gatherEndpointStationId(record, endpointKind),
+      }))
+      .sort((a, b) => (
+        String(a.stationId || '').localeCompare(String(b.stationId || ''), undefined, { numeric: true })
+        || a.value.localeCompare(b.value, undefined, { numeric: true })
+      ));
   }
 
   function staticTraceRecords(view) {
@@ -1563,6 +1677,61 @@
     ].join('<br>');
   }
 
+  function profileEndpointCustomData(point) {
+    return {
+      endpoint_kind: point.endpointKind,
+      endpoint_key: point.endpointKey,
+      station_id: point.stationId,
+      node_id: point.nodeId,
+      inline_m: point.inline,
+      static_status: point.staticStatus,
+      solution_status: point.solutionStatus,
+    };
+  }
+
+  function profileEndpointFromCustomData(customdata) {
+    if (!customdata || typeof customdata !== 'object') return null;
+    const endpointKind = normalizedText(customdata.endpoint_kind);
+    const endpointKey = String(customdata.endpoint_key || '').trim();
+    if (!endpointKind || !endpointKey || endpointKey === '-') return null;
+    return {
+      endpointKind,
+      endpointKey,
+      stationId: textOrDash(customdata.station_id),
+      nodeId: textOrDash(customdata.node_id),
+      inlineM: toFiniteNumber(customdata.inline_m),
+      staticStatus: textOrDash(customdata.static_status),
+      solutionStatus: textOrDash(customdata.solution_status),
+    };
+  }
+
+  function profileEndpointKey(endpoint) {
+    return `${endpoint?.endpointKind || ''}|${endpoint?.endpointKey || ''}`;
+  }
+
+  function attachProfileEndpointClickActions(plot) {
+    if (!plot || typeof plot.on !== 'function' || plot.dataset.profileEndpointClickAttached === 'true') return;
+    plot.dataset.profileEndpointClickAttached = 'true';
+    plot.on('plotly_click', (event) => {
+      const endpoint = profileEndpointFromCustomData(event?.points?.[0]?.customdata);
+      if (!endpoint) return;
+      state.selectedProfileEndpoint = endpoint;
+      render();
+    });
+  }
+
+  function setEndpointFilter(endpointKind, endpointKey) {
+    const cleanKey = String(endpointKey || '').trim();
+    if (!endpointKind || !cleanKey) return;
+    state.selectedEndpointKind = endpointKind === 'receiver' ? 'receiver' : 'source';
+    state.selectedEndpoint = cleanKey;
+  }
+
+  function openEndpointStaticDrilldown(endpointKind, endpointKey) {
+    setEndpointFilter(endpointKind, endpointKey);
+    setSelectedView('static_components');
+  }
+
   function clearNode(node) {
     while (node && node.firstChild) node.removeChild(node.firstChild);
   }
@@ -1721,6 +1890,600 @@
       `Modeled: ${formatNumber(point.modeledMs, 2)} ms`,
       `Residual: ${formatNumber(point.residualMs, 2)} ms`,
     ].join('<br>');
+  }
+
+  function firstBreakPickCustomData(point) {
+    return {
+      x: point.x,
+      observed_ms: point.observedMs,
+      modeled_ms: point.modeledMs,
+      residual_ms: point.residualMs,
+      source_endpoint_key: point.sourceEndpointKey,
+      receiver_endpoint_key: point.receiverEndpointKey,
+      trace_index: point.traceIndex,
+      layer_kind: point.layerKind,
+      status: point.status,
+      source: point.source,
+      receiver: point.receiver,
+    };
+  }
+
+  function firstBreakPickFromCustomData(customdata) {
+    if (!customdata || typeof customdata !== 'object') return null;
+    const residualMs = toFiniteNumber(customdata.residual_ms);
+    return {
+      x: toFiniteNumber(customdata.x),
+      observedMs: toFiniteNumber(customdata.observed_ms),
+      modeledMs: toFiniteNumber(customdata.modeled_ms),
+      residualMs,
+      sourceEndpointKey: String(customdata.source_endpoint_key || '').trim(),
+      receiverEndpointKey: String(customdata.receiver_endpoint_key || '').trim(),
+      traceIndex: textOrDash(customdata.trace_index),
+      layerKind: String(customdata.layer_kind || '').trim() || 'unknown',
+      status: String(customdata.status || '').trim() || 'used',
+      source: textOrDash(customdata.source || customdata.source_endpoint_key),
+      receiver: textOrDash(customdata.receiver || customdata.receiver_endpoint_key),
+    };
+  }
+
+  function firstBreakPickKey(point) {
+    if (!point) return '';
+    return [
+      point.traceIndex,
+      point.layerKind,
+      point.sourceEndpointKey,
+      point.receiverEndpointKey,
+      Number.isFinite(point.x) ? formatNumber(point.x, 6) : '',
+      Number.isFinite(point.residualMs) ? formatNumber(point.residualMs, 6) : '',
+    ].join('|');
+  }
+
+  function selectedFirstBreakPick(points) {
+    const selected = state.selectedFirstBreakPick;
+    if (!selected) return null;
+    const selectedKey = firstBreakPickKey(selected);
+    return points.find((point) => firstBreakPickKey(point) === selectedKey) || null;
+  }
+
+  function attachFirstBreakPickClickActions(plot) {
+    if (!plot || typeof plot.on !== 'function' || plot.dataset.firstBreakPickClickAttached === 'true') return;
+    plot.dataset.firstBreakPickClickAttached = 'true';
+    plot.on('plotly_click', (event) => {
+      const point = event?.points?.[0];
+      const pick = firstBreakPickFromCustomData(point?.customdata);
+      if (!pick) return;
+      state.selectedFirstBreakPick = pick;
+      state.firstBreakDrilldown = null;
+      state.firstBreakDrilldownError = null;
+      render();
+    });
+  }
+
+  function gatherPreviewInputsReady() {
+    const { errors } = buildGatherPreviewRequest();
+    return !errors.length;
+  }
+
+  function previewGatherForEndpoint(endpointKind, endpointKey, options = {}) {
+    const cleanKey = String(endpointKey || '').trim();
+    if (!cleanKey) return;
+    state.gatherAxis = endpointKind === 'receiver' ? 'receiver' : 'source';
+    state.gatherEndpointKey = cleanKey;
+    state.gatherEndpointSearch = '';
+    state.gatherPreview = null;
+    state.gatherError = null;
+    setSelectedView('gather_preview');
+    if (options.autoLoad !== false && gatherPreviewInputsReady()) loadGatherPreview();
+  }
+
+  async function openEndpointDrilldownForPick(pick) {
+    const sourceKey = String(pick?.sourceEndpointKey || '').trim();
+    const receiverKey = String(pick?.receiverEndpointKey || '').trim();
+    const endpointKind = sourceKey ? 'source' : (receiverKey ? 'receiver' : '');
+    const endpointKey = endpointKind === 'source' ? sourceKey : receiverKey;
+    if (!endpointKind || !endpointKey) return;
+
+    state.selectedEndpointKind = endpointKind;
+    state.selectedEndpoint = endpointKey;
+    state.firstBreakDrilldown = null;
+    state.firstBreakDrilldownError = null;
+    state.firstBreakDrilldownLoading = true;
+    render();
+    try {
+      const response = await fetch('/statics/refraction/qc/drilldown', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          job_id: String(state.selectedJobId || dom?.jobId?.value || '').trim(),
+          target: { kind: 'endpoint', endpoint_kind: endpointKind, endpoint_key: endpointKey },
+        }),
+      });
+      if (!response.ok) throw new Error(await readError(response, 'Endpoint drilldown request'));
+      state.firstBreakDrilldown = await response.json();
+    } catch (error) {
+      state.firstBreakDrilldownError = error instanceof Error ? error.message : String(error);
+    } finally {
+      state.firstBreakDrilldownLoading = false;
+      render();
+    }
+  }
+
+  async function loadQcDrilldown(target) {
+    const jobId = String(state.selectedJobId || dom?.jobId?.value || '').trim();
+    const requestTarget = target && typeof target === 'object' ? { ...target } : null;
+    const serial = ++qcDrilldownRequestSerial;
+    state.qcDrilldownTarget = requestTarget;
+    state.qcDrilldown = null;
+    state.qcDrilldownError = null;
+    state.qcDrilldownLoading = true;
+    render();
+
+    if (!jobId || !requestTarget) {
+      if (serial !== qcDrilldownRequestSerial) return;
+      state.qcDrilldownLoading = false;
+      state.qcDrilldownError = !jobId ? 'Job ID is required.' : 'Cell drilldown target is required.';
+      render();
+      return;
+    }
+
+    try {
+      const response = await fetch('/statics/refraction/qc/drilldown', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          job_id: jobId,
+          target: requestTarget,
+          max_observations: QC_DRILLDOWN_MAX_OBSERVATIONS,
+        }),
+      });
+      if (!response.ok) throw new Error(await readError(response, 'Cell drilldown request'));
+      const payload = await response.json();
+      if (serial !== qcDrilldownRequestSerial) return;
+      state.qcDrilldown = payload;
+      state.qcDrilldownError = null;
+    } catch (error) {
+      if (serial !== qcDrilldownRequestSerial) return;
+      state.qcDrilldown = null;
+      state.qcDrilldownError = error instanceof Error ? error.message : String(error);
+    } finally {
+      if (serial === qcDrilldownRequestSerial) {
+        state.qcDrilldownLoading = false;
+        render();
+      }
+    }
+  }
+
+  function createFirstBreakPickActionButton(label, disabledReason, onClick) {
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.textContent = label;
+    if (disabledReason) {
+      button.disabled = true;
+      button.title = disabledReason;
+    } else {
+      button.addEventListener('click', onClick);
+    }
+    return button;
+  }
+
+  function createEndpointActionButton(label, disabledReason, onClick, testId) {
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.textContent = label;
+    if (testId) button.dataset.testid = testId;
+    if (disabledReason) {
+      button.disabled = true;
+      button.title = disabledReason;
+    } else {
+      button.addEventListener('click', onClick);
+    }
+    return button;
+  }
+
+  function drilldownNumber(value) {
+    const number = toFiniteNumber(value);
+    return Number.isFinite(number) ? number : NaN;
+  }
+
+  function drilldownMetric(value, digits, unit = '') {
+    const number = drilldownNumber(value);
+    if (!Number.isFinite(number)) return '-';
+    const formatted = formatNumber(number, digits);
+    return unit ? `${formatted} ${unit}` : formatted;
+  }
+
+  function drilldownResidualMs(record) {
+    return finiteMetric(
+      record,
+      ['residual_time_ms', 'residual_ms'],
+      ['residual_time_s', 'residual_s'],
+      1000.0,
+    );
+  }
+
+  function endpointCandidatesFromCellDrilldown(payload) {
+    const records = Array.isArray(payload?.observations?.records)
+      ? payload.observations.records
+      : [];
+    const byEndpoint = new Map();
+    for (const record of records) {
+      for (const endpointKind of ['source', 'receiver']) {
+        const endpointKey = String(firstDefined(record, [`${endpointKind}_endpoint_key`, `${endpointKind}_id`]) || '').trim();
+        if (!endpointKey) continue;
+        const key = `${endpointKind}|${endpointKey}`;
+        if (!byEndpoint.has(key)) {
+          byEndpoint.set(key, {
+            endpointKind,
+            endpointKey,
+            pickCount: 0,
+            residualSquares: [],
+          });
+        }
+        const candidate = byEndpoint.get(key);
+        candidate.pickCount += 1;
+        const residualMs = drilldownResidualMs(record);
+        if (Number.isFinite(residualMs)) candidate.residualSquares.push(residualMs * residualMs);
+      }
+    }
+    return Array.from(byEndpoint.values())
+      .map((candidate) => ({
+        endpointKind: candidate.endpointKind,
+        endpointKey: candidate.endpointKey,
+        pickCount: candidate.pickCount,
+        residualRmsMs: candidate.residualSquares.length
+          ? Math.sqrt(candidate.residualSquares.reduce((total, value) => total + value, 0) / candidate.residualSquares.length)
+          : NaN,
+      }))
+      .sort((a, b) => (
+        a.endpointKind.localeCompare(b.endpointKind)
+        || b.pickCount - a.pickCount
+        || a.endpointKey.localeCompare(b.endpointKey)
+      ));
+  }
+
+  function cellDrilldownTargetFromSelectedCell(cell) {
+    if (!cell || cell.cell_ix === undefined || cell.cell_iy === undefined) return null;
+    return {
+      kind: 'cell',
+      layer_kind: cell.layer_kind || 'v2_t1',
+      cell_ix: Number(cell.cell_ix),
+      cell_iy: Number(cell.cell_iy),
+    };
+  }
+
+  function cellEndpointDisplayName(endpointKind, endpointKey) {
+    const cleanKey = String(endpointKey || '').trim();
+    const prefix = endpointKind === 'receiver' ? 'R' : 'S';
+    const lowered = cleanKey.toLowerCase();
+    if (
+      cleanKey.toUpperCase().startsWith(prefix)
+      || lowered.startsWith(endpointKind)
+    ) {
+      return cleanKey;
+    }
+    return `${prefix} ${cleanKey}`;
+  }
+
+  function createCellEndpointCandidateRow(candidate) {
+    const item = document.createElement('li');
+    const summary = document.createElement('span');
+    const rms = Number.isFinite(candidate.residualRmsMs)
+      ? ` · RMS ${formatNumber(candidate.residualRmsMs, 1)} ms`
+      : '';
+    summary.textContent = `${cellEndpointDisplayName(
+      candidate.endpointKind,
+      candidate.endpointKey,
+    )} · picks ${candidate.pickCount}${rms}`;
+    item.appendChild(summary);
+
+    const action = createEndpointActionButton(
+      candidate.endpointKind === 'receiver' ? 'Preview receiver gather' : 'Preview source gather',
+      '',
+      () => previewGatherForEndpoint(candidate.endpointKind, candidate.endpointKey),
+      candidate.endpointKind === 'receiver'
+        ? 'refraction-qc-cell-preview-receiver'
+        : 'refraction-qc-cell-preview-source',
+    );
+    item.appendChild(action);
+    return item;
+  }
+
+  function appendCellDrilldownObservations(panel, observations) {
+    const records = Array.isArray(observations?.records) ? observations.records.slice(0, 8) : [];
+    const title = document.createElement('h4');
+    title.textContent = 'Contributing picks';
+    panel.appendChild(title);
+
+    if (!records.length) {
+      const empty = document.createElement('p');
+      empty.className = 'refraction-qc-placeholder';
+      empty.textContent = 'No contributing pick records were returned for this cell.';
+      panel.appendChild(empty);
+      return;
+    }
+
+    const list = document.createElement('ul');
+    list.className = 'refraction-qc-cell-drilldown-picks';
+    list.dataset.testid = 'refraction-qc-cell-drilldown-picks';
+    for (const record of records) {
+      const item = document.createElement('li');
+      const trace = textOrDash(firstDefined(record, ['trace_index_sorted', 'sorted_trace_index', 'trace_index', 'trace']));
+      const source = textOrDash(firstDefined(record, ['source_endpoint_key', 'source_id']));
+      const receiver = textOrDash(firstDefined(record, ['receiver_endpoint_key', 'receiver_id']));
+      const residual = drilldownResidualMs(record);
+      const residualText = Number.isFinite(residual)
+        ? ` · residual ${residual >= 0 ? '+' : ''}${formatNumber(residual, 1)} ms`
+        : '';
+      item.textContent = `trace ${trace} · source ${source} · receiver ${receiver}${residualText}`;
+      list.appendChild(item);
+    }
+    panel.appendChild(list);
+  }
+
+  function renderCellDrilldownPanel(content, payload) {
+    const panel = document.createElement('section');
+    panel.className = 'refraction-qc-cell-drilldown';
+    panel.dataset.testid = 'refraction-qc-cell-drilldown';
+
+    const title = document.createElement('h3');
+    title.textContent = 'Cell drilldown';
+    panel.appendChild(title);
+
+    if (!state.selectedCell || state.selectedCell.cell_ix === undefined) {
+      const empty = document.createElement('p');
+      empty.className = 'refraction-qc-placeholder';
+      empty.textContent = 'Click a cell to load contributing endpoints and picks.';
+      panel.appendChild(empty);
+      content.appendChild(panel);
+      return;
+    }
+
+    if (state.qcDrilldownLoading) {
+      const loading = document.createElement('p');
+      loading.className = 'refraction-qc-note';
+      loading.textContent = 'Loading cell drilldown...';
+      panel.appendChild(loading);
+    }
+
+    if (state.qcDrilldownError) {
+      const error = document.createElement('p');
+      error.className = 'refraction-qc-error';
+      error.dataset.testid = 'refraction-qc-cell-drilldown-error';
+      error.textContent = state.qcDrilldownError;
+      panel.appendChild(error);
+    }
+
+    if (!payload) {
+      content.appendChild(panel);
+      return;
+    }
+
+    const cell = payload.cell || {};
+    const velocity = payload.velocity || cell.velocity || {};
+    const fold = payload.fold || cell.fold || {};
+    const residual = payload.residual_summary || cell.residual_summary || {};
+    const endpointCounts = payload.endpoint_counts || cell.endpoint_counts || {};
+    const observations = payload.observations || {};
+    const row = cell.row || {};
+    const layerKind = cell.layer_kind || payload.target?.layer_kind || state.qcDrilldownTarget?.layer_kind;
+    const cellIx = firstDefined(cell, ['cell_ix']) ?? payload.target?.cell_ix ?? state.qcDrilldownTarget?.cell_ix;
+    const cellIy = firstDefined(cell, ['cell_iy']) ?? payload.target?.cell_iy ?? state.qcDrilldownTarget?.cell_iy;
+    const residualRms = firstDefined(residual, ['cell_residual_rms_ms', 'used_rms_ms', 'all_rms_ms']);
+
+    panel.appendChild(createKv([
+      ['Layer', layerLabel(layerKind)],
+      ['Cell', `ix ${textOrDash(cellIx)}, iy ${textOrDash(cellIy)}`],
+      ['Velocity', drilldownMetric(firstDefined(velocity, ['velocity_m_s', 'v2_m_s']), 2, 'm/s')],
+      ['Fold', firstDefined(fold, ['n_observations', 'fold', 'observation_count'])],
+      ['Used fold', firstDefined(fold, ['n_used_observations', 'used_fold'])],
+      ['Residual RMS', drilldownMetric(residualRms, 1, 'ms')],
+      ['Status', firstDefined(velocity, ['velocity_status', 'status']) || firstDefined(row, ['velocity_status', 'status'])],
+      ['Contributing observations', `${observations.returned_count ?? 0} of ${observations.total_count ?? 0}`],
+      ['Source endpoints', endpointCounts.source_count],
+      ['Receiver endpoints', endpointCounts.receiver_count],
+    ]));
+
+    if (observations.capped) {
+      const capped = document.createElement('p');
+      capped.className = 'refraction-qc-note';
+      capped.dataset.testid = 'refraction-qc-cell-drilldown-capped';
+      capped.textContent = `Observation records are capped at ${observations.returned_count} of ${observations.total_count} by max_observations.`;
+      panel.appendChild(capped);
+    }
+
+    const endpointTitle = document.createElement('h4');
+    endpointTitle.textContent = 'Contributing endpoints';
+    panel.appendChild(endpointTitle);
+    const candidates = endpointCandidatesFromCellDrilldown(payload);
+    if (candidates.length) {
+      const list = document.createElement('ul');
+      list.className = 'refraction-qc-cell-drilldown-endpoints';
+      list.dataset.testid = 'refraction-qc-cell-drilldown-endpoints';
+      for (const candidate of candidates) {
+        list.appendChild(createCellEndpointCandidateRow(candidate));
+      }
+      panel.appendChild(list);
+    } else {
+      const empty = document.createElement('p');
+      empty.className = 'refraction-qc-placeholder';
+      empty.textContent = 'No source or receiver endpoint keys were returned for this cell.';
+      panel.appendChild(empty);
+    }
+
+    appendCellDrilldownObservations(panel, observations);
+    content.appendChild(panel);
+  }
+
+  function endpointSummaryItems(endpoint) {
+    const station = endpoint.stationId && endpoint.stationId !== '-'
+      ? `${endpoint.endpointKind === 'receiver' ? 'Receiver' : 'Source'} ${endpoint.stationId}`
+      : `${endpoint.endpointKind === 'receiver' ? 'Receiver' : 'Source'} ${endpoint.endpointKey}`;
+    const inline = Number.isFinite(endpoint.inlineM) ? `${formatNumber(endpoint.inlineM, 2)} m` : '-';
+    return [
+      ['Endpoint', `${station} · key ${endpoint.endpointKey}`],
+      ['Node', endpoint.nodeId],
+      ['Inline', inline],
+      ['Static status', endpoint.staticStatus],
+      ['Solution status', endpoint.solutionStatus],
+    ];
+  }
+
+  function createProfileEndpointActions(endpoint) {
+    const panel = document.createElement('section');
+    panel.className = 'refraction-qc-endpoint-actions';
+    panel.dataset.testid = 'refraction-qc-profile-endpoint-actions';
+
+    const title = document.createElement('h3');
+    title.textContent = 'Selected endpoint';
+    panel.appendChild(title);
+    panel.appendChild(createKv(endpointSummaryItems(endpoint)));
+
+    const actions = document.createElement('div');
+    actions.className = 'refraction-qc-actions';
+    const gatherKind = endpoint.endpointKind === 'receiver' ? 'receiver' : 'source';
+    actions.append(
+      createEndpointActionButton(
+        `Preview ${gatherKind} gather`,
+        '',
+        () => previewGatherForEndpoint(gatherKind, endpoint.endpointKey),
+        'refraction-qc-profile-preview-gather',
+      ),
+      createEndpointActionButton(
+        'Open endpoint drilldown',
+        '',
+        () => openEndpointStaticDrilldown(gatherKind, endpoint.endpointKey),
+        'refraction-qc-profile-open-drilldown',
+      ),
+      createEndpointActionButton(
+        'Use as endpoint filter',
+        '',
+        () => {
+          setEndpointFilter(gatherKind, endpoint.endpointKey);
+          render();
+        },
+        'refraction-qc-profile-use-endpoint-filter',
+      ),
+    );
+    panel.appendChild(actions);
+    return panel;
+  }
+
+  function createStaticEndpointActions(endpointRecord, disabledReason) {
+    const panel = document.createElement('section');
+    panel.className = 'refraction-qc-endpoint-actions';
+    panel.dataset.testid = 'refraction-qc-static-endpoint-actions';
+
+    const endpointKind = endpointRecord ? staticEndpointKind(endpointRecord) : '';
+    const endpointKey = endpointRecord ? staticEndpointKey(endpointRecord) : '';
+    const gatherKind = endpointKind === 'receiver' ? 'receiver' : 'source';
+    const actions = document.createElement('div');
+    actions.className = 'refraction-qc-actions';
+    actions.append(
+      createEndpointActionButton(
+        `Preview selected ${gatherKind} gather`,
+        disabledReason,
+        () => previewGatherForEndpoint(gatherKind, endpointKey),
+        'refraction-qc-static-preview-gather',
+      ),
+      createEndpointActionButton(
+        'Open endpoint drilldown',
+        disabledReason,
+        () => openEndpointStaticDrilldown(gatherKind, endpointKey),
+        'refraction-qc-static-open-drilldown',
+      ),
+      createEndpointActionButton(
+        'Copy endpoint key',
+        disabledReason,
+        async () => {
+          if (!endpointKey || !navigator.clipboard?.writeText) return;
+          await navigator.clipboard.writeText(endpointKey);
+        },
+        'refraction-qc-static-copy-endpoint',
+      ),
+    );
+    panel.appendChild(actions);
+
+    const value = document.createElement('p');
+    value.className = 'refraction-qc-note';
+    value.dataset.testid = 'refraction-qc-static-action-endpoint-key';
+    value.textContent = endpointKey ? `endpoint_key: ${endpointKey}` : 'endpoint_key: not selected';
+    panel.appendChild(value);
+
+    if (disabledReason) {
+      const reason = document.createElement('p');
+      reason.className = 'refraction-qc-note';
+      reason.dataset.testid = 'refraction-qc-static-action-reason';
+      reason.textContent = disabledReason;
+      panel.appendChild(reason);
+    }
+    return panel;
+  }
+
+  function createFirstBreakPickActions(pick) {
+    const panel = document.createElement('section');
+    panel.className = 'refraction-qc-pick-actions';
+    panel.dataset.testid = 'refraction-qc-first-break-pick-actions';
+
+    const title = document.createElement('h3');
+    title.textContent = 'Selected pick';
+    panel.appendChild(title);
+    panel.appendChild(createKv([
+      ['Trace', pick.traceIndex],
+      ['Layer', layerLabel(pick.layerKind)],
+      ['Residual', `${formatNumber(pick.residualMs, 1)} ms`],
+      ['Source', pick.source],
+      ['Receiver', pick.receiver],
+    ]));
+
+    const actions = document.createElement('div');
+    actions.className = 'refraction-qc-actions';
+    actions.append(
+      createFirstBreakPickActionButton(
+        'Preview source gather',
+        pick.sourceEndpointKey ? '' : 'Source endpoint key is missing for this pick.',
+        () => previewGatherForEndpoint('source', pick.sourceEndpointKey),
+      ),
+      createFirstBreakPickActionButton(
+        'Preview receiver gather',
+        pick.receiverEndpointKey ? '' : 'Receiver endpoint key is missing for this pick.',
+        () => previewGatherForEndpoint('receiver', pick.receiverEndpointKey),
+      ),
+      createFirstBreakPickActionButton(
+        state.firstBreakDrilldownLoading ? 'Opening drilldown...' : 'Open endpoint drilldown',
+        pick.sourceEndpointKey || pick.receiverEndpointKey ? '' : 'Endpoint key is missing for this pick.',
+        () => openEndpointDrilldownForPick(pick),
+      ),
+    );
+    panel.appendChild(actions);
+
+    const missingReasons = [];
+    if (!pick.sourceEndpointKey) missingReasons.push('Source gather preview is disabled because source_endpoint_key is missing.');
+    if (!pick.receiverEndpointKey) missingReasons.push('Receiver gather preview is disabled because receiver_endpoint_key is missing.');
+    if (missingReasons.length) {
+      const reason = document.createElement('p');
+      reason.className = 'refraction-qc-note';
+      reason.dataset.testid = 'refraction-qc-first-break-pick-action-reason';
+      reason.textContent = missingReasons.join(' ');
+      panel.appendChild(reason);
+    }
+
+    if (state.firstBreakDrilldownError) {
+      const error = document.createElement('p');
+      error.className = 'refraction-qc-error';
+      error.dataset.testid = 'refraction-qc-first-break-drilldown-error';
+      error.textContent = state.firstBreakDrilldownError;
+      panel.appendChild(error);
+    } else if (state.firstBreakDrilldown) {
+      const endpoint = state.firstBreakDrilldown.endpoint || {};
+      const details = createKv([
+        ['Drilldown endpoint', textOrDash(endpoint.endpoint_key)],
+        ['Observations', textOrDash(state.firstBreakDrilldown.observations?.total_count)],
+      ]);
+      details.dataset.testid = 'refraction-qc-first-break-drilldown-summary';
+      panel.appendChild(details);
+    }
+
+    return panel;
   }
 
   function reducedTimeHoverText(point) {
@@ -1959,6 +2722,9 @@
       return;
     }
 
+    const selectedPick = selectedFirstBreakPick(points);
+    if (selectedPick) content.appendChild(createFirstBreakPickActions(selectedPick));
+
     const plotGrid = document.createElement('div');
     plotGrid.className = 'refraction-qc-plot-grid';
     const timePlot = createFirstBreakPlot('refraction-qc-first-break-time-plot');
@@ -1971,6 +2737,7 @@
     if (window.Plotly) {
       const xAxis = firstBreakXAxisDefinition();
       const hoverText = points.map(plotHoverText);
+      const customdata = points.map(firstBreakPickCustomData);
       const commonLayout = {
         height: plotHeight(260, 440),
         margin: { l: 58, r: 14, t: 34, b: 50 },
@@ -1993,7 +2760,7 @@
       };
       const config = { displayModeBar: false, responsive: true };
 
-      window.Plotly.newPlot(timePlot, [
+      Promise.resolve(window.Plotly.newPlot(timePlot, [
         {
           name: 'Observed',
           type: 'scatter',
@@ -2001,6 +2768,7 @@
           x: points.map((point) => point.x),
           y: points.map((point) => point.observedMs),
           text: hoverText,
+          customdata,
           hovertemplate: '%{text}<extra>Observed</extra>',
           marker: {
             color: '#2563eb',
@@ -2015,6 +2783,7 @@
           x: points.map((point) => point.x),
           y: points.map((point) => point.modeledMs),
           text: hoverText,
+          customdata,
           hovertemplate: '%{text}<extra>Modeled</extra>',
           marker: {
             color: '#f97316',
@@ -2031,7 +2800,7 @@
           zeroline: false,
           gridcolor: '#e5e7eb',
         },
-      }, config);
+      }, config)).then(() => attachFirstBreakPickClickActions(timePlot));
 
       const residualGroups = new Map();
       for (const point of points) {
@@ -2043,12 +2812,14 @@
             x: [],
             y: [],
             text: [],
+            customdata: [],
           });
         }
         const group = residualGroups.get(groupKey);
         group.x.push(point.x);
         group.y.push(point.residualMs);
         group.text.push(plotHoverText(point));
+        group.customdata.push(firstBreakPickCustomData(point));
       }
       const residualTraces = Array.from(residualGroups.values()).map((group) => ({
         name: `${layerLabel(group.layerKind)} ${group.status}`,
@@ -2057,6 +2828,7 @@
         x: group.x,
         y: group.y,
         text: group.text,
+        customdata: group.customdata,
         hovertemplate: '%{text}<extra></extra>',
         marker: {
           color: LAYER_COLORS[group.layerKind] || LAYER_COLORS.unknown,
@@ -2065,7 +2837,7 @@
           opacity: group.status === 'rejected' ? 0.55 : 0.9,
         },
       }));
-      window.Plotly.newPlot(residualPlot, residualTraces, {
+      Promise.resolve(window.Plotly.newPlot(residualPlot, residualTraces, {
         ...commonLayout,
         title: { text: 'First-break residuals', font: { size: 12 } },
         yaxis: {
@@ -2074,7 +2846,7 @@
           zerolinecolor: '#94a3b8',
           gridcolor: '#e5e7eb',
         },
-      }, config);
+      }, config)).then(() => attachFirstBreakPickClickActions(residualPlot));
     } else {
       timePlot.textContent = 'Plot library is unavailable.';
       residualPlot.textContent = 'Plot library is unavailable.';
@@ -2301,6 +3073,17 @@
 
     const plot = createFirstBreakPlot('refraction-qc-profile-plot');
     plot.dataset.pointCount = String(records.length);
+    const selectedProfileEndpoint = state.selectedProfileEndpoint;
+    if (selectedProfileEndpoint) {
+      const selectedKey = profileEndpointKey(selectedProfileEndpoint);
+      const selectedRecord = records.find((record) => (
+        profileEndpointKey({
+          endpointKind: record.endpointKind,
+          endpointKey: record.endpointKey,
+        }) === selectedKey
+      ));
+      if (selectedRecord) content.appendChild(createProfileEndpointActions(selectedProfileEndpoint));
+    }
     content.appendChild(plot);
 
     if (window.Plotly) {
@@ -2317,6 +3100,7 @@
               x: [],
               y: [],
               text: [],
+              customdata: [],
               invalid: [],
             });
           }
@@ -2324,6 +3108,7 @@
           entry.x.push(point.inline);
           entry.y.push(y);
           entry.text.push(profileHoverText(point, series, y, group));
+          entry.customdata.push(profileEndpointCustomData(point));
           entry.invalid.push(point.invalid);
         }
         for (const entry of grouped.values()) {
@@ -2334,6 +3119,7 @@
             x: entry.x,
             y: entry.y,
             text: entry.text,
+            customdata: entry.customdata,
             hovertemplate: '%{text}<extra></extra>',
             line: {
               color: PROFILE_SERIES_COLORS[series.key] || '#64748b',
@@ -2353,7 +3139,7 @@
         }
       }
 
-      window.Plotly.newPlot(plot, traces, {
+      Promise.resolve(window.Plotly.newPlot(plot, traces, {
         height: plotHeight(320, 520),
         margin: { l: 62, r: 14, t: 34, b: 50 },
         font: { size: 10, color: '#334155' },
@@ -2379,7 +3165,7 @@
           yanchor: 'top',
           font: { size: 10 },
         },
-      }, { displayModeBar: false, responsive: true });
+      }, { displayModeBar: false, responsive: true })).then(() => attachProfileEndpointClickActions(plot));
     } else {
       plot.textContent = 'Plot library is unavailable.';
     }
@@ -2434,6 +3220,7 @@
     downsamplingNote.textContent = `Downsampling: ${downsamplingText}`;
     downsamplingNote.dataset.testid = 'refraction-qc-cell-map-downsampling';
     content.appendChild(downsamplingNote);
+    renderCellDrilldownPanel(content, state.qcDrilldown);
 
     if (!records.length || !layerRecords.length) {
       const missing = document.createElement('p');
@@ -2578,7 +3365,9 @@
             layer_kind: String(cell.layer_kind || layerKind),
           };
           if (dom?.cell) dom.cell.value = `${state.selectedCell.cell_ix},${state.selectedCell.cell_iy}`;
+          const drilldownTarget = cellDrilldownTargetFromSelectedCell(state.selectedCell);
           render();
+          loadQcDrilldown(drilldownTarget);
         });
       });
     } else {
@@ -2609,6 +3398,14 @@
     const endpointNoMatch = Boolean(normalizedText(state.selectedEndpoint) && !endpointRecord);
     const traceRecord = endpointNoMatch ? null : selectedStaticTraceRecord(traceRecords, endpointRecord);
     const legacyRecord = matchingLegacyStaticRecord(bundle, endpointRecord);
+    let staticActionDisabledReason = '';
+    if (!endpointRecords.length) {
+      staticActionDisabledReason = 'Gather preview is disabled because no endpoint component rows are available.';
+    } else if (endpointNoMatch) {
+      staticActionDisabledReason = 'Gather preview is disabled because no endpoint matches the current endpoint selector.';
+    } else if (!endpointRecord) {
+      staticActionDisabledReason = 'Gather preview is disabled because no endpoint is selected.';
+    }
     const endpointRows = buildStaticComponentRows(
       endpointRecord,
       legacyRecord,
@@ -2636,6 +3433,7 @@
       ['Endpoint status', textOrDash(firstDefined(endpointRecord, ['static_status']))],
       ['Trace status', textOrDash(firstDefined(traceRecord, ['static_status']))],
     ]));
+    content.appendChild(createStaticEndpointActions(endpointRecord, staticActionDisabledReason));
 
     const signNote = document.createElement('p');
     signNote.className = 'refraction-qc-note';
@@ -2796,9 +3594,10 @@
       payload.x0 = x0;
       payload.x1 = x1;
     } else {
-      const endpointKey = String(state.selectedEndpoint || '').trim();
+      const endpointKey = String(state.gatherEndpointKey || '').trim();
       if (!endpointKey) {
-        errors.push('Endpoint is required for source and receiver gathers.');
+        const label = state.gatherAxis === 'receiver' ? 'Receiver station' : 'Source station';
+        errors.push(`${label}を選択してください.`);
       }
       payload.endpoint_key = endpointKey;
     }
@@ -2855,6 +3654,97 @@
     return select;
   }
 
+  function createGatherEndpointControls() {
+    const endpointKind = state.gatherAxis === 'receiver' ? 'receiver' : 'source';
+    const label = endpointKind === 'receiver' ? 'Receiver station' : 'Source station';
+    const options = buildGatherEndpointOptions(state.qcBundle, endpointKind);
+    const hasSelectedOption = options.some((option) => option.value === state.gatherEndpointKey);
+    if (state.gatherEndpointKey && !hasSelectedOption) {
+      options.push({
+        value: state.gatherEndpointKey,
+        label: `${state.gatherEndpointKey} · selected from first-break pick`,
+        stationId: state.gatherEndpointKey,
+      });
+    }
+    const searchText = normalizedText(state.gatherEndpointSearch);
+    const filteredOptions = searchText
+      ? options.filter((option) => (
+        normalizedText(option.label).includes(searchText)
+        || normalizedText(option.value).includes(searchText)
+      ))
+      : options;
+
+    const search = makeGatherInput(
+      'search',
+      state.gatherEndpointSearch,
+      'refraction-qc-gather-endpoint-search',
+      (value) => { state.gatherEndpointSearch = value.trim(); render(); },
+    );
+    search.placeholder = `Search ${label.toLowerCase()}`;
+
+    const select = document.createElement('select');
+    select.dataset.testid = 'refraction-qc-gather-endpoint';
+    select.disabled = !options.length;
+    const placeholder = document.createElement('option');
+    placeholder.value = '';
+    placeholder.textContent = options.length ? `Select ${label.toLowerCase()}` : `No ${label.toLowerCase()} candidates`;
+    select.appendChild(placeholder);
+    for (const optionData of filteredOptions) {
+      const option = document.createElement('option');
+      option.value = optionData.value;
+      option.textContent = optionData.label;
+      select.appendChild(option);
+    }
+    select.value = state.gatherEndpointKey;
+    select.addEventListener('change', () => {
+      state.gatherEndpointKey = select.value;
+      render();
+    });
+
+    const fragment = document.createDocumentFragment();
+    fragment.append(
+      makeGatherField(`${label} search`, search),
+      makeGatherField(label, select),
+    );
+    if (!options.length || (options.length && !filteredOptions.length)) {
+      const empty = document.createElement('p');
+      empty.className = 'refraction-qc-placeholder refraction-qc-gather-endpoint-empty';
+      empty.dataset.testid = 'refraction-qc-gather-endpoint-empty';
+      empty.textContent = !options.length
+        ? `No ${label.toLowerCase()} candidates are present in static components.`
+        : `No ${label.toLowerCase()} candidates match the search.`;
+      fragment.appendChild(empty);
+    }
+    return fragment;
+  }
+
+  function createGatherEndpointDetails() {
+    const details = document.createElement('details');
+    details.className = 'refraction-qc-gather-details';
+    details.dataset.testid = 'refraction-qc-gather-endpoint-details';
+    const summary = document.createElement('summary');
+    summary.textContent = 'Advanced details';
+    const row = document.createElement('div');
+    row.className = 'refraction-qc-gather-detail-row';
+    const label = document.createElement('span');
+    label.textContent = 'endpoint_key';
+    const value = document.createElement('code');
+    value.dataset.testid = 'refraction-qc-gather-endpoint-key';
+    value.textContent = state.gatherEndpointKey || 'not selected';
+    const copy = document.createElement('button');
+    copy.type = 'button';
+    copy.textContent = 'Copy';
+    copy.disabled = !state.gatherEndpointKey;
+    copy.dataset.testid = 'refraction-qc-gather-endpoint-copy';
+    copy.addEventListener('click', async () => {
+      if (!state.gatherEndpointKey || !navigator.clipboard?.writeText) return;
+      await navigator.clipboard.writeText(state.gatherEndpointKey);
+    });
+    row.append(label, value, copy);
+    details.append(summary, row);
+    return details;
+  }
+
   function createGatherPreviewControls() {
     const context = currentGatherContext();
     const form = document.createElement('form');
@@ -2872,6 +3762,8 @@
       Object.entries(GATHER_AXIS_LABELS),
       (value) => {
         state.gatherAxis = value;
+        state.gatherEndpointKey = '';
+        state.gatherEndpointSearch = '';
         render();
       },
     );
@@ -2933,6 +3825,8 @@
           { min: 0, step: 1 },
         )),
       );
+    } else {
+      form.appendChild(createGatherEndpointControls());
     }
 
     form.append(
@@ -2978,6 +3872,9 @@
     loadButton.dataset.testid = 'refraction-qc-gather-load';
     actions.appendChild(loadButton);
     form.appendChild(actions);
+    if (state.gatherAxis !== 'section') {
+      form.appendChild(createGatherEndpointDetails());
+    }
     return form;
   }
 
@@ -3298,6 +4195,7 @@
     content.appendChild(createKv([
       ['Selected endpoint kind', state.selectedEndpointKind],
       ['Endpoint', state.selectedEndpoint],
+      ['Gather endpoint', state.gatherEndpointKey],
       ['Cell', selectedCellLabel(state.selectedCell)],
       ['Layer', state.selectedLayerKind],
     ]));
@@ -4410,6 +5308,15 @@
     const maxPoints = parsePositiveInteger(dom.maxPoints.value, DEFAULT_MAX_POINTS);
     state.selectedJobId = jobId;
     state.maxPoints = maxPoints;
+    state.selectedFirstBreakPick = null;
+    state.firstBreakDrilldown = null;
+    state.firstBreakDrilldownError = null;
+    state.firstBreakDrilldownLoading = false;
+    state.qcDrilldown = null;
+    state.qcDrilldownError = null;
+    state.qcDrilldownLoading = false;
+    state.qcDrilldownTarget = null;
+    qcDrilldownRequestSerial += 1;
     if (!jobId) {
       state.error = 'Job ID is required.';
       state.qcBundle = null;
@@ -4607,6 +5514,11 @@
     });
     dom.cell.addEventListener('input', () => {
       state.selectedCell = parseCell(dom.cell.value);
+      state.qcDrilldown = null;
+      state.qcDrilldownError = null;
+      state.qcDrilldownLoading = false;
+      state.qcDrilldownTarget = null;
+      qcDrilldownRequestSerial += 1;
       render();
     });
     for (const button of dom.viewButtons) {
