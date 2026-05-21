@@ -1137,8 +1137,16 @@ async function gatherPlotSummary(page: Page, testId: string) {
 				x?: number[];
 				y?: number[];
 				z?: number[][];
+				showlegend?: boolean;
+				marker?: {
+					colorbar?: {
+						ticktext?: string[];
+					};
+				};
 			}>;
 			layout?: {
+				margin?: { r?: number };
+				showlegend?: boolean;
 				xaxis?: { title?: { text?: string } };
 				yaxis?: { title?: { text?: string } };
 			};
@@ -1152,7 +1160,11 @@ async function gatherPlotSummary(page: Page, testId: string) {
 				x: Array.isArray(trace.x) ? trace.x : [],
 				y: Array.isArray(trace.y) ? trace.y : [],
 				z: Array.isArray(trace.z) ? trace.z : [],
+				showlegend: trace.showlegend,
+				residualTickText: trace.marker?.colorbar?.ticktext ?? [],
 			})),
+			marginRight: plot.layout?.margin?.r ?? null,
+			showlegend: plot.layout?.showlegend,
 		};
 	});
 }
@@ -2787,10 +2799,16 @@ test('refraction gather preview UI raw corrected side by side renders overlays',
 		});
 	});
 	await page.route('**/statics/refraction/qc', async (route) => {
+		const bundle = qcBundlePayload('refraction-gather-side-by-side') as any;
+		bundle.summary.request = {
+			file_id: 'raw-preview-file',
+			key1_byte: 9,
+			key2_byte: 13,
+		};
 		await route.fulfill({
 			status: 200,
 			contentType: 'application/json',
-			body: JSON.stringify(qcBundlePayload('refraction-gather-side-by-side')),
+			body: JSON.stringify(bundle),
 		});
 	});
 
@@ -2801,22 +2819,37 @@ test('refraction gather preview UI raw corrected side by side renders overlays',
 	await expect(page.getByTestId('refraction-qc-gather-raw-plot')).toBeVisible();
 	await expect(page.getByTestId('refraction-qc-gather-corrected-plot')).toBeVisible();
 	await expect(page.getByTestId('refraction-qc-gather-corrected-status')).toContainText('corrected_tracestore');
+	await expect(page.getByTestId('refraction-qc-gather-shared-legend')).toHaveText(
+		'Observed first breakModeled first break',
+	);
 	await expect.poll(async () => gatherPlotSummary(page, 'refraction-qc-gather-raw-plot')).toMatchObject({
 		xAxisTitle: 'Offset (m)',
 		yAxisTitle: 'Time (s)',
+		marginRight: 86,
+		showlegend: false,
 		traces: [
 			expect.objectContaining({ name: 'Raw gather', type: 'heatmap' }),
-			expect.objectContaining({ name: 'Observed first break', x: [100, 200], y: [0.1, 0.2] }),
-			expect.objectContaining({ name: 'Modeled first break', x: [100, 200], y: [0.11, 0.19] }),
+			expect.objectContaining({ name: 'Observed first break', x: [100, 200], y: [0.1, 0.2], showlegend: false }),
+			expect.objectContaining({ name: 'Modeled first break', x: [100, 200], y: [0.11, 0.19], showlegend: false }),
 		],
 	});
 	await expect.poll(async () => gatherPlotSummary(page, 'refraction-qc-gather-corrected-plot')).toMatchObject({
+		marginRight: 86,
+		showlegend: false,
 		traces: [
 			expect.objectContaining({ name: 'Corrected gather', type: 'heatmap' }),
-			expect.objectContaining({ name: 'Corrected observed first break', x: [100, 200], y: [0.12, 0.19] }),
-			expect.objectContaining({ name: 'Corrected modeled first break', x: [100, 200], y: [0.13, 0.18] }),
+			expect.objectContaining({
+				name: 'Observed first break',
+				x: [100, 200],
+				y: [0.12, 0.19],
+				showlegend: false,
+				residualTickText: ['-10', '-5', '0', '5', '10'],
+			}),
+			expect.objectContaining({ name: 'Modeled first break', x: [100, 200], y: [0.13, 0.18], showlegend: false }),
 		],
 	});
+	await expect(page.getByTestId('refraction-qc-view-gather')).not.toContainText('Corrected observed first break');
+	await expect(page.getByTestId('refraction-qc-view-gather')).not.toContainText('Corrected modeled first break');
 });
 
 test('refraction gather preview UI missing corrected status is clear', async ({ page }) => {

@@ -1083,6 +1083,19 @@
     return value.toFixed(digits);
   }
 
+  function formatAsciiTick(value, digits) {
+    const normalized = Math.abs(value) < Number.EPSILON ? 0 : value;
+    const text = normalized.toFixed(digits).replace(/\.?0+$/, '');
+    return text === '-0' ? '0' : text;
+  }
+
+  function residualTickDigits(maxAbs) {
+    if (maxAbs >= 10) return 1;
+    if (maxAbs >= 1) return 2;
+    if (maxAbs >= 0.1) return 3;
+    return 4;
+  }
+
   function layerLabel(layerKind) {
     return LAYER_LABELS[layerKind] || (layerKind ? String(layerKind) : 'Unlayered');
   }
@@ -4500,6 +4513,28 @@
     return banner;
   }
 
+  function createGatherOverlayLegendItem(symbol, label) {
+    const item = document.createElement('span');
+    item.className = 'refraction-qc-gather-shared-legend-item';
+    const marker = document.createElement('span');
+    marker.className = `refraction-qc-gather-shared-legend-marker refraction-qc-gather-shared-legend-marker-${symbol}`;
+    marker.setAttribute('aria-hidden', 'true');
+    const text = document.createElement('span');
+    text.textContent = label;
+    item.appendChild(marker);
+    item.appendChild(text);
+    return item;
+  }
+
+  function createGatherOverlayLegend() {
+    const legend = document.createElement('div');
+    legend.className = 'refraction-qc-gather-shared-legend';
+    legend.dataset.testid = 'refraction-qc-gather-shared-legend';
+    legend.appendChild(createGatherOverlayLegendItem('observed', 'Observed first break'));
+    legend.appendChild(createGatherOverlayLegendItem('modeled', 'Modeled first break'));
+    return legend;
+  }
+
   function finitePairPoints(xValues, yValues) {
     const x = [];
     const y = [];
@@ -4515,6 +4550,49 @@
     return { x, y, indices };
   }
 
+  function finiteResidualMs(preview) {
+    const residuals = Array.isArray(preview?.residual_s) ? preview.residual_s : [];
+    return residuals
+      .map((value) => Number(value) * 1000.0)
+      .filter((value) => Number.isFinite(value));
+  }
+
+  function gatherHasResidualScale(preview) {
+    return finiteResidualMs(preview).length > 0;
+  }
+
+  function residualColorScale(residualMs) {
+    const finite = residualMs.filter((value) => Number.isFinite(value));
+    if (!finite.length) return null;
+    const maxAbs = finite.reduce((current, value) => Math.max(current, Math.abs(value)), 0);
+    if (maxAbs === 0) {
+      return {
+        colorbar: {
+          title: { text: 'Residual (ms)' },
+          tickmode: 'array',
+          tickvals: [0],
+          ticktext: ['0'],
+          x: 1.02,
+          xanchor: 'left',
+        },
+      };
+    }
+    const tickvals = [-maxAbs, -maxAbs / 2, 0, maxAbs / 2, maxAbs];
+    const digits = residualTickDigits(maxAbs);
+    return {
+      cmin: -maxAbs,
+      cmax: maxAbs,
+      colorbar: {
+        title: { text: 'Residual (ms)' },
+        tickmode: 'array',
+        tickvals,
+        ticktext: tickvals.map((value) => formatAsciiTick(value, digits)),
+        x: 1.02,
+        xanchor: 'left',
+      },
+    };
+  }
+
   function gatherOverlayTrace(preview, xValues, options) {
     const times = Array.isArray(preview[options.field]) ? preview[options.field] : [];
     const points = finitePairPoints(xValues, times);
@@ -4526,8 +4604,10 @@
     });
     const hasResidual = options.residual && residualMs.some((value) => Number.isFinite(value));
     const showResidualScale = Boolean(hasResidual && options.showResidualScale);
+    const residualScale = showResidualScale ? residualColorScale(residualMs) : null;
     return {
       name: options.name,
+      showlegend: options.showlegend !== false,
       type: 'scatter',
       mode: 'markers',
       x: points.x,
@@ -4538,10 +4618,10 @@
         colorscale: hasResidual ? 'RdBu' : undefined,
         reversescale: hasResidual ? true : undefined,
         cmid: hasResidual ? 0 : undefined,
+        cmin: residualScale?.cmin,
+        cmax: residualScale?.cmax,
         showscale: showResidualScale,
-        colorbar: showResidualScale
-          ? { title: { text: 'Residual (ms)' }, x: 1.02, xanchor: 'left' }
-          : undefined,
+        colorbar: residualScale?.colorbar,
         symbol: options.symbol,
         size: options.size || 8,
         line: { color: '#0f172a', width: 0.5 },
@@ -4580,6 +4660,7 @@
     const sideBySide = Boolean(options.sideBySide);
     const showAmplitudeScale = !sideBySide;
     const showResidualScale = !sideBySide || Boolean(options.corrected);
+    const showOverlayLegend = !sideBySide;
     const observedField = options.corrected
       ? 'corrected_observed_pick_time_s'
       : 'observed_pick_time_s';
@@ -4588,11 +4669,12 @@
       : 'modeled_pick_time_s';
     const observedTrace = gatherOverlayTrace(preview, xAxis.x, {
       field: observedField,
-      name: options.corrected ? 'Corrected observed first break' : 'Observed first break',
+      name: 'Observed first break',
       color: '#2563eb',
       symbol: 'circle',
       residual: true,
       showResidualScale,
+      showlegend: showOverlayLegend,
     });
     const hasResidualColorbar = Boolean(observedTrace?.marker?.showscale);
     const splitColorbars = showAmplitudeScale && hasResidualColorbar;
@@ -4611,7 +4693,10 @@
       };
     }
     const showAnyColorbar = showAmplitudeScale || hasResidualColorbar;
-    const marginRight = splitColorbars ? 96 : showAnyColorbar ? 86 : 24;
+    const sideBySideRightMargin = gatherHasResidualScale(preview) ? 86 : 24;
+    const marginRight = sideBySide
+      ? sideBySideRightMargin
+      : splitColorbars ? 96 : showAnyColorbar ? 86 : 24;
     const traces = [
       {
         name: options.title,
@@ -4628,10 +4713,11 @@
     ];
     const modeledTrace = gatherOverlayTrace(preview, xAxis.x, {
       field: modeledField,
-      name: options.corrected ? 'Corrected modeled first break' : 'Modeled first break',
+      name: 'Modeled first break',
       color: '#f97316',
       symbol: 'x',
       size: 9,
+      showlegend: showOverlayLegend,
     });
     if (observedTrace) traces.push(observedTrace);
     if (modeledTrace) traces.push(modeledTrace);
@@ -4642,6 +4728,7 @@
       font: { size: 10, color: '#334155' },
       paper_bgcolor: '#ffffff',
       plot_bgcolor: '#ffffff',
+      showlegend: showOverlayLegend,
       title: { text: options.title, font: { size: 12 } },
       xaxis: {
         title: { text: xAxis.label },
@@ -4778,6 +4865,9 @@
     const axisContext = gatherPreviewAxisContext(preview);
     const plotGrid = document.createElement('div');
     const sideBySide = state.gatherDisplayMode === 'side_by_side';
+    if (sideBySide) {
+      content.appendChild(createGatherOverlayLegend());
+    }
     plotGrid.className = sideBySide
       ? 'refraction-qc-gather-grid refraction-qc-gather-grid-side-by-side'
       : 'refraction-qc-plot-grid';
