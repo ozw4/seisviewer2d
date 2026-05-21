@@ -368,6 +368,42 @@ function gatherPreviewQcBundle(jobId = 'job-gather') {
   };
 }
 
+function gatherPreviewPayload() {
+  return {
+    job_id: 'job-gather',
+    gather: { axis: 'source', endpoint_key: '1001' },
+    window: {
+      requested_trace_count: 10,
+      returned_trace_count: 10,
+      requested_sample_count: 3,
+      returned_sample_count: 3,
+    },
+    dt_s: 0.004,
+    shape: [3, 10],
+    x_indices: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9],
+    offset_m: [250, 500, 750, 1000, 1250, 1500, 1750, 2000, 2250, 2400],
+    raw_samples: [
+      [1, 2, 3, 4, 5, 6, 7, 8, 9, 10],
+      [2, 3, 4, 5, 6, 7, 8, 9, 10, 11],
+      [3, 4, 5, 6, 7, 8, 9, 10, 11, 12],
+    ],
+    corrected_samples: [
+      [1, 1, 2, 3, 5, 8, 13, 21, 34, 55],
+      [2, 2, 3, 4, 6, 9, 14, 22, 35, 56],
+      [3, 3, 4, 5, 7, 10, 15, 23, 36, 57],
+    ],
+    observed_pick_time_s: [0.001, 0.002, 0.003, 0.004, 0.005, 0.006, 0.007, 0.008, 0.009, 0.01],
+    modeled_pick_time_s: [0.001, 0.002, 0.003, 0.004, 0.005, 0.006, 0.007, 0.008, 0.009, 0.01],
+    corrected_observed_pick_time_s: [0.0015, 0.0025, 0.0035, 0.0045, 0.0055, 0.0065, 0.0075, 0.0085, 0.0095, 0.0105],
+    corrected_modeled_pick_time_s: [0.0015, 0.0025, 0.0035, 0.0045, 0.0055, 0.0065, 0.0075, 0.0085, 0.0095, 0.0105],
+    residual_s: [0, 0.001, -0.001, 0, 0.001, -0.001, 0, 0.001, -0.001, 0],
+    corrected_samples_source: 'raw_tracestore_shifted_on_the_fly',
+    corrected_window_ref: { status: 'ok' },
+    sign_convention: 'positive static shifts delay traces',
+    overlay_status: { first_break_fit: 'ok' },
+  };
+}
+
 function cellQcBundle(jobId = 'job-cell') {
   return {
     ...qcBundle(jobId),
@@ -403,6 +439,9 @@ function installPlotlyClickStub() {
       };
       return Promise.resolve();
     }),
+    Plots: {
+      resize: vi.fn(),
+    },
   };
   window.Plotly = plotly;
   return { handlers, plots, plotly };
@@ -874,50 +913,24 @@ test('Gather Preview selects a source station from one searchable control and pr
   expect(document.querySelector('[data-testid="refraction-qc-gather-raw-plot"]')).not.toBeNull();
 });
 
-test('Gather Preview side-by-side plots share explicit offset and time ranges', () => {
-  const { plots } = installPlotlyClickStub();
+test('Gather Preview side-by-side plots share ranges and avoid overlapping scales', async () => {
+  const { plots, plotly } = installPlotlyClickStub();
   loadRefractionQcScript();
   window.refractionQcState.qcBundle = gatherPreviewQcBundle();
   window.refractionQcState.gatherDisplayMode = 'side_by_side';
   window.refractionQcState.gatherEndpointKey = '1001';
-  window.refractionQcState.gatherPreview = {
-    job_id: 'job-gather',
-    gather: { axis: 'source', endpoint_key: '1001' },
-    window: {
-      requested_trace_count: 10,
-      returned_trace_count: 10,
-      requested_sample_count: 3,
-      returned_sample_count: 3,
-    },
-    dt_s: 0.004,
-    shape: [3, 10],
-    x_indices: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9],
-    offset_m: [250, 500, 750, 1000, 1250, 1500, 1750, 2000, 2250, 2400],
-    raw_samples: [
-      [1, 2, 3, 4, 5, 6, 7, 8, 9, 10],
-      [2, 3, 4, 5, 6, 7, 8, 9, 10, 11],
-      [3, 4, 5, 6, 7, 8, 9, 10, 11, 12],
-    ],
-    corrected_samples: [
-      [1, 1, 2, 3, 5, 8, 13, 21, 34, 55],
-      [2, 2, 3, 4, 6, 9, 14, 22, 35, 56],
-      [3, 3, 4, 5, 7, 10, 15, 23, 36, 57],
-    ],
-    observed_pick_time_s: [0.001, 0.002, 0.003, 0.004, 0.005, 0.006, 0.007, 0.008, 0.009, 0.01],
-    modeled_pick_time_s: [0.001, 0.002, 0.003, 0.004, 0.005, 0.006, 0.007, 0.008, 0.009, 0.01],
-    corrected_observed_pick_time_s: [0.0015, 0.0025, 0.0035, 0.0045, 0.0055, 0.0065, 0.0075, 0.0085, 0.0095, 0.0105],
-    corrected_modeled_pick_time_s: [0.0015, 0.0025, 0.0035, 0.0045, 0.0055, 0.0065, 0.0075, 0.0085, 0.0095, 0.0105],
-    residual_s: [0, 0.001, -0.001, 0, 0.001, -0.001, 0, 0.001, -0.001, 0],
-    corrected_samples_source: 'raw_tracestore_shifted_on_the_fly',
-    corrected_window_ref: { status: 'ok' },
-    sign_convention: 'positive static shifts delay traces',
-    overlay_status: { first_break_fit: 'ok' },
-  };
+  window.refractionQcState.gatherPreview = gatherPreviewPayload();
 
   window.refractionQcUI.setSelectedView('gather_preview');
 
   const rawPlot = plots.find((entry) => entry.plot.dataset.testid === 'refraction-qc-gather-raw-plot');
   const correctedPlot = plots.find((entry) => entry.plot.dataset.testid === 'refraction-qc-gather-corrected-plot');
+  const rawHeatmap = rawPlot.traces.find((trace) => trace.type === 'heatmap');
+  const correctedHeatmap = correctedPlot.traces.find((trace) => trace.type === 'heatmap');
+  const rawObserved = rawPlot.traces.find((trace) => trace.name === 'Observed first break');
+  const correctedObserved = correctedPlot.traces.find((trace) => trace.name === 'Corrected observed first break');
+  const residualScaleCount = [rawObserved, correctedObserved]
+    .filter((trace) => trace.marker.showscale).length;
 
   expect(rawPlot.layout.xaxis.range).toEqual(correctedPlot.layout.xaxis.range);
   expect(rawPlot.layout.yaxis.range).toEqual(correctedPlot.layout.yaxis.range);
@@ -928,6 +941,46 @@ test('Gather Preview side-by-side plots share explicit offset and time ranges', 
   expect(rawPlot.layout.xaxis.range[0]).toBeLessThan(250);
   expect(rawPlot.layout.xaxis.range[1]).toBeGreaterThan(2400);
   expect(rawPlot.layout.yaxis.range[0]).toBeGreaterThan(0.0105);
+  expect(rawHeatmap.showscale).toBe(false);
+  expect(rawHeatmap.colorbar).toBeUndefined();
+  expect(correctedHeatmap.showscale).toBe(false);
+  expect(correctedHeatmap.colorbar).toBeUndefined();
+  expect(rawObserved.marker.showscale).toBe(false);
+  expect(rawObserved.marker.colorbar).toBeUndefined();
+  expect(correctedObserved.marker.showscale).toBe(true);
+  expect(correctedObserved.marker.colorbar.title.text).toBe('Residual (ms)');
+  expect(residualScaleCount).toBe(1);
+  expect(rawPlot.layout.margin.r).toBe(24);
+  expect(correctedPlot.layout.margin.r).toBeGreaterThanOrEqual(86);
+  expect(rawPlot.layout.margin.t).toBe(64);
+  expect(rawPlot.layout.legend.y).toBe(1.22);
+  expect(document.querySelector('.refraction-qc-gather-grid-side-by-side')).not.toBeNull();
+  await flushAsyncWork();
+  expect(plotly.Plots.resize).toHaveBeenCalledTimes(2);
+});
+
+test('Gather Preview single plot keeps amplitude and residual colorbars readable', () => {
+  const { plots } = installPlotlyClickStub();
+  loadRefractionQcScript();
+  window.refractionQcState.qcBundle = gatherPreviewQcBundle();
+  window.refractionQcState.gatherDisplayMode = 'raw';
+  window.refractionQcState.gatherEndpointKey = '1001';
+  window.refractionQcState.gatherPreview = gatherPreviewPayload();
+
+  window.refractionQcUI.setSelectedView('gather_preview');
+
+  const rawPlot = plots.find((entry) => entry.plot.dataset.testid === 'refraction-qc-gather-raw-plot');
+  const heatmap = rawPlot.traces.find((trace) => trace.type === 'heatmap');
+  const observed = rawPlot.traces.find((trace) => trace.name === 'Observed first break');
+
+  expect(heatmap.showscale).toBe(true);
+  expect(heatmap.colorbar.title.text).toBe('Amplitude');
+  expect(observed.marker.showscale).toBe(true);
+  expect(observed.marker.colorbar.title.text).toBe('Residual (ms)');
+  expect(heatmap.colorbar.y).toBeGreaterThan(observed.marker.colorbar.y);
+  expect(heatmap.colorbar.len).toBeLessThan(0.5);
+  expect(observed.marker.colorbar.len).toBeLessThan(0.5);
+  expect(rawPlot.layout.margin.r).toBeGreaterThanOrEqual(86);
 });
 
 test('Gather Preview explains missing station selection without endpoint wording', () => {

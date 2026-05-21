@@ -4525,6 +4525,7 @@
       return Number.isFinite(value) ? value * 1000.0 : NaN;
     });
     const hasResidual = options.residual && residualMs.some((value) => Number.isFinite(value));
+    const showResidualScale = Boolean(hasResidual && options.showResidualScale);
     return {
       name: options.name,
       type: 'scatter',
@@ -4537,8 +4538,10 @@
         colorscale: hasResidual ? 'RdBu' : undefined,
         reversescale: hasResidual ? true : undefined,
         cmid: hasResidual ? 0 : undefined,
-        showscale: hasResidual,
-        colorbar: hasResidual ? { title: { text: 'Residual (ms)' } } : undefined,
+        showscale: showResidualScale,
+        colorbar: showResidualScale
+          ? { title: { text: 'Residual (ms)' }, x: 1.02, xanchor: 'left' }
+          : undefined,
         symbol: options.symbol,
         size: options.size || 8,
         line: { color: '#0f172a', width: 0.5 },
@@ -4574,19 +4577,9 @@
     const xRange = axisContext.xRange;
     const yRange = axisContext.yRange;
     const reversedYRange = Array.isArray(yRange) ? [yRange[1], yRange[0]] : undefined;
-    const traces = [
-      {
-        name: options.title,
-        type: 'heatmap',
-        x: xAxis.x,
-        y,
-        z: options.samples,
-        colorscale: 'Greys',
-        zsmooth: false,
-        colorbar: { title: { text: 'Amplitude' } },
-        hovertemplate: `${options.title}<br>${xAxis.label}: %{x}<br>Time: %{y:.4f} s<br>Amplitude: %{z:.4g}<extra></extra>`,
-      },
-    ];
+    const sideBySide = Boolean(options.sideBySide);
+    const showAmplitudeScale = !sideBySide;
+    const showResidualScale = !sideBySide || Boolean(options.corrected);
     const observedField = options.corrected
       ? 'corrected_observed_pick_time_s'
       : 'observed_pick_time_s';
@@ -4599,7 +4592,40 @@
       color: '#2563eb',
       symbol: 'circle',
       residual: true,
+      showResidualScale,
     });
+    const hasResidualColorbar = Boolean(observedTrace?.marker?.showscale);
+    const splitColorbars = showAmplitudeScale && hasResidualColorbar;
+    const amplitudeColorbar = showAmplitudeScale
+      ? {
+          title: { text: 'Amplitude' },
+          ...(splitColorbars ? { x: 1.02, xanchor: 'left', y: 0.76, yanchor: 'middle', len: 0.42 } : {}),
+        }
+      : undefined;
+    if (splitColorbars && observedTrace?.marker?.colorbar) {
+      observedTrace.marker.colorbar = {
+        ...observedTrace.marker.colorbar,
+        y: 0.24,
+        yanchor: 'middle',
+        len: 0.42,
+      };
+    }
+    const showAnyColorbar = showAmplitudeScale || hasResidualColorbar;
+    const marginRight = splitColorbars ? 96 : showAnyColorbar ? 86 : 24;
+    const traces = [
+      {
+        name: options.title,
+        type: 'heatmap',
+        x: xAxis.x,
+        y,
+        z: options.samples,
+        colorscale: 'Greys',
+        zsmooth: false,
+        showscale: showAmplitudeScale,
+        colorbar: amplitudeColorbar,
+        hovertemplate: `${options.title}<br>${xAxis.label}: %{x}<br>Time: %{y:.4f} s<br>Amplitude: %{z:.4g}<extra></extra>`,
+      },
+    ];
     const modeledTrace = gatherOverlayTrace(preview, xAxis.x, {
       field: modeledField,
       name: options.corrected ? 'Corrected modeled first break' : 'Modeled first break',
@@ -4610,9 +4636,9 @@
     if (observedTrace) traces.push(observedTrace);
     if (modeledTrace) traces.push(modeledTrace);
 
-    window.Plotly.newPlot(plot, traces, {
+    const promise = window.Plotly.newPlot(plot, traces, {
       height: plotHeight(320, 520),
-      margin: { l: 62, r: 18, t: 38, b: 52 },
+      margin: { l: 62, r: marginRight, t: 64, b: 52 },
       font: { size: 10, color: '#334155' },
       paper_bgcolor: '#ffffff',
       plot_bgcolor: '#ffffff',
@@ -4634,12 +4660,15 @@
       legend: {
         orientation: 'h',
         x: 0,
-        y: 1.16,
+        y: 1.22,
         xanchor: 'left',
         yanchor: 'top',
         font: { size: 10 },
       },
     }, { displayModeBar: false, responsive: true });
+    Promise.resolve(promise).then(() => {
+      if (window.Plotly?.Plots?.resize) window.Plotly.Plots.resize(plot);
+    });
   }
 
   function renderGatherReducedTime(content, preview) {
@@ -4748,8 +4777,9 @@
 
     const axisContext = gatherPreviewAxisContext(preview);
     const plotGrid = document.createElement('div');
-    plotGrid.className = state.gatherDisplayMode === 'side_by_side'
-      ? 'refraction-qc-gather-grid'
+    const sideBySide = state.gatherDisplayMode === 'side_by_side';
+    plotGrid.className = sideBySide
+      ? 'refraction-qc-gather-grid refraction-qc-gather-grid-side-by-side'
       : 'refraction-qc-plot-grid';
     content.appendChild(plotGrid);
 
@@ -4760,6 +4790,7 @@
         samples: preview.raw_samples,
         corrected: false,
         axisContext,
+        sideBySide,
       });
     }
     if (state.gatherDisplayMode === 'corrected' || state.gatherDisplayMode === 'side_by_side') {
@@ -4769,6 +4800,7 @@
         samples: preview.corrected_samples,
         corrected: true,
         axisContext,
+        sideBySide,
       });
     }
   }
