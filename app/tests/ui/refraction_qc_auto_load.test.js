@@ -396,8 +396,8 @@ function installPlotlyClickStub() {
   const plots = [];
   const handlers = new Map();
   const plotly = {
-    newPlot: vi.fn((plot, traces) => {
-      plots.push({ plot, traces });
+    newPlot: vi.fn((plot, traces, layout, config) => {
+      plots.push({ plot, traces, layout, config });
       plot.on = (event, callback) => {
         handlers.set(`${plot.dataset.testid}:${event}`, callback);
       };
@@ -872,6 +872,62 @@ test('Gather Preview selects a source station from one searchable control and pr
   expect(document.querySelector('[data-testid="refraction-qc-gather-context"]').textContent)
     .toContain('Source gather: S 1001 · picks 96 · RMS 12.4 ms · ok');
   expect(document.querySelector('[data-testid="refraction-qc-gather-raw-plot"]')).not.toBeNull();
+});
+
+test('Gather Preview side-by-side plots share explicit offset and time ranges', () => {
+  const { plots } = installPlotlyClickStub();
+  loadRefractionQcScript();
+  window.refractionQcState.qcBundle = gatherPreviewQcBundle();
+  window.refractionQcState.gatherDisplayMode = 'side_by_side';
+  window.refractionQcState.gatherEndpointKey = '1001';
+  window.refractionQcState.gatherPreview = {
+    job_id: 'job-gather',
+    gather: { axis: 'source', endpoint_key: '1001' },
+    window: {
+      requested_trace_count: 10,
+      returned_trace_count: 10,
+      requested_sample_count: 3,
+      returned_sample_count: 3,
+    },
+    dt_s: 0.004,
+    shape: [3, 10],
+    x_indices: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9],
+    offset_m: [250, 500, 750, 1000, 1250, 1500, 1750, 2000, 2250, 2400],
+    raw_samples: [
+      [1, 2, 3, 4, 5, 6, 7, 8, 9, 10],
+      [2, 3, 4, 5, 6, 7, 8, 9, 10, 11],
+      [3, 4, 5, 6, 7, 8, 9, 10, 11, 12],
+    ],
+    corrected_samples: [
+      [1, 1, 2, 3, 5, 8, 13, 21, 34, 55],
+      [2, 2, 3, 4, 6, 9, 14, 22, 35, 56],
+      [3, 3, 4, 5, 7, 10, 15, 23, 36, 57],
+    ],
+    observed_pick_time_s: [0.001, 0.002, 0.003, 0.004, 0.005, 0.006, 0.007, 0.008, 0.009, 0.01],
+    modeled_pick_time_s: [0.001, 0.002, 0.003, 0.004, 0.005, 0.006, 0.007, 0.008, 0.009, 0.01],
+    corrected_observed_pick_time_s: [0.0015, 0.0025, 0.0035, 0.0045, 0.0055, 0.0065, 0.0075, 0.0085, 0.0095, 0.0105],
+    corrected_modeled_pick_time_s: [0.0015, 0.0025, 0.0035, 0.0045, 0.0055, 0.0065, 0.0075, 0.0085, 0.0095, 0.0105],
+    residual_s: [0, 0.001, -0.001, 0, 0.001, -0.001, 0, 0.001, -0.001, 0],
+    corrected_samples_source: 'raw_tracestore_shifted_on_the_fly',
+    corrected_window_ref: { status: 'ok' },
+    sign_convention: 'positive static shifts delay traces',
+    overlay_status: { first_break_fit: 'ok' },
+  };
+
+  window.refractionQcUI.setSelectedView('gather_preview');
+
+  const rawPlot = plots.find((entry) => entry.plot.dataset.testid === 'refraction-qc-gather-raw-plot');
+  const correctedPlot = plots.find((entry) => entry.plot.dataset.testid === 'refraction-qc-gather-corrected-plot');
+
+  expect(rawPlot.layout.xaxis.range).toEqual(correctedPlot.layout.xaxis.range);
+  expect(rawPlot.layout.yaxis.range).toEqual(correctedPlot.layout.yaxis.range);
+  expect(rawPlot.layout.xaxis.title.text).toBe('Offset (m)');
+  expect(correctedPlot.layout.xaxis.title.text).toBe('Offset (m)');
+  expect(rawPlot.layout.xaxis.autorange).toBe(false);
+  expect(correctedPlot.layout.yaxis.autorange).toBe(false);
+  expect(rawPlot.layout.xaxis.range[0]).toBeLessThan(250);
+  expect(rawPlot.layout.xaxis.range[1]).toBeGreaterThan(2400);
+  expect(rawPlot.layout.yaxis.range[0]).toBeGreaterThan(0.0105);
 });
 
 test('Gather Preview explains missing station selection without endpoint wording', () => {

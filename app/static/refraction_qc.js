@@ -4397,6 +4397,66 @@
     return out;
   }
 
+  function gatherOverlayTimeValues(preview) {
+    const fields = [
+      'observed_pick_time_s',
+      'modeled_pick_time_s',
+      'corrected_observed_pick_time_s',
+      'corrected_modeled_pick_time_s',
+    ];
+    const values = [];
+    for (const field of fields) {
+      const fieldValues = Array.isArray(preview[field]) ? preview[field] : [];
+      for (const value of fieldValues) {
+        const numeric = Number(value);
+        if (Number.isFinite(numeric)) values.push(numeric);
+      }
+    }
+    return values;
+  }
+
+  function numericRangeWithPadding(values, options = {}) {
+    const finite = (Array.isArray(values) ? values : [])
+      .map((value) => Number(value))
+      .filter((value) => Number.isFinite(value))
+      .sort((a, b) => a - b);
+    if (!finite.length) return undefined;
+
+    if (finite.length === 1) {
+      const pad = Number.isFinite(Number(options.singlePad)) ? Number(options.singlePad) : 1;
+      return [finite[0] - pad, finite[0] + pad];
+    }
+
+    const diffs = [];
+    for (let index = 1; index < finite.length; index += 1) {
+      const diff = finite[index] - finite[index - 1];
+      if (diff > 0 && Number.isFinite(diff)) diffs.push(diff);
+    }
+    diffs.sort((a, b) => a - b);
+    const step = diffs.length ? diffs[Math.floor(diffs.length / 2)] : 0;
+    const spread = finite[finite.length - 1] - finite[0];
+    if (spread === 0) {
+      const pad = Number.isFinite(Number(options.singlePad)) ? Number(options.singlePad) : 1;
+      return [finite[0] - pad, finite[0] + pad];
+    }
+    const pad = Number.isFinite(Number(options.pad))
+      ? Number(options.pad)
+      : (step > 0 ? step * 0.5 : Math.abs(spread) * 0.01);
+    return [finite[0] - pad, finite[finite.length - 1] + pad];
+  }
+
+  function gatherPreviewAxisContext(preview) {
+    const xAxis = gatherAxisValues(preview);
+    const yValues = gatherTimeValues(preview);
+    const yRangeValues = yValues.concat(gatherOverlayTimeValues(preview));
+    return {
+      xAxis,
+      yValues,
+      xRange: numericRangeWithPadding(xAxis.x),
+      yRange: numericRangeWithPadding(yRangeValues),
+    };
+  }
+
   function gatherContextLines(preview = null) {
     const axis = preview?.gather?.axis || state.gatherAxis;
     const axisLabel = axis === 'receiver'
@@ -4508,8 +4568,12 @@
       return;
     }
 
-    const xAxis = gatherAxisValues(preview);
-    const y = gatherTimeValues(preview);
+    const axisContext = options.axisContext || gatherPreviewAxisContext(preview);
+    const xAxis = axisContext.xAxis;
+    const y = axisContext.yValues;
+    const xRange = axisContext.xRange;
+    const yRange = axisContext.yRange;
+    const reversedYRange = Array.isArray(yRange) ? [yRange[1], yRange[0]] : undefined;
     const traces = [
       {
         name: options.title,
@@ -4555,12 +4619,15 @@
       title: { text: options.title, font: { size: 12 } },
       xaxis: {
         title: { text: xAxis.label },
+        range: xRange,
+        autorange: xRange ? false : true,
         zeroline: false,
         gridcolor: '#e5e7eb',
       },
       yaxis: {
         title: { text: 'Time (s)' },
-        autorange: 'reversed',
+        range: reversedYRange,
+        autorange: reversedYRange ? false : 'reversed',
         zeroline: false,
         gridcolor: '#e5e7eb',
       },
@@ -4679,6 +4746,7 @@
       return;
     }
 
+    const axisContext = gatherPreviewAxisContext(preview);
     const plotGrid = document.createElement('div');
     plotGrid.className = state.gatherDisplayMode === 'side_by_side'
       ? 'refraction-qc-gather-grid'
@@ -4691,6 +4759,7 @@
         title: 'Raw gather',
         samples: preview.raw_samples,
         corrected: false,
+        axisContext,
       });
     }
     if (state.gatherDisplayMode === 'corrected' || state.gatherDisplayMode === 'side_by_side') {
@@ -4699,6 +4768,7 @@
         title: 'Corrected gather',
         samples: preview.corrected_samples,
         corrected: true,
+        axisContext,
       });
     }
   }
