@@ -4397,6 +4397,66 @@
     return out;
   }
 
+  function gatherOverlayTimeValues(preview) {
+    const fields = [
+      'observed_pick_time_s',
+      'modeled_pick_time_s',
+      'corrected_observed_pick_time_s',
+      'corrected_modeled_pick_time_s',
+    ];
+    const values = [];
+    for (const field of fields) {
+      const fieldValues = Array.isArray(preview[field]) ? preview[field] : [];
+      for (const value of fieldValues) {
+        const numeric = Number(value);
+        if (Number.isFinite(numeric)) values.push(numeric);
+      }
+    }
+    return values;
+  }
+
+  function numericRangeWithPadding(values, options = {}) {
+    const finite = (Array.isArray(values) ? values : [])
+      .map((value) => Number(value))
+      .filter((value) => Number.isFinite(value))
+      .sort((a, b) => a - b);
+    if (!finite.length) return undefined;
+
+    if (finite.length === 1) {
+      const pad = Number.isFinite(Number(options.singlePad)) ? Number(options.singlePad) : 1;
+      return [finite[0] - pad, finite[0] + pad];
+    }
+
+    const diffs = [];
+    for (let index = 1; index < finite.length; index += 1) {
+      const diff = finite[index] - finite[index - 1];
+      if (diff > 0 && Number.isFinite(diff)) diffs.push(diff);
+    }
+    diffs.sort((a, b) => a - b);
+    const step = diffs.length ? diffs[Math.floor(diffs.length / 2)] : 0;
+    const spread = finite[finite.length - 1] - finite[0];
+    if (spread === 0) {
+      const pad = Number.isFinite(Number(options.singlePad)) ? Number(options.singlePad) : 1;
+      return [finite[0] - pad, finite[0] + pad];
+    }
+    const pad = Number.isFinite(Number(options.pad))
+      ? Number(options.pad)
+      : (step > 0 ? step * 0.5 : Math.abs(spread) * 0.01);
+    return [finite[0] - pad, finite[finite.length - 1] + pad];
+  }
+
+  function gatherPreviewAxisContext(preview) {
+    const xAxis = gatherAxisValues(preview);
+    const yValues = gatherTimeValues(preview);
+    const yRangeValues = yValues.concat(gatherOverlayTimeValues(preview));
+    return {
+      xAxis,
+      yValues,
+      xRange: numericRangeWithPadding(xAxis.x),
+      yRange: numericRangeWithPadding(yRangeValues),
+    };
+  }
+
   function gatherContextLines(preview = null) {
     const axis = preview?.gather?.axis || state.gatherAxis;
     const axisLabel = axis === 'receiver'
@@ -4465,6 +4525,7 @@
       return Number.isFinite(value) ? value * 1000.0 : NaN;
     });
     const hasResidual = options.residual && residualMs.some((value) => Number.isFinite(value));
+    const showResidualScale = Boolean(hasResidual && options.showResidualScale);
     return {
       name: options.name,
       type: 'scatter',
@@ -4477,8 +4538,10 @@
         colorscale: hasResidual ? 'RdBu' : undefined,
         reversescale: hasResidual ? true : undefined,
         cmid: hasResidual ? 0 : undefined,
-        showscale: hasResidual,
-        colorbar: hasResidual ? { title: { text: 'Residual (ms)' } } : undefined,
+        showscale: showResidualScale,
+        colorbar: showResidualScale
+          ? { title: { text: 'Residual (ms)' }, x: 1.02, xanchor: 'left' }
+          : undefined,
         symbol: options.symbol,
         size: options.size || 8,
         line: { color: '#0f172a', width: 0.5 },
@@ -4508,21 +4571,15 @@
       return;
     }
 
-    const xAxis = gatherAxisValues(preview);
-    const y = gatherTimeValues(preview);
-    const traces = [
-      {
-        name: options.title,
-        type: 'heatmap',
-        x: xAxis.x,
-        y,
-        z: options.samples,
-        colorscale: 'Greys',
-        zsmooth: false,
-        colorbar: { title: { text: 'Amplitude' } },
-        hovertemplate: `${options.title}<br>${xAxis.label}: %{x}<br>Time: %{y:.4f} s<br>Amplitude: %{z:.4g}<extra></extra>`,
-      },
-    ];
+    const axisContext = options.axisContext || gatherPreviewAxisContext(preview);
+    const xAxis = axisContext.xAxis;
+    const y = axisContext.yValues;
+    const xRange = axisContext.xRange;
+    const yRange = axisContext.yRange;
+    const reversedYRange = Array.isArray(yRange) ? [yRange[1], yRange[0]] : undefined;
+    const sideBySide = Boolean(options.sideBySide);
+    const showAmplitudeScale = !sideBySide;
+    const showResidualScale = !sideBySide || Boolean(options.corrected);
     const observedField = options.corrected
       ? 'corrected_observed_pick_time_s'
       : 'observed_pick_time_s';
@@ -4535,7 +4592,40 @@
       color: '#2563eb',
       symbol: 'circle',
       residual: true,
+      showResidualScale,
     });
+    const hasResidualColorbar = Boolean(observedTrace?.marker?.showscale);
+    const splitColorbars = showAmplitudeScale && hasResidualColorbar;
+    const amplitudeColorbar = showAmplitudeScale
+      ? {
+          title: { text: 'Amplitude' },
+          ...(splitColorbars ? { x: 1.02, xanchor: 'left', y: 0.76, yanchor: 'middle', len: 0.42 } : {}),
+        }
+      : undefined;
+    if (splitColorbars && observedTrace?.marker?.colorbar) {
+      observedTrace.marker.colorbar = {
+        ...observedTrace.marker.colorbar,
+        y: 0.24,
+        yanchor: 'middle',
+        len: 0.42,
+      };
+    }
+    const showAnyColorbar = showAmplitudeScale || hasResidualColorbar;
+    const marginRight = splitColorbars ? 96 : showAnyColorbar ? 86 : 24;
+    const traces = [
+      {
+        name: options.title,
+        type: 'heatmap',
+        x: xAxis.x,
+        y,
+        z: options.samples,
+        colorscale: 'Greys',
+        zsmooth: false,
+        showscale: showAmplitudeScale,
+        colorbar: amplitudeColorbar,
+        hovertemplate: `${options.title}<br>${xAxis.label}: %{x}<br>Time: %{y:.4f} s<br>Amplitude: %{z:.4g}<extra></extra>`,
+      },
+    ];
     const modeledTrace = gatherOverlayTrace(preview, xAxis.x, {
       field: modeledField,
       name: options.corrected ? 'Corrected modeled first break' : 'Modeled first break',
@@ -4546,33 +4636,39 @@
     if (observedTrace) traces.push(observedTrace);
     if (modeledTrace) traces.push(modeledTrace);
 
-    window.Plotly.newPlot(plot, traces, {
+    const promise = window.Plotly.newPlot(plot, traces, {
       height: plotHeight(320, 520),
-      margin: { l: 62, r: 18, t: 38, b: 52 },
+      margin: { l: 62, r: marginRight, t: 64, b: 52 },
       font: { size: 10, color: '#334155' },
       paper_bgcolor: '#ffffff',
       plot_bgcolor: '#ffffff',
       title: { text: options.title, font: { size: 12 } },
       xaxis: {
         title: { text: xAxis.label },
+        range: xRange,
+        autorange: xRange ? false : true,
         zeroline: false,
         gridcolor: '#e5e7eb',
       },
       yaxis: {
         title: { text: 'Time (s)' },
-        autorange: 'reversed',
+        range: reversedYRange,
+        autorange: reversedYRange ? false : 'reversed',
         zeroline: false,
         gridcolor: '#e5e7eb',
       },
       legend: {
         orientation: 'h',
         x: 0,
-        y: 1.16,
+        y: 1.22,
         xanchor: 'left',
         yanchor: 'top',
         font: { size: 10 },
       },
     }, { displayModeBar: false, responsive: true });
+    Promise.resolve(promise).then(() => {
+      if (window.Plotly?.Plots?.resize) window.Plotly.Plots.resize(plot);
+    });
   }
 
   function renderGatherReducedTime(content, preview) {
@@ -4679,9 +4775,11 @@
       return;
     }
 
+    const axisContext = gatherPreviewAxisContext(preview);
     const plotGrid = document.createElement('div');
-    plotGrid.className = state.gatherDisplayMode === 'side_by_side'
-      ? 'refraction-qc-gather-grid'
+    const sideBySide = state.gatherDisplayMode === 'side_by_side';
+    plotGrid.className = sideBySide
+      ? 'refraction-qc-gather-grid refraction-qc-gather-grid-side-by-side'
       : 'refraction-qc-plot-grid';
     content.appendChild(plotGrid);
 
@@ -4691,6 +4789,8 @@
         title: 'Raw gather',
         samples: preview.raw_samples,
         corrected: false,
+        axisContext,
+        sideBySide,
       });
     }
     if (state.gatherDisplayMode === 'corrected' || state.gatherDisplayMode === 'side_by_side') {
@@ -4699,6 +4799,8 @@
         title: 'Corrected gather',
         samples: preview.corrected_samples,
         corrected: true,
+        axisContext,
+        sideBySide,
       });
     }
   }
