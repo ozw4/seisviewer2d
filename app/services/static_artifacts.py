@@ -2,16 +2,17 @@
 
 from __future__ import annotations
 
-import csv
-import json
-import uuid
-from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
 import numpy as np
 
+from app.services.common.artifact_io import (
+    write_csv_atomic as _common_write_csv_atomic,
+    write_json_atomic as _common_write_json_atomic,
+    write_npz_atomic as _common_write_npz_atomic,
+)
 from app.services.datum_static_validation import (
     ExistingStaticHeaderCheck,
     TraceShiftValidationResult,
@@ -632,71 +633,65 @@ def _stats_without_max_abs(values: np.ndarray) -> dict[str, float]:
 
 
 def _write_npz_atomic(out_path: Path, payload: dict[str, np.ndarray]) -> None:
-    def write(tmp_path: Path) -> None:
-        with tmp_path.open('wb') as handle:
-            np.savez(handle, **payload)
-
-    _atomic_write(out_path, write)
+    _common_write_npz_atomic(
+        out_path,
+        payload,
+        compressed=False,
+        reject_object_arrays=False,
+    )
 
 
 def _write_json_atomic(out_path: Path, payload: dict[str, Any]) -> None:
-    def write(tmp_path: Path) -> None:
-        with tmp_path.open('w', encoding='utf-8') as handle:
-            json.dump(
-                payload,
-                handle,
-                allow_nan=False,
-                ensure_ascii=False,
-                indent=2,
-                sort_keys=True,
-            )
-            handle.write('\n')
-
-    _atomic_write(out_path, write)
+    _common_write_json_atomic(
+        out_path,
+        payload,
+        allow_nan=False,
+        ensure_ascii=False,
+        indent=2,
+        sort_keys=True,
+        trailing_newline=True,
+    )
 
 
 def _write_csv_atomic(out_path: Path, values: _ValidatedInputs) -> None:
-    def write(tmp_path: Path) -> None:
-        with tmp_path.open('w', encoding='utf-8', newline='') as handle:
-            writer = csv.writer(handle)
-            writer.writerow(_CSV_COLUMNS)
-            for sorted_trace_index in range(values.n_traces):
-                writer.writerow(
-                    [
-                        sorted_trace_index,
-                        int(values.key1_sorted[sorted_trace_index]),
-                        int(values.key2_sorted[sorted_trace_index]),
-                        float(
-                            values.source_surface_elevation_m_sorted[sorted_trace_index]
-                        ),
-                        float(values.source_depth_m_sorted[sorted_trace_index]),
-                        'true'
-                        if bool(values.source_depth_used_sorted[sorted_trace_index])
-                        else 'false',
-                        float(values.source_elevation_m_sorted[sorted_trace_index]),
-                        float(values.receiver_elevation_m_sorted[sorted_trace_index]),
-                        float(
-                            values.source_shift_s_sorted[sorted_trace_index] * 1000.0
-                        ),
-                        float(
-                            values.receiver_shift_s_sorted[sorted_trace_index] * 1000.0
-                        ),
-                        float(values.trace_shift_s_sorted[sorted_trace_index] * 1000.0),
-                    ]
-                )
-
-    _atomic_write(out_path, write)
-
-
-def _atomic_write(out_path: Path, write: Callable[[Path], None]) -> None:
-    tmp_path = out_path.with_name(f'{out_path.name}.tmp-{uuid.uuid4().hex}')
-    try:
-        write(tmp_path)
-        tmp_path.replace(out_path)
-    except Exception:
-        if tmp_path.exists():
-            tmp_path.unlink()
-        raise
+    rows = []
+    for sorted_trace_index in range(values.n_traces):
+        rows.append(
+            {
+                'sorted_trace_index': sorted_trace_index,
+                'key1': int(values.key1_sorted[sorted_trace_index]),
+                'key2': int(values.key2_sorted[sorted_trace_index]),
+                'source_surface_elevation_m': float(
+                    values.source_surface_elevation_m_sorted[sorted_trace_index]
+                ),
+                'source_depth_m': float(values.source_depth_m_sorted[sorted_trace_index]),
+                'source_depth_used': 'true'
+                if bool(values.source_depth_used_sorted[sorted_trace_index])
+                else 'false',
+                'source_elevation_m': float(
+                    values.source_elevation_m_sorted[sorted_trace_index]
+                ),
+                'receiver_elevation_m': float(
+                    values.receiver_elevation_m_sorted[sorted_trace_index]
+                ),
+                'source_shift_ms': float(
+                    values.source_shift_s_sorted[sorted_trace_index] * 1000.0
+                ),
+                'receiver_shift_ms': float(
+                    values.receiver_shift_s_sorted[sorted_trace_index] * 1000.0
+                ),
+                'trace_shift_ms': float(
+                    values.trace_shift_s_sorted[sorted_trace_index] * 1000.0
+                ),
+            }
+        )
+    _common_write_csv_atomic(
+        out_path,
+        columns=_CSV_COLUMNS,
+        rows=rows,
+        extrasaction='raise',
+        lineterminator='\r\n',
+    )
 
 
 __all__ = [

@@ -2,16 +2,14 @@
 
 from __future__ import annotations
 
-import json
 import time
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
-from uuid import uuid4
 
 import numpy as np
 
 from app.contracts.statics.first_break_qc import FirstBreakQcRequest
+from app.services.common.artifact_io import write_json_atomic
 from app.core.state import AppState
 from app.services.first_break_qc_artifacts import (
     FIRST_BREAK_QC_CSV_NAME,
@@ -81,20 +79,6 @@ def _set_job_progress_message(
         state.jobs.set_message(job_id, message)
 
 
-def _write_json_atomic(path: Path, payload: dict[str, Any]) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    tmp_path = path.with_name(f'{path.name}.{uuid4().hex}.tmp')
-    try:
-        tmp_path.write_text(
-            json.dumps(payload, ensure_ascii=True, sort_keys=True),
-            encoding='utf-8',
-        )
-        tmp_path.replace(path)
-    except Exception:
-        tmp_path.unlink(missing_ok=True)
-        raise
-
-
 def _write_job_meta(
     *,
     job_id: str,
@@ -102,7 +86,7 @@ def _write_job_meta(
     req: FirstBreakQcRequest,
 ) -> None:
     pick_source = req.pick_source.model_dump(mode='json', exclude_none=True)
-    _write_json_atomic(
+    write_json_atomic(
         job_dir / 'job_meta.json',
         {
             'job_id': job_id,
@@ -123,6 +107,8 @@ def _write_job_meta(
                 'residual_by_key1_csv': RESIDUAL_BY_KEY1_CSV_NAME,
             },
         },
+        allow_nan=True,
+        make_parent=True,
     )
 
 

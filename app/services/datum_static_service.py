@@ -3,18 +3,17 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-import json
 import math
 from pathlib import Path
 import re
 import shutil
 import time
-from typing import Any
 from uuid import uuid4
 
 import numpy as np
 
 from app.contracts.statics.datum import DatumStaticApplyRequest
+from app.services.common.artifact_io import write_json_atomic
 from app.core.paths import get_trace_store_dir
 from app.core.state import AppState
 from app.services.corrected_trace_store import (
@@ -107,27 +106,13 @@ def _is_cancel_requested(state: AppState, job_id: str) -> bool:
         return state.jobs.is_cancel_requested(job_id)
 
 
-def _write_json_atomic(path: Path, payload: dict[str, Any]) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    tmp_path = path.with_name(f'{path.name}.{uuid4().hex}.tmp')
-    try:
-        tmp_path.write_text(
-            json.dumps(payload, ensure_ascii=True, sort_keys=True),
-            encoding='utf-8',
-        )
-        tmp_path.replace(path)
-    except Exception:
-        tmp_path.unlink(missing_ok=True)
-        raise
-
-
 def _write_job_meta(
     *,
     job_id: str,
     job_dir: Path,
     req: DatumStaticApplyRequest,
 ) -> None:
-    _write_json_atomic(
+    write_json_atomic(
         job_dir / 'job_meta.json',
         {
             'job_id': job_id,
@@ -138,6 +123,8 @@ def _write_job_meta(
             'key2_byte': req.key2_byte,
             'request': req.model_dump(mode='json'),
         },
+        allow_nan=True,
+        make_parent=True,
     )
 
 
@@ -501,7 +488,7 @@ def _run_datum_static_apply_job_body(
         progress=0.95,
         message='writing_corrected_file_manifest',
     )
-    _write_json_atomic(
+    write_json_atomic(
         job_dir / _CORRECTED_FILE_NAME,
         _build_corrected_file_payload(
             corrected_file_id=corrected_file_id,
@@ -510,6 +497,8 @@ def _run_datum_static_apply_job_body(
             req=req,
             job_id=job_id,
         ),
+        allow_nan=True,
+        make_parent=True,
     )
     _set_job_progress_message(state, job_id, progress=1.0, message='done')
     return JobCompletion(finished_ts=time.time())

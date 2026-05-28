@@ -2,14 +2,12 @@
 
 from __future__ import annotations
 
-import csv
-import json
 from pathlib import Path
 from typing import Any
-from uuid import uuid4
 
 import numpy as np
 
+from app.services.common.artifact_io import write_csv_atomic, write_json_atomic
 from app.services.refraction_static_types import (
     REFRACTION_FIELD_CORRECTION_COMPONENT_NAMES,
     RefractionEndpointFieldCorrectionResult,
@@ -202,8 +200,20 @@ def write_refraction_uphole_artifacts(
     root.mkdir(parents=True, exist_ok=True)
     qc_path = root / REFRACTION_UPHOLE_QC_JSON_NAME
     source_path = root / REFRACTION_UPHOLE_SOURCES_CSV_NAME
-    _write_json_atomic(qc_path, result.qc)
-    _write_csv_atomic(source_path, _uphole_rows(result), _UPHOLE_COLUMNS)
+    write_json_atomic(
+        qc_path,
+        result.qc,
+        allow_nan=True,
+        ensure_ascii=True,
+        sort_keys=True,
+    )
+    write_csv_atomic(
+        source_path,
+        columns=_UPHOLE_COLUMNS,
+        rows=_uphole_rows(result),
+        extrasaction='raise',
+        lineterminator='\r\n',
+    )
     return {
         'qc_json': qc_path,
         'sources_csv': source_path,
@@ -670,38 +680,6 @@ def _csv_float(value: float) -> str:
     if not np.isfinite(value):
         return ''
     return f'{float(value):.17g}'
-
-
-def _write_json_atomic(path: Path, payload: dict[str, Any]) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    tmp_path = path.with_name(f'{path.name}.{uuid4().hex}.tmp')
-    try:
-        tmp_path.write_text(
-            json.dumps(payload, ensure_ascii=True, sort_keys=True),
-            encoding='utf-8',
-        )
-        tmp_path.replace(path)
-    except Exception:
-        tmp_path.unlink(missing_ok=True)
-        raise
-
-
-def _write_csv_atomic(
-    path: Path,
-    rows: list[dict[str, object]],
-    columns: tuple[str, ...],
-) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    tmp_path = path.with_name(f'{path.name}.{uuid4().hex}.tmp')
-    try:
-        with tmp_path.open('w', encoding='utf-8', newline='') as handle:
-            writer = csv.DictWriter(handle, fieldnames=columns, extrasaction='raise')
-            writer.writeheader()
-            writer.writerows(rows)
-        tmp_path.replace(path)
-    except Exception:
-        tmp_path.unlink(missing_ok=True)
-        raise
 
 
 __all__ = [

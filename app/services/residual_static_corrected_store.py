@@ -14,6 +14,7 @@ from uuid import uuid4
 
 import numpy as np
 
+from app.services.common.artifact_io import write_json_atomic
 from app.services.corrected_trace_store import build_time_shifted_trace_store
 from app.services.trace_store_registration import (
     register_trace_store,
@@ -346,7 +347,7 @@ def apply_residual_static_correction_to_trace_store(
         )
         _raise_if_cancelled(cancel_check)
         _notify_progress(progress_callback, 0.97, 'writing_corrected_file_manifest')
-        _write_json_atomic(
+        write_json_atomic(
             corrected_file_json_path,
             _build_corrected_file_payload(
                 corrected_file_id=resolved_file_id,
@@ -358,6 +359,7 @@ def apply_residual_static_correction_to_trace_store(
                 key2_byte=key2_byte,
                 dt=build_result.dt,
             ),
+            make_parent=True,
         )
     except Exception:
         _cleanup_registration(
@@ -590,25 +592,6 @@ def _build_corrected_file_payload(
         'estimated_delay_field': 'estimated_trace_delay_s_sorted',
         'sign_convention': _SIGN_CONVENTION,
     }
-
-
-def _write_json_atomic(path: Path, payload: dict[str, object]) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    tmp_path = path.with_name(f'{path.name}.tmp')
-    try:
-        with tmp_path.open('w', encoding='utf-8') as handle:
-            json.dump(
-                payload,
-                handle,
-                allow_nan=False,
-                ensure_ascii=True,
-                sort_keys=True,
-            )
-        tmp_path.replace(path)
-    except Exception:
-        if tmp_path.is_file() or tmp_path.is_symlink():
-            tmp_path.unlink()
-        raise
 
 
 def _cleanup_registration(

@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
-import csv
 from collections.abc import Mapping
 from dataclasses import dataclass
+from functools import partial
 import hashlib
 import json
 from pathlib import Path
@@ -19,6 +19,11 @@ import numpy as np
 from app.contracts.statics.refraction.inputs import RefractionStaticGeometryRequest
 from app.contracts.statics.refraction.table_apply import RefractionStaticTableApplyRequest
 from app.core.state import AppState
+from app.services.common.artifact_io import (
+    write_csv_atomic,
+    write_json_atomic,
+    write_npz_atomic,
+)
 from app.services.corrected_trace_store import (
     TimeShiftedTraceStoreResult,
     build_time_shifted_trace_store,
@@ -64,6 +69,17 @@ _DONE_MESSAGE = 'static_table_apply_artifacts_written'
 _CORRECTED_DONE_MESSAGE = 'static_table_apply_corrected_trace_store_registered'
 _ARTIFACT_ID_RE = re.compile(r'^(?P<job_id>[^:]+):(?P<name>[^:]+)$')
 _SAFE_STORE_NAME_RE = re.compile(r'[^A-Za-z0-9_.-]+')
+_write_json_atomic = partial(
+    write_json_atomic,
+    allow_nan=False,
+    ensure_ascii=True,
+    sort_keys=True,
+)
+_write_npz_atomic = partial(
+    write_npz_atomic,
+    compressed=True,
+    reject_object_arrays=False,
+)
 
 
 EndpointIdentityMode = Literal['endpoint_key', 'endpoint_id']
@@ -1844,8 +1860,6 @@ def _static_table_apply_history_payload(
 
 
 def _write_trace_shift_csv(path: Path, trace_shift: _StaticTableTraceShift) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    tmp_path = path.with_name(f'{path.name}.{uuid4().hex}.tmp')
     columns = (
         'sorted_trace_index',
         'source_endpoint_key',
@@ -1860,49 +1874,42 @@ def _write_trace_shift_csv(path: Path, trace_shift: _StaticTableTraceShift) -> N
         'trace_static_status',
         'sign_convention',
     )
-    try:
-        with tmp_path.open('w', encoding='utf-8', newline='') as handle:
-            writer = csv.DictWriter(handle, fieldnames=columns, lineterminator='\n')
-            writer.writeheader()
-            for index in range(int(trace_shift.trace_shift_s_sorted.shape[0])):
-                writer.writerow(
-                    {
-                        'sorted_trace_index': int(trace_shift.sorted_trace_index[index]),
-                        'source_endpoint_key': str(
-                            trace_shift.source_endpoint_key_sorted[index]
-                        ),
-                        'receiver_endpoint_key': str(
-                            trace_shift.receiver_endpoint_key_sorted[index]
-                        ),
-                        'source_endpoint_id': str(
-                            trace_shift.source_endpoint_id_sorted[index]
-                        ),
-                        'receiver_endpoint_id': str(
-                            trace_shift.receiver_endpoint_id_sorted[index]
-                        ),
-                        'source_identity': str(trace_shift.source_identity_sorted[index]),
-                        'receiver_identity': str(
-                            trace_shift.receiver_identity_sorted[index]
-                        ),
-                        'source_static_shift_ms': _format_ms(
-                            trace_shift.source_static_shift_s_sorted[index]
-                        ),
-                        'receiver_static_shift_ms': _format_ms(
-                            trace_shift.receiver_static_shift_s_sorted[index]
-                        ),
-                        'trace_shift_ms': _format_ms(
-                            trace_shift.trace_shift_s_sorted[index]
-                        ),
-                        'trace_static_status': str(
-                            trace_shift.trace_static_status_sorted[index]
-                        ),
-                        'sign_convention': REFRACTION_STATIC_REPO_SIGN_CONVENTION,
-                    }
-                )
-        tmp_path.replace(path)
-    except Exception:
-        tmp_path.unlink(missing_ok=True)
-        raise
+    write_csv_atomic(
+        path,
+        columns=columns,
+        rows=(
+            {
+                'sorted_trace_index': int(trace_shift.sorted_trace_index[index]),
+                'source_endpoint_key': str(
+                    trace_shift.source_endpoint_key_sorted[index]
+                ),
+                'receiver_endpoint_key': str(
+                    trace_shift.receiver_endpoint_key_sorted[index]
+                ),
+                'source_endpoint_id': str(
+                    trace_shift.source_endpoint_id_sorted[index]
+                ),
+                'receiver_endpoint_id': str(
+                    trace_shift.receiver_endpoint_id_sorted[index]
+                ),
+                'source_identity': str(trace_shift.source_identity_sorted[index]),
+                'receiver_identity': str(trace_shift.receiver_identity_sorted[index]),
+                'source_static_shift_ms': _format_ms(
+                    trace_shift.source_static_shift_s_sorted[index]
+                ),
+                'receiver_static_shift_ms': _format_ms(
+                    trace_shift.receiver_static_shift_s_sorted[index]
+                ),
+                'trace_shift_ms': _format_ms(trace_shift.trace_shift_s_sorted[index]),
+                'trace_static_status': str(
+                    trace_shift.trace_static_status_sorted[index]
+                ),
+                'sign_convention': REFRACTION_STATIC_REPO_SIGN_CONVENTION,
+            }
+            for index in range(int(trace_shift.trace_shift_s_sorted.shape[0]))
+        ),
+        lineterminator='\n',
+    )
 
 
 def _corrected_file_payload(
@@ -2230,36 +2237,6 @@ def _optional_string(value: object) -> str | None:
     if not isinstance(value, str):
         raise ValueError('source TraceStore original_segy_path must be a string or null')
     return value
-
-
-def _write_json_atomic(path: Path, payload: dict[str, Any]) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    tmp_path = path.with_name(f'{path.name}.{uuid4().hex}.tmp')
-    try:
-        with tmp_path.open('w', encoding='utf-8') as handle:
-            json.dump(
-                payload,
-                handle,
-                allow_nan=False,
-                ensure_ascii=True,
-                sort_keys=True,
-            )
-        tmp_path.replace(path)
-    except Exception:
-        tmp_path.unlink(missing_ok=True)
-        raise
-
-
-def _write_npz_atomic(path: Path, payload: dict[str, np.ndarray]) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    tmp_path = path.with_name(f'{path.name}.{uuid4().hex}.tmp')
-    try:
-        with tmp_path.open('wb') as handle:
-            np.savez_compressed(handle, **payload)
-        tmp_path.replace(path)
-    except Exception:
-        tmp_path.unlink(missing_ok=True)
-        raise
 
 
 def _read_json_object(path: Path) -> dict[str, Any]:

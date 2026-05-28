@@ -2,14 +2,12 @@
 
 from __future__ import annotations
 
-import csv
 from collections.abc import Mapping
 from dataclasses import dataclass, replace
 import json
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
-from uuid import uuid4
 
 import numpy as np
 
@@ -21,6 +19,7 @@ from app.contracts.statics.refraction.inputs import (
 from app.contracts.statics.refraction.model import RefractionStaticModelRequest
 from app.contracts.statics.refraction.options import RefractionStaticMoveoutRequest
 from app.core.state import AppState
+from app.services.common.artifact_io import write_csv_atomic, write_json_atomic
 from app.services.geometry_linkage_loader import (
     LoadedGeometryLinkageArtifact,
     load_geometry_linkage_artifact,
@@ -636,8 +635,19 @@ def write_refraction_static_input_artifacts(
     root.mkdir(parents=True, exist_ok=True)
     qc_path = root / REFRACTION_INPUT_QC_JSON_NAME
     preview_path = root / REFRACTION_INPUT_PREVIEW_CSV_NAME
-    _write_json_atomic(qc_path, input_model.qc)
-    _write_csv_atomic(preview_path, _preview_rows(input_model))
+    write_json_atomic(
+        qc_path,
+        input_model.qc,
+        allow_nan=False,
+        ensure_ascii=True,
+        sort_keys=True,
+    )
+    write_csv_atomic(
+        preview_path,
+        columns=_PREVIEW_COLUMNS,
+        rows=_preview_rows(input_model),
+        lineterminator='\r\n',
+    )
     return {
         'qc_json': qc_path,
         'preview_csv': preview_path,
@@ -2057,37 +2067,6 @@ def _preview_rows(input_model: RefractionStaticInputModel) -> list[dict[str, Any
             }
         )
     return rows
-
-
-def _write_json_atomic(path: Path, payload: dict[str, Any]) -> None:
-    tmp_path = path.with_name(f'{path.name}.{uuid4().hex}.tmp')
-    try:
-        tmp_path.write_text(
-            json.dumps(
-                payload,
-                allow_nan=False,
-                ensure_ascii=True,
-                sort_keys=True,
-            ),
-            encoding='utf-8',
-        )
-        tmp_path.replace(path)
-    except Exception:
-        tmp_path.unlink(missing_ok=True)
-        raise
-
-
-def _write_csv_atomic(path: Path, rows: list[dict[str, Any]]) -> None:
-    tmp_path = path.with_name(f'{path.name}.{uuid4().hex}.tmp')
-    try:
-        with tmp_path.open('w', encoding='utf-8', newline='') as handle:
-            writer = csv.DictWriter(handle, fieldnames=list(_PREVIEW_COLUMNS))
-            writer.writeheader()
-            writer.writerows(rows)
-        tmp_path.replace(path)
-    except Exception:
-        tmp_path.unlink(missing_ok=True)
-        raise
 
 
 def _assert_json_safe(payload: dict[str, Any]) -> None:

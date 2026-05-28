@@ -7,7 +7,6 @@ from dataclasses import dataclass
 import json
 from pathlib import Path
 from typing import Any, Literal
-from uuid import uuid4
 
 import numpy as np
 
@@ -17,6 +16,7 @@ from app.contracts.statics.refraction.options import (
 )
 from app.contracts.statics.refraction.apply import RefractionStaticApplyRequest
 from app.core.state import AppState
+from app.services.common.artifact_io import write_csv_atomic, write_json_atomic
 from app.services.job_artifact_refs import resolve_job_artifact_path
 from app.services.refraction_static_first_layer import (
     validate_resolved_first_layer_velocity_match,
@@ -956,14 +956,36 @@ def write_refraction_datum_statics_artifacts(
     source_path = root / REFRACTION_DATUM_SOURCES_CSV_NAME
     receiver_path = root / REFRACTION_DATUM_RECEIVERS_CSV_NAME
     trace_path = root / REFRACTION_DATUM_TRACE_PREVIEW_CSV_NAME
-    _write_json_atomic(qc_path, result.qc)
-    _write_csv_atomic(node_path, _node_rows(result), _NODE_COLUMNS)
-    _write_csv_atomic(source_path, _source_rows(result), _SOURCE_COLUMNS)
-    _write_csv_atomic(receiver_path, _receiver_rows(result), _RECEIVER_COLUMNS)
-    _write_csv_atomic(
+    write_json_atomic(
+        qc_path,
+        result.qc,
+        allow_nan=False,
+        ensure_ascii=True,
+        sort_keys=True,
+    )
+    write_csv_atomic(
+        node_path,
+        columns=_NODE_COLUMNS,
+        rows=_node_rows(result),
+        lineterminator='\r\n',
+    )
+    write_csv_atomic(
+        source_path,
+        columns=_SOURCE_COLUMNS,
+        rows=_source_rows(result),
+        lineterminator='\r\n',
+    )
+    write_csv_atomic(
+        receiver_path,
+        columns=_RECEIVER_COLUMNS,
+        rows=_receiver_rows(result),
+        lineterminator='\r\n',
+    )
+    write_csv_atomic(
         trace_path,
-        _trace_preview_rows(result),
-        _trace_preview_columns(result),
+        columns=_trace_preview_columns(result),
+        rows=_trace_preview_rows(result),
+        lineterminator='\r\n',
     )
     return {
         'qc_json': qc_path,
@@ -3619,41 +3641,6 @@ def _csv_float(value: object) -> str | float:
     if not np.isfinite(out):
         return ''
     return out
-
-
-def _write_json_atomic(path: Path, payload: dict[str, Any]) -> None:
-    tmp_path = path.with_name(f'{path.name}.{uuid4().hex}.tmp')
-    try:
-        tmp_path.write_text(
-            json.dumps(
-                payload,
-                allow_nan=False,
-                ensure_ascii=True,
-                sort_keys=True,
-            ),
-            encoding='utf-8',
-        )
-        tmp_path.replace(path)
-    except Exception:
-        tmp_path.unlink(missing_ok=True)
-        raise
-
-
-def _write_csv_atomic(
-    path: Path,
-    rows: list[dict[str, Any]],
-    columns: tuple[str, ...],
-) -> None:
-    tmp_path = path.with_name(f'{path.name}.{uuid4().hex}.tmp')
-    try:
-        with tmp_path.open('w', encoding='utf-8', newline='') as handle:
-            writer = csv.DictWriter(handle, fieldnames=list(columns))
-            writer.writeheader()
-            writer.writerows(rows)
-        tmp_path.replace(path)
-    except Exception:
-        tmp_path.unlink(missing_ok=True)
-        raise
 
 
 def _assert_json_safe(payload: dict[str, Any]) -> None:

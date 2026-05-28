@@ -2,16 +2,18 @@
 
 from __future__ import annotations
 
-import csv
-import json
-import uuid
-from collections.abc import Callable, Mapping
+from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
 import numpy as np
 
+from app.services.common.artifact_io import (
+    assert_strict_json,
+    write_csv_atomic as _common_write_csv_atomic,
+    write_json_atomic as _common_write_json_atomic,
+)
 from app.services.first_break_qc_inputs import FirstBreakQcInputs
 from app.services.first_break_qc_math import (
     CorrelationQc,
@@ -702,19 +704,15 @@ def _compute_residual_stats_for_section(
 
 
 def _write_json_atomic(out_path: Path, payload: dict[str, Any]) -> None:
-    def write(tmp_path: Path) -> None:
-        with tmp_path.open('w', encoding='utf-8') as handle:
-            json.dump(
-                payload,
-                handle,
-                allow_nan=False,
-                ensure_ascii=False,
-                indent=2,
-                sort_keys=True,
-            )
-            handle.write('\n')
-
-    _atomic_write(out_path, write)
+    _common_write_json_atomic(
+        out_path,
+        payload,
+        allow_nan=False,
+        ensure_ascii=False,
+        indent=2,
+        sort_keys=True,
+        trailing_newline=True,
+    )
 
 
 def _write_trace_csv_atomic(
@@ -722,88 +720,84 @@ def _write_trace_csv_atomic(
     values: _ValidatedInputs,
     metrics: _ValidatedMetrics,
 ) -> None:
-    def write(tmp_path: Path) -> None:
-        with tmp_path.open('w', encoding='utf-8', newline='') as handle:
-            writer = csv.writer(handle)
-            writer.writerow(_TRACE_CSV_COLUMNS)
-            for index in range(values.n_traces):
-                writer.writerow(
-                    [
-                        str(index),
-                        str(int(values.key1_sorted[index])),
-                        str(int(values.key2_sorted[index])),
-                        'true'
-                        if bool(values.valid_pick_mask_sorted[index])
-                        else 'false',
-                        _format_optional_float(values.picks_time_s_sorted[index]),
-                        _format_optional_float(
-                            values.datum_trace_shift_s_sorted[index]
-                        ),
-                        _format_optional_float(
-                            metrics.pick_time_after_datum_s_sorted[index]
-                        ),
-                        _format_optional_float(values.offset_sorted[index]),
-                        _format_optional_float(abs(values.offset_sorted[index])),
-                        _format_optional_float(values.source_elevation_m_sorted[index]),
-                        _format_optional_float(
-                            values.receiver_elevation_m_sorted[index]
-                        ),
-                        _format_optional_float(
-                            _defined_trace_float(
-                                metrics.linear_moveout_model_s_sorted[index],
-                                defined=metrics.residual_valid_mask_sorted[index],
-                            )
-                        ),
-                        _format_optional_float(
-                            _defined_trace_float(
-                                metrics.residual_after_datum_s_sorted[index],
-                                defined=metrics.residual_valid_mask_sorted[index],
-                            )
-                        ),
-                    ]
-                )
-
-    _atomic_write(out_path, write)
+    rows = []
+    for index in range(values.n_traces):
+        rows.append(
+            {
+                'sorted_trace_index': str(index),
+                'key1': str(int(values.key1_sorted[index])),
+                'key2': str(int(values.key2_sorted[index])),
+                'valid_pick': 'true'
+                if bool(values.valid_pick_mask_sorted[index])
+                else 'false',
+                'pick_time_raw_s': _format_optional_float(
+                    values.picks_time_s_sorted[index]
+                ),
+                'datum_trace_shift_s': _format_optional_float(
+                    values.datum_trace_shift_s_sorted[index]
+                ),
+                'pick_time_after_datum_s': _format_optional_float(
+                    metrics.pick_time_after_datum_s_sorted[index]
+                ),
+                'offset': _format_optional_float(values.offset_sorted[index]),
+                'abs_offset': _format_optional_float(abs(values.offset_sorted[index])),
+                'source_elevation_m': _format_optional_float(
+                    values.source_elevation_m_sorted[index]
+                ),
+                'receiver_elevation_m': _format_optional_float(
+                    values.receiver_elevation_m_sorted[index]
+                ),
+                'linear_moveout_model_s': _format_optional_float(
+                    _defined_trace_float(
+                        metrics.linear_moveout_model_s_sorted[index],
+                        defined=metrics.residual_valid_mask_sorted[index],
+                    )
+                ),
+                'residual_after_datum_s': _format_optional_float(
+                    _defined_trace_float(
+                        metrics.residual_after_datum_s_sorted[index],
+                        defined=metrics.residual_valid_mask_sorted[index],
+                    )
+                ),
+            }
+        )
+    _common_write_csv_atomic(
+        out_path,
+        columns=_TRACE_CSV_COLUMNS,
+        rows=rows,
+        extrasaction='raise',
+        lineterminator='\r\n',
+    )
 
 
 def _write_residual_by_key1_csv_atomic(
     out_path: Path,
     rows: list[_ResidualKey1Row],
 ) -> None:
-    def write(tmp_path: Path) -> None:
-        with tmp_path.open('w', encoding='utf-8', newline='') as handle:
-            writer = csv.writer(handle)
-            writer.writerow(_RESIDUAL_BY_KEY1_CSV_COLUMNS)
-            for row in rows:
-                writer.writerow(
-                    [
-                        str(row.key1),
-                        str(row.n_traces),
-                        str(row.n_valid_picks),
-                        str(row.n_used_residual),
-                        _format_optional_float(row.residual_median_s),
-                        _format_optional_float(row.residual_mad_s),
-                        _format_optional_float(row.residual_mean_s),
-                        _format_optional_float(row.residual_std_s),
-                    ]
-                )
-
-    _atomic_write(out_path, write)
-
-
-def _atomic_write(out_path: Path, write: Callable[[Path], None]) -> None:
-    tmp_path = out_path.with_name(f'{out_path.name}.tmp-{uuid.uuid4().hex}')
-    try:
-        write(tmp_path)
-        tmp_path.replace(out_path)
-    except Exception:
-        if tmp_path.exists():
-            tmp_path.unlink()
-        raise
+    csv_rows = [
+        {
+            'key1': str(row.key1),
+            'n_traces': str(row.n_traces),
+            'n_valid_picks': str(row.n_valid_picks),
+            'n_used_residual': str(row.n_used_residual),
+            'residual_median_s': _format_optional_float(row.residual_median_s),
+            'residual_mad_s': _format_optional_float(row.residual_mad_s),
+            'residual_mean_s': _format_optional_float(row.residual_mean_s),
+            'residual_std_s': _format_optional_float(row.residual_std_s),
+        }
+        for row in rows
+    ]
+    _common_write_csv_atomic(
+        out_path,
+        columns=_RESIDUAL_BY_KEY1_CSV_COLUMNS,
+        rows=csv_rows,
+        extrasaction='raise',
+        lineterminator='\r\n',
+    )
 
 
 def _assert_json_payload(payload: dict[str, Any]) -> None:
-    json.dumps(payload, allow_nan=False)
+    assert_strict_json(payload)
 
 
 def _format_optional_float(value: object) -> str:
