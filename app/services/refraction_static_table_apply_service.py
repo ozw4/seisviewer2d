@@ -24,6 +24,10 @@ from app.services.common.artifact_io import (
     write_json_atomic,
     write_npz_atomic,
 )
+from app.services.common.array_validation import (
+    coerce_1d_finite_float64,
+    coerce_1d_integer_int64,
+)
 from app.services.corrected_trace_store import (
     TimeShiftedTraceStoreResult,
     build_time_shifted_trace_store,
@@ -2110,36 +2114,34 @@ def _reader_header(reader: Any, byte: int, *, n_traces: int) -> np.ndarray:
 
 
 def _coerce_id_header(values: np.ndarray, *, name: str, n_traces: int) -> np.ndarray:
-    arr = np.asarray(values)
-    if arr.ndim != 1 or arr.shape != (n_traces,):
-        raise ValueError(f'{name} shape mismatch: expected {(n_traces,)}, got {arr.shape}')
-    if np.issubdtype(arr.dtype, np.bool_):
-        raise ValueError(f'{name} must contain integer-compatible values')
-    if np.issubdtype(arr.dtype, np.integer):
-        return np.ascontiguousarray(arr, dtype=np.int64)
-    if not np.issubdtype(arr.dtype, np.number):
-        raise ValueError(f'{name} must contain integer-compatible values')
-    arr_f64 = arr.astype(np.float64, copy=False)
-    if not np.all(np.isfinite(arr_f64)):
-        raise ValueError(f'{name} must contain finite values')
-    if not np.all(arr_f64 == np.rint(arr_f64)):
-        raise ValueError(f'{name} must contain integer-compatible values')
-    return np.ascontiguousarray(arr_f64, dtype=np.int64)
+    try:
+        return coerce_1d_integer_int64(
+            values,
+            name=name,
+            expected_shape=(n_traces,),
+            nonfinite_message='must contain finite values',
+        )
+    except ValueError as exc:
+        message = str(exc).replace(
+            'must contain integer values',
+            'must contain integer-compatible values',
+        )
+        raise ValueError(message) from exc
 
 
 def _coerce_scalar_header(values: np.ndarray, *, name: str, n_traces: int) -> np.ndarray:
-    arr = np.asarray(values)
-    if arr.ndim != 1 or arr.shape != (n_traces,):
-        raise ValueError(f'{name} shape mismatch: expected {(n_traces,)}, got {arr.shape}')
-    if np.issubdtype(arr.dtype, np.integer):
-        return np.ascontiguousarray(arr, dtype=np.int64)
-    if np.issubdtype(arr.dtype, np.bool_) or not np.issubdtype(arr.dtype, np.number):
-        raise ValueError(f'{name} must contain integer-compatible values')
-    arr_f64 = arr.astype(np.float64, copy=False)
-    valid = np.isfinite(arr_f64) & (arr_f64 == np.rint(arr_f64))
-    if not np.all(valid):
-        raise ValueError(f'{name} must contain integer-compatible values')
-    return np.ascontiguousarray(arr_f64.astype(np.int64), dtype=np.int64)
+    try:
+        return coerce_1d_integer_int64(
+            values,
+            name=name,
+            expected_shape=(n_traces,),
+        )
+    except ValueError as exc:
+        message = str(exc).replace(
+            'must contain integer values',
+            'must contain integer-compatible values',
+        )
+        raise ValueError(message) from exc
 
 
 def _scaled_header_to_meters(
@@ -2150,14 +2152,11 @@ def _scaled_header_to_meters(
     name: str,
     n_traces: int,
 ) -> np.ndarray:
-    raw = np.asarray(values)
-    if raw.ndim != 1 or raw.shape != (n_traces,):
-        raise ValueError(f'{name} shape mismatch: expected {(n_traces,)}, got {raw.shape}')
-    if np.issubdtype(raw.dtype, np.bool_) or not np.issubdtype(raw.dtype, np.number):
-        raise ValueError(f'{name} must have a real numeric dtype')
-    raw_f64 = raw.astype(np.float64, copy=False)
-    if not np.all(np.isfinite(raw_f64)):
-        raise ValueError(f'{name} must contain finite values')
+    raw_f64 = coerce_1d_finite_float64(
+        values,
+        name=name,
+        expected_shape=(n_traces,),
+    )
     return np.ascontiguousarray(
         normalize_elevation_unit(apply_segy_scalar(raw_f64, scalars), unit),
         dtype=np.float64,

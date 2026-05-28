@@ -20,6 +20,11 @@ from app.contracts.statics.refraction.model import RefractionStaticModelRequest
 from app.contracts.statics.refraction.options import RefractionStaticMoveoutRequest
 from app.core.state import AppState
 from app.services.common.artifact_io import write_csv_atomic, write_json_atomic
+from app.services.common.array_validation import (
+    coerce_nonnegative_int as _coerce_nonnegative_int,
+    coerce_positive_int as _coerce_positive_int,
+    is_real_numeric_dtype as _is_real_numeric_dtype,
+)
 from app.services.geometry_linkage_loader import (
     LoadedGeometryLinkageArtifact,
     load_geometry_linkage_artifact,
@@ -2126,22 +2131,6 @@ def _validate_header_byte(value: object, *, name: str) -> int:
     return out
 
 
-def _coerce_nonnegative_int(value: object, *, name: str) -> int:
-    if isinstance(value, (bool, np.bool_)) or not isinstance(value, (int, np.integer)):
-        raise ValueError(f'{name} must be an integer')
-    out = int(value)
-    if out < 0:
-        raise ValueError(f'{name} must be greater than or equal to 0')
-    return out
-
-
-def _coerce_positive_int(value: object, *, name: str) -> int:
-    out = _coerce_nonnegative_int(value, name=name)
-    if out <= 0:
-        raise ValueError(f'{name} must be greater than 0')
-    return out
-
-
 def _coerce_positive_float(value: object, *, name: str) -> float:
     if isinstance(value, (bool, np.bool_)):
         raise ValueError(f'{name} must be a positive finite float')
@@ -2158,13 +2147,6 @@ def _non_empty_str(value: object, *, name: str) -> str:
     if not isinstance(value, str) or not value:
         raise ValueError(f'{name} must be a non-empty string')
     return value
-
-
-def _is_real_numeric_dtype(dtype: np.dtype) -> bool:
-    return np.issubdtype(dtype, np.number) and not np.issubdtype(
-        dtype,
-        np.complexfloating,
-    )
 
 
 __all__ = [

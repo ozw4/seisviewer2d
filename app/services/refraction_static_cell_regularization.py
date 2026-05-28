@@ -8,6 +8,13 @@ from typing import Any
 import numpy as np
 from scipy import sparse
 
+from app.services.common.array_validation import (
+    coerce_nonnegative_finite_float as _coerce_nonnegative_finite_float,
+    coerce_nonnegative_int as _coerce_nonnegative_int,
+    coerce_positive_finite_float as _coerce_positive_finite_float,
+    coerce_positive_int as _coerce_positive_int,
+)
+
 
 @dataclass(frozen=True)
 class CellSlownessSmoothingRows:
@@ -396,42 +403,6 @@ def _coerce_1d_float(values: np.ndarray, *, name: str) -> np.ndarray:
     out = np.ascontiguousarray(arr, dtype=np.float64)
     if np.any(~np.isfinite(out)):
         raise ValueError(f'{name} values must be finite')
-    return out
-
-
-def _coerce_positive_int(value: int, *, name: str) -> int:
-    if isinstance(value, (bool, np.bool_)) or not isinstance(value, (int, np.integer)):
-        raise ValueError(f'{name} must be a positive integer')
-    out = int(value)
-    if out <= 0:
-        raise ValueError(f'{name} must be a positive integer')
-    return out
-
-
-def _coerce_nonnegative_int(value: int, *, name: str) -> int:
-    if isinstance(value, (bool, np.bool_)) or not isinstance(value, (int, np.integer)):
-        raise ValueError(f'{name} must be a non-negative integer')
-    out = int(value)
-    if out < 0:
-        raise ValueError(f'{name} must be a non-negative integer')
-    return out
-
-
-def _coerce_nonnegative_finite_float(value: float, *, name: str) -> float:
-    if isinstance(value, (bool, np.bool_)):
-        raise ValueError(f'{name} must be a non-negative finite number')
-    out = float(value)
-    if not np.isfinite(out) or out < 0.0:
-        raise ValueError(f'{name} must be a non-negative finite number')
-    return out
-
-
-def _coerce_positive_finite_float(value: float, *, name: str) -> float:
-    if isinstance(value, (bool, np.bool_)):
-        raise ValueError(f'{name} must be a positive finite number')
-    out = float(value)
-    if not np.isfinite(out) or out <= 0.0:
-        raise ValueError(f'{name} must be a positive finite number')
     return out
 
 

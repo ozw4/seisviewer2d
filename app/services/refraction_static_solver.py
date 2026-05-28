@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, replace
+from functools import partial
 from typing import Any, Literal
 
 import numpy as np
@@ -10,6 +11,15 @@ from scipy import optimize, sparse
 
 from app.contracts.statics.refraction.model import RefractionStaticModelRequest
 from app.contracts.statics.refraction.options import RefractionStaticSolverRequest
+from app.services.common.array_validation import (
+    coerce_1d_integer_int64,
+    coerce_1d_real_numeric_float64,
+    coerce_finite_float,
+    coerce_nonnegative_finite_float,
+    coerce_positive_finite_float,
+    coerce_positive_int,
+    is_real_numeric_dtype as _is_real_numeric_dtype,
+)
 from app.services.refraction_static_cell_regularization import (
     CellSlownessSmoothingRows,
     augment_design_matrix_with_cell_smoothing,
@@ -41,6 +51,32 @@ _CELL_THRESHOLD_QC_KEYS = (
 
 class RefractionStaticSolverError(ValueError):
     """Raised when the bounded refraction static solve cannot be completed."""
+
+
+_coerce_1d_real_numeric_float64 = partial(
+    coerce_1d_real_numeric_float64,
+    error_type=RefractionStaticSolverError,
+)
+_coerce_1d_integer_int64 = partial(
+    coerce_1d_integer_int64,
+    error_type=RefractionStaticSolverError,
+)
+_coerce_positive_int = partial(
+    coerce_positive_int,
+    error_type=RefractionStaticSolverError,
+)
+_coerce_positive_finite_float = partial(
+    coerce_positive_finite_float,
+    error_type=RefractionStaticSolverError,
+)
+_coerce_nonnegative_finite_float = partial(
+    coerce_nonnegative_finite_float,
+    error_type=RefractionStaticSolverError,
+)
+_coerce_finite_float = partial(
+    coerce_finite_float,
+    error_type=RefractionStaticSolverError,
+)
 
 
 @dataclass(frozen=True)
@@ -2129,50 +2165,6 @@ def _validate_robust_method(value: object) -> RobustMethod:
     raise RefractionStaticSolverError('solver.robust.method must be mad or sigma')
 
 
-def _coerce_1d_real_numeric_float64(
-    values: object,
-    *,
-    name: str,
-    expected_shape: tuple[int, ...] | None = None,
-) -> np.ndarray:
-    arr = np.asarray(values)
-    if arr.ndim != 1:
-        raise RefractionStaticSolverError(f'{name} must be a 1D array')
-    if expected_shape is not None and arr.shape != expected_shape:
-        raise RefractionStaticSolverError(
-            f'{name} shape mismatch: expected {expected_shape}, got {arr.shape}'
-        )
-    if not _is_real_numeric_dtype(arr.dtype):
-        raise RefractionStaticSolverError(f'{name} must have a numeric dtype')
-    return np.ascontiguousarray(arr, dtype=np.float64)
-
-
-def _coerce_1d_integer_int64(
-    values: object,
-    *,
-    name: str,
-    expected_shape: tuple[int, ...] | None = None,
-) -> np.ndarray:
-    arr = np.asarray(values)
-    if arr.ndim != 1:
-        raise RefractionStaticSolverError(f'{name} must be a 1D array')
-    if expected_shape is not None and arr.shape != expected_shape:
-        raise RefractionStaticSolverError(
-            f'{name} shape mismatch: expected {expected_shape}, got {arr.shape}'
-        )
-    if np.issubdtype(arr.dtype, np.bool_):
-        raise RefractionStaticSolverError(f'{name} must contain integer values')
-    if np.issubdtype(arr.dtype, np.integer):
-        return np.ascontiguousarray(arr, dtype=np.int64)
-    if not _is_real_numeric_dtype(arr.dtype):
-        raise RefractionStaticSolverError(f'{name} must contain integer values')
-    arr_f64 = arr.astype(np.float64, copy=False)
-    _validate_all_finite(arr_f64, name=name)
-    if not np.all(arr_f64 == np.rint(arr_f64)):
-        raise RefractionStaticSolverError(f'{name} must contain integer values')
-    return np.ascontiguousarray(arr_f64, dtype=np.int64)
-
-
 def _coerce_bool(value: object, *, name: str) -> bool:
     if not isinstance(value, (bool, np.bool_)):
         raise RefractionStaticSolverError(f'{name} must be a bool')
@@ -2183,41 +2175,6 @@ def _coerce_fraction(value: object, *, name: str) -> float:
     out = _coerce_positive_finite_float(value, name=name)
     if out > 1.0:
         raise RefractionStaticSolverError(f'{name} must be <= 1')
-    return out
-
-
-def _coerce_positive_int(value: object, *, name: str) -> int:
-    if isinstance(value, (bool, np.bool_)) or not isinstance(value, (int, np.integer)):
-        raise RefractionStaticSolverError(f'{name} must be an integer')
-    out = int(value)
-    if out <= 0:
-        raise RefractionStaticSolverError(f'{name} must be greater than 0')
-    return out
-
-
-def _coerce_positive_finite_float(value: object, *, name: str) -> float:
-    out = _coerce_finite_float(value, name=name)
-    if out <= 0.0:
-        raise RefractionStaticSolverError(f'{name} must be greater than 0')
-    return out
-
-
-def _coerce_nonnegative_finite_float(value: object, *, name: str) -> float:
-    out = _coerce_finite_float(value, name=name)
-    if out < 0.0:
-        raise RefractionStaticSolverError(f'{name} must be non-negative')
-    return out
-
-
-def _coerce_finite_float(value: object, *, name: str) -> float:
-    if isinstance(value, (bool, np.bool_)):
-        raise RefractionStaticSolverError(f'{name} must be finite')
-    try:
-        out = float(value)
-    except (TypeError, ValueError) as exc:
-        raise RefractionStaticSolverError(f'{name} must be finite') from exc
-    if not np.isfinite(out):
-        raise RefractionStaticSolverError(f'{name} must be finite')
     return out
 
 
@@ -2242,13 +2199,6 @@ def _json_optional_float(value: float | None) -> float | None:
 def _validate_all_finite(values: np.ndarray, *, name: str) -> None:
     if np.any(~np.isfinite(values)):
         raise RefractionStaticSolverError(f'{name} must contain only finite values')
-
-
-def _is_real_numeric_dtype(dtype: np.dtype) -> bool:
-    return np.issubdtype(dtype, np.number) and not np.issubdtype(
-        dtype,
-        np.complexfloating,
-    )
 
 
 __all__ = [
