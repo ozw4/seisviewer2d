@@ -18,6 +18,7 @@ from app.services.common.artifact_io import (
 )
 from app.services.common.array_validation import (
     coerce_1d_bool_array as _require_1d_bool_array,
+    coerce_1d_finite_float64 as _coerce_1d_finite_float64,
     coerce_1d_integer_int64 as _common_coerce_1d_integer_int64,
     coerce_finite_float as _coerce_finite_float,
     coerce_positive_finite_float as _coerce_positive_finite_float,
@@ -690,9 +691,9 @@ def write_time_term_static_artifacts(
         qc_json_path=job_dir_path / TIME_TERM_STATIC_QC_JSON_NAME,
         statics_csv_path=job_dir_path / TIME_TERM_STATICS_CSV_NAME,
     )
-    _write_npz_atomic(paths.solution_npz_path, solution_arrays)
-    _write_json_atomic(paths.qc_json_path, qc_payload)
-    _write_csv_atomic(paths.statics_csv_path, csv_rows)
+    _write_time_term_solution_npz(paths.solution_npz_path, solution_arrays)
+    _write_time_term_qc_json(paths.qc_json_path, qc_payload)
+    _write_time_term_statics_csv(paths.statics_csv_path, csv_rows)
     return paths
 
 
@@ -1835,21 +1836,6 @@ def _coerce_trace_to_row_index(
     return arr
 
 
-def _coerce_1d_finite_float64(
-    values: object,
-    *,
-    name: str,
-    expected_shape: tuple[int, ...] | None = None,
-) -> np.ndarray:
-    arr = _coerce_1d_float64_allow_nan(
-        values,
-        name=name,
-        expected_shape=expected_shape,
-    )
-    _validate_all_finite(arr, name=name)
-    return arr
-
-
 def _coerce_1d_float64_allow_nan_no_inf(
     values: object,
     *,
@@ -2071,7 +2057,10 @@ def _assert_strict_json_payload(payload: dict[str, Any]) -> None:
     assert_strict_json(payload)
 
 
-def _write_npz_atomic(out_path: Path, payload: dict[str, np.ndarray]) -> None:
+def _write_time_term_solution_npz(
+    out_path: Path,
+    payload: dict[str, np.ndarray],
+) -> None:
     _common_write_npz_atomic(
         out_path,
         payload,
@@ -2080,7 +2069,7 @@ def _write_npz_atomic(out_path: Path, payload: dict[str, np.ndarray]) -> None:
     )
 
 
-def _write_json_atomic(out_path: Path, payload: dict[str, Any]) -> None:
+def _write_time_term_qc_json(out_path: Path, payload: dict[str, Any]) -> None:
     _common_write_json_atomic(
         out_path,
         payload,
@@ -2092,7 +2081,10 @@ def _write_json_atomic(out_path: Path, payload: dict[str, Any]) -> None:
     )
 
 
-def _write_csv_atomic(out_path: Path, rows: list[dict[str, object]]) -> None:
+def _write_time_term_statics_csv(
+    out_path: Path,
+    rows: list[dict[str, object]],
+) -> None:
     _common_write_csv_atomic(
         out_path,
         columns=_CSV_COLUMNS,

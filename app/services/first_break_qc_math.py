@@ -9,12 +9,12 @@ from typing import Any, Literal
 import numpy as np
 
 from app.services.common.array_validation import (
-    coerce_1d_bool_array as _common_coerce_1d_bool_array,
-    coerce_1d_finite_float64 as _common_coerce_1d_finite_float64,
-    coerce_1d_integer_int64 as _common_coerce_1d_integer_int64,
-    coerce_1d_real_numeric_float64 as _common_coerce_1d_real_numeric_float64,
-    coerce_finite_float as _common_coerce_finite_float,
-    coerce_positive_int as _common_coerce_positive_int,
+    coerce_1d_bool_array as _coerce_1d_bool_array,
+    coerce_1d_finite_float64 as _coerce_1d_finite_float64,
+    coerce_1d_integer_int64 as _coerce_1d_integer_int64,
+    coerce_1d_real_numeric_float64 as _coerce_1d_real_numeric_float64,
+    coerce_finite_float as _coerce_finite_float,
+    coerce_positive_int as _coerce_positive_int,
 )
 from app.services.first_break_qc_inputs import FirstBreakQcInputs
 
@@ -517,7 +517,7 @@ def _validate_first_break_qc_inputs(inputs: FirstBreakQcInputs) -> _ValidatedInp
         getattr(inputs, 'n_samples', None),
         name='n_samples',
     )
-    dt = _coerce_positive_finite_float(getattr(inputs, 'dt', None), name='dt')
+    dt = _coerce_qc_positive_finite_float(getattr(inputs, 'dt', None), name='dt')
     offset_byte = _validate_header_byte(
         getattr(inputs, 'offset_byte', None),
         name='offset_byte',
@@ -607,58 +607,6 @@ def _raise_if_required(fit: LinearOffsetFit, *, require: bool) -> None:
     raise ValueError(msg)
 
 
-def _coerce_1d_finite_float64(
-    values: np.ndarray,
-    *,
-    name: str,
-    expected_shape: tuple[int, ...] | None = None,
-) -> np.ndarray:
-    return _common_coerce_1d_finite_float64(
-        values,
-        name=name,
-        expected_shape=expected_shape,
-    )
-
-
-def _coerce_1d_real_numeric_float64(
-    values: np.ndarray,
-    *,
-    name: str,
-    expected_shape: tuple[int, ...] | None = None,
-) -> np.ndarray:
-    return _common_coerce_1d_real_numeric_float64(
-        values,
-        name=name,
-        expected_shape=expected_shape,
-    )
-
-
-def _coerce_1d_bool_array(
-    values: np.ndarray,
-    *,
-    name: str,
-    expected_shape: tuple[int, ...],
-) -> np.ndarray:
-    return _common_coerce_1d_bool_array(
-        values,
-        name=name,
-        expected_shape=expected_shape,
-    )
-
-
-def _coerce_1d_integer_int64(
-    values: np.ndarray,
-    *,
-    name: str,
-    expected_shape: tuple[int, ...],
-) -> np.ndarray:
-    return _common_coerce_1d_integer_int64(
-        values,
-        name=name,
-        expected_shape=expected_shape,
-    )
-
-
 def _validate_header_byte(value: object, *, name: str) -> int:
     if isinstance(value, (bool, np.bool_)) or not isinstance(value, (int, np.integer)):
         msg = f'{name} must be an integer SEG-Y trace header byte'
@@ -670,13 +618,10 @@ def _validate_header_byte(value: object, *, name: str) -> int:
     return byte
 
 
-def _coerce_positive_int(value: object, *, name: str) -> int:
-    return _common_coerce_positive_int(value, name=name)
-
-
-def _coerce_positive_finite_float(value: object, *, name: str) -> float:
+def _coerce_qc_positive_finite_float(value: object, *, name: str) -> float:
+    """Preserve first-break QC's combined finite/positive error wording."""
     try:
-        out = _common_coerce_finite_float(value, name=name)
+        out = _coerce_finite_float(value, name=name)
     except ValueError as exc:
         msg = f'{name} must be finite and greater than 0'
         raise ValueError(msg) from exc

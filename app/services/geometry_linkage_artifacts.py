@@ -16,9 +16,9 @@ from app.services.common.artifact_io import (
     write_npz_atomic as _common_write_npz_atomic,
 )
 from app.services.common.array_validation import (
-    coerce_1d_finite_float64 as _common_coerce_1d_finite_float64,
-    coerce_1d_integer_int64 as _common_coerce_1d_integer_int64,
-    coerce_positive_int as _common_coerce_positive_int,
+    coerce_1d_finite_float64 as _coerce_1d_finite_float64,
+    coerce_1d_integer_int64 as _coerce_1d_integer_int64,
+    coerce_positive_int as _coerce_positive_int,
 )
 from app.services.geometry_linkage_linker import (
     EndpointLinkageRecord,
@@ -314,9 +314,9 @@ def write_geometry_linkage_artifacts(
         qc_json_path=job_dir_path / GEOMETRY_LINKAGE_QC_JSON_NAME,
     )
 
-    _write_npz_atomic(paths.linkage_npz_path, solution_payload)
-    _write_csv_atomic(paths.linkage_csv_path, csv_rows)
-    _write_json_atomic(paths.qc_json_path, qc_payload)
+    _write_geometry_linkage_npz(paths.linkage_npz_path, solution_payload)
+    _write_geometry_linkage_csv(paths.linkage_csv_path, csv_rows)
+    _write_geometry_linkage_qc_json(paths.qc_json_path, qc_payload)
     return paths
 
 
@@ -952,7 +952,10 @@ def _validate_npz_payload_is_pickle_free(arrays: dict[str, np.ndarray]) -> None:
     validate_npz_no_object_arrays(arrays)
 
 
-def _write_npz_atomic(out_path: Path, payload: dict[str, np.ndarray]) -> None:
+def _write_geometry_linkage_npz(
+    out_path: Path,
+    payload: dict[str, np.ndarray],
+) -> None:
     _common_write_npz_atomic(
         out_path,
         payload,
@@ -961,7 +964,7 @@ def _write_npz_atomic(out_path: Path, payload: dict[str, np.ndarray]) -> None:
     )
 
 
-def _write_json_atomic(out_path: Path, payload: dict[str, Any]) -> None:
+def _write_geometry_linkage_qc_json(out_path: Path, payload: dict[str, Any]) -> None:
     _common_write_json_atomic(
         out_path,
         payload,
@@ -973,7 +976,10 @@ def _write_json_atomic(out_path: Path, payload: dict[str, Any]) -> None:
     )
 
 
-def _write_csv_atomic(out_path: Path, rows: list[dict[str, object]]) -> None:
+def _write_geometry_linkage_csv(
+    out_path: Path,
+    rows: list[dict[str, object]],
+) -> None:
     _common_write_csv_atomic(
         out_path,
         columns=_CSV_COLUMNS,
@@ -981,36 +987,6 @@ def _write_csv_atomic(out_path: Path, rows: list[dict[str, object]]) -> None:
         extrasaction='raise',
         lineterminator='\r\n',
     )
-
-
-def _coerce_1d_finite_float64(
-    values: object,
-    *,
-    name: str,
-    expected_shape: tuple[int, ...] | None = None,
-) -> np.ndarray:
-    return _common_coerce_1d_finite_float64(
-        values,
-        name=name,
-        expected_shape=expected_shape,
-    )
-
-
-def _coerce_1d_integer_int64(
-    values: object,
-    *,
-    name: str,
-    expected_shape: tuple[int, ...] | None = None,
-) -> np.ndarray:
-    return _common_coerce_1d_integer_int64(
-        values,
-        name=name,
-        expected_shape=expected_shape,
-    )
-
-
-def _coerce_positive_int(value: object, *, name: str) -> int:
-    return _common_coerce_positive_int(value, name=name)
 
 
 def _validate_nonnegative_count(value: object, *, name: str) -> None:

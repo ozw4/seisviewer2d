@@ -17,6 +17,7 @@ from app.services.common.artifact_io import (
 )
 from app.services.common.array_validation import (
     coerce_1d_bool_array as _require_1d_bool_array,
+    coerce_1d_finite_float64 as _coerce_1d_finite_float64,
     coerce_1d_integer_int64 as _common_coerce_1d_integer_int64,
     coerce_finite_float as _coerce_finite_float,
     coerce_optional_finite_float as _coerce_optional_finite_float,
@@ -541,9 +542,9 @@ def write_residual_static_artifacts(
         qc_json_path=job_dir_path / QC_JSON_NAME,
         statics_csv_path=job_dir_path / STATICS_CSV_NAME,
     )
-    _write_npz_atomic(paths.solution_npz_path, solution_arrays)
-    _write_json_atomic(paths.qc_json_path, qc_payload)
-    _write_csv_atomic(paths.statics_csv_path, csv_rows)
+    _write_residual_solution_npz(paths.solution_npz_path, solution_arrays)
+    _write_residual_qc_json(paths.qc_json_path, qc_payload)
+    _write_residual_statics_csv(paths.statics_csv_path, csv_rows)
     return paths
 
 
@@ -1151,22 +1152,6 @@ def _index_counts(
     )
 
 
-def _coerce_1d_finite_float64(
-    values: object,
-    *,
-    name: str,
-    expected_shape: tuple[int, ...] | None = None,
-) -> np.ndarray:
-    arr = _coerce_1d_float64_allow_nan(
-        values,
-        name=name,
-        expected_shape=expected_shape,
-    )
-    if not np.all(np.isfinite(arr)):
-        raise ValueError(f'{name} must contain only finite values')
-    return arr
-
-
 def _coerce_1d_float64_allow_nan(
     values: object,
     *,
@@ -1320,7 +1305,10 @@ def _assert_strict_json_payload(payload: dict[str, Any]) -> None:
     assert_strict_json(payload)
 
 
-def _write_npz_atomic(out_path: Path, payload: dict[str, np.ndarray]) -> None:
+def _write_residual_solution_npz(
+    out_path: Path,
+    payload: dict[str, np.ndarray],
+) -> None:
     _common_write_npz_atomic(
         out_path,
         payload,
@@ -1329,7 +1317,7 @@ def _write_npz_atomic(out_path: Path, payload: dict[str, np.ndarray]) -> None:
     )
 
 
-def _write_json_atomic(out_path: Path, payload: dict[str, Any]) -> None:
+def _write_residual_qc_json(out_path: Path, payload: dict[str, Any]) -> None:
     _common_write_json_atomic(
         out_path,
         payload,
@@ -1341,7 +1329,10 @@ def _write_json_atomic(out_path: Path, payload: dict[str, Any]) -> None:
     )
 
 
-def _write_csv_atomic(out_path: Path, rows: list[dict[str, object]]) -> None:
+def _write_residual_statics_csv(
+    out_path: Path,
+    rows: list[dict[str, object]],
+) -> None:
     _common_write_csv_atomic(
         out_path,
         columns=_CSV_COLUMNS,

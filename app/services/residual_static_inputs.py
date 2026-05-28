@@ -17,7 +17,9 @@ from app.services.common.array_validation import (
     coerce_1d_bool_array as _coerce_1d_bool_array,
     coerce_1d_integer_int64 as _common_coerce_1d_integer_int64,
     coerce_1d_real_numeric_float64 as _coerce_1d_real_numeric_float64,
+    coerce_nonnegative_int as _coerce_nonnegative_int,
     coerce_positive_finite_float as _coerce_positive_finite_float,
+    coerce_positive_int as _coerce_positive_int,
 )
 from app.services.first_break_qc_inputs import (
     load_datum_static_solution_npz,
@@ -783,22 +785,6 @@ def _validate_header_byte(value: object, *, name: str) -> int:
     if byte < 1 or byte > 240:
         raise ValueError(f'{name} must be between 1 and 240')
     return byte
-
-
-def _coerce_nonnegative_int(value: object, *, name: str) -> int:
-    if isinstance(value, (bool, np.bool_)) or not isinstance(value, (int, np.integer)):
-        raise ValueError(f'{name} must be an integer')
-    out = int(value)
-    if out < 0:
-        raise ValueError(f'{name} must be greater than or equal to 0')
-    return out
-
-
-def _coerce_positive_int(value: object, *, name: str) -> int:
-    out = _coerce_nonnegative_int(value, name=name)
-    if out <= 0:
-        raise ValueError(f'{name} must be greater than 0')
-    return out
 
 
 def _pick_source_kind(pick_source: LoadedPickSource) -> str:

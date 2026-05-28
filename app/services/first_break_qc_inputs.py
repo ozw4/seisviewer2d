@@ -10,11 +10,11 @@ from typing import Any
 import numpy as np
 
 from app.services.common.array_validation import (
-    coerce_1d_bool_array as _common_coerce_1d_bool_array,
-    coerce_1d_finite_float64 as _common_coerce_1d_finite_float64,
-    coerce_1d_integer_int64 as _common_coerce_1d_integer_int64,
-    coerce_1d_real_numeric_float64 as _common_coerce_1d_real_numeric_float64,
-    coerce_finite_float as _common_coerce_finite_float,
+    coerce_1d_bool_array as _coerce_1d_bool_array,
+    coerce_1d_finite_float64 as _coerce_1d_finite_float64,
+    coerce_1d_integer_int64 as _coerce_1d_integer_int64,
+    coerce_1d_real_numeric_float64 as _coerce_1d_real_numeric_float64,
+    coerce_finite_float as _coerce_finite_float,
     coerce_nonnegative_int as _common_coerce_nonnegative_int,
     is_real_numeric_dtype as _is_real_numeric_dtype,
 )
@@ -112,8 +112,8 @@ def load_datum_static_solution_npz(
         msg = f'datum static solution npz is not a file: {path}'
         raise ValueError(msg)
 
-    n_traces = _coerce_positive_int(expected_n_traces, name='expected_n_traces')
-    dt = _coerce_positive_finite_float(expected_dt, name='expected_dt')
+    n_traces = _coerce_qc_positive_int(expected_n_traces, name='expected_n_traces')
+    dt = _coerce_qc_positive_finite_float(expected_dt, name='expected_dt')
     key1_byte = _validate_header_byte(
         expected_key1_byte,
         name='expected_key1_byte',
@@ -184,7 +184,7 @@ def load_datum_static_solution_npz(
             msg = f'n_traces mismatch: expected {n_traces}, got {solution_n_traces}'
             raise ValueError(msg)
 
-        solution_dt = _coerce_positive_finite_float(
+        solution_dt = _coerce_qc_positive_finite_float(
             _read_float_scalar(npz, 'dt'),
             name='datum_static_solution.npz dt',
         )
@@ -213,7 +213,7 @@ def load_datum_static_solution_npz(
             _read_float_scalar(npz, 'datum_elevation_m'),
             name='datum_elevation_m',
         )
-        replacement_velocity = _coerce_positive_finite_float(
+        replacement_velocity = _coerce_qc_positive_finite_float(
             _read_float_scalar(npz, 'replacement_velocity_m_s'),
             name='replacement_velocity_m_s',
         )
@@ -247,7 +247,7 @@ def load_offset_header_sorted(
 ) -> np.ndarray:
     """Read a signed offset header in TraceStore sorted order."""
     byte = _validate_header_byte(offset_byte, name='offset_byte')
-    n_traces = _coerce_positive_int(expected_n_traces, name='expected_n_traces')
+    n_traces = _coerce_qc_positive_int(expected_n_traces, name='expected_n_traces')
     values = _read_reader_header(reader, byte=byte, role='offset')
     return _coerce_1d_finite_float64(
         values,
@@ -268,8 +268,8 @@ def build_first_break_qc_inputs(
     expected_key2_byte: int,
 ) -> FirstBreakQcInputs:
     """Build the sorted-order validated input object for first-break QC."""
-    dt = _coerce_positive_finite_float(expected_dt, name='expected_dt')
-    n_samples = _coerce_positive_int(
+    dt = _coerce_qc_positive_finite_float(expected_dt, name='expected_dt')
+    n_samples = _coerce_qc_positive_int(
         expected_n_samples,
         name='expected_n_samples',
     )
@@ -466,7 +466,7 @@ def _validate_reader_dt(
     if 'dt' not in meta:
         msg = 'reader meta missing dt'
         raise ValueError(msg)
-    reader_dt = _coerce_positive_finite_float(meta['dt'], name='reader dt')
+    reader_dt = _coerce_qc_positive_finite_float(meta['dt'], name='reader dt')
     if abs(reader_dt - expected_dt) > _DT_TOLERANCE:
         msg = f'reader dt mismatch: expected {expected_dt}, got {reader_dt}'
         raise ValueError(msg)
@@ -479,7 +479,7 @@ def _validate_pick_source(
     expected_n_samples: int,
     expected_dt: float,
 ) -> None:
-    pick_n_traces = _coerce_nonnegative_int(
+    pick_n_traces = _coerce_qc_nonnegative_int(
         getattr(pick_source, 'n_traces', None),
         name='pick source n_traces',
     )
@@ -487,7 +487,7 @@ def _validate_pick_source(
         msg = f'pick source n_traces mismatch: expected {expected_n_traces}, got {pick_n_traces}'
         raise ValueError(msg)
 
-    pick_n_samples = _coerce_positive_int(
+    pick_n_samples = _coerce_qc_positive_int(
         getattr(pick_source, 'n_samples', None),
         name='pick source n_samples',
     )
@@ -495,7 +495,7 @@ def _validate_pick_source(
         msg = f'pick source n_samples mismatch: expected {expected_n_samples}, got {pick_n_samples}'
         raise ValueError(msg)
 
-    pick_dt = _coerce_positive_finite_float(
+    pick_dt = _coerce_qc_positive_finite_float(
         getattr(pick_source, 'dt', None),
         name='pick source dt',
     )
@@ -567,10 +567,10 @@ def _reader_n_traces(reader: TraceStoreSectionReader) -> int:
     if hasattr(reader, 'traces'):
         shape = getattr(reader.traces, 'shape', ())
         if shape:
-            return _coerce_positive_int(shape[0], name='reader n_traces')
+            return _coerce_qc_positive_int(shape[0], name='reader n_traces')
     meta = getattr(reader, 'meta', None)
     if isinstance(meta, Mapping) and 'n_traces' in meta:
-        return _coerce_positive_int(meta['n_traces'], name='reader n_traces')
+        return _coerce_qc_positive_int(meta['n_traces'], name='reader n_traces')
     msg = 'reader cannot provide number of traces'
     raise ValueError(msg)
 
@@ -578,65 +578,13 @@ def _reader_n_traces(reader: TraceStoreSectionReader) -> int:
 def _reader_n_samples(reader: TraceStoreSectionReader) -> int:
     getter = getattr(reader, 'get_n_samples', None)
     if callable(getter):
-        return _coerce_positive_int(getter(), name='reader n_samples')
+        return _coerce_qc_positive_int(getter(), name='reader n_samples')
     if hasattr(reader, 'traces'):
         shape = getattr(reader.traces, 'shape', ())
         if len(shape) >= 2:
-            return _coerce_positive_int(shape[-1], name='reader n_samples')
+            return _coerce_qc_positive_int(shape[-1], name='reader n_samples')
     msg = 'reader cannot provide number of samples'
     raise ValueError(msg)
-
-
-def _coerce_1d_finite_float64(
-    values: np.ndarray,
-    *,
-    name: str,
-    expected_shape: tuple[int, ...],
-) -> np.ndarray:
-    return _common_coerce_1d_finite_float64(
-        values,
-        name=name,
-        expected_shape=expected_shape,
-    )
-
-
-def _coerce_1d_real_numeric_float64(
-    values: np.ndarray,
-    *,
-    name: str,
-    expected_shape: tuple[int, ...],
-) -> np.ndarray:
-    return _common_coerce_1d_real_numeric_float64(
-        values,
-        name=name,
-        expected_shape=expected_shape,
-    )
-
-
-def _coerce_1d_integer_int64(
-    values: np.ndarray,
-    *,
-    name: str,
-    expected_shape: tuple[int, ...],
-) -> np.ndarray:
-    return _common_coerce_1d_integer_int64(
-        values,
-        name=name,
-        expected_shape=expected_shape,
-    )
-
-
-def _coerce_1d_bool_array(
-    values: np.ndarray,
-    *,
-    name: str,
-    expected_shape: tuple[int, ...],
-) -> np.ndarray:
-    return _common_coerce_1d_bool_array(
-        values,
-        name=name,
-        expected_shape=expected_shape,
-    )
 
 
 def _read_int_scalar(npz: np.lib.npyio.NpzFile, key: str) -> int:
@@ -675,7 +623,8 @@ def _validate_header_byte(value: int, *, name: str) -> int:
     return byte
 
 
-def _coerce_nonnegative_int(value: object, *, name: str) -> int:
+def _coerce_qc_nonnegative_int(value: object, *, name: str) -> int:
+    """Preserve first-break QC's historical nonnegative wording."""
     try:
         return _common_coerce_nonnegative_int(value, name=name)
     except ValueError as exc:
@@ -689,21 +638,18 @@ def _coerce_nonnegative_int(value: object, *, name: str) -> int:
         raise ValueError(msg) from exc
 
 
-def _coerce_positive_int(value: object, *, name: str) -> int:
-    out = _coerce_nonnegative_int(value, name=name)
+def _coerce_qc_positive_int(value: object, *, name: str) -> int:
+    out = _coerce_qc_nonnegative_int(value, name=name)
     if out <= 0:
         msg = f'{name} must be greater than 0'
         raise ValueError(msg)
     return out
 
 
-def _coerce_finite_float(value: object, *, name: str) -> float:
-    return _common_coerce_finite_float(value, name=name)
-
-
-def _coerce_positive_finite_float(value: object, *, name: str) -> float:
+def _coerce_qc_positive_finite_float(value: object, *, name: str) -> float:
+    """Preserve first-break QC's combined finite/positive error wording."""
     try:
-        out = _common_coerce_finite_float(value, name=name)
+        out = _coerce_finite_float(value, name=name)
     except ValueError as exc:
         msg = f'{name} must be finite and greater than 0'
         raise ValueError(msg) from exc
