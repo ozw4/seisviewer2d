@@ -9,6 +9,12 @@ from typing import Literal
 import numpy as np
 
 from app.core.state import AppState
+from app.services.common.array_validation import (
+    coerce_nonnegative_int as _coerce_nonnegative_int,
+    coerce_positive_finite_float as _common_coerce_positive_finite_float,
+    coerce_positive_int as _coerce_positive_int,
+    is_real_numeric_dtype as _is_real_numeric_dtype,
+)
 from app.services.reader import get_reader
 from app.services.trace_store_index_validation import validate_sorted_to_original
 from app.trace_store.reader import TraceStoreSectionReader
@@ -31,38 +37,12 @@ class LoadedPickSource:
     metadata: dict[str, object]
 
 
-def _coerce_nonnegative_int(value: object, *, name: str) -> int:
-    if isinstance(value, bool) or not isinstance(value, (int, np.integer)):
-        msg = f'{name} must be an integer'
-        raise ValueError(msg)
-    out = int(value)
-    if out < 0:
-        msg = f'{name} must be non-negative'
-        raise ValueError(msg)
-    return out
-
-
-def _coerce_positive_int(value: object, *, name: str) -> int:
-    out = _coerce_nonnegative_int(value, name=name)
-    if out <= 0:
-        msg = f'{name} must be greater than 0'
-        raise ValueError(msg)
-    return out
-
-
 def _coerce_positive_float(value: object, *, name: str) -> float:
-    if isinstance(value, bool):
-        msg = f'{name} must be a positive finite float'
-        raise ValueError(msg)
     try:
-        out = float(value)
-    except (TypeError, ValueError) as exc:
+        return _common_coerce_positive_finite_float(value, name=name)
+    except ValueError as exc:
         msg = f'{name} must be a positive finite float'
         raise ValueError(msg) from exc
-    if not np.isfinite(out) or out <= 0.0:
-        msg = f'{name} must be a positive finite float'
-        raise ValueError(msg)
-    return out
 
 
 def _reader_n_traces(reader: TraceStoreSectionReader) -> int:
@@ -107,7 +87,7 @@ def _read_float_scalar(npz: np.lib.npyio.NpzFile, key: str) -> float:
     if arr.size != 1:
         msg = f'{key} must be a scalar'
         raise ValueError(msg)
-    if not np.issubdtype(arr.dtype, np.number):
+    if not _is_real_numeric_dtype(arr.dtype):
         msg = f'{key} must be numeric'
         raise ValueError(msg)
     return float(arr.reshape(-1)[0])

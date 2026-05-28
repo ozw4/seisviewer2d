@@ -15,6 +15,11 @@ from app.services.common.artifact_io import (
     write_json_atomic as _common_write_json_atomic,
     write_npz_atomic as _common_write_npz_atomic,
 )
+from app.services.common.array_validation import (
+    coerce_1d_finite_float64 as _common_coerce_1d_finite_float64,
+    coerce_1d_integer_int64 as _common_coerce_1d_integer_int64,
+    coerce_positive_int as _common_coerce_positive_int,
+)
 from app.services.geometry_linkage_linker import (
     EndpointLinkageRecord,
     GeometryLinkageResult,
@@ -984,22 +989,11 @@ def _coerce_1d_finite_float64(
     name: str,
     expected_shape: tuple[int, ...] | None = None,
 ) -> np.ndarray:
-    arr = np.asarray(values)
-    if arr.ndim != 1:
-        raise ValueError(f'{name} must be a 1D array')
-    if expected_shape is not None and arr.shape != expected_shape:
-        raise ValueError(
-            f'{name} shape mismatch: expected {expected_shape}, got {arr.shape}'
-        )
-    if np.issubdtype(arr.dtype, np.bool_):
-        raise ValueError(f'{name} must be numeric')
-    try:
-        arr_f64 = arr.astype(np.float64, copy=False)
-    except (TypeError, ValueError) as exc:
-        raise ValueError(f'{name} must be numeric') from exc
-    if not np.all(np.isfinite(arr_f64)):
-        raise ValueError(f'{name} must contain only finite values')
-    return np.ascontiguousarray(arr_f64, dtype=np.float64)
+    return _common_coerce_1d_finite_float64(
+        values,
+        name=name,
+        expected_shape=expected_shape,
+    )
 
 
 def _coerce_1d_integer_int64(
@@ -1008,35 +1002,15 @@ def _coerce_1d_integer_int64(
     name: str,
     expected_shape: tuple[int, ...] | None = None,
 ) -> np.ndarray:
-    arr = np.asarray(values)
-    if arr.ndim != 1:
-        raise ValueError(f'{name} must be a 1D array')
-    if expected_shape is not None and arr.shape != expected_shape:
-        raise ValueError(
-            f'{name} shape mismatch: expected {expected_shape}, got {arr.shape}'
-        )
-    if np.issubdtype(arr.dtype, np.bool_):
-        raise ValueError(f'{name} must contain integer values')
-    if np.issubdtype(arr.dtype, np.integer):
-        return np.ascontiguousarray(arr, dtype=np.int64)
-    try:
-        arr_f64 = arr.astype(np.float64, copy=False)
-    except (TypeError, ValueError) as exc:
-        raise ValueError(f'{name} must contain integer values') from exc
-    if not np.all(np.isfinite(arr_f64)):
-        raise ValueError(f'{name} must contain only finite values')
-    if not np.all(arr_f64 == np.rint(arr_f64)):
-        raise ValueError(f'{name} must contain integer values')
-    return np.ascontiguousarray(arr_f64, dtype=np.int64)
+    return _common_coerce_1d_integer_int64(
+        values,
+        name=name,
+        expected_shape=expected_shape,
+    )
 
 
 def _coerce_positive_int(value: object, *, name: str) -> int:
-    if isinstance(value, (bool, np.bool_)) or not isinstance(value, (int, np.integer)):
-        raise ValueError(f'{name} must be an integer')
-    out = int(value)
-    if out <= 0:
-        raise ValueError(f'{name} must be greater than 0')
-    return out
+    return _common_coerce_positive_int(value, name=name)
 
 
 def _validate_nonnegative_count(value: object, *, name: str) -> None:

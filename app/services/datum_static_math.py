@@ -6,6 +6,12 @@ from dataclasses import dataclass
 
 import numpy as np
 
+from app.services.common.array_validation import (
+    coerce_1d_finite_float64 as _coerce_1d_finite_float64,
+    coerce_finite_float as _coerce_finite_float,
+    coerce_positive_finite_float as _coerce_positive_finite_float,
+)
+
 
 @dataclass(frozen=True)
 class DatumStaticResult:
@@ -83,36 +89,6 @@ def compute_datum_static_shifts(
         source_elevation_m_sorted=np.asarray(source_elevation, dtype=np.float64),
         receiver_elevation_m_sorted=np.asarray(receiver, dtype=np.float64),
     )
-
-
-def _coerce_1d_finite_float64(values: np.ndarray, *, name: str) -> np.ndarray:
-    arr = np.asarray(values)
-    if arr.ndim != 1:
-        raise ValueError(f'{name} must be a 1D array')
-    try:
-        arr_f64 = arr.astype(np.float64, copy=False)
-    except (TypeError, ValueError) as exc:
-        raise ValueError(f'{name} must be numeric') from exc
-    if not np.all(np.isfinite(arr_f64)):
-        raise ValueError(f'{name} must contain only finite values')
-    return arr_f64
-
-
-def _coerce_finite_float(value: float, *, name: str) -> float:
-    try:
-        scalar = float(value)
-    except (TypeError, ValueError) as exc:
-        raise ValueError(f'{name} must be finite') from exc
-    if not np.isfinite(scalar):
-        raise ValueError(f'{name} must be finite')
-    return scalar
-
-
-def _coerce_positive_finite_float(value: float, *, name: str) -> float:
-    scalar = _coerce_finite_float(value, name=name)
-    if scalar <= 0.0:
-        raise ValueError(f'{name} must be greater than 0')
-    return scalar
 
 
 __all__ = ['DatumStaticResult', 'compute_datum_static_shifts']

@@ -8,6 +8,14 @@ from typing import Any, Literal
 
 import numpy as np
 
+from app.services.common.array_validation import (
+    coerce_1d_bool_array as _common_coerce_1d_bool_array,
+    coerce_1d_finite_float64 as _common_coerce_1d_finite_float64,
+    coerce_1d_integer_int64 as _common_coerce_1d_integer_int64,
+    coerce_1d_real_numeric_float64 as _common_coerce_1d_real_numeric_float64,
+    coerce_finite_float as _common_coerce_finite_float,
+    coerce_positive_int as _common_coerce_positive_int,
+)
 from app.services.first_break_qc_inputs import FirstBreakQcInputs
 
 
@@ -605,15 +613,11 @@ def _coerce_1d_finite_float64(
     name: str,
     expected_shape: tuple[int, ...] | None = None,
 ) -> np.ndarray:
-    arr = _coerce_1d_real_numeric_float64(
+    return _common_coerce_1d_finite_float64(
         values,
         name=name,
         expected_shape=expected_shape,
     )
-    if not np.all(np.isfinite(arr)):
-        msg = f'{name} must contain only finite values'
-        raise ValueError(msg)
-    return arr
 
 
 def _coerce_1d_real_numeric_float64(
@@ -622,17 +626,11 @@ def _coerce_1d_real_numeric_float64(
     name: str,
     expected_shape: tuple[int, ...] | None = None,
 ) -> np.ndarray:
-    arr = np.asarray(values)
-    if arr.ndim != 1:
-        msg = f'{name} must be a 1D array'
-        raise ValueError(msg)
-    if expected_shape is not None and arr.shape != expected_shape:
-        msg = f'{name} shape mismatch: expected {expected_shape}, got {arr.shape}'
-        raise ValueError(msg)
-    if not _is_real_numeric_dtype(arr.dtype):
-        msg = f'{name} must have a numeric dtype'
-        raise ValueError(msg)
-    return np.ascontiguousarray(arr, dtype=np.float64)
+    return _common_coerce_1d_real_numeric_float64(
+        values,
+        name=name,
+        expected_shape=expected_shape,
+    )
 
 
 def _coerce_1d_bool_array(
@@ -641,17 +639,11 @@ def _coerce_1d_bool_array(
     name: str,
     expected_shape: tuple[int, ...],
 ) -> np.ndarray:
-    arr = np.asarray(values)
-    if arr.ndim != 1:
-        msg = f'{name} must be a 1D array'
-        raise ValueError(msg)
-    if arr.shape != expected_shape:
-        msg = f'{name} shape mismatch: expected {expected_shape}, got {arr.shape}'
-        raise ValueError(msg)
-    if not np.issubdtype(arr.dtype, np.bool_):
-        msg = f'{name} must have bool dtype'
-        raise ValueError(msg)
-    return np.ascontiguousarray(arr, dtype=bool)
+    return _common_coerce_1d_bool_array(
+        values,
+        name=name,
+        expected_shape=expected_shape,
+    )
 
 
 def _coerce_1d_integer_int64(
@@ -660,29 +652,11 @@ def _coerce_1d_integer_int64(
     name: str,
     expected_shape: tuple[int, ...],
 ) -> np.ndarray:
-    arr = np.asarray(values)
-    if arr.ndim != 1:
-        msg = f'{name} must be a 1D array'
-        raise ValueError(msg)
-    if arr.shape != expected_shape:
-        msg = f'{name} shape mismatch: expected {expected_shape}, got {arr.shape}'
-        raise ValueError(msg)
-    if np.issubdtype(arr.dtype, np.bool_):
-        msg = f'{name} must contain integer values'
-        raise ValueError(msg)
-    if np.issubdtype(arr.dtype, np.integer):
-        return np.ascontiguousarray(arr, dtype=np.int64)
-    if not _is_real_numeric_dtype(arr.dtype):
-        msg = f'{name} must contain integer values'
-        raise ValueError(msg)
-    arr_f64 = arr.astype(np.float64, copy=False)
-    if not np.all(np.isfinite(arr_f64)):
-        msg = f'{name} must contain only finite values'
-        raise ValueError(msg)
-    if not np.all(arr_f64 == np.rint(arr_f64)):
-        msg = f'{name} must contain integer values'
-        raise ValueError(msg)
-    return np.ascontiguousarray(arr_f64, dtype=np.int64)
+    return _common_coerce_1d_integer_int64(
+        values,
+        name=name,
+        expected_shape=expected_shape,
+    )
 
 
 def _validate_header_byte(value: object, *, name: str) -> int:
@@ -697,36 +671,19 @@ def _validate_header_byte(value: object, *, name: str) -> int:
 
 
 def _coerce_positive_int(value: object, *, name: str) -> int:
-    if isinstance(value, (bool, np.bool_)) or not isinstance(value, (int, np.integer)):
-        msg = f'{name} must be an integer'
-        raise ValueError(msg)
-    out = int(value)
-    if out <= 0:
-        msg = f'{name} must be greater than 0'
-        raise ValueError(msg)
-    return out
+    return _common_coerce_positive_int(value, name=name)
 
 
 def _coerce_positive_finite_float(value: object, *, name: str) -> float:
-    if isinstance(value, (bool, np.bool_)):
-        msg = f'{name} must be finite and greater than 0'
-        raise ValueError(msg)
     try:
-        out = float(value)
-    except (TypeError, ValueError) as exc:
+        out = _common_coerce_finite_float(value, name=name)
+    except ValueError as exc:
         msg = f'{name} must be finite and greater than 0'
         raise ValueError(msg) from exc
-    if not np.isfinite(out) or out <= 0.0:
+    if out <= 0.0:
         msg = f'{name} must be finite and greater than 0'
         raise ValueError(msg)
     return out
-
-
-def _is_real_numeric_dtype(dtype: np.dtype) -> bool:
-    return np.issubdtype(dtype, np.number) and not np.issubdtype(
-        dtype,
-        np.complexfloating,
-    )
 
 
 __all__ = [
