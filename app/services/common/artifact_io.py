@@ -105,6 +105,7 @@ def write_csv_atomic(
     columns: Sequence[str],
     rows: Sequence[Mapping[str, object]],
     extrasaction: str = 'raise',
+    lineterminator: str = '\n',
     make_parent: bool = True,
     error_factory: ErrorFactory | None = None,
 ) -> None:
@@ -116,7 +117,7 @@ def write_csv_atomic(
                 handle,
                 fieldnames=columns,
                 extrasaction=extrasaction,
-                lineterminator='\n',
+                lineterminator=lineterminator,
             )
             writer.writeheader()
             writer.writerows(rows)

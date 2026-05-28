@@ -2,16 +2,18 @@
 
 from __future__ import annotations
 
-import csv
-import json
-import uuid
-from collections.abc import Callable
 from dataclasses import dataclass, fields
 from pathlib import Path
 from typing import Any, Literal
 
 import numpy as np
 
+from app.services.common.artifact_io import (
+    assert_strict_json,
+    write_csv_atomic as _common_write_csv_atomic,
+    write_json_atomic as _common_write_json_atomic,
+    write_npz_atomic as _common_write_npz_atomic,
+)
 from app.services.residual_static_robust_solver import (
     ResidualStaticRobustSolveResult,
 )
@@ -1382,53 +1384,38 @@ def _csv_float(value: object) -> float | str:
 
 
 def _assert_strict_json_payload(payload: dict[str, Any]) -> None:
-    json.dumps(payload, allow_nan=False)
+    assert_strict_json(payload)
 
 
 def _write_npz_atomic(out_path: Path, payload: dict[str, np.ndarray]) -> None:
-    def write(tmp_path: Path) -> None:
-        with tmp_path.open('wb') as handle:
-            np.savez(handle, **payload)
-
-    _atomic_write(out_path, write)
+    _common_write_npz_atomic(
+        out_path,
+        payload,
+        compressed=False,
+        reject_object_arrays=True,
+    )
 
 
 def _write_json_atomic(out_path: Path, payload: dict[str, Any]) -> None:
-    def write(tmp_path: Path) -> None:
-        with tmp_path.open('w', encoding='utf-8') as handle:
-            json.dump(
-                payload,
-                handle,
-                allow_nan=False,
-                ensure_ascii=False,
-                indent=2,
-                sort_keys=True,
-            )
-            handle.write('\n')
-
-    _atomic_write(out_path, write)
+    _common_write_json_atomic(
+        out_path,
+        payload,
+        allow_nan=False,
+        ensure_ascii=False,
+        indent=2,
+        sort_keys=True,
+        trailing_newline=True,
+    )
 
 
 def _write_csv_atomic(out_path: Path, rows: list[dict[str, object]]) -> None:
-    def write(tmp_path: Path) -> None:
-        with tmp_path.open('w', encoding='utf-8', newline='') as handle:
-            writer = csv.DictWriter(handle, fieldnames=_CSV_COLUMNS)
-            writer.writeheader()
-            for row in rows:
-                writer.writerow(row)
-
-    _atomic_write(out_path, write)
-
-
-def _atomic_write(out_path: Path, write: Callable[[Path], None]) -> None:
-    tmp_path = out_path.with_name(f'{out_path.name}.tmp-{uuid.uuid4().hex}')
-    try:
-        write(tmp_path)
-        tmp_path.replace(out_path)
-    except Exception:
-        if tmp_path.exists():
-            tmp_path.unlink()
-        raise
+    _common_write_csv_atomic(
+        out_path,
+        columns=_CSV_COLUMNS,
+        rows=rows,
+        extrasaction='raise',
+        lineterminator='\r\n',
+    )
 
 
 __all__ = [
