@@ -1075,6 +1075,49 @@ select {
       overflow-x: auto;
     }
 
+    .refraction-qc-gather-shared-legend {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: 0.85rem;
+      margin: 0.5rem 0 0.35rem;
+      color: #334155;
+      font-size: 0.9em;
+    }
+
+    .refraction-qc-gather-shared-legend-item {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.35rem;
+      white-space: nowrap;
+    }
+
+    .refraction-qc-gather-shared-legend-marker {
+      display: inline-flex;
+      width: 0.85rem;
+      height: 0.85rem;
+      align-items: center;
+      justify-content: center;
+      line-height: 1;
+      flex: 0 0 auto;
+    }
+
+    .refraction-qc-gather-shared-legend-marker-observed {
+      border: 1px solid #0f172a;
+      border-radius: 50%;
+      background: #2563eb;
+    }
+
+    .refraction-qc-gather-shared-legend-marker-modeled {
+      color: #f97316;
+      font-size: 1rem;
+      font-weight: 800;
+    }
+
+    .refraction-qc-gather-shared-legend-marker-modeled::before {
+      content: "x";
+    }
+
     .refraction-qc-gather-plot {
       height: 320px;
     }
@@ -1277,6 +1320,49 @@ select {
   gap: 1rem;
   align-items: start;
   overflow-x: auto;
+}
+
+.refraction-qc-page .refraction-qc-gather-shared-legend {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.85rem;
+  margin: 0.5rem 0 0.35rem;
+  color: #334155;
+  font-size: 0.9em;
+}
+
+.refraction-qc-page .refraction-qc-gather-shared-legend-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  white-space: nowrap;
+}
+
+.refraction-qc-page .refraction-qc-gather-shared-legend-marker {
+  display: inline-flex;
+  width: 0.85rem;
+  height: 0.85rem;
+  align-items: center;
+  justify-content: center;
+  line-height: 1;
+  flex: 0 0 auto;
+}
+
+.refraction-qc-page .refraction-qc-gather-shared-legend-marker-observed {
+  border: 1px solid #0f172a;
+  border-radius: 50%;
+  background: #2563eb;
+}
+
+.refraction-qc-page .refraction-qc-gather-shared-legend-marker-modeled {
+  color: #f97316;
+  font-size: 1rem;
+  font-weight: 800;
+}
+
+.refraction-qc-page .refraction-qc-gather-shared-legend-marker-modeled::before {
+  content: "x";
 }
 
 .refraction-qc-page .refraction-qc-gather-plot {
