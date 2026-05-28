@@ -14,7 +14,7 @@ from fastapi import APIRouter, Body, Depends, HTTPException, Query, Request
 from pydantic import BaseModel, Field
 
 from app.api._helpers import reject_legacy_key1_query_params, get_state
-from app.api.schemas import (
+from app.contracts.pipeline import (
     PipelineAllResponse,
     PipelineJobStatusResponse,
     PipelineSectionResponse,

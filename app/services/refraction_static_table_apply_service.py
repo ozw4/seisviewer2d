@@ -16,10 +16,8 @@ from uuid import uuid4
 
 import numpy as np
 
-from app.api.schemas import (
-    RefractionStaticGeometryRequest,
-    RefractionStaticTableApplyRequest,
-)
+from app.contracts.statics.refraction.inputs import RefractionStaticGeometryRequest
+from app.contracts.statics.refraction.table_apply import RefractionStaticTableApplyRequest
 from app.core.state import AppState
 from app.services.corrected_trace_store import (
     TimeShiftedTraceStoreResult,

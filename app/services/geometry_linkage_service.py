@@ -9,7 +9,7 @@ import time
 from typing import Any
 from uuid import uuid4
 
-from app.api.schemas import StaticLinkageBuildRequest
+from app.contracts.statics.geometry_linkage import StaticLinkageBuildRequest
 from app.core.state import AppState
 from app.services.geometry_linkage_artifacts import (
     GEOMETRY_LINKAGE_CSV_NAME,

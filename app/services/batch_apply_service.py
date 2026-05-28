@@ -11,7 +11,10 @@ from pathlib import Path
 import numpy as np
 from numpy.lib.format import open_memmap
 
-from app.api.schemas import BatchApplyRequest, PickOptions
+from app.contracts.batch import (
+    BatchApplyRequest,
+    PickOptions,
+)
 from app.core.state import AppState
 from app.services.fbpick_predict_math import (
     apply_sigma_gate,

@@ -8,7 +8,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from app.api.schemas import RefractionStaticQcBundleRequest
+from app.contracts.statics.refraction.qc import RefractionStaticQcBundleRequest
 from app.services.job_manager import JobManager
 from app.services.refraction_static_artifacts import (
     FIRST_BREAK_RESIDUALS_CSV_NAME,

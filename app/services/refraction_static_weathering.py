@@ -11,7 +11,8 @@ from uuid import uuid4
 
 import numpy as np
 
-from app.api.schemas import RefractionStaticApplyRequest, RefractionStaticModelRequest
+from app.contracts.statics.refraction.apply import RefractionStaticApplyRequest
+from app.contracts.statics.refraction.model import RefractionStaticModelRequest
 from app.core.state import AppState
 from app.services.refraction_static_cell_grid import (
     assign_points_to_refraction_cells,

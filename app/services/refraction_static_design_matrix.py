@@ -12,7 +12,7 @@ from uuid import uuid4
 import numpy as np
 from scipy import sparse
 
-from app.api.schemas import RefractionStaticModelRequest
+from app.contracts.statics.refraction.model import RefractionStaticModelRequest
 from app.services.refraction_static_cell_coordinates import (
     effective_refraction_cell_grid_config,
     project_refraction_cell_coordinates,

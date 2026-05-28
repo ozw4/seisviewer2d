@@ -7,7 +7,7 @@ from typing import Any, Literal
 
 import numpy as np
 
-from app.api.schemas import RefractionStaticRefractorCellRequest
+from app.contracts.statics.refraction.model import RefractionStaticRefractorCellRequest
 
 RefractionCellCoordinateMode = Literal['grid_3d', 'line_2d_projected']
 

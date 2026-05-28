@@ -14,7 +14,7 @@ from uuid import uuid4
 
 import numpy as np
 
-from app.api.schemas import DatumStaticApplyRequest
+from app.contracts.statics.datum import DatumStaticApplyRequest
 from app.core.paths import get_trace_store_dir
 from app.core.state import AppState
 from app.services.corrected_trace_store import (

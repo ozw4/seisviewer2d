@@ -7,7 +7,7 @@ from typing import Any, Mapping
 
 import numpy as np
 
-from app.api.schemas import RefractionStaticApplyRequest
+from app.contracts.statics.refraction.apply import RefractionStaticApplyRequest
 from app.core.state import AppState
 from app.services.refraction_static_inputs import build_refraction_static_input_model
 from app.services.refraction_static_pick_source_loader import PICK_TIME_KEYS

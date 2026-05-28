@@ -7,7 +7,7 @@ import math
 from pathlib import Path
 from typing import Any
 
-from app.api.schemas import RefractionStaticQcEndpointSearchRequest
+from app.contracts.statics.refraction.qc import RefractionStaticQcEndpointSearchRequest
 from app.services.job_manager import JobManager
 from app.services.refraction_static_artifacts import (
     REFRACTION_STATIC_COMPONENT_QC_ENDPOINT_CSV_NAME,

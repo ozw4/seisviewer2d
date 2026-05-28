@@ -11,11 +11,11 @@ from uuid import uuid4
 
 import numpy as np
 
-from app.api.schemas import (
+from app.contracts.statics.refraction.options import (
     RefractionStaticApplyOptions,
-    RefractionStaticApplyRequest,
     RefractionStaticDatumRequest,
 )
+from app.contracts.statics.refraction.apply import RefractionStaticApplyRequest
 from app.core.state import AppState
 from app.services.job_artifact_refs import resolve_job_artifact_path
 from app.services.refraction_static_first_layer import (

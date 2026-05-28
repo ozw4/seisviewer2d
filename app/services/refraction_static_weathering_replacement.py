@@ -11,7 +11,8 @@ from uuid import uuid4
 
 import numpy as np
 
-from app.api.schemas import RefractionStaticApplyOptions, RefractionStaticApplyRequest
+from app.contracts.statics.refraction.options import RefractionStaticApplyOptions
+from app.contracts.statics.refraction.apply import RefractionStaticApplyRequest
 from app.core.state import AppState
 from app.services.refraction_static_first_layer import (
     validate_resolved_first_layer_velocity_match,

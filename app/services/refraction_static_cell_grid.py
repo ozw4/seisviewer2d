@@ -8,7 +8,7 @@ from typing import TYPE_CHECKING, Any
 import numpy as np
 
 if TYPE_CHECKING:
-    from app.api.schemas import RefractionStaticRefractorCellRequest
+    from app.contracts.statics.refraction.model import RefractionStaticRefractorCellRequest
 
 
 _FINAL_BOUNDARY_ATOL = 1.0e-9

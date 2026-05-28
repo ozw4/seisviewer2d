@@ -13,13 +13,13 @@ from uuid import uuid4
 
 import numpy as np
 
-from app.api.schemas import (
-    RefractionStaticApplyRequest,
+from app.contracts.statics.refraction.apply import RefractionStaticApplyRequest
+from app.contracts.statics.refraction.inputs import (
     RefractionStaticGeometryRequest,
     RefractionStaticLinkageRequest,
-    RefractionStaticModelRequest,
-    RefractionStaticMoveoutRequest,
 )
+from app.contracts.statics.refraction.model import RefractionStaticModelRequest
+from app.contracts.statics.refraction.options import RefractionStaticMoveoutRequest
 from app.core.state import AppState
 from app.services.geometry_linkage_loader import (
     LoadedGeometryLinkageArtifact,

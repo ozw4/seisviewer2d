@@ -11,7 +11,7 @@ from uuid import uuid4
 
 import numpy as np
 
-from app.api.schemas import (
+from app.contracts.statics.refraction.qc import (
     RefractionStaticPickMapRequest,
     RefractionStaticPickMapResponse,
 )

@@ -10,10 +10,12 @@ import time
 from typing import Any
 from uuid import uuid4
 
-from app.api.schemas import (
+from app.contracts.statics.refraction.common import (
     REFRACTION_STATIC_DEFAULT_EXPORT_FORMATS,
-    RefractionStaticApplyRequest,
     RefractionStaticExportFormat,
+)
+from app.contracts.statics.refraction.apply import RefractionStaticApplyRequest
+from app.contracts.statics.refraction.export import (
     RefractionStaticExportJobRequest,
     RefractionStaticExportRequest,
 )

@@ -11,16 +11,18 @@ from typing import Any
 import numpy as np
 
 import app.services.refraction_static_t1lsst as refraction_t1lsst
-from app.api.schemas import (
+from app.contracts.statics.refraction.options import (
     RefractionStaticApplyOptions,
-    RefractionStaticApplyRequest,
     RefractionStaticConversionRequest,
     RefractionStaticDatumRequest,
-    RefractionStaticLinkageRequest,
-    RefractionStaticModelRequest,
-    RefractionStaticPickSourceRequest,
     RefractionStaticSolverRequest,
 )
+from app.contracts.statics.refraction.apply import RefractionStaticApplyRequest
+from app.contracts.statics.refraction.inputs import (
+    RefractionStaticLinkageRequest,
+    RefractionStaticPickSourceRequest,
+)
+from app.contracts.statics.refraction.model import RefractionStaticModelRequest
 from app.core.state import AppState
 from app.services.refraction_static_artifacts import write_refraction_static_artifacts
 from app.services.refraction_static_cell_coordinates import (
