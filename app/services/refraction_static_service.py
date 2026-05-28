@@ -7,13 +7,13 @@ from dataclasses import dataclass, replace
 from pathlib import Path
 import time
 from typing import Any
-from uuid import uuid4
 
 import numpy as np
 
 from app.contracts.statics.refraction.apply import RefractionStaticApplyRequest
 from app.contracts.statics.refraction.model import RefractionStaticModelRequest
 from app.core.state import AppState
+from app.services.common.artifact_io import write_json_atomic
 from app.services.job_runner import JobCompletion, JobFailure, run_job_with_lifecycle
 from app.services.job_artifact_refs import resolve_job_artifact_path
 from app.services.refraction_static_apply_trace_store import (
@@ -427,20 +427,6 @@ def _refractor_cell_payload_for_v2_layer(
     if config.smoothing_weight is not None:
         cell['velocity_smoothing_weight'] = config.smoothing_weight
     return cell
-
-
-def _write_json_atomic(path: Path, payload: dict[str, Any]) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    tmp_path = path.with_name(f'{path.name}.{uuid4().hex}.tmp')
-    try:
-        tmp_path.write_text(
-            json.dumps(payload, ensure_ascii=True, sort_keys=True),
-            encoding='utf-8',
-        )
-        tmp_path.replace(path)
-    except Exception:
-        tmp_path.unlink(missing_ok=True)
-        raise
 
 
 def _refraction_static_request_payload(
@@ -1243,9 +1229,11 @@ def _run_refraction_static_apply_job_body(
             'enabled': True,
             'requested_formats': list(requested_export_formats),
         }
-    _write_json_atomic(
+    write_json_atomic(
         job_dir / _REQUEST_JSON_NAME,
         request_record,
+        allow_nan=True,
+        make_parent=True,
     )
     reject_unsupported_refraction_field_corrections(req)
     public_multilayer_apply = _is_public_multilayer_apply(req)
@@ -1453,11 +1441,11 @@ def _write_refraction_static_failure_diagnostics(
         'available_diagnostic_artifacts': [],
     }
     path = job_dir / REFRACTION_STATIC_FAILURE_DIAGNOSTICS_JSON_NAME
-    _write_json_atomic(path, payload)
+    write_json_atomic(path, payload, allow_nan=True, make_parent=True)
     payload['available_diagnostic_artifacts'] = _available_failure_diagnostic_artifacts(
         job_dir
     )
-    _write_json_atomic(path, payload)
+    write_json_atomic(path, payload, allow_nan=True, make_parent=True)
 
 
 def _handle_refraction_static_job_error(

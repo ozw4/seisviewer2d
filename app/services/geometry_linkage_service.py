@@ -3,13 +3,11 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-import json
 from pathlib import Path
 import time
-from typing import Any
-from uuid import uuid4
 
 from app.contracts.statics.geometry_linkage import StaticLinkageBuildRequest
+from app.services.common.artifact_io import write_json_atomic
 from app.core.state import AppState
 from app.services.geometry_linkage_artifacts import (
     GEOMETRY_LINKAGE_CSV_NAME,
@@ -81,32 +79,13 @@ def _set_job_progress_message(
         state.jobs.set_message(job_id, message)
 
 
-def _write_json_atomic(path: Path, payload: dict[str, Any]) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    tmp_path = path.with_name(f'{path.name}.{uuid4().hex}.tmp')
-    try:
-        tmp_path.write_text(
-            json.dumps(
-                payload,
-                allow_nan=False,
-                ensure_ascii=True,
-                sort_keys=True,
-            ),
-            encoding='utf-8',
-        )
-        tmp_path.replace(path)
-    except Exception:
-        tmp_path.unlink(missing_ok=True)
-        raise
-
-
 def _write_job_meta(
     *,
     job_id: str,
     job_dir: Path,
     req: StaticLinkageBuildRequest,
 ) -> None:
-    _write_json_atomic(
+    write_json_atomic(
         job_dir / 'job_meta.json',
         {
             'job_id': job_id,
@@ -126,6 +105,7 @@ def _write_job_meta(
                 'qc_json': GEOMETRY_LINKAGE_QC_JSON_NAME,
             },
         },
+        make_parent=True,
     )
 
 

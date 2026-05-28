@@ -15,6 +15,7 @@ from uuid import uuid4
 import numpy as np
 
 from app.core.state import AppState
+from app.services.common.artifact_io import write_json_atomic
 from app.services.corrected_trace_store import (
     TimeShiftedTraceStoreResult,
     build_time_shifted_trace_store,
@@ -489,7 +490,7 @@ def apply_time_term_static_correction_to_trace_store(
         )
         _raise_if_cancelled(cancel_check)
         if corrected_file_json_path is not None:
-            _write_json_atomic(
+            write_json_atomic(
                 corrected_file_json_path,
                 _build_corrected_file_payload(
                     corrected_file_id=corrected_file_id,
@@ -502,6 +503,7 @@ def apply_time_term_static_correction_to_trace_store(
                     applied_shift_field=applied_shift_field,
                     shift_stats_ms=shift_stats_ms,
                 ),
+                make_parent=True,
             )
     except Exception:
         _cleanup_registration(
@@ -856,24 +858,6 @@ def _shift_stats_ms(shift_s: np.ndarray) -> dict[str, float]:
         'mean': float(np.mean(shift_ms)),
         'max_abs': float(np.max(np.abs(shift_ms))),
     }
-
-
-def _write_json_atomic(path: Path, payload: dict[str, object]) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    tmp_path = path.with_name(f'{path.name}.tmp')
-    try:
-        with tmp_path.open('w', encoding='utf-8') as handle:
-            json.dump(
-                payload,
-                handle,
-                allow_nan=False,
-                ensure_ascii=True,
-                sort_keys=True,
-            )
-        tmp_path.replace(path)
-    except Exception:
-        tmp_path.unlink(missing_ok=True)
-        raise
 
 
 def _cleanup_registration(

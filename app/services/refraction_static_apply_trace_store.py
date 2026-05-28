@@ -16,6 +16,7 @@ import numpy as np
 
 from app.contracts.statics.refraction.apply import RefractionStaticApplyRequest
 from app.core.state import AppState
+from app.services.common.artifact_io import write_json_atomic
 from app.services.corrected_trace_store import (
     TimeShiftedTraceStoreResult,
     build_time_shifted_trace_store,
@@ -476,8 +477,8 @@ def _apply_refraction_solution_to_trace_store(
             selected_shift=selected_shift,
             corrected_tracestore_path_written=True,
         )
-        _write_json_atomic(qc_json_path, qc)
-        _write_json_atomic(
+        write_json_atomic(qc_json_path, qc, make_parent=True)
+        write_json_atomic(
             corrected_file_json_path,
             _build_corrected_file_payload(
                 req=request,
@@ -488,6 +489,7 @@ def _apply_refraction_solution_to_trace_store(
                 solution=solution,
                 selected_shift=selected_shift,
             ),
+            make_parent=True,
         )
     except Exception:
         _cleanup_registration(
@@ -1154,24 +1156,6 @@ def _stat(values: np.ndarray, name: str) -> float | None:
     if name == 'p95':
         return float(np.percentile(arr, 95.0))
     raise ValueError(f'unsupported stat: {name}')
-
-
-def _write_json_atomic(path: Path, payload: Mapping[str, object]) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    tmp_path = path.with_name(f'{path.name}.{uuid4().hex}.tmp')
-    try:
-        with tmp_path.open('w', encoding='utf-8') as handle:
-            json.dump(
-                payload,
-                handle,
-                allow_nan=False,
-                ensure_ascii=True,
-                sort_keys=True,
-            )
-        tmp_path.replace(path)
-    except Exception:
-        tmp_path.unlink(missing_ok=True)
-        raise
 
 
 def _read_json_object(path: Path, *, label: str) -> dict[str, object]:
