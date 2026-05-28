@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import csv
 import json
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Callable, Iterable, Mapping, Sequence
 from pathlib import Path
 from uuid import uuid4
 
@@ -103,7 +103,7 @@ def write_csv_atomic(
     path: Path,
     *,
     columns: Sequence[str],
-    rows: Sequence[Mapping[str, object]],
+    rows: Iterable[Mapping[str, object]],
     extrasaction: str = 'raise',
     lineterminator: str = '\n',
     make_parent: bool = True,

@@ -75,7 +75,11 @@ _write_json_atomic = partial(
     ensure_ascii=True,
     sort_keys=True,
 )
-_write_npz_atomic = partial(write_npz_atomic, compressed=True)
+_write_npz_atomic = partial(
+    write_npz_atomic,
+    compressed=True,
+    reject_object_arrays=False,
+)
 
 
 EndpointIdentityMode = Literal['endpoint_key', 'endpoint_id']

@@ -2129,7 +2129,7 @@ def _write_npz_atomic(out_path: Path, payload: dict[str, np.ndarray]) -> None:
         out_path,
         payload,
         compressed=False,
-        reject_object_arrays=True,
+        reject_object_arrays=False,
     )
 
 
