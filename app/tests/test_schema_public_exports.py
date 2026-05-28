@@ -14,6 +14,7 @@ EXPECTED_SCHEMA_EXPORTS = [
     'RefractionStaticGatherPreviewScaling',
     'RefractionStaticGatherPreviewSampleSource',
     'REFRACTION_STATIC_DEFAULT_EXPORT_FORMATS',
+    '_REFRACTION_STATIC_LAYER_ORDER',
     'BandpassParams',
     'DenoiseParams',
     'FbpickParams',
@@ -164,5 +165,7 @@ def test_schema_public_constants_remain_available_from_legacy_import_path() -> N
     default_formats = _legacy_schema_import(
         'REFRACTION_STATIC_DEFAULT_EXPORT_FORMATS'
     )
+    layer_order = _legacy_schema_import('_REFRACTION_STATIC_LAYER_ORDER')
 
     assert default_formats == ('canonical_static_table', 'time_term_spreadsheet')
+    assert layer_order == {'v2_t1': 0, 'v3_t2': 1, 'vsub_t3': 2}
