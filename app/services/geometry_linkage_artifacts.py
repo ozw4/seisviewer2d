@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from functools import partial
 from pathlib import Path
 from typing import Any
 
@@ -16,7 +17,7 @@ from app.services.common.artifact_io import (
     write_npz_atomic as _common_write_npz_atomic,
 )
 from app.services.common.array_validation import (
-    coerce_1d_finite_float64 as _coerce_1d_finite_float64,
+    coerce_1d_castable_finite_float64 as _common_coerce_1d_finite_float64,
     coerce_1d_integer_int64 as _coerce_1d_integer_int64,
     coerce_positive_int as _coerce_positive_int,
 )
@@ -50,6 +51,10 @@ _KNOWN_METHODS = {
 }
 _DISTANCE_RTOL = 1.0e-9
 _DISTANCE_ATOL = 1.0e-9
+_coerce_1d_finite_float64 = partial(
+    _common_coerce_1d_finite_float64,
+    reject_bool_dtype=True,
+)
 
 _CSV_COLUMNS = [
     'endpoint_kind',

@@ -59,6 +59,26 @@ def coerce_1d_finite_float64(
     )
 
 
+def coerce_1d_castable_finite_float64(
+    values: object,
+    *,
+    name: str,
+    expected_shape: tuple[int, ...] | None = None,
+    reject_bool_dtype: bool = False,
+    error_type: type[Exception] = ValueError,
+) -> np.ndarray:
+    arr = _as_1d_array(values, name=name, expected_shape=expected_shape, error_type=error_type)
+    if reject_bool_dtype and np.issubdtype(arr.dtype, np.bool_):
+        _raise(f'{name} must be numeric', error_type)
+    try:
+        out = np.ascontiguousarray(arr, dtype=np.float64)
+    except (TypeError, ValueError) as exc:
+        _raise_from(f'{name} must be numeric', error_type, exc)
+    if np.any(~np.isfinite(out)):
+        _raise(f'{name} must contain only finite values', error_type)
+    return out
+
+
 def coerce_1d_integer_int64(
     values: object,
     *,
@@ -260,6 +280,7 @@ def _raise_from(
 
 __all__ = [
     'coerce_1d_bool_array',
+    'coerce_1d_castable_finite_float64',
     'coerce_1d_finite_float64',
     'coerce_1d_integer_int64',
     'coerce_1d_real_numeric_float64',

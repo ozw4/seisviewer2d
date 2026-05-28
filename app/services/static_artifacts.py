@@ -14,7 +14,7 @@ from app.services.common.artifact_io import (
     write_npz_atomic as _common_write_npz_atomic,
 )
 from app.services.common.array_validation import (
-    coerce_1d_finite_float64 as _coerce_1d_finite_float64,
+    coerce_1d_castable_finite_float64 as _coerce_1d_finite_float64,
     coerce_1d_integer_int64 as _coerce_1d_integer_int64,
     coerce_finite_float as _coerce_finite_float,
     coerce_positive_finite_float as _coerce_positive_finite_float,

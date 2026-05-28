@@ -17,7 +17,7 @@ from app.services.common.artifact_io import (
 )
 from app.services.common.array_validation import (
     coerce_1d_bool_array as _require_1d_bool_array,
-    coerce_1d_finite_float64 as _coerce_1d_finite_float64,
+    coerce_1d_castable_finite_float64 as _common_coerce_1d_finite_float64,
     coerce_1d_integer_int64 as _common_coerce_1d_integer_int64,
     coerce_finite_float as _coerce_finite_float,
     coerce_optional_finite_float as _coerce_optional_finite_float,
@@ -45,6 +45,10 @@ SIGN_CONVENTION = (
 _coerce_1d_integer_int64 = partial(
     _common_coerce_1d_integer_int64,
     nonfinite_message='must contain only finite values',
+)
+_coerce_1d_finite_float64 = partial(
+    _common_coerce_1d_finite_float64,
+    reject_bool_dtype=True,
 )
 
 _CSV_COLUMNS = [
