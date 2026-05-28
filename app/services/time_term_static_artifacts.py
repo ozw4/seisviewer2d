@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
+from functools import partial
 from pathlib import Path
 from typing import Any
 
@@ -14,6 +15,14 @@ from app.services.common.artifact_io import (
     write_csv_atomic as _common_write_csv_atomic,
     write_json_atomic as _common_write_json_atomic,
     write_npz_atomic as _common_write_npz_atomic,
+)
+from app.services.common.array_validation import (
+    coerce_1d_bool_array as _require_1d_bool_array,
+    coerce_1d_integer_int64 as _common_coerce_1d_integer_int64,
+    coerce_finite_float as _coerce_finite_float,
+    coerce_positive_finite_float as _coerce_positive_finite_float,
+    coerce_positive_int as _coerce_positive_int,
+    is_real_numeric_dtype as _is_real_numeric_dtype,
 )
 from app.services.time_term_apply_shift import (
     DELAY_TO_SHIFT_CONVENTION,
@@ -40,6 +49,11 @@ SCHEMA_VERSION = 1
 SOLUTION_ARTIFACT_KIND = 'time_term_static_solution'
 QC_ARTIFACT_KIND = 'time_term_static_qc'
 ORDER = 'trace_store_sorted'
+
+_coerce_1d_integer_int64 = partial(
+    _common_coerce_1d_integer_int64,
+    allow_integer_like_float=False,
+)
 
 ESTIMATED_DELAY_SIGN_CONVENTION = (
     'positive delay means observed first-break is late'
@@ -1871,73 +1885,6 @@ def _coerce_1d_float64_allow_nan(
     return np.ascontiguousarray(arr, dtype=np.float64)
 
 
-def _coerce_1d_integer_int64(
-    values: object,
-    *,
-    name: str,
-    expected_shape: tuple[int, ...] | None = None,
-) -> np.ndarray:
-    arr = np.asarray(values)
-    if arr.ndim != 1:
-        raise ValueError(f'{name} must be a 1D array')
-    if expected_shape is not None and arr.shape != expected_shape:
-        raise ValueError(
-            f'{name} shape mismatch: expected {expected_shape}, got {arr.shape}'
-        )
-    if np.issubdtype(arr.dtype, np.bool_) or not np.issubdtype(
-        arr.dtype,
-        np.integer,
-    ):
-        raise ValueError(f'{name} must contain integer values')
-    return np.ascontiguousarray(arr, dtype=np.int64)
-
-
-def _require_1d_bool_array(
-    values: object,
-    *,
-    name: str,
-    expected_shape: tuple[int, ...],
-) -> np.ndarray:
-    arr = np.asarray(values)
-    if arr.ndim != 1:
-        raise ValueError(f'{name} must be a 1D array')
-    if arr.shape != expected_shape:
-        raise ValueError(
-            f'{name} shape mismatch: expected {expected_shape}, got {arr.shape}'
-        )
-    if not np.issubdtype(arr.dtype, np.bool_):
-        raise ValueError(f'{name} must have bool dtype')
-    return np.ascontiguousarray(arr, dtype=bool)
-
-
-def _coerce_positive_int(value: object, *, name: str) -> int:
-    if isinstance(value, (bool, np.bool_)) or not isinstance(value, (int, np.integer)):
-        raise ValueError(f'{name} must be an integer')
-    out = int(value)
-    if out <= 0:
-        raise ValueError(f'{name} must be greater than 0')
-    return out
-
-
-def _coerce_finite_float(value: object, *, name: str) -> float:
-    if isinstance(value, (bool, np.bool_)):
-        raise ValueError(f'{name} must be finite')
-    try:
-        out = float(value)
-    except (TypeError, ValueError) as exc:
-        raise ValueError(f'{name} must be finite') from exc
-    if not np.isfinite(out):
-        raise ValueError(f'{name} must be finite')
-    return out
-
-
-def _coerce_positive_finite_float(value: object, *, name: str) -> float:
-    out = _coerce_finite_float(value, name=name)
-    if out <= 0.0:
-        raise ValueError(f'{name} must be greater than 0')
-    return out
-
-
 def _coerce_finite_or_nan_float(value: object) -> float:
     if isinstance(value, (bool, np.bool_)):
         raise ValueError('float scalar expected')
@@ -2152,13 +2099,6 @@ def _write_csv_atomic(out_path: Path, rows: list[dict[str, object]]) -> None:
         rows=rows,
         extrasaction='raise',
         lineterminator='\r\n',
-    )
-
-
-def _is_real_numeric_dtype(dtype: np.dtype) -> bool:
-    return np.issubdtype(dtype, np.number) and not np.issubdtype(
-        dtype,
-        np.complexfloating,
     )
 
 

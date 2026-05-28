@@ -7,6 +7,11 @@ from typing import Literal
 
 import numpy as np
 
+from app.services.common.array_validation import (
+    coerce_1d_real_numeric_float64 as _coerce_1d_real_numeric_float64,
+    coerce_positive_finite_float as _coerce_positive_finite_float,
+    coerce_positive_int as _coerce_positive_int,
+)
 from app.services.residual_static_sparse_solver import (
     ResidualStaticLsmrOptions,
     ResidualStaticStabilizationOptions,
@@ -408,64 +413,15 @@ def _validate_robust_method(value: object) -> ResidualStaticRobustMethod:
     raise ValueError('method must be mad or sigma')
 
 
-def _coerce_positive_int(value: object, *, name: str) -> int:
-    if isinstance(value, (bool, np.bool_)) or not isinstance(value, (int, np.integer)):
-        raise ValueError(f'{name} must be an integer')
-    out = int(value)
-    if out <= 0:
-        raise ValueError(f'{name} must be greater than 0')
-    return out
-
-
 def _coerce_min_used_fraction(value: object) -> float:
     out = _coerce_positive_finite_float(value, name='min_used_fraction')
     if out > 1.0:
         raise ValueError('min_used_fraction must be less than or equal to 1')
     return out
 
-
-def _coerce_positive_finite_float(value: object, *, name: str) -> float:
-    out = _coerce_finite_float(value, name=name)
-    if out <= 0.0:
-        raise ValueError(f'{name} must be greater than 0')
-    return out
-
-
-def _coerce_finite_float(value: object, *, name: str) -> float:
-    if isinstance(value, (bool, np.bool_)):
-        raise ValueError(f'{name} must be finite')
-    try:
-        out = float(value)
-    except (TypeError, ValueError) as exc:
-        raise ValueError(f'{name} must be finite') from exc
-    if not np.isfinite(out):
-        raise ValueError(f'{name} must be finite')
-    return out
-
-
-def _coerce_1d_real_numeric_float64(
-    values: object,
-    *,
-    name: str,
-) -> np.ndarray:
-    arr = np.asarray(values)
-    if arr.ndim != 1:
-        raise ValueError(f'{name} must be a 1D array')
-    if not _is_real_numeric_dtype(arr.dtype):
-        raise ValueError(f'{name} must have a numeric dtype')
-    return np.ascontiguousarray(arr, dtype=np.float64)
-
-
 def _validate_all_finite(values: np.ndarray, *, name: str) -> None:
     if np.any(~np.isfinite(values)):
         raise ValueError(f'{name} must contain only finite values')
-
-
-def _is_real_numeric_dtype(dtype: np.dtype) -> bool:
-    return np.issubdtype(dtype, np.number) and not np.issubdtype(
-        dtype,
-        np.complexfloating,
-    )
 
 
 __all__ = [

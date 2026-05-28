@@ -64,6 +64,8 @@ def coerce_1d_integer_int64(
     *,
     name: str,
     expected_shape: tuple[int, ...] | None = None,
+    allow_integer_like_float: bool = True,
+    nonfinite_message: str | None = None,
     error_type: type[Exception] = ValueError,
 ) -> np.ndarray:
     arr = _as_1d_array(values, name=name, expected_shape=expected_shape, error_type=error_type)
@@ -74,15 +76,17 @@ def coerce_1d_integer_int64(
         if not np.array_equal(arr, out):
             _raise(f'{name} values must fit in int64', error_type)
         return out
-    if not is_real_numeric_dtype(arr.dtype):
+    if not allow_integer_like_float or not is_real_numeric_dtype(arr.dtype):
         _raise(f'{name} must contain integer values', error_type)
 
     float_values = np.asarray(arr, dtype=np.float64)
     int64_info = np.iinfo(np.int64)
     int64_upper_exclusive = np.float64(2**63)
+    if np.any(~np.isfinite(float_values)):
+        message = nonfinite_message or 'must contain integer values'
+        _raise(f'{name} {message}', error_type)
     if (
-        np.any(~np.isfinite(float_values))
-        or np.any(float_values != np.trunc(float_values))
+        np.any(float_values != np.trunc(float_values))
         or np.any(float_values < int64_info.min)
         or np.any(float_values >= int64_upper_exclusive)
     ):

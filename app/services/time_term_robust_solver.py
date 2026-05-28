@@ -3,11 +3,21 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from functools import partial
 from typing import Literal
 
 import numpy as np
 from scipy import sparse
 
+from app.services.common.array_validation import (
+    coerce_1d_bool_array as _coerce_1d_bool_array,
+    coerce_1d_integer_int64 as _common_coerce_1d_integer_int64,
+    coerce_1d_real_numeric_float64 as _coerce_1d_real_numeric_float64,
+    coerce_finite_float as _coerce_finite_float,
+    coerce_positive_finite_float as _coerce_positive_finite_float,
+    coerce_positive_int as _coerce_positive_int,
+    is_real_numeric_dtype as _is_real_numeric_dtype,
+)
 from app.services.time_term_design_matrix import TimeTermDesignMatrix
 from app.services.time_term_sparse_solver import (
     TimeTermSparseSolverOptions,
@@ -27,6 +37,11 @@ TimeTermRobustStopReason = Literal[
 ]
 
 ROBUST_SCALE_FLOOR_S = 1.0e-12
+
+_coerce_1d_integer_int64 = partial(
+    _common_coerce_1d_integer_int64,
+    allow_integer_like_float=False,
+)
 
 
 @dataclass(frozen=True)
@@ -851,56 +866,6 @@ def _coerce_sparse_matrix_float64_csr(matrix: object) -> sparse.csr_matrix:
     return matrix_csr
 
 
-def _coerce_1d_real_numeric_float64(
-    values: object,
-    *,
-    name: str,
-    expected_shape: tuple[int, ...] | None = None,
-) -> np.ndarray:
-    arr = np.asarray(values)
-    if arr.ndim != 1:
-        raise ValueError(f'{name} must be a 1D array')
-    if expected_shape is not None and arr.shape != expected_shape:
-        raise ValueError(f'{name} shape mismatch: expected {expected_shape}, got {arr.shape}')
-    if not _is_real_numeric_dtype(arr.dtype):
-        raise ValueError(f'{name} must have a numeric dtype')
-    return np.ascontiguousarray(arr, dtype=np.float64)
-
-
-def _coerce_1d_integer_int64(
-    values: object,
-    *,
-    name: str,
-    expected_shape: tuple[int, ...] | None = None,
-) -> np.ndarray:
-    arr = np.asarray(values)
-    if arr.ndim != 1:
-        raise ValueError(f'{name} must be a 1D array')
-    if expected_shape is not None and arr.shape != expected_shape:
-        raise ValueError(f'{name} shape mismatch: expected {expected_shape}, got {arr.shape}')
-    if np.issubdtype(arr.dtype, np.bool_):
-        raise ValueError(f'{name} must contain integer values')
-    if not np.issubdtype(arr.dtype, np.integer):
-        raise ValueError(f'{name} must contain integer values')
-    return np.ascontiguousarray(arr, dtype=np.int64)
-
-
-def _coerce_1d_bool_array(
-    values: object,
-    *,
-    name: str,
-    expected_shape: tuple[int, ...],
-) -> np.ndarray:
-    arr = np.asarray(values)
-    if arr.ndim != 1:
-        raise ValueError(f'{name} must be a 1D array')
-    if arr.shape != expected_shape:
-        raise ValueError(f'{name} shape mismatch: expected {expected_shape}, got {arr.shape}')
-    if not np.issubdtype(arr.dtype, np.bool_):
-        raise ValueError(f'{name} must have bool dtype')
-    return np.ascontiguousarray(arr, dtype=bool)
-
-
 def _coerce_1d_bool_like_array(
     values: object,
     *,
@@ -941,15 +906,6 @@ def _coerce_trace_to_row_index(
     return arr
 
 
-def _coerce_positive_int(value: object, *, name: str) -> int:
-    if isinstance(value, (bool, np.bool_)) or not isinstance(value, (int, np.integer)):
-        raise ValueError(f'{name} must be an integer')
-    out = int(value)
-    if out <= 0:
-        raise ValueError(f'{name} must be greater than 0')
-    return out
-
-
 def _coerce_bool(value: object, *, name: str) -> bool:
     if not isinstance(value, (bool, np.bool_)):
         raise ValueError(f'{name} must be bool')
@@ -960,25 +916,6 @@ def _coerce_min_used_fraction(value: object) -> float:
     out = _coerce_positive_finite_float(value, name='min_used_fraction')
     if out > 1.0:
         raise ValueError('min_used_fraction must be less than or equal to 1')
-    return out
-
-
-def _coerce_positive_finite_float(value: object, *, name: str) -> float:
-    out = _coerce_finite_float(value, name=name)
-    if out <= 0.0:
-        raise ValueError(f'{name} must be greater than 0')
-    return out
-
-
-def _coerce_finite_float(value: object, *, name: str) -> float:
-    if isinstance(value, (bool, np.bool_)):
-        raise ValueError(f'{name} must be finite')
-    try:
-        out = float(value)
-    except (TypeError, ValueError) as exc:
-        raise ValueError(f'{name} must be finite') from exc
-    if not np.isfinite(out):
-        raise ValueError(f'{name} must be finite')
     return out
 
 
@@ -1042,13 +979,6 @@ def _fraction(numerator: int, denominator: int) -> float:
     if denominator <= 0:
         return 0.0
     return float(numerator / denominator)
-
-
-def _is_real_numeric_dtype(dtype: np.dtype) -> bool:
-    return np.issubdtype(dtype, np.number) and not np.issubdtype(
-        dtype,
-        np.complexfloating,
-    )
 
 
 __all__ = [

@@ -9,12 +9,18 @@ import json
 from pathlib import Path
 import re
 import shutil
-from typing import Any, Literal
+from typing import Literal
 from uuid import uuid4
 
 import numpy as np
 
 from app.services.common.artifact_io import write_json_atomic
+from app.services.common.array_validation import (
+    coerce_header_byte as _coerce_header_byte,
+    coerce_nonnegative_finite_float as _coerce_nonnegative_finite_float,
+    coerce_positive_finite_float as _coerce_positive_finite_float,
+    coerce_positive_int as _coerce_positive_int,
+)
 from app.services.corrected_trace_store import build_time_shifted_trace_store
 from app.services.trace_store_registration import (
     register_trace_store,
@@ -673,48 +679,6 @@ def _require_scalar_str(value: np.ndarray, *, name: str) -> str:
     if isinstance(item, bytes):
         return item.decode('utf-8')
     return str(item)
-
-
-def _coerce_positive_int(value: Any, *, name: str) -> int:
-    if isinstance(value, bool):
-        raise ValueError(f'{name} must be a positive integer')
-    if not isinstance(value, int | np.integer):
-        raise ValueError(f'{name} must be a positive integer')
-    out = int(value)
-    if out <= 0:
-        raise ValueError(f'{name} must be a positive integer')
-    return out
-
-
-def _coerce_header_byte(value: Any, *, name: str) -> int:
-    out = _coerce_positive_int(value, name=name)
-    if out > 240:
-        raise ValueError(f'{name} must be between 1 and 240')
-    return out
-
-
-def _coerce_positive_finite_float(value: Any, *, name: str) -> float:
-    if isinstance(value, bool):
-        raise ValueError(f'{name} must be finite and greater than 0')
-    try:
-        out = float(value)
-    except (TypeError, ValueError) as exc:
-        raise ValueError(f'{name} must be finite and greater than 0') from exc
-    if not np.isfinite(out) or out <= 0.0:
-        raise ValueError(f'{name} must be finite and greater than 0')
-    return out
-
-
-def _coerce_nonnegative_finite_float(value: Any, *, name: str) -> float:
-    if isinstance(value, bool):
-        raise ValueError(f'{name} must be finite and non-negative')
-    try:
-        out = float(value)
-    except (TypeError, ValueError) as exc:
-        raise ValueError(f'{name} must be finite and non-negative') from exc
-    if not np.isfinite(out) or out < 0.0:
-        raise ValueError(f'{name} must be finite and non-negative')
-    return out
 
 
 __all__ = [
