@@ -6,9 +6,12 @@ from typing import Any
 import app.api.schemas as legacy
 
 
-EXPECTED_SCHEMA_EXPORTS = [
+PIPELINE_NAME_EXPORTS = [
     'TransformName',
     'AnalyzerName',
+]
+
+REFRACTION_COMMON_EXPORTS = [
     'RefractionStaticExportFormat',
     'RefractionStaticQcBundleInclude',
     'RefractionStaticQcBundleCoordinateMode',
@@ -18,6 +21,9 @@ EXPECTED_SCHEMA_EXPORTS = [
     'RefractionStaticGatherPreviewSampleSource',
     'REFRACTION_STATIC_DEFAULT_EXPORT_FORMATS',
     '_REFRACTION_STATIC_LAYER_ORDER',
+]
+
+PIPELINE_EXPORTS = [
     'BandpassParams',
     'DenoiseParams',
     'FbpickParams',
@@ -26,6 +32,9 @@ EXPECTED_SCHEMA_EXPORTS = [
     'PipelineSectionResponse',
     'PipelineAllResponse',
     'PipelineJobStatusResponse',
+]
+
+BATCH_EXPORTS = [
     'SnapOptions',
     'PickOptions',
     'BatchApplyRequest',
@@ -33,26 +42,44 @@ EXPECTED_SCHEMA_EXPORTS = [
     'BatchJobStatusResponse',
     'BatchJobFile',
     'BatchJobFilesResponse',
+]
+
+STATIC_COMMON_EXPORTS = [
     'StaticJobStatusResponse',
     'StaticJobFile',
     'StaticJobFilesResponse',
+]
+
+DATUM_STATIC_EXPORTS = [
     'DatumStaticGeometryRequest',
     'DatumStaticDatumRequest',
     'DatumStaticExistingStaticsRequest',
     'DatumStaticApplyOptions',
     'DatumStaticApplyRequest',
     'DatumStaticApplyResponse',
+]
+
+VALIDATION_EXPORTS = [
     'require_trace_header_byte',
+]
+
+GEOMETRY_LINKAGE_EXPORTS = [
     'StaticLinkageGeometryRequest',
     'StaticLinkageOptionsRequest',
     'StaticLinkageBuildRequest',
     'StaticLinkageBuildResponse',
+]
+
+FIRST_BREAK_QC_EXPORTS = [
     'FirstBreakQcDatumSolutionRequest',
     'FirstBreakQcPickSourceRequest',
     'FirstBreakQcOffsetRequest',
     'FirstBreakQcOptionsRequest',
     'FirstBreakQcRequest',
     'FirstBreakQcJobResponse',
+]
+
+RESIDUAL_STATIC_EXPORTS = [
     'ResidualStaticDatumSolutionRequest',
     'ResidualStaticPickSourceRequest',
     'ResidualStaticGeometryRequest',
@@ -63,6 +90,9 @@ EXPECTED_SCHEMA_EXPORTS = [
     'ResidualStaticApplyOptions',
     'ResidualStaticApplyRequest',
     'ResidualStaticApplyResponse',
+]
+
+TIME_TERM_STATIC_EXPORTS = [
     'TimeTermStaticPickSourceRequest',
     'TimeTermStaticGeometryRequest',
     'TimeTermStaticLinkageRequest',
@@ -73,15 +103,24 @@ EXPECTED_SCHEMA_EXPORTS = [
     'TimeTermStaticApplyOptions',
     'TimeTermStaticApplyRequest',
     'TimeTermStaticApplyResponse',
+]
+
+REFRACTION_INPUT_EXPORTS = [
     'RefractionStaticPickSourceRequest',
     'RefractionStaticGeometryRequest',
     'RefractionStaticLinkageRequest',
+]
+
+REFRACTION_MODEL_EXPORTS = [
     'RefractionStaticFirstLayerRequest',
     'RefractionStaticRefractorCellRequest',
     'RefractionStaticLayerKind',
     'RefractionStaticLayerVelocityMode',
     'RefractionStaticLayerRequest',
     'RefractionStaticModelRequest',
+]
+
+REFRACTION_OPTION_EXPORTS = [
     'RefractionStaticMoveoutRequest',
     'RefractionStaticRobustRequest',
     'RefractionStaticSolverRequest',
@@ -89,6 +128,9 @@ EXPECTED_SCHEMA_EXPORTS = [
     'RefractionStaticApplyOptions',
     'RefractionStaticConversionRequest',
     'RefractionStaticReducedTimeQcRequest',
+]
+
+REFRACTION_FIELD_CORRECTION_EXPORTS = [
     'RefractionStaticFieldCorrectionArtifactRequest',
     'RefractionStaticSourceDepthCorrectionRequest',
     'RefractionStaticUpholeCorrectionRequest',
@@ -96,9 +138,15 @@ EXPECTED_SCHEMA_EXPORTS = [
     'RefractionStaticManualStaticRequest',
     'RefractionStaticFieldCorrectionCompositionRequest',
     'RefractionStaticFieldCorrectionsRequest',
+]
+
+REFRACTION_APPLY_EXPORTS = [
     'RefractionStaticExportRequest',
     'RefractionStaticApplyRequest',
     'RefractionStaticApplyResponse',
+]
+
+REFRACTION_QC_EXPORTS = [
     'RefractionStaticQcBundleRequest',
     'RefractionStaticQcDownsamplingEntry',
     'RefractionStaticQcTabularView',
@@ -127,12 +175,45 @@ EXPECTED_SCHEMA_EXPORTS = [
     'RefractionStaticStationStructureSeries',
     'RefractionStaticStationStructureVelocityField',
     'RefractionStaticStationStructureXAxis',
+]
+
+REFRACTION_GATHER_PREVIEW_EXPORTS = [
     'RefractionStaticGatherPreviewRequest',
     'RefractionStaticGatherPreviewResponse',
+]
+
+REFRACTION_TABLE_APPLY_EXPORTS = [
     'RefractionStaticTableApplyRequest',
     'RefractionStaticTableApplyResponse',
+]
+
+REFRACTION_EXPORT_JOB_EXPORTS = [
     'RefractionStaticExportJobRequest',
     'RefractionStaticExportJobResponse',
+]
+
+
+EXPECTED_SCHEMA_EXPORTS = [
+    *PIPELINE_NAME_EXPORTS,
+    *REFRACTION_COMMON_EXPORTS,
+    *PIPELINE_EXPORTS,
+    *BATCH_EXPORTS,
+    *STATIC_COMMON_EXPORTS,
+    *DATUM_STATIC_EXPORTS,
+    *VALIDATION_EXPORTS,
+    *GEOMETRY_LINKAGE_EXPORTS,
+    *FIRST_BREAK_QC_EXPORTS,
+    *RESIDUAL_STATIC_EXPORTS,
+    *TIME_TERM_STATIC_EXPORTS,
+    *REFRACTION_INPUT_EXPORTS,
+    *REFRACTION_MODEL_EXPORTS,
+    *REFRACTION_OPTION_EXPORTS,
+    *REFRACTION_FIELD_CORRECTION_EXPORTS,
+    *REFRACTION_APPLY_EXPORTS,
+    *REFRACTION_QC_EXPORTS,
+    *REFRACTION_GATHER_PREVIEW_EXPORTS,
+    *REFRACTION_TABLE_APPLY_EXPORTS,
+    *REFRACTION_EXPORT_JOB_EXPORTS,
 ]
 
 
@@ -197,6 +278,22 @@ def test_schema_all_has_no_duplicates() -> None:
     schemas = __import__('app.api.schemas', fromlist=['__all__'])
 
     assert len(schemas.__all__) == len(set(schemas.__all__))
+
+
+def test_schema_all_includes_statics_package_all() -> None:
+    statics = importlib.import_module('app.contracts.statics')
+
+    missing = [name for name in statics.__all__ if name not in legacy.__all__]
+
+    assert missing == []
+
+
+def test_schema_all_includes_refraction_package_all() -> None:
+    refraction = importlib.import_module('app.contracts.statics.refraction')
+
+    missing = [name for name in refraction.__all__ if name not in legacy.__all__]
+
+    assert missing == []
 
 
 def test_legacy_schema_exports_are_direct_reexports() -> None:
