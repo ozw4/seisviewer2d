@@ -313,9 +313,14 @@ def test_statics_package_exports_are_direct_reexports() -> None:
     assert statics.DatumStaticApplyRequest is datum.DatumStaticApplyRequest
     assert statics.ResidualStaticApplyRequest is residual.ResidualStaticApplyRequest
     assert statics.TimeTermStaticApplyRequest is time_term.TimeTermStaticApplyRequest
-    assert statics.RefractionStaticApplyRequest is (
-        refraction.RefractionStaticApplyRequest
-    )
+
+    missing_refraction_exports = [
+        name for name in refraction.__all__ if name not in statics.__all__
+    ]
+    assert missing_refraction_exports == []
+
+    for name in refraction.__all__:
+        assert getattr(statics, name) is getattr(refraction, name)
 
 
 def test_refraction_package_exports_are_direct_reexports() -> None:
