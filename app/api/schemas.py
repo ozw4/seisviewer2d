@@ -1,15 +1,70 @@
 """Pydantic models for describing pipeline operations."""
 
 import math
-from pathlib import Path
 from typing import Annotated, Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
+from app.contracts._validation import (
+    _require_bool,
+    _require_finite_float,
+    _require_nonnegative_finite_float,
+    _require_positive_finite_float,
+    _require_positive_int,
+    _validate_artifact_basename,
+    _velocity_values_match,
+    require_trace_header_byte,
+)
+from app.contracts.batch import (
+    BatchApplyRequest as BatchApplyRequest,
+    BatchApplyResponse as BatchApplyResponse,
+    BatchJobFile as BatchJobFile,
+    BatchJobFilesResponse as BatchJobFilesResponse,
+    BatchJobStatusResponse as BatchJobStatusResponse,
+    PickOptions as PickOptions,
+    SnapOptions as SnapOptions,
+)
+from app.contracts.pipeline import (
+    AnalyzerName as AnalyzerName,
+    BandpassParams as BandpassParams,
+    DenoiseParams as DenoiseParams,
+    FbpickParams as FbpickParams,
+    PipelineAllResponse as PipelineAllResponse,
+    PipelineJobStatusResponse as PipelineJobStatusResponse,
+    PipelineOp as PipelineOp,
+    PipelineSectionResponse as PipelineSectionResponse,
+    PipelineSpec as PipelineSpec,
+    TransformName as TransformName,
+)
+from app.contracts.statics.common import (
+    StaticJobFile as StaticJobFile,
+    StaticJobFilesResponse as StaticJobFilesResponse,
+    StaticJobStatusResponse as StaticJobStatusResponse,
+)
+from app.contracts.statics.datum import (
+    DatumStaticApplyOptions as DatumStaticApplyOptions,
+    DatumStaticApplyRequest as DatumStaticApplyRequest,
+    DatumStaticApplyResponse as DatumStaticApplyResponse,
+    DatumStaticDatumRequest as DatumStaticDatumRequest,
+    DatumStaticExistingStaticsRequest as DatumStaticExistingStaticsRequest,
+    DatumStaticGeometryRequest as DatumStaticGeometryRequest,
+)
+from app.contracts.statics.first_break_qc import (
+    FirstBreakQcDatumSolutionRequest as FirstBreakQcDatumSolutionRequest,
+    FirstBreakQcJobResponse as FirstBreakQcJobResponse,
+    FirstBreakQcOffsetRequest as FirstBreakQcOffsetRequest,
+    FirstBreakQcOptionsRequest as FirstBreakQcOptionsRequest,
+    FirstBreakQcPickSourceRequest as FirstBreakQcPickSourceRequest,
+    FirstBreakQcRequest as FirstBreakQcRequest,
+)
+from app.contracts.statics.geometry_linkage import (
+    StaticLinkageBuildRequest as StaticLinkageBuildRequest,
+    StaticLinkageBuildResponse as StaticLinkageBuildResponse,
+    StaticLinkageGeometryRequest as StaticLinkageGeometryRequest,
+    StaticLinkageOptionsRequest as StaticLinkageOptionsRequest,
+)
 from app.utils.validation import require_non_negative_int, require_positive_int
 
-TransformName = Literal['bandpass', 'denoise']
-AnalyzerName = Literal['fbpick']
 RefractionStaticExportFormat = Literal[
     'canonical_static_table',
     'lsst',
@@ -85,636 +140,6 @@ REFRACTION_STATIC_DEFAULT_EXPORT_FORMATS: tuple[
     'canonical_static_table',
     'time_term_spreadsheet',
 )
-
-
-class BandpassParams(BaseModel):
-    """Parameters for the band-pass filter."""
-
-    low_hz: float = Field(..., ge=0.0)
-    high_hz: float = Field(..., ge=0.0)
-    taper: float = Field(0.0, ge=0.0)
-
-    @model_validator(mode='before')
-    @classmethod
-    def _ensure_no_dt(cls, data: Any) -> Any:
-        if isinstance(data, dict) and 'dt' in data:
-            raise ValueError(
-                'dt is derived from the data and can no longer be specified'
-            )
-        return data
-
-    @model_validator(mode='after')
-    def _check_bounds(self) -> 'BandpassParams':
-        # フィールド制約（ge/gt）は Field で既に検証済み。
-        if self.low_hz >= self.high_hz:
-            raise ValueError('low_hz must be less than high_hz')
-        return self
-
-
-class DenoiseParams(BaseModel):
-    """Parameters for the denoise transform."""
-
-    model_config = ConfigDict(extra='forbid')
-
-    chunk_h: int = Field(128, ge=1)
-    overlap: int | tuple[int, int] | list[int] = 32
-    mask_ratio: float = Field(0.5, ge=0.0, le=1.0)
-    noise_std: float = Field(1.0, ge=0.0)
-    mask_noise_mode: Literal['replace', 'add'] = 'replace'
-    passes_batch: int = Field(4, ge=1)
-    seed: int = 12345
-    tile: int | tuple[int, int] | list[int] | None = None
-    amp: bool | None = None
-    use_amp: bool | None = None
-    tiles_per_batch: int | None = Field(default=None, ge=1)
-    use_ema: bool | None = None
-    ckpt_path: str | None = None
-    device: str | None = None
-
-    @classmethod
-    def _validate_positive_tile_value(cls, value: object) -> None:
-        if isinstance(value, int) and not isinstance(value, bool):
-            require_positive_int(value, 'tile')
-            return
-        if isinstance(value, tuple | list) and len(value) == 2:
-            require_positive_int(value[0], 'tile[0]')
-            require_positive_int(value[1], 'tile[1]')
-            return
-        raise ValueError(f'tile must be int or pair of ints, got {value!r}')
-
-    @classmethod
-    def _validate_non_negative_overlap_value(cls, value: object) -> None:
-        if isinstance(value, int) and not isinstance(value, bool):
-            require_non_negative_int(value, 'overlap')
-            return
-        if isinstance(value, tuple | list) and len(value) == 2:
-            require_non_negative_int(value[0], 'overlap[0]')
-            require_non_negative_int(value[1], 'overlap[1]')
-            return
-        raise ValueError(f'overlap must be int or pair of ints, got {value!r}')
-
-    @model_validator(mode='after')
-    def _check_bounds_and_canonicalize(self) -> 'DenoiseParams':
-        if self.tile is None:
-            require_non_negative_int(self.overlap, 'overlap')
-            if int(self.overlap) >= self.chunk_h:
-                raise ValueError('overlap must be less than chunk_h')
-        else:
-            self._validate_positive_tile_value(self.tile)
-            self._validate_non_negative_overlap_value(self.overlap)
-        if self.mask_ratio == 0.0:
-            self.noise_std = 1.0
-            self.mask_noise_mode = 'replace'
-            self.seed = 12345
-            self.passes_batch = 4
-        return self
-
-
-class FbpickParams(BaseModel):
-    """Parameters for the fbpick analyzer."""
-
-    model_config = ConfigDict(extra='forbid')
-
-    amp: bool | None = None
-    use_amp: bool | None = None
-    overlap: int | tuple[int, int] | list[int] | None = None
-    tau: float | None = Field(default=None, ge=0.0)
-    tile: tuple[int, int] | list[int] | None = None
-    channel: str | int | None = None
-    tiles_per_batch: int | None = Field(default=None, ge=1)
-    model_id: str | None = None
-    offsets: list[float] | None = None
-
-    @model_validator(mode='after')
-    def _check_values(self) -> 'FbpickParams':
-        overlap = self.overlap
-        if overlap is not None:
-            if isinstance(overlap, int) and not isinstance(overlap, bool):
-                require_positive_int(overlap, 'overlap')
-            elif isinstance(overlap, (tuple, list)):
-                if len(overlap) != 2:
-                    raise ValueError(f'overlap must be a pair of ints, got {overlap!r}')
-                require_positive_int(overlap[0], 'overlap[0]')
-                require_positive_int(overlap[1], 'overlap[1]')
-            else:
-                raise ValueError(
-                    f'overlap must be int or pair of ints, got {overlap!r}'
-                )
-
-        tile = self.tile
-        if tile is not None:
-            if not isinstance(tile, (tuple, list)):
-                raise ValueError(f'tile must be a pair of ints, got {tile!r}')
-            if len(tile) != 2:
-                raise ValueError(f'tile must be a pair of ints, got {tile!r}')
-            require_positive_int(tile[0], 'tile[0]')
-            require_positive_int(tile[1], 'tile[1]')
-
-        model_id = self.model_id
-        if model_id is not None:
-            if Path(model_id).name != model_id:
-                raise ValueError('model_id must be a plain file name')
-            if not (model_id.startswith('fbpick_') and model_id.endswith('.pt')):
-                raise ValueError(
-                    "model_id must start with 'fbpick_' and end with '.pt'"
-                )
-        return self
-
-
-class PipelineOp(BaseModel):
-    """Specification for a single pipeline operation."""
-
-    kind: Literal['transform', 'analyzer']
-    name: TransformName | AnalyzerName
-    params: dict[str, Any] = Field(default_factory=dict)
-    label: str | None = None
-
-    @model_validator(mode='after')
-    def _validate_params(self) -> 'PipelineOp':
-        # name に応じて params をサブモデルで検証
-        if self.name == 'bandpass':
-            BandpassParams(**(self.params or {}))
-        if self.name == 'denoise':
-            self.params = DenoiseParams(**(self.params or {})).model_dump(
-                exclude_none=True
-            )
-        if self.name == 'fbpick':
-            self.params = FbpickParams(**(self.params or {})).model_dump(
-                exclude_none=True
-            )
-        return self
-
-
-class PipelineSpec(BaseModel):
-    """Sequence of pipeline operations."""
-
-    steps: list[PipelineOp]
-
-
-class PipelineSectionResponse(BaseModel):
-    """Response model for ``/pipeline/section``."""
-
-    taps: dict[str, Any]
-    pipeline_key: str
-
-
-class PipelineAllResponse(BaseModel):
-    """Response model for ``/pipeline/all``."""
-
-    job_id: str
-    state: str
-
-
-class PipelineJobStatusResponse(BaseModel):
-    """Response model for pipeline job status."""
-
-    state: str
-    progress: float
-    message: str
-
-
-class SnapOptions(BaseModel):
-    """Configuration for optional raw-waveform snap refinement."""
-
-    enabled: bool = False
-    mode: Literal['peak', 'trough', 'rise'] = 'peak'
-    refine: Literal['none', 'parabolic', 'zc'] = 'parabolic'
-    window_ms: float = 20.0
-
-
-class PickOptions(BaseModel):
-    """Configuration for predicted-pick generation from probability maps."""
-
-    method: Literal['expectation', 'argmax'] = 'expectation'
-    subsample: bool = False
-    sigma_ms_max: float | None = None
-    snap: SnapOptions = Field(default_factory=SnapOptions)
-
-
-class BatchApplyRequest(BaseModel):
-    """Request model for ``/batch/apply``."""
-
-    file_id: str
-    key1_byte: int = 189
-    key2_byte: int = 193
-    pipeline_spec: PipelineSpec
-    pick_options: PickOptions = Field(default_factory=PickOptions)
-    save_picks: bool = False
-
-
-class BatchApplyResponse(BaseModel):
-    """Response model for creating a batch apply job."""
-
-    job_id: str
-    state: str
-
-
-class BatchJobStatusResponse(BaseModel):
-    """Response model for batch job status."""
-
-    state: str
-    progress: float
-    message: str
-
-
-class BatchJobFile(BaseModel):
-    """One file entry generated by a batch job."""
-
-    name: str
-    size_bytes: int
-
-
-class BatchJobFilesResponse(BaseModel):
-    """Response model for batch job files listing."""
-
-    files: list[BatchJobFile]
-
-
-class StaticJobStatusResponse(BaseModel):
-    """Response model for static correction job status."""
-
-    state: str
-    progress: float
-    message: str
-
-
-class StaticJobFile(BaseModel):
-    """One file entry generated by a static correction job."""
-
-    name: str
-    size_bytes: int
-
-
-class StaticJobFilesResponse(BaseModel):
-    """Response model for static correction job files listing."""
-
-    files: list[StaticJobFile]
-
-
-class DatumStaticGeometryRequest(BaseModel):
-    """Geometry header configuration for datum static correction."""
-
-    source_elevation_byte: int = 45
-    receiver_elevation_byte: int = 41
-    elevation_scalar_byte: int = 69
-    source_depth_byte: int | None = None
-    elevation_unit: Literal['m', 'ft'] = 'm'
-
-
-class DatumStaticDatumRequest(BaseModel):
-    """Datum plane and replacement velocity parameters."""
-
-    mode: Literal['constant'] = 'constant'
-    elevation_m: float
-    replacement_velocity_m_s: float
-
-    @model_validator(mode='after')
-    def _check_values(self) -> 'DatumStaticDatumRequest':
-        if not math.isfinite(float(self.elevation_m)):
-            raise ValueError('datum.elevation_m must be finite')
-        velocity = float(self.replacement_velocity_m_s)
-        if not math.isfinite(velocity) or velocity <= 0.0:
-            raise ValueError('datum.replacement_velocity_m_s must be finite and > 0')
-        return self
-
-
-class DatumStaticExistingStaticsRequest(BaseModel):
-    """Existing static-header validation options."""
-
-    policy: Literal['fail_if_nonzero'] = 'fail_if_nonzero'
-    source_static_byte: int | None = 99
-    receiver_static_byte: int | None = 101
-    total_static_byte: int | None = 103
-
-
-class DatumStaticApplyOptions(BaseModel):
-    """Options for building the corrected TraceStore."""
-
-    interpolation: Literal['linear'] = 'linear'
-    fill_value: float = 0.0
-    max_abs_shift_ms: float = 250.0
-    output_dtype: Literal['float32'] = 'float32'
-    register_corrected_file: bool = True
-
-    @model_validator(mode='after')
-    def _check_values(self) -> 'DatumStaticApplyOptions':
-        if not math.isfinite(float(self.fill_value)):
-            raise ValueError('apply.fill_value must be finite')
-        max_abs_shift_ms = float(self.max_abs_shift_ms)
-        if not math.isfinite(max_abs_shift_ms) or max_abs_shift_ms <= 0.0:
-            raise ValueError('apply.max_abs_shift_ms must be finite and > 0')
-        if self.register_corrected_file is not True:
-            raise ValueError('apply.register_corrected_file must be true')
-        return self
-
-
-class DatumStaticApplyRequest(BaseModel):
-    """Request model for ``/statics/datum/apply``."""
-
-    file_id: str
-    key1_byte: int = 189
-    key2_byte: int = 193
-    geometry: DatumStaticGeometryRequest = Field(
-        default_factory=DatumStaticGeometryRequest
-    )
-    datum: DatumStaticDatumRequest
-    existing_statics: DatumStaticExistingStaticsRequest = Field(
-        default_factory=DatumStaticExistingStaticsRequest,
-    )
-    apply: DatumStaticApplyOptions = Field(default_factory=DatumStaticApplyOptions)
-
-
-class DatumStaticApplyResponse(BaseModel):
-    """Response model for creating a datum static apply job."""
-
-    job_id: str
-    state: str
-
-
-def _validate_artifact_basename(name: str, field_name: str) -> str:
-    if not name:
-        raise ValueError(f'{field_name} must be a non-empty file name')
-    if name in {'.', '..'}:
-        raise ValueError(f'{field_name} must be a plain file name')
-    if Path(name).name != name:
-        raise ValueError(f'{field_name} must be a plain file name')
-    return name
-
-
-def require_trace_header_byte(value: object, name: str) -> int:
-    if isinstance(value, bool):
-        raise ValueError(f'{name} must be an integer SEG-Y trace header byte')
-    if not isinstance(value, int):
-        raise ValueError(f'{name} must be an integer SEG-Y trace header byte')
-    if value < 1 or value > 240:
-        raise ValueError(f'{name} must be in the range 1..240')
-    return value
-
-
-def _require_positive_int(value: object, name: str) -> int:
-    if isinstance(value, bool):
-        raise ValueError(f'{name} must be a positive integer')
-    if not isinstance(value, int):
-        raise ValueError(f'{name} must be a positive integer')
-    if value <= 0:
-        raise ValueError(f'{name} must be a positive integer')
-    return value
-
-
-def _require_bool(value: object, name: str) -> bool:
-    if not isinstance(value, bool):
-        raise ValueError(f'{name} must be a bool')
-    return value
-
-
-def _require_finite_float(value: object, name: str) -> float:
-    if isinstance(value, bool):
-        raise ValueError(f'{name} must be finite')
-    try:
-        out = float(value)
-    except (TypeError, ValueError) as exc:
-        raise ValueError(f'{name} must be finite') from exc
-    if not math.isfinite(out):
-        raise ValueError(f'{name} must be finite')
-    return out
-
-
-def _require_nonnegative_finite_float(value: object, name: str) -> float:
-    out = _require_finite_float(value, name)
-    if out < 0.0:
-        raise ValueError(f'{name} must be finite and >= 0')
-    return out
-
-
-def _require_positive_finite_float(value: object, name: str) -> float:
-    out = _require_finite_float(value, name)
-    if out <= 0.0:
-        raise ValueError(f'{name} must be finite and > 0')
-    return out
-
-
-def _velocity_values_match(left: float, right: float) -> bool:
-    return math.isclose(float(left), float(right), rel_tol=1.0e-9, abs_tol=1.0e-9)
-
-
-class StaticLinkageGeometryRequest(BaseModel):
-    """Geometry header configuration for static linkage."""
-
-    model_config = ConfigDict(extra='forbid')
-
-    source_id_byte: int = 9
-    receiver_id_byte: int = 13
-    source_x_byte: int = 73
-    source_y_byte: int = 77
-    receiver_x_byte: int = 81
-    receiver_y_byte: int = 85
-    source_elevation_byte: int = 45
-    receiver_elevation_byte: int = 41
-    source_depth_byte: int | None = None
-    coordinate_scalar_byte: int = 71
-    elevation_scalar_byte: int = 69
-    coordinate_unit: Literal['m', 'ft'] = 'm'
-    elevation_unit: Literal['m', 'ft'] = 'm'
-
-    @field_validator(
-        'source_id_byte',
-        'receiver_id_byte',
-        'source_x_byte',
-        'source_y_byte',
-        'receiver_x_byte',
-        'receiver_y_byte',
-        'source_elevation_byte',
-        'receiver_elevation_byte',
-        'coordinate_scalar_byte',
-        'elevation_scalar_byte',
-        mode='before',
-    )
-    @classmethod
-    def _check_header_byte(cls, value: object, info: Any) -> int:
-        return require_trace_header_byte(value, info.field_name)
-
-    @field_validator('source_depth_byte', mode='before')
-    @classmethod
-    def _check_optional_header_byte(cls, value: object) -> int | None:
-        if value is None:
-            return None
-        return require_trace_header_byte(value, 'source_depth_byte')
-
-    @model_validator(mode='after')
-    def _check_unique_headers(self) -> 'StaticLinkageGeometryRequest':
-        header_bytes = (
-            self.source_x_byte,
-            self.source_y_byte,
-            self.receiver_x_byte,
-            self.receiver_y_byte,
-            self.coordinate_scalar_byte,
-        )
-        if len(set(header_bytes)) != len(header_bytes):
-            raise ValueError('geometry header bytes must be unique')
-        if self.source_id_byte == self.receiver_id_byte:
-            raise ValueError('source_id_byte and receiver_id_byte must differ')
-        return self
-
-
-class StaticLinkageOptionsRequest(BaseModel):
-    """Linkage options for static linkage geometry building."""
-
-    model_config = ConfigDict(extra='forbid')
-
-    mode: Literal['none', 'auto_threshold']
-    threshold_m: float | None = None
-    receiver_location_interval_m: float | None = None
-    prefer_receiver_anchor: bool = True
-
-    @field_validator('threshold_m', mode='before')
-    @classmethod
-    def _check_threshold_m(cls, value: object) -> float | None:
-        if value is None:
-            return None
-        return _require_positive_finite_float(value, 'linkage.threshold_m')
-
-    @field_validator('receiver_location_interval_m', mode='before')
-    @classmethod
-    def _check_receiver_location_interval_m(cls, value: object) -> float | None:
-        if value is None:
-            return None
-        return _require_positive_finite_float(
-            value,
-            'linkage.receiver_location_interval_m',
-        )
-
-    @field_validator('prefer_receiver_anchor', mode='before')
-    @classmethod
-    def _check_prefer_receiver_anchor(cls, value: object) -> bool:
-        return _require_bool(value, 'linkage.prefer_receiver_anchor')
-
-    @model_validator(mode='after')
-    def _check_mode_options(self) -> 'StaticLinkageOptionsRequest':
-        if self.mode == 'auto_threshold' and self.threshold_m is None:
-            raise ValueError('linkage.threshold_m is required for auto_threshold')
-        if self.mode == 'none':
-            if self.threshold_m is not None:
-                raise ValueError('linkage.threshold_m must be null for none mode')
-            if self.receiver_location_interval_m is not None:
-                raise ValueError(
-                    'linkage.receiver_location_interval_m must be null for none mode'
-                )
-        return self
-
-
-class StaticLinkageBuildRequest(BaseModel):
-    """Request model for future ``/statics/linkage/build`` jobs."""
-
-    model_config = ConfigDict(extra='forbid')
-
-    file_id: str
-    key1_byte: int = 189
-    key2_byte: int = 193
-    geometry: StaticLinkageGeometryRequest = Field(
-        default_factory=StaticLinkageGeometryRequest,
-    )
-    linkage: StaticLinkageOptionsRequest
-
-    @field_validator('file_id', mode='before')
-    @classmethod
-    def _check_file_id(cls, value: object) -> str:
-        if not isinstance(value, str) or not value:
-            raise ValueError('file_id must be a non-empty string')
-        return value
-
-    @field_validator('key1_byte', 'key2_byte', mode='before')
-    @classmethod
-    def _check_key_header_byte(cls, value: object, info: Any) -> int:
-        return require_trace_header_byte(value, info.field_name)
-
-
-class StaticLinkageBuildResponse(BaseModel):
-    """Response model for creating a static linkage build job."""
-
-    model_config = ConfigDict(extra='forbid')
-
-    job_id: str
-    state: str
-
-
-class FirstBreakQcDatumSolutionRequest(BaseModel):
-    """Datum static solution artifact reference for first-break QC."""
-
-    job_id: str
-    name: str = 'datum_static_solution.npz'
-
-    @model_validator(mode='after')
-    def _check_values(self) -> 'FirstBreakQcDatumSolutionRequest':
-        if not self.job_id:
-            raise ValueError('datum_solution.job_id must be a non-empty string')
-        _validate_artifact_basename(self.name, 'datum_solution.name')
-        return self
-
-
-class FirstBreakQcPickSourceRequest(BaseModel):
-    """First-break pick source reference for first-break QC."""
-
-    kind: Literal['batch_job_artifact', 'manual_npz_artifact', 'manual_memmap']
-    job_id: str | None = None
-    name: str | None = None
-
-    @model_validator(mode='after')
-    def _check_ref(self) -> 'FirstBreakQcPickSourceRequest':
-        if self.kind in {'batch_job_artifact', 'manual_npz_artifact'}:
-            if not self.job_id:
-                raise ValueError('pick_source.job_id is required for artifact sources')
-            if not self.name:
-                raise ValueError('pick_source.name is required for artifact sources')
-            _validate_artifact_basename(self.name, 'pick_source.name')
-            return self
-
-        if self.job_id is not None or self.name is not None:
-            raise ValueError('pick_source.job_id/name must be omitted for manual_memmap')
-        return self
-
-
-class FirstBreakQcOffsetRequest(BaseModel):
-    """Offset header configuration for first-break QC."""
-
-    offset_byte: int = 37
-
-    @model_validator(mode='after')
-    def _check_values(self) -> 'FirstBreakQcOffsetRequest':
-        require_positive_int(self.offset_byte, 'offset.offset_byte')
-        return self
-
-
-class FirstBreakQcOptionsRequest(BaseModel):
-    """QC options for first-break QC."""
-
-    require_linear_offset_model: bool = False
-
-
-class FirstBreakQcRequest(BaseModel):
-    """Request model for ``/statics/first-break/qc``."""
-
-    file_id: str
-    key1_byte: int = 189
-    key2_byte: int = 193
-    datum_solution: FirstBreakQcDatumSolutionRequest
-    pick_source: FirstBreakQcPickSourceRequest
-    offset: FirstBreakQcOffsetRequest = Field(default_factory=FirstBreakQcOffsetRequest)
-    qc: FirstBreakQcOptionsRequest = Field(default_factory=FirstBreakQcOptionsRequest)
-
-    @model_validator(mode='after')
-    def _check_values(self) -> 'FirstBreakQcRequest':
-        if not self.file_id:
-            raise ValueError('file_id must be a non-empty string')
-        require_positive_int(self.key1_byte, 'key1_byte')
-        require_positive_int(self.key2_byte, 'key2_byte')
-        return self
-
-
-class FirstBreakQcJobResponse(BaseModel):
-    """Response model for creating a first-break QC job."""
-
-    job_id: str
-    state: str
 
 
 class ResidualStaticDatumSolutionRequest(BaseModel):
