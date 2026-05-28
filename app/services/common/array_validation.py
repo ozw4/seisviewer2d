@@ -113,16 +113,20 @@ def coerce_1d_string_array(
     name: str,
     expected_shape: tuple[int, ...] | None = None,
     reject_object_dtype: bool = True,
+    allow_non_string_dtype: bool = False,
+    output_dtype: object = str,
     error_type: type[Exception] = ValueError,
 ) -> np.ndarray:
     arr = _as_1d_array(values, name=name, expected_shape=expected_shape, error_type=error_type)
+    if allow_non_string_dtype:
+        return np.ascontiguousarray(arr.astype(output_dtype, copy=False))
     if arr.dtype == object:
         if reject_object_dtype:
             _raise(f'{name} must not have object dtype', error_type)
-        return np.ascontiguousarray(arr.astype(str))
+        return np.ascontiguousarray(arr.astype(output_dtype))
     if arr.dtype.kind not in {'U', 'S'}:
         _raise(f'{name} must have string dtype', error_type)
-    return np.ascontiguousarray(arr.astype(str, copy=False))
+    return np.ascontiguousarray(arr.astype(output_dtype, copy=False))
 
 
 def coerce_positive_int(

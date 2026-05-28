@@ -9,6 +9,10 @@ from typing import Any, Literal, cast
 
 import numpy as np
 
+from app.services.common.array_validation import (
+    coerce_1d_integer_int64 as _coerce_1d_integer_int64,
+    coerce_1d_string_array as _coerce_1d_string_array,
+)
 from app.services.refraction_static_types import (
     REFRACTION_FIELD_CORRECTION_COMPONENT_NAMES,
     RefractionManualStaticResult,
@@ -507,10 +511,12 @@ def _coerce_optional_endpoint_ids(
 
 
 def _coerce_1d_string(values: object, *, name: str) -> np.ndarray:
-    arr = np.asarray(values)
-    if arr.ndim != 1:
-        raise ValueError(f'{name} must be one-dimensional')
-    return np.ascontiguousarray(arr.astype(object, copy=False), dtype=object)
+    return _coerce_1d_string_array(
+        values,
+        name=name,
+        allow_non_string_dtype=True,
+        output_dtype=object,
+    )
 
 
 def _coerce_1d_integer(
@@ -519,12 +525,12 @@ def _coerce_1d_integer(
     name: str,
     expected_shape: tuple[int, ...],
 ) -> np.ndarray:
-    arr = np.asarray(values)
-    if arr.ndim != 1 or arr.shape != expected_shape:
-        raise ValueError(f'{name} shape mismatch: expected {expected_shape}, got {arr.shape}')
-    if np.issubdtype(arr.dtype, np.bool_) or not np.issubdtype(arr.dtype, np.integer):
-        raise ValueError(f'{name} must have an integer dtype')
-    return np.ascontiguousarray(arr, dtype=np.int64)
+    return _coerce_1d_integer_int64(
+        values,
+        name=name,
+        expected_shape=expected_shape,
+        allow_integer_like_float=False,
+    )
 
 
 def _optional_str(value: object) -> str | None:

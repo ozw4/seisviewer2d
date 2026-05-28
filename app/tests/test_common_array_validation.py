@@ -176,6 +176,18 @@ def test_string_array_coercion_can_allow_object_dtype() -> None:
     np.testing.assert_array_equal(out, np.array(['source', 'receiver']))
 
 
+def test_string_array_coercion_can_cast_non_string_dtype() -> None:
+    out = coerce_1d_string_array(
+        [1, 2],
+        name='endpoint_key',
+        allow_non_string_dtype=True,
+        output_dtype=object,
+    )
+
+    assert out.dtype == object
+    np.testing.assert_array_equal(out, np.array([1, 2], dtype=object))
+
+
 def test_custom_error_type_is_used() -> None:
     with pytest.raises(CustomValidationError, match='values must be a 1D array'):
         coerce_1d_real_numeric_float64(

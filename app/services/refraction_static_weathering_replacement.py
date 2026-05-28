@@ -12,6 +12,13 @@ import numpy as np
 from app.contracts.statics.refraction.options import RefractionStaticApplyOptions
 from app.contracts.statics.refraction.apply import RefractionStaticApplyRequest
 from app.core.state import AppState
+from app.services.common.array_validation import (
+    coerce_1d_bool_array as _coerce_1d_bool_array,
+    coerce_1d_integer_int64 as _coerce_1d_integer_int64,
+    coerce_1d_real_numeric_float64 as _coerce_1d_real_numeric_float64,
+    coerce_1d_string_array as _coerce_1d_string_array,
+    coerce_finite_float as _coerce_finite_float,
+)
 from app.services.common.artifact_io import write_csv_atomic, write_json_atomic
 from app.services.refraction_static_first_layer import (
     validate_resolved_first_layer_velocity_match,
@@ -1590,25 +1597,6 @@ def _required(owner: object, field: str) -> object:
     return value
 
 
-def _coerce_float_array(
-    values: object,
-    *,
-    name: str,
-    allow_nonfinite: bool = False,
-) -> np.ndarray:
-    arr = np.asarray(values)
-    if np.issubdtype(arr.dtype, np.bool_) or not _is_real_numeric_dtype(arr.dtype):
-        raise RefractionWeatheringReplacementStaticsError(
-            f'{name} must have a real numeric dtype'
-        )
-    out = np.ascontiguousarray(arr, dtype=np.float64)
-    if not allow_nonfinite and np.any(~np.isfinite(out)):
-        raise RefractionWeatheringReplacementStaticsError(
-            f'{name} must contain only finite values'
-        )
-    return out
-
-
 def _coerce_1d_float(
     values: object,
     *,
@@ -1616,14 +1604,13 @@ def _coerce_1d_float(
     expected_shape: tuple[int, ...] | None = None,
     allow_nonfinite: bool = False,
 ) -> np.ndarray:
-    arr = _coerce_float_array(values, name=name, allow_nonfinite=allow_nonfinite)
-    if arr.ndim != 1:
-        raise RefractionWeatheringReplacementStaticsError(f'{name} must be a 1D array')
-    if expected_shape is not None and arr.shape != expected_shape:
-        raise RefractionWeatheringReplacementStaticsError(
-            f'{name} shape mismatch: expected {expected_shape}, got {arr.shape}'
-        )
-    return arr
+    return _coerce_1d_real_numeric_float64(
+        values,
+        name=name,
+        expected_shape=expected_shape,
+        allow_nonfinite=allow_nonfinite,
+        error_type=RefractionWeatheringReplacementStaticsError,
+    )
 
 
 def _optional_1d_float(
@@ -1651,33 +1638,13 @@ def _coerce_1d_integer(
     name: str,
     expected_shape: tuple[int, ...] | None = None,
 ) -> np.ndarray:
-    arr = np.asarray(values)
-    if arr.ndim != 1:
-        raise RefractionWeatheringReplacementStaticsError(f'{name} must be a 1D array')
-    if expected_shape is not None and arr.shape != expected_shape:
-        raise RefractionWeatheringReplacementStaticsError(
-            f'{name} shape mismatch: expected {expected_shape}, got {arr.shape}'
-        )
-    if np.issubdtype(arr.dtype, np.bool_):
-        raise RefractionWeatheringReplacementStaticsError(
-            f'{name} must contain integer values'
-        )
-    if np.issubdtype(arr.dtype, np.integer):
-        return np.ascontiguousarray(arr, dtype=np.int64)
-    if not _is_real_numeric_dtype(arr.dtype):
-        raise RefractionWeatheringReplacementStaticsError(
-            f'{name} must contain integer values'
-        )
-    arr_f64 = arr.astype(np.float64, copy=False)
-    if np.any(~np.isfinite(arr_f64)):
-        raise RefractionWeatheringReplacementStaticsError(
-            f'{name} must contain finite values'
-        )
-    if not np.all(arr_f64 == np.rint(arr_f64)):
-        raise RefractionWeatheringReplacementStaticsError(
-            f'{name} must contain integer values'
-        )
-    return np.ascontiguousarray(arr_f64, dtype=np.int64)
+    return _coerce_1d_integer_int64(
+        values,
+        name=name,
+        expected_shape=expected_shape,
+        nonfinite_message='must contain finite values',
+        error_type=RefractionWeatheringReplacementStaticsError,
+    )
 
 
 def _optional_1d_integer(
@@ -1699,16 +1666,12 @@ def _coerce_1d_bool(
     name: str,
     expected_shape: tuple[int, ...] | None = None,
 ) -> np.ndarray:
-    arr = np.asarray(values)
-    if arr.ndim != 1:
-        raise RefractionWeatheringReplacementStaticsError(f'{name} must be a 1D array')
-    if expected_shape is not None and arr.shape != expected_shape:
-        raise RefractionWeatheringReplacementStaticsError(
-            f'{name} shape mismatch: expected {expected_shape}, got {arr.shape}'
-        )
-    if arr.dtype != np.bool_:
-        raise RefractionWeatheringReplacementStaticsError(f'{name} must have bool dtype')
-    return np.ascontiguousarray(arr, dtype=bool)
+    return _coerce_1d_bool_array(
+        values,
+        name=name,
+        expected_shape=expected_shape,
+        error_type=RefractionWeatheringReplacementStaticsError,
+    )
 
 
 def _coerce_1d_string(
@@ -1718,14 +1681,14 @@ def _coerce_1d_string(
     expected_shape: tuple[int, ...] | None = None,
     dtype: object = _ENDPOINT_KEY_DTYPE,
 ) -> np.ndarray:
-    arr = np.asarray(values)
-    if arr.ndim != 1:
-        raise RefractionWeatheringReplacementStaticsError(f'{name} must be a 1D array')
-    if expected_shape is not None and arr.shape != expected_shape:
-        raise RefractionWeatheringReplacementStaticsError(
-            f'{name} shape mismatch: expected {expected_shape}, got {arr.shape}'
-        )
-    return np.ascontiguousarray(arr.astype(dtype, copy=False))
+    return _coerce_1d_string_array(
+        values,
+        name=name,
+        expected_shape=expected_shape,
+        allow_non_string_dtype=True,
+        output_dtype=dtype,
+        error_type=RefractionWeatheringReplacementStaticsError,
+    )
 
 
 def _optional_1d_string(
@@ -1752,12 +1715,11 @@ def _positive_finite(value: object, *, name: str) -> float:
         raise RefractionWeatheringReplacementStaticsError(
             f'{name} must be finite and positive'
         )
-    try:
-        out = float(value)
-    except (TypeError, ValueError) as exc:
-        raise RefractionWeatheringReplacementStaticsError(
-            f'{name} must be finite and positive'
-        ) from exc
+    out = _coerce_finite_float(
+        value,
+        name=name,
+        error_type=RefractionWeatheringReplacementStaticsError,
+    )
     if not np.isfinite(out):
         raise RefractionWeatheringReplacementStaticsError(f'{name} must be finite')
     if out <= 0.0:
@@ -1960,13 +1922,6 @@ def _csv_float(value: object) -> str | float:
 
 def _assert_json_safe(payload: dict[str, Any]) -> None:
     json.dumps(payload, allow_nan=False)
-
-
-def _is_real_numeric_dtype(dtype: np.dtype) -> bool:
-    return np.issubdtype(dtype, np.number) and not np.issubdtype(
-        dtype,
-        np.complexfloating,
-    )
 
 
 __all__ = [

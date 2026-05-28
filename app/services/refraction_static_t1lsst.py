@@ -8,6 +8,9 @@ from typing import Any
 
 import numpy as np
 
+from app.services.common.array_validation import (
+    coerce_finite_float as _coerce_finite_float,
+)
 from app.services.common.artifact_io import write_csv_atomic
 from app.services.refraction_static_status import (
     classify_refraction_endpoint_static_status,
@@ -852,13 +855,17 @@ def _validate_3layer_velocity_order(
 
 
 def _positive_finite(value: object, *, name: str) -> float:
-    if isinstance(value, bool):
+    if isinstance(value, (bool, np.bool_)):
         raise RefractionT1LSSTError(f'{name} must be finite and positive')
     try:
-        out = float(value)
-    except (TypeError, ValueError) as exc:
+        out = _coerce_finite_float(
+            value,
+            name=name,
+            error_type=RefractionT1LSSTError,
+        )
+    except RefractionT1LSSTError as exc:
         raise RefractionT1LSSTError(f'{name} must be finite and positive') from exc
-    if not np.isfinite(out) or out <= 0.0:
+    if out <= 0.0:
         raise RefractionT1LSSTError(f'{name} must be finite and positive')
     return out
 
