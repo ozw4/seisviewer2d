@@ -10,7 +10,7 @@ from typing import Any
 
 import numpy as np
 
-from app.api.schemas import ResidualStaticApplyRequest
+from app.contracts.statics.residual import ResidualStaticApplyRequest
 from app.core.state import AppState
 from app.services.first_break_qc_inputs import (
     load_datum_static_solution_npz,

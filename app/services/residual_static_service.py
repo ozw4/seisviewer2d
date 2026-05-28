@@ -11,7 +11,7 @@ from uuid import uuid4
 
 import numpy as np
 
-from app.api.schemas import ResidualStaticApplyRequest
+from app.contracts.statics.residual import ResidualStaticApplyRequest
 from app.core.state import AppState
 from app.services.job_runner import (
     JobCancelledError,

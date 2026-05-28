@@ -10,7 +10,7 @@ from typing import Any
 
 import numpy as np
 
-from app.api.schemas import RefractionStaticGatherPreviewRequest
+from app.contracts.statics.refraction.gather_preview import RefractionStaticGatherPreviewRequest
 from app.core.state import AppState
 from app.services.job_manager import JobManager
 from app.services.reader import coerce_section_f32, get_reader

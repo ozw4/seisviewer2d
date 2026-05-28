@@ -8,7 +8,7 @@ import math
 from pathlib import Path
 from typing import Any
 
-from app.api.schemas import RefractionStaticQcDrilldownRequest
+from app.contracts.statics.refraction.qc import RefractionStaticQcDrilldownRequest
 from app.services.job_manager import JobManager
 from app.services.refraction_static_artifacts import (
     REFRACTION_FIRST_BREAK_FIT_QC_CSV_NAME,

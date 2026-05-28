@@ -106,6 +106,24 @@ EXPECTED_SCHEMA_EXPORTS = [
     'RefractionStaticQcDrilldownRequest',
     'RefractionStaticQcDrilldownObservations',
     'RefractionStaticQcDrilldownResponse',
+    'RefractionStaticQcEndpointKind',
+    'RefractionStaticQcEndpointRecordKind',
+    'RefractionStaticQcEndpointSearchRecord',
+    'RefractionStaticQcEndpointSearchRequest',
+    'RefractionStaticQcEndpointSearchResponse',
+    'RefractionStaticQcEndpointSort',
+    'RefractionStaticQcEndpointStatusFilter',
+    'RefractionStaticPickMapData',
+    'RefractionStaticPickMapGeometryRequest',
+    'RefractionStaticPickMapRequest',
+    'RefractionStaticPickMapResponse',
+    'RefractionStaticStationStructureDepthField',
+    'RefractionStaticStationStructurePanel',
+    'RefractionStaticStationStructureRequest',
+    'RefractionStaticStationStructureResponse',
+    'RefractionStaticStationStructureSeries',
+    'RefractionStaticStationStructureVelocityField',
+    'RefractionStaticStationStructureXAxis',
     'RefractionStaticGatherPreviewRequest',
     'RefractionStaticGatherPreviewResponse',
     'RefractionStaticTableApplyRequest',
@@ -128,6 +146,12 @@ def test_schema_public_exports_remain_available() -> None:
     ]
 
     assert missing == []
+
+
+def test_schema_all_matches_public_exports() -> None:
+    schemas = __import__('app.api.schemas', fromlist=['__all__'])
+
+    assert list(schemas.__all__) == EXPECTED_SCHEMA_EXPORTS
 
 
 def test_schema_public_models_instantiate_from_legacy_import_path() -> None:

@@ -8,7 +8,7 @@ from typing import Any
 
 import numpy as np
 
-from app.api.schemas import RefractionStaticApplyRequest
+from app.contracts.statics.refraction.apply import RefractionStaticApplyRequest
 from app.services.refraction_static_artifacts.cell_velocity import (
     _cell_velocity_component,
     _layer_velocity_modes_for_request,

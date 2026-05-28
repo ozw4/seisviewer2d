@@ -10,11 +10,9 @@ from uuid import uuid4
 
 import numpy as np
 
-from app.api.schemas import (
-    RefractionStaticApplyRequest,
-    RefractionStaticModelRequest,
-    RefractionStaticSolverRequest,
-)
+from app.contracts.statics.refraction.apply import RefractionStaticApplyRequest
+from app.contracts.statics.refraction.model import RefractionStaticModelRequest
+from app.contracts.statics.refraction.options import RefractionStaticSolverRequest
 from app.core.state import AppState
 from app.services.refraction_static_design_matrix import (
     build_refraction_static_design_matrix,

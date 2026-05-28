@@ -11,7 +11,7 @@ from uuid import uuid4
 
 import numpy as np
 
-from app.api.schemas import RefractionStaticApplyRequest
+from app.contracts.statics.refraction.apply import RefractionStaticApplyRequest
 from app.core.state import AppState
 from app.services.refraction_static_bedrock import (
     estimate_global_bedrock_slowness_from_input_model,

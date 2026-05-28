@@ -7,7 +7,7 @@ from typing import Any, Callable, Literal
 
 import numpy as np
 
-from app.api.schemas import PipelineSpec
+from app.contracts.pipeline import PipelineSpec
 from app.core.state import AppState
 from app.services.errors import (
     ConflictError,

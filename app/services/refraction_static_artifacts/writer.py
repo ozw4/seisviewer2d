@@ -5,7 +5,7 @@ from __future__ import annotations
 from collections.abc import Iterable
 from pathlib import Path
 
-from app.api.schemas import RefractionStaticApplyRequest
+from app.contracts.statics.refraction.apply import RefractionStaticApplyRequest
 from app.services.refraction_static_design_matrix import (
     all_refraction_design_matrix_layer_artifact_names,
 )

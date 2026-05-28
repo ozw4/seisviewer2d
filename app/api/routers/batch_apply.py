@@ -9,7 +9,7 @@ from fastapi import APIRouter, HTTPException, Query, Request
 from fastapi.responses import FileResponse
 
 from app.api._helpers import get_state
-from app.api.schemas import (
+from app.contracts.batch import (
     BatchApplyRequest,
     BatchApplyResponse,
     BatchJobFilesResponse,

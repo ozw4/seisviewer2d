@@ -14,17 +14,27 @@ from fastapi.responses import FileResponse
 from pydantic import ValidationError
 
 from app.api._helpers import get_state
-from app.api.schemas import (
+from app.contracts.statics.datum import (
     DatumStaticApplyRequest,
     DatumStaticApplyResponse,
+)
+from app.contracts.statics.first_break_qc import (
     FirstBreakQcJobResponse,
     FirstBreakQcRequest,
+)
+from app.contracts.statics.refraction.apply import (
     RefractionStaticApplyRequest,
     RefractionStaticApplyResponse,
+)
+from app.contracts.statics.refraction.export import (
     RefractionStaticExportJobRequest,
     RefractionStaticExportJobResponse,
+)
+from app.contracts.statics.refraction.gather_preview import (
     RefractionStaticGatherPreviewRequest,
     RefractionStaticGatherPreviewResponse,
+)
+from app.contracts.statics.refraction.qc import (
     RefractionStaticStationStructureRequest,
     RefractionStaticStationStructureResponse,
     RefractionStaticQcBundleRequest,
@@ -35,14 +45,24 @@ from app.api.schemas import (
     RefractionStaticQcEndpointSearchResponse,
     RefractionStaticPickMapRequest,
     RefractionStaticPickMapResponse,
+)
+from app.contracts.statics.refraction.table_apply import (
     RefractionStaticTableApplyRequest,
     RefractionStaticTableApplyResponse,
+)
+from app.contracts.statics.residual import (
     ResidualStaticApplyRequest,
     ResidualStaticApplyResponse,
+)
+from app.contracts.statics.geometry_linkage import (
     StaticLinkageBuildRequest,
     StaticLinkageBuildResponse,
+)
+from app.contracts.statics.common import (
     StaticJobFilesResponse,
     StaticJobStatusResponse,
+)
+from app.contracts.statics.time_term import (
     TimeTermStaticApplyRequest,
     TimeTermStaticApplyResponse,
 )

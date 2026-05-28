@@ -8,7 +8,8 @@ from typing import Any, Literal
 import numpy as np
 from scipy import optimize, sparse
 
-from app.api.schemas import RefractionStaticModelRequest, RefractionStaticSolverRequest
+from app.contracts.statics.refraction.model import RefractionStaticModelRequest
+from app.contracts.statics.refraction.options import RefractionStaticSolverRequest
 from app.services.refraction_static_cell_regularization import (
     CellSlownessSmoothingRows,
     augment_design_matrix_with_cell_smoothing,

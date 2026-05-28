@@ -9,7 +9,7 @@ from typing import Any
 
 import numpy as np
 
-from app.api.schemas import TimeTermStaticApplyRequest
+from app.contracts.statics.time_term import TimeTermStaticApplyRequest
 from app.core.state import AppState
 from app.services.errors import DomainError
 from app.services.geometry_linkage_loader import (

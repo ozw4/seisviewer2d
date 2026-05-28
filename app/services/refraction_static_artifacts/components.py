@@ -8,7 +8,7 @@ from typing import Any
 
 import numpy as np
 
-from app.api.schemas import RefractionStaticApplyRequest
+from app.contracts.statics.refraction.apply import RefractionStaticApplyRequest
 from app.services.refraction_static_artifacts.contract import (
     _COMPONENT_COLUMNS,
     _STATIC_COMPONENT_QC_ENDPOINT_COLUMNS,

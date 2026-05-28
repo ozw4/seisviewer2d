@@ -10,7 +10,7 @@ from typing import Any
 
 import numpy as np
 
-from app.api.schemas import RefractionStaticStationStructureRequest
+from app.contracts.statics.refraction.qc import RefractionStaticStationStructureRequest
 from app.services.job_manager import JobManager
 from app.services.refraction_static_artifacts import (
     RECEIVER_STATIC_TABLE_CSV_NAME,

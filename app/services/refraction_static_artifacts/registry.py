@@ -6,7 +6,7 @@ from collections.abc import Iterable
 from pathlib import Path
 from typing import Any
 
-from app.api.schemas import RefractionStaticApplyRequest
+from app.contracts.statics.refraction.apply import RefractionStaticApplyRequest
 from app.services.refraction_static_layer_config import (
     normalize_refraction_static_layers,
 )

@@ -7,7 +7,7 @@ from typing import Any
 
 import numpy as np
 
-from app.api.schemas import RefractionStaticApplyRequest
+from app.contracts.statics.refraction.apply import RefractionStaticApplyRequest
 from app.services.refraction_static_cell_coordinates import (
     effective_refraction_cell_grid_config,
     refraction_cell_coordinate_metadata_from_config,

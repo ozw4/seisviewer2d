@@ -6,7 +6,7 @@ from pathlib import Path
 
 import numpy as np
 
-from app.api.schemas import RefractionStaticApplyRequest
+from app.contracts.statics.refraction.apply import RefractionStaticApplyRequest
 from app.services.refraction_static_types import (
     RefractionDatumStaticsResult,
     ResolvedRefractionFirstLayer,

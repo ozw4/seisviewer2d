@@ -11,7 +11,7 @@ from uuid import uuid4
 
 import numpy as np
 
-from app.api.schemas import FirstBreakQcRequest
+from app.contracts.statics.first_break_qc import FirstBreakQcRequest
 from app.core.state import AppState
 from app.services.first_break_qc_artifacts import (
     FIRST_BREAK_QC_CSV_NAME,

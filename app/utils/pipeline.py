@@ -6,7 +6,7 @@ from typing import Any
 
 import numpy as np
 
-from app.api.schemas import PipelineSpec
+from app.contracts.pipeline import PipelineSpec
 
 from .ops import ANALYZERS, TRANSFORMS
 
