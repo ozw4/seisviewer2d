@@ -3,12 +3,10 @@
 from __future__ import annotations
 
 import csv
-import json
 from dataclasses import dataclass
 from pathlib import Path
 import time
 from typing import Any
-from uuid import uuid4
 
 from app.contracts.statics.refraction.common import (
     REFRACTION_STATIC_DEFAULT_EXPORT_FORMATS,
@@ -20,6 +18,7 @@ from app.contracts.statics.refraction.export import (
     RefractionStaticExportRequest,
 )
 from app.core.state import AppState
+from app.services.common.artifact_io import write_csv_atomic, write_json_atomic
 from app.services.job_manager import JobManager
 from app.services.job_runner import JobCompletion, JobFailure, run_job_with_lifecycle
 from app.services.refraction_static_artifacts import (
@@ -276,8 +275,20 @@ def _run_refraction_static_export_job_body(
         progress=0.80,
         message='writing_refraction_static_export_request',
     )
-    _write_json_atomic(job_dir / REFRACTION_STATIC_EXPORT_JOB_META_JSON_NAME, payload)
-    _write_json_atomic(job_dir / REFRACTION_STATIC_EXPORT_REQUEST_JSON_NAME, payload)
+    write_json_atomic(
+        job_dir / REFRACTION_STATIC_EXPORT_JOB_META_JSON_NAME,
+        payload,
+        allow_nan=True,
+        ensure_ascii=True,
+        sort_keys=True,
+    )
+    write_json_atomic(
+        job_dir / REFRACTION_STATIC_EXPORT_REQUEST_JSON_NAME,
+        payload,
+        allow_nan=True,
+        ensure_ascii=True,
+        sort_keys=True,
+    )
     _set_job_progress_message(
         state,
         job_id,
@@ -590,22 +601,12 @@ def _write_canonical_static_table_csv(
     path: Path,
     rows: tuple[dict[str, str], ...],
 ) -> None:
-    target = Path(path)
-    target.parent.mkdir(parents=True, exist_ok=True)
-    tmp_path = target.with_name(f'{target.name}.{uuid4().hex}.tmp')
-    try:
-        with tmp_path.open('w', encoding='utf-8', newline='') as handle:
-            writer = csv.DictWriter(
-                handle,
-                fieldnames=list(_CANONICAL_STATIC_TABLE_COLUMNS),
-                lineterminator='\n',
-            )
-            writer.writeheader()
-            writer.writerows(rows)
-        tmp_path.replace(target)
-    except Exception:
-        tmp_path.unlink(missing_ok=True)
-        raise
+    write_csv_atomic(
+        Path(path),
+        columns=_CANONICAL_STATIC_TABLE_COLUMNS,
+        rows=rows,
+        lineterminator='\n',
+    )
 
 
 def _write_time_term_spreadsheet_export(
@@ -636,21 +637,16 @@ def _copy_first_break_time_export(
         source.source_artifacts_dir / REFRACTION_FIRST_BREAK_TIME_EXPORT_CSV_NAME
     )
     dest_path = job_dir / REFRACTION_FIRST_BREAK_TIME_EXPORT_CSV_NAME
-    dest_path.parent.mkdir(parents=True, exist_ok=True)
-    tmp_path = dest_path.with_name(f'{dest_path.name}.{uuid4().hex}.tmp')
-    try:
-        with source_path.open('r', encoding='utf-8', newline='') as handle:
-            reader = csv.DictReader(handle)
-            fieldnames = list(reader.fieldnames or [])
-            rows = list(reader)
-        with tmp_path.open('w', encoding='utf-8', newline='') as handle:
-            writer = csv.DictWriter(handle, fieldnames=fieldnames)
-            writer.writeheader()
-            writer.writerows(rows)
-        tmp_path.replace(dest_path)
-    except Exception:
-        tmp_path.unlink(missing_ok=True)
-        raise
+    with source_path.open('r', encoding='utf-8', newline='') as handle:
+        reader = csv.DictReader(handle)
+        fieldnames = list(reader.fieldnames or [])
+        rows = list(reader)
+    write_csv_atomic(
+        dest_path,
+        columns=fieldnames,
+        rows=rows,
+        lineterminator='\r\n',
+    )
 
 
 def _load_lsst_export_bundle(
@@ -810,20 +806,6 @@ def _set_job_progress_message(
             return
         state.jobs.set_progress(job_id, progress)
         state.jobs.set_message(job_id, message)
-
-
-def _write_json_atomic(path: Path, payload: dict[str, Any]) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    tmp_path = path.with_name(f'{path.name}.{uuid4().hex}.tmp')
-    try:
-        tmp_path.write_text(
-            json.dumps(payload, ensure_ascii=True, sort_keys=True),
-            encoding='utf-8',
-        )
-        tmp_path.replace(path)
-    except Exception:
-        tmp_path.unlink(missing_ok=True)
-        raise
 
 
 def _handle_refraction_static_export_job_error(_exc: Exception) -> JobFailure:

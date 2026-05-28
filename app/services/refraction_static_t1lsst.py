@@ -2,14 +2,13 @@
 
 from __future__ import annotations
 
-import csv
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
-from uuid import uuid4
 
 import numpy as np
 
+from app.services.common.artifact_io import write_csv_atomic
 from app.services.refraction_static_status import (
     classify_refraction_endpoint_static_status,
 )
@@ -542,7 +541,12 @@ def write_refraction_t1lsst_1layer_components_csv(
 ) -> None:
     """Write the T1LSST-compatible one-layer component CSV artifact."""
     rows = compose_t1lsst_1layer_static_table_components(result)
-    _write_csv_atomic(Path(path), rows, _T1LSST_COMPONENT_COLUMNS)
+    write_csv_atomic(
+        Path(path),
+        columns=_T1LSST_COMPONENT_COLUMNS,
+        rows=rows,
+        lineterminator='\r\n',
+    )
 
 
 def _endpoint_row(
@@ -895,24 +899,6 @@ def _csv_ms(value_s: object) -> str | float:
     if not np.isfinite(out):
         return ''
     return float(out * 1000.0)
-
-
-def _write_csv_atomic(
-    path: Path,
-    rows: list[dict[str, Any]],
-    columns: tuple[str, ...],
-) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    tmp_path = path.with_name(f'{path.name}.{uuid4().hex}.tmp')
-    try:
-        with tmp_path.open('w', encoding='utf-8', newline='') as handle:
-            writer = csv.DictWriter(handle, fieldnames=list(columns))
-            writer.writeheader()
-            writer.writerows(rows)
-        tmp_path.replace(path)
-    except Exception:
-        tmp_path.unlink(missing_ok=True)
-        raise
 
 
 __all__ = [

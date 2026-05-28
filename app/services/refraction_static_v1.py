@@ -2,15 +2,14 @@
 
 from __future__ import annotations
 
-import csv
 from dataclasses import dataclass
 import json
 from pathlib import Path
 from typing import Any, Literal
-from uuid import uuid4
 
 import numpy as np
 
+from app.services.common.artifact_io import write_csv_atomic, write_json_atomic
 from app.services.refraction_static_types import RefractionStaticInputModel
 
 REFRACTION_V1_QC_JSON_NAME = 'refraction_v1_qc.json'
@@ -271,8 +270,21 @@ def write_refraction_v1_artifacts(
     root.mkdir(parents=True, exist_ok=True)
     qc_path = root / REFRACTION_V1_QC_JSON_NAME
     csv_path = root / REFRACTION_V1_ESTIMATES_CSV_NAME
-    _write_json_atomic(qc_path, result.qc)
-    _write_csv_atomic(csv_path, _CSV_COLUMNS, _estimate_rows(result))
+    _assert_strict_json(result.qc, artifact_name=qc_path.name)
+    write_json_atomic(
+        qc_path,
+        result.qc,
+        allow_nan=True,
+        ensure_ascii=True,
+        sort_keys=True,
+    )
+    write_csv_atomic(
+        csv_path,
+        columns=_CSV_COLUMNS,
+        rows=_estimate_rows(result),
+        extrasaction='raise',
+        lineterminator='\r\n',
+    )
     return {
         'qc_json': qc_path,
         'estimates_csv': csv_path,
@@ -582,39 +594,6 @@ def _csv_float(value: object) -> str:
     if not np.isfinite(number):
         return ''
     return f'{number:.10g}'
-
-
-def _write_json_atomic(path: Path, payload: dict[str, Any]) -> None:
-    _assert_strict_json(payload, artifact_name=path.name)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    tmp_path = path.with_name(f'{path.name}.{uuid4().hex}.tmp')
-    try:
-        tmp_path.write_text(
-            json.dumps(payload, ensure_ascii=True, sort_keys=True),
-            encoding='utf-8',
-        )
-        tmp_path.replace(path)
-    except Exception:
-        tmp_path.unlink(missing_ok=True)
-        raise
-
-
-def _write_csv_atomic(
-    path: Path,
-    columns: tuple[str, ...],
-    rows: list[dict[str, object]],
-) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    tmp_path = path.with_name(f'{path.name}.{uuid4().hex}.tmp')
-    try:
-        with tmp_path.open('w', newline='', encoding='utf-8') as handle:
-            writer = csv.DictWriter(handle, fieldnames=columns, extrasaction='raise')
-            writer.writeheader()
-            writer.writerows(rows)
-        tmp_path.replace(path)
-    except Exception:
-        tmp_path.unlink(missing_ok=True)
-        raise
 
 
 def _assert_strict_json(payload: dict[str, Any], *, artifact_name: str) -> None:

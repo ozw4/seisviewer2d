@@ -2,11 +2,9 @@
 
 from __future__ import annotations
 
-import csv
 import json
 from pathlib import Path
 from typing import Any
-from uuid import uuid4
 
 import numpy as np
 
@@ -14,6 +12,7 @@ from app.contracts.statics.refraction.apply import RefractionStaticApplyRequest
 from app.contracts.statics.refraction.model import RefractionStaticModelRequest
 from app.contracts.statics.refraction.options import RefractionStaticSolverRequest
 from app.core.state import AppState
+from app.services.common.artifact_io import write_csv_atomic, write_json_atomic
 from app.services.refraction_static_design_matrix import (
     build_refraction_static_design_matrix,
     write_refraction_design_matrix_diagnostics_artifacts,
@@ -142,8 +141,19 @@ def write_refraction_bedrock_debug_artifacts(
     root.mkdir(parents=True, exist_ok=True)
     qc_path = root / REFRACTION_BEDROCK_QC_JSON_NAME
     residuals_path = root / REFRACTION_BEDROCK_RESIDUALS_CSV_NAME
-    _write_json_atomic(qc_path, result.qc)
-    _write_csv_atomic(residuals_path, _residual_rows(result))
+    write_json_atomic(
+        qc_path,
+        result.qc,
+        allow_nan=False,
+        ensure_ascii=True,
+        sort_keys=True,
+    )
+    write_csv_atomic(
+        residuals_path,
+        columns=_RESIDUAL_COLUMNS,
+        rows=_residual_rows(result),
+        lineterminator='\r\n',
+    )
     return {
         'qc_json': qc_path,
         'residuals_csv': residuals_path,
@@ -574,37 +584,6 @@ def _residual_rows(
             }
         )
     return rows
-
-
-def _write_json_atomic(path: Path, payload: dict[str, Any]) -> None:
-    tmp_path = path.with_name(f'{path.name}.{uuid4().hex}.tmp')
-    try:
-        tmp_path.write_text(
-            json.dumps(
-                payload,
-                allow_nan=False,
-                ensure_ascii=True,
-                sort_keys=True,
-            ),
-            encoding='utf-8',
-        )
-        tmp_path.replace(path)
-    except Exception:
-        tmp_path.unlink(missing_ok=True)
-        raise
-
-
-def _write_csv_atomic(path: Path, rows: list[dict[str, Any]]) -> None:
-    tmp_path = path.with_name(f'{path.name}.{uuid4().hex}.tmp')
-    try:
-        with tmp_path.open('w', encoding='utf-8', newline='') as handle:
-            writer = csv.DictWriter(handle, fieldnames=list(_RESIDUAL_COLUMNS))
-            writer.writeheader()
-            writer.writerows(rows)
-        tmp_path.replace(path)
-    except Exception:
-        tmp_path.unlink(missing_ok=True)
-        raise
 
 
 def _assert_json_safe(payload: dict[str, Any]) -> None:

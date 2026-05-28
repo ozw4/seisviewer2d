@@ -2,17 +2,16 @@
 
 from __future__ import annotations
 
-import csv
 import json
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any, Literal
-from uuid import uuid4
 
 import numpy as np
 from scipy import sparse
 
 from app.contracts.statics.refraction.model import RefractionStaticModelRequest
+from app.services.common.artifact_io import write_csv_atomic, write_json_atomic
 from app.services.refraction_static_cell_coordinates import (
     effective_refraction_cell_grid_config,
     project_refraction_cell_coordinates,
@@ -1021,11 +1020,21 @@ def write_refraction_design_matrix_diagnostics_artifacts(
         n_active_nodes=int(design_matrix.active_node_id.shape[0]),
         node_diagnostics=node_diagnostics,
     )
-    _write_json_atomic(qc_path, qc)
-    _write_csv_atomic(
+    write_json_atomic(
+        qc_path,
+        qc,
+        allow_nan=False,
+        ensure_ascii=True,
+        indent=2,
+        sort_keys=True,
+        trailing_newline=True,
+    )
+    write_csv_atomic(
         csv_path,
-        _NODE_DIAGNOSTIC_COLUMNS,
-        [_node_diagnostic_csv_row(item) for item in node_diagnostics],
+        columns=_NODE_DIAGNOSTIC_COLUMNS,
+        rows=[_node_diagnostic_csv_row(item) for item in node_diagnostics],
+        extrasaction='raise',
+        lineterminator='\r\n',
     )
     return {'qc_json': qc_path, 'node_diagnostics_csv': csv_path}
 
@@ -1153,43 +1162,6 @@ def _node_diagnostic_csv_row(
         separators=(',', ':'),
     )
     return payload
-
-
-def _write_json_atomic(path: Path, payload: dict[str, Any]) -> None:
-    json.dumps(payload, allow_nan=False)
-    tmp_path = path.with_name(f'{path.name}.{uuid4().hex}.tmp')
-    try:
-        with tmp_path.open('w', encoding='utf-8') as handle:
-            json.dump(
-                payload,
-                handle,
-                allow_nan=False,
-                ensure_ascii=True,
-                indent=2,
-                sort_keys=True,
-            )
-            handle.write('\n')
-        tmp_path.replace(path)
-    except Exception:
-        tmp_path.unlink(missing_ok=True)
-        raise
-
-
-def _write_csv_atomic(
-    path: Path,
-    columns: tuple[str, ...],
-    rows: list[dict[str, object]],
-) -> None:
-    tmp_path = path.with_name(f'{path.name}.{uuid4().hex}.tmp')
-    try:
-        with tmp_path.open('w', encoding='utf-8', newline='') as handle:
-            writer = csv.DictWriter(handle, fieldnames=columns, extrasaction='raise')
-            writer.writeheader()
-            writer.writerows(rows)
-        tmp_path.replace(path)
-    except Exception:
-        tmp_path.unlink(missing_ok=True)
-        raise
 
 
 def _build_qc(

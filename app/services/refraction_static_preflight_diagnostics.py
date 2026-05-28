@@ -2,18 +2,15 @@
 
 from __future__ import annotations
 
-import csv
 import os
-from collections.abc import Iterable
 from dataclasses import asdict, dataclass
-import json
 from pathlib import Path
 from typing import Any, Literal
-from uuid import uuid4
 
 import numpy as np
 
 from app.contracts.statics.refraction.apply import RefractionStaticApplyRequest
+from app.services.common.artifact_io import write_csv_atomic, write_json_atomic
 from app.services.refraction_static_pick_source_loader import PICK_TIME_KEYS
 from app.services.trace_store_index_validation import validate_sorted_to_original
 
@@ -349,16 +346,34 @@ def write_refraction_static_preflight_artifacts(
     )
     payload = asdict(diagnostics)
     _attach_observation_csv_plan(payload, csv_plan)
-    _write_json_atomic(qc_path, payload)
+    write_json_atomic(
+        qc_path,
+        _json_safe(payload),
+        allow_nan=True,
+        ensure_ascii=True,
+        sort_keys=True,
+    )
     if (
         csv_plan['observations_csv_written']
         and input_model is not None
         and req is not None
     ):
         indices = np.asarray(csv_plan['_row_indices'], dtype=np.int64)
-        _write_csv_atomic(
+        write_csv_atomic(
             observations_path,
-            _observation_rows(input_model=input_model, req=req, indices=indices),
+            columns=_OBSERVATION_COLUMNS,
+            rows=(
+                {
+                    key: _csv_value(row.get(key))
+                    for key in _OBSERVATION_COLUMNS
+                }
+                for row in _observation_rows(
+                    input_model=input_model,
+                    req=req,
+                    indices=indices,
+                )
+            ),
+            lineterminator='\r\n',
         )
     else:
         observations_path.unlink(missing_ok=True)
@@ -856,35 +871,6 @@ def _n_nonempty_unique(values: np.ndarray) -> int:
     arr = np.asarray(values).astype(str)
     arr = arr[arr != '']
     return int(np.unique(arr).shape[0])
-
-
-def _write_json_atomic(path: Path, payload: dict[str, Any]) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    tmp_path = path.with_name(f'{path.name}.{uuid4().hex}.tmp')
-    try:
-        tmp_path.write_text(
-            json.dumps(_json_safe(payload), ensure_ascii=True, sort_keys=True),
-            encoding='utf-8',
-        )
-        tmp_path.replace(path)
-    except Exception:
-        tmp_path.unlink(missing_ok=True)
-        raise
-
-
-def _write_csv_atomic(path: Path, rows: Iterable[dict[str, Any]]) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    tmp_path = path.with_name(f'{path.name}.{uuid4().hex}.tmp')
-    try:
-        with tmp_path.open('w', encoding='utf-8', newline='') as handle:
-            writer = csv.DictWriter(handle, fieldnames=_OBSERVATION_COLUMNS)
-            writer.writeheader()
-            for row in rows:
-                writer.writerow({key: _csv_value(row.get(key)) for key in _OBSERVATION_COLUMNS})
-        tmp_path.replace(path)
-    except Exception:
-        tmp_path.unlink(missing_ok=True)
-        raise
 
 
 def _csv_value(value: Any) -> Any:
