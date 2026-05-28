@@ -1,16 +1,12 @@
 """Pydantic models for describing pipeline operations."""
 
-import math
 from typing import Annotated, Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from app.contracts._validation import (
-    _require_bool,
     _require_finite_float,
-    _require_positive_finite_float,
     _require_positive_int,
-    _validate_artifact_basename,
     require_trace_header_byte,
 )
 from app.contracts.batch import (
@@ -98,6 +94,15 @@ from app.contracts.statics.refraction.common import (
     RefractionStaticQcBundleCoordinateMode as RefractionStaticQcBundleCoordinateMode,
     RefractionStaticQcBundleInclude as RefractionStaticQcBundleInclude,
 )
+from app.contracts.statics.refraction.apply import (
+    RefractionStaticApplyRequest as RefractionStaticApplyRequest,
+    RefractionStaticApplyResponse as RefractionStaticApplyResponse,
+)
+from app.contracts.statics.refraction.export import (
+    RefractionStaticExportJobRequest as RefractionStaticExportJobRequest,
+    RefractionStaticExportJobResponse as RefractionStaticExportJobResponse,
+    RefractionStaticExportRequest as RefractionStaticExportRequest,
+)
 from app.contracts.statics.refraction.field_corrections import (
     RefractionStaticFieldCorrectionArtifactRequest as RefractionStaticFieldCorrectionArtifactRequest,
     RefractionStaticFieldCorrectionCompositionRequest as RefractionStaticFieldCorrectionCompositionRequest,
@@ -126,6 +131,10 @@ from app.contracts.statics.refraction.options import (
     RefractionStaticReducedTimeQcRequest as RefractionStaticReducedTimeQcRequest,
     RefractionStaticRobustRequest as RefractionStaticRobustRequest,
     RefractionStaticSolverRequest as RefractionStaticSolverRequest,
+)
+from app.contracts.statics.refraction.table_apply import (
+    RefractionStaticTableApplyRequest as RefractionStaticTableApplyRequest,
+    RefractionStaticTableApplyResponse as RefractionStaticTableApplyResponse,
 )
 from app.utils.validation import require_non_negative_int, require_positive_int
 
@@ -164,136 +173,6 @@ RefractionStaticQcEndpointSort = Literal[
     'endpoint_key_asc',
 ]
 RefractionStaticQcEndpointStatusFilter = Literal['all', 'ok', 'problem']
-
-
-class RefractionStaticExportRequest(BaseModel):
-    """M5 export options accepted by public refraction statics endpoints."""
-
-    model_config = ConfigDict(extra='forbid')
-
-    enabled: bool = False
-    formats: list[RefractionStaticExportFormat] = Field(default_factory=list)
-    units: Literal['seconds', 'milliseconds'] = 'milliseconds'
-    rounding_ms: float | None = 0.001
-    include_inactive_endpoints: bool = True
-    include_legacy_alias_columns: bool = True
-    fail_on_invalid_static_status: bool = True
-
-    @field_validator('rounding_ms')
-    @classmethod
-    def _check_rounding_ms(cls, value: float | None) -> float | None:
-        if value is None:
-            return None
-        rounded = float(value)
-        if not math.isfinite(rounded) or rounded < 0.0:
-            raise ValueError('export.rounding_ms must be finite and >= 0')
-        return rounded
-
-    @model_validator(mode='after')
-    def _check_supported_export_options(self) -> 'RefractionStaticExportRequest':
-        if self.units != 'milliseconds':
-            raise ValueError('export.units must be "milliseconds"')
-        if self.rounding_ms not in (None, 0.001):
-            raise ValueError(
-                'export.rounding_ms is reserved and must be null or 0.001'
-            )
-        if not self.include_legacy_alias_columns:
-            raise ValueError('export.include_legacy_alias_columns must be true')
-        return self
-
-
-class RefractionStaticApplyRequest(BaseModel):
-    """Request model for ``/statics/refraction/apply`` jobs."""
-
-    model_config = ConfigDict(extra='forbid')
-
-    file_id: str
-    key1_byte: int = 189
-    key2_byte: int = 193
-    pick_source: RefractionStaticPickSourceRequest
-    geometry: RefractionStaticGeometryRequest = Field(
-        default_factory=RefractionStaticGeometryRequest,
-    )
-    linkage: RefractionStaticLinkageRequest = Field(
-        default_factory=RefractionStaticLinkageRequest,
-    )
-    model: RefractionStaticModelRequest
-    moveout: RefractionStaticMoveoutRequest = Field(
-        default_factory=RefractionStaticMoveoutRequest,
-    )
-    solver: RefractionStaticSolverRequest = Field(
-        default_factory=RefractionStaticSolverRequest,
-    )
-    datum: RefractionStaticDatumRequest = Field(
-        default_factory=RefractionStaticDatumRequest,
-    )
-    conversion: RefractionStaticConversionRequest = Field(
-        default_factory=RefractionStaticConversionRequest,
-    )
-    reduced_time_qc: RefractionStaticReducedTimeQcRequest = Field(
-        default_factory=RefractionStaticReducedTimeQcRequest,
-    )
-    field_corrections: RefractionStaticFieldCorrectionsRequest = Field(
-        default_factory=RefractionStaticFieldCorrectionsRequest,
-    )
-    export: RefractionStaticExportRequest = Field(
-        default_factory=RefractionStaticExportRequest,
-    )
-    apply: RefractionStaticApplyOptions = Field(
-        default_factory=RefractionStaticApplyOptions,
-    )
-
-    @field_validator('file_id', mode='before')
-    @classmethod
-    def _check_file_id(cls, value: object) -> str:
-        if not isinstance(value, str) or not value:
-            raise ValueError('file_id must be a non-empty string')
-        return value
-
-    @field_validator('key1_byte', 'key2_byte', mode='before')
-    @classmethod
-    def _check_key_header_byte(cls, value: object, info: Any) -> int:
-        return require_trace_header_byte(value, info.field_name)
-
-    @model_validator(mode='after')
-    def _check_supported_refraction_apply_model(
-        self,
-    ) -> 'RefractionStaticApplyRequest':
-        if self.conversion.mode == 't1lsst_multilayer':
-            enabled_count = self.model.enabled_refraction_layer_count
-            if self.conversion.layer_count != enabled_count:
-                enabled_kinds = [
-                    layer.kind
-                    for layer in self.model.layers or []
-                    if layer.enabled
-                ]
-                enabled_text = ', '.join(enabled_kinds) if enabled_kinds else 'none'
-                raise ValueError(
-                    'conversion.layer_count must match enabled refraction layers; '
-                    f'conversion.layer_count={self.conversion.layer_count!r}, '
-                    f'enabled layer kinds={enabled_text}'
-                )
-        if (
-            self.field_corrections.source_depth.mode == 'weathering_velocity_time'
-            and self.field_corrections.source_depth.source_depth_byte is None
-            and self.geometry.source_depth_byte is None
-        ):
-            raise ValueError(
-                'field_corrections.source_depth.source_depth_byte or '
-                'geometry.source_depth_byte is required when '
-                'field_corrections.source_depth.mode is weathering_velocity_time'
-            )
-        return self
-
-
-class RefractionStaticApplyResponse(BaseModel):
-    """Response model for creating a refraction static apply job."""
-
-    model_config = ConfigDict(extra='forbid')
-
-    job_id: str
-    state: str
-    requested_formats: list[RefractionStaticExportFormat] | None = None
 
 
 class RefractionStaticQcBundleRequest(BaseModel):
@@ -916,147 +795,3 @@ class RefractionStaticGatherPreviewResponse(BaseModel):
     reduced_modeled_time_s: list[float | None] | None = None
     overlay_status: dict[str, Any]
     artifacts: dict[str, str]
-
-
-class RefractionStaticTableApplyRequest(BaseModel):
-    """Request model for standalone M5 static-table TraceStore apply jobs."""
-
-    model_config = ConfigDict(extra='forbid')
-
-    file_id: str
-    key1_byte: int = 189
-    key2_byte: int = 193
-    geometry: RefractionStaticGeometryRequest = Field(
-        default_factory=RefractionStaticGeometryRequest,
-    )
-    source_table_artifact_id: str | None = None
-    receiver_table_artifact_id: str | None = None
-    combined_table_artifact_id: str | None = None
-    source_key_header: Literal['endpoint_key', 'endpoint_id'] | None = None
-    receiver_key_header: Literal['endpoint_key', 'endpoint_id'] | None = None
-    register_corrected_file: bool = True
-    output_name: str | None = None
-    allow_missing_source_static: bool = False
-    allow_missing_receiver_static: bool = False
-    missing_static_policy: Literal['fail', 'zero'] = 'fail'
-    double_application_policy: Literal['warn', 'fail', 'allow'] = 'fail'
-    allow_reapply_same_static_table: bool = False
-    fill_value: float = 0.0
-    max_abs_shift_ms: float = 250.0
-
-    @field_validator('file_id', mode='before')
-    @classmethod
-    def _check_file_id(cls, value: object) -> str:
-        if not isinstance(value, str) or not value:
-            raise ValueError('file_id must be a non-empty string')
-        return value
-
-    @field_validator('key1_byte', 'key2_byte', mode='before')
-    @classmethod
-    def _check_key_header_byte(cls, value: object, info: Any) -> int:
-        return require_trace_header_byte(value, info.field_name)
-
-    @field_validator(
-        'source_table_artifact_id',
-        'receiver_table_artifact_id',
-        'combined_table_artifact_id',
-        mode='before',
-    )
-    @classmethod
-    def _check_artifact_id(cls, value: object) -> str | None:
-        if value is None:
-            return None
-        if not isinstance(value, str) or not value:
-            raise ValueError('static table artifact id must be a non-empty string')
-        return value
-
-    @field_validator('register_corrected_file', mode='before')
-    @classmethod
-    def _check_register_corrected_file_bool(cls, value: object) -> bool:
-        return _require_bool(value, 'register_corrected_file')
-
-    @field_validator(
-        'allow_missing_source_static',
-        'allow_missing_receiver_static',
-        'allow_reapply_same_static_table',
-        mode='before',
-    )
-    @classmethod
-    def _check_allow_missing_bool(cls, value: object, info: Any) -> bool:
-        return _require_bool(value, info.field_name)
-
-    @field_validator('output_name', mode='before')
-    @classmethod
-    def _check_output_name(cls, value: object) -> str | None:
-        if value is None:
-            return None
-        if not isinstance(value, str):
-            raise ValueError('output_name must be a plain file name')
-        return _validate_artifact_basename(value, 'output_name')
-
-    @field_validator('fill_value', mode='before')
-    @classmethod
-    def _check_fill_value(cls, value: object) -> float:
-        return _require_finite_float(value, 'fill_value')
-
-    @field_validator('max_abs_shift_ms', mode='before')
-    @classmethod
-    def _check_max_abs_shift_ms(cls, value: object) -> float:
-        return _require_positive_finite_float(value, 'max_abs_shift_ms')
-
-    @model_validator(mode='after')
-    def _check_table_artifacts(self) -> 'RefractionStaticTableApplyRequest':
-        has_combined = self.combined_table_artifact_id is not None
-        has_separate = (
-            self.source_table_artifact_id is not None
-            or self.receiver_table_artifact_id is not None
-        )
-        if has_combined and has_separate:
-            raise ValueError(
-                'provide either combined_table_artifact_id or separate '
-                'source/receiver table artifact ids'
-            )
-        if has_combined:
-            return self
-        if self.source_table_artifact_id is None or self.receiver_table_artifact_id is None:
-            raise ValueError(
-                'source_table_artifact_id and receiver_table_artifact_id are '
-                'required when combined_table_artifact_id is omitted'
-            )
-        return self
-
-
-class RefractionStaticTableApplyResponse(BaseModel):
-    """Response model for creating a standalone static-table apply job."""
-
-    model_config = ConfigDict(extra='forbid')
-
-    job_id: str
-    state: str
-
-
-class RefractionStaticExportJobRequest(BaseModel):
-    """Request model for ``/statics/refraction/export`` jobs."""
-
-    model_config = ConfigDict(extra='forbid')
-
-    source_job_id: str
-    export: RefractionStaticExportRequest
-
-    @field_validator('source_job_id')
-    @classmethod
-    def _check_source_job_id(cls, value: str) -> str:
-        if not isinstance(value, str) or not value:
-            raise ValueError('source_job_id must be a non-empty string')
-        return value
-
-
-class RefractionStaticExportJobResponse(BaseModel):
-    """Response model for creating a standalone refraction export job."""
-
-    model_config = ConfigDict(extra='forbid')
-
-    job_id: str
-    state: str
-    source_job_id: str
-    requested_formats: list[RefractionStaticExportFormat]
