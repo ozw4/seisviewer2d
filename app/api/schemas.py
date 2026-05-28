@@ -86,6 +86,7 @@ from app.contracts.statics.time_term import (
     TimeTermStaticVelocityRequest as TimeTermStaticVelocityRequest,
 )
 from app.contracts.statics.refraction.common import (
+    _REFRACTION_STATIC_LAYER_ORDER as _REFRACTION_STATIC_LAYER_ORDER,
     REFRACTION_STATIC_DEFAULT_EXPORT_FORMATS as REFRACTION_STATIC_DEFAULT_EXPORT_FORMATS,
     RefractionStaticExportFormat as RefractionStaticExportFormat,
     RefractionStaticGatherPreviewAxis as RefractionStaticGatherPreviewAxis,
