@@ -96,10 +96,13 @@ def coerce_1d_integer_int64(
         if not np.array_equal(arr, out):
             _raise(f'{name} values must fit in int64', error_type)
         return out
-    if not allow_integer_like_float or not is_real_numeric_dtype(arr.dtype):
+    if not allow_integer_like_float or np.issubdtype(arr.dtype, np.complexfloating):
         _raise(f'{name} must contain integer values', error_type)
 
-    float_values = np.asarray(arr, dtype=np.float64)
+    try:
+        float_values = np.asarray(arr, dtype=np.float64)
+    except (TypeError, ValueError) as exc:
+        _raise_from(f'{name} must contain integer values', error_type, exc)
     int64_info = np.iinfo(np.int64)
     int64_upper_exclusive = np.float64(2**63)
     if np.any(~np.isfinite(float_values)):
