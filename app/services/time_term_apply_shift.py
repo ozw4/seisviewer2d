@@ -3,15 +3,30 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from functools import partial
 from typing import Literal
 
 import numpy as np
 
+from app.services.common.array_validation import (
+    coerce_1d_bool_array as _coerce_1d_bool_array,
+    coerce_1d_integer_int64 as _common_coerce_1d_integer_int64,
+    coerce_1d_real_numeric_float64 as _coerce_1d_real_numeric_float64,
+    coerce_finite_float as _coerce_finite_float,
+    coerce_nonnegative_finite_float as _coerce_nonnegative_finite_float,
+    coerce_positive_finite_float as _coerce_positive_finite_float,
+    coerce_positive_int as _coerce_positive_int,
+)
 from app.services.time_term_robust_solver import TimeTermRobustSolverResult
 from app.services.time_term_sparse_solver import TimeTermSparseSolverResult
 from app.services.time_term_types import ORDER, TimeTermInversionInputs
 
 TimeTermRejectedTracePolicy = Literal['use_final_model']
+
+_coerce_1d_integer_int64 = partial(
+    _common_coerce_1d_integer_int64,
+    allow_integer_like_float=False,
+)
 
 SIGN_CONVENTION = (
     'estimated_trace_time_term_delay_s = source_node_time_term_s + '
@@ -523,83 +538,10 @@ def _coerce_summary_seconds(
     return arr
 
 
-def _coerce_1d_real_numeric_float64(
-    values: object,
-    *,
-    name: str,
-    expected_shape: tuple[int, ...] | None = None,
-) -> np.ndarray:
-    arr = np.asarray(values)
-    if arr.ndim != 1:
-        raise ValueError(f'{name} must be a 1D array')
-    if expected_shape is not None and arr.shape != expected_shape:
-        raise ValueError(f'{name} shape mismatch: expected {expected_shape}, got {arr.shape}')
-    if not _is_real_numeric_dtype(arr.dtype):
-        raise ValueError(f'{name} must have a numeric dtype')
-    return np.ascontiguousarray(arr, dtype=np.float64)
-
-
-def _coerce_1d_integer_int64(
-    values: object,
-    *,
-    name: str,
-    expected_shape: tuple[int, ...] | None = None,
-) -> np.ndarray:
-    arr = np.asarray(values)
-    if arr.ndim != 1:
-        raise ValueError(f'{name} must be a 1D array')
-    if expected_shape is not None and arr.shape != expected_shape:
-        raise ValueError(f'{name} shape mismatch: expected {expected_shape}, got {arr.shape}')
-    if np.issubdtype(arr.dtype, np.bool_):
-        raise ValueError(f'{name} must contain integer values')
-    if not np.issubdtype(arr.dtype, np.integer):
-        raise ValueError(f'{name} must contain integer values')
-    return np.ascontiguousarray(arr, dtype=np.int64)
-
-
-def _coerce_1d_bool_array(
-    values: object,
-    *,
-    name: str,
-    expected_shape: tuple[int, ...],
-) -> np.ndarray:
-    arr = np.asarray(values)
-    if arr.ndim != 1:
-        raise ValueError(f'{name} must be a 1D array')
-    if arr.shape != expected_shape:
-        raise ValueError(f'{name} shape mismatch: expected {expected_shape}, got {arr.shape}')
-    if not np.issubdtype(arr.dtype, np.bool_):
-        raise ValueError(f'{name} must have bool dtype')
-    return np.ascontiguousarray(arr, dtype=bool)
-
-
-def _coerce_positive_int(value: object, *, name: str) -> int:
-    if isinstance(value, (bool, np.bool_)) or not isinstance(value, (int, np.integer)):
-        raise ValueError(f'{name} must be an integer')
-    out = int(value)
-    if out <= 0:
-        raise ValueError(f'{name} must be greater than 0')
-    return out
-
-
 def _coerce_bool(value: object, *, name: str) -> bool:
     if not isinstance(value, (bool, np.bool_)):
         raise ValueError(f'{name} must be bool')
     return bool(value)
-
-
-def _coerce_positive_finite_float(value: object, *, name: str) -> float:
-    out = _coerce_finite_float(value, name=name)
-    if out <= 0.0:
-        raise ValueError(f'{name} must be greater than 0')
-    return out
-
-
-def _coerce_nonnegative_finite_float(value: object, *, name: str) -> float:
-    out = _coerce_finite_float(value, name=name)
-    if out < 0.0:
-        raise ValueError(f'{name} must be greater than or equal to 0')
-    return out
 
 
 def _coerce_optional_nonnegative_finite_float(
@@ -610,18 +552,6 @@ def _coerce_optional_nonnegative_finite_float(
     if value is None:
         return None
     return _coerce_nonnegative_finite_float(value, name=name)
-
-
-def _coerce_finite_float(value: object, *, name: str) -> float:
-    if isinstance(value, (bool, np.bool_)):
-        raise ValueError(f'{name} must be finite')
-    try:
-        out = float(value)
-    except (TypeError, ValueError) as exc:
-        raise ValueError(f'{name} must be finite') from exc
-    if not np.isfinite(out):
-        raise ValueError(f'{name} must be finite')
-    return out
 
 
 def _validate_index_range(
@@ -670,13 +600,6 @@ def _stats_payload(values: np.ndarray) -> dict[str, float | int | None]:
         'std': float(np.std(finite, ddof=0)),
         'max_abs': float(np.max(np.abs(finite))),
     }
-
-
-def _is_real_numeric_dtype(dtype: np.dtype) -> bool:
-    return np.issubdtype(dtype, np.number) and not np.issubdtype(
-        dtype,
-        np.complexfloating,
-    )
 
 
 __all__ = [

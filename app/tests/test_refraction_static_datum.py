@@ -830,6 +830,23 @@ def test_invalid_surface_and_unknown_endpoint_nodes_are_visible() -> None:
         )
 
 
+def test_datum_statics_rejects_non_real_numeric_node_ids() -> None:
+    replacement = replace(
+        _replacement_result(),
+        source_node_id=np.asarray(['0', '1', '2'], dtype='<U1'),
+    )
+
+    with pytest.raises(
+        RefractionDatumStaticsError,
+        match='source_node_id.*real numeric dtype',
+    ):
+        build_refraction_datum_statics(
+            weathering_replacement_result=replacement,
+            datum=_datum(),
+            apply_options=_apply_options(),
+        )
+
+
 def test_high_level_pipeline_calls_weathering_stage(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,

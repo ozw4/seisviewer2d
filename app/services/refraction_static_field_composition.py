@@ -7,6 +7,13 @@ from typing import Any, Literal
 
 import numpy as np
 
+from app.services.common.array_validation import (
+    coerce_1d_bool_array as _coerce_1d_bool_array,
+    coerce_1d_integer_int64 as _coerce_1d_integer_int64,
+    coerce_1d_real_numeric_float64 as _coerce_1d_real_numeric_float64,
+    coerce_1d_string_array as _coerce_1d_string_array,
+    coerce_finite_float as _coerce_finite_float,
+)
 from app.services.refraction_static_types import (
     REFRACTION_FIELD_CORRECTION_COMPONENT_NAMES,
     RefractionEndpointFieldCorrectionResult,
@@ -608,14 +615,13 @@ def _coerce_1d_string(
     name: str,
     expected_shape: tuple[int, ...] | None = None,
 ) -> np.ndarray:
-    arr = np.asarray(values)
-    if arr.ndim != 1:
-        raise ValueError(f'{name} must be one-dimensional')
-    if expected_shape is not None and arr.shape != expected_shape:
-        raise ValueError(
-            f'{name} shape mismatch: expected {expected_shape}, got {arr.shape}'
-        )
-    return np.ascontiguousarray(arr.astype(_ENDPOINT_KEY_DTYPE, copy=False))
+    return _coerce_1d_string_array(
+        values,
+        name=name,
+        expected_shape=expected_shape,
+        allow_non_string_dtype=True,
+        output_dtype=_ENDPOINT_KEY_DTYPE,
+    )
 
 
 def _coerce_1d_status(
@@ -624,14 +630,13 @@ def _coerce_1d_status(
     name: str,
     expected_shape: tuple[int, ...] | None = None,
 ) -> np.ndarray:
-    arr = np.asarray(values)
-    if arr.ndim != 1:
-        raise ValueError(f'{name} must be one-dimensional')
-    if expected_shape is not None and arr.shape != expected_shape:
-        raise ValueError(
-            f'{name} shape mismatch: expected {expected_shape}, got {arr.shape}'
-        )
-    return np.ascontiguousarray(arr.astype(_STATUS_DTYPE, copy=False))
+    return _coerce_1d_string_array(
+        values,
+        name=name,
+        expected_shape=expected_shape,
+        allow_non_string_dtype=True,
+        output_dtype=_STATUS_DTYPE,
+    )
 
 
 def _coerce_1d_integer(
@@ -640,14 +645,12 @@ def _coerce_1d_integer(
     name: str,
     expected_shape: tuple[int, ...],
 ) -> np.ndarray:
-    arr = np.asarray(values)
-    if arr.ndim != 1 or arr.shape != expected_shape:
-        raise ValueError(
-            f'{name} shape mismatch: expected {expected_shape}, got {arr.shape}'
-        )
-    if np.issubdtype(arr.dtype, np.bool_) or not np.issubdtype(arr.dtype, np.integer):
-        raise ValueError(f'{name} must have an integer dtype')
-    return np.ascontiguousarray(arr, dtype=np.int64)
+    return _coerce_1d_integer_int64(
+        values,
+        name=name,
+        expected_shape=expected_shape,
+        allow_integer_like_float=False,
+    )
 
 
 def _coerce_1d_float(
@@ -656,21 +659,11 @@ def _coerce_1d_float(
     name: str,
     expected_shape: tuple[int, ...] | None = None,
 ) -> np.ndarray:
-    arr = np.asarray(values)
-    if arr.ndim != 1:
-        raise ValueError(f'{name} must be one-dimensional')
-    if expected_shape is not None and arr.shape != expected_shape:
-        raise ValueError(
-            f'{name} shape mismatch: expected {expected_shape}, got {arr.shape}'
-        )
-    if np.issubdtype(arr.dtype, np.bool_) or not np.issubdtype(
-        arr.dtype,
-        np.number,
-    ):
-        raise ValueError(f'{name} must have a real numeric dtype')
-    if np.iscomplexobj(arr):
-        raise ValueError(f'{name} must have a real numeric dtype')
-    return np.ascontiguousarray(arr, dtype=np.float64)
+    return _coerce_1d_real_numeric_float64(
+        values,
+        name=name,
+        expected_shape=expected_shape,
+    )
 
 
 def _coerce_1d_bool(
@@ -679,14 +672,11 @@ def _coerce_1d_bool(
     name: str,
     expected_shape: tuple[int, ...],
 ) -> np.ndarray:
-    arr = np.asarray(values)
-    if arr.ndim != 1 or arr.shape != expected_shape:
-        raise ValueError(
-            f'{name} shape mismatch: expected {expected_shape}, got {arr.shape}'
-        )
-    if not np.issubdtype(arr.dtype, np.bool_):
-        raise ValueError(f'{name} must have a bool dtype')
-    return np.ascontiguousarray(arr, dtype=bool)
+    return _coerce_1d_bool_array(
+        values,
+        name=name,
+        expected_shape=expected_shape,
+    )
 
 
 def _optional_nonnegative_finite_float(value: object, *, name: str) -> float | None:
@@ -694,9 +684,7 @@ def _optional_nonnegative_finite_float(value: object, *, name: str) -> float | N
         return None
     if isinstance(value, bool) or not isinstance(value, (int, float, np.number)):
         raise ValueError(f'{name} must be a finite number')
-    out = float(value)
-    if not np.isfinite(out):
-        raise ValueError(f'{name} must be finite')
+    out = _coerce_finite_float(value, name=name)
     if out < 0.0:
         raise ValueError(f'{name} must be nonnegative')
     return out

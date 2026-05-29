@@ -9,6 +9,9 @@ from typing import Any
 import numpy as np
 
 from app.contracts.statics.refraction.apply import RefractionStaticApplyRequest
+from app.services.common.array_validation import (
+    is_real_numeric_dtype as _is_real_numeric_dtype,
+)
 from app.services.trace_store_index_validation import validate_sorted_to_original
 
 PICK_TIME_KEYS: tuple[str, ...] = (
@@ -272,13 +275,6 @@ def _read_string_scalar_from_npz(npz: np.lib.npyio.NpzFile, key: str) -> str:
     if isinstance(value, bytes):
         return value.decode('utf-8')
     return str(value)
-
-
-def _is_real_numeric_dtype(dtype: np.dtype) -> bool:
-    return np.issubdtype(dtype, np.number) and not np.issubdtype(
-        dtype,
-        np.complexfloating,
-    )
 
 
 __all__ = [

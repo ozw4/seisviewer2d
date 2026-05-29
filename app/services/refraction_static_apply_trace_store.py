@@ -5,6 +5,7 @@ from __future__ import annotations
 from collections.abc import Mapping
 from contextlib import nullcontext
 from dataclasses import dataclass, replace
+from functools import partial
 import json
 from pathlib import Path
 import re
@@ -17,6 +18,12 @@ import numpy as np
 from app.contracts.statics.refraction.apply import RefractionStaticApplyRequest
 from app.core.state import AppState
 from app.services.common.artifact_io import write_json_atomic
+from app.services.common.array_validation import (
+    coerce_header_byte,
+    coerce_nonnegative_finite_float,
+    coerce_positive_finite_float,
+    coerce_positive_int,
+)
 from app.services.corrected_trace_store import (
     TimeShiftedTraceStoreResult,
     build_time_shifted_trace_store,
@@ -72,6 +79,24 @@ _OPTIONAL_SOLUTION_METADATA_KEYS = (
 
 class RefractionStaticTraceStoreApplyError(ValueError):
     """Raised when refraction statics cannot be applied to a TraceStore."""
+
+
+_coerce_positive_int = partial(
+    coerce_positive_int,
+    error_type=RefractionStaticTraceStoreApplyError,
+)
+_coerce_header_byte = partial(
+    coerce_header_byte,
+    error_type=RefractionStaticTraceStoreApplyError,
+)
+_coerce_positive_finite_float = partial(
+    coerce_positive_finite_float,
+    error_type=RefractionStaticTraceStoreApplyError,
+)
+_coerce_nonnegative_finite_float = partial(
+    coerce_nonnegative_finite_float,
+    error_type=RefractionStaticTraceStoreApplyError,
+)
 
 
 @dataclass(frozen=True)
@@ -1264,66 +1289,6 @@ def _require_1d_string(
 def _reject_object_dtype(arr: np.ndarray, *, name: str) -> None:
     if arr.dtype == object:
         raise RefractionStaticTraceStoreApplyError(f'{name} must not have object dtype')
-
-
-def _coerce_positive_int(value: object, *, name: str) -> int:
-    if isinstance(value, bool):
-        raise RefractionStaticTraceStoreApplyError(
-            f'{name} must be a positive integer'
-        )
-    if not isinstance(value, int | np.integer):
-        raise RefractionStaticTraceStoreApplyError(
-            f'{name} must be a positive integer'
-        )
-    out = int(value)
-    if out <= 0:
-        raise RefractionStaticTraceStoreApplyError(
-            f'{name} must be a positive integer'
-        )
-    return out
-
-
-def _coerce_header_byte(value: object, *, name: str) -> int:
-    out = _coerce_positive_int(value, name=name)
-    if out > 240:
-        raise RefractionStaticTraceStoreApplyError(f'{name} must be between 1 and 240')
-    return out
-
-
-def _coerce_positive_finite_float(value: object, *, name: str) -> float:
-    if isinstance(value, bool):
-        raise RefractionStaticTraceStoreApplyError(
-            f'{name} must be finite and greater than 0'
-        )
-    try:
-        out = float(value)
-    except (TypeError, ValueError) as exc:
-        raise RefractionStaticTraceStoreApplyError(
-            f'{name} must be finite and greater than 0'
-        ) from exc
-    if not np.isfinite(out) or out <= 0.0:
-        raise RefractionStaticTraceStoreApplyError(
-            f'{name} must be finite and greater than 0'
-        )
-    return out
-
-
-def _coerce_nonnegative_finite_float(value: object, *, name: str) -> float:
-    if isinstance(value, bool):
-        raise RefractionStaticTraceStoreApplyError(
-            f'{name} must be finite and non-negative'
-        )
-    try:
-        out = float(value)
-    except (TypeError, ValueError) as exc:
-        raise RefractionStaticTraceStoreApplyError(
-            f'{name} must be finite and non-negative'
-        ) from exc
-    if not np.isfinite(out) or out < 0.0:
-        raise RefractionStaticTraceStoreApplyError(
-            f'{name} must be finite and non-negative'
-        )
-    return out
 
 
 __all__ = [

@@ -11,6 +11,14 @@ import numpy as np
 
 from app.contracts.statics.refraction.apply import RefractionStaticApplyRequest
 from app.core.state import AppState
+from app.services.common.array_validation import (
+    coerce_1d_bool_array as _coerce_1d_bool_array,
+    coerce_1d_integer_int64 as _coerce_1d_integer_int64,
+    coerce_1d_real_numeric_float64 as _coerce_1d_real_numeric_float64,
+    coerce_1d_string_array as _coerce_1d_string_array,
+    coerce_finite_float as _coerce_finite_float,
+    coerce_positive_int as _coerce_positive_int,
+)
 from app.services.common.artifact_io import write_csv_atomic, write_json_atomic
 from app.services.refraction_static_bedrock import (
     estimate_global_bedrock_slowness_from_input_model,
@@ -1345,21 +1353,16 @@ def _coerce_1d_float(
     expected_shape: tuple[int, ...] | None = None,
     allow_nan: bool = False,
 ) -> np.ndarray:
-    arr = np.asarray(values)
-    if arr.ndim != 1:
-        raise RefractionHalfInterceptTimeError(f'{name} must be a 1D array')
-    if expected_shape is not None and arr.shape != expected_shape:
-        raise RefractionHalfInterceptTimeError(
-            f'{name} shape mismatch: expected {expected_shape}, got {arr.shape}'
-        )
-    if np.issubdtype(arr.dtype, np.bool_) or not _is_real_numeric_dtype(arr.dtype):
-        raise RefractionHalfInterceptTimeError(f'{name} must have a real numeric dtype')
-    out = np.ascontiguousarray(arr, dtype=np.float64)
+    out = _coerce_1d_real_numeric_float64(
+        values,
+        name=name,
+        expected_shape=expected_shape,
+        allow_nonfinite=allow_nan,
+        error_type=RefractionHalfInterceptTimeError,
+    )
     if allow_nan:
         if np.any(np.isinf(out)):
             raise RefractionHalfInterceptTimeError(f'{name} must not contain infinity')
-    elif np.any(~np.isfinite(out)):
-        raise RefractionHalfInterceptTimeError(f'{name} must contain only finite values')
     return out
 
 
@@ -1369,25 +1372,13 @@ def _coerce_1d_integer(
     name: str,
     expected_shape: tuple[int, ...] | None = None,
 ) -> np.ndarray:
-    arr = np.asarray(values)
-    if arr.ndim != 1:
-        raise RefractionHalfInterceptTimeError(f'{name} must be a 1D array')
-    if expected_shape is not None and arr.shape != expected_shape:
-        raise RefractionHalfInterceptTimeError(
-            f'{name} shape mismatch: expected {expected_shape}, got {arr.shape}'
-        )
-    if np.issubdtype(arr.dtype, np.bool_):
-        raise RefractionHalfInterceptTimeError(f'{name} must contain integer values')
-    if np.issubdtype(arr.dtype, np.integer):
-        return np.ascontiguousarray(arr, dtype=np.int64)
-    if not _is_real_numeric_dtype(arr.dtype):
-        raise RefractionHalfInterceptTimeError(f'{name} must contain integer values')
-    arr_f64 = arr.astype(np.float64, copy=False)
-    if np.any(~np.isfinite(arr_f64)):
-        raise RefractionHalfInterceptTimeError(f'{name} must contain finite values')
-    if not np.all(arr_f64 == np.rint(arr_f64)):
-        raise RefractionHalfInterceptTimeError(f'{name} must contain integer values')
-    return np.ascontiguousarray(arr_f64, dtype=np.int64)
+    return _coerce_1d_integer_int64(
+        values,
+        name=name,
+        expected_shape=expected_shape,
+        nonfinite_message='must contain finite values',
+        error_type=RefractionHalfInterceptTimeError,
+    )
 
 
 def _coerce_1d_bool(
@@ -1396,16 +1387,12 @@ def _coerce_1d_bool(
     name: str,
     expected_shape: tuple[int, ...] | None = None,
 ) -> np.ndarray:
-    arr = np.asarray(values)
-    if arr.ndim != 1:
-        raise RefractionHalfInterceptTimeError(f'{name} must be a 1D array')
-    if expected_shape is not None and arr.shape != expected_shape:
-        raise RefractionHalfInterceptTimeError(
-            f'{name} shape mismatch: expected {expected_shape}, got {arr.shape}'
-        )
-    if arr.dtype != np.bool_:
-        raise RefractionHalfInterceptTimeError(f'{name} must have bool dtype')
-    return np.ascontiguousarray(arr, dtype=bool)
+    return _coerce_1d_bool_array(
+        values,
+        name=name,
+        expected_shape=expected_shape,
+        error_type=RefractionHalfInterceptTimeError,
+    )
 
 
 def _coerce_1d_string(
@@ -1414,25 +1401,24 @@ def _coerce_1d_string(
     name: str,
     expected_shape: tuple[int, ...] | None = None,
 ) -> np.ndarray:
-    arr = np.asarray(values)
-    if arr.ndim != 1:
-        raise RefractionHalfInterceptTimeError(f'{name} must be a 1D array')
-    if expected_shape is not None and arr.shape != expected_shape:
-        raise RefractionHalfInterceptTimeError(
-            f'{name} shape mismatch: expected {expected_shape}, got {arr.shape}'
-        )
-    return np.ascontiguousarray(arr.astype(_ENDPOINT_KEY_DTYPE, copy=False))
+    return _coerce_1d_string_array(
+        values,
+        name=name,
+        expected_shape=expected_shape,
+        allow_non_string_dtype=True,
+        output_dtype=_ENDPOINT_KEY_DTYPE,
+        error_type=RefractionHalfInterceptTimeError,
+    )
 
 
 def _positive_finite(value: object, *, name: str) -> float:
     if isinstance(value, (bool, np.bool_)):
         raise RefractionHalfInterceptTimeError(f'{name} must be finite and positive')
-    try:
-        out = float(value)
-    except (TypeError, ValueError) as exc:
-        raise RefractionHalfInterceptTimeError(
-            f'{name} must be finite and positive'
-        ) from exc
+    out = _coerce_finite_float(
+        value,
+        name=name,
+        error_type=RefractionHalfInterceptTimeError,
+    )
     if not np.isfinite(out):
         raise RefractionHalfInterceptTimeError(f'{name} must be finite')
     if out <= 0.0:
@@ -1441,12 +1427,11 @@ def _positive_finite(value: object, *, name: str) -> float:
 
 
 def _positive_int(value: object, *, name: str) -> int:
-    if isinstance(value, (bool, np.bool_)) or not isinstance(value, (int, np.integer)):
-        raise RefractionHalfInterceptTimeError(f'{name} must be an integer')
-    out = int(value)
-    if out <= 0:
-        raise RefractionHalfInterceptTimeError(f'{name} must be greater than 0')
-    return out
+    return _coerce_positive_int(
+        value,
+        name=name,
+        error_type=RefractionHalfInterceptTimeError,
+    )
 
 
 def _json_stat(values: np.ndarray, stat: str) -> float | None:
@@ -1627,13 +1612,6 @@ def _csv_float(value: object) -> str | float:
 
 def _assert_json_safe(payload: dict[str, Any]) -> None:
     json.dumps(payload, allow_nan=False)
-
-
-def _is_real_numeric_dtype(dtype: np.dtype) -> bool:
-    return np.issubdtype(dtype, np.number) and not np.issubdtype(
-        dtype,
-        np.complexfloating,
-    )
 
 
 __all__ = [

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
+from functools import partial
 from pathlib import Path
 from typing import Any
 
@@ -14,6 +15,15 @@ from app.services.common.artifact_io import (
     write_csv_atomic as _common_write_csv_atomic,
     write_json_atomic as _common_write_json_atomic,
     write_npz_atomic as _common_write_npz_atomic,
+)
+from app.services.common.array_validation import (
+    coerce_1d_bool_array as _require_1d_bool_array,
+    coerce_1d_finite_float64 as _coerce_1d_finite_float64,
+    coerce_1d_integer_int64 as _common_coerce_1d_integer_int64,
+    coerce_finite_float as _coerce_finite_float,
+    coerce_positive_finite_float as _coerce_positive_finite_float,
+    coerce_positive_int as _coerce_positive_int,
+    is_real_numeric_dtype as _is_real_numeric_dtype,
 )
 from app.services.time_term_apply_shift import (
     DELAY_TO_SHIFT_CONVENTION,
@@ -40,6 +50,11 @@ SCHEMA_VERSION = 1
 SOLUTION_ARTIFACT_KIND = 'time_term_static_solution'
 QC_ARTIFACT_KIND = 'time_term_static_qc'
 ORDER = 'trace_store_sorted'
+
+_coerce_1d_integer_int64 = partial(
+    _common_coerce_1d_integer_int64,
+    allow_integer_like_float=False,
+)
 
 ESTIMATED_DELAY_SIGN_CONVENTION = (
     'positive delay means observed first-break is late'
@@ -676,9 +691,9 @@ def write_time_term_static_artifacts(
         qc_json_path=job_dir_path / TIME_TERM_STATIC_QC_JSON_NAME,
         statics_csv_path=job_dir_path / TIME_TERM_STATICS_CSV_NAME,
     )
-    _write_npz_atomic(paths.solution_npz_path, solution_arrays)
-    _write_json_atomic(paths.qc_json_path, qc_payload)
-    _write_csv_atomic(paths.statics_csv_path, csv_rows)
+    _write_time_term_solution_npz(paths.solution_npz_path, solution_arrays)
+    _write_time_term_qc_json(paths.qc_json_path, qc_payload)
+    _write_time_term_statics_csv(paths.statics_csv_path, csv_rows)
     return paths
 
 
@@ -1821,21 +1836,6 @@ def _coerce_trace_to_row_index(
     return arr
 
 
-def _coerce_1d_finite_float64(
-    values: object,
-    *,
-    name: str,
-    expected_shape: tuple[int, ...] | None = None,
-) -> np.ndarray:
-    arr = _coerce_1d_float64_allow_nan(
-        values,
-        name=name,
-        expected_shape=expected_shape,
-    )
-    _validate_all_finite(arr, name=name)
-    return arr
-
-
 def _coerce_1d_float64_allow_nan_no_inf(
     values: object,
     *,
@@ -1869,73 +1869,6 @@ def _coerce_1d_float64_allow_nan(
     if not _is_real_numeric_dtype(arr.dtype):
         raise ValueError(f'{name} must have a real numeric dtype')
     return np.ascontiguousarray(arr, dtype=np.float64)
-
-
-def _coerce_1d_integer_int64(
-    values: object,
-    *,
-    name: str,
-    expected_shape: tuple[int, ...] | None = None,
-) -> np.ndarray:
-    arr = np.asarray(values)
-    if arr.ndim != 1:
-        raise ValueError(f'{name} must be a 1D array')
-    if expected_shape is not None and arr.shape != expected_shape:
-        raise ValueError(
-            f'{name} shape mismatch: expected {expected_shape}, got {arr.shape}'
-        )
-    if np.issubdtype(arr.dtype, np.bool_) or not np.issubdtype(
-        arr.dtype,
-        np.integer,
-    ):
-        raise ValueError(f'{name} must contain integer values')
-    return np.ascontiguousarray(arr, dtype=np.int64)
-
-
-def _require_1d_bool_array(
-    values: object,
-    *,
-    name: str,
-    expected_shape: tuple[int, ...],
-) -> np.ndarray:
-    arr = np.asarray(values)
-    if arr.ndim != 1:
-        raise ValueError(f'{name} must be a 1D array')
-    if arr.shape != expected_shape:
-        raise ValueError(
-            f'{name} shape mismatch: expected {expected_shape}, got {arr.shape}'
-        )
-    if not np.issubdtype(arr.dtype, np.bool_):
-        raise ValueError(f'{name} must have bool dtype')
-    return np.ascontiguousarray(arr, dtype=bool)
-
-
-def _coerce_positive_int(value: object, *, name: str) -> int:
-    if isinstance(value, (bool, np.bool_)) or not isinstance(value, (int, np.integer)):
-        raise ValueError(f'{name} must be an integer')
-    out = int(value)
-    if out <= 0:
-        raise ValueError(f'{name} must be greater than 0')
-    return out
-
-
-def _coerce_finite_float(value: object, *, name: str) -> float:
-    if isinstance(value, (bool, np.bool_)):
-        raise ValueError(f'{name} must be finite')
-    try:
-        out = float(value)
-    except (TypeError, ValueError) as exc:
-        raise ValueError(f'{name} must be finite') from exc
-    if not np.isfinite(out):
-        raise ValueError(f'{name} must be finite')
-    return out
-
-
-def _coerce_positive_finite_float(value: object, *, name: str) -> float:
-    out = _coerce_finite_float(value, name=name)
-    if out <= 0.0:
-        raise ValueError(f'{name} must be greater than 0')
-    return out
 
 
 def _coerce_finite_or_nan_float(value: object) -> float:
@@ -2124,7 +2057,10 @@ def _assert_strict_json_payload(payload: dict[str, Any]) -> None:
     assert_strict_json(payload)
 
 
-def _write_npz_atomic(out_path: Path, payload: dict[str, np.ndarray]) -> None:
+def _write_time_term_solution_npz(
+    out_path: Path,
+    payload: dict[str, np.ndarray],
+) -> None:
     _common_write_npz_atomic(
         out_path,
         payload,
@@ -2133,7 +2069,7 @@ def _write_npz_atomic(out_path: Path, payload: dict[str, np.ndarray]) -> None:
     )
 
 
-def _write_json_atomic(out_path: Path, payload: dict[str, Any]) -> None:
+def _write_time_term_qc_json(out_path: Path, payload: dict[str, Any]) -> None:
     _common_write_json_atomic(
         out_path,
         payload,
@@ -2145,20 +2081,16 @@ def _write_json_atomic(out_path: Path, payload: dict[str, Any]) -> None:
     )
 
 
-def _write_csv_atomic(out_path: Path, rows: list[dict[str, object]]) -> None:
+def _write_time_term_statics_csv(
+    out_path: Path,
+    rows: list[dict[str, object]],
+) -> None:
     _common_write_csv_atomic(
         out_path,
         columns=_CSV_COLUMNS,
         rows=rows,
         extrasaction='raise',
         lineterminator='\r\n',
-    )
-
-
-def _is_real_numeric_dtype(dtype: np.dtype) -> bool:
-    return np.issubdtype(dtype, np.number) and not np.issubdtype(
-        dtype,
-        np.complexfloating,
     )
 
 

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from functools import partial
 from pathlib import Path
 from typing import Any
 
@@ -14,6 +15,11 @@ from app.services.common.artifact_io import (
     write_csv_atomic as _common_write_csv_atomic,
     write_json_atomic as _common_write_json_atomic,
     write_npz_atomic as _common_write_npz_atomic,
+)
+from app.services.common.array_validation import (
+    coerce_1d_castable_finite_float64 as _common_coerce_1d_finite_float64,
+    coerce_1d_integer_int64 as _coerce_1d_integer_int64,
+    coerce_positive_int as _coerce_positive_int,
 )
 from app.services.geometry_linkage_linker import (
     EndpointLinkageRecord,
@@ -45,6 +51,10 @@ _KNOWN_METHODS = {
 }
 _DISTANCE_RTOL = 1.0e-9
 _DISTANCE_ATOL = 1.0e-9
+_coerce_1d_finite_float64 = partial(
+    _common_coerce_1d_finite_float64,
+    reject_bool_dtype=True,
+)
 
 _CSV_COLUMNS = [
     'endpoint_kind',
@@ -309,9 +319,9 @@ def write_geometry_linkage_artifacts(
         qc_json_path=job_dir_path / GEOMETRY_LINKAGE_QC_JSON_NAME,
     )
 
-    _write_npz_atomic(paths.linkage_npz_path, solution_payload)
-    _write_csv_atomic(paths.linkage_csv_path, csv_rows)
-    _write_json_atomic(paths.qc_json_path, qc_payload)
+    _write_geometry_linkage_npz(paths.linkage_npz_path, solution_payload)
+    _write_geometry_linkage_csv(paths.linkage_csv_path, csv_rows)
+    _write_geometry_linkage_qc_json(paths.qc_json_path, qc_payload)
     return paths
 
 
@@ -947,7 +957,10 @@ def _validate_npz_payload_is_pickle_free(arrays: dict[str, np.ndarray]) -> None:
     validate_npz_no_object_arrays(arrays)
 
 
-def _write_npz_atomic(out_path: Path, payload: dict[str, np.ndarray]) -> None:
+def _write_geometry_linkage_npz(
+    out_path: Path,
+    payload: dict[str, np.ndarray],
+) -> None:
     _common_write_npz_atomic(
         out_path,
         payload,
@@ -956,7 +969,7 @@ def _write_npz_atomic(out_path: Path, payload: dict[str, np.ndarray]) -> None:
     )
 
 
-def _write_json_atomic(out_path: Path, payload: dict[str, Any]) -> None:
+def _write_geometry_linkage_qc_json(out_path: Path, payload: dict[str, Any]) -> None:
     _common_write_json_atomic(
         out_path,
         payload,
@@ -968,7 +981,10 @@ def _write_json_atomic(out_path: Path, payload: dict[str, Any]) -> None:
     )
 
 
-def _write_csv_atomic(out_path: Path, rows: list[dict[str, object]]) -> None:
+def _write_geometry_linkage_csv(
+    out_path: Path,
+    rows: list[dict[str, object]],
+) -> None:
     _common_write_csv_atomic(
         out_path,
         columns=_CSV_COLUMNS,
@@ -976,67 +992,6 @@ def _write_csv_atomic(out_path: Path, rows: list[dict[str, object]]) -> None:
         extrasaction='raise',
         lineterminator='\r\n',
     )
-
-
-def _coerce_1d_finite_float64(
-    values: object,
-    *,
-    name: str,
-    expected_shape: tuple[int, ...] | None = None,
-) -> np.ndarray:
-    arr = np.asarray(values)
-    if arr.ndim != 1:
-        raise ValueError(f'{name} must be a 1D array')
-    if expected_shape is not None and arr.shape != expected_shape:
-        raise ValueError(
-            f'{name} shape mismatch: expected {expected_shape}, got {arr.shape}'
-        )
-    if np.issubdtype(arr.dtype, np.bool_):
-        raise ValueError(f'{name} must be numeric')
-    try:
-        arr_f64 = arr.astype(np.float64, copy=False)
-    except (TypeError, ValueError) as exc:
-        raise ValueError(f'{name} must be numeric') from exc
-    if not np.all(np.isfinite(arr_f64)):
-        raise ValueError(f'{name} must contain only finite values')
-    return np.ascontiguousarray(arr_f64, dtype=np.float64)
-
-
-def _coerce_1d_integer_int64(
-    values: object,
-    *,
-    name: str,
-    expected_shape: tuple[int, ...] | None = None,
-) -> np.ndarray:
-    arr = np.asarray(values)
-    if arr.ndim != 1:
-        raise ValueError(f'{name} must be a 1D array')
-    if expected_shape is not None and arr.shape != expected_shape:
-        raise ValueError(
-            f'{name} shape mismatch: expected {expected_shape}, got {arr.shape}'
-        )
-    if np.issubdtype(arr.dtype, np.bool_):
-        raise ValueError(f'{name} must contain integer values')
-    if np.issubdtype(arr.dtype, np.integer):
-        return np.ascontiguousarray(arr, dtype=np.int64)
-    try:
-        arr_f64 = arr.astype(np.float64, copy=False)
-    except (TypeError, ValueError) as exc:
-        raise ValueError(f'{name} must contain integer values') from exc
-    if not np.all(np.isfinite(arr_f64)):
-        raise ValueError(f'{name} must contain only finite values')
-    if not np.all(arr_f64 == np.rint(arr_f64)):
-        raise ValueError(f'{name} must contain integer values')
-    return np.ascontiguousarray(arr_f64, dtype=np.int64)
-
-
-def _coerce_positive_int(value: object, *, name: str) -> int:
-    if isinstance(value, (bool, np.bool_)) or not isinstance(value, (int, np.integer)):
-        raise ValueError(f'{name} must be an integer')
-    out = int(value)
-    if out <= 0:
-        raise ValueError(f'{name} must be greater than 0')
-    return out
 
 
 def _validate_nonnegative_count(value: object, *, name: str) -> None:

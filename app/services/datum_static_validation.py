@@ -7,6 +7,9 @@ from typing import Literal
 
 import numpy as np
 
+from app.services.common.array_validation import (
+    is_real_numeric_dtype as _is_real_numeric_dtype,
+)
 from app.trace_store.reader import TraceStoreSectionReader
 
 
@@ -249,13 +252,6 @@ def _validate_static_header_array(
         msg = f'{name} header byte {byte} must contain only integer values'
         raise ValueError(msg)
     return arr
-
-
-def _is_real_numeric_dtype(dtype: np.dtype) -> bool:
-    return np.issubdtype(dtype, np.number) and not np.issubdtype(
-        dtype,
-        np.complexfloating,
-    )
 
 
 __all__ = [

@@ -508,6 +508,24 @@ def test_validation_rejects_unknown_source_and_receiver_nodes() -> None:
         )
 
 
+def test_validation_rejects_non_real_numeric_trace_node_ids() -> None:
+    inputs, design, solved, _result = _build_result()
+
+    with pytest.raises(
+        RefractionHalfInterceptTimeError,
+        match='source_node_id_sorted.*real numeric dtype',
+    ):
+        build_refraction_half_intercept_time_model(
+            input_model=replace(
+                inputs,
+                source_node_id_sorted=inputs.source_node_id_sorted.astype('<U8'),
+            ),
+            design_matrix=design,
+            solver_result=solved,
+            weathering_velocity_m_s=WEATHERING_VELOCITY_M_S,
+        )
+
+
 def test_validation_rejects_source_receiver_sorted_length_mismatch() -> None:
     inputs, design, solved, _result = _build_result()
 

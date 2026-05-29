@@ -8,6 +8,7 @@ from scipy import sparse
 
 from app.api.schemas import RefractionStaticModelRequest
 from app.services.refraction_static_design_matrix import (
+    RefractionStaticDesignMatrixError,
     build_refraction_static_design_matrix,
     build_refraction_static_design_matrix_from_arrays,
 )
@@ -368,6 +369,22 @@ def test_lower_level_array_builder_is_importable_and_builds_design() -> None:
 
     assert isinstance(design, RefractionStaticDesignMatrix)
     assert design.matrix.shape == (3, 4)
+
+
+def test_lower_level_array_builder_rejects_non_real_numeric_node_ids() -> None:
+    with pytest.raises(
+        RefractionStaticDesignMatrixError,
+        match='source_node_id_sorted.*real numeric dtype',
+    ):
+        build_refraction_static_design_matrix_from_arrays(
+            pick_time_s_sorted=PICK_TIME,
+            valid_observation_mask_sorted=VALID_OBSERVATION,
+            source_node_id_sorted=SOURCE_NODE_ID.astype('<U8'),
+            receiver_node_id_sorted=RECEIVER_NODE_ID,
+            distance_m_sorted=DISTANCE_M,
+            node_id=NODE_ID,
+            bedrock_velocity_mode='solve_global',
+        )
 
 
 @pytest.mark.parametrize(

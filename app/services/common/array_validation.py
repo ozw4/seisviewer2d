@@ -59,30 +59,57 @@ def coerce_1d_finite_float64(
     )
 
 
+def coerce_1d_castable_finite_float64(
+    values: object,
+    *,
+    name: str,
+    expected_shape: tuple[int, ...] | None = None,
+    reject_bool_dtype: bool = False,
+    error_type: type[Exception] = ValueError,
+) -> np.ndarray:
+    arr = _as_1d_array(values, name=name, expected_shape=expected_shape, error_type=error_type)
+    if reject_bool_dtype and np.issubdtype(arr.dtype, np.bool_):
+        _raise(f'{name} must be numeric', error_type)
+    try:
+        out = np.ascontiguousarray(arr, dtype=np.float64)
+    except (TypeError, ValueError) as exc:
+        _raise_from(f'{name} must be numeric', error_type, exc)
+    if np.any(~np.isfinite(out)):
+        _raise(f'{name} must contain only finite values', error_type)
+    return out
+
+
 def coerce_1d_integer_int64(
     values: object,
     *,
     name: str,
     expected_shape: tuple[int, ...] | None = None,
+    allow_integer_like_float: bool = True,
+    nonfinite_message: str | None = None,
     error_type: type[Exception] = ValueError,
 ) -> np.ndarray:
     arr = _as_1d_array(values, name=name, expected_shape=expected_shape, error_type=error_type)
-    if np.issubdtype(arr.dtype, np.bool_):
-        _raise(f'{name} must contain integer values', error_type)
+    if not is_real_numeric_dtype(arr.dtype):
+        _raise(f'{name} must have a real numeric dtype', error_type)
     if np.issubdtype(arr.dtype, np.integer):
         out = np.ascontiguousarray(arr, dtype=np.int64)
         if not np.array_equal(arr, out):
             _raise(f'{name} values must fit in int64', error_type)
         return out
-    if not is_real_numeric_dtype(arr.dtype):
+    if not allow_integer_like_float or np.issubdtype(arr.dtype, np.complexfloating):
         _raise(f'{name} must contain integer values', error_type)
 
-    float_values = np.asarray(arr, dtype=np.float64)
+    try:
+        float_values = np.asarray(arr, dtype=np.float64)
+    except (TypeError, ValueError) as exc:
+        _raise_from(f'{name} must contain integer values', error_type, exc)
     int64_info = np.iinfo(np.int64)
     int64_upper_exclusive = np.float64(2**63)
+    if np.any(~np.isfinite(float_values)):
+        message = nonfinite_message or 'must contain integer values'
+        _raise(f'{name} {message}', error_type)
     if (
-        np.any(~np.isfinite(float_values))
-        or np.any(float_values != np.trunc(float_values))
+        np.any(float_values != np.trunc(float_values))
         or np.any(float_values < int64_info.min)
         or np.any(float_values >= int64_upper_exclusive)
     ):
@@ -109,16 +136,20 @@ def coerce_1d_string_array(
     name: str,
     expected_shape: tuple[int, ...] | None = None,
     reject_object_dtype: bool = True,
+    allow_non_string_dtype: bool = False,
+    output_dtype: object = str,
     error_type: type[Exception] = ValueError,
 ) -> np.ndarray:
     arr = _as_1d_array(values, name=name, expected_shape=expected_shape, error_type=error_type)
+    if allow_non_string_dtype:
+        return np.ascontiguousarray(arr.astype(output_dtype, copy=False))
     if arr.dtype == object:
         if reject_object_dtype:
             _raise(f'{name} must not have object dtype', error_type)
-        return np.ascontiguousarray(arr.astype(str))
+        return np.ascontiguousarray(arr.astype(output_dtype))
     if arr.dtype.kind not in {'U', 'S'}:
         _raise(f'{name} must have string dtype', error_type)
-    return np.ascontiguousarray(arr.astype(str, copy=False))
+    return np.ascontiguousarray(arr.astype(output_dtype, copy=False))
 
 
 def coerce_positive_int(
@@ -252,6 +283,7 @@ def _raise_from(
 
 __all__ = [
     'coerce_1d_bool_array',
+    'coerce_1d_castable_finite_float64',
     'coerce_1d_finite_float64',
     'coerce_1d_integer_int64',
     'coerce_1d_real_numeric_float64',

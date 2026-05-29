@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import asdict, dataclass
+from functools import partial
 from pathlib import Path
 from typing import Any, Literal
 
@@ -12,6 +13,12 @@ from scipy import sparse
 
 from app.contracts.statics.refraction.model import RefractionStaticModelRequest
 from app.services.common.artifact_io import write_csv_atomic, write_json_atomic
+from app.services.common.array_validation import (
+    coerce_1d_bool_array,
+    coerce_1d_integer_int64,
+    coerce_1d_real_numeric_float64,
+    coerce_positive_finite_float,
+)
 from app.services.refraction_static_cell_coordinates import (
     effective_refraction_cell_grid_config,
     project_refraction_cell_coordinates,
@@ -103,6 +110,24 @@ def _validate_design_matrix_layer_kind(layer_kind: RefractionLayerKind) -> None:
 
 class RefractionStaticDesignMatrixError(ValueError):
     """Raised when refraction static design matrix inputs are inconsistent."""
+
+
+_coerce_1d_real_numeric_float64 = partial(
+    coerce_1d_real_numeric_float64,
+    error_type=RefractionStaticDesignMatrixError,
+)
+_coerce_1d_integer_int64 = partial(
+    coerce_1d_integer_int64,
+    error_type=RefractionStaticDesignMatrixError,
+)
+_coerce_1d_bool_array = partial(
+    coerce_1d_bool_array,
+    error_type=RefractionStaticDesignMatrixError,
+)
+_coerce_positive_finite_float = partial(
+    coerce_positive_finite_float,
+    error_type=RefractionStaticDesignMatrixError,
+)
 
 
 @dataclass(frozen=True)
@@ -1624,69 +1649,6 @@ def _coerce_optional_endpoint_key(
     return np.ascontiguousarray(arr.astype('<U128'), dtype='<U128')
 
 
-def _coerce_1d_real_numeric_float64(
-    values: np.ndarray,
-    *,
-    name: str,
-    expected_shape: tuple[int, ...] | None = None,
-) -> np.ndarray:
-    arr = np.asarray(values)
-    if arr.ndim != 1:
-        raise RefractionStaticDesignMatrixError(f'{name} must be a 1D array')
-    if expected_shape is not None and arr.shape != expected_shape:
-        raise RefractionStaticDesignMatrixError(
-            f'{name} shape mismatch: expected {expected_shape}, got {arr.shape}'
-        )
-    if not _is_real_numeric_dtype(arr.dtype):
-        raise RefractionStaticDesignMatrixError(f'{name} must have a numeric dtype')
-    return np.ascontiguousarray(arr, dtype=np.float64)
-
-
-def _coerce_1d_integer_int64(
-    values: np.ndarray,
-    *,
-    name: str,
-    expected_shape: tuple[int, ...] | None = None,
-) -> np.ndarray:
-    arr = np.asarray(values)
-    if arr.ndim != 1:
-        raise RefractionStaticDesignMatrixError(f'{name} must be a 1D array')
-    if expected_shape is not None and arr.shape != expected_shape:
-        raise RefractionStaticDesignMatrixError(
-            f'{name} shape mismatch: expected {expected_shape}, got {arr.shape}'
-        )
-    if np.issubdtype(arr.dtype, np.bool_):
-        raise RefractionStaticDesignMatrixError(f'{name} must contain integer values')
-    if np.issubdtype(arr.dtype, np.integer):
-        return np.ascontiguousarray(arr, dtype=np.int64)
-    if not _is_real_numeric_dtype(arr.dtype):
-        raise RefractionStaticDesignMatrixError(f'{name} must contain integer values')
-    arr_f64 = arr.astype(np.float64, copy=False)
-    if not np.all(np.isfinite(arr_f64)):
-        raise RefractionStaticDesignMatrixError(f'{name} must contain only finite values')
-    if not np.all(arr_f64 == np.rint(arr_f64)):
-        raise RefractionStaticDesignMatrixError(f'{name} must contain integer values')
-    return np.ascontiguousarray(arr_f64, dtype=np.int64)
-
-
-def _coerce_1d_bool_array(
-    values: np.ndarray,
-    *,
-    name: str,
-    expected_shape: tuple[int, ...],
-) -> np.ndarray:
-    arr = np.asarray(values)
-    if arr.ndim != 1:
-        raise RefractionStaticDesignMatrixError(f'{name} must be a 1D array')
-    if arr.shape != expected_shape:
-        raise RefractionStaticDesignMatrixError(
-            f'{name} shape mismatch: expected {expected_shape}, got {arr.shape}'
-        )
-    if not np.issubdtype(arr.dtype, np.bool_):
-        raise RefractionStaticDesignMatrixError(f'{name} must have bool dtype')
-    return np.ascontiguousarray(arr, dtype=bool)
-
-
 def _coerce_optional_rejection_reason(
     values: np.ndarray | None,
     *,
@@ -1705,31 +1667,6 @@ def _coerce_optional_rejection_reason(
             f'expected {expected_shape}, got {arr.shape}'
         )
     return np.ascontiguousarray(arr.astype('<U64'), dtype='<U64')
-
-
-def _coerce_positive_finite_float(value: object, *, name: str) -> float:
-    if isinstance(value, (bool, np.bool_)):
-        raise RefractionStaticDesignMatrixError(
-            f'{name} must be finite and greater than 0'
-        )
-    try:
-        out = float(value)
-    except (TypeError, ValueError) as exc:
-        raise RefractionStaticDesignMatrixError(
-            f'{name} must be finite and greater than 0'
-        ) from exc
-    if not np.isfinite(out) or out <= 0.0:
-        raise RefractionStaticDesignMatrixError(
-            f'{name} must be finite and greater than 0'
-        )
-    return out
-
-
-def _is_real_numeric_dtype(dtype: np.dtype) -> bool:
-    return np.issubdtype(dtype, np.number) and not np.issubdtype(
-        dtype,
-        np.complexfloating,
-    )
 
 
 __all__ = [

@@ -14,6 +14,14 @@ from app.services.common.artifact_io import (
     write_csv_atomic as _common_write_csv_atomic,
     write_json_atomic as _common_write_json_atomic,
 )
+from app.services.common.array_validation import (
+    coerce_1d_bool_array as _coerce_1d_bool_array,
+    coerce_1d_finite_float64 as _coerce_1d_finite_float64,
+    coerce_1d_integer_int64 as _coerce_1d_integer_int64,
+    coerce_1d_real_numeric_float64 as _coerce_1d_real_numeric_float64,
+    coerce_finite_float as _coerce_finite_float,
+    coerce_nonnegative_int as _common_coerce_nonnegative_int,
+)
 from app.services.first_break_qc_inputs import FirstBreakQcInputs
 from app.services.first_break_qc_math import (
     CorrelationQc,
@@ -139,7 +147,7 @@ def write_first_break_qc_artifacts(
         residual_by_key1_csv=values.job_dir / RESIDUAL_BY_KEY1_CSV_NAME,
     )
 
-    _write_json_atomic(paths.qc_json, qc_payload)
+    _write_first_break_qc_json(paths.qc_json, qc_payload)
     _write_trace_csv_atomic(paths.qc_csv, values, metric_values)
     _write_residual_by_key1_csv_atomic(paths.residual_by_key1_csv, residual_rows)
     return paths
@@ -152,13 +160,13 @@ def _validate_inputs(*, job_dir: Path, inputs: FirstBreakQcInputs) -> _Validated
         msg = 'job_dir must be path-like'
         raise ValueError(msg) from exc
 
-    n_traces = _coerce_positive_int(getattr(inputs, 'n_traces', None), name='n_traces')
+    n_traces = _coerce_qc_positive_int(getattr(inputs, 'n_traces', None), name='n_traces')
     expected_shape = (n_traces,)
-    n_samples = _coerce_positive_int(
+    n_samples = _coerce_qc_positive_int(
         getattr(inputs, 'n_samples', None),
         name='n_samples',
     )
-    dt = _coerce_positive_finite_float(getattr(inputs, 'dt', None), name='dt')
+    dt = _coerce_qc_positive_finite_float(getattr(inputs, 'dt', None), name='dt')
     offset_byte = _validate_header_byte(
         getattr(inputs, 'offset_byte', None),
         name='offset_byte',
@@ -367,12 +375,12 @@ def _coerce_series_stats(
     if not isinstance(value, FiniteSeriesStats):
         msg = f'{name} must be FiniteSeriesStats'
         raise ValueError(msg)
-    _coerce_nonnegative_int(value.n_total, name=f'{name}.n_total')
+    _coerce_qc_nonnegative_int(value.n_total, name=f'{name}.n_total')
     if int(value.n_total) != expected_n_total:
         msg = f'{name}.n_total mismatch: expected {expected_n_total}, got {value.n_total}'
         raise ValueError(msg)
-    _coerce_nonnegative_int(value.n_valid, name=f'{name}.n_valid')
-    _coerce_nonnegative_int(value.n_nan, name=f'{name}.n_nan')
+    _coerce_qc_nonnegative_int(value.n_valid, name=f'{name}.n_valid')
+    _coerce_qc_nonnegative_int(value.n_nan, name=f'{name}.n_nan')
     for field_name in ('min_s', 'max_s', 'mean_s', 'median_s', 'std_s', 'mad_s'):
         _coerce_optional_finite_float(
             getattr(value, field_name),
@@ -396,7 +404,7 @@ def _coerce_correlations(value: object) -> dict[str, CorrelationQc]:
         if corr.status not in {'ok', 'insufficient_data', 'constant_input'}:
             msg = f'correlations[{key}].status is invalid'
             raise ValueError(msg)
-        _coerce_nonnegative_int(corr.n_used, name=f'correlations[{key}].n_used')
+        _coerce_qc_nonnegative_int(corr.n_used, name=f'correlations[{key}].n_used')
         if corr.status == 'ok':
             _coerce_finite_float(corr.r, name=f'correlations[{key}].r')
         elif corr.r is not None:
@@ -413,7 +421,7 @@ def _coerce_linear_offset_fit(value: object) -> LinearOffsetFit:
     if value.status not in {'ok', 'insufficient_data', 'constant_abs_offset'}:
         msg = 'linear_offset_fit.status is invalid'
         raise ValueError(msg)
-    _coerce_nonnegative_int(value.n_used, name='linear_offset_fit.n_used')
+    _coerce_qc_nonnegative_int(value.n_used, name='linear_offset_fit.n_used')
     fields = ('intercept_s', 'slowness_s_per_offset_unit', 'r2')
     if value.status == 'ok':
         for field_name in fields:
@@ -703,7 +711,7 @@ def _compute_residual_stats_for_section(
     )
 
 
-def _write_json_atomic(out_path: Path, payload: dict[str, Any]) -> None:
+def _write_first_break_qc_json(out_path: Path, payload: dict[str, Any]) -> None:
     _common_write_json_atomic(
         out_path,
         payload,
@@ -880,92 +888,6 @@ def _validate_pick_nan_contract(
         raise ValueError(msg)
 
 
-def _coerce_1d_finite_float64(
-    values: object,
-    *,
-    name: str,
-    expected_shape: tuple[int, ...],
-) -> np.ndarray:
-    arr = _coerce_1d_real_numeric_float64(
-        values,
-        name=name,
-        expected_shape=expected_shape,
-    )
-    if not np.all(np.isfinite(arr)):
-        msg = f'{name} must contain only finite values'
-        raise ValueError(msg)
-    return arr
-
-
-def _coerce_1d_real_numeric_float64(
-    values: object,
-    *,
-    name: str,
-    expected_shape: tuple[int, ...],
-) -> np.ndarray:
-    arr = np.asarray(values)
-    if arr.ndim != 1:
-        msg = f'{name} must be a 1D array'
-        raise ValueError(msg)
-    if arr.shape != expected_shape:
-        msg = f'{name} shape mismatch: expected {expected_shape}, got {arr.shape}'
-        raise ValueError(msg)
-    if not _is_real_numeric_dtype(arr.dtype):
-        msg = f'{name} must have a numeric dtype'
-        raise ValueError(msg)
-    return np.ascontiguousarray(arr, dtype=np.float64)
-
-
-def _coerce_1d_bool_array(
-    values: object,
-    *,
-    name: str,
-    expected_shape: tuple[int, ...],
-) -> np.ndarray:
-    arr = np.asarray(values)
-    if arr.ndim != 1:
-        msg = f'{name} must be a 1D array'
-        raise ValueError(msg)
-    if arr.shape != expected_shape:
-        msg = f'{name} shape mismatch: expected {expected_shape}, got {arr.shape}'
-        raise ValueError(msg)
-    if not np.issubdtype(arr.dtype, np.bool_):
-        msg = f'{name} must have bool dtype'
-        raise ValueError(msg)
-    return np.ascontiguousarray(arr, dtype=bool)
-
-
-def _coerce_1d_integer_int64(
-    values: object,
-    *,
-    name: str,
-    expected_shape: tuple[int, ...],
-) -> np.ndarray:
-    arr = np.asarray(values)
-    if arr.ndim != 1:
-        msg = f'{name} must be a 1D array'
-        raise ValueError(msg)
-    if arr.shape != expected_shape:
-        msg = f'{name} shape mismatch: expected {expected_shape}, got {arr.shape}'
-        raise ValueError(msg)
-    if np.issubdtype(arr.dtype, np.bool_):
-        msg = f'{name} must contain integer values'
-        raise ValueError(msg)
-    if np.issubdtype(arr.dtype, np.integer):
-        return np.ascontiguousarray(arr, dtype=np.int64)
-    if not _is_real_numeric_dtype(arr.dtype):
-        msg = f'{name} must contain integer values'
-        raise ValueError(msg)
-    arr_f64 = arr.astype(np.float64, copy=False)
-    if not np.all(np.isfinite(arr_f64)):
-        msg = f'{name} must contain only finite values'
-        raise ValueError(msg)
-    if not np.all(arr_f64 == np.rint(arr_f64)):
-        msg = f'{name} must contain integer values'
-        raise ValueError(msg)
-    return np.ascontiguousarray(arr_f64, dtype=np.int64)
-
-
 def _validate_header_byte(value: object, *, name: str) -> int:
     if isinstance(value, (bool, np.bool_)) or not isinstance(value, (int, np.integer)):
         msg = f'{name} must be an integer SEG-Y trace header byte'
@@ -977,23 +899,27 @@ def _validate_header_byte(value: object, *, name: str) -> int:
     return byte
 
 
-def _coerce_positive_int(value: object, *, name: str) -> int:
-    out = _coerce_nonnegative_int(value, name=name)
+def _coerce_qc_positive_int(value: object, *, name: str) -> int:
+    out = _coerce_qc_nonnegative_int(value, name=name)
     if out <= 0:
         msg = f'{name} must be greater than 0'
         raise ValueError(msg)
     return out
 
 
-def _coerce_nonnegative_int(value: object, *, name: str) -> int:
-    if isinstance(value, (bool, np.bool_)) or not isinstance(value, (int, np.integer)):
-        msg = f'{name} must be an integer'
-        raise ValueError(msg)
-    out = int(value)
-    if out < 0:
+def _coerce_qc_nonnegative_int(value: object, *, name: str) -> int:
+    """Preserve first-break QC's historical nonnegative wording."""
+    try:
+        return _common_coerce_nonnegative_int(value, name=name)
+    except ValueError as exc:
+        if isinstance(value, (bool, np.bool_)) or not isinstance(
+            value,
+            (int, np.integer),
+        ):
+            msg = f'{name} must be an integer'
+            raise ValueError(msg) from exc
         msg = f'{name} must be greater than or equal to 0'
-        raise ValueError(msg)
-    return out
+        raise ValueError(msg) from exc
 
 
 def _coerce_int_from_attr(value: object, attr: str, *, name: str) -> int:
@@ -1004,40 +930,23 @@ def _coerce_int_from_attr(value: object, attr: str, *, name: str) -> int:
     return int(out)
 
 
-def _coerce_finite_float(value: object, *, name: str) -> float:
-    if isinstance(value, (bool, np.bool_)):
-        msg = f'{name} must be finite'
-        raise ValueError(msg)
-    try:
-        out = float(value)
-    except (TypeError, ValueError) as exc:
-        msg = f'{name} must be finite'
-        raise ValueError(msg) from exc
-    if not np.isfinite(out):
-        msg = f'{name} must be finite'
-        raise ValueError(msg)
-    return out
-
-
 def _coerce_optional_finite_float(value: object, *, name: str) -> float | None:
     if value is None:
         return None
     return _coerce_finite_float(value, name=name)
 
 
-def _coerce_positive_finite_float(value: object, *, name: str) -> float:
-    out = _coerce_finite_float(value, name=name)
+def _coerce_qc_positive_finite_float(value: object, *, name: str) -> float:
+    """Preserve first-break QC's combined finite/positive error wording."""
+    try:
+        out = _coerce_finite_float(value, name=name)
+    except ValueError as exc:
+        msg = f'{name} must be finite and greater than 0'
+        raise ValueError(msg) from exc
     if out <= 0.0:
         msg = f'{name} must be finite and greater than 0'
         raise ValueError(msg)
     return out
-
-
-def _is_real_numeric_dtype(dtype: np.dtype) -> bool:
-    return np.issubdtype(dtype, np.number) and not np.issubdtype(
-        dtype,
-        np.complexfloating,
-    )
 
 
 __all__ = [

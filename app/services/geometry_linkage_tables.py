@@ -7,6 +7,10 @@ from typing import Literal
 
 import numpy as np
 
+from app.services.common.array_validation import (
+    coerce_1d_finite_float64 as _common_coerce_1d_finite_float64,
+    coerce_1d_integer_int64 as _common_coerce_1d_integer_int64,
+)
 from app.services.geometry_linkage_validation import GeometryLinkageHeaders
 from app.utils.segy_scalars import (
     apply_segy_scalar,
@@ -153,18 +157,7 @@ def _build_unique_endpoint_table(
 
 
 def _coerce_1d_numeric(values: np.ndarray, *, name: str) -> np.ndarray:
-    arr = np.asarray(values)
-    if arr.ndim != 1:
-        msg = f'{name} must be a 1D array'
-        raise ValueError(msg)
-    if not _is_real_numeric_dtype(arr.dtype):
-        msg = f'{name} must have a real numeric dtype'
-        raise ValueError(msg)
-    arr_f64 = arr.astype(np.float64, copy=False)
-    if not np.all(np.isfinite(arr_f64)):
-        msg = f'{name} must contain only finite values'
-        raise ValueError(msg)
-    return arr_f64
+    return _common_coerce_1d_finite_float64(values, name=name)
 
 
 def _coerce_1d_integer_scalars(values: np.ndarray, *, name: str) -> np.ndarray:
@@ -172,28 +165,22 @@ def _coerce_1d_integer_scalars(values: np.ndarray, *, name: str) -> np.ndarray:
     if arr.ndim != 1:
         msg = f'{name} must be a 1D array'
         raise ValueError(msg)
-    if np.issubdtype(arr.dtype, np.integer):
-        return np.asarray(arr, dtype=np.int64)
-    if not np.issubdtype(arr.dtype, np.floating):
+    if not (
+        np.issubdtype(arr.dtype, np.integer)
+        or np.issubdtype(arr.dtype, np.floating)
+    ):
         msg = f'{name} must have an integer dtype or integer-valued float dtype'
         raise ValueError(msg)
-
-    arr_f64 = arr.astype(np.float64, copy=False)
-    if not np.all(np.isfinite(arr_f64)):
-        msg = f'{name} must contain only finite values'
-        raise ValueError(msg)
-    if not np.all(arr_f64 == np.rint(arr_f64)):
+    try:
+        return _common_coerce_1d_integer_int64(values, name=name)
+    except ValueError as exc:
+        if np.issubdtype(arr.dtype, np.floating) and np.any(
+            ~np.isfinite(arr.astype(np.float64, copy=False))
+        ):
+            msg = f'{name} must contain only finite values'
+            raise ValueError(msg) from exc
         msg = f'{name} must contain only integer values'
-        raise ValueError(msg)
-
-    int64_info = np.iinfo(np.int64)
-    if arr_f64.size and (
-        float(arr_f64.min()) < int64_info.min
-        or float(arr_f64.max()) > int64_info.max
-    ):
-        msg = f'{name} values are outside the int64 range'
-        raise ValueError(msg)
-    return np.asarray(arr_f64, dtype=np.int64)
+        raise ValueError(msg) from exc
 
 
 def _validate_matching_shape(
@@ -205,13 +192,6 @@ def _validate_matching_shape(
     if values.shape != expected_shape:
         msg = f'{name} shape mismatch: expected {expected_shape}, got {values.shape}'
         raise ValueError(msg)
-
-
-def _is_real_numeric_dtype(dtype: np.dtype) -> bool:
-    return np.issubdtype(dtype, np.number) and not np.issubdtype(
-        dtype,
-        np.complexfloating,
-    )
 
 
 __all__ = [
