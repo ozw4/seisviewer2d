@@ -130,24 +130,20 @@ def test_integer_array_coercion_accepts_integer_like_float() -> None:
     np.testing.assert_array_equal(out, np.array([1, 2, -3], dtype=np.int64))
 
 
-def test_integer_array_coercion_accepts_castable_string_values() -> None:
-    source = np.array(['1.0', '2.0', '-3.0'], dtype='<U4')[::2]
-
-    out = coerce_1d_integer_int64(source, name='indices')
-
-    assert out.dtype == np.int64
-    assert out.flags.c_contiguous is True
-    np.testing.assert_array_equal(out, np.array([1, -3], dtype=np.int64))
-
-
-def test_integer_array_coercion_accepts_castable_object_values() -> None:
-    source = np.array(['1', 2.0, np.int64(-3)], dtype=object)
-
-    out = coerce_1d_integer_int64(source, name='indices')
-
-    assert out.dtype == np.int64
-    assert out.flags.c_contiguous is True
-    np.testing.assert_array_equal(out, np.array([1, 2, -3], dtype=np.int64))
+@pytest.mark.parametrize(
+    'values',
+    [
+        np.array([True, False], dtype=bool),
+        np.array([1.0 + 0.0j], dtype=np.complex128),
+        np.array(['1.0', '2.0', '-3.0'], dtype='<U4'),
+        np.array(['1', 2.0, np.int64(-3)], dtype=object),
+    ],
+)
+def test_integer_array_coercion_rejects_non_real_numeric_dtype(
+    values: np.ndarray,
+) -> None:
+    with pytest.raises(ValueError, match='real numeric dtype'):
+        coerce_1d_integer_int64(values, name='indices')
 
 
 def test_integer_array_coercion_accepts_min_int64_float() -> None:
@@ -185,9 +181,6 @@ def test_integer_array_coercion_uses_custom_nonfinite_message() -> None:
     [
         np.array([1.2], dtype=np.float64),
         np.array([np.nan], dtype=np.float64),
-        np.array([True, False], dtype=bool),
-        np.array([1.0 + 0.0j], dtype=np.complex128),
-        np.array(['not-an-int'], dtype='<U10'),
         np.array([2**63], dtype=np.float64),
     ],
 )

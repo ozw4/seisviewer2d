@@ -89,8 +89,8 @@ def coerce_1d_integer_int64(
     error_type: type[Exception] = ValueError,
 ) -> np.ndarray:
     arr = _as_1d_array(values, name=name, expected_shape=expected_shape, error_type=error_type)
-    if np.issubdtype(arr.dtype, np.bool_):
-        _raise(f'{name} must contain integer values', error_type)
+    if not is_real_numeric_dtype(arr.dtype):
+        _raise(f'{name} must have a real numeric dtype', error_type)
     if np.issubdtype(arr.dtype, np.integer):
         out = np.ascontiguousarray(arr, dtype=np.int64)
         if not np.array_equal(arr, out):

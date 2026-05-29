@@ -509,6 +509,22 @@ def test_time_term_linkage_rejects_negative_node_ids(
         )
 
 
+def test_time_term_linkage_rejects_non_real_numeric_node_ids(
+    client: TestClient,
+    tmp_path: Path,
+) -> None:
+    _install_trace_store(client, tmp_path)
+    payload = _linkage_payload()
+    payload['source_node_id_sorted'] = payload['source_node_id_sorted'].astype('<U8')
+    _install_linkage_job(client, tmp_path, payload=payload)
+
+    with pytest.raises(ValueError, match='source_node_id_sorted.*real numeric dtype'):
+        validate_time_term_request(
+            _validate(_payload()),
+            state=client.app.state.sv,
+        )
+
+
 def test_time_term_apply_endpoint_creates_async_job(
     client: TestClient,
     monkeypatch: pytest.MonkeyPatch,
