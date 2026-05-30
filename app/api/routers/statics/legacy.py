@@ -11,7 +11,7 @@ from fastapi import APIRouter, HTTPException, Request
 from pydantic import ValidationError
 
 from app.api._helpers import get_state
-from app.api.routers.statics.launch import launch_static_job
+from app.api.routers.statics.launch import launch_static_job, static_router_job_target
 from app.api.routers.statics.uploads import (
     _store_refraction_pick_upload,
     _validate_refraction_pick_upload,
@@ -46,7 +46,6 @@ from app.services.pipeline_artifacts import maybe_cleanup_expired_jobs
 from app.services.refraction_static_export_service import (
     RefractionStaticExportSourceJobNotFound,
     RefractionStaticExportValidationError,
-    run_refraction_static_export_job,
     validate_refraction_static_export_source_job,
 )
 from app.services.refraction_static_gather_preview import (
@@ -339,7 +338,7 @@ def refraction_static_export(
         key1_byte=source.key1_byte,
         key2_byte=source.key2_byte,
         statics_kind='refraction_export',
-        target=run_refraction_static_export_job,
+        target=static_router_job_target('run_refraction_static_export_job'),
         target_args=lambda job_id: (job_id, req, state),
         after_create=_after_create,
     )

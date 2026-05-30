@@ -12,7 +12,7 @@ from fastapi import APIRouter, File, Form, HTTPException, Request, UploadFile
 from pydantic import ValidationError
 
 from app.api._helpers import get_state
-from app.api.routers.statics.launch import launch_static_job
+from app.api.routers.statics.launch import launch_static_job, static_router_job_target
 from app.api.routers.statics.uploads import (
     _store_refraction_pick_upload,
     _validate_refraction_pick_upload,
@@ -27,7 +27,6 @@ from app.services.refraction_static_artifacts import UPLOADED_REFRACTION_PICKS_N
 from app.services.refraction_static_export_service import (
     resolve_refraction_static_export_formats,
 )
-from app.services.refraction_static_service import run_refraction_static_apply_job
 from app.services.refraction_static_validation_service import (
     validate_refraction_static_inputs_with_picks,
 )
@@ -81,7 +80,7 @@ def refraction_static_apply(
         key1_byte=req.key1_byte,
         key2_byte=req.key2_byte,
         statics_kind='refraction',
-        target=run_refraction_static_apply_job,
+        target=static_router_job_target('run_refraction_static_apply_job'),
         target_args=lambda job_id: (job_id, req, state),
         after_create=_after_create,
     )
@@ -151,7 +150,7 @@ def refraction_static_apply_with_picks(
         key1_byte=req.key1_byte,
         key2_byte=req.key2_byte,
         statics_kind='refraction',
-        target=run_refraction_static_apply_job,
+        target=static_router_job_target('run_refraction_static_apply_job'),
         target_args=_target_args,
         pre_create=_pre_create,
         after_create=_after_create,
