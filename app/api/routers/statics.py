@@ -5,8 +5,9 @@ from __future__ import annotations
 import json
 import tempfile
 import threading
+from collections.abc import Callable, MutableMapping
 from pathlib import Path
-from typing import Annotated
+from typing import Annotated, Any
 from uuid import uuid4
 
 from fastapi import APIRouter, File, Form, HTTPException, Query, Request, UploadFile
@@ -81,7 +82,8 @@ from app.services.first_break_qc_service import run_first_break_qc_job
 from app.services.geometry_linkage_service import run_geometry_linkage_build_job
 from app.services.in_memory_cleanup import cleanup_in_memory_state
 from app.services.job_runner import start_job_thread
-from app.services.pipeline_artifacts import get_job_dir, maybe_cleanup_expired_jobs
+from app.services.jobs import LaunchedJob, launch_managed_job
+from app.services.pipeline_artifacts import maybe_cleanup_expired_jobs
 from app.services.refraction_static_artifacts import UPLOADED_REFRACTION_PICKS_NPZ_NAME
 from app.services.refraction_static_export_service import (
     RefractionStaticExportSourceJobNotFound,
@@ -215,6 +217,37 @@ def _store_refraction_pick_upload(
     return target_path, total_size
 
 
+def launch_static_job(
+    *,
+    state: AppState,
+    file_id: str,
+    key1_byte: int,
+    key2_byte: int,
+    statics_kind: str,
+    target: Callable[..., Any],
+    target_args: Callable[[str], tuple[Any, ...]],
+    pre_create: Callable[[str, Path], None] | None = None,
+    after_create: Callable[[MutableMapping[str, object]], None] | None = None,
+) -> LaunchedJob:
+    return launch_managed_job(
+        state,
+        create_job=lambda job_id, artifacts_dir: state.jobs.create_static_job(
+            job_id,
+            file_id=file_id,
+            key1_byte=key1_byte,
+            key2_byte=key2_byte,
+            statics_kind=statics_kind,
+            artifacts_dir=str(artifacts_dir),
+        ),
+        target=target,
+        target_args=target_args,
+        thread_factory=threading.Thread,
+        start_thread=start_job_thread,
+        pre_create=pre_create,
+        after_create=after_create,
+    )
+
+
 @router.post('/statics/datum/apply', response_model=DatumStaticApplyResponse)
 def datum_static_apply(
     req: DatumStaticApplyRequest,
@@ -224,25 +257,17 @@ def datum_static_apply(
     cleanup_in_memory_state(state)
     maybe_cleanup_expired_jobs()
 
-    job_id = str(uuid4())
-    with state.lock:
-        job_state = state.jobs.create_static_job(
-            job_id,
-            file_id=req.file_id,
-            key1_byte=req.key1_byte,
-            key2_byte=req.key2_byte,
-            statics_kind='datum',
-            artifacts_dir=str(get_job_dir(job_id)),
-        )
-        status = job_state['status']
-
-    start_job_thread(
-        thread_factory=threading.Thread,
+    launched = launch_static_job(
+        state=state,
+        file_id=req.file_id,
+        key1_byte=req.key1_byte,
+        key2_byte=req.key2_byte,
+        statics_kind='datum',
         target=run_datum_static_apply_job,
-        args=(job_id, req, state),
+        target_args=lambda job_id: (job_id, req, state),
     )
 
-    return {'job_id': job_id, 'state': status}
+    return {'job_id': launched.job_id, 'state': launched.state}
 
 
 @router.post('/statics/first-break/qc', response_model=FirstBreakQcJobResponse)
@@ -254,25 +279,17 @@ def first_break_qc(
     cleanup_in_memory_state(state)
     maybe_cleanup_expired_jobs()
 
-    job_id = str(uuid4())
-    with state.lock:
-        job_state = state.jobs.create_static_job(
-            job_id,
-            file_id=req.file_id,
-            key1_byte=req.key1_byte,
-            key2_byte=req.key2_byte,
-            statics_kind='first_break_qc',
-            artifacts_dir=str(get_job_dir(job_id)),
-        )
-        status = job_state['status']
-
-    start_job_thread(
-        thread_factory=threading.Thread,
+    launched = launch_static_job(
+        state=state,
+        file_id=req.file_id,
+        key1_byte=req.key1_byte,
+        key2_byte=req.key2_byte,
+        statics_kind='first_break_qc',
         target=run_first_break_qc_job,
-        args=(job_id, req, state),
+        target_args=lambda job_id: (job_id, req, state),
     )
 
-    return {'job_id': job_id, 'state': status}
+    return {'job_id': launched.job_id, 'state': launched.state}
 
 
 @router.post(
@@ -287,25 +304,17 @@ def static_linkage_build(
     cleanup_in_memory_state(state)
     maybe_cleanup_expired_jobs()
 
-    job_id = str(uuid4())
-    with state.lock:
-        job_state = state.jobs.create_static_job(
-            job_id,
-            file_id=req.file_id,
-            key1_byte=req.key1_byte,
-            key2_byte=req.key2_byte,
-            statics_kind='geometry_linkage',
-            artifacts_dir=str(get_job_dir(job_id)),
-        )
-        status = job_state['status']
-
-    start_job_thread(
-        thread_factory=threading.Thread,
+    launched = launch_static_job(
+        state=state,
+        file_id=req.file_id,
+        key1_byte=req.key1_byte,
+        key2_byte=req.key2_byte,
+        statics_kind='geometry_linkage',
         target=run_geometry_linkage_build_job,
-        args=(job_id, req, state),
+        target_args=lambda job_id: (job_id, req, state),
     )
 
-    return {'job_id': job_id, 'state': status}
+    return {'job_id': launched.job_id, 'state': launched.state}
 
 
 @router.post(
@@ -320,25 +329,17 @@ def residual_static_apply(
     cleanup_in_memory_state(state)
     maybe_cleanup_expired_jobs()
 
-    job_id = str(uuid4())
-    with state.lock:
-        job_state = state.jobs.create_static_job(
-            job_id,
-            file_id=req.file_id,
-            key1_byte=req.key1_byte,
-            key2_byte=req.key2_byte,
-            statics_kind='residual',
-            artifacts_dir=str(get_job_dir(job_id)),
-        )
-        status = job_state['status']
-
-    start_job_thread(
-        thread_factory=threading.Thread,
+    launched = launch_static_job(
+        state=state,
+        file_id=req.file_id,
+        key1_byte=req.key1_byte,
+        key2_byte=req.key2_byte,
+        statics_kind='residual',
         target=run_residual_static_apply_job,
-        args=(job_id, req, state),
+        target_args=lambda job_id: (job_id, req, state),
     )
 
-    return {'job_id': job_id, 'state': status}
+    return {'job_id': launched.job_id, 'state': launched.state}
 
 
 @router.post(
@@ -353,25 +354,17 @@ def time_term_static_apply(
     cleanup_in_memory_state(state)
     maybe_cleanup_expired_jobs()
 
-    job_id = str(uuid4())
-    with state.lock:
-        job_state = state.jobs.create_static_job(
-            job_id,
-            file_id=req.file_id,
-            key1_byte=req.key1_byte,
-            key2_byte=req.key2_byte,
-            statics_kind='time_term',
-            artifacts_dir=str(get_job_dir(job_id)),
-        )
-        status = job_state['status']
-
-    start_job_thread(
-        thread_factory=threading.Thread,
+    launched = launch_static_job(
+        state=state,
+        file_id=req.file_id,
+        key1_byte=req.key1_byte,
+        key2_byte=req.key2_byte,
+        statics_kind='time_term',
         target=run_time_term_static_apply_job,
-        args=(job_id, req, state),
+        target_args=lambda job_id: (job_id, req, state),
     )
 
-    return {'job_id': job_id, 'state': status}
+    return {'job_id': launched.job_id, 'state': launched.state}
 
 
 @router.post(
@@ -396,28 +389,27 @@ def refraction_static_apply(
     cleanup_in_memory_state(state)
     maybe_cleanup_expired_jobs()
 
-    job_id = str(uuid4())
     requested_formats = resolve_refraction_static_export_formats(req.export)
-    with state.lock:
-        job_state = state.jobs.create_static_job(
-            job_id,
-            file_id=req.file_id,
-            key1_byte=req.key1_byte,
-            key2_byte=req.key2_byte,
-            statics_kind='refraction',
-            artifacts_dir=str(get_job_dir(job_id)),
-        )
+
+    def _after_create(job_state: MutableMapping[str, object]) -> None:
         if req.export.enabled:
             job_state['export_formats'] = list(requested_formats)
-        status = job_state['status']
 
-    start_job_thread(
-        thread_factory=threading.Thread,
+    launched = launch_static_job(
+        state=state,
+        file_id=req.file_id,
+        key1_byte=req.key1_byte,
+        key2_byte=req.key2_byte,
+        statics_kind='refraction',
         target=run_refraction_static_apply_job,
-        args=(job_id, req, state),
+        target_args=lambda job_id: (job_id, req, state),
+        after_create=_after_create,
     )
 
-    response: RefractionStaticApplyResponse = {'job_id': job_id, 'state': status}
+    response: RefractionStaticApplyResponse = {
+        'job_id': launched.job_id,
+        'state': launched.state,
+    }
     if req.export.enabled:
         response['requested_formats'] = list(requested_formats)
     return response
@@ -445,42 +437,50 @@ def refraction_static_apply_with_picks(
     cleanup_in_memory_state(state)
     maybe_cleanup_expired_jobs()
 
-    job_id = str(uuid4())
-    job_dir = get_job_dir(job_id)
-    stored_path, _size_bytes = _store_refraction_pick_upload(
-        pick_npz=pick_npz,
-        job_dir=job_dir,
-    )
+    stored_path: Path | None = None
     upload_metadata = {
         'original_filename': pick_npz.filename or '',
         'stored_name': UPLOADED_REFRACTION_PICKS_NPZ_NAME,
     }
 
     requested_formats = resolve_refraction_static_export_formats(req.export)
-    with state.lock:
-        job_state = state.jobs.create_static_job(
-            job_id,
-            file_id=req.file_id,
-            key1_byte=req.key1_byte,
-            key2_byte=req.key2_byte,
-            statics_kind='refraction',
-            artifacts_dir=str(job_dir),
+
+    def _pre_create(_job_id: str, artifacts_dir: Path) -> None:
+        nonlocal stored_path
+        stored_path, _size_bytes = _store_refraction_pick_upload(
+            pick_npz=pick_npz,
+            job_dir=artifacts_dir,
         )
+
+    def _after_create(job_state: MutableMapping[str, object]) -> None:
         job_state['pick_source'] = {
             'kind': 'uploaded_npz',
             **upload_metadata,
         }
         if req.export.enabled:
             job_state['export_formats'] = list(requested_formats)
-        status = job_state['status']
 
-    start_job_thread(
-        thread_factory=threading.Thread,
+    def _target_args(job_id: str) -> tuple[Any, ...]:
+        if stored_path is None:
+            raise RuntimeError('uploaded refraction picks were not stored')
+        return (job_id, req, state, stored_path, upload_metadata)
+
+    launched = launch_static_job(
+        state=state,
+        file_id=req.file_id,
+        key1_byte=req.key1_byte,
+        key2_byte=req.key2_byte,
+        statics_kind='refraction',
         target=run_refraction_static_apply_job,
-        args=(job_id, req, state, stored_path, upload_metadata),
+        target_args=_target_args,
+        pre_create=_pre_create,
+        after_create=_after_create,
     )
 
-    response: RefractionStaticApplyResponse = {'job_id': job_id, 'state': status}
+    response: RefractionStaticApplyResponse = {
+        'job_id': launched.job_id,
+        'state': launched.state,
+    }
     if req.export.enabled:
         response['requested_formats'] = list(requested_formats)
     return response
@@ -717,25 +717,17 @@ def refraction_static_table_apply(
     cleanup_in_memory_state(state)
     maybe_cleanup_expired_jobs()
 
-    job_id = str(uuid4())
-    with state.lock:
-        job_state = state.jobs.create_static_job(
-            job_id,
-            file_id=req.file_id,
-            key1_byte=req.key1_byte,
-            key2_byte=req.key2_byte,
-            statics_kind='refraction_static_table_apply',
-            artifacts_dir=str(get_job_dir(job_id)),
-        )
-        status = job_state['status']
-
-    start_job_thread(
-        thread_factory=threading.Thread,
+    launched = launch_static_job(
+        state=state,
+        file_id=req.file_id,
+        key1_byte=req.key1_byte,
+        key2_byte=req.key2_byte,
+        statics_kind='refraction_static_table_apply',
         target=run_refraction_static_table_apply_job,
-        args=(job_id, req, state),
+        target_args=lambda job_id: (job_id, req, state),
     )
 
-    return {'job_id': job_id, 'state': status}
+    return {'job_id': launched.job_id, 'state': launched.state}
 
 
 @router.post(
@@ -757,29 +749,24 @@ def refraction_static_export(
     except RefractionStaticExportValidationError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
 
-    job_id = str(uuid4())
-    with state.lock:
-        job_state = state.jobs.create_static_job(
-            job_id,
-            file_id=source.source_file_id,
-            key1_byte=source.key1_byte,
-            key2_byte=source.key2_byte,
-            statics_kind='refraction_export',
-            artifacts_dir=str(get_job_dir(job_id)),
-        )
+    def _after_create(job_state: MutableMapping[str, object]) -> None:
         job_state['source_job_id'] = source.source_job_id
         job_state['export_formats'] = list(source.requested_formats)
-        status = job_state['status']
 
-    start_job_thread(
-        thread_factory=threading.Thread,
+    launched = launch_static_job(
+        state=state,
+        file_id=source.source_file_id,
+        key1_byte=source.key1_byte,
+        key2_byte=source.key2_byte,
+        statics_kind='refraction_export',
         target=run_refraction_static_export_job,
-        args=(job_id, req, state),
+        target_args=lambda job_id: (job_id, req, state),
+        after_create=_after_create,
     )
 
     return {
-        'job_id': job_id,
-        'state': status,
+        'job_id': launched.job_id,
+        'state': launched.state,
         'source_job_id': source.source_job_id,
         'requested_formats': list(source.requested_formats),
     }

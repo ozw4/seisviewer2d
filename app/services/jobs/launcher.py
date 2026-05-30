@@ -29,6 +29,7 @@ def launch_managed_job(
     target: Callable[..., Any],
     target_args: Callable[[str], tuple[Any, ...]],
     thread_factory: Callable[..., Any] = threading.Thread,
+    start_thread: Callable[..., Any] = start_job_thread,
     job_id_factory: Callable[[], str] | None = None,
     pre_create: Callable[[str, Path], None] | None = None,
     after_create: Callable[[MutableMapping[str, object]], None] | None = None,
@@ -47,7 +48,7 @@ def launch_managed_job(
         status = JobManager.normalize_status_value(job_state.get('status', 'unknown'))
 
     args = target_args(job_id)
-    start_job_thread(
+    start_thread(
         target=target,
         args=args,
         thread_factory=thread_factory,
