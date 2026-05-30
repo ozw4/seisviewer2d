@@ -10,20 +10,10 @@ from pathlib import Path
 from typing import Annotated, Any
 from uuid import uuid4
 
-from fastapi import APIRouter, File, Form, HTTPException, Query, Request, UploadFile
-from fastapi.responses import FileResponse
+from fastapi import APIRouter, File, Form, HTTPException, Request, UploadFile
 from pydantic import ValidationError
 
 from app.api._helpers import get_state
-from app.api.job_artifacts import (
-    list_job_artifact_files,
-    resolve_download_artifact_or_http_error,
-)
-from app.api.job_routes import (
-    cancel_job_and_get_status_payload,
-    get_job_or_404,
-    job_status_payload,
-)
 from app.contracts.statics.datum import (
     DatumStaticApplyRequest,
     DatumStaticApplyResponse,
@@ -68,10 +58,6 @@ from app.contracts.statics.geometry_linkage import (
     StaticLinkageBuildRequest,
     StaticLinkageBuildResponse,
 )
-from app.contracts.statics.common import (
-    StaticJobFilesResponse,
-    StaticJobStatusResponse,
-)
 from app.contracts.statics.time_term import (
     TimeTermStaticApplyRequest,
     TimeTermStaticApplyResponse,
@@ -81,7 +67,6 @@ from app.services.datum_static_service import run_datum_static_apply_job
 from app.services.first_break_qc_service import run_first_break_qc_job
 from app.services.geometry_linkage_service import run_geometry_linkage_build_job
 from app.services.in_memory_cleanup import cleanup_in_memory_state
-from app.services.job_runner import start_job_thread
 from app.services.jobs import LaunchedJob, launch_managed_job
 from app.services.pipeline_artifacts import maybe_cleanup_expired_jobs
 from app.services.refraction_static_artifacts import UPLOADED_REFRACTION_PICKS_NPZ_NAME
@@ -242,10 +227,16 @@ def launch_static_job(
         target=target,
         target_args=target_args,
         thread_factory=threading.Thread,
-        start_thread=start_job_thread,
+        start_thread=_static_router_start_job_thread,
         pre_create=pre_create,
         after_create=after_create,
     )
+
+
+def _static_router_start_job_thread(**kwargs: Any) -> object:
+    from app.api.routers import statics as statics_router_module
+
+    return statics_router_module.start_job_thread(**kwargs)
 
 
 @router.post('/statics/datum/apply', response_model=DatumStaticApplyResponse)
@@ -770,62 +761,3 @@ def refraction_static_export(
         'source_job_id': source.source_job_id,
         'requested_formats': list(source.requested_formats),
     }
-
-
-@router.get(
-    '/statics/job/{job_id}/status',
-    response_model=StaticJobStatusResponse,
-)
-def static_job_status(request: Request, job_id: str) -> StaticJobStatusResponse:
-    state = get_state(request.app)
-    cleanup_in_memory_state(state)
-    job = get_job_or_404(state, job_id, allowed_job_types={'statics'})
-    return job_status_payload(job)
-
-
-@router.post(
-    '/statics/job/{job_id}/cancel',
-    response_model=StaticJobStatusResponse,
-)
-def static_job_cancel(request: Request, job_id: str) -> StaticJobStatusResponse:
-    state = get_state(request.app)
-    cleanup_in_memory_state(state)
-    return cancel_job_and_get_status_payload(
-        state,
-        job_id,
-        allowed_job_types={'statics'},
-    )
-
-
-@router.get(
-    '/statics/job/{job_id}/files',
-    response_model=StaticJobFilesResponse,
-)
-def static_job_files(request: Request, job_id: str) -> StaticJobFilesResponse:
-    state = get_state(request.app)
-    cleanup_in_memory_state(state)
-    job = get_job_or_404(state, job_id, allowed_job_types={'statics'})
-
-    maybe_cleanup_expired_jobs()
-    return list_job_artifact_files(job)
-
-
-@router.get('/statics/job/{job_id}/download')
-def static_job_download(
-    request: Request,
-    job_id: str,
-    name: str = Query(...),
-) -> FileResponse:
-    state = get_state(request.app)
-    cleanup_in_memory_state(state)
-    get_job_or_404(state, job_id, allowed_job_types={'statics'})
-
-    maybe_cleanup_expired_jobs()
-    file_path = resolve_download_artifact_or_http_error(
-        state,
-        job_id=job_id,
-        name=name,
-        allowed_job_types={'statics'},
-    )
-
-    return FileResponse(path=file_path, filename=name)
