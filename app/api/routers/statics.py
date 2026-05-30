@@ -14,6 +14,10 @@ from fastapi.responses import FileResponse
 from pydantic import ValidationError
 
 from app.api._helpers import get_state
+from app.api.job_artifacts import (
+    list_job_artifact_files,
+    resolve_download_artifact_or_http_error,
+)
 from app.api.job_routes import (
     cancel_job_and_get_status_payload,
     get_job_or_404,
@@ -76,7 +80,6 @@ from app.services.datum_static_service import run_datum_static_apply_job
 from app.services.first_break_qc_service import run_first_break_qc_job
 from app.services.geometry_linkage_service import run_geometry_linkage_build_job
 from app.services.in_memory_cleanup import cleanup_in_memory_state
-from app.services.job_artifact_refs import resolve_job_artifact_path
 from app.services.job_runner import start_job_thread
 from app.services.pipeline_artifacts import get_job_dir, maybe_cleanup_expired_jobs
 from app.services.refraction_static_artifacts import UPLOADED_REFRACTION_PICKS_NPZ_NAME
@@ -142,16 +145,6 @@ def _get_static_job_or_404(state: AppState, job_id: str) -> dict[str, object]:
         if job.get('job_type') != 'statics':
             raise HTTPException(status_code=404, detail='Job ID not found')
         return dict(job)
-
-
-def _static_job_artifacts_dir(job: dict[str, object]) -> Path:
-    raw = job.get('artifacts_dir')
-    if not isinstance(raw, str) or not raw:
-        raise HTTPException(
-            status_code=500,
-            detail='Job metadata is inconsistent: artifacts_dir',
-        )
-    return Path(raw)
 
 
 def _parse_refraction_apply_request_json(
@@ -824,24 +817,10 @@ def static_job_cancel(request: Request, job_id: str) -> StaticJobStatusResponse:
 def static_job_files(request: Request, job_id: str) -> StaticJobFilesResponse:
     state = get_state(request.app)
     cleanup_in_memory_state(state)
-    job = _get_static_job_or_404(state, job_id)
+    job = get_job_or_404(state, job_id, allowed_job_types={'statics'})
 
     maybe_cleanup_expired_jobs()
-    artifacts_dir = _static_job_artifacts_dir(job)
-    if not artifacts_dir.is_dir():
-        raise HTTPException(status_code=404, detail='Job artifacts not found')
-
-    files = []
-    for file_path in sorted(artifacts_dir.iterdir()):
-        if not file_path.is_file():
-            continue
-        files.append(
-            {
-                'name': file_path.name,
-                'size_bytes': int(file_path.stat().st_size),
-            }
-        )
-    return {'files': files}
+    return list_job_artifact_files(job)
 
 
 @router.get('/statics/job/{job_id}/download')
@@ -852,23 +831,14 @@ def static_job_download(
 ) -> FileResponse:
     state = get_state(request.app)
     cleanup_in_memory_state(state)
-    _get_static_job_or_404(state, job_id)
+    get_job_or_404(state, job_id, allowed_job_types={'statics'})
 
     maybe_cleanup_expired_jobs()
-    try:
-        file_path = resolve_job_artifact_path(
-            state,
-            job_id=job_id,
-            name=name,
-            allowed_job_types={'statics'},
-        )
-    except ValueError as exc:
-        if 'artifact name must be a plain file name' in str(exc):
-            raise HTTPException(status_code=400, detail='Invalid file name') from exc
-        if 'artifacts_dir is not a directory' in str(exc):
-            raise HTTPException(status_code=404, detail='Job artifacts not found') from exc
-        if 'job artifact not found' in str(exc):
-            raise HTTPException(status_code=404, detail='File not found') from exc
-        raise HTTPException(status_code=404, detail='File not found') from exc
+    file_path = resolve_download_artifact_or_http_error(
+        state,
+        job_id=job_id,
+        name=name,
+        allowed_job_types={'statics'},
+    )
 
     return FileResponse(path=file_path, filename=name)

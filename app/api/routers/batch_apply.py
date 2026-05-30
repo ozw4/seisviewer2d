@@ -3,12 +3,15 @@
 from __future__ import annotations
 
 import threading
-from pathlib import Path
 
-from fastapi import APIRouter, HTTPException, Query, Request
+from fastapi import APIRouter, Query, Request
 from fastapi.responses import FileResponse
 
 from app.api._helpers import get_state
+from app.api.job_artifacts import (
+    list_job_artifact_files,
+    resolve_download_artifact_or_http_error,
+)
 from app.api.job_routes import (
     cancel_job_and_get_status_payload,
     get_job_or_404,
@@ -78,27 +81,10 @@ def batch_job_cancel(request: Request, job_id: str) -> BatchJobStatusResponse:
 def batch_job_files(request: Request, job_id: str) -> BatchJobFilesResponse:
     state = get_state(request.app)
     cleanup_in_memory_state(state)
-    with state.lock:
-        job = state.jobs.get(job_id)
-    if job is None:
-        raise HTTPException(status_code=404, detail='Job ID not found')
+    job = get_job_or_404(state, job_id, allowed_job_types={'batch_apply'})
 
     maybe_cleanup_expired_jobs()
-    job_dir = get_job_dir(job_id)
-    if not job_dir.is_dir():
-        raise HTTPException(status_code=404, detail='Job artifacts not found')
-
-    files = []
-    for file_path in sorted(job_dir.iterdir()):
-        if not file_path.is_file():
-            continue
-        files.append(
-            {
-                'name': file_path.name,
-                'size_bytes': int(file_path.stat().st_size),
-            }
-        )
-    return {'files': files}
+    return list_job_artifact_files(job)
 
 
 @router.get('/batch/job/{job_id}/download')
@@ -109,17 +95,14 @@ def batch_job_download(
 ) -> FileResponse:
     state = get_state(request.app)
     cleanup_in_memory_state(state)
-    with state.lock:
-        job = state.jobs.get(job_id)
-    if job is None:
-        raise HTTPException(status_code=404, detail='Job ID not found')
-
-    if Path(name).name != name:
-        raise HTTPException(status_code=400, detail='Invalid file name')
+    get_job_or_404(state, job_id, allowed_job_types={'batch_apply'})
 
     maybe_cleanup_expired_jobs()
-    file_path = get_job_dir(job_id) / name
-    if not file_path.is_file():
-        raise HTTPException(status_code=404, detail='File not found')
+    file_path = resolve_download_artifact_or_http_error(
+        state,
+        job_id=job_id,
+        name=name,
+        allowed_job_types={'batch_apply'},
+    )
 
     return FileResponse(path=file_path, filename=name)
