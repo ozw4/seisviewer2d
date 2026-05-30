@@ -14,6 +14,11 @@ from fastapi.responses import FileResponse
 from pydantic import ValidationError
 
 from app.api._helpers import get_state
+from app.api.job_routes import (
+    cancel_job_and_get_status_payload,
+    get_job_or_404,
+    job_status_payload,
+)
 from app.contracts.statics.datum import (
     DatumStaticApplyRequest,
     DatumStaticApplyResponse,
@@ -72,8 +77,7 @@ from app.services.first_break_qc_service import run_first_break_qc_job
 from app.services.geometry_linkage_service import run_geometry_linkage_build_job
 from app.services.in_memory_cleanup import cleanup_in_memory_state
 from app.services.job_artifact_refs import resolve_job_artifact_path
-from app.services.job_manager import JobManager
-from app.services.job_runner import request_job_cancel, start_job_thread
+from app.services.job_runner import start_job_thread
 from app.services.pipeline_artifacts import get_job_dir, maybe_cleanup_expired_jobs
 from app.services.refraction_static_artifacts import UPLOADED_REFRACTION_PICKS_NPZ_NAME
 from app.services.refraction_static_export_service import (
@@ -148,18 +152,6 @@ def _static_job_artifacts_dir(job: dict[str, object]) -> Path:
             detail='Job metadata is inconsistent: artifacts_dir',
         )
     return Path(raw)
-
-
-def _static_job_status_payload(
-    job: dict[str, object],
-) -> StaticJobStatusResponse:
-    progress = job.get('progress', 0.0)
-    message = job.get('message', '')
-    return {
-        'state': JobManager.normalize_status_value(job.get('status', 'unknown')),
-        'progress': float(progress) if isinstance(progress, (int, float)) else 0.0,
-        'message': message if isinstance(message, str) else '',
-    }
 
 
 def _parse_refraction_apply_request_json(
@@ -807,8 +799,8 @@ def refraction_static_export(
 def static_job_status(request: Request, job_id: str) -> StaticJobStatusResponse:
     state = get_state(request.app)
     cleanup_in_memory_state(state)
-    job = _get_static_job_or_404(state, job_id)
-    return _static_job_status_payload(job)
+    job = get_job_or_404(state, job_id, allowed_job_types={'statics'})
+    return job_status_payload(job)
 
 
 @router.post(
@@ -818,12 +810,11 @@ def static_job_status(request: Request, job_id: str) -> StaticJobStatusResponse:
 def static_job_cancel(request: Request, job_id: str) -> StaticJobStatusResponse:
     state = get_state(request.app)
     cleanup_in_memory_state(state)
-    _get_static_job_or_404(state, job_id)
-
-    request_job_cancel(state, job_id)
-
-    job = _get_static_job_or_404(state, job_id)
-    return _static_job_status_payload(job)
+    return cancel_job_and_get_status_payload(
+        state,
+        job_id,
+        allowed_job_types={'statics'},
+    )
 
 
 @router.get(
