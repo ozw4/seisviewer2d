@@ -4,8 +4,7 @@ from __future__ import annotations
 
 import json
 import tempfile
-import threading
-from collections.abc import Callable, MutableMapping
+from collections.abc import MutableMapping
 from pathlib import Path
 from typing import Annotated, Any
 from uuid import uuid4
@@ -14,14 +13,7 @@ from fastapi import APIRouter, File, Form, HTTPException, Request, UploadFile
 from pydantic import ValidationError
 
 from app.api._helpers import get_state
-from app.contracts.statics.datum import (
-    DatumStaticApplyRequest,
-    DatumStaticApplyResponse,
-)
-from app.contracts.statics.first_break_qc import (
-    FirstBreakQcJobResponse,
-    FirstBreakQcRequest,
-)
+from app.api.routers.statics.launch import launch_static_job
 from app.contracts.statics.refraction.apply import (
     RefractionStaticApplyRequest,
     RefractionStaticApplyResponse,
@@ -50,24 +42,8 @@ from app.contracts.statics.refraction.table_apply import (
     RefractionStaticTableApplyRequest,
     RefractionStaticTableApplyResponse,
 )
-from app.contracts.statics.residual import (
-    ResidualStaticApplyRequest,
-    ResidualStaticApplyResponse,
-)
-from app.contracts.statics.geometry_linkage import (
-    StaticLinkageBuildRequest,
-    StaticLinkageBuildResponse,
-)
-from app.contracts.statics.time_term import (
-    TimeTermStaticApplyRequest,
-    TimeTermStaticApplyResponse,
-)
 from app.core.state import AppState
-from app.services.datum_static_service import run_datum_static_apply_job
-from app.services.first_break_qc_service import run_first_break_qc_job
-from app.services.geometry_linkage_service import run_geometry_linkage_build_job
 from app.services.in_memory_cleanup import cleanup_in_memory_state
-from app.services.jobs import LaunchedJob, launch_managed_job
 from app.services.pipeline_artifacts import maybe_cleanup_expired_jobs
 from app.services.refraction_static_artifacts import UPLOADED_REFRACTION_PICKS_NPZ_NAME
 from app.services.refraction_static_export_service import (
@@ -110,8 +86,6 @@ from app.services.refraction_static_table_apply_service import (
 from app.services.refraction_static_validation_service import (
     validate_refraction_static_inputs_with_picks,
 )
-from app.services.residual_static_service import run_residual_static_apply_job
-from app.services.time_term_static_service import run_time_term_static_apply_job
 
 router = APIRouter()
 
@@ -200,162 +174,6 @@ def _store_refraction_pick_upload(
         tmp_path.unlink(missing_ok=True)
         raise
     return target_path, total_size
-
-
-def launch_static_job(
-    *,
-    state: AppState,
-    file_id: str,
-    key1_byte: int,
-    key2_byte: int,
-    statics_kind: str,
-    target: Callable[..., Any],
-    target_args: Callable[[str], tuple[Any, ...]],
-    pre_create: Callable[[str, Path], None] | None = None,
-    after_create: Callable[[MutableMapping[str, object]], None] | None = None,
-) -> LaunchedJob:
-    return launch_managed_job(
-        state,
-        create_job=lambda job_id, artifacts_dir: state.jobs.create_static_job(
-            job_id,
-            file_id=file_id,
-            key1_byte=key1_byte,
-            key2_byte=key2_byte,
-            statics_kind=statics_kind,
-            artifacts_dir=str(artifacts_dir),
-        ),
-        target=target,
-        target_args=target_args,
-        thread_factory=threading.Thread,
-        start_thread=_static_router_start_job_thread,
-        pre_create=pre_create,
-        after_create=after_create,
-    )
-
-
-def _static_router_start_job_thread(**kwargs: Any) -> object:
-    from app.api.routers import statics as statics_router_module
-
-    return statics_router_module.start_job_thread(**kwargs)
-
-
-@router.post('/statics/datum/apply', response_model=DatumStaticApplyResponse)
-def datum_static_apply(
-    req: DatumStaticApplyRequest,
-    request: Request,
-) -> DatumStaticApplyResponse:
-    state = get_state(request.app)
-    cleanup_in_memory_state(state)
-    maybe_cleanup_expired_jobs()
-
-    launched = launch_static_job(
-        state=state,
-        file_id=req.file_id,
-        key1_byte=req.key1_byte,
-        key2_byte=req.key2_byte,
-        statics_kind='datum',
-        target=run_datum_static_apply_job,
-        target_args=lambda job_id: (job_id, req, state),
-    )
-
-    return {'job_id': launched.job_id, 'state': launched.state}
-
-
-@router.post('/statics/first-break/qc', response_model=FirstBreakQcJobResponse)
-def first_break_qc(
-    req: FirstBreakQcRequest,
-    request: Request,
-) -> FirstBreakQcJobResponse:
-    state = get_state(request.app)
-    cleanup_in_memory_state(state)
-    maybe_cleanup_expired_jobs()
-
-    launched = launch_static_job(
-        state=state,
-        file_id=req.file_id,
-        key1_byte=req.key1_byte,
-        key2_byte=req.key2_byte,
-        statics_kind='first_break_qc',
-        target=run_first_break_qc_job,
-        target_args=lambda job_id: (job_id, req, state),
-    )
-
-    return {'job_id': launched.job_id, 'state': launched.state}
-
-
-@router.post(
-    '/statics/linkage/build',
-    response_model=StaticLinkageBuildResponse,
-)
-def static_linkage_build(
-    req: StaticLinkageBuildRequest,
-    request: Request,
-) -> StaticLinkageBuildResponse:
-    state = get_state(request.app)
-    cleanup_in_memory_state(state)
-    maybe_cleanup_expired_jobs()
-
-    launched = launch_static_job(
-        state=state,
-        file_id=req.file_id,
-        key1_byte=req.key1_byte,
-        key2_byte=req.key2_byte,
-        statics_kind='geometry_linkage',
-        target=run_geometry_linkage_build_job,
-        target_args=lambda job_id: (job_id, req, state),
-    )
-
-    return {'job_id': launched.job_id, 'state': launched.state}
-
-
-@router.post(
-    '/statics/residual/apply',
-    response_model=ResidualStaticApplyResponse,
-)
-def residual_static_apply(
-    req: ResidualStaticApplyRequest,
-    request: Request,
-) -> ResidualStaticApplyResponse:
-    state = get_state(request.app)
-    cleanup_in_memory_state(state)
-    maybe_cleanup_expired_jobs()
-
-    launched = launch_static_job(
-        state=state,
-        file_id=req.file_id,
-        key1_byte=req.key1_byte,
-        key2_byte=req.key2_byte,
-        statics_kind='residual',
-        target=run_residual_static_apply_job,
-        target_args=lambda job_id: (job_id, req, state),
-    )
-
-    return {'job_id': launched.job_id, 'state': launched.state}
-
-
-@router.post(
-    '/statics/time-term/apply',
-    response_model=TimeTermStaticApplyResponse,
-)
-def time_term_static_apply(
-    req: TimeTermStaticApplyRequest,
-    request: Request,
-) -> TimeTermStaticApplyResponse:
-    state = get_state(request.app)
-    cleanup_in_memory_state(state)
-    maybe_cleanup_expired_jobs()
-
-    launched = launch_static_job(
-        state=state,
-        file_id=req.file_id,
-        key1_byte=req.key1_byte,
-        key2_byte=req.key2_byte,
-        statics_kind='time_term',
-        target=run_time_term_static_apply_job,
-        target_args=lambda job_id: (job_id, req, state),
-    )
-
-    return {'job_id': launched.job_id, 'state': launched.state}
 
 
 @router.post(
