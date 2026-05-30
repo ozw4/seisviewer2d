@@ -5,9 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
-import threading
 from typing import Annotated, Any
-from uuid import uuid4
 
 import numpy as np
 from fastapi import APIRouter, Body, Depends, HTTPException, Query, Request
@@ -25,8 +23,8 @@ from app.contracts.pipeline import (
     PipelineSectionResponse,
     PipelineSpec,
 )
+from app.services.jobs import launch_managed_job
 from app.services.pipeline_artifacts import (
-    get_job_dir,
     maybe_cleanup_expired_jobs,
     read_artifact,
     write_artifact,
@@ -38,7 +36,6 @@ from app.services.job_runner import (
     run_job_with_lifecycle,
     set_job_message,
     set_job_progress,
-    start_job_thread,
 )
 from app.services.pipeline_execution import (
     SectionSourceSpec,
@@ -336,28 +333,24 @@ def pipeline_all(
         downsample_quicklook=downsample_quicklook,
     )
 
-    job_id = str(uuid4())
     pipe_key = pipeline_key(spec)
 
-    with state.lock:
-        job_state = state.jobs.create_pipeline_all_job(
+    launched = launch_managed_job(
+        state,
+        create_job=lambda job_id, artifacts_dir: state.jobs.create_pipeline_all_job(
             job_id,
             file_id=file_id,
             key1_byte=key1_byte,
             key2_byte=key2_byte,
             pipeline_key=pipe_key,
             offset_byte=forced_offset_byte,
-            artifacts_dir=str(get_job_dir(job_id)),
-        )
-        status = job_state['status']
-
-    start_job_thread(
-        thread_factory=threading.Thread,
+            artifacts_dir=str(artifacts_dir),
+        ),
         target=_run_pipeline_all_job,
-        args=(job_id, req, pipe_key, state),
+        target_args=lambda job_id: (job_id, req, pipe_key, state),
     )
 
-    return {'job_id': job_id, 'state': status}
+    return {'job_id': launched.job_id, 'state': launched.state}
 
 
 @router.get('/pipeline/job/{job_id}/status', response_model=PipelineJobStatusResponse)
