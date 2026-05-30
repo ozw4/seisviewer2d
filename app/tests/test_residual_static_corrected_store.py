@@ -150,6 +150,48 @@ def _apply(
     )
 
 
+@pytest.mark.parametrize('dtype', [np.float32, np.float64])
+def test_require_1d_float64_converts_float_array_to_contiguous_float64(
+    dtype: np.dtype,
+) -> None:
+    values = np.asarray([0.0, 1.5, 2.5, 3.5], dtype=dtype)[::2]
+
+    out = svc._require_1d_float64(values, name='field', expected_shape=(2,))
+
+    assert out.dtype == np.float64
+    assert out.flags.c_contiguous
+    np.testing.assert_allclose(out, np.asarray([0.0, 2.5], dtype=np.float64))
+
+
+@pytest.mark.parametrize(
+    'values',
+    [
+        np.asarray([1, 2], dtype=np.int64),
+        np.asarray([True, False], dtype=bool),
+        np.asarray([1.0 + 0.0j, 2.0 + 0.0j], dtype=np.complex128),
+        np.asarray([1.0, 2.0], dtype=object),
+    ],
+)
+def test_require_1d_float64_rejects_non_float_dtype(values: np.ndarray) -> None:
+    with pytest.raises(ValueError, match='field must be a float array'):
+        svc._require_1d_float64(values, name='field', expected_shape=(2,))
+
+
+@pytest.mark.parametrize('bad_value', [np.nan, np.inf])
+def test_require_1d_float64_rejects_nonfinite_values(bad_value: float) -> None:
+    values = np.asarray([0.0, bad_value], dtype=np.float64)
+
+    with pytest.raises(ValueError, match='field must contain only finite values'):
+        svc._require_1d_float64(values, name='field', expected_shape=(2,))
+
+
+def test_require_1d_float64_rejects_shape_mismatch() -> None:
+    values = np.asarray([0.0, 1.0], dtype=np.float64)
+
+    with pytest.raises(ValueError, match='field shape mismatch'):
+        svc._require_1d_float64(values, name='field', expected_shape=(3,))
+
+
 def test_load_residual_solution_for_apply_validates_required_fields(
     tmp_path: Path,
 ) -> None:

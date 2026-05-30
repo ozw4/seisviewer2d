@@ -16,6 +16,7 @@ import numpy as np
 
 from app.services.common.artifact_io import write_json_atomic
 from app.services.common.array_validation import (
+    coerce_1d_real_numeric_float64,
     coerce_header_byte as _coerce_header_byte,
     coerce_nonnegative_finite_float as _coerce_nonnegative_finite_float,
     coerce_positive_finite_float as _coerce_positive_finite_float,
@@ -637,18 +638,14 @@ def _require_1d_float64(
     expected_shape: tuple[int, ...],
 ) -> np.ndarray:
     arr = np.asarray(value)
-    if arr.ndim != 1:
-        raise ValueError(f'{name} must be 1-dimensional')
-    if arr.shape != expected_shape:
-        raise ValueError(
-            f'{name} shape mismatch: expected {expected_shape}, got {arr.shape}'
-        )
     if not np.issubdtype(arr.dtype, np.floating):
         raise ValueError(f'{name} must be a float array')
-    out = np.asarray(arr, dtype=np.float64)
-    if not np.all(np.isfinite(out)):
-        raise ValueError(f'{name} must contain only finite values')
-    return np.ascontiguousarray(out, dtype=np.float64)
+    return coerce_1d_real_numeric_float64(
+        arr,
+        name=name,
+        expected_shape=expected_shape,
+        require_finite=True,
+    )
 
 
 def _require_scalar_int(value: np.ndarray, *, name: str) -> int:

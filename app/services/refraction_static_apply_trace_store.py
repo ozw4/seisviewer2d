@@ -19,6 +19,9 @@ from app.contracts.statics.refraction.apply import RefractionStaticApplyRequest
 from app.core.state import AppState
 from app.services.common.artifact_io import write_json_atomic
 from app.services.common.array_validation import (
+    coerce_1d_bool_array,
+    coerce_1d_real_numeric_float64,
+    coerce_1d_string_array,
     coerce_header_byte,
     coerce_nonnegative_finite_float,
     coerce_positive_finite_float,
@@ -1231,21 +1234,17 @@ def _require_1d_float64(
     allow_nonfinite: bool = False,
 ) -> np.ndarray:
     arr = np.asarray(value)
-    _reject_object_dtype(arr, name=name)
-    if arr.ndim != 1:
-        raise RefractionStaticTraceStoreApplyError(f'{name} must be 1-dimensional')
-    if arr.shape != expected_shape:
-        raise RefractionStaticTraceStoreApplyError(
-            f'{name} shape mismatch: expected {expected_shape}, got {arr.shape}'
-        )
+    if arr.dtype == object:
+        raise RefractionStaticTraceStoreApplyError(f'{name} must not have object dtype')
     if not np.issubdtype(arr.dtype, np.floating):
         raise RefractionStaticTraceStoreApplyError(f'{name} must be a float array')
-    out = np.asarray(arr, dtype=np.float64)
-    if not allow_nonfinite and not np.all(np.isfinite(out)):
-        raise RefractionStaticTraceStoreApplyError(
-            f'{name} must contain only finite values'
-        )
-    return np.ascontiguousarray(out, dtype=np.float64)
+    return coerce_1d_real_numeric_float64(
+        arr,
+        name=name,
+        expected_shape=expected_shape,
+        allow_nonfinite=allow_nonfinite,
+        error_type=RefractionStaticTraceStoreApplyError,
+    )
 
 
 def _require_1d_bool(
@@ -1254,17 +1253,12 @@ def _require_1d_bool(
     name: str,
     expected_shape: tuple[int, ...],
 ) -> np.ndarray:
-    arr = np.asarray(value)
-    _reject_object_dtype(arr, name=name)
-    if arr.ndim != 1:
-        raise RefractionStaticTraceStoreApplyError(f'{name} must be 1-dimensional')
-    if arr.shape != expected_shape:
-        raise RefractionStaticTraceStoreApplyError(
-            f'{name} shape mismatch: expected {expected_shape}, got {arr.shape}'
-        )
-    if not np.issubdtype(arr.dtype, np.bool_):
-        raise RefractionStaticTraceStoreApplyError(f'{name} must have bool dtype')
-    return np.ascontiguousarray(arr, dtype=bool)
+    return coerce_1d_bool_array(
+        value,
+        name=name,
+        expected_shape=expected_shape,
+        error_type=RefractionStaticTraceStoreApplyError,
+    )
 
 
 def _require_1d_string(
@@ -1273,17 +1267,14 @@ def _require_1d_string(
     name: str,
     expected_shape: tuple[int, ...],
 ) -> np.ndarray:
-    arr = np.asarray(value)
-    _reject_object_dtype(arr, name=name)
-    if arr.ndim != 1:
-        raise RefractionStaticTraceStoreApplyError(f'{name} must be 1-dimensional')
-    if arr.shape != expected_shape:
-        raise RefractionStaticTraceStoreApplyError(
-            f'{name} shape mismatch: expected {expected_shape}, got {arr.shape}'
-        )
-    if arr.dtype.kind not in {'U', 'S'}:
-        raise RefractionStaticTraceStoreApplyError(f'{name} must have string dtype')
-    return np.ascontiguousarray(arr.astype(str, copy=False))
+    return coerce_1d_string_array(
+        value,
+        name=name,
+        expected_shape=expected_shape,
+        reject_object_dtype=True,
+        output_dtype=str,
+        error_type=RefractionStaticTraceStoreApplyError,
+    )
 
 
 def _reject_object_dtype(arr: np.ndarray, *, name: str) -> None:

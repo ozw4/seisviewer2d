@@ -279,6 +279,125 @@ def test_refraction_shift_validation_rejects_bad_inputs() -> None:
         )
 
 
+@pytest.mark.parametrize('dtype', [np.float32, np.float64])
+def test_require_1d_float64_accepts_float_arrays_as_contiguous_float64(
+    dtype: type[np.floating],
+) -> None:
+    values = np.asarray([1.5, 99.0, -2.25, 42.0], dtype=dtype)[::2]
+
+    out = svc._require_1d_float64(
+        values,
+        name='trace_shift_s_sorted',
+        expected_shape=(2,),
+    )
+
+    assert out.dtype == np.float64
+    assert out.flags.c_contiguous
+    np.testing.assert_allclose(out, [1.5, -2.25])
+
+
+@pytest.mark.parametrize(
+    ('values', 'message'),
+    [
+        (np.asarray([1, 2], dtype=np.int64), 'must be a float array'),
+        (np.asarray([True, False], dtype=bool), 'must be a float array'),
+        (np.asarray([1.0 + 0.0j, 2.0 + 0.0j]), 'must be a float array'),
+        (np.asarray([1.0, 2.0], dtype=object), 'must not have object dtype'),
+    ],
+)
+def test_require_1d_float64_rejects_non_float_dtypes(
+    values: np.ndarray,
+    message: str,
+) -> None:
+    with pytest.raises(RefractionStaticTraceStoreApplyError, match=message):
+        svc._require_1d_float64(
+            values,
+            name='trace_shift_s_sorted',
+            expected_shape=(2,),
+        )
+
+
+def test_require_1d_float64_nonfinite_policy() -> None:
+    values = np.asarray([0.0, np.nan, np.inf], dtype=np.float64)
+
+    with pytest.raises(RefractionStaticTraceStoreApplyError, match='finite'):
+        svc._require_1d_float64(
+            values,
+            name='trace_shift_s_sorted',
+            expected_shape=(3,),
+            allow_nonfinite=False,
+        )
+
+    out = svc._require_1d_float64(
+        values,
+        name='trace_shift_s_sorted',
+        expected_shape=(3,),
+        allow_nonfinite=True,
+    )
+
+    np.testing.assert_array_equal(out, values)
+
+
+def test_require_1d_bool_accepts_bool_only() -> None:
+    out = svc._require_1d_bool(
+        np.asarray([True, False]),
+        name='trace_static_valid_mask_sorted',
+        expected_shape=(2,),
+    )
+
+    assert out.dtype == bool
+    assert out.flags.c_contiguous
+    np.testing.assert_array_equal(out, [True, False])
+
+    with pytest.raises(RefractionStaticTraceStoreApplyError, match='bool dtype'):
+        svc._require_1d_bool(
+            np.asarray([1, 0], dtype=np.int64),
+            name='trace_static_valid_mask_sorted',
+            expected_shape=(2,),
+        )
+
+
+@pytest.mark.parametrize('dtype', ['<U8', '|S8'])
+def test_require_1d_string_accepts_string_dtypes(dtype: str) -> None:
+    out = svc._require_1d_string(
+        np.asarray(['ok', 'missing'], dtype=dtype),
+        name='trace_static_status_sorted',
+        expected_shape=(2,),
+    )
+
+    assert out.dtype.kind == 'U'
+    assert out.flags.c_contiguous
+    np.testing.assert_array_equal(out, np.asarray(['ok', 'missing']))
+
+
+def test_require_1d_string_rejects_object_dtype() -> None:
+    with pytest.raises(
+        RefractionStaticTraceStoreApplyError,
+        match='must not have object dtype',
+    ):
+        svc._require_1d_string(
+            np.asarray(['ok', 'missing'], dtype=object),
+            name='trace_static_status_sorted',
+            expected_shape=(2,),
+        )
+
+
+@pytest.mark.parametrize(
+    ('helper', 'values'),
+    [
+        (svc._require_1d_float64, np.asarray([0.0, 1.0], dtype=np.float64)),
+        (svc._require_1d_bool, np.asarray([True, False])),
+        (svc._require_1d_string, np.asarray(['ok', 'ok'], dtype='<U8')),
+    ],
+)
+def test_require_1d_wrappers_raise_apply_error_on_shape_mismatch(
+    helper: Any,
+    values: np.ndarray,
+) -> None:
+    with pytest.raises(RefractionStaticTraceStoreApplyError, match='shape mismatch'):
+        helper(values, name='field', expected_shape=(3,))
+
+
 def test_apply_refraction_statics_builds_and_registers_corrected_trace_store(
     tmp_path: Path,
 ) -> None:

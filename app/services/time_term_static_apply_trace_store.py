@@ -17,6 +17,9 @@ import numpy as np
 from app.core.state import AppState
 from app.services.common.artifact_io import write_json_atomic
 from app.services.common.array_validation import (
+    coerce_1d_bool_array,
+    coerce_1d_integer_int64,
+    coerce_1d_real_numeric_float64,
     coerce_header_byte as _coerce_header_byte,
     coerce_nonnegative_finite_float as _coerce_nonnegative_finite_float,
     coerce_positive_finite_float as _coerce_positive_finite_float,
@@ -930,19 +933,16 @@ def _require_1d_float64(
     expected_shape: tuple[int, ...] | None = None,
 ) -> np.ndarray:
     arr = np.asarray(value)
-    _reject_object_dtype(arr, name=name)
-    if arr.ndim != 1:
-        raise ValueError(f'{name} must be 1-dimensional')
-    if expected_shape is not None and arr.shape != expected_shape:
-        raise ValueError(
-            f'{name} shape mismatch: expected {expected_shape}, got {arr.shape}'
-        )
+    if arr.dtype == object:
+        raise ValueError(f'{name} must not have object dtype')
     if not np.issubdtype(arr.dtype, np.floating):
         raise ValueError(f'{name} must be a float array')
-    out = np.asarray(arr, dtype=np.float64)
-    if not np.all(np.isfinite(out)):
-        raise ValueError(f'{name} must contain only finite values')
-    return np.ascontiguousarray(out, dtype=np.float64)
+    return coerce_1d_real_numeric_float64(
+        arr,
+        name=name,
+        expected_shape=expected_shape,
+        require_finite=True,
+    )
 
 
 def _require_1d_bool(
@@ -951,17 +951,11 @@ def _require_1d_bool(
     name: str,
     expected_shape: tuple[int, ...],
 ) -> np.ndarray:
-    arr = np.asarray(value)
-    _reject_object_dtype(arr, name=name)
-    if arr.ndim != 1:
-        raise ValueError(f'{name} must be 1-dimensional')
-    if arr.shape != expected_shape:
-        raise ValueError(
-            f'{name} shape mismatch: expected {expected_shape}, got {arr.shape}'
-        )
-    if not np.issubdtype(arr.dtype, np.bool_):
-        raise ValueError(f'{name} must have bool dtype')
-    return np.ascontiguousarray(arr, dtype=bool)
+    return coerce_1d_bool_array(
+        value,
+        name=name,
+        expected_shape=expected_shape,
+    )
 
 
 def _require_1d_int64(
@@ -970,20 +964,12 @@ def _require_1d_int64(
     name: str,
     expected_shape: tuple[int, ...],
 ) -> np.ndarray:
-    arr = np.asarray(value)
-    _reject_object_dtype(arr, name=name)
-    if arr.ndim != 1:
-        raise ValueError(f'{name} must be 1-dimensional')
-    if arr.shape != expected_shape:
-        raise ValueError(
-            f'{name} shape mismatch: expected {expected_shape}, got {arr.shape}'
-        )
-    if np.issubdtype(arr.dtype, np.bool_) or not np.issubdtype(
-        arr.dtype,
-        np.integer,
-    ):
-        raise ValueError(f'{name} must have integer dtype')
-    return np.ascontiguousarray(arr, dtype=np.int64)
+    return coerce_1d_integer_int64(
+        value,
+        name=name,
+        expected_shape=expected_shape,
+        allow_integer_like_float=False,
+    )
 
 
 def _require_scalar_int(value: np.ndarray, *, name: str) -> int:
