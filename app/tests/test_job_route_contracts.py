@@ -292,6 +292,29 @@ def test_pipeline_job_status_returns_state_progress_message(
     }
 
 
+@pytest.mark.parametrize(
+    ('method', 'path'),
+    [
+        ('get', '/pipeline/job/batch-job-1/status'),
+        ('post', '/pipeline/job/batch-job-1/cancel'),
+        ('get', '/pipeline/job/static-job-1/status'),
+        ('post', '/pipeline/job/static-job-1/cancel'),
+    ],
+)
+def test_pipeline_status_cancel_reject_non_pipeline_jobs(
+    client: TestClient,
+    method: str,
+    path: str,
+) -> None:
+    _create_batch_job(client)
+    _create_static_job(client)
+
+    response = client.request(method, path)
+
+    assert response.status_code == 404
+    assert response.json() == {'detail': 'Job ID not found'}
+
+
 def test_pipeline_job_cancel_queued_marks_cancelled(client: TestClient) -> None:
     _create_pipeline_job(client)
 
