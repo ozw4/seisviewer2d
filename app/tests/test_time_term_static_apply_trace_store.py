@@ -321,6 +321,106 @@ def test_load_time_term_static_solution_rejects_object_dtype(tmp_path: Path) -> 
         load_time_term_static_solution(solution_path)
 
 
+@pytest.mark.parametrize('dtype', [np.float32, np.float64])
+def test_require_1d_float64_coerces_floating_array(dtype: np.dtype) -> None:
+    out = svc._require_1d_float64(
+        np.asarray([1.0, 2.0], dtype=dtype),
+        name='values',
+        expected_shape=(2,),
+    )
+
+    assert out.dtype == np.float64
+    assert out.flags.c_contiguous
+    np.testing.assert_allclose(out, [1.0, 2.0])
+
+
+@pytest.mark.parametrize(
+    'values',
+    [
+        np.asarray([1, 2], dtype=np.int64),
+        np.asarray([True, False], dtype=bool),
+        np.asarray([1.0 + 0.0j], dtype=np.complex128),
+        np.asarray([1.0], dtype=object),
+    ],
+)
+def test_require_1d_float64_rejects_non_floating_dtype(values: np.ndarray) -> None:
+    with pytest.raises(ValueError):
+        svc._require_1d_float64(values, name='values')
+
+
+@pytest.mark.parametrize(
+    'values',
+    [
+        np.asarray([np.nan], dtype=np.float64),
+        np.asarray([np.inf], dtype=np.float64),
+    ],
+)
+def test_require_1d_float64_rejects_non_finite(values: np.ndarray) -> None:
+    with pytest.raises(ValueError, match='finite'):
+        svc._require_1d_float64(values, name='values')
+
+
+def test_require_1d_bool_accepts_bool_only() -> None:
+    out = svc._require_1d_bool(
+        np.asarray([True, False], dtype=bool),
+        name='mask',
+        expected_shape=(2,),
+    )
+
+    assert out.dtype == bool
+    assert out.flags.c_contiguous
+    with pytest.raises(ValueError):
+        svc._require_1d_bool(
+            np.asarray([1, 0], dtype=np.int64),
+            name='mask',
+            expected_shape=(2,),
+        )
+
+
+def test_require_1d_int64_accepts_integer_only() -> None:
+    out = svc._require_1d_int64(
+        np.asarray([1, 2], dtype=np.int32),
+        name='indices',
+        expected_shape=(2,),
+    )
+
+    assert out.dtype == np.int64
+    assert out.flags.c_contiguous
+    np.testing.assert_array_equal(out, [1, 2])
+    with pytest.raises(ValueError):
+        svc._require_1d_int64(
+            np.asarray([True, False], dtype=bool),
+            name='indices',
+            expected_shape=(2,),
+        )
+
+
+def test_require_1d_int64_rejects_integer_like_float() -> None:
+    with pytest.raises(ValueError):
+        svc._require_1d_int64(
+            np.asarray([1.0, 2.0], dtype=np.float64),
+            name='indices',
+            expected_shape=(2,),
+        )
+
+
+@pytest.mark.parametrize(
+    'validator,values,kwargs',
+    [
+        (svc._require_1d_float64, np.asarray([1.0, 2.0]), {'expected_shape': (3,)}),
+        (svc._require_1d_bool, np.asarray([True, False]), {'expected_shape': (3,)}),
+        (svc._require_1d_int64, np.asarray([1, 2]), {'expected_shape': (3,)}),
+    ],
+)
+def test_require_1d_validators_reject_shape_mismatch(
+    validator: Any,
+    values: np.ndarray,
+    kwargs: dict[str, object],
+) -> None:
+    with pytest.raises(ValueError, match='shape mismatch'):
+        validator(values, name='values', **kwargs)
+
+
 def test_time_term_apply_selects_weathering_shift_for_weathering_only_mode(
     tmp_path: Path,
 ) -> None:
