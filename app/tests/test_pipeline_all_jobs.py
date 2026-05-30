@@ -11,6 +11,7 @@ from fastapi.testclient import TestClient
 
 from app.api._helpers import get_state
 from app.main import app
+from app.services.jobs import launcher as job_launcher_module
 from app.services.pipeline_artifacts import get_job_dir, safe_filename
 
 
@@ -65,7 +66,10 @@ def pipeline_env(tmp_path: Path, monkeypatch):
 
     _CapturedThread.created.clear()
     monkeypatch.setattr(
-        pipe, 'threading', SimpleNamespace(Thread=_CapturedThread), raising=True
+        job_launcher_module,
+        'threading',
+        SimpleNamespace(Thread=_CapturedThread),
+        raising=True,
     )
 
     reader = _StubReader([10, 20])

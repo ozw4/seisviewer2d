@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import threading
-
 from fastapi import APIRouter, Query, Request
 from fastapi.responses import FileResponse
 
@@ -25,9 +23,8 @@ from app.contracts.batch import (
 )
 from app.services.batch_apply_service import run_batch_apply_job
 from app.services.in_memory_cleanup import cleanup_in_memory_state
-from app.services.job_runner import start_job_thread
-from app.services.pipeline_artifacts import get_job_dir, maybe_cleanup_expired_jobs
-from uuid import uuid4
+from app.services.jobs import launch_managed_job
+from app.services.pipeline_artifacts import maybe_cleanup_expired_jobs
 
 router = APIRouter()
 
@@ -38,24 +35,20 @@ def batch_apply(req: BatchApplyRequest, request: Request) -> BatchApplyResponse:
     cleanup_in_memory_state(state)
     maybe_cleanup_expired_jobs()
 
-    job_id = str(uuid4())
-    with state.lock:
-        job_state = state.jobs.create_batch_apply_job(
+    launched = launch_managed_job(
+        state,
+        create_job=lambda job_id, artifacts_dir: state.jobs.create_batch_apply_job(
             job_id,
             file_id=req.file_id,
             key1_byte=req.key1_byte,
             key2_byte=req.key2_byte,
-            artifacts_dir=str(get_job_dir(job_id)),
-        )
-        status = job_state['status']
-
-    start_job_thread(
-        thread_factory=threading.Thread,
+            artifacts_dir=str(artifacts_dir),
+        ),
         target=run_batch_apply_job,
-        args=(job_id, req, state),
+        target_args=lambda job_id: (job_id, req, state),
     )
 
-    return {'job_id': job_id, 'state': status}
+    return {'job_id': launched.job_id, 'state': launched.state}
 
 
 @router.get('/batch/job/{job_id}/status', response_model=BatchJobStatusResponse)

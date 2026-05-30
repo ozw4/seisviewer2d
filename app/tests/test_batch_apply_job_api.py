@@ -10,9 +10,9 @@ import numpy as np
 import pytest
 from fastapi.testclient import TestClient
 
-from app.api.routers import batch_apply as batch_apply_router_module
 from app.main import app
 from app.services import batch_apply_service
+from app.services.jobs import launcher as job_launcher_module
 
 KEY1 = 189
 KEY2 = 193
@@ -126,7 +126,7 @@ def test_batch_apply_lifecycle_files_download_and_path_traversal(
 
     CapturedThread.instances.clear()
     monkeypatch.setattr(
-        batch_apply_router_module,
+        job_launcher_module,
         'threading',
         SimpleNamespace(Thread=CapturedThread),
     )

@@ -28,8 +28,8 @@ def launch_managed_job(
     create_job: Callable[[str, Path], MutableMapping[str, object]],
     target: Callable[..., Any],
     target_args: Callable[[str], tuple[Any, ...]],
-    thread_factory: Callable[..., Any] = threading.Thread,
-    start_thread: Callable[..., Any] = start_job_thread,
+    thread_factory: Callable[..., Any] | None = None,
+    start_thread: Callable[..., Any] | None = None,
     job_id_factory: Callable[[], str] | None = None,
     pre_create: Callable[[str, Path], None] | None = None,
     after_create: Callable[[MutableMapping[str, object]], None] | None = None,
@@ -37,6 +37,8 @@ def launch_managed_job(
     """Create a managed job record and launch its worker thread."""
     job_id = str(uuid4()) if job_id_factory is None else str(job_id_factory())
     artifacts_dir = get_job_dir(job_id)
+    thread_factory = threading.Thread if thread_factory is None else thread_factory
+    start_thread = start_job_thread if start_thread is None else start_thread
 
     if pre_create is not None:
         pre_create(job_id, artifacts_dir)
