@@ -6,17 +6,15 @@ import json
 import tempfile
 from collections.abc import MutableMapping
 from pathlib import Path
-from typing import Annotated, Any
-from uuid import uuid4
 
-from fastapi import APIRouter, File, Form, HTTPException, Request, UploadFile
+from fastapi import APIRouter, HTTPException, Request
 from pydantic import ValidationError
 
 from app.api._helpers import get_state
 from app.api.routers.statics.launch import launch_static_job
-from app.contracts.statics.refraction.apply import (
-    RefractionStaticApplyRequest,
-    RefractionStaticApplyResponse,
+from app.api.routers.statics.uploads import (
+    _store_refraction_pick_upload,
+    _validate_refraction_pick_upload,
 )
 from app.contracts.statics.refraction.export import (
     RefractionStaticExportJobRequest,
@@ -45,11 +43,9 @@ from app.contracts.statics.refraction.table_apply import (
 from app.core.state import AppState
 from app.services.in_memory_cleanup import cleanup_in_memory_state
 from app.services.pipeline_artifacts import maybe_cleanup_expired_jobs
-from app.services.refraction_static_artifacts import UPLOADED_REFRACTION_PICKS_NPZ_NAME
 from app.services.refraction_static_export_service import (
     RefractionStaticExportSourceJobNotFound,
     RefractionStaticExportValidationError,
-    resolve_refraction_static_export_formats,
     run_refraction_static_export_job,
     validate_refraction_static_export_source_job,
 )
@@ -79,23 +75,11 @@ from app.services.refraction_static_pick_map import (
     RefractionStaticPickMapError,
     build_refraction_static_pick_map,
 )
-from app.services.refraction_static_service import run_refraction_static_apply_job
 from app.services.refraction_static_table_apply_service import (
     run_refraction_static_table_apply_job,
 )
-from app.services.refraction_static_validation_service import (
-    validate_refraction_static_inputs_with_picks,
-)
 
 router = APIRouter()
-
-_UPLOAD_CHUNK_SIZE = 1024 * 1024
-_MAX_UPLOADED_PICK_NPZ_BYTES = 256 * 1024 * 1024
-_ACCEPTED_NPZ_CONTENT_TYPES = {
-    'application/x-npz',
-    'application/zip',
-    'application/x-zip-compressed',
-}
 
 
 def _get_static_job_or_404(state: AppState, job_id: str) -> dict[str, object]:
@@ -108,18 +92,6 @@ def _get_static_job_or_404(state: AppState, job_id: str) -> dict[str, object]:
         return dict(job)
 
 
-def _parse_refraction_apply_request_json(
-    request_json: str,
-) -> RefractionStaticApplyRequest:
-    try:
-        return RefractionStaticApplyRequest.model_validate_json(request_json)
-    except ValidationError as exc:
-        raise HTTPException(
-            status_code=422,
-            detail=json.loads(exc.json()),
-        ) from exc
-
-
 def _parse_refraction_pick_map_request_json(
     request_json: str,
 ) -> RefractionStaticPickMapRequest:
@@ -130,207 +102,6 @@ def _parse_refraction_pick_map_request_json(
             status_code=422,
             detail=json.loads(exc.json()),
         ) from exc
-
-
-def _validate_refraction_pick_upload(pick_npz: UploadFile) -> None:
-    filename = pick_npz.filename or ''
-    content_type = (pick_npz.content_type or '').split(';', 1)[0].strip().lower()
-    if filename.lower().endswith('.npz'):
-        return
-    if content_type in _ACCEPTED_NPZ_CONTENT_TYPES:
-        return
-    raise HTTPException(
-        status_code=422,
-        detail='pick_npz must be an .npz upload',
-    )
-
-
-def _store_refraction_pick_upload(
-    *,
-    pick_npz: UploadFile,
-    job_dir: Path,
-) -> tuple[Path, int]:
-    job_dir.mkdir(parents=True, exist_ok=True)
-    target_path = job_dir / UPLOADED_REFRACTION_PICKS_NPZ_NAME
-    tmp_path = target_path.with_name(f'{target_path.name}.{uuid4().hex}.tmp')
-    total_size = 0
-    try:
-        with tmp_path.open('wb') as handle:
-            while True:
-                chunk = pick_npz.file.read(_UPLOAD_CHUNK_SIZE)
-                if not chunk:
-                    break
-                total_size += len(chunk)
-                if total_size > _MAX_UPLOADED_PICK_NPZ_BYTES:
-                    raise HTTPException(
-                        status_code=413,
-                        detail='pick_npz exceeds maximum upload size',
-                    )
-                handle.write(chunk)
-        if total_size == 0:
-            raise HTTPException(status_code=422, detail='pick_npz is empty')
-        tmp_path.replace(target_path)
-    except Exception:
-        tmp_path.unlink(missing_ok=True)
-        raise
-    return target_path, total_size
-
-
-@router.post(
-    '/statics/refraction/apply',
-    response_model=RefractionStaticApplyResponse,
-    response_model_exclude_none=True,
-)
-def refraction_static_apply(
-    req: RefractionStaticApplyRequest,
-    request: Request,
-) -> RefractionStaticApplyResponse:
-    if req.pick_source.kind == 'uploaded_npz':
-        raise HTTPException(
-            status_code=422,
-            detail=(
-                'pick_source.kind uploaded_npz requires multipart '
-                '/statics/refraction/apply-with-picks'
-            ),
-        )
-
-    state = get_state(request.app)
-    cleanup_in_memory_state(state)
-    maybe_cleanup_expired_jobs()
-
-    requested_formats = resolve_refraction_static_export_formats(req.export)
-
-    def _after_create(job_state: MutableMapping[str, object]) -> None:
-        if req.export.enabled:
-            job_state['export_formats'] = list(requested_formats)
-
-    launched = launch_static_job(
-        state=state,
-        file_id=req.file_id,
-        key1_byte=req.key1_byte,
-        key2_byte=req.key2_byte,
-        statics_kind='refraction',
-        target=run_refraction_static_apply_job,
-        target_args=lambda job_id: (job_id, req, state),
-        after_create=_after_create,
-    )
-
-    response: RefractionStaticApplyResponse = {
-        'job_id': launched.job_id,
-        'state': launched.state,
-    }
-    if req.export.enabled:
-        response['requested_formats'] = list(requested_formats)
-    return response
-
-
-@router.post(
-    '/statics/refraction/apply-with-picks',
-    response_model=RefractionStaticApplyResponse,
-    response_model_exclude_none=True,
-)
-def refraction_static_apply_with_picks(
-    request: Request,
-    request_json: Annotated[str, Form(...)],
-    pick_npz: Annotated[UploadFile, File(...)],
-) -> RefractionStaticApplyResponse:
-    req = _parse_refraction_apply_request_json(request_json)
-    if req.pick_source.kind != 'uploaded_npz':
-        raise HTTPException(
-            status_code=422,
-            detail='pick_source.kind must be uploaded_npz',
-        )
-    _validate_refraction_pick_upload(pick_npz)
-
-    state = get_state(request.app)
-    cleanup_in_memory_state(state)
-    maybe_cleanup_expired_jobs()
-
-    stored_path: Path | None = None
-    upload_metadata = {
-        'original_filename': pick_npz.filename or '',
-        'stored_name': UPLOADED_REFRACTION_PICKS_NPZ_NAME,
-    }
-
-    requested_formats = resolve_refraction_static_export_formats(req.export)
-
-    def _pre_create(_job_id: str, artifacts_dir: Path) -> None:
-        nonlocal stored_path
-        stored_path, _size_bytes = _store_refraction_pick_upload(
-            pick_npz=pick_npz,
-            job_dir=artifacts_dir,
-        )
-
-    def _after_create(job_state: MutableMapping[str, object]) -> None:
-        job_state['pick_source'] = {
-            'kind': 'uploaded_npz',
-            **upload_metadata,
-        }
-        if req.export.enabled:
-            job_state['export_formats'] = list(requested_formats)
-
-    def _target_args(job_id: str) -> tuple[Any, ...]:
-        if stored_path is None:
-            raise RuntimeError('uploaded refraction picks were not stored')
-        return (job_id, req, state, stored_path, upload_metadata)
-
-    launched = launch_static_job(
-        state=state,
-        file_id=req.file_id,
-        key1_byte=req.key1_byte,
-        key2_byte=req.key2_byte,
-        statics_kind='refraction',
-        target=run_refraction_static_apply_job,
-        target_args=_target_args,
-        pre_create=_pre_create,
-        after_create=_after_create,
-    )
-
-    response: RefractionStaticApplyResponse = {
-        'job_id': launched.job_id,
-        'state': launched.state,
-    }
-    if req.export.enabled:
-        response['requested_formats'] = list(requested_formats)
-    return response
-
-
-@router.post(
-    '/statics/refraction/validate-with-picks',
-    response_model_exclude_none=True,
-)
-def refraction_static_validate_with_picks(
-    request: Request,
-    request_json: Annotated[str, Form(...)],
-    pick_npz: Annotated[UploadFile, File(...)],
-) -> dict[str, object]:
-    req = _parse_refraction_apply_request_json(request_json)
-    if req.pick_source.kind != 'uploaded_npz':
-        raise HTTPException(
-            status_code=422,
-            detail='pick_source.kind must be uploaded_npz',
-        )
-    _validate_refraction_pick_upload(pick_npz)
-
-    state = get_state(request.app)
-    cleanup_in_memory_state(state)
-
-    with tempfile.TemporaryDirectory(prefix='refraction-validate-') as tmp:
-        temp_dir = Path(tmp)
-        stored_path, _size_bytes = _store_refraction_pick_upload(
-            pick_npz=pick_npz,
-            job_dir=temp_dir,
-        )
-        upload_metadata = {
-            'original_filename': pick_npz.filename or '',
-            'stored_name': UPLOADED_REFRACTION_PICKS_NPZ_NAME,
-        }
-        return validate_refraction_static_inputs_with_picks(
-            req=req,
-            state=state,
-            pick_npz_path=stored_path,
-            uploaded_pick_metadata=upload_metadata,
-        )
 
 
 @router.post(
