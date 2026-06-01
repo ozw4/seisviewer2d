@@ -18,6 +18,9 @@ import app.statics.refraction.application.input_model as refraction_inputs_modul
 import app.statics.refraction.application.workflow as refraction_service_module
 from app.api.schemas import RefractionStaticApplyRequest
 from app.main import app
+from app.statics.refraction.adapters.seisviewer2d.trace_store import (
+    SeisViewer2DRefractionTraceStoreProvider,
+)
 from app.statics.refraction.application.apply_trace_store import (
     CORRECTED_FILE_JSON_NAME,
     REFRACTION_STATIC_APPLY_QC_JSON_NAME,
@@ -80,7 +83,7 @@ from app.statics.refraction.application.preflight_diagnostics import (
     RefractionStaticPreflightError,
     write_refraction_static_preflight_artifacts,
 )
-from app.statics.refraction.application.workflow import run_refraction_static_apply_job
+from app.statics.refraction.adapters.seisviewer2d.workflow_runner import run_refraction_static_apply_job
 from app.statics.refraction.domain.source_depth import (
     REFRACTION_SOURCE_DEPTH_QC_JSON_NAME,
     REFRACTION_SOURCE_DEPTH_SOURCES_CSV_NAME,
@@ -506,9 +509,14 @@ def test_validate_with_picks_returns_preflight_summary(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setattr(
-        refraction_inputs_module,
+        SeisViewer2DRefractionTraceStoreProvider,
         'get_reader',
-        lambda *args, **kwargs: _ValidationReader(),
+        lambda *_args, **_kwargs: _ValidationReader(),
+    )
+    monkeypatch.setattr(
+        SeisViewer2DRefractionTraceStoreProvider,
+        'get_dt',
+        lambda *_args, **_kwargs: 0.001,
     )
 
     response = client.post(
@@ -589,9 +597,14 @@ def test_validate_with_picks_reports_pick_count_mismatch_without_job(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setattr(
-        refraction_inputs_module,
+        SeisViewer2DRefractionTraceStoreProvider,
         'get_reader',
-        lambda *args, **kwargs: _ValidationReader(),
+        lambda *_args, **_kwargs: _ValidationReader(),
+    )
+    monkeypatch.setattr(
+        SeisViewer2DRefractionTraceStoreProvider,
+        'get_dt',
+        lambda *_args, **_kwargs: 0.001,
     )
 
     response = client.post(

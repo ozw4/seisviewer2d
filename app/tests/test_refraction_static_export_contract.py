@@ -33,6 +33,8 @@ from app.statics.refraction.application.export_service import (
     CANONICAL_SOURCE_STATIC_TABLE_CSV_NAME,
     REFRACTION_STATIC_EXPORT_JOB_META_JSON_NAME,
     REFRACTION_STATIC_EXPORT_REQUEST_JSON_NAME,
+)
+from app.statics.refraction.adapters.seisviewer2d.export_runner import (
     run_refraction_static_export_job,
 )
 from app.statics.refraction.domain.export_units import (

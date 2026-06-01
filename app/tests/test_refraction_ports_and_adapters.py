@@ -10,6 +10,7 @@ from app.core.state import create_app_state
 from app.services.job_runner import JobCancelledError
 from app.statics.refraction.adapters.seisviewer2d import (
     SeisViewer2DRefractionArtifactResolver,
+    SeisViewer2DRefractionCorrectedStoreProvider,
     SeisViewer2DRefractionJobContext,
     SeisViewer2DRefractionRuntime,
     SeisViewer2DRefractionTraceStoreProvider,
@@ -19,6 +20,7 @@ from app.statics.refraction.adapters.seisviewer2d import (
 PORT_MODULES = (
     'app.statics.refraction.ports',
     'app.statics.refraction.ports.artifact_resolver',
+    'app.statics.refraction.ports.corrected_store',
     'app.statics.refraction.ports.job_context',
     'app.statics.refraction.ports.pick_source',
     'app.statics.refraction.ports.runtime',
@@ -28,6 +30,7 @@ PORT_MODULES = (
 ADAPTER_MODULES = (
     'app.statics.refraction.adapters.seisviewer2d',
     'app.statics.refraction.adapters.seisviewer2d.artifact_resolver',
+    'app.statics.refraction.adapters.seisviewer2d.corrected_store',
     'app.statics.refraction.adapters.seisviewer2d.job_context',
     'app.statics.refraction.adapters.seisviewer2d.runtime',
     'app.statics.refraction.adapters.seisviewer2d.trace_store',
@@ -147,3 +150,21 @@ def test_runtime_adapter_builds_refraction_dependencies(tmp_path: Path) -> None:
     assert isinstance(context, SeisViewer2DRefractionJobContext)
     assert context.job_id == 'job-a'
     assert context.artifacts_dir == tmp_path
+
+
+def test_corrected_store_adapter_sanitizes_output_name(tmp_path: Path) -> None:
+    state = create_app_state()
+    source_store_path = tmp_path / 'trace_stores' / 'line001.sgy'
+    source_store_path.mkdir(parents=True)
+    adapter = SeisViewer2DRefractionCorrectedStoreProvider(state)
+
+    output_path = adapter.corrected_store_path(
+        source_store_path=source_store_path,
+        statics_kind='static-table',
+        suffix='job-a',
+        error_type=ValueError,
+        output_name='../outside/store',
+    )
+
+    assert output_path.parent == source_store_path.parent
+    assert output_path.name == '.._outside_store'

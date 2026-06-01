@@ -15,10 +15,6 @@ from app.statics.refraction.contracts.qc import (
     RefractionStaticPickMapRequest,
     RefractionStaticPickMapResponse,
 )
-from app.core.state import AppState
-from app.services.job_artifact_refs import resolve_job_artifact_path
-from app.services.job_manager import JobManager
-from app.services.reader import get_reader
 from app.statics.refraction.artifacts import (
     REFRACTION_FIRST_BREAK_FIT_QC_CSV_NAME,
     REFRACTION_FIRST_BREAK_FIT_QC_NPZ_NAME,
@@ -26,9 +22,14 @@ from app.statics.refraction.artifacts import (
     REFRACTION_STATIC_COMPONENT_QC_TRACE_CSV_NAME,
     REFRACTION_STATIC_SOLUTION_NPZ_NAME,
 )
+from app.statics.refraction.application.job_status import (
+    is_ready_status_value,
+    normalize_status_value,
+)
 from app.statics.refraction.application.pick_source_loader import (
     load_npz_refraction_pick_source_from_path,
 )
+from app.statics.refraction.ports.runtime import RefractionRuntime
 from app.services.trace_store_index_validation import validate_sorted_to_original
 from app.utils.segy_scalars import apply_segy_scalar, normalize_linear_unit
 
@@ -43,7 +44,7 @@ _COMPLETED_PICK_MAP_CACHE_SCHEMA_VERSION = 1
 def build_refraction_static_pick_map(
     *,
     req: RefractionStaticPickMapRequest,
-    state: AppState,
+    runtime: RefractionRuntime,
     job: dict[str, object] | None = None,
     uploaded_pick_npz_path: Path | None = None,
 ) -> dict[str, Any]:
@@ -54,7 +55,7 @@ def build_refraction_static_pick_map(
         return _build_completed_job_pick_map(req=req, job=job)
     return _build_pre_statics_pick_map(
         req=req,
-        state=state,
+        runtime=runtime,
         uploaded_pick_npz_path=uploaded_pick_npz_path,
     )
 
@@ -62,16 +63,16 @@ def build_refraction_static_pick_map(
 def _build_pre_statics_pick_map(
     *,
     req: RefractionStaticPickMapRequest,
-    state: AppState,
+    runtime: RefractionRuntime,
     uploaded_pick_npz_path: Path | None,
 ) -> dict[str, Any]:
     if req.file_id is None or req.pick_source is None:
         raise RefractionStaticPickMapError('file_id and pick_source are required')
 
-    reader = get_reader(req.file_id, req.key1_byte, req.key2_byte, state=state)
+    reader = runtime.trace_store.get_reader(req.file_id, req.key1_byte, req.key2_byte)
     n_traces = _reader_n_traces(reader)
     n_samples = _reader_n_samples(reader)
-    dt_s = _reader_dt(reader, state=state, file_id=req.file_id)
+    dt_s = _reader_dt(reader, runtime=runtime, file_id=req.file_id)
     sorted_to_original = validate_sorted_to_original(
         np.asarray(reader.get_sorted_to_original()),
         expected_n_traces=n_traces,
@@ -79,7 +80,7 @@ def _build_pre_statics_pick_map(
     )
     pick_path = _resolve_pick_path(
         req=req,
-        state=state,
+        runtime=runtime,
         uploaded_pick_npz_path=uploaded_pick_npz_path,
     )
     loaded = load_npz_refraction_pick_source_from_path(
@@ -141,7 +142,7 @@ def _build_pre_statics_pick_map(
 def _resolve_pick_path(
     *,
     req: RefractionStaticPickMapRequest,
-    state: AppState,
+    runtime: RefractionRuntime,
     uploaded_pick_npz_path: Path | None,
 ) -> Path:
     pick_source = req.pick_source
@@ -162,8 +163,7 @@ def _resolve_pick_path(
     allowed_job_types = (
         {'batch_apply'} if pick_source.kind == 'batch_predicted_npz' else {'statics'}
     )
-    return resolve_job_artifact_path(
-        state,
+    return runtime.artifacts.resolve_artifact(
         job_id=str(pick_source.job_id),
         name=str(pick_source.artifact_name),
         allowed_job_types=allowed_job_types,
@@ -182,10 +182,10 @@ def _build_completed_job_pick_map(
     job_id = str(req.job_id)
     if job.get('statics_kind') != 'refraction':
         raise RefractionStaticPickMapError(f'Job {job_id} is not a refraction statics job')
-    if not JobManager.is_ready_status_value(job.get('status')):
+    if not is_ready_status_value(job.get('status')):
         raise RefractionStaticPickMapError(
             f'Job {job_id} is not complete; current state is '
-            f'{JobManager.normalize_status_value(job.get("status"))}'
+            f'{normalize_status_value(job.get("status"))}'
         )
     artifacts_dir = _job_artifacts_dir(job, job_id)
     cached = _load_completed_pick_map_cache(artifacts_dir=artifacts_dir, req=req)
@@ -569,13 +569,13 @@ def _reader_n_samples(reader: Any) -> int:
     raise RefractionStaticPickMapError('TraceStore metadata unavailable: n_samples')
 
 
-def _reader_dt(reader: Any, *, state: AppState, file_id: str) -> float:
+def _reader_dt(reader: Any, *, runtime: RefractionRuntime, file_id: str) -> float:
     meta = getattr(reader, 'meta', {})
     if isinstance(meta, dict):
         raw = meta.get('dt')
         if isinstance(raw, (int, float)) and raw > 0:
             return float(raw)
-    value = float(state.file_registry.get_dt(file_id))
+    value = float(runtime.trace_store.get_dt(file_id))
     if value <= 0.0:
         raise RefractionStaticPickMapError('TraceStore metadata unavailable: dt')
     return value

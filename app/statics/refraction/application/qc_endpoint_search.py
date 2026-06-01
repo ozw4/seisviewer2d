@@ -7,9 +7,12 @@ import math
 from pathlib import Path
 from typing import Any
 
-from app.services.job_manager import JobManager
 from app.statics.refraction.contracts.qc import (
     RefractionStaticQcEndpointSearchRequest,
+)
+from app.statics.refraction.application.job_status import (
+    is_ready_status_value,
+    normalize_status_value,
 )
 from app.statics.refraction.artifacts import (
     REFRACTION_STATIC_COMPONENT_QC_ENDPOINT_CSV_NAME,
@@ -32,10 +35,10 @@ def build_refraction_static_qc_endpoint_search(
         raise RefractionStaticQcEndpointSearchError(
             f'Job {job_id} is not a refraction statics job'
         )
-    if not JobManager.is_ready_status_value(job.get('status')):
+    if not is_ready_status_value(job.get('status')):
         raise RefractionStaticQcEndpointSearchError(
             f'Job {job_id} is not complete; current state is '
-            f'{JobManager.normalize_status_value(job.get("status"))}'
+            f'{normalize_status_value(job.get("status"))}'
         )
 
     artifacts_dir = _job_artifacts_dir(job, job_id)

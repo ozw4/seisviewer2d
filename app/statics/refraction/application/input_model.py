@@ -18,7 +18,6 @@ from app.statics.refraction.contracts.inputs import (
 )
 from app.statics.refraction.contracts.model import RefractionStaticModelRequest
 from app.statics.refraction.contracts.options import RefractionStaticMoveoutRequest
-from app.core.state import AppState
 from app.services.common.artifact_io import write_csv_atomic, write_json_atomic
 from app.services.common.array_validation import (
     coerce_nonnegative_int as _coerce_nonnegative_int,
@@ -29,7 +28,6 @@ from app.services.geometry_linkage_loader import (
     LoadedGeometryLinkageArtifact,
     load_geometry_linkage_artifact,
 )
-from app.services.job_artifact_refs import resolve_job_artifact_path
 from app.statics.refraction.application.pick_source_loader import (
     PICK_TIME_KEYS,
     REFRACTION_PICK_ORDER_TRACE_STORE_SORTED as _ORDER_TRACE_STORE_SORTED,
@@ -46,7 +44,6 @@ from app.statics.refraction.application.preflight_diagnostics import (
     scan_refraction_static_pick_npz,
     write_refraction_static_preflight_artifacts,
 )
-from app.services.reader import get_reader
 from app.statics.refraction.domain.layer_observations import (
     build_refraction_layer_observation_masks,
     refraction_layer_observation_qc,
@@ -62,7 +59,7 @@ from app.statics.refraction.domain.uphole import (
     resolve_refraction_uphole_for_input_model,
 )
 from app.services.trace_store_index_validation import validate_sorted_to_original
-from app.trace_store.reader import TraceStoreSectionReader
+from app.statics.refraction.ports.runtime import RefractionRuntime
 from app.utils.pick_cache_file1d_mem import path_for_file
 from app.utils.segy_scalars import apply_segy_scalar, normalize_elevation_unit
 
@@ -177,28 +174,35 @@ class _UpholeInputConfig:
 def build_refraction_static_input_model(
     *,
     req: RefractionStaticApplyRequest,
-    state: AppState,
+    runtime: RefractionRuntime | None = None,
+    state: object | None = None,
     job_dir: Path | None = None,
     uploaded_pick_npz_path: Path | None = None,
     uploaded_pick_metadata: Mapping[str, object] | None = None,
     require_valid_observations: bool = True,
 ) -> RefractionStaticInputModel:
     """Build a sorted-order refraction statics input model for a request."""
+    if runtime is None:
+        if state is not None:
+            raise TypeError(
+                'runtime is required; AppState adaptation belongs in adapters'
+            )
+        raise TypeError('runtime is required')
     file_id = _non_empty_str(req.file_id, name='file_id')
     key1_byte = _validate_header_byte(req.key1_byte, name='key1_byte')
     key2_byte = _validate_header_byte(req.key2_byte, name='key2_byte')
 
-    reader = get_reader(file_id, key1_byte, key2_byte, state=state)
+    reader = runtime.trace_store.get_reader(file_id, key1_byte, key2_byte)
     n_traces = _reader_n_traces(reader)
     n_samples = _reader_n_samples(reader)
-    dt = _reader_dt(reader, state=state, file_id=file_id)
+    dt = _reader_dt(reader, runtime=runtime, file_id=file_id)
     sorted_trace_index = _reader_sorted_to_original(reader, n_traces=n_traces)
     source_depth_config = _source_depth_input_config(req)
     uphole_config = _uphole_input_config(req)
 
     pick_source = _load_refraction_pick_source(
         req=req,
-        state=state,
+        runtime=runtime,
         reader=reader,
         n_traces=n_traces,
         n_samples=n_samples,
@@ -217,7 +221,7 @@ def build_refraction_static_input_model(
     )
     linkage_artifact = _resolve_linkage_artifact(
         req=req,
-        state=state,
+        runtime=runtime,
         n_traces=n_traces,
     )
 
@@ -700,8 +704,9 @@ def _preflight_request_from_inputs(
 def _load_refraction_pick_source(
     *,
     req: RefractionStaticApplyRequest,
-    state: AppState,
-    reader: TraceStoreSectionReader,
+    runtime: RefractionRuntime | None = None,
+    state: object | None = None,
+    reader: Any,
     n_traces: int,
     n_samples: int,
     dt: float,
@@ -744,10 +749,16 @@ def _load_refraction_pick_source(
             source_kind='uploaded_npz',
             metadata=metadata,
         )
+    if runtime is None:
+        if state is not None:
+            raise TypeError(
+                'runtime is required; AppState adaptation belongs in adapters'
+            )
+        raise TypeError('runtime is required')
     if pick_source.kind == 'manual_memmap':
         return _load_manual_memmap_pick_source(
             file_id=req.file_id,
-            state=state,
+            runtime=runtime,
             n_traces=n_traces,
             sorted_trace_index=sorted_trace_index,
         )
@@ -758,8 +769,7 @@ def _load_refraction_pick_source(
         name='pick_source.artifact_name',
     )
     if pick_source.kind == 'batch_predicted_npz':
-        path = resolve_job_artifact_path(
-            state,
+        path = runtime.artifacts.resolve_artifact(
             job_id=job_id,
             name=artifact_name,
             allowed_job_types={'batch_apply'},
@@ -770,8 +780,7 @@ def _load_refraction_pick_source(
         )
         source_kind = 'batch_predicted_npz'
     elif pick_source.kind == 'manual_npz_artifact':
-        path = resolve_job_artifact_path(
-            state,
+        path = runtime.artifacts.resolve_artifact(
             job_id=job_id,
             name=artifact_name,
             allowed_job_types={'statics', 'batch_apply', 'pipeline'},
@@ -862,11 +871,11 @@ def _scan_pick_npz_for_preflight(
 def _load_manual_memmap_pick_source(
     *,
     file_id: str,
-    state: AppState,
+    runtime: RefractionRuntime,
     n_traces: int,
     sorted_trace_index: np.ndarray,
 ) -> _LoadedRefractionPickSource:
-    file_name = state.file_registry.filename(file_id)
+    file_name = runtime.trace_store.filename(file_id)
     if not file_name:
         raise ValueError(
             'manual_memmap pick source is not available for refraction statics '
@@ -909,7 +918,7 @@ def _load_manual_memmap_pick_source(
 def _load_npz_refraction_pick_source(
     npz_path: Path,
     *,
-    reader: TraceStoreSectionReader,
+    reader: Any,
     n_traces: int,
     n_samples: int,
     dt: float,
@@ -934,7 +943,7 @@ def _load_npz_refraction_pick_source(
 def _resolve_linkage_artifact(
     *,
     req: RefractionStaticApplyRequest,
-    state: AppState,
+    runtime: RefractionRuntime,
     n_traces: int,
 ) -> LoadedGeometryLinkageArtifact | None:
     linkage = req.linkage
@@ -949,8 +958,7 @@ def _resolve_linkage_artifact(
         name='linkage.artifact_name',
     )
     try:
-        path = resolve_job_artifact_path(
-            state,
+        path = runtime.artifacts.resolve_artifact(
             job_id=job_id,
             name=artifact_name,
             allowed_job_types={'statics'},
@@ -975,7 +983,7 @@ def _resolve_linkage_artifact(
 
 def _load_refraction_trace_headers(
     *,
-    reader: TraceStoreSectionReader,
+    reader: Any,
     req: RefractionStaticApplyRequest,
     n_traces: int,
     geometry: RefractionStaticGeometryRequest | None = None,
@@ -1977,7 +1985,7 @@ def _offset_header_needed(moveout: RefractionStaticMoveoutRequest) -> bool:
 
 
 def _reader_sorted_to_original(
-    reader: TraceStoreSectionReader,
+    reader: Any,
     *,
     n_traces: int,
 ) -> np.ndarray:
@@ -1990,7 +1998,7 @@ def _reader_sorted_to_original(
 
 
 def _read_reader_header(
-    reader: TraceStoreSectionReader,
+    reader: Any,
     *,
     byte: int,
     role: str,
@@ -2006,7 +2014,7 @@ def _read_reader_header(
         raise ValueError(f'failed to read {role} header byte {byte}: {exc}') from exc
 
 
-def _reader_n_traces(reader: TraceStoreSectionReader) -> int:
+def _reader_n_traces(reader: Any) -> int:
     if hasattr(reader, 'traces'):
         shape = getattr(reader.traces, 'shape', ())
         if shape:
@@ -2017,7 +2025,7 @@ def _reader_n_traces(reader: TraceStoreSectionReader) -> int:
     raise ValueError('TraceStore metadata unavailable: n_traces')
 
 
-def _reader_n_samples(reader: TraceStoreSectionReader) -> int:
+def _reader_n_samples(reader: Any) -> int:
     getter = getattr(reader, 'get_n_samples', None)
     if callable(getter):
         return _coerce_positive_int(getter(), name='reader n_samples')
@@ -2028,13 +2036,13 @@ def _reader_n_samples(reader: TraceStoreSectionReader) -> int:
     raise ValueError('TraceStore metadata unavailable: n_samples')
 
 
-def _reader_dt(reader: TraceStoreSectionReader, *, state: AppState, file_id: str) -> float:
+def _reader_dt(reader: Any, *, runtime: RefractionRuntime, file_id: str) -> float:
     meta = getattr(reader, 'meta', None)
     if isinstance(meta, Mapping):
         raw_dt = meta.get('dt')
         if isinstance(raw_dt, (int, float)) and raw_dt > 0:
             return float(raw_dt)
-    return _coerce_positive_float(state.file_registry.get_dt(file_id), name='dt')
+    return _coerce_positive_float(runtime.trace_store.get_dt(file_id), name='dt')
 
 
 def _preview_rows(input_model: RefractionStaticInputModel) -> list[dict[str, Any]]:

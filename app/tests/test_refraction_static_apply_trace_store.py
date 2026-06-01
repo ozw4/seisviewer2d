@@ -9,8 +9,14 @@ import numpy as np
 import pytest
 
 import app.statics.refraction.application.apply_trace_store as svc
+from app.statics.refraction.adapters.seisviewer2d import (
+    corrected_store as corrected_store_adapter,
+)
 from app.api.schemas import RefractionStaticApplyRequest
 from app.core.state import AppState, create_app_state
+from app.statics.refraction.adapters.seisviewer2d.runtime import (
+    SeisViewer2DRefractionRuntime,
+)
 from app.statics.refraction.application.apply_trace_store import (
     CORRECTED_FILE_JSON_NAME,
     REFRACTION_STATIC_APPLY_QC_JSON_NAME,
@@ -408,7 +414,7 @@ def test_apply_refraction_statics_builds_and_registers_corrected_trace_store(
     result = apply_refraction_statics_to_trace_store(
         req=req,
         result=_valid_result(),
-        state=state,
+        runtime=SeisViewer2DRefractionRuntime(state),
         job_id=JOB_ID,
         job_dir=job_dir,
     )
@@ -483,7 +489,7 @@ def test_apply_tracestore_uses_final_shift_when_field_corrections_enabled(
     result = apply_refraction_statics_to_trace_store(
         req=req,
         result=_field_result(apply_to_trace_shift=True),
-        state=state,
+        runtime=SeisViewer2DRefractionRuntime(state),
         job_id=JOB_ID,
         job_dir=job_dir,
     )
@@ -532,7 +538,7 @@ def test_apply_tracestore_uses_refraction_shift_when_field_corrections_artifact_
     result = apply_refraction_statics_to_trace_store(
         req=req,
         result=field_result,
-        state=state,
+        runtime=SeisViewer2DRefractionRuntime(state),
         job_id=JOB_ID,
         job_dir=job_dir,
     )
@@ -583,7 +589,7 @@ def test_apply_tracestore_rejects_invalid_field_shift_when_policy_fail(
         apply_refraction_statics_to_trace_store(
             req=req,
             result=result,
-            state=state,
+            runtime=SeisViewer2DRefractionRuntime(state),
             job_id=JOB_ID,
             job_dir=job_dir,
         )
@@ -611,7 +617,7 @@ def test_apply_tracestore_skips_invalid_field_traces_when_policy_skip(
     applied = apply_refraction_statics_to_trace_store(
         req=req,
         result=result,
-        state=state,
+        runtime=SeisViewer2DRefractionRuntime(state),
         job_id=JOB_ID,
         job_dir=job_dir,
     )
@@ -642,7 +648,7 @@ def test_apply_refraction_statics_from_solution_artifact(
     result = apply_refraction_statics_from_solution_artifact(
         req=req,
         solution_npz_path=solution_path,
-        state=state,
+        runtime=SeisViewer2DRefractionRuntime(state),
         job_id=JOB_ID,
         job_dir=job_dir,
     )
@@ -670,7 +676,7 @@ def test_apply_tracestore_from_solution_artifact_uses_final_shift_when_enabled(
     result = apply_refraction_statics_from_solution_artifact(
         req=req,
         solution_npz_path=solution_path,
-        state=state,
+        runtime=SeisViewer2DRefractionRuntime(state),
         job_id=JOB_ID,
         job_dir=job_dir,
     )
@@ -691,7 +697,7 @@ def test_apply_refraction_statics_rejects_sorted_order_mismatch_without_output(
         apply_refraction_statics_to_trace_store(
             req=req,
             result=_valid_result(sorted_trace_index=np.arange(4, dtype=np.int64)),
-            state=state,
+            runtime=SeisViewer2DRefractionRuntime(state),
             job_id=JOB_ID,
             job_dir=job_dir,
         )
@@ -714,13 +720,13 @@ def test_apply_refraction_statics_cleans_built_store_on_registration_failure(
     def _fail_register(**_kwargs: Any) -> object:
         raise RuntimeError('registration failed')
 
-    monkeypatch.setattr(svc, 'register_trace_store', _fail_register)
+    monkeypatch.setattr(corrected_store_adapter, 'register_trace_store', _fail_register)
 
     with pytest.raises(RuntimeError, match='registration failed'):
         apply_refraction_statics_to_trace_store(
             req=req,
             result=_valid_result(),
-            state=state,
+            runtime=SeisViewer2DRefractionRuntime(state),
             job_id=JOB_ID,
             job_dir=job_dir,
         )

@@ -10,7 +10,6 @@ from typing import Any, Literal
 import numpy as np
 
 from app.statics.refraction.contracts.apply import RefractionStaticApplyRequest
-from app.core.state import AppState
 from app.services.common.array_validation import (
     coerce_1d_bool_array as _coerce_1d_bool_array,
     coerce_1d_integer_int64 as _coerce_1d_integer_int64,
@@ -23,6 +22,7 @@ from app.services.common.artifact_io import write_csv_atomic, write_json_atomic
 from app.statics.refraction.application.bedrock import (
     estimate_global_bedrock_slowness_from_input_model,
 )
+from app.statics.refraction.ports.runtime import RefractionRuntime
 from app.statics.refraction.application.design_matrix import (
     LOW_FOLD_CELL_REJECTION_REASON,
     OUTSIDE_REFRACTOR_CELL_GRID_REASON,
@@ -183,12 +183,17 @@ class _EndpointResult:
 def estimate_refraction_half_intercept_times_from_first_breaks(
     *,
     req: RefractionStaticApplyRequest,
-    state: AppState,
+    runtime: RefractionRuntime | None = None,
+    state: object | None = None,
     job_dir: Path | None = None,
     input_model: RefractionStaticInputModel | None = None,
     resolved_first_layer: ResolvedRefractionFirstLayer | None = None,
 ) -> RefractionHalfInterceptTimeResult:
     """Build inputs, solve the GLI system, and emit the half-intercept model."""
+    if runtime is None and input_model is None:
+        if state is None:
+            raise TypeError('runtime is required')
+        raise TypeError('runtime is required; AppState adaptation belongs in adapters')
     try:
         if input_model is None:
             from app.statics.refraction.application.input_model import (
@@ -197,7 +202,7 @@ def estimate_refraction_half_intercept_times_from_first_breaks(
 
             input_model = build_refraction_static_input_model(
                 req=req,
-                state=state,
+                runtime=runtime,
                 job_dir=job_dir,
             )
         if req.model.bedrock_velocity_mode == 'solve_global':

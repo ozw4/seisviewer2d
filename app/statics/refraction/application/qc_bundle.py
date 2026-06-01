@@ -8,8 +8,11 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from app.services.job_manager import JobManager
 from app.statics.refraction.contracts.qc import RefractionStaticQcBundleRequest
+from app.statics.refraction.application.job_status import (
+    is_ready_status_value,
+    normalize_status_value,
+)
 from app.statics.refraction.domain.export_units import (
     REFRACTION_STATIC_REPO_SIGN_CONVENTION,
 )
@@ -118,10 +121,10 @@ def build_refraction_static_qc_bundle(
         raise RefractionStaticQcBundleError(
             f'Job {job_id} is not a refraction statics job'
         )
-    if not JobManager.is_ready_status_value(job.get('status')):
+    if not is_ready_status_value(job.get('status')):
         raise RefractionStaticQcBundleError(
             f'Job {job_id} is not complete; current state is '
-            f'{JobManager.normalize_status_value(job.get("status"))}'
+            f'{normalize_status_value(job.get("status"))}'
         )
 
     artifacts_dir = _job_artifacts_dir(job, job_id)
@@ -415,7 +418,7 @@ def _summary_from_qc(
 ) -> dict[str, Any]:
     summary: dict[str, Any] = {
         'status': 'ok',
-        'job_state': JobManager.normalize_status_value(job.get('status')),
+        'job_state': normalize_status_value(job.get('status')),
     }
     for key in ('file_id', 'key1_byte', 'key2_byte'):
         value = job.get(key)

@@ -11,7 +11,6 @@ import numpy as np
 
 from app.statics.refraction.contracts.apply import RefractionStaticApplyRequest
 from app.statics.refraction.contracts.model import RefractionStaticModelRequest
-from app.core.state import AppState
 from app.services.common.array_validation import (
     coerce_1d_bool_array as _coerce_1d_bool_array,
     coerce_1d_integer_int64 as _coerce_1d_integer_int64,
@@ -34,6 +33,7 @@ from app.statics.refraction.domain.first_layer import (
 from app.statics.refraction.application.half_intercept import (
     estimate_refraction_half_intercept_times_from_first_breaks,
 )
+from app.statics.refraction.ports.runtime import RefractionRuntime
 from app.statics.refraction.domain.t1lsst import (
     RefractionT1LSSTError,
     compute_t1lsst_1layer_thickness,
@@ -248,7 +248,8 @@ class _ValidatedHalfIntercept:
 def estimate_weathering_thickness_from_first_breaks(
     *,
     req: RefractionStaticApplyRequest,
-    state: AppState,
+    runtime: RefractionRuntime | None = None,
+    state: object | None = None,
     job_dir: Path | None = None,
     input_model: RefractionStaticInputModel | None = None,
     resolved_first_layer: ResolvedRefractionFirstLayer | None = None,
@@ -257,9 +258,12 @@ def estimate_weathering_thickness_from_first_breaks(
     try:
         half_intercept_kwargs: dict[str, Any] = {
             'req': req,
-            'state': state,
             'job_dir': job_dir,
         }
+        if runtime is not None:
+            half_intercept_kwargs['runtime'] = runtime
+        elif state is not None:
+            half_intercept_kwargs['state'] = state
         if input_model is not None:
             half_intercept_kwargs['input_model'] = input_model
         if resolved_first_layer is not None:

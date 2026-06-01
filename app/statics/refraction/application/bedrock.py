@@ -11,8 +11,8 @@ import numpy as np
 from app.statics.refraction.contracts.apply import RefractionStaticApplyRequest
 from app.statics.refraction.contracts.model import RefractionStaticModelRequest
 from app.statics.refraction.contracts.options import RefractionStaticSolverRequest
-from app.core.state import AppState
 from app.services.common.artifact_io import write_csv_atomic, write_json_atomic
+from app.statics.refraction.ports.runtime import RefractionRuntime
 from app.statics.refraction.application.design_matrix import (
     build_refraction_static_design_matrix,
     write_refraction_design_matrix_diagnostics_artifacts,
@@ -55,7 +55,8 @@ class RefractionBedrockSlownessError(ValueError):
 def estimate_global_bedrock_slowness_from_first_breaks(
     *,
     req: RefractionStaticApplyRequest,
-    state: AppState,
+    runtime: RefractionRuntime | None = None,
+    state: object | None = None,
     job_dir: Path | None = None,
     resolved_first_layer: ResolvedRefractionFirstLayer | None = None,
 ) -> RefractionBedrockSlownessResult:
@@ -66,6 +67,7 @@ def estimate_global_bedrock_slowness_from_first_breaks(
     try:
         input_model = build_refraction_static_input_model(
             req=req,
+            runtime=runtime,
             state=state,
             job_dir=job_dir,
         )

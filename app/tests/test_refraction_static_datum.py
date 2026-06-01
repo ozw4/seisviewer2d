@@ -13,6 +13,9 @@ import pytest
 import app.statics.refraction.application.datum as datum_module
 from app.api.schemas import RefractionStaticApplyOptions, RefractionStaticDatumRequest
 from app.core.state import AppState
+from app.statics.refraction.adapters.seisviewer2d.runtime import (
+    SeisViewer2DRefractionRuntime,
+)
 from app.statics.refraction.application.datum import (
     REFRACTION_DATUM_NODES_CSV_NAME,
     REFRACTION_DATUM_RECEIVERS_CSV_NAME,
@@ -569,7 +572,7 @@ def test_from_artifact_mode_loads_node_npz_from_static_job(tmp_path: Path) -> No
             floating_datum_artifact_name=artifact_name,
         ),
         apply_options=_apply_options(),
-        state=state,
+        runtime=SeisViewer2DRefractionRuntime(state),
         file_id='line-a',
         key1_byte=189,
         key2_byte=193,
