@@ -8,7 +8,7 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-from app.services.refraction_static_artifacts import (
+from app.statics.refraction.artifacts import (
     REFRACTION_CELL_SOLVER_HISTORY_CSV_NAME,
     write_refraction_static_artifacts,
 )

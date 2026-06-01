@@ -12,7 +12,7 @@ from app.api.schemas import (
     RefractionStaticDatumRequest,
     RefractionStaticSolverRequest,
 )
-from app.services.refraction_static_artifacts import (
+from app.statics.refraction.artifacts import (
     FIRST_BREAK_RESIDUALS_CSV_NAME,
     NEAR_SURFACE_MODEL_CSV_NAME,
     RECEIVER_STATIC_TABLE_CSV_NAME,
@@ -42,12 +42,12 @@ from app.services.refraction_static_artifacts import (
     SOURCE_STATIC_TABLE_CSV_NAME,
     write_refraction_static_artifacts,
 )
-from app.services.refraction_static_datum import build_refraction_datum_statics
-from app.services.refraction_static_design_matrix import (
+from app.statics.refraction.application.datum import build_refraction_datum_statics
+from app.statics.refraction.application.design_matrix import (
     refraction_design_matrix_layer_node_diagnostics_csv_name,
     refraction_design_matrix_layer_qc_json_name,
 )
-from app.services.refraction_static_multilayer_service import (
+from app.statics.refraction.application.multilayer_service import (
     _artifact_request_for_multilayer_workflow,
     build_refraction_multilayer_weathering_replacement_statics,
     compute_refraction_multilayer_datum_statics_from_input_model,

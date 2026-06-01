@@ -18,7 +18,7 @@ from app.api.schemas import (
     RefractionStaticSourceDepthCorrectionRequest,
     RefractionStaticUpholeCorrectionRequest,
 )
-from app.services.refraction_static_service import (
+from app.statics.refraction.application.workflow import (
     RefractionFieldCorrectionNotImplemented,
     _source_depth_double_count_guard_qc,
     _with_manual_static_field_correction,
@@ -26,9 +26,9 @@ from app.services.refraction_static_service import (
     _with_uphole_field_correction,
     reject_unsupported_refraction_field_corrections,
 )
-from app.services.refraction_static_source_depth import resolve_refraction_source_depth
-from app.services.refraction_static_uphole import resolve_refraction_uphole
-from app.services.refraction_static_types import ResolvedRefractionFirstLayer
+from app.statics.refraction.domain.source_depth import resolve_refraction_source_depth
+from app.statics.refraction.domain.uphole import resolve_refraction_uphole
+from app.statics.refraction.domain.types import ResolvedRefractionFirstLayer
 from app.tests._refraction_static_synthetic import (
     SYNTHETIC_V1_M_S,
     run_synthetic_refraction_statics,

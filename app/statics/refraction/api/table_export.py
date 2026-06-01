@@ -7,12 +7,11 @@ from collections.abc import MutableMapping
 from fastapi import APIRouter, HTTPException, Request
 
 from app.api._helpers import get_state
-from app.api.routers.statics.launch import launch_static_job, static_router_job_target
-from app.contracts.statics.refraction.export import (
+from app.statics.refraction.contracts.export import (
     RefractionStaticExportJobRequest,
     RefractionStaticExportJobResponse,
 )
-from app.contracts.statics.refraction.table_apply import (
+from app.statics.refraction.contracts.table_apply import (
     RefractionStaticTableApplyRequest,
     RefractionStaticTableApplyResponse,
 )
@@ -41,6 +40,8 @@ def refraction_static_table_apply(
     state = get_state(request.app)
     cleanup_in_memory_state(state)
     maybe_cleanup_expired_jobs()
+
+    from app.api.routers.statics.launch import launch_static_job
 
     launched = launch_static_job(
         state=state,
@@ -77,6 +78,11 @@ def refraction_static_export(
     def _after_create(job_state: MutableMapping[str, object]) -> None:
         job_state['source_job_id'] = source.source_job_id
         job_state['export_formats'] = list(source.requested_formats)
+
+    from app.api.routers.statics.launch import (
+        launch_static_job,
+        static_router_job_target,
+    )
 
     launched = launch_static_job(
         state=state,

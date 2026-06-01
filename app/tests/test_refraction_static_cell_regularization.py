@@ -4,7 +4,7 @@ import numpy as np
 import pytest
 from scipy import sparse
 
-from app.services.refraction_static_cell_regularization import (
+from app.statics.refraction.domain.cell_regularization import (
     augment_design_matrix_with_cell_smoothing,
     build_cell_slowness_smoothing_rows,
 )

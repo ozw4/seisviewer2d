@@ -9,13 +9,13 @@ import pytest
 from fastapi.testclient import TestClient
 
 from app.main import app
-from app.services.refraction_static_artifacts import (
+from app.statics.refraction.artifacts import (
     REFRACTION_FIRST_BREAK_FIT_QC_CSV_NAME,
     REFRACTION_PICK_MAP_QC_COMPLETED_CACHE_DIR_NAME,
     REFRACTION_STATIC_COMPONENT_QC_TRACE_CSV_NAME,
     REFRACTION_STATIC_QC_JSON_NAME,
 )
-from app.services.refraction_static_export_units import (
+from app.statics.refraction.domain.export_units import (
     REFRACTION_STATIC_REPO_SIGN_CONVENTION,
 )
 

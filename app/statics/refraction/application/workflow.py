@@ -16,7 +16,7 @@ from app.core.state import AppState
 from app.services.common.artifact_io import write_json_atomic
 from app.services.job_runner import JobCompletion, JobFailure, run_job_with_lifecycle
 from app.services.job_artifact_refs import resolve_job_artifact_path
-from app.services.refraction_static_apply_trace_store import (
+from app.statics.refraction.application.apply_trace_store import (
     apply_refraction_statics_to_trace_store,
 )
 from app.statics.refraction.artifacts import (

@@ -51,11 +51,11 @@ from app.contracts.statics.geometry_linkage import (
     StaticLinkageGeometryRequest as StaticLinkageGeometryRequest,
     StaticLinkageOptionsRequest as StaticLinkageOptionsRequest,
 )
-from app.contracts.statics.refraction.apply import (
+from app.statics.refraction.contracts.apply import (
     RefractionStaticApplyRequest as RefractionStaticApplyRequest,
     RefractionStaticApplyResponse as RefractionStaticApplyResponse,
 )
-from app.contracts.statics.refraction.common import (
+from app.statics.refraction.contracts.common import (
     REFRACTION_STATIC_DEFAULT_EXPORT_FORMATS as REFRACTION_STATIC_DEFAULT_EXPORT_FORMATS,
     _REFRACTION_STATIC_LAYER_ORDER as _REFRACTION_STATIC_LAYER_ORDER,
     RefractionStaticExportFormat as RefractionStaticExportFormat,
@@ -68,12 +68,12 @@ from app.contracts.statics.refraction.common import (
     RefractionStaticQcBundleCoordinateMode as RefractionStaticQcBundleCoordinateMode,
     RefractionStaticQcBundleInclude as RefractionStaticQcBundleInclude,
 )
-from app.contracts.statics.refraction.export import (
+from app.statics.refraction.contracts.export import (
     RefractionStaticExportJobRequest as RefractionStaticExportJobRequest,
     RefractionStaticExportJobResponse as RefractionStaticExportJobResponse,
     RefractionStaticExportRequest as RefractionStaticExportRequest,
 )
-from app.contracts.statics.refraction.field_corrections import (
+from app.statics.refraction.contracts.field_corrections import (
     RefractionStaticFieldCorrectionArtifactRequest as RefractionStaticFieldCorrectionArtifactRequest,
     RefractionStaticFieldCorrectionCompositionRequest as RefractionStaticFieldCorrectionCompositionRequest,
     RefractionStaticFieldCorrectionsRequest as RefractionStaticFieldCorrectionsRequest,
@@ -82,22 +82,22 @@ from app.contracts.statics.refraction.field_corrections import (
     RefractionStaticSourceDepthCorrectionRequest as RefractionStaticSourceDepthCorrectionRequest,
     RefractionStaticUpholeCorrectionRequest as RefractionStaticUpholeCorrectionRequest,
 )
-from app.contracts.statics.refraction.gather_preview import (
+from app.statics.refraction.contracts.gather_preview import (
     RefractionStaticGatherPreviewRequest as RefractionStaticGatherPreviewRequest,
     RefractionStaticGatherPreviewResponse as RefractionStaticGatherPreviewResponse,
 )
-from app.contracts.statics.refraction.inputs import (
+from app.statics.refraction.contracts.inputs import (
     RefractionStaticGeometryRequest as RefractionStaticGeometryRequest,
     RefractionStaticLinkageRequest as RefractionStaticLinkageRequest,
     RefractionStaticPickSourceRequest as RefractionStaticPickSourceRequest,
 )
-from app.contracts.statics.refraction.model import (
+from app.statics.refraction.contracts.model import (
     RefractionStaticFirstLayerRequest as RefractionStaticFirstLayerRequest,
     RefractionStaticLayerRequest as RefractionStaticLayerRequest,
     RefractionStaticModelRequest as RefractionStaticModelRequest,
     RefractionStaticRefractorCellRequest as RefractionStaticRefractorCellRequest,
 )
-from app.contracts.statics.refraction.options import (
+from app.statics.refraction.contracts.options import (
     RefractionStaticApplyOptions as RefractionStaticApplyOptions,
     RefractionStaticConversionRequest as RefractionStaticConversionRequest,
     RefractionStaticDatumRequest as RefractionStaticDatumRequest,
@@ -106,7 +106,7 @@ from app.contracts.statics.refraction.options import (
     RefractionStaticRobustRequest as RefractionStaticRobustRequest,
     RefractionStaticSolverRequest as RefractionStaticSolverRequest,
 )
-from app.contracts.statics.refraction.qc import (
+from app.statics.refraction.contracts.qc import (
     RefractionStaticPickMapData as RefractionStaticPickMapData,
     RefractionStaticPickMapGeometryRequest as RefractionStaticPickMapGeometryRequest,
     RefractionStaticPickMapRequest as RefractionStaticPickMapRequest,
@@ -136,7 +136,7 @@ from app.contracts.statics.refraction.qc import (
     RefractionStaticStationStructureVelocityField as RefractionStaticStationStructureVelocityField,
     RefractionStaticStationStructureXAxis as RefractionStaticStationStructureXAxis,
 )
-from app.contracts.statics.refraction.table_apply import (
+from app.statics.refraction.contracts.table_apply import (
     RefractionStaticTableApplyRequest as RefractionStaticTableApplyRequest,
     RefractionStaticTableApplyResponse as RefractionStaticTableApplyResponse,
 )

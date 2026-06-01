@@ -11,11 +11,11 @@ import numpy as np
 import pytest
 
 from app.api.schemas import RefractionStaticApplyOptions
-from app.services.refraction_static_types import (
+from app.statics.refraction.domain.types import (
     RefractionWeatheringThicknessResult,
 )
-import app.services.refraction_static_weathering_replacement as replacement_module
-from app.services.refraction_static_weathering_replacement import (
+import app.statics.refraction.application.weathering_replacement as replacement_module
+from app.statics.refraction.application.weathering_replacement import (
     REFRACTION_WEATHERING_REPLACEMENT_NODES_CSV_NAME,
     REFRACTION_WEATHERING_REPLACEMENT_QC_JSON_NAME,
     REFRACTION_WEATHERING_REPLACEMENT_RECEIVERS_CSV_NAME,

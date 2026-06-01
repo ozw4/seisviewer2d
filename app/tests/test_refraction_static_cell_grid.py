@@ -4,7 +4,7 @@ import numpy as np
 import pytest
 
 from app.api.schemas import RefractionStaticRefractorCellRequest
-from app.services.refraction_static_cell_grid import (
+from app.statics.refraction.domain.cell_grid import (
     assign_observation_midpoint_cells,
     assign_points_to_refraction_cells,
     build_refraction_cell_grid,

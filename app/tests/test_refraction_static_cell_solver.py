@@ -5,13 +5,13 @@ from typing import Any
 import numpy as np
 import pytest
 
-import app.services.refraction_static_solver as solver_module
+import app.statics.refraction.domain.solver as solver_module
 from app.api.schemas import RefractionStaticModelRequest, RefractionStaticSolverRequest
-from app.services.refraction_static_design_matrix import (
+from app.statics.refraction.application.design_matrix import (
     build_refraction_static_design_matrix_from_arrays,
 )
-from app.services.refraction_static_solver import solve_refraction_static_bounded_ls
-from app.services.refraction_static_types import RefractionStaticDesignMatrix
+from app.statics.refraction.domain.solver import solve_refraction_static_bounded_ls
+from app.statics.refraction.domain.types import RefractionStaticDesignMatrix
 
 ACTIVE_NODE_ID = np.asarray([10, 20, 30, 40], dtype=np.int64)
 TRUE_HALF_INTERCEPT_S = np.asarray([0.010, 0.020, 0.015, 0.012], dtype=np.float64)

@@ -45,43 +45,10 @@ LEGACY_CONTRACT_IMPORTS = {
     ),
 }
 
-LEGACY_SERVICE_IMPORTS = {
-    'app.services.refraction_static_export_service': (
-        'run_refraction_static_export_job',
-    ),
-    'app.services.refraction_static_lsst_export': (
-        'format_refraction_lsst_csv',
-    ),
-    'app.services.refraction_static_gather_preview': (
-        'build_refraction_static_gather_preview',
-    ),
-    'app.services.refraction_static_inputs': (
-        'build_refraction_static_input_model',
-    ),
-    'app.services.refraction_static_pick_map': (
-        'build_refraction_static_pick_map',
-    ),
-    'app.services.refraction_static_qc_bundle': (
-        'build_refraction_static_qc_bundle',
-    ),
-    'app.services.refraction_static_qc_drilldown': (
-        'build_refraction_static_qc_drilldown',
-    ),
-    'app.services.refraction_static_qc_endpoint_search': (
-        'build_refraction_static_qc_endpoint_search',
-    ),
-    'app.services.refraction_static_service': (
-        'run_refraction_static_apply_job',
-    ),
-    'app.services.refraction_static_station_structure': (
-        'build_refraction_static_station_structure',
-    ),
-    'app.services.refraction_static_table_apply_service': (
-        'run_refraction_static_table_apply_job',
-    ),
-}
-
 APPLICATION_IMPORTS = {
+    'app.statics.refraction.application.apply_trace_store': (
+        'apply_refraction_statics_to_trace_store',
+    ),
     'app.statics.refraction.application.gather_preview': (
         'build_refraction_static_gather_preview',
     ),
@@ -90,6 +57,9 @@ APPLICATION_IMPORTS = {
     ),
     'app.statics.refraction.application.lsst_export': (
         'format_refraction_lsst_csv',
+    ),
+    'app.statics.refraction.application.input_model': (
+        'build_refraction_static_input_model',
     ),
     'app.statics.refraction.application.pick_map': (
         'build_refraction_static_pick_map',
@@ -114,16 +84,16 @@ APPLICATION_IMPORTS = {
     ),
 }
 
-LEGACY_ARTIFACT_IMPORTS = {
-    'app.services.refraction_static_artifacts': (
+ARTIFACT_IMPORTS = {
+    'app.statics.refraction.artifacts': (
         'REFRACTION_STATIC_SOLUTION_NPZ_NAME',
         'write_refraction_static_artifacts',
         'write_refraction_static_solution_npz',
     ),
-    'app.services.refraction_static_artifacts.contract': (
+    'app.statics.refraction.artifacts.contract': (
         'REFRACTION_STATIC_SOLUTION_NPZ_NAME',
     ),
-    'app.services.refraction_static_artifacts.writer': (
+    'app.statics.refraction.artifacts.writer': (
         'write_refraction_static_artifacts',
     ),
 }
@@ -180,79 +150,9 @@ def test_refraction_contract_shims_return_same_class_objects() -> None:
     assert OldTableApply is NewTableApply
 
 
-def test_legacy_refraction_service_imports_resolve() -> None:
-    _assert_imports_resolve(LEGACY_SERVICE_IMPORTS)
-
-
-def test_legacy_refraction_qc_services_share_application_objects() -> None:
-    pairs = {
-        'refraction_static_gather_preview': (
-            'gather_preview',
-            'build_refraction_static_gather_preview',
-        ),
-        'refraction_static_pick_map': (
-            'pick_map',
-            'build_refraction_static_pick_map',
-        ),
-        'refraction_static_qc_bundle': (
-            'qc_bundle',
-            'build_refraction_static_qc_bundle',
-        ),
-        'refraction_static_qc_drilldown': (
-            'qc_drilldown',
-            'build_refraction_static_qc_drilldown',
-        ),
-        'refraction_static_qc_endpoint_search': (
-            'qc_endpoint_search',
-            'build_refraction_static_qc_endpoint_search',
-        ),
-        'refraction_static_station_structure': (
-            'station_structure',
-            'build_refraction_static_station_structure',
-        ),
-    }
-    for old_name, (new_name, representative_name) in pairs.items():
-        old_module = importlib.import_module(f'app.services.{old_name}')
-        new_module = importlib.import_module(
-            f'app.statics.refraction.application.{new_name}'
-        )
-
-        assert getattr(old_module, representative_name) is getattr(
-            new_module,
-            representative_name,
-        )
-
-
-def test_legacy_refraction_export_services_share_application_objects() -> None:
-    pairs = {
-        'refraction_static_export_service': (
-            'export_service',
-            'run_refraction_static_export_job',
-        ),
-        'refraction_static_lsst_export': (
-            'lsst_export',
-            'format_refraction_lsst_csv',
-        ),
-        'refraction_static_table_apply_service': (
-            'table_apply_service',
-            'run_refraction_static_table_apply_job',
-        ),
-    }
-    for old_name, (new_name, representative_name) in pairs.items():
-        old_module = importlib.import_module(f'app.services.{old_name}')
-        new_module = importlib.import_module(
-            f'app.statics.refraction.application.{new_name}'
-        )
-
-        assert getattr(old_module, representative_name) is getattr(
-            new_module,
-            representative_name,
-        )
-
-
 def test_refraction_application_imports_resolve() -> None:
     _assert_imports_resolve(APPLICATION_IMPORTS)
 
 
-def test_legacy_refraction_artifact_imports_resolve() -> None:
-    _assert_imports_resolve(LEGACY_ARTIFACT_IMPORTS)
+def test_refraction_artifact_imports_resolve() -> None:
+    _assert_imports_resolve(ARTIFACT_IMPORTS)

@@ -8,7 +8,7 @@ import numpy as np
 
 from app.statics.refraction.artifacts.contract import RefractionStaticArtifactError
 from app.statics.refraction.artifacts.formatters import _float_or_nan, _json_float
-from app.services.refraction_static_status import REFRACTION_STATIC_STATUSES
+from app.statics.refraction.domain.status import REFRACTION_STATIC_STATUSES
 
 def _required_layer_cell_id_array(value: object, *, name: str) -> np.ndarray:
     if value is None:

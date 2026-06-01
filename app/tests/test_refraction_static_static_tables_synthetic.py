@@ -7,7 +7,7 @@ from typing import Any
 import numpy as np
 import pytest
 
-from app.services.refraction_static_artifacts import write_refraction_static_artifacts
+from app.statics.refraction.artifacts import write_refraction_static_artifacts
 from app.tests._refraction_static_synthetic import (
     SYNTHETIC_CELL_NODE_CELL_ID,
     SYNTHETIC_CELL_V2_M_S,

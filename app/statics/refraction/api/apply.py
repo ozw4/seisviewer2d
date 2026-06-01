@@ -12,12 +12,11 @@ from fastapi import APIRouter, File, Form, HTTPException, Request, UploadFile
 from pydantic import ValidationError
 
 from app.api._helpers import get_state
-from app.api.routers.statics.launch import launch_static_job, static_router_job_target
 from app.statics.refraction.api.uploads import (
     _store_refraction_pick_upload,
     _validate_refraction_pick_upload,
 )
-from app.contracts.statics.refraction.apply import (
+from app.statics.refraction.contracts.apply import (
     RefractionStaticApplyRequest,
     RefractionStaticApplyResponse,
 )
@@ -27,7 +26,7 @@ from app.statics.refraction.artifacts import UPLOADED_REFRACTION_PICKS_NPZ_NAME
 from app.statics.refraction.application.export_service import (
     resolve_refraction_static_export_formats,
 )
-from app.services.refraction_static_validation_service import (
+from app.statics.refraction.application.validation_service import (
     validate_refraction_static_inputs_with_picks,
 )
 
@@ -73,6 +72,11 @@ def refraction_static_apply(
     def _after_create(job_state: MutableMapping[str, object]) -> None:
         if req.export.enabled:
             job_state['export_formats'] = list(requested_formats)
+
+    from app.api.routers.statics.launch import (
+        launch_static_job,
+        static_router_job_target,
+    )
 
     launched = launch_static_job(
         state=state,
@@ -143,6 +147,11 @@ def refraction_static_apply_with_picks(
         if stored_path is None:
             raise RuntimeError('uploaded refraction picks were not stored')
         return (job_id, req, state, stored_path, upload_metadata)
+
+    from app.api.routers.statics.launch import (
+        launch_static_job,
+        static_router_job_target,
+    )
 
     launched = launch_static_job(
         state=state,

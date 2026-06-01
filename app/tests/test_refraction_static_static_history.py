@@ -7,12 +7,12 @@ import pytest
 
 from app.api.schemas import RefractionStaticApplyRequest
 from app.core.state import AppState
-from app.services.refraction_static_artifacts import (
+from app.statics.refraction.artifacts import (
     REFRACTION_STATIC_HISTORY_JSON_NAME,
     build_refraction_static_history_payload,
     write_refraction_static_artifacts,
 )
-from app.services.refraction_static_service import (
+from app.statics.refraction.application.workflow import (
     _with_static_history_double_application_qc,
 )
 from app.tests._refraction_static_artifact_helpers import _request, _result

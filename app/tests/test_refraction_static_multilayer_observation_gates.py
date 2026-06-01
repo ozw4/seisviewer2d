@@ -8,7 +8,7 @@ import pytest
 from pydantic import ValidationError
 
 from app.api.schemas import RefractionStaticLayerRequest, RefractionStaticModelRequest
-from app.services.refraction_static_layer_observations import (
+from app.statics.refraction.domain.layer_observations import (
     LAYER_REJECTION_DISABLED,
     LAYER_REJECTION_MISSING_OFFSET,
     LAYER_REJECTION_OUTSIDE_GATE,

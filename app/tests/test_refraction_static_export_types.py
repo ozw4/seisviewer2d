@@ -10,7 +10,7 @@ from typing import get_args, get_type_hints
 
 import pytest
 
-from app.services.refraction_static_export_types import (
+from app.statics.refraction.domain.export_types import (
     REFRACTION_STATIC_EXPORT_SIGN_CONVENTION,
     REFRACTION_STATIC_EXPORT_UNITS,
     RefractionStaticCanonicalTableRow,
@@ -25,7 +25,7 @@ _FORBIDDEN_IMPORTS = {
     'app.api.routers',
     'app.api.schemas',
     'app.main',
-    'app.services.refraction_static_service',
+    'app.statics.refraction.application.workflow',
     'app.trace_store.reader',
     'segyio',
 }
@@ -47,7 +47,7 @@ import sys
 for name in {sorted(_FORBIDDEN_IMPORTS)!r}:
     sys.modules.pop(name, None)
 
-module = importlib.import_module('app.services.refraction_static_export_types')
+module = importlib.import_module('app.statics.refraction.domain.export_types')
 assert module.RefractionStaticEndpointExportRow is not None
 assert module.RefractionStaticExportBundle is not None
 assert module.RefractionStaticCanonicalTableRow is not None
@@ -66,7 +66,7 @@ print(json.dumps(sorted(name for name in sys.modules if name in forbidden)))
 
     assert json.loads(result.stdout) == []
 
-    module = importlib.import_module('app.services.refraction_static_export_types')
+    module = importlib.import_module('app.statics.refraction.domain.export_types')
     source = Path(module.__file__ or '').read_text(encoding='utf-8')
     for forbidden in _FORBIDDEN_SOURCE_STRINGS:
         assert forbidden not in source

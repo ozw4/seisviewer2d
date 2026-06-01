@@ -12,25 +12,25 @@ from app.api.schemas import (
     RefractionStaticModelRequest,
     RefractionStaticSolverRequest,
 )
-from app.services.refraction_static_artifacts import (
+from app.statics.refraction.artifacts import (
     REFRACTION_REFRACTOR_VELOCITY_QC_JSON_NAME,
     write_refraction_static_artifacts,
 )
-from app.services.refraction_static_cell_regularization import (
+from app.statics.refraction.domain.cell_regularization import (
     build_cell_slowness_smoothing_rows,
 )
-from app.services.refraction_static_datum import build_refraction_datum_statics
-from app.services.refraction_static_design_matrix import (
+from app.statics.refraction.application.datum import build_refraction_datum_statics
+from app.statics.refraction.application.design_matrix import (
     build_refraction_static_design_matrix,
 )
-from app.services.refraction_static_solver import solve_refraction_static_bounded_ls
-from app.services.refraction_static_types import (
+from app.statics.refraction.domain.solver import solve_refraction_static_bounded_ls
+from app.statics.refraction.domain.types import (
     RefractionDatumStaticsResult,
     RefractionEndpointTable,
     RefractionStaticInputModel,
     RefractionStaticSolverResult,
 )
-from app.services.refraction_static_weathering_replacement import (
+from app.statics.refraction.application.weathering_replacement import (
     compute_weathering_replacement_statics_from_first_breaks,
 )
 from app.tests.fixtures.refraction_synthetic import (

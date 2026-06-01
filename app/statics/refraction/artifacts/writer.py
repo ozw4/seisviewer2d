@@ -5,8 +5,8 @@ from __future__ import annotations
 from collections.abc import Iterable
 from pathlib import Path
 
-from app.contracts.statics.refraction.apply import RefractionStaticApplyRequest
-from app.services.refraction_static_design_matrix import (
+from app.statics.refraction.contracts.apply import RefractionStaticApplyRequest
+from app.statics.refraction.application.design_matrix import (
     all_refraction_design_matrix_layer_artifact_names,
 )
 from app.statics.refraction.artifacts.cell_velocity import (
@@ -146,16 +146,16 @@ from app.statics.refraction.artifacts.validation import (
     _validate_resolved_first_layer,
     _validate_result,
 )
-from app.services.refraction_static_t1lsst import (
+from app.statics.refraction.domain.t1lsst import (
     REFRACTION_T1LSST_1LAYER_COMPONENTS_CSV_NAME,
     write_refraction_t1lsst_1layer_components_csv,
 )
-from app.services.refraction_static_types import (
+from app.statics.refraction.domain.types import (
     RefractionDatumStaticsResult,
     RefractionStaticArtifactSet,
     ResolvedRefractionFirstLayer,
 )
-from app.services.refraction_static_v1 import (
+from app.statics.refraction.domain.v1 import (
     REFRACTION_V1_ESTIMATES_CSV_NAME,
     REFRACTION_V1_QC_JSON_NAME,
 )

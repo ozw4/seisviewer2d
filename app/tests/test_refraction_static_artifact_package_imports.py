@@ -5,20 +5,20 @@ import pkgutil
 
 
 def _refraction_static_artifact_submodule_names() -> set[str]:
-    import app.services.refraction_static_artifacts as pkg
+    import app.statics.refraction.artifacts as pkg
 
     return {module.name for module in pkgutil.iter_modules(pkg.__path__)}
 
 
 def test_refraction_static_artifact_package_submodules_import() -> None:
-    import app.services.refraction_static_artifacts as pkg
+    import app.statics.refraction.artifacts as pkg
 
     for module_name in _refraction_static_artifact_submodule_names():
         importlib.import_module(f'{pkg.__name__}.{module_name}')
 
 
 def test_refraction_static_artifact_facade_exports_core_public_api() -> None:
-    import app.services.refraction_static_artifacts as artifacts
+    import app.statics.refraction.artifacts as artifacts
     import app.statics.refraction.artifacts as new_artifacts
 
     required_names = {
@@ -47,7 +47,7 @@ def test_refraction_static_artifact_facade_exports_core_public_api() -> None:
 
 
 def test_refraction_static_artifact_legacy_facade_matches_new_facade() -> None:
-    import app.services.refraction_static_artifacts as old_artifacts
+    import app.statics.refraction.artifacts as old_artifacts
     import app.statics.refraction.artifacts as new_artifacts
 
     assert (

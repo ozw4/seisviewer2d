@@ -8,7 +8,7 @@ from typing import Any
 
 import numpy as np
 
-from app.contracts.statics.refraction.apply import RefractionStaticApplyRequest
+from app.statics.refraction.contracts.apply import RefractionStaticApplyRequest
 from app.statics.refraction.artifacts.arrays import (
     _qc_cell_count_array,
     _qc_cell_id_array,
@@ -52,24 +52,24 @@ from app.statics.refraction.artifacts.registry import (
     _request_cell_velocity_layer_kinds,
 )
 from app.statics.refraction.artifacts.stats import _residual_stat, _stat
-from app.services.refraction_static_cell_coordinates import (
+from app.statics.refraction.domain.cell_coordinates import (
     effective_refraction_cell_grid_config,
     project_refraction_cell_points,
     refraction_cell_coordinate_metadata_from_config,
 )
-from app.services.refraction_static_cell_grid import assign_observation_midpoint_cells
-from app.services.refraction_static_cell_grid import build_refraction_cell_grid
-from app.services.refraction_static_design_matrix import (
+from app.statics.refraction.domain.cell_grid import assign_observation_midpoint_cells
+from app.statics.refraction.domain.cell_grid import build_refraction_cell_grid
+from app.statics.refraction.application.design_matrix import (
     LOW_FOLD_CELL_REJECTION_REASON,
     LOW_FOLD_CELL_VELOCITY_STATUS,
 )
-from app.services.refraction_static_layer_config import (
+from app.statics.refraction.domain.layer_config import (
     normalize_refraction_static_layers,
 )
-from app.services.refraction_static_layer_observations import (
+from app.statics.refraction.domain.layer_observations import (
     build_refraction_layer_observation_masks_from_arrays,
 )
-from app.services.refraction_static_types import (
+from app.statics.refraction.domain.types import (
     RefractionDatumStaticsResult,
     RefractionLayerKind,
     RefractionLayerSolveResult,

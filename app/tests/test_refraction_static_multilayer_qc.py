@@ -9,11 +9,11 @@ from app.api.schemas import (
     RefractionStaticDatumRequest,
     RefractionStaticSolverRequest,
 )
-from app.services.refraction_static_artifacts import (
+from app.statics.refraction.artifacts import (
     FIRST_BREAK_RESIDUALS_CSV_NAME,
     REFRACTION_STATIC_QC_JSON_NAME,
 )
-from app.services.refraction_static_multilayer_service import (
+from app.statics.refraction.application.multilayer_service import (
     compute_refraction_multilayer_datum_statics_from_input_model,
 )
 from app.tests._refraction_multilayer_3layer_helpers import (

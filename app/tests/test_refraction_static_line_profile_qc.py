@@ -9,7 +9,7 @@ import numpy as np
 import pytest
 
 from app.api.schemas import RefractionStaticApplyRequest
-from app.services.refraction_static_artifacts import (
+from app.statics.refraction.artifacts import (
     REFRACTION_LINE_PROFILE_QC_COMBINED_CSV_NAME,
     REFRACTION_LINE_PROFILE_QC_JSON_NAME,
     REFRACTION_LINE_PROFILE_QC_NPZ_NAME,

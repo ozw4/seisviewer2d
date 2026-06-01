@@ -7,18 +7,18 @@ from typing import Any
 
 import numpy as np
 
-from app.contracts.statics.refraction.apply import RefractionStaticApplyRequest
-from app.services.refraction_static_cell_coordinates import (
+from app.statics.refraction.contracts.apply import RefractionStaticApplyRequest
+from app.statics.refraction.domain.cell_coordinates import (
     effective_refraction_cell_grid_config,
     refraction_cell_coordinate_metadata_from_config,
 )
-from app.services.refraction_static_design_matrix import (
+from app.statics.refraction.application.design_matrix import (
     LOW_FOLD_CELL_VELOCITY_STATUS,
 )
-from app.services.refraction_static_layer_config import (
+from app.statics.refraction.domain.layer_config import (
     normalize_refraction_static_layers,
 )
-from app.services.refraction_static_types import (
+from app.statics.refraction.domain.types import (
     RefractionDatumStaticsResult,
 )
 from app.statics.refraction.artifacts.arrays import (

@@ -3,7 +3,7 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from app.services.refraction_static_t1lsst import (
+from app.statics.refraction.domain.t1lsst import (
     RefractionT1LSSTError,
     compute_t1lsst_2layer_thicknesses,
     compute_t1lsst_2layer_thicknesses_with_status,

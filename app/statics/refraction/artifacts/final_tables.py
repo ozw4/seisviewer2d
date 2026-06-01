@@ -31,7 +31,7 @@ from app.statics.refraction.artifacts.static_tables import (
     _node_sh1_weathering_thickness_m,
 )
 from app.statics.refraction.artifacts.validation import _validate_result
-from app.services.refraction_static_types import RefractionDatumStaticsResult
+from app.statics.refraction.domain.types import RefractionDatumStaticsResult
 
 def write_refraction_statics_csv(
     *,

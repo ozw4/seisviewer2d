@@ -3,7 +3,7 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from app.services.refraction_static_field_composition import (
+from app.statics.refraction.domain.field_composition import (
     RefractionFieldCompositionError,
     compose_refraction_endpoint_field_corrections,
     compose_refraction_final_trace_shift,

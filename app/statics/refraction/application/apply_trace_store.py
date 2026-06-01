@@ -3,34 +3,25 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-from contextlib import nullcontext
 from dataclasses import dataclass, replace
 from functools import partial
 import json
 from pathlib import Path
-import re
-import shutil
 from typing import Any, Literal
 from uuid import uuid4
 
 import numpy as np
 
-from app.contracts.statics.refraction.apply import RefractionStaticApplyRequest
+from app.statics.refraction.contracts.apply import RefractionStaticApplyRequest
 from app.core.state import AppState
 from app.services.common.artifact_io import write_json_atomic
 from app.services.common.array_validation import (
-    coerce_1d_bool_array,
-    coerce_1d_real_numeric_float64,
-    coerce_1d_string_array,
     coerce_header_byte,
     coerce_nonnegative_finite_float,
     coerce_positive_finite_float,
     coerce_positive_int,
 )
-from app.services.corrected_trace_store import (
-    TimeShiftedTraceStoreResult,
-    build_time_shifted_trace_store,
-)
+from app.services.corrected_trace_store import TimeShiftedTraceStoreResult
 from app.services.reader import get_reader
 from app.statics.refraction.artifacts import (
     FIRST_BREAK_RESIDUALS_CSV_NAME,
@@ -42,18 +33,31 @@ from app.statics.refraction.artifacts import (
     REFRACTION_STATIC_SOLUTION_NPZ_NAME,
     refraction_static_double_application_qc,
 )
-from app.services.refraction_static_types import (
+from app.statics.refraction.domain.types import (
     RefractionDatumStaticsResult,
     RefractionStaticApplyTraceStoreResult,
     RefractionTraceShiftValidationResult,
 )
 from app.services.trace_store_index_validation import validate_sorted_to_original
-from app.services.trace_store_registration import (
-    register_trace_store,
-    trace_store_cache_key,
+from app.services.trace_store_registration import register_trace_store
+from app.statics.common.corrected_store import (
+    build_and_register_time_shifted_trace_store,
+    cleanup_artifact,
+    cleanup_registration,
+    cleanup_store,
+    corrected_store_path,
+    safe_store_name_component,
+    verify_registered_trace_store,
+)
+from app.statics.common.trace_shift import (
+    apply_trace_shifts_to_array as common_apply_trace_shifts_to_array,
+    require_1d_bool,
+    require_1d_float64,
+    require_1d_string,
+    status_counts_by_value,
+    validate_trace_shifts_for_application,
 )
 from app.trace_store.reader import TraceStoreSectionReader
-from app.utils.time_shift import shift_traces_linear
 
 RefractionStaticApplyMode = Literal['refraction_from_raw']
 
@@ -61,7 +65,6 @@ CORRECTED_FILE_JSON_NAME = 'corrected_file.json'
 REFRACTION_STATIC_APPLY_QC_JSON_NAME = 'refraction_static_apply_qc.json'
 SIGN_CONVENTION = 'corrected(t) = raw(t - shift_s)'
 
-_SAFE_STORE_NAME_RE = re.compile(r'[^A-Za-z0-9_.-]+')
 _BUILDER_SIGN_CONVENTION = (
     'corrected(t)=raw(t-shift_s); positive_shift_delays_events'
 )
@@ -152,29 +155,15 @@ def apply_trace_shifts_to_array(
     output_dtype: np.dtype | str = np.float32,
 ) -> np.ndarray:
     """Apply sorted per-trace shifts using ``corrected(t) = raw(t - shift_s)``."""
-    if interpolation != 'linear':
-        raise RefractionStaticTraceStoreApplyError('interpolation must be "linear"')
-    dtype = np.dtype(output_dtype)
-    if dtype != np.dtype('float32'):
-        raise RefractionStaticTraceStoreApplyError('output_dtype must be "float32"')
-
-    arr = np.asarray(traces)
-    if arr.ndim != 2:
-        raise RefractionStaticTraceStoreApplyError('traces must be a 2D array')
-    dt = _coerce_positive_finite_float(
-        sample_interval_s,
-        name='sample_interval_s',
+    return common_apply_trace_shifts_to_array(
+        traces=traces,
+        sample_interval_s=sample_interval_s,
+        trace_shift_s_sorted=trace_shift_s_sorted,
+        interpolation=interpolation,
+        fill_value=fill_value,
+        output_dtype=output_dtype,
+        error_type=RefractionStaticTraceStoreApplyError,
     )
-    try:
-        shifted = shift_traces_linear(
-            arr,
-            np.asarray(trace_shift_s_sorted, dtype=np.float64),
-            dt,
-            fill_value=fill_value,
-        )
-    except ValueError as exc:
-        raise RefractionStaticTraceStoreApplyError(str(exc)) from exc
-    return np.ascontiguousarray(shifted, dtype=np.float32)
 
 
 def validate_refraction_trace_shifts_for_application(
@@ -187,72 +176,30 @@ def validate_refraction_trace_shifts_for_application(
     require_all_traces_valid: bool = True,
 ) -> RefractionTraceShiftValidationResult:
     """Validate final refraction trace shifts before TraceStore application."""
-    expected_shape = (_coerce_positive_int(n_traces, name='n_traces'),)
-    shifts = _require_1d_float64(
-        trace_shift_s_sorted,
-        name='refraction_trace_shift_s_sorted',
-        expected_shape=expected_shape,
-        allow_nonfinite=True,
+    validation = validate_trace_shifts_for_application(
+        trace_shift_s_sorted=trace_shift_s_sorted,
+        trace_static_valid_mask_sorted=trace_static_valid_mask_sorted,
+        trace_static_status_sorted=trace_static_status_sorted,
+        n_traces=n_traces,
+        max_abs_shift_ms=max_abs_shift_ms,
+        shift_field_name='refraction_trace_shift_s_sorted',
+        require_all_traces_valid=require_all_traces_valid,
+        invalid_message_prefix='Refraction statics contain invalid trace shifts',
+        error_type=RefractionStaticTraceStoreApplyError,
     )
-    valid_mask = _require_1d_bool(
-        trace_static_valid_mask_sorted,
-        name='trace_static_valid_mask_sorted',
-        expected_shape=expected_shape,
-    )
-    statuses = _require_1d_string(
-        trace_static_status_sorted,
-        name='trace_static_status_sorted',
-        expected_shape=expected_shape,
-    )
-    status_counts = _status_counts(statuses)
-    max_abs_ms = _coerce_nonnegative_finite_float(
-        max_abs_shift_ms,
-        name='max_abs_shift_ms',
-    )
-
-    if require_all_traces_valid and not bool(np.all(valid_mask)):
-        invalid_count = int(np.count_nonzero(~valid_mask))
-        raise RefractionStaticTraceStoreApplyError(
-            'Refraction statics contain invalid trace shifts; corrected '
-            'TraceStore was not created. '
-            f'invalid_trace_shift_count={invalid_count}; '
-            f'trace_static_status_counts={status_counts}'
-        )
-
-    applied_mask = np.ones(expected_shape, dtype=bool) if require_all_traces_valid else valid_mask
-    if not np.all(np.isfinite(shifts[applied_mask])):
-        raise RefractionStaticTraceStoreApplyError(
-            'refraction_trace_shift_s_sorted contains non-finite shifts for '
-            'traces selected for application'
-        )
-
-    shift_ms = shifts * 1000.0
-    exceeds_mask = np.abs(shift_ms) > max_abs_ms
-    exceeds_count = int(np.count_nonzero(exceeds_mask & applied_mask))
-    max_abs_applied_ms = float(np.max(np.abs(shift_ms[applied_mask])))
-    if exceeds_count:
-        raise RefractionStaticTraceStoreApplyError(
-            'refraction_trace_shift_s_sorted exceeds max_abs_shift_ms: '
-            f'{max_abs_applied_ms:.6g} > {max_abs_ms:.6g}; '
-            f'exceeds_max_abs_shift_count={exceeds_count}; '
-            f'trace_static_status_counts={status_counts}'
-        )
-
-    valid_count = int(np.count_nonzero(valid_mask))
-    invalid_count = int(valid_mask.size - valid_count)
     return RefractionTraceShiftValidationResult(
-        trace_shift_s_sorted=np.ascontiguousarray(shifts, dtype=np.float64),
-        trace_static_valid_mask_sorted=np.ascontiguousarray(valid_mask, dtype=bool),
-        trace_static_status_sorted=np.ascontiguousarray(statuses),
-        trace_static_status_counts=status_counts,
-        max_abs_shift_ms=max_abs_ms,
-        max_abs_applied_shift_ms=max_abs_applied_ms,
-        exceeds_max_abs_shift_count=exceeds_count,
-        n_valid_trace_shifts=valid_count,
-        n_invalid_trace_shifts=invalid_count,
-        n_zero_trace_shifts=int(np.count_nonzero(shift_ms == 0.0)),
-        n_positive_trace_shifts=int(np.count_nonzero(shift_ms > 0.0)),
-        n_negative_trace_shifts=int(np.count_nonzero(shift_ms < 0.0)),
+        trace_shift_s_sorted=validation.trace_shift_s_sorted,
+        trace_static_valid_mask_sorted=validation.trace_static_valid_mask_sorted,
+        trace_static_status_sorted=validation.trace_static_status_sorted,
+        trace_static_status_counts=validation.trace_static_status_counts,
+        max_abs_shift_ms=validation.max_abs_shift_ms,
+        max_abs_applied_shift_ms=validation.max_abs_applied_shift_ms,
+        exceeds_max_abs_shift_count=validation.exceeds_max_abs_shift_count,
+        n_valid_trace_shifts=validation.n_valid_trace_shifts,
+        n_invalid_trace_shifts=validation.n_invalid_trace_shifts,
+        n_zero_trace_shifts=validation.n_zero_trace_shifts,
+        n_positive_trace_shifts=validation.n_positive_trace_shifts,
+        n_negative_trace_shifts=validation.n_negative_trace_shifts,
     )
 
 
@@ -465,7 +412,9 @@ def _apply_refraction_solution_to_trace_store(
     build_result: TimeShiftedTraceStoreResult | None = None
     qc: dict[str, Any] | None = None
     try:
-        build_result = build_time_shifted_trace_store(
+        build_result = build_and_register_time_shifted_trace_store(
+            state=state,
+            corrected_file_id=corrected_file_id,
             source_store_path=source.store_path,
             output_store_path=output_store_path,
             trace_shift_s_sorted=validation.trace_shift_s_sorted,
@@ -474,26 +423,11 @@ def _apply_refraction_solution_to_trace_store(
             derived_metadata=derived_metadata,
             from_file_id=request.file_id,
             original_segy_path=source.original_segy_path,
+            key1_byte=request.key1_byte,
+            key2_byte=request.key2_byte,
             header_bytes_to_materialize=(request.key1_byte, request.key2_byte),
-        )
-        registered_reader = register_trace_store(
-            state=state,
-            file_id=corrected_file_id,
-            store_dir=build_result.store_path,
-            key1_byte=request.key1_byte,
-            key2_byte=request.key2_byte,
-            dt=build_result.dt,
-            update_registry=True,
-            touch_meta=True,
             preload_header_bytes=(request.key1_byte, request.key2_byte),
-        )
-        _verify_registered_trace_store(
-            state=state,
-            file_id=corrected_file_id,
-            store_path=build_result.store_path,
-            key1_byte=request.key1_byte,
-            key2_byte=request.key2_byte,
-            reader=registered_reader,
+            register_fn=register_trace_store,
         )
         qc = _build_apply_qc_payload(
             req=request,
@@ -520,15 +454,15 @@ def _apply_refraction_solution_to_trace_store(
             make_parent=True,
         )
     except Exception:
-        _cleanup_registration(
+        cleanup_registration(
             state,
             file_id=corrected_file_id,
             key1_byte=request.key1_byte,
             key2_byte=request.key2_byte,
         )
-        _cleanup_store(output_store_path)
-        _cleanup_artifact(corrected_file_json_path)
-        _cleanup_artifact(qc_json_path)
+        cleanup_store(output_store_path)
+        cleanup_artifact(corrected_file_json_path)
+        cleanup_artifact(qc_json_path)
         raise
 
     return RefractionStaticApplyTraceStoreResult(
@@ -1062,24 +996,19 @@ def _corrected_artifact_names() -> list[str]:
 
 
 def _corrected_store_path(*, source_store_path: Path, job_id: str) -> Path:
-    source_name = _safe_store_name_component(source_store_path.name)
-    safe_job_id = _safe_store_name_component(str(job_id))
-    store_name = f'{source_name}.statics.refraction.{safe_job_id}'
-    output_path = source_store_path.parent / store_name
-    if output_path.exists() or output_path.is_symlink():
-        raise RefractionStaticTraceStoreApplyError(
-            f'corrected output path already exists: {output_path}'
-        )
-    return output_path
+    return corrected_store_path(
+        source_store_path=source_store_path,
+        statics_kind='refraction',
+        suffix=str(job_id),
+        error_type=RefractionStaticTraceStoreApplyError,
+    )
 
 
 def _safe_store_name_component(value: str) -> str:
-    safe = _SAFE_STORE_NAME_RE.sub('_', str(value))
-    if safe in {'', '.', '..'}:
-        raise RefractionStaticTraceStoreApplyError(
-            'TraceStore name cannot be made filesystem-safe'
-        )
-    return safe
+    return safe_store_name_component(
+        value,
+        error_type=RefractionStaticTraceStoreApplyError,
+    )
 
 
 def _verify_registered_trace_store(
@@ -1091,17 +1020,14 @@ def _verify_registered_trace_store(
     key2_byte: int,
     reader: object,
 ) -> None:
-    registered_path = Path(state.file_registry.get_store_path(file_id))
-    if registered_path.resolve() != store_path.resolve():
-        raise RuntimeError('registered corrected TraceStore path mismatch')
-    cache_key = trace_store_cache_key(file_id, key1_byte, key2_byte)
-    with state.lock:
-        if cache_key not in state.cached_readers:
-            raise RuntimeError('registered corrected TraceStore reader is missing')
-    key1_values = np.asarray(reader.get_key1_values())
-    if key1_values.size == 0:
-        raise RuntimeError('registered corrected TraceStore has no key1 values')
-    reader.get_section(int(key1_values[0]))
+    verify_registered_trace_store(
+        state=state,
+        file_id=file_id,
+        store_path=store_path,
+        key1_byte=key1_byte,
+        key2_byte=key2_byte,
+        reader=reader,
+    )
 
 
 def _solution_metadata_from_npz(npz: np.lib.npyio.NpzFile) -> dict[str, object]:
@@ -1166,8 +1092,7 @@ def _component_dicts(derived: Mapping[str, object]) -> list[dict[str, object]]:
 
 
 def _status_counts(statuses: np.ndarray) -> dict[str, int]:
-    unique, counts = np.unique(np.asarray(statuses, dtype=str), return_counts=True)
-    return {str(status): int(count) for status, count in zip(unique, counts, strict=True)}
+    return status_counts_by_value(statuses)
 
 
 def _stat(values: np.ndarray, name: str) -> float | None:
@@ -1205,25 +1130,20 @@ def _cleanup_registration(
     key1_byte: int,
     key2_byte: int,
 ) -> None:
-    lock = getattr(state, 'lock', None)
-    context = lock if lock is not None else nullcontext()
-    with context:
-        state.file_registry.pop(file_id, None)
-        state.cached_readers.pop(trace_store_cache_key(file_id, key1_byte, key2_byte), None)
+    cleanup_registration(
+        state,
+        file_id=file_id,
+        key1_byte=key1_byte,
+        key2_byte=key2_byte,
+    )
 
 
 def _cleanup_store(output_path: Path) -> None:
-    for tmp_path in output_path.parent.glob(f'{output_path.name}.tmp-*'):
-        if tmp_path.is_dir():
-            shutil.rmtree(tmp_path, ignore_errors=True)
-    if output_path.exists():
-        shutil.rmtree(output_path, ignore_errors=True)
+    cleanup_store(output_path)
 
 
 def _cleanup_artifact(path: Path) -> None:
-    path.unlink(missing_ok=True)
-    for tmp_path in path.parent.glob(f'{path.name}.*.tmp'):
-        tmp_path.unlink(missing_ok=True)
+    cleanup_artifact(path)
 
 
 def _require_1d_float64(
@@ -1233,13 +1153,8 @@ def _require_1d_float64(
     expected_shape: tuple[int, ...],
     allow_nonfinite: bool = False,
 ) -> np.ndarray:
-    arr = np.asarray(value)
-    if arr.dtype == object:
-        raise RefractionStaticTraceStoreApplyError(f'{name} must not have object dtype')
-    if not np.issubdtype(arr.dtype, np.floating):
-        raise RefractionStaticTraceStoreApplyError(f'{name} must be a float array')
-    return coerce_1d_real_numeric_float64(
-        arr,
+    return require_1d_float64(
+        value,
         name=name,
         expected_shape=expected_shape,
         allow_nonfinite=allow_nonfinite,
@@ -1253,7 +1168,7 @@ def _require_1d_bool(
     name: str,
     expected_shape: tuple[int, ...],
 ) -> np.ndarray:
-    return coerce_1d_bool_array(
+    return require_1d_bool(
         value,
         name=name,
         expected_shape=expected_shape,
@@ -1267,12 +1182,10 @@ def _require_1d_string(
     name: str,
     expected_shape: tuple[int, ...],
 ) -> np.ndarray:
-    return coerce_1d_string_array(
+    return require_1d_string(
         value,
         name=name,
         expected_shape=expected_shape,
-        reject_object_dtype=True,
-        output_dtype=str,
         error_type=RefractionStaticTraceStoreApplyError,
     )
 

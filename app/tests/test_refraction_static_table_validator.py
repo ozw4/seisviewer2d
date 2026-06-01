@@ -2,10 +2,10 @@ from __future__ import annotations
 
 import pytest
 
-from app.services.refraction_static_export_types import (
+from app.statics.refraction.domain.export_types import (
     REFRACTION_STATIC_EXPORT_SIGN_CONVENTION,
 )
-from app.services.refraction_static_table_validator import (
+from app.statics.refraction.domain.table_validator import (
     validate_canonical_static_table_rows,
 )
 

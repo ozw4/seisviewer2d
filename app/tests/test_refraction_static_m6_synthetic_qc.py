@@ -7,7 +7,7 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-from app.services.refraction_static_artifacts import (
+from app.statics.refraction.artifacts import (
     REFRACTION_STATIC_COMPONENT_QC_NPZ_NAME,
     REFRACTION_STATIC_SOLUTION_NPZ_NAME,
 )

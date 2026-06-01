@@ -5,7 +5,7 @@ import json
 import numpy as np
 import pytest
 
-from app.services.refraction_static_uphole import (
+from app.statics.refraction.domain.uphole import (
     REFRACTION_UPHOLE_QC_JSON_NAME,
     REFRACTION_UPHOLE_SOURCES_CSV_NAME,
     compute_uphole_time_correction,

@@ -8,13 +8,13 @@ from app.api.schemas import (
     RefractionStaticApplyRequest,
     RefractionStaticFirstLayerRequest,
 )
-from app.services.refraction_static_datum import build_refraction_datum_statics
-from app.services.refraction_static_types import (
+from app.statics.refraction.application.datum import build_refraction_datum_statics
+from app.statics.refraction.domain.types import (
     RefractionDatumStaticsResult,
     RefractionEndpointTable,
     RefractionStaticInputModel,
 )
-from app.services.refraction_static_weathering_replacement import (
+from app.statics.refraction.application.weathering_replacement import (
     compute_weathering_replacement_statics_from_first_breaks,
 )
 
