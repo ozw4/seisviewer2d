@@ -12,7 +12,7 @@ from app.statics.refraction.domain.cell_coordinates import (
     effective_refraction_cell_grid_config,
     refraction_cell_coordinate_metadata_from_config,
 )
-from app.statics.refraction.application.design_matrix import (
+from app.statics.refraction.domain.cell_velocity_status import (
     LOW_FOLD_CELL_VELOCITY_STATUS,
 )
 from app.statics.refraction.domain.layer_config import (

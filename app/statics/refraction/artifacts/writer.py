@@ -6,7 +6,7 @@ from collections.abc import Iterable
 from pathlib import Path
 
 from app.statics.refraction.contracts.apply import RefractionStaticApplyRequest
-from app.statics.refraction.application.design_matrix import (
+from app.statics.refraction.artifacts.design_matrix import (
     all_refraction_design_matrix_layer_artifact_names,
 )
 from app.statics.refraction.artifacts.cell_velocity import (

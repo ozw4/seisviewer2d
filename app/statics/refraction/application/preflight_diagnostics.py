@@ -12,12 +12,12 @@ import numpy as np
 from app.statics.refraction.contracts.apply import RefractionStaticApplyRequest
 from app.services.common.artifact_io import write_csv_atomic, write_json_atomic
 from app.statics.refraction.application.pick_source_loader import PICK_TIME_KEYS
+from app.statics.refraction.artifacts.preflight import (
+    REFRACTION_STATIC_PREFLIGHT_OBSERVATIONS_CSV_NAME,
+    REFRACTION_STATIC_PREFLIGHT_QC_JSON_NAME,
+)
 from app.services.trace_store_index_validation import validate_sorted_to_original
 
-REFRACTION_STATIC_PREFLIGHT_QC_JSON_NAME = 'refraction_static_preflight_qc.json'
-REFRACTION_STATIC_PREFLIGHT_OBSERVATIONS_CSV_NAME = (
-    'refraction_static_preflight_observations.csv'
-)
 REFRACTION_STATIC_PREFLIGHT_OBSERVATIONS_CSV_MAX_ROWS_ENV = (
     'SV_REFRACTION_STATIC_PREFLIGHT_OBSERVATIONS_CSV_MAX_ROWS'
 )

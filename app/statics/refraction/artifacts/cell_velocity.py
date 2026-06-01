@@ -59,7 +59,7 @@ from app.statics.refraction.domain.cell_coordinates import (
 )
 from app.statics.refraction.domain.cell_grid import assign_observation_midpoint_cells
 from app.statics.refraction.domain.cell_grid import build_refraction_cell_grid
-from app.statics.refraction.application.design_matrix import (
+from app.statics.refraction.domain.cell_velocity_status import (
     LOW_FOLD_CELL_REJECTION_REASON,
     LOW_FOLD_CELL_VELOCITY_STATUS,
 )

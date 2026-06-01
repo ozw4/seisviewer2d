@@ -10,14 +10,14 @@ from app.statics.refraction.contracts.apply import RefractionStaticApplyRequest
 from app.statics.refraction.domain.layer_config import (
     normalize_refraction_static_layers,
 )
-from app.statics.refraction.application.design_matrix import (
+from app.statics.refraction.artifacts.design_matrix import (
     REFRACTION_DESIGN_MATRIX_NODE_DIAGNOSTICS_CSV_NAME,
     REFRACTION_DESIGN_MATRIX_QC_JSON_NAME,
     all_refraction_design_matrix_layer_artifact_names,
     refraction_design_matrix_layer_node_diagnostics_csv_name,
     refraction_design_matrix_layer_qc_json_name,
 )
-from app.statics.refraction.application.preflight_diagnostics import (
+from app.statics.refraction.artifacts.preflight import (
     REFRACTION_STATIC_PREFLIGHT_OBSERVATIONS_CSV_NAME,
     REFRACTION_STATIC_PREFLIGHT_QC_JSON_NAME,
 )
