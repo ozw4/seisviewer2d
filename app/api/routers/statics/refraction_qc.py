@@ -1,4 +1,4 @@
-"""Static correction job APIs."""
+"""Refraction static QC APIs."""
 
 from __future__ import annotations
 
@@ -10,6 +10,7 @@ from fastapi import APIRouter, HTTPException, Request
 from pydantic import ValidationError
 
 from app.api._helpers import get_state
+from app.api.routers.statics.common import _get_static_job_or_404
 from app.api.routers.statics.uploads import (
     _store_refraction_pick_upload,
     _validate_refraction_pick_upload,
@@ -30,7 +31,6 @@ from app.contracts.statics.refraction.qc import (
     RefractionStaticPickMapRequest,
     RefractionStaticPickMapResponse,
 )
-from app.core.state import AppState
 from app.services.in_memory_cleanup import cleanup_in_memory_state
 from app.services.refraction_static_gather_preview import (
     RefractionStaticGatherPreviewError,
@@ -60,16 +60,6 @@ from app.services.refraction_static_pick_map import (
 )
 
 router = APIRouter()
-
-
-def _get_static_job_or_404(state: AppState, job_id: str) -> dict[str, object]:
-    with state.lock:
-        job = state.jobs.get(job_id)
-        if job is None:
-            raise HTTPException(status_code=404, detail='Job ID not found')
-        if job.get('job_type') != 'statics':
-            raise HTTPException(status_code=404, detail='Job ID not found')
-        return dict(job)
 
 
 def _parse_refraction_pick_map_request_json(
@@ -263,4 +253,3 @@ def refraction_static_gather_preview(
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except RefractionStaticGatherPreviewError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
-
