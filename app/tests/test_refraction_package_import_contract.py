@@ -102,6 +102,45 @@ def test_legacy_refraction_contract_imports_resolve() -> None:
     _assert_imports_resolve(LEGACY_CONTRACT_IMPORTS)
 
 
+def test_refraction_contract_shims_return_same_class_objects() -> None:
+    from app.contracts.statics.refraction.apply import (
+        RefractionStaticApplyRequest as OldApply,
+    )
+    from app.contracts.statics.refraction.export import (
+        RefractionStaticExportJobRequest as OldExportJob,
+    )
+    from app.contracts.statics.refraction.gather_preview import (
+        RefractionStaticGatherPreviewRequest as OldGatherPreview,
+    )
+    from app.contracts.statics.refraction.qc import (
+        RefractionStaticQcBundleRequest as OldQcBundle,
+    )
+    from app.contracts.statics.refraction.table_apply import (
+        RefractionStaticTableApplyRequest as OldTableApply,
+    )
+    from app.statics.refraction.contracts.apply import (
+        RefractionStaticApplyRequest as NewApply,
+    )
+    from app.statics.refraction.contracts.export import (
+        RefractionStaticExportJobRequest as NewExportJob,
+    )
+    from app.statics.refraction.contracts.gather_preview import (
+        RefractionStaticGatherPreviewRequest as NewGatherPreview,
+    )
+    from app.statics.refraction.contracts.qc import (
+        RefractionStaticQcBundleRequest as NewQcBundle,
+    )
+    from app.statics.refraction.contracts.table_apply import (
+        RefractionStaticTableApplyRequest as NewTableApply,
+    )
+
+    assert OldApply is NewApply
+    assert OldQcBundle is NewQcBundle
+    assert OldGatherPreview is NewGatherPreview
+    assert OldExportJob is NewExportJob
+    assert OldTableApply is NewTableApply
+
+
 def test_legacy_refraction_service_imports_resolve() -> None:
     _assert_imports_resolve(LEGACY_SERVICE_IMPORTS)
 
