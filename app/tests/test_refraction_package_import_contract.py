@@ -55,6 +55,9 @@ LEGACY_SERVICE_IMPORTS = {
     'app.services.refraction_static_inputs': (
         'build_refraction_static_input_model',
     ),
+    'app.services.refraction_static_pick_map': (
+        'build_refraction_static_pick_map',
+    ),
     'app.services.refraction_static_qc_bundle': (
         'build_refraction_static_qc_bundle',
     ),
@@ -76,6 +79,24 @@ LEGACY_SERVICE_IMPORTS = {
 }
 
 APPLICATION_IMPORTS = {
+    'app.statics.refraction.application.gather_preview': (
+        'build_refraction_static_gather_preview',
+    ),
+    'app.statics.refraction.application.pick_map': (
+        'build_refraction_static_pick_map',
+    ),
+    'app.statics.refraction.application.qc_bundle': (
+        'build_refraction_static_qc_bundle',
+    ),
+    'app.statics.refraction.application.qc_drilldown': (
+        'build_refraction_static_qc_drilldown',
+    ),
+    'app.statics.refraction.application.qc_endpoint_search': (
+        'build_refraction_static_qc_endpoint_search',
+    ),
+    'app.statics.refraction.application.station_structure': (
+        'build_refraction_static_station_structure',
+    ),
     'app.statics.refraction.application.workflow': (
         'run_refraction_static_apply_job',
     ),
@@ -149,6 +170,45 @@ def test_refraction_contract_shims_return_same_class_objects() -> None:
 
 def test_legacy_refraction_service_imports_resolve() -> None:
     _assert_imports_resolve(LEGACY_SERVICE_IMPORTS)
+
+
+def test_legacy_refraction_qc_services_share_application_objects() -> None:
+    pairs = {
+        'refraction_static_gather_preview': (
+            'gather_preview',
+            'build_refraction_static_gather_preview',
+        ),
+        'refraction_static_pick_map': (
+            'pick_map',
+            'build_refraction_static_pick_map',
+        ),
+        'refraction_static_qc_bundle': (
+            'qc_bundle',
+            'build_refraction_static_qc_bundle',
+        ),
+        'refraction_static_qc_drilldown': (
+            'qc_drilldown',
+            'build_refraction_static_qc_drilldown',
+        ),
+        'refraction_static_qc_endpoint_search': (
+            'qc_endpoint_search',
+            'build_refraction_static_qc_endpoint_search',
+        ),
+        'refraction_static_station_structure': (
+            'station_structure',
+            'build_refraction_static_station_structure',
+        ),
+    }
+    for old_name, (new_name, representative_name) in pairs.items():
+        old_module = importlib.import_module(f'app.services.{old_name}')
+        new_module = importlib.import_module(
+            f'app.statics.refraction.application.{new_name}'
+        )
+
+        assert getattr(old_module, representative_name) is getattr(
+            new_module,
+            representative_name,
+        )
 
 
 def test_refraction_application_imports_resolve() -> None:
