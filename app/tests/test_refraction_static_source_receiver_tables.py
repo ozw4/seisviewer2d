@@ -8,17 +8,17 @@ import numpy as np
 import pytest
 
 from app.api.schemas import RefractionStaticApplyRequest
-from app.services.refraction_static_artifacts import (
+from app.statics.refraction.artifacts import (
     RECEIVER_STATIC_TABLE_CSV_NAME,
     SOURCE_RECEIVER_STATIC_TABLE_NPZ_NAME,
     SOURCE_STATIC_TABLE_CSV_NAME,
     write_refraction_static_artifacts,
 )
-from app.services.refraction_static_artifacts.static_tables import (
+from app.statics.refraction.artifacts.static_tables import (
     _receiver_static_table_columns,
     _source_static_table_columns,
 )
-from app.services.refraction_static_t1lsst import (
+from app.statics.refraction.domain.t1lsst import (
     compute_t1lsst_1layer_thickness,
     compute_t1lsst_1layer_weathering_correction,
 )

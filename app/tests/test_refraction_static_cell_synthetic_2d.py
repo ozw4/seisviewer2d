@@ -4,11 +4,11 @@ import numpy as np
 import pytest
 
 from app.api.schemas import RefractionStaticModelRequest, RefractionStaticSolverRequest
-from app.services.refraction_static_design_matrix import (
+from app.statics.refraction.application.design_matrix import (
     build_refraction_static_design_matrix,
 )
-from app.services.refraction_static_solver import solve_refraction_static_bounded_ls
-from app.services.refraction_static_types import (
+from app.statics.refraction.domain.solver import solve_refraction_static_bounded_ls
+from app.statics.refraction.domain.types import (
     RefractionEndpointTable,
     RefractionStaticDesignMatrix,
     RefractionStaticInputModel,

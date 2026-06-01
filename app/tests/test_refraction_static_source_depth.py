@@ -5,7 +5,7 @@ import json
 import numpy as np
 import pytest
 
-from app.services.refraction_static_source_depth import (
+from app.statics.refraction.domain.source_depth import (
     REFRACTION_SOURCE_DEPTH_QC_JSON_NAME,
     REFRACTION_SOURCE_DEPTH_SOURCES_CSV_NAME,
     compute_source_depth_weathering_time_correction,

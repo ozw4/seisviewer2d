@@ -10,16 +10,15 @@ from fastapi import APIRouter, HTTPException, Request
 from pydantic import ValidationError
 
 from app.api._helpers import get_state
-from app.api.routers.statics.common import _get_static_job_or_404
 from app.statics.refraction.api.uploads import (
     _store_refraction_pick_upload,
     _validate_refraction_pick_upload,
 )
-from app.contracts.statics.refraction.gather_preview import (
+from app.statics.refraction.contracts.gather_preview import (
     RefractionStaticGatherPreviewRequest,
     RefractionStaticGatherPreviewResponse,
 )
-from app.contracts.statics.refraction.qc import (
+from app.statics.refraction.contracts.qc import (
     RefractionStaticStationStructureRequest,
     RefractionStaticStationStructureResponse,
     RefractionStaticQcBundleRequest,
@@ -60,6 +59,14 @@ from app.statics.refraction.application.pick_map import (
 )
 
 router = APIRouter()
+
+
+def _get_static_job_or_404(state: object, job_id: str) -> dict[str, object]:
+    from app.api.routers.statics.common import (
+        _get_static_job_or_404 as get_static_job_or_404,
+    )
+
+    return get_static_job_or_404(state, job_id)
 
 
 def _parse_refraction_pick_map_request_json(

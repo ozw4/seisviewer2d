@@ -12,7 +12,7 @@ from uuid import uuid4
 
 import numpy as np
 
-from app.contracts.statics.refraction.apply import RefractionStaticApplyRequest
+from app.statics.refraction.contracts.apply import RefractionStaticApplyRequest
 from app.core.state import AppState
 from app.services.common.artifact_io import write_json_atomic
 from app.services.common.array_validation import (
@@ -33,7 +33,7 @@ from app.statics.refraction.artifacts import (
     REFRACTION_STATIC_SOLUTION_NPZ_NAME,
     refraction_static_double_application_qc,
 )
-from app.services.refraction_static_types import (
+from app.statics.refraction.domain.types import (
     RefractionDatumStaticsResult,
     RefractionStaticApplyTraceStoreResult,
     RefractionTraceShiftValidationResult,

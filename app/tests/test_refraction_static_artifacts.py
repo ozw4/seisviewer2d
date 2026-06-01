@@ -10,23 +10,23 @@ import numpy as np
 import pytest
 
 from app.api.schemas import RefractionStaticApplyRequest
-import app.services.refraction_static_artifacts as artifact_module
-import app.services.refraction_static_artifacts.writer as artifact_writer_module
-import app.services.refraction_static_artifacts.cell_velocity as cell_velocity_module
-import app.services.refraction_static_artifacts.components as components_module
-import app.services.refraction_static_artifacts.solution as solution_module
-import app.services.refraction_static_artifacts.validation as validation_module
-from app.services.refraction_static_artifacts import registry as artifact_registry
-from app.services.refraction_static_artifacts.io import (
+import app.statics.refraction.artifacts as artifact_module
+import app.statics.refraction.artifacts.writer as artifact_writer_module
+import app.statics.refraction.artifacts.cell_velocity as cell_velocity_module
+import app.statics.refraction.artifacts.components as components_module
+import app.statics.refraction.artifacts.solution as solution_module
+import app.statics.refraction.artifacts.validation as validation_module
+from app.statics.refraction.artifacts import registry as artifact_registry
+from app.statics.refraction.artifacts.io import (
     _write_csv_atomic,
     _write_json_atomic,
     _write_npz_atomic,
 )
-from app.services.refraction_static_design_matrix import (
+from app.statics.refraction.application.design_matrix import (
     refraction_design_matrix_layer_node_diagnostics_csv_name,
     refraction_design_matrix_layer_qc_json_name,
 )
-from app.services.refraction_static_artifacts import (
+from app.statics.refraction.artifacts import (
     FIRST_BREAK_RESIDUALS_CSV_NAME,
     NEAR_SURFACE_MODEL_CSV_NAME,
     REFRACTION_FIRST_BREAK_FIT_QC_CSV_NAME,
@@ -82,12 +82,12 @@ from app.services.refraction_static_artifacts import (
     write_refraction_static_solution_npz,
     write_refraction_static_artifacts,
 )
-from app.services.refraction_static_source_depth import (
+from app.statics.refraction.domain.source_depth import (
     REFRACTION_SOURCE_DEPTH_QC_JSON_NAME,
     REFRACTION_SOURCE_DEPTH_SOURCES_CSV_NAME,
 )
-from app.services.refraction_static_types import RefractionLayerSolveResult
-from app.services.refraction_static_uphole import (
+from app.statics.refraction.domain.types import RefractionLayerSolveResult
+from app.statics.refraction.domain.uphole import (
     REFRACTION_UPHOLE_QC_JSON_NAME,
     REFRACTION_UPHOLE_SOURCES_CSV_NAME,
 )
@@ -445,7 +445,7 @@ def test_static_component_entry_points_are_in_components_module() -> None:
 
 
 def test_refraction_static_artifacts_contract_constants_are_direct_importable() -> None:
-    from app.services.refraction_static_artifacts import (
+    from app.statics.refraction.artifacts import (
         ARTIFACT_VERSION,
         FIRST_BREAK_TIME_EXPORT_FORMAT_NAME,
         FIRST_BREAK_TIME_EXPORT_FORMAT_VERSION,
@@ -557,14 +557,14 @@ def test_refraction_static_registry_manifest_entry_contract() -> None:
     'module_name',
     [
         'app.services.job_artifact_refs',
-        'app.services.refraction_static_apply_trace_store',
-        'app.services.refraction_static_export_service',
-        'app.services.refraction_static_gather_preview',
-        'app.services.refraction_static_multilayer_service',
-        'app.services.refraction_static_qc_bundle',
-        'app.services.refraction_static_qc_drilldown',
-        'app.services.refraction_static_service',
-        'app.services.refraction_static_table_apply_service',
+        'app.statics.refraction.application.apply_trace_store',
+        'app.statics.refraction.application.export_service',
+        'app.statics.refraction.application.gather_preview',
+        'app.statics.refraction.application.multilayer_service',
+        'app.statics.refraction.application.qc_bundle',
+        'app.statics.refraction.application.qc_drilldown',
+        'app.statics.refraction.application.workflow',
+        'app.statics.refraction.application.table_apply_service',
         'app.api.routers.statics',
     ],
 )

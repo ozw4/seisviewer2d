@@ -8,10 +8,10 @@ from typing import Any
 import numpy as np
 import pytest
 
-import app.services.refraction_static_apply_trace_store as svc
+import app.statics.refraction.application.apply_trace_store as svc
 from app.api.schemas import RefractionStaticApplyRequest
 from app.core.state import AppState, create_app_state
-from app.services.refraction_static_apply_trace_store import (
+from app.statics.refraction.application.apply_trace_store import (
     CORRECTED_FILE_JSON_NAME,
     REFRACTION_STATIC_APPLY_QC_JSON_NAME,
     RefractionStaticTraceStoreApplyError,
@@ -20,7 +20,7 @@ from app.services.refraction_static_apply_trace_store import (
     apply_trace_shifts_to_array,
     validate_refraction_trace_shifts_for_application,
 )
-from app.services.refraction_static_artifacts import (
+from app.statics.refraction.artifacts import (
     REFRACTION_STATIC_SOLUTION_NPZ_NAME,
     write_refraction_static_solution_npz,
 )

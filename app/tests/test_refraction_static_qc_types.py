@@ -8,7 +8,7 @@ import sys
 
 import numpy as np
 
-from app.services.refraction_static_qc_types import (
+from app.statics.refraction.domain.qc_types import (
     REFRACTION_STATIC_QC_SIGN_CONVENTION,
     RefractionCellQcSeries,
     RefractionFirstBreakQcSeries,
@@ -26,8 +26,8 @@ _FORBIDDEN_IMPORTS = {
     'app.api.schemas',
     'app.main',
     'app.services.reader',
-    'app.services.refraction_static_inputs',
-    'app.services.refraction_static_service',
+    'app.statics.refraction.application.input_model',
+    'app.statics.refraction.application.workflow',
     'app.trace_store.reader',
     'segyio',
 }
@@ -68,7 +68,7 @@ import sys
 for name in {sorted(_FORBIDDEN_IMPORTS)!r}:
     sys.modules.pop(name, None)
 
-module = importlib.import_module('app.services.refraction_static_qc_types')
+module = importlib.import_module('app.statics.refraction.domain.qc_types')
 assert module.RefractionFirstBreakQcSeries is not None
 assert module.RefractionProfileQcSeries is not None
 assert module.RefractionCellQcSeries is not None
@@ -88,7 +88,7 @@ print(json.dumps(sorted(name for name in sys.modules if name in forbidden)))
 
     assert json.loads(result.stdout) == []
 
-    module = importlib.import_module('app.services.refraction_static_qc_types')
+    module = importlib.import_module('app.statics.refraction.domain.qc_types')
     source = Path(module.__file__ or '').read_text(encoding='utf-8')
     for forbidden in _FORBIDDEN_SOURCE_STRINGS:
         assert forbidden not in source

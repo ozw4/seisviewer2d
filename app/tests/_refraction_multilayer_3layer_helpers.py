@@ -16,23 +16,23 @@ from app.api.schemas import (
     RefractionStaticPickSourceRequest,
     RefractionStaticSolverRequest,
 )
-from app.services.refraction_static_artifacts import write_refraction_static_artifacts
-from app.services.refraction_static_datum import (
+from app.statics.refraction.artifacts import write_refraction_static_artifacts
+from app.statics.refraction.application.datum import (
     build_refraction_datum_statics,
     write_refraction_datum_statics_artifacts,
 )
-from app.services.refraction_static_design_matrix import (
+from app.statics.refraction.application.design_matrix import (
     REFRACTION_DESIGN_MATRIX_NODE_DIAGNOSTICS_CSV_NAME,
     REFRACTION_DESIGN_MATRIX_QC_JSON_NAME,
     refraction_design_matrix_layer_node_diagnostics_csv_name,
     refraction_design_matrix_layer_qc_json_name,
 )
-from app.services.refraction_static_multilayer_service import (
+from app.statics.refraction.application.multilayer_service import (
     RefractionMultiLayerStaticsWorkflowResult,
     _components_from_replacement,
     build_refraction_multilayer_weathering_replacement_statics,
 )
-from app.services.refraction_static_types import (
+from app.statics.refraction.domain.types import (
     RefractionEndpointTable,
     RefractionLayerKind,
     RefractionLayerSolveResult,

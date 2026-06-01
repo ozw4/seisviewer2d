@@ -10,13 +10,13 @@ import numpy as np
 
 from app.api.schemas import RefractionStaticApplyRequest
 from app.core.state import AppState
-from app.services.refraction_static_source_depth import resolve_refraction_source_depth
-from app.services.refraction_static_types import (
+from app.statics.refraction.domain.source_depth import resolve_refraction_source_depth
+from app.statics.refraction.domain.types import (
     RefractionDatumStaticsResult,
     RefractionEndpointTable,
     RefractionStaticInputModel,
 )
-from app.services.refraction_static_uphole import resolve_refraction_uphole
+from app.statics.refraction.domain.uphole import resolve_refraction_uphole
 from app.tests._refraction_static_field_synthetic import (
     SyntheticRefractionFieldCorrectionDataset,
     make_clean_2d_field_corrections,

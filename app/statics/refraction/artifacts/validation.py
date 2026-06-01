@@ -7,7 +7,7 @@ from pathlib import Path
 
 import numpy as np
 
-from app.contracts.statics.refraction.apply import RefractionStaticApplyRequest
+from app.statics.refraction.contracts.apply import RefractionStaticApplyRequest
 from app.statics.refraction.artifacts.arrays import (
     _length,
     _required_cell_int_array,
@@ -17,7 +17,7 @@ from app.statics.refraction.artifacts.contract import (
     _ValidatedResult,
     RefractionStaticArtifactError,
 )
-from app.services.refraction_static_types import (
+from app.statics.refraction.domain.types import (
     RefractionDatumStaticsResult,
     ResolvedRefractionFirstLayer,
 )

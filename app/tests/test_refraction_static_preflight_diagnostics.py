@@ -8,7 +8,7 @@ from typing import Any
 import numpy as np
 import pytest
 
-import app.services.refraction_static_inputs as inputs_module
+import app.statics.refraction.application.input_model as inputs_module
 from app.api.schemas import (
     RefractionStaticApplyRequest,
     RefractionStaticGeometryRequest,
@@ -16,8 +16,8 @@ from app.api.schemas import (
     RefractionStaticMoveoutRequest,
 )
 from app.core.state import AppState
-from app.services.refraction_static_inputs import build_refraction_static_input_model
-from app.services.refraction_static_preflight_diagnostics import (
+from app.statics.refraction.application.input_model import build_refraction_static_input_model
+from app.statics.refraction.application.preflight_diagnostics import (
     REFRACTION_STATIC_PREFLIGHT_OBSERVATIONS_CSV_NAME,
     REFRACTION_STATIC_PREFLIGHT_QC_JSON_NAME,
 )

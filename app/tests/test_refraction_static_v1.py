@@ -14,10 +14,10 @@ from app.api.schemas import (
     RefractionStaticLinkageRequest,
     RefractionStaticMoveoutRequest,
 )
-from app.services.refraction_static_inputs import (
+from app.statics.refraction.application.input_model import (
     build_refraction_static_input_model_from_arrays,
 )
-from app.services.refraction_static_v1 import (
+from app.statics.refraction.domain.v1 import (
     REFRACTION_V1_ESTIMATES_CSV_NAME,
     REFRACTION_V1_QC_JSON_NAME,
     RefractionV1EstimationError,

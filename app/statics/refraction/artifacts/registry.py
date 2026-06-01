@@ -6,37 +6,37 @@ from collections.abc import Iterable
 from pathlib import Path
 from typing import Any
 
-from app.contracts.statics.refraction.apply import RefractionStaticApplyRequest
-from app.services.refraction_static_layer_config import (
+from app.statics.refraction.contracts.apply import RefractionStaticApplyRequest
+from app.statics.refraction.domain.layer_config import (
     normalize_refraction_static_layers,
 )
-from app.services.refraction_static_design_matrix import (
+from app.statics.refraction.application.design_matrix import (
     REFRACTION_DESIGN_MATRIX_NODE_DIAGNOSTICS_CSV_NAME,
     REFRACTION_DESIGN_MATRIX_QC_JSON_NAME,
     all_refraction_design_matrix_layer_artifact_names,
     refraction_design_matrix_layer_node_diagnostics_csv_name,
     refraction_design_matrix_layer_qc_json_name,
 )
-from app.services.refraction_static_preflight_diagnostics import (
+from app.statics.refraction.application.preflight_diagnostics import (
     REFRACTION_STATIC_PREFLIGHT_OBSERVATIONS_CSV_NAME,
     REFRACTION_STATIC_PREFLIGHT_QC_JSON_NAME,
 )
-from app.services.refraction_static_source_depth import (
+from app.statics.refraction.domain.source_depth import (
     REFRACTION_SOURCE_DEPTH_QC_JSON_NAME,
     REFRACTION_SOURCE_DEPTH_SOURCES_CSV_NAME,
 )
-from app.services.refraction_static_t1lsst import (
+from app.statics.refraction.domain.t1lsst import (
     REFRACTION_T1LSST_1LAYER_COMPONENTS_CSV_NAME,
 )
-from app.services.refraction_static_types import (
+from app.statics.refraction.domain.types import (
     RefractionLayerKind,
     ResolvedRefractionFirstLayer,
 )
-from app.services.refraction_static_uphole import (
+from app.statics.refraction.domain.uphole import (
     REFRACTION_UPHOLE_QC_JSON_NAME,
     REFRACTION_UPHOLE_SOURCES_CSV_NAME,
 )
-from app.services.refraction_static_v1 import (
+from app.statics.refraction.domain.v1 import (
     REFRACTION_V1_ESTIMATES_CSV_NAME,
     REFRACTION_V1_QC_JSON_NAME,
 )

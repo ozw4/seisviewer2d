@@ -10,10 +10,10 @@ from typing import Any
 import numpy as np
 import pytest
 
-import app.services.refraction_static_datum as datum_module
+import app.statics.refraction.application.datum as datum_module
 from app.api.schemas import RefractionStaticApplyOptions, RefractionStaticDatumRequest
 from app.core.state import AppState
-from app.services.refraction_static_datum import (
+from app.statics.refraction.application.datum import (
     REFRACTION_DATUM_NODES_CSV_NAME,
     REFRACTION_DATUM_RECEIVERS_CSV_NAME,
     REFRACTION_DATUM_SOURCES_CSV_NAME,
@@ -26,7 +26,7 @@ from app.services.refraction_static_datum import (
     compute_flat_datum_shift_s,
     compute_floating_datum_elevation_shift_s,
 )
-from app.services.refraction_static_types import (
+from app.statics.refraction.domain.types import (
     RefractionWeatheringReplacementStaticsResult,
 )
 

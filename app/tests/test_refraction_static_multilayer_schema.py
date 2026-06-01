@@ -10,7 +10,7 @@ from app.api.schemas import (
     RefractionStaticApplyRequest,
     RefractionStaticModelRequest,
 )
-from app.services.refraction_static_layer_config import (
+from app.statics.refraction.domain.layer_config import (
     normalize_refraction_static_layers,
 )
 

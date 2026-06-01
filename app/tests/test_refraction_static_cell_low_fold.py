@@ -8,22 +8,22 @@ from pathlib import Path
 import numpy as np
 
 from app.api.schemas import RefractionStaticApplyRequest
-from app.services.refraction_static_artifacts import (
+from app.statics.refraction.artifacts import (
     REFRACTION_REFRACTOR_VELOCITY_GRID_NPZ_NAME,
     REFRACTION_REFRACTOR_VELOCITY_QC_JSON_NAME,
     build_refraction_refractor_velocity_grid_arrays,
     write_refraction_static_artifacts,
 )
-from app.services.refraction_static_design_matrix import (
+from app.statics.refraction.application.design_matrix import (
     build_refraction_static_design_matrix,
 )
-from app.services.refraction_static_datum import build_refraction_datum_statics
-from app.services.refraction_static_types import (
+from app.statics.refraction.application.datum import build_refraction_datum_statics
+from app.statics.refraction.domain.types import (
     RefractionDatumStaticsResult,
     RefractionEndpointTable,
     RefractionStaticInputModel,
 )
-from app.services.refraction_static_weathering_replacement import (
+from app.statics.refraction.application.weathering_replacement import (
     compute_weathering_replacement_statics_from_first_breaks,
 )
 from app.tests.fixtures.refraction_synthetic import (

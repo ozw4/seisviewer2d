@@ -8,7 +8,7 @@ from typing import Any
 
 import numpy as np
 
-from app.contracts.statics.refraction.apply import RefractionStaticApplyRequest
+from app.statics.refraction.contracts.apply import RefractionStaticApplyRequest
 from app.statics.refraction.artifacts.contract import (
     _COMPONENT_COLUMNS,
     _STATIC_COMPONENT_QC_ENDPOINT_COLUMNS,
@@ -67,11 +67,11 @@ from app.statics.refraction.artifacts.io import (
     _write_npz_atomic,
 )
 from app.statics.refraction.artifacts.stats import _stat, _status_counts
-from app.services.refraction_static_status import (
+from app.statics.refraction.domain.status import (
     REFRACTION_STATIC_STATUSES,
     classify_refraction_endpoint_static_status,
 )
-from app.services.refraction_static_types import RefractionDatumStaticsResult
+from app.statics.refraction.domain.types import RefractionDatumStaticsResult
 
 
 def write_refraction_static_components_csv(

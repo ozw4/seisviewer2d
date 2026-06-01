@@ -8,7 +8,7 @@ from pathlib import Path
 from app.statics.refraction.domain.export_units import (
     REFRACTION_STATIC_REPO_SIGN_CONVENTION,
 )
-from app.services.refraction_static_types import (
+from app.statics.refraction.domain.types import (
     RefractionDatumStaticsResult,
     RefractionLayerKind,
 )

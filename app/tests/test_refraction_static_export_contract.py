@@ -16,7 +16,7 @@ from app.api.schemas import (
     RefractionStaticExportJobRequest,
 )
 from app.main import app
-from app.services.refraction_static_artifacts import (
+from app.statics.refraction.artifacts import (
     FIRST_BREAK_TIME_EXPORT_SIGN_CONVENTION,
     RECEIVER_STATIC_TABLE_CSV_NAME,
     REFRACTION_FIRST_BREAK_TIME_EXPORT_CSV_NAME,
@@ -27,7 +27,7 @@ from app.services.refraction_static_artifacts import (
     SOURCE_RECEIVER_STATIC_TABLE_NPZ_NAME,
     SOURCE_STATIC_TABLE_CSV_NAME,
 )
-from app.services.refraction_static_export_service import (
+from app.statics.refraction.application.export_service import (
     CANONICAL_RECEIVER_STATIC_TABLE_CSV_NAME,
     CANONICAL_SOURCE_RECEIVER_STATIC_TABLE_CSV_NAME,
     CANONICAL_SOURCE_STATIC_TABLE_CSV_NAME,
@@ -35,16 +35,16 @@ from app.services.refraction_static_export_service import (
     REFRACTION_STATIC_EXPORT_REQUEST_JSON_NAME,
     run_refraction_static_export_job,
 )
-from app.services.refraction_static_export_units import (
+from app.statics.refraction.domain.export_units import (
     REFRACTION_STATIC_REPO_SIGN_CONVENTION,
 )
-from app.services.refraction_static_lsst_export import (
+from app.statics.refraction.application.lsst_export import (
     REFRACTION_LSST_CARDS_TXT_NAME,
     REFRACTION_LSST_CSV_NAME,
     REFRACTION_LSST_PLUS_CARDS_TXT_NAME,
     REFRACTION_LSST_PLUS_CSV_NAME,
 )
-from app.services.refraction_static_table_import import (
+from app.statics.refraction.domain.table_import import (
     import_refraction_static_table_csv,
 )
 from app.tests._refraction_static_synthetic import synthetic_refraction_apply_request

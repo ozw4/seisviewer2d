@@ -9,7 +9,7 @@ import numpy as np
 import pytest
 
 from app.api.schemas import RefractionStaticApplyRequest
-from app.services.refraction_static_artifacts import (
+from app.statics.refraction.artifacts import (
     REFRACTION_STATIC_COMPONENT_QC_ENDPOINT_CSV_NAME,
     REFRACTION_STATIC_COMPONENT_QC_JSON_NAME,
     REFRACTION_STATIC_COMPONENT_QC_NPZ_NAME,
@@ -17,7 +17,7 @@ from app.services.refraction_static_artifacts import (
     RefractionStaticArtifactError,
     write_refraction_static_artifacts,
 )
-from app.services.refraction_static_artifacts.field_corrections import (
+from app.statics.refraction.artifacts.field_corrections import (
     _endpoint_shift_to_trace_order,
 )
 from app.tests._refraction_static_artifact_helpers import _request, _result

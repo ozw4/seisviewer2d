@@ -14,7 +14,7 @@ from app.api.schemas import (
     RefractionStaticModelRequest,
     RefractionStaticSolverRequest,
 )
-from app.services.refraction_static_artifacts import (
+from app.statics.refraction.artifacts import (
     NEAR_SURFACE_MODEL_CSV_NAME,
     RECEIVER_STATIC_TABLE_CSV_NAME,
     REFRACTION_STATIC_QC_JSON_NAME,
@@ -23,14 +23,14 @@ from app.services.refraction_static_artifacts import (
     SOURCE_RECEIVER_STATIC_TABLE_NPZ_NAME,
     SOURCE_STATIC_TABLE_CSV_NAME,
 )
-from app.services.refraction_static_layer_observations import (
+from app.statics.refraction.domain.layer_observations import (
     build_refraction_layer_observation_masks,
 )
-from app.services.refraction_static_multilayer_service import (
+from app.statics.refraction.application.multilayer_service import (
     RefractionMultiLayerStaticsWorkflowResult,
     compute_refraction_multilayer_datum_statics_from_input_model,
 )
-from app.services.refraction_static_types import (
+from app.statics.refraction.domain.types import (
     RefractionEndpointTable,
     RefractionLayerSolveResult,
     RefractionStaticInputModel,

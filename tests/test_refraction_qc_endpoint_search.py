@@ -7,7 +7,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from app.main import app
-from app.services.refraction_static_artifacts import (
+from app.statics.refraction.artifacts import (
     REFRACTION_STATIC_COMPONENT_QC_ENDPOINT_CSV_NAME,
     REFRACTION_STATIC_COMPONENTS_CSV_NAME,
 )

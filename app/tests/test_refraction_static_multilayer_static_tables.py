@@ -7,7 +7,7 @@ from typing import Any
 import numpy as np
 import pytest
 
-from app.services.refraction_static_artifacts import (
+from app.statics.refraction.artifacts import (
     RECEIVER_STATIC_TABLE_CSV_NAME,
     SOURCE_RECEIVER_STATIC_TABLE_NPZ_NAME,
     SOURCE_STATIC_TABLE_CSV_NAME,

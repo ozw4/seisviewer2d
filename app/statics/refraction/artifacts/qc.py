@@ -8,7 +8,7 @@ from typing import Any
 
 import numpy as np
 
-from app.contracts.statics.refraction.apply import RefractionStaticApplyRequest
+from app.statics.refraction.contracts.apply import RefractionStaticApplyRequest
 from app.statics.refraction.artifacts.cell_velocity import (
     _cell_velocity_component,
     _layer_velocity_modes_for_request,
@@ -50,13 +50,13 @@ from app.statics.refraction.artifacts.validation import (
     _validate_resolved_first_layer,
     _validate_result,
 )
-from app.services.refraction_static_cell_coordinates import refraction_cell_coordinate_metadata_from_config
-from app.services.refraction_static_source_depth import REFRACTION_SOURCE_DEPTH_SOURCES_CSV_NAME
-from app.services.refraction_static_types import (
+from app.statics.refraction.domain.cell_coordinates import refraction_cell_coordinate_metadata_from_config
+from app.statics.refraction.domain.source_depth import REFRACTION_SOURCE_DEPTH_SOURCES_CSV_NAME
+from app.statics.refraction.domain.types import (
     RefractionDatumStaticsResult,
     ResolvedRefractionFirstLayer,
 )
-from app.services.refraction_static_uphole import REFRACTION_UPHOLE_SOURCES_CSV_NAME
+from app.statics.refraction.domain.uphole import REFRACTION_UPHOLE_SOURCES_CSV_NAME
 
 def write_refraction_static_qc_json(
     *,

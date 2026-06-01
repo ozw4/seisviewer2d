@@ -9,7 +9,7 @@ from fastapi.testclient import TestClient
 
 from app.api.schemas import RefractionStaticQcBundleRequest
 from app.main import app
-from app.services.refraction_static_artifacts import (
+from app.statics.refraction.artifacts import (
     FIRST_BREAK_RESIDUALS_CSV_NAME,
     REFRACTION_FIRST_BREAK_FIT_QC_CSV_NAME,
     REFRACTION_FIRST_BREAK_FIT_QC_JSON_NAME,

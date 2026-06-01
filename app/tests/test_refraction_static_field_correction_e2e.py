@@ -8,24 +8,24 @@ from typing import Any
 import numpy as np
 import pytest
 
-import app.services.refraction_static_service as refraction_service_module
+import app.statics.refraction.application.workflow as refraction_service_module
 from app.core.state import AppState, create_app_state
-from app.services.refraction_static_apply_trace_store import (
+from app.statics.refraction.application.apply_trace_store import (
     CORRECTED_FILE_JSON_NAME,
     REFRACTION_STATIC_APPLY_QC_JSON_NAME,
 )
-from app.services.refraction_static_artifacts import (
+from app.statics.refraction.artifacts import (
     RECEIVER_STATIC_TABLE_CSV_NAME,
     REFRACTION_STATIC_QC_JSON_NAME,
     REFRACTION_STATIC_SOLUTION_NPZ_NAME,
     SOURCE_RECEIVER_STATIC_TABLE_NPZ_NAME,
     SOURCE_STATIC_TABLE_CSV_NAME,
 )
-from app.services.refraction_static_source_depth import (
+from app.statics.refraction.domain.source_depth import (
     REFRACTION_SOURCE_DEPTH_QC_JSON_NAME,
 )
-from app.services.refraction_static_service import run_refraction_static_apply_job
-from app.services.refraction_static_uphole import REFRACTION_UPHOLE_QC_JSON_NAME
+from app.statics.refraction.application.workflow import run_refraction_static_apply_job
+from app.statics.refraction.domain.uphole import REFRACTION_UPHOLE_QC_JSON_NAME
 from app.tests._refraction_static_field_e2e_helpers import (
     FIELD_FILE_ID,
     FIELD_ORIGINAL_NAME,

@@ -9,12 +9,12 @@ import sys
 
 import pytest
 
-from app.services.refraction_static_export_types import (
+from app.statics.refraction.domain.export_types import (
     REFRACTION_STATIC_EXPORT_SIGN_CONVENTION,
     RefractionStaticEndpointExportRow,
     RefractionStaticExportBundle,
 )
-from app.services.refraction_static_lsst_export import (
+from app.statics.refraction.application.lsst_export import (
     REFRACTION_LSST_CARDS_TXT_NAME,
     REFRACTION_LSST_CSV_NAME,
     REFRACTION_LSST_FORMAT_NAME,
@@ -42,7 +42,7 @@ _FORBIDDEN_IMPORTS = {
     'app.api.routers',
     'app.api.schemas',
     'app.main',
-    'app.services.refraction_static_service',
+    'app.statics.refraction.application.workflow',
     'app.trace_store.reader',
     'numpy',
     'segyio',
@@ -60,7 +60,7 @@ import sys
 for name in {sorted(_FORBIDDEN_IMPORTS)!r}:
     sys.modules.pop(name, None)
 
-module = importlib.import_module('app.services.refraction_static_lsst_export')
+module = importlib.import_module('app.statics.refraction.application.lsst_export')
 assert module.format_refraction_lsst_csv is not None
 assert module.format_refraction_lsst_cards_txt is not None
 assert module.format_refraction_lsst_plus_csv is not None

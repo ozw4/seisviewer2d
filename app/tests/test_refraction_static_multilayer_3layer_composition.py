@@ -7,11 +7,11 @@ import numpy as np
 import pytest
 
 from app.api.schemas import RefractionStaticApplyOptions, RefractionStaticDatumRequest
-from app.services.refraction_static_datum import build_refraction_datum_statics
-from app.services.refraction_static_multilayer_service import (
+from app.statics.refraction.application.datum import build_refraction_datum_statics
+from app.statics.refraction.application.multilayer_service import (
     build_refraction_multilayer_weathering_replacement_statics,
 )
-from app.services.refraction_static_t1lsst import (
+from app.statics.refraction.domain.t1lsst import (
     RefractionT1LSSTError,
     compute_t1lsst_3layer_weathering_correction,
 )

@@ -41,7 +41,7 @@ from app.statics.refraction.artifacts import (
     SOURCE_RECEIVER_STATIC_TABLE_NPZ_NAME,
     static_history_double_application_qc,
 )
-from app.services.refraction_static_apply_trace_store import (
+from app.statics.refraction.application.apply_trace_store import (
     CORRECTED_FILE_JSON_NAME,
     RefractionStaticTraceStoreApplyError,
     validate_refraction_trace_shifts_for_application,

@@ -8,12 +8,12 @@ from typing import Any
 
 import numpy as np
 
-from app.contracts.statics.refraction.apply import RefractionStaticApplyRequest
-from app.services.refraction_static_types import (
+from app.statics.refraction.contracts.apply import RefractionStaticApplyRequest
+from app.statics.refraction.domain.types import (
     RefractionDatumStaticsResult,
 )
 
-from app.services.refraction_static_cell_coordinates import (
+from app.statics.refraction.domain.cell_coordinates import (
     effective_refraction_cell_grid_config,
     project_refraction_cell_points,
 )
@@ -73,7 +73,7 @@ from app.statics.refraction.artifacts.registry import (
 )
 from app.statics.refraction.artifacts.stats import _residual_stat, _stat, _status_counts
 from app.statics.refraction.artifacts.validation import _validate_result
-from app.services.refraction_static_layer_config import normalize_refraction_static_layers
+from app.statics.refraction.domain.layer_config import normalize_refraction_static_layers
 
 def write_first_break_residuals_csv(
     *,

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import pytest
 
-from app.services.refraction_static_export_units import (
+from app.statics.refraction.domain.export_units import (
     REFRACTION_STATIC_REPO_SIGN_CONVENTION,
     REFRACTION_STATIC_SIGN_CONVENTION_HEADER,
     RefractionStaticExportUnitError,
