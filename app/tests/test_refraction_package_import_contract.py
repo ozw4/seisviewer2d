@@ -75,6 +75,12 @@ LEGACY_SERVICE_IMPORTS = {
     ),
 }
 
+APPLICATION_IMPORTS = {
+    'app.statics.refraction.application.workflow': (
+        'run_refraction_static_apply_job',
+    ),
+}
+
 LEGACY_ARTIFACT_IMPORTS = {
     'app.services.refraction_static_artifacts': (
         'REFRACTION_STATIC_SOLUTION_NPZ_NAME',
@@ -143,6 +149,10 @@ def test_refraction_contract_shims_return_same_class_objects() -> None:
 
 def test_legacy_refraction_service_imports_resolve() -> None:
     _assert_imports_resolve(LEGACY_SERVICE_IMPORTS)
+
+
+def test_refraction_application_imports_resolve() -> None:
+    _assert_imports_resolve(APPLICATION_IMPORTS)
 
 
 def test_legacy_refraction_artifact_imports_resolve() -> None:
