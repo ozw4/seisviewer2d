@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
 
-from app.services.refraction_static_export_units import (
+from app.statics.refraction.domain.export_units import (
     REFRACTION_STATIC_REPO_SIGN_CONVENTION,
 )
 from app.services.refraction_static_types import (

@@ -49,6 +49,9 @@ LEGACY_SERVICE_IMPORTS = {
     'app.services.refraction_static_export_service': (
         'run_refraction_static_export_job',
     ),
+    'app.services.refraction_static_lsst_export': (
+        'format_refraction_lsst_csv',
+    ),
     'app.services.refraction_static_gather_preview': (
         'build_refraction_static_gather_preview',
     ),
@@ -82,6 +85,12 @@ APPLICATION_IMPORTS = {
     'app.statics.refraction.application.gather_preview': (
         'build_refraction_static_gather_preview',
     ),
+    'app.statics.refraction.application.export_service': (
+        'run_refraction_static_export_job',
+    ),
+    'app.statics.refraction.application.lsst_export': (
+        'format_refraction_lsst_csv',
+    ),
     'app.statics.refraction.application.pick_map': (
         'build_refraction_static_pick_map',
     ),
@@ -96,6 +105,9 @@ APPLICATION_IMPORTS = {
     ),
     'app.statics.refraction.application.station_structure': (
         'build_refraction_static_station_structure',
+    ),
+    'app.statics.refraction.application.table_apply_service': (
+        'run_refraction_static_table_apply_job',
     ),
     'app.statics.refraction.application.workflow': (
         'run_refraction_static_apply_job',
@@ -197,6 +209,33 @@ def test_legacy_refraction_qc_services_share_application_objects() -> None:
         'refraction_static_station_structure': (
             'station_structure',
             'build_refraction_static_station_structure',
+        ),
+    }
+    for old_name, (new_name, representative_name) in pairs.items():
+        old_module = importlib.import_module(f'app.services.{old_name}')
+        new_module = importlib.import_module(
+            f'app.statics.refraction.application.{new_name}'
+        )
+
+        assert getattr(old_module, representative_name) is getattr(
+            new_module,
+            representative_name,
+        )
+
+
+def test_legacy_refraction_export_services_share_application_objects() -> None:
+    pairs = {
+        'refraction_static_export_service': (
+            'export_service',
+            'run_refraction_static_export_job',
+        ),
+        'refraction_static_lsst_export': (
+            'lsst_export',
+            'format_refraction_lsst_csv',
+        ),
+        'refraction_static_table_apply_service': (
+            'table_apply_service',
+            'run_refraction_static_table_apply_job',
         ),
     }
     for old_name, (new_name, representative_name) in pairs.items():

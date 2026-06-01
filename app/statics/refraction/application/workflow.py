@@ -36,7 +36,7 @@ from app.statics.refraction.application.datum import (
     build_refraction_datum_statics,
     write_refraction_datum_statics_artifacts,
 )
-from app.services.refraction_static_export_service import (
+from app.statics.refraction.application.export_service import (
     resolve_refraction_static_export_formats,
     write_inline_refraction_static_export_artifacts,
 )

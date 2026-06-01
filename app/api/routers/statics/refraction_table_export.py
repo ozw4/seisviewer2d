@@ -18,12 +18,12 @@ from app.contracts.statics.refraction.table_apply import (
 )
 from app.services.in_memory_cleanup import cleanup_in_memory_state
 from app.services.pipeline_artifacts import maybe_cleanup_expired_jobs
-from app.services.refraction_static_export_service import (
+from app.statics.refraction.application.export_service import (
     RefractionStaticExportSourceJobNotFound,
     RefractionStaticExportValidationError,
     validate_refraction_static_export_source_job,
 )
-from app.services.refraction_static_table_apply_service import (
+from app.statics.refraction.application.table_apply_service import (
     run_refraction_static_table_apply_job,
 )
 
