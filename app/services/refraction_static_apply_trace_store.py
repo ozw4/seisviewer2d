@@ -32,7 +32,7 @@ from app.services.corrected_trace_store import (
     build_time_shifted_trace_store,
 )
 from app.services.reader import get_reader
-from app.services.refraction_static_artifacts import (
+from app.statics.refraction.artifacts import (
     FIRST_BREAK_RESIDUALS_CSV_NAME,
     NEAR_SURFACE_MODEL_CSV_NAME,
     REFRACTION_STATICS_CSV_NAME,

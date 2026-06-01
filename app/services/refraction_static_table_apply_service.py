@@ -35,7 +35,7 @@ from app.services.corrected_trace_store import (
 from app.services.job_artifact_refs import resolve_job_artifact_path
 from app.services.job_runner import JobCompletion, JobFailure, run_job_with_lifecycle
 from app.services.reader import get_reader
-from app.services.refraction_static_artifacts import (
+from app.statics.refraction.artifacts import (
     REFRACTION_STATIC_HISTORY_JSON_NAME,
     REFRACTION_STATIC_REQUEST_JSON_NAME,
     SOURCE_RECEIVER_STATIC_TABLE_NPZ_NAME,

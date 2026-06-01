@@ -14,7 +14,7 @@ from app.contracts.statics.refraction.gather_preview import RefractionStaticGath
 from app.core.state import AppState
 from app.services.job_manager import JobManager
 from app.services.reader import coerce_section_f32, get_reader
-from app.services.refraction_static_artifacts import (
+from app.statics.refraction.artifacts import (
     REFRACTION_FIRST_BREAK_FIT_QC_NPZ_NAME,
     REFRACTION_STATIC_QC_JSON_NAME,
     REFRACTION_STATIC_SOLUTION_NPZ_NAME,

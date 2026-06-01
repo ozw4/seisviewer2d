@@ -10,7 +10,7 @@ from typing import Any
 
 from app.contracts.statics.refraction.qc import RefractionStaticQcDrilldownRequest
 from app.services.job_manager import JobManager
-from app.services.refraction_static_artifacts import (
+from app.statics.refraction.artifacts import (
     REFRACTION_FIRST_BREAK_FIT_QC_CSV_NAME,
     REFRACTION_REFRACTOR_VELOCITY_CELLS_CSV_NAME,
     REFRACTION_STATIC_QC_JSON_NAME,

@@ -24,7 +24,7 @@ from app.contracts.statics.refraction.inputs import (
 )
 from app.contracts.statics.refraction.model import RefractionStaticModelRequest
 from app.core.state import AppState
-from app.services.refraction_static_artifacts import write_refraction_static_artifacts
+from app.statics.refraction.artifacts import write_refraction_static_artifacts
 from app.services.refraction_static_cell_coordinates import (
     effective_refraction_cell_grid_config,
     project_refraction_cell_points,

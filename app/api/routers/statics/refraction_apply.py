@@ -23,7 +23,7 @@ from app.contracts.statics.refraction.apply import (
 )
 from app.services.in_memory_cleanup import cleanup_in_memory_state
 from app.services.pipeline_artifacts import maybe_cleanup_expired_jobs
-from app.services.refraction_static_artifacts import UPLOADED_REFRACTION_PICKS_NPZ_NAME
+from app.statics.refraction.artifacts import UPLOADED_REFRACTION_PICKS_NPZ_NAME
 from app.services.refraction_static_export_service import (
     resolve_refraction_static_export_formats,
 )

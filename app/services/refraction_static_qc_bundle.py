@@ -10,7 +10,7 @@ from typing import Any
 
 from app.contracts.statics.refraction.qc import RefractionStaticQcBundleRequest
 from app.services.job_manager import JobManager
-from app.services.refraction_static_artifacts import (
+from app.statics.refraction.artifacts import (
     FIRST_BREAK_RESIDUALS_CSV_NAME,
     REFRACTION_FIRST_BREAK_FIT_QC_CSV_NAME,
     REFRACTION_GRID_MAP_QC_CSV_NAME,
