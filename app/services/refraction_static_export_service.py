@@ -21,7 +21,7 @@ from app.core.state import AppState
 from app.services.common.artifact_io import write_csv_atomic, write_json_atomic
 from app.services.job_manager import JobManager
 from app.services.job_runner import JobCompletion, JobFailure, run_job_with_lifecycle
-from app.services.refraction_static_artifacts import (
+from app.statics.refraction.artifacts import (
     RECEIVER_STATIC_TABLE_CSV_NAME,
     REFRACTION_FIRST_BREAK_TIME_EXPORT_CSV_NAME,
     REFRACTION_STATIC_ARTIFACTS_JSON_NAME,

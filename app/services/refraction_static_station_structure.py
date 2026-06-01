@@ -12,7 +12,7 @@ import numpy as np
 
 from app.contracts.statics.refraction.qc import RefractionStaticStationStructureRequest
 from app.services.job_manager import JobManager
-from app.services.refraction_static_artifacts import (
+from app.statics.refraction.artifacts import (
     RECEIVER_STATIC_TABLE_CSV_NAME,
     REFRACTION_FIRST_BREAK_FIT_QC_CSV_NAME,
     REFRACTION_FIRST_BREAK_FIT_QC_NPZ_NAME,

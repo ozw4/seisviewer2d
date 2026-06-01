@@ -19,7 +19,7 @@ from app.core.state import AppState
 from app.services.job_artifact_refs import resolve_job_artifact_path
 from app.services.job_manager import JobManager
 from app.services.reader import get_reader
-from app.services.refraction_static_artifacts import (
+from app.statics.refraction.artifacts import (
     REFRACTION_FIRST_BREAK_FIT_QC_CSV_NAME,
     REFRACTION_FIRST_BREAK_FIT_QC_NPZ_NAME,
     REFRACTION_PICK_MAP_QC_COMPLETED_CACHE_DIR_NAME,

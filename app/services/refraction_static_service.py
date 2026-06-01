@@ -19,7 +19,7 @@ from app.services.job_artifact_refs import resolve_job_artifact_path
 from app.services.refraction_static_apply_trace_store import (
     apply_refraction_statics_to_trace_store,
 )
-from app.services.refraction_static_artifacts import (
+from app.statics.refraction.artifacts import (
     REFRACTION_STATIC_FAILURE_DIAGNOSTICS_JSON_NAME,
     REFRACTION_STATIC_HISTORY_JSON_NAME,
     UPLOADED_REFRACTION_PICKS_NPZ_NAME,

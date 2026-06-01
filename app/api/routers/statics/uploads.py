@@ -7,7 +7,7 @@ from uuid import uuid4
 
 from fastapi import HTTPException, UploadFile
 
-from app.services.refraction_static_artifacts import UPLOADED_REFRACTION_PICKS_NPZ_NAME
+from app.statics.refraction.artifacts import UPLOADED_REFRACTION_PICKS_NPZ_NAME
 
 _UPLOAD_CHUNK_SIZE = 1024 * 1024
 _MAX_UPLOADED_PICK_NPZ_BYTES = 256 * 1024 * 1024
