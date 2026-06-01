@@ -17,6 +17,7 @@ from app.api.schemas import (
     RefractionStaticMoveoutRequest,
 )
 from app.core.state import AppState
+from app.services.job_artifact_refs import resolve_job_artifact_path
 from app.statics.refraction.application.input_model import (
     REFRACTION_INPUT_PREVIEW_CSV_NAME,
     REFRACTION_INPUT_QC_JSON_NAME,
@@ -31,6 +32,43 @@ from app.statics.refraction.application.preflight_diagnostics import (
     REFRACTION_STATIC_PREFLIGHT_QC_JSON_NAME,
     RefractionStaticPreflightError,
 )
+
+
+class _FakeTraceStoreProvider:
+    def __init__(self, reader: object) -> None:
+        self._reader = reader
+
+    def get_reader(self, *_args: object, **_kwargs: object) -> object:
+        return self._reader
+
+    def get_dt(self, _file_id: str) -> float:
+        return 0.001
+
+    def filename(self, _file_id: str) -> str | None:
+        return None
+
+
+class _FakeArtifactResolver:
+    def __init__(self, state: AppState, hook: object | None = None) -> None:
+        self._state = state
+        self._hook = hook
+
+    def resolve_artifact(self, **kwargs: Any) -> Path:
+        if callable(self._hook):
+            self._hook(**kwargs)
+        return resolve_job_artifact_path(self._state, **kwargs)
+
+
+class _FakeRuntime:
+    def __init__(
+        self,
+        *,
+        state: AppState,
+        reader: object,
+        artifact_hook: object | None = None,
+    ) -> None:
+        self.trace_store = _FakeTraceStoreProvider(reader)
+        self.artifacts = _FakeArtifactResolver(state, artifact_hook)
 
 
 def _geometry(**overrides: Any) -> RefractionStaticGeometryRequest:
@@ -738,14 +776,13 @@ def test_no_valid_observations_can_return_validation_model() -> None:
 
 def test_build_refraction_static_input_model_loads_npz_original_order(
     tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     sorted_to_original = np.asarray([2, 0, 3, 1], dtype=np.int64)
     headers = _headers(4)
     reader = _FakeReader(headers=headers, sorted_to_original=sorted_to_original)
-    monkeypatch.setattr(inputs_module, 'get_reader', lambda *args, **kwargs: reader)
 
     state = AppState()
+    runtime = _FakeRuntime(state=state, reader=reader)
     job_dir = tmp_path / 'pick-job'
     job_dir.mkdir()
     state.jobs.create_batch_apply_job(
@@ -775,7 +812,7 @@ def test_build_refraction_static_input_model_loads_npz_original_order(
         datum={'mode': 'none'},
     )
 
-    model = build_refraction_static_input_model(req=req, state=state)
+    model = build_refraction_static_input_model(req=req, runtime=runtime)
 
     np.testing.assert_allclose(model.pick_time_s_sorted, [0.010, 0.020, 0.030, 0.040])
     np.testing.assert_array_equal(model.sorted_trace_index, sorted_to_original)
@@ -783,16 +820,7 @@ def test_build_refraction_static_input_model_loads_npz_original_order(
 
 
 def test_uploaded_npz_pick_source_does_not_resolve_job_artifact(
-    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    def _fail_artifact_resolution(*_args: Any, **_kwargs: Any) -> object:
-        pytest.fail('uploaded_npz should not resolve a job artifact')
-
-    monkeypatch.setattr(
-        inputs_module,
-        'resolve_job_artifact_path',
-        _fail_artifact_resolution,
-    )
     req = RefractionStaticApplyRequest(
         file_id='line-a',
         pick_source={'kind': 'uploaded_npz'},
@@ -958,23 +986,14 @@ def test_build_refraction_static_input_model_omitted_linkage_skips_artifact_reso
         headers=_headers(4),
         sorted_to_original=sorted_to_original,
     )
-    monkeypatch.setattr(inputs_module, 'get_reader', lambda *args, **kwargs: reader)
 
-    real_resolve_job_artifact_path = inputs_module.resolve_job_artifact_path
-
-    def _resolve_non_linkage_artifact(*args: Any, **kwargs: Any) -> object:
+    def _resolve_non_linkage_artifact(**kwargs: Any) -> None:
         if kwargs.get('reference_label') == 'linkage':
             pytest.fail('linkage artifact resolution should not run for mode=none')
-        return real_resolve_job_artifact_path(*args, **kwargs)
 
     def _fail_linkage_resolution(*_args: Any, **_kwargs: Any) -> object:
         pytest.fail('linkage artifact resolution should not run for mode=none')
 
-    monkeypatch.setattr(
-        inputs_module,
-        'resolve_job_artifact_path',
-        _resolve_non_linkage_artifact,
-    )
     monkeypatch.setattr(
         inputs_module,
         'load_geometry_linkage_artifact',
@@ -982,6 +1001,11 @@ def test_build_refraction_static_input_model_omitted_linkage_skips_artifact_reso
     )
 
     state = AppState()
+    runtime = _FakeRuntime(
+        state=state,
+        reader=reader,
+        artifact_hook=_resolve_non_linkage_artifact,
+    )
     job_dir = tmp_path / 'pick-job'
     job_dir.mkdir()
     state.jobs.create_batch_apply_job(
@@ -1006,7 +1030,7 @@ def test_build_refraction_static_input_model_omitted_linkage_skips_artifact_reso
         datum={'mode': 'none'},
     )
 
-    model = build_refraction_static_input_model(req=req, state=state)
+    model = build_refraction_static_input_model(req=req, runtime=runtime)
 
     assert req.linkage.mode == 'none'
     assert model.qc['linkage_requested'] == 'none'
@@ -1016,13 +1040,12 @@ def test_build_refraction_static_input_model_omitted_linkage_skips_artifact_reso
 
 def test_build_refraction_static_input_model_rejects_missing_pick_artifact(
     tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     sorted_to_original = np.asarray([0, 1, 2, 3], dtype=np.int64)
     reader = _FakeReader(headers=_headers(4), sorted_to_original=sorted_to_original)
-    monkeypatch.setattr(inputs_module, 'get_reader', lambda *args, **kwargs: reader)
 
     state = AppState()
+    runtime = _FakeRuntime(state=state, reader=reader)
     job_dir = tmp_path / 'pick-job'
     job_dir.mkdir()
     state.jobs.create_batch_apply_job(
@@ -1045,18 +1068,17 @@ def test_build_refraction_static_input_model_rejects_missing_pick_artifact(
     )
 
     with pytest.raises(ValueError, match='job artifact not found'):
-        build_refraction_static_input_model(req=req, state=state)
+        build_refraction_static_input_model(req=req, runtime=runtime)
 
 
 def test_build_refraction_static_input_model_rejects_unsupported_pick_artifact_key(
     tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     sorted_to_original = np.asarray([0, 1, 2, 3], dtype=np.int64)
     reader = _FakeReader(headers=_headers(4), sorted_to_original=sorted_to_original)
-    monkeypatch.setattr(inputs_module, 'get_reader', lambda *args, **kwargs: reader)
 
     state = AppState()
+    runtime = _FakeRuntime(state=state, reader=reader)
     job_dir = tmp_path / 'pick-job'
     job_dir.mkdir()
     state.jobs.create_batch_apply_job(
@@ -1083,18 +1105,17 @@ def test_build_refraction_static_input_model_rejects_unsupported_pick_artifact_k
     )
 
     with pytest.raises(ValueError, match='unsupported pick artifact key'):
-        build_refraction_static_input_model(req=req, state=state)
+        build_refraction_static_input_model(req=req, runtime=runtime)
 
 
 def test_build_refraction_static_input_model_rejects_cross_file_linkage_artifact(
     tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     sorted_to_original = np.asarray([0, 1, 2, 3], dtype=np.int64)
     reader = _FakeReader(headers=_headers(4), sorted_to_original=sorted_to_original)
-    monkeypatch.setattr(inputs_module, 'get_reader', lambda *args, **kwargs: reader)
 
     state = AppState()
+    runtime = _FakeRuntime(state=state, reader=reader)
     pick_dir = tmp_path / 'pick-job'
     pick_dir.mkdir()
     state.jobs.create_batch_apply_job(
@@ -1131,7 +1152,7 @@ def test_build_refraction_static_input_model_rejects_cross_file_linkage_artifact
     )
 
     with pytest.raises(ValueError, match='metadata mismatch: file_id'):
-        build_refraction_static_input_model(req=req, state=state)
+        build_refraction_static_input_model(req=req, runtime=runtime)
 
 
 class _FakeReader:

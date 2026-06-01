@@ -7,6 +7,9 @@ import pytest
 
 from app.api.schemas import RefractionStaticApplyRequest
 from app.core.state import AppState
+from app.statics.refraction.adapters.seisviewer2d.runtime import (
+    SeisViewer2DRefractionRuntime,
+)
 from app.statics.refraction.artifacts import (
     REFRACTION_STATIC_HISTORY_JSON_NAME,
     build_refraction_static_history_payload,
@@ -76,6 +79,13 @@ def _state_with_lineage(tmp_path: Path, components: list[str]) -> AppState:
     return state
 
 
+def _runtime_with_lineage(
+    tmp_path: Path,
+    components: list[str],
+) -> SeisViewer2DRefractionRuntime:
+    return SeisViewer2DRefractionRuntime(_state_with_lineage(tmp_path, components))
+
+
 def test_static_history_written_for_refraction_job(tmp_path: Path) -> None:
     paths = write_refraction_static_artifacts(
         result=_result(),
@@ -115,7 +125,7 @@ def test_double_application_policy_warn_records_warning(tmp_path: Path) -> None:
     result = _with_static_history_double_application_qc(
         result=_result(),
         req=req,
-        state=_state_with_lineage(tmp_path, ['refraction', 'source_depth']),
+        runtime=_runtime_with_lineage(tmp_path, ['refraction', 'source_depth']),
     )
 
     qc = result.qc['static_history']
@@ -131,7 +141,7 @@ def test_double_application_policy_fail_raises_clear_error(tmp_path: Path) -> No
         _with_static_history_double_application_qc(
             result=_result(),
             req=req,
-            state=_state_with_lineage(tmp_path, ['refraction', 'source_depth']),
+            runtime=_runtime_with_lineage(tmp_path, ['refraction', 'source_depth']),
         )
 
 
@@ -142,7 +152,7 @@ def test_double_application_policy_allow_records_duplicate_component(
     result = _with_static_history_double_application_qc(
         result=_result(),
         req=req,
-        state=_state_with_lineage(tmp_path, ['manual_static']),
+        runtime=_runtime_with_lineage(tmp_path, ['manual_static']),
     )
 
     qc = result.qc['static_history']

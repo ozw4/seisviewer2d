@@ -9,7 +9,6 @@ import hashlib
 import json
 from pathlib import Path
 import re
-import shutil
 import time
 from typing import Any, Literal
 from uuid import uuid4
@@ -18,7 +17,6 @@ import numpy as np
 
 from app.statics.refraction.contracts.inputs import RefractionStaticGeometryRequest
 from app.statics.refraction.contracts.table_apply import RefractionStaticTableApplyRequest
-from app.core.state import AppState
 from app.services.common.artifact_io import (
     write_csv_atomic,
     write_json_atomic,
@@ -28,13 +26,6 @@ from app.services.common.array_validation import (
     coerce_1d_finite_float64,
     coerce_1d_integer_int64,
 )
-from app.services.corrected_trace_store import (
-    TimeShiftedTraceStoreResult,
-    build_time_shifted_trace_store,
-)
-from app.services.job_artifact_refs import resolve_job_artifact_path
-from app.services.job_runner import JobCompletion, JobFailure, run_job_with_lifecycle
-from app.services.reader import get_reader
 from app.statics.refraction.artifacts import (
     REFRACTION_STATIC_HISTORY_JSON_NAME,
     REFRACTION_STATIC_REQUEST_JSON_NAME,
@@ -58,8 +49,9 @@ from app.statics.refraction.domain.table_import import (
 from app.statics.refraction.domain.table_validator import (
     CANONICAL_STATIC_TABLE_OPTIONAL_COLUMNS,
 )
+from app.statics.refraction.ports.job_context import RefractionJobContext
+from app.statics.refraction.ports.runtime import RefractionRuntime
 from app.services.trace_store_index_validation import validate_sorted_to_original
-from app.services.trace_store_registration import register_trace_store, trace_store_cache_key
 from app.utils.segy_scalars import apply_segy_scalar, normalize_elevation_unit
 
 STATIC_TABLE_APPLY_REQUEST_JSON_NAME = 'static_table_apply_request.json'
@@ -72,7 +64,6 @@ STATIC_TABLE_APPLY_REFRACTION_HISTORY_JSON_NAME = REFRACTION_STATIC_HISTORY_JSON
 _DONE_MESSAGE = 'static_table_apply_artifacts_written'
 _CORRECTED_DONE_MESSAGE = 'static_table_apply_corrected_trace_store_registered'
 _ARTIFACT_ID_RE = re.compile(r'^(?P<job_id>[^:]+):(?P<name>[^:]+)$')
-_SAFE_STORE_NAME_RE = re.compile(r'[^A-Za-z0-9_.-]+')
 _write_json_atomic = partial(
     write_json_atomic,
     allow_nan=False,
@@ -97,6 +88,12 @@ class _ResolvedTablePaths:
     artifact_ids: dict[str, str]
     source_job_id: str | None
     artifact_job_ids: tuple[str, ...]
+
+
+@dataclass(frozen=True)
+class JobCompletion:
+    finished_ts: float | None = None
+    message: str | None = None
 
 
 @dataclass(frozen=True)
@@ -146,25 +143,11 @@ class _StaticTableApplyLineage:
 def run_refraction_static_table_apply_job(
     job_id: str,
     req: RefractionStaticTableApplyRequest,
-    state: AppState,
+    state: object,
 ) -> None:
-    """Run the standalone static-table apply job lifecycle."""
-
-    def worker() -> JobCompletion:
-        return _run_refraction_static_table_apply_job_body(
-            job_id=job_id,
-            req=req,
-            state=state,
-        )
-
-    run_job_with_lifecycle(
-        state=state,
-        job_id=job_id,
-        worker=worker,
-        progress_1_on_done=False,
-        start_progress=0.0,
-        clear_message_on_start=True,
-        on_error=_handle_static_table_apply_error,
+    """SeisViewer2D lifecycle entrypoint moved to the adapter package."""
+    raise TypeError(
+        'run_refraction_static_table_apply_job lives in the runtime adapter'
     )
 
 
@@ -172,18 +155,14 @@ def _run_refraction_static_table_apply_job_body(
     *,
     job_id: str,
     req: RefractionStaticTableApplyRequest,
-    state: AppState,
+    runtime: RefractionRuntime,
+    context: RefractionJobContext,
 ) -> JobCompletion:
     request = RefractionStaticTableApplyRequest.model_validate(req)
-    job_dir = _resolve_job_dir(state, job_id)
+    job_dir = Path(context.artifacts_dir)
     job_dir.mkdir(parents=True, exist_ok=True)
 
-    _set_job_progress_message(
-        state,
-        job_id,
-        progress=0.05,
-        message='writing_static_table_apply_request',
-    )
+    context.set_progress(0.05, 'writing_static_table_apply_request')
     _write_json_atomic(
         job_dir / STATIC_TABLE_APPLY_REQUEST_JSON_NAME,
         {
@@ -197,24 +176,14 @@ def _run_refraction_static_table_apply_job_body(
         },
     )
 
-    _set_job_progress_message(
-        state,
-        job_id,
-        progress=0.15,
-        message='validating_static_table_artifacts',
-    )
-    table_paths = _resolve_table_paths(state=state, req=request)
+    context.set_progress(0.15, 'validating_static_table_artifacts')
+    table_paths = _resolve_table_paths(runtime=runtime, req=request)
     imported = _import_static_tables(table_paths)
 
-    _set_job_progress_message(
-        state,
-        job_id,
-        progress=0.35,
-        message='mapping_static_table_to_traces',
-    )
+    context.set_progress(0.35, 'mapping_static_table_to_traces')
     endpoint_keys = _load_trace_endpoint_keys(
         req=request,
-        state=state,
+        runtime=runtime,
         table_paths=table_paths,
         imported=imported,
     )
@@ -237,29 +206,24 @@ def _run_refraction_static_table_apply_job_body(
     )
     table_lineage = _static_table_apply_lineage(
         req=request,
-        state=state,
+        runtime=runtime,
         imported=imported,
         table_paths=table_paths,
         trace_shift=trace_shift,
     )
     table_reapply_qc = _static_table_reapply_qc(
         req=request,
-        state=state,
+        runtime=runtime,
         table_lineage=table_lineage,
     )
     _enforce_static_table_reapply_guard(table_reapply_qc)
     double_application_qc = _double_application_qc(
         req=request,
-        state=state,
+        runtime=runtime,
     )
     _enforce_double_application_policy(double_application_qc)
 
-    _set_job_progress_message(
-        state,
-        job_id,
-        progress=0.65,
-        message='writing_static_table_apply_artifacts',
-    )
+    context.set_progress(0.65, 'writing_static_table_apply_artifacts')
     artifacts = _write_static_table_apply_artifacts(
         job_dir=job_dir,
         job_id=job_id,
@@ -277,14 +241,9 @@ def _run_refraction_static_table_apply_job_body(
     corrected_file_id: str | None = None
     corrected_store_path: Path | None = None
     if request.register_corrected_file:
-        _set_job_progress_message(
-            state,
-            job_id,
-            progress=0.78,
-            message='applying_static_table_trace_shift',
-        )
+        context.set_progress(0.78, 'applying_static_table_trace_shift')
         corrected_file_id, corrected_store_path = _register_corrected_trace_store(
-            state=state,
+            runtime=runtime,
             job_id=job_id,
             req=request,
             imported=imported,
@@ -325,32 +284,21 @@ def _run_refraction_static_table_apply_job_body(
             job_dir / STATIC_TABLE_APPLY_REFRACTION_HISTORY_JSON_NAME,
             history,
         )
-        with state.lock:
-            state.jobs.set_static_corrected_file(
-                job_id,
-                corrected_file_id=corrected_file_id,
-                corrected_store_path=str(corrected_store_path),
-            )
-        _set_job_progress_message(
-            state,
+        runtime.set_static_corrected_file(
             job_id,
-            progress=1.0,
-            message=_CORRECTED_DONE_MESSAGE,
+            corrected_file_id=corrected_file_id,
+            corrected_store_path=str(corrected_store_path),
         )
+        context.set_progress(1.0, _CORRECTED_DONE_MESSAGE)
         return JobCompletion(finished_ts=time.time(), message=_CORRECTED_DONE_MESSAGE)
 
-    _set_job_progress_message(
-        state,
-        job_id,
-        progress=1.0,
-        message=_DONE_MESSAGE,
-    )
+    context.set_progress(1.0, _DONE_MESSAGE)
     return JobCompletion(finished_ts=time.time(), message=_DONE_MESSAGE)
 
 
 def _resolve_table_paths(
     *,
-    state: AppState,
+    runtime: RefractionRuntime,
     req: RefractionStaticTableApplyRequest,
 ) -> _ResolvedTablePaths:
     artifact_ids: dict[str, str] = {}
@@ -360,7 +308,7 @@ def _resolve_table_paths(
             req.combined_table_artifact_id
         )
         combined_path = _resolve_table_artifact(
-            state,
+            runtime,
             artifact_id=req.combined_table_artifact_id,
         )
         return _ResolvedTablePaths(
@@ -379,11 +327,11 @@ def _resolve_table_paths(
     source_job_id, _source_name = _parse_artifact_id(req.source_table_artifact_id)
     receiver_job_id, _receiver_name = _parse_artifact_id(req.receiver_table_artifact_id)
     source_path = _resolve_table_artifact(
-        state,
+        runtime,
         artifact_id=req.source_table_artifact_id,
     )
     receiver_path = _resolve_table_artifact(
-        state,
+        runtime,
         artifact_id=req.receiver_table_artifact_id,
     )
     return _ResolvedTablePaths(
@@ -406,10 +354,9 @@ def _parse_artifact_id(artifact_id: str) -> tuple[str, str]:
     return match.group('job_id'), match.group('name')
 
 
-def _resolve_table_artifact(state: AppState, *, artifact_id: str) -> Path:
+def _resolve_table_artifact(runtime: RefractionRuntime, *, artifact_id: str) -> Path:
     job_id, name = _parse_artifact_id(artifact_id)
-    return resolve_job_artifact_path(
-        state,
+    return runtime.artifacts.resolve_artifact(
         job_id=job_id,
         name=name,
         allowed_job_types={'statics'},
@@ -607,13 +554,13 @@ def _npz_1d_float_array(
 def _trace_endpoint_geometry(
     req: RefractionStaticTableApplyRequest,
     *,
-    state: AppState,
+    runtime: RefractionRuntime,
     table_paths: _ResolvedTablePaths,
     imported: RefractionStaticTableImportResult,
 ) -> RefractionStaticGeometryRequest:
     if 'geometry' not in req.model_fields_set:
         producer_geometry = _producer_trace_endpoint_geometry(
-            state=state,
+            runtime=runtime,
             table_paths=table_paths,
             imported=imported,
         )
@@ -625,11 +572,15 @@ def _trace_endpoint_geometry(
 def _load_trace_endpoint_keys(
     *,
     req: RefractionStaticTableApplyRequest,
-    state: AppState,
+    runtime: RefractionRuntime,
     table_paths: _ResolvedTablePaths,
     imported: RefractionStaticTableImportResult,
 ) -> _TraceEndpointKeys:
-    reader = get_reader(req.file_id, req.key1_byte, req.key2_byte, state=state)
+    reader = runtime.trace_store.get_reader(
+        req.file_id,
+        req.key1_byte,
+        req.key2_byte,
+    )
     n_traces = _reader_n_traces(reader)
     sorted_trace_index = validate_sorted_to_original(
         reader.get_sorted_to_original(),
@@ -638,7 +589,7 @@ def _load_trace_endpoint_keys(
     )
     geometry = _trace_endpoint_geometry(
         req,
-        state=state,
+        runtime=runtime,
         table_paths=table_paths,
         imported=imported,
     )
@@ -750,14 +701,14 @@ def _load_trace_endpoint_keys(
 
 def _producer_trace_endpoint_geometry(
     *,
-    state: AppState,
+    runtime: RefractionRuntime,
     table_paths: _ResolvedTablePaths,
     imported: RefractionStaticTableImportResult,
 ) -> RefractionStaticGeometryRequest | None:
     geometries = [
         _geometry_from_refraction_static_request(path)
         for path in _producer_refraction_request_paths(
-            state=state,
+            runtime=runtime,
             table_paths=table_paths,
             imported=imported,
         )
@@ -776,7 +727,7 @@ def _producer_trace_endpoint_geometry(
 
 def _producer_refraction_request_paths(
     *,
-    state: AppState,
+    runtime: RefractionRuntime,
     table_paths: _ResolvedTablePaths,
     imported: RefractionStaticTableImportResult,
 ) -> tuple[Path, ...]:
@@ -790,7 +741,7 @@ def _producer_refraction_request_paths(
             candidates.append(table_path.parent / REFRACTION_STATIC_REQUEST_JSON_NAME)
 
     for source_job_id in _imported_source_job_ids(imported):
-        job_dir = _optional_static_job_dir(state, source_job_id)
+        job_dir = _optional_static_job_dir(runtime, source_job_id)
         if job_dir is not None:
             candidates.append(job_dir / REFRACTION_STATIC_REQUEST_JSON_NAME)
 
@@ -871,10 +822,12 @@ def _iter_imported_endpoint_statics(
     )
 
 
-def _optional_static_job_dir(state: AppState, job_id: str) -> Path | None:
-    with state.lock:
-        job = state.jobs.get(job_id)
-        artifacts_dir = job.get('artifacts_dir') if isinstance(job, dict) else None
+def _optional_static_job_dir(
+    runtime: RefractionRuntime,
+    job_id: str,
+) -> Path | None:
+    job = runtime.get_job_snapshot(job_id)
+    artifacts_dir = job.get('artifacts_dir') if isinstance(job, dict) else None
     if not isinstance(artifacts_dir, str) or not artifacts_dir:
         return None
     return Path(artifacts_dir)
@@ -1071,7 +1024,7 @@ def _trace_status(
 
 def _register_corrected_trace_store(
     *,
-    state: AppState,
+    runtime: RefractionRuntime,
     job_id: str,
     req: RefractionStaticTableApplyRequest,
     imported: RefractionStaticTableImportResult,
@@ -1083,12 +1036,14 @@ def _register_corrected_trace_store(
     double_application_qc: dict[str, Any],
     artifact_names: tuple[str, ...],
 ) -> tuple[str, Path]:
-    source_store_path = Path(state.file_registry.get_store_path(req.file_id))
+    source_store_path = runtime.trace_store.get_store_path(req.file_id)
     source_meta = _read_json_object(source_store_path / 'meta.json')
     corrected_file_id = str(uuid4())
-    output_store_path = _corrected_store_path(
+    output_store_path = runtime.corrected_store.corrected_store_path(
         source_store_path=source_store_path,
-        job_id=job_id,
+        statics_kind='static-table',
+        suffix=job_id,
+        error_type=RefractionStaticTraceStoreApplyError,
         output_name=req.output_name,
     )
     history_metadata = _static_table_apply_history_payload(
@@ -1104,7 +1059,7 @@ def _register_corrected_trace_store(
     )
     corrected_file_json = job_dir / CORRECTED_FILE_JSON_NAME
     try:
-        build_result = build_time_shifted_trace_store(
+        build_result = runtime.corrected_store.build_time_shifted_trace_store(
             source_store_path=source_store_path,
             output_store_path=output_store_path,
             trace_shift_s_sorted=trace_shift.trace_shift_s_sorted,
@@ -1118,8 +1073,7 @@ def _register_corrected_trace_store(
             original_segy_path=_optional_string(source_meta.get('original_segy_path')),
             header_bytes_to_materialize=(req.key1_byte, req.key2_byte),
         )
-        reader = register_trace_store(
-            state=state,
+        reader = runtime.corrected_store.register_trace_store(
             file_id=corrected_file_id,
             store_dir=build_result.store_path,
             key1_byte=req.key1_byte,
@@ -1129,8 +1083,7 @@ def _register_corrected_trace_store(
             touch_meta=True,
             preload_header_bytes=(req.key1_byte, req.key2_byte),
         )
-        _verify_registered_trace_store(
-            state=state,
+        runtime.corrected_store.verify_registered_trace_store(
             file_id=corrected_file_id,
             store_path=build_result.store_path,
             key1_byte=req.key1_byte,
@@ -1150,14 +1103,13 @@ def _register_corrected_trace_store(
             ),
         )
     except Exception:
-        _cleanup_registration(
-            state,
+        runtime.corrected_store.cleanup_registration(
             file_id=corrected_file_id,
             key1_byte=req.key1_byte,
             key2_byte=req.key2_byte,
         )
-        _cleanup_store(output_store_path)
-        _cleanup_artifact(corrected_file_json)
+        runtime.corrected_store.cleanup_store(output_store_path)
+        runtime.corrected_store.cleanup_artifact(corrected_file_json)
         raise
     return corrected_file_id, build_result.store_path
 
@@ -1251,7 +1203,7 @@ def _write_static_table_apply_artifacts(
 def _static_table_apply_lineage(
     *,
     req: RefractionStaticTableApplyRequest,
-    state: AppState,
+    runtime: RefractionRuntime,
     imported: RefractionStaticTableImportResult,
     table_paths: _ResolvedTablePaths,
     trace_shift: _StaticTableTraceShift,
@@ -1273,7 +1225,7 @@ def _static_table_apply_lineage(
         )
     created_from_refraction_job_ids = _imported_source_job_ids(imported)
     created_from_export_job_ids = _created_from_export_job_ids(
-        state=state,
+        runtime=runtime,
         table_paths=table_paths,
     )
     return _StaticTableApplyLineage(
@@ -1300,10 +1252,10 @@ def _static_table_apply_lineage(
 def _static_table_reapply_qc(
     *,
     req: RefractionStaticTableApplyRequest,
-    state: AppState,
+    runtime: RefractionRuntime,
     table_lineage: _StaticTableApplyLineage,
 ) -> dict[str, Any]:
-    source_meta = _source_trace_store_meta(req=req, state=state)
+    source_meta = _source_trace_store_meta(req=req, runtime=runtime)
     histories = _static_table_history_records(source_meta)
     current_digests = _lineage_table_digest_set(table_lineage)
     existing_digests: set[str] = set()
@@ -1370,9 +1322,9 @@ def _static_table_reapply_qc(
 def _double_application_qc(
     *,
     req: RefractionStaticTableApplyRequest,
-    state: AppState,
+    runtime: RefractionRuntime,
 ) -> dict[str, Any]:
-    source_meta = _source_trace_store_meta(req=req, state=state)
+    source_meta = _source_trace_store_meta(req=req, runtime=runtime)
     policy = 'allow' if req.allow_reapply_same_static_table else 'fail'
     return static_history_double_application_qc(
         input_file_id=req.file_id,
@@ -1385,9 +1337,9 @@ def _double_application_qc(
 def _source_trace_store_meta(
     *,
     req: RefractionStaticTableApplyRequest,
-    state: AppState,
+    runtime: RefractionRuntime,
 ) -> dict[str, Any]:
-    source_store_path = Path(state.file_registry.get_store_path(req.file_id))
+    source_store_path = runtime.trace_store.get_store_path(req.file_id)
     return _read_json_object(source_store_path / 'meta.json')
 
 
@@ -1440,17 +1392,16 @@ def _digest_json(payload: Mapping[str, object]) -> str:
 
 def _created_from_export_job_ids(
     *,
-    state: AppState,
+    runtime: RefractionRuntime,
     table_paths: _ResolvedTablePaths,
 ) -> tuple[str, ...]:
     export_job_ids: list[str] = []
-    with state.lock:
-        for job_id in table_paths.artifact_job_ids:
-            job = state.jobs.get(job_id)
-            if not isinstance(job, Mapping):
-                continue
-            if job.get('statics_kind') == 'refraction_export':
-                export_job_ids.append(str(job_id))
+    for job_id in table_paths.artifact_job_ids:
+        job = runtime.get_job_snapshot(job_id)
+        if not isinstance(job, Mapping):
+            continue
+        if job.get('statics_kind') == 'refraction_export':
+            export_job_ids.append(str(job_id))
     return tuple(dict.fromkeys(export_job_ids))
 
 
@@ -1921,7 +1872,7 @@ def _corrected_file_payload(
     req: RefractionStaticTableApplyRequest,
     job_id: str,
     corrected_file_id: str,
-    build_result: TimeShiftedTraceStoreResult,
+    build_result: object,
     trace_shift: _StaticTableTraceShift,
     table_lineage: _StaticTableApplyLineage,
     artifact_names: tuple[str, ...],
@@ -2053,49 +2004,6 @@ def _derived_metadata(
     return metadata
 
 
-def _corrected_store_path(
-    *,
-    source_store_path: Path,
-    job_id: str,
-    output_name: str | None,
-) -> Path:
-    store_name = (
-        _safe_store_name_component(output_name)
-        if output_name is not None
-        else (
-            f'{_safe_store_name_component(source_store_path.name)}'
-            f'.statics.static-table.{_safe_store_name_component(job_id)}'
-        )
-    )
-    output_path = source_store_path.parent / store_name
-    if output_path.exists() or output_path.is_symlink():
-        raise RefractionStaticTraceStoreApplyError(
-            f'corrected output path already exists: {output_path}'
-        )
-    return output_path
-
-
-def _verify_registered_trace_store(
-    *,
-    state: AppState,
-    file_id: str,
-    store_path: Path,
-    key1_byte: int,
-    key2_byte: int,
-    reader: Any,
-) -> None:
-    registered_path = Path(state.file_registry.get_store_path(file_id))
-    if registered_path.resolve() != store_path.resolve():
-        raise RuntimeError('registered corrected TraceStore path mismatch')
-    cache_key = trace_store_cache_key(file_id, key1_byte, key2_byte)
-    with state.lock:
-        if cache_key not in state.cached_readers:
-            raise RuntimeError('registered corrected TraceStore reader is missing')
-    key1_values = np.asarray(reader.get_key1_values())
-    if key1_values.size == 0:
-        raise RuntimeError('registered corrected TraceStore has no key1 values')
-
-
 def _reader_n_traces(reader: Any) -> int:
     traces = getattr(reader, 'traces', None)
     if isinstance(traces, np.ndarray) and traces.ndim == 2:
@@ -2221,15 +2129,6 @@ def _string_array(values: Any) -> np.ndarray:
     return np.asarray(texts, dtype=f'<U{max_len}')
 
 
-def _safe_store_name_component(value: str) -> str:
-    safe = _SAFE_STORE_NAME_RE.sub('_', str(value))
-    if safe in {'', '.', '..'}:
-        raise RefractionStaticTraceStoreApplyError(
-            'TraceStore name cannot be made filesystem-safe'
-        )
-    return safe
-
-
 def _optional_string(value: object) -> str | None:
     if value is None:
         return None
@@ -2246,59 +2145,6 @@ def _read_json_object(path: Path) -> dict[str, Any]:
     if not isinstance(payload, dict):
         raise ValueError(f'JSON file must contain an object: {path}')
     return payload
-
-
-def _resolve_job_dir(state: AppState, job_id: str) -> Path:
-    with state.lock:
-        job = state.jobs.get(job_id)
-        artifacts_dir = job.get('artifacts_dir') if isinstance(job, dict) else None
-    if not isinstance(artifacts_dir, str) or not artifacts_dir:
-        raise ValueError('job artifacts_dir is not available')
-    return Path(artifacts_dir)
-
-
-def _set_job_progress_message(
-    state: AppState,
-    job_id: str,
-    *,
-    progress: float,
-    message: str,
-) -> None:
-    with state.lock:
-        if state.jobs.get(job_id) is None:
-            return
-        state.jobs.set_progress(job_id, progress)
-        state.jobs.set_message(job_id, message)
-
-
-def _handle_static_table_apply_error(_exc: Exception) -> JobFailure:
-    return JobFailure(finished_ts=time.time())
-
-
-def _cleanup_registration(
-    state: AppState,
-    *,
-    file_id: str,
-    key1_byte: int,
-    key2_byte: int,
-) -> None:
-    with state.lock:
-        state.file_registry.pop(file_id, None)
-        state.cached_readers.pop(trace_store_cache_key(file_id, key1_byte, key2_byte), None)
-
-
-def _cleanup_store(output_path: Path) -> None:
-    for tmp_path in output_path.parent.glob(f'{output_path.name}.tmp-*'):
-        if tmp_path.is_dir():
-            shutil.rmtree(tmp_path, ignore_errors=True)
-    if output_path.exists():
-        shutil.rmtree(output_path, ignore_errors=True)
-
-
-def _cleanup_artifact(path: Path) -> None:
-    path.unlink(missing_ok=True)
-    for tmp_path in path.parent.glob(f'{path.name}.*.tmp'):
-        tmp_path.unlink(missing_ok=True)
 
 
 __all__ = [

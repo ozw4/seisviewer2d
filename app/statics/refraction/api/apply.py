@@ -22,6 +22,9 @@ from app.statics.refraction.contracts.apply import (
 )
 from app.services.in_memory_cleanup import cleanup_in_memory_state
 from app.services.pipeline_artifacts import maybe_cleanup_expired_jobs
+from app.statics.refraction.adapters.seisviewer2d.runtime import (
+    SeisViewer2DRefractionRuntime,
+)
 from app.statics.refraction.artifacts import UPLOADED_REFRACTION_PICKS_NPZ_NAME
 from app.statics.refraction.application.export_service import (
     resolve_refraction_static_export_formats,
@@ -193,6 +196,7 @@ def refraction_static_validate_with_picks(
 
     state = get_state(request.app)
     cleanup_in_memory_state(state)
+    runtime = SeisViewer2DRefractionRuntime(state)
 
     with tempfile.TemporaryDirectory(prefix='refraction-validate-') as tmp:
         temp_dir = Path(tmp)
@@ -206,7 +210,7 @@ def refraction_static_validate_with_picks(
         }
         return validate_refraction_static_inputs_with_picks(
             req=req,
-            state=state,
+            runtime=runtime,
             pick_npz_path=stored_path,
             uploaded_pick_metadata=upload_metadata,
         )

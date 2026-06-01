@@ -13,7 +13,6 @@ from uuid import uuid4
 import numpy as np
 
 from app.statics.refraction.contracts.apply import RefractionStaticApplyRequest
-from app.core.state import AppState
 from app.services.common.artifact_io import write_json_atomic
 from app.services.common.array_validation import (
     coerce_header_byte,
@@ -21,8 +20,6 @@ from app.services.common.array_validation import (
     coerce_positive_finite_float,
     coerce_positive_int,
 )
-from app.services.corrected_trace_store import TimeShiftedTraceStoreResult
-from app.services.reader import get_reader
 from app.statics.refraction.artifacts import (
     FIRST_BREAK_RESIDUALS_CSV_NAME,
     NEAR_SURFACE_MODEL_CSV_NAME,
@@ -33,22 +30,13 @@ from app.statics.refraction.artifacts import (
     REFRACTION_STATIC_SOLUTION_NPZ_NAME,
     refraction_static_double_application_qc,
 )
+from app.statics.refraction.ports.runtime import RefractionRuntime
 from app.statics.refraction.domain.types import (
     RefractionDatumStaticsResult,
     RefractionStaticApplyTraceStoreResult,
     RefractionTraceShiftValidationResult,
 )
 from app.services.trace_store_index_validation import validate_sorted_to_original
-from app.services.trace_store_registration import register_trace_store
-from app.statics.common.corrected_store import (
-    build_and_register_time_shifted_trace_store,
-    cleanup_artifact,
-    cleanup_registration,
-    cleanup_store,
-    corrected_store_path,
-    safe_store_name_component,
-    verify_registered_trace_store,
-)
 from app.statics.common.trace_shift import (
     apply_trace_shifts_to_array as common_apply_trace_shifts_to_array,
     require_1d_bool,
@@ -57,7 +45,6 @@ from app.statics.common.trace_shift import (
     status_counts_by_value,
     validate_trace_shifts_for_application,
 )
-from app.trace_store.reader import TraceStoreSectionReader
 
 RefractionStaticApplyMode = Literal['refraction_from_raw']
 
@@ -134,7 +121,7 @@ class _SelectedTraceShiftForApplication:
 @dataclass(frozen=True)
 class _SourceTraceStoreContext:
     store_path: Path
-    reader: TraceStoreSectionReader
+    reader: Any
     meta: dict[str, object]
     sorted_trace_index: np.ndarray
     n_traces: int
@@ -323,16 +310,18 @@ def apply_refraction_statics_to_trace_store(
     *,
     req: RefractionStaticApplyRequest,
     result: RefractionDatumStaticsResult,
-    state: AppState,
+    runtime: RefractionRuntime | None = None,
+    state: object | None = None,
     job_id: str,
     job_dir: Path,
 ) -> RefractionStaticApplyTraceStoreResult:
     """Apply an in-memory final refraction statics result to the source TraceStore."""
+    runtime = _coerce_runtime(runtime=runtime, state=state)
     solution = _solution_from_datum_result(result)
     return _apply_refraction_solution_to_trace_store(
         req=req,
         solution=solution,
-        state=state,
+        runtime=runtime,
         job_id=job_id,
         job_dir=job_dir,
     )
@@ -342,26 +331,40 @@ def apply_refraction_statics_from_solution_artifact(
     *,
     req: RefractionStaticApplyRequest,
     solution_npz_path: Path,
-    state: AppState,
+    runtime: RefractionRuntime | None = None,
+    state: object | None = None,
     job_id: str,
     job_dir: Path,
 ) -> RefractionStaticApplyTraceStoreResult:
     """Apply final refraction statics from a P0 solution artifact."""
+    runtime = _coerce_runtime(runtime=runtime, state=state)
     solution = load_refraction_static_solution_for_apply(solution_npz_path)
     return _apply_refraction_solution_to_trace_store(
         req=req,
         solution=solution,
-        state=state,
+        runtime=runtime,
         job_id=job_id,
         job_dir=job_dir,
     )
+
+
+def _coerce_runtime(
+    *,
+    runtime: RefractionRuntime | None,
+    state: object | None,
+) -> RefractionRuntime:
+    if runtime is not None:
+        return runtime
+    if state is not None:
+        raise TypeError('runtime is required; AppState adaptation belongs in adapters')
+    raise TypeError('runtime is required')
 
 
 def _apply_refraction_solution_to_trace_store(
     *,
     req: RefractionStaticApplyRequest,
     solution: LoadedRefractionStaticSolutionForApply,
-    state: AppState,
+    runtime: RefractionRuntime,
     job_id: str,
     job_dir: Path,
 ) -> RefractionStaticApplyTraceStoreResult:
@@ -369,7 +372,7 @@ def _apply_refraction_solution_to_trace_store(
     _validate_apply_options(request)
     source = _resolve_source_trace_store(
         req=request,
-        state=state,
+        runtime=runtime,
     )
     _validate_sorted_trace_order(
         solution.sorted_trace_index,
@@ -396,6 +399,7 @@ def _apply_refraction_solution_to_trace_store(
 
     corrected_file_id = str(uuid4())
     output_store_path = _corrected_store_path(
+        runtime=runtime,
         source_store_path=source.store_path,
         job_id=job_id,
     )
@@ -409,11 +413,10 @@ def _apply_refraction_solution_to_trace_store(
         selected_shift=selected_shift,
     )
 
-    build_result: TimeShiftedTraceStoreResult | None = None
+    build_result: Any | None = None
     qc: dict[str, Any] | None = None
     try:
-        build_result = build_and_register_time_shifted_trace_store(
-            state=state,
+        build_result = runtime.corrected_store.build_and_register_time_shifted_trace_store(
             corrected_file_id=corrected_file_id,
             source_store_path=source.store_path,
             output_store_path=output_store_path,
@@ -427,7 +430,6 @@ def _apply_refraction_solution_to_trace_store(
             key2_byte=request.key2_byte,
             header_bytes_to_materialize=(request.key1_byte, request.key2_byte),
             preload_header_bytes=(request.key1_byte, request.key2_byte),
-            register_fn=register_trace_store,
         )
         qc = _build_apply_qc_payload(
             req=request,
@@ -454,15 +456,14 @@ def _apply_refraction_solution_to_trace_store(
             make_parent=True,
         )
     except Exception:
-        cleanup_registration(
-            state,
+        runtime.corrected_store.cleanup_registration(
             file_id=corrected_file_id,
             key1_byte=request.key1_byte,
             key2_byte=request.key2_byte,
         )
-        cleanup_store(output_store_path)
-        cleanup_artifact(corrected_file_json_path)
-        cleanup_artifact(qc_json_path)
+        runtime.corrected_store.cleanup_store(output_store_path)
+        runtime.corrected_store.cleanup_artifact(corrected_file_json_path)
+        runtime.corrected_store.cleanup_artifact(qc_json_path)
         raise
 
     return RefractionStaticApplyTraceStoreResult(
@@ -514,10 +515,10 @@ def _validate_apply_options(req: RefractionStaticApplyRequest) -> None:
 def _resolve_source_trace_store(
     *,
     req: RefractionStaticApplyRequest,
-    state: AppState,
+    runtime: RefractionRuntime,
 ) -> _SourceTraceStoreContext:
     try:
-        store_path = Path(state.file_registry.get_store_path(req.file_id))
+        store_path = runtime.trace_store.get_store_path(req.file_id)
     except Exception as exc:  # noqa: BLE001
         raise RefractionStaticTraceStoreApplyError(
             f'source file_id is not registered with a TraceStore: {req.file_id}'
@@ -532,7 +533,11 @@ def _resolve_source_trace_store(
         )
 
     try:
-        reader = get_reader(req.file_id, req.key1_byte, req.key2_byte, state=state)
+        reader = runtime.trace_store.get_reader(
+            req.file_id,
+            req.key1_byte,
+            req.key2_byte,
+        )
     except Exception as exc:  # noqa: BLE001
         raise RefractionStaticTraceStoreApplyError(
             f'source TraceStore reader could not be resolved: {exc}'
@@ -869,7 +874,7 @@ def _build_corrected_file_payload(
     req: RefractionStaticApplyRequest,
     job_id: str,
     corrected_file_id: str,
-    build_result: TimeShiftedTraceStoreResult,
+    build_result: Any,
     validation: RefractionTraceShiftValidationResult,
     solution: LoadedRefractionStaticSolutionForApply,
     selected_shift: _SelectedTraceShiftForApplication,
@@ -927,7 +932,7 @@ def _build_apply_qc_payload(
     req: RefractionStaticApplyRequest,
     job_id: str,
     corrected_file_id: str,
-    build_result: TimeShiftedTraceStoreResult,
+    build_result: Any,
     validation: RefractionTraceShiftValidationResult,
     solution: LoadedRefractionStaticSolutionForApply,
     selected_shift: _SelectedTraceShiftForApplication,
@@ -995,8 +1000,13 @@ def _corrected_artifact_names() -> list[str]:
     ]
 
 
-def _corrected_store_path(*, source_store_path: Path, job_id: str) -> Path:
-    return corrected_store_path(
+def _corrected_store_path(
+    *,
+    runtime: RefractionRuntime,
+    source_store_path: Path,
+    job_id: str,
+) -> Path:
+    return runtime.corrected_store.corrected_store_path(
         source_store_path=source_store_path,
         statics_kind='refraction',
         suffix=str(job_id),
@@ -1005,29 +1015,11 @@ def _corrected_store_path(*, source_store_path: Path, job_id: str) -> Path:
 
 
 def _safe_store_name_component(value: str) -> str:
-    return safe_store_name_component(
-        value,
-        error_type=RefractionStaticTraceStoreApplyError,
-    )
-
-
-def _verify_registered_trace_store(
-    *,
-    state: AppState,
-    file_id: str,
-    store_path: Path,
-    key1_byte: int,
-    key2_byte: int,
-    reader: object,
-) -> None:
-    verify_registered_trace_store(
-        state=state,
-        file_id=file_id,
-        store_path=store_path,
-        key1_byte=key1_byte,
-        key2_byte=key2_byte,
-        reader=reader,
-    )
+    safe = ''.join(ch if ch.isalnum() or ch in '_.-' else '-' for ch in value.strip())
+    safe = safe.strip('.-')
+    if not safe:
+        raise RefractionStaticTraceStoreApplyError('corrected store name is empty')
+    return safe
 
 
 def _solution_metadata_from_npz(npz: np.lib.npyio.NpzFile) -> dict[str, object]:
@@ -1121,29 +1113,6 @@ def _read_json_object(path: Path, *, label: str) -> dict[str, object]:
     if not isinstance(payload, dict):
         raise RefractionStaticTraceStoreApplyError(f'{label} must be an object')
     return payload
-
-
-def _cleanup_registration(
-    state: AppState,
-    *,
-    file_id: str,
-    key1_byte: int,
-    key2_byte: int,
-) -> None:
-    cleanup_registration(
-        state,
-        file_id=file_id,
-        key1_byte=key1_byte,
-        key2_byte=key2_byte,
-    )
-
-
-def _cleanup_store(output_path: Path) -> None:
-    cleanup_store(output_path)
-
-
-def _cleanup_artifact(path: Path) -> None:
-    cleanup_artifact(path)
 
 
 def _require_1d_float64(

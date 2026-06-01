@@ -17,10 +17,10 @@ from app.statics.refraction.contracts.export import (
     RefractionStaticExportJobRequest,
     RefractionStaticExportRequest,
 )
-from app.core.state import AppState
 from app.services.common.artifact_io import write_csv_atomic, write_json_atomic
-from app.services.job_manager import JobManager
-from app.services.job_runner import JobCompletion, JobFailure, run_job_with_lifecycle
+from app.statics.refraction.application.job_status import normalize_status_value
+from app.statics.refraction.ports.job_context import RefractionJobContext
+from app.statics.refraction.ports.runtime import RefractionRuntime
 from app.statics.refraction.artifacts import (
     RECEIVER_STATIC_TABLE_CSV_NAME,
     REFRACTION_FIRST_BREAK_TIME_EXPORT_CSV_NAME,
@@ -111,6 +111,12 @@ class RefractionStaticExportValidationError(ValueError):
 
 
 @dataclass(frozen=True)
+class JobCompletion:
+    finished_ts: float | None = None
+    message: str | None = None
+
+
+@dataclass(frozen=True)
 class ResolvedRefractionStaticExportSourceJob:
     source_job_id: str
     source_file_id: str
@@ -147,16 +153,14 @@ def required_refraction_static_export_source_artifacts(
 def validate_refraction_static_export_source_job(
     *,
     req: RefractionStaticExportJobRequest,
-    state: AppState,
+    runtime: RefractionRuntime,
 ) -> ResolvedRefractionStaticExportSourceJob:
     """Validate the completed source refraction job used by standalone export."""
     requested_formats = resolve_refraction_static_export_formats(req.export)
     required_artifacts = required_refraction_static_export_source_artifacts(
         requested_formats,
     )
-    with state.lock:
-        raw_job = state.jobs.get(req.source_job_id)
-        job = dict(raw_job) if isinstance(raw_job, dict) else None
+    job = runtime.get_job_snapshot(req.source_job_id)
     if job is None:
         raise RefractionStaticExportSourceJobNotFound(
             f'source refraction job not found: {req.source_job_id}'
@@ -166,7 +170,7 @@ def validate_refraction_static_export_source_job(
         raise RefractionStaticExportValidationError(
             'source_job_id must reference a refraction static job'
         )
-    status = JobManager.normalize_status_value(job.get('status'))
+    status = normalize_status_value(job.get('status'))
     if status != 'done':
         raise RefractionStaticExportValidationError(
             'source_job_id must reference a completed refraction static job'
@@ -215,66 +219,31 @@ def validate_refraction_static_export_source_job(
 def run_refraction_static_export_job(
     job_id: str,
     req: RefractionStaticExportJobRequest,
-    state: AppState,
+    state: object,
 ) -> None:
-    """Run a standalone M5 export job.
-
-    The job validates the completed source refraction artifacts, writes the
-    requested export artifacts into its own job directory, and persists request
-    metadata including resolved default formats.
-    """
-
-    def worker() -> JobCompletion:
-        return _run_refraction_static_export_job_body(
-            job_id=job_id,
-            req=req,
-            state=state,
-        )
-
-    run_job_with_lifecycle(
-        state=state,
-        job_id=job_id,
-        worker=worker,
-        progress_1_on_done=False,
-        start_progress=0.0,
-        clear_message_on_start=True,
-        on_error=_handle_refraction_static_export_job_error,
-    )
+    """SeisViewer2D lifecycle entrypoint moved to the adapter package."""
+    raise TypeError('run_refraction_static_export_job lives in the runtime adapter')
 
 
 def _run_refraction_static_export_job_body(
     *,
     job_id: str,
     req: RefractionStaticExportJobRequest,
-    state: AppState,
+    runtime: RefractionRuntime,
+    context: RefractionJobContext,
 ) -> JobCompletion:
-    _set_job_progress_message(
-        state,
-        job_id,
-        progress=0.10,
-        message='validating_source_refraction_static_job',
-    )
-    source = validate_refraction_static_export_source_job(req=req, state=state)
-    job_dir = _resolve_job_dir(state, job_id)
+    context.set_progress(0.10, 'validating_source_refraction_static_job')
+    source = validate_refraction_static_export_source_job(req=req, runtime=runtime)
+    job_dir = Path(context.artifacts_dir)
     job_dir.mkdir(parents=True, exist_ok=True)
     payload = _refraction_static_export_job_payload(
         job_id=job_id,
         req=req,
         source=source,
     )
-    _set_job_progress_message(
-        state,
-        job_id,
-        progress=0.60,
-        message='writing_refraction_static_export_artifacts',
-    )
+    context.set_progress(0.60, 'writing_refraction_static_export_artifacts')
     _write_requested_export_artifacts(job_dir=job_dir, req=req, source=source)
-    _set_job_progress_message(
-        state,
-        job_id,
-        progress=0.80,
-        message='writing_refraction_static_export_request',
-    )
+    context.set_progress(0.80, 'writing_refraction_static_export_request')
     write_json_atomic(
         job_dir / REFRACTION_STATIC_EXPORT_JOB_META_JSON_NAME,
         payload,
@@ -289,12 +258,7 @@ def _run_refraction_static_export_job_body(
         ensure_ascii=True,
         sort_keys=True,
     )
-    _set_job_progress_message(
-        state,
-        job_id,
-        progress=1.0,
-        message=REFRACTION_STATIC_EXPORT_DONE_MESSAGE,
-    )
+    context.set_progress(1.0, REFRACTION_STATIC_EXPORT_DONE_MESSAGE)
     return JobCompletion(
         finished_ts=time.time(),
         message=REFRACTION_STATIC_EXPORT_DONE_MESSAGE,
@@ -783,33 +747,6 @@ def _job_int(job: dict[str, object], field: str) -> int:
             f'source refraction job metadata is missing {field}'
         )
     return int(value)
-
-
-def _resolve_job_dir(state: AppState, job_id: str) -> Path:
-    with state.lock:
-        job = state.jobs.get(job_id)
-        artifacts_dir = job.get('artifacts_dir') if isinstance(job, dict) else None
-    if not isinstance(artifacts_dir, str) or not artifacts_dir:
-        raise ValueError('job artifacts_dir is not available')
-    return Path(artifacts_dir)
-
-
-def _set_job_progress_message(
-    state: AppState,
-    job_id: str,
-    *,
-    progress: float,
-    message: str,
-) -> None:
-    with state.lock:
-        if state.jobs.get(job_id) is None:
-            return
-        state.jobs.set_progress(job_id, progress)
-        state.jobs.set_message(job_id, message)
-
-
-def _handle_refraction_static_export_job_error(_exc: Exception) -> JobFailure:
-    return JobFailure(finished_ts=time.time())
 
 
 __all__ = [

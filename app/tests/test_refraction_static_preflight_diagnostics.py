@@ -8,14 +8,12 @@ from typing import Any
 import numpy as np
 import pytest
 
-import app.statics.refraction.application.input_model as inputs_module
 from app.api.schemas import (
     RefractionStaticApplyRequest,
     RefractionStaticGeometryRequest,
     RefractionStaticModelRequest,
     RefractionStaticMoveoutRequest,
 )
-from app.core.state import AppState
 from app.statics.refraction.application.input_model import build_refraction_static_input_model
 from app.statics.refraction.application.preflight_diagnostics import (
     REFRACTION_STATIC_PREFLIGHT_OBSERVATIONS_CSV_NAME,
@@ -111,12 +109,28 @@ class _FakeReader:
         return self._headers[byte]
 
 
+class _FakeTraceStoreProvider:
+    def __init__(self, reader: _FakeReader) -> None:
+        self._reader = reader
+
+    def get_reader(self, *_args: object, **_kwargs: object) -> _FakeReader:
+        return self._reader
+
+    def get_dt(self, _file_id: str) -> float:
+        return 0.001
+
+
+class _FakeRuntime:
+    def __init__(self, reader: _FakeReader) -> None:
+        self.trace_store = _FakeTraceStoreProvider(reader)
+
+
 def _install_reader(
     monkeypatch: pytest.MonkeyPatch,
     *,
     sorted_to_original: np.ndarray | None = None,
     headers: dict[int, np.ndarray] | None = None,
-) -> np.ndarray:
+) -> tuple[np.ndarray, _FakeRuntime]:
     order = (
         np.asarray([2, 0, 3, 1], dtype=np.int64)
         if sorted_to_original is None
@@ -126,8 +140,7 @@ def _install_reader(
         headers=headers or _headers(int(order.shape[0])),
         sorted_to_original=order,
     )
-    monkeypatch.setattr(inputs_module, 'get_reader', lambda *args, **kwargs: reader)
-    return order
+    return order, _FakeRuntime(reader)
 
 
 def _read_qc(job_dir: Path) -> dict[str, Any]:
@@ -142,7 +155,7 @@ def test_refraction_static_preflight_uploaded_npz_happy_path(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    sorted_to_original = _install_reader(monkeypatch)
+    sorted_to_original, runtime = _install_reader(monkeypatch)
     npz_path = tmp_path / 'uploaded_picks_time_s.npz'
     np.savez(
         npz_path,
@@ -155,7 +168,7 @@ def test_refraction_static_preflight_uploaded_npz_happy_path(
 
     build_refraction_static_input_model(
         req=_request(),
-        state=AppState(),
+        runtime=runtime,
         job_dir=tmp_path / 'job',
         uploaded_pick_npz_path=npz_path,
         uploaded_pick_metadata={'original_filename': 'picks.npz'},
@@ -183,14 +196,14 @@ def test_refraction_static_preflight_rejects_pick_count_mismatch(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    _install_reader(monkeypatch)
+    _, runtime = _install_reader(monkeypatch)
     npz_path = tmp_path / 'uploaded_picks_time_s.npz'
     np.savez(npz_path, pick_time_s=np.asarray([0.010, 0.020, 0.030]))
 
     with pytest.raises(ValueError, match='preflight.*pick array length mismatch'):
         build_refraction_static_input_model(
             req=_request(),
-            state=AppState(),
+            runtime=runtime,
             job_dir=tmp_path / 'job',
             uploaded_pick_npz_path=npz_path,
         )
@@ -205,7 +218,7 @@ def test_refraction_static_preflight_rejects_bad_sorted_to_original(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    _install_reader(monkeypatch)
+    _, runtime = _install_reader(monkeypatch)
     npz_path = tmp_path / 'uploaded_picks_time_s.npz'
     np.savez(
         npz_path,
@@ -216,7 +229,7 @@ def test_refraction_static_preflight_rejects_bad_sorted_to_original(
     with pytest.raises(ValueError, match='preflight.*sorted_to_original'):
         build_refraction_static_input_model(
             req=_request(),
-            state=AppState(),
+            runtime=runtime,
             job_dir=tmp_path / 'job',
             uploaded_pick_npz_path=npz_path,
         )
@@ -230,7 +243,7 @@ def test_refraction_static_preflight_counts_offset_gate_rejections(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    sorted_to_original = _install_reader(monkeypatch)
+    sorted_to_original, runtime = _install_reader(monkeypatch)
     npz_path = tmp_path / 'uploaded_picks_time_s.npz'
     np.savez(
         npz_path,
@@ -241,7 +254,7 @@ def test_refraction_static_preflight_counts_offset_gate_rejections(
 
     build_refraction_static_input_model(
         req=req,
-        state=AppState(),
+        runtime=runtime,
         job_dir=tmp_path / 'job',
         uploaded_pick_npz_path=npz_path,
     )
@@ -256,7 +269,7 @@ def test_refraction_static_preflight_rejects_nonfinite_uploaded_npz_picks(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    sorted_to_original = _install_reader(monkeypatch)
+    sorted_to_original, runtime = _install_reader(monkeypatch)
     npz_path = tmp_path / 'uploaded_picks_time_s.npz'
     np.savez(
         npz_path,
@@ -267,7 +280,7 @@ def test_refraction_static_preflight_rejects_nonfinite_uploaded_npz_picks(
     with pytest.raises(ValueError, match='preflight.*non-finite values'):
         build_refraction_static_input_model(
             req=_request(),
-            state=AppState(),
+            runtime=runtime,
             job_dir=tmp_path / 'job',
             uploaded_pick_npz_path=npz_path,
         )
@@ -285,7 +298,7 @@ def test_refraction_static_preflight_skips_observation_csv_for_success(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    sorted_to_original = _install_reader(monkeypatch)
+    sorted_to_original, runtime = _install_reader(monkeypatch)
     npz_path = tmp_path / 'uploaded_picks_time_s.npz'
     np.savez(
         npz_path,
@@ -295,7 +308,7 @@ def test_refraction_static_preflight_skips_observation_csv_for_success(
 
     build_refraction_static_input_model(
         req=_request(),
-        state=AppState(),
+        runtime=runtime,
         job_dir=tmp_path / 'job',
         uploaded_pick_npz_path=npz_path,
     )
@@ -322,7 +335,7 @@ def test_refraction_static_preflight_writes_bounded_rejected_rows_for_failure(
     )
     headers = _headers()
     headers[_geometry().source_x_byte] = np.asarray([np.nan, 0.0, np.nan, 0.0])
-    sorted_to_original = _install_reader(monkeypatch, headers=headers)
+    sorted_to_original, runtime = _install_reader(monkeypatch, headers=headers)
     npz_path = tmp_path / 'uploaded_picks_time_s.npz'
     np.savez(
         npz_path,
@@ -333,7 +346,7 @@ def test_refraction_static_preflight_writes_bounded_rejected_rows_for_failure(
     with pytest.raises(ValueError, match='No valid refraction observations remain'):
         build_refraction_static_input_model(
             req=_request(moveout=_moveout(max_offset_m=15.0)),
-            state=AppState(),
+            runtime=runtime,
             job_dir=tmp_path / 'job',
             uploaded_pick_npz_path=npz_path,
         )
@@ -361,7 +374,7 @@ def test_refraction_static_preflight_does_not_materialize_large_success_csv(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     n_traces = 10_050
-    sorted_to_original = _install_reader(
+    sorted_to_original, runtime = _install_reader(
         monkeypatch,
         sorted_to_original=np.arange(n_traces, dtype=np.int64),
     )
@@ -374,7 +387,7 @@ def test_refraction_static_preflight_does_not_materialize_large_success_csv(
 
     build_refraction_static_input_model(
         req=_request(),
-        state=AppState(),
+        runtime=runtime,
         job_dir=tmp_path / 'job',
         uploaded_pick_npz_path=npz_path,
     )

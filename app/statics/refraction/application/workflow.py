@@ -12,10 +12,7 @@ import numpy as np
 
 from app.statics.refraction.contracts.apply import RefractionStaticApplyRequest
 from app.statics.refraction.contracts.model import RefractionStaticModelRequest
-from app.core.state import AppState
 from app.services.common.artifact_io import write_json_atomic
-from app.services.job_runner import JobCompletion, JobFailure, run_job_with_lifecycle
-from app.services.job_artifact_refs import resolve_job_artifact_path
 from app.statics.refraction.application.apply_trace_store import (
     apply_refraction_statics_to_trace_store,
 )
@@ -49,6 +46,8 @@ from app.statics.refraction.domain.first_layer import (
     normalize_refraction_first_layer_request,
 )
 from app.statics.refraction.application.input_model import build_refraction_static_input_model
+from app.statics.refraction.ports.job_context import RefractionJobContext
+from app.statics.refraction.ports.runtime import RefractionRuntime
 from app.statics.refraction.domain.layer_config import (
     RefractionStaticLayerConfig,
     normalize_refraction_static_layers,
@@ -124,6 +123,12 @@ class _ResolvedFirstLayerRequest:
     upstream_artifact_names: tuple[str, ...] = ()
 
 
+@dataclass(frozen=True)
+class JobCompletion:
+    finished_ts: float | None = None
+    message: str | None = None
+
+
 class RefractionFirstLayerNotImplemented(NotImplementedError):
     """Raised when a requested first-layer mode is accepted but not implemented."""
 
@@ -158,7 +163,7 @@ def reject_unsupported_refraction_field_corrections(
 def resolve_refraction_first_layer_request(
     *,
     req: RefractionStaticApplyRequest,
-    state: AppState,
+    runtime: RefractionRuntime,
     job_dir: Path,
     uploaded_pick_npz_path: Path | None = None,
     uploaded_pick_metadata: dict[str, object] | None = None,
@@ -189,7 +194,7 @@ def resolve_refraction_first_layer_request(
     v1_req = _request_without_moveout_offset_gates(req)
     input_model = build_refraction_static_input_model(
         req=v1_req,
-        state=state,
+        runtime=runtime,
         job_dir=job_dir,
         uploaded_pick_npz_path=uploaded_pick_npz_path,
         uploaded_pick_metadata=uploaded_pick_metadata,
@@ -449,39 +454,35 @@ def _refraction_static_request_payload(
 
 
 def _set_job_progress_message(
-    state: AppState,
-    job_id: str,
+    context: RefractionJobContext,
+    _job_id: str,
     *,
     progress: float,
     message: str,
 ) -> None:
-    with state.lock:
-        if state.jobs.get(job_id) is None:
-            return
-        state.jobs.set_progress(job_id, progress)
-        state.jobs.set_message(job_id, message)
+    context.set_progress(progress, message)
 
 
-def _resolve_job_dir(state: AppState, job_id: str) -> Path:
-    with state.lock:
-        job = state.jobs.get(job_id)
-        artifacts_dir = job.get('artifacts_dir') if isinstance(job, dict) else None
-    if not isinstance(artifacts_dir, str) or not artifacts_dir:
-        raise ValueError('job artifacts_dir is not available')
-    return Path(artifacts_dir)
+def _resolve_job_dir(runtime: RefractionRuntime, job_id: str) -> Path:
+    return runtime.job_artifacts_dir(job_id)
+
+
+def _runtime_state(runtime: RefractionRuntime) -> object | None:
+    return getattr(runtime, 'state', None)
 
 
 def _finish_refraction_static_apply_job(
     *,
     job_id: str,
     req: RefractionStaticApplyRequest,
-    state: AppState,
+    runtime: RefractionRuntime,
+    context: RefractionJobContext,
     job_dir: Path,
     result: RefractionDatumStaticsResult,
 ) -> JobCompletion:
     if req.export.enabled:
         _set_job_progress_message(
-            state,
+            context,
             job_id,
             progress=0.91,
             message='writing_refraction_static_export_artifacts',
@@ -493,7 +494,7 @@ def _finish_refraction_static_apply_job(
         )
     if req.apply.register_corrected_file:
         _set_job_progress_message(
-            state,
+            context,
             job_id,
             progress=0.92,
             message='applying_refraction_static_trace_shift',
@@ -501,19 +502,17 @@ def _finish_refraction_static_apply_job(
         corrected_result = apply_refraction_statics_to_trace_store(
             req=req,
             result=result,
-            state=state,
+            runtime=runtime,
+            state=_runtime_state(runtime),
             job_id=job_id,
             job_dir=job_dir,
         )
         if corrected_result.corrected_file_id is not None:
-            with state.lock:
-                state.jobs.set_static_corrected_file(
-                    job_id,
-                    corrected_file_id=corrected_result.corrected_file_id,
-                    corrected_store_path=str(
-                        corrected_result.corrected_trace_store_path
-                    ),
-                )
+            runtime.set_static_corrected_file(
+                job_id,
+                corrected_file_id=corrected_result.corrected_file_id,
+                corrected_store_path=str(corrected_result.corrected_trace_store_path),
+            )
             if isinstance(result, RefractionDatumStaticsResult):
                 write_refraction_static_history_json(
                     result=result,
@@ -522,7 +521,7 @@ def _finish_refraction_static_apply_job(
                     output_file_id=corrected_result.corrected_file_id,
                 )
         _set_job_progress_message(
-            state,
+            context,
             job_id,
             progress=1.0,
             message='refraction_corrected_trace_store_registered',
@@ -530,7 +529,7 @@ def _finish_refraction_static_apply_job(
         return JobCompletion(finished_ts=time.time())
 
     _set_job_progress_message(
-        state,
+        context,
         job_id,
         progress=1.0,
         message=_ARTIFACT_ONLY_DONE_MESSAGE,
@@ -686,12 +685,13 @@ def _with_manual_static_field_correction(
     result: RefractionDatumStaticsResult,
     input_model: RefractionStaticInputModel | None,
     req: RefractionStaticApplyRequest,
-    state: AppState | None,
+    runtime: RefractionRuntime | None = None,
+    state: object | None = None,
 ) -> RefractionDatumStaticsResult:
     correction = req.field_corrections.manual_static
     if correction.mode == 'none':
         return result
-    rows = _manual_static_rows_from_request(req=req, state=state)
+    rows = _manual_static_rows_from_request(req=req, runtime=runtime, state=state)
     source_endpoint_id = _endpoint_ids_for_result(
         result_endpoint_key=result.source_endpoint_key,
         input_endpoint_key=(
@@ -873,7 +873,8 @@ def _field_correction_components_requested(req: RefractionStaticApplyRequest) ->
 def _manual_static_rows_from_request(
     *,
     req: RefractionStaticApplyRequest,
-    state: AppState | None,
+    runtime: RefractionRuntime | None = None,
+    state: object | None = None,
 ) -> tuple[RefractionManualStaticTableRow, ...]:
     correction = req.field_corrections.manual_static
     if correction.mode == 'inline_table':
@@ -894,9 +895,13 @@ def _manual_static_rows_from_request(
             'M4 field-correction follow-up implementation is required for '
             f'field_corrections.manual_static.mode={correction.mode}.'
         )
-    if state is None:
-        raise ValueError('manual static artifact table mode requires app state')
-
+    if runtime is None:
+        if state is None:
+            raise ValueError('manual static artifact table mode requires runtime')
+        raise ValueError(
+            'manual static artifact table mode requires runtime; '
+            'AppState adaptation belongs in adapters'
+        )
     artifact_specs: dict[tuple[str, str], set[str]] = {}
     for default_kind, artifact in (
         ('source', correction.source_table_artifact),
@@ -909,8 +914,7 @@ def _manual_static_rows_from_request(
 
     rows: list[RefractionManualStaticTableRow] = []
     for (job_id, artifact_name), default_kinds in artifact_specs.items():
-        path = resolve_job_artifact_path(
-            state,
+        path = runtime.artifacts.resolve_artifact(
             job_id=job_id,
             name=artifact_name,
             expected_file_id=req.file_id,
@@ -1055,9 +1059,14 @@ def _with_static_history_double_application_qc(
     *,
     result: RefractionDatumStaticsResult,
     req: RefractionStaticApplyRequest,
-    state: AppState,
+    runtime: RefractionRuntime | None = None,
+    state: object | None = None,
 ) -> RefractionDatumStaticsResult:
-    source_meta = _source_trace_store_meta_for_static_history(req=req, state=state)
+    source_meta = _source_trace_store_meta_for_static_history(
+        req=req,
+        runtime=runtime,
+        state=state,
+    )
     if source_meta is None:
         return result
     qc = refraction_static_double_application_qc(req=req, source_meta=source_meta)
@@ -1082,10 +1091,14 @@ def _with_static_history_double_application_qc(
 def _source_trace_store_meta_for_static_history(
     *,
     req: RefractionStaticApplyRequest,
-    state: AppState,
+    runtime: RefractionRuntime | None = None,
+    state: object | None = None,
 ) -> dict[str, object] | None:
     try:
-        store_path = Path(state.file_registry.get_store_path(req.file_id))
+        if runtime is not None:
+            store_path = runtime.trace_store.get_store_path(req.file_id)
+        else:
+            return None
     except Exception:  # noqa: BLE001
         return None
     meta_path = store_path / 'meta.json'
@@ -1102,27 +1115,28 @@ def _run_public_multilayer_refraction_static_apply_job(
     *,
     job_id: str,
     req: RefractionStaticApplyRequest,
-    state: AppState,
+    runtime: RefractionRuntime,
+    context: RefractionJobContext,
     job_dir: Path,
     first_layer: _ResolvedFirstLayerRequest,
     uploaded_pick_npz_path: Path | None = None,
     uploaded_pick_metadata: dict[str, object] | None = None,
 ) -> JobCompletion:
     _set_job_progress_message(
-        state,
+        context,
         job_id,
         progress=0.20,
         message='building_refraction_multilayer_input_model',
     )
     input_model = build_refraction_static_input_model(
         req=req,
-        state=state,
+        runtime=runtime,
         job_dir=job_dir,
         uploaded_pick_npz_path=uploaded_pick_npz_path,
         uploaded_pick_metadata=uploaded_pick_metadata,
     )
     _set_job_progress_message(
-        state,
+        context,
         job_id,
         progress=0.55,
         message='computing_refraction_multilayer_datum_statics',
@@ -1135,7 +1149,8 @@ def _run_public_multilayer_refraction_static_apply_job(
         apply_options=req.apply,
         resolved_first_layer=first_layer.resolved,
         design_matrix_job_dir=job_dir,
-        state=state,
+        runtime=runtime,
+        state=_runtime_state(runtime),
         file_id=req.file_id,
         key1_byte=req.key1_byte,
         key2_byte=req.key2_byte,
@@ -1155,7 +1170,7 @@ def _run_public_multilayer_refraction_static_apply_job(
         result=datum_result,
         input_model=input_model,
         req=req,
-        state=state,
+        runtime=runtime,
     )
     datum_result = _with_field_correction_composition(
         result=datum_result,
@@ -1165,10 +1180,10 @@ def _run_public_multilayer_refraction_static_apply_job(
     datum_result = _with_static_history_double_application_qc(
         result=datum_result,
         req=req,
-        state=state,
+        runtime=runtime,
     )
     _set_job_progress_message(
-        state,
+        context,
         job_id,
         progress=0.90,
         message='writing_refraction_static_artifacts',
@@ -1188,7 +1203,8 @@ def _run_public_multilayer_refraction_static_apply_job(
     return _finish_refraction_static_apply_job(
         job_id=job_id,
         req=req,
-        state=state,
+        runtime=runtime,
+        context=context,
         job_dir=job_dir,
         result=datum_result,
     )
@@ -1198,18 +1214,19 @@ def _run_refraction_static_apply_job_body(
     *,
     job_id: str,
     req: RefractionStaticApplyRequest,
-    state: AppState,
+    runtime: RefractionRuntime,
+    context: RefractionJobContext,
     uploaded_pick_npz_path: Path | None = None,
     uploaded_pick_metadata: dict[str, object] | None = None,
 ) -> JobCompletion | None:
     req = RefractionStaticApplyRequest.model_validate(req)
     _set_job_progress_message(
-        state,
+        context,
         job_id,
         progress=0.05,
         message='writing_refraction_static_request',
     )
-    job_dir = _resolve_job_dir(state, job_id)
+    job_dir = _resolve_job_dir(runtime, job_id)
     job_dir.mkdir(parents=True, exist_ok=True)
     requested_export_formats = resolve_refraction_static_export_formats(req.export)
     request_record = {
@@ -1240,14 +1257,14 @@ def _run_refraction_static_apply_job_body(
     if not public_multilayer_apply:
         _reject_unsupported_multilayer_apply(req)
     _set_job_progress_message(
-        state,
+        context,
         job_id,
         progress=0.12,
         message='resolving_refraction_first_layer',
     )
     first_layer = resolve_refraction_first_layer_request(
         req=req,
-        state=state,
+        runtime=runtime,
         job_dir=job_dir,
         uploaded_pick_npz_path=uploaded_pick_npz_path,
         uploaded_pick_metadata=uploaded_pick_metadata,
@@ -1257,7 +1274,8 @@ def _run_refraction_static_apply_job_body(
         return _run_public_multilayer_refraction_static_apply_job(
             job_id=job_id,
             req=input_req,
-            state=state,
+            runtime=runtime,
+            context=context,
             job_dir=job_dir,
             first_layer=first_layer,
             uploaded_pick_npz_path=uploaded_pick_npz_path,
@@ -1266,7 +1284,7 @@ def _run_refraction_static_apply_job_body(
 
     active_req = _solver_request_for_refraction_static_apply(input_req)
     _set_job_progress_message(
-        state,
+        context,
         job_id,
         progress=0.20,
         message='computing_refraction_weathering_replacement_statics',
@@ -1282,7 +1300,7 @@ def _run_refraction_static_apply_job_body(
     ):
         weathering_input_model = build_refraction_static_input_model(
             req=input_req,
-            state=state,
+            runtime=runtime,
             job_dir=job_dir,
             uploaded_pick_npz_path=uploaded_pick_npz_path,
             uploaded_pick_metadata=uploaded_pick_metadata,
@@ -1293,19 +1311,20 @@ def _run_refraction_static_apply_job_body(
     )
     replacement_result = compute_weathering_replacement_statics_from_first_breaks(
         req=active_req,
-        state=state,
+        runtime=runtime,
+        state=_runtime_state(runtime),
         job_dir=job_dir,
         input_model=weathering_input_model,
         resolved_first_layer=first_layer.resolved,
     )
     _set_job_progress_message(
-        state,
+        context,
         job_id,
         progress=0.70,
         message='refraction_weathering_replacement_statics_computed',
     )
     _set_job_progress_message(
-        state,
+        context,
         job_id,
         progress=0.75,
         message='computing_refraction_datum_statics',
@@ -1315,7 +1334,8 @@ def _run_refraction_static_apply_job_body(
         datum=active_req.datum,
         apply_options=active_req.apply,
         job_dir=job_dir,
-        state=state,
+        runtime=runtime,
+        state=_runtime_state(runtime),
         file_id=active_req.file_id,
         key1_byte=active_req.key1_byte,
         key2_byte=active_req.key2_byte,
@@ -1336,7 +1356,7 @@ def _run_refraction_static_apply_job_body(
         result=datum_result,
         input_model=weathering_input_model,
         req=active_req,
-        state=state,
+        runtime=runtime,
     )
     datum_result = _with_field_correction_composition(
         result=datum_result,
@@ -1346,16 +1366,16 @@ def _run_refraction_static_apply_job_body(
     datum_result = _with_static_history_double_application_qc(
         result=datum_result,
         req=active_req,
-        state=state,
+        runtime=runtime,
     )
     _set_job_progress_message(
-        state,
+        context,
         job_id,
         progress=0.85,
         message='refraction_datum_statics_computed',
     )
     _set_job_progress_message(
-        state,
+        context,
         job_id,
         progress=0.90,
         message='writing_refraction_static_artifacts',
@@ -1379,7 +1399,8 @@ def _run_refraction_static_apply_job_body(
     return _finish_refraction_static_apply_job(
         job_id=job_id,
         req=active_req,
-        state=state,
+        runtime=runtime,
+        context=context,
         job_dir=job_dir,
         result=datum_result,
     )
@@ -1424,10 +1445,10 @@ def _write_refraction_static_failure_diagnostics(
     *,
     job_id: str,
     exc: Exception,
-    state: AppState,
+    runtime: RefractionRuntime,
 ) -> None:
     try:
-        job_dir = _resolve_job_dir(state, job_id)
+        job_dir = _resolve_job_dir(runtime, job_id)
     except Exception:  # noqa: BLE001
         return
     if not job_dir.exists():
@@ -1452,50 +1473,28 @@ def _handle_refraction_static_job_error(
     exc: Exception,
     *,
     job_id: str,
-    state: AppState,
-) -> JobFailure:
+    runtime: RefractionRuntime,
+) -> JobCompletion:
     try:
         _write_refraction_static_failure_diagnostics(
             job_id=job_id,
             exc=exc,
-            state=state,
+            runtime=runtime,
         )
     except Exception:  # noqa: BLE001
         pass
-    return JobFailure(finished_ts=time.time())
+    return JobCompletion(finished_ts=time.time())
 
 
 def run_refraction_static_apply_job(
     job_id: str,
     req: RefractionStaticApplyRequest,
-    state: AppState,
+    state: object,
     uploaded_pick_npz_path: Path | None = None,
     uploaded_pick_metadata: dict[str, object] | None = None,
 ) -> None:
-    """Start the refraction statics job lifecycle."""
-
-    def worker() -> JobCompletion | None:
-        return _run_refraction_static_apply_job_body(
-            job_id=job_id,
-            req=req,
-            state=state,
-            uploaded_pick_npz_path=uploaded_pick_npz_path,
-            uploaded_pick_metadata=uploaded_pick_metadata,
-        )
-
-    run_job_with_lifecycle(
-        state=state,
-        job_id=job_id,
-        worker=worker,
-        progress_1_on_done=False,
-        start_progress=0.0,
-        clear_message_on_start=True,
-        on_error=lambda exc: _handle_refraction_static_job_error(
-            exc,
-            job_id=job_id,
-            state=state,
-        ),
-    )
+    """SeisViewer2D lifecycle entrypoint moved to the adapter package."""
+    raise TypeError('run_refraction_static_apply_job lives in the runtime adapter')
 
 
 __all__ = [

@@ -3,6 +3,9 @@
 from app.statics.refraction.ports.artifact_resolver import (
     RefractionArtifactResolver,
 )
+from app.statics.refraction.ports.corrected_store import (
+    RefractionCorrectedStoreProvider,
+)
 from app.statics.refraction.ports.job_context import RefractionJobContext
 from app.statics.refraction.ports.pick_source import (
     RefractionPickSourceLoader,
@@ -13,6 +16,7 @@ from app.statics.refraction.ports.trace_store import RefractionTraceStoreProvide
 
 __all__ = [
     'RefractionArtifactResolver',
+    'RefractionCorrectedStoreProvider',
     'RefractionJobContext',
     'RefractionPickSourceLoader',
     'RefractionPickSourcePayload',

@@ -8,20 +8,27 @@ from typing import Any, Mapping
 import numpy as np
 
 from app.statics.refraction.contracts.apply import RefractionStaticApplyRequest
-from app.core.state import AppState
 from app.statics.refraction.application.input_model import build_refraction_static_input_model
 from app.statics.refraction.application.pick_source_loader import PICK_TIME_KEYS
 from app.statics.refraction.domain.types import RefractionStaticInputModel
+from app.statics.refraction.ports.runtime import RefractionRuntime
 
 
 def validate_refraction_static_inputs_with_picks(
     *,
     req: RefractionStaticApplyRequest,
-    state: AppState,
+    runtime: RefractionRuntime | None = None,
+    state: object | None = None,
     pick_npz_path: Path,
     uploaded_pick_metadata: Mapping[str, object] | None = None,
 ) -> dict[str, Any]:
     """Build preflight diagnostics without launching correction work."""
+    if runtime is None:
+        if state is not None:
+            raise TypeError(
+                'runtime is required; AppState adaptation belongs in adapters'
+            )
+        raise TypeError('runtime is required')
     req = RefractionStaticApplyRequest.model_validate(req)
     target = {
         'file_id': req.file_id,
@@ -42,7 +49,7 @@ def validate_refraction_static_inputs_with_picks(
         try:
             input_model = build_refraction_static_input_model(
                 req=req,
-                state=state,
+                runtime=runtime,
                 job_dir=None,
                 uploaded_pick_npz_path=pick_npz_path,
                 uploaded_pick_metadata=uploaded_pick_metadata,

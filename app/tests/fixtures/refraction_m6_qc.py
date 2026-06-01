@@ -9,6 +9,9 @@ from typing import Any
 import numpy as np
 
 import app.statics.refraction.application.workflow as refraction_service_module
+from app.statics.refraction.adapters.seisviewer2d import (
+    workflow_runner as refraction_runner_module,
+)
 from app.api.schemas import (
     RefractionStaticApplyOptions,
     RefractionStaticApplyRequest,
@@ -304,7 +307,7 @@ def run_field_component_case(
         dt=FIELD_SAMPLE_INTERVAL_S,
     )
 
-    refraction_service_module.run_refraction_static_apply_job(job_id, req, state)
+    refraction_runner_module.run_refraction_static_apply_job(job_id, req, state)
     return M6FieldComponentCase(
         fixture=fixture,
         req=req,

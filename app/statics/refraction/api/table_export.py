@@ -17,12 +17,15 @@ from app.statics.refraction.contracts.table_apply import (
 )
 from app.services.in_memory_cleanup import cleanup_in_memory_state
 from app.services.pipeline_artifacts import maybe_cleanup_expired_jobs
+from app.statics.refraction.adapters.seisviewer2d.runtime import (
+    SeisViewer2DRefractionRuntime,
+)
 from app.statics.refraction.application.export_service import (
     RefractionStaticExportSourceJobNotFound,
     RefractionStaticExportValidationError,
     validate_refraction_static_export_source_job,
 )
-from app.statics.refraction.application.table_apply_service import (
+from app.statics.refraction.adapters.seisviewer2d.table_apply_runner import (
     run_refraction_static_table_apply_job,
 )
 
@@ -67,9 +70,13 @@ def refraction_static_export(
     state = get_state(request.app)
     cleanup_in_memory_state(state)
     maybe_cleanup_expired_jobs()
+    runtime = SeisViewer2DRefractionRuntime(state)
 
     try:
-        source = validate_refraction_static_export_source_job(req=req, state=state)
+        source = validate_refraction_static_export_source_job(
+            req=req,
+            runtime=runtime,
+        )
     except RefractionStaticExportSourceJobNotFound as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except RefractionStaticExportValidationError as exc:

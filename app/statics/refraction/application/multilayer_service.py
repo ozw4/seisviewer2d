@@ -23,7 +23,6 @@ from app.statics.refraction.contracts.inputs import (
     RefractionStaticPickSourceRequest,
 )
 from app.statics.refraction.contracts.model import RefractionStaticModelRequest
-from app.core.state import AppState
 from app.statics.refraction.artifacts import write_refraction_static_artifacts
 from app.statics.refraction.domain.cell_coordinates import (
     effective_refraction_cell_grid_config,
@@ -39,6 +38,7 @@ from app.statics.refraction.application.datum import (
     build_refraction_datum_statics,
     write_refraction_datum_statics_artifacts,
 )
+from app.statics.refraction.ports.runtime import RefractionRuntime
 from app.statics.refraction.application.design_matrix import (
     LOW_FOLD_CELL_REJECTION_REASON,
     OUTSIDE_REFRACTOR_CELL_GRID_REASON,
@@ -246,13 +246,16 @@ def compute_refraction_multilayer_datum_statics_from_input_model(
     resolved_first_layer: ResolvedRefractionFirstLayer,
     job_dir: Path | None = None,
     design_matrix_job_dir: Path | None = None,
-    state: AppState | None = None,
+    runtime: RefractionRuntime | None = None,
+    state: object | None = None,
     file_id: str | None = None,
     key1_byte: int | None = None,
     key2_byte: int | None = None,
     floating_datum_artifact_path: Path | None = None,
 ) -> RefractionMultiLayerStaticsWorkflowResult:
     """Run the implemented multi-layer time-term, T1LSST, and datum workflow."""
+    if runtime is None and state is not None:
+        raise TypeError('runtime is required; AppState adaptation belongs in adapters')
     normalized_layers = normalize_refraction_static_layers(model)
     _require_multilayer_t1lsst_layers(normalized_layers)
     layer_count = len(normalized_layers)
@@ -281,7 +284,7 @@ def compute_refraction_multilayer_datum_statics_from_input_model(
         datum=datum,
         apply_options=apply_options,
         job_dir=None,
-        state=state,
+        runtime=runtime,
         file_id=file_id,
         key1_byte=key1_byte,
         key2_byte=key2_byte,

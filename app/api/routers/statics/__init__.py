@@ -12,10 +12,12 @@ from app.services.datum_static_service import run_datum_static_apply_job
 from app.services.first_break_qc_service import run_first_break_qc_job
 from app.services.geometry_linkage_service import run_geometry_linkage_build_job
 from app.services.job_runner import start_job_thread
-from app.statics.refraction.application.workflow import run_refraction_static_apply_job
+from app.statics.refraction.adapters.seisviewer2d.workflow_runner import (
+    run_refraction_static_apply_job,
+)
 from app.services.residual_static_service import run_residual_static_apply_job
 from app.services.time_term_static_service import run_time_term_static_apply_job
-from app.statics.refraction.application.export_service import (
+from app.statics.refraction.adapters.seisviewer2d.export_runner import (
     run_refraction_static_export_job,
 )
 from app.statics.refraction.api import router as refraction_router

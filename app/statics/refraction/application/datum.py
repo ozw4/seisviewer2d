@@ -15,7 +15,6 @@ from app.statics.refraction.contracts.options import (
     RefractionStaticDatumRequest,
 )
 from app.statics.refraction.contracts.apply import RefractionStaticApplyRequest
-from app.core.state import AppState
 from app.services.common.array_validation import (
     coerce_1d_bool_array as _coerce_1d_bool_array,
     coerce_1d_integer_int64 as _coerce_1d_integer_int64,
@@ -24,7 +23,6 @@ from app.services.common.array_validation import (
     coerce_finite_float as _coerce_finite_float,
 )
 from app.services.common.artifact_io import write_csv_atomic, write_json_atomic
-from app.services.job_artifact_refs import resolve_job_artifact_path
 from app.statics.refraction.domain.first_layer import (
     validate_resolved_first_layer_velocity_match,
 )
@@ -37,6 +35,7 @@ from app.statics.refraction.domain.types import (
 from app.statics.refraction.application.weathering_replacement import (
     compute_weathering_replacement_statics_from_first_breaks,
 )
+from app.statics.refraction.ports.runtime import RefractionRuntime
 
 REFRACTION_DATUM_STATICS_QC_JSON_NAME = 'refraction_datum_statics_qc.json'
 REFRACTION_DATUM_NODES_CSV_NAME = 'refraction_datum_nodes.csv'
@@ -350,7 +349,8 @@ class _FloatingDatumModel:
 def compute_datum_refraction_statics_from_first_breaks(
     *,
     req: RefractionStaticApplyRequest,
-    state: AppState,
+    runtime: RefractionRuntime | None = None,
+    state: object | None = None,
     job_dir: Path | None = None,
     resolved_first_layer: ResolvedRefractionFirstLayer | None = None,
 ) -> RefractionDatumStaticsResult:
@@ -358,9 +358,12 @@ def compute_datum_refraction_statics_from_first_breaks(
     try:
         replacement_kwargs: dict[str, Any] = {
             'req': req,
-            'state': state,
             'job_dir': job_dir,
         }
+        if runtime is not None:
+            replacement_kwargs['runtime'] = runtime
+        elif state is not None:
+            replacement_kwargs['state'] = state
         if resolved_first_layer is not None:
             replacement_kwargs['resolved_first_layer'] = resolved_first_layer
         replacement = compute_weathering_replacement_statics_from_first_breaks(
@@ -371,6 +374,7 @@ def compute_datum_refraction_statics_from_first_breaks(
             datum=req.datum,
             apply_options=req.apply,
             job_dir=job_dir,
+            runtime=runtime,
             state=state,
             file_id=req.file_id,
             key1_byte=req.key1_byte,
@@ -389,7 +393,8 @@ def build_refraction_datum_statics(
     datum: RefractionStaticDatumRequest,
     apply_options: RefractionStaticApplyOptions | None = None,
     job_dir: Path | None = None,
-    state: AppState | None = None,
+    runtime: RefractionRuntime | None = None,
+    state: object | None = None,
     file_id: str | None = None,
     key1_byte: int | None = None,
     key2_byte: int | None = None,
@@ -406,7 +411,7 @@ def build_refraction_datum_statics(
     max_abs_shift_ms = _resolve_max_abs_shift_ms(apply_options)
     artifact_path = _resolve_floating_datum_artifact_path(
         datum=datum_req,
-        state=state,
+        runtime=runtime,
         explicit_path=floating_datum_artifact_path,
         file_id=file_id,
         key1_byte=key1_byte,
@@ -1732,7 +1737,7 @@ def _resolve_flat_datum(
 def _resolve_floating_datum_artifact_path(
     *,
     datum: RefractionStaticDatumRequest,
-    state: AppState | None,
+    runtime: RefractionRuntime | None,
     explicit_path: Path | None,
     file_id: str | None,
     key1_byte: int | None,
@@ -1747,13 +1752,12 @@ def _resolve_floating_datum_artifact_path(
                 f'floating datum artifact not found: {path}'
             )
         return path
-    if state is None:
+    if runtime is None:
         raise RefractionDatumStaticsError(_FROM_ARTIFACT_MESSAGE)
     if not datum.floating_datum_job_id or not datum.floating_datum_artifact_name:
         raise RefractionDatumStaticsError(_FROM_ARTIFACT_MESSAGE)
     try:
-        return resolve_job_artifact_path(
-            state,
+        return runtime.artifacts.resolve_artifact(
             job_id=datum.floating_datum_job_id,
             name=datum.floating_datum_artifact_name,
             allowed_job_types={'statics'},

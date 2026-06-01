@@ -11,7 +11,6 @@ import numpy as np
 
 from app.statics.refraction.contracts.options import RefractionStaticApplyOptions
 from app.statics.refraction.contracts.apply import RefractionStaticApplyRequest
-from app.core.state import AppState
 from app.services.common.array_validation import (
     coerce_1d_bool_array as _coerce_1d_bool_array,
     coerce_1d_integer_int64 as _coerce_1d_integer_int64,
@@ -37,6 +36,7 @@ from app.statics.refraction.domain.types import (
 from app.statics.refraction.application.weathering import (
     estimate_weathering_thickness_from_first_breaks,
 )
+from app.statics.refraction.ports.runtime import RefractionRuntime
 
 REFRACTION_WEATHERING_REPLACEMENT_QC_JSON_NAME = (
     'refraction_weathering_replacement_qc.json'
@@ -259,7 +259,8 @@ class _ValidatedWeathering:
 def compute_weathering_replacement_statics_from_first_breaks(
     *,
     req: RefractionStaticApplyRequest,
-    state: AppState,
+    runtime: RefractionRuntime | None = None,
+    state: object | None = None,
     job_dir: Path | None = None,
     input_model: RefractionStaticInputModel | None = None,
     resolved_first_layer: ResolvedRefractionFirstLayer | None = None,
@@ -268,9 +269,12 @@ def compute_weathering_replacement_statics_from_first_breaks(
     try:
         weathering_kwargs: dict[str, Any] = {
             'req': req,
-            'state': state,
             'job_dir': job_dir,
         }
+        if runtime is not None:
+            weathering_kwargs['runtime'] = runtime
+        elif state is not None:
+            weathering_kwargs['state'] = state
         if input_model is not None:
             weathering_kwargs['input_model'] = input_model
         if resolved_first_layer is not None:

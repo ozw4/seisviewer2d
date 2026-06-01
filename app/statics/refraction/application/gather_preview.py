@@ -10,11 +10,12 @@ from typing import Any
 
 import numpy as np
 
-from app.core.state import AppState
-from app.services.job_manager import JobManager
-from app.services.reader import coerce_section_f32, get_reader
 from app.statics.refraction.contracts.gather_preview import (
     RefractionStaticGatherPreviewRequest,
+)
+from app.statics.refraction.application.job_status import (
+    is_ready_status_value,
+    normalize_status_value,
 )
 from app.statics.refraction.domain.export_units import (
     REFRACTION_STATIC_REPO_SIGN_CONVENTION,
@@ -25,11 +26,22 @@ from app.statics.refraction.artifacts import (
     REFRACTION_STATIC_SOLUTION_NPZ_NAME,
 )
 from app.services.trace_store_index_validation import validate_sorted_to_original
-from app.trace_store.reader import TraceStoreSectionReader
+from app.statics.refraction.ports.runtime import RefractionRuntime
 
 _MAX_SERVICE_TRACES = 500
 _MAX_SERVICE_SAMPLES = 4000
 _WINDOW_ENDPOINT = '/get_section_window_bin'
+
+
+def _coerce_section_f32(arr: np.ndarray, scale: float | None) -> np.ndarray:
+    out = arr if arr.dtype == np.float32 else arr.astype(np.float32, copy=False)
+    if not out.flags.writeable:
+        out = out.copy()
+    if scale is not None:
+        out *= float(scale)
+    if not out.flags['C_CONTIGUOUS'] or out.dtype != np.float32:
+        out = np.ascontiguousarray(out, dtype=np.float32)
+    return out
 
 
 class RefractionStaticGatherPreviewError(ValueError):
@@ -80,7 +92,7 @@ def build_refraction_static_gather_preview(
     job_id: str,
     job: dict[str, object],
     req: RefractionStaticGatherPreviewRequest,
-    state: AppState,
+    runtime: RefractionRuntime,
 ) -> dict[str, Any]:
     """Build bounded preview data from existing TraceStore/artifact data."""
     _validate_job(job_id=job_id, job=job, req=req)
@@ -91,8 +103,8 @@ def build_refraction_static_gather_preview(
     )
     sign_convention = _extract_sign_convention(qc)
 
-    reader = get_reader(req.file_id, req.key1_byte, req.key2_byte, state=state)
-    dt_s = _reader_dt(reader, state=state, file_id=req.file_id)
+    reader = runtime.trace_store.get_reader(req.file_id, req.key1_byte, req.key2_byte)
+    dt_s = _reader_dt(reader, runtime=runtime, file_id=req.file_id)
     fit_arrays = _try_read_npz_artifact(
         artifacts_dir / REFRACTION_FIRST_BREAK_FIT_QC_NPZ_NAME,
     )
@@ -132,7 +144,7 @@ def build_refraction_static_gather_preview(
         _corrected_window_ref_and_samples(
             job=job,
             req=req,
-            state=state,
+            runtime=runtime,
             raw_reader=reader,
             raw_samples_trace_major=raw_samples,
             resolved=resolved,
@@ -232,10 +244,10 @@ def _validate_job(
         raise RefractionStaticGatherPreviewError(
             f'Job {job_id} is not a refraction statics job'
         )
-    if not JobManager.is_ready_status_value(job.get('status')):
+    if not is_ready_status_value(job.get('status')):
         raise RefractionStaticGatherPreviewError(
             f'Job {job_id} is not complete; current state is '
-            f'{JobManager.normalize_status_value(job.get("status"))}'
+            f'{normalize_status_value(job.get("status"))}'
         )
     job_file_id = _job_text(job, 'file_id', job_id)
     if job_file_id != req.file_id:
@@ -346,7 +358,7 @@ def _read_npz_artifact(path: Path, artifact_name: str) -> dict[str, np.ndarray]:
     return arrays
 
 
-def _section_shape(reader: TraceStoreSectionReader, key1: int) -> tuple[int, int]:
+def _section_shape(reader: Any, key1: int) -> tuple[int, int]:
     try:
         section = reader.get_section(int(key1)).arr
     except ValueError as exc:
@@ -360,9 +372,9 @@ def _section_shape(reader: TraceStoreSectionReader, key1: int) -> tuple[int, int
 
 
 def _reader_dt(
-    reader: TraceStoreSectionReader,
+    reader: Any,
     *,
-    state: AppState,
+    runtime: RefractionRuntime,
     file_id: str,
 ) -> float:
     meta = getattr(reader, 'meta', None)
@@ -371,7 +383,7 @@ def _reader_dt(
         dt = float(raw_dt)
         if math.isfinite(dt) and dt > 0.0:
             return dt
-    dt = float(state.file_registry.get_dt(file_id))
+    dt = float(runtime.trace_store.get_dt(file_id))
     if not math.isfinite(dt) or dt <= 0.0:
         raise RefractionStaticGatherPreviewError('TraceStore sample interval is invalid')
     return dt
@@ -380,7 +392,7 @@ def _reader_dt(
 def _resolve_key1(
     req: RefractionStaticGatherPreviewRequest,
     *,
-    reader: TraceStoreSectionReader,
+    reader: Any,
     fit_arrays: dict[str, np.ndarray] | None,
 ) -> int | None:
     if req.key1 is not None:
@@ -417,7 +429,7 @@ def _resolve_key1(
 def _resolve_window(
     req: RefractionStaticGatherPreviewRequest,
     *,
-    reader: TraceStoreSectionReader,
+    reader: Any,
     key1: int | None,
     dt_s: float,
     section_shape: tuple[int, int] | None,
@@ -670,7 +682,7 @@ def _load_trace_shift_selection(path: Path, *, n_traces: int) -> _TraceShiftSele
     )
 
 
-def _reader_sorted_to_original(reader: TraceStoreSectionReader) -> np.ndarray:
+def _reader_sorted_to_original(reader: Any) -> np.ndarray:
     try:
         values = reader.get_sorted_to_original()
     except ValueError as exc:
@@ -706,7 +718,7 @@ def _select_sorted_trace_shifts(
 def _validate_sorted_trace_indices(
     indices: np.ndarray,
     *,
-    reader: TraceStoreSectionReader,
+    reader: Any,
 ) -> None:
     arr = np.asarray(indices, dtype=np.int64)
     if arr.ndim != 1:
@@ -719,7 +731,7 @@ def _validate_sorted_trace_indices(
         )
 
 
-def _section_x_index_by_sorted_trace(reader: TraceStoreSectionReader) -> np.ndarray:
+def _section_x_index_by_sorted_trace(reader: Any) -> np.ndarray:
     n_traces = int(reader.traces.shape[0])
     out = np.full(n_traces, -1, dtype=np.int64)
     for key1_value in reader.get_key1_values().tolist():
@@ -843,7 +855,7 @@ def _endpoint_trace_indices(
 
 
 def _sample_trace_window(
-    reader: TraceStoreSectionReader,
+    reader: Any,
     *,
     resolved: _ResolvedWindow,
 ) -> np.ndarray:
@@ -851,7 +863,7 @@ def _sample_trace_window(
     if base.ndim != 2:
         raise RefractionStaticGatherPreviewError('TraceStore data must be 2D')
     sub = base[np.ix_(resolved.sorted_trace_indices, resolved.y_indices)]
-    samples = coerce_section_f32(sub, reader.scale)
+    samples = _coerce_section_f32(sub, reader.scale)
     if not np.all(np.isfinite(samples)):
         raise RefractionStaticGatherPreviewError(
             'TraceStore preview samples contain non-finite values'
@@ -860,7 +872,7 @@ def _sample_trace_window(
 
 
 def _shifted_preview_samples(
-    reader: TraceStoreSectionReader,
+    reader: Any,
     *,
     resolved: _ResolvedWindow,
     selected_shifts: np.ndarray,
@@ -891,7 +903,7 @@ def _shifted_preview_samples(
     raw_y1 = min(n_samples - 1, int(math.ceil(source_max)) + 1)
     raw_y_indices = np.arange(raw_y0, raw_y1 + 1, dtype=np.int64)
     expanded = base[np.ix_(resolved.sorted_trace_indices, raw_y_indices)]
-    expanded = coerce_section_f32(expanded, reader.scale)
+    expanded = _coerce_section_f32(expanded, reader.scale)
     if not np.all(np.isfinite(expanded)):
         raise RefractionStaticGatherPreviewError(
             'TraceStore preview samples contain non-finite values'
@@ -990,8 +1002,8 @@ def _corrected_window_ref_and_samples(
     *,
     job: dict[str, object],
     req: RefractionStaticGatherPreviewRequest,
-    state: AppState,
-    raw_reader: TraceStoreSectionReader,
+    runtime: RefractionRuntime,
+    raw_reader: Any,
     raw_samples_trace_major: np.ndarray,
     resolved: _ResolvedWindow,
     selected_shifts: np.ndarray,
@@ -1022,11 +1034,10 @@ def _corrected_window_ref_and_samples(
         )
 
     try:
-        corrected_reader = get_reader(
+        corrected_reader = runtime.trace_store.get_reader(
             corrected_file_id,
             req.key1_byte,
             req.key2_byte,
-            state=state,
         )
         corrected_shape = corrected_reader.traces.shape
     except Exception:  # noqa: BLE001

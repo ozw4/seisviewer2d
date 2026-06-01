@@ -22,6 +22,8 @@ from app.statics.refraction.application.table_apply_service import (
     STATIC_TABLE_APPLY_REFRACTION_HISTORY_JSON_NAME,
     STATIC_TABLE_APPLY_SOLUTION_NPZ_NAME,
     STATIC_TABLE_APPLY_TRACE_SHIFTS_CSV_NAME,
+)
+from app.statics.refraction.adapters.seisviewer2d.table_apply_runner import (
     run_refraction_static_table_apply_job,
 )
 from app.statics.refraction.application.apply_trace_store import CORRECTED_FILE_JSON_NAME

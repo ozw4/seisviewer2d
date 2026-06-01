@@ -57,6 +57,9 @@ from app.statics.refraction.application.pick_map import (
     RefractionStaticPickMapError,
     build_refraction_static_pick_map,
 )
+from app.statics.refraction.adapters.seisviewer2d.runtime import (
+    SeisViewer2DRefractionRuntime,
+)
 
 router = APIRouter()
 
@@ -175,10 +178,11 @@ async def refraction_static_qc_pick_map(
         state = get_state(request.app)
         cleanup_in_memory_state(state)
         job = _get_static_job_or_404(state, req.job_id) if req.job_id else None
+        runtime = SeisViewer2DRefractionRuntime(state)
         try:
             return build_refraction_static_pick_map(
                 req=req,
-                state=state,
+                runtime=runtime,
                 job=job,
                 uploaded_pick_npz_path=uploaded_pick_path,
             )
@@ -249,12 +253,13 @@ def refraction_static_gather_preview(
     state = get_state(request.app)
     cleanup_in_memory_state(state)
     job = _get_static_job_or_404(state, req.job_id)
+    runtime = SeisViewer2DRefractionRuntime(state)
     try:
         return build_refraction_static_gather_preview(
             job_id=req.job_id,
             job=job,
             req=req,
-            state=state,
+            runtime=runtime,
         )
     except RefractionStaticGatherPreviewNotFound as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
