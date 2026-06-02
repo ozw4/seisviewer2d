@@ -93,3 +93,16 @@ test('request controller notifies perf metrics for lifecycle events', () => {
     ['completed', { slotName: 'section-window', requestId: second.requestId }],
   ]);
 });
+
+test('manual request ids share the same monotonic sequence as render requests', () => {
+  const controller = createRenderRequestController();
+  const firstRender = controller.begin('section-window');
+  const legacyRequestId = controller.allocateRequestId();
+  const secondRender = controller.begin('compare-window');
+
+  expect(firstRender.requestId).toBe(1);
+  expect(legacyRequestId).toBe(2);
+  expect(secondRender.requestId).toBe(3);
+  expect(controller.isCurrent('section-window', legacyRequestId)).toBe(false);
+  expect(controller.isCurrent('compare-window', secondRender.requestId)).toBe(true);
+});

@@ -73,11 +73,16 @@ export function createRenderRequestController({ perfMetrics = viewerPerfMetrics 
     const name = requireSlotName(slotName);
     abort(name);
     const controller = new AbortController();
-    const requestId = ++nextRequestId;
+    const requestId = allocateRequestId();
     slots.set(name, { requestId, controller });
     increment(name, 'started');
     notify('recordRequestStarted', { slotName: name, requestId });
     return { requestId, signal: controller.signal };
+  }
+
+  function allocateRequestId() {
+    nextRequestId += 1;
+    return nextRequestId;
   }
 
   function isCurrent(slotName, requestId) {
@@ -125,6 +130,7 @@ export function createRenderRequestController({ perfMetrics = viewerPerfMetrics 
   }
 
   return {
+    allocateRequestId,
     begin,
     isCurrent,
     abort,

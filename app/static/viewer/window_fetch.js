@@ -188,7 +188,7 @@
     }
 
     function bumpWindowFetchId() {
-      const requestId = activeWindowFetchId + 1;
+      const requestId = getRenderRequestController().allocateRequestId();
       return setActiveWindowFetchId(requestId);
     }
 
