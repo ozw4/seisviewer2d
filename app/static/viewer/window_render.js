@@ -174,6 +174,7 @@
         else suppressRelayout = false;
         return promiseLike;
       }
+    function ignorePlotPromiseRejection() {}
     function maybeResizePlot(plotDiv, force) {
       if (!plotDiv) return Promise.resolve(false);
 
@@ -621,11 +622,13 @@
             total_ms: perf ? (tDone - perf.tReq0) : null,
             bytes: perf ? perf.bytes : null,
           });
-        });
+        }, ignorePlotPromiseRejection);
       }
       if (renderTimer) {
         if (plotPromise && typeof plotPromise.then === 'function') {
           plotPromise.then(() => {
+            stopWindowRenderPerfTimer(renderTimer);
+          }, () => {
             stopWindowRenderPerfTimer(renderTimer);
           });
         } else {
@@ -959,11 +962,13 @@
             total_ms: perf ? (tDone - perf.tReq0) : null,
             bytes: perf ? perf.bytes : null,
           });
-        });
+        }, ignorePlotPromiseRejection);
       }
       if (renderTimer) {
         if (plotPromise && typeof plotPromise.then === 'function') {
           plotPromise.then(() => {
+            stopWindowRenderPerfTimer(renderTimer);
+          }, () => {
             stopWindowRenderPerfTimer(renderTimer);
           });
         } else {

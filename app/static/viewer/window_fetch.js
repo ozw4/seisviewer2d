@@ -1287,7 +1287,7 @@
           if (windowFetchCtrl === ctrl) windowFetchCtrl = null;
           return;
         }
-        latestWindowRender = stripRenderRequest(cachedPayload);
+        latestWindowRender = renderPayload;
         hideLoading();
         if (isRelayouting) {
           redrawPending = true;
@@ -1438,7 +1438,7 @@
           return;
         }
         latestSeismicData = null;
-        latestWindowRender = durablePayload;
+        latestWindowRender = renderPayload;
         if (isRelayouting) {      // ドラッグ中なら描画は保留
           redrawPending = true;
           markRenderRequestCompleted(RENDER_SLOT_SECTION_WINDOW, requestId);
