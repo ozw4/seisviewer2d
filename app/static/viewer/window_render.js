@@ -209,6 +209,72 @@
         return promiseLike;
       }
     function ignorePlotPromiseRejection() {}
+    function getQueuedRenderRequest(renderData) {
+      if (
+        renderData?.__requestSlot &&
+        Number.isInteger(renderData.__requestId)
+      ) {
+        return {
+          slotName: renderData.__requestSlot,
+          requestId: renderData.__requestId,
+        };
+      }
+      return null;
+    }
+    function isQueuedRenderCurrent(renderData) {
+      const request = getQueuedRenderRequest(renderData);
+      if (!request || typeof isCurrentRenderRequest !== 'function') return true;
+      return isCurrentRenderRequest(request.slotName, request.requestId);
+    }
+    function markQueuedRenderStale(renderData) {
+      const request = getQueuedRenderRequest(renderData);
+      if (!request || typeof markStaleRenderDropped !== 'function') return false;
+      markStaleRenderDropped(request.slotName, request.requestId);
+      return true;
+    }
+    function isQueuedRenderCurrentOrMarkStale(renderData) {
+      if (isQueuedRenderCurrent(renderData)) return true;
+      markQueuedRenderStale(renderData);
+      return false;
+    }
+    function queueViewerPlotlyRender(plotDiv, renderData, startRender) {
+      const previous = plotDiv?.__svPlotlyRenderTail;
+      const previousSettled = previous && typeof previous.then === 'function'
+        ? previous.catch(ignorePlotPromiseRejection)
+        : Promise.resolve();
+      const queued = previousSettled.then(() => {
+        if (!isQueuedRenderCurrentOrMarkStale(renderData)) return false;
+        const renderPromise = startRender();
+        if (renderPromise && typeof renderPromise.then === 'function') {
+          return renderPromise.then(() => isQueuedRenderCurrentOrMarkStale(renderData));
+        }
+        return isQueuedRenderCurrentOrMarkStale(renderData);
+      });
+      if (plotDiv) {
+        plotDiv.__svPlotlyRenderTail = queued.catch(ignorePlotPromiseRejection);
+      }
+      return queued;
+    }
+    window.queueViewerPlotlyRender = queueViewerPlotlyRender;
+    function finishWindowPlotlyRender(plotDiv, windowData, mode, { wiggleSig = null } = {}) {
+      if (!isQueuedRenderCurrentOrMarkStale(windowData)) return false;
+      requestAnimationFrame(applyDragMode);
+      installPlotlyViewportHandlersOnce();
+      attachPickListeners(plotDiv);
+      installCustomDoubleClick(plotDiv);
+      plotDiv.__svPlotMode = mode;
+      if (wiggleSig !== null) plotDiv.__svWiggleSig = wiggleSig;
+      return true;
+    }
+    function finalizeWindowPlotlyRender(plotPromise, plotDiv, windowData, mode, options = {}) {
+      if (plotPromise && typeof plotPromise.then === 'function') {
+        return plotPromise.then((rendered) => {
+          if (!rendered) return false;
+          return finishWindowPlotlyRender(plotDiv, windowData, mode, options);
+        });
+      }
+      return finishWindowPlotlyRender(plotDiv, windowData, mode, options);
+    }
     function maybeResizePlot(plotDiv, force) {
       if (!plotDiv) return Promise.resolve(false);
 
@@ -366,52 +432,52 @@
         if (typeof markStaleRenderDropped === 'function') {
           markStaleRenderDropped(windowData.__requestSlot, windowData.__requestId);
         }
-        return;
+        return false;
       }
       if (isRelayouting) {           // ユーザーがドラッグ中
         latestWindowRender = windowData; // 最新結果だけ覚えて
         redrawPending = true;            // 終了後に再描画
-        return;
+        return false;
       }
       snapshotAxesRangesFromDOM();
-      if (!windowData || (windowData.mode && windowData.mode !== 'wiggle')) return;
+      if (!windowData || (windowData.mode && windowData.mode !== 'wiggle')) return false;
 
       const sel = document.getElementById('layerSelect');
       const currentLayer = sel ? sel.value : 'raw';
-      if (windowData.requestedLayer !== currentLayer) return;
+      if (windowData.requestedLayer !== currentLayer) return false;
       if (
         typeof windowData.scaling === 'string' &&
         typeof currentScaling !== 'undefined' &&
         windowData.scaling !== currentScaling
       ) {
-        return;
+        return false;
       }
       if (
         typeof windowData.lmoKey === 'string' &&
         typeof window.currentLmoKey === 'function' &&
         windowData.lmoKey !== window.currentLmoKey()
       ) {
-        return;
+        return false;
       }
 
       const slider = document.getElementById('key1_slider');
       const idx = slider ? parseInt(slider.value, 10) : 0;
       const key1Val = key1Values[idx];
-      if (windowData.key1 !== key1Val) return;
+      if (windowData.key1 !== key1Val) return false;
 
       if (windowData.pipelineKey && (window.latestPipelineKey || null) !== (windowData.pipelineKey || null)) {
-        return;
+        return false;
       }
 
-      if (windowData.effectiveLayer === 'fbprob') return;
+      if (windowData.effectiveLayer === 'fbprob') return false;
 
       const plotDiv = document.getElementById('plot');
-      if (!plotDiv) return;
+      if (!plotDiv) return false;
 
       const { shape, x0, x1, y0, y1 } = windowData;
       const rows = Number(shape?.[0] ?? 0);
       const cols = Number(shape?.[1] ?? 0);
-      if (!rows || !cols) return;
+      if (!rows || !cols) return false;
       const perf = windowData.__perf || null;
       const perfEnabled = window.SV_PERF === true;
       let tPrep0 = null;
@@ -421,11 +487,11 @@
 
       const useI8 = windowData.valuesI8 instanceof Int8Array;
       const useF32 = !useI8 && windowData.values && windowData.values.length != null;
-      if (!useI8 && !useF32) return;
+      if (!useI8 && !useF32) return false;
 
       const N = rows * cols;
-      if (useI8 && windowData.valuesI8.length < N) return;
-      if (useF32 && windowData.values.length < N) return;
+      if (useI8 && windowData.valuesI8.length < N) return false;
+      if (useF32 && windowData.values.length < N) return false;
       const renderTimer = startWindowRenderPerfTimer('render');
       recordWindowRenderPerfPayload(windowData, rows, cols);
 
@@ -620,35 +686,40 @@
         });
 
         if (perfEnabled) tPlot0 = performance.now();
-        plotPromise = withSuppressedRelayout(Plotly.react(plotDiv, traces, layout, {
-          responsive: true,
-          doubleClick: false,
-          doubleClickDelay: 300,
-        }));
-        setTimeout(() => { maybeResizePlot(plotDiv, true); }, 50);
+        plotPromise = queueViewerPlotlyRender(plotDiv, windowData, () => {
+          const promise = withSuppressedRelayout(Plotly.react(plotDiv, traces, layout, {
+            responsive: true,
+            doubleClick: false,
+            doubleClickDelay: 300,
+          }));
+          setTimeout(() => { maybeResizePlot(plotDiv, true); }, 50);
+          return promise;
+        });
       } else {
-        const diffUpdatePromise = Promise.resolve()
-          .then(() => Plotly.restyle(plotDiv, {
-            x: wiggleX,
-            y: wiggleY,
-          }, wiggleIdxs))
-          .then(() => {
-            const { manualIdx, predIdx, pendingIdx } = resolvePickTraceIndices(plotDiv);
-            if (manualIdx < 0 || predIdx < 0 || pendingIdx < 0) {
-              console.warn('[RENDER@wiggle][PICKS] pick traces missing on restyle path');
-              return;
-            }
-            return Plotly.restyle(plotDiv, {
-              x: [manualPickTr.x, predPickTr.x, pendingPickTr.x],
-              y: [manualPickTr.y, predPickTr.y, pendingPickTr.y],
-              visible: [true, !!showPred, !!pendingPickTr.visible],
-              mode: [manualPickTr.mode, predPickTr.mode, pendingPickTr.mode],
-              marker: [manualPickTr.marker, predPickTr.marker, pendingPickTr.marker],
-              line: [manualPickTr.line, predPickTr.line, pendingPickTr.line],
-            }, [manualIdx, predIdx, pendingIdx]);
-          });
         if (perfEnabled) tPlot0 = performance.now();
-        plotPromise = withSuppressedRelayout(diffUpdatePromise);
+        plotPromise = queueViewerPlotlyRender(plotDiv, windowData, () => {
+          const diffUpdatePromise = Promise.resolve()
+            .then(() => Plotly.restyle(plotDiv, {
+              x: wiggleX,
+              y: wiggleY,
+            }, wiggleIdxs))
+            .then(() => {
+              const { manualIdx, predIdx, pendingIdx } = resolvePickTraceIndices(plotDiv);
+              if (manualIdx < 0 || predIdx < 0 || pendingIdx < 0) {
+                console.warn('[RENDER@wiggle][PICKS] pick traces missing on restyle path');
+                return;
+              }
+              return Plotly.restyle(plotDiv, {
+                x: [manualPickTr.x, predPickTr.x, pendingPickTr.x],
+                y: [manualPickTr.y, predPickTr.y, pendingPickTr.y],
+                visible: [true, !!showPred, !!pendingPickTr.visible],
+                mode: [manualPickTr.mode, predPickTr.mode, pendingPickTr.mode],
+                marker: [manualPickTr.marker, predPickTr.marker, pendingPickTr.marker],
+                line: [manualPickTr.line, predPickTr.line, pendingPickTr.line],
+              }, [manualIdx, predIdx, pendingIdx]);
+            });
+          return withSuppressedRelayout(diffUpdatePromise);
+        });
       }
       if (perfEnabled && plotPromise && typeof plotPromise.then === 'function') {
         plotPromise.then(() => {
@@ -683,12 +754,7 @@
           stopWindowRenderPerfTimer(renderTimer);
         }
       }
-      requestAnimationFrame(applyDragMode);
-      installPlotlyViewportHandlersOnce();
-      attachPickListeners(plotDiv);
-      installCustomDoubleClick(plotDiv);
-      plotDiv.__svPlotMode = 'wiggle';
-      plotDiv.__svWiggleSig = wiggleSig;
+      return finalizeWindowPlotlyRender(plotPromise, plotDiv, windowData, 'wiggle', { wiggleSig });
     }
 
     function renderWindowHeatmap(windowData) {
@@ -704,45 +770,45 @@
         if (typeof markStaleRenderDropped === 'function') {
           markStaleRenderDropped(windowData.__requestSlot, windowData.__requestId);
         }
-        return;
+        return false;
       }
       if (isRelayouting) {           // ユーザーがドラッグ中
         latestWindowRender = windowData; // 最新結果だけ覚えて
         redrawPending = true;            // 終了後に再描画
-        return;
+        return false;
       }
       snapshotAxesRangesFromDOM();
-      if (!windowData || (windowData.mode && windowData.mode !== 'heatmap')) return;
+      if (!windowData || (windowData.mode && windowData.mode !== 'heatmap')) return false;
 
       const sel = document.getElementById('layerSelect');
       const currentLayer = sel ? sel.value : 'raw';
-      if (windowData.requestedLayer !== currentLayer) return;
+      if (windowData.requestedLayer !== currentLayer) return false;
       if (
         typeof windowData.scaling === 'string' &&
         typeof currentScaling !== 'undefined' &&
         windowData.scaling !== currentScaling
       ) {
-        return;
+        return false;
       }
       if (
         typeof windowData.lmoKey === 'string' &&
         typeof window.currentLmoKey === 'function' &&
         windowData.lmoKey !== window.currentLmoKey()
       ) {
-        return;
+        return false;
       }
 
       const slider = document.getElementById('key1_slider');
       const idx = slider ? parseInt(slider.value, 10) : 0;
       const key1Val = key1Values[idx];
-      if (windowData.key1 !== key1Val) return;
+      if (windowData.key1 !== key1Val) return false;
 
       if (windowData.pipelineKey && (window.latestPipelineKey || null) !== (windowData.pipelineKey || null)) {
-        return;
+        return false;
       }
 
       const plotDiv = document.getElementById('plot');
-      if (!plotDiv) return;
+      if (!plotDiv) return false;
 
       const resolveHeatmapTraceIndex = (gd) => {
         if (typeof window.heatmapTraceIndex === 'function') {
@@ -769,7 +835,7 @@
       let { stepX, stepY } = windowData;
       const rows = Number(shape?.[0] ?? 0);
       const cols = Number(shape?.[1] ?? 0);
-      if (!rows || !cols) return;
+      if (!rows || !cols) return false;
       const perf = windowData.__perf || null;
       const perfEnabled = window.SV_PERF === true;
       let tLut0 = null;
@@ -784,10 +850,10 @@
       const useF32 = !hasWorkerRows && !hasWorkerBacking && !useI8 && windowData.values && windowData.values.length != null;
       if (!hasWorkerRows && !hasWorkerBacking && !useI8 && !useF32) {
         console.warn('renderWindowHeatmap: missing values');
-        return;
+        return false;
       }
-      if (useI8 && windowData.valuesI8.length < N) return;
-      if (useF32 && windowData.values.length < N) return;
+      if (useI8 && windowData.valuesI8.length < N) return false;
+      if (useF32 && windowData.values.length < N) return false;
       const renderTimer = startWindowRenderPerfTimer('render');
       recordWindowRenderPerfPayload(windowData, rows, cols);
 
@@ -964,44 +1030,49 @@
         });
 
         if (perfEnabled) tPlot0 = performance.now();
-        plotPromise = withSuppressedRelayout(Plotly.react(plotDiv, traces, layout, {
-          responsive: true,
-          doubleClick: false,
-          doubleClickDelay: 300,
-        }));
-        setTimeout(() => { maybeResizePlot(plotDiv, true); }, 50);
-      } else {
-        const diffUpdatePromise = Promise.resolve()
-          .then(() => Plotly.restyle(plotDiv, {
-            x: [xVals],
-            y: [yVals],
-            z: [zData],
-            colorscale: [cm],
-            reversescale: [reverse],
-            zmin: [zMin],
-            zmax: [zMax],
-            zmid: [zMid],
-          }, [heatIdx]))
-          .then(() => {
-            const { manualIdx, predIdx, pendingIdx } = resolvePickTraceIndices(plotDiv);
-            if (manualIdx < 0 || predIdx < 0 || pendingIdx < 0) {
-              console.warn('[RENDER@heatmap][PICKS] pick traces missing on restyle path');
-              return;
-            }
-            return Plotly.restyle(plotDiv, {
-              x: [manualPickTr.x, predPickTr.x, pendingPickTr.x],
-              y: [manualPickTr.y, predPickTr.y, pendingPickTr.y],
-              visible: [true, !!showPred, !!pendingPickTr.visible],
-              mode: [manualPickTr.mode, predPickTr.mode, pendingPickTr.mode],
-              marker: [manualPickTr.marker, predPickTr.marker, pendingPickTr.marker],
-              line: [manualPickTr.line, predPickTr.line, pendingPickTr.line],
-            }, [manualIdx, predIdx, pendingIdx]);
-          })
-          .then(() => Plotly.relayout(plotDiv, {
-            title: fbTitle ?? '',
+        plotPromise = queueViewerPlotlyRender(plotDiv, windowData, () => {
+          const promise = withSuppressedRelayout(Plotly.react(plotDiv, traces, layout, {
+            responsive: true,
+            doubleClick: false,
+            doubleClickDelay: 300,
           }));
+          setTimeout(() => { maybeResizePlot(plotDiv, true); }, 50);
+          return promise;
+        });
+      } else {
         if (perfEnabled) tPlot0 = performance.now();
-        plotPromise = withSuppressedRelayout(diffUpdatePromise);
+        plotPromise = queueViewerPlotlyRender(plotDiv, windowData, () => {
+          const diffUpdatePromise = Promise.resolve()
+            .then(() => Plotly.restyle(plotDiv, {
+              x: [xVals],
+              y: [yVals],
+              z: [zData],
+              colorscale: [cm],
+              reversescale: [reverse],
+              zmin: [zMin],
+              zmax: [zMax],
+              zmid: [zMid],
+            }, [heatIdx]))
+            .then(() => {
+              const { manualIdx, predIdx, pendingIdx } = resolvePickTraceIndices(plotDiv);
+              if (manualIdx < 0 || predIdx < 0 || pendingIdx < 0) {
+                console.warn('[RENDER@heatmap][PICKS] pick traces missing on restyle path');
+                return;
+              }
+              return Plotly.restyle(plotDiv, {
+                x: [manualPickTr.x, predPickTr.x, pendingPickTr.x],
+                y: [manualPickTr.y, predPickTr.y, pendingPickTr.y],
+                visible: [true, !!showPred, !!pendingPickTr.visible],
+                mode: [manualPickTr.mode, predPickTr.mode, pendingPickTr.mode],
+                marker: [manualPickTr.marker, predPickTr.marker, pendingPickTr.marker],
+                line: [manualPickTr.line, predPickTr.line, pendingPickTr.line],
+              }, [manualIdx, predIdx, pendingIdx]);
+            })
+            .then(() => Plotly.relayout(plotDiv, {
+              title: fbTitle ?? '',
+            }));
+          return withSuppressedRelayout(diffUpdatePromise);
+        });
       }
       if (perfEnabled && plotPromise && typeof plotPromise.then === 'function') {
         plotPromise.then(() => {
@@ -1037,9 +1108,5 @@
           stopWindowRenderPerfTimer(renderTimer);
         }
       }
-      requestAnimationFrame(applyDragMode);
-      installPlotlyViewportHandlersOnce();
-      attachPickListeners(plotDiv);
-      installCustomDoubleClick(plotDiv);
-      plotDiv.__svPlotMode = 'heatmap';
+      return finalizeWindowPlotlyRender(plotPromise, plotDiv, windowData, 'heatmap');
     }

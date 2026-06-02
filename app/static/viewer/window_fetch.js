@@ -887,14 +887,22 @@
       return payload;
     }
 
-    function renderWindowPayload(windowPayload) {
-      if (!windowPayload) return;
+    async function renderWindowPayload(windowPayload) {
+      if (!windowPayload) return false;
       if (!isPayloadRenderRequestCurrent(windowPayload)) {
         markStaleRenderDropped(windowPayload.__requestSlot, windowPayload.__requestId);
-        return;
+        return false;
       }
-      if (windowPayload.mode === 'wiggle') renderWindowWiggle(windowPayload);
-      else renderWindowHeatmap(windowPayload);
+      const renderResult = windowPayload.mode === 'wiggle'
+        ? renderWindowWiggle(windowPayload)
+        : renderWindowHeatmap(windowPayload);
+      const rendered = await Promise.resolve(renderResult);
+      if (!rendered) return false;
+      if (!isPayloadRenderRequestCurrent(windowPayload)) {
+        markStaleRenderDropped(windowPayload.__requestSlot, windowPayload.__requestId);
+        return false;
+      }
+      return true;
     }
 
     function clampWindowInfoToSectionBounds(windowInfo) {
@@ -1306,11 +1314,24 @@
           if (windowFetchCtrl === ctrl) windowFetchCtrl = null;
           return;
         }
-        renderWindowPayload(renderPayload);
-        maybePrefetchAroundCurrentViewport(resolvedRequestContext);
-        markRenderRequestCompleted(RENDER_SLOT_SECTION_WINDOW, requestId);
-        commitLatestWindowRender(RENDER_SLOT_SECTION_WINDOW, requestId);
-        if (windowFetchCtrl === ctrl) windowFetchCtrl = null;
+        try {
+          const rendered = await renderWindowPayload(renderPayload);
+          if (!rendered) return;
+          if (!isCurrentRenderRequest(RENDER_SLOT_SECTION_WINDOW, requestId)) {
+            markStaleRenderDropped(RENDER_SLOT_SECTION_WINDOW, requestId);
+            return;
+          }
+          maybePrefetchAroundCurrentViewport(resolvedRequestContext);
+          markRenderRequestCompleted(RENDER_SLOT_SECTION_WINDOW, requestId);
+          commitLatestWindowRender(RENDER_SLOT_SECTION_WINDOW, requestId);
+        } catch (err) {
+          if (isCurrentRenderRequest(RENDER_SLOT_SECTION_WINDOW, requestId)) {
+            markRenderRequestFailed(RENDER_SLOT_SECTION_WINDOW, requestId);
+            console.warn('Cached window render error', err);
+          }
+        } finally {
+          if (windowFetchCtrl === ctrl) windowFetchCtrl = null;
+        }
         return;
       }
 
@@ -1462,7 +1483,8 @@
           markStaleRenderDropped(RENDER_SLOT_SECTION_WINDOW, requestId);
           return;
         }
-        renderWindowPayload(renderPayload);
+        const rendered = await renderWindowPayload(renderPayload);
+        if (!rendered) return;
         if (!isCurrentRenderRequest(RENDER_SLOT_SECTION_WINDOW, requestId)) {
           markStaleRenderDropped(RENDER_SLOT_SECTION_WINDOW, requestId);
           return;

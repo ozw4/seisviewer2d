@@ -695,40 +695,41 @@
     renderedEnd = render.x1;
     latestWindowRender = null;
     setGrid({ x0: render.x0, stepX: render.mode === 'wiggle' ? 1 : render.stepX, y0: render.y0, stepY: render.stepY });
-    const promise = withSuppressedRelayout(Plotly.react(plotDiv, traces, layout, {
+    const startRender = () => withSuppressedRelayout(Plotly.react(plotDiv, traces, layout, {
       responsive: true,
       doubleClick: false,
       doubleClickDelay: 300,
     }));
-    plotDiv.__svPlotMode = `compare-${render.mode}`;
-    plotDiv.__svComparePanelCount = panels.length;
-    plotDiv.__svCompareMode = render.mode;
-    if (promise && typeof promise.finally === 'function') {
-      promise
-        .then(() => {
-          if (typeof maybeResizePlot === 'function') maybeResizePlot(plotDiv, true);
-        })
-        .catch((err) => {
-          if (
-            Number.isInteger(render.__requestId) &&
-            isCompareRequestCurrent(render.__requestId)
-          ) {
-            console.warn('Compare Plotly render failed', err);
-          }
-        });
-    } else if (typeof maybeResizePlot === 'function') {
-      maybeResizePlot(plotDiv, true);
-    }
-    if (
-      Number.isInteger(render.__requestId) &&
-      !isCompareRequestCurrent(render.__requestId)
-    ) {
-      markStaleCompareRequest(render.__requestId);
-      return false;
-    }
-    requestAnimationFrame(applyDragMode);
-    if (typeof installPlotlyViewportHandlersOnce === 'function') installPlotlyViewportHandlersOnce();
-    return true;
+    const promise = typeof window.queueViewerPlotlyRender === 'function'
+      ? window.queueViewerPlotlyRender(plotDiv, render, startRender)
+      : Promise.resolve(startRender()).then(() => true);
+    return promise
+      .then((rendered) => {
+        if (!rendered) return false;
+        if (
+          Number.isInteger(render.__requestId) &&
+          !isCompareRequestCurrent(render.__requestId)
+        ) {
+          markStaleCompareRequest(render.__requestId);
+          return false;
+        }
+        plotDiv.__svPlotMode = `compare-${render.mode}`;
+        plotDiv.__svComparePanelCount = panels.length;
+        plotDiv.__svCompareMode = render.mode;
+        if (typeof maybeResizePlot === 'function') maybeResizePlot(plotDiv, true);
+        requestAnimationFrame(applyDragMode);
+        if (typeof installPlotlyViewportHandlersOnce === 'function') installPlotlyViewportHandlersOnce();
+        return true;
+      })
+      .catch((err) => {
+        if (
+          Number.isInteger(render.__requestId) &&
+          isCompareRequestCurrent(render.__requestId)
+        ) {
+          console.warn('Compare Plotly render failed', err);
+        }
+        return false;
+      });
   }
 
   function buildCompareRender(aPayload, bPayload, sources, decision, validation, windowInfo) {
@@ -855,7 +856,7 @@
       }
       latestCompareRender = render;
       latestSeismicData = null;
-      if (renderCompareLatestView() && isCompareRequestCurrent(requestId)) {
+      if (await renderCompareLatestView() && isCompareRequestCurrent(requestId)) {
         markRenderRequestCompleted(COMPARE_RENDER_SLOT, requestId);
       }
       return true;
