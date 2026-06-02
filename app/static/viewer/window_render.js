@@ -223,6 +223,17 @@
       D('RENDER@wiggle', { key1: windowData.key1, x: [windowData.x0, windowData.x1],
         y: [windowData.y0, windowData.y1], step: [windowData.stepX, windowData.stepY],
         picksTotal: picks.length });
+      if (
+        windowData?.__requestSlot &&
+        Number.isInteger(windowData.__requestId) &&
+        typeof isCurrentRenderRequest === 'function' &&
+        !isCurrentRenderRequest(windowData.__requestSlot, windowData.__requestId)
+      ) {
+        if (typeof markStaleRenderDropped === 'function') {
+          markStaleRenderDropped(windowData.__requestSlot, windowData.__requestId);
+        }
+        return;
+      }
       if (isRelayouting) {           // ユーザーがドラッグ中
         latestWindowRender = windowData; // 最新結果だけ覚えて
         redrawPending = true;            // 終了後に再描画
@@ -521,6 +532,17 @@
       D('RENDER@heatmap', { key1: windowData.key1, x: [windowData.x0, windowData.x1],
         y: [windowData.y0, windowData.y1], step: [windowData.stepX, windowData.stepY],
         picksTotal: picks.length });
+      if (
+        windowData?.__requestSlot &&
+        Number.isInteger(windowData.__requestId) &&
+        typeof isCurrentRenderRequest === 'function' &&
+        !isCurrentRenderRequest(windowData.__requestSlot, windowData.__requestId)
+      ) {
+        if (typeof markStaleRenderDropped === 'function') {
+          markStaleRenderDropped(windowData.__requestSlot, windowData.__requestId);
+        }
+        return;
+      }
       if (isRelayouting) {           // ユーザーがドラッグ中
         latestWindowRender = windowData; // 最新結果だけ覚えて
         redrawPending = true;            // 終了後に再描画

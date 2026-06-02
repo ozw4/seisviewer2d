@@ -2,6 +2,8 @@
   const AXIS_MARGIN = 0.035;
   const AMP_LIMIT = 3.0;
   const COMPARE_CACHE_PURPOSE = 'compare';
+  const COMPARE_RENDER_SLOT = 'compare-window';
+  const SECTION_RENDER_SLOT = 'section-window';
   let latestCompareRender = null;
   let compareSyncing = false;
 
@@ -216,7 +218,7 @@
     return { source, requestContext, ...artifacts };
   }
 
-  async function fetchComparePayload(request, ctrl, requestId) {
+  async function fetchComparePayload(request, signal, requestId) {
     if (!isCompareLmoCurrent(request.payloadMeta?.lmoKey)) return null;
     const cached = windowCacheGet(request.cacheKey);
     if (
@@ -227,7 +229,7 @@
       return cached;
     }
 
-    const res = await fetch(`/get_section_window_bin?${request.params.toString()}`, { signal: ctrl.signal });
+    const res = await fetch(`/get_section_window_bin?${request.params.toString()}`, { signal });
     if (!res.ok) {
       let detail = '';
       try {
@@ -244,7 +246,10 @@
       throw new CompareFetchError(request.source, res.status, detail);
     }
     const buf = await res.arrayBuffer();
-    if (requestId !== activeWindowFetchId) return null;
+    if (!isCurrentRenderRequest(COMPARE_RENDER_SLOT, requestId)) {
+      markStaleRenderDropped(COMPARE_RENDER_SLOT, requestId);
+      return null;
+    }
     if (!isCompareLmoCurrent(request.payloadMeta?.lmoKey)) return null;
     const payload = decodeWindowPayload(
       new Uint8Array(buf),
@@ -615,6 +620,13 @@
     if (!isCompareModeEnabled()) return false;
     const render = latestCompareRender;
     if (!render) return false;
+    if (
+      Number.isInteger(render.__requestId) &&
+      !isCurrentRenderRequest(COMPARE_RENDER_SLOT, render.__requestId)
+    ) {
+      markStaleRenderDropped(COMPARE_RENDER_SLOT, render.__requestId);
+      return false;
+    }
     const key1Val = currentCompareKey1();
     const sources = getCompareSources();
     if (render.key1 !== key1Val || sourcePairKey(render.sources) !== sourcePairKey(sources)) return false;
@@ -730,10 +742,15 @@
     const requestB = buildCompareRequest(sources.b, sources.a, key1Val, windowInfo, decision);
     const lmoKey = requestA.payloadMeta?.lmoKey;
 
-    const requestId = bumpWindowFetchId();
-    if (windowFetchCtrl) windowFetchCtrl.abort();
+    const { requestId, signal } = beginRenderRequest(
+      COMPARE_RENDER_SLOT,
+      [SECTION_RENDER_SLOT],
+    );
     if (typeof cancelActiveMainDecodeJob === 'function') cancelActiveMainDecodeJob();
-    const ctrl = new AbortController();
+    const ctrl = {
+      signal,
+      abort: () => abortRenderRequest(COMPARE_RENDER_SLOT),
+    };
     windowFetchCtrl = ctrl;
     showLoading(buildWindowLoadingMessage({
       mode: `compare ${decision.mode}`,
@@ -742,12 +759,17 @@
     }));
 
     try {
-      const aPromise = fetchComparePayload(requestA, ctrl, requestId);
+      const aPromise = fetchComparePayload(requestA, signal, requestId);
       const bPromise = requestA.cacheKey === requestB.cacheKey
         ? aPromise
-        : fetchComparePayload(requestB, ctrl, requestId);
+        : fetchComparePayload(requestB, signal, requestId);
       const [aPayload, bPayload] = await Promise.all([aPromise, bPromise]);
-      if (requestId !== activeWindowFetchId || !aPayload || !bPayload) return true;
+      if (!isCurrentRenderRequest(COMPARE_RENDER_SLOT, requestId) || !aPayload || !bPayload) {
+        if (!isCurrentRenderRequest(COMPARE_RENDER_SLOT, requestId)) {
+          markStaleRenderDropped(COMPARE_RENDER_SLOT, requestId);
+        }
+        return true;
+      }
       if (!isCompareLmoCurrent(lmoKey) || aPayload.lmoKey !== lmoKey || bPayload.lmoKey !== lmoKey) {
         return true;
       }
@@ -756,11 +778,15 @@
       const render = buildCompareRender(aPayload, bPayload, sources, decision, validation, windowInfo);
       if (!render) {
         setCompareStatus('A-B unavailable: source data could not be decoded.');
+        markRenderRequestFailed(COMPARE_RENDER_SLOT, requestId);
         return true;
       }
+      render.__requestSlot = COMPARE_RENDER_SLOT;
+      render.__requestId = requestId;
       latestCompareRender = render;
       latestSeismicData = null;
       renderCompareLatestView();
+      markRenderRequestCompleted(COMPARE_RENDER_SLOT, requestId);
       return true;
     } catch (err) {
       if (err && err.name === 'AbortError') return true;
@@ -771,14 +797,16 @@
         } else {
           setCompareStatus(err.message);
         }
+        markRenderRequestFailed(COMPARE_RENDER_SLOT, requestId);
         return true;
       }
       console.warn('Compare window fetch error', err);
       setCompareStatus(err instanceof Error ? err.message : String(err));
+      markRenderRequestFailed(COMPARE_RENDER_SLOT, requestId);
       return true;
     } finally {
       if (windowFetchCtrl === ctrl) windowFetchCtrl = null;
-      if (requestId === activeWindowFetchId) hideLoading();
+      if (isCurrentRenderRequest(COMPARE_RENDER_SLOT, requestId)) hideLoading();
     }
   }
 

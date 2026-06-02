@@ -5,6 +5,7 @@ import { buildLayout, buildPickShapes, buildPickMarkerTraces, buildPendingPickMa
 import { initPrefs, getPref } from './settings/prefs.js';
 import { cfg } from './core/config.js';
 import { debounce, throttle, rafDebounce } from './core/utils/timing.js';
+import { viewerRenderRequests } from './render_request_controller.js';
 
 // ------------------------------------------------------------
   // Mode decider with geometry-stability lock
@@ -80,6 +81,7 @@ window.cfg = cfg;
 window.debounce = debounce;
 window.throttle = throttle;
 window.rafDebounce = rafDebounce;
+window.viewerRenderRequests = viewerRenderRequests;
 
 const readyQueue = window.__viewerBootstrapQueue;
 window.viewerBootstrapReady = Promise.resolve();

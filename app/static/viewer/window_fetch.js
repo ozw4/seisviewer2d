@@ -91,10 +91,81 @@
       overlay.classList.remove('show');
     }
 
-    function bumpWindowFetchId() {
-      activeWindowFetchId += 1;
+    const RENDER_SLOT_SECTION_WINDOW = 'section-window';
+    const RENDER_SLOT_COMPARE_WINDOW = 'compare-window';
+
+    function getRenderRequestController() {
+      return window.viewerRenderRequests;
+    }
+
+    function setActiveWindowFetchId(requestId) {
+      activeWindowFetchId = requestId;
       windowFetchToken = activeWindowFetchId;
       return activeWindowFetchId;
+    }
+
+    function bumpWindowFetchId() {
+      const requestId = activeWindowFetchId + 1;
+      return setActiveWindowFetchId(requestId);
+    }
+
+    function beginRenderRequest(slotName, abortSlots = []) {
+      const requestController = getRenderRequestController();
+      for (const abortSlot of abortSlots) {
+        requestController.abort(abortSlot);
+      }
+      const request = requestController.begin(slotName);
+      setActiveWindowFetchId(request.requestId);
+      return request;
+    }
+
+    function isCurrentRenderRequest(slotName, requestId) {
+      return getRenderRequestController().isCurrent(slotName, requestId);
+    }
+
+    function markRenderRequestCompleted(slotName, requestId) {
+      getRenderRequestController().markCompleted(slotName, requestId);
+    }
+
+    function markRenderRequestFailed(slotName, requestId) {
+      getRenderRequestController().markFailed(slotName, requestId);
+    }
+
+    function markStaleRenderDropped(slotName, requestId) {
+      getRenderRequestController().markStaleDropped(slotName, requestId);
+    }
+
+    function abortRenderRequest(slotName) {
+      getRenderRequestController().abort(slotName);
+    }
+
+    function abortAllRenderRequests() {
+      getRenderRequestController().abortAll();
+    }
+
+    function attachRenderRequest(payload, slotName, requestId) {
+      if (!payload || typeof payload !== 'object') return payload;
+      return {
+        ...payload,
+        __requestSlot: slotName,
+        __requestId: requestId,
+      };
+    }
+
+    function stripRenderRequest(payload) {
+      if (!payload || typeof payload !== 'object') return payload;
+      if (!payload.__requestSlot && !Number.isInteger(payload.__requestId)) return payload;
+      const cleanPayload = { ...payload };
+      delete cleanPayload.__requestSlot;
+      delete cleanPayload.__requestId;
+      return cleanPayload;
+    }
+
+    function isPayloadRenderRequestCurrent(payload) {
+      const slotName = payload?.__requestSlot;
+      const requestId = payload?.__requestId;
+      if (!slotName || !Number.isInteger(requestId)) return true;
+      return isCurrentRenderRequest(slotName, requestId);
     }
 
     const WINDOW_CACHE_DEFAULT_MAX_BYTES = 128 * 1024 * 1024;
@@ -725,6 +796,10 @@
 
     function renderWindowPayload(windowPayload) {
       if (!windowPayload) return;
+      if (!isPayloadRenderRequestCurrent(windowPayload)) {
+        markStaleRenderDropped(windowPayload.__requestSlot, windowPayload.__requestId);
+        return;
+      }
       if (windowPayload.mode === 'wiggle') renderWindowWiggle(windowPayload);
       else renderWindowHeatmap(windowPayload);
     }
@@ -1103,24 +1178,40 @@
       const cachedPayload = windowCacheGet(cacheKey);
       if (cachedPayload) {
         if (!isCurrentLmoKey(cachedPayload.lmoKey)) return;
-        bumpWindowFetchId();
-        if (windowFetchCtrl) {
-          windowFetchCtrl.abort();
-          windowFetchCtrl = null;
-        }
+        const { requestId, signal } = beginRenderRequest(
+          RENDER_SLOT_SECTION_WINDOW,
+          [RENDER_SLOT_COMPARE_WINDOW],
+        );
+        const ctrl = {
+          signal,
+          abort: () => abortRenderRequest(RENDER_SLOT_SECTION_WINDOW),
+        };
+        windowFetchCtrl = ctrl;
         latestSeismicData = null;
-        latestWindowRender = cachedPayload;
+        const renderPayload = attachRenderRequest(
+          cachedPayload,
+          RENDER_SLOT_SECTION_WINDOW,
+          requestId,
+        );
+        latestWindowRender = stripRenderRequest(cachedPayload);
         hideLoading();
         if (isRelayouting) {
           redrawPending = true;
+          markRenderRequestCompleted(RENDER_SLOT_SECTION_WINDOW, requestId);
+          if (windowFetchCtrl === ctrl) windowFetchCtrl = null;
           return;
         }
-        renderWindowPayload(cachedPayload);
+        renderWindowPayload(renderPayload);
         maybePrefetchAroundCurrentViewport(resolvedRequestContext);
+        markRenderRequestCompleted(RENDER_SLOT_SECTION_WINDOW, requestId);
+        if (windowFetchCtrl === ctrl) windowFetchCtrl = null;
         return;
       }
 
-      const requestId = bumpWindowFetchId();
+      const { requestId, signal } = beginRenderRequest(
+        RENDER_SLOT_SECTION_WINDOW,
+        [RENDER_SLOT_COMPARE_WINDOW],
+      );
       const perfEnabled = window.SV_PERF === true;
       let tReq0 = null;
       let tRes = null;
@@ -1135,25 +1226,30 @@
         stepY: step_y,
       }));
 
-      // ---- Abort older in-flight window fetch, then create a new controller
-      if (windowFetchCtrl) {
-        windowFetchCtrl.abort();
-      }
-      const ctrl = new AbortController();
+      const ctrl = {
+        signal,
+        abort: () => abortRenderRequest(RENDER_SLOT_SECTION_WINDOW),
+      };
       windowFetchCtrl = ctrl;
 
       try {
         if (perfEnabled) tReq0 = performance.now();
-        const res = await fetch(`/get_section_window_bin?${params.toString()}`, { signal: ctrl.signal });
+        const res = await fetch(`/get_section_window_bin?${params.toString()}`, { signal });
         if (perfEnabled) tRes = performance.now();
         if (!res.ok) {
-          console.warn('Window fetch failed', res.status);
+          if (isCurrentRenderRequest(RENDER_SLOT_SECTION_WINDOW, requestId)) {
+            markRenderRequestFailed(RENDER_SLOT_SECTION_WINDOW, requestId);
+            console.warn('Window fetch failed', res.status);
+          }
           return;
         }
         const buf = await res.arrayBuffer();
         if (perfEnabled) tBuf = performance.now();
         if (perfEnabled) bytes = buf.byteLength;
-        if (requestId !== activeWindowFetchId) return; // stale
+        if (!isCurrentRenderRequest(RENDER_SLOT_SECTION_WINDOW, requestId)) {
+          markStaleRenderDropped(RENDER_SLOT_SECTION_WINDOW, requestId);
+          return;
+        }
         if (!isCurrentLmoKey(payloadMeta.lmoKey)) return;
 
         if (perfEnabled) tDec0 = performance.now();
@@ -1173,7 +1269,10 @@
           }
           decodeJobId = null;
           if (!decoded) return;
-          if (requestId !== activeWindowFetchId) return;
+          if (!isCurrentRenderRequest(RENDER_SLOT_SECTION_WINDOW, requestId)) {
+            markStaleRenderDropped(RENDER_SLOT_SECTION_WINDOW, requestId);
+            return;
+          }
           if (!isCurrentLmoKey(payloadMeta.lmoKey)) return;
           if (Number.isFinite(decoded?.dt) && decoded.dt > 0) {
             applyServerDt({ dt: decoded.dt });
@@ -1197,7 +1296,12 @@
         if (perfEnabled) tDec1 = performance.now();
         if (!windowPayload) return;
         if (!isCurrentLmoKey(windowPayload.lmoKey)) return;
-        windowPayload.__perf = perfEnabled ? {
+        const renderPayload = attachRenderRequest(
+          windowPayload,
+          RENDER_SLOT_SECTION_WINDOW,
+          requestId,
+        );
+        renderPayload.__perf = perfEnabled ? {
           id: requestId,
           mode,
           bytes,
@@ -1208,19 +1312,27 @@
           tDec1,
         } : null;
 
-        if (requestId !== activeWindowFetchId) return; // stale (decode/render phase)
-        if (!isCurrentLmoKey(windowPayload.lmoKey)) return;
-        const cachePayload = windowPayload.__perf ? { ...windowPayload, __perf: null } : windowPayload;
-        windowCacheSet(cacheKey, cachePayload);
-        latestSeismicData = null;
-        latestWindowRender = windowPayload;
-        if (isRelayouting) {      // ドラッグ中なら描画は保留
-          redrawPending = true;
+        if (!isCurrentRenderRequest(RENDER_SLOT_SECTION_WINDOW, requestId)) {
+          markStaleRenderDropped(RENDER_SLOT_SECTION_WINDOW, requestId);
           return;
         }
-        D('WINDOW@recv', { mode, shape: windowPayload.shape, stepX: windowPayload.stepX, stepY: windowPayload.stepY });
-        renderWindowPayload(windowPayload);
+        if (!isCurrentLmoKey(renderPayload.lmoKey)) return;
+        const durablePayload = stripRenderRequest(renderPayload);
+        const cachePayload = { ...durablePayload, __perf: null };
+        delete cachePayload.__requestSlot;
+        delete cachePayload.__requestId;
+        windowCacheSet(cacheKey, cachePayload);
+        latestSeismicData = null;
+        latestWindowRender = durablePayload;
+        if (isRelayouting) {      // ドラッグ中なら描画は保留
+          redrawPending = true;
+          markRenderRequestCompleted(RENDER_SLOT_SECTION_WINDOW, requestId);
+          return;
+        }
+        D('WINDOW@recv', { mode, shape: renderPayload.shape, stepX: renderPayload.stepX, stepY: renderPayload.stepY });
+        renderWindowPayload(renderPayload);
         maybePrefetchAroundCurrentViewport(resolvedRequestContext);
+        markRenderRequestCompleted(RENDER_SLOT_SECTION_WINDOW, requestId);
 
       } catch (err) {
         if (Number.isInteger(decodeJobId)) {
@@ -1236,7 +1348,10 @@
           return; // canceled on purpose
         }
         if (err && err.message === 'decode_job_canceled') return;
-        if (requestId === activeWindowFetchId) console.warn('Window fetch error', err);
+        if (isCurrentRenderRequest(RENDER_SLOT_SECTION_WINDOW, requestId)) {
+          markRenderRequestFailed(RENDER_SLOT_SECTION_WINDOW, requestId);
+          console.warn('Window fetch error', err);
+        }
       } finally {
         if (Number.isInteger(decodeJobId)) {
           cancelDecodeJob(DECODE_WORKER_KIND_MAIN, decodeJobId, { resolveDropped: true });
@@ -1246,11 +1361,13 @@
           decodeJobId = null;
         }
         if (windowFetchCtrl === ctrl) windowFetchCtrl = null;
-        if (requestId === activeWindowFetchId) hideLoading();
+        if (isCurrentRenderRequest(RENDER_SLOT_SECTION_WINDOW, requestId)) hideLoading();
       }
     }
 
     window.addEventListener('lmo:change', () => {
+      abortAllRenderRequests();
+      windowFetchCtrl = null;
       if (typeof scheduleWindowFetch === 'function') {
         scheduleWindowFetch();
       }
