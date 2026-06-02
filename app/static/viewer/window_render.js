@@ -1,3 +1,75 @@
+    function overlayAxisSuffix(index) {
+      return index === 0 ? '' : String(index + 1);
+    }
+
+    function overlayAxisLayoutName(base, index) {
+      return `${base}axis${overlayAxisSuffix(index)}`;
+    }
+
+    function buildOverlayTransformInputFromPlot(plotDiv = document.getElementById('plot'), options = {}) {
+      const layout = plotDiv?._fullLayout;
+      const rect = plotDiv?.getBoundingClientRect?.();
+      const size = layout?._size;
+      if (!plotDiv || !layout || !rect) return null;
+
+      const panelIndex = Number.isInteger(options.panelIndex) ? options.panelIndex : 0;
+      const xAxisName = options.xAxisName || overlayAxisLayoutName('x', panelIndex);
+      const yAxisName = options.yAxisName || overlayAxisLayoutName('y', panelIndex);
+      const xa = layout[xAxisName];
+      const ya = layout[yAxisName];
+      if (!xa || !ya || !Array.isArray(xa.range) || !Array.isArray(ya.range)) return null;
+
+      const xDomain = Array.isArray(xa.domain) && xa.domain.length === 2 ? xa.domain : [0, 1];
+      const yDomain = Array.isArray(ya.domain) && ya.domain.length === 2 ? ya.domain : [0, 1];
+      const plotArea = size && Number.isFinite(size.w) && Number.isFinite(size.h)
+        ? {
+            left: (Number(size.l) || 0) + xDomain[0] * size.w,
+            top: (Number(size.t) || 0) + (1 - yDomain[1]) * size.h,
+            width: Math.max(0, (xDomain[1] - xDomain[0]) * size.w),
+            height: Math.max(0, (yDomain[1] - yDomain[0]) * size.h),
+          }
+        : { left: 0, top: 0, width: rect.width, height: rect.height };
+
+      const dt = Number(options.dt ?? window.defaultDt ?? defaultDt);
+      const renderedY0 = Number(options.renderedY0 ?? latestWindowRender?.y0);
+      const renderedY1 = Number(options.renderedY1 ?? latestWindowRender?.y1);
+      const hasRenderedTime =
+        Number.isFinite(dt) &&
+        dt > 0 &&
+        Number.isFinite(renderedY0) &&
+        Number.isFinite(renderedY1);
+
+      return {
+        containerRect: {
+          left: Number(rect.left) || 0,
+          top: Number(rect.top) || 0,
+          width: Number(rect.width) || 0,
+          height: Number(rect.height) || 0,
+        },
+        plotArea,
+        xRange: [xa.range[0], xa.range[1]],
+        yRange: [ya.range[0], ya.range[1]],
+        transpose: options.transpose === true,
+        renderedStart: options.renderedStart ?? renderedStart,
+        renderedEnd: options.renderedEnd ?? renderedEnd,
+        renderedTimeStart: hasRenderedTime ? renderedY0 * dt : options.renderedTimeStart,
+        renderedTimeEnd: hasRenderedTime ? renderedY1 * dt : options.renderedTimeEnd,
+        dt,
+        panelIndex,
+        xAxisName,
+        yAxisName,
+      };
+    }
+
+    function createOverlayTransformForPlot(plotDiv = document.getElementById('plot'), options = {}) {
+      const input = buildOverlayTransformInputFromPlot(plotDiv, options);
+      const create = window.ViewerOverlayTransform?.createOverlayTransform;
+      return input && typeof create === 'function' ? create(input) : null;
+    }
+
+    window.buildOverlayTransformInputFromPlot = buildOverlayTransformInputFromPlot;
+    window.createOverlayTransformForPlot = createOverlayTransformForPlot;
+
     function installCustomDoubleClick(plotDiv) {
       if (!plotDiv || plotDiv.__customDbl) return;
 
