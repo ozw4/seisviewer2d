@@ -1,3 +1,5 @@
+import { viewerPerfMetrics } from './perf_metrics.js';
+
 const EMPTY_SLOT = Object.freeze({
   requestId: 0,
   controller: null,
@@ -21,7 +23,7 @@ function createEmptyMetrics() {
   };
 }
 
-export function createRenderRequestController() {
+export function createRenderRequestController({ perfMetrics = viewerPerfMetrics } = {}) {
   let nextRequestId = 0;
   const slots = new Map();
   const metrics = new Map();
@@ -49,12 +51,18 @@ export function createRenderRequestController() {
     getMetrics(slotName)[key] += 1;
   }
 
+  function notify(methodName, meta) {
+    const fn = perfMetrics && perfMetrics[methodName];
+    if (typeof fn === 'function') fn(meta);
+  }
+
   function abort(slotName) {
     const name = requireSlotName(slotName);
     const slot = getSlot(name);
     if (slot.controller && !slot.controller.signal.aborted) {
       slot.controller.abort();
       increment(name, 'aborted');
+      notify('recordRequestAborted', { slotName: name, requestId: slot.requestId });
     }
     if (slot.requestId !== 0) {
       slots.set(name, { requestId: 0, controller: null });
@@ -68,6 +76,7 @@ export function createRenderRequestController() {
     const requestId = ++nextRequestId;
     slots.set(name, { requestId, controller });
     increment(name, 'started');
+    notify('recordRequestStarted', { slotName: name, requestId });
     return { requestId, signal: controller.signal };
   }
 
@@ -86,6 +95,7 @@ export function createRenderRequestController() {
     const name = requireSlotName(slotName);
     if (!isCurrent(name, requestId)) return false;
     increment(name, 'completed');
+    notify('recordRequestCompleted', { slotName: name, requestId });
     slots.set(name, { requestId, controller: null });
     return true;
   }
@@ -102,6 +112,7 @@ export function createRenderRequestController() {
     const name = requireSlotName(slotName);
     if (isCurrent(name, requestId)) return false;
     increment(name, 'staleDropped');
+    notify('recordStaleResponseDropped', { slotName: name, requestId });
     return true;
   }
 

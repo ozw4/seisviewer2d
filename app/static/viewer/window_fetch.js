@@ -127,6 +127,60 @@
       return window.viewerRenderRequests;
     }
 
+    function getViewerPerfMetrics() {
+      return window.viewerPerfMetrics || null;
+    }
+
+    function startViewerPerfTimer(name) {
+      const metrics = getViewerPerfMetrics();
+      return metrics && typeof metrics.startTimer === 'function'
+        ? metrics.startTimer(name)
+        : null;
+    }
+
+    function stopViewerPerfTimer(timer) {
+      if (!timer) return null;
+      const metrics = getViewerPerfMetrics();
+      return metrics && typeof metrics.stopTimer === 'function'
+        ? metrics.stopTimer(timer)
+        : null;
+    }
+
+    function recordViewerPerfContext({ mode, layer, key1, windowInfo }) {
+      const metrics = getViewerPerfMetrics();
+      if (!metrics || typeof metrics.recordPayload !== 'function') return;
+      const meta = { mode, layer, key1 };
+      if (windowInfo) {
+        const x0 = Number(windowInfo.x0);
+        const x1 = Number(windowInfo.x1);
+        const y0 = Number(windowInfo.y0);
+        const y1 = Number(windowInfo.y1);
+        if (Number.isFinite(x0) && Number.isFinite(x1)) {
+          meta.visibleTraces = Math.max(0, Math.floor(Math.abs(x1 - x0)) + 1);
+        }
+        if (Number.isFinite(y0) && Number.isFinite(y1)) {
+          meta.visibleSamples = Math.max(0, Math.floor(Math.abs(y1 - y0)) + 1);
+        }
+      }
+      metrics.recordPayload(meta);
+    }
+
+    function recordViewerPerfPayload(windowPayload, extra = {}) {
+      const metrics = getViewerPerfMetrics();
+      if (!metrics || typeof metrics.recordPayload !== 'function' || !windowPayload) return;
+      const rows = Number(windowPayload.shape?.[0]);
+      const cols = Number(windowPayload.shape?.[1]);
+      const meta = {
+        mode: extra.mode ?? windowPayload.mode,
+        layer: extra.layer ?? windowPayload.requestedLayer,
+        key1: extra.key1 ?? windowPayload.key1,
+      };
+      if (Number.isFinite(extra.payloadBytes)) meta.payloadBytes = extra.payloadBytes;
+      if (Number.isFinite(cols)) meta.visibleTraces = cols;
+      if (Number.isFinite(rows)) meta.visibleSamples = rows;
+      metrics.recordPayload(meta);
+    }
+
     function setActiveWindowFetchId(requestId) {
       activeWindowFetchId = requestId;
       windowFetchToken = activeWindowFetchId;
@@ -1211,6 +1265,12 @@
           RENDER_SLOT_SECTION_WINDOW,
           [RENDER_SLOT_COMPARE_WINDOW],
         );
+        recordViewerPerfContext({
+          mode,
+          layer: requestedLayer,
+          key1: key1Val,
+          windowInfo,
+        });
         const ctrl = {
           signal,
           abort: () => abortRenderRequest(RENDER_SLOT_SECTION_WINDOW),
@@ -1246,6 +1306,12 @@
         RENDER_SLOT_SECTION_WINDOW,
         [RENDER_SLOT_COMPARE_WINDOW],
       );
+      recordViewerPerfContext({
+        mode,
+        layer: requestedLayer,
+        key1: key1Val,
+        windowInfo,
+      });
       const perfEnabled = window.SV_PERF === true;
       let tReq0 = null;
       let tRes = null;
@@ -1268,9 +1334,11 @@
 
       try {
         if (perfEnabled) tReq0 = performance.now();
+        const fetchTimer = startViewerPerfTimer('fetch');
         const res = await fetch(`/get_section_window_bin?${params.toString()}`, { signal });
         if (perfEnabled) tRes = performance.now();
         if (!res.ok) {
+          stopViewerPerfTimer(fetchTimer);
           if (isCurrentRenderRequest(RENDER_SLOT_SECTION_WINDOW, requestId)) {
             markRenderRequestFailed(RENDER_SLOT_SECTION_WINDOW, requestId);
             console.warn('Window fetch failed', res.status);
@@ -1278,8 +1346,9 @@
           return;
         }
         const buf = await res.arrayBuffer();
+        stopViewerPerfTimer(fetchTimer);
         if (perfEnabled) tBuf = performance.now();
-        if (perfEnabled) bytes = buf.byteLength;
+        bytes = buf.byteLength;
         if (!isCurrentRenderRequest(RENDER_SLOT_SECTION_WINDOW, requestId)) {
           markStaleRenderDropped(RENDER_SLOT_SECTION_WINDOW, requestId);
           return;
@@ -1287,6 +1356,7 @@
         if (!isCurrentLmoKey(payloadMeta.lmoKey)) return;
 
         if (perfEnabled) tDec0 = performance.now();
+        const decodeTimer = startViewerPerfTimer('decode');
         let windowPayload = null;
         if (workerEnabled) {
           const decodeJob = enqueueDecodeJob(DECODE_WORKER_KIND_MAIN, {
@@ -1327,8 +1397,15 @@
             (shape) => console.warn('Unexpected window shape', shape),
           );
         }
+        stopViewerPerfTimer(decodeTimer);
         if (perfEnabled) tDec1 = performance.now();
         if (!windowPayload) return;
+        recordViewerPerfPayload(windowPayload, {
+          payloadBytes: bytes,
+          mode,
+          layer: requestedLayer,
+          key1: key1Val,
+        });
         if (!isCurrentLmoKey(windowPayload.lmoKey)) return;
         const renderPayload = attachRenderRequest(
           windowPayload,

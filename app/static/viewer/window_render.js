@@ -119,6 +119,33 @@
       return withSuppressedRelayout(Promise.resolve(Plotly.Plots.resize(plotDiv)));
     }
     window.maybeResizePlot = maybeResizePlot;
+    function getWindowRenderPerfMetrics() {
+      return window.viewerPerfMetrics || null;
+    }
+    function startWindowRenderPerfTimer(name) {
+      const metrics = getWindowRenderPerfMetrics();
+      return metrics && typeof metrics.startTimer === 'function'
+        ? metrics.startTimer(name)
+        : null;
+    }
+    function stopWindowRenderPerfTimer(timer) {
+      if (!timer) return null;
+      const metrics = getWindowRenderPerfMetrics();
+      return metrics && typeof metrics.stopTimer === 'function'
+        ? metrics.stopTimer(timer)
+        : null;
+    }
+    function recordWindowRenderPerfPayload(windowData, rows, cols) {
+      const metrics = getWindowRenderPerfMetrics();
+      if (!metrics || typeof metrics.recordPayload !== 'function') return;
+      metrics.recordPayload({
+        mode: windowData?.mode,
+        layer: windowData?.requestedLayer,
+        key1: windowData?.key1,
+        visibleTraces: cols,
+        visibleSamples: rows,
+      });
+    }
     function resolveWiggleTraceIndices(gd) {
       const data = Array.isArray(gd?.data) ? gd.data : [];
       const idxs = [];
@@ -278,6 +305,8 @@
       const N = rows * cols;
       if (useI8 && windowData.valuesI8.length < N) return;
       if (useF32 && windowData.values.length < N) return;
+      const renderTimer = startWindowRenderPerfTimer('render');
+      recordWindowRenderPerfPayload(windowData, rows, cols);
 
       const scale = Number(windowData.scale) || 1;
       const stepX = windowData.stepX || 1;
@@ -416,6 +445,7 @@
       renderedStart = x0;
       renderedEnd = endTrace;
 
+      const overlayTimer = startWindowRenderPerfTimer('overlay');
       const showPred = !!document.getElementById('showFbPred')?.checked;
       const [manualPickTr, predPickTr] = buildPickMarkerTraces({
         manualPicks: picks,
@@ -432,6 +462,7 @@
         yMin: Math.min(time[0], time[rows - 1]),
         yMax: Math.max(time[0], time[rows - 1]),
       });
+      stopWindowRenderPerfTimer(overlayTimer);
       const pickManualCount = manualPickTr.x ? manualPickTr.x.length : 0;
       const pickPredCount = predPickTr.x ? predPickTr.x.length : 0;
       const [x0v, x1v] = visibleXRng();
@@ -519,6 +550,15 @@
             bytes: perf ? perf.bytes : null,
           });
         });
+      }
+      if (renderTimer) {
+        if (plotPromise && typeof plotPromise.then === 'function') {
+          plotPromise.then(() => {
+            stopWindowRenderPerfTimer(renderTimer);
+          });
+        } else {
+          stopWindowRenderPerfTimer(renderTimer);
+        }
       }
       requestAnimationFrame(applyDragMode);
       installPlotlyViewportHandlersOnce();
@@ -611,6 +651,8 @@
       }
       if (useI8 && windowData.valuesI8.length < N) return;
       if (useF32 && windowData.values.length < N) return;
+      const renderTimer = startWindowRenderPerfTimer('render');
+      recordWindowRenderPerfPayload(windowData, rows, cols);
 
       setGrid({ x0, stepX, y0, stepY });
       const gain = parseFloat(document.getElementById('gain').value) || 1.0;
@@ -717,6 +759,7 @@
       const zMid = (!fbMode && isDiv) ? 0 : null;
       const fbTitle = fbMode ? 'First-break Probability' : null;
 
+      const overlayTimer = startWindowRenderPerfTimer('overlay');
       const showPred = !!document.getElementById('showFbPred')?.checked;
       const [manualPickTr, predPickTr] = buildPickMarkerTraces({
         manualPicks: picks,
@@ -733,6 +776,7 @@
         yMin: Math.min(yVals[0], yVals[rows - 1]),
         yMax: Math.max(yVals[0], yVals[rows - 1]),
       });
+      stopWindowRenderPerfTimer(overlayTimer);
       const pickManualCount = manualPickTr.x ? manualPickTr.x.length : 0;
       const pickPredCount = predPickTr.x ? predPickTr.x.length : 0;
       const [x0v, x1v] = visibleXRng();
@@ -844,6 +888,15 @@
             bytes: perf ? perf.bytes : null,
           });
         });
+      }
+      if (renderTimer) {
+        if (plotPromise && typeof plotPromise.then === 'function') {
+          plotPromise.then(() => {
+            stopWindowRenderPerfTimer(renderTimer);
+          });
+        } else {
+          stopWindowRenderPerfTimer(renderTimer);
+        }
       }
       requestAnimationFrame(applyDragMode);
       installPlotlyViewportHandlersOnce();
