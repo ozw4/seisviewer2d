@@ -29,6 +29,8 @@ describe('createOverlayTransform', () => {
 
     const px = transform.traceTimeToPixel(50, 1);
     expect(px).toEqual({ x: 150, y: 100, relativeX: 140, relativeY: 80 });
+    expect(transform.traceTimeToPixel(50, 0)).toMatchObject({ x: 150, y: 150 });
+    expect(transform.traceTimeToPixel(50, 2)).toMatchObject({ x: 150, y: 50 });
     expectRoundTrip(transform, 50, 1);
   });
 
@@ -40,8 +42,8 @@ describe('createOverlayTransform', () => {
     });
 
     expectRoundTrip(transform, 25, 0.5);
-    expect(transform.traceTimeToPixel(100, 2)).toMatchObject({ x: 50, y: 50 });
-    expect(transform.traceTimeToPixel(0, 0)).toMatchObject({ x: 250, y: 150 });
+    expect(transform.traceTimeToPixel(100, 2)).toMatchObject({ x: 50, y: 150 });
+    expect(transform.traceTimeToPixel(0, 0)).toMatchObject({ x: 250, y: 50 });
   });
 
   test('clips visible ranges to the rendered partial viewport', () => {
@@ -71,8 +73,8 @@ describe('createOverlayTransform', () => {
 
     expect(full.traceTimeToPixel(50, 1)).toMatchObject({ x: 150, y: 100 });
     expect(zoomed.traceTimeToPixel(50, 1)).toMatchObject({ x: 150, y: 100 });
-    expect(zoomed.traceTimeToPixel(25, 1.5)).toMatchObject({ x: 50, y: 50 });
-    expect(zoomed.traceTimeToPixel(75, 0.5)).toMatchObject({ x: 250, y: 150 });
+    expect(zoomed.traceTimeToPixel(25, 1.5)).toMatchObject({ x: 50, y: 150 });
+    expect(zoomed.traceTimeToPixel(75, 0.5)).toMatchObject({ x: 250, y: 50 });
   });
 
   test('reports out-of-view trace/time points', () => {
@@ -99,6 +101,8 @@ describe('createOverlayTransform', () => {
 
     const px = transform.traceTimeToPixel(50, 1);
     expect(px).toEqual({ x: 150, y: 100, relativeX: 140, relativeY: 80 });
+    expect(transform.traceTimeToPixel(0, 1)).toMatchObject({ x: 150, y: 150 });
+    expect(transform.traceTimeToPixel(100, 1)).toMatchObject({ x: 150, y: 50 });
     expectRoundTrip(transform, 50, 1);
   });
 

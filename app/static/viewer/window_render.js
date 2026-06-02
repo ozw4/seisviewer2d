@@ -6,6 +6,40 @@
       return `${base}axis${overlayAxisSuffix(index)}`;
     }
 
+    function parseOverlayTranspose(value) {
+      if (value === true || value === 1) return true;
+      if (value === false || value === 0) return false;
+      if (typeof value === 'string') {
+        const normalized = value.trim().toLowerCase();
+        if (normalized === 'true' || normalized === '1') return true;
+        if (normalized === 'false' || normalized === '0') return false;
+      }
+      return null;
+    }
+
+    function resolveOverlayTranspose(plotDiv, options = {}) {
+      const explicit = parseOverlayTranspose(options.transpose);
+      if (explicit !== null) return explicit;
+
+      const candidates = [
+        options.axisTranspose,
+        options.overlayTranspose,
+        plotDiv?.__svTraceTimeTranspose,
+        plotDiv?.__svOverlayTranspose,
+        plotDiv?.dataset?.svTraceTimeTranspose,
+        plotDiv?.dataset?.svOverlayTranspose,
+        latestWindowRender?.axisTranspose,
+        latestWindowRender?.overlayTranspose,
+        window.viewerTraceTimeTranspose,
+        window.viewerOverlayTranspose,
+      ];
+      for (const candidate of candidates) {
+        const parsed = parseOverlayTranspose(candidate);
+        if (parsed !== null) return parsed;
+      }
+      return false;
+    }
+
     function buildOverlayTransformInputFromPlot(plotDiv = document.getElementById('plot'), options = {}) {
       const layout = plotDiv?._fullLayout;
       const rect = plotDiv?.getBoundingClientRect?.();
@@ -49,7 +83,7 @@
         plotArea,
         xRange: [xa.range[0], xa.range[1]],
         yRange: [ya.range[0], ya.range[1]],
-        transpose: options.transpose === true,
+        transpose: resolveOverlayTranspose(plotDiv, options),
         renderedStart: options.renderedStart ?? renderedStart,
         renderedEnd: options.renderedEnd ?? renderedEnd,
         renderedTimeStart: hasRenderedTime ? renderedY0 * dt : options.renderedTimeStart,

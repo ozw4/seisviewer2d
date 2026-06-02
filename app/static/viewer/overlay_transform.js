@@ -50,16 +50,19 @@ function withinRange(value, range) {
   return n >= lo - EPSILON && n <= hi + EPSILON;
 }
 
-function dataToPixel(value, range, pixelStart, pixelLength) {
+function dataToPixel(value, range, pixelStart, pixelLength, isYAxis = false) {
   const n = finiteNumber(value);
   if (n === null || !range || !(pixelLength > 0)) return null;
-  return pixelStart + ((n - range[0]) / (range[1] - range[0])) * pixelLength;
+  const ratio = (n - range[0]) / (range[1] - range[0]);
+  return pixelStart + (isYAxis ? 1 - ratio : ratio) * pixelLength;
 }
 
-function pixelToData(pixel, range, pixelStart, pixelLength) {
+function pixelToData(pixel, range, pixelStart, pixelLength, isYAxis = false) {
   const n = finiteNumber(pixel);
   if (n === null || !range || !(pixelLength > 0)) return null;
-  return range[0] + ((n - pixelStart) / pixelLength) * (range[1] - range[0]);
+  const pixelRatio = (n - pixelStart) / pixelLength;
+  const ratio = isYAxis ? 1 - pixelRatio : pixelRatio;
+  return range[0] + ratio * (range[1] - range[0]);
 }
 
 function normalizePlotArea(rect, plotArea) {
@@ -116,6 +119,8 @@ export function createOverlayTransform(input = {}) {
   const tracePixelLength = transpose ? plotArea.height : plotArea.width;
   const timePixelStart = transpose ? plotArea.left : plotArea.top;
   const timePixelLength = transpose ? plotArea.width : plotArea.height;
+  const traceAxisIsYAxis = transpose;
+  const timeAxisIsYAxis = !transpose;
   const visibleTrace = intersectRanges(rangeMinMax(traceAxisRange), traceRenderRange);
   const visibleTime = intersectRanges(rangeMinMax(timeAxisRange), timeRenderRange);
 
@@ -126,8 +131,20 @@ export function createOverlayTransform(input = {}) {
     plotArea,
     transpose,
     traceTimeToPixel(trace, timeS) {
-      const tracePx = dataToPixel(trace, traceAxisRange, tracePixelStart, tracePixelLength);
-      const timePx = dataToPixel(timeS, timeAxisRange, timePixelStart, timePixelLength);
+      const tracePx = dataToPixel(
+        trace,
+        traceAxisRange,
+        tracePixelStart,
+        tracePixelLength,
+        traceAxisIsYAxis,
+      );
+      const timePx = dataToPixel(
+        timeS,
+        timeAxisRange,
+        timePixelStart,
+        timePixelLength,
+        timeAxisIsYAxis,
+      );
       if (tracePx === null || timePx === null) return null;
       const clientX = transpose ? timePx : tracePx;
       const clientY = transpose ? tracePx : timePx;
@@ -141,8 +158,20 @@ export function createOverlayTransform(input = {}) {
     pixelToTraceTime(x, y) {
       const tracePixel = transpose ? y : x;
       const timePixel = transpose ? x : y;
-      const trace = pixelToData(tracePixel, traceAxisRange, tracePixelStart, tracePixelLength);
-      const timeS = pixelToData(timePixel, timeAxisRange, timePixelStart, timePixelLength);
+      const trace = pixelToData(
+        tracePixel,
+        traceAxisRange,
+        tracePixelStart,
+        tracePixelLength,
+        traceAxisIsYAxis,
+      );
+      const timeS = pixelToData(
+        timePixel,
+        timeAxisRange,
+        timePixelStart,
+        timePixelLength,
+        timeAxisIsYAxis,
+      );
       if (trace === null || timeS === null) return null;
       return { trace, timeS };
     },
