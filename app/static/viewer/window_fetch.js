@@ -74,9 +74,34 @@
       return `Loading window... Mode: ${mode}, stepX=${stepX}, stepY=${stepY}`;
     }
 
-    function showLoading(message) {
+    let activeWindowLoadingRequest = null;
+
+    function normalizeLoadingRequest(request) {
+      if (!request || typeof request !== 'object') return null;
+      const slotName = typeof request.slotName === 'string' ? request.slotName : request.slot;
+      const requestId = Number(request.requestId);
+      if (!slotName || !Number.isInteger(requestId)) return null;
+      return { slotName, requestId };
+    }
+
+    function sameLoadingRequest(request) {
+      const normalized = normalizeLoadingRequest(request);
+      if (!normalized || !activeWindowLoadingRequest) return false;
+      return activeWindowLoadingRequest.slotName === normalized.slotName &&
+        activeWindowLoadingRequest.requestId === normalized.requestId;
+    }
+
+    function showLoading(message, request = null) {
       const overlay = document.getElementById('windowLoadingOverlay');
       if (!overlay) return;
+      activeWindowLoadingRequest = normalizeLoadingRequest(request);
+      if (activeWindowLoadingRequest) {
+        overlay.dataset.renderSlot = activeWindowLoadingRequest.slotName;
+        overlay.dataset.requestId = String(activeWindowLoadingRequest.requestId);
+      } else {
+        delete overlay.dataset.renderSlot;
+        delete overlay.dataset.requestId;
+      }
       const messageEl = document.getElementById('windowLoadingMessage');
       if (messageEl) {
         messageEl.textContent = message || 'Loading window...';
@@ -85,9 +110,13 @@
       overlay.classList.add('show');
     }
 
-    function hideLoading() {
+    function hideLoading(request = null) {
       const overlay = document.getElementById('windowLoadingOverlay');
       if (!overlay) return;
+      if (request && !sameLoadingRequest(request)) return;
+      activeWindowLoadingRequest = null;
+      delete overlay.dataset.renderSlot;
+      delete overlay.dataset.requestId;
       overlay.classList.remove('show');
     }
 
@@ -1193,6 +1222,11 @@
           RENDER_SLOT_SECTION_WINDOW,
           requestId,
         );
+        if (!isCurrentRenderRequest(RENDER_SLOT_SECTION_WINDOW, requestId)) {
+          markStaleRenderDropped(RENDER_SLOT_SECTION_WINDOW, requestId);
+          if (windowFetchCtrl === ctrl) windowFetchCtrl = null;
+          return;
+        }
         latestWindowRender = stripRenderRequest(cachedPayload);
         hideLoading();
         if (isRelayouting) {
@@ -1224,7 +1258,7 @@
         mode,
         stepX: step_x,
         stepY: step_y,
-      }));
+      }), { slotName: RENDER_SLOT_SECTION_WINDOW, requestId });
 
       const ctrl = {
         signal,
@@ -1322,6 +1356,10 @@
         delete cachePayload.__requestSlot;
         delete cachePayload.__requestId;
         windowCacheSet(cacheKey, cachePayload);
+        if (!isCurrentRenderRequest(RENDER_SLOT_SECTION_WINDOW, requestId)) {
+          markStaleRenderDropped(RENDER_SLOT_SECTION_WINDOW, requestId);
+          return;
+        }
         latestSeismicData = null;
         latestWindowRender = durablePayload;
         if (isRelayouting) {      // ドラッグ中なら描画は保留
@@ -1330,7 +1368,15 @@
           return;
         }
         D('WINDOW@recv', { mode, shape: renderPayload.shape, stepX: renderPayload.stepX, stepY: renderPayload.stepY });
+        if (!isCurrentRenderRequest(RENDER_SLOT_SECTION_WINDOW, requestId)) {
+          markStaleRenderDropped(RENDER_SLOT_SECTION_WINDOW, requestId);
+          return;
+        }
         renderWindowPayload(renderPayload);
+        if (!isCurrentRenderRequest(RENDER_SLOT_SECTION_WINDOW, requestId)) {
+          markStaleRenderDropped(RENDER_SLOT_SECTION_WINDOW, requestId);
+          return;
+        }
         maybePrefetchAroundCurrentViewport(resolvedRequestContext);
         markRenderRequestCompleted(RENDER_SLOT_SECTION_WINDOW, requestId);
 
@@ -1361,7 +1407,7 @@
           decodeJobId = null;
         }
         if (windowFetchCtrl === ctrl) windowFetchCtrl = null;
-        if (isCurrentRenderRequest(RENDER_SLOT_SECTION_WINDOW, requestId)) hideLoading();
+        hideLoading({ slotName: RENDER_SLOT_SECTION_WINDOW, requestId });
       }
     }
 

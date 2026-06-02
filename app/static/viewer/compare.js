@@ -37,6 +37,20 @@
     status.hidden = text.length === 0;
   }
 
+  function isCompareRequestCurrent(requestId) {
+    return isCurrentRenderRequest(COMPARE_RENDER_SLOT, requestId);
+  }
+
+  function markStaleCompareRequest(requestId) {
+    markStaleRenderDropped(COMPARE_RENDER_SLOT, requestId);
+  }
+
+  function setCompareStatusIfCurrent(requestId, message) {
+    if (!isCompareRequestCurrent(requestId)) return false;
+    setCompareStatus(message);
+    return true;
+  }
+
   function isCompareModeEnabled() {
     return !!document.getElementById('compareModeToggle')?.checked;
   }
@@ -219,6 +233,10 @@
   }
 
   async function fetchComparePayload(request, signal, requestId) {
+    if (!isCompareRequestCurrent(requestId)) {
+      markStaleCompareRequest(requestId);
+      return null;
+    }
     if (!isCompareLmoCurrent(request.payloadMeta?.lmoKey)) return null;
     const cached = windowCacheGet(request.cacheKey);
     if (
@@ -226,6 +244,10 @@
       isCompareLmoCurrent(cached.lmoKey) &&
       canUseCachedComparePayload(cached, request.source)
     ) {
+      if (!isCompareRequestCurrent(requestId)) {
+        markStaleCompareRequest(requestId);
+        return null;
+      }
       return cached;
     }
 
@@ -246,8 +268,8 @@
       throw new CompareFetchError(request.source, res.status, detail);
     }
     const buf = await res.arrayBuffer();
-    if (!isCurrentRenderRequest(COMPARE_RENDER_SLOT, requestId)) {
-      markStaleRenderDropped(COMPARE_RENDER_SLOT, requestId);
+    if (!isCompareRequestCurrent(requestId)) {
+      markStaleCompareRequest(requestId);
       return null;
     }
     if (!isCompareLmoCurrent(request.payloadMeta?.lmoKey)) return null;
@@ -258,6 +280,10 @@
       (shape) => console.warn('Unexpected compare window shape', shape),
     );
     if (!payload) return null;
+    if (!isCompareRequestCurrent(requestId)) {
+      markStaleCompareRequest(requestId);
+      return null;
+    }
     if (!isCompareLmoCurrent(payload.lmoKey)) return null;
     windowCacheSet(request.cacheKey, payload);
     return payload;
@@ -622,9 +648,9 @@
     if (!render) return false;
     if (
       Number.isInteger(render.__requestId) &&
-      !isCurrentRenderRequest(COMPARE_RENDER_SLOT, render.__requestId)
+      !isCompareRequestCurrent(render.__requestId)
     ) {
-      markStaleRenderDropped(COMPARE_RENDER_SLOT, render.__requestId);
+      markStaleCompareRequest(render.__requestId);
       return false;
     }
     const key1Val = currentCompareKey1();
@@ -636,6 +662,13 @@
     const plotDiv = document.getElementById('plot');
     if (!plotDiv) return false;
     const panels = buildComparePanels(render);
+    if (
+      Number.isInteger(render.__requestId) &&
+      !isCompareRequestCurrent(render.__requestId)
+    ) {
+      markStaleCompareRequest(render.__requestId);
+      return false;
+    }
     if (compareShowDiffEnabled() && !render.diffAvailable) {
       setCompareStatus(render.diffMessage || 'A-B unavailable.');
     } else {
@@ -650,6 +683,13 @@
       else traces.push(buildCompareHeatmapTrace(panels[i], i, render));
     }
     const layout = buildCompareLayout(render, panels, xRange, yRange);
+    if (
+      Number.isInteger(render.__requestId) &&
+      !isCompareRequestCurrent(render.__requestId)
+    ) {
+      markStaleCompareRequest(render.__requestId);
+      return false;
+    }
     downsampleFactor = render.stepY || 1;
     renderedStart = render.x0;
     renderedEnd = render.x1;
@@ -664,11 +704,27 @@
     plotDiv.__svComparePanelCount = panels.length;
     plotDiv.__svCompareMode = render.mode;
     if (promise && typeof promise.finally === 'function') {
-      promise.finally(() => {
-        if (typeof maybeResizePlot === 'function') maybeResizePlot(plotDiv, true);
-      });
+      promise
+        .then(() => {
+          if (typeof maybeResizePlot === 'function') maybeResizePlot(plotDiv, true);
+        })
+        .catch((err) => {
+          if (
+            Number.isInteger(render.__requestId) &&
+            isCompareRequestCurrent(render.__requestId)
+          ) {
+            console.warn('Compare Plotly render failed', err);
+          }
+        });
     } else if (typeof maybeResizePlot === 'function') {
       maybeResizePlot(plotDiv, true);
+    }
+    if (
+      Number.isInteger(render.__requestId) &&
+      !isCompareRequestCurrent(render.__requestId)
+    ) {
+      markStaleCompareRequest(render.__requestId);
+      return false;
     }
     requestAnimationFrame(applyDragMode);
     if (typeof installPlotlyViewportHandlersOnce === 'function') installPlotlyViewportHandlersOnce();
@@ -756,7 +812,7 @@
       mode: `compare ${decision.mode}`,
       stepX: decision.stepX,
       stepY: decision.stepY,
-    }));
+    }), { slotName: COMPARE_RENDER_SLOT, requestId });
 
     try {
       const aPromise = fetchComparePayload(requestA, signal, requestId);
@@ -764,9 +820,9 @@
         ? aPromise
         : fetchComparePayload(requestB, signal, requestId);
       const [aPayload, bPayload] = await Promise.all([aPromise, bPromise]);
-      if (!isCurrentRenderRequest(COMPARE_RENDER_SLOT, requestId) || !aPayload || !bPayload) {
-        if (!isCurrentRenderRequest(COMPARE_RENDER_SLOT, requestId)) {
-          markStaleRenderDropped(COMPARE_RENDER_SLOT, requestId);
+      if (!isCompareRequestCurrent(requestId) || !aPayload || !bPayload) {
+        if (!isCompareRequestCurrent(requestId)) {
+          markStaleCompareRequest(requestId);
         }
         return true;
       }
@@ -777,36 +833,59 @@
       const validation = validateComparePair(aPayload, bPayload, sources);
       const render = buildCompareRender(aPayload, bPayload, sources, decision, validation, windowInfo);
       if (!render) {
-        setCompareStatus('A-B unavailable: source data could not be decoded.');
-        markRenderRequestFailed(COMPARE_RENDER_SLOT, requestId);
+        if (setCompareStatusIfCurrent(requestId, 'A-B unavailable: source data could not be decoded.')) {
+          markRenderRequestFailed(COMPARE_RENDER_SLOT, requestId);
+        }
+        return true;
+      }
+      if (
+        !isCompareRequestCurrent(requestId) ||
+        !isCompareLmoCurrent(lmoKey) ||
+        aPayload.lmoKey !== lmoKey ||
+        bPayload.lmoKey !== lmoKey
+      ) {
+        if (!isCompareRequestCurrent(requestId)) markStaleCompareRequest(requestId);
         return true;
       }
       render.__requestSlot = COMPARE_RENDER_SLOT;
       render.__requestId = requestId;
+      if (!isCompareRequestCurrent(requestId)) {
+        markStaleCompareRequest(requestId);
+        return true;
+      }
       latestCompareRender = render;
       latestSeismicData = null;
-      renderCompareLatestView();
-      markRenderRequestCompleted(COMPARE_RENDER_SLOT, requestId);
+      if (renderCompareLatestView() && isCompareRequestCurrent(requestId)) {
+        markRenderRequestCompleted(COMPARE_RENDER_SLOT, requestId);
+      }
       return true;
     } catch (err) {
       if (err && err.name === 'AbortError') return true;
       if (err instanceof CompareFetchError) {
         const role = err.source?.role === 'A' ? 'A' : 'B';
-        if (err.status === 409) {
-          setCompareStatus(`A-B unavailable: ${role} tap is not available. Run pipeline first.`);
+        if (isCompareRequestCurrent(requestId)) {
+          if (err.status === 409) {
+            setCompareStatus(`A-B unavailable: ${role} tap is not available. Run pipeline first.`);
+          } else {
+            setCompareStatus(err.message);
+          }
+          markRenderRequestFailed(COMPARE_RENDER_SLOT, requestId);
         } else {
-          setCompareStatus(err.message);
+          markStaleCompareRequest(requestId);
         }
-        markRenderRequestFailed(COMPARE_RENDER_SLOT, requestId);
         return true;
       }
-      console.warn('Compare window fetch error', err);
-      setCompareStatus(err instanceof Error ? err.message : String(err));
-      markRenderRequestFailed(COMPARE_RENDER_SLOT, requestId);
+      if (isCompareRequestCurrent(requestId)) {
+        console.warn('Compare window fetch error', err);
+        setCompareStatus(err instanceof Error ? err.message : String(err));
+        markRenderRequestFailed(COMPARE_RENDER_SLOT, requestId);
+      } else {
+        markStaleCompareRequest(requestId);
+      }
       return true;
     } finally {
       if (windowFetchCtrl === ctrl) windowFetchCtrl = null;
-      if (isCurrentRenderRequest(COMPARE_RENDER_SLOT, requestId)) hideLoading();
+      hideLoading({ slotName: COMPARE_RENDER_SLOT, requestId });
     }
   }
 
