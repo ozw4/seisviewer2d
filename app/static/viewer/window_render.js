@@ -266,6 +266,10 @@
         timeTransform: window.pickRawTimeToDisplayTime,
       }, { redraw: false, reason });
     }
+    function syncPredictionOverlayData(reason = 'render') {
+      if (typeof window.syncPredictionOverlayFromViewerState !== 'function') return;
+      window.syncPredictionOverlayFromViewerState(reason, { redraw: false });
+    }
 
     function finishWindowPlotlyRender(plotDiv, windowData, mode, { wiggleSig = null } = {}) {
       if (!isQueuedRenderCurrentOrMarkStale(windowData)) return false;
@@ -276,6 +280,7 @@
       plotDiv.__svPlotMode = mode;
       if (wiggleSig !== null) plotDiv.__svWiggleSig = wiggleSig;
       syncManualPickOverlayData(`render-${mode}`);
+      syncPredictionOverlayData(`render-${mode}`);
       if (typeof window.scheduleViewerOverlaySync === 'function') {
         window.scheduleViewerOverlaySync(`render-${mode}`);
       }
@@ -689,13 +694,12 @@
       renderedEnd = endTrace;
 
       const overlayTimer = startWindowRenderPerfTimer('overlay');
-      const showPred = !!document.getElementById('showFbPred')?.checked;
       const [, predPickTr] = buildPickMarkerTraces({
         manualPicks: [],
-        predicted: showPred ? predictedPicks : [],
+        predicted: [],
         xMin: x0,
         xMax: endTrace,
-        showPredicted: showPred,
+        showPredicted: false,
         timeTransform: window.pickRawTimeToDisplayTime,
       });
       stopWindowRenderPerfTimer(overlayTimer);
@@ -705,7 +709,7 @@
           return Number.isFinite(trace) && trace >= x0 && trace <= endTrace;
         }).length
         : 0;
-      const pickPredCount = predPickTr.x ? predPickTr.x.length : 0;
+      const pickPredCount = 0;
       const [x0v, x1v] = visibleXRng();
       D('RENDER@picks', {
         mode: 'wiggle',
@@ -766,7 +770,7 @@
               return Plotly.restyle(plotDiv, {
                 x: [predPickTr.x],
                 y: [predPickTr.y],
-                visible: [!!showPred],
+                visible: [false],
                 mode: [predPickTr.mode],
                 marker: [predPickTr.marker],
                 line: [predPickTr.line],
@@ -1017,13 +1021,12 @@
       const fbTitle = fbMode ? 'First-break Probability' : null;
 
       const overlayTimer = startWindowRenderPerfTimer('overlay');
-      const showPred = !!document.getElementById('showFbPred')?.checked;
       const [, predPickTr] = buildPickMarkerTraces({
         manualPicks: [],
-        predicted: showPred ? predictedPicks : [],
+        predicted: [],
         xMin: x0,
         xMax: x1,
-        showPredicted: showPred,
+        showPredicted: false,
         timeTransform: window.pickRawTimeToDisplayTime,
       });
       stopWindowRenderPerfTimer(overlayTimer);
@@ -1033,7 +1036,7 @@
           return Number.isFinite(trace) && trace >= x0 && trace <= x1;
         }).length
         : 0;
-      const pickPredCount = predPickTr.x ? predPickTr.x.length : 0;
+      const pickPredCount = 0;
       const [x0v, x1v] = visibleXRng();
       D('RENDER@picks', {
         mode: 'heatmap',
@@ -1114,7 +1117,7 @@
               return Plotly.restyle(plotDiv, {
                 x: [predPickTr.x],
                 y: [predPickTr.y],
-                visible: [!!showPred],
+                visible: [false],
                 mode: [predPickTr.mode],
                 marker: [predPickTr.marker],
                 line: [predPickTr.line],

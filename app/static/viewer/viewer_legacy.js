@@ -66,6 +66,7 @@
     const fbPredCache = new Map(); // key: "key1|layer|pipelineKey|modelId"
     const FBPICK_MODEL_STORAGE_KEY = 'fbpick_model_id';
     var currentFbKey = null;
+    var currentFbModelId = null;
     var fbPredReqId = 0;
     var downsampleFactor = 1;
     var isPickMode = false;
@@ -176,6 +177,61 @@
       });
       return true;
     }
+
+    function currentPredictionOverlayContext() {
+      const slider = document.getElementById('key1_slider');
+      const idx = slider ? parseInt(slider.value, 10) : 0;
+      const key1Val = key1Values?.[idx];
+      const layer = (document.getElementById('layerSelect')?.value) || 'raw';
+      return {
+        fileId: currentFileId || null,
+        key1: key1Val ?? null,
+        layer,
+        pipelineKey: window.latestPipelineKey || null,
+        modelId: getSelectedFbModelId(),
+      };
+    }
+
+    function currentPredictionOverlaySource() {
+      return {
+        fileId: currentFileId || null,
+        key1: currentFbKey ?? null,
+        layer: currentFbLayer || 'raw',
+        pipelineKey: currentFbPipelineKey || null,
+        modelId: currentFbModelId || null,
+      };
+    }
+
+    function updatePredictionOverlay(reason = 'prediction-overlay', options = {}) {
+      if (typeof window.updatePredictionOverlayState !== 'function') return false;
+      const showNode = document.getElementById('showFbPred');
+      const compareActive = typeof isCompareModeEnabled === 'function' && isCompareModeEnabled();
+      window.updatePredictionOverlayState({
+        predictedPicks: Array.isArray(predictedPicks) ? predictedPicks : [],
+        source: currentPredictionOverlaySource(),
+        current: currentPredictionOverlayContext(),
+        show: !!showNode?.checked && !compareActive,
+        timeTransform: window.pickRawTimeToDisplayTime,
+      }, {
+        reason,
+        redraw: options.redraw !== false,
+      });
+      return true;
+    }
+
+    function syncPredictionOverlayFromViewerState(reason = 'prediction-overlay', options = {}) {
+      return updatePredictionOverlay(reason, options);
+    }
+
+    function onFbPredictionToggle(checked) {
+      localStorage.setItem('showFbPred', checked ? 'true' : 'false');
+      if (!updatePredictionOverlay('prediction-toggle')) {
+        window.scheduleViewerOverlaySync?.('prediction-toggle');
+      }
+    }
+
+    window.syncPredictionOverlayFromViewerState = syncPredictionOverlayFromViewerState;
+    window.onFbPredictionToggle = onFbPredictionToggle;
 
     let manualPickRedoStack = [];
     let applyingManualPickHistory = false;
@@ -1169,6 +1225,7 @@
 
     function onFbModelChange() {
       updateFbModelStorageFromSelect();
+      updatePredictionOverlay('prediction-model-change');
       recomputeFbPicks();
     }
 
@@ -2099,9 +2156,16 @@
         currentFbKey = keyAtNow;
         currentFbLayer = layerNow;
         currentFbPipelineKey = pKeyNow;
-        renderLatestView();
+        currentFbModelId = modelIdNow;
+        updatePredictionOverlay('prediction-cache-hit');
         return;
       }
+      predictedPicks = [];
+      currentFbKey = null;
+      currentFbLayer = layerNow;
+      currentFbPipelineKey = pKeyNow;
+      currentFbModelId = modelIdNow;
+      updatePredictionOverlay('prediction-cache-miss');
       predictFromFb();
     }
 
@@ -2150,6 +2214,7 @@
           currentFbKey = keyAtStart;
           currentFbLayer = layerAtStart;
           currentFbPipelineKey = pipelineKeyAtStart;
+          currentFbModelId = modelIdAtStart;
           if (setOpStatusIfCurrent('predict', statusToken, 'success', `cached (${predictedPicks.length} picks)`)) {
             pushToast({
               level: 'success',
@@ -2158,9 +2223,16 @@
               dedupeKey: 'predict:success',
             });
           }
-          renderLatestView();
+          updatePredictionOverlay('prediction-cache-hit');
           return;
         }
+
+        predictedPicks = [];
+        currentFbKey = null;
+        currentFbLayer = layerAtStart;
+        currentFbPipelineKey = pipelineKeyAtStart;
+        currentFbModelId = modelIdAtStart;
+        updatePredictionOverlay('prediction-request-start');
 
         if (!setOpStatusIfCurrent('predict', statusToken, 'running', 'requesting FB picks...')) return;
 
@@ -2211,6 +2283,7 @@
         currentFbKey = keyAtStart;
         currentFbLayer = layerAtStart;
         currentFbPipelineKey = pipelineKeyAtStart;
+        currentFbModelId = modelIdAtStart;
         fbPredCache.set(cacheKeyStr, {
           picks: picks.slice(),
           method,
@@ -2225,7 +2298,7 @@
             dedupeKey: 'predict:success',
           });
         }
-        renderLatestView();
+        updatePredictionOverlay('prediction-complete');
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
         if (setOpStatusIfCurrent('predict', statusToken, 'error', message)) {
@@ -2865,6 +2938,18 @@
         sigmaCur,
       );
       predictedPicks = cachedEntry && cachedEntry.picks ? cachedEntry.picks.slice() : [];
+      if (cachedEntry) {
+        currentFbKey = key1Val;
+        currentFbLayer = layerCur;
+        currentFbPipelineKey = pKeyCur;
+        currentFbModelId = modelIdCur;
+      } else {
+        currentFbKey = null;
+        currentFbLayer = layerCur;
+        currentFbPipelineKey = pKeyCur;
+        currentFbModelId = modelIdCur;
+      }
+      updatePredictionOverlay('section-cache-sync', { redraw: false });
 
       await fetchPicks();
 
@@ -2899,6 +2984,7 @@
 
     function drawSelectedLayer(start = null, end = null) {
       D('DRAW@selectLayer', { layer: document.getElementById('layerSelect')?.value, start, end });
+      updatePredictionOverlay('layer-change');
       latestSeismicData = null;
       abortAllRenderRequests();
       windowFetchCtrl = null;
@@ -3328,6 +3414,8 @@
           currentFbKey = null;
           currentFbLayer = 'raw';
           currentFbPipelineKey = null;
+          currentFbModelId = null;
+          updatePredictionOverlay('file-change-clear');
           fbPredCache.clear();
           latestPipelineKey = null;
           window.latestPipelineKey = null;
