@@ -2,6 +2,8 @@
   const AXIS_MARGIN = 0.035;
   const AMP_LIMIT = 3.0;
   const COMPARE_CACHE_PURPOSE = 'compare';
+  const COMPARE_RENDER_SLOT = 'compare-window';
+  const SECTION_RENDER_SLOT = 'section-window';
   let latestCompareRender = null;
   let compareSyncing = false;
 
@@ -33,6 +35,20 @@
     const text = String(message || '').trim();
     status.textContent = text;
     status.hidden = text.length === 0;
+  }
+
+  function isCompareRequestCurrent(requestId) {
+    return isCurrentRenderRequest(COMPARE_RENDER_SLOT, requestId);
+  }
+
+  function markStaleCompareRequest(requestId) {
+    markStaleRenderDropped(COMPARE_RENDER_SLOT, requestId);
+  }
+
+  function setCompareStatusIfCurrent(requestId, message) {
+    if (!isCompareRequestCurrent(requestId)) return false;
+    setCompareStatus(message);
+    return true;
   }
 
   function isCompareModeEnabled() {
@@ -216,7 +232,11 @@
     return { source, requestContext, ...artifacts };
   }
 
-  async function fetchComparePayload(request, ctrl, requestId) {
+  async function fetchComparePayload(request, signal, requestId) {
+    if (!isCompareRequestCurrent(requestId)) {
+      markStaleCompareRequest(requestId);
+      return null;
+    }
     if (!isCompareLmoCurrent(request.payloadMeta?.lmoKey)) return null;
     const cached = windowCacheGet(request.cacheKey);
     if (
@@ -224,10 +244,14 @@
       isCompareLmoCurrent(cached.lmoKey) &&
       canUseCachedComparePayload(cached, request.source)
     ) {
+      if (!isCompareRequestCurrent(requestId)) {
+        markStaleCompareRequest(requestId);
+        return null;
+      }
       return cached;
     }
 
-    const res = await fetch(`/get_section_window_bin?${request.params.toString()}`, { signal: ctrl.signal });
+    const res = await fetch(`/get_section_window_bin?${request.params.toString()}`, { signal });
     if (!res.ok) {
       let detail = '';
       try {
@@ -244,7 +268,10 @@
       throw new CompareFetchError(request.source, res.status, detail);
     }
     const buf = await res.arrayBuffer();
-    if (requestId !== activeWindowFetchId) return null;
+    if (!isCompareRequestCurrent(requestId)) {
+      markStaleCompareRequest(requestId);
+      return null;
+    }
     if (!isCompareLmoCurrent(request.payloadMeta?.lmoKey)) return null;
     const payload = decodeWindowPayload(
       new Uint8Array(buf),
@@ -253,6 +280,10 @@
       (shape) => console.warn('Unexpected compare window shape', shape),
     );
     if (!payload) return null;
+    if (!isCompareRequestCurrent(requestId)) {
+      markStaleCompareRequest(requestId);
+      return null;
+    }
     if (!isCompareLmoCurrent(payload.lmoKey)) return null;
     windowCacheSet(request.cacheKey, payload);
     return payload;
@@ -615,6 +646,13 @@
     if (!isCompareModeEnabled()) return false;
     const render = latestCompareRender;
     if (!render) return false;
+    if (
+      Number.isInteger(render.__requestId) &&
+      !isCompareRequestCurrent(render.__requestId)
+    ) {
+      markStaleCompareRequest(render.__requestId);
+      return false;
+    }
     const key1Val = currentCompareKey1();
     const sources = getCompareSources();
     if (render.key1 !== key1Val || sourcePairKey(render.sources) !== sourcePairKey(sources)) return false;
@@ -624,6 +662,13 @@
     const plotDiv = document.getElementById('plot');
     if (!plotDiv) return false;
     const panels = buildComparePanels(render);
+    if (
+      Number.isInteger(render.__requestId) &&
+      !isCompareRequestCurrent(render.__requestId)
+    ) {
+      markStaleCompareRequest(render.__requestId);
+      return false;
+    }
     if (compareShowDiffEnabled() && !render.diffAvailable) {
       setCompareStatus(render.diffMessage || 'A-B unavailable.');
     } else {
@@ -638,29 +683,53 @@
       else traces.push(buildCompareHeatmapTrace(panels[i], i, render));
     }
     const layout = buildCompareLayout(render, panels, xRange, yRange);
+    if (
+      Number.isInteger(render.__requestId) &&
+      !isCompareRequestCurrent(render.__requestId)
+    ) {
+      markStaleCompareRequest(render.__requestId);
+      return false;
+    }
     downsampleFactor = render.stepY || 1;
     renderedStart = render.x0;
     renderedEnd = render.x1;
     latestWindowRender = null;
     setGrid({ x0: render.x0, stepX: render.mode === 'wiggle' ? 1 : render.stepX, y0: render.y0, stepY: render.stepY });
-    const promise = withSuppressedRelayout(Plotly.react(plotDiv, traces, layout, {
+    const startRender = () => withSuppressedRelayout(Plotly.react(plotDiv, traces, layout, {
       responsive: true,
       doubleClick: false,
       doubleClickDelay: 300,
     }));
-    plotDiv.__svPlotMode = `compare-${render.mode}`;
-    plotDiv.__svComparePanelCount = panels.length;
-    plotDiv.__svCompareMode = render.mode;
-    if (promise && typeof promise.finally === 'function') {
-      promise.finally(() => {
+    const promise = typeof window.queueViewerPlotlyRender === 'function'
+      ? window.queueViewerPlotlyRender(plotDiv, render, startRender)
+      : Promise.resolve(startRender()).then(() => true);
+    return promise
+      .then((rendered) => {
+        if (!rendered) return false;
+        if (
+          Number.isInteger(render.__requestId) &&
+          !isCompareRequestCurrent(render.__requestId)
+        ) {
+          markStaleCompareRequest(render.__requestId);
+          return false;
+        }
+        plotDiv.__svPlotMode = `compare-${render.mode}`;
+        plotDiv.__svComparePanelCount = panels.length;
+        plotDiv.__svCompareMode = render.mode;
         if (typeof maybeResizePlot === 'function') maybeResizePlot(plotDiv, true);
+        requestAnimationFrame(applyDragMode);
+        if (typeof installPlotlyViewportHandlersOnce === 'function') installPlotlyViewportHandlersOnce();
+        return true;
+      })
+      .catch((err) => {
+        if (
+          Number.isInteger(render.__requestId) &&
+          isCompareRequestCurrent(render.__requestId)
+        ) {
+          console.warn('Compare Plotly render failed', err);
+        }
+        return false;
       });
-    } else if (typeof maybeResizePlot === 'function') {
-      maybeResizePlot(plotDiv, true);
-    }
-    requestAnimationFrame(applyDragMode);
-    if (typeof installPlotlyViewportHandlersOnce === 'function') installPlotlyViewportHandlersOnce();
-    return true;
   }
 
   function buildCompareRender(aPayload, bPayload, sources, decision, validation, windowInfo) {
@@ -730,24 +799,34 @@
     const requestB = buildCompareRequest(sources.b, sources.a, key1Val, windowInfo, decision);
     const lmoKey = requestA.payloadMeta?.lmoKey;
 
-    const requestId = bumpWindowFetchId();
-    if (windowFetchCtrl) windowFetchCtrl.abort();
+    const { requestId, signal } = beginRenderRequest(
+      COMPARE_RENDER_SLOT,
+      [SECTION_RENDER_SLOT],
+    );
     if (typeof cancelActiveMainDecodeJob === 'function') cancelActiveMainDecodeJob();
-    const ctrl = new AbortController();
+    const ctrl = {
+      signal,
+      abort: () => abortRenderRequest(COMPARE_RENDER_SLOT),
+    };
     windowFetchCtrl = ctrl;
     showLoading(buildWindowLoadingMessage({
       mode: `compare ${decision.mode}`,
       stepX: decision.stepX,
       stepY: decision.stepY,
-    }));
+    }), { slotName: COMPARE_RENDER_SLOT, requestId });
 
     try {
-      const aPromise = fetchComparePayload(requestA, ctrl, requestId);
+      const aPromise = fetchComparePayload(requestA, signal, requestId);
       const bPromise = requestA.cacheKey === requestB.cacheKey
         ? aPromise
-        : fetchComparePayload(requestB, ctrl, requestId);
+        : fetchComparePayload(requestB, signal, requestId);
       const [aPayload, bPayload] = await Promise.all([aPromise, bPromise]);
-      if (requestId !== activeWindowFetchId || !aPayload || !bPayload) return true;
+      if (!isCompareRequestCurrent(requestId) || !aPayload || !bPayload) {
+        if (!isCompareRequestCurrent(requestId)) {
+          markStaleCompareRequest(requestId);
+        }
+        return true;
+      }
       if (!isCompareLmoCurrent(lmoKey) || aPayload.lmoKey !== lmoKey || bPayload.lmoKey !== lmoKey) {
         return true;
       }
@@ -755,30 +834,59 @@
       const validation = validateComparePair(aPayload, bPayload, sources);
       const render = buildCompareRender(aPayload, bPayload, sources, decision, validation, windowInfo);
       if (!render) {
-        setCompareStatus('A-B unavailable: source data could not be decoded.');
+        if (setCompareStatusIfCurrent(requestId, 'A-B unavailable: source data could not be decoded.')) {
+          markRenderRequestFailed(COMPARE_RENDER_SLOT, requestId);
+        }
+        return true;
+      }
+      if (
+        !isCompareRequestCurrent(requestId) ||
+        !isCompareLmoCurrent(lmoKey) ||
+        aPayload.lmoKey !== lmoKey ||
+        bPayload.lmoKey !== lmoKey
+      ) {
+        if (!isCompareRequestCurrent(requestId)) markStaleCompareRequest(requestId);
+        return true;
+      }
+      render.__requestSlot = COMPARE_RENDER_SLOT;
+      render.__requestId = requestId;
+      if (!isCompareRequestCurrent(requestId)) {
+        markStaleCompareRequest(requestId);
         return true;
       }
       latestCompareRender = render;
       latestSeismicData = null;
-      renderCompareLatestView();
+      if (await renderCompareLatestView() && isCompareRequestCurrent(requestId)) {
+        markRenderRequestCompleted(COMPARE_RENDER_SLOT, requestId);
+      }
       return true;
     } catch (err) {
       if (err && err.name === 'AbortError') return true;
       if (err instanceof CompareFetchError) {
         const role = err.source?.role === 'A' ? 'A' : 'B';
-        if (err.status === 409) {
-          setCompareStatus(`A-B unavailable: ${role} tap is not available. Run pipeline first.`);
+        if (isCompareRequestCurrent(requestId)) {
+          if (err.status === 409) {
+            setCompareStatus(`A-B unavailable: ${role} tap is not available. Run pipeline first.`);
+          } else {
+            setCompareStatus(err.message);
+          }
+          markRenderRequestFailed(COMPARE_RENDER_SLOT, requestId);
         } else {
-          setCompareStatus(err.message);
+          markStaleCompareRequest(requestId);
         }
         return true;
       }
-      console.warn('Compare window fetch error', err);
-      setCompareStatus(err instanceof Error ? err.message : String(err));
+      if (isCompareRequestCurrent(requestId)) {
+        console.warn('Compare window fetch error', err);
+        setCompareStatus(err instanceof Error ? err.message : String(err));
+        markRenderRequestFailed(COMPARE_RENDER_SLOT, requestId);
+      } else {
+        markStaleCompareRequest(requestId);
+      }
       return true;
     } finally {
       if (windowFetchCtrl === ctrl) windowFetchCtrl = null;
-      if (requestId === activeWindowFetchId) hideLoading();
+      hideLoading({ slotName: COMPARE_RENDER_SLOT, requestId });
     }
   }
 

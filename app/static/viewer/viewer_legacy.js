@@ -1508,6 +1508,9 @@
       const plotDiv = document.getElementById('plot');
       if (!plotDiv) return;
 
+      abortAllRenderRequests();
+      windowFetchCtrl = null;
+
       if (!immediate) {
         scheduleWindowFetch();
         return;
@@ -2333,10 +2336,8 @@
       currentScaling = rawValue === 'tracewise' ? 'tracewise' : 'amax';
       if (sel) sel.value = currentScaling;
       try { localStorage.setItem('scaling_mode', currentScaling); } catch (_) {}
-      if (windowFetchCtrl) {
-        windowFetchCtrl.abort();
-        windowFetchCtrl = null;
-      }
+      abortAllRenderRequests();
+      windowFetchCtrl = null;
       scheduleWindowFetch();
     }
 
@@ -2347,6 +2348,8 @@
       const stored = cfg.setWiggleDensity(v);
       if (el) el.value = stored.toFixed(2);
       WIGGLE_DENSITY_THRESHOLD = stored;
+      abortAllRenderRequests();
+      windowFetchCtrl = null;
       // Apply now: re-evaluate window mode and redraw
       renderLatestView();
       scheduleWindowFetch();
@@ -2948,11 +2951,8 @@
 
       latestWindowRender = null;
       if (typeof clearCompareRender === 'function') clearCompareRender();
-      bumpWindowFetchId();
-      if (windowFetchCtrl) {
-        windowFetchCtrl.abort();
-        windowFetchCtrl = null;
-      }
+      abortAllRenderRequests();
+      windowFetchCtrl = null;
       if (typeof hideLoading === 'function') hideLoading();
       uiResetNonce++;
       if (window.pipelineEvents && typeof window.pipelineEvents.emit === 'function') {
@@ -2981,6 +2981,8 @@
     function drawSelectedLayer(start = null, end = null) {
       D('DRAW@selectLayer', { layer: document.getElementById('layerSelect')?.value, start, end });
       latestSeismicData = null;
+      abortAllRenderRequests();
+      windowFetchCtrl = null;
       if (typeof isCompareModeEnabled === 'function' && isCompareModeEnabled()) {
         if (typeof renderCompareLatestView === 'function') renderCompareLatestView();
         scheduleWindowFetch();
@@ -3011,6 +3013,19 @@
         latestWindowRender.requestedLayer === layer &&
         latestWindowRender.key1 === key1Val
       ) {
+        if (
+          typeof latestWindowRender.scaling === 'string' &&
+          latestWindowRender.scaling !== currentScaling
+        ) {
+          return;
+        }
+        if (
+          typeof latestWindowRender.lmoKey === 'string' &&
+          typeof window.currentLmoKey === 'function' &&
+          latestWindowRender.lmoKey !== window.currentLmoKey()
+        ) {
+          return;
+        }
         if (layer !== 'raw') {
           const pipelineKeyNow = window.latestPipelineKey || null;
           if ((latestWindowRender.pipelineKey || null) !== (pipelineKeyNow || null)) {
@@ -3382,7 +3397,7 @@
           renderedEnd = null;
           latestWindowRender = null;
           if (typeof clearCompareRender === 'function') clearCompareRender();
-          bumpWindowFetchId();
+          abortAllRenderRequests();
           if (typeof hideLoading === 'function') hideLoading();
           latestSeismicData = null;
           latestTapData = {};
@@ -3397,10 +3412,7 @@
           latestPipelineKey = null;
           window.latestPipelineKey = null;
           resetOpStatuses();
-          if (windowFetchCtrl) {
-            windowFetchCtrl.abort();
-            windowFetchCtrl = null;
-          }
+          windowFetchCtrl = null;
           updateSectionNavigation({ syncDisplay: true, syncJumpInput: true });
           if (!currentFileId) {
             currentFileName = '';
