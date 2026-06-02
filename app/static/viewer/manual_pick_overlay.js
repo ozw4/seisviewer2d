@@ -72,6 +72,42 @@ function drawManualPick(ctx, point, options) {
   ctx.stroke();
 }
 
+function plotAreaClipRect(transform) {
+  const plotArea = transform?.plotArea;
+  const rect = transform?.rect;
+  if (!plotArea || !rect || !(plotArea.width > 0) || !(plotArea.height > 0)) return null;
+  return {
+    left: plotArea.left - rect.left,
+    top: plotArea.top - rect.top,
+    width: plotArea.width,
+    height: plotArea.height,
+  };
+}
+
+function withPlotAreaClip(ctx, transform, draw) {
+  const clipRect = plotAreaClipRect(transform);
+  if (
+    !clipRect ||
+    typeof ctx.save !== 'function' ||
+    typeof ctx.rect !== 'function' ||
+    typeof ctx.clip !== 'function' ||
+    typeof ctx.restore !== 'function'
+  ) {
+    draw();
+    return;
+  }
+
+  ctx.save();
+  ctx.beginPath();
+  ctx.rect(clipRect.left, clipRect.top, clipRect.width, clipRect.height);
+  ctx.clip();
+  try {
+    draw();
+  } finally {
+    ctx.restore();
+  }
+}
+
 function drawPendingLineAnchor(ctx, point, options) {
   const half = options.pendingLineSize / 2;
   ctx.beginPath();
@@ -90,10 +126,16 @@ function drawPendingLineAnchor(ctx, point, options) {
 
 function drawDeleteRangeAnchor(ctx, transform, trace, options) {
   const timeRange = transform.visibleTimeRange?.();
-  if (!Array.isArray(timeRange) || timeRange.length !== 2) return;
+  if (!Array.isArray(timeRange) || timeRange.length !== 2) return false;
+  if (
+    !transform.isTraceTimeVisible(trace, timeRange[0]) &&
+    !transform.isTraceTimeVisible(trace, timeRange[1])
+  ) {
+    return false;
+  }
   const p0 = transform.traceTimeToPixel(trace, timeRange[0]);
   const p1 = transform.traceTimeToPixel(trace, timeRange[1]);
-  if (!p0 || !p1) return;
+  if (!p0 || !p1) return false;
   ctx.beginPath();
   ctx.moveTo(p0.relativeX, p0.relativeY);
   ctx.lineTo(p1.relativeX, p1.relativeY);
@@ -102,6 +144,7 @@ function drawDeleteRangeAnchor(ctx, transform, trace, options) {
   ctx.setLineDash(options.deleteRangeDash);
   ctx.stroke();
   ctx.setLineDash([]);
+  return true;
 }
 
 export function renderManualPickOverlay(payload = {}) {
@@ -114,25 +157,31 @@ export function renderManualPickOverlay(payload = {}) {
 
   const options = { ...DEFAULT_OPTIONS, ...(overlayState.options || {}) };
   let manualCount = 0;
-  const manualPicks = Array.isArray(overlayState.manualPicks) ? overlayState.manualPicks : [];
-  for (const rawPick of manualPicks) {
-    const pick = normalizePick(rawPick);
-    if (!pick) continue;
-    const displayTime = resolveDisplayTime(pick, overlayState.timeTransform);
-    if (displayTime === null || !transform.isTraceTimeVisible(pick.trace, displayTime)) continue;
-    const point = transform.traceTimeToPixel(pick.trace, displayTime);
-    if (!point) continue;
-    drawManualPick(ctx, point, options);
-    manualCount += 1;
-  }
-
   const pending = normalizePending(overlayState.pending);
-  if (pending?.kind === 'line') {
-    const point = transform.traceTimeToPixel(pending.trace, pending.time);
-    if (point) drawPendingLineAnchor(ctx, point, options);
-  } else if (pending?.kind === 'delete-range') {
-    drawDeleteRangeAnchor(ctx, transform, pending.trace, options);
-  }
+  withPlotAreaClip(ctx, transform, () => {
+    const manualPicks = Array.isArray(overlayState.manualPicks) ? overlayState.manualPicks : [];
+    for (const rawPick of manualPicks) {
+      const pick = normalizePick(rawPick);
+      if (!pick) continue;
+      const displayTime = resolveDisplayTime(pick, overlayState.timeTransform);
+      if (displayTime === null || !transform.isTraceTimeVisible(pick.trace, displayTime)) continue;
+      const point = transform.traceTimeToPixel(pick.trace, displayTime);
+      if (!point) continue;
+      drawManualPick(ctx, point, options);
+      manualCount += 1;
+    }
+
+    if (pending?.kind === 'line') {
+      if (transform.isTraceTimeVisible(pending.trace, pending.time)) {
+        const point = transform.traceTimeToPixel(pending.trace, pending.time);
+        if (point) {
+          drawPendingLineAnchor(ctx, point, options);
+        }
+      }
+    } else if (pending?.kind === 'delete-range') {
+      drawDeleteRangeAnchor(ctx, transform, pending.trace, options);
+    }
+  });
 
   return { manual: manualCount, pending: !!pending };
 }
