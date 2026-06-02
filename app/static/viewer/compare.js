@@ -717,6 +717,9 @@
         plotDiv.__svComparePanelCount = panels.length;
         plotDiv.__svCompareMode = render.mode;
         if (typeof maybeResizePlot === 'function') maybeResizePlot(plotDiv, true);
+        if (typeof window.scheduleViewerOverlaySync === 'function') {
+          window.scheduleViewerOverlaySync('compare-render');
+        }
         requestAnimationFrame(applyDragMode);
         if (typeof installPlotlyViewportHandlersOnce === 'function') installPlotlyViewportHandlersOnce();
         return true;

@@ -1297,6 +1297,9 @@
 
     function finishSuppressedRelayout() {
       suppressRelayout = false;
+      if (typeof window.scheduleViewerOverlaySync === 'function') {
+        window.scheduleViewerOverlaySync('suppressed-relayout');
+      }
       if (
         typeof hasPendingPickOverlayState === 'function' &&
         hasPendingPickOverlayState() &&

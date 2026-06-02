@@ -264,6 +264,9 @@
       installCustomDoubleClick(plotDiv);
       plotDiv.__svPlotMode = mode;
       if (wiggleSig !== null) plotDiv.__svWiggleSig = wiggleSig;
+      if (typeof window.scheduleViewerOverlaySync === 'function') {
+        window.scheduleViewerOverlaySync(`render-${mode}`);
+      }
       return true;
     }
     function finalizeWindowPlotlyRender(plotPromise, plotDiv, windowData, mode, options = {}) {
@@ -289,7 +292,19 @@
       if (!force && !changed) return Promise.resolve(false);
 
       plotDiv.__svLastSize = { w, h };
-      return withSuppressedRelayout(Promise.resolve(Plotly.Plots.resize(plotDiv)));
+      const resizeResult = withSuppressedRelayout(Promise.resolve(Plotly.Plots.resize(plotDiv)));
+      if (resizeResult && typeof resizeResult.then === 'function') {
+        return resizeResult.then((value) => {
+          if (typeof window.scheduleViewerOverlaySync === 'function') {
+            window.scheduleViewerOverlaySync('plot-resize');
+          }
+          return value;
+        });
+      }
+      if (typeof window.scheduleViewerOverlaySync === 'function') {
+        window.scheduleViewerOverlaySync('plot-resize');
+      }
+      return resizeResult;
     }
     window.maybeResizePlot = maybeResizePlot;
     function getWindowRenderPerfMetrics() {
@@ -389,11 +404,17 @@
       plotDiv.on('plotly_relayouting', () => {
         if (suppressRelayout) return;
         isRelayouting = true;
+        if (typeof window.scheduleViewerOverlaySync === 'function') {
+          window.scheduleViewerOverlaySync('plotly-relayouting');
+        }
       });
 
       plotDiv.on('plotly_relayout', (ev) => {
         if (suppressRelayout) return;
         isRelayouting = false;
+        if (typeof window.scheduleViewerOverlaySync === 'function') {
+          window.scheduleViewerOverlaySync('plotly-relayout');
+        }
         const shouldRefreshPendingOverlay = (
           typeof window.hasPendingPickOverlayState === 'function' &&
           window.hasPendingPickOverlayState()

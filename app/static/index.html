@@ -376,6 +376,7 @@
     }
 
     #plot {
+      position: relative;
       flex: 1;
       min-width: 0;
       width: 100%;
@@ -467,6 +468,21 @@
       min-height: 0;
       width: 100% !important;
       height: 100% !important;
+    }
+
+    .sv-viewer-overlay-root {
+      position: absolute;
+      inset: 0;
+      z-index: 10;
+      pointer-events: none;
+      overflow: hidden;
+    }
+
+    .sv-viewer-overlay-canvas {
+      position: absolute;
+      inset: 0;
+      display: block;
+      pointer-events: none;
     }
 
     #windowLoadingOverlay {
