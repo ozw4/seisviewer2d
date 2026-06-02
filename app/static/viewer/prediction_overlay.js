@@ -128,6 +128,7 @@ export function schedulePredictionOverlayRedraw(reason = 'prediction') {
       width: state.width,
       height: state.height,
     });
+    window.viewerPerfMetrics?.recordOverlayRender?.({ reason });
   });
 }
 

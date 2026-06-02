@@ -212,6 +212,7 @@ export function syncViewerOverlayLayer(reason = 'sync') {
       console.warn('[viewer overlay] redraw callback failed', err);
     }
   }
+  window.viewerPerfMetrics?.recordOverlayRender?.({ reason });
   return state;
 }
 

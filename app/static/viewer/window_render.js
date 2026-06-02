@@ -351,6 +351,16 @@
         visibleSamples: rows,
       });
     }
+    function recordBaseRenderPerf(windowData, reason = 'window-render') {
+      const metrics = getWindowRenderPerfMetrics();
+      if (!metrics || typeof metrics.recordBaseRender !== 'function') return;
+      metrics.recordBaseRender({
+        mode: windowData?.mode,
+        layer: windowData?.requestedLayer,
+        key1: windowData?.key1,
+        reason,
+      });
+    }
     function resolveWiggleTraceIndices(gd) {
       const data = Array.isArray(gd?.data) ? gd.data : [];
       const idxs = [];
@@ -555,6 +565,7 @@
       if (useF32 && windowData.values.length < N) return false;
       const renderTimer = startWindowRenderPerfTimer('render');
       recordWindowRenderPerfPayload(windowData, rows, cols);
+      recordBaseRenderPerf(windowData, 'window-wiggle');
 
       const scale = Number(windowData.scale) || 1;
       const stepX = windowData.stepX || 1;
@@ -914,6 +925,7 @@
       if (useF32 && windowData.values.length < N) return false;
       const renderTimer = startWindowRenderPerfTimer('render');
       recordWindowRenderPerfPayload(windowData, rows, cols);
+      recordBaseRenderPerf(windowData, 'window-heatmap');
 
       setGrid({ x0, stepX, y0, stepY });
       const gain = parseFloat(document.getElementById('gain').value) || 1.0;

@@ -119,7 +119,7 @@
 
     function syncPendingPickUi() {
       renderPendingPickStatus();
-      schedulePickOverlayUpdate();
+      schedulePickOverlayUpdate('pending-pick-state');
     }
 
     function clearPendingPickState(reason = '', options = {}) {
@@ -165,16 +165,41 @@
 
     window.getPendingPickOverlayState = getPendingPickOverlayState;
     window.hasPendingPickOverlayState = hasPendingPickOverlayState;
+    function normalizeViewerInvalidationReason(reason) {
+      const normalize = window.RenderInvalidation?.normalizeReason;
+      return typeof normalize === 'function' ? normalize(reason) : reason;
+    }
+    function isOverlayOnlyViewerInvalidationReason(reason) {
+      const isOverlayOnly = window.RenderInvalidation?.isOverlayOnly;
+      return typeof isOverlayOnly === 'function' && isOverlayOnly(reason);
+    }
+    function requestViewerBaseRender(reason, scheduleBaseRender, payload = {}) {
+      const request = window.requestViewerBaseRenderInvalidation;
+      if (typeof request === 'function') {
+        return request(reason, scheduleBaseRender, payload);
+      }
+      return null;
+    }
+    function requestViewerOverlayRedraw(reason, payload = {}) {
+      const request = window.requestViewerOverlayInvalidation || window.invalidateViewerRender;
+      return typeof request === 'function' ? request(reason, payload) : null;
+    }
     function updateManualPickOverlay(reason = 'manual-pick-overlay', options = {}) {
       if (typeof window.updateManualPickOverlayState !== 'function') return false;
+      const normalizedReason = normalizeViewerInvalidationReason(reason);
       window.updateManualPickOverlayState({
         manualPicks: Array.isArray(picks) ? picks : [],
         pending: getPendingPickOverlayState(),
         timeTransform: window.pickRawTimeToDisplayTime,
       }, {
-        reason,
-        redraw: options.redraw !== false,
+        reason: normalizedReason,
+        redraw: false,
       });
+      if (options.redraw !== false && isOverlayOnlyViewerInvalidationReason(normalizedReason)) {
+        requestViewerOverlayRedraw(normalizedReason);
+      } else if (options.redraw !== false) {
+        window.scheduleViewerOverlaySync?.(normalizedReason);
+      }
       return true;
     }
 
@@ -204,6 +229,7 @@
 
     function updatePredictionOverlay(reason = 'prediction-overlay', options = {}) {
       if (typeof window.updatePredictionOverlayState !== 'function') return false;
+      const normalizedReason = normalizeViewerInvalidationReason(reason);
       const showNode = document.getElementById('showFbPred');
       const compareActive = typeof isCompareModeEnabled === 'function' && isCompareModeEnabled();
       window.updatePredictionOverlayState({
@@ -213,9 +239,14 @@
         show: !!showNode?.checked && !compareActive,
         timeTransform: window.pickRawTimeToDisplayTime,
       }, {
-        reason,
-        redraw: options.redraw !== false,
+        reason: normalizedReason,
+        redraw: false,
       });
+      if (options.redraw !== false && isOverlayOnlyViewerInvalidationReason(normalizedReason)) {
+        requestViewerOverlayRedraw(normalizedReason);
+      } else if (options.redraw !== false) {
+        window.scheduleViewerOverlaySync?.(normalizedReason);
+      }
       return true;
     }
 
@@ -225,13 +256,30 @@
 
     function onFbPredictionToggle(checked) {
       localStorage.setItem('showFbPred', checked ? 'true' : 'false');
-      if (!updatePredictionOverlay('prediction-toggle')) {
-        window.scheduleViewerOverlaySync?.('prediction-toggle');
-      }
+      updatePredictionOverlay('prediction-toggle');
     }
 
     window.syncPredictionOverlayFromViewerState = syncPredictionOverlayFromViewerState;
     window.onFbPredictionToggle = onFbPredictionToggle;
+    window.syncViewerOverlayInvalidationState = function syncViewerOverlayInvalidationState(reason = 'overlay') {
+      const normalizedReason = normalizeViewerInvalidationReason(reason);
+      if (
+        normalizedReason === 'manual-pick-add' ||
+        normalizedReason === 'manual-pick-move' ||
+        normalizedReason === 'manual-pick-delete' ||
+        normalizedReason === 'pending-pick-state' ||
+        normalizedReason === 'selected-pick-change' ||
+        normalizedReason === 'hover-pick-change'
+      ) {
+        updateManualPickOverlay(normalizedReason, { redraw: false });
+      }
+      if (
+        normalizedReason === 'prediction-toggle' ||
+        normalizedReason === 'prediction-data-current-viewport'
+      ) {
+        updatePredictionOverlay(normalizedReason, { redraw: false });
+      }
+    };
 
     let manualPickRedoStack = [];
     let applyingManualPickHistory = false;
@@ -623,7 +671,9 @@
       updateKey1Display();
       clearSectionNavValidation();
       if (!currentFileId || !Array.isArray(key1Values) || key1Values.length === 0) return;
-      fetchAndPlotDebounced();        // 入力が止まってから実行
+      requestViewerBaseRender('key1', () => {
+        fetchAndPlotDebounced();        // 入力が止まってから実行
+      }, { immediate: false, source: 'key1-input' });
     }
 
     async function onKey1Change(options = {}) {
@@ -642,9 +692,13 @@
         await flushPickOps();
       }
       if (immediate) {
-        fetchAndPlotDebounced.flush();
+        requestViewerBaseRender('key1', () => {
+          fetchAndPlotDebounced.flush();
+        }, { immediate: true, source: 'key1-change' });
       } else {
-        fetchAndPlotDebounced();
+        requestViewerBaseRender('key1', () => {
+          fetchAndPlotDebounced();
+        }, { immediate: false, source: 'key1-change' });
       }
     }
 
@@ -1001,6 +1055,7 @@
     let forceFullExtentOnce = false;    // next window calc uses full extent with no padding
     let pickOverlayRaf = 0;
     let pickOverlayDirty = false;
+    let pickOverlayReason = 'pending-pick-state';
     let pendingHotkeyXPanDelta = 0;
     let hotkeyXPanRaf = 0;
     let plotHover = false;
@@ -1177,7 +1232,9 @@
           const targetState = useBefore ? change.before : change.after;
           applyManualPickState(trace, targetState);
         }
-        schedulePickOverlayUpdate();
+        schedulePickOverlayUpdate(entry.changes.some((change) => change.before && change.after)
+          ? 'manual-pick-move'
+          : 'manual-pick-add');
         return true;
       } finally {
         applyingManualPickHistory = false;
@@ -1379,14 +1436,15 @@
       }
     }
 
-    function schedulePickOverlayUpdate() {
+    function schedulePickOverlayUpdate(reason = 'pending-pick-state') {
       pickOverlayDirty = true;
+      pickOverlayReason = normalizeViewerInvalidationReason(reason);
       if (pickOverlayRaf !== 0) return;
       pickOverlayRaf = requestAnimationFrame(() => {
         pickOverlayRaf = 0;
         flushPickOverlayUpdate();
         if (pickOverlayDirty && !isRelayouting) {
-          schedulePickOverlayUpdate();
+          schedulePickOverlayUpdate(pickOverlayReason);
         }
       });
     }
@@ -1396,7 +1454,8 @@
       if (isRelayouting) return;
 
       pickOverlayDirty = false;
-      if (!updateManualPickOverlay('pick-overlay-update')) {
+      const reason = pickOverlayReason || 'pending-pick-state';
+      if (!updateManualPickOverlay(reason)) {
         console.warn('[PICKS] manual pick overlay renderer is not available');
       }
     }
@@ -1503,6 +1562,13 @@
       }
     }
 
+    function requestViewportBaseRender({ immediate = false } = {}) {
+      return requestViewerBaseRender('viewport-full-res', () => {
+        requestWindowFetch({ immediate });
+      }, { immediate, source: 'viewport' });
+    }
+    window.requestViewportBaseRender = requestViewportBaseRender;
+
     function flushPendingResetFetchIfNeeded() {
       if (!pendingResetFetch) return;
       if (suppressRelayout || isRelayouting) return;
@@ -1533,7 +1599,7 @@
           latestWindowRender.stepY !== 1 ||
           latestWindowRender.x0 > win.x0 || latestWindowRender.x1 < win.x1 ||
           latestWindowRender.y0 > win.y0 || latestWindowRender.y1 < win.y1;
-        if (needFresh) requestWindowFetch({ immediate });
+        if (needFresh) requestViewportBaseRender({ immediate });
         return;
       }
 
@@ -1553,7 +1619,7 @@
         latestWindowRender.x0 > win.x0 || latestWindowRender.x1 < win.x1 ||
         latestWindowRender.y0 > win.y0 || latestWindowRender.y1 < win.y1;
 
-      if (needFresh) requestWindowFetch({ immediate });
+      if (needFresh) requestViewportBaseRender({ immediate });
     }
 
     // （任意：すでに入れているならそのままでOK）
@@ -1755,7 +1821,7 @@
         }
       }
 
-      requestWindowFetch({ immediate: true });
+      requestViewportBaseRender({ immediate: true });
     }
 
     function changeSectionByDelta(delta) {
@@ -2321,9 +2387,11 @@
       currentScaling = rawValue === 'tracewise' ? 'tracewise' : 'amax';
       if (sel) sel.value = currentScaling;
       try { localStorage.setItem('scaling_mode', currentScaling); } catch (_) {}
-      abortAllRenderRequests();
-      windowFetchCtrl = null;
-      scheduleWindowFetch();
+      requestViewerBaseRender('scaling', () => {
+        abortAllRenderRequests();
+        windowFetchCtrl = null;
+        scheduleWindowFetch();
+      }, { source: 'scaling-change' });
     }
 
     function onWiggleDensityChange() {
@@ -2333,11 +2401,13 @@
       const stored = cfg.setWiggleDensity(v);
       if (el) el.value = stored.toFixed(2);
       WIGGLE_DENSITY_THRESHOLD = stored;
-      abortAllRenderRequests();
-      windowFetchCtrl = null;
-      // Apply now: re-evaluate window mode and redraw
-      renderLatestView();
-      scheduleWindowFetch();
+      requestViewerBaseRender('viewport-full-res', () => {
+        abortAllRenderRequests();
+        windowFetchCtrl = null;
+        // Apply now: re-evaluate window mode and redraw
+        renderLatestView();
+        scheduleWindowFetch();
+      }, { source: 'wiggle-density-change' });
     }
 
     // Restore UI on load
@@ -2389,7 +2459,9 @@
       const val = el ? el.value : '1';
       document.getElementById('gain_display').textContent = `${parseFloat(val)}×`;
       localStorage.setItem('gain', val);
-      scheduleRestyle();
+      requestViewerBaseRender('gain', () => {
+        scheduleRestyle();
+      }, { source: 'gain-change' });
     }
 
     function onColormapChange() {
@@ -2421,7 +2493,7 @@
       } else {
         applyDragMode();
       }
-      schedulePickOverlayUpdate();
+      schedulePickOverlayUpdate('pending-pick-state');
     }
 
     function getTraceSamplesForProcessingRange(trace, rowLoIncl, rowHiIncl) {
@@ -2984,17 +3056,19 @@
 
     function drawSelectedLayer(start = null, end = null) {
       D('DRAW@selectLayer', { layer: document.getElementById('layerSelect')?.value, start, end });
-      updatePredictionOverlay('layer-change');
-      latestSeismicData = null;
-      abortAllRenderRequests();
-      windowFetchCtrl = null;
-      if (typeof isCompareModeEnabled === 'function' && isCompareModeEnabled()) {
-        if (typeof renderCompareLatestView === 'function') renderCompareLatestView();
+      updatePredictionOverlay('layer-change', { redraw: false });
+      requestViewerBaseRender('layer', () => {
+        latestSeismicData = null;
+        abortAllRenderRequests();
+        windowFetchCtrl = null;
+        if (typeof isCompareModeEnabled === 'function' && isCompareModeEnabled()) {
+          if (typeof renderCompareLatestView === 'function') renderCompareLatestView();
+          scheduleWindowFetch();
+          return;
+        }
+        renderLatestView();
         scheduleWindowFetch();
-        return;
-      }
-      renderLatestView();
-      scheduleWindowFetch();
+      }, { source: 'layer-change', start, end });
     }
 
 
@@ -3139,7 +3213,7 @@
         const deduped = dedupeLocalPicksByTrace();
         if (deduped > 0) {
           console.warn(`[PICKS] removed ${deduped} duplicate local pick(s) before handling input`);
-          schedulePickOverlayUpdate();
+          schedulePickOverlayUpdate('manual-pick-delete');
         }
 
         console.log('🔥 pick request', { trace, time, shiftKey, ctrlKey, altKey });
@@ -3171,7 +3245,7 @@
           await Promise.all(promises);
           recordManualPickHistory(historyChanges);
           D('PICKS@handlePickNormalized:line', { range: [start, end], count: picks.length });
-          schedulePickOverlayUpdate();
+          schedulePickOverlayUpdate('manual-pick-delete');
           return;
         }
 
@@ -3227,7 +3301,9 @@
           await Promise.all(promises);
           recordManualPickHistory(historyChanges);
           D('PICKS@handlePickNormalized:line', { range: [xStart, xEnd], count: picks.length });
-          schedulePickOverlayUpdate();
+          schedulePickOverlayUpdate(
+            historyChanges.some((change) => change.before) ? 'manual-pick-move' : 'manual-pick-add',
+          );
           return;
         }
 
@@ -3253,7 +3329,7 @@
           displayTime,
           count: picks.length,
         });
-        schedulePickOverlayUpdate();
+        schedulePickOverlayUpdate(hadExisting ? 'manual-pick-move' : 'manual-pick-add');
       } finally {
         handlePickNormalized._busy = false;
         const next = handlePickNormalized._queued;
@@ -3451,9 +3527,11 @@
           }
           hideViewerEmptyState();
           syncActiveViewerTargetState(true);
-          (typeof fetchAndPlotDebounced?.flush === 'function')
-            ? fetchAndPlotDebounced.flush()
-            : fetchAndPlot();
+          requestViewerBaseRender('file-id', () => {
+            (typeof fetchAndPlotDebounced?.flush === 'function')
+              ? fetchAndPlotDebounced.flush()
+              : fetchAndPlot();
+          }, { immediate: true, source: 'file-change' });
         });
       }
     });
@@ -3468,5 +3546,5 @@
       if (linePickStart || deleteRangeStart !== null) {
         clearPendingPickState('lmo-change');
       }
-      schedulePickOverlayUpdate();
+      schedulePickOverlayUpdate('pending-pick-state');
     });

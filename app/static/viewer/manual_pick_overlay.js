@@ -154,6 +154,7 @@ export function scheduleManualPickOverlayRedraw(reason = 'manual-pick') {
       width: state.width,
       height: state.height,
     });
+    window.viewerPerfMetrics?.recordOverlayRender?.({ reason });
   });
 }
 

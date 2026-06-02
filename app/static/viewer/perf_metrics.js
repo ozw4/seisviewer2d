@@ -30,9 +30,13 @@ function createInitialState() {
     requestCompleted: 0,
     requestAborted: 0,
     staleResponseDropped: 0,
+    baseRenderCount: 0,
+    baseInvalidationCount: 0,
+    overlayRenderCount: 0,
     lastRenderMode: null,
     lastLayer: null,
     lastKey1: null,
+    lastInvalidationReason: null,
   };
 }
 
@@ -53,6 +57,7 @@ export function createPerfMetrics({ now = defaultNow } = {}) {
     if (meta.bytes !== undefined) state.payloadBytes = coerceFiniteNumber(meta.bytes);
     if (meta.visibleTraces !== undefined) state.visibleTraces = coerceFiniteNumber(meta.visibleTraces);
     if (meta.visibleSamples !== undefined) state.visibleSamples = coerceFiniteNumber(meta.visibleSamples);
+    if (meta.reason !== undefined) state.lastInvalidationReason = meta.reason;
   }
 
   function recordDuration(name, durationMs) {
@@ -101,6 +106,21 @@ export function createPerfMetrics({ now = defaultNow } = {}) {
     updateContext(meta);
   }
 
+  function recordBaseRender(meta = {}) {
+    state.baseRenderCount += 1;
+    updateContext(meta);
+  }
+
+  function recordBaseInvalidation(meta = {}) {
+    state.baseInvalidationCount += 1;
+    updateContext(meta);
+  }
+
+  function recordOverlayRender(meta = {}) {
+    state.overlayRenderCount += 1;
+    updateContext(meta);
+  }
+
   function recordPayload(meta = {}) {
     updateContext(meta);
   }
@@ -119,6 +139,9 @@ export function createPerfMetrics({ now = defaultNow } = {}) {
     recordRequestCompleted,
     recordRequestAborted,
     recordStaleResponseDropped,
+    recordBaseRender,
+    recordBaseInvalidation,
+    recordOverlayRender,
     recordPayload,
     snapshot,
     reset,
