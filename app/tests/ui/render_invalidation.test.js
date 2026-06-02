@@ -99,6 +99,23 @@ describe('render invalidation scheduler', () => {
     expect(overlay).not.toHaveBeenCalled();
   });
 
+  test('base invalidations can sync overlay state before base render work', () => {
+    const calls = [];
+    const scheduler = createRenderInvalidationScheduler({
+      beforeBaseRender: (reason, payload) => calls.push(['sync', reason, payload.source]),
+      scheduleBaseRender: (reason, payload) => calls.push(['base', reason, payload.source]),
+      scheduleOverlayRedraw: vi.fn(),
+      requestAnimationFrameImpl: vi.fn(),
+    });
+
+    scheduler.invalidate('layer-change', { source: 'layer-select' });
+
+    expect(calls).toEqual([
+      ['sync', 'layer', 'layer-select'],
+      ['base', 'layer', 'layer-select'],
+    ]);
+  });
+
   test('base invalidations can run the caller-provided base work', () => {
     const base = vi.fn();
     const customBase = vi.fn();

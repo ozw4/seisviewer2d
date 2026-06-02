@@ -173,6 +173,8 @@
       const isOverlayOnly = window.RenderInvalidation?.isOverlayOnly;
       return typeof isOverlayOnly === 'function' && isOverlayOnly(reason);
     }
+    const SECTION_OVERLAY_RESET_REASONS = new Set(['file-id', 'key1']);
+    const PREDICTION_OVERLAY_RESET_REASONS = new Set(['file-id', 'key1', 'layer', 'pipeline']);
     function requestViewerBaseRender(reason, scheduleBaseRender, payload = {}) {
       const request = window.requestViewerBaseRenderInvalidation;
       if (typeof request === 'function') {
@@ -254,6 +256,24 @@
       return updatePredictionOverlay(reason, options);
     }
 
+    function clearManualOverlayForSectionChange(reason) {
+      picks = [];
+      clearManualPickHistory();
+      updateManualPickOverlay(reason, { redraw: false });
+      return true;
+    }
+
+    function clearPredictionOverlayForContextChange(reason) {
+      const current = currentPredictionOverlayContext();
+      predictedPicks = [];
+      currentFbKey = null;
+      currentFbLayer = current.layer || 'raw';
+      currentFbPipelineKey = current.pipelineKey || null;
+      currentFbModelId = current.modelId || null;
+      updatePredictionOverlay(reason, { redraw: false });
+      return true;
+    }
+
     function onFbPredictionToggle(checked) {
       localStorage.setItem('showFbPred', checked ? 'true' : 'false');
       updatePredictionOverlay('prediction-toggle');
@@ -263,6 +283,13 @@
     window.onFbPredictionToggle = onFbPredictionToggle;
     window.syncViewerOverlayInvalidationState = function syncViewerOverlayInvalidationState(reason = 'overlay') {
       const normalizedReason = normalizeViewerInvalidationReason(reason);
+      let didSync = false;
+      if (SECTION_OVERLAY_RESET_REASONS.has(normalizedReason)) {
+        didSync = clearManualOverlayForSectionChange(normalizedReason) || didSync;
+      }
+      if (PREDICTION_OVERLAY_RESET_REASONS.has(normalizedReason)) {
+        didSync = clearPredictionOverlayForContextChange(normalizedReason) || didSync;
+      }
       if (
         normalizedReason === 'manual-pick-add' ||
         normalizedReason === 'manual-pick-move' ||
@@ -272,13 +299,16 @@
         normalizedReason === 'hover-pick-change'
       ) {
         updateManualPickOverlay(normalizedReason, { redraw: false });
+        didSync = true;
       }
       if (
         normalizedReason === 'prediction-toggle' ||
         normalizedReason === 'prediction-data-current-viewport'
       ) {
         updatePredictionOverlay(normalizedReason, { redraw: false });
+        didSync = true;
       }
+      return didSync;
     };
 
     let manualPickRedoStack = [];

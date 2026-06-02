@@ -102,6 +102,7 @@ export function isOverlayOnlyInvalidation(reason) {
 export function createRenderInvalidationScheduler({
   scheduleBaseRender,
   scheduleOverlayRedraw,
+  beforeBaseRender,
   requestAnimationFrameImpl = globalThis.requestAnimationFrame,
 } = {}) {
   let overlayRaf = 0;
@@ -130,6 +131,9 @@ export function createRenderInvalidationScheduler({
   function invalidate(reason, payload = {}) {
     const classification = classifyRenderInvalidation(reason);
     if (classification.requiresBaseRender) {
+      if (typeof beforeBaseRender === 'function') {
+        beforeBaseRender(classification.reason, payload);
+      }
       const baseScheduler = typeof payload?.scheduleBaseRender === 'function'
         ? payload.scheduleBaseRender
         : scheduleBaseRender;

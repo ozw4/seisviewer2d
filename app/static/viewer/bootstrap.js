@@ -90,6 +90,12 @@ window.rafDebounce = rafDebounce;
 window.viewerRenderRequests = viewerRenderRequests;
 window.viewerPerfMetrics = viewerPerfMetrics;
 window.viewerRenderInvalidation = createRenderInvalidationScheduler({
+  beforeBaseRender(reason, payload) {
+    const synced = window.syncViewerOverlayInvalidationState?.(reason, payload);
+    if (synced) {
+      window.scheduleViewerOverlaySync?.(reason);
+    }
+  },
   scheduleBaseRender(reason) {
     if (typeof window.scheduleWindowFetch === 'function') {
       window.scheduleWindowFetch();
