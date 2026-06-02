@@ -3013,6 +3013,19 @@
         latestWindowRender.requestedLayer === layer &&
         latestWindowRender.key1 === key1Val
       ) {
+        if (
+          typeof latestWindowRender.scaling === 'string' &&
+          latestWindowRender.scaling !== currentScaling
+        ) {
+          return;
+        }
+        if (
+          typeof latestWindowRender.lmoKey === 'string' &&
+          typeof window.currentLmoKey === 'function' &&
+          latestWindowRender.lmoKey !== window.currentLmoKey()
+        ) {
+          return;
+        }
         if (layer !== 'raw') {
           const pipelineKeyNow = window.latestPipelineKey || null;
           if ((latestWindowRender.pipelineKey || null) !== (pipelineKeyNow || null)) {

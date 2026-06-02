@@ -379,6 +379,20 @@
       const sel = document.getElementById('layerSelect');
       const currentLayer = sel ? sel.value : 'raw';
       if (windowData.requestedLayer !== currentLayer) return;
+      if (
+        typeof windowData.scaling === 'string' &&
+        typeof currentScaling !== 'undefined' &&
+        windowData.scaling !== currentScaling
+      ) {
+        return;
+      }
+      if (
+        typeof windowData.lmoKey === 'string' &&
+        typeof window.currentLmoKey === 'function' &&
+        windowData.lmoKey !== window.currentLmoKey()
+      ) {
+        return;
+      }
 
       const slider = document.getElementById('key1_slider');
       const idx = slider ? parseInt(slider.value, 10) : 0;
@@ -703,6 +717,20 @@
       const sel = document.getElementById('layerSelect');
       const currentLayer = sel ? sel.value : 'raw';
       if (windowData.requestedLayer !== currentLayer) return;
+      if (
+        typeof windowData.scaling === 'string' &&
+        typeof currentScaling !== 'undefined' &&
+        windowData.scaling !== currentScaling
+      ) {
+        return;
+      }
+      if (
+        typeof windowData.lmoKey === 'string' &&
+        typeof window.currentLmoKey === 'function' &&
+        windowData.lmoKey !== window.currentLmoKey()
+      ) {
+        return;
+      }
 
       const slider = document.getElementById('key1_slider');
       const idx = slider ? parseInt(slider.value, 10) : 0;

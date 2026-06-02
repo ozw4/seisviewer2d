@@ -244,6 +244,15 @@
       return cleanPayload;
     }
 
+    function commitLatestWindowRender(slotName, requestId) {
+      if (
+        latestWindowRender?.__requestSlot === slotName &&
+        latestWindowRender.__requestId === requestId
+      ) {
+        latestWindowRender = stripRenderRequest(latestWindowRender);
+      }
+    }
+
     function isPayloadRenderRequestCurrent(payload) {
       const slotName = payload?.__requestSlot;
       const requestId = payload?.__requestId;
@@ -634,6 +643,7 @@
           effectiveLayer,
           pipelineKey: resolvedPipelineKey,
           referencePipelineKey: resolvedReferencePipelineKey,
+          scaling,
           x0: windowInfo.x0,
           x1: windowInfo.x1,
           y0: windowInfo.y0,
@@ -1292,12 +1302,14 @@
         if (isRelayouting) {
           redrawPending = true;
           markRenderRequestCompleted(RENDER_SLOT_SECTION_WINDOW, requestId);
+          commitLatestWindowRender(RENDER_SLOT_SECTION_WINDOW, requestId);
           if (windowFetchCtrl === ctrl) windowFetchCtrl = null;
           return;
         }
         renderWindowPayload(renderPayload);
         maybePrefetchAroundCurrentViewport(resolvedRequestContext);
         markRenderRequestCompleted(RENDER_SLOT_SECTION_WINDOW, requestId);
+        commitLatestWindowRender(RENDER_SLOT_SECTION_WINDOW, requestId);
         if (windowFetchCtrl === ctrl) windowFetchCtrl = null;
         return;
       }
@@ -1442,6 +1454,7 @@
         if (isRelayouting) {      // ドラッグ中なら描画は保留
           redrawPending = true;
           markRenderRequestCompleted(RENDER_SLOT_SECTION_WINDOW, requestId);
+          commitLatestWindowRender(RENDER_SLOT_SECTION_WINDOW, requestId);
           return;
         }
         D('WINDOW@recv', { mode, shape: renderPayload.shape, stepX: renderPayload.stepX, stepY: renderPayload.stepY });
@@ -1456,6 +1469,7 @@
         }
         maybePrefetchAroundCurrentViewport(resolvedRequestContext);
         markRenderRequestCompleted(RENDER_SLOT_SECTION_WINDOW, requestId);
+        commitLatestWindowRender(RENDER_SLOT_SECTION_WINDOW, requestId);
 
       } catch (err) {
         if (Number.isInteger(decodeJobId)) {
