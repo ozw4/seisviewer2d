@@ -9,6 +9,7 @@ import { viewerRenderRequests } from './render_request_controller.js';
 import { viewerPerfMetrics } from './perf_metrics.js';
 import { initViewerPerfOverlay } from './perf_overlay.js';
 import { initViewerOverlayLayer } from './overlay_layer.js';
+import { initManualPickOverlay } from './manual_pick_overlay.js';
 
 // ------------------------------------------------------------
   // Mode decider with geometry-stability lock
@@ -88,6 +89,7 @@ window.viewerRenderRequests = viewerRenderRequests;
 window.viewerPerfMetrics = viewerPerfMetrics;
 window.viewerPerfOverlay = initViewerPerfOverlay({ metrics: viewerPerfMetrics });
 window.viewerOverlayLayer = initViewerOverlayLayer();
+window.manualPickOverlay = initManualPickOverlay();
 
 const readyQueue = window.__viewerBootstrapQueue;
 window.viewerBootstrapReady = Promise.resolve();

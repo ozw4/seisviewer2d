@@ -164,6 +164,19 @@
 
     window.getPendingPickOverlayState = getPendingPickOverlayState;
     window.hasPendingPickOverlayState = hasPendingPickOverlayState;
+    function updateManualPickOverlay(reason = 'manual-pick-overlay', options = {}) {
+      if (typeof window.updateManualPickOverlayState !== 'function') return false;
+      window.updateManualPickOverlayState({
+        manualPicks: Array.isArray(picks) ? picks : [],
+        pending: getPendingPickOverlayState(),
+        timeTransform: window.pickRawTimeToDisplayTime,
+      }, {
+        reason,
+        redraw: options.redraw !== false,
+      });
+      return true;
+    }
+
     let manualPickRedoStack = [];
     let applyingManualPickHistory = false;
 
@@ -1321,117 +1334,13 @@
       });
     }
 
-    function resolvePendingPickYRange(plotDiv) {
-      const yaRange = plotDiv?._fullLayout?.yaxis?.range;
-      if (
-        Array.isArray(yaRange) &&
-        yaRange.length === 2 &&
-        Number.isFinite(yaRange[0]) &&
-        Number.isFinite(yaRange[1])
-      ) {
-        return {
-          yMin: Math.min(yaRange[0], yaRange[1]),
-          yMax: Math.max(yaRange[0], yaRange[1]),
-        };
-      }
-
-      const dt = Number(window.defaultDt ?? defaultDt) || 1;
-      const wy0 = Number(latestWindowRender?.y0);
-      const wy1 = Number(latestWindowRender?.y1);
-      if (Number.isFinite(wy0) && Number.isFinite(wy1)) {
-        return {
-          yMin: Math.min(wy0 * dt, wy1 * dt),
-          yMax: Math.max(wy0 * dt, wy1 * dt),
-        };
-      }
-
-      return { yMin: 0, yMax: 0 };
-    }
-
     function flushPickOverlayUpdate() {
       if (!pickOverlayDirty) return;
       if (isRelayouting) return;
 
-      const plotDiv = document.getElementById('plot');
-      if (!plotDiv) {
-        pickOverlayDirty = false;
-        return;
-      }
-      let xMin = null;
-      let xMax = null;
-
-      // Prefer the rendered window span so panning does not trim pick traces to viewport only.
-      if (Number.isFinite(renderedStart) && Number.isFinite(renderedEnd)) {
-        xMin = Math.floor(Math.min(renderedStart, renderedEnd));
-        xMax = Math.ceil(Math.max(renderedStart, renderedEnd));
-      }
-
-      if (!(Number.isFinite(xMin) && Number.isFinite(xMax) && xMin <= xMax)) {
-        const wx0 = Number(latestWindowRender?.x0);
-        const wx1 = Number(latestWindowRender?.x1);
-        if (Number.isFinite(wx0) && Number.isFinite(wx1)) {
-          xMin = Math.floor(Math.min(wx0, wx1));
-          xMax = Math.ceil(Math.max(wx0, wx1));
-        }
-      }
-
-      if (!(Number.isFinite(xMin) && Number.isFinite(xMax) && xMin <= xMax)) {
-        const xaRange = plotDiv?._fullLayout?.xaxis?.range;
-        if (
-          Array.isArray(xaRange) &&
-          xaRange.length === 2 &&
-          Number.isFinite(xaRange[0]) &&
-          Number.isFinite(xaRange[1])
-        ) {
-          xMin = Math.floor(Math.min(xaRange[0], xaRange[1]));
-          xMax = Math.ceil(Math.max(xaRange[0], xaRange[1]));
-        }
-      }
-
-      if (!(Number.isFinite(xMin) && Number.isFinite(xMax) && xMin <= xMax)) {
-        pickOverlayDirty = false;
-        return;
-      }
-
-      const showPred = !!document.getElementById('showFbPred')?.checked;
-      const [manualPickTr, predPickTr] = buildPickMarkerTraces({
-        manualPicks: picks,
-        predicted: showPred ? predictedPicks : [],
-        xMin,
-        xMax,
-        showPredicted: showPred,
-        timeTransform: window.pickRawTimeToDisplayTime,
-      });
-      const { yMin, yMax } = resolvePendingPickYRange(plotDiv);
-      const pendingPickTr = buildPendingPickMarkerTrace({
-        pending: getPendingPickOverlayState(),
-        yMin,
-        yMax,
-      });
       pickOverlayDirty = false;
-      const resolver = (typeof resolvePickTraceIndices === 'function')
-        ? resolvePickTraceIndices
-        : window.resolvePickTraceIndices;
-      if (typeof resolver !== 'function') {
-        console.warn('[PICKS] resolvePickTraceIndices is not available');
-        return;
-      }
-      const { manualIdx, predIdx, pendingIdx } = resolver(plotDiv);
-      if (manualIdx < 0 || predIdx < 0 || pendingIdx < 0) {
-        console.warn('[PICKS] pick traces are missing; overlay restyle skipped');
-        if (typeof renderLatestView === 'function') renderLatestView();
-        return;
-      }
-      const restyleResult = Plotly.restyle(plotDiv, {
-        x: [manualPickTr.x, predPickTr.x, pendingPickTr.x],
-        y: [manualPickTr.y, predPickTr.y, pendingPickTr.y],
-        visible: [true, !!showPred, !!pendingPickTr.visible],
-        mode: [manualPickTr.mode, predPickTr.mode, pendingPickTr.mode],
-        marker: [manualPickTr.marker, predPickTr.marker, pendingPickTr.marker],
-        line: [manualPickTr.line, predPickTr.line, pendingPickTr.line],
-      }, [manualIdx, predIdx, pendingIdx]);
-      if (restyleResult && typeof restyleResult.catch === 'function') {
-        restyleResult.catch((err) => console.warn('pick overlay restyle failed', err));
+      if (!updateManualPickOverlay('pick-overlay-update')) {
+        console.warn('[PICKS] manual pick overlay renderer is not available');
       }
     }
 
@@ -2814,12 +2723,19 @@
       if (!currentFileId) return;
       const idx = parseInt(document.getElementById('key1_slider').value);
       const key1Val = key1Values?.[idx];
-      if (key1Val === undefined) return;
+      if (key1Val === undefined) {
+        picks = [];
+        updateManualPickOverlay('picks-fetch-clear');
+        return;
+      }
+      picks = [];
+      updateManualPickOverlay('picks-fetch-clear');
       try {
         const res = await fetch(`/picks?file_id=${currentFileId}&key1=${encodeURIComponent(key1Val)}&key1_byte=${currentKey1Byte}&key2_byte=${currentKey2Byte}`);
         if (res.ok) {
           const data = await res.json();
           picks = (data.picks || []).map(p => ({ trace: p.trace, time: p.time }));
+          updateManualPickOverlay('picks-fetch');
         }
         const [x0, x1] = visibleXRng();
         D('PICKS@fetchPicks', { count: picks.length, vis: [x0, x1],
@@ -2895,15 +2811,15 @@
       const idx = Number.isFinite(idxRaw) ? idxRaw : 0;
       const key1Val = key1Values?.[idx];
       if (key1Val === undefined) return [];
+      picks = [];
+      updateManualPickOverlay('picks-reload-clear');
       try {
         const r = await fetch(`/picks?file_id=${encodeURIComponent(fileId)}&key1=${encodeURIComponent(key1Val)}&key1_byte=${currentKey1Byte}&key2_byte=${currentKey2Byte}`);
         if (!r.ok) return [];
         const j = await r.json();
         const arr = (j.picks || []).map(p => ({ trace: (p.trace | 0), time: +p.time }));
         picks = arr;
-        if (typeof renderLatestView === 'function') {
-          try { renderLatestView(); } catch (e) { console.warn('render after picks failed', e); }
-        }
+        updateManualPickOverlay('picks-reload');
         const [x0, x1] = visibleXRng();
         D('PICKS@reload', {
           count: picks.length,
@@ -3408,6 +3324,7 @@
 
           picks = [];
           predictedPicks = [];
+          updateManualPickOverlay('file-change-clear');
           currentFbKey = null;
           currentFbLayer = 'raw';
           currentFbPipelineKey = null;

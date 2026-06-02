@@ -34,6 +34,40 @@ def _click_plot_center(page, *, modifiers: list[str] | None = None) -> None:
             page.keyboard.up(key)
 
 
+def _wait_for_manual_pick_overlay_pixels(
+    page, *, min_pixels: int = 1, min_width: int = 1, min_height: int = 1
+) -> None:
+    page.wait_for_function(
+        """({ minPixels, minWidth, minHeight }) => {
+          const canvas = document.querySelector('.sv-viewer-manual-pick-overlay');
+          if (!canvas || canvas.width <= 0 || canvas.height <= 0) return false;
+          const ctx = canvas.getContext('2d', { willReadFrequently: true });
+          if (!ctx) return false;
+          const { data, width, height } = ctx.getImageData(0, 0, canvas.width, canvas.height);
+          let count = 0;
+          let minX = width;
+          let minY = height;
+          let maxX = -1;
+          let maxY = -1;
+          for (let i = 3; i < data.length; i += 4) {
+            if (data[i] === 0) continue;
+            count += 1;
+            const px = (i - 3) / 4;
+            const x = px % width;
+            const y = Math.floor(px / width);
+            minX = Math.min(minX, x);
+            minY = Math.min(minY, y);
+            maxX = Math.max(maxX, x);
+            maxY = Math.max(maxY, y);
+          }
+          return count >= minPixels &&
+            (maxX - minX + 1) >= minWidth &&
+            (maxY - minY + 1) >= minHeight;
+        }""",
+        arg={"minPixels": min_pixels, "minWidth": min_width, "minHeight": min_height},
+    )
+
+
 @pytest.mark.e2e
 def test_add_single_pick_then_get(page, base_url, tiny_segy_path, e2e_debug):
     page.set_default_timeout(60_000)
@@ -175,15 +209,7 @@ def test_pending_pick_anchors_are_visible_without_write(
           return text.includes('Line pick anchor:');
         }"""
     )
-    page.wait_for_function(
-        """() => {
-          const gd = document.getElementById('plot');
-          const tr = Array.isArray(gd?.data)
-            ? gd.data.find((item) => item?.meta?.svRole === 'pick' && item?.meta?.svKind === 'pending')
-            : null;
-          return !!(tr && tr.visible && Array.isArray(tr.x) ? tr.x.length === 1 : tr?.x?.length === 1);
-        }"""
-    )
+    _wait_for_manual_pick_overlay_pixels(page, min_pixels=8, min_width=8, min_height=8)
     assert pick_posts == []
 
     page.keyboard.up("Shift")
@@ -198,15 +224,7 @@ def test_pending_pick_anchors_are_visible_without_write(
           return text.includes('Delete range anchor:');
         }"""
     )
-    page.wait_for_function(
-        """() => {
-          const gd = document.getElementById('plot');
-          const tr = Array.isArray(gd?.data)
-            ? gd.data.find((item) => item?.meta?.svRole === 'pick' && item?.meta?.svKind === 'pending')
-            : null;
-          return !!(tr && tr.visible && tr.mode === 'lines' && tr.x?.length === 2 && tr.y?.length === 2);
-        }"""
-    )
+    _wait_for_manual_pick_overlay_pixels(page, min_pixels=8, min_height=40)
     assert pick_posts == []
     page.evaluate(
         """async () => {
@@ -222,20 +240,6 @@ def test_pending_pick_anchors_are_visible_without_write(
           await Plotly.relayout(gd, { 'yaxis.range': [center + span * 0.5, center - span * 0.5] });
         }"""
     )
-    page.wait_for_function(
-        """() => {
-          const gd = document.getElementById('plot');
-          const yaxis = gd?._fullLayout?.yaxis;
-          const tr = Array.isArray(gd?.data)
-            ? gd.data.find((item) => item?.meta?.svRole === 'pick' && item?.meta?.svKind === 'pending')
-            : null;
-          if (!Array.isArray(yaxis?.range) || !tr || !Array.isArray(tr.y) || tr.y.length !== 2) {
-            return false;
-          }
-          const expectedMin = Math.min(yaxis.range[0], yaxis.range[1]);
-          const expectedMax = Math.max(yaxis.range[0], yaxis.range[1]);
-          return Math.abs(tr.y[0] - expectedMin) < 1e-6 && Math.abs(tr.y[1] - expectedMax) < 1e-6;
-        }"""
-    )
+    _wait_for_manual_pick_overlay_pixels(page, min_pixels=8, min_height=40)
 
     e2e_debug.assert_clean()
