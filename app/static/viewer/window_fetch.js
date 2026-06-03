@@ -1,9 +1,19 @@
+    function scheduleViewportWindowFetchFallback() {
+      if (typeof window.requestViewportBaseRender === 'function') {
+        window.requestViewportBaseRender({ immediate: false });
+        return;
+      }
+      if (typeof scheduleWindowFetch === 'function') {
+        scheduleWindowFetch();
+      }
+    }
+
     function maybeFetchIfOutOfWindow() {
       if (typeof isCompareModeEnabled === 'function' && isCompareModeEnabled()) {
         return;
       }
       if (!latestWindowRender || !sectionShape) {
-        scheduleWindowFetch();
+        scheduleViewportWindowFetchFallback();
         return;
       }
       const { x0, x1, y0, y1 } = latestWindowRender;
@@ -13,7 +23,9 @@
       const guardY = Math.max(1, Math.floor((y1 - y0 + 1) * 0.05));
       const insideX = win.x0 >= x0 + guardX && win.x1 <= x1 - guardX;
       const insideY = win.y0 >= y0 + guardY && win.y1 <= y1 - guardY;
-      if (!(insideX && insideY)) scheduleWindowFetch();
+      if (!(insideX && insideY)) {
+        scheduleViewportWindowFetchFallback();
+      }
     }
     function roundUpPowerOfTwo(value) {
       let v = Math.max(1, Math.floor(value));

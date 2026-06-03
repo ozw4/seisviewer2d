@@ -60,9 +60,12 @@ test('init creates a non-interactive overlay with formatted metrics', () => {
     requestCompleted: 3,
     requestAborted: 1,
     staleResponseDropped: 2,
+    baseRenderCount: 5,
+    overlayRenderCount: 8,
     lastKey1: 101,
     lastLayer: 'raw',
     lastRenderMode: 'heatmap',
+    lastInvalidationReason: 'prediction-toggle',
   });
 
   const overlay = initViewerPerfOverlay({ doc: document, win, metrics });
@@ -74,12 +77,15 @@ test('init creates a non-interactive overlay with formatted metrics', () => {
   expect(overlay.node.textContent).toContain('decode 5.0 ms');
   expect(overlay.node.textContent).toContain('render 104 ms');
   expect(overlay.node.textContent).toContain('overlay 0.8 ms');
+  expect(overlay.node.textContent).toContain('base renders 5');
+  expect(overlay.node.textContent).toContain('overlay renders 8');
   expect(overlay.node.textContent).toContain('bytes  2.0 KB');
   expect(overlay.node.textContent).toContain('visible 64 x 128');
   expect(overlay.node.textContent).toContain('request started/completed/aborted/stale 4/3/1/2');
   expect(overlay.node.textContent).toContain('key1   101');
   expect(overlay.node.textContent).toContain('layer  raw');
   expect(overlay.node.textContent).toContain('mode   heatmap');
+  expect(overlay.node.textContent).toContain('reason prediction-toggle');
 
   now = 249;
   overlay.update();
@@ -95,6 +101,8 @@ test('init creates a non-interactive overlay with formatted metrics', () => {
 
 test('snapshot formatter keeps empty values explicit', () => {
   expect(formatPerfOverlaySnapshot({})).toContain('request started/completed/aborted/stale 0/0/0/0');
+  expect(formatPerfOverlaySnapshot({})).toContain('base renders 0');
+  expect(formatPerfOverlaySnapshot({})).toContain('overlay renders 0');
   expect(formatPerfOverlaySnapshot({})).toContain('visible -');
   expect(formatPerfOverlaySnapshot({})).toContain('mode   -');
 });

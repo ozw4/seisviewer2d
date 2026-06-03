@@ -51,6 +51,8 @@ export function formatPerfOverlaySnapshot(snapshot = {}) {
     `decode ${formatMs(snapshot.decodeMs)}`,
     `render ${formatMs(snapshot.renderMs)}`,
     `overlay ${formatMs(snapshot.overlayMs)}`,
+    `base renders ${formatCount(snapshot.baseRenderCount)}`,
+    `overlay renders ${formatCount(snapshot.overlayRenderCount)}`,
     `bytes  ${formatBytes(snapshot.payloadBytes)}`,
     `visible ${formatVisible(snapshot)}`,
     `request started/completed/aborted/stale ${[
@@ -62,6 +64,7 @@ export function formatPerfOverlaySnapshot(snapshot = {}) {
     `key1   ${formatText(snapshot.lastKey1)}`,
     `layer  ${formatText(snapshot.lastLayer)}`,
     `mode   ${formatText(snapshot.lastRenderMode)}`,
+    `reason ${formatText(snapshot.lastInvalidationReason)}`,
   ].join('\n');
 }
 

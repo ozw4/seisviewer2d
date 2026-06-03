@@ -376,6 +376,7 @@
     }
 
     #plot {
+      position: relative;
       flex: 1;
       min-width: 0;
       width: 100%;
@@ -467,6 +468,21 @@
       min-height: 0;
       width: 100% !important;
       height: 100% !important;
+    }
+
+    .sv-viewer-overlay-root {
+      position: absolute;
+      inset: 0;
+      z-index: 10;
+      pointer-events: none;
+      overflow: hidden;
+    }
+
+    .sv-viewer-overlay-canvas {
+      position: absolute;
+      inset: 0;
+      display: block;
+      pointer-events: none;
     }
 
     #windowLoadingOverlay {
@@ -1909,7 +1925,7 @@
               </div>
               <div class="control-row">
                 <label class="control-field"><input type="checkbox" id="showFbPred"
-                    onchange="localStorage.setItem('showFbPred', this.checked); drawSelectedLayer(renderedStart, renderedEnd)">Show FB predicted</label>
+                    onchange="onFbPredictionToggle(this.checked)">Show FB predicted</label>
                 <label id="fbpick_model_select_label" class="control-field" style="display:none;">FB model:
                   <select id="fbpick_model_select" disabled></select>
                 </label>

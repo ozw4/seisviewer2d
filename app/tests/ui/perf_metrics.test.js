@@ -32,6 +32,8 @@ test('payload and request counts can be reset', () => {
 
   metrics.recordRequestStarted();
   metrics.recordRequestCompleted();
+  metrics.recordBaseRender({ reason: 'key1' });
+  metrics.recordOverlayRender({ reason: 'manual-pick-add' });
   metrics.recordPayload({
     payloadBytes: 2048,
     visibleTraces: 50,
@@ -42,6 +44,9 @@ test('payload and request counts can be reset', () => {
   expect(metrics.snapshot()).toMatchObject({
     requestStarted: 1,
     requestCompleted: 1,
+    baseRenderCount: 1,
+    overlayRenderCount: 1,
+    lastInvalidationReason: 'manual-pick-add',
     payloadBytes: 2048,
     visibleTraces: 50,
     visibleSamples: 600,
@@ -53,6 +58,9 @@ test('payload and request counts can be reset', () => {
   expect(metrics.snapshot()).toMatchObject({
     requestStarted: 0,
     requestCompleted: 0,
+    baseRenderCount: 0,
+    overlayRenderCount: 0,
+    lastInvalidationReason: null,
     payloadBytes: 0,
     visibleTraces: 0,
     visibleSamples: 0,
