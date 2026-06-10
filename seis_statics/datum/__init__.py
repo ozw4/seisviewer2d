@@ -1,6 +1,4 @@
-"""Compatibility imports for datum static correction math helpers."""
-
-from __future__ import annotations
+"""Datum statics core namespace for future extraction."""
 
 from seis_statics.datum.math import DatumStaticResult, compute_datum_static_shifts
 

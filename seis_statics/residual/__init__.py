@@ -1,9 +1,8 @@
-"""Compatibility exports for residual static design-matrix helpers."""
+"""Residual statics model representation and design-matrix helpers."""
 
 from __future__ import annotations
 
 from seis_statics.residual.design_matrix import (
-    MoveoutModel,
     ResidualStaticColumnLayout,
     ResidualStaticModelEvaluation,
     ResidualStaticObservationMatrixTriplets,
@@ -15,6 +14,7 @@ from seis_statics.residual.design_matrix import (
     pack_residual_static_parameters,
     unpack_residual_static_parameters,
 )
+from seis_statics.residual.types import MoveoutModel, ResidualStaticSolverInputs
 
 
 __all__ = [
@@ -23,6 +23,7 @@ __all__ = [
     'ResidualStaticModelEvaluation',
     'ResidualStaticObservationMatrixTriplets',
     'ResidualStaticParameterParts',
+    'ResidualStaticSolverInputs',
     'build_residual_static_column_layout',
     'build_residual_static_observation_matrix_triplets',
     'compute_linear_abs_offset_moveout_s',
