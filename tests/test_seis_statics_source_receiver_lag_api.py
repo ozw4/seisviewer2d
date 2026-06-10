@@ -97,7 +97,43 @@ def test_valid_mask_excludes_invalid_endpoint_ids_from_solver_universe() -> None
     assert result.minimum_data.n_receivers == 5
     assert result.graph.n_components == 1
     assert result.used_mask[-1].item() is False
+    assert np.isnan(result.trace_delay_s[-1])
+    assert np.isnan(result.applied_shift_s[-1])
     assert np.isnan(result.residual_s[-1])
+
+
+def test_zero_weight_valid_trace_remains_evaluable() -> None:
+    source_delay = np.asarray([0.010, -0.004], dtype=np.float64)
+    receiver_delay = np.asarray([0.006, -0.002], dtype=np.float64)
+    source_id = np.asarray([101, 101, 102, 102], dtype=np.int64)
+    receiver_id = np.asarray([201, 202, 201, 202], dtype=np.int64)
+    lag_s = np.asarray(
+        [
+            source_delay[0] + receiver_delay[0],
+            source_delay[0] + receiver_delay[1],
+            source_delay[1] + receiver_delay[0],
+            source_delay[1] + receiver_delay[1],
+        ],
+        dtype=np.float64,
+    )
+    weight = np.ones_like(lag_s)
+    zero_weight_index = 3
+    weight[zero_weight_index] = 0.0
+
+    result = solve_source_receiver_statics(
+        lag_s=lag_s,
+        source_id=source_id,
+        receiver_id=receiver_id,
+        valid_mask=np.ones_like(lag_s, dtype=bool),
+        weight=weight,
+        robust=False,
+        lsmr_options=_lsmr_options(),
+    )
+
+    assert result.used_mask[zero_weight_index].item() is False
+    assert np.isfinite(result.trace_delay_s[zero_weight_index])
+    assert np.isfinite(result.residual_s[zero_weight_index])
+    assert result.minimum_data.n_zero_weight_observations == 1
 
 
 def test_gauge_freedom_recovers_source_receiver_after_alignment() -> None:

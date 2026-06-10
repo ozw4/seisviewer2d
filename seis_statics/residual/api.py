@@ -218,7 +218,9 @@ def solve_source_receiver_statics(
     provided, least-squares observation rows and right-hand-side values are
     multiplied by ``sqrt(weight)``. Weight values must be finite and
     non-negative; zero-weight observations are reported in diagnostics and are
-    excluded from the solve.
+    excluded from the solve, but remain valid for post-solve evaluation.
+    Observations where ``valid_mask`` is false are excluded from both the solve
+    and post-solve per-trace correction outputs, which are returned as ``NaN``.
     """
     lag = _coerce_1d_real_numeric_float64(lag_s, name='lag_s')
     n_traces = int(lag.shape[0])
@@ -972,10 +974,12 @@ def _solve_source_receiver_once(
     parameter = np.ascontiguousarray(raw_result.parameter_vector, dtype=np.float64)
     source_delay_s = np.ascontiguousarray(parameter[:n_sources], dtype=np.float64)
     receiver_delay_s = np.ascontiguousarray(parameter[n_sources:], dtype=np.float64)
-    trace_delay_s = np.ascontiguousarray(
+    raw_trace_delay_s = np.ascontiguousarray(
         source_delay_s[source.index_sorted] + receiver_delay_s[receiver.index_sorted],
         dtype=np.float64,
     )
+    trace_delay_s = np.full(lag.shape, np.nan, dtype=np.float64)
+    trace_delay_s[base_valid_mask] = raw_trace_delay_s[base_valid_mask]
     residual_s = np.full(lag.shape, np.nan, dtype=np.float64)
     residual_s[base_valid_mask] = lag[base_valid_mask] - trace_delay_s[
         base_valid_mask
