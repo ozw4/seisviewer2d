@@ -348,6 +348,20 @@ def test_public_api_matches_lower_solver_with_robust_rejection_enabled() -> None
     _assert_public_matches_lower(public, lower, inputs)
 
 
+def test_public_api_exposes_legacy_robust_result_without_hidden_attribute() -> None:
+    inputs = _grid_inputs(moveout_model='none')
+
+    result = _solve_public(
+        inputs,
+        robust_options=ResidualStaticRobustOptions(enabled=False),
+    )
+
+    legacy = result.robust_solve_result
+    assert legacy is result.legacy_robust_solve_result
+    assert not hasattr(result, '_robust_solve_result')
+    assert '_robust_solve_result' not in result.__dict__
+
+
 def test_public_api_ignores_invalid_pick_endpoint_ids() -> None:
     inputs = _grid_inputs(moveout_model='none')
     invalid_source_id = np.asarray([9001], dtype=np.int64)

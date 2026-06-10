@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 import numpy as np
 
@@ -61,14 +61,21 @@ class FirstBreakResidualStaticsResult:
     n_gauge_rows: int
     n_damping_rows: int
     max_abs_estimated_delay_s: float
+    legacy_robust_solve_result: ResidualStaticRobustSolveResult | None = field(
+        default=None,
+        repr=False,
+        compare=False,
+    )
 
     @property
     def robust_solve_result(self) -> ResidualStaticRobustSolveResult:
-        """Return the package solver result retained for artifact adapters."""
-        result = getattr(self, '_robust_solve_result', None)
-        if result is None:
+        """Return the legacy solver result retained for artifact adapters.
+
+        New clients should prefer stable fields on this public result object.
+        """
+        if self.legacy_robust_solve_result is None:
             raise AttributeError('robust_solve_result is not attached')
-        return result
+        return self.legacy_robust_solve_result
 
 
 @dataclass(frozen=True)

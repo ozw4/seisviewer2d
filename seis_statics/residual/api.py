@@ -629,7 +629,7 @@ def _public_result(
     final = robust_result.final_solver_result
     parts = final.parameter_parts
     evaluation = final.model_evaluation
-    public_result = FirstBreakResidualStaticsResult(
+    return FirstBreakResidualStaticsResult(
         moveout_model=final.layout.moveout_model,
         source_id=source.unique_ids,
         receiver_id=receiver.unique_ids,
@@ -661,9 +661,8 @@ def _public_result(
         n_gauge_rows=final.n_gauge_rows,
         n_damping_rows=final.n_damping_rows,
         max_abs_estimated_delay_s=final.max_abs_estimated_delay_s,
+        legacy_robust_solve_result=robust_result,
     )
-    object.__setattr__(public_result, '_robust_solve_result', robust_result)
-    return public_result
 
 
 class _SourceReceiverSolveResult:
