@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import csv
 import json
 from pathlib import Path
 from typing import Any
@@ -12,11 +13,16 @@ import app.api.routers.statics as statics_router_module
 import app.services.residual_static_service as residual_service
 from app.api.schemas import ResidualStaticApplyRequest
 from app.main import app
-from app.services.residual_static_artifacts import ResidualStaticArtifactPaths
+from app.services.residual_static_artifacts import (
+    ResidualStaticArtifactMetadata,
+    ResidualStaticArtifactPaths,
+    write_residual_static_artifacts,
+)
 from app.services.residual_static_corrected_store import (
     ResidualStaticCorrectedStoreResult,
 )
 from app.services.residual_static_inputs import ResidualStaticResolvedArtifacts
+from seis_statics.residual import ResidualStaticSolverInputs
 
 FILE_ID = 'datum-corrected-file-id'
 SOURCE_FILE_ID = 'raw-source-file-id'
@@ -108,6 +114,97 @@ def _request(**overrides: Any) -> ResidualStaticApplyRequest:
     payload = _payload()
     payload.update(overrides)
     return ResidualStaticApplyRequest.model_validate(payload)
+
+
+def _package_api_request() -> ResidualStaticApplyRequest:
+    return ResidualStaticApplyRequest.model_validate(
+        {
+            'file_id': 'input-file',
+            'datum_solution': {'job_id': 'datum-job'},
+            'pick_source': {'kind': 'manual_memmap'},
+            'geometry': {'source_id_byte': 17, 'receiver_id_byte': 13},
+            'offset': {'offset_byte': None},
+            'moveout': {'model': 'none'},
+            'solver': {
+                'min_valid_picks': 10,
+                'max_abs_estimated_delay_ms': 1000.0,
+            },
+            'robust': {
+                'enabled': True,
+                'method': 'mad',
+                'max_iterations': 3,
+                'threshold': 3.0,
+                'min_used_fraction': 0.5,
+            },
+        },
+    )
+
+
+def _package_api_solver_inputs() -> ResidualStaticSolverInputs:
+    n_sources = 5
+    n_receivers = 6
+    source_unique_ids = np.arange(101, 101 + n_sources, dtype=np.int64)
+    receiver_unique_ids = np.arange(201, 201 + n_receivers, dtype=np.int64)
+    source_index = np.repeat(np.arange(n_sources, dtype=np.int64), n_receivers)
+    receiver_index = np.tile(np.arange(n_receivers, dtype=np.int64), n_sources)
+    n_traces = int(source_index.size)
+
+    source_delay_s = np.linspace(-0.009, 0.007, n_sources, dtype=np.float64)
+    source_delay_s -= float(np.mean(source_delay_s))
+    receiver_delay_s = np.linspace(-0.004, 0.005, n_receivers, dtype=np.float64)
+    receiver_delay_s -= float(np.mean(receiver_delay_s))
+    pick_time_after_datum = (
+        0.075 + source_delay_s[source_index] + receiver_delay_s[receiver_index]
+    )
+    sample_index = np.arange(n_traces, dtype=np.float64)
+    noise = np.sin(sample_index * 1.7) + 0.5 * np.cos(sample_index * 2.3)
+    noise -= float(np.mean(noise))
+    pick_time_after_datum = pick_time_after_datum + (0.002 * noise)
+    pick_time_after_datum[13] += 0.03
+
+    datum_trace_shift = 0.001 * np.sin(np.arange(n_traces, dtype=np.float64))
+    valid_mask = np.ones(n_traces, dtype=bool)
+
+    return ResidualStaticSolverInputs(
+        picks_time_s_sorted=pick_time_after_datum - datum_trace_shift,
+        valid_pick_mask_sorted=valid_mask,
+        pick_time_after_datum_s_sorted=pick_time_after_datum,
+        datum_trace_shift_s_sorted=datum_trace_shift,
+        source_id_sorted=source_unique_ids[source_index],
+        receiver_id_sorted=receiver_unique_ids[receiver_index],
+        source_unique_ids=source_unique_ids,
+        receiver_unique_ids=receiver_unique_ids,
+        source_index_sorted=source_index,
+        receiver_index_sorted=receiver_index,
+        source_valid_pick_counts=np.bincount(
+            source_index,
+            minlength=n_sources,
+        ).astype(np.int64),
+        receiver_valid_pick_counts=np.bincount(
+            receiver_index,
+            minlength=n_receivers,
+        ).astype(np.int64),
+        offset_sorted=None,
+        abs_offset_sorted=None,
+        key1_sorted=source_unique_ids[source_index],
+        key2_sorted=receiver_unique_ids[receiver_index],
+        source_elevation_m_sorted=np.zeros(n_traces, dtype=np.float64),
+        receiver_elevation_m_sorted=np.zeros(n_traces, dtype=np.float64),
+        dt=0.004,
+        n_traces=n_traces,
+        n_samples=96,
+        key1_byte=189,
+        key2_byte=193,
+        source_id_byte=17,
+        receiver_id_byte=13,
+        offset_byte=None,
+        moveout_model='none',
+        input_file_id='input-file',
+        datum_source_file_id='datum-source-file',
+        datum_job_id='datum-job',
+        pick_source_kind='manual_memmap',
+        metadata={'source': 'residual-static-service-package-api-test'},
+    )
 
 
 def _create_residual_job(client: TestClient, tmp_path: Path) -> tuple[str, Path, Path]:
@@ -227,7 +324,7 @@ def _install_success_fakes(
     )
     monkeypatch.setattr(
         residual_service,
-        'solve_residual_static_robust_least_squares',
+        '_solve_residual_static_with_package_api',
         _solve,
     )
     monkeypatch.setattr(
@@ -239,6 +336,155 @@ def _install_success_fakes(
         residual_service,
         'apply_residual_static_correction_to_trace_store',
         _apply_trace_store,
+    )
+
+
+def test_residual_static_service_solve_uses_package_api_and_writes_stable_artifacts(
+    tmp_path: Path,
+) -> None:
+    inputs = _package_api_solver_inputs()
+    result = residual_service._solve_residual_static_with_package_api(
+        inputs,
+        _package_api_request(),
+    )
+    paths = write_residual_static_artifacts(
+        tmp_path,
+        inputs,
+        result,
+        metadata=ResidualStaticArtifactMetadata(
+            job_id='job-1',
+            input_file_id='input-file',
+            datum_source_file_id='datum-source-file',
+            datum_job_id='datum-job',
+            datum_solution_artifact='datum_static_solution.npz',
+            pick_source_kind='manual_memmap',
+        ),
+    )
+
+    expected_source_delay = np.asarray(
+        [-0.00754332, -0.004312, 0.0002385, 0.00401094, 0.00760588],
+        dtype=np.float64,
+    )
+    expected_receiver_delay = np.asarray(
+        [-0.00467254, -0.00257925, -0.00073709, 0.00082254, 0.00257405, 0.0045923],
+        dtype=np.float64,
+    )
+    expected_residual = np.asarray(
+        [
+            0.00071395,
+            0.00073771,
+            -0.00124474,
+            -0.00141704,
+            -0.00031926,
+            0.00152939,
+            -0.00058631,
+            -0.00197107,
+            0.00276613,
+            0.00090501,
+            -0.0020196,
+            0.00090583,
+            0.00115059,
+            np.nan,
+            -0.00163889,
+            -0.00044319,
+            0.00226638,
+            -0.0013349,
+            -0.00214466,
+            0.00237348,
+            0.00045022,
+            -0.00213924,
+            0.00046832,
+            0.00099188,
+            0.00086644,
+            -0.00114012,
+            -0.00033272,
+            0.00309446,
+            -0.00039585,
+            -0.00209221,
+        ],
+        dtype=np.float64,
+    )
+    expected_used = np.ones(inputs.n_traces, dtype=bool)
+    expected_used[13] = False
+    expected_rejected = np.zeros(inputs.n_traces, dtype=bool)
+    expected_rejected[13] = True
+    expected_applied_shift = np.asarray(
+        [
+            0.01221586,
+            0.01012257,
+            0.00828041,
+            0.00672078,
+            0.00496927,
+            0.00295103,
+            0.00898454,
+            0.00689125,
+            0.00504909,
+            0.00348946,
+            0.00173795,
+            -0.0002803,
+            0.00443404,
+            0.00234075,
+            0.00049858,
+            -0.00106104,
+            -0.00281255,
+            -0.0048308,
+            0.00066161,
+            -0.00143168,
+            -0.00327385,
+            -0.00483347,
+            -0.00658499,
+            -0.00860323,
+            -0.00293334,
+            -0.00502663,
+            -0.0068688,
+            -0.00842842,
+            -0.01017993,
+            -0.01219818,
+        ],
+        dtype=np.float64,
+    )
+
+    with np.load(paths.solution_npz_path) as solution:
+        np.testing.assert_allclose(
+            solution['source_delay_s'],
+            expected_source_delay,
+            atol=5.0e-9,
+        )
+        np.testing.assert_allclose(
+            solution['receiver_delay_s'],
+            expected_receiver_delay,
+            atol=5.0e-9,
+        )
+        np.testing.assert_allclose(
+            solution['residual_after_s'],
+            expected_residual,
+            atol=5.0e-9,
+            equal_nan=True,
+        )
+        np.testing.assert_array_equal(solution['used_mask_sorted'], expected_used)
+        np.testing.assert_array_equal(solution['rejected_mask_sorted'], expected_rejected)
+        np.testing.assert_allclose(
+            solution['applied_residual_shift_s_sorted'],
+            expected_applied_shift,
+            atol=5.0e-9,
+        )
+
+    qc = json.loads(paths.qc_json_path.read_text())
+    assert qc['counts']['n_initial_used_picks'] == 30
+    assert qc['counts']['n_final_used_picks'] == 29
+    assert qc['counts']['n_rejected_total'] == 1
+    assert qc['robust']['stop_reason'] == 'converged'
+    assert qc['solver']['final_lsmr']['itn'] == 8
+
+    with paths.statics_csv_path.open(newline='') as handle:
+        rows = list(csv.DictReader(handle))
+    assert rows[13]['final_used'] == 'false'
+    assert rows[13]['rejected'] == 'true'
+    assert rows[13]['rejected_iteration'] == '0'
+    np.testing.assert_allclose(
+        float(rows[13]['applied_residual_shift_ms']),
+        expected_applied_shift[13] * 1000.0,
+        atol=5.0e-6,
     )
 
 

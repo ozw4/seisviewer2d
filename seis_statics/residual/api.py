@@ -43,9 +43,10 @@ from seis_statics.residual.types import MoveoutModel, ResidualStaticSolverInputs
 
 def solve_first_break_residual_statics(
     *,
+    solver_inputs: ResidualStaticSolverInputs | None = None,
     pick_time_s: object | None = None,
     pick_time_after_datum_s: object | None = None,
-    valid_pick_mask: object,
+    valid_pick_mask: object | None = None,
     source_id: object | None = None,
     receiver_id: object | None = None,
     source_index: object | None = None,
@@ -80,6 +81,23 @@ def solve_first_break_residual_statics(
     metadata: Mapping[str, Any] | None = None,
 ) -> FirstBreakResidualStaticsResult:
     """Solve the package-level first-break/datum residual statics workflow."""
+    if solver_inputs is not None:
+        inputs = _coerce_solver_inputs(solver_inputs)
+        robust_result = solve_residual_static_robust_least_squares(
+            inputs,
+            used_mask_sorted=_optional_used_mask(
+                used_pick_mask,
+                n_traces=int(inputs.n_traces),
+            ),
+            stabilization_options=_stabilization_options(stabilization_options),
+            robust_options=_robust_options(robust_options),
+            lsmr_options=_lsmr_options(lsmr_options),
+        )
+        source, receiver = _endpoint_indices_from_inputs(inputs)
+        return _public_result(robust_result, source=source, receiver=receiver)
+
+    if valid_pick_mask is None:
+        raise ValueError('valid_pick_mask is required')
     if (pick_time_s is None) == (pick_time_after_datum_s is None):
         raise ValueError(
             'provide exactly one of pick_time_s or pick_time_after_datum_s'
@@ -294,6 +312,65 @@ class _EndpointIndex:
         self.unique_ids = unique_ids
         self.index_sorted = index_sorted
         self.valid_pick_counts = valid_pick_counts
+
+
+def _coerce_solver_inputs(
+    inputs: ResidualStaticSolverInputs,
+) -> ResidualStaticSolverInputs:
+    if not isinstance(inputs, ResidualStaticSolverInputs):
+        raise ValueError('solver_inputs must be a ResidualStaticSolverInputs instance')
+    return inputs
+
+
+def _endpoint_indices_from_inputs(
+    inputs: ResidualStaticSolverInputs,
+) -> tuple[_EndpointIndex, _EndpointIndex]:
+    n_traces = int(inputs.n_traces)
+    source_unique_ids = _coerce_1d_integer_int64(
+        inputs.source_unique_ids,
+        name='source_unique_ids',
+    )
+    receiver_unique_ids = _coerce_1d_integer_int64(
+        inputs.receiver_unique_ids,
+        name='receiver_unique_ids',
+    )
+    source = _EndpointIndex(
+        id_sorted=_coerce_1d_integer_int64(
+            inputs.source_id_sorted,
+            name='source_id_sorted',
+            expected_shape=(n_traces,),
+        ),
+        unique_ids=source_unique_ids,
+        index_sorted=_coerce_1d_integer_int64(
+            inputs.source_index_sorted,
+            name='source_index_sorted',
+            expected_shape=(n_traces,),
+        ),
+        valid_pick_counts=_coerce_1d_integer_int64(
+            inputs.source_valid_pick_counts,
+            name='source_valid_pick_counts',
+            expected_shape=(int(source_unique_ids.shape[0]),),
+        ),
+    )
+    receiver = _EndpointIndex(
+        id_sorted=_coerce_1d_integer_int64(
+            inputs.receiver_id_sorted,
+            name='receiver_id_sorted',
+            expected_shape=(n_traces,),
+        ),
+        unique_ids=receiver_unique_ids,
+        index_sorted=_coerce_1d_integer_int64(
+            inputs.receiver_index_sorted,
+            name='receiver_index_sorted',
+            expected_shape=(n_traces,),
+        ),
+        valid_pick_counts=_coerce_1d_integer_int64(
+            inputs.receiver_valid_pick_counts,
+            name='receiver_valid_pick_counts',
+            expected_shape=(int(receiver_unique_ids.shape[0]),),
+        ),
+    )
+    return source, receiver
 
 
 def _endpoint_index(
@@ -550,7 +627,7 @@ def _public_result(
     final = robust_result.final_solver_result
     parts = final.parameter_parts
     evaluation = final.model_evaluation
-    return FirstBreakResidualStaticsResult(
+    public_result = FirstBreakResidualStaticsResult(
         moveout_model=final.layout.moveout_model,
         source_id=source.unique_ids,
         receiver_id=receiver.unique_ids,
@@ -583,6 +660,8 @@ def _public_result(
         n_damping_rows=final.n_damping_rows,
         max_abs_estimated_delay_s=final.max_abs_estimated_delay_s,
     )
+    object.__setattr__(public_result, '_robust_solve_result', robust_result)
+    return public_result
 
 
 class _SourceReceiverSolveResult:

@@ -9,6 +9,7 @@ import numpy as np
 from seis_statics.residual.robust import (
     ResidualStaticRobustIterationSummary,
     ResidualStaticRobustOptions,
+    ResidualStaticRobustSolveResult,
     ResidualStaticRobustStopReason,
 )
 from seis_statics.residual.solver import (
@@ -60,6 +61,14 @@ class FirstBreakResidualStaticsResult:
     n_gauge_rows: int
     n_damping_rows: int
     max_abs_estimated_delay_s: float
+
+    @property
+    def robust_solve_result(self) -> ResidualStaticRobustSolveResult:
+        """Return the package solver result retained for artifact adapters."""
+        result = getattr(self, '_robust_solve_result', None)
+        if result is None:
+            raise AttributeError('robust_solve_result is not attached')
+        return result
 
 
 @dataclass(frozen=True)

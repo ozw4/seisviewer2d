@@ -36,11 +36,11 @@ from app.services.residual_static_inputs import (
     load_residual_static_pick_source,
     resolve_residual_static_input_artifacts,
 )
-from app.services.residual_static_robust_solver import (
+from seis_statics.residual import (
+    ResidualStaticRobustSolveResult,
+    ResidualStaticSolverInputs,
     robust_options_from_request_robust,
-    solve_residual_static_robust_least_squares,
-)
-from app.services.residual_static_sparse_solver import (
+    solve_first_break_residual_statics,
     stabilization_options_from_request_solver,
 )
 
@@ -170,6 +170,18 @@ def _apply_options_from_request(
     )
 
 
+def _solve_residual_static_with_package_api(
+    inputs: ResidualStaticSolverInputs,
+    req: ResidualStaticApplyRequest,
+) -> ResidualStaticRobustSolveResult:
+    result = solve_first_break_residual_statics(
+        solver_inputs=inputs,
+        stabilization_options=stabilization_options_from_request_solver(req.solver),
+        robust_options=robust_options_from_request_robust(req.robust),
+    )
+    return result.robust_solve_result
+
+
 def _run_residual_static_apply_job_body(
     job_id: str,
     req: ResidualStaticApplyRequest,
@@ -229,11 +241,7 @@ def _run_residual_static_apply_job_body(
         message='solving_residual_static_delays',
     )
     ensure_job_not_cancelled(state, job_id)
-    robust_result = solve_residual_static_robust_least_squares(
-        inputs,
-        stabilization_options=stabilization_options_from_request_solver(req.solver),
-        robust_options=robust_options_from_request_robust(req.robust),
-    )
+    robust_result = _solve_residual_static_with_package_api(inputs, req)
     ensure_job_not_cancelled(state, job_id)
 
     _set_job_progress_message(
