@@ -26,6 +26,7 @@ RUN --mount=type=cache,target=/var/lib/apt,sharing=locked \
     fontconfig \
     git \
     gpg \
+    shellcheck \
     ttf-mscorefonts-installer \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
