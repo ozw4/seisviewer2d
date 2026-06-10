@@ -62,4 +62,64 @@ class FirstBreakResidualStaticsResult:
     max_abs_estimated_delay_s: float
 
 
-__all__ = ['FirstBreakResidualStaticsResult']
+@dataclass(frozen=True)
+class SourceReceiverStaticsMinimumDataSummary:
+    """Minimum-data diagnostics for source/receiver lag decomposition."""
+
+    n_used_observations: int
+    n_sources: int
+    n_receivers: int
+    n_model_parameters: int
+    n_effective_parameters: int
+
+    source_used_observation_counts: np.ndarray
+    receiver_used_observation_counts: np.ndarray
+    underconstrained_source_ids: np.ndarray
+    underconstrained_receiver_ids: np.ndarray
+
+    n_zero_weight_observations: int
+    rank_deficient_possible: bool
+
+
+@dataclass(frozen=True)
+class SourceReceiverStaticsResult:
+    """Public result for source/receiver decomposition of lag observations."""
+
+    source_unique_ids: np.ndarray
+    receiver_unique_ids: np.ndarray
+    source_delay_s: np.ndarray
+    receiver_delay_s: np.ndarray
+
+    trace_delay_s: np.ndarray
+    applied_shift_s: np.ndarray
+    residual_s: np.ndarray
+
+    initial_used_mask: np.ndarray
+    used_mask: np.ndarray
+    rejected_mask: np.ndarray
+    rejected_iteration: np.ndarray
+    weight: np.ndarray
+
+    diagnostics: ResidualStaticLsmrDiagnostics
+    minimum_data: SourceReceiverStaticsMinimumDataSummary
+    graph: ResidualStaticObservationGraphSummary
+    stabilization_options: ResidualStaticStabilizationOptions
+    robust_options: ResidualStaticRobustOptions
+    robust_iteration_summaries: tuple[ResidualStaticRobustIterationSummary, ...]
+    robust_stop_reason: ResidualStaticRobustStopReason
+
+    n_initial_used_observations: int
+    n_final_used_observations: int
+    n_rejected_total: int
+    n_observations: int
+    n_model_parameters: int
+    n_gauge_rows: int
+    n_damping_rows: int
+    max_abs_trace_delay_s: float
+
+
+__all__ = [
+    'FirstBreakResidualStaticsResult',
+    'SourceReceiverStaticsMinimumDataSummary',
+    'SourceReceiverStaticsResult',
+]

@@ -2,7 +2,11 @@
 
 from __future__ import annotations
 
-from seis_statics.residual.api import solve_first_break_residual_statics
+from seis_statics.residual.api import (
+    delay_to_applied_shift,
+    solve_first_break_residual_statics,
+    solve_source_receiver_statics,
+)
 from seis_statics.residual.design_matrix import (
     ResidualStaticColumnLayout,
     ResidualStaticModelEvaluation,
@@ -15,7 +19,11 @@ from seis_statics.residual.design_matrix import (
     pack_residual_static_parameters,
     unpack_residual_static_parameters,
 )
-from seis_statics.residual.result import FirstBreakResidualStaticsResult
+from seis_statics.residual.result import (
+    FirstBreakResidualStaticsResult,
+    SourceReceiverStaticsMinimumDataSummary,
+    SourceReceiverStaticsResult,
+)
 from seis_statics.residual.robust import (
     ROBUST_SCALE_FLOOR_S,
     ResidualStaticRobustIterationSummary,
@@ -82,6 +90,8 @@ __all__ = [
     'ResidualStaticStabilizationOptions',
     'ResidualStaticStabilizedLeastSquaresResult',
     'ResidualStaticSolverInputs',
+    'SourceReceiverStaticsMinimumDataSummary',
+    'SourceReceiverStaticsResult',
     'build_csr_matrix_from_residual_static_triplets',
     'build_delay_damping_rows',
     'build_residual_static_column_layout',
@@ -92,6 +102,7 @@ __all__ = [
     'build_zero_mean_gauge_rows',
     'compute_linear_abs_offset_moveout_s',
     'compute_residual_static_robust_center_scale',
+    'delay_to_applied_shift',
     'evaluate_residual_static_model',
     'pack_residual_static_parameters',
     'run_sparse_lsmr',
@@ -100,6 +111,7 @@ __all__ = [
     'solve_residual_static_robust_least_squares',
     'solve_residual_static_least_squares',
     'solve_residual_static_stabilized_least_squares',
+    'solve_source_receiver_statics',
     'stabilization_options_from_request_solver',
     'unpack_residual_static_parameters',
     'validate_lsmr_options',
