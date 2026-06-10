@@ -105,28 +105,6 @@ def validate_residual_static_robust_options(
     )
 
 
-def robust_options_from_request_robust(
-    request_robust: object,
-) -> ResidualStaticRobustOptions:
-    """Convert a request-like robust object into validated robust options."""
-    fields = (
-        'enabled',
-        'method',
-        'max_iterations',
-        'threshold',
-        'min_used_fraction',
-    )
-    values: dict[str, object] = {}
-    for field in fields:
-        try:
-            values[field] = getattr(request_robust, field)
-        except AttributeError as exc:
-            raise ValueError(f'robust missing field: {field}') from exc
-    return validate_residual_static_robust_options(
-        ResidualStaticRobustOptions(**values)  # type: ignore[arg-type]
-    )
-
-
 def compute_residual_static_robust_center_scale(
     residual_s: np.ndarray,
     *,
@@ -434,7 +412,6 @@ __all__ = [
     'ResidualStaticRobustStopReason',
     'build_residual_static_outlier_mask',
     'compute_residual_static_robust_center_scale',
-    'robust_options_from_request_robust',
     'solve_residual_static_robust_least_squares',
     'validate_residual_static_robust_options',
 ]

@@ -36,12 +36,16 @@ from app.services.residual_static_inputs import (
     load_residual_static_pick_source,
     resolve_residual_static_input_artifacts,
 )
+from app.services.residual_static_robust_solver import (
+    robust_options_from_request_robust,
+)
+from app.services.residual_static_sparse_solver import (
+    stabilization_options_from_request_solver,
+)
 from seis_statics.residual import (
     ResidualStaticRobustSolveResult,
     ResidualStaticSolverInputs,
-    robust_options_from_request_robust,
     solve_first_break_residual_statics,
-    stabilization_options_from_request_solver,
 )
 
 _CORRECTED_FILE_NAME = 'corrected_file.json'

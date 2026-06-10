@@ -206,27 +206,6 @@ def validate_residual_static_stabilization_options(
     )
 
 
-def stabilization_options_from_request_solver(
-    solver: object,
-) -> ResidualStaticStabilizationOptions:
-    """Convert a request-like solver object into stabilization options."""
-    fields = (
-        'gauge',
-        'damping_lambda',
-        'min_valid_picks',
-        'min_picks_per_source',
-        'min_picks_per_receiver',
-        'max_abs_estimated_delay_ms',
-    )
-    try:
-        values = {field: getattr(solver, field) for field in fields}
-    except AttributeError as exc:
-        raise ValueError(f'solver missing stabilization field: {exc.name}') from exc
-    return validate_residual_static_stabilization_options(
-        ResidualStaticStabilizationOptions(**values)
-    )
-
-
 def validate_residual_static_used_mask(
     inputs: ResidualStaticSolverInputs,
     used_mask_sorted: np.ndarray | None,
@@ -1104,7 +1083,6 @@ __all__ = [
     'run_sparse_lsmr',
     'solve_residual_static_least_squares',
     'solve_residual_static_stabilized_least_squares',
-    'stabilization_options_from_request_solver',
     'validate_minimum_residual_static_data',
     'validate_lsmr_options',
     'validate_residual_static_estimated_delay_limit',
