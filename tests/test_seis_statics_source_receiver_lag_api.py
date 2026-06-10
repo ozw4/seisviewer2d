@@ -74,6 +74,32 @@ def test_exact_recovery_of_synthetic_trace_delays() -> None:
     assert result.robust_stop_reason == 'disabled'
 
 
+def test_valid_mask_excludes_invalid_endpoint_ids_from_solver_universe() -> None:
+    lag_s, source_id, receiver_id, _, _ = _grid()
+    invalid_source_id = np.asarray([9001], dtype=np.int64)
+    invalid_receiver_id = np.asarray([8001], dtype=np.int64)
+    valid_mask = np.concatenate([np.ones_like(lag_s, dtype=bool), [False]])
+
+    result = solve_source_receiver_statics(
+        lag_s=np.concatenate([lag_s, np.asarray([np.nan], dtype=np.float64)]),
+        source_id=np.concatenate([source_id, invalid_source_id]),
+        receiver_id=np.concatenate([receiver_id, invalid_receiver_id]),
+        valid_mask=valid_mask,
+        robust=False,
+        lsmr_options=_lsmr_options(),
+    )
+
+    assert invalid_source_id[0].item() not in result.source_unique_ids
+    assert invalid_receiver_id[0].item() not in result.receiver_unique_ids
+    np.testing.assert_array_equal(result.source_unique_ids, np.arange(101, 105))
+    np.testing.assert_array_equal(result.receiver_unique_ids, np.arange(201, 206))
+    assert result.minimum_data.n_sources == 4
+    assert result.minimum_data.n_receivers == 5
+    assert result.graph.n_components == 1
+    assert result.used_mask[-1].item() is False
+    assert np.isnan(result.residual_s[-1])
+
+
 def test_gauge_freedom_recovers_source_receiver_after_alignment() -> None:
     source_delay = np.asarray([0.020, 0.014, 0.031, 0.026], dtype=np.float64)
     receiver_delay = np.asarray([0.011, 0.019, 0.024, 0.029, 0.033], dtype=np.float64)

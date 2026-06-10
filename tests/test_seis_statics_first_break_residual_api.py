@@ -346,3 +346,41 @@ def test_public_api_matches_lower_solver_with_robust_rejection_enabled() -> None
     assert public.n_rejected_total == 1
     assert public.rejected_pick_mask[13].item() is True
     _assert_public_matches_lower(public, lower, inputs)
+
+
+def test_public_api_ignores_invalid_pick_endpoint_ids() -> None:
+    inputs = _grid_inputs(moveout_model='none')
+    invalid_source_id = np.asarray([9001], dtype=np.int64)
+    invalid_receiver_id = np.asarray([8001], dtype=np.int64)
+    valid_mask = np.concatenate(
+        [inputs.valid_pick_mask_sorted, np.asarray([False], dtype=bool)]
+    )
+
+    result = solve_first_break_residual_statics(
+        pick_time_s=np.concatenate(
+            [inputs.picks_time_s_sorted, np.asarray([np.nan], dtype=np.float64)]
+        ),
+        datum_trace_shift_s=np.concatenate(
+            [
+                inputs.datum_trace_shift_s_sorted,
+                np.asarray([0.0], dtype=np.float64),
+            ]
+        ),
+        valid_pick_mask=valid_mask,
+        source_id=np.concatenate([inputs.source_id_sorted, invalid_source_id]),
+        receiver_id=np.concatenate([inputs.receiver_id_sorted, invalid_receiver_id]),
+        moveout_model=inputs.moveout_model,
+        stabilization_options=_stabilization_options(),
+        robust_options={'enabled': False},
+        lsmr_options=_lsmr_options(),
+    )
+
+    assert invalid_source_id[0].item() not in result.source_id
+    assert invalid_receiver_id[0].item() not in result.receiver_id
+    np.testing.assert_array_equal(result.source_id, inputs.source_unique_ids)
+    np.testing.assert_array_equal(result.receiver_id, inputs.receiver_unique_ids)
+    assert result.minimum_data.n_sources == inputs.source_unique_ids.size
+    assert result.minimum_data.n_receivers == inputs.receiver_unique_ids.size
+    assert result.graph.n_components == 1
+    assert result.used_pick_mask[-1].item() is False
+    assert result.residual_valid_mask[-1].item() is False

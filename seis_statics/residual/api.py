@@ -313,25 +313,43 @@ def _endpoint_index(
             name=f'{role}_id',
             expected_shape=(n_traces,),
         )
-        unique_ids, inverse = np.unique(ids, return_inverse=True)
-        index = np.ascontiguousarray(inverse, dtype=np.int64)
+        unique_ids, valid_inverse = np.unique(ids[valid_mask], return_inverse=True)
+        if unique_ids.size == 0:
+            raise ValueError(f'{role}_id must contain at least one valid observation')
+        index = np.zeros(n_traces, dtype=np.int64)
+        index[valid_mask] = valid_inverse
+        ids = np.ascontiguousarray(unique_ids[index], dtype=np.int64)
     else:
-        index = _coerce_1d_integer_int64(
+        input_index = _coerce_1d_integer_int64(
             index_values,
             name=f'{role}_index',
             expected_shape=(n_traces,),
         )
-        if np.any(index < 0):
+        if np.any(input_index < 0):
             raise ValueError(f'{role}_index must be greater than or equal to 0')
-        n_unique = int(np.max(index)) + 1
+        valid_unique_index, valid_inverse = np.unique(
+            input_index[valid_mask],
+            return_inverse=True,
+        )
+        if valid_unique_index.size == 0:
+            raise ValueError(f'{role}_index must contain at least one valid observation')
         if unique_id_values is None:
-            unique_ids = np.arange(n_unique, dtype=np.int64)
+            unique_ids = np.ascontiguousarray(valid_unique_index, dtype=np.int64)
         else:
-            unique_ids = _coerce_1d_integer_int64(
+            all_unique_ids = _coerce_1d_integer_int64(
                 unique_id_values,
                 name=f'{role}_unique_ids',
-                expected_shape=(n_unique,),
             )
+            if int(valid_unique_index[-1]) >= int(all_unique_ids.shape[0]):
+                raise ValueError(
+                    f'{role}_unique_ids must include every valid {role}_index'
+                )
+            unique_ids = np.ascontiguousarray(
+                all_unique_ids[valid_unique_index],
+                dtype=np.int64,
+            )
+        index = np.zeros(n_traces, dtype=np.int64)
+        index[valid_mask] = valid_inverse
         ids = np.ascontiguousarray(unique_ids[index], dtype=np.int64)
     counts = np.bincount(
         index[valid_mask],
