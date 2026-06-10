@@ -124,28 +124,16 @@ Phase 1 is a dependency inversion and packaging step only. It must not change
 runtime behavior, API responses, cache behavior, artifact contents, or static
 shift sign conventions.
 
-## Phase 2 Extraction Candidates
+## Phase 2+ Time-Term and Refraction Boundary
 
-These modules contain numerical or domain logic that may be suitable for a
-later extraction after the Phase 1 datum/residual/trace-shift boundary is
-stable:
+Time-term and refraction are Phase 2+ extraction items. Do not move them during
+the Phase 1 datum/residual/trace-shift package extraction, and do not move the
+full refraction stack in one step. Future work should separate pure numerical
+and domain modules into `seis_statics` while keeping request handling, artifact
+contracts, TraceStore integration, and job runtime behavior in `seisviewer2d`.
 
-```text
-app/services/time_term_*.py
-app/statics/refraction/domain/**
-app/statics/refraction/application/bedrock.py
-app/statics/refraction/application/datum.py
-app/statics/refraction/application/design_matrix.py
-app/statics/refraction/application/half_intercept.py
-app/statics/refraction/application/input_model.py
-app/statics/refraction/application/multilayer_service.py
-app/statics/refraction/application/station_structure.py
-app/statics/refraction/application/weathering.py
-app/statics/refraction/application/weathering_replacement.py
-app/statics/refraction/application/workflow.py
-```
-
-Before moving these, verify the boundary against the canonical refraction docs:
+Before moving any refraction module, verify the boundary against the canonical
+refraction docs:
 
 ```text
 docs/statics/refraction_iras_phase1_design.md
@@ -157,7 +145,71 @@ The package boundary for refraction must preserve the documented T1LSST
 workflows, supported velocity modes, source/receiver static table semantics,
 and static-shift sign convention.
 
-## Phase 3 or App-Only Candidates
+### Time-Term Candidates for `seis_statics.time_term`
+
+These modules contain the likely future `seis_statics.time_term` numerical
+surface, subject to an import audit before any move:
+
+```text
+app/services/time_term_types.py
+app/services/time_term_moveout.py
+app/services/time_term_design_matrix.py
+app/services/time_term_sparse_solver.py
+app/services/time_term_robust_solver.py
+app/services/time_term_apply_shift.py
+```
+
+The future package surface should be parameterized with arrays, scalar options,
+and small dataclasses. It must preserve the current convention that estimated
+time-term delays are converted to applied weathering shifts by negation, and
+that final shifts compose datum, residual, and weathering applied shifts without
+changing numerical behavior.
+
+Keep these time-term modules in `seisviewer2d` unless a future issue explicitly
+splits out a pure helper from them:
+
+```text
+app/services/time_term_static_service.py
+app/services/time_term_static_inputs.py
+app/services/time_term_static_artifacts.py
+app/services/time_term_static_apply_trace_store.py
+```
+
+They currently own request orchestration, artifact loading/writing, TraceStore
+registration, and job/runtime integration.
+
+### Refraction Candidates for `seis_statics.refraction`
+
+These refraction modules are Phase 2+ candidates because they contain
+documented domain calculations, status rules, design-matrix construction, or
+solver orchestration that can be expressed without FastAPI, AppState, artifact
+registries, or TraceStore objects:
+
+```text
+app/statics/refraction/domain/**
+app/statics/refraction/application/bedrock.py
+app/statics/refraction/application/datum.py
+app/statics/refraction/application/design_matrix.py
+app/statics/refraction/application/half_intercept.py
+app/statics/refraction/application/input_model.py
+app/statics/refraction/application/multilayer_service.py
+app/statics/refraction/application/weathering.py
+app/statics/refraction/application/weathering_replacement.py
+```
+
+These candidates must keep the canonical Phase 1, Phase 2 cell-V2, and
+multi-layer T1LSST behavior intact: first-break equations, endpoint time terms,
+midpoint cell assignment, endpoint-local V2 projection, velocity-order
+validation, NaN/status handling for invalid conversions, source/receiver static
+table semantics, and the repo static-shift convention
+`corrected(t) = raw(t - shift_s)`.
+
+Do not extract `app/statics/refraction/application/workflow.py` as a numerical
+core module. It remains an app orchestration boundary unless a future issue
+first separates its pure computation from artifact writing, background job
+status, and corrected TraceStore registration.
+
+### Refraction App-Only Boundary
 
 These areas are not part of the initial numerical package. Revisit them only
 after Phase 1 and Phase 2 boundaries are proven:
@@ -177,6 +229,9 @@ app/statics/refraction/application/qc_drilldown.py
 app/statics/refraction/application/qc_endpoint_search.py
 app/statics/refraction/application/table_apply_service.py
 app/statics/refraction/application/validation_service.py
+app/statics/refraction/application/workflow.py
+app/statics/refraction/api/**
+app/statics/refraction/contracts/**
 app/statics/refraction/ports/**
 app/statics/refraction/adapters/seisviewer2d/**
 ```
@@ -186,6 +241,44 @@ but their current responsibility is coupled to `seisviewer2d` artifact
 contracts. `ports/**` and `adapters/seisviewer2d/**` describe application
 integration points and should remain on the app side unless a future
 refraction-core package explicitly owns a port interface.
+
+### Required Test Strategy Before Moving Phase 2+ Modules
+
+Any future move of time-term or refraction modules must be behavior-preserving
+and must not introduce imports from `seis_statics` back into `app`. Before the
+move, add or confirm focused tests around the existing app modules; after the
+move, run the same tests against the package imports and app adapters.
+
+Minimum time-term coverage:
+
+```text
+app/tests/test_time_term_import_layering.py
+app/tests/test_time_term_moveout.py
+app/tests/test_time_term_design_matrix.py
+app/tests/test_time_term_sparse_solver.py
+app/tests/test_time_term_robust_solver.py
+app/tests/test_time_term_apply_shift.py
+app/tests/test_time_term_static_artifacts.py
+app/tests/test_time_term_static_apply_trace_store.py
+app/tests/test_time_term_static_job_api.py
+app/tests/test_time_term_static_end_to_end.py
+```
+
+Minimum refraction coverage:
+
+```text
+app/tests/test_refraction_design_matrix_diagnostics.py
+app/tests/test_refraction_failure_diagnostics.py
+app/tests/test_refraction_gather_preview.py
+app/tests/test_refraction_qc_drilldown.py
+app/tests/test_refraction_qc_endpoint_search.py
+app/tests/test_refraction_qc_pick_map.py
+```
+
+For cell-V2, multi-layer T1LSST, source/receiver table, or apply-artifact
+changes, include the synthetic and artifact tests that cite the canonical
+refraction docs. Keep import-layer tests in the move PR so accidental FastAPI,
+SEG-Y reader, app-state, or job-runtime dependencies fail quickly.
 
 ## Migration Order
 
@@ -200,5 +293,8 @@ refraction-core package explicitly owns a port interface.
    update residual services to import the package surface.
 6. Run full `seisviewer2d` checks and compare existing datum/residual artifact
    and API response shapes.
-7. Only after Phase 1 is stable, define the separate time-term/refraction
-   extraction boundary.
+7. Only after Phase 1 is stable, move narrowly scoped time-term numerical
+   modules behind `seis_statics.time_term`.
+8. Move refraction domain pieces incrementally behind `seis_statics.refraction`
+   only after the app-only adapters, artifact writers, API schemas, and runtime
+   boundaries are explicit.
