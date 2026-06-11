@@ -5,37 +5,37 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
-import threading
 from typing import Annotated, Any
-from uuid import uuid4
 
 import numpy as np
 from fastapi import APIRouter, Body, Depends, HTTPException, Query, Request
 from pydantic import BaseModel, Field
 
 from app.api._helpers import reject_legacy_key1_query_params, get_state
-from app.api.schemas import (
+from app.api.job_routes import (
+    cancel_job_and_get_status_payload,
+    get_job_or_404,
+    job_status_payload,
+)
+from app.contracts.pipeline import (
     PipelineAllResponse,
     PipelineJobStatusResponse,
     PipelineSectionResponse,
     PipelineSpec,
 )
+from app.services.jobs import launch_managed_job
 from app.services.pipeline_artifacts import (
-    get_job_dir,
     maybe_cleanup_expired_jobs,
     read_artifact,
     write_artifact,
 )
 from app.services.fbpick_support import _maybe_attach_fbpick_offsets
 from app.services.in_memory_cleanup import cleanup_in_memory_state
-from app.services.job_manager import JobManager
 from app.services.job_runner import (
     ensure_job_not_cancelled,
     run_job_with_lifecycle,
-    request_job_cancel,
     set_job_message,
     set_job_progress,
-    start_job_thread,
 )
 from app.services.pipeline_execution import (
     SectionSourceSpec,
@@ -333,72 +333,43 @@ def pipeline_all(
         downsample_quicklook=downsample_quicklook,
     )
 
-    job_id = str(uuid4())
     pipe_key = pipeline_key(spec)
 
-    with state.lock:
-        job_state = state.jobs.create_pipeline_all_job(
+    launched = launch_managed_job(
+        state,
+        create_job=lambda job_id, artifacts_dir: state.jobs.create_pipeline_all_job(
             job_id,
             file_id=file_id,
             key1_byte=key1_byte,
             key2_byte=key2_byte,
             pipeline_key=pipe_key,
             offset_byte=forced_offset_byte,
-            artifacts_dir=str(get_job_dir(job_id)),
-        )
-        status = job_state['status']
-
-    start_job_thread(
-        thread_factory=threading.Thread,
+            artifacts_dir=str(artifacts_dir),
+        ),
         target=_run_pipeline_all_job,
-        args=(job_id, req, pipe_key, state),
+        target_args=lambda job_id: (job_id, req, pipe_key, state),
     )
 
-    return {'job_id': job_id, 'state': status}
+    return {'job_id': launched.job_id, 'state': launched.state}
 
 
 @router.get('/pipeline/job/{job_id}/status', response_model=PipelineJobStatusResponse)
 def pipeline_job_status(request: Request, job_id: str) -> PipelineJobStatusResponse:
     state = get_state(request.app)
     cleanup_in_memory_state(state)
-    with state.lock:
-        job = state.jobs.get(job_id)
-        if job is None:
-            raise HTTPException(status_code=404, detail='Job ID not found')
-        job_state = JobManager.normalize_status_value(job.get('status', 'unknown'))
-        progress = job.get('progress', 0.0)
-        message = job.get('message', '')
-    return {
-        'state': job_state,
-        'progress': progress,
-        'message': message,
-    }
+    job = get_job_or_404(state, job_id, allowed_job_types={'pipeline'})
+    return job_status_payload(job)
 
 
 @router.post('/pipeline/job/{job_id}/cancel', response_model=PipelineJobStatusResponse)
 def pipeline_job_cancel(request: Request, job_id: str) -> PipelineJobStatusResponse:
     state = get_state(request.app)
     cleanup_in_memory_state(state)
-
-    with state.lock:
-        job = state.jobs.get(job_id)
-        if job is None:
-            raise HTTPException(status_code=404, detail='Job ID not found')
-
-    request_job_cancel(state, job_id)
-
-    with state.lock:
-        job = state.jobs.get(job_id)
-        if job is None:
-            raise HTTPException(status_code=404, detail='Job ID not found')
-        job_state = JobManager.normalize_status_value(job.get('status', 'unknown'))
-        progress = job.get('progress', 0.0)
-        message = job.get('message', '')
-    return {
-        'state': job_state,
-        'progress': progress,
-        'message': message,
-    }
+    return cancel_job_and_get_status_payload(
+        state,
+        job_id,
+        allowed_job_types={'pipeline'},
+    )
 
 
 @router.get(

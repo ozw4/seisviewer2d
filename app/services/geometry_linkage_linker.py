@@ -7,6 +7,11 @@ from typing import Literal
 
 import numpy as np
 
+from app.services.common.array_validation import (
+    coerce_1d_finite_float64 as _common_coerce_1d_finite_float64,
+    coerce_1d_integer_int64 as _common_coerce_1d_integer_int64,
+    coerce_finite_float as _common_coerce_finite_float,
+)
 from app.services.geometry_linkage_tables import EndpointGeometryTables
 
 EndpointKind = Literal['source', 'receiver']
@@ -579,11 +584,11 @@ def _validate_optional_positive_float(value: float | None, *, name: str) -> floa
 
 def _validate_positive_float(value: float, *, name: str) -> float:
     try:
-        value_float = float(value)
-    except (TypeError, ValueError) as exc:
+        value_float = _common_coerce_finite_float(value, name=name)
+    except ValueError as exc:
         msg = f'{name} must be finite and > 0'
         raise ValueError(msg) from exc
-    if not np.isfinite(value_float) or value_float <= 0:
+    if value_float <= 0:
         msg = f'{name} must be finite and > 0'
         raise ValueError(msg)
     return value_float
@@ -597,7 +602,7 @@ def _coerce_1d_integer_array(values: object, *, name: str) -> np.ndarray:
     if not np.issubdtype(arr.dtype, np.integer):
         msg = f'{name} must have an integer dtype'
         raise ValueError(msg)
-    return np.asarray(arr, dtype=np.int64)
+    return _common_coerce_1d_integer_int64(values, name=name)
 
 
 def _coerce_1d_finite_float_array(values: object, *, name: str) -> np.ndarray:
@@ -608,11 +613,7 @@ def _coerce_1d_finite_float_array(values: object, *, name: str) -> np.ndarray:
     if not np.issubdtype(arr.dtype, np.floating):
         msg = f'{name} must have a floating dtype'
         raise ValueError(msg)
-    arr_f64 = arr.astype(np.float64, copy=False)
-    if not np.all(np.isfinite(arr_f64)):
-        msg = f'{name} must contain only finite values'
-        raise ValueError(msg)
-    return arr_f64
+    return _common_coerce_1d_finite_float64(values, name=name)
 
 
 def _max_or_minus_one(values: np.ndarray) -> int:

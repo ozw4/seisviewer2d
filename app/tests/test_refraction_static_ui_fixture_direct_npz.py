@@ -11,15 +11,18 @@ from fastapi.testclient import TestClient
 import app.api.routers.statics as statics_router_module
 from app.api.schemas import RefractionStaticApplyRequest
 from app.main import app
-from app.services.refraction_static_artifacts import (
+from app.statics.refraction.adapters.seisviewer2d.runtime import (
+    SeisViewer2DRefractionRuntime,
+)
+from app.statics.refraction.artifacts import (
     RECEIVER_STATIC_TABLE_CSV_NAME,
     REFRACTION_STATIC_SOLUTION_NPZ_NAME,
     SOURCE_STATIC_TABLE_CSV_NAME,
 )
-from app.services.refraction_static_design_matrix import (
+from app.statics.refraction.application.design_matrix import (
     build_refraction_static_design_matrix,
 )
-from app.services.refraction_static_inputs import build_refraction_static_input_model
+from app.statics.refraction.application.input_model import build_refraction_static_input_model
 from app.tests.fixtures.refraction_static_ui_fixture import (
     FILE_ID,
     build_ui_fixture_trace_store,
@@ -79,7 +82,7 @@ def test_ui_fixture_direct_npz_fixed_global_static_correction_succeeds(
     req = RefractionStaticApplyRequest.model_validate(payload)
     input_model = build_refraction_static_input_model(
         req=req,
-        state=state,
+        runtime=SeisViewer2DRefractionRuntime(state),
         uploaded_pick_npz_path=pick_npz_path,
         uploaded_pick_metadata={
             'original_filename': 'predicted_picks_time_s.npz',

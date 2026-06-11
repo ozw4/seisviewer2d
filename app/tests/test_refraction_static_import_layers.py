@@ -13,18 +13,18 @@ from typing import TextIO
 
 import pytest
 
-import app.services.refraction_static_bedrock as bedrock
-import app.services.refraction_static_design_matrix as design_matrix
-import app.services.refraction_static_export_types as export_types
-import app.services.refraction_static_half_intercept as half_intercept
-import app.services.refraction_static_layer_config as layer_config
-import app.services.refraction_static_solver as solver
-import app.services.refraction_static_source_depth as source_depth
-import app.services.refraction_static_t1lsst as t1lsst
-import app.services.refraction_static_types as refraction_types
-import app.services.refraction_static_uphole as uphole
-import app.services.refraction_static_v1 as v1
-import app.services.refraction_static_weathering as weathering
+import app.statics.refraction.application.bedrock as bedrock
+import app.statics.refraction.application.design_matrix as design_matrix
+import app.statics.refraction.domain.export_types as export_types
+import app.statics.refraction.application.half_intercept as half_intercept
+import app.statics.refraction.domain.layer_config as layer_config
+import app.statics.refraction.domain.solver as solver
+import app.statics.refraction.domain.source_depth as source_depth
+import app.statics.refraction.domain.t1lsst as t1lsst
+import app.statics.refraction.domain.types as refraction_types
+import app.statics.refraction.domain.uphole as uphole
+import app.statics.refraction.domain.v1 as v1
+import app.statics.refraction.application.weathering as weathering
 
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -32,8 +32,8 @@ _FORBIDDEN_IMPORTS = {
     'app.api.routers',
     'app.main',
     'app.services.reader',
-    'app.services.refraction_static_service',
-    'app.services.refraction_static_inputs',
+    'app.statics.refraction.application.workflow',
+    'app.statics.refraction.application.input_model',
     'app.trace_store.reader',
     'segyio',
 }
@@ -219,7 +219,7 @@ def test_refraction_static_import_layer_checks_use_process_group_timeout(
 
     monkeypatch.setattr(subprocess, 'Popen', FakePopen)
 
-    assert _forbidden_modules_imported_by('app.services.refraction_static_v1') == set()
+    assert _forbidden_modules_imported_by('app.statics.refraction.domain.v1') == set()
 
     kwargs = captured['kwargs']
     assert kwargs['cwd'] == _REPO_ROOT
@@ -318,10 +318,10 @@ def test_import_layer_timeout_failure_message_is_readable(
     monkeypatch.setattr(os, 'killpg', fake_killpg)
 
     with pytest.raises(AssertionError) as exc_info:
-        _forbidden_modules_imported_by('app.services.refraction_static_v1')
+        _forbidden_modules_imported_by('app.statics.refraction.domain.v1')
 
     message = str(exc_info.value)
-    assert 'module under test: app.services.refraction_static_v1' in message
+    assert 'module under test: app.statics.refraction.domain.v1' in message
     assert 'forbidden modules:' in message
     assert 'app.main' in message
     assert 'segyio' in message
@@ -350,7 +350,7 @@ def test_refraction_static_types_is_dependency_light() -> None:
 
     assert (
         _forbidden_modules_imported_by(
-            'app.services.refraction_static_types',
+            'app.statics.refraction.domain.types',
             forbidden_imports=_TYPE_MODULE_FORBIDDEN_IMPORTS,
         )
         == set()
@@ -362,7 +362,7 @@ def test_refraction_static_types_is_dependency_light() -> None:
     assert 'app.api.routers' not in source
     assert 'app.main' not in source
     assert 'app.services.reader' not in source
-    assert 'app.services.refraction_static_service' not in source
+    assert 'app.statics.refraction.application.workflow' not in source
     assert 'app.trace_store.reader' not in source
     assert 'refraction_static_inputs' not in source
     assert 'segyio' not in source
@@ -376,7 +376,7 @@ def test_refraction_static_export_types_is_dependency_light() -> None:
 
     assert (
         _forbidden_modules_imported_by(
-            'app.services.refraction_static_export_types',
+            'app.statics.refraction.domain.export_types',
             forbidden_imports=_TYPE_MODULE_FORBIDDEN_IMPORTS,
         )
         == set()
@@ -386,7 +386,7 @@ def test_refraction_static_export_types_is_dependency_light() -> None:
     assert 'app.api.schemas' not in source
     assert 'app.api.routers' not in source
     assert 'app.main' not in source
-    assert 'app.services.refraction_static_service' not in source
+    assert 'app.statics.refraction.application.workflow' not in source
     assert 'app.trace_store.reader' not in source
     assert 'segyio' not in source
     assert 'numpy' not in source
@@ -397,7 +397,7 @@ def test_refraction_static_source_depth_is_dependency_light() -> None:
 
     assert (
         _forbidden_modules_imported_by(
-            'app.services.refraction_static_source_depth',
+            'app.statics.refraction.domain.source_depth',
             forbidden_imports=_TYPE_MODULE_FORBIDDEN_IMPORTS,
         )
         == set()
@@ -408,7 +408,7 @@ def test_refraction_static_source_depth_is_dependency_light() -> None:
     assert 'app.api.routers' not in source
     assert 'app.main' not in source
     assert 'app.services.reader' not in source
-    assert 'app.services.refraction_static_service' not in source
+    assert 'app.statics.refraction.application.workflow' not in source
     assert 'app.trace_store.reader' not in source
     assert 'refraction_static_inputs' not in source
     assert 'segyio' not in source
@@ -420,7 +420,7 @@ def test_refraction_static_uphole_is_dependency_light() -> None:
 
     assert (
         _forbidden_modules_imported_by(
-            'app.services.refraction_static_uphole',
+            'app.statics.refraction.domain.uphole',
             forbidden_imports=_TYPE_MODULE_FORBIDDEN_IMPORTS,
         )
         == set()
@@ -431,7 +431,7 @@ def test_refraction_static_uphole_is_dependency_light() -> None:
     assert 'app.api.routers' not in source
     assert 'app.main' not in source
     assert 'app.services.reader' not in source
-    assert 'app.services.refraction_static_service' not in source
+    assert 'app.statics.refraction.application.workflow' not in source
     assert 'app.trace_store.reader' not in source
     assert 'refraction_static_inputs' not in source
     assert 'segyio' not in source
@@ -443,7 +443,7 @@ def test_refraction_static_layer_config_is_dependency_light() -> None:
 
     assert (
         _forbidden_modules_imported_by(
-            'app.services.refraction_static_layer_config',
+            'app.statics.refraction.domain.layer_config',
             forbidden_imports=_TYPE_MODULE_FORBIDDEN_IMPORTS,
         )
         == set()
@@ -451,8 +451,8 @@ def test_refraction_static_layer_config_is_dependency_light() -> None:
 
     source = _module_source(layer_config)
     assert 'app.api.schemas' not in source
-    assert 'app.services.refraction_static_service' not in source
-    assert 'app.services.refraction_static_inputs' not in source
+    assert 'app.statics.refraction.application.workflow' not in source
+    assert 'app.statics.refraction.application.input_model' not in source
 
 
 def test_numeric_refraction_modules_import_without_tracestore_readers() -> None:
@@ -463,11 +463,11 @@ def test_numeric_refraction_modules_import_without_tracestore_readers() -> None:
     assert weathering.RefractionWeatheringThicknessResult is not None
 
     for module_name in (
-        'app.services.refraction_static_design_matrix',
-        'app.services.refraction_static_solver',
-        'app.services.refraction_static_bedrock',
-        'app.services.refraction_static_half_intercept',
-        'app.services.refraction_static_weathering',
+        'app.statics.refraction.application.design_matrix',
+        'app.statics.refraction.domain.solver',
+        'app.statics.refraction.application.bedrock',
+        'app.statics.refraction.application.half_intercept',
+        'app.statics.refraction.application.weathering',
     ):
         assert _forbidden_modules_imported_by(module_name) == set()
 
@@ -475,14 +475,14 @@ def test_numeric_refraction_modules_import_without_tracestore_readers() -> None:
 def test_refraction_static_v1_imports_without_reader_or_segyio() -> None:
     assert v1.RefractionV1EstimateResult is not None
 
-    assert _forbidden_modules_imported_by('app.services.refraction_static_v1') == set()
+    assert _forbidden_modules_imported_by('app.statics.refraction.domain.v1') == set()
 
 
 def test_refraction_static_t1lsst_imports_without_reader_or_segyio() -> None:
     assert t1lsst.RefractionT1LSSTError is not None
 
     assert (
-        _forbidden_modules_imported_by('app.services.refraction_static_t1lsst')
+        _forbidden_modules_imported_by('app.statics.refraction.domain.t1lsst')
         == set()
     )
 

@@ -187,10 +187,28 @@ function parseSearchOrStorage(paramKey, storageKey, fallback = '') {
   return fallback;
 }
 
+function buildViewerUrl(fileId, key1Byte, key2Byte) {
+  const url = new URL('/', window.location.origin);
+  if (fileId) url.searchParams.set('file_id', fileId);
+  if (key1Byte) url.searchParams.set('key1_byte', key1Byte);
+  if (key2Byte) url.searchParams.set('key2_byte', key2Byte);
+  return url.toString();
+}
+
+function refreshViewerLink(ui) {
+  if (!ui || !ui.viewerLink) return;
+  ui.viewerLink.href = buildViewerUrl(
+    ui.fileIdInput.value,
+    ui.key1ByteInput.value,
+    ui.key2ByteInput.value
+  );
+}
+
 function createUi() {
   return {
     form: document.getElementById('batchApplyForm'),
     formError: document.getElementById('formError'),
+    viewerLink: document.getElementById('viewerLink'),
     fileIdInput: document.getElementById('fileIdInput'),
     fileNameHint: document.getElementById('fileNameHint'),
     key1ByteInput: document.getElementById('key1ByteInput'),
@@ -558,6 +576,11 @@ function startBatchUi() {
   ui.fileIdInput.value = initialFileId;
   ui.key1ByteInput.value = initialKey1;
   ui.key2ByteInput.value = initialKey2;
+  refreshViewerLink(ui);
+  for (const input of [ui.fileIdInput, ui.key1ByteInput, ui.key2ByteInput]) {
+    input.addEventListener('input', () => refreshViewerLink(ui));
+    input.addEventListener('change', () => refreshViewerLink(ui));
+  }
 
   syncSavePicksControl(ui);
   setJobState(ui, {

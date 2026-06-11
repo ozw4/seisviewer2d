@@ -13,16 +13,19 @@ import pytest
 from fastapi.testclient import TestClient
 
 import app.api.routers.statics as statics_router_module
-import app.services.refraction_static_bedrock as refraction_bedrock_module
-import app.services.refraction_static_inputs as refraction_inputs_module
-import app.services.refraction_static_service as refraction_service_module
+import app.statics.refraction.application.bedrock as refraction_bedrock_module
+import app.statics.refraction.application.input_model as refraction_inputs_module
+import app.statics.refraction.application.workflow as refraction_service_module
 from app.api.schemas import RefractionStaticApplyRequest
 from app.main import app
-from app.services.refraction_static_apply_trace_store import (
+from app.statics.refraction.adapters.seisviewer2d.trace_store import (
+    SeisViewer2DRefractionTraceStoreProvider,
+)
+from app.statics.refraction.application.apply_trace_store import (
     CORRECTED_FILE_JSON_NAME,
     REFRACTION_STATIC_APPLY_QC_JSON_NAME,
 )
-from app.services.refraction_static_artifacts import (
+from app.statics.refraction.artifacts import (
     FIRST_BREAK_RESIDUALS_CSV_NAME,
     NEAR_SURFACE_MODEL_CSV_NAME,
     REFRACTION_FIRST_BREAK_FIT_QC_CSV_NAME,
@@ -60,34 +63,34 @@ from app.services.refraction_static_artifacts import (
     SOURCE_STATIC_TABLE_CSV_NAME,
     UPLOADED_REFRACTION_PICKS_NPZ_NAME,
 )
-from app.services.refraction_static_design_matrix import (
+from app.statics.refraction.application.design_matrix import (
     REFRACTION_DESIGN_MATRIX_NODE_DIAGNOSTICS_CSV_NAME,
     REFRACTION_DESIGN_MATRIX_QC_JSON_NAME,
     build_refraction_static_design_matrix_from_arrays,
     write_refraction_design_matrix_diagnostics_artifacts,
 )
-from app.services.refraction_static_export_service import (
+from app.statics.refraction.application.export_service import (
     CANONICAL_SOURCE_RECEIVER_STATIC_TABLE_CSV_NAME,
 )
-from app.services.refraction_static_layer_observations import (
+from app.statics.refraction.domain.layer_observations import (
     build_refraction_layer_observation_masks,
     refraction_layer_observation_qc,
 )
-from app.services.refraction_static_preflight_diagnostics import (
+from app.statics.refraction.application.preflight_diagnostics import (
     REFRACTION_STATIC_PREFLIGHT_OBSERVATIONS_CSV_NAME,
     REFRACTION_STATIC_PREFLIGHT_QC_JSON_NAME,
     RefractionStaticPreflightDiagnostics,
     RefractionStaticPreflightError,
     write_refraction_static_preflight_artifacts,
 )
-from app.services.refraction_static_service import run_refraction_static_apply_job
-from app.services.refraction_static_source_depth import (
+from app.statics.refraction.adapters.seisviewer2d.workflow_runner import run_refraction_static_apply_job
+from app.statics.refraction.domain.source_depth import (
     REFRACTION_SOURCE_DEPTH_QC_JSON_NAME,
     REFRACTION_SOURCE_DEPTH_SOURCES_CSV_NAME,
     resolve_refraction_source_depth,
     write_refraction_source_depth_artifacts,
 )
-from app.services.refraction_static_v1 import RefractionV1EstimateResult
+from app.statics.refraction.domain.v1 import RefractionV1EstimateResult
 from app.services.trace_store_registration import trace_store_cache_key
 from app.tests._refraction_static_synthetic import (
     SYNTHETIC_SH1_TOLERANCE_M,
@@ -506,9 +509,14 @@ def test_validate_with_picks_returns_preflight_summary(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setattr(
-        refraction_inputs_module,
+        SeisViewer2DRefractionTraceStoreProvider,
         'get_reader',
-        lambda *args, **kwargs: _ValidationReader(),
+        lambda *_args, **_kwargs: _ValidationReader(),
+    )
+    monkeypatch.setattr(
+        SeisViewer2DRefractionTraceStoreProvider,
+        'get_dt',
+        lambda *_args, **_kwargs: 0.001,
     )
 
     response = client.post(
@@ -589,9 +597,14 @@ def test_validate_with_picks_reports_pick_count_mismatch_without_job(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setattr(
-        refraction_inputs_module,
+        SeisViewer2DRefractionTraceStoreProvider,
         'get_reader',
-        lambda *args, **kwargs: _ValidationReader(),
+        lambda *_args, **_kwargs: _ValidationReader(),
+    )
+    monkeypatch.setattr(
+        SeisViewer2DRefractionTraceStoreProvider,
+        'get_dt',
+        lambda *_args, **_kwargs: 0.001,
     )
 
     response = client.post(

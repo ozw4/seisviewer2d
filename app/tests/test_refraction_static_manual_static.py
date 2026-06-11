@@ -5,7 +5,7 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-from app.services.refraction_static_manual_static import (
+from app.statics.refraction.domain.manual_static import (
     RefractionManualStaticTableRow,
     load_refraction_manual_static_table_rows,
     resolve_refraction_manual_static,

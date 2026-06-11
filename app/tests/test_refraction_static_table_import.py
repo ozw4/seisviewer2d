@@ -5,10 +5,10 @@ from pathlib import Path
 
 import pytest
 
-from app.services.refraction_static_export_types import (
+from app.statics.refraction.domain.export_types import (
     REFRACTION_STATIC_EXPORT_SIGN_CONVENTION,
 )
-from app.services.refraction_static_table_import import (
+from app.statics.refraction.domain.table_import import (
     import_refraction_static_source_receiver_csvs,
     import_refraction_static_table_csv,
 )

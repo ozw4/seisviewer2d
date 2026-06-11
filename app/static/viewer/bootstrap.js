@@ -5,6 +5,13 @@ import { buildLayout, buildPickShapes, buildPickMarkerTraces, buildPendingPickMa
 import { initPrefs, getPref } from './settings/prefs.js';
 import { cfg } from './core/config.js';
 import { debounce, throttle, rafDebounce } from './core/utils/timing.js';
+import { viewerRenderRequests } from './render_request_controller.js';
+import { viewerPerfMetrics } from './perf_metrics.js';
+import { initViewerPerfOverlay } from './perf_overlay.js';
+import { initViewerOverlayLayer } from './overlay_layer.js';
+import { initManualPickOverlay } from './manual_pick_overlay.js';
+import { initPredictionOverlay } from './prediction_overlay.js';
+import { createRenderInvalidationScheduler } from './render_invalidation.js';
 
 // ------------------------------------------------------------
   // Mode decider with geometry-stability lock
@@ -80,6 +87,58 @@ window.cfg = cfg;
 window.debounce = debounce;
 window.throttle = throttle;
 window.rafDebounce = rafDebounce;
+window.viewerRenderRequests = viewerRenderRequests;
+window.viewerPerfMetrics = viewerPerfMetrics;
+window.viewerRenderInvalidation = createRenderInvalidationScheduler({
+  beforeBaseRender(reason, payload) {
+    const synced = window.syncViewerOverlayInvalidationState?.(reason, payload);
+    if (synced) {
+      window.scheduleViewerOverlaySync?.(reason);
+    }
+  },
+  scheduleBaseRender(reason) {
+    if (typeof window.scheduleWindowFetch === 'function') {
+      window.scheduleWindowFetch();
+    } else if (typeof window.renderLatestView === 'function') {
+      window.renderLatestView();
+    }
+    viewerPerfMetrics.recordBaseInvalidation?.({ reason });
+  },
+  scheduleOverlayRedraw(reason) {
+    window.syncViewerOverlayInvalidationState?.(reason);
+    if (typeof window.syncViewerOverlayLayer === 'function') {
+      window.syncViewerOverlayLayer(reason);
+    } else {
+      window.scheduleViewerOverlaySync?.(reason);
+    }
+  },
+});
+window.invalidateViewerRender = window.viewerRenderInvalidation.invalidate;
+window.requestViewerBaseRenderInvalidation = function requestViewerBaseRenderInvalidation(
+  reason,
+  scheduleBaseRender,
+  payload = {},
+) {
+  if (typeof window.invalidateViewerRender !== 'function') return null;
+  const wrappedBaseRender = typeof scheduleBaseRender === 'function'
+    ? (resolvedReason, resolvedPayload) => {
+        scheduleBaseRender(resolvedReason, resolvedPayload);
+        viewerPerfMetrics.recordBaseInvalidation?.({ reason: resolvedReason || reason });
+      }
+    : scheduleBaseRender;
+  return window.invalidateViewerRender(reason, {
+    ...payload,
+    scheduleBaseRender: wrappedBaseRender,
+  });
+};
+window.requestViewerOverlayInvalidation = function requestViewerOverlayInvalidation(reason, payload = {}) {
+  if (typeof window.invalidateViewerRender !== 'function') return null;
+  return window.invalidateViewerRender(reason, payload);
+};
+window.viewerPerfOverlay = initViewerPerfOverlay({ metrics: viewerPerfMetrics });
+window.viewerOverlayLayer = initViewerOverlayLayer();
+window.manualPickOverlay = initManualPickOverlay();
+window.predictionOverlay = initPredictionOverlay();
 
 const readyQueue = window.__viewerBootstrapQueue;
 window.viewerBootstrapReady = Promise.resolve();
@@ -146,8 +205,16 @@ const store = createStore(initial);
 window.store = store;
 window.SeisViewerState = createSeisViewerState(store);
 window.SeisViewerState.syncActiveFileTarget = function syncActiveFileTarget(state) {
-  store.patch(readActiveViewerTargetState(state));
-  return window.SeisViewerState.getActiveFileTarget();
+  const nextTargetState = readActiveViewerTargetState(state);
+  store.patch(nextTargetState);
+  const activeTarget = window.SeisViewerState.getActiveFileTarget();
+  if (typeof window.persistActiveViewerToolTarget === 'function') {
+    window.persistActiveViewerToolTarget(activeTarget || nextTargetState);
+  }
+  if (typeof window.refreshViewerToolLinks === 'function') {
+    window.refreshViewerToolLinks();
+  }
+  return activeTarget;
 };
 
 // ---- Sync global wiggle-threshold at boot
@@ -202,15 +269,19 @@ initPrefs({
       store.patch({ wiggleDensity: v });
       // モード判定はこのグローバルを見るので同期が必須
       window.WIGGLE_DENSITY_THRESHOLD = v;
-      if (typeof window.scheduleWindowFetch === 'function') {
-        window.scheduleWindowFetch();
-      }
+      window.requestViewerBaseRenderInvalidation?.('viewport-full-res', () => {
+        window.scheduleWindowFetch?.();
+      }, { source: 'pref-wiggle-density' });
       return; // 閾値変更では即時再描画しない（fetchに任せる）
     }
 
     // それ以外（gain/colormap等）は pan/zoom 中でなければ軽量再描画
     if (!window.isRelayouting && !window.suppressRelayout) {
-      if (typeof window.renderLatestView === 'function') {
+      if (key === 'gain') {
+        window.requestViewerBaseRenderInvalidation?.('gain', () => {
+          window.renderLatestView?.();
+        }, { source: 'pref-gain' });
+      } else if (typeof window.renderLatestView === 'function') {
         window.renderLatestView();
       }
     }

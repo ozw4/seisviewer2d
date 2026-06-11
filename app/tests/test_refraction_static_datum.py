@@ -10,10 +10,13 @@ from typing import Any
 import numpy as np
 import pytest
 
-import app.services.refraction_static_datum as datum_module
+import app.statics.refraction.application.datum as datum_module
 from app.api.schemas import RefractionStaticApplyOptions, RefractionStaticDatumRequest
 from app.core.state import AppState
-from app.services.refraction_static_datum import (
+from app.statics.refraction.adapters.seisviewer2d.runtime import (
+    SeisViewer2DRefractionRuntime,
+)
+from app.statics.refraction.application.datum import (
     REFRACTION_DATUM_NODES_CSV_NAME,
     REFRACTION_DATUM_RECEIVERS_CSV_NAME,
     REFRACTION_DATUM_SOURCES_CSV_NAME,
@@ -26,7 +29,7 @@ from app.services.refraction_static_datum import (
     compute_flat_datum_shift_s,
     compute_floating_datum_elevation_shift_s,
 )
-from app.services.refraction_static_types import (
+from app.statics.refraction.domain.types import (
     RefractionWeatheringReplacementStaticsResult,
 )
 
@@ -569,7 +572,7 @@ def test_from_artifact_mode_loads_node_npz_from_static_job(tmp_path: Path) -> No
             floating_datum_artifact_name=artifact_name,
         ),
         apply_options=_apply_options(),
-        state=state,
+        runtime=SeisViewer2DRefractionRuntime(state),
         file_id='line-a',
         key1_byte=189,
         key2_byte=193,
@@ -825,6 +828,23 @@ def test_invalid_surface_and_unknown_endpoint_nodes_are_visible() -> None:
             weathering_replacement_result=_replacement_result(
                 source_node_id=np.asarray([999, 1, 2]),
             ),
+            datum=_datum(),
+            apply_options=_apply_options(),
+        )
+
+
+def test_datum_statics_rejects_non_real_numeric_node_ids() -> None:
+    replacement = replace(
+        _replacement_result(),
+        source_node_id=np.asarray(['0', '1', '2'], dtype='<U1'),
+    )
+
+    with pytest.raises(
+        RefractionDatumStaticsError,
+        match='source_node_id.*real numeric dtype',
+    ):
+        build_refraction_datum_statics(
+            weathering_replacement_result=replacement,
             datum=_datum(),
             apply_options=_apply_options(),
         )

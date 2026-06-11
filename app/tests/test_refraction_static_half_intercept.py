@@ -10,13 +10,13 @@ import numpy as np
 import pytest
 
 from app.api.schemas import RefractionStaticModelRequest, RefractionStaticSolverRequest
-from app.services.refraction_static_design_matrix import (
+from app.statics.refraction.application.design_matrix import (
     build_refraction_static_design_matrix,
 )
-from app.services.refraction_static_bedrock import (
+from app.statics.refraction.application.bedrock import (
     estimate_global_bedrock_slowness_from_input_model,
 )
-from app.services.refraction_static_half_intercept import (
+from app.statics.refraction.application.half_intercept import (
     REFRACTION_HALF_INTERCEPT_NODES_CSV_NAME,
     REFRACTION_HALF_INTERCEPT_QC_JSON_NAME,
     REFRACTION_HALF_INTERCEPT_RECEIVERS_CSV_NAME,
@@ -27,11 +27,11 @@ from app.services.refraction_static_half_intercept import (
     build_refraction_half_intercept_time_model_from_bedrock_result,
     estimate_refraction_half_intercept_times_from_first_breaks,
 )
-from app.services.refraction_static_types import (
+from app.statics.refraction.domain.types import (
     RefractionEndpointTable,
     RefractionStaticInputModel,
 )
-from app.services.refraction_static_solver import solve_refraction_static_bounded_ls
+from app.statics.refraction.domain.solver import solve_refraction_static_bounded_ls
 
 NODE_ID = np.asarray([0, 1, 2, 3, 4, 5], dtype=np.int64)
 ACTIVE_NODE_ID = NODE_ID[:-1]
@@ -502,6 +502,24 @@ def test_validation_rejects_unknown_source_and_receiver_nodes() -> None:
     with pytest.raises(RefractionHalfInterceptTimeError, match='receiver'):
         build_refraction_half_intercept_time_model(
             input_model=replace(inputs, receiver_node_id_sorted=bad_receiver),
+            design_matrix=design,
+            solver_result=solved,
+            weathering_velocity_m_s=WEATHERING_VELOCITY_M_S,
+        )
+
+
+def test_validation_rejects_non_real_numeric_trace_node_ids() -> None:
+    inputs, design, solved, _result = _build_result()
+
+    with pytest.raises(
+        RefractionHalfInterceptTimeError,
+        match='source_node_id_sorted.*real numeric dtype',
+    ):
+        build_refraction_half_intercept_time_model(
+            input_model=replace(
+                inputs,
+                source_node_id_sorted=inputs.source_node_id_sorted.astype('<U8'),
+            ),
             design_matrix=design,
             solver_result=solved,
             weathering_velocity_m_s=WEATHERING_VELOCITY_M_S,

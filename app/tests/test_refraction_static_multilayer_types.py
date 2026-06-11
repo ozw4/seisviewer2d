@@ -6,7 +6,7 @@ from typing import Any, get_type_hints
 import numpy as np
 import pytest
 
-from app.services.refraction_static_types import (
+from app.statics.refraction.domain.types import (
     RefractionLayerKind,
     RefractionLayerSolveResult,
     RefractionLayerVelocityMode,

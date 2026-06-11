@@ -5,7 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from app.core.state import AppState
-from app.services.refraction_static_artifacts import (
+from app.statics.refraction.artifacts import (
     REFRACTION_STATIC_REGISTERED_ARTIFACT_NAMES,
 )
 

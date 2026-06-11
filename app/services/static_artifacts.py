@@ -2,16 +2,23 @@
 
 from __future__ import annotations
 
-import csv
-import json
-import uuid
-from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
 import numpy as np
 
+from app.services.common.artifact_io import (
+    write_csv_atomic as _common_write_csv_atomic,
+    write_json_atomic as _common_write_json_atomic,
+    write_npz_atomic as _common_write_npz_atomic,
+)
+from app.services.common.array_validation import (
+    coerce_1d_castable_finite_float64 as _coerce_1d_finite_float64,
+    coerce_1d_integer_int64 as _coerce_1d_integer_int64,
+    coerce_finite_float as _coerce_finite_float,
+    coerce_positive_finite_float as _coerce_positive_finite_float,
+)
 from app.services.datum_static_validation import (
     ExistingStaticHeaderCheck,
     TraceShiftValidationResult,
@@ -146,9 +153,9 @@ def write_datum_static_artifacts(
         statics_csv=values.job_dir / STATICS_CSV_NAME,
     )
 
-    _write_npz_atomic(paths.solution_npz, solution_payload)
-    _write_json_atomic(paths.qc_json, qc_payload)
-    _write_csv_atomic(paths.statics_csv, values)
+    _write_datum_solution_npz(paths.solution_npz, solution_payload)
+    _write_datum_qc_json(paths.qc_json, qc_payload)
+    _write_datum_statics_csv(paths.statics_csv, values)
     return paths
 
 
@@ -317,30 +324,6 @@ def _validate_inputs(
     )
 
 
-def _coerce_1d_finite_float64(
-    values: np.ndarray,
-    *,
-    name: str,
-    expected_shape: tuple[int, ...] | None = None,
-) -> np.ndarray:
-    arr = np.asarray(values)
-    if arr.ndim != 1:
-        msg = f'{name} must be a 1D array'
-        raise ValueError(msg)
-    if expected_shape is not None and arr.shape != expected_shape:
-        msg = f'{name} shape mismatch: expected {expected_shape}, got {arr.shape}'
-        raise ValueError(msg)
-    try:
-        arr_f64 = arr.astype(np.float64, copy=False)
-    except (TypeError, ValueError) as exc:
-        msg = f'{name} must be numeric'
-        raise ValueError(msg) from exc
-    if not np.all(np.isfinite(arr_f64)):
-        msg = f'{name} must contain only finite values'
-        raise ValueError(msg)
-    return np.asarray(arr_f64, dtype=np.float64)
-
-
 def _coerce_1d_bool(
     values: np.ndarray,
     *,
@@ -369,58 +352,6 @@ def _coerce_1d_bool(
         return np.asarray(arr, dtype=bool)
     msg = f'{name} must be bool dtype or safely convertible to bool'
     raise ValueError(msg)
-
-
-def _coerce_1d_integer_int64(
-    values: np.ndarray,
-    *,
-    name: str,
-    expected_shape: tuple[int, ...],
-) -> np.ndarray:
-    arr = np.asarray(values)
-    if arr.ndim != 1:
-        msg = f'{name} must be a 1D array'
-        raise ValueError(msg)
-    if arr.shape != expected_shape:
-        msg = f'{name} shape mismatch: expected {expected_shape}, got {arr.shape}'
-        raise ValueError(msg)
-    if np.issubdtype(arr.dtype, np.bool_):
-        msg = f'{name} must contain integer values'
-        raise ValueError(msg)
-    if np.issubdtype(arr.dtype, np.integer):
-        return np.asarray(arr, dtype=np.int64)
-    try:
-        arr_f64 = arr.astype(np.float64, copy=False)
-    except (TypeError, ValueError) as exc:
-        msg = f'{name} must contain integer values'
-        raise ValueError(msg) from exc
-    if not np.all(np.isfinite(arr_f64)):
-        msg = f'{name} must contain only finite values'
-        raise ValueError(msg)
-    if not np.all(arr_f64 == np.rint(arr_f64)):
-        msg = f'{name} must contain integer values'
-        raise ValueError(msg)
-    return np.asarray(arr_f64, dtype=np.int64)
-
-
-def _coerce_finite_float(value: float, *, name: str) -> float:
-    try:
-        scalar = float(value)
-    except (TypeError, ValueError) as exc:
-        msg = f'{name} must be finite'
-        raise ValueError(msg) from exc
-    if not np.isfinite(scalar):
-        msg = f'{name} must be finite'
-        raise ValueError(msg)
-    return scalar
-
-
-def _coerce_positive_finite_float(value: float, *, name: str) -> float:
-    scalar = _coerce_finite_float(value, name=name)
-    if scalar <= 0.0:
-        msg = f'{name} must be finite and greater than 0'
-        raise ValueError(msg)
-    return scalar
 
 
 def _coerce_bool_scalar(value: bool, *, name: str) -> bool:
@@ -631,72 +562,66 @@ def _stats_without_max_abs(values: np.ndarray) -> dict[str, float]:
     }
 
 
-def _write_npz_atomic(out_path: Path, payload: dict[str, np.ndarray]) -> None:
-    def write(tmp_path: Path) -> None:
-        with tmp_path.open('wb') as handle:
-            np.savez(handle, **payload)
-
-    _atomic_write(out_path, write)
-
-
-def _write_json_atomic(out_path: Path, payload: dict[str, Any]) -> None:
-    def write(tmp_path: Path) -> None:
-        with tmp_path.open('w', encoding='utf-8') as handle:
-            json.dump(
-                payload,
-                handle,
-                allow_nan=False,
-                ensure_ascii=False,
-                indent=2,
-                sort_keys=True,
-            )
-            handle.write('\n')
-
-    _atomic_write(out_path, write)
+def _write_datum_solution_npz(out_path: Path, payload: dict[str, np.ndarray]) -> None:
+    _common_write_npz_atomic(
+        out_path,
+        payload,
+        compressed=False,
+        reject_object_arrays=False,
+    )
 
 
-def _write_csv_atomic(out_path: Path, values: _ValidatedInputs) -> None:
-    def write(tmp_path: Path) -> None:
-        with tmp_path.open('w', encoding='utf-8', newline='') as handle:
-            writer = csv.writer(handle)
-            writer.writerow(_CSV_COLUMNS)
-            for sorted_trace_index in range(values.n_traces):
-                writer.writerow(
-                    [
-                        sorted_trace_index,
-                        int(values.key1_sorted[sorted_trace_index]),
-                        int(values.key2_sorted[sorted_trace_index]),
-                        float(
-                            values.source_surface_elevation_m_sorted[sorted_trace_index]
-                        ),
-                        float(values.source_depth_m_sorted[sorted_trace_index]),
-                        'true'
-                        if bool(values.source_depth_used_sorted[sorted_trace_index])
-                        else 'false',
-                        float(values.source_elevation_m_sorted[sorted_trace_index]),
-                        float(values.receiver_elevation_m_sorted[sorted_trace_index]),
-                        float(
-                            values.source_shift_s_sorted[sorted_trace_index] * 1000.0
-                        ),
-                        float(
-                            values.receiver_shift_s_sorted[sorted_trace_index] * 1000.0
-                        ),
-                        float(values.trace_shift_s_sorted[sorted_trace_index] * 1000.0),
-                    ]
-                )
-
-    _atomic_write(out_path, write)
+def _write_datum_qc_json(out_path: Path, payload: dict[str, Any]) -> None:
+    _common_write_json_atomic(
+        out_path,
+        payload,
+        allow_nan=False,
+        ensure_ascii=False,
+        indent=2,
+        sort_keys=True,
+        trailing_newline=True,
+    )
 
 
-def _atomic_write(out_path: Path, write: Callable[[Path], None]) -> None:
-    tmp_path = out_path.with_name(f'{out_path.name}.tmp-{uuid.uuid4().hex}')
-    try:
-        write(tmp_path)
-        tmp_path.replace(out_path)
-    except Exception:
-        if tmp_path.exists():
-            tmp_path.unlink()
-        raise
+def _write_datum_statics_csv(out_path: Path, values: _ValidatedInputs) -> None:
+    rows = []
+    for sorted_trace_index in range(values.n_traces):
+        rows.append(
+            {
+                'sorted_trace_index': sorted_trace_index,
+                'key1': int(values.key1_sorted[sorted_trace_index]),
+                'key2': int(values.key2_sorted[sorted_trace_index]),
+                'source_surface_elevation_m': float(
+                    values.source_surface_elevation_m_sorted[sorted_trace_index]
+                ),
+                'source_depth_m': float(values.source_depth_m_sorted[sorted_trace_index]),
+                'source_depth_used': 'true'
+                if bool(values.source_depth_used_sorted[sorted_trace_index])
+                else 'false',
+                'source_elevation_m': float(
+                    values.source_elevation_m_sorted[sorted_trace_index]
+                ),
+                'receiver_elevation_m': float(
+                    values.receiver_elevation_m_sorted[sorted_trace_index]
+                ),
+                'source_shift_ms': float(
+                    values.source_shift_s_sorted[sorted_trace_index] * 1000.0
+                ),
+                'receiver_shift_ms': float(
+                    values.receiver_shift_s_sorted[sorted_trace_index] * 1000.0
+                ),
+                'trace_shift_ms': float(
+                    values.trace_shift_s_sorted[sorted_trace_index] * 1000.0
+                ),
+            }
+        )
+    _common_write_csv_atomic(
+        out_path,
+        columns=_CSV_COLUMNS,
+        rows=rows,
+        extrasaction='raise',
+        lineterminator='\r\n',
+    )
 
 
 __all__ = [

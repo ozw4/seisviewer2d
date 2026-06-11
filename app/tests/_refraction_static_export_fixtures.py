@@ -4,17 +4,17 @@ from dataclasses import dataclass
 
 import numpy as np
 
-from app.services.refraction_static_artifacts import (
+from app.statics.refraction.artifacts import (
     FIRST_BREAK_TIME_EXPORT_SIGN_CONVENTION,
 )
-from app.services.refraction_static_export_types import (
+from app.statics.refraction.domain.export_types import (
     RefractionStaticEndpointExportRow,
     RefractionStaticExportBundle,
 )
-from app.services.refraction_static_export_units import (
+from app.statics.refraction.domain.export_units import (
     REFRACTION_STATIC_REPO_SIGN_CONVENTION,
 )
-from app.services.refraction_static_t1lsst import (
+from app.statics.refraction.domain.t1lsst import (
     compute_t1lsst_1layer_thickness,
     compute_t1lsst_1layer_weathering_correction,
     compute_t1lsst_2layer_thicknesses_with_status,

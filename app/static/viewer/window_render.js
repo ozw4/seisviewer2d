@@ -1,3 +1,109 @@
+    function overlayAxisSuffix(index) {
+      return index === 0 ? '' : String(index + 1);
+    }
+
+    function overlayAxisLayoutName(base, index) {
+      return `${base}axis${overlayAxisSuffix(index)}`;
+    }
+
+    function parseOverlayTranspose(value) {
+      if (value === true || value === 1) return true;
+      if (value === false || value === 0) return false;
+      if (typeof value === 'string') {
+        const normalized = value.trim().toLowerCase();
+        if (normalized === 'true' || normalized === '1') return true;
+        if (normalized === 'false' || normalized === '0') return false;
+      }
+      return null;
+    }
+
+    function resolveOverlayTranspose(plotDiv, options = {}) {
+      const explicit = parseOverlayTranspose(options.transpose);
+      if (explicit !== null) return explicit;
+
+      const candidates = [
+        options.axisTranspose,
+        options.overlayTranspose,
+        plotDiv?.__svTraceTimeTranspose,
+        plotDiv?.__svOverlayTranspose,
+        plotDiv?.dataset?.svTraceTimeTranspose,
+        plotDiv?.dataset?.svOverlayTranspose,
+        latestWindowRender?.axisTranspose,
+        latestWindowRender?.overlayTranspose,
+        window.viewerTraceTimeTranspose,
+        window.viewerOverlayTranspose,
+      ];
+      for (const candidate of candidates) {
+        const parsed = parseOverlayTranspose(candidate);
+        if (parsed !== null) return parsed;
+      }
+      return false;
+    }
+
+    function buildOverlayTransformInputFromPlot(plotDiv = document.getElementById('plot'), options = {}) {
+      const layout = plotDiv?._fullLayout;
+      const rect = plotDiv?.getBoundingClientRect?.();
+      const size = layout?._size;
+      if (!plotDiv || !layout || !rect) return null;
+
+      const panelIndex = Number.isInteger(options.panelIndex) ? options.panelIndex : 0;
+      const xAxisName = options.xAxisName || overlayAxisLayoutName('x', panelIndex);
+      const yAxisName = options.yAxisName || overlayAxisLayoutName('y', panelIndex);
+      const xa = layout[xAxisName];
+      const ya = layout[yAxisName];
+      if (!xa || !ya || !Array.isArray(xa.range) || !Array.isArray(ya.range)) return null;
+
+      const xDomain = Array.isArray(xa.domain) && xa.domain.length === 2 ? xa.domain : [0, 1];
+      const yDomain = Array.isArray(ya.domain) && ya.domain.length === 2 ? ya.domain : [0, 1];
+      const plotArea = size && Number.isFinite(size.w) && Number.isFinite(size.h)
+        ? {
+            left: (Number(size.l) || 0) + xDomain[0] * size.w,
+            top: (Number(size.t) || 0) + (1 - yDomain[1]) * size.h,
+            width: Math.max(0, (xDomain[1] - xDomain[0]) * size.w),
+            height: Math.max(0, (yDomain[1] - yDomain[0]) * size.h),
+          }
+        : { left: 0, top: 0, width: rect.width, height: rect.height };
+
+      const dt = Number(options.dt ?? window.defaultDt ?? defaultDt);
+      const renderedY0 = Number(options.renderedY0 ?? latestWindowRender?.y0);
+      const renderedY1 = Number(options.renderedY1 ?? latestWindowRender?.y1);
+      const hasRenderedTime =
+        Number.isFinite(dt) &&
+        dt > 0 &&
+        Number.isFinite(renderedY0) &&
+        Number.isFinite(renderedY1);
+
+      return {
+        containerRect: {
+          left: Number(rect.left) || 0,
+          top: Number(rect.top) || 0,
+          width: Number(rect.width) || 0,
+          height: Number(rect.height) || 0,
+        },
+        plotArea,
+        xRange: [xa.range[0], xa.range[1]],
+        yRange: [ya.range[0], ya.range[1]],
+        transpose: resolveOverlayTranspose(plotDiv, options),
+        renderedStart: options.renderedStart ?? renderedStart,
+        renderedEnd: options.renderedEnd ?? renderedEnd,
+        renderedTimeStart: hasRenderedTime ? renderedY0 * dt : options.renderedTimeStart,
+        renderedTimeEnd: hasRenderedTime ? renderedY1 * dt : options.renderedTimeEnd,
+        dt,
+        panelIndex,
+        xAxisName,
+        yAxisName,
+      };
+    }
+
+    function createOverlayTransformForPlot(plotDiv = document.getElementById('plot'), options = {}) {
+      const input = buildOverlayTransformInputFromPlot(plotDiv, options);
+      const create = window.ViewerOverlayTransform?.createOverlayTransform;
+      return input && typeof create === 'function' ? create(input) : null;
+    }
+
+    window.buildOverlayTransformInputFromPlot = buildOverlayTransformInputFromPlot;
+    window.createOverlayTransformForPlot = createOverlayTransformForPlot;
+
     function installCustomDoubleClick(plotDiv) {
       if (!plotDiv || plotDiv.__customDbl) return;
 
@@ -102,6 +208,93 @@
         else suppressRelayout = false;
         return promiseLike;
       }
+    function ignorePlotPromiseRejection() {}
+    function getQueuedRenderRequest(renderData) {
+      if (
+        renderData?.__requestSlot &&
+        Number.isInteger(renderData.__requestId)
+      ) {
+        return {
+          slotName: renderData.__requestSlot,
+          requestId: renderData.__requestId,
+        };
+      }
+      return null;
+    }
+    function isQueuedRenderCurrent(renderData) {
+      const request = getQueuedRenderRequest(renderData);
+      if (!request || typeof isCurrentRenderRequest !== 'function') return true;
+      return isCurrentRenderRequest(request.slotName, request.requestId);
+    }
+    function markQueuedRenderStale(renderData) {
+      const request = getQueuedRenderRequest(renderData);
+      if (!request || typeof markStaleRenderDropped !== 'function') return false;
+      markStaleRenderDropped(request.slotName, request.requestId);
+      return true;
+    }
+    function isQueuedRenderCurrentOrMarkStale(renderData) {
+      if (isQueuedRenderCurrent(renderData)) return true;
+      markQueuedRenderStale(renderData);
+      return false;
+    }
+    function queueViewerPlotlyRender(plotDiv, renderData, startRender) {
+      const previous = plotDiv?.__svPlotlyRenderTail;
+      const previousSettled = previous && typeof previous.then === 'function'
+        ? previous.catch(ignorePlotPromiseRejection)
+        : Promise.resolve();
+      const queued = previousSettled.then(() => {
+        if (!isQueuedRenderCurrentOrMarkStale(renderData)) return false;
+        const renderPromise = startRender();
+        if (renderPromise && typeof renderPromise.then === 'function') {
+          return renderPromise.then(() => isQueuedRenderCurrentOrMarkStale(renderData));
+        }
+        return isQueuedRenderCurrentOrMarkStale(renderData);
+      });
+      if (plotDiv) {
+        plotDiv.__svPlotlyRenderTail = queued.catch(ignorePlotPromiseRejection);
+      }
+      return queued;
+    }
+    window.queueViewerPlotlyRender = queueViewerPlotlyRender;
+    function syncManualPickOverlayData(reason = 'render') {
+      if (typeof window.updateManualPickOverlayState !== 'function') return;
+      window.updateManualPickOverlayState({
+        manualPicks: Array.isArray(picks) ? picks : [],
+        pending: typeof window.getPendingPickOverlayState === 'function'
+          ? window.getPendingPickOverlayState()
+          : null,
+        timeTransform: window.pickRawTimeToDisplayTime,
+      }, { redraw: false, reason });
+    }
+    function syncPredictionOverlayData(reason = 'render') {
+      if (typeof window.syncPredictionOverlayFromViewerState !== 'function') return;
+      window.syncPredictionOverlayFromViewerState(reason, { redraw: false });
+    }
+
+    function finishWindowPlotlyRender(plotDiv, windowData, mode, { wiggleSig = null } = {}) {
+      if (!isQueuedRenderCurrentOrMarkStale(windowData)) return false;
+      requestAnimationFrame(applyDragMode);
+      installPlotlyViewportHandlersOnce();
+      attachPickListeners(plotDiv);
+      installCustomDoubleClick(plotDiv);
+      plotDiv.__svPlotMode = mode;
+      if (wiggleSig !== null) plotDiv.__svWiggleSig = wiggleSig;
+      syncManualPickOverlayData(`render-${mode}`);
+      syncPredictionOverlayData(`render-${mode}`);
+      if (typeof window.scheduleViewerOverlaySync === 'function') {
+        window.scheduleViewerOverlaySync(`render-${mode}`);
+      }
+      return true;
+    }
+    function finalizeWindowPlotlyRender(plotPromise, plotDiv, windowData, mode, options = {}) {
+      if (plotPromise && typeof plotPromise.then === 'function') {
+        return plotPromise.then((rendered) => {
+          if (!rendered) return false;
+          return finishWindowPlotlyRender(plotDiv, windowData, mode, options);
+        });
+      }
+      return finishWindowPlotlyRender(plotDiv, windowData, mode, options);
+    }
     function maybeResizePlot(plotDiv, force) {
       if (!plotDiv) return Promise.resolve(false);
 
@@ -116,9 +309,58 @@
       if (!force && !changed) return Promise.resolve(false);
 
       plotDiv.__svLastSize = { w, h };
-      return withSuppressedRelayout(Promise.resolve(Plotly.Plots.resize(plotDiv)));
+      const resizeResult = withSuppressedRelayout(Promise.resolve(Plotly.Plots.resize(plotDiv)));
+      if (resizeResult && typeof resizeResult.then === 'function') {
+        return resizeResult.then((value) => {
+          if (typeof window.scheduleViewerOverlaySync === 'function') {
+            window.scheduleViewerOverlaySync('plot-resize');
+          }
+          return value;
+        });
+      }
+      if (typeof window.scheduleViewerOverlaySync === 'function') {
+        window.scheduleViewerOverlaySync('plot-resize');
+      }
+      return resizeResult;
     }
     window.maybeResizePlot = maybeResizePlot;
+    function getWindowRenderPerfMetrics() {
+      return window.viewerPerfMetrics || null;
+    }
+    function startWindowRenderPerfTimer(name) {
+      const metrics = getWindowRenderPerfMetrics();
+      return metrics && typeof metrics.startTimer === 'function'
+        ? metrics.startTimer(name)
+        : null;
+    }
+    function stopWindowRenderPerfTimer(timer) {
+      if (!timer) return null;
+      const metrics = getWindowRenderPerfMetrics();
+      return metrics && typeof metrics.stopTimer === 'function'
+        ? metrics.stopTimer(timer)
+        : null;
+    }
+    function recordWindowRenderPerfPayload(windowData, rows, cols) {
+      const metrics = getWindowRenderPerfMetrics();
+      if (!metrics || typeof metrics.recordPayload !== 'function') return;
+      metrics.recordPayload({
+        mode: windowData?.mode,
+        layer: windowData?.requestedLayer,
+        key1: windowData?.key1,
+        visibleTraces: cols,
+        visibleSamples: rows,
+      });
+    }
+    function recordBaseRenderPerf(windowData, reason = 'window-render') {
+      const metrics = getWindowRenderPerfMetrics();
+      if (!metrics || typeof metrics.recordBaseRender !== 'function') return;
+      metrics.recordBaseRender({
+        mode: windowData?.mode,
+        layer: windowData?.requestedLayer,
+        key1: windowData?.key1,
+        reason,
+      });
+    }
     function resolveWiggleTraceIndices(gd) {
       const data = Array.isArray(gd?.data) ? gd.data : [];
       const idxs = [];
@@ -169,6 +411,29 @@
       return { manualIdx, predIdx, pendingIdx };
     }
     window.resolvePickTraceIndices = resolvePickTraceIndices;
+    function resolvePredictionTraceIndex(gd) {
+      const data = Array.isArray(gd?.data) ? gd.data : [];
+      const cachedPred = gd ? gd.__svPickIdxPred : -1;
+      if (
+        Number.isInteger(cachedPred) &&
+        cachedPred >= 0 &&
+        cachedPred < data.length &&
+        data[cachedPred]?.meta?.svRole === 'pick' &&
+        data[cachedPred]?.meta?.svKind === 'pred'
+      ) {
+        return cachedPred;
+      }
+      for (let i = 0; i < data.length; i++) {
+        const tr = data[i];
+        if (tr?.meta?.svRole === 'pick' && tr?.meta?.svKind === 'pred') {
+          if (gd) gd.__svPickIdxPred = i;
+          return i;
+        }
+      }
+      if (gd) gd.__svPickIdxPred = -1;
+      return -1;
+    }
+    window.resolvePredictionTraceIndex = resolvePredictionTraceIndex;
     function makeWiggleSig(opts) {
       const styleKey = 'base:line0:skip|fill:toself:black:0.6:line0:skip|line:black:0.5:x+y';
       return JSON.stringify({
@@ -189,11 +454,17 @@
       plotDiv.on('plotly_relayouting', () => {
         if (suppressRelayout) return;
         isRelayouting = true;
+        if (typeof window.scheduleViewerOverlaySync === 'function') {
+          window.scheduleViewerOverlaySync('plotly-relayouting');
+        }
       });
 
       plotDiv.on('plotly_relayout', (ev) => {
         if (suppressRelayout) return;
         isRelayouting = false;
+        if (typeof window.scheduleViewerOverlaySync === 'function') {
+          window.scheduleViewerOverlaySync('plotly-relayout');
+        }
         const shouldRefreshPendingOverlay = (
           typeof window.hasPendingPickOverlayState === 'function' &&
           window.hasPendingPickOverlayState()
@@ -223,36 +494,61 @@
       D('RENDER@wiggle', { key1: windowData.key1, x: [windowData.x0, windowData.x1],
         y: [windowData.y0, windowData.y1], step: [windowData.stepX, windowData.stepY],
         picksTotal: picks.length });
+      if (
+        windowData?.__requestSlot &&
+        Number.isInteger(windowData.__requestId) &&
+        typeof isCurrentRenderRequest === 'function' &&
+        !isCurrentRenderRequest(windowData.__requestSlot, windowData.__requestId)
+      ) {
+        if (typeof markStaleRenderDropped === 'function') {
+          markStaleRenderDropped(windowData.__requestSlot, windowData.__requestId);
+        }
+        return false;
+      }
       if (isRelayouting) {           // ユーザーがドラッグ中
         latestWindowRender = windowData; // 最新結果だけ覚えて
         redrawPending = true;            // 終了後に再描画
-        return;
+        return false;
       }
       snapshotAxesRangesFromDOM();
-      if (!windowData || (windowData.mode && windowData.mode !== 'wiggle')) return;
+      if (!windowData || (windowData.mode && windowData.mode !== 'wiggle')) return false;
 
       const sel = document.getElementById('layerSelect');
       const currentLayer = sel ? sel.value : 'raw';
-      if (windowData.requestedLayer !== currentLayer) return;
+      if (windowData.requestedLayer !== currentLayer) return false;
+      if (
+        typeof windowData.scaling === 'string' &&
+        typeof currentScaling !== 'undefined' &&
+        windowData.scaling !== currentScaling
+      ) {
+        return false;
+      }
+      if (
+        typeof windowData.lmoKey === 'string' &&
+        typeof window.currentLmoKey === 'function' &&
+        windowData.lmoKey !== window.currentLmoKey()
+      ) {
+        return false;
+      }
 
       const slider = document.getElementById('key1_slider');
       const idx = slider ? parseInt(slider.value, 10) : 0;
       const key1Val = key1Values[idx];
-      if (windowData.key1 !== key1Val) return;
+      if (windowData.key1 !== key1Val) return false;
 
       if (windowData.pipelineKey && (window.latestPipelineKey || null) !== (windowData.pipelineKey || null)) {
-        return;
+        return false;
       }
 
-      if (windowData.effectiveLayer === 'fbprob') return;
+      if (windowData.effectiveLayer === 'fbprob') return false;
 
       const plotDiv = document.getElementById('plot');
-      if (!plotDiv) return;
+      if (!plotDiv) return false;
 
       const { shape, x0, x1, y0, y1 } = windowData;
       const rows = Number(shape?.[0] ?? 0);
       const cols = Number(shape?.[1] ?? 0);
-      if (!rows || !cols) return;
+      if (!rows || !cols) return false;
       const perf = windowData.__perf || null;
       const perfEnabled = window.SV_PERF === true;
       let tPrep0 = null;
@@ -262,11 +558,14 @@
 
       const useI8 = windowData.valuesI8 instanceof Int8Array;
       const useF32 = !useI8 && windowData.values && windowData.values.length != null;
-      if (!useI8 && !useF32) return;
+      if (!useI8 && !useF32) return false;
 
       const N = rows * cols;
-      if (useI8 && windowData.valuesI8.length < N) return;
-      if (useF32 && windowData.values.length < N) return;
+      if (useI8 && windowData.valuesI8.length < N) return false;
+      if (useF32 && windowData.values.length < N) return false;
+      const renderTimer = startWindowRenderPerfTimer('render');
+      recordWindowRenderPerfPayload(windowData, rows, cols);
+      recordBaseRenderPerf(windowData, 'window-wiggle');
 
       const scale = Number(windowData.scale) || 1;
       const stepX = windowData.stepX || 1;
@@ -284,17 +583,17 @@
       const prevMode = plotDiv.__svPlotMode;
       const hasPlotData = Array.isArray(plotDiv.data) && plotDiv.data.length > 0;
       const wiggleIdxs = resolveWiggleTraceIndices(plotDiv);
-      const pickTraceIdxs = resolvePickTraceIndices(plotDiv);
-      const hasPickTraces = pickTraceIdxs.manualIdx >= 0 && pickTraceIdxs.predIdx >= 0 && pickTraceIdxs.pendingIdx >= 0;
-      if (!hasPickTraces && hasPlotData && prevMode === 'wiggle') {
-        console.warn('[RENDER@wiggle][PICKS] missing pick traces; forcing react init');
+      const predIdx = resolvePredictionTraceIndex(plotDiv);
+      const hasPredTrace = predIdx >= 0;
+      if (!hasPredTrace && hasPlotData && prevMode === 'wiggle') {
+        console.warn('[RENDER@wiggle][PICKS] missing prediction trace; forcing react init');
       }
       const needsReactInit = (
         !hasPlotData ||
         prevMode !== 'wiggle' ||
         prevWiggleSig !== wiggleSig ||
         wiggleIdxs.length !== expectedTraceCount ||
-        !hasPickTraces
+        !hasPredTrace
       );
 
       if (perfEnabled) tPrep0 = performance.now();
@@ -405,24 +704,23 @@
       renderedStart = x0;
       renderedEnd = endTrace;
 
-      const showPred = !!document.getElementById('showFbPred')?.checked;
-      const [manualPickTr, predPickTr] = buildPickMarkerTraces({
-        manualPicks: picks,
-        predicted: showPred ? predictedPicks : [],
+      const overlayTimer = startWindowRenderPerfTimer('overlay');
+      const [, predPickTr] = buildPickMarkerTraces({
+        manualPicks: [],
+        predicted: [],
         xMin: x0,
         xMax: endTrace,
-        showPredicted: showPred,
+        showPredicted: false,
         timeTransform: window.pickRawTimeToDisplayTime,
       });
-      const pendingPickTr = buildPendingPickMarkerTrace({
-        pending: typeof window.getPendingPickOverlayState === 'function'
-          ? window.getPendingPickOverlayState()
-          : null,
-        yMin: Math.min(time[0], time[rows - 1]),
-        yMax: Math.max(time[0], time[rows - 1]),
-      });
-      const pickManualCount = manualPickTr.x ? manualPickTr.x.length : 0;
-      const pickPredCount = predPickTr.x ? predPickTr.x.length : 0;
+      stopWindowRenderPerfTimer(overlayTimer);
+      const pickManualCount = Array.isArray(picks)
+        ? picks.filter((pick) => {
+          const trace = Number(pick?.trace);
+          return Number.isFinite(trace) && trace >= x0 && trace <= endTrace;
+        }).length
+        : 0;
+      const pickPredCount = 0;
       const [x0v, x1v] = visibleXRng();
       D('RENDER@picks', {
         mode: 'wiggle',
@@ -432,10 +730,10 @@
       });
       if (perfEnabled) tPrep1 = performance.now();
       if (needsReactInit) {
-        traces.push(manualPickTr, predPickTr, pendingPickTr);
-        plotDiv.__svPickIdxManual = traces.length - 3;
-        plotDiv.__svPickIdxPred = traces.length - 2;
-        plotDiv.__svPickIdxPending = traces.length - 1;
+        traces.push(predPickTr);
+        plotDiv.__svPickIdxManual = -1;
+        plotDiv.__svPickIdxPred = traces.length - 1;
+        plotDiv.__svPickIdxPending = -1;
 
         const totalSamples = sectionShape ? sectionShape[1] : (typeof y1 === 'number' ? y1 - y0 + 1 : rows);
         const layout = buildLayout({
@@ -457,35 +755,40 @@
         });
 
         if (perfEnabled) tPlot0 = performance.now();
-        plotPromise = withSuppressedRelayout(Plotly.react(plotDiv, traces, layout, {
-          responsive: true,
-          doubleClick: false,
-          doubleClickDelay: 300,
-        }));
-        setTimeout(() => { maybeResizePlot(plotDiv, true); }, 50);
+        plotPromise = queueViewerPlotlyRender(plotDiv, windowData, () => {
+          const promise = withSuppressedRelayout(Plotly.react(plotDiv, traces, layout, {
+            responsive: true,
+            doubleClick: false,
+            doubleClickDelay: 300,
+          }));
+          setTimeout(() => { maybeResizePlot(plotDiv, true); }, 50);
+          return promise;
+        });
       } else {
-        const diffUpdatePromise = Promise.resolve()
-          .then(() => Plotly.restyle(plotDiv, {
-            x: wiggleX,
-            y: wiggleY,
-          }, wiggleIdxs))
-          .then(() => {
-            const { manualIdx, predIdx, pendingIdx } = resolvePickTraceIndices(plotDiv);
-            if (manualIdx < 0 || predIdx < 0 || pendingIdx < 0) {
-              console.warn('[RENDER@wiggle][PICKS] pick traces missing on restyle path');
-              return;
-            }
-            return Plotly.restyle(plotDiv, {
-              x: [manualPickTr.x, predPickTr.x, pendingPickTr.x],
-              y: [manualPickTr.y, predPickTr.y, pendingPickTr.y],
-              visible: [true, !!showPred, !!pendingPickTr.visible],
-              mode: [manualPickTr.mode, predPickTr.mode, pendingPickTr.mode],
-              marker: [manualPickTr.marker, predPickTr.marker, pendingPickTr.marker],
-              line: [manualPickTr.line, predPickTr.line, pendingPickTr.line],
-            }, [manualIdx, predIdx, pendingIdx]);
-          });
         if (perfEnabled) tPlot0 = performance.now();
-        plotPromise = withSuppressedRelayout(diffUpdatePromise);
+        plotPromise = queueViewerPlotlyRender(plotDiv, windowData, () => {
+          const diffUpdatePromise = Promise.resolve()
+            .then(() => Plotly.restyle(plotDiv, {
+              x: wiggleX,
+              y: wiggleY,
+            }, wiggleIdxs))
+            .then(() => {
+              const predTraceIdx = resolvePredictionTraceIndex(plotDiv);
+              if (predTraceIdx < 0) {
+                console.warn('[RENDER@wiggle][PICKS] prediction trace missing on restyle path');
+                return;
+              }
+              return Plotly.restyle(plotDiv, {
+                x: [predPickTr.x],
+                y: [predPickTr.y],
+                visible: [false],
+                mode: [predPickTr.mode],
+                marker: [predPickTr.marker],
+                line: [predPickTr.line],
+              }, [predTraceIdx]);
+            });
+          return withSuppressedRelayout(diffUpdatePromise);
+        });
       }
       if (perfEnabled && plotPromise && typeof plotPromise.then === 'function') {
         plotPromise.then(() => {
@@ -507,43 +810,74 @@
             total_ms: perf ? (tDone - perf.tReq0) : null,
             bytes: perf ? perf.bytes : null,
           });
-        });
+        }, ignorePlotPromiseRejection);
       }
-      requestAnimationFrame(applyDragMode);
-      installPlotlyViewportHandlersOnce();
-      attachPickListeners(plotDiv);
-      installCustomDoubleClick(plotDiv);
-      plotDiv.__svPlotMode = 'wiggle';
-      plotDiv.__svWiggleSig = wiggleSig;
+      if (renderTimer) {
+        if (plotPromise && typeof plotPromise.then === 'function') {
+          plotPromise.then(() => {
+            stopWindowRenderPerfTimer(renderTimer);
+          }, () => {
+            stopWindowRenderPerfTimer(renderTimer);
+          });
+        } else {
+          stopWindowRenderPerfTimer(renderTimer);
+        }
+      }
+      return finalizeWindowPlotlyRender(plotPromise, plotDiv, windowData, 'wiggle', { wiggleSig });
     }
 
     function renderWindowHeatmap(windowData) {
       D('RENDER@heatmap', { key1: windowData.key1, x: [windowData.x0, windowData.x1],
         y: [windowData.y0, windowData.y1], step: [windowData.stepX, windowData.stepY],
         picksTotal: picks.length });
+      if (
+        windowData?.__requestSlot &&
+        Number.isInteger(windowData.__requestId) &&
+        typeof isCurrentRenderRequest === 'function' &&
+        !isCurrentRenderRequest(windowData.__requestSlot, windowData.__requestId)
+      ) {
+        if (typeof markStaleRenderDropped === 'function') {
+          markStaleRenderDropped(windowData.__requestSlot, windowData.__requestId);
+        }
+        return false;
+      }
       if (isRelayouting) {           // ユーザーがドラッグ中
         latestWindowRender = windowData; // 最新結果だけ覚えて
         redrawPending = true;            // 終了後に再描画
-        return;
+        return false;
       }
       snapshotAxesRangesFromDOM();
-      if (!windowData || (windowData.mode && windowData.mode !== 'heatmap')) return;
+      if (!windowData || (windowData.mode && windowData.mode !== 'heatmap')) return false;
 
       const sel = document.getElementById('layerSelect');
       const currentLayer = sel ? sel.value : 'raw';
-      if (windowData.requestedLayer !== currentLayer) return;
+      if (windowData.requestedLayer !== currentLayer) return false;
+      if (
+        typeof windowData.scaling === 'string' &&
+        typeof currentScaling !== 'undefined' &&
+        windowData.scaling !== currentScaling
+      ) {
+        return false;
+      }
+      if (
+        typeof windowData.lmoKey === 'string' &&
+        typeof window.currentLmoKey === 'function' &&
+        windowData.lmoKey !== window.currentLmoKey()
+      ) {
+        return false;
+      }
 
       const slider = document.getElementById('key1_slider');
       const idx = slider ? parseInt(slider.value, 10) : 0;
       const key1Val = key1Values[idx];
-      if (windowData.key1 !== key1Val) return;
+      if (windowData.key1 !== key1Val) return false;
 
       if (windowData.pipelineKey && (window.latestPipelineKey || null) !== (windowData.pipelineKey || null)) {
-        return;
+        return false;
       }
 
       const plotDiv = document.getElementById('plot');
-      if (!plotDiv) return;
+      if (!plotDiv) return false;
 
       const resolveHeatmapTraceIndex = (gd) => {
         if (typeof window.heatmapTraceIndex === 'function') {
@@ -559,18 +893,18 @@
       };
       const heatIdx = resolveHeatmapTraceIndex(plotDiv);
       const prevMode = plotDiv.__svPlotMode;
-      const pickTraceIdxs = resolvePickTraceIndices(plotDiv);
-      const hasPickTraces = pickTraceIdxs.manualIdx >= 0 && pickTraceIdxs.predIdx >= 0 && pickTraceIdxs.pendingIdx >= 0;
-      if (!hasPickTraces && Array.isArray(plotDiv.data) && plotDiv.data.length > 0 && prevMode === 'heatmap') {
-        console.warn('[RENDER@heatmap][PICKS] missing pick traces; forcing react init');
+      const predIdx = resolvePredictionTraceIndex(plotDiv);
+      const hasPredTrace = predIdx >= 0;
+      if (!hasPredTrace && Array.isArray(plotDiv.data) && plotDiv.data.length > 0 && prevMode === 'heatmap') {
+        console.warn('[RENDER@heatmap][PICKS] missing prediction trace; forcing react init');
       }
-      const needsReactInit = heatIdx < 0 || prevMode !== 'heatmap' || !hasPickTraces;
+      const needsReactInit = heatIdx < 0 || prevMode !== 'heatmap' || !hasPredTrace;
 
       const { shape, x0, x1, y0, y1, effectiveLayer } = windowData;
       let { stepX, stepY } = windowData;
       const rows = Number(shape?.[0] ?? 0);
       const cols = Number(shape?.[1] ?? 0);
-      if (!rows || !cols) return;
+      if (!rows || !cols) return false;
       const perf = windowData.__perf || null;
       const perfEnabled = window.SV_PERF === true;
       let tLut0 = null;
@@ -585,10 +919,13 @@
       const useF32 = !hasWorkerRows && !hasWorkerBacking && !useI8 && windowData.values && windowData.values.length != null;
       if (!hasWorkerRows && !hasWorkerBacking && !useI8 && !useF32) {
         console.warn('renderWindowHeatmap: missing values');
-        return;
+        return false;
       }
-      if (useI8 && windowData.valuesI8.length < N) return;
-      if (useF32 && windowData.values.length < N) return;
+      if (useI8 && windowData.valuesI8.length < N) return false;
+      if (useF32 && windowData.values.length < N) return false;
+      const renderTimer = startWindowRenderPerfTimer('render');
+      recordWindowRenderPerfPayload(windowData, rows, cols);
+      recordBaseRenderPerf(windowData, 'window-heatmap');
 
       setGrid({ x0, stepX, y0, stepY });
       const gain = parseFloat(document.getElementById('gain').value) || 1.0;
@@ -695,24 +1032,23 @@
       const zMid = (!fbMode && isDiv) ? 0 : null;
       const fbTitle = fbMode ? 'First-break Probability' : null;
 
-      const showPred = !!document.getElementById('showFbPred')?.checked;
-      const [manualPickTr, predPickTr] = buildPickMarkerTraces({
-        manualPicks: picks,
-        predicted: showPred ? predictedPicks : [],
+      const overlayTimer = startWindowRenderPerfTimer('overlay');
+      const [, predPickTr] = buildPickMarkerTraces({
+        manualPicks: [],
+        predicted: [],
         xMin: x0,
         xMax: x1,
-        showPredicted: showPred,
+        showPredicted: false,
         timeTransform: window.pickRawTimeToDisplayTime,
       });
-      const pendingPickTr = buildPendingPickMarkerTrace({
-        pending: typeof window.getPendingPickOverlayState === 'function'
-          ? window.getPendingPickOverlayState()
-          : null,
-        yMin: Math.min(yVals[0], yVals[rows - 1]),
-        yMax: Math.max(yVals[0], yVals[rows - 1]),
-      });
-      const pickManualCount = manualPickTr.x ? manualPickTr.x.length : 0;
-      const pickPredCount = predPickTr.x ? predPickTr.x.length : 0;
+      stopWindowRenderPerfTimer(overlayTimer);
+      const pickManualCount = Array.isArray(picks)
+        ? picks.filter((pick) => {
+          const trace = Number(pick?.trace);
+          return Number.isFinite(trace) && trace >= x0 && trace <= x1;
+        }).length
+        : 0;
+      const pickPredCount = 0;
       const [x0v, x1v] = visibleXRng();
       D('RENDER@picks', {
         mode: 'heatmap',
@@ -736,10 +1072,10 @@
           hoverinfo: 'x+y',
           hovertemplate: '',
         }];
-        traces.push(manualPickTr, predPickTr, pendingPickTr);
-        plotDiv.__svPickIdxManual = traces.length - 3;
-        plotDiv.__svPickIdxPred = traces.length - 2;
-        plotDiv.__svPickIdxPending = traces.length - 1;
+        traces.push(predPickTr);
+        plotDiv.__svPickIdxManual = -1;
+        plotDiv.__svPickIdxPred = traces.length - 1;
+        plotDiv.__svPickIdxPending = -1;
 
         const dt = window.defaultDt ?? defaultDt;
         const layout = buildLayout({
@@ -761,44 +1097,49 @@
         });
 
         if (perfEnabled) tPlot0 = performance.now();
-        plotPromise = withSuppressedRelayout(Plotly.react(plotDiv, traces, layout, {
-          responsive: true,
-          doubleClick: false,
-          doubleClickDelay: 300,
-        }));
-        setTimeout(() => { maybeResizePlot(plotDiv, true); }, 50);
-      } else {
-        const diffUpdatePromise = Promise.resolve()
-          .then(() => Plotly.restyle(plotDiv, {
-            x: [xVals],
-            y: [yVals],
-            z: [zData],
-            colorscale: [cm],
-            reversescale: [reverse],
-            zmin: [zMin],
-            zmax: [zMax],
-            zmid: [zMid],
-          }, [heatIdx]))
-          .then(() => {
-            const { manualIdx, predIdx, pendingIdx } = resolvePickTraceIndices(plotDiv);
-            if (manualIdx < 0 || predIdx < 0 || pendingIdx < 0) {
-              console.warn('[RENDER@heatmap][PICKS] pick traces missing on restyle path');
-              return;
-            }
-            return Plotly.restyle(plotDiv, {
-              x: [manualPickTr.x, predPickTr.x, pendingPickTr.x],
-              y: [manualPickTr.y, predPickTr.y, pendingPickTr.y],
-              visible: [true, !!showPred, !!pendingPickTr.visible],
-              mode: [manualPickTr.mode, predPickTr.mode, pendingPickTr.mode],
-              marker: [manualPickTr.marker, predPickTr.marker, pendingPickTr.marker],
-              line: [manualPickTr.line, predPickTr.line, pendingPickTr.line],
-            }, [manualIdx, predIdx, pendingIdx]);
-          })
-          .then(() => Plotly.relayout(plotDiv, {
-            title: fbTitle ?? '',
+        plotPromise = queueViewerPlotlyRender(plotDiv, windowData, () => {
+          const promise = withSuppressedRelayout(Plotly.react(plotDiv, traces, layout, {
+            responsive: true,
+            doubleClick: false,
+            doubleClickDelay: 300,
           }));
+          setTimeout(() => { maybeResizePlot(plotDiv, true); }, 50);
+          return promise;
+        });
+      } else {
         if (perfEnabled) tPlot0 = performance.now();
-        plotPromise = withSuppressedRelayout(diffUpdatePromise);
+        plotPromise = queueViewerPlotlyRender(plotDiv, windowData, () => {
+          const diffUpdatePromise = Promise.resolve()
+            .then(() => Plotly.restyle(plotDiv, {
+              x: [xVals],
+              y: [yVals],
+              z: [zData],
+              colorscale: [cm],
+              reversescale: [reverse],
+              zmin: [zMin],
+              zmax: [zMax],
+              zmid: [zMid],
+            }, [heatIdx]))
+            .then(() => {
+              const predTraceIdx = resolvePredictionTraceIndex(plotDiv);
+              if (predTraceIdx < 0) {
+                console.warn('[RENDER@heatmap][PICKS] prediction trace missing on restyle path');
+                return;
+              }
+              return Plotly.restyle(plotDiv, {
+                x: [predPickTr.x],
+                y: [predPickTr.y],
+                visible: [false],
+                mode: [predPickTr.mode],
+                marker: [predPickTr.marker],
+                line: [predPickTr.line],
+              }, [predTraceIdx]);
+            })
+            .then(() => Plotly.relayout(plotDiv, {
+              title: fbTitle ?? '',
+            }));
+          return withSuppressedRelayout(diffUpdatePromise);
+        });
       }
       if (perfEnabled && plotPromise && typeof plotPromise.then === 'function') {
         plotPromise.then(() => {
@@ -821,11 +1162,18 @@
             total_ms: perf ? (tDone - perf.tReq0) : null,
             bytes: perf ? perf.bytes : null,
           });
-        });
+        }, ignorePlotPromiseRejection);
       }
-      requestAnimationFrame(applyDragMode);
-      installPlotlyViewportHandlersOnce();
-      attachPickListeners(plotDiv);
-      installCustomDoubleClick(plotDiv);
-      plotDiv.__svPlotMode = 'heatmap';
+      if (renderTimer) {
+        if (plotPromise && typeof plotPromise.then === 'function') {
+          plotPromise.then(() => {
+            stopWindowRenderPerfTimer(renderTimer);
+          }, () => {
+            stopWindowRenderPerfTimer(renderTimer);
+          });
+        } else {
+          stopWindowRenderPerfTimer(renderTimer);
+        }
+      }
+      return finalizeWindowPlotlyRender(plotPromise, plotDiv, windowData, 'heatmap');
     }

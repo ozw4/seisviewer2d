@@ -8,7 +8,7 @@ import pytest
 from scipy import sparse
 
 import app.services.residual_static_design_matrix as design_matrix
-import app.services.residual_static_sparse_solver as sparse_solver
+import seis_statics.residual.solver as package_sparse_solver
 from app.services.residual_static_design_matrix import (
     ResidualStaticModelEvaluation,
     build_residual_static_observation_matrix_triplets,
@@ -127,9 +127,9 @@ def test_design_matrix_module_still_does_not_import_scipy() -> None:
     )
 
 
-def test_sparse_solver_module_imports_scipy_only_in_solver_layer() -> None:
-    solver_source = sparse_solver.__loader__.get_source(  # type: ignore[union-attr]
-        sparse_solver.__name__
+def test_package_sparse_solver_module_imports_scipy_only_in_solver_layer() -> None:
+    solver_source = package_sparse_solver.__loader__.get_source(  # type: ignore[union-attr]
+        package_sparse_solver.__name__
     )
 
     assert 'scipy' in solver_source

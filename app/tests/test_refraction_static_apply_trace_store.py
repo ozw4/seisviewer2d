@@ -8,10 +8,16 @@ from typing import Any
 import numpy as np
 import pytest
 
-import app.services.refraction_static_apply_trace_store as svc
+import app.statics.refraction.application.apply_trace_store as svc
+from app.statics.refraction.adapters.seisviewer2d import (
+    corrected_store as corrected_store_adapter,
+)
 from app.api.schemas import RefractionStaticApplyRequest
 from app.core.state import AppState, create_app_state
-from app.services.refraction_static_apply_trace_store import (
+from app.statics.refraction.adapters.seisviewer2d.runtime import (
+    SeisViewer2DRefractionRuntime,
+)
+from app.statics.refraction.application.apply_trace_store import (
     CORRECTED_FILE_JSON_NAME,
     REFRACTION_STATIC_APPLY_QC_JSON_NAME,
     RefractionStaticTraceStoreApplyError,
@@ -20,7 +26,7 @@ from app.services.refraction_static_apply_trace_store import (
     apply_trace_shifts_to_array,
     validate_refraction_trace_shifts_for_application,
 )
-from app.services.refraction_static_artifacts import (
+from app.statics.refraction.artifacts import (
     REFRACTION_STATIC_SOLUTION_NPZ_NAME,
     write_refraction_static_solution_npz,
 )
@@ -279,6 +285,125 @@ def test_refraction_shift_validation_rejects_bad_inputs() -> None:
         )
 
 
+@pytest.mark.parametrize('dtype', [np.float32, np.float64])
+def test_require_1d_float64_accepts_float_arrays_as_contiguous_float64(
+    dtype: type[np.floating],
+) -> None:
+    values = np.asarray([1.5, 99.0, -2.25, 42.0], dtype=dtype)[::2]
+
+    out = svc._require_1d_float64(
+        values,
+        name='trace_shift_s_sorted',
+        expected_shape=(2,),
+    )
+
+    assert out.dtype == np.float64
+    assert out.flags.c_contiguous
+    np.testing.assert_allclose(out, [1.5, -2.25])
+
+
+@pytest.mark.parametrize(
+    ('values', 'message'),
+    [
+        (np.asarray([1, 2], dtype=np.int64), 'must be a float array'),
+        (np.asarray([True, False], dtype=bool), 'must be a float array'),
+        (np.asarray([1.0 + 0.0j, 2.0 + 0.0j]), 'must be a float array'),
+        (np.asarray([1.0, 2.0], dtype=object), 'must not have object dtype'),
+    ],
+)
+def test_require_1d_float64_rejects_non_float_dtypes(
+    values: np.ndarray,
+    message: str,
+) -> None:
+    with pytest.raises(RefractionStaticTraceStoreApplyError, match=message):
+        svc._require_1d_float64(
+            values,
+            name='trace_shift_s_sorted',
+            expected_shape=(2,),
+        )
+
+
+def test_require_1d_float64_nonfinite_policy() -> None:
+    values = np.asarray([0.0, np.nan, np.inf], dtype=np.float64)
+
+    with pytest.raises(RefractionStaticTraceStoreApplyError, match='finite'):
+        svc._require_1d_float64(
+            values,
+            name='trace_shift_s_sorted',
+            expected_shape=(3,),
+            allow_nonfinite=False,
+        )
+
+    out = svc._require_1d_float64(
+        values,
+        name='trace_shift_s_sorted',
+        expected_shape=(3,),
+        allow_nonfinite=True,
+    )
+
+    np.testing.assert_array_equal(out, values)
+
+
+def test_require_1d_bool_accepts_bool_only() -> None:
+    out = svc._require_1d_bool(
+        np.asarray([True, False]),
+        name='trace_static_valid_mask_sorted',
+        expected_shape=(2,),
+    )
+
+    assert out.dtype == bool
+    assert out.flags.c_contiguous
+    np.testing.assert_array_equal(out, [True, False])
+
+    with pytest.raises(RefractionStaticTraceStoreApplyError, match='bool dtype'):
+        svc._require_1d_bool(
+            np.asarray([1, 0], dtype=np.int64),
+            name='trace_static_valid_mask_sorted',
+            expected_shape=(2,),
+        )
+
+
+@pytest.mark.parametrize('dtype', ['<U8', '|S8'])
+def test_require_1d_string_accepts_string_dtypes(dtype: str) -> None:
+    out = svc._require_1d_string(
+        np.asarray(['ok', 'missing'], dtype=dtype),
+        name='trace_static_status_sorted',
+        expected_shape=(2,),
+    )
+
+    assert out.dtype.kind == 'U'
+    assert out.flags.c_contiguous
+    np.testing.assert_array_equal(out, np.asarray(['ok', 'missing']))
+
+
+def test_require_1d_string_rejects_object_dtype() -> None:
+    with pytest.raises(
+        RefractionStaticTraceStoreApplyError,
+        match='must not have object dtype',
+    ):
+        svc._require_1d_string(
+            np.asarray(['ok', 'missing'], dtype=object),
+            name='trace_static_status_sorted',
+            expected_shape=(2,),
+        )
+
+
+@pytest.mark.parametrize(
+    ('helper', 'values'),
+    [
+        (svc._require_1d_float64, np.asarray([0.0, 1.0], dtype=np.float64)),
+        (svc._require_1d_bool, np.asarray([True, False])),
+        (svc._require_1d_string, np.asarray(['ok', 'ok'], dtype='<U8')),
+    ],
+)
+def test_require_1d_wrappers_raise_apply_error_on_shape_mismatch(
+    helper: Any,
+    values: np.ndarray,
+) -> None:
+    with pytest.raises(RefractionStaticTraceStoreApplyError, match='shape mismatch'):
+        helper(values, name='field', expected_shape=(3,))
+
+
 def test_apply_refraction_statics_builds_and_registers_corrected_trace_store(
     tmp_path: Path,
 ) -> None:
@@ -289,7 +414,7 @@ def test_apply_refraction_statics_builds_and_registers_corrected_trace_store(
     result = apply_refraction_statics_to_trace_store(
         req=req,
         result=_valid_result(),
-        state=state,
+        runtime=SeisViewer2DRefractionRuntime(state),
         job_id=JOB_ID,
         job_dir=job_dir,
     )
@@ -364,7 +489,7 @@ def test_apply_tracestore_uses_final_shift_when_field_corrections_enabled(
     result = apply_refraction_statics_to_trace_store(
         req=req,
         result=_field_result(apply_to_trace_shift=True),
-        state=state,
+        runtime=SeisViewer2DRefractionRuntime(state),
         job_id=JOB_ID,
         job_dir=job_dir,
     )
@@ -413,7 +538,7 @@ def test_apply_tracestore_uses_refraction_shift_when_field_corrections_artifact_
     result = apply_refraction_statics_to_trace_store(
         req=req,
         result=field_result,
-        state=state,
+        runtime=SeisViewer2DRefractionRuntime(state),
         job_id=JOB_ID,
         job_dir=job_dir,
     )
@@ -464,7 +589,7 @@ def test_apply_tracestore_rejects_invalid_field_shift_when_policy_fail(
         apply_refraction_statics_to_trace_store(
             req=req,
             result=result,
-            state=state,
+            runtime=SeisViewer2DRefractionRuntime(state),
             job_id=JOB_ID,
             job_dir=job_dir,
         )
@@ -492,7 +617,7 @@ def test_apply_tracestore_skips_invalid_field_traces_when_policy_skip(
     applied = apply_refraction_statics_to_trace_store(
         req=req,
         result=result,
-        state=state,
+        runtime=SeisViewer2DRefractionRuntime(state),
         job_id=JOB_ID,
         job_dir=job_dir,
     )
@@ -523,7 +648,7 @@ def test_apply_refraction_statics_from_solution_artifact(
     result = apply_refraction_statics_from_solution_artifact(
         req=req,
         solution_npz_path=solution_path,
-        state=state,
+        runtime=SeisViewer2DRefractionRuntime(state),
         job_id=JOB_ID,
         job_dir=job_dir,
     )
@@ -551,7 +676,7 @@ def test_apply_tracestore_from_solution_artifact_uses_final_shift_when_enabled(
     result = apply_refraction_statics_from_solution_artifact(
         req=req,
         solution_npz_path=solution_path,
-        state=state,
+        runtime=SeisViewer2DRefractionRuntime(state),
         job_id=JOB_ID,
         job_dir=job_dir,
     )
@@ -572,7 +697,7 @@ def test_apply_refraction_statics_rejects_sorted_order_mismatch_without_output(
         apply_refraction_statics_to_trace_store(
             req=req,
             result=_valid_result(sorted_trace_index=np.arange(4, dtype=np.int64)),
-            state=state,
+            runtime=SeisViewer2DRefractionRuntime(state),
             job_id=JOB_ID,
             job_dir=job_dir,
         )
@@ -595,13 +720,13 @@ def test_apply_refraction_statics_cleans_built_store_on_registration_failure(
     def _fail_register(**_kwargs: Any) -> object:
         raise RuntimeError('registration failed')
 
-    monkeypatch.setattr(svc, 'register_trace_store', _fail_register)
+    monkeypatch.setattr(corrected_store_adapter, 'register_trace_store', _fail_register)
 
     with pytest.raises(RuntimeError, match='registration failed'):
         apply_refraction_statics_to_trace_store(
             req=req,
             result=_valid_result(),
-            state=state,
+            runtime=SeisViewer2DRefractionRuntime(state),
             job_id=JOB_ID,
             job_dir=job_dir,
         )

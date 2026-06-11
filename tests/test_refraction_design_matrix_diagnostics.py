@@ -8,14 +8,14 @@ import numpy as np
 import pytest
 
 from app.api.schemas import RefractionStaticModelRequest, RefractionStaticSolverRequest
-from app.services import refraction_static_design_matrix as design_matrix_module
-from app.services.refraction_static_design_matrix import (
+from app.statics.refraction.application import design_matrix as design_matrix_module
+from app.statics.refraction.application.design_matrix import (
     REFRACTION_DESIGN_MATRIX_NODE_DIAGNOSTICS_CSV_NAME,
     REFRACTION_DESIGN_MATRIX_QC_JSON_NAME,
     build_refraction_static_design_matrix_from_arrays,
     write_refraction_design_matrix_diagnostics_artifacts,
 )
-from app.services.refraction_static_solver import (
+from app.statics.refraction.domain.solver import (
     RefractionStaticSolverError,
     solve_refraction_static_bounded_ls,
 )

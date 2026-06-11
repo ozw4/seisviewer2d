@@ -2,16 +2,28 @@
 
 from __future__ import annotations
 
-import csv
-import json
-import uuid
-from collections.abc import Callable
 from dataclasses import dataclass, fields
+from functools import partial
 from pathlib import Path
 from typing import Any, Literal
 
 import numpy as np
 
+from app.services.common.artifact_io import (
+    assert_strict_json,
+    write_csv_atomic as _common_write_csv_atomic,
+    write_json_atomic as _common_write_json_atomic,
+    write_npz_atomic as _common_write_npz_atomic,
+)
+from app.services.common.array_validation import (
+    coerce_1d_bool_array as _require_1d_bool_array,
+    coerce_1d_castable_finite_float64 as _common_coerce_1d_finite_float64,
+    coerce_1d_integer_int64 as _common_coerce_1d_integer_int64,
+    coerce_finite_float as _coerce_finite_float,
+    coerce_optional_finite_float as _coerce_optional_finite_float,
+    coerce_positive_finite_float as _coerce_positive_finite_float,
+    coerce_positive_int as _coerce_positive_int,
+)
 from app.services.residual_static_robust_solver import (
     ResidualStaticRobustSolveResult,
 )
@@ -29,6 +41,14 @@ SIGN_CONVENTION = (
     'estimated_trace_delay_s=source_delay_s+receiver_delay_s; '
     'applied_residual_shift_s=-estimated_trace_delay_s; '
     'corrected(t)=raw(t-shift_s)'
+)
+_coerce_1d_integer_int64 = partial(
+    _common_coerce_1d_integer_int64,
+    nonfinite_message='must contain only finite values',
+)
+_coerce_1d_finite_float64 = partial(
+    _common_coerce_1d_finite_float64,
+    reject_bool_dtype=True,
 )
 
 _CSV_COLUMNS = [
@@ -526,9 +546,9 @@ def write_residual_static_artifacts(
         qc_json_path=job_dir_path / QC_JSON_NAME,
         statics_csv_path=job_dir_path / STATICS_CSV_NAME,
     )
-    _write_npz_atomic(paths.solution_npz_path, solution_arrays)
-    _write_json_atomic(paths.qc_json_path, qc_payload)
-    _write_csv_atomic(paths.statics_csv_path, csv_rows)
+    _write_residual_solution_npz(paths.solution_npz_path, solution_arrays)
+    _write_residual_qc_json(paths.qc_json_path, qc_payload)
+    _write_residual_statics_csv(paths.statics_csv_path, csv_rows)
     return paths
 
 
@@ -1136,22 +1156,6 @@ def _index_counts(
     )
 
 
-def _coerce_1d_finite_float64(
-    values: object,
-    *,
-    name: str,
-    expected_shape: tuple[int, ...] | None = None,
-) -> np.ndarray:
-    arr = _coerce_1d_float64_allow_nan(
-        values,
-        name=name,
-        expected_shape=expected_shape,
-    )
-    if not np.all(np.isfinite(arr)):
-        raise ValueError(f'{name} must contain only finite values')
-    return arr
-
-
 def _coerce_1d_float64_allow_nan(
     values: object,
     *,
@@ -1172,86 +1176,6 @@ def _coerce_1d_float64_allow_nan(
     except (TypeError, ValueError) as exc:
         raise ValueError(f'{name} must be numeric') from exc
     return np.ascontiguousarray(arr_f64, dtype=np.float64)
-
-
-def _require_1d_bool_array(
-    values: object,
-    *,
-    name: str,
-    expected_shape: tuple[int, ...] | None = None,
-) -> np.ndarray:
-    arr = np.asarray(values)
-    if arr.ndim != 1:
-        raise ValueError(f'{name} must be a 1D array')
-    if expected_shape is not None and arr.shape != expected_shape:
-        raise ValueError(
-            f'{name} shape mismatch: expected {expected_shape}, got {arr.shape}'
-        )
-    if not np.issubdtype(arr.dtype, np.bool_):
-        raise ValueError(f'{name} must have bool dtype')
-    return np.ascontiguousarray(arr, dtype=bool)
-
-
-def _coerce_1d_integer_int64(
-    values: object,
-    *,
-    name: str,
-    expected_shape: tuple[int, ...] | None = None,
-) -> np.ndarray:
-    arr = np.asarray(values)
-    if arr.ndim != 1:
-        raise ValueError(f'{name} must be a 1D array')
-    if expected_shape is not None and arr.shape != expected_shape:
-        raise ValueError(
-            f'{name} shape mismatch: expected {expected_shape}, got {arr.shape}'
-        )
-    if np.issubdtype(arr.dtype, np.bool_):
-        raise ValueError(f'{name} must contain integer values')
-    if np.issubdtype(arr.dtype, np.integer):
-        return np.ascontiguousarray(arr, dtype=np.int64)
-    try:
-        arr_f64 = arr.astype(np.float64, copy=False)
-    except (TypeError, ValueError) as exc:
-        raise ValueError(f'{name} must contain integer values') from exc
-    if not np.all(np.isfinite(arr_f64)):
-        raise ValueError(f'{name} must contain only finite values')
-    if not np.all(arr_f64 == np.rint(arr_f64)):
-        raise ValueError(f'{name} must contain integer values')
-    return np.ascontiguousarray(arr_f64, dtype=np.int64)
-
-
-def _coerce_finite_float(value: object, *, name: str) -> float:
-    if isinstance(value, (bool, np.bool_)):
-        raise ValueError(f'{name} must be finite')
-    try:
-        out = float(value)
-    except (TypeError, ValueError) as exc:
-        raise ValueError(f'{name} must be finite') from exc
-    if not np.isfinite(out):
-        raise ValueError(f'{name} must be finite')
-    return out
-
-
-def _coerce_optional_finite_float(value: object, *, name: str) -> float | None:
-    if value is None:
-        return None
-    return _coerce_finite_float(value, name=name)
-
-
-def _coerce_positive_finite_float(value: object, *, name: str) -> float:
-    out = _coerce_finite_float(value, name=name)
-    if out <= 0.0:
-        raise ValueError(f'{name} must be greater than 0')
-    return out
-
-
-def _coerce_positive_int(value: object, *, name: str) -> int:
-    if isinstance(value, (bool, np.bool_)) or not isinstance(value, (int, np.integer)):
-        raise ValueError(f'{name} must be an integer')
-    out = int(value)
-    if out <= 0:
-        raise ValueError(f'{name} must be greater than 0')
-    return out
 
 
 def _validate_header_byte(value: object, *, name: str) -> int:
@@ -1382,53 +1306,44 @@ def _csv_float(value: object) -> float | str:
 
 
 def _assert_strict_json_payload(payload: dict[str, Any]) -> None:
-    json.dumps(payload, allow_nan=False)
+    assert_strict_json(payload)
 
 
-def _write_npz_atomic(out_path: Path, payload: dict[str, np.ndarray]) -> None:
-    def write(tmp_path: Path) -> None:
-        with tmp_path.open('wb') as handle:
-            np.savez(handle, **payload)
-
-    _atomic_write(out_path, write)
-
-
-def _write_json_atomic(out_path: Path, payload: dict[str, Any]) -> None:
-    def write(tmp_path: Path) -> None:
-        with tmp_path.open('w', encoding='utf-8') as handle:
-            json.dump(
-                payload,
-                handle,
-                allow_nan=False,
-                ensure_ascii=False,
-                indent=2,
-                sort_keys=True,
-            )
-            handle.write('\n')
-
-    _atomic_write(out_path, write)
+def _write_residual_solution_npz(
+    out_path: Path,
+    payload: dict[str, np.ndarray],
+) -> None:
+    _common_write_npz_atomic(
+        out_path,
+        payload,
+        compressed=False,
+        reject_object_arrays=False,
+    )
 
 
-def _write_csv_atomic(out_path: Path, rows: list[dict[str, object]]) -> None:
-    def write(tmp_path: Path) -> None:
-        with tmp_path.open('w', encoding='utf-8', newline='') as handle:
-            writer = csv.DictWriter(handle, fieldnames=_CSV_COLUMNS)
-            writer.writeheader()
-            for row in rows:
-                writer.writerow(row)
+def _write_residual_qc_json(out_path: Path, payload: dict[str, Any]) -> None:
+    _common_write_json_atomic(
+        out_path,
+        payload,
+        allow_nan=False,
+        ensure_ascii=False,
+        indent=2,
+        sort_keys=True,
+        trailing_newline=True,
+    )
 
-    _atomic_write(out_path, write)
 
-
-def _atomic_write(out_path: Path, write: Callable[[Path], None]) -> None:
-    tmp_path = out_path.with_name(f'{out_path.name}.tmp-{uuid.uuid4().hex}')
-    try:
-        write(tmp_path)
-        tmp_path.replace(out_path)
-    except Exception:
-        if tmp_path.exists():
-            tmp_path.unlink()
-        raise
+def _write_residual_statics_csv(
+    out_path: Path,
+    rows: list[dict[str, object]],
+) -> None:
+    _common_write_csv_atomic(
+        out_path,
+        columns=_CSV_COLUMNS,
+        rows=rows,
+        extrasaction='raise',
+        lineterminator='\r\n',
+    )
 
 
 __all__ = [

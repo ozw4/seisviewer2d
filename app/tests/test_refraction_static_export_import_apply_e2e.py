@@ -12,23 +12,27 @@ from app.api.schemas import (
     RefractionStaticTableApplyRequest,
 )
 from app.core.state import AppState
-from app.services.refraction_static_artifacts import (
+from app.statics.refraction.artifacts import (
     REFRACTION_STATIC_ARTIFACTS_JSON_NAME,
     REFRACTION_STATIC_REQUEST_JSON_NAME,
     RECEIVER_STATIC_TABLE_CSV_NAME,
     SOURCE_STATIC_TABLE_CSV_NAME,
 )
-from app.services.refraction_static_export_service import (
+from app.statics.refraction.application.export_service import (
     CANONICAL_SOURCE_RECEIVER_STATIC_TABLE_CSV_NAME,
+)
+from app.statics.refraction.adapters.seisviewer2d.export_runner import (
     run_refraction_static_export_job,
 )
-from app.services.refraction_static_export_units import (
+from app.statics.refraction.domain.export_units import (
     REFRACTION_STATIC_REPO_SIGN_CONVENTION,
 )
-from app.services.refraction_static_table_apply_service import (
+from app.statics.refraction.application.table_apply_service import (
     STATIC_TABLE_APPLY_HISTORY_JSON_NAME,
     STATIC_TABLE_APPLY_QC_JSON_NAME,
     STATIC_TABLE_APPLY_SOLUTION_NPZ_NAME,
+)
+from app.statics.refraction.adapters.seisviewer2d.table_apply_runner import (
     run_refraction_static_table_apply_job,
 )
 from app.tests.test_refraction_static_apply_trace_store import (

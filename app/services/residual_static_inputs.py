@@ -4,14 +4,23 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from dataclasses import dataclass
+from functools import partial
 import json
 from pathlib import Path
 from typing import Any
 
 import numpy as np
 
-from app.api.schemas import ResidualStaticApplyRequest
+from app.contracts.statics.residual import ResidualStaticApplyRequest
 from app.core.state import AppState
+from app.services.common.array_validation import (
+    coerce_1d_bool_array as _coerce_1d_bool_array,
+    coerce_1d_integer_int64 as _common_coerce_1d_integer_int64,
+    coerce_1d_real_numeric_float64 as _coerce_1d_real_numeric_float64,
+    coerce_nonnegative_int as _coerce_nonnegative_int,
+    coerce_positive_finite_float as _coerce_positive_finite_float,
+    coerce_positive_int as _coerce_positive_int,
+)
 from app.services.first_break_qc_inputs import (
     load_datum_static_solution_npz,
     load_offset_header_sorted,
@@ -30,6 +39,10 @@ from app.trace_store.reader import TraceStoreSectionReader
 
 _DT_TOLERANCE = 1e-9
 _CORRECTED_FILE_MANIFEST = 'corrected_file.json'
+_coerce_1d_integer_int64 = partial(
+    _common_coerce_1d_integer_int64,
+    nonfinite_message='must contain only finite values',
+)
 
 
 @dataclass(frozen=True)
@@ -765,66 +778,6 @@ def _reader_n_samples(reader: TraceStoreSectionReader) -> int:
     raise ValueError('reader cannot provide number of samples')
 
 
-def _coerce_1d_integer_int64(
-    values: np.ndarray,
-    *,
-    name: str,
-    expected_shape: tuple[int, ...],
-) -> np.ndarray:
-    arr = np.asarray(values)
-    if arr.ndim != 1:
-        raise ValueError(f'{name} must be a 1D array')
-    if arr.shape != expected_shape:
-        msg = f'{name} shape mismatch: expected {expected_shape}, got {arr.shape}'
-        raise ValueError(msg)
-    if np.issubdtype(arr.dtype, np.bool_):
-        raise ValueError(f'{name} must contain integer values')
-    if np.issubdtype(arr.dtype, np.integer):
-        return np.ascontiguousarray(arr, dtype=np.int64)
-    if not _is_real_numeric_dtype(arr.dtype):
-        raise ValueError(f'{name} must contain integer values')
-    arr_f64 = arr.astype(np.float64, copy=False)
-    if not np.all(np.isfinite(arr_f64)):
-        raise ValueError(f'{name} must contain only finite values')
-    if not np.all(arr_f64 == np.rint(arr_f64)):
-        raise ValueError(f'{name} must contain integer values')
-    return np.ascontiguousarray(arr_f64, dtype=np.int64)
-
-
-def _coerce_1d_bool_array(
-    values: np.ndarray,
-    *,
-    name: str,
-    expected_shape: tuple[int, ...],
-) -> np.ndarray:
-    arr = np.asarray(values)
-    if arr.ndim != 1:
-        raise ValueError(f'{name} must be a 1D array')
-    if arr.shape != expected_shape:
-        msg = f'{name} shape mismatch: expected {expected_shape}, got {arr.shape}'
-        raise ValueError(msg)
-    if not np.issubdtype(arr.dtype, np.bool_):
-        raise ValueError(f'{name} must have bool dtype')
-    return np.ascontiguousarray(arr, dtype=bool)
-
-
-def _coerce_1d_real_numeric_float64(
-    values: np.ndarray,
-    *,
-    name: str,
-    expected_shape: tuple[int, ...],
-) -> np.ndarray:
-    arr = np.asarray(values)
-    if arr.ndim != 1:
-        raise ValueError(f'{name} must be a 1D array')
-    if arr.shape != expected_shape:
-        msg = f'{name} shape mismatch: expected {expected_shape}, got {arr.shape}'
-        raise ValueError(msg)
-    if not _is_real_numeric_dtype(arr.dtype):
-        raise ValueError(f'{name} must have a numeric dtype')
-    return np.ascontiguousarray(arr, dtype=np.float64)
-
-
 def _validate_header_byte(value: object, *, name: str) -> int:
     if isinstance(value, (bool, np.bool_)) or not isinstance(value, (int, np.integer)):
         raise ValueError(f'{name} must be an integer SEG-Y trace header byte')
@@ -832,41 +785,6 @@ def _validate_header_byte(value: object, *, name: str) -> int:
     if byte < 1 or byte > 240:
         raise ValueError(f'{name} must be between 1 and 240')
     return byte
-
-
-def _coerce_nonnegative_int(value: object, *, name: str) -> int:
-    if isinstance(value, (bool, np.bool_)) or not isinstance(value, (int, np.integer)):
-        raise ValueError(f'{name} must be an integer')
-    out = int(value)
-    if out < 0:
-        raise ValueError(f'{name} must be greater than or equal to 0')
-    return out
-
-
-def _coerce_positive_int(value: object, *, name: str) -> int:
-    out = _coerce_nonnegative_int(value, name=name)
-    if out <= 0:
-        raise ValueError(f'{name} must be greater than 0')
-    return out
-
-
-def _coerce_finite_float(value: object, *, name: str) -> float:
-    if isinstance(value, (bool, np.bool_)):
-        raise ValueError(f'{name} must be finite')
-    try:
-        out = float(value)
-    except (TypeError, ValueError) as exc:
-        raise ValueError(f'{name} must be finite') from exc
-    if not np.isfinite(out):
-        raise ValueError(f'{name} must be finite')
-    return out
-
-
-def _coerce_positive_finite_float(value: object, *, name: str) -> float:
-    out = _coerce_finite_float(value, name=name)
-    if out <= 0.0:
-        raise ValueError(f'{name} must be finite and greater than 0')
-    return out
 
 
 def _pick_source_kind(pick_source: LoadedPickSource) -> str:
@@ -893,13 +811,6 @@ def _non_empty_str(value: object, *, name: str) -> str:
     if not isinstance(value, str) or not value:
         raise ValueError(f'{name} must be a non-empty string')
     return value
-
-
-def _is_real_numeric_dtype(dtype: np.dtype) -> bool:
-    return np.issubdtype(dtype, np.number) and not np.issubdtype(
-        dtype,
-        np.complexfloating,
-    )
 
 
 __all__ = [

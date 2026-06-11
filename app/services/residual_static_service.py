@@ -3,15 +3,13 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-import json
 from pathlib import Path
 import time
-from typing import Any
-from uuid import uuid4
 
 import numpy as np
 
-from app.api.schemas import ResidualStaticApplyRequest
+from app.contracts.statics.residual import ResidualStaticApplyRequest
+from app.services.common.artifact_io import write_json_atomic
 from app.core.state import AppState
 from app.services.job_runner import (
     JobCancelledError,
@@ -40,10 +38,14 @@ from app.services.residual_static_inputs import (
 )
 from app.services.residual_static_robust_solver import (
     robust_options_from_request_robust,
-    solve_residual_static_robust_least_squares,
 )
 from app.services.residual_static_sparse_solver import (
     stabilization_options_from_request_solver,
+)
+from seis_statics.residual import (
+    ResidualStaticRobustSolveResult,
+    ResidualStaticSolverInputs,
+    solve_first_break_residual_statics,
 )
 
 _CORRECTED_FILE_NAME = 'corrected_file.json'
@@ -98,32 +100,13 @@ def _is_cancel_requested(state: AppState, job_id: str) -> bool:
         return state.jobs.is_cancel_requested(job_id)
 
 
-def _write_json_atomic(path: Path, payload: dict[str, Any]) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    tmp_path = path.with_name(f'{path.name}.{uuid4().hex}.tmp')
-    try:
-        tmp_path.write_text(
-            json.dumps(
-                payload,
-                allow_nan=False,
-                ensure_ascii=True,
-                sort_keys=True,
-            ),
-            encoding='utf-8',
-        )
-        tmp_path.replace(path)
-    except Exception:
-        tmp_path.unlink(missing_ok=True)
-        raise
-
-
 def _write_job_meta(
     *,
     job_id: str,
     job_dir: Path,
     req: ResidualStaticApplyRequest,
 ) -> None:
-    _write_json_atomic(
+    write_json_atomic(
         job_dir / 'job_meta.json',
         {
             'job_id': job_id,
@@ -153,6 +136,7 @@ def _write_job_meta(
                 'corrected_file_json': _CORRECTED_FILE_NAME,
             },
         },
+        make_parent=True,
     )
 
 
@@ -188,6 +172,18 @@ def _apply_options_from_request(
         output_dtype=req.apply.output_dtype,
         register_corrected_file=req.apply.register_corrected_file,
     )
+
+
+def _solve_residual_static_with_package_api(
+    inputs: ResidualStaticSolverInputs,
+    req: ResidualStaticApplyRequest,
+) -> ResidualStaticRobustSolveResult:
+    result = solve_first_break_residual_statics(
+        solver_inputs=inputs,
+        stabilization_options=stabilization_options_from_request_solver(req.solver),
+        robust_options=robust_options_from_request_robust(req.robust),
+    )
+    return result.robust_solve_result
 
 
 def _run_residual_static_apply_job_body(
@@ -249,11 +245,7 @@ def _run_residual_static_apply_job_body(
         message='solving_residual_static_delays',
     )
     ensure_job_not_cancelled(state, job_id)
-    robust_result = solve_residual_static_robust_least_squares(
-        inputs,
-        stabilization_options=stabilization_options_from_request_solver(req.solver),
-        robust_options=robust_options_from_request_robust(req.robust),
-    )
+    robust_result = _solve_residual_static_with_package_api(inputs, req)
     ensure_job_not_cancelled(state, job_id)
 
     _set_job_progress_message(

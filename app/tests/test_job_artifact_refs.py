@@ -5,7 +5,7 @@ from pathlib import Path
 import pytest
 
 from app.core.state import create_app_state
-from app.services.refraction_static_artifacts import (
+from app.statics.refraction.artifacts import (
     REFRACTION_CELL_SOLVER_HISTORY_CSV_NAME,
     REFRACTION_FIRST_BREAK_FIT_QC_CSV_NAME,
     REFRACTION_FIRST_BREAK_FIT_QC_JSON_NAME,
@@ -37,22 +37,22 @@ from app.services.refraction_static_artifacts import (
     SOURCE_STATIC_TABLE_CSV_NAME,
     UPLOADED_REFRACTION_PICKS_NPZ_NAME,
 )
-from app.services.refraction_static_design_matrix import (
+from app.statics.refraction.application.design_matrix import (
     REFRACTION_DESIGN_MATRIX_NODE_DIAGNOSTICS_CSV_NAME,
     REFRACTION_DESIGN_MATRIX_QC_JSON_NAME,
     refraction_design_matrix_layer_node_diagnostics_csv_name,
     refraction_design_matrix_layer_qc_json_name,
 )
-from app.services.refraction_static_preflight_diagnostics import (
+from app.statics.refraction.application.preflight_diagnostics import (
     REFRACTION_STATIC_PREFLIGHT_OBSERVATIONS_CSV_NAME,
     REFRACTION_STATIC_PREFLIGHT_QC_JSON_NAME,
 )
 from app.services.job_artifact_refs import resolve_job_artifact_path
-from app.services.refraction_static_source_depth import (
+from app.statics.refraction.domain.source_depth import (
     REFRACTION_SOURCE_DEPTH_QC_JSON_NAME,
     REFRACTION_SOURCE_DEPTH_SOURCES_CSV_NAME,
 )
-from app.services.refraction_static_uphole import (
+from app.statics.refraction.domain.uphole import (
     REFRACTION_UPHOLE_QC_JSON_NAME,
     REFRACTION_UPHOLE_SOURCES_CSV_NAME,
 )

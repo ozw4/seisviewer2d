@@ -8,7 +8,10 @@ from typing import Any
 
 import numpy as np
 
-import app.services.refraction_static_service as refraction_service_module
+import app.statics.refraction.application.workflow as refraction_service_module
+from app.statics.refraction.adapters.seisviewer2d import (
+    workflow_runner as refraction_runner_module,
+)
 from app.api.schemas import (
     RefractionStaticApplyOptions,
     RefractionStaticApplyRequest,
@@ -20,23 +23,23 @@ from app.api.schemas import (
     RefractionStaticSolverRequest,
 )
 from app.core.state import AppState, create_app_state
-from app.services.refraction_static_artifacts import write_refraction_static_artifacts
-from app.services.refraction_static_artifacts import (
+from app.statics.refraction.artifacts import write_refraction_static_artifacts
+from app.statics.refraction.artifacts import (
     write_refraction_line_profile_qc_artifacts,
 )
-from app.services.refraction_static_datum import build_refraction_datum_statics
-from app.services.refraction_static_multilayer_service import (
+from app.statics.refraction.application.datum import build_refraction_datum_statics
+from app.statics.refraction.application.multilayer_service import (
     RefractionMultiLayerStaticsWorkflowResult,
     build_refraction_multilayer_weathering_replacement_statics,
 )
-from app.services.refraction_static_types import (
+from app.statics.refraction.domain.types import (
     RefractionDatumStaticsResult,
     RefractionEndpointTable,
     RefractionStaticArtifactSet,
     RefractionStaticInputModel,
     ResolvedRefractionFirstLayer,
 )
-from app.services.refraction_static_weathering_replacement import (
+from app.statics.refraction.application.weathering_replacement import (
     compute_weathering_replacement_statics_from_first_breaks,
 )
 from app.tests._refraction_multilayer_3layer_helpers import (
@@ -304,7 +307,7 @@ def run_field_component_case(
         dt=FIELD_SAMPLE_INTERVAL_S,
     )
 
-    refraction_service_module.run_refraction_static_apply_job(job_id, req, state)
+    refraction_runner_module.run_refraction_static_apply_job(job_id, req, state)
     return M6FieldComponentCase(
         fixture=fixture,
         req=req,

@@ -1,0 +1,491 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>Static Correction - SeisViewer2D</title>
+  <link rel="stylesheet" href="/static/tool_pages.css" />
+</head>
+<body class="tool-page static-correction-page">
+  <header>
+    <span>Static Correction</span>
+    <div class="headerLinks">
+      <a href="/" data-tool-link>Viewer</a>
+      <a href="/refraction-qc" data-tool-link>Refraction QC</a>
+      <a href="/upload">Open SEG-Y</a>
+    </div>
+  </header>
+  <main class="tool-main">
+    <section class="tool-hero" aria-labelledby="staticCorrectionPageTitle">
+      <div>
+        <h1 id="staticCorrectionPageTitle">Static Correction</h1>
+        <p>Run refraction statics in a dedicated workspace. The current viewer file/key bytes are carried from the viewer URL or local storage.</p>
+      </div>
+    </section>
+    <div class="tool-card">
+<div class="static-correction-panel" data-testid="static-correction-panel">
+<h2 class="static-correction-title">Static Correction</h2>
+<form class="static-correction-form" data-testid="static-correction-form" id="staticCorrectionForm">
+<section aria-labelledby="staticCorrectionTargetHeading" class="static-correction-section">
+<h3 id="staticCorrectionTargetHeading">Target</h3>
+<div class="static-correction-target-summary" data-testid="static-correction-target-summary" id="staticCorrectionTargetSummary">
+<div class="static-correction-help" data-testid="static-correction-target-empty" id="staticCorrectionTargetEmpty">
+                  No active viewer file. Open an SGY/TraceStore in the viewer before running Static Correction.
+                </div>
+<div class="static-correction-target-summary" data-testid="static-correction-target-details" hidden="" id="staticCorrectionTargetDetails">
+<div class="static-correction-target-row">
+<span class="static-correction-target-label">Current viewer file</span>
+<span class="static-correction-target-value" data-testid="static-correction-target-file" id="staticCorrectionTargetFile">-</span>
+</div>
+<div class="static-correction-target-row">
+<span class="static-correction-target-label">Sort keys</span>
+<span class="static-correction-target-value" data-testid="static-correction-target-keys" id="staticCorrectionTargetKeys">-</span>
+</div>
+<div class="static-correction-target-row">
+<span class="static-correction-target-label">Status</span>
+<span class="static-correction-target-value" data-testid="static-correction-target-status" id="staticCorrectionTargetStatus">-</span>
+</div>
+</div>
+</div>
+</section>
+<section aria-labelledby="staticCorrectionPresetHeading" class="static-correction-section">
+<h3 id="staticCorrectionPresetHeading">Presets</h3>
+<p class="static-correction-help">
+                Presets store parameter fields only. Loading a preset keeps the current viewer target and selected pick file.
+              </p>
+<div class="static-correction-preset-grid">
+<label class="static-correction-field" for="staticCorrectionPresetSelect">Saved preset
+                  <select data-testid="static-correction-preset-select" id="staticCorrectionPresetSelect">
+<option value="">No saved presets</option>
+</select>
+</label>
+<button data-testid="static-correction-load-preset" id="staticCorrectionLoadPresetButton" type="button">Load</button>
+</div>
+<div class="static-correction-preset-grid">
+<label class="static-correction-field" for="staticCorrectionPresetName">Preset name
+                  <input autocomplete="off" data-testid="static-correction-preset-name" id="staticCorrectionPresetName" type="text">
+</input></label>
+<button data-testid="static-correction-save-preset" id="staticCorrectionSavePresetButton" type="button">Save</button>
+</div>
+<div class="static-correction-actions">
+<button data-testid="static-correction-delete-preset" id="staticCorrectionDeletePresetButton" type="button">Delete</button>
+</div>
+</section>
+<section aria-labelledby="staticCorrectionPicksHeading" class="static-correction-section">
+<h3 id="staticCorrectionPicksHeading">First-break picks</h3>
+<p class="static-correction-help">
+                Select a first-break pick NPZ for this static correction run. The viewer first-break probability
+                cache is not a valid statics pick file.
+              </p>
+<label class="static-correction-field" for="staticCorrectionPickNpz">First-break pick NPZ
+                <input accept=".npz" data-testid="static-correction-pick-npz" id="staticCorrectionPickNpz" name="pick_npz" type="file">
+</input></label>
+<div class="static-correction-file-summary" data-testid="static-correction-pick-npz-summary" id="staticCorrectionPickNpzSummary">No NPZ file selected.</div>
+<div class="static-correction-actions">
+<button data-testid="static-correction-replace-pick-npz" id="staticCorrectionReplacePickNpzButton" type="button">Replace NPZ</button>
+<button data-testid="static-correction-clear-pick-npz" id="staticCorrectionClearPickNpzButton" type="button">Clear restored NPZ</button>
+<button data-testid="static-correction-clear-draft" id="staticCorrectionClearDraftButton" type="button">Clear draft</button>
+</div>
+</section>
+<section aria-labelledby="staticCorrectionGeometryHeading" class="static-correction-section">
+<h3 id="staticCorrectionGeometryHeading">Geometry</h3>
+<label class="static-correction-field" for="staticCorrectionGeometryPreset">Preset
+                <select data-testid="static-correction-geometry-preset" id="staticCorrectionGeometryPreset" name="geometry_preset">
+<option selected="" value="segy_default">SEG-Y default</option>
+<option value="custom">custom</option>
+</select>
+</label>
+<div class="static-correction-field-row">
+<label class="static-correction-field" for="staticCorrectionSourceIdByte">source_id_byte
+                  <input data-testid="static-correction-source-id-byte" id="staticCorrectionSourceIdByte" max="240" min="1" name="geometry.source_id_byte" step="1" type="number" value="9">
+</input></label>
+<label class="static-correction-field" for="staticCorrectionReceiverIdByte">receiver_id_byte
+                  <input data-testid="static-correction-receiver-id-byte" id="staticCorrectionReceiverIdByte" max="240" min="1" name="geometry.receiver_id_byte" step="1" type="number" value="13">
+</input></label>
+</div>
+<div class="static-correction-field-row">
+<label class="static-correction-field" for="staticCorrectionSourceXByte">source_x_byte
+                  <input data-testid="static-correction-source-x-byte" id="staticCorrectionSourceXByte" max="240" min="1" name="geometry.source_x_byte" step="1" type="number" value="73">
+</input></label>
+<label class="static-correction-field" for="staticCorrectionSourceYByte">source_y_byte
+                  <input data-testid="static-correction-source-y-byte" id="staticCorrectionSourceYByte" max="240" min="1" name="geometry.source_y_byte" step="1" type="number" value="77">
+</input></label>
+</div>
+<div class="static-correction-field-row">
+<label class="static-correction-field" for="staticCorrectionReceiverXByte">receiver_x_byte
+                  <input data-testid="static-correction-receiver-x-byte" id="staticCorrectionReceiverXByte" max="240" min="1" name="geometry.receiver_x_byte" step="1" type="number" value="81">
+</input></label>
+<label class="static-correction-field" for="staticCorrectionReceiverYByte">receiver_y_byte
+                  <input data-testid="static-correction-receiver-y-byte" id="staticCorrectionReceiverYByte" max="240" min="1" name="geometry.receiver_y_byte" step="1" type="number" value="85">
+</input></label>
+</div>
+<div class="static-correction-field-row">
+<label class="static-correction-field" for="staticCorrectionSourceElevationByte">
+                  source_elevation_byte
+                  <input data-testid="static-correction-source-elevation-byte" id="staticCorrectionSourceElevationByte" max="240" min="1" name="geometry.source_elevation_byte" step="1" type="number" value="45">
+</input></label>
+<label class="static-correction-field" for="staticCorrectionReceiverElevationByte">
+                  receiver_elevation_byte
+                  <input data-testid="static-correction-receiver-elevation-byte" id="staticCorrectionReceiverElevationByte" max="240" min="1" name="geometry.receiver_elevation_byte" step="1" type="number" value="41">
+</input></label>
+</div>
+<div class="static-correction-field-row">
+<label class="static-correction-field" for="staticCorrectionCoordinateScalarByte">
+                  coordinate_scalar_byte
+                  <input data-testid="static-correction-coordinate-scalar-byte" id="staticCorrectionCoordinateScalarByte" max="240" min="1" name="geometry.coordinate_scalar_byte" step="1" type="number" value="71">
+</input></label>
+<label class="static-correction-field" for="staticCorrectionElevationScalarByte">
+                  elevation_scalar_byte
+                  <input data-testid="static-correction-elevation-scalar-byte" id="staticCorrectionElevationScalarByte" max="240" min="1" name="geometry.elevation_scalar_byte" step="1" type="number" value="69"/>
+</label>
+</div>
+<div class="static-correction-field-row">
+<label class="static-correction-field" for="staticCorrectionCoordinateUnit">coordinate_unit
+                  <select data-testid="static-correction-coordinate-unit" id="staticCorrectionCoordinateUnit" name="geometry.coordinate_unit">
+<option selected="" value="m">m</option>
+<option value="ft">ft</option>
+</select>
+</label>
+<label class="static-correction-field" for="staticCorrectionElevationUnit">elevation_unit
+                  <select data-testid="static-correction-elevation-unit" id="staticCorrectionElevationUnit" name="geometry.elevation_unit">
+<option selected="" value="m">m</option>
+<option value="ft">ft</option>
+</select>
+</label>
+</div>
+<div class="static-correction-field-row">
+<label class="static-correction-field" for="staticCorrectionSourceDepthByte">
+                  source_depth_byte
+                  <input data-testid="static-correction-source-depth-byte" id="staticCorrectionSourceDepthByte" max="240" min="1" name="geometry.source_depth_byte" placeholder="optional" step="1" type="number"/>
+</label>
+<label class="static-correction-field" for="staticCorrectionOffsetByte">moveout.offset_byte
+                  <input data-testid="static-correction-offset-byte" id="staticCorrectionOffsetByte" max="240" min="1" name="moveout.offset_byte" step="1" type="number" value="37"/>
+</label>
+</div>
+</section>
+<section aria-labelledby="staticCorrectionLinkageHeading" class="static-correction-section">
+<h3 id="staticCorrectionLinkageHeading">Linkage</h3>
+<label class="static-correction-check-field" for="staticCorrectionEnableLinkage">
+<input data-testid="static-correction-enable-linkage" id="staticCorrectionEnableLinkage" name="linkage.enabled" type="checkbox"/>
+<span>Link matching source/receiver endpoints</span>
+</label>
+<p class="static-correction-help">
+                Optional endpoint matching uses station and coordinate criteria. It does not merge all sources and
+                receivers into one node.
+              </p>
+<div class="static-correction-linkage-options" data-testid="static-correction-linkage-options" hidden="" id="staticCorrectionLinkageOptions">
+<label class="static-correction-field" for="staticCorrectionLinkageMode">linkage.mode
+                  <select data-testid="static-correction-linkage-mode" id="staticCorrectionLinkageMode" name="linkage.mode">
+<option selected="" value="auto_threshold">auto_threshold</option>
+</select>
+</label>
+<label class="static-correction-field" for="staticCorrectionLinkageThresholdM">threshold_m
+                  <input data-testid="static-correction-linkage-threshold-m" id="staticCorrectionLinkageThresholdM" min="0" name="linkage.threshold_m" step="any" type="number" value="25"/>
+</label>
+<label class="static-correction-field" for="staticCorrectionReceiverLocationIntervalM">
+                  receiver_location_interval_m
+                  <input data-testid="static-correction-receiver-location-interval-m" id="staticCorrectionReceiverLocationIntervalM" min="0" name="linkage.receiver_location_interval_m" placeholder="optional" step="any" type="number"/>
+</label>
+<label class="static-correction-check-field" for="staticCorrectionPreferReceiverAnchor">
+<input checked="" data-testid="static-correction-prefer-receiver-anchor" id="staticCorrectionPreferReceiverAnchor" name="linkage.prefer_receiver_anchor" type="checkbox"/>
+<span>prefer_receiver_anchor</span>
+</label>
+</div>
+</section>
+<section aria-labelledby="staticCorrectionModelHeading" class="static-correction-section">
+<h3 id="staticCorrectionModelHeading">Model</h3>
+<label class="static-correction-field" for="staticCorrectionModelKind">Model preset
+                <select data-testid="static-correction-model-kind" id="staticCorrectionModelKind" name="model_kind">
+<option selected="" value="one_layer_global">One-layer global V2/T1</option>
+<option value="two_layer_global">Two-layer global V3/T2</option>
+<option value="three_layer_global">Three-layer global Vsub/T3</option>
+<option value="cell_v2_t1_line_2d">Cell V2/T1 - 2D projected line</option>
+<option value="cell_v2_t1_grid_3d">Cell V2/T1 - 3D grid</option>
+</select>
+</label>
+<label class="static-correction-field" for="staticCorrectionWeatheringVelocityMS">
+                model.first_layer.weathering_velocity_m_s
+                <input data-testid="static-correction-weathering-velocity" id="staticCorrectionWeatheringVelocityMS" min="0" name="model.first_layer.weathering_velocity_m_s" step="any" type="number" value="800"/>
+</label>
+<label class="static-correction-field" for="staticCorrectionBedrockVelocityMode">
+                model.bedrock_velocity_mode
+                <select data-testid="static-correction-bedrock-velocity-mode" id="staticCorrectionBedrockVelocityMode" name="model.bedrock_velocity_mode">
+<option selected="" value="solve_global">solve_global</option>
+<option value="fixed_global">fixed_global</option>
+<option disabled="" value="solve_cell">solve_cell</option>
+</select>
+</label>
+<div class="static-correction-field-row">
+<label class="static-correction-field" for="staticCorrectionInitialBedrockVelocityMS">
+                  initial V2 m/s
+                  <input data-testid="static-correction-initial-bedrock-velocity" id="staticCorrectionInitialBedrockVelocityMS" min="0" name="model.initial_bedrock_velocity_m_s" step="any" type="number" value="2400"/>
+</label>
+<label class="static-correction-field" for="staticCorrectionFixedBedrockVelocityMS">
+                  fixed V2 m/s
+                  <input data-testid="static-correction-fixed-bedrock-velocity" id="staticCorrectionFixedBedrockVelocityMS" min="0" name="model.bedrock_velocity_m_s" step="any" type="number" value="2400"/>
+</label>
+</div>
+<div class="static-correction-field-row">
+<label class="static-correction-field" for="staticCorrectionMinOffsetM">moveout.min_offset_m
+                  <input data-testid="static-correction-min-offset" id="staticCorrectionMinOffsetM" min="0" name="moveout.min_offset_m" step="any" type="number" value="300"/>
+</label>
+<label class="static-correction-field" for="staticCorrectionMaxOffsetM">moveout.max_offset_m
+                  <input data-testid="static-correction-max-offset" id="staticCorrectionMaxOffsetM" min="0" name="moveout.max_offset_m" step="any" type="number" value="4000"/>
+</label>
+</div>
+<label class="static-correction-field" for="staticCorrectionConversionMode">conversion.mode
+                <select data-testid="static-correction-conversion-mode" id="staticCorrectionConversionMode" name="conversion.mode">
+<option selected="" value="t1lsst_1layer">t1lsst_1layer</option>
+<option value="t1lsst_multilayer">t1lsst_multilayer</option>
+</select>
+</label>
+<div class="static-correction-field-row" hidden="" id="staticCorrectionV3LayerFields">
+<label class="static-correction-field" for="staticCorrectionV3MinOffsetM">V3 min offset m
+                  <input data-testid="static-correction-v3-min-offset" id="staticCorrectionV3MinOffsetM" min="0" name="model.layers.v3_t2.min_offset_m" step="any" type="number" value="4000"/>
+</label>
+<label class="static-correction-field" for="staticCorrectionV3MaxOffsetM">V3 max offset m
+                  <input data-testid="static-correction-v3-max-offset" id="staticCorrectionV3MaxOffsetM" min="0" name="model.layers.v3_t2.max_offset_m" step="any" type="number" value="6000"/>
+</label>
+<label class="static-correction-field" for="staticCorrectionInitialV3VelocityMS">initial V3 m/s
+                  <input data-testid="static-correction-initial-v3-velocity" id="staticCorrectionInitialV3VelocityMS" min="0" name="model.layers.v3_t2.initial_velocity_m_s" step="any" type="number" value="3600"/>
+</label>
+</div>
+<div class="static-correction-field-row" hidden="" id="staticCorrectionVsubLayerFields">
+<label class="static-correction-field" for="staticCorrectionVsubMinOffsetM">Vsub min offset m
+                  <input data-testid="static-correction-vsub-min-offset" id="staticCorrectionVsubMinOffsetM" min="0" name="model.layers.vsub_t3.min_offset_m" step="any" type="number" value="6000"/>
+</label>
+<label class="static-correction-field" for="staticCorrectionInitialVsubVelocityMS">initial Vsub m/s
+                  <input data-testid="static-correction-initial-vsub-velocity" id="staticCorrectionInitialVsubVelocityMS" min="0" name="model.layers.vsub_t3.initial_velocity_m_s" step="any" type="number" value="5000"/>
+</label>
+</div>
+<div class="static-correction-field-row" hidden="" id="staticCorrectionCellFields">
+<label class="static-correction-field" for="staticCorrectionCellXOriginM">cell x origin m
+                  <input data-testid="static-correction-cell-x-origin" id="staticCorrectionCellXOriginM" name="model.refractor_cell.x_coordinate_origin_m" step="any" type="number" value="0"/>
+</label>
+<label class="static-correction-field" for="staticCorrectionCellYOriginM">cell y origin m
+                  <input data-testid="static-correction-cell-y-origin" id="staticCorrectionCellYOriginM" name="model.refractor_cell.y_coordinate_origin_m" step="any" type="number" value="0"/>
+</label>
+<label class="static-correction-field" for="staticCorrectionCellCountX">cell count x
+                  <input data-testid="static-correction-cell-count-x" id="staticCorrectionCellCountX" min="1" name="model.refractor_cell.number_of_cell_x" step="1" type="number" value="20"/>
+</label>
+<label class="static-correction-field" for="staticCorrectionCellCountY">cell count y
+                  <input data-testid="static-correction-cell-count-y" id="staticCorrectionCellCountY" min="1" name="model.refractor_cell.number_of_cell_y" step="1" type="number" value="1"/>
+</label>
+<label class="static-correction-field" for="staticCorrectionCellSizeXM">cell size x m
+                  <input data-testid="static-correction-cell-size-x" id="staticCorrectionCellSizeXM" min="0" name="model.refractor_cell.size_of_cell_x_m" step="any" type="number" value="500"/>
+</label>
+<label class="static-correction-field" for="staticCorrectionCellSizeYM">cell size y m
+                  <input data-testid="static-correction-cell-size-y" id="staticCorrectionCellSizeYM" min="0" name="model.refractor_cell.size_of_cell_y_m" step="any" type="number" value="500"/>
+</label>
+<label class="static-correction-field" for="staticCorrectionCellMinObservations">
+                  min observations/cell
+                  <input data-testid="static-correction-cell-min-observations" id="staticCorrectionCellMinObservations" min="1" name="model.refractor_cell.min_observations_per_cell" step="1" type="number" value="5"/>
+</label>
+<label class="static-correction-field" for="staticCorrectionCellSmoothingWeight">
+                  velocity smoothing
+                  <input data-testid="static-correction-cell-smoothing-weight" id="staticCorrectionCellSmoothingWeight" min="0" name="model.refractor_cell.velocity_smoothing_weight" step="any" type="number" value="0"/>
+</label>
+</div>
+<div class="static-correction-field-row" hidden="" id="staticCorrectionLine2DFields">
+<label class="static-correction-field" for="staticCorrectionLineOriginXM">line origin x m
+                  <input data-testid="static-correction-line-origin-x" id="staticCorrectionLineOriginXM" name="model.refractor_cell.line_origin_x_m" step="any" type="number" value="0"/>
+</label>
+<label class="static-correction-field" for="staticCorrectionLineOriginYM">line origin y m
+                  <input data-testid="static-correction-line-origin-y" id="staticCorrectionLineOriginYM" name="model.refractor_cell.line_origin_y_m" step="any" type="number" value="0"/>
+</label>
+<label class="static-correction-field" for="staticCorrectionLineAzimuthDeg">line azimuth deg
+                  <input data-testid="static-correction-line-azimuth" id="staticCorrectionLineAzimuthDeg" name="model.refractor_cell.line_azimuth_deg" step="any" type="number" value="0"/>
+</label>
+</div>
+</section>
+<section aria-labelledby="staticCorrectionOutputHeading" class="static-correction-section">
+<h3 id="staticCorrectionOutputHeading">Output</h3>
+<label class="static-correction-check-field" for="staticCorrectionRegisterCorrectedFile">
+<input data-testid="static-correction-register-corrected-file" id="staticCorrectionRegisterCorrectedFile" name="apply.register_corrected_file" type="checkbox"/>
+<span>apply.register_corrected_file</span>
+</label>
+</section>
+<details class="static-correction-section" id="staticCorrectionFieldCorrectionsSection">
+<summary id="staticCorrectionFieldCorrectionsHeading">Field corrections</summary>
+<label class="static-correction-check-field" for="staticCorrectionFieldCorrectionsEnabled">
+<input data-testid="static-correction-field-corrections-enabled" id="staticCorrectionFieldCorrectionsEnabled" name="field_corrections.enabled" type="checkbox"/>
+<span>field_corrections.enabled</span>
+</label>
+<div class="static-correction-linkage-options" hidden="" id="staticCorrectionFieldCorrectionOptions">
+<label class="static-correction-field" for="staticCorrectionFieldSourceDepthMode">
+                  source_depth.mode
+                  <select data-testid="static-correction-field-source-depth-mode" id="staticCorrectionFieldSourceDepthMode" name="field_corrections.source_depth.mode">
+<option selected="" value="none">none</option>
+<option value="weathering_velocity_time">weathering_velocity_time</option>
+</select>
+</label>
+<label class="static-correction-field" for="staticCorrectionFieldSourceDepthByte">
+                  source_depth.source_depth_byte
+                  <input data-testid="static-correction-field-source-depth-byte" id="staticCorrectionFieldSourceDepthByte" max="240" min="1" name="field_corrections.source_depth.source_depth_byte" step="1" type="number"/>
+</label>
+<label class="static-correction-field" for="staticCorrectionFieldUpholeMode">uphole.mode
+                  <select data-testid="static-correction-field-uphole-mode" id="staticCorrectionFieldUpholeMode" name="field_corrections.uphole.mode">
+<option selected="" value="none">none</option>
+<option value="header_time">header_time</option>
+</select>
+</label>
+<label class="static-correction-field" for="staticCorrectionFieldUpholeTimeByte">
+                  uphole.uphole_time_byte
+                  <input data-testid="static-correction-field-uphole-time-byte" id="staticCorrectionFieldUpholeTimeByte" max="240" min="1" name="field_corrections.uphole.uphole_time_byte" step="1" type="number"/>
+</label>
+<label class="static-correction-field" for="staticCorrectionFieldManualStaticMode">
+                  manual_static.mode
+                  <select data-testid="static-correction-field-manual-static-mode" id="staticCorrectionFieldManualStaticMode" name="field_corrections.manual_static.mode">
+<option selected="" value="none">none</option>
+<option value="artifact_table">artifact_table</option>
+</select>
+</label>
+<div class="static-correction-linkage-options" hidden="" id="staticCorrectionFieldManualArtifactFields">
+<label class="static-correction-field" for="staticCorrectionFieldManualStaticSignConvention">
+                    manual_static.sign_convention
+                    <select data-testid="static-correction-field-manual-static-sign-convention" id="staticCorrectionFieldManualStaticSignConvention" name="field_corrections.manual_static.sign_convention">
+<option selected="" value="applied_shift_s">applied_shift_s</option>
+<option value="delay_positive_ms">delay_positive_ms</option>
+</select>
+</label>
+<div class="static-correction-field-row">
+<label class="static-correction-field" for="staticCorrectionFieldManualSourceJobId">
+                      source_table_artifact.job_id
+                      <input autocomplete="off" data-testid="static-correction-field-manual-source-job-id" id="staticCorrectionFieldManualSourceJobId" name="field_corrections.manual_static.source_table_artifact.job_id" type="text"/>
+</label>
+<label class="static-correction-field" for="staticCorrectionFieldManualSourceArtifactName">
+                      source_table_artifact.artifact_name
+                      <input autocomplete="off" data-testid="static-correction-field-manual-source-artifact-name" id="staticCorrectionFieldManualSourceArtifactName" name="field_corrections.manual_static.source_table_artifact.artifact_name" type="text"/>
+</label>
+</div>
+<div class="static-correction-field-row">
+<label class="static-correction-field" for="staticCorrectionFieldManualReceiverJobId">
+                      receiver_table_artifact.job_id
+                      <input autocomplete="off" data-testid="static-correction-field-manual-receiver-job-id" id="staticCorrectionFieldManualReceiverJobId" name="field_corrections.manual_static.receiver_table_artifact.job_id" type="text"/>
+</label>
+<label class="static-correction-field" for="staticCorrectionFieldManualReceiverArtifactName">
+                      receiver_table_artifact.artifact_name
+                      <input autocomplete="off" data-testid="static-correction-field-manual-receiver-artifact-name" id="staticCorrectionFieldManualReceiverArtifactName" name="field_corrections.manual_static.receiver_table_artifact.artifact_name" type="text"/>
+</label>
+</div>
+</div>
+<label class="static-correction-check-field" for="staticCorrectionFieldApplyToTraceShift">
+<input checked="" data-testid="static-correction-field-apply-to-trace-shift" id="staticCorrectionFieldApplyToTraceShift" name="field_corrections.composition.apply_to_trace_shift" type="checkbox"/>
+<span>composition.apply_to_trace_shift</span>
+</label>
+</div>
+</details>
+<details class="static-correction-section" id="staticCorrectionExportSection">
+<summary id="staticCorrectionExportHeading">Exports</summary>
+<label class="static-correction-check-field" for="staticCorrectionExportEnabled">
+<input checked="" data-testid="static-correction-export-enabled" id="staticCorrectionExportEnabled" name="export.enabled" type="checkbox"/>
+<span>export.enabled</span>
+</label>
+<label class="static-correction-check-field" for="staticCorrectionExportCanonicalTable">
+<input checked="" data-static-correction-export-format="" data-testid="static-correction-export-canonical-table" id="staticCorrectionExportCanonicalTable" name="export.formats" type="checkbox" value="canonical_static_table"/>
+<span>canonical_static_table</span>
+</label>
+<label class="static-correction-check-field" for="staticCorrectionExportLsst">
+<input data-static-correction-export-format="" data-testid="static-correction-export-lsst" id="staticCorrectionExportLsst" name="export.formats" type="checkbox" value="lsst"/>
+<span>lsst</span>
+</label>
+<label class="static-correction-check-field" for="staticCorrectionExportLsstPlus">
+<input checked="" data-static-correction-export-format="" data-testid="static-correction-export-lsst-plus" id="staticCorrectionExportLsstPlus" name="export.formats" type="checkbox" value="lsst_plus"/>
+<span>lsst_plus</span>
+</label>
+<label class="static-correction-check-field" for="staticCorrectionExportTimeTermSpreadsheet">
+<input data-static-correction-export-format="" data-testid="static-correction-export-time-term-spreadsheet" id="staticCorrectionExportTimeTermSpreadsheet" name="export.formats" type="checkbox" value="time_term_spreadsheet"/>
+<span>time_term_spreadsheet</span>
+</label>
+<label class="static-correction-check-field" for="staticCorrectionExportFirstBreakTime">
+<input data-static-correction-export-format="" data-testid="static-correction-export-first-break-time" id="staticCorrectionExportFirstBreakTime" name="export.formats" type="checkbox" value="first_break_time"/>
+<span>first_break_time</span>
+</label>
+</details>
+<section aria-labelledby="staticCorrectionRunHeading" class="static-correction-section">
+<h3 id="staticCorrectionRunHeading">Run</h3>
+<div class="static-correction-actions">
+<button data-testid="static-correction-validate" id="staticCorrectionValidateButton" type="button">Validate Inputs</button>
+<button data-testid="static-correction-run" id="staticCorrectionRunButton" type="button">Run</button>
+<button data-testid="static-correction-cancel" hidden="" id="staticCorrectionCancelButton" type="button">Cancel</button>
+</div>
+<div class="static-correction-validation" data-testid="static-correction-validation-summary" hidden="" id="staticCorrectionValidationSummary" role="alert"></div>
+<div aria-live="polite" class="static-correction-diagnostics" data-testid="static-correction-validation-diagnostics" hidden="" id="staticCorrectionValidationDiagnostics" role="status"></div>
+<details id="staticCorrectionRequestPreviewDetails">
+<summary>JSON request preview</summary>
+<p class="static-correction-help" data-testid="static-correction-request-preview-note">
+                  Pick NPZ is sent as multipart file field: pick_npz
+                </p>
+<pre class="static-correction-request-preview" data-testid="static-correction-request-preview" id="staticCorrectionRequestPreview"></pre>
+</details>
+</section>
+</form>
+<div aria-live="polite" class="static-correction-status" data-testid="static-correction-status" id="staticCorrectionStatus" role="status"></div>
+<div class="static-correction-job-panel" data-testid="static-correction-job-panel" hidden="" id="staticCorrectionJobPanel">
+<div class="static-correction-job-row">
+<span class="static-correction-job-label">Job ID</span>
+<span class="static-correction-job-value" data-testid="static-correction-job-id" id="staticCorrectionJobIdValue">-</span>
+</div>
+<div class="static-correction-job-row">
+<span class="static-correction-job-label">State</span>
+<span class="static-correction-job-value" data-testid="static-correction-job-state" id="staticCorrectionJobStateValue">-</span>
+</div>
+<div class="static-correction-job-row">
+<span class="static-correction-job-label">Message</span>
+<span class="static-correction-job-value" data-testid="static-correction-job-message" id="staticCorrectionJobMessageValue">-</span>
+</div>
+<div class="static-correction-job-row">
+<span class="static-correction-job-label">Progress</span>
+<span class="static-correction-job-progress">
+<progress data-testid="static-correction-job-progress" id="staticCorrectionJobProgress" max="1" value="0"></progress>
+<span data-testid="static-correction-job-progress-value" id="staticCorrectionJobProgressValue">0%</span>
+</span>
+</div>
+</div><div class="static-correction-qc-link-row" data-testid="static-correction-qc-link-row" hidden="" id="staticCorrectionQcLinkRow">
+<span>Static Correction job is ready for visual QC.</span>
+<a data-testid="static-correction-open-qc-link" href="/refraction-qc" id="staticCorrectionQcLink">Open Refraction QC</a>
+</div>
+<section aria-labelledby="staticCorrectionArtifactsHeading" class="static-correction-section">
+<h3 id="staticCorrectionArtifactsHeading">Artifacts</h3>
+<div class="static-correction-artifact-empty" data-testid="static-correction-artifact-empty" id="staticCorrectionArtifactEmpty">Run a static correction job to list generated artifacts.</div>
+<table class="static-correction-artifact-table" data-testid="static-correction-artifact-table" hidden="" id="staticCorrectionArtifactTable">
+<thead>
+<tr>
+<th scope="col">File</th>
+<th scope="col">Size</th>
+<th scope="col">Download</th>
+</tr>
+</thead>
+<tbody data-testid="static-correction-artifact-body" id="staticCorrectionArtifactBody"></tbody>
+</table>
+</section>
+<div class="static-correction-error" data-testid="static-correction-error" hidden="" id="staticCorrectionError" role="alert"></div>
+</div>
+    </div>
+  </main>
+
+  <script>
+    function toolUrl(path) {
+      const params = new URLSearchParams(window.location.search || '');
+      const fileId = params.get('file_id') || localStorage.getItem('file_id') || '';
+      const key1Byte = params.get('key1_byte') || localStorage.getItem('key1_byte') || '';
+      const key2Byte = params.get('key2_byte') || localStorage.getItem('key2_byte') || '';
+      const target = new URL(path, window.location.origin);
+      if (fileId) target.searchParams.set('file_id', fileId);
+      if (key1Byte) target.searchParams.set('key1_byte', key1Byte);
+      if (key2Byte) target.searchParams.set('key2_byte', key2Byte);
+      const refractionJobId = params.get('refraction_job_id') || params.get('refraction_qc_job_id') || '';
+      if (refractionJobId && path.includes('refraction-qc')) {
+        target.searchParams.set('refraction_job_id', refractionJobId);
+      }
+      return target.toString();
+    }
+
+    window.addEventListener('DOMContentLoaded', () => {
+      for (const link of document.querySelectorAll('[data-tool-link]')) {
+        link.href = toolUrl(link.getAttribute('href'));
+      }
+    });
+  </script>
+  <script src="/static/refraction_static_run.js"></script>
+</body>
+</html>

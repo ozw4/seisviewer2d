@@ -11,7 +11,7 @@ from typing import Any, get_type_hints
 import numpy as np
 import pytest
 
-from app.services.refraction_static_types import (
+from app.statics.refraction.domain.types import (
     REFRACTION_FIELD_CORRECTION_COMPONENT_NAMES,
     RefractionEndpointFieldCorrectionResult,
     RefractionFieldCorrectionComponentName,
@@ -24,8 +24,8 @@ _FORBIDDEN_IMPORTS = {
     'app.api.routers',
     'app.api.schemas',
     'app.main',
-    'app.services.refraction_static_inputs',
-    'app.services.refraction_static_service',
+    'app.statics.refraction.application.input_model',
+    'app.statics.refraction.application.workflow',
     'app.trace_store.reader',
     'segyio',
 }
@@ -71,7 +71,7 @@ import sys
 for name in {sorted(_FORBIDDEN_IMPORTS)!r}:
     sys.modules.pop(name, None)
 
-module = importlib.import_module('app.services.refraction_static_types')
+module = importlib.import_module('app.statics.refraction.domain.types')
 assert module.RefractionEndpointFieldCorrectionResult is not None
 assert module.RefractionTraceFieldCorrectionResult is not None
 
@@ -89,7 +89,7 @@ print(json.dumps(sorted(name for name in sys.modules if name in forbidden)))
 
     assert json.loads(result.stdout) == []
 
-    module = importlib.import_module('app.services.refraction_static_types')
+    module = importlib.import_module('app.statics.refraction.domain.types')
     source = Path(module.__file__ or '').read_text(encoding='utf-8')
     for forbidden in _FORBIDDEN_SOURCE_STRINGS:
         assert forbidden not in source

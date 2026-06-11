@@ -8,11 +8,11 @@ import numpy as np
 import pytest
 
 from app.api.schemas import RefractionStaticApplyRequest
-from app.services.refraction_static_artifacts import (
+from app.statics.refraction.artifacts import (
     SOURCE_RECEIVER_STATIC_TABLE_NPZ_NAME,
     write_refraction_static_artifacts,
 )
-from app.services.refraction_static_datum import (
+from app.statics.refraction.application.datum import (
     REFRACTION_DATUM_TRACE_PREVIEW_CSV_NAME,
     write_refraction_datum_statics_artifacts,
 )

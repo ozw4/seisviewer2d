@@ -8,6 +8,9 @@ from typing import Literal
 
 import numpy as np
 
+from app.services.common.array_validation import (
+    is_real_numeric_dtype as _is_real_numeric_dtype,
+)
 from app.services.geometry_linkage_artifacts import (
     GEOMETRY_LINKAGE_NPZ_NAME,
     ORDER,
@@ -833,13 +836,6 @@ def _validate_1d_shape(
 def _readonly(arr: np.ndarray) -> np.ndarray:
     arr.setflags(write=False)
     return arr
-
-
-def _is_real_numeric_dtype(dtype: np.dtype) -> bool:
-    return np.issubdtype(dtype, np.number) and not np.issubdtype(
-        dtype,
-        np.complexfloating,
-    )
 
 
 def _is_string_dtype(dtype: np.dtype) -> bool:

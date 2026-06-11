@@ -7,20 +7,20 @@ from pathlib import Path
 
 import numpy as np
 
-from app.services.refraction_static_artifacts import (
+from app.statics.refraction.artifacts import (
     REFRACTION_TIME_TERM_SPREADSHEET_CSV_NAME,
     write_refraction_first_break_time_export_csv,
     write_refraction_time_term_spreadsheet_csv_from_static_tables,
 )
-from app.services.refraction_static_export_service import (
+from app.statics.refraction.application.export_service import (
     _canonical_static_table_rows,
     _write_canonical_static_table_csv,
 )
-from app.services.refraction_static_lsst_export import (
+from app.statics.refraction.application.lsst_export import (
     format_refraction_lsst_csv,
     format_refraction_lsst_plus_csv,
 )
-from app.services.refraction_static_table_validator import (
+from app.statics.refraction.domain.table_validator import (
     CANONICAL_STATIC_TABLE_OPTIONAL_COLUMNS,
     CANONICAL_STATIC_TABLE_REQUIRED_COLUMNS,
     validate_canonical_static_table_rows,

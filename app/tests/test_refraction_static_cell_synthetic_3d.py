@@ -8,14 +8,14 @@ import numpy as np
 import pytest
 
 from app.api.schemas import RefractionStaticApplyRequest
-from app.services.refraction_static_artifacts import write_refraction_static_artifacts
-from app.services.refraction_static_datum import build_refraction_datum_statics
-from app.services.refraction_static_types import (
+from app.statics.refraction.artifacts import write_refraction_static_artifacts
+from app.statics.refraction.application.datum import build_refraction_datum_statics
+from app.statics.refraction.domain.types import (
     RefractionDatumStaticsResult,
     RefractionEndpointTable,
     RefractionStaticInputModel,
 )
-from app.services.refraction_static_weathering_replacement import (
+from app.statics.refraction.application.weathering_replacement import (
     compute_weathering_replacement_statics_from_first_breaks,
 )
 from app.tests.fixtures.refraction_synthetic import (

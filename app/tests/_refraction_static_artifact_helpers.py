@@ -5,7 +5,7 @@ from dataclasses import replace
 import numpy as np
 
 from app.api.schemas import RefractionStaticApplyRequest
-from app.services.refraction_static_types import (
+from app.statics.refraction.domain.types import (
     RefractionDatumStaticsResult,
     ResolvedRefractionFirstLayer,
 )

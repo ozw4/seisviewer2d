@@ -9,11 +9,19 @@ import json
 from pathlib import Path
 import re
 import shutil
-from typing import Any, Literal
+from typing import Literal
 from uuid import uuid4
 
 import numpy as np
 
+from app.services.common.artifact_io import write_json_atomic
+from app.services.common.array_validation import (
+    coerce_1d_real_numeric_float64,
+    coerce_header_byte as _coerce_header_byte,
+    coerce_nonnegative_finite_float as _coerce_nonnegative_finite_float,
+    coerce_positive_finite_float as _coerce_positive_finite_float,
+    coerce_positive_int as _coerce_positive_int,
+)
 from app.services.corrected_trace_store import build_time_shifted_trace_store
 from app.services.trace_store_registration import (
     register_trace_store,
@@ -346,7 +354,7 @@ def apply_residual_static_correction_to_trace_store(
         )
         _raise_if_cancelled(cancel_check)
         _notify_progress(progress_callback, 0.97, 'writing_corrected_file_manifest')
-        _write_json_atomic(
+        write_json_atomic(
             corrected_file_json_path,
             _build_corrected_file_payload(
                 corrected_file_id=resolved_file_id,
@@ -358,6 +366,7 @@ def apply_residual_static_correction_to_trace_store(
                 key2_byte=key2_byte,
                 dt=build_result.dt,
             ),
+            make_parent=True,
         )
     except Exception:
         _cleanup_registration(
@@ -592,25 +601,6 @@ def _build_corrected_file_payload(
     }
 
 
-def _write_json_atomic(path: Path, payload: dict[str, object]) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    tmp_path = path.with_name(f'{path.name}.tmp')
-    try:
-        with tmp_path.open('w', encoding='utf-8') as handle:
-            json.dump(
-                payload,
-                handle,
-                allow_nan=False,
-                ensure_ascii=True,
-                sort_keys=True,
-            )
-        tmp_path.replace(path)
-    except Exception:
-        if tmp_path.is_file() or tmp_path.is_symlink():
-            tmp_path.unlink()
-        raise
-
-
 def _cleanup_registration(
     state: object,
     *,
@@ -648,18 +638,14 @@ def _require_1d_float64(
     expected_shape: tuple[int, ...],
 ) -> np.ndarray:
     arr = np.asarray(value)
-    if arr.ndim != 1:
-        raise ValueError(f'{name} must be 1-dimensional')
-    if arr.shape != expected_shape:
-        raise ValueError(
-            f'{name} shape mismatch: expected {expected_shape}, got {arr.shape}'
-        )
     if not np.issubdtype(arr.dtype, np.floating):
         raise ValueError(f'{name} must be a float array')
-    out = np.asarray(arr, dtype=np.float64)
-    if not np.all(np.isfinite(out)):
-        raise ValueError(f'{name} must contain only finite values')
-    return np.ascontiguousarray(out, dtype=np.float64)
+    return coerce_1d_real_numeric_float64(
+        arr,
+        name=name,
+        expected_shape=expected_shape,
+        require_finite=True,
+    )
 
 
 def _require_scalar_int(value: np.ndarray, *, name: str) -> int:
@@ -690,48 +676,6 @@ def _require_scalar_str(value: np.ndarray, *, name: str) -> str:
     if isinstance(item, bytes):
         return item.decode('utf-8')
     return str(item)
-
-
-def _coerce_positive_int(value: Any, *, name: str) -> int:
-    if isinstance(value, bool):
-        raise ValueError(f'{name} must be a positive integer')
-    if not isinstance(value, int | np.integer):
-        raise ValueError(f'{name} must be a positive integer')
-    out = int(value)
-    if out <= 0:
-        raise ValueError(f'{name} must be a positive integer')
-    return out
-
-
-def _coerce_header_byte(value: Any, *, name: str) -> int:
-    out = _coerce_positive_int(value, name=name)
-    if out > 240:
-        raise ValueError(f'{name} must be between 1 and 240')
-    return out
-
-
-def _coerce_positive_finite_float(value: Any, *, name: str) -> float:
-    if isinstance(value, bool):
-        raise ValueError(f'{name} must be finite and greater than 0')
-    try:
-        out = float(value)
-    except (TypeError, ValueError) as exc:
-        raise ValueError(f'{name} must be finite and greater than 0') from exc
-    if not np.isfinite(out) or out <= 0.0:
-        raise ValueError(f'{name} must be finite and greater than 0')
-    return out
-
-
-def _coerce_nonnegative_finite_float(value: Any, *, name: str) -> float:
-    if isinstance(value, bool):
-        raise ValueError(f'{name} must be finite and non-negative')
-    try:
-        out = float(value)
-    except (TypeError, ValueError) as exc:
-        raise ValueError(f'{name} must be finite and non-negative') from exc
-    if not np.isfinite(out) or out < 0.0:
-        raise ValueError(f'{name} must be finite and non-negative')
-    return out
 
 
 __all__ = [

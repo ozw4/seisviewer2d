@@ -13,19 +13,21 @@ import app.api.routers.statics as statics_router_module
 from app.api.schemas import RefractionStaticTableApplyRequest
 from app.core.state import AppState, create_app_state
 from app.main import app
-from app.services.refraction_static_export_units import (
+from app.statics.refraction.domain.export_units import (
     REFRACTION_STATIC_REPO_SIGN_CONVENTION,
 )
-from app.services.refraction_static_table_apply_service import (
+from app.statics.refraction.application.table_apply_service import (
     STATIC_TABLE_APPLY_HISTORY_JSON_NAME,
     STATIC_TABLE_APPLY_QC_JSON_NAME,
     STATIC_TABLE_APPLY_REFRACTION_HISTORY_JSON_NAME,
     STATIC_TABLE_APPLY_SOLUTION_NPZ_NAME,
     STATIC_TABLE_APPLY_TRACE_SHIFTS_CSV_NAME,
+)
+from app.statics.refraction.adapters.seisviewer2d.table_apply_runner import (
     run_refraction_static_table_apply_job,
 )
-from app.services.refraction_static_apply_trace_store import CORRECTED_FILE_JSON_NAME
-from app.services.refraction_static_artifacts import (
+from app.statics.refraction.application.apply_trace_store import CORRECTED_FILE_JSON_NAME
+from app.statics.refraction.artifacts import (
     REFRACTION_STATIC_REQUEST_JSON_NAME,
     SOURCE_RECEIVER_STATIC_TABLE_NPZ_NAME,
 )

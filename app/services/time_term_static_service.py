@@ -3,17 +3,18 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-import json
 import math
 from pathlib import Path
 import shutil
 import time
-from typing import Any
-from uuid import uuid4
 
 import numpy as np
 
-from app.api.schemas import TimeTermStaticApplyRequest
+from app.contracts.statics.time_term import TimeTermStaticApplyRequest
+from app.services.common.artifact_io import write_json_atomic
+from app.services.common.array_validation import (
+    coerce_1d_integer_int64,
+)
 from app.core.state import AppState
 from app.services.errors import DomainError
 from app.services.geometry_linkage_loader import load_geometry_linkage_artifact
@@ -240,31 +241,15 @@ def _validate_node_id_array(
     name: str,
     expected_n_traces: int,
 ) -> None:
-    arr = np.asarray(values)
     expected_shape = (int(expected_n_traces),)
-    if arr.ndim != 1:
-        raise ValueError(f'{name} must be a 1D array')
-    if arr.shape != expected_shape:
-        raise ValueError(
-            f'{name} shape mismatch: expected {expected_shape}, got {arr.shape}'
-        )
-    if np.issubdtype(arr.dtype, np.bool_) or not _is_real_numeric_dtype(arr.dtype):
-        raise ValueError(f'{name} must have a real numeric dtype')
-    if np.issubdtype(arr.dtype, np.floating):
-        arr_f64 = arr.astype(np.float64, copy=False)
-        if not np.all(np.isfinite(arr_f64)):
-            raise ValueError(f'{name} must contain only finite values')
-        if not np.all(arr_f64 == np.rint(arr_f64)):
-            raise ValueError(f'{name} must contain only integer values')
+    arr = coerce_1d_integer_int64(
+        values,
+        name=name,
+        expected_shape=expected_shape,
+        nonfinite_message='must contain only finite values',
+    )
     if np.any(arr < 0):
         raise ValueError(f'{name} must not contain negative values')
-
-
-def _is_real_numeric_dtype(dtype: np.dtype) -> bool:
-    return np.issubdtype(dtype, np.number) and not np.issubdtype(
-        dtype,
-        np.complexfloating,
-    )
 
 
 def _resolve_created_ts(state: AppState, job_id: str) -> float:
@@ -308,32 +293,13 @@ def _is_cancel_requested(state: AppState, job_id: str) -> bool:
         return state.jobs.is_cancel_requested(job_id)
 
 
-def _write_json_atomic(path: Path, payload: dict[str, Any]) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    tmp_path = path.with_name(f'{path.name}.{uuid4().hex}.tmp')
-    try:
-        tmp_path.write_text(
-            json.dumps(
-                payload,
-                allow_nan=False,
-                ensure_ascii=True,
-                sort_keys=True,
-            ),
-            encoding='utf-8',
-        )
-        tmp_path.replace(path)
-    except Exception:
-        tmp_path.unlink(missing_ok=True)
-        raise
-
-
 def _write_time_term_job_meta(
     *,
     job_id: str,
     job_dir: Path,
     req: TimeTermStaticApplyRequest,
 ) -> None:
-    _write_json_atomic(
+    write_json_atomic(
         job_dir / 'job_meta.json',
         {
             'job_id': job_id,
@@ -362,6 +328,7 @@ def _write_time_term_job_meta(
                 'corrected_file_json': _CORRECTED_FILE_NAME,
             },
         },
+        make_parent=True,
     )
 
 

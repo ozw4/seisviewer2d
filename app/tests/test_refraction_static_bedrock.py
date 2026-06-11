@@ -9,23 +9,23 @@ from typing import Any
 import numpy as np
 import pytest
 
-import app.services.refraction_static_bedrock as bedrock_module
+import app.statics.refraction.application.bedrock as bedrock_module
 from app.api.schemas import RefractionStaticModelRequest, RefractionStaticSolverRequest
-from app.services.refraction_static_bedrock import (
+from app.statics.refraction.application.bedrock import (
     REFRACTION_BEDROCK_QC_JSON_NAME,
     REFRACTION_BEDROCK_RESIDUALS_CSV_NAME,
     RefractionBedrockSlownessError,
     estimate_global_bedrock_slowness_from_first_breaks,
     estimate_global_bedrock_slowness_from_input_model,
 )
-from app.services.refraction_static_design_matrix import (
+from app.statics.refraction.application.design_matrix import (
     build_refraction_static_design_matrix,
 )
-from app.services.refraction_static_types import (
+from app.statics.refraction.domain.types import (
     RefractionEndpointTable,
     RefractionStaticInputModel,
 )
-from app.services.refraction_static_solver import (
+from app.statics.refraction.domain.solver import (
     RefractionStaticSolverError,
     solve_refraction_static_bounded_ls,
 )
@@ -629,7 +629,7 @@ def test_lower_level_can_retain_debug_objects() -> None:
 def test_estimate_wraps_high_level_input_builder_errors(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    import app.services.refraction_static_inputs as inputs_module
+    import app.statics.refraction.application.input_model as inputs_module
 
     monkeypatch.setattr(
         inputs_module,

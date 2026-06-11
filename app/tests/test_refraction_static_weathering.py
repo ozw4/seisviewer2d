@@ -9,8 +9,8 @@ from types import SimpleNamespace
 import numpy as np
 import pytest
 
-import app.services.refraction_static_weathering as weathering_module
-from app.services.refraction_static_weathering import (
+import app.statics.refraction.application.weathering as weathering_module
+from app.statics.refraction.application.weathering import (
     REFRACTION_WEATHERING_NODES_CSV_NAME,
     REFRACTION_WEATHERING_QC_JSON_NAME,
     REFRACTION_WEATHERING_RECEIVERS_CSV_NAME,

@@ -2,16 +2,26 @@
 
 from __future__ import annotations
 
-import csv
-import json
-import uuid
-from collections.abc import Callable, Mapping
+from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
 import numpy as np
 
+from app.services.common.artifact_io import (
+    assert_strict_json,
+    write_csv_atomic as _common_write_csv_atomic,
+    write_json_atomic as _common_write_json_atomic,
+)
+from app.services.common.array_validation import (
+    coerce_1d_bool_array as _coerce_1d_bool_array,
+    coerce_1d_finite_float64 as _coerce_1d_finite_float64,
+    coerce_1d_integer_int64 as _coerce_1d_integer_int64,
+    coerce_1d_real_numeric_float64 as _coerce_1d_real_numeric_float64,
+    coerce_finite_float as _coerce_finite_float,
+    coerce_nonnegative_int as _common_coerce_nonnegative_int,
+)
 from app.services.first_break_qc_inputs import FirstBreakQcInputs
 from app.services.first_break_qc_math import (
     CorrelationQc,
@@ -137,7 +147,7 @@ def write_first_break_qc_artifacts(
         residual_by_key1_csv=values.job_dir / RESIDUAL_BY_KEY1_CSV_NAME,
     )
 
-    _write_json_atomic(paths.qc_json, qc_payload)
+    _write_first_break_qc_json(paths.qc_json, qc_payload)
     _write_trace_csv_atomic(paths.qc_csv, values, metric_values)
     _write_residual_by_key1_csv_atomic(paths.residual_by_key1_csv, residual_rows)
     return paths
@@ -150,13 +160,13 @@ def _validate_inputs(*, job_dir: Path, inputs: FirstBreakQcInputs) -> _Validated
         msg = 'job_dir must be path-like'
         raise ValueError(msg) from exc
 
-    n_traces = _coerce_positive_int(getattr(inputs, 'n_traces', None), name='n_traces')
+    n_traces = _coerce_qc_positive_int(getattr(inputs, 'n_traces', None), name='n_traces')
     expected_shape = (n_traces,)
-    n_samples = _coerce_positive_int(
+    n_samples = _coerce_qc_positive_int(
         getattr(inputs, 'n_samples', None),
         name='n_samples',
     )
-    dt = _coerce_positive_finite_float(getattr(inputs, 'dt', None), name='dt')
+    dt = _coerce_qc_positive_finite_float(getattr(inputs, 'dt', None), name='dt')
     offset_byte = _validate_header_byte(
         getattr(inputs, 'offset_byte', None),
         name='offset_byte',
@@ -365,12 +375,12 @@ def _coerce_series_stats(
     if not isinstance(value, FiniteSeriesStats):
         msg = f'{name} must be FiniteSeriesStats'
         raise ValueError(msg)
-    _coerce_nonnegative_int(value.n_total, name=f'{name}.n_total')
+    _coerce_qc_nonnegative_int(value.n_total, name=f'{name}.n_total')
     if int(value.n_total) != expected_n_total:
         msg = f'{name}.n_total mismatch: expected {expected_n_total}, got {value.n_total}'
         raise ValueError(msg)
-    _coerce_nonnegative_int(value.n_valid, name=f'{name}.n_valid')
-    _coerce_nonnegative_int(value.n_nan, name=f'{name}.n_nan')
+    _coerce_qc_nonnegative_int(value.n_valid, name=f'{name}.n_valid')
+    _coerce_qc_nonnegative_int(value.n_nan, name=f'{name}.n_nan')
     for field_name in ('min_s', 'max_s', 'mean_s', 'median_s', 'std_s', 'mad_s'):
         _coerce_optional_finite_float(
             getattr(value, field_name),
@@ -394,7 +404,7 @@ def _coerce_correlations(value: object) -> dict[str, CorrelationQc]:
         if corr.status not in {'ok', 'insufficient_data', 'constant_input'}:
             msg = f'correlations[{key}].status is invalid'
             raise ValueError(msg)
-        _coerce_nonnegative_int(corr.n_used, name=f'correlations[{key}].n_used')
+        _coerce_qc_nonnegative_int(corr.n_used, name=f'correlations[{key}].n_used')
         if corr.status == 'ok':
             _coerce_finite_float(corr.r, name=f'correlations[{key}].r')
         elif corr.r is not None:
@@ -411,7 +421,7 @@ def _coerce_linear_offset_fit(value: object) -> LinearOffsetFit:
     if value.status not in {'ok', 'insufficient_data', 'constant_abs_offset'}:
         msg = 'linear_offset_fit.status is invalid'
         raise ValueError(msg)
-    _coerce_nonnegative_int(value.n_used, name='linear_offset_fit.n_used')
+    _coerce_qc_nonnegative_int(value.n_used, name='linear_offset_fit.n_used')
     fields = ('intercept_s', 'slowness_s_per_offset_unit', 'r2')
     if value.status == 'ok':
         for field_name in fields:
@@ -701,20 +711,16 @@ def _compute_residual_stats_for_section(
     )
 
 
-def _write_json_atomic(out_path: Path, payload: dict[str, Any]) -> None:
-    def write(tmp_path: Path) -> None:
-        with tmp_path.open('w', encoding='utf-8') as handle:
-            json.dump(
-                payload,
-                handle,
-                allow_nan=False,
-                ensure_ascii=False,
-                indent=2,
-                sort_keys=True,
-            )
-            handle.write('\n')
-
-    _atomic_write(out_path, write)
+def _write_first_break_qc_json(out_path: Path, payload: dict[str, Any]) -> None:
+    _common_write_json_atomic(
+        out_path,
+        payload,
+        allow_nan=False,
+        ensure_ascii=False,
+        indent=2,
+        sort_keys=True,
+        trailing_newline=True,
+    )
 
 
 def _write_trace_csv_atomic(
@@ -722,88 +728,84 @@ def _write_trace_csv_atomic(
     values: _ValidatedInputs,
     metrics: _ValidatedMetrics,
 ) -> None:
-    def write(tmp_path: Path) -> None:
-        with tmp_path.open('w', encoding='utf-8', newline='') as handle:
-            writer = csv.writer(handle)
-            writer.writerow(_TRACE_CSV_COLUMNS)
-            for index in range(values.n_traces):
-                writer.writerow(
-                    [
-                        str(index),
-                        str(int(values.key1_sorted[index])),
-                        str(int(values.key2_sorted[index])),
-                        'true'
-                        if bool(values.valid_pick_mask_sorted[index])
-                        else 'false',
-                        _format_optional_float(values.picks_time_s_sorted[index]),
-                        _format_optional_float(
-                            values.datum_trace_shift_s_sorted[index]
-                        ),
-                        _format_optional_float(
-                            metrics.pick_time_after_datum_s_sorted[index]
-                        ),
-                        _format_optional_float(values.offset_sorted[index]),
-                        _format_optional_float(abs(values.offset_sorted[index])),
-                        _format_optional_float(values.source_elevation_m_sorted[index]),
-                        _format_optional_float(
-                            values.receiver_elevation_m_sorted[index]
-                        ),
-                        _format_optional_float(
-                            _defined_trace_float(
-                                metrics.linear_moveout_model_s_sorted[index],
-                                defined=metrics.residual_valid_mask_sorted[index],
-                            )
-                        ),
-                        _format_optional_float(
-                            _defined_trace_float(
-                                metrics.residual_after_datum_s_sorted[index],
-                                defined=metrics.residual_valid_mask_sorted[index],
-                            )
-                        ),
-                    ]
-                )
-
-    _atomic_write(out_path, write)
+    rows = []
+    for index in range(values.n_traces):
+        rows.append(
+            {
+                'sorted_trace_index': str(index),
+                'key1': str(int(values.key1_sorted[index])),
+                'key2': str(int(values.key2_sorted[index])),
+                'valid_pick': 'true'
+                if bool(values.valid_pick_mask_sorted[index])
+                else 'false',
+                'pick_time_raw_s': _format_optional_float(
+                    values.picks_time_s_sorted[index]
+                ),
+                'datum_trace_shift_s': _format_optional_float(
+                    values.datum_trace_shift_s_sorted[index]
+                ),
+                'pick_time_after_datum_s': _format_optional_float(
+                    metrics.pick_time_after_datum_s_sorted[index]
+                ),
+                'offset': _format_optional_float(values.offset_sorted[index]),
+                'abs_offset': _format_optional_float(abs(values.offset_sorted[index])),
+                'source_elevation_m': _format_optional_float(
+                    values.source_elevation_m_sorted[index]
+                ),
+                'receiver_elevation_m': _format_optional_float(
+                    values.receiver_elevation_m_sorted[index]
+                ),
+                'linear_moveout_model_s': _format_optional_float(
+                    _defined_trace_float(
+                        metrics.linear_moveout_model_s_sorted[index],
+                        defined=metrics.residual_valid_mask_sorted[index],
+                    )
+                ),
+                'residual_after_datum_s': _format_optional_float(
+                    _defined_trace_float(
+                        metrics.residual_after_datum_s_sorted[index],
+                        defined=metrics.residual_valid_mask_sorted[index],
+                    )
+                ),
+            }
+        )
+    _common_write_csv_atomic(
+        out_path,
+        columns=_TRACE_CSV_COLUMNS,
+        rows=rows,
+        extrasaction='raise',
+        lineterminator='\r\n',
+    )
 
 
 def _write_residual_by_key1_csv_atomic(
     out_path: Path,
     rows: list[_ResidualKey1Row],
 ) -> None:
-    def write(tmp_path: Path) -> None:
-        with tmp_path.open('w', encoding='utf-8', newline='') as handle:
-            writer = csv.writer(handle)
-            writer.writerow(_RESIDUAL_BY_KEY1_CSV_COLUMNS)
-            for row in rows:
-                writer.writerow(
-                    [
-                        str(row.key1),
-                        str(row.n_traces),
-                        str(row.n_valid_picks),
-                        str(row.n_used_residual),
-                        _format_optional_float(row.residual_median_s),
-                        _format_optional_float(row.residual_mad_s),
-                        _format_optional_float(row.residual_mean_s),
-                        _format_optional_float(row.residual_std_s),
-                    ]
-                )
-
-    _atomic_write(out_path, write)
-
-
-def _atomic_write(out_path: Path, write: Callable[[Path], None]) -> None:
-    tmp_path = out_path.with_name(f'{out_path.name}.tmp-{uuid.uuid4().hex}')
-    try:
-        write(tmp_path)
-        tmp_path.replace(out_path)
-    except Exception:
-        if tmp_path.exists():
-            tmp_path.unlink()
-        raise
+    csv_rows = [
+        {
+            'key1': str(row.key1),
+            'n_traces': str(row.n_traces),
+            'n_valid_picks': str(row.n_valid_picks),
+            'n_used_residual': str(row.n_used_residual),
+            'residual_median_s': _format_optional_float(row.residual_median_s),
+            'residual_mad_s': _format_optional_float(row.residual_mad_s),
+            'residual_mean_s': _format_optional_float(row.residual_mean_s),
+            'residual_std_s': _format_optional_float(row.residual_std_s),
+        }
+        for row in rows
+    ]
+    _common_write_csv_atomic(
+        out_path,
+        columns=_RESIDUAL_BY_KEY1_CSV_COLUMNS,
+        rows=csv_rows,
+        extrasaction='raise',
+        lineterminator='\r\n',
+    )
 
 
 def _assert_json_payload(payload: dict[str, Any]) -> None:
-    json.dumps(payload, allow_nan=False)
+    assert_strict_json(payload)
 
 
 def _format_optional_float(value: object) -> str:
@@ -886,92 +888,6 @@ def _validate_pick_nan_contract(
         raise ValueError(msg)
 
 
-def _coerce_1d_finite_float64(
-    values: object,
-    *,
-    name: str,
-    expected_shape: tuple[int, ...],
-) -> np.ndarray:
-    arr = _coerce_1d_real_numeric_float64(
-        values,
-        name=name,
-        expected_shape=expected_shape,
-    )
-    if not np.all(np.isfinite(arr)):
-        msg = f'{name} must contain only finite values'
-        raise ValueError(msg)
-    return arr
-
-
-def _coerce_1d_real_numeric_float64(
-    values: object,
-    *,
-    name: str,
-    expected_shape: tuple[int, ...],
-) -> np.ndarray:
-    arr = np.asarray(values)
-    if arr.ndim != 1:
-        msg = f'{name} must be a 1D array'
-        raise ValueError(msg)
-    if arr.shape != expected_shape:
-        msg = f'{name} shape mismatch: expected {expected_shape}, got {arr.shape}'
-        raise ValueError(msg)
-    if not _is_real_numeric_dtype(arr.dtype):
-        msg = f'{name} must have a numeric dtype'
-        raise ValueError(msg)
-    return np.ascontiguousarray(arr, dtype=np.float64)
-
-
-def _coerce_1d_bool_array(
-    values: object,
-    *,
-    name: str,
-    expected_shape: tuple[int, ...],
-) -> np.ndarray:
-    arr = np.asarray(values)
-    if arr.ndim != 1:
-        msg = f'{name} must be a 1D array'
-        raise ValueError(msg)
-    if arr.shape != expected_shape:
-        msg = f'{name} shape mismatch: expected {expected_shape}, got {arr.shape}'
-        raise ValueError(msg)
-    if not np.issubdtype(arr.dtype, np.bool_):
-        msg = f'{name} must have bool dtype'
-        raise ValueError(msg)
-    return np.ascontiguousarray(arr, dtype=bool)
-
-
-def _coerce_1d_integer_int64(
-    values: object,
-    *,
-    name: str,
-    expected_shape: tuple[int, ...],
-) -> np.ndarray:
-    arr = np.asarray(values)
-    if arr.ndim != 1:
-        msg = f'{name} must be a 1D array'
-        raise ValueError(msg)
-    if arr.shape != expected_shape:
-        msg = f'{name} shape mismatch: expected {expected_shape}, got {arr.shape}'
-        raise ValueError(msg)
-    if np.issubdtype(arr.dtype, np.bool_):
-        msg = f'{name} must contain integer values'
-        raise ValueError(msg)
-    if np.issubdtype(arr.dtype, np.integer):
-        return np.ascontiguousarray(arr, dtype=np.int64)
-    if not _is_real_numeric_dtype(arr.dtype):
-        msg = f'{name} must contain integer values'
-        raise ValueError(msg)
-    arr_f64 = arr.astype(np.float64, copy=False)
-    if not np.all(np.isfinite(arr_f64)):
-        msg = f'{name} must contain only finite values'
-        raise ValueError(msg)
-    if not np.all(arr_f64 == np.rint(arr_f64)):
-        msg = f'{name} must contain integer values'
-        raise ValueError(msg)
-    return np.ascontiguousarray(arr_f64, dtype=np.int64)
-
-
 def _validate_header_byte(value: object, *, name: str) -> int:
     if isinstance(value, (bool, np.bool_)) or not isinstance(value, (int, np.integer)):
         msg = f'{name} must be an integer SEG-Y trace header byte'
@@ -983,23 +899,27 @@ def _validate_header_byte(value: object, *, name: str) -> int:
     return byte
 
 
-def _coerce_positive_int(value: object, *, name: str) -> int:
-    out = _coerce_nonnegative_int(value, name=name)
+def _coerce_qc_positive_int(value: object, *, name: str) -> int:
+    out = _coerce_qc_nonnegative_int(value, name=name)
     if out <= 0:
         msg = f'{name} must be greater than 0'
         raise ValueError(msg)
     return out
 
 
-def _coerce_nonnegative_int(value: object, *, name: str) -> int:
-    if isinstance(value, (bool, np.bool_)) or not isinstance(value, (int, np.integer)):
-        msg = f'{name} must be an integer'
-        raise ValueError(msg)
-    out = int(value)
-    if out < 0:
+def _coerce_qc_nonnegative_int(value: object, *, name: str) -> int:
+    """Preserve first-break QC's historical nonnegative wording."""
+    try:
+        return _common_coerce_nonnegative_int(value, name=name)
+    except ValueError as exc:
+        if isinstance(value, (bool, np.bool_)) or not isinstance(
+            value,
+            (int, np.integer),
+        ):
+            msg = f'{name} must be an integer'
+            raise ValueError(msg) from exc
         msg = f'{name} must be greater than or equal to 0'
-        raise ValueError(msg)
-    return out
+        raise ValueError(msg) from exc
 
 
 def _coerce_int_from_attr(value: object, attr: str, *, name: str) -> int:
@@ -1010,40 +930,23 @@ def _coerce_int_from_attr(value: object, attr: str, *, name: str) -> int:
     return int(out)
 
 
-def _coerce_finite_float(value: object, *, name: str) -> float:
-    if isinstance(value, (bool, np.bool_)):
-        msg = f'{name} must be finite'
-        raise ValueError(msg)
-    try:
-        out = float(value)
-    except (TypeError, ValueError) as exc:
-        msg = f'{name} must be finite'
-        raise ValueError(msg) from exc
-    if not np.isfinite(out):
-        msg = f'{name} must be finite'
-        raise ValueError(msg)
-    return out
-
-
 def _coerce_optional_finite_float(value: object, *, name: str) -> float | None:
     if value is None:
         return None
     return _coerce_finite_float(value, name=name)
 
 
-def _coerce_positive_finite_float(value: object, *, name: str) -> float:
-    out = _coerce_finite_float(value, name=name)
+def _coerce_qc_positive_finite_float(value: object, *, name: str) -> float:
+    """Preserve first-break QC's combined finite/positive error wording."""
+    try:
+        out = _coerce_finite_float(value, name=name)
+    except ValueError as exc:
+        msg = f'{name} must be finite and greater than 0'
+        raise ValueError(msg) from exc
     if out <= 0.0:
         msg = f'{name} must be finite and greater than 0'
         raise ValueError(msg)
     return out
-
-
-def _is_real_numeric_dtype(dtype: np.dtype) -> bool:
-    return np.issubdtype(dtype, np.number) and not np.issubdtype(
-        dtype,
-        np.complexfloating,
-    )
 
 
 __all__ = [

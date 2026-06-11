@@ -7,10 +7,10 @@ import numpy as np
 import pytest
 
 from app.api.schemas import RefractionStaticModelRequest
-from app.services.refraction_static_design_matrix import (
+from app.statics.refraction.application.design_matrix import (
     build_refraction_static_design_matrix,
 )
-from app.services.refraction_static_types import (
+from app.statics.refraction.domain.types import (
     RefractionEndpointTable,
     RefractionStaticInputModel,
 )

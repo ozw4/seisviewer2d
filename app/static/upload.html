@@ -309,6 +309,7 @@
     const recentState = document.getElementById('recent_state');
     const recentList = document.getElementById('recent_list');
     const RECENT_DATASET_LIMIT = 10;
+    const ACTIVE_VIEWER_TARGET_STORAGE_KEY = 'sv.active_viewer_target';
     let selectedFile = null;
     let stagedId = null;
     let headerQc = null;
@@ -782,6 +783,14 @@
       localStorage.setItem('last_original_name', originalName);
       localStorage.setItem('last_key1_byte', key1Byte);
       localStorage.setItem('last_key2_byte', key2Byte);
+      localStorage.setItem(ACTIVE_VIEWER_TARGET_STORAGE_KEY, JSON.stringify({
+        fileId,
+        displayName: originalName || fileId,
+        key1Byte: Number(key1Byte),
+        key2Byte: Number(key2Byte),
+        isFileLoaded: true,
+        updatedAt: new Date().toISOString(),
+      }));
       const params = new URLSearchParams({ file_id: fileId, key1_byte: key1Byte, key2_byte: key2Byte });
       window.setTimeout(() => {
         window.location.href = `/?${params.toString()}`;

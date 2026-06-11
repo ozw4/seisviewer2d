@@ -66,6 +66,7 @@
     const fbPredCache = new Map(); // key: "key1|layer|pipelineKey|modelId"
     const FBPICK_MODEL_STORAGE_KEY = 'fbpick_model_id';
     var currentFbKey = null;
+    var currentFbModelId = null;
     var fbPredReqId = 0;
     var downsampleFactor = 1;
     var isPickMode = false;
@@ -118,7 +119,7 @@
 
     function syncPendingPickUi() {
       renderPendingPickStatus();
-      schedulePickOverlayUpdate();
+      schedulePickOverlayUpdate('pending-pick-state');
     }
 
     function clearPendingPickState(reason = '', options = {}) {
@@ -164,6 +165,152 @@
 
     window.getPendingPickOverlayState = getPendingPickOverlayState;
     window.hasPendingPickOverlayState = hasPendingPickOverlayState;
+    function normalizeViewerInvalidationReason(reason) {
+      const normalize = window.RenderInvalidation?.normalizeReason;
+      return typeof normalize === 'function' ? normalize(reason) : reason;
+    }
+    function isOverlayOnlyViewerInvalidationReason(reason) {
+      const isOverlayOnly = window.RenderInvalidation?.isOverlayOnly;
+      return typeof isOverlayOnly === 'function' && isOverlayOnly(reason);
+    }
+    const SECTION_OVERLAY_RESET_REASONS = new Set(['file-id', 'key1']);
+    const PREDICTION_OVERLAY_RESET_REASONS = new Set(['file-id', 'key1', 'layer', 'pipeline']);
+    function requestViewerBaseRender(reason, scheduleBaseRender, payload = {}) {
+      const request = window.requestViewerBaseRenderInvalidation;
+      if (typeof request === 'function') {
+        return request(reason, scheduleBaseRender, payload);
+      }
+      return null;
+    }
+    function requestViewerOverlayRedraw(reason, payload = {}) {
+      const request = window.requestViewerOverlayInvalidation || window.invalidateViewerRender;
+      return typeof request === 'function' ? request(reason, payload) : null;
+    }
+    function updateManualPickOverlay(reason = 'manual-pick-overlay', options = {}) {
+      if (typeof window.updateManualPickOverlayState !== 'function') return false;
+      const normalizedReason = normalizeViewerInvalidationReason(reason);
+      window.updateManualPickOverlayState({
+        manualPicks: Array.isArray(picks) ? picks : [],
+        pending: getPendingPickOverlayState(),
+        timeTransform: window.pickRawTimeToDisplayTime,
+      }, {
+        reason: normalizedReason,
+        redraw: false,
+      });
+      if (options.redraw !== false && isOverlayOnlyViewerInvalidationReason(normalizedReason)) {
+        requestViewerOverlayRedraw(normalizedReason);
+      } else if (options.redraw !== false) {
+        window.scheduleViewerOverlaySync?.(normalizedReason);
+      }
+      return true;
+    }
+
+    function currentPredictionOverlayContext() {
+      const slider = document.getElementById('key1_slider');
+      const idx = slider ? parseInt(slider.value, 10) : 0;
+      const key1Val = key1Values?.[idx];
+      const layer = (document.getElementById('layerSelect')?.value) || 'raw';
+      return {
+        fileId: currentFileId || null,
+        key1: key1Val ?? null,
+        layer,
+        pipelineKey: window.latestPipelineKey || null,
+        modelId: getSelectedFbModelId(),
+      };
+    }
+
+    function currentPredictionOverlaySource() {
+      return {
+        fileId: currentFileId || null,
+        key1: currentFbKey ?? null,
+        layer: currentFbLayer || 'raw',
+        pipelineKey: currentFbPipelineKey || null,
+        modelId: currentFbModelId || null,
+      };
+    }
+
+    function updatePredictionOverlay(reason = 'prediction-overlay', options = {}) {
+      if (typeof window.updatePredictionOverlayState !== 'function') return false;
+      const normalizedReason = normalizeViewerInvalidationReason(reason);
+      const showNode = document.getElementById('showFbPred');
+      const compareActive = typeof isCompareModeEnabled === 'function' && isCompareModeEnabled();
+      window.updatePredictionOverlayState({
+        predictedPicks: Array.isArray(predictedPicks) ? predictedPicks : [],
+        source: currentPredictionOverlaySource(),
+        current: currentPredictionOverlayContext(),
+        show: !!showNode?.checked && !compareActive,
+        timeTransform: window.pickRawTimeToDisplayTime,
+      }, {
+        reason: normalizedReason,
+        redraw: false,
+      });
+      if (options.redraw !== false && isOverlayOnlyViewerInvalidationReason(normalizedReason)) {
+        requestViewerOverlayRedraw(normalizedReason);
+      } else if (options.redraw !== false) {
+        window.scheduleViewerOverlaySync?.(normalizedReason);
+      }
+      return true;
+    }
+
+    function syncPredictionOverlayFromViewerState(reason = 'prediction-overlay', options = {}) {
+      return updatePredictionOverlay(reason, options);
+    }
+
+    function clearManualOverlayForSectionChange(reason) {
+      picks = [];
+      clearManualPickHistory();
+      updateManualPickOverlay(reason, { redraw: false });
+      return true;
+    }
+
+    function clearPredictionOverlayForContextChange(reason) {
+      const current = currentPredictionOverlayContext();
+      predictedPicks = [];
+      currentFbKey = null;
+      currentFbLayer = current.layer || 'raw';
+      currentFbPipelineKey = current.pipelineKey || null;
+      currentFbModelId = current.modelId || null;
+      updatePredictionOverlay(reason, { redraw: false });
+      return true;
+    }
+
+    function onFbPredictionToggle(checked) {
+      localStorage.setItem('showFbPred', checked ? 'true' : 'false');
+      updatePredictionOverlay('prediction-toggle');
+    }
+
+    window.syncPredictionOverlayFromViewerState = syncPredictionOverlayFromViewerState;
+    window.onFbPredictionToggle = onFbPredictionToggle;
+    window.syncViewerOverlayInvalidationState = function syncViewerOverlayInvalidationState(reason = 'overlay') {
+      const normalizedReason = normalizeViewerInvalidationReason(reason);
+      let didSync = false;
+      if (SECTION_OVERLAY_RESET_REASONS.has(normalizedReason)) {
+        didSync = clearManualOverlayForSectionChange(normalizedReason) || didSync;
+      }
+      if (PREDICTION_OVERLAY_RESET_REASONS.has(normalizedReason)) {
+        didSync = clearPredictionOverlayForContextChange(normalizedReason) || didSync;
+      }
+      if (
+        normalizedReason === 'manual-pick-add' ||
+        normalizedReason === 'manual-pick-move' ||
+        normalizedReason === 'manual-pick-delete' ||
+        normalizedReason === 'pending-pick-state' ||
+        normalizedReason === 'selected-pick-change' ||
+        normalizedReason === 'hover-pick-change'
+      ) {
+        updateManualPickOverlay(normalizedReason, { redraw: false });
+        didSync = true;
+      }
+      if (
+        normalizedReason === 'prediction-toggle' ||
+        normalizedReason === 'prediction-data-current-viewport'
+      ) {
+        updatePredictionOverlay(normalizedReason, { redraw: false });
+        didSync = true;
+      }
+      return didSync;
+    };
+
     let manualPickRedoStack = [];
     let applyingManualPickHistory = false;
 
@@ -554,7 +701,9 @@
       updateKey1Display();
       clearSectionNavValidation();
       if (!currentFileId || !Array.isArray(key1Values) || key1Values.length === 0) return;
-      fetchAndPlotDebounced();        // 入力が止まってから実行
+      requestViewerBaseRender('key1', () => {
+        fetchAndPlotDebounced();        // 入力が止まってから実行
+      }, { immediate: false, source: 'key1-input' });
     }
 
     async function onKey1Change(options = {}) {
@@ -573,9 +722,13 @@
         await flushPickOps();
       }
       if (immediate) {
-        fetchAndPlotDebounced.flush();
+        requestViewerBaseRender('key1', () => {
+          fetchAndPlotDebounced.flush();
+        }, { immediate: true, source: 'key1-change' });
       } else {
-        fetchAndPlotDebounced();
+        requestViewerBaseRender('key1', () => {
+          fetchAndPlotDebounced();
+        }, { immediate: false, source: 'key1-change' });
       }
     }
 
@@ -932,6 +1085,7 @@
     let forceFullExtentOnce = false;    // next window calc uses full extent with no padding
     let pickOverlayRaf = 0;
     let pickOverlayDirty = false;
+    let pickOverlayReason = 'pending-pick-state';
     let pendingHotkeyXPanDelta = 0;
     let hotkeyXPanRaf = 0;
     let plotHover = false;
@@ -1108,7 +1262,9 @@
           const targetState = useBefore ? change.before : change.after;
           applyManualPickState(trace, targetState);
         }
-        schedulePickOverlayUpdate();
+        schedulePickOverlayUpdate(entry.changes.some((change) => change.before && change.after)
+          ? 'manual-pick-move'
+          : 'manual-pick-add');
         return true;
       } finally {
         applyingManualPickHistory = false;
@@ -1156,6 +1312,7 @@
 
     function onFbModelChange() {
       updateFbModelStorageFromSelect();
+      updatePredictionOverlay('prediction-model-change');
       recomputeFbPicks();
     }
 
@@ -1297,6 +1454,9 @@
 
     function finishSuppressedRelayout() {
       suppressRelayout = false;
+      if (typeof window.scheduleViewerOverlaySync === 'function') {
+        window.scheduleViewerOverlaySync('suppressed-relayout');
+      }
       if (
         typeof hasPendingPickOverlayState === 'function' &&
         hasPendingPickOverlayState() &&
@@ -1306,129 +1466,27 @@
       }
     }
 
-    function schedulePickOverlayUpdate() {
+    function schedulePickOverlayUpdate(reason = 'pending-pick-state') {
       pickOverlayDirty = true;
+      pickOverlayReason = normalizeViewerInvalidationReason(reason);
       if (pickOverlayRaf !== 0) return;
       pickOverlayRaf = requestAnimationFrame(() => {
         pickOverlayRaf = 0;
         flushPickOverlayUpdate();
         if (pickOverlayDirty && !isRelayouting) {
-          schedulePickOverlayUpdate();
+          schedulePickOverlayUpdate(pickOverlayReason);
         }
       });
-    }
-
-    function resolvePendingPickYRange(plotDiv) {
-      const yaRange = plotDiv?._fullLayout?.yaxis?.range;
-      if (
-        Array.isArray(yaRange) &&
-        yaRange.length === 2 &&
-        Number.isFinite(yaRange[0]) &&
-        Number.isFinite(yaRange[1])
-      ) {
-        return {
-          yMin: Math.min(yaRange[0], yaRange[1]),
-          yMax: Math.max(yaRange[0], yaRange[1]),
-        };
-      }
-
-      const dt = Number(window.defaultDt ?? defaultDt) || 1;
-      const wy0 = Number(latestWindowRender?.y0);
-      const wy1 = Number(latestWindowRender?.y1);
-      if (Number.isFinite(wy0) && Number.isFinite(wy1)) {
-        return {
-          yMin: Math.min(wy0 * dt, wy1 * dt),
-          yMax: Math.max(wy0 * dt, wy1 * dt),
-        };
-      }
-
-      return { yMin: 0, yMax: 0 };
     }
 
     function flushPickOverlayUpdate() {
       if (!pickOverlayDirty) return;
       if (isRelayouting) return;
 
-      const plotDiv = document.getElementById('plot');
-      if (!plotDiv) {
-        pickOverlayDirty = false;
-        return;
-      }
-      let xMin = null;
-      let xMax = null;
-
-      // Prefer the rendered window span so panning does not trim pick traces to viewport only.
-      if (Number.isFinite(renderedStart) && Number.isFinite(renderedEnd)) {
-        xMin = Math.floor(Math.min(renderedStart, renderedEnd));
-        xMax = Math.ceil(Math.max(renderedStart, renderedEnd));
-      }
-
-      if (!(Number.isFinite(xMin) && Number.isFinite(xMax) && xMin <= xMax)) {
-        const wx0 = Number(latestWindowRender?.x0);
-        const wx1 = Number(latestWindowRender?.x1);
-        if (Number.isFinite(wx0) && Number.isFinite(wx1)) {
-          xMin = Math.floor(Math.min(wx0, wx1));
-          xMax = Math.ceil(Math.max(wx0, wx1));
-        }
-      }
-
-      if (!(Number.isFinite(xMin) && Number.isFinite(xMax) && xMin <= xMax)) {
-        const xaRange = plotDiv?._fullLayout?.xaxis?.range;
-        if (
-          Array.isArray(xaRange) &&
-          xaRange.length === 2 &&
-          Number.isFinite(xaRange[0]) &&
-          Number.isFinite(xaRange[1])
-        ) {
-          xMin = Math.floor(Math.min(xaRange[0], xaRange[1]));
-          xMax = Math.ceil(Math.max(xaRange[0], xaRange[1]));
-        }
-      }
-
-      if (!(Number.isFinite(xMin) && Number.isFinite(xMax) && xMin <= xMax)) {
-        pickOverlayDirty = false;
-        return;
-      }
-
-      const showPred = !!document.getElementById('showFbPred')?.checked;
-      const [manualPickTr, predPickTr] = buildPickMarkerTraces({
-        manualPicks: picks,
-        predicted: showPred ? predictedPicks : [],
-        xMin,
-        xMax,
-        showPredicted: showPred,
-        timeTransform: window.pickRawTimeToDisplayTime,
-      });
-      const { yMin, yMax } = resolvePendingPickYRange(plotDiv);
-      const pendingPickTr = buildPendingPickMarkerTrace({
-        pending: getPendingPickOverlayState(),
-        yMin,
-        yMax,
-      });
       pickOverlayDirty = false;
-      const resolver = (typeof resolvePickTraceIndices === 'function')
-        ? resolvePickTraceIndices
-        : window.resolvePickTraceIndices;
-      if (typeof resolver !== 'function') {
-        console.warn('[PICKS] resolvePickTraceIndices is not available');
-        return;
-      }
-      const { manualIdx, predIdx, pendingIdx } = resolver(plotDiv);
-      if (manualIdx < 0 || predIdx < 0 || pendingIdx < 0) {
-        console.warn('[PICKS] pick traces are missing; overlay restyle skipped');
-        if (typeof renderLatestView === 'function') renderLatestView();
-        return;
-      }
-      const restyleResult = Plotly.restyle(plotDiv, {
-        x: [manualPickTr.x, predPickTr.x, pendingPickTr.x],
-        y: [manualPickTr.y, predPickTr.y, pendingPickTr.y],
-        visible: [true, !!showPred, !!pendingPickTr.visible],
-        mode: [manualPickTr.mode, predPickTr.mode, pendingPickTr.mode],
-        marker: [manualPickTr.marker, predPickTr.marker, pendingPickTr.marker],
-        line: [manualPickTr.line, predPickTr.line, pendingPickTr.line],
-      }, [manualIdx, predIdx, pendingIdx]);
-      if (restyleResult && typeof restyleResult.catch === 'function') {
-        restyleResult.catch((err) => console.warn('pick overlay restyle failed', err));
+      const reason = pickOverlayReason || 'pending-pick-state';
+      if (!updateManualPickOverlay(reason)) {
+        console.warn('[PICKS] manual pick overlay renderer is not available');
       }
     }
 
@@ -1508,6 +1566,9 @@
       const plotDiv = document.getElementById('plot');
       if (!plotDiv) return;
 
+      abortAllRenderRequests();
+      windowFetchCtrl = null;
+
       if (!immediate) {
         scheduleWindowFetch();
         return;
@@ -1530,6 +1591,13 @@
         result.catch((err) => console.warn('Window fetch failed', err));
       }
     }
+
+    function requestViewportBaseRender({ immediate = false } = {}) {
+      return requestViewerBaseRender('viewport-full-res', () => {
+        requestWindowFetch({ immediate });
+      }, { immediate, source: 'viewport' });
+    }
+    window.requestViewportBaseRender = requestViewportBaseRender;
 
     function flushPendingResetFetchIfNeeded() {
       if (!pendingResetFetch) return;
@@ -1561,7 +1629,7 @@
           latestWindowRender.stepY !== 1 ||
           latestWindowRender.x0 > win.x0 || latestWindowRender.x1 < win.x1 ||
           latestWindowRender.y0 > win.y0 || latestWindowRender.y1 < win.y1;
-        if (needFresh) requestWindowFetch({ immediate });
+        if (needFresh) requestViewportBaseRender({ immediate });
         return;
       }
 
@@ -1581,7 +1649,7 @@
         latestWindowRender.x0 > win.x0 || latestWindowRender.x1 < win.x1 ||
         latestWindowRender.y0 > win.y0 || latestWindowRender.y1 < win.y1;
 
-      if (needFresh) requestWindowFetch({ immediate });
+      if (needFresh) requestViewportBaseRender({ immediate });
     }
 
     // （任意：すでに入れているならそのままでOK）
@@ -1783,7 +1851,7 @@
         }
       }
 
-      requestWindowFetch({ immediate: true });
+      requestViewportBaseRender({ immediate: true });
     }
 
     function changeSectionByDelta(delta) {
@@ -2184,9 +2252,16 @@
         currentFbKey = keyAtNow;
         currentFbLayer = layerNow;
         currentFbPipelineKey = pKeyNow;
-        renderLatestView();
+        currentFbModelId = modelIdNow;
+        updatePredictionOverlay('prediction-cache-hit');
         return;
       }
+      predictedPicks = [];
+      currentFbKey = null;
+      currentFbLayer = layerNow;
+      currentFbPipelineKey = pKeyNow;
+      currentFbModelId = modelIdNow;
+      updatePredictionOverlay('prediction-cache-miss');
       predictFromFb();
     }
 
@@ -2235,6 +2310,7 @@
           currentFbKey = keyAtStart;
           currentFbLayer = layerAtStart;
           currentFbPipelineKey = pipelineKeyAtStart;
+          currentFbModelId = modelIdAtStart;
           if (setOpStatusIfCurrent('predict', statusToken, 'success', `cached (${predictedPicks.length} picks)`)) {
             pushToast({
               level: 'success',
@@ -2243,9 +2319,16 @@
               dedupeKey: 'predict:success',
             });
           }
-          renderLatestView();
+          updatePredictionOverlay('prediction-cache-hit');
           return;
         }
+
+        predictedPicks = [];
+        currentFbKey = null;
+        currentFbLayer = layerAtStart;
+        currentFbPipelineKey = pipelineKeyAtStart;
+        currentFbModelId = modelIdAtStart;
+        updatePredictionOverlay('prediction-request-start');
 
         if (!setOpStatusIfCurrent('predict', statusToken, 'running', 'requesting FB picks...')) return;
 
@@ -2296,6 +2379,7 @@
         currentFbKey = keyAtStart;
         currentFbLayer = layerAtStart;
         currentFbPipelineKey = pipelineKeyAtStart;
+        currentFbModelId = modelIdAtStart;
         fbPredCache.set(cacheKeyStr, {
           picks: picks.slice(),
           method,
@@ -2310,7 +2394,7 @@
             dedupeKey: 'predict:success',
           });
         }
-        renderLatestView();
+        updatePredictionOverlay('prediction-complete');
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
         if (setOpStatusIfCurrent('predict', statusToken, 'error', message)) {
@@ -2333,11 +2417,11 @@
       currentScaling = rawValue === 'tracewise' ? 'tracewise' : 'amax';
       if (sel) sel.value = currentScaling;
       try { localStorage.setItem('scaling_mode', currentScaling); } catch (_) {}
-      if (windowFetchCtrl) {
-        windowFetchCtrl.abort();
+      requestViewerBaseRender('scaling', () => {
+        abortAllRenderRequests();
         windowFetchCtrl = null;
-      }
-      scheduleWindowFetch();
+        scheduleWindowFetch();
+      }, { source: 'scaling-change' });
     }
 
     function onWiggleDensityChange() {
@@ -2347,9 +2431,13 @@
       const stored = cfg.setWiggleDensity(v);
       if (el) el.value = stored.toFixed(2);
       WIGGLE_DENSITY_THRESHOLD = stored;
-      // Apply now: re-evaluate window mode and redraw
-      renderLatestView();
-      scheduleWindowFetch();
+      requestViewerBaseRender('viewport-full-res', () => {
+        abortAllRenderRequests();
+        windowFetchCtrl = null;
+        // Apply now: re-evaluate window mode and redraw
+        renderLatestView();
+        scheduleWindowFetch();
+      }, { source: 'wiggle-density-change' });
     }
 
     // Restore UI on load
@@ -2401,7 +2489,9 @@
       const val = el ? el.value : '1';
       document.getElementById('gain_display').textContent = `${parseFloat(val)}×`;
       localStorage.setItem('gain', val);
-      scheduleRestyle();
+      requestViewerBaseRender('gain', () => {
+        scheduleRestyle();
+      }, { source: 'gain-change' });
     }
 
     function onColormapChange() {
@@ -2433,7 +2523,7 @@
       } else {
         applyDragMode();
       }
-      schedulePickOverlayUpdate();
+      schedulePickOverlayUpdate('pending-pick-state');
     }
 
     function getTraceSamplesForProcessingRange(trace, rowLoIncl, rowHiIncl) {
@@ -2730,14 +2820,21 @@
     }
 
     function syncActiveViewerTargetState(isFileLoaded) {
+      const targetState = {
+        fileId: currentFileId,
+        displayName: currentFileName,
+        key1Byte: currentKey1Byte,
+        key2Byte: currentKey2Byte,
+        isFileLoaded: Boolean(isFileLoaded),
+      };
       if (window.SeisViewerState && typeof window.SeisViewerState.syncActiveFileTarget === 'function') {
-        window.SeisViewerState.syncActiveFileTarget({
-          fileId: currentFileId,
-          displayName: currentFileName,
-          key1Byte: currentKey1Byte,
-          key2Byte: currentKey2Byte,
-          isFileLoaded: Boolean(isFileLoaded),
-        });
+        window.SeisViewerState.syncActiveFileTarget(targetState);
+      }
+      if (typeof window.persistActiveViewerToolTarget === 'function') {
+        window.persistActiveViewerToolTarget(targetState);
+      }
+      if (typeof window.refreshViewerToolLinks === 'function') {
+        window.refreshViewerToolLinks();
       }
     }
 
@@ -2801,12 +2898,19 @@
       if (!currentFileId) return;
       const idx = parseInt(document.getElementById('key1_slider').value);
       const key1Val = key1Values?.[idx];
-      if (key1Val === undefined) return;
+      if (key1Val === undefined) {
+        picks = [];
+        updateManualPickOverlay('picks-fetch-clear');
+        return;
+      }
+      picks = [];
+      updateManualPickOverlay('picks-fetch-clear');
       try {
         const res = await fetch(`/picks?file_id=${currentFileId}&key1=${encodeURIComponent(key1Val)}&key1_byte=${currentKey1Byte}&key2_byte=${currentKey2Byte}`);
         if (res.ok) {
           const data = await res.json();
           picks = (data.picks || []).map(p => ({ trace: p.trace, time: p.time }));
+          updateManualPickOverlay('picks-fetch');
         }
         const [x0, x1] = visibleXRng();
         D('PICKS@fetchPicks', { count: picks.length, vis: [x0, x1],
@@ -2882,15 +2986,15 @@
       const idx = Number.isFinite(idxRaw) ? idxRaw : 0;
       const key1Val = key1Values?.[idx];
       if (key1Val === undefined) return [];
+      picks = [];
+      updateManualPickOverlay('picks-reload-clear');
       try {
         const r = await fetch(`/picks?file_id=${encodeURIComponent(fileId)}&key1=${encodeURIComponent(key1Val)}&key1_byte=${currentKey1Byte}&key2_byte=${currentKey2Byte}`);
         if (!r.ok) return [];
         const j = await r.json();
         const arr = (j.picks || []).map(p => ({ trace: (p.trace | 0), time: +p.time }));
         picks = arr;
-        if (typeof renderLatestView === 'function') {
-          try { renderLatestView(); } catch (e) { console.warn('render after picks failed', e); }
-        }
+        updateManualPickOverlay('picks-reload');
         const [x0, x1] = visibleXRng();
         D('PICKS@reload', {
           count: picks.length,
@@ -2936,16 +3040,25 @@
         sigmaCur,
       );
       predictedPicks = cachedEntry && cachedEntry.picks ? cachedEntry.picks.slice() : [];
+      if (cachedEntry) {
+        currentFbKey = key1Val;
+        currentFbLayer = layerCur;
+        currentFbPipelineKey = pKeyCur;
+        currentFbModelId = modelIdCur;
+      } else {
+        currentFbKey = null;
+        currentFbLayer = layerCur;
+        currentFbPipelineKey = pKeyCur;
+        currentFbModelId = modelIdCur;
+      }
+      updatePredictionOverlay('section-cache-sync', { redraw: false });
 
       await fetchPicks();
 
       latestWindowRender = null;
       if (typeof clearCompareRender === 'function') clearCompareRender();
-      bumpWindowFetchId();
-      if (windowFetchCtrl) {
-        windowFetchCtrl.abort();
-        windowFetchCtrl = null;
-      }
+      abortAllRenderRequests();
+      windowFetchCtrl = null;
       if (typeof hideLoading === 'function') hideLoading();
       uiResetNonce++;
       if (window.pipelineEvents && typeof window.pipelineEvents.emit === 'function') {
@@ -2973,14 +3086,19 @@
 
     function drawSelectedLayer(start = null, end = null) {
       D('DRAW@selectLayer', { layer: document.getElementById('layerSelect')?.value, start, end });
-      latestSeismicData = null;
-      if (typeof isCompareModeEnabled === 'function' && isCompareModeEnabled()) {
-        if (typeof renderCompareLatestView === 'function') renderCompareLatestView();
+      updatePredictionOverlay('layer-change', { redraw: false });
+      requestViewerBaseRender('layer', () => {
+        latestSeismicData = null;
+        abortAllRenderRequests();
+        windowFetchCtrl = null;
+        if (typeof isCompareModeEnabled === 'function' && isCompareModeEnabled()) {
+          if (typeof renderCompareLatestView === 'function') renderCompareLatestView();
+          scheduleWindowFetch();
+          return;
+        }
+        renderLatestView();
         scheduleWindowFetch();
-        return;
-      }
-      renderLatestView();
-      scheduleWindowFetch();
+      }, { source: 'layer-change', start, end });
     }
 
 
@@ -3004,6 +3122,19 @@
         latestWindowRender.requestedLayer === layer &&
         latestWindowRender.key1 === key1Val
       ) {
+        if (
+          typeof latestWindowRender.scaling === 'string' &&
+          latestWindowRender.scaling !== currentScaling
+        ) {
+          return;
+        }
+        if (
+          typeof latestWindowRender.lmoKey === 'string' &&
+          typeof window.currentLmoKey === 'function' &&
+          latestWindowRender.lmoKey !== window.currentLmoKey()
+        ) {
+          return;
+        }
         if (layer !== 'raw') {
           const pipelineKeyNow = window.latestPipelineKey || null;
           if ((latestWindowRender.pipelineKey || null) !== (pipelineKeyNow || null)) {
@@ -3112,7 +3243,7 @@
         const deduped = dedupeLocalPicksByTrace();
         if (deduped > 0) {
           console.warn(`[PICKS] removed ${deduped} duplicate local pick(s) before handling input`);
-          schedulePickOverlayUpdate();
+          schedulePickOverlayUpdate('manual-pick-delete');
         }
 
         console.log('🔥 pick request', { trace, time, shiftKey, ctrlKey, altKey });
@@ -3144,7 +3275,7 @@
           await Promise.all(promises);
           recordManualPickHistory(historyChanges);
           D('PICKS@handlePickNormalized:line', { range: [start, end], count: picks.length });
-          schedulePickOverlayUpdate();
+          schedulePickOverlayUpdate('manual-pick-delete');
           return;
         }
 
@@ -3200,7 +3331,9 @@
           await Promise.all(promises);
           recordManualPickHistory(historyChanges);
           D('PICKS@handlePickNormalized:line', { range: [xStart, xEnd], count: picks.length });
-          schedulePickOverlayUpdate();
+          schedulePickOverlayUpdate(
+            historyChanges.some((change) => change.before) ? 'manual-pick-move' : 'manual-pick-add',
+          );
           return;
         }
 
@@ -3226,7 +3359,7 @@
           displayTime,
           count: picks.length,
         });
-        schedulePickOverlayUpdate();
+        schedulePickOverlayUpdate(hadExisting ? 'manual-pick-move' : 'manual-pick-add');
       } finally {
         handlePickNormalized._busy = false;
         const next = handlePickNormalized._queued;
@@ -3375,7 +3508,7 @@
           renderedEnd = null;
           latestWindowRender = null;
           if (typeof clearCompareRender === 'function') clearCompareRender();
-          bumpWindowFetchId();
+          abortAllRenderRequests();
           if (typeof hideLoading === 'function') hideLoading();
           latestSeismicData = null;
           latestTapData = {};
@@ -3383,17 +3516,17 @@
 
           picks = [];
           predictedPicks = [];
+          updateManualPickOverlay('file-change-clear');
           currentFbKey = null;
           currentFbLayer = 'raw';
           currentFbPipelineKey = null;
+          currentFbModelId = null;
+          updatePredictionOverlay('file-change-clear');
           fbPredCache.clear();
           latestPipelineKey = null;
           window.latestPipelineKey = null;
           resetOpStatuses();
-          if (windowFetchCtrl) {
-            windowFetchCtrl.abort();
-            windowFetchCtrl = null;
-          }
+          windowFetchCtrl = null;
           updateSectionNavigation({ syncDisplay: true, syncJumpInput: true });
           if (!currentFileId) {
             currentFileName = '';
@@ -3424,9 +3557,11 @@
           }
           hideViewerEmptyState();
           syncActiveViewerTargetState(true);
-          (typeof fetchAndPlotDebounced?.flush === 'function')
-            ? fetchAndPlotDebounced.flush()
-            : fetchAndPlot();
+          requestViewerBaseRender('file-id', () => {
+            (typeof fetchAndPlotDebounced?.flush === 'function')
+              ? fetchAndPlotDebounced.flush()
+              : fetchAndPlot();
+          }, { immediate: true, source: 'file-change' });
         });
       }
     });
@@ -3441,5 +3576,5 @@
       if (linePickStart || deleteRangeStart !== null) {
         clearPendingPickState('lmo-change');
       }
-      schedulePickOverlayUpdate();
+      schedulePickOverlayUpdate('pending-pick-state');
     });

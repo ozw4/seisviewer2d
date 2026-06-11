@@ -8,8 +8,8 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-from app.services.refraction_static_artifacts import write_refraction_static_artifacts
-from app.services.refraction_static_types import (
+from app.statics.refraction.artifacts import write_refraction_static_artifacts
+from app.statics.refraction.domain.types import (
     RefractionDatumStaticsResult,
     RefractionStaticInputModel,
 )

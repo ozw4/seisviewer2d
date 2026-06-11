@@ -9,12 +9,22 @@ import json
 from pathlib import Path
 import re
 import shutil
-from typing import Any, Literal
+from typing import Literal
 from uuid import uuid4
 
 import numpy as np
 
 from app.core.state import AppState
+from app.services.common.artifact_io import write_json_atomic
+from app.services.common.array_validation import (
+    coerce_1d_bool_array,
+    coerce_1d_integer_int64,
+    coerce_1d_real_numeric_float64,
+    coerce_header_byte as _coerce_header_byte,
+    coerce_nonnegative_finite_float as _coerce_nonnegative_finite_float,
+    coerce_positive_finite_float as _coerce_positive_finite_float,
+    coerce_positive_int as _coerce_positive_int,
+)
 from app.services.corrected_trace_store import (
     TimeShiftedTraceStoreResult,
     build_time_shifted_trace_store,
@@ -489,7 +499,7 @@ def apply_time_term_static_correction_to_trace_store(
         )
         _raise_if_cancelled(cancel_check)
         if corrected_file_json_path is not None:
-            _write_json_atomic(
+            write_json_atomic(
                 corrected_file_json_path,
                 _build_corrected_file_payload(
                     corrected_file_id=corrected_file_id,
@@ -502,6 +512,7 @@ def apply_time_term_static_correction_to_trace_store(
                     applied_shift_field=applied_shift_field,
                     shift_stats_ms=shift_stats_ms,
                 ),
+                make_parent=True,
             )
     except Exception:
         _cleanup_registration(
@@ -858,24 +869,6 @@ def _shift_stats_ms(shift_s: np.ndarray) -> dict[str, float]:
     }
 
 
-def _write_json_atomic(path: Path, payload: dict[str, object]) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    tmp_path = path.with_name(f'{path.name}.tmp')
-    try:
-        with tmp_path.open('w', encoding='utf-8') as handle:
-            json.dump(
-                payload,
-                handle,
-                allow_nan=False,
-                ensure_ascii=True,
-                sort_keys=True,
-            )
-        tmp_path.replace(path)
-    except Exception:
-        tmp_path.unlink(missing_ok=True)
-        raise
-
-
 def _cleanup_registration(
     state: AppState,
     *,
@@ -940,19 +933,16 @@ def _require_1d_float64(
     expected_shape: tuple[int, ...] | None = None,
 ) -> np.ndarray:
     arr = np.asarray(value)
-    _reject_object_dtype(arr, name=name)
-    if arr.ndim != 1:
-        raise ValueError(f'{name} must be 1-dimensional')
-    if expected_shape is not None and arr.shape != expected_shape:
-        raise ValueError(
-            f'{name} shape mismatch: expected {expected_shape}, got {arr.shape}'
-        )
+    if arr.dtype == object:
+        raise ValueError(f'{name} must not have object dtype')
     if not np.issubdtype(arr.dtype, np.floating):
         raise ValueError(f'{name} must be a float array')
-    out = np.asarray(arr, dtype=np.float64)
-    if not np.all(np.isfinite(out)):
-        raise ValueError(f'{name} must contain only finite values')
-    return np.ascontiguousarray(out, dtype=np.float64)
+    return coerce_1d_real_numeric_float64(
+        arr,
+        name=name,
+        expected_shape=expected_shape,
+        require_finite=True,
+    )
 
 
 def _require_1d_bool(
@@ -961,17 +951,11 @@ def _require_1d_bool(
     name: str,
     expected_shape: tuple[int, ...],
 ) -> np.ndarray:
-    arr = np.asarray(value)
-    _reject_object_dtype(arr, name=name)
-    if arr.ndim != 1:
-        raise ValueError(f'{name} must be 1-dimensional')
-    if arr.shape != expected_shape:
-        raise ValueError(
-            f'{name} shape mismatch: expected {expected_shape}, got {arr.shape}'
-        )
-    if not np.issubdtype(arr.dtype, np.bool_):
-        raise ValueError(f'{name} must have bool dtype')
-    return np.ascontiguousarray(arr, dtype=bool)
+    return coerce_1d_bool_array(
+        value,
+        name=name,
+        expected_shape=expected_shape,
+    )
 
 
 def _require_1d_int64(
@@ -980,20 +964,12 @@ def _require_1d_int64(
     name: str,
     expected_shape: tuple[int, ...],
 ) -> np.ndarray:
-    arr = np.asarray(value)
-    _reject_object_dtype(arr, name=name)
-    if arr.ndim != 1:
-        raise ValueError(f'{name} must be 1-dimensional')
-    if arr.shape != expected_shape:
-        raise ValueError(
-            f'{name} shape mismatch: expected {expected_shape}, got {arr.shape}'
-        )
-    if np.issubdtype(arr.dtype, np.bool_) or not np.issubdtype(
-        arr.dtype,
-        np.integer,
-    ):
-        raise ValueError(f'{name} must have integer dtype')
-    return np.ascontiguousarray(arr, dtype=np.int64)
+    return coerce_1d_integer_int64(
+        value,
+        name=name,
+        expected_shape=expected_shape,
+        allow_integer_like_float=False,
+    )
 
 
 def _require_scalar_int(value: np.ndarray, *, name: str) -> int:
@@ -1044,48 +1020,6 @@ def _require_optional_scalar_str(value: np.ndarray, *, name: str) -> str | None:
 def _reject_object_dtype(arr: np.ndarray, *, name: str) -> None:
     if arr.dtype == object:
         raise ValueError(f'{name} must not have object dtype')
-
-
-def _coerce_positive_int(value: Any, *, name: str) -> int:
-    if isinstance(value, bool):
-        raise ValueError(f'{name} must be a positive integer')
-    if not isinstance(value, int | np.integer):
-        raise ValueError(f'{name} must be a positive integer')
-    out = int(value)
-    if out <= 0:
-        raise ValueError(f'{name} must be a positive integer')
-    return out
-
-
-def _coerce_header_byte(value: Any, *, name: str) -> int:
-    out = _coerce_positive_int(value, name=name)
-    if out > 240:
-        raise ValueError(f'{name} must be between 1 and 240')
-    return out
-
-
-def _coerce_positive_finite_float(value: Any, *, name: str) -> float:
-    if isinstance(value, bool):
-        raise ValueError(f'{name} must be finite and greater than 0')
-    try:
-        out = float(value)
-    except (TypeError, ValueError) as exc:
-        raise ValueError(f'{name} must be finite and greater than 0') from exc
-    if not np.isfinite(out) or out <= 0.0:
-        raise ValueError(f'{name} must be finite and greater than 0')
-    return out
-
-
-def _coerce_nonnegative_finite_float(value: Any, *, name: str) -> float:
-    if isinstance(value, bool):
-        raise ValueError(f'{name} must be finite and non-negative')
-    try:
-        out = float(value)
-    except (TypeError, ValueError) as exc:
-        raise ValueError(f'{name} must be finite and non-negative') from exc
-    if not np.isfinite(out) or out < 0.0:
-        raise ValueError(f'{name} must be finite and non-negative')
-    return out
 
 
 __all__ = [

@@ -6,17 +6,17 @@ import numpy as np
 import pytest
 from scipy import sparse
 
-import app.services.refraction_static_solver as solver_module
+import app.statics.refraction.domain.solver as solver_module
 from app.api.schemas import RefractionStaticModelRequest, RefractionStaticSolverRequest
-from app.services.refraction_static_design_matrix import (
+from app.statics.refraction.application.design_matrix import (
     build_refraction_static_design_matrix_from_arrays,
 )
-from app.services.refraction_static_solver import (
+from app.statics.refraction.domain.solver import (
     RefractionStaticSolverError,
     solve_refraction_static_bounded_ls,
     solve_refraction_static_bounded_ls_from_matrix,
 )
-from app.services.refraction_static_types import (
+from app.statics.refraction.domain.types import (
     RefractionStaticDesignMatrix,
     ResolvedRefractionFirstLayer,
 )

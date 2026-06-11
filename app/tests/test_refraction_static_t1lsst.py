@@ -9,21 +9,21 @@ import numpy as np
 import pytest
 
 from app.api.schemas import RefractionStaticApplyRequest
-from app.services.refraction_static_artifacts import (
+from app.statics.refraction.artifacts import (
     REFRACTION_STATIC_ARTIFACTS_JSON_NAME,
     write_refraction_static_artifacts,
 )
-from app.services.refraction_static_t1lsst import (
+from app.statics.refraction.domain.t1lsst import (
     REFRACTION_T1LSST_1LAYER_COMPONENTS_CSV_NAME,
     T1LSST_SIGN_CONVENTION,
     RefractionT1LSSTError,
     compute_t1lsst_1layer_thickness,
     compute_t1lsst_1layer_weathering_correction,
 )
-from app.services.refraction_static_weathering import (
+from app.statics.refraction.application.weathering import (
     compute_weathering_thickness_from_half_intercept_time,
 )
-from app.services.refraction_static_weathering_replacement import (
+from app.statics.refraction.application.weathering_replacement import (
     compute_weathering_replacement_shift_s,
 )
 from app.tests._refraction_static_synthetic import (

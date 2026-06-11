@@ -8,12 +8,12 @@ import pytest
 from fastapi.testclient import TestClient
 
 from app.main import app
-from app.services.refraction_static_artifacts import (
+from app.statics.refraction.artifacts import (
     REFRACTION_FIRST_BREAK_FIT_QC_NPZ_NAME,
     REFRACTION_STATIC_QC_JSON_NAME,
     REFRACTION_STATIC_SOLUTION_NPZ_NAME,
 )
-from app.services.refraction_static_export_units import (
+from app.statics.refraction.domain.export_units import (
     REFRACTION_STATIC_REPO_SIGN_CONVENTION,
 )
 

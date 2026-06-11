@@ -5,20 +5,21 @@ import pkgutil
 
 
 def _refraction_static_artifact_submodule_names() -> set[str]:
-    import app.services.refraction_static_artifacts as pkg
+    import app.statics.refraction.artifacts as pkg
 
     return {module.name for module in pkgutil.iter_modules(pkg.__path__)}
 
 
 def test_refraction_static_artifact_package_submodules_import() -> None:
-    import app.services.refraction_static_artifacts as pkg
+    import app.statics.refraction.artifacts as pkg
 
     for module_name in _refraction_static_artifact_submodule_names():
         importlib.import_module(f'{pkg.__name__}.{module_name}')
 
 
 def test_refraction_static_artifact_facade_exports_core_public_api() -> None:
-    import app.services.refraction_static_artifacts as artifacts
+    import app.statics.refraction.artifacts as artifacts
+    import app.statics.refraction.artifacts as new_artifacts
 
     required_names = {
         'write_refraction_static_artifacts',
@@ -37,8 +38,27 @@ def test_refraction_static_artifact_facade_exports_core_public_api() -> None:
     }
 
     missing = sorted(name for name in required_names if not hasattr(artifacts, name))
+    missing_new = sorted(
+        name for name in required_names if not hasattr(new_artifacts, name)
+    )
 
     assert missing == []
+    assert missing_new == []
+
+
+def test_refraction_static_artifact_legacy_facade_matches_new_facade() -> None:
+    import app.statics.refraction.artifacts as old_artifacts
+    import app.statics.refraction.artifacts as new_artifacts
+
+    assert (
+        old_artifacts.REFRACTION_STATIC_SOLUTION_NPZ_NAME
+        == new_artifacts.REFRACTION_STATIC_SOLUTION_NPZ_NAME
+    )
+    assert (
+        old_artifacts.write_refraction_static_artifacts
+        is new_artifacts.write_refraction_static_artifacts
+    )
+    assert tuple(old_artifacts.__all__) == tuple(new_artifacts.__all__)
 
 
 def test_refraction_static_artifact_deleted_modules_are_absent() -> None:
