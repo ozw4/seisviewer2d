@@ -8,6 +8,7 @@
     "updateRemoteUserUID": false,
     "forwardPorts": [8000],
     "postCreateCommand": "codex --version && gh --version && specify check",
+    "postStartCommand": "bash /home/dcuser/.config/gh/bootstrap-gh.sh",
     "customizations": {
         "vscode": {
             "settings": {
