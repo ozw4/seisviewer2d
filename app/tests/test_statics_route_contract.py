@@ -38,10 +38,10 @@ EXPECTED_STATICS_ROUTE_CONTRACT = {
         '/statics/refraction/static-table/apply',
     ): 'refraction_static_table_apply',
     ('POST', '/statics/refraction/export'): 'refraction_static_export',
-    ('GET', '/statics/job/{job_id}/status'): 'static_job_status',
-    ('POST', '/statics/job/{job_id}/cancel'): 'static_job_cancel',
-    ('GET', '/statics/job/{job_id}/files'): 'static_job_files',
-    ('GET', '/statics/job/{job_id}/download'): 'static_job_download',
+    ('GET', '/statics/job/{job_id}/status'): 'job_status',
+    ('POST', '/statics/job/{job_id}/cancel'): 'job_cancel',
+    ('GET', '/statics/job/{job_id}/files'): 'job_files',
+    ('GET', '/statics/job/{job_id}/download'): 'job_download',
 }
 
 
