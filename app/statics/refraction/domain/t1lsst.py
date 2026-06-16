@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from pathlib import Path
 from typing import Any
 
 import numpy as np
@@ -11,43 +10,12 @@ import numpy as np
 from app.services.common.array_validation import (
     coerce_finite_float as _coerce_finite_float,
 )
-from app.services.common.artifact_io import write_csv_atomic
 from app.statics.refraction.domain.status import (
     classify_refraction_endpoint_static_status,
 )
 from app.statics.refraction.domain.types import RefractionDatumStaticsResult
 
-REFRACTION_T1LSST_1LAYER_COMPONENTS_CSV_NAME = (
-    'refraction_t1lsst_1layer_components.csv'
-)
 T1LSST_SIGN_CONVENTION = 'corrected(t) = raw(t - shift_s)'
-
-_T1LSST_COMPONENT_COLUMNS = (
-    'endpoint_kind',
-    'endpoint_key',
-    'node_id',
-    'x_m',
-    'y_m',
-    'surface_elevation_m',
-    'floating_datum_elevation_m',
-    'flat_datum_elevation_m',
-    't1_ms',
-    'v1_m_s',
-    'v2_m_s',
-    'sh1_weathering_thickness_m',
-    'refractor_elevation_m',
-    'weathering_correction_ms',
-    'floating_datum_correction_ms',
-    'flat_datum_correction_ms',
-    'elevation_correction_ms',
-    'total_static_ms',
-    'total_applied_shift_ms',
-    'solution_status',
-    'weathering_status',
-    'datum_status',
-    'static_status',
-    'sign_convention',
-)
 
 
 class RefractionT1LSSTError(ValueError):
@@ -537,21 +505,6 @@ def compose_t1lsst_1layer_static_table_components(
     return rows
 
 
-def write_refraction_t1lsst_1layer_components_csv(
-    *,
-    result: RefractionDatumStaticsResult,
-    path: Path,
-) -> None:
-    """Write the T1LSST-compatible one-layer component CSV artifact."""
-    rows = compose_t1lsst_1layer_static_table_components(result)
-    write_csv_atomic(
-        Path(path),
-        columns=_T1LSST_COMPONENT_COLUMNS,
-        rows=rows,
-        lineterminator='\r\n',
-    )
-
-
 def _endpoint_row(
     *,
     endpoint_kind: str,
@@ -909,7 +862,6 @@ def _csv_ms(value_s: object) -> str | float:
 
 
 __all__ = [
-    'REFRACTION_T1LSST_1LAYER_COMPONENTS_CSV_NAME',
     'T1LSST_SIGN_CONVENTION',
     'RefractionT1LSST2LayerThicknessResult',
     'RefractionT1LSST3LayerThicknessResult',
@@ -923,5 +875,4 @@ __all__ = [
     'compute_t1lsst_3layer_thicknesses_with_status',
     'compute_t1lsst_3layer_weathering_correction',
     'compose_t1lsst_1layer_static_table_components',
-    'write_refraction_t1lsst_1layer_components_csv',
 ]

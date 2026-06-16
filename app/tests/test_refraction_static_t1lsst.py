@@ -13,8 +13,10 @@ from app.statics.refraction.artifacts import (
     REFRACTION_STATIC_ARTIFACTS_JSON_NAME,
     write_refraction_static_artifacts,
 )
-from app.statics.refraction.domain.t1lsst import (
+from app.statics.refraction.artifacts.t1lsst import (
     REFRACTION_T1LSST_1LAYER_COMPONENTS_CSV_NAME,
+)
+from app.statics.refraction.domain.t1lsst import (
     T1LSST_SIGN_CONVENTION,
     RefractionT1LSSTError,
     compute_t1lsst_1layer_thickness,
