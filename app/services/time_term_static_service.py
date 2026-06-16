@@ -36,7 +36,7 @@ from app.services.time_term_design_matrix import (
     TimeTermDesignMatrixOptions,
     build_time_term_design_matrix,
 )
-from app.services.time_term_moveout import (
+from seis_statics.time_term import (
     TimeTermMoveoutConfig,
     compute_time_term_moveout,
 )
