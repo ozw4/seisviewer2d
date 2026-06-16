@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Any
 
 from fastapi import APIRouter, Query, Request
@@ -85,7 +86,7 @@ def build_job_lifecycle_router(
             allowed_job_types=allowed_types,
         )
 
-        return FileResponse(path=file_path, filename=name)
+        return FileResponse(path=file_path, filename=Path(file_path).name)
 
     return router
 
