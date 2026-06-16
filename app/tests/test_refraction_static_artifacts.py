@@ -69,8 +69,6 @@ from app.statics.refraction.artifacts import (
     REFRACTION_VSUB_REFRACTOR_VELOCITY_CELLS_CSV_NAME,
     REFRACTION_VSUB_REFRACTOR_VELOCITY_GRID_NPZ_NAME,
     REFRACTION_VSUB_REFRACTOR_VELOCITY_QC_JSON_NAME,
-    REFRACTION_V1_ESTIMATES_CSV_NAME,
-    REFRACTION_V1_QC_JSON_NAME,
     RECEIVER_STATIC_TABLE_CSV_NAME,
     RefractionStaticArtifactError,
     SOURCE_RECEIVER_STATIC_TABLE_NPZ_NAME,
@@ -89,6 +87,10 @@ from app.statics.refraction.artifacts.source_depth import (
 from app.statics.refraction.artifacts.uphole import (
     REFRACTION_UPHOLE_QC_JSON_NAME,
     REFRACTION_UPHOLE_SOURCES_CSV_NAME,
+)
+from app.statics.refraction.artifacts.v1 import (
+    REFRACTION_V1_ESTIMATES_CSV_NAME,
+    REFRACTION_V1_QC_JSON_NAME,
 )
 from app.statics.refraction.domain.types import RefractionLayerSolveResult
 from app.tests._refraction_static_artifact_helpers import (

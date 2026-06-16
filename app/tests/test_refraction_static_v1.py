@@ -17,12 +17,14 @@ from app.api.schemas import (
 from app.statics.refraction.application.input_model import (
     build_refraction_static_input_model_from_arrays,
 )
-from app.statics.refraction.domain.v1 import (
+from app.statics.refraction.artifacts.v1 import (
     REFRACTION_V1_ESTIMATES_CSV_NAME,
     REFRACTION_V1_QC_JSON_NAME,
+    write_refraction_v1_artifacts,
+)
+from app.statics.refraction.domain.v1 import (
     RefractionV1EstimationError,
     estimate_global_v1_from_direct_arrivals,
-    write_refraction_v1_artifacts,
 )
 from app.tests._refraction_static_synthetic import (
     SYNTHETIC_V1_M_S,
