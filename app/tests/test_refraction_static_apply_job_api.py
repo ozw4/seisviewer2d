@@ -84,11 +84,13 @@ from app.statics.refraction.application.preflight_diagnostics import (
     write_refraction_static_preflight_artifacts,
 )
 from app.statics.refraction.adapters.seisviewer2d.workflow_runner import run_refraction_static_apply_job
-from app.statics.refraction.domain.source_depth import (
+from app.statics.refraction.artifacts.source_depth import (
     REFRACTION_SOURCE_DEPTH_QC_JSON_NAME,
     REFRACTION_SOURCE_DEPTH_SOURCES_CSV_NAME,
-    resolve_refraction_source_depth,
     write_refraction_source_depth_artifacts,
+)
+from app.statics.refraction.domain.source_depth import (
+    resolve_refraction_source_depth,
 )
 from app.statics.refraction.domain.v1 import RefractionV1EstimateResult
 from app.services.trace_store_registration import trace_store_cache_key

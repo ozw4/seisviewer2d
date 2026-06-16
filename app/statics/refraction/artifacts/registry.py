@@ -21,7 +21,7 @@ from app.statics.refraction.artifacts.preflight import (
     REFRACTION_STATIC_PREFLIGHT_OBSERVATIONS_CSV_NAME,
     REFRACTION_STATIC_PREFLIGHT_QC_JSON_NAME,
 )
-from app.statics.refraction.domain.source_depth import (
+from app.statics.refraction.artifacts.source_depth import (
     REFRACTION_SOURCE_DEPTH_QC_JSON_NAME,
     REFRACTION_SOURCE_DEPTH_SOURCES_CSV_NAME,
 )

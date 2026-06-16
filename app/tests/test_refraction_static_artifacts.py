@@ -82,7 +82,7 @@ from app.statics.refraction.artifacts import (
     write_refraction_static_solution_npz,
     write_refraction_static_artifacts,
 )
-from app.statics.refraction.domain.source_depth import (
+from app.statics.refraction.artifacts.source_depth import (
     REFRACTION_SOURCE_DEPTH_QC_JSON_NAME,
     REFRACTION_SOURCE_DEPTH_SOURCES_CSV_NAME,
 )

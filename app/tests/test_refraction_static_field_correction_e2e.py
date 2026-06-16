@@ -21,7 +21,7 @@ from app.statics.refraction.artifacts import (
     SOURCE_RECEIVER_STATIC_TABLE_NPZ_NAME,
     SOURCE_STATIC_TABLE_CSV_NAME,
 )
-from app.statics.refraction.domain.source_depth import (
+from app.statics.refraction.artifacts.source_depth import (
     REFRACTION_SOURCE_DEPTH_QC_JSON_NAME,
 )
 from app.statics.refraction.adapters.seisviewer2d.workflow_runner import run_refraction_static_apply_job
