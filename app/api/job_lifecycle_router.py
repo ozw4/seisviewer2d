@@ -85,7 +85,7 @@ def build_job_lifecycle_router(
             allowed_job_types=allowed_types,
         )
 
-        return FileResponse(path=file_path, filename=name)
+        return FileResponse(path=file_path)
 
     return router
 
