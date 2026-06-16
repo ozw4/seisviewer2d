@@ -69,8 +69,6 @@ from app.statics.refraction.artifacts import (
     REFRACTION_VSUB_REFRACTOR_VELOCITY_CELLS_CSV_NAME,
     REFRACTION_VSUB_REFRACTOR_VELOCITY_GRID_NPZ_NAME,
     REFRACTION_VSUB_REFRACTOR_VELOCITY_QC_JSON_NAME,
-    REFRACTION_V1_ESTIMATES_CSV_NAME,
-    REFRACTION_V1_QC_JSON_NAME,
     RECEIVER_STATIC_TABLE_CSV_NAME,
     RefractionStaticArtifactError,
     SOURCE_RECEIVER_STATIC_TABLE_NPZ_NAME,
@@ -89,6 +87,10 @@ from app.statics.refraction.artifacts.source_depth import (
 from app.statics.refraction.artifacts.uphole import (
     REFRACTION_UPHOLE_QC_JSON_NAME,
     REFRACTION_UPHOLE_SOURCES_CSV_NAME,
+)
+from app.statics.refraction.artifacts.v1 import (
+    REFRACTION_V1_ESTIMATES_CSV_NAME,
+    REFRACTION_V1_QC_JSON_NAME,
 )
 from app.statics.refraction.domain.types import RefractionLayerSolveResult
 from app.tests._refraction_static_artifact_helpers import (
@@ -634,6 +636,15 @@ def test_refraction_static_artifact_name_snapshot() -> None:
         'vsub_solver_history_csv': (
             artifact_module.REFRACTION_VSUB_CELL_SOLVER_HISTORY_CSV_NAME
         ),
+        'source_depth_qc_json': REFRACTION_SOURCE_DEPTH_QC_JSON_NAME,
+        'source_depth_sources_csv': REFRACTION_SOURCE_DEPTH_SOURCES_CSV_NAME,
+        'uphole_qc_json': REFRACTION_UPHOLE_QC_JSON_NAME,
+        'uphole_sources_csv': REFRACTION_UPHOLE_SOURCES_CSV_NAME,
+        't1lsst_1layer_components_csv': (
+            artifact_module.REFRACTION_T1LSST_1LAYER_COMPONENTS_CSV_NAME
+        ),
+        'v1_qc_json': REFRACTION_V1_QC_JSON_NAME,
+        'v1_estimates_csv': REFRACTION_V1_ESTIMATES_CSV_NAME,
     }
 
     assert names == {
@@ -675,6 +686,13 @@ def test_refraction_static_artifact_name_snapshot() -> None:
         'vsub_grid_npz': 'refraction_vsub_refractor_velocity_grid.npz',
         'vsub_qc_json': 'refraction_vsub_refractor_velocity_qc.json',
         'vsub_solver_history_csv': 'refraction_vsub_cell_solver_history.csv',
+        'source_depth_qc_json': 'refraction_source_depth_qc.json',
+        'source_depth_sources_csv': 'refraction_source_depth_sources.csv',
+        'uphole_qc_json': 'refraction_uphole_qc.json',
+        'uphole_sources_csv': 'refraction_uphole_sources.csv',
+        't1lsst_1layer_components_csv': 'refraction_t1lsst_1layer_components.csv',
+        'v1_qc_json': 'refraction_v1_qc.json',
+        'v1_estimates_csv': 'refraction_v1_estimates.csv',
     }
 
 
@@ -1911,8 +1929,38 @@ def test_refraction_manifest_registers_field_correction_artifacts(
 
     manifest = json.loads(paths.manifest_json.read_text(encoding='utf-8'))
     artifacts = {item['name']: item for item in manifest['artifacts']}
-    for name in upstream_names:
-        assert artifacts[name]['origin'] == 'upstream'
+    assert artifacts[REFRACTION_SOURCE_DEPTH_QC_JSON_NAME] == {
+        'name': REFRACTION_SOURCE_DEPTH_QC_JSON_NAME,
+        'kind': 'json',
+        'required': True,
+        'origin': 'upstream',
+        'description': 'Source-depth field-correction QC summary',
+        'content_type': 'application/json',
+    }
+    assert artifacts[REFRACTION_SOURCE_DEPTH_SOURCES_CSV_NAME] == {
+        'name': REFRACTION_SOURCE_DEPTH_SOURCES_CSV_NAME,
+        'kind': 'csv',
+        'required': True,
+        'origin': 'upstream',
+        'description': 'Resolved source-depth rows used by field corrections',
+        'content_type': 'text/csv',
+    }
+    assert artifacts[REFRACTION_UPHOLE_QC_JSON_NAME] == {
+        'name': REFRACTION_UPHOLE_QC_JSON_NAME,
+        'kind': 'json',
+        'required': True,
+        'origin': 'upstream',
+        'description': 'Uphole-time field-correction QC summary',
+        'content_type': 'application/json',
+    }
+    assert artifacts[REFRACTION_UPHOLE_SOURCES_CSV_NAME] == {
+        'name': REFRACTION_UPHOLE_SOURCES_CSV_NAME,
+        'kind': 'csv',
+        'required': True,
+        'origin': 'upstream',
+        'description': 'Resolved source uphole-time rows used by field corrections',
+        'content_type': 'text/csv',
+    }
     qc = json.loads(paths.qc_json.read_text(encoding='utf-8'))
     qc_artifacts = {item['name'] for item in qc['artifacts']}
     assert set(upstream_names).issubset(qc_artifacts)

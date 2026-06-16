@@ -36,7 +36,7 @@ from app.statics.refraction.domain.types import (
     RefractionLayerKind,
     ResolvedRefractionFirstLayer,
 )
-from app.statics.refraction.domain.v1 import (
+from app.statics.refraction.artifacts.v1 import (
     REFRACTION_V1_ESTIMATES_CSV_NAME,
     REFRACTION_V1_QC_JSON_NAME,
 )

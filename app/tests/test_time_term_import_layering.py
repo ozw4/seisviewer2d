@@ -76,3 +76,39 @@ def test_time_term_numeric_services_import_without_segyio(
         importlib.import_module(module_name)
 
     assert 'app.services.time_term_static_inputs' not in sys.modules
+
+
+def test_time_term_solver_shims_reexport_core_objects() -> None:
+    design_shim = importlib.import_module('app.services.time_term_design_matrix')
+    sparse_shim = importlib.import_module('app.services.time_term_sparse_solver')
+    robust_shim = importlib.import_module('app.services.time_term_robust_solver')
+    core = importlib.import_module('seis_statics.time_term')
+
+    assert design_shim.TimeTermDesignMatrix is core.TimeTermDesignMatrix
+    assert design_shim.build_time_term_design_matrix is core.build_time_term_design_matrix
+    assert sparse_shim.TimeTermSparseSolverOptions is core.TimeTermSparseSolverOptions
+    assert (
+        sparse_shim.solve_time_term_sparse_least_squares
+        is core.solve_time_term_sparse_least_squares
+    )
+    assert robust_shim.TimeTermRobustSolverOptions is core.TimeTermRobustSolverOptions
+    assert (
+        robust_shim.solve_time_term_robust_least_squares
+        is core.solve_time_term_robust_least_squares
+    )
+
+
+@pytest.mark.parametrize(
+    'path',
+    [
+        'app/services/time_term_design_matrix.py',
+        'app/services/time_term_sparse_solver.py',
+        'app/services/time_term_robust_solver.py',
+    ],
+)
+def test_time_term_solver_shims_only_import_core_package(path: str) -> None:
+    source = _source(path)
+
+    assert 'from seis_statics.time_term' in source
+    assert 'from app.' not in source
+    assert 'import app.' not in source

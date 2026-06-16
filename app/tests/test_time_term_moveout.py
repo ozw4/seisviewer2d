@@ -9,12 +9,15 @@ import numpy as np
 import pytest
 
 from app.services.time_term_moveout import (
+    TimeTermMoveoutConfig as ShimTimeTermMoveoutConfig,
+)
+from seis_statics.time_term import TimeTermInversionInputs
+from seis_statics.time_term.moveout import (
     TimeTermMoveoutConfig,
     build_reciprocal_pair_index,
     compute_time_term_moveout,
     summarize_time_term_moveout,
 )
-from app.services.time_term_types import TimeTermInversionInputs
 
 N_TRACES = 5
 N_SAMPLES = 64
@@ -83,6 +86,10 @@ def test_head_wave_moveout_uses_geometry_distance_over_refractor_velocity() -> N
     np.testing.assert_allclose(result.distance_m_sorted, GEOMETRY_DISTANCE)
     np.testing.assert_allclose(result.moveout_time_s_sorted, GEOMETRY_DISTANCE / 2500.0)
     np.testing.assert_array_equal(result.valid_moveout_mask_sorted, np.ones(N_TRACES, dtype=bool))
+
+
+def test_app_moveout_config_shim_preserves_core_type() -> None:
+    assert ShimTimeTermMoveoutConfig is TimeTermMoveoutConfig
 
 
 def test_head_wave_moveout_uses_offset_header_distance_when_requested() -> None:

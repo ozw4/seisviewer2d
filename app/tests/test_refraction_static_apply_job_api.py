@@ -56,8 +56,6 @@ from app.statics.refraction.artifacts import (
     REFRACTION_STATIC_SOLUTION_NPZ_NAME,
     REFRACTION_TIME_TERM_SPREADSHEET_CSV_NAME,
     REFRACTION_T1LSST_1LAYER_COMPONENTS_CSV_NAME,
-    REFRACTION_V1_ESTIMATES_CSV_NAME,
-    REFRACTION_V1_QC_JSON_NAME,
     RECEIVER_STATIC_TABLE_CSV_NAME,
     SOURCE_RECEIVER_STATIC_TABLE_NPZ_NAME,
     SOURCE_STATIC_TABLE_CSV_NAME,
@@ -88,6 +86,10 @@ from app.statics.refraction.artifacts.source_depth import (
     REFRACTION_SOURCE_DEPTH_QC_JSON_NAME,
     REFRACTION_SOURCE_DEPTH_SOURCES_CSV_NAME,
     write_refraction_source_depth_artifacts,
+)
+from app.statics.refraction.artifacts.v1 import (
+    REFRACTION_V1_ESTIMATES_CSV_NAME,
+    REFRACTION_V1_QC_JSON_NAME,
 )
 from app.statics.refraction.domain.source_depth import (
     resolve_refraction_source_depth,

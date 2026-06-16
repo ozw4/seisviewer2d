@@ -35,7 +35,7 @@ from app.services.pick_source_loader import (
 )
 from app.services.reader import get_reader
 from app.services.residual_static_inputs import load_source_receiver_id_headers_sorted
-from app.services.time_term_types import (
+from seis_statics.time_term import (
     ORDER,
     SIGN_CONVENTION,
     TimeTermInversionInputs,

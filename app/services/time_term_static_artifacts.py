@@ -30,17 +30,15 @@ from app.services.time_term_apply_shift import (
     FINAL_SHIFT_CONVENTION,
     TimeTermAppliedShiftResult,
 )
-from app.services.time_term_design_matrix import TimeTermDesignMatrix
-from app.services.time_term_moveout import TimeTermMoveoutResult
-from app.services.time_term_robust_solver import (
+from seis_statics.time_term import (
+    TimeTermDesignMatrix,
+    TimeTermInversionInputs,
+    TimeTermMoveoutResult,
     TimeTermRobustIteration,
     TimeTermRobustSolverResult,
-)
-from app.services.time_term_sparse_solver import (
     TimeTermSparseSolverResult,
     TimeTermSolverSystem,
 )
-from app.services.time_term_types import TimeTermInversionInputs
 
 TIME_TERM_STATIC_SOLUTION_NPZ_NAME = 'time_term_static_solution.npz'
 TIME_TERM_STATIC_QC_JSON_NAME = 'time_term_static_qc.json'
