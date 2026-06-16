@@ -51,12 +51,12 @@ from app.statics.refraction.artifacts.validation import (
     _validate_result,
 )
 from app.statics.refraction.domain.cell_coordinates import refraction_cell_coordinate_metadata_from_config
-from app.statics.refraction.domain.source_depth import REFRACTION_SOURCE_DEPTH_SOURCES_CSV_NAME
+from app.statics.refraction.artifacts.source_depth import REFRACTION_SOURCE_DEPTH_SOURCES_CSV_NAME
+from app.statics.refraction.artifacts.uphole import REFRACTION_UPHOLE_SOURCES_CSV_NAME
 from app.statics.refraction.domain.types import (
     RefractionDatumStaticsResult,
     ResolvedRefractionFirstLayer,
 )
-from app.statics.refraction.domain.uphole import REFRACTION_UPHOLE_SOURCES_CSV_NAME
 
 def write_refraction_static_qc_json(
     *,
