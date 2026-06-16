@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import ast
 import importlib
 import sys
 from pathlib import Path
@@ -16,9 +17,22 @@ _NUMERIC_MODULE_PATHS = [
     'app/services/time_term_apply_shift.py',
 ]
 
+_SHIM_MODULES = [
+    'app.services.time_term_types',
+    'app.services.time_term_moveout',
+    'app.services.time_term_design_matrix',
+    'app.services.time_term_sparse_solver',
+    'app.services.time_term_robust_solver',
+    'app.services.time_term_apply_shift',
+]
+
 
 def _source(path: str) -> str:
     return Path(path).read_text(encoding='utf-8')
+
+
+def _shim_path(module_name: str) -> Path:
+    return Path(module_name.replace('.', '/') + '.py')
 
 
 @pytest.mark.parametrize('path', _NUMERIC_MODULE_PATHS)
@@ -65,50 +79,65 @@ def test_time_term_numeric_services_import_without_segyio(
         sys.modules.pop(module_name, None)
     monkeypatch.setitem(sys.modules, 'segyio', None)
 
-    for module_name in (
-        'app.services.time_term_types',
-        'app.services.time_term_moveout',
-        'app.services.time_term_design_matrix',
-        'app.services.time_term_sparse_solver',
-        'app.services.time_term_robust_solver',
-        'app.services.time_term_apply_shift',
-    ):
+    for module_name in _SHIM_MODULES:
         importlib.import_module(module_name)
 
     assert 'app.services.time_term_static_inputs' not in sys.modules
 
 
-def test_time_term_solver_shims_reexport_core_objects() -> None:
-    design_shim = importlib.import_module('app.services.time_term_design_matrix')
-    sparse_shim = importlib.import_module('app.services.time_term_sparse_solver')
-    robust_shim = importlib.import_module('app.services.time_term_robust_solver')
-    core = importlib.import_module('seis_statics.time_term')
+@pytest.mark.parametrize('module_name', _SHIM_MODULES)
+def test_time_term_shims_are_only_core_reexports(module_name: str) -> None:
+    path = _shim_path(module_name)
+    tree = ast.parse(path.read_text(encoding='utf-8'), filename=str(path))
+    imported_names: set[str] = set()
+    has_all = False
 
-    assert design_shim.TimeTermDesignMatrix is core.TimeTermDesignMatrix
-    assert design_shim.build_time_term_design_matrix is core.build_time_term_design_matrix
-    assert sparse_shim.TimeTermSparseSolverOptions is core.TimeTermSparseSolverOptions
-    assert (
-        sparse_shim.solve_time_term_sparse_least_squares
-        is core.solve_time_term_sparse_least_squares
-    )
-    assert robust_shim.TimeTermRobustSolverOptions is core.TimeTermRobustSolverOptions
-    assert (
-        robust_shim.solve_time_term_robust_least_squares
-        is core.solve_time_term_robust_least_squares
-    )
+    for index, node in enumerate(tree.body):
+        if (
+            index == 0
+            and isinstance(node, ast.Expr)
+            and isinstance(node.value, ast.Constant)
+            and isinstance(node.value.value, str)
+        ):
+            continue
+        if isinstance(node, ast.ImportFrom) and node.module == '__future__':
+            assert [alias.name for alias in node.names] == ['annotations']
+            continue
+        if isinstance(node, ast.ImportFrom) and node.module:
+            assert node.module == 'seis_statics.time_term' or node.module.startswith(
+                'seis_statics.time_term.'
+            )
+            for alias in node.names:
+                imported_names.add(alias.asname or alias.name)
+            continue
+        if isinstance(node, ast.Assign):
+            assert len(node.targets) == 1
+            target = node.targets[0]
+            assert isinstance(target, ast.Name)
+            assert target.id == '__all__'
+            assert isinstance(node.value, ast.List)
+            has_all = True
+            continue
+        raise AssertionError(f'unexpected shim statement in {path}: {ast.dump(node)}')
+
+    assert has_all
+
+    shim = importlib.import_module(module_name)
+    assert isinstance(shim.__all__, list)
+    assert set(shim.__all__) == imported_names
 
 
-@pytest.mark.parametrize(
-    'path',
-    [
-        'app/services/time_term_design_matrix.py',
-        'app/services/time_term_sparse_solver.py',
-        'app/services/time_term_robust_solver.py',
-    ],
-)
-def test_time_term_solver_shims_only_import_core_package(path: str) -> None:
-    source = _source(path)
+@pytest.mark.parametrize('module_name', _SHIM_MODULES)
+def test_time_term_shim_public_objects_are_core_objects(module_name: str) -> None:
+    path = _shim_path(module_name)
+    tree = ast.parse(path.read_text(encoding='utf-8'), filename=str(path))
+    shim = importlib.import_module(module_name)
 
-    assert 'from seis_statics.time_term' in source
-    assert 'from app.' not in source
-    assert 'import app.' not in source
+    for node in tree.body:
+        if not isinstance(node, ast.ImportFrom) or node.module == '__future__':
+            continue
+        assert node.module is not None
+        core_module = importlib.import_module(node.module)
+        for alias in node.names:
+            public_name = alias.asname or alias.name
+            assert getattr(shim, public_name) is getattr(core_module, alias.name)

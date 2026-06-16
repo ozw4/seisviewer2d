@@ -2,6 +2,18 @@
 
 from __future__ import annotations
 
+from seis_statics.time_term.apply_shift import (
+    SIGN_CONVENTION as APPLY_SHIFT_SIGN_CONVENTION,
+    DELAY_TO_SHIFT_CONVENTION,
+    FINAL_SHIFT_CONVENTION,
+    TimeTermAppliedShiftOptions,
+    TimeTermAppliedShiftResult,
+    TimeTermRejectedTracePolicy,
+    build_time_term_applied_shift_result,
+    compute_estimated_trace_time_term_delay_s,
+    delay_to_applied_shift_s,
+    summarize_time_term_applied_shift_result,
+)
 from seis_statics.time_term.design_matrix import (
     TimeTermDesignMatrix,
     TimeTermDesignMatrixOptions,
@@ -41,16 +53,23 @@ from seis_statics.time_term.sparse_solver import (
     summarize_time_term_sparse_solver_result,
 )
 from seis_statics.time_term.types import (
+    SIGN_CONVENTION as INPUT_SIGN_CONVENTION,
     ORDER,
     SIGN_CONVENTION,
     TimeTermInversionInputs,
 )
 
 __all__ = [
+    'APPLY_SHIFT_SIGN_CONVENTION',
+    'DELAY_TO_SHIFT_CONVENTION',
+    'FINAL_SHIFT_CONVENTION',
+    'INPUT_SIGN_CONVENTION',
     'ORDER',
     'SIGN_CONVENTION',
     'MoveoutDistanceSource',
     'ROBUST_SCALE_FLOOR_S',
+    'TimeTermAppliedShiftOptions',
+    'TimeTermAppliedShiftResult',
     'TimeTermDesignMatrix',
     'TimeTermDesignMatrixOptions',
     'TimeTermGaugeMode',
@@ -63,19 +82,24 @@ __all__ = [
     'TimeTermRobustSolverOptions',
     'TimeTermRobustSolverResult',
     'TimeTermRobustStopReason',
+    'TimeTermRejectedTracePolicy',
     'TimeTermSolverSystem',
     'TimeTermSparseSolverName',
     'TimeTermSparseSolverOptions',
     'TimeTermSparseSolverResult',
     'build_gauge_matrix',
     'build_node_components',
+    'build_time_term_applied_shift_result',
     'build_time_term_design_matrix',
     'build_time_term_solver_system',
+    'compute_estimated_trace_time_term_delay_s',
     'compute_time_term_robust_scores',
     'compute_time_term_moveout',
+    'delay_to_applied_shift_s',
     'solve_time_term_robust_least_squares',
     'solve_time_term_sparse_least_squares',
     'subset_time_term_design_matrix_rows',
+    'summarize_time_term_applied_shift_result',
     'summarize_time_term_design_matrix',
     'summarize_time_term_robust_solver_result',
     'summarize_time_term_sparse_solver_result',

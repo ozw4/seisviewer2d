@@ -10,7 +10,7 @@ import numpy as np
 import pytest
 from scipy import sparse
 
-from app.services.time_term_apply_shift import (
+from seis_statics.time_term.apply_shift import (
     DELAY_TO_SHIFT_CONVENTION,
     FINAL_SHIFT_CONVENTION,
     SIGN_CONVENTION,

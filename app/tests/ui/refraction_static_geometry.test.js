@@ -1,14 +1,15 @@
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
+import { pathToFileURL } from 'node:url';
 
 import { afterEach, beforeEach, expect, test, vi } from 'vitest';
 
-const SCRIPT = readFileSync(
-  resolve(process.cwd(), 'static/refraction_static_run.js'),
-  'utf8'
-);
 const STATIC_CORRECTION_HTML = readFileSync(
   resolve(process.cwd(), 'static/static_correction.html'),
+  'utf8'
+);
+const REFRACTION_QC_HTML = readFileSync(
+  resolve(process.cwd(), 'static/refraction_qc.html'),
   'utf8'
 );
 
@@ -229,9 +230,13 @@ function clearSelectedPickFile() {
   });
 }
 
-function loadStaticCorrectionScript() {
-  window.eval(SCRIPT);
-  document.dispatchEvent(new Event('DOMContentLoaded'));
+async function loadStaticCorrectionScript() {
+  const moduleUrl = new URL(
+    `static/refraction-static-run/main.js?test=${Date.now()}-${Math.random()}`,
+    `${pathToFileURL(resolve(process.cwd())).href}/`
+  );
+  const { initStaticCorrectionPage } = await import(moduleUrl.href);
+  initStaticCorrectionPage();
   return window.refractionStaticRunUI;
 }
 
@@ -242,6 +247,7 @@ function setCustomPreset() {
 }
 
 beforeEach(() => {
+  vi.resetModules();
   delete window.refractionStaticRunUI;
   delete window.refractionStaticRunState;
   delete window.RefractionQc;
@@ -381,7 +387,7 @@ function createStaticCorrectionFetchMock(
   return { calls, fetchMock };
 }
 
-test('fixture includes NPZ draft action buttons and QC link', () => {
+test('fixture includes NPZ draft action buttons and QC link', async () => {
   expect(document.getElementById('staticCorrectionReplacePickNpzButton')).not.toBeNull();
   expect(document.getElementById('staticCorrectionClearPickNpzButton')).not.toBeNull();
   expect(document.getElementById('staticCorrectionClearDraftButton')).not.toBeNull();
@@ -389,9 +395,18 @@ test('fixture includes NPZ draft action buttons and QC link', () => {
   expect(document.getElementById('staticCorrectionQcLink')).not.toBeNull();
 });
 
-test('selected pick NPZ renders in the file summary', () => {
+test('refraction pages load their entry scripts as modules', async () => {
+  expect(STATIC_CORRECTION_HTML).toContain(
+    '<script type="module" src="/static/refraction_static_run.js"></script>'
+  );
+  expect(REFRACTION_QC_HTML).toContain(
+    '<script type="module" src="/static/refraction_qc.js"></script>'
+  );
+});
+
+test('selected pick NPZ renders in the file summary', async () => {
   selectedPickFile('manual_picks_time_review.npz', 'abc');
-  loadStaticCorrectionScript();
+  await loadStaticCorrectionScript();
 
   expect(document.getElementById('staticCorrectionPickNpzSummary').textContent).toContain(
     'manual_picks_time_review.npz'
@@ -399,7 +414,7 @@ test('selected pick NPZ renders in the file summary', () => {
 });
 
 test('missing pick NPZ blocks submit and shows validation', async () => {
-  const ui = loadStaticCorrectionScript();
+  const ui = await loadStaticCorrectionScript();
   clearSelectedPickFile();
   document.getElementById('staticCorrectionPickNpz').dispatchEvent(new Event('change'));
 
@@ -415,7 +430,7 @@ test('missing pick NPZ blocks submit and shows validation', async () => {
 
 test('non-NPZ pick upload blocks submit', async () => {
   selectedPickFile('picks.txt', 'abc');
-  const ui = loadStaticCorrectionScript();
+  const ui = await loadStaticCorrectionScript();
 
   await ui.runStaticCorrection();
   await flushAsyncWork();
@@ -427,8 +442,8 @@ test('non-NPZ pick upload blocks submit', async () => {
   expect(window.refractionStaticRunState.lastRequest).toBe(null);
 });
 
-test('static correction request always uses uploaded NPZ pick source', () => {
-  const ui = loadStaticCorrectionScript();
+test('static correction request always uses uploaded NPZ pick source', async () => {
+  const ui = await loadStaticCorrectionScript();
 
   const result = ui.buildStaticCorrectionRequest();
 
@@ -436,8 +451,8 @@ test('static correction request always uses uploaded NPZ pick source', () => {
   expect(result.payload.pick_source).toEqual({ kind: 'uploaded_npz' });
 });
 
-test('geometry defaults render from the SEG-Y preset', () => {
-  loadStaticCorrectionScript();
+test('geometry defaults render from the SEG-Y preset', async () => {
+  await loadStaticCorrectionScript();
 
   expect(document.getElementById('staticCorrectionSourceIdByte').value).toBe('9');
   expect(document.getElementById('staticCorrectionReceiverIdByte').value).toBe('13');
@@ -448,8 +463,8 @@ test('geometry defaults render from the SEG-Y preset', () => {
   expect(document.getElementById('staticCorrectionSourceIdByte').disabled).toBe(true);
 });
 
-test('custom geometry values are included in the request fragment', () => {
-  const ui = loadStaticCorrectionScript();
+test('custom geometry values are included in the request fragment', async () => {
+  const ui = await loadStaticCorrectionScript();
   setCustomPreset();
 
   document.getElementById('staticCorrectionSourceIdByte').value = '101';
@@ -489,8 +504,8 @@ test('custom geometry values are included in the request fragment', () => {
   });
 });
 
-test('invalid byte values block submit and show an error', () => {
-  loadStaticCorrectionScript();
+test('invalid byte values block submit and show an error', async () => {
+  await loadStaticCorrectionScript();
   setCustomPreset();
   document.getElementById('staticCorrectionSourceIdByte').value = '';
 
@@ -503,8 +518,8 @@ test('invalid byte values block submit and show an error', () => {
   expect(window.refractionStaticRunState.lastRequest).toBe(null);
 });
 
-test('request preview renders valid JSON and updates when fields change', () => {
-  loadStaticCorrectionScript();
+test('request preview renders valid JSON and updates when fields change', async () => {
+  await loadStaticCorrectionScript();
 
   let preview = JSON.parse(document.getElementById('staticCorrectionRequestPreview').textContent);
   expect(preview.file_id).toBe('file-a');
@@ -518,8 +533,8 @@ test('request preview renders valid JSON and updates when fields change', () => 
   expect(preview.model.first_layer.weathering_velocity_m_s).toBe(925);
 });
 
-test('request preview supports uploaded pick source without artifact fields', () => {
-  loadStaticCorrectionScript();
+test('request preview supports uploaded pick source without artifact fields', async () => {
+  await loadStaticCorrectionScript();
 
   const preview = JSON.parse(document.getElementById('staticCorrectionRequestPreview').textContent);
   expect(preview.pick_source).toEqual({ kind: 'uploaded_npz' });
@@ -529,8 +544,8 @@ test('request preview supports uploaded pick source without artifact fields', ()
   expect(STATIC_CORRECTION_HTML).not.toContain('staticCorrectionLoadPickArtifactsButton');
 });
 
-test('static correction does not render manual target id or sort key inputs', () => {
-  loadStaticCorrectionScript();
+test('static correction does not render manual target id or sort key inputs', async () => {
+  await loadStaticCorrectionScript();
 
   expect(document.querySelector('#staticCorrectionFileId')).toBeNull();
   expect(document.querySelector('#staticCorrectionKey1Byte')).toBeNull();
@@ -544,9 +559,9 @@ test('static correction does not render manual target id or sort key inputs', ()
   );
 });
 
-test('request preview uses current viewer target', () => {
+test('request preview uses current viewer target', async () => {
   setViewerTarget('current-line', 9, 13);
-  loadStaticCorrectionScript();
+  await loadStaticCorrectionScript();
 
   const preview = JSON.parse(document.getElementById('staticCorrectionRequestPreview').textContent);
   expect(preview.file_id).toBe('current-line');
@@ -554,9 +569,9 @@ test('request preview uses current viewer target', () => {
   expect(preview.key2_byte).toBe(13);
 });
 
-test('validation error no active viewer file', () => {
+test('validation error no active viewer file', async () => {
   setViewerTarget(null);
-  const ui = loadStaticCorrectionScript();
+  const ui = await loadStaticCorrectionScript();
 
   const result = ui.buildStaticCorrectionRequest();
 
@@ -566,9 +581,9 @@ test('validation error no active viewer file', () => {
   );
 });
 
-test('validation error no pick npz', () => {
+test('validation error no pick npz', async () => {
   clearSelectedPickFile();
-  const ui = loadStaticCorrectionScript();
+  const ui = await loadStaticCorrectionScript();
 
   const result = ui.buildStaticCorrectionRequest();
 
@@ -576,14 +591,14 @@ test('validation error no pick npz', () => {
   expect(result.errors).toContain('First-break pick NPZ is required.');
 });
 
-test('validation error missing viewer target fields', () => {
+test('validation error missing viewer target fields', async () => {
   activeViewerTarget = {
     fileId: '',
     key1Byte: '',
     key2Byte: null,
     displayName: 'Line A',
   };
-  const ui = loadStaticCorrectionScript();
+  const ui = await loadStaticCorrectionScript();
 
   const result = ui.buildStaticCorrectionRequest();
 
@@ -598,8 +613,8 @@ test('validation error missing viewer target fields', () => {
   );
 });
 
-test('validation error missing required geometry byte', () => {
-  const ui = loadStaticCorrectionScript();
+test('validation error missing required geometry byte', async () => {
+  const ui = await loadStaticCorrectionScript();
   setCustomPreset();
   document.getElementById('staticCorrectionSourceIdByte').value = '';
 
@@ -611,8 +626,8 @@ test('validation error missing required geometry byte', () => {
   );
 });
 
-test('validation summary lists invalid fields before submit', () => {
-  loadStaticCorrectionScript();
+test('validation summary lists invalid fields before submit', async () => {
+  await loadStaticCorrectionScript();
   setViewerTarget(null);
   clearSelectedPickFile();
 
@@ -624,8 +639,8 @@ test('validation summary lists invalid fields before submit', () => {
   expect(summary.textContent).toContain('First-break pick NPZ is required');
 });
 
-test('save preset writes localStorage without transient job state', () => {
-  loadStaticCorrectionScript();
+test('save preset writes localStorage without transient job state', async () => {
+  await loadStaticCorrectionScript();
   document.getElementById('staticCorrectionPresetName').value = 'field layout';
   document.getElementById('staticCorrectionSavePresetButton').click();
 
@@ -637,8 +652,8 @@ test('save preset writes localStorage without transient job state', () => {
   expect(presets[0].values).not.toHaveProperty('staticArtifacts');
 });
 
-test('load preset restores model and header fields while keeping current ids', () => {
-  loadStaticCorrectionScript();
+test('load preset restores model and header fields while keeping current ids', async () => {
+  await loadStaticCorrectionScript();
   setCustomPreset();
   document.getElementById('staticCorrectionSourceIdByte').value = '101';
   selectModelPreset('two_layer_global');
@@ -661,8 +676,8 @@ test('load preset restores model and header fields while keeping current ids', (
   expect(document.getElementById('staticCorrectionWeatheringVelocityMS').value).toBe('900');
 });
 
-test('delete preset removes it from localStorage', () => {
-  loadStaticCorrectionScript();
+test('delete preset removes it from localStorage', async () => {
+  await loadStaticCorrectionScript();
   document.getElementById('staticCorrectionPresetName').value = 'delete me';
   document.getElementById('staticCorrectionSavePresetButton').click();
 
@@ -672,8 +687,8 @@ test('delete preset removes it from localStorage', () => {
   expect(document.getElementById('staticCorrectionPresetSelect').textContent).toContain('No saved presets');
 });
 
-test('loading preset does not submit a job', () => {
-  loadStaticCorrectionScript();
+test('loading preset does not submit a job', async () => {
+  await loadStaticCorrectionScript();
   const fetchMock = vi.fn();
   vi.stubGlobal('fetch', fetchMock);
   document.getElementById('staticCorrectionPresetName').value = 'quiet load';
@@ -684,8 +699,8 @@ test('loading preset does not submit a job', () => {
   expect(fetchMock).not.toHaveBeenCalled();
 });
 
-test('preset switching restores defaults and toggles editability', () => {
-  loadStaticCorrectionScript();
+test('preset switching restores defaults and toggles editability', async () => {
+  await loadStaticCorrectionScript();
   setCustomPreset();
   const sourceId = document.getElementById('staticCorrectionSourceIdByte');
   sourceId.value = '101';
@@ -704,8 +719,8 @@ test('preset switching restores defaults and toggles editability', () => {
   expect(sourceId.disabled).toBe(false);
 });
 
-test('linkage checkbox is unchecked by default and builds none mode', () => {
-  const ui = loadStaticCorrectionScript();
+test('linkage checkbox is unchecked by default and builds none mode', async () => {
+  const ui = await loadStaticCorrectionScript();
 
   expect(document.getElementById('staticCorrectionEnableLinkage').checked).toBe(false);
   expect(document.getElementById('staticCorrectionLinkageOptions').hidden).toBe(true);
@@ -717,8 +732,8 @@ test('linkage checkbox is unchecked by default and builds none mode', () => {
   expect(result.payload.linkage).toEqual({ mode: 'none' });
 });
 
-test('checked linkage reveals options and includes linkage builder fields', () => {
-  const ui = loadStaticCorrectionScript();
+test('checked linkage reveals options and includes linkage builder fields', async () => {
+  const ui = await loadStaticCorrectionScript();
   const checkbox = document.getElementById('staticCorrectionEnableLinkage');
   checkbox.checked = true;
   checkbox.dispatchEvent(new Event('change'));
@@ -741,8 +756,8 @@ test('checked linkage reveals options and includes linkage builder fields', () =
   });
 });
 
-test('checked auto-threshold linkage validates threshold only when enabled', () => {
-  const ui = loadStaticCorrectionScript();
+test('checked auto-threshold linkage validates threshold only when enabled', async () => {
+  const ui = await loadStaticCorrectionScript();
   document.getElementById('staticCorrectionLinkageThresholdM').value = '';
 
   expect(ui.buildStaticCorrectionRequest().errors).toEqual([]);
@@ -759,7 +774,7 @@ test('checked auto-threshold linkage validates threshold only when enabled', () 
   expect(window.refractionStaticRunState.lastRequest).toBe(null);
 });
 
-test('field correction and export sections are collapsed details controls', () => {
+test('field correction and export sections are collapsed details controls', async () => {
   expect(STATIC_CORRECTION_HTML).toContain('id="staticCorrectionPickNpz"');
   expect(STATIC_CORRECTION_HTML).toContain('id="staticCorrectionReplacePickNpzButton"');
   expect(STATIC_CORRECTION_HTML).toContain('id="staticCorrectionClearPickNpzButton"');
@@ -771,8 +786,8 @@ test('field correction and export sections are collapsed details controls', () =
   expect(STATIC_CORRECTION_HTML).toContain('<summary id="staticCorrectionExportHeading">Exports</summary>');
 });
 
-test('field corrections disabled omits optional field_corrections request block', () => {
-  const ui = loadStaticCorrectionScript();
+test('field corrections disabled omits optional field_corrections request block', async () => {
+  const ui = await loadStaticCorrectionScript();
 
   const result = ui.buildStaticCorrectionRequest();
 
@@ -780,8 +795,8 @@ test('field corrections disabled omits optional field_corrections request block'
   expect(result.payload).not.toHaveProperty('field_corrections');
 });
 
-test('source-depth weathering_velocity_time request fragment includes source_depth_byte', () => {
-  const ui = loadStaticCorrectionScript();
+test('source-depth weathering_velocity_time request fragment includes source_depth_byte', async () => {
+  const ui = await loadStaticCorrectionScript();
   enableFieldCorrections();
   const mode = document.getElementById('staticCorrectionFieldSourceDepthMode');
   mode.value = 'weathering_velocity_time';
@@ -798,8 +813,8 @@ test('source-depth weathering_velocity_time request fragment includes source_dep
   expect(result.payload.field_corrections.composition.apply_to_trace_shift).toBe(true);
 });
 
-test('uphole header_time request fragment includes uphole_time_byte', () => {
-  const ui = loadStaticCorrectionScript();
+test('uphole header_time request fragment includes uphole_time_byte', async () => {
+  const ui = await loadStaticCorrectionScript();
   enableFieldCorrections();
   const mode = document.getElementById('staticCorrectionFieldUpholeMode');
   mode.value = 'header_time';
@@ -815,8 +830,8 @@ test('uphole header_time request fragment includes uphole_time_byte', () => {
   });
 });
 
-test('apply_to_trace_shift checkbox changes the field correction request', () => {
-  const ui = loadStaticCorrectionScript();
+test('apply_to_trace_shift checkbox changes the field correction request', async () => {
+  const ui = await loadStaticCorrectionScript();
   enableFieldCorrections();
   document.getElementById('staticCorrectionFieldApplyToTraceShift').checked = false;
 
@@ -829,8 +844,8 @@ test('apply_to_trace_shift checkbox changes the field correction request', () =>
   });
 });
 
-test('manual static artifact mode validates and builds artifact refs', () => {
-  const ui = loadStaticCorrectionScript();
+test('manual static artifact mode validates and builds artifact refs', async () => {
+  const ui = await loadStaticCorrectionScript();
   enableFieldCorrections();
   const mode = document.getElementById('staticCorrectionFieldManualStaticMode');
   mode.value = 'artifact_table';
@@ -851,8 +866,8 @@ test('manual static artifact mode validates and builds artifact refs', () => {
   });
 });
 
-test('export format checkboxes build export formats list', () => {
-  const ui = loadStaticCorrectionScript();
+test('export format checkboxes build export formats list', async () => {
+  const ui = await loadStaticCorrectionScript();
   document.getElementById('staticCorrectionExportLsst').checked = true;
   document.getElementById('staticCorrectionExportFirstBreakTime').checked = true;
 
@@ -870,15 +885,15 @@ test('export format checkboxes build export formats list', () => {
   });
 });
 
-test('unsupported seconds export option is not present in the UI', () => {
-  loadStaticCorrectionScript();
+test('unsupported seconds export option is not present in the UI', async () => {
+  await loadStaticCorrectionScript();
 
   expect(document.querySelector('[name="export.units"]')).toBeNull();
   expect(STATIC_CORRECTION_HTML).not.toContain('value="seconds"');
 });
 
-test('one-layer validation ignores inactive bedrock velocity inputs', () => {
-  const ui = loadStaticCorrectionScript();
+test('one-layer validation ignores inactive bedrock velocity inputs', async () => {
+  const ui = await loadStaticCorrectionScript();
   const mode = document.getElementById('staticCorrectionBedrockVelocityMode');
   const initialVelocity = document.getElementById('staticCorrectionInitialBedrockVelocityMS');
   const fixedVelocity = document.getElementById('staticCorrectionFixedBedrockVelocityMS');
@@ -894,8 +909,8 @@ test('one-layer validation ignores inactive bedrock velocity inputs', () => {
   expect(ui.buildStaticCorrectionRequest().errors).toEqual([]);
 });
 
-test('one-layer model preset is the default request shape', () => {
-  const ui = loadStaticCorrectionScript();
+test('one-layer model preset is the default request shape', async () => {
+  const ui = await loadStaticCorrectionScript();
 
   const result = ui.buildStaticCorrectionRequest();
 
@@ -913,8 +928,8 @@ test('one-layer model preset is the default request shape', () => {
   expect(result.payload.conversion).toEqual({ mode: 't1lsst_1layer' });
 });
 
-test('two-layer preset builds public global V3/T2 request', () => {
-  const ui = loadStaticCorrectionScript();
+test('two-layer preset builds public global V3/T2 request', async () => {
+  const ui = await loadStaticCorrectionScript();
   setViewerTarget('line-preserved', 17, 21);
   selectedPickFile('pick-preserved.npz');
 
@@ -956,8 +971,8 @@ test('two-layer preset builds public global V3/T2 request', () => {
   });
 });
 
-test('three-layer preset builds public global Vsub/T3 request', () => {
-  const ui = loadStaticCorrectionScript();
+test('three-layer preset builds public global Vsub/T3 request', async () => {
+  const ui = await loadStaticCorrectionScript();
 
   selectModelPreset('three_layer_global');
   const result = ui.buildStaticCorrectionRequest();
@@ -989,8 +1004,8 @@ test('three-layer preset builds public global Vsub/T3 request', () => {
   });
 });
 
-test('cell 2D preset builds line-projected solve-cell V2 request', () => {
-  const ui = loadStaticCorrectionScript();
+test('cell 2D preset builds line-projected solve-cell V2 request', async () => {
+  const ui = await loadStaticCorrectionScript();
 
   selectModelPreset('cell_v2_t1_line_2d');
   document.getElementById('staticCorrectionCellCountY').value = '9';
@@ -1021,8 +1036,8 @@ test('cell 2D preset builds line-projected solve-cell V2 request', () => {
   expect(result.payload.conversion).toEqual({ mode: 't1lsst_1layer' });
 });
 
-test('cell 3D preset builds grid solve-cell V2 request', () => {
-  const ui = loadStaticCorrectionScript();
+test('cell 3D preset builds grid solve-cell V2 request', async () => {
+  const ui = await loadStaticCorrectionScript();
 
   selectModelPreset('cell_v2_t1_grid_3d');
   document.getElementById('staticCorrectionCellCountY').value = '4';
@@ -1045,8 +1060,8 @@ test('cell 3D preset builds grid solve-cell V2 request', () => {
   expect(result.payload.model.refractor_cell).not.toHaveProperty('line_azimuth_deg');
 });
 
-test('unsupported V3 and Vsub cell velocity modes are not exposed', () => {
-  loadStaticCorrectionScript();
+test('unsupported V3 and Vsub cell velocity modes are not exposed', async () => {
+  await loadStaticCorrectionScript();
 
   selectModelPreset('three_layer_global');
 
@@ -1061,7 +1076,7 @@ test('unsupported V3 and Vsub cell velocity modes are not exposed', () => {
 });
 
 test('unchecked linkage skips linkage build when running static correction', async () => {
-  const ui = loadStaticCorrectionScript();
+  const ui = await loadStaticCorrectionScript();
   const { calls } = createStaticCorrectionFetchMock();
 
   await ui.runStaticCorrection();
@@ -1079,7 +1094,7 @@ test('unchecked linkage skips linkage build when running static correction', asy
 });
 
 test('static correction multipart form data contains request JSON and pick NPZ', async () => {
-  const ui = loadStaticCorrectionScript();
+  const ui = await loadStaticCorrectionScript();
   const pickFile = selectedPickFile('uploaded-picks.npz', 'pick-data');
   setViewerTarget('active-line', 9, 13);
   const { calls } = createStaticCorrectionFetchMock();
@@ -1103,7 +1118,7 @@ test('static correction multipart form data contains request JSON and pick NPZ',
 });
 
 test('static correction submit failure returns to a retryable idle state', async () => {
-  const ui = loadStaticCorrectionScript();
+  const ui = await loadStaticCorrectionScript();
   const calls = [];
   vi.stubGlobal('fetch', vi.fn(async (url, options = {}) => {
     calls.push({ url: String(url), options });
@@ -1126,7 +1141,7 @@ test('static correction submit failure returns to a retryable idle state', async
 });
 
 test('static correction submit displays backend validation error', async () => {
-  const ui = loadStaticCorrectionScript();
+  const ui = await loadStaticCorrectionScript();
   vi.stubGlobal('fetch', vi.fn(async (url) => {
     if (url === '/statics/refraction/apply-with-picks') {
       return jsonResponse({ detail: 'request_json.file_id is invalid' }, 422);
@@ -1144,7 +1159,7 @@ test('static correction submit displays backend validation error', async () => {
 });
 
 test('checked linkage posts linkage build payload before static correction apply', async () => {
-  const ui = loadStaticCorrectionScript();
+  const ui = await loadStaticCorrectionScript();
   enableLinkage();
   document.getElementById('staticCorrectionLinkageThresholdM').value = '12.5';
   document.getElementById('staticCorrectionReceiverLocationIntervalM').value = '25';
@@ -1188,7 +1203,7 @@ test('checked linkage posts linkage build payload before static correction apply
 });
 
 test('static correction validation builds linkage before validation preflight', async () => {
-  const ui = loadStaticCorrectionScript();
+  const ui = await loadStaticCorrectionScript();
   enableLinkage();
   document.getElementById('staticCorrectionLinkageThresholdM').value = '12.5';
   document.getElementById('staticCorrectionReceiverLocationIntervalM').value = '25';
@@ -1219,7 +1234,7 @@ test('static correction validation builds linkage before validation preflight', 
 });
 
 test('checked linkage polls linkage status until ready', async () => {
-  const ui = loadStaticCorrectionScript();
+  const ui = await loadStaticCorrectionScript();
   enableLinkage();
   window.refractionStaticRunState.pollIntervalMs = 0;
   const { calls } = createStaticCorrectionFetchMock([
@@ -1236,7 +1251,7 @@ test('checked linkage polls linkage status until ready', async () => {
 });
 
 test('failed linkage prevents refraction apply submit', async () => {
-  const ui = loadStaticCorrectionScript();
+  const ui = await loadStaticCorrectionScript();
   enableLinkage();
   const { calls } = createStaticCorrectionFetchMock([
     { state: 'error', message: 'linkage build failed', progress: 1 },
@@ -1258,7 +1273,7 @@ test('failed linkage prevents refraction apply submit', async () => {
 });
 
 test('successful linkage injects linkage job reference into refraction request', async () => {
-  const ui = loadStaticCorrectionScript();
+  const ui = await loadStaticCorrectionScript();
   enableLinkage();
   window.refractionStaticRunState.pollIntervalMs = 0;
   const { calls } = createStaticCorrectionFetchMock([
@@ -1279,7 +1294,7 @@ test('successful linkage injects linkage job reference into refraction request',
 });
 
 test('static correction submit polls job status and loads ready artifacts', async () => {
-  const ui = loadStaticCorrectionScript();
+  const ui = await loadStaticCorrectionScript();
   window.refractionStaticRunState.pollIntervalMs = 0;
   const { calls } = createStaticCorrectionFetchMock(
     [{ state: 'done', message: '', progress: 1 }],
@@ -1306,7 +1321,7 @@ test('static correction submit polls job status and loads ready artifacts', asyn
 });
 
 test('ready static correction job exposes the standalone Refraction QC link with the completed job id', async () => {
-  const ui = loadStaticCorrectionScript();
+  const ui = await loadStaticCorrectionScript();
   window.refractionStaticRunState.pollIntervalMs = 0;
   const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
   createStaticCorrectionFetchMock(
@@ -1340,7 +1355,7 @@ test('ready static correction job exposes the standalone Refraction QC link with
 });
 
 test('static correction polling stops on failed state, loads artifacts, and shows an error', async () => {
-  const ui = loadStaticCorrectionScript();
+  const ui = await loadStaticCorrectionScript();
   window.refractionStaticRunState.pollIntervalMs = 0;
   const { calls } = createStaticCorrectionFetchMock(
     [{ state: 'done', message: '', progress: 1 }],
@@ -1361,7 +1376,7 @@ test('static correction polling stops on failed state, loads artifacts, and show
 });
 
 test('static correction cancel posts to the static cancel endpoint', async () => {
-  const ui = loadStaticCorrectionScript();
+  const ui = await loadStaticCorrectionScript();
   const { calls } = createStaticCorrectionFetchMock(
     [{ state: 'done', message: '', progress: 1 }],
     [{ state: 'running', message: 'working', progress: 0.25 }]
