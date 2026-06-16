@@ -1,3 +1,23 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "seisviewer2d"
+version = "0.0.0"
+requires-python = ">=3.10"
+
+[tool.setuptools.packages.find]
+include = ["app*", "seis_statics*"]
+
 [tool.black]
 target-version = ["py310"]
 extend-exclude = "(^app/static/|^node_modules/|^model/|^data/)"
+
+[tool.pytest.ini_options]
+testpaths = ["app/tests", "tests"]
+pythonpath = ["."]
+markers = [
+    "e2e: browser-based end-to-end tests",
+]
+norecursedirs = ["vendor/issue_forge"]

@@ -5,7 +5,7 @@ from __future__ import annotations
 from fastapi import APIRouter, Request
 
 from app.api._helpers import get_state
-from app.api.routers.statics.launch import launch_static_job, static_router_job_target
+from app.api.routers.statics.launch import launch_static_job
 from app.contracts.statics.datum import (
     DatumStaticApplyRequest,
     DatumStaticApplyResponse,
@@ -28,6 +28,7 @@ from app.contracts.statics.time_term import (
 )
 from app.services.in_memory_cleanup import cleanup_in_memory_state
 from app.services.pipeline_artifacts import maybe_cleanup_expired_jobs
+from app.services.static_job_targets import get_static_job_target
 
 router = APIRouter()
 
@@ -47,7 +48,7 @@ def datum_static_apply(
         key1_byte=req.key1_byte,
         key2_byte=req.key2_byte,
         statics_kind='datum',
-        target=static_router_job_target('run_datum_static_apply_job'),
+        target=get_static_job_target('datum'),
         target_args=lambda job_id: (job_id, req, state),
     )
 
@@ -69,7 +70,7 @@ def first_break_qc(
         key1_byte=req.key1_byte,
         key2_byte=req.key2_byte,
         statics_kind='first_break_qc',
-        target=static_router_job_target('run_first_break_qc_job'),
+        target=get_static_job_target('first_break_qc'),
         target_args=lambda job_id: (job_id, req, state),
     )
 
@@ -94,7 +95,7 @@ def static_linkage_build(
         key1_byte=req.key1_byte,
         key2_byte=req.key2_byte,
         statics_kind='geometry_linkage',
-        target=static_router_job_target('run_geometry_linkage_build_job'),
+        target=get_static_job_target('geometry_linkage'),
         target_args=lambda job_id: (job_id, req, state),
     )
 
@@ -119,7 +120,7 @@ def residual_static_apply(
         key1_byte=req.key1_byte,
         key2_byte=req.key2_byte,
         statics_kind='residual',
-        target=static_router_job_target('run_residual_static_apply_job'),
+        target=get_static_job_target('residual'),
         target_args=lambda job_id: (job_id, req, state),
     )
 
@@ -144,7 +145,7 @@ def time_term_static_apply(
         key1_byte=req.key1_byte,
         key2_byte=req.key2_byte,
         statics_kind='time_term',
-        target=static_router_job_target('run_time_term_static_apply_job'),
+        target=get_static_job_target('time_term'),
         target_args=lambda job_id: (job_id, req, state),
     )
 

@@ -8,7 +8,6 @@ import logging
 from pathlib import Path
 
 import numpy as np
-import segyio
 
 from app.services.trace_store_headers import (
     resolve_header_source_store_path,
@@ -18,6 +17,19 @@ from app.services.trace_store_headers import (
 from app.trace_store.types import SectionView
 
 logger = logging.getLogger(__name__)
+
+
+def _load_segyio():
+    """Import segyio only when original SEG-Y header materialization needs it."""
+    try:
+        import segyio
+    except ModuleNotFoundError as exc:
+        msg = (
+            'segyio is required to materialize missing TraceStore headers '
+            'from the original SEG-Y source'
+        )
+        raise ModuleNotFoundError(msg) from exc
+    return segyio
 
 
 @dataclass(frozen=True)
@@ -306,6 +318,7 @@ class TraceStoreSectionReader:
             raise ValueError(msg)
 
         logger.info('Extracting header byte %s for %s', header_byte, self.store_dir)
+        segyio = _load_segyio()
         with segyio.open(
             str(segy_path),
             'r',

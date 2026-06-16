@@ -6,7 +6,7 @@ from typing import Any
 import pytest
 from fastapi.testclient import TestClient
 
-import app.api.routers.statics as statics_router_module
+import app.services.static_job_targets as static_job_targets
 from app.main import app
 
 
@@ -57,8 +57,8 @@ def test_datum_static_apply_endpoint_starts_job(
         return object()
 
     monkeypatch.setattr(
-        statics_router_module,
-        'start_job_thread',
+        static_job_targets,
+        'start_static_job_thread',
         _capture_start_job_thread,
     )
 
@@ -69,7 +69,7 @@ def test_datum_static_apply_endpoint_starts_job(
     assert payload['state'] == 'queued'
     assert isinstance(payload['job_id'], str)
     assert len(started) == 1
-    assert started[0]['target'] is statics_router_module.run_datum_static_apply_job
+    assert started[0]['target'] is static_job_targets.get_static_job_target('datum')
 
     state = client.app.state.sv
     with state.lock:
@@ -101,8 +101,8 @@ def test_datum_static_apply_endpoint_rejects_unsupported_mvp_options(
 ) -> None:
     started: list[dict[str, Any]] = []
     monkeypatch.setattr(
-        statics_router_module,
-        'start_job_thread',
+        static_job_targets,
+        'start_static_job_thread',
         lambda **kwargs: started.append(kwargs),
     )
     payload = _payload()

@@ -22,6 +22,7 @@ from app.statics.refraction.contracts.apply import (
 )
 from app.services.in_memory_cleanup import cleanup_in_memory_state
 from app.services.pipeline_artifacts import maybe_cleanup_expired_jobs
+from app.services.static_job_targets import get_static_job_target
 from app.statics.refraction.adapters.seisviewer2d.runtime import (
     SeisViewer2DRefractionRuntime,
 )
@@ -76,10 +77,7 @@ def refraction_static_apply(
         if req.export.enabled:
             job_state['export_formats'] = list(requested_formats)
 
-    from app.api.routers.statics.launch import (
-        launch_static_job,
-        static_router_job_target,
-    )
+    from app.api.routers.statics.launch import launch_static_job
 
     launched = launch_static_job(
         state=state,
@@ -87,7 +85,7 @@ def refraction_static_apply(
         key1_byte=req.key1_byte,
         key2_byte=req.key2_byte,
         statics_kind='refraction',
-        target=static_router_job_target('run_refraction_static_apply_job'),
+        target=get_static_job_target('refraction'),
         target_args=lambda job_id: (job_id, req, state),
         after_create=_after_create,
     )
@@ -151,10 +149,7 @@ def refraction_static_apply_with_picks(
             raise RuntimeError('uploaded refraction picks were not stored')
         return (job_id, req, state, stored_path, upload_metadata)
 
-    from app.api.routers.statics.launch import (
-        launch_static_job,
-        static_router_job_target,
-    )
+    from app.api.routers.statics.launch import launch_static_job
 
     launched = launch_static_job(
         state=state,
@@ -162,7 +157,7 @@ def refraction_static_apply_with_picks(
         key1_byte=req.key1_byte,
         key2_byte=req.key2_byte,
         statics_kind='refraction',
-        target=static_router_job_target('run_refraction_static_apply_job'),
+        target=get_static_job_target('refraction'),
         target_args=_target_args,
         pre_create=_pre_create,
         after_create=_after_create,

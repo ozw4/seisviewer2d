@@ -9,7 +9,7 @@ import numpy as np
 import pytest
 from fastapi.testclient import TestClient
 
-import app.api.routers.statics as statics_router_module
+import app.services.static_job_targets as static_job_targets
 from app.api.schemas import RefractionStaticTableApplyRequest
 from app.core.state import AppState, create_app_state
 from app.main import app
@@ -1115,8 +1115,8 @@ def test_static_table_apply_endpoint_creates_job(
         return object()
 
     monkeypatch.setattr(
-        statics_router_module,
-        'start_job_thread',
+        static_job_targets,
+        'start_static_job_thread',
         _capture_start_job_thread,
     )
     with app.state.sv.lock:

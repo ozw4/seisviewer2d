@@ -17,6 +17,7 @@ from app.statics.refraction.contracts.table_apply import (
 )
 from app.services.in_memory_cleanup import cleanup_in_memory_state
 from app.services.pipeline_artifacts import maybe_cleanup_expired_jobs
+from app.services.static_job_targets import get_static_job_target
 from app.statics.refraction.adapters.seisviewer2d.runtime import (
     SeisViewer2DRefractionRuntime,
 )
@@ -24,9 +25,6 @@ from app.statics.refraction.application.export_service import (
     RefractionStaticExportSourceJobNotFound,
     RefractionStaticExportValidationError,
     validate_refraction_static_export_source_job,
-)
-from app.statics.refraction.adapters.seisviewer2d.table_apply_runner import (
-    run_refraction_static_table_apply_job,
 )
 
 router = APIRouter()
@@ -52,7 +50,7 @@ def refraction_static_table_apply(
         key1_byte=req.key1_byte,
         key2_byte=req.key2_byte,
         statics_kind='refraction_static_table_apply',
-        target=run_refraction_static_table_apply_job,
+        target=get_static_job_target('refraction_static_table_apply'),
         target_args=lambda job_id: (job_id, req, state),
     )
 
@@ -86,10 +84,7 @@ def refraction_static_export(
         job_state['source_job_id'] = source.source_job_id
         job_state['export_formats'] = list(source.requested_formats)
 
-    from app.api.routers.statics.launch import (
-        launch_static_job,
-        static_router_job_target,
-    )
+    from app.api.routers.statics.launch import launch_static_job
 
     launched = launch_static_job(
         state=state,
@@ -97,7 +92,7 @@ def refraction_static_export(
         key1_byte=source.key1_byte,
         key2_byte=source.key2_byte,
         statics_kind='refraction_export',
-        target=static_router_job_target('run_refraction_static_export_job'),
+        target=get_static_job_target('refraction_export'),
         target_args=lambda job_id: (job_id, req, state),
         after_create=_after_create,
     )
