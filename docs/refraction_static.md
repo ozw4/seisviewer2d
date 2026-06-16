@@ -416,10 +416,13 @@ directly selected multipart `pick_npz` file and does not ask users for a pick
 }
 ```
 
-Omitted request blocks and fields use the schema defaults in `app/api/schemas.py`.
-For `pick_source.kind="batch_predicted_npz"`, the default artifact name is
-`predicted_picks_time_s.npz`. For `linkage.mode="required"`, the default
-artifact name is `geometry_linkage.npz`.
+Omitted request blocks and fields use the contract defaults in
+`app/statics/refraction/contracts/apply.py::RefractionStaticApplyRequest` and
+the request blocks under `app/statics/refraction/contracts/`:
+`inputs.py`, `model.py`, `options.py`, `field_corrections.py`, `export.py`, and
+`table_apply.py`. For `pick_source.kind="batch_predicted_npz"`, the default
+artifact name is `predicted_picks_time_s.npz`. For `linkage.mode="required"`,
+the default artifact name is `geometry_linkage.npz`.
 
 ## Artifacts
 
@@ -483,19 +486,19 @@ Trace-level final shifts are in `refraction_statics.csv`. Source and receiver
 endpoint shifts are in `source_static_table.csv`, `receiver_static_table.csv`,
 and `source_receiver_static_table.npz`.
 
-Artifact writers are organized as the
-`app.services.refraction_static_artifacts` package. Import public names from the
-package facade, not from private helpers. The artifact-family modules are:
+Artifact writers are organized under `app/statics/refraction/artifacts`. Import
+public names from the package facade when available, not from private helpers.
+The artifact-family modules are:
 
-- `writer.py` for final artifact orchestration and public re-exports.
-- `solution.py`, `qc.py`, `final_tables.py`, and `first_break.py` for solution
-  NPZ, static QC/history JSON, trace/near-surface CSV, and first-break QC/export
-  writers.
-- `components.py`, `static_tables.py`, `cell_velocity.py`, `grid_map.py`, and
+- `contract.py` for artifact names, column definitions, and common constants.
+- `registry.py` for manifest and artifact registry helpers.
+- `writer.py` for the final artifact package writer.
+- `solution.py`, `qc.py`, `final_tables.py`, `first_break.py`,
+  `components.py`, `static_tables.py`, `cell_velocity.py`, `grid_map.py`, and
   `line_profile.py` for family-specific builders and writers.
-- `contract.py`, `registry.py`, `arrays.py`, `validation.py`, `formatters.py`,
-  `io.py`, and `stats.py` for shared artifact names, registry metadata, array
-  coercion, validation, formatting, atomic I/O, and summary statistics.
+- `arrays.py`, `validation.py`, `formatters.py`, `io.py`, and `stats.py` for
+  shared array coercion, validation, formatting, atomic I/O, and summary
+  statistics.
 
 Keep new artifact code in those family modules. As a review guideline, artifact
 modules should normally stay under about 1,500 lines, public writer functions

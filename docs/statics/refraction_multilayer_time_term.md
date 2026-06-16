@@ -68,8 +68,15 @@ Current non-goals are:
 
 ## 3. API Examples
 
-All examples are valid against `RefractionStaticApplyRequest`. Omitted request
-blocks use schema defaults in `app/api/schemas.py`.
+All examples are valid against
+`app/statics/refraction/contracts/apply.py::RefractionStaticApplyRequest`.
+Omitted request blocks use contract defaults from
+`app/statics/refraction/contracts/inputs.py`,
+`app/statics/refraction/contracts/model.py`,
+`app/statics/refraction/contracts/options.py`,
+`app/statics/refraction/contracts/field_corrections.py`,
+`app/statics/refraction/contracts/export.py`, and
+`app/statics/refraction/contracts/table_apply.py`.
 
 ### One-layer T1LSST
 

@@ -88,24 +88,18 @@ CSV time-shift, half-intercept, and residual columns are in milliseconds.
 Geometry, elevation, and thickness columns are in meters. Velocities are in
 meters per second, and slowness values are in seconds per meter.
 
-The implementation lives under `app/services/refraction_static_artifacts` with
+The implementation lives under `app/statics/refraction/artifacts` with
 `__init__.py` kept as the public re-export facade. The package responsibilities
 are split by artifact family:
 
-- `writer.py`: final artifact orchestration and public re-exports.
-- `solution.py`, `qc.py`, `final_tables.py`, and `first_break.py`: solution
-  NPZ, static QC/history JSON, trace/near-surface CSV, and first-break QC/export
-  writers.
-- `components.py`: source/receiver component CSV and component QC artifacts.
-- `static_tables.py`: source, receiver, combined NPZ, and time-term spreadsheet
-  static-table writers.
-- `cell_velocity.py`: per-cell velocity grids, QC summaries, and solver
-  history artifacts.
-- `grid_map.py` and `line_profile.py`: viewer-oriented cell map and line-profile
-  QC artifacts.
-- `contract.py`, `registry.py`, `arrays.py`, `validation.py`, `formatters.py`,
-  `io.py`, and `stats.py`: shared names, manifest metadata, array coercion,
-  validation, formatting, atomic writes, and statistics.
+- `contract.py`: artifact names, column definitions, and common constants.
+- `registry.py`: manifest and artifact registry helpers.
+- `writer.py`: final artifact package writer.
+- `solution.py`, `qc.py`, `final_tables.py`, `first_break.py`,
+  `components.py`, `static_tables.py`, `cell_velocity.py`, `grid_map.py`, and
+  `line_profile.py`: artifact-family builders and writers.
+- `arrays.py`, `validation.py`, `formatters.py`, `io.py`, and `stats.py`:
+  shared array coercion, validation, formatting, atomic writes, and statistics.
 
 Review new artifact code with the same split in mind: an artifact module should
 normally stay below about 1,500 lines, a public writer should normally stay
