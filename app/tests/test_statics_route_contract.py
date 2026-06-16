@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import importlib
+
 from app.main import app
 from app.tests.route_helpers import iter_app_routes
 
@@ -56,3 +58,11 @@ def test_statics_route_contract_method_path_and_endpoint_name() -> None:
             actual[(method, path)] = route.name
 
     assert actual == EXPECTED_STATICS_ROUTE_CONTRACT
+
+
+def test_statics_router_package_exports_only_router() -> None:
+    statics = importlib.import_module('app.api.routers.statics')
+
+    assert statics.__all__ == ['router']
+    assert not hasattr(statics, 'start_job_thread')
+    assert not hasattr(statics, 'run_datum_static_apply_job')
