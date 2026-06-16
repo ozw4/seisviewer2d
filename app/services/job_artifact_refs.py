@@ -85,7 +85,12 @@ def resolve_job_artifact_path(
     if not artifacts_dir.is_dir():
         raise ValueError(f'job artifacts_dir is not a directory: {artifacts_dir}')
 
-    artifact_path = (artifacts_dir / artifact_name).resolve()
+    artifact_path = next(
+        (path.resolve() for path in artifacts_dir.iterdir() if path.name == artifact_name),
+        None,
+    )
+    if artifact_path is None:
+        raise ValueError(f'job artifact not found: {artifact_name}')
     if artifact_path.parent != artifacts_dir:
         raise ValueError(f'job artifact path escapes artifacts_dir: {artifact_name}')
     if not artifact_path.is_file():
