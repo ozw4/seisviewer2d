@@ -8,6 +8,46 @@ from fastapi.testclient import TestClient
 
 from app.main import app
 from app.services.pipeline_artifacts import get_job_dir
+from app.tests.route_helpers import iter_app_routes
+
+
+EXPECTED_BATCH_ROUTE_CONTRACT = {
+    ('GET', '/batch'): 'batch',
+    ('POST', '/batch/apply'): 'batch_apply',
+    ('GET', '/batch/job/{job_id}/status'): 'job_status',
+    ('POST', '/batch/job/{job_id}/cancel'): 'job_cancel',
+    ('GET', '/batch/job/{job_id}/files'): 'job_files',
+    ('GET', '/batch/job/{job_id}/download'): 'job_download',
+}
+
+EXPECTED_LIFECYCLE_RESPONSE_REFS = {
+    ('get', '/batch/job/{job_id}/status'): '#/components/schemas/BatchJobStatusResponse',
+    ('post', '/batch/job/{job_id}/cancel'): '#/components/schemas/BatchJobStatusResponse',
+    ('get', '/batch/job/{job_id}/files'): '#/components/schemas/BatchJobFilesResponse',
+    (
+        'get',
+        '/statics/job/{job_id}/status',
+    ): '#/components/schemas/StaticJobStatusResponse',
+    (
+        'post',
+        '/statics/job/{job_id}/cancel',
+    ): '#/components/schemas/StaticJobStatusResponse',
+    (
+        'get',
+        '/statics/job/{job_id}/files',
+    ): '#/components/schemas/StaticJobFilesResponse',
+}
+
+LIFECYCLE_ROUTE_PATHS = {
+    '/batch/job/{job_id}/status',
+    '/batch/job/{job_id}/cancel',
+    '/batch/job/{job_id}/files',
+    '/batch/job/{job_id}/download',
+    '/statics/job/{job_id}/status',
+    '/statics/job/{job_id}/cancel',
+    '/statics/job/{job_id}/files',
+    '/statics/job/{job_id}/download',
+}
 
 
 @pytest.fixture()
@@ -102,6 +142,52 @@ def _create_static_job(
     return artifacts_dir
 
 
+def test_batch_route_contract_method_path_and_endpoint_name() -> None:
+    actual = {}
+    for route in iter_app_routes(app.routes):
+        path = getattr(route, 'path', None)
+        methods = getattr(route, 'methods', None)
+        if not path or not path.startswith('/batch') or not methods:
+            continue
+        for method in sorted(methods - {'HEAD', 'OPTIONS'}):
+            actual[(method, path)] = route.name
+
+    assert actual == EXPECTED_BATCH_ROUTE_CONTRACT
+
+
+def test_batch_and_static_lifecycle_routes_use_factory_endpoints() -> None:
+    actual = {
+        getattr(route, 'path', None): route.endpoint.__module__
+        for route in iter_app_routes(app.routes)
+        if getattr(route, 'path', None) in LIFECYCLE_ROUTE_PATHS
+    }
+
+    assert actual == {
+        path: 'app.api.job_lifecycle_router' for path in LIFECYCLE_ROUTE_PATHS
+    }
+
+
+def test_batch_and_static_lifecycle_openapi_response_models() -> None:
+    schema = app.openapi()
+
+    for (method, path), expected_ref in EXPECTED_LIFECYCLE_RESPONSE_REFS.items():
+        response_schema = schema['paths'][path][method]['responses']['200']['content'][
+            'application/json'
+        ]['schema']
+        assert response_schema == {'$ref': expected_ref}
+
+    for path in (
+        '/batch/job/{job_id}/download',
+        '/statics/job/{job_id}/download',
+    ):
+        operation = schema['paths'][path]['get']
+        params = {
+            (param['name'], param['in']): param['required']
+            for param in operation['parameters']
+        }
+        assert params == {('job_id', 'path'): True, ('name', 'query'): True}
+
+
 @pytest.mark.parametrize(
     ('method', 'path', 'params'),
     [
@@ -164,6 +250,30 @@ def test_batch_status_cancel_reject_non_batch_jobs(
     assert response.json() == {'detail': 'Job ID not found'}
 
 
+@pytest.mark.parametrize(
+    ('method', 'path', 'params'),
+    [
+        ('get', '/batch/job/pipeline-job-1/files', None),
+        ('get', '/batch/job/pipeline-job-1/download', {'name': 'job_meta.json'}),
+        ('get', '/batch/job/static-job-1/files', None),
+        ('get', '/batch/job/static-job-1/download', {'name': 'job_meta.json'}),
+    ],
+)
+def test_batch_files_download_reject_non_batch_jobs(
+    client: TestClient,
+    method: str,
+    path: str,
+    params: dict[str, str] | None,
+) -> None:
+    _create_pipeline_job(client)
+    _create_static_job(client)
+
+    response = client.request(method, path, params=params)
+
+    assert response.status_code == 404
+    assert response.json() == {'detail': 'Job ID not found'}
+
+
 def test_batch_job_cancel_queued_marks_cancelled(client: TestClient) -> None:
     _create_batch_job(client)
 
@@ -219,6 +329,27 @@ def test_batch_job_files_lists_direct_artifact_files_by_name(
     }
 
 
+def test_batch_job_files_missing_dir_404(client: TestClient) -> None:
+    _create_batch_job(client)
+
+    response = client.get('/batch/job/batch-job-1/files')
+
+    assert response.status_code == 404
+    assert response.json() == {'detail': 'Job artifacts not found'}
+
+
+def test_batch_job_files_missing_artifacts_dir_404(client: TestClient) -> None:
+    _create_batch_job(client)
+    state = client.app.state.sv
+    with state.lock:
+        state.jobs['batch-job-1'].pop('artifacts_dir')
+
+    response = client.get('/batch/job/batch-job-1/files')
+
+    assert response.status_code == 404
+    assert response.json() == {'detail': 'Job artifacts not found'}
+
+
 def test_batch_job_download_returns_plain_filename(client: TestClient) -> None:
     job_dir = _create_batch_job(client)
     job_dir.mkdir(parents=True)
@@ -252,6 +383,19 @@ def test_batch_job_download_rejects_path_traversal(
 
     assert response.status_code == 400
     assert response.json() == {'detail': 'Invalid file name'}
+
+
+def test_batch_job_download_missing_file_404(client: TestClient) -> None:
+    job_dir = _create_batch_job(client)
+    job_dir.mkdir(parents=True)
+
+    response = client.get(
+        '/batch/job/batch-job-1/download',
+        params={'name': 'job_meta.json'},
+    )
+
+    assert response.status_code == 404
+    assert response.json() == {'detail': 'File not found'}
 
 
 @pytest.mark.parametrize(

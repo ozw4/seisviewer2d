@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from app.main import app
+from app.tests.route_helpers import iter_app_routes
 
 EXPECTED_STATICS_ROUTE_CONTRACT = {
     ('POST', '/statics/datum/apply'): 'datum_static_apply',
@@ -37,16 +38,16 @@ EXPECTED_STATICS_ROUTE_CONTRACT = {
         '/statics/refraction/static-table/apply',
     ): 'refraction_static_table_apply',
     ('POST', '/statics/refraction/export'): 'refraction_static_export',
-    ('GET', '/statics/job/{job_id}/status'): 'static_job_status',
-    ('POST', '/statics/job/{job_id}/cancel'): 'static_job_cancel',
-    ('GET', '/statics/job/{job_id}/files'): 'static_job_files',
-    ('GET', '/statics/job/{job_id}/download'): 'static_job_download',
+    ('GET', '/statics/job/{job_id}/status'): 'job_status',
+    ('POST', '/statics/job/{job_id}/cancel'): 'job_cancel',
+    ('GET', '/statics/job/{job_id}/files'): 'job_files',
+    ('GET', '/statics/job/{job_id}/download'): 'job_download',
 }
 
 
 def test_statics_route_contract_method_path_and_endpoint_name() -> None:
     actual = {}
-    for route in app.routes:
+    for route in iter_app_routes(app.routes):
         path = getattr(route, 'path', None)
         methods = getattr(route, 'methods', None)
         if not path or not path.startswith('/statics') or not methods:
