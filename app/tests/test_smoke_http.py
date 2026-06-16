@@ -3,6 +3,7 @@ from fastapi.routing import APIRoute
 from fastapi.testclient import TestClient
 
 from app.main import app
+from app.tests.route_helpers import iter_app_routes
 
 client = TestClient(app)
 
@@ -44,7 +45,7 @@ def test_all_safe_gets_return_200():
 
 def test_router_modules_present_and_no_leftovers():
     # ルータ分割の健全性チェック
-    routes = [r for r in app.routes if isinstance(r, APIRoute)]
+    routes = [r for r in iter_app_routes(app.routes) if isinstance(r, APIRoute)]
     mods = {r.endpoint.__module__ for r in routes}
     expected = {
         'app.api.routers.upload',

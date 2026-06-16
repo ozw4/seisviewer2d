@@ -2,19 +2,10 @@
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Query, Request
-from fastapi.responses import FileResponse
+from fastapi import APIRouter, Request
 
 from app.api._helpers import get_state
-from app.api.job_artifacts import (
-    list_job_artifact_files,
-    resolve_download_artifact_or_http_error,
-)
-from app.api.job_routes import (
-    cancel_job_and_get_status_payload,
-    get_job_or_404,
-    job_status_payload,
-)
+from app.api.job_lifecycle_router import build_job_lifecycle_router
 from app.contracts.batch import (
     BatchApplyRequest,
     BatchApplyResponse,
@@ -27,6 +18,14 @@ from app.services.jobs import launch_managed_job
 from app.services.pipeline_artifacts import maybe_cleanup_expired_jobs
 
 router = APIRouter()
+router.include_router(
+    build_job_lifecycle_router(
+        route_prefix='/batch/job',
+        allowed_job_types={'batch_apply'},
+        status_response_model=BatchJobStatusResponse,
+        files_response_model=BatchJobFilesResponse,
+    )
+)
 
 
 @router.post('/batch/apply', response_model=BatchApplyResponse)
@@ -49,53 +48,3 @@ def batch_apply(req: BatchApplyRequest, request: Request) -> BatchApplyResponse:
     )
 
     return {'job_id': launched.job_id, 'state': launched.state}
-
-
-@router.get('/batch/job/{job_id}/status', response_model=BatchJobStatusResponse)
-def batch_job_status(request: Request, job_id: str) -> BatchJobStatusResponse:
-    state = get_state(request.app)
-    cleanup_in_memory_state(state)
-    job = get_job_or_404(state, job_id, allowed_job_types={'batch_apply'})
-    return job_status_payload(job)
-
-
-@router.post('/batch/job/{job_id}/cancel', response_model=BatchJobStatusResponse)
-def batch_job_cancel(request: Request, job_id: str) -> BatchJobStatusResponse:
-    state = get_state(request.app)
-    cleanup_in_memory_state(state)
-    return cancel_job_and_get_status_payload(
-        state,
-        job_id,
-        allowed_job_types={'batch_apply'},
-    )
-
-
-@router.get('/batch/job/{job_id}/files', response_model=BatchJobFilesResponse)
-def batch_job_files(request: Request, job_id: str) -> BatchJobFilesResponse:
-    state = get_state(request.app)
-    cleanup_in_memory_state(state)
-    job = get_job_or_404(state, job_id, allowed_job_types={'batch_apply'})
-
-    maybe_cleanup_expired_jobs()
-    return list_job_artifact_files(job)
-
-
-@router.get('/batch/job/{job_id}/download')
-def batch_job_download(
-    request: Request,
-    job_id: str,
-    name: str = Query(...),
-) -> FileResponse:
-    state = get_state(request.app)
-    cleanup_in_memory_state(state)
-    get_job_or_404(state, job_id, allowed_job_types={'batch_apply'})
-
-    maybe_cleanup_expired_jobs()
-    file_path = resolve_download_artifact_or_http_error(
-        state,
-        job_id=job_id,
-        name=name,
-        allowed_job_types={'batch_apply'},
-    )
-
-    return FileResponse(path=file_path, filename=name)

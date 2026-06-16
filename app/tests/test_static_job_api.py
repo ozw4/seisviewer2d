@@ -10,6 +10,7 @@ from app.core.state import create_app_state
 from app.main import app
 from app.services.job_manager import JobManager
 from app.services.pipeline_artifacts import get_job_dir
+from app.tests.route_helpers import iter_app_routes
 
 
 @pytest.fixture()
@@ -374,7 +375,7 @@ def test_static_job_download_missing_file_404(client: TestClient) -> None:
 
 
 def test_statics_router_registered() -> None:
-    paths = {getattr(route, 'path', None) for route in app.routes}
+    paths = {getattr(route, 'path', None) for route in iter_app_routes(app.routes)}
 
     assert '/statics/job/{job_id}/status' in paths
     assert '/statics/job/{job_id}/cancel' in paths
