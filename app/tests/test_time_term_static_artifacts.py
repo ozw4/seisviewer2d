@@ -16,14 +16,14 @@ from app.services.time_term_apply_shift import (
     SIGN_CONVENTION,
     TimeTermAppliedShiftResult,
 )
-from app.services.time_term_design_matrix import TimeTermDesignMatrix
-from app.services.time_term_moveout import TimeTermMoveoutResult
-from app.services.time_term_robust_solver import (
+from seis_statics.time_term import (
+    ORDER,
+    TimeTermDesignMatrix,
+    TimeTermInversionInputs,
+    TimeTermMoveoutResult,
     TimeTermRobustIteration,
     TimeTermRobustSolverOptions,
     TimeTermRobustSolverResult,
-)
-from app.services.time_term_sparse_solver import (
     TimeTermSolverSystem,
     TimeTermSparseSolverResult,
 )
@@ -37,7 +37,6 @@ from app.services.time_term_static_artifacts import (
     build_time_term_statics_csv_rows,
     write_time_term_static_artifacts,
 )
-from app.services.time_term_types import ORDER, TimeTermInversionInputs
 
 N_TRACES = 3
 N_NODES = 3

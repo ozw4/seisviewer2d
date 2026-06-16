@@ -8,13 +8,13 @@ import numpy as np
 import pytest
 from scipy import sparse
 
-from app.services.time_term_design_matrix import (
+from seis_statics.time_term import (
     TimeTermDesignMatrixOptions,
+    TimeTermInversionInputs,
+    TimeTermMoveoutResult,
     build_time_term_design_matrix,
     summarize_time_term_design_matrix,
 )
-from app.services.time_term_moveout import TimeTermMoveoutResult
-from app.services.time_term_types import TimeTermInversionInputs
 
 N_TRACES = 4
 N_SAMPLES = 64

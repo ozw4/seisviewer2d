@@ -7,17 +7,17 @@ import numpy as np
 import pytest
 from scipy import sparse
 
-import app.services.time_term_robust_solver as robust_module
-from app.services.time_term_design_matrix import TimeTermDesignMatrix
-from app.services.time_term_robust_solver import (
+import seis_statics.time_term.robust_solver as robust_module
+from seis_statics.time_term import (
+    TimeTermDesignMatrix,
     TimeTermRobustSolverOptions,
+    TimeTermSparseSolverOptions,
     compute_time_term_robust_scores,
     solve_time_term_robust_least_squares,
     subset_time_term_design_matrix_rows,
     summarize_time_term_robust_solver_result,
     validate_time_term_robust_solver_options,
 )
-from app.services.time_term_sparse_solver import TimeTermSparseSolverOptions
 
 SOURCE_NODE_COUNT = 4
 RECEIVER_NODE_COUNT = 5

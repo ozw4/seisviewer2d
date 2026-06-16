@@ -17,9 +17,12 @@ from app.services.common.array_validation import (
     coerce_positive_finite_float as _coerce_positive_finite_float,
     coerce_positive_int as _coerce_positive_int,
 )
-from app.services.time_term_robust_solver import TimeTermRobustSolverResult
-from app.services.time_term_sparse_solver import TimeTermSparseSolverResult
-from app.services.time_term_types import ORDER, TimeTermInversionInputs
+from seis_statics.time_term import (
+    ORDER,
+    TimeTermInversionInputs,
+    TimeTermRobustSolverResult,
+    TimeTermSparseSolverResult,
+)
 
 TimeTermRejectedTracePolicy = Literal['use_final_model']
 
