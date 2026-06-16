@@ -1,9 +1,9 @@
 # Static correction
 
-`seisviewer2d` exposes backend-only static-correction workflows through the
+`seisviewer2d` exposes API-centered static-correction workflows through the
 `/statics/...` API family. The viewer can open corrected TraceStores that these
-jobs register, but the static-correction APIs are primarily developer-facing.
-The browser workflow for the `Static Correction` tab is documented in
+jobs register, and refraction statics also have a dedicated browser workflow.
+The browser workflow for the `Static Correction` page is documented in
 [statics/static_correction_ui_workflow.md](statics/static_correction_ui_workflow.md).
 
 ## Workflows
