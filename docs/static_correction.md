@@ -8,30 +8,72 @@ The browser workflow for the `Static Correction` tab is documented in
 
 ## Workflows
 
-- Datum statics: `POST /statics/datum/apply`
+Core static-correction job launch endpoints:
+
+- `POST /statics/datum/apply`
   - Computes datum trace shifts and can register a datum-corrected TraceStore.
-- First-break QC: `POST /statics/first-break/qc`
+- `POST /statics/first-break/qc`
   - Validates first-break picks against a datum solution and writes QC artifacts.
-- Residual statics: `POST /statics/residual/apply`
-  - Estimates residual applied event-time shifts and can register a residual-corrected TraceStore.
-- Geometry linkage: `POST /statics/linkage/build`
-  - Builds `geometry_linkage.npz`, which maps each sorted trace's source and receiver endpoints to near-surface node IDs.
-- Time-term statics: `POST /statics/time-term/apply`
-  - Estimates source/receiver node time terms, converts estimated delays to applied weathering shifts, writes artifacts, and can register a time-term-corrected TraceStore.
-- Refraction statics: `POST /statics/refraction/apply`
-  - API entry point for first-break based near-surface refraction statics.
+- `POST /statics/linkage/build`
+  - Builds `geometry_linkage.npz`, which maps each sorted trace's source and
+    receiver endpoints to near-surface node IDs.
+- `POST /statics/residual/apply`
+  - Estimates residual applied event-time shifts and can register a
+    residual-corrected TraceStore.
+- `POST /statics/time-term/apply`
+  - Estimates source/receiver node time terms, converts estimated delays to
+    applied weathering shifts, writes artifacts, and can register a
+    time-term-corrected TraceStore.
+
+Refraction static apply and validation endpoints:
+
+- `POST /statics/refraction/apply`
+  - JSON request body API for first-break based near-surface refraction statics.
+  - `pick_source.kind="uploaded_npz"` is not accepted here. Directly uploaded
+    first-break NPZ files must use the multipart endpoints below.
   - Builds the GLI variable-thickness near-surface model and writes the final
     refraction statics artifact package.
   - When requested, applies the final refraction shifts to a derived TraceStore
     and registers the corrected file for viewer access. SEG-Y writing is not
     part of this workflow.
-  - The IRAS-compatible 1-layer V1/T1LSST/source-receiver table workflow is
-    documented in [refraction_static.md](refraction_static.md).
-  - The refraction QC artifact and viewer workflow is documented in
-    [statics/refraction_qc_viewer_workflow.md](statics/refraction_qc_viewer_workflow.md).
-  - The UI workflow for running refraction statics from the current viewer file
-    and a directly selected first-break pick NPZ is documented in
-    [statics/static_correction_ui_workflow.md](statics/static_correction_ui_workflow.md).
+- `POST /statics/refraction/apply-with-picks`
+  - `multipart/form-data` apply endpoint used by the `Static Correction` UI.
+  - Form fields are `request_json`, containing the JSON
+    `RefractionStaticApplyRequest`, and `pick_npz`, containing the selected
+    first-break pick NPZ file.
+  - The request JSON must use `pick_source.kind="uploaded_npz"`.
+- `POST /statics/refraction/validate-with-picks`
+  - `multipart/form-data` validation endpoint used by the `Static Correction`
+    UI before launching an apply job.
+  - Form fields are `request_json`, containing the JSON
+    `RefractionStaticApplyRequest`, and `pick_npz`, containing the selected
+    first-break pick NPZ file.
+  - The request JSON must use `pick_source.kind="uploaded_npz"`.
+
+Refraction QC endpoints:
+
+- `POST /statics/refraction/qc`
+- `POST /statics/refraction/qc/endpoints`
+- `POST /statics/refraction/qc/pick-map`
+- `POST /statics/refraction/qc/drilldown`
+- `POST /statics/refraction/qc/station-structure`
+- `POST /statics/refraction/qc/gather-preview`
+
+The refraction QC artifact and viewer workflow is documented in
+[statics/refraction_qc_viewer_workflow.md](statics/refraction_qc_viewer_workflow.md).
+
+M5 export and static-table apply endpoints:
+
+- `POST /statics/refraction/export`
+- `POST /statics/refraction/static-table/apply`
+
+The M5 export/import and static-table apply workflow is documented in
+[statics/refraction_m5_exports_table_workflow.md](statics/refraction_m5_exports_table_workflow.md).
+The IRAS-compatible 1-layer V1/T1LSST/source-receiver table workflow is
+documented in [refraction_static.md](refraction_static.md). The UI workflow for
+running refraction statics from the current viewer file and a directly selected
+first-break pick NPZ is documented in
+[statics/static_correction_ui_workflow.md](statics/static_correction_ui_workflow.md).
 
 The detailed time-term inversion API, sign convention, apply modes, and artifact
 contract are documented in [time_term_static_correction.md](time_term_static_correction.md).
@@ -42,11 +84,14 @@ Static-correction jobs use common job endpoints:
 
 ```bash
 curl http://localhost:8000/statics/job/<job_id>/status
+curl -X POST http://localhost:8000/statics/job/<job_id>/cancel
 curl http://localhost:8000/statics/job/<job_id>/files
 curl -L "http://localhost:8000/statics/job/<job_id>/download?name=<artifact_name>" -o <artifact_name>
 ```
 
 `/statics/job/<job_id>/status` returns `state`, `progress`, and `message`.
+`/statics/job/<job_id>/cancel` requests cancellation and returns the same status
+payload shape.
 `/statics/job/<job_id>/files` returns artifact names and sizes from the job
 artifact directory. `/statics/job/<job_id>/download` accepts only a plain file
 basename in the `name` query parameter.
