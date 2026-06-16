@@ -3,6 +3,7 @@ from fastapi.testclient import TestClient
 
 import app.api.routers.picks as picks_router
 from app.main import app
+from app.tests.route_helpers import iter_app_routes
 
 
 class _FakeReader:
@@ -24,7 +25,7 @@ class _FakeReader:
 def test_export_manual_picks_grstat_txt_route_exists():
     assert any(
         getattr(r, 'path', '') == '/export_manual_picks_grstat_txt'
-        for r in app.router.routes
+        for r in iter_app_routes(app.router.routes)
     )
 
 

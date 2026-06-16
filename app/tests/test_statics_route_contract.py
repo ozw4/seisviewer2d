@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from app.main import app
+from app.tests.route_helpers import iter_app_routes
 
 EXPECTED_STATICS_ROUTE_CONTRACT = {
     ('POST', '/statics/datum/apply'): 'datum_static_apply',
@@ -46,7 +47,7 @@ EXPECTED_STATICS_ROUTE_CONTRACT = {
 
 def test_statics_route_contract_method_path_and_endpoint_name() -> None:
     actual = {}
-    for route in app.routes:
+    for route in iter_app_routes(app.routes):
         path = getattr(route, 'path', None)
         methods = getattr(route, 'methods', None)
         if not path or not path.startswith('/statics') or not methods:
