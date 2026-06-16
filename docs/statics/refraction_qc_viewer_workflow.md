@@ -65,6 +65,9 @@ refraction_static_history.json
 refraction_static_artifacts.json
 ```
 
+`refraction_first_break_time_export.csv` is the observation-level first-break
+time export used by the QC viewer workflow and M5 export workflow.
+
 Successful apply jobs also write QC artifact families for the viewer:
 
 ```text

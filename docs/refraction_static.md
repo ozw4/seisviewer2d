@@ -501,15 +501,25 @@ Conditional artifacts are grouped by request feature:
   `refraction_uphole_sources.csv`.
 - `apply.register_corrected_file=true` can add `corrected_file.json` and
   `refraction_static_apply_qc.json`.
-- Export-enabled apply jobs and standalone export jobs can add
+- Export-enabled apply jobs can add
   `canonical_source_static_table.csv`,
   `canonical_receiver_static_table.csv`,
   `canonical_source_receiver_static_table.csv`,
   `refraction_lsst.csv`, `refraction_lsst_cards.txt`,
-  `refraction_lsst_plus.csv`, `refraction_lsst_plus_cards.txt`,
-  `refraction_time_term_spreadsheet.csv`, and
-  `refraction_first_break_time_export.csv`, depending on requested export
-  formats. Standalone export jobs also write
+  `refraction_lsst_plus.csv`, and `refraction_lsst_plus_cards.txt`,
+  depending on requested export formats. The `time_term_spreadsheet` and
+  `first_break_time` export formats target
+  `refraction_time_term_spreadsheet.csv` and
+  `refraction_first_break_time_export.csv`, respectively, but those files are
+  standard successful-apply artifacts listed above rather than additional
+  conditional apply artifacts.
+- Standalone export jobs write a separate export package. Depending on
+  requested formats, it can include `canonical_source_static_table.csv`,
+  `canonical_receiver_static_table.csv`,
+  `canonical_source_receiver_static_table.csv`, `refraction_lsst.csv`,
+  `refraction_lsst_cards.txt`, `refraction_lsst_plus.csv`,
+  `refraction_lsst_plus_cards.txt`, `refraction_time_term_spreadsheet.csv`,
+  and `refraction_first_break_time_export.csv`, plus
   `refraction_static_export_request.json` and `job_meta.json`.
 - Failed jobs can write `failure_diagnostics.json`. Preflight and
   design-matrix failures can also leave diagnostic artifacts such as
