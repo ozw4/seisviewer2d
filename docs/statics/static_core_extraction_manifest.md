@@ -126,11 +126,11 @@ shift sign conventions.
 
 ## Phase 2+ Time-Term and Refraction Boundary
 
-Time-term and refraction are Phase 2+ extraction items. Do not move them during
-the Phase 1 datum/residual/trace-shift package extraction, and do not move the
-full refraction stack in one step. Future work should separate pure numerical
-and domain modules into `seis_statics` while keeping request handling, artifact
-contracts, TraceStore integration, and job runtime behavior in `seisviewer2d`.
+Time-term numerical core code has been extracted to `seis_statics.time_term`.
+Refraction remains a Phase 2+ extraction item. Do not move the full refraction
+stack in one step. Future work should separate pure numerical and domain modules
+into `seis_statics` while keeping request handling, artifact contracts,
+TraceStore integration, and job runtime behavior in `seisviewer2d`.
 
 Before moving any refraction module, verify the boundary against the canonical
 refraction docs:
@@ -145,10 +145,28 @@ The package boundary for refraction must preserve the documented T1LSST
 workflows, supported velocity modes, source/receiver static table semantics,
 and static-shift sign convention.
 
-### Time-Term Candidates for `seis_statics.time_term`
+### Extracted Time-Term Core
 
-These modules contain the likely future `seis_statics.time_term` numerical
-surface, subject to an import audit before any move:
+The `seis_statics.time_term` package owns the numerical time-term surface:
+
+```text
+seis_statics/time_term/types.py
+seis_statics/time_term/moveout.py
+seis_statics/time_term/design_matrix.py
+seis_statics/time_term/sparse_solver.py
+seis_statics/time_term/robust_solver.py
+seis_statics/time_term/apply_shift.py
+```
+
+These modules are parameterized with arrays, scalar options, and small
+dataclasses. They must not import `app.*`, FastAPI, Pydantic, `AppState`,
+SEG-Y readers, `TraceStore`, job lifecycle helpers, artifact path resolvers, or
+API response schemas. They preserve the convention that estimated time-term
+delays are converted to applied weathering shifts by negation, and that final
+shifts compose datum, residual, and weathering applied shifts without changing
+numerical behavior.
+
+The app compatibility modules are thin re-export shims over the extracted core:
 
 ```text
 app/services/time_term_types.py
@@ -159,11 +177,9 @@ app/services/time_term_robust_solver.py
 app/services/time_term_apply_shift.py
 ```
 
-The future package surface should be parameterized with arrays, scalar options,
-and small dataclasses. It must preserve the current convention that estimated
-time-term delays are converted to applied weathering shifts by negation, and
-that final shifts compose datum, residual, and weathering applied shifts without
-changing numerical behavior.
+These shims are kept for compatibility during migration only. Their
+implementation should remain limited to imports from `seis_statics.time_term`
+and `__all__` re-exports.
 
 Keep these time-term modules in `seisviewer2d` unless a future issue explicitly
 splits out a pure helper from them:
