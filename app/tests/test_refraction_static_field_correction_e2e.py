@@ -24,8 +24,8 @@ from app.statics.refraction.artifacts import (
 from app.statics.refraction.artifacts.source_depth import (
     REFRACTION_SOURCE_DEPTH_QC_JSON_NAME,
 )
+from app.statics.refraction.artifacts.uphole import REFRACTION_UPHOLE_QC_JSON_NAME
 from app.statics.refraction.adapters.seisviewer2d.workflow_runner import run_refraction_static_apply_job
-from app.statics.refraction.domain.uphole import REFRACTION_UPHOLE_QC_JSON_NAME
 from app.tests._refraction_static_field_e2e_helpers import (
     FIELD_FILE_ID,
     FIELD_ORIGINAL_NAME,

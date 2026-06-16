@@ -25,16 +25,16 @@ from app.statics.refraction.artifacts.source_depth import (
     REFRACTION_SOURCE_DEPTH_QC_JSON_NAME,
     REFRACTION_SOURCE_DEPTH_SOURCES_CSV_NAME,
 )
+from app.statics.refraction.artifacts.uphole import (
+    REFRACTION_UPHOLE_QC_JSON_NAME,
+    REFRACTION_UPHOLE_SOURCES_CSV_NAME,
+)
 from app.statics.refraction.domain.t1lsst import (
     REFRACTION_T1LSST_1LAYER_COMPONENTS_CSV_NAME,
 )
 from app.statics.refraction.domain.types import (
     RefractionLayerKind,
     ResolvedRefractionFirstLayer,
-)
-from app.statics.refraction.domain.uphole import (
-    REFRACTION_UPHOLE_QC_JSON_NAME,
-    REFRACTION_UPHOLE_SOURCES_CSV_NAME,
 )
 from app.statics.refraction.domain.v1 import (
     REFRACTION_V1_ESTIMATES_CSV_NAME,

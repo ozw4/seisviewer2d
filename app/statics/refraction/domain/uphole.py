@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from pathlib import Path
 from typing import Any
 
 import numpy as np
@@ -13,16 +12,12 @@ from app.services.common.array_validation import (
     coerce_1d_string_array as _coerce_1d_string_array,
     coerce_finite_float as _coerce_finite_float,
 )
-from app.services.common.artifact_io import write_csv_atomic, write_json_atomic
 from app.statics.refraction.domain.types import (
     REFRACTION_FIELD_CORRECTION_COMPONENT_NAMES,
     RefractionEndpointFieldCorrectionResult,
     RefractionStaticInputModel,
     RefractionUpholeResult,
 )
-
-REFRACTION_UPHOLE_QC_JSON_NAME = 'refraction_uphole_qc.json'
-REFRACTION_UPHOLE_SOURCES_CSV_NAME = 'refraction_uphole_sources.csv'
 
 _STATUS_DTYPE = '<U32'
 _FIELD_STATUS_DTYPE = '<U48'
@@ -35,15 +30,6 @@ _UPHOLE_STATUSES = (
     'inconsistent_uphole_time',
     'exceeds_max_abs_uphole_time',
     'inactive_source_endpoint',
-)
-_UPHOLE_COLUMNS = (
-    'source_endpoint_key',
-    'source_endpoint_id',
-    'source_node_id',
-    'uphole_time_s',
-    'uphole_status',
-    'uphole_pick_count',
-    'uphole_trace_count',
 )
 _UPHOLE_COMPONENT = 'uphole_shift_s'
 _NOT_APPLICABLE_STATUS = 'not_applicable'
@@ -60,7 +46,6 @@ def resolve_refraction_uphole_for_input_model(
     positive_time_means_delay: bool = True,
     max_abs_uphole_time_s: float = 1.0,
     inconsistency_tolerance_s: float = _DEFAULT_INCONSISTENCY_TOLERANCE_S,
-    job_dir: Path | None = None,
 ) -> RefractionUpholeResult:
     """Resolve trace-order uphole times to source endpoint rows."""
     if input_model.source_endpoint_id_sorted is None:
@@ -80,8 +65,6 @@ def resolve_refraction_uphole_for_input_model(
         max_abs_uphole_time_s=max_abs_uphole_time_s,
         inconsistency_tolerance_s=inconsistency_tolerance_s,
     )
-    if job_dir is not None:
-        write_refraction_uphole_artifacts(Path(job_dir), result)
     return result
 
 
@@ -195,35 +178,6 @@ def resolve_refraction_uphole(
         uphole_trace_count=np.ascontiguousarray(out_trace_count, dtype=np.int64),
         qc=qc,
     )
-
-
-def write_refraction_uphole_artifacts(
-    job_dir: Path,
-    result: RefractionUpholeResult,
-) -> dict[str, Path]:
-    """Write uphole QC JSON and one-row-per-source CSV artifacts."""
-    root = Path(job_dir)
-    root.mkdir(parents=True, exist_ok=True)
-    qc_path = root / REFRACTION_UPHOLE_QC_JSON_NAME
-    source_path = root / REFRACTION_UPHOLE_SOURCES_CSV_NAME
-    write_json_atomic(
-        qc_path,
-        result.qc,
-        allow_nan=True,
-        ensure_ascii=True,
-        sort_keys=True,
-    )
-    write_csv_atomic(
-        source_path,
-        columns=_UPHOLE_COLUMNS,
-        rows=_uphole_rows(result),
-        extrasaction='raise',
-        lineterminator='\r\n',
-    )
-    return {
-        'qc_json': qc_path,
-        'sources_csv': source_path,
-    }
 
 
 def compute_uphole_time_correction(
@@ -528,24 +482,6 @@ def _node_id_for_group(node_values: np.ndarray) -> int:
     return -1
 
 
-def _uphole_rows(result: RefractionUpholeResult) -> list[dict[str, object]]:
-    rows: list[dict[str, object]] = []
-    for index in range(int(result.source_endpoint_key.shape[0])):
-        uphole_time = float(result.uphole_time_s[index])
-        rows.append(
-            {
-                'source_endpoint_key': str(result.source_endpoint_key[index]),
-                'source_endpoint_id': int(result.source_endpoint_id[index]),
-                'source_node_id': int(result.source_node_id[index]),
-                'uphole_time_s': _csv_float(uphole_time),
-                'uphole_status': str(result.uphole_status[index]),
-                'uphole_pick_count': int(result.uphole_pick_count[index]),
-                'uphole_trace_count': int(result.uphole_trace_count[index]),
-            }
-        )
-    return rows
-
-
 def _uphole_time_to_seconds(values: np.ndarray, unit: str) -> np.ndarray:
     if unit == 's':
         return np.ascontiguousarray(values, dtype=np.float64)
@@ -678,18 +614,9 @@ def _status_counts(status: np.ndarray) -> dict[str, int]:
     return out
 
 
-def _csv_float(value: float) -> str:
-    if not np.isfinite(value):
-        return ''
-    return f'{float(value):.17g}'
-
-
 __all__ = [
-    'REFRACTION_UPHOLE_QC_JSON_NAME',
-    'REFRACTION_UPHOLE_SOURCES_CSV_NAME',
     'compute_uphole_time_correction',
     'compute_uphole_time_correction_from_result',
     'resolve_refraction_uphole',
     'resolve_refraction_uphole_for_input_model',
-    'write_refraction_uphole_artifacts',
 ]
