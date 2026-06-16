@@ -5,6 +5,7 @@ from fastapi.testclient import TestClient
 
 from app.api.routers import picks as ep
 from app.main import app
+from app.tests.route_helpers import iter_app_routes
 from app.utils.pick_cache_file1d_mem import load_all, open_for_write
 
 
@@ -50,7 +51,8 @@ def _client_with_base_patches(
 
 def test_export_manual_picks_npz_route_exists():
     assert any(
-        getattr(r, 'path', '') == '/export_manual_picks_npz' for r in app.router.routes
+        getattr(r, 'path', '') == '/export_manual_picks_npz'
+        for r in iter_app_routes(app.router.routes)
     )
 
 

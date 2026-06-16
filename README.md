@@ -109,6 +109,10 @@ The UI is served from `app/static/`.
 - `/upload` lets you upload a SEG-Y or re-open a previously processed dataset.
 - `/` is the viewer with a side panel for pipeline steps.
 - `/batch` is the batch-apply page for running pipeline jobs over all key1 values.
+- `/static-correction` is the dedicated page for creating a refraction static
+  job from the current viewer file and a directly selected first-break pick NPZ.
+- `/refraction-qc` is the dedicated page for inspecting a completed refraction
+  job's QC bundle, drilldown views, and gather preview.
 
 The main viewer page (`app/static/index.html`) expects a small Vite-built bundle at `/static/assets/main.js`.
 If you change frontend sources under `app/web/`, rebuild with:
@@ -139,27 +143,36 @@ Compare mode:
 
 ## Static correction
 
-This viewer supports backend workflows for datum statics, first-break QC,
-residual statics, geometry linkage, and time-term statics.
+This viewer supports API-centered workflows for datum statics, first-break QC,
+residual statics, geometry linkage, and time-term statics. Refraction statics
+also have dedicated browser workflows at `/static-correction` and
+`/refraction-qc`.
 
 See:
 
 - `docs/static_correction.md`
+- `docs/statics/static_correction_ui_workflow.md`
 - `docs/refraction_static.md`
-- `docs/statics/refraction_static_ui_fixture.md`
+- `docs/statics/refraction_field_corrections.md`
 - `docs/statics/refraction_qc_viewer_workflow.md`
 - `docs/statics/refraction_multilayer_time_term.md`
 - `docs/statics/refraction_m5_exports_table_workflow.md`
 - `docs/time_term_static_correction.md`
 
+Smoke-test and manual fixture notes:
+
+- `docs/statics/refraction_static_ui_fixture.md`
+
 Refraction statics include the 1-layer V1/V2/T1 T1LSST workflow, cell-based
 local V2 support, and the public two- and three-layer
-`t1lsst_multilayer` workflow. The M6 QC viewer workflow covers first-break
-residuals, reduced-time/LMO, profiles, maps, static component waterfalls, and
-gather preview. Multi-layer source/receiver outputs use the
-existing static table artifacts with added `t2`, `v3`, `sh2`, and, for
-three-layer runs, `t3`, `vsub`, and `sh3` fields; the repo sign convention
-remains `corrected(t) = raw(t - shift_s)`.
+`t1lsst_multilayer` workflow. Field-correction documentation covers
+source-depth, uphole-time, and manual source/receiver static composition. The
+M6 QC viewer workflow covers first-break residuals, reduced-time/LMO, profiles,
+maps, static component waterfalls, and gather preview. Multi-layer
+source/receiver outputs use the existing static table artifacts with added
+`t2`, `v3`, `sh2`, and, for three-layer runs, `t3`, `vsub`, and `sh3` fields;
+the repo sign convention remains `corrected(t) = raw(t - shift_s)`.
+The refraction statics implementation lives under `app/statics/refraction/`.
 
 ## Viewer benchmark
 
@@ -385,13 +398,24 @@ Endpoints:
 app/
   main.py                 # FastAPI app + static mounting
   api/
-    routers/              # upload/section/pipeline/picks/fbpick/batch
+    routers/              # upload/section/pipeline/picks/fbpick/batch/statics
     _helpers.py           # shared API helpers
     baselines.py          # raw baseline stats used for scaling
     schemas.py            # pydantic models for requests/responses
+  contracts/
+    statics/              # core non-refraction statics request/response contracts
   core/                   # app state + data-dir resolution
   services/               # TraceStore readers, caching, pipeline taps, persistence
-  static/                 # HTML/JS viewer served at / and /upload
+  statics/
+    refraction/           # refraction statics package
+      api/                # FastAPI routes under /statics/refraction/...
+      contracts/          # refraction request/response contracts
+      application/        # workflow orchestration and use-case services
+      domain/             # solver/domain types and statics composition logic
+      artifacts/          # artifact schema, readers, writers, and table builders
+      ports/              # interfaces for jobs, TraceStores, picks, and artifacts
+      adapters/           # seisviewer2d runtime/job/TraceStore integration
+  static/                 # HTML/JS pages served at viewer and tool routes
   web/                    # Vite sources that build into static/assets
   utils/                  # SEG-Y ingest, ML wrappers, pipeline ops
   tests/                  # backend and JS unit tests

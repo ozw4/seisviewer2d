@@ -16,7 +16,7 @@ copied into it. M5 defines the repo-owned subset of IRAS-style behavior needed
 for export, spreadsheet review, validated import, and static application.
 
 The completed Phase 1-M4 refraction workflow already writes the stable public
-artifact package:
+artifact package. The core table and solution artifacts used by M5 exports are:
 
 ```text
 refraction_static_request.json
@@ -33,6 +33,11 @@ refraction_time_term_spreadsheet.csv
 refraction_static_history.json
 refraction_static_artifacts.json
 ```
+
+The same successful apply package also includes the first-break time export,
+first-break fit QC, reduced-time QC, static-component QC, and line-profile QC
+families described in
+[refraction_qc_viewer_workflow.md](refraction_qc_viewer_workflow.md).
 
 `source_static_table.csv` and `receiver_static_table.csv` are the endpoint CSV
 views intended for spreadsheet inspection. `source_receiver_static_table.npz`
