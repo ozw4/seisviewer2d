@@ -23,8 +23,10 @@ without changing the solved statics math.
 
 ## 2. Existing artifact baseline
 
-M6 must reuse the current artifact package before adding new artifacts. Current
-public refraction jobs can write:
+M6 reuses the standard refraction artifact package documented in
+[../refraction_static.md](../refraction_static.md#artifacts). Current
+successful public refraction jobs write these core solution and table
+artifacts:
 
 ```text
 refraction_static_request.json
@@ -43,7 +45,27 @@ refraction_static_history.json
 refraction_static_artifacts.json
 ```
 
-The Phase 1 / M1 one-layer T1LSST workflow also writes:
+They also write the M6 viewer-ready QC families:
+
+```text
+refraction_first_break_fit_qc.csv
+refraction_first_break_fit_qc.npz
+refraction_first_break_fit_qc.json
+refraction_reduced_time_qc.csv
+refraction_reduced_time_qc.npz
+refraction_reduced_time_qc.json
+refraction_line_profile_qc_source.csv
+refraction_line_profile_qc_receiver.csv
+refraction_line_profile_qc_combined.csv
+refraction_line_profile_qc.npz
+refraction_line_profile_qc.json
+refraction_static_component_qc_trace.csv
+refraction_static_component_qc_endpoint.csv
+refraction_static_component_qc.npz
+refraction_static_component_qc.json
+```
+
+The Phase 1 / M1 one-layer T1LSST workflow conditionally writes:
 
 ```text
 refraction_t1lsst_1layer_components.csv
@@ -51,13 +73,16 @@ refraction_v1_qc.json
 refraction_v1_estimates.csv
 ```
 
-The Phase 2 / M2-M2.5 cell V2 workflow also writes:
+The Phase 2 / M2-M2.5 cell V2 workflow conditionally writes:
 
 ```text
 refraction_refractor_velocity_cells.csv
 refraction_refractor_velocity_grid.npz
 refraction_refractor_velocity_qc.json
 refraction_cell_solver_history.csv
+refraction_grid_map_qc.csv
+refraction_grid_map_qc.npz
+refraction_grid_map_qc.json
 ```
 
 The M3 multi-layer workflow extends the endpoint and solution artifacts with

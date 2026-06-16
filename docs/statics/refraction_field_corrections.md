@@ -185,7 +185,9 @@ base refraction shift and applies valid field shifts to valid traces.
 
 ## 7. Artifact list
 
-Every public refraction statics job writes the standard package:
+Public refraction statics jobs write the standard package described in
+[refraction_static.md](../refraction_static.md#artifacts). Its core solution
+and table artifacts are:
 
 ```text
 refraction_static_request.json
@@ -198,9 +200,14 @@ refraction_static_components.csv
 source_static_table.csv
 receiver_static_table.csv
 source_receiver_static_table.npz
+refraction_time_term_spreadsheet.csv
 refraction_static_history.json
 refraction_static_artifacts.json
 ```
+
+The successful-job package also includes first-break fit, reduced-time,
+static-component, and line-profile QC artifact families used by
+[refraction_qc_viewer_workflow.md](refraction_qc_viewer_workflow.md).
 
 Source-depth correction also writes:
 
@@ -286,8 +293,8 @@ include `trace_field_shift_s_sorted` and component columns, but
 
 ## 9. Static history and double-application guard
 
-Every public refraction statics job writes `refraction_static_history.json`.
-It records:
+Successful public refraction statics jobs include
+`refraction_static_history.json`. It records:
 
 - `sign_convention`
 - input and optional output file IDs

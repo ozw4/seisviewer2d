@@ -816,24 +816,32 @@ trace total shift equals source + receiver + datum components under repo convent
 
 ## Implementation file map
 
-Likely touched or added files:
+Current implementation files:
 
 ```text
-app/api/schemas.py
-app/api/routers/statics.py
-
-app/services/refraction_static_service.py
-app/services/refraction_static_inputs.py
-app/services/refraction_static_v1.py
-app/services/refraction_static_t1lsst.py
-app/services/refraction_static_weathering.py
-app/services/refraction_static_weathering_replacement.py
-app/services/refraction_static_bedrock.py
-app/services/refraction_static_design_matrix.py
-app/services/refraction_static_solver.py
-app/services/refraction_static_datum.py
-app/services/refraction_static_artifacts.py
-app/services/refraction_static_status.py
+app/statics/refraction/api/apply.py
+app/statics/refraction/contracts/apply.py
+app/statics/refraction/contracts/inputs.py
+app/statics/refraction/contracts/model.py
+app/statics/refraction/contracts/options.py
+app/statics/refraction/contracts/field_corrections.py
+app/statics/refraction/contracts/export.py
+app/statics/refraction/contracts/table_apply.py
+app/statics/refraction/application/workflow.py
+app/statics/refraction/application/input_model.py
+app/statics/refraction/application/job_status.py
+app/statics/refraction/application/pick_source_loader.py
+app/statics/refraction/application/weathering.py
+app/statics/refraction/application/weathering_replacement.py
+app/statics/refraction/application/bedrock.py
+app/statics/refraction/application/design_matrix.py
+app/statics/refraction/application/datum.py
+app/statics/refraction/domain/v1.py
+app/statics/refraction/domain/t1lsst.py
+app/statics/refraction/domain/solver.py
+app/statics/refraction/artifacts/
+app/statics/refraction/ports/
+app/statics/refraction/adapters/seisviewer2d/
 app/services/job_artifact_refs.py
 
 app/tests/test_refraction_static_schema.py

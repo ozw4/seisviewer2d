@@ -416,16 +416,21 @@ directly selected multipart `pick_npz` file and does not ask users for a pick
 }
 ```
 
-Omitted request blocks and fields use the schema defaults in `app/api/schemas.py`.
-For `pick_source.kind="batch_predicted_npz"`, the default artifact name is
-`predicted_picks_time_s.npz`. For `linkage.mode="required"`, the default
-artifact name is `geometry_linkage.npz`.
+Omitted request blocks and fields use the contract defaults in
+`app/statics/refraction/contracts/apply.py::RefractionStaticApplyRequest` and
+the request blocks under `app/statics/refraction/contracts/`:
+`inputs.py`, `model.py`, `options.py`, `field_corrections.py`, `export.py`, and
+`table_apply.py`. For `pick_source.kind="batch_predicted_npz"`, the default
+artifact name is `predicted_picks_time_s.npz`. For `linkage.mode="required"`,
+the default artifact name is `geometry_linkage.npz`.
 
 ## Artifacts
 
-Every refraction static job writes:
+Successful refraction apply jobs write a standard package. The core solution and
+table artifacts are:
 
 ```text
+refraction_static_request.json
 refraction_static_solution.npz
 refraction_static_qc.json
 refraction_statics.csv
@@ -435,14 +440,95 @@ refraction_static_components.csv
 source_static_table.csv
 receiver_static_table.csv
 source_receiver_static_table.npz
+refraction_time_term_spreadsheet.csv
+refraction_static_history.json
 refraction_static_artifacts.json
 ```
 
-When `conversion.mode="t1lsst_1layer"`, the job also writes:
+The standard package also includes QC artifact families used by the Refraction
+QC viewer:
 
 ```text
-refraction_t1lsst_1layer_components.csv
+refraction_first_break_time_export.csv
+refraction_first_break_fit_qc.csv
+refraction_first_break_fit_qc.npz
+refraction_first_break_fit_qc.json
+refraction_reduced_time_qc.csv
+refraction_reduced_time_qc.npz
+refraction_reduced_time_qc.json
+refraction_static_component_qc_trace.csv
+refraction_static_component_qc_endpoint.csv
+refraction_static_component_qc.npz
+refraction_static_component_qc.json
+refraction_line_profile_qc_source.csv
+refraction_line_profile_qc_receiver.csv
+refraction_line_profile_qc_combined.csv
+refraction_line_profile_qc.npz
+refraction_line_profile_qc.json
 ```
+
+`refraction_static_artifacts.json` is the manifest built from the artifact
+registry for the validated request. It lists the standard artifacts plus the
+conditional artifacts that apply to that job, and is the machine-readable index
+used by artifact consumers. Registered diagnostic names can exist without being
+listed in a successful-job manifest when their condition did not apply.
+
+Conditional artifacts are grouped by request feature:
+
+- `model.first_layer.mode="estimate_direct_arrival"` adds
+  `refraction_v1_qc.json` and `refraction_v1_estimates.csv`.
+- `conversion.mode="t1lsst_1layer"` adds
+  `refraction_t1lsst_1layer_components.csv`.
+- `model.bedrock_velocity_mode="solve_cell"` or a V2/T1 cell velocity layer
+  adds `refraction_refractor_velocity_cells.csv`,
+  `refraction_refractor_velocity_grid.npz`,
+  `refraction_refractor_velocity_qc.json`,
+  `refraction_cell_solver_history.csv`, `refraction_grid_map_qc.csv`,
+  `refraction_grid_map_qc.npz`, and `refraction_grid_map_qc.json`.
+- Internal cell-layer solver output can use the V3/Vsub cell artifact names
+  `refraction_v3_refractor_velocity_cells.csv`,
+  `refraction_v3_refractor_velocity_grid.npz`,
+  `refraction_v3_refractor_velocity_qc.json`,
+  `refraction_v3_cell_solver_history.csv`,
+  `refraction_vsub_refractor_velocity_cells.csv`,
+  `refraction_vsub_refractor_velocity_grid.npz`,
+  `refraction_vsub_refractor_velocity_qc.json`, and
+  `refraction_vsub_cell_solver_history.csv`. Public T1LSST apply rejects cell
+  V3/T2 and cell Vsub/T3.
+- Source-depth field corrections add `refraction_source_depth_qc.json` and
+  `refraction_source_depth_sources.csv`.
+- Uphole field corrections add `refraction_uphole_qc.json` and
+  `refraction_uphole_sources.csv`.
+- `apply.register_corrected_file=true` can add `corrected_file.json` and
+  `refraction_static_apply_qc.json`.
+- Export-enabled apply jobs can add
+  `canonical_source_static_table.csv`,
+  `canonical_receiver_static_table.csv`,
+  `canonical_source_receiver_static_table.csv`,
+  `refraction_lsst.csv`, `refraction_lsst_cards.txt`,
+  `refraction_lsst_plus.csv`, and `refraction_lsst_plus_cards.txt`,
+  depending on requested export formats. The `time_term_spreadsheet` and
+  `first_break_time` export formats target
+  `refraction_time_term_spreadsheet.csv` and
+  `refraction_first_break_time_export.csv`, respectively, but those files are
+  standard successful-apply artifacts listed above rather than additional
+  conditional apply artifacts.
+- Standalone export jobs write a separate export package. Depending on
+  requested formats, it can include `canonical_source_static_table.csv`,
+  `canonical_receiver_static_table.csv`,
+  `canonical_source_receiver_static_table.csv`, `refraction_lsst.csv`,
+  `refraction_lsst_cards.txt`, `refraction_lsst_plus.csv`,
+  `refraction_lsst_plus_cards.txt`, `refraction_time_term_spreadsheet.csv`,
+  and `refraction_first_break_time_export.csv`, plus
+  `refraction_static_export_request.json` and `job_meta.json`.
+- Failed jobs can write `failure_diagnostics.json`. Preflight and
+  design-matrix failures can also leave diagnostic artifacts such as
+  `refraction_static_preflight_qc.json`,
+  `refraction_static_preflight_observations.csv`,
+  `refraction_design_matrix_qc.json`,
+  `refraction_design_matrix_node_diagnostics.csv`, and layer-specific
+  `refraction_design_matrix_<layer_kind>_qc.json` and
+  `refraction_design_matrix_<layer_kind>_node_diagnostics.csv`.
 
 For two-layer `t1lsst_multilayer` results, the same core artifacts are used.
 `near_surface_model.csv` adds explicit `sh1_weathering_thickness_m`,
@@ -464,38 +550,23 @@ corresponding seconds/meter arrays. `refraction_static_solution.npz` adds
 `receiver_layer1_base_elevation_m`, and
 `receiver_final_refractor_elevation_m`.
 
-When `model.first_layer.mode="estimate_direct_arrival"`, the job also writes:
-
-```text
-refraction_v1_qc.json
-refraction_v1_estimates.csv
-```
-
-When `apply.register_corrected_file=true`, the job can also write apply
-artifacts such as:
-
-```text
-corrected_file.json
-refraction_static_apply_qc.json
-```
-
 Trace-level final shifts are in `refraction_statics.csv`. Source and receiver
 endpoint shifts are in `source_static_table.csv`, `receiver_static_table.csv`,
 and `source_receiver_static_table.npz`.
 
-Artifact writers are organized as the
-`app.services.refraction_static_artifacts` package. Import public names from the
-package facade, not from private helpers. The artifact-family modules are:
+Artifact writers are organized under `app/statics/refraction/artifacts`. Import
+public names from the package facade when available, not from private helpers.
+The artifact-family modules are:
 
-- `writer.py` for final artifact orchestration and public re-exports.
-- `solution.py`, `qc.py`, `final_tables.py`, and `first_break.py` for solution
-  NPZ, static QC/history JSON, trace/near-surface CSV, and first-break QC/export
-  writers.
-- `components.py`, `static_tables.py`, `cell_velocity.py`, `grid_map.py`, and
+- `contract.py` for artifact names, column definitions, and common constants.
+- `registry.py` for manifest and artifact registry helpers.
+- `writer.py` for the final artifact package writer.
+- `solution.py`, `qc.py`, `final_tables.py`, `first_break.py`,
+  `components.py`, `static_tables.py`, `cell_velocity.py`, `grid_map.py`, and
   `line_profile.py` for family-specific builders and writers.
-- `contract.py`, `registry.py`, `arrays.py`, `validation.py`, `formatters.py`,
-  `io.py`, and `stats.py` for shared artifact names, registry metadata, array
-  coercion, validation, formatting, atomic I/O, and summary statistics.
+- `arrays.py`, `validation.py`, `formatters.py`, `io.py`, and `stats.py` for
+  shared array coercion, validation, formatting, atomic I/O, and summary
+  statistics.
 
 Keep new artifact code in those family modules. As a review guideline, artifact
 modules should normally stay under about 1,500 lines, public writer functions
