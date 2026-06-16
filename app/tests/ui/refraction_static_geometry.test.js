@@ -247,6 +247,7 @@ function setCustomPreset() {
 }
 
 beforeEach(() => {
+  vi.resetModules();
   delete window.refractionStaticRunUI;
   delete window.refractionStaticRunState;
   delete window.RefractionQc;
