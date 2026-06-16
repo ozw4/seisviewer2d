@@ -11,6 +11,10 @@ const STATIC_CORRECTION_HTML = readFileSync(
   resolve(process.cwd(), 'static/static_correction.html'),
   'utf8'
 );
+const REFRACTION_QC_HTML = readFileSync(
+  resolve(process.cwd(), 'static/refraction_qc.html'),
+  'utf8'
+);
 
 function renderStaticCorrectionForm() {
   document.body.innerHTML = `
@@ -387,6 +391,15 @@ test('fixture includes NPZ draft action buttons and QC link', () => {
   expect(document.getElementById('staticCorrectionClearDraftButton')).not.toBeNull();
   expect(document.getElementById('staticCorrectionQcLinkRow')).not.toBeNull();
   expect(document.getElementById('staticCorrectionQcLink')).not.toBeNull();
+});
+
+test('refraction pages load their entry scripts as modules', () => {
+  expect(STATIC_CORRECTION_HTML).toContain(
+    '<script type="module" src="/static/refraction_static_run.js"></script>'
+  );
+  expect(REFRACTION_QC_HTML).toContain(
+    '<script type="module" src="/static/refraction_qc.js"></script>'
+  );
 });
 
 test('selected pick NPZ renders in the file summary', () => {

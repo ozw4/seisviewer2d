@@ -4669,7 +4669,7 @@
       : 'modeled_pick_time_s';
     const observedTrace = gatherOverlayTrace(preview, xAxis.x, {
       field: observedField,
-      name: 'Observed first break',
+      name: options.corrected ? 'Corrected observed first break' : 'Observed first break',
       color: '#2563eb',
       symbol: 'circle',
       residual: true,
@@ -4693,7 +4693,7 @@
       };
     }
     const showAnyColorbar = showAmplitudeScale || hasResidualColorbar;
-    const sideBySideRightMargin = gatherHasResidualScale(preview) ? 86 : 24;
+    const sideBySideRightMargin = options.corrected && gatherHasResidualScale(preview) ? 86 : 24;
     const marginRight = sideBySide
       ? sideBySideRightMargin
       : splitColorbars ? 96 : showAnyColorbar ? 86 : 24;
@@ -4713,7 +4713,7 @@
     ];
     const modeledTrace = gatherOverlayTrace(preview, xAxis.x, {
       field: modeledField,
-      name: 'Modeled first break',
+      name: options.corrected ? 'Corrected modeled first break' : 'Modeled first break',
       color: '#f97316',
       symbol: 'x',
       size: 9,
