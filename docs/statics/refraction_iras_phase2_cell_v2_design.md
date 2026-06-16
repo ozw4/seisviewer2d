@@ -477,9 +477,12 @@ under this repo convention.
 
 ## 13. Artifact list and column definitions
 
-Final refraction jobs still write the Phase 1 artifact package:
+Final refraction jobs still include the core Phase 1 solution and table
+artifacts. The complete current package and conditional QC artifacts are
+documented in [../refraction_static.md](../refraction_static.md#artifacts).
 
 ```text
+refraction_static_request.json
 refraction_static_solution.npz
 refraction_static_qc.json
 refraction_statics.csv
@@ -489,8 +492,9 @@ refraction_static_components.csv
 source_static_table.csv
 receiver_static_table.csv
 source_receiver_static_table.npz
+refraction_time_term_spreadsheet.csv
+refraction_static_history.json
 refraction_static_artifacts.json
-refraction_static_request.json
 ```
 
 When `conversion.mode="t1lsst_1layer"`, jobs also write:

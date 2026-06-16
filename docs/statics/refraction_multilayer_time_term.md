@@ -505,7 +505,9 @@ preview final-shift columns.
 
 ## 7. Artifact List
 
-Every public refraction statics job writes:
+Public refraction statics jobs write the standard package described in
+[../refraction_static.md](../refraction_static.md#artifacts). Its core solution
+and table artifacts are:
 
 ```text
 refraction_static_request.json
@@ -514,22 +516,45 @@ refraction_static_qc.json
 refraction_statics.csv
 near_surface_model.csv
 first_break_residuals.csv
-refraction_first_break_time_export.csv
 refraction_static_components.csv
 source_static_table.csv
 receiver_static_table.csv
 source_receiver_static_table.npz
+refraction_time_term_spreadsheet.csv
 refraction_static_history.json
 refraction_static_artifacts.json
 ```
 
-One-layer `conversion.mode="t1lsst_1layer"` also writes:
+The successful-job package also includes first-break fit, reduced-time,
+static-component, and line-profile QC artifact families for the Refraction QC
+viewer:
+
+```text
+refraction_first_break_time_export.csv
+refraction_first_break_fit_qc.csv
+refraction_first_break_fit_qc.npz
+refraction_first_break_fit_qc.json
+refraction_reduced_time_qc.csv
+refraction_reduced_time_qc.npz
+refraction_reduced_time_qc.json
+refraction_static_component_qc_trace.csv
+refraction_static_component_qc_endpoint.csv
+refraction_static_component_qc.npz
+refraction_static_component_qc.json
+refraction_line_profile_qc_source.csv
+refraction_line_profile_qc_receiver.csv
+refraction_line_profile_qc_combined.csv
+refraction_line_profile_qc.npz
+refraction_line_profile_qc.json
+```
+
+One-layer `conversion.mode="t1lsst_1layer"` conditionally adds:
 
 ```text
 refraction_t1lsst_1layer_components.csv
 ```
 
-Direct-arrival V1 estimation also writes:
+Direct-arrival V1 estimation conditionally adds:
 
 ```text
 refraction_v1_qc.json
@@ -537,7 +562,8 @@ refraction_v1_estimates.csv
 ```
 
 Source-depth field correction with
-`field_corrections.source_depth.mode="weathering_velocity_time"` also writes:
+`field_corrections.source_depth.mode="weathering_velocity_time"` conditionally
+adds:
 
 ```text
 refraction_source_depth_qc.json
@@ -545,7 +571,7 @@ refraction_source_depth_sources.csv
 ```
 
 Uphole-time field correction with
-`field_corrections.uphole.mode="header_time"` also writes:
+`field_corrections.uphole.mode="header_time"` conditionally adds:
 
 ```text
 refraction_uphole_qc.json
@@ -556,13 +582,16 @@ Manual source/receiver static import writes endpoint component columns to the
 standard source/receiver static table artifacts and
 `source_receiver_static_table.npz`; it does not add a separate public artifact.
 
-V2/T1 `solve_cell` also writes:
+V2/T1 `solve_cell` conditionally adds:
 
 ```text
 refraction_refractor_velocity_cells.csv
 refraction_refractor_velocity_grid.npz
 refraction_refractor_velocity_qc.json
 refraction_cell_solver_history.csv
+refraction_grid_map_qc.csv
+refraction_grid_map_qc.npz
+refraction_grid_map_qc.json
 ```
 
 The artifact writer has names for V3 and Vsub cell velocity artifacts:
@@ -589,13 +618,18 @@ corrected_file.json
 refraction_static_apply_qc.json
 ```
 
+Failed jobs can write `failure_diagnostics.json`; preflight and design-matrix
+failures can also leave diagnostic artifacts documented in
+[../refraction_static.md](../refraction_static.md#artifacts).
+
 ## 8. Static History and Double-Application Guard
 
-Every public refraction statics job writes `refraction_static_history.json`.
-The history artifact records the repo sign convention, input file ID, output
-file ID when a corrected TraceStore is registered, the cumulative shift artifact
-and field, and each component with whether it was included in the trace-shift
-field. Field components use the request path
+Successful public refraction statics jobs include
+`refraction_static_history.json`. The history artifact records the repo sign
+convention, input file ID, output file ID when a corrected TraceStore is
+registered, the cumulative shift artifact and field, and each component with
+whether it was included in the trace-shift field. Field components use the
+request path
 `field_corrections.composition.apply_to_trace_shift`; when false, source-depth,
 uphole, and manual-static components may be written as artifacts without being
 included in the applied trace shift.

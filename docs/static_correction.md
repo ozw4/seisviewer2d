@@ -66,9 +66,11 @@ trace order.
 
 ## Refraction Statics Artifacts
 
-`POST /statics/refraction/apply` writes these final refraction artifacts to the
-common static job artifact directory:
+`POST /statics/refraction/apply` writes a standard refraction artifact package
+to the common static job artifact directory. Successful apply jobs include these
+core solution and table artifacts:
 
+- `refraction_static_request.json`: validated request payload used for the job.
 - `refraction_static_solution.npz`: compressed, pickle-free machine-readable
   solution with trace, node, endpoint, component, and residual arrays.
 - `refraction_static_qc.json`: human-readable QC summary with request,
@@ -81,7 +83,33 @@ common static job artifact directory:
 - `first_break_residuals.csv`: one row per GLI design-matrix observation.
 - `refraction_static_components.csv`: one combined source/receiver endpoint
   component table.
-- `refraction_static_artifacts.json`: manifest listing the final artifacts.
+- `source_static_table.csv`, `receiver_static_table.csv`, and
+  `source_receiver_static_table.npz`: endpoint static tables for spreadsheet
+  and machine-readable use.
+- `refraction_time_term_spreadsheet.csv`: endpoint time-term spreadsheet view.
+- `refraction_static_history.json`: static lineage, sign convention,
+  cumulative shift, and double-application audit history.
+- `refraction_static_artifacts.json`: manifest generated from the current
+  artifact registry entries for the request.
+
+Successful apply jobs also include viewer-ready QC families:
+
+- first-break fit: `refraction_first_break_fit_qc.csv`,
+  `refraction_first_break_fit_qc.npz`,
+  `refraction_first_break_fit_qc.json`
+- reduced-time QC: `refraction_reduced_time_qc.csv`,
+  `refraction_reduced_time_qc.npz`, `refraction_reduced_time_qc.json`
+- static component QC: `refraction_static_component_qc_trace.csv`,
+  `refraction_static_component_qc_endpoint.csv`,
+  `refraction_static_component_qc.npz`,
+  `refraction_static_component_qc.json`
+- line-profile QC: `refraction_line_profile_qc_source.csv`,
+  `refraction_line_profile_qc_receiver.csv`,
+  `refraction_line_profile_qc_combined.csv`,
+  `refraction_line_profile_qc.npz`, `refraction_line_profile_qc.json`
+
+Conditional artifacts are documented in
+[refraction_static.md](refraction_static.md) and the statics workflow guides.
 
 NPZ time arrays are stored in seconds unless the array name ends in `_ms`.
 CSV time-shift, half-intercept, and residual columns are in milliseconds.

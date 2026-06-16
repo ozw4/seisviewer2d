@@ -60,12 +60,12 @@ refraction_static_components.csv
 source_static_table.csv
 receiver_static_table.csv
 source_receiver_static_table.npz
+refraction_time_term_spreadsheet.csv
 refraction_static_history.json
 refraction_static_artifacts.json
 ```
 
-M6 viewer-ready jobs also write QC artifact families when the inputs support
-them:
+Successful apply jobs also write QC artifact families for the viewer:
 
 ```text
 refraction_first_break_fit_qc.csv
@@ -79,22 +79,23 @@ refraction_line_profile_qc_receiver.csv
 refraction_line_profile_qc_combined.csv
 refraction_line_profile_qc.npz
 refraction_line_profile_qc.json
-refraction_grid_map_qc.csv
-refraction_grid_map_qc.npz
-refraction_grid_map_qc.json
 refraction_static_component_qc_trace.csv
 refraction_static_component_qc_endpoint.csv
 refraction_static_component_qc.npz
 refraction_static_component_qc.json
 ```
 
-Cell velocity jobs also write the cell artifacts used by map QC:
+Cell velocity jobs also write the cell artifacts and grid-map QC artifacts used
+by map QC:
 
 ```text
 refraction_refractor_velocity_cells.csv
 refraction_refractor_velocity_grid.npz
 refraction_refractor_velocity_qc.json
 refraction_cell_solver_history.csv
+refraction_grid_map_qc.csv
+refraction_grid_map_qc.npz
+refraction_grid_map_qc.json
 ```
 
 If `model.first_layer.mode="estimate_direct_arrival"`, review
