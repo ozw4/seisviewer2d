@@ -9,7 +9,7 @@ import numpy as np
 import pytest
 from fastapi.testclient import TestClient
 
-import app.api.routers.statics as statics_router_module
+import app.services.static_job_targets as static_job_targets
 from app.main import app
 
 KEY1_SORTED = np.asarray([10, 10, 20, 20], dtype=np.int64)
@@ -174,8 +174,8 @@ def test_first_break_qc_endpoint_starts_static_job(
         return object()
 
     monkeypatch.setattr(
-        statics_router_module,
-        'start_job_thread',
+        static_job_targets,
+        'start_static_job_thread',
         _capture_start_job_thread,
     )
 
@@ -186,7 +186,7 @@ def test_first_break_qc_endpoint_starts_static_job(
     assert payload['state'] == 'queued'
     assert isinstance(payload['job_id'], str)
     assert len(started) == 1
-    assert started[0]['target'] is statics_router_module.run_first_break_qc_job
+    assert started[0]['target'] is static_job_targets.get_static_job_target('first_break_qc')
 
     state = client.app.state.sv
     with state.lock:
@@ -231,8 +231,8 @@ def test_first_break_qc_endpoint_rejects_invalid_request(
 ) -> None:
     started: list[dict[str, Any]] = []
     monkeypatch.setattr(
-        statics_router_module,
-        'start_job_thread',
+        static_job_targets,
+        'start_static_job_thread',
         lambda **kwargs: started.append(kwargs),
     )
     payload = _payload()
@@ -291,7 +291,7 @@ def test_first_break_qc_job_real_path_allows_nan_pick(
     tmp_path: Path,
 ) -> None:
     _setup_real_first_break_qc_inputs(client, tmp_path)
-    monkeypatch.setattr(statics_router_module, 'start_job_thread', _run_job_sync)
+    monkeypatch.setattr(static_job_targets, 'start_static_job_thread', _run_job_sync)
 
     response = client.post('/statics/first-break/qc', json=_payload())
 

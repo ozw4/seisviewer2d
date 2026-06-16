@@ -11,7 +11,7 @@ import numpy as np
 import pytest
 from fastapi.testclient import TestClient
 
-import app.api.routers.statics as statics_router_module
+import app.services.static_job_targets as static_job_targets
 from app.main import app
 from app.services.geometry_linkage_loader import load_geometry_linkage_from_job_dir
 from app.services.reader import get_reader
@@ -84,7 +84,7 @@ def client(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
 
 @pytest.fixture()
 def sync_static_jobs(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(statics_router_module, 'start_job_thread', _run_job_sync)
+    monkeypatch.setattr(static_job_targets, 'start_static_job_thread', _run_job_sync)
 
 
 def test_time_term_static_e2e_recovers_known_delays_and_registers_corrected_store(

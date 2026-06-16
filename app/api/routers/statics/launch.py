@@ -2,13 +2,13 @@
 
 from __future__ import annotations
 
-import threading
 from collections.abc import Callable, MutableMapping
 from pathlib import Path
 from typing import Any
 
 from app.core.state import AppState
 from app.services.jobs import LaunchedJob, launch_managed_job
+from app.services import static_job_targets
 
 
 def launch_static_job(
@@ -35,23 +35,7 @@ def launch_static_job(
         ),
         target=target,
         target_args=target_args,
-        thread_factory=threading.Thread,
-        start_thread=_static_router_start_job_thread,
+        start_thread=static_job_targets.start_static_job_thread,
         pre_create=pre_create,
         after_create=after_create,
     )
-
-
-def static_router_job_target(name: str) -> Callable[..., Any]:
-    from app.api.routers import statics as statics_router_module
-
-    target = getattr(statics_router_module, name)
-    if not callable(target):
-        raise TypeError(f'statics router hook {name} is not callable')
-    return target
-
-
-def _static_router_start_job_thread(**kwargs: Any) -> object:
-    from app.api.routers import statics as statics_router_module
-
-    return statics_router_module.start_job_thread(**kwargs)
