@@ -79,11 +79,17 @@ def test_time_term_numeric_services_import_without_segyio(
 
 
 def test_time_term_solver_shims_reexport_core_objects() -> None:
+    apply_shim = importlib.import_module('app.services.time_term_apply_shift')
     design_shim = importlib.import_module('app.services.time_term_design_matrix')
     sparse_shim = importlib.import_module('app.services.time_term_sparse_solver')
     robust_shim = importlib.import_module('app.services.time_term_robust_solver')
     core = importlib.import_module('seis_statics.time_term')
 
+    assert apply_shim.TimeTermAppliedShiftOptions is core.TimeTermAppliedShiftOptions
+    assert (
+        apply_shim.build_time_term_applied_shift_result
+        is core.build_time_term_applied_shift_result
+    )
     assert design_shim.TimeTermDesignMatrix is core.TimeTermDesignMatrix
     assert design_shim.build_time_term_design_matrix is core.build_time_term_design_matrix
     assert sparse_shim.TimeTermSparseSolverOptions is core.TimeTermSparseSolverOptions
@@ -104,6 +110,7 @@ def test_time_term_solver_shims_reexport_core_objects() -> None:
         'app/services/time_term_design_matrix.py',
         'app/services/time_term_sparse_solver.py',
         'app/services/time_term_robust_solver.py',
+        'app/services/time_term_apply_shift.py',
     ],
 )
 def test_time_term_solver_shims_only_import_core_package(path: str) -> None:

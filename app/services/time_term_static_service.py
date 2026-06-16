@@ -28,7 +28,7 @@ from app.services.job_runner import (
 )
 from app.services.pipeline_artifacts import get_job_dir
 from app.services.reader import get_reader
-from app.services.time_term_apply_shift import (
+from seis_statics.time_term.apply_shift import (
     TimeTermAppliedShiftOptions,
     build_time_term_applied_shift_result,
 )

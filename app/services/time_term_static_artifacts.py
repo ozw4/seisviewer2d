@@ -25,7 +25,7 @@ from app.services.common.array_validation import (
     coerce_positive_int as _coerce_positive_int,
     is_real_numeric_dtype as _is_real_numeric_dtype,
 )
-from app.services.time_term_apply_shift import (
+from seis_statics.time_term.apply_shift import (
     DELAY_TO_SHIFT_CONVENTION,
     FINAL_SHIFT_CONVENTION,
     TimeTermAppliedShiftResult,
