@@ -1,12 +1,5 @@
-import { readFileSync } from 'node:fs';
-import { resolve } from 'node:path';
-
 import { afterEach, beforeEach, expect, test, vi } from 'vitest';
-
-const SCRIPT = readFileSync(
-  resolve(process.cwd(), 'static/refraction_qc.js'),
-  'utf8'
-);
+import { initRefractionQcPage } from '../../static/refraction_qc.js';
 
 let canvasOps = [];
 
@@ -157,8 +150,7 @@ function deferred() {
 }
 
 function loadRefractionQcScript() {
-  window.eval(SCRIPT);
-  document.dispatchEvent(new Event('DOMContentLoaded'));
+  initRefractionQcPage();
   return window.RefractionQc;
 }
 
