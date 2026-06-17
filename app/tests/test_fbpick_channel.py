@@ -4,8 +4,8 @@ from pathlib import Path
 
 import numpy as np
 
-from app.api.routers import fbpick as fbpick_router_mod
-from app.api.routers import fbpick_predict as fbpick_predict_mod
+import app.api.routers.fbpick as fbpick_router_mod
+import app.api.routers.fbpick_predict as fbpick_predict_mod
 from app.utils import fbpick as fbpick_mod
 from app.utils import ops as ops_mod
 
