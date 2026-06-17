@@ -8,7 +8,7 @@ import numpy as np
 import pytest
 from fastapi.testclient import TestClient
 
-import app.api.routers.statics as statics_router_module
+import app.services.static_job_targets as static_job_targets
 from app.main import app
 from app.services.reader import get_reader
 
@@ -273,8 +273,8 @@ def test_residual_static_apply_job_end_to_end_synthetic_trace_store(
         target(*args, **call_kwargs)
 
     monkeypatch.setattr(
-        statics_router_module,
-        'start_job_thread',
+        static_job_targets,
+        'start_static_job_thread',
         _run_synchronously,
     )
 

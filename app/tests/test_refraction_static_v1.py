@@ -17,12 +17,14 @@ from app.api.schemas import (
 from app.statics.refraction.application.input_model import (
     build_refraction_static_input_model_from_arrays,
 )
-from app.statics.refraction.domain.v1 import (
+from app.statics.refraction.artifacts.v1 import (
     REFRACTION_V1_ESTIMATES_CSV_NAME,
     REFRACTION_V1_QC_JSON_NAME,
+    write_refraction_v1_artifacts,
+)
+from app.statics.refraction.domain.v1 import (
     RefractionV1EstimationError,
     estimate_global_v1_from_direct_arrivals,
-    write_refraction_v1_artifacts,
 )
 from app.tests._refraction_static_synthetic import (
     SYNTHETIC_V1_M_S,
@@ -156,9 +158,27 @@ def test_v1_estimate_global_from_direct_arrivals(tmp_path: Path) -> None:
         abs=SYNTHETIC_V1_TOLERANCE_M_S,
     )
     with (tmp_path / REFRACTION_V1_ESTIMATES_CSV_NAME).open(newline='') as handle:
-        rows = list(csv.DictReader(handle))
+        reader = csv.DictReader(handle)
+        rows = list(reader)
+    assert tuple(reader.fieldnames or ()) == (
+        'group_kind',
+        'group_key',
+        'n_candidates',
+        'n_used',
+        'offset_min_m',
+        'offset_max_m',
+        'slope_s_per_m',
+        'v1_m_s',
+        'intercept_s',
+        'residual_rms_ms',
+        'residual_mad_ms',
+        'status',
+    )
     assert len(rows) == 6
     assert rows[0]['group_kind'] == 'source_endpoint'
+    assert rows[0]['n_candidates'] == '6'
+    assert rows[0]['n_used'] == '6'
+    assert rows[0]['status'] == 'ok'
     assert float(rows[0]['v1_m_s']) == pytest.approx(
         SYNTHETIC_V1_M_S,
         abs=SYNTHETIC_V1_TOLERANCE_M_S,

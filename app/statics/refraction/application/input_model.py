@@ -44,6 +44,12 @@ from app.statics.refraction.application.preflight_diagnostics import (
     scan_refraction_static_pick_npz,
     write_refraction_static_preflight_artifacts,
 )
+from app.statics.refraction.artifacts.source_depth import (
+    write_refraction_source_depth_artifacts,
+)
+from app.statics.refraction.artifacts.uphole import (
+    write_refraction_uphole_artifacts,
+)
 from app.statics.refraction.domain.layer_observations import (
     build_refraction_layer_observation_masks,
     refraction_layer_observation_qc,
@@ -540,8 +546,9 @@ def build_refraction_static_input_model_from_arrays(
             ),
             positive_down=source_depth_positive_down,
             max_abs_source_depth_m=max_abs_source_depth_m,
-            job_dir=job_dir,
         )
+        if job_dir is not None:
+            write_refraction_source_depth_artifacts(Path(job_dir), source_depth_result)
         input_model = replace(
             input_model,
             qc={
@@ -564,8 +571,9 @@ def build_refraction_static_input_model_from_arrays(
             uphole_time_unit=uphole_time_unit,
             positive_time_means_delay=uphole_positive_time_means_delay,
             max_abs_uphole_time_s=max_abs_uphole_time_s,
-            job_dir=job_dir,
         )
+        if job_dir is not None:
+            write_refraction_uphole_artifacts(Path(job_dir), uphole_result)
         input_model = replace(
             input_model,
             qc={

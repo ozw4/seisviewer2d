@@ -28,23 +28,19 @@ from app.services.job_runner import (
 )
 from app.services.pipeline_artifacts import get_job_dir
 from app.services.reader import get_reader
-from app.services.time_term_apply_shift import (
+from seis_statics.time_term.apply_shift import (
     TimeTermAppliedShiftOptions,
     build_time_term_applied_shift_result,
 )
-from app.services.time_term_design_matrix import (
+from seis_statics.time_term import (
     TimeTermDesignMatrixOptions,
-    build_time_term_design_matrix,
-)
-from app.services.time_term_moveout import (
     TimeTermMoveoutConfig,
-    compute_time_term_moveout,
-)
-from app.services.time_term_robust_solver import (
     TimeTermRobustSolverOptions,
+    TimeTermSparseSolverOptions,
+    build_time_term_design_matrix,
+    compute_time_term_moveout,
     solve_time_term_robust_least_squares,
 )
-from app.services.time_term_sparse_solver import TimeTermSparseSolverOptions
 from app.services.time_term_static_apply_trace_store import (
     TimeTermTraceStoreApplyOptions,
     apply_time_term_static_correction_to_trace_store,

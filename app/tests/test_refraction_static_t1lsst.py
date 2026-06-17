@@ -13,8 +13,10 @@ from app.statics.refraction.artifacts import (
     REFRACTION_STATIC_ARTIFACTS_JSON_NAME,
     write_refraction_static_artifacts,
 )
-from app.statics.refraction.domain.t1lsst import (
+from app.statics.refraction.artifacts.t1lsst import (
     REFRACTION_T1LSST_1LAYER_COMPONENTS_CSV_NAME,
+)
+from app.statics.refraction.domain.t1lsst import (
     T1LSST_SIGN_CONVENTION,
     RefractionT1LSSTError,
     compute_t1lsst_1layer_thickness,
@@ -204,11 +206,39 @@ def test_t1lsst_1layer_artifact_contains_sign_convention(tmp_path: Path) -> None
     assert t1lsst_path.is_file()
     assert REFRACTION_T1LSST_1LAYER_COMPONENTS_CSV_NAME in paths.artifact_names
 
-    rows = _read_csv(t1lsst_path)
+    rows, fieldnames = _read_csv_with_fieldnames(t1lsst_path)
+    assert tuple(fieldnames) == (
+        'endpoint_kind',
+        'endpoint_key',
+        'node_id',
+        'x_m',
+        'y_m',
+        'surface_elevation_m',
+        'floating_datum_elevation_m',
+        'flat_datum_elevation_m',
+        't1_ms',
+        'v1_m_s',
+        'v2_m_s',
+        'sh1_weathering_thickness_m',
+        'refractor_elevation_m',
+        'weathering_correction_ms',
+        'floating_datum_correction_ms',
+        'flat_datum_correction_ms',
+        'elevation_correction_ms',
+        'total_static_ms',
+        'total_applied_shift_ms',
+        'solution_status',
+        'weathering_status',
+        'datum_status',
+        'static_status',
+        'sign_convention',
+    )
     assert len(rows) == 4
     assert {row['endpoint_kind'] for row in rows} == {'source', 'receiver'}
     assert rows[0]['sign_convention'] == T1LSST_SIGN_CONVENTION
     assert rows[0]['endpoint_kind'] == 'source'
+    assert rows[0]['endpoint_key'] == 's0'
+    assert rows[0]['node_id'] == '0'
     assert float(rows[0]['t1_ms']) == pytest.approx(10.0)
     assert float(rows[0]['sh1_weathering_thickness_m']) == pytest.approx(10.0)
     assert float(rows[0]['weathering_correction_ms']) == pytest.approx(-8.5)
@@ -268,3 +298,9 @@ def test_t1lsst_1layer_static_status_follows_invalid_weathering(
 def _read_csv(path: Path) -> list[dict[str, str]]:
     with path.open(encoding='utf-8', newline='') as handle:
         return list(csv.DictReader(handle))
+
+
+def _read_csv_with_fieldnames(path: Path) -> tuple[list[dict[str, str]], list[str]]:
+    with path.open(encoding='utf-8', newline='') as handle:
+        reader = csv.DictReader(handle)
+        return list(reader), list(reader.fieldnames or [])

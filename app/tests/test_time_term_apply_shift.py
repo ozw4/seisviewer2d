@@ -8,7 +8,7 @@ import numpy as np
 import pytest
 from scipy import sparse
 
-from app.services.time_term_apply_shift import (
+from seis_statics.time_term.apply_shift import (
     DELAY_TO_SHIFT_CONVENTION,
     FINAL_SHIFT_CONVENTION,
     SIGN_CONVENTION,
@@ -18,15 +18,14 @@ from app.services.time_term_apply_shift import (
     delay_to_applied_shift_s,
     summarize_time_term_applied_shift_result,
 )
-from app.services.time_term_robust_solver import (
+from seis_statics.time_term import (
+    ORDER,
+    TimeTermInversionInputs,
     TimeTermRobustSolverOptions,
     TimeTermRobustSolverResult,
-)
-from app.services.time_term_sparse_solver import (
     TimeTermSolverSystem,
     TimeTermSparseSolverResult,
 )
-from app.services.time_term_types import ORDER, TimeTermInversionInputs
 
 N_TRACES = 3
 N_NODES = 3

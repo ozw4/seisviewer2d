@@ -9,7 +9,7 @@ import pytest
 from fastapi.testclient import TestClient
 from pydantic import ValidationError
 
-import app.api.routers.statics as statics_router_module
+import app.services.static_job_targets as static_job_targets
 from app.api.schemas import TimeTermStaticApplyRequest
 from app.main import app
 from app.services.geometry_linkage_artifacts import (
@@ -532,8 +532,8 @@ def test_time_term_apply_endpoint_creates_async_job(
 ) -> None:
     started: list[dict[str, Any]] = []
     monkeypatch.setattr(
-        statics_router_module,
-        'start_job_thread',
+        static_job_targets,
+        'start_static_job_thread',
         lambda **kwargs: started.append(kwargs),
     )
     _install_trace_store(client, tmp_path)
@@ -545,7 +545,7 @@ def test_time_term_apply_endpoint_creates_async_job(
     payload = response.json()
     assert payload['state'] == 'queued'
     assert len(started) == 1
-    assert started[0]['target'] is statics_router_module.run_time_term_static_apply_job
+    assert started[0]['target'] is static_job_targets.get_static_job_target('time_term')
     with client.app.state.sv.lock:
         job = dict(client.app.state.sv.jobs[payload['job_id']])
     assert job['job_type'] == 'statics'
@@ -558,8 +558,8 @@ def test_time_term_apply_endpoint_rejects_invalid_schema_without_starting_job(
 ) -> None:
     started: list[dict[str, Any]] = []
     monkeypatch.setattr(
-        statics_router_module,
-        'start_job_thread',
+        static_job_targets,
+        'start_static_job_thread',
         lambda **kwargs: started.append(kwargs),
     )
     payload = _payload()

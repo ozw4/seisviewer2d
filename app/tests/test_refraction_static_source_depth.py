@@ -1,17 +1,20 @@
 from __future__ import annotations
 
+import csv
 import json
 
 import numpy as np
 import pytest
 
-from app.statics.refraction.domain.source_depth import (
+from app.statics.refraction.artifacts.source_depth import (
     REFRACTION_SOURCE_DEPTH_QC_JSON_NAME,
     REFRACTION_SOURCE_DEPTH_SOURCES_CSV_NAME,
+    write_refraction_source_depth_artifacts,
+)
+from app.statics.refraction.domain.source_depth import (
     compute_source_depth_weathering_time_correction,
     compute_source_depth_weathering_time_correction_from_result,
     resolve_refraction_source_depth,
-    write_refraction_source_depth_artifacts,
 )
 
 
@@ -172,9 +175,29 @@ def test_source_depth_artifacts_write_qc_and_source_rows(tmp_path) -> None:
     qc = json.loads(paths['qc_json'].read_text(encoding='utf-8'))
     assert qc['n_sources_with_depth'] == 1
     assert qc['sign_convention'] == 'corrected(t) = raw(t - shift_s)'
-    text = paths['sources_csv'].read_text(encoding='utf-8')
-    assert 'source_endpoint_key,source_endpoint_id,source_node_id' in text
-    assert 'source:a,101,0,3.5,ok,1,1' in text
+    with paths['sources_csv'].open(encoding='utf-8', newline='') as handle:
+        reader = csv.DictReader(handle)
+        rows = list(reader)
+    assert tuple(reader.fieldnames or ()) == (
+        'source_endpoint_key',
+        'source_endpoint_id',
+        'source_node_id',
+        'source_depth_m',
+        'source_depth_status',
+        'source_depth_pick_count',
+        'source_depth_trace_count',
+    )
+    assert rows == [
+        {
+            'source_endpoint_key': 'source:a',
+            'source_endpoint_id': '101',
+            'source_node_id': '0',
+            'source_depth_m': '3.5',
+            'source_depth_status': 'ok',
+            'source_depth_pick_count': '1',
+            'source_depth_trace_count': '1',
+        }
+    ]
 
 
 def test_source_depth_weathering_time_shift_formula_and_sign() -> None:

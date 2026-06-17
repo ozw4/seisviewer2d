@@ -9,7 +9,7 @@ from typing import Any
 import pytest
 from fastapi.testclient import TestClient
 
-import app.api.routers.statics as statics_router_module
+import app.services.static_job_targets as static_job_targets
 from app.api.schemas import (
     REFRACTION_STATIC_DEFAULT_EXPORT_FORMATS,
     RefractionStaticApplyRequest,
@@ -121,8 +121,8 @@ def test_refraction_apply_accepts_export_block(
 ) -> None:
     started: list[dict[str, Any]] = []
     monkeypatch.setattr(
-        statics_router_module,
-        'start_job_thread',
+        static_job_targets,
+        'start_static_job_thread',
         lambda **kwargs: started.append(kwargs),
     )
     payload = _apply_payload()
@@ -149,8 +149,8 @@ def test_refraction_apply_legacy_request_without_export_still_valid(
 ) -> None:
     started: list[dict[str, Any]] = []
     monkeypatch.setattr(
-        statics_router_module,
-        'start_job_thread',
+        static_job_targets,
+        'start_static_job_thread',
         lambda **kwargs: started.append(kwargs),
     )
 
@@ -260,8 +260,8 @@ def test_refraction_export_endpoint_starts_metadata_job(
 ) -> None:
     started: list[dict[str, Any]] = []
     monkeypatch.setattr(
-        statics_router_module,
-        'start_job_thread',
+        static_job_targets,
+        'start_static_job_thread',
         lambda **kwargs: started.append(kwargs),
     )
     _create_source_refraction_job(
@@ -283,7 +283,7 @@ def test_refraction_export_endpoint_starts_metadata_job(
     assert body['source_job_id'] == 'source-refraction-job'
     assert body['requested_formats'] == list(REFRACTION_STATIC_DEFAULT_EXPORT_FORMATS)
     assert len(started) == 1
-    assert started[0]['target'] is statics_router_module.run_refraction_static_export_job
+    assert started[0]['target'] is static_job_targets.get_static_job_target('refraction_export')
     with client.app.state.sv.lock:
         job = dict(client.app.state.sv.jobs[body['job_id']])
     assert job['statics_kind'] == 'refraction_export'

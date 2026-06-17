@@ -1,0 +1,41 @@
+function initialState() {
+  return {
+    ready: false,
+    message: 'Open a viewer file and choose a first-break pick NPZ for refraction statics.',
+    error: '',
+    lastRequest: null,
+    lastResponse: null,
+    lastLinkageBuildRequest: null,
+    lastLinkageJobId: '',
+    lastStaticCorrectionJobId: '',
+    lastStaticCorrectionState: '',
+    lastStaticCorrectionMessage: '',
+    lastStaticCorrectionProgress: 0,
+    staticArtifacts: [],
+    loadingStaticArtifacts: false,
+    presets: [],
+    validationErrors: [],
+    validationDiagnostics: null,
+    showValidationSummary: false,
+    phase: 'idle',
+    pollIntervalMs: 1000,
+    autoOpenQcOnCompletion: false,
+    pickNpzDraftMeta: null,
+    pickNpzRestoreStatus: '',
+    pickNpzRestoreMessage: '',
+    pickNpzRestoredSavedAt: '',
+    restoringPickInput: false,
+    suppressPickChangeHandler: false,
+    draftCleared: false,
+    draftRestoreAttemptedForTarget: '',
+  };
+}
+
+export const state = initialState();
+
+export function resetState() {
+  for (const key of Object.keys(state)) {
+    delete state[key];
+  }
+  Object.assign(state, initialState());
+}

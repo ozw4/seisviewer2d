@@ -12,7 +12,7 @@ import numpy as np
 import pytest
 from fastapi.testclient import TestClient
 
-import app.api.routers.statics as statics_router_module
+import app.services.static_job_targets as static_job_targets
 import app.statics.refraction.application.bedrock as refraction_bedrock_module
 import app.statics.refraction.application.input_model as refraction_inputs_module
 import app.statics.refraction.application.workflow as refraction_service_module
@@ -56,8 +56,6 @@ from app.statics.refraction.artifacts import (
     REFRACTION_STATIC_SOLUTION_NPZ_NAME,
     REFRACTION_TIME_TERM_SPREADSHEET_CSV_NAME,
     REFRACTION_T1LSST_1LAYER_COMPONENTS_CSV_NAME,
-    REFRACTION_V1_ESTIMATES_CSV_NAME,
-    REFRACTION_V1_QC_JSON_NAME,
     RECEIVER_STATIC_TABLE_CSV_NAME,
     SOURCE_RECEIVER_STATIC_TABLE_NPZ_NAME,
     SOURCE_STATIC_TABLE_CSV_NAME,
@@ -84,11 +82,17 @@ from app.statics.refraction.application.preflight_diagnostics import (
     write_refraction_static_preflight_artifacts,
 )
 from app.statics.refraction.adapters.seisviewer2d.workflow_runner import run_refraction_static_apply_job
-from app.statics.refraction.domain.source_depth import (
+from app.statics.refraction.artifacts.source_depth import (
     REFRACTION_SOURCE_DEPTH_QC_JSON_NAME,
     REFRACTION_SOURCE_DEPTH_SOURCES_CSV_NAME,
-    resolve_refraction_source_depth,
     write_refraction_source_depth_artifacts,
+)
+from app.statics.refraction.artifacts.v1 import (
+    REFRACTION_V1_ESTIMATES_CSV_NAME,
+    REFRACTION_V1_QC_JSON_NAME,
+)
+from app.statics.refraction.domain.source_depth import (
+    resolve_refraction_source_depth,
 )
 from app.statics.refraction.domain.v1 import RefractionV1EstimateResult
 from app.services.trace_store_registration import trace_store_cache_key
@@ -328,8 +332,8 @@ def test_refraction_static_apply_endpoint_starts_job(
         return object()
 
     monkeypatch.setattr(
-        statics_router_module,
-        'start_job_thread',
+        static_job_targets,
+        'start_static_job_thread',
         _capture_start_job_thread,
     )
 
@@ -340,7 +344,7 @@ def test_refraction_static_apply_endpoint_starts_job(
     assert payload['state'] == 'queued'
     assert isinstance(payload['job_id'], str)
     assert len(started) == 1
-    assert started[0]['target'] is statics_router_module.run_refraction_static_apply_job
+    assert started[0]['target'] is static_job_targets.get_static_job_target('refraction')
     assert started[0]['args'][0] == payload['job_id']
     assert isinstance(started[0]['args'][1], RefractionStaticApplyRequest)
     assert started[0]['args'][2] is client.app.state.sv
@@ -363,8 +367,8 @@ def test_refraction_static_apply_endpoint_rejects_uploaded_npz_json(
 ) -> None:
     started: list[dict[str, Any]] = []
     monkeypatch.setattr(
-        statics_router_module,
-        'start_job_thread',
+        static_job_targets,
+        'start_static_job_thread',
         lambda **kwargs: started.append(kwargs),
     )
 
@@ -386,8 +390,8 @@ def test_refraction_apply_with_uploaded_picks_accepts_multipart_npz(
 ) -> None:
     started: list[dict[str, Any]] = []
     monkeypatch.setattr(
-        statics_router_module,
-        'start_job_thread',
+        static_job_targets,
+        'start_static_job_thread',
         lambda **kwargs: started.append(kwargs),
     )
     upload_bytes = _pick_npz_bytes()
@@ -408,7 +412,7 @@ def test_refraction_apply_with_uploaded_picks_accepts_multipart_npz(
     payload = response.json()
     assert payload['state'] == 'queued'
     assert len(started) == 1
-    assert started[0]['target'] is statics_router_module.run_refraction_static_apply_job
+    assert started[0]['target'] is static_job_targets.get_static_job_target('refraction')
     assert started[0]['args'][0] == payload['job_id']
     assert isinstance(started[0]['args'][1], RefractionStaticApplyRequest)
     assert started[0]['args'][1].pick_source.kind == 'uploaded_npz'
@@ -436,8 +440,8 @@ def test_refraction_apply_with_uploaded_picks_rejects_missing_file(
 ) -> None:
     started: list[dict[str, Any]] = []
     monkeypatch.setattr(
-        statics_router_module,
-        'start_job_thread',
+        static_job_targets,
+        'start_static_job_thread',
         lambda **kwargs: started.append(kwargs),
     )
 
@@ -635,8 +639,8 @@ def test_refraction_apply_with_uploaded_picks_rejects_non_uploaded_npz_kind(
 ) -> None:
     started: list[dict[str, Any]] = []
     monkeypatch.setattr(
-        statics_router_module,
-        'start_job_thread',
+        static_job_targets,
+        'start_static_job_thread',
         lambda **kwargs: started.append(kwargs),
     )
 
@@ -665,8 +669,8 @@ def test_refraction_apply_with_uploaded_picks_rejects_empty_upload(
 ) -> None:
     started: list[dict[str, Any]] = []
     monkeypatch.setattr(
-        statics_router_module,
-        'start_job_thread',
+        static_job_targets,
+        'start_static_job_thread',
         lambda **kwargs: started.append(kwargs),
     )
 
@@ -695,8 +699,8 @@ def test_refraction_apply_with_uploaded_picks_stores_input_artifact_metadata(
 ) -> None:
     started: list[dict[str, Any]] = []
     monkeypatch.setattr(
-        statics_router_module,
-        'start_job_thread',
+        static_job_targets,
+        'start_static_job_thread',
         lambda **kwargs: started.append(kwargs),
     )
     response = client.post(
@@ -763,8 +767,8 @@ def test_refraction_apply_with_uploaded_picks_job_status_and_files(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setattr(
-        statics_router_module,
-        'start_job_thread',
+        static_job_targets,
+        'start_static_job_thread',
         lambda **_kwargs: object(),
     )
     response = client.post(
@@ -799,8 +803,8 @@ def test_uploaded_npz_preserved_for_failed_apply_with_picks_job(
         raise RuntimeError('synthetic failure')
 
     monkeypatch.setattr(
-        statics_router_module,
-        'start_job_thread',
+        static_job_targets,
+        'start_static_job_thread',
         lambda **kwargs: kwargs['target'](*kwargs['args']),
     )
     monkeypatch.setattr(
@@ -1060,8 +1064,8 @@ def test_refraction_static_apply_endpoint_accepts_omitted_linkage(
 ) -> None:
     started: list[dict[str, Any]] = []
     monkeypatch.setattr(
-        statics_router_module,
-        'start_job_thread',
+        static_job_targets,
+        'start_static_job_thread',
         lambda **kwargs: started.append(kwargs),
     )
     payload = _payload()
@@ -1083,8 +1087,8 @@ def test_refraction_static_apply_endpoint_rejects_invalid_schema_without_job(
 ) -> None:
     started: list[dict[str, Any]] = []
     monkeypatch.setattr(
-        statics_router_module,
-        'start_job_thread',
+        static_job_targets,
+        'start_static_job_thread',
         lambda **kwargs: started.append(kwargs),
     )
     payload = _payload()
@@ -1104,8 +1108,8 @@ def test_refraction_static_apply_endpoint_starts_solve_cell_job(
 ) -> None:
     started: list[dict[str, Any]] = []
     monkeypatch.setattr(
-        statics_router_module,
-        'start_job_thread',
+        static_job_targets,
+        'start_static_job_thread',
         lambda **kwargs: started.append(kwargs),
     )
     payload = _payload()
@@ -1138,7 +1142,7 @@ def test_refraction_static_apply_endpoint_starts_solve_cell_job(
     assert response.status_code == 200
     assert response.json()['state'] == 'queued'
     assert len(started) == 1
-    assert started[0]['target'] is statics_router_module.run_refraction_static_apply_job
+    assert started[0]['target'] is static_job_targets.get_static_job_target('refraction')
     assert started[0]['args'][1].model.bedrock_velocity_mode == 'solve_cell'
     with client.app.state.sv.lock:
         assert len(client.app.state.sv.jobs) == 1
@@ -1150,8 +1154,8 @@ def test_refraction_static_rejects_public_estimated_v1_value(
 ) -> None:
     started: list[dict[str, Any]] = []
     monkeypatch.setattr(
-        statics_router_module,
-        'start_job_thread',
+        static_job_targets,
+        'start_static_job_thread',
         lambda **kwargs: started.append(kwargs),
     )
     payload = _payload()

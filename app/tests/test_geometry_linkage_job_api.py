@@ -8,7 +8,7 @@ import numpy as np
 import pytest
 from fastapi.testclient import TestClient
 
-import app.api.routers.statics as statics_router_module
+import app.services.static_job_targets as static_job_targets
 import app.services.geometry_linkage_service as linkage_service
 from app.api.schemas import StaticLinkageBuildRequest
 from app.main import app
@@ -128,8 +128,8 @@ def test_static_linkage_build_endpoint_creates_geometry_linkage_job(
         return object()
 
     monkeypatch.setattr(
-        statics_router_module,
-        'start_job_thread',
+        static_job_targets,
+        'start_static_job_thread',
         _capture_start_job_thread,
     )
 
@@ -142,7 +142,7 @@ def test_static_linkage_build_endpoint_creates_geometry_linkage_job(
     assert len(started) == 1
     assert (
         started[0]['target']
-        is statics_router_module.run_geometry_linkage_build_job
+        is static_job_targets.get_static_job_target('geometry_linkage')
     )
 
     state = client.app.state.sv
@@ -165,7 +165,7 @@ def test_static_linkage_build_job_writes_expected_artifacts(
     mode: str,
 ) -> None:
     _install_reader(client, tmp_path)
-    monkeypatch.setattr(statics_router_module, 'start_job_thread', _run_job_sync)
+    monkeypatch.setattr(static_job_targets, 'start_static_job_thread', _run_job_sync)
 
     response = client.post('/statics/linkage/build', json=_payload(mode=mode))
 
@@ -220,7 +220,7 @@ def test_static_linkage_build_job_downloads_artifacts(
     tmp_path: Path,
 ) -> None:
     _install_reader(client, tmp_path)
-    monkeypatch.setattr(statics_router_module, 'start_job_thread', _run_job_sync)
+    monkeypatch.setattr(static_job_targets, 'start_static_job_thread', _run_job_sync)
     response = client.post('/statics/linkage/build', json=_payload())
     job_id = response.json()['job_id']
 
@@ -256,7 +256,7 @@ def test_static_linkage_build_job_self_validates_npz(
         'load_geometry_linkage_from_job_dir',
         _recording_loader,
     )
-    monkeypatch.setattr(statics_router_module, 'start_job_thread', _run_job_sync)
+    monkeypatch.setattr(static_job_targets, 'start_static_job_thread', _run_job_sync)
 
     response = client.post('/statics/linkage/build', json=_payload())
 
@@ -275,8 +275,8 @@ def test_static_linkage_build_endpoint_rejects_invalid_schema_with_422(
 ) -> None:
     started: list[dict[str, Any]] = []
     monkeypatch.setattr(
-        statics_router_module,
-        'start_job_thread',
+        static_job_targets,
+        'start_static_job_thread',
         lambda **kwargs: started.append(kwargs),
     )
     payload = _payload()
@@ -292,7 +292,7 @@ def test_static_linkage_build_job_invalid_file_id_becomes_error_status(
     client: TestClient,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setattr(statics_router_module, 'start_job_thread', _run_job_sync)
+    monkeypatch.setattr(static_job_targets, 'start_static_job_thread', _run_job_sync)
 
     response = client.post('/statics/linkage/build', json=_payload())
     job_id = response.json()['job_id']
@@ -309,7 +309,7 @@ def test_static_linkage_build_job_header_validation_error_becomes_error_status(
     tmp_path: Path,
 ) -> None:
     _install_reader(client, tmp_path, missing_header=73)
-    monkeypatch.setattr(statics_router_module, 'start_job_thread', _run_job_sync)
+    monkeypatch.setattr(static_job_targets, 'start_static_job_thread', _run_job_sync)
 
     response = client.post('/statics/linkage/build', json=_payload())
     job_id = response.json()['job_id']

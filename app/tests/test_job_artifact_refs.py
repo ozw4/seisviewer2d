@@ -29,13 +29,15 @@ from app.statics.refraction.artifacts import (
     REFRACTION_T1LSST_1LAYER_COMPONENTS_CSV_NAME,
     REFRACTION_V3_REFRACTOR_VELOCITY_QC_JSON_NAME,
     REFRACTION_VSUB_REFRACTOR_VELOCITY_QC_JSON_NAME,
-    REFRACTION_V1_ESTIMATES_CSV_NAME,
-    REFRACTION_V1_QC_JSON_NAME,
     REFRACTION_STATIC_REQUEST_JSON_NAME,
     RECEIVER_STATIC_TABLE_CSV_NAME,
     SOURCE_RECEIVER_STATIC_TABLE_NPZ_NAME,
     SOURCE_STATIC_TABLE_CSV_NAME,
     UPLOADED_REFRACTION_PICKS_NPZ_NAME,
+)
+from app.statics.refraction.artifacts.v1 import (
+    REFRACTION_V1_ESTIMATES_CSV_NAME,
+    REFRACTION_V1_QC_JSON_NAME,
 )
 from app.statics.refraction.application.design_matrix import (
     REFRACTION_DESIGN_MATRIX_NODE_DIAGNOSTICS_CSV_NAME,
@@ -48,11 +50,11 @@ from app.statics.refraction.application.preflight_diagnostics import (
     REFRACTION_STATIC_PREFLIGHT_QC_JSON_NAME,
 )
 from app.services.job_artifact_refs import resolve_job_artifact_path
-from app.statics.refraction.domain.source_depth import (
+from app.statics.refraction.artifacts.source_depth import (
     REFRACTION_SOURCE_DEPTH_QC_JSON_NAME,
     REFRACTION_SOURCE_DEPTH_SOURCES_CSV_NAME,
 )
-from app.statics.refraction.domain.uphole import (
+from app.statics.refraction.artifacts.uphole import (
     REFRACTION_UPHOLE_QC_JSON_NAME,
     REFRACTION_UPHOLE_SOURCES_CSV_NAME,
 )

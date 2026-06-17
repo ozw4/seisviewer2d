@@ -1,17 +1,20 @@
 from __future__ import annotations
 
+import csv
 import json
 
 import numpy as np
 import pytest
 
-from app.statics.refraction.domain.uphole import (
+from app.statics.refraction.artifacts.uphole import (
     REFRACTION_UPHOLE_QC_JSON_NAME,
     REFRACTION_UPHOLE_SOURCES_CSV_NAME,
+    write_refraction_uphole_artifacts,
+)
+from app.statics.refraction.domain.uphole import (
     compute_uphole_time_correction,
     compute_uphole_time_correction_from_result,
     resolve_refraction_uphole,
-    write_refraction_uphole_artifacts,
 )
 
 
@@ -174,6 +177,26 @@ def test_uphole_artifacts_write_qc_and_source_rows(tmp_path) -> None:
     assert paths['sources_csv'] == tmp_path / REFRACTION_UPHOLE_SOURCES_CSV_NAME
     qc = json.loads(paths['qc_json'].read_text(encoding='utf-8'))
     assert qc['uphole_shift_formula'] == 'uphole_shift_s = -uphole_time_s'
-    text = paths['sources_csv'].read_text(encoding='utf-8')
-    assert 'source_endpoint_key,source_endpoint_id,source_node_id' in text
-    assert 'source:a,101,0,0.012,ok,1,1' in text
+    with paths['sources_csv'].open(encoding='utf-8', newline='') as handle:
+        reader = csv.DictReader(handle)
+        rows = list(reader)
+    assert tuple(reader.fieldnames or ()) == (
+        'source_endpoint_key',
+        'source_endpoint_id',
+        'source_node_id',
+        'uphole_time_s',
+        'uphole_status',
+        'uphole_pick_count',
+        'uphole_trace_count',
+    )
+    assert rows == [
+        {
+            'source_endpoint_key': 'source:a',
+            'source_endpoint_id': '101',
+            'source_node_id': '0',
+            'uphole_time_s': '0.012',
+            'uphole_status': 'ok',
+            'uphole_pick_count': '1',
+            'uphole_trace_count': '1',
+        }
+    ]

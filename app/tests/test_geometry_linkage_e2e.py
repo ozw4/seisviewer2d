@@ -11,7 +11,7 @@ import numpy as np
 import pytest
 from fastapi.testclient import TestClient
 
-import app.api.routers.statics as statics_router_module
+import app.services.static_job_targets as static_job_targets
 from app.main import app
 from app.services.geometry_linkage_artifacts import (
     GEOMETRY_LINKAGE_CSV_NAME,
@@ -64,7 +64,7 @@ def client(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
 
 @pytest.fixture()
 def sync_linkage_jobs(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(statics_router_module, 'start_job_thread', _run_job_sync)
+    monkeypatch.setattr(static_job_targets, 'start_static_job_thread', _run_job_sync)
 
 
 def test_linkage_none_api_lifecycle_artifact_round_trip(
@@ -443,8 +443,8 @@ def test_request_schema_failures_do_not_create_jobs(
     del case_name
     started: list[dict[str, Any]] = []
     monkeypatch.setattr(
-        statics_router_module,
-        'start_job_thread',
+        static_job_targets,
+        'start_static_job_thread',
         lambda **kwargs: started.append(kwargs),
     )
     payload = _request_payload(

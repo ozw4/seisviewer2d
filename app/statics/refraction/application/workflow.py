@@ -70,9 +70,20 @@ from app.statics.refraction.application.preflight_diagnostics import (
     REFRACTION_STATIC_PREFLIGHT_QC_JSON_NAME,
     RefractionStaticPreflightError,
 )
-from app.statics.refraction.domain.source_depth import (
+from app.statics.refraction.artifacts.source_depth import (
     REFRACTION_SOURCE_DEPTH_QC_JSON_NAME,
     REFRACTION_SOURCE_DEPTH_SOURCES_CSV_NAME,
+)
+from app.statics.refraction.artifacts.uphole import (
+    REFRACTION_UPHOLE_QC_JSON_NAME,
+    REFRACTION_UPHOLE_SOURCES_CSV_NAME,
+)
+from app.statics.refraction.artifacts.v1 import (
+    REFRACTION_V1_ESTIMATES_CSV_NAME,
+    REFRACTION_V1_QC_JSON_NAME,
+    write_refraction_v1_artifacts,
+)
+from app.statics.refraction.domain.source_depth import (
     compute_source_depth_weathering_time_correction_from_result,
 )
 from app.statics.refraction.domain.types import (
@@ -81,14 +92,9 @@ from app.statics.refraction.domain.types import (
     ResolvedRefractionFirstLayer,
 )
 from app.statics.refraction.domain.v1 import (
-    REFRACTION_V1_ESTIMATES_CSV_NAME,
-    REFRACTION_V1_QC_JSON_NAME,
     estimate_global_v1_from_direct_arrivals,
-    write_refraction_v1_artifacts,
 )
 from app.statics.refraction.domain.uphole import (
-    REFRACTION_UPHOLE_QC_JSON_NAME,
-    REFRACTION_UPHOLE_SOURCES_CSV_NAME,
     compute_uphole_time_correction_from_result,
 )
 from app.statics.refraction.application.weathering_replacement import (

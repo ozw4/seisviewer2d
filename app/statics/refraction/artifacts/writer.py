@@ -141,21 +141,21 @@ from app.statics.refraction.artifacts.static_tables import (
     write_source_receiver_static_table_npz,
     write_source_static_table_csv,
 )
+from app.statics.refraction.artifacts.t1lsst import (
+    REFRACTION_T1LSST_1LAYER_COMPONENTS_CSV_NAME,
+    write_refraction_t1lsst_1layer_components_csv,
+)
 from app.statics.refraction.artifacts.validation import (
     _validate_job_dir,
     _validate_resolved_first_layer,
     _validate_result,
-)
-from app.statics.refraction.domain.t1lsst import (
-    REFRACTION_T1LSST_1LAYER_COMPONENTS_CSV_NAME,
-    write_refraction_t1lsst_1layer_components_csv,
 )
 from app.statics.refraction.domain.types import (
     RefractionDatumStaticsResult,
     RefractionStaticArtifactSet,
     ResolvedRefractionFirstLayer,
 )
-from app.statics.refraction.domain.v1 import (
+from app.statics.refraction.artifacts.v1 import (
     REFRACTION_V1_ESTIMATES_CSV_NAME,
     REFRACTION_V1_QC_JSON_NAME,
 )

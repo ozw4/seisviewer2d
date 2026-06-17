@@ -8,8 +8,8 @@ import numpy as np
 import pytest
 from scipy import sparse
 
-from app.services.time_term_design_matrix import TimeTermDesignMatrix
-from app.services.time_term_sparse_solver import (
+from seis_statics.time_term import (
+    TimeTermDesignMatrix,
     TimeTermSparseSolverOptions,
     build_time_term_solver_system,
     solve_time_term_sparse_least_squares,
@@ -424,7 +424,7 @@ def test_time_term_sparse_solver_rejects_nonfinite_solver_output(monkeypatch) ->
                 0.0,
             )
 
-    import app.services.time_term_sparse_solver as solver_module
+    import seis_statics.time_term.sparse_solver as solver_module
 
     monkeypatch.setattr(solver_module.sparse_linalg, 'lsmr', BadLsmr())
 
