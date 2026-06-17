@@ -207,7 +207,7 @@ export function renderInspectorPanel({ state, dom, context }) {
       context.openEndpointStaticDrilldown('receiver', pick.receiverEndpointKey);
     });
     appendInspectorAction(actions, 'Filter to this trace', pick.traceIndex && pick.traceIndex !== '-' ? '' : 'Missing trace index.', () => {
-      state.selectedTraceIndex = String(pick.traceIndex);
+      context.setControlValue('selectedTraceIndex', String(pick.traceIndex));
       context.controllerActions.setSelectedView('static_components');
     });
     section.appendChild(actions);

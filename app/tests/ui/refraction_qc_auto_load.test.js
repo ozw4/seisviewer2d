@@ -1254,6 +1254,31 @@ test('Inspector updates after cell click and opens cell drilldown', async () => 
   });
 });
 
+test('Cell map drilldown panel renders loading and error states', () => {
+  loadRefractionQcScript();
+  refractionQcState.qcBundle = cellQcBundle();
+  refractionQcState.selectedCell = { cell_ix: 4, cell_iy: 2, layer_kind: 'v2_t1' };
+  refractionQcState.qcDrilldownTarget = {
+    kind: 'cell',
+    layer_kind: 'v2_t1',
+    cell_ix: 4,
+    cell_iy: 2,
+  };
+  refractionQcState.qcDrilldownLoading = true;
+
+  qcPublicApi.setSelectedView('cell_maps_3d');
+
+  const panel = document.querySelector('[data-testid="refraction-qc-cell-drilldown"]');
+  expect(panel.textContent).toContain('Loading cell drilldown...');
+
+  refractionQcState.qcDrilldownLoading = false;
+  refractionQcState.qcDrilldownError = 'Drilldown failed';
+  qcPublicApi.setSelectedView('cell_maps_3d');
+
+  expect(document.querySelector('[data-testid="refraction-qc-cell-drilldown-error"]').textContent)
+    .toBe('Drilldown failed');
+});
+
 test('loadJob displays QC loading errors with the requested job id still visible', async () => {
   vi.stubGlobal('fetch', vi.fn(async () => jsonResponse({ detail: 'QC bundle missing' }, 404)));
   const refractionQc = loadRefractionQcScript();

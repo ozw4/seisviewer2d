@@ -19,16 +19,18 @@ export function renderPickMapView({
   pickMapGatherNumber,
   pickMapTicks,
   plotHeight,
-  render,
   toFiniteNumber,
 }) {
   const state = viewState;
 
+  function effectivePickMapDisplayMode(payload = state.pickMap) {
+    if (payload && !payload.has_after_statics) return 'before';
+    return state.pickMapDisplayMode === 'after' ? 'after' : 'before';
+  }
+
   function renderPickMap(content, viewConfig = PICK_MAP_VIEWS.pick_map) {
     cleanupPickMapCanvasRenderer();
-    if (state.pickMap && !state.pickMap.has_after_statics && state.pickMapDisplayMode !== 'before') {
-      state.pickMapDisplayMode = 'before';
-    }
+    const displayMode = effectivePickMapDisplayMode();
     const testIdPrefix = viewConfig.testIdPrefix;
   
     const controls = document.createElement('div');
@@ -38,10 +40,9 @@ export function renderPickMapView({
     beforeButton.type = 'button';
     beforeButton.textContent = 'Before Statics';
     beforeButton.dataset.testid = `${testIdPrefix}-before`;
-    beforeButton.className = state.pickMapDisplayMode === 'before' ? 'is-active' : '';
+    beforeButton.className = displayMode === 'before' ? 'is-active' : '';
     beforeButton.addEventListener('click', () => {
-      state.pickMapDisplayMode = 'before';
-      render();
+      controllerActions.setPickMapDisplayMode('before');
     });
   
     const afterButton = document.createElement('button');
@@ -49,11 +50,10 @@ export function renderPickMapView({
     afterButton.textContent = 'After Statics';
     afterButton.dataset.testid = `${testIdPrefix}-after`;
     afterButton.disabled = !state.pickMap?.has_after_statics;
-    afterButton.className = state.pickMapDisplayMode === 'after' ? 'is-active' : '';
+    afterButton.className = displayMode === 'after' ? 'is-active' : '';
     afterButton.addEventListener('click', () => {
       if (!state.pickMap?.has_after_statics) return;
-      state.pickMapDisplayMode = 'after';
-      render();
+      controllerActions.setPickMapDisplayMode('after');
     });
   
     const gatherStart = document.createElement('input');
@@ -62,8 +62,7 @@ export function renderPickMapView({
     gatherStart.value = state.pickMapGatherStart;
     gatherStart.dataset.testid = `${testIdPrefix}-gather-start`;
     gatherStart.addEventListener('input', () => {
-      state.pickMapGatherStart = gatherStart.value;
-      render();
+      controllerActions.setPickMapGatherRange('start', gatherStart.value);
     });
   
     const gatherEnd = document.createElement('input');
@@ -72,8 +71,7 @@ export function renderPickMapView({
     gatherEnd.value = state.pickMapGatherEnd;
     gatherEnd.dataset.testid = `${testIdPrefix}-gather-end`;
     gatherEnd.addEventListener('input', () => {
-      state.pickMapGatherEnd = gatherEnd.value;
-      render();
+      controllerActions.setPickMapGatherRange('end', gatherEnd.value);
     });
   
     const cachedButton = document.createElement('button');
@@ -185,7 +183,7 @@ export function renderPickMapView({
       if (hasEnd && Number.isFinite(gatherNumber) && gatherNumber > end) continue;
       const beforeMs = toFiniteNumber(data.pick_before_ms?.[index]);
       const afterMs = toFiniteNumber(data.pick_after_ms?.[index]);
-      const y = state.pickMapDisplayMode === 'after' && payload.has_after_statics ? afterMs : beforeMs;
+      const y = effectivePickMapDisplayMode(payload) === 'after' ? afterMs : beforeMs;
       const x = toFiniteNumber(data[viewConfig.xField]?.[index]);
       if (!Number.isFinite(y)) continue;
       if (!Number.isFinite(x)) {
@@ -307,7 +305,7 @@ export function renderPickMapView({
   
     drawPickMapGrid(context, margin, plotWidth, plotHeightCss, xRange, yRange, xScale, yScale, viewConfig);
   
-    const title = `${state.pickMapDisplayMode === 'after' ? 'After Statics' : 'Before Statics'} ${viewConfig.label}`;
+    const title = `${effectivePickMapDisplayMode(payload) === 'after' ? 'After Statics' : 'Before Statics'} ${viewConfig.label}`;
     context.fillStyle = '#334155';
     context.font = '12px sans-serif';
     context.textAlign = 'left';

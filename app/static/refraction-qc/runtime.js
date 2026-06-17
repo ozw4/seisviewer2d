@@ -106,14 +106,17 @@ const defaultActions = {
   loadPreStaticsPickMap: requiredAction('loadPreStaticsPickMap'),
   loadStationStructureQc: requiredAction('loadStationStructureQc'),
   nextQcDrilldownRequestSerial: requiredAction('nextQcDrilldownRequestSerial'),
+  setPickMapDisplayMode: requiredAction('setPickMapDisplayMode'),
+  setPickMapGatherRange: requiredAction('setPickMapGatherRange'),
   setSelectedView: requiredAction('setSelectedView'),
+  setStationStructureControl: requiredAction('setStationStructureControl'),
   staticCorrectionLinkForTarget: requiredAction('staticCorrectionLinkForTarget'),
 };
 
 controllerActions = defaultActions;
 
 export function createRefractionQcRenderRuntime(options = {}) {
-  controllerActions = { ...defaultActions, ...(options.actions || {}) };
+  controllerActions = { ...defaultActions, ...runtimeControllerActions(), ...(options.actions || {}) };
   return {
     buildGatherPreviewRequest,
     render,
@@ -2848,6 +2851,102 @@ function pickMapTicks(range, count = 5) {
   return ticks;
 }
 
+const CONTROL_STATE_KEYS = new Set([
+  'artifactSearch',
+  'artifactTypeFilter',
+  'firstBreakResidualThresholdMs',
+  'firstBreakSortBy',
+  'firstBreakXAxis',
+  'profileStatusFilter',
+  'selectedCellMapQuantity',
+  'selectedEndpoint',
+  'selectedEndpointKind',
+  'selectedLayerKind',
+  'selectedProfileGroup',
+  'selectedProfileUnits',
+  'selectedTraceIndex',
+  'showRejectedFirstBreaks',
+]);
+
+const STATION_STRUCTURE_CONTROL_KEYS = new Set([
+  'stationStructureDepthField',
+  'stationStructureGatherEnd',
+  'stationStructureGatherStart',
+  'stationStructureVelocityField',
+]);
+
+function setControlValue(key, value) {
+  if (!CONTROL_STATE_KEYS.has(key)) {
+    throw new Error(`Unknown Refraction QC control state: ${key}`);
+  }
+  state[key] = value;
+}
+
+function clearEndpointFilter() {
+  state.selectedEndpoint = '';
+  state.selectedProfileEndpoint = null;
+  if (state.selectedObject?.kind === 'endpoint') clearSelectedObject();
+}
+
+function setSelectedCellFromText(value) {
+  clearSelectedCellFilter();
+  state.selectedCell = parseCell(value);
+}
+
+function selectCellMapPoint(cell, layerKind) {
+  if (!cell || cell.cell_ix === undefined || cell.cell_iy === undefined) return;
+  state.selectedCell = {
+    cell_ix: Number(cell.cell_ix),
+    cell_iy: Number(cell.cell_iy),
+    layer_kind: String(cell.layer_kind || layerKind),
+    velocity_m_s: toFiniteNumber(cell.velocity_m_s),
+    fold: toFiniteNumber(cell.fold),
+    residual_rms_ms: toFiniteNumber(cell.residual_rms_ms),
+    status: textOrDash(cell.status),
+  };
+  state.selectedObject = {
+    kind: 'cell',
+    key: selectedCellLabel(state.selectedCell),
+    payload: state.selectedCell,
+  };
+  if (dom?.cell) dom.cell.value = `${state.selectedCell.cell_ix},${state.selectedCell.cell_iy}`;
+  const drilldownTarget = cellDrilldownTargetFromSelectedCell(state.selectedCell);
+  render();
+  loadQcDrilldown(drilldownTarget);
+}
+
+function setPickMapDisplayMode(mode) {
+  if (mode === 'after' && !state.pickMap?.has_after_statics) return;
+  state.pickMapDisplayMode = mode === 'after' ? 'after' : 'before';
+  render();
+}
+
+function setPickMapGatherRange(edge, value) {
+  if (edge === 'start') {
+    state.pickMapGatherStart = value;
+  } else if (edge === 'end') {
+    state.pickMapGatherEnd = value;
+  } else {
+    throw new Error(`Unknown Pick Map gather range edge: ${edge}`);
+  }
+  render();
+}
+
+function setStationStructureControl(key, value) {
+  if (!STATION_STRUCTURE_CONTROL_KEYS.has(key)) {
+    throw new Error(`Unknown station-structure control state: ${key}`);
+  }
+  state[key] = value;
+}
+
+function runtimeControllerActions() {
+  return {
+    setPickMapDisplayMode,
+    setPickMapGatherRange,
+    setStationStructureControl,
+  };
+}
+
 
 
 
@@ -2861,9 +2960,6 @@ function viewState(keys) {
     Object.defineProperty(facade, key, {
       enumerable: true,
       get: () => state[key],
-      set: (value) => {
-        state[key] = value;
-      },
     });
   }
   return facade;
@@ -2889,6 +2985,9 @@ function viewStateFor(viewId) {
   if (viewId === 'cell_maps_3d') {
     return viewState([
       'qcDrilldown',
+      'qcDrilldownError',
+      'qcDrilldownLoading',
+      'qcDrilldownTarget',
       'selectedCell',
       'selectedCellMapQuantity',
       'selectedLayerKind',
@@ -3021,7 +3120,6 @@ function renderDepsForView(viewId) {
   if (viewId === 'cell_maps_3d') {
     return {
       buildCellMapMatrix,
-      cellDrilldownTargetFromSelectedCell,
       cellEndpointDisplayName,
       cellMapHoverText,
       cellMapQuantityDefinition,
@@ -3032,7 +3130,6 @@ function renderDepsForView(viewId) {
       createFirstBreakPlot,
       createKv,
       createTable,
-      domRef: () => dom,
       drilldownMetric,
       drilldownResidualMs,
       filteredCellMapRecords,
@@ -3043,18 +3140,16 @@ function renderDepsForView(viewId) {
       getPlotly,
       isUnavailable,
       layerLabel,
-      loadQcDrilldown,
       plotHeight,
       plotlyNewPlot,
       plotlyUnavailableMessage,
       previewGatherForEndpoint,
-      render,
+      selectCellMapPoint,
       selectedCellLabel,
       selectedCellMapLayer,
       selectedCellMapPoint,
       statusCounts,
       textOrDash,
-      toFiniteNumber,
     };
   }
   if (viewId === 'static_components') {
@@ -3124,7 +3219,6 @@ function renderDepsForView(viewId) {
       pickMapGatherNumber,
       pickMapTicks,
       plotHeight,
-      render,
       toFiniteNumber,
     };
   }
@@ -3148,20 +3242,20 @@ function activeFilterDeps() {
   return {
     clearGatherPreviewFilter,
     clearNode,
+    clearEndpointFilter,
     clearSelectedCellFilter,
-    clearSelectedObject,
     firstBreakResidualThresholdMs,
     formatNumber,
     layerLabel,
     optionLabel,
     render,
+    setControlValue,
     selectedCellLabel,
   };
 }
 
 function controlsDeps() {
   return {
-    clearSelectedCellFilter,
     clearNode,
     createCheckboxControl,
     createGatherPreviewControls,
@@ -3172,8 +3266,8 @@ function controlsDeps() {
     formatNumber,
     layerLabel,
     optionLabel,
-    parseCell,
-    render,
+    setControlValue,
+    setSelectedCellFromText,
   };
 }
 
@@ -3199,6 +3293,7 @@ function inspectorDeps() {
     selectedFirstBreakPick,
     selectedProfileSeries,
     selectedStaticEndpointRecord,
+    setControlValue,
     setEndpointFilter,
     STATIC_ENDPOINT_VIEW_KEY,
     staticEndpointKey,

@@ -130,7 +130,7 @@ export function renderStationStructureView({
     gatherStart.value = state.stationStructureGatherStart;
     gatherStart.dataset.testid = 'refraction-qc-station-structure-gather-start';
     gatherStart.addEventListener('input', () => {
-      state.stationStructureGatherStart = gatherStart.value;
+      controllerActions.setStationStructureControl('stationStructureGatherStart', gatherStart.value);
     });
   
     const gatherEnd = document.createElement('input');
@@ -139,7 +139,7 @@ export function renderStationStructureView({
     gatherEnd.value = state.stationStructureGatherEnd;
     gatherEnd.dataset.testid = 'refraction-qc-station-structure-gather-end';
     gatherEnd.addEventListener('input', () => {
-      state.stationStructureGatherEnd = gatherEnd.value;
+      controllerActions.setStationStructureControl('stationStructureGatherEnd', gatherEnd.value);
     });
   
     const velocity = document.createElement('select');
@@ -158,7 +158,7 @@ export function renderStationStructureView({
     }
     velocity.value = state.stationStructureVelocityField;
     velocity.addEventListener('change', () => {
-      state.stationStructureVelocityField = velocity.value;
+      controllerActions.setStationStructureControl('stationStructureVelocityField', velocity.value);
     });
   
     const depth = document.createElement('select');
@@ -180,7 +180,7 @@ export function renderStationStructureView({
     }
     depth.value = state.stationStructureDepthField;
     depth.addEventListener('change', () => {
-      state.stationStructureDepthField = depth.value;
+      controllerActions.setStationStructureControl('stationStructureDepthField', depth.value);
     });
   
     const loadButton = document.createElement('button');

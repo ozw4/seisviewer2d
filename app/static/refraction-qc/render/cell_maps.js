@@ -4,7 +4,6 @@ export function renderCellMapsView({
   viewDef,
   viewState,
   buildCellMapMatrix,
-  cellDrilldownTargetFromSelectedCell,
   cellEndpointDisplayName,
   cellMapHoverText,
   cellMapQuantityDefinition,
@@ -15,7 +14,6 @@ export function renderCellMapsView({
   createFirstBreakPlot,
   createKv,
   createTable,
-  domRef,
   drilldownMetric,
   drilldownResidualMs,
   filteredCellMapRecords,
@@ -26,21 +24,18 @@ export function renderCellMapsView({
   getPlotly,
   isUnavailable,
   layerLabel,
-  loadQcDrilldown,
   plotHeight,
   plotlyNewPlot,
   plotlyUnavailableMessage,
   previewGatherForEndpoint,
-  render,
+  selectCellMapPoint,
   selectedCellLabel,
   selectedCellMapLayer,
   selectedCellMapPoint,
   statusCounts,
   textOrDash,
-  toFiniteNumber,
 }) {
   const state = viewState;
-  const dom = domRef();
 
   function endpointCandidatesFromCellDrilldown(payload) {
     const records = Array.isArray(payload?.observations?.records)
@@ -424,24 +419,7 @@ export function renderCellMapsView({
           const point = event?.points?.[0];
           const cell = point?.customdata;
           if (!cell || cell.cell_ix === undefined || cell.cell_iy === undefined) return;
-          state.selectedCell = {
-            cell_ix: Number(cell.cell_ix),
-            cell_iy: Number(cell.cell_iy),
-            layer_kind: String(cell.layer_kind || layerKind),
-            velocity_m_s: toFiniteNumber(cell.velocity_m_s),
-            fold: toFiniteNumber(cell.fold),
-            residual_rms_ms: toFiniteNumber(cell.residual_rms_ms),
-            status: textOrDash(cell.status),
-          };
-          state.selectedObject = {
-            kind: 'cell',
-            key: selectedCellLabel(state.selectedCell),
-            payload: state.selectedCell,
-          };
-          if (dom?.cell) dom.cell.value = `${state.selectedCell.cell_ix},${state.selectedCell.cell_iy}`;
-          const drilldownTarget = cellDrilldownTargetFromSelectedCell(state.selectedCell);
-          render();
-          loadQcDrilldown(drilldownTarget);
+          selectCellMapPoint(cell, layerKind);
         });
       });
     } else {

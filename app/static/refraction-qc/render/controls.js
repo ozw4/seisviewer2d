@@ -16,13 +16,13 @@ export function renderActiveFilterChipsPanel({ state, dom, context }) {
     clearGatherPreviewFilter,
     clearNode,
     clearSelectedCellFilter,
-    clearSelectedObject,
     firstBreakResidualThresholdMs,
     formatNumber,
     layerLabel,
     optionLabel,
     render,
     selectedCellLabel,
+    setControlValue,
   } = context;
   clearNode(dom.activeFilters);
 
@@ -35,55 +35,53 @@ export function renderActiveFilterChipsPanel({ state, dom, context }) {
   const addChip = (key, text, reset) => chips.push({ key, text, reset });
   if (state.selectedLayerKind !== 'all') {
     addChip('layer', `Layer ${layerLabel(state.selectedLayerKind)}`, () => {
-      state.selectedLayerKind = 'all';
+      setControlValue('selectedLayerKind', 'all');
     });
   }
   if (state.firstBreakXAxis !== 'offset') {
     addChip('x-axis', `X axis ${optionLabel(X_AXIS_CONTROL_OPTIONS, state.firstBreakXAxis)}`, () => {
-      state.firstBreakXAxis = 'offset';
+      setControlValue('firstBreakXAxis', 'offset');
     });
   }
   if (!state.showRejectedFirstBreaks) {
     addChip('used-only', 'Used only', () => {
-      state.showRejectedFirstBreaks = true;
+      setControlValue('showRejectedFirstBreaks', true);
     });
   }
   const residualThreshold = firstBreakResidualThresholdMs();
   if (residualThreshold !== null) {
     addChip('residual-threshold', `Residual >= ${formatNumber(residualThreshold, 1)} ms`, () => {
-      state.firstBreakResidualThresholdMs = '';
+      setControlValue('firstBreakResidualThresholdMs', '');
     });
   }
   if (state.selectedProfileGroup !== 'time_terms') {
     addChip('profile-group', `Profile group ${optionLabel(PROFILE_GROUP_CONTROL_OPTIONS, state.selectedProfileGroup)}`, () => {
-      state.selectedProfileGroup = 'time_terms';
+      setControlValue('selectedProfileGroup', 'time_terms');
     });
   }
   if (state.selectedProfileUnits !== 'auto') {
     addChip('profile-units', `Profile units ${optionLabel(PROFILE_UNITS_CONTROL_OPTIONS, state.selectedProfileUnits)}`, () => {
-      state.selectedProfileUnits = 'auto';
+      setControlValue('selectedProfileUnits', 'auto');
     });
   }
   if (state.profileStatusFilter !== 'all') {
     addChip('status', `Status ${optionLabel(STATUS_FILTER_CONTROL_OPTIONS, state.profileStatusFilter)}`, () => {
-      state.profileStatusFilter = 'all';
+      setControlValue('profileStatusFilter', 'all');
     });
   }
   if (state.selectedCellMapQuantity !== 'velocity') {
     addChip('map-quantity', `Map quantity ${optionLabel(CELL_MAP_QUANTITY_CONTROL_OPTIONS, state.selectedCellMapQuantity)}`, () => {
-      state.selectedCellMapQuantity = 'velocity';
+      setControlValue('selectedCellMapQuantity', 'velocity');
     });
   }
   if (state.selectedEndpoint) {
     addChip('endpoint', `${state.selectedEndpointKind} ${state.selectedEndpoint}`, () => {
-      state.selectedEndpoint = '';
-      state.selectedProfileEndpoint = null;
-      if (state.selectedObject?.kind === 'endpoint') clearSelectedObject();
+      context.clearEndpointFilter();
     });
   }
   if (state.selectedTraceIndex) {
     addChip('trace', `Trace ${state.selectedTraceIndex}`, () => {
-      state.selectedTraceIndex = '';
+      setControlValue('selectedTraceIndex', '');
     });
   }
   if (state.selectedCell) {
@@ -98,12 +96,12 @@ export function renderActiveFilterChipsPanel({ state, dom, context }) {
   }
   if (state.artifactTypeFilter !== 'all') {
     addChip('artifact-type', `Artifact ${optionLabel(ARTIFACT_TYPE_CONTROL_OPTIONS, state.artifactTypeFilter)}`, () => {
-      state.artifactTypeFilter = 'all';
+      setControlValue('artifactTypeFilter', 'all');
     });
   }
   if (state.artifactSearch) {
     addChip('artifact-search', `Artifact search ${state.artifactSearch}`, () => {
-      state.artifactSearch = '';
+      setControlValue('artifactSearch', '');
     });
   }
 
@@ -136,50 +134,51 @@ function renderFindProblemsControls(container, state, context, options = {}) {
     createCheckboxControl,
     createNumberControl,
     createSelectControl,
+    setControlValue,
   } = context;
   container.append(
     createSelectControl('Layer', 'refraction-qc-layer-kind', state.selectedLayerKind, LAYER_CONTROL_OPTIONS, (value) => {
-      state.selectedLayerKind = value;
+      setControlValue('selectedLayerKind', value);
     }),
     createSelectControl('X axis', 'refraction-qc-x-axis', state.firstBreakXAxis, X_AXIS_CONTROL_OPTIONS, (value) => {
-      state.firstBreakXAxis = value;
+      setControlValue('firstBreakXAxis', value);
     }),
     createCheckboxControl('Show rejected / unused', 'refraction-qc-show-rejected', state.showRejectedFirstBreaks, (checked) => {
-      state.showRejectedFirstBreaks = checked;
+      setControlValue('showRejectedFirstBreaks', checked);
     }),
   );
   if (!options.includeResidualControls) return;
   container.append(
     createNumberControl('Residual threshold (ms)', 'refraction-qc-residual-threshold', state.firstBreakResidualThresholdMs, (value) => {
-      state.firstBreakResidualThresholdMs = value;
+      setControlValue('firstBreakResidualThresholdMs', value);
     }, { min: 0, step: '0.1' }),
     createSelectControl('Sort by', 'refraction-qc-residual-sort', state.firstBreakSortBy, FIRST_BREAK_SORT_CONTROL_OPTIONS, (value) => {
-      state.firstBreakSortBy = value;
+      setControlValue('firstBreakSortBy', value);
     }),
   );
 }
 
 function renderStationControls(container, state, context) {
-  const { createSelectControl, createTextControl } = context;
+  const { createSelectControl, createTextControl, setControlValue } = context;
   if (state.selectedView === 'profiles_2d') {
     container.append(
       createSelectControl('Layer', 'refraction-qc-layer-kind', state.selectedLayerKind, LAYER_CONTROL_OPTIONS, (value) => {
-        state.selectedLayerKind = value;
+        setControlValue('selectedLayerKind', value);
       }),
       createSelectControl('Station kind', 'refraction-qc-endpoint-kind', state.selectedEndpointKind, ENDPOINT_KIND_CONTROL_OPTIONS, (value) => {
-        state.selectedEndpointKind = value;
+        setControlValue('selectedEndpointKind', value);
       }),
       createTextControl('Station search', 'refraction-qc-endpoint', state.selectedEndpoint, (value) => {
-        state.selectedEndpoint = value;
+        setControlValue('selectedEndpoint', value);
       }),
       createSelectControl('Profile group', 'refraction-qc-profile-group', state.selectedProfileGroup, PROFILE_GROUP_CONTROL_OPTIONS, (value) => {
-        state.selectedProfileGroup = value;
+        setControlValue('selectedProfileGroup', value);
       }),
       createSelectControl('Profile units', 'refraction-qc-profile-units', state.selectedProfileUnits, PROFILE_UNITS_CONTROL_OPTIONS, (value) => {
-        state.selectedProfileUnits = value;
+        setControlValue('selectedProfileUnits', value);
       }),
       createSelectControl('Status', 'refraction-qc-status-filter', state.profileStatusFilter, STATUS_FILTER_CONTROL_OPTIONS, (value) => {
-        state.profileStatusFilter = value;
+        setControlValue('profileStatusFilter', value);
       }),
     );
     return;
@@ -187,13 +186,13 @@ function renderStationControls(container, state, context) {
   if (state.selectedView === 'static_components') {
     container.append(
       createSelectControl('Station kind', 'refraction-qc-endpoint-kind', state.selectedEndpointKind, ENDPOINT_KIND_CONTROL_OPTIONS, (value) => {
-        state.selectedEndpointKind = value;
+        setControlValue('selectedEndpointKind', value);
       }),
       createTextControl('Station search', 'refraction-qc-endpoint', state.selectedEndpoint, (value) => {
-        state.selectedEndpoint = value;
+        setControlValue('selectedEndpoint', value);
       }),
       createTextControl('Trace', 'refraction-qc-trace', state.selectedTraceIndex, (value) => {
-        state.selectedTraceIndex = value;
+        setControlValue('selectedTraceIndex', value);
       }),
     );
   }
@@ -201,26 +200,25 @@ function renderStationControls(container, state, context) {
 
 function renderCellControls(container, state, context) {
   const {
-    clearSelectedCellFilter,
     createSelectControl,
     createTextControl,
-    parseCell,
+    setControlValue,
+    setSelectedCellFromText,
   } = context;
   container.append(
     createSelectControl('Layer', 'refraction-qc-layer-kind', state.selectedLayerKind, LAYER_CONTROL_OPTIONS, (value) => {
-      state.selectedLayerKind = value;
+      setControlValue('selectedLayerKind', value);
     }),
     createSelectControl('Map quantity', 'refraction-qc-map-quantity', state.selectedCellMapQuantity, CELL_MAP_QUANTITY_CONTROL_OPTIONS, (value) => {
-      state.selectedCellMapQuantity = value;
+      setControlValue('selectedCellMapQuantity', value);
     }),
     createSelectControl('Status', 'refraction-qc-status-filter', state.profileStatusFilter, STATUS_FILTER_CONTROL_OPTIONS, (value) => {
-      state.profileStatusFilter = value;
+      setControlValue('profileStatusFilter', value);
     }),
     createTextControl('Cell search', 'refraction-qc-cell', state.selectedCell?.cell_ix !== undefined
       ? `${state.selectedCell.cell_ix},${state.selectedCell.cell_iy}`
       : (state.selectedCell?.text || ''), (value) => {
-      clearSelectedCellFilter();
-      state.selectedCell = parseCell(value);
+      setSelectedCellFromText(value);
     }),
   );
 }
@@ -230,13 +228,13 @@ function renderGatherControls(container, context) {
 }
 
 function renderArtifactsControls(container, state, context) {
-  const { createSelectControl, createTextControl } = context;
+  const { createSelectControl, createTextControl, setControlValue } = context;
   container.append(
     createSelectControl('Artifact type', 'refraction-qc-artifact-type', state.artifactTypeFilter, ARTIFACT_TYPE_CONTROL_OPTIONS, (value) => {
-      state.artifactTypeFilter = value;
+      setControlValue('artifactTypeFilter', value);
     }),
     createTextControl('Search table columns', 'refraction-qc-artifact-search', state.artifactSearch, (value) => {
-      state.artifactSearch = value;
+      setControlValue('artifactSearch', value);
     }),
   );
 }
