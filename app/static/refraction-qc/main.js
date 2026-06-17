@@ -53,6 +53,7 @@ import {
   let pickMapRequestSerial = 0;
   let stationStructureRequestSerial = 0;
   let renderRuntime = null;
+  let initializedForm = null;
 
   function positiveIntegerText(value) {
     const text = String(value ?? '').trim();
@@ -645,6 +646,11 @@ import {
   }
 
   export function initRefractionQcPage() {
+    const collectedDom = collectRefractionQcDom();
+    const { form } = collectedDom;
+    if (!form) return qcPublicApi;
+    if (initializedForm === form) return qcPublicApi;
+
     resetState();
     requestSerial = 0;
     gatherRequestSerial = 0;
@@ -654,16 +660,14 @@ import {
     getRenderRuntime().reset();
     getRenderRuntime().setDom(null);
     exposeRefractionQcPublicApi();
-    const collectedDom = collectRefractionQcDom();
-    const { form } = collectedDom;
-    if (!form) return;
 
     dom = collectedDom;
     getRenderRuntime().setDom(dom);
 
-    if (!dom.jobId || !dom.maxPoints || !dom.loadButton || !dom.status || !dom.error || !dom.sign) return;
-    if (!dom.jobSummary || !dom.inspector) return;
-    if (!dom.activeFilters || !dom.viewControls) return;
+    if (!dom.jobId || !dom.maxPoints || !dom.loadButton || !dom.status || !dom.error || !dom.sign) return qcPublicApi;
+    if (!dom.jobSummary || !dom.inspector) return qcPublicApi;
+    if (!dom.activeFilters || !dom.viewControls) return qcPublicApi;
+    initializedForm = form;
 
     if (dom.pipelineTab) dom.pipelineTab.addEventListener('click', () => activateSidebarTab('pipeline'));
     if (dom.staticCorrectionTab) dom.staticCorrectionTab.addEventListener('click', () => activateSidebarTab('static_correction'));
@@ -704,14 +708,18 @@ import {
     if (jobId && isStandaloneRefractionQcPage()) {
       loadBundle();
     }
+    return qcPublicApi;
   }
 
   function exposeRefractionQcPublicApi() {
-    window.refractionQcState = state;
-    window.RefractionQc = {
-      loadJob,
+    window.__SEISVIEWER2D_DEV__ = window.__SEISVIEWER2D_DEV__ || {};
+    window.__SEISVIEWER2D_DEV__.refractionQc = {
+      state,
+      ui: qcPublicApi,
     };
-    window.refractionQcUI = {
+  }
+
+  export const qcPublicApi = {
       loadBundle,
       loadJob,
       loadGatherPreview,
@@ -719,7 +727,25 @@ import {
       setSelectedView,
       activateSidebarTab,
       pickMapGatherNumber,
-    };
+  };
+
+  export function resetRefractionQcPageForTests() {
+    resetState();
+    requestSerial = 0;
+    gatherRequestSerial = 0;
+    qcDrilldownRequestSerial = 0;
+    pickMapRequestSerial = 0;
+    stationStructureRequestSerial = 0;
+    dom = null;
+    initializedForm = null;
+    getRenderRuntime().reset();
+    getRenderRuntime().setDom(null);
+    if (window.__SEISVIEWER2D_DEV__) {
+      delete window.__SEISVIEWER2D_DEV__.refractionQc;
+      if (Object.keys(window.__SEISVIEWER2D_DEV__).length === 0) {
+        delete window.__SEISVIEWER2D_DEV__;
+      }
+    }
   }
 
-  exposeRefractionQcPublicApi();
+  export { state };

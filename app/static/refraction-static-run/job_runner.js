@@ -11,6 +11,10 @@ import { getStaticCorrectionDom, requestStaticCorrectionRender } from './runtime
 import { state } from './state.js';
 import { buildRefractionQcUrl } from './target.js';
 import { delay, readResponseError, trimValue } from './utils.js';
+import {
+  initRefractionQcPage,
+  loadJob as loadRefractionQcJob,
+} from '../refraction-qc/main.js';
 
 let staticPollToken = 0;
 
@@ -92,9 +96,9 @@ async function autoLoadRefractionQc(jobId) {
   if (!safeJobId) {
     return null;
   }
-  const refractionQc = window.RefractionQc;
-  if (refractionQc && typeof refractionQc.loadJob === 'function') {
-    return refractionQc.loadJob(safeJobId, { activateTab: true });
+  if (document.getElementById('refractionQcForm')) {
+    initRefractionQcPage();
+    return loadRefractionQcJob(safeJobId, { activateTab: true });
   }
   const qcUrl = buildRefractionQcUrl(safeJobId);
   const dom = getStaticCorrectionDom();

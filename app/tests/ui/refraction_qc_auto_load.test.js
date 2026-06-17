@@ -1,5 +1,10 @@
 import { afterEach, beforeEach, expect, test, vi } from 'vitest';
-import { initRefractionQcPage } from '../../static/refraction_qc.js';
+import {
+  initRefractionQcPage,
+  qcPublicApi,
+  resetRefractionQcPageForTests,
+  state as refractionQcState,
+} from '../../static/refraction-qc/main.js';
 
 let canvasOps = [];
 
@@ -151,7 +156,7 @@ function deferred() {
 
 function loadRefractionQcScript() {
   initRefractionQcPage();
-  return window.RefractionQc;
+  return qcPublicApi;
 }
 
 async function flushAsyncWork(times = 2) {
@@ -571,26 +576,23 @@ async function openPickMapWithCachedNpz() {
   seedStaticCorrectionPickDraft();
   stubStaticCorrectionPickDb();
   loadRefractionQcScript();
-  window.refractionQcUI.setSelectedView('pick_map');
+  qcPublicApi.setSelectedView('pick_map');
   await flushAsyncWork(4);
 }
 
 beforeEach(() => {
+  resetRefractionQcPageForTests();
   localStorage.clear();
   window.history.replaceState(null, '', '/');
-  delete window.RefractionQc;
-  delete window.refractionQcUI;
-  delete window.refractionQcState;
+  delete window.__SEISVIEWER2D_DEV__;
   delete window.SeisViewerState;
   renderRefractionQcPanel();
   installCanvasContextStub();
 });
 
 afterEach(() => {
+  resetRefractionQcPageForTests();
   localStorage.clear();
-  delete window.RefractionQc;
-  delete window.refractionQcUI;
-  delete window.refractionQcState;
   delete window.SeisViewerState;
   try {
     delete window.navigator.clipboard;
@@ -627,6 +629,28 @@ test('loadJob populates the QC job input, loads the bundle, and activates Refrac
   expect(
     Array.from(document.getElementById('refractionQcJobList').children).map((node) => node.value)
   ).toContain('static-job-a');
+});
+
+test('refraction QC init is idempotent for the same DOM', async () => {
+  const calls = [];
+  vi.stubGlobal('fetch', vi.fn(async (url, options = {}) => {
+    calls.push({ url: String(url), body: JSON.parse(options.body || '{}') });
+    return jsonResponse(qcBundle('static-job-a'));
+  }));
+  loadRefractionQcScript();
+  initRefractionQcPage();
+
+  document.getElementById('refractionQcJobId').value = 'static-job-a';
+  document.getElementById('refractionQcForm').dispatchEvent(
+    new Event('submit', { bubbles: true, cancelable: true })
+  );
+  await flushAsyncWork();
+
+  expect(calls).toHaveLength(1);
+  expect(calls[0]).toMatchObject({
+    url: '/statics/refraction/qc',
+    body: { job_id: 'static-job-a', max_points: 20000 },
+  });
 });
 
 test('manual Refraction QC load still uses the shared bundle loader', async () => {
@@ -675,19 +699,19 @@ test('Overview does not show global selector flood', () => {
 test('Artifacts task shows the empty bundle state before a QC bundle is loaded', () => {
   loadRefractionQcScript();
 
-  expect(() => window.refractionQcUI.setSelectedView('artifacts')).not.toThrow();
+  expect(() => qcPublicApi.setSelectedView('artifacts')).not.toThrow();
   expect(document.querySelector('[data-view-content="artifacts"]').textContent)
     .toContain('No QC bundle loaded.');
 });
 
 test('Run summary warning count ignores unavailable view metadata', () => {
   loadRefractionQcScript();
-  window.refractionQcState.qcBundle = {
+  refractionQcState.qcBundle = {
     ...qcBundle('job-unavailable-views'),
     unavailable_views: ['profiles', 'cells'],
   };
 
-  window.refractionQcUI.setSelectedView('summary');
+  qcPublicApi.setSelectedView('summary');
 
   const warningsMetric = Array.from(
     document.querySelectorAll('#refractionQcJobSummary .refraction-qc-metric')
@@ -700,43 +724,43 @@ test('Run summary warning count ignores unavailable view metadata', () => {
 test('Refraction QC renders controls only for the selected view', () => {
   loadRefractionQcScript();
 
-  window.refractionQcUI.setSelectedView('cell_maps_3d');
+  qcPublicApi.setSelectedView('cell_maps_3d');
   expect(document.querySelector('[data-testid="refraction-qc-map-quantity"]')).not.toBeNull();
   expect(document.querySelector('[data-testid="refraction-qc-status-filter"]')).not.toBeNull();
   const cellSearch = document.querySelector('[data-testid="refraction-qc-cell"]');
   expect(cellSearch).not.toBeNull();
   cellSearch.value = '12,34';
   expect(() => cellSearch.dispatchEvent(new Event('input', { bubbles: true }))).not.toThrow();
-  expect(window.refractionQcState.selectedCell).toEqual({ cell_ix: 12, cell_iy: 34 });
+  expect(refractionQcState.selectedCell).toEqual({ cell_ix: 12, cell_iy: 34 });
   expect(document.querySelector('[data-testid="refraction-qc-profile-group"]')).toBeNull();
 
-  window.refractionQcUI.setSelectedView('profiles_2d');
+  qcPublicApi.setSelectedView('profiles_2d');
   expect(document.querySelector('[data-testid="refraction-qc-profile-group"]')).not.toBeNull();
   expect(document.querySelector('[data-testid="refraction-qc-profile-units"]')).not.toBeNull();
   expect(document.querySelector('[data-testid="refraction-qc-map-quantity"]')).toBeNull();
 
-  window.refractionQcUI.setSelectedView('first_break_residuals');
+  qcPublicApi.setSelectedView('first_break_residuals');
   expect(document.querySelector('[data-testid="refraction-qc-x-axis"]')).not.toBeNull();
   expect(document.querySelector('[data-testid="refraction-qc-show-rejected"]')).not.toBeNull();
   expect(document.querySelector('[data-testid="refraction-qc-residual-threshold"]')).not.toBeNull();
   expect(document.querySelector('[data-testid="refraction-qc-residual-sort"]')).not.toBeNull();
   expect(document.querySelector('[data-testid="refraction-qc-endpoint"]')).toBeNull();
 
-  window.refractionQcUI.setSelectedView('reduced_time');
+  qcPublicApi.setSelectedView('reduced_time');
   expect(document.querySelector('[data-testid="refraction-qc-x-axis"]')).not.toBeNull();
   expect(document.querySelector('[data-testid="refraction-qc-show-rejected"]')).not.toBeNull();
   expect(document.querySelector('[data-testid="refraction-qc-residual-threshold"]')).toBeNull();
   expect(document.querySelector('[data-testid="refraction-qc-residual-sort"]')).toBeNull();
   expect(document.querySelector('[data-testid="refraction-qc-map-quantity"]')).toBeNull();
 
-  window.refractionQcUI.setSelectedView('gather_preview');
+  qcPublicApi.setSelectedView('gather_preview');
   expect(document.querySelector('[data-testid="refraction-qc-gather-axis"]')).not.toBeNull();
   expect(document.querySelector('[data-testid="refraction-qc-gather-display"]')).not.toBeNull();
   expect(document.querySelector('[data-testid="refraction-qc-gather-time-start"]')).not.toBeNull();
   expect(document.querySelector('[data-testid="refraction-qc-gather-max-traces"]')).not.toBeNull();
   expect(document.querySelector('[data-view-content="gather_preview"] [data-testid="refraction-qc-gather-controls"]')).toBeNull();
 
-  window.refractionQcUI.setSelectedView('artifacts');
+  qcPublicApi.setSelectedView('artifacts');
   expect(document.querySelector('[data-testid="refraction-qc-artifact-type"]')).not.toBeNull();
   expect(document.querySelector('[data-testid="refraction-qc-artifact-search"]')).not.toBeNull();
   expect(document.querySelector('[data-testid="refraction-qc-gather-axis"]')).toBeNull();
@@ -752,9 +776,9 @@ test('Gather Preview keeps internal context in the advanced drawer', async () =>
   window.currentFileId = 'stale-line.sgy';
   window.currentKey1Byte = 17;
   window.currentKey2Byte = 21;
-  window.refractionQcState.qcBundle = gatherPreviewQcBundle();
+  refractionQcState.qcBundle = gatherPreviewQcBundle();
 
-  window.refractionQcUI.setSelectedView('gather_preview');
+  qcPublicApi.setSelectedView('gather_preview');
 
   expect(document.querySelector('[data-testid="refraction-qc-gather-file-id"]')).toBeNull();
   expect(document.querySelector('[data-testid="refraction-qc-gather-key1-byte"]')).toBeNull();
@@ -781,7 +805,7 @@ test('Gather Preview keeps internal context in the advanced drawer', async () =>
   const station = document.querySelector('[data-testid="refraction-qc-gather-endpoint"]');
   station.value = 'S 1001 · picks 96 · RMS 12.4 ms · ok';
   station.dispatchEvent(new Event('input', { bubbles: true }));
-  expect(window.refractionQcState.gatherEndpointKey).toBe('1001');
+  expect(refractionQcState.gatherEndpointKey).toBe('1001');
   expect(endpointValue.textContent)
     .toBe('1001');
   expect(endpointCopy.disabled).toBe(false);
@@ -793,7 +817,7 @@ test('Gather Preview keeps internal context in the advanced drawer', async () =>
 
   station.value = 'S 9999';
   station.dispatchEvent(new Event('input', { bubbles: true }));
-  expect(window.refractionQcState.gatherEndpointKey).toBe('');
+  expect(refractionQcState.gatherEndpointKey).toBe('');
   expect(endpointValue.textContent)
     .toBe('-');
   expect(endpointCopy.disabled).toBe(true);
@@ -812,9 +836,9 @@ test('Gather Preview keeps internal context in the advanced drawer', async () =>
 test('Gather Preview clears stale preview output when the selected station changes', () => {
   installPlotlyClickStub();
   loadRefractionQcScript();
-  window.refractionQcState.qcBundle = gatherPreviewQcBundle();
-  window.refractionQcState.gatherEndpointKey = '1001';
-  window.refractionQcState.gatherPreview = {
+  refractionQcState.qcBundle = gatherPreviewQcBundle();
+  refractionQcState.gatherEndpointKey = '1001';
+  refractionQcState.gatherPreview = {
     job_id: 'job-gather',
     gather: { axis: 'source', endpoint_key: '1001' },
     window: {
@@ -835,15 +859,15 @@ test('Gather Preview clears stale preview output when the selected station chang
     overlay_status: { first_break_fit: 'ok' },
   };
 
-  window.refractionQcUI.setSelectedView('gather_preview');
+  qcPublicApi.setSelectedView('gather_preview');
   expect(document.querySelector('[data-testid="refraction-qc-gather-raw-plot"]')).not.toBeNull();
 
   const station = document.querySelector('[data-testid="refraction-qc-gather-endpoint"]');
   station.value = 'S 9999';
   station.dispatchEvent(new Event('input', { bubbles: true }));
 
-  expect(window.refractionQcState.gatherEndpointKey).toBe('');
-  expect(window.refractionQcState.gatherPreview).toBeNull();
+  expect(refractionQcState.gatherEndpointKey).toBe('');
+  expect(refractionQcState.gatherPreview).toBeNull();
   expect(document.querySelector('[data-testid="refraction-qc-gather-raw-plot"]')).toBeNull();
   expect(document.querySelector('[data-view-content="gather_preview"]').textContent)
     .toContain('Choose a station and preview the gather.');
@@ -880,14 +904,14 @@ test('Gather Preview selects a source station from one searchable control and pr
   window.currentKey1Byte = 189;
   window.currentKey2Byte = 193;
   document.getElementById('refractionQcJobId').value = 'job-gather';
-  window.refractionQcState.qcBundle = gatherPreviewQcBundle();
+  refractionQcState.qcBundle = gatherPreviewQcBundle();
 
-  window.refractionQcUI.setSelectedView('gather_preview');
+  qcPublicApi.setSelectedView('gather_preview');
   const station = document.querySelector('[data-testid="refraction-qc-gather-endpoint"]');
   station.value = 'S 1001 · picks 96 · RMS 12.4 ms · ok';
   station.dispatchEvent(new Event('input', { bubbles: true }));
 
-  expect(window.refractionQcState.gatherEndpointKey).toBe('1001');
+  expect(refractionQcState.gatherEndpointKey).toBe('1001');
 
   document.querySelector('[data-testid="refraction-qc-gather-load"]').click();
   await flushAsyncWork();
@@ -912,12 +936,12 @@ test('Gather Preview selects a source station from one searchable control and pr
 test('Gather Preview side-by-side plots share ranges and avoid overlapping scales', async () => {
   const { plots, plotly } = installPlotlyClickStub();
   loadRefractionQcScript();
-  window.refractionQcState.qcBundle = gatherPreviewQcBundle();
-  window.refractionQcState.gatherDisplayMode = 'side_by_side';
-  window.refractionQcState.gatherEndpointKey = '1001';
-  window.refractionQcState.gatherPreview = gatherPreviewPayload();
+  refractionQcState.qcBundle = gatherPreviewQcBundle();
+  refractionQcState.gatherDisplayMode = 'side_by_side';
+  refractionQcState.gatherEndpointKey = '1001';
+  refractionQcState.gatherPreview = gatherPreviewPayload();
 
-  window.refractionQcUI.setSelectedView('gather_preview');
+  qcPublicApi.setSelectedView('gather_preview');
 
   const rawPlot = plots.find((entry) => entry.plot.dataset.testid === 'refraction-qc-gather-raw-plot');
   const correctedPlot = plots.find((entry) => entry.plot.dataset.testid === 'refraction-qc-gather-corrected-plot');
@@ -958,12 +982,12 @@ test('Gather Preview side-by-side plots share ranges and avoid overlapping scale
 test('Gather Preview single plot keeps amplitude and residual colorbars readable', () => {
   const { plots } = installPlotlyClickStub();
   loadRefractionQcScript();
-  window.refractionQcState.qcBundle = gatherPreviewQcBundle();
-  window.refractionQcState.gatherDisplayMode = 'raw';
-  window.refractionQcState.gatherEndpointKey = '1001';
-  window.refractionQcState.gatherPreview = gatherPreviewPayload();
+  refractionQcState.qcBundle = gatherPreviewQcBundle();
+  refractionQcState.gatherDisplayMode = 'raw';
+  refractionQcState.gatherEndpointKey = '1001';
+  refractionQcState.gatherPreview = gatherPreviewPayload();
 
-  window.refractionQcUI.setSelectedView('gather_preview');
+  qcPublicApi.setSelectedView('gather_preview');
 
   const rawPlot = plots.find((entry) => entry.plot.dataset.testid === 'refraction-qc-gather-raw-plot');
   const heatmap = rawPlot.traces.find((trace) => trace.type === 'heatmap');
@@ -985,9 +1009,9 @@ test('Gather Preview explains missing station selection without endpoint wording
   window.currentKey1Byte = 189;
   window.currentKey2Byte = 193;
   document.getElementById('refractionQcJobId').value = 'job-gather';
-  window.refractionQcState.qcBundle = gatherPreviewQcBundle();
+  refractionQcState.qcBundle = gatherPreviewQcBundle();
 
-  window.refractionQcUI.setSelectedView('gather_preview');
+  qcPublicApi.setSelectedView('gather_preview');
   document.querySelector('[data-testid="refraction-qc-gather-load"]').click();
 
   const error = document.querySelector('[data-testid="refraction-qc-gather-error"]');
@@ -997,14 +1021,14 @@ test('Gather Preview explains missing station selection without endpoint wording
 
 test('typing in view-specific text controls keeps the focused input mounted', () => {
   loadRefractionQcScript();
-  window.refractionQcUI.setSelectedView('profiles_2d');
+  qcPublicApi.setSelectedView('profiles_2d');
 
   const station = document.querySelector('[data-testid="refraction-qc-endpoint"]');
   station.focus();
   station.value = 'S1001';
   station.dispatchEvent(new Event('input', { bubbles: true }));
 
-  expect(window.refractionQcState.selectedEndpoint).toBe('S1001');
+  expect(refractionQcState.selectedEndpoint).toBe('S1001');
   expect(station.isConnected).toBe(true);
   expect(document.activeElement).toBe(station);
   expect(document.querySelector('[data-testid="refraction-qc-endpoint"]')).toBe(station);
@@ -1014,7 +1038,7 @@ test('typing in view-specific text controls keeps the focused input mounted', ()
 
 test('active filter chips clear filters and update view controls', () => {
   loadRefractionQcScript();
-  window.refractionQcUI.setSelectedView('cell_maps_3d');
+  qcPublicApi.setSelectedView('cell_maps_3d');
 
   const layer = document.querySelector('[data-testid="refraction-qc-layer-kind"]');
   layer.value = 'v2_t1';
@@ -1024,14 +1048,14 @@ test('active filter chips clear filters and update view controls', () => {
   expect(chip.textContent).toContain('Layer V2/T1');
   chip.click();
 
-  expect(window.refractionQcState.selectedLayerKind).toBe('all');
+  expect(refractionQcState.selectedLayerKind).toBe('all');
   expect(document.querySelector('[data-testid="refraction-qc-layer-kind"]').value).toBe('all');
   expect(document.querySelector('[data-testid="refraction-qc-filter-chip"][data-filter="layer"]')).toBeNull();
 });
 
 test('first-break residual threshold filters points and can be cleared from a chip', () => {
   loadRefractionQcScript();
-  window.refractionQcState.qcBundle = {
+  refractionQcState.qcBundle = {
     job_id: 'job-a',
     views: {
       first_break_fit: {
@@ -1061,7 +1085,7 @@ test('first-break residual threshold filters points and can be cleared from a ch
       },
     },
   };
-  window.refractionQcUI.setSelectedView('first_break_residuals');
+  qcPublicApi.setSelectedView('first_break_residuals');
 
   expect(document.querySelector('[data-testid="refraction-qc-first-break-residual-plot"]').dataset.pointCount)
     .toBe('2');
@@ -1070,7 +1094,7 @@ test('first-break residual threshold filters points and can be cleared from a ch
   threshold.value = '10';
   threshold.dispatchEvent(new Event('input', { bubbles: true }));
 
-  expect(window.refractionQcState.firstBreakResidualThresholdMs).toBe('10');
+  expect(refractionQcState.firstBreakResidualThresholdMs).toBe('10');
   expect(document.querySelector('[data-testid="refraction-qc-first-break-residual-plot"]').dataset.pointCount)
     .toBe('1');
   const chip = document.querySelector('[data-testid="refraction-qc-filter-chip"][data-filter="residual-threshold"]');
@@ -1078,7 +1102,7 @@ test('first-break residual threshold filters points and can be cleared from a ch
 
   chip.click();
 
-  expect(window.refractionQcState.firstBreakResidualThresholdMs).toBe('');
+  expect(refractionQcState.firstBreakResidualThresholdMs).toBe('');
   expect(document.querySelector('[data-testid="refraction-qc-first-break-residual-plot"]').dataset.pointCount)
     .toBe('2');
 });
@@ -1086,23 +1110,23 @@ test('first-break residual threshold filters points and can be cleared from a ch
 test('loading a different job resets endpoint trace and cell filters', async () => {
   vi.stubGlobal('fetch', vi.fn(async () => jsonResponse(qcBundle('job-b'))));
   loadRefractionQcScript();
-  window.refractionQcState.qcBundle = qcBundle('job-a');
-  window.refractionQcState.selectedEndpoint = 'S1001';
-  window.refractionQcState.selectedTraceIndex = '42';
-  window.refractionQcState.selectedCell = { cell_ix: 2, cell_iy: 3, layer_kind: 'v2_t1' };
-  window.refractionQcState.selectedObject = {
+  refractionQcState.qcBundle = qcBundle('job-a');
+  refractionQcState.selectedEndpoint = 'S1001';
+  refractionQcState.selectedTraceIndex = '42';
+  refractionQcState.selectedCell = { cell_ix: 2, cell_iy: 3, layer_kind: 'v2_t1' };
+  refractionQcState.selectedObject = {
     kind: 'cell',
     key: '2,3 V2/T1',
     payload: { cell_ix: 2, cell_iy: 3, layer_kind: 'v2_t1' },
   };
 
   document.getElementById('refractionQcJobId').value = 'job-b';
-  await window.refractionQcUI.loadBundle();
+  await qcPublicApi.loadBundle();
 
-  expect(window.refractionQcState.selectedEndpoint).toBe('');
-  expect(window.refractionQcState.selectedTraceIndex).toBe('');
-  expect(window.refractionQcState.selectedCell).toBeNull();
-  expect(window.refractionQcState.selectedObject.kind).toBeNull();
+  expect(refractionQcState.selectedEndpoint).toBe('');
+  expect(refractionQcState.selectedTraceIndex).toBe('');
+  expect(refractionQcState.selectedCell).toBeNull();
+  expect(refractionQcState.selectedObject.kind).toBeNull();
   expect(document.querySelector('[data-testid="refraction-qc-filter-chip"][data-filter="endpoint"]')).toBeNull();
   expect(document.querySelector('[data-testid="refraction-qc-filter-chip"][data-filter="trace"]')).toBeNull();
   expect(document.querySelector('[data-testid="refraction-qc-filter-chip"][data-filter="cell"]')).toBeNull();
@@ -1113,8 +1137,8 @@ test('Inspector starts empty and updates after first-break pick click', async ()
   loadRefractionQcScript();
   expect(document.getElementById('refractionQcInspector').textContent).toContain('No selection');
 
-  window.refractionQcState.qcBundle = firstBreakQcBundle();
-  window.refractionQcUI.setSelectedView('first_break_residuals');
+  refractionQcState.qcBundle = firstBreakQcBundle();
+  qcPublicApi.setSelectedView('first_break_residuals');
   await flushAsyncWork();
 
   const residualPlot = plots.find((entry) => entry.plot.dataset.testid === 'refraction-qc-first-break-residual-plot');
@@ -1129,16 +1153,16 @@ test('Inspector starts empty and updates after first-break pick click', async ()
   expect(inspector.textContent).toContain('+17.5 ms');
 
   inspector.querySelector('button').click();
-  expect(window.refractionQcState.selectedView).toBe('gather_preview');
-  expect(window.refractionQcState.gatherAxis).toBe('source');
-  expect(window.refractionQcState.gatherEndpointKey).toBe('1001');
+  expect(refractionQcState.selectedView).toBe('gather_preview');
+  expect(refractionQcState.gatherAxis).toBe('source');
+  expect(refractionQcState.gatherEndpointKey).toBe('1001');
 });
 
 test('Inspector updates after profile endpoint click', async () => {
   const { handlers, plots } = installPlotlyClickStub();
   loadRefractionQcScript();
-  window.refractionQcState.qcBundle = profileQcBundle();
-  window.refractionQcUI.setSelectedView('profiles_2d');
+  refractionQcState.qcBundle = profileQcBundle();
+  qcPublicApi.setSelectedView('profiles_2d');
   await flushAsyncWork();
 
   const profilePlot = plots.find((entry) => entry.plot.dataset.testid === 'refraction-qc-profile-plot');
@@ -1155,18 +1179,18 @@ test('Inspector updates after profile endpoint click', async () => {
   Array.from(inspector.querySelectorAll('button'))
     .find((button) => button.textContent === 'Preview gather')
     .click();
-  expect(window.refractionQcState.selectedView).toBe('gather_preview');
-  expect(window.refractionQcState.gatherAxis).toBe('source');
-  expect(window.refractionQcState.gatherEndpointKey).toBe('1001');
+  expect(refractionQcState.selectedView).toBe('gather_preview');
+  expect(refractionQcState.gatherAxis).toBe('source');
+  expect(refractionQcState.gatherEndpointKey).toBe('1001');
 });
 
 test('Inspector renders endpoint filter selections from static components', () => {
   loadRefractionQcScript();
-  window.refractionQcState.qcBundle = staticEndpointQcBundle();
-  window.refractionQcState.selectedEndpointKind = 'source';
-  window.refractionQcState.selectedEndpoint = '1001';
+  refractionQcState.qcBundle = staticEndpointQcBundle();
+  refractionQcState.selectedEndpointKind = 'source';
+  refractionQcState.selectedEndpoint = '1001';
 
-  window.refractionQcUI.setSelectedView('static_components');
+  qcPublicApi.setSelectedView('static_components');
 
   const inspector = document.getElementById('refractionQcInspector');
   expect(inspector.textContent).toContain('Selected source station');
@@ -1177,9 +1201,9 @@ test('Inspector renders endpoint filter selections from static components', () =
   Array.from(inspector.querySelectorAll('button'))
     .find((button) => button.textContent === 'Preview gather')
     .click();
-  expect(window.refractionQcState.selectedView).toBe('gather_preview');
-  expect(window.refractionQcState.gatherAxis).toBe('source');
-  expect(window.refractionQcState.gatherEndpointKey).toBe('1001');
+  expect(refractionQcState.selectedView).toBe('gather_preview');
+  expect(refractionQcState.gatherAxis).toBe('source');
+  expect(refractionQcState.gatherEndpointKey).toBe('1001');
 });
 
 test('Inspector updates after cell click and opens cell drilldown', async () => {
@@ -1201,9 +1225,9 @@ test('Inspector updates after cell click and opens cell drilldown', async () => 
     });
   }));
   loadRefractionQcScript();
-  window.refractionQcState.selectedJobId = 'job-cell';
-  window.refractionQcState.qcBundle = cellQcBundle();
-  window.refractionQcUI.setSelectedView('cell_maps_3d');
+  refractionQcState.selectedJobId = 'job-cell';
+  refractionQcState.qcBundle = cellQcBundle();
+  qcPublicApi.setSelectedView('cell_maps_3d');
   await flushAsyncWork();
 
   const cellPlot = plots.find((entry) => entry.plot.dataset.testid === 'refraction-qc-cell-map-plot');
@@ -1221,7 +1245,7 @@ test('Inspector updates after cell click and opens cell drilldown', async () => 
   Array.from(inspector.querySelectorAll('button'))
     .find((button) => button.textContent === 'Open cell drilldown')
     .click();
-  expect(window.refractionQcState.selectedView).toBe('cell_maps_3d');
+  expect(refractionQcState.selectedView).toBe('cell_maps_3d');
   expect(calls.at(-1).body.target).toMatchObject({
     kind: 'cell',
     layer_kind: 'v2_t1',
@@ -1253,8 +1277,8 @@ test('Pick Map uses canvas renderer without Plotly', () => {
   window.Plotly = plotly;
   loadRefractionQcScript();
 
-  window.refractionQcState.pickMap = preStaticsPickMap();
-  window.refractionQcUI.setSelectedView('pick_map');
+  refractionQcState.pickMap = preStaticsPickMap();
+  qcPublicApi.setSelectedView('pick_map');
 
   expect(document.querySelector('[data-testid="refraction-qc-pick-map-canvas"]')).not.toBeNull();
   expect(document.querySelector('[data-testid="refraction-qc-pick-map-plot"]').dataset.renderer).toBe('canvas');
@@ -1274,8 +1298,8 @@ test('Pick Map canvas handles dense point ranges without spreading values into M
   pickMap.pick_map.offset_m = Array.from({ length: count }, (_, index) => index % 2000);
   loadRefractionQcScript();
 
-  window.refractionQcState.pickMap = pickMap;
-  expect(() => window.refractionQcUI.setSelectedView('pick_map')).not.toThrow();
+  refractionQcState.pickMap = pickMap;
+  expect(() => qcPublicApi.setSelectedView('pick_map')).not.toThrow();
 
   expect(document.querySelector('[data-testid="refraction-qc-pick-map-canvas"]')).not.toBeNull();
   expect(document.querySelector('[data-testid="refraction-qc-pick-map-plot"]').dataset.pointCount).toBe(String(count));
@@ -1289,8 +1313,8 @@ test('Pick Map canvas draws pick time increasing downward', () => {
   pickMap.pick_map.offset_m = [100, 200];
   loadRefractionQcScript();
 
-  window.refractionQcState.pickMap = pickMap;
-  window.refractionQcUI.setSelectedView('pick_map');
+  refractionQcState.pickMap = pickMap;
+  qcPublicApi.setSelectedView('pick_map');
 
   const arcs = pointArcs().slice(-2);
   expect(arcs).toHaveLength(2);
@@ -1301,14 +1325,14 @@ test('Pick Map canvas draws pick time increasing downward', () => {
 test('Pick Map canvas renders before and after modes', () => {
   loadRefractionQcScript();
 
-  window.refractionQcState.pickMap = multiPointCompletedPickMap();
-  window.refractionQcUI.setSelectedView('pick_map');
+  refractionQcState.pickMap = multiPointCompletedPickMap();
+  qcPublicApi.setSelectedView('pick_map');
   const beforeArcs = pointArcs().map((op) => op[2]);
 
   canvasOps = [];
   document.querySelector('[data-testid="refraction-qc-pick-map-after"]').click();
 
-  expect(window.refractionQcState.pickMapDisplayMode).toBe('after');
+  expect(refractionQcState.pickMapDisplayMode).toBe('after');
   expect(document.querySelector('[data-testid="refraction-qc-pick-map-after"]').className).toBe('is-active');
   expect(pointArcs().map((op) => op[2])).not.toEqual(beforeArcs);
 });
@@ -1316,8 +1340,8 @@ test('Pick Map canvas renders before and after modes', () => {
 test('completed Pick Map canvas distinguishes used, unused, and offset-colored points', () => {
   loadRefractionQcScript();
 
-  window.refractionQcState.pickMap = multiPointCompletedPickMap();
-  window.refractionQcUI.setSelectedView('pick_map');
+  refractionQcState.pickMap = multiPointCompletedPickMap();
+  qcPublicApi.setSelectedView('pick_map');
 
   const plot = document.querySelector('[data-testid="refraction-qc-pick-map-plot"]');
   expect(plot.dataset.usedPointCount).toBe('2');
@@ -1328,9 +1352,9 @@ test('completed Pick Map canvas distinguishes used, unused, and offset-colored p
 test('pre-statics Pick Map canvas disables After Statics', () => {
   loadRefractionQcScript();
 
-  window.refractionQcState.pickMap = preStaticsPickMap();
-  window.refractionQcState.pickMapDisplayMode = 'after';
-  window.refractionQcUI.setSelectedView('pick_map');
+  refractionQcState.pickMap = preStaticsPickMap();
+  refractionQcState.pickMapDisplayMode = 'after';
+  qcPublicApi.setSelectedView('pick_map');
 
   expect(document.querySelector('[data-testid="refraction-qc-pick-map-canvas"]')).not.toBeNull();
   expect(document.querySelector('[data-testid="refraction-qc-pick-map-after"]').disabled).toBe(true);
@@ -1340,10 +1364,10 @@ test('pre-statics Pick Map canvas disables After Statics', () => {
 test('Pick Map canvas applies gather range filter', () => {
   loadRefractionQcScript();
 
-  window.refractionQcState.pickMap = multiPointCompletedPickMap();
-  window.refractionQcState.pickMapGatherStart = '101';
-  window.refractionQcState.pickMapGatherEnd = '102';
-  window.refractionQcUI.setSelectedView('pick_map');
+  refractionQcState.pickMap = multiPointCompletedPickMap();
+  refractionQcState.pickMapGatherStart = '101';
+  refractionQcState.pickMapGatherEnd = '102';
+  qcPublicApi.setSelectedView('pick_map');
 
   const plot = document.querySelector('[data-testid="refraction-qc-pick-map-plot"]');
   expect(plot.dataset.pointCount).toBe('2');
@@ -1362,8 +1386,8 @@ test('Offset-time uses canvas renderer without Plotly', () => {
   window.Plotly = plotly;
   loadRefractionQcScript();
 
-  window.refractionQcState.pickMap = preStaticsPickMap();
-  window.refractionQcUI.setSelectedView('offset_time');
+  refractionQcState.pickMap = preStaticsPickMap();
+  qcPublicApi.setSelectedView('offset_time');
 
   const plot = document.querySelector('[data-testid="refraction-qc-offset-time-plot"]');
   expect(document.querySelector('[data-testid="refraction-qc-offset-time-canvas"]')).not.toBeNull();
@@ -1379,8 +1403,8 @@ test('Offset-time reuses Pick Map payload and shared gather range controls', () 
   vi.stubGlobal('fetch', fetch);
   loadRefractionQcScript();
 
-  window.refractionQcState.pickMap = multiPointCompletedPickMap();
-  window.refractionQcUI.setSelectedView('pick_map');
+  refractionQcState.pickMap = multiPointCompletedPickMap();
+  qcPublicApi.setSelectedView('pick_map');
   const gatherStart = document.querySelector('[data-testid="refraction-qc-pick-map-gather-start"]');
   const gatherEnd = document.querySelector('[data-testid="refraction-qc-pick-map-gather-end"]');
   gatherStart.value = '101';
@@ -1388,7 +1412,7 @@ test('Offset-time reuses Pick Map payload and shared gather range controls', () 
   gatherEnd.value = '102';
   gatherEnd.dispatchEvent(new Event('input', { bubbles: true }));
 
-  window.refractionQcUI.setSelectedView('offset_time');
+  qcPublicApi.setSelectedView('offset_time');
 
   expect(fetch).not.toHaveBeenCalled();
   expect(document.querySelector('[data-testid="refraction-qc-offset-time-gather-start"]').value).toBe('101');
@@ -1401,8 +1425,8 @@ test('Offset-time skips records with missing offsets and reports displayed count
   const pickMap = multiPointCompletedPickMap();
   pickMap.pick_map.offset_m = [100, NaN, 'bad', 250];
 
-  window.refractionQcState.pickMap = pickMap;
-  window.refractionQcUI.setSelectedView('offset_time');
+  refractionQcState.pickMap = pickMap;
+  qcPublicApi.setSelectedView('offset_time');
 
   const plot = document.querySelector('[data-testid="refraction-qc-offset-time-plot"]');
   expect(plot.dataset.pointCount).toBe('2');
@@ -1418,10 +1442,10 @@ test('Offset-time shows a clear message when selected records have no finite off
   const pickMap = multiPointCompletedPickMap();
   pickMap.pick_map.offset_m = [100, NaN, 'bad', 250];
 
-  window.refractionQcState.pickMap = pickMap;
-  window.refractionQcState.pickMapGatherStart = '101';
-  window.refractionQcState.pickMapGatherEnd = '102';
-  window.refractionQcUI.setSelectedView('offset_time');
+  refractionQcState.pickMap = pickMap;
+  refractionQcState.pickMapGatherStart = '101';
+  refractionQcState.pickMapGatherEnd = '102';
+  qcPublicApi.setSelectedView('offset_time');
 
   const plot = document.querySelector('[data-testid="refraction-qc-offset-time-plot"]');
   expect(plot.dataset.pointCount).toBe('0');
@@ -1442,9 +1466,9 @@ test('Structure QC uses canvas renderer without Plotly', () => {
   window.Plotly = plotly;
   loadRefractionQcScript();
 
-  window.refractionQcState.qcBundle = qcBundle('completed-job-structure');
-  window.refractionQcState.stationStructure = stationStructurePayload();
-  window.refractionQcUI.setSelectedView('station_structure');
+  refractionQcState.qcBundle = qcBundle('completed-job-structure');
+  refractionQcState.stationStructure = stationStructurePayload();
+  qcPublicApi.setSelectedView('station_structure');
 
   const timePlot = document.querySelector('[data-testid="refraction-qc-station-structure-time-term-plot"]');
   expect(document.querySelector('[data-testid="refraction-qc-station-structure-time-term-canvas"]')).not.toBeNull();
@@ -1475,9 +1499,9 @@ test('Structure QC displays fallback axis warning and backend x arrays', () => {
   payload.time_term.source.x = [1, 5, 9, 73];
   payload.velocity.source.x = [1, 5, 9, 73];
   payload.depth.source.x = [1, 5, 9, 73];
-  window.refractionQcState.qcBundle = qcBundle('completed-job-structure');
-  window.refractionQcState.stationStructure = payload;
-  window.refractionQcUI.setSelectedView('station_structure');
+  refractionQcState.qcBundle = qcBundle('completed-job-structure');
+  refractionQcState.stationStructure = payload;
+  qcPublicApi.setSelectedView('station_structure');
 
   const timePlot = document.querySelector('[data-testid="refraction-qc-station-structure-time-term-plot"]');
   expect(timePlot.dataset.xAxisTitle).toBe('source/receiver endpoint id fallback');
@@ -1490,8 +1514,8 @@ test('Structure QC sends gather range and selectors to station endpoint', async 
   vi.stubGlobal('fetch', fetch);
   loadRefractionQcScript();
 
-  window.refractionQcState.qcBundle = qcBundle('completed-job-structure');
-  window.refractionQcUI.setSelectedView('station_structure');
+  refractionQcState.qcBundle = qcBundle('completed-job-structure');
+  qcPublicApi.setSelectedView('station_structure');
   document.querySelector('[data-testid="refraction-qc-station-structure-gather-start"]').value = '101';
   document.querySelector('[data-testid="refraction-qc-station-structure-gather-start"]')
     .dispatchEvent(new Event('input', { bubbles: true }));
@@ -1505,7 +1529,7 @@ test('Structure QC sends gather range and selectors to station endpoint', async 
   document.querySelector('[data-testid="refraction-qc-station-structure-depth-field"]')
     .dispatchEvent(new Event('change', { bubbles: true }));
 
-  await window.refractionQcUI.loadStationStructureQc();
+  await qcPublicApi.loadStationStructureQc();
 
   expect(fetch).toHaveBeenCalledWith('/statics/refraction/qc/station-structure', expect.objectContaining({
     method: 'POST',
@@ -1525,7 +1549,7 @@ test('Structure QC sends gather range and selectors to station endpoint', async 
 
 test('Pick Map does not render manual NPZ file input or upload button', () => {
   loadRefractionQcScript();
-  window.refractionQcUI.setSelectedView('pick_map');
+  qcPublicApi.setSelectedView('pick_map');
 
   expect(document.querySelector('[data-testid="refraction-qc-pick-map-npz"]')).toBeNull();
   expect(document.querySelector('[data-testid="refraction-qc-pick-map-load-upload"]')).toBeNull();
@@ -1567,7 +1591,7 @@ test('Pick Map loads pre-statics map from Static Correction cached NPZ', async (
 test('Pick Map shows Static Correction guidance without cached NPZ', async () => {
   window.SeisViewerState = activeViewerTarget();
   loadRefractionQcScript();
-  window.refractionQcUI.setSelectedView('pick_map');
+  qcPublicApi.setSelectedView('pick_map');
   await flushAsyncWork();
 
   expect(document.querySelector('[data-testid="refraction-qc-pick-map-cache-status"]').textContent).toContain(
@@ -1583,7 +1607,7 @@ test('Pick Map rejects cached NPZ for a different viewer target', async () => {
   window.SeisViewerState = activeViewerTarget();
   seedStaticCorrectionPickDraft({ fileId: 'other-file', key1Byte: 189, key2Byte: 193 });
   loadRefractionQcScript();
-  window.refractionQcUI.setSelectedView('pick_map');
+  qcPublicApi.setSelectedView('pick_map');
   await flushAsyncWork();
 
   expect(document.querySelector('[data-testid="refraction-qc-pick-map-cache-status"]').textContent).toContain(
@@ -1597,8 +1621,8 @@ test('Pick Map refreshes cached NPZ controls when cache becomes invalid with a m
   seedStaticCorrectionPickDraft();
   stubStaticCorrectionPickDb();
   loadRefractionQcScript();
-  window.refractionQcState.pickMap = preStaticsPickMap();
-  window.refractionQcUI.setSelectedView('pick_map');
+  refractionQcState.pickMap = preStaticsPickMap();
+  qcPublicApi.setSelectedView('pick_map');
   await flushAsyncWork(4);
 
   expect(document.querySelector('[data-testid="refraction-qc-pick-map-cache-status"]').textContent).toContain(
@@ -1607,7 +1631,7 @@ test('Pick Map refreshes cached NPZ controls when cache becomes invalid with a m
   expect(document.querySelector('[data-testid="refraction-qc-pick-map-load-cached"]').disabled).toBe(false);
 
   seedStaticCorrectionPickDraft({ fileId: 'other-file', key1Byte: 189, key2Byte: 193 });
-  window.refractionQcUI.setSelectedView('pick_map');
+  qcPublicApi.setSelectedView('pick_map');
   await flushAsyncWork();
 
   expect(document.querySelector('[data-testid="refraction-qc-pick-map-cache-status"]').textContent).toContain(
@@ -1630,14 +1654,14 @@ test('Pick Map completed job button still loads completed-job map', async () => 
   }));
   loadRefractionQcScript();
   document.getElementById('refractionQcJobId').value = 'completed-job-map';
-  window.refractionQcState.selectedJobId = 'completed-job-map';
-  window.refractionQcUI.setSelectedView('pick_map');
+  refractionQcState.selectedJobId = 'completed-job-map';
+  qcPublicApi.setSelectedView('pick_map');
 
   document.querySelector('[data-testid="refraction-qc-pick-map-load-job"]').click();
   await flushAsyncWork();
 
   expect(pickMapCalls).toEqual([{ job_id: 'completed-job-map' }]);
-  expect(window.refractionQcState.pickMap).toMatchObject({
+  expect(refractionQcState.pickMap).toMatchObject({
     mode: 'completed_job',
     job_id: 'completed-job-map',
   });
@@ -1656,15 +1680,15 @@ test('completed QC bundle clears active pre-statics Pick Map and loads completed
     throw new Error(`Unexpected fetch ${url}`);
   }));
   loadRefractionQcScript();
-  window.refractionQcState.pickMap = preStaticsPickMap();
-  window.refractionQcUI.setSelectedView('pick_map');
+  refractionQcState.pickMap = preStaticsPickMap();
+  qcPublicApi.setSelectedView('pick_map');
 
   document.getElementById('refractionQcJobId').value = 'completed-job-a';
-  await window.refractionQcUI.loadBundle();
+  await qcPublicApi.loadBundle();
   await flushAsyncWork();
 
   expect(pickMapCalls).toEqual([{ job_id: 'completed-job-a' }]);
-  expect(window.refractionQcState.pickMap).toMatchObject({
+  expect(refractionQcState.pickMap).toMatchObject({
     mode: 'completed_job',
     job_id: 'completed-job-a',
     has_after_statics: true,
@@ -1685,20 +1709,20 @@ test('completed QC bundle defers completed Pick Map load until Pick Map view ope
     throw new Error(`Unexpected fetch ${url}`);
   }));
   loadRefractionQcScript();
-  window.refractionQcState.pickMap = preStaticsPickMap();
+  refractionQcState.pickMap = preStaticsPickMap();
 
   document.getElementById('refractionQcJobId').value = 'completed-job-b';
-  await window.refractionQcUI.loadBundle();
+  await qcPublicApi.loadBundle();
   await flushAsyncWork();
 
-  expect(window.refractionQcState.pickMap).toBeNull();
+  expect(refractionQcState.pickMap).toBeNull();
   expect(pickMapCalls).toHaveLength(0);
 
-  window.refractionQcUI.setSelectedView('pick_map');
+  qcPublicApi.setSelectedView('pick_map');
   await flushAsyncWork();
 
   expect(pickMapCalls).toEqual([{ job_id: 'completed-job-b' }]);
-  expect(window.refractionQcState.pickMap).toMatchObject({
+  expect(refractionQcState.pickMap).toMatchObject({
     mode: 'completed_job',
     job_id: 'completed-job-b',
   });
@@ -1718,15 +1742,15 @@ test('completed QC bundle keeps same-job completed Pick Map without reloading', 
     throw new Error(`Unexpected fetch ${url}`);
   }));
   loadRefractionQcScript();
-  window.refractionQcState.pickMap = existingPickMap;
-  window.refractionQcUI.setSelectedView('pick_map');
+  refractionQcState.pickMap = existingPickMap;
+  qcPublicApi.setSelectedView('pick_map');
 
   document.getElementById('refractionQcJobId').value = 'completed-job-c';
-  await window.refractionQcUI.loadBundle();
+  await qcPublicApi.loadBundle();
   await flushAsyncWork();
 
   expect(pickMapCalls).toHaveLength(0);
-  expect(window.refractionQcState.pickMap).toBe(existingPickMap);
+  expect(refractionQcState.pickMap).toBe(existingPickMap);
   expect(document.querySelector('[data-testid="refraction-qc-pick-map-status"]').textContent).toBe(
     'Existing same-job Pick Map'
   );
@@ -1754,26 +1778,26 @@ test('completed QC bundle cancels in-flight Pick Map without clearing same-job c
   seedStaticCorrectionPickDraft();
   stubStaticCorrectionPickDb();
   loadRefractionQcScript();
-  window.refractionQcState.pickMap = existingPickMap;
-  window.refractionQcUI.setSelectedView('pick_map');
+  refractionQcState.pickMap = existingPickMap;
+  qcPublicApi.setSelectedView('pick_map');
   await flushAsyncWork(4);
 
   document.querySelector('[data-testid="refraction-qc-pick-map-load-cached"]').click();
 
-  expect(window.refractionQcState.pickMapLoading).toBe(true);
-  expect(window.refractionQcState.pickMap).toBe(existingPickMap);
+  expect(refractionQcState.pickMapLoading).toBe(true);
+  expect(refractionQcState.pickMap).toBe(existingPickMap);
   document.getElementById('refractionQcJobId').value = 'completed-job-c';
-  await window.refractionQcUI.loadBundle();
+  await qcPublicApi.loadBundle();
   await flushAsyncWork();
 
   expect(pickMapCalls).toEqual([{ mode: 'pre_statics' }]);
-  expect(window.refractionQcState.pickMapLoading).toBe(false);
-  expect(window.refractionQcState.pickMap).toBe(existingPickMap);
+  expect(refractionQcState.pickMapLoading).toBe(false);
+  expect(refractionQcState.pickMap).toBe(existingPickMap);
 
   preStaticsResponse.resolve(jsonResponse(preStaticsPickMap()));
   await flushAsyncWork();
 
-  expect(window.refractionQcState.pickMap).toBe(existingPickMap);
+  expect(refractionQcState.pickMap).toBe(existingPickMap);
   expect(document.querySelector('[data-testid="refraction-qc-pick-map-status"]').textContent).toBe(
     'Existing same-job Pick Map'
   );
@@ -1792,15 +1816,15 @@ test('completed QC bundle reloads active completed Pick Map when job changes', a
     throw new Error(`Unexpected fetch ${url}`);
   }));
   loadRefractionQcScript();
-  window.refractionQcState.pickMap = completedPickMap('completed-job-old');
-  window.refractionQcUI.setSelectedView('pick_map');
+  refractionQcState.pickMap = completedPickMap('completed-job-old');
+  qcPublicApi.setSelectedView('pick_map');
 
   document.getElementById('refractionQcJobId').value = 'completed-job-new';
-  await window.refractionQcUI.loadBundle();
+  await qcPublicApi.loadBundle();
   await flushAsyncWork();
 
   expect(pickMapCalls).toEqual([{ job_id: 'completed-job-new' }]);
-  expect(window.refractionQcState.pickMap).toMatchObject({
+  expect(refractionQcState.pickMap).toMatchObject({
     mode: 'completed_job',
     job_id: 'completed-job-new',
   });
@@ -1827,21 +1851,21 @@ test('completed QC bundle invalidates in-flight pre-statics Pick Map', async () 
   seedStaticCorrectionPickDraft();
   stubStaticCorrectionPickDb();
   loadRefractionQcScript();
-  window.refractionQcUI.setSelectedView('pick_map');
+  qcPublicApi.setSelectedView('pick_map');
   await flushAsyncWork(4);
 
   document.querySelector('[data-testid="refraction-qc-pick-map-load-cached"]').click();
 
-  expect(window.refractionQcState.pickMapLoading).toBe(true);
+  expect(refractionQcState.pickMapLoading).toBe(true);
   document.getElementById('refractionQcJobId').value = 'completed-job-d';
-  await window.refractionQcUI.loadBundle();
+  await qcPublicApi.loadBundle();
   await flushAsyncWork();
 
   expect(pickMapCalls).toEqual([
     { mode: 'pre_statics' },
     { job_id: 'completed-job-d' },
   ]);
-  expect(window.refractionQcState.pickMap).toMatchObject({
+  expect(refractionQcState.pickMap).toMatchObject({
     mode: 'completed_job',
     job_id: 'completed-job-d',
     has_after_statics: true,
@@ -1850,7 +1874,7 @@ test('completed QC bundle invalidates in-flight pre-statics Pick Map', async () 
   preStaticsResponse.resolve(jsonResponse(preStaticsPickMap()));
   await flushAsyncWork();
 
-  expect(window.refractionQcState.pickMap).toMatchObject({
+  expect(refractionQcState.pickMap).toMatchObject({
     mode: 'completed_job',
     job_id: 'completed-job-d',
     has_after_statics: true,

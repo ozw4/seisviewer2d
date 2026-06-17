@@ -16,3 +16,8 @@ export function setStaticCorrectionRender(callback) {
 export function requestStaticCorrectionRender() {
   staticCorrectionRender();
 }
+
+export function resetStaticCorrectionRuntime() {
+  staticCorrectionDom = null;
+  staticCorrectionRender = () => {};
+}
