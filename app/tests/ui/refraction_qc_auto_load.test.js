@@ -703,7 +703,11 @@ test('Refraction QC renders controls only for the selected view', () => {
   window.refractionQcUI.setSelectedView('cell_maps_3d');
   expect(document.querySelector('[data-testid="refraction-qc-map-quantity"]')).not.toBeNull();
   expect(document.querySelector('[data-testid="refraction-qc-status-filter"]')).not.toBeNull();
-  expect(document.querySelector('[data-testid="refraction-qc-cell"]')).not.toBeNull();
+  const cellSearch = document.querySelector('[data-testid="refraction-qc-cell"]');
+  expect(cellSearch).not.toBeNull();
+  cellSearch.value = '12,34';
+  expect(() => cellSearch.dispatchEvent(new Event('input', { bubbles: true }))).not.toThrow();
+  expect(window.refractionQcState.selectedCell).toEqual({ cell_ix: 12, cell_iy: 34 });
   expect(document.querySelector('[data-testid="refraction-qc-profile-group"]')).toBeNull();
 
   window.refractionQcUI.setSelectedView('profiles_2d');
