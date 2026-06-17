@@ -66,8 +66,12 @@ import {
   buildStaticLinkageBuildRequest,
   getStaticCorrectionValidationSnapshot,
 } from './request_builder.js';
-import { setStaticCorrectionDom, setStaticCorrectionRender } from './runtime.js';
-import { state } from './state.js';
+import {
+  resetStaticCorrectionRuntime,
+  setStaticCorrectionDom,
+  setStaticCorrectionRender,
+} from './runtime.js';
+import { resetState as resetStaticCorrectionState, state } from './state.js';
 import {
   buildRefractionQcUrl,
   getStandaloneStaticCorrectionTargetState,
@@ -96,7 +100,9 @@ import {
 import { setDefaultValue, trimValue } from './utils.js';
 
 let dom = null;
+let initializedForm = null;
 let viewerTargetUnsubscribe = null;
+let lifecycleListenersInstalled = false;
 
 function handleRun(event) {
   if (event) {
@@ -124,6 +130,9 @@ function subscribeToViewerTargetUpdates() {
 
 function init() {
   const form = document.getElementById('staticCorrectionForm');
+  if (initializedForm === form && form) {
+    return true;
+  }
   const status = document.getElementById('staticCorrectionStatus');
   const error = document.getElementById('staticCorrectionError');
   const validateButton = document.getElementById('staticCorrectionValidateButton');
@@ -264,8 +273,9 @@ function init() {
     || !staticArtifactTable || !staticArtifactBody || !staticArtifactEmpty
     || exportFormatInputs.length === 0
   ) {
-    return;
+    return false;
   }
+  initializedForm = form;
 
   setDefaultValue(linkageMode, DEFAULTS.linkageMode);
   setDefaultValue(linkageThresholdM, DEFAULTS.linkageThresholdM);
@@ -574,11 +584,15 @@ function init() {
     render();
   });
 
-  window.addEventListener('pagehide', () => saveStaticCorrectionDraft());
-  window.addEventListener('beforeunload', () => saveStaticCorrectionDraft());
+  if (!lifecycleListenersInstalled) {
+    window.addEventListener('pagehide', saveStaticCorrectionDraft);
+    window.addEventListener('beforeunload', saveStaticCorrectionDraft);
+    lifecycleListenersInstalled = true;
+  }
 
   render();
   restoreStaticCorrectionDraftIfAvailable();
+  return true;
 }
 
 const staticCorrectionPublicApi = {
@@ -635,17 +649,35 @@ const staticCorrectionPublicApi = {
 };
 
 function installStaticCorrectionPublicSurface() {
-  window.refractionStaticRunState = state;
-  window.refractionStaticRunUI = staticCorrectionPublicApi;
+  window.__SEISVIEWER2D_DEV__ = window.__SEISVIEWER2D_DEV__ || {};
+  window.__SEISVIEWER2D_DEV__.refractionStaticRun = {
+    state,
+    ui: staticCorrectionPublicApi,
+  };
 }
 
 function initStaticCorrectionPage() {
-  installStaticCorrectionPublicSurface();
-  init();
+  if (init()) {
+    installStaticCorrectionPublicSurface();
+  }
   return staticCorrectionPublicApi;
 }
 
-installStaticCorrectionPublicSurface();
+function resetStaticCorrectionPageForTests() {
+  stopStaticCorrectionPolling();
+  resetStaticCorrectionState();
+  resetStaticCorrectionRuntime();
+  dom = null;
+  initializedForm = null;
+  viewerTargetUnsubscribe = null;
+  lifecycleListenersInstalled = false;
+  if (window.__SEISVIEWER2D_DEV__) {
+    delete window.__SEISVIEWER2D_DEV__.refractionStaticRun;
+    if (Object.keys(window.__SEISVIEWER2D_DEV__).length === 0) {
+      delete window.__SEISVIEWER2D_DEV__;
+    }
+  }
+}
 
 export {
   ACTIVE_VIEWER_TARGET_STORAGE_KEY,
@@ -698,6 +730,7 @@ export {
   pollStaticJobUntilReady,
   readStaticCorrectionDraft,
   readStoredPresets,
+  resetStaticCorrectionPageForTests,
   render,
   restoreStaticCorrectionDraftIfAvailable,
   saveCurrentPreset,

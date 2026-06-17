@@ -106,8 +106,14 @@ The UI is served from `app/static/`.
 - `/` is the viewer with a side panel for pipeline steps.
 - `/batch` is the batch-apply page for running pipeline jobs over all key1 values.
 
+Frontend source is split between legacy/static page assets under `app/static/`
+and the Vite viewer bundle sources under `app/web/`. Refraction static run and
+QC page entrypoints stay at `/static/refraction_static_run.js` and
+`/static/refraction_qc.js`; the Vite build also emits bundled copies under
+`app/static/assets/` and generated assets are not required for source edits.
+
 The main viewer page (`app/static/index.html`) expects a small Vite-built bundle at `/static/assets/main.js`.
-If you change frontend sources under `app/web/`, rebuild with:
+If you change frontend sources, rebuild with:
 
 ```bash
 cd app
@@ -413,4 +419,5 @@ Frontend unit tests (optional):
 cd app
 npm ci
 npm run test:ui
+npm run test:ui -- tests/ui/refraction_static_geometry.test.js tests/ui/refraction_qc_auto_load.test.js tests/ui/refraction_module_entrypoints.test.js
 ```

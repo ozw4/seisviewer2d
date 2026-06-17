@@ -1,8 +1,11 @@
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
-import { pathToFileURL } from 'node:url';
-
 import { afterEach, beforeEach, expect, test, vi } from 'vitest';
+import {
+  initStaticCorrectionPage,
+  resetStaticCorrectionPageForTests,
+  state as staticCorrectionState,
+} from '../../static/refraction-static-run/main.js';
 
 const STATIC_CORRECTION_HTML = readFileSync(
   resolve(process.cwd(), 'static/static_correction.html'),
@@ -231,13 +234,7 @@ function clearSelectedPickFile() {
 }
 
 async function loadStaticCorrectionScript() {
-  const moduleUrl = new URL(
-    `static/refraction-static-run/main.js?test=${Date.now()}-${Math.random()}`,
-    `${pathToFileURL(resolve(process.cwd())).href}/`
-  );
-  const { initStaticCorrectionPage } = await import(moduleUrl.href);
-  initStaticCorrectionPage();
-  return window.refractionStaticRunUI;
+  return initStaticCorrectionPage();
 }
 
 function setCustomPreset() {
@@ -248,9 +245,8 @@ function setCustomPreset() {
 
 beforeEach(() => {
   vi.resetModules();
-  delete window.refractionStaticRunUI;
-  delete window.refractionStaticRunState;
-  delete window.RefractionQc;
+  resetStaticCorrectionPageForTests();
+  delete window.__SEISVIEWER2D_DEV__;
   setViewerTarget();
   window.SeisViewerState = {
     getActiveFileTarget: () => activeViewerTarget,
@@ -261,10 +257,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
-  if (window.refractionStaticRunUI && window.refractionStaticRunUI.stopStaticCorrectionPolling) {
-    window.refractionStaticRunUI.stopStaticCorrectionPolling();
-  }
-  delete window.RefractionQc;
+  resetStaticCorrectionPageForTests();
   delete window.SeisViewerState;
   vi.unstubAllGlobals();
   window.localStorage.clear();
@@ -310,13 +303,8 @@ async function flushAsyncWork(times = 4) {
 function createStaticCorrectionFetchMock(
   linkageStatuses = [{ state: 'done', message: '', progress: 1 }],
   staticStatuses = [{ state: 'done', message: 'finished', progress: 1 }],
-  { stubEmbeddedRefractionQc = true } = {}
+  _options = {}
 ) {
-  if (stubEmbeddedRefractionQc && !window.RefractionQc) {
-    window.RefractionQc = {
-      loadJob: vi.fn(async () => null),
-    };
-  }
   const calls = [];
   const linkageStatusQueue = [...linkageStatuses];
   const staticStatusQueue = [...staticStatuses];
@@ -404,6 +392,18 @@ test('refraction pages load their entry scripts as modules', async () => {
   );
 });
 
+test('static correction init is idempotent for the same DOM', async () => {
+  const ui = await loadStaticCorrectionScript();
+  initStaticCorrectionPage();
+  const { calls } = createStaticCorrectionFetchMock();
+
+  document.getElementById('staticCorrectionValidateButton').click();
+  await flushAsyncWork();
+
+  expect(ui).toBe(initStaticCorrectionPage());
+  expect(calls.filter((call) => call.url === '/statics/refraction/validate-with-picks')).toHaveLength(1);
+});
+
 test('selected pick NPZ renders in the file summary', async () => {
   selectedPickFile('manual_picks_time_review.npz', 'abc');
   await loadStaticCorrectionScript();
@@ -425,7 +425,7 @@ test('missing pick NPZ blocks submit and shows validation', async () => {
   expect(document.getElementById('staticCorrectionError').textContent).toContain(
     'First-break pick NPZ is required'
   );
-  expect(window.refractionStaticRunState.lastRequest).toBe(null);
+  expect(staticCorrectionState.lastRequest).toBe(null);
 });
 
 test('non-NPZ pick upload blocks submit', async () => {
@@ -439,7 +439,7 @@ test('non-NPZ pick upload blocks submit', async () => {
   expect(document.getElementById('staticCorrectionError').textContent).toContain(
     'First-break pick file must use the .npz extension'
   );
-  expect(window.refractionStaticRunState.lastRequest).toBe(null);
+  expect(staticCorrectionState.lastRequest).toBe(null);
 });
 
 test('static correction request always uses uploaded NPZ pick source', async () => {
@@ -515,7 +515,7 @@ test('invalid byte values block submit and show an error', async () => {
   expect(document.getElementById('staticCorrectionError').textContent).toContain(
     'geometry.source_id_byte'
   );
-  expect(window.refractionStaticRunState.lastRequest).toBe(null);
+  expect(staticCorrectionState.lastRequest).toBe(null);
 });
 
 test('request preview renders valid JSON and updates when fields change', async () => {
@@ -771,7 +771,7 @@ test('checked auto-threshold linkage validates threshold only when enabled', asy
   expect(document.getElementById('staticCorrectionError').textContent).toContain(
     'linkage.threshold_m'
   );
-  expect(window.refractionStaticRunState.lastRequest).toBe(null);
+  expect(staticCorrectionState.lastRequest).toBe(null);
 });
 
 test('field correction and export sections are collapsed details controls', async () => {
@@ -1132,7 +1132,7 @@ test('static correction submit failure returns to a retryable idle state', async
   await flushAsyncWork();
 
   expect(calls.map((call) => call.url)).toEqual(['/statics/refraction/apply-with-picks']);
-  expect(window.refractionStaticRunState.phase).toBe('idle');
+  expect(staticCorrectionState.phase).toBe('idle');
   expect(document.getElementById('staticCorrectionRunButton').disabled).toBe(false);
   expect(document.getElementById('staticCorrectionError').textContent).toContain('apply failed');
   expect(document.getElementById('staticCorrectionStatus').textContent).toContain(
@@ -1236,7 +1236,7 @@ test('static correction validation builds linkage before validation preflight', 
 test('checked linkage polls linkage status until ready', async () => {
   const ui = await loadStaticCorrectionScript();
   enableLinkage();
-  window.refractionStaticRunState.pollIntervalMs = 0;
+  staticCorrectionState.pollIntervalMs = 0;
   const { calls } = createStaticCorrectionFetchMock([
     { state: 'queued', message: '', progress: 0 },
     { state: 'running', message: 'building', progress: 0.5 },
@@ -1268,14 +1268,14 @@ test('failed linkage prevents refraction apply submit', async () => {
   expect(document.getElementById('staticCorrectionStatus').textContent).toContain(
     'Static correction was not submitted'
   );
-  expect(window.refractionStaticRunState.phase).toBe('idle');
+  expect(staticCorrectionState.phase).toBe('idle');
   expect(document.getElementById('staticCorrectionRunButton').disabled).toBe(false);
 });
 
 test('successful linkage injects linkage job reference into refraction request', async () => {
   const ui = await loadStaticCorrectionScript();
   enableLinkage();
-  window.refractionStaticRunState.pollIntervalMs = 0;
+  staticCorrectionState.pollIntervalMs = 0;
   const { calls } = createStaticCorrectionFetchMock([
     { state: 'completed', message: '', progress: 1 },
   ]);
@@ -1289,13 +1289,13 @@ test('successful linkage injects linkage job reference into refraction request',
     job_id: 'linkage-job-a',
     artifact_name: 'geometry_linkage.npz',
   });
-  expect(window.refractionStaticRunState.lastLinkageJobId).toBe('linkage-job-a');
+  expect(staticCorrectionState.lastLinkageJobId).toBe('linkage-job-a');
   expect(document.getElementById('staticCorrectionStatus').textContent).toContain('static-job-a');
 });
 
 test('static correction submit polls job status and loads ready artifacts', async () => {
   const ui = await loadStaticCorrectionScript();
-  window.refractionStaticRunState.pollIntervalMs = 0;
+  staticCorrectionState.pollIntervalMs = 0;
   const { calls } = createStaticCorrectionFetchMock(
     [{ state: 'done', message: '', progress: 1 }],
     [
@@ -1322,7 +1322,7 @@ test('static correction submit polls job status and loads ready artifacts', asyn
 
 test('ready static correction job exposes the standalone Refraction QC link with the completed job id', async () => {
   const ui = await loadStaticCorrectionScript();
-  window.refractionStaticRunState.pollIntervalMs = 0;
+  staticCorrectionState.pollIntervalMs = 0;
   const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
   createStaticCorrectionFetchMock(
     [{ state: 'done', message: '', progress: 1 }],
@@ -1356,7 +1356,7 @@ test('ready static correction job exposes the standalone Refraction QC link with
 
 test('static correction polling stops on failed state, loads artifacts, and shows an error', async () => {
   const ui = await loadStaticCorrectionScript();
-  window.refractionStaticRunState.pollIntervalMs = 0;
+  staticCorrectionState.pollIntervalMs = 0;
   const { calls } = createStaticCorrectionFetchMock(
     [{ state: 'done', message: '', progress: 1 }],
     [{ state: 'error', message: 'solver failed', progress: 1 }]
