@@ -13,6 +13,8 @@ FORBIDDEN_RUNTIME_MODULES = {
     'app.trace_store.reader',
     'fastapi',
     'pydantic',
+    'scipy',
+    'segyio',
 }
 
 
@@ -29,12 +31,12 @@ def test_seis_statics_time_term_imports_without_app_dependency() -> None:
 
     assert time_term.__name__ == 'seis_statics.time_term'
     assert hasattr(time_term, 'TimeTermInversionInputs')
+    assert hasattr(time_term, 'TimeTermMoveoutConfig')
+    assert hasattr(time_term, 'TimeTermMoveoutResult')
     assert hasattr(time_term, 'compute_time_term_moveout')
-    assert hasattr(time_term, 'TimeTermDesignMatrix')
-    assert hasattr(time_term, 'solve_time_term_sparse_least_squares')
-    assert hasattr(time_term, 'solve_time_term_robust_least_squares')
-    assert hasattr(time_term, 'TimeTermAppliedShiftResult')
-    assert hasattr(time_term, 'build_time_term_applied_shift_result')
+    assert hasattr(time_term, 'compute_geometry_distance_m')
+    assert hasattr(time_term, 'build_reciprocal_pair_index')
+    assert hasattr(time_term, 'summarize_time_term_moveout')
 
     for module_name in FORBIDDEN_RUNTIME_MODULES:
         assert module_name not in sys.modules
