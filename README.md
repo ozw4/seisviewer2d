@@ -57,6 +57,11 @@ bind mounts are for reference only. Normal package code, tests, and fixtures
 must be standalone and must not reach into a sibling `seisviewer2d` checkout
 through `sys.path`, symlinks, fallback imports, or runtime file access.
 
+Time-term statics use `delay_s > 0` to mean the event is late. The correction
+stored by the package is `applied_shift_s = -delay_s`, and final trace shifts
+are composed as the sum of datum, residual, and weathering applied shifts under
+the repo convention `corrected(t) = raw(t - shift_s)`.
+
 ## What happens on upload
 
 `POST /upload_segy` converts the uploaded SEG-Y into a cached “trace store” under:

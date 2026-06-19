@@ -42,6 +42,38 @@ def test_seis_statics_time_term_imports_without_app_dependency() -> None:
         assert module_name not in sys.modules
 
 
+def test_seis_statics_time_term_all_public_api_importable() -> None:
+    time_term = importlib.import_module('seis_statics.time_term')
+
+    expected_symbols = {
+        'APPLY_SHIFT_SIGN_CONVENTION',
+        'DELAY_TO_SHIFT_CONVENTION',
+        'FINAL_SHIFT_CONVENTION',
+        'ROBUST_SCALE_FLOOR_S',
+        'TimeTermAppliedShiftOptions',
+        'TimeTermAppliedShiftResult',
+        'TimeTermRobustIteration',
+        'TimeTermRobustMethod',
+        'TimeTermRobustSolverOptions',
+        'TimeTermRobustSolverResult',
+        'TimeTermRobustStopReason',
+        'TimeTermRejectedTracePolicy',
+        'build_time_term_applied_shift_result',
+        'compute_estimated_trace_time_term_delay_s',
+        'compute_time_term_robust_scores',
+        'delay_to_applied_shift_s',
+        'solve_time_term_robust_least_squares',
+        'subset_time_term_design_matrix_rows',
+        'summarize_time_term_applied_shift_result',
+        'summarize_time_term_robust_solver_result',
+        'validate_time_term_robust_solver_options',
+    }
+
+    assert expected_symbols <= set(time_term.__all__)
+    for symbol in expected_symbols:
+        assert getattr(time_term, symbol) is not None
+
+
 def test_seis_statics_time_term_source_does_not_import_app() -> None:
     offenders: list[str] = []
     for path in sorted(TIME_TERM_ROOT.rglob('*.py')):
