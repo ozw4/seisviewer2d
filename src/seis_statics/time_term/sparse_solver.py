@@ -1,4 +1,10 @@
-"""Sparse least-squares solver for source/receiver node time-term delays."""
+"""Sparse least-squares solver for source/receiver node time-term delays.
+
+This module owns the pure numerical sparse system assembly and solve:
+observation rows come from ``design_matrix``, gauge and damping rows are
+explicitly appended here, and applied static-shift conversion remains outside
+the sparse solver boundary.
+"""
 
 from __future__ import annotations
 

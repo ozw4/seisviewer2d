@@ -1,4 +1,4 @@
-"""Public API for time-term input and moveout core computations."""
+"""Public API for time-term input, moveout, design matrix, and sparse solve."""
 
 from __future__ import annotations
 
@@ -160,11 +160,25 @@ __all__ = [
     'SIGN_CONVENTION',
     'MoveoutDistanceSource',
     'TimeTermInversionInputs',
+    'TimeTermDesignMatrix',
+    'TimeTermDesignMatrixOptions',
+    'TimeTermGaugeMode',
     'TimeTermMoveoutConfig',
     'TimeTermMoveoutModel',
     'TimeTermMoveoutResult',
+    'TimeTermSolverSystem',
+    'TimeTermSparseSolverName',
+    'TimeTermSparseSolverOptions',
+    'TimeTermSparseSolverResult',
+    'build_gauge_matrix',
+    'build_node_components',
     'build_reciprocal_pair_index',
+    'build_time_term_design_matrix',
+    'build_time_term_solver_system',
     'compute_geometry_distance_m',
     'compute_time_term_moveout',
+    'solve_time_term_sparse_least_squares',
+    'summarize_time_term_design_matrix',
     'summarize_time_term_moveout',
+    'summarize_time_term_sparse_solver_result',
 ]

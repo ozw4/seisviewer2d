@@ -1,4 +1,9 @@
-"""Design matrix builder for source/receiver node time-term inversion."""
+"""Design matrix builder for source/receiver node time-term inversion.
+
+This module is the pure numerical boundary for time-term observation rows:
+it consumes package dataclasses and NumPy arrays, and leaves gauge,
+damping, sparse solve, and application-layer orchestration to later stages.
+"""
 
 from __future__ import annotations
 
