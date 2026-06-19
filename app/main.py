@@ -8,17 +8,15 @@ from fastapi import FastAPI, Request
 from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
-from app.api.routers import (
-    batch_apply_router,
-    fbpick_predict_router,
-    fbpick_router,
-    picks_router,
-    pipeline_router,
-    section_router,
-    statics_router,
-    upload_router,
-)
+from app.api.routers.batch_apply import router as batch_apply_router
+from app.api.routers.fbpick import router as fbpick_router
+from app.api.routers.fbpick_predict import router as fbpick_predict_router
+from app.api.routers.picks import router as picks_router
+from app.api.routers.pipeline import router as pipeline_router
+from app.api.routers.section import router as section_router
+from app.api.routers.statics import router as statics_router
 from app.api.routers.upload import cleanup_staged_uploads
+from app.api.routers.upload import router as upload_router
 from app.core.state import create_app_state
 from app.services.errors import DomainError
 

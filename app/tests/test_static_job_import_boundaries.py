@@ -50,6 +50,104 @@ def test_statics_router_package_public_surface_is_router_only() -> None:
         assert not hasattr(statics, name)
 
 
+def test_router_parent_package_does_not_eager_import_subrouters() -> None:
+    code = textwrap.dedent(
+        """
+        from __future__ import annotations
+
+        import importlib
+        import sys
+
+        for name in list(sys.modules):
+            if name == 'app.api.routers' or name.startswith('app.api.routers.'):
+                sys.modules.pop(name, None)
+            elif name in {'app.utils.ingest', 'segyio'}:
+                sys.modules.pop(name, None)
+
+        routers = importlib.import_module('app.api.routers')
+        assert routers.__name__ == 'app.api.routers'
+        assert routers.__all__ == []
+        assert 'app.api.routers.upload' not in sys.modules
+        assert 'app.api.routers.statics' not in sys.modules
+        assert 'app.utils.ingest' not in sys.modules
+        assert 'segyio' not in sys.modules
+        """
+    )
+
+    subprocess.run(
+        [sys.executable, '-c', code],
+        cwd=_REPO_ROOT,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+
+
+def test_statics_router_import_does_not_import_upload_ingest_or_segyio() -> None:
+    code = textwrap.dedent(
+        """
+        from __future__ import annotations
+
+        import importlib
+        import sys
+
+        for name in list(sys.modules):
+            if name == 'app.api.routers' or name.startswith('app.api.routers.'):
+                sys.modules.pop(name, None)
+            elif name in {'app.utils.ingest', 'segyio'}:
+                sys.modules.pop(name, None)
+
+        statics = importlib.import_module('app.api.routers.statics')
+        assert hasattr(statics, 'router')
+        assert statics.__all__ == ['router']
+        assert 'app.api.routers.upload' not in sys.modules
+        assert 'app.utils.ingest' not in sys.modules
+        assert 'segyio' not in sys.modules
+        """
+    )
+
+    subprocess.run(
+        [sys.executable, '-c', code],
+        cwd=_REPO_ROOT,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+
+
+def test_statics_router_import_succeeds_when_segyio_is_unavailable() -> None:
+    code = textwrap.dedent(
+        """
+        from __future__ import annotations
+
+        import importlib
+        import sys
+
+        for name in list(sys.modules):
+            if name == 'app.api.routers' or name.startswith('app.api.routers.'):
+                sys.modules.pop(name, None)
+            elif name in {'app.utils.ingest', 'segyio'}:
+                sys.modules.pop(name, None)
+
+        sys.modules['segyio'] = None
+        statics = importlib.import_module('app.api.routers.statics')
+        assert hasattr(statics, 'router')
+        assert statics.__all__ == ['router']
+        assert 'app.api.routers.upload' not in sys.modules
+        assert 'app.utils.ingest' not in sys.modules
+        assert sys.modules['segyio'] is None
+        """
+    )
+
+    subprocess.run(
+        [sys.executable, '-c', code],
+        cwd=_REPO_ROOT,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+
+
 def test_launch_module_does_not_reverse_import_statics_router_package() -> None:
     tree = _launch_module_ast()
 
