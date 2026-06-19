@@ -737,13 +737,6 @@ def _validate_design(design: TimeTermDesignMatrix) -> _ValidatedTimeTermDesign:
         n_traces=n_traces,
         n_observations=n_observations,
     )
-    _validate_trace_row_index_mapping(
-        used_trace_mask=used_trace_mask,
-        row_trace_index=row_trace_index,
-        trace_to_row_index=trace_to_row_index,
-        n_traces=n_traces,
-        n_observations=n_observations,
-    )
     source_node_id = _coerce_1d_integer_int64(
         design.source_node_id_sorted,
         name='design.source_node_id_sorted',
@@ -911,36 +904,6 @@ def _coerce_trace_to_row_index(
     if np.any(arr >= n_observations):
         raise ValueError('design.trace_to_row_index_sorted contains row indices outside range')
     return arr
-
-
-def _validate_trace_row_index_mapping(
-    *,
-    used_trace_mask: np.ndarray,
-    row_trace_index: np.ndarray,
-    trace_to_row_index: np.ndarray,
-    n_traces: int,
-    n_observations: int,
-) -> None:
-    if np.unique(row_trace_index).shape[0] != n_observations:
-        raise ValueError('design.row_trace_index_sorted must contain unique traces')
-
-    expected_used_trace_mask = np.zeros(n_traces, dtype=bool)
-    expected_used_trace_mask[row_trace_index] = True
-    if np.any(used_trace_mask != expected_used_trace_mask):
-        raise ValueError(
-            'design.used_trace_mask_sorted does not match design.row_trace_index_sorted'
-        )
-
-    expected_trace_to_row_index = np.full(n_traces, -1, dtype=np.int64)
-    expected_trace_to_row_index[row_trace_index] = np.arange(
-        n_observations,
-        dtype=np.int64,
-    )
-    if np.any(trace_to_row_index != expected_trace_to_row_index):
-        raise ValueError(
-            'design.trace_to_row_index_sorted does not match '
-            'design.row_trace_index_sorted'
-        )
 
 
 def _coerce_bool(value: object, *, name: str) -> bool:
