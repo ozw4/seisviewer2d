@@ -6,7 +6,7 @@ import sys
 from pathlib import Path
 
 
-TIME_TERM_ROOT = Path(__file__).resolve().parents[1] / 'seis_statics' / 'time_term'
+TIME_TERM_ROOT = Path(__file__).resolve().parents[1] / 'src' / 'seis_statics' / 'time_term'
 FORBIDDEN_RUNTIME_MODULES = {
     'app.core.state',
     'app.services.reader',

@@ -45,6 +45,18 @@ uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
 This repo includes a dev container based on an NVIDIA PyTorch image (see `Dockerfile`).
 It installs Python deps, Node 20, and Playwright.
 
+## `seis_statics` package development
+
+The reusable static-correction numerical core lives in `src/seis_statics`.
+Application code may import `seis_statics`, but the package must not import
+back from `app.*`, FastAPI, Pydantic, SEG-Y readers, TraceStore, job runtimes,
+or artifact registries.
+
+When working with a sibling `seis-statics` checkout during externalization,
+bind mounts are for reference only. Normal package code, tests, and fixtures
+must be standalone and must not reach into a sibling `seisviewer2d` checkout
+through `sys.path`, symlinks, fallback imports, or runtime file access.
+
 ## What happens on upload
 
 `POST /upload_segy` converts the uploaded SEG-Y into a cached “trace store” under:
