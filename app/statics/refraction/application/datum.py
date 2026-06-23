@@ -26,6 +26,9 @@ from app.services.common.artifact_io import write_csv_atomic, write_json_atomic
 from seis_statics.refraction.first_layer import (
     validate_resolved_first_layer_velocity_match,
 )
+from seis_statics.refraction.datum import (
+    compute_refraction_datum_elevation_shift_s as core_compute_refraction_datum_elevation_shift_s,
+)
 from seis_statics.refraction.status import LOCAL_V2_STATUS_VALUES
 from app.statics.refraction.domain.types import (
     RefractionDatumStaticsResult,
@@ -456,7 +459,6 @@ def build_refraction_datum_statics(
         active=flat_active,
         shape=data.receiver_surface_elevation_m.shape,
     )
-
     source_status = _classify_endpoint_status(
         inherited_status=data.source_static_status,
         surface_elevation_m=data.source_surface_elevation_m,
@@ -564,29 +566,13 @@ def build_refraction_datum_statics(
         datum=datum_req,
     )
 
-    trace_floating_shift = _trace_floating_shift(
-        source_surface_elevation_m=data.source_surface_elevation_m_sorted,
-        receiver_surface_elevation_m=data.receiver_surface_elevation_m_sorted,
-        source_floating_datum_elevation_m=(
-            floating.source_floating_datum_elevation_m_sorted
-        ),
-        receiver_floating_datum_elevation_m=(
-            floating.receiver_floating_datum_elevation_m_sorted
-        ),
-        bedrock_velocity_m_s=velocity.bedrock_velocity_m_s,
-        active=floating_active,
+    trace_floating_shift = np.ascontiguousarray(
+        source_floating_shift_sorted + receiver_floating_shift_sorted,
+        dtype=np.float64,
     )
-    trace_flat_shift = _trace_flat_shift(
-        flat_datum_elevation_m=flat_datum,
-        source_floating_datum_elevation_m=(
-            floating.source_floating_datum_elevation_m_sorted
-        ),
-        receiver_floating_datum_elevation_m=(
-            floating.receiver_floating_datum_elevation_m_sorted
-        ),
-        bedrock_velocity_m_s=velocity.bedrock_velocity_m_s,
-        active=flat_active,
-        shape=data.sorted_trace_index.shape,
+    trace_flat_shift = np.ascontiguousarray(
+        source_flat_shift_sorted + receiver_flat_shift_sorted,
+        dtype=np.float64,
     )
     refraction_trace_shift = compose_refraction_trace_shift_s(
         weathering_replacement_trace_shift_s=(
@@ -860,39 +846,21 @@ def compute_floating_datum_elevation_shift_s(
     bedrock_velocity_m_s: float,
 ) -> np.ndarray:
     """Compute ``-((ETs - EFDs) + (ETr - EFDr)) / vb`` in seconds."""
-    source_surface = _coerce_1d_float(
-        true_source_elevation_m,
-        name='true_source_elevation_m',
-        allow_nonfinite=True,
-    )
-    shape = source_surface.shape
-    receiver_surface = _coerce_1d_float(
-        true_receiver_elevation_m,
-        name='true_receiver_elevation_m',
-        expected_shape=shape,
-        allow_nonfinite=True,
-    )
-    source_floating = _coerce_1d_float(
-        floating_source_elevation_m,
-        name='floating_source_elevation_m',
-        expected_shape=shape,
-        allow_nonfinite=True,
-    )
-    receiver_floating = _coerce_1d_float(
-        floating_receiver_elevation_m,
-        name='floating_receiver_elevation_m',
-        expected_shape=shape,
-        allow_nonfinite=True,
-    )
-    vb = _positive_finite(bedrock_velocity_m_s, name='bedrock_velocity_m_s')
-    return np.ascontiguousarray(
-        -(
-            (source_surface - source_floating)
-            + (receiver_surface - receiver_floating)
+    try:
+        source_shift = core_compute_refraction_datum_elevation_shift_s(
+            elevation_m=true_source_elevation_m,
+            datum_elevation_m=floating_source_elevation_m,
+            replacement_velocity_m_s=bedrock_velocity_m_s,
         )
-        / vb,
-        dtype=np.float64,
-    )
+        receiver_shift = core_compute_refraction_datum_elevation_shift_s(
+            elevation_m=true_receiver_elevation_m,
+            datum_elevation_m=floating_receiver_elevation_m,
+            replacement_velocity_m_s=bedrock_velocity_m_s,
+        )
+    except ValueError as exc:
+        message = str(exc).replace('replacement_velocity_m_s', 'bedrock_velocity_m_s')
+        raise RefractionDatumStaticsError(message) from exc
+    return np.ascontiguousarray(source_shift + receiver_shift, dtype=np.float64)
 
 
 def compute_flat_datum_shift_s(
@@ -903,26 +871,26 @@ def compute_flat_datum_shift_s(
     bedrock_velocity_m_s: float,
 ) -> np.ndarray:
     """Compute ``(2*ED - (EFDs + EFDr)) / vb`` in seconds."""
-    flat_datum = _finite_float(
-        flat_datum_elevation_m,
-        name='flat_datum_elevation_m',
-    )
-    source_floating = _coerce_1d_float(
-        floating_source_elevation_m,
-        name='floating_source_elevation_m',
-        allow_nonfinite=True,
-    )
-    receiver_floating = _coerce_1d_float(
-        floating_receiver_elevation_m,
-        name='floating_receiver_elevation_m',
-        expected_shape=source_floating.shape,
-        allow_nonfinite=True,
-    )
-    vb = _positive_finite(bedrock_velocity_m_s, name='bedrock_velocity_m_s')
-    return np.ascontiguousarray(
-        (2.0 * flat_datum - (source_floating + receiver_floating)) / vb,
-        dtype=np.float64,
-    )
+    try:
+        source_shift = core_compute_refraction_datum_elevation_shift_s(
+            elevation_m=floating_source_elevation_m,
+            datum_elevation_m=flat_datum_elevation_m,
+            replacement_velocity_m_s=bedrock_velocity_m_s,
+        )
+        receiver_shift = core_compute_refraction_datum_elevation_shift_s(
+            elevation_m=floating_receiver_elevation_m,
+            datum_elevation_m=flat_datum_elevation_m,
+            replacement_velocity_m_s=bedrock_velocity_m_s,
+        )
+    except ValueError as exc:
+        message = str(exc).replace('replacement_velocity_m_s', 'bedrock_velocity_m_s')
+        raise RefractionDatumStaticsError(message) from exc
+    if source_shift.shape != receiver_shift.shape:
+        raise RefractionDatumStaticsError(
+            'shape mismatch for floating_source_elevation_m and '
+            'floating_receiver_elevation_m'
+        )
+    return np.ascontiguousarray(source_shift + receiver_shift, dtype=np.float64)
 
 
 def compose_refraction_trace_shift_s(
@@ -2390,10 +2358,18 @@ def _endpoint_floating_shift(
 ) -> np.ndarray:
     if not active:
         return np.zeros(surface_elevation_m.shape, dtype=np.float64)
-    return np.ascontiguousarray(
-        -(surface_elevation_m - floating_datum_elevation_m) / bedrock_velocity_m_s,
-        dtype=np.float64,
-    )
+    try:
+        return np.ascontiguousarray(
+            core_compute_refraction_datum_elevation_shift_s(
+                elevation_m=surface_elevation_m,
+                datum_elevation_m=floating_datum_elevation_m,
+                replacement_velocity_m_s=bedrock_velocity_m_s,
+            ),
+            dtype=np.float64,
+        )
+    except ValueError as exc:
+        message = str(exc).replace('replacement_velocity_m_s', 'bedrock_velocity_m_s')
+        raise RefractionDatumStaticsError(message) from exc
 
 
 def _endpoint_flat_shift(

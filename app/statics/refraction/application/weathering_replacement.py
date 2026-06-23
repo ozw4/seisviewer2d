@@ -23,10 +23,6 @@ from seis_statics.refraction.first_layer import (
     validate_resolved_first_layer_velocity_match,
 )
 from seis_statics.refraction.status import LOCAL_V2_STATUS_VALUES
-from seis_statics.refraction.t1lsst import (
-    RefractionT1LSSTError,
-    compute_t1lsst_1layer_weathering_correction,
-)
 from app.statics.refraction.domain.types import (
     RefractionStaticInputModel,
     RefractionWeatheringReplacementStaticsResult,
@@ -37,6 +33,9 @@ from app.statics.refraction.application.weathering import (
     estimate_weathering_thickness_from_first_breaks,
 )
 from app.statics.refraction.ports.runtime import RefractionRuntime
+from seis_statics.refraction.weathering_replacement import (
+    compute_weathering_replacement_shift_s as core_compute_weathering_replacement_shift_s,
+)
 
 REFRACTION_WEATHERING_REPLACEMENT_QC_JSON_NAME = (
     'refraction_weathering_replacement_qc.json'
@@ -302,6 +301,22 @@ def build_refraction_weathering_replacement_statics(
     resolved_first_layer: ResolvedRefractionFirstLayer | None = None,
 ) -> RefractionWeatheringReplacementStaticsResult:
     """Compute weathering-replacement statics from weathering thickness."""
+    return _build_refraction_weathering_replacement_contract_result(
+        weathering_result=weathering_result,
+        apply_options=apply_options,
+        job_dir=job_dir,
+        resolved_first_layer=resolved_first_layer,
+    )
+
+
+def _build_refraction_weathering_replacement_contract_result(
+    *,
+    weathering_result: RefractionWeatheringThicknessResult,
+    apply_options: RefractionStaticApplyOptions | None = None,
+    job_dir: Path | None = None,
+    resolved_first_layer: ResolvedRefractionFirstLayer | None = None,
+) -> RefractionWeatheringReplacementStaticsResult:
+    """Build the app contract result while pure conversion helpers delegate to core."""
     data = _validate_weathering_result(weathering_result)
     velocity = _validate_velocity_context(
         weathering_result,
@@ -591,22 +606,13 @@ def compute_weathering_replacement_shift_s(
 ) -> np.ndarray:
     """Compute ``shift = z * (1/vb - 1/vw)`` in seconds."""
     try:
-        return compute_t1lsst_1layer_weathering_correction(
-            sh1_m=weathering_thickness_m,
-            v1_m_s=weathering_velocity_m_s,
-            v2_m_s=bedrock_velocity_m_s,
+        return core_compute_weathering_replacement_shift_s(
+            weathering_thickness_m=weathering_thickness_m,
+            weathering_velocity_m_s=weathering_velocity_m_s,
+            bedrock_velocity_m_s=bedrock_velocity_m_s,
         )
-    except RefractionT1LSSTError as exc:
-        if str(exc) == 'v2_m_s must be greater than v1_m_s':
-            raise RefractionWeatheringReplacementStaticsError(
-                'bedrock_velocity_m_s must be greater than weathering_velocity_m_s'
-            ) from exc
-        raise RefractionWeatheringReplacementStaticsError(
-            str(exc)
-            .replace('sh1_m', 'weathering_thickness_m')
-            .replace('v1_m_s', 'weathering_velocity_m_s')
-            .replace('v2_m_s', 'bedrock_velocity_m_s')
-        ) from exc
+    except ValueError as exc:
+        raise RefractionWeatheringReplacementStaticsError(str(exc)) from exc
 
 
 def compute_weathering_replacement_shift_scalar_s(

@@ -37,9 +37,8 @@ from app.statics.refraction.application.half_intercept import (
     estimate_refraction_half_intercept_times_from_first_breaks,
 )
 from app.statics.refraction.ports.runtime import RefractionRuntime
-from seis_statics.refraction.t1lsst import (
-    RefractionT1LSSTError,
-    compute_t1lsst_1layer_thickness,
+from seis_statics.refraction.weathering import (
+    compute_weathering_thickness_from_half_intercept_time as core_compute_weathering_thickness,
 )
 from app.statics.refraction.domain.types import (
     RefractionHalfInterceptTimeResult,
@@ -296,6 +295,22 @@ def build_refraction_weathering_thickness_model(
     resolved_first_layer: ResolvedRefractionFirstLayer | None = None,
 ) -> RefractionWeatheringThicknessResult:
     """Convert GLI half-intercept times to a weathering-thickness model."""
+    return _build_refraction_weathering_thickness_contract_result(
+        half_intercept_result=half_intercept_result,
+        model=model,
+        job_dir=job_dir,
+        resolved_first_layer=resolved_first_layer,
+    )
+
+
+def _build_refraction_weathering_thickness_contract_result(
+    *,
+    half_intercept_result: RefractionHalfInterceptTimeResult,
+    model: RefractionStaticModelRequest,
+    job_dir: Path | None = None,
+    resolved_first_layer: ResolvedRefractionFirstLayer | None = None,
+) -> RefractionWeatheringThicknessResult:
+    """Build the app contract result while pure conversion helpers delegate to core."""
     data = _validate_half_intercept_result(half_intercept_result)
     velocity = _validate_velocity_context(
         half_intercept_result=half_intercept_result,
@@ -615,12 +630,19 @@ def compute_weathering_thickness_from_half_intercept_time(
 ) -> np.ndarray:
     """Convert half-intercept time to weathering thickness with the GLI relation."""
     try:
-        return compute_t1lsst_1layer_thickness(
-            t1_s=half_intercept_time_s,
-            v1_m_s=weathering_velocity_m_s,
-            v2_m_s=bedrock_velocity_m_s,
-        )
-    except RefractionT1LSSTError as exc:
+        half = np.asarray(half_intercept_time_s, dtype=np.float64)
+        bedrock = np.asarray(bedrock_velocity_m_s, dtype=np.float64)
+        half, bedrock = np.broadcast_arrays(half, bedrock)
+        out = np.full(half.shape, np.nan, dtype=np.float64)
+        valid = np.isfinite(half) & np.isfinite(bedrock)
+        if np.any(valid):
+            out[valid] = core_compute_weathering_thickness(
+                half_intercept_time_s=half[valid],
+                v1_m_s=weathering_velocity_m_s,
+                v2_m_s=bedrock[valid],
+            )
+        return np.ascontiguousarray(out, dtype=np.float64)
+    except ValueError as exc:
         if str(exc) == 'v2_m_s must be greater than v1_m_s':
             raise RefractionWeatheringThicknessError(
                 'bedrock_velocity_m_s must be greater than weathering_velocity_m_s'
