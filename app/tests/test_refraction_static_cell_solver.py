@@ -148,6 +148,59 @@ def test_cell_solver_adapter_preserves_active_cell_contract() -> None:
     assert result.qc['bedrock_velocity_solution_kind'] == 'per_cell'
 
 
+def test_cell_solver_adapter_uses_active_cell_order_for_sparse_cell_ids() -> None:
+    row_midpoint_cell_id = np.where(ROW_MIDPOINT_CELL_ID == 0, 0, 2).astype(np.int64)
+    velocity_by_cell = np.asarray([2000.0, np.nan, 3000.0], dtype=np.float64)
+    node_to_index = {int(node): idx for idx, node in enumerate(ACTIVE_NODE_ID)}
+    source_time = np.asarray(
+        [TRUE_HALF_INTERCEPT_S[node_to_index[int(node)]] for node in ROW_SOURCE_NODE_ID],
+        dtype=np.float64,
+    )
+    receiver_time = np.asarray(
+        [
+            TRUE_HALF_INTERCEPT_S[node_to_index[int(node)]]
+            for node in ROW_RECEIVER_NODE_ID
+        ],
+        dtype=np.float64,
+    )
+    design = build_refraction_static_design_matrix_from_arrays(
+        pick_time_s_sorted=(
+            source_time
+            + receiver_time
+            + ROW_DISTANCE_M / velocity_by_cell[row_midpoint_cell_id]
+        ),
+        valid_observation_mask_sorted=np.ones(ROW_DISTANCE_M.shape[0], dtype=bool),
+        source_node_id_sorted=ROW_SOURCE_NODE_ID,
+        receiver_node_id_sorted=ROW_RECEIVER_NODE_ID,
+        distance_m_sorted=ROW_DISTANCE_M,
+        node_id=ACTIVE_NODE_ID,
+        bedrock_velocity_mode='solve_cell',
+        n_traces=int(ROW_DISTANCE_M.shape[0]),
+        midpoint_cell_id_sorted=row_midpoint_cell_id,
+        n_total_cells=3,
+        cell_assignment_mode='midpoint',
+    )
+
+    result = solve_refraction_static_bounded_ls(
+        design_matrix=design,
+        model=_cell_model(),
+        solver=_solver(),
+    )
+
+    np.testing.assert_array_equal(result.active_cell_id, [0, 2])
+    np.testing.assert_array_equal(result.inactive_cell_id, [1])
+    np.testing.assert_allclose(
+        result.cell_bedrock_velocity_m_s,
+        [2000.0, 3000.0],
+        rtol=1.0e-7,
+    )
+    np.testing.assert_allclose(
+        result.cell_bedrock_slowness_s_per_m,
+        [1.0 / 2000.0, 1.0 / 3000.0],
+        rtol=1.0e-7,
+    )
+
+
 def test_cell_solver_adapter_preserves_robust_masks() -> None:
     pick_time = _pick_times()
     pick_time[0] += 0.200

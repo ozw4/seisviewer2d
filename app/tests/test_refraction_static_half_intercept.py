@@ -259,6 +259,30 @@ def test_build_from_bedrock_result_uses_debug_objects() -> None:
     )
 
 
+def test_build_from_bedrock_result_accepts_app_debug_contract_without_core() -> None:
+    inputs = _input_model()
+    bedrock = estimate_global_bedrock_slowness_from_input_model(
+        input_model=inputs,
+        model=_model(),
+        solver=_solver(),
+        include_debug_objects=True,
+    )
+
+    result = build_refraction_half_intercept_time_model_from_bedrock_result(
+        bedrock_result=replace(bedrock, core_result=None)
+    )
+
+    np.testing.assert_allclose(
+        result.node_half_intercept_time_s[:5],
+        TRUE_HALF_INTERCEPT_S,
+        atol=1.0e-9,
+    )
+    assert result.bedrock_velocity_m_s == pytest.approx(
+        TRUE_BEDROCK_VELOCITY_M_S,
+        rel=1.0e-7,
+    )
+
+
 def test_node_endpoint_and_trace_tables_map_half_intercepts() -> None:
     inputs, _design, _solved, result = _build_result()
 

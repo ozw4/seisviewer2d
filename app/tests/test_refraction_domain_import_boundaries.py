@@ -7,7 +7,17 @@ from pathlib import Path
 import pytest
 
 
-APP_ROOT = Path(__file__).resolve().parents[1]
+REPO_ROOT = Path(__file__).resolve().parents[2]
+APP_ROOT = REPO_ROOT / 'app'
+SOURCE_ROOTS = tuple(
+    path
+    for path in (
+        APP_ROOT,
+        REPO_ROOT / 'tests',
+        REPO_ROOT / 'scripts',
+    )
+    if path.exists()
+)
 DOMAIN_ROOT = APP_ROOT / 'statics' / 'refraction' / 'domain'
 LEGACY_DOMAIN_PREFIX = '.'.join(('app', 'statics', 'refraction', 'domain'))
 
@@ -23,7 +33,7 @@ def test_refraction_domain_package_cannot_be_imported() -> None:
 
 def test_refraction_sources_do_not_import_legacy_domain_package() -> None:
     offenders: list[str] = []
-    for source_path in sorted(APP_ROOT.rglob('*.py')):
+    for source_path in _source_paths():
         if source_path == Path(__file__).resolve():
             continue
         tree = ast.parse(source_path.read_text(encoding='utf-8'))
@@ -32,10 +42,18 @@ def test_refraction_sources_do_not_import_legacy_domain_package() -> None:
                 f'{LEGACY_DOMAIN_PREFIX}.'
             ):
                 offenders.append(
-                    f'{source_path.relative_to(APP_ROOT).as_posix()}: {module}'
+                    f'{source_path.relative_to(REPO_ROOT).as_posix()}: {module}'
                 )
 
     assert offenders == []
+
+
+def _source_paths() -> list[Path]:
+    return sorted(
+        source_path
+        for root in SOURCE_ROOTS
+        for source_path in root.rglob('*.py')
+    )
 
 
 def _imported_modules(tree: ast.AST) -> list[str]:

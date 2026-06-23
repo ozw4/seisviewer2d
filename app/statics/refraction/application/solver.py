@@ -402,20 +402,43 @@ def _active_cell_solution_arrays(
             np.empty(0, dtype=np.float64),
             np.empty(0, dtype='<U16'),
         )
+    cell_id = np.asarray(core_result.cell_id, dtype=np.int64)
+    slowness = np.asarray(
+        core_result.cell_bedrock_slowness_s_per_m,
+        dtype=np.float64,
+    )
+    velocity = np.asarray(core_result.cell_bedrock_velocity_m_s, dtype=np.float64)
+    status = np.asarray(core_result.cell_velocity_status)
+    if (
+        cell_id.ndim != 1
+        or slowness.shape != cell_id.shape
+        or velocity.shape != cell_id.shape
+        or status.shape != cell_id.shape
+        or np.unique(cell_id).shape[0] != cell_id.shape[0]
+    ):
+        raise RefractionStaticSolverError(
+            'solve_cell result active cell arrays length mismatch'
+        )
+    cell_pos_by_id = {int(cell): idx for idx, cell in enumerate(cell_id.tolist())}
+    try:
+        active_pos = np.asarray(
+            [cell_pos_by_id[int(cell)] for cell in active_cell_id],
+            dtype=np.int64,
+        )
+    except KeyError as exc:
+        raise RefractionStaticSolverError(
+            'solve_cell result is missing an active cell solution'
+        ) from exc
     return (
         np.ascontiguousarray(
-            np.asarray(core_result.cell_bedrock_slowness_s_per_m, dtype=np.float64)[
-                active_cell_id
-            ],
+            slowness[active_pos],
             dtype=np.float64,
         ),
         np.ascontiguousarray(
-            np.asarray(core_result.cell_bedrock_velocity_m_s, dtype=np.float64)[
-                active_cell_id
-            ],
+            velocity[active_pos],
             dtype=np.float64,
         ),
-        np.ascontiguousarray(np.asarray(core_result.cell_velocity_status)[active_cell_id]),
+        np.ascontiguousarray(status[active_pos]),
     )
 
 
