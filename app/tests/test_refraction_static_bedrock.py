@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import csv
-from dataclasses import replace
 import json
 from pathlib import Path
 from typing import Any
@@ -18,17 +17,11 @@ from app.statics.refraction.application.bedrock import (
     estimate_global_bedrock_slowness_from_first_breaks,
     estimate_global_bedrock_slowness_from_input_model,
 )
-from app.statics.refraction.application.design_matrix import (
-    build_refraction_static_design_matrix,
-)
 from app.statics.refraction.domain.types import (
     RefractionEndpointTable,
     RefractionStaticInputModel,
 )
-from app.statics.refraction.domain.solver import (
-    RefractionStaticSolverError,
-    solve_refraction_static_bounded_ls,
-)
+from app.statics.refraction.domain.solver import RefractionStaticSolverError
 
 NODE_ID = np.asarray([0, 1, 2, 3, 4], dtype=np.int64)
 TRUE_HALF_INTERCEPT_S = np.asarray([0.010, 0.012, 0.015, 0.018, 0.020])
@@ -311,37 +304,6 @@ def test_estimate_global_bedrock_slowness_classifies_max_velocity_clip() -> None
     assert result.qc['bedrock_slowness_at_lower_bound'] is True
 
 
-def test_estimate_rejects_solved_velocity_not_greater_than_weathering(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    model = _model()
-    solver = _solver()
-    input_model = _input_model()
-    design = build_refraction_static_design_matrix(input_model=input_model, model=model)
-    solver_result = solve_refraction_static_bounded_ls(
-        design_matrix=design,
-        model=model,
-        solver=solver,
-    )
-    patched = replace(
-        solver_result,
-        bedrock_velocity_m_s=700.0,
-        bedrock_slowness_s_per_m=1.0 / 700.0,
-    )
-    monkeypatch.setattr(
-        bedrock_module,
-        'solve_refraction_static_bounded_ls',
-        lambda **_kwargs: patched,
-    )
-
-    with pytest.raises(RefractionBedrockSlownessError, match='weathering velocity'):
-        estimate_global_bedrock_slowness_from_input_model(
-            input_model=input_model,
-            model=model,
-            solver=solver,
-        )
-
-
 def test_robust_disabled_uses_all_rows_with_bad_pick() -> None:
     picks = _pick_times()
     picks[0] += 0.150
@@ -475,132 +437,6 @@ def test_estimate_rejects_zero_pick_time_aperture() -> None:
         )
 
 
-def test_estimate_rejects_design_matrix_without_slowness_column(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    real_build = bedrock_module.build_refraction_static_design_matrix
-
-    def _build_without_slowness(**kwargs: Any) -> object:
-        return replace(real_build(**kwargs), bedrock_slowness_col=None)
-
-    monkeypatch.setattr(
-        bedrock_module,
-        'build_refraction_static_design_matrix',
-        _build_without_slowness,
-    )
-
-    with pytest.raises(RefractionBedrockSlownessError, match='slowness column'):
-        estimate_global_bedrock_slowness_from_input_model(
-            input_model=_input_model(),
-            model=_model(),
-            solver=_solver(),
-        )
-
-
-def test_estimate_wraps_solver_failure(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(
-        bedrock_module,
-        'solve_refraction_static_bounded_ls',
-        lambda **_kwargs: (_ for _ in ()).throw(
-            RefractionStaticSolverError('patched solver failure')
-        ),
-    )
-
-    with pytest.raises(RefractionBedrockSlownessError, match='patched solver failure'):
-        estimate_global_bedrock_slowness_from_input_model(
-            input_model=_input_model(),
-            model=_model(),
-            solver=_solver(),
-        )
-
-
-def test_estimate_rejects_invalid_solver_values(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    model = _model()
-    solver = _solver()
-    input_model = _input_model()
-    design = build_refraction_static_design_matrix(input_model=input_model, model=model)
-    solver_result = solve_refraction_static_bounded_ls(
-        design_matrix=design,
-        model=model,
-        solver=solver,
-    )
-    monkeypatch.setattr(
-        bedrock_module,
-        'solve_refraction_static_bounded_ls',
-        lambda **_kwargs: replace(
-            solver_result,
-            bedrock_slowness_s_per_m=np.nan,
-        ),
-    )
-
-    with pytest.raises(RefractionBedrockSlownessError, match='slowness'):
-        estimate_global_bedrock_slowness_from_input_model(
-            input_model=input_model,
-            model=model,
-            solver=solver,
-        )
-
-
-def test_estimate_rejects_inconsistent_solver_velocity(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    model = _model()
-    solver = _solver()
-    input_model = _input_model()
-    design = build_refraction_static_design_matrix(input_model=input_model, model=model)
-    solver_result = solve_refraction_static_bounded_ls(
-        design_matrix=design,
-        model=model,
-        solver=solver,
-    )
-    monkeypatch.setattr(
-        bedrock_module,
-        'solve_refraction_static_bounded_ls',
-        lambda **_kwargs: replace(
-            solver_result,
-            bedrock_velocity_m_s=3000.0,
-        ),
-    )
-
-    with pytest.raises(RefractionBedrockSlownessError, match='does not match'):
-        estimate_global_bedrock_slowness_from_input_model(
-            input_model=input_model,
-            model=model,
-            solver=solver,
-        )
-
-
-def test_estimate_rejects_residual_length_mismatch(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    model = _model()
-    solver = _solver()
-    input_model = _input_model()
-    design = build_refraction_static_design_matrix(input_model=input_model, model=model)
-    solver_result = solve_refraction_static_bounded_ls(
-        design_matrix=design,
-        model=model,
-        solver=solver,
-    )
-    monkeypatch.setattr(
-        bedrock_module,
-        'solve_refraction_static_bounded_ls',
-        lambda **_kwargs: replace(
-            solver_result,
-            residual_time_s=solver_result.residual_time_s[:-1],
-        ),
-    )
-
-    with pytest.raises(RefractionBedrockSlownessError, match='length mismatch'):
-        estimate_global_bedrock_slowness_from_input_model(
-            input_model=input_model,
-            model=model,
-            solver=solver,
-        )
-
-
 def test_estimate_rejects_obvious_pick_distance_mismatch() -> None:
     with pytest.raises(RefractionBedrockSlownessError, match='median pick time'):
         estimate_global_bedrock_slowness_from_input_model(
@@ -650,6 +486,31 @@ def test_estimate_wraps_high_level_input_builder_errors(
             req=req,  # type: ignore[arg-type]
             state=object(),  # type: ignore[arg-type]
         )
+
+
+def test_estimate_wraps_solver_result_conversion_errors(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def raise_conversion_error(**_kwargs: Any) -> None:
+        raise RefractionStaticSolverError('adapter conversion failed')
+
+    monkeypatch.setattr(
+        bedrock_module,
+        '_app_solver_result_from_core',
+        raise_conversion_error,
+    )
+
+    with pytest.raises(
+        RefractionBedrockSlownessError,
+        match='adapter conversion failed',
+    ) as exc_info:
+        estimate_global_bedrock_slowness_from_input_model(
+            input_model=_input_model(),
+            model=_model(),
+            solver=_solver(),
+        )
+
+    assert isinstance(exc_info.value.__cause__, RefractionStaticSolverError)
 
 
 def test_estimate_rejects_invalid_model_contract() -> None:

@@ -376,6 +376,7 @@ class RefractionBedrockSlownessResult:
     solver_result: RefractionStaticSolverResult
 
     qc: dict[str, Any]
+    core_result: Any | None = None
 
 
 @dataclass(frozen=True)

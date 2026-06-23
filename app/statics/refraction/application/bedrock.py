@@ -7,6 +7,12 @@ from pathlib import Path
 from typing import Any
 
 import numpy as np
+from seis_statics.refraction.bedrock import (
+    RefractionBedrockEstimationError as CoreRefractionBedrockEstimationError,
+)
+from seis_statics.refraction.bedrock import (
+    estimate_global_bedrock_slowness_from_input_model as core_estimate_global_bedrock_slowness_from_input_model,
+)
 
 from app.statics.refraction.contracts.apply import RefractionStaticApplyRequest
 from app.statics.refraction.contracts.model import RefractionStaticModelRequest
@@ -14,15 +20,17 @@ from app.statics.refraction.contracts.options import RefractionStaticSolverReque
 from app.services.common.artifact_io import write_csv_atomic, write_json_atomic
 from app.statics.refraction.ports.runtime import RefractionRuntime
 from app.statics.refraction.application.design_matrix import (
-    build_refraction_static_design_matrix,
     write_refraction_design_matrix_diagnostics_artifacts,
 )
 from app.statics.refraction.application.core_options import (
+    core_input_model_from_app,
+    model_options_from_request,
     resolve_weathering_velocity_from_model_request as resolve_weathering_velocity_m_s,
+    solver_options_from_request,
 )
 from app.statics.refraction.domain.solver import (
     RefractionStaticSolverError,
-    solve_refraction_static_bounded_ls,
+    _app_solver_result_from_core,
 )
 from app.statics.refraction.domain.types import (
     RefractionBedrockSlownessResult,
@@ -97,14 +105,23 @@ def estimate_global_bedrock_slowness_from_input_model(
     _require_solve_global(model)
     input_qc = _validate_input_quality(input_model=input_model, model=model, solver=solver)
     try:
-        design_matrix = build_refraction_static_design_matrix(
-            input_model=input_model,
-            model=model,
+        core_result = core_estimate_global_bedrock_slowness_from_input_model(
+            input_model=core_input_model_from_app(input_model),
+            model=model_options_from_request(model),
+            solver_options=solver_options_from_request(solver),
             resolved_first_layer=resolved_first_layer,
             include_diagnostics=job_dir is not None,
+            include_debug_objects=True,
         )
-    except ValueError as exc:
+    except (CoreRefractionBedrockEstimationError, ValueError) as exc:
         raise RefractionBedrockSlownessError(str(exc)) from exc
+
+    core_solve_result = core_result.debug_solve_result
+    if core_solve_result is None:
+        raise RefractionBedrockSlownessError(
+            'external bedrock result is missing debug solve output'
+        )
+    design_matrix = core_solve_result.design
     _validate_design_matrix(design_matrix)
     if job_dir is not None:
         write_refraction_design_matrix_diagnostics_artifacts(
@@ -113,8 +130,9 @@ def estimate_global_bedrock_slowness_from_input_model(
         )
 
     try:
-        solver_result = solve_refraction_static_bounded_ls(
+        solver_result = _app_solver_result_from_core(
             design_matrix=design_matrix,
+            core_result=core_solve_result,
             model=model,
             solver=solver,
             resolved_first_layer=resolved_first_layer,
@@ -127,9 +145,10 @@ def estimate_global_bedrock_slowness_from_input_model(
         solver_result=solver_result,
         model=model,
         solver=solver,
-        input_qc=input_qc,
+        input_qc={**input_qc, **_input_qc_from_core(core_result.qc)},
         include_debug_objects=include_debug_objects,
         resolved_first_layer=resolved_first_layer,
+        core_result=core_result,
     )
     if job_dir is not None:
         write_refraction_bedrock_debug_artifacts(Path(job_dir), result)
@@ -295,6 +314,7 @@ def _build_bedrock_result(
     input_qc: dict[str, Any],
     include_debug_objects: bool,
     resolved_first_layer: ResolvedRefractionFirstLayer | None,
+    core_result: Any | None = None,
 ) -> RefractionBedrockSlownessResult:
     _validate_solver_success(solver_result)
     _validate_row_lengths(solver_result)
@@ -424,9 +444,29 @@ def _build_bedrock_result(
         design_matrix=design_matrix if include_debug_objects else None,
         solver_result=solver_result,
         qc=qc,
+        core_result=core_result,
     )
     _validate_row_lengths(result)
     return result
+
+
+def _input_qc_from_core(qc: object) -> dict[str, Any]:
+    if not isinstance(qc, dict):
+        return {}
+    keys = (
+        'n_valid_observations',
+        'n_active_nodes',
+        'distance_aperture_m',
+        'distance_m_min',
+        'distance_m_max',
+        'distance_m_median',
+        'pick_time_s_min',
+        'pick_time_s_max',
+        'pick_time_s_median',
+        'pick_time_aperture_s',
+        'layers',
+    )
+    return {key: qc[key] for key in keys if key in qc}
 
 
 def _validate_solver_success(solver_result: RefractionStaticSolverResult) -> None:

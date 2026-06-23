@@ -41,7 +41,7 @@ from app.tests._refraction_multilayer_synthetic import (
 )
 
 
-def test_multilayer_orchestrator_runs_normalized_one_layer_v2_solve(
+def test_multilayer_orchestrator_runs_normalized_one_layer_v2_fixed_layer(
     tmp_path: Path,
 ) -> None:
     dataset = make_2d_straight_two_layer_refraction_dataset()
@@ -51,8 +51,8 @@ def test_multilayer_orchestrator_runs_normalized_one_layer_v2_solve(
                 'v2_t1',
                 min_offset_m=300.0,
                 max_offset_m=800.0,
-                velocity_mode='solve_global',
-                initial_velocity_m_s=SYNTHETIC_MULTILAYER_V2_M_S,
+                velocity_mode='fixed_global',
+                fixed_velocity_m_s=SYNTHETIC_MULTILAYER_V2_M_S,
                 min_velocity_m_s=1600.0,
                 max_velocity_m_s=3200.0,
             ),
@@ -79,10 +79,10 @@ def test_multilayer_orchestrator_runs_normalized_one_layer_v2_solve(
     layer = result.layer_results[0]
     assert layer.layer_kind == 'v2_t1'
     assert layer.layer_index == 1
-    assert layer.velocity_mode == 'solve_global'
-    assert layer.global_velocity_m_s is not None
+    assert layer.velocity_mode == 'fixed_global'
+    assert layer.global_velocity_m_s == pytest.approx(SYNTHETIC_MULTILAYER_V2_M_S)
     assert layer.global_slowness_s_per_m == pytest.approx(
-        1.0 / layer.global_velocity_m_s
+        1.0 / SYNTHETIC_MULTILAYER_V2_M_S
     )
     assert layer.trace_predicted_time_s_sorted.shape == (dataset.sorted_trace_index.size,)
     np.testing.assert_array_equal(

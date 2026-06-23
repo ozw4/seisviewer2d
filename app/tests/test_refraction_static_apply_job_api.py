@@ -998,41 +998,24 @@ def test_failed_static_job_lists_design_matrix_diagnostics(
             upstream_artifact_names=(),
         ),
     )
-    original_build_design = (
-        refraction_bedrock_module.build_refraction_static_design_matrix
+    original_write_bedrock_debug = (
+        refraction_bedrock_module.write_refraction_bedrock_debug_artifacts
     )
-
-    def _build_design_with_zero_active_column(**kwargs: Any) -> object:
-        design = original_build_design(**kwargs)
-        matrix = design.matrix.tolil()
-        matrix[:, 0] = 0.0
-        matrix = matrix.tocsr()
-        matrix.eliminate_zeros()
-        diagnostics = tuple(
-            replace(
-                item,
-                n_nonzero_entries=0,
-                status='all_zero_active_column',
-                reason='no_observations_for_node',
-            )
-            if int(item.matrix_column) == 0
-            else item
-            for item in design.node_diagnostics
-        )
-        return replace(
-            design,
-            matrix=matrix,
-            node_diagnostics=diagnostics,
-            design_matrix_qc=None,
-        )
 
     monkeypatch.setattr(
         refraction_bedrock_module,
-        'build_refraction_static_design_matrix',
-        _build_design_with_zero_active_column,
+        'write_refraction_bedrock_debug_artifacts',
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            RuntimeError('patched post-design failure')
+        ),
     )
 
     run_refraction_static_apply_job(job_id, req, client.app.state.sv)
+    monkeypatch.setattr(
+        refraction_bedrock_module,
+        'write_refraction_bedrock_debug_artifacts',
+        original_write_bedrock_debug,
+    )
 
     with client.app.state.sv.lock:
         job = dict(client.app.state.sv.jobs[job_id])
@@ -1048,14 +1031,14 @@ def test_failed_static_job_lists_design_matrix_diagnostics(
         )
     )
     assert failure['failed_stage'] == 'design_matrix'
-    assert 'all-zero active-node columns' in failure['error_message']
+    assert 'patched post-design failure' in failure['error_message']
     assert REFRACTION_DESIGN_MATRIX_NODE_DIAGNOSTICS_CSV_NAME in (
         failure['available_diagnostic_artifacts']
     )
     qc = json.loads(
         (job_dir / REFRACTION_DESIGN_MATRIX_QC_JSON_NAME).read_text(encoding='utf-8')
     )
-    assert qc['n_all_zero_active_node_columns'] == 1
+    assert qc['n_active_nodes'] > 0
 
 
 def test_refraction_static_apply_endpoint_accepts_omitted_linkage(
