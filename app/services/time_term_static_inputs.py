@@ -38,7 +38,6 @@ from app.services.residual_static_inputs import load_source_receiver_id_headers_
 from seis_statics.time_term import (
     ORDER,
     SIGN_CONVENTION,
-    TimeTermInversionInputs,
 )
 from app.trace_store.reader import TraceStoreSectionReader
 from app.utils.segy_scalars import apply_segy_scalar
@@ -56,6 +55,50 @@ class _ShiftLoadResult:
     path: Path | None
     field_name: str | None
     metadata: dict[str, object]
+
+
+@dataclass(frozen=True)
+class TimeTermInversionInputs:
+    """Application-owned time-term inputs with artifact provenance fields."""
+
+    n_traces: int
+    n_samples: int
+    dt: float
+    key1_byte: int
+    key2_byte: int
+
+    pick_time_raw_s_sorted: np.ndarray
+    valid_pick_mask_sorted: np.ndarray
+    datum_trace_shift_s_sorted: np.ndarray
+    residual_applied_shift_s_sorted: np.ndarray
+    pick_time_after_static_s_sorted: np.ndarray
+
+    source_node_id_sorted: np.ndarray
+    receiver_node_id_sorted: np.ndarray
+    n_nodes: int
+
+    source_id_sorted: np.ndarray
+    receiver_id_sorted: np.ndarray
+    offset_sorted: np.ndarray | None
+
+    source_x_m_sorted: np.ndarray
+    source_y_m_sorted: np.ndarray
+    receiver_x_m_sorted: np.ndarray
+    receiver_y_m_sorted: np.ndarray
+
+    source_elevation_m_sorted: np.ndarray
+    receiver_elevation_m_sorted: np.ndarray
+    source_depth_m_sorted: np.ndarray
+
+    input_file_id: str
+    pick_source_description: str
+    datum_solution_path: Path | None
+    residual_solution_path: Path | None
+    linkage_artifact_path: Path | None
+    metadata: dict[str, object] | None = None
+
+    order: str = ORDER
+    sign_convention: str = SIGN_CONVENTION
 
 
 def build_time_term_inversion_inputs(

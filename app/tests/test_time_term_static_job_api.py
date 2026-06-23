@@ -3,6 +3,7 @@ from __future__ import annotations
 from io import BytesIO
 import json
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 
 import numpy as np
@@ -29,6 +30,9 @@ class _Inputs:
         self.datum_solution_path = None
         self.residual_solution_path = None
         self.linkage_artifact_path = tmp_path / 'geometry_linkage.npz'
+        self.datum_trace_shift_s_sorted = np.zeros(2, dtype=np.float64)
+        self.residual_applied_shift_s_sorted = np.zeros(2, dtype=np.float64)
+        self.valid_pick_mask_sorted = np.ones(2, dtype=bool)
 
 
 @pytest.fixture()
@@ -171,11 +175,17 @@ def _install_success_fakes(
 
     def _solve(*args: Any, **kwargs: Any) -> object:
         calls.append('solver')
-        return object()
+        return SimpleNamespace(
+            estimated_trace_time_term_delay_s_sorted=np.zeros(2, dtype=np.float64),
+            prediction_valid_trace_mask_sorted=np.ones(2, dtype=bool),
+        )
 
     def _applied_shift(*args: Any, **kwargs: Any) -> object:
         calls.append('applied_shift')
-        return object()
+        return SimpleNamespace(
+            applied_weathering_shift_s_sorted=np.zeros(2, dtype=np.float64),
+            valid_shift_mask_sorted=np.ones(2, dtype=bool),
+        )
 
     def _artifacts(*, job_dir: Path, **kwargs: Any) -> TimeTermStaticArtifactPaths:
         calls.append('artifacts')
@@ -237,7 +247,7 @@ def _install_success_fakes(
     )
     monkeypatch.setattr(
         time_term_service,
-        'build_time_term_applied_shift_result',
+        'compose_time_term_applied_shifts',
         _applied_shift,
     )
     monkeypatch.setattr(
@@ -440,6 +450,81 @@ def test_run_time_term_static_apply_job_failure_sets_error_message(
     assert job['status'] == 'error'
     assert job['message'] == 'time-term solver mismatch'
     assert 'applied_shift' not in calls
+
+
+def test_time_term_static_apply_validates_weathering_shift_limit() -> None:
+    with pytest.raises(ValueError, match='max_abs_weathering_shift_ms'):
+        time_term_service._validate_max_abs_weathering_shift_ms(
+            np.asarray([0.006, 0.001], dtype=np.float64),
+            np.ones(2, dtype=bool),
+            max_abs_shift_ms=5.0,
+        )
+
+
+def test_time_term_solver_options_use_external_gauge_surface() -> None:
+    payload = _payload()
+    req = TimeTermStaticApplyRequest.model_validate(payload)
+
+    options = time_term_service._sparse_solver_options_from_time_term_request(req)
+
+    assert options.gauge == 'auto_component'
+    assert not hasattr(options, 'reference_node_id')
+
+
+def test_time_term_reference_node_request_is_not_relabelled_after_solve(
+    monkeypatch: pytest.MonkeyPatch,
+    client: TestClient,
+    tmp_path: Path,
+) -> None:
+    payload = _payload()
+    payload['solver']['gauge'] = 'reference_node'
+    payload['solver']['reference_node_id'] = 0
+    req = TimeTermStaticApplyRequest.model_validate(payload)
+    job_id, _job_dir = _create_time_term_job(client, tmp_path)
+    calls: list[str] = []
+    solver_result = SimpleNamespace(
+        estimated_trace_time_term_delay_s_sorted=np.zeros(2, dtype=np.float64),
+        prediction_valid_trace_mask_sorted=np.ones(2, dtype=bool),
+    )
+    _install_success_fakes(monkeypatch, tmp_path, calls)
+
+    def _solve(*args: Any, **kwargs: Any) -> object:
+        calls.append('solver')
+        return solver_result
+
+    def _artifacts(*, job_dir: Path, **kwargs: Any) -> TimeTermStaticArtifactPaths:
+        calls.append('artifacts')
+        assert kwargs['solver_result'] is solver_result
+        solution = job_dir / 'time_term_static_solution.npz'
+        qc = job_dir / 'time_term_static_qc.json'
+        csv = job_dir / 'time_term_statics.csv'
+        np.savez(solution, trace=np.asarray([0.0, 1.0], dtype=np.float64))
+        qc.write_text('{"ok": true}', encoding='utf-8')
+        csv.write_text('trace_index,time_term_ms\n0,0.0\n', encoding='utf-8')
+        return TimeTermStaticArtifactPaths(
+            solution_npz_path=solution,
+            qc_json_path=qc,
+            statics_csv_path=csv,
+        )
+
+    monkeypatch.setattr(time_term_service, 'solve_time_term_robust_least_squares', _solve)
+    monkeypatch.setattr(time_term_service, 'write_time_term_static_artifacts', _artifacts)
+
+    time_term_service.run_time_term_static_apply_job(
+        job_id,
+        req,
+        client.app.state.sv,
+    )
+
+    assert calls == [
+        'inputs',
+        'moveout',
+        'design',
+        'solver',
+        'applied_shift',
+        'artifacts',
+        'apply',
+    ]
 
 
 def test_time_term_static_job_invalid_file_id_becomes_error_status(

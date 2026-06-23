@@ -28,14 +28,12 @@ from app.services.job_runner import (
 )
 from app.services.pipeline_artifacts import get_job_dir
 from app.services.reader import get_reader
-from seis_statics.time_term.apply_shift import (
-    TimeTermAppliedShiftOptions,
-    build_time_term_applied_shift_result,
-)
+from seis_statics.time_term.apply_shift import compose_time_term_applied_shifts
 from seis_statics.time_term import (
     TimeTermDesignMatrixOptions,
     TimeTermMoveoutConfig,
-    TimeTermRobustSolverOptions,
+    TimeTermRobustOptions,
+    TimeTermRobustSolveResult,
     TimeTermSparseSolverOptions,
     build_time_term_design_matrix,
     compute_time_term_moveout,
@@ -344,14 +342,11 @@ def _moveout_config_from_time_term_request(
 def _sparse_solver_options_from_time_term_request(
     req: TimeTermStaticApplyRequest,
 ) -> TimeTermSparseSolverOptions:
+    # The external time-term solver owns the numerical gauge surface. Keep the
+    # public app request in job metadata, but do not relabel solver results.
     return TimeTermSparseSolverOptions(
         damping_lambda=req.solver.damping,
-        gauge=req.solver.gauge,
-        reference_node_id=(
-            req.solver.reference_node_id
-            if req.solver.gauge == 'reference_node'
-            else None
-        ),
+        gauge='none' if req.solver.gauge == 'none' else 'auto_component',
         min_observations=req.solver.robust.min_used_observations,
         max_abs_node_time_term_ms=req.apply.max_abs_shift_ms,
         max_abs_estimated_trace_delay_ms=req.apply.max_abs_shift_ms,
@@ -360,26 +355,48 @@ def _sparse_solver_options_from_time_term_request(
 
 def _robust_solver_options_from_time_term_request(
     req: TimeTermStaticApplyRequest,
-) -> TimeTermRobustSolverOptions:
+) -> TimeTermRobustOptions:
     robust = req.solver.robust
-    return TimeTermRobustSolverOptions(
+    return TimeTermRobustOptions(
         enabled=robust.enabled,
         method=robust.method,
         threshold=robust.threshold,
         max_iterations=robust.max_iterations,
         min_used_fraction=robust.min_used_fraction,
-        min_used_observations=robust.min_used_observations,
+        min_used_count=robust.min_used_observations,
     )
 
 
-def _applied_shift_options_from_time_term_request(
-    req: TimeTermStaticApplyRequest,
-) -> TimeTermAppliedShiftOptions:
-    return TimeTermAppliedShiftOptions(
-        max_abs_weathering_shift_ms=req.apply.max_abs_shift_ms,
-        max_abs_final_shift_ms=req.apply.max_abs_shift_ms,
-        rejected_trace_policy='use_final_model',
-    )
+def _final_time_term_sparse_result(solver_result: object) -> object:
+    if isinstance(solver_result, TimeTermRobustSolveResult):
+        return solver_result.final_solver_result
+    return solver_result
+
+
+def _validate_max_abs_weathering_shift_ms(
+    applied_weathering_shift_s_sorted: np.ndarray,
+    valid_shift_mask_sorted: np.ndarray,
+    *,
+    max_abs_shift_ms: float | None,
+) -> None:
+    if max_abs_shift_ms is None:
+        return
+    limit_ms = float(max_abs_shift_ms)
+    mask = np.asarray(valid_shift_mask_sorted, dtype=bool)
+    values = np.asarray(applied_weathering_shift_s_sorted, dtype=np.float64)
+    if values.shape != mask.shape:
+        raise ValueError(
+            'applied_weathering_shift_s_sorted and valid_shift_mask_sorted '
+            'must have matching shapes'
+        )
+    if not np.any(mask):
+        return
+    max_abs_weathering_ms = float(np.max(np.abs(values[mask])) * 1000.0)
+    if max_abs_weathering_ms > limit_ms:
+        raise ValueError(
+            'applied_weathering_shift_s_sorted exceeds max_abs_weathering_shift_ms: '
+            f'{max_abs_weathering_ms:.6g} > {limit_ms:.6g}'
+        )
 
 
 def _trace_store_apply_options_from_time_term_request(
@@ -515,7 +532,7 @@ def _run_time_term_static_apply_job_body(
     )
     solver_result = solve_time_term_robust_least_squares(
         design,
-        solver_options=_sparse_solver_options_from_time_term_request(req),
+        sparse_solver_options=_sparse_solver_options_from_time_term_request(req),
         robust_options=_robust_solver_options_from_time_term_request(req),
     )
     ensure_job_not_cancelled(state, job_id)
@@ -526,10 +543,23 @@ def _run_time_term_static_apply_job_body(
         progress=0.58,
         message='building_time_term_applied_shifts',
     )
-    applied_shift = build_time_term_applied_shift_result(
-        inputs=inputs,
-        solver_result=solver_result,
-        options=_applied_shift_options_from_time_term_request(req),
+    final_solver_result = _final_time_term_sparse_result(solver_result)
+    applied_shift = compose_time_term_applied_shifts(
+        trace_time_term_delay_s_sorted=(
+            final_solver_result.estimated_trace_time_term_delay_s_sorted
+        ),
+        prediction_valid_trace_mask_sorted=(
+            final_solver_result.prediction_valid_trace_mask_sorted
+        ),
+        datum_applied_shift_s_sorted=inputs.datum_trace_shift_s_sorted,
+        residual_applied_shift_s_sorted=inputs.residual_applied_shift_s_sorted,
+        valid_trace_mask_sorted=inputs.valid_pick_mask_sorted,
+        max_abs_final_applied_shift_ms=req.apply.max_abs_shift_ms,
+    )
+    _validate_max_abs_weathering_shift_ms(
+        applied_shift.applied_weathering_shift_s_sorted,
+        applied_shift.valid_shift_mask_sorted,
+        max_abs_shift_ms=req.apply.max_abs_shift_ms,
     )
     ensure_job_not_cancelled(state, job_id)
 

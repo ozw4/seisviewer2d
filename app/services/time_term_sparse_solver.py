@@ -4,11 +4,13 @@ from __future__ import annotations
 
 from seis_statics.time_term.sparse_solver import (
     TimeTermGaugeMode,
+    TimeTermGaugeResolution,
     TimeTermSolverSystem,
     TimeTermSparseSolverName,
     TimeTermSparseSolverOptions,
     TimeTermSparseSolverResult,
-    build_gauge_matrix,
+    TimeTermTracePredictionPolicy,
+    build_endpoint_sum_gauge_matrix,
     build_node_components,
     build_time_term_solver_system,
     solve_time_term_sparse_least_squares,
@@ -17,11 +19,13 @@ from seis_statics.time_term.sparse_solver import (
 
 __all__ = [
     'TimeTermGaugeMode',
+    'TimeTermGaugeResolution',
     'TimeTermSolverSystem',
     'TimeTermSparseSolverName',
     'TimeTermSparseSolverOptions',
     'TimeTermSparseSolverResult',
-    'build_gauge_matrix',
+    'TimeTermTracePredictionPolicy',
+    'build_endpoint_sum_gauge_matrix',
     'build_node_components',
     'build_time_term_solver_system',
     'solve_time_term_sparse_least_squares',

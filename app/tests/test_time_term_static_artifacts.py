@@ -10,24 +10,21 @@ import numpy as np
 import pytest
 from scipy import sparse
 
-from seis_statics.time_term.apply_shift import (
-    DELAY_TO_SHIFT_CONVENTION,
-    FINAL_SHIFT_CONVENTION,
-    SIGN_CONVENTION,
-    TimeTermAppliedShiftResult,
-)
+from seis_statics.time_term.apply_shift import TimeTermAppliedShiftResult
 from seis_statics.time_term import (
     ORDER,
     TimeTermDesignMatrix,
-    TimeTermInversionInputs,
     TimeTermMoveoutResult,
-    TimeTermRobustIteration,
-    TimeTermRobustSolverOptions,
-    TimeTermRobustSolverResult,
+    TimeTermRobustIterationSummary,
+    TimeTermRobustOptions,
+    TimeTermRobustSolveResult,
     TimeTermSolverSystem,
     TimeTermSparseSolverResult,
 )
 from app.services.time_term_static_artifacts import (
+    DELAY_TO_SHIFT_CONVENTION,
+    FINAL_SHIFT_CONVENTION,
+    SOLUTION_SIGN_CONVENTION,
     TIME_TERM_STATICS_CSV_NAME,
     TIME_TERM_STATIC_QC_JSON_NAME,
     TIME_TERM_STATIC_SOLUTION_NPZ_NAME,
@@ -37,6 +34,7 @@ from app.services.time_term_static_artifacts import (
     build_time_term_statics_csv_rows,
     write_time_term_static_artifacts,
 )
+from app.services.time_term_static_inputs import TimeTermInversionInputs
 
 N_TRACES = 3
 N_NODES = 3
@@ -310,14 +308,20 @@ def _system(
         n_augmented_rows=n_augmented,
         n_nodes=n_nodes,
         damping_prior_s=np.zeros(n_nodes, dtype=np.float64),
-        gauge_mode='mean_zero',
+        gauge_mode='auto_component',
+        gauge_resolution='tikhonov_prior',
         component_id_by_node=np.zeros(n_nodes, dtype=np.int64),
         n_components=1,
+        is_bipartite_by_component=np.zeros(1, dtype=bool),
+        signed_partition_by_node=np.ones(n_nodes, dtype=np.int64),
+        gauge_required_by_component=np.zeros(1, dtype=bool),
+        n_bipartite_components=0,
         damping_lambda=0.01,
         gauge_weight=1.0,
-        reference_node_id=None,
         min_total_observations_per_node=1,
         total_observation_count_by_node=np.asarray([1, 2, 3], dtype=np.int64),
+        endpoint_supported_trace_mask_sorted=np.ones(N_TRACES, dtype=bool),
+        endpoint_identifiable_trace_mask_sorted=np.ones(N_TRACES, dtype=bool),
     )
 
 
@@ -336,6 +340,7 @@ def _sparse_result(**overrides: Any) -> TimeTermSparseSolverResult:
         'rms_residual_before_s': _rms(ROW_DATA_S),
         'rms_residual_after_s': _rms(ROW_RESIDUAL_AFTER_S),
         'used_trace_mask_sorted': np.ones(N_TRACES, dtype=bool),
+        'prediction_valid_trace_mask_sorted': np.ones(N_TRACES, dtype=bool),
         'row_trace_index_sorted': np.arange(N_OBSERVATIONS, dtype=np.int64),
         'solver_name': 'lsmr',
         'solver_istop': 1,
@@ -352,79 +357,60 @@ def _sparse_result(**overrides: Any) -> TimeTermSparseSolverResult:
 
 def _robust_iteration(
     solver_result: TimeTermSparseSolverResult | None = None,
-) -> TimeTermRobustIteration:
+) -> TimeTermRobustIterationSummary:
     solver = _sparse_result() if solver_result is None else solver_result
-    return TimeTermRobustIteration(
-        iteration=0,
-        solver_result=solver,
-        row_used_mask=np.ones(N_OBSERVATIONS, dtype=bool),
-        row_rejected_this_iteration_mask=REJECTED_MASK.copy(),
-        row_residual_s=ROW_RESIDUAL_AFTER_S.copy(),
-        row_score=np.asarray([0.2, 4.2, 0.3], dtype=np.float64),
-        scale_s=0.001,
-        center_s=0.0,
-        threshold_s=0.0035,
-        n_used=N_OBSERVATIONS,
-        n_rejected_total=1,
+    return TimeTermRobustIterationSummary(
+        iteration_index=0,
+        method='mad',
+        n_used_before=N_OBSERVATIONS,
         n_rejected_this_iteration=1,
+        n_used_after=2,
+        residual_center_s=0.0,
+        residual_scale_s=0.001,
+        residual_cutoff_s=0.0035,
+        max_abs_centered_residual_s=float(np.max(np.abs(solver.row_residual_after_s))),
+        converged=True,
+        stop_reason='converged',
     )
 
 
-def _robust_result(**overrides: Any) -> TimeTermRobustSolverResult:
-    final_solver_result = overrides.pop('final_solver_result', _sparse_result())
+def _robust_result(**overrides: Any) -> TimeTermRobustSolveResult:
+    final_solver_result = overrides.pop(
+        'final_solver_result',
+        _sparse_result(used_trace_mask_sorted=FINAL_USED_MASK.copy()),
+    )
     payload: dict[str, Any] = {
+        'initial_solver_result': _sparse_result(),
         'final_solver_result': final_solver_result,
-        'iterations': (_robust_iteration(final_solver_result),),
+        'robust_options': TimeTermRobustOptions(threshold=3.5),
+        'sparse_solver_options': None,
         'initial_used_trace_mask_sorted': np.ones(N_TRACES, dtype=bool),
         'final_used_trace_mask_sorted': FINAL_USED_MASK.copy(),
-        'final_rejected_trace_mask_sorted': REJECTED_MASK.copy(),
+        'rejected_trace_mask_sorted': REJECTED_MASK.copy(),
         'rejected_iteration_sorted': REJECTED_ITERATION.copy(),
-        'initial_row_used_mask': np.ones(N_OBSERVATIONS, dtype=bool),
-        'final_row_used_mask': FINAL_USED_MASK.copy(),
-        'final_row_rejected_mask': REJECTED_MASK.copy(),
-        'row_rejected_iteration': REJECTED_ITERATION.copy(),
-        'method': 'mad',
-        'enabled': True,
+        'iteration_summaries': (_robust_iteration(final_solver_result),),
         'stop_reason': 'converged',
-        'robust_options': TimeTermRobustSolverOptions(threshold=3.5),
         'n_initial_used_traces': N_TRACES,
         'n_final_used_traces': 2,
-        'n_rejected_traces': 1,
-        'final_used_fraction': 2.0 / 3.0,
+        'n_rejected_total': 1,
+        'n_endpoint_supported_traces': N_TRACES,
+        'n_prediction_identifiable_traces': N_TRACES,
+        'n_endpoint_supported_prediction_invalid_due_to_gauge_traces': 0,
+        'n_prediction_valid_traces': N_TRACES,
+        'n_fit_unused_prediction_valid_traces': 1,
+        'n_unsupported_endpoint_traces': 0,
     }
     payload.update(overrides)
-    return TimeTermRobustSolverResult(**payload)
+    return TimeTermRobustSolveResult(**payload)
 
 
 def _applied_shift(**overrides: Any) -> TimeTermAppliedShiftResult:
     payload: dict[str, Any] = {
-        'n_traces': N_TRACES,
-        'dt': DT,
-        'node_time_term_s': NODE_TIME_TERM_S.copy(),
-        'source_node_time_term_s_sorted': np.asarray(
-            [0.010, 0.005, -0.002],
-            dtype=np.float64,
-        ),
-        'receiver_node_time_term_s_sorted': np.asarray(
-            [0.005, -0.002, -0.002],
-            dtype=np.float64,
-        ),
-        'estimated_trace_time_term_delay_s_sorted': ESTIMATED_DELAY_S.copy(),
+        'trace_time_term_delay_s_sorted': ESTIMATED_DELAY_S.copy(),
         'applied_weathering_shift_s_sorted': APPLIED_WEATHERING_SHIFT_S.copy(),
-        'datum_trace_shift_s_sorted': DATUM_SHIFT_S.copy(),
-        'residual_applied_shift_s_sorted': RESIDUAL_SHIFT_S.copy(),
-        'final_trace_shift_s_sorted': FINAL_SHIFT_S.copy(),
-        'valid_pick_mask_sorted': np.ones(N_TRACES, dtype=bool),
-        'final_used_trace_mask_sorted': FINAL_USED_MASK.copy(),
-        'rejected_trace_mask_sorted': REJECTED_MASK.copy(),
-        'rejected_iteration_sorted': REJECTED_ITERATION.copy(),
-        'sign_convention': SIGN_CONVENTION,
-        'order': ORDER,
-        'metadata': {
-            'delay_to_shift_convention': DELAY_TO_SHIFT_CONVENTION,
-            'final_shift_convention': FINAL_SHIFT_CONVENTION,
-            'rejected_trace_policy': 'use_final_model',
-        },
+        'final_applied_shift_s_sorted': FINAL_SHIFT_S.copy(),
+        'valid_shift_mask_sorted': np.ones(N_TRACES, dtype=bool),
+        'max_abs_final_applied_shift_s': float(np.max(np.abs(FINAL_SHIFT_S))),
     }
     payload.update(overrides)
     return TimeTermAppliedShiftResult(**payload)
@@ -435,7 +421,7 @@ def _build_arrays(
     inputs: TimeTermInversionInputs | None = None,
     moveout: TimeTermMoveoutResult | None = None,
     design: TimeTermDesignMatrix | None = None,
-    solver_result: TimeTermSparseSolverResult | TimeTermRobustSolverResult | None = None,
+    solver_result: TimeTermSparseSolverResult | TimeTermRobustSolveResult | None = None,
     applied_shift: TimeTermAppliedShiftResult | None = None,
     metadata: TimeTermStaticArtifactMetadata | None = None,
 ) -> dict[str, np.ndarray]:
@@ -488,6 +474,7 @@ def test_time_term_solution_arrays_store_components_and_conventions() -> None:
     )
     assert arrays['delay_to_shift_convention'].item() == DELAY_TO_SHIFT_CONVENTION
     assert arrays['final_shift_convention'].item() == FINAL_SHIFT_CONVENTION
+    assert arrays['sign_convention'].item() == SOLUTION_SIGN_CONVENTION
     assert arrays['order'].item() == ORDER
 
 
@@ -526,7 +513,7 @@ def test_time_term_solution_arrays_reject_shift_sign_mismatch() -> None:
 def test_time_term_solution_arrays_reject_final_shift_composition_mismatch() -> None:
     bad_shift = replace(
         _applied_shift(),
-        final_trace_shift_s_sorted=FINAL_SHIFT_S + 0.001,
+        final_applied_shift_s_sorted=FINAL_SHIFT_S + 0.001,
     )
 
     with pytest.raises(ValueError, match='final_trace_shift_s_sorted'):

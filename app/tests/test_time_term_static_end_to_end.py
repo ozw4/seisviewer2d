@@ -115,7 +115,7 @@ def test_time_term_static_e2e_recovers_known_delays_and_registers_corrected_stor
 
     with np.load(solution_path, allow_pickle=False) as solution:
         _assert_no_object_dtype(solution)
-        assert str(solution['gauge_mode']) == 'reference_node'
+        assert str(solution['gauge_mode']) == 'auto_component'
         node_time_term = np.asarray(solution['node_time_term_s'])
         estimated_delay = np.asarray(
             solution['estimated_trace_time_term_delay_s_sorted']

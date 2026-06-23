@@ -25,20 +25,16 @@ from app.services.common.array_validation import (
     coerce_positive_int as _coerce_positive_int,
     is_real_numeric_dtype as _is_real_numeric_dtype,
 )
-from seis_statics.time_term.apply_shift import (
-    DELAY_TO_SHIFT_CONVENTION,
-    FINAL_SHIFT_CONVENTION,
-    TimeTermAppliedShiftResult,
-)
+from seis_statics.time_term.apply_shift import TimeTermAppliedShiftResult
 from seis_statics.time_term import (
     TimeTermDesignMatrix,
-    TimeTermInversionInputs,
     TimeTermMoveoutResult,
-    TimeTermRobustIteration,
-    TimeTermRobustSolverResult,
+    TimeTermRobustIterationSummary,
+    TimeTermRobustSolveResult,
     TimeTermSparseSolverResult,
     TimeTermSolverSystem,
 )
+from app.services.time_term_static_inputs import TimeTermInversionInputs
 
 TIME_TERM_STATIC_SOLUTION_NPZ_NAME = 'time_term_static_solution.npz'
 TIME_TERM_STATIC_QC_JSON_NAME = 'time_term_static_qc.json'
@@ -56,6 +52,20 @@ _coerce_1d_integer_int64 = partial(
 
 ESTIMATED_DELAY_SIGN_CONVENTION = (
     'positive delay means observed first-break is late'
+)
+SOLUTION_SIGN_CONVENTION = (
+    'pick_time_after_static_s = pick_time_raw_s '
+    '+ datum_trace_shift_s + residual_applied_shift_s; '
+    'residual_applied_shift_s is an applied event-time shift, not an estimated delay'
+)
+DELAY_TO_SHIFT_CONVENTION = (
+    'applied_weathering_shift_s_sorted = '
+    '-estimated_trace_time_term_delay_s_sorted'
+)
+FINAL_SHIFT_CONVENTION = (
+    'final_trace_shift_s_sorted = datum_trace_shift_s_sorted '
+    '+ residual_applied_shift_s_sorted '
+    '+ applied_weathering_shift_s_sorted'
 )
 REJECTED_TRACE_POLICY = 'use_final_model'
 
@@ -131,7 +141,7 @@ class TimeTermFiniteStats:
 @dataclass(frozen=True)
 class _SolverContext:
     sparse_result: TimeTermSparseSolverResult
-    robust_result: TimeTermRobustSolverResult | None
+    robust_result: TimeTermRobustSolveResult | None
     solver_result_kind: str
     initial_row_used_mask: np.ndarray
     final_row_used_mask: np.ndarray
@@ -141,7 +151,7 @@ class _SolverContext:
     robust_method: str | None
     robust_threshold: float | None
     robust_stop_reason: str
-    robust_iterations: tuple[TimeTermRobustIteration, ...]
+    robust_iterations: tuple[TimeTermRobustIterationSummary, ...]
 
 
 @dataclass(frozen=True)
@@ -242,7 +252,7 @@ def build_time_term_solution_arrays(
     inputs: TimeTermInversionInputs,
     moveout: TimeTermMoveoutResult,
     design: TimeTermDesignMatrix,
-    solver_result: TimeTermSparseSolverResult | TimeTermRobustSolverResult,
+    solver_result: TimeTermSparseSolverResult | TimeTermRobustSolveResult,
     applied_shift: TimeTermAppliedShiftResult,
     metadata: TimeTermStaticArtifactMetadata | None = None,
 ) -> dict[str, np.ndarray]:
@@ -299,28 +309,14 @@ def build_time_term_solution_arrays(
         'robust_n_iterations': _scalar_int(
             _robust_iteration_count(context.solver)
         ),
-        'sign_convention': _scalar_str(applied_shift.sign_convention),
+        'sign_convention': _scalar_str(SOLUTION_SIGN_CONVENTION),
         'delay_to_shift_convention': _scalar_str(
-            _metadata_str(
-                applied_shift.metadata,
-                'delay_to_shift_convention',
-                DELAY_TO_SHIFT_CONVENTION,
-            )
+            DELAY_TO_SHIFT_CONVENTION
         ),
         'final_shift_convention': _scalar_str(
-            _metadata_str(
-                applied_shift.metadata,
-                'final_shift_convention',
-                FINAL_SHIFT_CONVENTION,
-            )
+            FINAL_SHIFT_CONVENTION
         ),
-        'rejected_trace_policy': _scalar_str(
-            _metadata_str(
-                applied_shift.metadata,
-                'rejected_trace_policy',
-                REJECTED_TRACE_POLICY,
-            )
-        ),
+        'rejected_trace_policy': _scalar_str(REJECTED_TRACE_POLICY),
         'solver_result_kind': _scalar_str(context.solver.solver_result_kind),
         'sorted_trace_index': context.sorted_trace_index,
         'pick_time_raw_s_sorted': context.pick_time_raw_s_sorted,
@@ -397,7 +393,7 @@ def build_time_term_qc_payload(
     inputs: TimeTermInversionInputs,
     moveout: TimeTermMoveoutResult,
     design: TimeTermDesignMatrix,
-    solver_result: TimeTermSparseSolverResult | TimeTermRobustSolverResult,
+    solver_result: TimeTermSparseSolverResult | TimeTermRobustSolveResult,
     applied_shift: TimeTermAppliedShiftResult,
     metadata: TimeTermStaticArtifactMetadata | None = None,
 ) -> dict[str, Any]:
@@ -519,16 +515,8 @@ def build_time_term_qc_payload(
         },
         'sign_convention': {
             'estimated_delay': ESTIMATED_DELAY_SIGN_CONVENTION,
-            'applied_shift': _metadata_str(
-                applied_shift.metadata,
-                'delay_to_shift_convention',
-                DELAY_TO_SHIFT_CONVENTION,
-            ),
-            'trace_shift': _metadata_str(
-                applied_shift.metadata,
-                'final_shift_convention',
-                FINAL_SHIFT_CONVENTION,
-            ),
+            'applied_shift': DELAY_TO_SHIFT_CONVENTION,
+            'trace_shift': FINAL_SHIFT_CONVENTION,
         },
         'request': _json_safe(lineage.request),
     }
@@ -541,7 +529,7 @@ def build_time_term_statics_csv_rows(
     inputs: TimeTermInversionInputs,
     moveout: TimeTermMoveoutResult,
     design: TimeTermDesignMatrix,
-    solver_result: TimeTermSparseSolverResult | TimeTermRobustSolverResult,
+    solver_result: TimeTermSparseSolverResult | TimeTermRobustSolveResult,
     applied_shift: TimeTermAppliedShiftResult,
     metadata: TimeTermStaticArtifactMetadata | None = None,
 ) -> list[dict[str, object]]:
@@ -648,7 +636,7 @@ def write_time_term_static_artifacts(
     inputs: TimeTermInversionInputs,
     moveout: TimeTermMoveoutResult,
     design: TimeTermDesignMatrix,
-    solver_result: TimeTermSparseSolverResult | TimeTermRobustSolverResult,
+    solver_result: TimeTermSparseSolverResult | TimeTermRobustSolveResult,
     applied_shift: TimeTermAppliedShiftResult,
     metadata: TimeTermStaticArtifactMetadata | None = None,
 ) -> TimeTermStaticArtifactPaths:
@@ -700,7 +688,7 @@ def _build_artifact_context(
     inputs: TimeTermInversionInputs,
     moveout: TimeTermMoveoutResult,
     design: TimeTermDesignMatrix,
-    solver_result: TimeTermSparseSolverResult | TimeTermRobustSolverResult,
+    solver_result: TimeTermSparseSolverResult | TimeTermRobustSolveResult,
     applied_shift: TimeTermAppliedShiftResult,
     metadata: TimeTermStaticArtifactMetadata | None,
 ) -> _ArtifactContext:
@@ -871,59 +859,39 @@ def _build_artifact_context(
         mask_name='valid moveout traces',
     )
 
+    row_trace_index = _coerce_1d_integer_int64(
+        design.row_trace_index_sorted,
+        name='row_trace_index_sorted',
+        expected_shape=expected_row_shape,
+    )
+    _validate_index_range(
+        row_trace_index,
+        n_unique=n_traces,
+        name='row_trace_index_sorted',
+    )
+
     solver = _extract_solver_context(
         solver_result,
         n_traces=n_traces,
         n_observations=n_observations,
+        row_trace_index_sorted=row_trace_index,
     )
     node_time_term = _coerce_1d_finite_float64(
-        applied_shift.node_time_term_s,
-        name='node_time_term_s',
-        expected_shape=expected_node_shape,
-    )
-    sparse_node_time_term = _coerce_1d_finite_float64(
         solver.sparse_result.node_time_term_s,
         name='solver.node_time_term_s',
         expected_shape=expected_node_shape,
     )
-    if not np.allclose(node_time_term, sparse_node_time_term, rtol=0.0, atol=1.0e-12):
-        raise ValueError('node_time_term_s must match final solver result')
-
-    source_node_time_term = _coerce_1d_finite_float64(
-        applied_shift.source_node_time_term_s_sorted,
-        name='source_node_time_term_s_sorted',
-        expected_shape=expected_trace_shape,
-    )
-    receiver_node_time_term = _coerce_1d_finite_float64(
-        applied_shift.receiver_node_time_term_s_sorted,
-        name='receiver_node_time_term_s_sorted',
-        expected_shape=expected_trace_shape,
-    )
-    expected_source_terms = np.ascontiguousarray(
+    source_node_time_term = np.ascontiguousarray(
         node_time_term[source_node_id],
         dtype=np.float64,
     )
-    expected_receiver_terms = np.ascontiguousarray(
+    receiver_node_time_term = np.ascontiguousarray(
         node_time_term[receiver_node_id],
         dtype=np.float64,
     )
-    if not np.allclose(
-        source_node_time_term,
-        expected_source_terms,
-        rtol=0.0,
-        atol=1.0e-12,
-    ):
-        raise ValueError('source_node_time_term_s_sorted does not match node ids')
-    if not np.allclose(
-        receiver_node_time_term,
-        expected_receiver_terms,
-        rtol=0.0,
-        atol=1.0e-12,
-    ):
-        raise ValueError('receiver_node_time_term_s_sorted does not match node ids')
 
     estimated_delay = _coerce_1d_finite_float64(
-        applied_shift.estimated_trace_time_term_delay_s_sorted,
+        applied_shift.trace_time_term_delay_s_sorted,
         name='estimated_trace_time_term_delay_s_sorted',
         expected_shape=expected_trace_shape,
     )
@@ -951,27 +919,8 @@ def _build_artifact_context(
             '-estimated_trace_time_term_delay_s_sorted'
         )
 
-    applied_datum_shift = _coerce_1d_finite_float64(
-        applied_shift.datum_trace_shift_s_sorted,
-        name='applied_shift.datum_trace_shift_s_sorted',
-        expected_shape=expected_trace_shape,
-    )
-    applied_residual_shift = _coerce_1d_finite_float64(
-        applied_shift.residual_applied_shift_s_sorted,
-        name='applied_shift.residual_applied_shift_s_sorted',
-        expected_shape=expected_trace_shape,
-    )
-    if not np.allclose(applied_datum_shift, datum_shift, rtol=0.0, atol=1.0e-12):
-        raise ValueError('datum_trace_shift_s_sorted must match applied_shift')
-    if not np.allclose(
-        applied_residual_shift,
-        residual_shift,
-        rtol=0.0,
-        atol=1.0e-12,
-    ):
-        raise ValueError('residual_applied_shift_s_sorted must match applied_shift')
     final_shift = _coerce_1d_finite_float64(
-        applied_shift.final_trace_shift_s_sorted,
+        applied_shift.final_applied_shift_s_sorted,
         name='final_trace_shift_s_sorted',
         expected_shape=expected_trace_shape,
     )
@@ -986,20 +935,24 @@ def _build_artifact_context(
         )
 
     final_used_trace_mask = _require_1d_bool_array(
-        applied_shift.final_used_trace_mask_sorted,
+        solver.sparse_result.used_trace_mask_sorted,
         name='final_used_trace_mask_sorted',
         expected_shape=expected_trace_shape,
     )
-    rejected_trace_mask = _require_1d_bool_array(
-        applied_shift.rejected_trace_mask_sorted,
-        name='rejected_trace_mask_sorted',
-        expected_shape=expected_trace_shape,
-    )
-    rejected_iteration = _coerce_1d_integer_int64(
-        applied_shift.rejected_iteration_sorted,
-        name='rejected_iteration_sorted',
-        expected_shape=expected_trace_shape,
-    )
+    if solver.robust_result is None:
+        rejected_trace_mask = np.zeros(expected_trace_shape, dtype=bool)
+        rejected_iteration = np.full(expected_trace_shape, -1, dtype=np.int64)
+    else:
+        rejected_trace_mask = _require_1d_bool_array(
+            solver.robust_result.rejected_trace_mask_sorted,
+            name='rejected_trace_mask_sorted',
+            expected_shape=expected_trace_shape,
+        )
+        rejected_iteration = _coerce_1d_integer_int64(
+            solver.robust_result.rejected_iteration_sorted,
+            name='rejected_iteration_sorted',
+            expected_shape=expected_trace_shape,
+        )
     _validate_rejected_iteration(
         rejected_iteration,
         mask=rejected_trace_mask,
@@ -1015,16 +968,6 @@ def _build_artifact_context(
             rejected_iteration=rejected_iteration,
         )
 
-    row_trace_index = _coerce_1d_integer_int64(
-        design.row_trace_index_sorted,
-        name='row_trace_index_sorted',
-        expected_shape=expected_row_shape,
-    )
-    _validate_index_range(
-        row_trace_index,
-        n_unique=n_traces,
-        name='row_trace_index_sorted',
-    )
     trace_to_row_index = _coerce_trace_to_row_index(
         design.trace_to_row_index_sorted,
         n_traces=n_traces,
@@ -1184,36 +1127,62 @@ def _build_artifact_context(
 
 
 def _extract_solver_context(
-    solver_result: TimeTermSparseSolverResult | TimeTermRobustSolverResult,
+    solver_result: TimeTermSparseSolverResult | TimeTermRobustSolveResult,
     *,
     n_traces: int,
     n_observations: int,
+    row_trace_index_sorted: np.ndarray,
 ) -> _SolverContext:
     expected_trace_shape = (n_traces,)
     expected_row_shape = (n_observations,)
-    if isinstance(solver_result, TimeTermRobustSolverResult):
+    row_trace_index = _coerce_1d_integer_int64(
+        row_trace_index_sorted,
+        name='row_trace_index_sorted',
+        expected_shape=expected_row_shape,
+    )
+    if isinstance(solver_result, TimeTermRobustSolveResult):
         sparse_result = solver_result.final_solver_result
         if not isinstance(sparse_result, TimeTermSparseSolverResult):
             raise ValueError(
                 'final_solver_result must be a TimeTermSparseSolverResult instance'
             )
+        initial_used_trace_mask = _require_1d_bool_array(
+            solver_result.initial_used_trace_mask_sorted,
+            name='initial_used_trace_mask_sorted',
+            expected_shape=expected_trace_shape,
+        )
+        final_used_trace_mask = _require_1d_bool_array(
+            solver_result.final_used_trace_mask_sorted,
+            name='final_used_trace_mask_sorted',
+            expected_shape=expected_trace_shape,
+        )
+        rejected_trace_mask = _require_1d_bool_array(
+            solver_result.rejected_trace_mask_sorted,
+            name='rejected_trace_mask_sorted',
+            expected_shape=expected_trace_shape,
+        )
+        rejected_iteration = _coerce_1d_integer_int64(
+            solver_result.rejected_iteration_sorted,
+            name='rejected_iteration_sorted',
+            expected_shape=expected_trace_shape,
+        )
         initial_row_used = _require_1d_bool_array(
-            solver_result.initial_row_used_mask,
+            initial_used_trace_mask[row_trace_index],
             name='initial_row_used_mask',
             expected_shape=expected_row_shape,
         )
         final_row_used = _require_1d_bool_array(
-            solver_result.final_row_used_mask,
+            final_used_trace_mask[row_trace_index],
             name='final_row_used_mask',
             expected_shape=expected_row_shape,
         )
         final_row_rejected = _require_1d_bool_array(
-            solver_result.final_row_rejected_mask,
+            rejected_trace_mask[row_trace_index],
             name='final_row_rejected_mask',
             expected_shape=expected_row_shape,
         )
         row_rejected_iteration = _coerce_1d_integer_int64(
-            solver_result.row_rejected_iteration,
+            np.where(final_row_rejected, rejected_iteration[row_trace_index], -1),
             name='row_rejected_iteration',
             expected_shape=expected_row_shape,
         )
@@ -1223,11 +1192,6 @@ def _extract_solver_context(
             final_row_rejected=final_row_rejected,
             row_rejected_iteration=row_rejected_iteration,
         )
-        _coerce_1d_bool_array_for_solver_trace_mask(
-            solver_result.initial_used_trace_mask_sorted,
-            'initial_used_trace_mask_sorted',
-            expected_trace_shape,
-        )
         return _SolverContext(
             sparse_result=sparse_result,
             robust_result=solver_result,
@@ -1236,11 +1200,11 @@ def _extract_solver_context(
             final_row_used_mask=final_row_used,
             final_row_rejected_mask=final_row_rejected,
             row_rejected_iteration=row_rejected_iteration,
-            robust_enabled=bool(solver_result.enabled),
-            robust_method=str(solver_result.method),
+            robust_enabled=bool(solver_result.robust_options.enabled),
+            robust_method=str(solver_result.robust_options.method),
             robust_threshold=float(solver_result.robust_options.threshold),
             robust_stop_reason=str(solver_result.stop_reason),
-            robust_iterations=tuple(solver_result.iterations),
+            robust_iterations=tuple(solver_result.iteration_summaries),
         )
 
     if isinstance(solver_result, TimeTermSparseSolverResult):
@@ -1266,7 +1230,7 @@ def _extract_solver_context(
 
     raise ValueError(
         'solver_result must be a TimeTermSparseSolverResult or '
-        'TimeTermRobustSolverResult instance'
+        'TimeTermRobustSolveResult instance'
     )
 
 
@@ -1387,33 +1351,37 @@ def _robust_iteration_payload(context: _ArtifactContext) -> list[dict[str, Any]]
 
 def _robust_iteration_records(context: _ArtifactContext) -> list[dict[str, float | int]]:
     if context.solver.robust_iterations:
-        return [
-            {
-                'iteration_index': int(iteration.iteration),
-                'n_used': int(iteration.n_used),
-                'n_rejected_total': int(iteration.n_rejected_total),
-                'n_rejected_this_iteration': int(
-                    iteration.n_rejected_this_iteration
-                ),
-                'center_s': _coerce_finite_float(
-                    iteration.center_s,
-                    name='robust iteration center_s',
-                ),
-                'scale_s': _coerce_finite_float(
-                    iteration.scale_s,
-                    name='robust iteration scale_s',
-                ),
-                'threshold_s': _coerce_finite_float(
-                    iteration.threshold_s,
-                    name='robust iteration threshold_s',
-                ),
-                'rms_residual_after_s': _coerce_finite_float(
-                    iteration.solver_result.rms_residual_after_s,
-                    name='robust iteration rms_residual_after_s',
-                ),
-            }
-            for iteration in context.solver.robust_iterations
-        ]
+        records: list[dict[str, float | int]] = []
+        n_rejected_total = 0
+        for iteration in context.solver.robust_iterations:
+            n_rejected_total += int(iteration.n_rejected_this_iteration)
+            records.append(
+                {
+                    'iteration_index': int(iteration.iteration_index),
+                    'n_used': int(iteration.n_used_after),
+                    'n_rejected_total': n_rejected_total,
+                    'n_rejected_this_iteration': int(
+                        iteration.n_rejected_this_iteration
+                    ),
+                    'center_s': _coerce_finite_float(
+                        iteration.residual_center_s,
+                        name='robust iteration center_s',
+                    ),
+                    'scale_s': _coerce_finite_float(
+                        iteration.residual_scale_s,
+                        name='robust iteration scale_s',
+                    ),
+                    'threshold_s': _coerce_finite_float(
+                        iteration.residual_cutoff_s,
+                        name='robust iteration threshold_s',
+                    ),
+                    'rms_residual_after_s': _coerce_finite_float(
+                        context.solver.sparse_result.rms_residual_after_s,
+                        name='robust iteration rms_residual_after_s',
+                    ),
+                }
+            )
+        return records
 
     solver = context.solver.sparse_result
     return [
@@ -1684,7 +1652,7 @@ def _validate_no_inf_for_names(
 
 
 def _validate_trace_masks_match_robust_result(
-    robust_result: TimeTermRobustSolverResult,
+    robust_result: TimeTermRobustSolveResult,
     *,
     final_used_trace_mask: np.ndarray,
     rejected_trace_mask: np.ndarray,
@@ -1697,8 +1665,8 @@ def _validate_trace_masks_match_robust_result(
         expected_shape=expected_shape,
     )
     robust_rejected = _require_1d_bool_array(
-        robust_result.final_rejected_trace_mask_sorted,
-        name='robust_result.final_rejected_trace_mask_sorted',
+        robust_result.rejected_trace_mask_sorted,
+        name='robust_result.rejected_trace_mask_sorted',
         expected_shape=expected_shape,
     )
     robust_rejected_iteration = _coerce_1d_integer_int64(

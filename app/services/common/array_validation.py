@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from seis_statics._validation import (
+from seis_statics.validation import (
     coerce_1d_bool_array,
     coerce_1d_castable_finite_float64,
     coerce_1d_finite_float64,

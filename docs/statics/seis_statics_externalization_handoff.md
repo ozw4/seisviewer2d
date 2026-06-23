@@ -2,8 +2,8 @@
 
 ## Purpose
 
-This handoff describes the next repository split for the reusable statics
-numerical core currently living in `seisviewer2d`.
+This handoff records the repository split for the reusable statics numerical
+core now consumed by `seisviewer2d` from the external `seis-statics` package.
 
 The recommended external repository name is:
 
@@ -27,30 +27,23 @@ seis_statics  <-- imported by --  seisai
 `seis_statics` must not import from `app.*` or any other `seisviewer2d`
 application module.
 
-## Initial Export Surface
+## External Export Surface
 
-The first external package should export the Phase 1 numerical surface already
-present in this repository:
+The external package exports the numerical surface consumed by this repository:
 
 ```text
+seis_statics.validation
 seis_statics.trace_shift
 seis_statics.datum
 seis_statics.residual
+seis_statics.time_term
 ```
 
-The initial copy-out should include:
-
-```text
-seis_statics/__init__.py
-seis_statics/_validation.py
-seis_statics/trace_shift.py
-seis_statics/datum/**
-seis_statics/residual/**
-```
-
-Keep private helpers private unless an external caller has a documented need
-for them. The package-level APIs should continue accepting arrays, scalars,
-small dataclasses, and simple Python values rather than application objects.
+The local `seis_statics/` package has been removed from `seisviewer2d`; imports
+must resolve to the installed external distribution. App code should use public
+package modules and avoid private helpers such as `seis_statics._validation`.
+The package-level APIs should continue accepting arrays, scalars, small
+dataclasses, and simple Python values rather than application objects.
 
 ## Modules Left in seisviewer2d
 
@@ -71,9 +64,10 @@ The existing extraction manifest remains the detailed boundary reference:
 docs/statics/static_core_extraction_manifest.md
 ```
 
-## Suggested External Repository Layout
+## External Repository Layout
 
-Use a small source-layout package so tests exercise the installed package:
+The external repository uses a source-layout package so tests exercise the
+installed package:
 
 ```text
 seis-statics/
@@ -82,7 +76,7 @@ seis-statics/
   src/
     seis_statics/
       __init__.py
-      _validation.py
+      validation.py
       trace_shift.py
       datum/
         __init__.py
@@ -95,6 +89,14 @@ seis-statics/
         robust.py
         solver.py
         types.py
+      time_term/
+        __init__.py
+        apply_shift.py
+        design_matrix.py
+        moveout.py
+        robust_solver.py
+        sparse_solver.py
+        types.py
   tests/
     test_datum_math.py
     test_first_break_residual_api.py
@@ -106,8 +108,9 @@ seis-statics/
     test_trace_shift.py
 ```
 
-When copying tests, keep only package-level tests that import `seis_statics`.
-Tests that import `app.*` remain in `seisviewer2d`.
+Package-level numerical unit tests live in `seis-statics`. Tests that import
+`app.*`, verify HTTP/artifact contracts, or smoke-test app consumers remain in
+`seisviewer2d`.
 
 ## Dependency Policy
 
@@ -126,22 +129,15 @@ repository.
 
 ## Local Development Workflow
 
-Use sibling checkouts while the package is still shared across repositories:
+Use an immutable release tag or commit when installing the package for
+`seisviewer2d`:
 
 ```bash
-# future layout
-workspace/
-  seis-statics/
-  seisviewer2d/
-  seisai/
-
-cd workspace/seisviewer2d
-pip install -e ../seis-statics
+pip install "seis-statics @ git+https://github.com/ozw4/seis-statics.git@v0.4.0"
 ```
 
-During the transition, run the package tests in `seis-statics` first, then run
-the `seisviewer2d` tests that exercise wrapper imports and application
-integration.
+Do not rely on sibling checkout path injection, symlinks, editable local
+fallbacks, or runtime `sys.path` manipulation.
 
 ## Version Milestones
 
@@ -154,18 +150,15 @@ v0.3: generic additive solver S/R/CMP/offset
 v0.4: time-term/refraction domain extraction
 ```
 
-Do not include Phase 2+ refraction or time-term extraction in the first release
-unless a separate issue redefines the boundary and validates it against the
-canonical statics design docs.
+`seisviewer2d` currently pins the external package at `v0.4.0`.
 
 ## Guardrails Before Copy-Out
 
-Before creating the external repository, verify:
+Before changing the external package pin or import surface, verify:
 
-- `seis_statics` has no `app.*` imports.
+- `seis_statics` imports resolve outside the `seisviewer2d` repository.
 - Existing `seisviewer2d` wrapper imports still resolve.
-- Package tests pass from an installed editable checkout.
+- Package tests pass in `seis-statics`.
 - Static-shift sign conventions and API response shapes are unchanged.
 - No FastAPI, artifact, cache, job, or SEG-Y reader dependency has crossed into
   the package.
-

@@ -2,8 +2,8 @@
 
 ## Purpose
 
-This document defines the initial extraction boundary for moving reusable
-static-correction numerical code from `seisviewer2d` into a future package while
+This document defines the extraction boundary for reusable static-correction
+numerical code that now lives in the external `seis-statics` package while
 keeping `seisviewer2d` as an application consumer.
 
 The proposed package and import name is:
@@ -24,29 +24,31 @@ FastAPI, `AppState`, `TraceStore`, SEG-Y readers, job lifecycle management,
 artifact registries, background workers, browser UI code, or
 `seisviewer2d` API response schemas.
 
-## Initial Package Surface
+## Current Package Surface
 
-Phase 1 should expose a small numerical surface:
+The external package exposes the application-consumed numerical surface:
 
 ```text
+seis_statics.validation
 seis_statics.trace_shift
 seis_statics.datum
 seis_statics.residual
+seis_statics.time_term
 ```
 
-Internal helpers may live under private modules such as
-`seis_statics._array_validation`, but callers should not need to import them
-directly.
+`seisviewer2d` must import public package modules only. In particular, app code
+must not import private helpers such as `seis_statics._validation` directly.
 
-## Phase 1 Core Candidates
+## Phase 1 Core Ownership
 
-Move or wrap these files first. During migration, update `seisviewer2d` call
-sites to import the package surface directly from app-owned adapters or
-services, without adding fallback import paths.
+The Phase 1 core files are owned by `seis-statics`; the local `seis_statics/`
+shadow package has been removed from this repository. `seisviewer2d` call sites
+import the package surface directly from app-owned adapters or services,
+without fallback import paths.
 
 | Current file | Target area | Notes |
 |---|---|---|
-| `app/services/common/array_validation.py` | private package helper | Pure NumPy validation helpers used by datum, residual, and trace-shift code. |
+| `app/services/common/array_validation.py` | `seis_statics.validation` | Public validation helper imports used by app-side compatibility code. |
 | `app/utils/time_shift.py` | `seis_statics.trace_shift` | Trace-wise interpolation utility. |
 | `app/statics/common/trace_shift.py` | `seis_statics.trace_shift` | Static shift validation and array application. Must keep the repo sign convention: `corrected(t) = raw(t - shift_s)`. |
 | `app/services/datum_static_math.py` | `seis_statics.datum` | Datum static numerical calculation and result type. |
@@ -126,7 +128,8 @@ shift sign conventions.
 
 ## Phase 2+ Time-Term and Refraction Boundary
 
-Time-term numerical core code has been extracted to `seis_statics.time_term`.
+Time-term numerical core code has been extracted to `seis_statics.time_term` in
+the external package.
 Refraction remains a Phase 2+ extraction item. Do not move the full refraction
 stack in one step. Future work should separate pure numerical and domain modules
 into `seis_statics` while keeping request handling, artifact contracts,
@@ -260,10 +263,10 @@ refraction-core package explicitly owns a port interface.
 
 ### Required Test Strategy Before Moving Phase 2+ Modules
 
-Any future move of time-term or refraction modules must be behavior-preserving
-and must not introduce imports from `seis_statics` back into `app`. Before the
-move, add or confirm focused tests around the existing app modules; after the
-move, run the same tests against the package imports and app adapters.
+Any future move of time-term or refraction modules must be behavior-preserving.
+Package-owned numerical unit tests live in `seis-statics`; `seisviewer2d` keeps
+application integration, contract, artifact, import-layer, and sign-convention
+smoke coverage.
 
 Minimum time-term coverage:
 
@@ -298,19 +301,10 @@ SEG-Y reader, app-state, or job-runtime dependencies fail quickly.
 
 ## Migration Order
 
-1. Create this manifest and agree on the extraction boundary.
-2. Add a future `seis_statics` package skeleton with tests copied or adapted
-   around the Phase 1 core modules.
-3. Move private array validation plus trace-shift utilities, then update
-   `seisviewer2d` services to import the new package surface directly.
-4. Move datum static math and update `datum_static_service.py` to import the
-   package surface without changing job artifacts or responses.
-5. Move residual static types, design matrix, sparse solver, and robust solver;
-   update residual services to import the package surface.
-6. Run full `seisviewer2d` checks and compare existing datum/residual artifact
-   and API response shapes.
-7. Only after Phase 1 is stable, move narrowly scoped time-term numerical
-   modules behind `seis_statics.time_term`.
-8. Move refraction domain pieces incrementally behind `seis_statics.refraction`
-   only after the app-only adapters, artifact writers, API schemas, and runtime
-   boundaries are explicit.
+1. Phase 1 trace-shift, datum, residual, and validation code is externalized.
+2. Time-term numerical modules are externalized behind `seis_statics.time_term`.
+3. `seisviewer2d` pins `seis-statics` from an immutable release tag and does
+   not ship a local `seis_statics/` package.
+4. Future work may move refraction domain pieces incrementally behind
+   `seis_statics.refraction` only after the app-only adapters, artifact
+   writers, API schemas, and runtime boundaries are explicit.

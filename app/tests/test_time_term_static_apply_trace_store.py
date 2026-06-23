@@ -9,7 +9,7 @@ import pytest
 
 import app.services.time_term_static_apply_trace_store as svc
 from app.core.state import AppState, create_app_state
-from app.services.time_term_apply_shift import (
+from app.services.time_term_static_artifacts import (
     DELAY_TO_SHIFT_CONVENTION,
     FINAL_SHIFT_CONVENTION,
 )
