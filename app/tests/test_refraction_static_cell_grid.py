@@ -4,7 +4,10 @@ import numpy as np
 import pytest
 
 from app.api.schemas import RefractionStaticRefractorCellRequest
-from app.statics.refraction.domain.cell_grid import (
+from app.statics.refraction.core_options import (
+    refractor_cell_options_from_request,
+)
+from seis_statics.refraction.cell_grid import (
     assign_observation_midpoint_cells,
     assign_points_to_refraction_cells,
     build_refraction_cell_grid,
@@ -30,9 +33,13 @@ def _cell_request(**overrides: object) -> RefractionStaticRefractorCellRequest:
     return RefractionStaticRefractorCellRequest.model_validate(payload)
 
 
+def _cell_options(**overrides: object):
+    return refractor_cell_options_from_request(_cell_request(**overrides))
+
+
 def test_cell_grid_builds_1d_line_cells() -> None:
     grid = build_refraction_cell_grid(
-        _cell_request(
+        _cell_options(
             number_of_cell_x=4,
             size_of_cell_x_m=25.0,
             x_coordinate_origin_m=100.0,
@@ -79,7 +86,7 @@ def test_line_2d_projected_rejects_number_of_cell_y_greater_than_one() -> None:
 
 def test_cell_grid_builds_2d_cells_with_row_major_ids() -> None:
     grid = build_refraction_cell_grid(
-        _cell_request(
+        _cell_options(
             number_of_cell_x=3,
             size_of_cell_x_m=10.0,
             x_coordinate_origin_m=100.0,
@@ -108,7 +115,7 @@ def test_cell_grid_builds_2d_cells_with_row_major_ids() -> None:
 
 def test_assign_points_to_cells_uses_half_open_intervals() -> None:
     grid = build_refraction_cell_grid(
-        _cell_request(number_of_cell_y=2, size_of_cell_y_m=10.0)
+        _cell_options(number_of_cell_y=2, size_of_cell_y_m=10.0)
     )
 
     assignment = assign_points_to_refraction_cells(
@@ -128,7 +135,7 @@ def test_assign_points_to_cells_uses_half_open_intervals() -> None:
 
 def test_assign_points_includes_final_boundary_with_tolerance() -> None:
     grid = build_refraction_cell_grid(
-        _cell_request(number_of_cell_y=2, size_of_cell_y_m=10.0)
+        _cell_options(number_of_cell_y=2, size_of_cell_y_m=10.0)
     )
 
     assignment = assign_points_to_refraction_cells(
@@ -145,7 +152,7 @@ def test_assign_points_includes_final_boundary_with_tolerance() -> None:
 
 def test_assign_points_marks_outside_grid() -> None:
     grid = build_refraction_cell_grid(
-        _cell_request(number_of_cell_y=2, size_of_cell_y_m=10.0)
+        _cell_options(number_of_cell_y=2, size_of_cell_y_m=10.0)
     )
 
     assignment = assign_points_to_refraction_cells(
@@ -183,7 +190,7 @@ def test_assign_points_marks_outside_grid() -> None:
 
 def test_assign_observation_midpoint_cells() -> None:
     grid = build_refraction_cell_grid(
-        _cell_request(number_of_cell_x=4, size_of_cell_x_m=10.0)
+        _cell_options(number_of_cell_x=4, size_of_cell_x_m=10.0)
     )
 
     source_x_m = np.asarray([0.0, 10.0, 25.0])
@@ -225,7 +232,7 @@ def test_assign_observation_midpoint_cells() -> None:
 
 def test_cell_assignment_qc_counts_active_and_inactive_cells() -> None:
     grid = build_refraction_cell_grid(
-        _cell_request(number_of_cell_x=4, size_of_cell_x_m=10.0)
+        _cell_options(number_of_cell_x=4, size_of_cell_x_m=10.0)
     )
 
     assignment = assign_points_to_refraction_cells(

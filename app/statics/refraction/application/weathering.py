@@ -19,16 +19,19 @@ from app.services.common.array_validation import (
     coerce_finite_float as _coerce_finite_float,
 )
 from app.services.common.artifact_io import write_csv_atomic, write_json_atomic
-from app.statics.refraction.domain.cell_grid import (
+from seis_statics.refraction.cell_grid import (
     assign_points_to_refraction_cells,
     build_refraction_cell_grid,
 )
-from app.statics.refraction.domain.cell_coordinates import (
+from seis_statics.refraction.cell_coordinates import (
     effective_refraction_cell_grid_config,
     project_refraction_cell_points,
 )
-from app.statics.refraction.domain.first_layer import (
-    resolve_weathering_velocity_m_s,
+from app.statics.refraction.core_options import (
+    resolve_weathering_velocity_from_model_request as resolve_weathering_velocity_m_s,
+)
+from app.statics.refraction.core_options import (
+    refractor_cell_options_from_request,
 )
 from app.statics.refraction.application.half_intercept import (
     estimate_refraction_half_intercept_times_from_first_breaks,
@@ -663,12 +666,13 @@ def _build_local_v2_model(
         raise RefractionWeatheringThicknessError(
             'solve_cell half-intercept result requires active cell velocities'
         )
+    cell_options = refractor_cell_options_from_request(refractor_cell)
     grid = build_refraction_cell_grid(
-        effective_refraction_cell_grid_config(refractor_cell)
+        effective_refraction_cell_grid_config(cell_options)
     )
     node = _project_local_v2(
         grid=grid,
-        refractor_cell=refractor_cell,
+        refractor_cell=cell_options,
         x_m=data.node_x_m,
         y_m=data.node_y_m,
         active_cell_id=data.active_cell_id,
@@ -678,7 +682,7 @@ def _build_local_v2_model(
     )
     source = _project_local_v2(
         grid=grid,
-        refractor_cell=refractor_cell,
+        refractor_cell=cell_options,
         x_m=data.source_x_m,
         y_m=data.source_y_m,
         active_cell_id=data.active_cell_id,
@@ -688,7 +692,7 @@ def _build_local_v2_model(
     )
     receiver = _project_local_v2(
         grid=grid,
-        refractor_cell=refractor_cell,
+        refractor_cell=cell_options,
         x_m=data.receiver_x_m,
         y_m=data.receiver_y_m,
         active_cell_id=data.active_cell_id,

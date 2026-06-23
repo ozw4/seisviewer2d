@@ -27,19 +27,24 @@ from app.statics.refraction.artifacts.design_matrix import (
     refraction_design_matrix_layer_node_diagnostics_csv_name,
     refraction_design_matrix_layer_qc_json_name,
 )
-from app.statics.refraction.domain.cell_coordinates import (
+from seis_statics.refraction.cell_coordinates import (
     effective_refraction_cell_grid_config,
     project_refraction_cell_coordinates,
 )
-from app.statics.refraction.domain.cell_grid import (
+from seis_statics.refraction.cell_grid import (
     assign_observation_midpoint_cells,
     build_refraction_cell_grid,
 )
-from app.statics.refraction.domain.cell_velocity_status import (
+from seis_statics.refraction.cell_velocity_status import (
     LOW_FOLD_CELL_REJECTION_REASON,
     LOW_FOLD_CELL_VELOCITY_STATUS,
 )
-from app.statics.refraction.domain.first_layer import resolve_weathering_velocity_m_s
+from app.statics.refraction.core_options import (
+    resolve_weathering_velocity_from_model_request as resolve_weathering_velocity_m_s,
+)
+from app.statics.refraction.core_options import (
+    refractor_cell_options_from_request,
+)
 from app.statics.refraction.domain.types import (
     RefractionDesignMatrixNodeDiagnostics,
     RefractionStaticDesignMatrix,
@@ -210,17 +215,18 @@ def build_refraction_static_cell_design_matrix(
             'model.refractor_cell is required when '
             'model.bedrock_velocity_mode is solve_cell'
         )
-    grid_config = effective_refraction_cell_grid_config(refractor_cell)
+    cell_options = refractor_cell_options_from_request(refractor_cell)
+    grid_config = effective_refraction_cell_grid_config(cell_options)
     grid = build_refraction_cell_grid(grid_config)
     projected = project_refraction_cell_coordinates(
         source_x_m=input_model.source_x_m_sorted,
         source_y_m=input_model.source_y_m_sorted,
         receiver_x_m=input_model.receiver_x_m_sorted,
         receiver_y_m=input_model.receiver_y_m_sorted,
-        mode=refractor_cell.coordinate_mode,
-        line_origin_x_m=refractor_cell.line_origin_x_m,
-        line_origin_y_m=refractor_cell.line_origin_y_m,
-        line_azimuth_deg=refractor_cell.line_azimuth_deg,
+        mode=cell_options.coordinate_mode,
+        line_origin_x_m=cell_options.line_origin_x_m,
+        line_origin_y_m=cell_options.line_origin_y_m,
+        line_azimuth_deg=cell_options.line_azimuth_deg,
     )
     assignment = assign_observation_midpoint_cells(
         grid,
@@ -246,8 +252,8 @@ def build_refraction_static_cell_design_matrix(
         n_total_cells=int(grid.cell_id.shape[0]),
         number_of_cell_x=grid.number_of_cell_x,
         number_of_cell_y=grid.number_of_cell_y,
-        cell_assignment_mode=refractor_cell.assignment_mode,
-        min_observations_per_cell=refractor_cell.min_observations_per_cell,
+        cell_assignment_mode=cell_options.assignment_mode,
+        min_observations_per_cell=cell_options.min_observations_per_cell,
         rejection_reason_sorted=input_model.rejection_reason_sorted,
         coordinate_qc=projected.qc,
         include_diagnostics=include_diagnostics,

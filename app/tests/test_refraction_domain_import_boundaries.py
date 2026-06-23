@@ -10,16 +10,9 @@ DOMAIN_ROOT = Path(__file__).resolve().parents[1] / 'statics' / 'refraction' / '
 
 DOMAIN_MODULES = {
     'types': 'RefractionStaticInputModel',
-    'status': 'REFRACTION_STATIC_STATUSES',
     'qc_types': 'RefractionFirstBreakQcSeries',
     'export_types': 'RefractionStaticEndpointExportRow',
     'export_units': 'normalize_export_units',
-    'first_layer': 'resolve_weathering_velocity_m_s',
-    'layer_config': 'normalize_refraction_static_layers',
-    'layer_observations': 'build_refraction_layer_observation_masks',
-    'cell_coordinates': 'project_refraction_cell_coordinates',
-    'cell_grid': 'build_refraction_cell_grid',
-    'cell_regularization': 'build_cell_slowness_smoothing_rows',
     'field_composition': 'compose_refraction_final_trace_shift',
     'manual_static': 'resolve_refraction_manual_static',
     'solver': 'solve_refraction_static_bounded_ls',

@@ -24,15 +24,25 @@ from app.statics.refraction.contracts.inputs import (
 )
 from app.statics.refraction.contracts.model import RefractionStaticModelRequest
 from app.statics.refraction.artifacts import write_refraction_static_artifacts
-from app.statics.refraction.domain.cell_coordinates import (
+from seis_statics.refraction.cell_coordinates import (
     effective_refraction_cell_grid_config,
     project_refraction_cell_points,
 )
-from app.statics.refraction.domain.cell_grid import (
+from seis_statics.refraction.cell_grid import (
     RefractionCellGrid,
     assign_observation_midpoint_cells,
     assign_points_to_refraction_cells,
     build_refraction_cell_grid,
+)
+from seis_statics.refraction.layer_config import (
+    RefractionLayerConfigLayer as RefractionStaticLayerConfig,
+)
+from seis_statics.refraction.types import RefractionLayerObservationMasks
+from app.statics.refraction.core_options import (
+    layer_observation_masks_from_input_model,
+    layer_observation_qc_for_viewer as refraction_layer_observation_qc,
+    normalized_layers_from_model_request,
+    refractor_cell_options_from_request,
 )
 from app.statics.refraction.application.datum import (
     build_refraction_datum_statics,
@@ -50,14 +60,6 @@ from app.statics.refraction.application.design_matrix import (
 from app.statics.refraction.application.half_intercept import (
     estimate_refraction_half_intercept_times_from_first_breaks,
 )
-from app.statics.refraction.domain.layer_config import (
-    RefractionStaticLayerConfig,
-    normalize_refraction_static_layers,
-)
-from app.statics.refraction.domain.layer_observations import (
-    build_refraction_layer_observation_masks,
-    refraction_layer_observation_qc,
-)
 from app.statics.refraction.domain.t1lsst import (
     compute_t1lsst_2layer_thicknesses_with_status,
 )
@@ -65,7 +67,6 @@ from app.statics.refraction.domain.types import (
     RefractionDatumStaticsResult,
     RefractionHalfInterceptTimeResult,
     RefractionLayerKind,
-    RefractionLayerObservationMasks,
     RefractionLayerSolveResult,
     RefractionLayerVelocityMode,
     RefractionMultiLayerStaticComponents,
@@ -166,6 +167,7 @@ def solve_refraction_multilayer_time_terms(
             input_model=input_model,
             layer_masks=layer_masks,
             layer_kind=config.kind,
+            model=model,
         )
         layer_model = _model_for_layer(model=model, config=config)
         layer_job_dir = _layer_design_matrix_artifact_dir(job_dir, config)
@@ -214,7 +216,7 @@ def solve_refraction_multilayer_time_terms(
         input_model.receiver_node_id_sorted,
     )
     enabled_kinds = tuple(config.kind for config in normalized_layers)
-    observation_gates = refraction_layer_observation_qc(layer_masks)
+    observation_gates = refraction_layer_observation_qc(layer_masks, model=model)
     layer_qc = _multilayer_layer_qc(
         layer_results=tuple(layer_results),
         observation_gates=observation_gates,
@@ -256,10 +258,10 @@ def compute_refraction_multilayer_datum_statics_from_input_model(
     """Run the implemented multi-layer time-term, T1LSST, and datum workflow."""
     if runtime is None and state is not None:
         raise TypeError('runtime is required; AppState adaptation belongs in adapters')
-    normalized_layers = normalize_refraction_static_layers(model)
+    normalized_layers = normalized_layers_from_model_request(model)
     _require_multilayer_t1lsst_layers(normalized_layers)
     layer_count = len(normalized_layers)
-    layer_masks = build_refraction_layer_observation_masks(
+    layer_masks = layer_observation_masks_from_input_model(
         input_model=input_model,
         model=model,
     )
@@ -381,7 +383,7 @@ def _artifact_request_for_multilayer_workflow(
         datum=datum,
         conversion=RefractionStaticConversionRequest(
             mode='t1lsst_multilayer',
-            layer_count=len(normalize_refraction_static_layers(model)),
+            layer_count=len(normalized_layers_from_model_request(model)),
         ),
         apply=apply_options or RefractionStaticApplyOptions(),
     )
@@ -404,7 +406,7 @@ def build_refraction_multilayer_weathering_replacement_statics(
     resolved_first_layer: ResolvedRefractionFirstLayer,
 ) -> RefractionWeatheringReplacementStaticsResult:
     """Build T1LSST replacement statics from production layer solves."""
-    normalized_layers = normalize_refraction_static_layers(model)
+    normalized_layers = normalized_layers_from_model_request(model)
     _require_multilayer_t1lsst_layers(normalized_layers)
     layer_count = len(normalized_layers)
     v2_layer = _required_layer_result(solve_result, 'v2_t1')
@@ -1506,8 +1508,9 @@ def _cell_v2_static_model(
         raise RefractionMultiLayerSolveError(
             'solve_cell V2 layer must return active cell velocities'
         )
+    cell_options = refractor_cell_options_from_request(model.refractor_cell)
     grid = build_refraction_cell_grid(
-        effective_refraction_cell_grid_config(model.refractor_cell)
+        effective_refraction_cell_grid_config(cell_options)
     )
     n_total_cells = int(grid.cell_id.shape[0])
     cell_velocity_m_s = _cell_indexed_float_array(
@@ -1528,7 +1531,7 @@ def _cell_v2_static_model(
     )
     node_cell, node_v2, node_status = _project_v2_to_points(
         grid=grid,
-        refractor_cell=model.refractor_cell,
+        refractor_cell=cell_options,
         x_m=input_model.node_x_m,
         y_m=input_model.node_y_m,
         active_cell_id=layer.active_cell_id,
@@ -1538,7 +1541,7 @@ def _cell_v2_static_model(
     )
     source_cell, source_v2, source_status = _project_v2_to_points(
         grid=grid,
-        refractor_cell=model.refractor_cell,
+        refractor_cell=cell_options,
         x_m=source.x_m,
         y_m=source.y_m,
         active_cell_id=layer.active_cell_id,
@@ -1548,7 +1551,7 @@ def _cell_v2_static_model(
     )
     receiver_cell, receiver_v2, receiver_status = _project_v2_to_points(
         grid=grid,
-        refractor_cell=model.refractor_cell,
+        refractor_cell=cell_options,
         x_m=receiver.x_m,
         y_m=receiver.y_m,
         active_cell_id=layer.active_cell_id,
@@ -1573,18 +1576,18 @@ def _cell_v2_static_model(
     source_projected = project_refraction_cell_points(
         x_m=input_model.source_x_m_sorted,
         y_m=input_model.source_y_m_sorted,
-        mode=model.refractor_cell.coordinate_mode,
-        line_origin_x_m=model.refractor_cell.line_origin_x_m,
-        line_origin_y_m=model.refractor_cell.line_origin_y_m,
-        line_azimuth_deg=model.refractor_cell.line_azimuth_deg,
+        mode=cell_options.coordinate_mode,
+        line_origin_x_m=cell_options.line_origin_x_m,
+        line_origin_y_m=cell_options.line_origin_y_m,
+        line_azimuth_deg=cell_options.line_azimuth_deg,
     )
     receiver_projected = project_refraction_cell_points(
         x_m=input_model.receiver_x_m_sorted,
         y_m=input_model.receiver_y_m_sorted,
-        mode=model.refractor_cell.coordinate_mode,
-        line_origin_x_m=model.refractor_cell.line_origin_x_m,
-        line_origin_y_m=model.refractor_cell.line_origin_y_m,
-        line_azimuth_deg=model.refractor_cell.line_azimuth_deg,
+        mode=cell_options.coordinate_mode,
+        line_origin_x_m=cell_options.line_origin_x_m,
+        line_origin_y_m=cell_options.line_origin_y_m,
+        line_azimuth_deg=cell_options.line_azimuth_deg,
     )
     row_assignment = assign_observation_midpoint_cells(
         grid,
@@ -2214,6 +2217,7 @@ def _input_model_for_layer(
     input_model: RefractionStaticInputModel,
     layer_masks: RefractionLayerObservationMasks,
     layer_kind: RefractionLayerKind,
+    model: RefractionStaticModelRequest,
 ) -> RefractionStaticInputModel:
     try:
         used_mask = layer_masks.layer_used_mask_sorted[layer_kind]
@@ -2239,7 +2243,7 @@ def _input_model_for_layer(
         qc={
             **input_model.qc,
             'active_layer_kind': layer_kind,
-            'layers': refraction_layer_observation_qc(layer_masks),
+            'layers': refraction_layer_observation_qc(layer_masks, model=model),
         },
         layer_observation_masks=layer_masks,
     )
@@ -2520,24 +2524,25 @@ def _layer_rejection_reason_from_context(
         raise RefractionMultiLayerSolveError(
             f'{context.layer_config.kind} solve_cell layer requires refractor_cell'
         )
+    cell_options = refractor_cell_options_from_request(refractor_cell)
     grid = build_refraction_cell_grid(
-        effective_refraction_cell_grid_config(refractor_cell)
+        effective_refraction_cell_grid_config(cell_options)
     )
     source_projected = project_refraction_cell_points(
         x_m=context.input_model.source_x_m_sorted,
         y_m=context.input_model.source_y_m_sorted,
-        mode=refractor_cell.coordinate_mode,
-        line_origin_x_m=refractor_cell.line_origin_x_m,
-        line_origin_y_m=refractor_cell.line_origin_y_m,
-        line_azimuth_deg=refractor_cell.line_azimuth_deg,
+        mode=cell_options.coordinate_mode,
+        line_origin_x_m=cell_options.line_origin_x_m,
+        line_origin_y_m=cell_options.line_origin_y_m,
+        line_azimuth_deg=cell_options.line_azimuth_deg,
     )
     receiver_projected = project_refraction_cell_points(
         x_m=context.input_model.receiver_x_m_sorted,
         y_m=context.input_model.receiver_y_m_sorted,
-        mode=refractor_cell.coordinate_mode,
-        line_origin_x_m=refractor_cell.line_origin_x_m,
-        line_origin_y_m=refractor_cell.line_origin_y_m,
-        line_azimuth_deg=refractor_cell.line_azimuth_deg,
+        mode=cell_options.coordinate_mode,
+        line_origin_x_m=cell_options.line_origin_x_m,
+        line_origin_y_m=cell_options.line_origin_y_m,
+        line_azimuth_deg=cell_options.line_azimuth_deg,
     )
     assignment = assign_observation_midpoint_cells(
         grid,
@@ -2561,7 +2566,7 @@ def _layer_rejection_reason_from_context(
     min_observations_per_cell = (
         context.layer_config.min_observations_per_cell
         if context.layer_config.min_observations_per_cell is not None
-        else refractor_cell.min_observations_per_cell
+        else cell_options.min_observations_per_cell
     )
     low_fold_cell = (
         (cell_observation_count > 0)

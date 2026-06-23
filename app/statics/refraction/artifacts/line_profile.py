@@ -50,12 +50,15 @@ from app.statics.refraction.artifacts.io import (
     _write_npz_atomic,
 )
 from app.statics.refraction.artifacts.stats import _stat, _status_counts
-from app.statics.refraction.domain.cell_coordinates import (
+from seis_statics.refraction.cell_coordinates import (
     project_refraction_cell_points,
     refraction_cell_coordinate_metadata_from_config,
 )
-from app.statics.refraction.domain.status import (
+from seis_statics.refraction.status import (
     classify_refraction_endpoint_static_status,
+)
+from app.statics.refraction.core_options import (
+    refractor_cell_options_from_request,
 )
 from app.statics.refraction.domain.types import RefractionDatumStaticsResult
 
@@ -228,7 +231,9 @@ def _line_profile_coordinate_metadata(
             'line_origin_y_m': None,
             'line_azimuth_deg': None,
         }
-    return refraction_cell_coordinate_metadata_from_config(refractor_cell)
+    return refraction_cell_coordinate_metadata_from_config(
+        refractor_cell_options_from_request(refractor_cell)
+    )
 
 
 def _empty_line_profile_qc_arrays() -> dict[str, np.ndarray]:

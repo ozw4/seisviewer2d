@@ -50,9 +50,9 @@ from app.statics.refraction.artifacts.source_depth import (
 from app.statics.refraction.artifacts.uphole import (
     write_refraction_uphole_artifacts,
 )
-from app.statics.refraction.domain.layer_observations import (
-    build_refraction_layer_observation_masks,
-    refraction_layer_observation_qc,
+from app.statics.refraction.core_options import (
+    layer_observation_masks_from_input_model,
+    layer_observation_qc_for_viewer as refraction_layer_observation_qc,
 )
 from app.statics.refraction.domain.source_depth import (
     resolve_refraction_source_depth_for_input_model,
@@ -583,7 +583,7 @@ def build_refraction_static_input_model_from_arrays(
             uphole_result=uphole_result,
         )
     if model is not None and getattr(model, 'layers', None) is not None:
-        layer_masks = build_refraction_layer_observation_masks(
+        layer_masks = layer_observation_masks_from_input_model(
             input_model=input_model,
             model=model,
         )
@@ -591,7 +591,7 @@ def build_refraction_static_input_model_from_arrays(
             input_model,
             qc={
                 **input_model.qc,
-                'layers': refraction_layer_observation_qc(layer_masks),
+                'layers': refraction_layer_observation_qc(layer_masks, model=model),
             },
             layer_observation_masks=layer_masks,
         )

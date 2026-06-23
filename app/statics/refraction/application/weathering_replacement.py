@@ -19,10 +19,10 @@ from app.services.common.array_validation import (
     coerce_finite_float as _coerce_finite_float,
 )
 from app.services.common.artifact_io import write_csv_atomic, write_json_atomic
-from app.statics.refraction.domain.first_layer import (
+from seis_statics.refraction.first_layer import (
     validate_resolved_first_layer_velocity_match,
 )
-from app.statics.refraction.domain.status import LOCAL_V2_STATUS_VALUES
+from seis_statics.refraction.status import LOCAL_V2_STATUS_VALUES
 from app.statics.refraction.domain.t1lsst import (
     RefractionT1LSSTError,
     compute_t1lsst_1layer_weathering_correction,

@@ -22,7 +22,7 @@ from seis_statics.refraction import (
     RefractionStaticSolverOptions,
 )
 
-from app.statics.refraction.application.core_options import (
+from app.statics.refraction.core_options import (
     conversion_options_from_request,
     datum_options_from_request,
     first_layer_options_from_request,
@@ -389,7 +389,7 @@ def test_invalid_refraction_requests_are_rejected_before_conversion(
 def test_refraction_core_options_import_is_lightweight() -> None:
     code = (
         'import sys; '
-        'import app.statics.refraction.application.core_options; '
+        'import app.statics.refraction.core_options; '
         'forbidden = ['
         '"app.statics.refraction.api.apply", '
         '"app.statics.refraction.artifacts.writer", '

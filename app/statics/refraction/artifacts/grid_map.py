@@ -8,15 +8,16 @@ from typing import Any
 import numpy as np
 
 from app.statics.refraction.contracts.apply import RefractionStaticApplyRequest
-from app.statics.refraction.domain.cell_coordinates import (
+from seis_statics.refraction.cell_coordinates import (
     effective_refraction_cell_grid_config,
     refraction_cell_coordinate_metadata_from_config,
 )
-from app.statics.refraction.domain.cell_velocity_status import (
+from seis_statics.refraction.cell_velocity_status import (
     LOW_FOLD_CELL_VELOCITY_STATUS,
 )
-from app.statics.refraction.domain.layer_config import (
-    normalize_refraction_static_layers,
+from app.statics.refraction.core_options import (
+    normalized_layers_from_model_request,
+    refractor_cell_options_from_request,
 )
 from app.statics.refraction.domain.types import (
     RefractionDatumStaticsResult,
@@ -199,7 +200,8 @@ def build_refraction_grid_map_qc_arrays(
         raise RefractionStaticArtifactError(
             'model.refractor_cell is required for grid map QC artifacts'
         )
-    grid_config = effective_refraction_cell_grid_config(refractor_cell)
+    cell_options = refractor_cell_options_from_request(refractor_cell)
+    grid_config = effective_refraction_cell_grid_config(cell_options)
     arrays.update(
         {
             'artifact_version': _scalar_str(ARTIFACT_VERSION),
@@ -246,7 +248,8 @@ def build_refraction_grid_map_qc_payload(
         raise RefractionStaticArtifactError(
             'model.refractor_cell is required for grid map QC artifacts'
         )
-    grid_config = effective_refraction_cell_grid_config(refractor_cell)
+    cell_options = refractor_cell_options_from_request(refractor_cell)
+    grid_config = effective_refraction_cell_grid_config(cell_options)
 
     layers = {}
     raw_layer_kind = np.asarray(arrays['layer_kind']).astype(str, copy=False)
@@ -270,9 +273,9 @@ def build_refraction_grid_map_qc_payload(
             'json': REFRACTION_GRID_MAP_QC_JSON_NAME,
         },
         'grid': {
-            'cell_assignment_mode': refractor_cell.assignment_mode,
-            **refraction_cell_coordinate_metadata_from_config(refractor_cell),
-            'outside_grid_policy': refractor_cell.outside_grid_policy,
+            'cell_assignment_mode': cell_options.assignment_mode,
+            **refraction_cell_coordinate_metadata_from_config(cell_options),
+            'outside_grid_policy': cell_options.outside_grid_policy,
             'number_of_cell_x': int(grid_config.number_of_cell_x),
             'number_of_cell_y': int(grid_config.number_of_cell_y),
             'size_of_cell_x_m': float(grid_config.size_of_cell_x_m),
@@ -355,7 +358,7 @@ def _grid_map_qc_global_velocity_layers(
     req: RefractionStaticApplyRequest,
 ) -> list[dict[str, str]]:
     rows: list[dict[str, str]] = []
-    for layer in normalize_refraction_static_layers(req.model):
+    for layer in normalized_layers_from_model_request(req.model):
         if layer.velocity_mode == 'solve_cell':
             continue
         rows.append(

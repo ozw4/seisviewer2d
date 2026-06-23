@@ -42,20 +42,18 @@ from app.statics.refraction.domain.field_composition import (
     compose_refraction_final_trace_shift,
     compose_refraction_trace_field_corrections,
 )
-from app.statics.refraction.domain.first_layer import (
-    normalize_refraction_first_layer_request,
+from seis_statics.refraction.layer_config import (
+    RefractionLayerConfigLayer as RefractionStaticLayerConfig,
+)
+from app.statics.refraction.core_options import (
+    layer_observation_masks_from_input_model,
+    layer_observation_qc_for_viewer as refraction_layer_observation_qc,
+    normalize_first_layer_from_model_request as normalize_refraction_first_layer_request,
+    normalized_layers_from_model_request,
 )
 from app.statics.refraction.application.input_model import build_refraction_static_input_model
 from app.statics.refraction.ports.job_context import RefractionJobContext
 from app.statics.refraction.ports.runtime import RefractionRuntime
-from app.statics.refraction.domain.layer_config import (
-    RefractionStaticLayerConfig,
-    normalize_refraction_static_layers,
-)
-from app.statics.refraction.domain.layer_observations import (
-    build_refraction_layer_observation_masks,
-    refraction_layer_observation_qc,
-)
 from app.statics.refraction.domain.manual_static import (
     RefractionManualStaticTableRow,
     load_refraction_manual_static_table_rows,
@@ -250,7 +248,7 @@ def _reject_unsupported_multilayer_apply(req: RefractionStaticApplyRequest) -> N
     if req.model.method == 'multilayer_time_term':
         unsupported_layers = [
             config.kind
-            for config in normalize_refraction_static_layers(req.model)
+            for config in normalized_layers_from_model_request(req.model)
             if config.kind != 'v2_t1'
         ]
         if unsupported_layers:
@@ -283,7 +281,7 @@ def _is_public_multilayer_apply(
 def _require_public_multilayer_apply(
     req: RefractionStaticApplyRequest,
 ) -> None:
-    normalized_layers = normalize_refraction_static_layers(req.model)
+    normalized_layers = normalized_layers_from_model_request(req.model)
     enabled_kinds = tuple(config.kind for config in normalized_layers)
     enabled_text = ', '.join(enabled_kinds) if enabled_kinds else 'none'
     expected_by_count = {
@@ -326,7 +324,7 @@ def _solver_request_for_refraction_static_apply(
 ) -> RefractionStaticApplyRequest:
     if req.model.method != 'multilayer_time_term':
         return req
-    normalized_layers = normalize_refraction_static_layers(req.model)
+    normalized_layers = normalized_layers_from_model_request(req.model)
     if len(normalized_layers) != 1 or normalized_layers[0].kind != 'v2_t1':
         raise RefractionMultiLayerApplyNotImplemented(
             'refraction static apply can currently execute only a single '
@@ -379,7 +377,7 @@ def _solver_input_model_for_refraction_static_apply(
 ) -> RefractionStaticInputModel | None:
     if input_model is None or req.model.method != 'multilayer_time_term':
         return input_model
-    normalized_layers = normalize_refraction_static_layers(req.model)
+    normalized_layers = normalized_layers_from_model_request(req.model)
     if len(normalized_layers) != 1 or normalized_layers[0].kind != 'v2_t1':
         raise RefractionMultiLayerApplyNotImplemented(
             'refraction static apply can currently execute only a single '
@@ -387,7 +385,7 @@ def _solver_input_model_for_refraction_static_apply(
         )
     layer_masks = input_model.layer_observation_masks
     if layer_masks is None:
-        layer_masks = build_refraction_layer_observation_masks(
+        layer_masks = layer_observation_masks_from_input_model(
             input_model=input_model,
             model=req.model,
         )
@@ -416,7 +414,7 @@ def _solver_input_model_for_refraction_static_apply(
         qc={
             **input_model.qc,
             'active_layer_kind': 'v2_t1',
-            'layers': refraction_layer_observation_qc(layer_masks),
+            'layers': refraction_layer_observation_qc(layer_masks, model=req.model),
         },
         layer_observation_masks=layer_masks,
     )

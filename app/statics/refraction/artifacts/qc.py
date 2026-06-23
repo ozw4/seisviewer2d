@@ -50,7 +50,10 @@ from app.statics.refraction.artifacts.validation import (
     _validate_resolved_first_layer,
     _validate_result,
 )
-from app.statics.refraction.domain.cell_coordinates import refraction_cell_coordinate_metadata_from_config
+from seis_statics.refraction.cell_coordinates import refraction_cell_coordinate_metadata_from_config
+from app.statics.refraction.core_options import (
+    refractor_cell_options_from_request,
+)
 from app.statics.refraction.artifacts.source_depth import REFRACTION_SOURCE_DEPTH_SOURCES_CSV_NAME
 from app.statics.refraction.artifacts.uphole import REFRACTION_UPHOLE_SOURCES_CSV_NAME
 from app.statics.refraction.domain.types import (
@@ -339,7 +342,7 @@ def build_refraction_static_qc_payload(
         component = _cell_velocity_component(layer_kind)
         cell_artifact_names = _cell_velocity_artifact_names(layer_kind)
         coordinate_metadata = refraction_cell_coordinate_metadata_from_config(
-            refractor_cell
+            refractor_cell_options_from_request(refractor_cell)
         )
         cell_artifacts_by_layer = {}
         for item_layer_kind in cell_velocity_layer_kinds:

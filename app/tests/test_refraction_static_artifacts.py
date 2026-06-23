@@ -17,6 +17,9 @@ import app.statics.refraction.artifacts.components as components_module
 import app.statics.refraction.artifacts.solution as solution_module
 import app.statics.refraction.artifacts.validation as validation_module
 from app.statics.refraction.artifacts import registry as artifact_registry
+from app.statics.refraction.artifacts.first_break import (
+    build_refraction_reduced_time_qc_payload,
+)
 from app.statics.refraction.artifacts.io import (
     _write_csv_atomic,
     _write_json_atomic,
@@ -2320,6 +2323,66 @@ def test_reduced_time_qc_includes_layer_gate_flags() -> None:
     assert arrays['within_v2_t1_gate'].tolist() == [True, True, True]
     assert arrays['within_v3_t2_gate'].tolist() == [False, False, False]
     assert arrays['within_vsub_t3_gate'].tolist() == [False, False, False]
+
+
+def test_reduced_time_qc_offset_gates_preserve_disabled_layers() -> None:
+    payload = _request().model_dump(mode='json')
+    payload['model'] = {
+        'method': 'multilayer_time_term',
+        'first_layer': {
+            'mode': 'constant',
+            'weathering_velocity_m_s': 800.0,
+        },
+        'layers': [
+            {
+                'kind': 'v2_t1',
+                'enabled': True,
+                'min_offset_m': 0.0,
+                'max_offset_m': 150.0,
+                'velocity_mode': 'solve_global',
+                'initial_velocity_m_s': 2400.0,
+                'min_velocity_m_s': 1200.0,
+                'max_velocity_m_s': 3500.0,
+            },
+            {
+                'kind': 'v3_t2',
+                'enabled': False,
+                'min_offset_m': None,
+                'max_offset_m': None,
+                'velocity_mode': 'solve_global',
+                'initial_velocity_m_s': 3600.0,
+                'min_velocity_m_s': 2600.0,
+                'max_velocity_m_s': 6500.0,
+            },
+            {
+                'kind': 'vsub_t3',
+                'enabled': False,
+                'min_offset_m': None,
+                'max_offset_m': None,
+                'velocity_mode': 'fixed_global',
+                'fixed_velocity_m_s': 5200.0,
+                'min_velocity_m_s': 3800.0,
+                'max_velocity_m_s': 9000.0,
+            },
+        ],
+    }
+    payload['conversion'] = {
+        'mode': 't1lsst_multilayer',
+        'layer_count': 1,
+    }
+
+    qc = build_refraction_reduced_time_qc_payload(
+        result=_result(),
+        req=RefractionStaticApplyRequest.model_validate(payload),
+    )
+
+    assert qc['offset_gates']['v2_t1']['enabled'] is True
+    assert qc['offset_gates']['v3_t2'] == {
+        'enabled': False,
+        'min_offset_m': None,
+        'max_offset_m': None,
+    }
+    assert qc['offset_gates']['vsub_t3']['enabled'] is False
 
 
 def test_first_break_fit_qc_reports_cell_and_multilayer_context(

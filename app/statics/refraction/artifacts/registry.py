@@ -7,8 +7,8 @@ from pathlib import Path
 from typing import Any
 
 from app.statics.refraction.contracts.apply import RefractionStaticApplyRequest
-from app.statics.refraction.domain.layer_config import (
-    normalize_refraction_static_layers,
+from app.statics.refraction.core_options import (
+    normalized_layers_from_model_request,
 )
 from app.statics.refraction.artifacts.design_matrix import (
     REFRACTION_DESIGN_MATRIX_NODE_DIAGNOSTICS_CSV_NAME,
@@ -486,7 +486,7 @@ def _request_cell_velocity_layer_kinds(
         return ('v2_t1',) if req.model.bedrock_velocity_mode == 'solve_cell' else ()
     return tuple(
         config.kind
-        for config in normalize_refraction_static_layers(req.model)
+        for config in normalized_layers_from_model_request(req.model)
         if config.velocity_mode == 'solve_cell'
     )
 
@@ -587,7 +587,7 @@ def _design_matrix_diagnostics_artifact_entries(
     if req.model.method != 'multilayer_time_term':
         return ()
     entries: list[dict[str, str | bool]] = []
-    for config in normalize_refraction_static_layers(req.model):
+    for config in normalized_layers_from_model_request(req.model):
         label = _CELL_VELOCITY_LABEL_BY_LAYER[config.kind]
         entries.extend(
             (

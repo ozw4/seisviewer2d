@@ -20,12 +20,14 @@ from app.services.common.array_validation import (
     coerce_positive_int,
     is_real_numeric_dtype as _is_real_numeric_dtype,
 )
-from app.statics.refraction.domain.cell_regularization import (
+from seis_statics.refraction.cell_regularization import (
     CellSlownessSmoothingRows,
     augment_design_matrix_with_cell_smoothing,
     build_cell_slowness_smoothing_rows,
 )
-from app.statics.refraction.domain.first_layer import resolve_weathering_velocity_m_s
+from app.statics.refraction.core_options import (
+    resolve_weathering_velocity_from_model_request as resolve_weathering_velocity_m_s,
+)
 from app.statics.refraction.domain.types import (
     RefractionDesignMatrixNodeDiagnostics,
     RefractionStaticDesignMatrix,

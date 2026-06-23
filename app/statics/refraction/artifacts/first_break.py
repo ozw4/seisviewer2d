@@ -13,9 +13,13 @@ from app.statics.refraction.domain.types import (
     RefractionDatumStaticsResult,
 )
 
-from app.statics.refraction.domain.cell_coordinates import (
+from seis_statics.refraction.cell_coordinates import (
     effective_refraction_cell_grid_config,
     project_refraction_cell_points,
+)
+from app.statics.refraction.core_options import (
+    normalized_layers_from_model_request,
+    refractor_cell_options_from_request,
 )
 from app.statics.refraction.artifacts.arrays import (
     _bool_array,
@@ -73,7 +77,6 @@ from app.statics.refraction.artifacts.registry import (
 )
 from app.statics.refraction.artifacts.stats import _residual_stat, _stat, _status_counts
 from app.statics.refraction.artifacts.validation import _validate_result
-from app.statics.refraction.domain.layer_config import normalize_refraction_static_layers
 
 def write_first_break_residuals_csv(
     *,
@@ -782,9 +785,7 @@ def _reduced_time_layer_gate_flags(
             max_offset_m=first_layer.max_direct_offset_m,
             enabled=True,
         )
-    for config in normalize_refraction_static_layers(req.model, enabled_only=False):
-        if not config.enabled:
-            continue
+    for config in normalized_layers_from_model_request(req.model):
         flags[config.kind] = _offset_gate_mask(
             offset,
             min_offset_m=config.min_offset_m,
@@ -871,7 +872,7 @@ def _configured_initial_velocity_by_layer(
     first_layer_velocity = _configured_v1_velocity(req)
     if first_layer_velocity is not None:
         values['v1_direct_arrival'] = first_layer_velocity
-    for config in normalize_refraction_static_layers(req.model, enabled_only=False):
+    for config in normalized_layers_from_model_request(req.model):
         velocity = config.initial_velocity_m_s
         if velocity is None:
             velocity = config.fixed_velocity_m_s
@@ -930,9 +931,17 @@ def _reduced_time_gate_qc(req: RefractionStaticApplyRequest) -> dict[str, Any]:
             'min_offset_m': _json_float(first_layer.min_direct_offset_m),
             'max_offset_m': _json_float(first_layer.max_direct_offset_m),
         }
-    for config in normalize_refraction_static_layers(req.model, enabled_only=False):
+    if req.model.method == 'multilayer_time_term':
+        for layer in req.model.layers or ():
+            payload[layer.kind] = {
+                'enabled': bool(layer.enabled),
+                'min_offset_m': _json_float(layer.min_offset_m),
+                'max_offset_m': _json_float(layer.max_offset_m),
+            }
+        return payload
+    for config in normalized_layers_from_model_request(req.model):
         payload[config.kind] = {
-            'enabled': bool(config.enabled),
+            'enabled': True,
             'min_offset_m': _json_float(config.min_offset_m),
             'max_offset_m': _json_float(config.max_offset_m),
         }
@@ -1120,16 +1129,16 @@ def _first_break_fit_inline_crossline(
     crossline = np.full(midpoint_x.shape, np.nan, dtype=np.float64)
     if req is None or req.model.refractor_cell is None:
         return inline, crossline
-    refractor_cell = req.model.refractor_cell
-    if refractor_cell.coordinate_mode != 'line_2d_projected':
+    cell_options = refractor_cell_options_from_request(req.model.refractor_cell)
+    if cell_options.coordinate_mode != 'line_2d_projected':
         return inline, crossline
     projected = project_refraction_cell_points(
         x_m=midpoint_x,
         y_m=midpoint_y,
-        mode=refractor_cell.coordinate_mode,
-        line_origin_x_m=refractor_cell.line_origin_x_m,
-        line_origin_y_m=refractor_cell.line_origin_y_m,
-        line_azimuth_deg=refractor_cell.line_azimuth_deg,
+        mode=cell_options.coordinate_mode,
+        line_origin_x_m=cell_options.line_origin_x_m,
+        line_origin_y_m=cell_options.line_origin_y_m,
+        line_azimuth_deg=cell_options.line_azimuth_deg,
     )
     if projected.projected_inline_m is not None:
         inline = projected.projected_inline_m
@@ -1273,9 +1282,10 @@ def _residual_cell_x_count(
         request = RefractionStaticApplyRequest.model_validate(req)
         refractor_cell = request.model.refractor_cell
         if _request_has_cell_velocity_layer(request) and refractor_cell is not None:
+            cell_options = refractor_cell_options_from_request(refractor_cell)
             return int(
                 effective_refraction_cell_grid_config(
-                    refractor_cell
+                    cell_options
                 ).number_of_cell_x
             )
     raw = result.qc.get('number_of_cell_x')

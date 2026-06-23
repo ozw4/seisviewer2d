@@ -52,22 +52,21 @@ from app.statics.refraction.artifacts.registry import (
     _request_cell_velocity_layer_kinds,
 )
 from app.statics.refraction.artifacts.stats import _residual_stat, _stat
-from app.statics.refraction.domain.cell_coordinates import (
+from seis_statics.refraction.cell_coordinates import (
     effective_refraction_cell_grid_config,
     project_refraction_cell_points,
     refraction_cell_coordinate_metadata_from_config,
 )
-from app.statics.refraction.domain.cell_grid import assign_observation_midpoint_cells
-from app.statics.refraction.domain.cell_grid import build_refraction_cell_grid
-from app.statics.refraction.domain.cell_velocity_status import (
+from seis_statics.refraction.cell_grid import assign_observation_midpoint_cells
+from seis_statics.refraction.cell_grid import build_refraction_cell_grid
+from seis_statics.refraction.cell_velocity_status import (
     LOW_FOLD_CELL_REJECTION_REASON,
     LOW_FOLD_CELL_VELOCITY_STATUS,
 )
-from app.statics.refraction.domain.layer_config import (
-    normalize_refraction_static_layers,
-)
-from app.statics.refraction.domain.layer_observations import (
-    build_refraction_layer_observation_masks_from_arrays,
+from app.statics.refraction.core_options import (
+    layer_observation_masks_from_arrays,
+    normalized_layers_from_model_request,
+    refractor_cell_options_from_request,
 )
 from app.statics.refraction.domain.types import (
     RefractionDatumStaticsResult,
@@ -167,7 +166,8 @@ def build_refraction_refractor_velocity_grid_arrays(
         )
     component = _cell_velocity_component(resolved_layer_kind)
 
-    grid_config = effective_refraction_cell_grid_config(refractor_cell)
+    cell_options = refractor_cell_options_from_request(refractor_cell)
+    grid_config = effective_refraction_cell_grid_config(cell_options)
     grid = build_refraction_cell_grid(grid_config)
     n_total_cells = int(grid.cell_id.shape[0])
     active_cell_id = _required_cell_int_array(
@@ -433,7 +433,8 @@ def build_refraction_refractor_velocity_qc_payload(
         raise RefractionStaticArtifactError(
             'model.refractor_cell is required for cell velocity QC'
         )
-    grid_config = effective_refraction_cell_grid_config(refractor_cell)
+    cell_options = refractor_cell_options_from_request(refractor_cell)
+    grid_config = effective_refraction_cell_grid_config(cell_options)
     active_mask = np.asarray(arrays['active_cell_mask'], dtype=bool)
     velocity = np.asarray(arrays['velocity_m_s'], dtype=np.float64)
     active_velocity = velocity[active_mask & np.isfinite(velocity)]
@@ -490,9 +491,9 @@ def build_refraction_refractor_velocity_qc_payload(
         'bedrock_velocity_mode': 'solve_cell',
         'cell_velocity_layer_kind': resolved_layer_kind,
         'cell_velocity_component': _cell_velocity_component(resolved_layer_kind),
-        'cell_assignment_mode': refractor_cell.assignment_mode,
-        **refraction_cell_coordinate_metadata_from_config(refractor_cell),
-        'outside_grid_policy': refractor_cell.outside_grid_policy,
+        'cell_assignment_mode': cell_options.assignment_mode,
+        **refraction_cell_coordinate_metadata_from_config(cell_options),
+        'outside_grid_policy': cell_options.outside_grid_policy,
         'number_of_cell_x': int(grid_config.number_of_cell_x),
         'number_of_cell_y': int(grid_config.number_of_cell_y),
         'size_of_cell_x_m': float(grid_config.size_of_cell_x_m),
@@ -540,7 +541,7 @@ def build_refraction_refractor_velocity_qc_payload(
         'smoothing_reference_distance_m': _qc_optional_float(
             result.qc,
             'smoothing_reference_distance_m',
-            default=refractor_cell.smoothing_reference_distance_m,
+            default=cell_options.smoothing_reference_distance_m,
         ),
         'n_cell_smoothing_rows': n_smoothing_rows,
     }
@@ -698,7 +699,7 @@ def _layer_velocity_modes_for_request(
         return {}
     return {
         str(config.kind): str(config.velocity_mode)
-        for config in normalize_refraction_static_layers(req.model)
+        for config in normalized_layers_from_model_request(req.model)
     }
 
 def _request_has_cell_velocity_layer(req: RefractionStaticApplyRequest) -> bool:
@@ -711,7 +712,7 @@ def _request_cell_velocity_layer(
 ) -> Any | None:
     if req.model.method != 'multilayer_time_term':
         return None
-    for layer in normalize_refraction_static_layers(req.model):
+    for layer in normalized_layers_from_model_request(req.model):
         if layer.velocity_mode != 'solve_cell':
             continue
         if layer_kind is None or layer.kind == layer_kind:
@@ -858,8 +859,9 @@ def _cell_velocity_n_total_cells(req: RefractionStaticApplyRequest) -> int:
         raise RefractionStaticArtifactError(
             'model.refractor_cell is required for cell velocity artifacts'
         )
+    cell_options = refractor_cell_options_from_request(refractor_cell)
     grid = build_refraction_cell_grid(
-        effective_refraction_cell_grid_config(refractor_cell)
+        effective_refraction_cell_grid_config(cell_options)
     )
     return int(grid.cell_id.shape[0])
 
@@ -954,24 +956,25 @@ def _compute_row_midpoint_cell_id(
         endpoint='receiver',
         n_rows=n_rows,
     )
+    cell_options = refractor_cell_options_from_request(refractor_cell)
     source_projected = project_refraction_cell_points(
         x_m=source_x,
         y_m=source_y,
-        mode=refractor_cell.coordinate_mode,
-        line_origin_x_m=refractor_cell.line_origin_x_m,
-        line_origin_y_m=refractor_cell.line_origin_y_m,
-        line_azimuth_deg=refractor_cell.line_azimuth_deg,
+        mode=cell_options.coordinate_mode,
+        line_origin_x_m=cell_options.line_origin_x_m,
+        line_origin_y_m=cell_options.line_origin_y_m,
+        line_azimuth_deg=cell_options.line_azimuth_deg,
     )
     receiver_projected = project_refraction_cell_points(
         x_m=receiver_x,
         y_m=receiver_y,
-        mode=refractor_cell.coordinate_mode,
-        line_origin_x_m=refractor_cell.line_origin_x_m,
-        line_origin_y_m=refractor_cell.line_origin_y_m,
-        line_azimuth_deg=refractor_cell.line_azimuth_deg,
+        mode=cell_options.coordinate_mode,
+        line_origin_x_m=cell_options.line_origin_x_m,
+        line_origin_y_m=cell_options.line_origin_y_m,
+        line_azimuth_deg=cell_options.line_azimuth_deg,
     )
     grid = build_refraction_cell_grid(
-        effective_refraction_cell_grid_config(refractor_cell)
+        effective_refraction_cell_grid_config(cell_options)
     )
     assignment = assign_observation_midpoint_cells(
         grid,
@@ -1054,7 +1057,7 @@ def _cell_velocity_candidate_row_mask(
             'valid_observation_mask_sorted length must match residual rows'
         )
     try:
-        masks = build_refraction_layer_observation_masks_from_arrays(
+        masks = layer_observation_masks_from_arrays(
             base_valid_mask_sorted=valid_observation,
             offset_m_sorted=distance,
             rejection_reason_sorted=np.full(n_rows, 'ok', dtype='<U32'),

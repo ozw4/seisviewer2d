@@ -19,7 +19,7 @@ from app.statics.refraction.domain.export_units import (
     validate_import_sign_convention,
 )
 from app.statics.refraction.domain.export_types import RefractionStaticEndpointKind
-from app.statics.refraction.domain.status import REFRACTION_STATIC_STATUSES
+from seis_statics.refraction.status import REFRACTION_STATIC_STATUSES
 
 CANONICAL_STATIC_TABLE_FORMAT_NAME = 'canonical_static_table'
 CANONICAL_STATIC_TABLE_FORMAT_VERSION = 1

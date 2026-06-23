@@ -14,10 +14,10 @@ from typing import TextIO
 import pytest
 
 import app.statics.refraction.application.bedrock as bedrock
+import app.statics.refraction.core_options as core_options
 import app.statics.refraction.application.design_matrix as design_matrix
 import app.statics.refraction.domain.export_types as export_types
 import app.statics.refraction.application.half_intercept as half_intercept
-import app.statics.refraction.domain.layer_config as layer_config
 import app.statics.refraction.domain.solver as solver
 import app.statics.refraction.domain.source_depth as source_depth
 import app.statics.refraction.domain.t1lsst as t1lsst
@@ -438,18 +438,18 @@ def test_refraction_static_uphole_is_dependency_light() -> None:
     assert 'scipy' not in source
 
 
-def test_refraction_static_layer_config_is_dependency_light() -> None:
-    assert layer_config.RefractionStaticLayerConfig is not None
+def test_refraction_static_core_options_adapter_is_dependency_light() -> None:
+    assert core_options.normalized_layers_from_model_request is not None
 
     assert (
         _forbidden_modules_imported_by(
-            'app.statics.refraction.domain.layer_config',
+            'app.statics.refraction.core_options',
             forbidden_imports=_TYPE_MODULE_FORBIDDEN_IMPORTS,
         )
         == set()
     )
 
-    source = _module_source(layer_config)
+    source = _module_source(core_options)
     assert 'app.api.schemas' not in source
     assert 'app.statics.refraction.application.workflow' not in source
     assert 'app.statics.refraction.application.input_model' not in source

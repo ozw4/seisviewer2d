@@ -67,7 +67,7 @@ from app.statics.refraction.artifacts.io import (
     _write_npz_atomic,
 )
 from app.statics.refraction.artifacts.stats import _stat, _status_counts
-from app.statics.refraction.domain.status import (
+from seis_statics.refraction.status import (
     REFRACTION_STATIC_STATUSES,
     classify_refraction_endpoint_static_status,
 )

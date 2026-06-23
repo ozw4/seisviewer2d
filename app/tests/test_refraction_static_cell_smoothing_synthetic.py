@@ -16,7 +16,7 @@ from app.statics.refraction.artifacts import (
     REFRACTION_REFRACTOR_VELOCITY_QC_JSON_NAME,
     write_refraction_static_artifacts,
 )
-from app.statics.refraction.domain.cell_regularization import (
+from seis_statics.refraction.cell_regularization import (
     build_cell_slowness_smoothing_rows,
 )
 from app.statics.refraction.application.datum import build_refraction_datum_statics

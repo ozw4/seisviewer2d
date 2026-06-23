@@ -10,7 +10,7 @@ import numpy as np
 from app.services.common.array_validation import (
     coerce_finite_float as _coerce_finite_float,
 )
-from app.statics.refraction.domain.status import (
+from seis_statics.refraction.status import (
     classify_refraction_endpoint_static_status,
 )
 from app.statics.refraction.domain.types import RefractionDatumStaticsResult

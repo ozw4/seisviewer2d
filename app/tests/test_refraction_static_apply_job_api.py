@@ -70,9 +70,9 @@ from app.statics.refraction.application.design_matrix import (
 from app.statics.refraction.application.export_service import (
     CANONICAL_SOURCE_RECEIVER_STATIC_TABLE_CSV_NAME,
 )
-from app.statics.refraction.domain.layer_observations import (
-    build_refraction_layer_observation_masks,
-    refraction_layer_observation_qc,
+from app.statics.refraction.core_options import (
+    layer_observation_masks_from_input_model as build_refraction_layer_observation_masks,
+    layer_observation_qc_for_viewer as refraction_layer_observation_qc,
 )
 from app.statics.refraction.application.preflight_diagnostics import (
     REFRACTION_STATIC_PREFLIGHT_OBSERVATIONS_CSV_NAME,
@@ -1539,7 +1539,10 @@ def test_run_refraction_static_apply_job_writes_multilayer_layer_qc(
         input_model=input_model,
         model=req.model,
     )
-    expected_layer_qc = refraction_layer_observation_qc(expected_layer_masks)
+    expected_layer_qc = refraction_layer_observation_qc(
+        expected_layer_masks,
+        model=req.model,
+    )
     replacement_result = object()
     datum_result = replace(
         _artifact_result(),

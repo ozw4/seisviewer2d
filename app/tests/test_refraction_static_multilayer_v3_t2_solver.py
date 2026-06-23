@@ -4,11 +4,11 @@ import numpy as np
 import pytest
 
 from app.api.schemas import RefractionStaticModelRequest, RefractionStaticSolverRequest
-from app.statics.refraction.domain.layer_config import (
-    normalize_refraction_static_layers,
+from app.statics.refraction.core_options import (
+    normalized_layers_from_model_request as normalize_refraction_static_layers,
 )
-from app.statics.refraction.domain.layer_observations import (
-    build_refraction_layer_observation_masks,
+from app.statics.refraction.core_options import (
+    layer_observation_masks_from_input_model as build_refraction_layer_observation_masks,
 )
 from app.statics.refraction.application.multilayer_service import (
     RefractionMultiLayerSolveError,

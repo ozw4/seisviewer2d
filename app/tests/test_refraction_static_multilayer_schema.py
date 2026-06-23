@@ -10,8 +10,8 @@ from app.api.schemas import (
     RefractionStaticApplyRequest,
     RefractionStaticModelRequest,
 )
-from app.statics.refraction.domain.layer_config import (
-    normalize_refraction_static_layers,
+from app.statics.refraction.core_options import (
+    normalized_layers_from_model_request as normalize_refraction_static_layers,
 )
 
 
@@ -174,10 +174,14 @@ def test_multilayer_schema_preserves_disabled_layer_configs() -> None:
     )
 
     enabled = normalize_refraction_static_layers(model)
-    all_layers = normalize_refraction_static_layers(model, enabled_only=False)
 
     assert [layer.kind for layer in enabled] == ['v2_t1']
-    assert [layer.kind for layer in all_layers] == ['v2_t1', 'v3_t2', 'vsub_t3']
+    assert [layer.kind for layer in model.layers or ()] == [
+        'v2_t1',
+        'v3_t2',
+        'vsub_t3',
+    ]
+    assert [layer.enabled for layer in model.layers or ()] == [True, False, False]
 
 
 def test_legacy_refraction_schema_normalizes_to_single_v2_layer() -> None:
@@ -195,7 +199,6 @@ def test_legacy_refraction_schema_normalizes_to_single_v2_layer() -> None:
     layers = normalize_refraction_static_layers(model)
 
     assert [layer.kind for layer in layers] == ['v2_t1']
-    assert layers[0].enabled is True
     assert layers[0].initial_velocity_m_s == pytest.approx(2500.0)
 
 

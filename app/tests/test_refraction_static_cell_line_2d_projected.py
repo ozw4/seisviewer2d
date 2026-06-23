@@ -4,12 +4,15 @@ import numpy as np
 import pytest
 
 from app.api.schemas import RefractionStaticRefractorCellRequest
-from app.statics.refraction.domain.cell_coordinates import (
+from app.statics.refraction.core_options import (
+    refractor_cell_options_from_request,
+)
+from seis_statics.refraction.cell_coordinates import (
     effective_refraction_cell_grid_config,
     project_refraction_cell_coordinates,
     project_refraction_cell_points,
 )
-from app.statics.refraction.domain.cell_grid import (
+from seis_statics.refraction.cell_grid import (
     assign_observation_midpoint_cells,
     build_refraction_cell_grid,
 )
@@ -61,7 +64,8 @@ def test_line_2d_projected_midpoint_cell_assignment_uses_inline_midpoint() -> No
     assert dataset.source_inline_m is not None
     assert dataset.receiver_inline_m is not None
     request = _line_cell_request(dataset)
-    grid = build_refraction_cell_grid(effective_refraction_cell_grid_config(request))
+    cell_options = refractor_cell_options_from_request(request)
+    grid = build_refraction_cell_grid(effective_refraction_cell_grid_config(cell_options))
     projected = project_refraction_cell_coordinates(
         source_x_m=dataset.source_x_m,
         source_y_m=dataset.source_y_m,
@@ -124,8 +128,9 @@ def test_rotated_line_grid_3d_and_line_2d_projected_assignments_can_differ() -> 
         line_azimuth_deg=37.0,
     )
     line_request = _line_cell_request(dataset)
+    line_options = refractor_cell_options_from_request(line_request)
     line_grid = build_refraction_cell_grid(
-        effective_refraction_cell_grid_config(line_request)
+        effective_refraction_cell_grid_config(line_options)
     )
     line_projected = project_refraction_cell_coordinates(
         source_x_m=dataset.source_x_m,
@@ -145,7 +150,7 @@ def test_rotated_line_grid_3d_and_line_2d_projected_assignments_can_differ() -> 
         receiver_y_m=line_projected.receiver_y_m,
     )
     grid_3d_grid = build_refraction_cell_grid(
-        _grid_3d_request_covering_rotated_line(dataset)
+        refractor_cell_options_from_request(_grid_3d_request_covering_rotated_line(dataset))
     )
     grid_3d_assignment = assign_observation_midpoint_cells(
         grid_3d_grid,
