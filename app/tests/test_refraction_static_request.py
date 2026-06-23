@@ -16,6 +16,7 @@ from app.api.schemas import (
     RefractionStaticModelRequest,
     RefractionStaticMoveoutRequest,
     RefractionStaticPickSourceRequest,
+    RefractionStaticRefractorCellRequest,
     RefractionStaticReducedTimeQcRequest,
     RefractionStaticRobustRequest,
     RefractionStaticSolverRequest,
@@ -134,6 +135,7 @@ def test_refraction_static_schema_models_forbid_extra_fields() -> None:
         RefractionStaticMoveoutRequest,
         RefractionStaticRobustRequest,
         RefractionStaticSolverRequest,
+        RefractionStaticRefractorCellRequest,
         RefractionStaticDatumRequest,
         RefractionStaticReducedTimeQcRequest,
         RefractionStaticApplyOptions,
@@ -212,6 +214,58 @@ def test_refraction_static_request_accepts_minimal_valid_request_and_defaults() 
     assert req.apply.max_abs_shift_ms == 250.0
     assert req.apply.output_dtype == 'float32'
     assert req.apply.register_corrected_file is False
+
+
+def _refractor_cell_payload(**overrides: Any) -> dict[str, Any]:
+    payload: dict[str, Any] = {
+        'number_of_cell_x': 3,
+        'size_of_cell_x_m': 10.0,
+        'x_coordinate_origin_m': 0.0,
+        'number_of_cell_y': 1,
+        'size_of_cell_y_m': None,
+        'y_coordinate_origin_m': 0.0,
+        'assignment_mode': 'midpoint',
+        'outside_grid_policy': 'reject',
+        'coordinate_mode': 'grid_3d',
+        'min_observations_per_cell': 5,
+        'velocity_smoothing_weight': 0.0,
+        'smoothing_reference_distance_m': None,
+    }
+    payload.update(overrides)
+    return payload
+
+
+@pytest.mark.parametrize(
+    'missing_field',
+    ['line_origin_x_m', 'line_origin_y_m', 'line_azimuth_deg'],
+)
+def test_refraction_static_refractor_cell_line_2d_projected_requires_origin_and_azimuth(
+    missing_field: str,
+) -> None:
+    payload = _refractor_cell_payload(
+        coordinate_mode='line_2d_projected',
+        line_origin_x_m=1000.0,
+        line_origin_y_m=2000.0,
+        line_azimuth_deg=45.0,
+    )
+    payload[missing_field] = None
+
+    with pytest.raises(ValidationError, match=missing_field):
+        RefractionStaticRefractorCellRequest.model_validate(payload)
+
+
+def test_refraction_static_refractor_cell_line_2d_projected_requires_single_y_cell() -> None:
+    payload = _refractor_cell_payload(
+        coordinate_mode='line_2d_projected',
+        line_origin_x_m=1000.0,
+        line_origin_y_m=2000.0,
+        line_azimuth_deg=45.0,
+        number_of_cell_y=2,
+        size_of_cell_y_m=25.0,
+    )
+
+    with pytest.raises(ValidationError, match='number_of_cell_y must be 1'):
+        RefractionStaticRefractorCellRequest.model_validate(payload)
 
 
 def test_refraction_datum_request_defaults_to_inactive_mode() -> None:

@@ -4,6 +4,8 @@
 
 This handoff records the repository split for the reusable statics numerical
 core now consumed by `seisviewer2d` from the external `seis-statics` package.
+The split is complete for the currently supported trace-shift, datum,
+residual, time-term, and refraction numerical core surface.
 
 The recommended external repository name is:
 
@@ -37,6 +39,7 @@ seis_statics.trace_shift
 seis_statics.datum
 seis_statics.residual
 seis_statics.time_term
+seis_statics.refraction
 ```
 
 The local `seis_statics/` package has been removed from `seisviewer2d`; imports
@@ -56,7 +59,8 @@ the initial split:
 - Job lifecycle, background workers, artifact registries, and cleanup.
 - Static correction artifact writing and public download packaging.
 - Browser UI assets under `app/static`.
-- Refraction workflow orchestration and app adapters.
+- Refraction workflow orchestration, app adapters, HTTP contracts, artifact
+  writers, TraceStore registration, cache integration, and job lifecycle.
 
 The existing extraction manifest remains the detailed boundary reference:
 
@@ -97,6 +101,30 @@ seis-statics/
         robust_solver.py
         sparse_solver.py
         types.py
+      refraction/
+        __init__.py
+        bedrock.py
+        cell_coordinates.py
+        cell_grid.py
+        cell_regularization.py
+        datum.py
+        design_matrix.py
+        field_composition.py
+        first_layer.py
+        half_intercept.py
+        layer_config.py
+        layer_observations.py
+        manual_static.py
+        multilayer_conversion.py
+        multilayer_solver.py
+        solver.py
+        source_depth.py
+        status.py
+        t1lsst.py
+        uphole.py
+        v1.py
+        weathering.py
+        weathering_replacement.py
   tests/
     test_datum_math.py
     test_first_break_residual_api.py
@@ -111,6 +139,12 @@ seis-statics/
 Package-level numerical unit tests live in `seis-statics`. Tests that import
 `app.*`, verify HTTP/artifact contracts, or smoke-test app consumers remain in
 `seisviewer2d`.
+
+Pure refraction core coverage for cell grids, line projection, smoothing,
+direct-arrival V1, T1LSST formulas, weathering, datum, solver, and multi-layer
+time-term calculations is owned by `seis-statics` as of release `v0.4.0`.
+`seisviewer2d` retains application integration, import-boundary, API,
+artifact, TraceStore, and consumer smoke tests.
 
 ## Dependency Policy
 
@@ -150,7 +184,17 @@ v0.3: generic additive solver S/R/CMP/offset
 v0.4: time-term/refraction domain extraction
 ```
 
-`seisviewer2d` currently pins the external package at `v0.4.0`.
+`seisviewer2d` currently pins the external package at immutable release tag
+`v0.4.0`:
+
+```text
+seis-statics @ git+https://github.com/ozw4/seis-statics.git@v0.4.0
+```
+
+The pin is recorded in `.devcontainer/requirements-dev.txt` and used by CI
+through the same requirements file. Do not replace it with `main`, a sibling
+checkout, an editable install, `PYTHONPATH`, symlinks, or runtime path
+manipulation.
 
 ## Guardrails Before Copy-Out
 
@@ -158,7 +202,8 @@ Before changing the external package pin or import surface, verify:
 
 - `seis_statics` imports resolve outside the `seisviewer2d` repository.
 - Existing `seisviewer2d` wrapper imports still resolve.
-- Package tests pass in `seis-statics`.
+- Package tests pass in `seis-statics` for the release tag or immutable commit
+  being pinned.
 - Static-shift sign conventions and API response shapes are unchanged.
 - No FastAPI, artifact, cache, job, or SEG-Y reader dependency has crossed into
   the package.

@@ -16,18 +16,7 @@ from app.statics.refraction.artifacts import (
 from app.statics.refraction.artifacts.t1lsst import (
     REFRACTION_T1LSST_1LAYER_COMPONENTS_CSV_NAME,
 )
-from seis_statics.refraction.t1lsst import (
-    T1LSST_SIGN_CONVENTION,
-    RefractionT1LSSTError,
-    compute_t1lsst_1layer_thickness,
-    compute_t1lsst_1layer_weathering_correction,
-)
-from app.statics.refraction.application.weathering import (
-    compute_weathering_thickness_from_half_intercept_time,
-)
-from app.statics.refraction.application.weathering_replacement import (
-    compute_weathering_replacement_shift_s,
-)
+from seis_statics.refraction.t1lsst import T1LSST_SIGN_CONVENTION
 from app.tests._refraction_static_synthetic import (
     SYNTHETIC_SH1_TOLERANCE_M,
     SYNTHETIC_T1_TOLERANCE_MS,
@@ -53,85 +42,6 @@ def test_refraction_static_conversion_request_accepts_t1lsst_1layer() -> None:
     req = _t1lsst_request()
 
     assert req.conversion.mode == 't1lsst_1layer'
-
-
-def test_t1lsst_1layer_scalar_formula() -> None:
-    t1_s = 0.010
-    v1_m_s = 800.0
-    v2_m_s = 2400.0
-
-    sh1 = compute_t1lsst_1layer_thickness(
-        np.asarray([t1_s]),
-        v1_m_s=v1_m_s,
-        v2_m_s=v2_m_s,
-    )[0]
-    wcor = compute_t1lsst_1layer_weathering_correction(
-        np.asarray([sh1]),
-        v1_m_s=v1_m_s,
-        v2_m_s=v2_m_s,
-    )[0]
-
-    expected_sh1 = t1_s * v2_m_s * v1_m_s / np.sqrt(v2_m_s**2 - v1_m_s**2)
-    assert sh1 == pytest.approx(expected_sh1)
-    assert wcor == pytest.approx(expected_sh1 * (1.0 / v2_m_s - 1.0 / v1_m_s))
-    assert wcor < 0.0
-
-
-def test_t1lsst_1layer_vector_formula() -> None:
-    t1_s = np.asarray([0.010, 0.012, 0.014], dtype=np.float64)
-    v1_m_s = 800.0
-    v2_m_s = np.asarray([2200.0, 2500.0, 3000.0], dtype=np.float64)
-
-    sh1 = compute_t1lsst_1layer_thickness(
-        t1_s,
-        v1_m_s=v1_m_s,
-        v2_m_s=v2_m_s,
-    )
-    wcor = compute_t1lsst_1layer_weathering_correction(
-        sh1,
-        v1_m_s=v1_m_s,
-        v2_m_s=v2_m_s,
-    )
-
-    np.testing.assert_allclose(
-        sh1,
-        t1_s * v2_m_s * v1_m_s / np.sqrt(v2_m_s**2 - v1_m_s**2),
-    )
-    np.testing.assert_allclose(wcor, sh1 * (1.0 / v2_m_s - 1.0 / v1_m_s))
-
-
-def test_t1lsst_1layer_matches_existing_weathering_thickness() -> None:
-    t1_s = np.asarray([0.010, 0.012, 0.014], dtype=np.float64)
-
-    t1lsst = compute_t1lsst_1layer_thickness(
-        t1_s,
-        v1_m_s=800.0,
-        v2_m_s=2500.0,
-    )
-    existing = compute_weathering_thickness_from_half_intercept_time(
-        half_intercept_time_s=t1_s,
-        weathering_velocity_m_s=800.0,
-        bedrock_velocity_m_s=2500.0,
-    )
-
-    np.testing.assert_allclose(t1lsst, existing)
-
-
-def test_t1lsst_1layer_matches_existing_weathering_replacement_shift() -> None:
-    sh1_m = np.asarray([10.0, 12.0, 14.0], dtype=np.float64)
-
-    t1lsst = compute_t1lsst_1layer_weathering_correction(
-        sh1_m,
-        v1_m_s=800.0,
-        v2_m_s=2500.0,
-    )
-    existing = compute_weathering_replacement_shift_s(
-        weathering_thickness_m=sh1_m,
-        weathering_velocity_m_s=800.0,
-        bedrock_velocity_m_s=2500.0,
-    )
-
-    np.testing.assert_allclose(t1lsst, existing)
 
 
 def test_t1lsst_1layer_matches_existing_weathering_replacement(
@@ -174,22 +84,6 @@ def test_t1lsst_1layer_matches_existing_weathering_replacement(
         assert float(row['total_applied_shift_ms']) == pytest.approx(
             float(row['total_static_ms']),
             abs=SYNTHETIC_WCOR_TOLERANCE_MS,
-        )
-
-
-def test_t1lsst_1layer_rejects_v2_less_than_or_equal_v1() -> None:
-    with pytest.raises(RefractionT1LSSTError, match='v2_m_s must be greater'):
-        compute_t1lsst_1layer_thickness(
-            np.asarray([0.010]),
-            v1_m_s=800.0,
-            v2_m_s=800.0,
-        )
-
-    with pytest.raises(RefractionT1LSSTError, match='v2_m_s must be greater'):
-        compute_t1lsst_1layer_weathering_correction(
-            np.asarray([10.0]),
-            v1_m_s=800.0,
-            v2_m_s=799.0,
         )
 
 

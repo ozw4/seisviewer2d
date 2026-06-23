@@ -34,6 +34,7 @@ seis_statics.trace_shift
 seis_statics.datum
 seis_statics.residual
 seis_statics.time_term
+seis_statics.refraction
 ```
 
 `seisviewer2d` must import public package modules only. In particular, app code
@@ -126,14 +127,14 @@ Phase 1 is a dependency inversion and packaging step only. It must not change
 runtime behavior, API responses, cache behavior, artifact contents, or static
 shift sign conventions.
 
-## Phase 2+ Time-Term and Refraction Boundary
+## Completed Time-Term and Refraction Boundary
 
 Time-term numerical core code has been extracted to `seis_statics.time_term` in
 the external package.
-Refraction remains a Phase 2+ extraction item. Do not move the full refraction
-stack in one step. Future work should separate pure numerical and domain modules
-into `seis_statics` while keeping request handling, artifact contracts,
-TraceStore integration, and job runtime behavior in `seisviewer2d`.
+Refraction numerical and domain core code has been extracted to
+`seis_statics.refraction` in the external package. `seisviewer2d` keeps request
+handling, artifact contracts, TraceStore integration, cache behavior, and job
+runtime behavior.
 
 Before moving any refraction module, verify the boundary against the canonical
 refraction docs:
@@ -197,36 +198,52 @@ app/services/time_term_static_apply_trace_store.py
 They currently own request orchestration, artifact loading/writing, TraceStore
 registration, and job/runtime integration.
 
-### Refraction Candidates for `seis_statics.refraction`
+### Extracted Refraction Core
 
-These refraction modules are Phase 2+ candidates because they contain
-documented domain calculations, status rules, design-matrix construction, or
-solver orchestration that can be expressed without FastAPI, AppState, artifact
-registries, or TraceStore objects:
+The `seis_statics.refraction` package owns documented domain calculations,
+status rules, design-matrix construction, and solver orchestration that can be
+expressed without FastAPI, AppState, artifact registries, or TraceStore objects:
 
 ```text
-app/statics/refraction/domain/**
-app/statics/refraction/application/bedrock.py
-app/statics/refraction/application/datum.py
-app/statics/refraction/application/design_matrix.py
-app/statics/refraction/application/half_intercept.py
-app/statics/refraction/application/input_model.py
-app/statics/refraction/application/multilayer_service.py
-app/statics/refraction/application/weathering.py
-app/statics/refraction/application/weathering_replacement.py
+seis_statics/refraction/bedrock.py
+seis_statics/refraction/cell_coordinates.py
+seis_statics/refraction/cell_grid.py
+seis_statics/refraction/cell_regularization.py
+seis_statics/refraction/datum.py
+seis_statics/refraction/design_matrix.py
+seis_statics/refraction/field_composition.py
+seis_statics/refraction/first_layer.py
+seis_statics/refraction/half_intercept.py
+seis_statics/refraction/layer_config.py
+seis_statics/refraction/layer_observations.py
+seis_statics/refraction/manual_static.py
+seis_statics/refraction/multilayer_conversion.py
+seis_statics/refraction/multilayer_solver.py
+seis_statics/refraction/solver.py
+seis_statics/refraction/source_depth.py
+seis_statics/refraction/status.py
+seis_statics/refraction/t1lsst.py
+seis_statics/refraction/uphole.py
+seis_statics/refraction/v1.py
+seis_statics/refraction/weathering.py
+seis_statics/refraction/weathering_replacement.py
 ```
 
-These candidates must keep the canonical Phase 1, Phase 2 cell-V2, and
+The external core must keep the canonical Phase 1, Phase 2 cell-V2, and
 multi-layer T1LSST behavior intact: first-break equations, endpoint time terms,
 midpoint cell assignment, endpoint-local V2 projection, velocity-order
 validation, NaN/status handling for invalid conversions, source/receiver static
 table semantics, and the repo static-shift convention
 `corrected(t) = raw(t - shift_s)`.
 
-Do not extract `app/statics/refraction/application/workflow.py` as a numerical
-core module. It remains an app orchestration boundary unless a future issue
-first separates its pure computation from artifact writing, background job
-status, and corrected TraceStore registration.
+The viewer-side modules with the same workflow names are application adapters:
+they translate Pydantic requests and app dataclasses into package options,
+write artifacts, compose QC, and preserve public response and artifact shapes.
+They must not grow replacement numerical implementations or fallback branches.
+
+`app/statics/refraction/application/workflow.py` remains an app orchestration
+boundary: it owns artifact writing, background job status, and corrected
+TraceStore registration.
 
 ### Refraction App-Only Boundary
 
@@ -268,6 +285,16 @@ Package-owned numerical unit tests live in `seis-statics`; `seisviewer2d` keeps
 application integration, contract, artifact, import-layer, and sign-convention
 smoke coverage.
 
+Moved pure-core coverage is recorded here because the external checkout is
+read-only for `seisviewer2d` implementation issues:
+
+| Former viewer coverage | External owner | Viewer retained coverage |
+|---|---|---|
+| Cell grid assignment and line projection unit tests | `seis-statics/tests/parity_manifest.md` and package refraction tests at `v0.4.0` | Cell design-matrix, synthetic E2E, QC, artifact, and API tests |
+| Cell smoothing row/unit tests | `seis-statics/tests/parity_manifest.md` and package refraction tests at `v0.4.0` | Cell smoothing synthetic workflow and solver/artifact tests |
+| Direct-arrival V1 estimator error/robustness unit tests | `seis-statics/tests/parity_manifest.md` and package refraction tests at `v0.4.0` | V1 artifact smoke and API apply tests |
+| T1LSST scalar/vector formula and velocity-order unit tests | `seis-statics/tests/parity_manifest.md` and package refraction tests at `v0.4.0` | T1LSST request, artifact schema, synthetic workflow, and sign-convention tests |
+
 Minimum time-term coverage:
 
 ```text
@@ -305,6 +332,6 @@ SEG-Y reader, app-state, or job-runtime dependencies fail quickly.
 2. Time-term numerical modules are externalized behind `seis_statics.time_term`.
 3. `seisviewer2d` pins `seis-statics` from an immutable release tag and does
    not ship a local `seis_statics/` package.
-4. Future work may move refraction domain pieces incrementally behind
-   `seis_statics.refraction` only after the app-only adapters, artifact
-   writers, API schemas, and runtime boundaries are explicit.
+4. Refraction numerical/domain pieces are externalized behind
+   `seis_statics.refraction`; app-only adapters, artifact writers, API schemas,
+   and runtime boundaries remain in `seisviewer2d`.
