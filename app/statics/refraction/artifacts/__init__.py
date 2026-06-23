@@ -2,46 +2,75 @@
 
 from __future__ import annotations
 
-from app.statics.refraction.artifacts import contract
-from app.statics.refraction.artifacts import writer
-from app.statics.refraction.artifacts.writer import *  # noqa: F403
-from app.statics.refraction.artifacts.components import (
-    build_refraction_static_component_qc_arrays as build_refraction_static_component_qc_arrays,
-    build_refraction_static_component_qc_payload as build_refraction_static_component_qc_payload,
-    write_refraction_static_component_qc_artifacts as write_refraction_static_component_qc_artifacts,
-    write_refraction_static_components_csv as write_refraction_static_components_csv,
-)
-from app.statics.refraction.artifacts.cell_velocity import (
-    build_refraction_cell_solver_history_rows as build_refraction_cell_solver_history_rows,
-    build_refraction_refractor_velocity_grid_arrays as build_refraction_refractor_velocity_grid_arrays,
-    build_refraction_refractor_velocity_qc_payload as build_refraction_refractor_velocity_qc_payload,
-    write_refraction_cell_solver_history_csv as write_refraction_cell_solver_history_csv,
-    write_refraction_refractor_velocity_cells_csv as write_refraction_refractor_velocity_cells_csv,
-    write_refraction_refractor_velocity_grid_npz as write_refraction_refractor_velocity_grid_npz,
-    write_refraction_refractor_velocity_qc_json as write_refraction_refractor_velocity_qc_json,
-)
-from app.statics.refraction.artifacts.grid_map import (
-    build_refraction_grid_map_qc_arrays as build_refraction_grid_map_qc_arrays,
-    build_refraction_grid_map_qc_payload as build_refraction_grid_map_qc_payload,
-    write_refraction_grid_map_qc_csv as write_refraction_grid_map_qc_csv,
-    write_refraction_grid_map_qc_json as write_refraction_grid_map_qc_json,
-    write_refraction_grid_map_qc_npz as write_refraction_grid_map_qc_npz,
-)
-from app.statics.refraction.artifacts.line_profile import (
-    build_refraction_line_profile_qc_arrays as build_refraction_line_profile_qc_arrays,
-    build_refraction_line_profile_qc_payload as build_refraction_line_profile_qc_payload,
-    write_refraction_line_profile_qc_artifacts as write_refraction_line_profile_qc_artifacts,
+import ast
+from importlib import import_module
+from pathlib import Path
+from typing import Any
+
+
+_WRITER_MODULE = 'app.statics.refraction.artifacts.writer'
+_CONTRACT_MODULE = 'app.statics.refraction.artifacts.contract'
+_LAZY_MODULES = {
+    'contract': _CONTRACT_MODULE,
+    'writer': _WRITER_MODULE,
+    'registry': 'app.statics.refraction.artifacts.registry',
+}
+_CONTRACT_EXPORTS = {
+    'FIRST_BREAK_TIME_EXPORT_SIGN_CONVENTION',
+    'SIGN_CONVENTION',
+    'TIME_TERM_SPREADSHEET_FORMAT_NAME',
+    'TIME_TERM_SPREADSHEET_FORMAT_VERSION',
+    'TIME_TERM_SPREADSHEET_SCHEMA_VERSION',
+}
+_FALLBACK_EXPORT_MODULES = (
+    'app.statics.refraction.artifacts.components',
+    'app.statics.refraction.artifacts.cell_velocity',
+    'app.statics.refraction.artifacts.grid_map',
+    'app.statics.refraction.artifacts.line_profile',
 )
 
-for _name in contract.__all__:
-    globals()[_name] = getattr(contract, _name)
 
-FIRST_BREAK_TIME_EXPORT_SIGN_CONVENTION = (
-    contract.FIRST_BREAK_TIME_EXPORT_SIGN_CONVENTION
-)
-SIGN_CONVENTION = contract.SIGN_CONVENTION
-TIME_TERM_SPREADSHEET_FORMAT_NAME = contract.TIME_TERM_SPREADSHEET_FORMAT_NAME
-TIME_TERM_SPREADSHEET_FORMAT_VERSION = contract.TIME_TERM_SPREADSHEET_FORMAT_VERSION
-TIME_TERM_SPREADSHEET_SCHEMA_VERSION = contract.TIME_TERM_SPREADSHEET_SCHEMA_VERSION
+def _load_writer_all() -> list[str]:
+    writer_source = Path(__file__).with_name('writer.py').read_text(encoding='utf-8')
+    writer_tree = ast.parse(writer_source)
+    for node in writer_tree.body:
+        if not isinstance(node, ast.Assign):
+            continue
+        if not any(
+            isinstance(target, ast.Name) and target.id == '__all__'
+            for target in node.targets
+        ):
+            continue
+        value = ast.literal_eval(node.value)
+        return [str(item) for item in value]
+    return []
 
-__all__ = list(writer.__all__)
+
+__all__ = _load_writer_all()
+
+
+def __getattr__(name: str) -> Any:
+    if name in _LAZY_MODULES:
+        value = import_module(_LAZY_MODULES[name])
+        globals()[name] = value
+        return value
+    if name in __all__:
+        value = getattr(import_module(_WRITER_MODULE), name)
+        globals()[name] = value
+        return value
+    contract_module = import_module(_CONTRACT_MODULE)
+    if name in _CONTRACT_EXPORTS or hasattr(contract_module, name):
+        value = getattr(contract_module, name)
+        globals()[name] = value
+        return value
+    for module_name in _FALLBACK_EXPORT_MODULES:
+        module = import_module(module_name)
+        if hasattr(module, name):
+            value = getattr(module, name)
+            globals()[name] = value
+            return value
+    raise AttributeError(f'module {__name__!r} has no attribute {name!r}')
+
+
+def __dir__() -> list[str]:
+    return sorted(set(globals()) | set(__all__) | set(_CONTRACT_EXPORTS))

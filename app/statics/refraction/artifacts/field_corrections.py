@@ -7,7 +7,7 @@ import numpy as np
 from app.statics.refraction.artifacts.contract import (
     RefractionStaticArtifactError,
 )
-from app.statics.refraction.domain.types import RefractionDatumStaticsResult
+from app.statics.refraction.contracts.result_types import RefractionDatumStaticsResult
 
 _FIELD_DISABLED_STATUS = 'not_enabled'
 _FIELD_NOT_APPLICABLE_STATUS = 'not_applicable'

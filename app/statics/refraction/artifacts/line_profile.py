@@ -60,7 +60,7 @@ from seis_statics.refraction.status import (
 from app.statics.refraction.contracts.core_options import (
     refractor_cell_options_from_request,
 )
-from app.statics.refraction.domain.types import RefractionDatumStaticsResult
+from app.statics.refraction.contracts.result_types import RefractionDatumStaticsResult
 
 _LINE_PROFILE_STRING_COLUMNS = frozenset(
     {'endpoint_kind', 'endpoint_key', 'static_status', 'solution_status'}

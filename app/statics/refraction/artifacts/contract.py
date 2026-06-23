@@ -6,10 +6,10 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from app.statics.refraction.domain.export_units import (
+from app.statics.refraction.artifacts.export_units import (
     REFRACTION_STATIC_REPO_SIGN_CONVENTION,
 )
-from app.statics.refraction.domain.types import (
+from app.statics.refraction.contracts.result_types import (
     RefractionDatumStaticsResult,
     RefractionLayerKind,
 )

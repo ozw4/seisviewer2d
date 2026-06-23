@@ -23,8 +23,8 @@ from app.statics.refraction.application.datum import build_refraction_datum_stat
 from app.statics.refraction.application.design_matrix import (
     build_refraction_static_design_matrix,
 )
-from app.statics.refraction.domain.solver import solve_refraction_static_bounded_ls
-from app.statics.refraction.domain.types import (
+from app.statics.refraction.application.solver import solve_refraction_static_bounded_ls
+from app.statics.refraction.contracts.result_types import (
     RefractionDatumStaticsResult,
     RefractionEndpointTable,
     RefractionStaticInputModel,

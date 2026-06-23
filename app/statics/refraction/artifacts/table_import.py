@@ -8,12 +8,12 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from app.statics.refraction.domain.export_types import RefractionStaticEndpointKind
-from app.statics.refraction.domain.export_units import (
+from app.statics.refraction.artifacts.export_types import RefractionStaticEndpointKind
+from app.statics.refraction.artifacts.export_units import (
     REFRACTION_STATIC_REPO_SIGN_CONVENTION,
     RefractionStaticExportUnits,
 )
-from app.statics.refraction.domain.table_validator import (
+from app.statics.refraction.artifacts.table_validator import (
     CANONICAL_STATIC_TABLE_FORMAT_VERSION,
     CANONICAL_STATIC_TABLE_OPTIONAL_COLUMNS,
     RefractionStaticTableNormalizedRow,

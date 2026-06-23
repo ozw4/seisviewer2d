@@ -23,7 +23,7 @@ from app.statics.refraction.application.core_options import (
 )
 from app.statics.refraction.contracts.model import RefractionStaticModelRequest
 from app.statics.refraction.contracts.options import RefractionStaticSolverRequest
-from app.statics.refraction.domain.types import (
+from app.statics.refraction.contracts.result_types import (
     RefractionDesignMatrixNodeDiagnostics,
     RefractionStaticDesignMatrix,
     RefractionStaticSolverResult,

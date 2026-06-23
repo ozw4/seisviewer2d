@@ -80,7 +80,7 @@ from app.statics.refraction.artifacts.io import (
     _write_csv_atomic,
     _write_npz_atomic,
 )
-from app.statics.refraction.domain.types import RefractionDatumStaticsResult
+from app.statics.refraction.contracts.result_types import RefractionDatumStaticsResult
 
 _NODE_2LAYER_STATIC_ARRAY_NAMES = (
     'node_sh1_weathering_thickness_m',

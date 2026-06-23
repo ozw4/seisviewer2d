@@ -17,7 +17,7 @@ from app.statics.refraction.application.design_matrix import (
     build_refraction_static_design_matrix,
     build_refraction_static_design_matrix_from_arrays,
 )
-from app.statics.refraction.domain.types import (
+from app.statics.refraction.contracts.result_types import (
     RefractionEndpointTable,
     RefractionStaticDesignMatrix,
     RefractionStaticInputModel,

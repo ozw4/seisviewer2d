@@ -54,7 +54,7 @@ from app.statics.refraction.application.core_options import (
     layer_observation_masks_from_input_model,
     layer_observation_qc_for_viewer as refraction_layer_observation_qc,
 )
-from app.statics.refraction.domain.types import (
+from app.statics.refraction.contracts.result_types import (
     RefractionEndpointTable,
     RefractionStaticInputModel,
 )

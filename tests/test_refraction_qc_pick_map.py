@@ -15,7 +15,7 @@ from app.statics.refraction.artifacts import (
     REFRACTION_STATIC_COMPONENT_QC_TRACE_CSV_NAME,
     REFRACTION_STATIC_QC_JSON_NAME,
 )
-from app.statics.refraction.domain.export_units import (
+from app.statics.refraction.artifacts.export_units import (
     REFRACTION_STATIC_REPO_SIGN_CONVENTION,
 )
 

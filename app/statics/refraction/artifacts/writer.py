@@ -151,7 +151,7 @@ from app.statics.refraction.artifacts.validation import (
     _validate_resolved_first_layer,
     _validate_result,
 )
-from app.statics.refraction.domain.types import (
+from app.statics.refraction.contracts.result_types import (
     RefractionDatumStaticsResult,
     ResolvedRefractionFirstLayer,
 )

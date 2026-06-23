@@ -24,7 +24,7 @@ from app.statics.refraction.application.export_service import (
 from app.statics.refraction.adapters.seisviewer2d.export_runner import (
     run_refraction_static_export_job,
 )
-from app.statics.refraction.domain.export_units import (
+from app.statics.refraction.artifacts.export_units import (
     REFRACTION_STATIC_REPO_SIGN_CONVENTION,
 )
 from app.statics.refraction.application.table_apply_service import (

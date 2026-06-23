@@ -20,16 +20,7 @@ FORBIDDEN_MODULES = (
     'app.statics.refraction.adapters.seisviewer2d',
 )
 
-MIGRATED_LEGACY_HELPER_MODULES = (
-    'app.statics.refraction.domain.first_layer',
-    'app.statics.refraction.domain.status',
-    'app.statics.refraction.domain.cell_coordinates',
-    'app.statics.refraction.domain.cell_grid',
-    'app.statics.refraction.domain.cell_regularization',
-    'app.statics.refraction.domain.cell_velocity_status',
-    'app.statics.refraction.domain.layer_config',
-    'app.statics.refraction.domain.layer_observations',
-)
+MIGRATED_LEGACY_HELPER_MODULES = ('.'.join(('app', 'statics', 'refraction', 'domain')),)
 
 
 def test_refraction_application_does_not_import_seisviewer2d_runtime() -> None:

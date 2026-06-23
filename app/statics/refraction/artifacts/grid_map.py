@@ -19,7 +19,7 @@ from app.statics.refraction.contracts.core_options import (
     normalized_layers_from_model_request,
     refractor_cell_options_from_request,
 )
-from app.statics.refraction.domain.types import (
+from app.statics.refraction.contracts.result_types import (
     RefractionDatumStaticsResult,
 )
 from app.statics.refraction.artifacts.arrays import (

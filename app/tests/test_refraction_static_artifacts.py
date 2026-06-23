@@ -95,7 +95,7 @@ from app.statics.refraction.artifacts.v1 import (
     REFRACTION_V1_ESTIMATES_CSV_NAME,
     REFRACTION_V1_QC_JSON_NAME,
 )
-from app.statics.refraction.domain.types import RefractionLayerSolveResult
+from app.statics.refraction.contracts.result_types import RefractionLayerSolveResult
 from app.tests._refraction_static_artifact_helpers import (
     _estimated_v1_request,
     _request,

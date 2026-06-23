@@ -71,7 +71,7 @@ from seis_statics.refraction.status import (
     REFRACTION_STATIC_STATUSES,
     classify_refraction_endpoint_static_status,
 )
-from app.statics.refraction.domain.types import RefractionDatumStaticsResult
+from app.statics.refraction.contracts.result_types import RefractionDatumStaticsResult
 
 
 def write_refraction_static_components_csv(

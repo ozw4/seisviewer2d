@@ -13,7 +13,7 @@ from app.statics.refraction.artifacts import (
     REFRACTION_STATIC_QC_JSON_NAME,
     REFRACTION_STATIC_SOLUTION_NPZ_NAME,
 )
-from app.statics.refraction.domain.export_units import (
+from app.statics.refraction.artifacts.export_units import (
     REFRACTION_STATIC_REPO_SIGN_CONVENTION,
 )
 

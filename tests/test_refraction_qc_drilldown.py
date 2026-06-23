@@ -15,7 +15,7 @@ from app.statics.refraction.artifacts import (
     RECEIVER_STATIC_TABLE_CSV_NAME,
     SOURCE_STATIC_TABLE_CSV_NAME,
 )
-from app.statics.refraction.domain.export_units import (
+from app.statics.refraction.artifacts.export_units import (
     REFRACTION_STATIC_REPO_SIGN_CONVENTION,
 )
 

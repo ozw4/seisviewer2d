@@ -9,7 +9,7 @@ from typing import Any
 import numpy as np
 
 from app.statics.refraction.contracts.apply import RefractionStaticApplyRequest
-from app.statics.refraction.domain.types import (
+from app.statics.refraction.contracts.result_types import (
     RefractionDatumStaticsResult,
 )
 

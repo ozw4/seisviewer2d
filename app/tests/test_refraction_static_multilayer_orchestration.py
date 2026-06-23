@@ -24,7 +24,7 @@ from app.statics.refraction.application.multilayer_service import (
     RefractionMultiLayerSolveError,
     solve_refraction_multilayer_time_terms,
 )
-from app.statics.refraction.domain.types import (
+from app.statics.refraction.contracts.result_types import (
     RefractionEndpointTable,
     RefractionStaticInputModel,
     ResolvedRefractionFirstLayer,

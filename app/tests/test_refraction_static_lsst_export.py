@@ -9,7 +9,7 @@ import sys
 
 import pytest
 
-from app.statics.refraction.domain.export_types import (
+from app.statics.refraction.artifacts.export_types import (
     REFRACTION_STATIC_EXPORT_SIGN_CONVENTION,
     RefractionStaticEndpointExportRow,
     RefractionStaticExportBundle,

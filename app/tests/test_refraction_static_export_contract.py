@@ -37,7 +37,7 @@ from app.statics.refraction.application.export_service import (
 from app.statics.refraction.adapters.seisviewer2d.export_runner import (
     run_refraction_static_export_job,
 )
-from app.statics.refraction.domain.export_units import (
+from app.statics.refraction.artifacts.export_units import (
     REFRACTION_STATIC_REPO_SIGN_CONVENTION,
 )
 from app.statics.refraction.application.lsst_export import (
@@ -46,7 +46,7 @@ from app.statics.refraction.application.lsst_export import (
     REFRACTION_LSST_PLUS_CARDS_TXT_NAME,
     REFRACTION_LSST_PLUS_CSV_NAME,
 )
-from app.statics.refraction.domain.table_import import (
+from app.statics.refraction.artifacts.table_import import (
     import_refraction_static_table_csv,
 )
 from app.tests._refraction_static_synthetic import synthetic_refraction_apply_request

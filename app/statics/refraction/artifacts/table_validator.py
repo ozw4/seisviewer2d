@@ -9,7 +9,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Literal, cast
 
-from app.statics.refraction.domain.export_units import (
+from app.statics.refraction.artifacts.export_units import (
     REFRACTION_STATIC_REPO_SIGN_CONVENTION,
     RefractionStaticExportUnitError,
     RefractionStaticExportUnits,
@@ -18,7 +18,7 @@ from app.statics.refraction.domain.export_units import (
     normalize_export_units,
     validate_import_sign_convention,
 )
-from app.statics.refraction.domain.export_types import RefractionStaticEndpointKind
+from app.statics.refraction.artifacts.export_types import RefractionStaticEndpointKind
 from seis_statics.refraction.status import REFRACTION_STATIC_STATUSES
 
 CANONICAL_STATIC_TABLE_FORMAT_NAME = 'canonical_static_table'

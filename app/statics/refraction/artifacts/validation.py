@@ -17,7 +17,7 @@ from app.statics.refraction.artifacts.contract import (
     _ValidatedResult,
     RefractionStaticArtifactError,
 )
-from app.statics.refraction.domain.types import (
+from app.statics.refraction.contracts.result_types import (
     RefractionDatumStaticsResult,
     ResolvedRefractionFirstLayer,
 )

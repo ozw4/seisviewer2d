@@ -56,7 +56,7 @@ from app.statics.refraction.application.multilayer_service import (
 from seis_statics.refraction.t1lsst import (
     compute_t1lsst_2layer_weathering_correction,
 )
-from app.statics.refraction.domain.types import (
+from app.statics.refraction.contracts.result_types import (
     RefractionEndpointTable,
     RefractionDatumStaticsResult,
     RefractionLayerSolveResult,

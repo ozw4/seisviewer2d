@@ -10,7 +10,7 @@ import pytest
 from app.api.schemas import RefractionStaticApplyRequest
 from app.statics.refraction.artifacts import write_refraction_static_artifacts
 from app.statics.refraction.application.datum import build_refraction_datum_statics
-from app.statics.refraction.domain.types import (
+from app.statics.refraction.contracts.result_types import (
     RefractionDatumStaticsResult,
     RefractionEndpointTable,
     RefractionStaticInputModel,

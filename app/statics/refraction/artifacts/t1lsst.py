@@ -16,7 +16,7 @@ from seis_statics.refraction.t1lsst import (
     RefractionT1LSSTError,
     compose_t1lsst_1layer_endpoint_component_rows,
 )
-from app.statics.refraction.domain.types import RefractionDatumStaticsResult
+from app.statics.refraction.contracts.result_types import RefractionDatumStaticsResult
 
 REFRACTION_T1LSST_1LAYER_COMPONENTS_CSV_NAME = (
     'refraction_t1lsst_1layer_components.csv'

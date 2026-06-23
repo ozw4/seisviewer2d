@@ -8,7 +8,6 @@ REFRACTION_PACKAGE_MODULES = [
     'app.statics.common',
     'app.statics.refraction',
     'app.statics.refraction.contracts',
-    'app.statics.refraction.domain',
     'app.statics.refraction.artifacts',
     'app.statics.refraction.application',
     'app.statics.refraction.ports',

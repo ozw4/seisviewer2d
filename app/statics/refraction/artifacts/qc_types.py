@@ -11,7 +11,7 @@ from typing import Any, Final
 
 import numpy as np
 
-from app.statics.refraction.domain.export_units import (
+from app.statics.refraction.artifacts.export_units import (
     REFRACTION_STATIC_REPO_SIGN_CONVENTION,
 )
 

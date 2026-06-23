@@ -10,7 +10,7 @@ import numpy as np
 from app.statics.refraction.contracts.apply import RefractionStaticApplyRequest
 from app.statics.refraction.application.input_model import build_refraction_static_input_model
 from app.statics.refraction.application.pick_source_loader import PICK_TIME_KEYS
-from app.statics.refraction.domain.types import RefractionStaticInputModel
+from app.statics.refraction.contracts.result_types import RefractionStaticInputModel
 from app.statics.refraction.ports.runtime import RefractionRuntime
 
 

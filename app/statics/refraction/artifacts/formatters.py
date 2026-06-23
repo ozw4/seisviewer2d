@@ -10,7 +10,7 @@ import numpy as np
 from app.statics.refraction.artifacts.contract import (
     RefractionStaticArtifactError,
 )
-from app.statics.refraction.domain.export_units import seconds_to_export_units
+from app.statics.refraction.artifacts.export_units import seconds_to_export_units
 
 
 def _nan_if_none(value: float | None) -> float:

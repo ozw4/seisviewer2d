@@ -7,11 +7,11 @@ import numpy as np
 from app.statics.refraction.artifacts import (
     FIRST_BREAK_TIME_EXPORT_SIGN_CONVENTION,
 )
-from app.statics.refraction.domain.export_types import (
+from app.statics.refraction.artifacts.export_types import (
     RefractionStaticEndpointExportRow,
     RefractionStaticExportBundle,
 )
-from app.statics.refraction.domain.export_units import (
+from app.statics.refraction.artifacts.export_units import (
     REFRACTION_STATIC_REPO_SIGN_CONVENTION,
 )
 from seis_statics.refraction.t1lsst import (

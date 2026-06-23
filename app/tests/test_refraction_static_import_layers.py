@@ -16,10 +16,10 @@ import pytest
 import app.statics.refraction.application.bedrock as bedrock
 import app.statics.refraction.application.core_options as core_options
 import app.statics.refraction.application.design_matrix as design_matrix
-import app.statics.refraction.domain.export_types as export_types
+import app.statics.refraction.artifacts.export_types as export_types
 import app.statics.refraction.application.half_intercept as half_intercept
-import app.statics.refraction.domain.solver as solver
-import app.statics.refraction.domain.types as refraction_types
+import app.statics.refraction.application.solver as solver
+import app.statics.refraction.contracts.result_types as refraction_types
 import app.statics.refraction.application.weathering as weathering
 
 
@@ -346,7 +346,7 @@ def test_refraction_static_types_is_dependency_light() -> None:
 
     assert (
         _forbidden_modules_imported_by(
-            'app.statics.refraction.domain.types',
+            'app.statics.refraction.contracts.result_types',
             forbidden_imports=_TYPE_MODULE_FORBIDDEN_IMPORTS,
         )
         == set()
@@ -372,7 +372,7 @@ def test_refraction_static_export_types_is_dependency_light() -> None:
 
     assert (
         _forbidden_modules_imported_by(
-            'app.statics.refraction.domain.export_types',
+            'app.statics.refraction.artifacts.export_types',
             forbidden_imports=_TYPE_MODULE_FORBIDDEN_IMPORTS,
         )
         == set()
@@ -414,7 +414,7 @@ def test_numeric_refraction_modules_import_without_tracestore_readers() -> None:
 
     for module_name in (
         'app.statics.refraction.application.design_matrix',
-        'app.statics.refraction.domain.solver',
+        'app.statics.refraction.application.solver',
         'app.statics.refraction.application.bedrock',
         'app.statics.refraction.application.half_intercept',
         'app.statics.refraction.application.weathering',

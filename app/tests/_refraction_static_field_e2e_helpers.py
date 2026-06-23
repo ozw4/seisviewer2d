@@ -11,7 +11,7 @@ import numpy as np
 from app.api.schemas import RefractionStaticApplyRequest
 from app.core.state import AppState
 from seis_statics.refraction.source_depth import resolve_refraction_source_depth
-from app.statics.refraction.domain.types import (
+from app.statics.refraction.contracts.result_types import (
     RefractionDatumStaticsResult,
     RefractionEndpointTable,
     RefractionStaticInputModel,

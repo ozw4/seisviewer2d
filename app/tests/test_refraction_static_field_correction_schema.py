@@ -28,7 +28,7 @@ from app.statics.refraction.application.workflow import (
 )
 from seis_statics.refraction.source_depth import resolve_refraction_source_depth
 from seis_statics.refraction.uphole import resolve_refraction_uphole
-from app.statics.refraction.domain.types import ResolvedRefractionFirstLayer
+from app.statics.refraction.contracts.result_types import ResolvedRefractionFirstLayer
 from app.tests._refraction_static_synthetic import (
     SYNTHETIC_V1_M_S,
     run_synthetic_refraction_statics,

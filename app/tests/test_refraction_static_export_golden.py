@@ -20,7 +20,7 @@ from app.statics.refraction.application.lsst_export import (
     format_refraction_lsst_csv,
     format_refraction_lsst_plus_csv,
 )
-from app.statics.refraction.domain.table_validator import (
+from app.statics.refraction.artifacts.table_validator import (
     CANONICAL_STATIC_TABLE_OPTIONAL_COLUMNS,
     CANONICAL_STATIC_TABLE_REQUIRED_COLUMNS,
     validate_canonical_static_table_rows,

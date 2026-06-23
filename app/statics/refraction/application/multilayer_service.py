@@ -79,7 +79,7 @@ from app.statics.refraction.application.design_matrix import (
     refraction_design_matrix_layer_qc_json_name,
     write_refraction_design_matrix_diagnostics_artifacts,
 )
-from app.statics.refraction.domain.types import (
+from app.statics.refraction.contracts.result_types import (
     RefractionDatumStaticsResult,
     RefractionHalfInterceptTimeResult,
     RefractionLayerKind,

@@ -43,7 +43,7 @@ from app.statics.refraction.application.core_options import (
     resolve_weathering_velocity_from_model_request as resolve_weathering_velocity_m_s,
     solver_options_from_request,
 )
-from app.statics.refraction.domain.types import (
+from app.statics.refraction.contracts.result_types import (
     RefractionBedrockSlownessResult,
     RefractionHalfInterceptTimeResult,
     RefractionStaticDesignMatrix,

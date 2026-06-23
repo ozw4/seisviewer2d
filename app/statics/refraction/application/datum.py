@@ -30,7 +30,7 @@ from seis_statics.refraction.datum import (
     compute_refraction_datum_elevation_shift_s as core_compute_refraction_datum_elevation_shift_s,
 )
 from seis_statics.refraction.status import LOCAL_V2_STATUS_VALUES
-from app.statics.refraction.domain.types import (
+from app.statics.refraction.contracts.result_types import (
     RefractionDatumStaticsResult,
     RefractionWeatheringReplacementStaticsResult,
     ResolvedRefractionFirstLayer,

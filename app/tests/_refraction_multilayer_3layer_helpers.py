@@ -32,7 +32,7 @@ from app.statics.refraction.application.multilayer_service import (
     _components_from_replacement,
     build_refraction_multilayer_weathering_replacement_statics,
 )
-from app.statics.refraction.domain.types import (
+from app.statics.refraction.contracts.result_types import (
     RefractionEndpointTable,
     RefractionLayerKind,
     RefractionLayerSolveResult,

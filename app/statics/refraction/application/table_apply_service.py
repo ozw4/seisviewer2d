@@ -37,16 +37,16 @@ from app.statics.refraction.application.apply_trace_store import (
     RefractionStaticTraceStoreApplyError,
     validate_refraction_trace_shifts_for_application,
 )
-from app.statics.refraction.domain.export_units import (
+from app.statics.refraction.artifacts.export_units import (
     REFRACTION_STATIC_REPO_SIGN_CONVENTION,
 )
-from app.statics.refraction.domain.table_import import (
+from app.statics.refraction.artifacts.table_import import (
     RefractionImportedEndpointStatic,
     RefractionStaticTableImportResult,
     import_refraction_static_table_csv,
     import_refraction_static_tables,
 )
-from app.statics.refraction.domain.table_validator import (
+from app.statics.refraction.artifacts.table_validator import (
     CANONICAL_STATIC_TABLE_OPTIONAL_COLUMNS,
 )
 from app.statics.refraction.ports.job_context import RefractionJobContext

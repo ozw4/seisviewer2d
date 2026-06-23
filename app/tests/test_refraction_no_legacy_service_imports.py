@@ -36,7 +36,6 @@ def test_legacy_refraction_service_files_are_removed() -> None:
 def test_refraction_package_imports_without_legacy_services() -> None:
     for module_name in (
         'app.statics.refraction.contracts',
-        'app.statics.refraction.domain',
         'app.statics.refraction.artifacts',
         'app.statics.refraction.application',
         'app.statics.refraction.api',

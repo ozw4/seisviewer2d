@@ -15,7 +15,7 @@ from app.statics.refraction.application.design_matrix import (
     build_refraction_static_design_matrix_from_arrays,
     write_refraction_design_matrix_diagnostics_artifacts,
 )
-from app.statics.refraction.domain.solver import (
+from app.statics.refraction.application.solver import (
     RefractionStaticSolverError,
     solve_refraction_static_bounded_ls,
 )

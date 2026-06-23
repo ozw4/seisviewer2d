@@ -23,7 +23,7 @@ from seis_statics.refraction.first_layer import (
     validate_resolved_first_layer_velocity_match,
 )
 from seis_statics.refraction.status import LOCAL_V2_STATUS_VALUES
-from app.statics.refraction.domain.types import (
+from app.statics.refraction.contracts.result_types import (
     RefractionStaticInputModel,
     RefractionWeatheringReplacementStaticsResult,
     RefractionWeatheringThicknessResult,

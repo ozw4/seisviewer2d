@@ -11,7 +11,7 @@ from typing import Any, get_type_hints
 import numpy as np
 import pytest
 
-from app.statics.refraction.domain.types import (
+from app.statics.refraction.contracts.result_types import (
     REFRACTION_FIELD_CORRECTION_COMPONENT_NAMES,
     RefractionEndpointFieldCorrectionResult,
     RefractionFieldCorrectionComponentName,
@@ -71,7 +71,7 @@ import sys
 for name in {sorted(_FORBIDDEN_IMPORTS)!r}:
     sys.modules.pop(name, None)
 
-module = importlib.import_module('app.statics.refraction.domain.types')
+module = importlib.import_module('app.statics.refraction.contracts.result_types')
 assert module.RefractionEndpointFieldCorrectionResult is not None
 assert module.RefractionTraceFieldCorrectionResult is not None
 
@@ -89,7 +89,7 @@ print(json.dumps(sorted(name for name in sys.modules if name in forbidden)))
 
     assert json.loads(result.stdout) == []
 
-    module = importlib.import_module('app.statics.refraction.domain.types')
+    module = importlib.import_module('app.statics.refraction.contracts.result_types')
     source = Path(module.__file__ or '').read_text(encoding='utf-8')
     for forbidden in _FORBIDDEN_SOURCE_STRINGS:
         assert forbidden not in source

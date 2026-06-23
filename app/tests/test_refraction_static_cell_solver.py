@@ -9,7 +9,7 @@ from app.api.schemas import RefractionStaticModelRequest, RefractionStaticSolver
 from app.statics.refraction.application.design_matrix import (
     build_refraction_static_design_matrix_from_arrays,
 )
-from app.statics.refraction.domain.solver import solve_refraction_static_bounded_ls
+from app.statics.refraction.application.solver import solve_refraction_static_bounded_ls
 
 ACTIVE_NODE_ID = np.asarray([10, 20, 30, 40], dtype=np.int64)
 TRUE_HALF_INTERCEPT_S = np.asarray([0.010, 0.020, 0.015, 0.012], dtype=np.float64)

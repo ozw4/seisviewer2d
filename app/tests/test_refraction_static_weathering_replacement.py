@@ -11,7 +11,7 @@ import numpy as np
 import pytest
 
 from app.api.schemas import RefractionStaticApplyOptions
-from app.statics.refraction.domain.types import (
+from app.statics.refraction.contracts.result_types import (
     RefractionWeatheringThicknessResult,
 )
 import app.statics.refraction.application.weathering_replacement as replacement_module

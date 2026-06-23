@@ -91,7 +91,7 @@ from app.statics.refraction.artifacts.v1 import (
 from seis_statics.refraction.source_depth import (
     compute_source_depth_weathering_time_correction_from_result,
 )
-from app.statics.refraction.domain.types import (
+from app.statics.refraction.contracts.result_types import (
     RefractionDatumStaticsResult,
     RefractionStaticInputModel,
     ResolvedRefractionFirstLayer,

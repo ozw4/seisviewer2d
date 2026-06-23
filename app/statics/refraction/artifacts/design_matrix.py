@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from app.statics.refraction.domain.types import RefractionLayerKind
+from app.statics.refraction.contracts.result_types import RefractionLayerKind
 
 REFRACTION_DESIGN_MATRIX_QC_JSON_NAME = 'refraction_design_matrix_qc.json'
 REFRACTION_DESIGN_MATRIX_NODE_DIAGNOSTICS_CSV_NAME = (

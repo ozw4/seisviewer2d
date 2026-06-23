@@ -8,7 +8,7 @@ import sys
 
 import numpy as np
 
-from app.statics.refraction.domain.qc_types import (
+from app.statics.refraction.artifacts.qc_types import (
     REFRACTION_STATIC_QC_SIGN_CONVENTION,
     RefractionCellQcSeries,
     RefractionFirstBreakQcSeries,
@@ -68,7 +68,7 @@ import sys
 for name in {sorted(_FORBIDDEN_IMPORTS)!r}:
     sys.modules.pop(name, None)
 
-module = importlib.import_module('app.statics.refraction.domain.qc_types')
+module = importlib.import_module('app.statics.refraction.artifacts.qc_types')
 assert module.RefractionFirstBreakQcSeries is not None
 assert module.RefractionProfileQcSeries is not None
 assert module.RefractionCellQcSeries is not None
@@ -88,7 +88,7 @@ print(json.dumps(sorted(name for name in sys.modules if name in forbidden)))
 
     assert json.loads(result.stdout) == []
 
-    module = importlib.import_module('app.statics.refraction.domain.qc_types')
+    module = importlib.import_module('app.statics.refraction.artifacts.qc_types')
     source = Path(module.__file__ or '').read_text(encoding='utf-8')
     for forbidden in _FORBIDDEN_SOURCE_STRINGS:
         assert forbidden not in source

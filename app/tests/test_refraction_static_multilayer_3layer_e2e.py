@@ -30,7 +30,7 @@ from app.statics.refraction.application.multilayer_service import (
     RefractionMultiLayerStaticsWorkflowResult,
     compute_refraction_multilayer_datum_statics_from_input_model,
 )
-from app.statics.refraction.domain.types import (
+from app.statics.refraction.contracts.result_types import (
     RefractionEndpointTable,
     RefractionLayerSolveResult,
     RefractionStaticInputModel,

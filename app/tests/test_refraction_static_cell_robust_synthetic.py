@@ -9,7 +9,7 @@ import numpy as np
 import pytest
 
 from app.statics.refraction.artifacts import write_refraction_static_artifacts
-from app.statics.refraction.domain.types import (
+from app.statics.refraction.contracts.result_types import (
     RefractionDatumStaticsResult,
     RefractionStaticInputModel,
 )

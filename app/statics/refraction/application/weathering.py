@@ -40,7 +40,7 @@ from app.statics.refraction.ports.runtime import RefractionRuntime
 from seis_statics.refraction.weathering import (
     compute_weathering_thickness_from_half_intercept_time as core_compute_weathering_thickness,
 )
-from app.statics.refraction.domain.types import (
+from app.statics.refraction.contracts.result_types import (
     RefractionHalfInterceptTimeResult,
     RefractionStaticInputModel,
     RefractionWeatheringThicknessResult,

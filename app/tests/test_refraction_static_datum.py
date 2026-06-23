@@ -29,7 +29,7 @@ from app.statics.refraction.application.datum import (
     compute_flat_datum_shift_s,
     compute_floating_datum_elevation_shift_s,
 )
-from app.statics.refraction.domain.types import (
+from app.statics.refraction.contracts.result_types import (
     RefractionWeatheringReplacementStaticsResult,
 )
 

@@ -27,11 +27,11 @@ from app.statics.refraction.application.half_intercept import (
     build_refraction_half_intercept_time_model_from_bedrock_result,
     estimate_refraction_half_intercept_times_from_first_breaks,
 )
-from app.statics.refraction.domain.types import (
+from app.statics.refraction.contracts.result_types import (
     RefractionEndpointTable,
     RefractionStaticInputModel,
 )
-from app.statics.refraction.domain.solver import solve_refraction_static_bounded_ls
+from app.statics.refraction.application.solver import solve_refraction_static_bounded_ls
 
 NODE_ID = np.asarray([0, 1, 2, 3, 4, 5], dtype=np.int64)
 ACTIVE_NODE_ID = NODE_ID[:-1]

@@ -27,7 +27,7 @@ from app.statics.refraction.application.core_options import (
     core_input_model_from_app,
     model_options_from_request,
 )
-from app.statics.refraction.domain.types import (
+from app.statics.refraction.contracts.result_types import (
     RefractionDesignMatrixNodeDiagnostics,
     RefractionStaticInputModel,
     ResolvedRefractionFirstLayer,

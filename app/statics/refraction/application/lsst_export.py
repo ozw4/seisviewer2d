@@ -9,11 +9,11 @@ from collections.abc import Sequence
 from pathlib import Path
 from typing import Final
 
-from app.statics.refraction.domain.export_types import (
+from app.statics.refraction.artifacts.export_types import (
     RefractionStaticEndpointExportRow,
     RefractionStaticExportBundle,
 )
-from app.statics.refraction.domain.export_units import (
+from app.statics.refraction.artifacts.export_units import (
     REFRACTION_STATIC_REPO_SIGN_CONVENTION,
     seconds_to_export_units,
 )

@@ -17,7 +17,7 @@ from app.statics.refraction.application.job_status import (
     is_ready_status_value,
     normalize_status_value,
 )
-from app.statics.refraction.domain.export_units import (
+from app.statics.refraction.artifacts.export_units import (
     REFRACTION_STATIC_REPO_SIGN_CONVENTION,
 )
 from app.statics.refraction.artifacts import (

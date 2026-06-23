@@ -31,7 +31,7 @@ from app.statics.refraction.artifacts import (
     refraction_static_double_application_qc,
 )
 from app.statics.refraction.ports.runtime import RefractionRuntime
-from app.statics.refraction.domain.types import (
+from app.statics.refraction.contracts.result_types import (
     RefractionDatumStaticsResult,
 )
 from app.statics.refraction.application.types import (

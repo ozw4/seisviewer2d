@@ -56,7 +56,7 @@ from app.statics.refraction.contracts.core_options import (
 )
 from app.statics.refraction.artifacts.source_depth import REFRACTION_SOURCE_DEPTH_SOURCES_CSV_NAME
 from app.statics.refraction.artifacts.uphole import REFRACTION_UPHOLE_SOURCES_CSV_NAME
-from app.statics.refraction.domain.types import (
+from app.statics.refraction.contracts.result_types import (
     RefractionDatumStaticsResult,
     ResolvedRefractionFirstLayer,
 )

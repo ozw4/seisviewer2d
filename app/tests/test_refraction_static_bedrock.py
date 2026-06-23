@@ -17,11 +17,11 @@ from app.statics.refraction.application.bedrock import (
     estimate_global_bedrock_slowness_from_first_breaks,
     estimate_global_bedrock_slowness_from_input_model,
 )
-from app.statics.refraction.domain.types import (
+from app.statics.refraction.contracts.result_types import (
     RefractionEndpointTable,
     RefractionStaticInputModel,
 )
-from app.statics.refraction.domain.solver import RefractionStaticSolverError
+from app.statics.refraction.application.solver import RefractionStaticSolverError
 
 NODE_ID = np.asarray([0, 1, 2, 3, 4], dtype=np.int64)
 TRUE_HALF_INTERCEPT_S = np.asarray([0.010, 0.012, 0.015, 0.018, 0.020])

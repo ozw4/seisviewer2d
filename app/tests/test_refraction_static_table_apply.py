@@ -13,7 +13,7 @@ import app.services.static_job_targets as static_job_targets
 from app.api.schemas import RefractionStaticTableApplyRequest
 from app.core.state import AppState, create_app_state
 from app.main import app
-from app.statics.refraction.domain.export_units import (
+from app.statics.refraction.artifacts.export_units import (
     REFRACTION_STATIC_REPO_SIGN_CONVENTION,
 )
 from app.statics.refraction.application.table_apply_service import (

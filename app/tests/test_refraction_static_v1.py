@@ -26,7 +26,7 @@ from app.statics.refraction.application.core_options import (
     core_input_model_from_app,
     first_layer_options_from_request,
 )
-from app.statics.refraction.domain.types import RefractionStaticInputModel
+from app.statics.refraction.contracts.result_types import RefractionStaticInputModel
 from seis_statics.refraction.v1 import (
     RefractionV1EstimationError,
     estimate_global_v1_from_direct_arrivals,

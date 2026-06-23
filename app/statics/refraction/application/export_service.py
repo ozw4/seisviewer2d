@@ -42,15 +42,15 @@ from app.statics.refraction.application.lsst_export import (
     write_refraction_lsst_plus_cards_txt,
     write_refraction_lsst_plus_csv,
 )
-from app.statics.refraction.domain.export_units import (
+from app.statics.refraction.artifacts.export_units import (
     REFRACTION_STATIC_REPO_SIGN_CONVENTION,
 )
-from app.statics.refraction.domain.export_types import (
+from app.statics.refraction.artifacts.export_types import (
     RefractionStaticEndpointExportRow,
     RefractionStaticEndpointKind,
     RefractionStaticExportBundle,
 )
-from app.statics.refraction.domain.table_validator import (
+from app.statics.refraction.artifacts.table_validator import (
     CANONICAL_STATIC_TABLE_FORMAT_NAME,
     CANONICAL_STATIC_TABLE_FORMAT_VERSION,
     CANONICAL_STATIC_TABLE_OPTIONAL_COLUMNS,

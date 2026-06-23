@@ -5,7 +5,7 @@ from app.statics.refraction.application.preflight_diagnostics import (
     RefractionStaticPreflightError,
 )
 from app.statics.refraction.application.workflow import _failed_refraction_static_stage
-from app.statics.refraction.domain.solver import RefractionStaticSolverError
+from app.statics.refraction.application.solver import RefractionStaticSolverError
 
 
 def test_failed_refraction_static_stage_classifies_preflight_error(tmp_path) -> None:
