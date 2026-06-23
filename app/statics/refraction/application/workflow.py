@@ -42,10 +42,15 @@ from seis_statics.refraction.field_composition import (
     compose_refraction_final_trace_shift,
     compose_refraction_trace_field_corrections,
 )
+from seis_statics.refraction.v1 import (
+    estimate_global_v1_from_direct_arrivals,
+)
 from seis_statics.refraction.layer_config import (
     RefractionLayerConfigLayer as RefractionStaticLayerConfig,
 )
 from app.statics.refraction.core_options import (
+    core_input_model_from_app,
+    first_layer_options_from_request,
     layer_observation_masks_from_input_model,
     layer_observation_qc_for_viewer as refraction_layer_observation_qc,
     normalize_first_layer_from_model_request as normalize_refraction_first_layer_request,
@@ -90,9 +95,6 @@ from app.statics.refraction.domain.types import (
     RefractionDatumStaticsResult,
     RefractionStaticInputModel,
     ResolvedRefractionFirstLayer,
-)
-from app.statics.refraction.domain.v1 import (
-    estimate_global_v1_from_direct_arrivals,
 )
 from seis_statics.refraction.uphole import (
     compute_uphole_time_correction_from_result,
@@ -206,8 +208,8 @@ def resolve_refraction_first_layer_request(
         uploaded_pick_metadata=uploaded_pick_metadata,
     )
     estimate = estimate_global_v1_from_direct_arrivals(
-        input_model=input_model,
-        first_layer=first_layer,
+        input_model=core_input_model_from_app(input_model),
+        first_layer=first_layer_options_from_request(first_layer),
     )
     write_refraction_v1_artifacts(job_dir, estimate)
     return _ResolvedFirstLayerRequest(

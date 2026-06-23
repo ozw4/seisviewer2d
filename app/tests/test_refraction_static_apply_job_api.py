@@ -94,7 +94,7 @@ from app.statics.refraction.artifacts.v1 import (
 from seis_statics.refraction.source_depth import (
     resolve_refraction_source_depth,
 )
-from app.statics.refraction.domain.v1 import RefractionV1EstimateResult
+from seis_statics.refraction.types import RefractionV1EstimateResult
 from app.services.trace_store_registration import trace_store_cache_key
 from app.tests._refraction_static_synthetic import (
     SYNTHETIC_SH1_TOLERANCE_M,
@@ -1772,8 +1772,10 @@ def test_refraction_static_job_uses_resolved_first_layer_dataclass_downstream(
             return input_model
         return weathering_input_model
 
+    core_input_model = object()
+
     def _estimate_v1(**kwargs: Any) -> RefractionV1EstimateResult:
-        assert kwargs['input_model'] is input_model
+        assert kwargs['input_model'] is core_input_model
         return estimate
 
     monkeypatch.setattr(
@@ -1785,6 +1787,11 @@ def test_refraction_static_job_uses_resolved_first_layer_dataclass_downstream(
         refraction_service_module,
         'estimate_global_v1_from_direct_arrivals',
         _estimate_v1,
+    )
+    monkeypatch.setattr(
+        refraction_service_module,
+        'core_input_model_from_app',
+        lambda value: core_input_model if value is input_model else value,
     )
 
     def _capture_v1_write(*args: Any, **kwargs: Any) -> object:
@@ -3008,6 +3015,11 @@ def _stub_v1_estimation(
         refraction_service_module,
         'build_refraction_static_input_model',
         lambda **_kwargs: object(),
+    )
+    monkeypatch.setattr(
+        refraction_service_module,
+        'core_input_model_from_app',
+        lambda value: value,
     )
     monkeypatch.setattr(
         refraction_service_module,

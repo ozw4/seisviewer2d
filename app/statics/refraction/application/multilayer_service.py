@@ -10,7 +10,7 @@ from typing import Any
 
 import numpy as np
 
-import app.statics.refraction.domain.t1lsst as refraction_t1lsst
+import seis_statics.refraction.t1lsst as refraction_t1lsst
 from app.statics.refraction.contracts.options import (
     RefractionStaticApplyOptions,
     RefractionStaticConversionRequest,
@@ -60,7 +60,7 @@ from app.statics.refraction.application.design_matrix import (
 from app.statics.refraction.application.half_intercept import (
     estimate_refraction_half_intercept_times_from_first_breaks,
 )
-from app.statics.refraction.domain.t1lsst import (
+from seis_statics.refraction.t1lsst import (
     compute_t1lsst_2layer_thicknesses_with_status,
 )
 from app.statics.refraction.domain.types import (

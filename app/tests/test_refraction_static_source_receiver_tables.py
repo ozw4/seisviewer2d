@@ -18,7 +18,7 @@ from app.statics.refraction.artifacts.static_tables import (
     _receiver_static_table_columns,
     _source_static_table_columns,
 )
-from app.statics.refraction.domain.t1lsst import (
+from seis_statics.refraction.t1lsst import (
     compute_t1lsst_1layer_thickness,
     compute_t1lsst_1layer_weathering_correction,
 )

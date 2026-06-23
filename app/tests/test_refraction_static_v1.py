@@ -22,7 +22,12 @@ from app.statics.refraction.artifacts.v1 import (
     REFRACTION_V1_QC_JSON_NAME,
     write_refraction_v1_artifacts,
 )
-from app.statics.refraction.domain.v1 import (
+from app.statics.refraction.core_options import (
+    core_input_model_from_app,
+    first_layer_options_from_request,
+)
+from app.statics.refraction.domain.types import RefractionStaticInputModel
+from seis_statics.refraction.v1 import (
     RefractionV1EstimationError,
     estimate_global_v1_from_direct_arrivals,
 )
@@ -132,8 +137,19 @@ def _input_model(
     )
 
 
+def _estimate_global_v1(
+    *,
+    input_model: RefractionStaticInputModel,
+    first_layer: RefractionStaticFirstLayerRequest,
+):
+    return estimate_global_v1_from_direct_arrivals(
+        input_model=core_input_model_from_app(input_model),
+        first_layer=first_layer_options_from_request(first_layer),
+    )
+
+
 def test_v1_estimate_global_from_direct_arrivals(tmp_path: Path) -> None:
-    result = estimate_global_v1_from_direct_arrivals(
+    result = _estimate_global_v1(
         input_model=synthetic_direct_arrival_input_model(),
         first_layer=synthetic_first_layer_request(),
     )
@@ -188,7 +204,7 @@ def test_v1_estimate_global_from_direct_arrivals(tmp_path: Path) -> None:
 def test_v1_estimate_robust_to_outlier_picks() -> None:
     model = _input_model(pick_overrides={(1, 2): 0.300})
 
-    result = estimate_global_v1_from_direct_arrivals(
+    result = _estimate_global_v1(
         input_model=model,
         first_layer=_first_layer(robust_threshold=2.5),
     )
@@ -206,7 +222,7 @@ def test_v1_estimate_respects_direct_offset_gate() -> None:
     }
     model = _input_model(offsets_m=offsets, pick_overrides=overrides)
 
-    result = estimate_global_v1_from_direct_arrivals(
+    result = _estimate_global_v1(
         input_model=model,
         first_layer=_first_layer(max_direct_offset_m=120.0),
     )
@@ -220,7 +236,7 @@ def test_v1_estimate_fails_with_insufficient_picks() -> None:
     model = _input_model(offsets_m=(20.0, 40.0, 60.0, 80.0))
 
     with pytest.raises(RefractionV1EstimationError, match='Insufficient'):
-        estimate_global_v1_from_direct_arrivals(
+        _estimate_global_v1(
             input_model=model,
             first_layer=_first_layer(min_picks_per_fit=5),
         )
@@ -242,7 +258,7 @@ def test_v1_estimate_partial_failures_reports_status_counts() -> None:
     )
 
     with pytest.raises(RefractionV1EstimationError) as exc_info:
-        estimate_global_v1_from_direct_arrivals(
+        _estimate_global_v1(
             input_model=model,
             first_layer=_first_layer(
                 min_groups=3,
@@ -272,7 +288,7 @@ def test_v1_estimate_all_out_of_bounds_error_mentions_velocity_bounds() -> None:
     model = _input_model(v1_m_s=2200.0)
 
     with pytest.raises(RefractionV1EstimationError) as exc_info:
-        estimate_global_v1_from_direct_arrivals(
+        _estimate_global_v1(
             input_model=model,
             first_layer=_first_layer(
                 min_weathering_velocity_m_s=500.0,
@@ -296,7 +312,7 @@ def test_v1_estimate_insufficient_groups_error_reports_valid_and_required_counts
     model = _input_model(intercept_by_source=(0.010, 0.012))
 
     with pytest.raises(RefractionV1EstimationError) as exc_info:
-        estimate_global_v1_from_direct_arrivals(
+        _estimate_global_v1(
             input_model=model,
             first_layer=_first_layer(min_groups=3),
         )

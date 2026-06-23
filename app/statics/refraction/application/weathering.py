@@ -37,7 +37,7 @@ from app.statics.refraction.application.half_intercept import (
     estimate_refraction_half_intercept_times_from_first_breaks,
 )
 from app.statics.refraction.ports.runtime import RefractionRuntime
-from app.statics.refraction.domain.t1lsst import (
+from seis_statics.refraction.t1lsst import (
     RefractionT1LSSTError,
     compute_t1lsst_1layer_thickness,
 )

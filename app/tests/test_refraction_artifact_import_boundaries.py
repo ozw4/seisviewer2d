@@ -26,10 +26,7 @@ ARTIFACT_NAME_CONSUMERS = (
     ARTIFACTS_ROOT / 'writer.py',
     ARTIFACTS_ROOT / 'qc.py',
 )
-FIELD_DOMAIN_MODULES = (
-    'app.statics.refraction.domain.t1lsst',
-    'app.statics.refraction.domain.v1',
-)
+FIELD_DOMAIN_MODULES: tuple[str, ...] = ()
 
 
 def test_refraction_artifacts_do_not_import_application_layer() -> None:

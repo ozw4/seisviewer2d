@@ -19,9 +19,7 @@ import app.statics.refraction.application.design_matrix as design_matrix
 import app.statics.refraction.domain.export_types as export_types
 import app.statics.refraction.application.half_intercept as half_intercept
 import app.statics.refraction.domain.solver as solver
-import app.statics.refraction.domain.t1lsst as t1lsst
 import app.statics.refraction.domain.types as refraction_types
-import app.statics.refraction.domain.v1 as v1
 import app.statics.refraction.application.weathering as weathering
 
 
@@ -217,7 +215,7 @@ def test_refraction_static_import_layer_checks_use_process_group_timeout(
 
     monkeypatch.setattr(subprocess, 'Popen', FakePopen)
 
-    assert _forbidden_modules_imported_by('app.statics.refraction.domain.v1') == set()
+    assert _forbidden_modules_imported_by('app.statics.refraction.core_options') == set()
 
     kwargs = captured['kwargs']
     assert kwargs['cwd'] == _REPO_ROOT
@@ -316,10 +314,10 @@ def test_import_layer_timeout_failure_message_is_readable(
     monkeypatch.setattr(os, 'killpg', fake_killpg)
 
     with pytest.raises(AssertionError) as exc_info:
-        _forbidden_modules_imported_by('app.statics.refraction.domain.v1')
+        _forbidden_modules_imported_by('app.statics.refraction.core_options')
 
     message = str(exc_info.value)
-    assert 'module under test: app.statics.refraction.domain.v1' in message
+    assert 'module under test: app.statics.refraction.core_options' in message
     assert 'forbidden modules:' in message
     assert 'app.main' in message
     assert 'segyio' in message
@@ -422,21 +420,6 @@ def test_numeric_refraction_modules_import_without_tracestore_readers() -> None:
         'app.statics.refraction.application.weathering',
     ):
         assert _forbidden_modules_imported_by(module_name) == set()
-
-
-def test_refraction_static_v1_imports_without_reader_or_segyio() -> None:
-    assert v1.RefractionV1EstimateResult is not None
-
-    assert _forbidden_modules_imported_by('app.statics.refraction.domain.v1') == set()
-
-
-def test_refraction_static_t1lsst_imports_without_reader_or_segyio() -> None:
-    assert t1lsst.RefractionT1LSSTError is not None
-
-    assert (
-        _forbidden_modules_imported_by('app.statics.refraction.domain.t1lsst')
-        == set()
-    )
 
 
 def test_refraction_static_schema_tests_do_not_import_service_or_reader() -> None:

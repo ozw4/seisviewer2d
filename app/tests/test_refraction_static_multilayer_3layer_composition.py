@@ -11,7 +11,7 @@ from app.statics.refraction.application.datum import build_refraction_datum_stat
 from app.statics.refraction.application.multilayer_service import (
     build_refraction_multilayer_weathering_replacement_statics,
 )
-from app.statics.refraction.domain.t1lsst import (
+from seis_statics.refraction.t1lsst import (
     RefractionT1LSSTError,
     compute_t1lsst_3layer_weathering_correction,
 )

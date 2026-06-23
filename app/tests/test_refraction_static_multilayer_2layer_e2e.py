@@ -52,7 +52,7 @@ from app.statics.refraction.application.multilayer_service import (
     build_refraction_multilayer_weathering_replacement_statics,
     compute_refraction_multilayer_datum_statics_from_input_model,
 )
-from app.statics.refraction.domain.t1lsst import (
+from seis_statics.refraction.t1lsst import (
     compute_t1lsst_2layer_weathering_correction,
 )
 from app.statics.refraction.domain.types import (

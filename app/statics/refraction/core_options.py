@@ -33,6 +33,7 @@ from seis_statics.refraction.layer_observations import (
     build_refraction_layer_observation_masks,
 )
 from seis_statics.refraction.types import (
+    RefractionStaticInputModel as CoreRefractionStaticInputModel,
     RefractionLayerObservationMasks,
     ResolvedRefractionFirstLayer,
 )
@@ -490,8 +491,68 @@ def reduced_time_qc_options_from_request(
     )
 
 
+def core_input_model_from_app(input_model: object) -> CoreRefractionStaticInputModel:
+    """Convert the app input model container to the external core dataclass."""
+    return CoreRefractionStaticInputModel(
+        file_id=getattr(input_model, 'file_id'),
+        n_traces=getattr(input_model, 'n_traces'),
+        sorted_trace_index=getattr(input_model, 'sorted_trace_index'),
+        pick_time_s_sorted=getattr(input_model, 'pick_time_s_sorted'),
+        valid_pick_mask_sorted=getattr(input_model, 'valid_pick_mask_sorted'),
+        valid_observation_mask_sorted=getattr(
+            input_model,
+            'valid_observation_mask_sorted',
+        ),
+        source_id_sorted=getattr(input_model, 'source_id_sorted'),
+        receiver_id_sorted=getattr(input_model, 'receiver_id_sorted'),
+        source_x_m_sorted=getattr(input_model, 'source_x_m_sorted'),
+        source_y_m_sorted=getattr(input_model, 'source_y_m_sorted'),
+        receiver_x_m_sorted=getattr(input_model, 'receiver_x_m_sorted'),
+        receiver_y_m_sorted=getattr(input_model, 'receiver_y_m_sorted'),
+        source_elevation_m_sorted=getattr(input_model, 'source_elevation_m_sorted'),
+        receiver_elevation_m_sorted=getattr(
+            input_model,
+            'receiver_elevation_m_sorted',
+        ),
+        source_depth_m_sorted=getattr(input_model, 'source_depth_m_sorted'),
+        geometry_distance_m_sorted=getattr(input_model, 'geometry_distance_m_sorted'),
+        offset_m_sorted=getattr(input_model, 'offset_m_sorted'),
+        distance_m_sorted=getattr(input_model, 'distance_m_sorted'),
+        source_endpoint_key_sorted=getattr(
+            input_model,
+            'source_endpoint_key_sorted',
+        ),
+        receiver_endpoint_key_sorted=getattr(
+            input_model,
+            'receiver_endpoint_key_sorted',
+        ),
+        source_node_id_sorted=getattr(input_model, 'source_node_id_sorted'),
+        receiver_node_id_sorted=getattr(input_model, 'receiver_node_id_sorted'),
+        node_x_m=getattr(input_model, 'node_x_m'),
+        node_y_m=getattr(input_model, 'node_y_m'),
+        node_elevation_m=getattr(input_model, 'node_elevation_m'),
+        node_kind=getattr(input_model, 'node_kind'),
+        rejection_reason_sorted=getattr(input_model, 'rejection_reason_sorted'),
+        qc=getattr(input_model, 'qc'),
+        endpoint_table=getattr(input_model, 'endpoint_table'),
+        metadata=getattr(input_model, 'metadata'),
+        layer_observation_masks=getattr(input_model, 'layer_observation_masks', None),
+        source_endpoint_id_sorted=getattr(
+            input_model,
+            'source_endpoint_id_sorted',
+            None,
+        ),
+        receiver_endpoint_id_sorted=getattr(
+            input_model,
+            'receiver_endpoint_id_sorted',
+            None,
+        ),
+    )
+
+
 __all__ = [
     'conversion_options_from_request',
+    'core_input_model_from_app',
     'datum_options_from_request',
     'first_layer_options_from_request',
     'layer_config_from_model_request',

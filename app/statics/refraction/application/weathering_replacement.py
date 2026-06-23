@@ -23,7 +23,7 @@ from seis_statics.refraction.first_layer import (
     validate_resolved_first_layer_velocity_match,
 )
 from seis_statics.refraction.status import LOCAL_V2_STATUS_VALUES
-from app.statics.refraction.domain.t1lsst import (
+from seis_statics.refraction.t1lsst import (
     RefractionT1LSSTError,
     compute_t1lsst_1layer_weathering_correction,
 )

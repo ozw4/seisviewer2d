@@ -14,7 +14,7 @@ from app.statics.refraction.domain.export_types import (
 from app.statics.refraction.domain.export_units import (
     REFRACTION_STATIC_REPO_SIGN_CONVENTION,
 )
-from app.statics.refraction.domain.t1lsst import (
+from seis_statics.refraction.t1lsst import (
     compute_t1lsst_1layer_thickness,
     compute_t1lsst_1layer_weathering_correction,
     compute_t1lsst_2layer_thicknesses_with_status,

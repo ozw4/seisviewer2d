@@ -8,7 +8,7 @@ import numpy as np
 
 from app.services.common.artifact_io import write_csv_atomic, write_json_atomic
 from app.statics.refraction.artifacts.io import _assert_strict_json
-from app.statics.refraction.domain.v1 import RefractionV1EstimateResult
+from seis_statics.refraction.types import RefractionV1EstimateResult
 
 REFRACTION_V1_QC_JSON_NAME = 'refraction_v1_qc.json'
 REFRACTION_V1_ESTIMATES_CSV_NAME = 'refraction_v1_estimates.csv'

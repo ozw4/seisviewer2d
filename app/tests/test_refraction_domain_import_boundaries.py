@@ -16,8 +16,6 @@ DOMAIN_MODULES = {
     'solver': 'solve_refraction_static_bounded_ls',
     'table_import': 'import_refraction_static_tables',
     'table_validator': 'validate_canonical_static_table_rows',
-    't1lsst': 'compute_t1lsst_1layer_thickness',
-    'v1': 'estimate_global_v1_from_direct_arrivals',
 }
 
 FORBIDDEN_IMPORTS = (
@@ -29,10 +27,7 @@ FORBIDDEN_IMPORTS = (
     'app.services.job_artifact_refs',
 )
 
-FIELD_ARTIFACT_DOMAIN_MODULES = (
-    't1lsst',
-    'v1',
-)
+FIELD_ARTIFACT_DOMAIN_MODULES: tuple[str, ...] = ()
 FORBIDDEN_FIELD_ARTIFACT_IMPORT_MODULES = (
     'pathlib',
     'app.services.common.artifact_io',
