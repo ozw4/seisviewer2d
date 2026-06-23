@@ -29,7 +29,7 @@ from app.statics.refraction.application.design_matrix import (
     build_refraction_static_design_matrix,
     write_refraction_design_matrix_diagnostics_artifacts,
 )
-from app.statics.refraction.core_options import (
+from app.statics.refraction.application.core_options import (
     resolve_weathering_velocity_from_model_request as resolve_weathering_velocity_m_s,
 )
 from app.statics.refraction.domain.solver import solve_refraction_static_bounded_ls

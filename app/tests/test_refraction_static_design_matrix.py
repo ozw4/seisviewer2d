@@ -5,8 +5,10 @@ from typing import Any
 import numpy as np
 import pytest
 from scipy import sparse
+from seis_statics.refraction import RefractionStaticModelOptions
 
 from app.api.schemas import RefractionStaticModelRequest
+import app.statics.refraction.application.design_matrix as design_matrix_module
 from app.statics.refraction.application.design_matrix import (
     RefractionStaticDesignMatrixError,
     build_refraction_static_design_matrix,
@@ -273,6 +275,41 @@ def test_fixed_global_stores_velocity_metadata_and_qc() -> None:
     assert design.qc['fixed_bedrock_velocity_m_s'] == 2500.0
     assert design.qc['fixed_bedrock_slowness_s_per_m'] == pytest.approx(0.0004)
     assert design.qc['slowness_column_present'] is False
+
+
+@pytest.mark.parametrize(
+    'model',
+    [
+        _model(),
+        _model(
+            bedrock_velocity_mode='fixed_global',
+            bedrock_velocity_m_s=2500.0,
+        ),
+    ],
+)
+def test_design_matrix_passes_external_model_options_to_core(
+    monkeypatch: pytest.MonkeyPatch,
+    model: RefractionStaticModelRequest,
+) -> None:
+    captured: dict[str, object] = {}
+    real_build = (
+        design_matrix_module.core_design_matrix.build_refraction_static_design_matrix
+    )
+
+    def spy_build_refraction_static_design_matrix(**kwargs: object) -> object:
+        captured['model'] = kwargs['model']
+        return real_build(**kwargs)
+
+    monkeypatch.setattr(
+        design_matrix_module.core_design_matrix,
+        'build_refraction_static_design_matrix',
+        spy_build_refraction_static_design_matrix,
+    )
+
+    _build(model=model)
+
+    assert isinstance(captured['model'], RefractionStaticModelOptions)
+    assert not isinstance(captured['model'], RefractionStaticModelRequest)
 
 
 def test_fixed_global_rejects_missing_fixed_bedrock_velocity() -> None:

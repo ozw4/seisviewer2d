@@ -50,7 +50,7 @@ from app.statics.refraction.artifacts.source_depth import (
 from app.statics.refraction.artifacts.uphole import (
     write_refraction_uphole_artifacts,
 )
-from app.statics.refraction.core_options import (
+from app.statics.refraction.application.core_options import (
     layer_observation_masks_from_input_model,
     layer_observation_qc_for_viewer as refraction_layer_observation_qc,
 )

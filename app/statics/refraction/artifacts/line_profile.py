@@ -57,7 +57,7 @@ from seis_statics.refraction.cell_coordinates import (
 from seis_statics.refraction.status import (
     classify_refraction_endpoint_static_status,
 )
-from app.statics.refraction.core_options import (
+from app.statics.refraction.contracts.core_options import (
     refractor_cell_options_from_request,
 )
 from app.statics.refraction.domain.types import RefractionDatumStaticsResult

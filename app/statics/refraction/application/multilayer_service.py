@@ -38,7 +38,7 @@ from seis_statics.refraction.layer_config import (
     RefractionLayerConfigLayer as RefractionStaticLayerConfig,
 )
 from seis_statics.refraction.types import RefractionLayerObservationMasks
-from app.statics.refraction.core_options import (
+from app.statics.refraction.application.core_options import (
     layer_observation_masks_from_input_model,
     layer_observation_qc_for_viewer as refraction_layer_observation_qc,
     normalized_layers_from_model_request,

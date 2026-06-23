@@ -70,7 +70,7 @@ from app.statics.refraction.application.design_matrix import (
 from app.statics.refraction.application.export_service import (
     CANONICAL_SOURCE_RECEIVER_STATIC_TABLE_CSV_NAME,
 )
-from app.statics.refraction.core_options import (
+from app.statics.refraction.application.core_options import (
     layer_observation_masks_from_input_model as build_refraction_layer_observation_masks,
     layer_observation_qc_for_viewer as refraction_layer_observation_qc,
 )

@@ -25,7 +25,7 @@ from seis_statics.refraction.cell_regularization import (
     augment_design_matrix_with_cell_smoothing,
     build_cell_slowness_smoothing_rows,
 )
-from app.statics.refraction.core_options import (
+from app.statics.refraction.application.core_options import (
     resolve_weathering_velocity_from_model_request as resolve_weathering_velocity_m_s,
 )
 from app.statics.refraction.domain.types import (

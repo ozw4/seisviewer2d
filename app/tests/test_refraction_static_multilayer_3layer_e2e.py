@@ -23,7 +23,7 @@ from app.statics.refraction.artifacts import (
     SOURCE_RECEIVER_STATIC_TABLE_NPZ_NAME,
     SOURCE_STATIC_TABLE_CSV_NAME,
 )
-from app.statics.refraction.core_options import (
+from app.statics.refraction.application.core_options import (
     layer_observation_masks_from_input_model as build_refraction_layer_observation_masks,
 )
 from app.statics.refraction.application.multilayer_service import (

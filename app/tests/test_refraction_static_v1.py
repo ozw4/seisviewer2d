@@ -22,7 +22,7 @@ from app.statics.refraction.artifacts.v1 import (
     REFRACTION_V1_QC_JSON_NAME,
     write_refraction_v1_artifacts,
 )
-from app.statics.refraction.core_options import (
+from app.statics.refraction.application.core_options import (
     core_input_model_from_app,
     first_layer_options_from_request,
 )

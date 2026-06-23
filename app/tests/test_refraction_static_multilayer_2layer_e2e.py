@@ -44,7 +44,7 @@ from app.statics.refraction.artifacts import (
     write_source_static_table_csv,
 )
 from app.statics.refraction.application.datum import build_refraction_datum_statics
-from app.statics.refraction.core_options import (
+from app.statics.refraction.application.core_options import (
     layer_observation_masks_from_input_model as build_refraction_layer_observation_masks,
 )
 from app.statics.refraction.application.multilayer_service import (

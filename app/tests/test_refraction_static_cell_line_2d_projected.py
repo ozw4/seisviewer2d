@@ -4,7 +4,7 @@ import numpy as np
 import pytest
 
 from app.api.schemas import RefractionStaticRefractorCellRequest
-from app.statics.refraction.core_options import (
+from app.statics.refraction.application.core_options import (
     refractor_cell_options_from_request,
 )
 from seis_statics.refraction.cell_coordinates import (

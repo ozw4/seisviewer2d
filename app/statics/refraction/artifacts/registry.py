@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Any
 
 from app.statics.refraction.contracts.apply import RefractionStaticApplyRequest
-from app.statics.refraction.core_options import (
+from app.statics.refraction.contracts.core_options import (
     normalized_layers_from_model_request,
 )
 from app.statics.refraction.artifacts.design_matrix import (

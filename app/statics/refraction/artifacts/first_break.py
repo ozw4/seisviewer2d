@@ -17,7 +17,7 @@ from seis_statics.refraction.cell_coordinates import (
     effective_refraction_cell_grid_config,
     project_refraction_cell_points,
 )
-from app.statics.refraction.core_options import (
+from app.statics.refraction.contracts.core_options import (
     normalized_layers_from_model_request,
     refractor_cell_options_from_request,
 )

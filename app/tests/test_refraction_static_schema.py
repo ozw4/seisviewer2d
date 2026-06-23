@@ -4,7 +4,7 @@ import pytest
 from pydantic import ValidationError
 
 from app.api.schemas import RefractionStaticModelRequest
-from app.statics.refraction.core_options import (
+from app.statics.refraction.application.core_options import (
     normalize_first_layer_from_model_request as normalize_refraction_first_layer_request,
 )
 

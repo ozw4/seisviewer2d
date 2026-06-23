@@ -63,7 +63,7 @@ from seis_statics.refraction.cell_velocity_status import (
     LOW_FOLD_CELL_REJECTION_REASON,
     LOW_FOLD_CELL_VELOCITY_STATUS,
 )
-from app.statics.refraction.core_options import (
+from app.statics.refraction.contracts.core_options import (
     layer_observation_masks_from_arrays,
     normalized_layers_from_model_request,
     refractor_cell_options_from_request,

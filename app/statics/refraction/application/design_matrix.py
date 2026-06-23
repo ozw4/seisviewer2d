@@ -21,7 +21,7 @@ from app.statics.refraction.artifacts.design_matrix import (
     refraction_design_matrix_layer_qc_json_name,
 )
 from app.statics.refraction.contracts.model import RefractionStaticModelRequest
-from app.statics.refraction.core_options import (
+from app.statics.refraction.application.core_options import (
     core_input_model_from_app,
     model_options_from_request,
 )
@@ -71,7 +71,7 @@ def build_refraction_static_design_matrix(
     _validate_fixed_bedrock_velocity_compat(model)
     core_design = core_design_matrix.build_refraction_static_design_matrix(
         input_model=core_input_model_from_app(input_model),
-        model=_core_model_from_app(model),
+        model=model_options_from_request(model),
         resolved_first_layer=resolved_first_layer,
         min_observations_per_node=min_observations_per_node,
         include_diagnostics=include_diagnostics,
@@ -107,12 +107,6 @@ def build_refraction_static_design_matrix_from_arrays(
         **kwargs
     )
     return _app_design_matrix_from_core(core_design)
-
-
-def _core_model_from_app(model: RefractionStaticModelRequest) -> object:
-    if getattr(model, 'bedrock_velocity_mode', None) == 'solve_cell':
-        return model_options_from_request(model)
-    return model
 
 
 def write_refraction_design_matrix_diagnostics_artifacts(

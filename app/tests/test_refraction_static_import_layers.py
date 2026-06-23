@@ -14,7 +14,7 @@ from typing import TextIO
 import pytest
 
 import app.statics.refraction.application.bedrock as bedrock
-import app.statics.refraction.core_options as core_options
+import app.statics.refraction.application.core_options as core_options
 import app.statics.refraction.application.design_matrix as design_matrix
 import app.statics.refraction.domain.export_types as export_types
 import app.statics.refraction.application.half_intercept as half_intercept
@@ -215,7 +215,7 @@ def test_refraction_static_import_layer_checks_use_process_group_timeout(
 
     monkeypatch.setattr(subprocess, 'Popen', FakePopen)
 
-    assert _forbidden_modules_imported_by('app.statics.refraction.core_options') == set()
+    assert _forbidden_modules_imported_by('app.statics.refraction.application.core_options') == set()
 
     kwargs = captured['kwargs']
     assert kwargs['cwd'] == _REPO_ROOT
@@ -314,10 +314,10 @@ def test_import_layer_timeout_failure_message_is_readable(
     monkeypatch.setattr(os, 'killpg', fake_killpg)
 
     with pytest.raises(AssertionError) as exc_info:
-        _forbidden_modules_imported_by('app.statics.refraction.core_options')
+        _forbidden_modules_imported_by('app.statics.refraction.application.core_options')
 
     message = str(exc_info.value)
-    assert 'module under test: app.statics.refraction.core_options' in message
+    assert 'module under test: app.statics.refraction.application.core_options' in message
     assert 'forbidden modules:' in message
     assert 'app.main' in message
     assert 'segyio' in message
@@ -393,7 +393,7 @@ def test_refraction_static_core_options_adapter_is_dependency_light() -> None:
 
     assert (
         _forbidden_modules_imported_by(
-            'app.statics.refraction.core_options',
+            'app.statics.refraction.application.core_options',
             forbidden_imports=_TYPE_MODULE_FORBIDDEN_IMPORTS,
         )
         == set()

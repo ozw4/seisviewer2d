@@ -51,7 +51,7 @@ from app.statics.refraction.artifacts.validation import (
     _validate_result,
 )
 from seis_statics.refraction.cell_coordinates import refraction_cell_coordinate_metadata_from_config
-from app.statics.refraction.core_options import (
+from app.statics.refraction.contracts.core_options import (
     refractor_cell_options_from_request,
 )
 from app.statics.refraction.artifacts.source_depth import REFRACTION_SOURCE_DEPTH_SOURCES_CSV_NAME

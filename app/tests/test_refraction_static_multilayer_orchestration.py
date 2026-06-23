@@ -13,10 +13,10 @@ from app.statics.refraction.application.design_matrix import (
     refraction_design_matrix_layer_node_diagnostics_csv_name,
     refraction_design_matrix_layer_qc_json_name,
 )
-from app.statics.refraction.core_options import (
+from app.statics.refraction.application.core_options import (
     normalized_layers_from_model_request as normalize_refraction_static_layers,
 )
-from app.statics.refraction.core_options import (
+from app.statics.refraction.application.core_options import (
     layer_observation_masks_from_input_model as build_refraction_layer_observation_masks,
 )
 from app.statics.refraction.application.multilayer_service import (
