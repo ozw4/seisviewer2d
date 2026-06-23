@@ -33,6 +33,8 @@ from app.statics.refraction.artifacts import (
 from app.statics.refraction.ports.runtime import RefractionRuntime
 from app.statics.refraction.domain.types import (
     RefractionDatumStaticsResult,
+)
+from app.statics.refraction.application.types import (
     RefractionStaticApplyTraceStoreResult,
     RefractionTraceShiftValidationResult,
 )

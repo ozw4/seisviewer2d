@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from pathlib import Path
 from typing import Any, Final, Literal
 
 import numpy as np
@@ -939,98 +938,6 @@ class RefractionDatumStaticsResult:
     field_composition_qc: dict[str, Any] | None = None
 
 
-@dataclass(frozen=True)
-class RefractionStaticArtifactSet:
-    job_dir: Path
-    solution_npz: Path
-    qc_json: Path
-    refraction_statics_csv: Path
-    near_surface_model_csv: Path
-    first_break_residuals_csv: Path
-    refraction_first_break_time_export_csv: Path
-    refraction_first_break_fit_qc_csv: Path
-    refraction_first_break_fit_qc_npz: Path
-    refraction_first_break_fit_qc_json: Path
-    refraction_reduced_time_qc_csv: Path
-    refraction_reduced_time_qc_npz: Path
-    refraction_reduced_time_qc_json: Path
-    refraction_static_components_csv: Path
-    refraction_static_component_qc_trace_csv: Path
-    refraction_static_component_qc_endpoint_csv: Path
-    refraction_static_component_qc_npz: Path
-    refraction_static_component_qc_json: Path
-    source_static_table_csv: Path
-    receiver_static_table_csv: Path
-    source_receiver_static_table_npz: Path
-    refraction_line_profile_qc_source_csv: Path
-    refraction_line_profile_qc_receiver_csv: Path
-    refraction_line_profile_qc_combined_csv: Path
-    refraction_line_profile_qc_npz: Path
-    refraction_line_profile_qc_json: Path
-    refraction_time_term_spreadsheet_csv: Path
-    static_history_json: Path
-    manifest_json: Path | None
-    artifact_names: tuple[str, ...]
-    qc: dict[str, Any]
-    refraction_t1lsst_1layer_components_csv: Path | None = None
-    refraction_refractor_velocity_cells_csv: Path | None = None
-    refraction_refractor_velocity_grid_npz: Path | None = None
-    refraction_refractor_velocity_qc_json: Path | None = None
-    refraction_cell_solver_history_csv: Path | None = None
-    refraction_grid_map_qc_csv: Path | None = None
-    refraction_grid_map_qc_npz: Path | None = None
-    refraction_grid_map_qc_json: Path | None = None
-
-
-@dataclass(frozen=True)
-class RefractionTraceShiftValidationResult:
-    trace_shift_s_sorted: np.ndarray
-    trace_static_valid_mask_sorted: np.ndarray
-    trace_static_status_sorted: np.ndarray
-    trace_static_status_counts: dict[str, int]
-    max_abs_shift_ms: float
-    max_abs_applied_shift_ms: float
-    exceeds_max_abs_shift_count: int
-    n_valid_trace_shifts: int
-    n_invalid_trace_shifts: int
-    n_zero_trace_shifts: int
-    n_positive_trace_shifts: int
-    n_negative_trace_shifts: int
-
-
-@dataclass(frozen=True)
-class RefractionStaticApplyTraceStoreResult:
-    source_file_id: str
-    corrected_file_id: str | None
-
-    source_trace_store_path: Path
-    corrected_trace_store_path: Path | None
-
-    n_traces: int
-    n_samples: int
-    sample_interval_s: float
-
-    interpolation: str
-    fill_value: float
-    output_dtype: str
-
-    applied_shift_s_sorted: np.ndarray
-    applied_shift_ms_sorted: np.ndarray
-    trace_static_valid_mask_sorted: np.ndarray
-    trace_static_status_sorted: np.ndarray
-
-    max_abs_applied_shift_ms: float
-    n_valid_trace_shifts: int
-    n_invalid_trace_shifts: int
-    n_zero_trace_shifts: int
-    n_positive_trace_shifts: int
-    n_negative_trace_shifts: int
-
-    corrected_file_json: Path | None
-    qc_json: Path | None
-    qc: dict[str, Any]
-
-
 __all__ = [
     'BedrockVelocityMode',
     'REFRACTION_FIELD_CORRECTION_COMPONENT_NAMES',
@@ -1054,12 +961,9 @@ __all__ = [
     'RefractionSourceDepthStatus',
     'RefractionUpholeResult',
     'RefractionUpholeStatus',
-    'RefractionStaticApplyTraceStoreResult',
-    'RefractionStaticArtifactSet',
     'RefractionStaticDesignMatrix',
     'RefractionStaticInputModel',
     'RefractionStaticSolverResult',
-    'RefractionTraceShiftValidationResult',
     'RefractionTraceFieldCorrectionResult',
     'RefractionWeatheringReplacementStaticsResult',
     'RefractionWeatheringThicknessResult',

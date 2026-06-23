@@ -73,6 +73,7 @@ from app.statics.refraction.artifacts.contract import (
     SOURCE_STATIC_TABLE_CSV_NAME,
     UPLOADED_REFRACTION_PICKS_NPZ_NAME,
     RefractionCellSolverHistoryRow,
+    RefractionStaticArtifactSet,
     RefractionStaticArtifactError,
 )
 from app.statics.refraction.artifacts.final_tables import (
@@ -152,7 +153,6 @@ from app.statics.refraction.artifacts.validation import (
 )
 from app.statics.refraction.domain.types import (
     RefractionDatumStaticsResult,
-    RefractionStaticArtifactSet,
     ResolvedRefractionFirstLayer,
 )
 from app.statics.refraction.artifacts.v1 import (

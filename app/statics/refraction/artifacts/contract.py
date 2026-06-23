@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 
 from app.statics.refraction.domain.export_units import (
     REFRACTION_STATIC_REPO_SIGN_CONVENTION,
@@ -866,6 +867,49 @@ class RefractionStaticArtifactError(ValueError):
 
 
 @dataclass(frozen=True)
+class RefractionStaticArtifactSet:
+    job_dir: Path
+    solution_npz: Path
+    qc_json: Path
+    refraction_statics_csv: Path
+    near_surface_model_csv: Path
+    first_break_residuals_csv: Path
+    refraction_first_break_time_export_csv: Path
+    refraction_first_break_fit_qc_csv: Path
+    refraction_first_break_fit_qc_npz: Path
+    refraction_first_break_fit_qc_json: Path
+    refraction_reduced_time_qc_csv: Path
+    refraction_reduced_time_qc_npz: Path
+    refraction_reduced_time_qc_json: Path
+    refraction_static_components_csv: Path
+    refraction_static_component_qc_trace_csv: Path
+    refraction_static_component_qc_endpoint_csv: Path
+    refraction_static_component_qc_npz: Path
+    refraction_static_component_qc_json: Path
+    source_static_table_csv: Path
+    receiver_static_table_csv: Path
+    source_receiver_static_table_npz: Path
+    refraction_line_profile_qc_source_csv: Path
+    refraction_line_profile_qc_receiver_csv: Path
+    refraction_line_profile_qc_combined_csv: Path
+    refraction_line_profile_qc_npz: Path
+    refraction_line_profile_qc_json: Path
+    refraction_time_term_spreadsheet_csv: Path
+    static_history_json: Path
+    manifest_json: Path | None
+    artifact_names: tuple[str, ...]
+    qc: dict[str, Any]
+    refraction_t1lsst_1layer_components_csv: Path | None = None
+    refraction_refractor_velocity_cells_csv: Path | None = None
+    refraction_refractor_velocity_grid_npz: Path | None = None
+    refraction_refractor_velocity_qc_json: Path | None = None
+    refraction_cell_solver_history_csv: Path | None = None
+    refraction_grid_map_qc_csv: Path | None = None
+    refraction_grid_map_qc_npz: Path | None = None
+    refraction_grid_map_qc_json: Path | None = None
+
+
+@dataclass(frozen=True)
 class _ValidatedResult:
     result: RefractionDatumStaticsResult
     n_traces: int
@@ -968,5 +1012,6 @@ __all__ = [
     'UPLOADED_REFRACTION_PICKS_NPZ_NAME',
     'WORKFLOW',
     'RefractionCellSolverHistoryRow',
+    'RefractionStaticArtifactSet',
     'RefractionStaticArtifactError',
 ]

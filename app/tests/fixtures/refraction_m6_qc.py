@@ -27,6 +27,7 @@ from app.statics.refraction.artifacts import write_refraction_static_artifacts
 from app.statics.refraction.artifacts import (
     write_refraction_line_profile_qc_artifacts,
 )
+from app.statics.refraction.artifacts.contract import RefractionStaticArtifactSet
 from app.statics.refraction.application.datum import build_refraction_datum_statics
 from app.statics.refraction.application.multilayer_service import (
     RefractionMultiLayerStaticsWorkflowResult,
@@ -35,7 +36,6 @@ from app.statics.refraction.application.multilayer_service import (
 from app.statics.refraction.domain.types import (
     RefractionDatumStaticsResult,
     RefractionEndpointTable,
-    RefractionStaticArtifactSet,
     RefractionStaticInputModel,
     ResolvedRefractionFirstLayer,
 )
