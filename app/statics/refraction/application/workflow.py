@@ -37,7 +37,7 @@ from app.statics.refraction.application.export_service import (
     resolve_refraction_static_export_formats,
     write_inline_refraction_static_export_artifacts,
 )
-from app.statics.refraction.domain.field_composition import (
+from seis_statics.refraction.field_composition import (
     compose_refraction_endpoint_field_corrections,
     compose_refraction_final_trace_shift,
     compose_refraction_trace_field_corrections,
@@ -54,10 +54,12 @@ from app.statics.refraction.core_options import (
 from app.statics.refraction.application.input_model import build_refraction_static_input_model
 from app.statics.refraction.ports.job_context import RefractionJobContext
 from app.statics.refraction.ports.runtime import RefractionRuntime
-from app.statics.refraction.domain.manual_static import (
+from app.statics.refraction.application.manual_static_table import (
     RefractionManualStaticTableRow,
     load_refraction_manual_static_table_rows,
     manual_static_inline_rows,
+)
+from seis_statics.refraction.manual_static import (
     resolve_refraction_manual_static,
 )
 from app.statics.refraction.application.multilayer_service import (
@@ -81,7 +83,7 @@ from app.statics.refraction.artifacts.v1 import (
     REFRACTION_V1_QC_JSON_NAME,
     write_refraction_v1_artifacts,
 )
-from app.statics.refraction.domain.source_depth import (
+from seis_statics.refraction.source_depth import (
     compute_source_depth_weathering_time_correction_from_result,
 )
 from app.statics.refraction.domain.types import (
@@ -92,7 +94,7 @@ from app.statics.refraction.domain.types import (
 from app.statics.refraction.domain.v1 import (
     estimate_global_v1_from_direct_arrivals,
 )
-from app.statics.refraction.domain.uphole import (
+from seis_statics.refraction.uphole import (
     compute_uphole_time_correction_from_result,
 )
 from app.statics.refraction.application.weathering_replacement import (

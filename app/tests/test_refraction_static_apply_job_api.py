@@ -91,7 +91,7 @@ from app.statics.refraction.artifacts.v1 import (
     REFRACTION_V1_ESTIMATES_CSV_NAME,
     REFRACTION_V1_QC_JSON_NAME,
 )
-from app.statics.refraction.domain.source_depth import (
+from seis_statics.refraction.source_depth import (
     resolve_refraction_source_depth,
 )
 from app.statics.refraction.domain.v1 import RefractionV1EstimateResult

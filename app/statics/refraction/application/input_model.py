@@ -54,15 +54,15 @@ from app.statics.refraction.core_options import (
     layer_observation_masks_from_input_model,
     layer_observation_qc_for_viewer as refraction_layer_observation_qc,
 )
-from app.statics.refraction.domain.source_depth import (
-    resolve_refraction_source_depth_for_input_model,
-)
 from app.statics.refraction.domain.types import (
     RefractionEndpointTable,
     RefractionStaticInputModel,
 )
-from app.statics.refraction.domain.uphole import (
-    resolve_refraction_uphole_for_input_model,
+from seis_statics.refraction.source_depth import (
+    resolve_refraction_source_depth,
+)
+from seis_statics.refraction.uphole import (
+    resolve_refraction_uphole,
 )
 from app.services.trace_store_index_validation import validate_sorted_to_original
 from app.statics.refraction.ports.runtime import RefractionRuntime
@@ -536,8 +536,11 @@ def build_refraction_static_input_model_from_arrays(
                 preflight_error_message(diagnostics)
             )
     if source_depth_mode != 'none':
-        source_depth_result = resolve_refraction_source_depth_for_input_model(
-            input_model=input_model,
+        source_depth_result = resolve_refraction_source_depth(
+            source_endpoint_key_sorted=input_model.source_endpoint_key_sorted,
+            source_endpoint_id_sorted=input_model.source_endpoint_id_sorted,
+            source_node_id_sorted=input_model.source_node_id_sorted,
+            source_depth_m_sorted=input_model.source_depth_m_sorted,
             mode=source_depth_mode,
             source_depth_byte=(
                 source_depth_byte
@@ -563,8 +566,10 @@ def build_refraction_static_input_model_from_arrays(
             if uphole_time_byte is None
             else _header(trace_headers_sorted, uphole_time_byte, 'uphole_time')
         )
-        uphole_result = resolve_refraction_uphole_for_input_model(
-            input_model=input_model,
+        uphole_result = resolve_refraction_uphole(
+            source_endpoint_key_sorted=input_model.source_endpoint_key_sorted,
+            source_endpoint_id_sorted=input_model.source_endpoint_id_sorted,
+            source_node_id_sorted=input_model.source_node_id_sorted,
             uphole_time_sorted=uphole_time_sorted,
             mode=uphole_mode,
             uphole_time_byte=uphole_time_byte,

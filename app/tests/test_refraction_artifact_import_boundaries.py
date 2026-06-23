@@ -27,8 +27,6 @@ ARTIFACT_NAME_CONSUMERS = (
     ARTIFACTS_ROOT / 'qc.py',
 )
 FIELD_DOMAIN_MODULES = (
-    'app.statics.refraction.domain.source_depth',
-    'app.statics.refraction.domain.uphole',
     'app.statics.refraction.domain.t1lsst',
     'app.statics.refraction.domain.v1',
 )

@@ -26,8 +26,8 @@ from app.statics.refraction.application.workflow import (
     _with_uphole_field_correction,
     reject_unsupported_refraction_field_corrections,
 )
-from app.statics.refraction.domain.source_depth import resolve_refraction_source_depth
-from app.statics.refraction.domain.uphole import resolve_refraction_uphole
+from seis_statics.refraction.source_depth import resolve_refraction_source_depth
+from seis_statics.refraction.uphole import resolve_refraction_uphole
 from app.statics.refraction.domain.types import ResolvedRefractionFirstLayer
 from app.tests._refraction_static_synthetic import (
     SYNTHETIC_V1_M_S,

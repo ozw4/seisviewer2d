@@ -13,14 +13,10 @@ DOMAIN_MODULES = {
     'qc_types': 'RefractionFirstBreakQcSeries',
     'export_types': 'RefractionStaticEndpointExportRow',
     'export_units': 'normalize_export_units',
-    'field_composition': 'compose_refraction_final_trace_shift',
-    'manual_static': 'resolve_refraction_manual_static',
     'solver': 'solve_refraction_static_bounded_ls',
-    'source_depth': 'resolve_refraction_source_depth',
     'table_import': 'import_refraction_static_tables',
     'table_validator': 'validate_canonical_static_table_rows',
     't1lsst': 'compute_t1lsst_1layer_thickness',
-    'uphole': 'resolve_refraction_uphole',
     'v1': 'estimate_global_v1_from_direct_arrivals',
 }
 
@@ -34,9 +30,7 @@ FORBIDDEN_IMPORTS = (
 )
 
 FIELD_ARTIFACT_DOMAIN_MODULES = (
-    'source_depth',
     't1lsst',
-    'uphole',
     'v1',
 )
 FORBIDDEN_FIELD_ARTIFACT_IMPORT_MODULES = (

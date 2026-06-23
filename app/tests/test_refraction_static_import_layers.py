@@ -19,10 +19,8 @@ import app.statics.refraction.application.design_matrix as design_matrix
 import app.statics.refraction.domain.export_types as export_types
 import app.statics.refraction.application.half_intercept as half_intercept
 import app.statics.refraction.domain.solver as solver
-import app.statics.refraction.domain.source_depth as source_depth
 import app.statics.refraction.domain.t1lsst as t1lsst
 import app.statics.refraction.domain.types as refraction_types
-import app.statics.refraction.domain.uphole as uphole
 import app.statics.refraction.domain.v1 as v1
 import app.statics.refraction.application.weathering as weathering
 
@@ -390,52 +388,6 @@ def test_refraction_static_export_types_is_dependency_light() -> None:
     assert 'app.trace_store.reader' not in source
     assert 'segyio' not in source
     assert 'numpy' not in source
-
-
-def test_refraction_static_source_depth_is_dependency_light() -> None:
-    assert source_depth.resolve_refraction_source_depth is not None
-
-    assert (
-        _forbidden_modules_imported_by(
-            'app.statics.refraction.domain.source_depth',
-            forbidden_imports=_TYPE_MODULE_FORBIDDEN_IMPORTS,
-        )
-        == set()
-    )
-
-    source = _module_source(source_depth)
-    assert 'app.api.schemas' not in source
-    assert 'app.api.routers' not in source
-    assert 'app.main' not in source
-    assert 'app.services.reader' not in source
-    assert 'app.statics.refraction.application.workflow' not in source
-    assert 'app.trace_store.reader' not in source
-    assert 'refraction_static_inputs' not in source
-    assert 'segyio' not in source
-    assert 'scipy' not in source
-
-
-def test_refraction_static_uphole_is_dependency_light() -> None:
-    assert uphole.resolve_refraction_uphole is not None
-
-    assert (
-        _forbidden_modules_imported_by(
-            'app.statics.refraction.domain.uphole',
-            forbidden_imports=_TYPE_MODULE_FORBIDDEN_IMPORTS,
-        )
-        == set()
-    )
-
-    source = _module_source(uphole)
-    assert 'app.api.schemas' not in source
-    assert 'app.api.routers' not in source
-    assert 'app.main' not in source
-    assert 'app.services.reader' not in source
-    assert 'app.statics.refraction.application.workflow' not in source
-    assert 'app.trace_store.reader' not in source
-    assert 'refraction_static_inputs' not in source
-    assert 'segyio' not in source
-    assert 'scipy' not in source
 
 
 def test_refraction_static_core_options_adapter_is_dependency_light() -> None:

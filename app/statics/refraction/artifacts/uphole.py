@@ -7,7 +7,7 @@ from pathlib import Path
 import numpy as np
 
 from app.services.common.artifact_io import write_csv_atomic, write_json_atomic
-from app.statics.refraction.domain.types import RefractionUpholeResult
+from seis_statics.refraction.uphole import RefractionUpholeResult
 
 REFRACTION_UPHOLE_QC_JSON_NAME = 'refraction_uphole_qc.json'
 REFRACTION_UPHOLE_SOURCES_CSV_NAME = 'refraction_uphole_sources.csv'

@@ -11,7 +11,7 @@ from app.statics.refraction.artifacts.source_depth import (
     REFRACTION_SOURCE_DEPTH_SOURCES_CSV_NAME,
     write_refraction_source_depth_artifacts,
 )
-from app.statics.refraction.domain.source_depth import (
+from seis_statics.refraction.source_depth import (
     compute_source_depth_weathering_time_correction,
     compute_source_depth_weathering_time_correction_from_result,
     resolve_refraction_source_depth,

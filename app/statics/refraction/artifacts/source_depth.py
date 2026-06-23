@@ -7,7 +7,7 @@ from pathlib import Path
 import numpy as np
 
 from app.services.common.artifact_io import write_csv_atomic, write_json_atomic
-from app.statics.refraction.domain.types import RefractionSourceDepthResult
+from seis_statics.refraction.source_depth import RefractionSourceDepthResult
 
 REFRACTION_SOURCE_DEPTH_QC_JSON_NAME = 'refraction_source_depth_qc.json'
 REFRACTION_SOURCE_DEPTH_SOURCES_CSV_NAME = 'refraction_source_depth_sources.csv'
