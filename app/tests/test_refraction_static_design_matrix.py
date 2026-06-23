@@ -5,7 +5,10 @@ from typing import Any
 import numpy as np
 import pytest
 from scipy import sparse
-from seis_statics.refraction import RefractionStaticModelOptions
+from seis_statics.refraction import (
+    RefractionStaticDesignMatrix as CoreRefractionStaticDesignMatrix,
+    RefractionStaticModelOptions,
+)
 
 from app.api.schemas import RefractionStaticModelRequest
 import app.statics.refraction.application.design_matrix as design_matrix_module
@@ -310,6 +313,63 @@ def test_design_matrix_passes_external_model_options_to_core(
 
     assert isinstance(captured['model'], RefractionStaticModelOptions)
     assert not isinstance(captured['model'], RefractionStaticModelRequest)
+
+
+def test_application_builder_returns_external_design_matrix_type() -> None:
+    design = _build()
+
+    assert isinstance(design, CoreRefractionStaticDesignMatrix)
+    assert RefractionStaticDesignMatrix is CoreRefractionStaticDesignMatrix
+
+
+def test_application_builder_preserves_core_design_matrix_identity(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    sentinel = build_refraction_static_design_matrix_from_arrays(
+        pick_time_s_sorted=PICK_TIME,
+        valid_observation_mask_sorted=VALID_OBSERVATION,
+        source_node_id_sorted=SOURCE_NODE_ID,
+        receiver_node_id_sorted=RECEIVER_NODE_ID,
+        distance_m_sorted=DISTANCE_M,
+        node_id=NODE_ID,
+        bedrock_velocity_mode='solve_global',
+    )
+
+    def build_sentinel(**_: object) -> object:
+        return sentinel
+
+    monkeypatch.setattr(
+        design_matrix_module.core_design_matrix,
+        'build_refraction_static_design_matrix',
+        build_sentinel,
+    )
+
+    design = _build()
+
+    assert design is sentinel
+
+
+def test_application_builder_preserves_external_low_fold_node_fields() -> None:
+    input_model = _input_model(
+        pick_time_s_sorted=np.asarray([0.10, 0.20, 0.21, 0.40], dtype=np.float64),
+        valid_observation_mask_sorted=np.ones(4, dtype=bool),
+        source_node_id_sorted=np.asarray([10, 10, 10, 30], dtype=np.int64),
+        receiver_node_id_sorted=np.asarray([20, 30, 30, 30], dtype=np.int64),
+        distance_m_sorted=np.asarray([100.0, 200.0, 210.0, 400.0], dtype=np.float64),
+    )
+
+    design = build_refraction_static_design_matrix(
+        input_model=input_model,
+        model=_model(),
+        min_observations_per_node=2,
+    )
+
+    assert isinstance(design, CoreRefractionStaticDesignMatrix)
+    assert design.min_observations_per_node == 2
+    np.testing.assert_array_equal(design.node_observation_count, [2, 0, 3, 0])
+    np.testing.assert_array_equal(design.low_fold_node_id, [20])
+    assert design.n_observations_rejected_by_low_fold_node == 1
+    np.testing.assert_array_equal(design.row_trace_index_sorted, [1, 2, 3])
 
 
 def test_fixed_global_rejects_missing_fixed_bedrock_velocity() -> None:
