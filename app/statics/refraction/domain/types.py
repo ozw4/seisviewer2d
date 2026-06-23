@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from typing import Any, Final, Literal
 
 import numpy as np
+from seis_statics.refraction import RefractionStaticDesignMatrix
 
 
 BedrockVelocityMode = Literal['solve_global', 'fixed_global', 'solve_cell']
@@ -187,53 +188,6 @@ class RefractionDesignMatrixNodeDiagnostics:
     status: str
     reason: str
     first_trace_indices_pre_filter: tuple[int, ...] = ()
-
-
-@dataclass(frozen=True)
-class RefractionStaticDesignMatrix:
-    matrix: Any
-    rhs_s: np.ndarray
-
-    observed_pick_time_s: np.ndarray
-    row_trace_index_sorted: np.ndarray
-    row_source_node_id: np.ndarray
-    row_receiver_node_id: np.ndarray
-    row_distance_m: np.ndarray
-
-    active_node_id: np.ndarray
-    inactive_node_id: np.ndarray
-    node_id_to_col: dict[int, int]
-    source_node_col: np.ndarray
-    receiver_node_col: np.ndarray
-
-    bedrock_slowness_col: int | None
-    bedrock_velocity_mode: BedrockVelocityMode
-    fixed_bedrock_velocity_m_s: float | None
-    fixed_bedrock_slowness_s_per_m: float | None
-
-    n_total_nodes: int
-    n_active_nodes: int
-    n_observations: int
-    n_parameters: int
-
-    qc: dict[str, Any]
-    node_diagnostics: tuple[RefractionDesignMatrixNodeDiagnostics, ...] = ()
-    design_matrix_qc: dict[str, Any] | None = None
-    diagnostics_context: Any = None
-
-    bedrock_slowness_cell_col_start: int | None = None
-    active_cell_id: np.ndarray | None = None
-    inactive_cell_id: np.ndarray | None = None
-    cell_id_to_col: dict[int, int] | None = None
-    row_midpoint_cell_id: np.ndarray | None = None
-    row_midpoint_cell_col: np.ndarray | None = None
-    cell_assignment_mode: str | None = None
-    n_total_cells: int | None = None
-    n_active_cells: int | None = None
-    n_inactive_cells: int | None = None
-    number_of_cell_x: int | None = None
-    number_of_cell_y: int | None = None
-    rejection_reason_sorted: np.ndarray | None = None
 
 
 @dataclass(frozen=True)

@@ -3,13 +3,15 @@
 from __future__ import annotations
 
 import json
-from dataclasses import asdict, fields
+from dataclasses import asdict, replace
 from pathlib import Path
-from types import SimpleNamespace
 from typing import Any
 
 import numpy as np
-from seis_statics.refraction import design_matrix as core_design_matrix
+from seis_statics.refraction import (
+    RefractionStaticDesignMatrix,
+    design_matrix as core_design_matrix,
+)
 
 from app.services.common.artifact_io import write_csv_atomic, write_json_atomic
 from app.statics.refraction.artifacts.design_matrix import (
@@ -27,7 +29,6 @@ from app.statics.refraction.application.core_options import (
 )
 from app.statics.refraction.domain.types import (
     RefractionDesignMatrixNodeDiagnostics,
-    RefractionStaticDesignMatrix,
     RefractionStaticInputModel,
     ResolvedRefractionFirstLayer,
 )
@@ -76,7 +77,7 @@ def build_refraction_static_design_matrix(
         min_observations_per_node=min_observations_per_node,
         include_diagnostics=include_diagnostics,
     )
-    return _app_design_matrix_from_core(core_design)
+    return core_design
 
 
 def build_refraction_static_cell_design_matrix(
@@ -96,17 +97,16 @@ def build_refraction_static_cell_design_matrix(
         min_observations_per_node=min_observations_per_node,
         include_diagnostics=include_diagnostics,
     )
-    return _app_design_matrix_from_core(core_design)
+    return core_design
 
 
 def build_refraction_static_design_matrix_from_arrays(
     **kwargs: Any,
 ) -> RefractionStaticDesignMatrix:
     """Build a refraction static design matrix from sorted observation arrays."""
-    core_design = core_design_matrix.build_refraction_static_design_matrix_from_arrays(
+    return core_design_matrix.build_refraction_static_design_matrix_from_arrays(
         **kwargs
     )
-    return _app_design_matrix_from_core(core_design)
 
 
 def write_refraction_design_matrix_diagnostics_artifacts(
@@ -124,12 +124,13 @@ def write_refraction_design_matrix_diagnostics_artifacts(
         node_diagnostics = _build_node_diagnostics(
             design=design_matrix,
         )
-    qc = core_design_matrix.summarize_refraction_static_design_matrix(
-        _core_design_matrix_view(
+    summary_design = design_matrix
+    if node_diagnostics != design_matrix.node_diagnostics:
+        summary_design = replace(
             design_matrix,
             node_diagnostics=node_diagnostics,
         )
-    )
+    qc = core_design_matrix.summarize_refraction_static_design_matrix(summary_design)
     write_json_atomic(
         qc_path,
         qc,
@@ -152,39 +153,10 @@ def write_refraction_design_matrix_diagnostics_artifacts(
 def _build_node_diagnostics(
     *,
     design: RefractionStaticDesignMatrix,
-) -> tuple[RefractionDesignMatrixNodeDiagnostics, ...]:
-    return _app_node_diagnostics_from_core(
-        core_design_matrix.build_refraction_design_matrix_node_diagnostics(
-            _core_design_matrix_view(design)
-        )
+) -> tuple[core_design_matrix.RefractionDesignMatrixNodeDiagnostics, ...]:
+    return core_design_matrix.build_refraction_design_matrix_node_diagnostics(
+        design
     )
-
-
-def _app_design_matrix_from_core(
-    core_design: core_design_matrix.RefractionStaticDesignMatrix,
-) -> RefractionStaticDesignMatrix:
-    payload = {
-        field.name: getattr(core_design, field.name)
-        for field in fields(RefractionStaticDesignMatrix)
-    }
-    payload['node_diagnostics'] = _app_node_diagnostics_from_core(
-        core_design.node_diagnostics
-    )
-    return RefractionStaticDesignMatrix(**payload)
-
-
-def _core_design_matrix_view(
-    design: RefractionStaticDesignMatrix,
-    *,
-    node_diagnostics: tuple[RefractionDesignMatrixNodeDiagnostics, ...] | None = None,
-) -> object:
-    payload: dict[str, Any] = {}
-    for field in fields(RefractionStaticDesignMatrix):
-        payload[field.name] = getattr(design, field.name)
-    payload['node_diagnostics'] = (
-        design.node_diagnostics if node_diagnostics is None else node_diagnostics
-    )
-    return SimpleNamespace(**payload)
 
 
 def _validate_input_model_trace_shapes(input_model: RefractionStaticInputModel) -> None:
@@ -218,17 +190,9 @@ def _validate_fixed_bedrock_velocity_compat(
         )
 
 
-def _app_node_diagnostics_from_core(
-    diagnostics: tuple[core_design_matrix.RefractionDesignMatrixNodeDiagnostics, ...],
-) -> tuple[RefractionDesignMatrixNodeDiagnostics, ...]:
-    return tuple(
-        RefractionDesignMatrixNodeDiagnostics(**asdict(item))
-        for item in diagnostics
-    )
-
-
 def _node_diagnostic_csv_row(
-    item: RefractionDesignMatrixNodeDiagnostics,
+    item: RefractionDesignMatrixNodeDiagnostics
+    | core_design_matrix.RefractionDesignMatrixNodeDiagnostics,
 ) -> dict[str, object]:
     payload = asdict(item)
     payload['active'] = 'true' if item.active else 'false'
