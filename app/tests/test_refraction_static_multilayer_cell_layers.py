@@ -13,8 +13,6 @@ from app.statics.refraction.application.core_options import (
     layer_observation_masks_from_input_model as build_refraction_layer_observation_masks,
 )
 from app.statics.refraction.application.multilayer_service import (
-    RefractionLayerSolverContext,
-    _layer_rejection_reason_from_context,
     solve_refraction_multilayer_time_terms,
 )
 from app.statics.refraction.domain.types import (
@@ -116,53 +114,6 @@ def test_layer_specific_min_observations_per_cell_is_applied_to_v3() -> None:
     np.testing.assert_array_equal(layer.inactive_cell_id, [2])
     assert layer.cell_velocity_status is not None
     assert layer.cell_velocity_status.tolist() == ['solved', 'solved', 'low_fold']
-
-
-def test_layer_specific_low_fold_rejection_reason_uses_v3_threshold() -> None:
-    input_model = _v3_cell_input_model()
-    model = _v3_solve_cell_model(min_observations_per_cell=2)
-    payload = model.model_dump(mode='python')
-    assert isinstance(payload['refractor_cell'], dict)
-    payload['refractor_cell']['min_observations_per_cell'] = 1
-    model = RefractionStaticModelRequest.model_validate(payload)
-    masks = build_refraction_layer_observation_masks(
-        input_model=input_model,
-        model=model,
-    )
-    normalized_layers = normalize_refraction_static_layers(model)
-    config = next(layer for layer in normalized_layers if layer.kind == 'v3_t2')
-    layer_input = replace(
-        input_model,
-        valid_observation_mask_sorted=np.ascontiguousarray(
-            masks.layer_used_mask_sorted['v3_t2'],
-            dtype=bool,
-        ),
-        rejection_reason_sorted=np.ascontiguousarray(
-            masks.layer_rejection_reason_sorted['v3_t2'],
-            dtype='<U32',
-        ),
-    )
-
-    reason = _layer_rejection_reason_from_context(
-        RefractionLayerSolverContext(
-            base_input_model=input_model,
-            input_model=layer_input,
-            resolved_first_layer=_resolved_first_layer(),
-            layer_config=config,
-            layer_index=2,
-            layer_masks=masks,
-            model=model,
-            solver=RefractionStaticSolverRequest(
-                damping=0.0,
-                min_picks_per_node=1,
-                robust={'enabled': False},
-            ),
-        )
-    )
-
-    v3_reason = reason[layer_input.valid_observation_mask_sorted]
-    assert np.count_nonzero(v3_reason == 'below_min_observations_per_cell') == 1
-    assert np.count_nonzero(v3_reason == 'ok') == int(V3_OFFSET_M.size - 1)
 
 
 def test_layer_specific_smoothing_weight_is_applied_to_v3() -> None:

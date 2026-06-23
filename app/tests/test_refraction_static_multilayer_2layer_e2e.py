@@ -44,6 +44,7 @@ from app.statics.refraction.artifacts import (
     write_source_static_table_csv,
 )
 from app.statics.refraction.application.datum import build_refraction_datum_statics
+from app.statics.refraction.application import multilayer_service
 from app.statics.refraction.application.core_options import (
     layer_observation_masks_from_input_model as build_refraction_layer_observation_masks,
 )
@@ -147,10 +148,29 @@ def test_two_layer_global_e2e_recovers_solver_conversion_tables_and_trace_shift(
 
 def test_two_layer_line_projected_local_v2_global_v3_e2e_recovers_tables(
     tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     fixture = _make_two_layer_fixture(
         coordinate_mode='line_2d_projected',
         v2_velocity_mode='solve_cell',
+    )
+    original_conversion = multilayer_service.core_build_refraction_multilayer_conversion
+    node_v2_velocity: list[np.ndarray] = []
+
+    def _capture_node_v2_velocity(**kwargs):
+        core_input = kwargs['input_model']
+        core_solve = kwargs['solve_result']
+        if int(core_input.n_traces) == int(fixture.input_model.node_x_m.shape[0]):
+            v2_layer = core_solve.layer_result_by_kind['v2_t1']
+            node_v2_velocity.append(
+                np.asarray(v2_layer.velocity_m_s_sorted, dtype=np.float64).copy()
+            )
+        return original_conversion(**kwargs)
+
+    monkeypatch.setattr(
+        multilayer_service,
+        'core_build_refraction_multilayer_conversion',
+        _capture_node_v2_velocity,
     )
 
     outputs = _compute_static_outputs(fixture=fixture, tmp_path=tmp_path)
@@ -161,6 +181,15 @@ def test_two_layer_line_projected_local_v2_global_v3_e2e_recovers_tables(
     assert fixture.model.refractor_cell.coordinate_mode == 'line_2d_projected'
     assert v2_layer.velocity_mode == 'solve_cell'
     assert v2_layer.cell_velocity_m_s is not None
+    assert node_v2_velocity
+    node_v2 = node_v2_velocity[-1]
+    assert np.any(np.isfinite(node_v2))
+    np.testing.assert_allclose(
+        node_v2[np.isfinite(node_v2)],
+        SYNTHETIC_MULTILAYER_V2_M_S,
+        rtol=1.0e-8,
+        atol=1.0e-4,
+    )
     np.testing.assert_allclose(
         v2_layer.cell_velocity_m_s,
         SYNTHETIC_MULTILAYER_V2_M_S,

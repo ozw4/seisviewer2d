@@ -2,15 +2,33 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable, Mapping
+from collections.abc import Mapping
 from dataclasses import dataclass, replace
 import json
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 
 import numpy as np
 
-import seis_statics.refraction.t1lsst as refraction_t1lsst
+from seis_statics.refraction.multilayer_conversion import (
+    RefractionMultilayerConversionError as CoreRefractionMultilayerConversionError,
+    build_refraction_multilayer_conversion as core_build_refraction_multilayer_conversion,
+)
+from seis_statics.refraction.multilayer_solver import (
+    RefractionMultilayerTimeTermLayerResult as CoreRefractionMultilayerTimeTermLayerResult,
+    RefractionMultilayerTimeTermSolveResult as CoreRefractionMultilayerTimeTermSolveResult,
+)
+from seis_statics.refraction.multilayer_solver import (
+    RefractionMultilayerTimeTermSolverError as CoreRefractionMultilayerTimeTermSolverError,
+)
+from seis_statics.refraction.multilayer_solver import (
+    solve_refraction_multilayer_time_terms as core_solve_refraction_multilayer_time_terms,
+)
+from seis_statics.refraction.t1lsst import (
+    compute_t1lsst_2layer_thicknesses_with_status,
+    compute_t1lsst_3layer_thicknesses_with_status,
+)
 from app.statics.refraction.contracts.options import (
     RefractionStaticApplyOptions,
     RefractionStaticConversionRequest,
@@ -39,10 +57,13 @@ from seis_statics.refraction.layer_config import (
 )
 from seis_statics.refraction.types import RefractionLayerObservationMasks
 from app.statics.refraction.application.core_options import (
+    core_input_model_from_app,
     layer_observation_masks_from_input_model,
     layer_observation_qc_for_viewer as refraction_layer_observation_qc,
+    model_options_from_request,
     normalized_layers_from_model_request,
     refractor_cell_options_from_request,
+    solver_options_from_request,
 )
 from app.statics.refraction.application.datum import (
     build_refraction_datum_statics,
@@ -51,24 +72,18 @@ from app.statics.refraction.application.datum import (
 from app.statics.refraction.ports.runtime import RefractionRuntime
 from app.statics.refraction.application.design_matrix import (
     LOW_FOLD_CELL_REJECTION_REASON,
-    OUTSIDE_REFRACTOR_CELL_GRID_REASON,
     REFRACTION_DESIGN_MATRIX_NODE_DIAGNOSTICS_CSV_NAME,
     REFRACTION_DESIGN_MATRIX_QC_JSON_NAME,
+    build_refraction_static_design_matrix,
     refraction_design_matrix_layer_node_diagnostics_csv_name,
     refraction_design_matrix_layer_qc_json_name,
-)
-from app.statics.refraction.application.half_intercept import (
-    estimate_refraction_half_intercept_times_from_first_breaks,
-)
-from seis_statics.refraction.t1lsst import (
-    compute_t1lsst_2layer_thicknesses_with_status,
+    write_refraction_design_matrix_diagnostics_artifacts,
 )
 from app.statics.refraction.domain.types import (
     RefractionDatumStaticsResult,
     RefractionHalfInterceptTimeResult,
     RefractionLayerKind,
     RefractionLayerSolveResult,
-    RefractionLayerVelocityMode,
     RefractionMultiLayerStaticComponents,
     RefractionMultiLayerSolveResult,
     RefractionStaticInputModel,
@@ -87,7 +102,6 @@ _VELOCITY_SEQUENCE_REFERENCE_BY_KIND: dict[RefractionLayerKind, RefractionLayerK
 }
 _STATUS_DTYPE = '<U32'
 _SIGN_CONVENTION_TEXT = 'corrected(t) = raw(t - shift_s)'
-_LOCAL_V2_OK_STATUS = {'ok', 'solved'}
 _CELL_THRESHOLD_QC_KEYS = (
     'cell_observation_count',
     'low_fold_cell_id',
@@ -105,22 +119,6 @@ class RefractionMultiLayerSolveError(ValueError):
 
 
 @dataclass(frozen=True)
-class RefractionLayerSolverContext:
-    """Inputs for one layer solver dispatched by the multi-layer orchestrator."""
-
-    base_input_model: RefractionStaticInputModel
-    input_model: RefractionStaticInputModel
-    resolved_first_layer: ResolvedRefractionFirstLayer
-    layer_config: RefractionStaticLayerConfig
-    layer_index: int
-    layer_masks: RefractionLayerObservationMasks
-    model: RefractionStaticModelRequest
-    solver: RefractionStaticSolverRequest
-    grid: RefractionCellGrid | None = None
-    job_dir: Path | None = None
-
-
-@dataclass(frozen=True)
 class RefractionMultiLayerStaticsWorkflowResult:
     """Production outputs for a multi-layer statics workflow."""
 
@@ -128,12 +126,6 @@ class RefractionMultiLayerStaticsWorkflowResult:
     components: RefractionMultiLayerStaticComponents
     weathering_replacement_result: RefractionWeatheringReplacementStaticsResult
     datum_result: RefractionDatumStaticsResult
-
-
-RefractionLayerSolver = Callable[
-    [RefractionLayerSolverContext],
-    RefractionLayerSolveResult,
-]
 
 
 def solve_refraction_multilayer_time_terms(
@@ -145,68 +137,83 @@ def solve_refraction_multilayer_time_terms(
     model: RefractionStaticModelRequest,
     solver: RefractionStaticSolverRequest,
     job_dir: Path | None = None,
-    grid: RefractionCellGrid | None = None,
-    solver_dispatch: Mapping[
-        tuple[RefractionLayerKind, RefractionLayerVelocityMode],
-        RefractionLayerSolver,
-    ]
-    | None = None,
 ) -> RefractionMultiLayerSolveResult:
     """Run enabled refraction layer solves in configured order."""
     if not normalized_layers:
         raise RefractionMultiLayerSolveError(
             'at least one enabled refraction layer is required'
         )
-
-    dispatch = _effective_solver_dispatch(solver_dispatch)
-    layer_results: list[RefractionLayerSolveResult] = []
     for config in normalized_layers:
-        layer_solver = _solver_for_layer(config, dispatch)
         _require_layer_observations(config, layer_masks)
-        layer_input = _input_model_for_layer(
-            input_model=input_model,
-            layer_masks=layer_masks,
-            layer_kind=config.kind,
-            model=model,
-        )
-        layer_model = _model_for_layer(model=model, config=config)
-        layer_job_dir = _layer_design_matrix_artifact_dir(job_dir, config)
-        context = RefractionLayerSolverContext(
-            base_input_model=input_model,
-            input_model=layer_input,
-            resolved_first_layer=resolved_first_layer,
-            layer_config=config,
-            layer_index=_layer_index(config.kind),
-            layer_masks=layer_masks,
-            model=layer_model,
-            solver=solver,
-            grid=grid,
-            job_dir=layer_job_dir,
-        )
-        try:
-            result = layer_solver(context)
-        except Exception:  # noqa: BLE001
-            _copy_layer_design_matrix_diagnostics_to_root_artifacts(
-                root=job_dir,
-                layer_dir=layer_job_dir,
-                layer_kind=config.kind,
-                layer_index=_layer_index(config.kind),
+        min_used = int(solver.robust.min_used_observations)
+        count = int(layer_masks.layer_observation_count.get(config.kind, 0))
+        if count < min_used:
+            raise RefractionMultiLayerSolveError(
+                f'refraction layer {config.kind} solve failed: '
+                'Too few valid refraction observations'
             )
-            raise
-        _copy_layer_design_matrix_diagnostics_to_root_artifacts(
-            root=job_dir,
-            layer_dir=layer_job_dir,
-            layer_kind=config.kind,
-            layer_index=_layer_index(config.kind),
-        )
-        _validate_layer_result(result=result, config=config)
-        result = _validate_layer_velocity_sequence(
-            result=result,
-            previous_results=tuple(layer_results),
-            normalized_layers=normalized_layers,
-        )
-        layer_results.append(result)
+    return _solve_refraction_multilayer_time_terms_with_core(
+        input_model=input_model,
+        resolved_first_layer=resolved_first_layer,
+        normalized_layers=normalized_layers,
+        layer_masks=layer_masks,
+        model=model,
+        solver=solver,
+        job_dir=job_dir,
+    )
 
+
+def _solve_refraction_multilayer_time_terms_with_core(
+    *,
+    input_model: RefractionStaticInputModel,
+    resolved_first_layer: ResolvedRefractionFirstLayer,
+    normalized_layers: tuple[RefractionStaticLayerConfig, ...],
+    layer_masks: RefractionLayerObservationMasks,
+    model: RefractionStaticModelRequest,
+    solver: RefractionStaticSolverRequest,
+    job_dir: Path | None,
+) -> RefractionMultiLayerSolveResult:
+    core_input = core_input_model_from_app(
+        replace(input_model, layer_observation_masks=layer_masks)
+    )
+    try:
+        core_result = core_solve_refraction_multilayer_time_terms(
+            input_model=core_input,
+            model=model_options_from_request(model),
+            solver_options=solver_options_from_request(solver),
+            resolved_first_layer=resolved_first_layer,
+            include_diagnostics=job_dir is not None,
+        )
+    except CoreRefractionMultilayerTimeTermSolverError as exc:
+        _write_failed_core_layer_design_matrix_diagnostics(
+            input_model=input_model,
+            resolved_first_layer=resolved_first_layer,
+            normalized_layers=normalized_layers,
+            layer_masks=layer_masks,
+            model=model,
+            solver=solver,
+            job_dir=job_dir,
+        )
+        raise RefractionMultiLayerSolveError(str(exc)) from exc
+    return _app_solve_result_from_core(
+        input_model=input_model,
+        normalized_layers=normalized_layers,
+        layer_masks=layer_masks,
+        model=model,
+        core_result=core_result,
+        job_dir=job_dir,
+    )
+
+
+def _app_solve_result_from_core(
+    *,
+    input_model: RefractionStaticInputModel,
+    normalized_layers: tuple[RefractionStaticLayerConfig, ...],
+    layer_masks: RefractionLayerObservationMasks,
+    model: RefractionStaticModelRequest,
+    core_result: CoreRefractionMultilayerTimeTermSolveResult,
+    job_dir: Path | None,
+) -> RefractionMultiLayerSolveResult:
     source_endpoint_key, source_node_id = _unique_endpoint_key_nodes(
         input_model.source_endpoint_key_sorted,
         input_model.source_node_id_sorted,
@@ -215,18 +222,41 @@ def solve_refraction_multilayer_time_terms(
         input_model.receiver_endpoint_key_sorted,
         input_model.receiver_node_id_sorted,
     )
+    layer_results: list[RefractionLayerSolveResult] = []
+    for core_layer in core_result.layer_results:
+        layer_dir = _layer_design_matrix_artifact_dir(job_dir, core_layer.layer)
+        if layer_dir is not None and core_layer.solve_result.design is not None:
+            write_refraction_design_matrix_diagnostics_artifacts(
+                layer_dir,
+                core_layer.solve_result.design,
+            )
+        _copy_layer_design_matrix_diagnostics_to_root_artifacts(
+            root=job_dir,
+            layer_dir=layer_dir,
+            layer_kind=core_layer.layer_kind,
+            layer_index=int(core_layer.layer_index),
+        )
+        layer_result = _layer_result_from_core_layer(
+            input_model=input_model,
+            source_endpoint_key=source_endpoint_key,
+            source_node_id=source_node_id,
+            receiver_endpoint_key=receiver_endpoint_key,
+            receiver_node_id=receiver_node_id,
+            core_layer=core_layer,
+        )
+        layer_result = _validate_layer_velocity_sequence(
+            result=layer_result,
+            previous_results=tuple(layer_results),
+            normalized_layers=normalized_layers,
+        )
+        layer_results.append(layer_result)
+
     enabled_kinds = tuple(config.kind for config in normalized_layers)
     observation_gates = refraction_layer_observation_qc(layer_masks, model=model)
     layer_qc = _multilayer_layer_qc(
         layer_results=tuple(layer_results),
         observation_gates=observation_gates,
     )
-    qc = {
-        'enabled_layer_count': len(enabled_kinds),
-        'enabled_layer_kinds': list(enabled_kinds),
-        'observation_gates': observation_gates,
-        'layers': layer_qc,
-    }
     return RefractionMultiLayerSolveResult(
         enabled_layer_kinds=enabled_kinds,
         layer_results=tuple(layer_results),
@@ -234,7 +264,12 @@ def solve_refraction_multilayer_time_terms(
         receiver_endpoint_key=receiver_endpoint_key,
         source_node_id=source_node_id,
         receiver_node_id=receiver_node_id,
-        qc=qc,
+        qc={
+            'enabled_layer_count': len(enabled_kinds),
+            'enabled_layer_kinds': list(enabled_kinds),
+            'observation_gates': observation_gates,
+            'layers': layer_qc,
+        },
     )
 
 
@@ -439,7 +474,6 @@ def build_refraction_multilayer_weathering_replacement_statics(
         expected=solve_result.receiver_endpoint_key,
         name='receiver_endpoint_key',
     )
-
     v2 = _build_v2_static_model(
         input_model=input_model,
         model=model,
@@ -449,8 +483,14 @@ def build_refraction_multilayer_weathering_replacement_statics(
         receiver=receiver,
         v1_m_s=v1_m_s,
     )
+    if v2.node_v2_status is None:
+        _validate_global_multilayer_velocity_order(
+            v1_m_s=v1_m_s,
+            v2_m_s=v2.node_v2_m_s,
+            v3_m_s=v3_m_s,
+            vsub_m_s=vsub_m_s,
+        )
     node_t1 = _layer_node_terms(v2_layer, shape=node_id.shape, name='v2_t1')
-    node_t2 = _layer_node_terms(v3_layer, shape=node_id.shape, name='v3_t2')
     source_t1 = _endpoint_terms(v2_layer.source_time_term_s, source, name='source_t1')
     source_t2 = _endpoint_terms(v3_layer.source_time_term_s, source, name='source_t2')
     receiver_t1 = _endpoint_terms(
@@ -465,37 +505,7 @@ def build_refraction_multilayer_weathering_replacement_statics(
     )
     if vsub_layer is None:
         source_t3 = receiver_t3 = None
-        node_conversion = _compute_2layer_conversion(
-            t1_s=node_t1,
-            t2_s=node_t2,
-            v1_m_s=v1_m_s,
-            v2_m_s=v2.node_v2_m_s,
-            v3_m_s=v3_m_s,
-            v2_status=v2.node_v2_status,
-        )
-        source_conversion = _compute_2layer_conversion(
-            t1_s=source_t1,
-            t2_s=source_t2,
-            v1_m_s=v1_m_s,
-            v2_m_s=v2.source_v2_m_s,
-            v3_m_s=v3_m_s,
-            v2_status=v2.source_v2_status,
-        )
-        receiver_conversion = _compute_2layer_conversion(
-            t1_s=receiver_t1,
-            t2_s=receiver_t2,
-            v1_m_s=v1_m_s,
-            v2_m_s=v2.receiver_v2_m_s,
-            v3_m_s=v3_m_s,
-            v2_status=v2.receiver_v2_status,
-        )
     else:
-        assert vsub_m_s is not None
-        node_t3 = _layer_node_terms(
-            vsub_layer,
-            shape=node_id.shape,
-            name='vsub_t3',
-        )
         source_t3 = _endpoint_terms(
             vsub_layer.source_time_term_s,
             source,
@@ -506,53 +516,49 @@ def build_refraction_multilayer_weathering_replacement_statics(
             receiver,
             name='receiver_t3',
         )
-        node_conversion = _compute_3layer_conversion(
-            t1_s=node_t1,
-            t2_s=node_t2,
-            t3_s=node_t3,
-            v1_m_s=v1_m_s,
-            v2_m_s=v2.node_v2_m_s,
-            v3_m_s=v3_m_s,
-            vsub_m_s=vsub_m_s,
-            v2_status=v2.node_v2_status,
-        )
-        source_conversion = _compute_3layer_conversion(
-            t1_s=source_t1,
-            t2_s=source_t2,
-            t3_s=source_t3,
-            v1_m_s=v1_m_s,
-            v2_m_s=v2.source_v2_m_s,
-            v3_m_s=v3_m_s,
-            vsub_m_s=vsub_m_s,
-            v2_status=v2.source_v2_status,
-        )
-        receiver_conversion = _compute_3layer_conversion(
-            t1_s=receiver_t1,
-            t2_s=receiver_t2,
-            t3_s=receiver_t3,
-            v1_m_s=v1_m_s,
-            v2_m_s=v2.receiver_v2_m_s,
-            v3_m_s=v3_m_s,
-            vsub_m_s=vsub_m_s,
-            v2_status=v2.receiver_v2_status,
-        )
+    source_conversion = _core_multilayer_endpoint_conversion_from_app_result(
+        input_model=input_model,
+        model=model,
+        solve_result=solve_result,
+        resolved_first_layer=resolved_first_layer,
+        layer_count=layer_count,
+        endpoint='source',
+    )
+    receiver_conversion = _core_multilayer_endpoint_conversion_from_app_result(
+        input_model=input_model,
+        model=model,
+        solve_result=solve_result,
+        resolved_first_layer=resolved_first_layer,
+        layer_count=layer_count,
+        endpoint='receiver',
+    )
+    node_conversion = _core_multilayer_node_conversion_from_app_result(
+        input_model=input_model,
+        model=model,
+        solve_result=solve_result,
+        resolved_first_layer=resolved_first_layer,
+        layer_count=layer_count,
+    )
+    node_sh3_m = None if vsub_layer is None else node_conversion.sh3_m
+    source_sh3_m = None if vsub_layer is None else source_conversion.sh3_m
+    receiver_sh3_m = None if vsub_layer is None else receiver_conversion.sh3_m
 
     max_abs_shift_ms = (
         None if apply_options is None else float(apply_options.max_abs_shift_ms)
     )
     node_static_status = _status_from_conversion(
-        node_conversion.status,
-        node_conversion.weathering_correction_s,
+        node_conversion.static_status,
+        node_conversion.weathering_replacement_shift_s,
         max_abs_shift_ms=max_abs_shift_ms,
     )
     source_static_status = _status_from_conversion(
-        source_conversion.status,
-        source_conversion.weathering_correction_s,
+        source_conversion.static_status,
+        source_conversion.weathering_replacement_shift_s,
         max_abs_shift_ms=max_abs_shift_ms,
     )
     receiver_static_status = _status_from_conversion(
-        receiver_conversion.status,
-        receiver_conversion.weathering_correction_s,
+        receiver_conversion.static_status,
+        receiver_conversion.weathering_replacement_shift_s,
         max_abs_shift_ms=max_abs_shift_ms,
     )
 
@@ -594,21 +600,21 @@ def build_refraction_multilayer_weathering_replacement_statics(
     )
     source_sh3_sorted = (
         None
-        if source_conversion.sh3_m is None
+        if vsub_layer is None
         else _map_endpoint_values_to_trace_order(
             endpoint_key_sorted=input_model.source_endpoint_key_sorted,
             endpoint_key=source.endpoint_key,
-            endpoint_values=source_conversion.sh3_m,
+            endpoint_values=source_sh3_m,
             name='source_sh3_m_sorted',
         )
     )
     receiver_sh3_sorted = (
         None
-        if receiver_conversion.sh3_m is None
+        if vsub_layer is None
         else _map_endpoint_values_to_trace_order(
             endpoint_key_sorted=input_model.receiver_endpoint_key_sorted,
             endpoint_key=receiver.endpoint_key,
-            endpoint_values=receiver_conversion.sh3_m,
+            endpoint_values=receiver_sh3_m,
             name='receiver_sh3_m_sorted',
         )
     )
@@ -616,17 +622,17 @@ def build_refraction_multilayer_weathering_replacement_statics(
     node_total_thickness = _total_weathering_thickness(
         node_conversion.sh1_m,
         node_conversion.sh2_m,
-        node_conversion.sh3_m,
+        node_sh3_m,
     )
     source_total_thickness = _total_weathering_thickness(
         source_conversion.sh1_m,
         source_conversion.sh2_m,
-        source_conversion.sh3_m,
+        source_sh3_m,
     )
     receiver_total_thickness = _total_weathering_thickness(
         receiver_conversion.sh1_m,
         receiver_conversion.sh2_m,
-        receiver_conversion.sh3_m,
+        receiver_sh3_m,
     )
     source_total_thickness_sorted = _total_weathering_thickness(
         source_sh1_sorted,
@@ -641,13 +647,13 @@ def build_refraction_multilayer_weathering_replacement_statics(
     source_wcor_sorted = _map_endpoint_values_to_trace_order(
         endpoint_key_sorted=input_model.source_endpoint_key_sorted,
         endpoint_key=source.endpoint_key,
-        endpoint_values=source_conversion.weathering_correction_s,
+        endpoint_values=source_conversion.weathering_replacement_shift_s,
         name='source_wcor_s_sorted',
     )
     receiver_wcor_sorted = _map_endpoint_values_to_trace_order(
         endpoint_key_sorted=input_model.receiver_endpoint_key_sorted,
         endpoint_key=receiver.endpoint_key,
-        endpoint_values=receiver_conversion.weathering_correction_s,
+        endpoint_values=receiver_conversion.weathering_replacement_shift_s,
         name='receiver_wcor_s_sorted',
     )
     source_status_sorted = _map_endpoint_strings_to_trace_order(
@@ -767,12 +773,12 @@ def build_refraction_multilayer_weathering_replacement_statics(
         node_refractor_elevation_m=node_surface - node_total_thickness,
         node_half_intercept_time_s=node_t1,
         node_solution_status=np.full(node_id.shape, 'solved', dtype=_STATUS_DTYPE),
-        node_weathering_status=node_conversion.status,
+        node_weathering_status=node_conversion.static_status,
         node_weathering_replacement_shift_s=(
-            node_conversion.weathering_correction_s
+            node_conversion.weathering_replacement_shift_s
         ),
         node_weathering_replacement_shift_ms=(
-            node_conversion.weathering_correction_s * 1000.0
+            node_conversion.weathering_replacement_shift_s * 1000.0
         ),
         node_static_status=node_static_status,
         node_pick_count=node_pick_count,
@@ -790,7 +796,7 @@ def build_refraction_multilayer_weathering_replacement_statics(
         source_weathering_thickness_m=source_total_thickness,
         source_refractor_elevation_m=source.elevation_m - source_total_thickness,
         source_weathering_replacement_shift_s=(
-            source_conversion.weathering_correction_s
+            source_conversion.weathering_replacement_shift_s
         ),
         source_static_status=source_static_status,
         receiver_endpoint_key=receiver.endpoint_key,
@@ -805,7 +811,7 @@ def build_refraction_multilayer_weathering_replacement_statics(
             receiver.elevation_m - receiver_total_thickness
         ),
         receiver_weathering_replacement_shift_s=(
-            receiver_conversion.weathering_correction_s
+            receiver_conversion.weathering_replacement_shift_s
         ),
         receiver_static_status=receiver_static_status,
         sorted_trace_index=np.ascontiguousarray(
@@ -902,21 +908,21 @@ def build_refraction_multilayer_weathering_replacement_statics(
         receiver_v2_status_sorted=v2.receiver_v2_status_sorted,
         node_sh1_weathering_thickness_m=node_conversion.sh1_m,
         node_sh2_weathering_thickness_m=node_conversion.sh2_m,
-        node_sh3_weathering_thickness_m=node_conversion.sh3_m,
+        node_sh3_weathering_thickness_m=node_sh3_m,
         source_t2_time_s=source_t2,
         source_t3_time_s=source_t3,
         source_v3_m_s=source_v3_m_s,
         source_vsub_m_s=source_vsub_m_s,
         source_sh1_weathering_thickness_m=source_conversion.sh1_m,
         source_sh2_weathering_thickness_m=source_conversion.sh2_m,
-        source_sh3_weathering_thickness_m=source_conversion.sh3_m,
+        source_sh3_weathering_thickness_m=source_sh3_m,
         receiver_t2_time_s=receiver_t2,
         receiver_t3_time_s=receiver_t3,
         receiver_v3_m_s=receiver_v3_m_s,
         receiver_vsub_m_s=receiver_vsub_m_s,
         receiver_sh1_weathering_thickness_m=receiver_conversion.sh1_m,
         receiver_sh2_weathering_thickness_m=receiver_conversion.sh2_m,
-        receiver_sh3_weathering_thickness_m=receiver_conversion.sh3_m,
+        receiver_sh3_weathering_thickness_m=receiver_sh3_m,
         row_layer_kind=row_layer_kind,
         row_layer_index=row_layer_index,
         row_source_endpoint_key=np.asarray(
@@ -968,13 +974,440 @@ class _V2StaticModel:
     row_velocity_m_s: np.ndarray | None = None
 
 
-@dataclass(frozen=True)
-class _T1LSSTMultilayerConversion:
-    sh1_m: np.ndarray
-    sh2_m: np.ndarray
-    weathering_correction_s: np.ndarray
-    status: np.ndarray
-    sh3_m: np.ndarray | None = None
+def _core_multilayer_endpoint_conversion_from_app_result(
+    *,
+    input_model: RefractionStaticInputModel,
+    model: RefractionStaticModelRequest,
+    solve_result: RefractionMultiLayerSolveResult,
+    resolved_first_layer: ResolvedRefractionFirstLayer,
+    layer_count: int,
+    endpoint: str,
+) -> Any:
+    try:
+        conversion = core_build_refraction_multilayer_conversion(
+            input_model=core_input_model_from_app(input_model),
+            model=model_options_from_request(model),
+            solve_result=_core_multilayer_solve_result_from_app(
+                input_model=input_model,
+                model=model,
+                solve_result=solve_result,
+                resolved_first_layer=resolved_first_layer,
+                endpoint_terms=endpoint,
+            ),
+            resolved_first_layer=resolved_first_layer,
+            layer_count=layer_count,
+        )
+    except CoreRefractionMultilayerConversionError as exc:
+        raise RefractionMultiLayerSolveError(str(exc)) from exc
+    if endpoint == 'source':
+        return conversion.source_endpoint
+    if endpoint == 'receiver':
+        return conversion.receiver_endpoint
+    raise RefractionMultiLayerSolveError(f'unsupported endpoint conversion: {endpoint}')
+
+
+def _core_multilayer_node_conversion_from_app_result(
+    *,
+    input_model: RefractionStaticInputModel,
+    model: RefractionStaticModelRequest,
+    solve_result: RefractionMultiLayerSolveResult,
+    resolved_first_layer: ResolvedRefractionFirstLayer,
+    layer_count: int,
+) -> Any:
+    try:
+        conversion = core_build_refraction_multilayer_conversion(
+            input_model=_core_node_input_model_from_app(input_model),
+            model=model_options_from_request(model),
+            solve_result=_core_multilayer_solve_result_from_app(
+                input_model=input_model,
+                model=model,
+                solve_result=solve_result,
+                resolved_first_layer=resolved_first_layer,
+                endpoint_terms='node',
+            ),
+            resolved_first_layer=resolved_first_layer,
+            layer_count=layer_count,
+        )
+    except CoreRefractionMultilayerConversionError as exc:
+        raise RefractionMultiLayerSolveError(str(exc)) from exc
+    return conversion.source_endpoint
+
+
+def _core_node_input_model_from_app(input_model: RefractionStaticInputModel) -> Any:
+    core = core_input_model_from_app(input_model)
+    node_id = _input_node_id(input_model)
+    node_count = int(node_id.shape[0])
+    row_index = np.arange(node_count, dtype=np.int64)
+    true_mask = np.ones(node_count, dtype=bool)
+    zeros = np.zeros(node_count, dtype=np.float64)
+    node_key = np.asarray(node_id, dtype=object)
+    node_id_i64 = np.ascontiguousarray(node_id, dtype=np.int64)
+    node_x = np.ascontiguousarray(input_model.node_x_m, dtype=np.float64)
+    node_y = np.ascontiguousarray(input_model.node_y_m, dtype=np.float64)
+    node_elevation = np.ascontiguousarray(
+        input_model.node_elevation_m,
+        dtype=np.float64,
+    )
+    return replace(
+        core,
+        n_traces=node_count,
+        sorted_trace_index=row_index,
+        pick_time_s_sorted=zeros,
+        valid_pick_mask_sorted=true_mask,
+        valid_observation_mask_sorted=true_mask,
+        source_id_sorted=node_id_i64,
+        receiver_id_sorted=node_id_i64,
+        source_x_m_sorted=node_x,
+        source_y_m_sorted=node_y,
+        receiver_x_m_sorted=node_x,
+        receiver_y_m_sorted=node_y,
+        source_elevation_m_sorted=node_elevation,
+        receiver_elevation_m_sorted=node_elevation,
+        source_depth_m_sorted=None,
+        geometry_distance_m_sorted=zeros,
+        offset_m_sorted=zeros,
+        distance_m_sorted=zeros,
+        source_endpoint_key_sorted=node_key,
+        receiver_endpoint_key_sorted=node_key,
+        source_node_id_sorted=node_id_i64,
+        receiver_node_id_sorted=node_id_i64,
+        source_endpoint_id_sorted=node_id_i64,
+        receiver_endpoint_id_sorted=node_id_i64,
+    )
+
+
+def _core_multilayer_solve_result_from_app(
+    *,
+    input_model: RefractionStaticInputModel,
+    model: RefractionStaticModelRequest,
+    solve_result: RefractionMultiLayerSolveResult,
+    resolved_first_layer: ResolvedRefractionFirstLayer,
+    endpoint_terms: str,
+) -> CoreRefractionMultilayerTimeTermSolveResult:
+    node_domain = endpoint_terms == 'node'
+    trace_count = (
+        int(_input_node_id(input_model).shape[0])
+        if node_domain
+        else int(input_model.n_traces)
+    )
+    core_layers = tuple(
+        _core_layer_result_from_app(
+            input_model=input_model,
+            model=model,
+            layer=layer,
+            resolved_first_layer=resolved_first_layer,
+            endpoint_terms=endpoint_terms,
+            trace_count=trace_count,
+        )
+        for layer in solve_result.layer_results
+    )
+    if node_domain:
+        modeled_pick_time_s = np.zeros(trace_count, dtype=np.float64)
+        residual_s = np.zeros(trace_count, dtype=np.float64)
+        residual_ms = np.zeros(trace_count, dtype=np.float64)
+        used_mask = np.ones(trace_count, dtype=bool)
+        rejected_mask = np.zeros(trace_count, dtype=bool)
+        layer_kind = np.full(trace_count, '', dtype=_STATUS_DTYPE)
+        rejection_reason = np.full(trace_count, '', dtype=_STATUS_DTYPE)
+        layer_masks = _core_node_layer_observation_masks_from_app(
+            input_model=input_model,
+            trace_count=trace_count,
+        )
+    else:
+        modeled_pick_time_s = _combined_modeled_pick_time(
+            solve_result,
+            input_model.n_traces,
+        )
+        residual_s = np.ascontiguousarray(
+            input_model.pick_time_s_sorted - modeled_pick_time_s,
+            dtype=np.float64,
+        )
+        residual_ms = np.ascontiguousarray(residual_s * 1000.0, dtype=np.float64)
+        used_mask = _combined_used_mask(solve_result, input_model.n_traces)
+        rejected_mask = ~used_mask
+        layer_kind = _combined_layer_identity(solve_result, input_model.n_traces)[0]
+        rejection_reason = _combined_rejection_reason(
+            input_model=input_model,
+            layer_kind=layer_kind,
+            layer_rejection_reason=_combined_layer_rejection_reason(
+                solve_result,
+                input_model.n_traces,
+            ),
+            used_mask=used_mask,
+            rejected_by_robust_mask=_combined_rejected_by_robust_mask(
+                solve_result,
+                input_model.n_traces,
+            ),
+        )
+        layer_masks = input_model.layer_observation_masks
+    return CoreRefractionMultilayerTimeTermSolveResult(
+        layer_results=core_layers,
+        layer_result_by_kind={layer.layer_kind: layer for layer in core_layers},
+        layer_observation_masks=layer_masks,
+        modeled_pick_time_s_sorted=np.ascontiguousarray(
+            modeled_pick_time_s,
+            dtype=np.float64,
+        ),
+        residual_s_sorted=np.ascontiguousarray(residual_s, dtype=np.float64),
+        residual_ms_sorted=np.ascontiguousarray(residual_ms, dtype=np.float64),
+        used_observation_mask_sorted=np.ascontiguousarray(used_mask, dtype=bool),
+        rejected_observation_mask_sorted=np.ascontiguousarray(
+            rejected_mask,
+            dtype=bool,
+        ),
+        layer_kind_sorted=np.asarray(layer_kind).astype(_STATUS_DTYPE, copy=True),
+        rejection_reason_sorted=np.asarray(rejection_reason).astype(
+            _STATUS_DTYPE,
+            copy=True,
+        ),
+        velocity_m_s_sorted=np.ascontiguousarray(
+            np.full(trace_count, np.nan, dtype=np.float64)
+        ),
+        qc=dict(solve_result.qc),
+    )
+
+
+def _core_node_layer_observation_masks_from_app(
+    *,
+    input_model: RefractionStaticInputModel,
+    trace_count: int,
+) -> RefractionLayerObservationMasks | None:
+    masks = input_model.layer_observation_masks
+    if masks is None:
+        return masks
+    enabled_kind = [str(kind) for kind in np.asarray(masks.layer_kind).tolist()]
+    true_mask = np.ones(trace_count, dtype=bool)
+    empty_reason = np.full(trace_count, '', dtype=_STATUS_DTYPE)
+    return replace(
+        masks,
+        layer_used_mask_sorted={
+            kind: np.array(true_mask, dtype=bool, copy=True)
+            for kind in enabled_kind
+        },
+        layer_rejection_reason_sorted={
+            kind: np.array(empty_reason, dtype=_STATUS_DTYPE, copy=True)
+            for kind in enabled_kind
+        },
+        layer_candidate_count={kind: trace_count for kind in enabled_kind},
+        layer_observation_count={kind: trace_count for kind in enabled_kind},
+        overlapping_valid_observation_count=0,
+        unassigned_valid_observation_count=0,
+        unique_used_trace_count=trace_count,
+        layer_membership_total_count=trace_count * len(enabled_kind),
+    )
+
+
+def _core_layer_result_from_app(
+    *,
+    input_model: RefractionStaticInputModel,
+    model: RefractionStaticModelRequest,
+    layer: RefractionLayerSolveResult,
+    resolved_first_layer: ResolvedRefractionFirstLayer,
+    endpoint_terms: str,
+    trace_count: int,
+) -> CoreRefractionMultilayerTimeTermLayerResult:
+    node_id = _input_node_id(input_model)
+    cell_id = (
+        np.asarray([], dtype=np.int64)
+        if layer.cell_velocity_m_s is None
+        else np.arange(np.asarray(layer.cell_velocity_m_s).shape[0], dtype=np.int64)
+    )
+    cell_velocity = (
+        np.asarray([], dtype=np.float64)
+        if layer.cell_velocity_m_s is None
+        else np.ascontiguousarray(layer.cell_velocity_m_s, dtype=np.float64)
+    )
+    cell_slowness = (
+        np.asarray([], dtype=np.float64)
+        if layer.cell_slowness_s_per_m is None
+        else np.ascontiguousarray(layer.cell_slowness_s_per_m, dtype=np.float64)
+    )
+    cell_status = (
+        np.asarray([], dtype=_STATUS_DTYPE)
+        if layer.cell_velocity_status is None
+        else np.asarray(layer.cell_velocity_status).astype(_STATUS_DTYPE, copy=True)
+    )
+    core_solve = SimpleNamespace(
+        node_id=node_id,
+        node_half_intercept_time_s=_layer_terms_for_core_conversion(
+            input_model=input_model,
+            layer=layer,
+            endpoint_terms=endpoint_terms,
+        ),
+        node_solution_status=np.full(node_id.shape, 'solved', dtype=_STATUS_DTYPE),
+        bedrock_velocity_mode=layer.velocity_mode,
+        bedrock_velocity_m_s=(
+            float('nan')
+            if layer.global_velocity_m_s is None
+            else float(layer.global_velocity_m_s)
+        ),
+        bedrock_slowness_s_per_m=(
+            float('nan')
+            if layer.global_slowness_s_per_m is None
+            else float(layer.global_slowness_s_per_m)
+        ),
+        cell_id=cell_id,
+        cell_bedrock_velocity_m_s=cell_velocity,
+        cell_bedrock_slowness_s_per_m=cell_slowness,
+        cell_velocity_status=cell_status,
+    )
+    return CoreRefractionMultilayerTimeTermLayerResult(
+        layer_kind=layer.layer_kind,
+        layer_index=layer.layer_index,
+        layer=RefractionStaticLayerConfig(
+            kind=layer.layer_kind,
+            min_offset_m=None,
+            max_offset_m=None,
+            velocity_mode=layer.velocity_mode,
+        ),
+        solve_result=core_solve,
+        velocity_m_s_sorted=(
+            np.full(trace_count, layer.global_velocity_m_s, dtype=np.float64)
+            if layer.global_velocity_m_s is not None
+            else _core_layer_row_velocity_from_app(
+                input_model=input_model,
+                model=model,
+                layer=layer,
+                resolved_first_layer=resolved_first_layer,
+                trace_count=trace_count,
+                endpoint_terms=endpoint_terms,
+            )
+        ),
+        rejection_reason_sorted=(
+            np.full(trace_count, '', dtype=_STATUS_DTYPE)
+            if layer.rejection_reason_sorted is None
+            else _core_layer_rejection_reason_from_app(
+                layer=layer,
+                trace_count=trace_count,
+                endpoint_terms=endpoint_terms,
+            )
+        ),
+        velocity_order_valid_mask_sorted=np.ones(trace_count, dtype=bool),
+    )
+
+
+def _core_layer_row_velocity_from_app(
+    *,
+    input_model: RefractionStaticInputModel,
+    model: RefractionStaticModelRequest,
+    layer: RefractionLayerSolveResult,
+    resolved_first_layer: ResolvedRefractionFirstLayer,
+    trace_count: int,
+    endpoint_terms: str,
+) -> np.ndarray:
+    if layer.layer_kind == 'v2_t1' and layer.velocity_mode == 'solve_cell':
+        v2 = _build_v2_static_model(
+            input_model=input_model,
+            model=model,
+            layer=layer,
+            node_id=_input_node_id(input_model),
+            source=_endpoint_metadata(input_model, endpoint='source'),
+            receiver=_endpoint_metadata(input_model, endpoint='receiver'),
+            v1_m_s=_positive_float(
+                resolved_first_layer.weathering_velocity_m_s,
+                name='resolved_first_layer.weathering_velocity_m_s',
+            ),
+        )
+        if endpoint_terms == 'node':
+            return _core_velocity_array_for_trace_count(
+                v2.node_v2_m_s,
+                trace_count=trace_count,
+                name='node_v2_m_s',
+            )
+        if endpoint_terms == 'source':
+            return _core_velocity_array_for_trace_count(
+                v2.source_v2_m_s_sorted,
+                trace_count=trace_count,
+                name='source_v2_m_s_sorted',
+            )
+        if endpoint_terms == 'receiver':
+            return _core_velocity_array_for_trace_count(
+                v2.receiver_v2_m_s_sorted,
+                trace_count=trace_count,
+                name='receiver_v2_m_s_sorted',
+            )
+    if endpoint_terms == 'node':
+        return np.full(trace_count, np.nan, dtype=np.float64)
+    return _core_velocity_array_for_trace_count(
+        layer.row_midpoint_velocity_m_s,
+        trace_count=trace_count,
+        name=f'{layer.layer_kind}.row_midpoint_velocity_m_s',
+    )
+
+
+def _core_velocity_array_for_trace_count(
+    value: np.ndarray | None,
+    *,
+    trace_count: int,
+    name: str,
+) -> np.ndarray:
+    if value is None:
+        raise RefractionMultiLayerSolveError(f'{name} is required')
+    array = np.ascontiguousarray(value, dtype=np.float64)
+    if array.shape != (trace_count,):
+        raise RefractionMultiLayerSolveError(
+            f'{name} shape must match conversion trace count'
+        )
+    return array
+
+
+def _core_layer_rejection_reason_from_app(
+    *,
+    layer: RefractionLayerSolveResult,
+    trace_count: int,
+    endpoint_terms: str,
+) -> np.ndarray:
+    if endpoint_terms == 'node':
+        return np.full(trace_count, '', dtype=_STATUS_DTYPE)
+    return np.asarray(layer.rejection_reason_sorted).astype(_STATUS_DTYPE, copy=True)
+
+
+def _layer_terms_for_core_conversion(
+    input_model: RefractionStaticInputModel,
+    layer: RefractionLayerSolveResult,
+    endpoint_terms: str,
+) -> np.ndarray:
+    node_id = _input_node_id(input_model)
+    values = _layer_node_terms(layer, shape=node_id.shape, name=layer.layer_kind)
+    if endpoint_terms == 'node':
+        return values
+    source_key, source_node = _unique_endpoint_key_nodes(
+        input_model.source_endpoint_key_sorted,
+        input_model.source_node_id_sorted,
+    )
+    receiver_key, receiver_node = _unique_endpoint_key_nodes(
+        input_model.receiver_endpoint_key_sorted,
+        input_model.receiver_node_id_sorted,
+    )
+    output = np.array(values, dtype=np.float64, copy=True, order='C')
+    node_pos = {int(node): index for index, node in enumerate(node_id.tolist())}
+    if layer.source_time_term_s.shape != source_key.shape:
+        raise RefractionMultiLayerSolveError(
+            f'{layer.layer_kind} source endpoint time-term shape mismatch'
+        )
+    if layer.receiver_time_term_s.shape != receiver_key.shape:
+        raise RefractionMultiLayerSolveError(
+            f'{layer.layer_kind} receiver endpoint time-term shape mismatch'
+        )
+    if endpoint_terms == 'source':
+        term_node = source_node
+        terms = layer.source_time_term_s
+    elif endpoint_terms == 'receiver':
+        term_node = receiver_node
+        terms = layer.receiver_time_term_s
+    else:
+        raise RefractionMultiLayerSolveError(
+            f'unsupported endpoint terms: {endpoint_terms}'
+        )
+    for endpoint_node, term in zip(
+        term_node.tolist(),
+        np.asarray(terms, dtype=np.float64).tolist(),
+        strict=True,
+    ):
+        pos = node_pos.get(int(endpoint_node))
+        if pos is not None:
+            output[pos] = float(term)
+    return np.ascontiguousarray(output, dtype=np.float64)
 
 
 def _require_multilayer_t1lsst_layers(
@@ -1002,177 +1435,6 @@ def _require_multilayer_t1lsst_layers(
                 'Vsub/T3 velocity; solve_cell Vsub/T3 is available only for '
                 'internal layer solving'
             )
-
-
-def _compute_2layer_conversion(
-    *,
-    t1_s: np.ndarray,
-    t2_s: np.ndarray,
-    v1_m_s: float,
-    v2_m_s: np.ndarray,
-    v3_m_s: float,
-    v2_status: np.ndarray | None,
-) -> _T1LSSTMultilayerConversion:
-    v2 = np.asarray(v2_m_s, dtype=np.float64)
-    if v2_status is None:
-        _validate_global_2layer_velocity_order(
-            v1_m_s=v1_m_s,
-            v2_m_s=v2,
-            v3_m_s=v3_m_s,
-        )
-        thickness = compute_t1lsst_2layer_thicknesses_with_status(
-            t1_s=t1_s,
-            t2_s=t2_s,
-            v1_m_s=v1_m_s,
-            v2_m_s=v2,
-            v3_m_s=v3_m_s,
-            strict_velocity_order=False,
-        )
-        wcor = _required_multilayer_wcor(thickness.weathering_correction_s)
-        return _T1LSSTMultilayerConversion(
-            sh1_m=thickness.sh1_m,
-            sh2_m=thickness.sh2_m,
-            weathering_correction_s=wcor,
-            status=thickness.status,
-        )
-
-    status = np.asarray(v2_status).astype(_STATUS_DTYPE, copy=True)
-    if status.shape != v2.shape:
-        raise RefractionMultiLayerSolveError('local V2 status shape mismatch')
-    invalid_local_v2 = ~np.isin(status.astype(str), list(_LOCAL_V2_OK_STATUS))
-
-    thickness = compute_t1lsst_2layer_thicknesses_with_status(
-        t1_s=t1_s,
-        t2_s=t2_s,
-        v1_m_s=v1_m_s,
-        v2_m_s=v2,
-        v3_m_s=v3_m_s,
-        strict_velocity_order=False,
-    )
-    wcor = _required_multilayer_wcor(thickness.weathering_correction_s)
-
-    sh1 = np.array(thickness.sh1_m, dtype=np.float64, copy=True, order='C')
-    sh2 = np.array(thickness.sh2_m, dtype=np.float64, copy=True, order='C')
-    wcor = np.array(wcor, dtype=np.float64, copy=True, order='C')
-    conversion_status = np.asarray(thickness.status).astype(_STATUS_DTYPE, copy=True)
-    conversion_status[invalid_local_v2] = status[invalid_local_v2]
-    sh1[invalid_local_v2] = np.nan
-    sh2[invalid_local_v2] = np.nan
-    wcor[invalid_local_v2] = np.nan
-    return _T1LSSTMultilayerConversion(
-        sh1_m=sh1,
-        sh2_m=sh2,
-        weathering_correction_s=wcor,
-        status=conversion_status,
-    )
-
-
-def _compute_3layer_conversion(
-    *,
-    t1_s: np.ndarray,
-    t2_s: np.ndarray,
-    t3_s: np.ndarray,
-    v1_m_s: float,
-    v2_m_s: np.ndarray,
-    v3_m_s: float,
-    vsub_m_s: float,
-    v2_status: np.ndarray | None,
-) -> _T1LSSTMultilayerConversion:
-    v2 = np.asarray(v2_m_s, dtype=np.float64)
-    try:
-        compute_3layer = refraction_t1lsst.compute_t1lsst_3layer_thicknesses_with_status
-    except AttributeError as exc:
-        raise RefractionMultiLayerSolveError(
-            'three-layer T1LSST conversion dependency is not available'
-        ) from exc
-    if v2_status is None:
-        _validate_global_3layer_velocity_order(
-            v1_m_s=v1_m_s,
-            v2_m_s=v2,
-            v3_m_s=v3_m_s,
-            vsub_m_s=vsub_m_s,
-            compute_3layer=compute_3layer,
-        )
-    thickness = compute_3layer(
-        t1_s=t1_s,
-        t2_s=t2_s,
-        t3_s=t3_s,
-        v1_m_s=v1_m_s,
-        v2_m_s=v2,
-        v3_m_s=v3_m_s,
-        vsub_m_s=vsub_m_s,
-        strict_velocity_order=False,
-    )
-    wcor = _required_multilayer_wcor(thickness.weathering_correction_s)
-    if v2_status is None:
-        return _T1LSSTMultilayerConversion(
-            sh1_m=thickness.sh1_m,
-            sh2_m=thickness.sh2_m,
-            sh3_m=thickness.sh3_m,
-            weathering_correction_s=wcor,
-            status=thickness.status,
-        )
-
-    status = np.asarray(v2_status).astype(_STATUS_DTYPE, copy=True)
-    if status.shape != v2.shape:
-        raise RefractionMultiLayerSolveError('local V2 status shape mismatch')
-    invalid_local_v2 = ~np.isin(status.astype(str), list(_LOCAL_V2_OK_STATUS))
-
-    sh1 = np.array(thickness.sh1_m, dtype=np.float64, copy=True, order='C')
-    sh2 = np.array(thickness.sh2_m, dtype=np.float64, copy=True, order='C')
-    sh3 = np.array(thickness.sh3_m, dtype=np.float64, copy=True, order='C')
-    wcor = np.array(wcor, dtype=np.float64, copy=True, order='C')
-    conversion_status = np.asarray(thickness.status).astype(_STATUS_DTYPE, copy=True)
-    conversion_status[invalid_local_v2] = status[invalid_local_v2]
-    sh1[invalid_local_v2] = np.nan
-    sh2[invalid_local_v2] = np.nan
-    sh3[invalid_local_v2] = np.nan
-    wcor[invalid_local_v2] = np.nan
-    return _T1LSSTMultilayerConversion(
-        sh1_m=sh1,
-        sh2_m=sh2,
-        sh3_m=sh3,
-        weathering_correction_s=wcor,
-        status=conversion_status,
-    )
-
-
-def _validate_global_2layer_velocity_order(
-    *,
-    v1_m_s: float,
-    v2_m_s: np.ndarray,
-    v3_m_s: float,
-) -> None:
-    zeros = np.zeros(np.asarray(v2_m_s, dtype=np.float64).shape, dtype=np.float64)
-    compute_t1lsst_2layer_thicknesses_with_status(
-        t1_s=zeros,
-        t2_s=zeros,
-        v1_m_s=v1_m_s,
-        v2_m_s=v2_m_s,
-        v3_m_s=v3_m_s,
-        strict_velocity_order=True,
-    )
-
-
-def _validate_global_3layer_velocity_order(
-    *,
-    v1_m_s: float,
-    v2_m_s: np.ndarray,
-    v3_m_s: float,
-    vsub_m_s: float,
-    compute_3layer: Callable[..., object],
-) -> None:
-    zeros = np.zeros(np.asarray(v2_m_s, dtype=np.float64).shape, dtype=np.float64)
-    compute_3layer(
-        t1_s=zeros,
-        t2_s=zeros,
-        t3_s=zeros,
-        v1_m_s=v1_m_s,
-        v2_m_s=v2_m_s,
-        v3_m_s=v3_m_s,
-        vsub_m_s=vsub_m_s,
-        strict_velocity_order=True,
-    )
 
 
 def _total_weathering_thickness(
@@ -1303,10 +1565,6 @@ def _required_result_array(value: object, *, name: str) -> np.ndarray:
     return np.ascontiguousarray(arr, dtype=np.float64)
 
 
-def _required_multilayer_wcor(value: object) -> np.ndarray:
-    return _required_result_array(value, name='multilayer weathering_correction_s')
-
-
 def _required_layer_result(
     result: RefractionMultiLayerSolveResult,
     layer_kind: RefractionLayerKind,
@@ -1325,6 +1583,36 @@ def _required_global_velocity(layer: RefractionLayerSolveResult) -> float:
     return _positive_float(
         layer.global_velocity_m_s,
         name=f'{layer.layer_kind}.global_velocity_m_s',
+    )
+
+
+def _validate_global_multilayer_velocity_order(
+    *,
+    v1_m_s: float,
+    v2_m_s: np.ndarray,
+    v3_m_s: float,
+    vsub_m_s: float | None,
+) -> None:
+    zeros = np.zeros(np.asarray(v2_m_s, dtype=np.float64).shape, dtype=np.float64)
+    if vsub_m_s is None:
+        compute_t1lsst_2layer_thicknesses_with_status(
+            t1_s=zeros,
+            t2_s=zeros,
+            v1_m_s=v1_m_s,
+            v2_m_s=v2_m_s,
+            v3_m_s=v3_m_s,
+            strict_velocity_order=True,
+        )
+        return
+    compute_t1lsst_3layer_thicknesses_with_status(
+        t1_s=zeros,
+        t2_s=zeros,
+        t3_s=zeros,
+        v1_m_s=v1_m_s,
+        v2_m_s=v2_m_s,
+        v3_m_s=v3_m_s,
+        vsub_m_s=vsub_m_s,
+        strict_velocity_order=True,
     )
 
 
@@ -2158,49 +2446,6 @@ def _node_residual_stats(
     return np.ascontiguousarray(rms), np.ascontiguousarray(mad)
 
 
-def _effective_solver_dispatch(
-    overrides: Mapping[
-        tuple[RefractionLayerKind, RefractionLayerVelocityMode],
-        RefractionLayerSolver,
-    ]
-    | None,
-) -> dict[tuple[RefractionLayerKind, RefractionLayerVelocityMode], RefractionLayerSolver]:
-    dispatch: dict[
-        tuple[RefractionLayerKind, RefractionLayerVelocityMode],
-        RefractionLayerSolver,
-    ] = {
-        ('v2_t1', 'fixed_global'): _solve_existing_time_term_layer,
-        ('v2_t1', 'solve_global'): _solve_existing_time_term_layer,
-        ('v2_t1', 'solve_cell'): _solve_existing_time_term_layer,
-        ('v3_t2', 'fixed_global'): _solve_existing_time_term_layer,
-        ('v3_t2', 'solve_global'): _solve_existing_time_term_layer,
-        ('v3_t2', 'solve_cell'): _solve_existing_time_term_layer,
-        ('vsub_t3', 'fixed_global'): _solve_existing_time_term_layer,
-        ('vsub_t3', 'solve_global'): _solve_existing_time_term_layer,
-        ('vsub_t3', 'solve_cell'): _solve_existing_time_term_layer,
-    }
-    if overrides is not None:
-        dispatch.update(dict(overrides))
-    return dispatch
-
-
-def _solver_for_layer(
-    config: RefractionStaticLayerConfig,
-    dispatch: Mapping[
-        tuple[RefractionLayerKind, RefractionLayerVelocityMode],
-        RefractionLayerSolver,
-    ],
-) -> RefractionLayerSolver:
-    key = (config.kind, config.velocity_mode)
-    layer_solver = dispatch.get(key)
-    if layer_solver is None:
-        raise RefractionMultiLayerSolveError(
-            f'refraction layer {config.kind} with velocity_mode='
-            f'{config.velocity_mode} is not implemented'
-        )
-    return layer_solver
-
-
 def _require_layer_observations(
     config: RefractionStaticLayerConfig,
     layer_masks: RefractionLayerObservationMasks,
@@ -2212,129 +2457,6 @@ def _require_layer_observations(
         )
 
 
-def _input_model_for_layer(
-    *,
-    input_model: RefractionStaticInputModel,
-    layer_masks: RefractionLayerObservationMasks,
-    layer_kind: RefractionLayerKind,
-    model: RefractionStaticModelRequest,
-) -> RefractionStaticInputModel:
-    try:
-        used_mask = layer_masks.layer_used_mask_sorted[layer_kind]
-        rejection_reason = layer_masks.layer_rejection_reason_sorted[layer_kind]
-    except KeyError as exc:
-        raise RefractionMultiLayerSolveError(
-            f'refraction layer {layer_kind} does not have observation masks'
-        ) from exc
-    used = np.ascontiguousarray(used_mask, dtype=bool)
-    reason = np.asarray(rejection_reason).astype('<U32', copy=False)
-    if used.shape != (int(input_model.n_traces),):
-        raise RefractionMultiLayerSolveError(
-            f'refraction layer {layer_kind} mask shape mismatch'
-        )
-    if reason.shape != used.shape:
-        raise RefractionMultiLayerSolveError(
-            f'refraction layer {layer_kind} rejection-reason shape mismatch'
-        )
-    return replace(
-        input_model,
-        valid_observation_mask_sorted=used,
-        rejection_reason_sorted=np.ascontiguousarray(reason, dtype='<U32'),
-        qc={
-            **input_model.qc,
-            'active_layer_kind': layer_kind,
-            'layers': refraction_layer_observation_qc(layer_masks, model=model),
-        },
-        layer_observation_masks=layer_masks,
-    )
-
-
-def _model_for_layer(
-    *,
-    model: RefractionStaticModelRequest,
-    config: RefractionStaticLayerConfig,
-) -> RefractionStaticModelRequest:
-    min_velocity = (
-        config.min_velocity_m_s
-        if config.min_velocity_m_s is not None
-        else model.min_bedrock_velocity_m_s
-    )
-    max_velocity = (
-        config.max_velocity_m_s
-        if config.max_velocity_m_s is not None
-        else model.max_bedrock_velocity_m_s
-    )
-    payload = model.model_dump(mode='python')
-    refractor_cell = _refractor_cell_payload_for_layer(
-        payload=payload,
-        config=config,
-    )
-    payload.update(
-        {
-            'method': 'gli_variable_thickness',
-            'bedrock_velocity_mode': config.velocity_mode,
-            'bedrock_velocity_m_s': (
-                config.fixed_velocity_m_s
-                if config.velocity_mode == 'fixed_global'
-                else None
-            ),
-            'initial_bedrock_velocity_m_s': (
-                config.initial_velocity_m_s
-                if config.velocity_mode in ('solve_global', 'solve_cell')
-                else None
-            ),
-            'min_bedrock_velocity_m_s': min_velocity,
-            'max_bedrock_velocity_m_s': max_velocity,
-            'refractor_cell': refractor_cell,
-            'layers': None,
-            'allow_overlapping_layer_gates': False,
-        }
-    )
-    return RefractionStaticModelRequest.model_validate(payload)
-
-
-def _refractor_cell_payload_for_layer(
-    *,
-    payload: Mapping[str, object],
-    config: RefractionStaticLayerConfig,
-) -> dict[str, object] | None:
-    if config.velocity_mode != 'solve_cell':
-        return None
-    raw_cell = payload.get('refractor_cell')
-    if raw_cell is None:
-        return None
-    cell = dict(raw_cell)
-    if config.min_observations_per_cell is not None:
-        cell['min_observations_per_cell'] = config.min_observations_per_cell
-    if config.smoothing_weight is not None:
-        cell['velocity_smoothing_weight'] = config.smoothing_weight
-    return cell
-
-
-def _solve_existing_time_term_layer(
-    context: RefractionLayerSolverContext,
-) -> RefractionLayerSolveResult:
-    try:
-        result = estimate_refraction_half_intercept_times_from_first_breaks(
-            req=_LayerSolveRequest(context.model, context.solver),
-            state=_LayerSolveState(),
-            job_dir=context.job_dir,
-            input_model=context.input_model,
-            resolved_first_layer=context.resolved_first_layer,
-        )
-    except ValueError as exc:
-        raise RefractionMultiLayerSolveError(
-            f'refraction layer {context.layer_config.kind} solve failed: {exc}'
-        ) from exc
-    return _layer_result_from_half_intercept(
-        result=result,
-        layer_kind=context.layer_config.kind,
-        layer_index=context.layer_index,
-        candidate_observation_mask_sorted=context.input_model.valid_observation_mask_sorted,
-        rejection_reason_sorted=_layer_rejection_reason_from_context(context),
-    )
-
-
 def _layer_design_matrix_artifact_dir(
     root: Path | None,
     config: RefractionStaticLayerConfig,
@@ -2342,6 +2464,106 @@ def _layer_design_matrix_artifact_dir(
     if root is None:
         return None
     return Path(root) / f'{_DESIGN_MATRIX_ARTIFACT_DIR_PREFIX}_{config.kind}'
+
+
+def _write_failed_core_layer_design_matrix_diagnostics(
+    *,
+    input_model: RefractionStaticInputModel,
+    resolved_first_layer: ResolvedRefractionFirstLayer,
+    normalized_layers: tuple[RefractionStaticLayerConfig, ...],
+    layer_masks: RefractionLayerObservationMasks,
+    model: RefractionStaticModelRequest,
+    solver: RefractionStaticSolverRequest,
+    job_dir: Path | None,
+) -> None:
+    if job_dir is None:
+        return
+    for config in normalized_layers:
+        layer_dir = _layer_design_matrix_artifact_dir(job_dir, config)
+        if layer_dir is None:
+            continue
+        design = build_refraction_static_design_matrix(
+            input_model=_layer_input_model_for_design_diagnostics(
+                input_model=input_model,
+                layer_masks=layer_masks,
+                config=config,
+            ),
+            model=_layer_model_request_for_design_diagnostics(
+                model=model,
+                resolved_first_layer=resolved_first_layer,
+                config=config,
+            ),
+            resolved_first_layer=None,
+            include_diagnostics=True,
+            min_observations_per_node=solver.min_picks_per_node,
+        )
+        write_refraction_design_matrix_diagnostics_artifacts(layer_dir, design)
+        _copy_layer_design_matrix_diagnostics_to_root_artifacts(
+            root=job_dir,
+            layer_dir=layer_dir,
+            layer_kind=config.kind,
+            layer_index=_layer_index(config.kind),
+        )
+
+
+def _layer_input_model_for_design_diagnostics(
+    *,
+    input_model: RefractionStaticInputModel,
+    layer_masks: RefractionLayerObservationMasks,
+    config: RefractionStaticLayerConfig,
+) -> RefractionStaticInputModel:
+    return replace(
+        input_model,
+        valid_observation_mask_sorted=layer_masks.layer_used_mask_sorted[config.kind],
+        rejection_reason_sorted=layer_masks.layer_rejection_reason_sorted[config.kind],
+        layer_observation_masks=None,
+    )
+
+
+def _layer_model_request_for_design_diagnostics(
+    *,
+    model: RefractionStaticModelRequest,
+    resolved_first_layer: ResolvedRefractionFirstLayer,
+    config: RefractionStaticLayerConfig,
+) -> RefractionStaticModelRequest:
+    weathering_velocity = float(resolved_first_layer.weathering_velocity_m_s)
+    refractor_cell: dict[str, Any] | None = None
+    if config.velocity_mode == 'solve_cell':
+        if model.refractor_cell is None:
+            raise RefractionMultiLayerSolveError(
+                'model.refractor_cell is required for solve_cell layers'
+            )
+        refractor_cell = model.refractor_cell.model_dump()
+        if config.min_observations_per_cell is not None:
+            refractor_cell['min_observations_per_cell'] = int(
+                config.min_observations_per_cell
+            )
+        if config.smoothing_weight is not None:
+            refractor_cell['velocity_smoothing_weight'] = float(
+                config.smoothing_weight
+            )
+    payload: dict[str, Any] = {
+        'method': 'gli_variable_thickness',
+        'first_layer': {
+            'mode': 'constant',
+            'weathering_velocity_m_s': weathering_velocity,
+        },
+        'bedrock_velocity_mode': config.velocity_mode,
+        'bedrock_velocity_m_s': config.fixed_velocity_m_s,
+        'initial_bedrock_velocity_m_s': config.initial_velocity_m_s,
+        'min_bedrock_velocity_m_s': (
+            float(np.nextafter(weathering_velocity, np.inf))
+            if config.min_velocity_m_s is None
+            else float(config.min_velocity_m_s)
+        ),
+        'max_bedrock_velocity_m_s': (
+            float(np.finfo(np.float64).max)
+            if config.max_velocity_m_s is None
+            else float(config.max_velocity_m_s)
+        ),
+        'refractor_cell': refractor_cell,
+    }
+    return RefractionStaticModelRequest.model_validate(payload)
 
 
 def _copy_layer_design_matrix_diagnostics_to_root_artifacts(
@@ -2505,79 +2727,229 @@ def _layer_result_from_half_intercept(
     )
 
 
-def _layer_rejection_reason_from_context(
-    context: RefractionLayerSolverContext,
+def _layer_result_from_core_layer(
+    *,
+    input_model: RefractionStaticInputModel,
+    source_endpoint_key: np.ndarray,
+    source_node_id: np.ndarray,
+    receiver_endpoint_key: np.ndarray,
+    receiver_node_id: np.ndarray,
+    core_layer: CoreRefractionMultilayerTimeTermLayerResult,
+) -> RefractionLayerSolveResult:
+    result = core_layer.solve_result
+    velocity_mode = result.bedrock_velocity_mode
+    is_cell = velocity_mode == 'solve_cell'
+    global_velocity = None if is_cell else float(result.bedrock_velocity_m_s)
+    global_slowness = None if is_cell else float(result.bedrock_slowness_s_per_m)
+    active_cell_id, inactive_cell_id, cell_velocity_m_s, cell_slowness_s_per_m, (
+        cell_velocity_status
+    ) = _core_cell_arrays(result)
+    source_time_term = _node_values_by_id(
+        endpoint_node_id=source_node_id,
+        layer_node_id=result.node_id,
+        values=result.node_half_intercept_time_s,
+        name=f'{core_layer.layer_kind}.source_time_term_s',
+    )
+    receiver_time_term = _node_values_by_id(
+        endpoint_node_id=receiver_node_id,
+        layer_node_id=result.node_id,
+        values=result.node_half_intercept_time_s,
+        name=f'{core_layer.layer_kind}.receiver_time_term_s',
+    )
+    rejected_by_robust = np.asarray(core_layer.rejection_reason_sorted).astype(
+        str,
+        copy=False,
+    ) == 'robust_rejected'
+    used_mask = np.asarray(result.used_observation_mask_sorted, dtype=bool)
+    qc = {
+        **result.qc,
+        'layer_kind': core_layer.layer_kind,
+        'layer_index': int(core_layer.layer_index),
+        'velocity_mode': velocity_mode,
+        'n_observations': int(np.count_nonzero(used_mask)),
+        'n_sources': int(np.unique(input_model.source_node_id_sorted).shape[0]),
+        'n_receivers': int(np.unique(input_model.receiver_node_id_sorted).shape[0]),
+        'robust_iterations': int(result.qc.get('robust_iteration_count', 0)),
+        'n_rejected_by_robust': int(np.count_nonzero(rejected_by_robust)),
+        'residual_rms_ms': float(result.rms_residual_ms),
+        'residual_mad_ms': _used_residual_mad_ms(
+            result.residual_s_sorted,
+            used_mask,
+        ),
+    }
+    if core_layer.layer.min_observations_per_cell is not None:
+        qc['min_observations_per_cell'] = int(
+            core_layer.layer.min_observations_per_cell
+        )
+    if cell_velocity_m_s is not None:
+        finite_velocity = np.asarray(cell_velocity_m_s, dtype=np.float64)
+        finite_velocity = finite_velocity[np.isfinite(finite_velocity)]
+        if finite_velocity.size:
+            qc['cell_bedrock_velocity_median_m_s'] = float(np.median(finite_velocity))
+    if cell_velocity_status is not None:
+        low_fold = np.flatnonzero(
+            np.asarray(cell_velocity_status).astype(str, copy=False) == 'low_fold'
+        )
+        qc['low_fold_cell_id'] = low_fold.astype(int).tolist()
+        qc['n_low_fold_cells'] = int(low_fold.size)
+        qc['n_observations_rejected_by_low_fold_cell'] = int(
+            np.count_nonzero(
+                np.asarray(core_layer.rejection_reason_sorted).astype(str, copy=False)
+                == LOW_FOLD_CELL_REJECTION_REASON
+            )
+        )
+    qc.update(
+        _layer_velocity_qc_aliases(
+            layer_kind=core_layer.layer_kind,
+            global_velocity_m_s=global_velocity,
+            global_slowness_s_per_m=global_slowness,
+        )
+    )
+    return RefractionLayerSolveResult(
+        layer_kind=core_layer.layer_kind,
+        layer_index=int(core_layer.layer_index),
+        velocity_mode=velocity_mode,
+        source_time_term_s=source_time_term,
+        receiver_time_term_s=receiver_time_term,
+        node_time_term_s=np.ascontiguousarray(
+            result.node_half_intercept_time_s,
+            dtype=np.float64,
+        ),
+        global_velocity_m_s=global_velocity,
+        global_slowness_s_per_m=global_slowness,
+        cell_velocity_m_s=cell_velocity_m_s,
+        cell_slowness_s_per_m=cell_slowness_s_per_m,
+        trace_predicted_time_s_sorted=np.ascontiguousarray(
+            result.modeled_pick_time_s_sorted,
+            dtype=np.float64,
+        ),
+        trace_residual_s_sorted=np.ascontiguousarray(
+            result.residual_s_sorted,
+            dtype=np.float64,
+        ),
+        used_observation_mask_sorted=np.ascontiguousarray(
+            result.used_observation_mask_sorted,
+            dtype=bool,
+        ),
+        layer_status='solved',
+        qc=qc,
+        active_cell_id=active_cell_id,
+        inactive_cell_id=inactive_cell_id,
+        cell_velocity_status=cell_velocity_status,
+        row_midpoint_cell_id=(
+            None
+            if result.row_midpoint_cell_id is None
+            else np.ascontiguousarray(result.row_midpoint_cell_id, dtype=np.int64)
+        ),
+        row_midpoint_velocity_m_s=(
+            None
+            if result.row_midpoint_bedrock_velocity_m_s is None
+            else np.ascontiguousarray(
+                result.row_midpoint_bedrock_velocity_m_s,
+                dtype=np.float64,
+            )
+        ),
+        rejected_by_robust_mask_sorted=np.ascontiguousarray(rejected_by_robust),
+        candidate_observation_mask_sorted=(
+            np.asarray(core_layer.rejection_reason_sorted).astype(str, copy=False)
+            != 'outside_layer_offset_gate'
+        ),
+        rejection_reason_sorted=np.asarray(
+            core_layer.rejection_reason_sorted,
+        ).astype(_STATUS_DTYPE, copy=True),
+    )
+
+
+def _used_residual_mad_ms(residual_s: np.ndarray, used_mask: np.ndarray) -> float:
+    residual = np.asarray(residual_s, dtype=np.float64)
+    used = np.asarray(used_mask, dtype=bool)
+    values = residual[used & np.isfinite(residual)]
+    if values.size == 0:
+        return float('nan')
+    median = float(np.median(values))
+    return float(np.median(np.abs(values - median)) * 1000.0)
+
+
+def _node_values_by_id(
+    *,
+    endpoint_node_id: np.ndarray,
+    layer_node_id: np.ndarray,
+    values: np.ndarray,
+    name: str,
 ) -> np.ndarray:
-    reason = np.asarray(context.input_model.rejection_reason_sorted).astype(
+    layer_nodes = np.asarray(layer_node_id, dtype=np.int64)
+    layer_values = np.asarray(values, dtype=np.float64)
+    if layer_nodes.shape != layer_values.shape:
+        raise RefractionMultiLayerSolveError(f'{name} node/value shape mismatch')
+    lookup = {
+        int(node): float(value)
+        for node, value in zip(layer_nodes.tolist(), layer_values.tolist(), strict=True)
+    }
+    out = np.full(np.asarray(endpoint_node_id).shape, np.nan, dtype=np.float64)
+    for index, raw_node in enumerate(np.asarray(endpoint_node_id, dtype=np.int64).tolist()):
+        try:
+            out[index] = lookup[int(raw_node)]
+        except KeyError as exc:
+            raise RefractionMultiLayerSolveError(
+                f'{name} missing node_id {int(raw_node)}'
+            ) from exc
+    return np.ascontiguousarray(out, dtype=np.float64)
+
+
+def _core_cell_arrays(
+    result: object,
+) -> tuple[np.ndarray | None, np.ndarray | None, np.ndarray | None, np.ndarray | None, np.ndarray | None]:
+    if getattr(result, 'bedrock_velocity_mode') != 'solve_cell':
+        return None, None, None, None, None
+    raw_cell_id = np.asarray(getattr(result, 'cell_id'), dtype=np.int64)
+    if raw_cell_id.ndim != 1:
+        raise RefractionMultiLayerSolveError('core cell_id must be one-dimensional')
+    n_total = _core_cell_count(result, raw_cell_id)
+    velocity = np.full(n_total, np.nan, dtype=np.float64)
+    slowness = np.full(n_total, np.nan, dtype=np.float64)
+    status = np.full(n_total, 'inactive', dtype=_STATUS_DTYPE)
+    raw_velocity = np.asarray(
+        getattr(result, 'cell_bedrock_velocity_m_s'),
+        dtype=np.float64,
+    )
+    raw_slowness = np.asarray(
+        getattr(result, 'cell_bedrock_slowness_s_per_m'),
+        dtype=np.float64,
+    )
+    raw_status = np.asarray(getattr(result, 'cell_velocity_status')).astype(
         _STATUS_DTYPE,
-        copy=True,
+        copy=False,
     )
-    valid = np.asarray(context.input_model.valid_observation_mask_sorted, dtype=bool)
-    if reason.shape != valid.shape:
-        raise RefractionMultiLayerSolveError(
-            f'{context.layer_config.kind} rejection-reason shape mismatch'
-        )
-    if context.layer_config.velocity_mode != 'solve_cell':
-        return np.ascontiguousarray(reason, dtype=_STATUS_DTYPE)
-    refractor_cell = context.model.refractor_cell
-    if refractor_cell is None:
-        raise RefractionMultiLayerSolveError(
-            f'{context.layer_config.kind} solve_cell layer requires refractor_cell'
-        )
-    cell_options = refractor_cell_options_from_request(refractor_cell)
-    grid = build_refraction_cell_grid(
-        effective_refraction_cell_grid_config(cell_options)
+    if not (
+        raw_velocity.shape == raw_cell_id.shape
+        and raw_slowness.shape == raw_cell_id.shape
+        and raw_status.shape == raw_cell_id.shape
+    ):
+        raise RefractionMultiLayerSolveError('core cell arrays must match cell_id')
+    velocity[raw_cell_id] = raw_velocity
+    slowness[raw_cell_id] = raw_slowness
+    status[raw_cell_id] = raw_status
+    active = raw_cell_id[
+        np.isfinite(raw_velocity)
+        & (raw_velocity > 0.0)
+        & np.isin(raw_status.astype(str), ['solved', 'ok', 'clipped_lower', 'clipped_upper'])
+    ]
+    all_ids = np.arange(n_total, dtype=np.int64)
+    inactive = np.setdiff1d(all_ids, active, assume_unique=False)
+    return (
+        np.ascontiguousarray(active, dtype=np.int64),
+        np.ascontiguousarray(inactive, dtype=np.int64),
+        np.ascontiguousarray(velocity, dtype=np.float64),
+        np.ascontiguousarray(slowness, dtype=np.float64),
+        np.ascontiguousarray(status, dtype=_STATUS_DTYPE),
     )
-    source_projected = project_refraction_cell_points(
-        x_m=context.input_model.source_x_m_sorted,
-        y_m=context.input_model.source_y_m_sorted,
-        mode=cell_options.coordinate_mode,
-        line_origin_x_m=cell_options.line_origin_x_m,
-        line_origin_y_m=cell_options.line_origin_y_m,
-        line_azimuth_deg=cell_options.line_azimuth_deg,
-    )
-    receiver_projected = project_refraction_cell_points(
-        x_m=context.input_model.receiver_x_m_sorted,
-        y_m=context.input_model.receiver_y_m_sorted,
-        mode=cell_options.coordinate_mode,
-        line_origin_x_m=cell_options.line_origin_x_m,
-        line_origin_y_m=cell_options.line_origin_y_m,
-        line_azimuth_deg=cell_options.line_azimuth_deg,
-    )
-    assignment = assign_observation_midpoint_cells(
-        grid,
-        source_x_m=source_projected.x_m,
-        source_y_m=source_projected.y_m,
-        receiver_x_m=receiver_projected.x_m,
-        receiver_y_m=receiver_projected.y_m,
-    )
-    cell_id = np.asarray(assignment.cell_id, dtype=np.int64)
-    if cell_id.shape != valid.shape:
-        raise RefractionMultiLayerSolveError(
-            f'{context.layer_config.kind} cell assignment shape mismatch'
-        )
-    inside_grid = cell_id >= 0
-    outside_grid = valid & ~inside_grid
-    in_grid_valid = valid & inside_grid
-    cell_observation_count = np.bincount(
-        cell_id[in_grid_valid],
-        minlength=int(grid.cell_id.shape[0]),
-    )
-    min_observations_per_cell = (
-        context.layer_config.min_observations_per_cell
-        if context.layer_config.min_observations_per_cell is not None
-        else cell_options.min_observations_per_cell
-    )
-    low_fold_cell = (
-        (cell_observation_count > 0)
-        & (cell_observation_count < int(min_observations_per_cell))
-    )
-    low_fold = np.zeros(valid.shape, dtype=bool)
-    if np.any(low_fold_cell):
-        low_fold[in_grid_valid] = low_fold_cell[cell_id[in_grid_valid]]
-    reason[outside_grid] = OUTSIDE_REFRACTOR_CELL_GRID_REASON
-    reason[low_fold] = LOW_FOLD_CELL_REJECTION_REASON
-    return np.ascontiguousarray(reason, dtype=_STATUS_DTYPE)
+
+
+def _core_cell_count(result: object, cell_id: np.ndarray) -> int:
+    qc = getattr(result, 'qc', {})
+    if isinstance(qc, Mapping) and qc.get('n_total_cells') is not None:
+        return int(qc['n_total_cells'])
+    return int(np.max(cell_id)) + 1 if cell_id.size else 0
 
 
 def _optional_cell_id_array(value: np.ndarray | None) -> np.ndarray | None:
@@ -2860,25 +3232,7 @@ def _layer_index(kind: RefractionLayerKind) -> int:
         ) from exc
 
 
-class _LayerSolveRequest:
-    """Minimal request shim for the existing input-model solve path."""
-
-    def __init__(
-        self,
-        model: RefractionStaticModelRequest,
-        solver: RefractionStaticSolverRequest,
-    ) -> None:
-        self.model = model
-        self.solver = solver
-
-
-class _LayerSolveState:
-    """Placeholder state for layer solves that already have an input model."""
-
-
 __all__ = [
-    'RefractionLayerSolver',
-    'RefractionLayerSolverContext',
     'RefractionMultiLayerSolveError',
     'RefractionMultiLayerStaticsWorkflowResult',
     'build_refraction_multilayer_weathering_replacement_statics',

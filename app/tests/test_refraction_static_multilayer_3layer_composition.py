@@ -8,6 +8,7 @@ import pytest
 
 from app.api.schemas import RefractionStaticApplyOptions, RefractionStaticDatumRequest
 from app.statics.refraction.application.datum import build_refraction_datum_statics
+import app.statics.refraction.application.multilayer_service as multilayer_service
 from app.statics.refraction.application.multilayer_service import (
     build_refraction_multilayer_weathering_replacement_statics,
 )
@@ -183,6 +184,66 @@ def test_three_layer_invalid_endpoint_status_propagates_to_trace_status() -> Non
     assert np.any(ok_trace_mask)
     assert np.all(datum_result.trace_static_status_sorted[ok_trace_mask] == 'ok')
     assert np.all(datum_result.trace_static_valid_mask_sorted[ok_trace_mask])
+
+
+def test_three_layer_core_conversion_adapter_uses_matching_trace_shapes(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _dataset, input_model, model, workflow = compute_three_layer_workflow()
+    original = multilayer_service.core_build_refraction_multilayer_conversion
+    observed_trace_counts: list[int] = []
+
+    def _assert_matching_shapes(**kwargs):
+        core_input = kwargs['input_model']
+        core_solve = kwargs['solve_result']
+        n_traces = int(core_input.n_traces)
+        observed_trace_counts.append(n_traces)
+        for value in (
+            core_solve.modeled_pick_time_s_sorted,
+            core_solve.residual_s_sorted,
+            core_solve.residual_ms_sorted,
+            core_solve.used_observation_mask_sorted,
+            core_solve.rejected_observation_mask_sorted,
+            core_solve.layer_kind_sorted,
+            core_solve.rejection_reason_sorted,
+            core_solve.velocity_m_s_sorted,
+        ):
+            assert np.asarray(value).shape == (n_traces,)
+        layer_masks = core_solve.layer_observation_masks
+        if layer_masks is not None:
+            for mask_by_kind in (
+                layer_masks.layer_used_mask_sorted,
+                layer_masks.layer_rejection_reason_sorted,
+            ):
+                for value in mask_by_kind.values():
+                    assert np.asarray(value).shape == (n_traces,)
+        for layer_result in core_solve.layer_results:
+            assert np.asarray(layer_result.velocity_m_s_sorted).shape == (n_traces,)
+            assert np.asarray(layer_result.rejection_reason_sorted).shape == (n_traces,)
+            assert np.asarray(layer_result.velocity_order_valid_mask_sorted).shape == (
+                n_traces,
+            )
+        return original(**kwargs)
+
+    monkeypatch.setattr(
+        multilayer_service,
+        'core_build_refraction_multilayer_conversion',
+        _assert_matching_shapes,
+    )
+
+    build_refraction_multilayer_weathering_replacement_statics(
+        input_model=input_model,
+        model=model,
+        solve_result=workflow.solve_result,
+        apply_options=RefractionStaticApplyOptions(max_abs_shift_ms=500.0),
+        resolved_first_layer=resolved_first_layer(),
+    )
+
+    assert observed_trace_counts == [
+        input_model.n_traces,
+        input_model.n_traces,
+        input_model.node_x_m.shape[0],
+    ]
 
 
 def test_three_layer_global_velocity_order_is_rejected() -> None:
