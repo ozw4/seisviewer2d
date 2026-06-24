@@ -1290,13 +1290,19 @@ def _validate_app_half_intercept_for_core_conversion(
             'bedrock_velocity_m_s does not match bedrock_slowness_s_per_m'
         )
     node_id = _i64(result.node_id)
-    _validate_known_nodes(_i64(result.source_node_id), node_id, name='source_node_id')
-    _validate_known_nodes(
-        _i64(result.receiver_node_id),
-        node_id,
-        name='receiver_node_id',
-    )
     valid = np.asarray(result.valid_observation_mask_sorted, dtype=bool)
+    _validate_endpoint_nodes_used_by_valid_observations(
+        result,
+        node_id,
+        side='source',
+        valid_observation_mask_sorted=valid,
+    )
+    _validate_endpoint_nodes_used_by_valid_observations(
+        result,
+        node_id,
+        side='receiver',
+        valid_observation_mask_sorted=valid,
+    )
     _validate_known_nodes(
         _i64(result.source_node_id_sorted)[valid],
         node_id,
@@ -1306,6 +1312,47 @@ def _validate_app_half_intercept_for_core_conversion(
         _i64(result.receiver_node_id_sorted)[valid],
         node_id,
         name='receiver_node_id_sorted',
+    )
+
+
+def _validate_endpoint_nodes_used_by_valid_observations(
+    result: RefractionHalfInterceptTimeResult,
+    node_id: np.ndarray,
+    *,
+    side: str,
+    valid_observation_mask_sorted: np.ndarray,
+) -> None:
+    endpoint_key = np.asarray(getattr(result, f'{side}_endpoint_key'), dtype=object)
+    endpoint_node_id = _i64(getattr(result, f'{side}_node_id'))
+    sorted_key = np.asarray(
+        getattr(result, f'{side}_endpoint_key_sorted'),
+        dtype=object,
+    )
+    if endpoint_key.shape != endpoint_node_id.shape:
+        raise RefractionWeatheringThicknessError(
+            f'{side}_endpoint_key and {side}_node_id shape mismatch'
+        )
+    if sorted_key.shape != valid_observation_mask_sorted.shape:
+        raise RefractionWeatheringThicknessError(
+            f'{side}_endpoint_key_sorted shape mismatch'
+        )
+    valid_keys = {
+        str(key)
+        for key in sorted_key[valid_observation_mask_sorted].reshape(-1).tolist()
+    }
+    referenced_nodes = [
+        int(node)
+        for key, node in zip(
+            endpoint_key.reshape(-1).tolist(),
+            endpoint_node_id.reshape(-1).tolist(),
+            strict=True,
+        )
+        if str(key) in valid_keys
+    ]
+    _validate_known_nodes(
+        np.asarray(referenced_nodes, dtype=np.int64),
+        node_id,
+        name=f'{side}_node_id',
     )
 
 
