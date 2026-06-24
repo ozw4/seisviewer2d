@@ -43,6 +43,9 @@ from app.statics.refraction.application.core_options import (
     resolve_weathering_velocity_from_model_request as resolve_weathering_velocity_m_s,
     solver_options_from_request,
 )
+from app.statics.refraction.application.trace_order import (
+    sorted_positions_for_original_trace_ids,
+)
 from app.statics.refraction.contracts.result_types import (
     RefractionBedrockSlownessResult,
     RefractionHalfInterceptTimeResult,
@@ -317,6 +320,10 @@ def _app_half_intercept_result_from_core(
         )
 
     row_trace = np.ascontiguousarray(design.row_trace_index_sorted, dtype=np.int64)
+    row_sorted_position = sorted_positions_for_original_trace_ids(
+        sorted_to_original=input_model.sorted_trace_index,
+        original_trace_id=row_trace,
+    )
     used_sorted = np.ascontiguousarray(
         core_result.used_observation_mask_sorted,
         dtype=bool,
@@ -325,8 +332,8 @@ def _app_half_intercept_result_from_core(
         core_result.rejected_observation_mask_sorted,
         dtype=bool,
     )
-    used_row = np.ascontiguousarray(used_sorted[row_trace], dtype=bool)
-    rejected_row = np.ascontiguousarray(rejected_sorted[row_trace], dtype=bool)
+    used_row = np.ascontiguousarray(used_sorted[row_sorted_position], dtype=bool)
+    rejected_row = np.ascontiguousarray(rejected_sorted[row_sorted_position], dtype=bool)
     row_residual = np.ascontiguousarray(
         solve_result.row_residual_s,
         dtype=np.float64,
@@ -352,7 +359,7 @@ def _app_half_intercept_result_from_core(
         row_endpoint_key=np.asarray(
             input_model.source_endpoint_key_sorted,
             dtype=object,
-        )[row_trace],
+        )[row_sorted_position],
         endpoint_key=core_result.source_endpoint.endpoint_key,
         row_residual_s=row_residual,
         used_row_mask=used_row,
@@ -361,7 +368,7 @@ def _app_half_intercept_result_from_core(
         row_endpoint_key=np.asarray(
             input_model.receiver_endpoint_key_sorted,
             dtype=object,
-        )[row_trace],
+        )[row_sorted_position],
         endpoint_key=core_result.receiver_endpoint.endpoint_key,
         row_residual_s=row_residual,
         used_row_mask=used_row,

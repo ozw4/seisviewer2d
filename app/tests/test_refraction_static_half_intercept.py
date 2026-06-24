@@ -4,6 +4,7 @@ import csv
 from dataclasses import replace
 import json
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 
 import numpy as np
@@ -23,6 +24,7 @@ from app.statics.refraction.application.half_intercept import (
     REFRACTION_HALF_INTERCEPT_SOURCES_CSV_NAME,
     REFRACTION_HALF_INTERCEPT_TRACE_PREVIEW_CSV_NAME,
     RefractionHalfInterceptTimeError,
+    _app_half_intercept_result_from_core,
     build_refraction_half_intercept_time_model,
     build_refraction_half_intercept_time_model_from_bedrock_result,
     estimate_refraction_half_intercept_times_from_first_breaks,
@@ -233,6 +235,135 @@ def test_public_apis_are_importable() -> None:
     assert callable(estimate_refraction_half_intercept_times_from_first_breaks)
     assert callable(build_refraction_half_intercept_time_model)
     assert callable(build_refraction_half_intercept_time_model_from_bedrock_result)
+
+
+def test_external_core_rows_map_original_trace_ids_to_sorted_positions() -> None:
+    sorted_trace_index = np.asarray([2, 0, 1], dtype=np.int64)
+    source_node_sorted = np.asarray([2, 0, 1], dtype=np.int64)
+    receiver_node_sorted = np.asarray([2, 0, 1], dtype=np.int64)
+    endpoint_table = RefractionEndpointTable(
+        node_id=np.asarray([0, 1, 2], dtype=np.int64),
+        endpoint_id=np.asarray([0, 1, 2], dtype=np.int64),
+        x_m=np.asarray([0.0, 100.0, 200.0], dtype=np.float64),
+        y_m=np.zeros(3, dtype=np.float64),
+        elevation_m=np.zeros(3, dtype=np.float64),
+        kind=np.full(3, 'linked', dtype='<U16'),
+        pick_count=np.ones(3, dtype=np.int64),
+    )
+    input_model = RefractionStaticInputModel(
+        file_id='permuted-file-id',
+        n_traces=3,
+        sorted_trace_index=sorted_trace_index,
+        pick_time_s_sorted=np.asarray([0.070, 0.050, 0.060], dtype=np.float64),
+        valid_pick_mask_sorted=np.ones(3, dtype=bool),
+        valid_observation_mask_sorted=np.ones(3, dtype=bool),
+        source_id_sorted=np.asarray([12, 10, 11], dtype=np.int64),
+        receiver_id_sorted=np.asarray([22, 20, 21], dtype=np.int64),
+        source_x_m_sorted=np.asarray([200.0, 0.0, 100.0], dtype=np.float64),
+        source_y_m_sorted=np.zeros(3, dtype=np.float64),
+        receiver_x_m_sorted=np.asarray([200.0, 0.0, 100.0], dtype=np.float64),
+        receiver_y_m_sorted=np.zeros(3, dtype=np.float64),
+        source_elevation_m_sorted=np.zeros(3, dtype=np.float64),
+        receiver_elevation_m_sorted=np.zeros(3, dtype=np.float64),
+        source_depth_m_sorted=None,
+        geometry_distance_m_sorted=np.asarray([120.0, 100.0, 110.0]),
+        offset_m_sorted=None,
+        distance_m_sorted=np.asarray([120.0, 100.0, 110.0], dtype=np.float64),
+        source_endpoint_key_sorted=np.asarray(['s2', 's0', 's1'], dtype=object),
+        receiver_endpoint_key_sorted=np.asarray(['r2', 'r0', 'r1'], dtype=object),
+        source_node_id_sorted=source_node_sorted,
+        receiver_node_id_sorted=receiver_node_sorted,
+        node_x_m=np.asarray([0.0, 100.0, 200.0], dtype=np.float64),
+        node_y_m=np.zeros(3, dtype=np.float64),
+        node_elevation_m=np.zeros(3, dtype=np.float64),
+        node_kind=np.full(3, 'linked', dtype='<U16'),
+        rejection_reason_sorted=np.full(3, 'ok', dtype='<U16'),
+        qc={},
+        endpoint_table=endpoint_table,
+        metadata={},
+    )
+    row_original_trace_id = np.asarray([2, 0, 1], dtype=np.int64)
+    design = SimpleNamespace(
+        row_trace_index_sorted=row_original_trace_id,
+        row_source_node_id=np.asarray([2, 0, 1], dtype=np.int64),
+        row_receiver_node_id=np.asarray([2, 0, 1], dtype=np.int64),
+        row_distance_m=np.asarray([120.0, 100.0, 110.0], dtype=np.float64),
+        observed_pick_time_s=np.asarray([0.070, 0.050, 0.060], dtype=np.float64),
+    )
+    solve_result = SimpleNamespace(
+        row_residual_s=np.asarray([0.001, 0.100, 0.002], dtype=np.float64),
+        row_modeled_pick_time_s=np.asarray([0.069, -0.050, 0.058], dtype=np.float64),
+        qc={'robust_method': 'mad'},
+    )
+    core_result = SimpleNamespace(
+        debug_design=design,
+        debug_solve_result=solve_result,
+        used_observation_mask_sorted=np.asarray([True, False, True], dtype=bool),
+        rejected_observation_mask_sorted=np.asarray([False, True, False], dtype=bool),
+        bedrock_velocity_mode='fixed_global',
+        bedrock_slowness_s_per_m=1.0 / TRUE_BEDROCK_VELOCITY_M_S,
+        bedrock_velocity_m_s=TRUE_BEDROCK_VELOCITY_M_S,
+        qc={},
+        robust_enabled=True,
+        robust_iteration_summaries=(object(),),
+        node_half_intercept_time_s=np.asarray([0.010, 0.012, 0.015]),
+        node_solution_status=np.full(3, 'ok', dtype='<U16'),
+        node_pick_count=np.asarray([1, 1, 1], dtype=np.int64),
+        node_used_observation_count=np.asarray([0, 1, 1], dtype=np.int64),
+        node_rejected_observation_count=np.asarray([1, 0, 0], dtype=np.int64),
+        source_endpoint=SimpleNamespace(
+            endpoint_key=np.asarray(['s2', 's0', 's1'], dtype=object),
+            node_id=np.asarray([2, 0, 1], dtype=np.int64),
+            half_intercept_time_s=np.asarray([0.015, 0.010, 0.012]),
+            solution_status=np.full(3, 'ok', dtype='<U16'),
+            pick_count=np.asarray([1, 1, 1], dtype=np.int64),
+        ),
+        receiver_endpoint=SimpleNamespace(
+            endpoint_key=np.asarray(['r2', 'r0', 'r1'], dtype=object),
+            node_id=np.asarray([2, 0, 1], dtype=np.int64),
+            half_intercept_time_s=np.asarray([0.015, 0.010, 0.012]),
+            solution_status=np.full(3, 'ok', dtype='<U16'),
+            pick_count=np.asarray([1, 1, 1], dtype=np.int64),
+        ),
+        trace_half_intercept_time_s_sorted=np.asarray([0.030, 0.020, 0.024]),
+        modeled_pick_time_s_sorted=np.asarray([0.069, -0.050, 0.058]),
+        residual_s_sorted=np.asarray([0.001, 0.100, 0.002]),
+        source_half_intercept_time_s_sorted=np.asarray([0.015, 0.010, 0.012]),
+        receiver_half_intercept_time_s_sorted=np.asarray([0.015, 0.010, 0.012]),
+    )
+
+    result = _app_half_intercept_result_from_core(
+        input_model=input_model,
+        weathering_velocity_m_s=WEATHERING_VELOCITY_M_S,
+        core_result=core_result,
+    )
+
+    np.testing.assert_array_equal(result.row_trace_index_sorted, [2, 0, 1])
+    np.testing.assert_array_equal(result.used_row_mask, [True, False, True])
+    np.testing.assert_array_equal(result.rejected_by_robust_mask, [False, True, False])
+    rejected_original = result.row_trace_index_sorted[result.rejected_by_robust_mask]
+    np.testing.assert_array_equal(rejected_original, [0])
+
+    source_rms = dict(
+        zip(
+            result.source_endpoint_key.tolist(),
+            result.source_residual_rms_s.tolist(),
+            strict=True,
+        )
+    )
+    receiver_rms = dict(
+        zip(
+            result.receiver_endpoint_key.tolist(),
+            result.receiver_residual_rms_s.tolist(),
+            strict=True,
+        )
+    )
+    assert np.isnan(source_rms['s0'])
+    assert source_rms['s1'] == pytest.approx(0.002)
+    assert source_rms['s2'] == pytest.approx(0.001)
+    assert np.isnan(receiver_rms['r0'])
+    assert receiver_rms['r1'] == pytest.approx(0.002)
+    assert receiver_rms['r2'] == pytest.approx(0.001)
 
 
 def test_build_from_bedrock_result_uses_debug_objects() -> None:
