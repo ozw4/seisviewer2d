@@ -255,6 +255,7 @@ def build_refraction_weathering_thickness_model(
         cell_id_probe = _core_weathering_cell_id_probe(
             input_model=core_input_model,
             half_intercept_result=core_result,
+            app_half_intercept_result=half_intercept_result,
             model=core_model,
         )
         core_weathering = _with_side_specific_endpoint_weathering(
@@ -319,7 +320,14 @@ def build_refraction_weathering_core_context(
     cell_id_probe = _core_weathering_cell_id_probe(
         input_model=half_intercept_context.core_input_model,
         half_intercept_result=half_intercept_context.core_result,
+        app_half_intercept_result=half_intercept_context.app_result,
         model=core_model,
+    )
+    core_weathering = _with_side_specific_endpoint_weathering(
+        core_weathering=core_weathering,
+        half_intercept_result=half_intercept_context.app_result,
+        core_result=half_intercept_context.core_result,
+        core_model=core_model,
     )
     result = _app_weathering_result_from_core(
         core_weathering=core_weathering,
@@ -439,6 +447,7 @@ def _core_weathering_cell_id_probe(
     *,
     input_model: CoreRefractionStaticInputModel,
     half_intercept_result: CoreRefractionHalfInterceptResult,
+    app_half_intercept_result: RefractionHalfInterceptTimeResult,
     model: object,
 ) -> CoreRefractionWeatheringModel | None:
     if half_intercept_result.bedrock_velocity_mode != 'solve_cell':
@@ -461,10 +470,16 @@ def _core_weathering_cell_id_probe(
         ),
         cell_v2_m_s=probe_v2,
     )
-    return core_build_refraction_weathering_model_from_half_intercept_result(
+    probe_weathering = core_build_refraction_weathering_model_from_half_intercept_result(
         input_model=input_model,
         half_intercept_result=probe_result,
         model=model,
+    )
+    return _with_side_specific_endpoint_weathering(
+        core_weathering=probe_weathering,
+        half_intercept_result=app_half_intercept_result,
+        core_result=probe_result,
+        core_model=model,
     )
 
 
@@ -591,6 +606,25 @@ def _with_side_specific_endpoint_weathering(
         half_intercept_result=core_result,
         model=core_model,
     )
+    trace_thickness = np.ascontiguousarray(
+        source_core.source_weathering_thickness_m_sorted
+        + receiver_core.receiver_weathering_thickness_m_sorted,
+        dtype=np.float64,
+    )
+    trace_status = _trace_weathering_status_from_endpoint_status(
+        source_status=source_core.source_weathering_status_sorted,
+        receiver_status=receiver_core.receiver_weathering_status_sorted,
+        source_thickness=source_core.source_weathering_thickness_m_sorted,
+        receiver_thickness=receiver_core.receiver_weathering_thickness_m_sorted,
+    )
+    qc = dict(getattr(core_weathering, 'qc', {}))
+    qc['source_weathering_status_counts'] = _status_counts(
+        np.asarray(source_core.source_endpoint.weathering_status)
+    )
+    qc['receiver_weathering_status_counts'] = _status_counts(
+        np.asarray(receiver_core.receiver_endpoint.weathering_status)
+    )
+    qc['trace_weathering_status_counts'] = _status_counts(trace_status)
     return replace(
         core_weathering,
         source_endpoint=source_core.source_endpoint,
@@ -611,7 +645,49 @@ def _with_side_specific_endpoint_weathering(
         receiver_weathering_status_sorted=(
             receiver_core.receiver_weathering_status_sorted
         ),
+        trace_weathering_thickness_m_sorted=trace_thickness,
+        trace_weathering_status_sorted=trace_status,
+        qc=qc,
     )
+
+
+def _trace_weathering_status_from_endpoint_status(
+    *,
+    source_status: np.ndarray,
+    receiver_status: np.ndarray,
+    source_thickness: np.ndarray,
+    receiver_thickness: np.ndarray,
+) -> np.ndarray:
+    source = _status(source_status)
+    receiver = _status(receiver_status)
+    source_values = _f64(source_thickness)
+    receiver_values = _f64(receiver_thickness)
+    if not (
+        source.shape
+        == receiver.shape
+        == source_values.shape
+        == receiver_values.shape
+    ):
+        raise RefractionWeatheringThicknessError(
+            'source/receiver trace weathering shape mismatch'
+        )
+    status = np.full(source.shape, 'ok', dtype=_STATUS_DTYPE)
+    for index, (src_status, rec_status) in enumerate(
+        zip(source.tolist(), receiver.tolist(), strict=True)
+    ):
+        src = str(src_status)
+        rec = str(rec_status)
+        if src == rec:
+            status[index] = src
+        elif src == 'ok':
+            status[index] = rec
+        elif rec == 'ok':
+            status[index] = src
+        else:
+            status[index] = 'mixed'
+    invalid_value = ~(np.isfinite(source_values) & np.isfinite(receiver_values))
+    status[invalid_value & (status == 'ok')] = 'invalid_weathering_thickness'
+    return np.ascontiguousarray(status, dtype=_STATUS_DTYPE)
 
 
 def _has_shared_endpoint_geometry_conflict(

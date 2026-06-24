@@ -21,6 +21,7 @@ from app.statics.refraction.application.weathering import (
     REFRACTION_WEATHERING_SOURCES_CSV_NAME,
     REFRACTION_WEATHERING_TRACE_PREVIEW_CSV_NAME,
     RefractionWeatheringThicknessError,
+    build_refraction_weathering_core_context,
     build_refraction_weathering_thickness_model,
     compute_weathering_thickness_from_half_intercept_time,
     compute_weathering_thickness_scalar,
@@ -400,6 +401,170 @@ def test_shared_source_receiver_node_keeps_endpoint_surface_elevation() -> None:
             result.receiver_node_id_sorted == 0
         ],
         80.0 - expected_thickness,
+    )
+
+
+def test_production_core_context_keeps_shared_node_endpoint_geometry() -> None:
+    inputs, _design, _solved, half = _build_result()
+    source_elevation = half.source_elevation_m.copy()
+    receiver_elevation = half.receiver_elevation_m.copy()
+    source_elevation_sorted = half.source_elevation_m_sorted.copy()
+    receiver_elevation_sorted = half.receiver_elevation_m_sorted.copy()
+    source_zero = int(np.flatnonzero(half.source_node_id == 0)[0])
+    receiver_zero = int(np.flatnonzero(half.receiver_node_id == 0)[0])
+    source_elevation[source_zero] = 100.0
+    receiver_elevation[receiver_zero] = 120.0
+    source_elevation_sorted[half.source_node_id_sorted == 0] = 100.0
+    receiver_elevation_sorted[half.receiver_node_id_sorted == 0] = 120.0
+    half = replace(
+        half,
+        source_elevation_m=source_elevation,
+        receiver_elevation_m=receiver_elevation,
+        source_elevation_m_sorted=source_elevation_sorted,
+        receiver_elevation_m_sorted=receiver_elevation_sorted,
+    )
+    model = _model()
+    core_result = weathering_module._core_half_intercept_result_from_app_result(
+        half_intercept_result=half,
+        model=model,
+    )
+    context = weathering_module._HalfInterceptCoreContext(
+        app_input_model=inputs,
+        core_input_model=weathering_module.core_input_model_from_app(inputs),
+        core_result=core_result,
+        app_result=half,
+    )
+
+    weathering_context = build_refraction_weathering_core_context(
+        half_intercept_context=context,
+        model=model,
+    )
+
+    result = weathering_context.app_weathering_result
+    core = weathering_context.core_weathering_model
+    expected_thickness = TRUE_HALF_INTERCEPT_S[0] * _conversion_factor()
+    assert result.source_surface_elevation_m[source_zero] == pytest.approx(100.0)
+    assert result.receiver_surface_elevation_m[receiver_zero] == pytest.approx(120.0)
+    assert result.source_refractor_elevation_m[source_zero] == pytest.approx(
+        100.0 - expected_thickness
+    )
+    assert result.receiver_refractor_elevation_m[receiver_zero] == pytest.approx(
+        120.0 - expected_thickness
+    )
+    assert core.source_endpoint.surface_elevation_m[source_zero] == pytest.approx(100.0)
+    assert core.receiver_endpoint.surface_elevation_m[receiver_zero] == pytest.approx(
+        120.0
+    )
+    assert core.source_endpoint.refractor_elevation_m[source_zero] == pytest.approx(
+        100.0 - expected_thickness
+    )
+    assert core.receiver_endpoint.refractor_elevation_m[
+        receiver_zero
+    ] == pytest.approx(120.0 - expected_thickness)
+    assert (
+        core.receiver_endpoint.refractor_elevation_m[receiver_zero]
+        - core.source_endpoint.refractor_elevation_m[source_zero]
+        == pytest.approx(20.0)
+    )
+    np.testing.assert_allclose(
+        core.trace_weathering_thickness_m_sorted,
+        core.source_weathering_thickness_m_sorted
+        + core.receiver_weathering_thickness_m_sorted,
+        equal_nan=True,
+    )
+    assert core.qc['trace_weathering_status_counts'] == {
+        key: int(value)
+        for key, value in zip(
+            *np.unique(core.trace_weathering_status_sorted, return_counts=True),
+            strict=True,
+        )
+    }
+
+
+def test_solve_cell_probe_uses_side_specific_endpoint_geometry() -> None:
+    inputs, _design, _solved, half = _build_result()
+    source_x = half.source_x_m.copy()
+    receiver_x = half.receiver_x_m.copy()
+    source_x_sorted = inputs.source_x_m_sorted.copy()
+    receiver_x_sorted = inputs.receiver_x_m_sorted.copy()
+    source_zero = int(np.flatnonzero(half.source_node_id == 0)[0])
+    receiver_zero = int(np.flatnonzero(half.receiver_node_id == 0)[0])
+    source_x[source_zero] = 50.0
+    receiver_x[receiver_zero] = 150.0
+    source_x_sorted[half.source_node_id_sorted == 0] = 50.0
+    receiver_x_sorted[half.receiver_node_id_sorted == 0] = 150.0
+    cell_velocity = np.asarray([2200.0, 2600.0, 3000.0], dtype=np.float64)
+    half = replace(
+        half,
+        bedrock_velocity_mode='solve_cell',
+        source_x_m=source_x,
+        receiver_x_m=receiver_x,
+        active_cell_id=np.asarray([0, 1, 2], dtype=np.int64),
+        cell_bedrock_velocity_m_s=cell_velocity,
+        cell_bedrock_slowness_s_per_m=1.0 / cell_velocity,
+        cell_velocity_status=np.full(3, 'solved', dtype='<U32'),
+        row_midpoint_cell_id=np.zeros(half.row_trace_index_sorted.shape, dtype=np.int64),
+        row_midpoint_bedrock_velocity_m_s=np.full(
+            half.row_trace_index_sorted.shape,
+            cell_velocity[0],
+            dtype=np.float64,
+        ),
+        qc={
+            **half.qc,
+            'cell_observation_count': [10, 10, 10],
+        },
+    )
+    inputs = replace(
+        inputs,
+        source_x_m_sorted=source_x_sorted,
+        receiver_x_m_sorted=receiver_x_sorted,
+    )
+    model = _model(
+        bedrock_velocity_mode='solve_cell',
+        refractor_cell={
+            'number_of_cell_x': 3,
+            'size_of_cell_x_m': 100.0,
+            'x_coordinate_origin_m': 0.0,
+            'number_of_cell_y': 1,
+            'size_of_cell_y_m': None,
+            'y_coordinate_origin_m': 0.0,
+            'min_observations_per_cell': 1,
+        },
+    )
+    core_result = weathering_module._core_half_intercept_result_from_app_result(
+        half_intercept_result=half,
+        model=model,
+    )
+    context = weathering_module._HalfInterceptCoreContext(
+        app_input_model=inputs,
+        core_input_model=weathering_module.core_input_model_from_app(inputs),
+        core_result=core_result,
+        app_result=half,
+    )
+
+    result = build_refraction_weathering_core_context(
+        half_intercept_context=context,
+        model=model,
+    ).app_weathering_result
+
+    assert result.node_v2_cell_id is not None
+    assert result.source_v2_cell_id is not None
+    assert result.receiver_v2_cell_id is not None
+    assert result.source_v2_cell_id_sorted is not None
+    assert result.receiver_v2_cell_id_sorted is not None
+    assert result.node_v2_cell_id[0] == 0
+    assert result.source_v2_cell_id[source_zero] == 0
+    assert result.receiver_v2_cell_id[receiver_zero] == 1
+    assert result.source_v2_cell_id[source_zero] != result.receiver_v2_cell_id[
+        receiver_zero
+    ]
+    np.testing.assert_array_equal(
+        result.source_v2_cell_id_sorted[result.source_node_id_sorted == 0],
+        0,
+    )
+    np.testing.assert_array_equal(
+        result.receiver_v2_cell_id_sorted[result.receiver_node_id_sorted == 0],
+        1,
     )
 
 
