@@ -215,6 +215,11 @@ def build_refraction_weathering_thickness_model(
                 raise RefractionWeatheringThicknessError(
                     'half_intercept_context.app_result must match half_intercept_result'
                 )
+            _validate_weathering_velocity_matches_half_intercept_result(
+                half_intercept_result=half_intercept_result,
+                model=model,
+                resolved_first_layer=resolved_first_layer,
+            )
             return build_refraction_weathering_core_context(
                 half_intercept_context=half_intercept_context,
                 model=model,
@@ -222,6 +227,11 @@ def build_refraction_weathering_thickness_model(
                 resolved_first_layer=resolved_first_layer,
             ).app_weathering_result
 
+        _validate_weathering_velocity_matches_half_intercept_result(
+            half_intercept_result=half_intercept_result,
+            model=model,
+            resolved_first_layer=resolved_first_layer,
+        )
         core_input_model = (
             core_input_model_from_app(input_model)
             if input_model is not None
@@ -292,6 +302,11 @@ def build_refraction_weathering_core_context(
     resolved_first_layer: ResolvedRefractionFirstLayer | None = None,
 ) -> _WeatheringCoreContext:
     """Build app weathering output and retain the external model for downstream stages."""
+    _validate_weathering_velocity_matches_half_intercept_result(
+        half_intercept_result=half_intercept_context.app_result,
+        model=model,
+        resolved_first_layer=resolved_first_layer,
+    )
     core_model = _model_options_for_weathering_core(
         model,
         resolved_first_layer=resolved_first_layer,
@@ -387,6 +402,37 @@ def _model_options_for_weathering_core(
             weathering_velocity_m_s=resolved_first_layer.weathering_velocity_m_s,
         ),
     )
+
+
+def _validate_weathering_velocity_matches_half_intercept_result(
+    *,
+    half_intercept_result: RefractionHalfInterceptTimeResult,
+    model: RefractionStaticModelRequest,
+    resolved_first_layer: ResolvedRefractionFirstLayer | None,
+) -> float:
+    requested_velocity = float(
+        resolve_weathering_velocity_m_s(
+            model=model,
+            resolved_first_layer=resolved_first_layer,
+            name='model.weathering_velocity_m_s',
+        )
+    )
+    result_velocity = float(half_intercept_result.weathering_velocity_m_s)
+    if not np.isfinite(result_velocity) or result_velocity <= 0.0:
+        raise ValueError(
+            'half_intercept_result.weathering_velocity_m_s must be positive finite'
+        )
+    if not np.isclose(
+        requested_velocity,
+        result_velocity,
+        rtol=1.0e-6,
+        atol=1.0e-6,
+    ):
+        raise ValueError(
+            'model.weathering_velocity_m_s does not match '
+            'half_intercept_result.weathering_velocity_m_s'
+        )
+    return requested_velocity
 
 
 def _core_weathering_cell_id_probe(

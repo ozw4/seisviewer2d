@@ -47,6 +47,10 @@ def cell_v2_metadata_from_core_weathering(
 
     source = core_weathering.source_endpoint
     receiver = core_weathering.receiver_endpoint
+    probe_source = cell_id_probe.source_endpoint if cell_id_probe is not None else None
+    probe_receiver = (
+        cell_id_probe.receiver_endpoint if cell_id_probe is not None else None
+    )
     node_cell_id = (
         _cell_id_from_core_probe_v2(
             local_v2_m_s=cell_id_probe.node_v2_m_s,
@@ -61,57 +65,41 @@ def cell_v2_metadata_from_core_weathering(
             cell_velocity_status=core_weathering.cell_velocity_status,
         )
     )
-    source_cell_id = _cell_id_by_node(
-        endpoint_node_id=source.node_id,
-        node_id=core_weathering.node_id,
-        node_cell_id=node_cell_id,
+    source_cell_id = _cell_id_from_core_endpoint_v2(
+        endpoint=source,
+        cell_id=core_weathering.cell_id,
+        cell_v2_m_s=core_weathering.cell_v2_m_s,
+        cell_velocity_status=core_weathering.cell_velocity_status,
+        cell_id_probe_endpoint=probe_source,
     )
-    receiver_cell_id = _cell_id_by_node(
-        endpoint_node_id=receiver.node_id,
-        node_id=core_weathering.node_id,
-        node_cell_id=node_cell_id,
+    receiver_cell_id = _cell_id_from_core_endpoint_v2(
+        endpoint=receiver,
+        cell_id=core_weathering.cell_id,
+        cell_v2_m_s=core_weathering.cell_v2_m_s,
+        cell_velocity_status=core_weathering.cell_velocity_status,
+        cell_id_probe_endpoint=probe_receiver,
     )
-    source_cell_id_sorted = _values_by_node(
-        node_id_sorted=core_weathering.source_node_id_sorted,
-        node_id=core_weathering.node_id,
-        values=node_cell_id,
-        dtype=np.int64,
-        fill_value=-1,
+    (
+        source_cell_id_sorted,
+        source_v2_m_s_sorted,
+        source_v2_status_sorted,
+    ) = _endpoint_v2_by_key_sorted(
+        endpoint_key_sorted=core_weathering.source_endpoint_key_sorted,
+        endpoint_key=source.endpoint_key,
+        endpoint_cell_id=source_cell_id,
+        endpoint_v2_m_s=source.v2_m_s,
+        endpoint_v2_status=source.local_v2_status,
     )
-    receiver_cell_id_sorted = _values_by_node(
-        node_id_sorted=core_weathering.receiver_node_id_sorted,
-        node_id=core_weathering.node_id,
-        values=node_cell_id,
-        dtype=np.int64,
-        fill_value=-1,
-    )
-    source_v2_m_s_sorted = _values_by_node(
-        node_id_sorted=core_weathering.source_node_id_sorted,
-        node_id=core_weathering.node_id,
-        values=core_weathering.node_v2_m_s,
-        dtype=np.float64,
-        fill_value=np.nan,
-    )
-    receiver_v2_m_s_sorted = _values_by_node(
-        node_id_sorted=core_weathering.receiver_node_id_sorted,
-        node_id=core_weathering.node_id,
-        values=core_weathering.node_v2_m_s,
-        dtype=np.float64,
-        fill_value=np.nan,
-    )
-    source_v2_status_sorted = _values_by_node(
-        node_id_sorted=core_weathering.source_node_id_sorted,
-        node_id=core_weathering.node_id,
-        values=core_weathering.node_local_v2_status,
-        dtype=_STATUS_DTYPE,
-        fill_value='missing_node',
-    )
-    receiver_v2_status_sorted = _values_by_node(
-        node_id_sorted=core_weathering.receiver_node_id_sorted,
-        node_id=core_weathering.node_id,
-        values=core_weathering.node_local_v2_status,
-        dtype=_STATUS_DTYPE,
-        fill_value='missing_node',
+    (
+        receiver_cell_id_sorted,
+        receiver_v2_m_s_sorted,
+        receiver_v2_status_sorted,
+    ) = _endpoint_v2_by_key_sorted(
+        endpoint_key_sorted=core_weathering.receiver_endpoint_key_sorted,
+        endpoint_key=receiver.endpoint_key,
+        endpoint_cell_id=receiver_cell_id,
+        endpoint_v2_m_s=receiver.v2_m_s,
+        endpoint_v2_status=receiver.local_v2_status,
     )
 
     return CellV2Metadata(
@@ -176,6 +164,28 @@ def _cell_id_from_core_probe_v2(
     return np.ascontiguousarray(out, dtype=np.int64)
 
 
+def _cell_id_from_core_endpoint_v2(
+    *,
+    endpoint: object,
+    cell_id: np.ndarray,
+    cell_v2_m_s: np.ndarray,
+    cell_velocity_status: np.ndarray,
+    cell_id_probe_endpoint: object | None,
+) -> np.ndarray:
+    if cell_id_probe_endpoint is not None:
+        return _cell_id_from_core_probe_v2(
+            local_v2_m_s=cell_id_probe_endpoint.v2_m_s,
+            cell_id=cell_id,
+        )
+    return _cell_id_from_core_local_v2(
+        local_v2_m_s=endpoint.v2_m_s,
+        local_v2_status=endpoint.local_v2_status,
+        cell_id=cell_id,
+        cell_v2_m_s=cell_v2_m_s,
+        cell_velocity_status=cell_velocity_status,
+    )
+
+
 def _matching_cell_ids(
     *,
     value: float,
@@ -200,53 +210,36 @@ def _matching_cell_ids(
     return np.ascontiguousarray(cell_id[match], dtype=np.int64)
 
 
-def _cell_id_by_node(
+def _endpoint_v2_by_key_sorted(
     *,
-    endpoint_node_id: np.ndarray,
-    node_id: np.ndarray,
-    node_cell_id: np.ndarray,
-) -> np.ndarray:
-    lookup = {
-        int(node): int(cell)
-        for node, cell in zip(
-            np.asarray(node_id, dtype=np.int64).tolist(),
-            np.asarray(node_cell_id, dtype=np.int64).tolist(),
-            strict=True,
-        )
+    endpoint_key_sorted: np.ndarray,
+    endpoint_key: np.ndarray,
+    endpoint_cell_id: np.ndarray,
+    endpoint_v2_m_s: np.ndarray,
+    endpoint_v2_status: np.ndarray,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    key_to_index = {
+        str(key): index
+        for index, key in enumerate(np.asarray(endpoint_key, dtype=object).tolist())
     }
-    return np.ascontiguousarray(
-        np.asarray(
-            [
-                lookup.get(int(node), -1)
-                for node in np.asarray(endpoint_node_id, dtype=np.int64).tolist()
-            ],
-            dtype=np.int64,
-        )
-    )
-
-
-def _values_by_node(
-    *,
-    node_id_sorted: np.ndarray,
-    node_id: np.ndarray,
-    values: np.ndarray,
-    dtype: object,
-    fill_value: object,
-) -> np.ndarray:
-    lookup = {
-        int(node): value
-        for node, value in zip(
-            np.asarray(node_id, dtype=np.int64).tolist(),
-            np.asarray(values, dtype=dtype).tolist(),
-            strict=True,
-        )
-    }
-    return np.ascontiguousarray(
-        np.asarray(
-            [
-                lookup.get(int(node), fill_value)
-                for node in np.asarray(node_id_sorted, dtype=np.int64).tolist()
-            ],
-            dtype=dtype,
-        )
+    n_traces = int(np.asarray(endpoint_key_sorted).shape[0])
+    cell_id = np.full(n_traces, -1, dtype=np.int64)
+    v2 = np.full(n_traces, np.nan, dtype=np.float64)
+    status = np.full(n_traces, 'missing_endpoint', dtype=_STATUS_DTYPE)
+    endpoint_cells = np.asarray(endpoint_cell_id, dtype=np.int64)
+    endpoint_v2 = np.asarray(endpoint_v2_m_s, dtype=np.float64)
+    endpoint_status = np.asarray(endpoint_v2_status, dtype=_STATUS_DTYPE)
+    for index, raw_key in enumerate(
+        np.asarray(endpoint_key_sorted, dtype=object).tolist()
+    ):
+        endpoint_index = key_to_index.get(str(raw_key))
+        if endpoint_index is None:
+            continue
+        cell_id[index] = int(endpoint_cells[endpoint_index])
+        v2[index] = float(endpoint_v2[endpoint_index])
+        status[index] = str(endpoint_status[endpoint_index])
+    return (
+        np.ascontiguousarray(cell_id, dtype=np.int64),
+        np.ascontiguousarray(v2, dtype=np.float64),
+        np.ascontiguousarray(status, dtype=_STATUS_DTYPE),
     )

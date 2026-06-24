@@ -9,6 +9,10 @@ from types import SimpleNamespace
 import numpy as np
 import pytest
 
+from app.statics.refraction.application.cell_v2_metadata import (
+    _CELL_ID_PROBE_V2_BASE_M_S,
+    cell_v2_metadata_from_core_weathering,
+)
 import app.statics.refraction.application.weathering as weathering_module
 from app.statics.refraction.application.weathering import (
     REFRACTION_WEATHERING_NODES_CSV_NAME,
@@ -145,6 +149,81 @@ def test_high_level_pipeline_calls_half_intercept_stage(
         rtol=1.0e-9,
     )
     assert (tmp_path / REFRACTION_WEATHERING_QC_JSON_NAME).is_file()
+
+
+def test_cell_v2_metadata_uses_endpoint_local_projection() -> None:
+    model = SimpleNamespace(bedrock_velocity_mode='solve_cell', refractor_cell=object())
+    core_weathering = SimpleNamespace(
+        node_id=np.asarray([10, 20], dtype=np.int64),
+        node_v2_m_s=np.asarray([2200.0, 2600.0], dtype=np.float64),
+        node_local_v2_status=np.asarray(['ok', 'ok'], dtype='<U32'),
+        cell_id=np.asarray([0, 1, 2], dtype=np.int64),
+        cell_v2_m_s=np.asarray([2200.0, 2600.0, 3000.0], dtype=np.float64),
+        cell_velocity_status=np.asarray(['solved', 'solved', 'inactive'], dtype='<U32'),
+        source_endpoint=SimpleNamespace(
+            endpoint_key=np.asarray(['s0', 's1'], dtype=object),
+            node_id=np.asarray([10, 10], dtype=np.int64),
+            v2_m_s=np.asarray([3000.0, 2600.0], dtype=np.float64),
+            local_v2_status=np.asarray(['ok', 'ok'], dtype='<U32'),
+        ),
+        receiver_endpoint=SimpleNamespace(
+            endpoint_key=np.asarray(['r0', 'r1'], dtype=object),
+            node_id=np.asarray([20, 20], dtype=np.int64),
+            v2_m_s=np.asarray([2600.0, np.nan], dtype=np.float64),
+            local_v2_status=np.asarray(['ok', 'inactive_v2_cell'], dtype='<U32'),
+        ),
+        source_endpoint_key_sorted=np.asarray(['s1', 's0', 's0'], dtype=object),
+        receiver_endpoint_key_sorted=np.asarray(['r0', 'r1', 'missing'], dtype=object),
+    )
+    probe = SimpleNamespace(
+        node_v2_m_s=_CELL_ID_PROBE_V2_BASE_M_S
+        + np.asarray([0.0, 1.0], dtype=np.float64),
+        source_endpoint=SimpleNamespace(
+            v2_m_s=_CELL_ID_PROBE_V2_BASE_M_S
+            + np.asarray([2.0, 1.0], dtype=np.float64),
+        ),
+        receiver_endpoint=SimpleNamespace(
+            v2_m_s=_CELL_ID_PROBE_V2_BASE_M_S
+            + np.asarray([1.0, 2.0], dtype=np.float64),
+        ),
+    )
+
+    metadata = cell_v2_metadata_from_core_weathering(
+        core_weathering=core_weathering,
+        model=model,  # type: ignore[arg-type]
+        cell_id_probe=probe,
+    )
+
+    np.testing.assert_array_equal(metadata.node_cell_id, [0, 1])
+    np.testing.assert_array_equal(metadata.source_cell_id, [2, 1])
+    np.testing.assert_array_equal(metadata.receiver_cell_id, [1, 2])
+    np.testing.assert_array_equal(metadata.source_cell_id_sorted, [1, 2, 2])
+    np.testing.assert_allclose(metadata.source_v2_m_s_sorted, [2600.0, 3000.0, 3000.0])
+    np.testing.assert_array_equal(
+        metadata.receiver_cell_id_sorted,
+        [1, 2, -1],
+    )
+    np.testing.assert_array_equal(
+        metadata.receiver_v2_status_sorted,
+        ['ok', 'inactive_v2_cell', 'missing_endpoint'],
+    )
+
+
+def test_build_weathering_rejects_model_velocity_mismatch() -> None:
+    _inputs, _design, _solved, half = _build_result()
+    model = _model(weathering_velocity_m_s=WEATHERING_VELOCITY_M_S + 100.0)
+
+    with pytest.raises(
+        RefractionWeatheringThicknessError,
+        match=(
+            'model.weathering_velocity_m_s does not match '
+            'half_intercept_result.weathering_velocity_m_s'
+        ),
+    ):
+        build_refraction_weathering_thickness_model(
+            half_intercept_result=half,
+            model=model,
+        )
 
 
 def test_math_helper_converts_half_intercepts_and_preserves_nan() -> None:
