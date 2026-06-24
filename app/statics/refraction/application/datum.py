@@ -38,6 +38,9 @@ from app.statics.refraction.contracts.result_types import (
 from app.statics.refraction.application.weathering_replacement import (
     compute_weathering_replacement_statics_from_first_breaks,
 )
+from app.statics.refraction.application.trace_order import (
+    sorted_positions_for_original_trace_ids,
+)
 from app.statics.refraction.ports.runtime import RefractionRuntime
 
 REFRACTION_DATUM_STATICS_QC_JSON_NAME = 'refraction_datum_statics_qc.json'
@@ -619,6 +622,22 @@ def build_refraction_datum_statics(
         upstream_qc=getattr(weathering_replacement_result, 'qc', {}),
     )
 
+    row_source_endpoint_key = data.row_source_endpoint_key
+    row_receiver_endpoint_key = data.row_receiver_endpoint_key
+    if row_source_endpoint_key is None or row_receiver_endpoint_key is None:
+        row_sorted_position = sorted_positions_for_original_trace_ids(
+            sorted_to_original=data.sorted_trace_index,
+            original_trace_id=data.row_trace_index_sorted,
+        )
+        if row_source_endpoint_key is None:
+            row_source_endpoint_key = data.source_endpoint_key_sorted[
+                row_sorted_position
+            ]
+        if row_receiver_endpoint_key is None:
+            row_receiver_endpoint_key = data.receiver_endpoint_key_sorted[
+                row_sorted_position
+            ]
+
     result = RefractionDatumStaticsResult(
         bedrock_velocity_mode=velocity.mode,
         bedrock_slowness_s_per_m=velocity.bedrock_slowness_s_per_m,
@@ -819,16 +838,8 @@ def build_refraction_datum_statics(
             if data.row_layer_index is not None
             else np.ones(data.row_trace_index_sorted.shape, dtype=np.int64)
         ),
-        row_source_endpoint_key=(
-            data.row_source_endpoint_key
-            if data.row_source_endpoint_key is not None
-            else data.source_endpoint_key_sorted[data.row_trace_index_sorted]
-        ),
-        row_receiver_endpoint_key=(
-            data.row_receiver_endpoint_key
-            if data.row_receiver_endpoint_key is not None
-            else data.receiver_endpoint_key_sorted[data.row_trace_index_sorted]
-        ),
+        row_source_endpoint_key=row_source_endpoint_key,
+        row_receiver_endpoint_key=row_receiver_endpoint_key,
         row_rejection_reason=data.row_rejection_reason,
         row_velocity_m_s=data.row_velocity_m_s,
     )

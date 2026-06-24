@@ -428,6 +428,26 @@ def test_build_constant_floating_and_flat_components_in_sorted_order(
     assert 'refraction_trace_shift_ms' in rows[0]
 
 
+def test_row_endpoint_key_fallback_maps_original_trace_ids_to_sorted_positions() -> None:
+    replacement = _replacement_result(
+        source_endpoint_key_sorted=np.asarray(['s2', 's0', 's1'], dtype=object),
+        receiver_endpoint_key_sorted=np.asarray(['r2', 'r0', 'r1'], dtype=object),
+        source_node_id_sorted=np.asarray([2, 0, 1], dtype=np.int64),
+        receiver_node_id_sorted=np.asarray([2, 0, 1], dtype=np.int64),
+    )
+
+    result = build_refraction_datum_statics(
+        weathering_replacement_result=replacement,
+        datum=_datum(),
+        apply_options=_apply_options(),
+    )
+
+    np.testing.assert_array_equal(result.sorted_trace_index, [2, 0, 1])
+    np.testing.assert_array_equal(result.row_trace_index_sorted, [0, 1])
+    np.testing.assert_array_equal(result.row_source_endpoint_key, ['s0', 's1'])
+    np.testing.assert_array_equal(result.row_receiver_endpoint_key, ['r0', 'r1'])
+
+
 def test_build_preserves_upstream_invalid_replacement_statuses() -> None:
     replacement = replace(
         _replacement_result(),

@@ -12,10 +12,16 @@ from seis_statics.refraction.half_intercept import (
     RefractionHalfInterceptError as CoreRefractionHalfInterceptError,
 )
 from seis_statics.refraction.half_intercept import (
+    RefractionHalfInterceptResult as CoreRefractionHalfInterceptResult,
+)
+from seis_statics.refraction.half_intercept import (
     build_refraction_half_intercept_result_from_bedrock_result as core_build_refraction_half_intercept_result_from_bedrock_result,
 )
 from seis_statics.refraction.half_intercept import (
     estimate_refraction_half_intercept_from_input_model as core_estimate_refraction_half_intercept_from_input_model,
+)
+from seis_statics.refraction.types import (
+    RefractionStaticInputModel as CoreRefractionStaticInputModel,
 )
 
 from app.statics.refraction.contracts.apply import RefractionStaticApplyRequest
@@ -42,6 +48,9 @@ from app.statics.refraction.application.core_options import (
     model_options_from_request,
     resolve_weathering_velocity_from_model_request as resolve_weathering_velocity_m_s,
     solver_options_from_request,
+)
+from app.statics.refraction.application.trace_order import (
+    sorted_positions_for_original_trace_ids,
 )
 from app.statics.refraction.contracts.result_types import (
     RefractionBedrockSlownessResult,
@@ -192,6 +201,14 @@ class _EndpointResult:
     residual_rms_s: np.ndarray
 
 
+@dataclass(frozen=True)
+class _HalfInterceptCoreContext:
+    app_input_model: RefractionStaticInputModel
+    core_input_model: CoreRefractionStaticInputModel
+    core_result: CoreRefractionHalfInterceptResult
+    app_result: RefractionHalfInterceptTimeResult
+
+
 def estimate_refraction_half_intercept_times_from_first_breaks(
     *,
     req: RefractionStaticApplyRequest,
@@ -202,6 +219,26 @@ def estimate_refraction_half_intercept_times_from_first_breaks(
     resolved_first_layer: ResolvedRefractionFirstLayer | None = None,
 ) -> RefractionHalfInterceptTimeResult:
     """Build inputs, solve the GLI system, and emit the half-intercept model."""
+    return estimate_refraction_half_intercept_core_context_from_first_breaks(
+        req=req,
+        runtime=runtime,
+        state=state,
+        job_dir=job_dir,
+        input_model=input_model,
+        resolved_first_layer=resolved_first_layer,
+    ).app_result
+
+
+def estimate_refraction_half_intercept_core_context_from_first_breaks(
+    *,
+    req: RefractionStaticApplyRequest,
+    runtime: RefractionRuntime | None = None,
+    state: object | None = None,
+    job_dir: Path | None = None,
+    input_model: RefractionStaticInputModel | None = None,
+    resolved_first_layer: ResolvedRefractionFirstLayer | None = None,
+) -> _HalfInterceptCoreContext:
+    """Build inputs, solve externally, and retain the external half-intercept result."""
     if runtime is None and input_model is None:
         if state is None:
             raise TypeError('runtime is required')
@@ -226,12 +263,13 @@ def estimate_refraction_half_intercept_times_from_first_breaks(
                 include_debug_objects=True,
                 resolved_first_layer=resolved_first_layer,
             )
-            return build_refraction_half_intercept_time_model_from_bedrock_result(
+            return build_refraction_half_intercept_core_context_from_bedrock_result(
                 bedrock_result=bedrock_result,
                 job_dir=job_dir,
             )
+        core_input_model = core_input_model_from_app(input_model)
         core_result = core_estimate_refraction_half_intercept_from_input_model(
-            input_model=core_input_model_from_app(input_model),
+            input_model=core_input_model,
             model=model_options_from_request(req.model),
             solver_options=solver_options_from_request(req.solver),
             resolved_first_layer=resolved_first_layer,
@@ -252,9 +290,14 @@ def estimate_refraction_half_intercept_times_from_first_breaks(
                 write_refraction_design_matrix_diagnostics_artifacts(
                     Path(job_dir),
                     core_result.debug_design,
-                )
+            )
             write_refraction_half_intercept_artifacts(Path(job_dir), result)
-        return result
+        return _HalfInterceptCoreContext(
+            app_input_model=input_model,
+            core_input_model=core_input_model,
+            core_result=core_result,
+            app_result=result,
+        )
     except RefractionHalfInterceptTimeError:
         raise
     except (CoreRefractionHalfInterceptError, ValueError) as exc:
@@ -303,6 +346,48 @@ def build_refraction_half_intercept_time_model_from_bedrock_result(
     return result
 
 
+def build_refraction_half_intercept_core_context_from_bedrock_result(
+    *,
+    bedrock_result: RefractionBedrockSlownessResult,
+    job_dir: Path | None = None,
+) -> _HalfInterceptCoreContext:
+    """Build app and external half-intercept results from a core-backed bedrock result."""
+    if bedrock_result.input_model is None:
+        raise RefractionHalfInterceptTimeError(
+            'bedrock_result.input_model is required'
+        )
+    if bedrock_result.design_matrix is None:
+        raise RefractionHalfInterceptTimeError(
+            'bedrock_result.design_matrix is required'
+        )
+    if bedrock_result.core_result is None:
+        raise RefractionHalfInterceptTimeError('bedrock_result.core_result is required')
+    core_input_model = core_input_model_from_app(bedrock_result.input_model)
+    core_result = core_build_refraction_half_intercept_result_from_bedrock_result(
+        input_model=core_input_model,
+        bedrock_result=bedrock_result.core_result,
+        include_debug_objects=True,
+    )
+    result = _app_half_intercept_result_from_core(
+        input_model=bedrock_result.input_model,
+        weathering_velocity_m_s=bedrock_result.weathering_velocity_m_s,
+        core_result=core_result,
+    )
+    if job_dir is not None:
+        if core_result.debug_design is not None:
+            write_refraction_design_matrix_diagnostics_artifacts(
+                Path(job_dir),
+                core_result.debug_design,
+            )
+        write_refraction_half_intercept_artifacts(Path(job_dir), result)
+    return _HalfInterceptCoreContext(
+        app_input_model=bedrock_result.input_model,
+        core_input_model=core_input_model,
+        core_result=core_result,
+        app_result=result,
+    )
+
+
 def _app_half_intercept_result_from_core(
     *,
     input_model: RefractionStaticInputModel,
@@ -317,6 +402,10 @@ def _app_half_intercept_result_from_core(
         )
 
     row_trace = np.ascontiguousarray(design.row_trace_index_sorted, dtype=np.int64)
+    row_sorted_position = sorted_positions_for_original_trace_ids(
+        sorted_to_original=input_model.sorted_trace_index,
+        original_trace_id=row_trace,
+    )
     used_sorted = np.ascontiguousarray(
         core_result.used_observation_mask_sorted,
         dtype=bool,
@@ -325,8 +414,8 @@ def _app_half_intercept_result_from_core(
         core_result.rejected_observation_mask_sorted,
         dtype=bool,
     )
-    used_row = np.ascontiguousarray(used_sorted[row_trace], dtype=bool)
-    rejected_row = np.ascontiguousarray(rejected_sorted[row_trace], dtype=bool)
+    used_row = np.ascontiguousarray(used_sorted[row_sorted_position], dtype=bool)
+    rejected_row = np.ascontiguousarray(rejected_sorted[row_sorted_position], dtype=bool)
     row_residual = np.ascontiguousarray(
         solve_result.row_residual_s,
         dtype=np.float64,
@@ -352,7 +441,7 @@ def _app_half_intercept_result_from_core(
         row_endpoint_key=np.asarray(
             input_model.source_endpoint_key_sorted,
             dtype=object,
-        )[row_trace],
+        )[row_sorted_position],
         endpoint_key=core_result.source_endpoint.endpoint_key,
         row_residual_s=row_residual,
         used_row_mask=used_row,
@@ -361,7 +450,7 @@ def _app_half_intercept_result_from_core(
         row_endpoint_key=np.asarray(
             input_model.receiver_endpoint_key_sorted,
             dtype=object,
-        )[row_trace],
+        )[row_sorted_position],
         endpoint_key=core_result.receiver_endpoint.endpoint_key,
         row_residual_s=row_residual,
         used_row_mask=used_row,
@@ -2250,8 +2339,10 @@ __all__ = [
     'REFRACTION_HALF_INTERCEPT_TRACE_PREVIEW_CSV_NAME',
     'RefractionHalfInterceptTimeError',
     'RefractionHalfInterceptTimeResult',
+    'build_refraction_half_intercept_core_context_from_bedrock_result',
     'build_refraction_half_intercept_time_model',
     'build_refraction_half_intercept_time_model_from_bedrock_result',
+    'estimate_refraction_half_intercept_core_context_from_first_breaks',
     'estimate_refraction_half_intercept_times_from_first_breaks',
     'write_refraction_half_intercept_artifacts',
 ]

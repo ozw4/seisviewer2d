@@ -9,6 +9,12 @@ from typing import Any
 
 import numpy as np
 import pytest
+from seis_statics.refraction.weathering import (
+    RefractionWeatheringEndpointComponents as CoreRefractionWeatheringEndpointComponents,
+)
+from seis_statics.refraction.weathering import (
+    RefractionWeatheringModel as CoreRefractionWeatheringModel,
+)
 
 from app.api.schemas import RefractionStaticApplyOptions
 from app.statics.refraction.contracts.result_types import (
@@ -228,6 +234,150 @@ def _weathering_result(
     )
 
 
+def _core_weathering_model(
+    weathering_result: RefractionWeatheringThicknessResult,
+) -> CoreRefractionWeatheringModel:
+    shape = weathering_result.node_id.shape
+    source_shape = weathering_result.source_endpoint_key.shape
+    receiver_shape = weathering_result.receiver_endpoint_key.shape
+    trace_shape = weathering_result.sorted_trace_index.shape
+    node_v1 = np.full(shape, weathering_result.weathering_velocity_m_s, dtype=np.float64)
+    node_v2 = np.full(shape, weathering_result.bedrock_velocity_m_s, dtype=np.float64)
+    source_v1 = np.full(
+        source_shape,
+        weathering_result.weathering_velocity_m_s,
+        dtype=np.float64,
+    )
+    source_v2 = np.full(
+        source_shape,
+        weathering_result.bedrock_velocity_m_s,
+        dtype=np.float64,
+    )
+    receiver_v1 = np.full(
+        receiver_shape,
+        weathering_result.weathering_velocity_m_s,
+        dtype=np.float64,
+    )
+    receiver_v2 = np.full(
+        receiver_shape,
+        weathering_result.bedrock_velocity_m_s,
+        dtype=np.float64,
+    )
+    node_v2_status = np.full(shape, 'ok', dtype='<U32')
+    source_v2_status = np.full(source_shape, 'ok', dtype='<U32')
+    receiver_v2_status = np.full(receiver_shape, 'ok', dtype='<U32')
+    return CoreRefractionWeatheringModel(
+        file_id='',
+        n_traces=int(weathering_result.sorted_trace_index.shape[0]),
+        bedrock_velocity_mode=weathering_result.bedrock_velocity_mode,
+        weathering_velocity_m_s=weathering_result.weathering_velocity_m_s,
+        bedrock_velocity_m_s=weathering_result.bedrock_velocity_m_s,
+        bedrock_slowness_s_per_m=weathering_result.bedrock_slowness_s_per_m,
+        bedrock_velocity_status='ok',
+        v2_m_s=weathering_result.bedrock_velocity_m_s,
+        node_id=weathering_result.node_id,
+        node_x_m=weathering_result.node_x_m,
+        node_y_m=weathering_result.node_y_m,
+        node_surface_elevation_m=weathering_result.node_surface_elevation_m,
+        node_half_intercept_time_s=weathering_result.node_half_intercept_time_s,
+        node_v1_m_s=node_v1,
+        node_v2_m_s=node_v2,
+        node_weathering_thickness_m=weathering_result.node_weathering_thickness_m,
+        node_refractor_elevation_m=weathering_result.node_refractor_elevation_m,
+        node_solution_status=weathering_result.node_solution_status,
+        node_local_v2_status=node_v2_status,
+        node_weathering_status=weathering_result.node_weathering_status,
+        node_pick_count=weathering_result.node_pick_count,
+        node_used_observation_count=weathering_result.node_used_pick_count,
+        node_rejected_observation_count=weathering_result.node_rejected_pick_count,
+        source_endpoint=CoreRefractionWeatheringEndpointComponents(
+            endpoint_key=weathering_result.source_endpoint_key,
+            endpoint_id=weathering_result.source_id,
+            node_id=weathering_result.source_node_id,
+            x_m=weathering_result.source_x_m,
+            y_m=weathering_result.source_y_m,
+            surface_elevation_m=weathering_result.source_surface_elevation_m,
+            half_intercept_time_s=weathering_result.source_half_intercept_time_s,
+            v1_m_s=source_v1,
+            v2_m_s=source_v2,
+            weathering_thickness_m=weathering_result.source_weathering_thickness_m,
+            refractor_elevation_m=weathering_result.source_refractor_elevation_m,
+            solution_status=weathering_result.source_weathering_status,
+            local_v2_status=source_v2_status,
+            weathering_status=weathering_result.source_weathering_status,
+            pick_count=np.zeros(source_shape, dtype=np.int64),
+            used_observation_count=np.zeros(source_shape, dtype=np.int64),
+            rejected_observation_count=np.zeros(source_shape, dtype=np.int64),
+        ),
+        receiver_endpoint=CoreRefractionWeatheringEndpointComponents(
+            endpoint_key=weathering_result.receiver_endpoint_key,
+            endpoint_id=weathering_result.receiver_id,
+            node_id=weathering_result.receiver_node_id,
+            x_m=weathering_result.receiver_x_m,
+            y_m=weathering_result.receiver_y_m,
+            surface_elevation_m=weathering_result.receiver_surface_elevation_m,
+            half_intercept_time_s=weathering_result.receiver_half_intercept_time_s,
+            v1_m_s=receiver_v1,
+            v2_m_s=receiver_v2,
+            weathering_thickness_m=weathering_result.receiver_weathering_thickness_m,
+            refractor_elevation_m=weathering_result.receiver_refractor_elevation_m,
+            solution_status=weathering_result.receiver_weathering_status,
+            local_v2_status=receiver_v2_status,
+            weathering_status=weathering_result.receiver_weathering_status,
+            pick_count=np.zeros(receiver_shape, dtype=np.int64),
+            used_observation_count=np.zeros(receiver_shape, dtype=np.int64),
+            rejected_observation_count=np.zeros(receiver_shape, dtype=np.int64),
+        ),
+        trace_index_sorted=weathering_result.sorted_trace_index,
+        source_endpoint_key_sorted=weathering_result.source_endpoint_key_sorted,
+        receiver_endpoint_key_sorted=weathering_result.receiver_endpoint_key_sorted,
+        source_node_id_sorted=weathering_result.source_node_id_sorted,
+        receiver_node_id_sorted=weathering_result.receiver_node_id_sorted,
+        source_weathering_thickness_m_sorted=(
+            weathering_result.source_weathering_thickness_m_sorted
+        ),
+        receiver_weathering_thickness_m_sorted=(
+            weathering_result.receiver_weathering_thickness_m_sorted
+        ),
+        source_refractor_elevation_m_sorted=(
+            weathering_result.source_refractor_elevation_m_sorted
+        ),
+        receiver_refractor_elevation_m_sorted=(
+            weathering_result.receiver_refractor_elevation_m_sorted
+        ),
+        source_weathering_status_sorted=weathering_result.source_weathering_status_sorted,
+        receiver_weathering_status_sorted=(
+            weathering_result.receiver_weathering_status_sorted
+        ),
+        trace_weathering_thickness_m_sorted=np.full(
+            trace_shape,
+            np.nan,
+            dtype=np.float64,
+        ),
+        trace_weathering_status_sorted=np.full(trace_shape, 'ok', dtype='<U32'),
+        cell_id=np.empty(0, dtype=np.int64),
+        cell_v2_m_s=np.empty(0, dtype=np.float64),
+        cell_velocity_status=np.empty(0, dtype='<U32'),
+        cell_observation_count=np.empty(0, dtype=np.int64),
+        qc=dict(weathering_result.qc),
+    )
+
+
+def _build_replacement(
+    *,
+    weathering_result: RefractionWeatheringThicknessResult | None = None,
+    apply_options: RefractionStaticApplyOptions | None = None,
+    job_dir: Path | None = None,
+):
+    weathering = _weathering_result() if weathering_result is None else weathering_result
+    return build_refraction_weathering_replacement_statics(
+        weathering_result=weathering,
+        core_weathering_model=_core_weathering_model(weathering),
+        apply_options=apply_options,
+        job_dir=job_dir,
+    )
+
+
 def test_public_apis_are_importable() -> None:
     assert callable(compute_weathering_replacement_shift_s)
     assert callable(compute_weathering_replacement_shift_scalar_s)
@@ -296,7 +446,7 @@ def test_math_helper_rejects_invalid_velocity(
 def test_build_computes_node_endpoint_and_trace_shifts_in_sorted_order() -> None:
     weathering = _weathering_result()
 
-    result = build_refraction_weathering_replacement_statics(
+    result = _build_replacement(
         weathering_result=weathering,
         apply_options=_apply_options(),
     )
@@ -374,7 +524,7 @@ def test_statuses_preserve_inactive_invalid_and_inherited_conditions() -> None:
         dtype='<U32',
     )
 
-    result = build_refraction_weathering_replacement_statics(
+    result = _build_replacement(
         weathering_result=_weathering_result(
             node_thickness=thickness,
             node_status=status,
@@ -410,7 +560,7 @@ def test_elevation_only_weathering_statuses_do_not_block_replacement_shift() -> 
         dtype='<U32',
     )
 
-    result = build_refraction_weathering_replacement_statics(
+    result = _build_replacement(
         weathering_result=_weathering_result(node_status=status),
         apply_options=_apply_options(),
     )
@@ -445,7 +595,7 @@ def test_status_priority_is_deterministic_for_components_and_traces() -> None:
         dtype='<U32',
     )
 
-    result = build_refraction_weathering_replacement_statics(
+    result = _build_replacement(
         weathering_result=_weathering_result(
             node_thickness=thickness,
             node_status=status,
@@ -453,14 +603,14 @@ def test_status_priority_is_deterministic_for_components_and_traces() -> None:
         apply_options=_apply_options(max_abs_shift_ms=20.0),
     )
 
-    assert result.node_static_status[0] == 'invalid_weathering_thickness'
+    assert result.node_static_status[0] == 'low_fold'
     assert result.node_static_status[1] == 'clipped_half_intercept_lower'
     assert result.node_static_status[2] == 'clipped_half_intercept_upper'
     assert result.trace_static_status_sorted[3] == 'exceeds_max_abs_shift'
     assert result.trace_static_status_sorted[6] == 'inactive'
 
 
-def test_unknown_endpoint_nodes_raise() -> None:
+def test_unknown_endpoint_node_ids_raise() -> None:
     weathering = _weathering_result()
     bad_source = weathering.source_node_id.copy()
     bad_source[0] = 999
@@ -468,7 +618,7 @@ def test_unknown_endpoint_nodes_raise() -> None:
         RefractionWeatheringReplacementStaticsError,
         match='source_node_id',
     ):
-        build_refraction_weathering_replacement_statics(
+        _build_replacement(
             weathering_result=replace(weathering, source_node_id=bad_source),
         )
 
@@ -478,7 +628,7 @@ def test_unknown_endpoint_nodes_raise() -> None:
         RefractionWeatheringReplacementStaticsError,
         match='receiver_node_id',
     ):
-        build_refraction_weathering_replacement_statics(
+        _build_replacement(
             weathering_result=replace(weathering, receiver_node_id=bad_receiver),
         )
 
@@ -489,21 +639,21 @@ def test_missing_trace_nodes_produce_nan_component_and_invalid_mask() -> None:
         receiver_node_id_sorted=np.asarray([1, 2, 999, 4, 0, 2, 5], dtype=np.int64),
     )
 
-    result = build_refraction_weathering_replacement_statics(
+    result = _build_replacement(
         weathering_result=weathering,
         apply_options=_apply_options(),
     )
 
     assert np.isnan(result.source_weathering_replacement_shift_s_sorted[0])
-    assert result.source_static_status_sorted[0] == 'missing_node'
+    assert result.source_static_status_sorted[0] == 'missing_endpoint'
     assert result.trace_static_valid_mask_sorted[0] == np.False_
     assert np.isnan(result.receiver_weathering_replacement_shift_s_sorted[2])
-    assert result.receiver_static_status_sorted[2] == 'missing_node'
+    assert result.receiver_static_status_sorted[2] == 'missing_endpoint'
     assert result.trace_static_valid_mask_sorted[2] == np.False_
 
 
 def test_max_abs_shift_marks_status_without_clipping() -> None:
-    result = build_refraction_weathering_replacement_statics(
+    result = _build_replacement(
         weathering_result=_weathering_result(),
         apply_options=_apply_options(max_abs_shift_ms=18.0),
     )
@@ -520,7 +670,7 @@ def test_max_abs_shift_marks_status_without_clipping() -> None:
 
 
 def test_max_abs_shift_marks_node_and_endpoint_status_without_clipping() -> None:
-    result = build_refraction_weathering_replacement_statics(
+    result = _build_replacement(
         weathering_result=_weathering_result(),
         apply_options=_apply_options(max_abs_shift_ms=12.0),
     )
@@ -582,7 +732,7 @@ def test_sign_convention_negative_shift_moves_impulse_earlier() -> None:
 def test_qc_and_artifacts_include_velocity_status_and_shift_columns(
     tmp_path: Path,
 ) -> None:
-    result = build_refraction_weathering_replacement_statics(
+    result = _build_replacement(
         weathering_result=_weathering_result(),
         apply_options=_apply_options(),
         job_dir=tmp_path,
@@ -639,7 +789,7 @@ def test_velocity_context_validation_rejects_bad_slowness() -> None:
     )
 
     with pytest.raises(RefractionWeatheringReplacementStaticsError, match='slowness'):
-        build_refraction_weathering_replacement_statics(
+        _build_replacement(
             weathering_result=weathering,
             apply_options=_apply_options(),
         )
@@ -652,14 +802,32 @@ def test_high_level_pipeline_calls_weathering_stage(
     weathering = _weathering_result()
     calls: list[dict[str, Any]] = []
 
-    def _capture_estimate(**kwargs: Any) -> RefractionWeatheringThicknessResult:
+    core_weathering = _core_weathering_model(weathering)
+    core_calls: list[dict[str, Any]] = []
+    actual_core_build = (
+        replacement_module.core_build_refraction_weathering_replacement_statics
+    )
+
+    def _capture_estimate(**kwargs: Any) -> SimpleNamespace:
         calls.append(kwargs)
-        return weathering
+        return SimpleNamespace(
+            app_weathering_result=weathering,
+            core_weathering_model=core_weathering,
+        )
+
+    def _capture_core_build(**kwargs: Any) -> object:
+        core_calls.append(kwargs)
+        return actual_core_build(**kwargs)
 
     monkeypatch.setattr(
         replacement_module,
-        'estimate_weathering_thickness_from_first_breaks',
+        'estimate_weathering_thickness_core_context_from_first_breaks',
         _capture_estimate,
+    )
+    monkeypatch.setattr(
+        replacement_module,
+        'core_build_refraction_weathering_replacement_statics',
+        _capture_core_build,
     )
     req = SimpleNamespace(apply=_apply_options())
     state = object()
@@ -671,5 +839,8 @@ def test_high_level_pipeline_calls_weathering_stage(
     )
 
     assert calls == [{'req': req, 'state': state, 'job_dir': tmp_path}]
+    assert len(core_calls) == 1
+    assert core_calls[0]['weathering_model'] is core_weathering
+    assert core_calls[0]['max_abs_shift_ms'] == pytest.approx(250.0)
     assert result.qc['static_component'] == 'weathering_replacement'
     assert (tmp_path / REFRACTION_WEATHERING_REPLACEMENT_QC_JSON_NAME).is_file()
