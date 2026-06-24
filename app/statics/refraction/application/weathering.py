@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import replace
+from dataclasses import dataclass, replace
 import json
 from pathlib import Path
 from typing import Any
@@ -139,6 +139,12 @@ class RefractionWeatheringThicknessError(ValueError):
     """Raised when weathering-thickness outputs cannot be built."""
 
 
+@dataclass(frozen=True)
+class _WeatheringCoreContext:
+    core_weathering_model: CoreRefractionWeatheringModel
+    app_weathering_result: RefractionWeatheringThicknessResult
+
+
 def estimate_weathering_thickness_from_first_breaks(
     *,
     req: RefractionStaticApplyRequest,
@@ -149,6 +155,26 @@ def estimate_weathering_thickness_from_first_breaks(
     resolved_first_layer: ResolvedRefractionFirstLayer | None = None,
 ) -> RefractionWeatheringThicknessResult:
     """Estimate half-intercepts externally, then build the core weathering model."""
+    return estimate_weathering_thickness_core_context_from_first_breaks(
+        req=req,
+        runtime=runtime,
+        state=state,
+        job_dir=job_dir,
+        input_model=input_model,
+        resolved_first_layer=resolved_first_layer,
+    ).app_weathering_result
+
+
+def estimate_weathering_thickness_core_context_from_first_breaks(
+    *,
+    req: RefractionStaticApplyRequest,
+    runtime: RefractionRuntime | None = None,
+    state: object | None = None,
+    job_dir: Path | None = None,
+    input_model: RefractionStaticInputModel | None = None,
+    resolved_first_layer: ResolvedRefractionFirstLayer | None = None,
+) -> _WeatheringCoreContext:
+    """Estimate half-intercepts and retain the external weathering model."""
     try:
         context = estimate_refraction_half_intercept_core_context_from_first_breaks(
             req=req,
@@ -158,7 +184,7 @@ def estimate_weathering_thickness_from_first_breaks(
             input_model=input_model,
             resolved_first_layer=resolved_first_layer,
         )
-        return _build_refraction_weathering_thickness_from_core_context(
+        return build_refraction_weathering_core_context(
             half_intercept_context=context,
             model=req.model,
             job_dir=job_dir,
@@ -186,12 +212,12 @@ def build_refraction_weathering_thickness_model(
                 raise RefractionWeatheringThicknessError(
                     'half_intercept_context.app_result must match half_intercept_result'
                 )
-            return _build_refraction_weathering_thickness_from_core_context(
+            return build_refraction_weathering_core_context(
                 half_intercept_context=half_intercept_context,
                 model=model,
                 job_dir=job_dir,
                 resolved_first_layer=resolved_first_layer,
-            )
+            ).app_weathering_result
 
         core_input_model = (
             core_input_model_from_app(input_model)
@@ -247,6 +273,22 @@ def _build_refraction_weathering_thickness_from_core_context(
     job_dir: Path | None,
     resolved_first_layer: ResolvedRefractionFirstLayer | None,
 ) -> RefractionWeatheringThicknessResult:
+    return build_refraction_weathering_core_context(
+        half_intercept_context=half_intercept_context,
+        model=model,
+        job_dir=job_dir,
+        resolved_first_layer=resolved_first_layer,
+    ).app_weathering_result
+
+
+def build_refraction_weathering_core_context(
+    *,
+    half_intercept_context: _HalfInterceptCoreContext,
+    model: RefractionStaticModelRequest,
+    job_dir: Path | None = None,
+    resolved_first_layer: ResolvedRefractionFirstLayer | None = None,
+) -> _WeatheringCoreContext:
+    """Build app weathering output and retain the external model for downstream stages."""
     core_model = _model_options_for_weathering_core(
         model,
         resolved_first_layer=resolved_first_layer,
@@ -276,7 +318,10 @@ def _build_refraction_weathering_thickness_from_core_context(
     )
     if job_dir is not None:
         write_refraction_weathering_thickness_artifacts(Path(job_dir), result)
-    return result
+    return _WeatheringCoreContext(
+        core_weathering_model=core_weathering,
+        app_weathering_result=result,
+    )
 
 
 def compute_weathering_thickness_from_half_intercept_time(
@@ -1479,8 +1524,10 @@ __all__ = [
     'RefractionWeatheringThicknessError',
     'RefractionWeatheringThicknessResult',
     'build_refraction_weathering_thickness_model',
+    'build_refraction_weathering_core_context',
     'compute_weathering_thickness_from_half_intercept_time',
     'compute_weathering_thickness_scalar',
+    'estimate_weathering_thickness_core_context_from_first_breaks',
     'estimate_weathering_thickness_from_first_breaks',
     'write_refraction_weathering_thickness_artifacts',
 ]

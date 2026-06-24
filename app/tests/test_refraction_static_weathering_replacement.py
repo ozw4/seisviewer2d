@@ -453,34 +453,32 @@ def test_status_priority_is_deterministic_for_components_and_traces() -> None:
         apply_options=_apply_options(max_abs_shift_ms=20.0),
     )
 
-    assert result.node_static_status[0] == 'invalid_weathering_thickness'
+    assert result.node_static_status[0] == 'low_fold'
     assert result.node_static_status[1] == 'clipped_half_intercept_lower'
     assert result.node_static_status[2] == 'clipped_half_intercept_upper'
     assert result.trace_static_status_sorted[3] == 'exceeds_max_abs_shift'
     assert result.trace_static_status_sorted[6] == 'inactive'
 
 
-def test_unknown_endpoint_nodes_raise() -> None:
+def test_endpoint_node_ids_are_mapped_by_external_endpoint_payload() -> None:
     weathering = _weathering_result()
     bad_source = weathering.source_node_id.copy()
     bad_source[0] = 999
-    with pytest.raises(
-        RefractionWeatheringReplacementStaticsError,
-        match='source_node_id',
-    ):
-        build_refraction_weathering_replacement_statics(
-            weathering_result=replace(weathering, source_node_id=bad_source),
-        )
+    source_result = build_refraction_weathering_replacement_statics(
+        weathering_result=replace(weathering, source_node_id=bad_source),
+    )
+    assert source_result.source_node_id[0] == 999
+    assert source_result.source_static_status[0] == 'ok'
+    assert np.isfinite(source_result.source_weathering_replacement_shift_s[0])
 
     bad_receiver = weathering.receiver_node_id.copy()
     bad_receiver[0] = 999
-    with pytest.raises(
-        RefractionWeatheringReplacementStaticsError,
-        match='receiver_node_id',
-    ):
-        build_refraction_weathering_replacement_statics(
-            weathering_result=replace(weathering, receiver_node_id=bad_receiver),
-        )
+    receiver_result = build_refraction_weathering_replacement_statics(
+        weathering_result=replace(weathering, receiver_node_id=bad_receiver),
+    )
+    assert receiver_result.receiver_node_id[0] == 999
+    assert receiver_result.receiver_static_status[0] == 'ok'
+    assert np.isfinite(receiver_result.receiver_weathering_replacement_shift_s[0])
 
 
 def test_missing_trace_nodes_produce_nan_component_and_invalid_mask() -> None:
@@ -495,10 +493,10 @@ def test_missing_trace_nodes_produce_nan_component_and_invalid_mask() -> None:
     )
 
     assert np.isnan(result.source_weathering_replacement_shift_s_sorted[0])
-    assert result.source_static_status_sorted[0] == 'missing_node'
+    assert result.source_static_status_sorted[0] == 'missing_endpoint'
     assert result.trace_static_valid_mask_sorted[0] == np.False_
     assert np.isnan(result.receiver_weathering_replacement_shift_s_sorted[2])
-    assert result.receiver_static_status_sorted[2] == 'missing_node'
+    assert result.receiver_static_status_sorted[2] == 'missing_endpoint'
     assert result.trace_static_valid_mask_sorted[2] == np.False_
 
 
@@ -652,14 +650,34 @@ def test_high_level_pipeline_calls_weathering_stage(
     weathering = _weathering_result()
     calls: list[dict[str, Any]] = []
 
-    def _capture_estimate(**kwargs: Any) -> RefractionWeatheringThicknessResult:
+    core_weathering = replacement_module._core_weathering_model_from_app_result(
+        weathering
+    )
+    core_calls: list[dict[str, Any]] = []
+    actual_core_build = (
+        replacement_module.core_build_refraction_weathering_replacement_statics
+    )
+
+    def _capture_estimate(**kwargs: Any) -> SimpleNamespace:
         calls.append(kwargs)
-        return weathering
+        return SimpleNamespace(
+            app_weathering_result=weathering,
+            core_weathering_model=core_weathering,
+        )
+
+    def _capture_core_build(**kwargs: Any) -> object:
+        core_calls.append(kwargs)
+        return actual_core_build(**kwargs)
 
     monkeypatch.setattr(
         replacement_module,
-        'estimate_weathering_thickness_from_first_breaks',
+        'estimate_weathering_thickness_core_context_from_first_breaks',
         _capture_estimate,
+    )
+    monkeypatch.setattr(
+        replacement_module,
+        'core_build_refraction_weathering_replacement_statics',
+        _capture_core_build,
     )
     req = SimpleNamespace(apply=_apply_options())
     state = object()
@@ -671,5 +689,8 @@ def test_high_level_pipeline_calls_weathering_stage(
     )
 
     assert calls == [{'req': req, 'state': state, 'job_dir': tmp_path}]
+    assert len(core_calls) == 1
+    assert core_calls[0]['weathering_model'] is core_weathering
+    assert core_calls[0]['max_abs_shift_ms'] == pytest.approx(250.0)
     assert result.qc['static_component'] == 'weathering_replacement'
     assert (tmp_path / REFRACTION_WEATHERING_REPLACEMENT_QC_JSON_NAME).is_file()
