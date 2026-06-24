@@ -255,6 +255,7 @@ def build_refraction_weathering_thickness_model(
         cell_id_probe = _core_weathering_cell_id_probe(
             input_model=core_input_model,
             half_intercept_result=core_result,
+            app_half_intercept_result=half_intercept_result,
             model=core_model,
         )
         core_weathering = _with_side_specific_endpoint_weathering(
@@ -319,7 +320,14 @@ def build_refraction_weathering_core_context(
     cell_id_probe = _core_weathering_cell_id_probe(
         input_model=half_intercept_context.core_input_model,
         half_intercept_result=half_intercept_context.core_result,
+        app_half_intercept_result=half_intercept_context.app_result,
         model=core_model,
+    )
+    core_weathering = _with_side_specific_endpoint_weathering(
+        core_weathering=core_weathering,
+        half_intercept_result=half_intercept_context.app_result,
+        core_result=half_intercept_context.core_result,
+        core_model=core_model,
     )
     result = _app_weathering_result_from_core(
         core_weathering=core_weathering,
@@ -439,6 +447,7 @@ def _core_weathering_cell_id_probe(
     *,
     input_model: CoreRefractionStaticInputModel,
     half_intercept_result: CoreRefractionHalfInterceptResult,
+    app_half_intercept_result: RefractionHalfInterceptTimeResult,
     model: object,
 ) -> CoreRefractionWeatheringModel | None:
     if half_intercept_result.bedrock_velocity_mode != 'solve_cell':
@@ -461,17 +470,21 @@ def _core_weathering_cell_id_probe(
         ),
         cell_v2_m_s=probe_v2,
     )
-    return core_build_refraction_weathering_model_from_half_intercept_result(
+    probe_weathering = core_build_refraction_weathering_model_from_half_intercept_result(
         input_model=input_model,
         half_intercept_result=probe_result,
         model=model,
+    )
+    return _with_side_specific_endpoint_weathering(
+        core_weathering=probe_weathering,
+        half_intercept_result=app_half_intercept_result,
+        core_result=probe_result,
+        core_model=model,
     )
 
 
 def _core_input_model_from_app_half_intercept_result(
     result: RefractionHalfInterceptTimeResult,
-    *,
-    endpoint_geometry_side: str | None = None,
 ) -> CoreRefractionStaticInputModel:
     n_traces = int(np.asarray(result.sorted_trace_index).shape[0])
     source_x_sorted = _node_values_sorted(
@@ -515,10 +528,7 @@ def _core_input_model_from_app_half_intercept_result(
         distance_m_sorted[row_sorted_position] = row_distance
     elif row_distance.shape == (n_traces,):
         distance_m_sorted[:] = row_distance
-    endpoint_table = _endpoint_table_from_app_half_intercept_result(
-        result,
-        endpoint_geometry_side=endpoint_geometry_side,
-    )
+    endpoint_table = _endpoint_table_from_app_half_intercept_result(result)
     return CoreRefractionStaticInputModel(
         file_id=str(result.qc.get('file_id', '')),
         n_traces=n_traces,
@@ -575,26 +585,49 @@ def _with_side_specific_endpoint_weathering(
 ) -> CoreRefractionWeatheringModel:
     if not _has_shared_endpoint_geometry_conflict(half_intercept_result):
         return core_weathering
-    source_core = core_build_refraction_weathering_model_from_half_intercept_result(
-        input_model=_core_input_model_from_app_half_intercept_result(
-            half_intercept_result,
-            endpoint_geometry_side='source',
-        ),
-        half_intercept_result=core_result,
+    source_core = _side_specific_core_weathering(
+        half_intercept_result=half_intercept_result,
+        core_result=core_result,
         model=core_model,
+        side='source',
     )
-    receiver_core = core_build_refraction_weathering_model_from_half_intercept_result(
-        input_model=_core_input_model_from_app_half_intercept_result(
-            half_intercept_result,
-            endpoint_geometry_side='receiver',
-        ),
-        half_intercept_result=core_result,
+    receiver_core = _side_specific_core_weathering(
+        half_intercept_result=half_intercept_result,
+        core_result=core_result,
         model=core_model,
+        side='receiver',
     )
+    trace_thickness = np.ascontiguousarray(
+        source_core.source_weathering_thickness_m_sorted
+        + receiver_core.receiver_weathering_thickness_m_sorted,
+        dtype=np.float64,
+    )
+    trace_status = _trace_weathering_status_from_endpoint_status(
+        source_status=source_core.source_weathering_status_sorted,
+        receiver_status=receiver_core.receiver_weathering_status_sorted,
+        source_thickness=source_core.source_weathering_thickness_m_sorted,
+        receiver_thickness=receiver_core.receiver_weathering_thickness_m_sorted,
+    )
+    qc = dict(getattr(core_weathering, 'qc', {}))
+    qc['source_weathering_status_counts'] = _status_counts(
+        np.asarray(source_core.source_endpoint.weathering_status)
+    )
+    qc['receiver_weathering_status_counts'] = _status_counts(
+        np.asarray(receiver_core.receiver_endpoint.weathering_status)
+    )
+    qc['trace_weathering_status_counts'] = _status_counts(trace_status)
     return replace(
         core_weathering,
-        source_endpoint=source_core.source_endpoint,
-        receiver_endpoint=receiver_core.receiver_endpoint,
+        source_endpoint=_endpoint_components_with_app_node_id(
+            source_core.source_endpoint,
+            half_intercept_result=half_intercept_result,
+            side='source',
+        ),
+        receiver_endpoint=_endpoint_components_with_app_node_id(
+            receiver_core.receiver_endpoint,
+            half_intercept_result=half_intercept_result,
+            side='receiver',
+        ),
         source_weathering_thickness_m_sorted=(
             source_core.source_weathering_thickness_m_sorted
         ),
@@ -611,30 +644,183 @@ def _with_side_specific_endpoint_weathering(
         receiver_weathering_status_sorted=(
             receiver_core.receiver_weathering_status_sorted
         ),
+        trace_weathering_thickness_m_sorted=trace_thickness,
+        trace_weathering_status_sorted=trace_status,
+        qc=qc,
     )
+
+
+def _side_specific_core_weathering(
+    *,
+    half_intercept_result: RefractionHalfInterceptTimeResult,
+    core_result: CoreRefractionHalfInterceptResult,
+    model: object,
+    side: str,
+) -> CoreRefractionWeatheringModel:
+    endpoint_node_id = _i64(getattr(half_intercept_result, f'{side}_node_id'))
+    local_node_id = np.arange(int(endpoint_node_id.shape[0]), dtype=np.int64)
+    side_core_result = _core_result_with_side_endpoint_nodes(
+        core_result=core_result,
+        local_node_id=local_node_id,
+        side=side,
+    )
+    side_input_model = replace(
+        _core_input_model_from_app_half_intercept_result(half_intercept_result),
+        endpoint_table=_side_endpoint_table_from_app_half_intercept_result(
+            half_intercept_result,
+            local_node_id=local_node_id,
+            side=side,
+        ),
+    )
+    return core_build_refraction_weathering_model_from_half_intercept_result(
+        input_model=side_input_model,
+        half_intercept_result=side_core_result,
+        model=model,
+    )
+
+
+def _core_result_with_side_endpoint_nodes(
+    *,
+    core_result: CoreRefractionHalfInterceptResult,
+    local_node_id: np.ndarray,
+    side: str,
+) -> CoreRefractionHalfInterceptResult:
+    endpoint = getattr(core_result, f'{side}_endpoint')
+    if np.asarray(endpoint.node_id).shape != local_node_id.shape:
+        raise RefractionWeatheringThicknessError(
+            f'{side} endpoint geometry shape mismatch'
+        )
+    side_endpoint = replace(
+        endpoint,
+        node_id=np.ascontiguousarray(local_node_id, dtype=np.int64),
+    )
+    return replace(
+        core_result,
+        node_id=np.ascontiguousarray(local_node_id, dtype=np.int64),
+        node_half_intercept_time_s=np.ascontiguousarray(
+            endpoint.half_intercept_time_s,
+            dtype=np.float64,
+        ),
+        node_solution_status=np.ascontiguousarray(endpoint.solution_status),
+        node_pick_count=np.ascontiguousarray(endpoint.pick_count, dtype=np.int64),
+        node_used_observation_count=np.ascontiguousarray(
+            endpoint.used_observation_count,
+            dtype=np.int64,
+        ),
+        node_rejected_observation_count=np.ascontiguousarray(
+            endpoint.rejected_observation_count,
+            dtype=np.int64,
+        ),
+        **{f'{side}_endpoint': side_endpoint},
+    )
+
+
+def _side_endpoint_table_from_app_half_intercept_result(
+    result: RefractionHalfInterceptTimeResult,
+    *,
+    local_node_id: np.ndarray,
+    side: str,
+) -> CoreRefractionEndpointTable:
+    endpoint_node_id = _i64(getattr(result, f'{side}_node_id'))
+    endpoint_x = _f64(getattr(result, f'{side}_x_m'))
+    endpoint_y = _f64(getattr(result, f'{side}_y_m'))
+    endpoint_elevation = _f64(getattr(result, f'{side}_elevation_m'))
+    endpoint_pick_count = _i64(getattr(result, f'{side}_pick_count'))
+    if not (
+        local_node_id.shape
+        == endpoint_node_id.shape
+        == endpoint_x.shape
+        == endpoint_y.shape
+        == endpoint_elevation.shape
+        == endpoint_pick_count.shape
+    ):
+        raise RefractionWeatheringThicknessError(
+            f'{side} endpoint geometry shape mismatch'
+        )
+    return CoreRefractionEndpointTable(
+        node_id=np.ascontiguousarray(local_node_id, dtype=np.int64),
+        endpoint_id=np.ascontiguousarray(local_node_id, dtype=np.int64),
+        x_m=np.ascontiguousarray(endpoint_x, dtype=np.float64),
+        y_m=np.ascontiguousarray(endpoint_y, dtype=np.float64),
+        elevation_m=np.ascontiguousarray(endpoint_elevation, dtype=np.float64),
+        kind=np.full(local_node_id.shape, side, dtype='<U16'),
+        pick_count=np.ascontiguousarray(endpoint_pick_count, dtype=np.int64),
+    )
+
+
+def _endpoint_components_with_app_node_id(
+    endpoint: object,
+    *,
+    half_intercept_result: RefractionHalfInterceptTimeResult,
+    side: str,
+) -> object:
+    node_id = _i64(getattr(half_intercept_result, f'{side}_node_id'))
+    if np.asarray(getattr(endpoint, 'node_id')).shape != node_id.shape:
+        raise RefractionWeatheringThicknessError(
+            f'{side} endpoint geometry shape mismatch'
+        )
+    return replace(endpoint, node_id=node_id)
+
+
+def _trace_weathering_status_from_endpoint_status(
+    *,
+    source_status: np.ndarray,
+    receiver_status: np.ndarray,
+    source_thickness: np.ndarray,
+    receiver_thickness: np.ndarray,
+) -> np.ndarray:
+    source = _status(source_status)
+    receiver = _status(receiver_status)
+    source_values = _f64(source_thickness)
+    receiver_values = _f64(receiver_thickness)
+    if not (
+        source.shape
+        == receiver.shape
+        == source_values.shape
+        == receiver_values.shape
+    ):
+        raise RefractionWeatheringThicknessError(
+            'source/receiver trace weathering shape mismatch'
+        )
+    status = np.full(source.shape, 'ok', dtype=_STATUS_DTYPE)
+    for index, (src_status, rec_status) in enumerate(
+        zip(source.tolist(), receiver.tolist(), strict=True)
+    ):
+        src = str(src_status)
+        rec = str(rec_status)
+        if src == rec:
+            status[index] = src
+        elif src == 'ok':
+            status[index] = rec
+        elif rec == 'ok':
+            status[index] = src
+        else:
+            status[index] = 'mixed'
+    invalid_value = ~(np.isfinite(source_values) & np.isfinite(receiver_values))
+    status[invalid_value & (status == 'ok')] = 'invalid_weathering_thickness'
+    return np.ascontiguousarray(status, dtype=_STATUS_DTYPE)
 
 
 def _has_shared_endpoint_geometry_conflict(
     result: RefractionHalfInterceptTimeResult,
 ) -> bool:
-    source_by_node = _endpoint_geometry_by_node(result, 'source')
-    receiver_by_node = _endpoint_geometry_by_node(result, 'receiver')
-    for node, source_geometry in source_by_node.items():
-        receiver_geometry = receiver_by_node.get(node)
-        if receiver_geometry is None:
+    source_by_node = _endpoint_geometries_by_node(result, 'source')
+    receiver_by_node = _endpoint_geometries_by_node(result, 'receiver')
+    for node, source_geometries in source_by_node.items():
+        receiver_geometries = receiver_by_node.get(node)
+        if receiver_geometries is None:
             continue
-        if not all(
-            _same_geometry_value(left, right)
-            for left, right in zip(source_geometry, receiver_geometry, strict=True)
-        ):
+        geometries = [*source_geometries, *receiver_geometries]
+        first = geometries[0]
+        if any(not _same_geometry(first, geometry) for geometry in geometries[1:]):
             return True
     return False
 
 
-def _endpoint_geometry_by_node(
+def _endpoint_geometries_by_node(
     result: RefractionHalfInterceptTimeResult,
     side: str,
-) -> dict[int, tuple[float, float, float]]:
+) -> dict[int, list[tuple[float, float, float]]]:
     node_id = _i64(getattr(result, f'{side}_node_id'))
     x_m = _f64(getattr(result, f'{side}_x_m'))
     y_m = _f64(getattr(result, f'{side}_y_m'))
@@ -643,16 +829,28 @@ def _endpoint_geometry_by_node(
         raise RefractionWeatheringThicknessError(
             f'{side} endpoint geometry shape mismatch'
         )
-    return {
-        int(node): (float(x), float(y), float(elevation))
-        for node, x, y, elevation in zip(
-            node_id.tolist(),
-            x_m.tolist(),
-            y_m.tolist(),
-            elevation_m.tolist(),
-            strict=True,
+    by_node: dict[int, list[tuple[float, float, float]]] = {}
+    for node, x, y, elevation in zip(
+        node_id.tolist(),
+        x_m.tolist(),
+        y_m.tolist(),
+        elevation_m.tolist(),
+        strict=True,
+    ):
+        by_node.setdefault(int(node), []).append(
+            (float(x), float(y), float(elevation))
         )
-    }
+    return by_node
+
+
+def _same_geometry(
+    left: tuple[float, float, float],
+    right: tuple[float, float, float],
+) -> bool:
+    return all(
+        _same_geometry_value(left_value, right_value)
+        for left_value, right_value in zip(left, right, strict=True)
+    )
 
 
 def _same_geometry_value(left: float, right: float) -> bool:
@@ -663,55 +861,12 @@ def _same_geometry_value(left: float, right: float) -> bool:
 
 def _endpoint_table_from_app_half_intercept_result(
     result: RefractionHalfInterceptTimeResult,
-    *,
-    endpoint_geometry_side: str | None = None,
 ) -> CoreRefractionEndpointTable:
     node_id = _i64(result.node_id)
     x_m = _f64(result.node_x_m).copy()
     y_m = _f64(result.node_y_m).copy()
     elevation_m = _f64(result.node_elevation_m).copy()
     pick_count = _i64(result.node_pick_count).copy()
-    if endpoint_geometry_side is None:
-        return CoreRefractionEndpointTable(
-            node_id=node_id,
-            endpoint_id=node_id.copy(),
-            x_m=np.ascontiguousarray(x_m, dtype=np.float64),
-            y_m=np.ascontiguousarray(y_m, dtype=np.float64),
-            elevation_m=np.ascontiguousarray(elevation_m, dtype=np.float64),
-            kind=np.ascontiguousarray(result.node_kind),
-            pick_count=np.ascontiguousarray(pick_count, dtype=np.int64),
-        )
-    if endpoint_geometry_side not in {'source', 'receiver'}:
-        raise RefractionWeatheringThicknessError(
-            'endpoint_geometry_side must be source, receiver, or None'
-        )
-    node_pos = {int(node): index for index, node in enumerate(node_id.tolist())}
-    endpoint_node_id = _i64(getattr(result, f'{endpoint_geometry_side}_node_id'))
-    endpoint_x = _f64(getattr(result, f'{endpoint_geometry_side}_x_m'))
-    endpoint_y = _f64(getattr(result, f'{endpoint_geometry_side}_y_m'))
-    endpoint_elevation = _f64(getattr(result, f'{endpoint_geometry_side}_elevation_m'))
-    endpoint_pick_count = _i64(getattr(result, f'{endpoint_geometry_side}_pick_count'))
-    if not (
-        endpoint_node_id.shape
-        == endpoint_x.shape
-        == endpoint_y.shape
-        == endpoint_elevation.shape
-        == endpoint_pick_count.shape
-    ):
-        raise RefractionWeatheringThicknessError(
-            f'{endpoint_geometry_side} endpoint geometry shape mismatch'
-        )
-    for index, raw_node in enumerate(endpoint_node_id.tolist()):
-        position = node_pos.get(int(raw_node))
-        if position is None:
-            continue
-        x_m[position] = float(endpoint_x[index])
-        y_m[position] = float(endpoint_y[index])
-        elevation_m[position] = float(endpoint_elevation[index])
-        pick_count[position] = max(
-            int(pick_count[position]),
-            int(endpoint_pick_count[index]),
-        )
     return CoreRefractionEndpointTable(
         node_id=node_id,
         endpoint_id=node_id.copy(),
@@ -1214,13 +1369,19 @@ def _validate_app_half_intercept_for_core_conversion(
             'bedrock_velocity_m_s does not match bedrock_slowness_s_per_m'
         )
     node_id = _i64(result.node_id)
-    _validate_known_nodes(_i64(result.source_node_id), node_id, name='source_node_id')
-    _validate_known_nodes(
-        _i64(result.receiver_node_id),
-        node_id,
-        name='receiver_node_id',
-    )
     valid = np.asarray(result.valid_observation_mask_sorted, dtype=bool)
+    _validate_endpoint_nodes_used_by_valid_observations(
+        result,
+        node_id,
+        side='source',
+        valid_observation_mask_sorted=valid,
+    )
+    _validate_endpoint_nodes_used_by_valid_observations(
+        result,
+        node_id,
+        side='receiver',
+        valid_observation_mask_sorted=valid,
+    )
     _validate_known_nodes(
         _i64(result.source_node_id_sorted)[valid],
         node_id,
@@ -1230,6 +1391,47 @@ def _validate_app_half_intercept_for_core_conversion(
         _i64(result.receiver_node_id_sorted)[valid],
         node_id,
         name='receiver_node_id_sorted',
+    )
+
+
+def _validate_endpoint_nodes_used_by_valid_observations(
+    result: RefractionHalfInterceptTimeResult,
+    node_id: np.ndarray,
+    *,
+    side: str,
+    valid_observation_mask_sorted: np.ndarray,
+) -> None:
+    endpoint_key = np.asarray(getattr(result, f'{side}_endpoint_key'), dtype=object)
+    endpoint_node_id = _i64(getattr(result, f'{side}_node_id'))
+    sorted_key = np.asarray(
+        getattr(result, f'{side}_endpoint_key_sorted'),
+        dtype=object,
+    )
+    if endpoint_key.shape != endpoint_node_id.shape:
+        raise RefractionWeatheringThicknessError(
+            f'{side}_endpoint_key and {side}_node_id shape mismatch'
+        )
+    if sorted_key.shape != valid_observation_mask_sorted.shape:
+        raise RefractionWeatheringThicknessError(
+            f'{side}_endpoint_key_sorted shape mismatch'
+        )
+    valid_keys = {
+        str(key)
+        for key in sorted_key[valid_observation_mask_sorted].reshape(-1).tolist()
+    }
+    referenced_nodes = [
+        int(node)
+        for key, node in zip(
+            endpoint_key.reshape(-1).tolist(),
+            endpoint_node_id.reshape(-1).tolist(),
+            strict=True,
+        )
+        if str(key) in valid_keys
+    ]
+    _validate_known_nodes(
+        np.asarray(referenced_nodes, dtype=np.int64),
+        node_id,
+        name=f'{side}_node_id',
     )
 
 

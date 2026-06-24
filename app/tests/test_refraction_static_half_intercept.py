@@ -11,9 +11,6 @@ import numpy as np
 import pytest
 
 from app.api.schemas import RefractionStaticModelRequest, RefractionStaticSolverRequest
-from app.statics.refraction.application.design_matrix import (
-    build_refraction_static_design_matrix,
-)
 from app.statics.refraction.application.bedrock import (
     estimate_global_bedrock_slowness_from_input_model,
 )
@@ -25,7 +22,6 @@ from app.statics.refraction.application.half_intercept import (
     REFRACTION_HALF_INTERCEPT_TRACE_PREVIEW_CSV_NAME,
     RefractionHalfInterceptTimeError,
     _app_half_intercept_result_from_core,
-    build_refraction_half_intercept_time_model,
     build_refraction_half_intercept_time_model_from_bedrock_result,
     estimate_refraction_half_intercept_times_from_first_breaks,
 )
@@ -33,7 +29,6 @@ from app.statics.refraction.contracts.result_types import (
     RefractionEndpointTable,
     RefractionStaticInputModel,
 )
-from app.statics.refraction.application.solver import solve_refraction_static_bounded_ls
 
 NODE_ID = np.asarray([0, 1, 2, 3, 4, 5], dtype=np.int64)
 ACTIVE_NODE_ID = NODE_ID[:-1]
@@ -131,6 +126,7 @@ def _endpoint_table() -> RefractionEndpointTable:
 
 def _input_model(
     *,
+    sorted_trace_index: np.ndarray | None = None,
     pick_time_s_sorted: np.ndarray | None = None,
     valid_observation_mask_sorted: np.ndarray | None = None,
     source_node_id_sorted: np.ndarray | None = None,
@@ -162,7 +158,10 @@ def _input_model(
         valid = np.concatenate((np.ones(n_traces - 1, dtype=bool), [False]))
     else:
         valid = np.asarray(valid_observation_mask_sorted, dtype=bool)
-    trace_index = np.arange(n_traces, dtype=np.int64)
+    if sorted_trace_index is None:
+        trace_index = np.arange(n_traces, dtype=np.int64)
+    else:
+        trace_index = np.asarray(sorted_trace_index, dtype=np.int64)
     node_x = NODE_ID.astype(np.float64) * 100.0
     source_x = node_x[source]
     receiver_x = node_x[receiver]
@@ -215,25 +214,20 @@ def _build_result(
     model = _model()
     solver = _solver() if solver_request is None else solver_request
     inputs = _input_model() if input_model is None else input_model
-    design = build_refraction_static_design_matrix(input_model=inputs, model=model)
-    solved = solve_refraction_static_bounded_ls(
-        design_matrix=design,
+    bedrock = estimate_global_bedrock_slowness_from_input_model(
+        input_model=inputs,
         model=model,
         solver=solver,
+        include_debug_objects=True,
     )
-    result = build_refraction_half_intercept_time_model(
-        input_model=inputs,
-        design_matrix=design,
-        solver_result=solved,
-        weathering_velocity_m_s=model.weathering_velocity_m_s,
-        min_picks_per_node=solver.min_picks_per_node,
+    result = build_refraction_half_intercept_time_model_from_bedrock_result(
+        bedrock_result=bedrock,
     )
-    return inputs, design, solved, result
+    return inputs, bedrock.design_matrix, bedrock.solver_result, result
 
 
 def test_public_apis_are_importable() -> None:
     assert callable(estimate_refraction_half_intercept_times_from_first_breaks)
-    assert callable(build_refraction_half_intercept_time_model)
     assert callable(build_refraction_half_intercept_time_model_from_bedrock_result)
 
 
@@ -366,6 +360,98 @@ def test_external_core_rows_map_original_trace_ids_to_sorted_positions() -> None
     assert receiver_rms['r2'] == pytest.approx(0.001)
 
 
+def test_external_core_bedrock_half_intercept_preserves_nonidentity_permutation_trace_order() -> None:
+    sorted_trace_index = np.asarray([2, 0, 1, *range(3, 16)], dtype=np.int64)
+    valid_sorted_original = sorted_trace_index[:-1]
+    inputs = _input_model(
+        sorted_trace_index=sorted_trace_index,
+        pick_time_s_sorted=_pick_times()[valid_sorted_original],
+        source_node_id_sorted=ROW_SOURCE_NODE_ID[valid_sorted_original],
+        receiver_node_id_sorted=ROW_RECEIVER_NODE_ID[valid_sorted_original],
+        distance_m_sorted=ROW_DISTANCE_M[valid_sorted_original],
+    )
+    bedrock = estimate_global_bedrock_slowness_from_input_model(
+        input_model=inputs,
+        model=_model(),
+        solver=_solver(),
+        include_debug_objects=True,
+    )
+
+    result = build_refraction_half_intercept_time_model_from_bedrock_result(
+        bedrock_result=bedrock
+    )
+
+    np.testing.assert_array_equal(result.sorted_trace_index[:3], [2, 0, 1])
+    np.testing.assert_array_equal(result.row_trace_index_sorted[:3], [2, 0, 1])
+    np.testing.assert_array_equal(
+        result.source_endpoint_key_sorted[:3],
+        ['source:0', 'source:0', 'source:0'],
+    )
+    np.testing.assert_array_equal(
+        result.receiver_endpoint_key_sorted[:3],
+        ['receiver:3', 'receiver:1', 'receiver:2'],
+    )
+
+    original_to_sorted = np.empty(result.sorted_trace_index.shape[0], dtype=np.int64)
+    original_to_sorted[result.sorted_trace_index] = np.arange(
+        result.sorted_trace_index.shape[0],
+        dtype=np.int64,
+    )
+    row_sorted_position = original_to_sorted[result.row_trace_index_sorted]
+    np.testing.assert_array_equal(row_sorted_position[:3], [0, 1, 2])
+    np.testing.assert_array_equal(
+        result.used_row_mask,
+        result.used_observation_mask_sorted[row_sorted_position],
+    )
+    np.testing.assert_array_equal(result.rejected_by_robust_mask, False)
+    np.testing.assert_array_equal(
+        result.row_source_node_id,
+        result.source_node_id_sorted[row_sorted_position],
+    )
+    np.testing.assert_array_equal(
+        result.row_receiver_node_id,
+        result.receiver_node_id_sorted[row_sorted_position],
+    )
+    np.testing.assert_allclose(
+        result.modeled_pick_time_s,
+        result.estimated_first_break_time_s_sorted[row_sorted_position],
+    )
+    np.testing.assert_allclose(
+        result.residual_time_s,
+        result.first_break_residual_s_sorted[row_sorted_position],
+    )
+    assert result.qc['n_used_observations'] == int(np.count_nonzero(result.used_row_mask))
+    assert result.qc['n_rejected_by_robust'] == 0
+    assert dict(
+        zip(
+            result.source_endpoint_key.tolist(),
+            result.source_pick_count.tolist(),
+            strict=True,
+        )
+    ) == {
+        'source:0': 5,
+        'source:1': 4,
+        'source:2': 3,
+        'source:3': 2,
+        'source:4': 1,
+        'source:5': 0,
+    }
+    assert dict(
+        zip(
+            result.receiver_endpoint_key.tolist(),
+            result.receiver_pick_count.tolist(),
+            strict=True,
+        )
+    ) == {
+        'receiver:3': 4,
+        'receiver:1': 2,
+        'receiver:2': 3,
+        'receiver:4': 5,
+        'receiver:0': 1,
+        'receiver:5': 0,
+    }
+
+
 def test_build_from_bedrock_result_uses_debug_objects() -> None:
     inputs = _input_model()
     bedrock = estimate_global_bedrock_slowness_from_input_model(
@@ -390,7 +476,7 @@ def test_build_from_bedrock_result_uses_debug_objects() -> None:
     )
 
 
-def test_build_from_bedrock_result_accepts_app_debug_contract_without_core() -> None:
+def test_build_from_bedrock_result_rejects_coreless_bedrock_result() -> None:
     inputs = _input_model()
     bedrock = estimate_global_bedrock_slowness_from_input_model(
         input_model=inputs,
@@ -399,19 +485,13 @@ def test_build_from_bedrock_result_accepts_app_debug_contract_without_core() -> 
         include_debug_objects=True,
     )
 
-    result = build_refraction_half_intercept_time_model_from_bedrock_result(
-        bedrock_result=replace(bedrock, core_result=None)
-    )
-
-    np.testing.assert_allclose(
-        result.node_half_intercept_time_s[:5],
-        TRUE_HALF_INTERCEPT_S,
-        atol=1.0e-9,
-    )
-    assert result.bedrock_velocity_m_s == pytest.approx(
-        TRUE_BEDROCK_VELOCITY_M_S,
-        rel=1.0e-7,
-    )
+    with pytest.raises(
+        RefractionHalfInterceptTimeError,
+        match='bedrock_result.core_result is required',
+    ):
+        build_refraction_half_intercept_time_model_from_bedrock_result(
+            bedrock_result=replace(bedrock, core_result=None)
+        )
 
 
 def test_node_endpoint_and_trace_tables_map_half_intercepts() -> None:
@@ -515,203 +595,18 @@ def test_endpoint_keys_preserve_long_distinct_strings_without_truncation() -> No
     assert result.receiver_endpoint_key.dtype == object
 
 
-def test_node_statuses_report_bounds_and_low_fold() -> None:
-    inputs, design, solved, _result = _build_result()
-    active_half = solved.active_node_half_intercept_time_s.copy()
-    active_half[0] = 0.0
-    active_half[1] = 0.012
-    lower = solved.lower_bounds.copy()
-    upper = solved.upper_bounds.copy()
-    lower[0] = 0.0
-    upper[1] = 0.012
-
-    clipped = build_refraction_half_intercept_time_model(
-        input_model=inputs,
-        design_matrix=design,
-        solver_result=replace(
-            solved,
-            active_node_half_intercept_time_s=active_half,
-            lower_bounds=lower,
-            upper_bounds=upper,
-        ),
-        weathering_velocity_m_s=WEATHERING_VELOCITY_M_S,
-        min_picks_per_node=1,
-    )
-    assert clipped.node_solution_status[0] == 'clipped_lower'
-    assert clipped.node_solution_status[1] == 'clipped_upper'
-
-    low_fold = build_refraction_half_intercept_time_model(
-        input_model=inputs,
-        design_matrix=design,
-        solver_result=solved,
-        weathering_velocity_m_s=WEATHERING_VELOCITY_M_S,
-        min_picks_per_node=100,
-    )
-    assert 'low_fold' in low_fold.node_solution_status.tolist()
-    assert low_fold.qc['low_fold_node_count'] == 5
-
-
-def test_residual_aggregation_uses_used_rows_without_same_node_double_count() -> None:
-    inputs, design, solved, _result = _build_result()
-    residual = np.arange(1, solved.residual_time_s.shape[0] + 1, dtype=np.float64)
-    residual *= 0.001
-    used = np.ones_like(solved.used_row_mask, dtype=bool)
-    rejected = np.zeros_like(solved.rejected_by_robust_mask, dtype=bool)
-    used[0] = False
-    rejected[0] = True
-
-    result = build_refraction_half_intercept_time_model(
-        input_model=inputs,
-        design_matrix=design,
-        solver_result=replace(
-            solved,
-            residual_time_s=residual,
-            used_row_mask=used,
-            rejected_by_robust_mask=rejected,
-        ),
-        weathering_velocity_m_s=WEATHERING_VELOCITY_M_S,
-        min_picks_per_node=1,
-    )
-
-    assert result.node_pick_count[0] == 5
-    assert result.node_used_pick_count[0] == 4
-    assert result.node_rejected_pick_count[0] == 1
-    expected_node0 = residual[[1, 2, 3, 10]]
-    assert result.node_residual_rms_s[0] == pytest.approx(
-        float(np.sqrt(np.mean(expected_node0 * expected_node0)))
-    )
-    source_zero = int(np.flatnonzero(result.source_node_id == 0)[0])
-    receiver_zero = int(np.flatnonzero(result.receiver_node_id == 0)[0])
-    assert result.source_residual_rms_s[source_zero] == pytest.approx(
-        float(np.sqrt(np.mean(expected_node0 * expected_node0)))
-    )
-    assert result.receiver_residual_rms_s[receiver_zero] == pytest.approx(
-        float(abs(residual[10]))
-    )
-    assert not result.used_observation_mask_sorted[0]
-
-
-@pytest.mark.parametrize(
-    ('patch_name', 'patch_value', 'match'),
-    [
-        ('bedrock_velocity_m_s', np.inf, 'bedrock_velocity'),
-        ('bedrock_velocity_m_s', 0.0, 'bedrock_velocity'),
-        ('active_node_id', np.asarray([999, 1, 2, 3, 4]), 'unknown active'),
-        (
-            'active_node_half_intercept_time_s',
-            np.asarray([np.nan, 0.012, 0.015, 0.018, 0.020]),
-            'finite',
-        ),
-        (
-            'active_node_half_intercept_time_s',
-            np.asarray([-0.001, 0.012, 0.015, 0.018, 0.020]),
-            'non-negative',
-        ),
-        ('residual_time_s', np.zeros(14, dtype=np.float64), 'shape mismatch'),
-        ('modeled_pick_time_s', None, 'required'),
-    ],
-)
-def test_validation_rejects_solver_result_errors(
-    patch_name: str,
-    patch_value: object,
-    match: str,
-) -> None:
-    inputs, design, solved, _result = _build_result()
-    patched = replace(solved, **{patch_name: patch_value})
-
-    with pytest.raises(RefractionHalfInterceptTimeError, match=match):
-        build_refraction_half_intercept_time_model(
-            input_model=inputs,
-            design_matrix=design,
-            solver_result=patched,
-            weathering_velocity_m_s=WEATHERING_VELOCITY_M_S,
-        )
-
-
-def test_validation_rejects_velocity_not_greater_than_weathering() -> None:
-    inputs, design, solved, _result = _build_result()
-
-    with pytest.raises(RefractionHalfInterceptTimeError, match='weathering'):
-        build_refraction_half_intercept_time_model(
-            input_model=inputs,
-            design_matrix=design,
-            solver_result=solved,
-            weathering_velocity_m_s=3000.0,
-        )
-
-
-def test_validation_rejects_unknown_source_and_receiver_nodes() -> None:
-    inputs, design, solved, _result = _build_result()
-    bad_source = inputs.source_node_id_sorted.copy()
-    bad_source[0] = 999
-    with pytest.raises(RefractionHalfInterceptTimeError, match='source'):
-        build_refraction_half_intercept_time_model(
-            input_model=replace(inputs, source_node_id_sorted=bad_source),
-            design_matrix=design,
-            solver_result=solved,
-            weathering_velocity_m_s=WEATHERING_VELOCITY_M_S,
-        )
-
-    bad_receiver = inputs.receiver_node_id_sorted.copy()
-    bad_receiver[0] = 999
-    with pytest.raises(RefractionHalfInterceptTimeError, match='receiver'):
-        build_refraction_half_intercept_time_model(
-            input_model=replace(inputs, receiver_node_id_sorted=bad_receiver),
-            design_matrix=design,
-            solver_result=solved,
-            weathering_velocity_m_s=WEATHERING_VELOCITY_M_S,
-        )
-
-
-def test_validation_rejects_non_real_numeric_trace_node_ids() -> None:
-    inputs, design, solved, _result = _build_result()
-
-    with pytest.raises(
-        RefractionHalfInterceptTimeError,
-        match='source_node_id_sorted.*real numeric dtype',
-    ):
-        build_refraction_half_intercept_time_model(
-            input_model=replace(
-                inputs,
-                source_node_id_sorted=inputs.source_node_id_sorted.astype('<U8'),
-            ),
-            design_matrix=design,
-            solver_result=solved,
-            weathering_velocity_m_s=WEATHERING_VELOCITY_M_S,
-        )
-
-
-def test_validation_rejects_source_receiver_sorted_length_mismatch() -> None:
-    inputs, design, solved, _result = _build_result()
-
-    with pytest.raises(RefractionHalfInterceptTimeError, match='shape mismatch'):
-        build_refraction_half_intercept_time_model(
-            input_model=replace(
-                inputs,
-                source_node_id_sorted=inputs.source_node_id_sorted[:-1],
-            ),
-            design_matrix=design,
-            solver_result=solved,
-            weathering_velocity_m_s=WEATHERING_VELOCITY_M_S,
-        )
-
-
 def test_artifacts_write_qc_and_csv_tables(tmp_path: Path) -> None:
     inputs = _input_model()
     model = _model()
     solver = _solver()
-    design = build_refraction_static_design_matrix(input_model=inputs, model=model)
-    solved = solve_refraction_static_bounded_ls(
-        design_matrix=design,
+    bedrock = estimate_global_bedrock_slowness_from_input_model(
+        input_model=inputs,
         model=model,
         solver=solver,
+        include_debug_objects=True,
     )
-    result = build_refraction_half_intercept_time_model(
-        input_model=inputs,
-        design_matrix=design,
-        solver_result=solved,
-        weathering_velocity_m_s=WEATHERING_VELOCITY_M_S,
-        min_picks_per_node=1,
+    result = build_refraction_half_intercept_time_model_from_bedrock_result(
+        bedrock_result=bedrock,
         job_dir=tmp_path,
     )
 
