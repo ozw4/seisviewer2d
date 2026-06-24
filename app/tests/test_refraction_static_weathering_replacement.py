@@ -460,25 +460,27 @@ def test_status_priority_is_deterministic_for_components_and_traces() -> None:
     assert result.trace_static_status_sorted[6] == 'inactive'
 
 
-def test_endpoint_node_ids_are_mapped_by_external_endpoint_payload() -> None:
+def test_unknown_endpoint_node_ids_raise() -> None:
     weathering = _weathering_result()
     bad_source = weathering.source_node_id.copy()
     bad_source[0] = 999
-    source_result = build_refraction_weathering_replacement_statics(
-        weathering_result=replace(weathering, source_node_id=bad_source),
-    )
-    assert source_result.source_node_id[0] == 999
-    assert source_result.source_static_status[0] == 'ok'
-    assert np.isfinite(source_result.source_weathering_replacement_shift_s[0])
+    with pytest.raises(
+        RefractionWeatheringReplacementStaticsError,
+        match='source_node_id',
+    ):
+        build_refraction_weathering_replacement_statics(
+            weathering_result=replace(weathering, source_node_id=bad_source),
+        )
 
     bad_receiver = weathering.receiver_node_id.copy()
     bad_receiver[0] = 999
-    receiver_result = build_refraction_weathering_replacement_statics(
-        weathering_result=replace(weathering, receiver_node_id=bad_receiver),
-    )
-    assert receiver_result.receiver_node_id[0] == 999
-    assert receiver_result.receiver_static_status[0] == 'ok'
-    assert np.isfinite(receiver_result.receiver_weathering_replacement_shift_s[0])
+    with pytest.raises(
+        RefractionWeatheringReplacementStaticsError,
+        match='receiver_node_id',
+    ):
+        build_refraction_weathering_replacement_statics(
+            weathering_result=replace(weathering, receiver_node_id=bad_receiver),
+        )
 
 
 def test_missing_trace_nodes_produce_nan_component_and_invalid_mask() -> None:

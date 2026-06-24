@@ -917,6 +917,18 @@ def _validate_weathering_result(
     )
     source_shape = (int(source_endpoint_key.shape[0]),)
     receiver_shape = (int(receiver_endpoint_key.shape[0]),)
+    source_node_id = _coerce_1d_integer(
+        _required(weathering_result, 'source_node_id'),
+        name='weathering_result.source_node_id',
+        expected_shape=source_shape,
+    )
+    receiver_node_id = _coerce_1d_integer(
+        _required(weathering_result, 'receiver_node_id'),
+        name='weathering_result.receiver_node_id',
+        expected_shape=receiver_shape,
+    )
+    _validate_endpoint_nodes(source_node_id, node_id, name='source_node_id')
+    _validate_endpoint_nodes(receiver_node_id, node_id, name='receiver_node_id')
 
     return _ValidatedWeathering(
         node_id=node_id,
@@ -1058,11 +1070,7 @@ def _validate_weathering_result(
             name='weathering_result.source_id',
             expected_shape=source_shape,
         ),
-        source_node_id=_coerce_1d_integer(
-            _required(weathering_result, 'source_node_id'),
-            name='weathering_result.source_node_id',
-            expected_shape=source_shape,
-        ),
+        source_node_id=source_node_id,
         source_x_m=_coerce_1d_float(
             _required(weathering_result, 'source_x_m'),
             name='weathering_result.source_x_m',
@@ -1131,11 +1139,7 @@ def _validate_weathering_result(
             name='weathering_result.receiver_id',
             expected_shape=receiver_shape,
         ),
-        receiver_node_id=_coerce_1d_integer(
-            _required(weathering_result, 'receiver_node_id'),
-            name='weathering_result.receiver_node_id',
-            expected_shape=receiver_shape,
-        ),
+        receiver_node_id=receiver_node_id,
         receiver_x_m=_coerce_1d_float(
             _required(weathering_result, 'receiver_x_m'),
             name='weathering_result.receiver_x_m',
@@ -1366,6 +1370,24 @@ def _validate_weathering_result(
             name='weathering_result.rejected_by_robust_mask',
         ),
     )
+
+
+def _validate_endpoint_nodes(
+    endpoint_node_id: np.ndarray,
+    node_id: np.ndarray,
+    *,
+    name: str,
+) -> None:
+    known = {int(node) for node in np.asarray(node_id, dtype=np.int64).tolist()}
+    missing = [
+        int(node)
+        for node in np.asarray(endpoint_node_id, dtype=np.int64).reshape(-1).tolist()
+        if int(node) not in known
+    ]
+    if missing:
+        raise RefractionWeatheringReplacementStaticsError(
+            f'{name} references unknown node_id {missing[0]}'
+        )
 
 
 def _validate_velocity_context(
