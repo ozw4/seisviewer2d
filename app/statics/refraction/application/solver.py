@@ -3,14 +3,10 @@
 from __future__ import annotations
 
 from dataclasses import replace
-from typing import Any, Literal
+from typing import Any
 
 import numpy as np
 from scipy import sparse
-from seis_statics.refraction.design_matrix import (
-    RefractionDesignMatrixNodeDiagnostics as CoreNodeDiagnostics,
-    RefractionStaticDesignMatrix as CoreDesignMatrix,
-)
 from seis_statics.refraction.solver import (
     RefractionStaticSolverError as CoreRefractionStaticSolverError,
     solve_refraction_static_design_least_squares,
@@ -24,13 +20,10 @@ from app.statics.refraction.application.core_options import (
 from app.statics.refraction.contracts.model import RefractionStaticModelRequest
 from app.statics.refraction.contracts.options import RefractionStaticSolverRequest
 from app.statics.refraction.contracts.result_types import (
-    RefractionDesignMatrixNodeDiagnostics,
     RefractionStaticDesignMatrix,
     RefractionStaticSolverResult,
     ResolvedRefractionFirstLayer,
 )
-
-BedrockVelocityMode = Literal['solve_global', 'fixed_global', 'solve_cell']
 
 _CELL_THRESHOLD_QC_KEYS = (
     'min_observations_per_cell',
@@ -88,69 +81,6 @@ def solve_refraction_static_bounded_ls(
     if not extra_qc:
         return result
     return replace(result, qc={**result.qc, **extra_qc})
-
-
-def solve_refraction_static_bounded_ls_from_matrix(
-    *,
-    matrix: sparse.csr_matrix,
-    rhs_s: np.ndarray,
-    active_node_id: np.ndarray,
-    bedrock_slowness_col: int | None,
-    row_distance_m: np.ndarray,
-    observed_pick_time_s: np.ndarray,
-    model: RefractionStaticModelRequest,
-    solver: RefractionStaticSolverRequest,
-    row_trace_index_sorted: np.ndarray | None = None,
-    row_source_node_id: np.ndarray | None = None,
-    row_receiver_node_id: np.ndarray | None = None,
-    inactive_node_id: np.ndarray | None = None,
-    bedrock_velocity_mode: BedrockVelocityMode | None = None,
-    fixed_bedrock_velocity_m_s: float | None = None,
-    fixed_bedrock_slowness_s_per_m: float | None = None,
-    bedrock_slowness_cell_col_start: int | None = None,
-    active_cell_id: np.ndarray | None = None,
-    inactive_cell_id: np.ndarray | None = None,
-    n_total_cells: int | None = None,
-    number_of_cell_x: int | None = None,
-    number_of_cell_y: int | None = None,
-    row_midpoint_cell_id: np.ndarray | None = None,
-    row_midpoint_cell_col: np.ndarray | None = None,
-    node_diagnostics: tuple[RefractionDesignMatrixNodeDiagnostics, ...] = (),
-    resolved_first_layer: ResolvedRefractionFirstLayer | None = None,
-) -> RefractionStaticSolverResult:
-    """Solve a pre-built sparse system by wrapping it as an external design."""
-    mode = _resolve_mode(model=model, design_mode=bedrock_velocity_mode)
-    design = _core_design_from_matrix(
-        matrix=matrix,
-        rhs_s=rhs_s,
-        active_node_id=active_node_id,
-        inactive_node_id=inactive_node_id,
-        bedrock_slowness_col=bedrock_slowness_col,
-        row_distance_m=row_distance_m,
-        observed_pick_time_s=observed_pick_time_s,
-        row_trace_index_sorted=row_trace_index_sorted,
-        row_source_node_id=row_source_node_id,
-        row_receiver_node_id=row_receiver_node_id,
-        mode=mode,
-        fixed_bedrock_velocity_m_s=fixed_bedrock_velocity_m_s,
-        fixed_bedrock_slowness_s_per_m=fixed_bedrock_slowness_s_per_m,
-        bedrock_slowness_cell_col_start=bedrock_slowness_cell_col_start,
-        active_cell_id=active_cell_id,
-        inactive_cell_id=inactive_cell_id,
-        n_total_cells=n_total_cells,
-        number_of_cell_x=number_of_cell_x,
-        number_of_cell_y=number_of_cell_y,
-        row_midpoint_cell_id=row_midpoint_cell_id,
-        row_midpoint_cell_col=row_midpoint_cell_col,
-        node_diagnostics=node_diagnostics,
-        model=model,
-    )
-    return solve_refraction_static_bounded_ls(
-        design_matrix=design,
-        model=model,
-        solver=solver,
-        resolved_first_layer=resolved_first_layer,
-    )
 
 
 def _app_solver_result_from_core(
@@ -491,163 +421,6 @@ def _cell_qc(core_result: Any) -> dict[str, Any]:
     }
 
 
-def _core_design_from_matrix(
-    *,
-    matrix: sparse.csr_matrix,
-    rhs_s: np.ndarray,
-    active_node_id: np.ndarray,
-    inactive_node_id: np.ndarray | None,
-    bedrock_slowness_col: int | None,
-    row_distance_m: np.ndarray,
-    observed_pick_time_s: np.ndarray,
-    row_trace_index_sorted: np.ndarray | None,
-    row_source_node_id: np.ndarray | None,
-    row_receiver_node_id: np.ndarray | None,
-    mode: BedrockVelocityMode,
-    fixed_bedrock_velocity_m_s: float | None,
-    fixed_bedrock_slowness_s_per_m: float | None,
-    bedrock_slowness_cell_col_start: int | None,
-    active_cell_id: np.ndarray | None,
-    inactive_cell_id: np.ndarray | None,
-    n_total_cells: int | None,
-    number_of_cell_x: int | None,
-    number_of_cell_y: int | None,
-    row_midpoint_cell_id: np.ndarray | None,
-    row_midpoint_cell_col: np.ndarray | None,
-    node_diagnostics: tuple[RefractionDesignMatrixNodeDiagnostics, ...],
-    model: RefractionStaticModelRequest,
-) -> CoreDesignMatrix:
-    if mode == 'solve_global' and bedrock_slowness_col is None:
-        raise RefractionStaticSolverError(
-            'solve_global mode requires a bedrock slowness column'
-        )
-    if mode != 'solve_global' and bedrock_slowness_col is not None:
-        raise RefractionStaticSolverError(
-            f'{mode} mode must not include a global bedrock slowness column'
-        )
-    if not sparse.isspmatrix_csr(matrix):
-        raise RefractionStaticSolverError('refraction design matrix must be CSR')
-    matrix = matrix.copy()
-    matrix.sort_indices()
-    if np.any(~np.isfinite(matrix.data)):
-        raise RefractionStaticSolverError('refraction design matrix values must be finite')
-    rhs = _coerce_1d_float(rhs_s, name='rhs_s')
-    observed = _coerce_1d_float(observed_pick_time_s, name='observed_pick_time_s')
-    distance = _coerce_1d_float(row_distance_m, name='row_distance_m')
-    n_rows, n_cols = matrix.shape
-    if rhs.shape != (n_rows,):
-        raise RefractionStaticSolverError('rhs_s shape mismatch')
-    if observed.shape != (n_rows,):
-        raise RefractionStaticSolverError('observed_pick_time_s shape mismatch')
-    if distance.shape != (n_rows,):
-        raise RefractionStaticSolverError('row_distance_m shape mismatch')
-    if n_rows <= 0:
-        raise RefractionStaticSolverError(
-            'refraction solver system requires at least one observation row'
-        )
-    nodes = _coerce_1d_int(active_node_id, name='active_node_id')
-    inactive_nodes = (
-        np.empty(0, dtype=np.int64)
-        if inactive_node_id is None
-        else _coerce_1d_int(inactive_node_id, name='inactive_node_id')
-    )
-    source_node = _coerce_optional_row_node(
-        row_source_node_id,
-        fallback_nodes=nodes,
-        n_rows=n_rows,
-        name='row_source_node_id',
-    )
-    receiver_node = _coerce_optional_row_node(
-        row_receiver_node_id,
-        fallback_nodes=nodes,
-        n_rows=n_rows,
-        name='row_receiver_node_id',
-    )
-    trace_index = (
-        np.arange(n_rows, dtype=np.int64)
-        if row_trace_index_sorted is None
-        else _coerce_1d_int(
-            row_trace_index_sorted,
-            name='row_trace_index_sorted',
-            expected_shape=(n_rows,),
-        )
-    )
-    if np.unique(trace_index).shape[0] != n_rows:
-        raise RefractionStaticSolverError('row_trace_index_sorted must be unique')
-    n_traces = int(np.max(trace_index)) + 1 if trace_index.size else 0
-    node_id_to_col = {int(node): index for index, node in enumerate(nodes.tolist())}
-    source_col = _node_cols(source_node, node_id_to_col=node_id_to_col)
-    receiver_col = _node_cols(receiver_node, node_id_to_col=node_id_to_col)
-    design_qc: dict[str, Any] = {
-        'n_traces': n_traces,
-        'bedrock_velocity_mode': mode,
-    }
-    active_cells = _optional_int_array(active_cell_id)
-    inactive_cells = _optional_int_array(inactive_cell_id)
-    cell_id_to_col = None
-    if mode == 'solve_cell':
-        if active_cells is None:
-            raise RefractionStaticSolverError('solve_cell mode requires active_cell_id')
-        if n_total_cells is None:
-            raise RefractionStaticSolverError('solve_cell mode requires n_total_cells')
-        if bedrock_slowness_cell_col_start is None:
-            raise RefractionStaticSolverError(
-                'solve_cell mode requires cell slowness columns'
-            )
-        cell_id_to_col = {
-            int(cell_id): int(bedrock_slowness_cell_col_start) + index
-            for index, cell_id in enumerate(active_cells.tolist())
-            }
-    if mode == 'fixed_global':
-        if fixed_bedrock_velocity_m_s is None:
-            fixed_bedrock_velocity_m_s = float(model.bedrock_velocity_m_s)
-        if fixed_bedrock_slowness_s_per_m is None:
-            fixed_bedrock_slowness_s_per_m = float(1.0 / fixed_bedrock_velocity_m_s)
-    return CoreDesignMatrix(
-        matrix=matrix,
-        rhs_s=np.ascontiguousarray(rhs, dtype=np.float64),
-        observed_pick_time_s=np.ascontiguousarray(observed, dtype=np.float64),
-        row_trace_index_sorted=np.ascontiguousarray(trace_index, dtype=np.int64),
-        row_source_node_id=np.ascontiguousarray(source_node, dtype=np.int64),
-        row_receiver_node_id=np.ascontiguousarray(receiver_node, dtype=np.int64),
-        row_distance_m=np.ascontiguousarray(distance, dtype=np.float64),
-        active_node_id=np.ascontiguousarray(nodes, dtype=np.int64),
-        inactive_node_id=np.ascontiguousarray(inactive_nodes, dtype=np.int64),
-        node_id_to_col=node_id_to_col,
-        source_node_col=np.ascontiguousarray(source_col, dtype=np.int64),
-        receiver_node_col=np.ascontiguousarray(receiver_col, dtype=np.int64),
-        bedrock_slowness_col=bedrock_slowness_col,
-        bedrock_velocity_mode=mode,
-        fixed_bedrock_velocity_m_s=fixed_bedrock_velocity_m_s,
-        fixed_bedrock_slowness_s_per_m=fixed_bedrock_slowness_s_per_m,
-        n_total_nodes=int(nodes.shape[0] + inactive_nodes.shape[0]),
-        n_active_nodes=int(nodes.shape[0]),
-        min_observations_per_node=1,
-        node_observation_count=np.zeros(nodes.shape, dtype=np.int64),
-        low_fold_node_id=np.empty(0, dtype=np.int64),
-        n_observations_rejected_by_low_fold_node=0,
-        n_observations=n_rows,
-        n_parameters=n_cols,
-        qc=design_qc,
-        node_diagnostics=tuple(_core_node_diagnostics(node_diagnostics)),
-        design_matrix_qc=dict(design_qc),
-        diagnostics_context=None,
-        bedrock_slowness_cell_col_start=bedrock_slowness_cell_col_start,
-        active_cell_id=active_cells,
-        inactive_cell_id=inactive_cells,
-        cell_id_to_col=cell_id_to_col,
-        row_midpoint_cell_id=_optional_int_array(row_midpoint_cell_id),
-        row_midpoint_cell_col=_optional_int_array(row_midpoint_cell_col),
-        cell_assignment_mode='midpoint' if mode == 'solve_cell' else None,
-        n_total_cells=n_total_cells,
-        n_active_cells=None if active_cells is None else int(active_cells.shape[0]),
-        n_inactive_cells=None if inactive_cells is None else int(inactive_cells.shape[0]),
-        number_of_cell_x=number_of_cell_x,
-        number_of_cell_y=number_of_cell_y,
-        rejection_reason_sorted=None,
-    )
-
-
 def _validate_app_model_for_external_solve(
     *,
     model: RefractionStaticModelRequest,
@@ -728,23 +501,6 @@ def _validate_design_matrix_has_observable_active_columns(
     )
 
 
-def _resolve_mode(
-    *,
-    model: RefractionStaticModelRequest,
-    design_mode: BedrockVelocityMode | None,
-) -> BedrockVelocityMode:
-    mode = getattr(model, 'bedrock_velocity_mode', None)
-    if mode not in {'solve_global', 'fixed_global', 'solve_cell'}:
-        raise RefractionStaticSolverError(
-            'bedrock_velocity_mode must be solve_global, fixed_global, or solve_cell'
-        )
-    if design_mode is not None and design_mode != mode:
-        raise RefractionStaticSolverError(
-            'design matrix bedrock_velocity_mode does not match model'
-        )
-    return mode
-
-
 def _viewer_robust_stop_reason(reason: str) -> str:
     if reason == 'safe_rejection':
         return 'coverage_guard_no_safe_rejections'
@@ -764,42 +520,6 @@ def _residual_stats_ms(residual_time_s: np.ndarray) -> dict[str, float]:
     }
 
 
-def _coerce_1d_float(
-    values: object,
-    *,
-    name: str,
-    expected_shape: tuple[int, ...] | None = None,
-) -> np.ndarray:
-    try:
-        out = np.asarray(values, dtype=np.float64)
-    except (TypeError, ValueError) as exc:
-        raise RefractionStaticSolverError(f'{name} must be numeric') from exc
-    if out.ndim != 1:
-        raise RefractionStaticSolverError(f'{name} must be one-dimensional')
-    if expected_shape is not None and out.shape != expected_shape:
-        raise RefractionStaticSolverError(f'{name} shape mismatch')
-    if np.any(~np.isfinite(out)):
-        raise RefractionStaticSolverError(f'{name} must contain only finite values')
-    return np.ascontiguousarray(out, dtype=np.float64)
-
-
-def _coerce_1d_int(
-    values: object,
-    *,
-    name: str,
-    expected_shape: tuple[int, ...] | None = None,
-) -> np.ndarray:
-    try:
-        out = np.asarray(values, dtype=np.int64)
-    except (TypeError, ValueError) as exc:
-        raise RefractionStaticSolverError(f'{name} must contain integers') from exc
-    if out.ndim != 1:
-        raise RefractionStaticSolverError(f'{name} must be one-dimensional')
-    if expected_shape is not None and out.shape != expected_shape:
-        raise RefractionStaticSolverError(f'{name} shape mismatch')
-    return np.ascontiguousarray(out, dtype=np.int64)
-
-
 def _optional_int_array(values: object) -> np.ndarray | None:
     if values is None:
         return None
@@ -812,64 +532,8 @@ def _optional_float_array(values: object) -> np.ndarray | None:
     return np.ascontiguousarray(np.asarray(values, dtype=np.float64), dtype=np.float64)
 
 
-def _coerce_optional_row_node(
-    values: object,
-    *,
-    fallback_nodes: np.ndarray,
-    n_rows: int,
-    name: str,
-) -> np.ndarray:
-    if values is not None:
-        return _coerce_1d_int(values, name=name, expected_shape=(n_rows,))
-    if fallback_nodes.size == 0:
-        raise RefractionStaticSolverError(f'{name} fallback requires active nodes')
-    index = np.minimum(np.arange(n_rows), fallback_nodes.shape[0] - 1)
-    return np.ascontiguousarray(fallback_nodes[index], dtype=np.int64)
-
-
-def _node_cols(
-    row_node_id: np.ndarray,
-    *,
-    node_id_to_col: dict[int, int],
-) -> np.ndarray:
-    cols = np.full(row_node_id.shape, -1, dtype=np.int64)
-    for index, raw_node in enumerate(row_node_id.tolist()):
-        cols[index] = int(node_id_to_col.get(int(raw_node), -1))
-    return cols
-
-
-def _core_node_diagnostics(
-    diagnostics: tuple[RefractionDesignMatrixNodeDiagnostics, ...],
-) -> tuple[CoreNodeDiagnostics, ...]:
-    out: list[CoreNodeDiagnostics] = []
-    for item in diagnostics:
-        if isinstance(item, CoreNodeDiagnostics):
-            out.append(item)
-            continue
-        out.append(
-            CoreNodeDiagnostics(
-                node_id=item.node_id,
-                matrix_column=item.matrix_column,
-                endpoint_kind=item.endpoint_kind,
-                endpoint_key=item.endpoint_key,
-                source_endpoint_key=item.source_endpoint_key,
-                receiver_endpoint_key=item.receiver_endpoint_key,
-                n_rows_pre_filter=item.n_rows_pre_filter,
-                n_rows_post_filter=item.n_rows_post_filter,
-                n_nonzero_entries=item.n_nonzero_entries,
-                active=item.active,
-                status=item.status,
-                reason=item.reason,
-                first_trace_indices_pre_filter=item.first_trace_indices_pre_filter,
-            )
-        )
-    return tuple(out)
-
-
 __all__ = [
-    'BedrockVelocityMode',
     'RefractionStaticSolverError',
     'RefractionStaticSolverResult',
     'solve_refraction_static_bounded_ls',
-    'solve_refraction_static_bounded_ls_from_matrix',
 ]
