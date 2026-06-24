@@ -40,6 +40,40 @@ def _conversion_factor() -> float:
     return vb * vw / np.sqrt(vb * vb - vw * vw)
 
 
+def _with_sorted_trace_permutation(half, sorted_to_original: np.ndarray):
+    def _sorted(values: np.ndarray) -> np.ndarray:
+        return np.ascontiguousarray(np.asarray(values)[sorted_to_original])
+
+    return replace(
+        half,
+        sorted_trace_index=np.ascontiguousarray(sorted_to_original, dtype=np.int64),
+        source_endpoint_key_sorted=_sorted(half.source_endpoint_key_sorted),
+        receiver_endpoint_key_sorted=_sorted(half.receiver_endpoint_key_sorted),
+        source_elevation_m_sorted=_sorted(half.source_elevation_m_sorted),
+        receiver_elevation_m_sorted=_sorted(half.receiver_elevation_m_sorted),
+        source_node_id_sorted=_sorted(half.source_node_id_sorted),
+        receiver_node_id_sorted=_sorted(half.receiver_node_id_sorted),
+        source_half_intercept_time_s_sorted=_sorted(
+            half.source_half_intercept_time_s_sorted
+        ),
+        receiver_half_intercept_time_s_sorted=_sorted(
+            half.receiver_half_intercept_time_s_sorted
+        ),
+        estimated_intercept_time_sum_s_sorted=_sorted(
+            half.estimated_intercept_time_sum_s_sorted
+        ),
+        estimated_bedrock_moveout_time_s_sorted=_sorted(
+            half.estimated_bedrock_moveout_time_s_sorted
+        ),
+        estimated_first_break_time_s_sorted=_sorted(
+            half.estimated_first_break_time_s_sorted
+        ),
+        first_break_residual_s_sorted=_sorted(half.first_break_residual_s_sorted),
+        valid_observation_mask_sorted=_sorted(half.valid_observation_mask_sorted),
+        used_observation_mask_sorted=_sorted(half.used_observation_mask_sorted),
+    )
+
+
 def test_public_apis_are_importable() -> None:
     assert callable(estimate_weathering_thickness_from_first_breaks)
     assert callable(build_refraction_weathering_thickness_model)
@@ -241,6 +275,55 @@ def test_build_weathering_model_maps_nodes_endpoints_and_trace_order(
         trace_rows = list(csv.DictReader(handle))
     assert 'source_refractor_elevation_m' in trace_rows[0]
     assert trace_rows[-1]['valid_observation'] == 'False'
+
+
+def test_public_builder_reconstructs_row_values_in_sorted_position_order(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _inputs, _design, _solved, half = _build_result()
+    n_traces = int(half.sorted_trace_index.shape[0])
+    sorted_to_original = np.arange(n_traces, dtype=np.int64)
+    sorted_to_original[:3] = np.asarray([2, 0, 1], dtype=np.int64)
+    half = _with_sorted_trace_permutation(half, sorted_to_original)
+    captured_input_models = []
+    original_core_build = (
+        weathering_module.core_build_refraction_weathering_model_from_half_intercept_result
+    )
+
+    def _capture_core_build(**kwargs: object):
+        captured_input_models.append(kwargs['input_model'])
+        return original_core_build(**kwargs)
+
+    monkeypatch.setattr(
+        weathering_module,
+        'core_build_refraction_weathering_model_from_half_intercept_result',
+        _capture_core_build,
+    )
+
+    result = build_refraction_weathering_thickness_model(
+        half_intercept_result=half,
+        model=_model(),
+    )
+
+    inverse = np.empty(n_traces, dtype=np.int64)
+    inverse[sorted_to_original] = np.arange(n_traces, dtype=np.int64)
+    expected_pick = np.full(n_traces, np.nan, dtype=np.float64)
+    expected_distance = np.full(n_traces, np.nan, dtype=np.float64)
+    row_position = inverse[half.row_trace_index_sorted]
+    expected_pick[row_position] = half.observed_pick_time_s
+    expected_distance[row_position] = half.row_distance_m
+    core_input = captured_input_models[0]
+    np.testing.assert_allclose(
+        core_input.pick_time_s_sorted,
+        expected_pick,
+        equal_nan=True,
+    )
+    np.testing.assert_allclose(
+        core_input.distance_m_sorted,
+        expected_distance,
+        equal_nan=True,
+    )
+    np.testing.assert_array_equal(result.sorted_trace_index, sorted_to_original)
 
 
 def test_core_weathering_values_are_mapped_without_recalculation(
@@ -535,7 +618,7 @@ def test_invalid_surface_elevation_yields_nan_refractor() -> None:
     assert np.isnan(result.source_refractor_elevation_m_sorted[0])
 
 
-def test_endpoint_elevation_mutation_does_not_override_core_weathering() -> None:
+def test_invalid_endpoint_surface_elevation_yields_nan_refractor() -> None:
     _inputs, _design, _solved, half = _build_result()
     source_elevation = half.source_elevation_m.copy()
     source_elevation_sorted = half.source_elevation_m_sorted.copy()
@@ -551,10 +634,10 @@ def test_endpoint_elevation_mutation_does_not_override_core_weathering() -> None
         model=_model(),
     )
 
-    assert result.source_weathering_status[0] == 'ok'
-    assert np.isfinite(result.source_refractor_elevation_m[0])
-    assert result.source_weathering_status_sorted[0] == 'ok'
-    assert np.isfinite(result.source_refractor_elevation_m_sorted[0])
+    assert result.source_weathering_status[0] == 'invalid_surface_elevation'
+    assert np.isnan(result.source_refractor_elevation_m[0])
+    assert result.source_weathering_status_sorted[0] == 'invalid_surface_elevation'
+    assert np.isnan(result.source_refractor_elevation_m_sorted[0])
 
 
 def test_velocity_validation_rejects_unphysical_context() -> None:

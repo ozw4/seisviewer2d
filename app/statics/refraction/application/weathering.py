@@ -49,6 +49,9 @@ from app.statics.refraction.application.half_intercept import (
     _HalfInterceptCoreContext,
     estimate_refraction_half_intercept_core_context_from_first_breaks,
 )
+from app.statics.refraction.application.trace_order import (
+    sorted_positions_for_original_trace_ids,
+)
 from app.statics.refraction.contracts.apply import RefractionStaticApplyRequest
 from app.statics.refraction.contracts.model import RefractionStaticModelRequest
 from app.statics.refraction.contracts.result_types import (
@@ -470,21 +473,22 @@ def _core_input_model_from_app_half_intercept_result(
     )
     pick_time_s_sorted = np.full(n_traces, np.nan, dtype=np.float64)
     row_index = np.asarray(result.row_trace_index_sorted, dtype=np.int64).reshape(-1)
+    row_sorted_position = sorted_positions_for_original_trace_ids(
+        sorted_to_original=result.sorted_trace_index,
+        original_trace_id=row_index,
+    )
     observed = np.asarray(result.observed_pick_time_s, dtype=np.float64).reshape(-1)
     if row_index.shape == observed.shape:
-        valid_row = (0 <= row_index) & (row_index < n_traces)
-        pick_time_s_sorted[row_index[valid_row]] = observed[valid_row]
+        pick_time_s_sorted[row_sorted_position] = observed
     elif observed.shape == (n_traces,):
         pick_time_s_sorted[:] = observed
-    endpoint_table = CoreRefractionEndpointTable(
-        node_id=_i64(result.node_id),
-        endpoint_id=_i64(result.node_id),
-        x_m=_f64(result.node_x_m),
-        y_m=_f64(result.node_y_m),
-        elevation_m=_f64(result.node_elevation_m),
-        kind=np.ascontiguousarray(result.node_kind),
-        pick_count=_i64(result.node_pick_count),
-    )
+    distance_m_sorted = np.full(n_traces, np.nan, dtype=np.float64)
+    row_distance = np.asarray(result.row_distance_m, dtype=np.float64).reshape(-1)
+    if row_index.shape == row_distance.shape:
+        distance_m_sorted[row_sorted_position] = row_distance
+    elif row_distance.shape == (n_traces,):
+        distance_m_sorted[:] = row_distance
+    endpoint_table = _endpoint_table_from_app_half_intercept_result(result)
     return CoreRefractionStaticInputModel(
         file_id=str(result.qc.get('file_id', '')),
         n_traces=n_traces,
@@ -505,17 +509,11 @@ def _core_input_model_from_app_half_intercept_result(
         receiver_elevation_m_sorted=_f64(result.receiver_elevation_m_sorted),
         source_depth_m_sorted=None,
         geometry_distance_m_sorted=np.nan_to_num(
-            _f64(result.row_distance_m)
-            if np.asarray(result.row_distance_m).shape == (n_traces,)
-            else np.zeros(n_traces, dtype=np.float64),
+            distance_m_sorted,
             nan=0.0,
         ),
         offset_m_sorted=None,
-        distance_m_sorted=(
-            _f64(result.row_distance_m)
-            if np.asarray(result.row_distance_m).shape == (n_traces,)
-            else np.full(n_traces, np.nan, dtype=np.float64)
-        ),
+        distance_m_sorted=np.ascontiguousarray(distance_m_sorted, dtype=np.float64),
         source_endpoint_key_sorted=np.ascontiguousarray(
             result.source_endpoint_key_sorted,
         ),
@@ -535,6 +533,57 @@ def _core_input_model_from_app_half_intercept_result(
         layer_observation_masks=None,
         source_endpoint_id_sorted=None,
         receiver_endpoint_id_sorted=None,
+    )
+
+
+def _endpoint_table_from_app_half_intercept_result(
+    result: RefractionHalfInterceptTimeResult,
+) -> CoreRefractionEndpointTable:
+    node_id = _i64(result.node_id)
+    x_m = _f64(result.node_x_m).copy()
+    y_m = _f64(result.node_y_m).copy()
+    elevation_m = _f64(result.node_elevation_m).copy()
+    pick_count = _i64(result.node_pick_count).copy()
+    node_pos = {int(node): index for index, node in enumerate(node_id.tolist())}
+    for prefix in ('source', 'receiver'):
+        endpoint_node_id = _i64(getattr(result, f'{prefix}_node_id'))
+        endpoint_x = _f64(getattr(result, f'{prefix}_x_m'))
+        endpoint_y = _f64(getattr(result, f'{prefix}_y_m'))
+        endpoint_elevation = _f64(getattr(result, f'{prefix}_elevation_m'))
+        endpoint_pick_count = _i64(getattr(result, f'{prefix}_pick_count'))
+        if not (
+            endpoint_node_id.shape
+            == endpoint_x.shape
+            == endpoint_y.shape
+            == endpoint_elevation.shape
+            == endpoint_pick_count.shape
+        ):
+            raise RefractionWeatheringThicknessError(
+                f'{prefix} endpoint geometry shape mismatch'
+            )
+        for index, raw_node in enumerate(endpoint_node_id.tolist()):
+            position = node_pos.get(int(raw_node))
+            if position is None:
+                continue
+            x_m[position] = float(endpoint_x[index])
+            y_m[position] = float(endpoint_y[index])
+            endpoint_surface = float(endpoint_elevation[index])
+            if np.isfinite(elevation_m[position]) and np.isfinite(endpoint_surface):
+                elevation_m[position] = endpoint_surface
+            else:
+                elevation_m[position] = np.nan
+            pick_count[position] = max(
+                int(pick_count[position]),
+                int(endpoint_pick_count[index]),
+            )
+    return CoreRefractionEndpointTable(
+        node_id=node_id,
+        endpoint_id=node_id.copy(),
+        x_m=np.ascontiguousarray(x_m, dtype=np.float64),
+        y_m=np.ascontiguousarray(y_m, dtype=np.float64),
+        elevation_m=np.ascontiguousarray(elevation_m, dtype=np.float64),
+        kind=np.ascontiguousarray(result.node_kind),
+        pick_count=np.ascontiguousarray(pick_count, dtype=np.int64),
     )
 
 
