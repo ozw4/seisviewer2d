@@ -51,19 +51,39 @@ def test_high_level_pipeline_calls_half_intercept_stage(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
-    _inputs, _design, _solved, half = _build_result()
+    inputs, _design, _solved, half = _build_result()
     calls: list[dict[str, object]] = []
+    core_calls: list[dict[str, object]] = []
+    model = _model()
+    core_context = SimpleNamespace(
+        app_result=half,
+        core_input_model=weathering_module.core_input_model_from_app(inputs),
+        core_result=weathering_module._core_half_intercept_result_from_app_result(
+            half_intercept_result=half,
+            model=model,
+        ),
+    )
+    core_build = weathering_module.core_build_refraction_weathering_model_from_half_intercept_result
 
     def _capture_estimate(**kwargs: object):
         calls.append(kwargs)
-        return half
+        return core_context
+
+    def _capture_core_build(**kwargs: object):
+        core_calls.append(kwargs)
+        return core_build(**kwargs)
 
     monkeypatch.setattr(
         weathering_module,
-        'estimate_refraction_half_intercept_times_from_first_breaks',
+        'estimate_refraction_half_intercept_core_context_from_first_breaks',
         _capture_estimate,
     )
-    req = SimpleNamespace(model=_model())
+    monkeypatch.setattr(
+        weathering_module,
+        'core_build_refraction_weathering_model_from_half_intercept_result',
+        _capture_core_build,
+    )
+    req = SimpleNamespace(model=model)
     state = object()
 
     result = estimate_weathering_thickness_from_first_breaks(
@@ -72,7 +92,18 @@ def test_high_level_pipeline_calls_half_intercept_stage(
         job_dir=tmp_path,
     )
 
-    assert calls == [{'req': req, 'state': state, 'job_dir': tmp_path}]
+    assert calls == [
+        {
+            'req': req,
+            'runtime': None,
+            'state': state,
+            'job_dir': tmp_path,
+            'input_model': None,
+            'resolved_first_layer': None,
+        }
+    ]
+    assert core_calls
+    assert core_calls[0]['half_intercept_result'] is core_context.core_result
     expected_node_thickness = TRUE_HALF_INTERCEPT_S * _conversion_factor()
     np.testing.assert_allclose(
         result.node_weathering_thickness_m[:5],
@@ -126,7 +157,7 @@ def test_math_helper_accepts_vector_bedrock_velocity() -> None:
 def test_build_weathering_model_maps_nodes_endpoints_and_trace_order(
     tmp_path: Path,
 ) -> None:
-    _inputs, _design, _solved, half = _build_result()
+    inputs, _design, _solved, half = _build_result()
     model = _model()
 
     result = build_refraction_weathering_thickness_model(
@@ -212,46 +243,119 @@ def test_build_weathering_model_maps_nodes_endpoints_and_trace_order(
     assert trace_rows[-1]['valid_observation'] == 'False'
 
 
-def test_trace_refractor_elevation_uses_endpoint_surface_elevation() -> None:
+def test_core_weathering_values_are_mapped_without_recalculation(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     _inputs, _design, _solved, half = _build_result()
-    source_elevation = half.source_elevation_m.copy()
-    receiver_elevation = half.receiver_elevation_m.copy()
-    source_elevation_sorted = half.source_elevation_m_sorted.copy()
-    receiver_elevation_sorted = half.receiver_elevation_m_sorted.copy()
+    model = _model()
+    original_core_build = (
+        weathering_module.core_build_refraction_weathering_model_from_half_intercept_result
+    )
 
-    source_node_zero = int(np.flatnonzero(half.source_node_id == 0)[0])
-    receiver_node_zero = int(np.flatnonzero(half.receiver_node_id == 0)[0])
-    source_elevation[source_node_zero] = 110.0
-    receiver_elevation[receiver_node_zero] = 210.0
-    source_elevation_sorted[half.source_node_id_sorted == 0] = 110.0
-    receiver_elevation_sorted[half.receiver_node_id_sorted == 0] = 210.0
+    def _patched_core_build(**kwargs: object):
+        core = original_core_build(**kwargs)
+        node_status = np.full(core.node_weathering_status.shape, 'external_node')
+        source_status = np.full(
+            core.source_endpoint.weathering_status.shape,
+            'external_source',
+        )
+        receiver_status = np.full(
+            core.receiver_endpoint.weathering_status.shape,
+            'external_receiver',
+        )
+        source_sorted_status = np.full(
+            core.source_weathering_status_sorted.shape,
+            'external_source_sorted',
+        )
+        receiver_sorted_status = np.full(
+            core.receiver_weathering_status_sorted.shape,
+            'external_receiver_sorted',
+        )
+        return replace(
+            core,
+            node_weathering_thickness_m=np.full(
+                core.node_weathering_thickness_m.shape,
+                101.0,
+            ),
+            node_refractor_elevation_m=np.full(
+                core.node_refractor_elevation_m.shape,
+                202.0,
+            ),
+            node_weathering_status=node_status,
+            source_endpoint=replace(
+                core.source_endpoint,
+                weathering_thickness_m=np.full(
+                    core.source_endpoint.weathering_thickness_m.shape,
+                    303.0,
+                ),
+                refractor_elevation_m=np.full(
+                    core.source_endpoint.refractor_elevation_m.shape,
+                    404.0,
+                ),
+                weathering_status=source_status,
+            ),
+            receiver_endpoint=replace(
+                core.receiver_endpoint,
+                weathering_thickness_m=np.full(
+                    core.receiver_endpoint.weathering_thickness_m.shape,
+                    505.0,
+                ),
+                refractor_elevation_m=np.full(
+                    core.receiver_endpoint.refractor_elevation_m.shape,
+                    606.0,
+                ),
+                weathering_status=receiver_status,
+            ),
+            source_weathering_thickness_m_sorted=np.full(
+                core.source_weathering_thickness_m_sorted.shape,
+                707.0,
+            ),
+            receiver_weathering_thickness_m_sorted=np.full(
+                core.receiver_weathering_thickness_m_sorted.shape,
+                808.0,
+            ),
+            source_refractor_elevation_m_sorted=np.full(
+                core.source_refractor_elevation_m_sorted.shape,
+                909.0,
+            ),
+            receiver_refractor_elevation_m_sorted=np.full(
+                core.receiver_refractor_elevation_m_sorted.shape,
+                1001.0,
+            ),
+            source_weathering_status_sorted=source_sorted_status,
+            receiver_weathering_status_sorted=receiver_sorted_status,
+        )
+
+    monkeypatch.setattr(
+        weathering_module,
+        'core_build_refraction_weathering_model_from_half_intercept_result',
+        _patched_core_build,
+    )
 
     result = build_refraction_weathering_thickness_model(
-        half_intercept_result=replace(
-            half,
-            source_elevation_m=source_elevation,
-            receiver_elevation_m=receiver_elevation,
-            source_elevation_m_sorted=source_elevation_sorted,
-            receiver_elevation_m_sorted=receiver_elevation_sorted,
-        ),
-        model=_model(),
+        half_intercept_result=half,
+        model=model,
     )
 
-    expected_thickness = TRUE_HALF_INTERCEPT_S[0] * _conversion_factor()
-    source_trace = int(np.flatnonzero(result.source_node_id_sorted == 0)[0])
-    receiver_trace = int(np.flatnonzero(result.receiver_node_id_sorted == 0)[0])
-    assert result.source_refractor_elevation_m[source_node_zero] == pytest.approx(
-        110.0 - expected_thickness
-    )
-    assert result.receiver_refractor_elevation_m[receiver_node_zero] == pytest.approx(
-        210.0 - expected_thickness
-    )
-    assert result.source_refractor_elevation_m_sorted[source_trace] == pytest.approx(
-        110.0 - expected_thickness
-    )
-    assert result.receiver_refractor_elevation_m_sorted[receiver_trace] == pytest.approx(
-        210.0 - expected_thickness
-    )
+    np.testing.assert_allclose(result.node_weathering_thickness_m, 101.0)
+    np.testing.assert_allclose(result.node_refractor_elevation_m, 202.0)
+    assert result.node_weathering_status.tolist() == ['external_node'] * 6
+    np.testing.assert_allclose(result.source_weathering_thickness_m, 303.0)
+    np.testing.assert_allclose(result.source_refractor_elevation_m, 404.0)
+    assert result.source_weathering_status.tolist() == ['external_source'] * 6
+    np.testing.assert_allclose(result.receiver_weathering_thickness_m, 505.0)
+    np.testing.assert_allclose(result.receiver_refractor_elevation_m, 606.0)
+    assert result.receiver_weathering_status.tolist() == ['external_receiver'] * 6
+    np.testing.assert_allclose(result.source_weathering_thickness_m_sorted, 707.0)
+    np.testing.assert_allclose(result.receiver_weathering_thickness_m_sorted, 808.0)
+    np.testing.assert_allclose(result.source_refractor_elevation_m_sorted, 909.0)
+    np.testing.assert_allclose(result.receiver_refractor_elevation_m_sorted, 1001.0)
+    assert result.source_weathering_status_sorted.tolist() == [
+        'external_source_sorted'
+    ] * 16
+    assert result.receiver_weathering_status_sorted.tolist() == [
+        'external_receiver_sorted'
+    ] * 16
 
 
 def test_max_thickness_marks_without_clipping() -> None:
@@ -274,12 +378,10 @@ def test_max_thickness_marks_without_clipping() -> None:
     assert result.qc['exceeds_max_thickness_count'] == 4
 
 
-def test_weathering_status_priority_preserves_higher_priority_statuses() -> None:
+def test_weathering_status_comes_from_core_result() -> None:
     _inputs, _design, _solved, half = _build_result()
     node_half = half.node_half_intercept_time_s.copy()
     node_elevation = half.node_elevation_m.copy()
-    source_elevation = half.source_elevation_m.copy()
-    source_elevation_sorted = half.source_elevation_m_sorted.copy()
     node_half[0] = np.nan
     node_half[2] = 0.005
     node_elevation[2] = np.inf
@@ -291,9 +393,6 @@ def test_weathering_status_priority_preserves_higher_priority_statuses() -> None
     status[2] = 'low_fold'
     status[3] = 'clipped_upper'
     status[4] = 'clipped_lower'
-    source_node_two = int(np.flatnonzero(half.source_node_id == 2)[0])
-    source_elevation[source_node_two] = np.inf
-    source_elevation_sorted[half.source_node_id_sorted == 2] = np.inf
 
     with np.errstate(over='ignore'):
         result = build_refraction_weathering_thickness_model(
@@ -302,67 +401,24 @@ def test_weathering_status_priority_preserves_higher_priority_statuses() -> None
                 node_half_intercept_time_s=node_half,
                 node_elevation_m=node_elevation,
                 node_solution_status=status,
-                source_elevation_m=source_elevation,
-                source_elevation_m_sorted=source_elevation_sorted,
             ),
             model=_model(max_weathering_thickness_m=10.0),
         )
 
     assert result.node_weathering_status.tolist() == [
-        'invalid_half_intercept',
-        'exceeds_max_thickness',
-        'invalid_surface_elevation',
-        'invalid_refractor_elevation',
+        'low_fold',
+        'clipped_half_intercept_upper',
+        'low_fold',
+        'clipped_half_intercept_upper',
         'clipped_half_intercept_lower',
         'inactive',
     ]
-    source_node_zero = int(np.flatnonzero(result.source_node_id == 0)[0])
-    receiver_node_one = int(np.flatnonzero(result.receiver_node_id == 1)[0])
-    source_node_three = int(np.flatnonzero(result.source_node_id == 3)[0])
-    source_node_four = int(np.flatnonzero(result.source_node_id == 4)[0])
-    source_trace_zero = int(np.flatnonzero(result.source_node_id_sorted == 0)[0])
-    receiver_trace_one = int(np.flatnonzero(result.receiver_node_id_sorted == 1)[0])
-    source_trace_two = int(np.flatnonzero(result.source_node_id_sorted == 2)[0])
-    source_trace_three = int(np.flatnonzero(result.source_node_id_sorted == 3)[0])
-    source_trace_four = int(np.flatnonzero(result.source_node_id_sorted == 4)[0])
-    assert result.source_weathering_status[source_node_zero] == (
-        'invalid_half_intercept'
-    )
-    assert (
-        result.receiver_weathering_status[receiver_node_one]
-        == 'exceeds_max_thickness'
-    )
-    assert result.source_weathering_status[source_node_two] == (
-        'invalid_surface_elevation'
-    )
-    assert result.source_weathering_status[source_node_three] == (
-        'invalid_refractor_elevation'
-    )
-    assert result.source_weathering_status[source_node_four] == (
-        'clipped_half_intercept_lower'
-    )
-    assert result.source_weathering_status_sorted[source_trace_zero] == (
-        'invalid_half_intercept'
-    )
-    assert (
-        result.receiver_weathering_status_sorted[receiver_trace_one]
-        == 'exceeds_max_thickness'
-    )
-    assert result.source_weathering_status_sorted[source_trace_two] == (
-        'invalid_surface_elevation'
-    )
-    assert result.source_weathering_status_sorted[source_trace_three] == (
-        'invalid_refractor_elevation'
-    )
-    assert result.source_weathering_status_sorted[source_trace_four] == (
-        'clipped_half_intercept_lower'
-    )
-    assert result.qc['low_fold_node_count'] == 0
-    assert result.qc['clipped_half_intercept_node_count'] == 1
-    assert result.qc['invalid_half_intercept_node_count'] == 1
-    assert result.qc['exceeds_max_thickness_count'] == 1
-    assert result.qc['invalid_surface_elevation_count'] == 1
-    assert result.qc['invalid_refractor_elevation_count'] == 1
+    assert result.qc['low_fold_node_count'] == 2
+    assert result.qc['clipped_half_intercept_node_count'] == 3
+    assert result.qc['invalid_half_intercept_node_count'] == 0
+    assert result.qc['exceeds_max_thickness_count'] == 0
+    assert result.qc['invalid_surface_elevation_count'] == 0
+    assert result.qc['invalid_refractor_elevation_count'] == 0
     assert result.qc['zero_thickness_node_count'] == 0
 
 
@@ -433,7 +489,7 @@ def test_unknown_invalid_trace_nodes_are_marked() -> None:
         model=_model(),
     )
 
-    assert result.source_weathering_status_sorted[-1] == 'missing_node'
+    assert result.source_weathering_status_sorted[-1] == 'inactive'
     assert np.isnan(result.source_weathering_thickness_m_sorted[-1])
 
 
@@ -444,13 +500,12 @@ def test_invalid_trace_unknown_nodes_from_half_intercept_do_not_emit_endpoints()
     source_node_id_sorted[-1] = 999
     source_endpoint_key_sorted[-1] = 'source:999'
 
-    _inputs, _design, _solved, half = _build_result(
-        input_model=replace(
-            inputs,
-            source_node_id_sorted=source_node_id_sorted,
-            source_endpoint_key_sorted=source_endpoint_key_sorted,
-        ),
+    modified_input = replace(
+        inputs,
+        source_node_id_sorted=source_node_id_sorted,
+        source_endpoint_key_sorted=source_endpoint_key_sorted,
     )
+    _inputs, _design, _solved, half = _build_result(input_model=modified_input)
 
     assert 999 not in half.source_node_id.tolist()
     assert 'source:999' not in half.source_endpoint_key.tolist()
@@ -460,7 +515,7 @@ def test_invalid_trace_unknown_nodes_from_half_intercept_do_not_emit_endpoints()
         model=_model(),
     )
 
-    assert result.source_weathering_status_sorted[-1] == 'missing_node'
+    assert result.source_weathering_status_sorted[-1] == 'missing_endpoint'
     assert np.isnan(result.source_weathering_thickness_m_sorted[-1])
 
 
@@ -476,11 +531,11 @@ def test_invalid_surface_elevation_yields_nan_refractor() -> None:
 
     assert result.node_weathering_status[0] == 'invalid_surface_elevation'
     assert np.isnan(result.node_refractor_elevation_m[0])
-    assert result.source_weathering_status_sorted[0] == 'ok'
-    assert np.isfinite(result.source_refractor_elevation_m_sorted[0])
+    assert result.source_weathering_status_sorted[0] == 'invalid_surface_elevation'
+    assert np.isnan(result.source_refractor_elevation_m_sorted[0])
 
 
-def test_invalid_endpoint_surface_elevation_yields_nan_trace_refractor() -> None:
+def test_endpoint_elevation_mutation_does_not_override_core_weathering() -> None:
     _inputs, _design, _solved, half = _build_result()
     source_elevation = half.source_elevation_m.copy()
     source_elevation_sorted = half.source_elevation_m_sorted.copy()
@@ -496,10 +551,10 @@ def test_invalid_endpoint_surface_elevation_yields_nan_trace_refractor() -> None
         model=_model(),
     )
 
-    assert result.source_weathering_status[0] == 'invalid_surface_elevation'
-    assert np.isnan(result.source_refractor_elevation_m[0])
-    assert result.source_weathering_status_sorted[0] == 'invalid_surface_elevation'
-    assert np.isnan(result.source_refractor_elevation_m_sorted[0])
+    assert result.source_weathering_status[0] == 'ok'
+    assert np.isfinite(result.source_refractor_elevation_m[0])
+    assert result.source_weathering_status_sorted[0] == 'ok'
+    assert np.isfinite(result.source_refractor_elevation_m_sorted[0])
 
 
 def test_velocity_validation_rejects_unphysical_context() -> None:
