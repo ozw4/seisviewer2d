@@ -316,12 +316,10 @@ def test_build_weathering_model_maps_nodes_endpoints_and_trace_order(
     )
     assert result.source_weathering_status_sorted[-1] == 'inactive'
     assert result.receiver_weathering_status_sorted[-1] == 'inactive'
-    assert result.qc['weathering_thickness_median_m'] == pytest.approx(
-        float(np.median(expected_node_thickness))
+    assert result.qc['node_weathering_status_counts']['ok'] == int(
+        NODE_ID.shape[0] - 1
     )
-    assert result.qc['thickness_formula'] == (
-        'z = T * vb * vw / sqrt(vb^2 - vw^2)'
-    )
+    assert 'weathering_thickness_median_m' not in result.qc
 
     artifact_names = (
         REFRACTION_WEATHERING_QC_JSON_NAME,
@@ -533,6 +531,12 @@ def test_core_weathering_values_are_mapped_without_recalculation(
             ),
             source_weathering_status_sorted=source_sorted_status,
             receiver_weathering_status_sorted=receiver_sorted_status,
+            qc={
+                'qc_source': 'external_core',
+                'node_weathering_status_counts': {'external_node': 6},
+                'source_weathering_status_counts': {'external_source': 6},
+                'receiver_weathering_status_counts': {'external_receiver': 6},
+            },
         )
 
     monkeypatch.setattr(
@@ -565,6 +569,8 @@ def test_core_weathering_values_are_mapped_without_recalculation(
     assert result.receiver_weathering_status_sorted.tolist() == [
         'external_receiver_sorted'
     ] * 16
+    assert result.qc['qc_source'] == 'external_core'
+    assert result.qc['weathering_status_counts'] == {'external_node': 6}
 
 
 def test_max_thickness_marks_without_clipping() -> None:

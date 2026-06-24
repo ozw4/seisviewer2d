@@ -22,9 +22,6 @@ from seis_statics.refraction.first_layer import (
     validate_resolved_first_layer_velocity_match,
 )
 from seis_statics.refraction.weathering import (
-    RefractionWeatheringEndpointComponents as CoreRefractionWeatheringEndpointComponents,
-)
-from seis_statics.refraction.weathering import (
     RefractionWeatheringModel as CoreRefractionWeatheringModel,
 )
 from app.statics.refraction.contracts.result_types import (
@@ -303,6 +300,7 @@ def compute_weathering_replacement_core_context_from_first_breaks(
 def build_refraction_weathering_replacement_statics(
     *,
     weathering_result: RefractionWeatheringThicknessResult,
+    core_weathering_model: CoreRefractionWeatheringModel,
     apply_options: RefractionStaticApplyOptions | None = None,
     job_dir: Path | None = None,
     resolved_first_layer: ResolvedRefractionFirstLayer | None = None,
@@ -310,6 +308,7 @@ def build_refraction_weathering_replacement_statics(
     """Compute weathering-replacement statics from weathering thickness."""
     return build_refraction_weathering_replacement_core_context(
         weathering_result=weathering_result,
+        core_weathering_model=core_weathering_model,
         apply_options=apply_options,
         job_dir=job_dir,
         resolved_first_layer=resolved_first_layer,
@@ -319,7 +318,7 @@ def build_refraction_weathering_replacement_statics(
 def build_refraction_weathering_replacement_core_context(
     *,
     weathering_result: RefractionWeatheringThicknessResult,
-    core_weathering_model: CoreRefractionWeatheringModel | None = None,
+    core_weathering_model: CoreRefractionWeatheringModel,
     apply_options: RefractionStaticApplyOptions | None = None,
     job_dir: Path | None = None,
     resolved_first_layer: ResolvedRefractionFirstLayer | None = None,
@@ -327,11 +326,11 @@ def build_refraction_weathering_replacement_core_context(
     """Call the external high-level replacement builder and map to the app DTO."""
     try:
         max_abs_shift_ms = _resolve_max_abs_shift_ms(apply_options)
-        core_weathering = (
-            core_weathering_model
-            if core_weathering_model is not None
-            else _core_weathering_model_from_app_result(weathering_result)
-        )
+        if not isinstance(core_weathering_model, CoreRefractionWeatheringModel):
+            raise RefractionWeatheringReplacementStaticsError(
+                'core_weathering_model must be a RefractionWeatheringModel instance'
+            )
+        core_weathering = core_weathering_model
         if resolved_first_layer is not None:
             validate_resolved_first_layer_velocity_match(
                 weathering_velocity_m_s=float(core_weathering.weathering_velocity_m_s),
@@ -361,12 +360,14 @@ def build_refraction_weathering_replacement_core_context(
 def _build_refraction_weathering_replacement_contract_result(
     *,
     weathering_result: RefractionWeatheringThicknessResult,
+    core_weathering_model: CoreRefractionWeatheringModel,
     apply_options: RefractionStaticApplyOptions | None = None,
     job_dir: Path | None = None,
     resolved_first_layer: ResolvedRefractionFirstLayer | None = None,
 ) -> RefractionWeatheringReplacementStaticsResult:
     return build_refraction_weathering_replacement_core_context(
         weathering_result=weathering_result,
+        core_weathering_model=core_weathering_model,
         apply_options=apply_options,
         job_dir=job_dir,
         resolved_first_layer=resolved_first_layer,
@@ -517,190 +518,6 @@ def _app_replacement_result_from_core(
     return result
 
 
-def _core_weathering_model_from_app_result(
-    weathering_result: RefractionWeatheringThicknessResult,
-) -> CoreRefractionWeatheringModel:
-    data = _validate_weathering_result(weathering_result)
-    velocity = _validate_velocity_context(weathering_result, resolved_first_layer=None)
-    node_v2 = _local_or_scalar_v2(
-        data.node_v2_m_s,
-        shape=data.node_weathering_thickness_m.shape,
-        scalar_v2_m_s=velocity.bedrock_velocity_m_s,
-    )
-    source_v2 = _local_or_scalar_v2(
-        data.source_v2_m_s,
-        shape=data.source_weathering_thickness_m.shape,
-        scalar_v2_m_s=velocity.bedrock_velocity_m_s,
-    )
-    receiver_v2 = _local_or_scalar_v2(
-        data.receiver_v2_m_s,
-        shape=data.receiver_weathering_thickness_m.shape,
-        scalar_v2_m_s=velocity.bedrock_velocity_m_s,
-    )
-    node_v2_status = _local_or_ok_status(data.node_v2_status, data.node_id.shape)
-    source_v2_status = _local_or_ok_status(
-        data.source_v2_status,
-        data.source_endpoint_key.shape,
-    )
-    receiver_v2_status = _local_or_ok_status(
-        data.receiver_v2_status,
-        data.receiver_endpoint_key.shape,
-    )
-    return CoreRefractionWeatheringModel(
-        file_id='',
-        n_traces=data.n_traces,
-        bedrock_velocity_mode=velocity.mode,
-        weathering_velocity_m_s=velocity.weathering_velocity_m_s,
-        bedrock_velocity_m_s=velocity.bedrock_velocity_m_s,
-        bedrock_slowness_s_per_m=velocity.bedrock_slowness_s_per_m,
-        bedrock_velocity_status='ok',
-        v2_m_s=velocity.bedrock_velocity_m_s,
-        node_id=data.node_id,
-        node_x_m=data.node_x_m,
-        node_y_m=data.node_y_m,
-        node_surface_elevation_m=data.node_surface_elevation_m,
-        node_half_intercept_time_s=data.node_half_intercept_time_s,
-        node_v1_m_s=np.full(
-            data.node_id.shape,
-            velocity.weathering_velocity_m_s,
-            dtype=np.float64,
-        ),
-        node_v2_m_s=node_v2,
-        node_weathering_thickness_m=data.node_weathering_thickness_m,
-        node_refractor_elevation_m=data.node_refractor_elevation_m,
-        node_solution_status=data.node_solution_status,
-        node_local_v2_status=node_v2_status,
-        node_weathering_status=data.node_weathering_status,
-        node_pick_count=data.node_pick_count,
-        node_used_observation_count=data.node_used_pick_count,
-        node_rejected_observation_count=data.node_rejected_pick_count,
-        source_endpoint=CoreRefractionWeatheringEndpointComponents(
-            endpoint_key=data.source_endpoint_key,
-            endpoint_id=data.source_id,
-            node_id=data.source_node_id,
-            x_m=data.source_x_m,
-            y_m=data.source_y_m,
-            surface_elevation_m=data.source_surface_elevation_m,
-            half_intercept_time_s=data.source_half_intercept_time_s,
-            v1_m_s=np.full(
-                data.source_endpoint_key.shape,
-                velocity.weathering_velocity_m_s,
-                dtype=np.float64,
-            ),
-            v2_m_s=source_v2,
-            weathering_thickness_m=data.source_weathering_thickness_m,
-            refractor_elevation_m=data.source_refractor_elevation_m,
-            solution_status=data.source_weathering_status,
-            local_v2_status=source_v2_status,
-            weathering_status=data.source_weathering_status,
-            pick_count=np.zeros(data.source_endpoint_key.shape, dtype=np.int64),
-            used_observation_count=np.zeros(
-                data.source_endpoint_key.shape,
-                dtype=np.int64,
-            ),
-            rejected_observation_count=np.zeros(
-                data.source_endpoint_key.shape,
-                dtype=np.int64,
-            ),
-        ),
-        receiver_endpoint=CoreRefractionWeatheringEndpointComponents(
-            endpoint_key=data.receiver_endpoint_key,
-            endpoint_id=data.receiver_id,
-            node_id=data.receiver_node_id,
-            x_m=data.receiver_x_m,
-            y_m=data.receiver_y_m,
-            surface_elevation_m=data.receiver_surface_elevation_m,
-            half_intercept_time_s=data.receiver_half_intercept_time_s,
-            v1_m_s=np.full(
-                data.receiver_endpoint_key.shape,
-                velocity.weathering_velocity_m_s,
-                dtype=np.float64,
-            ),
-            v2_m_s=receiver_v2,
-            weathering_thickness_m=data.receiver_weathering_thickness_m,
-            refractor_elevation_m=data.receiver_refractor_elevation_m,
-            solution_status=data.receiver_weathering_status,
-            local_v2_status=receiver_v2_status,
-            weathering_status=data.receiver_weathering_status,
-            pick_count=np.zeros(data.receiver_endpoint_key.shape, dtype=np.int64),
-            used_observation_count=np.zeros(
-                data.receiver_endpoint_key.shape,
-                dtype=np.int64,
-            ),
-            rejected_observation_count=np.zeros(
-                data.receiver_endpoint_key.shape,
-                dtype=np.int64,
-            ),
-        ),
-        trace_index_sorted=data.sorted_trace_index,
-        source_endpoint_key_sorted=data.source_endpoint_key_sorted,
-        receiver_endpoint_key_sorted=data.receiver_endpoint_key_sorted,
-        source_node_id_sorted=data.source_node_id_sorted,
-        receiver_node_id_sorted=data.receiver_node_id_sorted,
-        source_weathering_thickness_m_sorted=(
-            data.source_weathering_thickness_m_sorted
-        ),
-        receiver_weathering_thickness_m_sorted=(
-            data.receiver_weathering_thickness_m_sorted
-        ),
-        source_refractor_elevation_m_sorted=data.source_refractor_elevation_m_sorted,
-        receiver_refractor_elevation_m_sorted=(
-            data.receiver_refractor_elevation_m_sorted
-        ),
-        source_weathering_status_sorted=data.source_weathering_status_sorted,
-        receiver_weathering_status_sorted=data.receiver_weathering_status_sorted,
-        trace_weathering_thickness_m_sorted=np.full(
-            data.sorted_trace_index.shape,
-            np.nan,
-            dtype=np.float64,
-        ),
-        trace_weathering_status_sorted=np.full(
-            data.sorted_trace_index.shape,
-            'ok',
-            dtype=_STATUS_DTYPE,
-        ),
-        cell_id=_optional_or_empty_i64(data.active_cell_id),
-        cell_v2_m_s=_optional_or_empty_f64(data.cell_bedrock_velocity_m_s),
-        cell_velocity_status=_optional_or_empty_status(data.cell_velocity_status),
-        cell_observation_count=_cell_observation_count_from_qc(weathering_result.qc),
-        qc=_core_qc(getattr(weathering_result, 'qc', {})),
-    )
-
-
-def _local_or_ok_status(
-    local_status: np.ndarray | None,
-    shape: tuple[int, ...],
-) -> np.ndarray:
-    if local_status is None:
-        return np.full(shape, 'ok', dtype=_STATUS_DTYPE)
-    return np.ascontiguousarray(local_status, dtype=_STATUS_DTYPE)
-
-
-def _optional_or_empty_i64(values: np.ndarray | None) -> np.ndarray:
-    if values is None:
-        return np.empty(0, dtype=np.int64)
-    return np.ascontiguousarray(values, dtype=np.int64)
-
-
-def _optional_or_empty_f64(values: np.ndarray | None) -> np.ndarray:
-    if values is None:
-        return np.empty(0, dtype=np.float64)
-    return np.ascontiguousarray(values, dtype=np.float64)
-
-
-def _optional_or_empty_status(values: np.ndarray | None) -> np.ndarray:
-    if values is None:
-        return np.empty(0, dtype=_STATUS_DTYPE)
-    return np.ascontiguousarray(values, dtype=_STATUS_DTYPE)
-
-
-def _cell_observation_count_from_qc(qc: dict[str, Any]) -> np.ndarray:
-    values = qc.get('cell_observation_count')
-    if values is None:
-        return np.empty(0, dtype=np.int64)
-    return np.ascontiguousarray(values, dtype=np.int64)
-
-
 def _core_f64(values: object) -> np.ndarray:
     return np.ascontiguousarray(values, dtype=np.float64)
 
@@ -817,17 +634,6 @@ def compute_weathering_replacement_shift_scalar_s(
         bedrock_velocity_m_s=bedrock_velocity_m_s,
     )
     return float(value[0])
-
-
-def _local_or_scalar_v2(
-    local_v2_m_s: np.ndarray | None,
-    *,
-    shape: tuple[int, ...],
-    scalar_v2_m_s: float,
-) -> np.ndarray:
-    if local_v2_m_s is None:
-        return np.full(shape, scalar_v2_m_s, dtype=np.float64)
-    return np.ascontiguousarray(local_v2_m_s, dtype=np.float64)
 
 
 def write_refraction_weathering_replacement_artifacts(

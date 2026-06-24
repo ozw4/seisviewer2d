@@ -71,7 +71,6 @@ REFRACTION_WEATHERING_TRACE_PREVIEW_CSV_NAME = (
 )
 
 _STATUS_DTYPE = '<U32'
-_FORMULA_TEXT = 'z = T * vb * vw / sqrt(vb^2 - vw^2)'
 _CELL_THRESHOLD_QC_KEYS = (
     'min_observations_per_cell',
     'n_low_fold_cells',
@@ -792,15 +791,6 @@ def _app_weathering_result_from_core(
     qc = _app_weathering_qc_from_core(
         core_weathering=core_weathering,
         half_intercept_result=half_intercept_result,
-        model=model,
-        resolved_first_layer=resolved_first_layer,
-        node_weathering_thickness_m=node_thickness,
-        node_refractor_elevation_m=node_refractor,
-        node_weathering_status=node_status,
-        source_weathering_thickness_m=source_thickness,
-        source_weathering_status=source_status,
-        receiver_weathering_thickness_m=receiver_thickness,
-        receiver_weathering_status=receiver_status,
     )
     return RefractionWeatheringThicknessResult(
         bedrock_velocity_mode=core_weathering.bedrock_velocity_mode,
@@ -928,119 +918,90 @@ def _app_weathering_qc_from_core(
     *,
     core_weathering: CoreRefractionWeatheringModel,
     half_intercept_result: RefractionHalfInterceptTimeResult,
-    model: RefractionStaticModelRequest,
-    resolved_first_layer: ResolvedRefractionFirstLayer | None,
-    node_weathering_thickness_m: np.ndarray,
-    node_refractor_elevation_m: np.ndarray,
-    node_weathering_status: np.ndarray,
-    source_weathering_thickness_m: np.ndarray,
-    source_weathering_status: np.ndarray,
-    receiver_weathering_thickness_m: np.ndarray,
-    receiver_weathering_status: np.ndarray,
 ) -> dict[str, Any]:
-    node_status = _weathering_status(node_weathering_status)
-    source_status = _weathering_status(source_weathering_status)
-    receiver_status = _weathering_status(receiver_weathering_status)
-    ok_nodes = node_status == 'ok'
-    finite_ok_thickness = _f64(node_weathering_thickness_m)[
-        ok_nodes & np.isfinite(node_weathering_thickness_m)
-    ]
-    finite_ok_refractor = _f64(node_refractor_elevation_m)[
-        ok_nodes & np.isfinite(node_refractor_elevation_m)
-    ]
-    source_ok = source_status == 'ok'
-    receiver_ok = receiver_status == 'ok'
-    max_thickness = model.max_weathering_thickness_m
-    qc: dict[str, Any] = {
-        'method': 'gli_variable_thickness',
-        'bedrock_velocity_mode': str(core_weathering.bedrock_velocity_mode),
-        'bedrock_velocity_m_s': _json_float_or_none(
-            half_intercept_result.bedrock_velocity_m_s
-        ),
-        'bedrock_slowness_s_per_m': _json_float_or_none(
-            half_intercept_result.bedrock_slowness_s_per_m
-        ),
-        'weathering_velocity_m_s': float(
-            resolve_weathering_velocity_m_s(
-                model=model,
-                resolved_first_layer=resolved_first_layer,
-                name='model.weathering_velocity_m_s',
-            )
-        ),
-        'n_traces': int(core_weathering.n_traces),
-        'n_valid_observations': int(
-            np.count_nonzero(half_intercept_result.valid_observation_mask_sorted)
-        ),
-        'n_used_observations': int(
-            np.count_nonzero(half_intercept_result.used_observation_mask_sorted)
-        ),
-        'n_nodes': int(core_weathering.node_id.shape[0]),
-        'n_active_nodes': int(
-            np.count_nonzero(_status(core_weathering.node_solution_status) != 'inactive')
-        ),
-        'n_inactive_nodes': int(
-            np.count_nonzero(_status(core_weathering.node_solution_status) == 'inactive')
-        ),
-        'n_source_endpoints': int(core_weathering.source_endpoint.endpoint_key.shape[0]),
-        'n_receiver_endpoints': int(
-            core_weathering.receiver_endpoint.endpoint_key.shape[0]
-        ),
-        'weathering_thickness_min_m': _json_stat(finite_ok_thickness, 'min'),
-        'weathering_thickness_max_m': _json_stat(finite_ok_thickness, 'max'),
-        'weathering_thickness_median_m': _json_stat(finite_ok_thickness, 'median'),
-        'weathering_thickness_p95_m': _json_stat(finite_ok_thickness, 'p95'),
-        'source_weathering_thickness_median_m': _json_stat(
-            _f64(source_weathering_thickness_m)[
-                source_ok & np.isfinite(source_weathering_thickness_m)
-            ],
-            'median',
-        ),
-        'receiver_weathering_thickness_median_m': _json_stat(
-            _f64(receiver_weathering_thickness_m)[
-                receiver_ok & np.isfinite(receiver_weathering_thickness_m)
-            ],
-            'median',
-        ),
-        'refractor_elevation_min_m': _json_stat(finite_ok_refractor, 'min'),
-        'refractor_elevation_max_m': _json_stat(finite_ok_refractor, 'max'),
-        'refractor_elevation_median_m': _json_stat(finite_ok_refractor, 'median'),
-        'max_weathering_thickness_m': (
-            None if max_thickness is None else float(max_thickness)
-        ),
-        'exceeds_max_thickness_count': int(
-            np.count_nonzero(node_status == 'exceeds_max_thickness')
-        ),
-        'inactive_node_count': int(np.count_nonzero(node_status == 'inactive')),
-        'low_fold_node_count': int(np.count_nonzero(node_status == 'low_fold')),
-        'clipped_half_intercept_node_count': int(
-            np.count_nonzero(
-                (node_status == 'clipped_half_intercept_lower')
-                | (node_status == 'clipped_half_intercept_upper')
-            )
-        ),
-        'invalid_half_intercept_node_count': int(
-            np.count_nonzero(node_status == 'invalid_half_intercept')
-        ),
-        'negative_thickness_node_count': int(
-            np.count_nonzero(node_status == 'negative_thickness')
-        ),
-        'zero_thickness_node_count': int(
-            np.count_nonzero(node_status == 'zero_thickness')
-        ),
-        'invalid_surface_elevation_count': int(
-            np.count_nonzero(node_status == 'invalid_surface_elevation')
-        ),
-        'invalid_refractor_elevation_count': int(
-            np.count_nonzero(node_status == 'invalid_refractor_elevation')
-        ),
-        'weathering_status_counts': _status_counts(node_status),
-        'source_weathering_status_counts': _status_counts(source_status),
-        'receiver_weathering_status_counts': _status_counts(receiver_status),
-        'thickness_formula': _FORMULA_TEXT,
-    }
+    qc = _core_qc(getattr(core_weathering, 'qc', {}))
+    node_counts = _qc_counts(qc.get('node_weathering_status_counts'))
+    source_counts = _qc_counts(qc.get('source_weathering_status_counts'))
+    receiver_counts = _qc_counts(qc.get('receiver_weathering_status_counts'))
+    qc.setdefault('method', 'gli_variable_thickness')
+    qc.setdefault('bedrock_velocity_mode', str(core_weathering.bedrock_velocity_mode))
+    qc.setdefault(
+        'bedrock_velocity_m_s',
+        _json_float_or_none(half_intercept_result.bedrock_velocity_m_s),
+    )
+    qc.setdefault(
+        'bedrock_slowness_s_per_m',
+        _json_float_or_none(half_intercept_result.bedrock_slowness_s_per_m),
+    )
+    qc.setdefault(
+        'weathering_velocity_m_s',
+        _json_float_or_none(core_weathering.weathering_velocity_m_s),
+    )
+    qc.setdefault('n_traces', int(core_weathering.n_traces))
+    qc.setdefault(
+        'n_valid_observations',
+        int(np.count_nonzero(half_intercept_result.valid_observation_mask_sorted)),
+    )
+    qc.setdefault(
+        'n_used_observations',
+        int(np.count_nonzero(half_intercept_result.used_observation_mask_sorted)),
+    )
+    qc.setdefault('n_nodes', int(core_weathering.node_id.shape[0]))
+    qc.setdefault(
+        'n_source_endpoints',
+        int(core_weathering.source_endpoint.endpoint_key.shape[0]),
+    )
+    qc.setdefault(
+        'n_receiver_endpoints',
+        int(core_weathering.receiver_endpoint.endpoint_key.shape[0]),
+    )
+    qc.setdefault('weathering_status_counts', node_counts)
+    qc.setdefault('source_weathering_status_counts', source_counts)
+    qc.setdefault('receiver_weathering_status_counts', receiver_counts)
+    qc.setdefault('n_inactive_nodes', node_counts.get('inactive', 0))
+    qc.setdefault('n_active_nodes', int(core_weathering.node_id.shape[0]) - node_counts.get('inactive', 0))
+    qc.setdefault('inactive_node_count', node_counts.get('inactive', 0))
+    qc.setdefault('low_fold_node_count', node_counts.get('low_fold', 0))
+    qc.setdefault(
+        'exceeds_max_thickness_count',
+        node_counts.get('exceeds_max_thickness', 0),
+    )
+    qc.setdefault(
+        'clipped_half_intercept_node_count',
+        node_counts.get('clipped_half_intercept_lower', 0)
+        + node_counts.get('clipped_half_intercept_upper', 0)
+        + node_counts.get('clipped_lower', 0)
+        + node_counts.get('clipped_upper', 0),
+    )
+    qc.setdefault(
+        'invalid_half_intercept_node_count',
+        node_counts.get('invalid_half_intercept', 0),
+    )
+    qc.setdefault('negative_thickness_node_count', node_counts.get('negative_thickness', 0))
+    qc.setdefault('zero_thickness_node_count', node_counts.get('zero_thickness', 0))
+    qc.setdefault(
+        'invalid_surface_elevation_count',
+        node_counts.get('invalid_surface_elevation', 0),
+    )
+    qc.setdefault(
+        'invalid_refractor_elevation_count',
+        node_counts.get('invalid_refractor_elevation', 0),
+    )
     _copy_cell_threshold_qc(qc, getattr(half_intercept_result, 'qc', {}))
     _assert_json_safe(qc)
     return qc
+
+
+def _core_qc(values: object) -> dict[str, Any]:
+    if not isinstance(values, dict):
+        raise RefractionWeatheringThicknessError('core qc must be a dict')
+    return dict(values)
+
+
+def _qc_counts(values: object) -> dict[str, int]:
+    if not isinstance(values, dict):
+        return {}
+    return {str(key): int(value) for key, value in values.items()}
 
 
 def _core_half_intercept_result_from_app_result(
@@ -1545,22 +1506,6 @@ def _optional_i64(values: object | None) -> np.ndarray | None:
     return None if values is None else _i64(values)
 
 
-def _json_stat(values: np.ndarray, stat: str) -> float | None:
-    arr = np.asarray(values, dtype=np.float64)
-    arr = arr[np.isfinite(arr)]
-    if arr.size == 0:
-        return None
-    if stat == 'min':
-        return float(np.min(arr))
-    if stat == 'max':
-        return float(np.max(arr))
-    if stat == 'median':
-        return float(np.median(arr))
-    if stat == 'p95':
-        return float(np.percentile(arr, 95.0))
-    raise RefractionWeatheringThicknessError(f'unsupported statistic: {stat}')
-
-
 def _json_float_or_none(value: object) -> float | None:
     out = float(value)
     return out if np.isfinite(out) else None
@@ -1583,14 +1528,6 @@ def _nan_stat(values: object, stat: str) -> float:
     if stat == 'max_abs':
         return float(np.max(np.abs(arr)))
     raise RefractionWeatheringThicknessError(f'unsupported statistic: {stat}')
-
-
-def _status_counts(values: np.ndarray) -> dict[str, int]:
-    out: dict[str, int] = {}
-    for raw in values.tolist():
-        key = str(raw)
-        out[key] = out.get(key, 0) + 1
-    return dict(sorted(out.items()))
 
 
 def _copy_cell_threshold_qc(payload: dict[str, Any], upstream: dict[str, Any]) -> None:
