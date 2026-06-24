@@ -538,6 +538,103 @@ def test_production_core_context_keeps_shared_node_endpoint_geometry() -> None:
     }
 
 
+def test_production_core_context_keeps_multiple_shared_node_endpoint_geometries() -> None:
+    inputs, _design, _solved, half = _build_result()
+    source_zero = int(np.flatnonzero(half.source_endpoint_key == 'source:0')[0])
+    source_one = int(np.flatnonzero(half.source_endpoint_key == 'source:1')[0])
+    receiver_zero = int(np.flatnonzero(half.receiver_endpoint_key == 'receiver:0')[0])
+    source_zero_trace = half.source_endpoint_key_sorted == 'source:0'
+    source_one_trace = half.source_endpoint_key_sorted == 'source:1'
+    receiver_zero_trace = half.receiver_endpoint_key_sorted == 'receiver:0'
+    source_node_id = half.source_node_id.copy()
+    source_x = half.source_x_m.copy()
+    source_elevation = half.source_elevation_m.copy()
+    receiver_x = half.receiver_x_m.copy()
+    receiver_elevation = half.receiver_elevation_m.copy()
+    source_node_id_sorted = half.source_node_id_sorted.copy()
+    source_elevation_sorted = half.source_elevation_m_sorted.copy()
+    receiver_elevation_sorted = half.receiver_elevation_m_sorted.copy()
+    source_x_sorted = inputs.source_x_m_sorted.copy()
+    receiver_x_sorted = inputs.receiver_x_m_sorted.copy()
+
+    source_node_id[source_one] = 0
+    source_node_id_sorted[source_one_trace] = 0
+    source_x[source_zero] = 40.0
+    source_x[source_one] = 60.0
+    receiver_x[receiver_zero] = 60.0
+    source_x_sorted[source_zero_trace] = 40.0
+    source_x_sorted[source_one_trace] = 60.0
+    receiver_x_sorted[receiver_zero_trace] = 60.0
+    source_elevation[source_zero] = 100.0
+    source_elevation[source_one] = 120.0
+    receiver_elevation[receiver_zero] = 120.0
+    source_elevation_sorted[source_zero_trace] = 100.0
+    source_elevation_sorted[source_one_trace] = 120.0
+    receiver_elevation_sorted[receiver_zero_trace] = 120.0
+    half = replace(
+        half,
+        source_node_id=source_node_id,
+        source_x_m=source_x,
+        source_elevation_m=source_elevation,
+        receiver_x_m=receiver_x,
+        receiver_elevation_m=receiver_elevation,
+        source_node_id_sorted=source_node_id_sorted,
+        source_elevation_m_sorted=source_elevation_sorted,
+        receiver_elevation_m_sorted=receiver_elevation_sorted,
+    )
+    inputs = replace(
+        inputs,
+        source_node_id_sorted=source_node_id_sorted,
+        source_x_m_sorted=source_x_sorted,
+        receiver_x_m_sorted=receiver_x_sorted,
+        source_elevation_m_sorted=source_elevation_sorted,
+        receiver_elevation_m_sorted=receiver_elevation_sorted,
+    )
+    model = _model()
+    core_result = weathering_module._core_half_intercept_result_from_app_result(
+        half_intercept_result=half,
+        model=model,
+    )
+    context = weathering_module._HalfInterceptCoreContext(
+        app_input_model=inputs,
+        core_input_model=weathering_module.core_input_model_from_app(inputs),
+        core_result=core_result,
+        app_result=half,
+    )
+
+    weathering_context = build_refraction_weathering_core_context(
+        half_intercept_context=context,
+        model=model,
+    )
+
+    result = weathering_context.app_weathering_result
+    core = weathering_context.core_weathering_model
+    expected_thickness = TRUE_HALF_INTERCEPT_S[0] * _conversion_factor()
+    assert result.source_node_id[source_zero] == 0
+    assert result.source_node_id[source_one] == 0
+    assert core.source_endpoint.node_id[source_zero] == 0
+    assert core.source_endpoint.node_id[source_one] == 0
+    assert result.source_x_m[source_zero] == pytest.approx(40.0)
+    assert result.source_x_m[source_one] == pytest.approx(60.0)
+    assert result.source_surface_elevation_m[source_zero] == pytest.approx(100.0)
+    assert result.source_surface_elevation_m[source_one] == pytest.approx(120.0)
+    assert result.receiver_surface_elevation_m[receiver_zero] == pytest.approx(120.0)
+    assert result.source_refractor_elevation_m[source_zero] == pytest.approx(
+        100.0 - expected_thickness
+    )
+    assert result.source_refractor_elevation_m[source_one] == pytest.approx(
+        120.0 - expected_thickness
+    )
+    np.testing.assert_allclose(
+        result.source_refractor_elevation_m_sorted[source_zero_trace],
+        100.0 - expected_thickness,
+    )
+    np.testing.assert_allclose(
+        result.source_refractor_elevation_m_sorted[source_one_trace],
+        120.0 - expected_thickness,
+    )
+
+
 def test_solve_cell_probe_uses_side_specific_endpoint_geometry() -> None:
     inputs, _design, _solved, half = _build_result()
     source_x = half.source_x_m.copy()
