@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import json
 from pathlib import Path
 from typing import Any, Literal
 
@@ -66,6 +67,17 @@ REFRACTION_WEATHERING_REPLACEMENT_TRACE_PREVIEW_CSV_NAME = (
 _STATUS_DTYPE = '<U32'
 _ENDPOINT_KEY_DTYPE = object
 _SLOWNESS_RTOL = 1.0e-8
+_ZERO_SHIFT_ATOL_S = 1.0e-12
+_FORMULA_TEXT = 'shift = z * (1/vb - 1/vw)'
+_SIGN_CONVENTION_TEXT = 'corrected(t) = raw(t - shift_s)'
+_CELL_THRESHOLD_QC_KEYS = (
+    'min_observations_per_cell',
+    'n_low_fold_cells',
+    'n_observations_rejected_by_low_fold_cell',
+    'low_fold_cell_rejection_reason',
+    'low_fold_cell_id',
+    'cell_observation_count',
+)
 
 _NODE_COLUMNS = (
     'node_id',
@@ -344,6 +356,7 @@ def build_refraction_weathering_replacement_core_context(
         result = _app_replacement_result_from_core(
             core_result=core_result,
             weathering_result=weathering_result,
+            max_abs_shift_ms=max_abs_shift_ms,
         )
         if job_dir is not None:
             write_refraction_weathering_replacement_artifacts(Path(job_dir), result)
@@ -378,6 +391,7 @@ def _app_replacement_result_from_core(
     *,
     core_result: CoreRefractionWeatheringReplacementResult,
     weathering_result: RefractionWeatheringThicknessResult,
+    max_abs_shift_ms: float | None,
 ) -> RefractionWeatheringReplacementStaticsResult:
     data = _validate_weathering_result(weathering_result)
     velocity = _validate_velocity_context(weathering_result, resolved_first_layer=None)
@@ -491,7 +505,14 @@ def _app_replacement_result_from_core(
         residual_time_s=data.residual_time_s,
         used_row_mask=data.used_row_mask,
         rejected_by_robust_mask=data.rejected_by_robust_mask,
-        qc=_app_replacement_qc_from_core(core_result.qc, velocity=velocity),
+        qc=_app_replacement_qc_from_core(
+            core_result.qc,
+            velocity=velocity,
+            data=data,
+            core_result=core_result,
+            max_abs_shift_ms=max_abs_shift_ms,
+            upstream_qc=getattr(weathering_result, 'qc', {}),
+        ),
         active_cell_id=data.active_cell_id,
         inactive_cell_id=data.inactive_cell_id,
         cell_bedrock_slowness_s_per_m=data.cell_bedrock_slowness_s_per_m,
@@ -536,14 +557,117 @@ def _app_replacement_qc_from_core(
     values: object,
     *,
     velocity: _VelocityContext,
+    data: _ValidatedWeathering,
+    core_result: CoreRefractionWeatheringReplacementResult,
+    max_abs_shift_ms: float | None,
+    upstream_qc: dict[str, Any],
 ) -> dict[str, Any]:
     qc = _core_qc(values)
-    qc['bedrock_velocity_m_s'] = velocity.bedrock_velocity_m_s
-    qc['bedrock_slowness_s_per_m'] = velocity.bedrock_slowness_s_per_m
-    qc['weathering_velocity_m_s'] = velocity.weathering_velocity_m_s
-    qc['replacement_slowness_delta_s_per_m'] = (
-        velocity.replacement_slowness_delta_s_per_m
+    node_shift_s = _core_f64(core_result.node_weathering_replacement_shift_s)
+    source_shift_s = _core_f64(core_result.source_weathering_replacement_shift_s)
+    receiver_shift_s = _core_f64(core_result.receiver_weathering_replacement_shift_s)
+    trace_shift_s = _core_f64(core_result.weathering_replacement_trace_shift_s_sorted)
+    node_status = _core_status(core_result.node_static_status)
+    source_status = _core_status(core_result.source_static_status)
+    receiver_status = _core_status(core_result.receiver_static_status)
+    trace_status = _core_status(core_result.trace_static_status_sorted)
+    trace_valid = np.ascontiguousarray(
+        core_result.trace_static_valid_mask_sorted,
+        dtype=bool,
     )
+    valid_node_shift_ms = _valid_shift_ms(node_shift_s, node_status)
+    valid_source_shift_ms = _valid_shift_ms(source_shift_s, source_status)
+    valid_receiver_shift_ms = _valid_shift_ms(receiver_shift_s, receiver_status)
+    valid_trace_shift_ms = trace_shift_s[trace_valid] * 1000.0
+    finite_trace_shift = trace_shift_s[np.isfinite(trace_shift_s)]
+    qc.update(
+        {
+            'method': 'gli_variable_thickness',
+            'static_component': 'weathering_replacement',
+            'bedrock_velocity_mode': velocity.mode,
+            'bedrock_velocity_m_s': float(velocity.bedrock_velocity_m_s),
+            'bedrock_slowness_s_per_m': float(velocity.bedrock_slowness_s_per_m),
+            'weathering_velocity_m_s': float(velocity.weathering_velocity_m_s),
+            'replacement_slowness_delta_s_per_m': float(
+                velocity.replacement_slowness_delta_s_per_m
+            ),
+            'n_traces': int(data.n_traces),
+            'n_valid_observations': int(
+                np.count_nonzero(data.valid_observation_mask_sorted)
+            ),
+            'n_used_observations': int(
+                np.count_nonzero(data.used_observation_mask_sorted)
+            ),
+            'n_nodes': int(data.n_nodes),
+            'n_source_endpoints': int(data.source_endpoint_key.shape[0]),
+            'n_receiver_endpoints': int(data.receiver_endpoint_key.shape[0]),
+            'node_shift_min_ms': _json_stat(valid_node_shift_ms, 'min'),
+            'node_shift_max_ms': _json_stat(valid_node_shift_ms, 'max'),
+            'node_shift_median_ms': _json_stat(valid_node_shift_ms, 'median'),
+            'node_shift_p95_abs_ms': _json_stat(
+                np.abs(valid_node_shift_ms),
+                'p95',
+            ),
+            'source_shift_min_ms': _json_stat(valid_source_shift_ms, 'min'),
+            'source_shift_max_ms': _json_stat(valid_source_shift_ms, 'max'),
+            'source_shift_median_ms': _json_stat(
+                valid_source_shift_ms,
+                'median',
+            ),
+            'receiver_shift_min_ms': _json_stat(valid_receiver_shift_ms, 'min'),
+            'receiver_shift_max_ms': _json_stat(valid_receiver_shift_ms, 'max'),
+            'receiver_shift_median_ms': _json_stat(
+                valid_receiver_shift_ms,
+                'median',
+            ),
+            'trace_shift_min_ms': _json_stat(valid_trace_shift_ms, 'min'),
+            'trace_shift_max_ms': _json_stat(valid_trace_shift_ms, 'max'),
+            'trace_shift_median_ms': _json_stat(valid_trace_shift_ms, 'median'),
+            'trace_shift_p95_abs_ms': _json_stat(
+                np.abs(valid_trace_shift_ms),
+                'p95',
+            ),
+            'trace_shift_max_abs_ms': _json_stat(
+                np.abs(valid_trace_shift_ms),
+                'max',
+            ),
+            'negative_trace_shift_count': int(
+                np.count_nonzero(valid_trace_shift_ms < -_ZERO_SHIFT_ATOL_S * 1000.0)
+            ),
+            'positive_trace_shift_count': int(
+                np.count_nonzero(valid_trace_shift_ms > _ZERO_SHIFT_ATOL_S * 1000.0)
+            ),
+            'zero_trace_shift_count': int(
+                np.count_nonzero(
+                    np.abs(valid_trace_shift_ms) <= _ZERO_SHIFT_ATOL_S * 1000.0
+                )
+            ),
+            'invalid_trace_shift_count': int(
+                np.count_nonzero(~np.isfinite(trace_shift_s))
+            ),
+            'max_abs_shift_ms': _json_optional_float(max_abs_shift_ms),
+            'exceeds_max_abs_shift_count': int(
+                np.count_nonzero(trace_status == 'exceeds_max_abs_shift')
+            ),
+            'inactive_node_count': int(np.count_nonzero(node_status == 'inactive')),
+            'low_fold_node_count': int(np.count_nonzero(node_status == 'low_fold')),
+            'invalid_weathering_thickness_count': int(
+                np.count_nonzero(node_status == 'invalid_weathering_thickness')
+            ),
+            'exceeds_max_thickness_count': int(
+                np.count_nonzero(node_status == 'exceeds_max_thickness')
+            ),
+            'finite_trace_shift_count': int(finite_trace_shift.shape[0]),
+            'node_static_status_counts': _status_counts(node_status),
+            'source_static_status_counts': _status_counts(source_status),
+            'receiver_static_status_counts': _status_counts(receiver_status),
+            'trace_static_status_counts': _status_counts(trace_status),
+            'sign_convention': _SIGN_CONVENTION_TEXT,
+            'formula': _FORMULA_TEXT,
+        }
+    )
+    _copy_cell_threshold_qc(qc, upstream_qc)
+    _assert_json_safe(qc)
     return qc
 
 
@@ -1251,6 +1375,51 @@ def _resolve_max_abs_shift_ms(
     return _positive_finite(value, name='apply.max_abs_shift_ms')
 
 
+def _valid_shift_ms(shift_s: np.ndarray, status: np.ndarray) -> np.ndarray:
+    arr = np.asarray(shift_s, dtype=np.float64)
+    status_arr = np.asarray(status).astype(str, copy=False)
+    return arr[(status_arr == 'ok') & np.isfinite(arr)] * 1000.0
+
+
+def _json_stat(values: np.ndarray, stat: str) -> float | None:
+    arr = np.asarray(values, dtype=np.float64)
+    arr = arr[np.isfinite(arr)]
+    if arr.size == 0:
+        return None
+    if stat == 'min':
+        return float(np.min(arr))
+    if stat == 'max':
+        return float(np.max(arr))
+    if stat == 'median':
+        return float(np.median(arr))
+    if stat == 'p95':
+        return float(np.percentile(arr, 95.0))
+    raise RefractionWeatheringReplacementStaticsError(
+        f'unsupported statistic: {stat}'
+    )
+
+
+def _status_counts(values: np.ndarray) -> dict[str, int]:
+    out: dict[str, int] = {}
+    for raw in values.tolist():
+        key = str(raw)
+        out[key] = out.get(key, 0) + 1
+    return dict(sorted(out.items()))
+
+
+def _json_optional_float(value: float | None) -> float | None:
+    return None if value is None else float(value)
+
+
+def _copy_cell_threshold_qc(payload: dict[str, Any], upstream: dict[str, Any]) -> None:
+    for key in _CELL_THRESHOLD_QC_KEYS:
+        if key in upstream:
+            payload[key] = upstream[key]
+    layer_qc = upstream.get('layers')
+    if isinstance(layer_qc, dict):
+        payload['layers'] = layer_qc
+
+
 def _required(owner: object, field: str) -> object:
     try:
         value = getattr(owner, field)
@@ -1554,6 +1723,10 @@ def _csv_float(value: object) -> str | float:
     if not np.isfinite(out):
         return ''
     return out
+
+
+def _assert_json_safe(payload: dict[str, Any]) -> None:
+    json.dumps(payload, allow_nan=False)
 
 
 __all__ = [

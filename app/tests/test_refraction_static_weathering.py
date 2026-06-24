@@ -319,7 +319,9 @@ def test_build_weathering_model_maps_nodes_endpoints_and_trace_order(
     assert result.qc['node_weathering_status_counts']['ok'] == int(
         NODE_ID.shape[0] - 1
     )
-    assert 'weathering_thickness_median_m' not in result.qc
+    assert result.qc['weathering_thickness_median_m'] == pytest.approx(
+        np.median(expected_node_thickness)
+    )
 
     artifact_names = (
         REFRACTION_WEATHERING_QC_JSON_NAME,
