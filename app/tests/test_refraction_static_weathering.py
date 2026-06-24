@@ -86,14 +86,71 @@ def test_public_apis_are_importable() -> None:
     assert callable(compute_weathering_thickness_scalar)
 
 
+@pytest.mark.parametrize(
+    ('bedrock_velocity_mode', 'expected_core_call_count'),
+    [
+        pytest.param('solve_global', 1, id='solve_global'),
+        pytest.param('fixed_global', 1, id='fixed_global'),
+        pytest.param('solve_cell', 2, id='solve_cell'),
+    ],
+)
 def test_high_level_pipeline_calls_half_intercept_stage(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
+    bedrock_velocity_mode: str,
+    expected_core_call_count: int,
 ) -> None:
     inputs, _design, _solved, half = _build_result()
     calls: list[dict[str, object]] = []
     core_calls: list[dict[str, object]] = []
-    model = _model()
+    if bedrock_velocity_mode == 'fixed_global':
+        model = _model(
+            bedrock_velocity_mode='fixed_global',
+            bedrock_velocity_m_s=TRUE_BEDROCK_VELOCITY_M_S,
+        )
+        half = replace(half, bedrock_velocity_mode='fixed_global')
+    elif bedrock_velocity_mode == 'solve_cell':
+        cell_count = int(half.node_id.shape[0])
+        cell_velocity = np.full(
+            cell_count,
+            TRUE_BEDROCK_VELOCITY_M_S,
+            dtype=np.float64,
+        )
+        model = _model(
+            bedrock_velocity_mode='solve_cell',
+            refractor_cell={
+                'number_of_cell_x': cell_count,
+                'size_of_cell_x_m': 100.0,
+                'x_coordinate_origin_m': 0.0,
+                'number_of_cell_y': 1,
+                'size_of_cell_y_m': None,
+                'y_coordinate_origin_m': 0.0,
+                'min_observations_per_cell': 1,
+            },
+        )
+        half = replace(
+            half,
+            bedrock_velocity_mode='solve_cell',
+            active_cell_id=np.arange(cell_count, dtype=np.int64),
+            cell_bedrock_velocity_m_s=cell_velocity,
+            cell_bedrock_slowness_s_per_m=1.0 / cell_velocity,
+            cell_velocity_status=np.full(cell_count, 'solved', dtype='<U32'),
+            row_midpoint_cell_id=np.zeros(
+                half.row_trace_index_sorted.shape,
+                dtype=np.int64,
+            ),
+            row_midpoint_bedrock_velocity_m_s=np.full(
+                half.row_trace_index_sorted.shape,
+                TRUE_BEDROCK_VELOCITY_M_S,
+                dtype=np.float64,
+            ),
+            qc={
+                **half.qc,
+                'cell_observation_count': [10] * cell_count,
+            },
+        )
+    else:
+        model = _model()
     core_context = SimpleNamespace(
         app_result=half,
         core_input_model=weathering_module.core_input_model_from_app(inputs),
@@ -141,7 +198,7 @@ def test_high_level_pipeline_calls_half_intercept_stage(
             'resolved_first_layer': None,
         }
     ]
-    assert core_calls
+    assert len(core_calls) == expected_core_call_count
     assert core_calls[0]['half_intercept_result'] is core_context.core_result
     expected_node_thickness = TRUE_HALF_INTERCEPT_S * _conversion_factor()
     np.testing.assert_allclose(
@@ -552,12 +609,24 @@ def test_solve_cell_probe_uses_side_specific_endpoint_geometry() -> None:
     assert result.receiver_v2_cell_id is not None
     assert result.source_v2_cell_id_sorted is not None
     assert result.receiver_v2_cell_id_sorted is not None
+    assert result.source_v2_m_s is not None
+    assert result.receiver_v2_m_s is not None
+    assert result.source_v2_m_s_sorted is not None
+    assert result.receiver_v2_m_s_sorted is not None
+    assert result.source_v2_status is not None
+    assert result.receiver_v2_status is not None
+    assert result.source_v2_status_sorted is not None
+    assert result.receiver_v2_status_sorted is not None
     assert result.node_v2_cell_id[0] == 0
     assert result.source_v2_cell_id[source_zero] == 0
     assert result.receiver_v2_cell_id[receiver_zero] == 1
     assert result.source_v2_cell_id[source_zero] != result.receiver_v2_cell_id[
         receiver_zero
     ]
+    assert result.source_v2_m_s[source_zero] == pytest.approx(cell_velocity[0])
+    assert result.receiver_v2_m_s[receiver_zero] == pytest.approx(cell_velocity[1])
+    assert result.source_v2_status[source_zero] == 'ok'
+    assert result.receiver_v2_status[receiver_zero] == 'ok'
     np.testing.assert_array_equal(
         result.source_v2_cell_id_sorted[result.source_node_id_sorted == 0],
         0,
@@ -565,6 +634,22 @@ def test_solve_cell_probe_uses_side_specific_endpoint_geometry() -> None:
     np.testing.assert_array_equal(
         result.receiver_v2_cell_id_sorted[result.receiver_node_id_sorted == 0],
         1,
+    )
+    np.testing.assert_allclose(
+        result.source_v2_m_s_sorted[result.source_node_id_sorted == 0],
+        cell_velocity[0],
+    )
+    np.testing.assert_allclose(
+        result.receiver_v2_m_s_sorted[result.receiver_node_id_sorted == 0],
+        cell_velocity[1],
+    )
+    np.testing.assert_array_equal(
+        result.source_v2_status_sorted[result.source_node_id_sorted == 0],
+        'ok',
+    )
+    np.testing.assert_array_equal(
+        result.receiver_v2_status_sorted[result.receiver_node_id_sorted == 0],
+        'ok',
     )
 
 

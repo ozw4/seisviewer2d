@@ -20,6 +20,10 @@ from app.api.schemas import RefractionStaticApplyOptions
 from app.statics.refraction.contracts.result_types import (
     RefractionWeatheringThicknessResult,
 )
+import app.statics.refraction.application.weathering as weathering_module
+from app.statics.refraction.application.weathering import (
+    build_refraction_weathering_core_context,
+)
 import app.statics.refraction.application.weathering_replacement as replacement_module
 from app.statics.refraction.application.weathering_replacement import (
     REFRACTION_WEATHERING_REPLACEMENT_NODES_CSV_NAME,
@@ -32,6 +36,10 @@ from app.statics.refraction.application.weathering_replacement import (
     compute_weathering_replacement_shift_s,
     compute_weathering_replacement_shift_scalar_s,
     compute_weathering_replacement_statics_from_first_breaks,
+)
+from app.tests.test_refraction_static_half_intercept import (
+    _build_result,
+    _model,
 )
 
 WEATHERING_VELOCITY_M_S = 800.0
@@ -844,3 +852,133 @@ def test_high_level_pipeline_calls_weathering_stage(
     assert core_calls[0]['max_abs_shift_ms'] == pytest.approx(250.0)
     assert result.qc['static_component'] == 'weathering_replacement'
     assert (tmp_path / REFRACTION_WEATHERING_REPLACEMENT_QC_JSON_NAME).is_file()
+
+
+def test_replacement_uses_corrected_shared_cell_weathering_context() -> None:
+    inputs, _design, _solved, half = _build_result()
+    source_zero = int(np.flatnonzero(half.source_node_id == 0)[0])
+    receiver_zero = int(np.flatnonzero(half.receiver_node_id == 0)[0])
+    source_x = half.source_x_m.copy()
+    receiver_x = half.receiver_x_m.copy()
+    source_x_sorted = inputs.source_x_m_sorted.copy()
+    receiver_x_sorted = inputs.receiver_x_m_sorted.copy()
+    source_x[source_zero] = 50.0
+    receiver_x[receiver_zero] = 150.0
+    source_x_sorted[half.source_node_id_sorted == 0] = 50.0
+    receiver_x_sorted[half.receiver_node_id_sorted == 0] = 150.0
+    cell_velocity = np.asarray([2200.0, 2600.0, 3000.0], dtype=np.float64)
+    half = replace(
+        half,
+        bedrock_velocity_mode='solve_cell',
+        source_x_m=source_x,
+        receiver_x_m=receiver_x,
+        active_cell_id=np.asarray([0, 1, 2], dtype=np.int64),
+        cell_bedrock_velocity_m_s=cell_velocity,
+        cell_bedrock_slowness_s_per_m=1.0 / cell_velocity,
+        cell_velocity_status=np.full(3, 'solved', dtype='<U32'),
+        row_midpoint_cell_id=np.zeros(half.row_trace_index_sorted.shape, dtype=np.int64),
+        row_midpoint_bedrock_velocity_m_s=np.full(
+            half.row_trace_index_sorted.shape,
+            cell_velocity[0],
+            dtype=np.float64,
+        ),
+        qc={
+            **half.qc,
+            'cell_observation_count': [10, 10, 10],
+        },
+    )
+    inputs = replace(
+        inputs,
+        source_x_m_sorted=source_x_sorted,
+        receiver_x_m_sorted=receiver_x_sorted,
+    )
+    model = _model(
+        bedrock_velocity_mode='solve_cell',
+        refractor_cell={
+            'number_of_cell_x': 3,
+            'size_of_cell_x_m': 100.0,
+            'x_coordinate_origin_m': 0.0,
+            'number_of_cell_y': 1,
+            'size_of_cell_y_m': None,
+            'y_coordinate_origin_m': 0.0,
+            'min_observations_per_cell': 1,
+        },
+    )
+    core_result = weathering_module._core_half_intercept_result_from_app_result(
+        half_intercept_result=half,
+        model=model,
+    )
+    weathering_context = build_refraction_weathering_core_context(
+        half_intercept_context=weathering_module._HalfInterceptCoreContext(
+            app_input_model=inputs,
+            core_input_model=weathering_module.core_input_model_from_app(inputs),
+            core_result=core_result,
+            app_result=half,
+        ),
+        model=model,
+    )
+
+    weathering = weathering_context.app_weathering_result
+    core_weathering = weathering_context.core_weathering_model
+    assert weathering.source_v2_m_s is not None
+    assert weathering.receiver_v2_m_s is not None
+    assert weathering.source_v2_cell_id is not None
+    assert weathering.receiver_v2_cell_id is not None
+    assert weathering.source_v2_cell_id[source_zero] == 0
+    assert weathering.receiver_v2_cell_id[receiver_zero] == 1
+    assert weathering.source_v2_m_s[source_zero] == pytest.approx(cell_velocity[0])
+    assert weathering.receiver_v2_m_s[receiver_zero] == pytest.approx(cell_velocity[1])
+    assert core_weathering.source_endpoint.v2_m_s[source_zero] == pytest.approx(
+        weathering.source_v2_m_s[source_zero]
+    )
+    assert core_weathering.receiver_endpoint.v2_m_s[receiver_zero] == pytest.approx(
+        weathering.receiver_v2_m_s[receiver_zero]
+    )
+
+    result = build_refraction_weathering_replacement_statics(
+        weathering_result=weathering,
+        core_weathering_model=core_weathering,
+        apply_options=_apply_options(),
+    )
+
+    expected_source_shift = compute_weathering_replacement_shift_s(
+        weathering_thickness_m=np.asarray(
+            [weathering.source_weathering_thickness_m[source_zero]],
+            dtype=np.float64,
+        ),
+        weathering_velocity_m_s=weathering.weathering_velocity_m_s,
+        bedrock_velocity_m_s=np.asarray(
+            [weathering.source_v2_m_s[source_zero]],
+            dtype=np.float64,
+        ),
+    )[0]
+    expected_receiver_shift = compute_weathering_replacement_shift_s(
+        weathering_thickness_m=np.asarray(
+            [weathering.receiver_weathering_thickness_m[receiver_zero]],
+            dtype=np.float64,
+        ),
+        weathering_velocity_m_s=weathering.weathering_velocity_m_s,
+        bedrock_velocity_m_s=np.asarray(
+            [weathering.receiver_v2_m_s[receiver_zero]],
+            dtype=np.float64,
+        ),
+    )[0]
+    assert result.source_weathering_replacement_shift_s[source_zero] == pytest.approx(
+        expected_source_shift
+    )
+    assert result.receiver_weathering_replacement_shift_s[
+        receiver_zero
+    ] == pytest.approx(expected_receiver_shift)
+    assert result.source_weathering_replacement_shift_s[
+        source_zero
+    ] != pytest.approx(result.receiver_weathering_replacement_shift_s[receiver_zero])
+    shared_trace = int(
+        np.flatnonzero(
+            (weathering.source_node_id_sorted == 0)
+            & (weathering.receiver_node_id_sorted == 0)
+        )[0]
+    )
+    assert result.weathering_replacement_trace_shift_s_sorted[
+        shared_trace
+    ] == pytest.approx(expected_source_shift + expected_receiver_shift)
+    assert result.trace_static_valid_mask_sorted[shared_trace] == np.True_
