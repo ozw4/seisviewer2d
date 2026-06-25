@@ -80,6 +80,8 @@ _CELL_THRESHOLD_QC_KEYS = (
     'low_fold_cell_id',
     'cell_observation_count',
 )
+_ENDPOINT_GEOMETRY_RTOL = 1.0e-6
+_ENDPOINT_GEOMETRY_ATOL_M = 1.0e-6
 
 _NODE_COLUMNS = (
     'node_id',
@@ -583,7 +585,7 @@ def _with_side_specific_endpoint_weathering(
     core_result: CoreRefractionHalfInterceptResult,
     core_model: object,
 ) -> CoreRefractionWeatheringModel:
-    if not _has_shared_endpoint_geometry_conflict(half_intercept_result):
+    if not _has_endpoint_geometry_conflict(half_intercept_result):
         return core_weathering
     source_core = _side_specific_core_weathering(
         half_intercept_result=half_intercept_result,
@@ -801,18 +803,22 @@ def _trace_weathering_status_from_endpoint_status(
     return np.ascontiguousarray(status, dtype=_STATUS_DTYPE)
 
 
-def _has_shared_endpoint_geometry_conflict(
+def _has_endpoint_geometry_conflict(
     result: RefractionHalfInterceptTimeResult,
 ) -> bool:
-    source_by_node = _endpoint_geometries_by_node(result, 'source')
-    receiver_by_node = _endpoint_geometries_by_node(result, 'receiver')
-    for node, source_geometries in source_by_node.items():
-        receiver_geometries = receiver_by_node.get(node)
-        if receiver_geometries is None:
+    geometries_by_node: dict[int, list[tuple[float, float, float]]] = {}
+    for side in ('source', 'receiver'):
+        for node, geometries in _endpoint_geometries_by_node(result, side).items():
+            geometries_by_node.setdefault(node, []).extend(geometries)
+
+    for geometries in geometries_by_node.values():
+        if len(geometries) < 2:
             continue
-        geometries = [*source_geometries, *receiver_geometries]
         first = geometries[0]
-        if any(not _same_geometry(first, geometry) for geometry in geometries[1:]):
+        if any(
+            not _same_endpoint_geometry(first, geometry)
+            for geometry in geometries[1:]
+        ):
             return True
     return False
 
@@ -843,20 +849,29 @@ def _endpoint_geometries_by_node(
     return by_node
 
 
-def _same_geometry(
+def _same_endpoint_geometry(
     left: tuple[float, float, float],
     right: tuple[float, float, float],
 ) -> bool:
     return all(
-        _same_geometry_value(left_value, right_value)
+        _same_endpoint_geometry_value(left_value, right_value)
         for left_value, right_value in zip(left, right, strict=True)
     )
 
 
-def _same_geometry_value(left: float, right: float) -> bool:
+def _same_endpoint_geometry_value(left: float, right: float) -> bool:
     if np.isnan(left) and np.isnan(right):
         return True
-    return bool(left == right)
+    if np.isfinite(left) and np.isfinite(right):
+        return bool(
+            np.isclose(
+                left,
+                right,
+                rtol=_ENDPOINT_GEOMETRY_RTOL,
+                atol=_ENDPOINT_GEOMETRY_ATOL_M,
+            )
+        )
+    return False
 
 
 def _endpoint_table_from_app_half_intercept_result(
