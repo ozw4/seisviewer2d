@@ -79,6 +79,339 @@ def _with_sorted_trace_permutation(half, sorted_to_original: np.ndarray):
     )
 
 
+def _core_context_from_app_result(inputs, half, model):
+    core_result = weathering_module._core_half_intercept_result_from_app_result(
+        half_intercept_result=half,
+        model=model,
+    )
+    return weathering_module._HalfInterceptCoreContext(
+        app_input_model=inputs,
+        core_input_model=weathering_module.core_input_model_from_app(inputs),
+        core_result=core_result,
+        app_result=half,
+    )
+
+
+def _source_only_shared_node_fixture(*, cell_x: tuple[float, float] = (40.0, 60.0)):
+    inputs, _design, _solved, half = _build_result()
+    source_zero = int(np.flatnonzero(half.source_endpoint_key == 'source:0')[0])
+    source_one = int(np.flatnonzero(half.source_endpoint_key == 'source:1')[0])
+    receiver_zero = int(np.flatnonzero(half.receiver_endpoint_key == 'receiver:0')[0])
+    receiver_one = int(np.flatnonzero(half.receiver_endpoint_key == 'receiver:1')[0])
+    source_zero_trace = half.source_endpoint_key_sorted == 'source:0'
+    source_one_trace = half.source_endpoint_key_sorted == 'source:1'
+    receiver_zero_trace = half.receiver_endpoint_key_sorted == 'receiver:0'
+
+    source_node_id = half.source_node_id.copy()
+    receiver_node_id = half.receiver_node_id.copy()
+    source_x = half.source_x_m.copy()
+    receiver_x = half.receiver_x_m.copy()
+    source_elevation = half.source_elevation_m.copy()
+    receiver_elevation = half.receiver_elevation_m.copy()
+    source_half_intercept = half.source_half_intercept_time_s.copy()
+    source_node_id_sorted = half.source_node_id_sorted.copy()
+    receiver_node_id_sorted = half.receiver_node_id_sorted.copy()
+    source_x_sorted = inputs.source_x_m_sorted.copy()
+    receiver_x_sorted = inputs.receiver_x_m_sorted.copy()
+    source_elevation_sorted = half.source_elevation_m_sorted.copy()
+    receiver_elevation_sorted = half.receiver_elevation_m_sorted.copy()
+    source_half_intercept_sorted = half.source_half_intercept_time_s_sorted.copy()
+
+    source_node_id[source_one] = 0
+    source_node_id_sorted[source_one_trace] = 0
+    source_x[source_zero] = cell_x[0]
+    source_x[source_one] = cell_x[1]
+    source_x_sorted[source_zero_trace] = cell_x[0]
+    source_x_sorted[source_one_trace] = cell_x[1]
+    source_elevation[source_zero] = 100.0
+    source_elevation[source_one] = 120.0
+    source_elevation_sorted[source_zero_trace] = 100.0
+    source_elevation_sorted[source_one_trace] = 120.0
+    source_half_intercept[source_one] = source_half_intercept[source_zero]
+    source_half_intercept_sorted[source_one_trace] = source_half_intercept[source_zero]
+
+    receiver_node_id[receiver_zero] = 1
+    receiver_node_id_sorted[receiver_zero_trace] = 1
+    receiver_x[receiver_zero] = receiver_x[receiver_one]
+    receiver_x_sorted[receiver_zero_trace] = receiver_x[receiver_one]
+    receiver_elevation[receiver_zero] = receiver_elevation[receiver_one]
+    receiver_elevation_sorted[receiver_zero_trace] = receiver_elevation[receiver_one]
+
+    half = replace(
+        half,
+        source_node_id=source_node_id,
+        receiver_node_id=receiver_node_id,
+        source_x_m=source_x,
+        receiver_x_m=receiver_x,
+        source_elevation_m=source_elevation,
+        receiver_elevation_m=receiver_elevation,
+        source_half_intercept_time_s=source_half_intercept,
+        source_node_id_sorted=source_node_id_sorted,
+        receiver_node_id_sorted=receiver_node_id_sorted,
+        source_elevation_m_sorted=source_elevation_sorted,
+        receiver_elevation_m_sorted=receiver_elevation_sorted,
+        source_half_intercept_time_s_sorted=source_half_intercept_sorted,
+    )
+    inputs = replace(
+        inputs,
+        source_node_id_sorted=source_node_id_sorted,
+        receiver_node_id_sorted=receiver_node_id_sorted,
+        source_x_m_sorted=source_x_sorted,
+        receiver_x_m_sorted=receiver_x_sorted,
+        source_elevation_m_sorted=source_elevation_sorted,
+        receiver_elevation_m_sorted=receiver_elevation_sorted,
+    )
+    return inputs, half, source_zero, source_one, receiver_zero
+
+
+def _receiver_only_shared_node_fixture(
+    *,
+    cell_x: tuple[float, float] = (40.0, 60.0),
+):
+    inputs, _design, _solved, half = _build_result()
+    source_zero = int(np.flatnonzero(half.source_endpoint_key == 'source:0')[0])
+    source_one = int(np.flatnonzero(half.source_endpoint_key == 'source:1')[0])
+    receiver_zero = int(np.flatnonzero(half.receiver_endpoint_key == 'receiver:0')[0])
+    receiver_one = int(np.flatnonzero(half.receiver_endpoint_key == 'receiver:1')[0])
+    source_zero_trace = half.source_endpoint_key_sorted == 'source:0'
+    receiver_zero_trace = half.receiver_endpoint_key_sorted == 'receiver:0'
+    receiver_one_trace = half.receiver_endpoint_key_sorted == 'receiver:1'
+
+    source_node_id = half.source_node_id.copy()
+    receiver_node_id = half.receiver_node_id.copy()
+    source_x = half.source_x_m.copy()
+    receiver_x = half.receiver_x_m.copy()
+    source_elevation = half.source_elevation_m.copy()
+    receiver_elevation = half.receiver_elevation_m.copy()
+    receiver_half_intercept = half.receiver_half_intercept_time_s.copy()
+    source_node_id_sorted = half.source_node_id_sorted.copy()
+    receiver_node_id_sorted = half.receiver_node_id_sorted.copy()
+    source_x_sorted = inputs.source_x_m_sorted.copy()
+    receiver_x_sorted = inputs.receiver_x_m_sorted.copy()
+    source_elevation_sorted = half.source_elevation_m_sorted.copy()
+    receiver_elevation_sorted = half.receiver_elevation_m_sorted.copy()
+    receiver_half_intercept_sorted = half.receiver_half_intercept_time_s_sorted.copy()
+
+    source_node_id[source_zero] = 1
+    source_node_id_sorted[source_zero_trace] = 1
+    source_x[source_zero] = source_x[source_one]
+    source_x_sorted[source_zero_trace] = source_x[source_one]
+    source_elevation[source_zero] = source_elevation[source_one]
+    source_elevation_sorted[source_zero_trace] = source_elevation[source_one]
+
+    receiver_node_id[receiver_one] = 0
+    receiver_node_id_sorted[receiver_one_trace] = 0
+    receiver_x[receiver_zero] = cell_x[0]
+    receiver_x[receiver_one] = cell_x[1]
+    receiver_x_sorted[receiver_zero_trace] = cell_x[0]
+    receiver_x_sorted[receiver_one_trace] = cell_x[1]
+    receiver_elevation[receiver_zero] = 100.0
+    receiver_elevation[receiver_one] = 120.0
+    receiver_elevation_sorted[receiver_zero_trace] = 100.0
+    receiver_elevation_sorted[receiver_one_trace] = 120.0
+    receiver_half_intercept[receiver_one] = receiver_half_intercept[receiver_zero]
+    receiver_half_intercept_sorted[receiver_one_trace] = receiver_half_intercept[
+        receiver_zero
+    ]
+
+    half = replace(
+        half,
+        source_node_id=source_node_id,
+        receiver_node_id=receiver_node_id,
+        source_x_m=source_x,
+        receiver_x_m=receiver_x,
+        source_elevation_m=source_elevation,
+        receiver_elevation_m=receiver_elevation,
+        receiver_half_intercept_time_s=receiver_half_intercept,
+        source_node_id_sorted=source_node_id_sorted,
+        receiver_node_id_sorted=receiver_node_id_sorted,
+        source_elevation_m_sorted=source_elevation_sorted,
+        receiver_elevation_m_sorted=receiver_elevation_sorted,
+        receiver_half_intercept_time_s_sorted=receiver_half_intercept_sorted,
+    )
+    inputs = replace(
+        inputs,
+        source_node_id_sorted=source_node_id_sorted,
+        receiver_node_id_sorted=receiver_node_id_sorted,
+        source_x_m_sorted=source_x_sorted,
+        receiver_x_m_sorted=receiver_x_sorted,
+        source_elevation_m_sorted=source_elevation_sorted,
+        receiver_elevation_m_sorted=receiver_elevation_sorted,
+    )
+    return inputs, half, source_zero, receiver_zero, receiver_one
+
+
+def _with_solve_cell_half_intercept(half, cell_velocity: np.ndarray):
+    return replace(
+        half,
+        bedrock_velocity_mode='solve_cell',
+        active_cell_id=np.arange(cell_velocity.shape[0], dtype=np.int64),
+        cell_bedrock_velocity_m_s=np.ascontiguousarray(
+            cell_velocity,
+            dtype=np.float64,
+        ),
+        cell_bedrock_slowness_s_per_m=np.divide(1.0, cell_velocity),
+        cell_velocity_status=np.full(cell_velocity.shape, 'solved', dtype='<U32'),
+        row_midpoint_cell_id=np.zeros(half.row_trace_index_sorted.shape, dtype=np.int64),
+        row_midpoint_bedrock_velocity_m_s=np.full(
+            half.row_trace_index_sorted.shape,
+            float(cell_velocity[0]),
+            dtype=np.float64,
+        ),
+        qc={
+            **half.qc,
+            'cell_observation_count': [10] * int(cell_velocity.shape[0]),
+        },
+    )
+
+
+def _solve_cell_model(
+    cell_count: int,
+    *,
+    cell_size_x_m: float = 100.0,
+    x_coordinate_origin_m: float = 0.0,
+):
+    return _model(
+        bedrock_velocity_mode='solve_cell',
+        refractor_cell={
+            'number_of_cell_x': cell_count,
+            'size_of_cell_x_m': cell_size_x_m,
+            'x_coordinate_origin_m': x_coordinate_origin_m,
+            'number_of_cell_y': 1,
+            'size_of_cell_y_m': None,
+            'y_coordinate_origin_m': 0.0,
+            'min_observations_per_cell': 1,
+        },
+    )
+
+
+def _endpoint_geometry_value_conflict(left: float, right: float) -> bool:
+    return not weathering_module._same_endpoint_geometry_value(left, right)
+
+
+@pytest.mark.parametrize(
+    ('origin', 'expected_conflict'),
+    [
+        pytest.param(0.0, False, id='near_origin'),
+        pytest.param(500000.0, False, id='utm_origin'),
+    ],
+)
+def test_endpoint_geometry_absolute_tolerance_inside_is_origin_independent(
+    origin: float,
+    expected_conflict: bool,
+) -> None:
+    assert (
+        _endpoint_geometry_value_conflict(origin, origin + 0.5e-6)
+        is expected_conflict
+    )
+
+
+@pytest.mark.parametrize(
+    ('origin', 'expected_conflict'),
+    [
+        pytest.param(0.0, True, id='near_origin'),
+        pytest.param(500000.0, True, id='utm_origin'),
+    ],
+)
+def test_endpoint_geometry_absolute_tolerance_excess_is_origin_independent(
+    origin: float,
+    expected_conflict: bool,
+) -> None:
+    assert (
+        _endpoint_geometry_value_conflict(origin, origin + 2.0e-6)
+        is expected_conflict
+    )
+
+
+def test_endpoint_geometry_detects_utm_tenth_meter_source_only_conflict() -> None:
+    _inputs, half, _source_zero, _source_one, _receiver_zero = (
+        _source_only_shared_node_fixture(cell_x=(500000.0, 500000.1))
+    )
+
+    assert weathering_module._has_endpoint_geometry_conflict(half)
+    assert _endpoint_geometry_value_conflict(500000.0, 500000.1)
+
+
+@pytest.mark.parametrize(
+    ('left', 'right', 'expected_same'),
+    [
+        pytest.param(np.nan, np.nan, True, id='nan_nan'),
+        pytest.param(np.nan, 1.0, False, id='nan_finite'),
+        pytest.param(1.0, np.nan, False, id='finite_nan'),
+        pytest.param(np.inf, np.inf, False, id='inf_inf'),
+        pytest.param(np.inf, -np.inf, False, id='different_inf'),
+    ],
+)
+def test_endpoint_geometry_non_finite_contract(
+    left: float,
+    right: float,
+    expected_same: bool,
+) -> None:
+    assert weathering_module._same_endpoint_geometry_value(left, right) is expected_same
+
+
+def test_solve_cell_source_only_utm_boundary_uses_absolute_geometry_tolerance() -> None:
+    cell_velocity = np.asarray([2200.0, 2600.0], dtype=np.float64)
+    model = _solve_cell_model(
+        int(cell_velocity.shape[0]),
+        cell_size_x_m=0.05,
+        x_coordinate_origin_m=500000.0,
+    )
+    inputs, half, source_zero, source_one, _receiver_zero = (
+        _source_only_shared_node_fixture(cell_x=(500000.0, 500000.1))
+    )
+    half = _with_solve_cell_half_intercept(half, cell_velocity)
+
+    result = build_refraction_weathering_core_context(
+        half_intercept_context=_core_context_from_app_result(inputs, half, model),
+        model=model,
+    ).app_weathering_result
+
+    assert result.source_v2_cell_id is not None
+    assert result.source_v2_m_s is not None
+    assert result.source_v2_status is not None
+    assert result.source_v2_cell_id[source_zero] == 0
+    assert result.source_v2_cell_id[source_one] == 1
+    assert result.source_v2_m_s[source_zero] == pytest.approx(cell_velocity[0])
+    assert result.source_v2_m_s[source_one] == pytest.approx(cell_velocity[1])
+    assert result.source_v2_status[source_zero] == 'ok'
+    assert result.source_v2_status[source_one] == 'ok'
+    assert result.source_weathering_thickness_m[source_zero] != pytest.approx(
+        result.source_weathering_thickness_m[source_one]
+    )
+
+
+def test_solve_cell_receiver_only_utm_boundary_uses_absolute_geometry_tolerance() -> None:
+    cell_velocity = np.asarray([2200.0, 2600.0], dtype=np.float64)
+    model = _solve_cell_model(
+        int(cell_velocity.shape[0]),
+        cell_size_x_m=0.05,
+        x_coordinate_origin_m=500000.0,
+    )
+    inputs, half, _source_zero, receiver_zero, receiver_one = (
+        _receiver_only_shared_node_fixture(cell_x=(500000.0, 500000.1))
+    )
+    half = _with_solve_cell_half_intercept(half, cell_velocity)
+
+    result = build_refraction_weathering_core_context(
+        half_intercept_context=_core_context_from_app_result(inputs, half, model),
+        model=model,
+    ).app_weathering_result
+
+    assert result.receiver_v2_cell_id is not None
+    assert result.receiver_v2_m_s is not None
+    assert result.receiver_v2_status is not None
+    assert result.receiver_v2_cell_id[receiver_zero] == 0
+    assert result.receiver_v2_cell_id[receiver_one] == 1
+    assert result.receiver_v2_m_s[receiver_zero] == pytest.approx(cell_velocity[0])
+    assert result.receiver_v2_m_s[receiver_one] == pytest.approx(cell_velocity[1])
+    assert result.receiver_v2_status[receiver_zero] == 'ok'
+    assert result.receiver_v2_status[receiver_one] == 'ok'
+    assert result.receiver_weathering_thickness_m[receiver_zero] != pytest.approx(
+        result.receiver_weathering_thickness_m[receiver_one]
+    )
+
+
 def test_public_apis_are_importable() -> None:
     assert callable(estimate_weathering_thickness_from_first_breaks)
     assert callable(build_refraction_weathering_thickness_model)
@@ -635,6 +968,92 @@ def test_production_core_context_keeps_multiple_shared_node_endpoint_geometries(
     )
 
 
+def test_production_core_context_keeps_source_only_shared_node_endpoint_geometry() -> None:
+    inputs, half, source_zero, source_one, _receiver_zero = (
+        _source_only_shared_node_fixture()
+    )
+    model = _model()
+
+    weathering_context = build_refraction_weathering_core_context(
+        half_intercept_context=_core_context_from_app_result(inputs, half, model),
+        model=model,
+    )
+
+    result = weathering_context.app_weathering_result
+    core = weathering_context.core_weathering_model
+    expected_thickness = TRUE_HALF_INTERCEPT_S[0] * _conversion_factor()
+    assert result.source_node_id[source_zero] == 0
+    assert result.source_node_id[source_one] == 0
+    assert not np.any(result.receiver_node_id == 0)
+    assert result.source_surface_elevation_m[source_zero] == pytest.approx(100.0)
+    assert result.source_surface_elevation_m[source_one] == pytest.approx(120.0)
+    assert result.source_refractor_elevation_m[source_zero] == pytest.approx(
+        100.0 - expected_thickness
+    )
+    assert result.source_refractor_elevation_m[source_one] == pytest.approx(
+        120.0 - expected_thickness
+    )
+    assert (
+        result.source_refractor_elevation_m[source_one]
+        - result.source_refractor_elevation_m[source_zero]
+        == pytest.approx(20.0)
+    )
+    np.testing.assert_allclose(
+        result.source_refractor_elevation_m,
+        core.source_endpoint.refractor_elevation_m,
+        equal_nan=True,
+    )
+    np.testing.assert_allclose(
+        core.trace_weathering_thickness_m_sorted,
+        core.source_weathering_thickness_m_sorted
+        + core.receiver_weathering_thickness_m_sorted,
+        equal_nan=True,
+    )
+
+
+def test_production_core_context_keeps_receiver_only_shared_node_endpoint_geometry() -> None:
+    inputs, half, _source_zero, receiver_zero, receiver_one = (
+        _receiver_only_shared_node_fixture()
+    )
+    model = _model()
+
+    weathering_context = build_refraction_weathering_core_context(
+        half_intercept_context=_core_context_from_app_result(inputs, half, model),
+        model=model,
+    )
+
+    result = weathering_context.app_weathering_result
+    core = weathering_context.core_weathering_model
+    expected_thickness = TRUE_HALF_INTERCEPT_S[0] * _conversion_factor()
+    assert not np.any(result.source_node_id == 0)
+    assert result.receiver_node_id[receiver_zero] == 0
+    assert result.receiver_node_id[receiver_one] == 0
+    assert result.receiver_surface_elevation_m[receiver_zero] == pytest.approx(100.0)
+    assert result.receiver_surface_elevation_m[receiver_one] == pytest.approx(120.0)
+    assert result.receiver_refractor_elevation_m[receiver_zero] == pytest.approx(
+        100.0 - expected_thickness
+    )
+    assert result.receiver_refractor_elevation_m[receiver_one] == pytest.approx(
+        120.0 - expected_thickness
+    )
+    assert (
+        result.receiver_refractor_elevation_m[receiver_one]
+        - result.receiver_refractor_elevation_m[receiver_zero]
+        == pytest.approx(20.0)
+    )
+    np.testing.assert_allclose(
+        result.receiver_refractor_elevation_m,
+        core.receiver_endpoint.refractor_elevation_m,
+        equal_nan=True,
+    )
+    np.testing.assert_allclose(
+        core.trace_weathering_thickness_m_sorted,
+        core.source_weathering_thickness_m_sorted
+        + core.receiver_weathering_thickness_m_sorted,
+        equal_nan=True,
+    )
+
+
 def test_solve_cell_probe_uses_side_specific_endpoint_geometry() -> None:
     inputs, _design, _solved, half = _build_result()
     source_x = half.source_x_m.copy()
@@ -748,6 +1167,71 @@ def test_solve_cell_probe_uses_side_specific_endpoint_geometry() -> None:
         result.receiver_v2_status_sorted[result.receiver_node_id_sorted == 0],
         'ok',
     )
+
+
+def test_solve_cell_probe_uses_source_only_and_receiver_only_shared_node_geometry() -> None:
+    cell_velocity = np.asarray([2200.0, 2600.0, 3000.0], dtype=np.float64)
+    model = _solve_cell_model(int(cell_velocity.shape[0]))
+
+    source_inputs, source_half, source_zero, source_one, receiver_zero = (
+        _source_only_shared_node_fixture(cell_x=(50.0, 150.0))
+    )
+    source_half = _with_solve_cell_half_intercept(source_half, cell_velocity)
+    source_result = build_refraction_weathering_core_context(
+        half_intercept_context=_core_context_from_app_result(
+            source_inputs,
+            source_half,
+            model,
+        ),
+        model=model,
+    ).app_weathering_result
+
+    assert source_result.node_v2_cell_id is not None
+    assert source_result.source_v2_cell_id is not None
+    assert source_result.source_v2_m_s is not None
+    assert source_result.source_v2_status is not None
+    assert source_result.receiver_v2_cell_id is not None
+    assert source_result.node_v2_cell_id[0] == 0
+    assert source_result.source_v2_cell_id[source_zero] == 0
+    assert source_result.source_v2_cell_id[source_one] == 1
+    assert source_result.source_v2_m_s[source_zero] == pytest.approx(
+        cell_velocity[0]
+    )
+    assert source_result.source_v2_m_s[source_one] == pytest.approx(cell_velocity[1])
+    assert source_result.source_v2_status[source_zero] == 'ok'
+    assert source_result.source_v2_status[source_one] == 'ok'
+    assert source_result.receiver_v2_cell_id[receiver_zero] == 1
+
+    receiver_inputs, receiver_half, source_zero, receiver_zero, receiver_one = (
+        _receiver_only_shared_node_fixture(cell_x=(50.0, 150.0))
+    )
+    receiver_half = _with_solve_cell_half_intercept(receiver_half, cell_velocity)
+    receiver_result = build_refraction_weathering_core_context(
+        half_intercept_context=_core_context_from_app_result(
+            receiver_inputs,
+            receiver_half,
+            model,
+        ),
+        model=model,
+    ).app_weathering_result
+
+    assert receiver_result.node_v2_cell_id is not None
+    assert receiver_result.source_v2_cell_id is not None
+    assert receiver_result.receiver_v2_cell_id is not None
+    assert receiver_result.receiver_v2_m_s is not None
+    assert receiver_result.receiver_v2_status is not None
+    assert receiver_result.node_v2_cell_id[0] == 0
+    assert receiver_result.receiver_v2_cell_id[receiver_zero] == 0
+    assert receiver_result.receiver_v2_cell_id[receiver_one] == 1
+    assert receiver_result.receiver_v2_m_s[receiver_zero] == pytest.approx(
+        cell_velocity[0]
+    )
+    assert receiver_result.receiver_v2_m_s[receiver_one] == pytest.approx(
+        cell_velocity[1]
+    )
+    assert receiver_result.receiver_v2_status[receiver_zero] == 'ok'
+    assert receiver_result.receiver_v2_status[receiver_one] == 'ok'
+    assert receiver_result.source_v2_cell_id[source_zero] == 1
 
 
 def test_public_builder_reconstructs_row_values_in_sorted_position_order(
