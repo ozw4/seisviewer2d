@@ -80,7 +80,7 @@ _CELL_THRESHOLD_QC_KEYS = (
     'low_fold_cell_id',
     'cell_observation_count',
 )
-_ENDPOINT_GEOMETRY_RTOL = 1.0e-6
+_ENDPOINT_GEOMETRY_RTOL = 0.0
 _ENDPOINT_GEOMETRY_ATOL_M = 1.0e-6
 
 _NODE_COLUMNS = (

@@ -265,18 +265,150 @@ def _with_solve_cell_half_intercept(half, cell_velocity: np.ndarray):
     )
 
 
-def _solve_cell_model(cell_count: int):
+def _solve_cell_model(
+    cell_count: int,
+    *,
+    cell_size_x_m: float = 100.0,
+    x_coordinate_origin_m: float = 0.0,
+):
     return _model(
         bedrock_velocity_mode='solve_cell',
         refractor_cell={
             'number_of_cell_x': cell_count,
-            'size_of_cell_x_m': 100.0,
-            'x_coordinate_origin_m': 0.0,
+            'size_of_cell_x_m': cell_size_x_m,
+            'x_coordinate_origin_m': x_coordinate_origin_m,
             'number_of_cell_y': 1,
             'size_of_cell_y_m': None,
             'y_coordinate_origin_m': 0.0,
             'min_observations_per_cell': 1,
         },
+    )
+
+
+def _endpoint_geometry_value_conflict(left: float, right: float) -> bool:
+    return not weathering_module._same_endpoint_geometry_value(left, right)
+
+
+@pytest.mark.parametrize(
+    ('origin', 'expected_conflict'),
+    [
+        pytest.param(0.0, False, id='near_origin'),
+        pytest.param(500000.0, False, id='utm_origin'),
+    ],
+)
+def test_endpoint_geometry_absolute_tolerance_inside_is_origin_independent(
+    origin: float,
+    expected_conflict: bool,
+) -> None:
+    assert (
+        _endpoint_geometry_value_conflict(origin, origin + 0.5e-6)
+        is expected_conflict
+    )
+
+
+@pytest.mark.parametrize(
+    ('origin', 'expected_conflict'),
+    [
+        pytest.param(0.0, True, id='near_origin'),
+        pytest.param(500000.0, True, id='utm_origin'),
+    ],
+)
+def test_endpoint_geometry_absolute_tolerance_excess_is_origin_independent(
+    origin: float,
+    expected_conflict: bool,
+) -> None:
+    assert (
+        _endpoint_geometry_value_conflict(origin, origin + 2.0e-6)
+        is expected_conflict
+    )
+
+
+def test_endpoint_geometry_detects_utm_tenth_meter_source_only_conflict() -> None:
+    _inputs, half, _source_zero, _source_one, _receiver_zero = (
+        _source_only_shared_node_fixture(cell_x=(500000.0, 500000.1))
+    )
+
+    assert weathering_module._has_endpoint_geometry_conflict(half)
+    assert _endpoint_geometry_value_conflict(500000.0, 500000.1)
+
+
+@pytest.mark.parametrize(
+    ('left', 'right', 'expected_same'),
+    [
+        pytest.param(np.nan, np.nan, True, id='nan_nan'),
+        pytest.param(np.nan, 1.0, False, id='nan_finite'),
+        pytest.param(1.0, np.nan, False, id='finite_nan'),
+        pytest.param(np.inf, np.inf, False, id='inf_inf'),
+        pytest.param(np.inf, -np.inf, False, id='different_inf'),
+    ],
+)
+def test_endpoint_geometry_non_finite_contract(
+    left: float,
+    right: float,
+    expected_same: bool,
+) -> None:
+    assert weathering_module._same_endpoint_geometry_value(left, right) is expected_same
+
+
+def test_solve_cell_source_only_utm_boundary_uses_absolute_geometry_tolerance() -> None:
+    cell_velocity = np.asarray([2200.0, 2600.0], dtype=np.float64)
+    model = _solve_cell_model(
+        int(cell_velocity.shape[0]),
+        cell_size_x_m=0.05,
+        x_coordinate_origin_m=500000.0,
+    )
+    inputs, half, source_zero, source_one, _receiver_zero = (
+        _source_only_shared_node_fixture(cell_x=(500000.0, 500000.1))
+    )
+    half = _with_solve_cell_half_intercept(half, cell_velocity)
+
+    result = build_refraction_weathering_core_context(
+        half_intercept_context=_core_context_from_app_result(inputs, half, model),
+        model=model,
+    ).app_weathering_result
+
+    assert result.source_v2_cell_id is not None
+    assert result.source_v2_m_s is not None
+    assert result.source_v2_status is not None
+    assert result.source_v2_cell_id[source_zero] == 0
+    assert result.source_v2_cell_id[source_one] == 1
+    assert result.source_v2_m_s[source_zero] == pytest.approx(cell_velocity[0])
+    assert result.source_v2_m_s[source_one] == pytest.approx(cell_velocity[1])
+    assert result.source_v2_status[source_zero] == 'ok'
+    assert result.source_v2_status[source_one] == 'ok'
+    assert result.source_weathering_thickness_m[source_zero] != pytest.approx(
+        result.source_weathering_thickness_m[source_one]
+    )
+
+
+def test_solve_cell_receiver_only_utm_boundary_uses_absolute_geometry_tolerance() -> None:
+    cell_velocity = np.asarray([2200.0, 2600.0], dtype=np.float64)
+    model = _solve_cell_model(
+        int(cell_velocity.shape[0]),
+        cell_size_x_m=0.05,
+        x_coordinate_origin_m=500000.0,
+    )
+    inputs, half, _source_zero, receiver_zero, receiver_one = (
+        _receiver_only_shared_node_fixture(cell_x=(500000.0, 500000.1))
+    )
+    half = _with_solve_cell_half_intercept(half, cell_velocity)
+
+    result = build_refraction_weathering_core_context(
+        half_intercept_context=_core_context_from_app_result(inputs, half, model),
+        model=model,
+    ).app_weathering_result
+
+    assert result.receiver_v2_cell_id is not None
+    assert result.receiver_v2_m_s is not None
+    assert result.receiver_v2_status is not None
+    assert result.receiver_v2_cell_id[receiver_zero] == 0
+    assert result.receiver_v2_cell_id[receiver_one] == 1
+    assert result.receiver_v2_m_s[receiver_zero] == pytest.approx(cell_velocity[0])
+    assert result.receiver_v2_m_s[receiver_one] == pytest.approx(cell_velocity[1])
+    assert result.receiver_v2_status[receiver_zero] == 'ok'
+    assert result.receiver_v2_status[receiver_one] == 'ok'
+    assert result.receiver_weathering_thickness_m[receiver_zero] != pytest.approx(
+        result.receiver_weathering_thickness_m[receiver_one]
     )
 
 
