@@ -417,7 +417,6 @@ app/
       api/                # FastAPI routes under /statics/refraction/...
       contracts/          # refraction request/response contracts
       application/        # workflow orchestration and use-case services
-      domain/             # solver/domain types and statics composition logic
       artifacts/          # artifact schema, readers, writers, and table builders
       ports/              # interfaces for jobs, TraceStores, picks, and artifacts
       adapters/           # seisviewer2d runtime/job/TraceStore integration
@@ -428,6 +427,12 @@ app/
 .devcontainer/requirements-dev.txt
 Dockerfile
 ```
+
+The reusable static-correction numerical core is provided by the external
+package pin `seis-statics @ git+https://github.com/ozw4/seis-statics.git@v0.4.1`
+in `.devcontainer/requirements-dev.txt`. Do not replace it with a `main` branch
+dependency, editable CI install, `PYTHONPATH` override, or repository-root local
+`seis_statics/` package.
 
 ## Tests
 
