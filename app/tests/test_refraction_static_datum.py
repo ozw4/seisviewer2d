@@ -58,7 +58,7 @@ def _datum(**overrides: Any) -> RefractionStaticDatumRequest:
     payload: dict[str, Any] = {
         'mode': 'floating_and_flat',
         'floating_datum_mode': 'constant',
-        'floating_datum_elevation_m': 130.0,
+        'floating_datum_elevation_m': 180.0,
         'flat_datum_elevation_m': 200.0,
     }
     payload.update(overrides)
@@ -121,17 +121,17 @@ def _replacement_result(
         else np.asarray(receiver_endpoint_key_sorted, dtype=object)
     )
     source_surface_arr = (
-        np.asarray([100.0, 110.0, 120.0], dtype=np.float64)
+        np.asarray([190.0, 200.0, 210.0], dtype=np.float64)
         if source_surface is None
         else np.asarray(source_surface, dtype=np.float64)
     )
     receiver_surface_arr = (
-        np.asarray([105.0, 115.0, 125.0], dtype=np.float64)
+        np.asarray([195.0, 205.0, 215.0], dtype=np.float64)
         if receiver_surface is None
         else np.asarray(receiver_surface, dtype=np.float64)
     )
-    source_thickness = np.asarray([10.0, 12.0, 15.0], dtype=np.float64)
-    receiver_thickness = np.asarray([11.0, 13.0, 16.0], dtype=np.float64)
+    source_thickness = np.asarray([50.0, 52.0, 55.0], dtype=np.float64)
+    receiver_thickness = np.asarray([51.0, 53.0, 56.0], dtype=np.float64)
     source_shift = source_thickness * SLOWNESS_DELTA_S_PER_M
     receiver_shift = receiver_thickness * SLOWNESS_DELTA_S_PER_M
 
@@ -159,8 +159,8 @@ def _replacement_result(
     )
     used = np.asarray([True, False, False], dtype=bool)
     status = np.full(sorted_trace_index.shape, 'ok', dtype='<U32')
-    node_surface = np.asarray([102.5, 112.5, 122.5], dtype=np.float64)
-    node_thickness = np.asarray([10.5, 12.5, 15.5], dtype=np.float64)
+    node_surface = np.asarray([192.5, 202.5, 212.5], dtype=np.float64)
+    node_thickness = np.asarray([50.5, 52.5, 55.5], dtype=np.float64)
     return RefractionWeatheringReplacementStaticsResult(
         bedrock_velocity_mode='solve_global',
         bedrock_slowness_s_per_m=BEDROCK_SLOWNESS_S_PER_M,
@@ -390,16 +390,19 @@ def test_build_constant_floating_and_flat_components_in_sorted_order(
         expected_floating,
     )
     np.testing.assert_allclose(result.flat_datum_shift_s_sorted, expected_flat)
+    expected_refraction = (
+        replacement.weathering_replacement_trace_shift_s_sorted
+        + expected_floating
+        + expected_flat
+    )
+    expected_refraction[~replacement.valid_observation_mask_sorted] = np.nan
     np.testing.assert_allclose(
         result.refraction_trace_shift_s_sorted,
-        (
-            replacement.weathering_replacement_trace_shift_s_sorted
-            + expected_floating
-            + expected_flat
-        ),
+        expected_refraction,
     )
     np.testing.assert_array_equal(result.sorted_trace_index, [2, 0, 1])
-    assert result.trace_static_valid_mask_sorted.tolist() == [True, True, True]
+    assert result.trace_static_valid_mask_sorted.tolist() == [True, True, False]
+    assert result.valid_observation_mask_sorted.tolist() == [True, True, False]
     assert result.trace_static_status_sorted[2] == 'not_observed'
     assert result.qc['sign_convention'] == 'corrected(t) = raw(t - shift_s)'
     assert (tmp_path / REFRACTION_DATUM_STATICS_QC_JSON_NAME).is_file()
@@ -448,7 +451,7 @@ def test_row_endpoint_key_fallback_maps_original_trace_ids_to_sorted_positions()
     np.testing.assert_array_equal(result.row_receiver_endpoint_key, ['r0', 'r1'])
 
 
-def test_build_preserves_upstream_invalid_replacement_statuses() -> None:
+def test_build_preserves_external_upstream_replacement_statuses() -> None:
     replacement = replace(
         _replacement_result(),
         source_static_status=np.asarray(
@@ -477,13 +480,63 @@ def test_build_preserves_upstream_invalid_replacement_statuses() -> None:
         apply_options=_apply_options(),
     )
 
-    assert result.source_datum_status[0] == 'invalid_weathering_replacement'
+    assert result.source_datum_status[0] == 'exceeds_max_abs_shift'
     assert result.receiver_datum_status[1] == 'invalid_weathering_replacement'
     assert np.isnan(result.source_refraction_shift_s[0])
     assert np.isnan(result.receiver_refraction_shift_s[1])
-    assert result.trace_static_status_sorted[0] == 'invalid_weathering_replacement'
+    assert result.trace_static_status_sorted[0] == 'exceeds_max_abs_shift'
     assert result.trace_static_valid_mask_sorted[0] == np.False_
     assert np.isnan(result.refraction_trace_shift_s_sorted[0])
+    assert result.trace_static_status_sorted[1] == 'invalid_weathering_replacement'
+    assert result.trace_static_valid_mask_sorted[1] == np.False_
+    assert np.isnan(result.refraction_trace_shift_s_sorted[1])
+
+    trace_field = SimpleNamespace(
+        source_field_shift_s_sorted=np.asarray([0.001, 0.002, 0.003]),
+        receiver_field_shift_s_sorted=np.asarray([0.004, 0.005, 0.006]),
+        trace_field_shift_s_sorted=np.asarray([0.005, 0.007, 0.009]),
+        trace_field_static_status_sorted=np.asarray(['ok', 'ok', 'ok']),
+        qc={},
+    )
+    with_field = build_refraction_datum_statics(
+        weathering_replacement_result=replacement,
+        datum=_datum(),
+        apply_options=_apply_options(),
+        field_corrections=datum_module.RefractionDatumFieldCorrectionInputs(
+            trace_field_correction=trace_field,  # type: ignore[arg-type]
+            apply_to_trace_shift=True,
+        ),
+    )
+
+    assert with_field.final_trace_static_status_sorted[1] == (
+        'invalid_weathering_replacement'
+    )
+    assert with_field.final_trace_static_valid_mask_sorted[1] == np.False_
+    assert np.isnan(with_field.final_trace_shift_s_sorted[1])
+    assert with_field.applied_field_shift_s_sorted[1] == 0.0
+
+
+def test_build_preserves_upstream_trace_status_without_endpoint_error() -> None:
+    replacement = replace(
+        _replacement_result(valid_observation=[True, True, True]),
+        trace_static_status_sorted=np.asarray(['ok', 'invalid_shift', 'ok'], dtype='<U32'),
+        trace_static_valid_mask_sorted=np.asarray([True, False, True], dtype=bool),
+    )
+
+    result = build_refraction_datum_statics(
+        weathering_replacement_result=replacement,
+        datum=_datum(),
+        apply_options=_apply_options(),
+    )
+
+    np.testing.assert_array_equal(
+        result.source_datum_status,
+        ['ok', 'ok', 'ok'],
+    )
+    np.testing.assert_array_equal(
+        result.receiver_datum_status,
+        ['ok', 'ok', 'ok'],
+    )
     assert result.trace_static_status_sorted[1] == 'invalid_weathering_replacement'
     assert result.trace_static_valid_mask_sorted[1] == np.False_
     assert np.isnan(result.refraction_trace_shift_s_sorted[1])
@@ -519,6 +572,7 @@ def test_datum_modes_control_component_composition(
         expected += result.flat_datum_shift_s_sorted
     else:
         np.testing.assert_allclose(result.flat_datum_shift_s_sorted, 0.0)
+    expected[~replacement.valid_observation_mask_sorted] = np.nan
     np.testing.assert_allclose(result.refraction_trace_shift_s_sorted, expected)
 
 
@@ -530,9 +584,11 @@ def test_surface_floating_datum_mode_produces_zero_floating_shift() -> None:
     )
 
     np.testing.assert_allclose(result.floating_datum_elevation_shift_s_sorted, 0.0)
+    expected = result.weathering_replacement_trace_shift_s_sorted.copy()
+    expected[~result.valid_observation_mask_sorted] = np.nan
     np.testing.assert_allclose(
         result.refraction_trace_shift_s_sorted,
-        result.weathering_replacement_trace_shift_s_sorted,
+        expected,
     )
 
 
@@ -572,7 +628,7 @@ def test_from_artifact_mode_loads_node_npz_from_static_job(tmp_path: Path) -> No
     np.savez(
         artifact_path,
         node_id=np.asarray([0, 1, 2], dtype=np.int64),
-        floating_datum_elevation_m=np.asarray([101.0, 111.0, 121.0]),
+        floating_datum_elevation_m=np.asarray([181.0, 191.0, 201.0]),
     )
     state.jobs.create_static_job(
         'floating-datum-job',
@@ -600,11 +656,11 @@ def test_from_artifact_mode_loads_node_npz_from_static_job(tmp_path: Path) -> No
 
     np.testing.assert_allclose(
         result.node_floating_datum_elevation_m,
-        [101.0, 111.0, 121.0],
+        [181.0, 191.0, 201.0],
     )
     np.testing.assert_allclose(
         result.source_floating_datum_elevation_m_sorted,
-        [101.0, 111.0, 121.0],
+        [181.0, 191.0, 201.0],
     )
     expected_floating = -(
         (
@@ -620,9 +676,13 @@ def test_from_artifact_mode_loads_node_npz_from_static_job(tmp_path: Path) -> No
         result.floating_datum_elevation_shift_s_sorted,
         expected_floating,
     )
+    expected_refraction = (
+        result.weathering_replacement_trace_shift_s_sorted + expected_floating
+    )
+    expected_refraction[~result.valid_observation_mask_sorted] = np.nan
     np.testing.assert_allclose(
         result.refraction_trace_shift_s_sorted,
-        result.weathering_replacement_trace_shift_s_sorted + expected_floating,
+        expected_refraction,
     )
 
 
@@ -633,9 +693,9 @@ def test_from_artifact_mode_loads_endpoint_npz_from_explicit_path(
     np.savez(
         artifact_path,
         source_endpoint_key=np.asarray(['s0', 's1', 's2']),
-        source_floating_datum_elevation_m=np.asarray([102.0, 112.0, 122.0]),
+        source_floating_datum_elevation_m=np.asarray([181.0, 191.0, 201.0]),
         receiver_endpoint_key=np.asarray(['r0', 'r1', 'r2']),
-        receiver_floating_datum_elevation_m=np.asarray([103.0, 113.0, 123.0]),
+        receiver_floating_datum_elevation_m=np.asarray([182.0, 192.0, 202.0]),
     )
 
     result = build_refraction_datum_statics(
@@ -652,15 +712,15 @@ def test_from_artifact_mode_loads_endpoint_npz_from_explicit_path(
 
     np.testing.assert_allclose(
         result.source_floating_datum_elevation_m,
-        [102.0, 112.0, 122.0],
+        [181.0, 191.0, 201.0],
     )
     np.testing.assert_allclose(
         result.receiver_floating_datum_elevation_m,
-        [103.0, 113.0, 123.0],
+        [182.0, 192.0, 202.0],
     )
     np.testing.assert_allclose(
         result.node_floating_datum_elevation_m,
-        [102.5, 112.5, 122.5],
+        [181.5, 191.5, 201.5],
     )
 
 
@@ -671,15 +731,15 @@ def test_from_artifact_mode_preserves_endpoint_values_for_shared_nodes(
     np.savez(
         artifact_path,
         source_endpoint_key=np.asarray(['s0', 's1', 's2']),
-        source_floating_datum_elevation_m=np.asarray([101.0, 131.0, 121.0]),
+        source_floating_datum_elevation_m=np.asarray([135.0, 145.0, 140.0]),
         receiver_endpoint_key=np.asarray(['r0', 'r1', 'r2']),
-        receiver_floating_datum_elevation_m=np.asarray([106.0, 136.0, 126.0]),
+        receiver_floating_datum_elevation_m=np.asarray([136.0, 146.0, 141.0]),
     )
 
     result = build_refraction_datum_statics(
         weathering_replacement_result=_replacement_result(
-            source_surface=np.asarray([100.0, 130.0, 120.0]),
-            receiver_surface=np.asarray([105.0, 135.0, 125.0]),
+            source_surface=np.asarray([140.0, 150.0, 145.0]),
+            receiver_surface=np.asarray([145.0, 155.0, 150.0]),
             source_node_id=np.asarray([0, 0, 1]),
             receiver_node_id=np.asarray([0, 0, 1]),
             source_node_id_sorted=np.asarray([0, 0, 1]),
@@ -699,19 +759,19 @@ def test_from_artifact_mode_preserves_endpoint_values_for_shared_nodes(
 
     np.testing.assert_allclose(
         result.source_surface_elevation_m_sorted,
-        [130.0, 100.0, 120.0],
+        [150.0, 140.0, 145.0],
     )
     np.testing.assert_allclose(
         result.receiver_surface_elevation_m_sorted,
-        [135.0, 105.0, 125.0],
+        [155.0, 145.0, 150.0],
     )
     np.testing.assert_allclose(
         result.source_floating_datum_elevation_m_sorted,
-        [131.0, 101.0, 121.0],
+        [145.0, 135.0, 140.0],
     )
     np.testing.assert_allclose(
         result.receiver_floating_datum_elevation_m_sorted,
-        [136.0, 106.0, 126.0],
+        [146.0, 136.0, 141.0],
     )
     expected_floating = -(
         (
@@ -796,7 +856,7 @@ def test_flat_datum_above_topography_policy_is_explicit() -> None:
             mode='flat_only',
             floating_datum_mode='constant',
             floating_datum_elevation_m=100.0,
-            flat_datum_elevation_m=130.0,
+            flat_datum_elevation_m=220.0,
             allow_flat_datum_above_topography=False,
         ),
         apply_options=_apply_options(),
@@ -807,7 +867,7 @@ def test_flat_datum_above_topography_policy_is_explicit() -> None:
             mode='flat_only',
             floating_datum_mode='constant',
             floating_datum_elevation_m=100.0,
-            flat_datum_elevation_m=130.0,
+            flat_datum_elevation_m=220.0,
             allow_flat_datum_above_topography=True,
         ),
         apply_options=_apply_options(),
@@ -819,17 +879,38 @@ def test_flat_datum_above_topography_policy_is_explicit() -> None:
     assert allowed.trace_static_valid_mask_sorted[0] == np.True_
 
 
-def test_max_shift_marks_status_without_clipping() -> None:
+def test_max_shift_status_and_shift_come_from_external_core() -> None:
     result = build_refraction_datum_statics(
         weathering_replacement_result=_replacement_result(),
         datum=_datum(flat_datum_elevation_m=1000.0),
         apply_options=_apply_options(max_abs_shift_ms=10.0),
     )
 
-    assert result.refraction_trace_shift_s_sorted[0] > 0.0
-    assert result.trace_static_status_sorted[0] == 'exceeds_max_abs_shift'
-    assert result.trace_static_valid_mask_sorted[0] == np.False_
-    assert result.qc['exceeds_max_abs_shift_count'] == 3
+    assert np.isnan(result.refraction_trace_shift_s_sorted).all()
+    assert np.isnan(result.source_refraction_shift_s).all()
+    assert np.isnan(result.receiver_refraction_shift_s).all()
+    np.testing.assert_array_equal(
+        result.trace_static_status_sorted,
+        ['invalid_datum_shift', 'invalid_datum_shift', 'invalid_datum_shift'],
+    )
+    np.testing.assert_array_equal(
+        result.source_datum_status,
+        ['invalid_datum_shift', 'invalid_datum_shift', 'invalid_datum_shift'],
+    )
+    np.testing.assert_array_equal(
+        result.receiver_datum_status,
+        ['invalid_datum_shift', 'invalid_datum_shift', 'invalid_datum_shift'],
+    )
+    np.testing.assert_array_equal(
+        result.node_datum_status,
+        ['invalid_datum_shift', 'invalid_datum_shift', 'invalid_datum_shift'],
+    )
+    np.testing.assert_array_equal(
+        result.trace_static_valid_mask_sorted,
+        [False, False, False],
+    )
+    assert result.qc['exceeds_max_abs_shift_count'] == 0
+    assert result.qc['trace_static_status_counts'] == {'invalid_datum_shift': 3}
 
 
 def test_invalid_surface_and_unknown_endpoint_nodes_are_visible() -> None:
@@ -868,6 +949,132 @@ def test_datum_statics_rejects_non_real_numeric_node_ids() -> None:
             datum=_datum(),
             apply_options=_apply_options(),
         )
+
+
+def test_build_maps_external_core_result_without_recomputing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    replacement = _replacement_result(valid_observation=[True, True, True])
+    captured_core_kwargs: dict[str, Any] = {}
+    captured_node_kwargs: dict[str, Any] = {}
+    source_core = SimpleNamespace(
+        floating_datum_shift_s=np.asarray([0.101, 0.102, 0.103]),
+        flat_datum_shift_s=np.asarray([0.201, 0.202, 0.203]),
+        datum_static_status=np.asarray(
+            ['exceeds_max_abs_shift', 'ok', 'ok'],
+            dtype='<U32',
+        ),
+        total_refraction_shift_s=np.asarray([1.001, 1.002, 1.003]),
+    )
+    receiver_core = SimpleNamespace(
+        floating_datum_shift_s=np.asarray([0.301, 0.302, 0.303]),
+        flat_datum_shift_s=np.asarray([0.401, 0.402, 0.403]),
+        datum_static_status=np.asarray(
+            ['ok', 'exceeds_max_abs_shift', 'ok'],
+            dtype='<U32',
+        ),
+        total_refraction_shift_s=np.asarray([2.001, 2.002, 2.003]),
+    )
+    core_result = SimpleNamespace(
+        source_endpoint_datum=source_core,
+        receiver_endpoint_datum=receiver_core,
+        source_floating_datum_shift_s_sorted=np.asarray([10.0, 11.0, 12.0]),
+        receiver_floating_datum_shift_s_sorted=np.asarray([20.0, 21.0, 22.0]),
+        source_flat_datum_shift_s_sorted=np.asarray([30.0, 31.0, 32.0]),
+        receiver_flat_datum_shift_s_sorted=np.asarray([40.0, 41.0, 42.0]),
+        source_refraction_shift_s_sorted=np.asarray([50.0, 51.0, 52.0]),
+        receiver_refraction_shift_s_sorted=np.asarray([60.0, 61.0, 62.0]),
+        refraction_trace_shift_s_sorted=np.asarray([70.0, 71.0, 72.0]),
+        trace_static_status_sorted=np.asarray(['ok', 'external_status', 'ok']),
+        trace_static_valid_mask_sorted=np.asarray([True, False, True]),
+        applied_field_shift_s_sorted=np.asarray([0.5, 0.0, 0.7]),
+        final_trace_shift_s_sorted=np.asarray([70.5, 71.0, 72.7]),
+        final_trace_static_status_sorted=np.asarray(['ok', 'external_status', 'ok']),
+        final_trace_static_valid_mask_sorted=np.asarray([True, False, True]),
+        qc={'core_final': True},
+    )
+    trace_field = SimpleNamespace(
+        source_field_shift_s_sorted=np.asarray([0.1, 0.2, 0.3]),
+        receiver_field_shift_s_sorted=np.asarray([0.4, 0.5, 0.6]),
+        trace_field_shift_s_sorted=np.asarray([0.5, 0.7, 0.9]),
+        trace_field_static_status_sorted=np.asarray(['ok', 'ok', 'ok']),
+        qc={'trace_field': True},
+    )
+
+    monkeypatch.setattr(
+        datum_module,
+        'core_build_refraction_datum_statics',
+        lambda **kwargs: captured_core_kwargs.setdefault('kwargs', kwargs)
+        and core_result,
+    )
+    monkeypatch.setattr(
+        datum_module,
+        'core_build_refraction_endpoint_datum_statics',
+        lambda **kwargs: captured_node_kwargs.setdefault('kwargs', kwargs)
+        and SimpleNamespace(
+            datum_static_status=np.asarray(
+                ['node_external', 'node_external', 'node_external'],
+                dtype='<U32',
+            ),
+            total_refraction_shift_s=np.asarray([3.001, 3.002, 3.003]),
+        ),
+    )
+
+    result = build_refraction_datum_statics(
+        weathering_replacement_result=replacement,
+        datum=_datum(),
+        apply_options=_apply_options(max_abs_shift_ms=1.0),
+        field_corrections=datum_module.RefractionDatumFieldCorrectionInputs(
+            trace_field_correction=trace_field,  # type: ignore[arg-type]
+            apply_to_trace_shift=True,
+            invalid_component_policy='skip_invalid_traces',
+            field_composition_qc={'trace_field': trace_field.qc},
+        ),
+    )
+
+    np.testing.assert_allclose(result.source_refraction_shift_s, [1.001, 1.002, 1.003])
+    np.testing.assert_allclose(
+        result.receiver_refraction_shift_s,
+        [2.001, 2.002, 2.003],
+    )
+    np.testing.assert_allclose(result.source_refraction_shift_s_sorted, [50.0, 51.0, 52.0])
+    np.testing.assert_allclose(
+        result.receiver_refraction_shift_s_sorted,
+        [60.0, 61.0, 62.0],
+    )
+    np.testing.assert_allclose(result.refraction_trace_shift_s_sorted, [70.0, 71.0, 72.0])
+    np.testing.assert_array_equal(
+        result.trace_static_status_sorted,
+        ['ok', 'external_status', 'ok'],
+    )
+    np.testing.assert_array_equal(
+        result.source_datum_status,
+        ['exceeds_max_abs_shift', 'ok', 'ok'],
+    )
+    np.testing.assert_array_equal(
+        result.receiver_datum_status,
+        ['ok', 'exceeds_max_abs_shift', 'ok'],
+    )
+    np.testing.assert_array_equal(
+        result.trace_static_valid_mask_sorted,
+        [True, False, True],
+    )
+    np.testing.assert_array_equal(
+        result.node_datum_status,
+        ['node_external', 'node_external', 'node_external'],
+    )
+    np.testing.assert_array_equal(
+        captured_core_kwargs['kwargs']['source_weathering_replacement_status'],
+        replacement.source_static_status,
+    )
+    assert captured_core_kwargs['kwargs']['max_abs_datum_shift_ms'] == 1.0
+    assert captured_core_kwargs['kwargs']['trace_field_correction'] is trace_field
+    assert captured_core_kwargs['kwargs']['apply_field_correction_to_trace_shift'] is True
+    assert (
+        captured_core_kwargs['kwargs']['invalid_field_component_policy']
+        == 'skip_invalid_traces'
+    )
+    assert captured_node_kwargs['kwargs']['max_abs_datum_shift_ms'] == 1.0
 
 
 def test_high_level_pipeline_calls_weathering_stage(

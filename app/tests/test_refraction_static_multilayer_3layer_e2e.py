@@ -308,7 +308,7 @@ def test_three_layer_trace_shift_is_source_plus_receiver_plus_datum() -> None:
     datum = RefractionStaticDatumRequest(
         mode='floating_and_flat',
         floating_datum_mode='constant',
-        floating_datum_elevation_m=125.0,
+        floating_datum_elevation_m=75.0,
         flat_datum_elevation_m=175.0,
     )
     _dataset, _input_model, _model, workflow = compute_three_layer_workflow(

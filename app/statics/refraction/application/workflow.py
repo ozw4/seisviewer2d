@@ -30,6 +30,7 @@ from app.statics.refraction.application.design_matrix import (
     all_refraction_design_matrix_layer_artifact_names,
 )
 from app.statics.refraction.application.datum import (
+    RefractionDatumFieldCorrectionInputs,
     build_refraction_datum_statics,
     write_refraction_datum_statics_artifacts,
 )
@@ -94,6 +95,7 @@ from seis_statics.refraction.source_depth import (
 from app.statics.refraction.contracts.result_types import (
     RefractionDatumStaticsResult,
     RefractionStaticInputModel,
+    RefractionWeatheringReplacementStaticsResult,
     ResolvedRefractionFirstLayer,
 )
 from seis_statics.refraction.uphole import (
@@ -751,6 +753,218 @@ def _with_manual_static_field_correction(
     )
 
 
+def _field_correction_inputs_for_datum_core(
+    *,
+    result: RefractionDatumStaticsResult | RefractionWeatheringReplacementStaticsResult,
+    input_model: RefractionStaticInputModel | None,
+    req: RefractionStaticApplyRequest,
+    resolved_first_layer: ResolvedRefractionFirstLayer,
+    runtime: RefractionRuntime | None = None,
+    state: object | None = None,
+) -> RefractionDatumFieldCorrectionInputs | None:
+    if not _field_correction_components_requested(req):
+        return None
+
+    source_depth_m = None
+    source_depth_shift_s = None
+    source_depth_status = None
+    source_depth_qc = None
+    if req.field_corrections.source_depth.mode != 'none':
+        correction = req.field_corrections.source_depth
+        if input_model is None or input_model.source_depth_result is None:
+            raise ValueError(
+                'source-depth field correction requires resolved source-depth input rows'
+            )
+        v1_m_s = float(resolved_first_layer.weathering_velocity_m_s)
+        max_shift_s = (
+            float(correction.max_abs_source_depth_m) / v1_m_s
+            if np.isfinite(v1_m_s) and v1_m_s > 0.0
+            else None
+        )
+        field_result = compute_source_depth_weathering_time_correction_from_result(
+            input_model.source_depth_result,
+            v1_m_s,
+            max_abs_shift_s=max_shift_s,
+        )
+        source_depth_m, source_depth_shift_s, source_depth_status = (
+            _map_source_depth_field_correction_to_sources(
+                source_endpoint_key=result.source_endpoint_key,
+                source_depth_result=input_model.source_depth_result,
+                field_result=field_result,
+            )
+        )
+        guard, warnings = _source_depth_double_count_guard_qc(req)
+        source_depth_qc = {
+            **field_result.qc,
+            'source_depth_double_count_guard': guard,
+            'warnings': warnings,
+        }
+
+    source_uphole_time_s = None
+    source_uphole_shift_s = None
+    source_uphole_status = None
+    uphole_qc = None
+    if req.field_corrections.uphole.mode != 'none':
+        correction = req.field_corrections.uphole
+        if correction.mode != 'header_time':
+            raise RefractionFieldCorrectionNotImplemented(
+                'M4 field-correction follow-up implementation is required for '
+                f'field_corrections.uphole.mode={correction.mode}.'
+            )
+        if input_model is None or input_model.uphole_result is None:
+            raise ValueError(
+                'uphole field correction requires resolved uphole input rows'
+            )
+        field_result = compute_uphole_time_correction_from_result(
+            input_model.uphole_result,
+            positive_time_means_delay=bool(correction.positive_time_means_delay),
+            max_abs_uphole_time_s=float(correction.max_abs_uphole_time_s),
+        )
+        source_uphole_time_s, source_uphole_shift_s, source_uphole_status = (
+            _map_uphole_field_correction_to_sources(
+                source_endpoint_key=result.source_endpoint_key,
+                uphole_result=input_model.uphole_result,
+                field_result=field_result,
+            )
+        )
+        uphole_qc = {
+            **input_model.uphole_result.qc,
+            **field_result.qc,
+            'uphole_time_byte': correction.uphole_time_byte,
+            'uphole_time_unit': correction.uphole_time_unit,
+        }
+
+    source_manual_static_shift_s = None
+    source_manual_static_status = None
+    receiver_manual_static_shift_s = None
+    receiver_manual_static_status = None
+    manual_qc = None
+    if req.field_corrections.manual_static.mode != 'none':
+        correction = req.field_corrections.manual_static
+        rows = _manual_static_rows_from_request(req=req, runtime=runtime, state=state)
+        source_endpoint_id = _endpoint_ids_for_result(
+            result_endpoint_key=result.source_endpoint_key,
+            input_endpoint_key=(
+                None if input_model is None else input_model.source_endpoint_key_sorted
+            ),
+            input_endpoint_id=(
+                None if input_model is None else input_model.source_endpoint_id_sorted
+            ),
+        )
+        receiver_endpoint_id = _endpoint_ids_for_result(
+            result_endpoint_key=result.receiver_endpoint_key,
+            input_endpoint_key=(
+                None
+                if input_model is None
+                else input_model.receiver_endpoint_key_sorted
+            ),
+            input_endpoint_id=(
+                None if input_model is None else input_model.receiver_endpoint_id_sorted
+            ),
+        )
+        manual_result = resolve_refraction_manual_static(
+            source_endpoint_key=result.source_endpoint_key,
+            source_endpoint_id=source_endpoint_id,
+            source_node_id=result.source_node_id,
+            receiver_endpoint_key=result.receiver_endpoint_key,
+            receiver_endpoint_id=receiver_endpoint_id,
+            receiver_node_id=result.receiver_node_id,
+            rows=rows,
+            mode=correction.mode,
+            sign_convention=correction.sign_convention,
+            allow_missing_endpoints=bool(correction.allow_missing_endpoints),
+        )
+        source_manual_static_shift_s = manual_result.source_manual_static_shift_s
+        source_manual_static_status = manual_result.source_manual_static_status
+        receiver_manual_static_shift_s = manual_result.receiver_manual_static_shift_s
+        receiver_manual_static_status = manual_result.receiver_manual_static_status
+        manual_qc = manual_result.qc
+
+    composition = req.field_corrections.composition
+    if not bool(composition.enabled):
+        return RefractionDatumFieldCorrectionInputs(
+            source_depth_m=source_depth_m,
+            source_depth_shift_s=source_depth_shift_s,
+            source_depth_status=source_depth_status,
+            source_depth_field_correction_qc=source_depth_qc,
+            source_uphole_time_s=source_uphole_time_s,
+            source_uphole_shift_s=source_uphole_shift_s,
+            source_uphole_status=source_uphole_status,
+            source_uphole_field_correction_qc=uphole_qc,
+            source_manual_static_shift_s=source_manual_static_shift_s,
+            source_manual_static_status=source_manual_static_status,
+            receiver_manual_static_shift_s=receiver_manual_static_shift_s,
+            receiver_manual_static_status=receiver_manual_static_status,
+            manual_static_field_correction_qc=manual_qc,
+        )
+    if input_model is None:
+        raise ValueError('field-correction composition requires input trace endpoints')
+
+    source_endpoint_id = _endpoint_ids_for_result(
+        result_endpoint_key=result.source_endpoint_key,
+        input_endpoint_key=input_model.source_endpoint_key_sorted,
+        input_endpoint_id=input_model.source_endpoint_id_sorted,
+    )
+    receiver_endpoint_id = _endpoint_ids_for_result(
+        result_endpoint_key=result.receiver_endpoint_key,
+        input_endpoint_key=input_model.receiver_endpoint_key_sorted,
+        input_endpoint_id=input_model.receiver_endpoint_id_sorted,
+    )
+    source_field = compose_refraction_endpoint_field_corrections(
+        endpoint_kind='source',
+        endpoint_key=result.source_endpoint_key,
+        endpoint_id=source_endpoint_id,
+        node_id=result.source_node_id,
+        source_depth_shift_s=source_depth_shift_s,
+        source_depth_status=source_depth_status,
+        uphole_shift_s=source_uphole_shift_s,
+        uphole_status=source_uphole_status,
+        manual_static_shift_s=source_manual_static_shift_s,
+        manual_static_status=source_manual_static_status,
+    )
+    receiver_field = compose_refraction_endpoint_field_corrections(
+        endpoint_kind='receiver',
+        endpoint_key=result.receiver_endpoint_key,
+        endpoint_id=receiver_endpoint_id,
+        node_id=result.receiver_node_id,
+        manual_static_shift_s=receiver_manual_static_shift_s,
+        manual_static_status=receiver_manual_static_status,
+    )
+    trace_field = compose_refraction_trace_field_corrections(
+        source_endpoint_field=source_field,
+        receiver_endpoint_field=receiver_field,
+        source_endpoint_key_sorted=input_model.source_endpoint_key_sorted,
+        receiver_endpoint_key_sorted=input_model.receiver_endpoint_key_sorted,
+    )
+    return RefractionDatumFieldCorrectionInputs(
+        source_depth_m=source_depth_m,
+        source_depth_shift_s=source_depth_shift_s,
+        source_depth_status=source_depth_status,
+        source_depth_field_correction_qc=source_depth_qc,
+        source_uphole_time_s=source_uphole_time_s,
+        source_uphole_shift_s=source_uphole_shift_s,
+        source_uphole_status=source_uphole_status,
+        source_uphole_field_correction_qc=uphole_qc,
+        source_manual_static_shift_s=source_manual_static_shift_s,
+        source_manual_static_status=source_manual_static_status,
+        receiver_manual_static_shift_s=receiver_manual_static_shift_s,
+        receiver_manual_static_status=receiver_manual_static_status,
+        manual_static_field_correction_qc=manual_qc,
+        source_field_shift_s=source_field.total_field_shift_s,
+        source_field_static_status=source_field.field_static_status,
+        receiver_field_shift_s=receiver_field.total_field_shift_s,
+        receiver_field_static_status=receiver_field.field_static_status,
+        trace_field_correction=trace_field,
+        apply_to_trace_shift=bool(composition.apply_to_trace_shift),
+        invalid_component_policy=composition.invalid_component_policy,
+        field_composition_qc={
+            'source_endpoint_field': source_field.qc,
+            'receiver_endpoint_field': receiver_field.qc,
+            'trace_field': trace_field.qc,
+        },
+    )
+
+
 def _with_field_correction_composition(
     *,
     result: RefractionDatumStaticsResult,
@@ -875,6 +1089,18 @@ def _field_correction_components_requested(req: RefractionStaticApplyRequest) ->
         req.field_corrections.source_depth.mode != 'none'
         or req.field_corrections.uphole.mode != 'none'
         or req.field_corrections.manual_static.mode != 'none'
+    )
+
+
+def _can_resolve_field_corrections_from_replacement(result: object) -> bool:
+    return all(
+        hasattr(result, name)
+        for name in (
+            'source_endpoint_key',
+            'source_node_id',
+            'receiver_endpoint_key',
+            'receiver_node_id',
+        )
     )
 
 
@@ -1337,6 +1563,21 @@ def _run_refraction_static_apply_job_body(
         progress=0.75,
         message='computing_refraction_datum_statics',
     )
+    compose_field_corrections_after_datum = False
+    if _can_resolve_field_corrections_from_replacement(replacement_result):
+        field_corrections = _field_correction_inputs_for_datum_core(
+            result=replacement_result,
+            input_model=weathering_input_model,
+            req=active_req,
+            resolved_first_layer=first_layer.resolved,
+            runtime=runtime,
+            state=_runtime_state(runtime),
+        )
+    else:
+        field_corrections = None
+        compose_field_corrections_after_datum = _field_correction_components_requested(
+            active_req
+        )
     datum_result = build_refraction_datum_statics(
         weathering_replacement_result=replacement_result,
         datum=active_req.datum,
@@ -1348,29 +1589,31 @@ def _run_refraction_static_apply_job_body(
         key1_byte=active_req.key1_byte,
         key2_byte=active_req.key2_byte,
         resolved_first_layer=first_layer.resolved,
+        field_corrections=field_corrections,
     )
-    datum_result = _with_source_depth_field_correction(
-        result=datum_result,
-        input_model=weathering_input_model,
-        req=active_req,
-        resolved_first_layer=first_layer.resolved,
-    )
-    datum_result = _with_uphole_field_correction(
-        result=datum_result,
-        input_model=weathering_input_model,
-        req=active_req,
-    )
-    datum_result = _with_manual_static_field_correction(
-        result=datum_result,
-        input_model=weathering_input_model,
-        req=active_req,
-        runtime=runtime,
-    )
-    datum_result = _with_field_correction_composition(
-        result=datum_result,
-        input_model=weathering_input_model,
-        req=active_req,
-    )
+    if compose_field_corrections_after_datum:
+        datum_result = _with_source_depth_field_correction(
+            result=datum_result,
+            input_model=weathering_input_model,
+            req=active_req,
+            resolved_first_layer=first_layer.resolved,
+        )
+        datum_result = _with_uphole_field_correction(
+            result=datum_result,
+            input_model=weathering_input_model,
+            req=active_req,
+        )
+        datum_result = _with_manual_static_field_correction(
+            result=datum_result,
+            input_model=weathering_input_model,
+            req=active_req,
+            runtime=runtime,
+        )
+        datum_result = _with_field_correction_composition(
+            result=datum_result,
+            input_model=weathering_input_model,
+            req=active_req,
+        )
     datum_result = _with_static_history_double_application_qc(
         result=datum_result,
         req=active_req,

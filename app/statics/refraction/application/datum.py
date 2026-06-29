@@ -27,9 +27,20 @@ from seis_statics.refraction.first_layer import (
     validate_resolved_first_layer_velocity_match,
 )
 from seis_statics.refraction.datum import (
+    RefractionDatumError as CoreRefractionDatumError,
+    ResolvedFloatingDatum as CoreResolvedFloatingDatum,
+    build_refraction_datum_statics as core_build_refraction_datum_statics,
+    build_refraction_endpoint_datum_statics as core_build_refraction_endpoint_datum_statics,
     compute_refraction_datum_elevation_shift_s as core_compute_refraction_datum_elevation_shift_s,
+    resolve_smoothed_refraction_floating_datum as core_resolve_smoothed_refraction_floating_datum,
 )
-from seis_statics.refraction.status import LOCAL_V2_STATUS_VALUES
+from seis_statics.refraction.field_composition import (
+    RefractionFieldCompositionError,
+    compose_refraction_final_trace_shift as core_compose_refraction_final_trace_shift,
+)
+from seis_statics.refraction.types import (
+    RefractionTraceFieldCorrectionResult as CoreRefractionTraceFieldCorrectionResult,
+)
 from app.statics.refraction.contracts.result_types import (
     RefractionDatumStaticsResult,
     RefractionWeatheringReplacementStaticsResult,
@@ -60,47 +71,15 @@ _FROM_ARTIFACT_MESSAGE = (
     'floating datum artifact must be provided or resolvable for '
     'floating_datum_mode=from_artifact'
 )
-_CELL_THRESHOLD_QC_KEYS = (
-    'min_observations_per_cell',
-    'n_low_fold_cells',
-    'n_observations_rejected_by_low_fold_cell',
-    'low_fold_cell_rejection_reason',
-    'low_fold_cell_id',
-    'cell_observation_count',
-)
-
-_STATUS_PRIORITY = {
-    'ok': 0,
-    'not_observed': 1,
-    'inactive': 2,
-    'exceeds_max_abs_shift': 3,
-    'invalid_datum_shift': 4,
-    'flat_datum_below_refractor': 5,
-    'floating_datum_below_refractor': 6,
-    'invalid_weathering_replacement': 7,
-    'invalid_nonfinite_input': 8,
-    'invalid_velocity_order': 9,
-    'outside_refractor_cell_grid': 10,
-    'inactive_v2_cell': 11,
-    'low_fold_v2_cell': 12,
-    'invalid_local_v2': 13,
-    'v2_not_greater_than_v1': 14,
-    'invalid_flat_datum_elevation': 15,
-    'invalid_floating_datum_elevation': 16,
-    'invalid_surface_elevation': 17,
-    'invalid_bedrock_velocity': 18,
-    'missing_endpoint': 19,
-    'missing_node': 20,
-}
-
-_INVALID_TRACE_STATUSES = {
+_UPSTREAM_REPLACEMENT_INVALID_STATUSES = {
     'missing_node',
     'missing_endpoint',
-    'invalid_bedrock_velocity',
-    'invalid_surface_elevation',
-    'invalid_floating_datum_elevation',
-    'invalid_flat_datum_elevation',
-    'invalid_weathering_replacement',
+    'invalid_velocity',
+    'inactive',
+    'exceeds_max_abs_shift',
+    'invalid_shift',
+    'negative_weathering_thickness',
+    'invalid_weathering_thickness',
     'invalid_nonfinite_input',
     'invalid_velocity_order',
     'outside_refractor_cell_grid',
@@ -108,29 +87,6 @@ _INVALID_TRACE_STATUSES = {
     'low_fold_v2_cell',
     'invalid_local_v2',
     'v2_not_greater_than_v1',
-    'floating_datum_below_refractor',
-    'flat_datum_below_refractor',
-    'invalid_datum_shift',
-    'exceeds_max_abs_shift',
-    'inactive',
-}
-
-_UPSTREAM_REPLACEMENT_STATUS_TO_DATUM_STATUS = {
-    'missing_node': 'missing_node',
-    'missing_endpoint': 'missing_endpoint',
-    'invalid_velocity': 'invalid_bedrock_velocity',
-    'inactive': 'inactive',
-    'exceeds_max_abs_shift': 'invalid_weathering_replacement',
-    'invalid_shift': 'invalid_weathering_replacement',
-    'negative_weathering_thickness': 'invalid_weathering_replacement',
-    'invalid_weathering_thickness': 'invalid_weathering_replacement',
-    'invalid_nonfinite_input': 'invalid_nonfinite_input',
-    'invalid_velocity_order': 'invalid_velocity_order',
-    'outside_refractor_cell_grid': 'outside_refractor_cell_grid',
-    'inactive_v2_cell': 'inactive_v2_cell',
-    'low_fold_v2_cell': 'low_fold_v2_cell',
-    'invalid_local_v2': 'invalid_local_v2',
-    'v2_not_greater_than_v1': 'v2_not_greater_than_v1',
 }
 _UPSTREAM_REPLACEMENT_NON_INVALID_STATUSES = {
     'ok',
@@ -140,6 +96,24 @@ _UPSTREAM_REPLACEMENT_NON_INVALID_STATUSES = {
     'low_fold',
     'exceeds_max_thickness',
 }
+_UPSTREAM_REPLACEMENT_STATUS_TO_CORE_STATUS = {
+    status: status for status in _UPSTREAM_REPLACEMENT_INVALID_STATUSES
+}
+_UPSTREAM_REPLACEMENT_STATUS_TO_CORE_STATUS['invalid_velocity'] = 'invalid_velocity'
+_APP_STATUS_FROM_CORE_STATUS = {
+    'invalid_velocity': 'invalid_bedrock_velocity',
+    'invalid_shift': 'invalid_weathering_replacement',
+    'negative_weathering_thickness': 'invalid_weathering_replacement',
+    'invalid_weathering_thickness': 'invalid_weathering_replacement',
+}
+_CELL_THRESHOLD_QC_KEYS = (
+    'min_observations_per_cell',
+    'n_low_fold_cells',
+    'n_observations_rejected_by_low_fold_cell',
+    'low_fold_cell_rejection_reason',
+    'low_fold_cell_id',
+    'cell_observation_count',
+)
 
 _NODE_COLUMNS = (
     'node_id',
@@ -217,6 +191,33 @@ _FIELD_TOTAL_VALID_STATUSES = frozenset(
 
 class RefractionDatumStaticsError(ValueError):
     """Raised when datum refraction static outputs cannot be built."""
+
+
+@dataclass(frozen=True)
+class RefractionDatumFieldCorrectionInputs:
+    """Resolved app field-correction inputs for external datum composition."""
+
+    source_depth_m: np.ndarray | None = None
+    source_depth_shift_s: np.ndarray | None = None
+    source_depth_status: np.ndarray | None = None
+    source_depth_field_correction_qc: dict[str, Any] | None = None
+    source_uphole_time_s: np.ndarray | None = None
+    source_uphole_shift_s: np.ndarray | None = None
+    source_uphole_status: np.ndarray | None = None
+    source_uphole_field_correction_qc: dict[str, Any] | None = None
+    source_manual_static_shift_s: np.ndarray | None = None
+    source_manual_static_status: np.ndarray | None = None
+    receiver_manual_static_shift_s: np.ndarray | None = None
+    receiver_manual_static_status: np.ndarray | None = None
+    manual_static_field_correction_qc: dict[str, Any] | None = None
+    source_field_shift_s: np.ndarray | None = None
+    source_field_static_status: np.ndarray | None = None
+    receiver_field_shift_s: np.ndarray | None = None
+    receiver_field_static_status: np.ndarray | None = None
+    trace_field_correction: CoreRefractionTraceFieldCorrectionResult | None = None
+    apply_to_trace_shift: bool = False
+    invalid_component_policy: str = 'fail'
+    field_composition_qc: dict[str, Any] | None = None
 
 
 @dataclass(frozen=True)
@@ -406,6 +407,7 @@ def build_refraction_datum_statics(
     key2_byte: int | None = None,
     floating_datum_artifact_path: Path | None = None,
     resolved_first_layer: ResolvedRefractionFirstLayer | None = None,
+    field_corrections: RefractionDatumFieldCorrectionInputs | None = None,
 ) -> RefractionDatumStaticsResult:
     """Compose weathering replacement, floating datum, and flat datum shifts."""
     data = _validate_replacement_result(weathering_replacement_result)
@@ -432,143 +434,157 @@ def build_refraction_datum_statics(
         artifact_path=artifact_path,
     )
 
-    floating_active = datum_req.mode in {'floating_only', 'floating_and_flat'}
     flat_active = datum_req.mode in {'flat_only', 'floating_and_flat'}
     flat_datum = _resolve_flat_datum(datum_req, flat_active=flat_active)
+    source_replacement_velocity, receiver_replacement_velocity = (
+        _external_replacement_velocity_inputs(data=data, velocity=velocity)
+    )
+    source_replacement_status = _core_replacement_status_input(
+        data.source_static_status
+    )
+    receiver_replacement_status = _core_replacement_status_input(
+        data.receiver_static_status
+    )
+    node_replacement_status = _core_replacement_status_input(data.node_static_status)
+    try:
+        core_result = core_build_refraction_datum_statics(
+            source_endpoint_key=data.source_endpoint_key,
+            source_endpoint_id=data.source_id,
+            source_node_id=data.source_node_id,
+            source_surface_elevation_m=data.source_surface_elevation_m,
+            source_refractor_elevation_m=data.source_refractor_elevation_m,
+            source_weathering_replacement_shift_s=(
+                data.source_weathering_replacement_shift_s
+            ),
+            source_weathering_replacement_status=source_replacement_status,
+            receiver_endpoint_key=data.receiver_endpoint_key,
+            receiver_endpoint_id=data.receiver_id,
+            receiver_node_id=data.receiver_node_id,
+            receiver_surface_elevation_m=data.receiver_surface_elevation_m,
+            receiver_refractor_elevation_m=data.receiver_refractor_elevation_m,
+            receiver_weathering_replacement_shift_s=(
+                data.receiver_weathering_replacement_shift_s
+            ),
+            receiver_weathering_replacement_status=receiver_replacement_status,
+            source_endpoint_key_sorted=data.source_endpoint_key_sorted,
+            receiver_endpoint_key_sorted=data.receiver_endpoint_key_sorted,
+            mode=datum_req.mode,
+            source_replacement_velocity_m_s=source_replacement_velocity,
+            receiver_replacement_velocity_m_s=receiver_replacement_velocity,
+            floating_datum=CoreResolvedFloatingDatum(
+                source_elevation_m=floating.source_floating_datum_elevation_m,
+                receiver_elevation_m=floating.receiver_floating_datum_elevation_m,
+            ),
+            flat_datum_elevation_m=flat_datum,
+            allow_flat_datum_above_topography=(
+                datum_req.allow_flat_datum_above_topography
+            ),
+            allow_flat_datum_below_refractor=(
+                datum_req.allow_flat_datum_below_refractor
+            ),
+            max_abs_datum_shift_ms=max_abs_shift_ms,
+            trace_field_correction=(
+                None
+                if field_corrections is None
+                else field_corrections.trace_field_correction
+            ),
+            apply_field_correction_to_trace_shift=(
+                False
+                if field_corrections is None
+                else bool(field_corrections.apply_to_trace_shift)
+            ),
+            invalid_field_component_policy=(
+                'fail'
+                if field_corrections is None
+                else field_corrections.invalid_component_policy
+            ),
+        )
+        core_node_result = core_build_refraction_endpoint_datum_statics(
+            endpoint_kind='source',
+            endpoint_key=data.node_id.astype(str),
+            endpoint_id=None,
+            node_id=data.node_id,
+            surface_elevation_m=data.node_surface_elevation_m,
+            refractor_elevation_m=data.node_refractor_elevation_m,
+            weathering_replacement_shift_s=data.node_weathering_replacement_shift_s,
+            weathering_replacement_status=node_replacement_status,
+            mode=datum_req.mode,
+            replacement_velocity_m_s=_node_replacement_velocity_input(
+                data=data,
+                velocity=velocity,
+            ),
+            floating_datum_elevation_m=floating.node_floating_datum_elevation_m,
+            flat_datum_elevation_m=flat_datum,
+            allow_flat_datum_above_topography=(
+                datum_req.allow_flat_datum_above_topography
+            ),
+            allow_flat_datum_below_refractor=(
+                datum_req.allow_flat_datum_below_refractor
+            ),
+            max_abs_datum_shift_ms=max_abs_shift_ms,
+        )
+    except (CoreRefractionDatumError, RefractionFieldCompositionError) as exc:
+        raise RefractionDatumStaticsError(str(exc)) from exc
 
-    source_floating_shift = _endpoint_floating_shift(
-        surface_elevation_m=data.source_surface_elevation_m,
-        floating_datum_elevation_m=floating.source_floating_datum_elevation_m,
-        bedrock_velocity_m_s=velocity.bedrock_velocity_m_s,
-        active=floating_active,
+    source_core = core_result.source_endpoint_datum
+    receiver_core = core_result.receiver_endpoint_datum
+    source_floating_shift = np.ascontiguousarray(
+        source_core.floating_datum_shift_s,
+        dtype=np.float64,
     )
-    receiver_floating_shift = _endpoint_floating_shift(
-        surface_elevation_m=data.receiver_surface_elevation_m,
-        floating_datum_elevation_m=floating.receiver_floating_datum_elevation_m,
-        bedrock_velocity_m_s=velocity.bedrock_velocity_m_s,
-        active=floating_active,
+    receiver_floating_shift = np.ascontiguousarray(
+        receiver_core.floating_datum_shift_s,
+        dtype=np.float64,
     )
-    source_flat_shift = _endpoint_flat_shift(
-        flat_datum_elevation_m=flat_datum,
-        floating_datum_elevation_m=floating.source_floating_datum_elevation_m,
-        bedrock_velocity_m_s=velocity.bedrock_velocity_m_s,
-        active=flat_active,
-        shape=data.source_surface_elevation_m.shape,
+    source_flat_shift = np.ascontiguousarray(
+        source_core.flat_datum_shift_s,
+        dtype=np.float64,
     )
-    receiver_flat_shift = _endpoint_flat_shift(
-        flat_datum_elevation_m=flat_datum,
-        floating_datum_elevation_m=floating.receiver_floating_datum_elevation_m,
-        bedrock_velocity_m_s=velocity.bedrock_velocity_m_s,
-        active=flat_active,
-        shape=data.receiver_surface_elevation_m.shape,
+    receiver_flat_shift = np.ascontiguousarray(
+        receiver_core.flat_datum_shift_s,
+        dtype=np.float64,
     )
-    source_status = _classify_endpoint_status(
-        inherited_status=data.source_static_status,
-        surface_elevation_m=data.source_surface_elevation_m,
-        floating_datum_elevation_m=floating.source_floating_datum_elevation_m,
-        refractor_elevation_m=data.source_refractor_elevation_m,
-        weathering_replacement_shift_s=data.source_weathering_replacement_shift_s,
-        flat_datum_elevation_m=flat_datum,
-        datum=datum_req,
-        max_abs_shift_ms=max_abs_shift_ms,
-        refraction_shift_s=(
-            data.source_weathering_replacement_shift_s
-            + source_floating_shift
-            + source_flat_shift
-        ),
+    source_refraction_shift = np.ascontiguousarray(
+        source_core.total_refraction_shift_s,
+        dtype=np.float64,
     )
-    receiver_status = _classify_endpoint_status(
-        inherited_status=data.receiver_static_status,
-        surface_elevation_m=data.receiver_surface_elevation_m,
-        floating_datum_elevation_m=floating.receiver_floating_datum_elevation_m,
-        refractor_elevation_m=data.receiver_refractor_elevation_m,
-        weathering_replacement_shift_s=data.receiver_weathering_replacement_shift_s,
-        flat_datum_elevation_m=flat_datum,
-        datum=datum_req,
-        max_abs_shift_ms=max_abs_shift_ms,
-        refraction_shift_s=(
-            data.receiver_weathering_replacement_shift_s
-            + receiver_floating_shift
-            + receiver_flat_shift
-        ),
+    receiver_refraction_shift = np.ascontiguousarray(
+        receiver_core.total_refraction_shift_s,
+        dtype=np.float64,
     )
-    source_refraction_shift = _compose_endpoint_shift(
-        weathering_shift_s=data.source_weathering_replacement_shift_s,
-        floating_shift_s=source_floating_shift,
-        flat_shift_s=source_flat_shift,
-        status=source_status,
+    source_status = _endpoint_status_from_core_endpoint(
+        core_endpoint=source_core,
     )
-    receiver_refraction_shift = _compose_endpoint_shift(
-        weathering_shift_s=data.receiver_weathering_replacement_shift_s,
-        floating_shift_s=receiver_floating_shift,
-        flat_shift_s=receiver_flat_shift,
-        status=receiver_status,
+    receiver_status = _endpoint_status_from_core_endpoint(
+        core_endpoint=receiver_core,
     )
-    source_floating_shift_sorted, _, _ = _map_trace_endpoint_values(
-        node_id_sorted=data.source_node_id_sorted,
-        endpoint_key_sorted=data.source_endpoint_key_sorted,
-        endpoint_key=data.source_endpoint_key,
-        endpoint_node_id=data.source_node_id,
-        endpoint_values=source_floating_shift,
-        node_pos=node_pos,
-        name='source_floating_datum_elevation_shift_s_sorted',
+    source_floating_shift_sorted = np.ascontiguousarray(
+        core_result.source_floating_datum_shift_s_sorted,
+        dtype=np.float64,
     )
-    receiver_floating_shift_sorted, _, _ = _map_trace_endpoint_values(
-        node_id_sorted=data.receiver_node_id_sorted,
-        endpoint_key_sorted=data.receiver_endpoint_key_sorted,
-        endpoint_key=data.receiver_endpoint_key,
-        endpoint_node_id=data.receiver_node_id,
-        endpoint_values=receiver_floating_shift,
-        node_pos=node_pos,
-        name='receiver_floating_datum_elevation_shift_s_sorted',
+    receiver_floating_shift_sorted = np.ascontiguousarray(
+        core_result.receiver_floating_datum_shift_s_sorted,
+        dtype=np.float64,
     )
-    source_flat_shift_sorted, _, _ = _map_trace_endpoint_values(
-        node_id_sorted=data.source_node_id_sorted,
-        endpoint_key_sorted=data.source_endpoint_key_sorted,
-        endpoint_key=data.source_endpoint_key,
-        endpoint_node_id=data.source_node_id,
-        endpoint_values=source_flat_shift,
-        node_pos=node_pos,
-        name='source_flat_datum_shift_s_sorted',
+    source_flat_shift_sorted = np.ascontiguousarray(
+        core_result.source_flat_datum_shift_s_sorted,
+        dtype=np.float64,
     )
-    receiver_flat_shift_sorted, _, _ = _map_trace_endpoint_values(
-        node_id_sorted=data.receiver_node_id_sorted,
-        endpoint_key_sorted=data.receiver_endpoint_key_sorted,
-        endpoint_key=data.receiver_endpoint_key,
-        endpoint_node_id=data.receiver_node_id,
-        endpoint_values=receiver_flat_shift,
-        node_pos=node_pos,
-        name='receiver_flat_datum_shift_s_sorted',
+    receiver_flat_shift_sorted = np.ascontiguousarray(
+        core_result.receiver_flat_datum_shift_s_sorted,
+        dtype=np.float64,
     )
-    source_refraction_shift_sorted, _, _ = _map_trace_endpoint_values(
-        node_id_sorted=data.source_node_id_sorted,
-        endpoint_key_sorted=data.source_endpoint_key_sorted,
-        endpoint_key=data.source_endpoint_key,
-        endpoint_node_id=data.source_node_id,
-        endpoint_values=source_refraction_shift,
-        node_pos=node_pos,
-        name='source_refraction_shift_s_sorted',
+    source_refraction_shift_sorted = np.ascontiguousarray(
+        core_result.source_refraction_shift_s_sorted,
+        dtype=np.float64,
     )
-    receiver_refraction_shift_sorted, _, _ = _map_trace_endpoint_values(
-        node_id_sorted=data.receiver_node_id_sorted,
-        endpoint_key_sorted=data.receiver_endpoint_key_sorted,
-        endpoint_key=data.receiver_endpoint_key,
-        endpoint_node_id=data.receiver_node_id,
-        endpoint_values=receiver_refraction_shift,
-        node_pos=node_pos,
-        name='receiver_refraction_shift_s_sorted',
+    receiver_refraction_shift_sorted = np.ascontiguousarray(
+        core_result.receiver_refraction_shift_s_sorted,
+        dtype=np.float64,
     )
-
-    node_status = _classify_node_status(
-        inherited_status=data.node_static_status,
-        surface_elevation_m=data.node_surface_elevation_m,
-        floating_datum_elevation_m=floating.node_floating_datum_elevation_m,
-        refractor_elevation_m=data.node_refractor_elevation_m,
-        weathering_replacement_shift_s=data.node_weathering_replacement_shift_s,
-        flat_datum_elevation_m=flat_datum,
-        datum=datum_req,
+    node_status = _endpoint_status_from_core_endpoint(
+        core_endpoint=core_node_result,
     )
-
     trace_floating_shift = np.ascontiguousarray(
         source_floating_shift_sorted + receiver_floating_shift_sorted,
         dtype=np.float64,
@@ -577,29 +593,79 @@ def build_refraction_datum_statics(
         source_flat_shift_sorted + receiver_flat_shift_sorted,
         dtype=np.float64,
     )
-    refraction_trace_shift = compose_refraction_trace_shift_s(
-        weathering_replacement_trace_shift_s=(
-            data.weathering_replacement_trace_shift_s_sorted
-        ),
-        floating_datum_elevation_shift_s=trace_floating_shift,
-        flat_datum_shift_s=trace_flat_shift,
-    )
-    trace_status = _classify_trace_status(
-        data=data,
-        datum=datum_req,
-        floating=floating,
-        flat_datum_elevation_m=flat_datum,
-        floating_shift_s=trace_floating_shift,
-        flat_shift_s=trace_flat_shift,
-        refraction_shift_s=refraction_trace_shift,
-        max_abs_shift_ms=max_abs_shift_ms,
-    )
-    trace_valid = _trace_valid_mask(trace_status, refraction_trace_shift)
     refraction_trace_shift = np.ascontiguousarray(
-        np.where(_trace_nan_mask(trace_status), np.nan, refraction_trace_shift),
+        core_result.refraction_trace_shift_s_sorted,
         dtype=np.float64,
     )
-    trace_valid = _trace_valid_mask(trace_status, refraction_trace_shift)
+    trace_status, trace_valid, refraction_trace_shift, upstream_trace_overlay = (
+        _carry_upstream_trace_rejections(
+            data=data,
+            trace_static_status_sorted=core_result.trace_static_status_sorted,
+            trace_static_valid_mask_sorted=core_result.trace_static_valid_mask_sorted,
+            refraction_trace_shift_s_sorted=refraction_trace_shift,
+        )
+    )
+    trace_field_correction = (
+        None if field_corrections is None else field_corrections.trace_field_correction
+    )
+    final_trace_shift = np.ascontiguousarray(
+        getattr(core_result, 'final_trace_shift_s_sorted', refraction_trace_shift),
+        dtype=np.float64,
+    )
+    final_trace_status = _app_status_from_core(
+        getattr(
+            core_result,
+            'final_trace_static_status_sorted',
+            core_result.trace_static_status_sorted,
+        )
+    )
+    final_trace_valid = np.ascontiguousarray(
+        getattr(
+            core_result,
+            'final_trace_static_valid_mask_sorted',
+            core_result.trace_static_valid_mask_sorted,
+        ),
+        dtype=bool,
+    )
+    applied_field_shift = np.ascontiguousarray(
+        getattr(
+            core_result,
+            'applied_field_shift_s_sorted',
+            np.zeros(data.n_traces, dtype=np.float64),
+        ),
+        dtype=np.float64,
+    )
+    if upstream_trace_overlay and trace_field_correction is not None:
+        try:
+            recomposed = core_compose_refraction_final_trace_shift(
+                refraction_trace_shift_s_sorted=refraction_trace_shift,
+                trace_static_status_sorted=trace_status,
+                trace_static_valid_mask_sorted=trace_valid,
+                trace_field_correction=trace_field_correction,
+                apply_to_trace_shift=bool(field_corrections.apply_to_trace_shift),
+                invalid_component_policy=field_corrections.invalid_component_policy,
+            )
+        except RefractionFieldCompositionError as exc:
+            raise RefractionDatumStaticsError(str(exc)) from exc
+        final_trace_shift = np.ascontiguousarray(
+            recomposed.final_trace_shift_s_sorted,
+            dtype=np.float64,
+        )
+        final_trace_status = _app_status_from_core(
+            recomposed.final_trace_static_status_sorted
+        )
+        final_trace_valid = np.ascontiguousarray(
+            recomposed.final_trace_static_valid_mask_sorted,
+            dtype=bool,
+        )
+        applied_field_shift = np.ascontiguousarray(
+            recomposed.applied_field_shift_s_sorted,
+            dtype=np.float64,
+        )
+    field_composition_qc = _field_composition_qc(
+        field_corrections=field_corrections,
+        core_result=core_result,
+    )
 
     qc = _build_qc(
         velocity=velocity,
@@ -620,6 +686,11 @@ def build_refraction_datum_statics(
         receiver_status=receiver_status,
         max_abs_shift_ms=max_abs_shift_ms,
         upstream_qc=getattr(weathering_replacement_result, 'qc', {}),
+    )
+    qc = _with_field_corrections_qc(
+        qc=qc,
+        field_corrections=field_corrections,
+        field_composition_qc=field_composition_qc,
     )
 
     row_source_endpoint_key = data.row_source_endpoint_key
@@ -842,10 +913,157 @@ def build_refraction_datum_statics(
         row_receiver_endpoint_key=row_receiver_endpoint_key,
         row_rejection_reason=data.row_rejection_reason,
         row_velocity_m_s=data.row_velocity_m_s,
+        source_depth_m=(
+            None if field_corrections is None else field_corrections.source_depth_m
+        ),
+        source_depth_shift_s=(
+            None
+            if field_corrections is None
+            else field_corrections.source_depth_shift_s
+        ),
+        source_depth_status=(
+            None if field_corrections is None else field_corrections.source_depth_status
+        ),
+        source_depth_field_correction_qc=(
+            None
+            if field_corrections is None
+            else field_corrections.source_depth_field_correction_qc
+        ),
+        source_uphole_time_s=(
+            None if field_corrections is None else field_corrections.source_uphole_time_s
+        ),
+        source_uphole_shift_s=(
+            None
+            if field_corrections is None
+            else field_corrections.source_uphole_shift_s
+        ),
+        source_uphole_status=(
+            None if field_corrections is None else field_corrections.source_uphole_status
+        ),
+        source_uphole_field_correction_qc=(
+            None
+            if field_corrections is None
+            else field_corrections.source_uphole_field_correction_qc
+        ),
+        source_manual_static_shift_s=(
+            None
+            if field_corrections is None
+            else field_corrections.source_manual_static_shift_s
+        ),
+        source_manual_static_status=(
+            None
+            if field_corrections is None
+            else field_corrections.source_manual_static_status
+        ),
+        receiver_manual_static_shift_s=(
+            None
+            if field_corrections is None
+            else field_corrections.receiver_manual_static_shift_s
+        ),
+        receiver_manual_static_status=(
+            None
+            if field_corrections is None
+            else field_corrections.receiver_manual_static_status
+        ),
+        manual_static_field_correction_qc=(
+            None
+            if field_corrections is None
+            else field_corrections.manual_static_field_correction_qc
+        ),
+        source_field_shift_s=(
+            None
+            if field_corrections is None
+            else field_corrections.source_field_shift_s
+        ),
+        source_field_static_status=(
+            None
+            if field_corrections is None
+            else field_corrections.source_field_static_status
+        ),
+        receiver_field_shift_s=(
+            None
+            if field_corrections is None
+            else field_corrections.receiver_field_shift_s
+        ),
+        receiver_field_static_status=(
+            None
+            if field_corrections is None
+            else field_corrections.receiver_field_static_status
+        ),
+        source_field_shift_s_sorted=(
+            None
+            if trace_field_correction is None
+            else trace_field_correction.source_field_shift_s_sorted
+        ),
+        receiver_field_shift_s_sorted=(
+            None
+            if trace_field_correction is None
+            else trace_field_correction.receiver_field_shift_s_sorted
+        ),
+        trace_field_shift_s_sorted=(
+            None
+            if trace_field_correction is None
+            else trace_field_correction.trace_field_shift_s_sorted
+        ),
+        trace_field_static_status_sorted=(
+            None
+            if trace_field_correction is None
+            else trace_field_correction.trace_field_static_status_sorted
+        ),
+        trace_field_static_valid_mask_sorted=(
+            None
+            if trace_field_correction is None
+            else np.ascontiguousarray(
+                trace_field_correction.trace_field_static_status_sorted == 'ok',
+                dtype=bool,
+            )
+        ),
+        base_refraction_trace_shift_s_sorted=(
+            None if trace_field_correction is None else refraction_trace_shift
+        ),
+        final_trace_shift_s_sorted=(
+            None if trace_field_correction is None else final_trace_shift
+        ),
+        final_trace_static_status_sorted=(
+            None if trace_field_correction is None else final_trace_status
+        ),
+        final_trace_static_valid_mask_sorted=(
+            None if trace_field_correction is None else final_trace_valid
+        ),
+        applied_field_shift_s_sorted=(
+            None if trace_field_correction is None else applied_field_shift
+        ),
+        field_composition_qc=(
+            field_composition_qc
+        ),
     )
     if job_dir is not None:
         write_refraction_datum_statics_artifacts(Path(job_dir), result)
     return result
+
+
+def _external_replacement_velocity_inputs(
+    *,
+    data: _ValidatedReplacement,
+    velocity: _VelocityContext,
+) -> tuple[np.ndarray | float | None, np.ndarray | float | None]:
+    if velocity.mode == 'solve_cell':
+        return data.source_v2_m_s, data.receiver_v2_m_s
+    if velocity.mode in {'solve_global', 'fixed_global'}:
+        return velocity.bedrock_velocity_m_s, velocity.bedrock_velocity_m_s
+    return None, None
+
+
+def _node_replacement_velocity_input(
+    *,
+    data: _ValidatedReplacement,
+    velocity: _VelocityContext,
+) -> np.ndarray | float | None:
+    if velocity.mode == 'solve_cell':
+        return data.node_v2_m_s
+    if velocity.mode in {'solve_global', 'fixed_global'}:
+        return velocity.bedrock_velocity_m_s
+    return None
 
 
 def compute_floating_datum_elevation_shift_s(
@@ -1847,17 +2065,27 @@ def _build_floating_datum_model(
             f'unsupported floating_datum_mode: {datum.floating_datum_mode}'
         )
 
-    node_floating = _smooth_node_surface(data=data, datum=datum)
-    source_floating = _map_node_values(
-        node_id=data.source_node_id,
-        node_pos=node_pos,
-        node_values=node_floating,
-    )
-    receiver_floating = _map_node_values(
-        node_id=data.receiver_node_id,
-        node_pos=node_pos,
-        node_values=node_floating,
-    )
+    window = datum.smoothing_window_nodes
+    if window is None:
+        raise RefractionDatumStaticsError('datum.smoothing_window_nodes is required')
+    try:
+        smoothed = core_resolve_smoothed_refraction_floating_datum(
+            node_id=data.node_id,
+            node_x_m=data.node_x_m,
+            node_y_m=data.node_y_m,
+            node_surface_elevation_m=data.node_surface_elevation_m,
+            source_node_id=data.source_node_id,
+            receiver_node_id=data.receiver_node_id,
+            window_nodes=window,
+            radius_m=datum.smoothing_radius_m,
+            method=datum.smoothing_method,
+        )
+    except CoreRefractionDatumError as exc:
+        raise RefractionDatumStaticsError(str(exc)) from exc
+
+    node_floating = smoothed.node_elevation_m
+    source_floating = smoothed.source_elevation_m
+    receiver_floating = smoothed.receiver_elevation_m
     source_floating_sorted = _map_node_values(
         node_id=data.source_node_id_sorted,
         node_pos=node_pos,
@@ -2284,531 +2512,6 @@ def _node_floating_from_endpoint_values(
     return np.ascontiguousarray(out, dtype=np.float64)
 
 
-def _smooth_node_surface(
-    *,
-    data: _ValidatedReplacement,
-    datum: RefractionStaticDatumRequest,
-) -> np.ndarray:
-    window = datum.smoothing_window_nodes
-    if window is None:
-        raise RefractionDatumStaticsError('datum.smoothing_window_nodes is required')
-    if window <= 0 or window % 2 == 0:
-        raise RefractionDatumStaticsError(
-            'datum.smoothing_window_nodes must be a positive odd integer'
-        )
-    order, coordinate = _node_smoothing_order(data)
-    surface_sorted = data.node_surface_elevation_m[order]
-    smoothed_sorted = np.full(surface_sorted.shape, np.nan, dtype=np.float64)
-    half = window // 2
-    for sorted_index in range(int(surface_sorted.shape[0])):
-        neighbor_values: np.ndarray
-        if datum.smoothing_radius_m is not None and np.isfinite(
-            coordinate[sorted_index]
-        ):
-            radius = float(datum.smoothing_radius_m)
-            radius_mask = np.isfinite(coordinate) & (
-                np.abs(coordinate - coordinate[sorted_index]) <= radius
-            )
-            neighbor_values = surface_sorted[radius_mask]
-        else:
-            start = max(0, sorted_index - half)
-            stop = min(int(surface_sorted.shape[0]), sorted_index + half + 1)
-            neighbor_values = surface_sorted[start:stop]
-        finite = neighbor_values[np.isfinite(neighbor_values)]
-        if finite.size == 0 and datum.smoothing_radius_m is not None:
-            start = max(0, sorted_index - half)
-            stop = min(int(surface_sorted.shape[0]), sorted_index + half + 1)
-            finite = surface_sorted[start:stop]
-            finite = finite[np.isfinite(finite)]
-        if finite.size == 0:
-            continue
-        if datum.smoothing_method == 'median':
-            smoothed_sorted[sorted_index] = float(np.median(finite))
-        else:
-            smoothed_sorted[sorted_index] = float(np.mean(finite))
-    out = np.full(surface_sorted.shape, np.nan, dtype=np.float64)
-    out[order] = smoothed_sorted
-    return np.ascontiguousarray(out, dtype=np.float64)
-
-
-def _node_smoothing_order(data: _ValidatedReplacement) -> tuple[np.ndarray, np.ndarray]:
-    x = np.asarray(data.node_x_m, dtype=np.float64)
-    y = np.asarray(data.node_y_m, dtype=np.float64)
-    finite_xy = np.isfinite(x) & np.isfinite(y)
-    if np.count_nonzero(finite_xy) >= 2 and np.nanmax(x[finite_xy]) > np.nanmin(
-        x[finite_xy]
-    ):
-        coordinate = x.copy()
-    elif np.count_nonzero(finite_xy) >= 2:
-        points = np.column_stack([x[finite_xy], y[finite_xy]])
-        centered = points - np.mean(points, axis=0)
-        try:
-            _, _, vh = np.linalg.svd(centered, full_matrices=False)
-            projected = centered @ vh[0]
-        except np.linalg.LinAlgError:
-            projected = np.arange(int(points.shape[0]), dtype=np.float64)
-        coordinate = np.full(data.node_id.shape, np.nan, dtype=np.float64)
-        coordinate[finite_xy] = projected
-    else:
-        coordinate = np.arange(data.n_nodes, dtype=np.float64)
-
-    sortable = np.where(np.isfinite(coordinate), coordinate, np.inf)
-    order = np.lexsort((data.node_id, sortable))
-    return np.ascontiguousarray(order, dtype=np.int64), np.ascontiguousarray(
-        coordinate[order],
-        dtype=np.float64,
-    )
-
-
-def _endpoint_floating_shift(
-    *,
-    surface_elevation_m: np.ndarray,
-    floating_datum_elevation_m: np.ndarray,
-    bedrock_velocity_m_s: float,
-    active: bool,
-) -> np.ndarray:
-    if not active:
-        return np.zeros(surface_elevation_m.shape, dtype=np.float64)
-    try:
-        return np.ascontiguousarray(
-            core_compute_refraction_datum_elevation_shift_s(
-                elevation_m=surface_elevation_m,
-                datum_elevation_m=floating_datum_elevation_m,
-                replacement_velocity_m_s=bedrock_velocity_m_s,
-            ),
-            dtype=np.float64,
-        )
-    except ValueError as exc:
-        message = str(exc).replace('replacement_velocity_m_s', 'bedrock_velocity_m_s')
-        raise RefractionDatumStaticsError(message) from exc
-
-
-def _endpoint_flat_shift(
-    *,
-    flat_datum_elevation_m: float | None,
-    floating_datum_elevation_m: np.ndarray,
-    bedrock_velocity_m_s: float,
-    active: bool,
-    shape: tuple[int, ...],
-) -> np.ndarray:
-    if not active:
-        return np.zeros(shape, dtype=np.float64)
-    if flat_datum_elevation_m is None:
-        return np.full(shape, np.nan, dtype=np.float64)
-    return np.ascontiguousarray(
-        (flat_datum_elevation_m - floating_datum_elevation_m)
-        / bedrock_velocity_m_s,
-        dtype=np.float64,
-    )
-
-
-def _trace_floating_shift(
-    *,
-    source_surface_elevation_m: np.ndarray,
-    receiver_surface_elevation_m: np.ndarray,
-    source_floating_datum_elevation_m: np.ndarray,
-    receiver_floating_datum_elevation_m: np.ndarray,
-    bedrock_velocity_m_s: float,
-    active: bool,
-) -> np.ndarray:
-    if not active:
-        return np.zeros(source_surface_elevation_m.shape, dtype=np.float64)
-    return compute_floating_datum_elevation_shift_s(
-        true_source_elevation_m=source_surface_elevation_m,
-        true_receiver_elevation_m=receiver_surface_elevation_m,
-        floating_source_elevation_m=source_floating_datum_elevation_m,
-        floating_receiver_elevation_m=receiver_floating_datum_elevation_m,
-        bedrock_velocity_m_s=bedrock_velocity_m_s,
-    )
-
-
-def _trace_flat_shift(
-    *,
-    flat_datum_elevation_m: float | None,
-    source_floating_datum_elevation_m: np.ndarray,
-    receiver_floating_datum_elevation_m: np.ndarray,
-    bedrock_velocity_m_s: float,
-    active: bool,
-    shape: tuple[int, ...],
-) -> np.ndarray:
-    if not active:
-        return np.zeros(shape, dtype=np.float64)
-    if flat_datum_elevation_m is None:
-        return np.full(shape, np.nan, dtype=np.float64)
-    return compute_flat_datum_shift_s(
-        flat_datum_elevation_m=flat_datum_elevation_m,
-        floating_source_elevation_m=source_floating_datum_elevation_m,
-        floating_receiver_elevation_m=receiver_floating_datum_elevation_m,
-        bedrock_velocity_m_s=bedrock_velocity_m_s,
-    )
-
-
-def _classify_node_status(
-    *,
-    inherited_status: np.ndarray,
-    surface_elevation_m: np.ndarray,
-    floating_datum_elevation_m: np.ndarray,
-    refractor_elevation_m: np.ndarray,
-    weathering_replacement_shift_s: np.ndarray,
-    flat_datum_elevation_m: float | None,
-    datum: RefractionStaticDatumRequest,
-) -> np.ndarray:
-    if datum.mode == 'none':
-        return np.full(surface_elevation_m.shape, 'inactive', dtype=_STATUS_DTYPE)
-    status = np.full(surface_elevation_m.shape, 'ok', dtype=_STATUS_DTYPE)
-    _assign_inherited_replacement_status(status, inherited_status)
-    _assign(
-        status,
-        ~np.isfinite(weathering_replacement_shift_s),
-        'invalid_weathering_replacement',
-    )
-    _assign(status, ~np.isfinite(surface_elevation_m), 'invalid_surface_elevation')
-    _assign(
-        status,
-        ~np.isfinite(floating_datum_elevation_m),
-        'invalid_floating_datum_elevation',
-    )
-    _assign(
-        status,
-        _floating_below_refractor_mask(
-            floating_datum_elevation_m=floating_datum_elevation_m,
-            refractor_elevation_m=refractor_elevation_m,
-        ),
-        'floating_datum_below_refractor',
-    )
-    if datum.mode in {'flat_only', 'floating_and_flat'}:
-        flat_invalid = flat_datum_elevation_m is None or not np.isfinite(
-            flat_datum_elevation_m
-        )
-        _assign(
-            status,
-            np.full(surface_elevation_m.shape, flat_invalid, dtype=bool),
-            'invalid_flat_datum_elevation',
-        )
-        if not datum.allow_flat_datum_above_topography:
-            _assign(
-                status,
-                _flat_above_topography_mask(
-                    flat_datum_elevation_m=flat_datum_elevation_m,
-                    surface_elevation_m=surface_elevation_m,
-                ),
-                'invalid_flat_datum_elevation',
-            )
-        if not datum.allow_flat_datum_below_refractor:
-            _assign(
-                status,
-                _flat_below_refractor_mask(
-                    flat_datum_elevation_m=flat_datum_elevation_m,
-                    refractor_elevation_m=refractor_elevation_m,
-                ),
-                'flat_datum_below_refractor',
-            )
-    return np.ascontiguousarray(status, dtype=_STATUS_DTYPE)
-
-
-def _classify_endpoint_status(
-    *,
-    inherited_status: np.ndarray,
-    surface_elevation_m: np.ndarray,
-    floating_datum_elevation_m: np.ndarray,
-    refractor_elevation_m: np.ndarray,
-    weathering_replacement_shift_s: np.ndarray,
-    flat_datum_elevation_m: float | None,
-    datum: RefractionStaticDatumRequest,
-    max_abs_shift_ms: float | None,
-    refraction_shift_s: np.ndarray,
-) -> np.ndarray:
-    inherited = np.asarray(inherited_status).astype(str, copy=False)
-    if datum.mode == 'none':
-        status = np.full(surface_elevation_m.shape, 'ok', dtype=_STATUS_DTYPE)
-        _assign_inherited_replacement_status(status, inherited)
-        _assign(
-            status,
-            ~np.isfinite(weathering_replacement_shift_s),
-            'invalid_weathering_replacement',
-        )
-        return status
-    status = np.full(surface_elevation_m.shape, 'ok', dtype=_STATUS_DTYPE)
-    _assign_inherited_replacement_status(status, inherited)
-    _assign(
-        status,
-        ~np.isfinite(weathering_replacement_shift_s),
-        'invalid_weathering_replacement',
-    )
-    _assign(status, ~np.isfinite(surface_elevation_m), 'invalid_surface_elevation')
-    _assign(
-        status,
-        ~np.isfinite(floating_datum_elevation_m),
-        'invalid_floating_datum_elevation',
-    )
-    _assign(
-        status,
-        _floating_below_refractor_mask(
-            floating_datum_elevation_m=floating_datum_elevation_m,
-            refractor_elevation_m=refractor_elevation_m,
-        ),
-        'floating_datum_below_refractor',
-    )
-    if datum.mode in {'flat_only', 'floating_and_flat'}:
-        flat_invalid = flat_datum_elevation_m is None or not np.isfinite(
-            flat_datum_elevation_m
-        )
-        _assign(
-            status,
-            np.full(surface_elevation_m.shape, flat_invalid, dtype=bool),
-            'invalid_flat_datum_elevation',
-        )
-        if not datum.allow_flat_datum_above_topography:
-            _assign(
-                status,
-                _flat_above_topography_mask(
-                    flat_datum_elevation_m=flat_datum_elevation_m,
-                    surface_elevation_m=surface_elevation_m,
-                ),
-                'invalid_flat_datum_elevation',
-            )
-        if not datum.allow_flat_datum_below_refractor:
-            _assign(
-                status,
-                _flat_below_refractor_mask(
-                    flat_datum_elevation_m=flat_datum_elevation_m,
-                    refractor_elevation_m=refractor_elevation_m,
-                ),
-                'flat_datum_below_refractor',
-            )
-    _assign(status, ~np.isfinite(refraction_shift_s), 'invalid_datum_shift')
-    if max_abs_shift_ms is not None:
-        exceeds = np.isfinite(refraction_shift_s) & (
-            np.abs(refraction_shift_s) * 1000.0 > max_abs_shift_ms
-        )
-        _assign(status, exceeds, 'exceeds_max_abs_shift')
-    return np.ascontiguousarray(status, dtype=_STATUS_DTYPE)
-
-
-def _classify_trace_status(
-    *,
-    data: _ValidatedReplacement,
-    datum: RefractionStaticDatumRequest,
-    floating: _FloatingDatumModel,
-    flat_datum_elevation_m: float | None,
-    floating_shift_s: np.ndarray,
-    flat_shift_s: np.ndarray,
-    refraction_shift_s: np.ndarray,
-    max_abs_shift_ms: float | None,
-) -> np.ndarray:
-    status = np.full(data.sorted_trace_index.shape, 'ok', dtype=_STATUS_DTYPE)
-    inherited = np.asarray(data.trace_static_status_sorted).astype(str, copy=False)
-    _assign(
-        status,
-        ~np.asarray(data.valid_observation_mask_sorted, dtype=bool),
-        'not_observed',
-    )
-    _assign_inherited_replacement_status(status, inherited)
-    _assign_inherited_replacement_status(status, data.source_static_status_sorted)
-    _assign_inherited_replacement_status(status, data.receiver_static_status_sorted)
-    _assign(
-        status,
-        ~np.asarray(data.trace_static_valid_mask_sorted, dtype=bool),
-        'invalid_weathering_replacement',
-    )
-    _assign(
-        status,
-        data.source_missing_endpoint_sorted | data.receiver_missing_endpoint_sorted,
-        'missing_endpoint',
-    )
-    _assign(
-        status,
-        data.source_missing_node_sorted | data.receiver_missing_node_sorted,
-        'missing_node',
-    )
-    _assign(
-        status,
-        ~np.isfinite(data.weathering_replacement_trace_shift_s_sorted),
-        'invalid_weathering_replacement',
-    )
-    if datum.mode != 'none':
-        _assign(
-            status,
-            ~np.isfinite(data.source_surface_elevation_m_sorted)
-            | ~np.isfinite(data.receiver_surface_elevation_m_sorted),
-            'invalid_surface_elevation',
-        )
-        _assign(
-            status,
-            ~np.isfinite(floating.source_floating_datum_elevation_m_sorted)
-            | ~np.isfinite(floating.receiver_floating_datum_elevation_m_sorted),
-            'invalid_floating_datum_elevation',
-        )
-        _assign(
-            status,
-            _floating_below_refractor_mask(
-                floating_datum_elevation_m=(
-                    floating.source_floating_datum_elevation_m_sorted
-                ),
-                refractor_elevation_m=data.source_refractor_elevation_m_sorted,
-            )
-            | _floating_below_refractor_mask(
-                floating_datum_elevation_m=(
-                    floating.receiver_floating_datum_elevation_m_sorted
-                ),
-                refractor_elevation_m=data.receiver_refractor_elevation_m_sorted,
-            ),
-            'floating_datum_below_refractor',
-        )
-    if datum.mode in {'flat_only', 'floating_and_flat'}:
-        flat_invalid = flat_datum_elevation_m is None or not np.isfinite(
-            flat_datum_elevation_m
-        )
-        _assign(
-            status,
-            np.full(data.sorted_trace_index.shape, flat_invalid, dtype=bool),
-            'invalid_flat_datum_elevation',
-        )
-        if not datum.allow_flat_datum_above_topography:
-            _assign(
-                status,
-                _flat_above_topography_mask(
-                    flat_datum_elevation_m=flat_datum_elevation_m,
-                    surface_elevation_m=data.source_surface_elevation_m_sorted,
-                )
-                | _flat_above_topography_mask(
-                    flat_datum_elevation_m=flat_datum_elevation_m,
-                    surface_elevation_m=data.receiver_surface_elevation_m_sorted,
-                ),
-                'invalid_flat_datum_elevation',
-            )
-        if not datum.allow_flat_datum_below_refractor:
-            _assign(
-                status,
-                _flat_below_refractor_mask(
-                    flat_datum_elevation_m=flat_datum_elevation_m,
-                    refractor_elevation_m=data.source_refractor_elevation_m_sorted,
-                )
-                | _flat_below_refractor_mask(
-                    flat_datum_elevation_m=flat_datum_elevation_m,
-                    refractor_elevation_m=data.receiver_refractor_elevation_m_sorted,
-                ),
-                'flat_datum_below_refractor',
-            )
-    _assign(
-        status,
-        ~np.isfinite(floating_shift_s) | ~np.isfinite(flat_shift_s),
-        'invalid_datum_shift',
-    )
-    _assign(status, ~np.isfinite(refraction_shift_s), 'invalid_datum_shift')
-    if max_abs_shift_ms is not None:
-        exceeds = np.isfinite(refraction_shift_s) & (
-            np.abs(refraction_shift_s) * 1000.0 > max_abs_shift_ms
-        )
-        _assign(status, exceeds, 'exceeds_max_abs_shift')
-    return np.ascontiguousarray(status, dtype=_STATUS_DTYPE)
-
-
-def _compose_endpoint_shift(
-    *,
-    weathering_shift_s: np.ndarray,
-    floating_shift_s: np.ndarray,
-    flat_shift_s: np.ndarray,
-    status: np.ndarray,
-) -> np.ndarray:
-    out = np.ascontiguousarray(
-        weathering_shift_s + floating_shift_s + flat_shift_s,
-        dtype=np.float64,
-    )
-    invalid = _endpoint_nan_mask(status)
-    out[invalid] = np.nan
-    return out
-
-
-def _endpoint_nan_mask(status: np.ndarray) -> np.ndarray:
-    text = np.asarray(status).astype(str, copy=False)
-    return np.isin(
-        text,
-        [
-            'missing_node',
-            'missing_endpoint',
-            'invalid_bedrock_velocity',
-            'invalid_surface_elevation',
-            'invalid_floating_datum_elevation',
-            'invalid_flat_datum_elevation',
-            'invalid_weathering_replacement',
-            'invalid_nonfinite_input',
-            'invalid_velocity_order',
-            'floating_datum_below_refractor',
-            'flat_datum_below_refractor',
-            'invalid_datum_shift',
-            'inactive',
-            *LOCAL_V2_STATUS_VALUES,
-        ],
-    )
-
-
-def _trace_nan_mask(status: np.ndarray) -> np.ndarray:
-    text = np.asarray(status).astype(str, copy=False)
-    return np.isin(
-        text,
-        [
-            'missing_node',
-            'missing_endpoint',
-            'invalid_bedrock_velocity',
-            'invalid_surface_elevation',
-            'invalid_floating_datum_elevation',
-            'invalid_flat_datum_elevation',
-            'invalid_weathering_replacement',
-            'invalid_nonfinite_input',
-            'invalid_velocity_order',
-            'floating_datum_below_refractor',
-            'flat_datum_below_refractor',
-            'invalid_datum_shift',
-            'inactive',
-            *LOCAL_V2_STATUS_VALUES,
-        ],
-    )
-
-
-def _trace_valid_mask(status: np.ndarray, refraction_shift_s: np.ndarray) -> np.ndarray:
-    text = np.asarray(status).astype(str, copy=False)
-    valid = np.isfinite(refraction_shift_s)
-    valid &= ~np.isin(text, list(_INVALID_TRACE_STATUSES))
-    return np.ascontiguousarray(valid, dtype=bool)
-
-
-def _floating_below_refractor_mask(
-    *,
-    floating_datum_elevation_m: np.ndarray,
-    refractor_elevation_m: np.ndarray,
-) -> np.ndarray:
-    return (
-        np.isfinite(floating_datum_elevation_m)
-        & np.isfinite(refractor_elevation_m)
-        & (floating_datum_elevation_m < refractor_elevation_m)
-    )
-
-
-def _flat_below_refractor_mask(
-    *,
-    flat_datum_elevation_m: float | None,
-    refractor_elevation_m: np.ndarray,
-) -> np.ndarray:
-    if flat_datum_elevation_m is None or not np.isfinite(flat_datum_elevation_m):
-        return np.zeros(refractor_elevation_m.shape, dtype=bool)
-    return np.isfinite(refractor_elevation_m) & (
-        float(flat_datum_elevation_m) < refractor_elevation_m
-    )
-
-
-def _flat_above_topography_mask(
-    *,
-    flat_datum_elevation_m: float | None,
-    surface_elevation_m: np.ndarray,
-) -> np.ndarray:
-    if flat_datum_elevation_m is None or not np.isfinite(flat_datum_elevation_m):
-        return np.zeros(surface_elevation_m.shape, dtype=bool)
-    return np.isfinite(surface_elevation_m) & (
-        float(flat_datum_elevation_m) > surface_elevation_m
-    )
-
-
 def _build_qc(
     *,
     velocity: _VelocityContext,
@@ -2935,6 +2638,54 @@ def _build_qc(
     _copy_cell_threshold_qc(qc, upstream_qc)
     _assert_json_safe(qc)
     return qc
+
+
+def _field_composition_qc(
+    *,
+    field_corrections: RefractionDatumFieldCorrectionInputs | None,
+    core_result: object,
+) -> dict[str, Any] | None:
+    if field_corrections is None or field_corrections.trace_field_correction is None:
+        return None
+    core_qc = getattr(core_result, 'qc', None)
+    base = core_qc if isinstance(core_qc, dict) else {}
+    extra = field_corrections.field_composition_qc
+    return {
+        **base,
+        **(extra if isinstance(extra, dict) else {}),
+    }
+
+
+def _with_field_corrections_qc(
+    *,
+    qc: dict[str, Any],
+    field_corrections: RefractionDatumFieldCorrectionInputs | None,
+    field_composition_qc: dict[str, Any] | None,
+) -> dict[str, Any]:
+    if field_corrections is None:
+        return qc
+    field_qc: dict[str, Any] = {}
+    if field_corrections.source_depth_field_correction_qc is not None:
+        field_qc['source_depth'] = field_corrections.source_depth_field_correction_qc
+    if field_corrections.source_uphole_field_correction_qc is not None:
+        field_qc['uphole'] = field_corrections.source_uphole_field_correction_qc
+    if field_corrections.manual_static_field_correction_qc is not None:
+        field_qc['manual_static'] = field_corrections.manual_static_field_correction_qc
+    if field_composition_qc is not None:
+        field_qc['composition'] = field_composition_qc
+    if not field_qc:
+        return qc
+    merged = {
+        **(
+            qc.get('field_corrections')
+            if isinstance(qc.get('field_corrections'), dict)
+            else {}
+        ),
+        **field_qc,
+    }
+    out = {**qc, 'field_corrections': merged}
+    _assert_json_safe(out)
+    return out
 
 
 def _validate_endpoint_nodes(
@@ -3199,19 +2950,84 @@ def _required(owner: object, field: str) -> object:
     return value
 
 
-def _assign_inherited_replacement_status(
-    status: np.ndarray,
-    inherited_status: np.ndarray,
-) -> None:
-    inherited = np.asarray(inherited_status).astype(str, copy=False)
+def _core_replacement_status_input(status: np.ndarray) -> np.ndarray:
+    inherited = np.asarray(status).astype(str, copy=False)
+    out = np.full(inherited.shape, 'ok', dtype=_STATUS_DTYPE)
     for upstream_status, datum_status in (
-        _UPSTREAM_REPLACEMENT_STATUS_TO_DATUM_STATUS.items()
+        _UPSTREAM_REPLACEMENT_STATUS_TO_CORE_STATUS.items()
     ):
-        _assign(status, inherited == upstream_status, datum_status)
-    known = set(_UPSTREAM_REPLACEMENT_STATUS_TO_DATUM_STATUS)
+        out[inherited == upstream_status] = datum_status
+    known = set(_UPSTREAM_REPLACEMENT_STATUS_TO_CORE_STATUS)
     known.update(_UPSTREAM_REPLACEMENT_NON_INVALID_STATUSES)
-    unknown = ~np.isin(inherited, list(known))
-    _assign(status, unknown, 'invalid_weathering_replacement')
+    out[~np.isin(inherited, list(known))] = 'invalid_shift'
+    return np.ascontiguousarray(out, dtype=_STATUS_DTYPE)
+
+
+def _app_status_from_core(status: np.ndarray) -> np.ndarray:
+    text = np.asarray(status).astype(str, copy=False)
+    out = np.ascontiguousarray(text, dtype=_STATUS_DTYPE)
+    for core_status, app_status in _APP_STATUS_FROM_CORE_STATUS.items():
+        out[text == core_status] = app_status
+    return np.ascontiguousarray(out, dtype=_STATUS_DTYPE)
+
+
+def _carry_upstream_trace_rejections(
+    *,
+    data: _ValidatedReplacement,
+    trace_static_status_sorted: np.ndarray,
+    trace_static_valid_mask_sorted: np.ndarray,
+    refraction_trace_shift_s_sorted: np.ndarray,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, bool]:
+    trace_status = _app_status_from_core(trace_static_status_sorted)
+    trace_valid = np.ascontiguousarray(trace_static_valid_mask_sorted, dtype=bool)
+    trace_shift = np.ascontiguousarray(
+        refraction_trace_shift_s_sorted,
+        dtype=np.float64,
+    )
+    upstream_status = _app_status_from_core(data.trace_static_status_sorted)
+    upstream_status = np.ascontiguousarray(upstream_status, dtype=_STATUS_DTYPE)
+    not_observed = ~data.valid_observation_mask_sorted
+    invalid_upstream_trace = not_observed | (~data.trace_static_valid_mask_sorted)
+    overlay = trace_valid & invalid_upstream_trace
+    if not bool(np.any(overlay)):
+        return trace_status, trace_valid, trace_shift, False
+
+    replacement_status = upstream_status.copy()
+    replacement_status[(replacement_status == 'ok') & not_observed] = 'not_observed'
+    replacement_status[
+        (replacement_status == 'ok')
+        & data.valid_observation_mask_sorted
+        & (~data.trace_static_valid_mask_sorted)
+    ] = 'invalid_weathering_replacement'
+
+    trace_status = trace_status.copy()
+    trace_valid = trace_valid.copy()
+    trace_shift = trace_shift.copy()
+    trace_status[overlay] = replacement_status[overlay]
+    trace_valid[overlay] = False
+    trace_shift[overlay] = np.nan
+    return (
+        np.ascontiguousarray(trace_status, dtype=_STATUS_DTYPE),
+        np.ascontiguousarray(trace_valid, dtype=bool),
+        np.ascontiguousarray(trace_shift, dtype=np.float64),
+        True,
+    )
+
+
+def _endpoint_status_from_core_result(
+    *,
+    core_status: np.ndarray,
+) -> np.ndarray:
+    return _app_status_from_core(core_status)
+
+
+def _endpoint_status_from_core_endpoint(
+    *,
+    core_endpoint: object,
+) -> np.ndarray:
+    return _endpoint_status_from_core_result(
+        core_status=np.asarray(core_endpoint.datum_static_status),
+    )
 
 
 def _copy_cell_threshold_qc(payload: dict[str, Any], upstream: dict[str, Any]) -> None:
@@ -3221,16 +3037,6 @@ def _copy_cell_threshold_qc(payload: dict[str, Any], upstream: dict[str, Any]) -
     layer_qc = upstream.get('layers')
     if isinstance(layer_qc, dict):
         payload['layers'] = layer_qc
-
-
-def _assign(status: np.ndarray, mask: np.ndarray, value: str) -> None:
-    current = np.asarray(status).astype(str, copy=False)
-    priority = _STATUS_PRIORITY[value]
-    should_assign = np.asarray(mask, dtype=bool) & np.asarray(
-        [_STATUS_PRIORITY.get(str(item), -1) <= priority for item in current],
-        dtype=bool,
-    )
-    status[should_assign] = value
 
 
 def _json_stat(values: np.ndarray, stat: str) -> float | None:
@@ -3625,6 +3431,7 @@ __all__ = [
     'REFRACTION_DATUM_SOURCES_CSV_NAME',
     'REFRACTION_DATUM_STATICS_QC_JSON_NAME',
     'REFRACTION_DATUM_TRACE_PREVIEW_CSV_NAME',
+    'RefractionDatumFieldCorrectionInputs',
     'RefractionDatumStaticsError',
     'RefractionDatumStaticsResult',
     'build_refraction_datum_statics',
