@@ -8,9 +8,9 @@ import pkgutil
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
-EXPECTED_SEIS_STATICS_VERSION = '0.4.0'
+EXPECTED_SEIS_STATICS_VERSION = '0.4.1'
 EXPECTED_SEIS_STATICS_REQUIREMENT = (
-    'seis-statics @ git+https://github.com/ozw4/seis-statics.git@v0.4.0'
+    'seis-statics @ git+https://github.com/ozw4/seis-statics.git@v0.4.1'
 )
 REQUIREMENTS_PATH = REPO_ROOT / '.devcontainer' / 'requirements-dev.txt'
 
@@ -57,6 +57,14 @@ def test_seis_statics_dependency_pin_is_immutable_release_tag() -> None:
 
 
 def test_required_external_seis_statics_surface_imports() -> None:
+    from seis_statics.refraction import (
+        resolve_smoothed_refraction_floating_datum,
+        solve_refraction_multilayer_time_terms,
+    )
+
+    assert callable(resolve_smoothed_refraction_floating_datum)
+    assert callable(solve_refraction_multilayer_time_terms)
+
     module_names = [
         'seis_statics.validation',
         'seis_statics.datum',
