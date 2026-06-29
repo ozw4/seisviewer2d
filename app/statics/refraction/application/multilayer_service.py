@@ -530,14 +530,14 @@ def build_refraction_multilayer_weathering_replacement_statics(
             receiver,
             name='receiver_t3',
         )
-    trace_conversion = _core_multilayer_conversion_from_app_result(
+    trace_conversion = _core_multilayer_trace_conversion_from_app_result(
         input_model=input_model,
         model=model,
         solve_result=solve_result,
         resolved_first_layer=resolved_first_layer,
         layer_count=layer_count,
-        core_input_model=core_input_model_from_app(input_model),
-        trace_domain=True,
+        source=source,
+        receiver=receiver,
     )
     source_conversion = trace_conversion.source_endpoint
     receiver_conversion = trace_conversion.receiver_endpoint
@@ -997,6 +997,12 @@ class _V2StaticModel:
     row_velocity_m_s: np.ndarray | None = None
 
 
+@dataclass(frozen=True)
+class _CoreEndpointConversionDomain:
+    core_input_model: Any
+    node_id: np.ndarray
+
+
 def _core_multilayer_conversion_from_app_result(
     *,
     input_model: RefractionStaticInputModel,
@@ -1026,6 +1032,41 @@ def _core_multilayer_conversion_from_app_result(
         raise RefractionMultiLayerSolveError(str(exc)) from exc
 
 
+def _core_multilayer_trace_conversion_from_app_result(
+    *,
+    input_model: RefractionStaticInputModel,
+    model: RefractionStaticModelRequest,
+    solve_result: RefractionMultiLayerSolveResult,
+    resolved_first_layer: ResolvedRefractionFirstLayer,
+    layer_count: int,
+    source: _EndpointMetadata,
+    receiver: _EndpointMetadata,
+) -> Any:
+    domain = _core_endpoint_conversion_domain_from_app(
+        input_model=input_model,
+        source=source,
+        receiver=receiver,
+    )
+    try:
+        return core_build_refraction_multilayer_conversion(
+            input_model=domain.core_input_model,
+            model=model_options_from_request(model),
+            solve_result=_core_endpoint_multilayer_solve_result_from_app(
+                input_model=input_model,
+                model=model,
+                solve_result=solve_result,
+                resolved_first_layer=resolved_first_layer,
+                source=source,
+                receiver=receiver,
+                domain=domain,
+            ),
+            resolved_first_layer=resolved_first_layer,
+            layer_count=layer_count,
+        )
+    except CoreRefractionMultilayerConversionError as exc:
+        raise RefractionMultiLayerSolveError(str(exc)) from exc
+
+
 def _core_multilayer_node_conversion_from_app_result(
     *,
     input_model: RefractionStaticInputModel,
@@ -1044,6 +1085,182 @@ def _core_multilayer_node_conversion_from_app_result(
         trace_domain=False,
     )
     return conversion.source_endpoint
+
+
+def _core_endpoint_conversion_domain_from_app(
+    *,
+    input_model: RefractionStaticInputModel,
+    source: _EndpointMetadata,
+    receiver: _EndpointMetadata,
+) -> _CoreEndpointConversionDomain:
+    source_count = int(source.endpoint_key.shape[0])
+    receiver_count = int(receiver.endpoint_key.shape[0])
+    source_node_id = np.arange(source_count, dtype=np.int64)
+    receiver_node_id = np.arange(
+        source_count,
+        source_count + receiver_count,
+        dtype=np.int64,
+    )
+    core = core_input_model_from_app(input_model)
+    core_input = replace(
+        core,
+        source_node_id_sorted=_map_endpoint_int_to_trace_order(
+            endpoint_key_sorted=input_model.source_endpoint_key_sorted,
+            endpoint_key=source.endpoint_key,
+            endpoint_values=source_node_id,
+            name='source_endpoint_conversion_node_id_sorted',
+        ),
+        receiver_node_id_sorted=_map_endpoint_int_to_trace_order(
+            endpoint_key_sorted=input_model.receiver_endpoint_key_sorted,
+            endpoint_key=receiver.endpoint_key,
+            endpoint_values=receiver_node_id,
+            name='receiver_endpoint_conversion_node_id_sorted',
+        ),
+        source_endpoint_id_sorted=_map_endpoint_int_to_trace_order(
+            endpoint_key_sorted=input_model.source_endpoint_key_sorted,
+            endpoint_key=source.endpoint_key,
+            endpoint_values=source.endpoint_id,
+            name='source_endpoint_id_sorted',
+        ),
+        receiver_endpoint_id_sorted=_map_endpoint_int_to_trace_order(
+            endpoint_key_sorted=input_model.receiver_endpoint_key_sorted,
+            endpoint_key=receiver.endpoint_key,
+            endpoint_values=receiver.endpoint_id,
+            name='receiver_endpoint_id_sorted',
+        ),
+        node_x_m=np.ascontiguousarray(
+            np.concatenate((source.x_m, receiver.x_m)),
+            dtype=np.float64,
+        ),
+        node_y_m=np.ascontiguousarray(
+            np.concatenate((source.y_m, receiver.y_m)),
+            dtype=np.float64,
+        ),
+        node_elevation_m=np.ascontiguousarray(
+            np.concatenate((source.elevation_m, receiver.elevation_m)),
+            dtype=np.float64,
+        ),
+        node_kind=np.ascontiguousarray(
+            np.concatenate(
+                (
+                    np.full(source_count, 'source', dtype='<U16'),
+                    np.full(receiver_count, 'receiver', dtype='<U16'),
+                )
+            ),
+            dtype='<U16',
+        ),
+    )
+    return _CoreEndpointConversionDomain(
+        core_input_model=core_input,
+        node_id=np.ascontiguousarray(
+            np.concatenate((source_node_id, receiver_node_id)),
+            dtype=np.int64,
+        ),
+    )
+
+
+def _core_endpoint_multilayer_solve_result_from_app(
+    *,
+    input_model: RefractionStaticInputModel,
+    model: RefractionStaticModelRequest,
+    solve_result: RefractionMultiLayerSolveResult,
+    resolved_first_layer: ResolvedRefractionFirstLayer,
+    source: _EndpointMetadata,
+    receiver: _EndpointMetadata,
+    domain: _CoreEndpointConversionDomain,
+) -> CoreRefractionMultilayerTimeTermSolveResult:
+    base = _core_multilayer_solve_result_from_app(
+        input_model=input_model,
+        model=model,
+        solve_result=solve_result,
+        resolved_first_layer=resolved_first_layer,
+        endpoint_terms='source',
+        trace_domain=True,
+    )
+    layers = tuple(
+        _core_endpoint_layer_result_from_app(
+            input_model=input_model,
+            model=model,
+            layer=layer,
+            resolved_first_layer=resolved_first_layer,
+            source=source,
+            receiver=receiver,
+            domain=domain,
+        )
+        for layer in solve_result.layer_results
+    )
+    return replace(
+        base,
+        layer_results=layers,
+        layer_result_by_kind={layer.layer_kind: layer for layer in layers},
+    )
+
+
+def _core_endpoint_layer_result_from_app(
+    *,
+    input_model: RefractionStaticInputModel,
+    model: RefractionStaticModelRequest,
+    layer: RefractionLayerSolveResult,
+    resolved_first_layer: ResolvedRefractionFirstLayer,
+    source: _EndpointMetadata,
+    receiver: _EndpointMetadata,
+    domain: _CoreEndpointConversionDomain,
+) -> CoreRefractionMultilayerTimeTermLayerResult:
+    base = _core_layer_result_from_app(
+        input_model=input_model,
+        model=model,
+        layer=layer,
+        resolved_first_layer=resolved_first_layer,
+        endpoint_terms='source',
+        trace_count=int(input_model.n_traces),
+        trace_domain=True,
+    )
+    solve = base.solve_result
+    return replace(
+        base,
+        solve_result=SimpleNamespace(
+            node_id=domain.node_id,
+            node_half_intercept_time_s=_endpoint_layer_terms_for_core_conversion(
+                layer=layer,
+                source=source,
+                receiver=receiver,
+            ),
+            node_solution_status=np.full(
+                domain.node_id.shape,
+                'solved',
+                dtype=_STATUS_DTYPE,
+            ),
+            bedrock_velocity_mode=solve.bedrock_velocity_mode,
+            bedrock_velocity_m_s=solve.bedrock_velocity_m_s,
+            bedrock_slowness_s_per_m=solve.bedrock_slowness_s_per_m,
+            cell_id=solve.cell_id,
+            cell_bedrock_velocity_m_s=solve.cell_bedrock_velocity_m_s,
+            cell_bedrock_slowness_s_per_m=solve.cell_bedrock_slowness_s_per_m,
+            cell_velocity_status=solve.cell_velocity_status,
+        ),
+    )
+
+
+def _endpoint_layer_terms_for_core_conversion(
+    *,
+    layer: RefractionLayerSolveResult,
+    source: _EndpointMetadata,
+    receiver: _EndpointMetadata,
+) -> np.ndarray:
+    source_terms = _endpoint_terms(
+        layer.source_time_term_s,
+        source,
+        name=f'{layer.layer_kind} source endpoint time terms',
+    )
+    receiver_terms = _endpoint_terms(
+        layer.receiver_time_term_s,
+        receiver,
+        name=f'{layer.layer_kind} receiver endpoint time terms',
+    )
+    return np.ascontiguousarray(
+        np.concatenate((source_terms, receiver_terms)),
+        dtype=np.float64,
+    )
 
 
 def _core_node_input_model_from_app(input_model: RefractionStaticInputModel) -> Any:
@@ -2211,6 +2428,24 @@ def _map_endpoint_values_to_trace_order(
             raise RefractionMultiLayerSolveError(f'{name} missing endpoint {raw_key!s}')
         out[index] = float(values[endpoint_index])
     return np.ascontiguousarray(out, dtype=np.float64)
+
+
+def _map_endpoint_int_to_trace_order(
+    *,
+    endpoint_key_sorted: np.ndarray,
+    endpoint_key: np.ndarray,
+    endpoint_values: np.ndarray,
+    name: str,
+) -> np.ndarray:
+    key_to_index = _endpoint_key_to_index(endpoint_key)
+    values = np.asarray(endpoint_values, dtype=np.int64)
+    out = np.full(endpoint_key_sorted.shape, -1, dtype=np.int64)
+    for index, raw_key in enumerate(np.asarray(endpoint_key_sorted, dtype=object).tolist()):
+        endpoint_index = key_to_index.get(str(raw_key))
+        if endpoint_index is None:
+            raise RefractionMultiLayerSolveError(f'{name} missing endpoint {raw_key!s}')
+        out[index] = int(values[endpoint_index])
+    return np.ascontiguousarray(out, dtype=np.int64)
 
 
 def _map_endpoint_strings_to_trace_order(

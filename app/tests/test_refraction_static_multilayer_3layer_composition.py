@@ -134,13 +134,9 @@ def test_three_layer_invalid_endpoint_status_propagates_to_trace_status() -> Non
     _dataset, input_model, model, workflow = compute_three_layer_workflow()
     bad_source_index = 0
     vsub_layer = layer(workflow.solve_result, 'vsub_t3')
-    bad_source_node = int(workflow.solve_result.source_node_id[bad_source_index])
-    node_position = int(
-        np.flatnonzero(input_model.endpoint_table.node_id == bad_source_node)[0]
-    )
-    bad_node_t3 = np.asarray(vsub_layer.node_time_term_s, dtype=np.float64).copy()
-    bad_node_t3[node_position] = 0.0
-    patched_vsub_layer = replace(vsub_layer, node_time_term_s=bad_node_t3)
+    bad_source_t3 = np.asarray(vsub_layer.source_time_term_s, dtype=np.float64).copy()
+    bad_source_t3[bad_source_index] = 0.0
+    patched_vsub_layer = replace(vsub_layer, source_time_term_s=bad_source_t3)
     patched_solve = replace(
         workflow.solve_result,
         layer_results=(

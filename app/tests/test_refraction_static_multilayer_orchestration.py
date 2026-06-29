@@ -15,7 +15,10 @@ from app.api.schemas import (
     RefractionStaticModelRequest,
     RefractionStaticSolverRequest,
 )
-from app.statics.refraction.artifacts import FIRST_BREAK_RESIDUALS_CSV_NAME
+from app.statics.refraction.artifacts import (
+    FIRST_BREAK_RESIDUALS_CSV_NAME,
+    REFRACTION_STATICS_CSV_NAME,
+)
 from app.statics.refraction.application.design_matrix import (
     REFRACTION_DESIGN_MATRIX_NODE_DIAGNOSTICS_CSV_NAME,
     REFRACTION_DESIGN_MATRIX_QC_JSON_NAME,
@@ -291,12 +294,61 @@ def test_multilayer_artifact_rows_use_original_trace_ids_for_nonidentity_permuta
         rows = list(csv.DictReader(handle))
 
     assert [int(row['sorted_trace_index']) for row in rows[:5]] == [3, 0, 4, 1, 2]
+    solve = workflow.solve_result
     for sorted_position, row in enumerate(rows[:5]):
-        assert float(row['modeled_pick_time_s']) == pytest.approx(
-            result.modeled_pick_time_s[sorted_position],
+        assert float(row['observed_pick_time_s']) == pytest.approx(
+            input_model.pick_time_s_sorted[sorted_position],
             abs=1.0e-12,
         )
-        assert row['layer_kind'] == str(result.row_layer_kind[sorted_position])
+        assert float(row['modeled_pick_time_s']) == pytest.approx(
+            solve.modeled_pick_time_s_sorted[sorted_position],
+            abs=1.0e-12,
+        )
+        assert float(row['residual_s']) == pytest.approx(
+            solve.residual_s_sorted[sorted_position],
+            abs=1.0e-12,
+        )
+        assert row['used'] == _csv_bool(solve.used_observation_mask_sorted[sorted_position])
+        assert row['layer_kind'] == str(solve.layer_kind_sorted[sorted_position])
+        expected_reason = str(solve.rejection_reason_sorted[sorted_position])
+        assert row['rejection_reason'] == (expected_reason or 'ok')
+        assert float(row['row_velocity_m_s']) == pytest.approx(
+            solve.velocity_m_s_sorted[sorted_position],
+            abs=1.0e-12,
+        )
+
+    with (tmp_path / REFRACTION_STATICS_CSV_NAME).open(
+        encoding='utf-8',
+        newline='',
+    ) as handle:
+        trace_rows = list(csv.DictReader(handle))
+    final_shift_s = (
+        result.final_trace_shift_s_sorted
+        if result.final_trace_shift_s_sorted is not None
+        else result.refraction_trace_shift_s_sorted
+    )
+    assert [int(row['sorted_trace_index']) for row in trace_rows[:5]] == [
+        3,
+        0,
+        4,
+        1,
+        2,
+    ]
+    for sorted_position, row in enumerate(trace_rows[:5]):
+        assert row['used_observation'] == _csv_bool(
+            result.used_observation_mask_sorted[sorted_position]
+        )
+        assert row['trace_static_status'] == str(
+            result.trace_static_status_sorted[sorted_position]
+        )
+        expected_shift = float(final_shift_s[sorted_position])
+        if np.isfinite(expected_shift):
+            assert float(row['final_trace_shift_ms']) / 1000.0 == pytest.approx(
+                expected_shift,
+                abs=1.0e-12,
+            )
+        else:
+            assert row['final_trace_shift_ms'] == ''
 
 
 def test_multilayer_design_matrix_diagnostics_are_layer_disambiguated(
@@ -593,6 +645,10 @@ def _endpoint_table(
         ),
         pick_count=pick_count,
     )
+
+
+def _csv_bool(value: object) -> str:
+    return 'true' if bool(value) else 'false'
 
 
 def _resolved_first_layer() -> ResolvedRefractionFirstLayer:

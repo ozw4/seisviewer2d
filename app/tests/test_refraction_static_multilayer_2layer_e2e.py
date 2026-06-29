@@ -54,6 +54,7 @@ from app.statics.refraction.application.multilayer_service import (
     compute_refraction_multilayer_datum_statics_from_input_model,
 )
 from seis_statics.refraction.t1lsst import (
+    compute_t1lsst_2layer_thicknesses,
     compute_t1lsst_2layer_weathering_correction,
 )
 from app.statics.refraction.contracts.result_types import (
@@ -144,6 +145,129 @@ def test_two_layer_global_e2e_recovers_solver_conversion_tables_and_trace_shift(
         expected_velocity_m_s=SYNTHETIC_MULTILAYER_V3_M_S,
     )
     _assert_two_layer_outputs_match_truth(fixture, outputs)
+
+
+def test_two_layer_conversion_uses_source_and_receiver_endpoint_terms() -> None:
+    fixture = _make_two_layer_fixture(
+        coordinate_mode='grid_3d',
+        v2_velocity_mode='solve_global',
+    )
+    workflow = compute_refraction_multilayer_datum_statics_from_input_model(
+        input_model=fixture.input_model,
+        model=fixture.model,
+        solver=RefractionStaticSolverRequest(
+            damping=0.0,
+            robust={'enabled': False},
+        ),
+        datum=RefractionStaticDatumRequest(mode='none'),
+        apply_options=RefractionStaticApplyOptions(max_abs_shift_ms=250.0),
+        resolved_first_layer=_resolved_first_layer(),
+    )
+    solve = workflow.solve_result
+    source_t1 = fixture.source_t1_s + np.linspace(
+        0.0002,
+        0.0008,
+        fixture.source_t1_s.size,
+    )
+    receiver_t1 = fixture.receiver_t1_s + np.linspace(
+        0.0009,
+        0.0003,
+        fixture.receiver_t1_s.size,
+    )
+    source_t2 = fixture.source_t2_s + np.linspace(
+        0.0015,
+        0.0021,
+        fixture.source_t2_s.size,
+    )
+    receiver_t2 = fixture.receiver_t2_s + np.linspace(
+        0.0022,
+        0.0016,
+        fixture.receiver_t2_s.size,
+    )
+    patched_layers = tuple(
+        replace(layer, source_time_term_s=source_t1, receiver_time_term_s=receiver_t1)
+        if layer.layer_kind == 'v2_t1'
+        else replace(
+            layer,
+            source_time_term_s=source_t2,
+            receiver_time_term_s=receiver_t2,
+        )
+        for layer in solve.layer_results
+    )
+    patched_solve = replace(solve, layer_results=patched_layers)
+
+    replacement = build_refraction_multilayer_weathering_replacement_statics(
+        input_model=fixture.input_model,
+        model=fixture.model,
+        solve_result=patched_solve,
+        apply_options=RefractionStaticApplyOptions(max_abs_shift_ms=250.0),
+        resolved_first_layer=_resolved_first_layer(),
+    )
+
+    source_sh1, source_sh2 = compute_t1lsst_2layer_thicknesses(
+        t1_s=source_t1,
+        t2_s=source_t2,
+        v1_m_s=SYNTHETIC_MULTILAYER_V1_M_S,
+        v2_m_s=SYNTHETIC_MULTILAYER_V2_M_S,
+        v3_m_s=SYNTHETIC_MULTILAYER_V3_M_S,
+    )
+    receiver_sh1, receiver_sh2 = compute_t1lsst_2layer_thicknesses(
+        t1_s=receiver_t1,
+        t2_s=receiver_t2,
+        v1_m_s=SYNTHETIC_MULTILAYER_V1_M_S,
+        v2_m_s=SYNTHETIC_MULTILAYER_V2_M_S,
+        v3_m_s=SYNTHETIC_MULTILAYER_V3_M_S,
+    )
+    expected_source_shift = compute_t1lsst_2layer_weathering_correction(
+        sh1_m=source_sh1,
+        sh2_m=source_sh2,
+        v1_m_s=SYNTHETIC_MULTILAYER_V1_M_S,
+        v2_m_s=SYNTHETIC_MULTILAYER_V2_M_S,
+        v3_m_s=SYNTHETIC_MULTILAYER_V3_M_S,
+    )
+    expected_receiver_shift = compute_t1lsst_2layer_weathering_correction(
+        sh1_m=receiver_sh1,
+        sh2_m=receiver_sh2,
+        v1_m_s=SYNTHETIC_MULTILAYER_V1_M_S,
+        v2_m_s=SYNTHETIC_MULTILAYER_V2_M_S,
+        v3_m_s=SYNTHETIC_MULTILAYER_V3_M_S,
+    )
+    expected_source_sorted = _values_by_sorted_key(
+        fixture.input_model.source_endpoint_key_sorted,
+        fixture.source_endpoint_key,
+        expected_source_shift,
+    )
+    expected_receiver_sorted = _values_by_sorted_key(
+        fixture.input_model.receiver_endpoint_key_sorted,
+        fixture.receiver_endpoint_key,
+        expected_receiver_shift,
+    )
+
+    np.testing.assert_allclose(
+        replacement.source_weathering_replacement_shift_s,
+        expected_source_shift,
+        atol=_STATIC_ATOL_S,
+    )
+    np.testing.assert_allclose(
+        replacement.receiver_weathering_replacement_shift_s,
+        expected_receiver_shift,
+        atol=_STATIC_ATOL_S,
+    )
+    np.testing.assert_allclose(
+        replacement.source_weathering_replacement_shift_s_sorted,
+        expected_source_sorted,
+        atol=_STATIC_ATOL_S,
+    )
+    np.testing.assert_allclose(
+        replacement.receiver_weathering_replacement_shift_s_sorted,
+        expected_receiver_sorted,
+        atol=_STATIC_ATOL_S,
+    )
+    np.testing.assert_allclose(
+        replacement.weathering_replacement_trace_shift_s_sorted,
+        expected_source_sorted + expected_receiver_sorted,
+        atol=_STATIC_ATOL_S,
+    )
 
 
 def test_two_layer_line_projected_local_v2_global_v3_e2e_recovers_tables(
@@ -1310,6 +1434,21 @@ def _write_static_outputs(
 def _read_csv(path: Path) -> list[dict[str, str]]:
     with path.open(newline='', encoding='utf-8') as handle:
         return list(csv.DictReader(handle))
+
+
+def _values_by_sorted_key(
+    sorted_key: np.ndarray,
+    endpoint_key: np.ndarray,
+    values: np.ndarray,
+) -> np.ndarray:
+    lookup = {
+        str(key): float(value)
+        for key, value in zip(endpoint_key.tolist(), values.tolist(), strict=True)
+    }
+    return np.ascontiguousarray(
+        [lookup[str(key)] for key in sorted_key.tolist()],
+        dtype=np.float64,
+    )
 
 
 def _invalid_negative_sh2_t2_s(sh1_m: float) -> float:
