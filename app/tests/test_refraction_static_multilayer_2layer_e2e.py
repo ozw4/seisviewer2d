@@ -759,6 +759,167 @@ def test_two_layer_local_v2_low_fold_endpoint_statuses_do_not_abort() -> None:
     )
 
 
+def test_two_layer_local_v2_trace_conversion_uses_endpoint_velocity(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fixture = _make_two_layer_fixture(
+        coordinate_mode='line_2d_projected',
+        v2_velocity_mode='solve_cell',
+    )
+    workflow = compute_refraction_multilayer_datum_statics_from_input_model(
+        input_model=fixture.input_model,
+        model=fixture.model,
+        solver=RefractionStaticSolverRequest(
+            damping=0.0,
+            robust={'enabled': False},
+        ),
+        datum=RefractionStaticDatumRequest(mode='none'),
+        apply_options=RefractionStaticApplyOptions(max_abs_shift_ms=250.0),
+        resolved_first_layer=_resolved_first_layer(),
+    )
+    v2_layer = _layer(workflow.solve_result, 'v2_t1')
+    cell_velocity_m_s = np.asarray(
+        [2100.0, 2300.0, 2500.0, 2700.0, 2900.0],
+        dtype=np.float64,
+    )
+    row_midpoint_v2 = _cell_velocity_for_node_midpoints(
+        fixture.input_model.source_node_id_sorted,
+        fixture.input_model.receiver_node_id_sorted,
+        cell_velocity_m_s=cell_velocity_m_s,
+    )
+    patched_v2_layer = replace(
+        v2_layer,
+        cell_velocity_m_s=cell_velocity_m_s,
+        cell_slowness_s_per_m=1.0 / cell_velocity_m_s,
+        row_midpoint_velocity_m_s=row_midpoint_v2,
+    )
+    patched_solve = replace(
+        workflow.solve_result,
+        layer_results=(patched_v2_layer, _layer(workflow.solve_result, 'v3_t2')),
+    )
+    expected_source_v2_sorted = _cell_velocity_for_node_ids(
+        fixture.input_model.source_node_id_sorted,
+        cell_velocity_m_s=cell_velocity_m_s,
+    )
+    expected_receiver_v2_sorted = _cell_velocity_for_node_ids(
+        fixture.input_model.receiver_node_id_sorted,
+        cell_velocity_m_s=cell_velocity_m_s,
+    )
+    assert np.any(expected_source_v2_sorted != row_midpoint_v2)
+    assert np.any(expected_receiver_v2_sorted != row_midpoint_v2)
+
+    original_conversion = multilayer_service.core_build_refraction_multilayer_conversion
+    trace_v2_velocity: list[np.ndarray] = []
+
+    def _capture_trace_v2_velocity(**kwargs):
+        core_input = kwargs['input_model']
+        core_solve = kwargs['solve_result']
+        if int(core_input.n_traces) == int(fixture.input_model.n_traces):
+            trace_v2_velocity.append(
+                np.asarray(
+                    core_solve.layer_result_by_kind['v2_t1'].velocity_m_s_sorted,
+                    dtype=np.float64,
+                ).copy()
+            )
+        return original_conversion(**kwargs)
+
+    monkeypatch.setattr(
+        multilayer_service,
+        'core_build_refraction_multilayer_conversion',
+        _capture_trace_v2_velocity,
+    )
+
+    replacement = build_refraction_multilayer_weathering_replacement_statics(
+        input_model=fixture.input_model,
+        model=fixture.model,
+        solve_result=patched_solve,
+        apply_options=RefractionStaticApplyOptions(max_abs_shift_ms=250.0),
+        resolved_first_layer=_resolved_first_layer(),
+    )
+
+    assert len(trace_v2_velocity) == 2
+    np.testing.assert_allclose(trace_v2_velocity[0], expected_source_v2_sorted)
+    np.testing.assert_allclose(trace_v2_velocity[1], expected_receiver_v2_sorted)
+
+    expected_source_v2 = _cell_velocity_for_node_ids(
+        fixture.source_node_id,
+        cell_velocity_m_s=cell_velocity_m_s,
+    )
+    expected_receiver_v2 = _cell_velocity_for_node_ids(
+        fixture.receiver_node_id,
+        cell_velocity_m_s=cell_velocity_m_s,
+    )
+    expected_source_sh1, expected_source_sh2 = compute_t1lsst_2layer_thicknesses(
+        t1_s=fixture.source_t1_s,
+        t2_s=fixture.source_t2_s,
+        v1_m_s=SYNTHETIC_MULTILAYER_V1_M_S,
+        v2_m_s=expected_source_v2,
+        v3_m_s=SYNTHETIC_MULTILAYER_V3_M_S,
+    )
+    expected_receiver_sh1, expected_receiver_sh2 = compute_t1lsst_2layer_thicknesses(
+        t1_s=fixture.receiver_t1_s,
+        t2_s=fixture.receiver_t2_s,
+        v1_m_s=SYNTHETIC_MULTILAYER_V1_M_S,
+        v2_m_s=expected_receiver_v2,
+        v3_m_s=SYNTHETIC_MULTILAYER_V3_M_S,
+    )
+    expected_source_wcor = compute_t1lsst_2layer_weathering_correction(
+        sh1_m=expected_source_sh1,
+        sh2_m=expected_source_sh2,
+        v1_m_s=SYNTHETIC_MULTILAYER_V1_M_S,
+        v2_m_s=expected_source_v2,
+        v3_m_s=SYNTHETIC_MULTILAYER_V3_M_S,
+    )
+    expected_receiver_wcor = compute_t1lsst_2layer_weathering_correction(
+        sh1_m=expected_receiver_sh1,
+        sh2_m=expected_receiver_sh2,
+        v1_m_s=SYNTHETIC_MULTILAYER_V1_M_S,
+        v2_m_s=expected_receiver_v2,
+        v3_m_s=SYNTHETIC_MULTILAYER_V3_M_S,
+    )
+
+    np.testing.assert_allclose(
+        replacement.source_v2_m_s,
+        expected_source_v2,
+        rtol=1.0e-9,
+    )
+    np.testing.assert_allclose(
+        replacement.receiver_v2_m_s,
+        expected_receiver_v2,
+        rtol=1.0e-9,
+    )
+    np.testing.assert_allclose(
+        replacement.source_sh1_weathering_thickness_m,
+        expected_source_sh1,
+        atol=_THICKNESS_ATOL_M,
+    )
+    np.testing.assert_allclose(
+        replacement.source_sh2_weathering_thickness_m,
+        expected_source_sh2,
+        atol=_THICKNESS_ATOL_M,
+    )
+    np.testing.assert_allclose(
+        replacement.receiver_sh1_weathering_thickness_m,
+        expected_receiver_sh1,
+        atol=_THICKNESS_ATOL_M,
+    )
+    np.testing.assert_allclose(
+        replacement.receiver_sh2_weathering_thickness_m,
+        expected_receiver_sh2,
+        atol=_THICKNESS_ATOL_M,
+    )
+    np.testing.assert_allclose(
+        replacement.source_weathering_replacement_shift_s,
+        expected_source_wcor,
+        atol=_STATIC_ATOL_S,
+    )
+    np.testing.assert_allclose(
+        replacement.receiver_weathering_replacement_shift_s,
+        expected_receiver_wcor,
+        atol=_STATIC_ATOL_S,
+    )
+
+
 def test_two_layer_local_v2_invalid_velocity_order_writes_nan_artifacts(
     tmp_path: Path,
 ) -> None:
@@ -1449,6 +1610,29 @@ def _values_by_sorted_key(
         [lookup[str(key)] for key in sorted_key.tolist()],
         dtype=np.float64,
     )
+
+
+def _cell_velocity_for_node_ids(
+    node_id: np.ndarray,
+    *,
+    cell_velocity_m_s: np.ndarray,
+) -> np.ndarray:
+    cell_id = np.asarray(node_id, dtype=np.int64) // 2
+    return np.ascontiguousarray(cell_velocity_m_s[cell_id], dtype=np.float64)
+
+
+def _cell_velocity_for_node_midpoints(
+    source_node_id: np.ndarray,
+    receiver_node_id: np.ndarray,
+    *,
+    cell_velocity_m_s: np.ndarray,
+) -> np.ndarray:
+    midpoint_inline_m = (
+        np.asarray(source_node_id, dtype=np.float64)
+        + np.asarray(receiver_node_id, dtype=np.float64)
+    ) * 125.0
+    cell_id = np.floor(midpoint_inline_m / 500.0).astype(np.int64)
+    return np.ascontiguousarray(cell_velocity_m_s[cell_id], dtype=np.float64)
 
 
 def _invalid_negative_sh2_t2_s(sh1_m: float) -> float:

@@ -92,6 +92,7 @@ _LAYER_INDEX_BY_KIND: dict[RefractionLayerKind, int] = {
     'vsub_t3': 3,
 }
 _STATUS_DTYPE = '<U32'
+_TRACE_OK_STATUSES = {'ok', 'solved', 'zero_thickness'}
 _SIGN_CONVENTION_TEXT = 'corrected(t) = raw(t - shift_s)'
 _CELL_THRESHOLD_QC_KEYS = (
     'cell_observation_count',
@@ -1047,6 +1048,47 @@ def _core_multilayer_trace_conversion_from_app_result(
         source=source,
         receiver=receiver,
     )
+    source_conversion = _core_multilayer_endpoint_trace_conversion_from_app_result(
+        input_model=input_model,
+        model=model,
+        solve_result=solve_result,
+        resolved_first_layer=resolved_first_layer,
+        layer_count=layer_count,
+        source=source,
+        receiver=receiver,
+        domain=domain,
+        endpoint_terms='source',
+    )
+    receiver_conversion = _core_multilayer_endpoint_trace_conversion_from_app_result(
+        input_model=input_model,
+        model=model,
+        solve_result=solve_result,
+        resolved_first_layer=resolved_first_layer,
+        layer_count=layer_count,
+        source=source,
+        receiver=receiver,
+        domain=domain,
+        endpoint_terms='receiver',
+    )
+    return _combine_endpoint_trace_conversions(
+        source_conversion=source_conversion,
+        receiver_conversion=receiver_conversion,
+        n_traces=input_model.n_traces,
+    )
+
+
+def _core_multilayer_endpoint_trace_conversion_from_app_result(
+    *,
+    input_model: RefractionStaticInputModel,
+    model: RefractionStaticModelRequest,
+    solve_result: RefractionMultiLayerSolveResult,
+    resolved_first_layer: ResolvedRefractionFirstLayer,
+    layer_count: int,
+    source: _EndpointMetadata,
+    receiver: _EndpointMetadata,
+    domain: _CoreEndpointConversionDomain,
+    endpoint_terms: str,
+) -> Any:
     try:
         return core_build_refraction_multilayer_conversion(
             input_model=domain.core_input_model,
@@ -1059,12 +1101,62 @@ def _core_multilayer_trace_conversion_from_app_result(
                 source=source,
                 receiver=receiver,
                 domain=domain,
+                endpoint_terms=endpoint_terms,
             ),
             resolved_first_layer=resolved_first_layer,
             layer_count=layer_count,
         )
     except CoreRefractionMultilayerConversionError as exc:
         raise RefractionMultiLayerSolveError(str(exc)) from exc
+
+
+def _combine_endpoint_trace_conversions(
+    *,
+    source_conversion: Any,
+    receiver_conversion: Any,
+    n_traces: int,
+) -> Any:
+    source_shift = _core_sorted_float_array(
+        source_conversion.source_weathering_replacement_shift_s_sorted,
+        n_traces=n_traces,
+        name='source_weathering_replacement_shift_s_sorted',
+    )
+    receiver_shift = _core_sorted_float_array(
+        receiver_conversion.receiver_weathering_replacement_shift_s_sorted,
+        n_traces=n_traces,
+        name='receiver_weathering_replacement_shift_s_sorted',
+    )
+    trace_shift = _combine_source_receiver_trace_shift(
+        source_shift=source_shift,
+        receiver_shift=receiver_shift,
+    )
+    source_status = _core_sorted_string_array(
+        source_conversion.source_static_status_sorted,
+        n_traces=n_traces,
+        name='source_static_status_sorted',
+    )
+    receiver_status = _core_sorted_string_array(
+        receiver_conversion.receiver_static_status_sorted,
+        n_traces=n_traces,
+        name='receiver_static_status_sorted',
+    )
+    trace_status = _combine_source_receiver_trace_status(
+        source_status=source_status,
+        receiver_status=receiver_status,
+        trace_shift=trace_shift,
+    )
+    return replace(
+        source_conversion,
+        receiver_endpoint=receiver_conversion.receiver_endpoint,
+        receiver_weathering_replacement_shift_s_sorted=receiver_shift,
+        receiver_static_status_sorted=receiver_status,
+        weathering_replacement_trace_shift_s_sorted=trace_shift,
+        trace_static_status_sorted=trace_status,
+        trace_static_valid_mask_sorted=np.ascontiguousarray(
+            (trace_status == 'ok') & np.isfinite(trace_shift),
+            dtype=bool,
+        ),
+    )
 
 
 def _core_multilayer_node_conversion_from_app_result(
@@ -1168,13 +1260,14 @@ def _core_endpoint_multilayer_solve_result_from_app(
     source: _EndpointMetadata,
     receiver: _EndpointMetadata,
     domain: _CoreEndpointConversionDomain,
+    endpoint_terms: str,
 ) -> CoreRefractionMultilayerTimeTermSolveResult:
     base = _core_multilayer_solve_result_from_app(
         input_model=input_model,
         model=model,
         solve_result=solve_result,
         resolved_first_layer=resolved_first_layer,
-        endpoint_terms='source',
+        endpoint_terms=endpoint_terms,
         trace_domain=True,
     )
     layers = tuple(
@@ -1186,6 +1279,7 @@ def _core_endpoint_multilayer_solve_result_from_app(
             source=source,
             receiver=receiver,
             domain=domain,
+            endpoint_terms=endpoint_terms,
         )
         for layer in solve_result.layer_results
     )
@@ -1205,13 +1299,14 @@ def _core_endpoint_layer_result_from_app(
     source: _EndpointMetadata,
     receiver: _EndpointMetadata,
     domain: _CoreEndpointConversionDomain,
+    endpoint_terms: str,
 ) -> CoreRefractionMultilayerTimeTermLayerResult:
     base = _core_layer_result_from_app(
         input_model=input_model,
         model=model,
         layer=layer,
         resolved_first_layer=resolved_first_layer,
-        endpoint_terms='source',
+        endpoint_terms=endpoint_terms,
         trace_count=int(input_model.n_traces),
         trace_domain=True,
     )
@@ -1532,6 +1627,19 @@ def _core_layer_velocity_for_conversion(
 ) -> np.ndarray:
     if layer.global_velocity_m_s is not None:
         return np.full(trace_count, layer.global_velocity_m_s, dtype=np.float64)
+    if (
+        trace_domain
+        and layer.layer_kind == 'v2_t1'
+        and layer.velocity_mode == 'solve_cell'
+    ):
+        return _core_layer_row_velocity_from_app(
+            input_model=input_model,
+            model=model,
+            layer=layer,
+            resolved_first_layer=resolved_first_layer,
+            trace_count=trace_count,
+            endpoint_terms=endpoint_terms,
+        )
     if trace_domain:
         return _core_velocity_array_for_trace_count(
             layer.row_midpoint_velocity_m_s,
@@ -2486,6 +2594,45 @@ def _status_from_conversion(
         too_large = np.isfinite(shift) & (np.abs(shift) * 1000.0 > max_abs_shift_ms)
         status[too_large] = 'exceeds_max_abs_shift'
     return status
+
+
+def _combine_source_receiver_trace_shift(
+    *,
+    source_shift: np.ndarray,
+    receiver_shift: np.ndarray,
+) -> np.ndarray:
+    source = np.asarray(source_shift, dtype=np.float64)
+    receiver = np.asarray(receiver_shift, dtype=np.float64)
+    if source.shape != receiver.shape:
+        raise RefractionMultiLayerSolveError(
+            'source/receiver trace shift shape mismatch'
+        )
+    out = np.full(source.shape, np.nan, dtype=np.float64)
+    valid = np.isfinite(source) & np.isfinite(receiver)
+    out[valid] = source[valid] + receiver[valid]
+    return np.ascontiguousarray(out, dtype=np.float64)
+
+
+def _combine_source_receiver_trace_status(
+    *,
+    source_status: np.ndarray,
+    receiver_status: np.ndarray,
+    trace_shift: np.ndarray,
+) -> np.ndarray:
+    source = np.asarray(source_status).astype(str, copy=False)
+    receiver = np.asarray(receiver_status).astype(str, copy=False)
+    shift = np.asarray(trace_shift, dtype=np.float64)
+    if source.shape != receiver.shape or source.shape != shift.shape:
+        raise RefractionMultiLayerSolveError(
+            'source/receiver trace status shape mismatch'
+        )
+    out = np.asarray(source).astype(_STATUS_DTYPE, copy=True)
+    source_ok = np.isin(source, list(_TRACE_OK_STATUSES))
+    receiver_ok = np.isin(receiver, list(_TRACE_OK_STATUSES))
+    out[source_ok & ~receiver_ok] = receiver[source_ok & ~receiver_ok]
+    out[np.isin(out.astype(str, copy=False), list(_TRACE_OK_STATUSES))] = 'ok'
+    out[(out == 'ok') & ~np.isfinite(shift)] = 'invalid_shift'
+    return np.ascontiguousarray(out, dtype=_STATUS_DTYPE)
 
 
 def _layer_index_sorted_from_kind(layer_kind_sorted: np.ndarray) -> np.ndarray:

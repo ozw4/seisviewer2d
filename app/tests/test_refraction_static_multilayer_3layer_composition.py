@@ -233,7 +233,11 @@ def test_three_layer_core_conversion_adapter_uses_matching_trace_shapes(
         resolved_first_layer=resolved_first_layer(),
     )
 
-    assert observed_trace_counts == [input_model.n_traces, input_model.node_x_m.shape[0]]
+    assert observed_trace_counts == [
+        input_model.n_traces,
+        input_model.n_traces,
+        input_model.node_x_m.shape[0],
+    ]
 
 
 def test_three_layer_global_velocity_order_is_reported_by_core() -> None:
