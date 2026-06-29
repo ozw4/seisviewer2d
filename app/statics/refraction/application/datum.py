@@ -36,6 +36,7 @@ from seis_statics.refraction.datum import (
 )
 from seis_statics.refraction.field_composition import (
     RefractionFieldCompositionError,
+    compose_refraction_final_trace_shift as core_compose_refraction_final_trace_shift,
 )
 from seis_statics.refraction.types import (
     RefractionTraceFieldCorrectionResult as CoreRefractionTraceFieldCorrectionResult,
@@ -481,7 +482,7 @@ def build_refraction_datum_statics(
             allow_flat_datum_below_refractor=(
                 datum_req.allow_flat_datum_below_refractor
             ),
-            max_abs_datum_shift_ms=None,
+            max_abs_datum_shift_ms=max_abs_shift_ms,
             trace_field_correction=(
                 None
                 if field_corrections is None
@@ -520,7 +521,7 @@ def build_refraction_datum_statics(
             allow_flat_datum_below_refractor=(
                 datum_req.allow_flat_datum_below_refractor
             ),
-            max_abs_datum_shift_ms=None,
+            max_abs_datum_shift_ms=max_abs_shift_ms,
         )
     except (CoreRefractionDatumError, RefractionFieldCompositionError) as exc:
         raise RefractionDatumStaticsError(str(exc)) from exc
@@ -584,24 +585,6 @@ def build_refraction_datum_statics(
     node_status = _endpoint_status_from_core_endpoint(
         core_endpoint=core_node_result,
     )
-    source_status = _with_max_abs_shift_status(
-        shift_s=source_refraction_shift,
-        status=source_status,
-        max_abs_shift_ms=max_abs_shift_ms,
-    )
-    receiver_status = _with_max_abs_shift_status(
-        shift_s=receiver_refraction_shift,
-        status=receiver_status,
-        max_abs_shift_ms=max_abs_shift_ms,
-    )
-    node_status = _with_max_abs_shift_status(
-        shift_s=np.ascontiguousarray(
-            core_node_result.total_refraction_shift_s,
-            dtype=np.float64,
-        ),
-        status=node_status,
-        max_abs_shift_ms=max_abs_shift_ms,
-    )
     trace_floating_shift = np.ascontiguousarray(
         source_floating_shift_sorted + receiver_floating_shift_sorted,
         dtype=np.float64,
@@ -614,16 +597,13 @@ def build_refraction_datum_statics(
         core_result.refraction_trace_shift_s_sorted,
         dtype=np.float64,
     )
-    trace_status = _app_status_from_core(core_result.trace_static_status_sorted)
-    trace_valid = np.ascontiguousarray(
-        core_result.trace_static_valid_mask_sorted,
-        dtype=bool,
-    )
-    trace_status, trace_valid = _with_max_abs_trace_status(
-        shift_s=refraction_trace_shift,
-        status=trace_status,
-        valid_mask=trace_valid,
-        max_abs_shift_ms=max_abs_shift_ms,
+    trace_status, trace_valid, refraction_trace_shift, upstream_trace_overlay = (
+        _carry_upstream_trace_rejections(
+            data=data,
+            trace_static_status_sorted=core_result.trace_static_status_sorted,
+            trace_static_valid_mask_sorted=core_result.trace_static_valid_mask_sorted,
+            refraction_trace_shift_s_sorted=refraction_trace_shift,
+        )
     )
     trace_field_correction = (
         None if field_corrections is None else field_corrections.trace_field_correction
@@ -655,18 +635,44 @@ def build_refraction_datum_statics(
         ),
         dtype=np.float64,
     )
-    final_trace_status, final_trace_valid = _with_max_abs_trace_status(
-        shift_s=final_trace_shift,
-        status=final_trace_status,
-        valid_mask=final_trace_valid,
-        max_abs_shift_ms=max_abs_shift_ms,
-    )
-    max_abs_exceeds = trace_status == 'exceeds_max_abs_shift'
-    if np.any(max_abs_exceeds):
-        final_trace_status = final_trace_status.copy()
-        final_trace_valid = final_trace_valid.copy()
-        final_trace_status[max_abs_exceeds] = 'exceeds_max_abs_shift'
-        final_trace_valid[max_abs_exceeds] = False
+    if upstream_trace_overlay:
+        if trace_field_correction is None:
+            final_trace_shift = np.ascontiguousarray(
+                refraction_trace_shift,
+                dtype=np.float64,
+            )
+            final_trace_status = np.ascontiguousarray(
+                trace_status,
+                dtype=_STATUS_DTYPE,
+            )
+            final_trace_valid = np.ascontiguousarray(trace_valid, dtype=bool)
+        else:
+            try:
+                recomposed = core_compose_refraction_final_trace_shift(
+                    refraction_trace_shift_s_sorted=refraction_trace_shift,
+                    trace_static_status_sorted=trace_status,
+                    trace_static_valid_mask_sorted=trace_valid,
+                    trace_field_correction=trace_field_correction,
+                    apply_to_trace_shift=bool(field_corrections.apply_to_trace_shift),
+                    invalid_component_policy=field_corrections.invalid_component_policy,
+                )
+            except RefractionFieldCompositionError as exc:
+                raise RefractionDatumStaticsError(str(exc)) from exc
+            final_trace_shift = np.ascontiguousarray(
+                recomposed.final_trace_shift_s_sorted,
+                dtype=np.float64,
+            )
+            final_trace_status = _app_status_from_core(
+                recomposed.final_trace_static_status_sorted
+            )
+            final_trace_valid = np.ascontiguousarray(
+                recomposed.final_trace_static_valid_mask_sorted,
+                dtype=bool,
+            )
+            applied_field_shift = np.ascontiguousarray(
+                recomposed.applied_field_shift_s_sorted,
+                dtype=np.float64,
+            )
     field_composition_qc = _field_composition_qc(
         field_corrections=field_corrections,
         core_result=core_result,
@@ -3026,48 +3032,46 @@ def _app_status_from_core(status: np.ndarray) -> np.ndarray:
     return np.ascontiguousarray(out, dtype=_STATUS_DTYPE)
 
 
-def _with_max_abs_shift_status(
+def _carry_upstream_trace_rejections(
     *,
-    shift_s: np.ndarray,
-    status: np.ndarray,
-    max_abs_shift_ms: float | None,
-) -> np.ndarray:
-    out = np.ascontiguousarray(status, dtype=_STATUS_DTYPE)
-    if max_abs_shift_ms is None:
-        return out
-    shift = np.asarray(shift_s, dtype=np.float64)
-    exceeds = (
-        (out == 'ok')
-        & np.isfinite(shift)
-        & (np.abs(shift) * 1000.0 > float(max_abs_shift_ms))
+    data: _ValidatedReplacement,
+    trace_static_status_sorted: np.ndarray,
+    trace_static_valid_mask_sorted: np.ndarray,
+    refraction_trace_shift_s_sorted: np.ndarray,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, bool]:
+    trace_status = _app_status_from_core(trace_static_status_sorted)
+    trace_valid = np.ascontiguousarray(trace_static_valid_mask_sorted, dtype=bool)
+    trace_shift = np.ascontiguousarray(
+        refraction_trace_shift_s_sorted,
+        dtype=np.float64,
     )
-    if not bool(np.any(exceeds)):
-        return out
-    out = out.copy()
-    out[exceeds] = 'exceeds_max_abs_shift'
-    return np.ascontiguousarray(out, dtype=_STATUS_DTYPE)
+    upstream_status = _app_status_from_core(data.trace_static_status_sorted)
+    upstream_status = np.ascontiguousarray(upstream_status, dtype=_STATUS_DTYPE)
+    not_observed = ~data.valid_observation_mask_sorted
+    invalid_upstream_trace = not_observed | (~data.trace_static_valid_mask_sorted)
+    overlay = trace_valid & invalid_upstream_trace
+    if not bool(np.any(overlay)):
+        return trace_status, trace_valid, trace_shift, False
 
+    replacement_status = upstream_status.copy()
+    replacement_status[(replacement_status == 'ok') & not_observed] = 'not_observed'
+    replacement_status[
+        (replacement_status == 'ok')
+        & data.valid_observation_mask_sorted
+        & (~data.trace_static_valid_mask_sorted)
+    ] = 'invalid_weathering_replacement'
 
-def _with_max_abs_trace_status(
-    *,
-    shift_s: np.ndarray,
-    status: np.ndarray,
-    valid_mask: np.ndarray,
-    max_abs_shift_ms: float | None,
-) -> tuple[np.ndarray, np.ndarray]:
-    out_status = _with_max_abs_shift_status(
-        shift_s=shift_s,
-        status=status,
-        max_abs_shift_ms=max_abs_shift_ms,
-    )
-    out_valid = np.ascontiguousarray(valid_mask, dtype=bool)
-    exceeds = out_status == 'exceeds_max_abs_shift'
-    if bool(np.any(exceeds)):
-        out_valid = out_valid.copy()
-        out_valid[exceeds] = False
+    trace_status = trace_status.copy()
+    trace_valid = trace_valid.copy()
+    trace_shift = trace_shift.copy()
+    trace_status[overlay] = replacement_status[overlay]
+    trace_valid[overlay] = False
+    trace_shift[overlay] = np.nan
     return (
-        np.ascontiguousarray(out_status, dtype=_STATUS_DTYPE),
-        np.ascontiguousarray(out_valid, dtype=bool),
+        np.ascontiguousarray(trace_status, dtype=_STATUS_DTYPE),
+        np.ascontiguousarray(trace_valid, dtype=bool),
+        np.ascontiguousarray(trace_shift, dtype=np.float64),
+        True,
     )
 
 
