@@ -55,11 +55,8 @@ services:
       - type: bind
         source: /home/aiuser4/Desktop/.config/gh/
         target: /home/dcuser/.config/gh/
-      - type: bind
-        source: /home/aiuser4/Desktop/seis-statics
-        target: /workspace/seis-statics
     working_dir: /workspace
     ports:
-      - "8000:8000"
+      - "8005:8000"
     stdin_open: true
     tty: true

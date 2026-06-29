@@ -13,6 +13,9 @@ ARG NO_PROXY
 ENV HTTP_PROXY=${HTTP_PROXY} \
     HTTPS_PROXY=${HTTPS_PROXY} \
     NO_PROXY=${NO_PROXY} \
+    http_proxy=${HTTP_PROXY} \
+    https_proxy=${HTTPS_PROXY} \
+    no_proxy=${NO_PROXY} \
     DEBIAN_FRONTEND=noninteractive \
     PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
 
@@ -40,41 +43,52 @@ RUN --mount=type=cache,target=/root/.cache/pip,sharing=locked \
     --mount=type=bind,source=.devcontainer/requirements-dev.txt,target=requirements-dev.txt \
     python -m pip install -r requirements-dev.txt
 
-RUN mkdir -p "$PLAYWRIGHT_BROWSERS_PATH" \
-    && python -m playwright install --with-deps chromium
+RUN mkdir -p "${PLAYWRIGHT_BROWSERS_PATH}" \
+    && python -m playwright install --with-deps chromium \
+    && chmod -R a+rX "${PLAYWRIGHT_BROWSERS_PATH}" \
+    && rm -rf /var/lib/apt/lists/*
+
 RUN curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg \
     | gpg --dearmor -o /usr/share/keyrings/githubcli-archive-keyring.gpg \
- && chmod go+r /usr/share/keyrings/githubcli-archive-keyring.gpg \
- && echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" \
-    > /etc/apt/sources.list.d/github-cli.list \
- && apt-get update \
- && apt-get install -y --no-install-recommends gh \
- && rm -rf /var/lib/apt/lists/*
+    && chmod go+r /usr/share/keyrings/githubcli-archive-keyring.gpg \
+    && echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" \
+       > /etc/apt/sources.list.d/github-cli.list \
+    && apt-get update \
+    && apt-get install -y --no-install-recommends gh \
+    && rm -rf /var/lib/apt/lists/*
 
 RUN curl -fsSL https://deb.nodesource.com/setup_20.x | bash - \
- && apt-get update \
- && apt-get install -y --no-install-recommends nodejs \
- && npm install -g @openai/codex@latest \
- && codex --version \
- && npm cache clean --force \
- && rm -rf /var/lib/apt/lists/*
+    && apt-get update \
+    && apt-get install -y --no-install-recommends nodejs \
+    && rm -rf /var/lib/apt/lists/*
 
-RUN addgroup --gid $GID $USERNAME && \
-    adduser --disabled-password --gecos "" --shell "/bin/bash" --uid $UID --gid $GID $USERNAME && \
-    mkdir -p /home/$USERNAME/.codex && \
-    chown -R $USERNAME:$USERNAME /home/$USERNAME "$PLAYWRIGHT_BROWSERS_PATH"
+RUN addgroup --gid "${GID}" "${USERNAME}" \
+    && adduser --disabled-password --gecos "" --shell "/bin/bash" --uid "${UID}" --gid "${GID}" "${USERNAME}" \
+    && install -d -m 0755 -o "${UID}" -g "${GID}" "/home/${USERNAME}/.codex" \
+    && install -d -m 0755 -o "${UID}" -g "${GID}" "/home/${USERNAME}/.local" \
+    && install -d -m 0755 -o "${UID}" -g "${GID}" "/home/${USERNAME}/.local/bin" \
+    && install -d -m 0755 -o "${UID}" -g "${GID}" "/home/${USERNAME}/.npm" \
+    && install -d -m 0755 -o "${UID}" -g "${GID}" "/home/${USERNAME}/.cache" \
+    && install -d -m 0755 -o "${UID}" -g "${GID}" /workspace
 
-USER $USERNAME
+USER ${USERNAME}
 
-ENV HOME=/home/$USERNAME \
-    CODEX_HOME=/home/$USERNAME/.codex \
-    PATH="/home/$USERNAME/.local/bin:${PATH}" \
+ENV HOME=/home/${USERNAME} \
+    CODEX_HOME=/home/${USERNAME}/.codex \
+    NPM_CONFIG_PREFIX=/home/${USERNAME}/.local \
+    PATH="/home/${USERNAME}/.local/bin:${PATH}" \
     PYTHONPATH="/workspace"
 
+RUN npm install -g @openai/codex@latest \
+    && codex --version \
+    && npm cache clean --force
+
 RUN curl -LsSf https://astral.sh/uv/install.sh | sh
+
 RUN uv tool install specify-cli --from git+https://github.com/github/spec-kit.git@v0.4.4
 
-COPY --chown=$USERNAME:$USERNAME ruff.toml /home/$USERNAME/
+COPY --chown=${UID}:${GID} ruff.toml /home/${USERNAME}/
+
 WORKDIR /workspace
 
 CMD ["/bin/bash"]
