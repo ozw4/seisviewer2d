@@ -11,7 +11,6 @@ from app.statics.refraction.application.core_options import (
     layer_observation_masks_from_input_model as build_refraction_layer_observation_masks,
 )
 from app.statics.refraction.application.multilayer_service import (
-    RefractionMultiLayerSolveError,
     solve_refraction_multilayer_time_terms,
 )
 from app.statics.refraction.contracts.result_types import (
@@ -74,8 +73,6 @@ def test_vsub_t3_fixed_global_layer_solves_after_v3_t2() -> None:
     assert layer.layer_index == 3
     assert layer.global_velocity_m_s == pytest.approx(VSUB_M_S)
     assert layer.global_slowness_s_per_m == pytest.approx(1.0 / VSUB_M_S)
-    assert layer.qc['velocity_sequence_reference_layer_kind'] == 'v3_t2'
-    assert layer.qc['velocity_sequence_reference_m_s'] == pytest.approx(V3_M_S)
     assert result.qc['layers']['vsub_t3']['layer_kind'] == 'vsub_t3'
     assert result.qc['observation_gates']['vsub_t3']['n_used_observations'] == (
         VSUB_OFFSET_M.size
@@ -124,18 +121,16 @@ def test_vsub_t3_result_contains_t3_terms_and_layer_index_3() -> None:
     )
 
 
-def test_vsub_t3_rejects_velocity_not_greater_than_v3() -> None:
-    with pytest.raises(
-        RefractionMultiLayerSolveError,
-        match='vsub_t3 velocity must be greater than v3_t2 velocity',
-    ):
-        _run_multilayer(
-            model=_model(
-                vsub_velocity_mode='fixed_global',
-                vsub_fixed_velocity_m_s=V3_M_S,
-            ),
-            input_model=_input_model(),
-        )
+def test_vsub_t3_velocity_not_greater_than_v3_is_marked_by_core() -> None:
+    result = _run_multilayer(
+        model=_model(
+            vsub_velocity_mode='fixed_global',
+            vsub_fixed_velocity_m_s=V3_M_S,
+        ),
+        input_model=_input_model(),
+    )
+
+    assert 'invalid_velocity_order' in set(result.rejection_reason_sorted.astype(str))
 
 
 def _run_multilayer(

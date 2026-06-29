@@ -66,8 +66,6 @@ def test_v3_t2_solve_global_estimates_velocity_and_t2_terms() -> None:
     assert layer.qc['residual_mad_ms'] == pytest.approx(0.0, abs=1.0e-5)
     assert layer.qc['robust_iterations'] == 0
     assert layer.qc['n_rejected_by_robust'] == 0
-    assert layer.qc['velocity_sequence_reference_layer_kind'] == 'v2_t1'
-    assert layer.qc['velocity_sequence_reference_m_s'] == pytest.approx(V2_M_S)
 
 
 def test_v3_t2_fixed_global_solves_t2_terms() -> None:

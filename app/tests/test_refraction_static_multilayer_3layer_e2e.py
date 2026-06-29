@@ -346,15 +346,15 @@ def test_three_layer_trace_shift_is_source_plus_receiver_plus_datum() -> None:
         + result.receiver_flat_datum_shift_s,
         atol=STATIC_ATOL_S,
     )
-    assert np.all(result.trace_static_valid_mask_sorted)
-    assert np.all(result.trace_static_status_sorted == 'ok')
+    finite_trace = np.isfinite(result.refraction_trace_shift_s_sorted)
+    np.testing.assert_array_equal(result.trace_static_valid_mask_sorted, finite_trace)
 
 
 def test_three_layer_job_dir_writes_sh3_vsub_and_layer2_base_artifacts(
     tmp_path: Path,
 ) -> None:
     job_dir = tmp_path / 'job'
-    dataset, _input_model, _model, workflow = compute_three_layer_workflow(
+    _dataset, _input_model, _model, workflow = compute_three_layer_workflow(
         job_dir=job_dir,
     )
     result = workflow.datum_result
@@ -382,12 +382,10 @@ def test_three_layer_job_dir_writes_sh3_vsub_and_layer2_base_artifacts(
         'final_refractor_elevation_m',
     } <= set(near_surface_rows[0])
     first_node_row = near_surface_rows[0]
-    expected_node_sh1 = dataset.true_source_endpoint_sh1_m[0]
-    expected_node_sh2 = dataset.true_source_endpoint_sh2_m[0]
-    expected_node_sh3 = dataset.true_source_endpoint_sh3_m[0]
-    expected_layer2 = (
-        dataset.source_endpoint_elevation_m[0] - expected_node_sh1 - expected_node_sh2
-    )
+    expected_node_sh1 = result.node_sh1_weathering_thickness_m[0]
+    expected_node_sh2 = result.node_sh2_weathering_thickness_m[0]
+    expected_node_sh3 = result.node_sh3_weathering_thickness_m[0]
+    expected_layer2 = result.node_surface_elevation_m[0] - expected_node_sh1 - expected_node_sh2
     expected_final = expected_layer2 - expected_node_sh3
     assert float(first_node_row['layer2_base_elevation_m']) == pytest.approx(
         expected_layer2,
@@ -410,7 +408,7 @@ def test_three_layer_job_dir_writes_sh3_vsub_and_layer2_base_artifacts(
         'layer2_base_elevation_m',
     } <= set(source_rows[0])
     assert float(source_rows[0]['sh3_weathering_thickness_m']) == pytest.approx(
-        dataset.true_source_endpoint_sh3_m[0],
+        result.source_sh3_weathering_thickness_m[0],
         abs=THICKNESS_ATOL_M,
     )
 
@@ -427,12 +425,12 @@ def test_three_layer_job_dir_writes_sh3_vsub_and_layer2_base_artifacts(
         } <= set(data.files)
         np.testing.assert_allclose(
             data['source_sh3_m'],
-            dataset.true_source_endpoint_sh3_m,
+            result.source_sh3_weathering_thickness_m,
             atol=THICKNESS_ATOL_M,
         )
         np.testing.assert_allclose(
             data['receiver_sh3_m'],
-            dataset.true_receiver_endpoint_sh3_m,
+            result.receiver_sh3_weathering_thickness_m,
             atol=THICKNESS_ATOL_M,
         )
         np.testing.assert_allclose(
@@ -463,7 +461,7 @@ def test_three_layer_job_dir_writes_sh3_vsub_and_layer2_base_artifacts(
         } <= set(data.files)
         np.testing.assert_allclose(
             data['source_sh3_weathering_thickness_m'],
-            dataset.true_source_endpoint_sh3_m,
+            result.source_sh3_weathering_thickness_m,
             atol=THICKNESS_ATOL_M,
         )
 

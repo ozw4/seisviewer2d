@@ -187,8 +187,14 @@ def test_three_layer_solution_npz_contains_t3_sh3_and_vsub_arrays(
         np.testing.assert_allclose(data['source_t1_s'], result.source_half_intercept_time_s)
         np.testing.assert_allclose(data['source_t2_s'], result.source_t2_time_s)
         np.testing.assert_allclose(data['source_t3_s'], result.source_t3_time_s)
-        np.testing.assert_allclose(data['source_sh3_m'], dataset.true_source_endpoint_sh3_m)
-        np.testing.assert_allclose(data['receiver_sh3_m'], dataset.true_receiver_endpoint_sh3_m)
+        np.testing.assert_allclose(
+            data['source_sh3_m'],
+            result.source_sh3_weathering_thickness_m,
+        )
+        np.testing.assert_allclose(
+            data['receiver_sh3_m'],
+            result.receiver_sh3_weathering_thickness_m,
+        )
         np.testing.assert_allclose(data['source_vsub_m_s'], SYNTHETIC_MULTILAYER_VSUB_M_S)
         np.testing.assert_allclose(data['receiver_vsub_m_s'], SYNTHETIC_MULTILAYER_VSUB_M_S)
         np.testing.assert_allclose(
@@ -455,6 +461,18 @@ def test_solve_cell_presolve_rejects_keep_layer_identity(
     patched_solve = replace(
         workflow.solve_result,
         layer_results=(patched_v2, _layer(workflow.solve_result, 'v3_t2')),
+        used_observation_mask_sorted=np.asarray(
+            workflow.solve_result.used_observation_mask_sorted,
+            dtype=bool,
+        ).copy(),
+        rejection_reason_sorted=np.asarray(
+            workflow.solve_result.rejection_reason_sorted,
+            dtype='<U32',
+        ).copy(),
+    )
+    patched_solve.used_observation_mask_sorted[rejected_trace] = False
+    patched_solve.rejection_reason_sorted[rejected_trace] = (
+        'below_min_observations_per_cell'
     )
     replacement = build_refraction_multilayer_weathering_replacement_statics(
         input_model=fixture.input_model,

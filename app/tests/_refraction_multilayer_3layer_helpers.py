@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from dataclasses import replace
 import json
 from pathlib import Path
 
@@ -16,11 +15,6 @@ from app.api.schemas import (
     RefractionStaticPickSourceRequest,
     RefractionStaticSolverRequest,
 )
-from app.statics.refraction.artifacts import write_refraction_static_artifacts
-from app.statics.refraction.application.datum import (
-    build_refraction_datum_statics,
-    write_refraction_datum_statics_artifacts,
-)
 from app.statics.refraction.application.design_matrix import (
     REFRACTION_DESIGN_MATRIX_NODE_DIAGNOSTICS_CSV_NAME,
     REFRACTION_DESIGN_MATRIX_QC_JSON_NAME,
@@ -29,8 +23,7 @@ from app.statics.refraction.application.design_matrix import (
 )
 from app.statics.refraction.application.multilayer_service import (
     RefractionMultiLayerStaticsWorkflowResult,
-    _components_from_replacement,
-    build_refraction_multilayer_weathering_replacement_statics,
+    compute_refraction_multilayer_datum_statics_from_input_model,
 )
 from app.statics.refraction.contracts.result_types import (
     RefractionEndpointTable,
@@ -244,54 +237,15 @@ def compute_three_layer_workflow(
     )
     apply_options = RefractionStaticApplyOptions(max_abs_shift_ms=500.0)
     active_datum = datum if datum is not None else RefractionStaticDatumRequest(mode='none')
-    solve_result = make_three_layer_solve_result(dataset)
-    weathering_replacement = build_refraction_multilayer_weathering_replacement_statics(
+    workflow = compute_refraction_multilayer_datum_statics_from_input_model(
         input_model=input_model,
         model=model,
-        solve_result=solve_result,
-        apply_options=apply_options,
-        resolved_first_layer=resolved_first_layer(),
-    )
-    datum_result = build_refraction_datum_statics(
-        weathering_replacement_result=weathering_replacement,
+        solver=solver,
         datum=active_datum,
         apply_options=apply_options,
         resolved_first_layer=resolved_first_layer(),
+        job_dir=job_dir,
     )
-    datum_result = replace(
-        datum_result,
-        qc={
-            **datum_result.qc,
-            'method': 'multilayer_time_term',
-            'conversion_mode': 't1lsst_multilayer',
-            'layer_count': 3,
-            'enabled_layer_kinds': ['v2_t1', 'v3_t2', 'vsub_t3'],
-            'layers': solve_result.qc,
-        },
-    )
-    components = _components_from_replacement(weathering_replacement)
-    workflow = RefractionMultiLayerStaticsWorkflowResult(
-        solve_result=solve_result,
-        components=components,
-        weathering_replacement_result=weathering_replacement,
-        datum_result=datum_result,
-    )
-    if job_dir is not None:
-        root = Path(job_dir)
-        write_refraction_datum_statics_artifacts(root, datum_result)
-        _write_fixture_design_matrix_diagnostics(root, solve_result)
-        write_refraction_static_artifacts(
-            result=datum_result,
-            req=_artifact_request(
-                input_model=input_model,
-                model=model,
-                solver=solver,
-                datum=active_datum,
-                apply_options=apply_options,
-            ),
-            job_dir=root,
-            resolved_first_layer=resolved_first_layer(),
-        )
     return dataset, input_model, model, workflow
 
 
@@ -376,6 +330,18 @@ def make_three_layer_solve_result(
             used_mask=dataset.expected_layer_mask_by_kind['vsub_t3'],
         ),
     )
+    (
+        modeled_pick_time_s,
+        residual_s,
+        used_mask,
+        rejected_mask,
+        layer_kind,
+        rejection_reason,
+        velocity_m_s,
+    ) = _multilayer_sorted_arrays_from_layers(
+        dataset=dataset,
+        layers=layers,
+    )
     return RefractionMultiLayerSolveResult(
         enabled_layer_kinds=('v2_t1', 'v3_t2', 'vsub_t3'),
         layer_results=layers,
@@ -388,6 +354,13 @@ def make_three_layer_solve_result(
             'enabled_layer_kinds': ['v2_t1', 'v3_t2', 'vsub_t3'],
             'layers': {item.layer_kind: item.qc for item in layers},
         },
+        modeled_pick_time_s_sorted=modeled_pick_time_s,
+        residual_s_sorted=residual_s,
+        used_observation_mask_sorted=used_mask,
+        rejected_observation_mask_sorted=rejected_mask,
+        layer_kind_sorted=layer_kind,
+        rejection_reason_sorted=rejection_reason,
+        velocity_m_s_sorted=velocity_m_s,
     )
 
 
@@ -447,6 +420,59 @@ def _layer_result(
             'global_velocity_m_s': float(velocity_m_s),
             'n_used_observations': int(np.count_nonzero(used_mask)),
         },
+    )
+
+
+def _multilayer_sorted_arrays_from_layers(
+    *,
+    dataset: SyntheticMultiLayerRefractionDataset,
+    layers: tuple[RefractionLayerSolveResult, ...],
+) -> tuple[
+    np.ndarray,
+    np.ndarray,
+    np.ndarray,
+    np.ndarray,
+    np.ndarray,
+    np.ndarray,
+    np.ndarray,
+]:
+    modeled_pick_time_s = np.full(
+        dataset.sorted_trace_index.shape,
+        np.nan,
+        dtype=np.float64,
+    )
+    residual_s = np.full(dataset.sorted_trace_index.shape, np.nan, dtype=np.float64)
+    used_mask = np.zeros(dataset.sorted_trace_index.shape, dtype=bool)
+    rejected_mask = np.zeros(dataset.sorted_trace_index.shape, dtype=bool)
+    layer_kind = np.full(dataset.sorted_trace_index.shape, '', dtype='<U32')
+    rejection_reason = np.full(
+        dataset.sorted_trace_index.shape,
+        'outside_layer_offset_gate',
+        dtype='<U32',
+    )
+    velocity_m_s = np.full(dataset.sorted_trace_index.shape, np.nan, dtype=np.float64)
+
+    for layer_result in layers:
+        layer_used = np.asarray(layer_result.used_observation_mask_sorted, dtype=bool)
+        modeled_pick_time_s[layer_used] = layer_result.trace_predicted_time_s_sorted[
+            layer_used
+        ]
+        residual_s[layer_used] = layer_result.trace_residual_s_sorted[layer_used]
+        used_mask[layer_used] = True
+        layer_kind[layer_used] = str(layer_result.layer_kind)
+        rejection_reason[layer_used] = 'ok'
+        if layer_result.global_velocity_m_s is not None:
+            velocity_m_s[layer_used] = float(layer_result.global_velocity_m_s)
+
+    rejected_mask[:] = (~used_mask) & np.asarray(dataset.valid_mask, dtype=bool)
+    return (
+        np.ascontiguousarray(modeled_pick_time_s, dtype=np.float64),
+        np.ascontiguousarray(residual_s, dtype=np.float64),
+        np.ascontiguousarray(used_mask, dtype=bool),
+        np.ascontiguousarray(rejected_mask, dtype=bool),
+        np.asarray(layer_kind).astype('<U32', copy=True),
+        np.asarray(rejection_reason).astype('<U32', copy=True),
+        np.ascontiguousarray(velocity_m_s, dtype=np.float64),
     )
 
 

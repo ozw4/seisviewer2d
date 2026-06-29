@@ -1810,10 +1810,12 @@ def _validate_replacement_result(
         modeled_pick_time_s=_coerce_1d_float(
             _required(result, 'modeled_pick_time_s'),
             name='weathering_replacement_result.modeled_pick_time_s',
+            allow_nonfinite=True,
         ),
         residual_time_s=_coerce_1d_float(
             _required(result, 'residual_time_s'),
             name='weathering_replacement_result.residual_time_s',
+            allow_nonfinite=True,
         ),
         used_row_mask=_coerce_1d_bool(
             _required(result, 'used_row_mask'),

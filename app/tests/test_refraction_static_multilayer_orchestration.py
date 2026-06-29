@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import csv
+from dataclasses import replace
 import json
 from pathlib import Path
 
@@ -7,7 +9,13 @@ import numpy as np
 import pytest
 
 import app.statics.refraction.application.multilayer_service as multilayer_service
-from app.api.schemas import RefractionStaticModelRequest, RefractionStaticSolverRequest
+from app.api.schemas import (
+    RefractionStaticApplyOptions,
+    RefractionStaticDatumRequest,
+    RefractionStaticModelRequest,
+    RefractionStaticSolverRequest,
+)
+from app.statics.refraction.artifacts import FIRST_BREAK_RESIDUALS_CSV_NAME
 from app.statics.refraction.application.design_matrix import (
     REFRACTION_DESIGN_MATRIX_NODE_DIAGNOSTICS_CSV_NAME,
     REFRACTION_DESIGN_MATRIX_QC_JSON_NAME,
@@ -22,6 +30,7 @@ from app.statics.refraction.application.core_options import (
 )
 from app.statics.refraction.application.multilayer_service import (
     RefractionMultiLayerSolveError,
+    compute_refraction_multilayer_datum_statics_from_input_model,
     solve_refraction_multilayer_time_terms,
 )
 from app.statics.refraction.contracts.result_types import (
@@ -230,6 +239,64 @@ def test_multilayer_orchestrator_returns_enabled_layers_in_order() -> None:
     assert [layer.layer_index for layer in result.layer_results] == [1, 2, 3]
     assert result.qc['layers']['v3_t2']['layer_kind'] == 'v3_t2'
     assert result.qc['observation_gates']['vsub_t3']['max_offset_m'] is None
+
+
+def test_multilayer_artifact_rows_use_original_trace_ids_for_nonidentity_permutation(
+    tmp_path: Path,
+) -> None:
+    dataset = make_2d_straight_two_layer_refraction_dataset()
+    model = _model(
+        [
+            _layer(
+                'v2_t1',
+                min_offset_m=300.0,
+                max_offset_m=1000.0,
+                velocity_mode='fixed_global',
+                fixed_velocity_m_s=SYNTHETIC_MULTILAYER_V2_M_S,
+                min_velocity_m_s=1600.0,
+                max_velocity_m_s=3200.0,
+            ),
+            _layer(
+                'v3_t2',
+                min_offset_m=1000.0,
+                max_offset_m=None,
+                velocity_mode='fixed_global',
+                fixed_velocity_m_s=SYNTHETIC_MULTILAYER_V3_M_S,
+                min_velocity_m_s=2600.0,
+                max_velocity_m_s=5200.0,
+            ),
+        ]
+    )
+    sorted_trace_index = np.arange(dataset.sorted_trace_index.size, dtype=np.int64)
+    sorted_trace_index[:5] = np.asarray([3, 0, 4, 1, 2], dtype=np.int64)
+    input_model = replace(_input_model(dataset), sorted_trace_index=sorted_trace_index)
+
+    workflow = compute_refraction_multilayer_datum_statics_from_input_model(
+        input_model=input_model,
+        model=model,
+        solver=RefractionStaticSolverRequest(damping=0.0, robust={'enabled': False}),
+        datum=RefractionStaticDatumRequest(mode='none'),
+        apply_options=RefractionStaticApplyOptions(max_abs_shift_ms=500.0),
+        resolved_first_layer=_resolved_first_layer(),
+        job_dir=tmp_path,
+    )
+
+    result = workflow.datum_result
+    np.testing.assert_array_equal(result.sorted_trace_index[:5], [3, 0, 4, 1, 2])
+    np.testing.assert_array_equal(result.row_trace_index_sorted[:5], [3, 0, 4, 1, 2])
+    with (tmp_path / FIRST_BREAK_RESIDUALS_CSV_NAME).open(
+        encoding='utf-8',
+        newline='',
+    ) as handle:
+        rows = list(csv.DictReader(handle))
+
+    assert [int(row['sorted_trace_index']) for row in rows[:5]] == [3, 0, 4, 1, 2]
+    for sorted_position, row in enumerate(rows[:5]):
+        assert float(row['modeled_pick_time_s']) == pytest.approx(
+            result.modeled_pick_time_s[sorted_position],
+            abs=1.0e-12,
+        )
+        assert row['layer_kind'] == str(result.row_layer_kind[sorted_position])
 
 
 def test_multilayer_design_matrix_diagnostics_are_layer_disambiguated(

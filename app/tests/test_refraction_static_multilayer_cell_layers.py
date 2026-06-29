@@ -95,8 +95,6 @@ def test_vsub_t3_solve_cell_recovers_synthetic_cell_velocity() -> None:
         VSUB_CELL_VELOCITY_M_S,
         rtol=1.0e-7,
     )
-    assert layer.qc['velocity_sequence_reference_layer_kind'] == 'v3_t2'
-    assert layer.qc['velocity_sequence_reference_m_s'] == pytest.approx(V3_M_S)
 
 
 def test_layer_specific_min_observations_per_cell_is_applied_to_v3() -> None:

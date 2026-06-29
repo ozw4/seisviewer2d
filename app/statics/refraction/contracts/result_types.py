@@ -285,6 +285,14 @@ class RefractionMultiLayerSolveResult:
 
     qc: dict[str, Any]
 
+    modeled_pick_time_s_sorted: np.ndarray | None = None
+    residual_s_sorted: np.ndarray | None = None
+    used_observation_mask_sorted: np.ndarray | None = None
+    rejected_observation_mask_sorted: np.ndarray | None = None
+    layer_kind_sorted: np.ndarray | None = None
+    rejection_reason_sorted: np.ndarray | None = None
+    velocity_m_s_sorted: np.ndarray | None = None
+
 
 @dataclass(frozen=True)
 class RefractionMultiLayerStaticComponents:

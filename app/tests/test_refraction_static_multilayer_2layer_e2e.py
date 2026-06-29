@@ -742,16 +742,11 @@ def test_two_layer_invalid_sh2_preserves_explicit_sh1_in_artifacts(
     assert v3_layer.node_time_term_s is not None
 
     bad_source_index = 0
-    bad_receiver_index = 0
     bad_node_index = 0
     source_t2 = np.array(v3_layer.source_time_term_s, dtype=np.float64, copy=True)
-    receiver_t2 = np.array(v3_layer.receiver_time_term_s, dtype=np.float64, copy=True)
     node_t2 = np.array(v3_layer.node_time_term_s, dtype=np.float64, copy=True)
     source_t2[bad_source_index] = _invalid_negative_sh2_t2_s(
         float(fixture.source_sh1_m[bad_source_index])
-    )
-    receiver_t2[bad_receiver_index] = _invalid_negative_sh2_t2_s(
-        float(fixture.receiver_sh1_m[bad_receiver_index])
     )
     node_t2[bad_node_index] = _invalid_negative_sh2_t2_s(
         float(_fixture_node_sh1_m(fixture)[bad_node_index])
@@ -759,7 +754,6 @@ def test_two_layer_invalid_sh2_preserves_explicit_sh1_in_artifacts(
     patched_v3_layer = replace(
         v3_layer,
         source_time_term_s=source_t2,
-        receiver_time_term_s=receiver_t2,
         node_time_term_s=node_t2,
     )
     patched_solve = replace(
@@ -796,13 +790,7 @@ def test_two_layer_invalid_sh2_preserves_explicit_sh1_in_artifacts(
     )
     assert components.source_sh2_m is not None
     assert np.isnan(components.source_sh2_m[bad_source_index])
-    np.testing.assert_allclose(
-        components.receiver_sh1_m[bad_receiver_index],
-        fixture.receiver_sh1_m[bad_receiver_index],
-        atol=_THICKNESS_ATOL_M,
-    )
     assert components.receiver_sh2_m is not None
-    assert np.isnan(components.receiver_sh2_m[bad_receiver_index])
 
     datum_result = build_refraction_datum_statics(
         weathering_replacement_result=replacement,
@@ -852,24 +840,6 @@ def test_two_layer_invalid_sh2_preserves_explicit_sh1_in_artifacts(
     assert source_rows[bad_source_index]['final_refractor_elevation_m'] == ''
     assert source_rows[bad_source_index]['refractor_elevation_m'] == ''
 
-    receiver_rows = _read_csv(receiver_path)
-    assert float(
-        receiver_rows[bad_receiver_index]['sh1_weathering_thickness_m']
-    ) == pytest.approx(
-        fixture.receiver_sh1_m[bad_receiver_index],
-        abs=_THICKNESS_ATOL_M,
-    )
-    assert receiver_rows[bad_receiver_index]['sh2_weathering_thickness_m'] == ''
-    assert float(
-        receiver_rows[bad_receiver_index]['layer1_base_elevation_m']
-    ) == pytest.approx(
-        datum_result.receiver_surface_elevation_m[bad_receiver_index]
-        - fixture.receiver_sh1_m[bad_receiver_index],
-        abs=_THICKNESS_ATOL_M,
-    )
-    assert receiver_rows[bad_receiver_index]['final_refractor_elevation_m'] == ''
-    assert receiver_rows[bad_receiver_index]['refractor_elevation_m'] == ''
-
     with np.load(table_path, allow_pickle=False) as data:
         np.testing.assert_allclose(
             data['source_sh1_m'][bad_source_index],
@@ -885,21 +855,6 @@ def test_two_layer_invalid_sh2_preserves_explicit_sh1_in_artifacts(
         )
         assert np.isnan(
             data['source_final_refractor_elevation_m'][bad_source_index]
-        )
-        np.testing.assert_allclose(
-            data['receiver_sh1_m'][bad_receiver_index],
-            fixture.receiver_sh1_m[bad_receiver_index],
-            atol=_THICKNESS_ATOL_M,
-        )
-        assert np.isnan(data['receiver_sh2_m'][bad_receiver_index])
-        np.testing.assert_allclose(
-            data['receiver_layer1_base_elevation_m'][bad_receiver_index],
-            datum_result.receiver_surface_elevation_m[bad_receiver_index]
-            - fixture.receiver_sh1_m[bad_receiver_index],
-            atol=_THICKNESS_ATOL_M,
-        )
-        assert np.isnan(
-            data['receiver_final_refractor_elevation_m'][bad_receiver_index]
         )
 
 

@@ -25,10 +25,6 @@ from seis_statics.refraction.multilayer_solver import (
 from seis_statics.refraction.multilayer_solver import (
     solve_refraction_multilayer_time_terms as core_solve_refraction_multilayer_time_terms,
 )
-from seis_statics.refraction.t1lsst import (
-    compute_t1lsst_2layer_thicknesses_with_status,
-    compute_t1lsst_3layer_thicknesses_with_status,
-)
 from app.statics.refraction.contracts.options import (
     RefractionStaticApplyOptions,
     RefractionStaticConversionRequest,
@@ -81,7 +77,6 @@ from app.statics.refraction.application.design_matrix import (
 )
 from app.statics.refraction.contracts.result_types import (
     RefractionDatumStaticsResult,
-    RefractionHalfInterceptTimeResult,
     RefractionLayerKind,
     RefractionLayerSolveResult,
     RefractionMultiLayerStaticComponents,
@@ -95,10 +90,6 @@ _LAYER_INDEX_BY_KIND: dict[RefractionLayerKind, int] = {
     'v2_t1': 1,
     'v3_t2': 2,
     'vsub_t3': 3,
-}
-_VELOCITY_SEQUENCE_REFERENCE_BY_KIND: dict[RefractionLayerKind, RefractionLayerKind] = {
-    'v3_t2': 'v2_t1',
-    'vsub_t3': 'v3_t2',
 }
 _STATUS_DTYPE = '<U32'
 _SIGN_CONVENTION_TEXT = 'corrected(t) = raw(t - shift_s)'
@@ -244,11 +235,6 @@ def _app_solve_result_from_core(
             receiver_node_id=receiver_node_id,
             core_layer=core_layer,
         )
-        layer_result = _validate_layer_velocity_sequence(
-            result=layer_result,
-            previous_results=tuple(layer_results),
-            normalized_layers=normalized_layers,
-        )
         layer_results.append(layer_result)
 
     enabled_kinds = tuple(config.kind for config in normalized_layers)
@@ -270,6 +256,41 @@ def _app_solve_result_from_core(
             'observation_gates': observation_gates,
             'layers': layer_qc,
         },
+        modeled_pick_time_s_sorted=_core_sorted_float_array(
+            core_result.modeled_pick_time_s_sorted,
+            n_traces=input_model.n_traces,
+            name='modeled_pick_time_s_sorted',
+        ),
+        residual_s_sorted=_core_sorted_float_array(
+            core_result.residual_s_sorted,
+            n_traces=input_model.n_traces,
+            name='residual_s_sorted',
+        ),
+        used_observation_mask_sorted=_core_sorted_bool_array(
+            core_result.used_observation_mask_sorted,
+            n_traces=input_model.n_traces,
+            name='used_observation_mask_sorted',
+        ),
+        rejected_observation_mask_sorted=_core_sorted_bool_array(
+            core_result.rejected_observation_mask_sorted,
+            n_traces=input_model.n_traces,
+            name='rejected_observation_mask_sorted',
+        ),
+        layer_kind_sorted=_core_sorted_string_array(
+            core_result.layer_kind_sorted,
+            n_traces=input_model.n_traces,
+            name='layer_kind_sorted',
+        ),
+        rejection_reason_sorted=_core_sorted_string_array(
+            core_result.rejection_reason_sorted,
+            n_traces=input_model.n_traces,
+            name='rejection_reason_sorted',
+        ),
+        velocity_m_s_sorted=_core_sorted_float_array(
+            core_result.velocity_m_s_sorted,
+            n_traces=input_model.n_traces,
+            name='velocity_m_s_sorted',
+        ),
     )
 
 
@@ -483,13 +504,6 @@ def build_refraction_multilayer_weathering_replacement_statics(
         receiver=receiver,
         v1_m_s=v1_m_s,
     )
-    if v2.node_v2_status is None:
-        _validate_global_multilayer_velocity_order(
-            v1_m_s=v1_m_s,
-            v2_m_s=v2.node_v2_m_s,
-            v3_m_s=v3_m_s,
-            vsub_m_s=vsub_m_s,
-        )
     node_t1 = _layer_node_terms(v2_layer, shape=node_id.shape, name='v2_t1')
     source_t1 = _endpoint_terms(v2_layer.source_time_term_s, source, name='source_t1')
     source_t2 = _endpoint_terms(v3_layer.source_time_term_s, source, name='source_t2')
@@ -516,22 +530,17 @@ def build_refraction_multilayer_weathering_replacement_statics(
             receiver,
             name='receiver_t3',
         )
-    source_conversion = _core_multilayer_endpoint_conversion_from_app_result(
+    trace_conversion = _core_multilayer_conversion_from_app_result(
         input_model=input_model,
         model=model,
         solve_result=solve_result,
         resolved_first_layer=resolved_first_layer,
         layer_count=layer_count,
-        endpoint='source',
+        core_input_model=core_input_model_from_app(input_model),
+        trace_domain=True,
     )
-    receiver_conversion = _core_multilayer_endpoint_conversion_from_app_result(
-        input_model=input_model,
-        model=model,
-        solve_result=solve_result,
-        resolved_first_layer=resolved_first_layer,
-        layer_count=layer_count,
-        endpoint='receiver',
-    )
+    source_conversion = trace_conversion.source_endpoint
+    receiver_conversion = trace_conversion.receiver_endpoint
     node_conversion = _core_multilayer_node_conversion_from_app_result(
         input_model=input_model,
         model=model,
@@ -644,67 +653,82 @@ def build_refraction_multilayer_weathering_replacement_statics(
         receiver_sh2_sorted,
         receiver_sh3_sorted,
     )
-    source_wcor_sorted = _map_endpoint_values_to_trace_order(
-        endpoint_key_sorted=input_model.source_endpoint_key_sorted,
-        endpoint_key=source.endpoint_key,
-        endpoint_values=source_conversion.weathering_replacement_shift_s,
-        name='source_wcor_s_sorted',
+    source_wcor_sorted = _core_sorted_float_array(
+        trace_conversion.source_weathering_replacement_shift_s_sorted,
+        n_traces=input_model.n_traces,
+        name='source_weathering_replacement_shift_s_sorted',
     )
-    receiver_wcor_sorted = _map_endpoint_values_to_trace_order(
-        endpoint_key_sorted=input_model.receiver_endpoint_key_sorted,
-        endpoint_key=receiver.endpoint_key,
-        endpoint_values=receiver_conversion.weathering_replacement_shift_s,
-        name='receiver_wcor_s_sorted',
+    receiver_wcor_sorted = _core_sorted_float_array(
+        trace_conversion.receiver_weathering_replacement_shift_s_sorted,
+        n_traces=input_model.n_traces,
+        name='receiver_weathering_replacement_shift_s_sorted',
     )
-    source_status_sorted = _map_endpoint_strings_to_trace_order(
-        endpoint_key_sorted=input_model.source_endpoint_key_sorted,
-        endpoint_key=source.endpoint_key,
-        endpoint_values=source_static_status,
+    source_status_sorted = _core_sorted_string_array(
+        trace_conversion.source_static_status_sorted,
+        n_traces=input_model.n_traces,
         name='source_static_status_sorted',
     )
-    receiver_status_sorted = _map_endpoint_strings_to_trace_order(
-        endpoint_key_sorted=input_model.receiver_endpoint_key_sorted,
-        endpoint_key=receiver.endpoint_key,
-        endpoint_values=receiver_static_status,
-        name='receiver_static_status_sorted',
-    )
-    trace_shift = _combine_trace_shifts(source_wcor_sorted, receiver_wcor_sorted)
-    trace_status = _trace_static_status(
-        source_status=source_status_sorted,
-        receiver_status=receiver_status_sorted,
-        trace_shift_s=trace_shift,
+    source_status_sorted = _status_from_conversion(
+        source_status_sorted,
+        source_wcor_sorted,
         max_abs_shift_ms=max_abs_shift_ms,
     )
-    trace_valid = (trace_status == 'ok') & np.isfinite(trace_shift)
-    modeled = _combined_modeled_pick_time(solve_result, input_model.n_traces)
-    residual = np.ascontiguousarray(
-        input_model.pick_time_s_sorted - modeled,
-        dtype=np.float64,
-    )
-    used = _combined_used_mask(solve_result, input_model.n_traces)
-    row_layer_kind, row_layer_index = _combined_layer_identity(
-        solve_result,
-        input_model.n_traces,
-    )
-    layer_rejection_reason = _combined_layer_rejection_reason(
-        solve_result,
-        input_model.n_traces,
-    )
-    row_rejection_reason = _combined_rejection_reason(
-        input_model=input_model,
-        layer_kind=row_layer_kind,
-        layer_rejection_reason=layer_rejection_reason,
-        used_mask=used,
-        rejected_by_robust_mask=_combined_rejected_by_robust_mask(
-            solve_result,
-            input_model.n_traces,
-        ),
-    )
-    row_velocity_m_s = _combined_row_velocity_m_s(
-        solve_result,
-        layer_kind=row_layer_kind,
-        v2_row_velocity_m_s=v2.row_velocity_m_s,
+    receiver_status_sorted = _core_sorted_string_array(
+        trace_conversion.receiver_static_status_sorted,
         n_traces=input_model.n_traces,
+        name='receiver_static_status_sorted',
+    )
+    receiver_status_sorted = _status_from_conversion(
+        receiver_status_sorted,
+        receiver_wcor_sorted,
+        max_abs_shift_ms=max_abs_shift_ms,
+    )
+    trace_shift = _core_sorted_float_array(
+        trace_conversion.weathering_replacement_trace_shift_s_sorted,
+        n_traces=input_model.n_traces,
+        name='weathering_replacement_trace_shift_s_sorted',
+    )
+    trace_status = _core_sorted_string_array(
+        trace_conversion.trace_static_status_sorted,
+        n_traces=input_model.n_traces,
+        name='trace_static_status_sorted',
+    )
+    trace_status = _status_from_conversion(
+        trace_status,
+        trace_shift,
+        max_abs_shift_ms=max_abs_shift_ms,
+    )
+    trace_valid = _core_sorted_bool_array(
+        trace_conversion.trace_static_valid_mask_sorted,
+        n_traces=input_model.n_traces,
+        name='trace_static_valid_mask_sorted',
+    )
+    modeled = _required_multilayer_sorted_float_array(
+        solve_result,
+        'modeled_pick_time_s_sorted',
+    )
+    residual = _required_multilayer_sorted_float_array(
+        solve_result,
+        'residual_s_sorted',
+    )
+    used = _required_multilayer_sorted_bool_array(
+        solve_result,
+        'used_observation_mask_sorted',
+    )
+    row_layer_kind = _required_multilayer_sorted_string_array(
+        solve_result,
+        'layer_kind_sorted',
+    )
+    row_layer_index = _layer_index_sorted_from_kind(row_layer_kind)
+    row_rejection_reason = _artifact_rejection_reason_from_core(
+        _required_multilayer_sorted_string_array(
+            solve_result,
+            'rejection_reason_sorted',
+        )
+    )
+    row_velocity_m_s = _required_multilayer_sorted_float_array(
+        solve_result,
+        'velocity_m_s_sorted',
     )
     node_residual_rms, node_residual_mad = _node_residual_stats(
         input_model=input_model,
@@ -752,9 +776,8 @@ def build_refraction_multilayer_weathering_replacement_statics(
         if vsub_layer is None
         else np.full(receiver.endpoint_key.shape, replacement_velocity_m_s, dtype=np.float64)
     )
-    rejected_by_robust = _combined_rejected_by_robust_mask(
-        solve_result,
-        input_model.n_traces,
+    rejected_by_robust = _robust_rejection_mask_from_reason(
+        row_rejection_reason,
     )
     return RefractionWeatheringReplacementStaticsResult(
         bedrock_velocity_mode=replacement_velocity_mode,
@@ -974,36 +997,33 @@ class _V2StaticModel:
     row_velocity_m_s: np.ndarray | None = None
 
 
-def _core_multilayer_endpoint_conversion_from_app_result(
+def _core_multilayer_conversion_from_app_result(
     *,
     input_model: RefractionStaticInputModel,
     model: RefractionStaticModelRequest,
     solve_result: RefractionMultiLayerSolveResult,
     resolved_first_layer: ResolvedRefractionFirstLayer,
     layer_count: int,
-    endpoint: str,
+    core_input_model: Any,
+    trace_domain: bool,
 ) -> Any:
     try:
-        conversion = core_build_refraction_multilayer_conversion(
-            input_model=core_input_model_from_app(input_model),
+        return core_build_refraction_multilayer_conversion(
+            input_model=core_input_model,
             model=model_options_from_request(model),
             solve_result=_core_multilayer_solve_result_from_app(
                 input_model=input_model,
                 model=model,
                 solve_result=solve_result,
                 resolved_first_layer=resolved_first_layer,
-                endpoint_terms=endpoint,
+                endpoint_terms='node',
+                trace_domain=trace_domain,
             ),
             resolved_first_layer=resolved_first_layer,
             layer_count=layer_count,
         )
     except CoreRefractionMultilayerConversionError as exc:
         raise RefractionMultiLayerSolveError(str(exc)) from exc
-    if endpoint == 'source':
-        return conversion.source_endpoint
-    if endpoint == 'receiver':
-        return conversion.receiver_endpoint
-    raise RefractionMultiLayerSolveError(f'unsupported endpoint conversion: {endpoint}')
 
 
 def _core_multilayer_node_conversion_from_app_result(
@@ -1014,22 +1034,15 @@ def _core_multilayer_node_conversion_from_app_result(
     resolved_first_layer: ResolvedRefractionFirstLayer,
     layer_count: int,
 ) -> Any:
-    try:
-        conversion = core_build_refraction_multilayer_conversion(
-            input_model=_core_node_input_model_from_app(input_model),
-            model=model_options_from_request(model),
-            solve_result=_core_multilayer_solve_result_from_app(
-                input_model=input_model,
-                model=model,
-                solve_result=solve_result,
-                resolved_first_layer=resolved_first_layer,
-                endpoint_terms='node',
-            ),
-            resolved_first_layer=resolved_first_layer,
-            layer_count=layer_count,
-        )
-    except CoreRefractionMultilayerConversionError as exc:
-        raise RefractionMultiLayerSolveError(str(exc)) from exc
+    conversion = _core_multilayer_conversion_from_app_result(
+        input_model=input_model,
+        model=model,
+        solve_result=solve_result,
+        resolved_first_layer=resolved_first_layer,
+        layer_count=layer_count,
+        core_input_model=_core_node_input_model_from_app(input_model),
+        trace_domain=False,
+    )
     return conversion.source_endpoint
 
 
@@ -1083,8 +1096,9 @@ def _core_multilayer_solve_result_from_app(
     solve_result: RefractionMultiLayerSolveResult,
     resolved_first_layer: ResolvedRefractionFirstLayer,
     endpoint_terms: str,
+    trace_domain: bool = False,
 ) -> CoreRefractionMultilayerTimeTermSolveResult:
-    node_domain = endpoint_terms == 'node'
+    node_domain = endpoint_terms == 'node' and not trace_domain
     trace_count = (
         int(_input_node_id(input_model).shape[0])
         if node_domain
@@ -1098,6 +1112,7 @@ def _core_multilayer_solve_result_from_app(
             resolved_first_layer=resolved_first_layer,
             endpoint_terms=endpoint_terms,
             trace_count=trace_count,
+            trace_domain=trace_domain,
         )
         for layer in solve_result.layer_results
     )
@@ -1109,35 +1124,40 @@ def _core_multilayer_solve_result_from_app(
         rejected_mask = np.zeros(trace_count, dtype=bool)
         layer_kind = np.full(trace_count, '', dtype=_STATUS_DTYPE)
         rejection_reason = np.full(trace_count, '', dtype=_STATUS_DTYPE)
+        velocity_m_s = np.full(trace_count, np.nan, dtype=np.float64)
         layer_masks = _core_node_layer_observation_masks_from_app(
             input_model=input_model,
             trace_count=trace_count,
         )
     else:
-        modeled_pick_time_s = _combined_modeled_pick_time(
+        modeled_pick_time_s = _required_multilayer_sorted_float_array(
             solve_result,
-            input_model.n_traces,
+            'modeled_pick_time_s_sorted',
         )
-        residual_s = np.ascontiguousarray(
-            input_model.pick_time_s_sorted - modeled_pick_time_s,
-            dtype=np.float64,
+        residual_s = _required_multilayer_sorted_float_array(
+            solve_result,
+            'residual_s_sorted',
         )
         residual_ms = np.ascontiguousarray(residual_s * 1000.0, dtype=np.float64)
-        used_mask = _combined_used_mask(solve_result, input_model.n_traces)
-        rejected_mask = ~used_mask
-        layer_kind = _combined_layer_identity(solve_result, input_model.n_traces)[0]
-        rejection_reason = _combined_rejection_reason(
-            input_model=input_model,
-            layer_kind=layer_kind,
-            layer_rejection_reason=_combined_layer_rejection_reason(
-                solve_result,
-                input_model.n_traces,
-            ),
-            used_mask=used_mask,
-            rejected_by_robust_mask=_combined_rejected_by_robust_mask(
-                solve_result,
-                input_model.n_traces,
-            ),
+        used_mask = _required_multilayer_sorted_bool_array(
+            solve_result,
+            'used_observation_mask_sorted',
+        )
+        rejected_mask = _required_multilayer_sorted_bool_array(
+            solve_result,
+            'rejected_observation_mask_sorted',
+        )
+        layer_kind = _required_multilayer_sorted_string_array(
+            solve_result,
+            'layer_kind_sorted',
+        )
+        rejection_reason = _required_multilayer_sorted_string_array(
+            solve_result,
+            'rejection_reason_sorted',
+        )
+        velocity_m_s = _required_multilayer_sorted_float_array(
+            solve_result,
+            'velocity_m_s_sorted',
         )
         layer_masks = input_model.layer_observation_masks
     return CoreRefractionMultilayerTimeTermSolveResult(
@@ -1160,9 +1180,7 @@ def _core_multilayer_solve_result_from_app(
             _STATUS_DTYPE,
             copy=True,
         ),
-        velocity_m_s_sorted=np.ascontiguousarray(
-            np.full(trace_count, np.nan, dtype=np.float64)
-        ),
+        velocity_m_s_sorted=np.ascontiguousarray(velocity_m_s, dtype=np.float64),
         qc=dict(solve_result.qc),
     )
 
@@ -1205,6 +1223,7 @@ def _core_layer_result_from_app(
     resolved_first_layer: ResolvedRefractionFirstLayer,
     endpoint_terms: str,
     trace_count: int,
+    trace_domain: bool,
 ) -> CoreRefractionMultilayerTimeTermLayerResult:
     node_id = _input_node_id(input_model)
     cell_id = (
@@ -1251,6 +1270,15 @@ def _core_layer_result_from_app(
         cell_bedrock_slowness_s_per_m=cell_slowness,
         cell_velocity_status=cell_status,
     )
+    velocity_m_s_sorted = _core_layer_velocity_for_conversion(
+        input_model=input_model,
+        model=model,
+        layer=layer,
+        resolved_first_layer=resolved_first_layer,
+        trace_count=trace_count,
+        endpoint_terms=endpoint_terms,
+        trace_domain=trace_domain,
+    )
     return CoreRefractionMultilayerTimeTermLayerResult(
         layer_kind=layer.layer_kind,
         layer_index=layer.layer_index,
@@ -1261,18 +1289,7 @@ def _core_layer_result_from_app(
             velocity_mode=layer.velocity_mode,
         ),
         solve_result=core_solve,
-        velocity_m_s_sorted=(
-            np.full(trace_count, layer.global_velocity_m_s, dtype=np.float64)
-            if layer.global_velocity_m_s is not None
-            else _core_layer_row_velocity_from_app(
-                input_model=input_model,
-                model=model,
-                layer=layer,
-                resolved_first_layer=resolved_first_layer,
-                trace_count=trace_count,
-                endpoint_terms=endpoint_terms,
-            )
-        ),
+        velocity_m_s_sorted=velocity_m_s_sorted,
         rejection_reason_sorted=(
             np.full(trace_count, '', dtype=_STATUS_DTYPE)
             if layer.rejection_reason_sorted is None
@@ -1283,6 +1300,34 @@ def _core_layer_result_from_app(
             )
         ),
         velocity_order_valid_mask_sorted=np.ones(trace_count, dtype=bool),
+    )
+
+
+def _core_layer_velocity_for_conversion(
+    *,
+    input_model: RefractionStaticInputModel,
+    model: RefractionStaticModelRequest,
+    layer: RefractionLayerSolveResult,
+    resolved_first_layer: ResolvedRefractionFirstLayer,
+    trace_count: int,
+    endpoint_terms: str,
+    trace_domain: bool,
+) -> np.ndarray:
+    if layer.global_velocity_m_s is not None:
+        return np.full(trace_count, layer.global_velocity_m_s, dtype=np.float64)
+    if trace_domain:
+        return _core_velocity_array_for_trace_count(
+            layer.row_midpoint_velocity_m_s,
+            trace_count=trace_count,
+            name=f'{layer.layer_kind}.row_midpoint_velocity_m_s',
+        )
+    return _core_layer_row_velocity_from_app(
+        input_model=input_model,
+        model=model,
+        layer=layer,
+        resolved_first_layer=resolved_first_layer,
+        trace_count=trace_count,
+        endpoint_terms=endpoint_terms,
     )
 
 
@@ -1565,6 +1610,90 @@ def _required_result_array(value: object, *, name: str) -> np.ndarray:
     return np.ascontiguousarray(arr, dtype=np.float64)
 
 
+def _core_sorted_float_array(
+    value: object,
+    *,
+    n_traces: int,
+    name: str,
+) -> np.ndarray:
+    arr = np.asarray(value, dtype=np.float64)
+    if arr.shape != (int(n_traces),):
+        raise RefractionMultiLayerSolveError(f'core {name} shape mismatch')
+    return np.ascontiguousarray(arr, dtype=np.float64)
+
+
+def _core_sorted_bool_array(
+    value: object,
+    *,
+    n_traces: int,
+    name: str,
+) -> np.ndarray:
+    arr = np.asarray(value, dtype=bool)
+    if arr.shape != (int(n_traces),):
+        raise RefractionMultiLayerSolveError(f'core {name} shape mismatch')
+    return np.ascontiguousarray(arr, dtype=bool)
+
+
+def _core_sorted_string_array(
+    value: object,
+    *,
+    n_traces: int,
+    name: str,
+) -> np.ndarray:
+    arr = np.asarray(value).astype(_STATUS_DTYPE, copy=True)
+    if arr.shape != (int(n_traces),):
+        raise RefractionMultiLayerSolveError(f'core {name} shape mismatch')
+    return np.ascontiguousarray(arr, dtype=_STATUS_DTYPE)
+
+
+def _required_multilayer_sorted_float_array(
+    solve_result: RefractionMultiLayerSolveResult,
+    field_name: str,
+) -> np.ndarray:
+    value = getattr(solve_result, field_name)
+    if value is None:
+        raise RefractionMultiLayerSolveError(f'{field_name} is required')
+    return _core_sorted_float_array(
+        value,
+        n_traces=_solve_result_trace_count(solve_result),
+        name=field_name,
+    )
+
+
+def _required_multilayer_sorted_bool_array(
+    solve_result: RefractionMultiLayerSolveResult,
+    field_name: str,
+) -> np.ndarray:
+    value = getattr(solve_result, field_name)
+    if value is None:
+        raise RefractionMultiLayerSolveError(f'{field_name} is required')
+    return _core_sorted_bool_array(
+        value,
+        n_traces=_solve_result_trace_count(solve_result),
+        name=field_name,
+    )
+
+
+def _required_multilayer_sorted_string_array(
+    solve_result: RefractionMultiLayerSolveResult,
+    field_name: str,
+) -> np.ndarray:
+    value = getattr(solve_result, field_name)
+    if value is None:
+        raise RefractionMultiLayerSolveError(f'{field_name} is required')
+    return _core_sorted_string_array(
+        value,
+        n_traces=_solve_result_trace_count(solve_result),
+        name=field_name,
+    )
+
+
+def _solve_result_trace_count(solve_result: RefractionMultiLayerSolveResult) -> int:
+    for layer in solve_result.layer_results:
+        return int(np.asarray(layer.used_observation_mask_sorted).shape[0])
+    raise RefractionMultiLayerSolveError('at least one layer result is required')
+
+
 def _required_layer_result(
     result: RefractionMultiLayerSolveResult,
     layer_kind: RefractionLayerKind,
@@ -1583,36 +1712,6 @@ def _required_global_velocity(layer: RefractionLayerSolveResult) -> float:
     return _positive_float(
         layer.global_velocity_m_s,
         name=f'{layer.layer_kind}.global_velocity_m_s',
-    )
-
-
-def _validate_global_multilayer_velocity_order(
-    *,
-    v1_m_s: float,
-    v2_m_s: np.ndarray,
-    v3_m_s: float,
-    vsub_m_s: float | None,
-) -> None:
-    zeros = np.zeros(np.asarray(v2_m_s, dtype=np.float64).shape, dtype=np.float64)
-    if vsub_m_s is None:
-        compute_t1lsst_2layer_thicknesses_with_status(
-            t1_s=zeros,
-            t2_s=zeros,
-            v1_m_s=v1_m_s,
-            v2_m_s=v2_m_s,
-            v3_m_s=v3_m_s,
-            strict_velocity_order=True,
-        )
-        return
-    compute_t1lsst_3layer_thicknesses_with_status(
-        t1_s=zeros,
-        t2_s=zeros,
-        t3_s=zeros,
-        v1_m_s=v1_m_s,
-        v2_m_s=v2_m_s,
-        v3_m_s=v3_m_s,
-        vsub_m_s=vsub_m_s,
-        strict_velocity_order=True,
     )
 
 
@@ -2154,6 +2253,28 @@ def _status_from_conversion(
     return status
 
 
+def _layer_index_sorted_from_kind(layer_kind_sorted: np.ndarray) -> np.ndarray:
+    kinds = np.asarray(layer_kind_sorted).astype(str, copy=False)
+    out = np.zeros(kinds.shape, dtype=np.int64)
+    for kind, layer_index in _LAYER_INDEX_BY_KIND.items():
+        out[kinds == kind] = int(layer_index)
+    return np.ascontiguousarray(out, dtype=np.int64)
+
+
+def _artifact_rejection_reason_from_core(rejection_reason_sorted: np.ndarray) -> np.ndarray:
+    reason = np.asarray(rejection_reason_sorted).astype(_STATUS_DTYPE, copy=True)
+    reason[reason.astype(str, copy=False) == 'robust_rejected'] = 'robust_outlier'
+    return np.ascontiguousarray(reason, dtype=_STATUS_DTYPE)
+
+
+def _robust_rejection_mask_from_reason(rejection_reason_sorted: np.ndarray) -> np.ndarray:
+    reason = np.asarray(rejection_reason_sorted).astype(str, copy=False)
+    return np.ascontiguousarray(
+        (reason == 'robust_rejected') | (reason == 'robust_outlier'),
+        dtype=bool,
+    )
+
+
 def _multilayer_layer_qc(
     *,
     layer_results: tuple[RefractionLayerSolveResult, ...],
@@ -2182,209 +2303,6 @@ def _multilayer_layer_qc(
             section['observation_gate_rejection_counts'] = dict(rejection_counts)
         payload[layer.layer_kind] = section
     return payload
-
-
-def _trace_static_status(
-    *,
-    source_status: np.ndarray,
-    receiver_status: np.ndarray,
-    trace_shift_s: np.ndarray,
-    max_abs_shift_ms: float | None,
-) -> np.ndarray:
-    status = np.full(trace_shift_s.shape, 'ok', dtype=_STATUS_DTYPE)
-    source_not_ok = np.asarray(source_status).astype(str, copy=False) != 'ok'
-    receiver_not_ok = np.asarray(receiver_status).astype(str, copy=False) != 'ok'
-    status[source_not_ok] = np.asarray(source_status).astype(str, copy=False)[
-        source_not_ok
-    ]
-    status[receiver_not_ok] = np.asarray(receiver_status).astype(str, copy=False)[
-        receiver_not_ok
-    ]
-    status[(status == 'ok') & (~np.isfinite(trace_shift_s))] = 'invalid_shift'
-    if max_abs_shift_ms is not None:
-        too_large = (
-            (status == 'ok')
-            & np.isfinite(trace_shift_s)
-            & (np.abs(trace_shift_s) * 1000.0 > max_abs_shift_ms)
-        )
-        status[too_large] = 'exceeds_max_abs_shift'
-    return status
-
-
-def _combine_trace_shifts(source_shift_s: np.ndarray, receiver_shift_s: np.ndarray) -> np.ndarray:
-    source = np.asarray(source_shift_s, dtype=np.float64)
-    receiver = np.asarray(receiver_shift_s, dtype=np.float64)
-    if source.shape != receiver.shape:
-        raise RefractionMultiLayerSolveError('trace shift endpoint shape mismatch')
-    out = np.full(source.shape, np.nan, dtype=np.float64)
-    finite = np.isfinite(source) & np.isfinite(receiver)
-    out[finite] = source[finite] + receiver[finite]
-    return np.ascontiguousarray(out, dtype=np.float64)
-
-
-def _combined_modeled_pick_time(
-    solve_result: RefractionMultiLayerSolveResult,
-    n_traces: int,
-) -> np.ndarray:
-    modeled = np.full(int(n_traces), np.nan, dtype=np.float64)
-    for layer in solve_result.layer_results:
-        mask = _layer_trace_membership_mask(layer, n_traces)
-        if mask.shape != modeled.shape:
-            raise RefractionMultiLayerSolveError(
-                f'{layer.layer_kind} membership mask shape mismatch'
-            )
-        modeled[mask] = np.asarray(
-            layer.trace_predicted_time_s_sorted,
-            dtype=np.float64,
-        )[mask]
-    return np.ascontiguousarray(modeled, dtype=np.float64)
-
-
-def _combined_used_mask(
-    solve_result: RefractionMultiLayerSolveResult,
-    n_traces: int,
-) -> np.ndarray:
-    used = np.zeros(int(n_traces), dtype=bool)
-    for layer in solve_result.layer_results:
-        mask = np.asarray(layer.used_observation_mask_sorted, dtype=bool)
-        if mask.shape != used.shape:
-            raise RefractionMultiLayerSolveError(
-                f'{layer.layer_kind} used mask shape mismatch'
-            )
-        used |= mask
-    return np.ascontiguousarray(used, dtype=bool)
-
-
-def _combined_rejected_by_robust_mask(
-    solve_result: RefractionMultiLayerSolveResult,
-    n_traces: int,
-) -> np.ndarray:
-    rejected = np.zeros(int(n_traces), dtype=bool)
-    for layer in solve_result.layer_results:
-        mask = layer.rejected_by_robust_mask_sorted
-        if mask is None:
-            continue
-        layer_rejected = np.asarray(mask, dtype=bool)
-        if layer_rejected.shape != rejected.shape:
-            raise RefractionMultiLayerSolveError(
-                f'{layer.layer_kind} robust rejection mask shape mismatch'
-            )
-        rejected |= layer_rejected
-    return np.ascontiguousarray(rejected, dtype=bool)
-
-
-def _combined_layer_identity(
-    solve_result: RefractionMultiLayerSolveResult,
-    n_traces: int,
-) -> tuple[np.ndarray, np.ndarray]:
-    layer_kind = np.full(int(n_traces), '', dtype='<U16')
-    layer_index = np.zeros(int(n_traces), dtype=np.int64)
-    for layer in solve_result.layer_results:
-        mask = _layer_trace_membership_mask(layer, n_traces)
-        layer_kind[mask] = layer.layer_kind
-        layer_index[mask] = int(layer.layer_index)
-    return (
-        np.ascontiguousarray(layer_kind, dtype='<U16'),
-        np.ascontiguousarray(layer_index, dtype=np.int64),
-    )
-
-
-def _combined_rejection_reason(
-    *,
-    input_model: RefractionStaticInputModel,
-    layer_kind: np.ndarray,
-    layer_rejection_reason: np.ndarray,
-    used_mask: np.ndarray,
-    rejected_by_robust_mask: np.ndarray,
-) -> np.ndarray:
-    reason = np.full(int(input_model.n_traces), 'not_used', dtype=_STATUS_DTYPE)
-    base_reason = np.asarray(input_model.rejection_reason_sorted).astype(
-        _STATUS_DTYPE,
-        copy=False,
-    )
-    valid = np.asarray(input_model.valid_observation_mask_sorted, dtype=bool)
-    layer_assigned = np.asarray(layer_kind).astype(str, copy=False) != ''
-    layer_reason = np.asarray(layer_rejection_reason).astype(str, copy=False)
-    if layer_reason.shape != reason.shape:
-        raise RefractionMultiLayerSolveError('layer rejection-reason shape mismatch')
-    reason[~valid] = base_reason[~valid]
-    has_layer_reason = layer_assigned & (layer_reason != '')
-    reason[has_layer_reason] = layer_reason[has_layer_reason]
-    reason[valid & ~layer_assigned] = 'outside_layer_offset_gate'
-    reason[np.asarray(used_mask, dtype=bool)] = 'ok'
-    reason[np.asarray(rejected_by_robust_mask, dtype=bool)] = 'robust_outlier'
-    return np.ascontiguousarray(reason, dtype=_STATUS_DTYPE)
-
-
-def _combined_row_velocity_m_s(
-    solve_result: RefractionMultiLayerSolveResult,
-    *,
-    layer_kind: np.ndarray,
-    v2_row_velocity_m_s: np.ndarray | None,
-    n_traces: int,
-) -> np.ndarray:
-    row_velocity = np.full(int(n_traces), np.nan, dtype=np.float64)
-    layer_kind_str = np.asarray(layer_kind).astype(str, copy=False)
-    for layer in solve_result.layer_results:
-        mask = layer_kind_str == layer.layer_kind
-        if not np.any(mask):
-            continue
-        if layer.layer_kind == 'v2_t1' and v2_row_velocity_m_s is not None:
-            v2_velocity = np.asarray(v2_row_velocity_m_s, dtype=np.float64)
-            if v2_velocity.shape != row_velocity.shape:
-                raise RefractionMultiLayerSolveError(
-                    'v2 row velocity shape mismatch'
-                )
-            row_velocity[mask] = v2_velocity[mask]
-        elif layer.global_velocity_m_s is not None:
-            row_velocity[mask] = float(layer.global_velocity_m_s)
-    return np.ascontiguousarray(row_velocity, dtype=np.float64)
-
-
-def _layer_trace_membership_mask(
-    layer: RefractionLayerSolveResult,
-    n_traces: int,
-) -> np.ndarray:
-    candidate = layer.candidate_observation_mask_sorted
-    if candidate is not None:
-        candidate_mask = np.asarray(candidate, dtype=bool)
-        if candidate_mask.shape != (int(n_traces),):
-            raise RefractionMultiLayerSolveError(
-                f'{layer.layer_kind} candidate mask shape mismatch'
-            )
-        return np.ascontiguousarray(candidate_mask, dtype=bool)
-    used = np.asarray(layer.used_observation_mask_sorted, dtype=bool)
-    if used.shape != (int(n_traces),):
-        raise RefractionMultiLayerSolveError(
-            f'{layer.layer_kind} used mask shape mismatch'
-        )
-    rejected = np.zeros(int(n_traces), dtype=bool)
-    if layer.rejected_by_robust_mask_sorted is not None:
-        rejected = np.asarray(layer.rejected_by_robust_mask_sorted, dtype=bool)
-        if rejected.shape != used.shape:
-            raise RefractionMultiLayerSolveError(
-                f'{layer.layer_kind} robust rejection mask shape mismatch'
-            )
-    return np.ascontiguousarray(used | rejected, dtype=bool)
-
-
-def _combined_layer_rejection_reason(
-    solve_result: RefractionMultiLayerSolveResult,
-    n_traces: int,
-) -> np.ndarray:
-    reason = np.full(int(n_traces), '', dtype=_STATUS_DTYPE)
-    for layer in solve_result.layer_results:
-        mask = _layer_trace_membership_mask(layer, n_traces)
-        raw_reason = layer.rejection_reason_sorted
-        if raw_reason is None:
-            continue
-        layer_reason = np.asarray(raw_reason).astype(_STATUS_DTYPE, copy=False)
-        if layer_reason.shape != reason.shape:
-            raise RefractionMultiLayerSolveError(
-                f'{layer.layer_kind} rejection-reason shape mismatch'
-            )
-        reason[mask] = layer_reason[mask]
-    return np.ascontiguousarray(reason, dtype=_STATUS_DTYPE)
 
 
 def _node_pick_counts(
@@ -2608,125 +2526,6 @@ def _copy_layer_design_matrix_diagnostics_to_root_artifacts(
         ).write_bytes(csv_source.read_bytes())
 
 
-def _layer_result_from_half_intercept(
-    *,
-    result: RefractionHalfInterceptTimeResult,
-    layer_kind: RefractionLayerKind,
-    layer_index: int,
-    candidate_observation_mask_sorted: np.ndarray | None = None,
-    rejection_reason_sorted: np.ndarray | None = None,
-) -> RefractionLayerSolveResult:
-    velocity_mode = result.bedrock_velocity_mode
-    is_cell = velocity_mode == 'solve_cell'
-    global_velocity = None if is_cell else float(result.bedrock_velocity_m_s)
-    global_slowness = None if is_cell else float(result.bedrock_slowness_s_per_m)
-    active_cell_id = _optional_cell_id_array(result.active_cell_id)
-    inactive_cell_id = _optional_cell_id_array(result.inactive_cell_id)
-    cell_velocity_m_s = _active_cell_float_values_to_cell_indexed(
-        result.cell_bedrock_velocity_m_s,
-        active_cell_id=active_cell_id,
-        inactive_cell_id=inactive_cell_id,
-        qc=result.qc,
-        name='cell_bedrock_velocity_m_s',
-    )
-    cell_slowness_s_per_m = _active_cell_float_values_to_cell_indexed(
-        result.cell_bedrock_slowness_s_per_m,
-        active_cell_id=active_cell_id,
-        inactive_cell_id=inactive_cell_id,
-        qc=result.qc,
-        name='cell_bedrock_slowness_s_per_m',
-    )
-    cell_velocity_status = _active_cell_status_to_cell_indexed(
-        result.cell_velocity_status,
-        active_cell_id=active_cell_id,
-        inactive_cell_id=inactive_cell_id,
-        qc=result.qc,
-        name='cell_velocity_status',
-    )
-    qc = {
-        **result.qc,
-        'layer_kind': layer_kind,
-        'layer_index': layer_index,
-        'velocity_mode': velocity_mode,
-        'n_observations': int(result.row_trace_index_sorted.shape[0]),
-        'n_sources': int(np.unique(result.row_source_node_id).shape[0]),
-        'n_receivers': int(np.unique(result.row_receiver_node_id).shape[0]),
-        'robust_iterations': int(result.qc.get('robust_iteration_count', 0)),
-        'n_rejected_by_robust': int(
-            np.count_nonzero(result.rejected_by_robust_mask)
-        ),
-    }
-    qc.update(
-        _layer_velocity_qc_aliases(
-            layer_kind=layer_kind,
-            global_velocity_m_s=global_velocity,
-            global_slowness_s_per_m=global_slowness,
-        )
-    )
-    return RefractionLayerSolveResult(
-        layer_kind=layer_kind,
-        layer_index=layer_index,
-        velocity_mode=velocity_mode,
-        source_time_term_s=np.ascontiguousarray(
-            result.source_half_intercept_time_s,
-            dtype=np.float64,
-        ),
-        receiver_time_term_s=np.ascontiguousarray(
-            result.receiver_half_intercept_time_s,
-            dtype=np.float64,
-        ),
-        node_time_term_s=np.ascontiguousarray(
-            result.node_half_intercept_time_s,
-            dtype=np.float64,
-        ),
-        global_velocity_m_s=global_velocity,
-        global_slowness_s_per_m=global_slowness,
-        cell_velocity_m_s=cell_velocity_m_s,
-        cell_slowness_s_per_m=cell_slowness_s_per_m,
-        trace_predicted_time_s_sorted=np.ascontiguousarray(
-            result.estimated_first_break_time_s_sorted,
-            dtype=np.float64,
-        ),
-        trace_residual_s_sorted=np.ascontiguousarray(
-            result.first_break_residual_s_sorted,
-            dtype=np.float64,
-        ),
-        used_observation_mask_sorted=np.ascontiguousarray(
-            result.used_observation_mask_sorted,
-            dtype=bool,
-        ),
-        layer_status='solved',
-        qc=qc,
-        active_cell_id=active_cell_id,
-        inactive_cell_id=inactive_cell_id,
-        cell_velocity_status=cell_velocity_status,
-        row_midpoint_cell_id=(
-            None
-            if result.row_midpoint_cell_id is None
-            else np.ascontiguousarray(result.row_midpoint_cell_id, dtype=np.int64)
-        ),
-        row_midpoint_velocity_m_s=(
-            None
-            if result.row_midpoint_bedrock_velocity_m_s is None
-            else np.ascontiguousarray(
-                result.row_midpoint_bedrock_velocity_m_s,
-                dtype=np.float64,
-            )
-        ),
-        rejected_by_robust_mask_sorted=_robust_rejection_mask_in_sorted_order(result),
-        candidate_observation_mask_sorted=(
-            None
-            if candidate_observation_mask_sorted is None
-            else np.ascontiguousarray(candidate_observation_mask_sorted, dtype=bool)
-        ),
-        rejection_reason_sorted=(
-            None
-            if rejection_reason_sorted is None
-            else np.ascontiguousarray(rejection_reason_sorted, dtype=_STATUS_DTYPE)
-        ),
-    )
-
-
 def _layer_result_from_core_layer(
     *,
     input_model: RefractionStaticInputModel,
@@ -2843,9 +2642,9 @@ def _layer_result_from_core_layer(
         ),
         row_midpoint_velocity_m_s=(
             None
-            if result.row_midpoint_bedrock_velocity_m_s is None
+            if core_layer.velocity_m_s_sorted is None
             else np.ascontiguousarray(
-                result.row_midpoint_bedrock_velocity_m_s,
+                core_layer.velocity_m_s_sorted,
                 dtype=np.float64,
             )
         ),
@@ -2952,135 +2751,6 @@ def _core_cell_count(result: object, cell_id: np.ndarray) -> int:
     return int(np.max(cell_id)) + 1 if cell_id.size else 0
 
 
-def _optional_cell_id_array(value: np.ndarray | None) -> np.ndarray | None:
-    if value is None:
-        return None
-    return np.ascontiguousarray(value, dtype=np.int64)
-
-
-def _active_cell_float_values_to_cell_indexed(
-    value: np.ndarray | None,
-    *,
-    active_cell_id: np.ndarray | None,
-    inactive_cell_id: np.ndarray | None,
-    qc: Mapping[str, Any],
-    name: str,
-) -> np.ndarray | None:
-    if value is None:
-        return None
-    if active_cell_id is None or inactive_cell_id is None:
-        raise RefractionMultiLayerSolveError(
-            f'{name} requires active_cell_id and inactive_cell_id'
-        )
-    active_values = np.asarray(value, dtype=np.float64)
-    if active_values.ndim != 1:
-        raise RefractionMultiLayerSolveError(f'{name} must be one-dimensional')
-    if active_values.shape != active_cell_id.shape:
-        raise RefractionMultiLayerSolveError(
-            f'{name} from the cell solver must match active_cell_id length'
-        )
-    n_total_cells = _cell_indexed_count_from_ids(
-        active_cell_id=active_cell_id,
-        inactive_cell_id=inactive_cell_id,
-        qc=qc,
-    )
-    output = np.full(n_total_cells, np.nan, dtype=np.float64)
-    output[active_cell_id] = active_values
-    return np.ascontiguousarray(output, dtype=np.float64)
-
-
-def _active_cell_status_to_cell_indexed(
-    value: np.ndarray | None,
-    *,
-    active_cell_id: np.ndarray | None,
-    inactive_cell_id: np.ndarray | None,
-    qc: Mapping[str, Any],
-    name: str,
-) -> np.ndarray | None:
-    if value is None:
-        return None
-    if active_cell_id is None or inactive_cell_id is None:
-        raise RefractionMultiLayerSolveError(
-            f'{name} requires active_cell_id and inactive_cell_id'
-        )
-    active_status = np.asarray(value).astype(_STATUS_DTYPE, copy=True)
-    if active_status.ndim != 1:
-        raise RefractionMultiLayerSolveError(f'{name} must be one-dimensional')
-    if active_status.shape != active_cell_id.shape:
-        raise RefractionMultiLayerSolveError(
-            f'{name} from the cell solver must match active_cell_id length'
-        )
-    n_total_cells = _cell_indexed_count_from_ids(
-        active_cell_id=active_cell_id,
-        inactive_cell_id=inactive_cell_id,
-        qc=qc,
-    )
-    output = np.full(n_total_cells, 'inactive', dtype=_STATUS_DTYPE)
-    low_fold = _low_fold_cell_id_from_qc(qc)
-    if low_fold.size:
-        _cell_id_array_in_range(
-            low_fold,
-            n_total_cells=n_total_cells,
-            name='low_fold_cell_id',
-        )
-        output[low_fold] = 'low_fold'
-    output[active_cell_id] = active_status
-    return output
-
-
-def _cell_indexed_count_from_ids(
-    *,
-    active_cell_id: np.ndarray,
-    inactive_cell_id: np.ndarray,
-    qc: Mapping[str, Any],
-) -> int:
-    raw_total = qc.get('n_total_cells')
-    if raw_total is None:
-        all_cell_id = np.concatenate((active_cell_id, inactive_cell_id))
-        return int(np.max(all_cell_id)) + 1 if all_cell_id.size else 0
-    try:
-        n_total_cells = int(raw_total)
-    except (TypeError, ValueError) as exc:
-        raise RefractionMultiLayerSolveError('n_total_cells must be an integer') from exc
-    if n_total_cells <= 0:
-        raise RefractionMultiLayerSolveError('n_total_cells must be positive')
-    _cell_id_array_in_range(
-        active_cell_id,
-        n_total_cells=n_total_cells,
-        name='active_cell_id',
-    )
-    _cell_id_array_in_range(
-        inactive_cell_id,
-        n_total_cells=n_total_cells,
-        name='inactive_cell_id',
-    )
-    return n_total_cells
-
-
-def _robust_rejection_mask_in_sorted_order(
-    result: RefractionHalfInterceptTimeResult,
-) -> np.ndarray:
-    sorted_trace_index = np.asarray(result.sorted_trace_index, dtype=np.int64)
-    row_trace_index = np.asarray(result.row_trace_index_sorted, dtype=np.int64)
-    row_rejected = np.asarray(result.rejected_by_robust_mask, dtype=bool)
-    if row_trace_index.shape != row_rejected.shape:
-        raise RefractionMultiLayerSolveError(
-            'robust rejection rows must match row trace indices'
-        )
-    trace_position = {
-        int(trace): index for index, trace in enumerate(sorted_trace_index.tolist())
-    }
-    rejected = np.zeros(sorted_trace_index.shape, dtype=bool)
-    for row_index, raw_trace in enumerate(row_trace_index.tolist()):
-        position = trace_position.get(int(raw_trace))
-        if position is None:
-            raise RefractionMultiLayerSolveError(
-                'robust rejection row references unknown trace index'
-            )
-        rejected[position] = bool(row_rejected[row_index])
-    return np.ascontiguousarray(rejected, dtype=bool)
-
-
 def _layer_velocity_qc_aliases(
     *,
     layer_kind: RefractionLayerKind,
@@ -3107,97 +2777,6 @@ def _layer_velocity_qc_aliases(
             'vsub_slowness_s_per_m': float(global_slowness_s_per_m),
         }
     return {}
-
-
-def _validate_layer_result(
-    *,
-    result: RefractionLayerSolveResult,
-    config: RefractionStaticLayerConfig,
-) -> None:
-    if result.layer_kind != config.kind:
-        raise RefractionMultiLayerSolveError(
-            f'layer solver returned {result.layer_kind} for requested {config.kind}'
-        )
-    if result.velocity_mode != config.velocity_mode:
-        raise RefractionMultiLayerSolveError(
-            f'layer solver returned velocity_mode={result.velocity_mode} for '
-            f'requested {config.velocity_mode}'
-        )
-    if result.layer_status != 'solved':
-        raise RefractionMultiLayerSolveError(
-            f'refraction layer {config.kind} failed with status '
-            f'{result.layer_status}'
-        )
-
-
-def _validate_layer_velocity_sequence(
-    *,
-    result: RefractionLayerSolveResult,
-    previous_results: tuple[RefractionLayerSolveResult, ...],
-    normalized_layers: tuple[RefractionStaticLayerConfig, ...],
-) -> RefractionLayerSolveResult:
-    reference_layer_kind = _VELOCITY_SEQUENCE_REFERENCE_BY_KIND.get(result.layer_kind)
-    if reference_layer_kind is None:
-        return result
-    current_velocity = _summary_velocity_m_s(result)
-    if current_velocity is None:
-        return result
-    reference = _prior_layer_velocity_reference(
-        layer_kind=reference_layer_kind,
-        previous_results=previous_results,
-        normalized_layers=normalized_layers,
-    )
-    if reference is None:
-        return result
-    reference_kind, reference_velocity, reference_source = reference
-    if current_velocity <= reference_velocity:
-        raise RefractionMultiLayerSolveError(
-            f'refraction layer {result.layer_kind} velocity must be greater '
-            f'than {reference_kind} velocity ({current_velocity:.6g} <= '
-            f'{reference_velocity:.6g} m/s)'
-        )
-    return replace(
-        result,
-        qc={
-            **result.qc,
-            'velocity_sequence_reference_layer_kind': reference_kind,
-            'velocity_sequence_reference_m_s': float(reference_velocity),
-            'velocity_sequence_reference_source': reference_source,
-        },
-    )
-
-
-def _prior_layer_velocity_reference(
-    *,
-    layer_kind: RefractionLayerKind,
-    previous_results: tuple[RefractionLayerSolveResult, ...],
-    normalized_layers: tuple[RefractionStaticLayerConfig, ...],
-) -> tuple[RefractionLayerKind, float, str] | None:
-    for previous in reversed(previous_results):
-        if previous.layer_kind != layer_kind:
-            continue
-        velocity = _summary_velocity_m_s(previous)
-        if velocity is not None:
-            return layer_kind, velocity, 'solved_summary'
-    for config in normalized_layers:
-        if config.kind == layer_kind and config.min_velocity_m_s is not None:
-            return layer_kind, float(config.min_velocity_m_s), 'configured_min'
-    return None
-
-
-def _summary_velocity_m_s(result: RefractionLayerSolveResult) -> float | None:
-    if result.global_velocity_m_s is not None:
-        velocity = float(result.global_velocity_m_s)
-        if np.isfinite(velocity) and velocity > 0.0:
-            return velocity
-        return None
-    if result.cell_velocity_m_s is None:
-        return None
-    values = np.asarray(result.cell_velocity_m_s, dtype=np.float64)
-    values = values[np.isfinite(values) & (values > 0.0)]
-    if values.size == 0:
-        return None
-    return float(np.median(values))
 
 
 def _unique_endpoint_key_nodes(
