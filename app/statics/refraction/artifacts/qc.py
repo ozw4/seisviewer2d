@@ -61,6 +61,9 @@ from app.statics.refraction.contracts.result_types import (
     ResolvedRefractionFirstLayer,
 )
 
+_FIELD_DISABLED_STATUS = 'not_enabled'
+
+
 def write_refraction_static_qc_json(
     *,
     result: RefractionDatumStaticsResult,
@@ -426,6 +429,11 @@ def _source_depth_field_correction_qc(
                 'component arrays'
             )
         return {}
+    if (
+        req.field_corrections.source_depth.mode == 'none'
+        and _disabled_source_depth_component(result)
+    ):
+        return {}
     qc = result.source_depth_field_correction_qc
     if not isinstance(qc, dict):
         raise RefractionStaticArtifactError(
@@ -449,6 +457,11 @@ def _uphole_field_correction_qc(
                 'uphole field correction artifacts require uphole component arrays'
             )
         return {}
+    if (
+        req.field_corrections.uphole.mode == 'none'
+        and _disabled_uphole_component(result)
+    ):
+        return {}
     qc = result.source_uphole_field_correction_qc
     if not isinstance(qc, dict):
         raise RefractionStaticArtifactError(
@@ -470,6 +483,11 @@ def _manual_static_field_correction_qc(
                 'manual static field correction artifacts require manual '
                 'static component arrays'
             )
+        return {}
+    if (
+        req.field_corrections.manual_static.mode == 'none'
+        and _disabled_manual_static_component(result)
+    ):
         return {}
     qc = result.manual_static_field_correction_qc
     if not isinstance(qc, dict):
@@ -505,6 +523,11 @@ def _field_correction_composition_qc(
                 'status': 'not_composed',
             }
         return {}
+    if (
+        not _field_correction_component_requested(req)
+        and _disabled_field_composition(result)
+    ):
+        return {}
     qc = result.field_composition_qc
     if not isinstance(qc, dict):
         raise RefractionStaticArtifactError(
@@ -523,6 +546,60 @@ def _field_correction_composition_qc(
     )
     payload.setdefault('sign_convention', SIGN_CONVENTION)
     return payload
+
+
+def _disabled_source_depth_component(result: RefractionDatumStaticsResult) -> bool:
+    return (
+        _is_zero_array(result.source_depth_m)
+        and _is_zero_array(result.source_depth_shift_s)
+        and _is_disabled_status_array(result.source_depth_status)
+    )
+
+
+def _disabled_uphole_component(result: RefractionDatumStaticsResult) -> bool:
+    return (
+        _is_zero_array(result.source_uphole_time_s)
+        and _is_zero_array(result.source_uphole_shift_s)
+        and _is_disabled_status_array(result.source_uphole_status)
+    )
+
+
+def _disabled_manual_static_component(result: RefractionDatumStaticsResult) -> bool:
+    return (
+        _is_zero_array(result.source_manual_static_shift_s)
+        and _is_disabled_status_array(result.source_manual_static_status)
+        and _is_zero_array(result.receiver_manual_static_shift_s)
+        and _is_disabled_status_array(result.receiver_manual_static_status)
+    )
+
+
+def _disabled_field_composition(result: RefractionDatumStaticsResult) -> bool:
+    return (
+        _is_zero_array(result.source_field_shift_s)
+        and _is_disabled_status_array(result.source_field_static_status)
+        and _is_zero_array(result.receiver_field_shift_s)
+        and _is_disabled_status_array(result.receiver_field_static_status)
+        and _is_zero_array(result.source_field_shift_s_sorted)
+        and _is_zero_array(result.receiver_field_shift_s_sorted)
+        and _is_zero_array(result.trace_field_shift_s_sorted)
+        and _is_disabled_status_array(result.trace_field_static_status_sorted)
+        and _is_zero_array(result.applied_field_shift_s_sorted)
+    )
+
+
+def _is_zero_array(value: object) -> bool:
+    if value is None:
+        return False
+    arr = np.asarray(value, dtype=np.float64)
+    return bool(np.all(np.isfinite(arr) & (arr == 0.0)))
+
+
+def _is_disabled_status_array(value: object) -> bool:
+    if value is None:
+        return False
+    arr = np.asarray(value).astype(str, copy=False)
+    return bool(np.all(arr == _FIELD_DISABLED_STATUS))
+
 
 def _field_correction_component_requested(
     req: RefractionStaticApplyRequest,

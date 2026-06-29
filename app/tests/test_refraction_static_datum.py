@@ -395,15 +395,14 @@ def test_build_constant_floating_and_flat_components_in_sorted_order(
         + expected_floating
         + expected_flat
     )
-    expected_refraction[~replacement.valid_observation_mask_sorted] = np.nan
     np.testing.assert_allclose(
         result.refraction_trace_shift_s_sorted,
         expected_refraction,
     )
     np.testing.assert_array_equal(result.sorted_trace_index, [2, 0, 1])
-    assert result.trace_static_valid_mask_sorted.tolist() == [True, True, False]
+    assert result.trace_static_valid_mask_sorted.tolist() == [True, True, True]
     assert result.valid_observation_mask_sorted.tolist() == [True, True, False]
-    assert result.trace_static_status_sorted[2] == 'not_observed'
+    assert result.trace_static_status_sorted[2] == 'ok'
     assert result.qc['sign_convention'] == 'corrected(t) = raw(t - shift_s)'
     assert (tmp_path / REFRACTION_DATUM_STATICS_QC_JSON_NAME).is_file()
     assert (tmp_path / REFRACTION_DATUM_NODES_CSV_NAME).is_file()
@@ -516,7 +515,7 @@ def test_build_preserves_external_upstream_replacement_statuses() -> None:
     assert with_field.applied_field_shift_s_sorted[1] == 0.0
 
 
-def test_build_preserves_upstream_trace_status_without_endpoint_error() -> None:
+def test_build_does_not_overlay_upstream_trace_only_status() -> None:
     replacement = replace(
         _replacement_result(valid_observation=[True, True, True]),
         trace_static_status_sorted=np.asarray(['ok', 'invalid_shift', 'ok'], dtype='<U32'),
@@ -537,9 +536,9 @@ def test_build_preserves_upstream_trace_status_without_endpoint_error() -> None:
         result.receiver_datum_status,
         ['ok', 'ok', 'ok'],
     )
-    assert result.trace_static_status_sorted[1] == 'invalid_weathering_replacement'
-    assert result.trace_static_valid_mask_sorted[1] == np.False_
-    assert np.isnan(result.refraction_trace_shift_s_sorted[1])
+    assert result.trace_static_status_sorted[1] == 'ok'
+    assert result.trace_static_valid_mask_sorted[1] == np.True_
+    assert np.isfinite(result.refraction_trace_shift_s_sorted[1])
 
 
 @pytest.mark.parametrize(
@@ -572,8 +571,69 @@ def test_datum_modes_control_component_composition(
         expected += result.flat_datum_shift_s_sorted
     else:
         np.testing.assert_allclose(result.flat_datum_shift_s_sorted, 0.0)
-    expected[~replacement.valid_observation_mask_sorted] = np.nan
     np.testing.assert_allclose(result.refraction_trace_shift_s_sorted, expected)
+
+
+def test_build_populates_disabled_field_correction_arrays() -> None:
+    result = build_refraction_datum_statics(
+        weathering_replacement_result=_replacement_result(valid_observation=[True] * 3),
+        datum=_datum(),
+        apply_options=_apply_options(),
+    )
+
+    np.testing.assert_allclose(result.source_depth_m, [0.0, 0.0, 0.0])
+    np.testing.assert_allclose(result.source_depth_shift_s, [0.0, 0.0, 0.0])
+    np.testing.assert_array_equal(
+        result.source_depth_status,
+        ['not_enabled', 'not_enabled', 'not_enabled'],
+    )
+    np.testing.assert_allclose(result.source_uphole_time_s, [0.0, 0.0, 0.0])
+    np.testing.assert_allclose(result.source_manual_static_shift_s, [0.0, 0.0, 0.0])
+    np.testing.assert_allclose(
+        result.receiver_manual_static_shift_s,
+        [0.0, 0.0, 0.0],
+    )
+    np.testing.assert_array_equal(
+        result.source_field_static_status,
+        ['not_enabled', 'not_enabled', 'not_enabled'],
+    )
+    np.testing.assert_array_equal(
+        result.receiver_field_static_status,
+        ['not_enabled', 'not_enabled', 'not_enabled'],
+    )
+    np.testing.assert_allclose(result.trace_field_shift_s_sorted, [0.0, 0.0, 0.0])
+    np.testing.assert_array_equal(
+        result.trace_field_static_status_sorted,
+        ['not_enabled', 'not_enabled', 'not_enabled'],
+    )
+    np.testing.assert_array_equal(
+        result.trace_field_static_valid_mask_sorted,
+        [True, True, True],
+    )
+    np.testing.assert_allclose(
+        result.base_refraction_trace_shift_s_sorted,
+        result.refraction_trace_shift_s_sorted,
+    )
+    np.testing.assert_allclose(
+        result.final_trace_shift_s_sorted,
+        result.refraction_trace_shift_s_sorted,
+    )
+    np.testing.assert_array_equal(
+        result.final_trace_static_status_sorted,
+        result.trace_static_status_sorted,
+    )
+    np.testing.assert_array_equal(
+        result.final_trace_static_valid_mask_sorted,
+        result.trace_static_valid_mask_sorted,
+    )
+    np.testing.assert_allclose(result.applied_field_shift_s_sorted, [0.0, 0.0, 0.0])
+    assert result.field_composition_qc == {
+        'composition_enabled': False,
+        'apply_to_trace_shift': False,
+        'invalid_component_policy': 'fail',
+        'sign_convention': 'corrected(t) = raw(t - shift_s)',
+        'status': 'not_enabled',
+    }
 
 
 def test_surface_floating_datum_mode_produces_zero_floating_shift() -> None:
@@ -585,7 +645,6 @@ def test_surface_floating_datum_mode_produces_zero_floating_shift() -> None:
 
     np.testing.assert_allclose(result.floating_datum_elevation_shift_s_sorted, 0.0)
     expected = result.weathering_replacement_trace_shift_s_sorted.copy()
-    expected[~result.valid_observation_mask_sorted] = np.nan
     np.testing.assert_allclose(
         result.refraction_trace_shift_s_sorted,
         expected,
@@ -679,7 +738,6 @@ def test_from_artifact_mode_loads_node_npz_from_static_job(tmp_path: Path) -> No
     expected_refraction = (
         result.weathering_replacement_trace_shift_s_sorted + expected_floating
     )
-    expected_refraction[~result.valid_observation_mask_sorted] = np.nan
     np.testing.assert_allclose(
         result.refraction_trace_shift_s_sorted,
         expected_refraction,
@@ -879,38 +937,38 @@ def test_flat_datum_above_topography_policy_is_explicit() -> None:
     assert allowed.trace_static_valid_mask_sorted[0] == np.True_
 
 
-def test_max_shift_status_and_shift_come_from_external_core() -> None:
+def test_max_shift_marks_status_without_discarding_external_shift() -> None:
     result = build_refraction_datum_statics(
         weathering_replacement_result=_replacement_result(),
         datum=_datum(flat_datum_elevation_m=1000.0),
         apply_options=_apply_options(max_abs_shift_ms=10.0),
     )
 
-    assert np.isnan(result.refraction_trace_shift_s_sorted).all()
-    assert np.isnan(result.source_refraction_shift_s).all()
-    assert np.isnan(result.receiver_refraction_shift_s).all()
+    assert np.isfinite(result.refraction_trace_shift_s_sorted).all()
+    assert np.isfinite(result.source_refraction_shift_s).all()
+    assert np.isfinite(result.receiver_refraction_shift_s).all()
     np.testing.assert_array_equal(
         result.trace_static_status_sorted,
-        ['invalid_datum_shift', 'invalid_datum_shift', 'invalid_datum_shift'],
+        ['exceeds_max_abs_shift', 'exceeds_max_abs_shift', 'exceeds_max_abs_shift'],
     )
     np.testing.assert_array_equal(
         result.source_datum_status,
-        ['invalid_datum_shift', 'invalid_datum_shift', 'invalid_datum_shift'],
+        ['exceeds_max_abs_shift', 'exceeds_max_abs_shift', 'exceeds_max_abs_shift'],
     )
     np.testing.assert_array_equal(
         result.receiver_datum_status,
-        ['invalid_datum_shift', 'invalid_datum_shift', 'invalid_datum_shift'],
+        ['exceeds_max_abs_shift', 'exceeds_max_abs_shift', 'exceeds_max_abs_shift'],
     )
     np.testing.assert_array_equal(
         result.node_datum_status,
-        ['invalid_datum_shift', 'invalid_datum_shift', 'invalid_datum_shift'],
+        ['exceeds_max_abs_shift', 'exceeds_max_abs_shift', 'exceeds_max_abs_shift'],
     )
     np.testing.assert_array_equal(
         result.trace_static_valid_mask_sorted,
         [False, False, False],
     )
-    assert result.qc['exceeds_max_abs_shift_count'] == 0
-    assert result.qc['trace_static_status_counts'] == {'invalid_datum_shift': 3}
+    assert result.qc['exceeds_max_abs_shift_count'] == 3
+    assert result.qc['trace_static_status_counts'] == {'exceeds_max_abs_shift': 3}
 
 
 def test_invalid_surface_and_unknown_endpoint_nodes_are_visible() -> None:
@@ -1023,7 +1081,7 @@ def test_build_maps_external_core_result_without_recomputing(
     result = build_refraction_datum_statics(
         weathering_replacement_result=replacement,
         datum=_datum(),
-        apply_options=_apply_options(max_abs_shift_ms=1.0),
+        apply_options=_apply_options(max_abs_shift_ms=100000.0),
         field_corrections=datum_module.RefractionDatumFieldCorrectionInputs(
             trace_field_correction=trace_field,  # type: ignore[arg-type]
             apply_to_trace_shift=True,
@@ -1067,14 +1125,14 @@ def test_build_maps_external_core_result_without_recomputing(
         captured_core_kwargs['kwargs']['source_weathering_replacement_status'],
         replacement.source_static_status,
     )
-    assert captured_core_kwargs['kwargs']['max_abs_datum_shift_ms'] == 1.0
+    assert captured_core_kwargs['kwargs']['max_abs_datum_shift_ms'] is None
     assert captured_core_kwargs['kwargs']['trace_field_correction'] is trace_field
     assert captured_core_kwargs['kwargs']['apply_field_correction_to_trace_shift'] is True
     assert (
         captured_core_kwargs['kwargs']['invalid_field_component_policy']
         == 'skip_invalid_traces'
     )
-    assert captured_node_kwargs['kwargs']['max_abs_datum_shift_ms'] == 1.0
+    assert captured_node_kwargs['kwargs']['max_abs_datum_shift_ms'] is None
 
 
 def test_high_level_pipeline_calls_weathering_stage(
