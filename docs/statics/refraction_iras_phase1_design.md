@@ -836,9 +836,9 @@ app/statics/refraction/application/weathering_replacement.py
 app/statics/refraction/application/bedrock.py
 app/statics/refraction/application/design_matrix.py
 app/statics/refraction/application/datum.py
-app/statics/refraction/domain/v1.py
-app/statics/refraction/domain/t1lsst.py
-app/statics/refraction/domain/solver.py
+seis_statics/refraction/v1.py
+seis_statics/refraction/t1lsst.py
+seis_statics/refraction/solver.py
 app/statics/refraction/artifacts/
 app/statics/refraction/ports/
 app/statics/refraction/adapters/seisviewer2d/
