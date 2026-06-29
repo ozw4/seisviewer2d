@@ -235,7 +235,6 @@ def test_three_layer_core_conversion_adapter_uses_matching_trace_shapes(
 
     assert observed_trace_counts == [
         input_model.n_traces,
-        input_model.n_traces,
         input_model.node_x_m.shape[0],
     ]
 

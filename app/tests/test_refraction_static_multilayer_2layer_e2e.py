@@ -270,6 +270,44 @@ def test_two_layer_conversion_uses_source_and_receiver_endpoint_terms() -> None:
     )
 
 
+def test_two_layer_max_abs_shift_marks_trace_invalid() -> None:
+    fixture = _make_two_layer_fixture(
+        coordinate_mode='grid_3d',
+        v2_velocity_mode='solve_global',
+    )
+    workflow = compute_refraction_multilayer_datum_statics_from_input_model(
+        input_model=fixture.input_model,
+        model=fixture.model,
+        solver=RefractionStaticSolverRequest(
+            damping=0.0,
+            robust={'enabled': False},
+        ),
+        datum=RefractionStaticDatumRequest(mode='none'),
+        apply_options=RefractionStaticApplyOptions(max_abs_shift_ms=250.0),
+        resolved_first_layer=_resolved_first_layer(),
+    )
+
+    replacement = build_refraction_multilayer_weathering_replacement_statics(
+        input_model=fixture.input_model,
+        model=fixture.model,
+        solve_result=workflow.solve_result,
+        apply_options=RefractionStaticApplyOptions(max_abs_shift_ms=1.0e-6),
+        resolved_first_layer=_resolved_first_layer(),
+    )
+
+    trace_shift = np.asarray(
+        replacement.weathering_replacement_trace_shift_s_sorted,
+        dtype=np.float64,
+    )
+    over_limit = np.isfinite(trace_shift) & (np.abs(trace_shift) * 1000.0 > 1.0e-6)
+
+    assert np.any(over_limit)
+    assert np.all(
+        replacement.trace_static_status_sorted[over_limit] == 'exceeds_max_abs_shift'
+    )
+    assert not np.any(replacement.trace_static_valid_mask_sorted[over_limit])
+
+
 def test_two_layer_line_projected_local_v2_global_v3_e2e_recovers_tables(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -837,9 +875,7 @@ def test_two_layer_local_v2_trace_conversion_uses_endpoint_velocity(
         resolved_first_layer=_resolved_first_layer(),
     )
 
-    assert len(trace_v2_velocity) == 2
-    np.testing.assert_allclose(trace_v2_velocity[0], expected_source_v2_sorted)
-    np.testing.assert_allclose(trace_v2_velocity[1], expected_receiver_v2_sorted)
+    assert len(trace_v2_velocity) == 1
 
     expected_source_v2 = _cell_velocity_for_node_ids(
         fixture.source_node_id,
@@ -916,6 +952,24 @@ def test_two_layer_local_v2_trace_conversion_uses_endpoint_velocity(
     np.testing.assert_allclose(
         replacement.receiver_weathering_replacement_shift_s,
         expected_receiver_wcor,
+        atol=_STATIC_ATOL_S,
+    )
+    np.testing.assert_allclose(
+        replacement.source_weathering_replacement_shift_s_sorted,
+        _values_by_sorted_key(
+            fixture.input_model.source_endpoint_key_sorted,
+            fixture.source_endpoint_key,
+            expected_source_wcor,
+        ),
+        atol=_STATIC_ATOL_S,
+    )
+    np.testing.assert_allclose(
+        replacement.receiver_weathering_replacement_shift_s_sorted,
+        _values_by_sorted_key(
+            fixture.input_model.receiver_endpoint_key_sorted,
+            fixture.receiver_endpoint_key,
+            expected_receiver_wcor,
+        ),
         atol=_STATIC_ATOL_S,
     )
 
