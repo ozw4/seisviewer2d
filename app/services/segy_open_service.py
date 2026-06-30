@@ -17,9 +17,19 @@ from app.trace_store.catalog import (
     trace_store_complete,
 )
 from app.trace_store.naming import safe_store_name, safe_upload_name
-from app.utils.ingest import SegyIngestor
 
 logger = logging.getLogger(__name__)
+
+
+class _LazySegyIngestor:
+    @staticmethod
+    def from_segy(*args, **kwargs):
+        from app.utils.ingest import SegyIngestor as _SegyIngestor
+
+        return _SegyIngestor.from_segy(*args, **kwargs)
+
+
+SegyIngestor = _LazySegyIngestor
 
 
 async def open_existing_trace_store(

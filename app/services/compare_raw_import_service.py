@@ -24,7 +24,12 @@ from app.trace_store.naming import (
     content_addressed_compare_store_name,
     safe_upload_name,
 )
-from app.utils.header_qc import inspect_segy_header_qc
+
+
+def inspect_segy_header_qc(path: str | Path) -> dict:
+    from app.utils.header_qc import inspect_segy_header_qc as _inspect
+
+    return _inspect(path)
 
 
 async def import_compare_raw_source(
