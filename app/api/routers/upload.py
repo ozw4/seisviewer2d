@@ -348,6 +348,9 @@ def _trace_store_summary(store_dir: Path) -> dict | None:
         'key2_byte': key2_byte,
         'last_used_ts': last_used_ts,
     }
+    source_sha256 = meta.get('source_sha256')
+    if isinstance(source_sha256, str):
+        summary['source_sha256'] = source_sha256
     for key in ('dt', 'n_traces', 'n_samples'):
         value = meta.get(key)
         if isinstance(value, (int, float)):
@@ -538,26 +541,42 @@ async def recent_datasets():
 @router.post('/open_segy')
 async def open_segy(
     request: Request,
-    original_name: Annotated[str, Form(...)],
+    original_name: Annotated[str | None, Form()] = None,
+    store_name: Annotated[str | None, Form()] = None,
     key1_byte: Annotated[int, Form()] = 189,
     key2_byte: Annotated[int, Form()] = 193,
 ):
     state = get_state(request.app)
-    safe_name = re.sub(r'[^A-Za-z0-9_.-]', '_', original_name)
-    store_dir = TRACE_DIR / safe_name
+    if store_name is not None:
+        safe_store_name = _safe_store_name(store_name)
+        store_dir = TRACE_DIR / safe_store_name
+        requested_name = store_name
+    elif original_name is not None:
+        safe_name = _safe_upload_name(original_name)
+        store_dir = TRACE_DIR / safe_name
+        requested_name = original_name
+    else:
+        raise HTTPException(
+            status_code=400,
+            detail='store_name or original_name is required',
+        )
+
     meta_path = store_dir / 'meta.json'
     if not meta_path.exists():
         raise HTTPException(
             status_code=404,
-            detail=f'Trace store not found for {original_name}',
+            detail=f'Trace store not found for {requested_name}',
         )
-    logger.info('Opening existing trace store for %s', original_name)
+    logger.info('Opening existing trace store for %s', store_dir.name)
     file_id = str(uuid4())
     reused = _trace_store_complete(store_dir, key1_byte, key2_byte)
-    if reused:
-        meta = json.loads(meta_path.read_text())
-    else:
-        meta = json.loads(meta_path.read_text())
+    meta = _load_trace_store_meta(meta_path)
+    if meta is None:
+        raise HTTPException(
+            status_code=500,
+            detail='Trace store metadata is unreadable',
+        )
+    if not reused:
         segy_path = meta.get('original_segy_path') if isinstance(meta, dict) else None
         source_sha256 = (
             meta.get('source_sha256')
@@ -577,6 +596,10 @@ async def open_segy(
             key2_byte,
             source_sha256=source_sha256,
         )
+    response_original_name = meta.get('original_name') if isinstance(meta, dict) else None
+    if not isinstance(response_original_name, str) or not response_original_name:
+        response_original_name = original_name or store_dir.name
+    source_sha256 = meta.get('source_sha256') if isinstance(meta, dict) else None
     register_trace_store(
         state=state,
         file_id=file_id,
@@ -587,7 +610,17 @@ async def open_segy(
         update_registry=True,
         touch_meta=True,
     )
-    return {'file_id': file_id, 'reused_trace_store': reused}
+    response = {
+        'file_id': file_id,
+        'reused_trace_store': reused,
+        'store_name': store_dir.name,
+        'original_name': response_original_name,
+        'key1_byte': key1_byte,
+        'key2_byte': key2_byte,
+    }
+    if isinstance(source_sha256, str):
+        response['source_sha256'] = source_sha256
+    return response
 
 
 @router.post('/upload_segy')
