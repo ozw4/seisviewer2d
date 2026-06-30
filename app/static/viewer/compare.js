@@ -575,6 +575,29 @@
     return result;
   }
 
+  async function ensureRawCompareReferenceBaseline(sources, signal) {
+    if (!isRawCompareSource(sources?.a) || !isRawCompareSource(sources?.b)) return true;
+    if (!sources.a.fileId) return true;
+
+    const key1Byte = Number(sources.a.key1Byte ?? currentKey1Byte);
+    const key2Byte = Number(sources.a.key2Byte ?? currentKey2Byte);
+    if (!Number.isFinite(key1Byte) || !Number.isFinite(key2Byte)) {
+      throw new Error('A-B unavailable: source key bytes are missing.');
+    }
+
+    const params = new URLSearchParams({
+      file_id: String(sources.a.fileId),
+      key1_byte: String(key1Byte),
+      key2_byte: String(key2Byte),
+    });
+    const response = await fetch(`/get_section_meta?${params.toString()}`, { signal });
+    if (!response.ok) {
+      const detail = await readCompareResponseDetail(response);
+      throw new Error(detail || `A normalization baseline is unavailable (${response.status})`);
+    }
+    return true;
+  }
+
   function visibleComparePanelCount(sources) {
     return compareShowDiffEnabled() && canAttemptDiff(sources) ? 3 : 2;
   }
@@ -1426,6 +1449,12 @@
         return true;
       }
 
+      await ensureRawCompareReferenceBaseline(sources, signal);
+      if (!isCompareRequestCurrent(requestId)) {
+        markStaleCompareRequest(requestId);
+        return true;
+      }
+
       const aPromise = fetchComparePayload(requestA, signal, requestId);
       const bPromise = requestA.cacheKey === requestB.cacheKey
         ? aPromise
@@ -1688,9 +1717,15 @@
     resolveCompareNormalizationFileId,
     rawCompareValidationKey,
     validateRawCompareSources,
+    ensureRawCompareReferenceBaseline,
     renderCompareUnavailable,
     getLatestCompareRender: () => latestCompareRender,
     setLatestCompareRenderForTest: (render) => { latestCompareRender = render; },
+    setCompareFileTargetsForTest: (targets) => {
+      compareFileTargets = Array.isArray(targets) ? targets : [];
+      compareActiveTargetKey = compareTargetIdentity(compareFileTargets[0]);
+      window.compareFileTargets = compareFileTargets;
+    },
     clearRawCompareValidationCache,
     compareUnavailableMessage,
     buildCompareRequest,
