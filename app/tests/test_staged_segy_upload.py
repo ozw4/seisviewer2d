@@ -63,6 +63,7 @@ def _staged_env(tmp_path: Path, monkeypatch):
     from app.services import compare_raw_import_service
     from app.services import segy_ingest_service
     from app.services import segy_open_service
+    from app.services import staged_segy_upload_service
 
     state = app.state.sv
     state.file_registry.clear()
@@ -146,7 +147,12 @@ def _staged_env(tmp_path: Path, monkeypatch):
         )
         return meta
 
-    monkeypatch.setattr(upload_mod, 'inspect_segy_header_qc', _fake_qc, raising=True)
+    monkeypatch.setattr(
+        staged_segy_upload_service,
+        'inspect_segy_header_qc',
+        _fake_qc,
+        raising=True,
+    )
     monkeypatch.setattr(
         compare_raw_import_service,
         'inspect_segy_header_qc',
@@ -728,12 +734,18 @@ def test_compare_raw_import_qc_failure_removes_staged_file(
 
 def test_stage_segy_qc_failure_removes_staged_file(_staged_env, monkeypatch):
     client, upload_mod, calls = _staged_env
+    from app.services import staged_segy_upload_service
 
     def _raise_qc(_path: str | Path) -> dict:
         calls['qc'] += 1
         raise RuntimeError('bad headers')
 
-    monkeypatch.setattr(upload_mod, 'inspect_segy_header_qc', _raise_qc, raising=True)
+    monkeypatch.setattr(
+        staged_segy_upload_service,
+        'inspect_segy_header_qc',
+        _raise_qc,
+        raising=True,
+    )
 
     response = client.post(
         '/stage_segy',

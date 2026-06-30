@@ -2,11 +2,9 @@
 
 from __future__ import annotations
 
-import asyncio
 import logging
 from pathlib import Path
 from typing import Annotated
-from uuid import uuid4
 
 from fastapi import APIRouter, File, Form, HTTPException, Query, Request, UploadFile
 
@@ -17,6 +15,7 @@ from app.core.paths import (
     get_upload_dir,
 )
 from app.core.state import AppState
+from app.services.compare_raw_import_service import import_compare_raw_source
 from app.services.segy_upload_storage import (
     SavedUpload,
     cleanup_discarded_staged_upload as storage_cleanup_discarded_staged_upload,
@@ -28,13 +27,14 @@ from app.services.segy_upload_storage import (
     sha256_file,
     staged_upload_dir,
 )
-from app.services.compare_raw_import_service import import_compare_raw_source
-from app.services.segy_header_qc_summary import selected_header_qc_summary
 from app.services.segy_ingest_service import ingest_saved_segy
 from app.services.segy_open_service import open_existing_trace_store
+from app.services.staged_segy_upload_service import (
+    ingest_staged_segy_upload,
+    stage_segy_upload,
+)
 from app.trace_store.catalog import list_recent_dataset_summaries
 from app.trace_store.naming import safe_upload_name
-from app.utils.header_qc import inspect_segy_header_qc
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -185,46 +185,7 @@ async def stage_segy(
     file: Annotated[UploadFile, File(...)],
 ):
     state = get_state(request.app)
-    cleanup_staged_uploads(state)
-    if not file.filename:
-        raise HTTPException(
-            status_code=400, detail='Uploaded file must have a filename'
-        )
-
-    staged_id = uuid4().hex
-    safe_name = safe_upload_name(file.filename)
-    raw_path = _staged_upload_dir() / staged_id / safe_name
-    saved = await _save_upload_file(file, safe_name, raw_path=raw_path)
-    try:
-        header_qc = await asyncio.to_thread(inspect_segy_header_qc, saved.raw_path)
-    except Exception as exc:  # noqa: BLE001
-        _cleanup_staged_upload(saved.raw_path)
-        raise HTTPException(
-            status_code=422,
-            detail=f'Unable to inspect SEG-Y headers: {exc}',
-        ) from exc
-
-    record = {
-        'original_name': saved.original_name,
-        'safe_name': saved.safe_name,
-        'raw_path': str(saved.raw_path),
-        'source_sha256': saved.source_sha256,
-        'source_size': saved.source_size,
-        'header_qc': header_qc,
-    }
-    with state.lock:
-        state.staged_uploads.set(staged_id, record)
-
-    return {
-        'staged_id': staged_id,
-        'file': {
-            'original_name': saved.original_name,
-            'safe_name': saved.safe_name,
-            'size': saved.source_size,
-            'sha256': saved.source_sha256,
-        },
-        **header_qc,
-    }
+    return await stage_segy_upload(state=state, upload_dir=UPLOAD_DIR, file=file)
 
 
 @router.post('/ingest_staged_segy')
@@ -235,53 +196,14 @@ async def ingest_staged_segy(
     key2_byte: Annotated[int, Form()] = 193,
 ):
     state = get_state(request.app)
-    cleanup_staged_uploads(state)
-    with state.lock:
-        staged = state.staged_uploads.get(staged_id)
-    if staged is None:
-        raise HTTPException(status_code=404, detail='Staged SEG-Y not found')
-    if key1_byte == key2_byte:
-        raise HTTPException(
-            status_code=400,
-            detail='key1_byte and key2_byte must be different',
-        )
-    if not isinstance(staged, dict):
-        raise HTTPException(status_code=404, detail='Staged SEG-Y not found')
-
-    raw_path = Path(str(staged.get('raw_path', '')))
-    if not raw_path.is_file():
-        raise HTTPException(status_code=410, detail='Staged SEG-Y file is missing')
-
-    safe_name = str(staged.get('safe_name'))
-    source_sha256 = str(staged.get('source_sha256'))
-    source_size = int(staged.get('source_size'))
-    durable_raw_path = _promote_staged_segy_to_raw(
-        staged_path=raw_path,
-        safe_name=safe_name,
-        source_sha256=source_sha256,
-    )
-    result = await ingest_saved_segy(
+    return await ingest_staged_segy_upload(
         state=state,
+        upload_dir=UPLOAD_DIR,
         trace_dir=TRACE_DIR,
-        original_name=str(staged.get('original_name') or staged.get('safe_name')),
-        safe_name=safe_name,
-        raw_path=durable_raw_path,
-        source_sha256=source_sha256,
-        source_size=source_size,
+        staged_id=staged_id,
         key1_byte=key1_byte,
         key2_byte=key2_byte,
     )
-    with state.lock:
-        state.staged_uploads.pop(staged_id, None)
-    _cleanup_staged_upload(raw_path)
-    summary = selected_header_qc_summary(
-        staged.get('header_qc'),
-        key1_byte=key1_byte,
-        key2_byte=key2_byte,
-    )
-    if summary is not None:
-        result['header_qc'] = summary
-    return result
 
 
 @router.get('/file_info')
