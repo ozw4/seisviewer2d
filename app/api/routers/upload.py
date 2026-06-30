@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import logging
-from pathlib import Path
 from typing import Annotated
 
 from fastapi import APIRouter, File, Form, HTTPException, Query, Request, UploadFile
@@ -14,96 +12,20 @@ from app.core.paths import (
     get_trace_store_dir,
     get_upload_dir,
 )
-from app.core.state import AppState
 from app.services.compare_raw_import_service import import_compare_raw_source
-from app.services.segy_upload_storage import (
-    SavedUpload,
-    cleanup_discarded_staged_upload as storage_cleanup_discarded_staged_upload,
-    cleanup_staged_upload as storage_cleanup_staged_upload,
-    cleanup_staged_uploads as storage_cleanup_staged_uploads,
-    ensure_staged_upload_cleanup_callback as storage_ensure_staged_upload_cleanup_callback,
-    promote_staged_segy_to_raw,
-    save_upload_file,
-    sha256_file,
-    staged_upload_dir,
-)
-from app.services.segy_ingest_service import ingest_saved_segy
 from app.services.segy_open_service import open_existing_trace_store
+from app.services.segy_upload_service import upload_segy_file
 from app.services.staged_segy_upload_service import (
     ingest_staged_segy_upload,
     stage_segy_upload,
 )
 from app.trace_store.catalog import list_recent_dataset_summaries
-from app.trace_store.naming import safe_upload_name
 
 router = APIRouter()
-logger = logging.getLogger(__name__)
 
 UPLOAD_DIR = get_upload_dir()
 PROCESSED_DIR = get_processed_upload_dir()
 TRACE_DIR = get_trace_store_dir()
-
-
-def _staged_upload_dir() -> Path:
-    return staged_upload_dir(UPLOAD_DIR)
-
-
-def _cleanup_staged_upload(raw_path: Path) -> None:
-    storage_cleanup_staged_upload(raw_path, upload_dir=UPLOAD_DIR)
-
-
-def _cleanup_discarded_staged_upload(_key, value, _reason: str) -> None:
-    storage_cleanup_discarded_staged_upload(
-        _key,
-        value,
-        _reason,
-        upload_dir=UPLOAD_DIR,
-    )
-
-
-def _ensure_staged_upload_cleanup_callback(state: AppState) -> None:
-    storage_ensure_staged_upload_cleanup_callback(state, upload_dir=UPLOAD_DIR)
-
-
-def cleanup_staged_uploads(
-    state: AppState,
-    *,
-    force: bool = False,
-    now_ts: float | None = None,
-) -> int:
-    return storage_cleanup_staged_uploads(
-        state,
-        upload_dir=UPLOAD_DIR,
-        force=force,
-        now_ts=now_ts,
-    )
-
-
-def _sha256_file(path: Path) -> str:
-    return sha256_file(path)
-
-
-def _promote_staged_segy_to_raw(
-    *,
-    staged_path: Path,
-    safe_name: str,
-    source_sha256: str,
-) -> Path:
-    return promote_staged_segy_to_raw(
-        staged_path=staged_path,
-        safe_name=safe_name,
-        source_sha256=source_sha256,
-        upload_dir=UPLOAD_DIR,
-    )
-
-
-async def _save_upload_file(
-    file: UploadFile,
-    safe_name: str,
-    *,
-    raw_path: Path,
-) -> SavedUpload:
-    return await save_upload_file(file, safe_name, raw_path=raw_path)
 
 
 @router.get('/recent_datasets')
@@ -140,22 +62,12 @@ async def upload_segy(
     key1_byte: Annotated[int, Form()] = 189,
     key2_byte: Annotated[int, Form()] = 193,
 ):
-    if not file.filename:
-        raise HTTPException(
-            status_code=400, detail='Uploaded file must have a filename'
-        )
-    logger.info('Uploading file: %s', file.filename)
-    safe_name = safe_upload_name(file.filename)
-    saved = await _save_upload_file(file, safe_name, raw_path=UPLOAD_DIR / safe_name)
     state = get_state(request.app)
-    return await ingest_saved_segy(
+    return await upload_segy_file(
         state=state,
+        upload_dir=UPLOAD_DIR,
         trace_dir=TRACE_DIR,
-        original_name=saved.original_name,
-        safe_name=saved.safe_name,
-        raw_path=saved.raw_path,
-        source_sha256=saved.source_sha256,
-        source_size=saved.source_size,
+        file=file,
         key1_byte=key1_byte,
         key2_byte=key2_byte,
     )

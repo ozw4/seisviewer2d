@@ -816,7 +816,12 @@ def test_stale_staged_upload_dir_cleanup_removes_orphan(_staged_env):
     os.utime(stale_dir, (stale_mtime, stale_mtime))
     os.utime(stale_file, (stale_mtime, stale_mtime))
 
-    removed = upload_mod.cleanup_staged_uploads(state, force=True, now_ts=now)
+    removed = segy_upload_storage.cleanup_staged_uploads(
+        state,
+        upload_dir=Path(upload_mod.UPLOAD_DIR),
+        force=True,
+        now_ts=now,
+    )
 
     assert removed == 1
     assert not stale_dir.exists()
@@ -832,7 +837,10 @@ def test_staged_upload_cleanup_refuses_paths_outside_staged_root(
     outside_dir.mkdir()
     outside_path.write_bytes(b'unsafe')
 
-    upload_mod._cleanup_staged_upload(outside_path)
+    segy_upload_storage.cleanup_staged_upload(
+        outside_path,
+        upload_dir=Path(upload_mod.UPLOAD_DIR),
+    )
 
     assert outside_path.exists()
     assert outside_dir.exists()
