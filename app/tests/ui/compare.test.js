@@ -14,6 +14,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  window.__svCompare.setLatestCompareRenderForTest(null);
   window.__svCompare.clearRawCompareValidationCache();
   delete window.buildWindowRequestArtifacts;
   vi.unstubAllGlobals();
@@ -323,6 +324,68 @@ test('raw compare validation ok=false returns backend message for caller to stop
     message: 'A-B unavailable: key2 sequence differs.',
   });
   expect(fetchMock).toHaveBeenCalledTimes(1);
+});
+
+test('renderCompareUnavailable clears previous compare plot and status shows validation message', async () => {
+  document.body.innerHTML += `
+    <div id="plot"></div>
+    <div id="compareStatus" hidden></div>
+  `;
+  const plot = document.getElementById('plot');
+  const message = 'A-B unavailable: key2 sequence differs.';
+  plot.__svComparePanelCount = 3;
+  plot.__svCompareMode = 'heatmap';
+  const react = vi.fn(async () => true);
+  vi.stubGlobal('Plotly', { react });
+
+  const rendered = await window.__svCompare.renderCompareUnavailable(message);
+
+  expect(rendered).toBe(true);
+  expect(window.__svCompare.getLatestCompareRender()).toBeNull();
+  expect(react).toHaveBeenCalledTimes(1);
+  expect(react.mock.calls[0][0]).toBe(plot);
+  expect(react.mock.calls[0][1]).toEqual([]);
+  expect(react.mock.calls[0][2].annotations[0].text).toBe(message);
+  expect(plot.__svComparePanelCount).toBe(0);
+  expect(plot.__svCompareMode).toBe('unavailable');
+  expect(document.getElementById('compareStatus').textContent).toBe(message);
+  expect(document.getElementById('compareStatus').hidden).toBe(false);
+});
+
+test('renderCompareUnavailable does not clear plot when queued request is stale', async () => {
+  document.body.innerHTML += `
+    <div id="plot"></div>
+    <div id="compareStatus" hidden></div>
+  `;
+  const plot = document.getElementById('plot');
+  plot.__svComparePanelCount = 3;
+  plot.__svCompareMode = 'heatmap';
+  const previousRender = { mode: 'heatmap', key1: 100 };
+  window.__svCompare.setLatestCompareRenderForTest(previousRender);
+  const react = vi.fn(async () => true);
+  const queueViewerPlotlyRender = vi.fn(async (_plot, renderData) => {
+    expect(renderData).toEqual({
+      __requestSlot: 'compare-window',
+      __requestId: 42,
+    });
+    return false;
+  });
+  vi.stubGlobal('Plotly', { react });
+  vi.stubGlobal('isCurrentRenderRequest', vi.fn(() => true));
+  vi.stubGlobal('queueViewerPlotlyRender', queueViewerPlotlyRender);
+
+  const rendered = await window.__svCompare.renderCompareUnavailable(
+    'A-B unavailable: stale.',
+    42,
+  );
+
+  expect(rendered).toBe(false);
+  expect(queueViewerPlotlyRender).toHaveBeenCalledTimes(1);
+  expect(react).not.toHaveBeenCalled();
+  expect(plot.__svComparePanelCount).toBe(3);
+  expect(plot.__svCompareMode).toBe('heatmap');
+  expect(window.__svCompare.getLatestCompareRender()).toBe(previousRender);
+  expect(document.getElementById('compareStatus').hidden).toBe(true);
 });
 
 test('buildComparePanels uses file names in raw diff label', () => {
