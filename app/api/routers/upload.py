@@ -3,11 +3,7 @@
 from __future__ import annotations
 
 import asyncio
-import hashlib
 import logging
-import shutil
-import time
-from dataclasses import dataclass
 from pathlib import Path
 from typing import Annotated
 from uuid import uuid4
@@ -21,9 +17,16 @@ from app.core.paths import (
     get_upload_dir,
 )
 from app.core.state import AppState
-from app.services.staged_upload_cleanup import (
-    cleanup_staged_upload,
-    cleanup_stale_staged_upload_dirs,
+from app.services.segy_upload_storage import (
+    SavedUpload,
+    cleanup_discarded_staged_upload as storage_cleanup_discarded_staged_upload,
+    cleanup_staged_upload as storage_cleanup_staged_upload,
+    cleanup_staged_uploads as storage_cleanup_staged_uploads,
+    ensure_staged_upload_cleanup_callback as storage_ensure_staged_upload_cleanup_callback,
+    promote_staged_segy_to_raw,
+    save_upload_file,
+    sha256_file,
+    staged_upload_dir,
 )
 from app.services.trace_store_registration import register_trace_store
 from app.trace_store.catalog import (
@@ -50,39 +53,27 @@ logger = logging.getLogger(__name__)
 UPLOAD_DIR = get_upload_dir()
 PROCESSED_DIR = get_processed_upload_dir()
 TRACE_DIR = get_trace_store_dir()
-UPLOAD_CHUNK_SIZE = 4 * 1024 * 1024
-STAGED_UPLOAD_CLEANUP_INTERVAL_SEC = 600
-_last_staged_cleanup_ts = 0.0
-
-
-@dataclass(frozen=True)
-class SavedUpload:
-    original_name: str
-    safe_name: str
-    raw_path: Path
-    source_sha256: str
-    source_size: int
 
 
 def _staged_upload_dir() -> Path:
-    return UPLOAD_DIR / 'staged'
+    return staged_upload_dir(UPLOAD_DIR)
 
 
 def _cleanup_staged_upload(raw_path: Path) -> None:
-    cleanup_staged_upload(raw_path, staged_root=_staged_upload_dir())
+    storage_cleanup_staged_upload(raw_path, upload_dir=UPLOAD_DIR)
 
 
 def _cleanup_discarded_staged_upload(_key, value, _reason: str) -> None:
-    if not isinstance(value, dict):
-        return
-    raw_path = value.get('raw_path')
-    if not isinstance(raw_path, (str, Path)):
-        return
-    _cleanup_staged_upload(Path(raw_path))
+    storage_cleanup_discarded_staged_upload(
+        _key,
+        value,
+        _reason,
+        upload_dir=UPLOAD_DIR,
+    )
 
 
 def _ensure_staged_upload_cleanup_callback(state: AppState) -> None:
-    state.staged_uploads.set_on_discard(_cleanup_discarded_staged_upload)
+    storage_ensure_staged_upload_cleanup_callback(state, upload_dir=UPLOAD_DIR)
 
 
 def cleanup_staged_uploads(
@@ -91,35 +82,16 @@ def cleanup_staged_uploads(
     force: bool = False,
     now_ts: float | None = None,
 ) -> int:
-    """Purge expired staged records and stale staged directories."""
-    global _last_staged_cleanup_ts
-
-    now = time.time() if now_ts is None else float(now_ts)
-    with state.lock:
-        _ensure_staged_upload_cleanup_callback(state)
-        removed = state.staged_uploads.purge_expired()
-        active_ids = set(state.staged_uploads.keys())
-        ttl_sec = state.staged_uploads.ttl_sec
-
-    if not force and now - _last_staged_cleanup_ts < STAGED_UPLOAD_CLEANUP_INTERVAL_SEC:
-        return removed
-
-    _last_staged_cleanup_ts = now
-    removed += cleanup_stale_staged_upload_dirs(
-        staged_root=_staged_upload_dir(),
-        ttl_sec=ttl_sec,
-        active_ids=active_ids,
-        now_ts=now,
+    return storage_cleanup_staged_uploads(
+        state,
+        upload_dir=UPLOAD_DIR,
+        force=force,
+        now_ts=now_ts,
     )
-    return removed
 
 
 def _sha256_file(path: Path) -> str:
-    hasher = hashlib.sha256()
-    with path.open('rb') as fh:
-        for chunk in iter(lambda: fh.read(UPLOAD_CHUNK_SIZE), b''):
-            hasher.update(chunk)
-    return hasher.hexdigest()
+    return sha256_file(path)
 
 
 def _promote_staged_segy_to_raw(
@@ -128,26 +100,12 @@ def _promote_staged_segy_to_raw(
     safe_name: str,
     source_sha256: str,
 ) -> Path:
-    raw_dir = UPLOAD_DIR / 'raw' / source_sha256
-    raw_path = raw_dir / safe_name
-    raw_dir.mkdir(parents=True, exist_ok=True)
-
-    if raw_path.exists():
-        if raw_path.is_file() and _sha256_file(raw_path) == source_sha256:
-            return raw_path
-        raw_path = raw_dir / f'{raw_path.stem}.{uuid4().hex}{raw_path.suffix}'
-
-    tmp_path = raw_path.with_suffix(raw_path.suffix + f'.{uuid4().hex}.tmp')
-    try:
-        shutil.copy2(staged_path, tmp_path)
-        tmp_path.replace(raw_path)
-    except OSError as exc:
-        tmp_path.unlink(missing_ok=True)
-        raise HTTPException(
-            status_code=422,
-            detail=f'Unable to promote staged SEG-Y: {exc}',
-        ) from exc
-    return raw_path
+    return promote_staged_segy_to_raw(
+        staged_path=staged_path,
+        safe_name=safe_name,
+        source_sha256=source_sha256,
+        upload_dir=UPLOAD_DIR,
+    )
 
 
 async def _save_upload_file(
@@ -156,31 +114,7 @@ async def _save_upload_file(
     *,
     raw_path: Path,
 ) -> SavedUpload:
-    original_name = file.filename or safe_name
-    raw_path.parent.mkdir(parents=True, exist_ok=True)
-    tmp_path = raw_path.with_suffix(raw_path.suffix + f'.{uuid4().hex}.tmp')
-    hasher = hashlib.sha256()
-    try:
-        with tmp_path.open('wb') as temp_file:
-            while True:
-                chunk = await file.read(UPLOAD_CHUNK_SIZE)
-                if not chunk:
-                    break
-                hasher.update(chunk)
-                temp_file.write(chunk)
-        tmp_path.replace(raw_path)
-        source_size = raw_path.stat().st_size
-    except OSError as exc:
-        tmp_path.unlink(missing_ok=True)
-        raise HTTPException(status_code=422, detail=str(exc)) from exc
-
-    return SavedUpload(
-        original_name=original_name,
-        safe_name=safe_name,
-        raw_path=raw_path,
-        source_sha256=hasher.hexdigest(),
-        source_size=int(source_size),
-    )
+    return await save_upload_file(file, safe_name, raw_path=raw_path)
 
 
 async def _ingest_saved_segy(
