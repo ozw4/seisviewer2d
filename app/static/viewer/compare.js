@@ -12,6 +12,7 @@
   let compareActiveSyncWrapped = false;
   let compareActiveSyncQueued = false;
   let rawCompareValidationCache = new Map();
+  let compareImportInFlight = false;
 
   class CompareFetchError extends Error {
     constructor(source, status, detail) {
@@ -33,6 +34,8 @@
       showDiff: document.getElementById('compareShowDiff'),
       datasetPicker: document.getElementById('compareDatasetPicker'),
       addDataset: document.getElementById('compareAddDataset'),
+      importBSource: document.getElementById('compareImportBSource'),
+      bSourceFile: document.getElementById('compareBSourceFile'),
       clearDatasets: document.getElementById('compareClearDatasets'),
       datasetList: document.getElementById('compareDatasetList'),
       status: document.getElementById('compareStatus'),
@@ -206,6 +209,14 @@
 
   function clearRawCompareValidationCache() {
     rawCompareValidationCache.clear();
+  }
+
+  function setCompareImportInFlight(inFlight) {
+    compareImportInFlight = inFlight === true;
+    const { importBSource, bSourceFile } = getCompareNodes();
+    if (importBSource) importBSource.disabled = compareImportInFlight;
+    if (bSourceFile) bSourceFile.disabled = compareImportInFlight;
+    renderCompareDatasetPicker();
   }
 
   function wrapActiveFileTargetSync() {
@@ -404,7 +415,7 @@
     if (previous && Array.from(datasetPicker.options).some((option) => option.value === previous)) {
       datasetPicker.value = previous;
     }
-    if (addDataset) addDataset.disabled = !active || datasetPicker.options.length === 0;
+    if (addDataset) addDataset.disabled = compareImportInFlight || !active || datasetPicker.options.length === 0;
   }
 
   function renderCompareDatasetList() {
@@ -769,6 +780,77 @@
     } catch (err) {
       setCompareStatus(err instanceof Error ? err.message : String(err));
       return false;
+    }
+  }
+
+  async function importCompareBSourceFile(file) {
+    if (compareImportInFlight) return false;
+    if (!file) return false;
+
+    const active = activeCompareFileTarget();
+    if (!active) {
+      setCompareStatus('Open an A dataset before importing B source.');
+      return false;
+    }
+    const startingActiveIdentity = compareTargetIdentity(active);
+    const formData = new FormData();
+    formData.append('file', file);
+    formData.append('key1_byte', String(active.key1Byte));
+    formData.append('key2_byte', String(active.key2Byte));
+
+    setCompareImportInFlight(true);
+    try {
+      const response = await fetch('/compare/raw/import', { method: 'POST', body: formData });
+      if (!response.ok) {
+        const detail = await readCompareResponseDetail(response);
+        throw new Error(detail || `Import B source failed (${response.status})`);
+      }
+      const payload = await response.json();
+      if (compareTargetIdentity(activeCompareFileTarget()) !== startingActiveIdentity) {
+        setCompareStatus('B source was imported, but the active A dataset changed. Add it from recent datasets.');
+        loadCompareRecentDatasets();
+        return false;
+      }
+
+      const result = addCompareDatasetTarget(compareFileTargets, {
+        fileId: payload.file_id,
+        displayName: payload.display_name || payload.original_name || file.name,
+        originalName: payload.original_name || file.name,
+        storeName: payload.store_name || '',
+        sourceSha256: payload.source_sha256 || '',
+        key1Byte: payload.key1_byte ?? active.key1Byte,
+        key2Byte: payload.key2_byte ?? active.key2Byte,
+        isActive: false,
+      }, active);
+      if (!result.added) {
+        setCompareStatus(result.reason);
+        loadCompareRecentDatasets();
+        return false;
+      }
+      compareFileTargets = result.targets;
+      window.compareFileTargets = compareFileTargets;
+      clearRawCompareValidationCache();
+      updateCompareSourceOptions();
+      const { sourceB } = getCompareNodes();
+      const importedSourceId = compareSourceId(payload.file_id, 'raw');
+      if (sourceB) sourceB.value = importedSourceId;
+      loadCompareRecentDatasets();
+      clearCompareDataState();
+      if (isCompareModeEnabled()) {
+        const renderPromise = fetchCompareAndPlot();
+        if (renderPromise && typeof renderPromise.catch === 'function') {
+          renderPromise.catch((err) => console.warn('Compare B source import render failed', err));
+        }
+      } else {
+        onCompareControlChange();
+      }
+      setCompareStatus('B source imported.');
+      return true;
+    } catch (err) {
+      setCompareStatus(err instanceof Error ? err.message : String(err));
+      return false;
+    } finally {
+      setCompareImportInFlight(false);
     }
   }
 
@@ -1731,7 +1813,7 @@
   function initCompareControls() {
     ensureActiveFileTargetSyncWrapped();
     updateCompareSourceOptions();
-    const { toggle, sourceA, sourceB, showDiff, addDataset, clearDatasets } = getCompareNodes();
+    const { toggle, sourceA, sourceB, showDiff, addDataset, importBSource, bSourceFile, clearDatasets } = getCompareNodes();
     for (const node of [toggle, sourceA, sourceB, showDiff]) {
       if (!node) continue;
       node.addEventListener('change', onCompareControlChange);
@@ -1739,6 +1821,18 @@
     if (addDataset) addDataset.addEventListener('click', () => {
       addSelectedCompareDataset();
     });
+    if (importBSource && bSourceFile) {
+      importBSource.addEventListener('click', () => {
+        if (compareImportInFlight) return;
+        bSourceFile.value = '';
+        bSourceFile.click();
+      });
+      bSourceFile.addEventListener('change', () => {
+        const file = bSourceFile.files && bSourceFile.files[0];
+        if (!file) return;
+        importCompareBSourceFile(file);
+      });
+    }
     if (clearDatasets) clearDatasets.addEventListener('click', clearCompareDatasets);
     loadCompareRecentDatasets();
   }
@@ -1785,12 +1879,15 @@
     compareUnavailableMessage,
     buildCompareRequest,
     addSelectedCompareDataset,
+    importCompareBSourceFile,
+    compareSourceId,
     addCompareDatasetTarget,
     clearCompareDatasetTargets,
     resetCompareTargetsForActive,
     buildCompareSourceCatalog,
     compareHeatmapScale,
     buildComparePanels,
+    initCompareControls,
   };
 
   if (document.readyState === 'loading') {

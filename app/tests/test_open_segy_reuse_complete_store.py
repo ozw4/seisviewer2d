@@ -252,13 +252,22 @@ def test_open_segy_store_name_takes_precedence_over_original_name(_open_env):
     assert rec['dt'] == pytest.approx(0.007)
 
 
-@pytest.mark.parametrize('store_name', ['../x', 'a/b', '', '.', '..'])
+@pytest.mark.parametrize('store_name', ['../x', 'a/b', '.', '..'])
 def test_open_segy_rejects_unsafe_store_name(_open_env, store_name: str):
     client, _upload_mod, _captured, calls = _open_env
 
-    res = client.post('/open_segy', data={'store_name': store_name})
+    res = client.post(
+        '/open_segy',
+        data={
+            'original_name': 'line.sgy',
+            'store_name': store_name,
+            'key1_byte': str(KEY1),
+            'key2_byte': str(KEY2),
+        },
+    )
 
     assert res.status_code == 400
+    assert res.json()['detail'] == 'Trace store name is unsafe'
     assert calls['ingest'] == 0
 
 
