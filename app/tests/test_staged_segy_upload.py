@@ -60,7 +60,10 @@ def _qc_payload() -> dict:
 @pytest.fixture()
 def _staged_env(tmp_path: Path, monkeypatch):
     from app.api.routers import upload as upload_mod
+    from app.services import compare_raw_import_service
     from app.services import segy_ingest_service
+    from app.services import segy_open_service
+    from app.services import staged_segy_upload_service
 
     state = app.state.sv
     state.file_registry.clear()
@@ -75,6 +78,7 @@ def _staged_env(tmp_path: Path, monkeypatch):
     monkeypatch.setattr(upload_mod, 'UPLOAD_DIR', upload_root, raising=True)
     monkeypatch.setattr(upload_mod, 'PROCESSED_DIR', processed, raising=True)
     monkeypatch.setattr(upload_mod, 'TRACE_DIR', trace_dir, raising=True)
+
     def _fake_register(
         *,
         state,
@@ -96,8 +100,8 @@ def _staged_env(tmp_path: Path, monkeypatch):
                 dt=dt,
             )
 
-    monkeypatch.setattr(upload_mod, 'register_trace_store', _fake_register)
     monkeypatch.setattr(segy_ingest_service, 'register_trace_store', _fake_register)
+    monkeypatch.setattr(segy_open_service, 'register_trace_store', _fake_register)
 
     calls = {'qc': 0, 'ingest': 0}
 
@@ -143,12 +147,26 @@ def _staged_env(tmp_path: Path, monkeypatch):
         )
         return meta
 
-    monkeypatch.setattr(upload_mod, 'inspect_segy_header_qc', _fake_qc, raising=True)
     monkeypatch.setattr(
-        upload_mod.SegyIngestor, 'from_segy', _fake_from_segy, raising=True
+        staged_segy_upload_service,
+        'inspect_segy_header_qc',
+        _fake_qc,
+        raising=True,
+    )
+    monkeypatch.setattr(
+        compare_raw_import_service,
+        'inspect_segy_header_qc',
+        _fake_qc,
+        raising=True,
     )
     monkeypatch.setattr(
         segy_ingest_service.SegyIngestor,
+        'from_segy',
+        _fake_from_segy,
+        raising=True,
+    )
+    monkeypatch.setattr(
+        segy_open_service.SegyIngestor,
         'from_segy',
         _fake_from_segy,
         raising=True,
@@ -692,12 +710,18 @@ def test_compare_raw_import_qc_failure_removes_staged_file(
     monkeypatch,
 ):
     client, upload_mod, calls = _staged_env
+    from app.services import compare_raw_import_service
 
     def _raise_qc(_path: str | Path) -> dict:
         calls['qc'] += 1
         raise RuntimeError('bad headers')
 
-    monkeypatch.setattr(upload_mod, 'inspect_segy_header_qc', _raise_qc, raising=True)
+    monkeypatch.setattr(
+        compare_raw_import_service,
+        'inspect_segy_header_qc',
+        _raise_qc,
+        raising=True,
+    )
 
     response = _compare_raw_import(client, name='bad.sgy', data=b'bad-data')
 
@@ -710,12 +734,18 @@ def test_compare_raw_import_qc_failure_removes_staged_file(
 
 def test_stage_segy_qc_failure_removes_staged_file(_staged_env, monkeypatch):
     client, upload_mod, calls = _staged_env
+    from app.services import staged_segy_upload_service
 
     def _raise_qc(_path: str | Path) -> dict:
         calls['qc'] += 1
         raise RuntimeError('bad headers')
 
-    monkeypatch.setattr(upload_mod, 'inspect_segy_header_qc', _raise_qc, raising=True)
+    monkeypatch.setattr(
+        staged_segy_upload_service,
+        'inspect_segy_header_qc',
+        _raise_qc,
+        raising=True,
+    )
 
     response = client.post(
         '/stage_segy',
@@ -786,7 +816,12 @@ def test_stale_staged_upload_dir_cleanup_removes_orphan(_staged_env):
     os.utime(stale_dir, (stale_mtime, stale_mtime))
     os.utime(stale_file, (stale_mtime, stale_mtime))
 
-    removed = upload_mod.cleanup_staged_uploads(state, force=True, now_ts=now)
+    removed = segy_upload_storage.cleanup_staged_uploads(
+        state,
+        upload_dir=Path(upload_mod.UPLOAD_DIR),
+        force=True,
+        now_ts=now,
+    )
 
     assert removed == 1
     assert not stale_dir.exists()
@@ -802,7 +837,10 @@ def test_staged_upload_cleanup_refuses_paths_outside_staged_root(
     outside_dir.mkdir()
     outside_path.write_bytes(b'unsafe')
 
-    upload_mod._cleanup_staged_upload(outside_path)
+    segy_upload_storage.cleanup_staged_upload(
+        outside_path,
+        upload_dir=Path(upload_mod.UPLOAD_DIR),
+    )
 
     assert outside_path.exists()
     assert outside_dir.exists()

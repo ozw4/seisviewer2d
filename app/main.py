@@ -15,17 +15,18 @@ from app.api.routers.picks import router as picks_router
 from app.api.routers.pipeline import router as pipeline_router
 from app.api.routers.section import router as section_router
 from app.api.routers.statics import router as statics_router
-from app.api.routers.upload import cleanup_staged_uploads
 from app.api.routers.upload import router as upload_router
+from app.core.paths import get_upload_dir
 from app.core.state import create_app_state
 from app.services.errors import DomainError
+from app.services.segy_upload_storage import cleanup_staged_uploads
 
 STATIC_DIR = (Path(__file__).parent / 'static').resolve()
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
-    cleanup_staged_uploads(app.state.sv, force=True)
+    cleanup_staged_uploads(app.state.sv, upload_dir=get_upload_dir(), force=True)
     yield
 
 

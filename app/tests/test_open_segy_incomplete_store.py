@@ -77,6 +77,7 @@ def _write_complete_store(
 def _open_env(tmp_path: Path, monkeypatch):
     """Isolate TRACE_DIR and stub ingest for /open_segy tests."""
     from app.api.routers import upload as upload_mod
+    from app.services import segy_open_service
 
     app.state.sv.file_registry.clear()
     get_state(app).cached_readers.clear()
@@ -112,7 +113,7 @@ def _open_env(tmp_path: Path, monkeypatch):
                 dt=dt,
             )
 
-    monkeypatch.setattr(upload_mod, 'register_trace_store', _fake_register)
+    monkeypatch.setattr(segy_open_service, 'register_trace_store', _fake_register)
 
     calls: dict[str, object] = {'ingest': 0, 'args': None, 'source_sha256': None}
 
@@ -166,7 +167,7 @@ def _open_env(tmp_path: Path, monkeypatch):
         return meta
 
     monkeypatch.setattr(
-        upload_mod.SegyIngestor, 'from_segy', _fake_from_segy, raising=True
+        segy_open_service.SegyIngestor, 'from_segy', _fake_from_segy, raising=True
     )
 
     client = TestClient(app, raise_server_exceptions=False)
