@@ -60,6 +60,7 @@ def _qc_payload() -> dict:
 @pytest.fixture()
 def _staged_env(tmp_path: Path, monkeypatch):
     from app.api.routers import upload as upload_mod
+    from app.services import segy_ingest_service
 
     state = app.state.sv
     state.file_registry.clear()
@@ -96,6 +97,7 @@ def _staged_env(tmp_path: Path, monkeypatch):
             )
 
     monkeypatch.setattr(upload_mod, 'register_trace_store', _fake_register)
+    monkeypatch.setattr(segy_ingest_service, 'register_trace_store', _fake_register)
 
     calls = {'qc': 0, 'ingest': 0}
 
@@ -144,6 +146,12 @@ def _staged_env(tmp_path: Path, monkeypatch):
     monkeypatch.setattr(upload_mod, 'inspect_segy_header_qc', _fake_qc, raising=True)
     monkeypatch.setattr(
         upload_mod.SegyIngestor, 'from_segy', _fake_from_segy, raising=True
+    )
+    monkeypatch.setattr(
+        segy_ingest_service.SegyIngestor,
+        'from_segy',
+        _fake_from_segy,
+        raising=True,
     )
 
     try:

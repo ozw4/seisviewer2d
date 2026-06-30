@@ -6,7 +6,6 @@ import hashlib
 import json
 import threading
 from pathlib import Path
-from types import SimpleNamespace
 
 import numpy as np
 import pytest
@@ -14,6 +13,7 @@ from fastapi import HTTPException
 from fastapi.testclient import TestClient
 
 from app.main import app
+from app.services.segy_ingest_service import ingest_saved_segy
 from app.tests._stubs import write_baseline_raw
 from app.trace_store.naming import content_addressed_compare_store_name
 from app.utils.baseline_artifacts import (
@@ -64,6 +64,7 @@ def _upload_env(
 ) -> tuple[TestClient, object, dict[str, int]]:
     """Isolate UPLOAD_DIR/TRACE_DIR into a temp folder and stub ingest."""
     from app.api.routers import upload as upload_mod
+    from app.services import segy_ingest_service
 
     app.state.sv.file_registry.clear()
     state = getattr(getattr(app, 'state', None), 'sv', None)
@@ -101,6 +102,7 @@ def _upload_env(
             )
 
     monkeypatch.setattr(upload_mod, 'register_trace_store', _fake_register)
+    monkeypatch.setattr(segy_ingest_service, 'register_trace_store', _fake_register)
 
     calls = {'ingest': 0}
 
@@ -146,6 +148,12 @@ def _upload_env(
 
     monkeypatch.setattr(
         upload_mod.SegyIngestor, 'from_segy', _fake_from_segy, raising=True
+    )
+    monkeypatch.setattr(
+        segy_ingest_service.SegyIngestor,
+        'from_segy',
+        _fake_from_segy,
+        raising=True,
     )
 
     return TestClient(app), upload_mod, calls
@@ -221,8 +229,9 @@ def test_ingest_saved_segy_uses_explicit_store_name(_upload_env):
     source_sha256 = hashlib.sha256(data).hexdigest()
 
     out = _run_async(
-        upload_mod._ingest_saved_segy(
-            request=SimpleNamespace(app=app),
+        ingest_saved_segy(
+            state=app.state.sv,
+            trace_dir=Path(upload_mod.TRACE_DIR),
             original_name='raw.sgy',
             safe_name='raw.sgy',
             raw_path=raw_path,
@@ -257,8 +266,9 @@ def test_ingest_saved_segy_no_archive_existing_returns_409(_upload_env):
 
     with pytest.raises(HTTPException) as exc_info:
         _run_async(
-            upload_mod._ingest_saved_segy(
-                request=SimpleNamespace(app=app),
+            ingest_saved_segy(
+                state=app.state.sv,
+                trace_dir=Path(upload_mod.TRACE_DIR),
                 original_name='raw.sgy',
                 safe_name='raw.sgy',
                 raw_path=raw_path,
@@ -298,8 +308,9 @@ def test_ingest_saved_segy_reuses_content_addressed_store(_upload_env):
     )
 
     out = _run_async(
-        upload_mod._ingest_saved_segy(
-            request=SimpleNamespace(app=app),
+        ingest_saved_segy(
+            state=app.state.sv,
+            trace_dir=Path(upload_mod.TRACE_DIR),
             original_name='lineA.sgy',
             safe_name='lineA.sgy',
             raw_path=raw_path,
@@ -328,8 +339,9 @@ def test_ingest_saved_segy_rejects_unsafe_store_name(_upload_env, store_name: st
 
     with pytest.raises(HTTPException) as exc_info:
         _run_async(
-            upload_mod._ingest_saved_segy(
-                request=SimpleNamespace(app=app),
+            ingest_saved_segy(
+                state=app.state.sv,
+                trace_dir=Path(upload_mod.TRACE_DIR),
                 original_name='raw.sgy',
                 safe_name='raw.sgy',
                 raw_path=raw_path,

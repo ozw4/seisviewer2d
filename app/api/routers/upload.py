@@ -28,15 +28,13 @@ from app.services.segy_upload_storage import (
     sha256_file,
     staged_upload_dir,
 )
+from app.services.segy_ingest_service import ingest_saved_segy
 from app.services.trace_store_registration import register_trace_store
 from app.trace_store.catalog import (
-    archive_trace_store,
-    ensure_trace_store_meta_identity,
     ensure_trace_store_meta_key_bytes,
     list_recent_dataset_summaries,
     load_trace_store_meta,
     trace_store_complete,
-    trace_store_matches_source,
 )
 from app.trace_store.naming import (
     bounded_direct_import_raw_name,
@@ -115,112 +113,6 @@ async def _save_upload_file(
     raw_path: Path,
 ) -> SavedUpload:
     return await save_upload_file(file, safe_name, raw_path=raw_path)
-
-
-async def _ingest_saved_segy(
-    *,
-    request: Request,
-    original_name: str,
-    safe_name: str,
-    raw_path: Path,
-    source_sha256: str,
-    source_size: int,
-    key1_byte: int,
-    key2_byte: int,
-    store_name: str | None = None,
-    allow_archive_existing: bool = True,
-) -> dict:
-    state = get_state(request.app)
-    resolved_store_name = safe_name if store_name is None else store_name
-    store_dir = TRACE_DIR / safe_store_name(resolved_store_name)
-    file_id = str(uuid4())
-
-    meta: dict | None = None
-    reused = False
-    if store_dir.exists():
-        meta = trace_store_matches_source(
-            store_dir,
-            key1_byte,
-            key2_byte,
-            source_sha256=source_sha256,
-            source_size=source_size,
-        )
-        if meta is not None:
-            reused = True
-        else:
-            if not allow_archive_existing:
-                raise HTTPException(
-                    status_code=409,
-                    detail='Trace store already exists for a different source or key bytes',
-                )
-            try:
-                archive_trace_store(store_dir)
-            except OSError as exc:
-                msg = f'Unable to archive existing trace store: {exc}'
-                raise HTTPException(status_code=409, detail=msg) from exc
-
-    if reused and meta is not None:
-        meta = ensure_trace_store_meta_identity(
-            store_dir,
-            meta,
-            raw_path=raw_path,
-            original_name=original_name,
-            display_name=original_name,
-            store_name=store_dir.name,
-            source_sha256=source_sha256,
-            source_size=source_size,
-        )
-        logger.info('Reusing trace store for %s', original_name)
-        register_trace_store(
-            state=state,
-            file_id=file_id,
-            store_dir=store_dir,
-            key1_byte=key1_byte,
-            key2_byte=key2_byte,
-            dt=meta.get('dt') if isinstance(meta, dict) else None,
-            update_registry=True,
-            touch_meta=True,
-        )
-        return {
-            'file_id': file_id,
-            'reused_trace_store': True,
-            'store_name': store_dir.name,
-        }
-
-    store_dir.mkdir(parents=True, exist_ok=True)
-    meta = await asyncio.to_thread(
-        SegyIngestor.from_segy,
-        str(raw_path),
-        store_dir,
-        key1_byte,
-        key2_byte,
-        source_sha256=source_sha256,
-    )
-    meta = ensure_trace_store_meta_identity(
-        store_dir,
-        meta,
-        raw_path=raw_path,
-        original_name=original_name,
-        display_name=original_name,
-        store_name=store_dir.name,
-        source_sha256=source_sha256,
-        source_size=source_size,
-    )
-    register_trace_store(
-        state=state,
-        file_id=file_id,
-        store_dir=store_dir,
-        key1_byte=key1_byte,
-        key2_byte=key2_byte,
-        dt=meta.get('dt') if isinstance(meta, dict) else None,
-        update_registry=True,
-        touch_meta=True,
-    )
-    return {
-        'file_id': file_id,
-        'reused_trace_store': False,
-        'store_name': store_dir.name,
-    }
 
 
 def _selected_header_qc_summary(
@@ -372,8 +264,10 @@ async def upload_segy(
     logger.info('Uploading file: %s', file.filename)
     safe_name = safe_upload_name(file.filename)
     saved = await _save_upload_file(file, safe_name, raw_path=UPLOAD_DIR / safe_name)
-    return await _ingest_saved_segy(
-        request=request,
+    state = get_state(request.app)
+    return await ingest_saved_segy(
+        state=state,
+        trace_dir=TRACE_DIR,
         original_name=saved.original_name,
         safe_name=saved.safe_name,
         raw_path=saved.raw_path,
@@ -439,8 +333,9 @@ async def import_compare_raw(
             key1_byte=key1_byte,
             key2_byte=key2_byte,
         )
-        result = await _ingest_saved_segy(
-            request=request,
+        result = await ingest_saved_segy(
+            state=state,
+            trace_dir=TRACE_DIR,
             original_name=saved.original_name,
             safe_name=safe_name,
             raw_path=durable_raw_path,
@@ -549,8 +444,9 @@ async def ingest_staged_segy(
         safe_name=safe_name,
         source_sha256=source_sha256,
     )
-    result = await _ingest_saved_segy(
-        request=request,
+    result = await ingest_saved_segy(
+        state=state,
+        trace_dir=TRACE_DIR,
         original_name=str(staged.get('original_name') or staged.get('safe_name')),
         safe_name=safe_name,
         raw_path=durable_raw_path,
