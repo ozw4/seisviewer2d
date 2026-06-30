@@ -60,6 +60,7 @@ def _qc_payload() -> dict:
 @pytest.fixture()
 def _staged_env(tmp_path: Path, monkeypatch):
     from app.api.routers import upload as upload_mod
+    from app.services import compare_raw_import_service
     from app.services import segy_ingest_service
     from app.services import segy_open_service
 
@@ -146,6 +147,12 @@ def _staged_env(tmp_path: Path, monkeypatch):
         return meta
 
     monkeypatch.setattr(upload_mod, 'inspect_segy_header_qc', _fake_qc, raising=True)
+    monkeypatch.setattr(
+        compare_raw_import_service,
+        'inspect_segy_header_qc',
+        _fake_qc,
+        raising=True,
+    )
     monkeypatch.setattr(
         segy_ingest_service.SegyIngestor,
         'from_segy',
@@ -697,12 +704,18 @@ def test_compare_raw_import_qc_failure_removes_staged_file(
     monkeypatch,
 ):
     client, upload_mod, calls = _staged_env
+    from app.services import compare_raw_import_service
 
     def _raise_qc(_path: str | Path) -> dict:
         calls['qc'] += 1
         raise RuntimeError('bad headers')
 
-    monkeypatch.setattr(upload_mod, 'inspect_segy_header_qc', _raise_qc, raising=True)
+    monkeypatch.setattr(
+        compare_raw_import_service,
+        'inspect_segy_header_qc',
+        _raise_qc,
+        raising=True,
+    )
 
     response = _compare_raw_import(client, name='bad.sgy', data=b'bad-data')
 

@@ -28,14 +28,12 @@ from app.services.segy_upload_storage import (
     sha256_file,
     staged_upload_dir,
 )
+from app.services.compare_raw_import_service import import_compare_raw_source
+from app.services.segy_header_qc_summary import selected_header_qc_summary
 from app.services.segy_ingest_service import ingest_saved_segy
 from app.services.segy_open_service import open_existing_trace_store
 from app.trace_store.catalog import list_recent_dataset_summaries
-from app.trace_store.naming import (
-    bounded_direct_import_raw_name,
-    content_addressed_compare_store_name,
-    safe_upload_name,
-)
+from app.trace_store.naming import safe_upload_name
 from app.utils.header_qc import inspect_segy_header_qc
 
 router = APIRouter()
@@ -108,39 +106,6 @@ async def _save_upload_file(
     return await save_upload_file(file, safe_name, raw_path=raw_path)
 
 
-def _selected_header_qc_summary(
-    header_qc: object,
-    *,
-    key1_byte: int,
-    key2_byte: int,
-) -> dict | None:
-    if not isinstance(header_qc, dict):
-        return None
-
-    pairs = header_qc.get('recommended_pairs')
-    if isinstance(pairs, list):
-        for pair in pairs:
-            if not isinstance(pair, dict):
-                continue
-            if (
-                pair.get('key1_byte') == key1_byte
-                and pair.get('key2_byte') == key2_byte
-            ):
-                warnings = pair.get('warnings')
-                return {
-                    'selected_pair_score': pair.get('score'),
-                    'confidence': pair.get('confidence', 'unknown'),
-                    'warnings': warnings if isinstance(warnings, list) else [],
-                }
-
-    warnings = header_qc.get('warnings')
-    return {
-        'selected_pair_score': None,
-        'confidence': 'unknown',
-        'warnings': warnings if isinstance(warnings, list) else [],
-    }
-
-
 @router.get('/recent_datasets')
 async def recent_datasets():
     return {'datasets': list_recent_dataset_summaries(TRACE_DIR)}
@@ -204,81 +169,14 @@ async def import_compare_raw(
     key2_byte: Annotated[int, Form(...)],
 ):
     state = get_state(request.app)
-    cleanup_staged_uploads(state)
-    if not file.filename:
-        raise HTTPException(
-            status_code=400, detail='Uploaded file must have a filename'
-        )
-    if key1_byte == key2_byte:
-        raise HTTPException(
-            status_code=400,
-            detail='key1_byte and key2_byte must be different',
-        )
-
-    staged_id = uuid4().hex
-    safe_name = safe_upload_name(file.filename)
-    raw_safe_name = bounded_direct_import_raw_name(safe_name)
-    raw_path = _staged_upload_dir() / staged_id / raw_safe_name
-    saved: SavedUpload | None = None
-    try:
-        saved = await _save_upload_file(file, raw_safe_name, raw_path=raw_path)
-        try:
-            header_qc = await asyncio.to_thread(inspect_segy_header_qc, saved.raw_path)
-        except Exception as exc:  # noqa: BLE001
-            raise HTTPException(
-                status_code=422,
-                detail=f'Unable to inspect SEG-Y headers: {exc}',
-            ) from exc
-        header_qc_summary = _selected_header_qc_summary(
-            header_qc,
-            key1_byte=key1_byte,
-            key2_byte=key2_byte,
-        )
-        if header_qc_summary is None:
-            raise HTTPException(
-                status_code=422,
-                detail='Unable to summarize selected SEG-Y headers',
-            )
-
-        durable_raw_path = _promote_staged_segy_to_raw(
-            staged_path=saved.raw_path,
-            safe_name=raw_safe_name,
-            source_sha256=saved.source_sha256,
-        )
-        store_name = content_addressed_compare_store_name(
-            safe_name=safe_name,
-            source_sha256=saved.source_sha256,
-            key1_byte=key1_byte,
-            key2_byte=key2_byte,
-        )
-        result = await ingest_saved_segy(
-            state=state,
-            trace_dir=TRACE_DIR,
-            original_name=saved.original_name,
-            safe_name=safe_name,
-            raw_path=durable_raw_path,
-            source_sha256=saved.source_sha256,
-            source_size=saved.source_size,
-            key1_byte=key1_byte,
-            key2_byte=key2_byte,
-            store_name=store_name,
-            allow_archive_existing=False,
-        )
-        return {
-            'file_id': result['file_id'],
-            'display_name': saved.original_name,
-            'original_name': saved.original_name,
-            'safe_name': safe_name,
-            'store_name': result['store_name'],
-            'source_sha256': saved.source_sha256,
-            'source_size': saved.source_size,
-            'key1_byte': key1_byte,
-            'key2_byte': key2_byte,
-            'reused_trace_store': result['reused_trace_store'],
-            'header_qc': header_qc_summary,
-        }
-    finally:
-        _cleanup_staged_upload(saved.raw_path if saved is not None else raw_path)
+    return await import_compare_raw_source(
+        state=state,
+        upload_dir=UPLOAD_DIR,
+        trace_dir=TRACE_DIR,
+        file=file,
+        key1_byte=key1_byte,
+        key2_byte=key2_byte,
+    )
 
 
 @router.post('/stage_segy')
@@ -376,7 +274,7 @@ async def ingest_staged_segy(
     with state.lock:
         state.staged_uploads.pop(staged_id, None)
     _cleanup_staged_upload(raw_path)
-    summary = _selected_header_qc_summary(
+    summary = selected_header_qc_summary(
         staged.get('header_qc'),
         key1_byte=key1_byte,
         key2_byte=key2_byte,
