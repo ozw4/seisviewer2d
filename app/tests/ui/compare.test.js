@@ -1,4 +1,4 @@
-import { beforeAll, beforeEach, expect, test } from 'vitest';
+import { afterEach, beforeAll, beforeEach, expect, test, vi } from 'vitest';
 
 beforeAll(async () => {
   await import('../../static/viewer/compare.js');
@@ -11,6 +11,12 @@ beforeEach(() => {
     <select id="colormap"><option value="Greys" selected>Greys</option></select>
     <input id="cmReverse" type="checkbox">
   `;
+});
+
+afterEach(() => {
+  window.__svCompare.clearRawCompareValidationCache();
+  delete window.buildWindowRequestArtifacts;
+  vi.unstubAllGlobals();
 });
 
 function scale(panel) {
@@ -137,6 +143,98 @@ test('sourcePairKey distinguishes raw sources by fileId', () => {
   expect(window.__svCompare.sourcePairKey(firstPair)).not.toEqual(
     window.__svCompare.sourcePairKey(secondPair),
   );
+});
+
+test('buildCompareRequest sends raw B window with A normalization file id', () => {
+  vi.stubGlobal('currentScaling', 'amax');
+  const buildArtifacts = vi.fn((context) => {
+    const params = new URLSearchParams();
+    if (context.normalizationFileId) {
+      params.set('normalization_file_id', context.normalizationFileId);
+    }
+    return { params, cacheKey: `cache:${context.normalizationFileId || ''}`, payloadMeta: {} };
+  });
+  window.buildWindowRequestArtifacts = buildArtifacts;
+  const sourceA = {
+    id: 'raw',
+    layerId: 'raw',
+    fileId: 'file-a',
+    key1Byte: 189,
+    key2Byte: 193,
+    pipelineKey: null,
+    tapLabel: null,
+  };
+  const sourceB = {
+    id: 'raw',
+    layerId: 'raw',
+    fileId: 'file-b',
+    key1Byte: 189,
+    key2Byte: 193,
+    pipelineKey: null,
+    tapLabel: null,
+  };
+
+  const request = window.__svCompare.buildCompareRequest(
+    sourceB,
+    sourceA,
+    101,
+    { x0: 0, x1: 10, y0: 0, y1: 20 },
+    { stepX: 1, stepY: 1, mode: 'heatmap' },
+  );
+
+  expect(buildArtifacts).toHaveBeenCalledWith(expect.objectContaining({
+    fileId: 'file-b',
+    normalizationFileId: 'file-a',
+  }));
+  expect(request.params.get('normalization_file_id')).toBe('file-a');
+});
+
+test('raw compare validation calls backend for distinct raw file sources', async () => {
+  const fetchMock = vi.fn(async () => ({
+    ok: true,
+    headers: { get: () => 'application/json' },
+    json: async () => ({ ok: true, reason: '', message: '' }),
+  }));
+  vi.stubGlobal('fetch', fetchMock);
+
+  const result = await window.__svCompare.validateRawCompareSources({
+    a: { id: 'raw', layerId: 'raw', fileId: 'file-a', key1Byte: 189, key2Byte: 193 },
+    b: { id: 'raw', layerId: 'raw', fileId: 'file-b', key1Byte: 189, key2Byte: 193 },
+  });
+
+  expect(result).toMatchObject({ ok: true });
+  expect(fetchMock).toHaveBeenCalledTimes(1);
+  const url = new URL(fetchMock.mock.calls[0][0], 'http://localhost');
+  expect(url.pathname).toBe('/compare/raw/validate');
+  expect(url.searchParams.get('file_id_a')).toBe('file-a');
+  expect(url.searchParams.get('file_id_b')).toBe('file-b');
+  expect(url.searchParams.get('key1_byte')).toBe('189');
+  expect(url.searchParams.get('key2_byte')).toBe('193');
+});
+
+test('compare recent dataset selection includes key-byte identity', () => {
+  const datasets = [
+    { original_name: 'line.sgy', store_name: 'a', key1_byte: 189, key2_byte: 193 },
+    { original_name: 'line.sgy', store_name: 'b', key1_byte: 17, key2_byte: 193 },
+  ];
+  const selectedValue = window.__svCompare.compareRecentDatasetValue({
+    originalName: 'line.sgy',
+    key1Byte: 17,
+    key2Byte: 193,
+  });
+
+  const selected = window.__svCompare.resolveCompareRecentDataset(datasets, selectedValue);
+
+  expect(selected).toMatchObject({
+    originalName: 'line.sgy',
+    key1Byte: 17,
+    key2Byte: 193,
+  });
+  expect(selectedValue).not.toEqual(window.__svCompare.compareRecentDatasetValue({
+    originalName: 'line.sgy',
+    key1Byte: 189,
+    key2Byte: 193,
+  }));
 });
 
 test('compare source catalog builds active raw source with file metadata', () => {

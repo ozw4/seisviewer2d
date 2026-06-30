@@ -11,6 +11,7 @@
   let compareActiveTargetKey = '';
   let compareActiveSyncWrapped = false;
   let compareActiveSyncQueued = false;
+  let rawCompareValidationCache = new Map();
 
   class CompareFetchError extends Error {
     constructor(source, status, detail) {
@@ -190,9 +191,14 @@
   }
 
   function resetCompareTargetsForActiveFile() {
+    clearRawCompareValidationCache();
     compareActiveTargetKey = '';
     syncCompareTargetsWithActive();
     updateCompareSourceOptions();
+  }
+
+  function clearRawCompareValidationCache() {
+    rawCompareValidationCache.clear();
   }
 
   function wrapActiveFileTargetSync() {
@@ -324,6 +330,23 @@
     };
   }
 
+  function compareRecentDatasetValue(candidate) {
+    const dataset = normalizeRecentDataset(candidate);
+    if (!dataset) return '';
+    return [
+      encodeURIComponent(dataset.originalName),
+      dataset.key1Byte,
+      dataset.key2Byte,
+    ].join('|');
+  }
+
+  function resolveCompareRecentDataset(datasets, selectedValue) {
+    if (!selectedValue) return null;
+    return (Array.isArray(datasets) ? datasets : [])
+      .map(normalizeRecentDataset)
+      .find((dataset) => dataset && compareRecentDatasetValue(dataset) === selectedValue) || null;
+  }
+
   function datasetMatchesActiveKeys(dataset, activeTarget) {
     const active = normalizeCompareFileTarget(activeTarget);
     return !!active
@@ -341,7 +364,7 @@
       .map(normalizeRecentDataset)
       .filter(Boolean);
     for (const dataset of datasets) {
-      const value = dataset.originalName;
+      const value = compareRecentDatasetValue(dataset);
       const option = new Option(dataset.originalName, value);
       option.dataset.key1Byte = String(dataset.key1Byte);
       option.dataset.key2Byte = String(dataset.key2Byte);
@@ -469,6 +492,89 @@
     return sources.a.domain === sources.b.domain;
   }
 
+  function isRawCompareSource(source) {
+    return (source?.layerId || source?.id || '') === 'raw';
+  }
+
+  function resolveCompareNormalizationFileId(source, referenceSource) {
+    if (!isRawCompareSource(source) || !isRawCompareSource(referenceSource)) return null;
+    const fileId = String(referenceSource?.fileId || '').trim();
+    return fileId || null;
+  }
+
+  function shouldValidateRawCompareSources(sources) {
+    return isRawCompareSource(sources?.a)
+      && isRawCompareSource(sources?.b)
+      && !!sources.a.fileId
+      && !!sources.b.fileId
+      && sources.a.fileId !== sources.b.fileId;
+  }
+
+  function rawCompareValidationKey(sources, key1Byte, key2Byte) {
+    return [
+      sources.a.fileId,
+      sources.b.fileId,
+      key1Byte,
+      key2Byte,
+    ].map((value) => encodeURIComponent(String(value ?? ''))).join('|');
+  }
+
+  async function readCompareResponseDetail(response) {
+    try {
+      const contentType = response.headers?.get?.('content-type') || '';
+      if (contentType.includes('application/json')) {
+        const json = await response.json();
+        return typeof json?.detail === 'string' ? json.detail : '';
+      }
+      return await response.text();
+    } catch (_) {
+      return '';
+    }
+  }
+
+  async function validateRawCompareSources(sources, signal) {
+    if (!shouldValidateRawCompareSources(sources)) return { ok: true, reason: '', message: '' };
+
+    const key1ByteA = Number(sources.a.key1Byte ?? currentKey1Byte);
+    const key2ByteA = Number(sources.a.key2Byte ?? currentKey2Byte);
+    const key1ByteB = Number(sources.b.key1Byte ?? currentKey1Byte);
+    const key2ByteB = Number(sources.b.key2Byte ?? currentKey2Byte);
+    if (![key1ByteA, key2ByteA, key1ByteB, key2ByteB].every(Number.isFinite)) {
+      return { ok: false, reason: 'key_bytes', message: 'A-B unavailable: source key bytes are missing.' };
+    }
+    if (key1ByteA !== key1ByteB || key2ByteA !== key2ByteB) {
+      return { ok: false, reason: 'key_bytes', message: 'A-B unavailable: source key bytes are different.' };
+    }
+
+    const cacheKey = rawCompareValidationKey(sources, key1ByteA, key2ByteA);
+    if (rawCompareValidationCache.has(cacheKey)) {
+      return rawCompareValidationCache.get(cacheKey);
+    }
+
+    const params = new URLSearchParams({
+      file_id_a: String(sources.a.fileId),
+      file_id_b: String(sources.b.fileId),
+      key1_byte: String(key1ByteA),
+      key2_byte: String(key2ByteA),
+    });
+    const response = await fetch(`/compare/raw/validate?${params.toString()}`, { signal });
+    if (!response.ok) {
+      const detail = await readCompareResponseDetail(response);
+      throw new Error(detail || `A-B validation failed (${response.status})`);
+    }
+    const payload = await response.json();
+    const result = {
+      ok: payload?.ok === true,
+      reason: String(payload?.reason || ''),
+      message: String(payload?.message || ''),
+    };
+    if (!result.ok && !result.message) {
+      result.message = 'A-B unavailable: raw source grids are different.';
+    }
+    rawCompareValidationCache.set(cacheKey, result);
+    return result;
+  }
+
   function visibleComparePanelCount(sources) {
     return compareShowDiffEnabled() && canAttemptDiff(sources) ? 3 : 2;
   }
@@ -533,22 +639,28 @@
       tapLabel,
       referencePipelineKey,
       referenceTapLabel,
+      normalizationFileId: resolveCompareNormalizationFileId(source, referenceSource),
       scaling: currentScaling,
       transpose: '1',
       mode: decision.mode,
       purpose: COMPARE_CACHE_PURPOSE,
     };
-    const artifacts = buildWindowRequestArtifacts(requestContext);
+    const artifacts = buildCompareWindowRequestArtifacts(requestContext);
     return { source, requestContext, ...artifacts };
+  }
+
+  function buildCompareWindowRequestArtifacts(requestContext) {
+    const builder = typeof window.buildWindowRequestArtifacts === 'function'
+      ? window.buildWindowRequestArtifacts
+      : (typeof buildWindowRequestArtifacts === 'function' ? buildWindowRequestArtifacts : null);
+    if (!builder) throw new Error('Window request builder is not available.');
+    return builder(requestContext);
   }
 
   function selectedCompareRecentDataset() {
     const { datasetPicker } = getCompareNodes();
     if (!datasetPicker) return null;
-    const selectedName = datasetPicker.value;
-    return compareRecentDatasets
-      .map(normalizeRecentDataset)
-      .find((dataset) => dataset && dataset.originalName === selectedName) || null;
+    return resolveCompareRecentDataset(compareRecentDatasets, datasetPicker.value);
   }
 
   async function addSelectedCompareDataset() {
@@ -1196,6 +1308,21 @@
     }), { slotName: COMPARE_RENDER_SLOT, requestId });
 
     try {
+      const rawValidation = await validateRawCompareSources(sources, signal);
+      if (!isCompareRequestCurrent(requestId)) {
+        markStaleCompareRequest(requestId);
+        return true;
+      }
+      if (!rawValidation.ok) {
+        if (setCompareStatusIfCurrent(
+          requestId,
+          rawValidation.message || 'A-B unavailable: raw source grids are different.',
+        )) {
+          markRenderRequestFailed(COMPARE_RENDER_SLOT, requestId);
+        }
+        return true;
+      }
+
       const aPromise = fetchComparePayload(requestA, signal, requestId);
       const bPromise = requestA.cacheKey === requestB.cacheKey
         ? aPromise
@@ -1450,6 +1577,13 @@
     resolveSourceDomain,
     sourcePairKey,
     normalizeCompareFileTarget,
+    normalizeRecentDataset,
+    compareRecentDatasetValue,
+    resolveCompareRecentDataset,
+    resolveCompareNormalizationFileId,
+    validateRawCompareSources,
+    clearRawCompareValidationCache,
+    buildCompareRequest,
     addCompareDatasetTarget,
     clearCompareDatasetTargets,
     resetCompareTargetsForActive,

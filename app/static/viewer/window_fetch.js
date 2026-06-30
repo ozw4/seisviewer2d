@@ -518,6 +518,7 @@
       tapLabel,
       referencePipelineKey,
       referenceTapLabel,
+      normalizationFileId,
       scaling,
       transpose,
       mode,
@@ -542,6 +543,7 @@
         `tap=${enc(tapLabel)}`,
         `rpkey=${enc(referencePipelineKey)}`,
         `rtap=${enc(referenceTapLabel)}`,
+        `norm=${enc(normalizationFileId)}`,
         `sc=${enc(scaling)}`,
         `tr=${enc(transpose)}`,
         `mode=${enc(mode)}`,
@@ -564,6 +566,7 @@
       tapLabel,
       referencePipelineKey,
       referenceTapLabel,
+      normalizationFileId,
       scaling,
       transpose,
       mode,
@@ -577,6 +580,9 @@
       const resolvedReferenceTapLabel = (
         referenceTapLabel && resolvedReferencePipelineKey
       ) ? referenceTapLabel : null;
+      const resolvedNormalizationFileId = normalizationFileId
+        ? String(normalizationFileId)
+        : null;
       const lmoKey = getSafeLmoKey();
       const params = new URLSearchParams({
         file_id: String(fileId),
@@ -598,6 +604,9 @@
         params.set('reference_pipeline_key', resolvedReferencePipelineKey);
         params.set('reference_tap_label', resolvedReferenceTapLabel);
       }
+      if (resolvedNormalizationFileId) {
+        params.set('normalization_file_id', resolvedNormalizationFileId);
+      }
       params.set('transpose', transpose);
       params.set('scaling', scaling);
       appendLinearMoveoutParams(params);
@@ -616,6 +625,7 @@
         tapLabel: resolvedTapLabel,
         referencePipelineKey: resolvedReferencePipelineKey,
         referenceTapLabel: resolvedReferenceTapLabel,
+        normalizationFileId: resolvedNormalizationFileId,
         scaling,
         transpose,
         mode,
@@ -642,6 +652,7 @@
           tapLabel: resolvedTapLabel,
           referencePipelineKey: resolvedReferencePipelineKey,
           referenceTapLabel: resolvedReferenceTapLabel,
+          normalizationFileId: resolvedNormalizationFileId,
           scaling,
           transpose,
           mode,
@@ -655,6 +666,7 @@
           effectiveLayer,
           pipelineKey: resolvedPipelineKey,
           referencePipelineKey: resolvedReferencePipelineKey,
+          normalizationFileId: resolvedNormalizationFileId,
           scaling,
           x0: windowInfo.x0,
           x1: windowInfo.x1,
@@ -1206,6 +1218,7 @@
       clear: windowCacheClear,
       stats: windowCacheStats,
     };
+    window.buildWindowRequestArtifacts = buildWindowRequestArtifacts;
 
     async function fetchWindowAndPlot() {
       if (typeof isCompareModeEnabled === 'function' && isCompareModeEnabled()) {
