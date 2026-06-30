@@ -447,7 +447,8 @@ def test_upload_segy_still_returns_existing_basic_shape(_staged_env):
 
     assert response.status_code == 200, response.text
     body = response.json()
-    assert set(body) == {'file_id', 'reused_trace_store'}
+    assert set(body) == {'file_id', 'reused_trace_store', 'store_name'}
     assert body['file_id']
     assert body['reused_trace_store'] is False
+    assert body['store_name'] == 'direct.sgy'
     assert calls == {'qc': 0, 'ingest': 1}

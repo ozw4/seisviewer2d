@@ -62,6 +62,32 @@ def _safe_upload_name(filename: str) -> str:
     return safe_name
 
 
+def _safe_store_name(store_name: str) -> str:
+    if store_name in {'', '.', '..'}:
+        raise HTTPException(status_code=400, detail='Trace store name is unsafe')
+    if '/' in store_name or '\\' in store_name:
+        raise HTTPException(status_code=400, detail='Trace store name is unsafe')
+    safe_name = _safe_upload_name(store_name)
+    if safe_name != store_name:
+        raise HTTPException(status_code=400, detail='Trace store name is unsafe')
+    return safe_name
+
+
+def _content_addressed_compare_store_name(
+    *,
+    safe_name: str,
+    source_sha256: str,
+    key1_byte: int,
+    key2_byte: int,
+) -> str:
+    source_hash = source_sha256.lower()
+    if not re.fullmatch(r'[0-9a-f]{64}', source_hash):
+        raise HTTPException(status_code=400, detail='Source sha256 is invalid')
+    safe_stem = _safe_upload_name(Path(safe_name).stem)
+    store_name = f'{safe_stem}__k{key1_byte}_{key2_byte}__sha256_{source_hash}'
+    return _safe_store_name(store_name)
+
+
 def _staged_upload_dir() -> Path:
     return UPLOAD_DIR / 'staged'
 
@@ -388,9 +414,12 @@ async def _ingest_saved_segy(
     source_size: int,
     key1_byte: int,
     key2_byte: int,
+    store_name: str | None = None,
+    allow_archive_existing: bool = True,
 ) -> dict:
     state = get_state(request.app)
-    store_dir = TRACE_DIR / safe_name
+    resolved_store_name = safe_name if store_name is None else store_name
+    store_dir = TRACE_DIR / _safe_store_name(resolved_store_name)
     file_id = str(uuid4())
 
     meta: dict | None = None
@@ -406,6 +435,11 @@ async def _ingest_saved_segy(
         if meta is not None:
             reused = True
         else:
+            if not allow_archive_existing:
+                raise HTTPException(
+                    status_code=409,
+                    detail='Trace store already exists for a different source or key bytes',
+                )
             try:
                 _archive_trace_store(store_dir)
             except OSError as exc:
@@ -431,7 +465,11 @@ async def _ingest_saved_segy(
             update_registry=True,
             touch_meta=True,
         )
-        return {'file_id': file_id, 'reused_trace_store': True}
+        return {
+            'file_id': file_id,
+            'reused_trace_store': True,
+            'store_name': store_dir.name,
+        }
 
     store_dir.mkdir(parents=True, exist_ok=True)
     meta = await asyncio.to_thread(
@@ -452,7 +490,11 @@ async def _ingest_saved_segy(
         update_registry=True,
         touch_meta=True,
     )
-    return {'file_id': file_id, 'reused_trace_store': False}
+    return {
+        'file_id': file_id,
+        'reused_trace_store': False,
+        'store_name': store_dir.name,
+    }
 
 
 def _selected_header_qc_summary(
