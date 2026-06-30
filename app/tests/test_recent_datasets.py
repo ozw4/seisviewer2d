@@ -86,6 +86,8 @@ def test_recent_datasets_lists_complete_stores_sorted_by_meta_mtime(
         n_traces=16,
         n_samples=64,
         original_name='newer.segy',
+        source_sha256='sha-newer',
+        baseline_source_sha256='sha-newer',
     )
     _write_store(
         incomplete,
@@ -132,6 +134,8 @@ def test_recent_datasets_lists_complete_stores_sorted_by_meta_mtime(
     assert [item['original_name'] for item in datasets] == ['newer.segy', 'older.segy']
     assert datasets[0]['key1_byte'] == 9
     assert datasets[0]['key2_byte'] == 13
+    assert datasets[0]['store_name'] == 'newer.segy'
+    assert datasets[0]['source_sha256'] == 'sha-newer'
     assert datasets[0]['dt'] == 0.004
     assert datasets[0]['n_traces'] == 16
     assert datasets[0]['n_samples'] == 64

@@ -1,12 +1,17 @@
 from __future__ import annotations
 
+import asyncio
 import hashlib
+import io
 import json
 import os
+import threading
 from pathlib import Path
+from types import SimpleNamespace
 
 import numpy as np
 import pytest
+from fastapi import UploadFile
 from fastapi.testclient import TestClient
 
 from app.main import app
@@ -120,6 +125,14 @@ def _staged_env(tmp_path: Path, monkeypatch):
             'source_sha256': source_sha256,
         }
         (store_path / 'meta.json').write_text(json.dumps(meta), encoding='utf-8')
+        write_baseline_raw(
+            store_path,
+            key1=1,
+            n_traces=2,
+            key1_byte=key1_byte,
+            key2_byte=key2_byte,
+            source_sha256=source_sha256,
+        )
         return meta
 
     monkeypatch.setattr(upload_mod, 'inspect_segy_header_qc', _fake_qc, raising=True)
@@ -210,6 +223,165 @@ def test_ingest_staged_segy_ingests_valid_stage(_staged_env):
     assert not staged_path.exists()
     assert not staged_dir.exists()
     assert app.state.sv.staged_uploads.get(staged_id) is None
+
+
+def _compare_raw_import(
+    client: TestClient,
+    *,
+    name: str = 'line 001.sgy',
+    data: bytes = b'segy',
+    key1_byte: int = 189,
+    key2_byte: int = 193,
+):
+    return client.post(
+        '/compare/raw/import',
+        files={'file': (name, data, 'application/octet-stream')},
+        data={'key1_byte': str(key1_byte), 'key2_byte': str(key2_byte)},
+    )
+
+
+def _run_async(coro):
+    try:
+        asyncio.get_running_loop()
+    except RuntimeError:
+        return asyncio.run(coro)
+
+    result: dict[str, object] = {}
+
+    def _target() -> None:
+        try:
+            result['value'] = asyncio.run(coro)
+        except BaseException as exc:  # noqa: BLE001
+            result['error'] = exc
+
+    thread = threading.Thread(target=_target)
+    thread.start()
+    thread.join()
+    if 'error' in result:
+        raise result['error']
+    return result.get('value')
+
+
+def test_compare_raw_import_ingests_content_addressed_store(_staged_env):
+    client, upload_mod, calls = _staged_env
+    data = b'compare-raw'
+    source_sha256 = hashlib.sha256(data).hexdigest()
+
+    response = _compare_raw_import(client, data=data)
+
+    assert response.status_code == 200, response.text
+    body = response.json()
+    expected_store_name = f'line_001__k189_193__sha256_{source_sha256}'
+    assert calls == {'qc': 1, 'ingest': 1}
+    assert body['file_id']
+    assert body['display_name'] == 'line 001.sgy'
+    assert body['original_name'] == 'line 001.sgy'
+    assert body['safe_name'] == 'line_001.sgy'
+    assert body['store_name'] == expected_store_name
+    assert body['source_sha256'] == source_sha256
+    assert body['source_size'] == len(data)
+    assert body['key1_byte'] == 189
+    assert body['key2_byte'] == 193
+    assert body['reused_trace_store'] is False
+    assert body['header_qc'] == {
+        'selected_pair_score': 0.94,
+        'confidence': 'high',
+        'warnings': [],
+    }
+
+    store_dir = Path(upload_mod.TRACE_DIR) / expected_store_name
+    meta = json.loads((store_dir / 'meta.json').read_text(encoding='utf-8'))
+    durable_raw_path = (
+        Path(upload_mod.UPLOAD_DIR) / 'raw' / source_sha256 / 'line_001.sgy'
+    )
+    assert meta['original_segy_path'] == str(durable_raw_path)
+    assert durable_raw_path.read_bytes() == data
+    staged_root = Path(upload_mod.UPLOAD_DIR) / 'staged'
+    assert not staged_root.exists() or list(staged_root.iterdir()) == []
+
+
+def test_compare_raw_import_reuses_same_source_hash_and_key_bytes(_staged_env):
+    client, _upload_mod, calls = _staged_env
+    data = b'reuse-compare-raw'
+
+    first = _compare_raw_import(client, data=data)
+    second = _compare_raw_import(client, data=data)
+
+    assert first.status_code == 200, first.text
+    assert second.status_code == 200, second.text
+    assert first.json()['reused_trace_store'] is False
+    assert second.json()['reused_trace_store'] is True
+    assert first.json()['store_name'] == second.json()['store_name']
+    assert first.json()['file_id'] != second.json()['file_id']
+    assert calls == {'qc': 2, 'ingest': 1}
+
+
+def test_compare_raw_import_same_basename_does_not_archive_upload_store(
+    _staged_env,
+):
+    client, upload_mod, _calls = _staged_env
+    normal_store = Path(upload_mod.TRACE_DIR) / 'line_001.sgy'
+    normal_store.mkdir(parents=True)
+    sentinel = normal_store / 'sentinel.txt'
+    sentinel.write_text('keep', encoding='utf-8')
+
+    response = _compare_raw_import(client, data=b'different-compare-source')
+
+    assert response.status_code == 200, response.text
+    assert sentinel.read_text(encoding='utf-8') == 'keep'
+    assert normal_store.is_dir()
+    assert not list(Path(upload_mod.TRACE_DIR).glob('line_001.sgy.old-*'))
+    assert response.json()['store_name'] != 'line_001.sgy'
+
+
+def test_compare_raw_import_rejects_duplicate_key_bytes(_staged_env):
+    client, _upload_mod, calls = _staged_env
+
+    response = _compare_raw_import(client, key1_byte=189, key2_byte=189)
+
+    assert response.status_code == 400
+    assert response.json()['detail'] == 'key1_byte and key2_byte must be different'
+    assert calls == {'qc': 0, 'ingest': 0}
+
+
+def test_compare_raw_import_rejects_missing_filename(_staged_env):
+    _client, upload_mod, calls = _staged_env
+    upload = UploadFile(file=io.BytesIO(b'data'), filename='')
+
+    with pytest.raises(upload_mod.HTTPException) as exc_info:
+        _run_async(
+            upload_mod.import_compare_raw(
+                request=SimpleNamespace(app=app),
+                file=upload,
+                key1_byte=189,
+                key2_byte=193,
+            )
+        )
+
+    assert exc_info.value.status_code == 400
+    assert exc_info.value.detail == 'Uploaded file must have a filename'
+    assert calls == {'qc': 0, 'ingest': 0}
+
+
+def test_compare_raw_import_qc_failure_removes_staged_file(
+    _staged_env,
+    monkeypatch,
+):
+    client, upload_mod, calls = _staged_env
+
+    def _raise_qc(_path: str | Path) -> dict:
+        calls['qc'] += 1
+        raise RuntimeError('bad headers')
+
+    monkeypatch.setattr(upload_mod, 'inspect_segy_header_qc', _raise_qc, raising=True)
+
+    response = _compare_raw_import(client, name='bad.sgy', data=b'bad-data')
+
+    assert response.status_code == 422
+    assert response.json()['detail'] == 'Unable to inspect SEG-Y headers: bad headers'
+    assert calls == {'qc': 1, 'ingest': 0}
+    staged_root = Path(upload_mod.UPLOAD_DIR) / 'staged'
+    assert not staged_root.exists() or list(staged_root.iterdir()) == []
 
 
 def test_stage_segy_qc_failure_removes_staged_file(_staged_env, monkeypatch):
@@ -447,7 +619,8 @@ def test_upload_segy_still_returns_existing_basic_shape(_staged_env):
 
     assert response.status_code == 200, response.text
     body = response.json()
-    assert set(body) == {'file_id', 'reused_trace_store'}
+    assert set(body) == {'file_id', 'reused_trace_store', 'store_name'}
     assert body['file_id']
     assert body['reused_trace_store'] is False
+    assert body['store_name'] == 'direct.sgy'
     assert calls == {'qc': 0, 'ingest': 1}

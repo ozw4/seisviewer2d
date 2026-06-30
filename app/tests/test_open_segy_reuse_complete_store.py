@@ -124,7 +124,16 @@ def test_open_segy_reuses_complete_store_sets_reused_true(_open_env):
     client, upload_mod, captured, calls = _open_env
     original_name = 'complete.segy'
     store_dir = Path(upload_mod.TRACE_DIR) / original_name
-    _write_complete_store(store_dir, key1_byte=KEY1, key2_byte=KEY2, dt=0.004)
+    _write_complete_store(
+        store_dir,
+        key1_byte=KEY1,
+        key2_byte=KEY2,
+        dt=0.004,
+        meta_overrides={
+            'original_name': original_name,
+            'source_sha256': 'sha-complete',
+        },
+    )
 
     res = client.post(
         '/open_segy',
@@ -137,6 +146,11 @@ def test_open_segy_reuses_complete_store_sets_reused_true(_open_env):
     assert res.status_code == 200, res.text
     payload = res.json()
     assert payload['reused_trace_store'] is True
+    assert payload['store_name'] == original_name
+    assert payload['original_name'] == original_name
+    assert payload['source_sha256'] == 'sha-complete'
+    assert payload['key1_byte'] == KEY1
+    assert payload['key2_byte'] == KEY2
     assert isinstance(payload.get('file_id'), str)
     assert calls['ingest'] == 0
 
@@ -152,6 +166,100 @@ def test_open_segy_reuses_complete_store_sets_reused_true(_open_env):
     assert reg_store == str(store_dir)
     assert reg_k1 == KEY1
     assert reg_k2 == KEY2
+
+
+def test_open_segy_reuses_content_addressed_store_by_store_name(_open_env):
+    client, upload_mod, _captured, calls = _open_env
+    store_name = 'B__k189_193__sha256_abcdef1234567890'
+    original_name = 'B.sgy'
+    store_dir = Path(upload_mod.TRACE_DIR) / store_name
+    _write_complete_store(
+        store_dir,
+        key1_byte=KEY1,
+        key2_byte=KEY2,
+        dt=0.006,
+        meta_overrides={
+            'original_name': original_name,
+            'source_sha256': 'abcdef1234567890',
+        },
+    )
+
+    res = client.post(
+        '/open_segy',
+        data={
+            'store_name': store_name,
+            'key1_byte': str(KEY1),
+            'key2_byte': str(KEY2),
+        },
+    )
+
+    assert res.status_code == 200, res.text
+    payload = res.json()
+    assert payload['reused_trace_store'] is True
+    assert payload['store_name'] == store_name
+    assert payload['original_name'] == original_name
+    assert payload['source_sha256'] == 'abcdef1234567890'
+    assert calls['ingest'] == 0
+
+    rec = app.state.sv.file_registry.get_record(payload['file_id'])
+    assert isinstance(rec, dict)
+    assert rec['store_path'] == str(store_dir)
+    assert rec['dt'] == pytest.approx(0.006)
+
+
+def test_open_segy_store_name_takes_precedence_over_original_name(_open_env):
+    client, upload_mod, _captured, calls = _open_env
+    original_name = 'same-name.sgy'
+    legacy_store = Path(upload_mod.TRACE_DIR) / original_name
+    content_store_name = 'same-name__k189_193__sha256_feedface'
+    content_store = Path(upload_mod.TRACE_DIR) / content_store_name
+    _write_complete_store(
+        legacy_store,
+        key1_byte=KEY1,
+        key2_byte=KEY2,
+        dt=0.001,
+        meta_overrides={'original_name': original_name},
+    )
+    _write_complete_store(
+        content_store,
+        key1_byte=KEY1,
+        key2_byte=KEY2,
+        dt=0.007,
+        meta_overrides={
+            'original_name': original_name,
+            'source_sha256': 'feedface',
+        },
+    )
+
+    res = client.post(
+        '/open_segy',
+        data={
+            'original_name': original_name,
+            'store_name': content_store_name,
+            'key1_byte': str(KEY1),
+            'key2_byte': str(KEY2),
+        },
+    )
+
+    assert res.status_code == 200, res.text
+    payload = res.json()
+    assert payload['store_name'] == content_store_name
+    assert calls['ingest'] == 0
+
+    rec = app.state.sv.file_registry.get_record(payload['file_id'])
+    assert isinstance(rec, dict)
+    assert rec['store_path'] == str(content_store)
+    assert rec['dt'] == pytest.approx(0.007)
+
+
+@pytest.mark.parametrize('store_name', ['../x', 'a/b', '', '.', '..'])
+def test_open_segy_rejects_unsafe_store_name(_open_env, store_name: str):
+    client, _upload_mod, _captured, calls = _open_env
+
+    res = client.post('/open_segy', data={'store_name': store_name})
+
+    assert res.status_code == 400
+    assert calls['ingest'] == 0
 
 
 @pytest.mark.parametrize('baseline_mode', ['missing', 'legacy_json_only'])

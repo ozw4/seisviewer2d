@@ -727,12 +727,13 @@
           syncKeyByteSelectors(item.key1_byte, item.key2_byte);
           progressBar.value = 0;
           progressText.innerText = '0%';
-          setUploadState('opening', `Opening ${item.original_name}...`, 'Loading the prepared TraceStore from the server.');
+          const displayName = item.original_name || item.store_name || 'dataset';
+          setUploadState('opening', `Opening ${displayName}...`, 'Loading the prepared TraceStore from the server.');
           try {
-            const res = await openSegy(item.original_name, item.key1_byte, item.key2_byte);
+            const res = await openSegy(item.original_name, item.key1_byte, item.key2_byte, item.store_name);
             if (res.ok) {
               const result = await res.json();
-              handleSuccess(result.file_id, item.original_name, item.key1_byte, item.key2_byte);
+              handleSuccess(result.file_id, result.original_name || displayName, item.key1_byte, item.key2_byte);
               return;
             }
             if (res.status === 404) {
@@ -797,9 +798,14 @@
       }, 150);
     }
 
-    async function openSegy(originalName, key1Byte, key2Byte) {
+    async function openSegy(originalName, key1Byte, key2Byte, storeName = null) {
       const fd = new FormData();
-      fd.append('original_name', originalName);
+      if (typeof originalName === 'string' && originalName.length > 0) {
+        fd.append('original_name', originalName);
+      }
+      if (typeof storeName === 'string' && storeName.length > 0) {
+        fd.append('store_name', storeName);
+      }
       fd.append('key1_byte', key1Byte);
       fd.append('key2_byte', key2Byte);
       return fetch('/open_segy', { method: 'POST', body: fd });
