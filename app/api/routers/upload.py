@@ -65,6 +65,8 @@ def _safe_upload_name(filename: str) -> str:
 def _safe_store_name(store_name: str) -> str:
     if store_name in {'', '.', '..'}:
         raise HTTPException(status_code=400, detail='Trace store name is unsafe')
+    if Path(store_name).is_absolute():
+        raise HTTPException(status_code=400, detail='Trace store name is unsafe')
     if '/' in store_name or '\\' in store_name:
         raise HTTPException(status_code=400, detail='Trace store name is unsafe')
     safe_name = _safe_upload_name(store_name)
@@ -214,6 +216,25 @@ def _load_trace_store_meta(meta_path: Path) -> dict | None:
     if not isinstance(meta, dict):
         return None
     return meta
+
+
+def _ensure_trace_store_meta_key_bytes(
+    meta: dict,
+    *,
+    key1_byte: int,
+    key2_byte: int,
+) -> None:
+    key_bytes = meta.get('key_bytes')
+    if not isinstance(key_bytes, dict):
+        raise HTTPException(
+            status_code=409,
+            detail='TraceStore key bytes do not match requested key bytes',
+        )
+    if key_bytes.get('key1') != key1_byte or key_bytes.get('key2') != key2_byte:
+        raise HTTPException(
+            status_code=409,
+            detail='TraceStore key bytes do not match requested key bytes',
+        )
 
 
 def _ensure_trace_store_meta_raw_path(
@@ -547,14 +568,20 @@ async def open_segy(
     key2_byte: Annotated[int, Form()] = 193,
 ):
     state = get_state(request.app)
-    if store_name is not None:
-        safe_store_name = _safe_store_name(store_name)
+    form = await request.form()
+    if 'store_name' in form:
+        raw_store_name = form.get('store_name')
+        if not isinstance(raw_store_name, str):
+            raise HTTPException(status_code=400, detail='Trace store name is unsafe')
+        safe_store_name = _safe_store_name(raw_store_name)
         store_dir = TRACE_DIR / safe_store_name
-        requested_name = store_name
+        requested_name = raw_store_name
+        store_name_was_provided = True
     elif original_name is not None:
         safe_name = _safe_upload_name(original_name)
         store_dir = TRACE_DIR / safe_name
         requested_name = original_name
+        store_name_was_provided = False
     else:
         raise HTTPException(
             status_code=400,
@@ -575,6 +602,12 @@ async def open_segy(
         raise HTTPException(
             status_code=500,
             detail='Trace store metadata is unreadable',
+        )
+    if store_name_was_provided:
+        _ensure_trace_store_meta_key_bytes(
+            meta,
+            key1_byte=key1_byte,
+            key2_byte=key2_byte,
         )
     if not reused:
         segy_path = meta.get('original_segy_path') if isinstance(meta, dict) else None

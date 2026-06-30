@@ -207,6 +207,54 @@ def test_open_segy_reuses_content_addressed_store_by_store_name(_open_env):
     assert rec['dt'] == pytest.approx(0.006)
 
 
+def test_open_segy_store_name_rejects_key_mismatch_without_ingest_or_writes(
+    _open_env,
+):
+    client, upload_mod, captured, calls = _open_env
+    store_name = 'B__k189_193__sha256_abcdef1234567890'
+    store_dir = Path(upload_mod.TRACE_DIR) / store_name
+    _write_complete_store(
+        store_dir,
+        key1_byte=KEY1,
+        key2_byte=KEY2,
+        dt=0.006,
+        meta_overrides={
+            'original_name': 'B.sgy',
+            'source_sha256': 'abcdef1234567890',
+        },
+    )
+    before = {
+        path.name: path.read_bytes()
+        for path in sorted(store_dir.iterdir())
+        if path.is_file()
+    }
+
+    res = client.post(
+        '/open_segy',
+        data={
+            'store_name': store_name,
+            'key1_byte': '17',
+            'key2_byte': str(KEY2),
+        },
+    )
+
+    assert res.status_code == 409
+    assert (
+        res.json()['detail']
+        == 'TraceStore key bytes do not match requested key bytes'
+    )
+    assert calls['ingest'] == 0
+    assert captured['register'] is None
+    assert store_dir.is_dir()
+    assert not list(Path(upload_mod.TRACE_DIR).glob(f'{store_name}.old-*'))
+    after = {
+        path.name: path.read_bytes()
+        for path in sorted(store_dir.iterdir())
+        if path.is_file()
+    }
+    assert after == before
+
+
 def test_open_segy_store_name_takes_precedence_over_original_name(_open_env):
     client, upload_mod, _captured, calls = _open_env
     original_name = 'same-name.sgy'
@@ -252,7 +300,10 @@ def test_open_segy_store_name_takes_precedence_over_original_name(_open_env):
     assert rec['dt'] == pytest.approx(0.007)
 
 
-@pytest.mark.parametrize('store_name', ['../x', 'a/b', '.', '..'])
+@pytest.mark.parametrize(
+    'store_name',
+    ['', '../x', 'a/b', 'a\\b', '/tmp/x', '.', '..', 'bad name'],
+)
 def test_open_segy_rejects_unsafe_store_name(_open_env, store_name: str):
     client, _upload_mod, _captured, calls = _open_env
 
