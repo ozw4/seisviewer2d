@@ -240,6 +240,7 @@ def _load_lmo_shift_samples(
 def build_section_window_payload(
     *,
     file_id: str,
+    normalization_file_id: str | None = None,
     key1: int,
     key1_byte: int,
     key2_byte: int,
@@ -381,15 +382,21 @@ def build_section_window_payload(
             step_x=step_x,
         )
     else:
+        stats_file_id = normalization_file_id or file_id
+        stats_reader = (
+            raw_reader
+            if stats_file_id == file_id
+            else reader_getter(stats_file_id, key1_byte, key2_byte)
+        )
         store_dir = _resolve_store_dir(
-            file_id=file_id,
-            reader=raw_reader if raw_reader is not None else reader,
+            file_id=stats_file_id,
+            reader=stats_reader if stats_reader is not None else reader,
             store_dir_resolver=store_dir_resolver,
         )
         prepared = apply_scaling_from_baseline(
             prepared,
             scaling=mode,
-            file_id=file_id,
+            file_id=stats_file_id,
             key1=key1,
             store_dir=store_dir,
             key1_byte=key1_byte,

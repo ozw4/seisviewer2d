@@ -9,9 +9,14 @@ import msgpack
 import numpy as np
 import pytest
 
+from app.api import baselines as baselines_mod
 from app.api.routers import section as sec
 from app.main import app
-from app.tests._stubs import make_stub_reader, write_baseline_raw
+from app.tests._stubs import (
+    make_stub_reader,
+    write_baseline_raw,
+    write_trace_store_metadata,
+)
 
 
 def _decode_window_payload(resp) -> tuple[np.ndarray, tuple[int, int], float]:
@@ -205,6 +210,128 @@ def test_get_section_window_bin_scaling_amax_vs_tracewise(monkeypatch, tmp_path)
     assert np.array_equal(q_amax, base)
     assert np.array_equal(q_tw, expected_tw)
     assert not np.array_equal(q_amax, q_tw)
+
+
+def test_get_section_window_bin_normalization_file_id_uses_reference_baseline_amax(
+    monkeypatch, tmp_path
+):
+    key1 = 7
+    data_dir = tmp_path / 'data'
+    stats_dir = tmp_path / 'stats'
+    data_reader = make_stub_reader(
+        np.array([[10.0, 12.0], [14.0, 16.0]], dtype=np.float32)
+    )
+    stats_reader = make_stub_reader(
+        np.array([[8.0, 8.0], [12.0, 12.0]], dtype=np.float32)
+    )
+    readers = {'B': data_reader, 'A': stats_reader}
+
+    monkeypatch.setattr(
+        sec,
+        'get_reader',
+        lambda fid, kb1, kb2, state=None: readers[fid],
+        raising=True,
+    )
+    monkeypatch.setattr(
+        baselines_mod,
+        'get_reader',
+        lambda fid, kb1, kb2, state=None: readers[fid],
+        raising=True,
+    )
+
+    app.state.sv.file_registry.set_record(
+        'B', {'store_path': str(data_dir), 'dt': 0.004}
+    )
+    app.state.sv.file_registry.set_record(
+        'A', {'store_path': str(stats_dir), 'dt': 0.004}
+    )
+    write_trace_store_metadata(stats_dir, key1=key1, n_traces=2)
+
+    res = sec.get_section_window_bin(
+        file_id='B',
+        normalization_file_id='A',
+        key1=key1,
+        key1_byte=189,
+        key2_byte=193,
+        offset_byte=None,
+        x0=0,
+        x1=1,
+        y0=0,
+        y1=1,
+        step_x=1,
+        step_y=1,
+        transpose=False,
+        pipeline_key=None,
+        tap_label=None,
+        scaling='amax',
+        request=SimpleNamespace(app=app),
+    )
+
+    q, (h, w), scale = _decode_window_payload(res)
+    assert scale == pytest.approx(1.0)
+    assert (h, w) == (2, 2)
+    assert np.array_equal(q, np.array([[0, 1], [2, 3]], dtype=np.int8))
+
+
+def test_get_section_window_bin_normalization_file_id_uses_reference_baseline_tracewise(
+    monkeypatch, tmp_path
+):
+    key1 = 7
+    data_dir = tmp_path / 'data'
+    stats_dir = tmp_path / 'stats'
+    data_reader = make_stub_reader(
+        np.array([[10.0, 12.0], [14.0, 16.0]], dtype=np.float32)
+    )
+    stats_reader = make_stub_reader(
+        np.array([[8.0, 10.0], [10.0, 14.0]], dtype=np.float32)
+    )
+    readers = {'B': data_reader, 'A': stats_reader}
+
+    monkeypatch.setattr(
+        sec,
+        'get_reader',
+        lambda fid, kb1, kb2, state=None: readers[fid],
+        raising=True,
+    )
+    monkeypatch.setattr(
+        baselines_mod,
+        'get_reader',
+        lambda fid, kb1, kb2, state=None: readers[fid],
+        raising=True,
+    )
+
+    app.state.sv.file_registry.set_record(
+        'B', {'store_path': str(data_dir), 'dt': 0.004}
+    )
+    app.state.sv.file_registry.set_record(
+        'A', {'store_path': str(stats_dir), 'dt': 0.004}
+    )
+    write_trace_store_metadata(stats_dir, key1=key1, n_traces=2)
+
+    res = sec.get_section_window_bin(
+        file_id='B',
+        normalization_file_id='A',
+        key1=key1,
+        key1_byte=189,
+        key2_byte=193,
+        offset_byte=None,
+        x0=0,
+        x1=1,
+        y0=0,
+        y1=1,
+        step_x=1,
+        step_y=1,
+        transpose=False,
+        pipeline_key=None,
+        tap_label=None,
+        scaling='tracewise',
+        request=SimpleNamespace(app=app),
+    )
+
+    q, (h, w), scale = _decode_window_payload(res)
+    assert scale == pytest.approx(1.0)
+    assert (h, w) == (2, 2)
+    assert np.array_equal(q, np.array([[1, 3], [1, 2]], dtype=np.int8))
 
 
 def test_get_section_window_bin_tracewise_clamp_saturates_int8(monkeypatch, tmp_path):

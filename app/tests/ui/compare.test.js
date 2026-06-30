@@ -1,4 +1,4 @@
-import { beforeAll, beforeEach, expect, test } from 'vitest';
+import { afterEach, beforeAll, beforeEach, expect, test, vi } from 'vitest';
 
 beforeAll(async () => {
   await import('../../static/viewer/compare.js');
@@ -11,6 +11,12 @@ beforeEach(() => {
     <select id="colormap"><option value="Greys" selected>Greys</option></select>
     <input id="cmReverse" type="checkbox">
   `;
+});
+
+afterEach(() => {
+  window.__svCompare.clearRawCompareValidationCache();
+  delete window.buildWindowRequestArtifacts;
+  vi.unstubAllGlobals();
 });
 
 function scale(panel) {
@@ -122,4 +128,258 @@ test('probability diff uses decoded probability values, not display-scaled backi
   expectF32Values(sourceA, [0.8]);
   expectF32Values(sourceB, [0.2]);
   expectF32Values(diff, [0.6]);
+});
+
+test('sourcePairKey distinguishes raw sources by fileId', () => {
+  const firstPair = {
+    a: { fileId: 'line-a.sgy', layerId: 'raw', pipelineKey: null, tapLabel: null },
+    b: { fileId: 'line-b.sgy', layerId: 'raw', pipelineKey: null, tapLabel: null },
+  };
+  const secondPair = {
+    a: { fileId: 'line-a.sgy', layerId: 'raw', pipelineKey: null, tapLabel: null },
+    b: { fileId: 'line-c.sgy', layerId: 'raw', pipelineKey: null, tapLabel: null },
+  };
+
+  expect(window.__svCompare.sourcePairKey(firstPair)).not.toEqual(
+    window.__svCompare.sourcePairKey(secondPair),
+  );
+});
+
+test('buildCompareRequest sends raw B window with A normalization file id', () => {
+  vi.stubGlobal('currentScaling', 'amax');
+  const buildArtifacts = vi.fn((context) => {
+    const params = new URLSearchParams();
+    if (context.normalizationFileId) {
+      params.set('normalization_file_id', context.normalizationFileId);
+    }
+    return { params, cacheKey: `cache:${context.normalizationFileId || ''}`, payloadMeta: {} };
+  });
+  window.buildWindowRequestArtifacts = buildArtifacts;
+  const sourceA = {
+    id: 'raw',
+    layerId: 'raw',
+    fileId: 'file-a',
+    key1Byte: 189,
+    key2Byte: 193,
+    pipelineKey: null,
+    tapLabel: null,
+  };
+  const sourceB = {
+    id: 'raw',
+    layerId: 'raw',
+    fileId: 'file-b',
+    key1Byte: 189,
+    key2Byte: 193,
+    pipelineKey: null,
+    tapLabel: null,
+  };
+
+  const request = window.__svCompare.buildCompareRequest(
+    sourceB,
+    sourceA,
+    101,
+    { x0: 0, x1: 10, y0: 0, y1: 20 },
+    { stepX: 1, stepY: 1, mode: 'heatmap' },
+  );
+
+  expect(buildArtifacts).toHaveBeenCalledWith(expect.objectContaining({
+    fileId: 'file-b',
+    normalizationFileId: 'file-a',
+  }));
+  expect(request.params.get('normalization_file_id')).toBe('file-a');
+});
+
+test('raw compare validation calls backend for distinct raw file sources', async () => {
+  const fetchMock = vi.fn(async () => ({
+    ok: true,
+    headers: { get: () => 'application/json' },
+    json: async () => ({ ok: true, reason: '', message: '' }),
+  }));
+  vi.stubGlobal('fetch', fetchMock);
+
+  const result = await window.__svCompare.validateRawCompareSources({
+    a: { id: 'raw', layerId: 'raw', fileId: 'file-a', key1Byte: 189, key2Byte: 193 },
+    b: { id: 'raw', layerId: 'raw', fileId: 'file-b', key1Byte: 189, key2Byte: 193 },
+  });
+
+  expect(result).toMatchObject({ ok: true });
+  expect(fetchMock).toHaveBeenCalledTimes(1);
+  const url = new URL(fetchMock.mock.calls[0][0], 'http://localhost');
+  expect(url.pathname).toBe('/compare/raw/validate');
+  expect(url.searchParams.get('file_id_a')).toBe('file-a');
+  expect(url.searchParams.get('file_id_b')).toBe('file-b');
+  expect(url.searchParams.get('key1_byte')).toBe('189');
+  expect(url.searchParams.get('key2_byte')).toBe('193');
+});
+
+test('compare recent dataset selection includes key-byte identity', () => {
+  const datasets = [
+    { original_name: 'line.sgy', store_name: 'a', key1_byte: 189, key2_byte: 193 },
+    { original_name: 'line.sgy', store_name: 'b', key1_byte: 17, key2_byte: 193 },
+  ];
+  const selectedValue = window.__svCompare.compareRecentDatasetValue({
+    originalName: 'line.sgy',
+    key1Byte: 17,
+    key2Byte: 193,
+  });
+
+  const selected = window.__svCompare.resolveCompareRecentDataset(datasets, selectedValue);
+
+  expect(selected).toMatchObject({
+    originalName: 'line.sgy',
+    key1Byte: 17,
+    key2Byte: 193,
+  });
+  expect(selectedValue).not.toEqual(window.__svCompare.compareRecentDatasetValue({
+    originalName: 'line.sgy',
+    key1Byte: 189,
+    key2Byte: 193,
+  }));
+});
+
+test('compare source catalog builds active raw source with file metadata', () => {
+  const catalog = window.__svCompare.buildCompareSourceCatalog([
+    {
+      fileId: 'line/a.sgy',
+      displayName: 'line_a.sgy',
+      key1Byte: 189,
+      key2Byte: 193,
+      isActive: true,
+    },
+  ], { layerValues: ['raw'] });
+
+  expect(catalog).toHaveLength(1);
+  expect(catalog[0]).toMatchObject({
+    sourceId: 'file:line%2Fa.sgy:raw',
+    fileId: 'line/a.sgy',
+    fileName: 'line_a.sgy',
+    key1Byte: 189,
+    key2Byte: 193,
+    layerId: 'raw',
+    label: 'line_a.sgy / raw',
+    pipelineKey: null,
+    tapLabel: null,
+    domain: 'amplitude',
+    available: true,
+  });
+});
+
+test('compare source catalog does not expose taps for non-active targets', () => {
+  const catalog = window.__svCompare.buildCompareSourceCatalog([
+    {
+      fileId: 'active.sgy',
+      displayName: 'active.sgy',
+      key1Byte: 189,
+      key2Byte: 193,
+      isActive: true,
+    },
+    {
+      fileId: 'other.sgy',
+      displayName: 'other.sgy',
+      key1Byte: 189,
+      key2Byte: 193,
+      isActive: false,
+    },
+  ], {
+    layerValues: ['raw', 'fbpick_prob'],
+    latestPipelineKey: 'pipeline-1',
+    latestTapData: { fbpick_prob: { prob: true } },
+  });
+
+  expect(catalog.map((source) => source.sourceId)).toEqual([
+    'file:active.sgy:raw',
+    'file:active.sgy:tap:fbpick_prob',
+    'file:other.sgy:raw',
+  ]);
+  expect(catalog.find((source) => source.fileId === 'other.sgy' && source.tapLabel)).toBeUndefined();
+});
+
+test('compare dataset target list keeps active target and added raw target', () => {
+  const active = {
+    fileId: 'active-file-id',
+    displayName: 'active.sgy',
+    originalName: 'active.sgy',
+    key1Byte: 189,
+    key2Byte: 193,
+    isActive: true,
+  };
+
+  const result = window.__svCompare.addCompareDatasetTarget([], {
+    fileId: 'added-file-id',
+    displayName: 'added.sgy',
+    originalName: 'added.sgy',
+    key1Byte: 189,
+    key2Byte: 193,
+  }, active);
+  const catalog = window.__svCompare.buildCompareSourceCatalog(result.targets, {
+    layerValues: ['raw', 'fbpick_prob'],
+    latestPipelineKey: 'pipeline-1',
+  });
+
+  expect(result.added).toBe(true);
+  expect(result.targets).toMatchObject([
+    { fileId: 'active-file-id', displayName: 'active.sgy', isActive: true },
+    { fileId: 'added-file-id', displayName: 'added.sgy', isActive: false },
+  ]);
+  expect(catalog.map((source) => source.label)).toContain('active.sgy / raw');
+  expect(catalog.map((source) => source.label)).toContain('added.sgy / raw');
+  expect(catalog.find((source) => source.fileId === 'added-file-id' && source.layerId !== 'raw')).toBeUndefined();
+});
+
+test('compare dataset manager rejects mismatched key bytes', () => {
+  const active = {
+    fileId: 'active-file-id',
+    displayName: 'active.sgy',
+    originalName: 'active.sgy',
+    key1Byte: 189,
+    key2Byte: 193,
+    isActive: true,
+  };
+
+  const result = window.__svCompare.addCompareDatasetTarget([], {
+    fileId: 'mismatch-file-id',
+    displayName: 'mismatch.sgy',
+    originalName: 'mismatch.sgy',
+    key1Byte: 17,
+    key2Byte: 193,
+  }, active);
+
+  expect(result.added).toBe(false);
+  expect(result.reason).toMatch(/key bytes/i);
+  expect(result.targets).toMatchObject([
+    { fileId: 'active-file-id', displayName: 'active.sgy', isActive: true },
+  ]);
+});
+
+test('clear compare datasets keeps active target only', () => {
+  const active = {
+    fileId: 'active-file-id',
+    displayName: 'active.sgy',
+    originalName: 'active.sgy',
+    key1Byte: 189,
+    key2Byte: 193,
+    isActive: true,
+  };
+  const targets = [
+    active,
+    {
+      fileId: 'added-file-id',
+      displayName: 'added.sgy',
+      originalName: 'added.sgy',
+      key1Byte: 189,
+      key2Byte: 193,
+      isActive: false,
+    },
+  ];
+
+  expect(window.__svCompare.clearCompareDatasetTargets(targets, active)).toEqual([
+    {
+      fileId: 'active-file-id',
+      displayName: 'active.sgy',
+      originalName: 'active.sgy',
+      key1Byte: 189,
+      key2Byte: 193,
+      isActive: true,
+    },
+  ]);
 });
