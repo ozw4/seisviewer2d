@@ -867,9 +867,14 @@ test('compare dataset manager allows same basename with different hashes and ded
     key1Byte: 189,
     key2Byte: 193,
   }, active);
+  const hashAKey = window.__svCompare.compareTargetDatasetKey(first.targets[1]);
+  const hashBKey = window.__svCompare.compareTargetDatasetKey(second.targets[2]);
 
   expect(first.added).toBe(true);
   expect(second.added).toBe(true);
+  expect(hashAKey).toBe('sha256:aaaaaaaa11111111|189|193');
+  expect(hashBKey).toBe('sha256:bbbbbbbb22222222|189|193');
+  expect(hashAKey).not.toBe(hashBKey);
   expect(second.targets.map((target) => target.fileId)).toEqual([
     'active-file-id',
     'added-file-a',
@@ -930,7 +935,7 @@ test('addSelectedCompareDataset sends store_name to open_segy', async () => {
   window.__svCompare.setCompareRecentDatasetsForTest([
     {
       original_name: 'line.sgy',
-      store_name: 'store/line-b.sgy',
+      store_name: 'line-b__k189_193__sha256_abcdef1234567890',
       source_sha256: 'abcdef1234567890',
       key1_byte: 189,
       key2_byte: 193,
@@ -942,14 +947,14 @@ test('addSelectedCompareDataset sends store_name to open_segy', async () => {
   expect(added).toBe(true);
   expect(fetch).toHaveBeenCalledWith('/open_segy', expect.objectContaining({ method: 'POST' }));
   const formData = fetch.mock.calls[0][1].body;
-  expect(formData.get('store_name')).toBe('store/line-b.sgy');
+  expect(formData.get('store_name')).toBe('line-b__k189_193__sha256_abcdef1234567890');
   expect(formData.get('original_name')).toBe('line.sgy');
   expect(window.compareFileTargets).toMatchObject([
     { fileId: 'active-file', isActive: true },
     {
       fileId: 'opened-file',
       originalName: 'line.sgy',
-      storeName: 'store/line-b.sgy',
+      storeName: 'line-b__k189_193__sha256_abcdef1234567890',
       sourceSha256: 'abcdef1234567890',
       isActive: false,
     },
@@ -1011,6 +1016,9 @@ test('file selection imports B source with active key bytes and selects imported
       isActive: false,
     },
   ]);
+  expect(document.getElementById('compareSourceA').value).toBe(
+    window.__svCompare.compareSourceId('active-file', 'raw'),
+  );
   expect(document.getElementById('compareSourceB').value).toBe(
     window.__svCompare.compareSourceId('imported-file', 'raw'),
   );
@@ -1050,6 +1058,51 @@ test('import B source failure does not add target and shows backend detail', asy
   expect(added).toBe(false);
   expect(window.compareFileTargets).toEqual([]);
   expect(document.getElementById('compareStatus').textContent).toBe('bad SEG-Y file');
+});
+
+test('import B source failure preserves existing selections and render', async () => {
+  setupCompareImportDom();
+  const latestRender = { panels: [{ label: 'existing compare render' }] };
+  const existingTargets = [
+    {
+      fileId: 'active-file',
+      displayName: 'active.sgy',
+      originalName: 'active.sgy',
+      key1Byte: 189,
+      key2Byte: 193,
+      isActive: true,
+    },
+    {
+      fileId: 'existing-b',
+      displayName: 'line-b.sgy',
+      originalName: 'line-b.sgy',
+      sourceSha256: 'abcdef1234567890',
+      key1Byte: 189,
+      key2Byte: 193,
+      isActive: false,
+    },
+  ];
+  window.__svCompare.setCompareFileTargetsForTest(existingTargets);
+  window.__svCompare.setLatestCompareRenderForTest(latestRender);
+  window.updateCompareSourceOptions();
+  const sourceA = document.getElementById('compareSourceA');
+  const sourceB = document.getElementById('compareSourceB');
+  sourceA.value = window.__svCompare.compareSourceId('active-file', 'raw');
+  sourceB.value = window.__svCompare.compareSourceId('existing-b', 'raw');
+  const fetch = vi.fn(async () => errorText(409, 'Trace store already exists for a different source or key bytes'));
+  vi.stubGlobal('fetch', fetch);
+
+  const added = await window.__svCompare.importCompareBSourceFile(new File(['bad'], 'line-b.sgy'));
+
+  expect(added).toBe(false);
+  expect(window.compareFileTargets).toHaveLength(2);
+  expect(window.compareFileTargets).toMatchObject(existingTargets);
+  expect(sourceA.value).toBe(window.__svCompare.compareSourceId('active-file', 'raw'));
+  expect(sourceB.value).toBe(window.__svCompare.compareSourceId('existing-b', 'raw'));
+  expect(window.__svCompare.getLatestCompareRender()).toBe(latestRender);
+  expect(document.getElementById('compareStatus').textContent).toBe(
+    'Trace store already exists for a different source or key bytes',
+  );
 });
 
 test('import B source suppresses duplicate imports while request is in flight', async () => {
@@ -1092,6 +1145,8 @@ test('import B source does not add target when active A dataset changes during i
   const added = await window.__svCompare.importCompareBSourceFile(new File(['sgy'], 'line-b.sgy'));
 
   expect(added).toBe(false);
+  expect(fetch.mock.calls.filter(([url]) => url === '/compare/raw/import')).toHaveLength(1);
+  expect(fetch.mock.calls.filter(([url]) => url === '/recent_datasets')).toHaveLength(1);
   expect(window.compareFileTargets).toEqual([]);
   expect(document.getElementById('compareSourceB').options).toHaveLength(0);
   expect(document.getElementById('compareStatus').textContent).toBe(

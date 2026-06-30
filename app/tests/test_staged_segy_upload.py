@@ -240,6 +240,44 @@ def _compare_raw_import(
     )
 
 
+def _write_complete_compare_store(
+    store_dir: Path,
+    *,
+    source_sha256: str,
+    source_size: int,
+    key1_byte: int = 189,
+    key2_byte: int = 193,
+    original_name: str | None = None,
+    dt: float = 0.002,
+) -> None:
+    store_dir.mkdir(parents=True, exist_ok=True)
+    np.save(store_dir / 'traces.npy', np.zeros((2, 4), dtype=np.float32))
+    np.savez(
+        store_dir / 'index.npz',
+        key1_values=np.asarray([1], dtype=np.int32),
+        key1_offsets=np.asarray([0], dtype=np.int64),
+        key1_counts=np.asarray([2], dtype=np.int64),
+    )
+    meta = {
+        'key_bytes': {'key1': int(key1_byte), 'key2': int(key2_byte)},
+        'dt': float(dt),
+        'original_segy_path': str(store_dir / 'original.sgy'),
+        'original_size': int(source_size),
+        'source_sha256': source_sha256,
+    }
+    if original_name is not None:
+        meta['original_name'] = original_name
+    (store_dir / 'meta.json').write_text(json.dumps(meta), encoding='utf-8')
+    write_baseline_raw(
+        store_dir,
+        key1=1,
+        n_traces=2,
+        key1_byte=key1_byte,
+        key2_byte=key2_byte,
+        source_sha256=source_sha256,
+    )
+
+
 def _run_async(coro):
     try:
         asyncio.get_running_loop()
@@ -301,11 +339,17 @@ def test_compare_raw_import_ingests_content_addressed_store(_staged_env):
 
 
 def test_compare_raw_import_reuses_same_source_hash_and_key_bytes(_staged_env):
-    client, _upload_mod, calls = _staged_env
+    client, upload_mod, calls = _staged_env
     data = b'reuse-compare-raw'
 
     first = _compare_raw_import(client, data=data)
+    stores_after_first = {
+        child.name for child in Path(upload_mod.TRACE_DIR).iterdir() if child.is_dir()
+    }
     second = _compare_raw_import(client, data=data)
+    stores_after_second = {
+        child.name for child in Path(upload_mod.TRACE_DIR).iterdir() if child.is_dir()
+    }
 
     assert first.status_code == 200, first.text
     assert second.status_code == 200, second.text
@@ -313,6 +357,7 @@ def test_compare_raw_import_reuses_same_source_hash_and_key_bytes(_staged_env):
     assert second.json()['reused_trace_store'] is True
     assert first.json()['store_name'] == second.json()['store_name']
     assert first.json()['file_id'] != second.json()['file_id']
+    assert stores_after_second == stores_after_first
     assert calls == {'qc': 2, 'ingest': 1}
 
 
@@ -320,18 +365,130 @@ def test_compare_raw_import_same_basename_does_not_archive_upload_store(
     _staged_env,
 ):
     client, upload_mod, _calls = _staged_env
+    data = b'different-compare-source'
+    source_sha256 = hashlib.sha256(data).hexdigest()
+    expected_store_name = upload_mod._content_addressed_compare_store_name(
+        safe_name='line_001.sgy',
+        source_sha256=source_sha256,
+        key1_byte=189,
+        key2_byte=193,
+    )
     normal_store = Path(upload_mod.TRACE_DIR) / 'line_001.sgy'
     normal_store.mkdir(parents=True)
     sentinel = normal_store / 'sentinel.txt'
     sentinel.write_text('keep', encoding='utf-8')
 
-    response = _compare_raw_import(client, data=b'different-compare-source')
+    response = _compare_raw_import(client, data=data)
 
     assert response.status_code == 200, response.text
+    assert response.json()['store_name'] == expected_store_name
     assert sentinel.read_text(encoding='utf-8') == 'keep'
     assert normal_store.is_dir()
+    assert (Path(upload_mod.TRACE_DIR) / expected_store_name).is_dir()
     assert not list(Path(upload_mod.TRACE_DIR).glob('line_001.sgy.old-*'))
-    assert response.json()['store_name'] != 'line_001.sgy'
+
+
+def test_compare_raw_import_content_addressed_conflict_returns_409_without_archive(
+    _staged_env,
+):
+    client, upload_mod, calls = _staged_env
+    data = b'conflicting-compare-source'
+    source_sha256 = hashlib.sha256(data).hexdigest()
+    store_name = upload_mod._content_addressed_compare_store_name(
+        safe_name='line_001.sgy',
+        source_sha256=source_sha256,
+        key1_byte=189,
+        key2_byte=193,
+    )
+    store_dir = Path(upload_mod.TRACE_DIR) / store_name
+    _write_complete_compare_store(
+        store_dir,
+        source_sha256=hashlib.sha256(b'other-source').hexdigest(),
+        source_size=len(data),
+    )
+
+    response = _compare_raw_import(client, data=data)
+
+    assert response.status_code == 409
+    assert response.json()['detail'] == (
+        'Trace store already exists for a different source or key bytes'
+    )
+    assert store_dir.is_dir()
+    assert not list(Path(upload_mod.TRACE_DIR).glob(f'{store_name}.old-*'))
+    assert calls == {'qc': 1, 'ingest': 0}
+
+
+def test_open_segy_store_name_selects_requested_compare_store_with_same_original_name(
+    _staged_env,
+):
+    client, upload_mod, calls = _staged_env
+    legacy_store = Path(upload_mod.TRACE_DIR) / 'line_001.sgy'
+    target_store_name = 'line_001__k189_193__sha256_bbbbbbbb'
+    target_store = Path(upload_mod.TRACE_DIR) / target_store_name
+    _write_complete_compare_store(
+        legacy_store,
+        source_sha256='aaaaaaaa',
+        source_size=10,
+        original_name='line 001.sgy',
+        dt=0.001,
+    )
+    _write_complete_compare_store(
+        target_store,
+        source_sha256='bbbbbbbb',
+        source_size=20,
+        original_name='line 001.sgy',
+        dt=0.007,
+    )
+
+    response = client.post(
+        '/open_segy',
+        data={
+            'original_name': 'line 001.sgy',
+            'store_name': target_store_name,
+            'key1_byte': '189',
+            'key2_byte': '193',
+        },
+    )
+
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body['store_name'] == target_store_name
+    assert body['original_name'] == 'line 001.sgy'
+    assert body['source_sha256'] == 'bbbbbbbb'
+    assert app.state.sv.file_registry.get_record(body['file_id'])['store_path'] == str(
+        target_store
+    )
+    assert calls == {'qc': 0, 'ingest': 0}
+
+
+@pytest.mark.parametrize('store_name', ['../x', 'a/b', '.', '..'])
+def test_open_segy_rejects_compare_store_name_traversal(_staged_env, store_name: str):
+    client, _upload_mod, calls = _staged_env
+
+    response = client.post('/open_segy', data={'store_name': store_name})
+
+    assert response.status_code == 400
+    assert calls == {'qc': 0, 'ingest': 0}
+
+
+def test_recent_datasets_include_compare_store_name_and_source_sha256(_staged_env):
+    client, upload_mod, calls = _staged_env
+    store_name = 'line_001__k189_193__sha256_cccccccc'
+    _write_complete_compare_store(
+        Path(upload_mod.TRACE_DIR) / store_name,
+        source_sha256='cccccccc',
+        source_size=30,
+        original_name='line 001.sgy',
+    )
+
+    response = client.get('/recent_datasets')
+
+    assert response.status_code == 200, response.text
+    datasets = response.json()['datasets']
+    assert datasets[0]['original_name'] == 'line 001.sgy'
+    assert datasets[0]['store_name'] == store_name
+    assert datasets[0]['source_sha256'] == 'cccccccc'
+    assert calls == {'qc': 0, 'ingest': 0}
 
 
 def test_compare_raw_import_rejects_duplicate_key_bytes(_staged_env):
