@@ -17,6 +17,7 @@ def _upload_compare_dataset(page, base_url, segy_path):
     page.wait_for_function(
         "() => document.getElementById('viewerEmptyState')?.hidden === true"
     )
+    page.wait_for_load_state("networkidle")
     params = parse_qs(urlparse(page.url).query)
     return params["file_id"][0]
 

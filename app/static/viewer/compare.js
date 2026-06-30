@@ -575,6 +575,29 @@
     return result;
   }
 
+  async function ensureRawCompareReferenceBaseline(sources, signal) {
+    if (!isRawCompareSource(sources?.a) || !isRawCompareSource(sources?.b)) return true;
+    if (!sources.a.fileId) return true;
+
+    const key1Byte = Number(sources.a.key1Byte ?? currentKey1Byte);
+    const key2Byte = Number(sources.a.key2Byte ?? currentKey2Byte);
+    if (!Number.isFinite(key1Byte) || !Number.isFinite(key2Byte)) {
+      throw new Error('A-B unavailable: source key bytes are missing.');
+    }
+
+    const params = new URLSearchParams({
+      file_id: String(sources.a.fileId),
+      key1_byte: String(key1Byte),
+      key2_byte: String(key2Byte),
+    });
+    const response = await fetch(`/get_section_meta?${params.toString()}`, { signal });
+    if (!response.ok) {
+      const detail = await readCompareResponseDetail(response);
+      throw new Error(detail || `A normalization baseline is unavailable (${response.status})`);
+    }
+    return true;
+  }
+
   function visibleComparePanelCount(sources) {
     return compareShowDiffEnabled() && canAttemptDiff(sources) ? 3 : 2;
   }
@@ -1226,6 +1249,93 @@
       });
   }
 
+  function clearCompareDataState() {
+    latestCompareRender = null;
+    if (typeof latestSeismicData !== 'undefined') latestSeismicData = null;
+    if (typeof latestWindowRender !== 'undefined') latestWindowRender = null;
+  }
+
+  function withCompareSuppressedRelayout(promiseLike) {
+    if (typeof withSuppressedRelayout === 'function') {
+      return withSuppressedRelayout(promiseLike);
+    }
+    return Promise.resolve(promiseLike);
+  }
+
+  async function renderCompareUnavailable(message, requestId = null) {
+    const text = String(message || 'A-B unavailable.').trim() || 'A-B unavailable.';
+    if (Number.isInteger(requestId) && !isCompareRequestCurrent(requestId)) {
+      markStaleCompareRequest(requestId);
+      return false;
+    }
+
+    const plotDiv = document.getElementById('plot');
+    if (!plotDiv || !window.Plotly || typeof window.Plotly.react !== 'function') {
+      clearCompareDataState();
+      setCompareStatus(text);
+      return false;
+    }
+
+    const layout = {
+      margin: { t: 38, r: 12, l: 58, b: 42 },
+      annotations: [{
+        xref: 'paper',
+        yref: 'paper',
+        x: 0.5,
+        y: 0.5,
+        text,
+        showarrow: false,
+        font: { size: 14 },
+      }],
+      xaxis: { visible: false },
+      yaxis: { visible: false },
+    };
+
+    const startRender = () => {
+      return withCompareSuppressedRelayout(window.Plotly.react(plotDiv, [], layout, {
+        responsive: true,
+        doubleClick: false,
+        doubleClickDelay: 300,
+      }));
+    };
+    const renderData = Number.isInteger(requestId)
+      ? { __requestSlot: COMPARE_RENDER_SLOT, __requestId: requestId }
+      : null;
+
+    try {
+      const rendered = typeof window.queueViewerPlotlyRender === 'function'
+        ? await window.queueViewerPlotlyRender(plotDiv, renderData, startRender)
+        : await Promise.resolve(startRender()).then(() => true);
+      if (!rendered) return false;
+    } catch (err) {
+      if (
+        Number.isInteger(requestId) &&
+        !isCompareRequestCurrent(requestId)
+      ) {
+        markStaleCompareRequest(requestId);
+        return false;
+      }
+      console.warn('Compare unavailable Plotly render failed', err);
+      clearCompareDataState();
+      plotDiv.__svPlotMode = 'compare-unavailable';
+      plotDiv.__svComparePanelCount = 0;
+      plotDiv.__svCompareMode = 'unavailable';
+      setCompareStatus(text);
+      return false;
+    }
+
+    if (Number.isInteger(requestId) && !isCompareRequestCurrent(requestId)) {
+      markStaleCompareRequest(requestId);
+      return false;
+    }
+    clearCompareDataState();
+    plotDiv.__svPlotMode = 'compare-unavailable';
+    plotDiv.__svComparePanelCount = 0;
+    plotDiv.__svCompareMode = 'unavailable';
+    setCompareStatus(text);
+    return true;
+  }
+
   function buildCompareRender(aPayload, bPayload, sources, decision, validation, windowInfo) {
     const aValues = payloadToF32(aPayload, sources.a);
     const bValues = payloadToF32(bPayload, sources.b);
@@ -1293,7 +1403,13 @@
 
     const sources = getCompareSources();
     if (!sources.a.available || !sources.b.available) {
-      setCompareStatus(compareUnavailableMessage(sources));
+      const { requestId } = beginRenderRequest(COMPARE_RENDER_SLOT);
+      if (typeof cancelActiveMainDecodeJob === 'function') cancelActiveMainDecodeJob();
+      const message = compareUnavailableMessage(sources);
+      await renderCompareUnavailable(message, requestId);
+      if (isCompareRequestCurrent(requestId)) {
+        markRenderRequestFailed(COMPARE_RENDER_SLOT, requestId);
+      }
       return true;
     }
     const decision = decideCompareWindowMode(windowInfo, plotDiv, sources);
@@ -1324,13 +1440,33 @@
         return true;
       }
       if (!rawValidation.ok) {
-        clearCompareRender();
-        if (setCompareStatusIfCurrent(
-          requestId,
-          rawValidation.message || 'A-B unavailable: raw source grids are different.',
-        )) {
+        const message = rawValidation.message || 'A-B unavailable: raw source grids are different.';
+        const rendered = await renderCompareUnavailable(message, requestId);
+        if (isCompareRequestCurrent(requestId)) {
+          if (!rendered) setCompareStatus(message);
           markRenderRequestFailed(COMPARE_RENDER_SLOT, requestId);
         }
+        return true;
+      }
+
+      try {
+        await ensureRawCompareReferenceBaseline(sources, signal);
+      } catch (err) {
+        if (err && err.name === 'AbortError') return true;
+        if (!isCompareRequestCurrent(requestId)) {
+          markStaleCompareRequest(requestId);
+          return true;
+        }
+        const message = err instanceof Error ? err.message : String(err);
+        const rendered = await renderCompareUnavailable(message, requestId);
+        if (isCompareRequestCurrent(requestId)) {
+          if (!rendered) setCompareStatus(message);
+          markRenderRequestFailed(COMPARE_RENDER_SLOT, requestId);
+        }
+        return true;
+      }
+      if (!isCompareRequestCurrent(requestId)) {
+        markStaleCompareRequest(requestId);
         return true;
       }
 
@@ -1596,6 +1732,15 @@
     resolveCompareNormalizationFileId,
     rawCompareValidationKey,
     validateRawCompareSources,
+    ensureRawCompareReferenceBaseline,
+    renderCompareUnavailable,
+    getLatestCompareRender: () => latestCompareRender,
+    setLatestCompareRenderForTest: (render) => { latestCompareRender = render; },
+    setCompareFileTargetsForTest: (targets) => {
+      compareFileTargets = Array.isArray(targets) ? targets : [];
+      compareActiveTargetKey = compareTargetIdentity(compareFileTargets[0]);
+      window.compareFileTargets = compareFileTargets;
+    },
     clearRawCompareValidationCache,
     compareUnavailableMessage,
     buildCompareRequest,

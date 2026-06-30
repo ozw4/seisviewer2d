@@ -14,10 +14,123 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  window.__svCompare.setLatestCompareRenderForTest(null);
+  window.__svCompare.setCompareFileTargetsForTest([]);
   window.__svCompare.clearRawCompareValidationCache();
   delete window.buildWindowRequestArtifacts;
   vi.unstubAllGlobals();
 });
+
+function okJson(payload = {}) {
+  return {
+    ok: true,
+    headers: { get: () => 'application/json' },
+    json: async () => payload,
+  };
+}
+
+function errorText(status, text) {
+  return {
+    ok: false,
+    status,
+    headers: { get: () => 'text/plain' },
+    text: async () => text,
+  };
+}
+
+function okBinary() {
+  return {
+    ok: true,
+    headers: { get: () => 'application/octet-stream' },
+    arrayBuffer: async () => new ArrayBuffer(0),
+  };
+}
+
+function setupCompareFetchHarness() {
+  document.body.innerHTML = `
+    <input id="compareModeToggle" type="checkbox" checked>
+    <select id="compareSourceA"></select>
+    <select id="compareSourceB"></select>
+    <input id="compareShowDiff" type="checkbox">
+    <input id="gain" value="2">
+    <select id="colormap"><option value="Greys" selected>Greys</option></select>
+    <input id="cmReverse" type="checkbox">
+    <select id="layerSelect"><option value="raw" selected>raw</option></select>
+    <input id="key1_slider" value="0">
+    <div id="compareStatus" hidden></div>
+    <div id="plot"></div>
+  `;
+  const plot = document.getElementById('plot');
+  Object.defineProperty(plot, 'clientWidth', { configurable: true, value: 800 });
+  Object.defineProperty(plot, 'clientHeight', { configurable: true, value: 400 });
+
+  vi.stubGlobal('currentFileId', 'active-file');
+  vi.stubGlobal('currentFileName', 'active.sgy');
+  vi.stubGlobal('currentKey1Byte', 189);
+  vi.stubGlobal('currentKey2Byte', 193);
+  vi.stubGlobal('key1Values', [101]);
+  vi.stubGlobal('sectionShape', [1, 1]);
+  vi.stubGlobal('currentScaling', 'amax');
+  vi.stubGlobal('currentVisibleWindow', vi.fn(() => ({
+    x0: 0,
+    x1: 1,
+    y0: 0,
+    y1: 1,
+    nTraces: 1,
+    nSamples: 1,
+  })));
+  vi.stubGlobal('wantWiggleForWindow', vi.fn(() => false));
+  vi.stubGlobal('computeStepsForWindow', vi.fn(() => ({ step_x: 1, step_y: 1 })));
+  vi.stubGlobal('buildWindowLoadingMessage', vi.fn(() => 'loading'));
+  vi.stubGlobal('showLoading', vi.fn());
+  vi.stubGlobal('hideLoading', vi.fn());
+  vi.stubGlobal('cancelActiveMainDecodeJob', vi.fn());
+  vi.stubGlobal('windowFetchCtrl', null);
+  vi.stubGlobal('currentLmoKey', vi.fn(() => 'lmo:off'));
+  vi.stubGlobal('windowCacheGet', vi.fn(() => null));
+  vi.stubGlobal('windowCacheSet', vi.fn());
+  vi.stubGlobal('decodeWindowPayload', vi.fn(() => null));
+  vi.stubGlobal('beginRenderRequest', vi.fn(() => ({
+    requestId: 7,
+    signal: new AbortController().signal,
+  })));
+  vi.stubGlobal('isCurrentRenderRequest', vi.fn(() => true));
+  vi.stubGlobal('markRenderRequestCompleted', vi.fn());
+  vi.stubGlobal('markRenderRequestFailed', vi.fn());
+  vi.stubGlobal('markStaleRenderDropped', vi.fn());
+  vi.stubGlobal('abortRenderRequest', vi.fn());
+  vi.stubGlobal('buildWindowRequestArtifacts', vi.fn((context) => {
+    const params = new URLSearchParams({
+      file_id: context.fileId,
+      normalization_file_id: context.normalizationFileId,
+    });
+    return {
+      params,
+      cacheKey: `cache:${context.fileId}:${context.normalizationFileId}`,
+      payloadMeta: { lmoKey: 'lmo:off', fileId: context.fileId },
+    };
+  }));
+
+  window.__svCompare.setCompareFileTargetsForTest([
+    {
+      fileId: 'active-file',
+      displayName: 'active.sgy',
+      key1Byte: 189,
+      key2Byte: 193,
+      isActive: true,
+    },
+    {
+      fileId: 'added-file',
+      displayName: 'added.sgy',
+      key1Byte: 189,
+      key2Byte: 193,
+      isActive: false,
+    },
+  ]);
+  window.updateCompareSourceOptions();
+  document.getElementById('compareSourceA').value = 'file:added-file:raw';
+  document.getElementById('compareSourceB').value = 'file:active-file:raw';
+}
 
 function scale(panel) {
   return window.__svCompare.compareHeatmapScale(panel, 2);
@@ -323,6 +436,171 @@ test('raw compare validation ok=false returns backend message for caller to stop
     message: 'A-B unavailable: key2 sequence differs.',
   });
   expect(fetchMock).toHaveBeenCalledTimes(1);
+});
+
+test('raw compare preflights A section meta after validation before A/B window fetches', async () => {
+  setupCompareFetchHarness();
+  const fetchMock = vi.fn(async (input) => {
+    const url = new URL(input, 'http://localhost');
+    if (url.pathname === '/compare/raw/validate') {
+      return okJson({ ok: true, reason: '', message: '' });
+    }
+    if (url.pathname === '/get_section_meta') return okJson({ shape: [1, 1] });
+    if (url.pathname === '/get_section_window_bin') return okBinary();
+    throw new Error(`unexpected fetch: ${url.pathname}`);
+  });
+  vi.stubGlobal('fetch', fetchMock);
+
+  await window.fetchCompareAndPlot();
+
+  expect(fetchMock).toHaveBeenCalledTimes(4);
+  const urls = fetchMock.mock.calls.map(([input]) => new URL(input, 'http://localhost'));
+  expect(urls.map((url) => url.pathname)).toEqual([
+    '/compare/raw/validate',
+    '/get_section_meta',
+    '/get_section_window_bin',
+    '/get_section_window_bin',
+  ]);
+  expect(urls[0].searchParams.get('file_id_a')).toBe('added-file');
+  expect(urls[0].searchParams.get('file_id_b')).toBe('active-file');
+  expect(urls[1].searchParams.get('file_id')).toBe('added-file');
+  expect(urls[1].searchParams.get('key1_byte')).toBe('189');
+  expect(urls[1].searchParams.get('key2_byte')).toBe('193');
+  expect(urls[2].searchParams.get('normalization_file_id')).toBe('added-file');
+  expect(urls[3].searchParams.get('normalization_file_id')).toBe('added-file');
+});
+
+test('raw compare preflight failure stops window fetch and reports status', async () => {
+  setupCompareFetchHarness();
+  const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+  const plot = document.getElementById('plot');
+  plot.__svComparePanelCount = 3;
+  plot.__svCompareMode = 'heatmap';
+  window.__svCompare.setLatestCompareRenderForTest({ mode: 'heatmap', key1: 101 });
+  const react = vi.fn(async () => true);
+  vi.stubGlobal('Plotly', { react });
+  const fetchMock = vi.fn(async (input) => {
+    const url = new URL(input, 'http://localhost');
+    if (url.pathname === '/compare/raw/validate') {
+      return okJson({ ok: true, reason: '', message: '' });
+    }
+    if (url.pathname === '/get_section_meta') {
+      return errorText(500, 'baseline failed');
+    }
+    if (url.pathname === '/get_section_window_bin') return okBinary();
+    throw new Error(`unexpected fetch: ${url.pathname}`);
+  });
+  vi.stubGlobal('fetch', fetchMock);
+
+  try {
+    await window.fetchCompareAndPlot();
+
+    const paths = fetchMock.mock.calls.map(([input]) => new URL(input, 'http://localhost').pathname);
+    expect(paths).toEqual(['/compare/raw/validate', '/get_section_meta']);
+    expect(react).toHaveBeenCalledTimes(1);
+    expect(react.mock.calls[0][0]).toBe(plot);
+    expect(react.mock.calls[0][1]).toEqual([]);
+    expect(react.mock.calls[0][2].annotations[0].text).toBe('baseline failed');
+    expect(plot.__svComparePanelCount).toBe(0);
+    expect(plot.__svCompareMode).toBe('unavailable');
+    expect(window.__svCompare.getLatestCompareRender()).toBeNull();
+    expect(document.getElementById('compareStatus').textContent).toBe('baseline failed');
+    expect(document.getElementById('compareStatus').hidden).toBe(false);
+    expect(globalThis.markRenderRequestFailed).toHaveBeenCalledWith('compare-window', 7);
+  } finally {
+    warnSpy.mockRestore();
+  }
+});
+
+test('stale raw compare preflight does not fetch windows or overwrite status', async () => {
+  setupCompareFetchHarness();
+  document.getElementById('compareStatus').textContent = 'current status';
+  document.getElementById('compareStatus').hidden = false;
+  let current = true;
+  globalThis.isCurrentRenderRequest.mockImplementation(() => current);
+  const fetchMock = vi.fn(async (input) => {
+    const url = new URL(input, 'http://localhost');
+    if (url.pathname === '/compare/raw/validate') {
+      return okJson({ ok: true, reason: '', message: '' });
+    }
+    if (url.pathname === '/get_section_meta') {
+      current = false;
+      return okJson({ shape: [1, 1] });
+    }
+    if (url.pathname === '/get_section_window_bin') return okBinary();
+    throw new Error(`unexpected fetch: ${url.pathname}`);
+  });
+  vi.stubGlobal('fetch', fetchMock);
+
+  await window.fetchCompareAndPlot();
+
+  const paths = fetchMock.mock.calls.map(([input]) => new URL(input, 'http://localhost').pathname);
+  expect(paths).toEqual(['/compare/raw/validate', '/get_section_meta']);
+  expect(globalThis.markStaleRenderDropped).toHaveBeenCalledWith('compare-window', 7);
+  expect(document.getElementById('compareStatus').textContent).toBe('current status');
+  expect(document.getElementById('compareStatus').hidden).toBe(false);
+});
+
+test('renderCompareUnavailable clears previous compare plot and status shows validation message', async () => {
+  document.body.innerHTML += `
+    <div id="plot"></div>
+    <div id="compareStatus" hidden></div>
+  `;
+  const plot = document.getElementById('plot');
+  const message = 'A-B unavailable: key2 sequence differs.';
+  plot.__svComparePanelCount = 3;
+  plot.__svCompareMode = 'heatmap';
+  const react = vi.fn(async () => true);
+  vi.stubGlobal('Plotly', { react });
+
+  const rendered = await window.__svCompare.renderCompareUnavailable(message);
+
+  expect(rendered).toBe(true);
+  expect(window.__svCompare.getLatestCompareRender()).toBeNull();
+  expect(react).toHaveBeenCalledTimes(1);
+  expect(react.mock.calls[0][0]).toBe(plot);
+  expect(react.mock.calls[0][1]).toEqual([]);
+  expect(react.mock.calls[0][2].annotations[0].text).toBe(message);
+  expect(plot.__svComparePanelCount).toBe(0);
+  expect(plot.__svCompareMode).toBe('unavailable');
+  expect(document.getElementById('compareStatus').textContent).toBe(message);
+  expect(document.getElementById('compareStatus').hidden).toBe(false);
+});
+
+test('renderCompareUnavailable does not clear plot when queued request is stale', async () => {
+  document.body.innerHTML += `
+    <div id="plot"></div>
+    <div id="compareStatus" hidden></div>
+  `;
+  const plot = document.getElementById('plot');
+  plot.__svComparePanelCount = 3;
+  plot.__svCompareMode = 'heatmap';
+  const previousRender = { mode: 'heatmap', key1: 100 };
+  window.__svCompare.setLatestCompareRenderForTest(previousRender);
+  const react = vi.fn(async () => true);
+  const queueViewerPlotlyRender = vi.fn(async (_plot, renderData) => {
+    expect(renderData).toEqual({
+      __requestSlot: 'compare-window',
+      __requestId: 42,
+    });
+    return false;
+  });
+  vi.stubGlobal('Plotly', { react });
+  vi.stubGlobal('isCurrentRenderRequest', vi.fn(() => true));
+  vi.stubGlobal('queueViewerPlotlyRender', queueViewerPlotlyRender);
+
+  const rendered = await window.__svCompare.renderCompareUnavailable(
+    'A-B unavailable: stale.',
+    42,
+  );
+
+  expect(rendered).toBe(false);
+  expect(queueViewerPlotlyRender).toHaveBeenCalledTimes(1);
+  expect(react).not.toHaveBeenCalled();
+  expect(plot.__svComparePanelCount).toBe(3);
+  expect(plot.__svCompareMode).toBe('heatmap');
+  expect(window.__svCompare.getLatestCompareRender()).toBe(previousRender);
+  expect(document.getElementById('compareStatus').hidden).toBe(true);
 });
 
 test('buildComparePanels uses file names in raw diff label', () => {
