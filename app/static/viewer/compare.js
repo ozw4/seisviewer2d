@@ -6,6 +6,11 @@
   const SECTION_RENDER_SLOT = 'section-window';
   let latestCompareRender = null;
   let compareSyncing = false;
+  let compareRecentDatasets = [];
+  let compareFileTargets = [];
+  let compareActiveTargetKey = '';
+  let compareActiveSyncWrapped = false;
+  let compareActiveSyncQueued = false;
 
   class CompareFetchError extends Error {
     constructor(source, status, detail) {
@@ -25,6 +30,10 @@
       sourceA: document.getElementById('compareSourceA'),
       sourceB: document.getElementById('compareSourceB'),
       showDiff: document.getElementById('compareShowDiff'),
+      datasetPicker: document.getElementById('compareDatasetPicker'),
+      addDataset: document.getElementById('compareAddDataset'),
+      clearDatasets: document.getElementById('compareClearDatasets'),
+      datasetList: document.getElementById('compareDatasetList'),
       status: document.getElementById('compareStatus'),
     };
   }
@@ -108,7 +117,15 @@
       key1Byte: Number.isFinite(key1Byte) ? key1Byte : null,
       key2Byte: Number.isFinite(key2Byte) ? key2Byte : null,
       isActive: candidate.isActive === true,
+      originalName: String(candidate.originalName ?? candidate.original_name ?? '').trim(),
     };
+  }
+
+  function compareTargetDatasetKey(target) {
+    const normalized = normalizeCompareFileTarget(target);
+    if (!normalized) return '';
+    const name = String(normalized.originalName || normalized.displayName || '').trim();
+    return `${name}|${normalized.key1Byte ?? ''}|${normalized.key2Byte ?? ''}`;
   }
 
   function activeCompareFileTarget() {
@@ -118,7 +135,112 @@
       key1Byte: window.currentKey1Byte,
       key2Byte: window.currentKey2Byte,
       isActive: true,
+      originalName: window.currentFileName || '',
     });
+  }
+
+  function compareTargetIdentity(target) {
+    const normalized = normalizeCompareFileTarget(target);
+    if (!normalized) return '';
+    return `${normalized.fileId}|${normalized.key1Byte ?? ''}|${normalized.key2Byte ?? ''}`;
+  }
+
+  function addCompareDatasetTarget(targets, candidate, activeTarget) {
+    const active = normalizeCompareFileTarget(activeTarget);
+    const nextTarget = normalizeCompareFileTarget(candidate);
+    if (!active) return { targets: [], added: false, reason: 'Open a dataset before adding compare targets.' };
+    if (!nextTarget) {
+      return {
+        targets: resetCompareTargetsForActive(targets, active),
+        added: false,
+        reason: 'Compare dataset could not be opened.',
+      };
+    }
+    if (nextTarget.key1Byte !== active.key1Byte || nextTarget.key2Byte !== active.key2Byte) {
+      return {
+        targets: resetCompareTargetsForActive(targets, active),
+        added: false,
+        reason: 'Dataset key bytes do not match the active file.',
+      };
+    }
+    const next = resetCompareTargetsForActive(targets, active);
+    const nextDatasetKey = compareTargetDatasetKey(nextTarget);
+    if (nextDatasetKey && next.some((target) => compareTargetDatasetKey(target) === nextDatasetKey)) {
+      return { targets: next, added: false, reason: 'Dataset is already added.' };
+    }
+    return { targets: [...next, { ...nextTarget, isActive: false }], added: true, reason: '' };
+  }
+
+  function resetCompareTargetsForActive(targets, activeTarget) {
+    const active = normalizeCompareFileTarget(activeTarget);
+    if (!active) return [];
+    const activeKey = compareTargetIdentity(active);
+    const current = Array.isArray(targets) ? targets : [];
+    if (current.length === 0 || compareTargetIdentity(current[0]) !== activeKey) {
+      return [{ ...active, isActive: true }];
+    }
+    return [{ ...active, isActive: true }, ...current.slice(1).map((target) => ({
+      ...target,
+      isActive: false,
+    }))];
+  }
+
+  function clearCompareDatasetTargets(targets, activeTarget) {
+    return resetCompareTargetsForActive([], activeTarget);
+  }
+
+  function resetCompareTargetsForActiveFile() {
+    compareActiveTargetKey = '';
+    syncCompareTargetsWithActive();
+    updateCompareSourceOptions();
+  }
+
+  function wrapActiveFileTargetSync() {
+    if (compareActiveSyncWrapped) return;
+    const state = window.SeisViewerState;
+    if (!state || typeof state.syncActiveFileTarget !== 'function') return;
+    const originalSync = state.syncActiveFileTarget;
+    state.syncActiveFileTarget = function syncActiveFileTargetWithCompareReset() {
+      const result = originalSync.apply(this, arguments);
+      resetCompareTargetsForActiveFile();
+      return result;
+    };
+    compareActiveSyncWrapped = true;
+  }
+
+  function ensureActiveFileTargetSyncWrapped() {
+    wrapActiveFileTargetSync();
+    if (compareActiveSyncWrapped) return;
+    if (typeof window.setTimeout === 'function') {
+      window.setTimeout(wrapActiveFileTargetSync, 0);
+    }
+    if (compareActiveSyncQueued || typeof window.whenViewerBootstrapReady !== 'function') return;
+    compareActiveSyncQueued = true;
+    window.whenViewerBootstrapReady(() => {
+      wrapActiveFileTargetSync();
+      if (!compareActiveSyncWrapped && typeof window.setTimeout === 'function') {
+        window.setTimeout(wrapActiveFileTargetSync, 0);
+      }
+    });
+  }
+
+  function syncCompareTargetsWithActive() {
+    const active = activeCompareFileTarget();
+    if (!active) {
+      compareFileTargets = [];
+      compareActiveTargetKey = '';
+      window.compareFileTargets = compareFileTargets;
+      return compareFileTargets;
+    }
+    const activeKey = compareTargetIdentity(active);
+    if (activeKey !== compareActiveTargetKey) {
+      compareFileTargets = [{ ...active, isActive: true }];
+      compareActiveTargetKey = activeKey;
+    } else {
+      compareFileTargets = resetCompareTargetsForActive(compareFileTargets, active);
+    }
+    window.compareFileTargets = compareFileTargets;
+    return compareFileTargets;
   }
 
   function rawCompareSource(target) {
@@ -179,11 +301,85 @@
   }
 
   function currentCompareSourceCatalog() {
-    return buildCompareSourceCatalog([activeCompareFileTarget()], {
+    return buildCompareSourceCatalog(syncCompareTargetsWithActive(), {
       layerValues: getLayerSourceOptions(),
       latestPipelineKey: window.latestPipelineKey || null,
       latestTapData: window.latestTapData || {},
     });
+  }
+
+  function normalizeRecentDataset(candidate) {
+    if (!candidate || typeof candidate !== 'object') return null;
+    const originalName = String(candidate.original_name ?? candidate.originalName ?? '').trim();
+    if (!originalName) return null;
+    const storeName = String(candidate.store_name ?? candidate.storeName ?? originalName).trim();
+    const key1Byte = Number(candidate.key1_byte ?? candidate.key1Byte);
+    const key2Byte = Number(candidate.key2_byte ?? candidate.key2Byte);
+    if (!Number.isFinite(key1Byte) || !Number.isFinite(key2Byte)) return null;
+    return {
+      originalName,
+      storeName,
+      key1Byte,
+      key2Byte,
+    };
+  }
+
+  function datasetMatchesActiveKeys(dataset, activeTarget) {
+    const active = normalizeCompareFileTarget(activeTarget);
+    return !!active
+      && Number(dataset?.key1Byte) === active.key1Byte
+      && Number(dataset?.key2Byte) === active.key2Byte;
+  }
+
+  function renderCompareDatasetPicker() {
+    const { datasetPicker, addDataset } = getCompareNodes();
+    if (!datasetPicker) return;
+    const active = activeCompareFileTarget();
+    const previous = datasetPicker.value;
+    datasetPicker.innerHTML = '';
+    const datasets = compareRecentDatasets
+      .map(normalizeRecentDataset)
+      .filter(Boolean);
+    for (const dataset of datasets) {
+      const value = dataset.originalName;
+      const option = new Option(dataset.originalName, value);
+      option.dataset.key1Byte = String(dataset.key1Byte);
+      option.dataset.key2Byte = String(dataset.key2Byte);
+      option.disabled = !datasetMatchesActiveKeys(dataset, active);
+      datasetPicker.appendChild(option);
+    }
+    if (previous && Array.from(datasetPicker.options).some((option) => option.value === previous)) {
+      datasetPicker.value = previous;
+    }
+    if (addDataset) addDataset.disabled = !active || datasetPicker.options.length === 0;
+  }
+
+  function renderCompareDatasetList() {
+    const { datasetList } = getCompareNodes();
+    if (!datasetList) return;
+    syncCompareTargetsWithActive();
+    datasetList.innerHTML = '';
+    for (const target of compareFileTargets) {
+      const item = document.createElement('div');
+      item.textContent = target.displayName;
+      datasetList.appendChild(item);
+    }
+  }
+
+  async function loadCompareRecentDatasets() {
+    const { datasetPicker } = getCompareNodes();
+    if (!datasetPicker || typeof fetch !== 'function') return;
+    try {
+      const response = await fetch('/recent_datasets');
+      if (!response.ok) throw new Error(`Recent datasets request failed (${response.status})`);
+      const payload = await response.json();
+      compareRecentDatasets = Array.isArray(payload?.datasets) ? payload.datasets : [];
+      renderCompareDatasetPicker();
+    } catch (err) {
+      compareRecentDatasets = [];
+      renderCompareDatasetPicker();
+      setCompareStatus(err instanceof Error ? err.message : String(err));
+    }
   }
 
   function fillSourceSelect(select, sources, preferred, fallback) {
@@ -210,6 +406,8 @@
     const firstTap = sources.find((source) => source.layerId !== 'raw')?.sourceId || rawSourceId;
     fillSourceSelect(sourceA, sources, sourceA?.value || rawSourceId, rawSourceId);
     fillSourceSelect(sourceB, sources, sourceB?.value || firstTap, firstTap);
+    renderCompareDatasetPicker();
+    renderCompareDatasetList();
   }
 
   function resolveSourceDomain(sourceId, tapDataByLabel = window.latestTapData) {
@@ -322,10 +520,10 @@
       ? null
       : (referenceSource?.tapLabel || null);
     const requestContext = {
-      fileId: currentFileId,
+      fileId: source.fileId || currentFileId,
       key1Val,
-      key1Byte: currentKey1Byte,
-      key2Byte: currentKey2Byte,
+      key1Byte: source.key1Byte ?? currentKey1Byte,
+      key2Byte: source.key2Byte ?? currentKey2Byte,
       windowInfo,
       stepX: decision.stepX,
       stepY: decision.stepY,
@@ -342,6 +540,73 @@
     };
     const artifacts = buildWindowRequestArtifacts(requestContext);
     return { source, requestContext, ...artifacts };
+  }
+
+  function selectedCompareRecentDataset() {
+    const { datasetPicker } = getCompareNodes();
+    if (!datasetPicker) return null;
+    const selectedName = datasetPicker.value;
+    return compareRecentDatasets
+      .map(normalizeRecentDataset)
+      .find((dataset) => dataset && dataset.originalName === selectedName) || null;
+  }
+
+  async function addSelectedCompareDataset() {
+    const dataset = selectedCompareRecentDataset();
+    const active = activeCompareFileTarget();
+    if (!dataset) {
+      setCompareStatus('Select a recent dataset to add.');
+      return false;
+    }
+    if (!datasetMatchesActiveKeys(dataset, active)) {
+      setCompareStatus('Dataset key bytes do not match the active file.');
+      return false;
+    }
+    const duplicateKey = compareTargetDatasetKey({
+      fileId: 'candidate',
+      displayName: dataset.originalName,
+      originalName: dataset.originalName,
+      key1Byte: active.key1Byte,
+      key2Byte: active.key2Byte,
+    });
+    if (duplicateKey && syncCompareTargetsWithActive().some((target) => compareTargetDatasetKey(target) === duplicateKey)) {
+      setCompareStatus('Dataset is already added.');
+      return false;
+    }
+    const formData = new FormData();
+    formData.append('original_name', dataset.originalName);
+    formData.append('key1_byte', String(active.key1Byte));
+    formData.append('key2_byte', String(active.key2Byte));
+    try {
+      const response = await fetch('/open_segy', { method: 'POST', body: formData });
+      if (!response.ok) throw new Error(`Open dataset failed (${response.status})`);
+      const payload = await response.json();
+      const result = addCompareDatasetTarget(compareFileTargets, {
+        fileId: payload.file_id,
+        displayName: dataset.originalName,
+        key1Byte: active.key1Byte,
+        key2Byte: active.key2Byte,
+        originalName: dataset.originalName,
+        isActive: false,
+      }, active);
+      compareFileTargets = result.targets;
+      window.compareFileTargets = compareFileTargets;
+      setCompareStatus(result.reason);
+      updateCompareSourceOptions();
+      onCompareControlChange();
+      return result.added;
+    } catch (err) {
+      setCompareStatus(err instanceof Error ? err.message : String(err));
+      return false;
+    }
+  }
+
+  function clearCompareDatasets() {
+    compareFileTargets = clearCompareDatasetTargets(compareFileTargets, activeCompareFileTarget());
+    window.compareFileTargets = compareFileTargets;
+    setCompareStatus('');
+    updateCompareSourceOptions();
+    onCompareControlChange();
   }
 
   async function fetchComparePayload(request, signal, requestId) {
@@ -1153,12 +1418,18 @@
   }
 
   function initCompareControls() {
+    ensureActiveFileTargetSyncWrapped();
     updateCompareSourceOptions();
-    const { toggle, sourceA, sourceB, showDiff } = getCompareNodes();
+    const { toggle, sourceA, sourceB, showDiff, addDataset, clearDatasets } = getCompareNodes();
     for (const node of [toggle, sourceA, sourceB, showDiff]) {
       if (!node) continue;
       node.addEventListener('change', onCompareControlChange);
     }
+    if (addDataset) addDataset.addEventListener('click', () => {
+      addSelectedCompareDataset();
+    });
+    if (clearDatasets) clearDatasets.addEventListener('click', clearCompareDatasets);
+    loadCompareRecentDatasets();
   }
 
   window.isCompareModeEnabled = isCompareModeEnabled;
@@ -1171,6 +1442,7 @@
   window.handleCompareRelayout = handleCompareRelayout;
   window.snapshotCompareAxesRangesFromDOM = snapshotCompareAxesRangesFromDOM;
   window.clearCompareRender = clearCompareRender;
+  window.resetCompareTargetsForActiveFile = resetCompareTargetsForActiveFile;
   window.__svCompare = {
     validateComparePair,
     subtractF32,
@@ -1178,6 +1450,9 @@
     resolveSourceDomain,
     sourcePairKey,
     normalizeCompareFileTarget,
+    addCompareDatasetTarget,
+    clearCompareDatasetTargets,
+    resetCompareTargetsForActive,
     buildCompareSourceCatalog,
     compareHeatmapScale,
     buildComparePanels,

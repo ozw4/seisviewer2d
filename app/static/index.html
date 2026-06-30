@@ -2014,6 +2014,14 @@
                   </label>
                   <label class="control-field"><input type="checkbox" id="compareShowDiff" checked>Show A-B</label>
                 </div>
+                <div class="control-row">
+                  <label class="control-field">Dataset:
+                    <select id="compareDatasetPicker"></select>
+                  </label>
+                  <button type="button" id="compareAddDataset">Add dataset</button>
+                  <button type="button" id="compareClearDatasets">Clear</button>
+                </div>
+                <div id="compareDatasetList"></div>
                 <div id="compareStatus" class="compare-status" aria-live="polite" aria-atomic="true" hidden></div>
               </div>
             </section>

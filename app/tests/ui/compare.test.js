@@ -195,3 +195,93 @@ test('compare source catalog does not expose taps for non-active targets', () =>
   ]);
   expect(catalog.find((source) => source.fileId === 'other.sgy' && source.tapLabel)).toBeUndefined();
 });
+
+test('compare dataset target list keeps active target and added raw target', () => {
+  const active = {
+    fileId: 'active-file-id',
+    displayName: 'active.sgy',
+    originalName: 'active.sgy',
+    key1Byte: 189,
+    key2Byte: 193,
+    isActive: true,
+  };
+
+  const result = window.__svCompare.addCompareDatasetTarget([], {
+    fileId: 'added-file-id',
+    displayName: 'added.sgy',
+    originalName: 'added.sgy',
+    key1Byte: 189,
+    key2Byte: 193,
+  }, active);
+  const catalog = window.__svCompare.buildCompareSourceCatalog(result.targets, {
+    layerValues: ['raw', 'fbpick_prob'],
+    latestPipelineKey: 'pipeline-1',
+  });
+
+  expect(result.added).toBe(true);
+  expect(result.targets).toMatchObject([
+    { fileId: 'active-file-id', displayName: 'active.sgy', isActive: true },
+    { fileId: 'added-file-id', displayName: 'added.sgy', isActive: false },
+  ]);
+  expect(catalog.map((source) => source.label)).toContain('active.sgy / raw');
+  expect(catalog.map((source) => source.label)).toContain('added.sgy / raw');
+  expect(catalog.find((source) => source.fileId === 'added-file-id' && source.layerId !== 'raw')).toBeUndefined();
+});
+
+test('compare dataset manager rejects mismatched key bytes', () => {
+  const active = {
+    fileId: 'active-file-id',
+    displayName: 'active.sgy',
+    originalName: 'active.sgy',
+    key1Byte: 189,
+    key2Byte: 193,
+    isActive: true,
+  };
+
+  const result = window.__svCompare.addCompareDatasetTarget([], {
+    fileId: 'mismatch-file-id',
+    displayName: 'mismatch.sgy',
+    originalName: 'mismatch.sgy',
+    key1Byte: 17,
+    key2Byte: 193,
+  }, active);
+
+  expect(result.added).toBe(false);
+  expect(result.reason).toMatch(/key bytes/i);
+  expect(result.targets).toMatchObject([
+    { fileId: 'active-file-id', displayName: 'active.sgy', isActive: true },
+  ]);
+});
+
+test('clear compare datasets keeps active target only', () => {
+  const active = {
+    fileId: 'active-file-id',
+    displayName: 'active.sgy',
+    originalName: 'active.sgy',
+    key1Byte: 189,
+    key2Byte: 193,
+    isActive: true,
+  };
+  const targets = [
+    active,
+    {
+      fileId: 'added-file-id',
+      displayName: 'added.sgy',
+      originalName: 'added.sgy',
+      key1Byte: 189,
+      key2Byte: 193,
+      isActive: false,
+    },
+  ];
+
+  expect(window.__svCompare.clearCompareDatasetTargets(targets, active)).toEqual([
+    {
+      fileId: 'active-file-id',
+      displayName: 'active.sgy',
+      originalName: 'active.sgy',
+      key1Byte: 189,
+      key2Byte: 193,
+      isActive: true,
+    },
+  ]);
+});
