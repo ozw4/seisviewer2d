@@ -29,15 +29,23 @@ def test_playwright_compare_mode_toggle_and_diff_panel(
     page.wait_for_function(
         "() => document.getElementById('plot')?.__svComparePanelCount === 3"
     )
-    assert page.locator("#compareSourceA").input_value() == "raw"
-    assert page.locator("#compareSourceB").input_value() == "raw"
+    assert page.locator("#compareSourceA option:checked").text_content().endswith(
+        " / raw"
+    )
+    assert page.locator("#compareSourceB option:checked").text_content().endswith(
+        " / raw"
+    )
 
     page.uncheck("#compareShowDiff")
     page.wait_for_function(
         "() => document.getElementById('plot')?.__svComparePanelCount === 2"
     )
-    assert page.locator("#compareSourceA").input_value() == "raw"
-    assert page.locator("#compareSourceB").input_value() == "raw"
+    assert page.locator("#compareSourceA option:checked").text_content().endswith(
+        " / raw"
+    )
+    assert page.locator("#compareSourceB option:checked").text_content().endswith(
+        " / raw"
+    )
 
     page.check("#compareShowDiff")
     page.wait_for_function(

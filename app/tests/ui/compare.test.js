@@ -123,3 +123,75 @@ test('probability diff uses decoded probability values, not display-scaled backi
   expectF32Values(sourceB, [0.2]);
   expectF32Values(diff, [0.6]);
 });
+
+test('sourcePairKey distinguishes raw sources by fileId', () => {
+  const firstPair = {
+    a: { fileId: 'line-a.sgy', layerId: 'raw', pipelineKey: null, tapLabel: null },
+    b: { fileId: 'line-b.sgy', layerId: 'raw', pipelineKey: null, tapLabel: null },
+  };
+  const secondPair = {
+    a: { fileId: 'line-a.sgy', layerId: 'raw', pipelineKey: null, tapLabel: null },
+    b: { fileId: 'line-c.sgy', layerId: 'raw', pipelineKey: null, tapLabel: null },
+  };
+
+  expect(window.__svCompare.sourcePairKey(firstPair)).not.toEqual(
+    window.__svCompare.sourcePairKey(secondPair),
+  );
+});
+
+test('compare source catalog builds active raw source with file metadata', () => {
+  const catalog = window.__svCompare.buildCompareSourceCatalog([
+    {
+      fileId: 'line/a.sgy',
+      displayName: 'line_a.sgy',
+      key1Byte: 189,
+      key2Byte: 193,
+      isActive: true,
+    },
+  ], { layerValues: ['raw'] });
+
+  expect(catalog).toHaveLength(1);
+  expect(catalog[0]).toMatchObject({
+    sourceId: 'file:line%2Fa.sgy:raw',
+    fileId: 'line/a.sgy',
+    fileName: 'line_a.sgy',
+    key1Byte: 189,
+    key2Byte: 193,
+    layerId: 'raw',
+    label: 'line_a.sgy / raw',
+    pipelineKey: null,
+    tapLabel: null,
+    domain: 'amplitude',
+    available: true,
+  });
+});
+
+test('compare source catalog does not expose taps for non-active targets', () => {
+  const catalog = window.__svCompare.buildCompareSourceCatalog([
+    {
+      fileId: 'active.sgy',
+      displayName: 'active.sgy',
+      key1Byte: 189,
+      key2Byte: 193,
+      isActive: true,
+    },
+    {
+      fileId: 'other.sgy',
+      displayName: 'other.sgy',
+      key1Byte: 189,
+      key2Byte: 193,
+      isActive: false,
+    },
+  ], {
+    layerValues: ['raw', 'fbpick_prob'],
+    latestPipelineKey: 'pipeline-1',
+    latestTapData: { fbpick_prob: { prob: true } },
+  });
+
+  expect(catalog.map((source) => source.sourceId)).toEqual([
+    'file:active.sgy:raw',
+    'file:active.sgy:tap:fbpick_prob',
+    'file:other.sgy:raw',
+  ]);
+  expect(catalog.find((source) => source.fileId === 'other.sgy' && source.tapLabel)).toBeUndefined();
+});

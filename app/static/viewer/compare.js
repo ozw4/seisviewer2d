@@ -87,30 +87,134 @@
     return unique;
   }
 
-  function fillSourceSelect(select, values, preferred, fallback) {
+  function compareSourceId(fileId, layerId, tapLabel = null) {
+    const encodedFileId = encodeURIComponent(String(fileId || ''));
+    if (layerId === 'raw') return `file:${encodedFileId}:raw`;
+    return `file:${encodedFileId}:tap:${encodeURIComponent(String(tapLabel || layerId || ''))}`;
+  }
+
+  function normalizeCompareFileTarget(candidate) {
+    if (!candidate || typeof candidate !== 'object') return null;
+    const fileId = String(candidate.fileId ?? candidate.file_id ?? '').trim();
+    if (!fileId) return null;
+    const displayName = String(
+      candidate.displayName ?? candidate.fileName ?? candidate.file_name ?? candidate.name ?? fileId,
+    ).trim() || fileId;
+    const key1Byte = Number(candidate.key1Byte ?? candidate.key1_byte);
+    const key2Byte = Number(candidate.key2Byte ?? candidate.key2_byte);
+    return {
+      fileId,
+      displayName,
+      key1Byte: Number.isFinite(key1Byte) ? key1Byte : null,
+      key2Byte: Number.isFinite(key2Byte) ? key2Byte : null,
+      isActive: candidate.isActive === true,
+    };
+  }
+
+  function activeCompareFileTarget() {
+    return normalizeCompareFileTarget({
+      fileId: window.currentFileId || '',
+      displayName: window.currentFileName || window.currentFileId || '',
+      key1Byte: window.currentKey1Byte,
+      key2Byte: window.currentKey2Byte,
+      isActive: true,
+    });
+  }
+
+  function rawCompareSource(target) {
+    const sourceId = compareSourceId(target.fileId, 'raw');
+    return {
+      role: null,
+      id: 'raw',
+      sourceId,
+      fileId: target.fileId,
+      fileName: target.displayName,
+      key1Byte: target.key1Byte,
+      key2Byte: target.key2Byte,
+      layerId: 'raw',
+      label: `${target.displayName} / raw`,
+      pipelineKey: null,
+      tapLabel: null,
+      domain: 'amplitude',
+      available: true,
+    };
+  }
+
+  function tapCompareSource(target, tapLabel, options = {}) {
+    const sourceId = compareSourceId(target.fileId, 'tap', tapLabel);
+    return {
+      role: null,
+      id: tapLabel,
+      sourceId,
+      fileId: target.fileId,
+      fileName: target.displayName,
+      key1Byte: target.key1Byte,
+      key2Byte: target.key2Byte,
+      layerId: tapLabel,
+      label: `${target.displayName} / ${tapLabel}`,
+      pipelineKey: options.latestPipelineKey || null,
+      tapLabel,
+      domain: resolveSourceDomain(tapLabel, options.latestTapData),
+      available: !!options.latestPipelineKey,
+    };
+  }
+
+  function buildCompareSourceCatalog(targets, options = {}) {
+    const catalog = [];
+    const seen = new Set();
+    const layerValues = Array.isArray(options.layerValues) ? options.layerValues : ['raw'];
+    for (const candidate of targets || []) {
+      const target = normalizeCompareFileTarget(candidate);
+      if (!target || seen.has(target.fileId)) continue;
+      seen.add(target.fileId);
+      catalog.push(rawCompareSource(target));
+      if (!target.isActive) continue;
+      for (const layer of layerValues) {
+        const tapLabel = String(layer || '').trim();
+        if (!tapLabel || tapLabel === 'raw') continue;
+        catalog.push(tapCompareSource(target, tapLabel, options));
+      }
+    }
+    return catalog;
+  }
+
+  function currentCompareSourceCatalog() {
+    return buildCompareSourceCatalog([activeCompareFileTarget()], {
+      layerValues: getLayerSourceOptions(),
+      latestPipelineKey: window.latestPipelineKey || null,
+      latestTapData: window.latestTapData || {},
+    });
+  }
+
+  function fillSourceSelect(select, sources, preferred, fallback) {
     if (!select) return;
     const previous = preferred || select.value || '';
     select.innerHTML = '';
-    for (const value of values) {
-      select.appendChild(new Option(value, value));
+    for (const source of sources) {
+      select.appendChild(new Option(source.label, source.sourceId));
     }
-    const target = values.includes(previous)
-      ? previous
-      : (values.includes(fallback) ? fallback : values[0]);
-    select.value = target || 'raw';
+    const sourceIds = sources.map((source) => source.sourceId);
+    const activeRaw = sources.find((source) => source.layerId === 'raw')?.sourceId || '';
+    const normalizedPrevious = previous === 'raw' ? activeRaw : previous;
+    const normalizedFallback = fallback === 'raw' ? activeRaw : fallback;
+    const target = sourceIds.includes(normalizedPrevious)
+      ? normalizedPrevious
+      : (sourceIds.includes(normalizedFallback) ? normalizedFallback : sourceIds[0]);
+    select.value = target || '';
   }
 
   function updateCompareSourceOptions() {
     const { sourceA, sourceB } = getCompareNodes();
-    const values = getLayerSourceOptions();
-    const firstTap = values.find((value) => value !== 'raw') || 'raw';
-    fillSourceSelect(sourceA, values, sourceA?.value || 'raw', 'raw');
-    fillSourceSelect(sourceB, values, sourceB?.value || firstTap, firstTap);
+    const sources = currentCompareSourceCatalog();
+    const rawSourceId = sources.find((source) => source.layerId === 'raw')?.sourceId || '';
+    const firstTap = sources.find((source) => source.layerId !== 'raw')?.sourceId || rawSourceId;
+    fillSourceSelect(sourceA, sources, sourceA?.value || rawSourceId, rawSourceId);
+    fillSourceSelect(sourceB, sources, sourceB?.value || firstTap, firstTap);
   }
 
-  function resolveSourceDomain(sourceId) {
+  function resolveSourceDomain(sourceId, tapDataByLabel = window.latestTapData) {
     if (!sourceId || sourceId === 'raw') return 'amplitude';
-    const tapData = window.latestTapData && window.latestTapData[sourceId];
+    const tapData = tapDataByLabel && tapDataByLabel[sourceId];
     if (tapData && typeof tapData === 'object') {
       const meta = tapData.meta;
       if (meta && typeof meta.domain === 'string') return meta.domain;
@@ -122,18 +226,17 @@
   }
 
   function resolveCompareSource(select, role) {
-    const value = select?.value || 'raw';
-    const isRaw = value === 'raw';
-    const pipelineKey = isRaw ? null : (window.latestPipelineKey || null);
-    return {
-      role,
-      id: value,
-      label: value,
-      pipelineKey,
-      tapLabel: isRaw ? null : value,
-      domain: resolveSourceDomain(value),
-      available: isRaw || !!pipelineKey,
-    };
+    const catalog = currentCompareSourceCatalog();
+    const activeRaw = catalog.find((source) => source.layerId === 'raw') || rawCompareSource({
+      fileId: window.currentFileId || '',
+      displayName: window.currentFileName || window.currentFileId || 'raw',
+      key1Byte: window.currentKey1Byte ?? null,
+      key2Byte: window.currentKey2Byte ?? null,
+      isActive: true,
+    });
+    const value = select?.value || activeRaw.sourceId;
+    const source = catalog.find((entry) => entry.sourceId === value) || activeRaw;
+    return { ...source, role };
   }
 
   function getCompareSources() {
@@ -152,7 +255,16 @@
   }
 
   function sourcePairKey(sources) {
-    return `${sources.a.id}|${sources.b.id}|${sources.a.pipelineKey || ''}|${sources.b.pipelineKey || ''}`;
+    return [
+      sources.a.fileId || '',
+      sources.a.layerId || sources.a.id || '',
+      sources.a.pipelineKey || '',
+      sources.a.tapLabel || '',
+      sources.b.fileId || '',
+      sources.b.layerId || sources.b.id || '',
+      sources.b.pipelineKey || '',
+      sources.b.tapLabel || '',
+    ].join('|');
   }
 
   function canAttemptDiff(sources) {
@@ -1064,6 +1176,9 @@
     subtractF32,
     payloadToF32,
     resolveSourceDomain,
+    sourcePairKey,
+    normalizeCompareFileTarget,
+    buildCompareSourceCatalog,
     compareHeatmapScale,
     buildComparePanels,
   };
