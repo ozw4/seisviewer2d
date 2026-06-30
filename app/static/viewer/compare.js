@@ -496,9 +496,9 @@
     return (source?.layerId || source?.id || '') === 'raw';
   }
 
-  function resolveCompareNormalizationFileId(source, referenceSource) {
+  function resolveCompareNormalizationFileId(source, referenceSource, fallbackFileId = null) {
     if (!isRawCompareSource(source) || !isRawCompareSource(referenceSource)) return null;
-    const fileId = String(referenceSource?.fileId || '').trim();
+    const fileId = String(referenceSource?.fileId || source?.fileId || fallbackFileId || '').trim();
     return fileId || null;
   }
 
@@ -619,6 +619,7 @@
   function buildCompareRequest(source, referenceSource, key1Val, windowInfo, decision) {
     const effectiveLayer = source.id === 'raw' ? 'raw' : source.id;
     const tapLabel = source.id === 'raw' ? null : source.tapLabel;
+    const fileId = source.fileId || currentFileId;
     const referencePipelineKey = referenceSource?.id === 'raw'
       ? null
       : (referenceSource?.pipelineKey || null);
@@ -626,7 +627,7 @@
       ? null
       : (referenceSource?.tapLabel || null);
     const requestContext = {
-      fileId: source.fileId || currentFileId,
+      fileId,
       key1Val,
       key1Byte: source.key1Byte ?? currentKey1Byte,
       key2Byte: source.key2Byte ?? currentKey2Byte,
@@ -639,7 +640,7 @@
       tapLabel,
       referencePipelineKey,
       referenceTapLabel,
-      normalizationFileId: resolveCompareNormalizationFileId(source, referenceSource),
+      normalizationFileId: resolveCompareNormalizationFileId(source, referenceSource, fileId),
       scaling: currentScaling,
       transpose: '1',
       mode: decision.mode,

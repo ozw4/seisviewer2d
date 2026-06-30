@@ -1218,6 +1218,10 @@
       clear: windowCacheClear,
       stats: windowCacheStats,
     };
+    window.__svWindowFetch = {
+      buildWindowCacheKey,
+      buildWindowRequestArtifacts,
+    };
     window.buildWindowRequestArtifacts = buildWindowRequestArtifacts;
 
     async function fetchWindowAndPlot() {
