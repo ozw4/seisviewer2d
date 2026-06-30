@@ -10,6 +10,7 @@ from fastapi.testclient import TestClient
 from app.api._helpers import get_state
 from app.main import app
 from app.tests._stubs import write_baseline_raw
+from app.trace_store.catalog import trace_store_complete
 
 KEY1 = 189
 KEY2 = 193
@@ -224,7 +225,7 @@ def test_open_segy_rebuilds_incomplete_store_from_original_path(
     assert (store_dir / 'traces.npy').is_file()
     assert (store_dir / 'index.npz').is_file()
     assert (store_dir / 'meta.json').is_file()
-    assert upload_mod._trace_store_complete(store_dir, KEY1, KEY2) is True
+    assert trace_store_complete(store_dir, KEY1, KEY2) is True
     assert not list(Path(upload_mod.TRACE_DIR).glob(f'{original_name}.old-*'))
 
     file_id = payload['file_id']
