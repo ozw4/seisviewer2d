@@ -473,6 +473,12 @@ test('raw compare preflights A section meta after validation before A/B window f
 test('raw compare preflight failure stops window fetch and reports status', async () => {
   setupCompareFetchHarness();
   const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+  const plot = document.getElementById('plot');
+  plot.__svComparePanelCount = 3;
+  plot.__svCompareMode = 'heatmap';
+  window.__svCompare.setLatestCompareRenderForTest({ mode: 'heatmap', key1: 101 });
+  const react = vi.fn(async () => true);
+  vi.stubGlobal('Plotly', { react });
   const fetchMock = vi.fn(async (input) => {
     const url = new URL(input, 'http://localhost');
     if (url.pathname === '/compare/raw/validate') {
@@ -491,6 +497,13 @@ test('raw compare preflight failure stops window fetch and reports status', asyn
 
     const paths = fetchMock.mock.calls.map(([input]) => new URL(input, 'http://localhost').pathname);
     expect(paths).toEqual(['/compare/raw/validate', '/get_section_meta']);
+    expect(react).toHaveBeenCalledTimes(1);
+    expect(react.mock.calls[0][0]).toBe(plot);
+    expect(react.mock.calls[0][1]).toEqual([]);
+    expect(react.mock.calls[0][2].annotations[0].text).toBe('baseline failed');
+    expect(plot.__svComparePanelCount).toBe(0);
+    expect(plot.__svCompareMode).toBe('unavailable');
+    expect(window.__svCompare.getLatestCompareRender()).toBeNull();
     expect(document.getElementById('compareStatus').textContent).toBe('baseline failed');
     expect(document.getElementById('compareStatus').hidden).toBe(false);
     expect(globalThis.markRenderRequestFailed).toHaveBeenCalledWith('compare-window', 7);

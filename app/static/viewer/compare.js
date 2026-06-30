@@ -1449,7 +1449,22 @@
         return true;
       }
 
-      await ensureRawCompareReferenceBaseline(sources, signal);
+      try {
+        await ensureRawCompareReferenceBaseline(sources, signal);
+      } catch (err) {
+        if (err && err.name === 'AbortError') return true;
+        if (!isCompareRequestCurrent(requestId)) {
+          markStaleCompareRequest(requestId);
+          return true;
+        }
+        const message = err instanceof Error ? err.message : String(err);
+        const rendered = await renderCompareUnavailable(message, requestId);
+        if (isCompareRequestCurrent(requestId)) {
+          if (!rendered) setCompareStatus(message);
+          markRenderRequestFailed(COMPARE_RENDER_SLOT, requestId);
+        }
+        return true;
+      }
       if (!isCompareRequestCurrent(requestId)) {
         markStaleCompareRequest(requestId);
         return true;
