@@ -15,6 +15,7 @@ from fastapi.testclient import TestClient
 
 from app.main import app
 from app.tests._stubs import write_baseline_raw
+from app.trace_store.naming import content_addressed_compare_store_name
 from app.utils.baseline_artifacts import (
     BASELINE_STAGE_RAW,
     build_baseline_manifest_path,
@@ -201,7 +202,7 @@ def test_content_addressed_compare_store_name_uses_safe_stem_and_hash(_upload_en
     _client, upload_mod, _calls = _upload_env
     source_sha256 = 'abcdef1234567890' * 4
 
-    store_name = upload_mod._content_addressed_compare_store_name(
+    store_name = content_addressed_compare_store_name(
         safe_name='lineA.sgy',
         source_sha256=source_sha256,
         key1_byte=189,
@@ -283,7 +284,7 @@ def test_ingest_saved_segy_reuses_content_addressed_store(_upload_env):
     raw_path.parent.mkdir(parents=True, exist_ok=True)
     raw_path.write_bytes(data)
     source_sha256 = hashlib.sha256(data).hexdigest()
-    store_name = upload_mod._content_addressed_compare_store_name(
+    store_name = content_addressed_compare_store_name(
         safe_name='lineA.sgy',
         source_sha256=source_sha256,
         key1_byte=189,

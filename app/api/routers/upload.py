@@ -6,7 +6,6 @@ import asyncio
 import hashlib
 import json
 import logging
-import re
 import shutil
 import time
 from dataclasses import dataclass
@@ -28,6 +27,12 @@ from app.services.staged_upload_cleanup import (
     cleanup_stale_staged_upload_dirs,
 )
 from app.services.trace_store_registration import register_trace_store
+from app.trace_store.naming import (
+    bounded_direct_import_raw_name,
+    content_addressed_compare_store_name,
+    safe_store_name,
+    safe_upload_name,
+)
 from app.utils.ingest import SegyIngestor
 from app.utils.baseline_artifacts import has_split_baseline_artifacts
 from app.utils.header_qc import inspect_segy_header_qc
@@ -40,8 +45,6 @@ PROCESSED_DIR = get_processed_upload_dir()
 TRACE_DIR = get_trace_store_dir()
 UPLOAD_CHUNK_SIZE = 4 * 1024 * 1024
 STAGED_UPLOAD_CLEANUP_INTERVAL_SEC = 600
-CONTENT_ADDRESSED_STORE_NAME_MAX_CHARS = 180
-DIRECT_IMPORT_RAW_NAME_MAX_CHARS = 180
 _last_staged_cleanup_ts = 0.0
 
 
@@ -52,63 +55,6 @@ class SavedUpload:
     raw_path: Path
     source_sha256: str
     source_size: int
-
-
-def _safe_upload_name(filename: str) -> str:
-    safe_name = re.sub(r'[^A-Za-z0-9_.-]', '_', filename)
-    if safe_name in {'', '.', '..'}:
-        raise HTTPException(
-            status_code=400,
-            detail='Uploaded file must have a safe filename',
-        )
-    return safe_name
-
-
-def _safe_store_name(store_name: str) -> str:
-    if store_name in {'', '.', '..'}:
-        raise HTTPException(status_code=400, detail='Trace store name is unsafe')
-    if Path(store_name).is_absolute():
-        raise HTTPException(status_code=400, detail='Trace store name is unsafe')
-    if '/' in store_name or '\\' in store_name:
-        raise HTTPException(status_code=400, detail='Trace store name is unsafe')
-    safe_name = _safe_upload_name(store_name)
-    if safe_name != store_name:
-        raise HTTPException(status_code=400, detail='Trace store name is unsafe')
-    return safe_name
-
-
-def _bounded_direct_import_raw_name(safe_name: str) -> str:
-    if len(safe_name) <= DIRECT_IMPORT_RAW_NAME_MAX_CHARS:
-        return safe_name
-
-    path = Path(safe_name)
-    suffix = path.suffix
-    if len(suffix) >= DIRECT_IMPORT_RAW_NAME_MAX_CHARS:
-        suffix = ''
-    stem_limit = DIRECT_IMPORT_RAW_NAME_MAX_CHARS - len(suffix)
-    stem = path.stem or 'segy'
-    stem = stem[:stem_limit] or 'segy'
-    return _safe_upload_name(f'{stem}{suffix}')
-
-
-def _content_addressed_compare_store_name(
-    *,
-    safe_name: str,
-    source_sha256: str,
-    key1_byte: int,
-    key2_byte: int,
-) -> str:
-    source_hash = source_sha256.lower()
-    if not re.fullmatch(r'[0-9a-f]{64}', source_hash):
-        raise HTTPException(status_code=400, detail='Source sha256 is invalid')
-    suffix = f'__k{key1_byte}_{key2_byte}__sha256_{source_hash}'
-    stem_limit = CONTENT_ADDRESSED_STORE_NAME_MAX_CHARS - len(suffix)
-    if stem_limit < 1:
-        raise HTTPException(status_code=400, detail='Content-addressed name is invalid')
-    safe_stem = _safe_upload_name(Path(safe_name).stem or 'segy')
-    safe_stem = safe_stem[:stem_limit] or 'segy'
-    store_name = f'{safe_stem}{suffix}'
-    return _safe_store_name(store_name)
 
 
 def _staged_upload_dir() -> Path:
@@ -488,7 +434,7 @@ async def _ingest_saved_segy(
 ) -> dict:
     state = get_state(request.app)
     resolved_store_name = safe_name if store_name is None else store_name
-    store_dir = TRACE_DIR / _safe_store_name(resolved_store_name)
+    store_dir = TRACE_DIR / safe_store_name(resolved_store_name)
     file_id = str(uuid4())
 
     meta: dict | None = None
@@ -631,12 +577,12 @@ async def open_segy(
         raw_store_name = form.get('store_name')
         if not isinstance(raw_store_name, str):
             raise HTTPException(status_code=400, detail='Trace store name is unsafe')
-        safe_store_name = _safe_store_name(raw_store_name)
-        store_dir = TRACE_DIR / safe_store_name
+        safe_store = safe_store_name(raw_store_name)
+        store_dir = TRACE_DIR / safe_store
         requested_name = raw_store_name
         store_name_was_provided = True
     elif original_name is not None:
-        safe_name = _safe_upload_name(original_name)
+        safe_name = safe_upload_name(original_name)
         store_dir = TRACE_DIR / safe_name
         requested_name = original_name
         store_name_was_provided = False
@@ -726,7 +672,7 @@ async def upload_segy(
             status_code=400, detail='Uploaded file must have a filename'
         )
     logger.info('Uploading file: %s', file.filename)
-    safe_name = _safe_upload_name(file.filename)
+    safe_name = safe_upload_name(file.filename)
     saved = await _save_upload_file(file, safe_name, raw_path=UPLOAD_DIR / safe_name)
     return await _ingest_saved_segy(
         request=request,
@@ -760,8 +706,8 @@ async def import_compare_raw(
         )
 
     staged_id = uuid4().hex
-    safe_name = _safe_upload_name(file.filename)
-    raw_safe_name = _bounded_direct_import_raw_name(safe_name)
+    safe_name = safe_upload_name(file.filename)
+    raw_safe_name = bounded_direct_import_raw_name(safe_name)
     raw_path = _staged_upload_dir() / staged_id / raw_safe_name
     saved: SavedUpload | None = None
     try:
@@ -789,7 +735,7 @@ async def import_compare_raw(
             safe_name=raw_safe_name,
             source_sha256=saved.source_sha256,
         )
-        store_name = _content_addressed_compare_store_name(
+        store_name = content_addressed_compare_store_name(
             safe_name=safe_name,
             source_sha256=saved.source_sha256,
             key1_byte=key1_byte,
@@ -837,7 +783,7 @@ async def stage_segy(
         )
 
     staged_id = uuid4().hex
-    safe_name = _safe_upload_name(file.filename)
+    safe_name = safe_upload_name(file.filename)
     raw_path = _staged_upload_dir() / staged_id / safe_name
     saved = await _save_upload_file(file, safe_name, raw_path=raw_path)
     try:

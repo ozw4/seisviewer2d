@@ -16,6 +16,10 @@ from fastapi.testclient import TestClient
 
 from app.main import app
 from app.tests._stubs import write_baseline_raw
+from app.trace_store.naming import (
+    CONTENT_ADDRESSED_STORE_NAME_MAX_CHARS,
+    content_addressed_compare_store_name,
+)
 
 
 def _qc_payload() -> dict:
@@ -377,13 +381,13 @@ def test_compare_raw_import_long_filename_store_name_is_bounded(_staged_env):
     assert response.status_code == 200, response.text
     body = response.json()
     suffix = f'__k189_193__sha256_{source_sha256}'
-    assert len(body['store_name']) <= upload_mod.CONTENT_ADDRESSED_STORE_NAME_MAX_CHARS
+    assert len(body['store_name']) <= CONTENT_ADDRESSED_STORE_NAME_MAX_CHARS
     assert body['store_name'].endswith(suffix)
     assert '/' not in body['store_name']
     assert '\\' not in body['store_name']
     store_dir = Path(upload_mod.TRACE_DIR) / body['store_name']
     assert store_dir.is_dir()
-    assert len(store_dir.name) <= upload_mod.CONTENT_ADDRESSED_STORE_NAME_MAX_CHARS
+    assert len(store_dir.name) <= CONTENT_ADDRESSED_STORE_NAME_MAX_CHARS
     meta = json.loads((store_dir / 'meta.json').read_text(encoding='utf-8'))
     assert meta['original_name'] == original_name
     assert meta['display_name'] == original_name
@@ -451,7 +455,7 @@ def test_compare_raw_import_same_basename_does_not_archive_upload_store(
     client, upload_mod, _calls = _staged_env
     data = b'different-compare-source'
     source_sha256 = hashlib.sha256(data).hexdigest()
-    expected_store_name = upload_mod._content_addressed_compare_store_name(
+    expected_store_name = content_addressed_compare_store_name(
         safe_name='line_001.sgy',
         source_sha256=source_sha256,
         key1_byte=189,
@@ -478,7 +482,7 @@ def test_compare_raw_import_content_addressed_conflict_returns_409_without_archi
     client, upload_mod, calls = _staged_env
     data = b'conflicting-compare-source'
     source_sha256 = hashlib.sha256(data).hexdigest()
-    store_name = upload_mod._content_addressed_compare_store_name(
+    store_name = content_addressed_compare_store_name(
         safe_name='line_001.sgy',
         source_sha256=source_sha256,
         key1_byte=189,
