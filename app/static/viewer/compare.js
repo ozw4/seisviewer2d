@@ -830,7 +830,15 @@
       const importedSourceId = compareSourceId(payload.file_id, 'raw');
       if (sourceB) sourceB.value = importedSourceId;
       loadCompareRecentDatasets();
-      onCompareControlChange();
+      clearCompareDataState();
+      if (isCompareModeEnabled()) {
+        const renderPromise = fetchCompareAndPlot();
+        if (renderPromise && typeof renderPromise.catch === 'function') {
+          renderPromise.catch((err) => console.warn('Compare B source import render failed', err));
+        }
+      } else {
+        onCompareControlChange();
+      }
       setCompareStatus(result.added ? 'B source imported.' : result.reason);
       return result.added;
     } catch (err) {
